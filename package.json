@@ -38,7 +38,7 @@
   "homepage": "https://local.sametbasbug.dev/",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
-    "fast-uri": "3.1.5",
+    "fast-uri": "4.1.2",
     "node-pty": "1.2.0-beta.14",
     "pixelmatch": "7.2.0",
     "pngjs": "7.0.0",
