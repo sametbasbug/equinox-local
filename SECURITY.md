@@ -42,6 +42,12 @@ The following are generally not vulnerabilities by themselves:
 - denial of service that only terminates a user-owned local process without persistence, privilege escalation, or boundary bypass;
 - findings against internal/private release infrastructure that is not shipped in the public source or managed release.
 
+## Automated security scanning
+
+The public repository includes a GitHub CodeQL workflow for JavaScript/TypeScript using the `security-extended` query suite. The workflow is intentionally skipped while the publication-staging repository is private and becomes active when the repository is public, in addition to the normal macOS CI/test suite.
+
+CodeQL is a supplement to the explicit security-boundary tests in this repository, not a replacement for them.
+
 ## Development rules for security-sensitive changes
 
 Security-boundary changes should include regression coverage. Before submitting:

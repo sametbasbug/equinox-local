@@ -94,6 +94,27 @@ It does **not** require Git, Homebrew, a system Node installation, administrator
 
 Current installation status is maintained at [local.sametbasbug.dev/install](https://local.sametbasbug.dev/install/).
 
+### Connect Equinox Local to ChatGPT
+
+Equinox Local runs on your Mac, while ChatGPT connects to remote MCP endpoints. To bridge the two without exposing a local port to the public internet, Equinox Local uses OpenAI Secure MCP Tunnel.
+
+You need **two separate values** from OpenAI Platform:
+
+1. **Tunnel ID** — open [Platform → Tunnels](https://platform.openai.com/settings/organization/tunnels), create a tunnel for the ChatGPT workspace that should use Equinox Local, then copy its `tunnel_…` identifier.
+2. **Runtime API key** — open [Platform → API keys](https://platform.openai.com/settings/organization/api-keys), create a **Restricted** runtime key and grant only **Tunnels: Read + Use**. Do not use an admin key or Tunnels: Manage for the long-lived Local runtime.
+
+After the managed Local install finishes:
+
+1. Open Control Center at `http://127.0.0.1:24891/`.
+2. In **Connect to ChatGPT**, paste the Tunnel ID and Runtime API key.
+3. Choose **Save & connect**. Equinox Local stores the key only in a private `0600` file on this Mac and schedules a safe restart into tunnel mode.
+4. In ChatGPT, enable the custom-app/developer-mode flow available to your plan/workspace, create or edit the MCP app/connector, choose **Connection: Tunnel**, and select or paste the **same Tunnel ID**.
+5. Scan/refresh the app tools after the tunnel is connected.
+
+The tunnel client makes an outbound HTTPS connection to OpenAI; Equinox Local does not need an inbound firewall rule or a public MCP port. If the tunnel does not appear in ChatGPT, verify that it was created for the correct workspace and that the relevant principal has **Tunnels Read + Use**. Newly created tunnels may also take a short time to become available.
+
+See [docs/tunnel.md](docs/tunnel.md) for the full setup and troubleshooting path. ChatGPT plan/workspace support for custom MCP apps and write/modify actions is controlled by OpenAI and may change independently of Equinox Local.
+
 ## Updates
 
 After first install, Local manages its own update lifecycle. Stable release manifests are signed with an offline/external Ed25519 key whose public half is pinned into the runtime. Before activation Local verifies the download, stages a versioned release, performs a controlled restart, checks the expected version/health, and restores the previous release if activation fails.
