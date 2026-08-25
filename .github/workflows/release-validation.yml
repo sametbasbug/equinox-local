@@ -14,10 +14,10 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: 24.19.0
           cache: npm
@@ -52,7 +52,7 @@ jobs:
           printf 'target=darwin-x64\nbytes=%s\nsha256=%s\n' "$bytes" "$sha256" | tee backups/local-packages/darwin-x64-metadata.txt
 
       - name: Upload unsigned x64 artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: equinox-local-4.2.0-darwin-x64-unsigned
           path: |

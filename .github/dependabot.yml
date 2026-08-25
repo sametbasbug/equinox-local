@@ -10,6 +10,13 @@ updates:
     open-pull-requests-limit: 5
     labels:
       - dependencies
+    ignore:
+      - dependency-name: fast-uri
+        update-types:
+          - version-update:semver-major
+      - dependency-name: node-pty
+        versions:
+          - 1.2.0-beta.15
 
   - package-ecosystem: github-actions
     directory: /
