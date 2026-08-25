@@ -14,7 +14,7 @@
 [Product site](https://local.sametbasbug.dev/) · [Security](SECURITY.md) · [Architecture](docs/architecture.md) · [Contributing](CONTRIBUTING.md)
 </div>
 
-> **Release-candidate status:** the source tree and Apple Silicon managed-install path are under final release validation. The general public bootstrap is not published yet, and Equinox Browser remains staged rather than publicly released.
+> **Release-candidate status:** the clean public source plus native Apple Silicon and Intel managed-release paths have passed automated validation. The general public bootstrap remains unpublished pending one clean macOS user/VM lifecycle check and a separate encrypted backup of the production update-signing key; Equinox Browser remains staged rather than publicly released.
 
 ## What is Equinox Local?
 
@@ -78,7 +78,7 @@ More: [docs/browser.md](docs/browser.md)
 
 ## Installation
 
-The public installer is intentionally **not live yet** while clean-machine and native Intel validation remain open release gates.
+The public installer is intentionally **not live yet** while the final clean-macOS user/VM lifecycle validation and signing-key backup remain open release gates.
 
 The planned public path is a small user-level macOS bootstrap that:
 
