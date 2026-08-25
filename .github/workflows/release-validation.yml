@@ -1,0 +1,62 @@
+name: Release Validation
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  intel-x64:
+    name: Intel x64 managed release
+    runs-on: macos-15-intel
+    timeout-minutes: 35
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24.19.0
+          cache: npm
+
+      - name: Verify native runner
+        run: |
+          test "$(uname -m)" = "x86_64"
+          node -e 'if (process.arch !== "x64") process.exit(1); console.log(`Node architecture: ${process.arch}`)'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Static checks
+        run: npm run check
+
+      - name: Test
+        run: npm test
+
+      - name: Build managed x64 release
+        run: npm run local:release:package
+
+      - name: Smoke managed x64 release
+        run: npm run local:smoke:managed
+
+      - name: Record artifact metadata
+        run: |
+          artifact="backups/local-packages/equinox-local-4.2.0-darwin-x64.tar.gz"
+          test -f "$artifact"
+          file "$artifact"
+          bytes="$(stat -f %z "$artifact")"
+          sha256="$(shasum -a 256 "$artifact" | awk '{print $1}')"
+          printf 'target=darwin-x64\nbytes=%s\nsha256=%s\n' "$bytes" "$sha256" | tee backups/local-packages/darwin-x64-metadata.txt
+
+      - name: Upload unsigned x64 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: equinox-local-4.2.0-darwin-x64-unsigned
+          path: |
+            backups/local-packages/equinox-local-4.2.0-darwin-x64.tar.gz
+            backups/local-packages/darwin-x64-metadata.txt
+          if-no-files-found: error
+          retention-days: 7
