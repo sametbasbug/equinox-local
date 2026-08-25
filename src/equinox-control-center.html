@@ -1,0 +1,556 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#08111d">
+  <title>Equinox Local Control Center</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="/assets/control-center.css">
+  <script type="module" src="/assets/control-center.js"></script>
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar" aria-label="Primary navigation">
+      <div class="brand-block">
+        <div class="brand-mark" aria-hidden="true">
+          <span class="brand-orbit"></span>
+          <span class="brand-core"></span>
+        </div>
+        <div>
+          <p class="eyebrow">Equinox Local</p>
+          <h1>Control Center</h1>
+        </div>
+      </div>
+
+      <nav class="nav-list" aria-label="Control Center sections">
+        <button class="nav-item is-active" type="button" data-section="dashboard" aria-current="page">
+          <span class="nav-icon" aria-hidden="true">⌂</span>
+          <span>Dashboard</span>
+        </button>
+        <button class="nav-item" type="button" data-section="projects">
+          <span class="nav-icon" aria-hidden="true">▦</span>
+          <span>Projects & folders</span>
+        </button>
+        <button class="nav-item" type="button" data-section="browser">
+          <span class="nav-icon" aria-hidden="true">◉</span>
+          <span>Browser</span>
+        </button>
+        <button class="nav-item" type="button" data-section="permissions">
+          <span class="nav-icon" aria-hidden="true">◇</span>
+          <span>Permissions</span>
+        </button>
+        <button class="nav-item" type="button" data-section="integrations">
+          <span class="nav-icon" aria-hidden="true">⌁</span>
+          <span>Integrations</span>
+        </button>
+        <button class="nav-item" type="button" data-section="activity">
+          <span class="nav-icon" aria-hidden="true">≋</span>
+          <span>Activity</span>
+        </button>
+      </nav>
+
+      <div class="sidebar-footer">
+        <div class="sidebar-health">
+          <span id="sidebar-health-dot" class="status-dot is-neutral" aria-hidden="true"></span>
+          <div>
+            <strong id="sidebar-health-label">Connecting…</strong>
+            <span id="sidebar-version">Local runtime</span>
+          </div>
+        </div>
+        <p>Loopback only · Private to this Mac</p>
+      </div>
+    </aside>
+
+    <main class="main-panel">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow" id="section-kicker">Overview</p>
+          <h2 id="section-title">Dashboard</h2>
+        </div>
+        <div class="topbar-actions">
+          <span id="last-refreshed" class="last-refreshed">Not refreshed yet</span>
+          <button id="refresh-button" class="button secondary" type="button">Refresh</button>
+        </div>
+      </header>
+
+      <div id="restart-banner" class="restart-banner" hidden>
+        <div>
+          <strong>Restart required</strong>
+          <p>Your configuration was saved safely. Restart Equinox Local before making another configuration change.</p>
+        </div>
+        <button id="reload-after-restart" class="button secondary" type="button">I restarted — reload</button>
+      </div>
+
+      <div id="error-banner" class="error-banner" role="alert" hidden>
+        <div>
+          <strong>Control Center could not load everything</strong>
+          <p id="error-message"></p>
+        </div>
+        <button id="dismiss-error" class="icon-button" type="button" aria-label="Dismiss error">×</button>
+      </div>
+
+      <section id="section-dashboard" class="page-section is-active" aria-labelledby="section-title">
+        <article id="onboarding-card" class="onboarding-card" hidden>
+          <div class="onboarding-header">
+            <div>
+              <p class="eyebrow">First-time setup</p>
+              <h3>Finish connecting Equinox Local</h3>
+              <p id="onboarding-copy">Your local runtime is ready. Complete the remaining connection steps without using Terminal.</p>
+            </div>
+            <span id="onboarding-badge" class="badge warn">Setup needed</span>
+          </div>
+
+          <div class="onboarding-layout">
+            <div class="setup-steps" aria-label="Setup progress">
+              <div class="setup-step">
+                <span class="setup-step-index">1</span>
+                <div><strong>Local runtime</strong><small>Installed and private to this Mac.</small></div>
+                <span id="setup-runtime-status" class="badge good">Ready</span>
+              </div>
+              <div class="setup-step">
+                <span class="setup-step-index">2</span>
+                <div><strong>Equinox Workspace</strong><small>Your managed starter workspace.</small></div>
+                <span id="setup-workspace-status" class="badge good">Ready</span>
+              </div>
+              <div class="setup-step">
+                <span class="setup-step-index">3</span>
+                <div><strong>Equinox Browser</strong><small>Optional until the Chrome Web Store release is published.</small></div>
+                <span id="setup-browser-status" class="badge neutral">Optional</span>
+              </div>
+              <div class="setup-step">
+                <span class="setup-step-index">4</span>
+                <div><strong>ChatGPT connection</strong><small>Connect this Local runtime through your OpenAI tunnel.</small></div>
+                <span id="setup-tunnel-status" class="badge warn">Not connected</span>
+              </div>
+            </div>
+
+            <form id="onboarding-tunnel-form" class="setup-form">
+              <div class="setup-form-heading">
+                <div>
+                  <strong>Connect to ChatGPT</strong>
+                  <p>Use a tunnel Runtime API key with Tunnels Read + Use. The key stays only on this Mac.</p>
+                </div>
+              </div>
+              <label class="field">
+                <span>Tunnel ID</span>
+                <input id="onboarding-tunnel-id" name="tunnelId" type="text" inputmode="text" autocomplete="off" spellcheck="false" placeholder="tunnel_…" pattern="tunnel_[a-f0-9]{32}" maxlength="39" required>
+                <small>OpenAI tunnel IDs use <code>tunnel_</code> followed by 32 lowercase hexadecimal characters.</small>
+              </label>
+              <label class="field">
+                <span>Runtime API key</span>
+                <input id="onboarding-runtime-key" name="runtimeKey" type="password" autocomplete="off" spellcheck="false" minlength="16" maxlength="4096" required>
+                <small>This secret is written to a private 0600 file and is never returned by the Control Center API.</small>
+              </label>
+              <div class="setup-links">
+                <a href="https://platform.openai.com/settings/organization/tunnels" target="_blank" rel="noopener noreferrer">Open Tunnels</a>
+                <a href="https://platform.openai.com/settings/organization/api-keys" target="_blank" rel="noopener noreferrer">Runtime API keys</a>
+                <a href="https://chatgpt.com/#settings/Connectors" target="_blank" rel="noopener noreferrer">ChatGPT connectors</a>
+              </div>
+              <button id="onboarding-connect-button" class="button primary full-width" type="submit">Save &amp; connect</button>
+              <p id="onboarding-reconnect" class="setup-reconnect" hidden>Restart scheduled. Equinox Local will reconnect here automatically…</p>
+            </form>
+          </div>
+        </article>
+
+        <div class="hero-card">
+          <div class="hero-copy">
+            <span id="runtime-health-badge" class="badge neutral">Checking runtime</span>
+            <h3>Your local agent control plane, at a glance.</h3>
+            <p>See what is connected, what Equinox Local can reach, and whether anything needs your attention.</p>
+          </div>
+          <div class="hero-metric">
+            <span>Runtime</span>
+            <strong id="runtime-version">—</strong>
+            <small id="runtime-uptime">Uptime unavailable</small>
+          </div>
+        </div>
+
+        <div class="dashboard-grid three-column">
+          <article class="metric-card">
+            <div class="card-heading">
+              <span class="card-icon">◉</span>
+              <span id="browser-status-dot" class="status-dot is-neutral"></span>
+            </div>
+            <p class="card-label">Equinox Browser</p>
+            <strong id="browser-status">Checking…</strong>
+            <span id="browser-version" class="muted">Version unavailable</span>
+          </article>
+
+          <article class="metric-card">
+            <div class="card-heading">
+              <span class="card-icon">⌘</span>
+              <span id="peekaboo-status-dot" class="status-dot is-neutral"></span>
+            </div>
+            <p class="card-label">Desktop bridge</p>
+            <strong id="peekaboo-status">Checking…</strong>
+            <span id="peekaboo-detail" class="muted">Peekaboo</span>
+          </article>
+
+          <article class="metric-card">
+            <div class="card-heading">
+              <span class="card-icon">▦</span>
+              <span id="api-status-dot" class="status-dot is-neutral"></span>
+            </div>
+            <p class="card-label">Control Center API</p>
+            <strong id="api-status">Checking…</strong>
+            <span id="api-detail" class="muted">127.0.0.1 only</span>
+          </article>
+        </div>
+
+        <div class="dashboard-grid two-column">
+          <article class="panel-card">
+            <div class="panel-header">
+              <div>
+                <p class="eyebrow">Configuration</p>
+                <h3>Access map</h3>
+              </div>
+              <button class="text-button" type="button" data-jump-section="projects">Manage</button>
+            </div>
+            <div class="stat-row">
+              <div>
+                <span>Projects</span>
+                <strong id="project-count">—</strong>
+              </div>
+              <div>
+                <span>Folder roots</span>
+                <strong id="folder-count">—</strong>
+              </div>
+              <div>
+                <span>Default project</span>
+                <strong id="default-project">—</strong>
+              </div>
+            </div>
+            <p class="panel-note">Only configured roots are exposed to Equinox Local tools. Paths stay in your private machine configuration.</p>
+          </article>
+
+          <article class="panel-card">
+            <div class="panel-header">
+              <div>
+                <p class="eyebrow">Runtime health</p>
+                <h3 id="health-summary-title">Checking recent runtime events</h3>
+              </div>
+              <span id="health-summary-badge" class="badge neutral">Checking</span>
+            </div>
+            <p id="health-summary-copy" class="health-copy">The Control Center is asking the existing observability layer for a bounded health summary.</p>
+            <div class="health-meta">
+              <span id="health-event-count">— recent events</span>
+              <span id="health-evaluated-at">Not evaluated yet</span>
+            </div>
+          </article>
+        </div>
+
+        <div class="dashboard-grid">
+          <article class="panel-card doctor-card">
+            <div class="panel-header">
+              <div>
+                <p class="eyebrow">System doctor</p>
+                <h3 id="doctor-title">Checking setup</h3>
+              </div>
+              <span id="doctor-badge" class="badge neutral">Checking</span>
+            </div>
+            <p id="doctor-copy" class="health-copy">Equinox Local is checking the runtime, private configuration, update path and optional integrations.</p>
+            <div id="doctor-list" class="doctor-list" aria-live="polite"></div>
+            <div class="health-meta">
+              <span id="doctor-summary">—</span>
+              <span id="doctor-checked-at">Not checked yet</span>
+            </div>
+          </article>
+        </div>
+
+        <div class="dashboard-grid">
+          <article class="panel-card">
+            <div class="panel-header">
+              <div>
+                <p class="eyebrow">Updates</p>
+                <h3 id="update-title">Checking installation channel</h3>
+              </div>
+              <span id="update-badge" class="badge neutral">Checking</span>
+            </div>
+            <p id="update-copy" class="health-copy">Managed installs can check the signed Equinox Local stable update channel without exposing local paths.</p>
+            <div class="health-meta">
+              <span id="update-version">Current version —</span>
+              <span id="update-checked-at">Not checked yet</span>
+            </div>
+            <div class="button-group">
+              <button id="check-update-button" class="button secondary" type="button">Check for updates</button>
+              <button id="install-update-button" class="button primary" type="button" hidden>Update &amp; restart</button>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <section id="section-projects" class="page-section" hidden>
+        <div class="section-intro">
+          <div>
+            <p class="eyebrow">Access boundaries</p>
+            <h3>Projects & folders</h3>
+            <p>Add or update the roots Equinox Local is allowed to see. Changes are validated by the same configuration layer used by the agent runtime.</p>
+          </div>
+          <div class="button-group">
+            <button id="add-folder-button" class="button secondary" type="button">Add read-only folder</button>
+            <button id="add-project-button" class="button primary" type="button">Add project</button>
+          </div>
+        </div>
+
+        <div class="project-layout">
+          <div>
+            <div class="list-heading">
+              <div>
+                <span class="list-title">Configured roots</span>
+                <span id="root-count-label" class="muted">Loading…</span>
+              </div>
+              <span id="dirty-state" class="badge neutral">No unsaved changes</span>
+            </div>
+            <div id="project-list" class="project-list" aria-live="polite"></div>
+          </div>
+
+          <aside class="settings-card">
+            <div class="panel-header compact">
+              <div>
+                <p class="eyebrow">Runtime routing</p>
+                <h3>Core folders</h3>
+              </div>
+            </div>
+
+            <label class="field">
+              <span>Default project</span>
+              <select id="default-project-select"></select>
+              <small>Used when an agent action does not name a project explicitly.</small>
+            </label>
+
+            <label class="field">
+              <span>Workspace project</span>
+              <select id="workspace-project-select"></select>
+              <small>Used for managed worktrees and runtime-owned workspace artifacts.</small>
+            </label>
+
+            <label class="field">
+              <span>Downloads root</span>
+              <select id="downloads-root-select"></select>
+              <small>Must remain a read-only folder root.</small>
+            </label>
+
+            <div class="settings-divider"></div>
+
+            <div class="setting-summary">
+              <span>Control Center</span>
+              <strong id="control-center-address">127.0.0.1:—</strong>
+              <small>Loopback binding is enforced by the backend and cannot be weakened here.</small>
+            </div>
+
+            <button id="save-config-button" class="button primary full-width" type="button" disabled>Save configuration</button>
+            <p class="save-hint">Saving writes the validated config with a revision guard. A restart is required before further edits.</p>
+          </aside>
+        </div>
+      </section>
+
+      <section id="section-browser" class="page-section" hidden>
+        <div class="section-intro">
+          <div>
+            <p class="eyebrow">User Chrome lane</p>
+            <h3>Browser</h3>
+            <p>Equinox Browser is the first-party bridge for your normal Chrome and the only user-browser automation lane exposed by Equinox Local.</p>
+          </div>
+        </div>
+
+        <div class="dashboard-grid two-column">
+          <article class="panel-card">
+            <div class="integration-title-row">
+              <div class="integration-icon">◉</div>
+              <div>
+                <span class="card-label">Equinox Browser</span>
+                <h3 id="browser-page-status">Checking…</h3>
+              </div>
+              <span id="browser-page-badge" class="badge neutral">Checking</span>
+            </div>
+            <dl class="detail-list">
+              <div><dt>Extension version</dt><dd id="browser-page-version">—</dd></div>
+              <div><dt>Connected since</dt><dd id="browser-connected-at">—</dd></div>
+              <div><dt>Connection model</dt><dd>Extension + Native Messaging</dd></div>
+              <div><dt>Automation</dt><dd id="browser-control-state">—</dd></div>
+            </dl>
+          </article>
+
+          <article class="panel-card browser-settings-card">
+            <p class="eyebrow">Browser controls</p>
+            <h3>Local browser settings</h3>
+            <label class="toggle-field compact-toggle">
+              <div>
+                <span>Browser automation</span>
+                <small>Turn agent control on or off while keeping the local settings channel available.</small>
+              </div>
+              <input id="browser-control-toggle" type="checkbox" role="switch">
+            </label>
+            <label class="toggle-field compact-toggle">
+              <div>
+                <span>Agent cursor</span>
+                <small>Show the agent's click and hover target on the page.</small>
+              </div>
+              <input id="browser-cursor-toggle" type="checkbox" role="switch">
+            </label>
+            <label class="field">
+              <span>Agent display name</span>
+              <input id="browser-agent-name" type="text" maxlength="32" autocomplete="off" spellcheck="false" placeholder="Agent">
+              <small>Shown beside the visible agent cursor. This setting stays in the extension's local storage.</small>
+            </label>
+            <button id="apply-browser-settings" class="button primary full-width" type="button" disabled>Apply browser settings</button>
+            <p id="browser-settings-note" class="save-hint">Settings apply immediately and do not require a Local restart.</p>
+          </article>
+        </div>
+
+        <article class="panel-card soft-panel browser-boundary-card">
+          <p class="eyebrow">Safe boundary</p>
+          <h3>No direct browser-debugging fallback</h3>
+          <p>The user browser route stays on the Equinox Browser extension and Native Messaging bridge. Turning automation off detaches debugger sessions but does not create a hidden fallback route.</p>
+        </article>
+      </section>
+
+      <section id="section-permissions" class="page-section" hidden>
+        <div class="section-intro">
+          <div>
+            <p class="eyebrow">Security model</p>
+            <h3>Permissions</h3>
+            <p>See the filesystem boundaries currently granted to Equinox Local. The V1 config models project roots and separate read-only roots; granular per-tool toggles are not part of the schema yet.</p>
+          </div>
+        </div>
+        <div id="permissions-list" class="permissions-list"></div>
+
+        <article id="uninstall-card" class="panel-card danger-panel uninstall-card" hidden>
+          <div class="panel-header">
+            <div>
+              <p class="eyebrow">Managed installation</p>
+              <h3>Uninstall Equinox Local</h3>
+            </div>
+            <span id="uninstall-badge" class="badge neutral">Managed only</span>
+          </div>
+          <p class="health-copy">Remove the managed runtime, LaunchAgent, tunnel credentials and Equinox Browser Native Messaging host from this Mac. By default, your Equinox Workspace and Control Center configuration are preserved.</p>
+          <form id="uninstall-form" class="uninstall-form">
+            <label class="toggle-field compact-toggle danger-toggle">
+              <div>
+                <span>Also delete local user data</span>
+                <small>This permanently removes the Equinox Workspace and saved Control Center configuration in addition to the managed runtime.</small>
+              </div>
+              <input id="uninstall-remove-data" type="checkbox" role="switch">
+            </label>
+            <label class="field">
+              <span>Type <code>UNINSTALL</code> to confirm</span>
+              <input id="uninstall-confirmation" type="text" autocomplete="off" spellcheck="false" maxlength="9" placeholder="UNINSTALL">
+              <small id="uninstall-confirmation-help">Workspace and configuration will be preserved unless the option above is enabled.</small>
+            </label>
+            <button id="uninstall-button" class="button danger full-width" type="submit" disabled>Uninstall Equinox Local</button>
+            <p id="uninstall-status" class="uninstall-status" hidden>Uninstall scheduled. Equinox Local will stop and this page will disconnect.</p>
+          </form>
+        </article>
+      </section>
+
+      <section id="section-integrations" class="page-section" hidden>
+        <div class="section-intro">
+          <div>
+            <p class="eyebrow">Optional capabilities</p>
+            <h3>Integrations</h3>
+            <p>Optional bridges fail independently. Core Equinox Local remains usable even when a browser or desktop integration is disconnected.</p>
+          </div>
+        </div>
+        <div id="integration-list" class="integration-grid"></div>
+      </section>
+
+      <section id="section-activity" class="page-section" hidden>
+        <div class="section-intro">
+          <div>
+            <p class="eyebrow">Diagnostics</p>
+            <h3>Activity</h3>
+            <p>This first Control Center slice shows bounded runtime and management-surface activity without exposing raw logs or arbitrary filesystem access.</p>
+          </div>
+        </div>
+
+        <div class="dashboard-grid three-column">
+          <article class="metric-card large-number">
+            <p class="card-label">Control Center requests</p>
+            <strong id="request-count">—</strong>
+            <span class="muted">Since this runtime started</span>
+          </article>
+          <article class="metric-card large-number">
+            <p class="card-label">Config mutations</p>
+            <strong id="mutation-count">—</strong>
+            <span class="muted">Accepted by this runtime</span>
+          </article>
+          <article class="metric-card large-number">
+            <p class="card-label">Recent runtime events</p>
+            <strong id="activity-event-count">—</strong>
+            <span class="muted">Health evaluation window</span>
+          </article>
+        </div>
+
+        <article class="panel-card activity-panel">
+          <div class="panel-header compact">
+            <div>
+              <p class="eyebrow">Audit timeline</p>
+              <h3>Recent sanitized runtime activity</h3>
+            </div>
+            <span class="mini-badge">Last 6 hours · max 30</span>
+          </div>
+          <div id="activity-timeline" class="activity-timeline" aria-live="polite"></div>
+        </article>
+      </section>
+    </main>
+  </div>
+
+  <dialog id="root-dialog" class="root-dialog">
+    <form id="root-form" novalidate>
+      <div class="dialog-header">
+        <div>
+          <p class="eyebrow" id="dialog-kicker">Project</p>
+          <h3 id="dialog-title">Add project</h3>
+        </div>
+        <button id="close-dialog" class="icon-button" type="button" aria-label="Close">×</button>
+      </div>
+
+      <input id="root-kind" type="hidden" value="project">
+
+      <label class="field">
+        <span>Identifier</span>
+        <input id="root-id" name="id" autocomplete="off" spellcheck="false" required maxlength="64" placeholder="my-project">
+        <small>Lowercase letters, numbers, dots, underscores and hyphens.</small>
+      </label>
+
+      <label class="field">
+        <span>Display name</span>
+        <input id="root-name" name="name" autocomplete="off" required maxlength="100" placeholder="My Project">
+      </label>
+
+      <label class="field">
+        <span>Absolute folder path</span>
+        <div class="field-inline">
+          <input id="root-path" name="root" autocomplete="off" spellcheck="false" required maxlength="1024" placeholder="/Users/example/Code/my-project">
+          <button id="choose-folder-button" class="button secondary" type="button">Choose folder…</button>
+        </div>
+        <small>Use the macOS folder picker or enter an absolute path manually. Equinox Local validates the selection and never grants the filesystem root.</small>
+      </label>
+
+      <label id="worktrees-field" class="toggle-field">
+        <div>
+          <span>Managed worktrees</span>
+          <small>Allow Equinox Local to create managed worktrees for this project.</small>
+        </div>
+        <input id="root-worktrees" type="checkbox" checked>
+      </label>
+
+      <div id="readonly-note" class="readonly-note" hidden>
+        <strong>Read-only folder</strong>
+        <p>V1 file roots are intentionally read-only and cannot be upgraded to writable from this screen.</p>
+      </div>
+
+      <p id="dialog-error" class="form-error" role="alert" hidden></p>
+
+      <div class="dialog-actions">
+        <button id="cancel-dialog" class="button secondary" type="button">Cancel</button>
+        <button class="button primary" type="submit">Apply to draft</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+</body>
+</html>

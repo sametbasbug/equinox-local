@@ -1,0 +1,47 @@
+{
+  "name": "equinox-local",
+  "version": "0.0.0-development",
+  "private": true,
+  "description": "Local control plane for AI agents with bounded projects, browser automation, diagnostics, and human-visible controls.",
+  "type": "module",
+  "scripts": {
+    "check": "node scripts/check.mjs",
+    "test": "node scripts/run-tests.mjs",
+    "start": "node src/server.js",
+    "browser:package": "bash scripts/package-browser-extension.sh",
+    "local:release:package": "node scripts/release/package-managed-release.mjs",
+    "local:smoke:managed": "node tests/release/smoke-managed-install.mjs"
+  },
+  "engines": {
+    "node": ">=24.19.0"
+  },
+  "os": [
+    "darwin"
+  ],
+  "keywords": [
+    "mcp",
+    "ai-agents",
+    "local-first",
+    "browser-automation",
+    "developer-tools",
+    "macos"
+  ],
+  "author": "Samet Basbug",
+  "license": "AGPL-3.0-only",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/sametbasbug/equinox-local.git"
+  },
+  "bugs": {
+    "url": "https://github.com/sametbasbug/equinox-local/issues"
+  },
+  "homepage": "https://local.sametbasbug.dev/",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "fast-uri": "3.1.5",
+    "node-pty": "1.2.0-beta.14",
+    "pixelmatch": "7.2.0",
+    "pngjs": "7.0.0",
+    "zod": "^4.4.3"
+  }
+}

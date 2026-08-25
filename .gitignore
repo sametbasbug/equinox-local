@@ -1,0 +1,9 @@
+.DS_Store
+node_modules/
+backups/
+.wrangler/
+coverage/
+*.tmp
+.env
+.env.*
+!.env.example

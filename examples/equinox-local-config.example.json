@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "defaultProject": "my-project",
+  "runtime": {
+    "workspaceProject": "workspace",
+    "downloadsRoot": "downloads"
+  },
+  "projects": {
+    "my-project": {
+      "name": "My Project",
+      "root": "/Users/example/Projects/my-project",
+      "worktrees": true
+    },
+    "workspace": {
+      "name": "Equinox Workspace",
+      "root": "/Users/example/Library/Application Support/Equinox Local/workspace-repo",
+      "worktrees": false
+    }
+  },
+  "fileRoots": {
+    "downloads": {
+      "name": "Downloads",
+      "root": "/Users/example/Downloads",
+      "access": "read-only"
+    }
+  },
+  "controlCenter": {
+    "enabled": true,
+    "port": 24891
+  }
+}

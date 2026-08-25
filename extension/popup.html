@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Equinox Browser</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <main class="shell">
+    <header class="brand">
+      <img class="brand-icon" src="icons/icon-48.png" width="48" height="48" alt="">
+      <div class="brand-copy">
+        <div class="brand-row">
+          <h1>Equinox Browser</h1>
+          <span id="version" class="version">v—</span>
+        </div>
+        <p>Local browser bridge for Equinox Local</p>
+      </div>
+    </header>
+
+    <section id="consent-card" class="consent-card" aria-labelledby="consent-title" hidden>
+      <div class="consent-copy">
+        <span class="consent-kicker">First use</span>
+        <h2 id="consent-title">Browser data access</h2>
+        <p>
+          When you ask an agent to perform a browser task, Equinox Browser may send tab content, URLs, screenshots, text you enter, and when needed limited console/network metadata to your local Equinox Local runtime. The task-relevant data may also be sent to the AI service you choose to complete that request. This data is used only to perform the browser action you requested.
+        </p>
+        <p class="consent-note">Browser automation stays off until you press the button below.</p>
+      </div>
+      <div class="consent-actions">
+        <a href="https://local.sametbasbug.dev/privacy" target="_blank" rel="noreferrer">Privacy policy</a>
+        <button id="accept-consent" type="button">Enable browser control</button>
+      </div>
+    </section>
+
+    <section class="control-card" aria-labelledby="control-title">
+      <div class="control-copy">
+        <h2 id="control-title">Browser control</h2>
+        <p id="control-description">Turn browser automation off with one tap when it is not in use.</p>
+      </div>
+      <label class="switch" aria-label="Turn Equinox Browser control on or off">
+        <input id="enabled-toggle" type="checkbox" role="switch" aria-describedby="control-description">
+        <span class="switch-track" aria-hidden="true"><span class="switch-thumb"></span></span>
+      </label>
+    </section>
+
+    <section class="control-card cursor-card" aria-labelledby="cursor-title">
+      <div class="control-copy">
+        <h2 id="cursor-title">Agent cursor</h2>
+        <p id="cursor-description">Show click and hover targets directly on the page.</p>
+      </div>
+      <label class="switch" aria-label="Turn the Equinox Browser agent cursor on or off">
+        <input id="cursor-toggle" type="checkbox" role="switch" aria-describedby="cursor-description">
+        <span class="switch-track" aria-hidden="true"><span class="switch-thumb"></span></span>
+      </label>
+    </section>
+
+    <section class="identity-card" aria-labelledby="agent-name-label">
+      <label id="agent-name-label" for="agent-name">Agent name</label>
+      <input id="agent-name" type="text" maxlength="32" autocomplete="off" spellcheck="false" aria-describedby="agent-name-help">
+      <p id="agent-name-help">Local name shown next to the cursor.</p>
+    </section>
+
+    <section class="status-card" aria-labelledby="connection-title">
+      <div class="status-heading">
+        <span id="connection-dot" class="status-dot" aria-hidden="true"></span>
+        <div>
+          <h2 id="connection-title">Connection</h2>
+          <p id="connection-status" aria-live="polite">Reading status…</p>
+        </div>
+      </div>
+      <p id="connection-detail" class="muted">Waiting for Equinox Local.</p>
+    </section>
+
+    <section class="tab-card" aria-labelledby="tab-title-label">
+      <div class="tab-label" id="tab-title-label">Active tab</div>
+      <div id="tab-title" class="tab-title">—</div>
+      <div class="tab-state-row">
+        <span id="tab-dot" class="mini-dot" aria-hidden="true"></span>
+        <span id="tab-state">Reading status…</span>
+      </div>
+    </section>
+
+    <p id="off-note" class="off-note" hidden>
+      When control is off, Equinox Local cannot automatically operate this browser; only the local settings channel stays connected. You do not need to disable the extension in Chrome.
+    </p>
+
+    <footer>
+      <span>Equinox Browser</span>
+      <span aria-hidden="true">·</span>
+      <span>Local bridge</span>
+    </footer>
+  </main>
+  <script src="popup.js"></script>
+</body>
+</html>

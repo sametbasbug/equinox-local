@@ -1,0 +1,33 @@
+name: Feature request
+description: Suggest a bounded product improvement
+title: "[Feature]: "
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Equinox Local favors explicit, reviewable capabilities over broad generic execution surfaces. Explain the user problem first; the implementation can follow.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What is difficult or missing today?
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Desired outcome
+      description: What should the user or agent be able to accomplish?
+    validations:
+      required: true
+  - type: textarea
+    id: boundaries
+    attributes:
+      label: Security / permission boundaries
+      description: What should the feature explicitly not be allowed to do?
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Optional — other approaches or workarounds you tried.
