@@ -28,7 +28,6 @@ test("inferCapabilityDomain keeps broad stable domains and excludes already-dyna
   assert.equal(inferCapabilityDomain("deployment_status"), "services");
   assert.equal(inferCapabilityDomain("system_doctor"), "runtime");
   assert.equal(inferCapabilityDomain("desktop_call"), null);
-  assert.equal(inferCapabilityDomain("selene_browser_call"), null);
   assert.equal(inferCapabilityDomain("visual_capture"), null);
   assert.equal(inferCapabilityDomain("visual_matrix"), null);
   assert.equal(inferCapabilityDomain("visual_compare"), null);

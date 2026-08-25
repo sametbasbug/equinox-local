@@ -97,7 +97,6 @@ const SERVICE_OPERATION_NAMES = new Set([
 
 const EXCLUDED_PREFIXES = Object.freeze([
   "desktop_",
-  "selene_browser_",
   "visual_",
 ]);
 
