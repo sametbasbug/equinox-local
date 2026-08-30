@@ -6,6 +6,13 @@ This project follows semantic versioning for public releases.
 
 ## [Unreleased]
 
+## [4.2.2] - 2026-08-30
+
+### Changed
+
+- Updated the bundled tunnel runtime from `tunnel-client` `0.0.12` to `0.0.13` for both Apple Silicon and Intel managed releases.
+- Refreshed runtime dependencies to `fast-uri` `3.1.6`, `node-pty` `1.2.0-beta.15`, and `zod` `4.5.4`.
+
 ## [4.2.1] - 2026-08-30
 
 ### Added
@@ -41,6 +48,7 @@ This project follows semantic versioning for public releases.
 - Internal release/QA browser surfaces are excluded from the public product capability registry.
 - Private Orbit/deployment configuration and machine-specific development infrastructure are excluded from the public source projection.
 
-[Unreleased]: https://github.com/sametbasbug/equinox-local/compare/v4.2.1...HEAD
+[Unreleased]: https://github.com/sametbasbug/equinox-local/compare/v4.2.2...HEAD
+[4.2.2]: https://github.com/sametbasbug/equinox-local/compare/v4.2.1...v4.2.2
 [4.2.1]: https://github.com/sametbasbug/equinox-local/compare/v4.2.0...v4.2.1
 [4.2.0]: https://github.com/sametbasbug/equinox-local/releases/tag/v4.2.0
