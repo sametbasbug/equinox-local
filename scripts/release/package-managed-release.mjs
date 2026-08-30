@@ -36,7 +36,7 @@ const RELEASE_ENTRYPOINTS = Object.freeze([
 ]);
 
 export const EQUINOX_LOCAL_NODE_VERSION = "24.19.0";
-export const EQUINOX_LOCAL_TUNNEL_CLIENT_VERSION = "0.0.12";
+export const EQUINOX_LOCAL_TUNNEL_CLIENT_VERSION = "0.0.13";
 export const NODE_DISTRIBUTIONS = Object.freeze({
   "darwin-arm64": Object.freeze({
     filename: `node-v${EQUINOX_LOCAL_NODE_VERSION}-darwin-arm64.tar.gz`,
@@ -53,13 +53,13 @@ export const TUNNEL_CLIENT_DISTRIBUTIONS = Object.freeze({
   "darwin-arm64": Object.freeze({
     assetTag: "darwin-arm64",
     filename: `tunnel-client-v${EQUINOX_LOCAL_TUNNEL_CLIENT_VERSION}-darwin-arm64.zip`,
-    sha256: "42fb3138dc9c081d5777cb7e8bd1e041cc48b67c4978dbab3c5167ca1aabca02",
+    sha256: "15abf165f06050af642c948ba6bd6c905191dc5420a9422dadde2b49d892e2c6",
     fileArchitecture: "arm64",
   }),
   "darwin-x64": Object.freeze({
     assetTag: "darwin-amd64",
     filename: `tunnel-client-v${EQUINOX_LOCAL_TUNNEL_CLIENT_VERSION}-darwin-amd64.zip`,
-    sha256: "33de53aec680faafedc795f8f8268d6861577bddb871cb2d49529c91f88c2009",
+    sha256: "c683e15d84fb997f5af1cc7c4cb55008e19a555a9ed2ec0f89a5ff426d85f85c",
     fileArchitecture: "x86_64",
   }),
 });

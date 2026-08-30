@@ -81,7 +81,7 @@ async function main() {
     await setControlCenterPort(configPath);
 
     assert.equal(await commandText(node, ["--version"]), "v24.19.0");
-    assert.match(await commandText(tunnel, ["--version"]), /^0\.0\.12\+/u);
+    assert.match(await commandText(tunnel, ["--version"]), /^0\.0\.13\+/u);
     assert.match(await commandText(cloudflared, ["--version"]), /cloudflared version/u);
 
     const fakeKey = path.join(installRoot, "secrets", "openai-runtime-key");
@@ -146,7 +146,7 @@ async function main() {
       version: EQUINOX_LOCAL_VERSION,
       target,
       nodeVersion: "24.19.0",
-      tunnelClientVersion: "0.0.12",
+      tunnelClientVersion: "0.0.13",
       controlCenterPort: CONTROL_CENTER_PORT,
       controlCenterHealth: status.status.health?.state ?? null,
       artifact,
