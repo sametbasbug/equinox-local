@@ -105,6 +105,9 @@ import {
   EQUINOX_LOCAL_VERSION,
 } from "./equinox-local-version.js";
 import {
+  validateIndependentGitProjectRoot,
+} from "./equinox-local-bootstrap.js";
+import {
   chooseLocalFolder,
 } from "./control-center-platform.js";
 import {
@@ -229,31 +232,8 @@ async function resolveProjectContext(
     );
   }
 
-  let gitTopLevel;
-
   try {
-    const gitResult = await execFile(
-      "/usr/bin/git",
-      [
-        "rev-parse",
-        "--show-toplevel",
-      ],
-      {
-        cwd: rootRealPath,
-        timeout: 15_000,
-        maxBuffer: 1024 * 1024,
-        env: {
-          ...process.env,
-          GIT_OPTIONAL_LOCKS: "0",
-          GIT_TERMINAL_PROMPT: "0",
-          LC_ALL: "C",
-        },
-      },
-    );
-
-    gitTopLevel = await fs.realpath(
-      gitResult.stdout.trim(),
-    );
+    await validateIndependentGitProjectRoot(rootRealPath);
   } catch (error) {
     throw new Error(
       [
@@ -261,16 +241,6 @@ async function resolveProjectContext(
         error instanceof Error
           ? error.message
           : String(error),
-      ].join("\n"),
-    );
-  }
-
-  if (gitTopLevel !== rootRealPath) {
-    throw new Error(
-      [
-        `İzinli proje yolu kendi Git köküyle eşleşmiyor: ${projectId}`,
-        `İzinli kök: ${rootRealPath}`,
-        `Git kökü: ${gitTopLevel}`,
       ].join("\n"),
     );
   }

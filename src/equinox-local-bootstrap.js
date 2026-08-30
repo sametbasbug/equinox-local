@@ -85,6 +85,63 @@ async function assertWorkspaceGitDirectory(gitRoot, { fsImpl = fs } = {}) {
   return gitRoot;
 }
 
+async function assertNormalGitHead(gitRoot, { fsImpl = fs } = {}) {
+  const headPath = path.join(gitRoot, "HEAD");
+  const stat = await fsImpl.lstat(headPath);
+  if (!stat.isFile() || stat.isSymbolicLink() || stat.size < 1 || stat.size > 64 * 1024) {
+    throw new Error("Configured Git metadata HEAD is unsafe.");
+  }
+  const head = (await fsImpl.readFile(headPath, "utf8")).trim();
+  const detached = /^[a-f0-9]{40}(?:[a-f0-9]{24})?$/u.test(head);
+  const symbolic = head.startsWith("ref: refs/heads/")
+    && head.length > "ref: refs/heads/".length
+    && !head.includes("..")
+    && !head.includes("@{")
+    && !head.includes("\\")
+    && !head.endsWith("/");
+  if (!detached && !symbolic) throw new Error("Configured Git metadata HEAD is invalid.");
+}
+
+export async function validateIndependentGitProjectRoot(projectRoot, { fsImpl = fs } = {}) {
+  if (typeof projectRoot !== "string" || !path.isAbsolute(projectRoot)) {
+    throw new Error("Configured project root must be an absolute path.");
+  }
+  const projectReal = await fsImpl.realpath(projectRoot);
+  const projectStat = await fsImpl.lstat(projectReal);
+  if (!projectStat.isDirectory() || projectStat.isSymbolicLink()) {
+    throw new Error("Configured project root is not a safe directory.");
+  }
+
+  const gitEntry = path.join(projectReal, ".git");
+  const gitStat = await fsImpl.lstat(gitEntry);
+  if (gitStat.isSymbolicLink()) throw new Error("Configured project .git entry may not be a symbolic link.");
+
+  if (gitStat.isDirectory()) {
+    await assertNormalGitHead(gitEntry, { fsImpl });
+    return projectReal;
+  }
+
+  if (!gitStat.isFile() || gitStat.size < 1 || gitStat.size > 64 * 1024) {
+    throw new Error("Configured project .git entry is invalid.");
+  }
+  const gitFile = await fsImpl.readFile(gitEntry, "utf8");
+  if (gitFile.includes("\0") || gitFile.includes("\r") || gitFile.split("\n").filter(Boolean).length !== 1) {
+    throw new Error("Configured project Git worktree metadata is invalid.");
+  }
+  const match = /^gitdir: (.+)\n?$/u.exec(gitFile);
+  if (!match?.[1]) throw new Error("Configured project Git worktree metadata is invalid.");
+  const configuredGitDir = path.isAbsolute(match[1])
+    ? match[1]
+    : path.resolve(projectReal, match[1]);
+  const gitDirReal = await fsImpl.realpath(configuredGitDir);
+  const gitDirStat = await fsImpl.lstat(gitDirReal);
+  if (!gitDirStat.isDirectory() || gitDirStat.isSymbolicLink()) {
+    throw new Error("Configured project Git worktree directory is unsafe.");
+  }
+  await assertNormalGitHead(gitDirReal, { fsImpl });
+  return projectReal;
+}
+
 export async function ensureWorkspaceGitRepository(workspaceRoot, { fsImpl = fs } = {}) {
   const expectedRoot = await fsImpl.realpath(workspaceRoot);
   const gitEntry = path.join(expectedRoot, ".git");

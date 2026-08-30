@@ -12,6 +12,7 @@ import {
   nativeHostManifest,
   nativeHostWrapper,
   seedEquinoxLocalConfig,
+  validateIndependentGitProjectRoot,
 } from "../../src/equinox-local-bootstrap.js";
 import { managedSupervisorPaths } from "../../src/equinox-local-supervisor.js";
 import { equinoxLocalUpdateTarget } from "../../src/equinox-local-updater.js";
@@ -99,6 +100,28 @@ test("workspace bootstrap creates an isolated Git repository without invoking sy
   assert.equal(await fs.readFile(path.join(workspaceRoot, ".git", "HEAD"), "utf8"), "ref: refs/heads/main\n");
   assert.match(await fs.readFile(path.join(workspaceRoot, ".git", "config"), "utf8"), /bare = false/u);
   assert.equal(await ensureWorkspaceGitRepository(workspaceRoot), resolved);
+});
+
+test("project-root validation accepts direct and worktree metadata without system Git", async (t) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "equinox-project-root-"));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+
+  const direct = path.join(root, "direct");
+  await fs.mkdir(direct, { recursive: true });
+  await ensureWorkspaceGitRepository(direct);
+  assert.equal(await validateIndependentGitProjectRoot(direct), await fs.realpath(direct));
+
+  const commonGitDir = path.join(root, "common", ".git", "worktrees", "child");
+  await fs.mkdir(commonGitDir, { recursive: true });
+  await fs.writeFile(path.join(commonGitDir, "HEAD"), "ref: refs/heads/main\n");
+  const child = path.join(root, "child");
+  await fs.mkdir(child, { recursive: true });
+  await fs.writeFile(path.join(child, ".git"), `gitdir: ${commonGitDir}\n`);
+  assert.equal(await validateIndependentGitProjectRoot(child), await fs.realpath(child));
+
+  const nested = path.join(direct, "nested");
+  await fs.mkdir(nested);
+  await assert.rejects(validateIndependentGitProjectRoot(nested), /\.git/u);
 });
 
 test("managed user bootstrap is idempotent and preserves user configuration", async (t) => {
