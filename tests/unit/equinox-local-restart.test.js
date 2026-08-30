@@ -31,6 +31,8 @@ test("source-checkout restart uses only private generic developer runtime config
   assert.match(script, /launchAgentLabel/u);
   assert.match(script, /tunnelRuntime/u);
   assert.match(script, /tunnelClient/u);
+  assert.match(script, /EQUINOX_LOCAL_DEV_NODE/u);
+  assert.match(script, /sync-source-tunnel-runtime\.mjs/u);
   assert.doesNotMatch(script, /^LABEL="[^"\n]+"/mu);
   assert.doesNotMatch(script, /^RUNTIME="[^"\n]+"/mu);
   assert.doesNotMatch(script, /^TUNNEL_CLIENT="\/[^"\n]+"/mu);

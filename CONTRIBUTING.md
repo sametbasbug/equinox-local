@@ -4,7 +4,7 @@ Thanks for taking an interest in Equinox Local. The project welcomes focused bug
 
 ## Before you start
 
-Equinox Local currently targets macOS. Use Node.js 24.19.0 or newer.
+Equinox Local currently targets macOS. Use Node.js 24.20.0 or newer.
 
 ```bash
 npm ci

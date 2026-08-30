@@ -59,7 +59,7 @@ test("local module parser finds static relative imports without treating package
 });
 
 test("pinned Node runtime metadata covers both supported macOS architectures", () => {
-  assert.equal(EQUINOX_LOCAL_NODE_VERSION, "24.19.0");
+  assert.equal(EQUINOX_LOCAL_NODE_VERSION, "24.20.0");
   assert.deepEqual(Object.keys(NODE_DISTRIBUTIONS).sort(), ["darwin-arm64", "darwin-x64"]);
   assert.match(NODE_DISTRIBUTIONS["darwin-arm64"].sha256, /^[a-f0-9]{64}$/u);
   assert.match(NODE_DISTRIBUTIONS["darwin-x64"].sha256, /^[a-f0-9]{64}$/u);

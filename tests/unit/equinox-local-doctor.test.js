@@ -56,6 +56,7 @@ test("source checkout doctor stays healthy without requiring managed-only files"
       config: { version: 1, runtime: { workspaceProject: "workspace" }, projects: { workspace: { root: workspace } } },
       runtimeHealthState: "HEALTHY",
       runtimeVersion: "4.2.0",
+      developmentTunnel: { configured: true, expectedVersion: "0.0.13", actualVersion: "0.0.13", synchronized: true },
       browser: { ready: false },
       peekaboo: { active: false },
       now: () => new Date("2026-08-25T00:00:00.000Z"),
@@ -65,7 +66,32 @@ test("source checkout doctor stays healthy without requiring managed-only files"
     assert.equal(result.installationKind, "source");
     assert.equal(result.summary.attention, 0);
     assert.equal(result.checks.find((item) => item.id === "installation")?.status, "pass");
+    assert.equal(result.checks.find((item) => item.id === "development-tunnel")?.status, "pass");
     assert.equal(result.checks.find((item) => item.id === "browser")?.status, "optional");
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test("source checkout doctor surfaces a stale developer tunnel runtime without exposing its path", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "equinox-doctor-source-drift-"));
+  try {
+    const workspace = path.join(root, "workspace");
+    await fs.mkdir(workspace, { mode: 0o700 });
+    const result = await getEquinoxLocalDoctorStatus({
+      installation: { kind: "source", managed: false, selfUpdateSupported: false },
+      config: { version: 1, runtime: { workspaceProject: "workspace" }, projects: { workspace: { root: workspace } } },
+      runtimeHealthState: "HEALTHY",
+      runtimeVersion: "4.2.2",
+      developmentTunnel: { configured: true, expectedVersion: "0.0.13", actualVersion: "0.0.12", synchronized: false },
+      browser: { ready: false },
+      peekaboo: { active: false },
+    });
+    const tunnel = result.checks.find((item) => item.id === "development-tunnel");
+    assert.equal(result.state, "ATTENTION");
+    assert.equal(tunnel?.status, "attention");
+    assert.match(tunnel?.detail || "", /0\.0\.12.*0\.0\.13/u);
+    assert.equal(JSON.stringify(result).includes(root), false);
   } finally {
     await fs.rm(root, { recursive: true, force: true });
   }

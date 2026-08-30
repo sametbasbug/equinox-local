@@ -6,6 +6,12 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 
 import { readBoundedNormalFile } from "../../src/equinox-local-safe-file.js";
+import {
+  EQUINOX_LOCAL_NODE_VERSION,
+  EQUINOX_LOCAL_TUNNEL_CLIENT_VERSION,
+  NODE_DISTRIBUTIONS,
+  TUNNEL_CLIENT_DISTRIBUTIONS,
+} from "../../src/equinox-local-runtime-versions.js";
 import { EQUINOX_LOCAL_VERSION } from "../../src/equinox-local-version.js";
 import { equinoxLocalUpdateTarget } from "../../src/equinox-local-updater.js";
 
@@ -35,34 +41,12 @@ const RELEASE_ENTRYPOINTS = Object.freeze([
   "src/equinox-local-supervisor.js",
 ]);
 
-export const EQUINOX_LOCAL_NODE_VERSION = "24.19.0";
-export const EQUINOX_LOCAL_TUNNEL_CLIENT_VERSION = "0.0.13";
-export const NODE_DISTRIBUTIONS = Object.freeze({
-  "darwin-arm64": Object.freeze({
-    filename: `node-v${EQUINOX_LOCAL_NODE_VERSION}-darwin-arm64.tar.gz`,
-    sha256: "8294b7aa9b03997481c06babf1e8b270c859358f27da57a11509afe537ac381d",
-    fileArchitecture: "arm64",
-  }),
-  "darwin-x64": Object.freeze({
-    filename: `node-v${EQUINOX_LOCAL_NODE_VERSION}-darwin-x64.tar.gz`,
-    sha256: "d1b5e999db158c62fe8f7267a4476b035d8bd93b1a605bac24a3f0dd166e3316",
-    fileArchitecture: "x86_64",
-  }),
-});
-export const TUNNEL_CLIENT_DISTRIBUTIONS = Object.freeze({
-  "darwin-arm64": Object.freeze({
-    assetTag: "darwin-arm64",
-    filename: `tunnel-client-v${EQUINOX_LOCAL_TUNNEL_CLIENT_VERSION}-darwin-arm64.zip`,
-    sha256: "15abf165f06050af642c948ba6bd6c905191dc5420a9422dadde2b49d892e2c6",
-    fileArchitecture: "arm64",
-  }),
-  "darwin-x64": Object.freeze({
-    assetTag: "darwin-amd64",
-    filename: `tunnel-client-v${EQUINOX_LOCAL_TUNNEL_CLIENT_VERSION}-darwin-amd64.zip`,
-    sha256: "c683e15d84fb997f5af1cc7c4cb55008e19a555a9ed2ec0f89a5ff426d85f85c",
-    fileArchitecture: "x86_64",
-  }),
-});
+export {
+  EQUINOX_LOCAL_NODE_VERSION,
+  EQUINOX_LOCAL_TUNNEL_CLIENT_VERSION,
+  NODE_DISTRIBUTIONS,
+  TUNNEL_CLIENT_DISTRIBUTIONS,
+};
 const TUNNEL_ARCHIVE_FILES = Object.freeze([
   "tunnel-client",
   "cloudflared",
@@ -342,7 +326,7 @@ async function downloadPinnedTunnelArchive(target, destination, { fetchImpl = gl
   return Object.freeze({ url, bytes, sha256: distribution.sha256 });
 }
 
-async function installPinnedTunnelRuntime(target, releaseDir, options = {}) {
+export async function installPinnedTunnelRuntime(target, releaseDir, options = {}) {
   const distribution = TUNNEL_CLIENT_DISTRIBUTIONS[target];
   if (!distribution) throw new Error(`No pinned tunnel-client distribution exists for ${target}.`);
   const transaction = path.join(path.dirname(releaseDir), `tunnel-${randomBytes(8).toString("hex")}`);
