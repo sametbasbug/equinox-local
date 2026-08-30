@@ -5,6 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
+import { readBoundedNormalFile } from "./equinox-local-safe-file.js";
 import { equinoxLocalUpdateTarget, parseEquinoxVersion } from "./equinox-local-updater.js";
 
 const execFile = promisify(execFileCallback);
@@ -69,8 +70,13 @@ export async function resolveSupervisorRelease(paths) {
   const version = path.basename(releaseDir);
   parseEquinoxVersion(version);
   const metadataPath = path.join(releaseDir, "release.json");
-  await assertNormalFile(metadataPath, "Release metadata", { maxBytes: 16 * 1024 });
-  const metadata = JSON.parse(await fs.readFile(metadataPath, "utf8"));
+  const { data: metadataText } = await readBoundedNormalFile(metadataPath, {
+    minBytes: 1,
+    maxBytes: 16 * 1024,
+    encoding: "utf8",
+    label: "Release metadata",
+  });
+  const metadata = JSON.parse(metadataText);
   const expectedTarget = equinoxLocalUpdateTarget();
   if (
     metadata?.schemaVersion !== 1 ||
@@ -92,19 +98,21 @@ export async function resolveSupervisorRelease(paths) {
 }
 
 export async function readSupervisorTransport(paths) {
-  let stat;
+  let text;
   try {
-    stat = await fs.lstat(paths.transportConfigPath);
+    ({ data: text } = await readBoundedNormalFile(paths.transportConfigPath, {
+      minBytes: 1,
+      maxBytes: MAX_TRANSPORT_CONFIG_BYTES,
+      encoding: "utf8",
+      label: "Transport configuration",
+    }));
   } catch (error) {
     if (error?.code === "ENOENT") return null;
-    throw error;
-  }
-  if (!stat.isFile() || stat.isSymbolicLink() || stat.size < 1 || stat.size > MAX_TRANSPORT_CONFIG_BYTES) {
     throw new Error("Transport configuration must be a bounded normal file.");
   }
   let raw;
   try {
-    raw = JSON.parse(await fs.readFile(paths.transportConfigPath, "utf8"));
+    raw = JSON.parse(text);
   } catch {
     throw new Error("Transport configuration is not valid JSON.");
   }

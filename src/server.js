@@ -9,6 +9,10 @@ import { promisify } from "node:util";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { pathToFileURL } from "node:url";
 import {
+  readBoundedNormalFile,
+  SAFE_FILE_ERROR_CODES,
+} from "./equinox-local-safe-file.js";
+import {
   createTerminalManager,
   TERMINAL_KEYS,
 } from "./terminal-manager.js";
@@ -1349,17 +1353,10 @@ registerTextTool(
       }
 
       const filePath = await safeResolve(requestedPath);
-      const stats = await fs.stat(filePath);
-
-      if (!stats.isFile()) {
-        throw new Error("Belirtilen yol bir dosya değil.");
-      }
-
-      if (stats.size > MAX_FILE_BYTES) {
-        throw new Error("Dosya 512 KB okuma sınırını aşıyor.");
-      }
-
-      const buffer = await fs.readFile(filePath);
+      const { data: buffer } = await readBoundedNormalFile(filePath, {
+        maxBytes: MAX_FILE_BYTES,
+        label: "Okunacak dosya",
+      });
 
       if (buffer.includes(0)) {
         throw new Error("İkili dosyalar okunamaz.");
@@ -1423,13 +1420,22 @@ registerTextTool(
           break;
         }
 
-        const fileStats = await fs.stat(filePath);
-
-        if (fileStats.size > MAX_FILE_BYTES) {
-          continue;
+        let buffer;
+        try {
+          ({ data: buffer } = await readBoundedNormalFile(filePath, {
+            maxBytes: MAX_FILE_BYTES,
+            label: "Arama dosyası",
+          }));
+        } catch (error) {
+          if (
+            error?.code === "ENOENT" ||
+            error?.code === SAFE_FILE_ERROR_CODES.notNormal ||
+            error?.code === SAFE_FILE_ERROR_CODES.tooLarge
+          ) {
+            continue;
+          }
+          throw error;
         }
-
-        const buffer = await fs.readFile(filePath);
 
         if (buffer.includes(0)) {
           continue;
@@ -1811,17 +1817,10 @@ registerTextTool(
       }
 
       const filePath = await safeResolve(requestedPath);
-      const stats = await fs.stat(filePath);
-
-      if (!stats.isFile()) {
-        throw new Error("Belirtilen yol mevcut bir dosya değil.");
-      }
-
-      if (stats.size > MAX_FILE_BYTES) {
-        throw new Error("Dosya 512 KB yazma sınırını aşıyor.");
-      }
-
-      const buffer = await fs.readFile(filePath);
+      const { data: buffer, stat: stats } = await readBoundedNormalFile(filePath, {
+        maxBytes: MAX_FILE_BYTES,
+        label: "Düzenlenecek dosya",
+      });
 
       if (buffer.includes(0)) {
         throw new Error("İkili dosyalarda metin değişikliği yapılamaz.");
@@ -2153,21 +2152,10 @@ registerTextTool(
 
       for (const relativePath of targetPaths) {
         const filePath = await safeResolve(relativePath);
-        const stats = await fs.stat(filePath);
-
-        if (!stats.isFile()) {
-          throw new Error(
-            `Hedef mevcut bir dosya değil: ${relativePath}`,
-          );
-        }
-
-        if (stats.size > MAX_FILE_BYTES) {
-          throw new Error(
-            `Dosya 512 KB sınırını aşıyor: ${relativePath}`,
-          );
-        }
-
-        const buffer = await fs.readFile(filePath);
+        const { data: buffer } = await readBoundedNormalFile(filePath, {
+          maxBytes: MAX_FILE_BYTES,
+          label: `Patch hedefi ${relativePath}`,
+        });
 
         if (buffer.includes(0)) {
           throw new Error(
@@ -2873,37 +2861,6 @@ async function inspectFileForDeletion(
     );
   }
 
-  const stats =
-    await fs.stat(filePath);
-
-  if (!stats.isFile()) {
-    throw new Error(
-      "Çözümlenen hedef normal bir dosya değil.",
-    );
-  }
-
-  /*
-   * Kullanıcının verdiği yol ile safeResolve
-   * sonucunun aynı inode'a işaret ettiğini doğrula.
-   */
-  if (
-    rawStats.dev !== stats.dev ||
-    rawStats.ino !== stats.ino
-  ) {
-    throw new Error(
-      "Dosya yolu doğrulama sırasında değişti veya beklenmeyen bir yönlendirme içeriyor.",
-    );
-  }
-
-  if (
-    stats.size >
-    MAX_HASHABLE_FILE_BYTES
-  ) {
-    throw new Error(
-      "Dosya 10 MB güvenlik sınırını aşıyor.",
-    );
-  }
-
   const relativePath =
     displayPath(filePath);
 
@@ -2946,8 +2903,19 @@ async function inspectFileForDeletion(
     );
   }
 
-  const buffer =
-    await fs.readFile(filePath);
+  const { data: buffer, stat: stats } = await readBoundedNormalFile(filePath, {
+    maxBytes: MAX_HASHABLE_FILE_BYTES,
+    label: "Hashlenecek dosya",
+  });
+
+  if (
+    rawStats.dev !== stats.dev ||
+    rawStats.ino !== stats.ino
+  ) {
+    throw new Error(
+      "Dosya yolu doğrulama sırasında değişti veya beklenmeyen bir yönlendirme içeriyor.",
+    );
+  }
 
   const sha256 =
     createHash("sha256")
@@ -8891,37 +8859,20 @@ async function snapshotNpmManifestFiles() {
       );
 
     try {
-      const stats =
-        await fs.lstat(absolutePath);
-
-      if (
-        stats.isSymbolicLink() ||
-        !stats.isFile()
-      ) {
-        throw new Error(
-          `npm manifest yolu normal dosya değil: ${relativePath}`,
-        );
-      }
-
       const maxBytes =
         relativePath === "package.json"
           ? MAX_FILE_BYTES
           : MAX_NPM_LOCKFILE_BYTES;
-
-      if (stats.size > maxBytes) {
-        throw new Error(
-          `npm manifest dosyası boyut sınırını aşıyor: ${relativePath}`,
-        );
-      }
+      const { data: buffer, stat: stats } = await readBoundedNormalFile(absolutePath, {
+        maxBytes,
+        label: `npm manifest ${relativePath}`,
+      });
 
       snapshots.set(
         relativePath,
         {
           exists: true,
-          buffer:
-            await fs.readFile(
-              absolutePath,
-            ),
+          buffer,
           mode:
             stats.mode & 0o777,
         },
@@ -13273,8 +13224,10 @@ registerTextTool(
         );
       }
 
-      const resolvedStats =
-        await fs.stat(sourcePath);
+      const { data: sourceBuffer, stat: resolvedStats } = await readBoundedNormalFile(sourcePath, {
+        maxBytes: MAX_INBOX_ASSET_BYTES,
+        label: "Dışa aktarılacak web varlığı",
+      });
 
       if (
         initialStats.dev !==
@@ -13284,15 +13237,6 @@ registerTextTool(
       ) {
         throw new Error(
           "Kaynak dosya doğrulama sırasında değişti.",
-        );
-      }
-
-      if (
-        resolvedStats.size >
-        MAX_INBOX_ASSET_BYTES
-      ) {
-        throw new Error(
-          "Kaynak web varlığı 10 MB sınırını aşıyor.",
         );
       }
 
@@ -13311,10 +13255,6 @@ registerTextTool(
         );
       }
 
-      const sourceBuffer =
-        await fs.readFile(
-          sourcePath,
-        );
       const detected =
         detectAndValidateAsset(
           sourceBuffer,

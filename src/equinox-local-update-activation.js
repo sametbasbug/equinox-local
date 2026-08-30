@@ -219,7 +219,7 @@ export async function activatePreparedEquinoxRelease({
         status: "rolled-back",
         failedVersion: targetVersion,
         version: switchResult.previous.version,
-        error: boundedMessage(activationError instanceof Error ? activationError.message : activationError),
+        failure: "activation-health-check-failed",
         updatedAt: now().toISOString(),
       });
       throw new Error(`Equinox Local ${targetVersion} activation failed and was rolled back to ${switchResult.previous.version}.`);
@@ -230,8 +230,8 @@ export async function activatePreparedEquinoxRelease({
         status: "rollback-failed",
         failedVersion: targetVersion,
         previousVersion: switchResult.previous.version,
-        activationError: boundedMessage(activationError instanceof Error ? activationError.message : activationError),
-        rollbackError: boundedMessage(rollbackError instanceof Error ? rollbackError.message : rollbackError),
+        activationFailure: "activation-health-check-failed",
+        rollbackFailure: "rollback-health-check-failed",
         updatedAt: now().toISOString(),
       }).catch(() => {});
       throw new Error(`Equinox Local ${targetVersion} activation failed and automatic rollback also failed.`);

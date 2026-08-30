@@ -8,6 +8,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
+import { readBoundedNormalFile } from "../../src/equinox-local-safe-file.js";
 import {
   canonicalUpdateManifestPayload,
   EQUINOX_LOCAL_UPDATE_CHANNEL,
@@ -62,20 +63,19 @@ export async function readPrivateUpdateSigningKey(privateKeyPath, {
   if (repositoryRoot && inside(path.resolve(repositoryRoot), resolved)) {
     throw new Error("Update signing private key must live outside the repository.");
   }
-  const stat = await fsImpl.lstat(resolved);
-  if (!stat.isFile() || stat.isSymbolicLink()) {
-    throw new Error("Update signing private key must be a normal file.");
-  }
+  const { data: pem, stat } = await readBoundedNormalFile(resolved, {
+    fsImpl,
+    minBytes: 1,
+    maxBytes: MAX_PRIVATE_KEY_BYTES,
+    encoding: "utf8",
+    label: "Update signing private key",
+  });
   if ((stat.mode & 0o777) !== 0o600) {
     throw new Error("Update signing private key permissions must be 0600.");
   }
   if (Number.isInteger(uid) && Number.isInteger(stat.uid) && stat.uid !== uid) {
     throw new Error("Update signing private key must be owned by the current user.");
   }
-  if (stat.size < 1 || stat.size > MAX_PRIVATE_KEY_BYTES) {
-    throw new Error("Update signing private key size is invalid.");
-  }
-  const pem = await fsImpl.readFile(resolved, "utf8");
   const privateKey = createPrivateKey(pem);
   if (privateKey.asymmetricKeyType !== "ed25519") {
     throw new Error("Update signing key must be an Ed25519 private key.");

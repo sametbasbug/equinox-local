@@ -5,6 +5,7 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 
+import { readBoundedNormalFile } from "../../src/equinox-local-safe-file.js";
 import { EQUINOX_LOCAL_VERSION } from "../../src/equinox-local-version.js";
 import { equinoxLocalUpdateTarget } from "../../src/equinox-local-updater.js";
 
@@ -14,6 +15,7 @@ const FILE_PATH = "/usr/bin/file";
 const UNZIP_PATH = "/usr/bin/unzip";
 const MAX_NODE_ARCHIVE_BYTES = 100 * 1024 * 1024;
 const MAX_TUNNEL_ARCHIVE_BYTES = 100 * 1024 * 1024;
+const MAX_RELEASE_SOURCE_BYTES = 2 * 1024 * 1024;
 const LOCAL_MODULE_PATTERN = /(?:from\s+|import\s*\(\s*)["'](\.\.?\/[^"']+)["']/gu;
 const STATIC_RELEASE_FILES = Object.freeze([
   "src/equinox-control-center.html",
@@ -111,7 +113,11 @@ export async function collectManagedReleaseSourceFiles(rootDir) {
     if (!stat.isFile() || stat.isSymbolicLink()) throw new Error(`Release source is not a normal file: ${relative}`);
     included.add(relative);
     if (!/\.(?:js|mjs)$/u.test(relative)) continue;
-    const source = await fs.readFile(absolute, "utf8");
+    const { data: source } = await readBoundedNormalFile(absolute, {
+      maxBytes: MAX_RELEASE_SOURCE_BYTES,
+      encoding: "utf8",
+      label: `Release source ${relative}`,
+    });
     for (const specifier of extractLocalModuleSpecifiers(source)) {
       const resolved = await resolveLocalModule(root, absolute, specifier);
       queue.push(resolved);

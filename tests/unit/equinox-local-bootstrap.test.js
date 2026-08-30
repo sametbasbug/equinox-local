@@ -14,6 +14,7 @@ import {
   seedEquinoxLocalConfig,
   validateIndependentGitProjectRoot,
 } from "../../src/equinox-local-bootstrap.js";
+import { readBoundedNormalFile } from "../../src/equinox-local-safe-file.js";
 import { managedSupervisorPaths } from "../../src/equinox-local-supervisor.js";
 import { equinoxLocalUpdateTarget } from "../../src/equinox-local-updater.js";
 
@@ -142,9 +143,20 @@ test("managed user bootstrap is idempotent and preserves user configuration", as
   assert.equal((await fs.lstat(path.join(fixture.paths.installRoot, "workspace", ".git"))).isDirectory(), true);
   assert.equal((await fs.lstat(path.join(fixture.homeDir, "Downloads"))).isDirectory(), true);
 
-  const configBefore = await fs.readFile(first.configPath, "utf8");
+  const { data: configBefore } = await readBoundedNormalFile(first.configPath, {
+    minBytes: 1,
+    maxBytes: 256 * 1024,
+    encoding: "utf8",
+    label: "Bootstrap config fixture",
+  });
   const second = await bootstrapManagedEquinoxUser({ homeDir: fixture.homeDir });
   assert.equal(second.configCreated, false);
-  assert.equal(await fs.readFile(second.configPath, "utf8"), configBefore);
+  const { data: configAfter } = await readBoundedNormalFile(second.configPath, {
+    minBytes: 1,
+    maxBytes: 256 * 1024,
+    encoding: "utf8",
+    label: "Bootstrap config fixture",
+  });
+  assert.equal(configAfter, configBefore);
   assert.equal(second.configRevision, first.configRevision);
 });
