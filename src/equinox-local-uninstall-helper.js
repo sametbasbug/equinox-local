@@ -5,6 +5,7 @@ import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 
 import { resolveEquinoxLocalInstallation } from "./equinox-local-installation.js";
+import { readBoundedNormalFile } from "./equinox-local-safe-file.js";
 
 const execFile = promisify(execFileCallback);
 const START_DELAY_MS = 1_500;
@@ -41,9 +42,14 @@ async function removeOwnedNativeHostManifest({ homeDir, installRoot, fsImpl = fs
     `${NATIVE_HOST_NAME}.json`,
   );
   try {
-    const stat = await fsImpl.lstat(manifestPath);
-    if (!stat.isFile() || stat.isSymbolicLink() || stat.size < 1 || stat.size > 16 * 1024) return false;
-    const manifest = JSON.parse(await fsImpl.readFile(manifestPath, "utf8"));
+    const { data } = await readBoundedNormalFile(manifestPath, {
+      fsImpl,
+      minBytes: 1,
+      maxBytes: 16 * 1024,
+      encoding: "utf8",
+      label: "Equinox Browser Native Messaging manifest",
+    });
+    const manifest = JSON.parse(data);
     if (path.resolve(manifest?.path || "") !== path.join(installRoot, "equinox-browser-native-host")) return false;
     await fsImpl.rm(manifestPath, { force: false });
     return true;

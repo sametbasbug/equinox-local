@@ -30,7 +30,9 @@ const server = http.createServer((req, res) => {
   res.setHeader('content-type', 'text/html; charset=utf-8');
   res.setHeader('cache-control', 'no-store');
   if (url.pathname === '/child') {
-    res.end(childPage(url.searchParams.get('kind') || 'unknown'));
+    const requestedKind = url.searchParams.get('kind');
+    const kind = requestedKind === 'popup' || requestedKind === 'tab' ? requestedKind : 'unknown';
+    res.end(childPage(kind));
     return;
   }
   res.end(sourcePage);

@@ -2,6 +2,8 @@ import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 
+import { readBoundedNormalFile } from "./equinox-local-safe-file.js";
+
 const WORKFLOW_SCHEMA_VERSION = 1;
 const DEFAULT_MAX_CONCURRENT = 3;
 const DEFAULT_MAX_RETAINED = 100;
@@ -482,14 +484,14 @@ export function createWorkflowManager({
       const filePath = path.join(rootDir, entry.name);
 
       try {
-        const stats = await fs.stat(filePath);
-
-        if (stats.size > maxStateBytes) {
-          throw new Error("State dosyası boyut sınırını aşıyor.");
-        }
+        const { data: stateText } = await readBoundedNormalFile(filePath, {
+          maxBytes: maxStateBytes,
+          encoding: "utf8",
+          label: "Workflow state file",
+        });
 
         const parsed = validateStoredRecord(
-          JSON.parse(await fs.readFile(filePath, "utf8")),
+          JSON.parse(stateText),
         );
 
         const recoveredFromInterruption = ACTIVE_STATES.has(parsed.status);

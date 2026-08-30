@@ -157,7 +157,7 @@ test("signed update bundle copies verified artifact and writes public update plu
     });
     assert.equal(await fs.readFile(result.bootstrapManifestPath, "utf8"), renderBootstrapInstallManifest(manifest));
     assert.equal((await fs.readFile(result.artifactPath)).toString(), "release artifact for publishing");
-    assert.equal((await fs.readdir(outputDir)).some((name) => /private|\.pem$/u.test(name)), false);
+    assert.equal((await fs.readdir(outputDir)).some((name) => name.includes("private") || name.endsWith(".pem")), false);
   } finally {
     await fs.rm(root, { recursive: true, force: true });
   }

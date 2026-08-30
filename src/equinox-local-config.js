@@ -3,6 +3,11 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
+import {
+  readBoundedNormalFile,
+  SAFE_FILE_ERROR_CODES,
+} from "./equinox-local-safe-file.js";
+
 export const EQUINOX_LOCAL_CONFIG_VERSION = 1;
 export const DEFAULT_CONTROL_CENTER_PORT = 24891;
 export const MAX_CONFIG_BYTES = 256 * 1024;
@@ -208,19 +213,29 @@ export function defaultEquinoxLocalConfigPath(homeDir = os.homedir()) {
 }
 
 async function readConfigFile(configPath) {
-  const stat = await fs.lstat(configPath).catch((error) => {
+  let text;
+  try {
+    ({ data: text } = await readBoundedNormalFile(configPath, {
+      minBytes: 1,
+      maxBytes: MAX_CONFIG_BYTES,
+      encoding: "utf8",
+      label: "Equinox Local config",
+    }));
+  } catch (error) {
     if (error?.code === "ENOENT") {
       throw new Error(`Equinox Local config bulunamadı: ${configPath}`);
     }
+    if (error?.code === SAFE_FILE_ERROR_CODES.notNormal) {
+      throw new Error("Equinox Local config normal ve symlink olmayan bir dosya olmalı.");
+    }
+    if (
+      error?.code === SAFE_FILE_ERROR_CODES.tooSmall ||
+      error?.code === SAFE_FILE_ERROR_CODES.tooLarge
+    ) {
+      throw new Error(`Equinox Local config 1-${MAX_CONFIG_BYTES} bayt arasında olmalı.`);
+    }
     throw error;
-  });
-  if (!stat.isFile() || stat.isSymbolicLink()) {
-    throw new Error("Equinox Local config normal ve symlink olmayan bir dosya olmalı.");
   }
-  if (stat.size <= 0 || stat.size > MAX_CONFIG_BYTES) {
-    throw new Error(`Equinox Local config 1-${MAX_CONFIG_BYTES} bayt arasında olmalı.`);
-  }
-  const text = await fs.readFile(configPath, "utf8");
   let parsed;
   try {
     parsed = JSON.parse(text);

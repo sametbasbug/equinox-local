@@ -3,6 +3,10 @@ import fs from "node:fs/promises";
 import path from "node:path";
 
 import {
+  readBoundedNormalFile,
+  SAFE_FILE_ERROR_CODES,
+} from "./equinox-local-safe-file.js";
+import {
   managedSupervisorPaths,
   readSupervisorTransport,
   TUNNEL_ID_PATTERN,
@@ -33,13 +37,21 @@ async function ensurePrivateDirectory(directory) {
 
 async function readOptionalNormalFile(filePath, { maxBytes = MAX_RUNTIME_KEY_BYTES } = {}) {
   try {
-    const stat = await fs.lstat(filePath);
-    if (!stat.isFile() || stat.isSymbolicLink() || stat.size < 1 || stat.size > maxBytes) {
-      throw new Error("Existing onboarding file is unsafe.");
-    }
-    return await fs.readFile(filePath);
+    const { data } = await readBoundedNormalFile(filePath, {
+      minBytes: 1,
+      maxBytes,
+      label: "Existing onboarding file",
+    });
+    return data;
   } catch (error) {
     if (error?.code === "ENOENT") return null;
+    if (
+      error?.code === SAFE_FILE_ERROR_CODES.notNormal ||
+      error?.code === SAFE_FILE_ERROR_CODES.tooSmall ||
+      error?.code === SAFE_FILE_ERROR_CODES.tooLarge
+    ) {
+      throw new Error("Existing onboarding file is unsafe.");
+    }
     throw error;
   }
 }

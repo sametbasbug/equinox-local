@@ -204,23 +204,24 @@ test("dedicated screenshot delete safely removes artifacts larger than the gener
 test("screenshot storage prunes old capture directories and stays bounded by capture count", async () => {
   const harness = makeHarness();
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "equinox-browser-screenshot-quota-"));
-  harness.deps.screenshotRoot = path.join(root, "browser-screenshots");
-  await fs.mkdir(harness.deps.screenshotRoot, { recursive: true });
+  const screenshotRoot = path.join(root, "browser-screenshots");
+  harness.deps.screenshotRoot = screenshotRoot;
+  await fs.mkdir(screenshotRoot, { recursive: true });
   const oldMs = Date.now() - 2 * 60 * 60 * 1000;
   for (let index = 0; index < 25; index += 1) {
     const captureId = `capture-${String(Date.now() - (index + 1) * 1000).padStart(13, "0")}-${String(index).padStart(8, "0")}-1111-1111-1111-111111111111`;
-    const target = path.join(harness.deps.screenshotRoot, captureId, "browser");
+    const target = path.join(screenshotRoot, captureId, "browser");
     await fs.mkdir(target, { recursive: true });
-    await fs.writeFile(path.join(target, "tiny.png"), "x");
+    await fs.writeFile(path.join(target, "tiny.png"), "x", { flag: "wx", mode: 0o600 });
   }
   const oldCapture = `capture-${String(oldMs).padStart(13, "0")}-aaaaaaaa-1111-1111-1111-111111111111`;
-  const oldTarget = path.join(harness.deps.screenshotRoot, oldCapture, "browser");
+  const oldTarget = path.join(screenshotRoot, oldCapture, "browser");
   await fs.mkdir(oldTarget, { recursive: true });
-  await fs.writeFile(path.join(oldTarget, "old.png"), "x");
+  await fs.writeFile(path.join(oldTarget, "old.png"), "x", { flag: "wx", mode: 0o600 });
   const oldDate = new Date(oldMs);
   await fs.utimes(path.join(oldTarget, "old.png"), oldDate, oldDate);
   await fs.utimes(oldTarget, oldDate, oldDate);
-  await fs.utimes(path.join(harness.deps.screenshotRoot, oldCapture), oldDate, oldDate);
+  await fs.utimes(path.join(screenshotRoot, oldCapture), oldDate, oldDate);
   const fixture = new PNG({ width: 1, height: 1 });
   fixture.data.set([0, 0, 0, 255]);
   const pngBase64 = PNG.sync.write(fixture).toString("base64");
@@ -228,7 +229,7 @@ test("screenshot storage prunes old capture directories and stays bounded by cap
   await registerEquinoxBrowserTools(harness.deps);
   const result = await harness.tools.get("equinox_browser_screenshot").handler({ name: "new", collection: "browser", full_page: false });
   assert.equal(result.isError, undefined);
-  const captures = (await fs.readdir(harness.deps.screenshotRoot, { withFileTypes: true })).filter((entry) => entry.isDirectory());
+  const captures = (await fs.readdir(screenshotRoot, { withFileTypes: true })).filter((entry) => entry.isDirectory());
   assert.equal(captures.length <= 24, true);
   assert.equal(captures.some((entry) => entry.name === oldCapture), false);
   await fs.rm(root, { recursive: true, force: true });

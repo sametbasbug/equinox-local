@@ -8,6 +8,7 @@ import {
   createEquinoxLocalConfigManager,
   serializeEquinoxLocalConfig,
 } from "./equinox-local-config.js";
+import { readBoundedNormalFile } from "./equinox-local-safe-file.js";
 import {
   managedSupervisorPaths,
   resolveSupervisorRelease,
@@ -71,7 +72,14 @@ async function assertWorkspaceGitDirectory(gitRoot, { fsImpl = fs } = {}) {
       throw new Error(`Existing Equinox Workspace Git ${relative} metadata is unsafe.`);
     }
   }
-  const head = (await fsImpl.readFile(path.join(gitRoot, "HEAD"), "utf8")).trim();
+  const { data: headText } = await readBoundedNormalFile(path.join(gitRoot, "HEAD"), {
+    fsImpl,
+    minBytes: 1,
+    maxBytes: 64 * 1024,
+    encoding: "utf8",
+    label: "Existing Equinox Workspace Git HEAD metadata",
+  });
+  const head = headText.trim();
   const detached = /^[a-f0-9]{40}(?:[a-f0-9]{24})?$/u.test(head);
   const symbolic = head.startsWith("ref: refs/heads/")
     && head.length > "ref: refs/heads/".length
@@ -87,11 +95,14 @@ async function assertWorkspaceGitDirectory(gitRoot, { fsImpl = fs } = {}) {
 
 async function assertNormalGitHead(gitRoot, { fsImpl = fs } = {}) {
   const headPath = path.join(gitRoot, "HEAD");
-  const stat = await fsImpl.lstat(headPath);
-  if (!stat.isFile() || stat.isSymbolicLink() || stat.size < 1 || stat.size > 64 * 1024) {
-    throw new Error("Configured Git metadata HEAD is unsafe.");
-  }
-  const head = (await fsImpl.readFile(headPath, "utf8")).trim();
+  const { data: headText } = await readBoundedNormalFile(headPath, {
+    fsImpl,
+    minBytes: 1,
+    maxBytes: 64 * 1024,
+    encoding: "utf8",
+    label: "Configured Git metadata HEAD",
+  });
+  const head = headText.trim();
   const detached = /^[a-f0-9]{40}(?:[a-f0-9]{24})?$/u.test(head);
   const symbolic = head.startsWith("ref: refs/heads/")
     && head.length > "ref: refs/heads/".length
@@ -121,10 +132,16 @@ export async function validateIndependentGitProjectRoot(projectRoot, { fsImpl = 
     return projectReal;
   }
 
-  if (!gitStat.isFile() || gitStat.size < 1 || gitStat.size > 64 * 1024) {
+  if (!gitStat.isFile()) {
     throw new Error("Configured project .git entry is invalid.");
   }
-  const gitFile = await fsImpl.readFile(gitEntry, "utf8");
+  const { data: gitFile } = await readBoundedNormalFile(gitEntry, {
+    fsImpl,
+    minBytes: 1,
+    maxBytes: 64 * 1024,
+    encoding: "utf8",
+    label: "Configured project .git entry",
+  });
   if (gitFile.includes("\0") || gitFile.includes("\r") || gitFile.split("\n").filter(Boolean).length !== 1) {
     throw new Error("Configured project Git worktree metadata is invalid.");
   }
