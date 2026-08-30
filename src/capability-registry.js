@@ -93,6 +93,7 @@ const AUTOMATION_OPERATION_NAMES = new Set([
 
 const SERVICE_OPERATION_NAMES = new Set([
   "list_package_scripts",
+  "telegram_send_message",
 ]);
 
 const EXCLUDED_PREFIXES = Object.freeze([

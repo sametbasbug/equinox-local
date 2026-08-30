@@ -47,6 +47,10 @@ async function withApi(fn, overrides = {}) {
     chooseFolder: overrides.chooseFolder ?? null,
     updateBrowserSettings: overrides.updateBrowserSettings ?? null,
     checkGitHub: overrides.checkGitHub ?? null,
+    getTelegramStatus: overrides.getTelegramStatus ?? null,
+    configureTelegram: overrides.configureTelegram ?? null,
+    testTelegram: overrides.testTelegram ?? null,
+    disconnectTelegram: overrides.disconnectTelegram ?? null,
   });
   const started = await api.start();
   try {
@@ -351,7 +355,7 @@ test("managed uninstall requires same-origin CSRF, typed confirmation and explic
   });
 });
 
-test("bounded Control Center actions expose activity, folder picker, Browser settings and GitHub readiness", async () => {
+test("bounded Control Center actions expose activity, Browser/GitHub controls and Telegram integration", async () => {
   const calls = [];
   await withApi(async ({ api, port, origin }) => {
     const base = `http://127.0.0.1:${port}`;
@@ -399,12 +403,55 @@ test("bounded Control Center actions expose activity, folder picker, Browser set
     assert.equal(github.response.status, 200);
     assert.deepEqual(github.body.github, { ready: true, account: "example-user" });
 
+    const telegramStatus = await jsonFetch(`${base}/api/v1/integrations/telegram`);
+    assert.equal(telegramStatus.response.status, 200);
+    assert.deepEqual(telegramStatus.body.telegram, {
+      configured: false,
+      ready: false,
+      needsAttention: false,
+      userIdHint: null,
+    });
+
+    const telegramConnect = await jsonFetch(`${base}/api/v1/integrations/telegram`, {
+      method: "PUT",
+      headers: mutationHeaders,
+      body: JSON.stringify({ botToken: "secret-token", telegramUserId: "123456789" }),
+    });
+    assert.equal(telegramConnect.response.status, 200);
+    assert.deepEqual(telegramConnect.body.telegram, {
+      configured: true,
+      ready: true,
+      needsAttention: false,
+      userIdHint: "…6789",
+    });
+    assert.equal(JSON.stringify(telegramConnect.body).includes("secret-token"), false);
+
+    const telegramTest = await jsonFetch(`${base}/api/v1/integrations/telegram/test`, {
+      method: "POST",
+      headers: mutationHeaders,
+      body: "{}",
+    });
+    assert.equal(telegramTest.response.status, 200);
+    assert.equal(telegramTest.body.result.sent, true);
+
+    const telegramDisconnect = await jsonFetch(`${base}/api/v1/integrations/telegram/disconnect`, {
+      method: "POST",
+      headers: mutationHeaders,
+      body: "{}",
+    });
+    assert.equal(telegramDisconnect.response.status, 200);
+    assert.equal(telegramDisconnect.body.result.disconnected, true);
+
     assert.deepEqual(calls, [
       ["picker"],
       ["browser", { enabled: false, agentCursorEnabled: true, agentCursorName: "Nyx" }],
       ["github"],
+      ["telegram-status"],
+      ["telegram-connect", { botToken: "secret-token", telegramUserId: "123456789" }],
+      ["telegram-test"],
+      ["telegram-disconnect"],
     ]);
-    assert.equal(api.snapshot().mutationCount, 1);
+    assert.equal(api.snapshot().mutationCount, 4);
 
     const invalidBrowser = await jsonFetch(`${base}/api/v1/browser/settings`, {
       method: "PUT",
@@ -412,7 +459,7 @@ test("bounded Control Center actions expose activity, folder picker, Browser set
       body: JSON.stringify({ surprise: true }),
     });
     assert.equal(invalidBrowser.response.status, 400);
-    assert.equal(calls.length, 3);
+    assert.equal(calls.length, 7);
   }, {
     getActivity: async () => [{ timestamp: "2026-08-22T00:00:00.000Z", component: "runtime", message: "Ready" }],
     chooseFolder: async () => {
@@ -426,6 +473,22 @@ test("bounded Control Center actions expose activity, folder picker, Browser set
     checkGitHub: async () => {
       calls.push(["github"]);
       return { ready: true, account: "example-user" };
+    },
+    getTelegramStatus: async () => {
+      calls.push(["telegram-status"]);
+      return { configured: false, ready: false, needsAttention: false, userIdHint: null };
+    },
+    configureTelegram: async (body) => {
+      calls.push(["telegram-connect", body]);
+      return { configured: true, ready: true, needsAttention: false, userIdHint: "…6789" };
+    },
+    testTelegram: async () => {
+      calls.push(["telegram-test"]);
+      return { sent: true, messageCount: 1 };
+    },
+    disconnectTelegram: async () => {
+      calls.push(["telegram-disconnect"]);
+      return { disconnected: true };
     },
   });
 });

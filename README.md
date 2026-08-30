@@ -8,13 +8,13 @@
 [![CI](https://github.com/sametbasbug/equinox-local/actions/workflows/ci.yml/badge.svg)](https://github.com/sametbasbug/equinox-local/actions/workflows/ci.yml)
 ![macOS](https://img.shields.io/badge/platform-macOS-111111?logo=apple)
 ![Node.js 24](https://img.shields.io/badge/Node.js-24-339933?logo=nodedotjs&logoColor=white)
-![Tests](https://img.shields.io/badge/tests-245%20passing-2ea44f)
+![Tests](https://img.shields.io/badge/tests-256%20passing-2ea44f)
 [![License: AGPL v3](https://img.shields.io/badge/license-AGPL--3.0--only-blue.svg)](LICENSE)
 
 [Product site](https://local.sametbasbug.dev/) · [Security](SECURITY.md) · [Architecture](docs/architecture.md) · [Contributing](CONTRIBUTING.md)
 </div>
 
-> **Public release:** Equinox Local `4.2.0` is live for Apple Silicon and Intel macOS. The public source, CodeQL scan, native architecture release validation, clean-macOS lifecycle test, signed update channel, production bootstrap, and Equinox Browser `0.3.0` Chrome Web Store release have all passed their release gates.
+> **Public release:** Equinox Local `4.2.1` is live for Apple Silicon and Intel macOS. The public source, CodeQL scan, native architecture release validation, signed update channel, production bootstrap, and Equinox Browser `0.3.0` Chrome Web Store release have all passed their release gates.
 
 ## What is Equinox Local?
 
@@ -32,6 +32,7 @@ The goal is not to turn your computer into an unrestricted remote shell. The goa
 | Control Center | Loopback-only management UI on `127.0.0.1:24891` |
 | Updates | Ed25519-signed metadata, bounded downloads, verified activation, automatic rollback |
 | Desktop | Optional Peekaboo bridge with a deliberately reduced allowlist |
+| Telegram | Optional Bot API delivery with a private local credential; agents receive only a send operation |
 | Agent API | Stable MCP gateways backed by a dynamic capability registry |
 
 ## Why build another local agent runtime?
@@ -78,7 +79,7 @@ More: [docs/browser.md](docs/browser.md)
 
 ## Installation
 
-Install Equinox Local `4.2.0` as your normal macOS user:
+Install Equinox Local `4.2.1` as your normal macOS user:
 
 ```bash
 curl -fsSL https://local.sametbasbug.dev/downloads/updates/install-equinox-local.sh | /bin/bash
@@ -118,6 +119,12 @@ After the managed Local install finishes:
 The tunnel client makes an outbound HTTPS connection to OpenAI; Equinox Local does not need an inbound firewall rule or a public MCP port. If the tunnel does not appear in ChatGPT, verify that it was created for the correct workspace and that the relevant principal has **Tunnels Read + Use**. Newly created tunnels may also take a short time to become available.
 
 See [docs/tunnel.md](docs/tunnel.md) for the full setup and troubleshooting path. ChatGPT plan/workspace support for custom MCP apps and write/modify actions is controlled by OpenAI and may change independently of Equinox Local.
+
+### Optional Telegram delivery
+
+The current unreleased source includes an optional Telegram Bot API integration for completion/fallback messages. In Control Center → **Integrations**, enter a bot token and **Your Telegram ID**, then choose **Connect & test**. The ID must identify a private Telegram user account; group, supergroup, and channel targets are deliberately rejected. Open the bot chat and send it a message first so the bot is allowed to contact the account.
+
+The token and fixed recipient ID are stored only on the Mac in Equinox Local's private `secrets` directory with `0600` file permissions. Control Center status, MCP results, and the agent-facing operation never return either secret value. Agents use the existing Services & integrations gateway to invoke `telegram_send_message`; the operation accepts only message text, so an agent cannot choose or override the recipient. Equinox Local exposes no Telegram inbox/read operation, so messages sent to the bot by other Telegram users are not surfaced to agents. Delivery is plain text and long messages are split into bounded Telegram-safe chunks.
 
 ## Updates
 
