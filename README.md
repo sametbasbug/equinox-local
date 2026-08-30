@@ -70,7 +70,7 @@ See [docs/architecture.md](docs/architecture.md) for the longer version.
 
 ## Equinox Browser
 
-Equinox Browser is the companion Chrome extension and the **only product path that controls the user's Chrome profile**. A fresh install starts with browser automation disabled. The user must accept the browser-data disclosure and explicitly enable control.
+Equinox Browser is the companion Chrome extension and the **only product path that controls the user's Chrome profile**. Install the unlisted production extension from [Chrome Web Store](https://chromewebstore.google.com/detail/equinox-browser/npdneefcobilfkjlihghjgjnknenhfoj). A fresh install starts with browser automation disabled. The user must accept the browser-data disclosure and explicitly enable control.
 
 The extension intentionally has no broad `host_permissions`; browser actions are performed through Chrome's documented debugger interface and a local Native Messaging bridge. Turning browser control off rejects browser-automation commands while allowing the bounded settings channel to remain available.
 
