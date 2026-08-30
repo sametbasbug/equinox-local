@@ -81,6 +81,13 @@ import {
   createEquinoxLocalControlApi,
 } from "./equinox-local-control-api.js";
 import {
+  configureTelegramIntegration,
+  disconnectTelegramIntegration,
+  getTelegramIntegrationStatus,
+  sendTelegramMessage,
+  testTelegramIntegration,
+} from "./telegram-integration.js";
+import {
   resolveEquinoxLocalInstallation,
 } from "./equinox-local-installation.js";
 import {
@@ -15754,6 +15761,17 @@ equinoxLocalControlApi = createEquinoxLocalControlApi({
     const account = /^[A-Za-z0-9-]{1,39}$/u.test(rawAccount) ? rawAccount : null;
     return { ready: Boolean(account), account };
   },
+  getTelegramStatus: async () => getTelegramIntegrationStatus(),
+  configureTelegram: async (body) => withMutationLocks(["telegram"], async () => (
+    configureTelegramIntegration({
+      botToken: body?.botToken,
+      telegramUserId: body?.telegramUserId,
+    })
+  )),
+  testTelegram: async () => withMutationLocks(["telegram"], async () => testTelegramIntegration()),
+  disconnectTelegram: async () => withMutationLocks(["telegram"], async () => (
+    disconnectTelegramIntegration()
+  )),
 });
 if (EQUINOX_LOCAL_CONFIG.controlCenter.enabled) {
   await equinoxLocalControlApi.start();
@@ -16027,6 +16045,44 @@ registerTextTool(
           "MCP bağlantısı kısa süreliğine kesilip yeniden kurulabilir.",
           `Kayıt: ${path.join(process.env.TMPDIR ?? "/tmp", "equinox-local-restart.log")}`,
         ].join("\n"),
+      );
+    } catch (error) {
+      return errorResult(error);
+    }
+  },
+  {
+    projectAware: false,
+    mutationScopes: ["global"],
+  },
+);
+
+registerTextTool(
+  "telegram_send_message",
+  {
+    description:
+      "Control Center'da bağlanmış Telegram botu üzerinden yalnız yapılandırılmış insana düz metin mesaj gönderir. Ajan hedef Telegram ID'sini seçemez veya değiştiremez; bot tokenı ve hedef kimliği MCP sonucuna ya da loglara döndürülmez. Uzun mesajlar Telegram sınırına uygun parçalara otomatik bölünür.",
+    inputSchema: {
+      message: z
+        .string()
+        .min(1)
+        .max(12_000)
+        .describe("İnsanına Telegram üzerinden gönderilecek düz metin mesaj"),
+    },
+    annotations: {
+      title: "Telegram mesajı gönder",
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+      openWorldHint: true,
+    },
+  },
+  async ({ message }) => {
+    try {
+      const result = await sendTelegramMessage({ message });
+      return textResult(
+        result.messageCount === 1
+          ? "Telegram mesajı gönderildi."
+          : `Telegram mesajı ${result.messageCount} parça halinde gönderildi.`,
       );
     } catch (error) {
       return errorResult(error);

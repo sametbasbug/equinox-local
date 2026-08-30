@@ -44,7 +44,7 @@ jobs:
 
       - name: Record artifact metadata
         run: |
-          artifact="backups/local-packages/equinox-local-4.2.0-darwin-x64.tar.gz"
+          artifact="backups/local-packages/equinox-local-4.2.1-darwin-x64.tar.gz"
           test -f "$artifact"
           file "$artifact"
           bytes="$(stat -f %z "$artifact")"
@@ -54,9 +54,9 @@ jobs:
       - name: Upload unsigned x64 artifact
         uses: actions/upload-artifact@v7
         with:
-          name: equinox-local-4.2.0-darwin-x64-unsigned
+          name: equinox-local-4.2.1-darwin-x64-unsigned
           path: |
-            backups/local-packages/equinox-local-4.2.0-darwin-x64.tar.gz
+            backups/local-packages/equinox-local-4.2.1-darwin-x64.tar.gz
             backups/local-packages/darwin-x64-metadata.txt
           if-no-files-found: error
           retention-days: 7

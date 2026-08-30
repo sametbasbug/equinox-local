@@ -26,6 +26,7 @@ test("inferCapabilityDomain keeps broad stable domains and excludes already-dyna
   assert.equal(inferCapabilityDomain("equinox_browser_click"), "browser");
   assert.equal(inferCapabilityDomain("workflow_start"), "automation");
   assert.equal(inferCapabilityDomain("deployment_status"), "services");
+  assert.equal(inferCapabilityDomain("telegram_send_message"), "services");
   assert.equal(inferCapabilityDomain("system_doctor"), "runtime");
   assert.equal(inferCapabilityDomain("desktop_call"), null);
   assert.equal(inferCapabilityDomain("visual_capture"), null);

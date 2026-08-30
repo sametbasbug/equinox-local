@@ -208,6 +208,10 @@ export function createEquinoxLocalControlApi({
   chooseFolder = null,
   updateBrowserSettings = null,
   checkGitHub = null,
+  getTelegramStatus = null,
+  configureTelegram = null,
+  testTelegram = null,
+  disconnectTelegram = null,
   host = LOOPBACK_HOST,
   port,
 } = {}) {
@@ -440,6 +444,57 @@ export function createEquinoxLocalControlApi({
           ok: true,
           github: result,
         });
+        return;
+      }
+
+      if (req.method === "GET" && url.pathname === "/api/v1/integrations/telegram") {
+        if (typeof getTelegramStatus !== "function") {
+          const error = new Error("Telegram integration is unavailable.");
+          error.statusCode = 503;
+          throw error;
+        }
+        jsonBody(res, 200, { ok: true, telegram: await getTelegramStatus() });
+        return;
+      }
+
+      if (req.method === "PUT" && url.pathname === "/api/v1/integrations/telegram") {
+        assertMutationRequest(req, { port: actualPort, csrfToken: state.csrfToken });
+        if (typeof configureTelegram !== "function") {
+          const error = new Error("Telegram integration setup is unavailable.");
+          error.statusCode = 503;
+          throw error;
+        }
+        const telegram = await configureTelegram(await readJsonRequest(req));
+        state.mutationCount += 1;
+        jsonBody(res, 200, { ok: true, telegram });
+        return;
+      }
+
+      if (req.method === "POST" && url.pathname === "/api/v1/integrations/telegram/test") {
+        assertMutationRequest(req, { port: actualPort, csrfToken: state.csrfToken });
+        validateEmptyObject(await readJsonRequest(req), "Telegram test");
+        if (typeof testTelegram !== "function") {
+          const error = new Error("Telegram integration test is unavailable.");
+          error.statusCode = 503;
+          throw error;
+        }
+        const result = await testTelegram();
+        state.mutationCount += 1;
+        jsonBody(res, 200, { ok: true, result });
+        return;
+      }
+
+      if (req.method === "POST" && url.pathname === "/api/v1/integrations/telegram/disconnect") {
+        assertMutationRequest(req, { port: actualPort, csrfToken: state.csrfToken });
+        validateEmptyObject(await readJsonRequest(req), "Telegram disconnect");
+        if (typeof disconnectTelegram !== "function") {
+          const error = new Error("Telegram integration disconnect is unavailable.");
+          error.statusCode = 503;
+          throw error;
+        }
+        const result = await disconnectTelegram();
+        state.mutationCount += 1;
+        jsonBody(res, 200, { ok: true, result });
         return;
       }
 

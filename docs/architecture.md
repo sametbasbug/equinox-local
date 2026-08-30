@@ -23,6 +23,7 @@ flowchart TB
     CORE --> WF[Workflows]
     CORE --> OBS[Observability / diagnosis / repair]
     CORE --> DESKTOP[Optional Peekaboo bridge]
+    CORE --> TELEGRAM[Optional Telegram Bot API]
 
     subgraph Browser
       CHROME[User Chrome]
@@ -73,6 +74,8 @@ Internal browser profiles used for development/release QA are not part of this p
 ## Control Center
 
 Control Center is served by the runtime on loopback. It uses fixed routes and same-origin assets; it is not a general static-file server. Mutations use validated JSON, same-origin checks, CSRF protection, and expected-revision guards where configuration changes are involved.
+
+Optional service integrations keep credentials outside the public configuration surface. For Telegram, Control Center can connect, test, or disconnect a bot for exactly one positive Telegram user ID; group/channel IDs are rejected, status exposes only readiness and a masked user-ID hint, and the agent surface receives only the bounded `telegram_send_message` operation with message text. There is no Telegram inbox/read operation, so inbound messages from other Telegram users are not exposed to agents.
 
 ## Managed installation
 

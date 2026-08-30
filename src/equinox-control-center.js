@@ -16,6 +16,9 @@ const state = {
   uninstallBusy: false,
   uninstallScheduled: false,
   github: null,
+  telegram: null,
+  telegramBotToken: "",
+  telegramUserId: "",
   browserDraft: null,
   browserSettingsDirty: false,
   browserSettingsBusy: false,
@@ -620,6 +623,75 @@ function createIntegrationCard(titleText, description, statusText, tone, actions
   return card;
 }
 
+function createTelegramIntegrationCard() {
+  const telegram = state.telegram;
+  const configured = Boolean(telegram?.configured && telegram?.ready);
+  const needsAttention = Boolean(telegram?.needsAttention);
+  const card = createIntegrationCard(
+    "Telegram",
+    configured
+      ? `Bot API is connected${telegram.userIdHint ? ` to user ${telegram.userIdHint}` : ""}. Agents can send messages only to this Telegram account; the recipient cannot be changed by an agent.`
+      : needsAttention
+        ? "Saved Telegram credentials need attention. Reconnect the bot to replace them safely."
+        : "Connect a Telegram bot to one Telegram account. Groups and channels are not supported, and agents cannot choose another recipient.",
+    configured ? "Ready" : needsAttention ? "Needs attention" : "Not connected",
+    configured ? "good" : needsAttention ? "warn" : "neutral",
+    configured
+      ? [
+          { label: "Send test", onClick: testTelegramConnection },
+          { label: "Disconnect", onClick: disconnectTelegramConnection },
+        ]
+      : [],
+  );
+
+  if (!configured) {
+    const form = document.createElement("form");
+    form.className = "integration-form";
+    form.addEventListener("submit", (event) => {
+      event.preventDefault();
+      void connectTelegramIntegration();
+    });
+
+    const tokenLabel = document.createElement("label");
+    tokenLabel.className = "field";
+    const tokenTitle = document.createElement("span");
+    tokenTitle.textContent = "Bot token";
+    const tokenInput = document.createElement("input");
+    tokenInput.type = "password";
+    tokenInput.autocomplete = "off";
+    tokenInput.spellcheck = false;
+    tokenInput.placeholder = "123456789:AA…";
+    tokenInput.value = state.telegramBotToken;
+    tokenInput.disabled = state.integrationBusy;
+    tokenInput.addEventListener("input", () => { state.telegramBotToken = tokenInput.value; });
+    tokenLabel.append(tokenTitle, tokenInput);
+
+    const chatLabel = document.createElement("label");
+    chatLabel.className = "field";
+    const chatTitle = document.createElement("span");
+    chatTitle.textContent = "Your Telegram ID";
+    const chatInput = document.createElement("input");
+    chatInput.type = "text";
+    chatInput.inputMode = "numeric";
+    chatInput.autocomplete = "off";
+    chatInput.spellcheck = false;
+    chatInput.placeholder = "123456789";
+    chatInput.value = state.telegramUserId;
+    chatInput.disabled = state.integrationBusy;
+    chatInput.addEventListener("input", () => { state.telegramUserId = chatInput.value; });
+    chatLabel.append(chatTitle, chatInput);
+
+    const button = document.createElement("button");
+    button.type = "submit";
+    button.className = "button primary";
+    button.textContent = state.integrationBusy ? "Connecting…" : "Connect & test";
+    button.disabled = state.integrationBusy;
+    form.append(tokenLabel, chatLabel, button);
+    card.append(form);
+  }
+  return card;
+}
+
 function renderIntegrations() {
   const list = $("integration-list");
   list.replaceChildren();
@@ -660,6 +732,7 @@ function renderIntegrations() {
       github === null ? "neutral" : github.ready ? "good" : "warn",
       [{ label: github === null ? "Check connection" : "Check again", onClick: checkGitHubIntegration }],
     ),
+    createTelegramIntegrationCard(),
   );
 }
 
@@ -805,7 +878,7 @@ async function refreshAll() {
   clearError();
   $("refresh-button").disabled = true;
   try {
-    const [health, status, config, activity, update, onboarding, doctor] = await Promise.all([
+    const [health, status, config, activity, update, onboarding, doctor, telegram] = await Promise.all([
       requestJson("/api/v1/health"),
       requestJson("/api/v1/status"),
       requestJson("/api/v1/config"),
@@ -813,6 +886,7 @@ async function refreshAll() {
       requestJson("/api/v1/update"),
       requestJson("/api/v1/onboarding"),
       requestJson("/api/v1/doctor"),
+      requestJson("/api/v1/integrations/telegram").catch(() => ({ telegram: null })),
     ]);
     state.health = health;
     state.status = status.status;
@@ -822,6 +896,7 @@ async function refreshAll() {
     state.update = update.update || null;
     state.onboarding = onboarding.onboarding || null;
     state.doctor = doctor.doctor || null;
+    state.telegram = telegram.telegram || null;
     state.browserDraft = null;
     state.browserSettingsDirty = false;
     state.restartRequired = false;
@@ -1025,6 +1100,64 @@ async function checkGitHubIntegration() {
     state.github = result.github || { ready: false, account: null };
     renderIntegrations();
     showToast(state.github.ready ? "GitHub connection is ready." : "GitHub needs attention.");
+  } catch (error) {
+    showError(error);
+  } finally {
+    state.integrationBusy = false;
+    renderIntegrations();
+  }
+}
+
+async function connectTelegramIntegration() {
+  if (state.integrationBusy) return;
+  clearError();
+  state.integrationBusy = true;
+  renderIntegrations();
+  try {
+    const result = await mutationJson("/api/v1/integrations/telegram", "PUT", {
+      botToken: state.telegramBotToken.trim(),
+      telegramUserId: state.telegramUserId.trim(),
+    });
+    state.telegram = result.telegram || null;
+    state.telegramBotToken = "";
+    state.telegramUserId = "";
+    if (state.health?.controlCenter) state.health.controlCenter.mutationCount += 1;
+    showToast("Telegram connected and test message sent.");
+  } catch (error) {
+    showError(error);
+  } finally {
+    state.integrationBusy = false;
+    renderIntegrations();
+  }
+}
+
+async function testTelegramConnection() {
+  if (state.integrationBusy) return;
+  clearError();
+  state.integrationBusy = true;
+  renderIntegrations();
+  try {
+    await mutationJson("/api/v1/integrations/telegram/test", "POST", {});
+    if (state.health?.controlCenter) state.health.controlCenter.mutationCount += 1;
+    showToast("Telegram test message sent.");
+  } catch (error) {
+    showError(error);
+  } finally {
+    state.integrationBusy = false;
+    renderIntegrations();
+  }
+}
+
+async function disconnectTelegramConnection() {
+  if (state.integrationBusy) return;
+  clearError();
+  state.integrationBusy = true;
+  renderIntegrations();
+  try {
+    await mutationJson("/api/v1/integrations/telegram/disconnect", "POST", {});
+    state.telegram = { configured: false, ready: false, needsAttention: false, userIdHint: null };
+    if (state.health?.controlCenter) state.health.controlCenter.mutationCount += 1;
+    showToast("Telegram disconnected.");
   } catch (error) {
     showError(error);
   } finally {

@@ -1122,6 +1122,23 @@ select:disabled {
   line-height: 1.55;
 }
 
+.integration-form {
+  display: grid;
+  gap: 2px;
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+}
+
+.integration-form .field {
+  margin-bottom: 10px;
+}
+
+.integration-form .button {
+  justify-self: start;
+  margin-top: 4px;
+}
+
 .permission-meta,
 .integration-meta {
   display: flex;
