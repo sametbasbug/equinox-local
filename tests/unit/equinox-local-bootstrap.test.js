@@ -81,14 +81,23 @@ test("launch agent and native host always follow the managed current pointer", (
   assert.deepEqual(manifest.allowed_origins, [`chrome-extension://${EQUINOX_BROWSER_PRODUCTION_EXTENSION_ID}/`]);
 });
 
-test("workspace bootstrap creates and verifies an isolated Git repository", async (t) => {
+test("workspace bootstrap creates an isolated Git repository without invoking system Git", async (t) => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "equinox-workspace-git-"));
   t.after(() => fs.rm(root, { recursive: true, force: true }));
   const workspaceRoot = path.join(root, "workspace");
   await fs.mkdir(workspaceRoot, { recursive: true });
-  const resolved = await ensureWorkspaceGitRepository(workspaceRoot);
+  let systemGitCalled = false;
+  const resolved = await ensureWorkspaceGitRepository(workspaceRoot, {
+    execFileImpl: async () => {
+      systemGitCalled = true;
+      throw new Error("system Git must not be required for first install");
+    },
+  });
   assert.equal(resolved, await fs.realpath(workspaceRoot));
+  assert.equal(systemGitCalled, false);
   assert.equal((await fs.lstat(path.join(workspaceRoot, ".git"))).isDirectory(), true);
+  assert.equal(await fs.readFile(path.join(workspaceRoot, ".git", "HEAD"), "utf8"), "ref: refs/heads/main\n");
+  assert.match(await fs.readFile(path.join(workspaceRoot, ".git", "config"), "utf8"), /bare = false/u);
   assert.equal(await ensureWorkspaceGitRepository(workspaceRoot), resolved);
 });
 

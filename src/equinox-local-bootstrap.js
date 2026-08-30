@@ -1,10 +1,8 @@
-import { execFile as execFileCallback } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
 
 import {
   createEquinoxLocalConfigManager,
@@ -14,8 +12,6 @@ import {
   managedSupervisorPaths,
   resolveSupervisorRelease,
 } from "./equinox-local-supervisor.js";
-
-const execFile = promisify(execFileCallback);
 
 export const EQUINOX_BROWSER_PRODUCTION_EXTENSION_ID = "npdneefcobilfkjlihghjgjnknenhfoj";
 export const EQUINOX_BROWSER_NATIVE_HOST_NAME = "dev.equinox.browser";
@@ -55,44 +51,66 @@ async function atomicWrite(filePath, content, mode) {
   }
 }
 
-export async function ensureWorkspaceGitRepository(workspaceRoot, { execFileImpl = execFile } = {}) {
-  const expectedRoot = await fs.realpath(workspaceRoot);
-  const verify = async () => {
-    const { stdout } = await execFileImpl(
-      "/usr/bin/git",
-      ["-C", workspaceRoot, "rev-parse", "--show-toplevel"],
-      { timeout: 5_000, maxBuffer: 1024 * 1024 },
-    );
-    const reported = stdout.trim();
-    if (!reported) throw new Error("Equinox Workspace Git root is empty.");
-    const actualRoot = await fs.realpath(reported);
-    if (actualRoot !== expectedRoot) {
-      throw new Error("Equinox Workspace resolved to an unexpected parent Git repository.");
-    }
-    return actualRoot;
-  };
+const WORKSPACE_GIT_HEAD = "ref: refs/heads/main\n";
+const WORKSPACE_GIT_CONFIG = `[core]\n\trepositoryformatversion = 0\n\tfilemode = true\n\tbare = false\n\tlogallrefupdates = true\n`;
 
-  try {
-    return await verify();
-  } catch (error) {
-    const gitEntry = path.join(workspaceRoot, ".git");
-    try {
-      const stat = await fs.lstat(gitEntry);
-      if (stat.isSymbolicLink() || (!stat.isDirectory() && !stat.isFile())) {
-        throw new Error("Existing Equinox Workspace .git entry is unsafe.");
-      }
-      throw new Error(`Existing Equinox Workspace Git metadata is invalid: ${error instanceof Error ? error.message : error}`);
-    } catch (gitError) {
-      if (gitError?.code !== "ENOENT") throw gitError;
+async function assertWorkspaceGitDirectory(gitRoot, { fsImpl = fs } = {}) {
+  const stat = await fsImpl.lstat(gitRoot);
+  if (!stat.isDirectory() || stat.isSymbolicLink()) {
+    throw new Error("Existing Equinox Workspace .git entry is unsafe.");
+  }
+  for (const relative of ["objects", "refs"]) {
+    const nested = await fsImpl.lstat(path.join(gitRoot, relative));
+    if (!nested.isDirectory() || nested.isSymbolicLink()) {
+      throw new Error(`Existing Equinox Workspace Git ${relative} metadata is unsafe.`);
     }
   }
+  for (const relative of ["HEAD", "config"]) {
+    const nested = await fsImpl.lstat(path.join(gitRoot, relative));
+    if (!nested.isFile() || nested.isSymbolicLink() || nested.size < 1 || nested.size > 64 * 1024) {
+      throw new Error(`Existing Equinox Workspace Git ${relative} metadata is unsafe.`);
+    }
+  }
+  const head = (await fsImpl.readFile(path.join(gitRoot, "HEAD"), "utf8")).trim();
+  const detached = /^[a-f0-9]{40}(?:[a-f0-9]{24})?$/u.test(head);
+  const symbolic = head.startsWith("ref: refs/heads/")
+    && head.length > "ref: refs/heads/".length
+    && !head.includes("..")
+    && !head.includes("@{")
+    && !head.includes("\\")
+    && !head.endsWith("/");
+  if (!detached && !symbolic) {
+    throw new Error("Existing Equinox Workspace Git HEAD metadata is invalid.");
+  }
+  return gitRoot;
+}
 
-  await execFileImpl(
-    "/usr/bin/git",
-    ["-C", workspaceRoot, "init", "--quiet"],
-    { timeout: 10_000, maxBuffer: 1024 * 1024 },
-  );
-  return await verify();
+export async function ensureWorkspaceGitRepository(workspaceRoot, { fsImpl = fs } = {}) {
+  const expectedRoot = await fsImpl.realpath(workspaceRoot);
+  const gitEntry = path.join(expectedRoot, ".git");
+
+  try {
+    await assertWorkspaceGitDirectory(gitEntry, { fsImpl });
+    return expectedRoot;
+  } catch (error) {
+    if (error?.code !== "ENOENT") throw error;
+  }
+
+  const temporary = path.join(expectedRoot, `.git.equinox-init-${process.pid}-${randomBytes(8).toString("hex")}`);
+  try {
+    await fsImpl.mkdir(path.join(temporary, "objects", "info"), { recursive: true, mode: 0o700 });
+    await fsImpl.mkdir(path.join(temporary, "objects", "pack"), { recursive: true, mode: 0o700 });
+    await fsImpl.mkdir(path.join(temporary, "refs", "heads"), { recursive: true, mode: 0o700 });
+    await fsImpl.mkdir(path.join(temporary, "refs", "tags"), { recursive: true, mode: 0o700 });
+    await fsImpl.writeFile(path.join(temporary, "HEAD"), WORKSPACE_GIT_HEAD, { flag: "wx", mode: 0o600 });
+    await fsImpl.writeFile(path.join(temporary, "config"), WORKSPACE_GIT_CONFIG, { flag: "wx", mode: 0o600 });
+    await fsImpl.rename(temporary, gitEntry);
+  } catch (error) {
+    await fsImpl.rm(temporary, { recursive: true, force: true }).catch(() => {});
+    throw error;
+  }
+  await assertWorkspaceGitDirectory(gitEntry, { fsImpl });
+  return expectedRoot;
 }
 
 export function seedEquinoxLocalConfig({ homeDir, installRoot }) {
