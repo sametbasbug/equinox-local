@@ -8,13 +8,13 @@
 [![CI](https://github.com/sametbasbug/equinox-local/actions/workflows/ci.yml/badge.svg)](https://github.com/sametbasbug/equinox-local/actions/workflows/ci.yml)
 ![macOS](https://img.shields.io/badge/platform-macOS-111111?logo=apple)
 ![Node.js 24](https://img.shields.io/badge/Node.js-24-339933?logo=nodedotjs&logoColor=white)
-![Tests](https://img.shields.io/badge/tests-244%20passing-2ea44f)
+![Tests](https://img.shields.io/badge/tests-245%20passing-2ea44f)
 [![License: AGPL v3](https://img.shields.io/badge/license-AGPL--3.0--only-blue.svg)](LICENSE)
 
 [Product site](https://local.sametbasbug.dev/) · [Security](SECURITY.md) · [Architecture](docs/architecture.md) · [Contributing](CONTRIBUTING.md)
 </div>
 
-> **Release-candidate status:** the clean public source plus native Apple Silicon and Intel managed-release paths have passed automated validation. The general public bootstrap remains unpublished pending one clean macOS user/VM lifecycle check and a separate encrypted backup of the production update-signing key; Equinox Browser remains staged rather than publicly released.
+> **Release-candidate status:** the clean public source, native Apple Silicon and Intel managed-release paths, clean-macOS install/reboot/uninstall lifecycle, and encrypted production-signing-key backup have all passed their pre-release gates. The public bootstrap and Equinox Browser remain intentionally unpublished pending explicit release authorization.
 
 ## What is Equinox Local?
 
@@ -78,7 +78,7 @@ More: [docs/browser.md](docs/browser.md)
 
 ## Installation
 
-The public installer is intentionally **not live yet** while the final clean-macOS user/VM lifecycle validation and signing-key backup remain open release gates.
+The public installer is intentionally **not live yet**. Pre-release technical gates are green; publication remains disabled until explicit release authorization and the coordinated repo/artifact/site/Chrome Web Store release sequence.
 
 The planned public path is a small user-level macOS bootstrap that:
 
@@ -154,7 +154,7 @@ npm run check
 npm test
 ```
 
-The public test suite currently contains **244 passing tests** covering browser consent/lifecycle, path and symlink guards, Control Center request boundaries, managed install/update/rollback/uninstall, workflows, repair/recovery, Native Messaging, and runtime observability.
+The public test suite currently contains **245 passing tests** covering browser consent/lifecycle, path and symlink guards, Control Center request boundaries, managed install/update/rollback/uninstall, workflows, repair/recovery, Native Messaging, and runtime observability.
 
 Source-checkout runtime configuration is intentionally external. Start with [examples/equinox-local-config.example.json](examples/equinox-local-config.example.json) and keep real machine paths/credentials out of the repository.
 
