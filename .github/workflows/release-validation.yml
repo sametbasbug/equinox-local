@@ -2,6 +2,11 @@ name: Release Validation
 
 on:
   workflow_dispatch:
+    inputs:
+      commit:
+        description: Exact public main commit to validate and package
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -13,8 +18,13 @@ jobs:
     timeout-minutes: 35
 
     steps:
-      - name: Checkout
+      - name: Checkout exact release commit
         uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.commit }}
+
+      - name: Verify exact release commit
+        run: test "$(git rev-parse HEAD)" = "${{ inputs.commit }}"
 
       - name: Set up Node.js
         uses: actions/setup-node@v7
@@ -43,20 +53,23 @@ jobs:
         run: npm run local:smoke:managed
 
       - name: Record artifact metadata
+        id: release
         run: |
-          artifact="backups/local-packages/equinox-local-4.2.1-darwin-x64.tar.gz"
+          version="$(node --input-type=module -e 'import { EQUINOX_LOCAL_VERSION } from "./src/equinox-local-version.js"; process.stdout.write(EQUINOX_LOCAL_VERSION)')"
+          artifact="backups/local-packages/equinox-local-${version}-darwin-x64.tar.gz"
           test -f "$artifact"
           file "$artifact"
           bytes="$(stat -f %z "$artifact")"
           sha256="$(shasum -a 256 "$artifact" | awk '{print $1}')"
-          printf 'target=darwin-x64\nbytes=%s\nsha256=%s\n' "$bytes" "$sha256" | tee backups/local-packages/darwin-x64-metadata.txt
+          printf 'version=%s\ntarget=darwin-x64\nbytes=%s\nsha256=%s\n' "$version" "$bytes" "$sha256" | tee backups/local-packages/darwin-x64-metadata.txt
+          printf 'version=%s\nartifact=%s\n' "$version" "$artifact" >> "$GITHUB_OUTPUT"
 
       - name: Upload unsigned x64 artifact
         uses: actions/upload-artifact@v7
         with:
-          name: equinox-local-4.2.1-darwin-x64-unsigned
+          name: equinox-local-${{ steps.release.outputs.version }}-darwin-x64-unsigned
           path: |
-            backups/local-packages/equinox-local-4.2.1-darwin-x64.tar.gz
+            ${{ steps.release.outputs.artifact }}
             backups/local-packages/darwin-x64-metadata.txt
           if-no-files-found: error
           retention-days: 7

@@ -14,7 +14,7 @@
 [Product site](https://local.sametbasbug.dev/) · [Security](SECURITY.md) · [Architecture](docs/architecture.md) · [Contributing](CONTRIBUTING.md)
 </div>
 
-> **Public release:** Equinox Local `4.2.1` is live for Apple Silicon and Intel macOS. The public source, CodeQL scan, native architecture release validation, signed update channel, production bootstrap, and Equinox Browser `0.3.0` Chrome Web Store release have all passed their release gates.
+> **Stable releases:** Apple Silicon and Intel macOS builds are published through the signed stable update channel. Every release must pass public-source CI/CodeQL, native architecture validation, managed smoke, signing verification, and live-channel checks before it is promoted from prerelease to stable.
 
 ## What is Equinox Local?
 
