@@ -14,7 +14,7 @@
 [Product site](https://local.sametbasbug.dev/) · [Security](SECURITY.md) · [Architecture](docs/architecture.md) · [Contributing](CONTRIBUTING.md)
 </div>
 
-> **Release-candidate status:** the clean public source, native Apple Silicon and Intel managed-release paths, clean-macOS install/reboot/uninstall lifecycle, and encrypted production-signing-key backup have all passed their pre-release gates. The public bootstrap and Equinox Browser remain intentionally unpublished pending explicit release authorization.
+> **Public release:** Equinox Local `4.2.0` is live for Apple Silicon and Intel macOS. The public source, CodeQL scan, native architecture release validation, clean-macOS lifecycle test, signed update channel, production bootstrap, and Equinox Browser `0.3.0` Chrome Web Store release have all passed their release gates.
 
 ## What is Equinox Local?
 
@@ -78,9 +78,13 @@ More: [docs/browser.md](docs/browser.md)
 
 ## Installation
 
-The public installer is intentionally **not live yet**. Pre-release technical gates are green; publication remains disabled until explicit release authorization and the coordinated repo/artifact/site/Chrome Web Store release sequence.
+Install Equinox Local `4.2.0` as your normal macOS user:
 
-The planned public path is a small user-level macOS bootstrap that:
+```bash
+curl -fsSL https://local.sametbasbug.dev/downloads/updates/install-equinox-local.sh | /bin/bash
+```
+
+The public path is a small user-level macOS bootstrap that:
 
 1. refuses `sudo`/root execution;
 2. detects Apple Silicon vs Intel;
