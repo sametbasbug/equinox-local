@@ -52,6 +52,7 @@ export async function getEquinoxLocalDoctorStatus({
   peekaboo = {},
   update = {},
   onboarding = {},
+  developmentTunnel = null,
   homeDir = process.env.HOME,
   fsImpl = fs,
   readCurrentReleaseImpl = readManagedCurrentRelease,
@@ -198,6 +199,28 @@ export async function getEquinoxLocalDoctorStatus({
         ? installation.reason || "This installation layout is unsupported."
         : "This runtime is intentionally running from a source checkout; managed self-update is disabled.",
     ));
+
+    if (installation?.kind === "source" && developmentTunnel) {
+      if (developmentTunnel.configured === false) {
+        checks.push(check(
+          "development-tunnel",
+          "Development tunnel runtime",
+          "optional",
+          "No private source-runtime tunnel configuration is present, so version synchronization is not checked.",
+        ));
+      } else {
+        const actual = developmentTunnel.actualVersion || "unknown";
+        const expected = developmentTunnel.expectedVersion || "unknown";
+        checks.push(check(
+          "development-tunnel",
+          "Development tunnel runtime",
+          developmentTunnel.synchronized === true ? "pass" : "attention",
+          developmentTunnel.synchronized === true
+            ? `Development tunnel-client ${actual} matches the pinned runtime version.`
+            : `Development tunnel-client ${actual} does not match pinned version ${expected}. Restart Equinox Local to synchronize it.`,
+        ));
+      }
+    }
   }
 
   if (browser?.ready) {

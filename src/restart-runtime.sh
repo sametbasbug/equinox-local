@@ -4,6 +4,7 @@ umask 077
 
 ROOT="$(cd "$(dirname "$0")" && /bin/pwd -P)"
 CONFIG="${EQUINOX_LOCAL_DEV_RUNTIME_CONFIG:-$ROOT/.equinox-local-dev-runtime.conf}"
+DEV_NODE="${EQUINOX_LOCAL_DEV_NODE:-$(command -v node 2>/dev/null || true)}"
 LOG_FILE="${TMPDIR:-/tmp}/equinox-local-restart.log"
 
 fail() {
@@ -19,6 +20,13 @@ case "$CONFIG_MODE" in
   600|400) ;;
   *) fail "developer runtime config must have mode 0600 or 0400" ;;
 esac
+case "$DEV_NODE" in
+  /*) ;;
+  *) fail "EQUINOX_LOCAL_DEV_NODE must be an absolute executable path" ;;
+esac
+[ -x "$DEV_NODE" ] || fail "configured developer Node runtime is not executable"
+
+EQUINOX_LOCAL_DEV_RUNTIME_CONFIG="$CONFIG" "$DEV_NODE" "$ROOT/../scripts/release/sync-source-tunnel-runtime.mjs"
 
 LABEL=""
 RUNTIME=""
@@ -62,7 +70,7 @@ case "$TUNNEL_CLIENT" in
   /*) ;;
   *) fail "tunnelClient must be an absolute executable path" ;;
 esac
-[ -x "$TUNNEL_CLIENT" ] || fail "configured tunnelClient is not executable"
+[ -x "$TUNNEL_CLIENT" ] || fail "configured tunnelClient is not executable after synchronization"
 
 PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
 [ -f "$PLIST" ] && [ ! -L "$PLIST" ] || fail "configured LaunchAgent plist is missing or unsafe"

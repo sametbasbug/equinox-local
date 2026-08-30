@@ -8,7 +8,7 @@
 [![CI](https://github.com/sametbasbug/equinox-local/actions/workflows/ci.yml/badge.svg)](https://github.com/sametbasbug/equinox-local/actions/workflows/ci.yml)
 ![macOS](https://img.shields.io/badge/platform-macOS-111111?logo=apple)
 ![Node.js 24](https://img.shields.io/badge/Node.js-24-339933?logo=nodedotjs&logoColor=white)
-![Tests](https://img.shields.io/badge/tests-256%20passing-2ea44f)
+![Tests](https://img.shields.io/badge/tests-263%20passing-2ea44f)
 [![License: AGPL v3](https://img.shields.io/badge/license-AGPL--3.0--only-blue.svg)](LICENSE)
 
 [Product site](https://local.sametbasbug.dev/) · [Security](SECURITY.md) · [Architecture](docs/architecture.md) · [Contributing](CONTRIBUTING.md)
@@ -122,7 +122,7 @@ See [docs/tunnel.md](docs/tunnel.md) for the full setup and troubleshooting path
 
 ### Optional Telegram delivery
 
-The current unreleased source includes an optional Telegram Bot API integration for completion/fallback messages. In Control Center → **Integrations**, enter a bot token and **Your Telegram ID**, then choose **Connect & test**. The ID must identify a private Telegram user account; group, supergroup, and channel targets are deliberately rejected. Open the bot chat and send it a message first so the bot is allowed to contact the account.
+Stable Equinox Local releases include an optional Telegram Bot API integration for completion/fallback messages. In Control Center → **Integrations**, enter a bot token and **Your Telegram ID**, then choose **Connect & test**. The ID must identify a private Telegram user account; group, supergroup, and channel targets are deliberately rejected. Open the bot chat and send it a message first so the bot is allowed to contact the account.
 
 The token and fixed recipient ID are stored only on the Mac in Equinox Local's private `secrets` directory with `0600` file permissions. Control Center status, MCP results, and the agent-facing operation never return either secret value. Agents use the existing Services & integrations gateway to invoke `telegram_send_message`; the operation accepts only message text, so an agent cannot choose or override the recipient. Equinox Local exposes no Telegram inbox/read operation, so messages sent to the bot by other Telegram users are not surfaced to agents. Delivery is plain text and long messages are split into bounded Telegram-safe chunks.
 
@@ -155,7 +155,7 @@ Tests live under `tests/` on purpose: they remain part of the public trust story
 ### Requirements
 
 - macOS
-- Node.js **24.19.0 or newer**
+- Node.js **24.20.0 or newer**
 - npm
 - Git
 
@@ -165,9 +165,9 @@ npm run check
 npm test
 ```
 
-The public test suite currently contains **245 passing tests** covering browser consent/lifecycle, path and symlink guards, Control Center request boundaries, managed install/update/rollback/uninstall, workflows, repair/recovery, Native Messaging, and runtime observability.
+The public test suite currently contains **263 passing tests** covering browser consent/lifecycle, path and symlink guards, Control Center request boundaries, managed install/update/rollback/uninstall, source-runtime synchronization, workflows, repair/recovery, Native Messaging, and runtime observability.
 
-Source-checkout runtime configuration is intentionally external. Start with [examples/equinox-local-config.example.json](examples/equinox-local-config.example.json) and keep real machine paths/credentials out of the repository.
+Source-checkout runtime configuration is intentionally external. Start with [examples/equinox-local-config.example.json](examples/equinox-local-config.example.json) and keep real machine paths/credentials out of the repository. The source restart path checks the configured development tunnel-client against the same pinned version and SHA metadata used by managed release packaging; when it drifts, restart synchronizes the verified binary before relaunching Local, while System Doctor reports mismatches without exposing the configured executable path.
 
 ## Security model
 

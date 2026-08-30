@@ -110,6 +110,9 @@ import {
   getEquinoxLocalDoctorStatus,
 } from "./equinox-local-doctor.js";
 import {
+  inspectSourceTunnelRuntime,
+} from "./equinox-local-source-runtime.js";
+import {
   EQUINOX_LOCAL_UPDATE_KEYS,
 } from "./equinox-local-update-keys.js";
 import {
@@ -15637,6 +15640,9 @@ async function getControlCenterDoctorStatus() {
     homeDir: process.env.HOME,
     supervisorMode: process.env.EQUINOX_LOCAL_SUPERVISOR_MODE || null,
   });
+  const developmentTunnel = equinoxLocalInstallation.kind === "source"
+    ? await inspectSourceTunnelRuntime()
+    : null;
   return getEquinoxLocalDoctorStatus({
     installation: equinoxLocalInstallation,
     config: EQUINOX_LOCAL_CONFIG,
@@ -15649,6 +15655,7 @@ async function getControlCenterDoctorStatus() {
     peekaboo: { active: peekabooBridge.active },
     update: equinoxLocalUpdateCoordinator.snapshot(),
     onboarding,
+    developmentTunnel,
     homeDir: process.env.HOME,
   });
 }
@@ -16014,6 +16021,7 @@ registerTextTool(
         LOGNAME: process.env.LOGNAME,
         TMPDIR: process.env.TMPDIR,
         PATH: "/usr/bin:/bin:/usr/sbin:/sbin",
+        EQUINOX_LOCAL_DEV_NODE: process.execPath,
         EQUINOX_LOCAL_DEV_RUNTIME_CONFIG:
           process.env.EQUINOX_LOCAL_DEV_RUNTIME_CONFIG,
       };
