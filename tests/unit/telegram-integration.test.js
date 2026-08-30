@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
+import { readBoundedNormalFile } from "../../src/equinox-local-safe-file.js";
 import {
   configureTelegramIntegration,
   defaultTelegramCredentialPath,
@@ -89,9 +90,14 @@ test("configure stores credentials privately only after a successful Telegram me
       userIdHint: "…6789",
     });
 
-    const stat = await fs.stat(credentialPath);
+    const { data: storedText, stat } = await readBoundedNormalFile(credentialPath, {
+      minBytes: 1,
+      maxBytes: 16 * 1024,
+      encoding: "utf8",
+      label: "Telegram test credential",
+    });
     assert.equal(stat.mode & 0o777, 0o600);
-    const stored = JSON.parse(await fs.readFile(credentialPath, "utf8"));
+    const stored = JSON.parse(storedText);
     assert.equal(stored.version, 2);
     assert.equal(stored.botToken, TOKEN);
     assert.equal(stored.telegramUserId, "123456789");
