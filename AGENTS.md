@@ -13,6 +13,7 @@ These instructions apply to the entire Equinox Local public repository unless a 
 - Never expose credentials, update-signing secrets, runtime keys, private tokens, raw observability storage paths, or sensitive machine details through MCP, APIs, UI, logs, tests, or fixtures.
 - Keep product source generic. Machine-specific project names, local paths, personal credentials, and private deployment configuration do not belong in the public repository.
 - Optional capabilities must fail independently. Core Equinox Local must remain usable without Telegram, Peekaboo, Equinox Browser, or other optional integrations.
+- macOS Screen Recording and Accessibility permissions belong only to the stable `Equinox Local.app` identity (`dev.equinox.local`). Peekaboo is an internal local/no-remote desktop engine; do not create a separate Peekaboo/Bridge/Terminal/Node TCC permission path.
 - Telegram delivery must preserve the one-human boundary: one configured positive Telegram user ID, no group/channel target, no agent-selectable recipient, and no inbox/read operation exposed to agents.
 - Chrome Web Store owns Equinox Browser distribution and updates. The Equinox Local updater must not overwrite or sideload the extension.
 - Public Equinox Local installation must not require a paid Apple Developer Program membership, Developer ID certificate, notarization, Mac App Store submission, or `.pkg` installer. Preserve the user-level HTTPS bootstrap model unless the project explicitly changes direction.

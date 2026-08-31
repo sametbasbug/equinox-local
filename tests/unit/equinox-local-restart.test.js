@@ -31,14 +31,23 @@ test("source-checkout restart uses only private generic developer runtime config
   assert.match(script, /launchAgentLabel/u);
   assert.match(script, /tunnelRuntime/u);
   assert.match(script, /tunnelClient/u);
+  assert.match(script, /sourceLauncher/u);
   assert.match(script, /EQUINOX_LOCAL_DEV_NODE/u);
   assert.match(script, /sync-source-tunnel-runtime\.mjs/u);
+  assert.match(script, /prepare-source-app-host\.mjs/u);
+  assert.match(script, /OLD_PID=.*pgrep/u);
+  assert.match(script, /NEW_PID=.*pgrep/u);
+  assert.match(script, /previous Equinox Local server process running/u);
+  assert.match(script, /launchctl bootout/u);
+  assert.match(script, /launchctl bootstrap/u);
+  assert.match(script, /launchctl kickstart -k/u);
   assert.doesNotMatch(script, /^LABEL="[^"\n]+"/mu);
   assert.doesNotMatch(script, /^RUNTIME="[^"\n]+"/mu);
   assert.doesNotMatch(script, /^TUNNEL_CLIENT="\/[^"\n]+"/mu);
   assert.match(example, /launchAgentLabel=dev\.equinox\.local\.dev/u);
   assert.match(example, /tunnelRuntime=equinox-local-dev/u);
   assert.match(example, /tunnelClient=\/absolute\/path\/to\/equinox-tunnel-client/u);
+  assert.match(example, /sourceLauncher=\/absolute\/path\/to\/private-source-launcher\.sh/u);
 });
 
 test("restart helper environment is minimal and credential-free", () => {

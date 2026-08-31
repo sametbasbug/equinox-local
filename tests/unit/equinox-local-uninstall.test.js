@@ -17,6 +17,14 @@ async function exists(target) {
   }
 }
 
+function uninstallExecStub(calls = null, { appBundleId = "dev.equinox.local" } = {}) {
+  return async (command, args) => {
+    if (Array.isArray(calls)) calls.push([command, args]);
+    if (command === "/usr/libexec/PlistBuddy") return { stdout: `${appBundleId}\n`, stderr: "" };
+    return { stdout: "", stderr: "" };
+  };
+}
+
 async function createFixture() {
   const homeDir = await fs.mkdtemp(path.join(os.tmpdir(), "equinox-uninstall-"));
   const installRoot = path.join(homeDir, "Library", "Application Support", "Equinox Local");
@@ -28,6 +36,9 @@ async function createFixture() {
   const stdoutLogPath = path.join(homeDir, "Library", "Logs", "Equinox Local.log");
   const stderrLogPath = path.join(homeDir, "Library", "Logs", "Equinox Local.error.log");
   const manifestPath = path.join(homeDir, "Library", "Application Support", "Google", "Chrome", "NativeMessagingHosts", "dev.equinox.browser.json");
+  const appPath = path.join(homeDir, "Applications", "Equinox Local.app");
+  const appExecutablePath = path.join(appPath, "Contents", "MacOS", "applet");
+  const appRuntimeWrapperPath = path.join(installRoot, "equinox-local-app-runtime");
   await fs.mkdir(releaseDir, { recursive: true, mode: 0o700 });
   await fs.mkdir(stagingRoot, { recursive: true, mode: 0o700 });
   await fs.mkdir(path.join(installRoot, "secrets"), { recursive: true, mode: 0o700 });
@@ -37,6 +48,10 @@ async function createFixture() {
   await fs.writeFile(path.join(installRoot, "transport.json"), "{}\n", { mode: 0o600 });
   await fs.writeFile(path.join(installRoot, "update-state.json"), "{}\n", { mode: 0o600 });
   await fs.writeFile(path.join(installRoot, "equinox-browser-native-host"), "#!/bin/bash\n", { mode: 0o700 });
+  await fs.writeFile(appRuntimeWrapperPath, "#!/bin/bash\n", { mode: 0o700 });
+  await fs.mkdir(path.dirname(appExecutablePath), { recursive: true, mode: 0o700 });
+  await fs.writeFile(appExecutablePath, "fixture-app\n", { mode: 0o700 });
+  await fs.writeFile(path.join(appPath, "Contents", "Info.plist"), "fixture-plist\n", { mode: 0o600 });
   await fs.symlink("releases/4.2.0", currentLink);
   await fs.mkdir(path.dirname(launchAgentPath), { recursive: true });
   await fs.writeFile(launchAgentPath, "plist", { mode: 0o600 });
@@ -59,6 +74,8 @@ async function createFixture() {
     stdoutLogPath,
     stderrLogPath,
     manifestPath,
+    appPath,
+    appRuntimeWrapperPath,
     env: {
       HOME: homeDir,
       USER: "example",
@@ -118,10 +135,7 @@ test("managed uninstall preserves workspace and config by default while removing
       homeDir: fixture.homeDir,
       uid: 501,
       sleepImpl: async () => {},
-      execFileImpl: async (command, args) => {
-        execCalls.push([command, args]);
-        return { stdout: "", stderr: "" };
-      },
+      execFileImpl: uninstallExecStub(execCalls),
     });
     assert.equal(result.userDataPreserved, true);
     assert.equal(await exists(path.join(fixture.installRoot, "config.json")), true);
@@ -135,6 +149,8 @@ test("managed uninstall preserves workspace and config by default while removing
     assert.equal(await exists(fixture.stdoutLogPath), false);
     assert.equal(await exists(fixture.stderrLogPath), false);
     assert.equal(await exists(fixture.manifestPath), false);
+    assert.equal(await exists(fixture.appPath), false);
+    assert.equal(await exists(fixture.appRuntimeWrapperPath), false);
     assert.deepEqual(execCalls[0], ["/bin/launchctl", ["bootout", "gui/501/dev.equinox.local"]]);
   } finally {
     await fs.rm(fixture.homeDir, { recursive: true, force: true });
@@ -150,10 +166,11 @@ test("full managed uninstall removes the entire Equinox Local application data r
       homeDir: fixture.homeDir,
       uid: 501,
       sleepImpl: async () => {},
-      execFileImpl: async () => ({ stdout: "", stderr: "" }),
+      execFileImpl: uninstallExecStub(),
     });
     assert.equal(result.userDataRemoved, true);
     assert.equal(await exists(fixture.installRoot), false);
+    assert.equal(await exists(fixture.appPath), false);
     assert.equal(await exists(fixture.stdoutLogPath), false);
     assert.equal(await exists(fixture.stderrLogPath), false);
   } finally {
@@ -171,9 +188,26 @@ test("uninstall never removes a Native Messaging manifest owned by another host 
       homeDir: fixture.homeDir,
       uid: 501,
       sleepImpl: async () => {},
-      execFileImpl: async () => ({ stdout: "", stderr: "" }),
+      execFileImpl: uninstallExecStub(),
     });
     assert.equal(await exists(fixture.manifestPath), true);
+  } finally {
+    await fs.rm(fixture.homeDir, { recursive: true, force: true });
+  }
+});
+
+test("uninstall never removes an Equinox Local.app path with another bundle identity", async () => {
+  const fixture = await createFixture();
+  try {
+    await runEquinoxLocalUninstallHelper({
+      argv: ["--uninstall", "--preserve-user-data"],
+      env: fixture.env,
+      homeDir: fixture.homeDir,
+      uid: 501,
+      sleepImpl: async () => {},
+      execFileImpl: uninstallExecStub(null, { appBundleId: "dev.example.other" }),
+    });
+    assert.equal(await exists(fixture.appPath), true);
   } finally {
     await fs.rm(fixture.homeDir, { recursive: true, force: true });
   }

@@ -56,6 +56,7 @@ test("source checkout doctor stays healthy without requiring managed-only files"
       config: { version: 1, runtime: { workspaceProject: "workspace" }, projects: { workspace: { root: workspace } } },
       runtimeHealthState: "HEALTHY",
       runtimeVersion: "4.2.0",
+      sourceCheckoutVersion: "4.2.0",
       developmentTunnel: { configured: true, expectedVersion: "0.0.13", actualVersion: "0.0.13", synchronized: true },
       browser: { ready: false },
       peekaboo: { active: false },
@@ -66,8 +67,33 @@ test("source checkout doctor stays healthy without requiring managed-only files"
     assert.equal(result.installationKind, "source");
     assert.equal(result.summary.attention, 0);
     assert.equal(result.checks.find((item) => item.id === "installation")?.status, "pass");
+    assert.equal(result.checks.find((item) => item.id === "source-version")?.status, "pass");
     assert.equal(result.checks.find((item) => item.id === "development-tunnel")?.status, "pass");
     assert.equal(result.checks.find((item) => item.id === "browser")?.status, "optional");
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test("source checkout doctor detects a stale running process after source version changes", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "equinox-doctor-source-version-drift-"));
+  try {
+    const workspace = path.join(root, "workspace");
+    await fs.mkdir(workspace, { mode: 0o700 });
+    const result = await getEquinoxLocalDoctorStatus({
+      installation: { kind: "source", managed: false, selfUpdateSupported: false },
+      config: { version: 1, runtime: { workspaceProject: "workspace" }, projects: { workspace: { root: workspace } } },
+      runtimeHealthState: "HEALTHY",
+      runtimeVersion: "4.2.2",
+      sourceCheckoutVersion: "4.2.3",
+      developmentTunnel: { configured: true, expectedVersion: "0.0.13", actualVersion: "0.0.13", synchronized: true },
+      browser: { ready: false },
+      peekaboo: { active: false },
+    });
+    const sourceVersion = result.checks.find((item) => item.id === "source-version");
+    assert.equal(result.state, "ATTENTION");
+    assert.equal(sourceVersion?.status, "attention");
+    assert.match(sourceVersion?.detail || "", /4\.2\.3.*4\.2\.2/u);
   } finally {
     await fs.rm(root, { recursive: true, force: true });
   }

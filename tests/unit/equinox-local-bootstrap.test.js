@@ -5,6 +5,7 @@ import path from "node:path";
 import test from "node:test";
 
 import {
+  appRuntimeWrapper,
   bootstrapManagedEquinoxUser,
   ensureWorkspaceGitRepository,
   EQUINOX_BROWSER_PRODUCTION_EXTENSION_ID,
@@ -54,6 +55,14 @@ function mode(stat) {
   return stat.mode & 0o777;
 }
 
+async function fakeAppHost({ homeDir }) {
+  return {
+    appPath: path.join(homeDir, "Applications", "Equinox Local.app"),
+    executablePath: path.join(homeDir, "Applications", "Equinox Local.app", "Contents", "MacOS", "applet"),
+    created: false,
+  };
+}
+
 test("first-run seed config exposes only a managed workspace and read-only Downloads root", () => {
   const homeDir = "/Users/example";
   const installRoot = "/Users/example/Library/Application Support/Equinox Local";
@@ -67,14 +76,18 @@ test("first-run seed config exposes only a managed workspace and read-only Downl
   assert.equal(config.controlCenter.port, 24891);
 });
 
-test("launch agent and native host always follow the managed current pointer", () => {
+test("launch agent uses the stable Equinox Local app identity while runtime wrapper follows current", () => {
   const homeDir = "/Users/example person";
   const installRoot = `${homeDir}/Library/Application Support/Equinox Local`;
   const plist = launchAgentPlist({ homeDir, installRoot });
   assert.match(plist, /dev\.equinox\.local/u);
-  assert.match(plist, /current\/runtime\/node\/bin\/node/u);
-  assert.match(plist, /current\/equinox-local-supervisor\.js/u);
-  assert.doesNotMatch(plist, /releases\/4\.2\.0/u);
+  assert.match(plist, /Applications\/Equinox Local\.app\/Contents\/MacOS\/applet/u);
+  assert.doesNotMatch(plist, /current\/runtime\/node\/bin\/node/u);
+
+  const runtimeWrapper = appRuntimeWrapper({ installRoot });
+  assert.match(runtimeWrapper, /current\/runtime\/node\/bin\/node/u);
+  assert.match(runtimeWrapper, /current\/equinox-local-supervisor\.js/u);
+  assert.doesNotMatch(runtimeWrapper, /releases\/4\.2\.0/u);
 
   const wrapper = nativeHostWrapper({ installRoot });
   assert.match(wrapper, /current\/runtime\/node\/bin\/node/u);
@@ -129,7 +142,7 @@ test("managed user bootstrap is idempotent and preserves user configuration", as
   const fixture = await makeManagedHome();
   t.after(() => fs.rm(fixture.root, { recursive: true, force: true }));
 
-  const first = await bootstrapManagedEquinoxUser({ homeDir: fixture.homeDir });
+  const first = await bootstrapManagedEquinoxUser({ homeDir: fixture.homeDir, ensureAppHostImpl: fakeAppHost });
   assert.equal(first.version, "4.2.0");
   assert.equal(first.configCreated, true);
   const config = JSON.parse(await fs.readFile(first.configPath, "utf8"));
@@ -149,7 +162,7 @@ test("managed user bootstrap is idempotent and preserves user configuration", as
     encoding: "utf8",
     label: "Bootstrap config fixture",
   });
-  const second = await bootstrapManagedEquinoxUser({ homeDir: fixture.homeDir });
+  const second = await bootstrapManagedEquinoxUser({ homeDir: fixture.homeDir, ensureAppHostImpl: fakeAppHost });
   assert.equal(second.configCreated, false);
   const { data: configAfter } = await readBoundedNormalFile(second.configPath, {
     minBytes: 1,
