@@ -22,18 +22,21 @@ export function parseSourceRuntimeConfig(text) {
     if (index <= 0) throw new Error("Developer runtime config is malformed.");
     const key = line.slice(0, index);
     const value = line.slice(index + 1);
-    if (!new Set(["launchAgentLabel", "tunnelRuntime", "tunnelClient"]).has(key)) {
+    if (!new Set(["launchAgentLabel", "tunnelRuntime", "tunnelClient", "sourceLauncher"]).has(key)) {
       throw new Error("Developer runtime config contains an unsupported field.");
     }
     if (values.has(key)) throw new Error("Developer runtime config contains a duplicate field.");
     values.set(key, value);
   }
   const tunnelClient = values.get("tunnelClient") || "";
+  const sourceLauncher = values.get("sourceLauncher") || "";
   if (!path.isAbsolute(tunnelClient)) throw new Error("Developer tunnel-client path is invalid.");
+  if (!path.isAbsolute(sourceLauncher)) throw new Error("Developer source launcher path is invalid.");
   return Object.freeze({
     launchAgentLabel: values.get("launchAgentLabel") || "",
     tunnelRuntime: values.get("tunnelRuntime") || "",
     tunnelClient,
+    sourceLauncher,
   });
 }
 
@@ -110,6 +113,30 @@ export async function updateSourceRuntimeTunnelClient(configPath, tunnelClient, 
 export function parseTunnelClientVersion(text) {
   const match = String(text).trim().match(/^(\d+\.\d+\.\d+)(?:\+|\s|$)/u);
   return match ? match[1] : null;
+}
+
+export function parseSourceCheckoutVersion(text) {
+  const match = String(text).match(/EQUINOX_LOCAL_VERSION\s*=\s*["'](\d+\.\d+\.\d+)["']/u);
+  return match ? match[1] : null;
+}
+
+export async function inspectSourceCheckoutVersion({
+  sourceRoot = ROOT,
+  fsImpl = fs,
+} = {}) {
+  try {
+    const versionPath = path.join(path.resolve(sourceRoot), "equinox-local-version.js");
+    const { data } = await readBoundedNormalFile(versionPath, {
+      fsImpl,
+      maxBytes: 4 * 1024,
+      encoding: "utf8",
+      label: "Equinox Local source version",
+    });
+    const version = parseSourceCheckoutVersion(data);
+    return Object.freeze({ available: Boolean(version), version });
+  } catch {
+    return Object.freeze({ available: false, version: null });
+  }
 }
 
 export async function inspectSourceTunnelRuntime({

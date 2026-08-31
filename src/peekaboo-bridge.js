@@ -289,7 +289,7 @@ function assertPermissionState(toolName, permissions) {
     if (permissions?.[permission] === false) {
       const label = permission === "screenRecording" ? "Screen Recording" : "Accessibility";
       throw new Error(
-        `Peekaboo ${toolName} için ${label} izni gerekli. System Settings > Privacy & Security üzerinden izni yeniden etkinleştir.`,
+        `Equinox Local ${toolName} için ${label} izni gerekli. System Settings > Privacy & Security bölümünde Equinox Local için izni etkinleştir.`,
       );
     }
   }
@@ -853,6 +853,7 @@ export function createPeekabooBridge({
       command: binary,
       args: [
         "mcp",
+        "--no-remote",
         "--log-level",
         "warning",
         "--input-strategy",
@@ -1107,8 +1108,8 @@ export function createPeekabooBridge({
           severity: lost ? "warn" : "info",
           status: lost ? "degraded" : "recovered",
           message: lost
-            ? "Peekaboo macOS izinlerinden en az biri kullanılamıyor."
-            : "Peekaboo Screen Recording ve Accessibility izinleri hazır.",
+            ? "Equinox Local macOS izinlerinden en az biri kullanılamıyor."
+            : "Equinox Local Screen Recording ve Accessibility izinleri hazır.",
           details: {
             screenRecording: parsed.screenRecording,
             accessibility: parsed.accessibility,

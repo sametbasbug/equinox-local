@@ -4,6 +4,11 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 
+import {
+  equinoxLocalAppPath,
+  equinoxLocalAppRuntimeWrapperPath,
+  validateEquinoxLocalAppHost,
+} from "./equinox-local-app-host.js";
 import { resolveEquinoxLocalInstallation } from "./equinox-local-installation.js";
 import { readBoundedNormalFile } from "./equinox-local-safe-file.js";
 
@@ -59,6 +64,18 @@ async function removeOwnedNativeHostManifest({ homeDir, installRoot, fsImpl = fs
   }
 }
 
+async function removeOwnedEquinoxLocalAppHost({ homeDir, fsImpl = fs, execFileImpl = execFile }) {
+  const appPath = equinoxLocalAppPath(homeDir);
+  try {
+    await validateEquinoxLocalAppHost(appPath, { fsImpl, execFileImpl });
+    await fsImpl.rm(appPath, { recursive: true, force: false });
+    return true;
+  } catch (error) {
+    if (error?.code === "ENOENT") return false;
+    return false;
+  }
+}
+
 export async function runEquinoxLocalUninstallHelper({
   argv = process.argv.slice(2),
   env = process.env,
@@ -83,6 +100,7 @@ export async function runEquinoxLocalUninstallHelper({
 
   await removeOwnedNativeHostManifest({ homeDir, installRoot: installation.installRoot, fsImpl });
   await removeIfExists(installation.launchAgentPath, { fsImpl });
+  await removeOwnedEquinoxLocalAppHost({ homeDir, fsImpl, execFileImpl });
   for (const logName of ["Equinox Local.log", "Equinox Local.error.log"]) {
     await removeIfExists(path.join(homeDir, "Library", "Logs", logName), { fsImpl });
   }
@@ -98,6 +116,7 @@ export async function runEquinoxLocalUninstallHelper({
       path.join(installation.installRoot, "transport.json"),
       path.join(installation.installRoot, "tunnel-profile"),
       path.join(installation.installRoot, "equinox-browser-native-host"),
+      equinoxLocalAppRuntimeWrapperPath(homeDir),
       path.join(installation.installRoot, "update-state.json"),
     ]) {
       await removeIfExists(target, {

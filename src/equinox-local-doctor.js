@@ -48,6 +48,7 @@ export async function getEquinoxLocalDoctorStatus({
   config,
   runtimeHealthState,
   runtimeVersion,
+  sourceCheckoutVersion = null,
   browser = {},
   peekaboo = {},
   update = {},
@@ -200,6 +201,18 @@ export async function getEquinoxLocalDoctorStatus({
         : "This runtime is intentionally running from a source checkout; managed self-update is disabled.",
     ));
 
+    if (installation?.kind === "source" && sourceCheckoutVersion) {
+      const sourceMatchesRuntime = sourceCheckoutVersion === runtimeVersion;
+      checks.push(check(
+        "source-version",
+        "Source checkout version",
+        sourceMatchesRuntime ? "pass" : "attention",
+        sourceMatchesRuntime
+          ? `Running process matches source checkout version ${sourceCheckoutVersion}.`
+          : `Source checkout is version ${sourceCheckoutVersion}, but the running process is ${runtimeVersion || "unknown"}. Restart Equinox Local to load the current source.`,
+      ));
+    }
+
     if (installation?.kind === "source" && developmentTunnel) {
       if (developmentTunnel.configured === false) {
         checks.push(check(
@@ -241,13 +254,17 @@ export async function getEquinoxLocalDoctorStatus({
     ));
   }
 
+  const peekabooReady = peekaboo?.ready === true || (peekaboo?.ready === undefined && peekaboo?.active === true);
+  const peekabooNeedsAttention = peekaboo?.needsAttention === true;
   checks.push(check(
     "peekaboo",
     "Desktop bridge",
-    peekaboo?.active ? "pass" : "optional",
-    peekaboo?.active
-      ? "Peekaboo desktop automation is available."
-      : "Peekaboo is optional and is not currently available.",
+    peekabooNeedsAttention ? "attention" : peekabooReady ? "pass" : "optional",
+    peekabooNeedsAttention
+      ? "Peekaboo is installed, but Equinox Local compatibility or required macOS permissions need attention."
+      : peekabooReady
+        ? "Peekaboo desktop automation is available."
+        : "Peekaboo is optional and is not currently available.",
   ));
 
   const summary = summarize(checks);

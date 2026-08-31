@@ -6,6 +6,27 @@ This project follows semantic versioning for public releases.
 
 ## [Unreleased]
 
+## [4.2.4] - 2026-08-31
+
+### Changed
+
+- macOS Screen Recording and Accessibility permissions now belong to one stable `Equinox Local.app` identity (`dev.equinox.local`) that is preserved across updates; users no longer grant those permissions separately to Peekaboo, Peekaboo Bridge, Terminal, Node, or versioned runtime binaries.
+- Peekaboo desktop automation is forced into local/no-remote mode beneath the Equinox Local app host, while managed and source-checkout LaunchAgents both start through the same stable app identity.
+- Public CI now uses Node.js `24.20.0`, matching the bundled Node 24 LTS runtime shipped by Equinox Local.
+- Uninstall removes the owned Equinox Local app host and runtime wrapper while refusing to delete an app at that path with another bundle identity.
+
+### Fixed
+
+- Source-checkout restarts now fail closed unless the Equinox Local server process is actually replaced, preventing a stale in-memory runtime from reporting an older product version after the source checkout advances.
+- Control Center integration status now probes GitHub and Peekaboo on refresh instead of showing misleading `Not checked` or `Disconnected` states for working optional integrations.
+- Equinox Browser status now distinguishes an unconnected extension from a failed Local bridge, and the duplicate Integrations heading was removed.
+- Runtime restart no longer imposes a same-assistant-turn stop; after the connector reconnects, Doctor/status checks can immediately verify the new process and version.
+
+### Diagnostics
+
+- System Doctor now compares the running source-checkout process version against the tracked source version and reports stale-process drift as attention.
+- Peekaboo status now reports compatibility and required macOS permission readiness instead of treating lazy bridge startup as a disconnect.
+
 ## [4.2.3] - 2026-08-30
 
 ### Changed
@@ -59,7 +80,8 @@ This project follows semantic versioning for public releases.
 - Internal release/QA browser surfaces are excluded from the public product capability registry.
 - Private Orbit/deployment configuration and machine-specific development infrastructure are excluded from the public source projection.
 
-[Unreleased]: https://github.com/sametbasbug/equinox-local/compare/v4.2.3...HEAD
+[Unreleased]: https://github.com/sametbasbug/equinox-local/compare/v4.2.4...HEAD
+[4.2.4]: https://github.com/sametbasbug/equinox-local/compare/v4.2.3...v4.2.4
 [4.2.3]: https://github.com/sametbasbug/equinox-local/compare/v4.2.2...v4.2.3
 [4.2.2]: https://github.com/sametbasbug/equinox-local/compare/v4.2.1...v4.2.2
 [4.2.1]: https://github.com/sametbasbug/equinox-local/compare/v4.2.0...v4.2.1

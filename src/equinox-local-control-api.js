@@ -208,6 +208,7 @@ export function createEquinoxLocalControlApi({
   chooseFolder = null,
   updateBrowserSettings = null,
   checkGitHub = null,
+  getPeekabooStatus = null,
   getTelegramStatus = null,
   configureTelegram = null,
   testTelegram = null,
@@ -428,6 +429,26 @@ export function createEquinoxLocalControlApi({
         const result = await updateBrowserSettings(settings);
         state.mutationCount += 1;
         jsonBody(res, 200, { ok: true, settings: result });
+        return;
+      }
+
+      if (req.method === "GET" && url.pathname === "/api/v1/integrations/github") {
+        if (typeof checkGitHub !== "function") {
+          const error = new Error("GitHub integration status is unavailable.");
+          error.statusCode = 503;
+          throw error;
+        }
+        jsonBody(res, 200, { ok: true, github: await checkGitHub() });
+        return;
+      }
+
+      if (req.method === "GET" && url.pathname === "/api/v1/integrations/peekaboo") {
+        if (typeof getPeekabooStatus !== "function") {
+          const error = new Error("Peekaboo integration status is unavailable.");
+          error.statusCode = 503;
+          throw error;
+        }
+        jsonBody(res, 200, { ok: true, peekaboo: await getPeekabooStatus() });
         return;
       }
 

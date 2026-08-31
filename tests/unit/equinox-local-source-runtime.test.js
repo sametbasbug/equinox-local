@@ -5,7 +5,9 @@ import path from "node:path";
 import test from "node:test";
 
 import {
+  inspectSourceCheckoutVersion,
   inspectSourceTunnelRuntime,
+  parseSourceCheckoutVersion,
   parseSourceRuntimeConfig,
   parseTunnelClientVersion,
   readSourceRuntimeConfig,
@@ -17,7 +19,9 @@ async function fixture(t, version = "0.0.13") {
   const binary = path.join(root, "equinox-tunnel-client");
   const configPath = path.join(root, "runtime.conf");
   await fs.writeFile(binary, `#!/bin/sh\necho '${version}+test (git sha: test)'\n`, { mode: 0o755 });
-  await fs.writeFile(configPath, `launchAgentLabel=dev.equinox.local.dev\ntunnelRuntime=equinox-local-dev\ntunnelClient=${binary}\n`, { mode: 0o600 });
+  const sourceLauncher = path.join(root, "start-source.sh");
+  await fs.writeFile(sourceLauncher, "#!/bin/sh\nexit 0\n", { mode: 0o700 });
+  await fs.writeFile(configPath, `launchAgentLabel=dev.equinox.local.dev\ntunnelRuntime=equinox-local-dev\ntunnelClient=${binary}\nsourceLauncher=${sourceLauncher}\n`, { mode: 0o600 });
   return { root, binary, configPath };
 }
 
@@ -28,6 +32,17 @@ test("source runtime config is bounded, private and parses only supported fields
   assert.equal(loaded.config.tunnelClient, item.binary);
   assert.throws(() => parseSourceRuntimeConfig(`tunnelClient=${item.binary}\nextra=value\n`), /unsupported field/u);
   assert.equal(parseTunnelClientVersion("0.0.13+abcdef (git sha: abcdef)"), "0.0.13");
+});
+
+test("source checkout version inspection reads the tracked version file without import caching", async (t) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "equinox-source-version-"));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const versionPath = path.join(root, "equinox-local-version.js");
+  await fs.writeFile(versionPath, 'export const EQUINOX_LOCAL_VERSION = "4.2.3";\n', { mode: 0o600 });
+  assert.equal(parseSourceCheckoutVersion('export const EQUINOX_LOCAL_VERSION = "4.2.3";'), "4.2.3");
+  assert.deepEqual(await inspectSourceCheckoutVersion({ sourceRoot: root }), { available: true, version: "4.2.3" });
+  await fs.writeFile(versionPath, 'export const EQUINOX_LOCAL_VERSION = "4.2.4";\n', { mode: 0o600 });
+  assert.deepEqual(await inspectSourceCheckoutVersion({ sourceRoot: root }), { available: true, version: "4.2.4" });
 });
 
 test("source tunnel inspection reports pinned-version drift without exposing paths", async (t) => {

@@ -27,13 +27,16 @@ esac
 [ -x "$DEV_NODE" ] || fail "configured developer Node runtime is not executable"
 
 EQUINOX_LOCAL_DEV_RUNTIME_CONFIG="$CONFIG" "$DEV_NODE" "$ROOT/../scripts/release/sync-source-tunnel-runtime.mjs"
+EQUINOX_LOCAL_DEV_RUNTIME_CONFIG="$CONFIG" "$DEV_NODE" "$ROOT/equinox-local-dev/prepare-source-app-host.mjs"
 
 LABEL=""
 RUNTIME=""
 TUNNEL_CLIENT=""
+SOURCE_LAUNCHER=""
 SEEN_LABEL=0
 SEEN_RUNTIME=0
 SEEN_CLIENT=0
+SEEN_SOURCE_LAUNCHER=0
 
 while IFS= read -r line || [ -n "$line" ]; do
   case "$line" in
@@ -58,6 +61,11 @@ while IFS= read -r line || [ -n "$line" ]; do
       TUNNEL_CLIENT="$value"
       SEEN_CLIENT=1
       ;;
+    sourceLauncher)
+      [ "$SEEN_SOURCE_LAUNCHER" -eq 0 ] || fail "developer runtime config repeats sourceLauncher"
+      SOURCE_LAUNCHER="$value"
+      SEEN_SOURCE_LAUNCHER=1
+      ;;
     *)
       fail "developer runtime config contains an unsupported field: $key"
       ;;
@@ -71,6 +79,11 @@ case "$TUNNEL_CLIENT" in
   *) fail "tunnelClient must be an absolute executable path" ;;
 esac
 [ -x "$TUNNEL_CLIENT" ] || fail "configured tunnelClient is not executable after synchronization"
+case "$SOURCE_LAUNCHER" in
+  /*) ;;
+  *) fail "sourceLauncher must be an absolute path" ;;
+esac
+[ -f "$SOURCE_LAUNCHER" ] && [ ! -L "$SOURCE_LAUNCHER" ] || fail "configured sourceLauncher is missing or unsafe"
 
 PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
 [ -f "$PLIST" ] && [ ! -L "$PLIST" ] || fail "configured LaunchAgent plist is missing or unsafe"
@@ -79,18 +92,25 @@ DOMAIN="gui/$CURRENT_UID"
 {
   printf '\n[%s] Equinox Local source-checkout restart started.\n' "$(date '+%Y-%m-%dT%H:%M:%S%z')"
 
+  OLD_PID="$(/usr/bin/pgrep -f "$DEV_NODE $ROOT/server.js" | /usr/bin/head -n 1 || true)"
+
   # Let the MCP response reach the client before the source runtime is restarted.
   sleep 8
 
   "$TUNNEL_CLIENT" runtimes stop "$RUNTIME" || true
 
-  /bin/launchctl print "$DOMAIN/$LABEL" >/dev/null 2>&1 || \
-    /bin/launchctl bootstrap "$DOMAIN" "$PLIST"
-
+  /bin/launchctl bootout "$DOMAIN/$LABEL" >/dev/null 2>&1 || true
+  /bin/launchctl bootstrap "$DOMAIN" "$PLIST"
   /bin/launchctl kickstart -k "$DOMAIN/$LABEL"
 
   sleep 8
   "$TUNNEL_CLIENT" runtimes status "$RUNTIME"
+
+  NEW_PID="$(/usr/bin/pgrep -f "$DEV_NODE $ROOT/server.js" | /usr/bin/head -n 1 || true)"
+  [ -n "$NEW_PID" ] || fail "source runtime did not start a new Equinox Local server process"
+  if [ -n "$OLD_PID" ] && [ "$NEW_PID" = "$OLD_PID" ]; then
+    fail "source runtime restart left the previous Equinox Local server process running"
+  fi
 
   printf '[%s] Equinox Local source-checkout restart completed.\n' "$(date '+%Y-%m-%dT%H:%M:%S%z')"
 } >>"$LOG_FILE" 2>&1
