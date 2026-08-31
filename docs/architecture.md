@@ -1,13 +1,15 @@
 # Architecture
 
-Equinox Local is a per-user macOS control plane that exposes bounded local capabilities to AI clients while giving the human a separate localhost management surface.
+Equinox Local is a per-user macOS control plane that exposes bounded local capabilities to AI clients while giving the human a native macOS Control Center backed by a private loopback management service.
 
 ## Main surfaces
 
 ```mermaid
 flowchart TB
     subgraph Human
+      APP[Equinox Local.app]
       CC[Control Center\n127.0.0.1:24891]
+      APP --> CC
     end
 
     subgraph Agent
@@ -73,15 +75,15 @@ Internal browser profiles used for development/release QA are not part of this p
 
 ## Control Center
 
-Control Center is served by the runtime on loopback. It uses fixed routes and same-origin assets; it is not a general static-file server. Mutations use validated JSON, same-origin checks, CSRF protection, and expected-revision guards where configuration changes are involved.
+The normal human entry point is the native `Equinox Local.app`, a small AppKit + WKWebView shell that renders Control Center from `127.0.0.1:24891`. The loopback URL remains usable for development and diagnostics, while the app keeps the browser address bar out of the product experience. Control Center itself is served by the runtime with fixed routes and same-origin assets; it is not a general static-file server. Mutations use validated JSON, same-origin checks, CSRF protection, and expected-revision guards where configuration changes are involved.
 
 Optional service integrations keep credentials outside the public configuration surface. For Telegram, Control Center can connect, test, or disconnect a bot for exactly one positive Telegram user ID; group/channel IDs are rejected, status exposes only readiness and a masked user-ID hint, and the agent surface receives only the bounded `telegram_send_message` operation with message text. There is no Telegram inbox/read operation, so inbound messages from other Telegram users are not exposed to agents.
 
 ## Managed installation
 
-A managed install is per-user and versioned. A `current` pointer selects the active release. The LaunchAgent and Browser Native Messaging host follow the managed current pointer rather than a developer checkout.
+A managed install is per-user and versioned. A `current` pointer selects the active release. The LaunchAgent runs through the stable `Equinox Local.app` identity in explicit runtime-host mode, while the app can also launch a separate foreground Control Center window. The Browser Native Messaging host follows the managed current pointer rather than a developer checkout.
 
-The first-install bootstrap and updater share the same release validation/activation concepts so the product has one managed lifecycle instead of separate installation and update worlds.
+Native app-shell artifacts are versioned with the managed release and synchronized before runtime activation; activation rollback restores the app shell that belongs to the previous release. The first-install bootstrap and updater share the same release validation/activation concepts so the product has one managed lifecycle instead of separate installation and update worlds.
 
 ## Observability and recovery
 

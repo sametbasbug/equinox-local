@@ -15,7 +15,7 @@ import {
 
 const execFile = promisify(execFileCallback);
 
-async function makeFixture({ version = "4.3.0", target = "darwin-arm64", withSymlink = false } = {}) {
+async function makeFixture({ version = "4.3.0", target = "darwin-arm64", withSymlink = false, nativeApp = false } = {}) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "equinox-release-manager-"));
   const sourceRoot = path.join(root, "source");
   const releaseRoot = path.join(sourceRoot, "release");
@@ -28,6 +28,7 @@ async function makeFixture({ version = "4.3.0", target = "darwin-arm64", withSym
     target,
     nodeVersion: "24.19.0",
     tunnelClientVersion: "0.0.12",
+    ...(nativeApp ? { nativeAppShellVersion: 1 } : {}),
     serverEntry: "server.js",
   }));
   await fs.writeFile(path.join(releaseRoot, "server.js"), "console.log('fixture');\n");
@@ -44,6 +45,14 @@ async function makeFixture({ version = "4.3.0", target = "darwin-arm64", withSym
   }
   await fs.writeFile(path.join(releaseRoot, "runtime", "tunnel", "LICENSE"), "fixture license\n");
   await fs.writeFile(path.join(releaseRoot, "runtime", "tunnel", "NOTICE"), "fixture notice\n");
+  if (nativeApp) {
+    const appRoot = path.join(releaseRoot, "runtime", "app");
+    await fs.mkdir(appRoot, { recursive: true });
+    await fs.writeFile(path.join(appRoot, "applet"), "fixture app\n");
+    await fs.chmod(path.join(appRoot, "applet"), 0o755);
+    await fs.writeFile(path.join(appRoot, "EquinoxLocal.png"), "fixture icon\n");
+    await fs.writeFile(path.join(appRoot, "native-app.json"), "{}\n");
+  }
   if (withSymlink) await fs.symlink("server.js", path.join(releaseRoot, "server-link.js"));
 
   const archivePath = path.join(root, "release.tar.gz");
@@ -148,4 +157,26 @@ test("managed release preparation verifies, extracts and atomically promotes the
     }),
     /already present/u,
   );
+});
+
+test("managed release preparation accepts the native app shell while keeping legacy releases compatible", async (t) => {
+  const fixture = await makeFixture({ nativeApp: true });
+  t.after(() => fs.rm(fixture.root, { recursive: true, force: true }));
+  const installation = installationFor(fixture.root);
+  const result = await prepareManagedEquinoxRelease({
+    installation,
+    manifest: {
+      version: fixture.version,
+      target: fixture.target,
+      artifact: {
+        url: "https://local.sametbasbug.dev/downloads/updates/equinox-local-4.3.0-darwin-arm64.tar.gz",
+        sha256: fixture.sha256,
+        bytes: fixture.bytes.length,
+      },
+    },
+    fetchImpl: async () => responseFor(fixture.bytes),
+  });
+  const metadata = JSON.parse(await fs.readFile(path.join(result.targetReleaseDir, "release.json"), "utf8"));
+  assert.equal(metadata.nativeAppShellVersion, 1);
+  assert.equal((await fs.lstat(path.join(result.targetReleaseDir, "runtime", "app", "applet"))).isFile(), true);
 });

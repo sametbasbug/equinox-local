@@ -82,11 +82,18 @@ test("launch agent uses the stable Equinox Local app identity while runtime wrap
   const plist = launchAgentPlist({ homeDir, installRoot });
   assert.match(plist, /dev\.equinox\.local/u);
   assert.match(plist, /Applications\/Equinox Local\.app\/Contents\/MacOS\/applet/u);
+  assert.match(plist, /EQUINOX_LOCAL_RUNTIME_HOST<\/key>\n    <string>1<\/string>/u);
   assert.doesNotMatch(plist, /current\/runtime\/node\/bin\/node/u);
 
   const runtimeWrapper = appRuntimeWrapper({ installRoot });
   assert.match(runtimeWrapper, /current\/runtime\/node\/bin\/node/u);
   assert.match(runtimeWrapper, /current\/equinox-local-supervisor\.js/u);
+  assert.match(runtimeWrapper, /RUNTIME_HOST_PID=\$PPID/u);
+  assert.match(runtimeWrapper, /PARENT_WATCHDOG_PID/u);
+  assert.match(runtimeWrapper, /SUPERVISOR_PID/u);
+  assert.match(runtimeWrapper, /watch_runtime_host/u);
+  assert.match(runtimeWrapper, /trap shutdown INT TERM HUP/u);
+  assert.doesNotMatch(runtimeWrapper, /exec .*equinox-local-supervisor/u);
   assert.doesNotMatch(runtimeWrapper, /releases\/4\.2\.0/u);
 
   const wrapper = nativeHostWrapper({ installRoot });

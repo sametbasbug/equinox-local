@@ -9,10 +9,10 @@ import {
   serializeEquinoxLocalConfig,
 } from "./equinox-local-config.js";
 import {
-  ensureEquinoxLocalAppHost,
   equinoxLocalAppExecutablePath,
   equinoxLocalAppRuntimeWrapperPath,
 } from "./equinox-local-app-host.js";
+import { synchronizeEquinoxLocalNativeAppHost } from "./equinox-local-native-app-host.js";
 import { readBoundedNormalFile } from "./equinox-local-safe-file.js";
 import {
   managedSupervisorPaths,
@@ -224,7 +224,7 @@ export function appRuntimeWrapper({ installRoot }) {
   const current = path.join(installRoot, "current");
   const nodeBinary = path.join(current, "runtime", "node", "bin", "node");
   const supervisor = path.join(current, "equinox-local-supervisor.js");
-  return `#!/bin/bash\nset -euo pipefail\nexec ${shellQuote(nodeBinary)} ${shellQuote(supervisor)}\n`;
+  return `#!/bin/bash\nset -euo pipefail\nRUNTIME_HOST_PID=$PPID\nSUPERVISOR_PID=\"\"\nPARENT_WATCHDOG_PID=\"\"\ncleanup() {\n  if [ -n \"$PARENT_WATCHDOG_PID\" ]; then\n    kill \"$PARENT_WATCHDOG_PID\" >/dev/null 2>&1 || true\n    wait \"$PARENT_WATCHDOG_PID\" 2>/dev/null || true\n  fi\n  if [ -n \"$SUPERVISOR_PID\" ]; then\n    kill \"$SUPERVISOR_PID\" >/dev/null 2>&1 || true\n    wait \"$SUPERVISOR_PID\" 2>/dev/null || true\n  fi\n}\nshutdown() {\n  exit 0\n}\ntrap cleanup EXIT\ntrap shutdown INT TERM HUP\nwatch_runtime_host() {\n  while kill -0 \"$RUNTIME_HOST_PID\" >/dev/null 2>&1; do\n    sleep 1\n  done\n  kill -TERM \"$$\" >/dev/null 2>&1 || true\n}\nwatch_runtime_host &\nPARENT_WATCHDOG_PID=$!\n${shellQuote(nodeBinary)} ${shellQuote(supervisor)} &\nSUPERVISOR_PID=$!\nwait \"$SUPERVISOR_PID\"\n`;
 }
 
 export function launchAgentPlist({ homeDir, installRoot }) {
@@ -232,7 +232,7 @@ export function launchAgentPlist({ homeDir, installRoot }) {
   const logsDir = path.join(homeDir, "Library", "Logs");
   const stdoutPath = path.join(logsDir, "Equinox Local.log");
   const stderrPath = path.join(logsDir, "Equinox Local.error.log");
-  return `<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0">\n<dict>\n  <key>Label</key>\n  <string>${EQUINOX_LOCAL_LAUNCH_AGENT_LABEL}</string>\n  <key>ProgramArguments</key>\n  <array>\n    <string>${xmlEscape(appExecutable)}</string>\n  </array>\n  <key>EnvironmentVariables</key>\n  <dict>\n    <key>HOME</key>\n    <string>${xmlEscape(homeDir)}</string>\n    <key>EQUINOX_LOCAL_INSTALL_ROOT</key>\n    <string>${xmlEscape(installRoot)}</string>\n  </dict>\n  <key>RunAtLoad</key>\n  <true/>\n  <key>KeepAlive</key>\n  <true/>\n  <key>ProcessType</key>\n  <string>Background</string>\n  <key>ThrottleInterval</key>\n  <integer>10</integer>\n  <key>StandardOutPath</key>\n  <string>${xmlEscape(stdoutPath)}</string>\n  <key>StandardErrorPath</key>\n  <string>${xmlEscape(stderrPath)}</string>\n</dict>\n</plist>\n`;
+  return `<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0">\n<dict>\n  <key>Label</key>\n  <string>${EQUINOX_LOCAL_LAUNCH_AGENT_LABEL}</string>\n  <key>ProgramArguments</key>\n  <array>\n    <string>${xmlEscape(appExecutable)}</string>\n  </array>\n  <key>EnvironmentVariables</key>\n  <dict>\n    <key>HOME</key>\n    <string>${xmlEscape(homeDir)}</string>\n    <key>EQUINOX_LOCAL_RUNTIME_HOST</key>\n    <string>1</string>\n    <key>EQUINOX_LOCAL_INSTALL_ROOT</key>\n    <string>${xmlEscape(installRoot)}</string>\n  </dict>\n  <key>RunAtLoad</key>\n  <true/>\n  <key>KeepAlive</key>\n  <true/>\n  <key>ProcessType</key>\n  <string>Background</string>\n  <key>ThrottleInterval</key>\n  <integer>10</integer>\n  <key>StandardOutPath</key>\n  <string>${xmlEscape(stdoutPath)}</string>\n  <key>StandardErrorPath</key>\n  <string>${xmlEscape(stderrPath)}</string>\n</dict>\n</plist>\n`;
 }
 
 export function nativeHostManifest(hostWrapperPath) {
@@ -271,7 +271,7 @@ async function ensureInitialConfig({ homeDir, installRoot, configPath }) {
 
 export async function bootstrapManagedEquinoxUser({
   homeDir = os.homedir(),
-  ensureAppHostImpl = ensureEquinoxLocalAppHost,
+  ensureAppHostImpl = null,
 } = {}) {
   if (process.platform !== "darwin") throw new Error("Equinox Local managed bootstrap is supported only on macOS.");
   const paths = managedSupervisorPaths(homeDir);
@@ -290,7 +290,9 @@ export async function bootstrapManagedEquinoxUser({
   await ensureDirectory(logsRoot, 0o700, { enforceMode: false });
 
   const config = await ensureInitialConfig({ homeDir, installRoot: paths.installRoot, configPath });
-  const appHost = await ensureAppHostImpl({ homeDir });
+  const appHost = ensureAppHostImpl
+    ? await ensureAppHostImpl({ homeDir })
+    : await synchronizeEquinoxLocalNativeAppHost({ homeDir, releaseDir: release.releaseDir });
   const appRuntimeWrapperPath = equinoxLocalAppRuntimeWrapperPath(homeDir);
   await atomicWrite(appRuntimeWrapperPath, appRuntimeWrapper({ installRoot: paths.installRoot }), 0o700);
 

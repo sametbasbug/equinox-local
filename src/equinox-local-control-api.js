@@ -28,6 +28,10 @@ const CONTROL_CENTER_ASSETS = new Map([
     url: new URL("./equinox-control-center.js", import.meta.url),
     contentType: "text/javascript; charset=utf-8",
   })],
+  ["/assets/equinox-local.png", Object.freeze({
+    url: new URL("../equinox-local-app/EquinoxLocal.png", import.meta.url),
+    contentType: "image/png",
+  })],
 ]);
 
 function jsonBody(res, statusCode, payload, extraHeaders = {}) {

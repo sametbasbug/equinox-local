@@ -115,7 +115,7 @@ export async function validateFirstInstallRelease(releaseDir, {
   const metadataPath = path.join(releaseDir, "release.json");
   await assertNormalFile(metadataPath, "Release metadata", { maxBytes: MAX_RELEASE_METADATA_BYTES, fsImpl });
   const metadata = JSON.parse(await fsImpl.readFile(metadataPath, "utf8"));
-  exactKeys(metadata, ["schemaVersion", "version", "target", "nodeVersion", "tunnelClientVersion", "serverEntry"], "Release metadata");
+  exactKeys(metadata, ["schemaVersion", "version", "target", "nodeVersion", "tunnelClientVersion", "nativeAppShellVersion", "serverEntry"], "Release metadata");
   if (
     metadata.schemaVersion !== 1 ||
     metadata.target !== target ||
@@ -123,7 +123,9 @@ export async function validateFirstInstallRelease(releaseDir, {
     typeof metadata.nodeVersion !== "string" ||
     !/^\d+\.\d+\.\d+$/u.test(metadata.nodeVersion) ||
     typeof metadata.tunnelClientVersion !== "string" ||
-    !/^\d+\.\d+\.\d+$/u.test(metadata.tunnelClientVersion)
+    !/^\d+\.\d+\.\d+$/u.test(metadata.tunnelClientVersion) ||
+    !Number.isSafeInteger(metadata.nativeAppShellVersion) ||
+    metadata.nativeAppShellVersion < 1
   ) {
     throw new Error(`Staged Equinox Local release metadata is invalid for ${target}.`);
   }
@@ -131,6 +133,9 @@ export async function validateFirstInstallRelease(releaseDir, {
   for (const relative of REQUIRED_RUNTIME_FILES) {
     await assertNormalFile(path.join(releaseDir, relative), `Runtime ${relative}`, { executable: true, fsImpl });
   }
+  await assertNormalFile(path.join(releaseDir, "runtime", "app", "applet"), "Native app executable", { executable: true, fsImpl });
+  await assertNormalFile(path.join(releaseDir, "runtime", "app", "EquinoxLocal.png"), "Native app icon", { fsImpl });
+  await assertNormalFile(path.join(releaseDir, "runtime", "app", "native-app.json"), "Native app metadata", { fsImpl });
   for (const relative of REQUIRED_RELEASE_FILES) {
     await assertNormalFile(path.join(releaseDir, relative), `Release ${relative}`, { fsImpl });
   }
@@ -202,7 +207,7 @@ async function reloadLaunchAgent(installation, {
     timeout: 15_000,
     maxBuffer: 1024 * 1024,
   });
-  await execFileImpl("/bin/launchctl", ["kickstart", "-k", service], {
+  await execFileImpl("/bin/launchctl", ["kickstart", service], {
     timeout: 15_000,
     maxBuffer: 1024 * 1024,
   });

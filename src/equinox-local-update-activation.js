@@ -4,6 +4,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 
+import { synchronizeEquinoxLocalAppHostForRelease } from "./equinox-local-native-app-host.js";
 import { equinoxLocalUpdateTarget, parseEquinoxVersion } from "./equinox-local-updater.js";
 
 const execFile = promisify(execFileCallback);
@@ -44,6 +45,7 @@ async function assertReleaseDirectory(installation, version) {
     !/^\d+\.\d+\.\d+$/u.test(metadata.nodeVersion) ||
     typeof metadata?.tunnelClientVersion !== "string" ||
     !/^\d+\.\d+\.\d+$/u.test(metadata.tunnelClientVersion) ||
+    (metadata?.nativeAppShellVersion !== undefined && (!Number.isSafeInteger(metadata.nativeAppShellVersion) || metadata.nativeAppShellVersion < 1)) ||
     metadata?.serverEntry !== "server.js"
   ) {
     throw new Error(`Managed release ${version} metadata is invalid for ${expectedTarget}.`);
@@ -120,12 +122,98 @@ export async function atomicSwitchCurrentRelease(installation, targetVersion) {
 export async function kickstartEquinoxLocalLaunchAgent(installation, {
   execFileImpl = execFile,
   uid = process.getuid?.(),
+  sleepImpl = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
 } = {}) {
   if (!Number.isInteger(uid) || uid < 1) throw new Error("A non-root user id is required to restart Equinox Local.");
   if (typeof installation?.launchAgentLabel !== "string" || installation.launchAgentLabel !== "dev.equinox.local") {
     throw new Error("Unexpected Equinox Local LaunchAgent label.");
   }
-  await execFileImpl("/bin/launchctl", ["kickstart", "-k", `gui/${uid}/${installation.launchAgentLabel}`], {
+  if (typeof installation?.launchAgentPath !== "string" || !path.isAbsolute(installation.launchAgentPath)) {
+    throw new Error("Managed Equinox Local LaunchAgent path is unavailable.");
+  }
+
+  const domain = `gui/${uid}`;
+  const service = `${domain}/${installation.launchAgentLabel}`;
+  let loaded = false;
+  let hostPid = null;
+  try {
+    const { stdout } = await execFileImpl("/bin/launchctl", ["print", service], {
+      encoding: "utf8",
+      timeout: 5_000,
+      maxBuffer: 1024 * 1024,
+    });
+    loaded = true;
+    const match = String(stdout ?? "").match(/^\s*pid = (\d+)\s*$/mu);
+    hostPid = match ? Number(match[1]) : null;
+  } catch {
+    loaded = false;
+  }
+
+  if (Number.isInteger(hostPid) && hostPid > 1) {
+    let childPids = [];
+    try {
+      const { stdout } = await execFileImpl("/usr/bin/pgrep", ["-P", String(hostPid)], {
+        encoding: "utf8",
+        timeout: 5_000,
+        maxBuffer: 64 * 1024,
+      });
+      childPids = String(stdout ?? "")
+        .split(/\r?\n/u)
+        .map((value) => Number(value.trim()))
+        .filter((value) => Number.isInteger(value) && value > 1);
+    } catch {
+      childPids = [];
+    }
+
+    for (const childPid of childPids) {
+      const { stdout } = await execFileImpl("/bin/ps", ["-p", String(childPid), "-o", "uid=,ppid="], {
+        encoding: "utf8",
+        timeout: 5_000,
+        maxBuffer: 16 * 1024,
+      });
+      const [childUid, childParent] = String(stdout ?? "").trim().split(/\s+/u).map(Number);
+      if (childUid === uid && childParent === hostPid) {
+        await execFileImpl("/bin/kill", ["-TERM", String(childPid)], { timeout: 5_000, maxBuffer: 16 * 1024 }).catch(() => {});
+      }
+    }
+
+    for (const childPid of childPids) {
+      let alive = true;
+      for (let attempt = 0; attempt < 40; attempt += 1) {
+        try {
+          await execFileImpl("/bin/kill", ["-0", String(childPid)], { timeout: 2_000, maxBuffer: 16 * 1024 });
+          await sleepImpl(100);
+        } catch {
+          alive = false;
+          break;
+        }
+      }
+      if (alive) throw new Error("Managed Equinox Local runtime child did not stop cleanly before LaunchAgent reload.");
+    }
+  }
+
+  if (loaded) {
+    await execFileImpl("/bin/launchctl", ["bootout", service], {
+      timeout: 15_000,
+      maxBuffer: 1024 * 1024,
+    });
+    for (let attempt = 0; attempt < 40; attempt += 1) {
+      try {
+        await execFileImpl("/bin/launchctl", ["print", service], { timeout: 2_000, maxBuffer: 64 * 1024 });
+        await sleepImpl(100);
+      } catch {
+        loaded = false;
+        break;
+      }
+    }
+    if (loaded) throw new Error("Managed Equinox Local LaunchAgent did not finish bootout.");
+  }
+
+  await execFileImpl("/bin/launchctl", ["bootstrap", domain, installation.launchAgentPath], {
+    timeout: 15_000,
+    maxBuffer: 1024 * 1024,
+  });
+  await execFileImpl("/bin/launchctl", ["kickstart", service], {
     timeout: 15_000,
     maxBuffer: 1024 * 1024,
   });
@@ -174,6 +262,7 @@ export async function activatePreparedEquinoxRelease({
   installation,
   targetVersion,
   kickstartImpl = () => kickstartEquinoxLocalLaunchAgent(installation),
+  syncAppHostImpl = ({ releaseDir }) => synchronizeEquinoxLocalAppHostForRelease({ installation, releaseDir }),
   fetchImpl = globalThis.fetch,
   sleepImpl,
   healthAttempts = HEALTH_ATTEMPTS,
@@ -187,6 +276,7 @@ export async function activatePreparedEquinoxRelease({
   }
 
   try {
+    await syncAppHostImpl({ version: targetVersion, releaseDir: switchResult.current.releaseDir });
     await kickstartImpl(targetVersion);
     await waitForEquinoxLocalVersion(targetVersion, {
       fetchImpl,
@@ -208,6 +298,7 @@ export async function activatePreparedEquinoxRelease({
   } catch (activationError) {
     try {
       await atomicSwitchCurrentRelease(installation, switchResult.previous.version);
+      await syncAppHostImpl({ version: switchResult.previous.version, releaseDir: switchResult.previous.releaseDir });
       await kickstartImpl(switchResult.previous.version);
       await waitForEquinoxLocalVersion(switchResult.previous.version, {
         fetchImpl,

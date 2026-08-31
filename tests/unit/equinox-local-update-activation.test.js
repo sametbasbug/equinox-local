@@ -7,6 +7,7 @@ import test from "node:test";
 import {
   activatePreparedEquinoxRelease,
   atomicSwitchCurrentRelease,
+  kickstartEquinoxLocalLaunchAgent,
   readManagedCurrentRelease,
 } from "../../src/equinox-local-update-activation.js";
 import { equinoxLocalUpdateTarget } from "../../src/equinox-local-updater.js";
@@ -51,6 +52,7 @@ async function makeInstall() {
       releasesRoot,
       stagingRoot: path.join(installRoot, "staging"),
       currentLink,
+      launchAgentPath: path.join(root, "dev.equinox.local.plist"),
       launchAgentLabel: "dev.equinox.local",
     },
   };
@@ -75,14 +77,62 @@ test("current release switch is atomic and remains inside the managed releases r
   );
 });
 
+test("managed LaunchAgent restart drains the exact runtime child before reload and never uses kickstart -k", async (t) => {
+  const fixture = await makeInstall();
+  t.after(() => fs.rm(fixture.root, { recursive: true, force: true }));
+  const calls = [];
+  let loaded = true;
+  let childAlive = true;
+  const execFileImpl = async (command, args) => {
+    calls.push([command, ...args]);
+    if (command === "/bin/launchctl" && args[0] === "print") {
+      if (!loaded) throw Object.assign(new Error("not loaded"), { code: 3 });
+      return { stdout: "state = running\n\tpid = 123\n" };
+    }
+    if (command === "/usr/bin/pgrep") return { stdout: "456\n" };
+    if (command === "/bin/ps") return { stdout: "501 123\n" };
+    if (command === "/bin/kill" && args[0] === "-TERM") {
+      childAlive = false;
+      return { stdout: "" };
+    }
+    if (command === "/bin/kill" && args[0] === "-0") {
+      if (childAlive) return { stdout: "" };
+      throw Object.assign(new Error("gone"), { code: 1 });
+    }
+    if (command === "/bin/launchctl" && args[0] === "bootout") {
+      loaded = false;
+      return { stdout: "" };
+    }
+    if (command === "/bin/launchctl" && args[0] === "bootstrap") {
+      loaded = true;
+      return { stdout: "" };
+    }
+    if (command === "/bin/launchctl" && args[0] === "kickstart") return { stdout: "" };
+    throw new Error(`Unexpected command: ${command} ${args.join(" ")}`);
+  };
+
+  await kickstartEquinoxLocalLaunchAgent(fixture.installation, {
+    execFileImpl,
+    uid: 501,
+    sleepImpl: async () => {},
+  });
+
+  assert.equal(calls.some((call) => call[0] === "/bin/kill" && call[1] === "-TERM" && call[2] === "456"), true);
+  assert.equal(calls.some((call) => call[0] === "/bin/launchctl" && call[1] === "bootout"), true);
+  assert.equal(calls.some((call) => call[0] === "/bin/launchctl" && call[1] === "bootstrap"), true);
+  assert.equal(calls.some((call) => call[0] === "/bin/launchctl" && call[1] === "kickstart" && call.includes("-k")), false);
+});
+
 test("successful activation restarts and accepts only the requested healthy version", async (t) => {
   const fixture = await makeInstall();
   t.after(() => fs.rm(fixture.root, { recursive: true, force: true }));
   const restarts = [];
+  const appSyncs = [];
   const result = await activatePreparedEquinoxRelease({
     installation: fixture.installation,
     targetVersion: "4.3.0",
     kickstartImpl: async (version) => restarts.push(version),
+    syncAppHostImpl: async ({ version }) => appSyncs.push(version),
     fetchImpl: async () => new Response(JSON.stringify({
       status: {
         server: { version: await currentVersion(fixture.installation) },
@@ -94,6 +144,7 @@ test("successful activation restarts and accepts only the requested healthy vers
     now: () => new Date("2026-08-25T02:00:00.000Z"),
   });
   assert.deepEqual(restarts, ["4.3.0"]);
+  assert.deepEqual(appSyncs, ["4.3.0"]);
   assert.equal(result.status, "activated");
   assert.equal(await currentVersion(fixture.installation), "4.3.0");
   const state = JSON.parse(await fs.readFile(path.join(fixture.installation.installRoot, "update-state.json"), "utf8"));
@@ -106,6 +157,7 @@ test("failed target health automatically restores and verifies the previous rele
   const fixture = await makeInstall();
   t.after(() => fs.rm(fixture.root, { recursive: true, force: true }));
   const restarts = [];
+  const appSyncs = [];
   let targetHealthAttempts = 0;
   const fetchImpl = async () => {
     const version = await currentVersion(fixture.installation);
@@ -126,6 +178,7 @@ test("failed target health automatically restores and verifies the previous rele
       installation: fixture.installation,
       targetVersion: "4.3.0",
       kickstartImpl: async (version) => restarts.push(version),
+      syncAppHostImpl: async ({ version }) => appSyncs.push(version),
       fetchImpl,
       sleepImpl: async () => {},
       healthAttempts: 2,
@@ -135,6 +188,7 @@ test("failed target health automatically restores and verifies the previous rele
   );
   assert.equal(targetHealthAttempts, 2);
   assert.deepEqual(restarts, ["4.3.0", "4.2.0"]);
+  assert.deepEqual(appSyncs, ["4.3.0", "4.2.0"]);
   assert.equal(await currentVersion(fixture.installation), "4.2.0");
   const state = JSON.parse(await fs.readFile(path.join(fixture.installation.installRoot, "update-state.json"), "utf8"));
   assert.equal(state.status, "rolled-back");

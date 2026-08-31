@@ -6,6 +6,8 @@ import {
   __test,
   buildSafePeekabooEnvironment,
   inspectPeekabooCompatibility,
+  isPeekabooControlCenterReady,
+  isPeekabooStatusReady,
   normalizePeekabooArguments,
   parsePeekabooPermissions,
 } from "../../src/peekaboo-bridge.js";
@@ -258,6 +260,12 @@ test("Peekaboo permission parser and preflight distinguish granted permissions",
     ),
     { screenRecording: true, accessibility: false },
   );
+  assert.deepEqual(
+    parsePeekabooPermissions(
+      "Screen Recording (Required): [ok] Granted\nAccessibility (Required): [ok] Granted\nEvent Synthesizing (Action-specific): [ok] Granted",
+    ),
+    { screenRecording: true, accessibility: true },
+  );
 
   assert.doesNotThrow(() =>
     __test.assertPermissionState("see", {
@@ -273,6 +281,40 @@ test("Peekaboo permission parser and preflight distinguish granted permissions",
       }),
     /Accessibility izni gerekli/u,
   );
+});
+
+test("Control Center readiness trusts verified compatibility and permissions over optional status noise", () => {
+  const readyStatus = {
+    active: true,
+    compatibility: { ok: true },
+    permissionState: { screenRecording: true, accessibility: true },
+    error: "server_status",
+  };
+  assert.equal(isPeekabooStatusReady(readyStatus), true);
+  assert.equal(isPeekabooStatusReady({ ...readyStatus, permissionState: { screenRecording: true, accessibility: false } }), false);
+  assert.equal(isPeekabooStatusReady({ ...readyStatus, compatibility: { ok: false } }), false);
+  assert.equal(isPeekabooStatusReady({ ...readyStatus, active: false }), false);
+  assert.equal(isPeekabooStatusReady({
+    active: true,
+    compatibility: { ok: true },
+    permissions: "Screen Recording: [ok] Granted\nAccessibility: [ok] Granted",
+  }), true);
+});
+
+test("Control Center passive readiness never treats unknown permissions as an attention state", () => {
+  const passiveStatus = {
+    active: true,
+    compatibility: { ok: true },
+    permissionState: null,
+    permissions: null,
+  };
+  assert.equal(isPeekabooControlCenterReady(passiveStatus), true);
+  assert.equal(isPeekabooControlCenterReady({
+    ...passiveStatus,
+    permissionState: { screenRecording: true, accessibility: false },
+  }), false);
+  assert.equal(isPeekabooControlCenterReady({ ...passiveStatus, compatibility: { ok: false } }), false);
+  assert.equal(isPeekabooControlCenterReady({ ...passiveStatus, active: false }), false);
 });
 
 test("destructive desktop shortcuts and protected system processes are blocked", () => {

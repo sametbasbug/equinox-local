@@ -15,7 +15,6 @@ const state = {
   onboardingReconnectTimer: null,
   uninstallBusy: false,
   uninstallScheduled: false,
-  github: null,
   telegram: null,
   telegramBotToken: "",
   telegramUserId: "",
@@ -709,7 +708,6 @@ function renderIntegrations() {
   list.replaceChildren();
   const browser = state.status?.browser || {};
   const peekaboo = state.status?.peekaboo || {};
-  const github = state.github;
   const browserStatus = browser.ready
     ? browser.consentAccepted === false
       ? "Consent required"
@@ -743,17 +741,6 @@ function renderIntegrations() {
         : "Optional macOS desktop capability. It is not required for core Equinox Local filesystem or Git operations.",
       peekabooStatus,
       peekabooTone,
-    ),
-    createIntegrationCard(
-      "GitHub",
-      github === null
-        ? "Optional GitHub CLI integration. Check only verifies the existing local credential state; credentials are never returned to the browser."
-        : github.ready
-          ? `GitHub CLI is ready${github.account ? ` for ${github.account}` : ""}.`
-          : "GitHub CLI is not authenticated or not available to Equinox Local.",
-      github === null ? "Not checked" : github.ready ? "Ready" : "Needs attention",
-      github === null ? "neutral" : github.ready ? "good" : "warn",
-      [{ label: github === null ? "Check connection" : "Check again", onClick: checkGitHubIntegration }],
     ),
     createTelegramIntegrationCard(),
   );
@@ -907,7 +894,7 @@ async function refreshAll() {
   clearError();
   $("refresh-button").disabled = true;
   try {
-    const [health, status, config, activity, update, onboarding, doctor, github, peekaboo, telegram] = await Promise.all([
+    const [health, status, config, activity, update, onboarding, doctor, peekaboo, telegram] = await Promise.all([
       requestJson("/api/v1/health"),
       requestJson("/api/v1/status"),
       requestJson("/api/v1/config"),
@@ -915,7 +902,6 @@ async function refreshAll() {
       requestJson("/api/v1/update"),
       requestJson("/api/v1/onboarding"),
       requestJson("/api/v1/doctor"),
-      requestJson("/api/v1/integrations/github").catch(() => ({ github: null })),
       requestJson("/api/v1/integrations/peekaboo").catch(() => ({ peekaboo: null })),
       requestJson("/api/v1/integrations/telegram").catch(() => ({ telegram: null })),
     ]);
@@ -927,7 +913,6 @@ async function refreshAll() {
     state.update = update.update || null;
     state.onboarding = onboarding.onboarding || null;
     state.doctor = doctor.doctor || null;
-    state.github = github.github || null;
     if (peekaboo.peekaboo) {
       state.status = {
         ...(state.status || {}),
@@ -1125,24 +1110,6 @@ async function saveBrowserSettings() {
   } finally {
     state.browserSettingsBusy = false;
     renderBrowserPage();
-  }
-}
-
-async function checkGitHubIntegration() {
-  if (state.integrationBusy) return;
-  clearError();
-  state.integrationBusy = true;
-  renderIntegrations();
-  try {
-    const result = await mutationJson("/api/v1/integrations/github/check", "POST", {});
-    state.github = result.github || { ready: false, account: null };
-    renderIntegrations();
-    showToast(state.github.ready ? "GitHub connection is ready." : "GitHub needs attention.");
-  } catch (error) {
-    showError(error);
-  } finally {
-    state.integrationBusy = false;
-    renderIntegrations();
   }
 }
 

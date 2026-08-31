@@ -170,8 +170,10 @@ async function readReleaseMetadata(releaseDir, expectedVersion, expectedTarget) 
   const text = await fs.readFile(metadataPath, "utf8");
   const metadata = JSON.parse(text);
   const keys = Object.keys(metadata).sort();
-  const expectedKeys = ["nodeVersion", "schemaVersion", "serverEntry", "target", "tunnelClientVersion", "version"];
-  if (keys.length !== expectedKeys.length || keys.some((key, index) => key !== expectedKeys[index])) {
+  const legacyKeys = ["nodeVersion", "schemaVersion", "serverEntry", "target", "tunnelClientVersion", "version"].sort();
+  const nativeKeys = [...legacyKeys, "nativeAppShellVersion"].sort();
+  const matches = (expected) => keys.length === expected.length && keys.every((key, index) => key === expected[index]);
+  if (!matches(legacyKeys) && !matches(nativeKeys)) {
     throw new Error("Release metadata contains missing or unsupported fields.");
   }
   if (
@@ -182,6 +184,7 @@ async function readReleaseMetadata(releaseDir, expectedVersion, expectedTarget) 
     !/^\d+\.\d+\.\d+$/u.test(metadata.nodeVersion) ||
     typeof metadata.tunnelClientVersion !== "string" ||
     !/^\d+\.\d+\.\d+$/u.test(metadata.tunnelClientVersion) ||
+    (metadata.nativeAppShellVersion !== undefined && (!Number.isSafeInteger(metadata.nativeAppShellVersion) || metadata.nativeAppShellVersion < 1)) ||
     metadata.serverEntry !== "server.js"
   ) {
     throw new Error("Release metadata does not match the expected Equinox Local release.");
@@ -203,6 +206,19 @@ async function readReleaseMetadata(releaseDir, expectedVersion, expectedTarget) 
     const executable = await fs.lstat(path.join(releaseDir, relative));
     if (!executable.isFile() || executable.isSymbolicLink() || (executable.mode & 0o111) === 0) {
       throw new Error(`Release must contain executable runtime file ${relative}.`);
+    }
+  }
+  if (metadata.nativeAppShellVersion !== undefined) {
+    const appExecutable = await fs.lstat(path.join(releaseDir, "runtime", "app", "applet"));
+    if (!appExecutable.isFile() || appExecutable.isSymbolicLink() || (appExecutable.mode & 0o111) === 0) {
+      throw new Error("Release must contain the executable Equinox Local native app shell.");
+    }
+    for (const relative of [
+      path.join("runtime", "app", "EquinoxLocal.png"),
+      path.join("runtime", "app", "native-app.json"),
+    ]) {
+      const appFile = await fs.lstat(path.join(releaseDir, relative));
+      if (!appFile.isFile() || appFile.isSymbolicLink()) throw new Error(`Release must contain native app file ${relative}.`);
     }
   }
   for (const relative of [

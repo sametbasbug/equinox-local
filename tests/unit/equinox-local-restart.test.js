@@ -37,10 +37,16 @@ test("source-checkout restart uses only private generic developer runtime config
   assert.match(script, /prepare-source-app-host\.mjs/u);
   assert.match(script, /OLD_PID=.*pgrep/u);
   assert.match(script, /NEW_PID=.*pgrep/u);
+  assert.match(script, /pgrep -f "node \$ROOT\/server\.js"/u);
+  assert.doesNotMatch(script, /pgrep -f "\$DEV_NODE \$ROOT\/server\.js"/u);
   assert.match(script, /previous Equinox Local server process running/u);
   assert.match(script, /launchctl bootout/u);
+  assert.match(script, /launchctl print/u);
+  assert.match(script, /bootout is asynchronous/u);
+  assert.match(script, /source LaunchAgent bootstrap failed after bounded retries/u);
   assert.match(script, /launchctl bootstrap/u);
-  assert.match(script, /launchctl kickstart -k/u);
+  assert.equal(script.includes('launchctl kickstart "$DOMAIN/$LABEL"'), true);
+  assert.doesNotMatch(script, /launchctl kickstart -k/u);
   assert.doesNotMatch(script, /^LABEL="[^"\n]+"/mu);
   assert.doesNotMatch(script, /^RUNTIME="[^"\n]+"/mu);
   assert.doesNotMatch(script, /^TUNNEL_CLIENT="\/[^"\n]+"/mu);

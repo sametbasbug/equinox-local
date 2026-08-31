@@ -28,21 +28,26 @@ async function createFixture(version = "4.2.0") {
   const releaseDir = path.join(stageRoot, "release");
   await fs.mkdir(path.join(releaseDir, "runtime", "node", "bin"), { recursive: true, mode: 0o700 });
   await fs.mkdir(path.join(releaseDir, "runtime", "tunnel"), { recursive: true, mode: 0o700 });
+  await fs.mkdir(path.join(releaseDir, "runtime", "app"), { recursive: true, mode: 0o700 });
   await fs.writeFile(path.join(releaseDir, "release.json"), `${JSON.stringify({
     schemaVersion: 1,
     version,
     target: TARGET,
     nodeVersion: "24.19.0",
     tunnelClientVersion: "0.0.12",
+    nativeAppShellVersion: 1,
     serverEntry: "server.js",
   })}\n`, { mode: 0o600 });
   for (const relative of [
     path.join("runtime", "node", "bin", "node"),
     path.join("runtime", "tunnel", "tunnel-client"),
     path.join("runtime", "tunnel", "cloudflared"),
+    path.join("runtime", "app", "applet"),
   ]) {
     await fs.writeFile(path.join(releaseDir, relative), "fixture\n", { mode: 0o700 });
   }
+  await fs.writeFile(path.join(releaseDir, "runtime", "app", "EquinoxLocal.png"), "fixture\n", { mode: 0o600 });
+  await fs.writeFile(path.join(releaseDir, "runtime", "app", "native-app.json"), "{}\n", { mode: 0o600 });
   for (const relative of [
     "server.js",
     "equinox-local-bootstrap.js",
@@ -66,6 +71,7 @@ test("first-install release validation requires exact target metadata and bundle
       target: "darwin-x64",
       nodeVersion: "24.19.0",
       tunnelClientVersion: "0.0.12",
+      nativeAppShellVersion: 1,
       serverEntry: "server.js",
     })}\n`);
     await assert.rejects(
@@ -120,6 +126,7 @@ test("first install promotes the verified release, bootstraps the user and loads
     assert.equal(await fs.readlink(path.join(fixture.installRoot, "current")), "releases/4.2.0");
     assert.deepEqual(waited, ["4.2.0"]);
     assert.equal(execCalls.some(([command, args]) => command === "/bin/launchctl" && args[0] === "bootstrap"), true);
+    assert.equal(execCalls.some(([command, args]) => command === "/bin/launchctl" && args[0] === "kickstart" && args.includes("-k")), false);
     assert.equal(execCalls.some(([command]) => /sudo/u.test(command)), false);
   } finally {
     await fs.rm(fixture.homeDir, { recursive: true, force: true });

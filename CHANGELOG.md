@@ -6,6 +6,25 @@ This project follows semantic versioning for public releases.
 
 ## [Unreleased]
 
+## [4.3.0] - 2026-09-01
+
+### Changed
+
+- Control Center now ships as a native macOS `Equinox Local.app` window backed by the existing loopback-only `127.0.0.1:24891` service; the localhost URL remains available for development and diagnostics instead of being the normal user entry point.
+- Reworked Control Center into a flatter native-app layout with status strips, separator-based lists and fewer nested cards, and replaced the placeholder AppleScript icon with the Equinox Local product logo.
+- Restored the conservative restart turn boundary: after scheduling an Equinox Local runtime restart, agents must return a final status response instead of attempting more Local calls in the same assistant turn.
+- Removed the standalone GitHub CLI card from Control Center. GitHub remains an implementation dependency of the guarded Git/GitHub gateway where needed, rather than a user-facing optional integration.
+
+### Fixed
+
+- Source-checkout native app hosting now uses a persistent LaunchAgent (`KeepAlive`) instead of a five-minute interval, so closing the foreground Equinox Local window cannot leave the local runtime offline; Control Center status refreshes now use passive Peekaboo readiness and never invoke the macOS permission probe on page reload.
+- Native app-host synchronization now treats a valid same-version app bundle as a stable macOS permission identity and preserves it byte-for-byte until the native shell version explicitly changes; ordinary runtime or release updates no longer re-sign the app and invalidate TCC permissions.
+- Source and managed runtime wrappers now monitor native-host parent death and clean their owned children, while restart/install flows drain the existing runtime before reload and no longer use `launchctl kickstart -k`; this prevents orphan wrapper/Peekaboo/supervisor processes from turning `KeepAlive` into a 10-second restart loop without changing the stable native app binary or resetting macOS permissions.
+- Peekaboo 4.2.x permission parsing now accepts the current `(Required)` labels, preventing Control Center and System Doctor from reporting missing Screen Recording or Accessibility permissions when they are granted.
+- Source-checkout restart waits for asynchronous LaunchAgent teardown and retries `launchctl bootstrap` within a bounded window, avoiding transient macOS `Bootstrap failed: 5: Input/output error` failures.
+- The Equinox Browser Native Messaging installer now installs and removes the shared socket-path module together with the host runtime, preventing stale host/runtime path drift.
+- Backend GitHub readiness checks now execute inside a valid project context instead of incorrectly reporting a disconnected GitHub CLI session.
+
 ## [4.2.4] - 2026-08-31
 
 ### Changed

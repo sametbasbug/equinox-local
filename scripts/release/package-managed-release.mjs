@@ -13,6 +13,7 @@ import {
   TUNNEL_CLIENT_DISTRIBUTIONS,
 } from "../../src/equinox-local-runtime-versions.js";
 import { EQUINOX_LOCAL_VERSION } from "../../src/equinox-local-version.js";
+import { buildEquinoxLocalNativeAppArtifacts } from "../../src/equinox-local-native-app.js";
 import { equinoxLocalUpdateTarget } from "../../src/equinox-local-updater.js";
 
 const execFile = promisify(execFileCallback);
@@ -413,12 +414,14 @@ export async function packageManagedEquinoxRelease({
     await copyProductionNodeModules(rootDir, releaseDir);
     await installPinnedNodeBinary(target, releaseDir, { fetchImpl });
     await installPinnedTunnelRuntime(target, releaseDir, { fetchImpl });
+    const nativeApp = await buildEquinoxLocalNativeAppArtifacts({ rootDir, releaseDir, target });
     await fs.writeFile(path.join(releaseDir, "release.json"), `${JSON.stringify({
       schemaVersion: 1,
       version: EQUINOX_LOCAL_VERSION,
       target,
       nodeVersion: EQUINOX_LOCAL_NODE_VERSION,
       tunnelClientVersion: EQUINOX_LOCAL_TUNNEL_CLIENT_VERSION,
+      nativeAppShellVersion: nativeApp.shellVersion,
       serverEntry: "server.js",
     }, null, 2)}\n`, { mode: 0o644 });
     await assertNoSymlinks(releaseDir);
