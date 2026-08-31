@@ -110,6 +110,7 @@ import {
   getEquinoxLocalDoctorStatus,
 } from "./equinox-local-doctor.js";
 import {
+  inspectSourceCheckoutVersion,
   inspectSourceTunnelRuntime,
 } from "./equinox-local-source-runtime.js";
 import {
@@ -15622,6 +15623,38 @@ async function getControlCenterActivity() {
   }));
 }
 
+function publicPeekabooVersion(value) {
+  const match = String(value ?? "").match(/(?:Peekaboo\s+)?(\d+\.\d+\.\d+)/u);
+  return match ? match[1] : null;
+}
+
+async function getControlCenterPeekabooStatus() {
+  try {
+    const status = await peekabooBridge.status();
+    const permissionsReady = status.permissionState?.screenRecording === true
+      && status.permissionState?.accessibility === true;
+    const compatibilityReady = status.compatibility?.ok === true;
+    const ready = Boolean(status.active && permissionsReady && compatibilityReady && !status.error);
+    return Object.freeze({
+      available: true,
+      active: Boolean(status.active),
+      ready,
+      needsAttention: !ready,
+      version: publicPeekabooVersion(status.version),
+      reconnectCount: Number.isInteger(status.reconnectCount) ? status.reconnectCount : 0,
+    });
+  } catch {
+    return Object.freeze({
+      available: false,
+      active: false,
+      ready: false,
+      needsAttention: false,
+      version: null,
+      reconnectCount: 0,
+    });
+  }
+}
+
 async function getControlCenterDoctorStatus() {
   const browser = equinoxBrowserBridge.snapshot();
   let browserSettings = null;
@@ -15640,19 +15673,22 @@ async function getControlCenterDoctorStatus() {
     homeDir: process.env.HOME,
     supervisorMode: process.env.EQUINOX_LOCAL_SUPERVISOR_MODE || null,
   });
-  const developmentTunnel = equinoxLocalInstallation.kind === "source"
-    ? await inspectSourceTunnelRuntime()
-    : null;
+  const [developmentTunnel, sourceCheckout, peekabooStatus] = await Promise.all([
+    equinoxLocalInstallation.kind === "source" ? inspectSourceTunnelRuntime() : Promise.resolve(null),
+    equinoxLocalInstallation.kind === "source" ? inspectSourceCheckoutVersion() : Promise.resolve(null),
+    getControlCenterPeekabooStatus(),
+  ]);
   return getEquinoxLocalDoctorStatus({
     installation: equinoxLocalInstallation,
     config: EQUINOX_LOCAL_CONFIG,
     runtimeHealthState: observabilityHealth.state,
     runtimeVersion: SERVER_VERSION,
+    sourceCheckoutVersion: sourceCheckout?.version ?? null,
     browser: {
       ready: Boolean(browser.ready),
       consentAccepted: typeof browserSettings?.consentAccepted === "boolean" ? browserSettings.consentAccepted : null,
     },
-    peekaboo: { active: peekabooBridge.active },
+    peekaboo: peekabooStatus,
     update: equinoxLocalUpdateCoordinator.snapshot(),
     onboarding,
     developmentTunnel,
@@ -15762,6 +15798,7 @@ equinoxLocalControlApi = createEquinoxLocalControlApi({
     }
     return await equinoxBrowserBridge.call("settings.update", settings, { timeoutMs: 5_000 });
   }),
+  getPeekabooStatus: getControlCenterPeekabooStatus,
   checkGitHub: async () => {
     const result = await runGhWithCode(["api", "user", "--jq", ".login"], "", 15_000).catch(() => null);
     const rawAccount = result?.code === 0 ? String(result.stdout ?? "").trim() : "";
@@ -15953,7 +15990,7 @@ registerTextTool(
     description:
       "Equinox Local runtime'ını kurulum türüne uygun güvenli restart yoluyla yeniden başlatmayı zamanlar. " +
       "Managed kurulumlar bundled LaunchAgent helper'ını, source checkout geliştirme ortamları ise private developer runtime config'ini kullanır. " +
-      "Bu araç başarılı döndükten sonra AYNI ASİSTAN TURUNDA başka Equinox Local aracı çağırma; kullanıcıya hemen yanıt ver.",
+      "Runtime yeniden bağlandıktan sonra system_doctor veya diğer salt-okunur durum araçları aynı asistan turunda yeniden çağrılabilir.",
     inputSchema: {},
     annotations: {
       title:

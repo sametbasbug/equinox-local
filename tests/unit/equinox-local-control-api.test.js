@@ -47,6 +47,7 @@ async function withApi(fn, overrides = {}) {
     chooseFolder: overrides.chooseFolder ?? null,
     updateBrowserSettings: overrides.updateBrowserSettings ?? null,
     checkGitHub: overrides.checkGitHub ?? null,
+    getPeekabooStatus: overrides.getPeekabooStatus ?? null,
     getTelegramStatus: overrides.getTelegramStatus ?? null,
     configureTelegram: overrides.configureTelegram ?? null,
     testTelegram: overrides.testTelegram ?? null,
@@ -395,6 +396,21 @@ test("bounded Control Center actions expose activity, Browser/GitHub controls an
     });
     assert.equal(removedAgentBrowser.response.status, 404);
 
+    const githubStatus = await jsonFetch(`${base}/api/v1/integrations/github`);
+    assert.equal(githubStatus.response.status, 200);
+    assert.deepEqual(githubStatus.body.github, { ready: true, account: "example-user" });
+
+    const peekabooStatus = await jsonFetch(`${base}/api/v1/integrations/peekaboo`);
+    assert.equal(peekabooStatus.response.status, 200);
+    assert.deepEqual(peekabooStatus.body.peekaboo, {
+      available: true,
+      active: true,
+      ready: true,
+      needsAttention: false,
+      version: "4.2.2",
+      reconnectCount: 0,
+    });
+
     const github = await jsonFetch(`${base}/api/v1/integrations/github/check`, {
       method: "POST",
       headers: mutationHeaders,
@@ -446,6 +462,8 @@ test("bounded Control Center actions expose activity, Browser/GitHub controls an
       ["picker"],
       ["browser", { enabled: false, agentCursorEnabled: true, agentCursorName: "Nyx" }],
       ["github"],
+      ["peekaboo-status"],
+      ["github"],
       ["telegram-status"],
       ["telegram-connect", { botToken: "secret-token", telegramUserId: "123456789" }],
       ["telegram-test"],
@@ -459,7 +477,7 @@ test("bounded Control Center actions expose activity, Browser/GitHub controls an
       body: JSON.stringify({ surprise: true }),
     });
     assert.equal(invalidBrowser.response.status, 400);
-    assert.equal(calls.length, 7);
+    assert.equal(calls.length, 9);
   }, {
     getActivity: async () => [{ timestamp: "2026-08-22T00:00:00.000Z", component: "runtime", message: "Ready" }],
     chooseFolder: async () => {
@@ -473,6 +491,17 @@ test("bounded Control Center actions expose activity, Browser/GitHub controls an
     checkGitHub: async () => {
       calls.push(["github"]);
       return { ready: true, account: "example-user" };
+    },
+    getPeekabooStatus: async () => {
+      calls.push(["peekaboo-status"]);
+      return {
+        available: true,
+        active: true,
+        ready: true,
+        needsAttention: false,
+        version: "4.2.2",
+        reconnectCount: 0,
+      };
     },
     getTelegramStatus: async () => {
       calls.push(["telegram-status"]);

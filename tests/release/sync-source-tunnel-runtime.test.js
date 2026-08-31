@@ -14,7 +14,9 @@ async function makeFixture(t, version = "0.0.12") {
   const binary = path.join(root, "equinox-tunnel-client");
   const configPath = path.join(root, "runtime.conf");
   await fs.writeFile(binary, `#!/bin/sh\necho '${version}+fixture (git sha: fixture)'\n`, { mode: 0o755 });
-  await fs.writeFile(configPath, `launchAgentLabel=dev.equinox.local.dev\ntunnelRuntime=equinox-local-dev\ntunnelClient=${binary}\n`, { mode: 0o600 });
+  const sourceLauncher = path.join(root, "start-source.sh");
+  await fs.writeFile(sourceLauncher, "#!/bin/sh\nexit 0\n", { mode: 0o700 });
+  await fs.writeFile(configPath, `launchAgentLabel=dev.equinox.local.dev\ntunnelRuntime=equinox-local-dev\ntunnelClient=${binary}\nsourceLauncher=${sourceLauncher}\n`, { mode: 0o600 });
   return { root, binary, configPath };
 }
 

@@ -224,14 +224,26 @@ function renderDashboard() {
     ? "Connected · consent required"
     : browser.ready && browser.controlEnabled === false
       ? "Connected · automation off"
-      : statusLabel(Boolean(browser.active), Boolean(browser.ready));
+      : browser.ready
+        ? "Ready"
+        : browser.active
+          ? "Extension not connected"
+          : "Unavailable";
   setText("browser-status", browserLabel);
   setText("browser-version", browser.extensionVersion ? `Extension ${browser.extensionVersion}` : "Extension version unavailable");
   setDot("browser-status-dot", browser.ready ? (browserConsentRequired || browser.controlEnabled === false ? "warn" : "good") : browser.active ? "warn" : "neutral");
 
-  setText("peekaboo-status", peekaboo.active ? "Available" : "Disconnected");
-  setText("peekaboo-detail", peekaboo.reconnectCount ? `${peekaboo.reconnectCount} reconnects` : "Peekaboo desktop bridge");
-  setDot("peekaboo-status-dot", peekaboo.active ? "good" : "neutral");
+  const peekabooReady = peekaboo.ready === true || (peekaboo.ready === undefined && peekaboo.active === true);
+  const peekabooLabel = peekaboo.needsAttention
+    ? "Needs attention"
+    : peekabooReady
+      ? "Ready"
+      : peekaboo.available === false
+        ? "Not available"
+        : "Not checked";
+  setText("peekaboo-status", peekabooLabel);
+  setText("peekaboo-detail", peekaboo.version ? `Peekaboo ${peekaboo.version}` : "Optional desktop capability");
+  setDot("peekaboo-status-dot", peekaboo.needsAttention ? "warn" : peekabooReady ? "good" : "neutral");
 
   setText("api-status", controlCenter.active ? "Listening" : "Unavailable");
   setText("api-detail", controlCenter.port ? `127.0.0.1:${controlCenter.port}` : "127.0.0.1 only");
@@ -702,10 +714,19 @@ function renderIntegrations() {
     ? browser.consentAccepted === false
       ? "Consent required"
       : (browser.controlEnabled === false ? "Automation off" : "Ready")
-    : browser.active ? "Not ready" : "Disconnected";
+    : browser.active ? "Extension not connected" : "Unavailable";
   const browserTone = browser.ready
     ? (browser.consentAccepted === false || browser.controlEnabled === false ? "warn" : "good")
-    : browser.active ? "warn" : "neutral";
+    : "neutral";
+  const peekabooReady = peekaboo.ready === true || (peekaboo.ready === undefined && peekaboo.active === true);
+  const peekabooStatus = peekaboo.needsAttention
+    ? "Needs attention"
+    : peekabooReady
+      ? "Ready"
+      : peekaboo.available === false
+        ? "Not available"
+        : "Not checked";
+  const peekabooTone = peekaboo.needsAttention ? "warn" : peekabooReady ? "good" : "neutral";
 
   list.append(
     createIntegrationCard(
@@ -717,9 +738,11 @@ function renderIntegrations() {
     ),
     createIntegrationCard(
       "Peekaboo desktop bridge",
-      "Optional macOS desktop capability. It is not required for core Equinox Local filesystem or Git operations.",
-      peekaboo.active ? "Available" : "Disconnected",
-      peekaboo.active ? "good" : "neutral",
+      peekaboo.version
+        ? `Optional macOS desktop capability · Peekaboo ${peekaboo.version}.`
+        : "Optional macOS desktop capability. It is not required for core Equinox Local filesystem or Git operations.",
+      peekabooStatus,
+      peekabooTone,
     ),
     createIntegrationCard(
       "GitHub",
@@ -758,12 +781,18 @@ function renderBrowserPage() {
   const controlOff = browser.ready && !consentRequired && browser.controlEnabled === false;
   const label = consentRequired
     ? "Connected · consent required"
-    : controlOff ? "Connected · automation off" : statusLabel(Boolean(browser.active), Boolean(browser.ready));
+    : controlOff
+      ? "Connected · automation off"
+      : browser.ready
+        ? "Ready"
+        : browser.active
+          ? "Extension not connected"
+          : "Unavailable";
   setText("browser-page-status", label);
   setBadge(
     "browser-page-badge",
-    browser.ready ? (consentRequired ? "Consent required" : controlOff ? "Automation off" : "Ready") : browser.active ? "Not ready" : "Disconnected",
-    browser.ready ? (consentRequired || controlOff ? "warn" : "good") : browser.active ? "warn" : "neutral",
+    browser.ready ? (consentRequired ? "Consent required" : controlOff ? "Automation off" : "Ready") : browser.active ? "Extension not connected" : "Unavailable",
+    browser.ready ? (consentRequired || controlOff ? "warn" : "good") : "neutral",
   );
   setText("browser-page-version", browser.extensionVersion || "—");
   setText("browser-connected-at", formatDate(browser.connectedAt));
@@ -878,7 +907,7 @@ async function refreshAll() {
   clearError();
   $("refresh-button").disabled = true;
   try {
-    const [health, status, config, activity, update, onboarding, doctor, telegram] = await Promise.all([
+    const [health, status, config, activity, update, onboarding, doctor, github, peekaboo, telegram] = await Promise.all([
       requestJson("/api/v1/health"),
       requestJson("/api/v1/status"),
       requestJson("/api/v1/config"),
@@ -886,6 +915,8 @@ async function refreshAll() {
       requestJson("/api/v1/update"),
       requestJson("/api/v1/onboarding"),
       requestJson("/api/v1/doctor"),
+      requestJson("/api/v1/integrations/github").catch(() => ({ github: null })),
+      requestJson("/api/v1/integrations/peekaboo").catch(() => ({ peekaboo: null })),
       requestJson("/api/v1/integrations/telegram").catch(() => ({ telegram: null })),
     ]);
     state.health = health;
@@ -896,6 +927,13 @@ async function refreshAll() {
     state.update = update.update || null;
     state.onboarding = onboarding.onboarding || null;
     state.doctor = doctor.doctor || null;
+    state.github = github.github || null;
+    if (peekaboo.peekaboo) {
+      state.status = {
+        ...(state.status || {}),
+        peekaboo: peekaboo.peekaboo,
+      };
+    }
     state.telegram = telegram.telegram || null;
     state.browserDraft = null;
     state.browserSettingsDirty = false;
