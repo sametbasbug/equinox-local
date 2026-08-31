@@ -10,6 +10,7 @@ TARGETS=(
   "$RUNTIME_DIR/equinox-browser-native-host"
   "$RUNTIME_DIR/equinox-browser-native-host.js"
   "$RUNTIME_DIR/equinox-browser-native-host-runtime.js"
+  "$RUNTIME_DIR/equinox-browser-socket.js"
 )
 
 for target in "${TARGETS[@]}"; do

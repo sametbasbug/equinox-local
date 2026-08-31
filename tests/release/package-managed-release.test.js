@@ -35,6 +35,8 @@ test("managed release source graph follows local imports and excludes developmen
     "src/equinox-control-center.html",
     "src/equinox-control-center.css",
     "src/equinox-control-center.js",
+    "src/equinox-local-native-app.js",
+    "src/equinox-local-native-app-host.js",
     "package.json",
     "package-lock.json",
   ]) {

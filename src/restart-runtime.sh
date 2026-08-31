@@ -27,7 +27,7 @@ esac
 [ -x "$DEV_NODE" ] || fail "configured developer Node runtime is not executable"
 
 EQUINOX_LOCAL_DEV_RUNTIME_CONFIG="$CONFIG" "$DEV_NODE" "$ROOT/../scripts/release/sync-source-tunnel-runtime.mjs"
-EQUINOX_LOCAL_DEV_RUNTIME_CONFIG="$CONFIG" "$DEV_NODE" "$ROOT/equinox-local-dev/prepare-source-app-host.mjs"
+EQUINOX_LOCAL_DEV_RUNTIME_CONFIG="$CONFIG" "$DEV_NODE" "$ROOT/../scripts/release/prepare-source-app-host.mjs"
 
 LABEL=""
 RUNTIME=""
@@ -92,21 +92,70 @@ DOMAIN="gui/$CURRENT_UID"
 {
   printf '\n[%s] Equinox Local source-checkout restart started.\n' "$(date '+%Y-%m-%dT%H:%M:%S%z')"
 
-  OLD_PID="$(/usr/bin/pgrep -f "$DEV_NODE $ROOT/server.js" | /usr/bin/head -n 1 || true)"
+  # Match the server command by its stable script path, not process.execPath. The
+  # tunnel runtime may launch the same Node binary through a different symlink.
+  OLD_PID="$(/usr/bin/pgrep -f "node $ROOT/server.js" | /usr/bin/head -n 1 || true)"
 
   # Let the MCP response reach the client before the source runtime is restarted.
   sleep 8
 
   "$TUNNEL_CLIENT" runtimes stop "$RUNTIME" || true
 
+  # A pre-v3 native host did not forward launchd termination signals to its
+  # runtime child. Stop that exact direct child first so bootout cannot orphan
+  # the wrapper/Peekaboo tree during the one-time migration to the fixed host.
+  HOST_PID="$(/bin/launchctl print "$DOMAIN/$LABEL" 2>/dev/null | /usr/bin/awk '$1 == "pid" && $2 == "=" { print $3; exit }' || true)"
+  if [[ "$HOST_PID" =~ ^[0-9]+$ ]] && [ "$HOST_PID" -gt 1 ]; then
+    HOST_CHILDREN="$(/usr/bin/pgrep -P "$HOST_PID" 2>/dev/null || true)"
+    for child_pid in $HOST_CHILDREN; do
+      child_uid="$(/bin/ps -p "$child_pid" -o uid= 2>/dev/null | /usr/bin/tr -d ' ' || true)"
+      child_ppid="$(/bin/ps -p "$child_pid" -o ppid= 2>/dev/null | /usr/bin/tr -d ' ' || true)"
+      if [ "$child_uid" = "$CURRENT_UID" ] && [ "$child_ppid" = "$HOST_PID" ]; then
+        /bin/kill -TERM "$child_pid" >/dev/null 2>&1 || true
+      fi
+    done
+    for child_pid in $HOST_CHILDREN; do
+      for _ in {1..40}; do
+        if ! /bin/kill -0 "$child_pid" >/dev/null 2>&1; then
+          break
+        fi
+        sleep 0.1
+      done
+      if /bin/kill -0 "$child_pid" >/dev/null 2>&1; then
+        fail "source runtime child did not stop cleanly before LaunchAgent bootout"
+      fi
+    done
+  fi
+
   /bin/launchctl bootout "$DOMAIN/$LABEL" >/dev/null 2>&1 || true
-  /bin/launchctl bootstrap "$DOMAIN" "$PLIST"
-  /bin/launchctl kickstart -k "$DOMAIN/$LABEL"
+
+  # launchctl bootout is asynchronous. Wait for the old job to disappear before
+  # bootstrapping the replacement; otherwise macOS can transiently return EIO.
+  for _ in {1..40}; do
+    if ! /bin/launchctl print "$DOMAIN/$LABEL" >/dev/null 2>&1; then
+      break
+    fi
+    sleep 0.25
+  done
+  if /bin/launchctl print "$DOMAIN/$LABEL" >/dev/null 2>&1; then
+    fail "source LaunchAgent did not finish bootout"
+  fi
+
+  BOOTSTRAPPED=0
+  for _ in {1..12}; do
+    if /bin/launchctl bootstrap "$DOMAIN" "$PLIST"; then
+      BOOTSTRAPPED=1
+      break
+    fi
+    sleep 1
+  done
+  [ "$BOOTSTRAPPED" -eq 1 ] || fail "source LaunchAgent bootstrap failed after bounded retries"
+  /bin/launchctl kickstart "$DOMAIN/$LABEL"
 
   sleep 8
   "$TUNNEL_CLIENT" runtimes status "$RUNTIME"
 
-  NEW_PID="$(/usr/bin/pgrep -f "$DEV_NODE $ROOT/server.js" | /usr/bin/head -n 1 || true)"
+  NEW_PID="$(/usr/bin/pgrep -f "node $ROOT/server.js" | /usr/bin/head -n 1 || true)"
   [ -n "$NEW_PID" ] || fail "source runtime did not start a new Equinox Local server process"
   if [ -n "$OLD_PID" ] && [ "$NEW_PID" = "$OLD_PID" ]; then
     fail "source runtime restart left the previous Equinox Local server process running"

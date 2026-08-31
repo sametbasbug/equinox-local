@@ -36,6 +36,7 @@ import {
 } from "./workflow-tools.js";
 import {
   createPeekabooBridge,
+  isPeekabooControlCenterReady,
   PEEKABOO_ALLOWED_TOOLS,
 } from "./peekaboo-bridge.js";
 import {
@@ -15630,11 +15631,8 @@ function publicPeekabooVersion(value) {
 
 async function getControlCenterPeekabooStatus() {
   try {
-    const status = await peekabooBridge.status();
-    const permissionsReady = status.permissionState?.screenRecording === true
-      && status.permissionState?.accessibility === true;
-    const compatibilityReady = status.compatibility?.ok === true;
-    const ready = Boolean(status.active && permissionsReady && compatibilityReady && !status.error);
+    const status = await peekabooBridge.status({ probePermissions: false });
+    const ready = isPeekabooControlCenterReady(status);
     return Object.freeze({
       available: true,
       active: Boolean(status.active),
@@ -15800,7 +15798,11 @@ equinoxLocalControlApi = createEquinoxLocalControlApi({
   }),
   getPeekabooStatus: getControlCenterPeekabooStatus,
   checkGitHub: async () => {
-    const result = await runGhWithCode(["api", "user", "--jq", ".login"], "", 15_000).catch(() => null);
+    const context = await resolveProjectContext(EQUINOX_LOCAL_CONFIG.defaultProject);
+    const result = await projectContextStorage.run(
+      context,
+      () => runGhWithCode(["api", "user", "--jq", ".login"], "", 15_000),
+    ).catch(() => null);
     const rawAccount = result?.code === 0 ? String(result.stdout ?? "").trim() : "";
     const account = /^[A-Za-z0-9-]{1,39}$/u.test(rawAccount) ? rawAccount : null;
     return { ready: Boolean(account), account };
@@ -15990,7 +15992,7 @@ registerTextTool(
     description:
       "Equinox Local runtime'ını kurulum türüne uygun güvenli restart yoluyla yeniden başlatmayı zamanlar. " +
       "Managed kurulumlar bundled LaunchAgent helper'ını, source checkout geliştirme ortamları ise private developer runtime config'ini kullanır. " +
-      "Runtime yeniden bağlandıktan sonra system_doctor veya diğer salt-okunur durum araçları aynı asistan turunda yeniden çağrılabilir.",
+      "Bu araç başarılı döndükten sonra AYNI ASİSTAN TURUNDA başka Equinox Local aracı çağırma; kullanıcıya hemen final durum yanıtı ver.",
     inputSchema: {},
     annotations: {
       title:

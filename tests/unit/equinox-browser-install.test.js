@@ -47,8 +47,10 @@ test("native host install/update/uninstall is idempotent and supports dual-id mi
 
   const sourceHost = await fs.readFile(path.join(ROOT, "src", "equinox-browser-native-host.js"));
   const sourceRuntime = await fs.readFile(path.join(ROOT, "src", "equinox-browser-native-host-runtime.js"));
+  const sourceSocket = await fs.readFile(path.join(ROOT, "src", "equinox-browser-socket.js"));
   assert.deepEqual(await fs.readFile(path.join(runtimeDir, "equinox-browser-native-host.js")), sourceHost);
   assert.deepEqual(await fs.readFile(path.join(runtimeDir, "equinox-browser-native-host-runtime.js")), sourceRuntime);
+  assert.deepEqual(await fs.readFile(path.join(runtimeDir, "equinox-browser-socket.js")), sourceSocket);
 
   await execFileAsync("/bin/bash", [INSTALL], { env });
   assert.equal(await fs.readFile(manifestPath, "utf8"), firstManifestText);
@@ -69,4 +71,5 @@ test("native host install/update/uninstall is idempotent and supports dual-id mi
   assert.equal(await exists(path.join(runtimeDir, "equinox-browser-native-host")), false);
   assert.equal(await exists(path.join(runtimeDir, "equinox-browser-native-host.js")), false);
   assert.equal(await exists(path.join(runtimeDir, "equinox-browser-native-host-runtime.js")), false);
+  assert.equal(await exists(path.join(runtimeDir, "equinox-browser-socket.js")), false);
 });

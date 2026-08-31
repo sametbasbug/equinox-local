@@ -18,7 +18,7 @@
 
 ## What is Equinox Local?
 
-Equinox Local runs on your Mac and gives an AI client a deliberately bounded way to work with local projects, Git, browser automation, workflows, diagnostics, and optional desktop control. A localhost **Control Center** exposes the same boundaries to a human without requiring source edits or a pile of terminal commands.
+Equinox Local runs on your Mac and gives an AI client a deliberately bounded way to work with local projects, Git, browser automation, workflows, diagnostics, and optional desktop control. A native macOS **Equinox Local** app opens Control Center for the human while the management backend remains private on loopback, without requiring source edits or a pile of terminal commands.
 
 The goal is not to turn your computer into an unrestricted remote shell. The goal is to expose useful, inspectable capabilities with explicit roots, fixed operations, guarded mutations, and clear user controls.
 
@@ -29,7 +29,7 @@ The goal is not to turn your computer into an unrestricted remote shell. The goa
 | Projects & files | Explicit configured roots, path containment, symlink checks, bounded reads/writes |
 | Git | Project-scoped operations with branch/SHA/worktree guards |
 | Equinox Browser | The only product route into user Chrome; Native Messaging + visible consent/on-off control |
-| Control Center | Loopback-only management UI on `127.0.0.1:24891` |
+| Control Center | Native macOS app backed by the loopback-only UI/API on `127.0.0.1:24891` |
 | Updates | Ed25519-signed metadata, bounded downloads, verified activation, automatic rollback |
 | Desktop | Optional Peekaboo bridge with a deliberately reduced allowlist |
 | Telegram | Optional Bot API delivery with a private local credential; agents receive only a send operation |
@@ -50,7 +50,8 @@ Agent tooling often optimizes for either **maximum capability** or **maximum saf
 
 ```mermaid
 flowchart LR
-    H[Human] --> CC[Control Center\n127.0.0.1:24891]
+    H[Human] --> APP[Equinox Local.app]
+    APP --> CC[Control Center\n127.0.0.1:24891]
     A[AI client] --> MCP[Stable MCP gateways]
     CC --> CORE[Equinox Local capability layer]
     MCP --> CORE
@@ -93,7 +94,7 @@ The public path is a small user-level macOS bootstrap that:
 4. verifies exact release byte count and SHA-256 before extraction;
 5. installs the self-contained managed runtime under the user's Library;
 6. registers the per-user LaunchAgent and Equinox Browser Native Messaging host; and
-7. opens Control Center for onboarding.
+7. installs the native `Equinox Local.app` shell and opens it for onboarding.
 
 It does **not** require Git, Homebrew, a system Node installation, administrator authentication, or a paid Apple Developer membership.
 
@@ -110,7 +111,7 @@ You need **two separate values** from OpenAI Platform:
 
 After the managed Local install finishes:
 
-1. Open Control Center at `http://127.0.0.1:24891/`.
+1. Open **Equinox Local** from Applications or Spotlight. The app renders Control Center from the private loopback service; `http://127.0.0.1:24891/` remains available as a development/diagnostic fallback.
 2. In **Connect to ChatGPT**, paste the Tunnel ID and Runtime API key.
 3. Choose **Save & connect**. Equinox Local stores the key only in a private `0600` file on this Mac and schedules a safe restart into tunnel mode.
 4. In ChatGPT, enable the custom-app/developer-mode flow available to your plan/workspace, create or edit the MCP app/connector, choose **Connection: Tunnel**, and select or paste the **same Tunnel ID**.

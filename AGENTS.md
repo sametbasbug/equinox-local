@@ -34,7 +34,7 @@ These instructions apply to the entire Equinox Local public repository unless a 
 - Run `git diff --check` before commit/push.
 - Add or update tests for behavior changes, especially security boundaries, updater/rollback behavior, onboarding, Control Center APIs, Telegram recipient isolation, and browser-lane isolation.
 - Release-affecting changes must preserve the established release gates: clean public source, CI/CodeQL, native ARM64/x64 validation, signed stable manifests, and production-domain upgrade smoke for real version bumps.
-- Runtime restarts may be followed by same-turn read-only Doctor/status verification after the connector reconnects; do not treat restart as a reason to skip post-restart validation.
+- After a successful Equinox Local runtime restart, do not invoke another Equinox Local tool in the same assistant turn. Send the user the final status response immediately, then perform Doctor/status verification after the connector is available in a new turn.
 
 ## Architecture references
 

@@ -107,6 +107,11 @@ test("control API serves the visual Control Center shell and fixed same-origin a
     assert.match(css.headers.get("content-type"), /^text\/css/u);
     assert.match(await css.text(), /\.app-shell/u);
 
+    const logo = await fetch(`${base}/assets/equinox-local.png`);
+    assert.equal(logo.status, 200);
+    assert.equal(logo.headers.get("content-type"), "image/png");
+    assert.equal((await logo.arrayBuffer()).byteLength > 0, true);
+
     const script = await fetch(`${base}/assets/control-center.js`);
     assert.equal(script.status, 200);
     assert.match(script.headers.get("content-type"), /^text\/javascript/u);
@@ -123,7 +128,8 @@ test("control API serves the visual Control Center shell and fixed same-origin a
     assert.match(scriptText, /\/api\/v1\/folder-picker/u);
     assert.match(scriptText, /\/api\/v1\/browser\/settings/u);
     assert.doesNotMatch(scriptText, /agent-browser|Agent Browser/u);
-    assert.match(scriptText, /\/api\/v1\/integrations\/github\/check/u);
+    assert.doesNotMatch(scriptText, /\/api\/v1\/integrations\/github(?:\/check)?/u);
+    assert.doesNotMatch(scriptText, /GitHub CLI/u);
 
     const missing = await jsonFetch(`${base}/missing-control-center-route`);
     assert.equal(missing.response.status, 404);

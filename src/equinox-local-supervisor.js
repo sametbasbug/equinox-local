@@ -82,6 +82,7 @@ export async function resolveSupervisorRelease(paths) {
     metadata?.schemaVersion !== 1 ||
     metadata?.version !== version ||
     metadata?.target !== expectedTarget ||
+    (metadata?.nativeAppShellVersion !== undefined && (!Number.isSafeInteger(metadata.nativeAppShellVersion) || metadata.nativeAppShellVersion < 1)) ||
     metadata?.serverEntry !== "server.js"
   ) {
     throw new Error(`Managed release metadata is invalid for ${expectedTarget}.`);

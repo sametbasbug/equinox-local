@@ -241,7 +241,7 @@ export function inspectPeekabooCompatibility(tools, versionText = "") {
 export function parsePeekabooPermissions(text) {
   const value = String(text ?? "");
   const readPermission = (label) => {
-    const match = new RegExp(`${label}:\\s*\\[(?:ok|warn|err)\\]\\s*(Granted|Not Granted)`, "iu").exec(value);
+    const match = new RegExp(`${label}(?:\\s*\\([^\\r\\n)]*\\))?:\\s*\\[(?:ok|warn|err)\\]\\s*(Granted|Not Granted)`, "iu").exec(value);
     if (!match) {
       return null;
     }
@@ -252,6 +252,27 @@ export function parsePeekabooPermissions(text) {
     screenRecording: readPermission("Screen Recording"),
     accessibility: readPermission("Accessibility"),
   };
+}
+
+export function isPeekabooStatusReady(status) {
+  const permissionState = status?.permissionState ?? parsePeekabooPermissions(status?.permissions);
+  return Boolean(
+    status?.active
+      && status?.compatibility?.ok === true
+      && permissionState?.screenRecording === true
+      && permissionState?.accessibility === true,
+  );
+}
+
+export function isPeekabooControlCenterReady(status) {
+  const permissionState = status?.permissionState ?? parsePeekabooPermissions(status?.permissions);
+  const permissionsKnown = permissionState?.screenRecording != null
+    && permissionState?.accessibility != null;
+  return Boolean(
+    status?.active
+      && status?.compatibility?.ok === true
+      && (!permissionsKnown || isPeekabooStatusReady(status)),
+  );
 }
 
 function requiredPermissionsForTool(toolName) {
@@ -1182,7 +1203,7 @@ export function createPeekabooBridge({
     }
   };
 
-  const status = async () => {
+  const status = async ({ probePermissions = true } = {}) => {
     const binary = await resolvePeekabooBinary(baseEnvironment);
     const versionText = await readVersion(binary);
     const statusErrors = [];
@@ -1201,16 +1222,24 @@ export function createPeekabooBridge({
       );
     }
 
-    try {
-      const currentPermissions = await readPermissions(true);
-      permissions = currentPermissions.text;
+    if (probePermissions) {
+      try {
+        const currentPermissions = await readPermissions(false);
+        permissions = currentPermissions.text;
+        permissionState = {
+          screenRecording: currentPermissions.screenRecording,
+          accessibility: currentPermissions.accessibility,
+        };
+      } catch (statusError) {
+        permissions = statusError instanceof Error ? statusError.message : String(statusError);
+        statusErrors.push("permissions");
+      }
+    } else if (permissionCache) {
+      permissions = permissionCache.text;
       permissionState = {
-        screenRecording: currentPermissions.screenRecording,
-        accessibility: currentPermissions.accessibility,
+        screenRecording: permissionCache.screenRecording,
+        accessibility: permissionCache.accessibility,
       };
-    } catch (statusError) {
-      permissions = statusError instanceof Error ? statusError.message : String(statusError);
-      statusErrors.push("permissions");
     }
 
     if (availableTools.some((tool) => tool.name === "list")) {
