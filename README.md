@@ -5,6 +5,8 @@
 
 **A local control plane for AI agents — powerful enough to do real work, bounded enough to stay understandable.**
 
+**Built to let ChatGPT on the web safely work with your own Mac — through explicit, inspectable local capabilities instead of an unrestricted remote shell.**
+
 [![CI](https://github.com/sametbasbug/equinox-local/actions/workflows/ci.yml/badge.svg)](https://github.com/sametbasbug/equinox-local/actions/workflows/ci.yml)
 ![macOS](https://img.shields.io/badge/platform-macOS-111111?logo=apple)
 ![Node.js 24](https://img.shields.io/badge/Node.js-24-339933?logo=nodedotjs&logoColor=white)
