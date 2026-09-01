@@ -20,6 +20,9 @@ test("public shell installer stays user-level, pinned to Equinox HTTPS and bound
   assert.match(source, /do not run this installer with sudo or as root/u);
   assert.match(source, /\/usr\/bin\/env -i/u);
   assert.match(source, /\/usr\/bin\/grep \/usr\/bin\/awk/u);
+  assert.match(source, /CONTROL_CENTER_APP="\$HOME_DIR\/Applications\/Equinox Local\.app"/u);
+  assert.match(source, /\/usr\/bin\/open -n "\$CONTROL_CENTER_APP"/u);
+  assert.match(source, /opening Equinox Local/u);
   assert.match(source, /trap cleanup EXIT/u);
   assert.match(source, /trap handle_signal HUP INT TERM/u);
   assert.doesNotMatch(source, /\bsudo\b(?! or as root)/u);

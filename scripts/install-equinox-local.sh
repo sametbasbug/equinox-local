@@ -42,6 +42,7 @@ case "$HOME_DIR" in
 esac
 [ -d "$HOME_DIR" ] && [ ! -L "$HOME_DIR" ] || fail "the current HOME directory is unsafe"
 [ "$(/usr/bin/stat -f '%u' "$HOME_DIR")" = "$CURRENT_UID" ] || fail "the current HOME directory is not owned by the current user"
+CONTROL_CENTER_APP="$HOME_DIR/Applications/Equinox Local.app"
 
 for command in /usr/bin/curl /usr/bin/shasum /usr/bin/stat /usr/bin/tar /usr/bin/mktemp /usr/bin/uname /usr/bin/id /usr/bin/env /usr/bin/open /usr/bin/grep /usr/bin/awk; do
   require_command "$command"
@@ -190,6 +191,10 @@ RESULT="$(/usr/bin/env -i \
   "$NODE" "$FIRST_INSTALL" --staged-release "$SOURCE_RELEASE")" || fail "managed first-install activation failed"
 
 printf '%s\n' "$RESULT"
-info "installation is ready; opening Control Center"
-/usr/bin/open "$CONTROL_CENTER_URL" >/dev/null 2>&1 || true
+info "installation is ready; opening Equinox Local"
+if [ -d "$CONTROL_CENTER_APP" ] && [ ! -L "$CONTROL_CENTER_APP" ] && [ "$(/usr/bin/stat -f '%u' "$CONTROL_CENTER_APP")" = "$CURRENT_UID" ]; then
+  /usr/bin/open -n "$CONTROL_CENTER_APP" >/dev/null 2>&1 || /usr/bin/open "$CONTROL_CENTER_URL" >/dev/null 2>&1 || true
+else
+  /usr/bin/open "$CONTROL_CENTER_URL" >/dev/null 2>&1 || true
+fi
 info "done"
