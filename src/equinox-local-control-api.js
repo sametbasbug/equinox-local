@@ -29,7 +29,10 @@ const CONTROL_CENTER_ASSETS = new Map([
     contentType: "text/javascript; charset=utf-8",
   })],
   ["/assets/equinox-local.png", Object.freeze({
-    url: new URL("../equinox-local-app/EquinoxLocal.png", import.meta.url),
+    urls: Object.freeze([
+      new URL("./equinox-local-app/EquinoxLocal.png", import.meta.url),
+      new URL("../equinox-local-app/EquinoxLocal.png", import.meta.url),
+    ]),
     contentType: "image/png",
   })],
 ]);
@@ -49,7 +52,22 @@ function jsonBody(res, statusCode, payload, extraHeaders = {}) {
 }
 
 async function controlCenterAssetBody(res, asset) {
-  const body = await fs.readFile(asset.url);
+  let body;
+  if (asset.url) {
+    body = await fs.readFile(asset.url);
+  } else {
+    let lastError = null;
+    for (const candidate of asset.urls || []) {
+      try {
+        body = await fs.readFile(candidate);
+        break;
+      } catch (error) {
+        lastError = error;
+        if (error?.code !== "ENOENT") throw error;
+      }
+    }
+    if (!body) throw lastError || new Error("Control Center asset is unavailable.");
+  }
   res.writeHead(200, {
     "content-type": asset.contentType,
     "content-length": body.length,

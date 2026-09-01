@@ -6,6 +6,13 @@ This project follows semantic versioning for public releases.
 
 ## [Unreleased]
 
+## [4.3.1] - 2026-09-01
+
+### Fixed
+
+- Fresh managed installs now package the Control Center brand logo at the path served by the loopback UI, so the logo renders the same way in native and browser views.
+- The public first-install bootstrap now opens the native `Equinox Local.app` window after a successful install, with the localhost Control Center URL kept only as a fallback.
+
 ## [4.3.0] - 2026-09-01
 
 ### Changed

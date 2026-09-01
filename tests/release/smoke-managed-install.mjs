@@ -139,6 +139,11 @@ async function main() {
     const shellResponse = await fetch(`http://127.0.0.1:${CONTROL_CENTER_PORT}/`, { cache: "no-store" });
     assert.equal(shellResponse.ok, true);
     assert.match(await shellResponse.text(), /Equinox Local Control Center/u);
+    const logoResponse = await fetch(`http://127.0.0.1:${CONTROL_CENTER_PORT}/assets/equinox-local.png`, { cache: "no-store" });
+    assert.equal(logoResponse.ok, true);
+    assert.match(String(logoResponse.headers.get("content-type")), /^image\/png\b/u);
+    const logoBytes = Buffer.from(await logoResponse.arrayBuffer());
+    assert.equal(logoBytes.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])), true);
     assert.match(stderr, /local-only onboarding mode/u);
 
     process.stdout.write(`${JSON.stringify({
