@@ -215,7 +215,8 @@ export async function registerEquinoxBrowserTools({
   downloadsRoot,
   screenshotRoot,
   screenshotProjectId,
-  bridge,
+  bridge: rawBridge,
+  isBrowserAccessEnabled = () => true,
   withMutationLocks,
   textResult,
   errorResult,
@@ -223,7 +224,7 @@ export async function registerEquinoxBrowserTools({
   if (
     typeof registerTextTool !== "function" ||
     typeof registerRawTool !== "function" ||
-    !z || !fileRootSchema || !bridge ||
+    !z || !fileRootSchema || !rawBridge ||
     typeof resolveUploadFile !== "function" ||
     typeof downloadsRoot !== "string" ||
     !path.isAbsolute(downloadsRoot) ||
@@ -231,12 +232,31 @@ export async function registerEquinoxBrowserTools({
     !path.isAbsolute(screenshotRoot) ||
     typeof screenshotProjectId !== "string" ||
     !screenshotProjectId.trim() ||
+    typeof isBrowserAccessEnabled !== "function" ||
     typeof withMutationLocks !== "function" ||
     typeof textResult !== "function" ||
     typeof errorResult !== "function"
   ) {
     throw new Error("Equinox Browser tool registration bağımlılıkları eksik.");
   }
+
+  const assertBrowserAccess = () => {
+    if (!isBrowserAccessEnabled()) {
+      throw new Error("Browser automation access is disabled in Control Center.");
+    }
+  };
+  const bridge = new Proxy(rawBridge, {
+    get(target, property, receiver) {
+      if (property === "call") {
+        return async (...args) => {
+          assertBrowserAccess();
+          return target.call(...args);
+        };
+      }
+      const value = Reflect.get(target, property, receiver);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
 
   const optionalTabId = () => z.number().int().positive().optional()
     .describe("İsteğe bağlı Chrome tab kimliği; verilmezse aktif sekme kullanılır");
@@ -259,10 +279,13 @@ export async function registerEquinoxBrowserTools({
     },
     async () => {
       try {
-        const local = bridge.snapshot();
+        const accessEnabled = Boolean(isBrowserAccessEnabled());
+        const local = rawBridge.snapshot();
         let remote = null;
-        if (local.ready) remote = await bridge.call("status", {}, { timeoutMs: 5_000 });
-        return jsonText({ local, remote });
+        if (accessEnabled && local.ready) {
+          remote = await rawBridge.call("status", {}, { timeoutMs: 5_000 });
+        }
+        return jsonText({ accessEnabled, local, remote });
       } catch (error) {
         return errorResult(error);
       }

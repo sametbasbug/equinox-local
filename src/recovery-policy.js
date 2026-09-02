@@ -273,7 +273,7 @@ export function createRecoveryPolicyController({
         status: "attention_required",
         projectId: null,
         correlationId: incidentId,
-        message: `Automatic recovery circuit açık: ${policy.id} / ${subjectKey}`,
+        message: `Automatic recovery circuit is open: ${policy.id} / ${subjectKey}`,
         details: {
           policyId: policy.id,
           subjectKey,
@@ -294,7 +294,7 @@ export function createRecoveryPolicyController({
         severity: "info",
         status: "recovering",
         correlationId: incidentId,
-        message: `Automatic recovery circuit yeniden tek denemeye açıldı: ${policy.id} / ${subjectKey}`,
+        message: `Automatic recovery circuit reopened for a single trial: ${policy.id} / ${subjectKey}`,
         details: {
           policyId: policy.id,
           subjectKey,
@@ -326,7 +326,7 @@ export function createRecoveryPolicyController({
         severity: "critical",
         status: "attention_required",
         correlationId: incidentId,
-        message: `Automatic recovery askıya alındı: ${policy.id} / ${subjectKey}`,
+        message: `Automatic recovery was suspended: ${policy.id} / ${subjectKey}`,
         details: {
           policyId: policy.id,
           subjectKey,
@@ -364,7 +364,7 @@ export function createRecoveryPolicyController({
         status: "recovering",
         projectId: incident.projectId ?? null,
         correlationId: incident.incidentId,
-        message: `Aynı automatic recovery işi zaten aktif: ${policy.id} / ${subjectKey}`,
+        message: `The same automatic recovery job is already active: ${policy.id} / ${subjectKey}`,
         details: { policyId: policy.id, subjectKey, circuitKey, incidentId: incident.incidentId },
       });
       return activeJobs.get(circuitKey).promise;
@@ -392,7 +392,7 @@ export function createRecoveryPolicyController({
         status: "recovering",
         projectId: incident.projectId ?? null,
         correlationId: incident.incidentId,
-        message: `Automatic recovery başladı: ${policy.id}`,
+        message: `Automatic recovery started: ${policy.id}`,
         details: {
           policyId: policy.id,
           subjectKey,
@@ -445,7 +445,7 @@ export function createRecoveryPolicyController({
             status: failure.opened ? "attention_required" : "degraded",
             projectId: incident.projectId ?? null,
             correlationId: incident.incidentId,
-            message: `Automatic recovery tamamlanamadı: ${policy.id}`,
+            message: `Automatic recovery did not complete: ${policy.id}`,
             details: {
               policyId: policy.id,
               subjectKey,
@@ -467,7 +467,7 @@ export function createRecoveryPolicyController({
         status: "recovered",
         projectId: incident.projectId ?? null,
         correlationId: incident.incidentId,
-        message: `Automatic recovery başarıyla tamamlandı: ${policy.id}`,
+        message: `Automatic recovery completed successfully: ${policy.id}`,
         details: {
           policyId: policy.id,
           subjectKey,
@@ -511,7 +511,7 @@ export function createRecoveryPolicyController({
         status: "healthy",
         projectId: event?.projectId ?? null,
         correlationId: event?.correlationId ?? null,
-        message: `Automatic recovery trigger sonrası aktif incident bulunamadı: ${policy.id}`,
+        message: `No active incident remained after the automatic recovery trigger: ${policy.id}`,
         details: {
           policyId: policy.id,
           subjectKey,
@@ -560,7 +560,7 @@ export function createRecoveryPolicyController({
       type: "recovery-policy.reconcile_completed",
       severity: "info",
       status: "healthy",
-      message: `Startup automatic recovery reconciliation tamamlandı: ${results.length} incident işlendi.`,
+      message: `Startup automatic recovery reconciliation completed: ${results.length} incidents processed.`,
       details: {
         attempted: results.length,
         recovered: results.filter((item) => item?.status === "RECOVERED").length,

@@ -263,22 +263,22 @@ export function createWorkflowManager({
       step.status = mode === "pause" ? "pending" : "cancelled";
       step.completedAt = iso(now());
       step.error = mode === "pause"
-        ? "Runtime kapanışı nedeniyle adım yeniden çalıştırılmak üzere beklemeye alındı."
-        : "Workflow kullanıcı tarafından iptal edildi.";
+        ? "Step was paused to run again because the runtime is shutting down."
+        : "Workflow was cancelled by the user.";
     }
 
     record.status = mode === "pause" ? "paused" : "cancelled";
     record.error = mode === "pause"
-      ? "Runtime kapanışı nedeniyle workflow duraklatıldı."
-      : "Workflow kullanıcı tarafından iptal edildi.";
+      ? "Workflow was paused because the runtime is shutting down."
+      : "Workflow was cancelled by the user.";
     record.completedAt = mode === "cancel" ? iso(now()) : null;
     await persist(record);
     await appendLog(
       record,
       mode === "pause" ? "warn" : "info",
       mode === "pause"
-        ? "Workflow runtime kapanışı için güvenli biçimde duraklatıldı."
-        : "Workflow iptal edildi.",
+        ? "Workflow was safely paused for runtime shutdown."
+        : "Workflow was cancelled.",
     );
     emitEvent({
       component: "workflow",
@@ -302,7 +302,7 @@ export function createWorkflowManager({
     record.error = null;
     record.completedAt = null;
     await persist(record);
-    await appendLog(record, "info", `Workflow başladı: ${record.recipeId} / ${record.projectId}`);
+    await appendLog(record, "info", `Workflow started: ${record.recipeId} / ${record.projectId}`);
     emitEvent({
       component: "workflow",
       type: "workflow.started",
@@ -310,7 +310,7 @@ export function createWorkflowManager({
       status: "running",
       projectId: record.projectId,
       correlationId: record.workflowId,
-      message: `Workflow başladı: ${record.recipeId}`,
+      message: `Workflow started: ${record.recipeId}`,
       details: {
         workflowId: record.workflowId,
         recipeId: record.recipeId,
@@ -339,7 +339,7 @@ export function createWorkflowManager({
         step.error = null;
         step.result = null;
         await persist(record);
-        await appendLog(record, "info", `Adım başladı: ${step.label}`);
+        await appendLog(record, "info", `Step started: ${step.label}`);
 
         if (runner.controller.signal.aborted) {
           await finalizeAbort(record, runner);
@@ -364,7 +364,7 @@ export function createWorkflowManager({
           step.completedAt = iso(now());
           step.result = result ?? null;
           await persist(record);
-          await appendLog(record, "info", `Adım tamamlandı: ${step.label}`);
+          await appendLog(record, "info", `Step completed: ${step.label}`);
         } catch (error) {
           if (runner.controller.signal.aborted) {
             await finalizeAbort(record, runner);
@@ -379,7 +379,7 @@ export function createWorkflowManager({
           record.error = message;
           record.completedAt = iso(now());
           await persist(record);
-          await appendLog(record, "error", `Adım başarısız: ${step.label}\n${message}`);
+          await appendLog(record, "error", `Step failed: ${step.label}\n${message}`);
           emitEvent({
             component: "workflow",
             type: "workflow.failed",
@@ -401,7 +401,7 @@ export function createWorkflowManager({
       }
 
       record.currentStepIndex = record.steps.length;
-      await appendLog(record, "info", "Workflow başarıyla tamamlandı.");
+      await appendLog(record, "info", "Workflow completed successfully.");
       record.status = "completed";
       record.error = null;
       record.completedAt = iso(now());
@@ -413,7 +413,7 @@ export function createWorkflowManager({
         status: "completed",
         projectId: record.projectId,
         correlationId: record.workflowId,
-        message: "Workflow başarıyla tamamlandı.",
+        message: "Workflow completed successfully.",
         details: {
           workflowId: record.workflowId,
           recipeId: record.recipeId,
@@ -426,7 +426,7 @@ export function createWorkflowManager({
       record.error = message;
       record.completedAt = iso(now());
       await persist(record).catch(() => {});
-      await appendLog(record, "error", `Workflow motoru hatası: ${message}`).catch(() => {});
+      await appendLog(record, "error", `Workflow engine error: ${message}`).catch(() => {});
       emitEvent({
         component: "workflow",
         type: "workflow.engine_error",
@@ -498,14 +498,14 @@ export function createWorkflowManager({
         if (recoveredFromInterruption) {
           parsed.status = "paused";
           parsed.interruptionCount = Number(parsed.interruptionCount ?? 0) + 1;
-          parsed.error = "Önceki runtime sonlanırken workflow tamamlanmamıştı.";
+          parsed.error = "Workflow was incomplete when the previous runtime stopped.";
           parsed.completedAt = null;
 
           for (const step of parsed.steps) {
             if (step.status === "running") {
               step.status = "pending";
               step.completedAt = null;
-              step.error = "Runtime kesintisi sonrasında yeniden çalıştırılacak.";
+              step.error = "Will run again after the runtime interruption.";
             }
           }
         }
@@ -517,7 +517,7 @@ export function createWorkflowManager({
           await appendLog(
             parsed,
             "warn",
-            "Workflow state diskten yüklendi; tamamlanmamış çalışma güvenli biçimde paused durumuna alındı.",
+            "Workflow state was loaded from disk; incomplete work was safely moved to paused state.",
           );
           if (recoveredFromInterruption) {
             emitEvent({
@@ -616,7 +616,7 @@ export function createWorkflowManager({
 
     records.set(workflowId, record);
     await persist(record);
-    await appendLog(record, "info", `Workflow kaydı oluşturuldu: ${workflowId}`);
+    await appendLog(record, "info", `Workflow record created: ${workflowId}`);
     launch(record);
     return publicWorkflow(record);
   };
@@ -722,13 +722,13 @@ export function createWorkflowManager({
     if (runner) {
       runner.stopMode = "cancel";
       runner.controller.abort();
-      await appendLog(record, "info", "Workflow iptal isteği alındı.");
+      await appendLog(record, "info", "Workflow cancellation requested.");
       await runner.promise.catch(() => {});
       return publicWorkflow(requireRecord(workflowId));
     }
 
     record.status = "cancelled";
-    record.error = "Workflow kullanıcı tarafından iptal edildi.";
+    record.error = "Workflow was cancelled by the user.";
     record.completedAt = iso(now());
     const step = record.steps[record.currentStepIndex];
     if (step && step.status !== "completed") {
@@ -736,7 +736,7 @@ export function createWorkflowManager({
       step.completedAt = iso(now());
     }
     await persist(record);
-    await appendLog(record, "info", "Workflow iptal edildi.");
+    await appendLog(record, "info", "Workflow was cancelled.");
     return publicWorkflow(record);
   };
 
@@ -776,7 +776,7 @@ export function createWorkflowManager({
     record.error = null;
     record.completedAt = null;
     await persist(record);
-    await appendLog(record, "info", "Workflow devam ettirme isteği alındı.");
+    await appendLog(record, "info", "Workflow resume requested.");
     emitEvent({
       component: "workflow",
       type: "workflow.resumed",
@@ -784,7 +784,7 @@ export function createWorkflowManager({
       status: "queued",
       projectId: record.projectId,
       correlationId: record.workflowId,
-      message: "Workflow devam ettirme isteği alındı.",
+      message: "Workflow resume requested.",
       details: {
         workflowId: record.workflowId,
         recipeId: record.recipeId,

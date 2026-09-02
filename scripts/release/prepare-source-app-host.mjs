@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import {
   equinoxLocalAppExecutablePath,
   equinoxLocalAppRuntimeWrapperPath,
+  launchAgentLogMaintenanceShell,
 } from "../../src/equinox-local-app-host.js";
 import { synchronizeEquinoxLocalNativeAppHost } from "../../src/equinox-local-native-app-host.js";
 import { buildEquinoxLocalNativeAppArtifacts } from "../../src/equinox-local-native-app.js";
@@ -60,15 +61,13 @@ async function assertSourceLauncher(sourceLauncher, { fsImpl = fs, uid = typeof 
   if ((stat.mode & 0o022) !== 0) throw new Error("Developer source launcher must not be group/world writable.");
 }
 
-const SOURCE_PEEKABOO_CANDIDATES = Object.freeze([
-  "/opt/homebrew/bin/peekaboo",
-  "/usr/local/bin/peekaboo",
-  "/usr/bin/peekaboo",
-]);
-
-export function sourceAppRuntimeWrapper(sourceLauncher) {
-  const candidates = SOURCE_PEEKABOO_CANDIDATES.map(shellQuote).join(" ");
-  return `#!/bin/bash\nset -euo pipefail\nRUNTIME_HOST_PID=$PPID\nPEEKABOO=\"\"\nPEEKABOO_DAEMON_PID=\"\"\nPARENT_WATCHDOG_PID=\"\"\nfor candidate in ${candidates}; do\n  if [ -x \"$candidate\" ]; then\n    PEEKABOO=\"$candidate\"\n    break\n  fi\ndone\nif [ -z \"$PEEKABOO\" ]; then\n  exec /bin/zsh ${shellQuote(sourceLauncher)}\nfi\n\ncleanup() {\n  if [ -n \"$PARENT_WATCHDOG_PID\" ]; then\n    kill \"$PARENT_WATCHDOG_PID\" >/dev/null 2>&1 || true\n    wait \"$PARENT_WATCHDOG_PID\" 2>/dev/null || true\n  fi\n  if [ -n \"$PEEKABOO_DAEMON_PID\" ]; then\n    kill \"$PEEKABOO_DAEMON_PID\" >/dev/null 2>&1 || true\n    wait \"$PEEKABOO_DAEMON_PID\" 2>/dev/null || true\n  fi\n}\nshutdown() {\n  exit 0\n}\ntrap cleanup EXIT\ntrap shutdown INT TERM HUP\n\nwatch_runtime_host() {\n  while kill -0 \"$RUNTIME_HOST_PID\" >/dev/null 2>&1; do\n    sleep 1\n  done\n  kill -TERM \"$$\" >/dev/null 2>&1 || true\n}\nwatch_runtime_host &\nPARENT_WATCHDOG_PID=$!\n\n\"$PEEKABOO\" daemon run --mode manual --no-remote --log-level warning &\nPEEKABOO_DAEMON_PID=$!\n/bin/zsh ${shellQuote(sourceLauncher)}\nwait \"$PEEKABOO_DAEMON_PID\"\n`;
+export function sourceAppRuntimeWrapper(sourceLauncher, peekabooPath = "") {
+  const pinnedPeekaboo = peekabooPath ? shellQuote(peekabooPath) : '""';
+  const logMaintenance = launchAgentLogMaintenanceShell({
+    stdoutName: "Equinox Local Source.log",
+    stderrName: "Equinox Local Source.error.log",
+  });
+  return `#!/bin/bash\nset -euo pipefail\n${logMaintenance}RUNTIME_HOST_PID=$PPID\nPEEKABOO=${pinnedPeekaboo}\nPEEKABOO_DAEMON_PID=\"\"\nPARENT_WATCHDOG_PID=\"\"\nif [ -z \"$PEEKABOO\" ] || [ ! -x \"$PEEKABOO\" ]; then\n  exec /bin/zsh ${shellQuote(sourceLauncher)}\nfi\nexport EQUINOX_PEEKABOO_PATH=\"$PEEKABOO\"\n\ncleanup() {\n  if [ -n \"$PARENT_WATCHDOG_PID\" ]; then\n    kill \"$PARENT_WATCHDOG_PID\" >/dev/null 2>&1 || true\n    wait \"$PARENT_WATCHDOG_PID\" 2>/dev/null || true\n  fi\n  if [ -n \"$PEEKABOO_DAEMON_PID\" ]; then\n    kill \"$PEEKABOO_DAEMON_PID\" >/dev/null 2>&1 || true\n    wait \"$PEEKABOO_DAEMON_PID\" 2>/dev/null || true\n  fi\n}\nshutdown() {\n  exit 0\n}\ntrap cleanup EXIT\ntrap shutdown INT TERM HUP\n\nwatch_runtime_host() {\n  local log_check_ticks=0\n  while kill -0 \"$RUNTIME_HOST_PID\" >/dev/null 2>&1; do\n    sleep 1\n    log_check_ticks=$((log_check_ticks + 1))\n    if [ \"$log_check_ticks\" -ge \"$LAUNCH_LOG_CHECK_INTERVAL_SECONDS\" ]; then\n      maintain_launch_logs\n      log_check_ticks=0\n    fi\n  done\n  kill -TERM \"$$\" >/dev/null 2>&1 || true\n}\nwatch_runtime_host &\nPARENT_WATCHDOG_PID=$!\n\n\"$PEEKABOO\" daemon run --mode manual --no-remote --log-level warning &\nPEEKABOO_DAEMON_PID=$!\n/bin/zsh ${shellQuote(sourceLauncher)}\n# Peekaboo is optional. Keep the stable app host alive even if its daemon exits;\n# Local/Desktop can reconnect independently without triggering a LaunchAgent loop.\nwait \"$PARENT_WATCHDOG_PID\"\n`;
 }
 
 export function sourceLaunchAgentPlist({ homeDir, label }) {
@@ -86,7 +85,7 @@ export async function prepareSourceAppHost({
   if (process.platform !== "darwin") throw new Error("Source app host is supported only on macOS.");
   const loaded = await readSourceRuntimeConfig({ configPath, fsImpl });
   if (!loaded.configured) throw new Error("Developer runtime config is missing.");
-  const { launchAgentLabel, sourceLauncher } = loaded.config;
+  const { launchAgentLabel, peekabooPath, sourceLauncher } = loaded.config;
   if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u.test(launchAgentLabel)) throw new Error("Developer launch-agent label is invalid.");
   await assertSourceLauncher(sourceLauncher, { fsImpl });
   if (ensureAppHostImpl) {
@@ -104,7 +103,7 @@ export async function prepareSourceAppHost({
   }
 
   const runtimeWrapperPath = equinoxLocalAppRuntimeWrapperPath(homeDir);
-  await atomicWrite(runtimeWrapperPath, sourceAppRuntimeWrapper(sourceLauncher), 0o700, { fsImpl });
+  await atomicWrite(runtimeWrapperPath, sourceAppRuntimeWrapper(sourceLauncher, peekabooPath), 0o700, { fsImpl });
   const launchAgentsRoot = path.join(homeDir, "Library", "LaunchAgents");
   await fsImpl.mkdir(launchAgentsRoot, { recursive: true, mode: 0o700 });
   const launchAgentPath = path.join(launchAgentsRoot, `${launchAgentLabel}.plist`);

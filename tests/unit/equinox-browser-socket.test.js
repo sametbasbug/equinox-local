@@ -8,11 +8,13 @@ import {
   prepareEquinoxBrowserSocketDirectory,
 } from "../../src/equinox-browser-socket.js";
 
-test("browser socket path stays short and user-specific", () => {
+test("browser socket path stays short, user-specific and supports isolated smoke namespaces", () => {
   const uid = 501;
   assert.equal(equinoxBrowserSocketDirectory({ uid }), "/tmp/equinox-local-501");
   assert.equal(equinoxBrowserSocketPath({ uid }), "/tmp/equinox-local-501/browser.sock");
-  assert.equal(Buffer.byteLength(equinoxBrowserSocketPath({ uid }), "utf8") < 100, true);
+  assert.equal(equinoxBrowserSocketPath({ uid, namespace: "smoke-123" }), "/tmp/equinox-local-501-smoke-123/browser.sock");
+  assert.equal(Buffer.byteLength(equinoxBrowserSocketPath({ uid, namespace: "smoke-123" }), "utf8") < 100, true);
+  assert.throws(() => equinoxBrowserSocketPath({ uid, namespace: "../unsafe" }), /namespace is invalid/u);
 });
 
 test("browser socket directory is private and owned by the current user", async (t) => {

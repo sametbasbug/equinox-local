@@ -4,9 +4,12 @@ import { ListRootsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 
 import fs from "node:fs/promises";
 import { execFile as execFileCallback } from "node:child_process";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
 const execFile = promisify(execFileCallback);
+const ROOT = path.dirname(fileURLToPath(import.meta.url));
 
 export const PEEKABOO_ALLOWED_TOOLS = Object.freeze([
   "permissions",
@@ -184,23 +187,23 @@ export function inspectPeekabooCompatibility(tools, versionText = "") {
   const contract = compatibilityContract(installedVersion, byName);
 
   if (!installedVersion) {
-    warnings.push("Peekaboo sürümü ayrıştırılamadı; araç şeması doğrulaması kullanılacak.");
+    warnings.push("Peekaboo version could not be parsed; tool-schema validation will be used.");
   } else {
     if (compareVersion(installedVersion, MIN_PEEKABOO_VERSION) < 0) {
       errors.push(
-        `Peekaboo ${MIN_PEEKABOO_VERSION.major}.${MIN_PEEKABOO_VERSION.minor}.${MIN_PEEKABOO_VERSION.patch} veya daha yeni olmalı.`,
+        `Peekaboo ${MIN_PEEKABOO_VERSION.major}.${MIN_PEEKABOO_VERSION.minor}.${MIN_PEEKABOO_VERSION.patch} or newer is required.`,
       );
     }
     if (installedVersion.major > MAX_SUPPORTED_PEEKABOO_MAJOR) {
       errors.push(
-        `Peekaboo major sürümü ${installedVersion.major} henüz desteklenmiyor; en yeni doğrulanmış major ${MAX_SUPPORTED_PEEKABOO_MAJOR}.`,
+        `Peekaboo major version ${installedVersion.major} is not supported yet; the newest validated major is ${MAX_SUPPORTED_PEEKABOO_MAJOR}.`,
       );
     }
   }
 
   const missingTools = contract.requiredTools.filter((name) => !byName.has(name));
   if (missingTools.length > 0) {
-    errors.push(`Eksik güvenli Peekaboo ${contract.name} araçları: ${missingTools.join(", ")}`);
+    errors.push(`Missing safe Peekaboo ${contract.name} tools: ${missingTools.join(", ")}`);
   }
 
   for (const toolName of contract.requiredTools) {
@@ -213,7 +216,7 @@ export function inspectPeekabooCompatibility(tools, versionText = "") {
     const properties = tool.inputSchema?.properties ?? {};
     for (const property of shape.properties) {
       if (!(property in properties)) {
-        errors.push(`${toolName} şemasında beklenen '${property}' alanı yok.`);
+        errors.push(`${toolName} schema is missing the expected '${property}' field.`);
       }
     }
 
@@ -221,7 +224,7 @@ export function inspectPeekabooCompatibility(tools, versionText = "") {
       const actionValues = new Set(properties.action?.enum ?? []);
       for (const action of shape.actionValues) {
         if (!actionValues.has(action)) {
-          errors.push(`${toolName}.action şemasında beklenen '${action}' eylemi yok.`);
+          errors.push(`${toolName}.action schema is missing the expected '${action}' action.`);
         }
       }
     }
@@ -755,24 +758,25 @@ export function buildSafePeekabooEnvironment(baseEnvironment = process.env) {
 }
 
 export async function resolvePeekabooBinary(baseEnvironment = process.env) {
+  const configured = typeof baseEnvironment.EQUINOX_PEEKABOO_PATH === "string"
+    ? baseEnvironment.EQUINOX_PEEKABOO_PATH
+    : "";
   const candidates = [
-    baseEnvironment.EQUINOX_PEEKABOO_PATH,
-    "/opt/homebrew/bin/peekaboo",
-    "/usr/local/bin/peekaboo",
-    "/usr/bin/peekaboo",
+    configured && path.isAbsolute(configured) ? configured : null,
+    path.join(ROOT, "runtime", "peekaboo", "peekaboo"),
   ].filter(Boolean);
 
   for (const candidate of candidates) {
     try {
-      await fs.access(candidate);
-      return candidate;
+      const stat = await fs.lstat(candidate);
+      if (stat.isFile() && !stat.isSymbolicLink() && (stat.mode & 0o111) !== 0) return candidate;
     } catch {
-      // Sıradaki bilinen yolu dene.
+      // Pinned desktop runtime is optional; core Equinox Local remains available.
     }
   }
 
   throw new Error(
-    "Peekaboo bulunamadı. Homebrew kurulumu bekleniyor: steipete/tap/peekaboo.",
+    "Equinox Local pinned Peekaboo runtime is unavailable. Repair or reinstall Equinox Local instead of installing a system Peekaboo package.",
   );
 }
 
@@ -810,6 +814,7 @@ export function createPeekabooBridge({
   let lastTransportError = null;
   let lastTransportErrorAt = null;
   let lastPermissionState = null;
+  let lastCompatibilityEventFingerprint = null;
 
   const emitEvent = (event) => {
     if (typeof onEvent !== "function") {
@@ -920,7 +925,7 @@ export function createPeekabooBridge({
           type: "peekaboo.unexpected_close",
           severity: "warn",
           status: "degraded",
-          message: "Peekaboo MCP alt süreci beklenmedik biçimde kapandı.",
+          message: "Peekaboo MCP child process closed unexpectedly.",
           details: {
             unexpectedCloseCount,
           },
@@ -945,7 +950,7 @@ export function createPeekabooBridge({
       type: "peekaboo.started",
       severity: "info",
       status: "healthy",
-      message: "Peekaboo MCP köprüsü bağlandı.",
+      message: "Peekaboo MCP bridge connected.",
       details: {
         binary,
         startedAt: nextState.startedAt,
@@ -989,7 +994,7 @@ export function createPeekabooBridge({
       type: "peekaboo.reconnected",
       severity: "info",
       status: "recovered",
-      message: "Peekaboo MCP transport bağlantısı yeniden kuruldu.",
+      message: "Peekaboo MCP transport connection recovered.",
       details: {
         reconnectCount,
         previousError: lastTransportError,
@@ -1039,12 +1044,13 @@ export function createPeekabooBridge({
     const compatibility = inspectPeekabooCompatibility(filtered, versionText);
 
     if (!compatibility.ok) {
+      lastCompatibilityEventFingerprint = null;
       emitEvent({
         component: "peekaboo",
         type: "peekaboo.compatibility_failure",
         severity: "critical",
         status: "attention_required",
-        message: `Peekaboo uyumluluk kontrolü başarısız: ${compatibility.errors.join(" | ")}`,
+        message: `Peekaboo compatibility check failed: ${compatibility.errors.join(" | ")}`,
         details: {
           errors: compatibility.errors,
           warnings: compatibility.warnings,
@@ -1052,22 +1058,30 @@ export function createPeekabooBridge({
         },
       });
       throw new Error(
-        `Peekaboo uyumluluk kontrolü başarısız: ${compatibility.errors.join(" | ")}`,
+        `Peekaboo compatibility check failed: ${compatibility.errors.join(" | ")}`,
       );
     }
 
-    emitEvent({
-      component: "peekaboo",
-      type: "peekaboo.compatibility_ok",
-      severity: "info",
-      status: "healthy",
-      message: "Peekaboo güvenli araç yüzeyi uyumluluk kontrolünü geçti.",
-      details: {
-        version: versionText,
-        toolCount: filtered.length,
-        warnings: compatibility.warnings,
-      },
+    const compatibilityEventFingerprint = JSON.stringify({
+      version: versionText,
+      tools: filtered.map((tool) => tool.name).sort(),
+      warnings: compatibility.warnings,
     });
+    if (compatibilityEventFingerprint !== lastCompatibilityEventFingerprint) {
+      lastCompatibilityEventFingerprint = compatibilityEventFingerprint;
+      emitEvent({
+        component: "peekaboo",
+        type: "peekaboo.compatibility_ok",
+        severity: "info",
+        status: "healthy",
+        message: "Peekaboo safe tool-surface compatibility check passed.",
+        details: {
+          version: versionText,
+          toolCount: filtered.length,
+          warnings: compatibility.warnings,
+        },
+      });
+    }
 
     toolCache = {
       fetchedAt: timestamp,
@@ -1129,8 +1143,8 @@ export function createPeekabooBridge({
           severity: lost ? "warn" : "info",
           status: lost ? "degraded" : "recovered",
           message: lost
-            ? "Equinox Local macOS izinlerinden en az biri kullanılamıyor."
-            : "Equinox Local Screen Recording ve Accessibility izinleri hazır.",
+            ? "At least one required Equinox Local macOS permission is unavailable."
+            : "Equinox Local Screen Recording and Accessibility permissions are ready.",
           details: {
             screenRecording: parsed.screenRecording,
             accessibility: parsed.accessibility,

@@ -34,6 +34,8 @@ test("source-checkout restart uses only private generic developer runtime config
   assert.match(script, /sourceLauncher/u);
   assert.match(script, /EQUINOX_LOCAL_DEV_NODE/u);
   assert.match(script, /sync-source-tunnel-runtime\.mjs/u);
+  assert.match(script, /sync-source-peekaboo-runtime\.mjs/u);
+  assert.match(script, /peekabooPath/u);
   assert.match(script, /prepare-source-app-host\.mjs/u);
   assert.match(script, /OLD_PID=.*pgrep/u);
   assert.match(script, /NEW_PID=.*pgrep/u);
@@ -43,6 +45,17 @@ test("source-checkout restart uses only private generic developer runtime config
   assert.match(script, /launchctl bootout/u);
   assert.match(script, /launchctl print/u);
   assert.match(script, /bootout is asynchronous/u);
+  assert.ok(
+    script.indexOf('launchctl bootout "$DOMAIN/$LABEL"') <
+      script.indexOf('/bin/kill -TERM "$child_pid"'),
+    "KeepAlive LaunchAgent must be booted out before terminating its captured runtime child",
+  );
+  assert.ok(
+    script.indexOf('launchctl bootout "$DOMAIN/$LABEL"') <
+      script.indexOf('"$TUNNEL_CLIENT" runtimes stop "$RUNTIME"'),
+    "KeepAlive LaunchAgent must be booted out before stopping the source tunnel runtime",
+  );
+  assert.match(script, /residual Equinox Local server process before relaunch/u);
   assert.match(script, /source LaunchAgent bootstrap failed after bounded retries/u);
   assert.match(script, /launchctl bootstrap/u);
   assert.equal(script.includes('launchctl kickstart "$DOMAIN/$LABEL"'), true);
@@ -53,6 +66,7 @@ test("source-checkout restart uses only private generic developer runtime config
   assert.match(example, /launchAgentLabel=dev\.equinox\.local\.dev/u);
   assert.match(example, /tunnelRuntime=equinox-local-dev/u);
   assert.match(example, /tunnelClient=\/absolute\/path\/to\/equinox-tunnel-client/u);
+  assert.match(example, /peekabooPath=\/absolute\/path\/to\/pinned-peekaboo/u);
   assert.match(example, /sourceLauncher=\/absolute\/path\/to\/private-source-launcher\.sh/u);
 });
 

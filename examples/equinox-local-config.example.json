@@ -24,6 +24,12 @@
       "access": "read-only"
     }
   },
+  "agentAccess": {
+    "files": "full",
+    "terminal": true,
+    "desktop": true,
+    "browser": true
+  },
   "controlCenter": {
     "enabled": true,
     "port": 24891

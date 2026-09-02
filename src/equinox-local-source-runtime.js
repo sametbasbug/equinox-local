@@ -6,7 +6,10 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
 import { readBoundedNormalFile } from "./equinox-local-safe-file.js";
-import { EQUINOX_LOCAL_TUNNEL_CLIENT_VERSION } from "./equinox-local-runtime-versions.js";
+import {
+  EQUINOX_LOCAL_PEEKABOO_VERSION,
+  EQUINOX_LOCAL_TUNNEL_CLIENT_VERSION,
+} from "./equinox-local-runtime-versions.js";
 
 const execFile = promisify(execFileCallback);
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
@@ -22,20 +25,23 @@ export function parseSourceRuntimeConfig(text) {
     if (index <= 0) throw new Error("Developer runtime config is malformed.");
     const key = line.slice(0, index);
     const value = line.slice(index + 1);
-    if (!new Set(["launchAgentLabel", "tunnelRuntime", "tunnelClient", "sourceLauncher"]).has(key)) {
+    if (!new Set(["launchAgentLabel", "tunnelRuntime", "tunnelClient", "peekabooPath", "sourceLauncher"]).has(key)) {
       throw new Error("Developer runtime config contains an unsupported field.");
     }
     if (values.has(key)) throw new Error("Developer runtime config contains a duplicate field.");
     values.set(key, value);
   }
   const tunnelClient = values.get("tunnelClient") || "";
+  const peekabooPath = values.get("peekabooPath") || "";
   const sourceLauncher = values.get("sourceLauncher") || "";
   if (!path.isAbsolute(tunnelClient)) throw new Error("Developer tunnel-client path is invalid.");
+  if (peekabooPath && !path.isAbsolute(peekabooPath)) throw new Error("Developer Peekaboo path is invalid.");
   if (!path.isAbsolute(sourceLauncher)) throw new Error("Developer source launcher path is invalid.");
   return Object.freeze({
     launchAgentLabel: values.get("launchAgentLabel") || "",
     tunnelRuntime: values.get("tunnelRuntime") || "",
     tunnelClient,
+    peekabooPath,
     sourceLauncher,
   });
 }
@@ -108,6 +114,64 @@ export async function updateSourceRuntimeTunnelClient(configPath, tunnelClient, 
     await fsImpl.rm(temporary, { force: true }).catch(() => {});
     throw error;
   }
+}
+
+export async function updateSourceRuntimePeekabooPath(configPath, peekabooPath, {
+  fsImpl = fs,
+  uid = typeof process.getuid === "function" ? process.getuid() : null,
+} = {}) {
+  if (typeof configPath !== "string" || !path.isAbsolute(configPath)) throw new Error("Developer runtime config path is invalid.");
+  if (typeof peekabooPath !== "string" || !path.isAbsolute(peekabooPath)) throw new Error("Developer Peekaboo path is invalid.");
+  const { data, stat } = await readBoundedNormalFile(configPath, {
+    fsImpl,
+    maxBytes: MAX_CONFIG_BYTES,
+    encoding: "utf8",
+    label: "Developer runtime config",
+  });
+  const mode = stat.mode & 0o777;
+  if (Number.isInteger(uid) && stat.uid !== uid) throw new Error("Developer runtime config ownership is invalid.");
+  if (mode !== 0o600 && mode !== 0o400) throw new Error("Developer runtime config permissions are invalid.");
+
+  let replacements = 0;
+  const lines = data.split(/\r?\n/u).map((line) => {
+    if (!line.startsWith("peekabooPath=")) return line;
+    replacements += 1;
+    return `peekabooPath=${peekabooPath}`;
+  });
+  if (replacements > 1) throw new Error("Developer runtime config contains duplicate peekabooPath fields.");
+  if (replacements === 0) {
+    const insertion = lines.findIndex((line) => line.startsWith("sourceLauncher="));
+    if (insertion < 0) throw new Error("Developer runtime config must contain sourceLauncher before adding peekabooPath.");
+    lines.splice(insertion, 0, `peekabooPath=${peekabooPath}`);
+  }
+  const next = lines.join("\n");
+
+  const parent = path.dirname(configPath);
+  const parentStat = await fsImpl.lstat(parent);
+  if (!parentStat.isDirectory() || parentStat.isSymbolicLink()) throw new Error("Developer runtime config parent is unsafe.");
+  if (Number.isInteger(uid) && parentStat.uid !== uid) throw new Error("Developer runtime config parent ownership is invalid.");
+  if ((parentStat.mode & 0o022) !== 0) throw new Error("Developer runtime config parent must not be group/world writable.");
+
+  const temporary = path.join(parent, `.equinox-local-dev-runtime-${randomBytes(8).toString("hex")}.tmp`);
+  const handle = await fsImpl.open(temporary, "wx", 0o600);
+  try {
+    await handle.writeFile(next, "utf8");
+    await handle.sync();
+    await handle.chmod(mode);
+  } finally {
+    await handle.close();
+  }
+  try {
+    await fsImpl.rename(temporary, configPath);
+  } catch (error) {
+    await fsImpl.rm(temporary, { force: true }).catch(() => {});
+    throw error;
+  }
+}
+
+export function parsePeekabooVersion(text) {
+  const match = String(text).trim().match(/(?:Peekaboo\s+)?(\d+\.\d+\.\d+)(?:\s|$)/u);
+  return match ? match[1] : null;
 }
 
 export function parseTunnelClientVersion(text) {
@@ -186,5 +250,46 @@ export async function inspectSourceTunnelRuntime({
       synchronized: false,
       needsAttention: true,
     });
+  }
+}
+
+export async function inspectSourcePeekabooRuntime({
+  configPath,
+  fsImpl = fs,
+  execFileImpl = execFile,
+  expectedVersion = EQUINOX_LOCAL_PEEKABOO_VERSION,
+  uid = typeof process.getuid === "function" ? process.getuid() : null,
+} = {}) {
+  try {
+    const loaded = await readSourceRuntimeConfig({ configPath, fsImpl, uid });
+    if (!loaded.configured) {
+      return Object.freeze({ configured: false, expectedVersion, actualVersion: null, synchronized: null, needsAttention: false });
+    }
+    if (!loaded.config.peekabooPath) {
+      return Object.freeze({ configured: true, expectedVersion, actualVersion: null, synchronized: false, needsAttention: true });
+    }
+    let actualVersion = null;
+    try {
+      const binaryStat = await fsImpl.lstat(loaded.config.peekabooPath);
+      if (!binaryStat.isFile() || binaryStat.isSymbolicLink()) throw new Error("Developer Peekaboo binary is unsafe.");
+      if (Number.isInteger(uid) && binaryStat.uid !== uid) throw new Error("Developer Peekaboo binary ownership is invalid.");
+      if ((binaryStat.mode & 0o022) !== 0 || (binaryStat.mode & 0o111) === 0) throw new Error("Developer Peekaboo binary permissions are invalid.");
+      const { stdout = "" } = await execFileImpl(loaded.config.peekabooPath, ["--version"], {
+        timeout: 10_000,
+        maxBuffer: 1024 * 1024,
+      });
+      actualVersion = parsePeekabooVersion(stdout);
+    } catch {
+      // Keep diagnostics bounded and never expose the configured executable path.
+    }
+    return Object.freeze({
+      configured: true,
+      expectedVersion,
+      actualVersion,
+      synchronized: actualVersion === expectedVersion,
+      needsAttention: actualVersion !== expectedVersion,
+    });
+  } catch {
+    return Object.freeze({ configured: true, expectedVersion, actualVersion: null, synchronized: false, needsAttention: true });
   }
 }

@@ -44,14 +44,15 @@ The human UI and agent surface intentionally converge on the same configuration 
 
 Machine-specific project roots live outside the repository in the user's Equinox Local configuration. The loaded registry defines:
 
-- projects and their filesystem roots;
+- projects and their filesystem-root shortcuts;
 - read-only extra file roots;
+- Agent Access (`files: full|selected`, Terminal/process, Desktop and Browser switches);
 - the default project;
 - the managed workspace project;
 - the downloads root; and
 - Control Center enablement/port.
 
-The configuration parser rejects unknown fields, unsafe IDs, duplicate roots, filesystem-root access, and unsupported writable extra roots.
+Fresh managed configs explicitly seed Full Agent Access. Existing configs that predate `agentAccess` normalize to selected-root filesystem behavior so an update does not silently widen prior boundaries. The configuration parser rejects unknown fields, unsafe IDs, duplicate configured roots, filesystem-root configuration, non-boolean capability switches and unsupported writable extra roots.
 
 ## Stable MCP surface
 
@@ -61,7 +62,7 @@ This lets the runtime gain new operations without turning every operation into a
 
 ## Files and Git
 
-Filesystem operations resolve through configured roots and reject traversal/symlink escape. Mutations use bounded payloads and expected SHA/revision checks where appropriate.
+Filesystem operations resolve through the active Agent Access mode. Selected mode uses configured roots; Full mode can use configured IDs, `home`, or an accessible absolute folder as the active contained root. Direct filesystem-root access and protected credential/application-secret areas are blocked for ad-hoc Full roots, and traversal/symlink escape is rejected in both modes. Core structured file CRUD works on ordinary non-Git Full-access roots without requiring a Terminal fallback; when the active root is a Git repository, ignore and dirty-worktree checks remain additive protections. Mutations use bounded payloads and expected SHA/revision checks where appropriate; `write_file` supports atomic UTF-8 create/replace and requires the current SHA-256 before replacing an existing file.
 
 Git operations are project-scoped and encode explicit rules around clean worktrees, protected branches, HEAD SHA verification, worktree ownership, and remote synchronization. The product does not expose a generic Git command endpoint through the management API.
 

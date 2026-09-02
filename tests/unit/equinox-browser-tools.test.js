@@ -89,6 +89,39 @@ test("registers the first-party Equinox Browser primitive surface", async () => 
   ]);
 });
 
+test("browser status returns the local snapshot without probing a disconnected extension", async () => {
+  const harness = makeHarness();
+  harness.bridge.snapshot = () => ({ active: true, ready: false });
+  await registerEquinoxBrowserTools(harness.deps);
+
+  const result = await harness.tools.get("equinox_browser_status").handler({});
+  assert.deepEqual(parseTextResult(result), {
+    accessEnabled: true,
+    local: { active: true, ready: false },
+    remote: null,
+  });
+  assert.deepEqual(harness.calls, []);
+});
+
+test("agent browser access can disable automation while keeping status readable", async () => {
+  const harness = makeHarness();
+  harness.deps.isBrowserAccessEnabled = () => false;
+  await registerEquinoxBrowserTools(harness.deps);
+
+  const status = await harness.tools.get("equinox_browser_status").handler({});
+  assert.deepEqual(parseTextResult(status), {
+    accessEnabled: false,
+    local: { active: true, ready: true },
+    remote: null,
+  });
+  assert.deepEqual(harness.calls, []);
+
+  const tabs = await harness.tools.get("equinox_browser_tabs").handler({});
+  assert.equal(tabs.isError, true);
+  assert.match(tabs.content[0].text, /disabled in Control Center/u);
+  assert.deepEqual(harness.calls, []);
+});
+
 test("extension reload maps to the first-party self.reload command", async () => {
   const harness = makeHarness();
   await registerEquinoxBrowserTools(harness.deps);

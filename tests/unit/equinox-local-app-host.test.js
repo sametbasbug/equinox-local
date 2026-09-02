@@ -6,12 +6,35 @@ import test from "node:test";
 
 import {
   EQUINOX_LOCAL_APP_BUNDLE_ID,
+  EQUINOX_LOCAL_LAUNCH_LOG_KEEP_BYTES,
+  EQUINOX_LOCAL_LAUNCH_LOG_MAX_BYTES,
   ensureEquinoxLocalAppHost,
   equinoxLocalAppAppleScript,
   equinoxLocalAppRuntimeWrapperPath,
+  launchAgentLogMaintenanceShell,
 } from "../../src/equinox-local-app-host.js";
 
 const macTest = process.platform === "darwin" ? test : test.skip;
+
+test("LaunchAgent log maintenance keeps fixed log files bounded without replacing their inode", () => {
+  const script = launchAgentLogMaintenanceShell({
+    stdoutName: "Equinox Local.log",
+    stderrName: "Equinox Local.error.log",
+  });
+  assert.match(script, new RegExp(`LAUNCH_LOG_MAX_BYTES=${EQUINOX_LOCAL_LAUNCH_LOG_MAX_BYTES}`, "u"));
+  assert.match(script, new RegExp(`LAUNCH_LOG_KEEP_BYTES=${EQUINOX_LOCAL_LAUNCH_LOG_KEEP_BYTES}`, "u"));
+  assert.match(script, /LAUNCH_LOG_CHECK_INTERVAL_SECONDS=300/u);
+  assert.match(script, /maintain_launch_logs/u);
+  assert.match(script, /Equinox Local\.log/u);
+  assert.match(script, /Equinox Local\.error\.log/u);
+  assert.match(script, /tail -c/u);
+  assert.match(script, /cat .* > .*target/u);
+  assert.doesNotMatch(script, /mv /u);
+  assert.throws(
+    () => launchAgentLogMaintenanceShell({ stdoutName: "../bad.log", stderrName: "ok.log" }),
+    /filename is invalid/u,
+  );
+});
 
 macTest("Equinox Local app host keeps one stable bundle identity across bootstrap runs", async (t) => {
   const homeDir = await fs.mkdtemp(path.join(os.tmpdir(), "equinox-app-host-"));

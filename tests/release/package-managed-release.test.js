@@ -11,9 +11,12 @@ import {
   collectManagedReleaseSourceFiles,
   createDeterministicManagedReleaseArchive,
   EQUINOX_LOCAL_NODE_VERSION,
+  EQUINOX_LOCAL_PEEKABOO_TEAM_ID,
+  EQUINOX_LOCAL_PEEKABOO_VERSION,
   EQUINOX_LOCAL_TUNNEL_CLIENT_VERSION,
   extractLocalModuleSpecifiers,
   NODE_DISTRIBUTIONS,
+  PEEKABOO_DISTRIBUTION,
   TUNNEL_CLIENT_DISTRIBUTIONS,
 } from "../../scripts/release/package-managed-release.mjs";
 
@@ -79,6 +82,14 @@ test("pinned tunnel runtime metadata covers both supported macOS architectures",
   assert.equal(TUNNEL_CLIENT_DISTRIBUTIONS["darwin-x64"].fileArchitecture, "x86_64");
   assert.equal(TUNNEL_CLIENT_DISTRIBUTIONS["darwin-arm64"].filename, "tunnel-client-v0.0.13-darwin-arm64.zip");
   assert.equal(TUNNEL_CLIENT_DISTRIBUTIONS["darwin-x64"].filename, "tunnel-client-v0.0.13-darwin-amd64.zip");
+});
+
+test("pinned Peekaboo runtime metadata is universal and fixed to the verified OpenClaw release", () => {
+  assert.equal(EQUINOX_LOCAL_PEEKABOO_VERSION, "4.2.2");
+  assert.equal(EQUINOX_LOCAL_PEEKABOO_TEAM_ID, "FWJYW4S8P8");
+  assert.equal(PEEKABOO_DISTRIBUTION.filename, "peekaboo-macos-universal.tar.gz");
+  assert.equal(PEEKABOO_DISTRIBUTION.sha256, "80b1983a9a2468e715e176167b75aabb4f43feb4882d667ffccc9373d706602e");
+  assert.deepEqual(PEEKABOO_DISTRIBUTION.architectures, ["arm64", "x86_64"]);
 });
 
 test("managed release archive is byte-reproducible across source mtimes and creation order", async (t) => {

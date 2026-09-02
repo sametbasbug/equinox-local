@@ -1,11 +1,21 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 
-export function equinoxBrowserSocketDirectory({ uid = process.getuid?.() } = {}) {
+function normalizeSocketNamespace(namespace) {
+  if (namespace == null || namespace === "") return null;
+  const value = String(namespace);
+  if (!/^[a-z0-9][a-z0-9-]{0,31}$/u.test(value)) {
+    throw new Error("Equinox Browser socket namespace is invalid.");
+  }
+  return value;
+}
+
+export function equinoxBrowserSocketDirectory({ uid = process.getuid?.(), namespace = null } = {}) {
   if (!Number.isInteger(uid) || uid < 1) {
     throw new Error("Equinox Browser requires a non-root user id for its local socket.");
   }
-  return path.join("/tmp", `equinox-local-${uid}`);
+  const normalizedNamespace = normalizeSocketNamespace(namespace);
+  return path.join("/tmp", normalizedNamespace ? `equinox-local-${uid}-${normalizedNamespace}` : `equinox-local-${uid}`);
 }
 
 export function equinoxBrowserSocketPath(options = {}) {

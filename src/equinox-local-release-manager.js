@@ -202,6 +202,8 @@ async function readReleaseMetadata(releaseDir, expectedVersion, expectedTarget) 
     path.join("runtime", "node", "bin", "node"),
     path.join("runtime", "tunnel", "tunnel-client"),
     path.join("runtime", "tunnel", "cloudflared"),
+    path.join("runtime", "peekaboo", "peekaboo"),
+    path.join("runtime", "peekaboo", "libswiftCompatibilitySpan.dylib"),
   ]) {
     const executable = await fs.lstat(path.join(releaseDir, relative));
     if (!executable.isFile() || executable.isSymbolicLink() || (executable.mode & 0o111) === 0) {
@@ -224,6 +226,9 @@ async function readReleaseMetadata(releaseDir, expectedVersion, expectedTarget) 
   for (const relative of [
     path.join("runtime", "tunnel", "LICENSE"),
     path.join("runtime", "tunnel", "NOTICE"),
+    path.join("runtime", "peekaboo", "LICENSE"),
+    path.join("runtime", "peekaboo", "README.md"),
+    path.join("runtime", "peekaboo", "VERSION"),
   ]) {
     const document = await fs.lstat(path.join(releaseDir, relative));
     if (!document.isFile() || document.isSymbolicLink()) {

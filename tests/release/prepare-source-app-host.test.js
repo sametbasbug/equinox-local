@@ -14,11 +14,13 @@ macTest("source app host routes the LaunchAgent through stable Equinox Local.app
   const homeDir = path.join(root, "home");
   const sourceLauncher = path.join(root, "start-source.sh");
   const tunnelClient = path.join(root, "tunnel-client");
+  const peekabooPath = path.join(root, "peekaboo");
   const configPath = path.join(root, "runtime.conf");
   await fs.mkdir(homeDir, { recursive: true });
   await fs.writeFile(sourceLauncher, "#!/bin/sh\nexit 0\n", { mode: 0o700 });
   await fs.writeFile(tunnelClient, "#!/bin/sh\nexit 0\n", { mode: 0o700 });
-  await fs.writeFile(configPath, `launchAgentLabel=dev.equinox.local.dev\ntunnelRuntime=equinox-local-dev\ntunnelClient=${tunnelClient}\nsourceLauncher=${sourceLauncher}\n`, { mode: 0o600 });
+  await fs.writeFile(peekabooPath, "#!/bin/sh\nexit 0\n", { mode: 0o700 });
+  await fs.writeFile(configPath, `launchAgentLabel=dev.equinox.local.dev\ntunnelRuntime=equinox-local-dev\ntunnelClient=${tunnelClient}\npeekabooPath=${peekabooPath}\nsourceLauncher=${sourceLauncher}\n`, { mode: 0o600 });
 
   const appPath = path.join(homeDir, "Applications", "Equinox Local.app");
   const result = await prepareSourceAppHost({ homeDir, configPath });
@@ -33,9 +35,16 @@ macTest("source app host routes the LaunchAgent through stable Equinox Local.app
   assert.match(wrapper, /peekaboo/u);
   assert.match(wrapper, /daemon run --mode manual --no-remote/u);
   assert.match(wrapper, /PEEKABOO_DAEMON_PID/u);
+  assert.equal(wrapper.includes(peekabooPath), true);
+  assert.match(wrapper, /EQUINOX_PEEKABOO_PATH/u);
+  assert.doesNotMatch(wrapper, /\/opt\/homebrew\/bin\/peekaboo/u);
+  assert.match(wrapper, /LAUNCH_LOG_MAX_BYTES/u);
+  assert.match(wrapper, /Equinox Local Source\.log/u);
+  assert.match(wrapper, /Equinox Local Source\.error\.log/u);
   assert.match(wrapper, /RUNTIME_HOST_PID=\$PPID/u);
   assert.match(wrapper, /PARENT_WATCHDOG_PID/u);
   assert.match(wrapper, /watch_runtime_host/u);
+  assert.equal(wrapper.includes('wait "$PARENT_WATCHDOG_PID"'), true);
   assert.equal(wrapper.includes('kill -TERM "$$"'), true);
   assert.match(wrapper, /trap cleanup EXIT/u);
   assert.match(wrapper, /trap shutdown INT TERM HUP/u);

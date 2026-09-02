@@ -86,13 +86,16 @@ test("supervisor child environment keeps managed paths but drops provider creden
     sourceEnv: {
       USER: "example",
       TMPDIR: "/tmp/example",
+      EQUINOX_LOCAL_BROWSER_SOCKET_NAMESPACE: "smoke-123",
       OPENAI_API_KEY: "must-not-leak",
       GITHUB_TOKEN: "must-not-leak",
     },
   });
   assert.equal(env.HOME, fixture.homeDir);
   assert.equal(env.EQUINOX_LOCAL_RELEASE_DIR, fixture.releaseDir);
+  assert.equal(env.EQUINOX_PEEKABOO_PATH, path.join(fixture.releaseDir, "runtime", "peekaboo", "peekaboo"));
   assert.equal(env.USER, "example");
+  assert.equal(env.EQUINOX_LOCAL_BROWSER_SOCKET_NAMESPACE, "smoke-123");
   assert.equal("OPENAI_API_KEY" in env, false);
   assert.equal("GITHUB_TOKEN" in env, false);
 });

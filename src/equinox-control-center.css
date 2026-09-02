@@ -58,7 +58,9 @@ select {
 
 button:focus-visible,
 input:focus-visible,
-select:focus-visible {
+select:focus-visible,
+a.button:focus-visible,
+.inline-link:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
@@ -268,6 +270,29 @@ select:focus-visible {
   gap: 12px;
 }
 
+.language-control {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.language-control select {
+  width: auto;
+  min-width: 104px;
+  min-height: 38px;
+  padding: 7px 30px 7px 10px;
+  border-color: var(--line-strong);
+  border-radius: 10px;
+  background-color: rgba(255, 255, 255, 0.035);
+}
+
+.language-control select:hover {
+  background-color: rgba(255, 255, 255, 0.065);
+}
+
 .last-refreshed {
   color: var(--muted);
   font-size: 12px;
@@ -312,6 +337,13 @@ select:focus-visible {
   cursor: not-allowed;
   opacity: 0.45;
   transform: none;
+}
+
+a.button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-decoration: none;
 }
 
 .full-width {
@@ -465,6 +497,19 @@ select:focus-visible {
   color: var(--muted);
   font-size: 11px;
   line-height: 1.4;
+}
+
+.inline-link {
+  width: fit-content;
+  color: var(--accent-strong);
+  font-size: 11px;
+  font-weight: 750;
+  line-height: 1.4;
+  text-decoration: none;
+}
+
+.inline-link:hover {
+  text-decoration: underline;
 }
 
 .setup-form {
@@ -1303,6 +1348,37 @@ select:disabled {
   margin-top: 16px;
 }
 
+.browser-store-callout {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 14px;
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+}
+
+.browser-store-callout > div {
+  display: grid;
+  flex: 1 1 240px;
+  gap: 4px;
+}
+
+.browser-store-callout strong {
+  font-size: 13px;
+}
+
+.browser-store-callout small {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.browser-store-button {
+  flex: 0 0 auto;
+}
+
 .integration-actions {
   display: flex;
   flex-wrap: wrap;
@@ -1535,7 +1611,12 @@ select:disabled {
 
   .topbar-actions {
     width: 100%;
+    flex-wrap: wrap;
     justify-content: space-between;
+  }
+
+  .language-control {
+    order: -1;
   }
 
   .four-column,

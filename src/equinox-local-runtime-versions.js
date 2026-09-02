@@ -1,5 +1,14 @@
 export const EQUINOX_LOCAL_NODE_VERSION = "24.20.0";
 export const EQUINOX_LOCAL_TUNNEL_CLIENT_VERSION = "0.0.13";
+export const EQUINOX_LOCAL_PEEKABOO_VERSION = "4.2.2";
+export const EQUINOX_LOCAL_PEEKABOO_TEAM_ID = "FWJYW4S8P8";
+
+export const PEEKABOO_DISTRIBUTION = Object.freeze({
+  filename: "peekaboo-macos-universal.tar.gz",
+  sha256: "80b1983a9a2468e715e176167b75aabb4f43feb4882d667ffccc9373d706602e",
+  archiveRoot: "peekaboo-macos-universal",
+  architectures: Object.freeze(["arm64", "x86_64"]),
+});
 
 export const NODE_DISTRIBUTIONS = Object.freeze({
   "darwin-arm64": Object.freeze({

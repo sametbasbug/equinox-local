@@ -22,8 +22,10 @@ async function makeInstall() {
     const release = path.join(releasesRoot, version);
     const nodeBinary = path.join(release, "runtime", "node", "bin", "node");
     const tunnelDir = path.join(release, "runtime", "tunnel");
+    const peekabooDir = path.join(release, "runtime", "peekaboo");
     await fs.mkdir(path.dirname(nodeBinary), { recursive: true });
     await fs.mkdir(tunnelDir, { recursive: true });
+    await fs.mkdir(peekabooDir, { recursive: true });
     await fs.writeFile(path.join(release, "release.json"), JSON.stringify({
       schemaVersion: 1,
       version,
@@ -36,6 +38,11 @@ async function makeInstall() {
     await fs.chmod(nodeBinary, 0o755);
     for (const name of ["tunnel-client", "cloudflared"]) {
       const binary = path.join(tunnelDir, name);
+      await fs.writeFile(binary, `${name}\n`);
+      await fs.chmod(binary, 0o755);
+    }
+    for (const name of ["peekaboo", "libswiftCompatibilitySpan.dylib"]) {
+      const binary = path.join(peekabooDir, name);
       await fs.writeFile(binary, `${name}\n`);
       await fs.chmod(binary, 0o755);
     }

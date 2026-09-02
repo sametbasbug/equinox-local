@@ -43,6 +43,7 @@ async function withApi(fn, overrides = {}) {
     checkForUpdates: overrides.checkForUpdates ?? null,
     applyUpdate: overrides.applyUpdate ?? null,
     configureTunnel: overrides.configureTunnel ?? null,
+    restartRuntime: overrides.restartRuntime ?? null,
     scheduleUninstall: overrides.scheduleUninstall ?? null,
     chooseFolder: overrides.chooseFolder ?? null,
     updateBrowserSettings: overrides.updateBrowserSettings ?? null,
@@ -100,12 +101,22 @@ test("control API serves the visual Control Center shell and fixed same-origin a
     assert.match(shell.headers.get("content-security-policy"), /script-src 'self'/u);
     assert.equal(shell.headers.get("access-control-allow-origin"), null);
     assert.equal(shell.headers.get("x-frame-options"), "DENY");
-    assert.match(await shell.text(), /Equinox Local Control Center/u);
+    const shellText = await shell.text();
+    assert.match(shellText, /Equinox Local Control Center/u);
+    assert.match(shellText, /id="restart-runtime-button"/u);
+    assert.match(shellText, /id="language-select"/u);
+    assert.match(shellText, /<option value="en">English<\/option>/u);
+    assert.match(shellText, /<option value="tr">Türkçe<\/option>/u);
+    assert.match(shellText, /https:\/\/chromewebstore\.google\.com\/detail\/equinox-browser\/npdneefcobilfkjlihghjgjnknenhfoj/u);
+    assert.match(shellText, /Install Equinox Browser/u);
+    assert.match(shellText, /target="_blank" rel="noopener noreferrer"/u);
 
     const css = await fetch(`${base}/assets/control-center.css`);
     assert.equal(css.status, 200);
     assert.match(css.headers.get("content-type"), /^text\/css/u);
-    assert.match(await css.text(), /\.app-shell/u);
+    const cssText = await css.text();
+    assert.match(cssText, /\.app-shell/u);
+    assert.match(cssText, /\.language-control/u);
 
     const logo = await fetch(`${base}/assets/equinox-local.png`);
     assert.equal(logo.status, 200);
@@ -118,6 +129,7 @@ test("control API serves the visual Control Center shell and fixed same-origin a
     const scriptText = await script.text();
     assert.match(scriptText, /\/api\/v1\/config/u);
     assert.match(scriptText, /\/api\/v1\/doctor/u);
+    assert.match(scriptText, /\/api\/v1\/runtime\/restart/u);
     assert.match(scriptText, /\/api\/v1\/activity/u);
     assert.match(scriptText, /\/api\/v1\/update/u);
     assert.match(scriptText, /\/api\/v1\/update\/check/u);
@@ -127,6 +139,13 @@ test("control API serves the visual Control Center shell and fixed same-origin a
     assert.match(scriptText, /\/api\/v1\/uninstall/u);
     assert.match(scriptText, /\/api\/v1\/folder-picker/u);
     assert.match(scriptText, /\/api\/v1\/browser\/settings/u);
+    assert.match(scriptText, /npdneefcobilfkjlihghjgjnknenhfoj/u);
+    assert.match(scriptText, /control\.rel = "noopener noreferrer"/u);
+    assert.match(scriptText, /equinox-local-control-center-language/u);
+    assert.match(scriptText, /localStorage\.setItem\(LANGUAGE_STORAGE_KEY/u);
+    assert.match(scriptText, /navigator\.language/u);
+    assert.match(scriptText, /localizeRuntimeEventMessage/u);
+    assert.match(scriptText, /Peekaboo safe tool-surface compatibility check passed\./u);
     assert.doesNotMatch(scriptText, /agent-browser|Agent Browser/u);
     assert.doesNotMatch(scriptText, /\/api\/v1\/integrations\/github(?:\/check)?/u);
     assert.doesNotMatch(scriptText, /GitHub CLI/u);
@@ -386,6 +405,14 @@ test("bounded Control Center actions expose activity, Browser/GitHub controls an
     assert.equal(picker.body.path, "/tmp/chosen");
     assert.equal(picker.body.cancelled, false);
 
+    const restart = await jsonFetch(`${base}/api/v1/runtime/restart`, {
+      method: "POST",
+      headers: mutationHeaders,
+      body: "{}",
+    });
+    assert.equal(restart.response.status, 202);
+    assert.deepEqual(restart.body.result, { scheduled: true, installationKind: "source" });
+
     const browser = await jsonFetch(`${base}/api/v1/browser/settings`, {
       method: "PUT",
       headers: mutationHeaders,
@@ -466,6 +493,7 @@ test("bounded Control Center actions expose activity, Browser/GitHub controls an
 
     assert.deepEqual(calls, [
       ["picker"],
+      ["restart"],
       ["browser", { enabled: false, agentCursorEnabled: true, agentCursorName: "Nyx" }],
       ["github"],
       ["peekaboo-status"],
@@ -475,7 +503,7 @@ test("bounded Control Center actions expose activity, Browser/GitHub controls an
       ["telegram-test"],
       ["telegram-disconnect"],
     ]);
-    assert.equal(api.snapshot().mutationCount, 4);
+    assert.equal(api.snapshot().mutationCount, 5);
 
     const invalidBrowser = await jsonFetch(`${base}/api/v1/browser/settings`, {
       method: "PUT",
@@ -483,9 +511,13 @@ test("bounded Control Center actions expose activity, Browser/GitHub controls an
       body: JSON.stringify({ surprise: true }),
     });
     assert.equal(invalidBrowser.response.status, 400);
-    assert.equal(calls.length, 9);
+    assert.equal(calls.length, 10);
   }, {
     getActivity: async () => [{ timestamp: "2026-08-22T00:00:00.000Z", component: "runtime", message: "Ready" }],
+    restartRuntime: async () => {
+      calls.push(["restart"]);
+      return { scheduled: true, installationKind: "source" };
+    },
     chooseFolder: async () => {
       calls.push(["picker"]);
       return "/tmp/chosen";

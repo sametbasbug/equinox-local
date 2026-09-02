@@ -73,6 +73,12 @@ test("first-run seed config exposes only a managed workspace and read-only Downl
   assert.deepEqual(Object.keys(config.projects), ["workspace"]);
   assert.equal(config.fileRoots.downloads.root, "/Users/example/Downloads");
   assert.equal(config.fileRoots.downloads.access, "read-only");
+  assert.deepEqual(config.agentAccess, {
+    files: "full",
+    terminal: true,
+    desktop: true,
+    browser: true,
+  });
   assert.equal(config.controlCenter.port, 24891);
 });
 
@@ -91,6 +97,9 @@ test("launch agent uses the stable Equinox Local app identity while runtime wrap
   assert.match(runtimeWrapper, /RUNTIME_HOST_PID=\$PPID/u);
   assert.match(runtimeWrapper, /PARENT_WATCHDOG_PID/u);
   assert.match(runtimeWrapper, /SUPERVISOR_PID/u);
+  assert.match(runtimeWrapper, /LAUNCH_LOG_MAX_BYTES/u);
+  assert.match(runtimeWrapper, /Equinox Local\.log/u);
+  assert.match(runtimeWrapper, /Equinox Local\.error\.log/u);
   assert.match(runtimeWrapper, /watch_runtime_host/u);
   assert.match(runtimeWrapper, /trap shutdown INT TERM HUP/u);
   assert.doesNotMatch(runtimeWrapper, /exec .*equinox-local-supervisor/u);

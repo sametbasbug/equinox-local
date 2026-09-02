@@ -58,6 +58,7 @@ test("source checkout doctor stays healthy without requiring managed-only files"
       runtimeVersion: "4.2.0",
       sourceCheckoutVersion: "4.2.0",
       developmentTunnel: { configured: true, expectedVersion: "0.0.13", actualVersion: "0.0.13", synchronized: true },
+      developmentPeekaboo: { configured: true, expectedVersion: "4.2.2", actualVersion: "4.2.2", synchronized: true },
       browser: { ready: false },
       peekaboo: { active: false },
       now: () => new Date("2026-08-25T00:00:00.000Z"),
@@ -69,6 +70,7 @@ test("source checkout doctor stays healthy without requiring managed-only files"
     assert.equal(result.checks.find((item) => item.id === "installation")?.status, "pass");
     assert.equal(result.checks.find((item) => item.id === "source-version")?.status, "pass");
     assert.equal(result.checks.find((item) => item.id === "development-tunnel")?.status, "pass");
+    assert.equal(result.checks.find((item) => item.id === "development-peekaboo")?.status, "pass");
     assert.equal(result.checks.find((item) => item.id === "browser")?.status, "optional");
   } finally {
     await fs.rm(root, { recursive: true, force: true });
@@ -117,6 +119,31 @@ test("source checkout doctor surfaces a stale developer tunnel runtime without e
     assert.equal(result.state, "ATTENTION");
     assert.equal(tunnel?.status, "attention");
     assert.match(tunnel?.detail || "", /0\.0\.12.*0\.0\.13/u);
+    assert.equal(JSON.stringify(result).includes(root), false);
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test("source checkout doctor surfaces a stale developer Peekaboo runtime without exposing its path", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "equinox-doctor-source-peekaboo-drift-"));
+  try {
+    const workspace = path.join(root, "workspace");
+    await fs.mkdir(workspace, { mode: 0o700 });
+    const result = await getEquinoxLocalDoctorStatus({
+      installation: { kind: "source", managed: false, selfUpdateSupported: false },
+      config: { version: 1, runtime: { workspaceProject: "workspace" }, projects: { workspace: { root: workspace } } },
+      runtimeHealthState: "HEALTHY",
+      runtimeVersion: "4.3.1",
+      developmentTunnel: { configured: true, expectedVersion: "0.0.13", actualVersion: "0.0.13", synchronized: true },
+      developmentPeekaboo: { configured: true, expectedVersion: "4.2.2", actualVersion: "4.1.0", synchronized: false },
+      browser: { ready: false },
+      peekaboo: { active: false },
+    });
+    const peekaboo = result.checks.find((item) => item.id === "development-peekaboo");
+    assert.equal(result.state, "ATTENTION");
+    assert.equal(peekaboo?.status, "attention");
+    assert.match(peekaboo?.detail || "", /4\.1\.0.*4\.2\.2/u);
     assert.equal(JSON.stringify(result).includes(root), false);
   } finally {
     await fs.rm(root, { recursive: true, force: true });

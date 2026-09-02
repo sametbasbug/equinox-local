@@ -6,7 +6,9 @@ import test from "node:test";
 
 import {
   inspectSourceCheckoutVersion,
+  inspectSourcePeekabooRuntime,
   inspectSourceTunnelRuntime,
+  parsePeekabooVersion,
   parseSourceCheckoutVersion,
   parseSourceRuntimeConfig,
   parseTunnelClientVersion,
@@ -53,6 +55,19 @@ test("source tunnel inspection reports pinned-version drift without exposing pat
   assert.equal(result.actualVersion, "0.0.12");
   assert.equal(result.synchronized, false);
   assert.equal(result.needsAttention, true);
+  assert.equal(JSON.stringify(result).includes(item.root), false);
+});
+
+test("source Peekaboo inspection validates the pinned desktop runtime without exposing its path", async (t) => {
+  const item = await fixture(t);
+  const peekaboo = path.join(item.root, "peekaboo");
+  await fs.writeFile(peekaboo, "#!/bin/sh\necho 'Peekaboo 4.2.2 (fixture)'\n", { mode: 0o755 });
+  const config = await fs.readFile(item.configPath, "utf8");
+  await fs.writeFile(item.configPath, config.replace("sourceLauncher=", `peekabooPath=${peekaboo}\nsourceLauncher=`), { mode: 0o600 });
+  assert.equal(parsePeekabooVersion("Peekaboo 4.2.2 (fixture)"), "4.2.2");
+  const result = await inspectSourcePeekabooRuntime({ configPath: item.configPath });
+  assert.equal(result.synchronized, true);
+  assert.equal(result.actualVersion, "4.2.2");
   assert.equal(JSON.stringify(result).includes(item.root), false);
 });
 
