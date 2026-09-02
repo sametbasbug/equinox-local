@@ -107,7 +107,10 @@ test("control API serves the visual Control Center shell and fixed same-origin a
     assert.match(shellText, /id="language-select"/u);
     assert.match(shellText, /<option value="en">English<\/option>/u);
     assert.match(shellText, /<option value="tr">Türkçe<\/option>/u);
-    assert.match(shellText, /https:\/\/chromewebstore\.google\.com\/detail\/equinox-browser\/npdneefcobilfkjlihghjgjnknenhfoj/u);
+    assert.equal(
+      shellText.includes('href="https://chromewebstore.google.com/detail/equinox-browser/npdneefcobilfkjlihghjgjnknenhfoj"'),
+      true,
+    );
     assert.match(shellText, /Install Equinox Browser/u);
     assert.match(shellText, /target="_blank" rel="noopener noreferrer"/u);
 
