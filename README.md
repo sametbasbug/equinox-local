@@ -10,7 +10,7 @@
 [![CI](https://github.com/sametbasbug/equinox-local/actions/workflows/ci.yml/badge.svg)](https://github.com/sametbasbug/equinox-local/actions/workflows/ci.yml)
 ![macOS](https://img.shields.io/badge/platform-macOS-111111?logo=apple)
 ![Node.js 24](https://img.shields.io/badge/Node.js-24-339933?logo=nodedotjs&logoColor=white)
-![Tests](https://img.shields.io/badge/tests-292%20passing-2ea44f)
+![Tests](https://img.shields.io/badge/tests-294%20passing-2ea44f)
 [![License: AGPL v3](https://img.shields.io/badge/license-AGPL--3.0--only-blue.svg)](LICENSE)
 
 [Product site](https://local.sametbasbug.dev/) · [Security](SECURITY.md) · [Architecture](docs/architecture.md) · [Contributing](CONTRIBUTING.md)
@@ -172,7 +172,7 @@ npm run check
 npm test
 ```
 
-The public test suite currently contains **292 passing tests** covering browser consent/lifecycle, Agent Access and credential boundaries, structured file operations, Control Center request boundaries, managed install/update/rollback/uninstall, source-runtime synchronization, workflows, repair/recovery, Native Messaging, and runtime observability.
+The public test suite currently contains **294 passing tests** covering browser consent/lifecycle, Agent Access and credential boundaries, structured file operations, Control Center request boundaries, managed install/update/rollback/uninstall, source-runtime synchronization, workflows, repair/recovery, Native Messaging, and runtime observability.
 
 Source-checkout runtime configuration is intentionally external. Start with [examples/equinox-local-config.example.json](examples/equinox-local-config.example.json) and keep real machine paths/credentials out of the repository. The source restart path synchronizes both the development tunnel client and pinned Peekaboo runtime from the same version/SHA/signing policy used by managed release packaging; System Doctor reports version drift without exposing configured executable paths.
 
