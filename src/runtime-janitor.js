@@ -1222,7 +1222,7 @@ export function createRuntimeJanitor({
           severity: "warn",
           status: "healthy",
           correlationId: cleanupId,
-          message: `Janitor preview değişti; ${category} cleanup reddedildi.`,
+          message: `Janitor preview changed; cleanup was refused for ${category}.`,
           details: { cleanupId, category, reason: "STALE_PREVIEW" },
         });
         return record;
@@ -1252,7 +1252,7 @@ export function createRuntimeJanitor({
         severity: "info",
         status: "recovering",
         correlationId: cleanupId,
-        message: `Janitor cleanup başladı: ${category}`,
+        message: `Janitor cleanup started: ${category}`,
         details: { cleanupId, category, itemCount: scanned.candidates.length, reclaimableBytes: scanned.candidates.reduce((sum, item) => sum + item.bytes, 0) },
       });
 
@@ -1269,7 +1269,7 @@ export function createRuntimeJanitor({
           })));
           cleaned.push(...scanned.candidates.map((item) => item.id));
           if (result?.pruned && result.pruned.length < cleaned.length) {
-            failure = `Beklenen ${cleaned.length} worktree metadata kaydından ${result.pruned.length} tanesi prune edildi.`;
+            failure = `Expected ${cleaned.length} worktree metadata records, but only ${result.pruned.length} were pruned.`;
           }
         } catch (error) {
           failure = error instanceof Error ? error.message : String(error);
@@ -1312,8 +1312,8 @@ export function createRuntimeJanitor({
         status: outcome === "CLEANED" ? "recovered" : "failed",
         correlationId: cleanupId,
         message: outcome === "CLEANED"
-          ? `Janitor cleanup tamamlandı: ${category} (${cleaned.length} öğe).`
-          : `Janitor cleanup tamamlanamadı: ${category}${failure ? ` — ${failure}` : ""}`,
+          ? `Janitor cleanup completed: ${category} (${cleaned.length} items).`
+          : `Janitor cleanup did not complete: ${category}${failure ? ` — ${failure}` : ""}`,
         details: { cleanupId, category, outcome, cleanedCount: cleaned.length, cleanedBytes },
       });
       return record;
@@ -1343,7 +1343,7 @@ export function createRuntimeJanitor({
       severity: "info",
       status: "healthy",
       correlationId: cycleId,
-      message: `Runtime janitor bakım turu başladı: ${trigger}`,
+      message: `Runtime janitor maintenance cycle started: ${trigger}`,
       details: { cycleId, trigger, categoryCount: JANITOR_CATEGORIES.length },
     });
 
@@ -1408,8 +1408,8 @@ export function createRuntimeJanitor({
         status: failed.length > 0 ? "degraded" : "healthy",
         correlationId: cycleId,
         message: failed.length > 0
-          ? `Runtime janitor bakım turu kısmi tamamlandı; ${failed.length} kategori başarısız.`
-          : `Runtime janitor bakım turu tamamlandı; ${cleanedCount} öğe temizlendi.`,
+          ? `Runtime janitor maintenance cycle completed partially; ${failed.length} categories failed.`
+          : `Runtime janitor maintenance cycle completed; ${cleanedCount} items cleaned.`,
         details: {
           cycleId,
           trigger,

@@ -11,7 +11,12 @@ import { pathToFileURL } from "node:url";
 import {
   readBoundedNormalFile,
   SAFE_FILE_ERROR_CODES,
+  writeBoundedUtf8File,
 } from "./equinox-local-safe-file.js";
+import {
+  createProtectedAgentPathChecker,
+  isSensitiveAgentName,
+} from "./equinox-local-agent-path-policy.js";
 import {
   createTerminalManager,
   TERMINAL_KEYS,
@@ -48,6 +53,9 @@ import {
 import {
   createEquinoxBrowserBridge,
 } from "./equinox-browser-bridge.js";
+import {
+  equinoxBrowserSocketPath,
+} from "./equinox-browser-socket.js";
 import {
   registerEquinoxBrowserTools,
 } from "./equinox-browser-tools.js";
@@ -112,6 +120,7 @@ import {
 } from "./equinox-local-doctor.js";
 import {
   inspectSourceCheckoutVersion,
+  inspectSourcePeekabooRuntime,
   inspectSourceTunnelRuntime,
 } from "./equinox-local-source-runtime.js";
 import {
@@ -138,6 +147,9 @@ const equinoxLocalConfigManager = createEquinoxLocalConfigManager({
 });
 const EQUINOX_LOCAL_CONFIG_SNAPSHOT = await equinoxLocalConfigManager.initialize();
 const EQUINOX_LOCAL_CONFIG = EQUINOX_LOCAL_CONFIG_SNAPSHOT.config;
+const AGENT_ACCESS = EQUINOX_LOCAL_CONFIG.agentAccess;
+const FULL_FILE_ACCESS = AGENT_ACCESS.files === "full";
+
 const DEFAULT_PROJECT = EQUINOX_LOCAL_CONFIG.defaultProject;
 const WORKSPACE_PROJECT_ID = EQUINOX_LOCAL_CONFIG.runtime.workspaceProject;
 const DOWNLOADS_ROOT_ID = EQUINOX_LOCAL_CONFIG.runtime.downloadsRoot;
@@ -150,19 +162,27 @@ const FILE_ROOT_DEFINITIONS = Object.freeze({
 });
 const FILE_ROOT_IDS = Object.freeze(Object.keys(FILE_ROOT_DEFINITIONS));
 
-const PROJECT_ID_VALUE_SCHEMA = z.enum(PROJECT_IDS);
-const FILE_ROOT_ID_VALUE_SCHEMA = z.enum(FILE_ROOT_IDS);
+const PROJECT_ID_VALUE_SCHEMA = FULL_FILE_ACCESS
+  ? z.string().min(1).max(1024)
+  : z.enum(PROJECT_IDS);
+const FILE_ROOT_ID_VALUE_SCHEMA = FULL_FILE_ACCESS
+  ? z.string().min(1).max(1024)
+  : z.enum(FILE_ROOT_IDS);
 
 const PROJECT_ID_SCHEMA = PROJECT_ID_VALUE_SCHEMA
   .default(DEFAULT_PROJECT)
   .describe(
-    `İşlem yapılacak izinli proje kimliği; belirtilmezse ${DEFAULT_PROJECT} kullanılır. Güncel liste için list_projects aracını kullan.`,
+    FULL_FILE_ACCESS
+      ? `İşlem yapılacak proje kimliği, home veya erişilebilir mutlak klasör yolu; belirtilmezse ${DEFAULT_PROJECT} kullanılır.`
+      : `İşlem yapılacak izinli proje kimliği; belirtilmezse ${DEFAULT_PROJECT} kullanılır. Güncel liste için list_projects aracını kullan.`,
   );
 
 const FILE_ROOT_ID_SCHEMA = FILE_ROOT_ID_VALUE_SCHEMA
   .default(DEFAULT_PROJECT)
   .describe(
-    "Dosya okunacak izinli kök; ek read-only kökler yalnız dosya erişimi ve transfer kaynağıdır. Güncel liste için list_projects aracını kullan.",
+    FULL_FILE_ACCESS
+      ? "Dosya kökü kimliği, home veya erişilebilir mutlak klasör yolu. Hassas dosya korumaları yine uygulanır."
+      : "Dosya okunacak izinli kök; ek read-only kökler yalnız dosya erişimi ve transfer kaynağıdır. Güncel liste için list_projects aracını kullan.",
   );
 
 const projectContextStorage =
@@ -185,6 +205,10 @@ const MAX_OUTPUT_CHARS = 120_000;
 
 const IGNORED_DIRECTORIES = new Set([
   ".git",
+]);
+
+const TRAVERSAL_SKIPPED_DIRECTORIES = new Set([
+  ".git",
   "node_modules",
   "dist",
   "build",
@@ -194,33 +218,51 @@ const IGNORED_DIRECTORIES = new Set([
   "coverage",
 ]);
 
-const BLOCKED_FILENAMES = new Set([
-  ".npmrc",
-  ".netrc",
-  "credentials.json",
-  "secrets.json",
-  "service-account.json",
-  "id_rsa",
-  "id_ed25519",
-]);
+const isProtectedAgentPath = createProtectedAgentPathChecker(process.env.HOME);
 
-const BLOCKED_EXTENSIONS = new Set([
-  ".pem",
-  ".key",
-  ".p12",
-  ".pfx",
-]);
+function assertNotProtectedAgentPath(absolutePath) {
+  if (isProtectedAgentPath(absolutePath)) {
+    throw new Error("Bu yol hassas kimlik bilgisi veya uygulama credential alanı olarak korunuyor.");
+  }
+}
 
 async function resolveProjectContext(
   projectId = DEFAULT_PROJECT,
 ) {
-  const definition =
+  const configuredDefinition =
     PROJECT_DEFINITIONS[projectId];
+  const adHocRoot =
+    !configuredDefinition && FULL_FILE_ACCESS
+      ? projectId === "home"
+        ? process.env.HOME
+        : path.isAbsolute(projectId)
+          ? projectId
+          : null
+      : null;
+  const definition =
+    configuredDefinition ??
+    (adHocRoot
+      ? {
+          name:
+            projectId === "home"
+              ? "Home"
+              : path.basename(adHocRoot) || adHocRoot,
+          root: adHocRoot,
+          worktrees: false,
+        }
+      : null);
 
   if (!definition) {
     throw new Error(
-      `İzin verilmeyen proje kimliği: ${projectId}`,
+      FULL_FILE_ACCESS
+        ? `Proje bağlamı bulunamadı. Yapılandırılmış bir proje kimliği, home veya mutlak klasör yolu kullan: ${projectId}`
+        : `İzin verilmeyen proje kimliği: ${projectId}`,
     );
+  }
+
+  const normalizedRoot = path.normalize(definition.root);
+  if (!configuredDefinition && normalizedRoot === path.parse(normalizedRoot).root) {
+    throw new Error("Dosya sistemi kökü doğrudan ajan çalışma kökü olarak kullanılamaz.");
   }
 
   let rootRealPath;
@@ -248,17 +290,25 @@ async function resolveProjectContext(
     );
   }
 
+  if (!configuredDefinition) {
+    assertNotProtectedAgentPath(rootRealPath);
+  }
+
+  let kind = "directory";
   try {
     await validateIndependentGitProjectRoot(rootRealPath);
+    kind = "git";
   } catch (error) {
-    throw new Error(
-      [
-        `İzinli proje bağımsız bir Git reposu değil: ${projectId}`,
-        error instanceof Error
-          ? error.message
-          : String(error),
-      ].join("\n"),
-    );
+    if (configuredDefinition) {
+      throw new Error(
+        [
+          `İzinli proje bağımsız bir Git reposu değil: ${projectId}`,
+          error instanceof Error
+            ? error.message
+            : String(error),
+        ].join("\n"),
+      );
+    }
   }
 
   return Object.freeze({
@@ -266,20 +316,47 @@ async function resolveProjectContext(
     name: definition.name,
     configuredRoot: definition.root,
     rootRealPath,
-    kind: "git",
+    kind,
+    configured: Boolean(configuredDefinition),
   });
 }
 
 async function resolveFileRootContext(
   rootId = DEFAULT_PROJECT,
 ) {
-  const definition =
+  const configuredDefinition =
     FILE_ROOT_DEFINITIONS[rootId];
+  const adHocRoot =
+    !configuredDefinition && FULL_FILE_ACCESS
+      ? rootId === "home"
+        ? process.env.HOME
+        : path.isAbsolute(rootId)
+          ? rootId
+          : null
+      : null;
+  const definition =
+    configuredDefinition ??
+    (adHocRoot
+      ? {
+          name:
+            rootId === "home"
+              ? "Home"
+              : path.basename(adHocRoot) || adHocRoot,
+          root: adHocRoot,
+        }
+      : null);
 
   if (!definition) {
     throw new Error(
-      `İzin verilmeyen dosya kökü: ${rootId}`,
+      FULL_FILE_ACCESS
+        ? `Dosya kökü bulunamadı. Yapılandırılmış bir kök, home veya mutlak klasör yolu kullan: ${rootId}`
+        : `İzin verilmeyen dosya kökü: ${rootId}`,
     );
+  }
+
+  const normalizedRoot = path.normalize(definition.root);
+  if (!configuredDefinition && normalizedRoot === path.parse(normalizedRoot).root) {
+    throw new Error("Dosya sistemi kökü doğrudan ajan dosya kökü olarak kullanılamaz.");
   }
 
   let rootRealPath;
@@ -306,14 +383,19 @@ async function resolveFileRootContext(
     );
   }
 
+  if (!configuredDefinition) {
+    assertNotProtectedAgentPath(rootRealPath);
+  }
+
   return Object.freeze({
     id: rootId,
     name: definition.name,
     configuredRoot: definition.root,
     rootRealPath,
-    kind: PROJECT_DEFINITIONS[rootId]
+    kind: configuredDefinition && PROJECT_DEFINITIONS[rootId]
       ? "git"
       : "files",
+    configured: Boolean(configuredDefinition),
   });
 }
 
@@ -375,16 +457,7 @@ function isInsideProject(targetPath) {
   );
 }
 
-function isSensitiveName(name) {
-  const lowerName = name.toLowerCase();
-
-  return (
-    lowerName === ".env" ||
-    lowerName.startsWith(".env.") ||
-    BLOCKED_FILENAMES.has(lowerName) ||
-    BLOCKED_EXTENSIONS.has(path.extname(lowerName))
-  );
-}
+const isSensitiveName = isSensitiveAgentName;
 
 function checkRequestedPath(relativePath) {
   if (typeof relativePath !== "string" || relativePath.includes("\0")) {
@@ -425,6 +498,9 @@ async function safeResolve(relativePath = ".") {
   if (!isInsideProject(realCandidate)) {
     throw new Error("Sembolik bağlantı üzerinden proje dışına çıkış engellendi.");
   }
+  if (FULL_FILE_ACCESS && !getActiveProjectContext().configured) {
+    assertNotProtectedAgentPath(realCandidate);
+  }
 
   return realCandidate;
 }
@@ -450,15 +526,18 @@ async function collectEntries(directory, depth, entries) {
       return;
     }
 
+    const absolutePath = path.join(directory, entry.name);
     if (
       entry.isSymbolicLink() ||
-      IGNORED_DIRECTORIES.has(entry.name) ||
-      isSensitiveName(entry.name)
+      TRAVERSAL_SKIPPED_DIRECTORIES.has(entry.name) ||
+      isSensitiveName(entry.name) ||
+      (FULL_FILE_ACCESS &&
+        !getActiveProjectContext().configured &&
+        isProtectedAgentPath(absolutePath))
     ) {
       continue;
     }
 
-    const absolutePath = path.join(directory, entry.name);
     const relativePath = displayPath(absolutePath);
 
     if (entry.isDirectory()) {
@@ -487,15 +566,17 @@ async function collectSearchFiles(directory, files, limit = 1200) {
       return;
     }
 
+    const absolutePath = path.join(directory, entry.name);
     if (
       entry.isSymbolicLink() ||
-      IGNORED_DIRECTORIES.has(entry.name) ||
-      isSensitiveName(entry.name)
+      TRAVERSAL_SKIPPED_DIRECTORIES.has(entry.name) ||
+      isSensitiveName(entry.name) ||
+      (FULL_FILE_ACCESS &&
+        !getActiveProjectContext().configured &&
+        isProtectedAgentPath(absolutePath))
     ) {
       continue;
     }
-
-    const absolutePath = path.join(directory, entry.name);
 
     if (entry.isDirectory()) {
       await collectSearchFiles(absolutePath, files, limit);
@@ -506,6 +587,10 @@ async function collectSearchFiles(directory, files, limit = 1200) {
 }
 
 async function runGit(args) {
+  if (getActiveProjectContext().kind !== "git") {
+    throw new Error("Bu işlem bir Git proje kökü gerektiriyor.");
+  }
+
   const { stdout, stderr } = await execFile("git", args, {
     cwd: getActiveProjectRoot(),
     timeout: 15_000,
@@ -554,7 +639,7 @@ await runtimeObservability.record({
   type: "runtime.start",
   severity: "info",
   status: "healthy",
-  message: `Equinox Local ${SERVER_VERSION} runtime başladı.`,
+  message: `Equinox Local ${SERVER_VERSION} runtime started.`,
   details: {
     server: SERVER_NAME,
     version: SERVER_VERSION,
@@ -1045,10 +1130,10 @@ registerTextTool(
   "list_projects",
   {
     description:
-      "Equinox Local için izin verilen Git projelerini ve salt-okunur dosya köklerini erişilebilirlikleriyle listeler.",
+      "Equinox Local için yapılandırılmış proje/kök kısayollarını ve etkin Agent Access dosya modunu listeler. Full modda home veya erişilebilir mutlak klasör yolu ayrıca doğrudan kullanılabilir.",
     inputSchema: {},
     annotations: {
-      title: "İzinli projeleri listele",
+      title: "Proje ve erişim köklerini listele",
       readOnlyHint: true,
       destructiveHint: false,
       idempotentHint: true,
@@ -1244,8 +1329,11 @@ registerTextTool(
 
     return textResult(
       [
+        `Dosya erişim modu: ${FULL_FILE_ACCESS ? "FULL" : "SELECTED"}`,
         `Varsayılan proje: ${DEFAULT_PROJECT}`,
-        "Git araçlarında project; dosya araçlarında project alanı izinli kökü seçer.",
+        FULL_FILE_ACCESS
+          ? "Yapılandırılmış kimliklerin yanında project alanında home veya erişilebilir mutlak klasör yolu kullanılabilir. Git araçları seçilen kökün Git repo olmasını ayrıca doğrular."
+          : "Git araçlarında project; dosya araçlarında project alanı yalnız yapılandırılmış kökü seçer.",
         ...sections,
       ].join("\n\n"),
     );
@@ -2451,7 +2539,7 @@ registerTextTool(
   "create_file",
   {
     description:
-      "Seçilen proje içinde yalnızca yeni bir UTF-8 metin dosyası oluşturur. Mevcut dosyanın üzerine yazamaz, klasör oluşturamaz ve hassas veya Git tarafından yok sayılan yollara yazamaz.",
+      "Seçilen çalışma kökü içinde yalnızca yeni bir UTF-8 metin dosyası oluşturur. Mevcut dosyanın üzerine yazamaz; .git ve hassas credential yolları kapalıdır, Git reposunda ignore kuralları da korunur.",
     inputSchema: {
       path: z
         .string()
@@ -2514,79 +2602,7 @@ registerTextTool(
         );
       }
 
-      const allowedHiddenSegments =
-        new Set([".github"]);
-
-      if (
-        segments.some(
-          (segment) =>
-            segment.startsWith(".") &&
-            !allowedHiddenSegments.has(segment),
-        )
-      ) {
-        throw new Error(
-          "Yalnızca .github gizli klasörü içinde dosya oluşturulabilir; diğer gizli yollar kapalıdır.",
-        );
-      }
-
-      const blockedDirectories = new Set([
-        "node_modules",
-        "dist",
-        "build",
-        ".astro",
-        ".next",
-        ".cache",
-        "coverage",
-      ]);
-
-      for (const segment of segments.slice(0, -1)) {
-        if (
-          blockedDirectories.has(
-            segment.toLowerCase(),
-          )
-        ) {
-          throw new Error(
-            `Yasaklı klasöre dosya oluşturulamaz: ${segment}`,
-          );
-        }
-      }
-
-      const fileName =
-        segments[segments.length - 1];
-
-      const lowerFileName =
-        fileName.toLowerCase();
-
-      const blockedNames = new Set([
-        ".env",
-        ".npmrc",
-        ".netrc",
-        "credentials.json",
-        "secrets.json",
-        "service-account.json",
-        "id_rsa",
-        "id_ed25519",
-      ]);
-
-      const blockedExtensions = [
-        ".pem",
-        ".key",
-        ".p12",
-        ".pfx",
-      ];
-
-      if (
-        blockedNames.has(lowerFileName) ||
-        lowerFileName.startsWith(".env.") ||
-        blockedExtensions.some(
-          (extension) =>
-            lowerFileName.endsWith(extension),
-        )
-      ) {
-        throw new Error(
-          "Hassas kimlik bilgisi veya anahtar dosyası oluşturulamaz.",
-        );
-      }
+      checkRequestedPath(requestedPath);
 
       if (content.includes("\0")) {
         throw new Error(
@@ -2649,6 +2665,9 @@ registerTextTool(
           "Hedef dosya proje kökünün dışına çıkıyor.",
         );
       }
+      if (FULL_FILE_ACCESS && !getActiveProjectContext().configured) {
+        assertNotProtectedAgentPath(targetPath);
+      }
 
       let targetExists = false;
 
@@ -2667,44 +2686,7 @@ registerTextTool(
         );
       }
 
-      let ignored = false;
-
-      try {
-        await execFile(
-          "/usr/bin/git",
-          [
-            "check-ignore",
-            "-q",
-            "--no-index",
-            "--",
-            requestedPath,
-          ],
-          {
-            cwd: getActiveProjectRoot(),
-            timeout: 15_000,
-            maxBuffer: 1024 * 1024,
-          },
-        );
-
-        ignored = true;
-      } catch (error) {
-        if (Number(error?.code) !== 1) {
-          throw new Error(
-            [
-              "Git ignore kontrolü başarısız.",
-              error instanceof Error
-                ? error.message
-                : String(error),
-            ].join("\n"),
-          );
-        }
-      }
-
-      if (ignored) {
-        throw new Error(
-          "Git tarafından yok sayılan bir yolda dosya oluşturulamaz.",
-        );
-      }
+      await assertPathNotIgnored(requestedPath);
 
       /*
        * wx:
@@ -2731,20 +2713,26 @@ registerTextTool(
       const relativePath =
         displayPath(targetPath);
 
-      const status = await runGit([
-        "status",
-        "--short",
-        "--",
-        relativePath,
-      ]);
+      const isGitProject =
+        getActiveProjectContext().kind === "git";
+      const status = isGitProject
+        ? await runGit([
+            "status",
+            "--short",
+            "--",
+            relativePath,
+          ])
+        : "";
 
       const result = textResult(
         [
           `Yeni dosya oluşturuldu: ${relativePath}`,
           `Boyut: ${contentBytes} bayt`,
-          status
-            ? `Git durumu:\n${status}`
-            : "Git durumu değişiklik göstermiyor.",
+          isGitProject
+            ? status
+              ? `Git durumu:\n${status}`
+              : "Git durumu değişiklik göstermiyor."
+            : "Git denetimi uygulanmadı; çalışma kökü normal bir klasör.",
           "Mevcut hiçbir dosyanın üzerine yazılmadı.",
         ].join("\n\n"),
       );
@@ -2767,6 +2755,73 @@ registerTextTool(
         }).catch(() => {});
       }
 
+      return errorResult(error);
+    }
+  },
+);
+
+registerTextTool(
+  "write_file",
+  {
+    description:
+      "Seçilen çalışma kökü içinde UTF-8 metin dosyası oluşturur veya mevcut normal dosyayı SHA-256 önkoşuluyla atomik olarak değiştirir. Git reposu gerektirmez; hassas credential ve .git yolları kapalı kalır.",
+    inputSchema: {
+      path: z
+        .string()
+        .min(1)
+        .max(300)
+        .describe("Çalışma köküne göre göreli dosya yolu"),
+      content: z
+        .string()
+        .max(500_000)
+        .describe("Yazılacak UTF-8 metin içeriği"),
+      expected_sha256: z
+        .string()
+        .regex(/^[a-fA-F0-9]{64}$/u)
+        .optional()
+        .describe("Mevcut dosya değiştirilecekse zorunlu güncel SHA-256"),
+    },
+    annotations: {
+      title: "Dosya yaz veya güvenli biçimde değiştir",
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: false,
+      openWorldHint: false,
+    },
+  },
+  async ({ path: requestedPath, content, expected_sha256 }) => {
+    try {
+      checkRequestedPath(requestedPath);
+      if (!requestedPath || requestedPath === ".") {
+        throw new Error("Hedef bir dosya yolu olmalı.");
+      }
+
+      const parentRelative = path.dirname(requestedPath);
+      const parentPath = parentRelative === "."
+        ? getActiveProjectRoot()
+        : await safeResolve(parentRelative);
+      const parentRealPath = await fs.realpath(parentPath);
+      const targetPath = path.join(parentRealPath, path.basename(requestedPath));
+      if (!isInsideProject(targetPath)) {
+        throw new Error("Hedef dosya çalışma kökünün dışına çıkıyor.");
+      }
+      if (FULL_FILE_ACCESS && !getActiveProjectContext().configured) {
+        assertNotProtectedAgentPath(targetPath);
+      }
+
+      const result = await writeBoundedUtf8File(targetPath, {
+        content,
+        expectedSha256: expected_sha256,
+        maxBytes: MAX_FILE_BYTES,
+        maxExistingBytes: MAX_HASHABLE_FILE_BYTES,
+        label: "Dosya",
+      });
+      return terminalJsonResult({
+        ok: true,
+        path: displayPath(targetPath),
+        ...result,
+      });
+    } catch (error) {
       return errorResult(error);
     }
   },
@@ -2876,43 +2931,45 @@ async function inspectFileForDeletion(
   const relativePath =
     displayPath(filePath);
 
-  let ignored = false;
+  if (getActiveProjectContext().kind === "git") {
+    let ignored = false;
 
-  try {
-    await execFile(
-      "/usr/bin/git",
-      [
-        "check-ignore",
-        "-q",
-        "--no-index",
-        "--",
-        relativePath,
-      ],
-      {
-        cwd: getActiveProjectRoot(),
-        timeout: 15_000,
-        maxBuffer: 1024 * 1024,
-      },
-    );
-
-    ignored = true;
-  } catch (error) {
-    if (Number(error?.code) !== 1) {
-      throw new Error(
+    try {
+      await execFile(
+        "/usr/bin/git",
         [
-          "Git ignore kontrolü başarısız.",
-          error instanceof Error
-            ? error.message
-            : String(error),
-        ].join("\n"),
+          "check-ignore",
+          "-q",
+          "--no-index",
+          "--",
+          relativePath,
+        ],
+        {
+          cwd: getActiveProjectRoot(),
+          timeout: 15_000,
+          maxBuffer: 1024 * 1024,
+        },
+      );
+
+      ignored = true;
+    } catch (error) {
+      if (Number(error?.code) !== 1) {
+        throw new Error(
+          [
+            "Git ignore kontrolü başarısız.",
+            error instanceof Error
+              ? error.message
+              : String(error),
+          ].join("\n"),
+        );
+      }
+    }
+
+    if (ignored) {
+      throw new Error(
+        "Git tarafından yok sayılan dosyalar bu araçlarla işlenemez.",
       );
     }
-  }
-
-  if (ignored) {
-    throw new Error(
-      "Git tarafından yok sayılan dosyalar bu araçlarla işlenemez.",
-    );
   }
 
   const { data: buffer, stat: stats } = await readBoundedNormalFile(filePath, {
@@ -2948,7 +3005,7 @@ registerTextTool(
   "file_hash",
   {
     description:
-      "Seçilen projedeki mevcut bir dosyanın SHA-256 özetini, boyutunu ve Git durumunu döndürür. Dosyada değişiklik yapmaz.",
+      "Seçilen çalışma kökündeki mevcut bir dosyanın SHA-256 özetini ve boyutunu döndürür; Git reposunda ayrıca Git durumunu gösterir. Dosyada değişiklik yapmaz.",
     inputSchema: {
       path: z
         .string()
@@ -2973,31 +3030,36 @@ registerTextTool(
           requestedPath,
         );
 
-      const status =
-        await runGit([
+      const isGitProject =
+        getActiveProjectContext().kind === "git";
+      let status = "";
+      let gitState =
+        "Uygulanmıyor; çalışma kökü normal bir klasör";
+
+      if (isGitProject) {
+        status = await runGit([
           "status",
           "--short",
           "--",
           inspected.relativePath,
         ]);
+        gitState = "Git açısından temiz";
 
-      let gitState =
-        "Git açısından temiz";
-
-      if (
-        status
-          .split("\n")
-          .filter(Boolean)
-          .some(
-            (line) =>
-              line.startsWith("?? "),
-          )
-      ) {
-        gitState =
-          "Git tarafından izlenmiyor";
-      } else if (status.trim()) {
-        gitState =
-          "Çalışma ağacında değişiklik var";
+        if (
+          status
+            .split("\n")
+            .filter(Boolean)
+            .some(
+              (line) =>
+                line.startsWith("?? "),
+            )
+        ) {
+          gitState =
+            "Git tarafından izlenmiyor";
+        } else if (status.trim()) {
+          gitState =
+            "Çalışma ağacında değişiklik var";
+        }
       }
 
       return textResult(
@@ -3006,9 +3068,11 @@ registerTextTool(
           `SHA-256: ${inspected.sha256}`,
           `Boyut: ${inspected.stats.size} bayt`,
           `Git durumu: ${gitState}`,
-          status.trim()
-            ? `Git çıktısı:\n${status}`
-            : "Git çıktısı boş.",
+          isGitProject
+            ? status.trim()
+              ? `Git çıktısı:\n${status}`
+              : "Git çıktısı boş."
+            : "Git denetimi uygulanmadı.",
         ].join("\n\n"),
       );
     } catch (error) {
@@ -3021,7 +3085,7 @@ registerTextTool(
   "delete_file",
   {
     description:
-      "Seçilen projedeki tek bir mevcut dosyayı yalnızca verilen SHA-256 özeti güncel içerikle birebir eşleşirse siler. Klasör, symlink, ignore edilmiş veya değişiklik taşıyan takipli dosyaları silemez.",
+      "Seçilen çalışma kökündeki tek bir mevcut dosyayı yalnızca verilen SHA-256 özeti güncel içerikle birebir eşleşirse siler. Klasör ve symlink silemez; Git reposunda ignore edilmiş veya değişiklik taşıyan takipli dosyalar ayrıca korunur.",
     inputSchema: {
       path: z
         .string()
@@ -3058,6 +3122,8 @@ registerTextTool(
     try {
       const normalizedExpectedHash =
         expected_sha256.toLowerCase();
+      const isGitProject =
+        getActiveProjectContext().kind === "git";
 
       const initialInspection =
         await inspectFileForDeletion(
@@ -3078,45 +3144,40 @@ registerTextTool(
         );
       }
 
-      const statusBefore =
-        await runGit([
+      let isUntracked = false;
+      if (isGitProject) {
+        const statusBefore = await runGit([
           "status",
           "--porcelain=v1",
           "--",
           initialInspection.relativePath,
         ]);
-
-      const statusLines =
-        statusBefore
+        const statusLines = statusBefore
           .split("\n")
-          .map((line) =>
-            line.trimEnd(),
-          )
+          .map((line) => line.trimEnd())
           .filter(Boolean);
+        isUntracked =
+          statusLines.length === 1 &&
+          statusLines[0].startsWith("?? ");
 
-      const isUntracked =
-        statusLines.length === 1 &&
-        statusLines[0].startsWith(
-          "?? ",
-        );
-
-      /*
-       * Temiz takipli dosya: status boş.
-       * Untracked dosya: yalnızca ?? satırı.
-       * Modifiye/staged/conflict dosya:
-       * güvenlik nedeniyle reddedilir.
-       */
-      if (
-        statusLines.length > 0 &&
-        !isUntracked
-      ) {
-        throw new Error(
-          [
-            "Dosyada mevcut Git değişikliği bulundu; silme işlemi durduruldu.",
-            "Önce değişikliği commit et, geri al veya ayrı değerlendir.",
-            statusLines.join("\n"),
-          ].join("\n"),
-        );
+        /*
+         * Temiz takipli dosya: status boş.
+         * Untracked dosya: yalnızca ?? satırı.
+         * Modifiye/staged/conflict dosya:
+         * güvenlik nedeniyle reddedilir.
+         */
+        if (
+          statusLines.length > 0 &&
+          !isUntracked
+        ) {
+          throw new Error(
+            [
+              "Dosyada mevcut Git değişikliği bulundu; silme işlemi durduruldu.",
+              "Önce değişikliği commit et, geri al veya ayrı değerlendir.",
+              statusLines.join("\n"),
+            ].join("\n"),
+          );
+        }
       }
 
       /*
@@ -3176,6 +3237,18 @@ registerTextTool(
       );
 
       deletionCompleted = true;
+
+      if (!isGitProject) {
+        deletionCompleted = false;
+        rollbackData = undefined;
+        return textResult(
+          [
+            `Dosya silindi: ${currentInspection.relativePath}`,
+            `Doğrulanan SHA-256: ${normalizedExpectedHash}`,
+            "Git denetimi uygulanmadı; çalışma kökü normal bir klasör.",
+          ].join("\n\n"),
+        );
+      }
 
       const statusAfter =
         await runGit([
@@ -5771,21 +5844,7 @@ function validateWritableDirectoryPath(
     );
   }
 
-  const allowedHiddenSegments =
-    new Set([".github"]);
-
   for (const segment of segments) {
-    if (
-      segment.startsWith(".") &&
-      !allowedHiddenSegments.has(
-        segment,
-      )
-    ) {
-      throw new Error(
-        `Gizli klasör oluşturma kapalı: ${segment}`,
-      );
-    }
-
     if (
       IGNORED_DIRECTORIES.has(
         segment,
@@ -5809,6 +5868,9 @@ function validateWritableDirectoryPath(
       "Klasör proje kökünün dışına çıkıyor.",
     );
   }
+  if (FULL_FILE_ACCESS && !getActiveProjectContext().configured) {
+    assertNotProtectedAgentPath(candidate);
+  }
 
   return {
     candidate,
@@ -5820,6 +5882,10 @@ function validateWritableDirectoryPath(
 async function assertPathNotIgnored(
   relativePath,
 ) {
+  if (getActiveProjectContext().kind !== "git") {
+    return;
+  }
+
   const ignored =
     await runGitWithCode([
       "check-ignore",
@@ -6056,7 +6122,7 @@ registerTextTool(
   "create_directory",
   {
     description:
-      "Seçilen proje içinde yeni bir klasör yolu oluşturur. Proje dışına, hassas, ignore edilmiş veya kapalı build klasörlerine yazamaz. .github klasörüne izin verir.",
+      "Seçilen çalışma kökü içinde yeni bir klasör yolu oluşturur. Kök dışına, .git veya hassas credential alanlarına yazamaz; Git reposunda ignore kuralları da korunur.",
     inputSchema: {
       path: z
         .string()
@@ -6166,7 +6232,7 @@ registerTextTool(
   "remove_empty_directory",
   {
     description:
-      "Seçilen projedeki tek bir boş klasörü siler. Proje kökünü, symlink'i, dolu klasörü veya kapalı yolları silemez.",
+      "Seçilen çalışma kökündeki tek bir boş klasörü siler. Çalışma kökünü, symlink'i, dolu klasörü, .git veya hassas credential yollarını silemez.",
     inputSchema: {
       path: z
         .string()
@@ -6236,7 +6302,7 @@ registerTextTool(
   "move_file",
   {
     description:
-      "Seçilen projedeki mevcut normal bir dosyayı aynı proje içinde yeni ve boş bir hedef yola taşır. Üzerine yazmaz, symlink işlemez ve önceden değişiklik taşıyan takipli dosyayı taşımaz.",
+      "Seçilen çalışma kökündeki mevcut normal bir dosyayı aynı kök içinde yeni ve boş bir hedef yola taşır. Üzerine yazmaz veya symlink işlemez; Git reposunda önceden değişiklik taşıyan takipli dosyayı ayrıca korur.",
     inputSchema: {
       source: z
         .string()
@@ -6328,47 +6394,52 @@ registerTextTool(
       const sourceRelative =
         displayPath(sourcePath);
 
-      await assertPathNotIgnored(
-        sourceRelative,
-      );
-
-      const sourceStatus =
-        await runGitWithCode([
-          "status",
-          "--porcelain=v1",
-          "--no-renames",
-          "--",
+      const isGitProject =
+        getActiveProjectContext().kind === "git";
+      let sourceIsUntracked = false;
+      if (isGitProject) {
+        await assertPathNotIgnored(
           sourceRelative,
-        ]);
-
-      if (sourceStatus.code !== 0) {
-        throw new Error(
-          `Kaynak Git durumu alınamadı: ${sourceStatus.stderr.trim()}`,
-        );
-      }
-
-      const sourceStatusLines =
-        sourceStatus.stdout
-          .split("\n")
-          .map((line) => line.trimEnd())
-          .filter(Boolean);
-
-      const sourceIsUntracked =
-        sourceStatusLines.length === 1 &&
-        sourceStatusLines[0].startsWith(
-          "?? ",
         );
 
-      if (
-        sourceStatusLines.length > 0 &&
-        !sourceIsUntracked
-      ) {
-        throw new Error(
-          [
-            "Kaynak takipli dosyada önceden Git değişikliği var; taşıma durduruldu.",
-            ...sourceStatusLines,
-          ].join("\n"),
-        );
+        const sourceStatus =
+          await runGitWithCode([
+            "status",
+            "--porcelain=v1",
+            "--no-renames",
+            "--",
+            sourceRelative,
+          ]);
+
+        if (sourceStatus.code !== 0) {
+          throw new Error(
+            `Kaynak Git durumu alınamadı: ${sourceStatus.stderr.trim()}`,
+          );
+        }
+
+        const sourceStatusLines =
+          sourceStatus.stdout
+            .split("\n")
+            .map((line) => line.trimEnd())
+            .filter(Boolean);
+
+        sourceIsUntracked =
+          sourceStatusLines.length === 1 &&
+          sourceStatusLines[0].startsWith(
+            "?? ",
+          );
+
+        if (
+          sourceStatusLines.length > 0 &&
+          !sourceIsUntracked
+        ) {
+          throw new Error(
+            [
+              "Kaynak takipli dosyada önceden Git değişikliği var; taşıma durduruldu.",
+              ...sourceStatusLines,
+            ].join("\n"),
+          );
+        }
       }
 
       checkRequestedPath(destination);
@@ -6398,23 +6469,6 @@ registerTextTool(
       ) {
         throw new Error(
           "Hedef yol boş veya üst dizine çıkan bölüm içeremez.",
-        );
-      }
-
-      const allowedHiddenSegments =
-        new Set([".github"]);
-
-      if (
-        destinationSegments.some(
-          (segment) =>
-            segment.startsWith(".") &&
-            !allowedHiddenSegments.has(
-              segment,
-            ),
-        )
-      ) {
-        throw new Error(
-          "Hedefte yalnızca .github gizli klasörüne izin verilir.",
         );
       }
 
@@ -6453,6 +6507,9 @@ registerTextTool(
           "Hedef dosya proje dışına çıkıyor.",
         );
       }
+      if (FULL_FILE_ACCESS && !getActiveProjectContext().configured) {
+        assertNotProtectedAgentPath(destinationPath);
+      }
 
       try {
         await fs.lstat(destinationPath);
@@ -6475,20 +6532,23 @@ registerTextTool(
       );
       moved = true;
 
-      const statusAfter =
-        await runGitWithCode([
-          "status",
-          "--short",
-          "--no-renames",
-          "--",
-          sourceRelative,
-          destination,
-        ]);
+      let statusAfter = null;
+      if (isGitProject) {
+        statusAfter =
+          await runGitWithCode([
+            "status",
+            "--short",
+            "--no-renames",
+            "--",
+            sourceRelative,
+            destination,
+          ]);
 
-      if (statusAfter.code !== 0) {
-        throw new Error(
-          `Taşıma sonrası Git durumu alınamadı: ${statusAfter.stderr.trim()}`,
-        );
+        if (statusAfter.code !== 0) {
+          throw new Error(
+            `Taşıma sonrası Git durumu alınamadı: ${statusAfter.stderr.trim()}`,
+          );
+        }
       }
 
       moved = false;
@@ -6496,13 +6556,19 @@ registerTextTool(
       return textResult(
         [
           `Dosya taşındı: ${sourceRelative} -> ${destination}`,
-          sourceIsUntracked
-            ? "Kaynak dosya Git tarafından izlenmiyordu."
-            : "Kaynak dosya taşınmadan önce takipli ve temizdi.",
-          statusAfter.stdout.trim()
-            ? `Git durumu:\n${statusAfter.stdout.trim()}`
-            : "Git durumu değişiklik göstermiyor.",
-          "commit_changes bu taşımayı ekleme + silme olarak güvenli biçimde commit edebilir.",
+          isGitProject
+            ? sourceIsUntracked
+              ? "Kaynak dosya Git tarafından izlenmiyordu."
+              : "Kaynak dosya taşınmadan önce takipli ve temizdi."
+            : "Git denetimi uygulanmadı; çalışma kökü normal bir klasör.",
+          isGitProject
+            ? statusAfter.stdout.trim()
+              ? `Git durumu:\n${statusAfter.stdout.trim()}`
+              : "Git durumu değişiklik göstermiyor."
+            : "Taşıma aynı çalışma kökü içinde tamamlandı.",
+          isGitProject
+            ? "commit_changes bu taşımayı ekleme + silme olarak güvenli biçimde commit edebilir."
+            : "Git commit adımı uygulanmaz.",
         ].join("\n\n"),
       );
     } catch (error) {
@@ -13583,6 +13649,10 @@ registerTextTool(
     label,
   }) => {
     try {
+      if (!AGENT_ACCESS.terminal) {
+        throw new Error("Terminal erişimi Control Center'da kapalı.");
+      }
+
       const resolvedCwd =
         await safeResolve(cwd);
       const stats =
@@ -13744,6 +13814,10 @@ registerTextTool(
   },
   async ({ session_id, data, key }) => {
     try {
+      if (!AGENT_ACCESS.terminal) {
+        throw new Error("Terminal erişimi Control Center'da kapalı.");
+      }
+
       return terminalJsonResult({
         ok: true,
         session: terminalManager.write({
@@ -13929,6 +14003,10 @@ registerTextTool(
     startup_wait_ms,
   }) => {
     try {
+      if (!AGENT_ACCESS.terminal) {
+        throw new Error("Terminal ve süreç erişimi Control Center'da kapalı.");
+      }
+
       const resolvedCwd =
         await safeResolve(cwd);
       const stats =
@@ -15430,6 +15508,9 @@ const peekabooBridge = createPeekabooBridge({
 });
 
 const equinoxBrowserBridge = createEquinoxBrowserBridge({
+  socketPath: equinoxBrowserSocketPath({
+    namespace: process.env.EQUINOX_LOCAL_BROWSER_SOCKET_NAMESPACE || null,
+  }),
   recordEvent: recordRuntimeEvent,
 });
 await equinoxBrowserBridge.start();
@@ -15586,6 +15667,7 @@ await registerEquinoxBrowserTools({
   screenshotRoot: workflowRuntimePaths.browserScreenshotRoot,
   screenshotProjectId: WORKSPACE_PROJECT_ID,
   bridge: equinoxBrowserBridge,
+  isBrowserAccessEnabled: () => AGENT_ACCESS.browser,
   withMutationLocks,
   textResult,
   errorResult,
@@ -15671,8 +15753,9 @@ async function getControlCenterDoctorStatus() {
     homeDir: process.env.HOME,
     supervisorMode: process.env.EQUINOX_LOCAL_SUPERVISOR_MODE || null,
   });
-  const [developmentTunnel, sourceCheckout, peekabooStatus] = await Promise.all([
+  const [developmentTunnel, developmentPeekaboo, sourceCheckout, peekabooStatus] = await Promise.all([
     equinoxLocalInstallation.kind === "source" ? inspectSourceTunnelRuntime() : Promise.resolve(null),
+    equinoxLocalInstallation.kind === "source" ? inspectSourcePeekabooRuntime() : Promise.resolve(null),
     equinoxLocalInstallation.kind === "source" ? inspectSourceCheckoutVersion() : Promise.resolve(null),
     getControlCenterPeekabooStatus(),
   ]);
@@ -15690,6 +15773,7 @@ async function getControlCenterDoctorStatus() {
     update: equinoxLocalUpdateCoordinator.snapshot(),
     onboarding,
     developmentTunnel,
+    developmentPeekaboo,
     homeDir: process.env.HOME,
   });
 }
@@ -15760,6 +15844,38 @@ equinoxLocalControlApi = createEquinoxLocalControlApi({
     installation: equinoxLocalInstallation,
     homeDir: process.env.HOME,
     supervisorMode: process.env.EQUINOX_LOCAL_SUPERVISOR_MODE || null,
+  }),
+  restartRuntime: async () => withMutationLocks(["local-restart"], async () => {
+    if (equinoxLocalInstallation.managed && equinoxLocalInstallation.selfUpdateSupported) {
+      const result = scheduleEquinoxLocalRestart({ installation: equinoxLocalInstallation });
+      runtimeRestartPendingUntil = Date.now() + RUNTIME_RESTART_GUARD_MS;
+      return { ...result, installationKind: "managed" };
+    }
+
+    const { spawn } = await import("node:child_process");
+    const { fileURLToPath } = await import("node:url");
+    const scriptPath = path.join(path.dirname(fileURLToPath(import.meta.url)), "restart-runtime.sh");
+    const scriptStats = await fs.lstat(scriptPath);
+    if (scriptStats.isSymbolicLink() || !scriptStats.isFile()) {
+      throw new Error("Source runtime restart script is not a normal file.");
+    }
+    const sourceRestartEnv = {
+      HOME: process.env.HOME,
+      USER: process.env.USER,
+      LOGNAME: process.env.LOGNAME,
+      TMPDIR: process.env.TMPDIR,
+      PATH: "/usr/bin:/bin:/usr/sbin:/sbin",
+      EQUINOX_LOCAL_DEV_NODE: process.execPath,
+      EQUINOX_LOCAL_DEV_RUNTIME_CONFIG: process.env.EQUINOX_LOCAL_DEV_RUNTIME_CONFIG,
+    };
+    const child = spawn("/bin/bash", [scriptPath], {
+      detached: true,
+      stdio: "ignore",
+      env: Object.fromEntries(Object.entries(sourceRestartEnv).filter(([, value]) => typeof value === "string" && value.length > 0)),
+    });
+    child.unref();
+    runtimeRestartPendingUntil = Date.now() + RUNTIME_RESTART_GUARD_MS;
+    return { scheduled: true, installationKind: "source" };
   }),
   configureTunnel: async (body) => withMutationLocks(["local-onboarding"], async () => {
     const configured = await configureManagedTunnel({
@@ -15904,6 +16020,10 @@ registerTextTool(
   },
   async ({ tool_name, refresh, restart }) => {
     try {
+      if (!AGENT_ACCESS.desktop) {
+        throw new Error("Desktop automation access is disabled in Control Center.");
+      }
+
       if (restart) {
         await peekabooBridge.restart();
       }
@@ -15972,6 +16092,10 @@ registerRawTool(
   },
   async ({ tool_name, arguments: toolArguments }) => {
     try {
+      if (!AGENT_ACCESS.desktop) {
+        throw new Error("Desktop automation access is disabled in Control Center.");
+      }
+
       return await withMutationLocks(["desktop"], async () => {
         const result = await peekabooBridge.callTool(tool_name, toolArguments);
         return normalizeChromeToolResult(result);
@@ -16191,7 +16315,7 @@ async function shutdownLocalResources() {
     type: "runtime.shutdown_requested",
     severity: "info",
     status: "stopping",
-    message: "Equinox Local runtime kapanışı başladı.",
+    message: "Equinox Local runtime shutdown started.",
     details: {
       pid: process.pid,
       uptimeSeconds: Math.round(process.uptime()),
@@ -16215,7 +16339,7 @@ async function shutdownLocalResources() {
     type: "runtime.stopped",
     severity: "info",
     status: "completed",
-    message: "Equinox Local runtime kaynakları temiz biçimde kapatıldı.",
+    message: "Equinox Local runtime resources shut down cleanly.",
     details: {
       pid: process.pid,
     },

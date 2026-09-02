@@ -28,6 +28,7 @@ async function createFixture(version = "4.2.0") {
   const releaseDir = path.join(stageRoot, "release");
   await fs.mkdir(path.join(releaseDir, "runtime", "node", "bin"), { recursive: true, mode: 0o700 });
   await fs.mkdir(path.join(releaseDir, "runtime", "tunnel"), { recursive: true, mode: 0o700 });
+  await fs.mkdir(path.join(releaseDir, "runtime", "peekaboo"), { recursive: true, mode: 0o700 });
   await fs.mkdir(path.join(releaseDir, "runtime", "app"), { recursive: true, mode: 0o700 });
   await fs.writeFile(path.join(releaseDir, "release.json"), `${JSON.stringify({
     schemaVersion: 1,
@@ -42,9 +43,14 @@ async function createFixture(version = "4.2.0") {
     path.join("runtime", "node", "bin", "node"),
     path.join("runtime", "tunnel", "tunnel-client"),
     path.join("runtime", "tunnel", "cloudflared"),
+    path.join("runtime", "peekaboo", "peekaboo"),
+    path.join("runtime", "peekaboo", "libswiftCompatibilitySpan.dylib"),
     path.join("runtime", "app", "applet"),
   ]) {
     await fs.writeFile(path.join(releaseDir, relative), "fixture\n", { mode: 0o700 });
+  }
+  for (const name of ["LICENSE", "README.md", "VERSION"]) {
+    await fs.writeFile(path.join(releaseDir, "runtime", "peekaboo", name), name === "VERSION" ? "4.2.2\n" : "fixture\n", { mode: 0o600 });
   }
   await fs.writeFile(path.join(releaseDir, "runtime", "app", "EquinoxLocal.png"), "fixture\n", { mode: 0o600 });
   await fs.writeFile(path.join(releaseDir, "runtime", "app", "native-app.json"), "{}\n", { mode: 0o600 });

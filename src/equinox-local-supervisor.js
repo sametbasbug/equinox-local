@@ -142,8 +142,9 @@ export function supervisorChildEnvironment({ paths, releaseDir, sourceEnv = proc
     PATH: "/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin:/usr/local/bin",
     EQUINOX_LOCAL_INSTALL_ROOT: paths.installRoot,
     EQUINOX_LOCAL_RELEASE_DIR: releaseDir,
+    EQUINOX_PEEKABOO_PATH: path.join(releaseDir, "runtime", "peekaboo", "peekaboo"),
   };
-  for (const key of ["USER", "LOGNAME", "TMPDIR", "LANG", "LC_ALL", "SSH_AUTH_SOCK"]) {
+  for (const key of ["USER", "LOGNAME", "TMPDIR", "LANG", "LC_ALL", "SSH_AUTH_SOCK", "EQUINOX_LOCAL_BROWSER_SOCKET_NAMESPACE"]) {
     if (typeof sourceEnv[key] === "string" && sourceEnv[key]) env[key] = sourceEnv[key];
   }
   return Object.freeze(env);

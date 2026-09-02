@@ -22,6 +22,7 @@ async function makeFixture({ version = "4.3.0", target = "darwin-arm64", withSym
   await fs.mkdir(path.join(releaseRoot, "node_modules", "fixture"), { recursive: true });
   await fs.mkdir(path.join(releaseRoot, "runtime", "node", "bin"), { recursive: true });
   await fs.mkdir(path.join(releaseRoot, "runtime", "tunnel"), { recursive: true });
+  await fs.mkdir(path.join(releaseRoot, "runtime", "peekaboo"), { recursive: true });
   await fs.writeFile(path.join(releaseRoot, "release.json"), JSON.stringify({
     schemaVersion: 1,
     version,
@@ -45,6 +46,14 @@ async function makeFixture({ version = "4.3.0", target = "darwin-arm64", withSym
   }
   await fs.writeFile(path.join(releaseRoot, "runtime", "tunnel", "LICENSE"), "fixture license\n");
   await fs.writeFile(path.join(releaseRoot, "runtime", "tunnel", "NOTICE"), "fixture notice\n");
+  for (const name of ["peekaboo", "libswiftCompatibilitySpan.dylib"]) {
+    const binary = path.join(releaseRoot, "runtime", "peekaboo", name);
+    await fs.writeFile(binary, `${name}\n`);
+    await fs.chmod(binary, 0o755);
+  }
+  await fs.writeFile(path.join(releaseRoot, "runtime", "peekaboo", "LICENSE"), "fixture license\n");
+  await fs.writeFile(path.join(releaseRoot, "runtime", "peekaboo", "README.md"), "fixture readme\n");
+  await fs.writeFile(path.join(releaseRoot, "runtime", "peekaboo", "VERSION"), "4.2.2\n");
   if (nativeApp) {
     const appRoot = path.join(releaseRoot, "runtime", "app");
     await fs.mkdir(appRoot, { recursive: true });

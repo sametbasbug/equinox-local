@@ -16,7 +16,7 @@
       <div class="brand-block">
         <img class="brand-logo" src="/assets/equinox-local.png" alt="" aria-hidden="true">
         <div>
-          <p class="eyebrow">Equinox Local</p>
+          <p class="eyebrow" lang="en">Equinox Local</p>
           <h1>Control Center</h1>
         </div>
       </div>
@@ -67,7 +67,15 @@
           <h2 id="section-title">Dashboard</h2>
         </div>
         <div class="topbar-actions">
+          <label class="language-control">
+            <span>Language</span>
+            <select id="language-select" aria-label="Control Center language">
+              <option value="en">English</option>
+              <option value="tr">Türkçe</option>
+            </select>
+          </label>
           <span id="last-refreshed" class="last-refreshed">Not refreshed yet</span>
+          <button id="restart-runtime-button" class="button secondary" type="button" disabled>Restart</button>
           <button id="refresh-button" class="button secondary" type="button">Refresh</button>
         </div>
       </header>
@@ -113,7 +121,11 @@
               </div>
               <div class="setup-step">
                 <span class="setup-step-index">3</span>
-                <div><strong>Equinox Browser</strong><small>Optional. Install it separately from Chrome Web Store.</small></div>
+                <div>
+                  <strong>Equinox Browser</strong>
+                  <small>Optional. Install it separately from Chrome Web Store.</small>
+                  <a class="inline-link" href="https://chromewebstore.google.com/detail/equinox-browser/npdneefcobilfkjlihghjgjnknenhfoj" target="_blank" rel="noopener noreferrer">Install extension ↗</a>
+                </div>
                 <span id="setup-browser-status" class="badge neutral">Optional</span>
               </div>
               <div class="setup-step">
@@ -219,7 +231,7 @@
                 <strong id="default-project">—</strong>
               </div>
             </div>
-            <p class="panel-note">Only configured roots are exposed to Equinox Local tools. Paths stay in your private machine configuration.</p>
+            <p class="panel-note">Agent file access follows your Agent Access mode. Configured roots remain convenient named shortcuts and stay in your private machine configuration.</p>
           </article>
 
           <article class="panel-card">
@@ -368,6 +380,13 @@
               <div><dt>Connection model</dt><dd>Extension + Native Messaging</dd></div>
               <div><dt>Automation</dt><dd id="browser-control-state">—</dd></div>
             </dl>
+            <div class="browser-store-callout">
+              <div>
+                <strong>Need Equinox Browser?</strong>
+                <small>Install or open the official unlisted Equinox Browser listing in Chrome Web Store.</small>
+              </div>
+              <a class="button primary browser-store-button" href="https://chromewebstore.google.com/detail/equinox-browser/npdneefcobilfkjlihghjgjnknenhfoj" target="_blank" rel="noopener noreferrer">Install Equinox Browser ↗</a>
+            </div>
           </article>
 
           <article class="panel-card browser-settings-card">
@@ -407,11 +426,53 @@
       <section id="section-permissions" class="page-section" hidden>
         <div class="section-intro">
           <div>
-            <p class="eyebrow">Security model</p>
+            <p class="eyebrow">Agent access</p>
             <h3>Permissions</h3>
-            <p>See the filesystem boundaries currently granted to Equinox Local. The V1 config models project roots and separate read-only roots; granular per-tool toggles are not part of the schema yet.</p>
+            <p>Equinox Local starts new installations with broad useful access. Narrow these controls when you want the agent contained to selected roots or without local execution.</p>
           </div>
         </div>
+
+        <article class="panel-card agent-access-card">
+          <div class="panel-header">
+            <div>
+              <p class="eyebrow">Local capabilities</p>
+              <h3>Agent Access</h3>
+            </div>
+            <span id="agent-access-badge" class="badge neutral">Loading…</span>
+          </div>
+          <label class="field">
+            <span>Files &amp; projects</span>
+            <select id="agent-files-access">
+              <option value="full">Full access</option>
+              <option value="selected">Selected roots only</option>
+            </select>
+            <small>Full access accepts configured project IDs, <code>home</code>, or an accessible absolute folder path. Known credential/application-secret areas are excluded from ad-hoc Full access, and the filesystem root remains blocked.</small>
+          </label>
+          <label class="toggle-field compact-toggle">
+            <div>
+              <span>Terminal &amp; processes</span>
+              <small>Allow interactive shells and background processes with your normal macOS user permissions. Equinox Local never grants sudo or root by itself.</small>
+            </div>
+            <input id="agent-terminal-access" type="checkbox" role="switch">
+          </label>
+          <label class="toggle-field compact-toggle">
+            <div>
+              <span>Desktop automation</span>
+              <small>Allow the first-party desktop tool surface when macOS permissions are also granted.</small>
+            </div>
+            <input id="agent-desktop-access" type="checkbox" role="switch">
+          </label>
+          <label class="toggle-field compact-toggle">
+            <div>
+              <span>Browser automation</span>
+              <small>Allow the Equinox Browser lane. Extension consent remains required and cannot be bypassed here.</small>
+            </div>
+            <input id="agent-web-access" type="checkbox" role="switch">
+          </label>
+          <button id="save-agent-access-button" class="button primary full-width" type="button" disabled>Save access settings</button>
+          <p class="save-hint">Access changes use the validated configuration path and require a Local restart.</p>
+        </article>
+
         <div id="permissions-list" class="permissions-list"></div>
 
         <article id="uninstall-card" class="panel-card danger-panel uninstall-card" hidden>

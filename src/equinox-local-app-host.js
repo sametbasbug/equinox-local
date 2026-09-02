@@ -22,6 +22,21 @@ export function equinoxLocalAppRuntimeWrapperPath(homeDir = os.homedir()) {
   return path.join(homeDir, "Library", "Application Support", "Equinox Local", "equinox-local-app-runtime");
 }
 
+export const EQUINOX_LOCAL_LAUNCH_LOG_MAX_BYTES = 2 * 1024 * 1024;
+export const EQUINOX_LOCAL_LAUNCH_LOG_KEEP_BYTES = 1024 * 1024;
+
+export function launchAgentLogMaintenanceShell({ stdoutName, stderrName } = {}) {
+  for (const name of [stdoutName, stderrName]) {
+    if (typeof name !== "string" || !/^[A-Za-z0-9 ._-]{1,80}$/u.test(name) || name.includes("..")) {
+      throw new Error("LaunchAgent log filename is invalid.");
+    }
+  }
+  const paths = [stdoutName, stderrName]
+    .map((name) => `  cap_launch_log \"$HOME/Library/Logs/${name}\"`)
+    .join("\\n");
+  return `LAUNCH_LOG_MAX_BYTES=${EQUINOX_LOCAL_LAUNCH_LOG_MAX_BYTES}\nLAUNCH_LOG_KEEP_BYTES=${EQUINOX_LOCAL_LAUNCH_LOG_KEEP_BYTES}\nLAUNCH_LOG_CHECK_INTERVAL_SECONDS=300\ncap_launch_log() {\n  local target=\"$1\"\n  [ -f \"$target\" ] || return 0\n  local size\n  size=\"$(/usr/bin/stat -f '%z' \"$target\" 2>/dev/null || printf '0')\"\n  case \"$size\" in\n    \"\"|*[!0-9]*) return 0 ;;\n  esac\n  [ \"$size\" -gt \"$LAUNCH_LOG_MAX_BYTES\" ] || return 0\n  local temporary=\"$target.equinox-trim.$$\"\n  if /usr/bin/tail -c \"$LAUNCH_LOG_KEEP_BYTES\" \"$target\" > \"$temporary\" 2>/dev/null; then\n    /bin/cat \"$temporary\" > \"$target\" 2>/dev/null || true\n  fi\n  /bin/rm -f \"$temporary\" >/dev/null 2>&1 || true\n}\nmaintain_launch_logs() {\n${paths}\n}\nmaintain_launch_logs\n`;
+}
+
 export function equinoxLocalAppAppleScript() {
   return `on run\n  set homePath to POSIX path of (path to home folder)\n  set runnerPath to homePath & "Library/Application Support/Equinox Local/equinox-local-app-runtime"\n  do shell script quoted form of runnerPath\nend run\n`;
 }

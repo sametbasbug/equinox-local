@@ -6,6 +6,28 @@ This project follows semantic versioning for public releases.
 
 ## [Unreleased]
 
+## [4.4.0] - 2026-09-02
+
+### Added
+
+- Managed releases now bundle the pinned, verified Peekaboo `4.2.2` universal runtime and source-checkout restarts synchronize the same private pinned desktop runtime, removing the product dependency on a separately installed system/Homebrew Peekaboo.
+- Control Center now supports persistent English/Türkçe UI selection, includes Agent Access controls for files, Terminal/processes, Desktop and Equinox Browser, and links directly to the official Equinox Browser Chrome Web Store listing from onboarding, Browser and Integrations.
+- Added an atomic structured `write_file` capability with SHA-256 preconditions for replacement, so agents can create or safely replace UTF-8 files without falling back to Terminal.
+
+### Changed
+
+- Fresh managed installs now start with maximum useful Agent Access: Full normal-file access plus Terminal/process, Desktop and Equinox Browser lanes enabled. Existing pre-Agent-Access configs preserve selected-root filesystem behavior until the user changes it.
+- Full file mode can address `home` or another accessible absolute folder without pre-registering every project. Core structured file CRUD now works on ordinary non-Git roots; Git-specific ignore/dirty-worktree checks remain additive only inside actual Git repositories.
+- Hidden agent workspaces such as `.codex`, `.openclaw` and `.claude` are accessible in Full mode while known authentication, credential, session-environment and application-secret paths remain protected.
+- Persistent runtime/audit messages are now canonical English; Control Center localizes supported Activity messages for the selected UI language.
+
+### Fixed
+
+- Control Center exposes a guarded Restart action for managed installs and source-checkout development runtimes and waits for the replacement runtime before reloading the UI.
+- Source-checkout restart lifecycle handling no longer races LaunchAgent teardown/bootstrap, and launch logs are bounded without replacing their stable files.
+- Managed release smoke tests use an isolated Equinox Browser Unix-socket namespace, preventing release validation on the same Mac user from removing the live Browser bridge socket and disconnecting the Chrome extension.
+- Repeated healthy Peekaboo compatibility checks are deduplicated in runtime activity instead of writing the same informational event on every tool-cache refresh.
+
 ## [4.3.1] - 2026-09-01
 
 ### Fixed

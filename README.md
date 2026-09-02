@@ -10,7 +10,7 @@
 [![CI](https://github.com/sametbasbug/equinox-local/actions/workflows/ci.yml/badge.svg)](https://github.com/sametbasbug/equinox-local/actions/workflows/ci.yml)
 ![macOS](https://img.shields.io/badge/platform-macOS-111111?logo=apple)
 ![Node.js 24](https://img.shields.io/badge/Node.js-24-339933?logo=nodedotjs&logoColor=white)
-![Tests](https://img.shields.io/badge/tests-263%20passing-2ea44f)
+![Tests](https://img.shields.io/badge/tests-292%20passing-2ea44f)
 [![License: AGPL v3](https://img.shields.io/badge/license-AGPL--3.0--only-blue.svg)](LICENSE)
 
 [Product site](https://local.sametbasbug.dev/) · [Security](SECURITY.md) · [Architecture](docs/architecture.md) · [Contributing](CONTRIBUTING.md)
@@ -28,7 +28,7 @@ The goal is not to turn your computer into an unrestricted remote shell. The goa
 
 | Surface | Boundary |
 | --- | --- |
-| Projects & files | Explicit configured roots, path containment, symlink checks, bounded reads/writes |
+| Projects & files | Full access by default on fresh installs or selected-root mode, with credential-area, path, symlink and SHA guards |
 | Git | Project-scoped operations with branch/SHA/worktree guards |
 | Equinox Browser | The only product route into user Chrome; Native Messaging + visible consent/on-off control |
 | Control Center | Native macOS app backed by the loopback-only UI/API on `127.0.0.1:24891` |
@@ -42,7 +42,7 @@ The goal is not to turn your computer into an unrestricted remote shell. The goa
 Agent tooling often optimizes for either **maximum capability** or **maximum safety through limitation**. Equinox Local tries to make the boundary itself a product surface:
 
 - **Agent-friendly:** structured capabilities, persistent workflows, runtime diagnostics, Git and browser primitives.
-- **Human-friendly:** a real Control Center for health, projects, permissions, browser state, updates, and uninstall.
+- **Human-friendly:** a real English/Türkçe Control Center for health, projects, permissions, browser state, updates, and uninstall.
 - **Local-first:** project data and runtime state live on the user's machine unless a requested action needs a connected AI/service provider.
 - **No arbitrary HTTP command console:** Control Center uses bounded management endpoints rather than a generic shell backend.
 - **One user-Chrome route:** Equinox Browser is the only product browser-automation lane. Internal release/QA browsers are not exported as product capabilities.
@@ -74,7 +74,7 @@ See [docs/architecture.md](docs/architecture.md) for the longer version.
 
 ## Equinox Browser
 
-Equinox Browser is the companion Chrome extension and the **only product path that controls the user's Chrome profile**. Install the unlisted production extension from [Chrome Web Store](https://chromewebstore.google.com/detail/equinox-browser/npdneefcobilfkjlihghjgjnknenhfoj). A fresh install starts with browser automation disabled. The user must accept the browser-data disclosure and explicitly enable control.
+Equinox Browser is the companion Chrome extension and the **only product path that controls the user's Chrome profile**. Install the unlisted production extension from [Chrome Web Store](https://chromewebstore.google.com/detail/equinox-browser/npdneefcobilfkjlihghjgjnknenhfoj). Control Center also links directly to the same Store listing from onboarding, the Browser page and Integrations so users do not have to hunt through this README. A fresh extension install starts with browser automation disabled until the user accepts the browser-data disclosure and explicitly enables control.
 
 The extension intentionally has no broad `host_permissions`; browser actions are performed through Chrome's documented debugger interface and a local Native Messaging bridge. Turning browser control off rejects browser-automation commands while allowing the bounded settings channel to remain available.
 
@@ -82,7 +82,7 @@ More: [docs/browser.md](docs/browser.md)
 
 ## Installation
 
-Install Equinox Local `4.2.1` as your normal macOS user:
+Install the current stable Equinox Local release as your normal macOS user:
 
 ```bash
 curl -fsSL https://local.sametbasbug.dev/downloads/updates/install-equinox-local.sh | /bin/bash
@@ -98,9 +98,13 @@ The public path is a small user-level macOS bootstrap that:
 6. registers the per-user LaunchAgent and Equinox Browser Native Messaging host; and
 7. installs the native `Equinox Local.app` shell and opens it for onboarding.
 
-It does **not** require Git, Homebrew, a system Node installation, administrator authentication, or a paid Apple Developer membership.
+It does **not** require Git, Homebrew, a system Node installation, a separate Peekaboo installation, administrator authentication, or a paid Apple Developer membership. The managed release bundles its verified Peekaboo desktop runtime alongside the pinned Node and tunnel runtimes.
 
 Current installation status is maintained at [local.sametbasbug.dev/install](https://local.sametbasbug.dev/install/).
+
+Fresh managed installs start Agent Access in **Full** mode for normal files/projects, Terminal/processes, Desktop automation and the Equinox Browser lane. Users can narrow file access to selected configured roots or disable individual execution/automation capabilities from Control Center. Full file access is not equivalent to unrestricted secrets access: known credential/application-secret areas, filesystem-root access and symlink escape remain blocked by the structured file surface.
+
+Core structured file create/read/hash/move/delete/write operations work on ordinary non-Git folders in Full mode, so agents do not need to fall back to Terminal just because a working folder is not a Git repository. Git-specific ignore/dirty-worktree protections are added only when the active root is actually a Git repository.
 
 ### Connect Equinox Local to ChatGPT
 
@@ -168,9 +172,9 @@ npm run check
 npm test
 ```
 
-The public test suite currently contains **263 passing tests** covering browser consent/lifecycle, path and symlink guards, Control Center request boundaries, managed install/update/rollback/uninstall, source-runtime synchronization, workflows, repair/recovery, Native Messaging, and runtime observability.
+The public test suite currently contains **292 passing tests** covering browser consent/lifecycle, Agent Access and credential boundaries, structured file operations, Control Center request boundaries, managed install/update/rollback/uninstall, source-runtime synchronization, workflows, repair/recovery, Native Messaging, and runtime observability.
 
-Source-checkout runtime configuration is intentionally external. Start with [examples/equinox-local-config.example.json](examples/equinox-local-config.example.json) and keep real machine paths/credentials out of the repository. The source restart path checks the configured development tunnel-client against the same pinned version and SHA metadata used by managed release packaging; when it drifts, restart synchronizes the verified binary before relaunching Local, while System Doctor reports mismatches without exposing the configured executable path.
+Source-checkout runtime configuration is intentionally external. Start with [examples/equinox-local-config.example.json](examples/equinox-local-config.example.json) and keep real machine paths/credentials out of the repository. The source restart path synchronizes both the development tunnel client and pinned Peekaboo runtime from the same version/SHA/signing policy used by managed release packaging; System Doctor reports version drift without exposing configured executable paths.
 
 ## Security model
 
@@ -178,7 +182,7 @@ Security-sensitive design choices are documented rather than hidden behind imple
 
 - loopback-only Control Center;
 - strict Host/origin/CSRF handling for management mutations;
-- explicit filesystem roots and path containment;
+- user-controlled Full/selected filesystem modes with path containment and protected credential/application-secret areas;
 - symlink defenses and expected-SHA guards where mutations need them;
 - mutation scopes/locks around competing operations;
 - minimal credential-free environments for detached helpers;

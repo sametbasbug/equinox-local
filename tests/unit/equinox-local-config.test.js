@@ -50,8 +50,41 @@ test("config validation normalizes a generic project/file-root registry", () => 
   assert.equal(config.projects.orbit.worktrees, true);
   assert.equal(config.projects.workspace.worktrees, false);
   assert.equal(config.fileRoots.downloads.access, "read-only");
+  assert.equal(config.agentAccess.files, "selected", "legacy configs keep selected-root file access");
+  assert.equal(config.agentAccess.terminal, true);
+  assert.equal(config.agentAccess.desktop, true);
+  assert.equal(config.agentAccess.browser, true);
   assert.equal(config.controlCenter.port, 24891);
   assert.equal(CONFIG_ID_PATTERN.test("orbit_mcp"), true);
+});
+
+test("agent access accepts explicit full mode and rejects unknown access policy", () => {
+  const full = fixture();
+  full.agentAccess = {
+    files: "full",
+    terminal: false,
+    desktop: true,
+    browser: false,
+  };
+  const normalized = validateEquinoxLocalConfig(full);
+  assert.deepEqual(normalized.agentAccess, {
+    files: "full",
+    terminal: false,
+    desktop: true,
+    browser: false,
+  });
+
+  const invalid = fixture();
+  invalid.agentAccess = { files: "everything" };
+  assert.throws(() => validateEquinoxLocalConfig(invalid), /selected veya full/u);
+
+  const unknown = fixture();
+  unknown.agentAccess = { files: "full", sudo: true };
+  assert.throws(() => validateEquinoxLocalConfig(unknown), /agentAccess\.sudo desteklenmiyor/u);
+
+  const nonBoolean = fixture();
+  nonBoolean.agentAccess = { files: "full", terminal: "false" };
+  assert.throws(() => validateEquinoxLocalConfig(nonBoolean), /agentAccess\.terminal true veya false/u);
 });
 
 test("config rejects unsafe ids, duplicate roots, unknown fields and writable file roots", () => {

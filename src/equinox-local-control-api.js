@@ -226,6 +226,7 @@ export function createEquinoxLocalControlApi({
   checkForUpdates = null,
   applyUpdate = null,
   configureTunnel = null,
+  restartRuntime = null,
   scheduleUninstall = null,
   chooseFolder = null,
   updateBrowserSettings = null,
@@ -366,6 +367,20 @@ export function createEquinoxLocalControlApi({
           throw error;
         }
         const result = await configureTunnel(await readJsonRequest(req));
+        state.mutationCount += 1;
+        jsonBody(res, 202, { ok: true, result });
+        return;
+      }
+
+      if (req.method === "POST" && url.pathname === "/api/v1/runtime/restart") {
+        assertMutationRequest(req, { port: actualPort, csrfToken: state.csrfToken });
+        validateEmptyObject(await readJsonRequest(req), "Runtime restart");
+        if (typeof restartRuntime !== "function") {
+          const error = new Error("Equinox Local restart is unavailable on this installation.");
+          error.statusCode = 503;
+          throw error;
+        }
+        const result = await restartRuntime();
         state.mutationCount += 1;
         jsonBody(res, 202, { ok: true, result });
         return;

@@ -32,6 +32,13 @@ const REQUIRED_RUNTIME_FILES = Object.freeze([
   path.join("runtime", "node", "bin", "node"),
   path.join("runtime", "tunnel", "tunnel-client"),
   path.join("runtime", "tunnel", "cloudflared"),
+  path.join("runtime", "peekaboo", "peekaboo"),
+  path.join("runtime", "peekaboo", "libswiftCompatibilitySpan.dylib"),
+]);
+const REQUIRED_RUNTIME_DOCUMENTS = Object.freeze([
+  path.join("runtime", "peekaboo", "LICENSE"),
+  path.join("runtime", "peekaboo", "README.md"),
+  path.join("runtime", "peekaboo", "VERSION"),
 ]);
 const REQUIRED_RELEASE_FILES = Object.freeze([
   "server.js",
@@ -132,6 +139,9 @@ export async function validateFirstInstallRelease(releaseDir, {
   parseEquinoxVersion(metadata.version);
   for (const relative of REQUIRED_RUNTIME_FILES) {
     await assertNormalFile(path.join(releaseDir, relative), `Runtime ${relative}`, { executable: true, fsImpl });
+  }
+  for (const relative of REQUIRED_RUNTIME_DOCUMENTS) {
+    await assertNormalFile(path.join(releaseDir, relative), `Runtime ${relative}`, { fsImpl });
   }
   await assertNormalFile(path.join(releaseDir, "runtime", "app", "applet"), "Native app executable", { executable: true, fsImpl });
   await assertNormalFile(path.join(releaseDir, "runtime", "app", "EquinoxLocal.png"), "Native app icon", { fsImpl });

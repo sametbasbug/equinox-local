@@ -32,6 +32,12 @@ async function waitForJson(url, attempts = 40) {
 
 async function setControlCenterPort(configPath) {
   const config = JSON.parse(await fs.readFile(configPath, "utf8"));
+  assert.deepEqual(config.agentAccess, {
+    files: "full",
+    terminal: true,
+    desktop: true,
+    browser: true,
+  });
   config.controlCenter = { ...(config.controlCenter || {}), enabled: true, port: CONTROL_CENTER_PORT };
   await fs.writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
   await fs.chmod(configPath, 0o600);
@@ -109,6 +115,7 @@ async function main() {
         HOME: homeDir,
         PATH: "/usr/bin:/bin:/usr/sbin:/sbin",
         EQUINOX_LOCAL_INSTALL_ROOT: installRoot,
+        EQUINOX_LOCAL_BROWSER_SOCKET_NAMESPACE: `smoke-${process.pid}`,
       },
       stdio: ["pipe", "ignore", "pipe"],
     });

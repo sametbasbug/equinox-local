@@ -151,7 +151,7 @@ export function createTerminalManager({
           status: "degraded",
           projectId: session.projectId,
           correlationId: session.id,
-          message: "PTY terminal buffer sınırını aştı; eski çıktı düşürülüyor.",
+          message: "PTY terminal output buffer exceeded its limit; older output is being dropped.",
           details: {
             sessionId: session.id,
             label: session.label,
@@ -284,7 +284,7 @@ export function createTerminalManager({
       status: "running",
       projectId: session.projectId,
       correlationId: session.id,
-      message: "PTY terminal oturumu başlatıldı.",
+      message: "PTY terminal session started.",
       details: {
         sessionId: session.id,
         label: session.label,
@@ -320,8 +320,8 @@ export function createTerminalManager({
         projectId: session.projectId,
         correlationId: session.id,
         message: failed
-          ? "PTY terminal oturumu beklenmedik biçimde sonlandı."
-          : "PTY terminal oturumu sonlandı.",
+          ? "PTY terminal session ended unexpectedly."
+          : "PTY terminal session ended.",
         details: {
           sessionId: session.id,
           label: session.label,
@@ -435,7 +435,7 @@ export function createTerminalManager({
         status: "stopping",
         projectId: session.projectId,
         correlationId: session.id,
-        message: "PTY terminal oturumu için durdurma istendi.",
+        message: "Stop requested for PTY terminal session.",
         details: {
           sessionId: session.id,
           label: session.label,

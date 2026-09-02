@@ -11,6 +11,7 @@ import {
 import {
   equinoxLocalAppExecutablePath,
   equinoxLocalAppRuntimeWrapperPath,
+  launchAgentLogMaintenanceShell,
 } from "./equinox-local-app-host.js";
 import { synchronizeEquinoxLocalNativeAppHost } from "./equinox-local-native-app-host.js";
 import { readBoundedNormalFile } from "./equinox-local-safe-file.js";
@@ -216,6 +217,12 @@ export function seedEquinoxLocalConfig({ homeDir, installRoot }) {
         access: "read-only",
       }),
     }),
+    agentAccess: Object.freeze({
+      files: "full",
+      terminal: true,
+      desktop: true,
+      browser: true,
+    }),
     controlCenter: Object.freeze({ enabled: true, port: 24891 }),
   });
 }
@@ -224,7 +231,11 @@ export function appRuntimeWrapper({ installRoot }) {
   const current = path.join(installRoot, "current");
   const nodeBinary = path.join(current, "runtime", "node", "bin", "node");
   const supervisor = path.join(current, "equinox-local-supervisor.js");
-  return `#!/bin/bash\nset -euo pipefail\nRUNTIME_HOST_PID=$PPID\nSUPERVISOR_PID=\"\"\nPARENT_WATCHDOG_PID=\"\"\ncleanup() {\n  if [ -n \"$PARENT_WATCHDOG_PID\" ]; then\n    kill \"$PARENT_WATCHDOG_PID\" >/dev/null 2>&1 || true\n    wait \"$PARENT_WATCHDOG_PID\" 2>/dev/null || true\n  fi\n  if [ -n \"$SUPERVISOR_PID\" ]; then\n    kill \"$SUPERVISOR_PID\" >/dev/null 2>&1 || true\n    wait \"$SUPERVISOR_PID\" 2>/dev/null || true\n  fi\n}\nshutdown() {\n  exit 0\n}\ntrap cleanup EXIT\ntrap shutdown INT TERM HUP\nwatch_runtime_host() {\n  while kill -0 \"$RUNTIME_HOST_PID\" >/dev/null 2>&1; do\n    sleep 1\n  done\n  kill -TERM \"$$\" >/dev/null 2>&1 || true\n}\nwatch_runtime_host &\nPARENT_WATCHDOG_PID=$!\n${shellQuote(nodeBinary)} ${shellQuote(supervisor)} &\nSUPERVISOR_PID=$!\nwait \"$SUPERVISOR_PID\"\n`;
+  const logMaintenance = launchAgentLogMaintenanceShell({
+    stdoutName: "Equinox Local.log",
+    stderrName: "Equinox Local.error.log",
+  });
+  return `#!/bin/bash\nset -euo pipefail\n${logMaintenance}RUNTIME_HOST_PID=$PPID\nSUPERVISOR_PID=\"\"\nPARENT_WATCHDOG_PID=\"\"\ncleanup() {\n  if [ -n \"$PARENT_WATCHDOG_PID\" ]; then\n    kill \"$PARENT_WATCHDOG_PID\" >/dev/null 2>&1 || true\n    wait \"$PARENT_WATCHDOG_PID\" 2>/dev/null || true\n  fi\n  if [ -n \"$SUPERVISOR_PID\" ]; then\n    kill \"$SUPERVISOR_PID\" >/dev/null 2>&1 || true\n    wait \"$SUPERVISOR_PID\" 2>/dev/null || true\n  fi\n}\nshutdown() {\n  exit 0\n}\ntrap cleanup EXIT\ntrap shutdown INT TERM HUP\nwatch_runtime_host() {\n  local log_check_ticks=0\n  while kill -0 \"$RUNTIME_HOST_PID\" >/dev/null 2>&1; do\n    sleep 1\n    log_check_ticks=$((log_check_ticks + 1))\n    if [ \"$log_check_ticks\" -ge \"$LAUNCH_LOG_CHECK_INTERVAL_SECONDS\" ]; then\n      maintain_launch_logs\n      log_check_ticks=0\n    fi\n  done\n  kill -TERM \"$$\" >/dev/null 2>&1 || true\n}\nwatch_runtime_host &\nPARENT_WATCHDOG_PID=$!\n${shellQuote(nodeBinary)} ${shellQuote(supervisor)} &\nSUPERVISOR_PID=$!\nwait \"$SUPERVISOR_PID\"\n`;
 }
 
 export function launchAgentPlist({ homeDir, installRoot }) {

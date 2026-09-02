@@ -318,7 +318,7 @@ export function createRepairEngine({
     base,
     outcome: "RECOVERED",
     actionStatus: "SKIPPED_ALREADY_RESOLVED",
-    summary: note ?? "Incident repair anında zaten çözülmüş görünüyordu; mutasyon yapılmadı.",
+    summary: note ?? "The incident already appeared resolved at repair time; no mutation was performed.",
     before: safeIncidentSummary(incident),
     after: safeIncidentSummary(incident),
   });
@@ -332,7 +332,7 @@ export function createRepairEngine({
         base,
         outcome: "FAILED",
         actionStatus: "REPAIR_BACKEND_UNAVAILABLE",
-        summary: "Peekaboo restart backend kullanılamıyor.",
+        summary: "Peekaboo restart backend is unavailable.",
         before: safeIncidentSummary(incident),
       });
     }
@@ -346,7 +346,7 @@ export function createRepairEngine({
       severity: "info",
       status: "recovering",
       correlationId: base.repairId,
-      message: "Peekaboo bridge restart başladı.",
+      message: "Peekaboo bridge restart started.",
       details: { repairId: base.repairId, recipeId: base.recipeId, incidentId: base.incidentId },
     });
 
@@ -362,7 +362,7 @@ export function createRepairEngine({
         base,
         outcome: "NEEDS_INTERVENTION",
         actionStatus: "RESTARTED_BUT_HEALTH_CHECK_FAILED",
-        summary: "Peekaboo bridge yeniden başlatıldı ancak compatibility/permission/server health doğrulaması tam geçmedi.",
+        summary: "Peekaboo bridge restarted, but compatibility, permission, or server-health verification did not fully pass.",
         before,
         after: {
           active: status?.active ?? false,
@@ -377,7 +377,7 @@ export function createRepairEngine({
       base,
       outcome: "RECOVERED",
       actionStatus: "RESTARTED_AND_VERIFIED",
-      summary: "Peekaboo bridge yeniden başlatıldı ve compatibility + macOS izinleri + server status doğrulandı.",
+      summary: "Peekaboo bridge restarted and compatibility, macOS permissions, and server status were verified.",
       before,
       after: {
         active: true,
@@ -400,7 +400,7 @@ export function createRepairEngine({
         base,
         outcome: "FAILED",
         actionStatus: "REPAIR_BACKEND_UNAVAILABLE",
-        summary: "Chrome bridge restart backend kullanılamıyor.",
+        summary: "Chrome bridge restart backend is unavailable.",
         before: { incident: safeIncidentSummary(incident), bridge: current },
       });
     }
@@ -411,7 +411,7 @@ export function createRepairEngine({
       severity: "info",
       status: "recovering",
       correlationId: base.repairId,
-      message: "Chrome bridge restart başladı.",
+      message: "Chrome bridge restart started.",
       details: { repairId: base.repairId, recipeId: base.recipeId, incidentId: base.incidentId },
     });
 
@@ -423,7 +423,7 @@ export function createRepairEngine({
         base,
         outcome: "NEEDS_INTERVENTION",
         actionStatus: "RESTARTED_BUT_BACKEND_NOT_READY",
-        summary: "Chrome bridge restart tamamlandı ancak gerçek Chrome backend readiness ACTIVE olmadı.",
+        summary: "Chrome bridge restart completed, but the real Chrome backend did not reach ACTIVE readiness.",
         before,
         after,
       });
@@ -433,7 +433,7 @@ export function createRepairEngine({
       base,
       outcome: "RECOVERED",
       actionStatus: "RESTARTED_AND_VERIFIED",
-      summary: "Chrome DevTools MCP bridge yeniden kuruldu ve gerçek Chrome backend readiness doğrulandı.",
+      summary: "Chrome DevTools MCP bridge reconnected and real Chrome backend readiness was verified.",
       before,
       after,
     });
@@ -446,7 +446,7 @@ export function createRepairEngine({
         base,
         outcome: "NEEDS_INTERVENTION",
         actionStatus: "INVALID_INCIDENT_EVIDENCE",
-        summary: "Preview incident geçerli port kanıtı taşımıyor; cleanup yapılmadı.",
+        summary: "Preview incident has no valid port evidence; cleanup was not performed.",
         before: safeIncidentSummary(incident),
       });
     }
@@ -460,7 +460,7 @@ export function createRepairEngine({
         status: "recovered",
         projectId: incident.projectId,
         correlationId: incident.correlationId,
-        message: `Release preview portu artık boş: ${port}.`,
+        message: `Release preview port is now free: ${port}.`,
         details: {
           incidentId: base.incidentId,
           repairId: base.repairId,
@@ -478,7 +478,7 @@ export function createRepairEngine({
         base,
         outcome: "NEEDS_INTERVENTION",
         actionStatus: "OWNERSHIP_UNPROVEN",
-        summary: "lsof listener sahipliği doğrulanamadığı için preview sürecine dokunulmadı.",
+        summary: "The preview process was left untouched because lsof listener ownership could not be verified.",
         before: { port, lsofError: clip(live.lsofError, 2_000) },
       });
     }
@@ -496,7 +496,7 @@ export function createRepairEngine({
         base,
         outcome: "NEEDS_INTERVENTION",
         actionStatus: "OWNERSHIP_UNPROVEN",
-        summary: "Preview cleanup yalnız tek listener PID ile tek managed workflow preview PID birebir eşleşirse çalışır; koşul sağlanmadı.",
+        summary: "Preview cleanup requires an exact one-to-one match between a single listener PID and a single managed workflow preview PID; the condition was not met.",
         before: {
           port,
           listenerPids,
@@ -535,7 +535,7 @@ export function createRepairEngine({
       status: "recovering",
       projectId: target.projectId,
       correlationId: base.repairId,
-      message: "Stale preview sahipliği listener PID + managed PID + terminal workflow ile doğrulandı.",
+      message: "Stale preview ownership was verified by listener PID, managed PID, and terminal workflow.",
       details: { repairId: base.repairId, recipeId: base.recipeId, incidentId: base.incidentId, processId: target.processId, port },
     });
 
@@ -551,7 +551,7 @@ export function createRepairEngine({
         base,
         outcome: "FAILED",
         actionStatus: "PROCESS_STOPPED_PORT_STILL_LISTENING",
-        summary: `Managed preview process durduruldu ancak ${port} portu hâlâ dinleniyor; başka listener olabilir.`,
+        summary: `Managed preview process stopped, but port ${port} is still listening; another listener may exist.`,
         before: { port, process: compactProcess(target), workflow: compactWorkflow(workflow) },
         after: { process: compactProcess(stopped), listenerPids: uniqueListenerPids(afterPort.listeners) },
       });
@@ -564,7 +564,7 @@ export function createRepairEngine({
       status: "recovered",
       projectId: incident.projectId,
       correlationId: incident.correlationId,
-      message: `Release preview portu self-healing ile boşaltıldı: ${port}.`,
+      message: `Release preview port was freed by self-healing: ${port}.`,
       details: {
         incidentId: base.incidentId,
         repairId: base.repairId,
@@ -576,7 +576,7 @@ export function createRepairEngine({
       base,
       outcome: "RECOVERED",
       actionStatus: "STALE_PREVIEW_REMOVED",
-      summary: `Stale managed preview process güvenli biçimde kapatıldı ve ${port} portunun boşaldığı doğrulandı.`,
+      summary: `Stale managed preview process was stopped safely and port ${port} was verified free.`,
       before: { port, process: compactProcess(target), workflow: compactWorkflow(workflow) },
       after: { process: compactProcess(stopped), portListening: false },
     });
@@ -599,7 +599,7 @@ export function createRepairEngine({
         base,
         outcome: "NEEDS_INTERVENTION",
         actionStatus: "WORKFLOW_NOT_FOUND",
-        summary: "Incident için workflow kaydı bulunamadı; child process sahipliği kanıtlanamadı.",
+        summary: "No workflow record was found for the incident; child-process ownership could not be proven.",
         before: safeIncidentSummary(incident),
       });
     }
@@ -608,7 +608,7 @@ export function createRepairEngine({
         base,
         outcome: "NEEDS_INTERVENTION",
         actionStatus: "WORKFLOW_STILL_ACTIVE",
-        summary: "Workflow hâlâ aktif; child process cleanup güvenlik nedeniyle reddedildi.",
+        summary: "Workflow is still active; child-process cleanup was refused for safety.",
         before: { incident: safeIncidentSummary(incident), workflow: compactWorkflow(workflow) },
       });
     }
@@ -634,7 +634,7 @@ export function createRepairEngine({
       status: "recovering",
       projectId: workflow.projectId,
       correlationId: base.repairId,
-      message: "Orphan workflow child süreç sahipliği doğrulandı.",
+      message: "Orphan workflow child-process ownership was verified.",
       details: { repairId: base.repairId, recipeId: base.recipeId, incidentId: base.incidentId, workflowId, processCount: targets.length },
     });
 
@@ -658,7 +658,7 @@ export function createRepairEngine({
         base,
         outcome: "FAILED",
         actionStatus: "ORPHAN_PROCESS_REMAINS",
-        summary: "Bazı workflow child süreçleri cleanup sonrasında hâlâ çalışıyor.",
+        summary: "Some workflow child processes are still running after cleanup.",
         before: { workflow: compactWorkflow(workflow), targets: targets.map(compactProcess) },
         after: { stopped: stopped.map(compactProcess), remaining: remaining.map(compactProcess) },
       });
@@ -668,7 +668,7 @@ export function createRepairEngine({
       base,
       outcome: "RECOVERED",
       actionStatus: "ORPHAN_PROCESSES_REMOVED",
-      summary: `${stopped.length} orphan managed workflow child process güvenli biçimde kapatıldı.`,
+      summary: `${stopped.length} orphan managed workflow child processes were stopped safely.`,
       before: { workflow: compactWorkflow(workflow), targets: targets.map(compactProcess) },
       after: { stopped: stopped.map(compactProcess), remaining: [] },
     });
@@ -681,7 +681,7 @@ export function createRepairEngine({
         base,
         outcome: "NEEDS_INTERVENTION",
         actionStatus: "WORKFLOW_NOT_FOUND",
-        summary: "Resume için workflow kaydı bulunamadı.",
+        summary: "No workflow record was found for resume.",
         before: safeIncidentSummary(incident),
       });
     }
@@ -697,7 +697,7 @@ export function createRepairEngine({
         base,
         outcome: "NEEDS_INTERVENTION",
         actionStatus: "WORKFLOW_NOT_RESUMABLE",
-        summary: `Workflow güvenli resume durumunda değil: ${workflow.status}.`,
+        summary: `Workflow is not in a safe resume state: ${workflow.status}.`,
         before: { incident: safeIncidentSummary(incident), workflow: compactWorkflow(workflow) },
       });
     }
@@ -714,7 +714,7 @@ export function createRepairEngine({
         base,
         outcome: "NEEDS_INTERVENTION",
         actionStatus: "ORPHAN_PROCESS_PRESENT",
-        summary: "Workflow resume öncesinde hâlâ çalışan managed child süreç var; önce orphan_process_cleanup kullanılmalı.",
+        summary: "A managed child process is still running before workflow resume; orphan_process_cleanup must run first.",
         before: {
           incident: safeIncidentSummary(incident),
           workflow: compactWorkflow(workflow),
@@ -727,7 +727,7 @@ export function createRepairEngine({
         base,
         outcome: "FAILED",
         actionStatus: "REPAIR_BACKEND_UNAVAILABLE",
-        summary: "Safe workflow resume backend kullanılamıyor.",
+        summary: "Safe workflow resume backend is unavailable.",
         before: { workflow: compactWorkflow(workflow) },
       });
     }
@@ -738,7 +738,7 @@ export function createRepairEngine({
       status: "recovering",
       projectId: workflow.projectId,
       correlationId: base.repairId,
-      message: "Workflow resumable state ve child-process temizliği doğrulandı; project root guard yeniden çalıştırılacak.",
+      message: "Workflow resumable state and child-process cleanup were verified; the project-root guard will run again.",
       details: { repairId: base.repairId, recipeId: base.recipeId, incidentId: base.incidentId, workflowId },
     });
 
@@ -750,7 +750,7 @@ export function createRepairEngine({
         base,
         outcome: "FAILED",
         actionStatus: "RESUME_FAILED_IMMEDIATELY",
-        summary: "Workflow resume kabul edildi ancak workflow hemen tekrar failed durumuna geçti.",
+        summary: "Workflow resume was accepted, but the workflow immediately returned to failed state.",
         before: { workflow: compactWorkflow(workflow) },
         after: { requested: compactWorkflow(resumed), current: compactWorkflow(after) },
       });
@@ -760,7 +760,7 @@ export function createRepairEngine({
         base,
         outcome: "NEEDS_INTERVENTION",
         actionStatus: "RESUME_STATE_UNEXPECTED",
-        summary: `Workflow resume sonrası beklenmeyen durumda: ${after.status}.`,
+        summary: `Workflow entered an unexpected state after resume: ${after.status}.`,
         before: { workflow: compactWorkflow(workflow) },
         after: { requested: compactWorkflow(resumed), current: compactWorkflow(after) },
       });
@@ -829,7 +829,7 @@ export function createRepairEngine({
         status: "recovering",
         projectId: base.projectId,
         correlationId: repairId,
-        message: `Repair başladı: ${recipeId}`,
+        message: `Repair started: ${recipeId}`,
         details: {
           repairId,
           recipeId,
@@ -843,7 +843,7 @@ export function createRepairEngine({
           base,
           outcome: "NEEDS_INTERVENTION",
           actionStatus: "RECIPE_INCIDENT_MISMATCH",
-          summary: `${recipeId} tarifi ${incident.code} incident koduna uygulanamaz; mutasyon yapılmadı.`,
+          summary: `Recipe ${recipeId} does not apply to incident code ${incident.code}; no mutation was performed.`,
           before: safeIncidentSummary(incident),
           details: { supportedIncidentCodes: [...recipe.incidentCodes] },
         });
@@ -857,7 +857,7 @@ export function createRepairEngine({
         base,
         outcome: "FAILED",
         actionStatus: "REPAIR_EXCEPTION",
-        summary: `Repair yürütülemedi: ${message}`,
+        summary: `Repair could not be executed: ${message}`,
         before: safeIncidentSummary(incident),
       });
     } finally {

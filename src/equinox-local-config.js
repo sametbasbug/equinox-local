@@ -46,6 +46,14 @@ function normalizeId(value, label) {
   return id;
 }
 
+function normalizeOptionalBoolean(value, label, defaultValue = true) {
+  if (value === undefined) return defaultValue;
+  if (typeof value !== "boolean") {
+    throw new Error(`${label} true veya false olmalı.`);
+  }
+  return value;
+}
+
 function normalizeAbsoluteRoot(value, label) {
   const root = assertSafeText(value, label, { min: 1, max: 1024 });
   if (!path.isAbsolute(root)) {
@@ -130,7 +138,7 @@ function assertUniqueConfiguredRoots(projects, fileRoots) {
 
 export function validateEquinoxLocalConfig(rawConfig) {
   const raw = assertPlainObject(rawConfig, "Equinox Local config");
-  const allowedTopLevel = new Set(["version", "defaultProject", "runtime", "projects", "fileRoots", "controlCenter"]);
+  const allowedTopLevel = new Set(["version", "defaultProject", "runtime", "projects", "fileRoots", "agentAccess", "controlCenter"]);
   for (const key of Object.keys(raw)) {
     if (!allowedTopLevel.has(key)) {
       throw new Error(`Config alanı desteklenmiyor: ${key}`);
@@ -171,6 +179,28 @@ export function validateEquinoxLocalConfig(rawConfig) {
     throw new Error(`runtime.downloadsRoot tanımlı bir read-only fileRoots kaydını göstermeli: ${downloadsRoot}`);
   }
 
+  const accessRaw = raw.agentAccess === undefined
+    ? {}
+    : assertPlainObject(raw.agentAccess, "agentAccess");
+  const accessKeys = new Set(["files", "terminal", "desktop", "browser"]);
+  for (const key of Object.keys(accessRaw)) {
+    if (!accessKeys.has(key)) {
+      throw new Error(`agentAccess.${key} desteklenmiyor.`);
+    }
+  }
+  // Legacy configs predate agentAccess and keep their original selected-root
+  // file behavior. Fresh installs explicitly seed full access below.
+  const fileAccess = accessRaw.files ?? "selected";
+  if (fileAccess !== "selected" && fileAccess !== "full") {
+    throw new Error("agentAccess.files yalnız selected veya full olabilir.");
+  }
+  const agentAccess = Object.freeze({
+    files: fileAccess,
+    terminal: normalizeOptionalBoolean(accessRaw.terminal, "agentAccess.terminal"),
+    desktop: normalizeOptionalBoolean(accessRaw.desktop, "agentAccess.desktop"),
+    browser: normalizeOptionalBoolean(accessRaw.browser, "agentAccess.browser"),
+  });
+
   const controlRaw = raw.controlCenter === undefined
     ? {}
     : assertPlainObject(raw.controlCenter, "controlCenter");
@@ -192,6 +222,7 @@ export function validateEquinoxLocalConfig(rawConfig) {
     runtime: Object.freeze({ workspaceProject, downloadsRoot }),
     projects: Object.freeze(projects),
     fileRoots: Object.freeze(fileRoots),
+    agentAccess,
     controlCenter: Object.freeze({ enabled, port }),
   });
 }

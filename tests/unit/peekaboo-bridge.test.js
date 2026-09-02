@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import test from "node:test";
 
 import {
@@ -10,6 +13,7 @@ import {
   isPeekabooStatusReady,
   normalizePeekabooArguments,
   parsePeekabooPermissions,
+  resolvePeekabooBinary,
 } from "../../src/peekaboo-bridge.js";
 
 test("Peekaboo allowlist excludes AI, browser and clipboard surfaces", () => {
@@ -43,6 +47,18 @@ test("safe Peekaboo environment does not inherit provider credentials", () => {
   assert.equal(env.GH_TOKEN, undefined);
   assert.equal(env.PATH, "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin");
   assert.equal(env.PEEKABOO_ALLOW_TOOLS, PEEKABOO_ALLOWED_TOOLS.join(","));
+});
+
+test("Peekaboo resolution uses only an explicit or release-bundled runtime", async (t) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "equinox-pinned-peekaboo-"));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const binary = path.join(root, "peekaboo");
+  await fs.writeFile(binary, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+  assert.equal(await resolvePeekabooBinary({ EQUINOX_PEEKABOO_PATH: binary }), binary);
+  await assert.rejects(
+    resolvePeekabooBinary({ EQUINOX_PEEKABOO_PATH: path.join(root, "missing") }),
+    /pinned Peekaboo runtime is unavailable/u,
+  );
 });
 
 test("semantic desktop targeting is enforced for click, drag, scroll and move", () => {
@@ -250,7 +266,7 @@ test("Peekaboo compatibility gate catches old versions and schema drift", () => 
 
   const future = inspectPeekabooCompatibility(makeCompatibleToolCatalog(4), "Peekaboo 5.0.0");
   assert.equal(future.ok, false);
-  assert.match(future.errors.join("\n"), /major sürümü 5/u);
+  assert.match(future.errors.join("\n"), /major version 5/u);
 });
 
 test("Peekaboo permission parser and preflight distinguish granted permissions", () => {

@@ -54,6 +54,8 @@ async function assertReleaseDirectory(installation, version) {
     path.join("runtime", "node", "bin", "node"),
     path.join("runtime", "tunnel", "tunnel-client"),
     path.join("runtime", "tunnel", "cloudflared"),
+    path.join("runtime", "peekaboo", "peekaboo"),
+    path.join("runtime", "peekaboo", "libswiftCompatibilitySpan.dylib"),
   ]) {
     const executable = await fs.lstat(path.join(target, relative));
     if (!executable.isFile() || executable.isSymbolicLink() || (executable.mode & 0o111) === 0) {

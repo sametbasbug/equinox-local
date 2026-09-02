@@ -145,7 +145,7 @@ export function createProcessManager({
           status: "degraded",
           projectId: session.projectId,
           correlationId: session.id,
-          message: "Yönetilen süreç log buffer sınırını aştı; eski çıktı düşürülüyor.",
+          message: "Managed process log buffer exceeded its limit; older output is being dropped.",
           details: {
             processId: session.id,
             label: session.label,
@@ -186,8 +186,8 @@ export function createProcessManager({
       projectId: session.projectId,
       correlationId: session.id,
       message: failed
-        ? "Yönetilen arka plan süreci beklenmedik biçimde sonlandı."
-        : "Yönetilen arka plan süreci sonlandı.",
+        ? "Managed background process ended unexpectedly."
+        : "Managed background process ended.",
       details: {
         processId: session.id,
         label: session.label,
@@ -338,7 +338,7 @@ export function createProcessManager({
       status: "running",
       projectId: session.projectId,
       correlationId: session.id,
-      message: "Yönetilen arka plan süreci başlatıldı.",
+      message: "Managed background process started.",
       details: {
         processId: session.id,
         label: session.label,
@@ -465,7 +465,7 @@ export function createProcessManager({
         status: "stopping",
         projectId: session.projectId,
         correlationId: session.id,
-        message: "Yönetilen arka plan süreci için durdurma istendi.",
+        message: "Stop requested for managed background process.",
         details: {
           processId: session.id,
           label: session.label,

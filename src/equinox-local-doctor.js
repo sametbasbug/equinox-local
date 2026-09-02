@@ -54,6 +54,7 @@ export async function getEquinoxLocalDoctorStatus({
   update = {},
   onboarding = {},
   developmentTunnel = null,
+  developmentPeekaboo = null,
   homeDir = process.env.HOME,
   fsImpl = fs,
   readCurrentReleaseImpl = readManagedCurrentRelease,
@@ -231,6 +232,28 @@ export async function getEquinoxLocalDoctorStatus({
           developmentTunnel.synchronized === true
             ? `Development tunnel-client ${actual} matches the pinned runtime version.`
             : `Development tunnel-client ${actual} does not match pinned version ${expected}. Restart Equinox Local to synchronize it.`,
+        ));
+      }
+    }
+
+    if (installation?.kind === "source" && developmentPeekaboo) {
+      if (developmentPeekaboo.configured === false) {
+        checks.push(check(
+          "development-peekaboo",
+          "Development Peekaboo runtime",
+          "optional",
+          "No private source-runtime configuration is present, so Peekaboo version synchronization is not checked.",
+        ));
+      } else {
+        const actual = developmentPeekaboo.actualVersion || "unknown";
+        const expected = developmentPeekaboo.expectedVersion || "unknown";
+        checks.push(check(
+          "development-peekaboo",
+          "Development Peekaboo runtime",
+          developmentPeekaboo.synchronized === true ? "pass" : "attention",
+          developmentPeekaboo.synchronized === true
+            ? `Development Peekaboo ${actual} matches the pinned desktop runtime version.`
+            : `Development Peekaboo ${actual} does not match pinned version ${expected}. Restart Equinox Local to synchronize it.`,
         ));
       }
     }

@@ -80,7 +80,7 @@ test("workflow manager runs steps, persists state and exposes cursor logs", asyn
   const combined = firstLogs.output + secondLogs.output;
 
   assert.match(combined, /output:one/u);
-  assert.match(combined, /Workflow başarıyla tamamlandı/u);
+  assert.match(combined, /Workflow completed successfully/u);
   assert.ok(secondLogs.nextCursor >= firstLogs.nextCursor);
 
   const state = JSON.parse(

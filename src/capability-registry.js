@@ -59,6 +59,7 @@ const FILE_OPERATION_NAMES = new Set([
   "remove_empty_directory",
   "replace_text",
   "search_text",
+  "write_file",
 ]);
 
 const GIT_OPERATION_NAMES = new Set([

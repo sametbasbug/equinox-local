@@ -8,8 +8,11 @@ import { promisify } from "node:util";
 import { readBoundedNormalFile } from "../../src/equinox-local-safe-file.js";
 import {
   EQUINOX_LOCAL_NODE_VERSION,
+  EQUINOX_LOCAL_PEEKABOO_TEAM_ID,
+  EQUINOX_LOCAL_PEEKABOO_VERSION,
   EQUINOX_LOCAL_TUNNEL_CLIENT_VERSION,
   NODE_DISTRIBUTIONS,
+  PEEKABOO_DISTRIBUTION,
   TUNNEL_CLIENT_DISTRIBUTIONS,
 } from "../../src/equinox-local-runtime-versions.js";
 import { EQUINOX_LOCAL_VERSION } from "../../src/equinox-local-version.js";
@@ -19,9 +22,11 @@ import { equinoxLocalUpdateTarget } from "../../src/equinox-local-updater.js";
 const execFile = promisify(execFileCallback);
 const TAR_PATH = "/usr/bin/tar";
 const FILE_PATH = "/usr/bin/file";
+const CODESIGN_PATH = "/usr/bin/codesign";
 const UNZIP_PATH = "/usr/bin/unzip";
 const MAX_NODE_ARCHIVE_BYTES = 100 * 1024 * 1024;
 const MAX_TUNNEL_ARCHIVE_BYTES = 100 * 1024 * 1024;
+const MAX_PEEKABOO_ARCHIVE_BYTES = 64 * 1024 * 1024;
 const MAX_RELEASE_SOURCE_BYTES = 2 * 1024 * 1024;
 const LOCAL_MODULE_PATTERN = /(?:from\s+|import\s*\(\s*)["'](\.\.?\/[^"']+)["']/gu;
 const STATIC_RELEASE_FILES = Object.freeze([
@@ -45,8 +50,11 @@ const RELEASE_ENTRYPOINTS = Object.freeze([
 
 export {
   EQUINOX_LOCAL_NODE_VERSION,
+  EQUINOX_LOCAL_PEEKABOO_TEAM_ID,
+  EQUINOX_LOCAL_PEEKABOO_VERSION,
   EQUINOX_LOCAL_TUNNEL_CLIENT_VERSION,
   NODE_DISTRIBUTIONS,
+  PEEKABOO_DISTRIBUTION,
   TUNNEL_CLIENT_DISTRIBUTIONS,
 };
 const TUNNEL_ARCHIVE_FILES = Object.freeze([
@@ -55,6 +63,13 @@ const TUNNEL_ARCHIVE_FILES = Object.freeze([
   "cloudflared-manifest.json",
   "LICENSE",
   "NOTICE",
+]);
+const PEEKABOO_ARCHIVE_FILES = Object.freeze([
+  "peekaboo",
+  "LICENSE",
+  "libswiftCompatibilitySpan.dylib",
+  "README.md",
+  "VERSION",
 ]);
 
 function inside(parent, child) {
@@ -375,6 +390,113 @@ export async function installPinnedTunnelRuntime(target, releaseDir, options = {
   }
 }
 
+async function downloadPinnedPeekabooArchive(destination, { fetchImpl = globalThis.fetch } = {}) {
+  const url = `https://github.com/openclaw/Peekaboo/releases/download/v${EQUINOX_LOCAL_PEEKABOO_VERSION}/${PEEKABOO_DISTRIBUTION.filename}`;
+  const response = await fetchImpl(url, {
+    method: "GET",
+    redirect: "follow",
+    cache: "no-store",
+    credentials: "omit",
+    headers: { accept: "application/gzip, application/octet-stream" },
+  });
+  if (!response?.ok || !response.body) throw new Error(`Peekaboo release server returned HTTP ${response?.status ?? "unknown"}.`);
+
+  const temporary = `${destination}.part-${randomBytes(8).toString("hex")}`;
+  const handle = await fs.open(temporary, "wx", 0o600);
+  const digest = createHash("sha256");
+  let bytes = 0;
+  try {
+    for await (const value of response.body) {
+      const chunk = Buffer.from(value);
+      bytes += chunk.length;
+      if (bytes > MAX_PEEKABOO_ARCHIVE_BYTES) throw new Error("Pinned Peekaboo distribution exceeded the download size limit.");
+      digest.update(chunk);
+      await handle.write(chunk);
+    }
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
+  if (digest.digest("hex") !== PEEKABOO_DISTRIBUTION.sha256) {
+    await fs.rm(temporary, { force: true });
+    throw new Error("Pinned Peekaboo distribution SHA-256 verification failed.");
+  }
+  await fs.rename(temporary, destination);
+  return Object.freeze({ url, bytes, sha256: PEEKABOO_DISTRIBUTION.sha256 });
+}
+
+function tarEntryTypes(output) {
+  return String(output).split("\n").map((line) => line.trimStart()).filter(Boolean).map((line) => line[0]);
+}
+
+async function verifyOpenClawCodeSignature(target, { execFileImpl = execFile } = {}) {
+  await execFileImpl(CODESIGN_PATH, ["--verify", "--strict", target], { timeout: 10_000, maxBuffer: 1024 * 1024 });
+  const { stderr = "" } = await execFileImpl(CODESIGN_PATH, ["-dv", "--verbose=4", target], {
+    timeout: 10_000,
+    maxBuffer: 1024 * 1024,
+  });
+  if (!stderr.includes(`TeamIdentifier=${EQUINOX_LOCAL_PEEKABOO_TEAM_ID}`)) {
+    throw new Error("Pinned Peekaboo code signature Team ID does not match OpenClaw Foundation.");
+  }
+  if (!stderr.includes(`Authority=Developer ID Application: OpenClaw Foundation (${EQUINOX_LOCAL_PEEKABOO_TEAM_ID})`)) {
+    throw new Error("Pinned Peekaboo code signature authority does not match OpenClaw Foundation.");
+  }
+}
+
+export async function installPinnedPeekabooRuntime(releaseDir, options = {}) {
+  const transaction = path.join(path.dirname(releaseDir), `peekaboo-${randomBytes(8).toString("hex")}`);
+  const archive = path.join(transaction, "peekaboo.tar.gz");
+  const extracted = path.join(transaction, "extracted");
+  await fs.mkdir(extracted, { recursive: true, mode: 0o700 });
+  try {
+    await downloadPinnedPeekabooArchive(archive, options);
+    const [{ stdout: namesText }, { stdout: verboseText }] = await Promise.all([
+      execFile(TAR_PATH, ["-tzf", archive], { timeout: 20_000, maxBuffer: 2 * 1024 * 1024 }),
+      execFile(TAR_PATH, ["-tvzf", archive], { timeout: 20_000, maxBuffer: 4 * 1024 * 1024 }),
+    ]);
+    const root = PEEKABOO_DISTRIBUTION.archiveRoot;
+    const expected = [`${root}/`, ...PEEKABOO_ARCHIVE_FILES.map((relative) => `${root}/${relative}`)];
+    const actual = namesText.split(/\r?\n/u).filter(Boolean);
+    if (actual.length !== expected.length || actual.some((value, index) => value !== expected[index])) {
+      throw new Error("Pinned Peekaboo archive contains missing or unexpected files.");
+    }
+    const types = tarEntryTypes(verboseText);
+    if (types.length !== expected.length || types[0] !== "d" || types.slice(1).some((type) => type !== "-")) {
+      throw new Error("Pinned Peekaboo archive contains unsupported filesystem entries.");
+    }
+    await execFile(TAR_PATH, ["-xzf", archive, "-C", extracted], { timeout: 30_000, maxBuffer: 4 * 1024 * 1024 });
+    const sourceRoot = path.join(extracted, root);
+    const destination = path.join(releaseDir, "runtime", "peekaboo");
+    await fs.mkdir(destination, { recursive: true, mode: 0o700 });
+    for (const relative of PEEKABOO_ARCHIVE_FILES) {
+      const source = path.join(sourceRoot, relative);
+      const stat = await fs.lstat(source);
+      if (!stat.isFile() || stat.isSymbolicLink()) throw new Error(`Pinned Peekaboo file is unsafe: ${relative}`);
+      await fs.copyFile(source, path.join(destination, relative));
+    }
+    const peekabooBinary = path.join(destination, "peekaboo");
+    const compatibilityLibrary = path.join(destination, "libswiftCompatibilitySpan.dylib");
+    await fs.chmod(peekabooBinary, 0o755);
+    await fs.chmod(compatibilityLibrary, 0o755);
+    const { stdout: fileText } = await execFile(FILE_PATH, [peekabooBinary], { timeout: 5_000, maxBuffer: 1024 * 1024 });
+    for (const architecture of PEEKABOO_DISTRIBUTION.architectures) {
+      if (!fileText.includes(architecture)) throw new Error(`Pinned Peekaboo binary is missing ${architecture}.`);
+    }
+    await verifyOpenClawCodeSignature(peekabooBinary, options);
+    await verifyOpenClawCodeSignature(compatibilityLibrary, options);
+    const versionFile = (await fs.readFile(path.join(destination, "VERSION"), "utf8")).trim();
+    if (versionFile !== EQUINOX_LOCAL_PEEKABOO_VERSION) throw new Error("Pinned Peekaboo VERSION file does not match the configured version.");
+    const { stdout: versionText } = await execFile(peekabooBinary, ["--version"], { timeout: 10_000, maxBuffer: 1024 * 1024 });
+    if (!versionText.trim().startsWith(`Peekaboo ${EQUINOX_LOCAL_PEEKABOO_VERSION} `)) {
+      throw new Error(`Pinned Peekaboo version mismatch: ${versionText.trim()}`);
+    }
+    const licenseText = await fs.readFile(path.join(destination, "LICENSE"), "utf8");
+    if (!licenseText.startsWith("MIT License\n")) throw new Error("Pinned Peekaboo MIT license is missing or invalid.");
+  } finally {
+    await fs.rm(transaction, { recursive: true, force: true });
+  }
+}
+
 async function sha256File(target) {
   const handle = await fs.open(target, "r");
   const digest = createHash("sha256");
@@ -415,6 +537,7 @@ export async function packageManagedEquinoxRelease({
     await copyProductionNodeModules(rootDir, releaseDir);
     await installPinnedNodeBinary(target, releaseDir, { fetchImpl });
     await installPinnedTunnelRuntime(target, releaseDir, { fetchImpl });
+    await installPinnedPeekabooRuntime(releaseDir, { fetchImpl });
     const nativeApp = await buildEquinoxLocalNativeAppArtifacts({ rootDir, releaseDir, target });
     await fs.writeFile(path.join(releaseDir, "release.json"), `${JSON.stringify({
       schemaVersion: 1,

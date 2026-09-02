@@ -1,6 +1,6 @@
 # Security Model
 
-Equinox Local is designed around explicit local boundaries rather than an assumption that an agent should inherit everything the logged-in user can do.
+Equinox Local is designed around user-controlled local boundaries. A fresh install starts with broad useful Agent Access, while the human can narrow filesystem, Terminal/process, Desktop and Browser capabilities without giving the management API arbitrary command authority.
 
 This document describes product invariants, not a claim that the project is vulnerability-free.
 
@@ -8,11 +8,11 @@ This document describes product invariants, not a claim that the project is vuln
 
 ### The human user
 
-The local macOS user is the authority that configures project roots, enables browser automation, connects AI/services, starts updates, and chooses whether to uninstall local data.
+The local macOS user is the authority that chooses Agent Access mode, configures convenient project/file-root shortcuts, enables or disables local execution/Desktop/Browser automation, connects AI/services, starts updates, and chooses whether to uninstall local data.
 
 ### The AI client
 
-An AI client receives the operation surface exposed by Equinox Local. It does not receive a generic Control Center shell endpoint or automatic access to arbitrary filesystem roots.
+An AI client receives the operation surface exposed by Equinox Local. It does not receive a generic Control Center shell endpoint. In Full file mode, file/project operations can address `home` or an accessible absolute folder without pre-registration, but filesystem-root access and protected credential/application-secret areas remain blocked; selected mode remains limited to configured roots.
 
 ### Connected providers
 
@@ -20,16 +20,18 @@ If the user connects an external AI or service provider, task-relevant data may 
 
 ## Filesystem containment
 
-Configured projects and file roots are canonicalized and bounded. Security-sensitive filesystem operations defend against:
+Filesystem roots are canonicalized and bounded. Selected mode resolves only through configured projects/file roots; Full mode may resolve `home` or an accessible absolute folder as an ad-hoc root. Security-sensitive filesystem operations defend against:
 
-- lexical traversal outside the selected root;
+- direct filesystem-root access;
+- protected credential/application-secret areas when using ad-hoc Full roots;
+- lexical traversal outside the active root;
 - symlinked files/directories where a normal file is required;
 - root replacement or duplicate configured roots;
 - unsupported writable extra roots;
 - oversized reads, transfers, screenshots, archives, or update artifacts; and
 - stale writes where an expected content SHA/revision is required.
 
-The whole home directory is not implicitly an agent root.
+Recursive file discovery skips protected areas in ad-hoc Full roots rather than traversing through them. A hidden directory is not sensitive merely because its name starts with a dot: agent workspaces such as `.codex`, `.openclaw` and `.claude` remain accessible in Full mode, while their known authentication/credential subpaths stay protected. Explicitly configured roots remain usable even when they live under Equinox Local's own managed Application Support tree.
 
 ## Management API
 

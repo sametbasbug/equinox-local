@@ -27,15 +27,18 @@ esac
 [ -x "$DEV_NODE" ] || fail "configured developer Node runtime is not executable"
 
 EQUINOX_LOCAL_DEV_RUNTIME_CONFIG="$CONFIG" "$DEV_NODE" "$ROOT/../scripts/release/sync-source-tunnel-runtime.mjs"
+EQUINOX_LOCAL_DEV_RUNTIME_CONFIG="$CONFIG" "$DEV_NODE" "$ROOT/../scripts/release/sync-source-peekaboo-runtime.mjs"
 EQUINOX_LOCAL_DEV_RUNTIME_CONFIG="$CONFIG" "$DEV_NODE" "$ROOT/../scripts/release/prepare-source-app-host.mjs"
 
 LABEL=""
 RUNTIME=""
 TUNNEL_CLIENT=""
+PEEKABOO_PATH=""
 SOURCE_LAUNCHER=""
 SEEN_LABEL=0
 SEEN_RUNTIME=0
 SEEN_CLIENT=0
+SEEN_PEEKABOO=0
 SEEN_SOURCE_LAUNCHER=0
 
 while IFS= read -r line || [ -n "$line" ]; do
@@ -61,6 +64,11 @@ while IFS= read -r line || [ -n "$line" ]; do
       TUNNEL_CLIENT="$value"
       SEEN_CLIENT=1
       ;;
+    peekabooPath)
+      [ "$SEEN_PEEKABOO" -eq 0 ] || fail "developer runtime config repeats peekabooPath"
+      PEEKABOO_PATH="$value"
+      SEEN_PEEKABOO=1
+      ;;
     sourceLauncher)
       [ "$SEEN_SOURCE_LAUNCHER" -eq 0 ] || fail "developer runtime config repeats sourceLauncher"
       SOURCE_LAUNCHER="$value"
@@ -79,6 +87,11 @@ case "$TUNNEL_CLIENT" in
   *) fail "tunnelClient must be an absolute executable path" ;;
 esac
 [ -x "$TUNNEL_CLIENT" ] || fail "configured tunnelClient is not executable after synchronization"
+case "$PEEKABOO_PATH" in
+  /*) ;;
+  *) fail "peekabooPath must be an absolute executable path" ;;
+esac
+[ -x "$PEEKABOO_PATH" ] && [ ! -L "$PEEKABOO_PATH" ] || fail "configured Peekaboo is not executable after synchronization"
 case "$SOURCE_LAUNCHER" in
   /*) ;;
   *) fail "sourceLauncher must be an absolute path" ;;
@@ -99,38 +112,27 @@ DOMAIN="gui/$CURRENT_UID"
   # Let the MCP response reach the client before the source runtime is restarted.
   sleep 8
 
-  "$TUNNEL_CLIENT" runtimes stop "$RUNTIME" || true
-
-  # A pre-v3 native host did not forward launchd termination signals to its
-  # runtime child. Stop that exact direct child first so bootout cannot orphan
-  # the wrapper/Peekaboo tree during the one-time migration to the fixed host.
+  # Capture only the app host's validated direct children before bootout. Do not
+  # terminate them while KeepAlive is still active: doing that can make launchd
+  # start a replacement app host in the narrow window before bootout.
   HOST_PID="$(/bin/launchctl print "$DOMAIN/$LABEL" 2>/dev/null | /usr/bin/awk '$1 == "pid" && $2 == "=" { print $3; exit }' || true)"
+  VALID_HOST_CHILDREN=""
   if [[ "$HOST_PID" =~ ^[0-9]+$ ]] && [ "$HOST_PID" -gt 1 ]; then
     HOST_CHILDREN="$(/usr/bin/pgrep -P "$HOST_PID" 2>/dev/null || true)"
     for child_pid in $HOST_CHILDREN; do
       child_uid="$(/bin/ps -p "$child_pid" -o uid= 2>/dev/null | /usr/bin/tr -d ' ' || true)"
       child_ppid="$(/bin/ps -p "$child_pid" -o ppid= 2>/dev/null | /usr/bin/tr -d ' ' || true)"
-      if [ "$child_uid" = "$CURRENT_UID" ] && [ "$child_ppid" = "$HOST_PID" ]; then
-        /bin/kill -TERM "$child_pid" >/dev/null 2>&1 || true
-      fi
-    done
-    for child_pid in $HOST_CHILDREN; do
-      for _ in {1..40}; do
-        if ! /bin/kill -0 "$child_pid" >/dev/null 2>&1; then
-          break
-        fi
-        sleep 0.1
-      done
-      if /bin/kill -0 "$child_pid" >/dev/null 2>&1; then
-        fail "source runtime child did not stop cleanly before LaunchAgent bootout"
+      child_command="$(/bin/ps -p "$child_pid" -o command= 2>/dev/null || true)"
+      if [ "$child_uid" = "$CURRENT_UID" ] && [ "$child_ppid" = "$HOST_PID" ] && [[ "$child_command" == *"$HOME/Library/Application Support/Equinox Local/equinox-local-app-runtime"* ]]; then
+        VALID_HOST_CHILDREN="$VALID_HOST_CHILDREN $child_pid"
       fi
     done
   fi
 
   /bin/launchctl bootout "$DOMAIN/$LABEL" >/dev/null 2>&1 || true
 
-  # launchctl bootout is asynchronous. Wait for the old job to disappear before
-  # bootstrapping the replacement; otherwise macOS can transiently return EIO.
+  # launchctl bootout is asynchronous. Wait for KeepAlive ownership to disappear
+  # before touching the captured wrapper children or the tunnel runtime.
   for _ in {1..40}; do
     if ! /bin/launchctl print "$DOMAIN/$LABEL" >/dev/null 2>&1; then
       break
@@ -140,6 +142,45 @@ DOMAIN="gui/$CURRENT_UID"
   if /bin/launchctl print "$DOMAIN/$LABEL" >/dev/null 2>&1; then
     fail "source LaunchAgent did not finish bootout"
   fi
+
+  for child_pid in $VALID_HOST_CHILDREN; do
+    child_uid="$(/bin/ps -p "$child_pid" -o uid= 2>/dev/null | /usr/bin/tr -d ' ' || true)"
+    if [ "$child_uid" = "$CURRENT_UID" ]; then
+      /bin/kill -TERM "$child_pid" >/dev/null 2>&1 || true
+    fi
+  done
+  for child_pid in $VALID_HOST_CHILDREN; do
+    for _ in {1..40}; do
+      if ! /bin/kill -0 "$child_pid" >/dev/null 2>&1; then
+        break
+      fi
+      sleep 0.1
+    done
+    if /bin/kill -0 "$child_pid" >/dev/null 2>&1; then
+      fail "source runtime child did not stop cleanly after LaunchAgent bootout"
+    fi
+  done
+
+  # Stop the tunnel only after KeepAlive is gone. Stopping it while the
+  # LaunchAgent is still active lets the source launcher race us and create a
+  # replacement server before bootout, leaving that replacement orphaned.
+  "$TUNNEL_CLIENT" runtimes stop "$RUNTIME" || true
+
+  # Do not relaunch while any previous source server is still alive. The
+  # tunnel runtime can take a moment to finish process teardown after reporting
+  # stopped, so wait for the exact old PID and then fail closed on any residual
+  # server process rather than accepting a restart-window orphan as the new PID.
+  if [ -n "$OLD_PID" ]; then
+    for _ in {1..40}; do
+      if ! /bin/kill -0 "$OLD_PID" >/dev/null 2>&1; then
+        break
+      fi
+      sleep 0.25
+    done
+    /bin/kill -0 "$OLD_PID" >/dev/null 2>&1 && fail "previous Equinox Local server process did not stop before relaunch"
+  fi
+  RESIDUAL_PID="$(/usr/bin/pgrep -f "node $ROOT/server.js" | /usr/bin/head -n 1 || true)"
+  [ -z "$RESIDUAL_PID" ] || fail "source runtime left a residual Equinox Local server process before relaunch"
 
   BOOTSTRAPPED=0
   for _ in {1..12}; do
