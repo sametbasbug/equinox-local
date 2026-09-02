@@ -5,7 +5,8 @@ import path from "node:path";
 import { promisify } from "node:util";
 
 import { synchronizeEquinoxLocalAppHostForRelease } from "./equinox-local-native-app-host.js";
-import { equinoxLocalUpdateTarget, parseEquinoxVersion } from "./equinox-local-updater.js";
+import { EQUINOX_LOCAL_BUNDLED_PEEKABOO_SINCE_VERSION } from "./equinox-local-runtime-versions.js";
+import { compareEquinoxVersions, equinoxLocalUpdateTarget, parseEquinoxVersion } from "./equinox-local-updater.js";
 
 const execFile = promisify(execFileCallback);
 export const EQUINOX_LOCAL_CONTROL_CENTER_STATUS_URL = "http://127.0.0.1:24891/api/v1/status";
@@ -50,13 +51,18 @@ async function assertReleaseDirectory(installation, version) {
   ) {
     throw new Error(`Managed release ${version} metadata is invalid for ${expectedTarget}.`);
   }
-  for (const relative of [
+  const requiredExecutables = [
     path.join("runtime", "node", "bin", "node"),
     path.join("runtime", "tunnel", "tunnel-client"),
     path.join("runtime", "tunnel", "cloudflared"),
-    path.join("runtime", "peekaboo", "peekaboo"),
-    path.join("runtime", "peekaboo", "libswiftCompatibilitySpan.dylib"),
-  ]) {
+  ];
+  if (compareEquinoxVersions(version, EQUINOX_LOCAL_BUNDLED_PEEKABOO_SINCE_VERSION) >= 0) {
+    requiredExecutables.push(
+      path.join("runtime", "peekaboo", "peekaboo"),
+      path.join("runtime", "peekaboo", "libswiftCompatibilitySpan.dylib"),
+    );
+  }
+  for (const relative of requiredExecutables) {
     const executable = await fs.lstat(path.join(target, relative));
     if (!executable.isFile() || executable.isSymbolicLink() || (executable.mode & 0o111) === 0) {
       throw new Error(`Managed release ${version} runtime executable is invalid: ${relative}.`);

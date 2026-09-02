@@ -4,7 +4,8 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 
-import { parseEquinoxVersion } from "./equinox-local-updater.js";
+import { EQUINOX_LOCAL_BUNDLED_PEEKABOO_SINCE_VERSION } from "./equinox-local-runtime-versions.js";
+import { compareEquinoxVersions, parseEquinoxVersion } from "./equinox-local-updater.js";
 
 const execFile = promisify(execFileCallback);
 const TAR_PATH = "/usr/bin/tar";
@@ -198,13 +199,22 @@ async function readReleaseMetadata(releaseDir, expectedVersion, expectedTarget) 
   if (!modules.isDirectory() || modules.isSymbolicLink()) {
     throw new Error("Release must contain its production node_modules tree.");
   }
-  for (const relative of [
+  const requiredExecutables = [
     path.join("runtime", "node", "bin", "node"),
     path.join("runtime", "tunnel", "tunnel-client"),
     path.join("runtime", "tunnel", "cloudflared"),
-    path.join("runtime", "peekaboo", "peekaboo"),
-    path.join("runtime", "peekaboo", "libswiftCompatibilitySpan.dylib"),
-  ]) {
+  ];
+  const requiresBundledPeekaboo = compareEquinoxVersions(
+    metadata.version,
+    EQUINOX_LOCAL_BUNDLED_PEEKABOO_SINCE_VERSION,
+  ) >= 0;
+  if (requiresBundledPeekaboo) {
+    requiredExecutables.push(
+      path.join("runtime", "peekaboo", "peekaboo"),
+      path.join("runtime", "peekaboo", "libswiftCompatibilitySpan.dylib"),
+    );
+  }
+  for (const relative of requiredExecutables) {
     const executable = await fs.lstat(path.join(releaseDir, relative));
     if (!executable.isFile() || executable.isSymbolicLink() || (executable.mode & 0o111) === 0) {
       throw new Error(`Release must contain executable runtime file ${relative}.`);
@@ -223,13 +233,18 @@ async function readReleaseMetadata(releaseDir, expectedVersion, expectedTarget) 
       if (!appFile.isFile() || appFile.isSymbolicLink()) throw new Error(`Release must contain native app file ${relative}.`);
     }
   }
-  for (const relative of [
+  const requiredDocuments = [
     path.join("runtime", "tunnel", "LICENSE"),
     path.join("runtime", "tunnel", "NOTICE"),
-    path.join("runtime", "peekaboo", "LICENSE"),
-    path.join("runtime", "peekaboo", "README.md"),
-    path.join("runtime", "peekaboo", "VERSION"),
-  ]) {
+  ];
+  if (requiresBundledPeekaboo) {
+    requiredDocuments.push(
+      path.join("runtime", "peekaboo", "LICENSE"),
+      path.join("runtime", "peekaboo", "README.md"),
+      path.join("runtime", "peekaboo", "VERSION"),
+    );
+  }
+  for (const relative of requiredDocuments) {
     const document = await fs.lstat(path.join(releaseDir, relative));
     if (!document.isFile() || document.isSymbolicLink()) {
       throw new Error(`Release must contain normal runtime document ${relative}.`);

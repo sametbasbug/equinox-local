@@ -202,3 +202,31 @@ test("failed target health automatically restores and verifies the previous rele
   assert.equal(state.failedVersion, "4.3.0");
   assert.equal(state.version, "4.2.0");
 });
+
+test("managed release validation permits pre-4.4.0 rollback trees without bundled Peekaboo but requires it from 4.4.0", async (t) => {
+  const fixture = await makeInstall();
+  t.after(() => fs.rm(fixture.root, { recursive: true, force: true }));
+  const template = path.join(fixture.installation.releasesRoot, "4.3.0");
+
+  const historical = path.join(fixture.installation.releasesRoot, "4.3.1");
+  await fs.cp(template, historical, { recursive: true });
+  const historicalMetadataPath = path.join(historical, "release.json");
+  const historicalMetadata = JSON.parse(await fs.readFile(historicalMetadataPath, "utf8"));
+  historicalMetadata.version = "4.3.1";
+  await fs.writeFile(historicalMetadataPath, JSON.stringify(historicalMetadata));
+  await fs.rm(path.join(historical, "runtime", "peekaboo"), { recursive: true, force: true });
+  await fs.rm(fixture.installation.currentLink);
+  await fs.symlink("releases/4.3.1", fixture.installation.currentLink, "dir");
+  assert.equal(await currentVersion(fixture.installation), "4.3.1");
+
+  const modern = path.join(fixture.installation.releasesRoot, "4.4.0");
+  await fs.cp(template, modern, { recursive: true });
+  const modernMetadataPath = path.join(modern, "release.json");
+  const modernMetadata = JSON.parse(await fs.readFile(modernMetadataPath, "utf8"));
+  modernMetadata.version = "4.4.0";
+  await fs.writeFile(modernMetadataPath, JSON.stringify(modernMetadata));
+  await fs.rm(path.join(modern, "runtime", "peekaboo"), { recursive: true, force: true });
+  await fs.rm(fixture.installation.currentLink);
+  await fs.symlink("releases/4.4.0", fixture.installation.currentLink, "dir");
+  await assert.rejects(readManagedCurrentRelease(fixture.installation), /peekaboo/u);
+});
