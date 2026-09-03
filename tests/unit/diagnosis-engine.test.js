@@ -249,32 +249,6 @@ test("paused resumable workflow becomes a WORKFLOW_PAUSED incident", async () =>
   assert.equal(result.incidents[0].details.resumable, true);
 });
 
-test("Chrome autonomous connection failure is diagnosed as bridge failure", async () => {
-  const nowMs = 1_800_000_500_000;
-  const events = [
-    event({
-      id: "chrome-connect-failed",
-      ms: nowMs - 1_000,
-      component: "chrome",
-      type: "chrome.connection_failed",
-      severity: "warn",
-      status: "degraded",
-      projectId: null,
-      correlationId: "chrome-attempt",
-      message: "backend readiness failed",
-    }),
-  ];
-  const engine = createDiagnosisEngine({
-    observability: fakeObservability(events, nowMs),
-    getBridgeSnapshot: () => ({ chrome: { active: false, connection: { status: "FAILED" } } }),
-    now: () => nowMs,
-  });
-
-  const result = await engine.diagnose({ windowMs: 60_000, component: "chrome" });
-  assert.equal(result.incidentCount, 1);
-  assert.equal(result.incidents[0].code, "CHROME_BRIDGE_FAILURE");
-  assert.equal(result.incidents[0].state, "ACTIVE");
-});
 
 test("hard runtime interruption is diagnosed as an active paused workflow", async () => {
   const nowMs = 1_800_000_600_000;

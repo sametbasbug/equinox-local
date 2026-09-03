@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash, randomUUID } from "node:crypto";
 import { createReadStream } from "node:fs";
 import fs from "node:fs/promises";
@@ -217,6 +218,7 @@ export async function registerEquinoxBrowserTools({
   screenshotProjectId,
   bridge: rawBridge,
   isBrowserAccessEnabled = () => true,
+  ensureAgentBrowserReady = null,
   withMutationLocks,
   textResult,
   errorResult,
@@ -233,6 +235,7 @@ export async function registerEquinoxBrowserTools({
     typeof screenshotProjectId !== "string" ||
     !screenshotProjectId.trim() ||
     typeof isBrowserAccessEnabled !== "function" ||
+    (ensureAgentBrowserReady !== null && typeof ensureAgentBrowserReady !== "function") ||
     typeof withMutationLocks !== "function" ||
     typeof textResult !== "function" ||
     typeof errorResult !== "function"
@@ -245,12 +248,61 @@ export async function registerEquinoxBrowserTools({
       throw new Error("Browser automation access is disabled in Control Center.");
     }
   };
+  const browserContextStorage = new AsyncLocalStorage();
+  const browserTargetSchema = () => z.enum(["agent", "user"])
+    .default("agent")
+    .describe("Tarayıcı hedefi. Varsayılan agent: ajanın izole Agent Browser profili. user yalnız kullanıcının kişisel Chrome profilini özellikle kullanmak gerektiğinde seçilmelidir.");
+  const browserLockKey = () => `browser:${browserContextStorage.getStore() ?? "agent"}`;
+  const baseWithMutationLocks = withMutationLocks;
+  withMutationLocks = (locks, callback) => baseWithMutationLocks(
+    locks.map((lock) => lock === "browser:user" ? browserLockKey() : lock).sort(),
+    callback,
+  );
+  const nonTargetedTools = new Set([
+    "equinox_browser_status",
+    "equinox_browser_screenshot_delete",
+  ]);
+  const baseRegisterTextTool = registerTextTool;
+  const baseRegisterRawTool = registerRawTool;
+  const wrapBrowserRegistration = (register, name, definition, handler, options) => {
+    if (nonTargetedTools.has(name)) return register(name, definition, handler, options);
+    const inputSchema = {
+      target: browserTargetSchema(),
+      ...(definition.inputSchema ?? {}),
+    };
+    return register(
+      name,
+      { ...definition, inputSchema },
+      async (args = {}, ...rest) => {
+        const target = args?.target === "user" ? "user" : "agent";
+        const { target: _target, ...forwarded } = args ?? {};
+        return await browserContextStorage.run(target, async () => handler(forwarded, ...rest));
+      },
+      options,
+    );
+  };
+  registerTextTool = (name, definition, handler, options) =>
+    wrapBrowserRegistration(baseRegisterTextTool, name, definition, handler, options);
+  registerRawTool = (name, definition, handler, options) =>
+    wrapBrowserRegistration(baseRegisterRawTool, name, definition, handler, options);
   const bridge = new Proxy(rawBridge, {
     get(target, property, receiver) {
       if (property === "call") {
-        return async (...args) => {
+        return async (method, args = {}, options = {}) => {
           assertBrowserAccess();
-          return target.call(...args);
+          const context = browserContextStorage.getStore() ?? "agent";
+          if (
+            context === "agent" &&
+            typeof ensureAgentBrowserReady === "function" &&
+            typeof rawBridge.readyFor === "function" &&
+            !rawBridge.readyFor("agent")
+          ) {
+            await ensureAgentBrowserReady();
+          }
+          return target.call(method, args, {
+            ...options,
+            context,
+          });
         };
       }
       const value = Reflect.get(target, property, receiver);
@@ -267,7 +319,7 @@ export async function registerEquinoxBrowserTools({
     "equinox_browser_status",
     {
       description:
-        "Birinci taraf Equinox Browser extension + Native Messaging köprüsünün durumunu salt okunur gösterir.",
+        "Equinox Browser'ın iki ayrı context'ini salt okunur gösterir: varsayılan izole Agent Browser ve kullanıcının kişisel User Browser profili. Context'ler arasında sessiz fallback yapılmaz.",
       inputSchema: {},
       annotations: {
         title: "Equinox Browser durumu",
@@ -281,11 +333,30 @@ export async function registerEquinoxBrowserTools({
       try {
         const accessEnabled = Boolean(isBrowserAccessEnabled());
         const local = rawBridge.snapshot();
-        let remote = null;
-        if (accessEnabled && local.ready) {
-          remote = await rawBridge.call("status", {}, { timeoutMs: 5_000 });
+        const remoteByContext = { agent: null, user: null };
+        if (accessEnabled) {
+          for (const context of ["agent", "user"]) {
+            if (!local.contexts?.[context]?.ready) continue;
+            try {
+              remoteByContext[context] = await rawBridge.call("status", {}, {
+                timeoutMs: 5_000,
+                context,
+              });
+            } catch {
+              // A context may disconnect between the local snapshot and the bounded status call.
+            }
+          }
         }
-        return jsonText({ accessEnabled, local, remote });
+        return jsonText({
+          accessEnabled,
+          defaultTarget: "agent",
+          local,
+          remote: remoteByContext.user,
+          contexts: {
+            agent: { local: local.contexts?.agent ?? null, remote: remoteByContext.agent },
+            user: { local: local.contexts?.user ?? null, remote: remoteByContext.user },
+          },
+        });
       } catch (error) {
         return errorResult(error);
       }

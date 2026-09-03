@@ -60,6 +60,9 @@ import {
   registerEquinoxBrowserTools,
 } from "./equinox-browser-tools.js";
 import {
+  createEquinoxAgentBrowser,
+} from "./equinox-agent-browser.js";
+import {
   createDiagnosisEngine,
 } from "./diagnosis-engine.js";
 import {
@@ -15501,19 +15504,74 @@ async function listProjectClientRoots() {
   return roots;
 }
 
+function normalizeChromeToolResult(
+  result,
+) {
+  if (
+    result &&
+    Array.isArray(result.content)
+  ) {
+    return result;
+  }
+
+  return {
+    content: [
+      {
+        type: "text",
+        text: JSON.stringify(
+          result ?? null,
+          null,
+          2,
+        ),
+      },
+    ],
+  };
+}
+
 const peekabooBridge = createPeekabooBridge({
   serverVersion: SERVER_VERSION,
   listRoots: listProjectClientRoots,
   onEvent: recordRuntimeEvent,
 });
 
+let equinoxAgentBrowser = null;
 const equinoxBrowserBridge = createEquinoxBrowserBridge({
   socketPath: equinoxBrowserSocketPath({
     namespace: process.env.EQUINOX_LOCAL_BROWSER_SOCKET_NAMESPACE || null,
   }),
   recordEvent: recordRuntimeEvent,
+  handleExtensionRequest: async ({ context, method, args }) => {
+    if (method !== "agent_browser.open") {
+      throw new Error(`Unsupported extension-initiated Local action: ${method}`);
+    }
+    if (args && Object.keys(args).length > 0) {
+      throw new Error("agent_browser.open does not accept arguments.");
+    }
+    if (!equinoxAgentBrowser) {
+      throw new Error("Agent Browser manager is not ready yet.");
+    }
+    if (context === "agent") {
+      return {
+        opened: false,
+        alreadyOpen: true,
+        agentBrowser: equinoxAgentBrowser.snapshot(),
+      };
+    }
+    const alreadyOpen = equinoxBrowserBridge.readyFor("agent");
+    return {
+      opened: true,
+      alreadyOpen,
+      agentBrowser: await equinoxAgentBrowser.launch({ setup: false }),
+    };
+  },
 });
 await equinoxBrowserBridge.start();
+equinoxAgentBrowser = createEquinoxAgentBrowser({
+  bridge: equinoxBrowserBridge,
+  homeDir: process.env.HOME,
+  execFileAsync: execFile,
+  recordEvent: recordRuntimeEvent,
+});
 let equinoxLocalControlApi = null;
 
 await registerRuntimeObservabilityTools({
@@ -15668,6 +15726,7 @@ await registerEquinoxBrowserTools({
   screenshotProjectId: WORKSPACE_PROJECT_ID,
   bridge: equinoxBrowserBridge,
   isBrowserAccessEnabled: () => AGENT_ACCESS.browser,
+  ensureAgentBrowserReady: () => equinoxAgentBrowser.ensureReady(),
   withMutationLocks,
   textResult,
   errorResult,
@@ -15783,14 +15842,20 @@ equinoxLocalControlApi = createEquinoxLocalControlApi({
   port: EQUINOX_LOCAL_CONFIG.controlCenter.port,
   getStatus: async () => {
     const browser = equinoxBrowserBridge.snapshot();
-    let browserSettings = null;
-    if (browser.ready) {
+    const browserSettingsByContext = { agent: null, user: null };
+    for (const context of ["agent", "user"]) {
+      if (!browser.contexts?.[context]?.ready) continue;
       try {
-        browserSettings = await equinoxBrowserBridge.call("settings.status", {}, { timeoutMs: 2_500 });
+        browserSettingsByContext[context] = await equinoxBrowserBridge.call("settings.status", {}, {
+          timeoutMs: 2_500,
+          context,
+        });
       } catch {
         // Older extension builds may not expose the settings control plane yet.
       }
     }
+    const browserSettings = browserSettingsByContext.user;
+    const agentBrowserStatus = equinoxAgentBrowser.snapshot();
     const observabilityHealth = await runtimeObservability.health({
       windowMs: 15 * 60 * 1000,
     });
@@ -15829,6 +15894,28 @@ equinoxLocalControlApi = createEquinoxLocalControlApi({
         agentCursorName: typeof browserSettings?.agentCursorName === "string" ? browserSettings.agentCursorName : null,
         nativeHostConnected: Boolean(browserSettings?.nativeHostConnected ?? browser.ready),
         localConnected: Boolean(browserSettings?.localConnected ?? browser.ready),
+        defaultTarget: "agent",
+        agentBrowser: agentBrowserStatus,
+        contexts: {
+          agent: {
+            ready: Boolean(browser.contexts?.agent?.ready),
+            connectedAt: browser.contexts?.agent?.connectedAt ?? null,
+            extensionVersion: browser.contexts?.agent?.extension?.extensionVersion ?? null,
+            consentAccepted: typeof browserSettingsByContext.agent?.consentAccepted === "boolean" ? browserSettingsByContext.agent.consentAccepted : null,
+            controlEnabled: typeof browserSettingsByContext.agent?.enabled === "boolean" ? browserSettingsByContext.agent.enabled : null,
+            agentCursorEnabled: typeof browserSettingsByContext.agent?.agentCursorEnabled === "boolean" ? browserSettingsByContext.agent.agentCursorEnabled : null,
+            agentCursorName: typeof browserSettingsByContext.agent?.agentCursorName === "string" ? browserSettingsByContext.agent.agentCursorName : null,
+          },
+          user: {
+            ready: Boolean(browser.contexts?.user?.ready),
+            connectedAt: browser.contexts?.user?.connectedAt ?? null,
+            extensionVersion: browser.contexts?.user?.extension?.extensionVersion ?? null,
+            consentAccepted: typeof browserSettingsByContext.user?.consentAccepted === "boolean" ? browserSettingsByContext.user.consentAccepted : null,
+            controlEnabled: typeof browserSettingsByContext.user?.enabled === "boolean" ? browserSettingsByContext.user.enabled : null,
+            agentCursorEnabled: typeof browserSettingsByContext.user?.agentCursorEnabled === "boolean" ? browserSettingsByContext.user.agentCursorEnabled : null,
+            agentCursorName: typeof browserSettingsByContext.user?.agentCursorName === "string" ? browserSettingsByContext.user.agentCursorName : null,
+          },
+        },
       },
       peekaboo: {
         active: peekabooBridge.active,
@@ -15904,14 +15991,28 @@ equinoxLocalControlApi = createEquinoxLocalControlApi({
   },
   applyUpdate: async () => withMutationLocks(["local-update"], async () => equinoxLocalUpdateCoordinator.apply()),
   chooseFolder: chooseLocalFolder,
-  updateBrowserSettings: async (settings) => withMutationLocks(["browser"], async () => {
-    if (!equinoxBrowserBridge.snapshot().ready) {
-      const error = new Error("Equinox Browser extension is not connected to Equinox Local.");
-      error.statusCode = 503;
-      throw error;
-    }
-    return await equinoxBrowserBridge.call("settings.update", settings, { timeoutMs: 5_000 });
-  }),
+  openAgentBrowser: async () => withMutationLocks(["browser:agent"], async () => (
+    equinoxAgentBrowser.launch({ setup: false })
+  )),
+  updateBrowserSettings: async (settings) => {
+    const context = settings?.context === "agent" ? "agent" : "user";
+    const { context: _context, ...extensionSettings } = settings ?? {};
+    return await withMutationLocks([`browser:${context}`], async () => {
+      if (!equinoxBrowserBridge.readyFor(context)) {
+        const error = new Error(
+          context === "agent"
+            ? "Agent Browser is not connected to Equinox Local. Open Agent Browser and install/enable Equinox Browser in that isolated profile."
+            : "Equinox Browser is not connected to the user's Chrome profile.",
+        );
+        error.statusCode = 503;
+        throw error;
+      }
+      return await equinoxBrowserBridge.call("settings.update", extensionSettings, {
+        timeoutMs: 5_000,
+        context,
+      });
+    });
+  },
   getPeekabooStatus: getControlCenterPeekabooStatus,
   checkGitHub: async () => {
     const context = await resolveProjectContext(EQUINOX_LOCAL_CONFIG.defaultProject);

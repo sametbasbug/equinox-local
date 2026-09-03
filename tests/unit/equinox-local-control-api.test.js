@@ -47,6 +47,7 @@ async function withApi(fn, overrides = {}) {
     scheduleUninstall: overrides.scheduleUninstall ?? null,
     chooseFolder: overrides.chooseFolder ?? null,
     updateBrowserSettings: overrides.updateBrowserSettings ?? null,
+    openAgentBrowser: overrides.openAgentBrowser ?? null,
     checkGitHub: overrides.checkGitHub ?? null,
     getPeekabooStatus: overrides.getPeekabooStatus ?? null,
     getTelegramStatus: overrides.getTelegramStatus ?? null,
@@ -142,6 +143,9 @@ test("control API serves the visual Control Center shell and fixed same-origin a
     assert.match(scriptText, /\/api\/v1\/uninstall/u);
     assert.match(scriptText, /\/api\/v1\/folder-picker/u);
     assert.match(scriptText, /\/api\/v1\/browser\/settings/u);
+    assert.match(scriptText, /\/api\/v1\/browser\/agent\/open/u);
+    assert.match(scriptText, /Agent Browser/u);
+    assert.match(scriptText, /browser-settings-target/u);
     assert.match(scriptText, /npdneefcobilfkjlihghjgjnknenhfoj/u);
     assert.match(scriptText, /control\.rel = "noopener noreferrer"/u);
     assert.match(scriptText, /equinox-local-control-center-language/u);
@@ -149,7 +153,6 @@ test("control API serves the visual Control Center shell and fixed same-origin a
     assert.match(scriptText, /navigator\.language/u);
     assert.match(scriptText, /localizeRuntimeEventMessage/u);
     assert.match(scriptText, /Peekaboo safe tool-surface compatibility check passed\./u);
-    assert.doesNotMatch(scriptText, /agent-browser|Agent Browser/u);
     assert.doesNotMatch(scriptText, /\/api\/v1\/integrations\/github(?:\/check)?/u);
     assert.doesNotMatch(scriptText, /GitHub CLI/u);
 
@@ -416,12 +419,22 @@ test("bounded Control Center actions expose activity, Browser/GitHub controls an
     assert.equal(restart.response.status, 202);
     assert.deepEqual(restart.body.result, { scheduled: true, installationKind: "source" });
 
+    const openedAgentBrowser = await jsonFetch(`${base}/api/v1/browser/agent/open`, {
+      method: "POST",
+      headers: mutationHeaders,
+      body: "{}",
+    });
+    assert.equal(openedAgentBrowser.response.status, 200);
+    assert.equal(openedAgentBrowser.body.agentBrowser.context, "agent");
+    assert.equal(openedAgentBrowser.body.agentBrowser.isolated, true);
+
     const browser = await jsonFetch(`${base}/api/v1/browser/settings`, {
       method: "PUT",
       headers: mutationHeaders,
-      body: JSON.stringify({ enabled: false, agentCursorEnabled: true, agentCursorName: "Nyx" }),
+      body: JSON.stringify({ context: "agent", enabled: false, agentCursorEnabled: true, agentCursorName: "Nyx" }),
     });
     assert.equal(browser.response.status, 200);
+    assert.equal(browser.body.settings.context, "agent");
     assert.equal(browser.body.settings.enabled, false);
     assert.equal(browser.body.settings.agentCursorName, "Nyx");
 
@@ -497,7 +510,8 @@ test("bounded Control Center actions expose activity, Browser/GitHub controls an
     assert.deepEqual(calls, [
       ["picker"],
       ["restart"],
-      ["browser", { enabled: false, agentCursorEnabled: true, agentCursorName: "Nyx" }],
+      ["agent-browser-open"],
+      ["browser", { context: "agent", enabled: false, agentCursorEnabled: true, agentCursorName: "Nyx" }],
       ["github"],
       ["peekaboo-status"],
       ["github"],
@@ -506,7 +520,7 @@ test("bounded Control Center actions expose activity, Browser/GitHub controls an
       ["telegram-test"],
       ["telegram-disconnect"],
     ]);
-    assert.equal(api.snapshot().mutationCount, 5);
+    assert.equal(api.snapshot().mutationCount, 6);
 
     const invalidBrowser = await jsonFetch(`${base}/api/v1/browser/settings`, {
       method: "PUT",
@@ -514,7 +528,7 @@ test("bounded Control Center actions expose activity, Browser/GitHub controls an
       body: JSON.stringify({ surprise: true }),
     });
     assert.equal(invalidBrowser.response.status, 400);
-    assert.equal(calls.length, 10);
+    assert.equal(calls.length, 11);
   }, {
     getActivity: async () => [{ timestamp: "2026-08-22T00:00:00.000Z", component: "runtime", message: "Ready" }],
     restartRuntime: async () => {
@@ -524,6 +538,10 @@ test("bounded Control Center actions expose activity, Browser/GitHub controls an
     chooseFolder: async () => {
       calls.push(["picker"]);
       return "/tmp/chosen";
+    },
+    openAgentBrowser: async () => {
+      calls.push(["agent-browser-open"]);
+      return { context: "agent", isolated: true, ready: false, pairing: true };
     },
     updateBrowserSettings: async (settings) => {
       calls.push(["browser", settings]);

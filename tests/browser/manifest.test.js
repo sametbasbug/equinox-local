@@ -63,6 +63,8 @@ test("popup ships prominent browser-data consent, accessible controls and local 
   assert.match(html, /text you enter/iu);
   assert.match(html, /console\/network metadata/iu);
   assert.match(html, /AI service you choose/iu);
+  assert.match(html, /id="open-agent-browser"[^>]*disabled/);
+  assert.match(html, /Agent Browser/);
   assert.match(html, /id="enabled-toggle"/);
   assert.match(html, /id="cursor-toggle"/);
   assert.match(html, /id="agent-name"[^>]*maxlength="32"/);

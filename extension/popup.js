@@ -5,6 +5,9 @@ const acceptConsentButton = $("#accept-consent");
 const toggle = $("#enabled-toggle");
 const cursorToggle = $("#cursor-toggle");
 const agentNameInput = $("#agent-name");
+const openAgentBrowserButton = $("#open-agent-browser");
+const agentBrowserDescription = $("#agent-browser-description");
+const agentBrowserFeedbackElement = $("#agent-browser-feedback");
 const version = $("#version");
 const connectionDot = $("#connection-dot");
 const connectionStatus = $("#connection-status");
@@ -19,6 +22,7 @@ let lastState = null;
 let pollTimer = null;
 let agentNameSaveTimer = null;
 let agentNameSaveSequence = 0;
+let agentBrowserFeedback = null;
 
 function send(message) {
   return new Promise((resolve, reject) => {
@@ -42,12 +46,42 @@ function setDot(element, tone) {
   if (tone === "good" || tone === "warn") element.classList.add(tone);
 }
 
+function setAgentBrowserFeedback(text = "", { error = false } = {}) {
+  agentBrowserFeedback = text ? { text, error } : null;
+  agentBrowserFeedbackElement.textContent = text;
+  agentBrowserFeedbackElement.classList.toggle("error", Boolean(text && error));
+}
+
 function syncInteractiveDisabled() {
   const consentAccepted = Boolean(lastState?.consentAccepted);
+  const inAgentBrowser = lastState?.browserContext === "agent";
   toggle.disabled = busy || !consentAccepted;
   cursorToggle.disabled = busy;
   agentNameInput.disabled = busy;
   acceptConsentButton.disabled = busy;
+  openAgentBrowserButton.disabled = busy || inAgentBrowser || !lastState?.localConnected;
+}
+
+function renderAgentBrowserAction(state) {
+  const inAgentBrowser = state.browserContext === "agent";
+  agentBrowserDescription.textContent = inAgentBrowser
+    ? "This Chrome profile is your agent's isolated browser."
+    : "Open your agent's isolated Chrome profile without sending it a message.";
+  openAgentBrowserButton.textContent = inAgentBrowser ? "Current" : busy ? "Opening…" : "Open";
+
+  if (inAgentBrowser) {
+    agentBrowserFeedbackElement.textContent = "You are already in Agent Browser.";
+    agentBrowserFeedbackElement.classList.remove("error");
+  } else if (!state.localConnected) {
+    agentBrowserFeedbackElement.textContent = "Connect Equinox Local to open Agent Browser.";
+    agentBrowserFeedbackElement.classList.add("error");
+  } else if (agentBrowserFeedback) {
+    agentBrowserFeedbackElement.textContent = agentBrowserFeedback.text;
+    agentBrowserFeedbackElement.classList.toggle("error", agentBrowserFeedback.error);
+  } else {
+    agentBrowserFeedbackElement.textContent = "";
+    agentBrowserFeedbackElement.classList.remove("error");
+  }
 }
 
 function tabPresentation(state) {
@@ -78,6 +112,7 @@ function render(state) {
   if (document.activeElement !== agentNameInput) {
     agentNameInput.value = state.agentCursorName || "Agent";
   }
+  renderAgentBrowserAction(state);
   syncInteractiveDisabled();
   version.textContent = `v${state.extensionVersion || "—"}`;
   offNote.hidden = !consentAccepted || Boolean(state.enabled);
@@ -187,6 +222,27 @@ async function setAgentCursorEnabled(enabled) {
   }
 }
 
+async function openAgentBrowser() {
+  if (busy || lastState?.browserContext === "agent") return;
+  busy = true;
+  setAgentBrowserFeedback("Opening Agent Browser…");
+  if (lastState) renderAgentBrowserAction(lastState);
+  syncInteractiveDisabled();
+  try {
+    const result = await send({ type: "equinox.popup.openAgentBrowser" });
+    setAgentBrowserFeedback(
+      result?.opened ? "Agent Browser opened." : "Agent Browser is already open.",
+    );
+  } catch (error) {
+    setAgentBrowserFeedback(error?.message || "Could not open Agent Browser.", { error: true });
+  } finally {
+    busy = false;
+    if (lastState) renderAgentBrowserAction(lastState);
+    syncInteractiveDisabled();
+    void refresh({ quiet: true });
+  }
+}
+
 async function persistAgentCursorName() {
   if (agentNameSaveTimer) {
     clearTimeout(agentNameSaveTimer);
@@ -211,6 +267,10 @@ function queueAgentCursorNameSave() {
     void persistAgentCursorName();
   }, 250);
 }
+
+openAgentBrowserButton.addEventListener("click", () => {
+  void openAgentBrowser();
+});
 
 acceptConsentButton.addEventListener("click", () => {
   void acceptBrowserControlConsent();

@@ -1,6 +1,5 @@
 const REPAIR_RECIPE_IDS = Object.freeze([
   "peekaboo_bridge_restart",
-  "chrome_bridge_restart",
   "stale_preview_cleanup",
   "orphan_process_cleanup",
   "stale_workflow_recover",

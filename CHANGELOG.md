@@ -6,6 +6,23 @@ This project follows semantic versioning for public releases.
 
 ## [Unreleased]
 
+## [4.5.0] - 2026-09-03
+
+### Added
+
+- Added a first-class isolated **Agent Browser** context backed by the same Equinox Browser extension and Native Messaging transport as the user's Chrome. Browser operations now default to `target=agent`, while `target=user` explicitly selects **Your Browser** when a task needs the user's existing Chrome session.
+- Control Center now shows Agent Browser and Your Browser as separate contexts, can launch the isolated Agent Browser, and edits Browser settings for either profile without adding a second browser tool family.
+- The Equinox Browser toolbar popup now includes a bounded **Open Agent Browser** action so the user can bring up the agent's isolated browser without asking the agent to do it.
+
+### Changed
+
+- Equinox Browser profile identity is persisted per Chrome profile with a random instance ID and explicit `agent` / `user` context. Concurrent contexts route independently and never silently fall back to the other profile.
+- Internal release/visual browser QA now uses the first-party Agent Browser path. The legacy loopback `:9223` Selene Chrome backend, its special CDP/profile modules and its diagnosis/repair/recovery hooks have been retired.
+
+### Fixed
+
+- Agent Browser now prepares a validated profile-local Native Messaging host manifest before launching Chrome, allowing custom `--user-data-dir` profiles to connect reliably without extension sideloading or a remote-debugging port.
+
 ## [4.4.1] - 2026-09-03
 
 ### Changed

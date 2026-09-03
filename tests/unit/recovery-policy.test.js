@@ -85,44 +85,6 @@ function createController({ root, incidents, repairIssue, nowRef, maxFailures = 
   return { controller, observability };
 }
 
-test("policy catalog is fixed low-risk and never auto-retries chrome connection_failed", async () => {
-  await withTempDir(async (root) => {
-    const nowRef = { value: 1_800_000_000_000 };
-    const repairs = [];
-    const chromeIncident = incident({
-      code: "CHROME_BRIDGE_FAILURE",
-      component: "chrome",
-      projectId: null,
-      correlationId: null,
-    });
-    const { controller } = createController({
-      root,
-      incidents: [chromeIncident],
-      nowRef,
-      repairIssue: async (args) => {
-        repairs.push(args);
-        return { ...args, repairId: "repair-x", outcome: "RECOVERED", actionStatus: "OK" };
-      },
-    });
-
-    const policies = controller.policies();
-    assert.equal(policies.length, 4);
-    assert.equal(policies.every((policy) => policy.risk === "low"), true);
-    assert.equal(policies.every((policy) => policy.arbitraryCommand === false), true);
-    const chrome = policies.find((policy) => policy.id === "chrome_transport_recover");
-    assert.equal(chrome, undefined);
-
-    const result = await controller.handleEvent({
-      eventId: "evt-chrome-failed",
-      type: "chrome.connection_failed",
-      component: "chrome",
-      projectId: null,
-      correlationId: "attempt-1",
-    });
-    assert.deepEqual(result, []);
-    assert.equal(repairs.length, 0);
-  });
-});
 
 test("Peekaboo unexpected close triggers exactly one guarded automatic repair", async () => {
   await withTempDir(async (root) => {

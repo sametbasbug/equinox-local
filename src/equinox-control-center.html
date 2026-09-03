@@ -358,22 +358,43 @@
       <section id="section-browser" class="page-section" hidden>
         <div class="section-intro">
           <div>
-            <p class="eyebrow">User Chrome lane</p>
+            <p class="eyebrow">Browser contexts</p>
             <h3>Browser</h3>
-            <p>Equinox Browser is the first-party bridge for your normal Chrome and the only user-browser automation lane exposed by Equinox Local.</p>
+            <p>Equinox Local keeps the agent's isolated Agent Browser separate from your personal Chrome. Both use the same Equinox Browser extension and Native Messaging capability set.</p>
           </div>
         </div>
 
         <div class="dashboard-grid two-column">
           <article class="panel-card">
             <div class="integration-title-row">
+              <div class="integration-icon">◎</div>
+              <div>
+                <span class="card-label">Agent Browser</span>
+                <h3 id="agent-browser-page-status">Checking…</h3>
+              </div>
+              <span id="agent-browser-page-badge" class="badge neutral">Checking</span>
+            </div>
+            <p class="card-copy">The default automation target. It uses a dedicated Chrome profile that stays isolated from your personal browser data and sessions.</p>
+            <dl class="detail-list">
+              <div><dt>Extension version</dt><dd id="agent-browser-page-version">—</dd></div>
+              <div><dt>Connected since</dt><dd id="agent-browser-connected-at">—</dd></div>
+              <div><dt>Isolation</dt><dd>Dedicated Chrome profile</dd></div>
+              <div><dt>Automation</dt><dd id="agent-browser-control-state">—</dd></div>
+            </dl>
+            <button id="open-agent-browser-button" class="button primary full-width" type="button">Open Agent Browser</button>
+            <p id="agent-browser-note" class="save-hint">On first use, Agent Browser opens Chrome Web Store inside the isolated profile so Equinox Browser can be installed there.</p>
+          </article>
+
+          <article class="panel-card">
+            <div class="integration-title-row">
               <div class="integration-icon">◉</div>
               <div>
-                <span class="card-label">Equinox Browser</span>
+                <span class="card-label">Your Browser</span>
                 <h3 id="browser-page-status">Checking…</h3>
               </div>
               <span id="browser-page-badge" class="badge neutral">Checking</span>
             </div>
+            <p class="card-copy">Your personal Chrome profile. Agents use it only when the task explicitly requires your existing browser sessions or accounts.</p>
             <dl class="detail-list">
               <div><dt>Extension version</dt><dd id="browser-page-version">—</dd></div>
               <div><dt>Connected since</dt><dd id="browser-connected-at">—</dd></div>
@@ -392,6 +413,14 @@
           <article class="panel-card browser-settings-card">
             <p class="eyebrow">Browser controls</p>
             <h3>Local browser settings</h3>
+            <label class="field">
+              <span>Settings target</span>
+              <select id="browser-settings-target">
+                <option value="user">Your Browser</option>
+                <option value="agent">Agent Browser</option>
+              </select>
+              <small>Settings are stored independently in each Chrome profile.</small>
+            </label>
             <label class="toggle-field compact-toggle">
               <div>
                 <span>Browser automation</span>
@@ -409,7 +438,7 @@
             <label class="field">
               <span>Agent display name</span>
               <input id="browser-agent-name" type="text" maxlength="32" autocomplete="off" spellcheck="false" placeholder="Agent">
-              <small>Shown beside the visible agent cursor. This setting stays in the extension's local storage.</small>
+              <small>Shown beside the visible agent cursor. This setting stays in the selected extension profile's local storage.</small>
             </label>
             <button id="apply-browser-settings" class="button primary full-width" type="button" disabled>Apply browser settings</button>
             <p id="browser-settings-note" class="save-hint">Settings apply immediately and do not require a Local restart.</p>
@@ -418,8 +447,8 @@
 
         <article class="panel-card soft-panel browser-boundary-card">
           <p class="eyebrow">Safe boundary</p>
-          <h3>No direct browser-debugging fallback</h3>
-          <p>The user browser route stays on the Equinox Browser extension and Native Messaging bridge. Turning automation off detaches debugger sessions but does not create a hidden fallback route.</p>
+          <h3>No silent browser fallback</h3>
+          <p>Agent Browser and Your Browser are separate contexts on the same Equinox Browser bridge. If Agent Browser is unavailable, Equinox Local fails closed instead of silently using your personal Chrome. Direct user-Chrome CDP fallback remains disabled.</p>
         </article>
       </section>
 

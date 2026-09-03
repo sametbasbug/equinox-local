@@ -11,7 +11,6 @@ const EVENT_PRODUCER_FILES = [
   "recovery-policy.js",
   "repair-engine.js",
   "runtime-janitor.js",
-  "chrome-profile-bridge.js",
 ];
 
 function runtimeSourceUrl(file) {

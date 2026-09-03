@@ -28,12 +28,42 @@ let browser = {
   active: true,
   ready: true,
   connectedAt: new Date().toISOString(),
-  extensionVersion: "0.3.0",
+  extensionVersion: "0.4.0-dev",
   controlEnabled: true,
   agentCursorEnabled: true,
   agentCursorName: "Agent",
   nativeHostConnected: true,
   localConnected: true,
+  defaultTarget: "agent",
+  agentBrowser: {
+    supported: true,
+    context: "agent",
+    isolated: true,
+    ready: true,
+    extensionVersion: "0.4.0-dev",
+    connectedAt: new Date().toISOString(),
+    pairing: false,
+  },
+  contexts: {
+    agent: {
+      ready: true,
+      connectedAt: new Date().toISOString(),
+      extensionVersion: "0.4.0-dev",
+      consentAccepted: true,
+      controlEnabled: true,
+      agentCursorEnabled: true,
+      agentCursorName: "Agent",
+    },
+    user: {
+      ready: true,
+      connectedAt: new Date().toISOString(),
+      extensionVersion: "0.4.0-dev",
+      consentAccepted: true,
+      controlEnabled: true,
+      agentCursorEnabled: true,
+      agentCursorName: "Agent",
+    },
+  },
 };
 let onboarding = {
   available: true,
@@ -127,18 +157,31 @@ const api = createEquinoxLocalControlApi({
   },
   scheduleUninstall: async ({ removeUserData }) => ({ scheduled: true, removeUserData }),
   chooseFolder: async () => "/Users/example/Code/selected",
+  openAgentBrowser: async () => browser.agentBrowser,
   updateBrowserSettings: async (settings) => {
+    const context = settings.context === "agent" ? "agent" : "user";
     browser = {
       ...browser,
-      controlEnabled: settings.enabled,
-      agentCursorEnabled: settings.agentCursorEnabled,
-      agentCursorName: settings.agentCursorName,
+      contexts: {
+        ...browser.contexts,
+        [context]: {
+          ...browser.contexts[context],
+          controlEnabled: settings.enabled,
+          agentCursorEnabled: settings.agentCursorEnabled,
+          agentCursorName: settings.agentCursorName,
+        },
+      },
+      ...(context === "user" ? {
+        controlEnabled: settings.enabled,
+        agentCursorEnabled: settings.agentCursorEnabled,
+        agentCursorName: settings.agentCursorName,
+      } : {}),
     };
     return {
       ...settings,
       nativeHostConnected: true,
       localConnected: true,
-      extensionVersion: "0.3.0",
+      extensionVersion: "0.4.0-dev",
     };
   },
   checkGitHub: async () => ({ ready: true, account: "demo-user" }),
