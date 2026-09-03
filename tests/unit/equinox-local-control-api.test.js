@@ -443,7 +443,7 @@ test("bounded Control Center actions expose activity, Browser/GitHub controls an
       active: true,
       ready: true,
       needsAttention: false,
-      version: "4.2.2",
+      version: "4.3.0",
       reconnectCount: 0,
     });
 
@@ -540,7 +540,7 @@ test("bounded Control Center actions expose activity, Browser/GitHub controls an
         active: true,
         ready: true,
         needsAttention: false,
-        version: "4.2.2",
+        version: "4.3.0",
         reconnectCount: 0,
       };
     },

@@ -57,8 +57,8 @@ test("source checkout doctor stays healthy without requiring managed-only files"
       runtimeHealthState: "HEALTHY",
       runtimeVersion: "4.2.0",
       sourceCheckoutVersion: "4.2.0",
-      developmentTunnel: { configured: true, expectedVersion: "0.0.13", actualVersion: "0.0.13", synchronized: true },
-      developmentPeekaboo: { configured: true, expectedVersion: "4.2.2", actualVersion: "4.2.2", synchronized: true },
+      developmentTunnel: { configured: true, expectedVersion: "0.0.14", actualVersion: "0.0.14", synchronized: true },
+      developmentPeekaboo: { configured: true, expectedVersion: "4.3.0", actualVersion: "4.3.0", synchronized: true },
       browser: { ready: false },
       peekaboo: { active: false },
       now: () => new Date("2026-08-25T00:00:00.000Z"),
@@ -88,7 +88,7 @@ test("source checkout doctor detects a stale running process after source versio
       runtimeHealthState: "HEALTHY",
       runtimeVersion: "4.2.2",
       sourceCheckoutVersion: "4.2.3",
-      developmentTunnel: { configured: true, expectedVersion: "0.0.13", actualVersion: "0.0.13", synchronized: true },
+      developmentTunnel: { configured: true, expectedVersion: "0.0.14", actualVersion: "0.0.14", synchronized: true },
       browser: { ready: false },
       peekaboo: { active: false },
     });
@@ -110,15 +110,15 @@ test("source checkout doctor surfaces a stale developer tunnel runtime without e
       installation: { kind: "source", managed: false, selfUpdateSupported: false },
       config: { version: 1, runtime: { workspaceProject: "workspace" }, projects: { workspace: { root: workspace } } },
       runtimeHealthState: "HEALTHY",
-      runtimeVersion: "4.2.2",
-      developmentTunnel: { configured: true, expectedVersion: "0.0.13", actualVersion: "0.0.12", synchronized: false },
+      runtimeVersion: "4.3.0",
+      developmentTunnel: { configured: true, expectedVersion: "0.0.14", actualVersion: "0.0.12", synchronized: false },
       browser: { ready: false },
       peekaboo: { active: false },
     });
     const tunnel = result.checks.find((item) => item.id === "development-tunnel");
     assert.equal(result.state, "ATTENTION");
     assert.equal(tunnel?.status, "attention");
-    assert.match(tunnel?.detail || "", /0\.0\.12.*0\.0\.13/u);
+    assert.match(tunnel?.detail || "", /0\.0\.12.*0\.0\.14/u);
     assert.equal(JSON.stringify(result).includes(root), false);
   } finally {
     await fs.rm(root, { recursive: true, force: true });
@@ -135,15 +135,15 @@ test("source checkout doctor surfaces a stale developer Peekaboo runtime without
       config: { version: 1, runtime: { workspaceProject: "workspace" }, projects: { workspace: { root: workspace } } },
       runtimeHealthState: "HEALTHY",
       runtimeVersion: "4.3.1",
-      developmentTunnel: { configured: true, expectedVersion: "0.0.13", actualVersion: "0.0.13", synchronized: true },
-      developmentPeekaboo: { configured: true, expectedVersion: "4.2.2", actualVersion: "4.1.0", synchronized: false },
+      developmentTunnel: { configured: true, expectedVersion: "0.0.14", actualVersion: "0.0.14", synchronized: true },
+      developmentPeekaboo: { configured: true, expectedVersion: "4.3.0", actualVersion: "4.1.0", synchronized: false },
       browser: { ready: false },
       peekaboo: { active: false },
     });
     const peekaboo = result.checks.find((item) => item.id === "development-peekaboo");
     assert.equal(result.state, "ATTENTION");
     assert.equal(peekaboo?.status, "attention");
-    assert.match(peekaboo?.detail || "", /4\.1\.0.*4\.2\.2/u);
+    assert.match(peekaboo?.detail || "", /4\.1\.0.*4\.3\.0/u);
     assert.equal(JSON.stringify(result).includes(root), false);
   } finally {
     await fs.rm(root, { recursive: true, force: true });
