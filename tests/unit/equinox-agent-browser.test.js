@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { constants as fsConstants } from "node:fs";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -102,13 +103,17 @@ test("Agent Browser Native Messaging projection atomically replaces a hostile ma
 
   await ensureAgentBrowserNativeMessagingManifest({ homeDir, profileRoot });
 
-  const manifestStat = await fs.lstat(manifestPath);
-  assert.equal(manifestStat.isFile(), true);
-  assert.equal(manifestStat.isSymbolicLink(), false);
-  assert.equal(manifestStat.mode & 0o777, 0o600);
+  const manifestHandle = await fs.open(manifestPath, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
+  try {
+    const manifestStat = await manifestHandle.stat();
+    assert.equal(manifestStat.isFile(), true);
+    assert.equal(manifestStat.mode & 0o777, 0o600);
+    const manifest = JSON.parse(await manifestHandle.readFile("utf8"));
+    assert.deepEqual(manifest.allowed_origins, ["chrome-extension://npdneefcobilfkjlihghjgjnknenhfoj/"]);
+  } finally {
+    await manifestHandle.close();
+  }
   assert.equal(await fs.readFile(sentinelPath, "utf8"), "unchanged\n");
-  const manifest = JSON.parse(await fs.readFile(manifestPath, "utf8"));
-  assert.deepEqual(manifest.allowed_origins, ["chrome-extension://npdneefcobilfkjlihghjgjnknenhfoj/"]);
 });
 
 test("first Agent Browser launch opens the Chrome Web Store and starts pairing", async (t) => {
