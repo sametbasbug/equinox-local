@@ -432,15 +432,6 @@ export function createDiagnosisEngine({
         summary: "Peekaboo sürümü veya MCP araç şeması Equinox Local güvenli yüzeyiyle uyumlu değil.",
         recommendation: "Peekaboo sürüm/şema değişimini incele; uyumluluk doğrulanmadan desktop mutasyonu yapılmamalı.",
       },
-      {
-        component: "chrome",
-        failureTypes: new Set(["chrome.error", "chrome.unexpected_close", "chrome.connection_failed"]),
-        recoveryTypes: new Set(["chrome.started", "chrome.reconnected"]),
-        code: "CHROME_BRIDGE_FAILURE",
-        title: "Chrome DevTools MCP bridge arızası",
-        summary: "Chrome DevTools MCP bağlantısı hata verdi veya beklenmedik biçimde kapandı.",
-        recommendation: "Arıza güncelse v4.0.2 chrome_bridge_restart sabit recipe'si yalnız Equinox Local bridge'ini yeniden kurup gerçek Chrome backend readiness'i doğrulayabilir.",
-      },
     ];
     for (const definition of bridgeDefinitions) {
       const incident = bridgeIncident({ events, ...definition });

@@ -97,8 +97,13 @@ test("browser status returns the local snapshot without probing a disconnected e
   const result = await harness.tools.get("equinox_browser_status").handler({});
   assert.deepEqual(parseTextResult(result), {
     accessEnabled: true,
+    defaultTarget: "agent",
     local: { active: true, ready: false },
     remote: null,
+    contexts: {
+      agent: { local: null, remote: null },
+      user: { local: null, remote: null },
+    },
   });
   assert.deepEqual(harness.calls, []);
 });
@@ -111,8 +116,13 @@ test("agent browser access can disable automation while keeping status readable"
   const status = await harness.tools.get("equinox_browser_status").handler({});
   assert.deepEqual(parseTextResult(status), {
     accessEnabled: false,
+    defaultTarget: "agent",
     local: { active: true, ready: true },
     remote: null,
+    contexts: {
+      agent: { local: null, remote: null },
+      user: { local: null, remote: null },
+    },
   });
   assert.deepEqual(harness.calls, []);
 
@@ -130,8 +140,23 @@ test("extension reload maps to the first-party self.reload command", async () =>
   assert.deepEqual(harness.calls.at(-1), {
     method: "self.reload",
     args: {},
-    options: { timeoutMs: 5_000 },
+    options: { timeoutMs: 5_000, context: "agent" },
   });
+});
+
+test("browser operations default to Agent Browser and can explicitly target User Browser", async () => {
+  const harness = makeHarness();
+  await registerEquinoxBrowserTools(harness.deps);
+
+  const openTool = harness.tools.get("equinox_browser_open");
+  const defaultTarget = openTool.config.inputSchema.target._def.defaultValue;
+  assert.equal(typeof defaultTarget === "function" ? defaultTarget() : defaultTarget, "agent");
+
+  await openTool.handler({ url: "https://example.com/agent" });
+  assert.equal(harness.calls.at(-1)?.options?.context, "agent");
+
+  await openTool.handler({ target: "user", url: "https://example.com/user" });
+  assert.equal(harness.calls.at(-1)?.options?.context, "user");
 });
 
 test("open maps tab_id to first-party bridge tabId without creating a second abstraction", async () => {
@@ -150,7 +175,7 @@ test("open maps tab_id to first-party bridge tabId without creating a second abs
   assert.deepEqual(harness.calls.at(-1), {
     method: "open",
     args: { tabId: 77, url: "https://example.com/" },
-    options: undefined,
+    options: { context: "agent" },
   });
 });
 
@@ -165,14 +190,14 @@ test("snapshot preserves @ref workflow arguments", async () => {
   assert.deepEqual(harness.calls.at(-1), {
     method: "snapshot",
     args: { tabId: 42, includeReadable: false },
-    options: undefined,
+    options: { context: "agent" },
   });
 
   await harness.tools.get("equinox_browser_click").handler({ ref: "@e3", tab_id: 42 });
   assert.deepEqual(harness.calls.at(-1), {
     method: "click",
     args: { tabId: 42, ref: "@e3" },
-    options: undefined,
+    options: { context: "agent" },
   });
 });
 
@@ -273,25 +298,25 @@ test("advanced interaction primitives map to first-party bridge methods", async 
   await registerEquinoxBrowserTools(harness.deps);
 
   await harness.tools.get("equinox_browser_activate").handler({ tab_id: 12 });
-  assert.deepEqual(harness.calls.at(-1), { method: "tabs.activate", args: { tabId: 12 }, options: undefined });
+  assert.deepEqual(harness.calls.at(-1), { method: "tabs.activate", args: { tabId: 12 }, options: { context: "agent" } });
 
   await harness.tools.get("equinox_browser_hover").handler({ ref: "@e4", tab_id: 12 });
-  assert.deepEqual(harness.calls.at(-1), { method: "hover", args: { tabId: 12, ref: "@e4" }, options: undefined });
+  assert.deepEqual(harness.calls.at(-1), { method: "hover", args: { tabId: 12, ref: "@e4" }, options: { context: "agent" } });
 
   await harness.tools.get("equinox_browser_scroll").handler({ direction: "down", pixels: 900, ref: "@e5", tab_id: 12 });
-  assert.deepEqual(harness.calls.at(-1), { method: "scroll", args: { tabId: 12, direction: "down", pixels: 900, ref: "@e5" }, options: undefined });
+  assert.deepEqual(harness.calls.at(-1), { method: "scroll", args: { tabId: 12, direction: "down", pixels: 900, ref: "@e5" }, options: { context: "agent" } });
 
   await harness.tools.get("equinox_browser_select").handler({ ref: "@e6", option: "Beta", tab_id: 12 });
-  assert.deepEqual(harness.calls.at(-1), { method: "select", args: { tabId: 12, ref: "@e6", option: "Beta" }, options: undefined });
+  assert.deepEqual(harness.calls.at(-1), { method: "select", args: { tabId: 12, ref: "@e6", option: "Beta" }, options: { context: "agent" } });
 
   await harness.tools.get("equinox_browser_check").handler({ ref: "@e7", checked: false, tab_id: 12 });
-  assert.deepEqual(harness.calls.at(-1), { method: "check", args: { tabId: 12, ref: "@e7", checked: false }, options: undefined });
+  assert.deepEqual(harness.calls.at(-1), { method: "check", args: { tabId: 12, ref: "@e7", checked: false }, options: { context: "agent" } });
 
   await harness.tools.get("equinox_browser_wait").handler({ text: "Ready", timeout_ms: 2_000, tab_id: 12 });
   assert.deepEqual(harness.calls.at(-1), {
     method: "wait",
     args: { tabId: 12, milliseconds: undefined, text: "Ready", urlContains: undefined, timeoutMs: 2_000 },
-    options: { timeoutMs: 7_000 },
+    options: { timeoutMs: 7_000, context: "agent" },
   });
 });
 
@@ -316,7 +341,7 @@ test("semantic find and observation tools map to first-party bridge methods", as
   assert.deepEqual(harness.calls.at(-1), {
     method: "find",
     args: { tabId: 9, query: "Sign in", role: "button", exact: true },
-    options: undefined,
+    options: { context: "agent" },
   });
 
   await harness.tools.get("equinox_browser_observe_start").handler({ tab_id: 9 });
@@ -325,7 +350,7 @@ test("semantic find and observation tools map to first-party bridge methods", as
   assert.deepEqual(harness.calls.at(-1), {
     method: "console.read",
     args: { tabId: 9, limit: 20, clear: false },
-    options: undefined,
+    options: { context: "agent" },
   });
   await harness.tools.get("equinox_browser_network").handler({ tab_id: 9, limit: 30, clear: true });
   assert.deepEqual(harness.calls.at(-1).method, "network.read");
@@ -333,7 +358,7 @@ test("semantic find and observation tools map to first-party bridge methods", as
   assert.deepEqual(harness.calls.at(-1), {
     method: "dialog",
     args: { tabId: 9, action: "accept", promptText: "ok" },
-    options: undefined,
+    options: { context: "agent" },
   });
 });
 
@@ -418,7 +443,7 @@ test("download wait returns bounded safe metadata and never exposes the absolute
   assert.deepEqual(harness.calls.at(-1), {
     method: "downloads.wait",
     args: { downloadId: 17, timeoutMs: 2_000 },
-    options: { timeoutMs: 7_000 },
+    options: { timeoutMs: 7_000, context: "agent" },
   });
   await fs.rm(root, { recursive: true, force: true });
 });

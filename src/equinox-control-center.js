@@ -144,6 +144,32 @@ const TR_UI = Object.freeze({
   "Safe boundary": "Güvenli sınır",
   "No direct browser-debugging fallback": "Doğrudan browser-debugging fallback yok",
   "The user browser route stays on the Equinox Browser extension and Native Messaging bridge. Turning automation off detaches debugger sessions but does not create a hidden fallback route.": "Kullanıcı tarayıcı yolu Equinox Browser uzantısı ve Native Messaging köprüsünde kalır. Otomasyonu kapatmak debugger oturumlarını ayırır ancak gizli bir fallback yolu oluşturmaz.",
+  "Browser contexts": "Tarayıcı bağlamları",
+  "Agent Browser": "Agent Browser",
+  "Your Browser": "Tarayıcınız",
+  "Isolation": "İzolasyon",
+  "Dedicated Chrome profile": "Özel Chrome profili",
+  "Open Agent Browser": "Agent Browser'ı aç",
+  "Opening…": "Açılıyor…",
+  "Agent Browser is open": "Agent Browser açık",
+  "Settings target": "Ayar hedefi",
+  "Settings are stored independently in each Chrome profile.": "Ayarlar her Chrome profilinde birbirinden bağımsız saklanır.",
+  "No silent browser fallback": "Sessiz tarayıcı fallback'i yok",
+  "Setup needed": "Kurulum gerekli",
+  "Waiting for extension": "Uzantı bekleniyor",
+  "Agent Browser · isolated default": "Agent Browser · izole varsayılan",
+  "Agent Browser is ready and is the default target for browser automation.": "Agent Browser hazır ve tarayıcı otomasyonunun varsayılan hedefi.",
+  "Waiting for Equinox Browser to connect from the isolated Agent Browser profile.": "Equinox Browser'ın izole Agent Browser profilinden bağlanması bekleniyor.",
+  "Equinox Browser is connected in Agent Browser, but browser automation is turned off in that profile.": "Equinox Browser Agent Browser'a bağlı, ancak bu profilde tarayıcı otomasyonu kapalı.",
+  "Open the Equinox Browser popup in Agent Browser, review the data-use disclosure, and enable browser control there.": "Agent Browser içinde Equinox Browser açılır penceresini açın, veri kullanımı açıklamasını inceleyin ve tarayıcı kontrolünü oradan etkinleştirin.",
+  "Open the Equinox Browser popup in the selected profile, review the data-use disclosure, and enable browser control there.": "Seçili profilde Equinox Browser açılır penceresini açın, veri kullanımı açıklamasını inceleyin ve tarayıcı kontrolünü oradan etkinleştirin.",
+  "Open Agent Browser and install Equinox Browser in that isolated profile to manage its settings.": "Ayarlarını yönetmek için Agent Browser'ı açın ve Equinox Browser'ı bu izole profile kurun.",
+  "Connect Equinox Browser in Your Browser to manage its settings from Control Center.": "Ayarlarını Control Center'dan yönetmek için Tarayıcınızda Equinox Browser'ı bağlayın.",
+  "Agent Browser opened.": "Agent Browser açıldı.",
+  "Equinox Local keeps the agent's isolated Agent Browser separate from your personal Chrome. Both use the same Equinox Browser extension and Native Messaging capability set.": "Equinox Local, ajanın izole Agent Browser'ını kişisel Chrome'unuzdan ayrı tutar. İkisi de aynı Equinox Browser uzantısını ve Native Messaging yetenek setini kullanır.",
+  "The default automation target. It uses a dedicated Chrome profile that stays isolated from your personal browser data and sessions.": "Varsayılan otomasyon hedefidir. Kişisel tarayıcı verilerinizden ve oturumlarınızdan ayrı kalan özel bir Chrome profili kullanır.",
+  "Your personal Chrome profile. Agents use it only when the task explicitly requires your existing browser sessions or accounts.": "Kişisel Chrome profilinizdir. Ajanlar bunu yalnızca görev mevcut tarayıcı oturumlarınızı veya hesaplarınızı açıkça gerektirdiğinde kullanır.",
+  "On first use, Agent Browser opens Chrome Web Store inside the isolated profile so Equinox Browser can be installed there.": "İlk kullanımda Agent Browser, Equinox Browser'ın izole profile kurulabilmesi için Chrome Web Store'u bu profilin içinde açar.",
   "Agent access": "Ajan erişimi",
   "Equinox Local starts new installations with broad useful access. Narrow these controls when you want the agent contained to selected roots or without local execution.": "Equinox Local yeni kurulumları geniş ve kullanışlı erişimle başlatır. Ajanı seçili köklerle sınırlamak veya yerel çalıştırmayı kapatmak istediğinizde bu kontrolleri daraltın.",
   "Local capabilities": "Yerel yetenekler",
@@ -362,8 +388,10 @@ const state = {
   telegramBotToken: "",
   telegramUserId: "",
   browserDraft: null,
+  browserSettingsTarget: "user",
   browserSettingsDirty: false,
   browserSettingsBusy: false,
+  agentBrowserBusy: false,
   integrationBusy: false,
   pickerBusy: false,
   restartBusy: false,
@@ -447,7 +475,8 @@ const DYNAMIC_TEXT_IDS = new Set([
   "doctor-checked-at", "update-title", "update-badge", "update-copy", "update-version", "update-checked-at",
   "check-update-button", "install-update-button", "root-count-label", "dirty-state", "project-list",
   "default-project-select", "workspace-project-select", "downloads-root-select", "control-center-address",
-  "save-config-button", "browser-page-status", "browser-page-badge", "browser-page-version", "browser-connected-at",
+  "save-config-button", "agent-browser-page-status", "agent-browser-page-badge", "agent-browser-page-version", "agent-browser-connected-at",
+  "agent-browser-control-state", "open-agent-browser-button", "agent-browser-note", "browser-page-status", "browser-page-badge", "browser-page-version", "browser-connected-at",
   "browser-control-state", "apply-browser-settings", "browser-settings-note", "permissions-list", "agent-access-badge",
   "save-agent-access-button", "uninstall-badge",
   "uninstall-confirmation-help", "uninstall-button", "integration-list", "request-count", "mutation-count",
@@ -739,7 +768,7 @@ function setLanguage(nextLanguage, { persist = true } = {}) {
 const sectionMeta = {
   dashboard: ["Overview", "Dashboard"],
   projects: ["Access boundaries", "Projects & folders"],
-  browser: ["User Chrome lane", "Browser"],
+  browser: ["Browser contexts", "Browser"],
   permissions: ["Agent access", "Permissions"],
   integrations: ["Optional capabilities", "Integrations"],
   activity: ["Diagnostics", "Activity"],
@@ -939,19 +968,20 @@ function renderDashboard() {
   setText("sidebar-health-label", runtimeHealth === "HEALTHY" ? "Runtime healthy" : runtimeHealth.toLowerCase().replaceAll("_", " "));
   setDot("sidebar-health-dot", dotToneForHealth(runtimeHealth));
 
-  const browserConsentRequired = browser.ready && browser.consentAccepted === false;
+  const defaultBrowser = browser.contexts?.agent || {};
+  const browserConsentRequired = defaultBrowser.ready && defaultBrowser.consentAccepted === false;
   const browserLabel = browserConsentRequired
     ? "Connected · consent required"
-    : browser.ready && browser.controlEnabled === false
+    : defaultBrowser.ready && defaultBrowser.controlEnabled === false
       ? "Connected · automation off"
-      : browser.ready
+      : defaultBrowser.ready
         ? "Ready"
-        : browser.active
-          ? "Extension not connected"
-          : "Unavailable";
+        : browser.agentBrowser?.pairing
+          ? "Waiting for extension"
+          : "Setup needed";
   setText("browser-status", browserLabel);
-  setText("browser-version", browser.extensionVersion ? `Extension ${browser.extensionVersion}` : "Extension version unavailable");
-  setDot("browser-status-dot", browser.ready ? (browserConsentRequired || browser.controlEnabled === false ? "warn" : "good") : browser.active ? "warn" : "neutral");
+  setText("browser-version", defaultBrowser.extensionVersion ? `Extension ${defaultBrowser.extensionVersion}` : "Agent Browser · isolated default");
+  setDot("browser-status-dot", defaultBrowser.ready ? (browserConsentRequired || defaultBrowser.controlEnabled === false ? "warn" : "good") : "warn");
 
   const peekabooReady = peekaboo.ready === true || (peekaboo.ready === undefined && peekaboo.active === true);
   const peekabooLabel = peekaboo.needsAttention
@@ -1458,14 +1488,16 @@ function renderIntegrations() {
   list.replaceChildren();
   const browser = state.status?.browser || {};
   const peekaboo = state.status?.peekaboo || {};
-  const browserStatus = browser.ready
-    ? browser.consentAccepted === false
+  const agentBrowser = browser.contexts?.agent || {};
+  const userBrowser = browser.contexts?.user || {};
+  const browserStatus = agentBrowser.ready
+    ? agentBrowser.consentAccepted === false
       ? "Consent required"
-      : (browser.controlEnabled === false ? "Automation off" : "Ready")
-    : browser.active ? "Extension not connected" : "Unavailable";
-  const browserTone = browser.ready
-    ? (browser.consentAccepted === false || browser.controlEnabled === false ? "warn" : "good")
-    : "neutral";
+      : (agentBrowser.controlEnabled === false ? "Automation off" : "Ready")
+    : browser.agentBrowser?.pairing ? "Waiting for extension" : "Setup needed";
+  const browserTone = agentBrowser.ready
+    ? (agentBrowser.consentAccepted === false || agentBrowser.controlEnabled === false ? "warn" : "good")
+    : "warn";
   const peekabooReady = peekaboo.ready === true || (peekaboo.ready === undefined && peekaboo.active === true);
   const peekabooStatus = peekaboo.needsAttention
     ? "Needs attention"
@@ -1479,12 +1511,12 @@ function renderIntegrations() {
   list.append(
     createIntegrationCard(
       "Equinox Browser",
-      browser.extensionVersion ? `First-party Chrome bridge · extension ${browser.extensionVersion}.` : "First-party Chrome bridge through the extension and Native Messaging.",
+      `Agent Browser ${agentBrowser.ready ? "ready" : "not ready"} · Your Browser ${userBrowser.ready ? "connected" : "not connected"}. Both contexts use the same Chrome Web Store extension and Native Messaging bridge.`,
       browserStatus,
       browserTone,
       [
-        { label: browser.ready ? "Chrome Web Store" : "Install extension", href: EQUINOX_BROWSER_STORE_URL, primary: !browser.ready },
-        { label: "Browser settings", onClick: () => switchSection("browser") },
+        { label: "Browser settings", onClick: () => switchSection("browser"), primary: !agentBrowser.ready },
+        { label: "Chrome Web Store", href: EQUINOX_BROWSER_STORE_URL },
       ],
     ),
     createIntegrationCard(
@@ -1499,8 +1531,24 @@ function renderIntegrations() {
   );
 }
 
-function browserSettingsFromStatus() {
+function browserContextStatus(target) {
   const browser = state.status?.browser || {};
+  const contextual = browser.contexts?.[target];
+  if (contextual && typeof contextual === "object") return contextual;
+  if (target !== "user") return {};
+  return {
+    ready: Boolean(browser.ready),
+    connectedAt: browser.connectedAt ?? null,
+    extensionVersion: browser.extensionVersion ?? null,
+    consentAccepted: browser.consentAccepted ?? null,
+    controlEnabled: browser.controlEnabled ?? null,
+    agentCursorEnabled: browser.agentCursorEnabled ?? null,
+    agentCursorName: browser.agentCursorName ?? null,
+  };
+}
+
+function browserSettingsFromStatus(target = state.browserSettingsTarget) {
+  const browser = browserContextStatus(target);
   if (
     typeof browser.controlEnabled !== "boolean" ||
     typeof browser.agentCursorEnabled !== "boolean" ||
@@ -1509,14 +1557,14 @@ function browserSettingsFromStatus() {
     return null;
   }
   return {
+    context: target,
     enabled: browser.controlEnabled,
     agentCursorEnabled: browser.agentCursorEnabled,
     agentCursorName: browser.agentCursorName,
   };
 }
 
-function renderBrowserPage() {
-  const browser = state.status?.browser || {};
+function browserContextLabel(browser, { unavailableLabel = "Extension not connected" } = {}) {
   const consentRequired = browser.ready && browser.consentAccepted === false;
   const controlOff = browser.ready && !consentRequired && browser.controlEnabled === false;
   const label = consentRequired
@@ -1525,29 +1573,84 @@ function renderBrowserPage() {
       ? "Connected · automation off"
       : browser.ready
         ? "Ready"
-        : browser.active
-          ? "Extension not connected"
-          : "Unavailable";
-  setText("browser-page-status", label);
-  setBadge(
-    "browser-page-badge",
-    browser.ready ? (consentRequired ? "Consent required" : controlOff ? "Automation off" : "Ready") : browser.active ? "Extension not connected" : "Unavailable",
-    browser.ready ? (consentRequired || controlOff ? "warn" : "good") : "neutral",
-  );
-  setText("browser-page-version", browser.extensionVersion || "—");
-  setText("browser-connected-at", formatDate(browser.connectedAt));
-  setText("browser-control-state", consentRequired ? "Consent required" : typeof browser.controlEnabled === "boolean" ? (browser.controlEnabled ? "Allowed" : "Off") : "Unavailable");
+        : unavailableLabel;
+  const badge = browser.ready
+    ? (consentRequired ? "Consent required" : controlOff ? "Automation off" : "Ready")
+    : unavailableLabel;
+  const tone = browser.ready ? (consentRequired || controlOff ? "warn" : "good") : "neutral";
+  return { consentRequired, controlOff, label, badge, tone };
+}
 
-  const baseline = browserSettingsFromStatus();
+function renderBrowserPage() {
+  const browser = state.status?.browser || {};
+  const agent = browserContextStatus("agent");
+  const user = browserContextStatus("user");
+  const manager = browser.agentBrowser || {};
+  const agentView = browserContextLabel(agent, {
+    unavailableLabel: manager.pairing ? "Waiting for extension" : "Setup needed",
+  });
+  const userView = browserContextLabel(user, {
+    unavailableLabel: browser.active ? "Extension not connected" : "Unavailable",
+  });
+
+  setText("agent-browser-page-status", agentView.label);
+  setBadge("agent-browser-page-badge", agentView.badge, agentView.tone);
+  setText("agent-browser-page-version", agent.extensionVersion || "—");
+  setText("agent-browser-connected-at", formatDate(agent.connectedAt));
+  setText(
+    "agent-browser-control-state",
+    agentView.consentRequired
+      ? "Consent required"
+      : typeof agent.controlEnabled === "boolean"
+        ? (agent.controlEnabled ? "Allowed" : "Off")
+        : "Unavailable",
+  );
+  const agentButton = $("open-agent-browser-button");
+  agentButton.disabled = state.agentBrowserBusy || Boolean(agent.ready) || manager.supported === false;
+  agentButton.textContent = localizeUiText(
+    state.agentBrowserBusy ? "Opening…" : agent.ready ? "Agent Browser is open" : "Open Agent Browser",
+  );
+  setText(
+    "agent-browser-note",
+    agentView.consentRequired
+      ? "Open the Equinox Browser popup in Agent Browser, review the data-use disclosure, and enable browser control there."
+      : agent.ready && agent.controlEnabled === false
+        ? "Equinox Browser is connected in Agent Browser, but browser automation is turned off in that profile."
+        : agent.ready
+          ? "Agent Browser is ready and is the default target for browser automation."
+          : manager.pairing
+            ? "Waiting for Equinox Browser to connect from the isolated Agent Browser profile."
+            : "On first use, Agent Browser opens Chrome Web Store inside the isolated profile so Equinox Browser can be installed there.",
+  );
+
+  setText("browser-page-status", userView.label);
+  setBadge("browser-page-badge", userView.badge, userView.tone);
+  setText("browser-page-version", user.extensionVersion || "—");
+  setText("browser-connected-at", formatDate(user.connectedAt));
+  setText(
+    "browser-control-state",
+    userView.consentRequired
+      ? "Consent required"
+      : typeof user.controlEnabled === "boolean"
+        ? (user.controlEnabled ? "Allowed" : "Off")
+        : "Unavailable",
+  );
+
+  const selected = browserContextStatus(state.browserSettingsTarget);
+  const selectedView = browserContextLabel(selected, { unavailableLabel: "Extension not connected" });
+  const baseline = browserSettingsFromStatus(state.browserSettingsTarget);
   if (!state.browserSettingsDirty) state.browserDraft = baseline ? { ...baseline } : null;
-  const available = Boolean(browser.ready && baseline && state.browserDraft);
+  const available = Boolean(selected.ready && baseline && state.browserDraft);
   const disabled = !available || state.browserSettingsBusy;
+  const targetSelect = $("browser-settings-target");
   const controlToggle = $("browser-control-toggle");
   const cursorToggle = $("browser-cursor-toggle");
   const nameInput = $("browser-agent-name");
   const applyButton = $("apply-browser-settings");
 
-  controlToggle.disabled = disabled || consentRequired;
+  targetSelect.value = state.browserSettingsTarget;
+  targetSelect.disabled = state.browserSettingsBusy;
+  controlToggle.disabled = disabled || selectedView.consentRequired;
   cursorToggle.disabled = disabled;
   nameInput.disabled = disabled;
   if (state.browserDraft) {
@@ -1563,11 +1666,13 @@ function renderBrowserPage() {
   applyButton.textContent = localizeUiText(state.browserSettingsBusy ? "Applying…" : "Apply browser settings");
   setText(
     "browser-settings-note",
-    consentRequired
-      ? "Open the Equinox Browser popup, review the data-use disclosure, and enable browser control there. The local settings channel remains connected."
+    selectedView.consentRequired
+      ? "Open the Equinox Browser popup in the selected profile, review the data-use disclosure, and enable browser control there."
       : available
         ? "Settings apply immediately through Native Messaging and do not require an Equinox Local restart."
-        : "Connect Equinox Browser to manage these settings from Control Center.",
+        : state.browserSettingsTarget === "agent"
+          ? "Open Agent Browser and install Equinox Browser in that isolated profile to manage its settings."
+          : "Connect Equinox Browser in Your Browser to manage its settings from Control Center.",
   );
 }
 
@@ -1831,10 +1936,19 @@ async function chooseFolderForDialog() {
   }
 }
 
+function selectBrowserSettingsTarget(value) {
+  if (state.browserSettingsBusy || !["agent", "user"].includes(value)) return;
+  state.browserSettingsTarget = value;
+  state.browserDraft = null;
+  state.browserSettingsDirty = false;
+  renderBrowserPage();
+}
+
 function updateBrowserDraftFromInputs() {
-  const baseline = browserSettingsFromStatus();
+  const baseline = browserSettingsFromStatus(state.browserSettingsTarget);
   if (!baseline || state.browserSettingsBusy) return;
   state.browserDraft = {
+    context: state.browserSettingsTarget,
     enabled: $("browser-control-toggle").checked,
     agentCursorEnabled: $("browser-cursor-toggle").checked,
     agentCursorName: $("browser-agent-name").value.slice(0, 32),
@@ -1846,23 +1960,66 @@ function updateBrowserDraftFromInputs() {
   renderBrowserPage();
 }
 
+async function openAgentBrowserFromControlCenter() {
+  if (state.agentBrowserBusy) return;
+  clearError();
+  state.agentBrowserBusy = true;
+  renderBrowserPage();
+  try {
+    const result = await mutationJson("/api/v1/browser/agent/open", "POST", {});
+    state.status = state.status || {};
+    state.status.browser = {
+      ...(state.status.browser || {}),
+      agentBrowser: result.agentBrowser || state.status.browser?.agentBrowser || null,
+    };
+    if (state.health?.controlCenter) state.health.controlCenter.mutationCount += 1;
+    showToast("Agent Browser opened.");
+    setTimeout(() => void refreshAll(), 900);
+  } catch (error) {
+    showError(error);
+  } finally {
+    state.agentBrowserBusy = false;
+    renderBrowserPage();
+    renderIntegrations();
+  }
+}
+
 async function saveBrowserSettings() {
   if (!state.browserDraft || !state.browserSettingsDirty || state.browserSettingsBusy) return;
   clearError();
   state.browserSettingsBusy = true;
   renderBrowserPage();
   try {
+    const target = state.browserDraft.context;
     const result = await mutationJson("/api/v1/browser/settings", "PUT", state.browserDraft);
     const settings = result.settings || {};
-    state.status.browser = {
-      ...(state.status?.browser || {}),
+    const browser = state.status?.browser || {};
+    const previousContext = browser.contexts?.[target] || {};
+    const updatedContext = {
+      ...previousContext,
+      ready: true,
       controlEnabled: typeof settings.enabled === "boolean" ? settings.enabled : state.browserDraft.enabled,
       agentCursorEnabled: typeof settings.agentCursorEnabled === "boolean" ? settings.agentCursorEnabled : state.browserDraft.agentCursorEnabled,
       agentCursorName: typeof settings.agentCursorName === "string" ? settings.agentCursorName : state.browserDraft.agentCursorName,
-      nativeHostConnected: Boolean(settings.nativeHostConnected ?? state.status?.browser?.nativeHostConnected),
-      localConnected: Boolean(settings.localConnected ?? state.status?.browser?.localConnected),
     };
-    state.browserDraft = browserSettingsFromStatus();
+    state.status.browser = {
+      ...browser,
+      contexts: {
+        ...(browser.contexts || {}),
+        [target]: updatedContext,
+      },
+    };
+    if (target === "user") {
+      state.status.browser = {
+        ...state.status.browser,
+        controlEnabled: updatedContext.controlEnabled,
+        agentCursorEnabled: updatedContext.agentCursorEnabled,
+        agentCursorName: updatedContext.agentCursorName,
+        nativeHostConnected: Boolean(settings.nativeHostConnected ?? browser.nativeHostConnected),
+        localConnected: Boolean(settings.localConnected ?? browser.localConnected),
+      };
+    }
+    state.browserDraft = browserSettingsFromStatus(target);
     state.browserSettingsDirty = false;
     if (state.health?.controlCenter) state.health.controlCenter.mutationCount += 1;
     renderDashboard();
@@ -2243,6 +2400,8 @@ function bindEvents() {
   $("choose-folder-button").addEventListener("click", chooseFolderForDialog);
   $("save-config-button").addEventListener("click", saveConfiguration);
   $("save-agent-access-button").addEventListener("click", saveConfiguration);
+  $("open-agent-browser-button").addEventListener("click", openAgentBrowserFromControlCenter);
+  $("browser-settings-target").addEventListener("change", (event) => selectBrowserSettingsTarget(event.target.value));
   $("browser-control-toggle").addEventListener("change", updateBrowserDraftFromInputs);
   $("browser-cursor-toggle").addEventListener("change", updateBrowserDraftFromInputs);
   $("browser-agent-name").addEventListener("input", updateBrowserDraftFromInputs);

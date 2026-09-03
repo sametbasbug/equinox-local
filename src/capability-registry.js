@@ -18,6 +18,7 @@ export const STABLE_CAPABILITY_DOMAINS = Object.freeze({
     catalogTool: "browser_tools",
     callTool: "browser_call",
     openWorldHint: true,
+    usageHint: "Browser operations default to the agent's isolated Agent Browser. Use target=user only when the user's personal Chrome profile is explicitly required. The two contexts never silently fall back to each other.",
   }),
   automation: Object.freeze({
     label: "Automation & release",
@@ -99,7 +100,7 @@ const SERVICE_OPERATION_NAMES = new Set([
 
 const EXCLUDED_PREFIXES = Object.freeze([
   "desktop_",
-  "visual_",
+   "visual_",
 ]);
 
 function isStableGatewayName(name) {
@@ -319,7 +320,8 @@ export function registerStableCapabilityGateways({
       {
         description:
           `${definition.label} için Equinox Local'in o an desteklediği dinamik operation kataloğunu listeler. ` +
-          "Yeni runtime sürümlerindeki operation'lar bu sabit MCP tool şeması değişmeden görünür. Belirli bir operation adı verilirse güncel JSON giriş şeması döner.",
+          "Yeni runtime sürümlerindeki operation'lar bu sabit MCP tool şeması değişmeden görünür. Belirli bir operation adı verilirse güncel JSON giriş şeması döner." +
+          (definition.usageHint ? ` ${definition.usageHint}` : ""),
         inputSchema: {
           operation: z
             .string()
@@ -355,7 +357,8 @@ export function registerStableCapabilityGateways({
         description:
           `${definition.label} dinamik kataloğundaki tek bir operation'ı çağırır. ` +
           `Önce ${definition.catalogTool} ile operation ve güncel giriş şemasını keşfet. ` +
-          "Operation adları bu MCP tool'un şemasında enum değildir; Equinox Local güncellendiğinde yeni operation'lar kullanıcıdan ChatGPT Eklentiler > Yenile istemeden çağrılabilir.",
+          "Operation adları bu MCP tool'un şemasında enum değildir; Equinox Local güncellendiğinde yeni operation'lar kullanıcıdan ChatGPT Eklentiler > Yenile istemeden çağrılabilir." +
+          (definition.usageHint ? ` ${definition.usageHint}` : ""),
         inputSchema: {
           operation: z
             .string()

@@ -24,6 +24,8 @@ async function createLifecycleHarness({
   storedConsentVersion = 1,
   storedAgentCursor = true,
   storedAgentCursorName = "Selene",
+  storedBrowserInstanceId = null,
+  storedBrowserContext = null,
 } = {}) {
   const runtimeStartup = createEvent();
   const runtimeInstalled = createEvent();
@@ -44,6 +46,8 @@ async function createLifecycleHarness({
     browserControlConsentVersion: storedConsentVersion,
     agentCursorEnabled: storedAgentCursor,
     agentCursorName: storedAgentCursorName,
+    browserInstanceId: storedBrowserInstanceId,
+    browserContext: storedBrowserContext,
   };
   let lastError = null;
 
@@ -99,7 +103,8 @@ async function createLifecycleHarness({
     storage: {
       local: {
         async get(key) {
-          return { [key]: storageData[key] };
+          const keys = Array.isArray(key) ? key : [key];
+          return Object.fromEntries(keys.map((item) => [item, storageData[item]]));
         },
         async set(values) {
           Object.assign(storageData, values);
@@ -143,6 +148,9 @@ async function createLifecycleHarness({
   const source = await fs.readFile(SERVICE_WORKER_PATH, "utf8");
   const context = {
     chrome,
+    crypto: {
+      randomUUID: () => "11111111-2222-4333-8444-555555555555",
+    },
     console,
     URL,
     setTimeout,
@@ -150,11 +158,13 @@ async function createLifecycleHarness({
     queueMicrotask,
   };
   vm.runInNewContext(
-    `${source}\n;globalThis.__life = { ensureBrowserControlConsentLoaded, ensureBrowserEnabledLoaded, ensureAgentCursorEnabledLoaded, ensureAgentCursorNameLoaded, setBrowserEnabled, acceptBrowserControlConsent, setAgentCursorEnabled, setAgentCursorName, updateBrowserSettings, popupStatus, handleCommand, connectNativeHost, scheduleReconnect, snapshot: () => ({ browserEnabled, browserEnabledLoaded, browserControlConsentVersion, browserControlConsentLoaded, agentCursorEnabled, agentCursorEnabledLoaded, agentCursorName, agentCursorNameLoaded, nativePort: Boolean(nativePort), localBridgeConnected, reconnectDelayMs, immediateReconnectUsed, lastNativeDisconnectError, reconnectTimer: Boolean(reconnectTimer) }) };`,
+    `${source}\n;globalThis.__life = { ensureBrowserControlConsentLoaded, ensureBrowserEnabledLoaded, ensureAgentCursorEnabledLoaded, ensureAgentCursorNameLoaded, ensureBrowserIdentityLoaded, setBrowserContext, setBrowserEnabled, acceptBrowserControlConsent, setAgentCursorEnabled, setAgentCursorName, updateBrowserSettings, popupStatus, handleCommand, connectNativeHost, scheduleReconnect, snapshot: () => ({ browserEnabled, browserEnabledLoaded, browserControlConsentVersion, browserControlConsentLoaded, agentCursorEnabled, agentCursorEnabledLoaded, agentCursorName, agentCursorNameLoaded, browserInstanceId, browserContext, browserIdentityLoaded, nativePort: Boolean(nativePort), localBridgeConnected, reconnectDelayMs, immediateReconnectUsed, lastNativeDisconnectError, reconnectTimer: Boolean(reconnectTimer) }) };`,
     context,
     { filename: SERVICE_WORKER_PATH },
   );
   await context.__life.ensureBrowserEnabledLoaded();
+  await context.__life.ensureBrowserIdentityLoaded();
+  await Promise.resolve();
   await Promise.resolve();
 
   return {
@@ -188,16 +198,71 @@ test("service worker cold boot connects native host and publishes extension hell
   assert.equal(first.api.snapshot().nativePort, true);
   assert.equal(first.ports[0].posted[0]?.type, "extension.hello");
   assert.equal(first.ports[0].posted[0]?.extensionId, "fixture-extension");
+  assert.equal(first.ports[0].posted[0]?.instanceId, "11111111-2222-4333-8444-555555555555");
+  assert.equal(first.ports[0].posted[0]?.browserContext, "unassigned");
+  assert.equal(first.storageData.browserInstanceId, "11111111-2222-4333-8444-555555555555");
 
-  const coldWake = await createLifecycleHarness();
+  const coldWake = await createLifecycleHarness({
+    storedBrowserInstanceId: first.storageData.browserInstanceId,
+  });
   assert.equal(coldWake.ports.length, 1);
   assert.equal(coldWake.ports[0].posted[0]?.type, "extension.hello");
+  assert.equal(coldWake.ports[0].posted[0]?.instanceId, first.storageData.browserInstanceId);
+});
+
+test("browser context assignment persists per Chrome profile and is available before automation consent", async () => {
+  const harness = await createLifecycleHarness({ storedEnabled: null, storedConsentVersion: null });
+  await harness.api.handleCommand({
+    type: "command",
+    id: "context",
+    method: "context.set",
+    args: { context: "agent" },
+  });
+  const response = harness.ports[0].posted.find((message) => message.id === "context");
+  assert.equal(response?.ok, true);
+  assert.equal(response?.result?.browserContext, "agent");
+  assert.equal(harness.storageData.browserContext, "agent");
+  const popup = await harness.api.popupStatus();
+  assert.equal(popup.browserContext, "agent");
+  assert.equal(popup.browserInstanceId, "11111111-2222-4333-8444-555555555555");
+});
+
+test("popup requests Agent Browser launch through the connected Local bridge", async () => {
+  const harness = await createLifecycleHarness({ storedBrowserContext: "user" });
+  harness.ports[0].onMessage.emit({ type: "host.status", localConnected: true });
+
+  const responsePromise = harness.sendPopupMessage({ type: "equinox.popup.openAgentBrowser" });
+  await Promise.resolve();
+  const request = harness.ports[0].posted.find((message) => message.type === "extension.request");
+  assert.equal(request?.method, "agent_browser.open");
+  assert.equal(Object.keys(request?.args || {}).length, 0);
+
+  harness.ports[0].onMessage.emit({
+    type: "extension.response",
+    id: request.id,
+    ok: true,
+    result: { opened: true, alreadyOpen: false },
+  });
+  const response = await responsePromise;
+  assert.equal(response.ok, true);
+  assert.deepEqual(response.result, { opened: true, alreadyOpen: false });
+});
+
+test("Agent Browser popup does not ask Local to launch a duplicate Agent Browser", async () => {
+  const harness = await createLifecycleHarness({ storedBrowserContext: "agent" });
+  harness.ports[0].onMessage.emit({ type: "host.status", localConnected: true });
+  const response = await harness.sendPopupMessage({ type: "equinox.popup.openAgentBrowser" });
+  assert.equal(response.ok, true);
+  assert.equal(response.result.alreadyOpen, true);
+  assert.equal(response.result.context, "agent");
+  assert.equal(harness.ports[0].posted.some((message) => message.type === "extension.request"), false);
 });
 
 test("native host crash reconnects immediately once, then alarm/backoff recovers repeated failure", async () => {
   const harness = await createLifecycleHarness();
   const firstPort = harness.ports[0];
   firstPort.disconnect("Native host crashed");
+  await Promise.resolve();
 
   assert.equal(harness.ports.length, 2);
   assert.equal(harness.api.snapshot().nativePort, true);

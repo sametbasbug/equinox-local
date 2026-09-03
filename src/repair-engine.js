@@ -187,8 +187,6 @@ export function createRepairEngine({
   inspectPort,
   restartPeekabooBridge,
   getPeekabooStatus,
-  restartChromeBridge,
-  getChromeSnapshot,
   resumeWorkflowSafely,
   now = () => Date.now(),
   randomId = () => randomUUID().slice(0, 10),
@@ -385,57 +383,6 @@ export function createRepairEngine({
         permissions,
         reconnectCount: status.reconnectCount,
       },
-    });
-  };
-
-  const repairChrome = async ({ base, incident, report }) => {
-    const current = typeof getChromeSnapshot === "function"
-      ? await Promise.resolve(getChromeSnapshot()).catch(() => null)
-      : report.currentEvidence?.bridgeSnapshot?.chrome ?? null;
-    if (incident.state === "RESOLVED" && current?.active === true) {
-      return alreadyResolved({ base, incident, note: "Chrome incident zaten çözülmüş ve backend readiness aktif; restart yapılmadı." });
-    }
-    if (typeof restartChromeBridge !== "function" || typeof getChromeSnapshot !== "function") {
-      return finishRecord({
-        base,
-        outcome: "FAILED",
-        actionStatus: "REPAIR_BACKEND_UNAVAILABLE",
-        summary: "Chrome bridge restart backend is unavailable.",
-        before: { incident: safeIncidentSummary(incident), bridge: current },
-      });
-    }
-
-    const before = { incident: safeIncidentSummary(incident), bridge: current };
-    await emit({
-      type: "repair.action_started",
-      severity: "info",
-      status: "recovering",
-      correlationId: base.repairId,
-      message: "Chrome bridge restart started.",
-      details: { repairId: base.repairId, recipeId: base.recipeId, incidentId: base.incidentId },
-    });
-
-    await restartChromeBridge();
-    const after = await Promise.resolve(getChromeSnapshot());
-    const healthy = after?.active === true && after?.connection?.status === "ACTIVE";
-    if (!healthy) {
-      return finishRecord({
-        base,
-        outcome: "NEEDS_INTERVENTION",
-        actionStatus: "RESTARTED_BUT_BACKEND_NOT_READY",
-        summary: "Chrome bridge restart completed, but the real Chrome backend did not reach ACTIVE readiness.",
-        before,
-        after,
-      });
-    }
-
-    return finishRecord({
-      base,
-      outcome: "RECOVERED",
-      actionStatus: "RESTARTED_AND_VERIFIED",
-      summary: "Chrome DevTools MCP bridge reconnected and real Chrome backend readiness was verified.",
-      before,
-      after,
     });
   };
 
@@ -780,7 +727,6 @@ export function createRepairEngine({
 
   const handlers = Object.freeze({
     peekaboo_bridge_restart: repairPeekaboo,
-    chrome_bridge_restart: repairChrome,
     stale_preview_cleanup: repairStalePreview,
     orphan_process_cleanup: repairOrphanProcesses,
     stale_workflow_recover: repairWorkflow,

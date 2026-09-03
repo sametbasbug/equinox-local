@@ -15,11 +15,15 @@ const DOWNLOAD_DISCOVERY_GRACE_MS = 250;
 const TAB_CREATION_DISCOVERY_GRACE_MS = 150;
 const SELF_RELOAD_DELAY_MS = 250;
 const NATIVE_RECONNECT_ALARM = "equinox-native-reconnect";
+const LOCAL_REQUEST_TIMEOUT_MS = 5_000;
 const BROWSER_ENABLED_STORAGE_KEY = "browserEnabled";
 const BROWSER_CONTROL_CONSENT_STORAGE_KEY = "browserControlConsentVersion";
 const CURRENT_BROWSER_CONTROL_CONSENT_VERSION = 1;
 const AGENT_CURSOR_STORAGE_KEY = "agentCursorEnabled";
 const AGENT_CURSOR_NAME_STORAGE_KEY = "agentCursorName";
+const BROWSER_INSTANCE_ID_STORAGE_KEY = "browserInstanceId";
+const BROWSER_CONTEXT_STORAGE_KEY = "browserContext";
+const BROWSER_CONTEXT_VALUES = new Set(["agent", "user"]);
 const AGENT_CURSOR_HOST_ID = "__equinox_browser_agent_cursor__";
 const DEFAULT_AGENT_CURSOR_NAME = "Agent";
 const AGENT_CURSOR_IDLE_MS = 3_500;
@@ -81,13 +85,78 @@ let agentCursorEnabledLoadPromise = null;
 let agentCursorName = DEFAULT_AGENT_CURSOR_NAME;
 let agentCursorNameLoaded = false;
 let agentCursorNameLoadPromise = null;
+let browserInstanceId = null;
+let browserContext = "unassigned";
+let browserIdentityLoaded = false;
+let browserIdentityLoadPromise = null;
 let localBridgeConnected = false;
+let nextLocalRequestId = 1;
+const pendingLocalRequests = new Map();
 const intentionallyDisconnectedPorts = new WeakSet();
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 function errorMessage(error) {
   return error?.message || String(error);
+}
+
+function rejectPendingLocalRequests(reason) {
+  for (const [id, waiter] of pendingLocalRequests.entries()) {
+    clearTimeout(waiter.timer);
+    pendingLocalRequests.delete(id);
+    waiter.reject(new Error(reason));
+  }
+}
+
+function handleLocalResponse(message) {
+  if (message?.type !== "extension.response" || message.id == null) return false;
+  const id = String(message.id);
+  const waiter = pendingLocalRequests.get(id);
+  if (!waiter) return true;
+  pendingLocalRequests.delete(id);
+  clearTimeout(waiter.timer);
+  if (message.ok) waiter.resolve(message.result ?? null);
+  else waiter.reject(new Error(message.error?.message || message.error || "Equinox Local request failed."));
+  return true;
+}
+
+async function requestLocalAction(method, args = {}, { timeoutMs = LOCAL_REQUEST_TIMEOUT_MS } = {}) {
+  if (typeof method !== "string" || !/^[a-z0-9._-]{1,80}$/u.test(method)) {
+    throw new Error("Equinox Local action name is invalid.");
+  }
+  if (!args || typeof args !== "object" || Array.isArray(args)) {
+    throw new Error("Equinox Local action arguments must be an object.");
+  }
+  if (!nativePort || !localBridgeConnected) {
+    throw new Error("Equinox Local is not connected.");
+  }
+  const id = `local-${nextLocalRequestId++}`;
+  return await new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      pendingLocalRequests.delete(id);
+      reject(new Error(`Equinox Local action timed out: ${method}`));
+    }, timeoutMs);
+    pendingLocalRequests.set(id, { resolve, reject, timer, method });
+    try {
+      nativePort.postMessage({ type: "extension.request", id, method, args });
+    } catch (error) {
+      pendingLocalRequests.delete(id);
+      clearTimeout(timer);
+      reject(error);
+    }
+  });
+}
+
+async function openAgentBrowserFromPopup() {
+  await ensureBrowserIdentityLoaded();
+  if (browserContext === "agent") {
+    return {
+      opened: false,
+      alreadyOpen: true,
+      context: browserContext,
+    };
+  }
+  return await requestLocalAction("agent_browser.open");
 }
 
 function hasCurrentBrowserControlConsent() {
@@ -164,6 +233,49 @@ async function ensureAgentCursorNameLoaded() {
   return await agentCursorNameLoadPromise;
 }
 
+function normalizeBrowserContext(value, { allowUnassigned = true } = {}) {
+  if (BROWSER_CONTEXT_VALUES.has(value)) return value;
+  if (allowUnassigned && (value == null || value === "unassigned")) return "unassigned";
+  throw new Error(`Unsupported browser context: ${String(value)}`);
+}
+
+async function ensureBrowserIdentityLoaded() {
+  if (browserIdentityLoaded) return { instanceId: browserInstanceId, browserContext };
+  if (!browserIdentityLoadPromise) {
+    browserIdentityLoadPromise = (async () => {
+      let stored = {};
+      try {
+        stored = await chrome.storage.local.get([
+          BROWSER_INSTANCE_ID_STORAGE_KEY,
+          BROWSER_CONTEXT_STORAGE_KEY,
+        ]);
+      } catch {
+        stored = {};
+      }
+      const storedInstanceId = String(stored?.[BROWSER_INSTANCE_ID_STORAGE_KEY] || "").trim();
+      browserInstanceId = /^[a-f0-9-]{36}$/iu.test(storedInstanceId)
+        ? storedInstanceId.toLowerCase()
+        : crypto.randomUUID();
+      browserContext = normalizeBrowserContext(stored?.[BROWSER_CONTEXT_STORAGE_KEY]);
+      await chrome.storage.local.set({ [BROWSER_INSTANCE_ID_STORAGE_KEY]: browserInstanceId });
+      browserIdentityLoaded = true;
+      return { instanceId: browserInstanceId, browserContext };
+    })();
+  }
+  return await browserIdentityLoadPromise;
+}
+
+async function setBrowserContext(nextContext) {
+  await ensureBrowserIdentityLoaded();
+  const normalized = normalizeBrowserContext(nextContext, { allowUnassigned: false });
+  await chrome.storage.local.set({ [BROWSER_CONTEXT_STORAGE_KEY]: normalized });
+  browserContext = normalized;
+  return {
+    instanceId: browserInstanceId,
+    browserContext,
+  };
+}
+
 function clearReconnectSchedule() {
   if (reconnectTimer) clearTimeout(reconnectTimer);
   reconnectTimer = null;
@@ -178,6 +290,7 @@ async function popupStatus() {
     ensureBrowserEnabledLoaded(),
     ensureAgentCursorEnabledLoaded(),
     ensureAgentCursorNameLoaded(),
+    ensureBrowserIdentityLoaded(),
   ]);
   const consentAccepted = hasCurrentBrowserControlConsent();
   let tab = null;
@@ -199,6 +312,8 @@ async function popupStatus() {
     nativeHostConnected: Boolean(nativePort),
     localConnected: localBridgeConnected,
     extensionVersion: chrome.runtime.getManifest().version,
+    browserContext,
+    browserInstanceId,
     lastNativeDisconnectError,
     tab: tab
       ? {
@@ -894,7 +1009,7 @@ async function browserSnapshot({ tabId, includeReadable = true } = {}) {
   };
 }
 
-async function browserScreenshot({ tabId, fullPage = false } = {}) {
+async function browserScreenshot({ tabId, fullPage = false, pixelDensity = "css-1x" } = {}) {
   const tab = await chooseTab(tabId);
   await requireDebuggableTab(tab.id);
   await attachTab(tab.id);
@@ -908,7 +1023,10 @@ async function browserScreenshot({ tabId, fullPage = false } = {}) {
     }),
   ]);
   const devicePixelRatio = Math.max(0.5, Math.min(Number(dprResult?.result?.value) || 1, 4));
-  const captureScale = 1 / devicePixelRatio;
+  if (!new Set(["css-1x", "device"]).has(pixelDensity)) {
+    throw new Error(`Unsupported screenshot pixel density: ${String(pixelDensity)}`);
+  }
+  const captureScale = pixelDensity === "device" ? 1 : 1 / devicePixelRatio;
   const viewport = metrics?.cssLayoutViewport || metrics?.layoutViewport;
   const content = metrics?.cssContentSize || metrics?.contentSize;
   const source = fullPage ? content : viewport;
@@ -918,14 +1036,21 @@ async function browserScreenshot({ tabId, fullPage = false } = {}) {
   if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
     throw new Error("Unable to determine a valid screenshot viewport.");
   }
-  if (width > MAX_SCREENSHOT_DIMENSION || height > MAX_SCREENSHOT_DIMENSION) {
+  const outputWidth = Math.ceil(width * devicePixelRatio * captureScale);
+  const outputHeight = Math.ceil(height * devicePixelRatio * captureScale);
+  if (
+    width > MAX_SCREENSHOT_DIMENSION ||
+    height > MAX_SCREENSHOT_DIMENSION ||
+    outputWidth > MAX_SCREENSHOT_DIMENSION ||
+    outputHeight > MAX_SCREENSHOT_DIMENSION
+  ) {
     throw new Error(
-      `Screenshot dimensions exceed the ${MAX_SCREENSHOT_DIMENSION}px safety limit: ${width}x${height}`,
+      `Screenshot dimensions exceed the ${MAX_SCREENSHOT_DIMENSION}px safety limit: ${outputWidth}x${outputHeight}`,
     );
   }
-  if (width * height > MAX_SCREENSHOT_AREA) {
+  if (outputWidth * outputHeight > MAX_SCREENSHOT_AREA) {
     throw new Error(
-      `Screenshot area exceeds the ${MAX_SCREENSHOT_AREA.toLocaleString()}px safety limit: ${width}x${height}`,
+      `Screenshot area exceeds the ${MAX_SCREENSHOT_AREA.toLocaleString()}px safety limit: ${outputWidth}x${outputHeight}`,
     );
   }
 
@@ -960,7 +1085,9 @@ async function browserScreenshot({ tabId, fullPage = false } = {}) {
     cssHeight: height,
     devicePixelRatio,
     captureScale,
-    pixelDensity: "css-1x",
+    pixelDensity,
+    pixelWidth: outputWidth,
+    pixelHeight: outputHeight,
     mimeType: "image/png",
     data,
   };
@@ -1784,6 +1911,122 @@ async function browserDownloadWait({ downloadId, timeoutMs = 60_000 } = {}) {
   throw new Error(`Timed out waiting for download ${downloadId}`);
 }
 
+async function browserCreateTab({ url, active = false } = {}) {
+  const targetUrl = validateOpenUrl(url);
+  if (!chrome.tabs?.create) throw new Error("Chrome tabs.create API is unavailable");
+  const tab = await chrome.tabs.create({ url: targetUrl, active: Boolean(active) });
+  if (!Number.isInteger(tab?.id)) throw new Error("Chrome did not return a created tab id.");
+  const updated = await waitForTab(
+    tab.id,
+    (candidate) => candidate.url === targetUrl || candidate.status === "complete",
+  );
+  const policy = classifyBrowserPage(updated);
+  return {
+    id: updated.id,
+    windowId: updated.windowId,
+    title: updated.title,
+    url: updated.url,
+    active: updated.active,
+    pageKind: policy.kind,
+    debuggerSupported: policy.debuggerSupported,
+  };
+}
+
+async function browserNavigate({ tabId, url, ignoreCache = false } = {}) {
+  const targetUrl = validateOpenUrl(url);
+  const tab = await chooseTab(tabId);
+  await requireDebuggableTab(tab.id);
+  const persistent = observationStates.has(tab.id);
+  await attachTab(tab.id, DEFAULT_ATTACH_IDLE_MS, { persistent });
+  if (ignoreCache) {
+    await send(tab.id, "Network.enable");
+    await send(tab.id, "Network.setCacheDisabled", { cacheDisabled: true });
+  }
+  try {
+    await send(tab.id, "Page.navigate", { url: targetUrl });
+    const updated = await waitForTab(
+      tab.id,
+      (candidate) => candidate.status === "complete" && String(candidate.url || "").startsWith(targetUrl),
+    );
+    const policy = classifyBrowserPage(updated);
+    return {
+      id: updated.id,
+      windowId: updated.windowId,
+      title: updated.title,
+      url: updated.url,
+      active: updated.active,
+      pageKind: policy.kind,
+      debuggerSupported: policy.debuggerSupported,
+    };
+  } finally {
+    if (ignoreCache) {
+      await send(tab.id, "Network.setCacheDisabled", { cacheDisabled: false }).catch(() => {});
+    }
+    if (!persistent) scheduleDetach(tab.id, 5_000);
+  }
+}
+
+async function browserEmulate({
+  tabId,
+  width,
+  height,
+  deviceScaleFactor = 1,
+  mobile = false,
+  touch = false,
+} = {}) {
+  const normalizedWidth = Number(width);
+  const normalizedHeight = Number(height);
+  const normalizedDpr = Number(deviceScaleFactor);
+  if (!Number.isInteger(normalizedWidth) || normalizedWidth < 240 || normalizedWidth > 3840) {
+    throw new Error("Emulation width must be an integer between 240 and 3840.");
+  }
+  if (!Number.isInteger(normalizedHeight) || normalizedHeight < 240 || normalizedHeight > 2400) {
+    throw new Error("Emulation height must be an integer between 240 and 2400.");
+  }
+  if (!Number.isFinite(normalizedDpr) || normalizedDpr < 1 || normalizedDpr > 3) {
+    throw new Error("Emulation deviceScaleFactor must be between 1 and 3.");
+  }
+  const tab = await chooseTab(tabId);
+  await requireDebuggableTab(tab.id);
+  const persistent = observationStates.has(tab.id);
+  await attachTab(tab.id, DEFAULT_ATTACH_IDLE_MS, { persistent });
+  await send(tab.id, "Emulation.setDeviceMetricsOverride", {
+    width: normalizedWidth,
+    height: normalizedHeight,
+    deviceScaleFactor: normalizedDpr,
+    mobile: Boolean(mobile),
+    screenWidth: normalizedWidth,
+    screenHeight: normalizedHeight,
+  });
+  await send(tab.id, "Emulation.setTouchEmulationEnabled", {
+    enabled: Boolean(touch || mobile),
+    maxTouchPoints: touch || mobile ? 5 : 1,
+  });
+  await send(tab.id, "Page.bringToFront");
+  if (!persistent) scheduleDetach(tab.id, 5_000);
+  return {
+    tabId: tab.id,
+    width: normalizedWidth,
+    height: normalizedHeight,
+    deviceScaleFactor: normalizedDpr,
+    mobile: Boolean(mobile),
+    touch: Boolean(touch || mobile),
+  };
+}
+
+async function browserClearEmulation({ tabId } = {}) {
+  const tab = await chooseTab(tabId);
+  await requireDebuggableTab(tab.id);
+  const persistent = observationStates.has(tab.id);
+  await attachTab(tab.id, DEFAULT_ATTACH_IDLE_MS, { persistent });
+  await Promise.all([
+    send(tab.id, "Emulation.clearDeviceMetricsOverride"),
+    send(tab.id, "Emulation.setTouchEmulationEnabled", { enabled: false }),
+  ]);
+  if (!persistent) scheduleDetach(tab.id, 5_000);
+  return { tabId: tab.id, cleared: true };
+}
+
 async function browserOpen({ tabId, url }) {
   const targetUrl = validateOpenUrl(url);
   const tab = await chooseTab(tabId);
@@ -1978,7 +2221,11 @@ const COMMANDS = {
   status: browserStatus,
   "tabs.list": browserTabsList,
   "tabs.activate": browserActivate,
+  "tabs.create": browserCreateTab,
   open: browserOpen,
+  navigate: browserNavigate,
+  emulate: browserEmulate,
+  "emulation.clear": browserClearEmulation,
   snapshot: browserSnapshot,
   screenshot: browserScreenshot,
   find: browserFind,
@@ -2003,9 +2250,12 @@ const COMMANDS = {
   "self.reload": browserSelfReload,
   "settings.status": popupStatus,
   "settings.update": updateBrowserSettings,
+  "context.set": async ({ context } = {}) => setBrowserContext(context),
 };
 
-const DISABLED_CONTROL_METHODS = new Set(["status", "settings.status", "settings.update"]);
+const DISABLED_CONTROL_METHODS = new Set([
+  "status", "settings.status", "settings.update", "context.set",
+]);
 
 async function handleCommand(message) {
   if (message?.type !== "command" || message.id == null) return;
@@ -2084,6 +2334,7 @@ function connectNativeHost() {
       localBridgeConnected = Boolean(message.localConnected);
       return;
     }
+    if (handleLocalResponse(message)) return;
     void handleCommand(message);
   });
   port.onDisconnect.addListener(() => {
@@ -2091,6 +2342,7 @@ function connectNativeHost() {
     intentionallyDisconnectedPorts.delete(port);
     if (nativePort === port) nativePort = null;
     localBridgeConnected = false;
+    rejectPendingLocalRequests("Equinox Local Native Messaging bağlantısı kesildi.");
     if (intentional) {
       lastNativeDisconnectError = null;
       return;
@@ -2105,14 +2357,21 @@ function connectNativeHost() {
   });
   reconnectDelayMs = 500;
   void chrome.alarms.clear(NATIVE_RECONNECT_ALARM);
-  port.postMessage({
-    type: "extension.hello",
-    extensionId: chrome.runtime.id,
-    extensionVersion: chrome.runtime.getManifest().version,
-    protocolVersion: BRIDGE_PROTOCOL_VERSION,
-    capabilities: Object.keys(COMMANDS),
-    lastNativeDisconnectError,
-  });
+  const postExtensionHello = () => {
+    if (nativePort !== port) return;
+    port.postMessage({
+      type: "extension.hello",
+      extensionId: chrome.runtime.id,
+      extensionVersion: chrome.runtime.getManifest().version,
+      protocolVersion: BRIDGE_PROTOCOL_VERSION,
+      capabilities: Object.keys(COMMANDS),
+      instanceId: browserInstanceId,
+      browserContext,
+      lastNativeDisconnectError,
+    });
+  };
+  if (browserIdentityLoaded) postExtensionHello();
+  else void ensureBrowserIdentityLoaded().then(postExtensionHello).catch(() => scheduleReconnect());
 }
 
 chrome.debugger.onEvent.addListener((source, method, params = {}) => {
@@ -2266,6 +2525,7 @@ chrome.runtime.onMessage?.addListener((message, _sender, sendResponse) => {
     "equinox.popup.acceptBrowserControlConsent",
     "equinox.popup.setAgentCursorEnabled",
     "equinox.popup.setAgentCursorName",
+    "equinox.popup.openAgentBrowser",
   ]).has(message.type)) return false;
   const task = message.type === "equinox.popup.setEnabled"
     ? setBrowserEnabled(message.enabled)
@@ -2275,7 +2535,9 @@ chrome.runtime.onMessage?.addListener((message, _sender, sendResponse) => {
         ? setAgentCursorEnabled(message.enabled)
         : message.type === "equinox.popup.setAgentCursorName"
           ? setAgentCursorName(message.name)
-          : popupStatus();
+          : message.type === "equinox.popup.openAgentBrowser"
+            ? openAgentBrowserFromPopup()
+            : popupStatus();
   Promise.resolve(task).then(
     (result) => sendResponse({ ok: true, result }),
     (error) => sendResponse({ ok: false, error: { message: errorMessage(error) } }),

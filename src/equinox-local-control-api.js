@@ -179,8 +179,11 @@ function validateBrowserSettings(body) {
     throw new Error("Browser settings body must be a JSON object.");
   }
   const keys = Object.keys(body);
-  if (keys.length < 1 || keys.some((key) => !["enabled", "agentCursorEnabled", "agentCursorName"].includes(key))) {
+  if (keys.length < 1 || keys.some((key) => !["context", "enabled", "agentCursorEnabled", "agentCursorName"].includes(key))) {
     throw new Error("Browser settings body has no supported settings or contains an unsupported field.");
+  }
+  if (Object.hasOwn(body, "context") && !["agent", "user"].includes(body.context)) {
+    throw new Error("Browser settings context must be agent or user.");
   }
   if (Object.hasOwn(body, "enabled") && typeof body.enabled !== "boolean") {
     throw new Error("enabled must be boolean.");
@@ -230,6 +233,7 @@ export function createEquinoxLocalControlApi({
   scheduleUninstall = null,
   chooseFolder = null,
   updateBrowserSettings = null,
+  openAgentBrowser = null,
   checkGitHub = null,
   getPeekabooStatus = null,
   getTelegramStatus = null,
@@ -452,6 +456,20 @@ export function createEquinoxLocalControlApi({
         }
         const selectedPath = await chooseFolder();
         jsonBody(res, 200, { ok: true, cancelled: selectedPath === null, path: selectedPath });
+        return;
+      }
+
+      if (req.method === "POST" && url.pathname === "/api/v1/browser/agent/open") {
+        assertMutationRequest(req, { port: actualPort, csrfToken: state.csrfToken });
+        validateEmptyObject(await readJsonRequest(req), "Agent Browser open");
+        if (typeof openAgentBrowser !== "function") {
+          const error = new Error("Agent Browser launch control is unavailable.");
+          error.statusCode = 503;
+          throw error;
+        }
+        const agentBrowser = await openAgentBrowser();
+        state.mutationCount += 1;
+        jsonBody(res, 200, { ok: true, agentBrowser });
         return;
       }
 

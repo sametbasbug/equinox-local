@@ -137,7 +137,6 @@ function normalizeState(raw) {
 
 function eventSubjectKey(policy, event) {
   if (policy.id === "peekaboo_transport_recover") return "peekaboo";
-  if (policy.id === "chrome_transport_recover") return "chrome";
   const projectId = event?.projectId ?? "global";
   const correlation = event?.correlationId ?? null;
   if (correlation) return `${projectId}:${correlation}`;
@@ -148,7 +147,6 @@ function eventSubjectKey(policy, event) {
 
 function incidentSubjectKey(policy, incident) {
   if (policy.id === "peekaboo_transport_recover") return "peekaboo";
-  if (policy.id === "chrome_transport_recover") return "chrome";
   const projectId = incident?.projectId ?? "global";
   const correlation = incident?.correlationId ?? incident?.details?.workflowId ?? null;
   if (correlation) return `${projectId}:${correlation}`;

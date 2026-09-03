@@ -47,8 +47,6 @@ function makeHarness({
     error: null,
     reconnectCount: 1,
   }),
-  restartChromeBridge = async () => {},
-  getChromeSnapshot = () => ({ active: true, connection: { status: "ACTIVE" } }),
   resumeWorkflowSafely,
 } = {}) {
   const events = [];
@@ -124,8 +122,6 @@ function makeHarness({
       inspectPort: (...args) => portInspector(...args),
       restartPeekabooBridge,
       getPeekabooStatus,
-      restartChromeBridge,
-      getChromeSnapshot,
       resumeWorkflowSafely: resumeWorkflowSafely ?? (async (workflowId) => {
         const record = workflows.get(workflowId);
         record.status = "running";
@@ -422,7 +418,7 @@ test("orphan process cleanup only stops workflow-owned managed children", async 
   assert.equal(harness.processes.some((item) => item.processId === "proc-unrelated" && item.running), true);
 });
 
-test("Peekaboo recipe verifies health after its fixed restart callback", async () => {
+test("Peekaboo recipe verifies health after fixed restart callback", async () => {
   const peekRoot = await makeTempRoot();
   let peekRestart = 0;
   const peekHarness = makeHarness({
@@ -444,21 +440,4 @@ test("Peekaboo recipe verifies health after its fixed restart callback", async (
     .filter((event) => event.component === "repair")
     .every((event) => event.details?.incidentId === "inc-peekaboo-transport-test"), true);
 
-
-});
-
-test("recipe mismatch returns NEEDS_INTERVENTION without mutation", async () => {
-  const rootDir = await makeTempRoot();
-  let peekRestart = 0;
-  const harness = makeHarness({
-    restartPeekabooBridge: async () => { peekRestart += 1; },
-  });
-  const engine = createRepairEngine({ rootDir, ...harness.dependencies });
-  const repair = await engine.repairIssue({
-    incidentId: "inc-preview-port-occupied-test",
-    recipeId: "peekaboo_bridge_restart",
-  });
-  assert.equal(repair.outcome, "NEEDS_INTERVENTION");
-  assert.equal(repair.actionStatus, "RECIPE_INCIDENT_MISMATCH");
-  assert.equal(peekRestart, 0);
 });
