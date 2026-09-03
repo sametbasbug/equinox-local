@@ -6,6 +6,15 @@ This project follows semantic versioning for public releases.
 
 ## [Unreleased]
 
+## [4.4.1] - 2026-09-03
+
+### Changed
+
+- Updated the bundled OpenAI tunnel runtime from `tunnel-client` `0.0.13` to `0.0.14` for Apple Silicon and Intel managed releases, with new pinned upstream SHA-256 metadata.
+- Updated the bundled universal Peekaboo runtime from `4.2.2` to `4.3.0`, retaining strict OpenClaw Foundation Developer ID / Team ID verification and source-runtime synchronization.
+- Aligned the Desktop bridge with Peekaboo 4.3.0 background authority: foreground-only drag/move/hotkey surfaces are no longer required, while explicit foreground/shared-pointer click and scroll requests remain blocked by Equinox Local.
+- Refreshed compatible transitive npm dependencies within their existing semver ranges; Node.js remains pinned to the current `24.20.0` Krypton LTS runtime.
+
 ## [4.4.0] - 2026-09-02
 
 ### Added

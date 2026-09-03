@@ -23,7 +23,7 @@ async function makeFixture(t, version = "0.0.12") {
 async function fakeInstall(_target, releaseDir) {
   const destination = path.join(releaseDir, "runtime", "tunnel");
   await fs.mkdir(destination, { recursive: true, mode: 0o700 });
-  await fs.writeFile(path.join(destination, "tunnel-client"), "#!/bin/sh\necho '0.0.13+fixture (git sha: fixture)'\n", { mode: 0o755 });
+  await fs.writeFile(path.join(destination, "tunnel-client"), "#!/bin/sh\necho '0.0.14+fixture (git sha: fixture)'\n", { mode: 0o755 });
   await fs.writeFile(path.join(destination, "cloudflared"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
 }
 
@@ -35,7 +35,7 @@ test("source tunnel sync migrates a stale external runtime into the private pinn
     target: "darwin-arm64",
     installPinnedTunnelRuntimeImpl: fakeInstall,
   });
-  assert.deepEqual(result, { changed: true, version: "0.0.13" });
+  assert.deepEqual(result, { changed: true, version: "0.0.14" });
   const status = await inspectSourceTunnelRuntime({ configPath: item.configPath });
   assert.equal(status.synchronized, true);
   const configText = await fs.readFile(item.configPath, "utf8");
@@ -65,7 +65,7 @@ test("source tunnel sync is a no-op after the private pinned runtime is installe
       return fakeInstall(...args);
     },
   });
-  assert.deepEqual(result, { changed: false, version: "0.0.13" });
+  assert.deepEqual(result, { changed: false, version: "0.0.14" });
   assert.equal(installCalls, 0);
 });
 

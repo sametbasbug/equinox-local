@@ -58,7 +58,7 @@ const PEEKABOO_V3_REQUIRED_TOOLS = Object.freeze([
 
 const PEEKABOO_V4_REQUIRED_TOOLS = Object.freeze([
   "permissions", "inspect_ui", "see", "app", "window", "menu", "dock",
-  "click", "drag", "move", "press", "scroll", "type", "action",
+  "click", "press", "scroll", "type", "action",
   "set_value", "space", "sleep",
 ]);
 
@@ -84,10 +84,10 @@ const REQUIRED_TOOL_SHAPES = Object.freeze({
   list: Object.freeze({ properties: ["item_type"] }),
   inspect_ui: Object.freeze({ properties: ["app_target", "snapshot", "max_elements"] }),
   see: Object.freeze({ properties: ["app_target", "snapshot", "max_elements"] }),
-  app: Object.freeze({ properties: ["action", "name"], actionValues: ["launch", "quit", "focus", "list"] }),
-  window: Object.freeze({ properties: ["action", "window_id"], actionValues: ["close", "focus"] }),
+  app: Object.freeze({ properties: ["action", "name"], actionValues: ["launch", "quit", "list"] }),
+  window: Object.freeze({ properties: ["action", "window_id"], actionValues: ["close", "list"] }),
   menu: Object.freeze({ properties: ["action", "app", "path"], actionValues: ["list", "click"] }),
-  dock: Object.freeze({ properties: ["action", "app"], actionValues: ["launch", "list"] }),
+  dock: Object.freeze({ properties: ["action"], actionValues: ["list"] }),
   click: Object.freeze({ properties: ["on", "query", "snapshot"] }),
   drag: Object.freeze({ properties: ["from", "to", "snapshot"] }),
   move: Object.freeze({ properties: ["id", "snapshot"] }),
@@ -504,6 +504,12 @@ export function normalizePeekabooArguments(toolName, rawArguments = {}) {
       );
     }
 
+    if (args.foreground === true || args.background === false || args.modifiers !== undefined) {
+      throw new Error(
+        "Foreground/shared-pointer click ve foreground modifier kullanımı Equinox Local üzerinden kapalıdır.",
+      );
+    }
+
     if (!args.on && !args.query) {
       throw new Error("click için element ID (on) veya query zorunludur.");
     }
@@ -650,6 +656,12 @@ export function normalizePeekabooArguments(toolName, rawArguments = {}) {
     if (!args.on) {
       throw new Error(
         "Mouse konumunda global scroll kapalıdır; scroll hedef element ID'si belirt.",
+      );
+    }
+
+    if (args.foreground === true || args.smooth === true) {
+      throw new Error(
+        "Foreground/shared-pointer scroll Equinox Local üzerinden kapalıdır.",
       );
     }
 

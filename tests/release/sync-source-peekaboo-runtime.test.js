@@ -23,11 +23,11 @@ async function makeFixture(t) {
 async function fakeInstall(releaseDir) {
   const destination = path.join(releaseDir, "runtime", "peekaboo");
   await fs.mkdir(destination, { recursive: true, mode: 0o700 });
-  await fs.writeFile(path.join(destination, "peekaboo"), "#!/bin/sh\necho 'Peekaboo 4.2.2 (fixture)'\n", { mode: 0o755 });
+  await fs.writeFile(path.join(destination, "peekaboo"), "#!/bin/sh\necho 'Peekaboo 4.3.0 (fixture)'\n", { mode: 0o755 });
   await fs.writeFile(path.join(destination, "libswiftCompatibilitySpan.dylib"), "fixture\n", { mode: 0o755 });
   await fs.writeFile(path.join(destination, "LICENSE"), "MIT License\n", { mode: 0o600 });
   await fs.writeFile(path.join(destination, "README.md"), "fixture\n", { mode: 0o600 });
-  await fs.writeFile(path.join(destination, "VERSION"), "4.2.2\n", { mode: 0o600 });
+  await fs.writeFile(path.join(destination, "VERSION"), "4.3.0\n", { mode: 0o600 });
 }
 
 test("source Peekaboo sync installs and pins the managed developer runtime", async (t) => {
@@ -37,13 +37,13 @@ test("source Peekaboo sync installs and pins the managed developer runtime", asy
     homeDir: item.root,
     installPinnedPeekabooRuntimeImpl: fakeInstall,
   });
-  assert.deepEqual(result, { changed: true, version: "4.2.2" });
+  assert.deepEqual(result, { changed: true, version: "4.3.0" });
   const status = await inspectSourcePeekabooRuntime({ configPath: item.configPath });
   assert.equal(status.synchronized, true);
   const configText = await fs.readFile(item.configPath, "utf8");
   const managedLine = configText.split(/\r?\n/u).find((line) => line.startsWith("peekabooPath="));
   assert.ok(managedLine);
-  assert.equal(managedLine.includes("Equinox Local Developer/runtime/peekaboo/versions/4.2.2/peekaboo"), true);
+  assert.equal(managedLine.includes("Equinox Local Developer/runtime/peekaboo/versions/4.3.0/peekaboo"), true);
 });
 
 test("source Peekaboo sync is a no-op once the pinned runtime is healthy", async (t) => {
@@ -58,6 +58,6 @@ test("source Peekaboo sync is a no-op once the pinned runtime is healthy", async
       return fakeInstall(...args);
     },
   });
-  assert.deepEqual(result, { changed: false, version: "4.2.2" });
+  assert.deepEqual(result, { changed: false, version: "4.3.0" });
   assert.equal(installCalls, 0);
 });

@@ -72,12 +72,20 @@ test("semantic desktop targeting is enforced for click, drag, scroll and move", 
     /Koordinat tabanlı click/u,
   );
   assert.throws(
+    () => normalizePeekabooArguments("click", { on: "B1", foreground: true }),
+    /Foreground\/shared-pointer click/u,
+  );
+  assert.throws(
     () => normalizePeekabooArguments("drag", { from_coords: "1,2", to_coords: "3,4" }),
     /Koordinat tabanlı drag/u,
   );
   assert.throws(
     () => normalizePeekabooArguments("scroll", { direction: "down" }),
     /scroll hedef element/u,
+  );
+  assert.throws(
+    () => normalizePeekabooArguments("scroll", { direction: "down", on: "B2", foreground: true }),
+    /Foreground\/shared-pointer scroll/u,
   );
   assert.throws(
     () => normalizePeekabooArguments("move", { center: true }),
@@ -244,10 +252,13 @@ test("Peekaboo compatibility gate catches old versions and schema drift", () => 
   assert.equal(current.ok, true);
   assert.deepEqual(current.errors, []);
 
-  const v4 = inspectPeekabooCompatibility(makeCompatibleToolCatalog(4), "Peekaboo 4.0.0");
+  const v4 = inspectPeekabooCompatibility(makeCompatibleToolCatalog(4), "Peekaboo 4.3.0");
   assert.equal(v4.ok, true);
   assert.equal(v4.contract, "v4");
   assert.deepEqual(v4.errors, []);
+  assert.equal(__test.PEEKABOO_V4_REQUIRED_TOOLS.includes("drag"), false);
+  assert.equal(__test.PEEKABOO_V4_REQUIRED_TOOLS.includes("move"), false);
+  assert.equal(__test.PEEKABOO_V4_REQUIRED_TOOLS.includes("hotkey"), false);
 
   const old = inspectPeekabooCompatibility(tools, "Peekaboo 3.9.8");
   assert.equal(old.ok, false);

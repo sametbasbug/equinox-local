@@ -50,7 +50,7 @@ async function createFixture(version = "4.2.0") {
     await fs.writeFile(path.join(releaseDir, relative), "fixture\n", { mode: 0o700 });
   }
   for (const name of ["LICENSE", "README.md", "VERSION"]) {
-    await fs.writeFile(path.join(releaseDir, "runtime", "peekaboo", name), name === "VERSION" ? "4.2.2\n" : "fixture\n", { mode: 0o600 });
+    await fs.writeFile(path.join(releaseDir, "runtime", "peekaboo", name), name === "VERSION" ? "4.3.0\n" : "fixture\n", { mode: 0o600 });
   }
   await fs.writeFile(path.join(releaseDir, "runtime", "app", "EquinoxLocal.png"), "fixture\n", { mode: 0o600 });
   await fs.writeFile(path.join(releaseDir, "runtime", "app", "native-app.json"), "{}\n", { mode: 0o600 });

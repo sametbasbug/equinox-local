@@ -54,7 +54,7 @@ async function makeFixture({ version = "4.3.0", target = "darwin-arm64", withSym
     }
     await fs.writeFile(path.join(releaseRoot, "runtime", "peekaboo", "LICENSE"), "fixture license\n");
     await fs.writeFile(path.join(releaseRoot, "runtime", "peekaboo", "README.md"), "fixture readme\n");
-    await fs.writeFile(path.join(releaseRoot, "runtime", "peekaboo", "VERSION"), "4.2.2\n");
+    await fs.writeFile(path.join(releaseRoot, "runtime", "peekaboo", "VERSION"), "4.3.0\n");
   }
   if (nativeApp) {
     const appRoot = path.join(releaseRoot, "runtime", "app");
