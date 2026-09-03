@@ -71,25 +71,6 @@ async function assertSafeNativeHostWrapper(hostWrapperPath) {
 
 async function atomicWritePrivateManifest(manifestPath, content) {
   const parent = path.dirname(manifestPath);
-  const existing = await fs.lstat(manifestPath).catch((error) => {
-    if (error?.code === "ENOENT") return null;
-    throw error;
-  });
-  const uid = typeof process.getuid === "function" ? process.getuid() : null;
-  if (existing) {
-    if (!existing.isFile() || existing.isSymbolicLink()) {
-      throw new Error("Agent Browser Native Messaging manifest yolu güvenli bir normal dosya değil.");
-    }
-    if (Number.isInteger(uid) && existing.uid !== uid) {
-      throw new Error("Agent Browser Native Messaging manifest sahipliği geçersiz.");
-    }
-    const current = await fs.readFile(manifestPath, "utf8");
-    if (current === content) {
-      await fs.chmod(manifestPath, 0o600);
-      return;
-    }
-  }
-
   const temporary = path.join(
     parent,
     `.${NATIVE_HOST_NAME}-${process.pid}-${randomBytes(8).toString("hex")}.tmp`,

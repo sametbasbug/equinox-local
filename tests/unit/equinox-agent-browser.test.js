@@ -89,6 +89,28 @@ test("Agent Browser Native Messaging projection refuses an unsafe host wrapper",
   );
 });
 
+test("Agent Browser Native Messaging projection atomically replaces a hostile manifest symlink", async (t) => {
+  const homeDir = await fs.mkdtemp(path.join(os.tmpdir(), "equinox-agent-browser-manifest-"));
+  t.after(() => fs.rm(homeDir, { recursive: true, force: true }));
+  const { profileRoot } = await prepareNativeHost(homeDir);
+  const manifestRoot = path.join(profileRoot, "NativeMessagingHosts");
+  const manifestPath = path.join(manifestRoot, "dev.equinox.browser.json");
+  const sentinelPath = path.join(homeDir, "sentinel.txt");
+  await fs.mkdir(manifestRoot, { recursive: true, mode: 0o700 });
+  await fs.writeFile(sentinelPath, "unchanged\n", { mode: 0o600 });
+  await fs.symlink(sentinelPath, manifestPath);
+
+  await ensureAgentBrowserNativeMessagingManifest({ homeDir, profileRoot });
+
+  const manifestStat = await fs.lstat(manifestPath);
+  assert.equal(manifestStat.isFile(), true);
+  assert.equal(manifestStat.isSymbolicLink(), false);
+  assert.equal(manifestStat.mode & 0o777, 0o600);
+  assert.equal(await fs.readFile(sentinelPath, "utf8"), "unchanged\n");
+  const manifest = JSON.parse(await fs.readFile(manifestPath, "utf8"));
+  assert.deepEqual(manifest.allowed_origins, ["chrome-extension://npdneefcobilfkjlihghjgjnknenhfoj/"]);
+});
+
 test("first Agent Browser launch opens the Chrome Web Store and starts pairing", async (t) => {
   const homeDir = await fs.mkdtemp(path.join(os.tmpdir(), "equinox-agent-browser-"));
   t.after(() => fs.rm(homeDir, { recursive: true, force: true }));
