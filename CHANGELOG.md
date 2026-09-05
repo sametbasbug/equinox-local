@@ -6,6 +6,24 @@ This project follows semantic versioning for public releases.
 
 ## [Unreleased]
 
+## [4.6.0] - 2026-09-05
+
+### Added
+
+- Expanded the first-party Equinox Browser agent surface with compact Snapshot v3 output, bounded device/mobile emulation, semantic touch tap/swipe gestures, richer click and keyboard input semantics, safer `ref_info`/reacquire workflows, and reusable bounded post-action wait/snapshot chains.
+- Added Console/Network Observation v2 with stable cursors, bounded filtering and metadata-only network-response waits, allowing agents to continue long browser tasks without repeatedly replaying large observation buffers.
+- Added Agent Browser bookmark management for saved sites and folders, including bounded list/search/create/update/move/remove operations. Bookmark capability v2 returns readable folder paths on reads and mutations so agents can understand nested organization without dumping the full tree. Bookmark tools are intentionally available only in the isolated Agent Browser context; Your Browser bookmark automation is blocked before the bridge and again inside the extension.
+
+### Changed
+
+- Equinox Browser capability negotiation is now versioned across snapshot, navigation, input, click, actionability, observation, emulation, touch gestures and bookmarks so Local rejects unsupported mutations before sending them to an older extension.
+- The Equinox Browser extension now requests Chrome's required `bookmarks` permission for the isolated Agent Browser workspace and advances the browser-data consent contract to version 2. Existing consent v1 does not silently carry over; users must accept the updated disclosure before browser automation resumes.
+- Browser screenshot/snapshot/ref workflows remain bounded by default, sensitive network/bookmark URL query values are redacted, and request/response bodies, raw auth headers, cookies and credentials remain outside the agent-facing observation surface.
+
+### Fixed
+
+- Browser actions now share stricter semantic actionability and stale-ref failure behavior across nested frames/OOPIF routing, reducing accidental clicks, typing or drags against replaced or obscured targets.
+
 ## [4.5.0] - 2026-09-03
 
 ### Added

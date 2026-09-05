@@ -330,6 +330,7 @@ export function createEquinoxBrowserBridge({
           extensionVersion: message.extensionVersion ?? null,
           protocolVersion: message.protocolVersion ?? null,
           capabilities: Array.isArray(message.capabilities) ? message.capabilities : [],
+          capabilityVersions: message.capabilityVersions && typeof message.capabilityVersions === "object" ? message.capabilityVersions : {},
           lastNativeDisconnectError: message.lastNativeDisconnectError ?? null,
           instanceId: state.instanceId,
           browserContext: assignedContext,
