@@ -3,7 +3,58 @@ const PROTOCOL_VERSION = "1.3";
 const BRIDGE_PROTOCOL_VERSION = 1;
 const DEFAULT_ATTACH_IDLE_MS = 30_000;
 const MAX_SNAPSHOT_ELEMENTS = 250;
+const SNAPSHOT_VERSION = 3;
+const DELTA_SNAPSHOT_VERSION = 1;
+const SCREENSHOT_VERSION = 3;
+const REACQUIRE_VERSION = 1;
+const COMPOUND_ACTION_VERSION = 2;
+const DOUBLE_CLICK_VERSION = 1;
+const POINTER_DRAG_VERSION = 1;
+const HTML5_DRAG_VERSION = 1;
+const WAIT_VERSION = 2;
+const NAVIGATION_VERSION = 1;
+const EMULATION_VERSION = 1;
+const INPUT_VERSION = 1;
+const ACTIONABILITY_VERSION = 1;
+const CLICK_VERSION = 2;
+const OBSERVATION_VERSION = 2;
+const TOUCH_GESTURE_VERSION = 1;
+const BOOKMARKS_VERSION = 2;
+const MAX_BOOKMARK_PATH_DEPTH = 16;
+const MAX_BOOKMARK_PATH_CHARS = 2_000;
+const HTML5_DRAG_INTERCEPT_TIMEOUT_MS = 1_500;
+const MAX_HTML5_DRAG_ITEMS = 32;
+const MAX_HTML5_DRAG_FILES = 16;
+const MAX_HTML5_DRAG_DATA_CHARS = 512 * 1024;
+const MAX_SNAPSHOT_HISTORY = 8;
+const MAX_REF_REGISTRY_ENTRIES = 2_000;
+const NETWORK_IDLE_IGNORED_TYPES = new Set(["EventSource", "Media", "WebSocket"]);
 const MAX_OBSERVATION_EVENTS = 500;
+const CONSOLE_LEVEL_FILTERS = new Set([
+  "log", "debug", "info", "error", "warning", "dir", "dirxml", "table", "trace", "clear",
+  "startgroup", "startgroupcollapsed", "endgroup", "assert", "profile", "profileend", "count", "timeend",
+]);
+const NETWORK_RESOURCE_TYPE_FILTERS = new Set([
+  "document",
+  "stylesheet",
+  "image",
+  "media",
+  "font",
+  "script",
+  "texttrack",
+  "xhr",
+  "fetch",
+  "prefetch",
+  "eventsource",
+  "websocket",
+  "manifest",
+  "signedexchange",
+  "ping",
+  "cspviolationreport",
+  "preflight",
+  "fedcm",
+  "other",
+]);
 const MAX_SCREENSHOT_DIMENSION = 32_000;
 const MAX_SCREENSHOT_AREA = 80_000_000;
 const MAX_SCREENSHOT_PNG_BYTES = 32 * 1024 * 1024;
@@ -18,15 +69,39 @@ const NATIVE_RECONNECT_ALARM = "equinox-native-reconnect";
 const LOCAL_REQUEST_TIMEOUT_MS = 5_000;
 const BROWSER_ENABLED_STORAGE_KEY = "browserEnabled";
 const BROWSER_CONTROL_CONSENT_STORAGE_KEY = "browserControlConsentVersion";
-const CURRENT_BROWSER_CONTROL_CONSENT_VERSION = 1;
+const CURRENT_BROWSER_CONTROL_CONSENT_VERSION = 2;
 const AGENT_CURSOR_STORAGE_KEY = "agentCursorEnabled";
 const AGENT_CURSOR_NAME_STORAGE_KEY = "agentCursorName";
 const BROWSER_INSTANCE_ID_STORAGE_KEY = "browserInstanceId";
 const BROWSER_CONTEXT_STORAGE_KEY = "browserContext";
 const BROWSER_CONTEXT_VALUES = new Set(["agent", "user"]);
 const AGENT_CURSOR_HOST_ID = "__equinox_browser_agent_cursor__";
+const SCREENSHOT_ANNOTATION_HOST_ID = "__equinox_browser_ref_annotations__";
+const MAX_SCREENSHOT_ANNOTATIONS = 100;
 const DEFAULT_AGENT_CURSOR_NAME = "Agent";
 const AGENT_CURSOR_IDLE_MS = 3_500;
+
+function browserCapabilityVersions() {
+  return {
+    snapshot: SNAPSHOT_VERSION,
+    deltaSnapshot: DELTA_SNAPSHOT_VERSION,
+    screenshot: SCREENSHOT_VERSION,
+    reacquire: REACQUIRE_VERSION,
+    compoundAction: COMPOUND_ACTION_VERSION,
+    doubleClick: DOUBLE_CLICK_VERSION,
+    pointerDrag: POINTER_DRAG_VERSION,
+    html5Drag: HTML5_DRAG_VERSION,
+    wait: WAIT_VERSION,
+    navigation: NAVIGATION_VERSION,
+    emulation: EMULATION_VERSION,
+    input: INPUT_VERSION,
+    actionability: ACTIONABILITY_VERSION,
+    click: CLICK_VERSION,
+    observation: OBSERVATION_VERSION,
+    touchGesture: TOUCH_GESTURE_VERSION,
+    bookmarks: BOOKMARKS_VERSION,
+  };
+}
 
 const INTERACTIVE_ROLES = new Set([
   "button",
@@ -59,8 +134,13 @@ const READABLE_ROLES = new Set([
 
 const attachedTabs = new Map();
 const refStates = new Map();
+const refRegistries = new Map();
+const snapshotHistories = new Map();
+const networkWaitStates = new Map();
+const networkResponseWaitStates = new Map();
 const observationStates = new Map();
 const dialogStates = new Map();
+const html5DragInterceptStates = new Map();
 let dialogSequence = 0;
 const documentGenerations = new Map();
 const tabCreationEvents = [];
@@ -98,6 +178,117 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 function errorMessage(error) {
   return error?.message || String(error);
+}
+
+function rejectPendingHtml5DragIntercept(tabId, reason) {
+  const state = html5DragInterceptStates.get(tabId);
+  if (!state) return false;
+  html5DragInterceptStates.delete(tabId);
+  clearTimeout(state.timer);
+  if (!state.settled) {
+    state.settled = true;
+    state.reject(new Error(reason));
+  }
+  return true;
+}
+
+function beginHtml5DragIntercept(tabId, timeoutMs = HTML5_DRAG_INTERCEPT_TIMEOUT_MS) {
+  if (html5DragInterceptStates.has(tabId)) {
+    throw new Error("Another HTML5 drag interception is already active for this tab");
+  }
+  const state = {
+    armed: false,
+    settled: false,
+    timer: null,
+    resolve: null,
+    reject: null,
+    promise: null,
+  };
+  state.promise = new Promise((resolve, reject) => {
+    state.resolve = resolve;
+    state.reject = reject;
+  });
+  state.promise.catch(() => {});
+  state.timer = setTimeout(() => {
+    if (html5DragInterceptStates.get(tabId) !== state || state.settled) return;
+    html5DragInterceptStates.delete(tabId);
+    state.settled = true;
+    state.reject(new Error("Timed out waiting for Chrome to intercept an HTML5 drag payload"));
+  }, Math.max(100, Math.min(Number(timeoutMs) || HTML5_DRAG_INTERCEPT_TIMEOUT_MS, 5_000)));
+  html5DragInterceptStates.set(tabId, state);
+  return state;
+}
+
+function resolveHtml5DragIntercept(tabId, source, params) {
+  const state = html5DragInterceptStates.get(tabId);
+  if (!state) return false;
+  if (!state.armed) return false;
+  if (source?.sessionId) {
+    rejectPendingHtml5DragIntercept(tabId, "HTML5 drag interception from a child CDP session is not supported safely");
+    return true;
+  }
+  html5DragInterceptStates.delete(tabId);
+  clearTimeout(state.timer);
+  state.settled = true;
+  state.resolve(params?.data ?? null);
+  return true;
+}
+
+function normalizeHtml5DragData(data) {
+  if (!data || typeof data !== "object" || Array.isArray(data)) {
+    throw new Error("Chrome did not provide a valid HTML5 drag payload");
+  }
+  const items = Array.isArray(data.items) ? data.items : [];
+  const files = Array.isArray(data.files) ? data.files : [];
+  if (items.length > MAX_HTML5_DRAG_ITEMS) throw new Error("HTML5 drag payload contains too many data items");
+  if (files.length > MAX_HTML5_DRAG_FILES) throw new Error("HTML5 drag payload contains too many files");
+
+  let totalChars = 0;
+  const normalizedItems = items.map((item) => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) {
+      throw new Error("HTML5 drag payload contains an invalid data item");
+    }
+    const mimeType = String(item.mimeType || "");
+    const itemData = String(item.data ?? "");
+    const title = item.title == null ? null : String(item.title);
+    const baseURL = item.baseURL == null ? null : String(item.baseURL);
+    if (!mimeType || mimeType.length > 256) throw new Error("HTML5 drag payload contains an invalid MIME type");
+    if (title != null && title.length > 4_096) throw new Error("HTML5 drag payload title is too large");
+    if (baseURL != null && baseURL.length > 8_192) throw new Error("HTML5 drag payload base URL is too large");
+    totalChars += mimeType.length + itemData.length + (title?.length || 0) + (baseURL?.length || 0);
+    return {
+      mimeType,
+      data: itemData,
+      ...(title == null ? {} : { title }),
+      ...(baseURL == null ? {} : { baseURL }),
+    };
+  });
+  const normalizedFiles = files.map((file) => {
+    const value = String(file || "");
+    if (!value || value.length > 8_192) throw new Error("HTML5 drag payload contains an invalid file path");
+    totalChars += value.length;
+    return value;
+  });
+  if (totalChars > MAX_HTML5_DRAG_DATA_CHARS) throw new Error("HTML5 drag payload exceeds the bounded data limit");
+
+  const dragOperationsMask = Number(data.dragOperationsMask);
+  if (!Number.isInteger(dragOperationsMask) || dragOperationsMask < 0 || dragOperationsMask > 0xffff_ffff) {
+    throw new Error("HTML5 drag payload contains an invalid operation mask");
+  }
+  return {
+    data: {
+      items: normalizedItems,
+      files: normalizedFiles,
+      dragOperationsMask,
+    },
+    summary: {
+      itemCount: normalizedItems.length,
+      fileCount: normalizedFiles.length,
+      hasFiles: normalizedFiles.length > 0,
+      mimeTypes: [...new Set(normalizedItems.map((item) => item.mimeType))].slice(0, 16),
+      dragOperationsMask,
+    },
+  };
 }
 
 function rejectPendingLocalRequests(reason) {
@@ -571,6 +762,7 @@ function currentDocumentGeneration(tabId) {
 function invalidateRefs(tabId, { bumpGeneration = false } = {}) {
   if (bumpGeneration) {
     documentGenerations.set(tabId, currentDocumentGeneration(tabId) + 1);
+    refRegistries.delete(tabId);
     return;
   }
   refStates.delete(tabId);
@@ -670,6 +862,7 @@ async function detachTab(tabId) {
   refStates.delete(tabId);
   observationStates.delete(tabId);
   dialogStates.delete(tabId);
+  rejectPendingHtml5DragIntercept(tabId, "Debugger detached while waiting for HTML5 drag interception");
   try {
     await chrome.debugger.detach({ tabId });
   } catch {
@@ -684,9 +877,45 @@ async function requireDebuggableTab(tabId) {
   return tab;
 }
 
-function pushBounded(list, value) {
+function pushBounded(list, value, limit = MAX_OBSERVATION_EVENTS) {
   list.push(value);
-  if (list.length > MAX_OBSERVATION_EVENTS) list.splice(0, list.length - MAX_OBSERVATION_EVENTS);
+  if (list.length > limit) list.splice(0, list.length - limit);
+}
+
+function pushObservationEvent(state, stream, value) {
+  const cursorField = `${stream}Cursor`;
+  const cursor = (Number(state[cursorField]) || 0) + 1;
+  state[cursorField] = cursor;
+  pushBounded(state[stream], { cursor, ...value });
+  return cursor;
+}
+
+function rememberNetworkRequest(state, requestId, metadata) {
+  if (!requestId) return;
+  if (!(state.networkRequests instanceof Map)) state.networkRequests = new Map();
+  state.networkRequests.delete(requestId);
+  state.networkRequests.set(requestId, metadata);
+  while (state.networkRequests.size > MAX_OBSERVATION_EVENTS) {
+    const oldest = state.networkRequests.keys().next().value;
+    if (oldest == null) break;
+    state.networkRequests.delete(oldest);
+  }
+}
+
+function networkRequestMetadata(state, requestId) {
+  return requestId ? state.networkRequests?.get(requestId) || null : null;
+}
+
+function forgetNetworkRequest(state, requestId) {
+  if (requestId) state.networkRequests?.delete(requestId);
+}
+
+function normalizeObservationCursor(value, currentCursor) {
+  if (value == null) return null;
+  const cursor = Number(value);
+  if (!Number.isSafeInteger(cursor) || cursor < 0) throw new Error("Observation cursor must be a non-negative safe integer.");
+  if (cursor > currentCursor) throw new Error(`Observation cursor ${cursor} is ahead of the current cursor ${currentCursor}.`);
+  return cursor;
 }
 
 function getObservation(tabId) {
@@ -775,11 +1004,107 @@ function safeObservedUrl(rawUrl) {
   }
 }
 
-function observationSlice(list, limit = 100, clear = false) {
+function observationRead(state, stream, { limit = 100, clear = false, afterCursor = null, predicate = null } = {}) {
+  const list = state[stream];
   const boundedLimit = Math.max(1, Math.min(Number(limit) || 100, 500));
-  const items = list.slice(-boundedLimit);
+  const currentCursor = Number(state[`${stream}Cursor`]) || 0;
+  const cursor = normalizeObservationCursor(afterCursor, currentCursor);
+  if (cursor != null && clear) throw new Error("clear cannot be combined with after_cursor; advance the stable cursor instead.");
+  const minAvailableCursor = list.length > 0 ? Math.max(0, Number(list[0]?.cursor) - 1) : currentCursor;
+  if (cursor != null && cursor < minAvailableCursor) {
+    throw new Error(`Observation cursor ${cursor} is no longer available; the bounded event buffer now starts after cursor ${minAvailableCursor}.`);
+  }
+  let candidates = cursor == null ? list : list.filter((item) => Number(item?.cursor) > cursor);
+  if (typeof predicate === "function") candidates = candidates.filter(predicate);
+  let items;
+  let hasMore = false;
+  let nextCursor = currentCursor;
+  if (cursor == null) {
+    items = candidates.slice(-boundedLimit);
+  } else {
+    items = candidates.slice(0, boundedLimit);
+    hasMore = candidates.length > items.length;
+    if (hasMore && items.length > 0) nextCursor = Number(items[items.length - 1].cursor);
+  }
   if (clear) list.length = 0;
-  return items;
+  return {
+    items,
+    returned: items.length,
+    matched: candidates.length,
+    nextCursor,
+    currentCursor,
+    minAvailableCursor,
+    hasMore,
+    cleared: Boolean(clear),
+  };
+}
+
+function normalizeConsoleLevelFilter(level) {
+  if (level == null || level === "") return null;
+  const normalized = String(level).trim().toLowerCase();
+  if (!CONSOLE_LEVEL_FILTERS.has(normalized)) throw new Error(`Unsupported console level filter: ${String(level)}`);
+  return normalized;
+}
+
+function consoleEventMatches(event, { level = null, query = null } = {}) {
+  if (level && String(event?.level || "").toLowerCase() !== level) return false;
+  if (!query) return true;
+  const normalizedQuery = String(query).toLowerCase();
+  const argsText = JSON.stringify(event?.args || []).slice(0, 20_000);
+  const haystack = [event?.kind, event?.level, event?.text, event?.url, argsText]
+    .filter((value) => value != null)
+    .join(" ")
+    .toLowerCase();
+  return haystack.includes(normalizedQuery);
+}
+
+function normalizeNetworkFilters({ urlContains = null, method = null, status = null, resourceType = null } = {}) {
+  const normalizedMethod = method == null || method === "" ? null : String(method).trim().toUpperCase();
+  if (normalizedMethod && !/^[A-Z]{1,16}$/.test(normalizedMethod)) throw new Error("Network method filter must contain 1-16 ASCII letters.");
+  let normalizedStatus = null;
+  if (status != null) {
+    normalizedStatus = Number(status);
+    if (!Number.isInteger(normalizedStatus) || normalizedStatus < 100 || normalizedStatus > 599) {
+      throw new Error("Network status filter must be an integer between 100 and 599.");
+    }
+  }
+  const normalizedResourceType = resourceType == null || resourceType === ""
+    ? null
+    : String(resourceType).trim().toLowerCase();
+  if (normalizedResourceType && !NETWORK_RESOURCE_TYPE_FILTERS.has(normalizedResourceType)) {
+    throw new Error(`Unsupported network resource type filter: ${String(resourceType)}`);
+  }
+  const normalizedUrl = urlContains == null || urlContains === "" ? null : String(urlContains).slice(0, 4_000);
+  return {
+    urlContains: normalizedUrl,
+    method: normalizedMethod,
+    status: normalizedStatus,
+    resourceType: normalizedResourceType,
+  };
+}
+
+function networkEventMatches(event, filters = {}) {
+  if (filters.urlContains && !String(event?.url || "").includes(filters.urlContains)) return false;
+  if (filters.method && String(event?.method || "").toUpperCase() !== filters.method) return false;
+  if (filters.status != null && Number(event?.status) !== filters.status) return false;
+  if (filters.resourceType && String(event?.type || "").toLowerCase() !== filters.resourceType) return false;
+  return true;
+}
+
+function addNetworkResponseWaitState(tabId, state) {
+  let waiters = networkResponseWaitStates.get(tabId);
+  if (!waiters) {
+    waiters = new Set();
+    networkResponseWaitStates.set(tabId, waiters);
+  }
+  waiters.add(state);
+}
+
+function removeNetworkResponseWaitState(tabId, state) {
+  const waiters = networkResponseWaitStates.get(tabId);
+  if (!waiters) return;
+  waiters.delete(state);
+  if (waiters.size === 0) networkResponseWaitStates.delete(tabId);
 }
 
 function axProperty(node, name) {
@@ -839,13 +1164,280 @@ async function collectFrameContexts(tabId) {
   return [...contexts.values()];
 }
 
-async function frameAccessibilityTree(tabId, frame) {
+async function frameAccessibilityTree(tabId, frame, { rootBackendNodeId = null } = {}) {
   await send(tabId, "Accessibility.enable", {}, frame.sessionId);
+  if (Number.isInteger(rootBackendNodeId)) {
+    await send(tabId, "DOM.enable", {}, frame.sessionId);
+    return await send(tabId, "Accessibility.queryAXTree", {
+      backendNodeId: rootBackendNodeId,
+    }, frame.sessionId);
+  }
   try {
     return await send(tabId, "Accessibility.getFullAXTree", { frameId: frame.id }, frame.sessionId);
   } catch (error) {
     if (!frame.sessionId || (frame.targetId && frame.targetId !== frame.id)) throw error;
     return await send(tabId, "Accessibility.getFullAXTree", {}, frame.sessionId);
+  }
+}
+
+function normalizeSnapshotMode(mode, includeReadable) {
+  if (mode == null || mode === "") return includeReadable === false ? "interactive" : "balanced";
+  const normalized = String(mode).toLowerCase();
+  if (!new Set(["interactive", "readable", "balanced"]).has(normalized)) {
+    throw new Error(`Unsupported snapshot mode: ${String(mode)}`);
+  }
+  return normalized;
+}
+
+function normalizeSnapshotScope(scope) {
+  const normalized = String(scope || "document").toLowerCase();
+  if (!new Set(["document", "viewport"]).has(normalized)) {
+    throw new Error(`Unsupported snapshot scope: ${String(scope)}`);
+  }
+  return normalized;
+}
+
+function normalizeSnapshotRoles(roles) {
+  if (!Array.isArray(roles) || roles.length === 0) return null;
+  return new Set(
+    roles
+      .map((role) => String(role || "").trim().toLowerCase())
+      .filter(Boolean)
+      .slice(0, 50),
+  );
+}
+
+async function frameViewport(tabId, frame) {
+  const metrics = await send(tabId, "Page.getLayoutMetrics", {}, frame.sessionId);
+  const viewport = metrics?.cssLayoutViewport || metrics?.layoutViewport;
+  const x = Number(viewport?.pageX ?? 0);
+  const y = Number(viewport?.pageY ?? 0);
+  const width = Number(viewport?.clientWidth ?? viewport?.width ?? 0);
+  const height = Number(viewport?.clientHeight ?? viewport?.height ?? 0);
+  if (![x, y, width, height].every(Number.isFinite) || width <= 0 || height <= 0) return null;
+  return { x, y, width, height };
+}
+
+async function backendNodeBounds(tabId, frame, backendNodeId) {
+  if (!Number.isInteger(backendNodeId)) return null;
+  try {
+    const result = await send(tabId, "DOM.getBoxModel", { backendNodeId }, frame.sessionId);
+    const quad = result?.model?.border || result?.model?.content || result?.model?.padding || result?.model?.margin;
+    if (!Array.isArray(quad) || quad.length < 8) return null;
+    const xs = [quad[0], quad[2], quad[4], quad[6]].map(Number);
+    const ys = [quad[1], quad[3], quad[5], quad[7]].map(Number);
+    if (![...xs, ...ys].every(Number.isFinite)) return null;
+    return {
+      left: Math.min(...xs),
+      top: Math.min(...ys),
+      right: Math.max(...xs),
+      bottom: Math.max(...ys),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function boundsIntersectViewport(bounds, viewport) {
+  if (!bounds || !viewport) return false;
+  return !(
+    bounds.right <= viewport.x ||
+    bounds.left >= viewport.x + viewport.width ||
+    bounds.bottom <= viewport.y ||
+    bounds.top >= viewport.y + viewport.height
+  );
+}
+
+function rememberSnapshotState(tabId, state) {
+  if (!Number.isInteger(tabId) || !state?.id) return;
+  const history = snapshotHistories.get(tabId) || [];
+  history.push(state);
+  if (history.length > MAX_SNAPSHOT_HISTORY) history.splice(0, history.length - MAX_SNAPSHOT_HISTORY);
+  snapshotHistories.set(tabId, history);
+}
+
+function snapshotStateById(tabId, snapshotId) {
+  const history = snapshotHistories.get(tabId) || [];
+  return history.find((item) => item.id === snapshotId) || null;
+}
+
+function stableRefForIdentity(tabId, generation, identity) {
+  let registry = refRegistries.get(tabId);
+  if (!registry || registry.documentGeneration !== generation) {
+    registry = {
+      documentGeneration: generation,
+      nextRefIndex: 1,
+      byIdentity: new Map(),
+    };
+    refRegistries.set(tabId, registry);
+  }
+  const existing = registry.byIdentity.get(identity);
+  if (existing) return existing;
+  const ref = `@e${registry.nextRefIndex++}`;
+  registry.byIdentity.set(identity, ref);
+  while (registry.byIdentity.size > MAX_REF_REGISTRY_ENTRIES) {
+    const oldest = registry.byIdentity.keys().next().value;
+    if (oldest == null) break;
+    registry.byIdentity.delete(oldest);
+  }
+  return ref;
+}
+
+function publicSnapshotElement(element) {
+  const { backendNodeId: _backendNodeId, identity: _identity, ...publicElement } = element;
+  return publicElement;
+}
+
+function snapshotElementSignature(element) {
+  const { ref: _ref, ...comparable } = publicSnapshotElement(element);
+  return JSON.stringify(comparable);
+}
+
+function snapshotFilterSignature(filters) {
+  return JSON.stringify({
+    mode: filters?.mode || "balanced",
+    scope: filters?.scope || "document",
+    maxNodes: Number(filters?.maxNodes) || MAX_SNAPSHOT_ELEMENTS,
+    rootRef: filters?.rootRef || null,
+    roles: Array.isArray(filters?.roles) ? [...filters.roles].sort() : null,
+    query: filters?.query || null,
+  });
+}
+
+function buildSnapshotDelta(base, currentElements, snapshotId) {
+  const baseElements = Array.isArray(base?.elements) ? base.elements : [];
+  const baseByIdentity = new Map(baseElements.map((element) => [element.identity, element]));
+  const currentByIdentity = new Map(currentElements.map((element) => [element.identity, element]));
+  const added = [];
+  const removed = [];
+  const changed = [];
+  const retainedRefs = [];
+
+  for (const current of currentElements) {
+    const previous = baseByIdentity.get(current.identity);
+    if (!previous) {
+      added.push(publicSnapshotElement(current));
+      continue;
+    }
+    if (current.ref) retainedRefs.push(current.ref);
+    if (snapshotElementSignature(previous) !== snapshotElementSignature(current)) {
+      changed.push({
+        ref: current.ref || null,
+        before: publicSnapshotElement(previous),
+        after: publicSnapshotElement(current),
+      });
+    }
+  }
+
+  for (const previous of baseElements) {
+    if (currentByIdentity.has(previous.identity)) continue;
+    const publicPrevious = publicSnapshotElement(previous);
+    removed.push({
+      ...publicPrevious,
+      previousRef: publicPrevious.ref || null,
+      ref: null,
+    });
+  }
+
+  return {
+    version: DELTA_SNAPSHOT_VERSION,
+    baseSnapshotId: base.id,
+    snapshotId,
+    added,
+    removed,
+    changed,
+    retainedRefs,
+    retainedCount: retainedRefs.length,
+  };
+}
+
+function mutationTrackerExpression() {
+  return `(() => {
+    const key = '__equinox_browser_mutation_tracker__';
+    const ignoredHostIds = [
+      ${JSON.stringify(AGENT_CURSOR_HOST_ID)},
+      ${JSON.stringify(SCREENSHOT_ANNOTATION_HOST_ID)},
+    ];
+    if (!window[key]) {
+      const state = { count: 0 };
+      const isIgnoredNode = (node) => {
+        if (!node) return false;
+        const element = node.nodeType === 1 ? node : node.parentElement;
+        if (!element) return false;
+        return ignoredHostIds.some((hostId) => (
+          element.id === hostId || Boolean(element.closest?.('#' + hostId))
+        ));
+      };
+      const observer = new MutationObserver((records) => {
+        const meaningful = records.some((record) => {
+          if (isIgnoredNode(record.target)) return false;
+          if (record.type === 'childList') {
+            const changed = [...record.addedNodes, ...record.removedNodes];
+            if (changed.length > 0 && changed.every((node) => isIgnoredNode(node))) return false;
+          }
+          return true;
+        });
+        if (meaningful) state.count += 1;
+      });
+      observer.observe(document, {
+        subtree: true,
+        childList: true,
+        attributes: true,
+        characterData: true,
+      });
+      Object.defineProperty(window, key, { value: state, configurable: true });
+    }
+    return Number(window[key].count) || 0;
+  })()`;
+}
+
+async function domMutationCounter(tabId) {
+  const evaluated = await send(tabId, "Runtime.evaluate", {
+    expression: mutationTrackerExpression(),
+    returnByValue: true,
+  });
+  const value = Number(evaluated?.result?.value);
+  return Number.isFinite(value) && value >= 0 ? value : 0;
+}
+
+async function inspectLiveRef(tabId, ref) {
+  const target = lookupRef(tabId, ref);
+  let objectId = null;
+  try {
+    const resolved = await send(tabId, "DOM.resolveNode", { backendNodeId: target.backendNodeId }, target.sessionId);
+    objectId = resolved?.object?.objectId || null;
+    if (!objectId) return { exists: false, visible: false, enabled: false };
+    const evaluated = await send(tabId, "Runtime.callFunctionOn", {
+      objectId,
+      functionDeclaration: `function() {
+        const exists = this.isConnected !== false;
+        if (!exists) return { exists: false, visible: false, enabled: false };
+        const style = globalThis.getComputedStyle ? getComputedStyle(this) : null;
+        const rect = typeof this.getBoundingClientRect === 'function' ? this.getBoundingClientRect() : null;
+        const hasBox = !rect || (Number(rect.width) > 0 && Number(rect.height) > 0);
+        const visible = Boolean(
+          hasBox &&
+          (!style || (style.display !== 'none' && style.visibility !== 'hidden' && style.visibility !== 'collapse' && Number(style.opacity || 1) > 0))
+        );
+        const disabled = Boolean(this.disabled) || this.getAttribute?.('aria-disabled') === 'true';
+        return { exists: true, visible, enabled: !disabled };
+      }`,
+      returnByValue: true,
+    }, target.sessionId);
+    const value = evaluated?.result?.value || {};
+    return {
+      exists: Boolean(value.exists),
+      visible: Boolean(value.visible),
+      enabled: Boolean(value.enabled),
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (/No node|Could not find node|Node with given id|Cannot find context|object.*not found/i.test(message)) {
+      return { exists: false, visible: false, enabled: false };
+    }
+    throw error;
+  } finally {
+    if (objectId) await send(tabId, "Runtime.releaseObject", { objectId }, target.sessionId).catch(() => {});
   }
 }
 
@@ -890,10 +1482,64 @@ function pageKindFromFrames(basePolicy, frames) {
   return basePolicy?.kind || "unknown";
 }
 
-function restrictedSnapshot(tab, policy) {
+function normalizeSnapshotOutput(output) {
+  const value = String(output || "both").toLowerCase();
+  if (!new Set(["compact", "structured", "text", "both"]).has(value)) {
+    throw new Error(`Unsupported snapshot output mode: ${value}`);
+  }
+  return value;
+}
+
+function projectSnapshotOutput(response, output) {
+  const mode = normalizeSnapshotOutput(output);
+  if (mode === "both") return { ...response, outputMode: mode };
+  const common = {
+    tab: response.tab,
+    snapshotVersion: response.snapshotVersion,
+    deltaVersion: response.deltaVersion,
+    restricted: response.restricted,
+    pageKind: response.pageKind,
+    debuggerSupported: response.debuggerSupported,
+    ...(response.reason ? { reason: response.reason } : {}),
+    ...(response.snapshot ? { snapshot: response.snapshot } : {}),
+    ...(Number.isInteger(response.refCount) ? { refCount: response.refCount } : {}),
+    ...(Number.isInteger(response.elementCount) ? { elementCount: response.elementCount } : {}),
+    ...(Number.isInteger(response.returnedElementCount) ? { returnedElementCount: response.returnedElementCount } : {}),
+    ...(typeof response.truncated === "boolean" ? { truncated: response.truncated } : {}),
+    ...(typeof response.deltaOnly === "boolean" ? { deltaOnly: response.deltaOnly } : {}),
+    outputMode: mode,
+  };
+  if (mode === "compact") {
+    if (response.deltaOnly && response.delta) return { ...common, delta: response.delta };
+    return { ...common, text: response.text || "" };
+  }
+  if (mode === "text") {
+    return {
+      tab: response.tab,
+      snapshotVersion: response.snapshotVersion,
+      restricted: response.restricted,
+      pageKind: response.pageKind,
+      debuggerSupported: response.debuggerSupported,
+      ...(response.reason ? { reason: response.reason } : {}),
+      ...(response.snapshot ? { snapshot: response.snapshot } : {}),
+      outputMode: mode,
+      text: response.text || "",
+    };
+  }
   return {
+    ...common,
+    frames: response.frames || [],
+    delta: response.delta ?? null,
+    elements: response.elements || [],
+  };
+}
+
+function restrictedSnapshot(tab, policy, output = "both") {
+  const response = {
     tab: { id: tab.id, windowId: tab.windowId, title: tab.title, url: tab.url, active: tab.active },
     restricted: true,
+    snapshotVersion: SNAPSHOT_VERSION,
+    deltaVersion: DELTA_SNAPSHOT_VERSION,
     pageKind: policy?.kind || "unknown",
     debuggerSupported: false,
     reason: policy?.reason || "restricted",
@@ -903,53 +1549,129 @@ function restrictedSnapshot(tab, policy) {
     elementCount: 0,
     elements: [],
   };
+  return projectSnapshotOutput(response, output);
 }
 
-async function browserSnapshot({ tabId, includeReadable = true } = {}) {
+async function browserSnapshot({
+  tabId,
+  includeReadable = true,
+  mode,
+  scope = "document",
+  maxNodes = MAX_SNAPSHOT_ELEMENTS,
+  rootRef,
+  roles,
+  query,
+  sinceSnapshotId,
+  output = "both",
+} = {}) {
+  const snapshotMode = normalizeSnapshotMode(mode, includeReadable);
+  const snapshotScope = normalizeSnapshotScope(scope);
+  const snapshotOutput = normalizeSnapshotOutput(output);
+  const requestedMaxNodes = Math.max(1, Math.min(
+    Number.isFinite(Number(maxNodes)) ? Math.floor(Number(maxNodes)) : MAX_SNAPSHOT_ELEMENTS,
+    MAX_SNAPSHOT_ELEMENTS,
+  ));
+  const roleFilter = normalizeSnapshotRoles(roles);
+  const queryNeedle = String(query || "").trim().toLowerCase();
+  const filters = {
+    mode: snapshotMode,
+    scope: snapshotScope,
+    maxNodes: requestedMaxNodes,
+    rootRef: rootRef || null,
+    roles: roleFilter ? [...roleFilter].sort() : null,
+    query: queryNeedle || null,
+  };
   const tab = await chooseTab(tabId);
+  const baseSnapshot = sinceSnapshotId
+    ? snapshotStateById(tab.id, String(sinceSnapshotId))
+    : null;
+  if (sinceSnapshotId && !baseSnapshot) {
+    throw new Error(`Snapshot id is unavailable or outside the bounded history: ${String(sinceSnapshotId)}`);
+  }
+  if (baseSnapshot && snapshotFilterSignature(baseSnapshot.filters) !== snapshotFilterSignature(filters)) {
+    throw new Error("Delta snapshot filters must match the base snapshot filters exactly.");
+  }
   const policy = classifyBrowserPage(tab);
-  if (!policy.debuggerSupported) return restrictedSnapshot(tab, policy);
+  if (!policy.debuggerSupported) return restrictedSnapshot(tab, policy, snapshotOutput);
   await requireDebuggableTab(tab.id);
   try {
     await attachTab(tab.id);
   } catch (error) {
     if (error?.code === "EQUINOX_RESTRICTED_PAGE") {
-      return restrictedSnapshot(tab, { kind: error.pageKind, reason: error.reason });
+      return restrictedSnapshot(tab, { kind: error.pageKind, reason: error.reason }, snapshotOutput);
     }
     throw error;
   }
+  const rootTarget = rootRef ? lookupRef(tab.id, String(rootRef)) : null;
   const frames = await collectFrameContexts(tab.id);
   const pageKind = pageKindFromFrames(policy, frames);
   if (pageKind === "browser-owned-error") {
     await detachTab(tab.id);
-    return restrictedSnapshot(tab, { kind: pageKind, reason: "browser-owned" });
+    return restrictedSnapshot(tab, { kind: pageKind, reason: "browser-owned" }, snapshotOutput);
   }
   const generation = currentDocumentGeneration(tab.id);
   const mainFrameId = frames.find((frame) => !frame.parentId && !frame.sessionId)?.id || frames[0]?.id || null;
+  const selectedFrames = rootTarget
+    ? frames.filter((frame) => frame.id === rootTarget.frameId && (frame.sessionId || null) === (rootTarget.sessionId || null))
+    : frames;
+  if (rootTarget && selectedFrames.length !== 1) {
+    throw new Error(`Snapshot root ref frame is unavailable: ${String(rootRef)}`);
+  }
   const refs = new Map();
   const elements = [];
-  let refIndex = 1;
+  let truncated = false;
 
-  for (const frame of frames) {
-    if (elements.length >= MAX_SNAPSHOT_ELEMENTS) break;
+  for (const frame of selectedFrames) {
+    if (elements.length >= requestedMaxNodes) {
+      truncated = true;
+      break;
+    }
     let tree;
     try {
-      tree = await frameAccessibilityTree(tab.id, frame);
-    } catch {
+      tree = await frameAccessibilityTree(tab.id, frame, {
+        rootBackendNodeId: rootTarget?.backendNodeId ?? null,
+      });
+    } catch (error) {
+      if (rootTarget) throw error;
       continue;
     }
-    for (const node of tree?.nodes || []) {
+    const viewport = snapshotScope === "viewport" ? await frameViewport(tab.id, frame) : null;
+    const nodes = tree?.nodes || [];
+    for (let nodeIndex = 0; nodeIndex < nodes.length; nodeIndex += 1) {
+      const node = nodes[nodeIndex];
       if (node?.ignored) continue;
       const role = node?.role?.value || "";
       const name = node?.name?.value || "";
       const value = node?.value?.value ?? null;
       const backendNodeId = node?.backendDOMNodeId;
       const interactive = INTERACTIVE_ROLES.has(role) && Number.isInteger(backendNodeId);
-      const readable = includeReadable && READABLE_ROLES.has(role) && Boolean(name);
-      if (!interactive && !readable) continue;
-      if (elements.length >= MAX_SNAPSHOT_ELEMENTS) break;
+      const readable = READABLE_ROLES.has(role) && Boolean(name);
+      const modeMatched = (
+        (snapshotMode !== "readable" && interactive) ||
+        (snapshotMode !== "interactive" && readable)
+      );
+      if (!modeMatched) continue;
+      if (roleFilter && !roleFilter.has(String(role).toLowerCase())) continue;
+      if (queryNeedle) {
+        const haystack = [role, name, value]
+          .filter((part) => part != null)
+          .map((part) => String(part).toLowerCase());
+        if (!haystack.some((part) => part.includes(queryNeedle))) continue;
+      }
+      if (snapshotScope === "viewport") {
+        const bounds = await backendNodeBounds(tab.id, frame, backendNodeId);
+        if (!boundsIntersectViewport(bounds, viewport)) continue;
+      }
+      if (elements.length >= requestedMaxNodes) {
+        truncated = true;
+        break;
+      }
 
+      const identityWithinDocument = interactive
+        ? `dom:${frame.sessionId || "root"}:${frame.id}:${backendNodeId}`
+        : `ax:${frame.sessionId || "root"}:${frame.id}:${node?.nodeId || `${nodeIndex}:${role}:${name}:${String(value ?? "")}`}`;
       const element = {
+        identity: `${generation}:${identityWithinDocument}`,
         ref: null,
         role,
         name,
@@ -965,12 +1687,13 @@ async function browserSnapshot({ tabId, includeReadable = true } = {}) {
         backendNodeId: interactive ? backendNodeId : null,
       };
       if (interactive) {
-        element.ref = `@e${refIndex++}`;
+        element.ref = stableRefForIdentity(tab.id, generation, identityWithinDocument);
         refs.set(element.ref, {
           backendNodeId,
           role,
           name,
           frameId: frame.id,
+          value,
           sessionId: frame.sessionId,
           targetId: frame.targetId,
           documentGeneration: generation,
@@ -978,9 +1701,11 @@ async function browserSnapshot({ tabId, includeReadable = true } = {}) {
       }
       elements.push(element);
     }
+    if (truncated) break;
   }
 
   const snapshotId = `${tab.id}:${generation}:${Date.now()}`;
+  const mutationCounter = await domMutationCounter(tab.id).catch(() => null);
   refStates.set(tab.id, {
     snapshotId,
     createdAt: Date.now(),
@@ -988,10 +1713,35 @@ async function browserSnapshot({ tabId, includeReadable = true } = {}) {
     url: tab.url,
     refs,
   });
+  const historyElements = elements.map((element) => ({ ...element }));
+  const delta = baseSnapshot ? buildSnapshotDelta(baseSnapshot, historyElements, snapshotId) : null;
+  rememberSnapshotState(tab.id, {
+    id: snapshotId,
+    createdAt: Date.now(),
+    documentGeneration: generation,
+    url: tab.url,
+    mutationCounter,
+    filters,
+    elements: historyElements,
+  });
   scheduleDetach(tab.id);
 
-  return {
+  const publicElements = elements.map(publicSnapshotElement);
+  const returnedElements = delta
+    ? [...delta.added, ...delta.changed.map((item) => item.after)]
+    : publicElements;
+  const responseText = delta
+    ? [
+        ...delta.added.map((item) => `+ ${formatSnapshotLine(item)}`),
+        ...delta.changed.map((item) => `~ ${formatSnapshotLine(item.after)}`),
+        ...delta.removed.map((item) => `- ${formatSnapshotLine({ ...item, ref: item.previousRef || null })}`),
+      ].join("\n")
+    : publicElements.map(formatSnapshotLine).join("\n");
+
+  const response = {
     tab: { id: tab.id, windowId: tab.windowId, title: tab.title, url: tab.url, active: tab.active },
+    snapshotVersion: SNAPSHOT_VERSION,
+    deltaVersion: DELTA_SNAPSHOT_VERSION,
     restricted: false,
     pageKind,
     debuggerSupported: true,
@@ -1000,16 +1750,141 @@ async function browserSnapshot({ tabId, includeReadable = true } = {}) {
       documentGeneration: generation,
       mainFrameId,
       createdAt: new Date().toISOString(),
+      mutationCounter,
+      filters,
     },
     frames: frames.map((frame) => publicFrameContext(frame, mainFrameId)),
     refCount: refs.size,
     elementCount: elements.length,
-    text: elements.map(formatSnapshotLine).join("\n"),
-    elements: elements.map(({ backendNodeId, ...publicElement }) => publicElement),
+    returnedElementCount: returnedElements.length,
+    truncated,
+    deltaOnly: Boolean(delta),
+    delta,
+    text: responseText,
+    elements: returnedElements,
+  };
+  return projectSnapshotOutput(response, snapshotOutput);
+}
+
+function normalizeScreenshotClip(clip) {
+  if (!clip || typeof clip !== "object") return null;
+  const x = Number(clip.x);
+  const y = Number(clip.y);
+  const width = Number(clip.width);
+  const height = Number(clip.height);
+  if (![x, y, width, height].every(Number.isFinite)) {
+    throw new Error("Screenshot clip coordinates must be finite numbers.");
+  }
+  if (x < 0 || y < 0 || width <= 0 || height <= 0) {
+    throw new Error("Screenshot clip requires x/y >= 0 and width/height > 0.");
+  }
+  return { x, y, width, height };
+}
+
+async function buildScreenshotAnnotations(tabId, captureClip) {
+  const state = refStates.get(tabId);
+  if (!state) throw new Error("annotateRefs requires a current snapshot. Take a new snapshot first.");
+  const generation = currentDocumentGeneration(tabId);
+  if (state.documentGeneration !== generation) {
+    refStates.delete(tabId);
+    throw new Error("annotateRefs snapshot refs are stale after document/frame navigation.");
+  }
+  const viewport = {
+    x: captureClip.x,
+    y: captureClip.y,
+    width: captureClip.width,
+    height: captureClip.height,
+  };
+  const labels = [];
+  const skippedOopifRefs = [];
+  let intersectingRootRefs = 0;
+  for (const [ref, target] of state.refs.entries()) {
+    if (target.sessionId) {
+      skippedOopifRefs.push(ref);
+      continue;
+    }
+    const bounds = await backendNodeBounds(
+      tabId,
+      { id: target.frameId, sessionId: null },
+      target.backendNodeId,
+    );
+    if (!bounds || !boundsIntersectViewport(bounds, viewport)) continue;
+    intersectingRootRefs += 1;
+    if (labels.length >= MAX_SCREENSHOT_ANNOTATIONS) continue;
+    labels.push({
+      ref,
+      x: Math.max(captureClip.x + 2, bounds.left),
+      y: Math.max(captureClip.y + 2, bounds.top),
+    });
+  }
+  return {
+    labels,
+    skippedOopifRefs,
+    truncated: intersectingRootRefs > labels.length,
   };
 }
 
-async function browserScreenshot({ tabId, fullPage = false, pixelDensity = "css-1x" } = {}) {
+async function injectScreenshotAnnotations(tabId, annotationData) {
+  const payload = JSON.stringify({
+    hostId: SCREENSHOT_ANNOTATION_HOST_ID,
+    labels: annotationData.labels,
+  });
+  await send(tabId, "Runtime.evaluate", {
+    expression: `(() => {
+      const data = ${payload};
+      document.getElementById(data.hostId)?.remove();
+      const root = document.documentElement || document.body;
+      if (!root) return 0;
+      const host = document.createElement('div');
+      host.id = data.hostId;
+      host.setAttribute('aria-hidden', 'true');
+      Object.assign(host.style, {
+        position: 'absolute', left: '0', top: '0', width: '0', height: '0',
+        overflow: 'visible', pointerEvents: 'none', zIndex: '2147483647',
+        contain: 'none'
+      });
+      for (const item of data.labels) {
+        const label = document.createElement('div');
+        label.textContent = item.ref;
+        Object.assign(label.style, {
+          position: 'absolute', left: item.x + 'px', top: item.y + 'px',
+          transform: 'translate(-2px,-2px)', padding: '2px 5px', borderRadius: '5px',
+          background: 'rgba(17, 20, 28, .90)', color: '#fff',
+          border: '1px solid rgba(255,255,255,.88)',
+          boxShadow: '0 1px 4px rgba(0,0,0,.42)',
+          font: '700 11px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace',
+          whiteSpace: 'nowrap', pointerEvents: 'none'
+        });
+        host.appendChild(label);
+      }
+      root.appendChild(host);
+      return data.labels.length;
+    })()`,
+    returnByValue: true,
+  });
+}
+
+async function removeScreenshotAnnotations(tabId) {
+  await send(tabId, "Runtime.evaluate", {
+    expression: `document.getElementById(${JSON.stringify(SCREENSHOT_ANNOTATION_HOST_ID)})?.remove(); true`,
+    returnByValue: true,
+  }).catch(() => {});
+}
+
+async function browserScreenshot({
+  tabId,
+  fullPage = false,
+  pixelDensity = "css-1x",
+  ref,
+  clip,
+  annotateRefs = false,
+} = {}) {
+  const explicitClip = normalizeScreenshotClip(clip);
+  const specializedCount = [Boolean(fullPage), Boolean(ref), Boolean(explicitClip)].filter(Boolean).length;
+  if (specializedCount > 1) {
+    throw new Error("fullPage, ref and clip are mutually exclusive screenshot scopes.");
+  }
+
   const tab = await chooseTab(tabId);
   await requireDebuggableTab(tab.id);
   await attachTab(tab.id);
@@ -1029,7 +1904,37 @@ async function browserScreenshot({ tabId, fullPage = false, pixelDensity = "css-
   const captureScale = pixelDensity === "device" ? 1 : 1 / devicePixelRatio;
   const viewport = metrics?.cssLayoutViewport || metrics?.layoutViewport;
   const content = metrics?.cssContentSize || metrics?.contentSize;
-  const source = fullPage ? content : viewport;
+
+  let sourceKind = fullPage ? "full_page" : "viewport";
+  let sourceRef = null;
+  let sourceClip = null;
+  if (ref) {
+    const target = lookupRef(tab.id, String(ref));
+    if (target.sessionId) {
+      throw new Error(
+        `Ref screenshot for out-of-process iframe targets is not supported safely yet: ${String(ref)}. Use a page clip instead.`,
+      );
+    }
+    const bounds = await backendNodeBounds(
+      tab.id,
+      { id: target.frameId, sessionId: target.sessionId || null },
+      target.backendNodeId,
+    );
+    if (!bounds) throw new Error(`Element has no capturable box: ${String(ref)}`);
+    sourceKind = "ref";
+    sourceRef = String(ref);
+    sourceClip = {
+      x: Math.max(0, bounds.left),
+      y: Math.max(0, bounds.top),
+      width: Math.max(1, bounds.right - bounds.left),
+      height: Math.max(1, bounds.bottom - bounds.top),
+    };
+  } else if (explicitClip) {
+    sourceKind = "clip";
+    sourceClip = explicitClip;
+  }
+
+  const source = sourceClip || (fullPage ? content : viewport);
   const width = Math.ceil(Number(source?.width || source?.clientWidth || 0));
   const height = Math.ceil(Number(source?.height || source?.clientHeight || 0));
 
@@ -1054,20 +1959,30 @@ async function browserScreenshot({ tabId, fullPage = false, pixelDensity = "css-
     );
   }
 
-  const clip = {
-    x: fullPage ? 0 : Number(viewport?.pageX || 0),
-    y: fullPage ? 0 : Number(viewport?.pageY || 0),
+  const captureClip = {
+    x: sourceClip ? Number(sourceClip.x) : fullPage ? 0 : Number(viewport?.pageX || 0),
+    y: sourceClip ? Number(sourceClip.y) : fullPage ? 0 : Number(viewport?.pageY || 0),
     width,
     height,
     scale: captureScale,
   };
-  const captured = await send(tab.id, "Page.captureScreenshot", {
-    format: "png",
-    fromSurface: true,
-    captureBeyondViewport: Boolean(fullPage),
-    optimizeForSpeed: false,
-    clip,
-  });
+  let annotationData = null;
+  if (annotateRefs) {
+    annotationData = await buildScreenshotAnnotations(tab.id, captureClip);
+    await injectScreenshotAnnotations(tab.id, annotationData);
+  }
+  let captured;
+  try {
+    captured = await send(tab.id, "Page.captureScreenshot", {
+      format: "png",
+      fromSurface: true,
+      captureBeyondViewport: Boolean(fullPage || sourceClip),
+      optimizeForSpeed: false,
+      clip: captureClip,
+    });
+  } finally {
+    if (annotateRefs) await removeScreenshotAnnotations(tab.id);
+  }
   const data = String(captured?.data || "");
   if (!data) throw new Error("Chrome returned an empty screenshot.");
   const estimatedBytes = Math.floor((data.length * 3) / 4);
@@ -1080,6 +1995,21 @@ async function browserScreenshot({ tabId, fullPage = false, pixelDensity = "css-
   scheduleDetach(tab.id, 5_000);
   return {
     tab: { id: tab.id, windowId: tab.windowId, title: tab.title, url: tab.url, active: tab.active },
+    screenshotVersion: SCREENSHOT_VERSION,
+    source: sourceKind,
+    ref: sourceRef,
+    clip: {
+      x: captureClip.x,
+      y: captureClip.y,
+      width: captureClip.width,
+      height: captureClip.height,
+    },
+    annotations: {
+      requested: Boolean(annotateRefs),
+      annotatedRefs: annotationData?.labels?.map((item) => item.ref) || [],
+      skippedOopifRefs: annotationData?.skippedOopifRefs || [],
+      truncated: Boolean(annotationData?.truncated),
+    },
     fullPage: Boolean(fullPage),
     cssWidth: width,
     cssHeight: height,
@@ -1111,6 +2041,86 @@ async function browserFind({ tabId, query, role, exact = false } = {}) {
     exact: Boolean(exact),
     count: matches.length,
     matches,
+  };
+}
+
+function normalizedReacquireField(value) {
+  return value == null ? "" : String(value).trim().replace(/\s+/g, " ").toLocaleLowerCase();
+}
+
+function sameReacquireFingerprint(source, candidate) {
+  return (
+    source?.frameId === candidate?.frameId &&
+    normalizedReacquireField(source?.role) === normalizedReacquireField(candidate?.role) &&
+    normalizedReacquireField(source?.name) === normalizedReacquireField(candidate?.name) &&
+    normalizedReacquireField(source?.value) === normalizedReacquireField(candidate?.value)
+  );
+}
+
+async function browserReacquire({ tabId, oldRef, fromSnapshotId } = {}) {
+  const ref = String(oldRef || "");
+  if (!/^@e\d+$/.test(ref)) throw new Error("oldRef must be a snapshot ref such as @e3");
+  const tab = await chooseTab(tabId);
+  const generation = currentDocumentGeneration(tab.id);
+  const history = snapshotHistories.get(tab.id) || [];
+  const sourceSnapshot = fromSnapshotId
+    ? snapshotStateById(tab.id, String(fromSnapshotId))
+    : [...history].reverse().find((item) => (
+        item.documentGeneration === generation &&
+        item.elements.some((element) => element.ref === ref)
+      ));
+  if (!sourceSnapshot) {
+    throw new Error(`No bounded source snapshot contains ${ref}. Take a snapshot before attempting reacquire.`);
+  }
+  if (sourceSnapshot.documentGeneration !== generation) {
+    throw new Error("Reacquire is limited to the same document generation; take a fresh snapshot after navigation.");
+  }
+  const source = sourceSnapshot.elements.find((element) => element.ref === ref);
+  if (!source) throw new Error(`Source snapshot does not contain ref: ${ref}`);
+
+  const fresh = await browserSnapshot({ tabId: tab.id, mode: "interactive" });
+  if (fresh.restricted) throw new Error("Reacquire is unavailable on restricted browser pages.");
+  const retained = fresh.elements.find((element) => element.ref === ref);
+  if (retained) {
+    return {
+      reacquireVersion: REACQUIRE_VERSION,
+      status: "retained",
+      unique: true,
+      confidence: "exact",
+      oldRef: ref,
+      newRef: ref,
+      sourceSnapshotId: sourceSnapshot.id,
+      targetSnapshotId: fresh.snapshot.id,
+      candidateCount: 1,
+    };
+  }
+
+  const candidates = fresh.elements.filter((element) => element.ref && sameReacquireFingerprint(source, element));
+  if (candidates.length === 1) {
+    return {
+      reacquireVersion: REACQUIRE_VERSION,
+      status: "reacquired",
+      unique: true,
+      confidence: "high",
+      oldRef: ref,
+      newRef: candidates[0].ref,
+      sourceSnapshotId: sourceSnapshot.id,
+      targetSnapshotId: fresh.snapshot.id,
+      candidateCount: 1,
+      match: candidates[0],
+    };
+  }
+  return {
+    reacquireVersion: REACQUIRE_VERSION,
+    status: candidates.length === 0 ? "not_found" : "ambiguous",
+    unique: false,
+    confidence: "none",
+    oldRef: ref,
+    newRef: null,
+    sourceSnapshotId: sourceSnapshot.id,
+    targetSnapshotId: fresh.snapshot.id,
+    candidateCount: candidates.length,
+    candidateRefs: candidates.slice(0, 8).map((element) => element.ref),
   };
 }
 
@@ -1378,8 +2388,141 @@ async function moveAgentCursorToRef(tabId, ref, { pulse = false, agentName } = {
   };
 }
 
-async function browserClick({ tabId, ref, agentName }) {
+function normalizeActionAfter(after, tabId, actionName = "action") {
+  if (after == null) return null;
+  if (typeof after !== "object" || Array.isArray(after)) throw new Error(`${actionName} after must be an object`);
+  const waitFor = after.waitFor == null ? null : String(after.waitFor);
+  const snapshot = after.snapshot == null ? null : String(after.snapshot);
+  if (waitFor && !new Set(["dom_stable", "network_idle"]).has(waitFor)) {
+    throw new Error(`Unsupported ${actionName} after.waitFor: ${waitFor}`);
+  }
+  if (snapshot && !new Set(["delta", "full"]).has(snapshot)) {
+    throw new Error(`Unsupported ${actionName} after.snapshot: ${snapshot}`);
+  }
+  if (!waitFor && !snapshot) throw new Error(`${actionName} after requires waitFor and/or snapshot`);
+  const quietMs = Math.max(100, Math.min(Number(after.quietMs) || 500, 5_000));
+  const timeoutMs = Math.max(100, Math.min(Number(after.timeoutMs) || 10_000, 60_000));
+  const baseSnapshotId = refStates.get(tabId)?.snapshotId || null;
+  const baseSnapshot = baseSnapshotId ? snapshotStateById(tabId, baseSnapshotId) : null;
+  if (snapshot === "delta" && !baseSnapshot) {
+    throw new Error(`${actionName} after.snapshot=delta requires a current snapshot base`);
+  }
+  if (snapshot && baseSnapshot?.filters?.rootRef) {
+    throw new Error(`${actionName} compound snapshot does not support a root_ref base; take an unscoped snapshot first`);
+  }
+  return { waitFor, snapshot, quietMs, timeoutMs, baseSnapshotId, baseSnapshot };
+}
+
+function snapshotArgsFromBase(baseSnapshot, { delta = false } = {}) {
+  const filters = baseSnapshot?.filters || {};
+  return {
+    mode: filters.mode || "balanced",
+    scope: filters.scope || "document",
+    maxNodes: Number(filters.maxNodes) || MAX_SNAPSHOT_ELEMENTS,
+    output: "compact",
+    ...(Array.isArray(filters.roles) && filters.roles.length ? { roles: filters.roles } : {}),
+    ...(filters.query ? { query: filters.query } : {}),
+    ...(delta && baseSnapshot?.id ? { sinceSnapshotId: baseSnapshot.id } : {}),
+  };
+}
+
+async function runActionAfter(tabId, config) {
+  if (!config) return null;
+  const result = { ok: true, wait: null, snapshot: null };
+  try {
+    if (config.waitFor === "dom_stable") {
+      result.wait = await browserWait({
+        tabId,
+        domStable: true,
+        quietMs: config.quietMs,
+        timeoutMs: config.timeoutMs,
+      });
+    } else if (config.waitFor === "network_idle") {
+      result.wait = await browserWait({
+        tabId,
+        networkIdle: true,
+        quietMs: config.quietMs,
+        timeoutMs: config.timeoutMs,
+      });
+    }
+  } catch (error) {
+    return {
+      ...result,
+      ok: false,
+      failedStage: "wait",
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+  try {
+    if (config.snapshot === "delta") {
+      result.snapshot = await browserSnapshot({
+        tabId,
+        ...snapshotArgsFromBase(config.baseSnapshot, { delta: true }),
+      });
+    } else if (config.snapshot === "full") {
+      result.snapshot = await browserSnapshot({
+        tabId,
+        ...snapshotArgsFromBase(config.baseSnapshot),
+      });
+    }
+  } catch (error) {
+    return {
+      ...result,
+      ok: false,
+      failedStage: "snapshot",
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+  return result;
+}
+
+function normalizeMouseButton(button = "left") {
+  const value = String(button || "left").toLowerCase();
+  if (!new Set(["left", "right", "middle"]).has(value)) throw new Error(`Unsupported mouse button: ${value}`);
+  return value;
+}
+
+function mouseButtonsMask(button) {
+  if (button === "right") return 2;
+  if (button === "middle") return 4;
+  return 1;
+}
+
+function normalizeInputModifiers(modifiers = []) {
+  const list = modifiers == null ? [] : modifiers;
+  if (!Array.isArray(list)) throw new Error("modifiers must be an array");
+  let mask = 0;
+  const normalized = [];
+  for (const raw of list) {
+    const value = String(raw || "").toLowerCase();
+    if (!value) continue;
+    if (value === "alt" || value === "option") mask |= 1;
+    else if (value === "ctrl" || value === "control") mask |= 2;
+    else if (value === "meta" || value === "cmd" || value === "command") mask |= 4;
+    else if (value === "shift") mask |= 8;
+    else throw new Error(`Unsupported input modifier: ${raw}`);
+    if (!normalized.includes(value)) normalized.push(value);
+  }
+  return { mask, values: normalized };
+}
+
+async function browserClick({
+  tabId,
+  ref,
+  agentName,
+  after,
+  clickCount = 1,
+  button = "left",
+  modifiers = [],
+  delayMs = 0,
+} = {}) {
   const tab = await chooseTab(tabId);
+  const afterConfig = normalizeActionAfter(after, tab.id, "click");
+  const requestedClickCount = Number(clickCount);
+  if (![1, 2].includes(requestedClickCount)) throw new Error("clickCount must be 1 or 2");
+  const requestedButton = normalizeMouseButton(button);
+  const modifierInfo = normalizeInputModifiers(modifiers);
+  const boundedDelayMs = Math.max(0, Math.min(Math.floor(Number(delayMs) || 0), 1_000));
   await requireDebuggableTab(tab.id);
   await attachTab(tab.id);
   const tabCreationSequenceBefore = tabCreationSequence;
@@ -1387,11 +2530,17 @@ async function browserClick({ tabId, ref, agentName }) {
   const existingDialog = currentDialogRecord(tab.id);
   if (existingDialog) {
     return {
+      clickVersion: CLICK_VERSION,
       tabId: tab.id,
       ref,
       actionDispatched: false,
       blockedByDialog: true,
       dialogOpened: existingDialog.dialog,
+      button: requestedButton,
+      modifiers: modifierInfo.values,
+      delayMs: boundedDelayMs,
+      compoundActionVersion: COMPOUND_ACTION_VERSION,
+      after: afterConfig ? { ok: false, skipped: true, reason: "blocked_by_dialog" } : null,
       tabCreationSequenceBefore,
       tabCreationSequenceAfter: tabCreationSequence,
       openedTabs: [],
@@ -1405,21 +2554,26 @@ async function browserClick({ tabId, ref, agentName }) {
   const dialogSequenceBefore = dialogSequence;
   const moved = await moveAgentCursorToRef(tab.id, ref, { pulse: true, agentName });
   const { target, point } = moved;
-
-  const pressPromise = send(tab.id, "Input.dispatchMouseEvent", {
-    type: "mousePressed",
-    ...point,
-    button: "left",
-    clickCount: 1,
-  }, target.sessionId);
-  let dialog = await settleCommandOrDialog(tab.id, pressPromise, dialogSequenceBefore);
-
-  if (!dialog) {
+  let dialog = null;
+  for (let currentClick = 1; currentClick <= requestedClickCount && !dialog; currentClick += 1) {
+    const pressPromise = send(tab.id, "Input.dispatchMouseEvent", {
+      type: "mousePressed",
+      ...point,
+      button: requestedButton,
+      buttons: mouseButtonsMask(requestedButton),
+      modifiers: modifierInfo.mask,
+      clickCount: currentClick,
+    }, target.sessionId);
+    dialog = await settleCommandOrDialog(tab.id, pressPromise, dialogSequenceBefore);
+    if (dialog) break;
+    if (boundedDelayMs > 0) await sleep(boundedDelayMs);
     const releasePromise = send(tab.id, "Input.dispatchMouseEvent", {
       type: "mouseReleased",
       ...point,
-      button: "left",
-      clickCount: 1,
+      button: requestedButton,
+      buttons: 0,
+      modifiers: modifierInfo.mask,
+      clickCount: currentClick,
     }, target.sessionId);
     dialog = await settleCommandOrDialog(tab.id, releasePromise, dialogSequenceBefore);
   }
@@ -1430,14 +2584,353 @@ async function browserClick({ tabId, ref, agentName }) {
   ]);
 
   refStates.delete(tab.id);
+  const afterResult = dialog || !afterConfig
+    ? (afterConfig ? { ok: false, skipped: true, reason: "dialog_opened" } : null)
+    : await runActionAfter(tab.id, afterConfig);
   scheduleDetach(tab.id, 250);
   return {
+    clickVersion: CLICK_VERSION,
     tabId: tab.id,
     ref,
     point,
+    clickCount: requestedClickCount,
+    button: requestedButton,
+    modifiers: modifierInfo.values,
+    delayMs: boundedDelayMs,
     frameId: target.frameId,
     sessionScope: target.sessionId ? "child" : "root",
     dialogOpened: dialog || null,
+    compoundActionVersion: COMPOUND_ACTION_VERSION,
+    after: afterResult,
+    tabCreationSequenceBefore,
+    tabCreationSequenceAfter: tabCreationSequence,
+    openedTabs,
+    downloadCreationSequenceBefore,
+    downloadCreationSequenceAfter: downloadCreationSequence,
+    downloadCreationsObserved: Math.max(0, downloadCreationSequence - downloadCreationSequenceBefore),
+    downloadsStartedTruncated: Math.max(0, downloadCreationSequence - downloadCreationSequenceBefore) > downloadsStarted.length,
+    downloadsStarted,
+  };
+}
+
+async function browserDoubleClick(args = {}) {
+  const result = await browserClick({ ...args, clickCount: 2 });
+  return {
+    ...result,
+    doubleClickVersion: DOUBLE_CLICK_VERSION,
+  };
+}
+
+async function performHtml5Drag({
+  tab,
+  sourceRefValue,
+  targetRefValue,
+  sourceTarget,
+  sourcePoint,
+  targetPoint,
+  stepCount,
+  boundedDurationMs,
+  dialogSequenceBefore,
+  tabCreationSequenceBefore,
+  downloadCreationSequenceBefore,
+}) {
+  const interceptState = beginHtml5DragIntercept(tab.id);
+  const stepDelay = Math.max(0, Math.floor(boundedDurationMs / stepCount));
+  let interceptEnabled = false;
+  let pointerDown = false;
+  let actionDispatched = false;
+  let dialog = null;
+  let dragData = null;
+  let dragDataSummary = null;
+  let dropDispatched = false;
+  try {
+    await send(tab.id, "Input.setInterceptDrags", { enabled: true });
+    interceptEnabled = true;
+    interceptState.armed = true;
+    const pressPromise = send(tab.id, "Input.dispatchMouseEvent", {
+      type: "mousePressed",
+      ...sourcePoint,
+      button: "left",
+      buttons: 1,
+      clickCount: 1,
+    });
+    dialog = await settleCommandOrDialog(tab.id, pressPromise, dialogSequenceBefore);
+    if (!dialog) {
+      pointerDown = true;
+      actionDispatched = true;
+      for (let index = 1; index <= stepCount && !interceptState.settled; index += 1) {
+        const progress = index / stepCount;
+        const point = {
+          x: sourcePoint.x + (targetPoint.x - sourcePoint.x) * progress,
+          y: sourcePoint.y + (targetPoint.y - sourcePoint.y) * progress,
+        };
+        const movePromise = send(tab.id, "Input.dispatchMouseEvent", {
+          type: "mouseMoved",
+          ...point,
+          button: "left",
+          buttons: 1,
+        });
+        dialog = await settleCommandOrDialog(tab.id, movePromise, dialogSequenceBefore);
+        if (dialog) break;
+        if (stepDelay > 0 && index < stepCount && !interceptState.settled) await sleep(stepDelay);
+      }
+      if (!dialog && !interceptState.settled) {
+        const repeatMovePromise = send(tab.id, "Input.dispatchMouseEvent", {
+          type: "mouseMoved",
+          ...targetPoint,
+          button: "left",
+          buttons: 1,
+        });
+        dialog = await settleCommandOrDialog(tab.id, repeatMovePromise, dialogSequenceBefore);
+      }
+      if (!dialog) {
+        const intercepted = normalizeHtml5DragData(await interceptState.promise);
+        dragData = intercepted.data;
+        dragDataSummary = intercepted.summary;
+        await send(tab.id, "Input.dispatchDragEvent", { type: "dragEnter", ...targetPoint, data: dragData });
+        await send(tab.id, "Input.dispatchDragEvent", { type: "dragOver", ...targetPoint, data: dragData });
+        await send(tab.id, "Input.dispatchDragEvent", { type: "dragOver", ...targetPoint, data: dragData });
+        await send(tab.id, "Input.dispatchDragEvent", { type: "drop", ...targetPoint, data: dragData });
+        dropDispatched = true;
+      }
+    }
+  } catch (error) {
+    if (dragData && !dropDispatched) {
+      await send(tab.id, "Input.dispatchDragEvent", {
+        type: "dragCancel",
+        ...targetPoint,
+        data: dragData,
+      }).catch(() => {});
+    }
+    await send(tab.id, "Input.cancelDragging", {}).catch(() => {});
+    throw error;
+  } finally {
+    rejectPendingHtml5DragIntercept(tab.id, "HTML5 drag interception was cancelled before completion");
+    if (pointerDown) {
+      await send(tab.id, "Input.dispatchMouseEvent", {
+        type: "mouseReleased",
+        ...targetPoint,
+        button: "left",
+        buttons: 0,
+        clickCount: 1,
+      }).catch(() => {});
+    }
+    if (interceptEnabled) await send(tab.id, "Input.setInterceptDrags", { enabled: false }).catch(() => {});
+    if (actionDispatched) refStates.delete(tab.id);
+    scheduleDetach(tab.id, 250);
+  }
+
+  const [openedTabs, downloadsStarted] = await Promise.all([
+    discoverNewTabs(tabCreationSequenceBefore, tab.id),
+    discoverNewDownloads(downloadCreationSequenceBefore),
+  ]);
+  return {
+    html5DragVersion: HTML5_DRAG_VERSION,
+    mode: "html5",
+    tabId: tab.id,
+    sourceRef: sourceRefValue,
+    targetRef: targetRefValue,
+    sourcePoint,
+    targetPoint,
+    frameId: sourceTarget.frameId,
+    sessionScope: "root",
+    steps: stepCount,
+    durationMs: boundedDurationMs,
+    actionDispatched,
+    dropDispatched,
+    dragDataSummary,
+    dialogOpened: dialog || null,
+    tabCreationSequenceBefore,
+    tabCreationSequenceAfter: tabCreationSequence,
+    openedTabs,
+    downloadCreationSequenceBefore,
+    downloadCreationSequenceAfter: downloadCreationSequence,
+    downloadCreationsObserved: Math.max(0, downloadCreationSequence - downloadCreationSequenceBefore),
+    downloadsStartedTruncated: Math.max(0, downloadCreationSequence - downloadCreationSequenceBefore) > downloadsStarted.length,
+    downloadsStarted,
+  };
+}
+
+function pointInsideViewport(point, viewport) {
+  if (!point || !viewport) return false;
+  return (
+    point.x >= viewport.x &&
+    point.y >= viewport.y &&
+    point.x <= viewport.x + viewport.width &&
+    point.y <= viewport.y + viewport.height
+  );
+}
+
+async function browserDrag({ tabId, sourceRef, targetRef, mode = "pointer", steps = 8, durationMs = 350, agentName, after } = {}) {
+  const sourceRefValue = String(sourceRef || "");
+  const targetRefValue = String(targetRef || "");
+  const dragMode = String(mode || "pointer").toLowerCase();
+  if (!/^@e\d+$/.test(sourceRefValue) || !/^@e\d+$/.test(targetRefValue)) {
+    throw new Error("sourceRef and targetRef must be snapshot refs such as @e3");
+  }
+  if (!new Set(["pointer", "html5"]).has(dragMode)) throw new Error(`Unsupported drag mode: ${dragMode}`);
+  if (sourceRefValue === targetRefValue) throw new Error("Semantic drag requires different sourceRef and targetRef values");
+
+  const tab = await chooseTab(tabId);
+  const afterConfig = normalizeActionAfter(after, tab.id, "drag");
+  await requireDebuggableTab(tab.id);
+  await attachTab(tab.id);
+  const sourceTarget = lookupRef(tab.id, sourceRefValue);
+  const destinationTarget = lookupRef(tab.id, targetRefValue);
+  if (
+    sourceTarget.frameId !== destinationTarget.frameId ||
+    (sourceTarget.sessionId || null) !== (destinationTarget.sessionId || null)
+  ) {
+    throw new Error("Semantic drag is limited to source and target refs in the same frame");
+  }
+  if (sourceTarget.sessionId || destinationTarget.sessionId) {
+    throw new Error("Semantic drag for OOPIF targets is not supported safely yet; use refs in the root session");
+  }
+
+  const existingDialog = currentDialogRecord(tab.id);
+  if (existingDialog) {
+    return {
+      ...(dragMode === "html5" ? { html5DragVersion: HTML5_DRAG_VERSION } : { pointerDragVersion: POINTER_DRAG_VERSION }),
+      mode: dragMode,
+      tabId: tab.id,
+      sourceRef: sourceRefValue,
+      targetRef: targetRefValue,
+      actionDispatched: false,
+      blockedByDialog: true,
+      dialogOpened: existingDialog.dialog,
+      compoundActionVersion: COMPOUND_ACTION_VERSION,
+      after: afterConfig ? { ok: false, skipped: true, reason: "blocked_by_dialog" } : null,
+    };
+  }
+
+  const stepCount = Math.max(2, Math.min(Math.floor(Number(steps) || 8), 32));
+  const boundedDurationMs = Math.max(100, Math.min(Math.floor(Number(durationMs) || 350), 2_000));
+  const tabCreationSequenceBefore = tabCreationSequence;
+  const downloadCreationSequenceBefore = downloadCreationSequence;
+  const dialogSequenceBefore = dialogSequence;
+  const moved = await moveAgentCursorToRef(tab.id, sourceRefValue, { pulse: true, agentName });
+  const targetPointInfo = await refPoint(tab.id, targetRefValue);
+  const metrics = await send(tab.id, "Page.getLayoutMetrics");
+  const rawViewport = metrics?.cssLayoutViewport || metrics?.layoutViewport;
+  const viewport = rawViewport
+    ? {
+        x: Number(rawViewport.pageX || 0),
+        y: Number(rawViewport.pageY || 0),
+        width: Number(rawViewport.clientWidth || rawViewport.width || 0),
+        height: Number(rawViewport.clientHeight || rawViewport.height || 0),
+      }
+    : null;
+  if (!pointInsideViewport(targetPointInfo.point, viewport)) {
+    throw new Error("Semantic drag target must be visible in the current viewport; scroll first and take a fresh snapshot");
+  }
+
+  const sourcePoint = moved.point;
+  const targetPoint = targetPointInfo.point;
+  if (dragMode === "html5") {
+    const result = await performHtml5Drag({
+      tab,
+      sourceRefValue,
+      targetRefValue,
+      sourceTarget,
+      sourcePoint,
+      targetPoint,
+      stepCount,
+      boundedDurationMs,
+      dialogSequenceBefore,
+      tabCreationSequenceBefore,
+      downloadCreationSequenceBefore,
+    });
+    const afterResult = result.dialogOpened || !afterConfig
+      ? (afterConfig ? { ok: false, skipped: true, reason: "dialog_opened" } : null)
+      : await runActionAfter(tab.id, afterConfig);
+    return {
+      ...result,
+      compoundActionVersion: COMPOUND_ACTION_VERSION,
+      after: afterResult,
+    };
+  }
+
+  const stepDelay = Math.max(0, Math.floor(boundedDurationMs / stepCount));
+  let dialog = null;
+  let pointerDown = false;
+  let actionDispatched = false;
+  try {
+    const pressPromise = send(tab.id, "Input.dispatchMouseEvent", {
+      type: "mousePressed",
+      ...sourcePoint,
+      button: "left",
+      buttons: 1,
+      clickCount: 1,
+    });
+    dialog = await settleCommandOrDialog(tab.id, pressPromise, dialogSequenceBefore);
+    if (!dialog) {
+      pointerDown = true;
+      actionDispatched = true;
+      for (let index = 1; index <= stepCount; index += 1) {
+        const progress = index / stepCount;
+        const point = {
+          x: sourcePoint.x + (targetPoint.x - sourcePoint.x) * progress,
+          y: sourcePoint.y + (targetPoint.y - sourcePoint.y) * progress,
+        };
+        const movePromise = send(tab.id, "Input.dispatchMouseEvent", {
+          type: "mouseMoved",
+          ...point,
+          button: "left",
+          buttons: 1,
+        });
+        dialog = await settleCommandOrDialog(tab.id, movePromise, dialogSequenceBefore);
+        if (dialog) break;
+        if (stepDelay > 0 && index < stepCount) await sleep(stepDelay);
+      }
+    }
+    if (!dialog && pointerDown) {
+      const releasePromise = send(tab.id, "Input.dispatchMouseEvent", {
+        type: "mouseReleased",
+        ...targetPoint,
+        button: "left",
+        buttons: 0,
+        clickCount: 1,
+      });
+      dialog = await settleCommandOrDialog(tab.id, releasePromise, dialogSequenceBefore);
+      pointerDown = false;
+    }
+  } finally {
+    if (pointerDown) {
+      await send(tab.id, "Input.dispatchMouseEvent", {
+        type: "mouseReleased",
+        ...targetPoint,
+        button: "left",
+        buttons: 0,
+        clickCount: 1,
+      }).catch(() => {});
+    }
+    if (actionDispatched) refStates.delete(tab.id);
+    scheduleDetach(tab.id, 250);
+  }
+
+  const [openedTabs, downloadsStarted] = await Promise.all([
+    discoverNewTabs(tabCreationSequenceBefore, tab.id),
+    discoverNewDownloads(downloadCreationSequenceBefore),
+  ]);
+  const afterResult = dialog || !afterConfig
+    ? (afterConfig ? { ok: false, skipped: true, reason: "dialog_opened" } : null)
+    : await runActionAfter(tab.id, afterConfig);
+  return {
+    pointerDragVersion: POINTER_DRAG_VERSION,
+    mode: "pointer",
+    tabId: tab.id,
+    sourceRef: sourceRefValue,
+    targetRef: targetRefValue,
+    sourcePoint,
+    targetPoint,
+    frameId: sourceTarget.frameId,
+    sessionScope: "root",
+    steps: stepCount,
+    durationMs: boundedDurationMs,
+    actionDispatched,
+    dialogOpened: dialog || null,
+    compoundActionVersion: COMPOUND_ACTION_VERSION,
+    after: afterResult,
     tabCreationSequenceBefore,
     tabCreationSequenceAfter: tabCreationSequence,
     openedTabs,
@@ -1461,13 +2954,93 @@ async function browserHover({ tabId, ref, agentName }) {
   const tab = await chooseTab(tabId);
   await requireDebuggableTab(tab.id);
   await attachTab(tab.id);
-  await send(tab.id, "Page.bringToFront");
-  const { point, sessionId, frameId } = await refPoint(tab.id, ref);
-  await showAgentCursor(tab.id, point, sessionId, { agentName });
-  await send(tab.id, "Input.dispatchMouseEvent", { type: "mouseMoved", ...point }, sessionId);
+  const moved = await moveAgentCursorToRef(tab.id, ref, { agentName });
   refStates.delete(tab.id);
   scheduleDetach(tab.id, 5_000);
-  return { tabId: tab.id, ref, point, frameId, sessionScope: sessionId ? "child" : "root" };
+  return {
+    actionabilityVersion: ACTIONABILITY_VERSION,
+    tabId: tab.id,
+    ref,
+    point: moved.point,
+    frameId: moved.frameId,
+    sessionScope: moved.sessionId ? "child" : "root",
+  };
+}
+
+async function browserScrollIntoView({ tabId, ref, agentName }) {
+  const tab = await chooseTab(tabId);
+  await requireDebuggableTab(tab.id);
+  await attachTab(tab.id);
+  const moved = await moveAgentCursorToRef(tab.id, ref, { agentName });
+  refStates.delete(tab.id);
+  scheduleDetach(tab.id, 5_000);
+  return {
+    actionabilityVersion: ACTIONABILITY_VERSION,
+    tabId: tab.id,
+    ref,
+    scrolledIntoView: true,
+    point: moved.point,
+    frameId: moved.frameId,
+    sessionScope: moved.sessionId ? "child" : "root",
+  };
+}
+
+async function browserRefInfo({ tabId, ref }) {
+  const tab = await chooseTab(tabId);
+  await requireDebuggableTab(tab.id);
+  await attachTab(tab.id);
+  const target = lookupRef(tab.id, ref);
+  const live = await inspectLiveRef(tab.id, ref);
+  let box = null;
+  let state = {};
+  if (live.exists) {
+    const model = await send(tab.id, "DOM.getBoxModel", { backendNodeId: target.backendNodeId }, target.sessionId).catch(() => null);
+    const quad = model?.model?.border || model?.model?.content;
+    if (Array.isArray(quad) && quad.length >= 8) {
+      const xs = [quad[0], quad[2], quad[4], quad[6]].map(Number);
+      const ys = [quad[1], quad[3], quad[5], quad[7]].map(Number);
+      box = {
+        x: Math.min(...xs),
+        y: Math.min(...ys),
+        width: Math.max(...xs) - Math.min(...xs),
+        height: Math.max(...ys) - Math.min(...ys),
+      };
+    }
+    const resolved = await send(tab.id, "DOM.resolveNode", { backendNodeId: target.backendNodeId }, target.sessionId);
+    const objectId = resolved?.object?.objectId;
+    if (objectId) {
+      const evaluated = await send(tab.id, "Runtime.callFunctionOn", {
+        objectId,
+        functionDeclaration: `function() {
+          const value = ('value' in this ? this.value : (this.isContentEditable ? this.textContent : null));
+          return {
+            checked: 'checked' in this ? Boolean(this.checked) : (this.getAttribute?.('aria-checked') === 'true' ? true : this.getAttribute?.('aria-checked') === 'false' ? false : null),
+            selected: 'selected' in this ? Boolean(this.selected) : (this.getAttribute?.('aria-selected') === 'true' ? true : this.getAttribute?.('aria-selected') === 'false' ? false : null),
+            expanded: this.getAttribute?.('aria-expanded') === 'true' ? true : this.getAttribute?.('aria-expanded') === 'false' ? false : null,
+            readOnly: Boolean(this.readOnly) || this.getAttribute?.('aria-readonly') === 'true',
+            editable: Boolean(this.isContentEditable) || ['INPUT', 'TEXTAREA'].includes(String(this.tagName || '').toUpperCase()),
+            tagName: String(this.tagName || '').toLowerCase() || null,
+            value: value == null ? null : String(value).slice(0, 2000),
+          };
+        }`,
+        returnByValue: true,
+      }, target.sessionId);
+      state = evaluated?.result?.value || {};
+    }
+  }
+  scheduleDetach(tab.id, 5_000);
+  return {
+    actionabilityVersion: ACTIONABILITY_VERSION,
+    tabId: tab.id,
+    ref,
+    role: target.role || null,
+    name: target.name || "",
+    frameId: target.frameId,
+    sessionScope: target.sessionId ? "child" : "root",
+    ...live,
+    ...state,
+    box,
+  };
 }
 
 async function browserScroll({ tabId, direction = "down", pixels = 600, ref, agentName }) {
@@ -1503,8 +3076,9 @@ async function browserScroll({ tabId, direction = "down", pixels = 600, ref, age
   return { tabId: tab.id, direction: String(direction).toLowerCase(), pixels: amount, point };
 }
 
-async function browserSelect({ tabId, ref, option, agentName }) {
+async function browserSelect({ tabId, ref, option, agentName, after }) {
   const tab = await chooseTab(tabId);
+  const afterConfig = normalizeActionAfter(after, tab.id, "select");
   await requireDebuggableTab(tab.id);
   await attachTab(tab.id);
   const { target, point, frameId, sessionId } = await moveAgentCursorToRef(tab.id, ref, { pulse: true, agentName });
@@ -1521,13 +3095,17 @@ async function browserSelect({ tabId, ref, option, agentName }) {
       this.value = match.value;
       this.dispatchEvent(new Event('input', { bubbles: true }));
       this.dispatchEvent(new Event('change', { bubbles: true }));
-      return { value: this.value, label: (match.label || match.textContent || '').trim() };
+      const selected = Array.from(this.selectedOptions || []).some((item) => item === match || item.value === match.value);
+      return { value: this.value, label: (match.label || match.textContent || '').trim(), selected };
     }`,
     arguments: [{ value: String(option) }],
     returnByValue: true,
   }, target.sessionId);
   if (result?.exceptionDetails) throw new Error(result.exceptionDetails?.text || `Unable to select option: ${option}`);
+  const outcome = result?.result?.value || {};
+  if (outcome.selected !== true) throw new Error(`Select postcondition failed for ${ref}`);
   refStates.delete(tab.id);
+  const afterResult = await runActionAfter(tab.id, afterConfig);
   scheduleDetach(tab.id, 5_000);
   return {
     tabId: tab.id,
@@ -1535,12 +3113,15 @@ async function browserSelect({ tabId, ref, option, agentName }) {
     point,
     frameId,
     sessionScope: sessionId ? "child" : "root",
-    ...(result?.result?.value || { value: String(option) }),
+    ...outcome,
+    compoundActionVersion: COMPOUND_ACTION_VERSION,
+    after: afterResult,
   };
 }
 
-async function browserCheck({ tabId, ref, checked = true, agentName }) {
+async function browserCheck({ tabId, ref, checked = true, agentName, after }) {
   const tab = await chooseTab(tabId);
+  const afterConfig = normalizeActionAfter(after, tab.id, "check");
   await requireDebuggableTab(tab.id);
   await attachTab(tab.id);
   const target = lookupRef(tab.id, ref);
@@ -1566,7 +3147,10 @@ async function browserCheck({ tabId, ref, checked = true, agentName }) {
     arguments: [{ value: Boolean(checked) }],
     returnByValue: true,
   }, target.sessionId);
+  const actualChecked = result?.result?.value?.checked;
+  if (actualChecked !== Boolean(checked)) throw new Error(`Check postcondition failed for ${ref}`);
   refStates.delete(tab.id);
+  const afterResult = await runActionAfter(tab.id, afterConfig);
   scheduleDetach(tab.id, 5_000);
   return {
     tabId: tab.id,
@@ -1574,45 +3158,229 @@ async function browserCheck({ tabId, ref, checked = true, agentName }) {
     point: moved.point,
     frameId: moved.frameId,
     sessionScope: moved.sessionId ? "child" : "root",
-    checked: result?.result?.value?.checked ?? Boolean(checked),
+    checked: actualChecked,
+    compoundActionVersion: COMPOUND_ACTION_VERSION,
+    after: afterResult,
   };
 }
 
-async function browserWait({ tabId, milliseconds, text, urlContains, timeoutMs = 10_000 }) {
+async function browserWait({
+  tabId,
+  milliseconds,
+  text,
+  urlContains,
+  refVisible,
+  refHidden,
+  refExists,
+  refEnabled,
+  networkResponse,
+  networkIdle = false,
+  domStable = false,
+  snapshotChanged,
+  quietMs = 500,
+  timeoutMs = 10_000,
+} = {}) {
   const tab = await chooseTab(tabId);
-  const requested = [milliseconds != null, Boolean(text), Boolean(urlContains)].filter(Boolean).length;
-  if (requested !== 1) throw new Error("Exactly one of milliseconds, text or urlContains is required");
+  const requested = [
+    milliseconds != null,
+    Boolean(text),
+    Boolean(urlContains),
+    Boolean(refVisible),
+    Boolean(refHidden),
+    Boolean(refExists),
+    Boolean(refEnabled),
+    Boolean(networkResponse),
+    networkIdle === true,
+    domStable === true,
+    Boolean(snapshotChanged),
+  ].filter(Boolean).length;
+  if (requested !== 1) {
+    throw new Error(
+      "Exactly one wait condition is required: milliseconds, text, urlContains, refVisible, refHidden, refExists, refEnabled, networkResponse, networkIdle, domStable or snapshotChanged",
+    );
+  }
   const timeout = Math.max(100, Math.min(Number(timeoutMs) || 10_000, 60_000));
+  const quiet = Math.max(100, Math.min(Number(quietMs) || 500, 5_000));
   if (milliseconds != null) {
     const delay = Math.max(0, Math.min(Number(milliseconds) || 0, 60_000));
     await sleep(delay);
-    return { tabId: tab.id, waitedMs: delay };
+    return { waitVersion: WAIT_VERSION, tabId: tab.id, waitedMs: delay };
   }
+
+  const smartRef = refVisible || refHidden || refExists || refEnabled || null;
+  const smartRequested = Boolean(smartRef || networkResponse || networkIdle || domStable || snapshotChanged);
+  if (smartRequested || text) {
+    await requireDebuggableTab(tab.id);
+    await attachTab(tab.id);
+  }
+
+  let networkState = null;
+  let networkResponseState = null;
+  let stableCounter = null;
+  let stableGeneration = currentDocumentGeneration(tab.id);
+  let stableSince = Date.now();
+  let baseSnapshot = null;
+  if (networkIdle) {
+    networkState = {
+      inflight: new Set(),
+      lastActivityAt: Date.now(),
+    };
+    networkWaitStates.set(tab.id, networkState);
+    await send(tab.id, "Network.enable");
+  }
+  if (networkResponse) {
+    networkResponseState = {
+      filters: normalizeNetworkFilters(networkResponse),
+      requests: new Map(),
+      matched: null,
+    };
+    addNetworkResponseWaitState(tab.id, networkResponseState);
+    await send(tab.id, "Network.enable");
+  }
+  if (domStable) {
+    stableCounter = await domMutationCounter(tab.id);
+    stableSince = Date.now();
+  }
+  if (snapshotChanged) {
+    baseSnapshot = snapshotStateById(tab.id, String(snapshotChanged));
+    if (!baseSnapshot) {
+      scheduleDetach(tab.id, 5_000);
+      throw new Error(`Snapshot id is unavailable or outside the bounded history: ${String(snapshotChanged)}`);
+    }
+  }
+
   const deadline = Date.now() + timeout;
-  while (Date.now() < deadline) {
-    const current = await chrome.tabs.get(tab.id);
-    if (urlContains && String(current.url || "").includes(String(urlContains))) {
-      return { tabId: tab.id, matched: "url", url: current.url };
-    }
-    if (text) {
-      await requireDebuggableTab(tab.id);
-      await attachTab(tab.id);
-      const evaluated = await send(tab.id, "Runtime.evaluate", {
-        expression: `Boolean(document.body && document.body.innerText.includes(${JSON.stringify(String(text))}))`,
-        returnByValue: true,
-      });
-      if (evaluated?.result?.value === true) {
-        scheduleDetach(tab.id, 5_000);
-        return { tabId: tab.id, matched: "text", text: String(text) };
+  try {
+    while (Date.now() < deadline) {
+      const current = await chrome.tabs.get(tab.id);
+      if (urlContains && String(current.url || "").includes(String(urlContains))) {
+        return { waitVersion: WAIT_VERSION, tabId: tab.id, matched: "url", url: current.url };
       }
+      if (text) {
+        const evaluated = await send(tab.id, "Runtime.evaluate", {
+          expression: `Boolean(document.body && document.body.innerText.includes(${JSON.stringify(String(text))}))`,
+          returnByValue: true,
+        });
+        if (evaluated?.result?.value === true) {
+          return { waitVersion: WAIT_VERSION, tabId: tab.id, matched: "text", text: String(text) };
+        }
+      }
+      if (smartRef) {
+        const live = await inspectLiveRef(tab.id, smartRef);
+        const matched = refVisible
+          ? live.exists && live.visible
+          : refHidden
+            ? !live.exists || !live.visible
+            : refExists
+              ? live.exists
+              : live.exists && live.enabled;
+        if (matched) {
+          return {
+            waitVersion: WAIT_VERSION,
+            tabId: tab.id,
+            matched: refVisible
+              ? "ref_visible"
+              : refHidden
+                ? "ref_hidden"
+                : refExists
+                  ? "ref_exists"
+                  : "ref_enabled",
+            ref: smartRef,
+            ...live,
+          };
+        }
+      }
+      if (networkResponseState?.matched) {
+        return {
+          waitVersion: WAIT_VERSION,
+          observationVersion: OBSERVATION_VERSION,
+          tabId: tab.id,
+          matched: "network_response",
+          response: networkResponseState.matched,
+        };
+      }
+      if (networkIdle && networkState) {
+        if (networkState.inflight.size === 0 && Date.now() - networkState.lastActivityAt >= quiet) {
+          return {
+            waitVersion: WAIT_VERSION,
+            tabId: tab.id,
+            matched: "network_idle",
+            quietMs: quiet,
+          };
+        }
+      }
+      if (domStable) {
+        const generation = currentDocumentGeneration(tab.id);
+        const counter = await domMutationCounter(tab.id);
+        if (generation !== stableGeneration || counter !== stableCounter) {
+          stableGeneration = generation;
+          stableCounter = counter;
+          stableSince = Date.now();
+        } else if (Date.now() - stableSince >= quiet) {
+          return {
+            waitVersion: WAIT_VERSION,
+            tabId: tab.id,
+            matched: "dom_stable",
+            quietMs: quiet,
+            mutationCounter: counter,
+          };
+        }
+      }
+      if (baseSnapshot) {
+        const generation = currentDocumentGeneration(tab.id);
+        if (generation !== baseSnapshot.documentGeneration) {
+          return {
+            waitVersion: WAIT_VERSION,
+            tabId: tab.id,
+            matched: "snapshot_changed",
+            snapshotId: baseSnapshot.id,
+            reason: "document_generation",
+            documentGeneration: generation,
+          };
+        }
+        const counter = await domMutationCounter(tab.id);
+        if (
+          baseSnapshot.mutationCounter != null &&
+          counter !== baseSnapshot.mutationCounter
+        ) {
+          return {
+            waitVersion: WAIT_VERSION,
+            tabId: tab.id,
+            matched: "snapshot_changed",
+            snapshotId: baseSnapshot.id,
+            reason: "dom_mutation",
+            mutationCounter: counter,
+          };
+        }
+        if (String(current.url || "") !== String(baseSnapshot.url || "")) {
+          return {
+            waitVersion: WAIT_VERSION,
+            tabId: tab.id,
+            matched: "snapshot_changed",
+            snapshotId: baseSnapshot.id,
+            reason: "url",
+            url: current.url,
+          };
+        }
+      }
+      await sleep(100);
     }
-    await sleep(100);
+    throw new Error(`Timed out waiting in tab ${tab.id}`);
+  } finally {
+    if (networkState && networkWaitStates.get(tab.id) === networkState) {
+      networkWaitStates.delete(tab.id);
+    }
+    if (networkResponseState) {
+      removeNetworkResponseWaitState(tab.id, networkResponseState);
+    }
+    if (smartRequested || text) scheduleDetach(tab.id, 5_000);
   }
-  throw new Error(`Timed out waiting in tab ${tab.id}`);
 }
 
-async function browserFill({ tabId, ref, value, agentName }) {
+async function browserFill({ tabId, ref, value, agentName, after }) {
   const tab = await chooseTab(tabId);
+  const afterConfig = normalizeActionAfter(after, tab.id, "fill");
+  const wanted = String(value ?? "");
   await requireDebuggableTab(tab.id);
   await attachTab(tab.id);
   const { target, point, frameId, sessionId } = await moveAgentCursorToRef(tab.id, ref, { pulse: true, agentName });
@@ -1623,28 +3391,47 @@ async function browserFill({ tabId, ref, value, agentName }) {
     objectId,
     functionDeclaration: `function(nextValue) {
       this.focus();
-      const proto = Object.getPrototypeOf(this);
-      const descriptor = Object.getOwnPropertyDescriptor(proto, 'value')
-        || Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')
-        || Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value');
-      if (descriptor && typeof descriptor.set === 'function') descriptor.set.call(this, nextValue);
-      else this.value = nextValue;
-      this.dispatchEvent(new Event('input', { bubbles: true }));
-      this.dispatchEvent(new Event('change', { bubbles: true }));
-      return { value: this.value ?? this.textContent ?? '' };
+      const tag = String(this.tagName || '').toUpperCase();
+      const inputType = String(this.type || '').toLowerCase();
+      const blockedInputTypes = new Set(['button', 'checkbox', 'color', 'file', 'hidden', 'image', 'radio', 'range', 'reset', 'submit']);
+      const nativeEditable = tag === 'TEXTAREA' || (tag === 'INPUT' && !blockedInputTypes.has(inputType));
+      const contentEditable = Boolean(this.isContentEditable);
+      if (!nativeEditable && !contentEditable) throw new Error('Target is not a supported editable control');
+      if (contentEditable) {
+        this.textContent = nextValue;
+      } else {
+        const proto = Object.getPrototypeOf(this);
+        const descriptor = Object.getOwnPropertyDescriptor(proto, 'value')
+          || (globalThis.HTMLInputElement ? Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value') : null)
+          || (globalThis.HTMLTextAreaElement ? Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value') : null);
+        if (descriptor && typeof descriptor.set === 'function') descriptor.set.call(this, nextValue);
+        else this.value = nextValue;
+      }
+      this.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
+      this.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
+      const actual = contentEditable ? String(this.textContent ?? '') : String(this.value ?? '');
+      return { value: actual, editable: true, kind: contentEditable ? 'contenteditable' : tag.toLowerCase() };
     }`,
-    arguments: [{ value: String(value ?? "") }],
+    arguments: [{ value: wanted }],
     returnByValue: true,
   }, target.sessionId);
+  if (result?.exceptionDetails) throw new Error(result.exceptionDetails?.text || `Unable to fill element: ${ref}`);
+  const outcome = result?.result?.value || {};
+  if (String(outcome.value ?? "") !== wanted) throw new Error(`Fill postcondition failed for ${ref}`);
   refStates.delete(tab.id);
+  const afterResult = await runActionAfter(tab.id, afterConfig);
   scheduleDetach(tab.id, 100);
   return {
+    inputVersion: INPUT_VERSION,
     tabId: tab.id,
     ref,
     point,
     frameId,
     sessionScope: sessionId ? "child" : "root",
-    value: result?.result?.value?.value ?? String(value ?? ""),
+    value: outcome.value,
+    kind: outcome.kind || null,
+    compoundActionVersion: COMPOUND_ACTION_VERSION,
+    after: afterResult,
   };
 }
 
@@ -1674,11 +3461,57 @@ function parseKeyChord(chord) {
   return { key, modifiers };
 }
 
-async function browserPress({ tabId, key }) {
+async function focusRefForInput(tabId, ref, { agentName, requireEditable = false } = {}) {
+  const moved = await moveAgentCursorToRef(tabId, ref, { pulse: true, agentName });
+  const target = moved.target;
+  const resolved = await send(tabId, "DOM.resolveNode", { backendNodeId: target.backendNodeId }, target.sessionId);
+  const objectId = resolved?.object?.objectId;
+  if (!objectId) throw new Error(`Unable to resolve element: ${ref}`);
+  const focused = await send(tabId, "Runtime.callFunctionOn", {
+    objectId,
+    functionDeclaration: `function(requireEditable) {
+      const tag = String(this.tagName || '').toUpperCase();
+      const inputType = String(this.type || '').toLowerCase();
+      const blockedInputTypes = new Set(['button', 'checkbox', 'color', 'file', 'hidden', 'image', 'radio', 'range', 'reset', 'submit']);
+      const editable = Boolean(this.isContentEditable) || tag === 'TEXTAREA' || (tag === 'INPUT' && !blockedInputTypes.has(inputType));
+      if (requireEditable && !editable) throw new Error('Target is not a supported editable control');
+      if (typeof this.focus !== 'function') throw new Error('Target cannot receive keyboard focus');
+      this.focus({ preventScroll: true });
+      const active = this.ownerDocument?.activeElement;
+      const hasFocus = active === this || Boolean(this.contains?.(active));
+      return { focused: hasFocus, editable, tagName: tag.toLowerCase() || null };
+    }`,
+    arguments: [{ value: Boolean(requireEditable) }],
+    returnByValue: true,
+  }, target.sessionId);
+  if (focused?.exceptionDetails) throw new Error(focused.exceptionDetails?.text || `Unable to focus element: ${ref}`);
+  const state = focused?.result?.value || {};
+  if (state.focused !== true) throw new Error(`Keyboard focus postcondition failed for ${ref}`);
+  return { ...moved, objectId, editable: Boolean(state.editable), tagName: state.tagName || null };
+}
+
+async function readFocusedEditableValue(tabId, objectId, sessionId) {
+  if (!objectId) return null;
+  const result = await send(tabId, "Runtime.callFunctionOn", {
+    objectId,
+    functionDeclaration: `function() {
+      if ('value' in this) return String(this.value ?? '').slice(0, 100000);
+      if (this.isContentEditable) return String(this.textContent ?? '').slice(0, 100000);
+      return null;
+    }`,
+    returnByValue: true,
+  }, sessionId);
+  return result?.result?.value ?? null;
+}
+
+async function browserPress({ tabId, key, ref, agentName, after }) {
   const tab = await chooseTab(tabId);
+  const afterConfig = normalizeActionAfter(after, tab.id, "press");
   await requireDebuggableTab(tab.id);
   await attachTab(tab.id);
   await send(tab.id, "Page.bringToFront");
+  const focused = ref ? await focusRefForInput(tab.id, ref, { agentName }) : null;
+  const sessionId = focused?.sessionId || null;
   const chord = parseKeyChord(key);
   const printable = chord.key.length === 1 && chord.modifiers === 0;
   await send(tab.id, "Input.dispatchKeyEvent", {
@@ -1686,14 +3519,76 @@ async function browserPress({ tabId, key }) {
     key: chord.key,
     modifiers: chord.modifiers,
     ...(printable ? { text: chord.key } : {}),
-  });
+  }, sessionId);
   await send(tab.id, "Input.dispatchKeyEvent", {
     type: "keyUp",
     key: chord.key,
     modifiers: chord.modifiers,
-  });
+  }, sessionId);
+  refStates.delete(tab.id);
+  const afterResult = await runActionAfter(tab.id, afterConfig);
   scheduleDetach(tab.id, 5_000);
-  return { tabId: tab.id, key: chord.key, modifiers: chord.modifiers };
+  return {
+    inputVersion: INPUT_VERSION,
+    tabId: tab.id,
+    key: chord.key,
+    modifiers: chord.modifiers,
+    ref: ref || null,
+    frameId: focused?.frameId || null,
+    sessionScope: sessionId ? "child" : "root",
+    compoundActionVersion: COMPOUND_ACTION_VERSION,
+    after: afterResult,
+  };
+}
+
+async function browserTypeText({ tabId, ref, text, delayMs = 0, agentName, after }) {
+  const tab = await chooseTab(tabId);
+  const afterConfig = normalizeActionAfter(after, tab.id, "type_text");
+  const value = String(text ?? "");
+  if (value.length > 100_000) throw new Error("type_text is limited to 100000 characters");
+  const boundedDelayMs = Math.max(0, Math.min(Math.floor(Number(delayMs) || 0), 200));
+  await requireDebuggableTab(tab.id);
+  await attachTab(tab.id);
+  await send(tab.id, "Page.bringToFront");
+  const focused = await focusRefForInput(tab.id, ref, { agentName, requireEditable: true });
+  const sessionId = focused.sessionId || null;
+  const sequential = value.length <= 2_000 && /^[\x20-\x7E]*$/.test(value);
+  if (sequential) {
+    for (let index = 0; index < value.length; index += 1) {
+      const character = value[index];
+      await send(tab.id, "Input.dispatchKeyEvent", {
+        type: "keyDown",
+        key: character,
+        text: character,
+        modifiers: 0,
+      }, sessionId);
+      await send(tab.id, "Input.dispatchKeyEvent", {
+        type: "keyUp",
+        key: character,
+        modifiers: 0,
+      }, sessionId);
+      if (boundedDelayMs > 0 && index < value.length - 1) await sleep(boundedDelayMs);
+    }
+  } else if (value) {
+    await send(tab.id, "Input.insertText", { text: value }, sessionId);
+  }
+  const actualValue = await readFocusedEditableValue(tab.id, focused.objectId, sessionId);
+  refStates.delete(tab.id);
+  const afterResult = await runActionAfter(tab.id, afterConfig);
+  scheduleDetach(tab.id, 5_000);
+  return {
+    inputVersion: INPUT_VERSION,
+    tabId: tab.id,
+    ref,
+    mode: sequential ? "key_events" : "insert_text",
+    characters: [...value].length,
+    delayMs: boundedDelayMs,
+    value: actualValue,
+    frameId: focused.frameId,
+    sessionScope: sessionId ? "child" : "root",
+    compoundActionVersion: COMPOUND_ACTION_VERSION,
+    after: afterResult,
+  };
 }
 
 async function browserEval({ tabId, expression }) {
@@ -1911,8 +3806,8 @@ async function browserDownloadWait({ downloadId, timeoutMs = 60_000 } = {}) {
   throw new Error(`Timed out waiting for download ${downloadId}`);
 }
 
-async function browserCreateTab({ url, active = false } = {}) {
-  const targetUrl = validateOpenUrl(url);
+async function browserCreateTab({ url = "chrome://newtab/", active = false } = {}) {
+  const targetUrl = validateOpenUrl(url || "chrome://newtab/");
   if (!chrome.tabs?.create) throw new Error("Chrome tabs.create API is unavailable");
   const tab = await chrome.tabs.create({ url: targetUrl, active: Boolean(active) });
   if (!Number.isInteger(tab?.id)) throw new Error("Chrome did not return a created tab id.");
@@ -1930,6 +3825,59 @@ async function browserCreateTab({ url, active = false } = {}) {
     pageKind: policy.kind,
     debuggerSupported: policy.debuggerSupported,
   };
+}
+
+async function browserHistoryNavigate({ tabId, direction } = {}) {
+  const normalizedDirection = direction === "forward" ? "forward" : "back";
+  const tab = await chooseTab(tabId);
+  const api = normalizedDirection === "forward" ? chrome.tabs?.goForward : chrome.tabs?.goBack;
+  if (typeof api !== "function") {
+    throw new Error(`Chrome tabs.go${normalizedDirection === "forward" ? "Forward" : "Back"} API is unavailable`);
+  }
+  try {
+    await api.call(chrome.tabs, tab.id);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Chrome could not navigate ${normalizedDirection} in tab ${tab.id}: ${message}`);
+  }
+  const updated = await chrome.tabs.get(tab.id);
+  const policy = classifyBrowserPage(updated);
+  return {
+    id: updated.id,
+    windowId: updated.windowId,
+    title: updated.title,
+    url: updated.url,
+    active: updated.active,
+    pageKind: policy.kind,
+    debuggerSupported: policy.debuggerSupported,
+    direction: normalizedDirection,
+  };
+}
+
+async function browserReload({ tabId, ignoreCache = false } = {}) {
+  const tab = await chooseTab(tabId);
+  await requireDebuggableTab(tab.id);
+  const persistent = observationStates.has(tab.id);
+  await attachTab(tab.id, DEFAULT_ATTACH_IDLE_MS, { persistent });
+  try {
+    await send(tab.id, "Page.reload", { ignoreCache: Boolean(ignoreCache) });
+    const updated = await waitForTab(tab.id, (candidate) => candidate.status === "complete");
+    const policy = classifyBrowserPage(updated);
+    return {
+      navigationVersion: NAVIGATION_VERSION,
+      id: updated.id,
+      windowId: updated.windowId,
+      title: updated.title,
+      url: updated.url,
+      active: updated.active,
+      pageKind: policy.kind,
+      debuggerSupported: policy.debuggerSupported,
+      reloaded: true,
+      ignoreCache: Boolean(ignoreCache),
+    };
+  } finally {
+    if (!persistent) scheduleDetach(tab.id, 5_000);
+  }
 }
 
 async function browserNavigate({ tabId, url, ignoreCache = false } = {}) {
@@ -1950,6 +3898,7 @@ async function browserNavigate({ tabId, url, ignoreCache = false } = {}) {
     );
     const policy = classifyBrowserPage(updated);
     return {
+      navigationVersion: NAVIGATION_VERSION,
       id: updated.id,
       windowId: updated.windowId,
       title: updated.title,
@@ -2005,6 +3954,7 @@ async function browserEmulate({
   await send(tab.id, "Page.bringToFront");
   if (!persistent) scheduleDetach(tab.id, 5_000);
   return {
+    emulationVersion: EMULATION_VERSION,
     tabId: tab.id,
     width: normalizedWidth,
     height: normalizedHeight,
@@ -2012,6 +3962,138 @@ async function browserEmulate({
     mobile: Boolean(mobile),
     touch: Boolean(touch || mobile),
   };
+}
+
+async function touchViewport(tabId, sessionId = null) {
+  const evaluated = await send(tabId, "Runtime.evaluate", {
+    expression: "({ width: Math.max(1, Math.floor(window.innerWidth || 0)), height: Math.max(1, Math.floor(window.innerHeight || 0)) })",
+    returnByValue: true,
+    silent: true,
+  }, sessionId);
+  const width = Number(evaluated?.result?.value?.width);
+  const height = Number(evaluated?.result?.value?.height);
+  if (!Number.isFinite(width) || !Number.isFinite(height) || width < 2 || height < 2) {
+    throw new Error("Unable to determine a usable viewport for touch gesture.");
+  }
+  return { width: Math.min(width, 10_000), height: Math.min(height, 10_000) };
+}
+
+function clampTouchCoordinate(value, maximum) {
+  return Math.max(1, Math.min(Number(value) || 1, Math.max(1, maximum - 1)));
+}
+
+async function dispatchTouchTap(tabId, point, sessionId = null) {
+  const touchPoint = {
+    x: point.x,
+    y: point.y,
+    radiusX: 1,
+    radiusY: 1,
+    force: 1,
+    id: 0,
+  };
+  await send(tabId, "Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [touchPoint] }, sessionId);
+  await sleep(40);
+  await send(tabId, "Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] }, sessionId);
+}
+
+async function browserTap({ tabId, ref, agentName } = {}) {
+  if (!/^@e\d+$/.test(String(ref || ""))) throw new Error("tap requires a current semantic ref.");
+  const tab = await chooseTab(tabId);
+  await requireDebuggableTab(tab.id);
+  const persistent = observationStates.has(tab.id);
+  await attachTab(tab.id, DEFAULT_ATTACH_IDLE_MS, { persistent });
+  try {
+    const moved = await moveAgentCursorToRef(tab.id, ref, { pulse: true, agentName });
+    await dispatchTouchTap(tab.id, moved.point, moved.sessionId);
+    refStates.delete(tab.id);
+    return {
+      touchGestureVersion: TOUCH_GESTURE_VERSION,
+      tabId: tab.id,
+      ref,
+      point: moved.point,
+      frameId: moved.frameId,
+      sessionScope: moved.sessionId ? "child" : "root",
+      gesture: "tap",
+    };
+  } finally {
+    if (!persistent) scheduleDetach(tab.id, 5_000);
+  }
+}
+
+async function browserSwipe({ tabId, direction, distance = 400, ref, agentName } = {}) {
+  const normalizedDirection = String(direction || "").toLowerCase();
+  if (!new Set(["up", "down", "left", "right"]).has(normalizedDirection)) {
+    throw new Error("Swipe direction must be up, down, left or right.");
+  }
+  const normalizedDistance = Number(distance);
+  if (!Number.isInteger(normalizedDistance) || normalizedDistance < 40 || normalizedDistance > 1_200) {
+    throw new Error("Swipe distance must be an integer between 40 and 1200 pixels.");
+  }
+  const tab = await chooseTab(tabId);
+  await requireDebuggableTab(tab.id);
+  const persistent = observationStates.has(tab.id);
+  await attachTab(tab.id, DEFAULT_ATTACH_IDLE_MS, { persistent });
+  try {
+    let sessionId = null;
+    let frameId = null;
+    let start;
+    if (ref != null) {
+      if (!/^@e\d+$/.test(String(ref))) throw new Error("Swipe ref must be a current semantic ref.");
+      const moved = await moveAgentCursorToRef(tab.id, ref, { pulse: false, agentName });
+      sessionId = moved.sessionId;
+      frameId = moved.frameId;
+      start = moved.point;
+    } else {
+      await send(tab.id, "Page.bringToFront");
+      const viewport = await touchViewport(tab.id);
+      start = { x: viewport.width / 2, y: viewport.height / 2 };
+    }
+    const viewport = await touchViewport(tab.id, sessionId);
+    const delta = {
+      up: { x: 0, y: -normalizedDistance },
+      down: { x: 0, y: normalizedDistance },
+      left: { x: -normalizedDistance, y: 0 },
+      right: { x: normalizedDistance, y: 0 },
+    }[normalizedDirection];
+    const from = {
+      x: clampTouchCoordinate(start.x, viewport.width),
+      y: clampTouchCoordinate(start.y, viewport.height),
+    };
+    const to = {
+      x: clampTouchCoordinate(from.x + delta.x, viewport.width),
+      y: clampTouchCoordinate(from.y + delta.y, viewport.height),
+    };
+    const effectiveDistance = Math.hypot(to.x - from.x, to.y - from.y);
+    if (effectiveDistance < 20) throw new Error("Swipe target is too close to the viewport edge for a meaningful bounded gesture.");
+    const steps = 8;
+    const pointFor = (index) => ({
+      x: from.x + ((to.x - from.x) * index) / steps,
+      y: from.y + ((to.y - from.y) * index) / steps,
+      radiusX: 1,
+      radiusY: 1,
+      force: 1,
+      id: 0,
+    });
+    await send(tab.id, "Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [pointFor(0)] }, sessionId);
+    for (let index = 1; index <= steps; index += 1) {
+      await send(tab.id, "Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [pointFor(index)] }, sessionId);
+      await sleep(16);
+    }
+    await send(tab.id, "Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] }, sessionId);
+    return {
+      touchGestureVersion: TOUCH_GESTURE_VERSION,
+      tabId: tab.id,
+      gesture: "swipe",
+      direction: normalizedDirection,
+      requestedDistance: normalizedDistance,
+      effectiveDistance: Math.round(effectiveDistance),
+      ref: ref || null,
+      frameId,
+      sessionScope: sessionId ? "child" : "root",
+    };
+  } finally {
+    if (!persistent) scheduleDetach(tab.id, 5_000);
+  }
 }
 
 async function browserClearEmulation({ tabId } = {}) {
@@ -2024,13 +4106,14 @@ async function browserClearEmulation({ tabId } = {}) {
     send(tab.id, "Emulation.setTouchEmulationEnabled", { enabled: false }),
   ]);
   if (!persistent) scheduleDetach(tab.id, 5_000);
-  return { tabId: tab.id, cleared: true };
+  return { emulationVersion: EMULATION_VERSION, tabId: tab.id, cleared: true };
 }
 
 async function browserOpen({ tabId, url }) {
   const targetUrl = validateOpenUrl(url);
   const tab = await chooseTab(tabId);
-  await detachTab(tab.id);
+  const persistent = observationStates.has(tab.id) && /^https?:/i.test(targetUrl);
+  if (!persistent) await detachTab(tab.id);
   await chrome.tabs.update(tab.id, { url: targetUrl, active: true });
   const updated = await waitForTab(
     tab.id,
@@ -2038,6 +4121,7 @@ async function browserOpen({ tabId, url }) {
   );
   const policy = classifyBrowserPage(updated);
   return {
+    navigationVersion: NAVIGATION_VERSION,
     id: updated.id,
     windowId: updated.windowId,
     title: updated.title,
@@ -2116,13 +4200,18 @@ async function browserObserveStart({ tabId } = {}) {
     send(tab.id, "Network.enable"),
     send(tab.id, "Page.enable"),
   ]);
-  observationStates.set(tab.id, {
+  const startedAt = new Date().toISOString();
+  const state = {
     startedAt: Date.now(),
     console: [],
+    consoleCursor: 0,
     network: [],
+    networkCursor: 0,
+    networkRequests: new Map(),
     dialog: currentDialogRecord(tab.id)?.dialog || null,
-  });
-  return { tabId: tab.id, observing: true, startedAt: new Date().toISOString() };
+  };
+  observationStates.set(tab.id, state);
+  return { observationVersion: OBSERVATION_VERSION, tabId: tab.id, observing: true, startedAt };
 }
 
 async function browserObserveStop({ tabId } = {}) {
@@ -2132,16 +4221,42 @@ async function browserObserveStop({ tabId } = {}) {
   return { tabId: tab.id, observing: false, wasObserving };
 }
 
-async function browserConsoleRead({ tabId, limit = 100, clear = false } = {}) {
+async function browserConsoleRead({ tabId, limit = 100, clear = false, afterCursor = null, level = null, query = null } = {}) {
   const tab = await chooseTab(tabId);
   const state = getObservation(tab.id);
-  return { tabId: tab.id, count: state.console.length, items: observationSlice(state.console, limit, clear) };
+  const normalizedLevel = normalizeConsoleLevelFilter(level);
+  const normalizedQuery = query == null || query === "" ? null : String(query).slice(0, 1_000);
+  const count = state.console.length;
+  const read = observationRead(state, "console", {
+    limit,
+    clear,
+    afterCursor,
+    predicate: (event) => consoleEventMatches(event, { level: normalizedLevel, query: normalizedQuery }),
+  });
+  return { observationVersion: OBSERVATION_VERSION, tabId: tab.id, count, ...read };
 }
 
-async function browserNetworkRead({ tabId, limit = 100, clear = false } = {}) {
+async function browserNetworkRead({
+  tabId,
+  limit = 100,
+  clear = false,
+  afterCursor = null,
+  urlContains = null,
+  method = null,
+  status = null,
+  resourceType = null,
+} = {}) {
   const tab = await chooseTab(tabId);
   const state = getObservation(tab.id);
-  return { tabId: tab.id, count: state.network.length, items: observationSlice(state.network, limit, clear) };
+  const filters = normalizeNetworkFilters({ urlContains, method, status, resourceType });
+  const count = state.network.length;
+  const read = observationRead(state, "network", {
+    limit,
+    clear,
+    afterCursor,
+    predicate: (event) => networkEventMatches(event, filters),
+  });
+  return { observationVersion: OBSERVATION_VERSION, tabId: tab.id, count, ...read };
 }
 
 async function browserDialog({ tabId, action = "status", promptText } = {}) {
@@ -2165,6 +4280,245 @@ async function browserDialog({ tabId, action = "status", promptText } = {}) {
   clearDialogState(tab.id);
   scheduleDetach(tab.id, 5_000);
   return { tabId: tab.id, action, handled };
+}
+
+async function requireAgentBookmarkContext() {
+  await ensureBrowserIdentityLoaded();
+  if (browserContext !== "agent") {
+    throw new Error("Bookmark automation is available only in Agent Browser; Your Browser bookmarks are intentionally unavailable.");
+  }
+  if (!chrome.bookmarks) throw new Error("Chrome bookmarks API is unavailable in this extension context.");
+}
+
+function normalizeBookmarkId(value, field = "bookmark id") {
+  const normalized = String(value == null ? "" : value).trim();
+  if (!normalized || normalized.length > 128 || /[\u0000-\u001f\u007f]/u.test(normalized)) {
+    throw new Error(`${field} must be a bounded Chrome bookmark id.`);
+  }
+  return normalized;
+}
+
+function normalizeBookmarkTitle(value, { allowEmpty = true } = {}) {
+  const normalized = String(value == null ? "" : value).replace(/[\u0000-\u001f\u007f]/gu, " ").trim();
+  if ((!allowEmpty && !normalized) || normalized.length > 500) {
+    throw new Error(`Bookmark title must be ${allowEmpty ? "at most" : "between 1 and"} 500 characters.`);
+  }
+  return normalized;
+}
+
+function normalizeBookmarkUrl(value) {
+  const raw = String(value == null ? "" : value).trim();
+  if (!raw || raw.length > 4_000) throw new Error("Bookmark URL must be between 1 and 4000 characters.");
+  let parsed;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    throw new Error("Bookmark URL must be a valid HTTP(S) URL.");
+  }
+  if (!new Set(["http:", "https:"]).has(parsed.protocol)) throw new Error("Bookmark URL must use http or https.");
+  return parsed.toString();
+}
+
+function normalizeBookmarkLimit(value) {
+  const limit = Number(value);
+  if (!Number.isInteger(limit) || limit < 1 || limit > 100) throw new Error("Bookmark result limit must be an integer between 1 and 100.");
+  return limit;
+}
+
+function normalizeBookmarkIndex(value) {
+  const index = Number(value);
+  if (!Number.isInteger(index) || index < 0 || index > 100_000) throw new Error("Bookmark index must be an integer between 0 and 100000.");
+  return index;
+}
+
+function projectBookmarkNode(node) {
+  return {
+    id: String(node?.id || ""),
+    parentId: node?.parentId == null ? null : String(node.parentId),
+    index: Number.isInteger(node?.index) ? node.index : null,
+    title: String(node?.title || "").slice(0, 500),
+    url: node?.url ? safeObservedUrl(node.url) : null,
+    type: node?.url ? "bookmark" : "folder",
+  };
+}
+
+async function bookmarkNodeById(id, cache) {
+  const normalizedId = String(id || "");
+  if (!normalizedId) return null;
+  if (cache.has(normalizedId)) return cache.get(normalizedId);
+  const nodes = await chrome.bookmarks.get(normalizedId);
+  const node = nodes?.[0] || null;
+  cache.set(normalizedId, node);
+  return node;
+}
+
+async function bookmarkFolderPath(folderId, cache) {
+  let currentId = folderId == null ? null : String(folderId);
+  if (!currentId || currentId === "0") return { path: "", truncated: false };
+  const segments = [];
+  const seen = new Set();
+  let truncated = false;
+  let depth = 0;
+  while (currentId && currentId !== "0") {
+    if (depth >= MAX_BOOKMARK_PATH_DEPTH || seen.has(currentId)) {
+      truncated = true;
+      break;
+    }
+    seen.add(currentId);
+    const node = await bookmarkNodeById(currentId, cache);
+    if (!node) break;
+    const title = normalizeBookmarkTitle(node.title);
+    if (title) segments.unshift(title);
+    currentId = node.parentId == null ? null : String(node.parentId);
+    depth += 1;
+  }
+  let path = segments.join(" / ");
+  if (path.length > MAX_BOOKMARK_PATH_CHARS) {
+    path = `… / ${path.slice(-(MAX_BOOKMARK_PATH_CHARS - 4))}`;
+    truncated = true;
+  }
+  return { path, truncated };
+}
+
+async function projectBookmarkNodeWithPath(node, cache) {
+  const projected = projectBookmarkNode(node);
+  const parent = await bookmarkFolderPath(projected.parentId, cache);
+  let path = [parent.path, projected.title].filter(Boolean).join(" / ");
+  let pathTruncated = parent.truncated;
+  if (path.length > MAX_BOOKMARK_PATH_CHARS) {
+    path = `… / ${path.slice(-(MAX_BOOKMARK_PATH_CHARS - 4))}`;
+    pathTruncated = true;
+  }
+  return {
+    ...projected,
+    parentPath: parent.path || null,
+    path: path || null,
+    pathTruncated,
+  };
+}
+
+async function browserBookmarksList({ parentId = "0", limit = 50 } = {}) {
+  await requireAgentBookmarkContext();
+  const normalizedParentId = normalizeBookmarkId(parentId, "parentId");
+  const boundedLimit = normalizeBookmarkLimit(limit);
+  const cache = new Map();
+  const folderNode = normalizedParentId === "0"
+    ? { id: "0", parentId: null, index: 0, title: "" }
+    : await bookmarkNodeById(normalizedParentId, cache);
+  if (!folderNode) throw new Error(`Bookmark folder not found: ${normalizedParentId}`);
+  if (folderNode.url) throw new Error(`Bookmark id ${normalizedParentId} is not a folder.`);
+  cache.set(normalizedParentId, folderNode);
+  const folderPath = await bookmarkFolderPath(normalizedParentId, cache);
+  const nodes = await chrome.bookmarks.getChildren(normalizedParentId);
+  const items = [];
+  for (const node of nodes.slice(0, boundedLimit)) items.push(await projectBookmarkNodeWithPath(node, cache));
+  return {
+    bookmarksVersion: BOOKMARKS_VERSION,
+    parentId: normalizedParentId,
+    folder: {
+      id: normalizedParentId,
+      title: String(folderNode.title || "").slice(0, 500),
+      path: folderPath.path || null,
+      pathTruncated: folderPath.truncated,
+    },
+    items,
+    returned: Math.min(nodes.length, boundedLimit),
+    totalChildren: nodes.length,
+    truncated: nodes.length > boundedLimit,
+  };
+}
+
+async function browserBookmarksSearch({ query, limit = 50 } = {}) {
+  await requireAgentBookmarkContext();
+  const normalizedQuery = String(query == null ? "" : query).trim();
+  if (!normalizedQuery || normalizedQuery.length > 500) throw new Error("Bookmark search query must be between 1 and 500 characters.");
+  const boundedLimit = normalizeBookmarkLimit(limit);
+  const cache = new Map();
+  const nodes = await chrome.bookmarks.search(normalizedQuery);
+  const items = [];
+  for (const node of nodes.slice(0, boundedLimit)) items.push(await projectBookmarkNodeWithPath(node, cache));
+  return {
+    bookmarksVersion: BOOKMARKS_VERSION,
+    query: normalizedQuery,
+    items,
+    returned: Math.min(nodes.length, boundedLimit),
+    totalMatches: nodes.length,
+    truncated: nodes.length > boundedLimit,
+  };
+}
+
+async function browserBookmarkAdd({ title, url, parentId, index } = {}) {
+  await requireAgentBookmarkContext();
+  const created = await chrome.bookmarks.create({
+    ...(parentId != null ? { parentId: normalizeBookmarkId(parentId, "parentId") } : {}),
+    ...(index != null ? { index: normalizeBookmarkIndex(index) } : {}),
+    title: normalizeBookmarkTitle(title, { allowEmpty: false }),
+    url: normalizeBookmarkUrl(url),
+  });
+  const item = await projectBookmarkNodeWithPath(created, new Map());
+  return { bookmarksVersion: BOOKMARKS_VERSION, item };
+}
+
+async function browserBookmarkFolderCreate({ title, parentId, index } = {}) {
+  await requireAgentBookmarkContext();
+  const created = await chrome.bookmarks.create({
+    ...(parentId != null ? { parentId: normalizeBookmarkId(parentId, "parentId") } : {}),
+    ...(index != null ? { index: normalizeBookmarkIndex(index) } : {}),
+    title: normalizeBookmarkTitle(title, { allowEmpty: false }),
+  });
+  const item = await projectBookmarkNodeWithPath(created, new Map());
+  return { bookmarksVersion: BOOKMARKS_VERSION, item };
+}
+
+async function browserBookmarkUpdateMove({ id, title, url, parentId, index } = {}) {
+  await requireAgentBookmarkContext();
+  const normalizedId = normalizeBookmarkId(id);
+  const existing = await chrome.bookmarks.get(normalizedId);
+  const original = existing?.[0];
+  if (!original) throw new Error(`Bookmark not found: ${normalizedId}`);
+  const update = {};
+  if (title != null) update.title = normalizeBookmarkTitle(title);
+  if (url != null) {
+    if (!original.url) throw new Error("A bookmark folder cannot be converted into a URL bookmark.");
+    update.url = normalizeBookmarkUrl(url);
+  }
+  const move = {};
+  if (parentId != null) move.parentId = normalizeBookmarkId(parentId, "parentId");
+  if (index != null) move.index = normalizeBookmarkIndex(index);
+  if (Object.keys(update).length === 0 && Object.keys(move).length === 0) {
+    throw new Error("Bookmark update/move requires title, url, parentId and/or index.");
+  }
+  let node = original;
+  let updated = false;
+  try {
+    if (Object.keys(update).length > 0) {
+      node = await chrome.bookmarks.update(normalizedId, update);
+      updated = true;
+    }
+    if (Object.keys(move).length > 0) node = await chrome.bookmarks.move(normalizedId, move);
+  } catch (error) {
+    if (updated && Object.keys(move).length > 0) {
+      await chrome.bookmarks.update(normalizedId, {
+        title: String(original.title || ""),
+        ...(original.url ? { url: original.url } : {}),
+      }).catch(() => {});
+    }
+    throw error;
+  }
+  const item = await projectBookmarkNodeWithPath(node, new Map());
+  return { bookmarksVersion: BOOKMARKS_VERSION, item };
+}
+
+async function browserBookmarkRemove({ id, recursive = false } = {}) {
+  await requireAgentBookmarkContext();
+  const normalizedId = normalizeBookmarkId(id);
+  const existing = await chrome.bookmarks.get(normalizedId);
+  const node = existing?.[0];
+  if (!node) throw new Error(`Bookmark not found: ${normalizedId}`);
+  const removed = await projectBookmarkNodeWithPath(node, new Map());
+  if (!node.url && recursive) await chrome.bookmarks.removeTree(normalizedId);
+  else await chrome.bookmarks.remove(normalizedId);
+  return { bookmarksVersion: BOOKMARKS_VERSION, removed, recursive: Boolean(recursive && !node.url) };
 }
 
 async function browserStatus() {
@@ -2195,6 +4549,7 @@ async function browserStatus() {
     tabCreationSequence: mayInspectBrowser ? tabCreationSequence : 0,
     downloadCreationSequence: mayInspectBrowser ? downloadCreationSequence : 0,
     tabCount: mayInspectBrowser ? tabs.length : null,
+    capabilityVersions: browserCapabilityVersions(),
   };
 }
 
@@ -2222,6 +4577,9 @@ const COMMANDS = {
   "tabs.list": browserTabsList,
   "tabs.activate": browserActivate,
   "tabs.create": browserCreateTab,
+  "history.back": (args) => browserHistoryNavigate({ ...args, direction: "back" }),
+  "history.forward": (args) => browserHistoryNavigate({ ...args, direction: "forward" }),
+  reload: browserReload,
   open: browserOpen,
   navigate: browserNavigate,
   emulate: browserEmulate,
@@ -2229,19 +4587,33 @@ const COMMANDS = {
   snapshot: browserSnapshot,
   screenshot: browserScreenshot,
   find: browserFind,
+  reacquire: browserReacquire,
   click: browserClick,
+  tap: browserTap,
+  swipe: browserSwipe,
+  double_click: browserDoubleClick,
+  drag: browserDrag,
   hover: browserHover,
   scroll: browserScroll,
+  scroll_into_view: browserScrollIntoView,
+  ref_info: browserRefInfo,
   select: browserSelect,
   check: browserCheck,
   wait: browserWait,
   fill: browserFill,
   press: browserPress,
+  type_text: browserTypeText,
   eval: browserEval,
   "observe.start": browserObserveStart,
   "observe.stop": browserObserveStop,
   "console.read": browserConsoleRead,
   "network.read": browserNetworkRead,
+  "bookmarks.list": browserBookmarksList,
+  "bookmarks.search": browserBookmarksSearch,
+  "bookmarks.add": browserBookmarkAdd,
+  "bookmarks.folder_create": browserBookmarkFolderCreate,
+  "bookmarks.update_move": browserBookmarkUpdateMove,
+  "bookmarks.remove": browserBookmarkRemove,
   dialog: browserDialog,
   close: browserClose,
   upload: browserUpload,
@@ -2365,6 +4737,7 @@ function connectNativeHost() {
       extensionVersion: chrome.runtime.getManifest().version,
       protocolVersion: BRIDGE_PROTOCOL_VERSION,
       capabilities: Object.keys(COMMANDS),
+      capabilityVersions: browserCapabilityVersions(),
       instanceId: browserInstanceId,
       browserContext,
       lastNativeDisconnectError,
@@ -2410,12 +4783,65 @@ chrome.debugger.onEvent.addListener((source, method, params = {}) => {
     return;
   }
 
+  if (method === "Input.dragIntercepted") {
+    resolveHtml5DragIntercept(tabId, source, params);
+    return;
+  }
+  const responseWaiters = networkResponseWaitStates.get(tabId);
+  if (responseWaiters?.size) {
+    if (method === "Network.requestWillBeSent") {
+      for (const waiter of responseWaiters) {
+        if (params.requestId) {
+          rememberNetworkRequest({ networkRequests: waiter.requests }, params.requestId, {
+            requestId: params.requestId,
+            method: params.request?.method || null,
+            url: safeObservedUrl(params.request?.url || params.documentURL || ""),
+            type: params.type || null,
+          });
+        }
+      }
+    } else if (method === "Network.responseReceived") {
+      for (const waiter of responseWaiters) {
+        const request = params.requestId ? waiter.requests.get(params.requestId) || null : null;
+        const response = {
+          requestId: params.requestId || null,
+          method: request?.method || null,
+          url: safeObservedUrl(params.response?.url || request?.url || ""),
+          status: params.response?.status ?? null,
+          statusText: params.response?.statusText || null,
+          mimeType: params.response?.mimeType || null,
+          type: params.type || request?.type || null,
+          fromDiskCache: Boolean(params.response?.fromDiskCache),
+          fromServiceWorker: Boolean(params.response?.fromServiceWorker),
+        };
+        if (!waiter.matched && networkEventMatches(response, waiter.filters)) waiter.matched = response;
+      }
+    } else if (method === "Network.loadingFinished" || method === "Network.loadingFailed") {
+      for (const waiter of responseWaiters) {
+        if (params.requestId) waiter.requests.delete(params.requestId);
+      }
+    }
+  }
+  const networkWaitState = networkWaitStates.get(tabId);
+  if (networkWaitState) {
+    if (method === "Network.requestWillBeSent") {
+      if (!NETWORK_IDLE_IGNORED_TYPES.has(String(params.type || ""))) {
+        if (params.requestId) networkWaitState.inflight.add(params.requestId);
+        networkWaitState.lastActivityAt = Date.now();
+      }
+    } else if (method === "Network.loadingFinished" || method === "Network.loadingFailed") {
+      if (params.requestId && networkWaitState.inflight.delete(params.requestId)) {
+        networkWaitState.lastActivityAt = Date.now();
+      }
+    }
+  }
+
   const state = observationStates.get(tabId);
   if (!state) return;
   const at = new Date().toISOString();
 
   if (method === "Runtime.consoleAPICalled") {
-    pushBounded(state.console, {
+    pushObservationEvent(state, "console", {
       at,
       kind: "console",
       level: params.type || "log",
@@ -2424,7 +4850,7 @@ chrome.debugger.onEvent.addListener((source, method, params = {}) => {
     return;
   }
   if (method === "Runtime.exceptionThrown") {
-    pushBounded(state.console, {
+    pushObservationEvent(state, "console", {
       at,
       kind: "exception",
       level: "error",
@@ -2436,41 +4862,73 @@ chrome.debugger.onEvent.addListener((source, method, params = {}) => {
     return;
   }
   if (method === "Network.requestWillBeSent") {
-    pushBounded(state.network, {
-      at,
-      phase: "request",
+    const request = {
       requestId: params.requestId || null,
       method: params.request?.method || null,
       url: safeObservedUrl(params.request?.url || params.documentURL || ""),
       type: params.type || null,
+    };
+    rememberNetworkRequest(state, params.requestId, request);
+    pushObservationEvent(state, "network", {
+      at,
+      phase: "request",
+      ...request,
     });
     return;
   }
   if (method === "Network.responseReceived") {
-    pushBounded(state.network, {
-      at,
-      phase: "response",
+    const previous = networkRequestMetadata(state, params.requestId);
+    const response = {
       requestId: params.requestId || null,
-      url: safeObservedUrl(params.response?.url || ""),
+      method: previous?.method || null,
+      url: safeObservedUrl(params.response?.url || previous?.url || ""),
       status: params.response?.status ?? null,
       statusText: params.response?.statusText || null,
       mimeType: params.response?.mimeType || null,
-      type: params.type || null,
+      type: params.type || previous?.type || null,
       fromDiskCache: Boolean(params.response?.fromDiskCache),
       fromServiceWorker: Boolean(params.response?.fromServiceWorker),
+    };
+    rememberNetworkRequest(state, params.requestId, response);
+    pushObservationEvent(state, "network", {
+      at,
+      phase: "response",
+      ...response,
     });
     return;
   }
+  if (method === "Network.loadingFinished") {
+    const previous = networkRequestMetadata(state, params.requestId);
+    pushObservationEvent(state, "network", {
+      at,
+      phase: "finished",
+      requestId: params.requestId || null,
+      method: previous?.method || null,
+      url: previous?.url || null,
+      status: previous?.status ?? null,
+      mimeType: previous?.mimeType || null,
+      type: previous?.type || null,
+      encodedDataLength: params.encodedDataLength ?? null,
+    });
+    forgetNetworkRequest(state, params.requestId);
+    return;
+  }
   if (method === "Network.loadingFailed") {
-    pushBounded(state.network, {
+    const previous = networkRequestMetadata(state, params.requestId);
+    pushObservationEvent(state, "network", {
       at,
       phase: "failed",
       requestId: params.requestId || null,
-      type: params.type || null,
+      method: previous?.method || null,
+      url: previous?.url || null,
+      status: previous?.status ?? null,
+      mimeType: previous?.mimeType || null,
+      type: params.type || previous?.type || null,
       errorText: params.errorText || null,
       canceled: Boolean(params.canceled),
       blockedReason: params.blockedReason || null,
     });
+    forgetNetworkRequest(state, params.requestId);
     return;
   }
 });
@@ -2482,8 +4940,11 @@ chrome.debugger.onDetach.addListener((source) => {
   if (state?.timer) clearTimeout(state.timer);
   attachedTabs.delete(tabId);
   refStates.delete(tabId);
+  networkWaitStates.delete(tabId);
+  networkResponseWaitStates.delete(tabId);
   observationStates.delete(tabId);
   dialogStates.delete(tabId);
+  rejectPendingHtml5DragIntercept(tabId, "Debugger detached while waiting for HTML5 drag interception");
 });
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
@@ -2508,8 +4969,13 @@ chrome.tabs.onRemoved.addListener((tabId) => {
   if (state?.timer) clearTimeout(state.timer);
   attachedTabs.delete(tabId);
   refStates.delete(tabId);
+  refRegistries.delete(tabId);
+  snapshotHistories.delete(tabId);
+  networkWaitStates.delete(tabId);
+  networkResponseWaitStates.delete(tabId);
   observationStates.delete(tabId);
   dialogStates.delete(tabId);
+  rejectPendingHtml5DragIntercept(tabId, "Tab closed while waiting for HTML5 drag interception");
   documentGenerations.delete(tabId);
 });
 

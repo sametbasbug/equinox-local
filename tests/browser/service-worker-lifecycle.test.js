@@ -21,7 +21,7 @@ function createEvent() {
 
 async function createLifecycleHarness({
   storedEnabled = true,
-  storedConsentVersion = 1,
+  storedConsentVersion = 2,
   storedAgentCursor = true,
   storedAgentCursorName = "Selene",
   storedBrowserInstanceId = null,
@@ -323,9 +323,9 @@ test("new install starts with browser automation off and does not inspect tabs b
   assert.equal(harness.tabQueries.length, 0);
 });
 
-test("browser control cannot be enabled through Local until popup consent is accepted", async () => {
-  const harness = await createLifecycleHarness({ storedEnabled: true, storedConsentVersion: 0 });
-  assert.equal(harness.api.snapshot().browserEnabled, false, "legacy enabled state must not bypass a missing consent version");
+test("browser control cannot be enabled through Local until current popup consent is accepted", async () => {
+  const harness = await createLifecycleHarness({ storedEnabled: true, storedConsentVersion: 1 });
+  assert.equal(harness.api.snapshot().browserEnabled, false, "previous consent v1 must not bypass the current bookmarks disclosure");
 
   await assert.rejects(
     () => harness.api.setBrowserEnabled(true),
@@ -354,12 +354,12 @@ test("explicit popup consent persists the consent version and enables browser co
   });
   assert.equal(response.ok, true);
   assert.equal(response.result.consentAccepted, true);
-  assert.equal(response.result.consentVersion, 1);
-  assert.equal(response.result.requiredConsentVersion, 1);
+  assert.equal(response.result.consentVersion, 2);
+  assert.equal(response.result.requiredConsentVersion, 2);
   assert.equal(response.result.enabled, true);
-  assert.equal(harness.storageData.browserControlConsentVersion, 1);
+  assert.equal(harness.storageData.browserControlConsentVersion, 2);
   assert.equal(harness.storageData.browserEnabled, true);
-  assert.equal(harness.api.snapshot().browserControlConsentVersion, 1);
+  assert.equal(harness.api.snapshot().browserControlConsentVersion, 2);
   assert.equal(harness.api.snapshot().browserEnabled, true);
   assert.ok(harness.tabQueries.length > 0, "tab inspection may begin only after the affirmative consent action");
 });

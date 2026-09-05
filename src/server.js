@@ -15727,6 +15727,7 @@ await registerEquinoxBrowserTools({
   bridge: equinoxBrowserBridge,
   isBrowserAccessEnabled: () => AGENT_ACCESS.browser,
   ensureAgentBrowserReady: () => equinoxAgentBrowser.ensureReady(),
+  getAgentBrowserStatus: () => equinoxAgentBrowser.snapshot(),
   withMutationLocks,
   textResult,
   errorResult,

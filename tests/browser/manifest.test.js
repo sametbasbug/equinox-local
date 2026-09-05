@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 
 const DEV_DIR = path.dirname(fileURLToPath(import.meta.url));
 const EXTENSION_DIR = path.resolve(DEV_DIR, "../../extension");
-const EXPECTED_PERMISSIONS = ["alarms", "debugger", "downloads", "nativeMessaging", "storage", "tabs"];
+const EXPECTED_PERMISSIONS = ["alarms", "bookmarks", "debugger", "downloads", "nativeMessaging", "storage", "tabs"];
 const EXPECTED_PRODUCTION_ID = "npdneefcobilfkjlihghjgjnknenhfoj";
 const EXPECTED_ICONS = new Map([
   ["16", 16],
@@ -62,6 +62,8 @@ test("popup ships prominent browser-data consent, accessible controls and local 
   assert.match(html, /screenshots/iu);
   assert.match(html, /text you enter/iu);
   assert.match(html, /console\/network metadata/iu);
+  assert.match(html, /Agent Browser bookmarks/iu);
+  assert.match(html, /Your Browser bookmarks/iu);
   assert.match(html, /AI service you choose/iu);
   assert.match(html, /id="open-agent-browser"[^>]*disabled/);
   assert.match(html, /Agent Browser/);
