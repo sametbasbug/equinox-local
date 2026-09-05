@@ -23,6 +23,8 @@ async function createHarness({
   startDownloadOnClick = false,
   coveredCenterOnClick = false,
   openDialogOnClick = false,
+  historyMode = "document",
+  historyCommitDelayMs = 25,
 } = {}) {
   const debuggerEvent = createEvent();
   const debuggerDetach = createEvent();
@@ -255,15 +257,39 @@ async function createHarness({
         const tab = tabs.get(id);
         if (!tab) throw new Error(`No tab ${id}`);
         historyMoves.push({ id, direction: "back" });
-        tab.url = "http://127.0.0.1:47850/back";
-        tabsUpdated.emit(id, { url: tab.url, status: "loading" }, { ...tab });
+        setTimeout(() => {
+          tab.url = "http://127.0.0.1:47850/back";
+          tab.title = "Back page";
+          if (historyMode === "document") {
+            tab.status = "loading";
+            tabsUpdated.emit(id, { url: tab.url, title: tab.title, status: "loading" }, { ...tab });
+            setTimeout(() => {
+              tab.status = "complete";
+              tabsUpdated.emit(id, { status: "complete" }, { ...tab });
+            }, 25);
+          } else {
+            tabsUpdated.emit(id, { url: tab.url, title: tab.title }, { ...tab });
+          }
+        }, historyCommitDelayMs);
       },
       async goForward(id) {
         const tab = tabs.get(id);
         if (!tab) throw new Error(`No tab ${id}`);
         historyMoves.push({ id, direction: "forward" });
-        tab.url = "http://127.0.0.1:47850/forward";
-        tabsUpdated.emit(id, { url: tab.url, status: "loading" }, { ...tab });
+        setTimeout(() => {
+          tab.url = "http://127.0.0.1:47850/forward";
+          tab.title = "Forward page";
+          if (historyMode === "document") {
+            tab.status = "loading";
+            tabsUpdated.emit(id, { url: tab.url, title: tab.title, status: "loading" }, { ...tab });
+            setTimeout(() => {
+              tab.status = "complete";
+              tabsUpdated.emit(id, { status: "complete" }, { ...tab });
+            }, 25);
+          } else {
+            tabsUpdated.emit(id, { url: tab.url, title: tab.title }, { ...tab });
+          }
+        }, historyCommitDelayMs);
       },
       async update(id, updates) {
         const tab = tabs.get(id);
@@ -460,20 +486,47 @@ test("create tab defaults to Chrome New Tab and returns bounded tab metadata", a
   assert.equal(tabs.get(51)?.active, false);
 });
 
-test("history navigation uses Chrome back/forward APIs and reports the resulting page", async () => {
+test("history navigation waits for committed metadata before returning", async () => {
   const { api, historyMoves } = await createHarness();
   const back = await api.browserHistoryNavigate({ tabId: 51, direction: "back" });
+  assert.equal(back.navigationVersion, 2);
   assert.equal(back.direction, "back");
   assert.equal(back.url, "http://127.0.0.1:47850/back");
+  assert.equal(back.title, "Back page");
+  assert.equal(back.navigationCommitted, true);
+  assert.equal(back.navigationTimedOut, false);
+  assert.equal(back.metadataSettled, true);
   assert.equal(back.debuggerSupported, true);
 
   const forward = await api.browserHistoryNavigate({ tabId: 51, direction: "forward" });
+  assert.equal(forward.navigationVersion, 2);
   assert.equal(forward.direction, "forward");
   assert.equal(forward.url, "http://127.0.0.1:47850/forward");
+  assert.equal(forward.title, "Forward page");
+  assert.equal(forward.navigationCommitted, true);
+  assert.equal(forward.navigationTimedOut, false);
+  assert.equal(forward.metadataSettled, true);
   assert.deepEqual(JSON.parse(JSON.stringify(historyMoves)), [
     { id: 51, direction: "back" },
     { id: 51, direction: "forward" },
   ]);
+});
+
+test("history navigation settles same-document SPA URL changes before returning", async () => {
+  const { api } = await createHarness({ historyMode: "spa", historyCommitDelayMs: 30 });
+  const back = await api.browserHistoryNavigate({ tabId: 51, direction: "back" });
+  assert.equal(back.url, "http://127.0.0.1:47850/back");
+  assert.ok(["url_change", "document_generation"].includes(back.navigationSignal));
+  assert.equal(back.navigationCommitted, true);
+  assert.equal(back.navigationTimedOut, false);
+  assert.equal(back.metadataSettled, true);
+
+  const forward = await api.browserHistoryNavigate({ tabId: 51, direction: "forward" });
+  assert.equal(forward.url, "http://127.0.0.1:47850/forward");
+  assert.ok(["url_change", "document_generation"].includes(forward.navigationSignal));
+  assert.equal(forward.navigationCommitted, true);
+  assert.equal(forward.navigationTimedOut, false);
+  assert.equal(forward.metadataSettled, true);
 });
 
 test("smart wait resolves live refs and preserves stale-ref failure after navigation", async () => {

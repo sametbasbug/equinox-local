@@ -6,13 +6,13 @@ const MAX_SNAPSHOT_ELEMENTS = 250;
 const SNAPSHOT_VERSION = 3;
 const DELTA_SNAPSHOT_VERSION = 1;
 const SCREENSHOT_VERSION = 3;
-const REACQUIRE_VERSION = 1;
+const REACQUIRE_VERSION = 2;
 const COMPOUND_ACTION_VERSION = 2;
 const DOUBLE_CLICK_VERSION = 1;
 const POINTER_DRAG_VERSION = 1;
 const HTML5_DRAG_VERSION = 1;
 const WAIT_VERSION = 2;
-const NAVIGATION_VERSION = 1;
+const NAVIGATION_VERSION = 2;
 const EMULATION_VERSION = 1;
 const INPUT_VERSION = 1;
 const ACTIONABILITY_VERSION = 1;
@@ -64,6 +64,9 @@ const MAX_DOWNLOAD_CREATION_EVENTS = 200;
 const MAX_DOWNLOADS_PER_ACTION = 8;
 const DOWNLOAD_DISCOVERY_GRACE_MS = 250;
 const TAB_CREATION_DISCOVERY_GRACE_MS = 150;
+const HISTORY_NAVIGATION_TIMEOUT_MS = 5_000;
+const HISTORY_METADATA_SETTLE_MS = 150;
+const HISTORY_NAVIGATION_POLL_MS = 50;
 const SELF_RELOAD_DELAY_MS = 250;
 const NATIVE_RECONNECT_ALARM = "equinox-native-reconnect";
 const LOCAL_REQUEST_TIMEOUT_MS = 5_000;
@@ -77,7 +80,7 @@ const BROWSER_CONTEXT_STORAGE_KEY = "browserContext";
 const BROWSER_CONTEXT_VALUES = new Set(["agent", "user"]);
 const AGENT_CURSOR_HOST_ID = "__equinox_browser_agent_cursor__";
 const SCREENSHOT_ANNOTATION_HOST_ID = "__equinox_browser_ref_annotations__";
-const MAX_SCREENSHOT_ANNOTATIONS = 100;
+const MAX_SCREENSHOT_ANNOTATIONS = 50;
 const DEFAULT_AGENT_CURSOR_NAME = "Agent";
 const AGENT_CURSOR_IDLE_MS = 3_500;
 
@@ -748,6 +751,61 @@ async function waitForTab(tabId, predicate, timeoutMs = 10_000) {
     await sleep(100);
   }
   throw new Error(`Timed out waiting for tab ${tabId}: ${tab?.url || "unknown"}`);
+}
+
+function historyNavigationSignal({ initialTab, candidate, initialGeneration, sawLoading, tabId }) {
+  if (currentDocumentGeneration(tabId) !== initialGeneration) return "document_generation";
+  if (String(candidate?.url || "") !== String(initialTab?.url || "")) return "url_change";
+  if (sawLoading) return "status_cycle";
+  if (String(candidate?.title || "") !== String(initialTab?.title || "")) return "title_change";
+  return null;
+}
+
+async function waitForHistoryNavigation(tabId, initialTab, initialGeneration, timeoutMs = HISTORY_NAVIGATION_TIMEOUT_MS) {
+  const deadline = Date.now() + Math.max(250, Math.min(Number(timeoutMs) || HISTORY_NAVIGATION_TIMEOUT_MS, 10_000));
+  let last = initialTab;
+  let sawLoading = false;
+  let signal = null;
+  let stableSignature = null;
+  let stableSince = null;
+
+  while (Date.now() < deadline) {
+    last = await chrome.tabs.get(tabId);
+    if (last?.status === "loading") sawLoading = true;
+    signal = historyNavigationSignal({ initialTab, candidate: last, initialGeneration, sawLoading, tabId });
+    if (signal && last?.status !== "loading") {
+      const signature = JSON.stringify([
+        last?.url || "",
+        last?.title || "",
+        last?.status || "",
+        currentDocumentGeneration(tabId),
+      ]);
+      if (signature !== stableSignature) {
+        stableSignature = signature;
+        stableSince = Date.now();
+      } else if (stableSince != null && Date.now() - stableSince >= HISTORY_METADATA_SETTLE_MS) {
+        return {
+          tab: last,
+          navigationCommitted: true,
+          navigationTimedOut: false,
+          metadataSettled: true,
+          navigationSignal: signal,
+        };
+      }
+    } else {
+      stableSignature = null;
+      stableSince = null;
+    }
+    await sleep(HISTORY_NAVIGATION_POLL_MS);
+  }
+
+  return {
+    tab: last,
+    navigationCommitted: Boolean(signal),
+    navigationTimedOut: true,
+    metadataSettled: false,
+    navigationSignal: signal,
+  };
 }
 
 async function send(tabId, method, params = {}, sessionId = null) {
@@ -1781,6 +1839,34 @@ function normalizeScreenshotClip(clip) {
   return { x, y, width, height };
 }
 
+function screenshotAnnotationRect(ref, x, y) {
+  const width = Math.max(34, Math.min(96, 12 + String(ref || "").length * 8));
+  const height = 18;
+  return { left: x - 2, top: y - 2, right: x - 2 + width, bottom: y - 2 + height };
+}
+
+function screenshotAnnotationOverlaps(candidate, occupied) {
+  return occupied.some((item) => !(
+    candidate.right + 2 <= item.left ||
+    candidate.left >= item.right + 2 ||
+    candidate.bottom + 2 <= item.top ||
+    candidate.top >= item.bottom + 2
+  ));
+}
+
+function placeScreenshotAnnotation(ref, anchorX, anchorY, captureClip, occupied) {
+  const offsets = [[0, 0], [0, 20], [0, -20], [44, 0], [-44, 0], [44, 20], [-44, 20]];
+  for (const [dx, dy] of offsets) {
+    const x = Math.max(captureClip.x + 2, Math.min(anchorX + dx, captureClip.x + captureClip.width - 34));
+    const y = Math.max(captureClip.y + 2, Math.min(anchorY + dy, captureClip.y + captureClip.height - 18));
+    const rect = screenshotAnnotationRect(ref, x, y);
+    if (screenshotAnnotationOverlaps(rect, occupied)) continue;
+    occupied.push(rect);
+    return { ref, x, y };
+  }
+  return null;
+}
+
 async function buildScreenshotAnnotations(tabId, captureClip) {
   const state = refStates.get(tabId);
   if (!state) throw new Error("annotateRefs requires a current snapshot. Take a new snapshot first.");
@@ -1797,6 +1883,8 @@ async function buildScreenshotAnnotations(tabId, captureClip) {
   };
   const labels = [];
   const skippedOopifRefs = [];
+  const skippedOverlapRefs = [];
+  const occupied = [];
   let intersectingRootRefs = 0;
   for (const [ref, target] of state.refs.entries()) {
     if (target.sessionId) {
@@ -1811,15 +1899,20 @@ async function buildScreenshotAnnotations(tabId, captureClip) {
     if (!bounds || !boundsIntersectViewport(bounds, viewport)) continue;
     intersectingRootRefs += 1;
     if (labels.length >= MAX_SCREENSHOT_ANNOTATIONS) continue;
-    labels.push({
+    const placed = placeScreenshotAnnotation(
       ref,
-      x: Math.max(captureClip.x + 2, bounds.left),
-      y: Math.max(captureClip.y + 2, bounds.top),
-    });
+      Math.max(captureClip.x + 2, bounds.left),
+      Math.max(captureClip.y + 2, bounds.top),
+      captureClip,
+      occupied,
+    );
+    if (placed) labels.push(placed);
+    else skippedOverlapRefs.push(ref);
   }
   return {
     labels,
     skippedOopifRefs,
+    skippedOverlapRefs,
     truncated: intersectingRootRefs > labels.length,
   };
 }
@@ -2008,6 +2101,7 @@ async function browserScreenshot({
       requested: Boolean(annotateRefs),
       annotatedRefs: annotationData?.labels?.map((item) => item.ref) || [],
       skippedOopifRefs: annotationData?.skippedOopifRefs || [],
+      skippedOverlapRefs: annotationData?.skippedOverlapRefs || [],
       truncated: Boolean(annotationData?.truncated),
     },
     fullPage: Boolean(fullPage),
@@ -2066,14 +2160,27 @@ async function browserReacquire({ tabId, oldRef, fromSnapshotId } = {}) {
   const sourceSnapshot = fromSnapshotId
     ? snapshotStateById(tab.id, String(fromSnapshotId))
     : [...history].reverse().find((item) => (
-        item.documentGeneration === generation &&
         item.elements.some((element) => element.ref === ref)
       ));
   if (!sourceSnapshot) {
     throw new Error(`No bounded source snapshot contains ${ref}. Take a snapshot before attempting reacquire.`);
   }
   if (sourceSnapshot.documentGeneration !== generation) {
-    throw new Error("Reacquire is limited to the same document generation; take a fresh snapshot after navigation.");
+    return {
+      reacquireVersion: REACQUIRE_VERSION,
+      status: "stale_document",
+      unique: false,
+      confidence: "none",
+      oldRef: ref,
+      newRef: null,
+      sourceSnapshotId: sourceSnapshot.id,
+      targetSnapshotId: null,
+      candidateCount: 0,
+      refContextValid: false,
+      freshSnapshotRequired: true,
+      sourceDocumentGeneration: sourceSnapshot.documentGeneration,
+      currentDocumentGeneration: generation,
+    };
   }
   const source = sourceSnapshot.elements.find((element) => element.ref === ref);
   if (!source) throw new Error(`Source snapshot does not contain ref: ${ref}`);
@@ -2092,6 +2199,8 @@ async function browserReacquire({ tabId, oldRef, fromSnapshotId } = {}) {
       sourceSnapshotId: sourceSnapshot.id,
       targetSnapshotId: fresh.snapshot.id,
       candidateCount: 1,
+      refContextValid: true,
+      freshSnapshotRequired: false,
     };
   }
 
@@ -2108,6 +2217,8 @@ async function browserReacquire({ tabId, oldRef, fromSnapshotId } = {}) {
       targetSnapshotId: fresh.snapshot.id,
       candidateCount: 1,
       match: candidates[0],
+      refContextValid: true,
+      freshSnapshotRequired: false,
     };
   }
   return {
@@ -2121,6 +2232,8 @@ async function browserReacquire({ tabId, oldRef, fromSnapshotId } = {}) {
     targetSnapshotId: fresh.snapshot.id,
     candidateCount: candidates.length,
     candidateRefs: candidates.slice(0, 8).map((element) => element.ref),
+    refContextValid: true,
+    freshSnapshotRequired: false,
   };
 }
 
@@ -3830,6 +3943,7 @@ async function browserCreateTab({ url = "chrome://newtab/", active = false } = {
 async function browserHistoryNavigate({ tabId, direction } = {}) {
   const normalizedDirection = direction === "forward" ? "forward" : "back";
   const tab = await chooseTab(tabId);
+  const initialGeneration = currentDocumentGeneration(tab.id);
   const api = normalizedDirection === "forward" ? chrome.tabs?.goForward : chrome.tabs?.goBack;
   if (typeof api !== "function") {
     throw new Error(`Chrome tabs.go${normalizedDirection === "forward" ? "Forward" : "Back"} API is unavailable`);
@@ -3840,9 +3954,11 @@ async function browserHistoryNavigate({ tabId, direction } = {}) {
     const message = error instanceof Error ? error.message : String(error);
     throw new Error(`Chrome could not navigate ${normalizedDirection} in tab ${tab.id}: ${message}`);
   }
-  const updated = await chrome.tabs.get(tab.id);
+  const navigation = await waitForHistoryNavigation(tab.id, tab, initialGeneration);
+  const updated = navigation.tab;
   const policy = classifyBrowserPage(updated);
   return {
+    navigationVersion: NAVIGATION_VERSION,
     id: updated.id,
     windowId: updated.windowId,
     title: updated.title,
@@ -3851,6 +3967,10 @@ async function browserHistoryNavigate({ tabId, direction } = {}) {
     pageKind: policy.kind,
     debuggerSupported: policy.debuggerSupported,
     direction: normalizedDirection,
+    navigationCommitted: navigation.navigationCommitted,
+    navigationTimedOut: navigation.navigationTimedOut,
+    metadataSettled: navigation.metadataSettled,
+    navigationSignal: navigation.navigationSignal,
   };
 }
 

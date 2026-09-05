@@ -397,7 +397,22 @@ test("snapshot v2 prunes by mode, viewport, role, query and max node count", asy
 
   const bounded = await api.browserSnapshot({ tabId: 41, mode: "interactive", maxNodes: 1 });
   assert.equal(bounded.elementCount, 1);
+  assert.equal(bounded.returnedElementCount, 1);
+  assert.equal(bounded.refCount <= 1, true);
   assert.equal(bounded.truncated, true);
+
+  const compact = await api.browserSnapshot({
+    tabId: 41,
+    mode: "interactive",
+    query: "Main action",
+    output: "compact",
+  });
+  assert.equal(compact.outputMode, "compact");
+  assert.equal(compact.elementCount, 1);
+  assert.equal(compact.returnedElementCount, 1);
+  assert.equal(typeof compact.text, "string");
+  assert.equal(Object.hasOwn(compact, "elements"), false);
+  assert.equal(Object.hasOwn(compact, "frames"), false);
 });
 
 test("snapshot v2 can safely scope to a still-valid prior root ref", async () => {
@@ -442,6 +457,38 @@ test("delta snapshot keeps stable refs and returns only changed projection data"
 
   const fullAgain = await api.browserSnapshot({ tabId: 41, mode: "interactive" });
   assert.equal(fullAgain.elements.find((item) => item.name === "Main action updated")?.ref, initialAction.ref);
+
+  const compactDelta = await api.browserSnapshot({
+    tabId: 41,
+    mode: "interactive",
+    sinceSnapshotId: fullAgain.snapshot.id,
+    output: "compact",
+  });
+  assert.equal(compactDelta.deltaOnly, true);
+  assert.equal(Object.hasOwn(compactDelta, "elements"), false);
+  assert.equal(Object.hasOwn(compactDelta, "frames"), false);
+  assert.ok(compactDelta.delta);
+});
+
+test("unrelated DOM additions retain existing refs in delta snapshots", async () => {
+  const { api, axTrees } = await createHarness();
+  const initial = await api.browserSnapshot({ tabId: 41, mode: "interactive" });
+  const initialRefs = initial.elements.map((item) => item.ref).filter(Boolean);
+  assert.ok(initialRefs.length > 1);
+
+  axTrees.get("frame-main").push(axNode({ role: "button", name: "Unrelated action", backendNodeId: 777 }));
+  const delta = await api.browserSnapshot({
+    tabId: 41,
+    mode: "interactive",
+    sinceSnapshotId: initial.snapshot.id,
+  });
+
+  assert.equal(delta.delta.added.length, 1);
+  assert.equal(delta.delta.added[0]?.name, "Unrelated action");
+  assert.deepEqual(
+    [...delta.delta.retainedRefs].sort(),
+    [...initialRefs].sort(),
+  );
 });
 
 test("screenshot v3 crops a current root-session ref and explicit page clip", async () => {
@@ -507,6 +554,25 @@ test("annotated screenshot labels current root refs, skips OOPIF refs and remove
   assert.equal(cleanupIndex > captureIndex, true);
 });
 
+test("dense screenshot annotations stay bounded and avoid overlapping labels", async () => {
+  const { api, axTrees } = await createHarness();
+  for (let index = 0; index < 70; index += 1) {
+    axTrees.get("frame-main").push(axNode({
+      role: "button",
+      name: `Dense action ${index}`,
+      backendNodeId: 400 + index,
+    }));
+  }
+  const snapshot = await api.browserSnapshot({ tabId: 41, mode: "interactive", maxNodes: 250 });
+  const offscreenRef = snapshot.elements.find((item) => item.name === "Offscreen action")?.ref;
+  const captured = await api.browserScreenshot({ tabId: 41, annotateRefs: true });
+
+  assert.equal(captured.annotations.annotatedRefs.length <= 50, true);
+  assert.equal(captured.annotations.skippedOverlapRefs.length > 0, true);
+  assert.equal(captured.annotations.truncated, true);
+  assert.equal(captured.annotations.annotatedRefs.includes(offscreenRef), false);
+});
+
 test("ref screenshot fails closed for OOPIF refs and conflicting scopes", async () => {
   const { api } = await createHarness();
   const snapshot = await api.browserSnapshot({ tabId: 41, mode: "interactive" });
@@ -537,8 +603,10 @@ test("safe reacquire returns one high-confidence ref after same-document DOM rep
     oldRef,
     fromSnapshotId: initial.snapshot.id,
   });
-  assert.equal(reacquired.reacquireVersion, 1);
+  assert.equal(reacquired.reacquireVersion, 2);
   assert.equal(reacquired.status, "reacquired");
+  assert.equal(reacquired.refContextValid, true);
+  assert.equal(reacquired.freshSnapshotRequired, false);
   assert.equal(reacquired.unique, true);
   assert.equal(reacquired.confidence, "high");
   assert.notEqual(reacquired.newRef, oldRef);
@@ -562,6 +630,39 @@ test("safe reacquire refuses ambiguous semantic replacements", async () => {
   assert.equal(result.unique, false);
   assert.equal(result.newRef, null);
   assert.equal(result.candidateCount, 2);
+  assert.equal(result.refContextValid, true);
+  assert.equal(result.freshSnapshotRequired, false);
+});
+
+test("cross-document reacquire reports invalid ref context and requires a fresh snapshot", async () => {
+  const { api, debuggerEvent } = await createHarness();
+  const initial = await api.browserSnapshot({ tabId: 41, mode: "interactive" });
+  const oldRef = initial.elements.find((item) => item.name === "Main action")?.ref;
+  assert.ok(oldRef);
+
+  debuggerEvent.emit(
+    { tabId: 41 },
+    "Page.frameNavigated",
+    { frame: { id: "frame-main", url: "http://127.0.0.1:47840/next" } },
+  );
+
+  const result = await api.browserReacquire({
+    tabId: 41,
+    oldRef,
+    fromSnapshotId: initial.snapshot.id,
+  });
+  assert.equal(result.reacquireVersion, 2);
+  assert.equal(result.status, "stale_document");
+  assert.equal(result.newRef, null);
+  assert.equal(result.refContextValid, false);
+  assert.equal(result.freshSnapshotRequired, true);
+  assert.equal(result.sourceDocumentGeneration, initial.snapshot.documentGeneration);
+  assert.ok(result.currentDocumentGeneration > result.sourceDocumentGeneration);
+
+  await assert.rejects(
+    api.browserRefInfo({ tabId: 41, ref: oldRef }),
+    /stale after document\/frame navigation|Take a new snapshot first/i,
+  );
 });
 
 test("controlled click after chains bounded DOM stability and delta snapshot", async () => {
@@ -835,6 +936,10 @@ test("hover, scroll_into_view and ref_info share verified semantic actionability
   assert.equal(info.visible, true);
   assert.equal(info.enabled, true);
   assert.deepEqual(JSON.parse(JSON.stringify(info.box)), { x: 10, y: 10, width: 100, height: 40 });
+  assert.equal(Object.keys(info).length <= 20, true);
+  for (const forbidden of ["outerHTML", "innerHTML", "attributes", "children", "backendNodeId", "objectId"]) {
+    assert.equal(Object.hasOwn(info, forbidden), false);
+  }
 });
 
 test("ref-targeted press and type_text keep keyboard input on the OOPIF session", async () => {

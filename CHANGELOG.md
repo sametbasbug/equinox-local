@@ -6,6 +6,19 @@ This project follows semantic versioning for public releases.
 
 ## [Unreleased]
 
+## [4.6.1] - 2026-09-05
+
+### Changed
+
+- Equinox Browser history navigation now waits for bounded committed/settled tab metadata before returning from back/forward operations, including same-document SPA history changes. The bridge advertises navigation capability v2 so older extension builds fail closed instead of returning stale page metadata.
+- Safe semantic ref reacquisition now uses reacquire capability v2 and reports explicit stale-document context metadata (`refContextValid=false`, `freshSnapshotRequired=true`) after cross-document navigation.
+- Dense annotated screenshots are capped at 50 labels and avoid overlapping label placements where possible; snapshot/delta/ref stability and bounded `ref_info` behavior are covered by stronger regression tests.
+- The macOS `desktop_call` MCP surface now publishes an explicit structured output schema while preserving the original rich Peekaboo content blocks, removing the schema recommendation shown by ChatGPT clients.
+
+### Fixed
+
+- Fixed back/forward calls that could return the previous page URL/title when Chrome had not yet committed the history navigation metadata.
+
 ## [4.6.0] - 2026-09-05
 
 ### Added

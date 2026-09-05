@@ -770,7 +770,7 @@ export async function registerEquinoxBrowserTools({
     "equinox_browser_back",
     {
       description:
-        "Aktif veya seçilen Chrome sekmesini kendi geçmişinde bir adım geri götürür. Context'ler arasında fallback yapmaz ve son sekme metadata'sını döndürür.",
+        "Aktif veya seçilen Chrome sekmesini kendi geçmişinde bir adım geri götürür. Navigation v2 commit/URL/document-generation değişimini bounded şekilde bekler ve settle olmuş final tab metadata'sını döndürür; doğrulama timeout olursa navigationCommitted/navigationTimedOut/metadataSettled alanları bunu açıkça belirtir. Context'ler arasında fallback yapmaz.",
       inputSchema: {
         tab_id: optionalTabId(),
       },
@@ -785,7 +785,18 @@ export async function registerEquinoxBrowserTools({
     async ({ tab_id }) => {
       try {
         return await withMutationLocks(["browser:user"], async () => {
+          await requireCapabilityVersion(
+            "navigation",
+            2,
+            "Committed history metadata için Equinox Browser uzantısının navigation v2 desteği gerekiyor.",
+          );
           const result = await bridge.call("history.back", { tabId: tab_id });
+          requireFeatureVersion(
+            result,
+            "navigationVersion",
+            2,
+            "Committed history metadata için Equinox Browser uzantısının navigation v2 desteği gerekiyor.",
+          );
           return jsonText(canonicalTabMetadata(result));
         });
       } catch (error) {
@@ -799,7 +810,7 @@ export async function registerEquinoxBrowserTools({
     "equinox_browser_forward",
     {
       description:
-        "Aktif veya seçilen Chrome sekmesini kendi geçmişinde bir adım ileri götürür. Context'ler arasında fallback yapmaz ve son sekme metadata'sını döndürür.",
+        "Aktif veya seçilen Chrome sekmesini kendi geçmişinde bir adım ileri götürür. Navigation v2 commit/URL/document-generation değişimini bounded şekilde bekler ve settle olmuş final tab metadata'sını döndürür; doğrulama timeout olursa navigationCommitted/navigationTimedOut/metadataSettled alanları bunu açıkça belirtir. Context'ler arasında fallback yapmaz.",
       inputSchema: {
         tab_id: optionalTabId(),
       },
@@ -814,7 +825,18 @@ export async function registerEquinoxBrowserTools({
     async ({ tab_id }) => {
       try {
         return await withMutationLocks(["browser:user"], async () => {
+          await requireCapabilityVersion(
+            "navigation",
+            2,
+            "Committed history metadata için Equinox Browser uzantısının navigation v2 desteği gerekiyor.",
+          );
           const result = await bridge.call("history.forward", { tabId: tab_id });
+          requireFeatureVersion(
+            result,
+            "navigationVersion",
+            2,
+            "Committed history metadata için Equinox Browser uzantısının navigation v2 desteği gerekiyor.",
+          );
           return jsonText(canonicalTabMetadata(result));
         });
       } catch (error) {
@@ -927,7 +949,7 @@ export async function registerEquinoxBrowserTools({
           height: z.number().positive().max(32_000),
         }).optional().describe("CSS page koordinatlarında bounded screenshot bölgesi"),
         annotate_refs: z.boolean().default(false)
-          .describe("Son geçerli snapshot'taki görünür root-session @eN ref'lerini PNG üzerine etiketle; OOPIF ref'leri güvenli biçimde atlanır"),
+          .describe("Son geçerli snapshot'taki görünür/interactive root-session @eN ref'lerini PNG üzerine bounded biçimde etiketle; en fazla 50 etiket kullanılır, yoğun bölgelerde overlap kaçınılır ve OOPIF ref'leri güvenli biçimde atlanır"),
         tab_id: optionalTabId(),
       },
       annotations: {
@@ -1081,7 +1103,7 @@ export async function registerEquinoxBrowserTools({
     "equinox_browser_reacquire",
     {
       description:
-        "Eski bir @eN ref'i için aynı document generation içinde güvenli semantik yeniden edinme yapar. Araç fresh interactive snapshot alır; yalnız tek exact role/name/value/frame eşleşmesinde yeni ref döndürür. Hiçbir action gerçekleştirmez; ambiguous/not_found sonuçlarında newRef null kalır.",
+        "Eski bir @eN ref'i için aynı document generation içinde güvenli semantik yeniden edinme yapar. Araç fresh interactive snapshot alır; yalnız tek exact role/name/value/frame eşleşmesinde yeni ref döndürür. Cross-document/stale durumda action yapmadan status=stale_document, refContextValid=false ve freshSnapshotRequired=true döndürür; ambiguous/not_found sonuçlarında newRef null kalır.",
       inputSchema: {
         old_ref: z.string().regex(/^@e\d+$/).describe("Yeniden edinilecek eski snapshot ref'i"),
         from_snapshot_id: z.string().min(1).max(240).optional()
@@ -1098,15 +1120,20 @@ export async function registerEquinoxBrowserTools({
     },
     async ({ old_ref, from_snapshot_id, tab_id }) => {
       try {
+        await requireCapabilityVersion(
+          "reacquire",
+          2,
+          "Safe ref reacquire + stale-context kontratı için Equinox Browser uzantısının reacquire v2 desteği gerekiyor.",
+        );
         const result = await bridge.call("reacquire", {
           tabId: tab_id,
           oldRef: old_ref,
           ...(from_snapshot_id ? { fromSnapshotId: from_snapshot_id } : {}),
         });
         const reacquireVersion = Number(result?.reacquireVersion);
-        if (!Number.isFinite(reacquireVersion) || reacquireVersion < 1) {
+        if (!Number.isFinite(reacquireVersion) || reacquireVersion < 2) {
           throw new Error(
-            "Safe ref reacquire için Equinox Browser uzantısının güncel sürümü gerekiyor. Uzantı güncellendikten sonra tekrar deneyin.",
+            "Safe ref reacquire + stale-context kontratı için Equinox Browser uzantısının reacquire v2 desteği gerekiyor. Uzantı güncellendikten sonra tekrar deneyin.",
           );
         }
         return jsonText(result);
