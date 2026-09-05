@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Equinox Browser",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "Connect Equinox Local to Chrome so an agent can inspect and interact with browser tabs under your control.",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA2vfC3QU7gIbFJ+/G0xjeuV2KSZtiMPmrHnemRDcRfRQtFIcH4zFj/YMvShGukFacV3o+OWxdQkpR0wm95Fwu6ago2iPZx4GB7uvKr+v+Jpsv/zm/72iuEfOlOA0le8qcQ6L8b7ftVXRDvNDZkspv86oYptEB6q0bEiokB7ydqDb+ooqIga0JKFwx2DtMqnYyNsiiRIqhb+8Yf37pNpplUmWz43WDWqvfTl7fyh2UrmxpYJqs9vyJOG93EvWKYxNjNw3Rc+BU5ApAz2zuWEjDZptORVYtZEvabN43EZjVrjDoEf4bOPqPAgwjgD3djE39Z1WXlfP05KnMgfq+ItmGJQIDAQAB",
   "permissions": ["debugger", "tabs", "downloads", "nativeMessaging", "alarms", "storage", "bookmarks"],

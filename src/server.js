@@ -16184,6 +16184,9 @@ registerRawTool(
         .default({})
         .describe("Peekaboo alt aracının JSON giriş şemasına uyan argümanlar"),
     },
+    outputSchema: {
+      text: z.string(),
+    },
     annotations: {
       title: "macOS masaüstü aracını çağır",
       readOnlyHint: false,
@@ -16200,7 +16203,13 @@ registerRawTool(
 
       return await withMutationLocks(["desktop"], async () => {
         const result = await peekabooBridge.callTool(tool_name, toolArguments);
-        return normalizeChromeToolResult(result);
+        const normalized = normalizeChromeToolResult(result);
+        return {
+          ...normalized,
+          structuredContent: {
+            text: extractTextContent(normalized),
+          },
+        };
       });
     } catch (error) {
       return errorResult(error);

@@ -16,13 +16,13 @@ function makeHarness() {
     snapshot: 3,
     deltaSnapshot: 1,
     screenshot: 3,
-    reacquire: 1,
+    reacquire: 2,
     compoundAction: 2,
     doubleClick: 1,
     pointerDrag: 1,
     html5Drag: 1,
     wait: 2,
-    navigation: 1,
+    navigation: 2,
     emulation: 1,
     input: 1,
     actionability: 1,
@@ -291,18 +291,45 @@ test("new tab creates a distinct tab and defaults to active Chrome New Tab", asy
   });
 });
 
-test("back and forward map to bounded history commands", async () => {
+test("back and forward require navigation v2 and preserve committed history metadata", async () => {
   const harness = makeHarness();
   harness.bridge.call = async (method, args, options) => {
     harness.calls.push({ method, args, options });
-    if (method === "history.back") return { id: 77, windowId: 7, direction: "back" };
-    if (method === "history.forward") return { id: 88, windowId: 7, direction: "forward" };
+    if (method === "history.back") return {
+      navigationVersion: 2,
+      id: 77,
+      windowId: 7,
+      direction: "back",
+      url: "https://example.test/a",
+      navigationCommitted: true,
+      navigationTimedOut: false,
+      metadataSettled: true,
+    };
+    if (method === "history.forward") return {
+      navigationVersion: 2,
+      id: 88,
+      windowId: 7,
+      direction: "forward",
+      url: "https://example.test/b",
+      navigationCommitted: true,
+      navigationTimedOut: false,
+      metadataSettled: true,
+    };
     return { method, args };
   };
   await registerEquinoxBrowserTools(harness.deps);
 
   const back = await harness.tools.get("equinox_browser_back").handler({ tab_id: 77 });
-  assert.deepEqual(parseTextResult(back), { tabId: 77, windowId: 7, direction: "back" });
+  assert.deepEqual(parseTextResult(back), {
+    tabId: 77,
+    windowId: 7,
+    navigationVersion: 2,
+    direction: "back",
+    url: "https://example.test/a",
+    navigationCommitted: true,
+    navigationTimedOut: false,
+    metadataSettled: true,
+  });
   assert.deepEqual(harness.calls.at(-1), {
     method: "history.back",
     args: { tabId: 77 },
@@ -310,12 +337,36 @@ test("back and forward map to bounded history commands", async () => {
   });
 
   const forward = await harness.tools.get("equinox_browser_forward").handler({ target: "user", tab_id: 88 });
-  assert.deepEqual(parseTextResult(forward), { tabId: 88, windowId: 7, direction: "forward" });
+  assert.deepEqual(parseTextResult(forward), {
+    tabId: 88,
+    windowId: 7,
+    navigationVersion: 2,
+    direction: "forward",
+    url: "https://example.test/b",
+    navigationCommitted: true,
+    navigationTimedOut: false,
+    metadataSettled: true,
+  });
   assert.deepEqual(harness.calls.at(-1), {
     method: "history.forward",
     args: { tabId: 88 },
     options: { context: "user" },
   });
+
+  const oldExtension = makeHarness();
+  oldExtension.bridge.snapshot = () => ({
+    active: true,
+    ready: true,
+    contexts: {
+      agent: { ready: true, extension: { extensionVersion: "0.1.0", capabilityVersions: { navigation: 1 } } },
+      user: { ready: true, extension: { extensionVersion: "0.1.0", capabilityVersions: { navigation: 1 } } },
+    },
+  });
+  await registerEquinoxBrowserTools(oldExtension.deps);
+  const rejected = await oldExtension.tools.get("equinox_browser_back").handler({ tab_id: 77 });
+  assert.equal(rejected.isError, true);
+  assert.match(rejected.content[0].text, /navigation v2/u);
+  assert.equal(oldExtension.calls.length, 0);
 });
 
 test("snapshot preserves @ref workflow arguments", async () => {
@@ -571,11 +622,13 @@ test("safe reacquire maps source metadata and rejects silent downgrade", async (
     harness.calls.push({ method, args, options });
     if (method === "reacquire") {
       return {
-        reacquireVersion: 1,
+        reacquireVersion: 2,
         status: "reacquired",
         oldRef: "@e2",
         newRef: "@e7",
         unique: true,
+        refContextValid: true,
+        freshSnapshotRequired: false,
       };
     }
     return { method, args };
@@ -594,11 +647,25 @@ test("safe reacquire maps source metadata and rejects silent downgrade", async (
     options: { context: "agent" },
   });
 
+  const parsed = parseTextResult(result);
+  assert.equal(parsed.reacquireVersion, 2);
+  assert.equal(parsed.refContextValid, true);
+  assert.equal(parsed.freshSnapshotRequired, false);
+
   const oldExtension = makeHarness();
+  oldExtension.bridge.snapshot = () => ({
+    active: true,
+    ready: true,
+    contexts: {
+      agent: { ready: true, extension: { extensionVersion: "0.1.0", capabilityVersions: { reacquire: 1 } } },
+      user: { ready: true, extension: { extensionVersion: "0.1.0", capabilityVersions: { reacquire: 1 } } },
+    },
+  });
   await registerEquinoxBrowserTools(oldExtension.deps);
   const downgraded = await oldExtension.tools.get("equinox_browser_reacquire").handler({ old_ref: "@e2" });
   assert.equal(downgraded.isError, true);
-  assert.match(downgraded.content[0].text, /Safe ref reacquire/u);
+  assert.match(downgraded.content[0].text, /reacquire v2/u);
+  assert.equal(oldExtension.calls.length, 0);
 });
 
 test("screenshot saves a validated PNG without exposing base64 in the tool result", async () => {
