@@ -6,6 +6,7 @@ const DEFAULT_MAX_ACTIVE_PROCESSES = 12;
 const DEFAULT_MAX_RETAINED_PROCESSES = 32;
 const DEFAULT_MAX_BUFFER_CHARS = 4_000_000;
 const DEFAULT_READ_MAX_CHARS = 40_000;
+const DEFAULT_GROUP_POLL_MS = 100;
 
 function stripAnsi(value) {
   return value
@@ -32,6 +33,7 @@ function publicProcess(session) {
     cwd: session.cwd,
     command: session.command,
     args: [...session.args],
+    purpose: session.purpose,
     pid: session.pid,
     running: session.running,
     expectedPorts: [...session.expectedPorts],
@@ -49,10 +51,14 @@ function publicProcess(session) {
   };
 }
 
-function normalizeChunk(stream, chunk) {
-  const text = Buffer.isBuffer(chunk)
+function outputText(chunk) {
+  return Buffer.isBuffer(chunk)
     ? chunk.toString("utf8")
     : String(chunk ?? "");
+}
+
+function normalizeChunk(stream, chunk) {
+  const text = outputText(chunk);
 
   if (!text) {
     return "";
@@ -63,6 +69,29 @@ function normalizeChunk(stream, chunk) {
     : "[stdout] ";
 
   return prefix + text;
+}
+
+function appendBoundedTail(state, text, maxChars) {
+  if (!text) return;
+  const combined = state.value + text;
+  if (combined.length <= maxChars) {
+    state.value = combined;
+    return;
+  }
+  const overflow = combined.length - maxChars;
+  state.value = combined.slice(overflow);
+  state.droppedChars += overflow;
+}
+
+function boundedSnapshot(value, droppedChars, maxChars, stripAnsiCodes) {
+  const overflow = Math.max(0, value.length - maxChars);
+  const chunk = overflow > 0 ? value.slice(overflow) : value;
+  const totalDropped = droppedChars + overflow;
+  return {
+    value: stripAnsiCodes ? stripAnsi(chunk) : chunk,
+    truncated: totalDropped > 0,
+    droppedChars: totalDropped,
+  };
 }
 
 function normalizeExpectedPorts(ports) {
@@ -81,17 +110,38 @@ function normalizeExpectedPorts(ports) {
   return normalized;
 }
 
+function defaultProcessGroupExists(pid) {
+  if (!Number.isInteger(pid) || pid <= 0) {
+    return false;
+  }
+
+  try {
+    process.kill(-pid, 0);
+    return true;
+  } catch (error) {
+    if (error?.code === "ESRCH") return false;
+    if (error?.code === "EPERM") return true;
+    throw error;
+  }
+}
+
 export function createProcessManager({
   spawnImpl = nodeSpawn,
   killImpl = process.kill.bind(process),
+  groupExistsImpl = defaultProcessGroupExists,
   now = () => Date.now(),
   randomId = () => randomUUID().slice(0, 8),
   maxActiveProcesses = DEFAULT_MAX_ACTIVE_PROCESSES,
   maxRetainedProcesses = DEFAULT_MAX_RETAINED_PROCESSES,
   maxBufferChars = DEFAULT_MAX_BUFFER_CHARS,
+  groupPollMs = DEFAULT_GROUP_POLL_MS,
   onEvent = null,
 } = {}) {
   const sessions = new Map();
+
+  if (!Number.isInteger(groupPollMs) || groupPollMs < 1 || groupPollMs > 5000) {
+    throw new Error("Process group poll interval is invalid.");
+  }
 
   const emitEvent = (event) => {
     if (typeof onEvent !== "function") {
@@ -121,12 +171,18 @@ export function createProcessManager({
   };
 
   const appendOutput = (session, stream, chunk) => {
-    const text = normalizeChunk(stream, chunk);
+    const rawText = outputText(chunk);
+    const text = normalizeChunk(stream, rawText);
 
     if (!text) {
       return;
     }
 
+    appendBoundedTail(
+      stream === "stderr" ? session.stderrState : session.stdoutState,
+      rawText,
+      maxBufferChars,
+    );
     session.buffer += text;
     session.totalCursor += text.length;
     session.lastActivityAt = now();
@@ -158,9 +214,43 @@ export function createProcessManager({
     notifyWaiters(session);
   };
 
+  const processGroupExists = (session) => {
+    if (!Number.isInteger(session.pid)) {
+      return false;
+    }
+
+    try {
+      return Boolean(groupExistsImpl(session.pid));
+    } catch (error) {
+      if (!session.groupProbeErrorNotified) {
+        session.groupProbeErrorNotified = true;
+        emitEvent({
+          component: "process",
+          type: "process.group_probe_failed",
+          severity: "warn",
+          status: "degraded",
+          projectId: session.projectId,
+          correlationId: session.id,
+          message: "Managed process group liveness could not be verified; ownership is being retained fail-closed.",
+          details: {
+            processId: session.id,
+            label: session.label,
+            error: error instanceof Error ? error.message : String(error),
+          },
+        });
+      }
+      return true;
+    }
+  };
+
   const finalizeSession = (session, { code = null, signal = null } = {}) => {
     if (!session.running) {
       return;
+    }
+
+    if (session.groupMonitorTimer) {
+      clearTimeout(session.groupMonitorTimer);
+      session.groupMonitorTimer = null;
     }
 
     session.running = false;
@@ -175,8 +265,14 @@ export function createProcessManager({
 
     const failed = Boolean(
       session.spawnError ||
-      (!session.stopRequested && session.exitCode !== null && session.exitCode !== 0) ||
-      (!session.stopRequested && session.signal),
+      (
+        session.purpose === "background" &&
+        !session.stopRequested &&
+        (
+          (session.exitCode !== null && session.exitCode !== 0) ||
+          session.signal
+        )
+      ),
     );
     emitEvent({
       component: "process",
@@ -198,6 +294,29 @@ export function createProcessManager({
         spawnError: session.spawnError,
       },
     });
+  };
+
+  const scheduleGroupMonitor = (session) => {
+    if (!session.running || !session.leaderExited || session.groupMonitorTimer) {
+      return;
+    }
+
+    session.groupMonitorTimer = setTimeout(() => {
+      session.groupMonitorTimer = null;
+      if (!session.running || !session.leaderExited) return;
+
+      if (processGroupExists(session)) {
+        scheduleGroupMonitor(session);
+        return;
+      }
+
+      if (!session.leaderClosed) return;
+      finalizeSession(session, {
+        code: session.leaderExitCode,
+        signal: session.leaderSignal,
+      });
+    }, groupPollMs);
+    session.groupMonitorTimer.unref?.();
   };
 
   const pruneRetainedProcesses = () => {
@@ -245,6 +364,7 @@ export function createProcessManager({
     cwd,
     command,
     args = [],
+    purpose = "background",
     env = process.env,
     label,
     expectedPorts = [],
@@ -269,6 +389,9 @@ export function createProcessManager({
     ) {
       throw new Error("Süreç argümanları metin dizisi olmalı.");
     }
+    if (!["background", "terminal_exec"].includes(purpose)) {
+      throw new Error("Süreç amacı geçersiz.");
+    }
 
     pruneRetainedProcesses();
 
@@ -284,6 +407,7 @@ export function createProcessManager({
           ...env,
           PAGER: "cat",
           GIT_PAGER: "cat",
+          GIT_TERMINAL_PROMPT: "0",
           NO_COLOR: env.NO_COLOR ?? "1",
         },
         detached: true,
@@ -304,6 +428,7 @@ export function createProcessManager({
       cwd,
       command,
       args: [...args],
+      purpose,
       expectedPorts: ports,
       pid: Number.isInteger(child.pid) ? child.pid : null,
       child,
@@ -319,11 +444,19 @@ export function createProcessManager({
       baseCursor: 0,
       totalCursor: 0,
       droppedChars: 0,
+      stdoutState: { value: "", droppedChars: 0 },
+      stderrState: { value: "", droppedChars: 0 },
       bufferDropNotified: false,
       stopRequested: false,
       waiters: new Set(),
       exitPromise: null,
       resolveExit: null,
+      leaderExited: false,
+      leaderClosed: false,
+      leaderExitCode: null,
+      leaderSignal: null,
+      groupMonitorTimer: null,
+      groupProbeErrorNotified: false,
     };
 
     session.exitPromise = new Promise((resolve) => {
@@ -343,6 +476,7 @@ export function createProcessManager({
         processId: session.id,
         label: session.label,
         command: session.command,
+        purpose: session.purpose,
         argumentCount: session.args.length,
         pid: session.pid,
         expectedPorts: session.expectedPorts,
@@ -372,7 +506,59 @@ export function createProcessManager({
     });
 
     child.once("exit", (code, signal) => {
-      finalizeSession(session, { code, signal });
+      session.leaderExited = true;
+      session.leaderExitCode = Number.isInteger(code) ? code : null;
+      session.leaderSignal = signal === null || signal === undefined
+        ? null
+        : String(signal);
+
+      if (processGroupExists(session)) {
+        session.lastActivityAt = now();
+        notifyWaiters(session);
+        emitEvent({
+          component: "process",
+          type: "process.leader_exited",
+          severity: "info",
+          status: "running",
+          projectId: session.projectId,
+          correlationId: session.id,
+          message: "Managed process leader exited while descendants remain in the owned process group.",
+          details: {
+            processId: session.id,
+            label: session.label,
+            exitCode: session.leaderExitCode,
+            signal: session.leaderSignal,
+            stopRequested: session.stopRequested,
+          },
+        });
+        scheduleGroupMonitor(session);
+        return;
+      }
+
+      if (session.leaderClosed) {
+        finalizeSession(session, { code, signal });
+      } else {
+        session.lastActivityAt = now();
+        notifyWaiters(session);
+      }
+    });
+
+    child.once("close", (code, signal) => {
+      session.leaderClosed = true;
+      if (!session.leaderExited) {
+        session.leaderExited = true;
+        session.leaderExitCode = Number.isInteger(code) ? code : null;
+        session.leaderSignal = signal === null || signal === undefined ? null : String(signal);
+      }
+      if (!session.running) return;
+      if (processGroupExists(session)) {
+        scheduleGroupMonitor(session);
+        return;
+      }
+      finalizeSession(session, {
+        code: session.leaderExitCode,
+        signal: session.leaderSignal,
+      });
     });
 
     return publicProcess(session);
@@ -418,6 +604,64 @@ export function createProcessManager({
     };
   };
 
+  const waitForExit = async ({ processId, waitMs = 0 }) => {
+    const session = getSession(processId);
+    if (!Number.isInteger(waitMs) || waitMs < 0) {
+      throw new Error("Süreç bekleme süresi geçersiz.");
+    }
+    if (session.running && waitMs > 0) {
+      await Promise.race([
+        session.exitPromise,
+        new Promise((resolve) => setTimeout(resolve, waitMs)),
+      ]);
+    }
+    return publicProcess(session);
+  };
+
+  const snapshotOutput = ({
+    processId,
+    maxChars = DEFAULT_READ_MAX_CHARS,
+    stripAnsiCodes = true,
+  }) => {
+    const session = getSession(processId);
+    if (!Number.isInteger(maxChars) || maxChars < 1) {
+      throw new Error("Süreç çıktı sınırı geçersiz.");
+    }
+
+    const stdout = boundedSnapshot(
+      session.stdoutState.value,
+      session.stdoutState.droppedChars,
+      maxChars,
+      stripAnsiCodes,
+    );
+    const stderr = boundedSnapshot(
+      session.stderrState.value,
+      session.stderrState.droppedChars,
+      maxChars,
+      stripAnsiCodes,
+    );
+    const combined = boundedSnapshot(
+      session.buffer,
+      session.droppedChars,
+      maxChars,
+      stripAnsiCodes,
+    );
+
+    return {
+      process: publicProcess(session),
+      nextCursor: session.totalCursor,
+      stdout: stdout.value,
+      stderr: stderr.value,
+      combinedOutput: combined.value,
+      stdoutTruncated: stdout.truncated,
+      stderrTruncated: stderr.truncated,
+      combinedOutputTruncated: combined.truncated,
+      stdoutDroppedChars: stdout.droppedChars,
+      stderrDroppedChars: stderr.droppedChars,
+      combinedOutputDroppedChars: combined.droppedChars,
+    };
+  };
+
   const sendSignal = (session, signal) => {
     if (!session.running) {
       return;
@@ -432,6 +676,20 @@ export function createProcessManager({
       } catch (error) {
         groupError = error;
       }
+    }
+
+    if (session.leaderExited) {
+      if (!processGroupExists(session)) {
+        finalizeSession(session, {
+          code: session.leaderExitCode,
+          signal: session.leaderSignal,
+        });
+        return;
+      }
+
+      throw new Error(
+        `Süreç grubuna sinyal gönderilemedi: ${groupError instanceof Error ? groupError.message : String(groupError ?? "bilinmeyen hata")}`,
+      );
     }
 
     try {
@@ -524,6 +782,8 @@ export function createProcessManager({
     start,
     list,
     readLogs,
+    waitForExit,
+    snapshotOutput,
     stop,
     findByPort,
     shutdown,

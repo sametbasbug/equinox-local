@@ -20,14 +20,87 @@ function extractText(result) {
 }
 
 test("inferCapabilityDomain keeps broad stable domains and excludes already-dynamic bridges", () => {
-  assert.equal(inferCapabilityDomain("read_file"), "files");
-  assert.equal(inferCapabilityDomain("project_info"), "files");
-  assert.equal(inferCapabilityDomain("git_status"), "git");
+  assert.equal(inferCapabilityDomain("list_projects"), "files");
+  assert.equal(inferCapabilityDomain("delete_inbox_asset"), "files");
+  for (const retainedGitHub of [
+    "create_pull_request",
+    "get_pull_request",
+    "get_pull_request_checks",
+    "update_pull_request",
+    "set_pull_request_draft",
+    "close_pull_request",
+    "merge_pull_request",
+  ]) {
+    assert.equal(inferCapabilityDomain(retainedGitHub), "git", `${retainedGitHub} must stay in Git`);
+  }
+  assert.equal(inferCapabilityDomain("rollback_snapshot"), "automation");
   assert.equal(inferCapabilityDomain("equinox_browser_click"), "browser");
-  assert.equal(inferCapabilityDomain("workflow_start"), "automation");
   assert.equal(inferCapabilityDomain("deployment_status"), "services");
   assert.equal(inferCapabilityDomain("telegram_send_message"), "services");
   assert.equal(inferCapabilityDomain("system_doctor"), "runtime");
+  assert.equal(inferCapabilityDomain("terminal_exec"), "runtime");
+  for (const retired of [
+    "apply_patch",
+    "copy_between_projects",
+    "create_directory",
+    "create_file",
+    "delete_file",
+    "file_hash",
+    "list_files",
+    "move_file",
+    "project_info",
+    "read_file",
+    "remove_empty_directory",
+    "replace_text",
+    "search_text",
+    "write_file",
+    "checkout_main",
+    "checkout_work_branch",
+    "cleanup_work_branch",
+    "commit_changes",
+    "create_branch",
+    "git_diff",
+    "git_head",
+    "git_log",
+    "git_show",
+    "git_status",
+    "list_work_branches",
+    "push_branch",
+    "revert_commit",
+    "sync_main",
+    "worktree_create",
+    "worktree_list",
+    "worktree_remove",
+    "list_package_scripts",
+    "npm_audit",
+    "npm_ci",
+    "npm_install_package",
+    "npm_outdated",
+    "npm_project_info",
+    "npm_remove_package",
+    "npm_view_package",
+    "dns_status",
+    "port_status",
+    "run_build",
+    "run_project_script",
+    "workflow_cancel",
+    "workflow_list",
+    "workflow_logs",
+    "workflow_recipes",
+    "workflow_resume",
+    "workflow_start",
+    "workflow_status",
+    "authenticated_command",
+  ]) {
+    assert.equal(inferCapabilityDomain(retired), null, `${retired} must stay retired`);
+  }
+  for (const retiredPrefix of ["git_", "worktree_", "npm_", "workflow_"]) {
+    assert.equal(
+      inferCapabilityDomain(`${retiredPrefix}future_wrapper`),
+      null,
+      `${retiredPrefix} wrapper family must stay retired`,
+    );
+  }
   assert.equal(inferCapabilityDomain("desktop_call"), null);
   assert.equal(inferCapabilityDomain("visual_capture"), null);
   assert.equal(inferCapabilityDomain("visual_matrix"), null);
@@ -35,21 +108,45 @@ test("inferCapabilityDomain keeps broad stable domains and excludes already-dyna
   assert.equal(inferCapabilityDomain("browser_call"), null);
 });
 
+test("terminal_exec is cataloged only under the runtime gateway", () => {
+  const registry = createCapabilityRegistry();
+  registry.register({
+    name: "terminal_exec",
+    config: {
+      description: "Run a finite shell command",
+      inputSchema: { command: z.string().min(1) },
+      annotations: {
+        title: "Terminal exec",
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: false,
+        openWorldHint: true,
+      },
+    },
+    invoke: async () => textResult("ok"),
+  });
+
+  assert.deepEqual(registry.catalog("runtime").operations.map((item) => item.name), ["terminal_exec"]);
+  for (const domain of ["files", "git", "automation", "services", "browser"]) {
+    assert.equal(registry.catalog(domain).operations.some((item) => item.name === "terminal_exec"), false);
+  }
+});
+
 test("registry lists, describes, validates and invokes operations through live schemas", async () => {
   const registry = createCapabilityRegistry();
   const calls = [];
 
   registry.register({
-    name: "read_file",
+    name: "list_projects",
     config: {
-      description: "Read a file",
+      description: "List projects",
       inputSchema: {
         project: z.string().default("demo"),
         path: z.string().min(1),
         limit: z.number().int().positive().default(10),
       },
       annotations: {
-        title: "Read file",
+        title: "List projects",
         readOnlyHint: true,
         destructiveHint: false,
         idempotentHint: true,
@@ -58,38 +155,38 @@ test("registry lists, describes, validates and invokes operations through live s
     },
     invoke: async (input) => {
       calls.push(input);
-      return textResult(`read:${input.project}:${input.path}:${input.limit}`);
+      return textResult(`list:${input.project}:${input.path}:${input.limit}`);
     },
   });
 
   const catalog = registry.catalog("files");
   assert.equal(catalog.count, 1);
   assert.deepEqual(catalog.operations[0], {
-    name: "read_file",
-    title: "Read file",
-    description: "Read a file",
+    name: "list_projects",
+    title: "List projects",
+    description: "List projects",
     readOnly: true,
     destructive: false,
     idempotent: true,
     openWorld: false,
   });
 
-  const descriptor = registry.describe("files", "read_file");
+  const descriptor = registry.describe("files", "list_projects");
   assert.equal(descriptor.domain, "files");
   assert.equal(descriptor.inputSchema.type, "object");
   assert.equal(descriptor.inputSchema.additionalProperties, false);
   assert.equal(descriptor.inputSchema.properties.path.type, "string");
 
-  const result = await registry.invoke("files", "read_file", { path: "README.md" });
-  assert.equal(extractText(result), "read:demo:README.md:10");
+  const result = await registry.invoke("files", "list_projects", { path: "README.md" });
+  assert.equal(extractText(result), "list:demo:README.md:10");
   assert.deepEqual(calls, [{ project: "demo", path: "README.md", limit: 10 }]);
 
   await assert.rejects(
-    registry.invoke("files", "read_file", { path: "README.md", surprise: true }),
+    registry.invoke("files", "list_projects", { path: "README.md", surprise: true }),
     /unrecognized|invalid|unknown/i,
   );
   await assert.rejects(
-    registry.invoke("git", "read_file", { path: "README.md" }),
+    registry.invoke("git", "list_projects", { path: "README.md" }),
     /operation bulunamadı/,
   );
 });
@@ -216,7 +313,7 @@ test("stable gateways normalize custom structured results to their stable text o
 test("registry rejects duplicate operations", () => {
   const registry = createCapabilityRegistry();
   const registration = {
-    name: "git_status",
+    name: "create_pull_request",
     config: { inputSchema: {} },
     invoke: async () => textResult("ok"),
   };

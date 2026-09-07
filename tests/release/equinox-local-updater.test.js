@@ -171,6 +171,38 @@ test("updater checks a signed stable manifest only for managed configured instal
   assert.match(sourceStatus.reason, /source checkout/u);
 });
 
+test("updater rejects a streamed manifest once it exceeds the byte budget", async () => {
+  const root = "/Users/example/Library/Application Support/Equinox Local";
+  const installation = resolveEquinoxLocalInstallation({
+    homeDir: "/Users/example",
+    env: {
+      EQUINOX_LOCAL_INSTALL_ROOT: root,
+      EQUINOX_LOCAL_RELEASE_DIR: `${root}/releases/4.2.0`,
+    },
+  });
+  const updater = createEquinoxLocalUpdater({
+    currentVersion: "4.2.0",
+    installation,
+    publicKeys: { [KEY_ID]: PUBLIC_PEM },
+    target: "darwin-arm64",
+    fetchImpl: async () => ({
+      ok: true,
+      status: 200,
+      headers: new Headers(),
+      body: (async function* () {
+        yield Buffer.alloc(40 * 1024, 0x20);
+        yield Buffer.alloc(30 * 1024, 0x20);
+      })(),
+    }),
+  });
+
+  await assert.rejects(
+    updater.check(),
+    /manifest exceeds the size limit/u,
+  );
+  assert.equal(updater.candidate(), null);
+});
+
 test("a failed re-check clears the previously verified install candidate", async () => {
   const root = "/Users/example/Library/Application Support/Equinox Local";
   const installation = resolveEquinoxLocalInstallation({

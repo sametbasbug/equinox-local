@@ -9,7 +9,8 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
 const execFile = promisify(execFileCallback);
-const ROOT = path.dirname(fileURLToPath(import.meta.url));
+const MODULE_DIR = path.dirname(fileURLToPath(import.meta.url));
+const RUNTIME_ROOT = path.basename(MODULE_DIR) === "src" ? path.dirname(MODULE_DIR) : MODULE_DIR;
 
 export const PEEKABOO_ALLOWED_TOOLS = Object.freeze([
   "permissions",
@@ -775,7 +776,7 @@ export async function resolvePeekabooBinary(baseEnvironment = process.env) {
     : "";
   const candidates = [
     configured && path.isAbsolute(configured) ? configured : null,
-    path.join(ROOT, "runtime", "peekaboo", "peekaboo"),
+    path.join(RUNTIME_ROOT, "runtime", "peekaboo", "peekaboo"),
   ].filter(Boolean);
 
   for (const candidate of candidates) {

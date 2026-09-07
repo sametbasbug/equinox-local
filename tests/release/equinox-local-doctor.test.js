@@ -4,7 +4,10 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { getEquinoxLocalDoctorStatus } from "../../src/equinox-local-doctor.js";
+import {
+  getEquinoxLocalDoctorStatus,
+  registerSystemDoctorTool,
+} from "../../src/equinox-local-doctor.js";
 
 async function createManagedFixture() {
   const homeDir = await fs.mkdtemp(path.join(os.tmpdir(), "equinox-doctor-"));
@@ -202,4 +205,36 @@ test("managed doctor fails closed when stable updates or first-run tunnel setup 
   } finally {
     await fs.rm(fixture.homeDir, { recursive: true, force: true });
   }
+});
+
+test("system_doctor registration preserves formatting and project-independent routing", async () => {
+  const registrations = new Map();
+  registerSystemDoctorTool({
+    registerTextTool(name, config, handler, options = {}) {
+      registrations.set(name, { config, handler, options });
+    },
+    getDoctorStatus: async () => ({
+      state: "ATTENTION",
+      summary: { pass: 2, attention: 1, optional: 1 },
+      checks: [
+        { status: "pass", label: "Runtime", detail: "healthy" },
+        { status: "attention", label: "Update", detail: "needs attention" },
+        { status: "optional", label: "Browser", detail: "not connected" },
+      ],
+    }),
+    textResult: (text) => ({ text }),
+    errorResult: (error) => ({ error: error instanceof Error ? error.message : String(error) }),
+  });
+
+  const registration = registrations.get("system_doctor");
+  assert.ok(registration);
+  assert.equal(registration.options.projectAware, false);
+  assert.equal(registration.config.annotations.readOnlyHint, true);
+
+  const result = await registration.handler({});
+  assert.match(result.text, /Equinox Local system doctor: ATTENTION/u);
+  assert.match(result.text, /Checks: 2 passed, 1 need attention, 1 optional\./u);
+  assert.match(result.text, /OK \| Runtime \| healthy/u);
+  assert.match(result.text, /ATTENTION \| Update \| needs attention/u);
+  assert.match(result.text, /OPTIONAL \| Browser \| not connected/u);
 });

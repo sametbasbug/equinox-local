@@ -66,9 +66,9 @@ macTest("native app host migrates legacy bundle once and restores it for rollbac
   const installedExecutable = path.join(migrated.appPath, "Contents", "MacOS", "applet");
   const stableInstalledBytes = await fs.readFile(installedExecutable);
   const alternateRoot = path.join(temp, "alternate-root");
-  const alternateSourceDir = path.join(alternateRoot, "equinox-local-app");
+  const alternateSourceDir = path.join(alternateRoot, "app");
   await fs.mkdir(alternateRoot, { recursive: true });
-  await fs.cp(path.join(ROOT, "equinox-local-app"), alternateSourceDir, { recursive: true });
+  await fs.cp(path.join(ROOT, "app"), alternateSourceDir, { recursive: true });
   const alternateSource = path.join(alternateSourceDir, "EquinoxLocalApp.swift");
   const alternateText = await fs.readFile(alternateSource, "utf8");
   await fs.writeFile(alternateSource, alternateText.replace('window.title = "Equinox Local"', 'window.title = "Equinox Local Test Artifact"'));

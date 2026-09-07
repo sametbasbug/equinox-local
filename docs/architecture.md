@@ -20,18 +20,22 @@ flowchart TB
     CC --> CORE[Shared capability + configuration layer]
     CLIENT --> GW --> CORE
 
-    CORE --> FILES[Files / projects]
-    CORE --> GIT[Git / worktrees]
-    CORE --> WF[Workflows]
+    CORE --> TERM[Terminal / processes]
+    CORE --> FILES[Projects / assets]
+    CORE --> GIT[GitHub]
+    CORE --> WF[Release automation]
     CORE --> OBS[Observability / diagnosis / repair]
     CORE --> DESKTOP[Optional Peekaboo bridge]
     CORE --> TELEGRAM[Optional Telegram Bot API]
 
     subgraph Browser
-      CHROME[User Chrome]
+      AGENT[Agent Browser\nisolated profile]
+      USER[Your Browser\npersonal Chrome]
       EXT[Equinox Browser]
       HOST[Native Messaging host]
-      CHROME <--> EXT <--> HOST
+      AGENT <--> EXT
+      USER <--> EXT
+      EXT <--> HOST
     end
 
     HOST <--> CORE
@@ -60,19 +64,19 @@ The top-level MCP API stays intentionally small. Each domain exposes discovery p
 
 This lets the runtime gain new operations without turning every operation into a permanently cached top-level MCP schema.
 
-## Files and Git
+## Terminal, projects/assets, and GitHub
 
-Filesystem operations resolve through the active Agent Access mode. Selected mode uses configured roots; Full mode can use configured IDs, `home`, or an accessible absolute folder as the active contained root. Direct filesystem-root access and protected credential/application-secret areas are blocked for ad-hoc Full roots, and traversal/symlink escape is rejected in both modes. Core structured file CRUD works on ordinary non-Git Full-access roots without requiring a Terminal fallback; when the active root is a Git repository, ignore and dirty-worktree checks remain additive protections. Mutations use bounded payloads and expected SHA/revision checks where appropriate; `write_file` supports atomic UTF-8 create/replace and requires the current SHA-256 before replacing an existing file.
+Root-aware structured capabilities resolve through the active Agent Access file mode. Selected mode uses configured roots; Full mode can use configured IDs, `home`, or an accessible absolute folder as the active contained root. Direct filesystem-root access and protected credential/application-secret areas are blocked for ad-hoc Full roots, and traversal/symlink escape is rejected in both modes. The retained Files gateway is limited to project discovery and bounded asset transfer/inspection. Terminal/process is the terminal-first path for ordinary local file/repo/Git/package-manager work and intentionally follows the logged-in macOS user's shell permissions; once a shell starts it is not confined to Selected roots. Generic execution environments are sanitized so Equinox-managed provider credentials are not inherited. `terminal_exec` starts each noninteractive zsh command once under the managed-process lifecycle: it waits for a bounded foreground response window, preserves stdout/stderr plus observed combined ordering, and returns the same process ID/cursor when work continues instead of killing or restarting it. Explicit long-lived non-PTY servers/watchers may start directly with `process_*`. PTY sessions keep their interactive shell semantics while Local tracks the controlling TTY's owned jobs so explicit stop/shutdown can drain jobs that zsh placed into separate process groups.
 
-Git operations are project-scoped and encode explicit rules around clean worktrees, protected branches, HEAD SHA verification, worktree ownership, and remote synchronization. The product does not expose a generic Git command endpoint through the management API.
+Ordinary local Git/worktree commands run through Terminal and follow repository policy rather than a dedicated wrapper surface. The retained GitHub gateway contains credential-backed PR/Actions operations with explicit SHA/branch/check guards. Provider credentials remain outside generic Terminal, and the Control Center management API exposes no arbitrary Git or shell endpoint.
 
 ## Equinox Browser
 
-Equinox Browser is the only product route into the user's Chrome profile. The Chrome extension connects to a local Native Messaging host, which connects to the Equinox Local browser bridge over a short private Unix socket path.
+Equinox Browser is the only product browser transport. It serves two explicit Chrome contexts behind the same extension, Native Messaging host and local bridge: **Agent Browser** is the default isolated Equinox Local profile (`target=agent`), while **Your Browser** is the user's personal Chrome profile and must be selected explicitly (`target=user`). The two contexts keep independent Chrome/profile state and Equinox Local never silently falls back from one to the other.
 
-Browser-control consent and the on/off state live in the extension. Equinox Local cannot silently enable control before the current disclosure has been accepted.
+Browser-control consent and the on/off state live independently in each extension profile. Equinox Local cannot silently enable control before the current disclosure has been accepted. Agent Browser bookmark automation is intentionally isolated to `target=agent`; Your Browser bookmark calls fail closed before the bridge and in the extension.
 
-Internal browser profiles used for development/release QA are not part of this public architecture and are deliberately excluded from the public source/capability projection.
+The retired loopback/CDP QA browser is not part of the product architecture. Release and visual QA use the same first-party Agent Browser extension/Native Messaging lane rather than a second isolated browser backend.
 
 ## Control Center
 
@@ -93,7 +97,7 @@ Runtime events are bounded, rotated, and sanitized before persistence. Diagnosis
 ## What is intentionally not part of the public product
 
 - private Equinox deployment profiles;
-- Orbit credentials/integration wiring used by the maintainer's private environment;
-- internal QA Chrome profiles;
+- maintainer-specific project integration wiring;
+- retired legacy QA Chrome backends or alternate browser transports;
 - generic shell/command management endpoints;
 - a fallback into user Chrome outside Equinox Browser.

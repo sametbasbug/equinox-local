@@ -182,7 +182,13 @@ export async function writeBoundedUtf8File(filePath, {
     } finally {
       await handle.close();
     }
-    if (existing) {
+    if (!existing) {
+      // Publish creates with no-clobber semantics. link() fails with EEXIST if
+      // another writer created the destination after our initial lstat.
+      await fsImpl.link(temporaryPath, filePath);
+      await fsImpl.unlink(temporaryPath);
+      temporaryCreated = false;
+    } else {
       const current = await readBoundedNormalFile(filePath, {
         fsImpl,
         maxBytes: maxExistingBytes,
@@ -194,9 +200,9 @@ export async function writeBoundedUtf8File(filePath, {
           `${label} SHA-256 guard changed before replacement. Expected: ${expectedSha256.toLowerCase()} Current: ${currentSha256}`,
         );
       }
+      await fsImpl.rename(temporaryPath, filePath);
+      temporaryCreated = false;
     }
-    await fsImpl.rename(temporaryPath, filePath);
-    temporaryCreated = false;
   } finally {
     if (temporaryCreated) {
       await fsImpl.rm(temporaryPath, { force: true }).catch(() => {});

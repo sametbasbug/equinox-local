@@ -174,12 +174,12 @@ const TR_UI = Object.freeze({
   "Equinox Local starts new installations with broad useful access. Narrow these controls when you want the agent contained to selected roots or without local execution.": "Equinox Local yeni kurulumları geniş ve kullanışlı erişimle başlatır. Ajanı seçili köklerle sınırlamak veya yerel çalıştırmayı kapatmak istediğinizde bu kontrolleri daraltın.",
   "Local capabilities": "Yerel yetenekler",
   "Agent Access": "Ajan Erişimi",
-  "Files & projects": "Dosyalar ve projeler",
+  "Structured roots": "Yapılandırılmış kökler",
   "Full access": "Tam erişim",
   "Selected roots only": "Yalnızca seçili kökler",
-  "Full access accepts configured project IDs, home, or an accessible absolute folder path. Known credential/application-secret areas are excluded from ad-hoc Full access, and the filesystem root remains blocked.": "Tam erişim yapılandırılmış proje kimliklerini, home kökünü veya erişilebilir mutlak klasör yollarını kabul eder. Bilinen kimlik bilgisi/uygulama gizli alanları ad-hoc Tam erişimin dışında tutulur ve dosya sistemi kökü engelli kalır.",
+  "Controls root-aware project/asset and file-backed special capabilities. Full accepts configured IDs, home, or an accessible absolute folder path; Selected stays on configured roots. Ordinary file, Git and package-manager work uses Terminal.": "Kök duyarlı proje/varlık ve dosya destekli özel yetenekleri denetler. Tam erişim yapılandırılmış kimlikleri, home kökünü veya erişilebilir mutlak klasör yolunu kabul eder; Seçili mod yapılandırılmış köklerde kalır. Normal dosya, Git ve paket yöneticisi işleri Terminal kullanır.",
   "Terminal & processes": "Terminal ve süreçler",
-  "Allow interactive shells and background processes with your normal macOS user permissions. Equinox Local never grants sudo or root by itself.": "Normal macOS kullanıcı izinlerinizle etkileşimli kabuklara ve arka plan süreçlerine izin verin. Equinox Local kendi başına sudo veya root yetkisi vermez.",
+  "Allow shell commands, interactive shells and managed background processes with your normal macOS user permissions. Terminal commands wait for a bounded foreground window; unfinished work continues as the same managed process instead of being restarted. Terminal is not confined to Selected roots after a shell starts; turn it off if you require strict selected-root containment. Equinox-managed provider credentials are not injected into generic shells or processes.": "Normal macOS kullanıcı izinlerinizle kabuk komutlarına, etkileşimli kabuklara ve yönetilen arka plan süreçlerine izin verin. Terminal komutları sınırlı bir ön-plan bekleme penceresi kullanır; bitmeyen iş yeniden başlatılmadan aynı yönetilen süreç olarak devam eder. Bir kabuk başladıktan sonra Terminal Seçili köklerle sınırlı değildir; katı seçili-kök sınırı gerekiyorsa Terminal'i kapatın. Equinox tarafından yönetilen sağlayıcı kimlik bilgileri genel kabuklara veya süreçlere aktarılmaz.",
   "Desktop automation": "Masaüstü otomasyonu",
   "Allow the first-party desktop tool surface when macOS permissions are also granted.": "macOS izinleri de verilmişse birinci taraf masaüstü araç yüzeyine izin verin.",
   "Allow the Equinox Browser lane. Extension consent remains required and cannot be bypassed here.": "Equinox Browser hattına izin verin. Uzantı onayı gerekli kalır ve buradan atlanamaz.",
@@ -219,7 +219,7 @@ const TR_UI = Object.freeze({
   "Choosing…": "Seçiliyor…",
   "Use the macOS folder picker or enter an absolute path manually. Equinox Local validates the selection and never grants the filesystem root.": "macOS klasör seçicisini kullanın veya mutlak yolu elle girin. Equinox Local seçimi doğrular ve dosya sisteminin kökünü hiçbir zaman açmaz.",
   "Managed worktrees": "Yönetilen worktree'ler",
-  "Allow Equinox Local to create managed worktrees for this project.": "Equinox Local'in bu proje için yönetilen worktree'ler oluşturmasına izin verin.",
+  "Include this project in Equinox Local managed-worktree maintenance and cleanup tracking.": "Bu projeyi Equinox Local yönetilen-worktree bakım ve temizlik takibine dahil edin.",
   "Read-only folder": "Salt okunur klasör",
   "V1 file roots are intentionally read-only and cannot be upgraded to writable from this screen.": "V1 dosya kökleri bilinçli olarak salt okunurdur ve bu ekrandan yazılabilir duruma yükseltilemez.",
   "Cancel": "İptal",
@@ -277,7 +277,7 @@ const TR_UI = Object.freeze({
   "Check the signed stable manifest when you want to look for a newer Equinox Local release.": "Daha yeni bir Equinox Local sürümü aramak istediğinizde imzalı kararlı manifesti kontrol edin.",
   "Project boundary": "Proje sınırı",
   "Configured shortcut": "Yapılandırılmış kısayol",
-  "Project tools stay contained to this configured root.": "Proje araçları bu yapılandırılmış kök içinde kalır.",
+  "Root-aware structured tools stay contained to this configured root.": "Kök duyarlı yapılandırılmış araçlar bu yapılandırılmış kök içinde kalır.",
   "This configured project remains a convenient named shortcut. Full access can also address home or other accessible folders without pre-registering them.": "Bu yapılandırılmış proje kullanışlı bir adlandırılmış kısayol olarak kalır. Tam erişim ayrıca home veya diğer erişilebilir klasörlere önceden kayıt gerektirmeden ulaşabilir.",
   "Managed worktrees off": "Yönetilen worktree'ler kapalı",
   "Managed worktrees on": "Yönetilen worktree'ler açık",
@@ -289,7 +289,7 @@ const TR_UI = Object.freeze({
   "Change the runtime routing first before removing this root.": "Bu kökü kaldırmadan önce runtime yönlendirmesini değiştirin.",
   "Remove from the draft configuration": "Taslak yapılandırmadan kaldır",
   "Read only": "Salt okunur",
-  "Project tools stay contained to this configured root. Granular per-tool capability switches are not part of config schema V1 yet.": "Proje araçları bu yapılandırılmış kök içinde kalır. Araç başına ayrıntılı yetenek anahtarları henüz V1 yapılandırma şemasının parçası değildir.",
+  "Root-aware structured tools stay contained to this configured root. Granular per-tool capability switches are not part of config schema V1 yet.": "Kök duyarlı yapılandırılmış araçlar bu yapılandırılmış kök içinde kalır. Araç başına ayrıntılı yetenek anahtarları henüz V1 yapılandırma şemasının parçası değildir.",
   "This extra file root is intentionally read-only in V1 and cannot be promoted to writable from the Control Center.": "Bu ek dosya kökü V1'de bilinçli olarak salt okunurdur ve Kontrol Merkezi'nden yazılabilir duruma yükseltilemez.",
   "Stopping": "Durduruluyor",
   "Deletes user data": "Kullanıcı verilerini siler",
@@ -312,7 +312,7 @@ const TR_UI = Object.freeze({
   "Chrome Web Store": "Chrome Web Store",
   "Peekaboo desktop bridge": "Peekaboo masaüstü köprüsü",
   "First-party Chrome bridge through the extension and Native Messaging.": "Uzantı ve Native Messaging üzerinden birinci taraf Chrome köprüsü.",
-  "Optional macOS desktop capability. It is not required for core Equinox Local filesystem or Git operations.": "İsteğe bağlı macOS masaüstü yeteneği. Temel Equinox Local dosya sistemi veya Git işlemleri için gerekli değildir.",
+  "Optional macOS desktop capability. It is not required for Terminal, GitHub or Browser operations.": "İsteğe bağlı macOS masaüstü yeteneği. Terminal, GitHub veya Tarayıcı işlemleri için gerekli değildir.",
   "Allowed": "İzin verildi",
   "Off": "Kapalı",
   "Open the Equinox Browser popup, review the data-use disclosure, and enable browser control there. The local settings channel remains connected.": "Equinox Browser popup'ını açın, veri kullanımı açıklamasını inceleyin ve tarayıcı kontrolünü oradan etkinleştirin. Yerel ayar kanalı bağlı kalır.",
@@ -1306,7 +1306,7 @@ function renderPermissions() {
     copy.textContent = localizeUiText(
       access.files === "full"
         ? "This configured project remains a convenient named shortcut. Full access can also address home or other accessible folders without pre-registering them."
-        : "Project tools stay contained to this configured root.",
+        : "Root-aware structured tools stay contained to this configured root.",
     );
     const path = document.createElement("span");
     path.className = "permission-path";
@@ -1523,7 +1523,7 @@ function renderIntegrations() {
       "Peekaboo desktop bridge",
       peekaboo.version
         ? `Optional macOS desktop capability · Peekaboo ${peekaboo.version}.`
-        : "Optional macOS desktop capability. It is not required for core Equinox Local filesystem or Git operations.",
+        : "Optional macOS desktop capability. It is not required for Terminal, GitHub or Browser operations.",
       peekabooStatus,
       peekabooTone,
     ),
@@ -1768,7 +1768,7 @@ async function refreshAll() {
       requestJson("/api/v1/activity").catch(() => ({ events: [] })),
       requestJson("/api/v1/update"),
       requestJson("/api/v1/onboarding"),
-      requestJson("/api/v1/doctor"),
+      requestJson("/api/v1/doctor").catch(() => ({ doctor: null })),
       requestJson("/api/v1/integrations/peekaboo").catch(() => ({ peekaboo: null })),
       requestJson("/api/v1/integrations/telegram").catch(() => ({ telegram: null })),
     ]);
@@ -2169,7 +2169,7 @@ async function pollOnboardingReconnect(attempt = 0) {
       requestJson("/api/v1/onboarding"),
       requestJson("/api/v1/status"),
       requestJson("/api/v1/health"),
-      requestJson("/api/v1/doctor"),
+      requestJson("/api/v1/doctor").catch(() => ({ doctor: null })),
     ]);
     state.onboarding = onboarding.onboarding || state.onboarding;
     state.status = status.status || state.status;

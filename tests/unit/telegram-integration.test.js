@@ -3,6 +3,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import * as z from "zod/v4";
 
 import { readBoundedNormalFile } from "../../src/equinox-local-safe-file.js";
 import {
@@ -10,6 +11,7 @@ import {
   defaultTelegramCredentialPath,
   disconnectTelegramIntegration,
   getTelegramIntegrationStatus,
+  registerTelegramSendTool,
   sendTelegramMessage,
   validateTelegramConnectionInput,
   validateTelegramMessage,
@@ -185,4 +187,36 @@ test("disconnect removes only the validated Telegram credential file", async () 
       userIdHint: null,
     });
   });
+});
+
+test("Telegram send tool preserves global mutation routing and bounded result formatting", async () => {
+  const registrations = new Map();
+  const messages = [];
+  registerTelegramSendTool({
+    registerTextTool(name, config, handler, options = {}) {
+      registrations.set(name, { config, handler, options });
+    },
+    z,
+    sendMessage: async ({ message }) => {
+      messages.push(message);
+      return { sent: true, messageCount: message === "one" ? 1 : 3 };
+    },
+    textResult: (text) => ({ text }),
+    errorResult: (error) => ({ error: error instanceof Error ? error.message : String(error) }),
+  });
+
+  const registration = registrations.get("telegram_send_message");
+  assert.ok(registration);
+  assert.equal(registration.options.projectAware, false);
+  assert.deepEqual(registration.options.mutationScopes, ["global"]);
+  assert.equal(registration.config.annotations.openWorldHint, true);
+  assert.equal(registration.config.inputSchema.message.safeParse("x".repeat(12_001)).success, false);
+
+  assert.deepEqual(await registration.handler({ message: "one" }), {
+    text: "Telegram mesajı gönderildi.",
+  });
+  assert.deepEqual(await registration.handler({ message: "many" }), {
+    text: "Telegram mesajı 3 parça halinde gönderildi.",
+  });
+  assert.deepEqual(messages, ["one", "many"]);
 });

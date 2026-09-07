@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { EventEmitter } from "node:events";
 import test from "node:test";
 
 import {
@@ -49,11 +50,13 @@ function updaterStub({ available = true } = {}) {
   };
 }
 
-test("detached activation helper receives only a minimal credential-free environment", () => {
+test("detached activation helper waits for spawn and receives only a minimal credential-free environment", async () => {
   const calls = [];
-  const child = { unrefCalled: false, unref() { this.unrefCalled = true; } };
+  const child = new EventEmitter();
+  child.unrefCalled = false;
+  child.unref = () => { child.unrefCalled = true; };
   const installation = managedInstallation();
-  const result = scheduleEquinoxLocalActivation({
+  const result = await scheduleEquinoxLocalActivation({
     installation,
     version: "4.3.0",
     nodePath: "/managed/node",
@@ -69,6 +72,7 @@ test("detached activation helper receives only a minimal credential-free environ
     },
     spawnImpl: (...args) => {
       calls.push(args);
+      queueMicrotask(() => child.emit("spawn"));
       return child;
     },
   });
@@ -87,6 +91,22 @@ test("detached activation helper receives only a minimal credential-free environ
   assert.equal("GITHUB_TOKEN" in options.env, false);
 });
 
+test("activation scheduler rejects an asynchronous helper spawn failure", async () => {
+  await assert.rejects(
+    scheduleEquinoxLocalActivation({
+      installation: managedInstallation(),
+      version: "4.3.0",
+      spawnImpl: () => {
+        const child = new EventEmitter();
+        child.unref = () => {};
+        queueMicrotask(() => child.emit("error", new Error("EACCES")));
+        return child;
+      },
+    }),
+    /update helper failed to start: EACCES/u,
+  );
+});
+
 test("coordinator prepares only a newer verified candidate and schedules activation", async () => {
   const installation = managedInstallation();
   const prepared = [];
@@ -103,7 +123,10 @@ test("coordinator prepares only a newer verified candidate and schedules activat
     sourceEnv: { HOME: "/Users/example" },
     spawnImpl: (...args) => {
       spawned.push(args);
-      return { unref() {} };
+      const child = new EventEmitter();
+      child.unref = () => {};
+      queueMicrotask(() => child.emit("spawn"));
+      return child;
     },
   });
   const result = await coordinator.apply();

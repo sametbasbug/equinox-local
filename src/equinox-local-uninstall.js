@@ -1,6 +1,8 @@
 import { spawn as spawnChild } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
+import { launchDetachedHelper } from "./equinox-local-detached-helper.js";
+
 const DEFAULT_HELPER_PATH = fileURLToPath(new URL("./equinox-local-uninstall-helper.js", import.meta.url));
 
 export function uninstallHelperEnvironment(installation, sourceEnv = process.env) {
@@ -16,7 +18,7 @@ export function uninstallHelperEnvironment(installation, sourceEnv = process.env
   return Object.fromEntries(Object.entries(env).filter(([, value]) => typeof value === "string" && value.length > 0));
 }
 
-export function scheduleEquinoxLocalUninstall({
+export async function scheduleEquinoxLocalUninstall({
   installation,
   removeUserData = false,
   spawnImpl = spawnChild,
@@ -29,14 +31,16 @@ export function scheduleEquinoxLocalUninstall({
   }
   if (typeof removeUserData !== "boolean") throw new Error("removeUserData must be boolean.");
   const mode = removeUserData ? "--remove-user-data" : "--preserve-user-data";
-  const child = spawnImpl(nodePath, [helperPath, "--uninstall", mode], {
-    detached: true,
-    stdio: "ignore",
-    env: uninstallHelperEnvironment(installation, sourceEnv),
+  await launchDetachedHelper({
+    spawnImpl,
+    command: nodePath,
+    args: [helperPath, "--uninstall", mode],
+    options: {
+      detached: true,
+      stdio: "ignore",
+      env: uninstallHelperEnvironment(installation, sourceEnv),
+    },
+    label: "Equinox Local uninstall helper",
   });
-  if (!child || typeof child.unref !== "function") {
-    throw new Error("Equinox Local uninstall helper failed to start.");
-  }
-  child.unref();
   return Object.freeze({ scheduled: true, removeUserData });
 }

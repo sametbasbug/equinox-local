@@ -6,7 +6,7 @@ import { promisify } from "node:util";
 
 const execFile = promisify(execFileCallback);
 const FILE_PATH = "/usr/bin/file";
-const NATIVE_SOURCE_DIR = "equinox-local-app";
+const NATIVE_SOURCE_DIR = "app";
 const NATIVE_OUTPUT_DIR = path.join("runtime", "app");
 
 export const EQUINOX_LOCAL_NATIVE_APP_SHELL_VERSION = 2;

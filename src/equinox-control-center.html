@@ -470,17 +470,17 @@
             <span id="agent-access-badge" class="badge neutral">Loading…</span>
           </div>
           <label class="field">
-            <span>Files &amp; projects</span>
+            <span>Structured roots</span>
             <select id="agent-files-access">
               <option value="full">Full access</option>
               <option value="selected">Selected roots only</option>
             </select>
-            <small>Full access accepts configured project IDs, <code>home</code>, or an accessible absolute folder path. Known credential/application-secret areas are excluded from ad-hoc Full access, and the filesystem root remains blocked.</small>
+            <small>Controls root-aware project/asset and file-backed special capabilities. Full accepts configured IDs, <code>home</code>, or an accessible absolute folder path; Selected stays on configured roots. Ordinary file, Git and package-manager work uses Terminal.</small>
           </label>
           <label class="toggle-field compact-toggle">
             <div>
               <span>Terminal &amp; processes</span>
-              <small>Allow interactive shells and background processes with your normal macOS user permissions. Equinox Local never grants sudo or root by itself.</small>
+              <small>Allow shell commands, interactive shells and managed background processes with your normal macOS user permissions. Terminal commands wait for a bounded foreground window; unfinished work continues as the same managed process instead of being restarted. Terminal is not confined to Selected roots after a shell starts; turn it off if you require strict selected-root containment. Equinox-managed provider credentials are not injected into generic shells or processes.</small>
             </div>
             <input id="agent-terminal-access" type="checkbox" role="switch">
           </label>
@@ -615,7 +615,7 @@
       <label id="worktrees-field" class="toggle-field">
         <div>
           <span>Managed worktrees</span>
-          <small>Allow Equinox Local to create managed worktrees for this project.</small>
+          <small>Include this project in Equinox Local managed-worktree maintenance and cleanup tracking.</small>
         </div>
         <input id="root-worktrees" type="checkbox" checked>
       </label>

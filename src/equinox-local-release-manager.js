@@ -12,6 +12,7 @@ const TAR_PATH = "/usr/bin/tar";
 const MAX_ARCHIVE_ENTRIES = 20_000;
 const MAX_EXTRACTED_BYTES = 2 * 1024 * 1024 * 1024;
 const MAX_ENTRY_NAME = 500;
+const DEFAULT_ARTIFACT_DOWNLOAD_TIMEOUT_MS = 5 * 60 * 1000;
 
 function inside(parent, child) {
   const relative = path.relative(parent, child);
@@ -39,12 +40,20 @@ function validateArchiveEntryName(rawName) {
   return name;
 }
 
-function parseVerboseEntryTypes(output) {
+function parseVerboseEntries(output) {
   return output
     .split("\n")
     .map((line) => line.trimStart())
     .filter(Boolean)
-    .map((line) => line[0]);
+    .map((line) => {
+      const match = line.match(/^(\S)\S*\s+\d+\s+\S+\s+\S+\s+(\d+)\s+/u);
+      if (!match) throw new Error("Update archive verbose listing is invalid.");
+      const size = Number(match[2]);
+      if (!Number.isSafeInteger(size) || size < 0) {
+        throw new Error("Update archive entry size is invalid.");
+      }
+      return Object.freeze({ type: match[1], size });
+    });
 }
 
 export async function inspectEquinoxReleaseArchive(archivePath, {
@@ -67,15 +76,23 @@ export async function inspectEquinoxReleaseArchive(archivePath, {
   }
   for (const name of names) validateArchiveEntryName(name);
 
-  const types = parseVerboseEntryTypes(verboseOutput);
-  if (types.length !== names.length) {
+  const verboseEntries = parseVerboseEntries(verboseOutput);
+  if (verboseEntries.length !== names.length) {
     throw new Error("Update archive listing is inconsistent.");
   }
-  if (types.some((type) => type !== "-" && type !== "d")) {
+  if (verboseEntries.some(({ type }) => type !== "-" && type !== "d")) {
     throw new Error("Update archive may contain only regular files and directories.");
   }
+  let extractedBytes = 0;
+  for (const entry of verboseEntries) {
+    if (entry.type !== "-") continue;
+    if (entry.size > MAX_EXTRACTED_BYTES - extractedBytes) {
+      throw new Error("Update archive exceeds the extracted size limit before extraction.");
+    }
+    extractedBytes += entry.size;
+  }
 
-  return Object.freeze({ entryCount: names.length });
+  return Object.freeze({ entryCount: names.length, extractedBytes });
 }
 
 async function removeIfPresent(target) {
@@ -84,6 +101,7 @@ async function removeIfPresent(target) {
 
 export async function downloadVerifiedUpdateArtifact(artifact, destinationPath, {
   fetchImpl = globalThis.fetch,
+  timeoutMs = DEFAULT_ARTIFACT_DOWNLOAD_TIMEOUT_MS,
 } = {}) {
   if (!artifact || typeof artifact.url !== "string" || !/^[a-f0-9]{64}$/u.test(artifact.sha256)) {
     throw new Error("Verified update artifact metadata is required.");
@@ -92,10 +110,16 @@ export async function downloadVerifiedUpdateArtifact(artifact, destinationPath, 
     throw new Error("Verified update artifact size is invalid.");
   }
   if (typeof fetchImpl !== "function") throw new Error("Update network client is unavailable.");
+  if (!Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 30 * 60 * 1000) {
+    throw new Error("Update artifact download timeout is invalid.");
+  }
 
   await fs.mkdir(path.dirname(destinationPath), { recursive: true, mode: 0o700 });
   const tempPath = `${destinationPath}.part-${randomBytes(8).toString("hex")}`;
   let handle = null;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  timer.unref?.();
   try {
     const response = await fetchImpl(artifact.url, {
       method: "GET",
@@ -103,6 +127,7 @@ export async function downloadVerifiedUpdateArtifact(artifact, destinationPath, 
       cache: "no-store",
       credentials: "omit",
       headers: { accept: "application/gzip, application/octet-stream" },
+      signal: controller.signal,
     });
     if (!response?.ok || !response.body) {
       throw new Error(`Update artifact server returned HTTP ${response?.status ?? "unknown"}.`);
@@ -137,6 +162,8 @@ export async function downloadVerifiedUpdateArtifact(artifact, destinationPath, 
     await handle?.close().catch(() => {});
     await removeIfPresent(tempPath);
     throw error;
+  } finally {
+    clearTimeout(timer);
   }
 }
 

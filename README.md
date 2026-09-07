@@ -10,7 +10,6 @@
 [![CI](https://github.com/sametbasbug/equinox-local/actions/workflows/ci.yml/badge.svg)](https://github.com/sametbasbug/equinox-local/actions/workflows/ci.yml)
 ![macOS](https://img.shields.io/badge/platform-macOS-111111?logo=apple)
 ![Node.js 24](https://img.shields.io/badge/Node.js-24-339933?logo=nodedotjs&logoColor=white)
-![Tests](https://img.shields.io/badge/tests-294%20passing-2ea44f)
 [![License: AGPL v3](https://img.shields.io/badge/license-AGPL--3.0--only-blue.svg)](LICENSE)
 
 [Product site](https://local.sametbasbug.dev/) · [Security](SECURITY.md) · [Architecture](docs/architecture.md) · [Contributing](CONTRIBUTING.md)
@@ -20,7 +19,7 @@
 
 ## What is Equinox Local?
 
-Equinox Local runs on your Mac and gives an AI client a deliberately bounded way to work with local projects, Git, browser automation, workflows, diagnostics, and optional desktop control. A native macOS **Equinox Local** app opens Control Center for the human while the management backend remains private on loopback, without requiring source edits or a pile of terminal commands.
+Equinox Local runs on your Mac and gives an AI client a deliberately bounded way to work with local projects, GitHub, browser automation, release workflows, diagnostics, and optional desktop control. A native macOS **Equinox Local** app opens Control Center for the human while the management backend remains private on loopback, without requiring source edits or a pile of terminal commands.
 
 The goal is not to turn your computer into an unrestricted remote shell. The goal is to expose useful, inspectable capabilities with explicit roots, fixed operations, guarded mutations, and clear user controls.
 
@@ -30,7 +29,7 @@ The goal is not to turn your computer into an unrestricted remote shell. The goa
 | --- | --- |
 | Projects & files | Full access by default on fresh installs or selected-root mode, with credential-area, path, symlink and SHA guards |
 | Git | Project-scoped operations with branch/SHA/worktree guards |
-| Equinox Browser | The only product route into user Chrome; Native Messaging + visible consent/on-off control |
+| Equinox Browser | One extension/Native Messaging engine with isolated-default Agent Browser and explicit Your Browser; per-profile consent/on-off control |
 | Control Center | Native macOS app backed by the loopback-only UI/API on `127.0.0.1:24891` |
 | Updates | Ed25519-signed metadata, bounded downloads, verified activation, automatic rollback |
 | Desktop | Optional Peekaboo bridge with a deliberately reduced allowlist |
@@ -41,11 +40,11 @@ The goal is not to turn your computer into an unrestricted remote shell. The goa
 
 Agent tooling often optimizes for either **maximum capability** or **maximum safety through limitation**. Equinox Local tries to make the boundary itself a product surface:
 
-- **Agent-friendly:** structured capabilities, persistent workflows, runtime diagnostics, Git and browser primitives.
+- **Agent-friendly:** terminal-first local execution, root-aware project/asset capabilities, release automation, runtime diagnostics, GitHub and browser primitives.
 - **Human-friendly:** a real English/Türkçe Control Center for health, projects, permissions, browser state, updates, and uninstall.
 - **Local-first:** project data and runtime state live on the user's machine unless a requested action needs a connected AI/service provider.
 - **No arbitrary HTTP command console:** Control Center uses bounded management endpoints rather than a generic shell backend.
-- **One user-Chrome route:** Equinox Browser is the only product browser-automation lane. Internal release/QA browsers are not exported as product capabilities.
+- **One browser transport, two explicit contexts:** Equinox Browser powers isolated-default Agent Browser and explicit Your Browser through the same extension/Native Messaging path; there is no hidden QA-browser or CDP fallback.
 - **Failure-aware:** health checks, repair recipes, recovery policies, update rollback, and bounded runtime observability are built in rather than bolted on later.
 
 ## Architecture
@@ -59,11 +58,12 @@ flowchart LR
     MCP --> CORE
 
     CORE --> FILES[Projects & files]
-    CORE --> GIT[Git & workflows]
+    CORE --> GIT[GitHub & release]
     CORE --> RUNTIME[Diagnostics & recovery]
     CORE --> PEEK[Optional desktop bridge]
 
-    CHROME[User Chrome] <--> EXT[Equinox Browser]
+    AGENT[Agent Browser<br/>isolated Chrome] <--> EXT[Equinox Browser]
+    USER[Your Browser<br/>personal Chrome] <--> EXT
     EXT <--> NM[Native Messaging]
     NM <--> CORE
 
@@ -74,9 +74,9 @@ See [docs/architecture.md](docs/architecture.md) for the longer version.
 
 ## Equinox Browser
 
-Equinox Browser is the companion Chrome extension and the **only product path that controls the user's Chrome profile**. Install the unlisted production extension from [Chrome Web Store](https://chromewebstore.google.com/detail/equinox-browser/npdneefcobilfkjlihghjgjnknenhfoj). Control Center also links directly to the same Store listing from onboarding, the Browser page and Integrations so users do not have to hunt through this README. A fresh extension install starts with browser automation disabled until the user accepts the browser-data disclosure and explicitly enables control.
+Equinox Browser is the companion Chrome extension and the **only product browser transport**. It serves two explicit contexts through the same Chrome Web Store identity and Native Messaging host: **Agent Browser** is the default isolated Equinox Local profile, while **Your Browser** is the user's personal Chrome and is used only when selected explicitly. The two contexts keep independent profile/consent state and never silently fall back to each other. Install the unlisted production extension from [Chrome Web Store](https://chromewebstore.google.com/detail/equinox-browser/npdneefcobilfkjlihghjgjnknenhfoj). Control Center also links directly to the same Store listing from onboarding, the Browser page and Integrations so users do not have to hunt through this README. A fresh extension install starts with browser automation disabled until the user accepts the browser-data disclosure and explicitly enables control.
 
-The extension intentionally has no broad `host_permissions`; browser actions are performed through Chrome's documented debugger interface and a local Native Messaging bridge. Turning browser control off rejects browser-automation commands while allowing the bounded settings channel to remain available.
+The extension intentionally has no broad `host_permissions`; browser actions are performed through Chrome's documented debugger interface and a local Native Messaging bridge. Turning browser control off rejects browser-automation commands while allowing the bounded settings channel to remain available. Bookmark automation is intentionally Agent Browser-only; Your Browser bookmark requests fail closed.
 
 More: [docs/browser.md](docs/browser.md)
 
@@ -102,9 +102,9 @@ It does **not** require Git, Homebrew, a system Node installation, a separate Pe
 
 Current installation status is maintained at [local.sametbasbug.dev/install](https://local.sametbasbug.dev/install/).
 
-Fresh managed installs start Agent Access in **Full** mode for normal files/projects, Terminal/processes, Desktop automation and the Equinox Browser lane. Users can narrow file access to selected configured roots or disable individual execution/automation capabilities from Control Center. Full file access is not equivalent to unrestricted secrets access: known credential/application-secret areas, filesystem-root access and symlink escape remain blocked by the structured file surface.
+Fresh managed installs start Agent Access in **Full** mode for root-aware structured capabilities, Terminal/processes, Desktop automation and the Equinox Browser lane. Users can narrow structured root access to selected configured roots or disable individual execution/automation capabilities from Control Center. Terminal is the terminal-first path for ordinary local file/repo/Git/package-manager work. It runs as the logged-in macOS user and is not confined to Selected roots after startup; users who require strict selected-root containment should disable Terminal. Equinox-managed provider credentials are not injected into generic Terminal/process environments. `terminal_exec` uses a bounded foreground `wait_ms`; if that wait expires, the same command keeps running under the managed-process lifecycle and returns a `processId`/cursor for `process_logs` or `process_stop` continuation instead of being killed or restarted.
 
-Core structured file create/read/hash/move/delete/write operations work on ordinary non-Git folders in Full mode, so agents do not need to fall back to Terminal just because a working folder is not a Git repository. Git-specific ignore/dirty-worktree protections are added only when the active root is actually a Git repository.
+The dynamic Files gateway is intentionally small: project discovery plus bounded asset inbox/import/export operations. Ordinary file editing, searching, copying, local Git, package-manager, build and test work uses Terminal instead of one wrapper operation per shell command. Credential-backed GitHub, deployment, release, Browser, Desktop and runtime capabilities remain explicit special operations.
 
 ### Connect Equinox Local to ChatGPT
 
@@ -172,7 +172,7 @@ npm run check
 npm test
 ```
 
-The public test suite currently contains **294 passing tests** covering browser consent/lifecycle, Agent Access and credential boundaries, structured file operations, Control Center request boundaries, managed install/update/rollback/uninstall, source-runtime synchronization, workflows, repair/recovery, Native Messaging, and runtime observability.
+The public test suite covers browser consent/lifecycle, Agent Access and credential boundaries, project/asset operations, terminal execution, Control Center request boundaries, managed install/update/rollback/uninstall, source-runtime synchronization, internal release workflows, repair/recovery, Native Messaging, and runtime observability. The CI badge above is the durable source for the current test status.
 
 Source-checkout runtime configuration is intentionally external. Start with [examples/equinox-local-config.example.json](examples/equinox-local-config.example.json) and keep real machine paths/credentials out of the repository. The source restart path synchronizes both the development tunnel client and pinned Peekaboo runtime from the same version/SHA/signing policy used by managed release packaging; System Doctor reports version drift without exposing configured executable paths.
 

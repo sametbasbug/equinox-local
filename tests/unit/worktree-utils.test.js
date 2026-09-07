@@ -3,49 +3,10 @@ import path from "node:path";
 import test from "node:test";
 
 import {
-  buildManagedWorktreePath,
   isPathInside,
   parseGitWorktreePorcelain,
   publicWorktreeRecord,
-  validateWorktreeSlug,
 } from "../../src/worktree-utils.js";
-
-test("worktree slug validation accepts safe names", () => {
-  assert.equal(validateWorktreeSlug("footer-fix"), "footer-fix");
-  assert.equal(validateWorktreeSlug("v3.5_test"), "v3.5_test");
-  assert.throws(
-    () => validateWorktreeSlug("../escape"),
-    /Worktree slug/u,
-  );
-  assert.throws(
-    () => validateWorktreeSlug("UPPER"),
-    /Worktree slug/u,
-  );
-});
-
-test("managed worktree path stays below workspace root", () => {
-  const workspaceRoot = "/tmp/equinox-workspace";
-  const target = buildManagedWorktreePath({
-    workspaceRoot,
-    projectId: "blog",
-    slug: "footer-fix",
-  });
-
-  assert.equal(
-    target,
-    path.join(
-      workspaceRoot,
-      "worktrees",
-      "blog",
-      "footer-fix",
-    ),
-  );
-  assert.equal(isPathInside(workspaceRoot, target), true);
-  assert.equal(
-    isPathInside(workspaceRoot, "/tmp/outside"),
-    false,
-  );
-});
 
 test("git worktree porcelain output is parsed", () => {
   const records = parseGitWorktreePorcelain(

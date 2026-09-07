@@ -267,3 +267,49 @@ export async function disconnectTelegramIntegration({
   await fsImpl.rm(credentialPath);
   return Object.freeze({ disconnected: true });
 }
+
+export function registerTelegramSendTool({
+  registerTextTool,
+  z,
+  sendMessage = sendTelegramMessage,
+  textResult,
+  errorResult,
+} = {}) {
+  registerTextTool(
+    "telegram_send_message",
+    {
+      description:
+        "Control Center'da bağlanmış Telegram botu üzerinden yalnız yapılandırılmış insana düz metin mesaj gönderir. Ajan hedef Telegram ID'sini seçemez veya değiştiremez; bot tokenı ve hedef kimliği MCP sonucuna ya da loglara döndürülmez. Uzun mesajlar Telegram sınırına uygun parçalara otomatik bölünür.",
+      inputSchema: {
+        message: z
+          .string()
+          .min(1)
+          .max(MAX_MESSAGE_CHARS)
+          .describe("İnsanına Telegram üzerinden gönderilecek düz metin mesaj"),
+      },
+      annotations: {
+        title: "Telegram mesajı gönder",
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: true,
+      },
+    },
+    async ({ message }) => {
+      try {
+        const result = await sendMessage({ message });
+        return textResult(
+          result.messageCount === 1
+            ? "Telegram mesajı gönderildi."
+            : `Telegram mesajı ${result.messageCount} parça halinde gönderildi.`,
+        );
+      } catch (error) {
+        return errorResult(error);
+      }
+    },
+    {
+      projectAware: false,
+      mutationScopes: ["global"],
+    },
+  );
+}

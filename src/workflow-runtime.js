@@ -4,23 +4,7 @@ import { promisify } from "node:util";
 
 import { buildSafeWorkflowEnvironment, sanitizeWorkflowOutput } from "./workflow-security.js";
 import { createWorkflowManager } from "./workflow-manager.js";
-import {
-  WORKFLOW_RECIPE_IDS,
-  buildWorkflowPlan,
-  listWorkflowRecipes,
-} from "./workflow-recipes.js";
-
 const execFile = promisify(execFileCallback);
-const WORKFLOW_STATES = Object.freeze([
-  "all",
-  "queued",
-  "running",
-  "paused",
-  "completed",
-  "failed",
-  "cancelled",
-]);
-
 function safeWorkflowEnvironment() {
   return {
     ...buildSafeWorkflowEnvironment(process.env),
@@ -444,21 +428,12 @@ export function createWorkflowStepExecutor({
   };
 }
 
-export async function registerWorkflowTools({
+export async function createWorkflowRuntime({
   rootDir,
-  registerTextTool,
-  z,
-  getActiveProjectId,
-  getActiveProjectName,
-  getActiveProjectRoot,
-  resolveProjectContext,
-  readProjectPackageJson,
   processManager,
   probeTcpPort,
   extraStepExecutor,
   onEvent,
-  processJsonResult,
-  errorResult,
 }) {
   const workflowManager = createWorkflowManager({
     rootDir,
@@ -470,267 +445,10 @@ export async function registerWorkflowTools({
     onEvent,
   });
   await workflowManager.initialize();
-
-  registerTextTool(
-    "workflow_recipes",
-    {
-      description:
-        "Aktif projede v3.7 kalıcı workflow motorunun sabit tariflerini ve package.json'a göre kullanılabilirliklerini listeler.",
-      inputSchema: {},
-      annotations: {
-        title: "Workflow tariflerini listele",
-        readOnlyHint: true,
-        destructiveHint: false,
-        idempotentHint: true,
-        openWorldHint: false,
-      },
-    },
-    async () => {
-      try {
-        const { scripts } = await readProjectPackageJson();
-        return processJsonResult({
-          projectId: getActiveProjectId(),
-          projectName: getActiveProjectName(),
-          recipes: listWorkflowRecipes(scripts),
-        });
-      } catch (error) {
-        return errorResult(error);
-      }
-    },
-  );
-
-  registerTextTool(
-    "workflow_start",
-    {
-      description:
-        "Aktif projede sabit bir kalıcı workflow tarifi başlatır. Rastgele komut veya environment kabul etmez; workflow state ve logları Selene Workspace altında kalıcı saklanır.",
-      inputSchema: {
-        recipe_id: z.enum(WORKFLOW_RECIPE_IDS),
-        label: z
-          .string()
-          .min(1)
-          .max(100)
-          .regex(/^[^\u0000-\u001f\u007f]+$/u)
-          .optional(),
-        timeout_seconds: z.number().int().min(30).max(900).default(300),
-        preview_port: z.number().int().min(1024).max(65535).optional(),
-        preview_path: z.string().min(1).max(200).default("/"),
-      },
-      annotations: {
-        title: "Kalıcı workflow başlat",
-        readOnlyHint: false,
-        destructiveHint: true,
-        idempotentHint: false,
-        openWorldHint: true,
-      },
-    },
-    async ({
-      recipe_id,
-      label,
-      timeout_seconds,
-      preview_port,
-      preview_path,
-    }) => {
-      try {
-        const { scripts } = await readProjectPackageJson();
-        const plan = buildWorkflowPlan({
-          recipeId: recipe_id,
-          scripts,
-          options: {
-            timeoutSeconds: timeout_seconds,
-            previewPort: preview_port,
-            previewPath: preview_path,
-          },
-        });
-
-        return processJsonResult({
-          ok: true,
-          workflow: await workflowManager.start({
-            recipeId: plan.recipe.id,
-            recipeLabel: plan.recipe.label,
-            label,
-            projectId: getActiveProjectId(),
-            projectName: getActiveProjectName(),
-            projectRoot: getActiveProjectRoot(),
-            options: plan.options,
-            steps: plan.steps,
-          }),
-          next: "workflow_status ve workflow_logs ile ilerlemeyi takip et.",
-        });
-      } catch (error) {
-        return errorResult(error);
-      }
-    },
-  );
-
-  registerTextTool(
-    "workflow_list",
-    {
-      description:
-        "Kalıcı workflow kayıtlarını durumlarına göre listeler; varsayılan olarak aktif proje kayıtlarını gösterir.",
-      inputSchema: {
-        state: z.enum(WORKFLOW_STATES).default("all"),
-        include_all_projects: z.boolean().default(false),
-      },
-      annotations: {
-        title: "Workflow kayıtlarını listele",
-        readOnlyHint: true,
-        destructiveHint: false,
-        idempotentHint: true,
-        openWorldHint: false,
-      },
-    },
-    async ({ state, include_all_projects }) =>
-      processJsonResult({
-        state,
-        workflows: workflowManager.list({
-          state,
-          projectId: include_all_projects ? undefined : getActiveProjectId(),
-        }),
-      }),
-  );
-
-  registerTextTool(
-    "workflow_status",
-    {
-      description:
-        "Tek bir kalıcı workflow kaydının proje, tarif, adım, deneme, hata ve resume durumunu gösterir.",
-      inputSchema: {
-        workflow_id: z.string().min(1).max(100),
-      },
-      annotations: {
-        title: "Workflow durumunu göster",
-        readOnlyHint: true,
-        destructiveHint: false,
-        idempotentHint: true,
-        openWorldHint: false,
-      },
-    },
-    async ({ workflow_id }) => {
-      try {
-        return processJsonResult({
-          workflow: workflowManager.status(workflow_id),
-        });
-      } catch (error) {
-        return errorResult(error);
-      }
-    },
-    { projectAware: false },
-  );
-
-  registerTextTool(
-    "workflow_logs",
-    {
-      description:
-        "Kalıcı workflow loglarını byte cursor üzerinden okur ve çalışan workflow için kısa süre yeni log bekleyebilir.",
-      inputSchema: {
-        workflow_id: z.string().min(1).max(100),
-        cursor: z.number().int().min(0).default(0),
-        max_bytes: z.number().int().min(1).max(320_000).default(80_000),
-        wait_ms: z.number().int().min(0).max(10_000).default(0),
-      },
-      annotations: {
-        title: "Workflow loglarını oku",
-        readOnlyHint: true,
-        destructiveHint: false,
-        idempotentHint: true,
-        openWorldHint: false,
-      },
-    },
-    async ({ workflow_id, cursor, max_bytes, wait_ms }) => {
-      try {
-        return processJsonResult(
-          await workflowManager.readLogs({
-            workflowId: workflow_id,
-            cursor,
-            maxBytes: max_bytes,
-            waitMs: wait_ms,
-          }),
-        );
-      } catch (error) {
-        return errorResult(error);
-      }
-    },
-    { projectAware: false },
-  );
-
-  registerTextTool(
-    "workflow_cancel",
-    {
-      description:
-        "Çalışan veya bekleyen kalıcı workflow'u iptal eder; o workflow'a ait yönetilen alt süreç önce normal, gerekirse zorla kapatılır.",
-      inputSchema: {
-        workflow_id: z.string().min(1).max(100),
-      },
-      annotations: {
-        title: "Workflow iptal et",
-        readOnlyHint: false,
-        destructiveHint: true,
-        idempotentHint: true,
-        openWorldHint: false,
-      },
-    },
-    async ({ workflow_id }) => {
-      try {
-        return processJsonResult({
-          workflow: await workflowManager.cancel(workflow_id),
-        });
-      } catch (error) {
-        return errorResult(error);
-      }
-    },
-    {
-      projectAware: false,
-      mutationScopes: ["global"],
-    },
-  );
-
-  registerTextTool(
-    "workflow_resume",
-    {
-      description:
-        "Paused veya failed kalıcı workflow'u tamamlanan adımları tekrar etmeden kaldığı adımdan yeniden çalıştırır; proje slotunun aynı Git köküne işaret ettiğini doğrular.",
-      inputSchema: {
-        workflow_id: z.string().min(1).max(100),
-      },
-      annotations: {
-        title: "Workflow devam ettir",
-        readOnlyHint: false,
-        destructiveHint: true,
-        idempotentHint: false,
-        openWorldHint: true,
-      },
-    },
-    async ({ workflow_id }) => {
-      try {
-        const current = workflowManager.status(workflow_id);
-        const context = await resolveProjectContext(current.projectId);
-
-        if (context.rootRealPath !== current.projectRoot) {
-          throw new Error(
-            "Workflow kayıtlı proje kökü güncel izinli proje slotuyla uyuşmuyor; resume engellendi.",
-          );
-        }
-
-        return processJsonResult({
-          workflow: await workflowManager.resume(workflow_id),
-          next: "workflow_status ve workflow_logs ile ilerlemeyi takip et.",
-        });
-      } catch (error) {
-        return errorResult(error);
-      }
-    },
-    {
-      projectAware: false,
-      mutationScopes: ["global"],
-    },
-  );
-
   return workflowManager;
 }
 
 export const __test = Object.freeze({
-  WORKFLOW_STATES,
   safeWorkflowEnvironment,
   assertGitClean,
   choosePreviewPort,

@@ -300,3 +300,42 @@ export async function getEquinoxLocalDoctorStatus({
     checks: Object.freeze(checks),
   });
 }
+
+export function registerSystemDoctorTool({
+  registerTextTool,
+  getDoctorStatus,
+  textResult,
+  errorResult,
+} = {}) {
+  registerTextTool(
+    "system_doctor",
+    {
+      description:
+        "Equinox Local kurulumunu, runtime sağlığını, yapılandırmayı, güvenli güncelleme hazırlığını, ChatGPT bağlantısını ve isteğe bağlı Browser/Desktop köprülerini ürün-dostu ve salt okunur biçimde denetler.",
+      inputSchema: {},
+      annotations: {
+        title: "Equinox Local sağlık kontrolü",
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async () => {
+      try {
+        const doctor = await getDoctorStatus();
+        return textResult([
+          `Equinox Local system doctor: ${doctor.state}`,
+          `Checks: ${doctor.summary.pass} passed, ${doctor.summary.attention} need attention, ${doctor.summary.optional} optional.`,
+          ...doctor.checks.map(
+            (item) =>
+              `${item.status === "pass" ? "OK" : item.status === "attention" ? "ATTENTION" : "OPTIONAL"} | ${item.label} | ${item.detail}`,
+          ),
+        ].join("\n"));
+      } catch (error) {
+        return errorResult(error);
+      }
+    },
+    { projectAware: false },
+  );
+}

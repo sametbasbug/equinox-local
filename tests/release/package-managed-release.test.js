@@ -38,7 +38,7 @@ test("managed release source graph follows local imports and excludes developmen
     "src/equinox-control-center.html",
     "src/equinox-control-center.css",
     "src/equinox-control-center.js",
-    "equinox-local-app/EquinoxLocal.png",
+    "app/EquinoxLocal.png",
     "src/equinox-local-native-app.js",
     "src/equinox-local-native-app-host.js",
     "package.json",
@@ -49,7 +49,7 @@ test("managed release source graph follows local imports and excludes developmen
   assert.equal(files.some((value) => value.includes(".test.")), false);
   assert.equal(files.some((value) => value.includes("reviewer")), false);
   assert.equal(files.some((value) => value.startsWith("backups/")), false);
-  assert.equal(files.some((value) => value.startsWith("equinox-browser-dev/")), false);
+  assert.equal(files.some((value) => value.startsWith("factory/browser/")), false);
 });
 
 test("local module parser finds static relative imports without treating packages as release files", () => {

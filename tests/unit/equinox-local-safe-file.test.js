@@ -84,6 +84,44 @@ test("safe file writer creates a bounded UTF-8 file and leaves no temporary arti
   }
 });
 
+test("safe file writer never clobbers a file created during publish", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "equinox-safe-file-race-"));
+  try {
+    const target = path.join(root, "created.txt");
+    let injected = false;
+    const racingFs = {
+      stat: (...args) => fs.stat(...args),
+      lstat: (...args) => fs.lstat(...args),
+      link: (...args) => fs.link(...args),
+      unlink: (...args) => fs.unlink(...args),
+      rm: (...args) => fs.rm(...args),
+      open: async (...args) => {
+        const handle = await fs.open(...args);
+        if (!injected) {
+          injected = true;
+          await fs.writeFile(target, "rival", { mode: 0o600, flag: "wx" });
+        }
+        return handle;
+      },
+    };
+
+    await assert.rejects(
+      writeBoundedUtf8File(target, {
+        content: "ours",
+        fsImpl: racingFs,
+        maxBytes: 64,
+        label: "Fixture",
+      }),
+      (error) => error?.code === "EEXIST",
+    );
+
+    assert.equal(await fs.readFile(target, "utf8"), "rival");
+    assert.deepEqual(await fs.readdir(root), ["created.txt"]);
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
 test("safe file writer replaces only with the current SHA-256 and preserves file mode", async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "equinox-safe-file-replace-"));
   try {

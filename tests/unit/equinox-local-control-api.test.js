@@ -3,6 +3,7 @@ import http from "node:http";
 import test from "node:test";
 
 import { createEquinoxLocalControlApi } from "../../src/equinox-local-control-api.js";
+import { EQUINOX_LOCAL_CONFIG_ERROR_CODES } from "../../src/equinox-local-config.js";
 
 function fakeConfigManager() {
   const calls = [];
@@ -54,6 +55,8 @@ async function withApi(fn, overrides = {}) {
     configureTelegram: overrides.configureTelegram ?? null,
     testTelegram: overrides.testTelegram ?? null,
     disconnectTelegram: overrides.disconnectTelegram ?? null,
+    recordInternalError: overrides.recordInternalError ?? null,
+    requestTimeoutMs: overrides.requestTimeoutMs,
   });
   const started = await api.start();
   try {
@@ -90,6 +93,40 @@ test("control API binds loopback and exposes bounded read-only health/config/sta
     assert.equal(doctor.body.doctor.state, "HEALTHY");
     assert.equal(doctor.body.doctor.summary.attention, 0);
     assert.equal(api.snapshot().requestCount, 4);
+  });
+});
+
+test("control API request timeout bounds inbound delivery without timing out slow handler work", async () => {
+  await withApi(async ({ port }) => {
+    const status = await jsonFetch(`http://127.0.0.1:${port}/api/v1/status`);
+    assert.equal(status.response.status, 200);
+    assert.deepEqual(status.body.status, { runtime: "slow-but-complete" });
+  }, {
+    requestTimeoutMs: 10,
+    getStatus: async () => {
+      await new Promise((resolve) => setTimeout(resolve, 40));
+      return { runtime: "slow-but-complete" };
+    },
+  });
+});
+
+test("control API redacts surfaced errors and maps unexpected backend failures to 500", async () => {
+  await withApi(async ({ port }) => {
+    const result = await jsonFetch(`http://127.0.0.1:${port}/api/v1/status`);
+    assert.equal(result.response.status, 500);
+    assert.equal(result.body.ok, false);
+    assert.equal(result.body.error, "Control Center request failed.");
+    assert.doesNotMatch(
+      result.body.error,
+      /test-user|super-secret|ghp_hidden|123456789:telegram-secret-value-123456/u,
+    );
+  }, {
+    getStatus: async () => {
+      const error = new Error(
+        "failed /Users/test-user/private/config.json Authorization: Bearer abc.def.ghi token=super-secret ghp_hidden 123456789:telegram-secret-value-123456",
+      );
+      throw error;
+    },
   });
 });
 
@@ -133,6 +170,7 @@ test("control API serves the visual Control Center shell and fixed same-origin a
     const scriptText = await script.text();
     assert.match(scriptText, /\/api\/v1\/config/u);
     assert.match(scriptText, /\/api\/v1\/doctor/u);
+    assert.equal(scriptText.includes('requestJson("/api/v1/doctor").catch(() => ({ doctor: null }))'), true);
     assert.match(scriptText, /\/api\/v1\/runtime\/restart/u);
     assert.match(scriptText, /\/api\/v1\/activity/u);
     assert.match(scriptText, /\/api\/v1\/update/u);
@@ -208,6 +246,36 @@ test("config mutation requires same-origin CSRF token and revision envelope", as
     assert.equal(configManager.calls.length, 1);
     assert.equal(configManager.calls[0].options.expectedRevision, "a".repeat(64));
     assert.equal(api.snapshot().mutationCount, 1);
+  });
+});
+
+test("config revision conflicts are exposed as HTTP 409", async () => {
+  await withApi(async ({ api, configManager, port, origin }) => {
+    const base = `http://127.0.0.1:${port}`;
+    const session = await jsonFetch(`${base}/api/v1/session`);
+    configManager.replacePersisted = async () => {
+      const error = new Error("Config revision guard eşleşmedi.");
+      error.code = EQUINOX_LOCAL_CONFIG_ERROR_CODES.revisionConflict;
+      throw error;
+    };
+
+    const conflict = await jsonFetch(`${base}/api/v1/config`, {
+      method: "PUT",
+      headers: {
+        "content-type": "application/json",
+        origin,
+        "x-equinox-csrf": session.body.csrfToken,
+      },
+      body: JSON.stringify({
+        expectedRevision: "a".repeat(64),
+        config: configManager.snapshot().config,
+      }),
+    });
+
+    assert.equal(conflict.response.status, 409);
+    assert.equal(conflict.body.ok, false);
+    assert.match(conflict.body.error, /revision guard/u);
+    assert.equal(api.snapshot().mutationCount, 0);
   });
 });
 
@@ -606,6 +674,22 @@ test("control API refuses CORS preflight, unsupported content types and query-be
     });
     assert.equal(wrongType.response.status, 415);
   });
+});
+
+test("control API returns a fixed public message for unexpected internal failures", async () => {
+  const captured = [];
+  await withApi(async ({ port }) => {
+    const result = await jsonFetch(`http://127.0.0.1:${port}/api/v1/status`);
+    assert.equal(result.response.status, 500);
+    assert.equal(result.body.error, "Control Center request failed.");
+    assert.doesNotMatch(result.body.error, /Volumes|AUDIT_FIXTURE|report\.txt/u);
+  }, {
+    getStatus: async () => {
+      throw new Error("Unable to open /Volumes/AUDIT_FIXTURE/private/report.txt");
+    },
+    recordInternalError: (error) => captured.push(error.message),
+  });
+  assert.deepEqual(captured, ["Unable to open /Volumes/AUDIT_FIXTURE/private/report.txt"]);
 });
 
 test("control API rejects DNS-rebinding style Host headers", async () => {

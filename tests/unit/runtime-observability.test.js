@@ -111,6 +111,28 @@ test("secret-like details and bearer strings are redacted before persistence", a
   });
 });
 
+test("newest limited query stops before reading older segments", async () => {
+  await withTempDir(async (root) => {
+    let nowValue = 30_000_000;
+    const store = createRuntimeObservability({ rootDir: root, now: () => nowValue });
+    await store.initialize();
+    await fs.writeFile(
+      path.join(root, "events-0000000000001-old1.jsonl"),
+      "{not-json}\n",
+      { mode: 0o600 },
+    );
+    await store.record({
+      component: "runtime",
+      type: "runtime.latest",
+      message: "latest",
+    });
+
+    const [latest] = await store.query({ limit: 1, newestFirst: true });
+    assert.equal(latest.type, "runtime.latest");
+    assert.equal((await store.storageStats()).malformedLines, 0);
+  });
+});
+
 test("event storage rotates and prunes old segments", async () => {
   await withTempDir(async (root) => {
     let nowValue = 10_000_000;
@@ -138,6 +160,61 @@ test("event storage rotates and prunes old segments", async () => {
     const entries = await fs.readdir(root);
     assert.equal(entries.includes(__test.CURRENT_FILE), true);
     assert.ok(entries.filter((name) => __test.SEGMENT_PATTERN.test(name)).length <= 2);
+  });
+});
+
+test("observability reads stay stable while concurrent records rotate storage", async () => {
+  await withTempDir(async (root) => {
+    let nowValue = 20_000_000;
+    let id = 0;
+    const store = createRuntimeObservability({
+      rootDir: root,
+      now: () => nowValue++,
+      randomId: () => `c${++id}`,
+      maxSegmentBytes: 16 * 1024,
+      maxSegments: 3,
+    });
+    await store.initialize();
+
+    for (let index = 0; index < 40; index += 1) {
+      await store.record({
+        component: "race",
+        type: "race.seed",
+        message: `seed-${index}-${"x".repeat(600)}`,
+      });
+    }
+
+    const operations = [];
+    for (let index = 0; index < 80; index += 1) {
+      operations.push(index % 3 === 0
+        ? store.query({ limit: 50, newestFirst: true })
+        : store.record({
+            component: "race",
+            type: "race.concurrent",
+            message: `event-${index}-${"y".repeat(600)}`,
+          }));
+    }
+    await Promise.all(operations);
+
+    const events = await store.query({ limit: 500, newestFirst: false });
+    for (let index = 1; index < events.length; index += 1) {
+      assert.ok(events[index - 1].timestampMs <= events[index].timestampMs);
+    }
+    assert.ok((await store.storageStats()).segmentCount <= 3);
+  });
+});
+
+test("malformed observability line count is not inflated by repeated queries", async () => {
+  await withTempDir(async (root) => {
+    const store = createRuntimeObservability({ rootDir: root });
+    await store.initialize();
+    await fs.appendFile(path.join(root, __test.CURRENT_FILE), "not-json\n", "utf8");
+
+    await store.query({ limit: 10 });
+    assert.equal((await store.storageStats()).malformedLines, 1);
+
+    await store.query({ limit: 10 });
+    assert.equal((await store.storageStats()).malformedLines, 1);
   });
 });
 

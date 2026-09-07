@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
+import { EQUINOX_LOCAL_VERSION } from "../../src/equinox-local-version.js";
 import {
   inspectSourceCheckoutVersion,
   inspectSourcePeekabooRuntime,
@@ -34,6 +35,12 @@ test("source runtime config is bounded, private and parses only supported fields
   assert.equal(loaded.config.tunnelClient, item.binary);
   assert.throws(() => parseSourceRuntimeConfig(`tunnelClient=${item.binary}\nextra=value\n`), /unsupported field/u);
   assert.equal(parseTunnelClientVersion("0.0.14+abcdef (git sha: abcdef)"), "0.0.14");
+});
+
+test("source checkout version inspection defaults to the tracked src directory", async () => {
+  const result = await inspectSourceCheckoutVersion();
+  assert.equal(result.available, true);
+  assert.equal(result.version, EQUINOX_LOCAL_VERSION);
 });
 
 test("source checkout version inspection reads the tracked version file without import caching", async (t) => {

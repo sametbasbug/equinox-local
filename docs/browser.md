@@ -1,12 +1,12 @@
 # Equinox Browser
 
-Equinox Browser is the only browser-automation lane exposed by Equinox Local.
+Equinox Browser is the only browser-automation transport exposed by Equinox Local.
 
-It is a first-party Chrome extension paired with a per-user Native Messaging host and the local Equinox Browser bridge. Equinox Local does not use a generic user-Chrome CDP fallback, does not require Chrome remote-debugging flags, and does not expose the internal release-QA browser as a product capability.
+It is a first-party Chrome extension paired with a per-user Native Messaging host and the local Equinox Browser bridge. The transport serves two explicit product contexts: **Agent Browser** (`target=agent`) is the default isolated Equinox Local Chrome profile, while **Your Browser** (`target=user`) is the user's personal Chrome profile and must be requested explicitly. The contexts never silently fall back to each other. Equinox Local does not use a generic user-Chrome CDP fallback, does not require Chrome remote-debugging flags, and the retired loopback/CDP QA browser is not a second product capability.
 
 ## Trust model
 
-Browser control is off on a new extension install until the user accepts the browser-data consent prompt in the extension popup. The extension keeps its local control channel available while automation itself is disabled, so status and settings remain inspectable without silently inspecting tabs.
+Browser control is off on a new extension install until the user accepts the browser-data consent prompt in that profile's extension popup. Consent, on/off state, cookies, logins, tabs and extension-local settings remain independent between Agent Browser and Your Browser. The extension keeps its local control channel available while automation itself is disabled, so status and settings remain inspectable without silently inspecting tabs.
 
 The extension can expose bounded browser primitives such as:
 
@@ -16,7 +16,8 @@ The extension can expose bounded browser primitives such as:
 - clicks, typing, scrolling, uploads and downloads,
 - screenshots stored inside Equinox Local's bounded workspace,
 - popup/new-tab and JavaScript dialog discovery,
-- bounded console/network metadata where the browser surface supports it.
+- bounded console/network metadata where the browser surface supports it; and
+- bounded bookmark management in Agent Browser only. Your Browser bookmark automation is rejected before the bridge and by the extension context guard.
 
 Protected Chrome pages, file URLs, browser interstitials and other restricted contexts fail closed rather than attempting to bypass Chrome protections.
 
@@ -24,12 +25,12 @@ Protected Chrome pages, file URLs, browser interstitials and other restricted co
 
 ```text
 Agent
-  -> Equinox Local browser_tools / browser_call
+  -> Equinox Local browser_tools / browser_call (target=agent|user)
       -> Equinox Browser bridge
           -> per-user Unix socket
               -> Native Messaging host
-                  -> Equinox Browser extension
-                      -> the user's Chrome tab
+                  -> Equinox Browser extension in the selected profile
+                      -> Agent Browser tab OR Your Browser tab
 ```
 
 The socket directory is user-specific and private. The bridge authenticates the expected native-host origin and extension identity before routing commands.

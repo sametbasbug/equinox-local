@@ -23,7 +23,7 @@ Keep changes narrow enough to review. If a proposal changes a major product boun
 - `examples/` — generic configuration examples only.
 - `docs/` — architecture and security documentation.
 
-Machine-specific paths, credentials, private deployment profiles, and internal QA infrastructure do not belong in this repository.
+Machine-specific paths, credentials, private deployment profiles, and retired/private QA infrastructure do not belong in this repository.
 
 ## Pull requests
 
@@ -41,10 +41,10 @@ Please do not commit generated release archives, runtime secrets, local configur
 
 Contributions must not quietly weaken these rules:
 
-- Equinox Browser is the only product route into the user's Chrome profile.
+- Equinox Browser is the only product browser transport; Agent Browser is the isolated default, Your Browser is explicit personal Chrome, and neither context may silently fall back to the other.
 - Browser automation starts disabled until the user accepts the disclosure and enables control.
 - Control Center stays loopback-only and does not expose an arbitrary command backend.
-- Filesystem access starts from configured allowlisted roots.
+- Filesystem access follows the user's Full/selected Agent Access mode. Selected mode stays on configured roots; Full mode may use a contained home/absolute folder while filesystem root, credential/application-secret areas, traversal, and symlink escape remain blocked.
 - Existing path containment, symlink defenses, revision/SHA guards, and mutation locks remain in force beneath both UI and agent operations.
 - Stable update artifacts remain pinned to the Equinox Local HTTPS update origin and require a trusted Ed25519 signature.
 - Optional integrations fail independently rather than becoming mandatory dependencies for core Local operation.

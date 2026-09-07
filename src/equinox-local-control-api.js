@@ -2,6 +2,8 @@ import { randomBytes } from "node:crypto";
 import fs from "node:fs/promises";
 import http from "node:http";
 
+import { EQUINOX_LOCAL_CONFIG_ERROR_CODES } from "./equinox-local-config.js";
+
 const LOOPBACK_HOST = "127.0.0.1";
 const MAX_REQUEST_BYTES = 256 * 1024;
 const REQUEST_TIMEOUT_MS = 10_000;
@@ -17,11 +19,17 @@ const CONTROL_CENTER_CSP = [
 ].join("; ");
 const CONTROL_CENTER_ASSETS = new Map([
   ["/", Object.freeze({
-    url: new URL("./equinox-control-center.html", import.meta.url),
+    urls: Object.freeze([
+      new URL("./equinox-control-center.html", import.meta.url),
+      new URL("../equinox-control-center.html", import.meta.url),
+    ]),
     contentType: "text/html; charset=utf-8",
   })],
   ["/assets/control-center.css", Object.freeze({
-    url: new URL("./equinox-control-center.css", import.meta.url),
+    urls: Object.freeze([
+      new URL("./equinox-control-center.css", import.meta.url),
+      new URL("../equinox-control-center.css", import.meta.url),
+    ]),
     contentType: "text/css; charset=utf-8",
   })],
   ["/assets/control-center.js", Object.freeze({
@@ -30,8 +38,8 @@ const CONTROL_CENTER_ASSETS = new Map([
   })],
   ["/assets/equinox-local.png", Object.freeze({
     urls: Object.freeze([
-      new URL("./equinox-local-app/EquinoxLocal.png", import.meta.url),
-      new URL("../equinox-local-app/EquinoxLocal.png", import.meta.url),
+      new URL("./app/EquinoxLocal.png", import.meta.url),
+      new URL("../app/EquinoxLocal.png", import.meta.url),
     ]),
     contentType: "image/png",
   })],
@@ -83,9 +91,39 @@ async function controlCenterAssetBody(res, asset) {
   res.end(body);
 }
 
+function redactErrorMessage(value) {
+  return String(value ?? "")
+    .replace(/Bearer\s+[A-Za-z0-9._~+\/-]+=*/giu, "Bearer [REDACTED]")
+    .replace(
+      /\b(authorization|token|secret|password|api[_-]?key|credential(?:token)?)\s*[:=]\s*[^\s,;]+/giu,
+      "$1=[REDACTED]",
+    )
+    .replace(/\b(?:gh[pousr]_[A-Za-z0-9_]+|github_pat_[A-Za-z0-9_]+)\b/gu, "[REDACTED_GITHUB_SECRET]")
+    .replace(/\b\d{6,}:[A-Za-z0-9_-]{20,}\b/gu, "[REDACTED_TELEGRAM_TOKEN]")
+    .replace(
+      /(?:\/Users\/|\/private\/var\/folders\/|\/var\/folders\/|\/tmp\/)[^\s"'`;,]*/gu,
+      "[REDACTED_PATH]",
+    );
+}
+
 function safeErrorMessage(error) {
   const message = error instanceof Error ? error.message : String(error);
-  return message.replace(/[\r\n]+/gu, " ").slice(0, 1000);
+  return redactErrorMessage(message)
+    .replace(/[\r\n\u0000-\u001f\u007f]+/gu, " ")
+    .replace(/\s+/gu, " ")
+    .trim()
+    .slice(0, 1000);
+}
+
+function publicErrorMessage(error, statusCode) {
+  if (statusCode === 500) return "Control Center request failed.";
+  return safeErrorMessage(error);
+}
+
+function badRequest(message) {
+  const error = new Error(message);
+  error.statusCode = 400;
+  return error;
 }
 
 function requestAuthority(req) {
@@ -159,41 +197,41 @@ function assertMutationRequest(req, { port, csrfToken }) {
 
 function validateReplaceEnvelope(body) {
   if (body === null || typeof body !== "object" || Array.isArray(body)) {
-    throw new Error("Config güncelleme gövdesi JSON nesnesi olmalı.");
+    throw badRequest("Config güncelleme gövdesi JSON nesnesi olmalı.");
   }
   const keys = Object.keys(body);
   if (keys.some((key) => !["expectedRevision", "config"].includes(key))) {
-    throw new Error("Config güncelleme gövdesinde desteklenmeyen alan var.");
+    throw badRequest("Config güncelleme gövdesinde desteklenmeyen alan var.");
   }
   if (typeof body.expectedRevision !== "string" || !/^[a-f0-9]{64}$/u.test(body.expectedRevision)) {
-    throw new Error("expectedRevision 64 karakterlik SHA-256 olmalı.");
+    throw badRequest("expectedRevision 64 karakterlik SHA-256 olmalı.");
   }
   if (body.config === null || typeof body.config !== "object" || Array.isArray(body.config)) {
-    throw new Error("config JSON nesnesi olmalı.");
+    throw badRequest("config JSON nesnesi olmalı.");
   }
   return body;
 }
 
 function validateBrowserSettings(body) {
   if (body === null || typeof body !== "object" || Array.isArray(body)) {
-    throw new Error("Browser settings body must be a JSON object.");
+    throw badRequest("Browser settings body must be a JSON object.");
   }
   const keys = Object.keys(body);
   if (keys.length < 1 || keys.some((key) => !["context", "enabled", "agentCursorEnabled", "agentCursorName"].includes(key))) {
-    throw new Error("Browser settings body has no supported settings or contains an unsupported field.");
+    throw badRequest("Browser settings body has no supported settings or contains an unsupported field.");
   }
   if (Object.hasOwn(body, "context") && !["agent", "user"].includes(body.context)) {
-    throw new Error("Browser settings context must be agent or user.");
+    throw badRequest("Browser settings context must be agent or user.");
   }
   if (Object.hasOwn(body, "enabled") && typeof body.enabled !== "boolean") {
-    throw new Error("enabled must be boolean.");
+    throw badRequest("enabled must be boolean.");
   }
   if (Object.hasOwn(body, "agentCursorEnabled") && typeof body.agentCursorEnabled !== "boolean") {
-    throw new Error("agentCursorEnabled must be boolean.");
+    throw badRequest("agentCursorEnabled must be boolean.");
   }
   if (Object.hasOwn(body, "agentCursorName")) {
     if (typeof body.agentCursorName !== "string" || body.agentCursorName.length > 64 || /[\u0000-\u001f\u007f]/u.test(body.agentCursorName)) {
-      throw new Error("agentCursorName must be bounded control-character-free text.");
+      throw badRequest("agentCursorName must be bounded control-character-free text.");
     }
   }
   return body;
@@ -201,21 +239,21 @@ function validateBrowserSettings(body) {
 
 function validateEmptyObject(body, label) {
   if (body === null || typeof body !== "object" || Array.isArray(body) || Object.keys(body).length !== 0) {
-    throw new Error(`${label} body must be an empty JSON object.`);
+    throw badRequest(`${label} body must be an empty JSON object.`);
   }
   return body;
 }
 
 function validateUninstallRequest(body) {
   if (body === null || typeof body !== "object" || Array.isArray(body)) {
-    throw new Error("Uninstall body must be a JSON object.");
+    throw badRequest("Uninstall body must be a JSON object.");
   }
   const keys = Object.keys(body).sort();
   if (keys.length !== 2 || keys[0] !== "confirm" || keys[1] !== "removeUserData") {
-    throw new Error("Uninstall accepts only confirm and removeUserData.");
+    throw badRequest("Uninstall accepts only confirm and removeUserData.");
   }
-  if (body.confirm !== "UNINSTALL") throw new Error("Uninstall confirmation is invalid.");
-  if (typeof body.removeUserData !== "boolean") throw new Error("removeUserData must be boolean.");
+  if (body.confirm !== "UNINSTALL") throw badRequest("Uninstall confirmation is invalid.");
+  if (typeof body.removeUserData !== "boolean") throw badRequest("removeUserData must be boolean.");
   return Object.freeze({ removeUserData: body.removeUserData });
 }
 
@@ -240,8 +278,10 @@ export function createEquinoxLocalControlApi({
   configureTelegram = null,
   testTelegram = null,
   disconnectTelegram = null,
+  recordInternalError = null,
   host = LOOPBACK_HOST,
   port,
+  requestTimeoutMs = REQUEST_TIMEOUT_MS,
 } = {}) {
   if (!configManager?.snapshot || !configManager?.replacePersisted) {
     throw new Error("Control Center API için configManager gerekli.");
@@ -255,6 +295,9 @@ export function createEquinoxLocalControlApi({
   if (typeof getActivity !== "function") {
     throw new Error("Control Center API getActivity fonksiyonu gerekli.");
   }
+  if (recordInternalError != null && typeof recordInternalError !== "function") {
+    throw new Error("Control Center API recordInternalError fonksiyonu geçersiz.");
+  }
   if (typeof getUpdateStatus !== "function") {
     throw new Error("Control Center API getUpdateStatus fonksiyonu gerekli.");
   }
@@ -266,6 +309,9 @@ export function createEquinoxLocalControlApi({
   }
   if (!Number.isInteger(port) || port < 0 || port > 65535) {
     throw new Error("Control Center API portu geçersiz.");
+  }
+  if (!Number.isInteger(requestTimeoutMs) || requestTimeoutMs < 1 || requestTimeoutMs > 60_000) {
+    throw new Error("Control Center API request timeout değeri geçersiz.");
   }
 
   const state = {
@@ -581,27 +627,37 @@ export function createEquinoxLocalControlApi({
 
       jsonBody(res, 404, { ok: false, error: "Control Center API endpoint bulunamadı." });
     } catch (error) {
-      const statusCode = Number.isInteger(error?.statusCode) ? error.statusCode : 400;
-      jsonBody(res, statusCode, { ok: false, error: safeErrorMessage(error) });
+      const statusCode = Number.isInteger(error?.statusCode)
+        ? error.statusCode
+        : error?.code === EQUINOX_LOCAL_CONFIG_ERROR_CODES.revisionConflict
+          ? 409
+          : 500;
+      if (statusCode === 500 && recordInternalError) {
+        void Promise.resolve(recordInternalError(error)).catch(() => {});
+      }
+      jsonBody(res, statusCode, { ok: false, error: publicErrorMessage(error, statusCode) });
     }
   };
 
   const start = async () => {
     if (state.server?.listening) return snapshot();
     const server = http.createServer((req, res) => {
-      const timer = setTimeout(() => {
-        if (!res.headersSent) {
-          jsonBody(res, 408, { ok: false, error: "Control Center isteği zaman aşımına uğradı." });
-        } else {
+      void handler(req, res).catch((error) => {
+        if (res.writableEnded || res.destroyed) return;
+        try {
+          if (recordInternalError) void Promise.resolve(recordInternalError(error)).catch(() => {});
+          jsonBody(res, 500, { ok: false, error: publicErrorMessage(error, 500) });
+        } catch {
           res.destroy();
         }
-      }, REQUEST_TIMEOUT_MS);
-      timer.unref?.();
-      void handler(req, res).finally(() => clearTimeout(timer));
+      });
     });
     server.keepAliveTimeout = 1_000;
     server.headersTimeout = 5_000;
-    server.requestTimeout = REQUEST_TIMEOUT_MS;
+    // Bound inbound request delivery only. Handler work may legitimately outlive
+    // this window; emitting an application-level 408 while a mutation continues
+    // would make the operation state ambiguous to the caller.
+    server.requestTimeout = requestTimeoutMs;
     server.maxHeadersCount = 64;
 
     await new Promise((resolve, reject) => {

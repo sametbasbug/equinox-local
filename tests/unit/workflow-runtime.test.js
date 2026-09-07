@@ -4,23 +4,17 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import * as z from "zod/v4";
-
 import {
   __test,
-  registerWorkflowTools,
-} from "../../src/workflow-tools.js";
+  createWorkflowRuntime,
+} from "../../src/workflow-runtime.js";
 
-async function createHarness(t, scripts = {}) {
-  const rootDir = await fs.mkdtemp(path.join(os.tmpdir(), "equinox-workflow-tools-"));
+async function createHarness(t) {
+  const rootDir = await fs.mkdtemp(path.join(os.tmpdir(), "equinox-workflow-runtime-"));
   t.after(async () => {
     await fs.rm(rootDir, { recursive: true, force: true });
   });
 
-  const tools = new Map();
-  const registerTextTool = (name, config, handler, options) => {
-    tools.set(name, { config, handler, options });
-  };
   const processManager = {
     start() { throw new Error("not used"); },
     list() { return []; },
@@ -28,53 +22,18 @@ async function createHarness(t, scripts = {}) {
     async stop() { return null; },
   };
 
-  const manager = await registerWorkflowTools({
+  const manager = await createWorkflowRuntime({
     rootDir,
-    registerTextTool,
-    z,
-    getActiveProjectId: () => "demo",
-    getActiveProjectName: () => "Demo",
-    getActiveProjectRoot: () => "/tmp/demo",
-    resolveProjectContext: async () => ({ rootRealPath: "/tmp/demo" }),
-    readProjectPackageJson: async () => ({ scripts }),
     processManager,
     probeTcpPort: async () => ({ listening: false }),
-    processJsonResult: (value) => value,
-    errorResult: (error) => ({ error: error.message }),
   });
 
-  return { tools, manager };
+  return { manager };
 }
 
-test("workflow module registers the complete v3.7 tool set", async (t) => {
-  const { tools, manager } = await createHarness(t, {
-    build: "astro build",
-    preview: "astro preview",
-  });
-
-  assert.deepEqual([...tools.keys()], [
-    "workflow_recipes",
-    "workflow_start",
-    "workflow_list",
-    "workflow_status",
-    "workflow_logs",
-    "workflow_cancel",
-    "workflow_resume",
-  ]);
+test("workflow runtime initializes the internal durable manager without public registrations", async (t) => {
+  const { manager } = await createHarness(t);
   assert.equal(manager.summary().total, 0);
-});
-
-test("workflow_recipes reports project-specific availability", async (t) => {
-  const { tools } = await createHarness(t, {
-    check: "astro check",
-    build: "astro build",
-    preview: "astro preview",
-  });
-
-  const result = await tools.get("workflow_recipes").handler({});
-  assert.equal(result.projectId, "demo");
-  assert.equal(result.recipes.find((item) => item.id === "checks").available, true);
-  assert.equal(result.recipes.find((item) => item.id === "qa-and-preview").available, true);
 });
 
 test("preview npm arguments are fixed by the detected adapter", () => {

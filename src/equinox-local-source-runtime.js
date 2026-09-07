@@ -12,8 +12,9 @@ import {
 } from "./equinox-local-runtime-versions.js";
 
 const execFile = promisify(execFileCallback);
-const ROOT = path.dirname(fileURLToPath(import.meta.url));
-const DEFAULT_CONFIG = path.join(ROOT, ".equinox-local-dev-runtime.conf");
+const MODULE_DIR = path.dirname(fileURLToPath(import.meta.url));
+const SOURCE_ROOT = path.basename(MODULE_DIR) === "src" ? path.dirname(MODULE_DIR) : MODULE_DIR;
+const DEFAULT_CONFIG = path.join(SOURCE_ROOT, ".equinox-local-dev-runtime.conf");
 const MAX_CONFIG_BYTES = 16 * 1024;
 
 export function parseSourceRuntimeConfig(text) {
@@ -185,7 +186,7 @@ export function parseSourceCheckoutVersion(text) {
 }
 
 export async function inspectSourceCheckoutVersion({
-  sourceRoot = ROOT,
+  sourceRoot = MODULE_DIR,
   fsImpl = fs,
 } = {}) {
   try {
