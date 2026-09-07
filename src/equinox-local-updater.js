@@ -190,6 +190,33 @@ export function validateSignedUpdateManifest(raw, {
   return normalized;
 }
 
+async function readBoundedResponseText(response, maximumBytes) {
+  const contentLength = response.headers?.get?.("content-length");
+  if (contentLength !== null && contentLength !== undefined && contentLength !== "") {
+    const parsed = Number(contentLength);
+    if (!Number.isSafeInteger(parsed) || parsed < 0 || parsed > maximumBytes) {
+      throw new Error("Update manifest exceeds the size limit.");
+    }
+  }
+
+  if (!response.body) {
+    throw new Error("Update manifest response body is unavailable.");
+  }
+
+  const chunks = [];
+  let bytes = 0;
+  for await (const chunkValue of response.body) {
+    const chunk = Buffer.from(chunkValue);
+    bytes += chunk.length;
+    if (bytes > maximumBytes) {
+      throw new Error("Update manifest exceeds the size limit.");
+    }
+    chunks.push(chunk);
+  }
+
+  return Buffer.concat(chunks, bytes).toString("utf8");
+}
+
 async function fetchManifestText(fetchImpl, manifestUrl) {
   if (typeof fetchImpl !== "function") throw new Error("Update network client is unavailable.");
   const controller = new AbortController();
@@ -205,11 +232,7 @@ async function fetchManifestText(fetchImpl, manifestUrl) {
       signal: controller.signal,
     });
     if (!response?.ok) throw new Error(`Update server returned HTTP ${response?.status ?? "unknown"}.`);
-    const text = await response.text();
-    if (Buffer.byteLength(text, "utf8") > MAX_MANIFEST_BYTES) {
-      throw new Error("Update manifest exceeds the size limit.");
-    }
-    return text;
+    return await readBoundedResponseText(response, MAX_MANIFEST_BYTES);
   } finally {
     clearTimeout(timer);
   }

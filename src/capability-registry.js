@@ -2,13 +2,13 @@ import * as z from "zod/v4";
 
 export const STABLE_CAPABILITY_DOMAINS = Object.freeze({
   files: Object.freeze({
-    label: "Files & projects",
+    label: "Projects & assets",
     catalogTool: "files_tools",
     callTool: "files_call",
     openWorldHint: false,
   }),
   git: Object.freeze({
-    label: "Git & GitHub",
+    label: "GitHub",
     catalogTool: "git_tools",
     callTool: "git_call",
     openWorldHint: true,
@@ -40,46 +40,76 @@ export const STABLE_CAPABILITY_DOMAINS = Object.freeze({
   }),
 });
 
-const FILE_OPERATION_NAMES = new Set([
+const RETIRED_TERMINAL_FIRST_OPERATION_NAMES = new Set([
   "apply_patch",
   "copy_between_projects",
   "create_directory",
   "create_file",
   "delete_file",
-  "delete_inbox_asset",
-  "export_asset",
   "file_hash",
-  "import_asset",
-  "inspect_inbox_asset",
-  "list_asset_inbox",
   "list_files",
   "move_file",
   "project_info",
   "read_file",
-  "list_projects",
   "remove_empty_directory",
   "replace_text",
   "search_text",
   "write_file",
-]);
-
-const GIT_OPERATION_NAMES = new Set([
   "checkout_main",
   "checkout_work_branch",
   "cleanup_work_branch",
-  "close_pull_request",
   "commit_changes",
   "create_branch",
+  "git_diff",
+  "git_head",
+  "git_log",
+  "git_show",
+  "git_status",
+  "list_work_branches",
+  "push_branch",
+  "revert_commit",
+  "sync_main",
+  "worktree_create",
+  "worktree_list",
+  "worktree_remove",
+  "list_package_scripts",
+  "npm_audit",
+  "npm_ci",
+  "npm_install_package",
+  "npm_outdated",
+  "npm_project_info",
+  "npm_remove_package",
+  "npm_view_package",
+  "dns_status",
+  "port_status",
+  "run_build",
+  "run_project_script",
+  "workflow_cancel",
+  "workflow_list",
+  "workflow_logs",
+  "workflow_recipes",
+  "workflow_resume",
+  "workflow_start",
+  "workflow_status",
+  "authenticated_command",
+]);
+
+const FILE_OPERATION_NAMES = new Set([
+  "delete_inbox_asset",
+  "export_asset",
+  "import_asset",
+  "inspect_inbox_asset",
+  "list_asset_inbox",
+  "list_projects",
+]);
+
+const GIT_OPERATION_NAMES = new Set([
+  "close_pull_request",
   "create_pull_request",
   "get_pull_request",
   "get_pull_request_checks",
-  "list_work_branches",
   "merge_pull_request",
-  "push_branch",
-  "revert_commit",
-  "rollback_snapshot",
   "set_pull_request_draft",
-  "sync_main",
   "update_pull_request",
 ]);
 
@@ -89,18 +119,24 @@ const AUTOMATION_OPERATION_NAMES = new Set([
   "get_workflow_run",
   "list_workflow_runs",
   "rerun_failed_workflow",
-  "run_build",
-  "run_project_script",
+  "rollback_snapshot",
 ]);
 
 const SERVICE_OPERATION_NAMES = new Set([
-  "list_package_scripts",
+  "credential_status",
   "telegram_send_message",
 ]);
 
 const EXCLUDED_PREFIXES = Object.freeze([
   "desktop_",
-   "visual_",
+  "visual_",
+]);
+
+const RETIRED_TERMINAL_FIRST_PREFIXES = Object.freeze([
+  "git_",
+  "worktree_",
+  "npm_",
+  "workflow_",
 ]);
 
 function isStableGatewayName(name) {
@@ -113,21 +149,22 @@ export function inferCapabilityDomain(name) {
   if (typeof name !== "string" || !name) return null;
   if (isStableGatewayName(name)) return null;
   if (EXCLUDED_PREFIXES.some((prefix) => name.startsWith(prefix))) return null;
+  if (RETIRED_TERMINAL_FIRST_PREFIXES.some((prefix) => name.startsWith(prefix))) return null;
+  if (RETIRED_TERMINAL_FIRST_OPERATION_NAMES.has(name)) return null;
 
   if (name.startsWith("equinox_browser_")) return "browser";
   if (FILE_OPERATION_NAMES.has(name)) return "files";
-  if (name.startsWith("git_") || name.startsWith("worktree_") || GIT_OPERATION_NAMES.has(name)) {
+  if (GIT_OPERATION_NAMES.has(name)) {
     return "git";
   }
   if (
-    name.startsWith("workflow_") ||
     name.startsWith("release_") ||
     name.startsWith("visual_") ||
     AUTOMATION_OPERATION_NAMES.has(name)
   ) {
     return "automation";
   }
-  if (name.startsWith("deployment_") || name.startsWith("npm_") || SERVICE_OPERATION_NAMES.has(name)) {
+  if (name.startsWith("deployment_") || SERVICE_OPERATION_NAMES.has(name)) {
     return "services";
   }
 

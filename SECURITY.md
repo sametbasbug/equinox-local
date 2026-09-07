@@ -22,10 +22,10 @@ Reports are especially useful when they demonstrate a concrete bypass of one of 
 
 - Control Center is reachable only through loopback and rejects unsafe Host/origin patterns.
 - Control Center mutations require the intended same-origin/CSRF flow and bounded request bodies.
-- Agents cannot escape configured project/file roots through traversal or symlink tricks.
+- Agents cannot escape the active Full/selected filesystem boundary through filesystem-root access, protected-secret paths, traversal or symlink tricks.
 - Guarded mutations cannot bypass expected revision/SHA checks or mutation ownership rules.
 - Equinox Browser cannot perform browser automation before consent/control is enabled.
-- User Chrome is controlled only through Equinox Browser; internal development/QA browser infrastructure is not a product fallback.
+- Equinox Browser is the only browser transport; Agent Browser and Your Browser remain explicit isolated contexts with no silent fallback, and the retired legacy QA-browser backend cannot reappear as an alternate route.
 - Native Messaging cannot be rebound to an unexpected extension/origin or unsafe host path.
 - Managed update manifests cannot be accepted without a trusted Ed25519 signature and pinned update origin.
 - A failed managed update cannot silently replace the last verified healthy release.
@@ -44,7 +44,7 @@ The following are generally not vulnerabilities by themselves:
 
 ## Automated security scanning
 
-The public repository includes a GitHub CodeQL workflow for JavaScript/TypeScript using the `security-extended` query suite. The workflow is intentionally skipped while the publication-staging repository is private and becomes active when the repository is public, in addition to the normal macOS CI/test suite.
+The public repository runs a GitHub CodeQL workflow for JavaScript/TypeScript using the `security-extended` query suite alongside the normal macOS CI/test suite. Private factory/release infrastructure is kept outside the public source boundary rather than relying on a private-publication staging mode for security coverage.
 
 CodeQL is a supplement to the explicit security-boundary tests in this repository, not a replacement for them.
 

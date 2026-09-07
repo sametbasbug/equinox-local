@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { EventEmitter } from "node:events";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -86,7 +87,7 @@ async function createFixture() {
   };
 }
 
-test("uninstall scheduler launches a detached credential-free helper with explicit data mode", () => {
+test("uninstall scheduler waits for detached helper spawn with explicit data mode", async () => {
   const installation = {
     managed: true,
     selfUpdateSupported: true,
@@ -107,7 +108,7 @@ test("uninstall scheduler launches a detached credential-free helper with explic
   assert.equal(env.OPENAI_API_KEY, undefined);
   assert.equal(env.GITHUB_TOKEN, undefined);
 
-  const result = scheduleEquinoxLocalUninstall({
+  const result = await scheduleEquinoxLocalUninstall({
     installation,
     removeUserData: true,
     nodePath: "/managed/node",
@@ -115,7 +116,10 @@ test("uninstall scheduler launches a detached credential-free helper with explic
     sourceEnv,
     spawnImpl: (command, args, options) => {
       calls.push({ command, args, options });
-      return { unref: () => { unrefCount += 1; } };
+      const child = new EventEmitter();
+      child.unref = () => { unrefCount += 1; };
+      queueMicrotask(() => child.emit("spawn"));
+      return child;
     },
   });
   assert.deepEqual(result, { scheduled: true, removeUserData: true });
@@ -123,6 +127,26 @@ test("uninstall scheduler launches a detached credential-free helper with explic
   assert.deepEqual(calls[0].args, ["/managed/uninstall-helper.js", "--uninstall", "--remove-user-data"]);
   assert.equal(calls[0].options.detached, true);
   assert.equal(calls[0].options.env.OPENAI_API_KEY, undefined);
+});
+
+test("uninstall scheduler rejects an asynchronous helper spawn failure", async () => {
+  await assert.rejects(
+    scheduleEquinoxLocalUninstall({
+      installation: {
+        managed: true,
+        selfUpdateSupported: true,
+        installRoot: "/Users/example/Library/Application Support/Equinox Local",
+        releaseDir: "/Users/example/Library/Application Support/Equinox Local/releases/4.2.0",
+      },
+      spawnImpl: () => {
+        const child = new EventEmitter();
+        child.unref = () => {};
+        queueMicrotask(() => child.emit("error", new Error("ENOEXEC")));
+        return child;
+      },
+    }),
+    /uninstall helper failed to start: ENOEXEC/u,
+  );
 });
 
 test("managed uninstall preserves workspace and config by default while removing runtime, credentials and native host", async () => {

@@ -31,7 +31,7 @@ macTest("source app host routes the LaunchAgent through stable Equinox Local.app
   assert.equal((await fs.lstat(path.join(appPath, "Contents", "Resources", "EquinoxLocal.icns"))).isFile(), true);
 
   const wrapper = await fs.readFile(path.join(homeDir, "Library", "Application Support", "Equinox Local", "equinox-local-app-runtime"), "utf8");
-  assert.match(wrapper, /exec \/bin\/zsh/u);
+  assert.match(wrapper, /\/bin\/zsh/u);
   assert.match(wrapper, /peekaboo/u);
   assert.match(wrapper, /daemon run --mode manual --no-remote/u);
   assert.match(wrapper, /PEEKABOO_DAEMON_PID/u);
@@ -44,7 +44,8 @@ macTest("source app host routes the LaunchAgent through stable Equinox Local.app
   assert.match(wrapper, /RUNTIME_HOST_PID=\$PPID/u);
   assert.match(wrapper, /PARENT_WATCHDOG_PID/u);
   assert.match(wrapper, /watch_runtime_host/u);
-  assert.equal(wrapper.includes('wait "$PARENT_WATCHDOG_PID"'), true);
+  assert.equal(wrapper.includes('wait "$RUNTIME_WATCHDOG_PID"'), true);
+  assert.match(wrapper, /watch-source-runtime\.mjs/u);
   assert.equal(wrapper.includes('kill -TERM "$$"'), true);
   assert.match(wrapper, /trap cleanup EXIT/u);
   assert.match(wrapper, /trap shutdown INT TERM HUP/u);

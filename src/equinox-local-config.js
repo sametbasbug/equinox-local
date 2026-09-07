@@ -14,6 +14,9 @@ export const MAX_CONFIG_BYTES = 256 * 1024;
 export const MAX_CONFIG_PROJECTS = 64;
 export const MAX_CONFIG_FILE_ROOTS = 64;
 export const CONFIG_ID_PATTERN = /^[a-z0-9][a-z0-9._-]{0,63}$/u;
+export const EQUINOX_LOCAL_CONFIG_ERROR_CODES = Object.freeze({
+  revisionConflict: "EQUINOX_LOCAL_CONFIG_REVISION_CONFLICT",
+});
 
 function assertPlainObject(value, label) {
   if (
@@ -290,6 +293,7 @@ export function createEquinoxLocalConfigManager({
     revision: null,
     loadedAt: null,
   };
+  let replaceTail = Promise.resolve();
 
   const initialize = async () => {
     const config = await readConfigFile(state.configPath);
@@ -316,7 +320,7 @@ export function createEquinoxLocalConfigManager({
     });
   };
 
-  const replacePersisted = async (nextConfig, { expectedRevision } = {}) => {
+  const persistReplacement = async (nextConfig, { expectedRevision } = {}) => {
     const normalized = validateEquinoxLocalConfig(nextConfig);
     if (typeof expectedRevision !== "string" || !/^[a-f0-9]{64}$/u.test(expectedRevision)) {
       throw new Error("Config güncellemesi için 64 karakterlik expectedRevision zorunludur.");
@@ -325,7 +329,9 @@ export function createEquinoxLocalConfigManager({
     const currentOnDisk = await readConfigFile(state.configPath);
     const currentRevision = equinoxLocalConfigRevision(currentOnDisk);
     if (currentRevision !== expectedRevision || currentRevision !== state.revision) {
-      throw new Error("Config revision guard eşleşmedi; config başka bir işlem tarafından değiştirilmiş olabilir.");
+      const error = new Error("Config revision guard eşleşmedi; config başka bir işlem tarafından değiştirilmiş olabilir.");
+      error.code = EQUINOX_LOCAL_CONFIG_ERROR_CODES.revisionConflict;
+      throw error;
     }
 
     const parent = path.dirname(state.configPath);
@@ -354,6 +360,15 @@ export function createEquinoxLocalConfigManager({
       restartRequired: true,
       config: normalized,
     });
+  };
+
+  const replacePersisted = (nextConfig, options = {}) => {
+    const task = replaceTail.then(() => persistReplacement(nextConfig, options));
+    replaceTail = task.then(
+      () => undefined,
+      () => undefined,
+    );
+    return task;
   };
 
   return Object.freeze({

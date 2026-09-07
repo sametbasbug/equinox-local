@@ -1,17 +1,5 @@
 import path from "node:path";
 
-const SLUG_PATTERN = /^[a-z0-9][a-z0-9._-]{0,59}$/u;
-
-export function validateWorktreeSlug(slug) {
-  if (typeof slug !== "string" || !SLUG_PATTERN.test(slug)) {
-    throw new Error(
-      "Worktree slug değeri küçük harf, sayı, nokta, alt çizgi veya tire içermeli ve 1-60 karakter olmalı.",
-    );
-  }
-
-  return slug;
-}
-
 export function isPathInside(rootPath, targetPath) {
   const relative = path.relative(rootPath, targetPath);
 
@@ -23,27 +11,6 @@ export function isPathInside(rootPath, targetPath) {
       !path.isAbsolute(relative)
     )
   );
-}
-
-export function buildManagedWorktreePath({
-  workspaceRoot,
-  projectId,
-  slug,
-}) {
-  validateWorktreeSlug(slug);
-
-  const target = path.resolve(
-    workspaceRoot,
-    "worktrees",
-    projectId,
-    slug,
-  );
-
-  if (!isPathInside(workspaceRoot, target)) {
-    throw new Error("Yönetilen worktree yolu workspace dışına çıkıyor.");
-  }
-
-  return target;
 }
 
 export function parseGitWorktreePorcelain(text) {
@@ -127,7 +94,3 @@ export function publicWorktreeRecord({
       : null,
   };
 }
-
-export const __test = Object.freeze({
-  SLUG_PATTERN,
-});

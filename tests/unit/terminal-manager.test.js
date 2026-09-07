@@ -1,5 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 
 import {
   createTerminalManager,
@@ -64,6 +67,9 @@ function makeManager(options = {}) {
     }),
     now: () => tick++,
     randomId: () => `id${terminals.length}`,
+    resolveProcessTtyImpl: async () => "ttys999",
+    listTtyProcessPidsImpl: async () => terminals.map((terminal) => terminal.pid),
+    pidExistsImpl: (pid) => terminals.some((terminal) => terminal.pid === pid),
     ...options,
   });
 
@@ -179,6 +185,65 @@ test("terminal session limit is enforced", async () => {
   );
 });
 
+test("terminal session limit reserves capacity across async PTY loading", async () => {
+  let resolveLoader;
+  const terminal = new FakeTerminal(5001);
+  const manager = createTerminalManager({
+    maxActiveSessions: 1,
+    ptyModuleLoader: () => new Promise((resolve) => {
+      resolveLoader = resolve;
+    }),
+    resolveProcessTtyImpl: async () => "ttys998",
+    listTtyProcessPidsImpl: async () => [5001],
+    pidExistsImpl: (pid) => pid === 5001,
+    randomId: () => "reserve1",
+  });
+
+  const firstStart = startFake(manager);
+  for (let attempt = 0; attempt < 20 && typeof resolveLoader !== "function"; attempt += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  assert.equal(typeof resolveLoader, "function");
+
+  await assert.rejects(
+    () => startFake(manager),
+    /en fazla 1 terminal/u,
+  );
+
+  resolveLoader({ spawn: () => terminal });
+  const first = await firstStart;
+  assert.equal(first.running, true);
+  await manager.stop({ sessionId: first.sessionId });
+});
+
+test("terminal start reservation is released after spawn failure", async () => {
+  let spawnAttempts = 0;
+  const terminal = new FakeTerminal(5002);
+  const manager = createTerminalManager({
+    maxActiveSessions: 1,
+    ptyModuleLoader: async () => ({
+      spawn: () => {
+        spawnAttempts += 1;
+        if (spawnAttempts === 1) throw new Error("synthetic spawn failure");
+        return terminal;
+      },
+    }),
+    resolveProcessTtyImpl: async () => "ttys997",
+    listTtyProcessPidsImpl: async () => [5002],
+    pidExistsImpl: (pid) => pid === 5002,
+    randomId: () => "reserve2",
+  });
+
+  await assert.rejects(
+    () => startFake(manager),
+    /synthetic spawn failure/u,
+  );
+
+  const second = await startFake(manager);
+  assert.equal(second.running, true);
+  await manager.stop({ sessionId: second.sessionId });
+});
+
 test("ANSI stripping removes CSI sequences", () => {
   assert.equal(
     __test.stripAnsi("a\u001b[2Kb\u001b[31mc\u001b[0m"),
@@ -228,4 +293,143 @@ test("installed node-pty can spawn and interact with zsh", async () => {
   await completed;
 
   assert.match(output, /__EQUINOX_PTY_OK__/u);
+});
+
+
+test("Darwin TTY parser selects only the requested PTY", () => {
+  assert.deepEqual(
+    __test.parseDarwinTtyProcessPids([
+      " 100 ttys001",
+      " 101 ttys001",
+      " 200 ttys002",
+      " garbage",
+      " 102 /dev/ttys001",
+      "",
+    ].join("\n"), "ttys001"),
+    [100, 101, 102],
+  );
+});
+
+async function waitForPidFile(pidFile, timeoutMs = 3000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      const pid = Number.parseInt(await fs.readFile(pidFile, "utf8"), 10);
+      if (Number.isInteger(pid) && pid > 0) return pid;
+    } catch (error) {
+      if (error?.code !== "ENOENT") throw error;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  throw new Error("PTY child pid file was not created in time.");
+}
+
+function shellQuote(value) {
+  return `'${String(value).replaceAll("'", `'\"'\"'`)}'`;
+}
+
+async function createResistantPtyChildFixture() {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "equinox-pty-session-"));
+  const childScript = path.join(root, "child.mjs");
+  const pidFile = path.join(root, "child.pid");
+  await fs.writeFile(childScript, [
+    'import fs from "node:fs";',
+    `fs.writeFileSync(${JSON.stringify(pidFile)}, String(process.pid));`,
+    'process.on("SIGHUP", () => {});',
+    'process.on("SIGTERM", () => {});',
+    'setInterval(() => {}, 1000);',
+  ].join("\n"));
+  return { root, childScript, pidFile };
+}
+
+test("real PTY stop drains a resistant background job from the owned controlling TTY", async (t) => {
+  if (process.platform !== "darwin") {
+    t.skip("macOS PTY process-session semantics are required");
+    return;
+  }
+
+  const fixture = await createResistantPtyChildFixture();
+  const manager = createTerminalManager();
+  let childPid = null;
+  try {
+    const started = await manager.start({
+      projectId: "local",
+      projectName: "Equinox Local",
+      cwd: fixture.root,
+      shell: "/bin/zsh",
+      shellArgs: ["-f"],
+      env: process.env,
+      cols: 100,
+      rows: 25,
+    });
+    manager.write({
+      sessionId: started.sessionId,
+      data: `${shellQuote(process.execPath)} ${shellQuote(fixture.childScript)} &`,
+      key: "enter",
+    });
+    childPid = await waitForPidFile(fixture.pidFile);
+
+    const stopped = await manager.stop({
+      sessionId: started.sessionId,
+      timeoutMs: 300,
+    });
+    assert.equal(stopped.running, false);
+    assert.equal(stopped.cleanupVerified, true);
+    assert.throws(() => process.kill(childPid, 0), (error) => error?.code === "ESRCH");
+  } finally {
+    await manager.shutdown();
+    if (Number.isInteger(childPid) && childPid > 0) {
+      try { process.kill(childPid, "SIGKILL"); } catch {}
+    }
+    await fs.rm(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test("natural PTY shell exit also drains resistant background jobs before finalizing", async (t) => {
+  if (process.platform !== "darwin") {
+    t.skip("macOS PTY process-session semantics are required");
+    return;
+  }
+
+  const fixture = await createResistantPtyChildFixture();
+  const manager = createTerminalManager({ ownershipMonitorMs: 40, naturalExitOwnershipFreshMs: 120 });
+  let childPid = null;
+  try {
+    const started = await manager.start({
+      projectId: "local",
+      projectName: "Equinox Local",
+      cwd: fixture.root,
+      shell: "/bin/zsh",
+      shellArgs: ["-f"],
+      env: process.env,
+      cols: 100,
+      rows: 25,
+    });
+    manager.write({
+      sessionId: started.sessionId,
+      data: `${shellQuote(process.execPath)} ${shellQuote(fixture.childScript)} &`,
+      key: "enter",
+    });
+    childPid = await waitForPidFile(fixture.pidFile);
+    await new Promise((resolve) => setTimeout(resolve, 220));
+    manager.write({ sessionId: started.sessionId, data: "disown %1; exit", key: "enter" });
+
+    const deadline = Date.now() + 3000;
+    let finalSession = null;
+    while (Date.now() < deadline) {
+      finalSession = manager.list().find((item) => item.sessionId === started.sessionId);
+      if (finalSession && !finalSession.running) break;
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    assert.ok(finalSession);
+    assert.equal(finalSession.running, false);
+    assert.equal(finalSession.cleanupVerified, true);
+    assert.throws(() => process.kill(childPid, 0), (error) => error?.code === "ESRCH");
+  } finally {
+    await manager.shutdown();
+    if (Number.isInteger(childPid) && childPid > 0) {
+      try { process.kill(childPid, "SIGKILL"); } catch {}
+    }
+    await fs.rm(fixture.root, { recursive: true, force: true });
+  }
 });

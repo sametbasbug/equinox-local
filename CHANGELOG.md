@@ -6,6 +6,25 @@ This project follows semantic versioning for public releases.
 
 ## [Unreleased]
 
+## [4.6.2] - 2026-09-07
+
+### Changed
+
+- Simplified ordinary local repository work around a terminal-first surface: file/repo/local-Git/npm/build/test operations now use the generic Terminal path instead of dozens of narrow wrappers, while GitHub, release, credential/deploy, Browser, Desktop and other genuinely special capabilities remain explicit.
+- Reduced the non-Browser public operation surface to 56 operations and internalized the generic workflow gateway without removing the durable workflow engine used by release, recovery and maintenance.
+- `terminal_exec` now starts work in the managed process lifecycle. `wait_ms` only bounds the foreground MCP response; unfinished work continues under the same process ID for `process_logs` / `process_stop` rather than being killed and restarted.
+- Added bounded separate stdout/stderr plus ordered combined output, project/cwd execution metadata and deterministic noninteractive pager/Git-prompt behavior without exposing Equinox-managed provider credentials to generic shells.
+- Strengthened source-checkout supervision so a stopped tunnel process releases the stable app host back to launchd only after consecutive confirmed stopped-state observations; network/probe uncertainty does not trigger restart loops.
+- Added production-composition regression coverage so missing helper wiring, Browser initialization-order mistakes and workflow/runtime integration regressions fail in the factory suite instead of first appearing during a live source restart.
+
+### Security
+
+- Hardened file creation/replacement races, configuration revision serialization, overlapping mutation ownership, detached-helper startup errors, descendant process-group cleanup and terminal capacity reservation.
+- Git worktree/common-dir metadata is now read through bounded `O_NOFOLLOW` file handles with descriptor-level stat checks, closing the path check-to-read race detected by the public CodeQL gate.
+- Hardened PTY lifecycle ownership on macOS by tracking jobs observed on the private controlling TTY and draining resistant/disowned background jobs during stop/shutdown instead of assuming shell-PID exit means cleanup is complete.
+- Added bounded updater transfers, Browser transport buffering and PNG decode/canvas budgets; stabilized observability reads during rotation and reduced Control Center internal error/detail exposure.
+- Preserved the explicit trust boundary: Terminal is a broad logged-in-user shell rather than a selected-root sandbox, generic Terminal/process environments strip secret-like provider variables, and Control Center exposes no arbitrary shell HTTP endpoint.
+
 ## [4.6.1] - 2026-09-05
 
 ### Changed
@@ -185,7 +204,15 @@ This project follows semantic versioning for public releases.
 - Internal release/QA browser surfaces are excluded from the public product capability registry.
 - Private Orbit/deployment configuration and machine-specific development infrastructure are excluded from the public source projection.
 
-[Unreleased]: https://github.com/sametbasbug/equinox-local/compare/v4.2.4...HEAD
+[Unreleased]: https://github.com/sametbasbug/equinox-local/compare/v4.6.2...HEAD
+[4.6.2]: https://github.com/sametbasbug/equinox-local/compare/v4.6.1...v4.6.2
+[4.6.1]: https://github.com/sametbasbug/equinox-local/compare/v4.6.0...v4.6.1
+[4.6.0]: https://github.com/sametbasbug/equinox-local/compare/v4.5.0...v4.6.0
+[4.5.0]: https://github.com/sametbasbug/equinox-local/compare/v4.4.1...v4.5.0
+[4.4.1]: https://github.com/sametbasbug/equinox-local/compare/v4.4.0...v4.4.1
+[4.4.0]: https://github.com/sametbasbug/equinox-local/compare/v4.3.1...v4.4.0
+[4.3.1]: https://github.com/sametbasbug/equinox-local/compare/v4.3.0...v4.3.1
+[4.3.0]: https://github.com/sametbasbug/equinox-local/compare/v4.2.4...v4.3.0
 [4.2.4]: https://github.com/sametbasbug/equinox-local/compare/v4.2.3...v4.2.4
 [4.2.3]: https://github.com/sametbasbug/equinox-local/compare/v4.2.2...v4.2.3
 [4.2.2]: https://github.com/sametbasbug/equinox-local/compare/v4.2.1...v4.2.2

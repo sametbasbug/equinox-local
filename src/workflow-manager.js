@@ -804,10 +804,14 @@ export function createWorkflowManager({
       );
     }
 
-    if (runners.has(workflowId)) {
-      throw new Error(
-        `Workflow runner hâlâ aktif; kayıt temizlenmedi: ${workflowId}`,
-      );
+    const runner = runners.get(workflowId);
+    if (runner) {
+      await runner.promise;
+      if (runners.has(workflowId)) {
+        throw new Error(
+          `Workflow runner hâlâ aktif; kayıt temizlenmedi: ${workflowId}`,
+        );
+      }
     }
 
     const snapshot = publicWorkflow(record);

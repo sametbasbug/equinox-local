@@ -149,6 +149,8 @@ export function createRuntimeObservability({
   const currentPath = path.join(rootDir, CURRENT_FILE);
   let initialized = false;
   let appendTail = Promise.resolve();
+  const segmentCache = new Map();
+  const knownMalformedCounts = new Map();
   let malformedLines = 0;
 
   const listSegments = async () => {
@@ -167,9 +169,14 @@ export function createRuntimeObservability({
 
   const pruneSegments = async () => {
     const segments = await listSegments();
+    const present = new Set(segments.map((segment) => segment.filePath));
+    for (const cachedPath of segmentCache.keys()) {
+      if (!present.has(cachedPath)) segmentCache.delete(cachedPath);
+    }
     const excess = Math.max(0, segments.length - maxSegments);
     for (const segment of segments.slice(0, excess)) {
       await fs.rm(segment.filePath, { force: true });
+      segmentCache.delete(segment.filePath);
     }
   };
 
@@ -199,6 +206,12 @@ export function createRuntimeObservability({
     await pruneSegments();
   };
 
+  const runSerializedStorageOperation = (operation) => {
+    const pending = appendTail.then(operation, operation);
+    appendTail = pending.then(() => undefined, () => undefined);
+    return pending;
+  };
+
   const record = async (input) => {
     await initialize();
     const normalized = normalizeEventInput(input);
@@ -222,14 +235,13 @@ export function createRuntimeObservability({
       await fs.chmod(currentPath, 0o600).catch(() => {});
       return event;
     };
-    const pending = appendTail.then(operation, operation);
-    appendTail = pending.then(() => undefined, () => undefined);
-    return pending;
+    return runSerializedStorageOperation(operation);
   };
 
   const readFileEvents = async (filePath) => {
     const text = await fs.readFile(filePath, "utf8");
     const events = [];
+    let malformedCount = 0;
     for (const line of text.split(/\r?\n/u)) {
       if (!line.trim()) {
         continue;
@@ -239,22 +251,47 @@ export function createRuntimeObservability({
         if (parsed && Number.isFinite(parsed.timestampMs) && typeof parsed.type === "string") {
           events.push(parsed);
         } else {
-          malformedLines += 1;
+          malformedCount += 1;
         }
       } catch {
-        malformedLines += 1;
+        malformedCount += 1;
       }
     }
-    return events;
+    knownMalformedCounts.set(filePath, malformedCount);
+    malformedLines = [...knownMalformedCounts.values()].reduce((sum, count) => sum + count, 0);
+    return { events, malformedCount };
+  };
+
+  const readSegmentEvents = async (segment) => {
+    const cached = segmentCache.get(segment.filePath);
+    if (
+      cached &&
+      cached.size === segment.size &&
+      cached.mtimeMs === segment.mtimeMs
+    ) {
+      return cached.parsed;
+    }
+    const parsed = await readFileEvents(segment.filePath);
+    segmentCache.set(segment.filePath, {
+      size: segment.size,
+      mtimeMs: segment.mtimeMs,
+      parsed,
+    });
+    return parsed;
   };
 
   const allEvents = async () => {
     await initialize();
-    await appendTail;
-    const segments = await listSegments();
-    const files = [...segments.map((item) => item.filePath), currentPath];
-    const nested = await Promise.all(files.map(readFileEvents));
-    return nested.flat().sort((a, b) => a.timestampMs - b.timestampMs);
+    return runSerializedStorageOperation(async () => {
+      const segments = await listSegments();
+      const parsedSegments = await Promise.all(segments.map(readSegmentEvents));
+      const current = await readFileEvents(currentPath);
+      const parsed = [...parsedSegments, current];
+      malformedLines = parsed.reduce((sum, item) => sum + item.malformedCount, 0);
+      return parsed
+        .flatMap((item) => item.events)
+        .sort((a, b) => a.timestampMs - b.timestampMs);
+    });
   };
 
   const filterEvents = async ({
@@ -290,34 +327,52 @@ export function createRuntimeObservability({
       throw new Error("Observability severity filtresi geçersiz.");
     }
 
-    let events = await filterEvents({
-      sinceMs,
-      untilMs,
-      component,
-      severity,
-      type,
+    await initialize();
+    return runSerializedStorageOperation(async () => {
+      const matches = (event) =>
+        (sinceMs === null || event.timestampMs >= sinceMs) &&
+        (untilMs === null || event.timestampMs <= untilMs) &&
+        (!component || event.component === component) &&
+        (!severity || event.severity === severity) &&
+        (!type || event.type === type);
+
+      const segments = await listSegments();
+      const sources = newestFirst
+        ? [{ current: true }, ...segments.toReversed()]
+        : [...segments, { current: true }];
+      const result = [];
+
+      for (const source of sources) {
+        const parsed = source.current
+          ? await readFileEvents(currentPath)
+          : await readSegmentEvents(source);
+        const events = newestFirst ? parsed.events.toReversed() : parsed.events;
+        for (const event of events) {
+          if (!matches(event)) continue;
+          result.push(event);
+          if (result.length >= limit) return result;
+        }
+      }
+      return result;
     });
-    if (newestFirst) {
-      events.reverse();
-    }
-    return events.slice(0, limit);
   };
 
   const storageStats = async () => {
     await initialize();
-    await appendTail;
-    const segments = await listSegments();
-    const current = await safeStat(currentPath);
-    return {
-      rootDir,
-      currentBytes: current?.size ?? 0,
-      segmentCount: segments.length,
-      segmentBytes: segments.reduce((sum, item) => sum + item.size, 0),
-      totalBytes: (current?.size ?? 0) + segments.reduce((sum, item) => sum + item.size, 0),
-      maxSegmentBytes,
-      maxSegments,
-      malformedLines,
-    };
+    return runSerializedStorageOperation(async () => {
+      const segments = await listSegments();
+      const current = await safeStat(currentPath);
+      return {
+        rootDir,
+        currentBytes: current?.size ?? 0,
+        segmentCount: segments.length,
+        segmentBytes: segments.reduce((sum, item) => sum + item.size, 0),
+        totalBytes: (current?.size ?? 0) + segments.reduce((sum, item) => sum + item.size, 0),
+        maxSegmentBytes,
+        maxSegments,
+        malformedLines,
+      };
+    });
   };
 
   const metrics = async ({ windowMs = 24 * 60 * 60 * 1000 } = {}) => {

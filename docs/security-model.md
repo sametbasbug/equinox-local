@@ -12,7 +12,7 @@ The local macOS user is the authority that chooses Agent Access mode, configures
 
 ### The AI client
 
-An AI client receives the operation surface exposed by Equinox Local. It does not receive a generic Control Center shell endpoint. In Full file mode, file/project operations can address `home` or an accessible absolute folder without pre-registration, but filesystem-root access and protected credential/application-secret areas remain blocked; selected mode remains limited to configured roots.
+An AI client receives the operation surface exposed by Equinox Local. It does not receive a generic Control Center shell endpoint. Root-aware structured capabilities remain governed by Full/Selected root policy, while ordinary local file/repo/Git/package-manager work is terminal-first. Terminal is a separate Agent Access capability: when enabled, it runs as the logged-in macOS user and is not a selected-root filesystem sandbox after the shell starts. Users who require strict selected-root containment must disable Terminal. Equinox-managed provider credentials are not injected into generic Terminal/process environments. Noninteractive `terminal_exec` commands start under the same managed-process lifecycle used by background processes: a bounded foreground wait never kills or restarts unfinished work, and continuation returns the same process ID/cursor for later logs or explicit stop. Interactive PTY stop/shutdown tracks jobs observed on that private controlling TTY instead of assuming that killing only the shell PID also killed zsh background process groups. This is lifecycle ownership, not a sandbox: commands that deliberately detach outside their owned process group/TTY are outside the generic Terminal cleanup contract and should not be used as the managed background-service path.
 
 ### Connected providers
 
@@ -50,19 +50,19 @@ The management API intentionally does not expose a generic command/shell endpoin
 
 ## Browser boundary
 
-Equinox Browser is the only product route into user Chrome.
+Equinox Browser is the only product browser transport. Agent Browser is the isolated default context and Your Browser is explicit personal Chrome; the two contexts never silently fall back to each other.
 
 A fresh extension install keeps automation off until the user accepts the current browser-data disclosure. Turning control off causes browser automation commands to be rejected; the local settings channel may remain connected so status/settings stay manageable.
 
 The Native Messaging path binds the expected host/extension relationship, and browser filesystem handoff is separately checked before Local exposes downloaded/uploaded files to an agent operation.
 
-Internal release/QA Chrome profiles are not a fallback and are excluded from the public capability surface.
+The legacy separate release/QA Chrome backend is retired. Release/visual QA uses Agent Browser through the same first-party extension/Native Messaging path rather than a hidden alternate browser route.
 
 ## Mutation concurrency
 
 Operations that can conflict acquire bounded mutation scopes/locks. Stable gateway calls delegate to the original guarded handler instead of taking a second independent mutation path.
 
-Git operations additionally use branch, clean-worktree, remote HEAD, worktree ownership, and expected-SHA guards where appropriate.
+Credential-backed GitHub and release operations additionally use branch, clean-worktree, remote HEAD, check-state, worktree-ownership, and expected-SHA guards where appropriate. Ordinary local Git runs through Terminal and remains subject to repository policy rather than a dedicated wrapper API.
 
 ## Detached helpers
 
@@ -93,7 +93,7 @@ Runtime events are bounded and rotated. Credential-like values and authorization
 
 Repair recipes are fixed operations. They re-check incident/current ownership before mutation and verify the result after mutation. Automatic recovery policies are similarly fixed, bounded, and circuit-breaker protected.
 
-The public product does not expose internal QA-browser repair recipes.
+Legacy QA-browser repair recipes were retired with that backend; the public product contains no alternate QA-browser recovery path.
 
 ## Optional desktop control
 

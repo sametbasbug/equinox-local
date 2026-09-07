@@ -1,6 +1,7 @@
 import { spawn as spawnChild } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
+import { launchDetachedHelper } from "./equinox-local-detached-helper.js";
 import { prepareManagedEquinoxRelease } from "./equinox-local-release-manager.js";
 import { compareEquinoxVersions, parseEquinoxVersion } from "./equinox-local-updater.js";
 
@@ -19,7 +20,7 @@ function helperEnvironment(installation, sourceEnv = process.env) {
   return Object.fromEntries(Object.entries(env).filter(([, value]) => typeof value === "string" && value.length > 0));
 }
 
-export function scheduleEquinoxLocalActivation({
+export async function scheduleEquinoxLocalActivation({
   installation,
   version,
   spawnImpl = spawnChild,
@@ -29,13 +30,17 @@ export function scheduleEquinoxLocalActivation({
 } = {}) {
   if (!installation?.selfUpdateSupported) throw new Error("A managed Equinox Local installation is required to schedule activation.");
   const normalizedVersion = parseEquinoxVersion(version).text;
-  const child = spawnImpl(nodePath, [helperPath, "--activate", normalizedVersion], {
-    detached: true,
-    stdio: "ignore",
-    env: helperEnvironment(installation, sourceEnv),
+  await launchDetachedHelper({
+    spawnImpl,
+    command: nodePath,
+    args: [helperPath, "--activate", normalizedVersion],
+    options: {
+      detached: true,
+      stdio: "ignore",
+      env: helperEnvironment(installation, sourceEnv),
+    },
+    label: "Equinox Local update helper",
   });
-  if (!child || typeof child.unref !== "function") throw new Error("Equinox Local update helper failed to start.");
-  child.unref();
   return Object.freeze({ scheduled: true, version: normalizedVersion });
 }
 
@@ -77,7 +82,7 @@ export function createEquinoxLocalUpdateCoordinator({
     applying = true;
     try {
       const prepared = await prepareRelease({ installation, manifest: candidate });
-      scheduleEquinoxLocalActivation({
+      await scheduleEquinoxLocalActivation({
         installation,
         version: candidate.version,
         spawnImpl,

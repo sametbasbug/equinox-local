@@ -6,6 +6,7 @@ import test from "node:test";
 
 import {
   CONFIG_ID_PATTERN,
+  EQUINOX_LOCAL_CONFIG_ERROR_CODES,
   createEquinoxLocalConfigManager,
   defaultEquinoxLocalConfigPath,
   equinoxLocalConfigRevision,
@@ -178,6 +179,34 @@ test("config replacement refuses stale revisions and symlink config files", asyn
       manager.replacePersisted(fixture(root), { expectedRevision: initial.revision }),
       /revision guard/u,
     );
+  });
+});
+
+test("config replacement serializes concurrent writes and rejects the stale follower", async () => {
+  await withTempDir(async (root) => {
+    const configPath = path.join(root, "config.json");
+    await fs.writeFile(configPath, serializeEquinoxLocalConfig(fixture(root)), { mode: 0o600 });
+    const manager = createEquinoxLocalConfigManager({ homeDir: root, configPath });
+    const initial = await manager.initialize();
+
+    const first = fixture(root);
+    first.controlCenter.port = 24892;
+    const second = fixture(root);
+    second.controlCenter.port = 24893;
+
+    const results = await Promise.allSettled([
+      manager.replacePersisted(first, { expectedRevision: initial.revision }),
+      manager.replacePersisted(second, { expectedRevision: initial.revision }),
+    ]);
+
+    assert.equal(results[0].status, "fulfilled");
+    assert.equal(results[1].status, "rejected");
+    assert.equal(results[1].reason?.code, EQUINOX_LOCAL_CONFIG_ERROR_CODES.revisionConflict);
+    assert.match(results[1].reason?.message ?? "", /revision guard/u);
+    assert.equal(manager.snapshot().revision, initial.revision, "running config stays pinned until restart");
+
+    const persisted = JSON.parse(await fs.readFile(configPath, "utf8"));
+    assert.equal(persisted.controlCenter.port, 24892);
   });
 });
 

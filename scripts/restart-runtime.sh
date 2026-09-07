@@ -2,7 +2,8 @@
 set -euo pipefail
 umask 077
 
-ROOT="$(cd "$(dirname "$0")" && /bin/pwd -P)"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && /bin/pwd -P)"
+ROOT="$(cd "$SCRIPT_DIR/.." && /bin/pwd -P)"
 CONFIG="${EQUINOX_LOCAL_DEV_RUNTIME_CONFIG:-$ROOT/.equinox-local-dev-runtime.conf}"
 DEV_NODE="${EQUINOX_LOCAL_DEV_NODE:-$(command -v node 2>/dev/null || true)}"
 LOG_FILE="${TMPDIR:-/tmp}/equinox-local-restart.log"
@@ -26,9 +27,9 @@ case "$DEV_NODE" in
 esac
 [ -x "$DEV_NODE" ] || fail "configured developer Node runtime is not executable"
 
-EQUINOX_LOCAL_DEV_RUNTIME_CONFIG="$CONFIG" "$DEV_NODE" "$ROOT/../scripts/release/sync-source-tunnel-runtime.mjs"
-EQUINOX_LOCAL_DEV_RUNTIME_CONFIG="$CONFIG" "$DEV_NODE" "$ROOT/../scripts/release/sync-source-peekaboo-runtime.mjs"
-EQUINOX_LOCAL_DEV_RUNTIME_CONFIG="$CONFIG" "$DEV_NODE" "$ROOT/../scripts/release/prepare-source-app-host.mjs"
+EQUINOX_LOCAL_DEV_RUNTIME_CONFIG="$CONFIG" "$DEV_NODE" "$ROOT/scripts/release/sync-source-tunnel-runtime.mjs"
+EQUINOX_LOCAL_DEV_RUNTIME_CONFIG="$CONFIG" "$DEV_NODE" "$ROOT/scripts/release/sync-source-peekaboo-runtime.mjs"
+EQUINOX_LOCAL_DEV_RUNTIME_CONFIG="$CONFIG" "$DEV_NODE" "$ROOT/scripts/release/prepare-source-app-host.mjs"
 
 LABEL=""
 RUNTIME=""
@@ -107,7 +108,7 @@ DOMAIN="gui/$CURRENT_UID"
 
   # Match the server command by its stable script path, not process.execPath. The
   # tunnel runtime may launch the same Node binary through a different symlink.
-  OLD_PID="$(/usr/bin/pgrep -f "node $ROOT/server.js" | /usr/bin/head -n 1 || true)"
+  OLD_PID="$(/usr/bin/pgrep -f "node $ROOT/src/server.js" | /usr/bin/head -n 1 || true)"
 
   # Let the MCP response reach the client before the source runtime is restarted.
   sleep 8
@@ -179,7 +180,7 @@ DOMAIN="gui/$CURRENT_UID"
     done
     /bin/kill -0 "$OLD_PID" >/dev/null 2>&1 && fail "previous Equinox Local server process did not stop before relaunch"
   fi
-  RESIDUAL_PID="$(/usr/bin/pgrep -f "node $ROOT/server.js" | /usr/bin/head -n 1 || true)"
+  RESIDUAL_PID="$(/usr/bin/pgrep -f "node $ROOT/src/server.js" | /usr/bin/head -n 1 || true)"
   [ -z "$RESIDUAL_PID" ] || fail "source runtime left a residual Equinox Local server process before relaunch"
 
   BOOTSTRAPPED=0
@@ -196,7 +197,7 @@ DOMAIN="gui/$CURRENT_UID"
   sleep 8
   "$TUNNEL_CLIENT" runtimes status "$RUNTIME"
 
-  NEW_PID="$(/usr/bin/pgrep -f "node $ROOT/server.js" | /usr/bin/head -n 1 || true)"
+  NEW_PID="$(/usr/bin/pgrep -f "node $ROOT/src/server.js" | /usr/bin/head -n 1 || true)"
   [ -n "$NEW_PID" ] || fail "source runtime did not start a new Equinox Local server process"
   if [ -n "$OLD_PID" ] && [ "$NEW_PID" = "$OLD_PID" ]; then
     fail "source runtime restart left the previous Equinox Local server process running"

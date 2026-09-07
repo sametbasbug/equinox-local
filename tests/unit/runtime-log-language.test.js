@@ -14,7 +14,7 @@ const EVENT_PRODUCER_FILES = [
 ];
 
 function runtimeSourceUrl(file) {
-  const factoryUrl = new URL(`./${file}`, import.meta.url);
+  const factoryUrl = new URL(`./src/${file}`, import.meta.url);
   if (existsSync(factoryUrl)) return factoryUrl;
   const publicUrl = new URL(`../../src/${file}`, import.meta.url);
   return existsSync(publicUrl) ? publicUrl : null;

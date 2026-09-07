@@ -119,6 +119,28 @@ test("verified artifact download requires exact signed bytes and SHA-256", async
   await assert.rejects(fs.lstat(`${destination}.bad`), /ENOENT/u);
 });
 
+test("verified artifact download aborts when the full transfer exceeds its deadline", async (t) => {
+  const fixture = await makeFixture();
+  t.after(() => fs.rm(fixture.root, { recursive: true, force: true }));
+  const destination = path.join(fixture.root, "download", "timeout.tar.gz");
+  const artifact = {
+    url: "https://local.sametbasbug.dev/downloads/updates/release.tar.gz",
+    sha256: fixture.sha256,
+    bytes: fixture.bytes.length,
+  };
+
+  await assert.rejects(
+    downloadVerifiedUpdateArtifact(artifact, destination, {
+      timeoutMs: 10,
+      fetchImpl: async (_url, options) => new Promise((_, reject) => {
+        options.signal.addEventListener("abort", () => reject(new Error("synthetic download abort")), { once: true });
+      }),
+    }),
+    /synthetic download abort/u,
+  );
+  await assert.rejects(fs.lstat(destination), /ENOENT/u);
+});
+
 test("archive inspection rejects symbolic links before extraction", async (t) => {
   const fixture = await makeFixture({ withSymlink: true });
   t.after(() => fs.rm(fixture.root, { recursive: true, force: true }));
@@ -126,6 +148,34 @@ test("archive inspection rejects symbolic links before extraction", async (t) =>
     inspectEquinoxReleaseArchive(fixture.archivePath),
     /regular files and directories/u,
   );
+});
+
+test("archive inspection rejects oversized uncompressed content before extraction", async () => {
+  const threeGiB = 3 * 1024 * 1024 * 1024;
+  const calls = [];
+  await assert.rejects(
+    inspectEquinoxReleaseArchive("/tmp/synthetic-release.tar.gz", {
+      execFileImpl: async (_command, args) => {
+        calls.push([...args]);
+        if (args[0] === "-tzf") {
+          return { stdout: "release/\nrelease/huge.bin\n", stderr: "" };
+        }
+        if (args[0] === "-tvzf") {
+          return {
+            stdout: [
+              "drwxr-xr-x  0 samet  staff       0 Sep  7 02:15 release/",
+              `-rw-r--r--  0 samet  staff       ${threeGiB} Sep  7 02:15 release/huge.bin`,
+              "",
+            ].join("\n"),
+            stderr: "",
+          };
+        }
+        throw new Error(`unexpected tar args: ${args.join(" ")}`);
+      },
+    }),
+    /extracted size limit before extraction/u,
+  );
+  assert.equal(calls.length, 2);
 });
 
 test("managed release preparation verifies, extracts and atomically promotes the release tree", async (t) => {

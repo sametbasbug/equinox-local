@@ -702,6 +702,34 @@ test("screenshot saves a validated PNG without exposing base64 in the tool resul
   await fs.rm(root, { recursive: true, force: true });
 });
 
+test("screenshot rejects oversized IHDR dimensions before PNG decode", async () => {
+  const harness = makeHarness();
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "equinox-browser-screenshot-budget-"));
+  const fixture = new PNG({ width: 1, height: 1 });
+  fixture.data.set([255, 255, 255, 255]);
+  const bomb = Buffer.from(PNG.sync.write(fixture));
+  bomb.writeUInt32BE(100_000, 16);
+  bomb.writeUInt32BE(100_000, 20);
+  harness.bridge.call = async (method, args, options) => {
+    harness.calls.push({ method, args, options });
+    if (method === "screenshot") {
+      return { tab: { id: 44 }, mimeType: "image/png", data: bomb.toString("base64") };
+    }
+    return { method, args };
+  };
+  harness.deps.screenshotRoot = path.join(root, "browser-screenshots");
+  await registerEquinoxBrowserTools(harness.deps);
+
+  const result = await harness.tools.get("equinox_browser_screenshot").handler({
+    name: "bomb",
+    collection: "browser",
+    tab_id: 44,
+  });
+  assert.equal(result.isError, true);
+  assert.match(result.content[0].text, /boyut sınırını aşıyor|pixel güvenlik bütçesini aşıyor/u);
+  await fs.rm(root, { recursive: true, force: true });
+});
+
 test("annotated screenshot maps annotate_refs and rejects silent extension downgrade", async () => {
   const harness = makeHarness();
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "equinox-browser-annotated-screenshot-"));

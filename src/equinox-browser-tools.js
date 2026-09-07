@@ -8,6 +8,8 @@ import { PNG } from "pngjs";
 
 const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 const MAX_SCREENSHOT_PNG_BYTES = 32 * 1024 * 1024;
+const MAX_SCREENSHOT_PNG_PIXELS = 20_000_000;
+const MAX_SCREENSHOT_PNG_DIMENSION = 20_000;
 const SCREENSHOT_NAME_PATTERN = /^[a-z0-9][a-z0-9._-]{0,79}$/u;
 const SCREENSHOT_CAPTURE_ID_PATTERN = /^capture-\d{13}-[0-9a-f-]{36}$/u;
 const SCREENSHOT_RETENTION_MS = 60 * 60 * 1000;
@@ -24,6 +26,28 @@ function validateScreenshotName(value, label) {
   return value;
 }
 
+function readScreenshotPngDimensions(buffer) {
+  if (
+    buffer.length < 29 ||
+    buffer.readUInt32BE(8) !== 13 ||
+    buffer.toString("ascii", 12, 16) !== "IHDR"
+  ) {
+    throw new Error("Equinox Browser screenshot PNG IHDR başlığı geçersiz veya eksik.");
+  }
+  const width = buffer.readUInt32BE(16);
+  const height = buffer.readUInt32BE(20);
+  if (width < 1 || height < 1) {
+    throw new Error("Equinox Browser screenshot PNG boyutları geçersiz.");
+  }
+  if (width > MAX_SCREENSHOT_PNG_DIMENSION || height > MAX_SCREENSHOT_PNG_DIMENSION) {
+    throw new Error(`Equinox Browser screenshot PNG ${MAX_SCREENSHOT_PNG_DIMENSION}px boyut sınırını aşıyor.`);
+  }
+  if (width > Math.floor(MAX_SCREENSHOT_PNG_PIXELS / height)) {
+    throw new Error(`Equinox Browser screenshot PNG ${MAX_SCREENSHOT_PNG_PIXELS} pixel güvenlik bütçesini aşıyor.`);
+  }
+  return { width, height };
+}
+
 function decodeScreenshotPng(data) {
   const encoded = String(data || "");
   if (!encoded) throw new Error("Equinox Browser boş screenshot verisi döndürdü.");
@@ -34,6 +58,7 @@ function decodeScreenshotPng(data) {
   if (buffer.length < PNG_SIGNATURE.length || !buffer.subarray(0, PNG_SIGNATURE.length).equals(PNG_SIGNATURE)) {
     throw new Error("Equinox Browser screenshot çıktısı geçerli PNG imzası taşımıyor.");
   }
+  readScreenshotPngDimensions(buffer);
   let png;
   try {
     png = PNG.sync.read(buffer, { checkCRC: true, skipRescale: false });
@@ -1032,7 +1057,7 @@ export async function registerEquinoxBrowserTools({
     "equinox_browser_screenshot_delete",
     {
       description:
-        "Equinox Browser'ın runtime-owned ephemeral screenshot artifact'ını, capture sonucundaki SHA-256 ile doğrulayıp güvenli biçimde siler. Generic 10 MB file_hash/delete_file sınırını kullanmaz ve yalnız browser-screenshots runtime köküne erişebilir.",
+        "Equinox Browser'ın runtime-owned ephemeral screenshot artifact'ını, capture sonucundaki SHA-256 ile doğrulayıp güvenli biçimde siler. Kaldırılan generic dosya wrapperlarını kullanmaz ve yalnız browser-screenshots runtime köküne erişebilir.",
       inputSchema: {
         path: z.string().min(1).max(300),
         expected_sha256: z.string().regex(/^[a-fA-F0-9]{64}$/),

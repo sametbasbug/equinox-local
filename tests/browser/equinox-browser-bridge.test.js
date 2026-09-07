@@ -594,3 +594,172 @@ test("bridge pairs the next unassigned profile to the expected Agent Browser con
   assert.deepEqual(commands[0]?.args, { context: "agent" });
   assert.equal(bridge.snapshot().pairing, null);
 });
+
+test("Equinox Browser bridge closes a host that exceeds the inbound line budget", async (t) => {
+  const { dir, socketPath } = await makeSocketPath("line-budget");
+  const bridge = createEquinoxBrowserBridge({
+    socketPath,
+    maxTransportLineBytes: 64,
+  });
+  await bridge.start();
+  t.after(async () => {
+    await bridge.close();
+    await fs.rm(dir, { recursive: true, force: true });
+  });
+
+  const client = net.createConnection(socketPath);
+  await new Promise((resolve, reject) => {
+    client.once("connect", resolve);
+    client.once("error", reject);
+  });
+  const closed = new Promise((resolve) => client.once("close", resolve));
+  client.write(Buffer.alloc(65, 0x61));
+  await closed;
+  assert.equal(bridge.snapshot().connectionCount, 0);
+});
+
+test("Equinox Browser bridge bounds simultaneous native-host connections", async (t) => {
+  const { dir, socketPath } = await makeSocketPath("connection-budget");
+  const bridge = createEquinoxBrowserBridge({ socketPath, maxConnections: 1 });
+  await bridge.start();
+  t.after(async () => {
+    await bridge.close();
+    await fs.rm(dir, { recursive: true, force: true });
+  });
+
+  const first = net.createConnection(socketPath);
+  await new Promise((resolve, reject) => {
+    first.once("connect", resolve);
+    first.once("error", reject);
+  });
+  t.after(() => first.destroy());
+  assert.equal(bridge.snapshot().connectionCount, 1);
+
+  const second = net.createConnection(socketPath);
+  const closed = new Promise((resolve) => second.once("close", resolve));
+  await new Promise((resolve, reject) => {
+    second.once("connect", resolve);
+    second.once("error", reject);
+  });
+  await closed;
+  assert.equal(bridge.snapshot().connectionCount, 1);
+});
+
+test("Equinox Browser bridge bounds pending commands per bridge", async (t) => {
+  const { dir, socketPath } = await makeSocketPath("pending-budget");
+  const bridge = createEquinoxBrowserBridge({ socketPath, maxPendingCalls: 1, callTimeoutMs: 1_000 });
+  await bridge.start();
+  t.after(async () => {
+    await bridge.close();
+    await fs.rm(dir, { recursive: true, force: true });
+  });
+
+  const client = net.createConnection(socketPath);
+  await new Promise((resolve, reject) => {
+    client.once("connect", resolve);
+    client.once("error", reject);
+  });
+  writeLine(client, {
+    type: "host.hello",
+    origin: `chrome-extension://${EQUINOX_BROWSER_EXTENSION_ID}/`,
+    pid: 3333,
+    version: 1,
+  });
+  writeLine(client, {
+    type: "extension.message",
+    message: {
+      type: "extension.hello",
+      extensionId: EQUINOX_BROWSER_EXTENSION_ID,
+      extensionVersion: "0.5.1",
+      protocolVersion: 1,
+      capabilities: ["ping"],
+    },
+  });
+  await bridge.waitUntilReady(1_000);
+
+  const firstCall = bridge.call("fixture.pending.one", {}, { timeoutMs: 1_000 });
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  await assert.rejects(
+    bridge.call("fixture.pending.two", {}, { timeoutMs: 1_000 }),
+    /pending command budget exceeded/u,
+  );
+  client.destroy();
+  await assert.rejects(firstCall, /disconnected|closed/u);
+});
+
+test("Equinox Browser bridge drops incomplete lines after a bounded deadline", async (t) => {
+  const { dir, socketPath } = await makeSocketPath("partial");
+  const bridge = createEquinoxBrowserBridge({ socketPath, partialLineTimeoutMs: 100 });
+  await bridge.start();
+  t.after(async () => {
+    await bridge.close();
+    await fs.rm(dir, { recursive: true, force: true });
+  });
+
+  const client = net.createConnection(socketPath);
+  await new Promise((resolve, reject) => {
+    client.once("connect", resolve);
+    client.once("error", reject);
+  });
+  const closed = new Promise((resolve) => client.once("close", resolve));
+  client.write('{"type":"host.hello"');
+  await closed;
+  assert.equal(bridge.snapshot().connectionCount, 0);
+});
+
+test("Equinox Browser bridge bounds its outbound queue while the native host is backpressured", async (t) => {
+  const { dir, socketPath } = await makeSocketPath("write-backpressure");
+  const maxLineBytes = 5 * 1024 * 1024;
+  const bridge = createEquinoxBrowserBridge({
+    socketPath,
+    callTimeoutMs: 2_000,
+    maxTransportLineBytes: maxLineBytes,
+    maxTransportWriteQueueBytes: maxLineBytes,
+    maxTransportWriteQueueMessages: 1,
+  });
+  await bridge.start();
+  t.after(async () => {
+    await bridge.close();
+    await fs.rm(dir, { recursive: true, force: true });
+  });
+
+  const client = net.createConnection(socketPath);
+  await new Promise((resolve, reject) => {
+    client.once("connect", resolve);
+    client.once("error", reject);
+  });
+  t.after(() => client.destroy());
+
+  writeLine(client, {
+    type: "host.hello",
+    origin: `chrome-extension://${EQUINOX_BROWSER_EXTENSION_ID}/`,
+    pid: 2468,
+    version: 1,
+  });
+  writeLine(client, {
+    type: "extension.message",
+    message: {
+      type: "extension.hello",
+      extensionId: EQUINOX_BROWSER_EXTENSION_ID,
+      extensionVersion: "0.5.1",
+      protocolVersion: 1,
+      capabilities: ["ping"],
+    },
+  });
+  await bridge.waitUntilReady(1_000);
+
+  client.pause();
+  const blob = "x".repeat(4 * 1024 * 1024);
+  const results = await Promise.allSettled([
+    bridge.call("fixture.backpressure.one", { blob }),
+    bridge.call("fixture.backpressure.two", { blob }),
+    bridge.call("fixture.backpressure.three", { blob }),
+  ]);
+
+  assert.equal(results.every((result) => result.status === "rejected"), true);
+  assert.equal(
+    results.some((result) => result.status === "rejected" && /outbound queue exceeded transport budget/u.test(result.reason?.message ?? "")),
+    true,
+  );
+  assert.equal(bridge.snapshot().connectionCount, 0);
+});

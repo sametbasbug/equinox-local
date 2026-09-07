@@ -23,6 +23,12 @@ const MAX_STREAMED_RESPONSE_CHARS = 48 * 1024 * 1024;
 const MAX_STREAM_CHUNKS = 128;
 const DEFAULT_PAIRING_TIMEOUT_MS = 10 * 60 * 1000;
 const INSTANCE_ID_PATTERN = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/iu;
+const MAX_BRIDGE_LINE_BYTES = 72 * 1024 * 1024;
+const MAX_BRIDGE_WRITE_QUEUE_BYTES = 72 * 1024 * 1024;
+const MAX_BRIDGE_WRITE_QUEUE_MESSAGES = 128;
+const MAX_BRIDGE_CONNECTIONS = 8;
+const MAX_BRIDGE_PENDING_CALLS = 128;
+const DEFAULT_PARTIAL_LINE_TIMEOUT_MS = 5_000;
 
 function nowIso() {
   return new Date().toISOString();
@@ -30,10 +36,6 @@ function nowIso() {
 
 function errorMessage(error) {
   return error instanceof Error ? error.message : String(error);
-}
-
-function writeLine(socket, message) {
-  socket.write(`${JSON.stringify(message)}\n`);
 }
 
 function normalizeBrowserContext(value, { allowUnassigned = false } = {}) {
@@ -57,6 +59,12 @@ export function createEquinoxBrowserBridge({
   callTimeoutMs = 15_000,
   recordEvent = () => {},
   handleExtensionRequest = null,
+  maxTransportLineBytes = MAX_BRIDGE_LINE_BYTES,
+  maxTransportWriteQueueBytes = MAX_BRIDGE_WRITE_QUEUE_BYTES,
+  maxTransportWriteQueueMessages = MAX_BRIDGE_WRITE_QUEUE_MESSAGES,
+  maxConnections = MAX_BRIDGE_CONNECTIONS,
+  maxPendingCalls = MAX_BRIDGE_PENDING_CALLS,
+  partialLineTimeoutMs = DEFAULT_PARTIAL_LINE_TIMEOUT_MS,
 } = {}) {
   let server = null;
   let startedAt = null;
@@ -72,6 +80,15 @@ export function createEquinoxBrowserBridge({
   }
   if (handleExtensionRequest != null && typeof handleExtensionRequest !== "function") {
     throw new Error("Equinox Browser extension request handler is invalid");
+  }
+  if (!Number.isInteger(maxConnections) || maxConnections < 1 || maxConnections > 64) {
+    throw new Error("Equinox Browser connection budget is invalid");
+  }
+  if (!Number.isInteger(maxPendingCalls) || maxPendingCalls < 1 || maxPendingCalls > 4096) {
+    throw new Error("Equinox Browser pending-call budget is invalid");
+  }
+  if (!Number.isInteger(partialLineTimeoutMs) || partialLineTimeoutMs < 100 || partialLineTimeoutMs > 60_000) {
+    throw new Error("Equinox Browser partial-line timeout is invalid");
   }
   const expectedExtensionIdSet = new Set(acceptedExtensionIds);
   const expectedOrigins = acceptedExtensionIds.map((id) => `chrome-extension://${id}/`);
@@ -115,6 +132,41 @@ export function createEquinoxBrowserBridge({
     return current.context;
   }
 
+  function flushStateWrites(state) {
+    if (!state || state.closed || state.writeBlocked || state.socket.destroyed) return;
+    while (state.writeQueue.length > 0) {
+      const queued = state.writeQueue.shift();
+      state.writeQueueBytes -= queued.length;
+      if (!state.socket.write(queued)) {
+        state.writeBlocked = true;
+        break;
+      }
+    }
+  }
+
+  function writeLine(state, message) {
+    if (!state || state.closed || !state.socket || state.socket.destroyed) return false;
+    const line = Buffer.from(`${JSON.stringify(message)}\n`, "utf8");
+    if (line.length > maxTransportLineBytes) {
+      clearConnection(state, "native host outbound line exceeded transport budget");
+      return false;
+    }
+    if (state.writeBlocked || state.writeQueue.length > 0) {
+      if (
+        state.writeQueue.length >= maxTransportWriteQueueMessages ||
+        state.writeQueueBytes + line.length > maxTransportWriteQueueBytes
+      ) {
+        clearConnection(state, "native host outbound queue exceeded transport budget");
+        return false;
+      }
+      state.writeQueue.push(line);
+      state.writeQueueBytes += line.length;
+      return true;
+    }
+    if (!state.socket.write(line)) state.writeBlocked = true;
+    return true;
+  }
+
   function rejectPendingForState(state, reason) {
     for (const [id, waiter] of pending.entries()) {
       if (waiter.state !== state) continue;
@@ -124,8 +176,24 @@ export function createEquinoxBrowserBridge({
     }
   }
 
+  function clearPartialLineTimer(state) {
+    if (!state?.partialLineTimer) return;
+    clearTimeout(state.partialLineTimer);
+    state.partialLineTimer = null;
+  }
+
+  function armPartialLineTimer(state) {
+    if (!state || state.closed || state.partialLineTimer || state.lineBytes === 0) return;
+    state.partialLineTimer = setTimeout(() => {
+      state.partialLineTimer = null;
+      clearConnection(state, "native host partial line timed out");
+    }, partialLineTimeoutMs);
+    state.partialLineTimer.unref?.();
+  }
+
   function clearConnection(state, reason = "native host disconnected", { destroy = true } = {}) {
     if (!state || state.closed) return;
+    clearPartialLineTimer(state);
     state.closed = true;
     connections.delete(state);
     if (state.context && contexts.get(state.context) === state) contexts.delete(state.context);
@@ -194,6 +262,9 @@ export function createEquinoxBrowserBridge({
     if (!state || state.closed || !state.socket || state.socket.destroyed) {
       throw new Error("Equinox Browser native host bağlı değil.");
     }
+    if (pending.size >= maxPendingCalls) {
+      throw new Error("Equinox Browser pending command budget exceeded.");
+    }
     const id = String(nextCommandId++);
     const command = {
       type: "command",
@@ -209,7 +280,9 @@ export function createEquinoxBrowserBridge({
       }, timeoutMs);
       pending.set(id, { resolve, reject, timer, method, stream: null, state });
       try {
-        writeLine(state.socket, { type: "host.send", message: command });
+        if (!writeLine(state, { type: "host.send", message: command })) {
+          throw new Error("Equinox Browser native host transport is unavailable.");
+        }
       } catch (error) {
         pending.delete(id);
         clearTimeout(timer);
@@ -267,7 +340,7 @@ export function createEquinoxBrowserBridge({
 
   function sendExtensionResponse(state, id, { ok, result = null, error = null } = {}) {
     if (!state?.socket || state.closed || state.socket.destroyed) return;
-    writeLine(state.socket, {
+    writeLine(state, {
       type: "host.send",
       message: ok
         ? { type: "extension.response", id, ok: true, result }
@@ -468,28 +541,61 @@ export function createEquinoxBrowserBridge({
   }
 
   function attachHost(socket) {
+    if (connections.size >= maxConnections) {
+      socket.destroy();
+      emit("connection_rejected", { reason: "connection budget exceeded" });
+      return;
+    }
     const state = {
       socket,
-      buffer: "",
+      lineChunks: [],
+      lineBytes: 0,
+      partialLineTimer: null,
       hostInfo: null,
       extensionInfo: null,
       connectedAt: null,
       instanceId: null,
       context: null,
+      writeQueue: [],
+      writeQueueBytes: 0,
+      writeBlocked: false,
       closed: false,
     };
     connections.add(state);
 
-    socket.setEncoding("utf8");
     socket.on("data", (chunk) => {
-      state.buffer += chunk;
-      while (true) {
-        const newline = state.buffer.indexOf("\n");
-        if (newline < 0) break;
-        const line = state.buffer.slice(0, newline);
-        state.buffer = state.buffer.slice(newline + 1);
+      const buffer = Buffer.from(chunk);
+      let offset = 0;
+      while (offset < buffer.length && !state.closed) {
+        const newline = buffer.indexOf(0x0a, offset);
+        const end = newline < 0 ? buffer.length : newline;
+        const piece = buffer.subarray(offset, end);
+        if (state.lineBytes + piece.length > maxTransportLineBytes) {
+          clearConnection(state, "native host inbound line exceeded transport budget");
+          return;
+        }
+        if (piece.length > 0) {
+          state.lineChunks.push(piece);
+          state.lineBytes += piece.length;
+        }
+        if (newline < 0) {
+          armPartialLineTimer(state);
+          break;
+        }
+        clearPartialLineTimer(state);
+        const line = state.lineChunks.length === 0
+          ? ""
+          : Buffer.concat(state.lineChunks, state.lineBytes).toString("utf8");
+        state.lineChunks = [];
+        state.lineBytes = 0;
         handleHostLine(state, line);
+        offset = newline + 1;
       }
+    });
+    socket.on("drain", () => {
+      if (state.closed) return;
+      state.writeBlocked = false;
+      flushStateWrites(state);
     });
     socket.on("error", (error) => {
       emit("host_error", {

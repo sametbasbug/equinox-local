@@ -6,10 +6,10 @@ These instructions apply to the entire Equinox Local public repository unless a 
 
 ## Product boundaries
 
-- Equinox Browser is the only public/product browser automation route. Do not add alternate user-Chrome automation paths or generic CDP fallbacks.
+- Equinox Browser is the only public/product browser automation route. It serves two isolated contexts through the same extension/Native Messaging engine: Agent Browser is the default and Your Browser is explicit personal Chrome. Never add silent cross-context fallback, alternate user-Chrome automation paths, generic CDP fallbacks, or a second QA browser backend.
 - Control Center extends the existing loopback backend at `127.0.0.1:24891`; do not add a competing local server.
 - Management APIs must remain loopback-only, bounded, and same-origin/CSRF protected for mutations. Never turn them into a generic shell or arbitrary-command backend.
-- Project and folder access must remain explicit, allowlist-based, path-contained, and fail-closed. Preserve SHA guards, symlink checks, mutation locks, and bounded I/O.
+- Project and folder access follows the loaded Full/selected Agent Access mode and remains path-contained and fail-closed. Selected mode is limited to configured roots; Full mode may use contained home/absolute folders while filesystem root, protected credential/application-secret areas, traversal and symlink escape remain blocked. Preserve SHA guards, mutation locks, and bounded I/O.
 - Never expose credentials, update-signing secrets, runtime keys, private tokens, raw observability storage paths, or sensitive machine details through MCP, APIs, UI, logs, tests, or fixtures.
 - Keep product source generic. Machine-specific project names, local paths, personal credentials, and private deployment configuration do not belong in the public repository.
 - Optional capabilities must fail independently. Core Equinox Local must remain usable without Telegram, Peekaboo, Equinox Browser, or other optional integrations.
