@@ -1,3 +1,4 @@
+import { constants as fsConstants } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 
@@ -21,6 +22,28 @@ export function mutationPathsOverlap(first, second) {
   return isSameOrAncestor(a, b) || isSameOrAncestor(b, a);
 }
 
+async function readBoundedMetadataFile(filePath, label, { fsImpl = fs } = {}) {
+  let handle;
+  try {
+    handle = await fsImpl.open(
+      filePath,
+      fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW,
+    );
+    const stat = await handle.stat();
+    if (!stat.isFile() || stat.size < 1 || stat.size > 4096) {
+      throw new Error(`${label} is outside the allowed bounds.`);
+    }
+    return (await handle.readFile({ encoding: "utf8" })).trim();
+  } catch (error) {
+    if (error?.code === "ELOOP") {
+      throw new Error(`${label} may not be a symlink.`);
+    }
+    throw error;
+  } finally {
+    await handle?.close();
+  }
+}
+
 export async function resolveGitCommonDirectory(projectRoot, { fsImpl = fs } = {}) {
   if (typeof projectRoot !== "string" || !path.isAbsolute(projectRoot)) {
     throw new Error("Git common-dir resolution requires an absolute project root.");
@@ -33,10 +56,11 @@ export async function resolveGitCommonDirectory(projectRoot, { fsImpl = fs } = {
   if (dotGitStat.isDirectory()) {
     gitDir = await fsImpl.realpath(dotGit);
   } else if (dotGitStat.isFile()) {
-    if (dotGitStat.size < 1 || dotGitStat.size > 4096) {
-      throw new Error("Git worktree metadata file is outside the allowed bounds.");
-    }
-    const text = (await fsImpl.readFile(dotGit, "utf8")).trim();
+    const text = await readBoundedMetadataFile(
+      dotGit,
+      "Git worktree metadata file",
+      { fsImpl },
+    );
     const match = text.match(/^gitdir:\s*(.+)$/u);
     if (!match) throw new Error("Git worktree metadata file is invalid.");
     gitDir = await fsImpl.realpath(path.resolve(projectRoot, match[1]));
@@ -45,17 +69,17 @@ export async function resolveGitCommonDirectory(projectRoot, { fsImpl = fs } = {
   }
 
   const commonFile = path.join(gitDir, "commondir");
-  let commonStat;
+  let commonRef;
   try {
-    commonStat = await fsImpl.lstat(commonFile);
+    commonRef = await readBoundedMetadataFile(
+      commonFile,
+      "Git commondir metadata",
+      { fsImpl },
+    );
   } catch (error) {
     if (error?.code === "ENOENT") return gitDir;
     throw error;
   }
-  if (commonStat.isSymbolicLink() || !commonStat.isFile() || commonStat.size < 1 || commonStat.size > 4096) {
-    throw new Error("Git commondir metadata is invalid.");
-  }
-  const commonRef = (await fsImpl.readFile(commonFile, "utf8")).trim();
   if (!commonRef || commonRef.includes("\0")) throw new Error("Git commondir metadata is empty or invalid.");
   const commonDir = await fsImpl.realpath(path.resolve(gitDir, commonRef));
   const commonDirStat = await fsImpl.lstat(commonDir);

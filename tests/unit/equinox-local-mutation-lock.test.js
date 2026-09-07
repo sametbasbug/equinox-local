@@ -36,6 +36,36 @@ test("linked worktrees resolve to the same common Git metadata directory", async
   }
 });
 
+
+test("Git metadata reads reject symlink swaps through no-follow file handles", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "equinox-git-metadata-nofollow-"));
+  try {
+    const worktree = path.join(root, "worktree");
+    const realMetadata = path.join(root, "metadata");
+    await fs.mkdir(worktree, { recursive: true });
+    await fs.writeFile(realMetadata, "gitdir: /tmp/elsewhere\n");
+    await fs.symlink(realMetadata, path.join(worktree, ".git"));
+    await assert.rejects(
+      resolveGitCommonDirectory(worktree),
+      /Git metadata path may not be a symlink/u,
+    );
+
+    const main = path.join(root, "main");
+    const gitDir = path.join(main, ".git");
+    const externalCommon = path.join(root, "external-common");
+    await fs.mkdir(gitDir, { recursive: true });
+    await fs.mkdir(externalCommon, { recursive: true });
+    await fs.symlink(path.join(root, "commondir-target"), path.join(gitDir, "commondir"));
+    await fs.writeFile(path.join(root, "commondir-target"), `${externalCommon}\n`);
+    await assert.rejects(
+      resolveGitCommonDirectory(main),
+      /Git commondir metadata may not be a symlink/u,
+    );
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
 test("mutation path overlap detects aliases and nested roots without conflating siblings", () => {
   assert.equal(mutationPathsOverlap("/tmp/repo", "/tmp/repo"), true);
   assert.equal(mutationPathsOverlap("/tmp/repo", "/tmp/repo/packages/app"), true);

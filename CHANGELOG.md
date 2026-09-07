@@ -20,6 +20,7 @@ This project follows semantic versioning for public releases.
 ### Security
 
 - Hardened file creation/replacement races, configuration revision serialization, overlapping mutation ownership, detached-helper startup errors, descendant process-group cleanup and terminal capacity reservation.
+- Git worktree/common-dir metadata is now read through bounded `O_NOFOLLOW` file handles with descriptor-level stat checks, closing the path check-to-read race detected by the public CodeQL gate.
 - Hardened PTY lifecycle ownership on macOS by tracking jobs observed on the private controlling TTY and draining resistant/disowned background jobs during stop/shutdown instead of assuming shell-PID exit means cleanup is complete.
 - Added bounded updater transfers, Browser transport buffering and PNG decode/canvas budgets; stabilized observability reads during rotation and reduced Control Center internal error/detail exposure.
 - Preserved the explicit trust boundary: Terminal is a broad logged-in-user shell rather than a selected-root sandbox, generic Terminal/process environments strip secret-like provider variables, and Control Center exposes no arbitrary shell HTTP endpoint.
