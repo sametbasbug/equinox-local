@@ -1,12 +1,12 @@
-export const EQUINOX_LOCAL_NODE_VERSION = "24.20.0";
+export const EQUINOX_LOCAL_NODE_VERSION = "26.8.1";
 export const EQUINOX_LOCAL_TUNNEL_CLIENT_VERSION = "0.0.14";
-export const EQUINOX_LOCAL_PEEKABOO_VERSION = "4.3.0";
+export const EQUINOX_LOCAL_PEEKABOO_VERSION = "4.3.3";
 export const EQUINOX_LOCAL_BUNDLED_PEEKABOO_SINCE_VERSION = "4.4.0";
 export const EQUINOX_LOCAL_PEEKABOO_TEAM_ID = "FWJYW4S8P8";
 
 export const PEEKABOO_DISTRIBUTION = Object.freeze({
   filename: "peekaboo-macos-universal.tar.gz",
-  sha256: "fec965e4bd6371b8fb017fb582e8d31c6a59628f77e266878f45cf1d4844836f",
+  sha256: "8c9dae67e64459f47653f2d3cd7580e6b593e0d8122da1fbdbc2c8f090748641",
   archiveRoot: "peekaboo-macos-universal",
   architectures: Object.freeze(["arm64", "x86_64"]),
 });
@@ -14,12 +14,12 @@ export const PEEKABOO_DISTRIBUTION = Object.freeze({
 export const NODE_DISTRIBUTIONS = Object.freeze({
   "darwin-arm64": Object.freeze({
     filename: `node-v${EQUINOX_LOCAL_NODE_VERSION}-darwin-arm64.tar.gz`,
-    sha256: "40e5607e5ecb3db9192723776da2d75d966260fc74a7a9e731c1bd67dda96bc8",
+    sha256: "6e577fd0d9db776db82306629e441a9dace416702622aebdd171c9dfaa41f4d2",
     fileArchitecture: "arm64",
   }),
   "darwin-x64": Object.freeze({
     filename: `node-v${EQUINOX_LOCAL_NODE_VERSION}-darwin-x64.tar.gz`,
-    sha256: "9e5b2644cf107befb6aefca676b96d3296bc10138096f022ed378d6233ed81f4",
+    sha256: "fe9c6dbf9c8e1b4443803d75e2a20366e420dae650c747dbb116b22975751baf",
     fileArchitecture: "x86_64",
   }),
 });

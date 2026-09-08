@@ -21,7 +21,17 @@ test("public shell installer stays user-level, pinned to Equinox HTTPS and bound
   assert.match(source, /\/usr\/bin\/env -i/u);
   assert.match(source, /\/usr\/bin\/grep \/usr\/bin\/awk/u);
   assert.match(source, /CONTROL_CENTER_APP="\$HOME_DIR\/Applications\/Equinox Local\.app"/u);
+  assert.match(source, /CONTROL_CENTER_EXECUTABLE="\$CONTROL_CENTER_APP\/Contents\/MacOS\/applet"/u);
+  assert.match(source, /\/usr\/bin\/nohup \/usr\/bin\/env -i/u);
+  assert.match(source, /\/bin\/kill -0 "\$NATIVE_APP_PID"/u);
   assert.match(source, /\/usr\/bin\/open -n "\$CONTROL_CENTER_APP"/u);
+  assert.match(source, /native app launch was unavailable; opening the localhost fallback/u);
+  const directLaunch = source.indexOf('\"$CONTROL_CENTER_EXECUTABLE\" </dev/null');
+  const launchServicesFallback = source.indexOf('/usr/bin/open -n \"$CONTROL_CENTER_APP\"');
+  const browserFallback = source.indexOf('/usr/bin/open \"$CONTROL_CENTER_URL\"');
+  assert.equal(directLaunch >= 0, true);
+  assert.equal(launchServicesFallback > directLaunch, true);
+  assert.equal(browserFallback > launchServicesFallback, true);
   assert.match(source, /opening Equinox Local/u);
   assert.match(source, /trap cleanup EXIT/u);
   assert.match(source, /trap handle_signal HUP INT TERM/u);

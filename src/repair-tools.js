@@ -19,46 +19,6 @@ export async function registerRepairTools({
   errorResult,
 }) {
   registerTextTool(
-    "repair_recipes",
-    {
-      description:
-        "v4.0.2 sabit ve denetlenebilir self-healing tariflerini listeler. Arbitrary shell, Git/deploy/credential/project-file mutasyonu içermez; incident koduna göre uygulanabilir tarifler filtrelenebilir.",
-      inputSchema: {
-        incident_code: z.string().min(2).max(100).optional(),
-      },
-      annotations: {
-        title: "Güvenli repair tariflerini listele",
-        readOnlyHint: true,
-        destructiveHint: false,
-        idempotentHint: true,
-        openWorldHint: false,
-      },
-    },
-    async ({ incident_code }) => {
-      try {
-        const all = repairEngine.recipes();
-        return processJsonResult({
-          recipes: incident_code
-            ? all.filter((recipe) => recipe.incidentCodes.includes(incident_code))
-            : all,
-          activeRepairs: repairEngine.activeRepairCount,
-          policy: {
-            arbitraryCommand: false,
-            deploymentMutation: false,
-            gitMutation: false,
-            credentialMutation: false,
-            projectFileMutation: false,
-            preconditionsRecheckedAtExecution: true,
-          },
-        });
-      } catch (error) {
-        return errorResult(error);
-      }
-    },
-    { projectAware: false },
-  );
-
-  registerTextTool(
     "repair_issue",
     {
       description:
@@ -138,7 +98,7 @@ export async function registerRepairTools({
     { projectAware: false },
   );
 
-  return Object.freeze({ toolCount: 3 });
+  return Object.freeze({ toolCount: 2 });
 }
 
 export const __test = Object.freeze({

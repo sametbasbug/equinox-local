@@ -5,6 +5,8 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
+import { spawnTrackedProcess } from "../helpers/native-process-harness.mjs";
+
 import { ensureEquinoxLocalAppHost } from "../../src/equinox-local-app-host.js";
 import {
   buildEquinoxLocalNativeAppArtifacts,
@@ -36,6 +38,35 @@ macTest("native app build is deterministic and target-native", async (t) => {
     await fs.readFile(path.join(first, "runtime", "app", "applet")),
     await fs.readFile(path.join(second, "runtime", "app", "applet")),
   );
+});
+
+macTest("fresh native app foreground launch is tracked and fully cleaned up", async (t) => {
+  const temp = await fs.mkdtemp(path.join(os.tmpdir(), "equinox-native-app-launch-"));
+  t.after(() => fs.rm(temp, { recursive: true, force: true }));
+  const homeDir = path.join(temp, "home");
+  const releaseDir = path.join(temp, "release");
+  await fs.mkdir(homeDir, { recursive: true });
+  await fs.mkdir(releaseDir, { recursive: true });
+
+  await buildEquinoxLocalNativeAppArtifacts({ rootDir: ROOT, releaseDir, target: TARGET });
+  const installed = await synchronizeEquinoxLocalNativeAppHost({ homeDir, releaseDir });
+  const user = process.env.USER || process.env.LOGNAME || "equinox-test";
+  const child = await spawnTrackedProcess(t, installed.executablePath, [], {
+    env: {
+      HOME: homeDir,
+      USER: user,
+      LOGNAME: user,
+      TMPDIR: "/tmp",
+      PATH: "/usr/bin:/bin:/usr/sbin:/sbin",
+    },
+    stdio: "ignore",
+  }, {
+    label: "fresh Equinox Local native app",
+    startupMs: 1_000,
+  });
+
+  assert.equal(child.exitCode, null);
+  assert.equal(child.signalCode, null);
 });
 
 macTest("native app host migrates legacy bundle once and restores it for rollback", async (t) => {
