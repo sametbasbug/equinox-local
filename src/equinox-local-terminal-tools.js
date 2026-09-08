@@ -149,7 +149,7 @@ export function registerTerminalTools({
             stdoutDroppedChars: snapshot.stdoutDroppedChars,
             stderrDroppedChars: snapshot.stderrDroppedChars,
             combinedOutputDroppedChars: snapshot.combinedOutputDroppedChars,
-            next: "Yeni çıktıyı process_logs ile nextCursor değerinden okumaya devam et; gerekirse process_stop ile durdur.",
+            next: "Sonlu iş için process_wait ile tamamlanmayı bekle; akış çıktısı için process_logs kullan, gerekirse process_stop ile durdur.",
           });
         }
 

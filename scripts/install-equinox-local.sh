@@ -44,7 +44,7 @@ esac
 [ "$(/usr/bin/stat -f '%u' "$HOME_DIR")" = "$CURRENT_UID" ] || fail "the current HOME directory is not owned by the current user"
 CONTROL_CENTER_APP="$HOME_DIR/Applications/Equinox Local.app"
 
-for command in /usr/bin/curl /usr/bin/shasum /usr/bin/stat /usr/bin/tar /usr/bin/mktemp /usr/bin/uname /usr/bin/id /usr/bin/env /usr/bin/open /usr/bin/grep /usr/bin/awk; do
+for command in /usr/bin/curl /usr/bin/shasum /usr/bin/stat /usr/bin/tar /usr/bin/mktemp /usr/bin/uname /usr/bin/id /usr/bin/env /usr/bin/nohup /usr/bin/open /usr/bin/grep /usr/bin/awk; do
   require_command "$command"
 done
 /usr/bin/curl --help all 2>/dev/null | /usr/bin/grep -q -- '--max-filesize' || fail "this macOS curl is too old for bounded downloads"
@@ -192,9 +192,31 @@ RESULT="$(/usr/bin/env -i \
 
 printf '%s\n' "$RESULT"
 info "installation is ready; opening Equinox Local"
-if [ -d "$CONTROL_CENTER_APP" ] && [ ! -L "$CONTROL_CENTER_APP" ] && [ "$(/usr/bin/stat -f '%u' "$CONTROL_CENTER_APP")" = "$CURRENT_UID" ]; then
-  /usr/bin/open -n "$CONTROL_CENTER_APP" >/dev/null 2>&1 || /usr/bin/open "$CONTROL_CENTER_URL" >/dev/null 2>&1 || true
-else
+NATIVE_APP_OPENED=0
+CONTROL_CENTER_EXECUTABLE="$CONTROL_CENTER_APP/Contents/MacOS/applet"
+if [ -d "$CONTROL_CENTER_APP" ] && [ ! -L "$CONTROL_CENTER_APP" ] && [ "$(/usr/bin/stat -f '%u' "$CONTROL_CENTER_APP")" = "$CURRENT_UID" ] \
+  && [ -f "$CONTROL_CENTER_EXECUTABLE" ] && [ ! -L "$CONTROL_CENTER_EXECUTABLE" ] && [ -x "$CONTROL_CENTER_EXECUTABLE" ] \
+  && [ "$(/usr/bin/stat -f '%u' "$CONTROL_CENTER_EXECUTABLE")" = "$CURRENT_UID" ]; then
+  /usr/bin/nohup /usr/bin/env -i \
+    HOME="$HOME_DIR" \
+    USER="$CURRENT_USER" \
+    LOGNAME="$CURRENT_USER" \
+    TMPDIR="/tmp" \
+    PATH="/usr/bin:/bin:/usr/sbin:/sbin" \
+    "$CONTROL_CENTER_EXECUTABLE" </dev/null >/dev/null 2>&1 &
+  NATIVE_APP_PID=$!
+  /bin/sleep 1
+  if /bin/kill -0 "$NATIVE_APP_PID" >/dev/null 2>&1; then
+    NATIVE_APP_OPENED=1
+  fi
+
+  if [ "$NATIVE_APP_OPENED" -ne 1 ] && /usr/bin/open -n "$CONTROL_CENTER_APP" >/dev/null 2>&1; then
+    NATIVE_APP_OPENED=1
+  fi
+fi
+
+if [ "$NATIVE_APP_OPENED" -ne 1 ]; then
+  info "native app launch was unavailable; opening the localhost fallback"
   /usr/bin/open "$CONTROL_CENTER_URL" >/dev/null 2>&1 || true
 fi
 info "done"

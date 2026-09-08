@@ -159,6 +159,54 @@ export function registerProcessTools({
   );
 
   registerTextTool(
+    "process_wait",
+    {
+      description:
+        "Yönetilen sonlu bir sürecin tamamlanmasını bounded süre bekler. Bekleme süresi dolarsa süreci öldürmez veya yeniden başlatmaz; aynı process kimliğiyle çalışan durumu ve bounded çıktı snapshot'ını döndürür.",
+      inputSchema: {
+        process_id: z.string().min(1).max(80),
+        wait_ms: z.number().int().min(0).max(120_000).default(30_000),
+        max_chars: z.number().int().min(1).max(160_000).default(40_000),
+        strip_ansi: z.boolean().default(true),
+      },
+      annotations: {
+        title: "Yönetilen sürecin tamamlanmasını bekle",
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async ({ process_id, wait_ms, max_chars, strip_ansi }) => {
+      try {
+        await processManager.waitForExit({
+          processId: process_id,
+          waitMs: wait_ms,
+        });
+        const snapshot = processManager.snapshotOutput({
+          processId: process_id,
+          maxChars: max_chars,
+          stripAnsiCodes: strip_ansi,
+        });
+        const completed = snapshot.process.running === false;
+        return processJsonResult({
+          ok: true,
+          completed,
+          waitExpired: !completed && wait_ms > 0,
+          process: snapshot.process,
+          nextCursor: snapshot.nextCursor,
+          combinedOutput: snapshot.combinedOutput,
+          combinedOutputTruncated: snapshot.combinedOutputTruncated,
+          combinedOutputDroppedChars: snapshot.combinedOutputDroppedChars,
+        });
+      } catch (error) {
+        return errorResult(error);
+      }
+    },
+    { projectAware: false },
+  );
+
+  registerTextTool(
     "process_stop",
     {
       description:

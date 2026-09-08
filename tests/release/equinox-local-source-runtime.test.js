@@ -68,13 +68,13 @@ test("source tunnel inspection reports pinned-version drift without exposing pat
 test("source Peekaboo inspection validates the pinned desktop runtime without exposing its path", async (t) => {
   const item = await fixture(t);
   const peekaboo = path.join(item.root, "peekaboo");
-  await fs.writeFile(peekaboo, "#!/bin/sh\necho 'Peekaboo 4.3.0 (fixture)'\n", { mode: 0o755 });
+  await fs.writeFile(peekaboo, "#!/bin/sh\necho 'Peekaboo 4.3.3 (fixture)'\n", { mode: 0o755 });
   const config = await fs.readFile(item.configPath, "utf8");
   await fs.writeFile(item.configPath, config.replace("sourceLauncher=", `peekabooPath=${peekaboo}\nsourceLauncher=`), { mode: 0o600 });
-  assert.equal(parsePeekabooVersion("Peekaboo 4.3.0 (fixture)"), "4.3.0");
+  assert.equal(parsePeekabooVersion("Peekaboo 4.3.3 (fixture)"), "4.3.3");
   const result = await inspectSourcePeekabooRuntime({ configPath: item.configPath });
   assert.equal(result.synchronized, true);
-  assert.equal(result.actualVersion, "4.3.0");
+  assert.equal(result.actualVersion, "4.3.3");
   assert.equal(JSON.stringify(result).includes(item.root), false);
 });
 

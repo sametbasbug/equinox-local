@@ -65,7 +65,7 @@ test("local module parser finds static relative imports without treating package
 });
 
 test("pinned Node runtime metadata covers both supported macOS architectures", () => {
-  assert.equal(EQUINOX_LOCAL_NODE_VERSION, "24.20.0");
+  assert.equal(EQUINOX_LOCAL_NODE_VERSION, "26.8.1");
   assert.deepEqual(Object.keys(NODE_DISTRIBUTIONS).sort(), ["darwin-arm64", "darwin-x64"]);
   assert.match(NODE_DISTRIBUTIONS["darwin-arm64"].sha256, /^[a-f0-9]{64}$/u);
   assert.match(NODE_DISTRIBUTIONS["darwin-x64"].sha256, /^[a-f0-9]{64}$/u);
@@ -85,10 +85,10 @@ test("pinned tunnel runtime metadata covers both supported macOS architectures",
 });
 
 test("pinned Peekaboo runtime metadata is universal and fixed to the verified OpenClaw release", () => {
-  assert.equal(EQUINOX_LOCAL_PEEKABOO_VERSION, "4.3.0");
+  assert.equal(EQUINOX_LOCAL_PEEKABOO_VERSION, "4.3.3");
   assert.equal(EQUINOX_LOCAL_PEEKABOO_TEAM_ID, "FWJYW4S8P8");
   assert.equal(PEEKABOO_DISTRIBUTION.filename, "peekaboo-macos-universal.tar.gz");
-  assert.equal(PEEKABOO_DISTRIBUTION.sha256, "fec965e4bd6371b8fb017fb582e8d31c6a59628f77e266878f45cf1d4844836f");
+  assert.equal(PEEKABOO_DISTRIBUTION.sha256, "8c9dae67e64459f47653f2d3cd7580e6b593e0d8122da1fbdbc2c8f090748641");
   assert.deepEqual(PEEKABOO_DISTRIBUTION.architectures, ["arm64", "x86_64"]);
 });
 

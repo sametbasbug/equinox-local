@@ -6,6 +6,24 @@ This project follows semantic versioning for public releases.
 
 ## [Unreleased]
 
+## [4.7.0] - 2026-09-08
+
+### Added
+
+- Added bounded `process_wait` continuation for finite managed Terminal work, allowing agents to wait on the exact promoted process without polling log calls or restarting the command.
+
+### Changed
+
+- Completed the terminal-first second-wave pruning: ordinary GitHub/Actions convenience wrappers, the retired asset inbox, rollback/recovery convenience reads and recipe discovery were removed while special release/deploy/runtime audit capabilities remain explicit. The retained non-Browser surface is 37 operations.
+- Raised the supported Node.js floor and bundled managed runtime from Node `24.20.0` to current Node `26.8.1` for Apple Silicon and Intel; public CI, release validation and future reviewer packages now use the same pinned runtime line.
+- Updated the bundled universal Peekaboo runtime from `4.3.0` to `4.3.3` with the verified OpenClaw Developer ID/Team ID and new pinned upstream SHA-256.
+- Updated the direct `fast-uri` dependency from `3.1.6` to `4.1.4`; `node-pty` intentionally remains on the newer `1.2.0-beta.15` line rather than regressing to the older `1.1.0` npm stable tag.
+- Refreshed npm lockfiles and compatible transitive dependencies while retaining current `@modelcontextprotocol/sdk`, `pixelmatch`, `pngjs`, `zod` and `tunnel-client` versions where upstream already matches the repository.
+
+### Fixed
+
+- Fixed fresh-install Control Center launch so the verified native app executable starts directly with a clean detached environment before LaunchServices/browser fallbacks, avoiding first-launch races that could open localhost in Chrome even though the native app was healthy.
+
 ## [4.6.3] - 2026-09-08
 
 ### Changed
@@ -217,7 +235,8 @@ This project follows semantic versioning for public releases.
 - Internal release/QA browser surfaces are excluded from the public product capability registry.
 - Private Orbit/deployment configuration and machine-specific development infrastructure are excluded from the public source projection.
 
-[Unreleased]: https://github.com/sametbasbug/equinox-local/compare/v4.6.3...HEAD
+[Unreleased]: https://github.com/sametbasbug/equinox-local/compare/v4.7.0...HEAD
+[4.7.0]: https://github.com/sametbasbug/equinox-local/compare/v4.6.3...v4.7.0
 [4.6.3]: https://github.com/sametbasbug/equinox-local/compare/v4.6.2...v4.6.3
 [4.6.2]: https://github.com/sametbasbug/equinox-local/compare/v4.6.1...v4.6.2
 [4.6.1]: https://github.com/sametbasbug/equinox-local/compare/v4.6.0...v4.6.1

@@ -9,7 +9,7 @@
 
 [![CI](https://github.com/sametbasbug/equinox-local/actions/workflows/ci.yml/badge.svg)](https://github.com/sametbasbug/equinox-local/actions/workflows/ci.yml)
 ![macOS](https://img.shields.io/badge/platform-macOS-111111?logo=apple)
-![Node.js 24](https://img.shields.io/badge/Node.js-24-339933?logo=nodedotjs&logoColor=white)
+![Node.js 26](https://img.shields.io/badge/Node.js-26-339933?logo=nodedotjs&logoColor=white)
 [![License: AGPL v3](https://img.shields.io/badge/license-AGPL--3.0--only-blue.svg)](LICENSE)
 
 [Product site](https://local.sametbasbug.dev/) · [Security](SECURITY.md) · [Architecture](docs/architecture.md) · [Contributing](CONTRIBUTING.md)
@@ -40,7 +40,7 @@ The goal is not to turn your computer into an unrestricted remote shell. The goa
 
 Agent tooling often optimizes for either **maximum capability** or **maximum safety through limitation**. Equinox Local tries to make the boundary itself a product surface:
 
-- **Agent-friendly:** terminal-first local execution, root-aware project/asset capabilities, release automation, runtime diagnostics, GitHub and browser primitives.
+- **Agent-friendly:** terminal-first local execution, root-aware project discovery, release automation, runtime diagnostics, browser primitives, and credential/deployment integrations.
 - **Human-friendly:** a real English/Türkçe Control Center for health, projects, permissions, browser state, updates, and uninstall.
 - **Local-first:** project data and runtime state live on the user's machine unless a requested action needs a connected AI/service provider.
 - **No arbitrary HTTP command console:** Control Center uses bounded management endpoints rather than a generic shell backend.
@@ -102,9 +102,9 @@ It does **not** require Git, Homebrew, a system Node installation, a separate Pe
 
 Current installation status is maintained at [local.sametbasbug.dev/install](https://local.sametbasbug.dev/install/).
 
-Fresh managed installs start Agent Access in **Full** mode for root-aware structured capabilities, Terminal/processes, Desktop automation and the Equinox Browser lane. Users can narrow structured root access to selected configured roots or disable individual execution/automation capabilities from Control Center. Terminal is the terminal-first path for ordinary local file/repo/Git/package-manager work. It runs as the logged-in macOS user and is not confined to Selected roots after startup; users who require strict selected-root containment should disable Terminal. Equinox-managed provider credentials are not injected into generic Terminal/process environments. `terminal_exec` uses a bounded foreground `wait_ms`; if that wait expires, the same command keeps running under the managed-process lifecycle and returns a `processId`/cursor for `process_logs` or `process_stop` continuation instead of being killed or restarted.
+Fresh managed installs start Agent Access in **Full** mode for root-aware structured capabilities, Terminal/processes, Desktop automation and the Equinox Browser lane. Users can narrow structured root access to selected configured roots or disable individual execution/automation capabilities from Control Center. Terminal is the terminal-first path for ordinary local file/repo/Git/package-manager work. It runs as the logged-in macOS user and is not confined to Selected roots after startup; users who require strict selected-root containment should disable Terminal. Equinox-managed provider credentials are not injected into generic Terminal/process environments. `terminal_exec` uses a bounded foreground `wait_ms`; if that wait expires, the same command keeps running under the managed-process lifecycle and returns a `processId`/cursor for `process_wait`, `process_logs` or `process_stop` continuation instead of being killed or restarted. `process_wait` can efficiently wait for finite managed work without polling and never kills the process when its wait expires.
 
-The dynamic Files gateway is intentionally small: project discovery plus bounded asset inbox/import/export operations. Ordinary file editing, searching, copying, local Git, package-manager, build and test work uses Terminal instead of one wrapper operation per shell command. Credential-backed GitHub, deployment, release, Browser, Desktop and runtime capabilities remain explicit special operations.
+The dynamic Files gateway is intentionally minimal: project/root discovery only. Ordinary file editing, searching, copying, local Git, GitHub PR/Actions, package-manager, build and test work uses Terminal instead of wrapper operations; `gh` uses the user’s system-keyring login while generic execution receives no injected Equinox-managed provider token. Deployment, release, Browser, Desktop and runtime capabilities remain explicit special operations.
 
 ### Connect Equinox Local to ChatGPT
 
@@ -162,7 +162,7 @@ Tests live under `tests/` on purpose: they remain part of the public trust story
 ### Requirements
 
 - macOS
-- Node.js **24.20.0 or newer**
+- Node.js **26.8.1 or newer**
 - npm
 - Git
 
@@ -172,7 +172,7 @@ npm run check
 npm test
 ```
 
-The public test suite covers browser consent/lifecycle, Agent Access and credential boundaries, project/asset operations, terminal execution, Control Center request boundaries, managed install/update/rollback/uninstall, source-runtime synchronization, internal release workflows, repair/recovery, Native Messaging, and runtime observability. The CI badge above is the durable source for the current test status.
+The public test suite covers browser consent/lifecycle, Agent Access and credential boundaries, project discovery, terminal execution, Control Center request boundaries, managed install/update/rollback/uninstall, source-runtime synchronization, internal release workflows, repair/recovery, Native Messaging, and runtime observability. The CI badge above is the durable source for the current test status.
 
 Source-checkout runtime configuration is intentionally external. Start with [examples/equinox-local-config.example.json](examples/equinox-local-config.example.json) and keep real machine paths/credentials out of the repository. The source restart path synchronizes both the development tunnel client and pinned Peekaboo runtime from the same version/SHA/signing policy used by managed release packaging; System Doctor reports version drift without exposing configured executable paths.
 

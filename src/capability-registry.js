@@ -92,18 +92,6 @@ const RETIRED_TERMINAL_FIRST_OPERATION_NAMES = new Set([
   "workflow_start",
   "workflow_status",
   "authenticated_command",
-]);
-
-const FILE_OPERATION_NAMES = new Set([
-  "delete_inbox_asset",
-  "export_asset",
-  "import_asset",
-  "inspect_inbox_asset",
-  "list_asset_inbox",
-  "list_projects",
-]);
-
-const GIT_OPERATION_NAMES = new Set([
   "close_pull_request",
   "create_pull_request",
   "get_pull_request",
@@ -111,15 +99,31 @@ const GIT_OPERATION_NAMES = new Set([
   "merge_pull_request",
   "set_pull_request_draft",
   "update_pull_request",
-]);
-
-const AUTOMATION_OPERATION_NAMES = new Set([
-  "baseline_promote",
   "cancel_workflow_run",
   "get_workflow_run",
   "list_workflow_runs",
   "rerun_failed_workflow",
+  "delete_inbox_asset",
+  "export_asset",
+  "import_asset",
+  "inspect_inbox_asset",
+  "list_asset_inbox",
   "rollback_snapshot",
+  "recovery_history",
+  "recovery_policies",
+  "repair_recipes",
+]);
+
+const FILE_OPERATION_NAMES = new Set([
+  "list_projects",
+]);
+
+
+const GIT_OPERATION_NAMES = new Set([]);
+
+
+const AUTOMATION_OPERATION_NAMES = new Set([
+  "baseline_promote",
 ]);
 
 const SERVICE_OPERATION_NAMES = new Set([

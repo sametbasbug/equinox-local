@@ -21,19 +21,6 @@ function extractText(result) {
 
 test("inferCapabilityDomain keeps broad stable domains and excludes already-dynamic bridges", () => {
   assert.equal(inferCapabilityDomain("list_projects"), "files");
-  assert.equal(inferCapabilityDomain("delete_inbox_asset"), "files");
-  for (const retainedGitHub of [
-    "create_pull_request",
-    "get_pull_request",
-    "get_pull_request_checks",
-    "update_pull_request",
-    "set_pull_request_draft",
-    "close_pull_request",
-    "merge_pull_request",
-  ]) {
-    assert.equal(inferCapabilityDomain(retainedGitHub), "git", `${retainedGitHub} must stay in Git`);
-  }
-  assert.equal(inferCapabilityDomain("rollback_snapshot"), "automation");
   assert.equal(inferCapabilityDomain("equinox_browser_click"), "browser");
   assert.equal(inferCapabilityDomain("deployment_status"), "services");
   assert.equal(inferCapabilityDomain("telegram_send_message"), "services");
@@ -91,6 +78,26 @@ test("inferCapabilityDomain keeps broad stable domains and excludes already-dyna
     "workflow_start",
     "workflow_status",
     "authenticated_command",
+    "close_pull_request",
+    "create_pull_request",
+    "get_pull_request",
+    "get_pull_request_checks",
+    "merge_pull_request",
+    "set_pull_request_draft",
+    "update_pull_request",
+    "cancel_workflow_run",
+    "get_workflow_run",
+    "list_workflow_runs",
+    "rerun_failed_workflow",
+    "delete_inbox_asset",
+    "export_asset",
+    "import_asset",
+    "inspect_inbox_asset",
+    "list_asset_inbox",
+    "rollback_snapshot",
+    "recovery_history",
+    "recovery_policies",
+    "repair_recipes",
   ]) {
     assert.equal(inferCapabilityDomain(retired), null, `${retired} must stay retired`);
   }
@@ -313,7 +320,7 @@ test("stable gateways normalize custom structured results to their stable text o
 test("registry rejects duplicate operations", () => {
   const registry = createCapabilityRegistry();
   const registration = {
-    name: "create_pull_request",
+    name: "runtime_duplicate_probe",
     config: { inputSchema: {} },
     invoke: async () => textResult("ok"),
   };
