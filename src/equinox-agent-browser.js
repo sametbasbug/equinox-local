@@ -6,6 +6,9 @@ export const EQUINOX_AGENT_BROWSER_CONTEXT = "agent";
 export const EQUINOX_BROWSER_STORE_URL = "https://chromewebstore.google.com/detail/equinox-browser/npdneefcobilfkjlihghjgjnknenhfoj";
 
 const OPEN_BINARY = "/usr/bin/open";
+const PS_BINARY = "/bin/ps";
+const CHROME_MAIN_PROCESS_FRAGMENT = "/Google Chrome.app/Contents/MacOS/Google Chrome ";
+const DEFAULT_SHUTDOWN_TIMEOUT_MS = 5_000;
 const CHROME_APP_NAME = "Google Chrome";
 const NATIVE_HOST_NAME = "dev.equinox.browser";
 const PRODUCTION_EXTENSION_ORIGIN = "chrome-extension://npdneefcobilfkjlihghjgjnknenhfoj/";
@@ -153,11 +156,29 @@ export function buildAgentBrowserLaunchArgs(profileRoot, { setup = false } = {})
   ];
 }
 
+
+export function parseAgentBrowserMainPids(psOutput, profileRoot) {
+  if (typeof profileRoot !== "string" || !path.isAbsolute(profileRoot)) {
+    throw new Error("Agent Browser profil kökü geçersiz.");
+  }
+  const profileFlag = `--user-data-dir=${profileRoot}`;
+  return String(psOutput || "")
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .filter((line) => line.includes(profileFlag))
+    .filter((line) => line.includes(CHROME_MAIN_PROCESS_FRAGMENT))
+    .filter((line) => !line.includes("/Helpers/"))
+    .map((line) => Number.parseInt(line.match(/^(\d+)\s+/u)?.[1] || "", 10))
+    .filter((pid) => Number.isInteger(pid) && pid > 1);
+}
+
 export function createEquinoxAgentBrowser({
   bridge,
   homeDir = process.env.HOME,
   platform = process.platform,
   execFileAsync,
+  signalProcess = process.kill.bind(process),
   recordEvent = () => {},
 } = {}) {
   if (!bridge?.readyFor || !bridge?.waitUntilReady || !bridge?.expectContext || !bridge?.cancelExpectedContext) {
@@ -165,6 +186,9 @@ export function createEquinoxAgentBrowser({
   }
   if (typeof execFileAsync !== "function") {
     throw new Error("Agent Browser için execFileAsync gerekli.");
+  }
+  if (typeof signalProcess !== "function") {
+    throw new Error("Agent Browser için signalProcess gerekli.");
   }
   if (typeof recordEvent !== "function") {
     throw new Error("Agent Browser recordEvent fonksiyonu geçersiz.");
@@ -174,6 +198,7 @@ export function createEquinoxAgentBrowser({
   let lastLaunchAt = null;
   let lastLaunchSetup = null;
   let lastLaunchError = null;
+  let setupComplete = null;
 
   function emit(type, data = {}) {
     try {
@@ -196,7 +221,8 @@ export function createEquinoxAgentBrowser({
     await ensurePrivateDirectory(profileRoot);
     await ensureAgentBrowserNativeMessagingManifest({ homeDir, profileRoot });
     bridge.expectContext(EQUINOX_AGENT_BROWSER_CONTEXT);
-    const shouldSetup = Boolean(setup || !(await hasReadyMarker(profileRoot)));
+    setupComplete = await hasReadyMarker(profileRoot);
+    const shouldSetup = Boolean(setup || !setupComplete);
     try {
       await execFileAsync(OPEN_BINARY, buildAgentBrowserLaunchArgs(profileRoot, { setup: shouldSetup }), {
         timeout: 10_000,
@@ -219,10 +245,64 @@ export function createEquinoxAgentBrowser({
     }
   }
 
+  async function listMainProcessPids() {
+    const { stdout = "" } = await execFileAsync(PS_BINARY, ["-axo", "pid=,command="], {
+      timeout: 5_000,
+      maxBuffer: 512 * 1024,
+      env: {
+        HOME: homeDir,
+        PATH: "/usr/bin:/bin:/usr/sbin:/sbin",
+      },
+    });
+    return parseAgentBrowserMainPids(stdout, profileRoot);
+  }
+
+  function processAlive(pid) {
+    try {
+      signalProcess(pid, 0);
+      return true;
+    } catch (error) {
+      if (error?.code === "ESRCH") return false;
+      throw error;
+    }
+  }
+
+  async function shutdown({ timeoutMs = DEFAULT_SHUTDOWN_TIMEOUT_MS } = {}) {
+    if (platform !== "darwin") {
+      throw new Error("Agent Browser şu anda yalnız macOS üzerinde destekleniyor.");
+    }
+    const boundedTimeout = Math.min(15_000, Math.max(500, Number(timeoutMs) || DEFAULT_SHUTDOWN_TIMEOUT_MS));
+    bridge.cancelExpectedContext();
+    const pids = await listMainProcessPids();
+    if (pids.length === 0) {
+      if (bridge.readyFor(EQUINOX_AGENT_BROWSER_CONTEXT)) {
+        throw new Error("Agent Browser bridge bağlı görünüyor ancak exact Agent Browser ana process'i bulunamadı; güvenli kapanış reddedildi.");
+      }
+      emit("shutdown_noop", {});
+      return { ...snapshot(), stopped: true, alreadyStopped: true, processId: null };
+    }
+    if (pids.length !== 1) {
+      throw new Error("Agent Browser ana process eşleşmesi belirsiz; güvenli kapanış reddedildi.");
+    }
+    const [pid] = pids;
+    signalProcess(pid, "SIGTERM");
+    emit("shutdown_requested", {});
+    const deadline = Date.now() + boundedTimeout;
+    while (Date.now() < deadline) {
+      if (!processAlive(pid) && !bridge.readyFor(EQUINOX_AGENT_BROWSER_CONTEXT)) {
+        emit("shutdown_complete", {});
+        return { ...snapshot(), stopped: true, alreadyStopped: false, processId: pid };
+      }
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    throw new Error("Agent Browser güvenli kapanış süresinde tamamen durmadı; zorla kapatma uygulanmadı.");
+  }
+
   async function ensureReady({ timeoutMs = DEFAULT_READY_TIMEOUT_MS } = {}) {
     if (bridge.readyFor(EQUINOX_AGENT_BROWSER_CONTEXT)) {
       await ensurePrivateDirectory(profileRoot);
       await writeReadyMarker(profileRoot);
+      setupComplete = true;
       return bridge.snapshotContext(EQUINOX_AGENT_BROWSER_CONTEXT);
     }
 
@@ -231,6 +311,7 @@ export function createEquinoxAgentBrowser({
       const ready = await bridge.waitUntilReady(timeoutMs, { context: EQUINOX_AGENT_BROWSER_CONTEXT });
       bridge.cancelExpectedContext();
       await writeReadyMarker(profileRoot);
+      setupComplete = true;
       emit("ready", {
         extensionVersion: ready.extension?.extensionVersion ?? null,
       });
@@ -244,6 +325,11 @@ export function createEquinoxAgentBrowser({
     }
   }
 
+  async function status() {
+    setupComplete = platform === "darwin" ? await hasReadyMarker(profileRoot) : false;
+    return snapshot();
+  }
+
   function snapshot() {
     const browser = bridge.snapshotContext(EQUINOX_AGENT_BROWSER_CONTEXT);
     return {
@@ -254,6 +340,7 @@ export function createEquinoxAgentBrowser({
       extensionVersion: browser.extension?.extensionVersion ?? null,
       connectedAt: browser.connectedAt ?? null,
       pairing: bridge.snapshot().pairing?.context === EQUINOX_AGENT_BROWSER_CONTEXT,
+      setupComplete,
       lastLaunchAt,
       lastLaunchSetup,
       lastLaunchError,
@@ -264,6 +351,8 @@ export function createEquinoxAgentBrowser({
   return Object.freeze({
     launch,
     ensureReady,
+    shutdown,
+    status,
     snapshot,
   });
 }

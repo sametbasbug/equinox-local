@@ -53,6 +53,59 @@ function normalizeInstanceId(value) {
   return normalized.toLowerCase();
 }
 
+async function prepareBridgeSocketPath(socketPath, { probeTimeoutMs = 500 } = {}) {
+  const existing = await fs.lstat(socketPath).catch((error) => {
+    if (error?.code === "ENOENT") return null;
+    throw error;
+  });
+  if (!existing) return;
+  if (!existing.isSocket() || existing.isSymbolicLink()) {
+    throw new Error("Equinox Browser socket path is occupied by a non-socket entry.");
+  }
+
+  const active = await new Promise((resolve, reject) => {
+    const probe = net.createConnection(socketPath);
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      probe.destroy();
+      reject(new Error("Timed out while checking the existing Equinox Browser socket."));
+    }, probeTimeoutMs);
+    timer.unref?.();
+    const finish = (callback) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      callback();
+    };
+    probe.once("connect", () => finish(() => {
+      probe.destroy();
+      resolve(true);
+    }));
+    probe.once("error", (error) => finish(() => {
+      if (error?.code === "ECONNREFUSED" || error?.code === "ENOENT") {
+        resolve(false);
+        return;
+      }
+      reject(error);
+    }));
+  });
+
+  if (active) {
+    throw new Error("Equinox Browser socket is already owned by another live bridge.");
+  }
+  await fs.rm(socketPath, { force: true });
+}
+
+function sameSocketIdentity(left, right) {
+  return Boolean(
+    left && right &&
+    left.isSocket?.() && !left.isSymbolicLink?.() &&
+    left.dev === right.dev && left.ino === right.ino
+  );
+}
+
 export function createEquinoxBrowserBridge({
   socketPath = EQUINOX_BROWSER_SOCKET_PATH,
   expectedExtensionIds = EQUINOX_BROWSER_EXTENSION_IDS,
@@ -70,6 +123,7 @@ export function createEquinoxBrowserBridge({
   let startedAt = null;
   let nextCommandId = 1;
   let pairingExpectation = null;
+  let ownedSocketIdentity = null;
   const pending = new Map();
   const connections = new Set();
   const contexts = new Map();
@@ -616,14 +670,26 @@ export function createEquinoxBrowserBridge({
     } else {
       await fs.mkdir(path.dirname(socketPath), { recursive: true });
     }
-    await fs.rm(socketPath, { force: true }).catch(() => {});
+    await prepareBridgeSocketPath(socketPath);
 
     server = net.createServer(attachHost);
-    await new Promise((resolve, reject) => {
-      server.once("error", reject);
-      server.listen(socketPath, resolve);
-    });
-    await fs.chmod(socketPath, 0o600).catch(() => {});
+    try {
+      await new Promise((resolve, reject) => {
+        server.once("error", reject);
+        server.listen(socketPath, resolve);
+      });
+      await fs.chmod(socketPath, 0o600);
+      const socketStat = await fs.lstat(socketPath);
+      if (!socketStat.isSocket() || socketStat.isSymbolicLink()) {
+        throw new Error("Equinox Browser bridge did not create a safe Unix socket.");
+      }
+      ownedSocketIdentity = { dev: socketStat.dev, ino: socketStat.ino };
+    } catch (error) {
+      const failedServer = server;
+      server = null;
+      await new Promise((resolve) => failedServer.close(() => resolve())).catch(() => {});
+      throw error;
+    }
     startedAt = nowIso();
     emit("started", { socketPath });
     return snapshot();
@@ -645,7 +711,16 @@ export function createEquinoxBrowserBridge({
       server = null;
       await new Promise((resolve) => closingServer.close(() => resolve()));
     }
-    await fs.rm(socketPath, { force: true }).catch(() => {});
+    if (ownedSocketIdentity) {
+      const current = await fs.lstat(socketPath).catch((error) => {
+        if (error?.code === "ENOENT") return null;
+        throw error;
+      });
+      if (sameSocketIdentity(current, ownedSocketIdentity)) {
+        await fs.rm(socketPath, { force: true });
+      }
+      ownedSocketIdentity = null;
+    }
     emit("closed");
   }
 

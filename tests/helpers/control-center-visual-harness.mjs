@@ -43,6 +43,7 @@ let browser = {
     extensionVersion: "0.4.0-dev",
     connectedAt: new Date().toISOString(),
     pairing: false,
+    setupComplete: true,
   },
   contexts: {
     agent: {

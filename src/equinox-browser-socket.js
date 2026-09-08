@@ -24,9 +24,10 @@ export function equinoxBrowserSocketPath(options = {}) {
 
 export async function prepareEquinoxBrowserSocketDirectory({
   uid = process.getuid?.(),
+  namespace = null,
   fsImpl = fs,
 } = {}) {
-  const directory = equinoxBrowserSocketDirectory({ uid });
+  const directory = equinoxBrowserSocketDirectory({ uid, namespace });
   try {
     await fsImpl.mkdir(directory, { mode: 0o700 });
   } catch (error) {

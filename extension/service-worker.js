@@ -1,25 +1,31 @@
 const HOST_NAME = "dev.equinox.browser";
 const PROTOCOL_VERSION = "1.3";
 const BRIDGE_PROTOCOL_VERSION = 1;
-const DEFAULT_ATTACH_IDLE_MS = 30_000;
+// Keep one sliding debugger lease across normal agent turns so Chrome's debugging infobar does not flicker.
+const DEFAULT_ATTACH_IDLE_MS = 60_000;
 const MAX_SNAPSHOT_ELEMENTS = 250;
-const SNAPSHOT_VERSION = 3;
-const DELTA_SNAPSHOT_VERSION = 1;
-const SCREENSHOT_VERSION = 3;
+const SNAPSHOT_VERSION = 9;
+const DELTA_SNAPSHOT_VERSION = 2;
+const SCREENSHOT_VERSION = 4;
 const REACQUIRE_VERSION = 2;
-const COMPOUND_ACTION_VERSION = 2;
+const COMPOUND_ACTION_VERSION = 4;
 const DOUBLE_CLICK_VERSION = 1;
 const POINTER_DRAG_VERSION = 1;
 const HTML5_DRAG_VERSION = 1;
-const WAIT_VERSION = 2;
+const WAIT_VERSION = 3;
 const NAVIGATION_VERSION = 2;
 const EMULATION_VERSION = 1;
-const INPUT_VERSION = 1;
-const ACTIONABILITY_VERSION = 1;
+const INPUT_VERSION = 3;
+const ACTIONABILITY_VERSION = 7;
+const REF_LIFECYCLE_VERSION = 1;
 const CLICK_VERSION = 2;
 const OBSERVATION_VERSION = 2;
 const TOUCH_GESTURE_VERSION = 1;
 const BOOKMARKS_VERSION = 2;
+const PDF_CONTENT_VERSION = 1;
+const DOWNLOAD_LIFECYCLE_VERSION = 1;
+const RANGE_VERSION = 2;
+const MAX_PDF_DOCUMENT_BYTES = 16 * 1024 * 1024;
 const MAX_BOOKMARK_PATH_DEPTH = 16;
 const MAX_BOOKMARK_PATH_CHARS = 2_000;
 const HTML5_DRAG_INTERCEPT_TIMEOUT_MS = 1_500;
@@ -99,10 +105,14 @@ function browserCapabilityVersions() {
     emulation: EMULATION_VERSION,
     input: INPUT_VERSION,
     actionability: ACTIONABILITY_VERSION,
+    refLifecycle: REF_LIFECYCLE_VERSION,
     click: CLICK_VERSION,
     observation: OBSERVATION_VERSION,
     touchGesture: TOUCH_GESTURE_VERSION,
     bookmarks: BOOKMARKS_VERSION,
+    pdfContent: PDF_CONTENT_VERSION,
+    downloadLifecycle: DOWNLOAD_LIFECYCLE_VERSION,
+    rangeSet: RANGE_VERSION,
   };
 }
 
@@ -133,6 +143,22 @@ const READABLE_ROLES = new Set([
   "alert",
   "status",
   "dialog",
+]);
+
+const SEMANTIC_CONTAINER_ROLES = new Set([
+  "row",
+  "article",
+  "listitem",
+  "group",
+  "region",
+]);
+
+const SEMANTIC_CONTEXT_TEXT_ROLES = new Set([
+  "statictext",
+  "heading",
+  "paragraph",
+  "cell",
+  "gridcell",
 ]);
 
 const attachedTabs = new Map();
@@ -826,6 +852,67 @@ function invalidateRefs(tabId, { bumpGeneration = false } = {}) {
   refStates.delete(tabId);
 }
 
+function refContextMetadata(tabId, { validReason = "current_snapshot", invalidReason = "no_active_snapshot" } = {}) {
+  const state = refStates.get(tabId);
+  const generation = currentDocumentGeneration(tabId);
+  if (!state) {
+    return {
+      currentSnapshotId: null,
+      refContextValid: false,
+      freshSnapshotRequired: true,
+      refContextReason: invalidReason,
+      currentDocumentGeneration: generation,
+    };
+  }
+  if (state.documentGeneration !== generation) {
+    refStates.delete(tabId);
+    return {
+      currentSnapshotId: null,
+      refContextValid: false,
+      freshSnapshotRequired: true,
+      refContextReason: "document_generation_changed",
+      currentDocumentGeneration: generation,
+    };
+  }
+  return {
+    currentSnapshotId: state.snapshotId || null,
+    refContextValid: true,
+    freshSnapshotRequired: false,
+    refContextReason: validReason,
+    currentDocumentGeneration: generation,
+  };
+}
+
+function captureRefContextSource(tabId) {
+  const state = refStates.get(tabId);
+  return {
+    sourceSnapshotId: state?.snapshotId || null,
+    sourceDocumentGeneration: state?.documentGeneration ?? currentDocumentGeneration(tabId),
+  };
+}
+
+function refOperationMetadata(tabId, source, options = {}) {
+  return {
+    refLifecycleVersion: REF_LIFECYCLE_VERSION,
+    sourceSnapshotId: source?.sourceSnapshotId ?? null,
+    sourceDocumentGeneration: source?.sourceDocumentGeneration ?? currentDocumentGeneration(tabId),
+    ...refContextMetadata(tabId, options),
+  };
+}
+
+function scheduleActionDetach(tabId, {
+  afterResult = null,
+  preserveRefContext = false,
+  idleMs = DEFAULT_ATTACH_IDLE_MS,
+} = {}) {
+  const hasFreshSnapshot = Boolean(
+    afterResult?.ok &&
+    afterResult?.snapshot?.snapshot?.id &&
+    refStates.get(tabId)?.snapshotId === afterResult.snapshot.snapshot.id
+  );
+  scheduleDetach(tabId, preserveRefContext || hasFreshSnapshot ? DEFAULT_ATTACH_IDLE_MS : idleMs);
+}
+
 function registerChildSession(tabId, sessionId, targetInfo = {}) {
   const state = attachedTabs.get(tabId);
   if (!state || !sessionId) return;
@@ -845,16 +932,35 @@ function unregisterChildSession(tabId, sessionId) {
   invalidateRefs(tabId, { bumpGeneration: true });
 }
 
+const FRAME_AUTO_ATTACH_OPTIONS = Object.freeze({
+  autoAttach: true,
+  waitForDebuggerOnStart: false,
+  flatten: true,
+});
+
 async function ensureFrameRouting(tabId) {
   const state = attachedTabs.get(tabId);
   if (!state || state.frameRoutingReady) return;
   await send(tabId, "Page.enable");
-  await send(tabId, "Target.setAutoAttach", {
-    autoAttach: true,
-    waitForDebuggerOnStart: false,
-    flatten: true,
-  });
+  await send(tabId, "Target.setAutoAttach", FRAME_AUTO_ATTACH_OPTIONS);
   state.frameRoutingReady = true;
+}
+
+async function ensureRecursiveFrameRouting(tabId) {
+  await ensureFrameRouting(tabId);
+  const state = attachedTabs.get(tabId);
+  if (!state) return;
+  let previousSessionCount = -1;
+  for (let round = 0; round < 4; round += 1) {
+    const sessions = [...state.sessions.values()].filter((session) => !session.type || session.type === "iframe");
+    if (sessions.length === previousSessionCount && round > 0) break;
+    previousSessionCount = sessions.length;
+    await Promise.all(sessions.map(async (session) => {
+      await send(tabId, "Page.enable", {}, session.sessionId).catch(() => {});
+      await send(tabId, "Target.setAutoAttach", FRAME_AUTO_ATTACH_OPTIONS, session.sessionId).catch(() => {});
+    }));
+    await sleep(25);
+  }
 }
 
 function scheduleDetach(tabId, idleMs = DEFAULT_ATTACH_IDLE_MS) {
@@ -1189,8 +1295,7 @@ function flattenFrameTree(frameTree, route, output = []) {
 }
 
 async function collectFrameContexts(tabId) {
-  await ensureFrameRouting(tabId);
-  await sleep(25);
+  await ensureRecursiveFrameRouting(tabId);
   const contexts = new Map();
   const rootTree = await send(tabId, "Page.getFrameTree");
   for (const frame of flattenFrameTree(rootTree?.frameTree, { sessionId: null, targetId: null, isOopif: false })) {
@@ -1255,6 +1360,230 @@ function normalizeSnapshotScope(scope) {
   return normalized;
 }
 
+function isMailSurfaceUrl(rawUrl) {
+  try {
+    const parsed = new URL(String(rawUrl || ""));
+    const host = parsed.hostname.toLowerCase();
+    return (
+      host === "mail.google.com" ||
+      host === "mail.yahoo.com" ||
+      host === "outlook.live.com" ||
+      host === "outlook.office.com" ||
+      host.endsWith(".proton.me") ||
+      host.endsWith(".protonmail.com")
+    );
+  } catch {
+    return false;
+  }
+}
+
+const AUTH_CODE_LABEL_PATTERN = /(?:otp|2fa(?: code)?|two[- ]factor(?: authentication)? code|one[- ]time(?: password| code)?|verification code|security code|recovery code|account recovery code|backup code|login code|authentication code|confirmation code|passcode|doğrulama kodu(?:nuz(?:dur)?)?|kurtarma kodu|hesap kurtarma kodu|yedek kodu|giriş kodu|kimlik doğrulama kodu|onay kodu|tek kullanımlık(?: şifre| kod)?|tek seferlik(?: doğrulama)?(?: şifre| kodu?(?:nuz(?:dur)?)?)?)/giu;
+const AUTH_CODE_TOKEN_PATTERN = /\b(?:\d{4,8}|\d{2,4}[ -]\d{2,4})\b/gu;
+
+function redactContextualAuthCodes(rawValue) {
+  const value = String(rawValue || "");
+  const labels = [...value.matchAll(AUTH_CODE_LABEL_PATTERN)].map((match) => ({
+    start: match.index ?? 0,
+    end: (match.index ?? 0) + match[0].length,
+  }));
+  if (labels.length === 0) return value;
+  return value.replace(AUTH_CODE_TOKEN_PATTERN, (candidate, offset) => {
+    const start = Number(offset) || 0;
+    const end = start + candidate.length;
+    const digits = candidate.replace(/\D/gu, "");
+    if (digits.length < 4 || digits.length > 8) return candidate;
+    const contextual = labels.some((label) => (
+      (end <= label.start && label.start - end <= 96) ||
+      (start >= label.end && start - label.end <= 48)
+    ));
+    return contextual ? "[REDACTED CODE]" : candidate;
+  });
+}
+
+function redactSensitiveSnapshotText(rawValue) {
+  if (rawValue == null) return { value: rawValue, redacted: false };
+  let value = String(rawValue).replace(/\s+/gu, " ").trim().slice(0, 4_000);
+  const original = value;
+  if (!value) return { value, redacted: false };
+  try {
+    if (/^https?:\/\//iu.test(value)) value = safeObservedUrl(value);
+  } catch {
+    // Keep the bounded text and continue with token masking.
+  }
+  value = redactContextualAuthCodes(value)
+    .replace(/\b(Bearer\s+)[A-Za-z0-9._~+\/-]{8,}\b/giu, "$1[REDACTED]")
+    .replace(/\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/gu, "[REDACTED]")
+    .replace(/\b(?:api[ _-]?key|secret|token|session|authorization|password|passwd)\s*[:=]\s*[^\s,;]{6,}/giu, (match) => {
+      const separator = match.search(/[:=]/u);
+      return separator >= 0 ? `${match.slice(0, separator + 1)}[REDACTED]` : "[REDACTED]";
+    })
+    .replace(/\b[a-f0-9]{40,}\b/giu, "[REDACTED]")
+    .replace(/\b[A-Za-z0-9_\-+/]{48,}={0,2}\b/gu, "[REDACTED]");
+  return { value: value.slice(0, 4_000), redacted: value !== original };
+}
+
+function isAuxiliaryFrame(frame) {
+  const rawUrl = String(frame?.url || "");
+  const haystack = `${frame?.name || ""} ${rawUrl}`.toLowerCase();
+  if (/(doubleclick|googlesyndication|googleadservices|adservice|adsystem|pagead|analytics|tagmanager|scorecardresearch|quantserve)/u.test(haystack)) {
+    return true;
+  }
+  try {
+    const parsed = new URL(rawUrl);
+    const host = parsed.hostname.toLowerCase();
+    if (host === "ogs.google.com" && /^\/(?:u\/\d+\/)?widget\/app(?:\/|$)/u.test(parsed.pathname)) return true;
+    if (host === "accounts.google.com" && parsed.pathname === "/RotateCookiesPage") return true;
+  } catch {
+    // Non-URL frame metadata falls back to the bounded name/url classifier above.
+  }
+  return false;
+}
+
+function snapshotFrameRelevance(frame, mainFrameId, pageKind) {
+  let score = frame?.id === mainFrameId ? 100 : frame?.isOopif ? 60 : 75;
+  if (frame?.parentId === mainFrameId) score += 5;
+  if (isAuxiliaryFrame(frame)) score -= 120;
+  if (pageKind === "chrome-pdf-viewer") {
+    const isViewerFrame = String(frame?.url || "").startsWith(`chrome-extension://${CHROME_PDF_VIEWER_EXTENSION_ID}/`);
+    if (isViewerFrame) score += 240;
+    else if (frame?.mimeType === "application/pdf") score += 80;
+  }
+  return score;
+}
+
+function selectSnapshotFrames(frames, {
+  mainFrameId,
+  pageKind,
+  rootTarget = null,
+  mainFrameOnly = false,
+  excludeAuxiliaryFrames = false,
+  activeLayerOnly = false,
+  frameId = null,
+} = {}) {
+  if (rootTarget) {
+    return frames.filter((frame) => (
+      frame.id === rootTarget.frameId &&
+      (frame.sessionId || null) === (rootTarget.sessionId || null)
+    ));
+  }
+  const selectorCount = [Boolean(mainFrameOnly), Boolean(activeLayerOnly), Boolean(frameId)].filter(Boolean).length;
+  if (selectorCount > 1) throw new Error("main_frame_only, active_layer_only and frame_id are mutually exclusive.");
+  let selected = [...frames];
+  if (frameId) {
+    selected = selected.filter((frame) => frame.id === String(frameId));
+    if (selected.length === 0) throw new Error(`Snapshot frame_id is unavailable: ${String(frameId)}`);
+  } else if (mainFrameOnly) {
+    selected = selected.filter((frame) => frame.id === mainFrameId);
+  } else if (activeLayerOnly) {
+    const ranked = selected
+      .map((frame) => ({ frame, score: snapshotFrameRelevance(frame, mainFrameId, pageKind) }))
+      .sort((a, b) => b.score - a.score);
+    selected = ranked.length ? [ranked[0].frame] : [];
+  }
+  if (excludeAuxiliaryFrames) selected = selected.filter((frame) => !isAuxiliaryFrame(frame));
+  return selected;
+}
+
+async function fallbackInteractiveName(tabId, frame, backendNodeId) {
+  if (!Number.isInteger(backendNodeId)) return null;
+  let objectId = null;
+  try {
+    const resolved = await send(tabId, "DOM.resolveNode", { backendNodeId }, frame.sessionId);
+    objectId = resolved?.object?.objectId || null;
+    if (!objectId) return null;
+    const result = await send(tabId, "Runtime.callFunctionOn", {
+      objectId,
+      returnByValue: true,
+      functionDeclaration: `function() {
+        const clean = (value) => String(value || "").replace(/\\s+/g, " ").trim().slice(0, 200);
+        const direct = [
+          ["aria-label", this.getAttribute && this.getAttribute("aria-label")],
+          ["title", this.getAttribute && this.getAttribute("title")],
+          ["alt", this.getAttribute && this.getAttribute("alt")],
+        ];
+        for (const [source, raw] of direct) {
+          const name = clean(raw);
+          if (name) return { name, source };
+        }
+        const labelledBy = this.getAttribute && clean(this.getAttribute("aria-labelledby"));
+        if (labelledBy) {
+          const names = labelledBy.split(/\\s+/).slice(0, 4).map((id) => clean(document.getElementById(id)?.innerText || document.getElementById(id)?.textContent)).filter(Boolean);
+          if (names.length) return { name: clean(names.join(" ")), source: "nearby_text" };
+        }
+        const candidates = [
+          this.innerText,
+          this.textContent,
+          this.closest && this.closest("label")?.innerText,
+          this.previousElementSibling?.innerText,
+          this.nextElementSibling?.innerText,
+        ];
+        for (const raw of candidates) {
+          const name = clean(raw);
+          if (name) return { name, source: "nearby_text" };
+        }
+        return null;
+      }`,
+    }, frame.sessionId);
+    const value = result?.result?.value;
+    const name = String(value?.name || "").replace(/\s+/gu, " ").trim().slice(0, 200);
+    if (!name) return null;
+    return { name, source: String(value?.source || "nearby_text").slice(0, 40) };
+  } catch {
+    return null;
+  } finally {
+    if (objectId) await send(tabId, "Runtime.releaseObject", { objectId }, frame.sessionId).catch(() => {});
+  }
+}
+
+function nearestSemanticAncestor(node, index, roles = SEMANTIC_CONTAINER_ROLES) {
+  if (node?.nodeId == null) return null;
+  let currentId = index.parentById.get(String(node.nodeId)) || null;
+  let depth = 0;
+  while (currentId && depth < 12) {
+    const ancestor = index.byId.get(currentId);
+    if (!ancestor) return null;
+    const role = normalizedIdentityText(ancestor?.role?.value, 40);
+    if (roles.has(role)) return ancestor;
+    currentId = index.parentById.get(currentId) || null;
+    depth += 1;
+  }
+  return null;
+}
+
+function coalesceReadableInlineElements(elements) {
+  const output = [];
+  for (const element of elements) {
+    const previous = output.at(-1);
+    const eligible = !element.ref && element.role === "StaticText" && element.name && String(element.name).length <= 120;
+    const previousEligible = previous && !previous.ref && previous.role === "StaticText" && previous.name && String(previous.name).length <= 220;
+    if (
+      eligible && previousEligible &&
+      element.frameId === previous.frameId &&
+      element.axParentId && element.axParentId === previous.axParentId &&
+      Number(element.axOrder) === Number(previous.axOrder) + 1 &&
+      (previous.coalescedInlineCount || 1) < 4
+    ) {
+      previous.name = `${previous.name} ${element.name}`.replace(/\s+/gu, " ").trim().slice(0, 320);
+      previous.coalescedInlineCount = (previous.coalescedInlineCount || 1) + 1;
+      previous.axOrder = element.axOrder;
+      continue;
+    }
+    output.push({ ...element });
+  }
+  return output;
+}
+
+function dedupeReadableSnapshotElements(elements) {
+  const seen = new Set();
+  return elements.filter((element) => {
+    if (element.ref) return true;
+    const key = JSON.stringify([element.frameId, element.role, element.name, element.value]);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 function normalizeSnapshotRoles(roles) {
   if (!Array.isArray(roles) || roles.length === 0) return null;
   return new Set(
@@ -1296,6 +1625,100 @@ async function backendNodeBounds(tabId, frame, backendNodeId) {
   }
 }
 
+async function elementViewportRect(tabId, sessionId, backendNodeId) {
+  if (!Number.isInteger(backendNodeId)) return null;
+  let objectId = null;
+  try {
+    const resolved = await send(tabId, "DOM.resolveNode", { backendNodeId }, sessionId);
+    objectId = resolved?.object?.objectId || null;
+    if (!objectId) return null;
+    const evaluated = await send(tabId, "Runtime.callFunctionOn", {
+      objectId,
+      functionDeclaration: `function() {
+        const __equinoxFrameRect = true;
+        if (typeof this.getBoundingClientRect !== 'function') return null;
+        const rect = this.getBoundingClientRect();
+        const width = Number(rect.width);
+        const height = Number(rect.height);
+        if (![rect.left, rect.top, rect.right, rect.bottom, width, height].every(Number.isFinite)) return null;
+        return {
+          left: Number(rect.left), top: Number(rect.top), right: Number(rect.right), bottom: Number(rect.bottom),
+          width, height, clientLeft: Number(this.clientLeft || 0), clientTop: Number(this.clientTop || 0),
+          offsetWidth: Number(this.offsetWidth || width || 1), offsetHeight: Number(this.offsetHeight || height || 1),
+        };
+      }`,
+      returnByValue: true,
+      silent: true,
+    }, sessionId);
+    return evaluated?.result?.value || null;
+  } catch {
+    return null;
+  } finally {
+    if (objectId) await send(tabId, "Runtime.releaseObject", { objectId }, sessionId).catch(() => {});
+  }
+}
+
+async function frameOwnerViewportTransform(tabId, childFrame, parentFrame) {
+  try {
+    await send(tabId, "DOM.enable", {}, parentFrame.sessionId);
+    const owner = await send(tabId, "DOM.getFrameOwner", { frameId: childFrame.id }, parentFrame.sessionId);
+    const backendNodeId = Number(owner?.backendNodeId);
+    if (!Number.isInteger(backendNodeId)) return null;
+    const rect = await elementViewportRect(tabId, parentFrame.sessionId, backendNodeId);
+    if (!rect) return null;
+    const scaleX = rect.offsetWidth > 0 ? rect.width / rect.offsetWidth : 1;
+    const scaleY = rect.offsetHeight > 0 ? rect.height / rect.offsetHeight : 1;
+    return {
+      x: rect.left + rect.clientLeft * scaleX,
+      y: rect.top + rect.clientTop * scaleY,
+      scaleX: Number.isFinite(scaleX) && scaleX > 0 ? scaleX : 1,
+      scaleY: Number.isFinite(scaleY) && scaleY > 0 ? scaleY : 1,
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function rootPageBoundsForTarget(tabId, target, frameContexts = null) {
+  const local = await elementViewportRect(tabId, target.sessionId || null, target.backendNodeId);
+  if (!local) return null;
+  let bounds = { left: local.left, top: local.top, right: local.right, bottom: local.bottom };
+  const frames = frameContexts || await collectFrameContexts(tabId);
+  let frame = frames.find((item) => (
+    item.id === target.frameId && (item.sessionId || null) === (target.sessionId || null)
+  )) || frames.find((item) => item.id === target.frameId);
+  const seen = new Set();
+  while (frame?.parentId) {
+    if (seen.has(frame.id)) return null;
+    seen.add(frame.id);
+    const parent = frames.find((item) => item.id === frame.parentId);
+    if (!parent) return null;
+    const transform = await frameOwnerViewportTransform(tabId, frame, parent);
+    if (!transform) return null;
+    bounds = {
+      left: transform.x + bounds.left * transform.scaleX,
+      top: transform.y + bounds.top * transform.scaleY,
+      right: transform.x + bounds.right * transform.scaleX,
+      bottom: transform.y + bounds.bottom * transform.scaleY,
+    };
+    frame = parent;
+  }
+  const scroll = await send(tabId, "Runtime.evaluate", {
+    expression: "({x:Number(window.scrollX||0),y:Number(window.scrollY||0)})",
+    returnByValue: true,
+    silent: true,
+  }).catch(() => null);
+  const scrollValue = scroll?.result?.value || {};
+  const scrollX = Number(scrollValue.x) || 0;
+  const scrollY = Number(scrollValue.y) || 0;
+  return {
+    left: bounds.left + scrollX,
+    top: bounds.top + scrollY,
+    right: bounds.right + scrollX,
+    bottom: bounds.bottom + scrollY,
+  };
+}
+
 function boundsIntersectViewport(bounds, viewport) {
   if (!bounds || !viewport) return false;
   return !(
@@ -1319,16 +1742,122 @@ function snapshotStateById(tabId, snapshotId) {
   return history.find((item) => item.id === snapshotId) || null;
 }
 
-function stableRefForIdentity(tabId, generation, identity) {
+function normalizedIdentityText(value, maxChars = 160) {
+  return String(value ?? "")
+    .replace(/\s+/gu, " ")
+    .trim()
+    .toLowerCase()
+    .slice(0, Math.max(1, maxChars));
+}
+
+function usefulSemanticContextText(value, targetName = "") {
+  const text = normalizedIdentityText(value, 96);
+  if (!text || text === normalizedIdentityText(targetName, 96)) return null;
+  if (/^[\d\s.,:%+()\/-]{1,24}$/u.test(text)) return null;
+  if (/^\d+\s*(?:s|m|h|d|w|mo|y|sec|secs|min|mins|hr|hrs|day|days|week|weeks|month|months|year|years)$/iu.test(text)) return null;
+  return text;
+}
+
+function usefulSemanticContextDisplayText(value, targetName = "") {
+  const display = String(value ?? "").replace(/\s+/gu, " ").trim().slice(0, 96);
+  return usefulSemanticContextText(display, targetName) ? display : null;
+}
+
+function buildAxTreeIndex(nodes) {
+  const byId = new Map();
+  const parentById = new Map();
+  for (const node of nodes || []) {
+    if (node?.nodeId == null) continue;
+    byId.set(String(node.nodeId), node);
+    if (node.parentId != null) parentById.set(String(node.nodeId), String(node.parentId));
+  }
+  for (const node of nodes || []) {
+    if (node?.nodeId == null || !Array.isArray(node.childIds)) continue;
+    const parentId = String(node.nodeId);
+    for (const childId of node.childIds) {
+      const key = String(childId);
+      if (!parentById.has(key)) parentById.set(key, parentId);
+    }
+  }
+  return { byId, parentById };
+}
+
+function boundedSemanticContainerSummary(container, index, targetNode, { maxParts = 6, maxChars = 320 } = {}) {
+  const parts = [];
+  const seen = new Set();
+  const targetId = targetNode?.nodeId == null ? null : String(targetNode.nodeId);
+  const targetName = targetNode?.name?.value || "";
+  const queue = [...(container?.childIds || [])].map(String);
+  const visited = new Set();
+  while (queue.length > 0 && parts.length < maxParts && visited.size < 80) {
+    const nodeId = queue.shift();
+    if (visited.has(nodeId)) continue;
+    visited.add(nodeId);
+    const node = index.byId.get(nodeId);
+    if (!node) continue;
+    if (nodeId !== targetId) {
+      const role = normalizedIdentityText(node?.role?.value, 40);
+      const name = usefulSemanticContextDisplayText(node?.name?.value, targetName);
+      if (name && SEMANTIC_CONTEXT_TEXT_ROLES.has(role) && !seen.has(name)) {
+        seen.add(name);
+        parts.push(name);
+      }
+    }
+    for (const childId of node.childIds || []) queue.push(String(childId));
+  }
+  if (parts.length === 0) {
+    const ownName = normalizedIdentityText(container?.name?.value, 200);
+    if (ownName) parts.push(ownName);
+  }
+  return parts.join(" | ").slice(0, maxChars);
+}
+
+function semanticContainerIdentity(node, index) {
+  if (node?.nodeId == null) return null;
+  let currentId = index.parentById.get(String(node.nodeId)) || null;
+  let depth = 0;
+  while (currentId && depth < 10) {
+    const ancestor = index.byId.get(currentId);
+    if (!ancestor) break;
+    const role = normalizedIdentityText(ancestor?.role?.value, 40);
+    if (SEMANTIC_CONTAINER_ROLES.has(role)) {
+      const summary = boundedSemanticContainerSummary(ancestor, index, node);
+      if (summary) return `${role}:${normalizedIdentityText(summary, 320)}`;
+    }
+    currentId = index.parentById.get(currentId) || null;
+    depth += 1;
+  }
+  return null;
+}
+
+function semanticInteractiveIdentity(frame, node, index, nameOverride = null) {
+  const container = semanticContainerIdentity(node, index);
+  if (!container) return null;
+  const role = normalizedIdentityText(node?.role?.value, 40);
+  const name = normalizedIdentityText(nameOverride ?? node?.name?.value, 160);
+  if (!role || !name) return null;
+  return `semantic:${frame.sessionId || "root"}:${frame.id}:${container}:${role}:${name}`;
+}
+
+function refRegistryForGeneration(tabId, generation) {
   let registry = refRegistries.get(tabId);
   if (!registry || registry.documentGeneration !== generation) {
     registry = {
       documentGeneration: generation,
       nextRefIndex: 1,
+      nextContainerRefIndex: 1,
       byIdentity: new Map(),
+      byContainerIdentity: new Map(),
     };
     refRegistries.set(tabId, registry);
   }
+  if (!Number.isInteger(registry.nextContainerRefIndex)) registry.nextContainerRefIndex = 1;
+  if (!(registry.byContainerIdentity instanceof Map)) registry.byContainerIdentity = new Map();
+  return registry;
+}
+
+function stableRefForIdentity(tabId, generation, identity) {
+  const registry = refRegistryForGeneration(tabId, generation);
   const existing = registry.byIdentity.get(identity);
   if (existing) return existing;
   const ref = `@e${registry.nextRefIndex++}`;
@@ -1341,8 +1870,28 @@ function stableRefForIdentity(tabId, generation, identity) {
   return ref;
 }
 
+function stableContainerRefForIdentity(tabId, generation, identity) {
+  const registry = refRegistryForGeneration(tabId, generation);
+  const existing = registry.byContainerIdentity.get(identity);
+  if (existing) return existing;
+  const ref = `@c${registry.nextContainerRefIndex++}`;
+  registry.byContainerIdentity.set(identity, ref);
+  while (registry.byContainerIdentity.size > MAX_REF_REGISTRY_ENTRIES) {
+    const oldest = registry.byContainerIdentity.keys().next().value;
+    if (oldest == null) break;
+    registry.byContainerIdentity.delete(oldest);
+  }
+  return ref;
+}
+
 function publicSnapshotElement(element) {
-  const { backendNodeId: _backendNodeId, identity: _identity, ...publicElement } = element;
+  const {
+    backendNodeId: _backendNodeId,
+    identity: _identity,
+    axParentId: _axParentId,
+    axOrder: _axOrder,
+    ...publicElement
+  } = element;
   return publicElement;
 }
 
@@ -1359,11 +1908,39 @@ function snapshotFilterSignature(filters) {
     rootRef: filters?.rootRef || null,
     roles: Array.isArray(filters?.roles) ? [...filters.roles].sort() : null,
     query: filters?.query || null,
+    mainFrameOnly: Boolean(filters?.mainFrameOnly),
+    excludeAuxiliaryFrames: Boolean(filters?.excludeAuxiliaryFrames),
+    activeLayerOnly: Boolean(filters?.activeLayerOnly),
+    frameId: filters?.frameId || null,
+    pruneUnnamedRefs: Boolean(filters?.pruneUnnamedRefs),
+    sensitiveText: filters?.sensitiveText === "redact" ? "redact" : "allow",
   });
 }
 
-function buildSnapshotDelta(base, currentElements, snapshotId) {
+function buildSnapshotDelta(base, currentElements, snapshotId, currentDocumentGeneration) {
   const baseElements = Array.isArray(base?.elements) ? base.elements : [];
+  const resetDelta = (reason, details = {}) => ({
+    version: DELTA_SNAPSHOT_VERSION,
+    baseSnapshotId: base?.id || null,
+    snapshotId,
+    deltaMode: "reset",
+    reset: true,
+    reason,
+    fullReplacement: true,
+    added: [],
+    removed: [],
+    changed: [],
+    retainedRefs: [],
+    retainedCount: 0,
+    retentionRatio: 0,
+    ...details,
+  });
+  if (Number.isInteger(base?.documentGeneration) && base.documentGeneration !== currentDocumentGeneration) {
+    return resetDelta("document_generation_changed", {
+      baseDocumentGeneration: base.documentGeneration,
+      documentGeneration: currentDocumentGeneration,
+    });
+  }
   const baseByIdentity = new Map(baseElements.map((element) => [element.identity, element]));
   const currentByIdentity = new Map(currentElements.map((element) => [element.identity, element]));
   const added = [];
@@ -1397,15 +1974,68 @@ function buildSnapshotDelta(base, currentElements, snapshotId) {
     });
   }
 
+  const baseRefCount = baseElements.filter((element) => Boolean(element.ref)).length;
+  const currentRefCount = currentElements.filter((element) => Boolean(element.ref)).length;
+  const comparableRefCount = Math.min(baseRefCount, currentRefCount);
+  const retentionRatio = comparableRefCount > 0 ? retainedRefs.length / comparableRefCount : 1;
+  if (comparableRefCount > 0 && (retainedRefs.length === 0 || (comparableRefCount >= 8 && retentionRatio < 0.1))) {
+    return resetDelta("low_ref_retention", {
+      baseRefCount,
+      currentRefCount,
+      comparableRefCount,
+      retentionRatio,
+    });
+  }
   return {
     version: DELTA_SNAPSHOT_VERSION,
     baseSnapshotId: base.id,
     snapshotId,
+    deltaMode: "incremental",
+    reset: false,
+    fullReplacement: false,
     added,
     removed,
     changed,
     retainedRefs,
     retainedCount: retainedRefs.length,
+    retentionRatio,
+  };
+}
+
+async function semanticProjectionState(tabId, { query = "", roles = null, minNodes = 1 } = {}) {
+  const queryNeedle = String(query || "").trim().toLowerCase();
+  const roleFilter = Array.isArray(roles) && roles.length
+    ? new Set(roles.map((role) => String(role).trim().toLowerCase()).filter(Boolean))
+    : null;
+  const minimum = Math.max(1, Math.min(Math.floor(Number(minNodes) || 1), MAX_SNAPSHOT_ELEMENTS));
+  const frames = await collectFrameContexts(tabId);
+  const semanticRows = [];
+  for (const frame of frames) {
+    let tree;
+    try {
+      tree = await frameAccessibilityTree(tabId, frame);
+    } catch {
+      continue;
+    }
+    for (const node of tree?.nodes || []) {
+      if (node?.ignored) continue;
+      const role = String(node?.role?.value || "");
+      const name = String(node?.name?.value || "");
+      const value = node?.value?.value == null ? "" : String(node.value.value);
+      const meaningful = INTERACTIVE_ROLES.has(role) || (READABLE_ROLES.has(role) && Boolean(name));
+      if (!meaningful) continue;
+      if (roleFilter && !roleFilter.has(role.toLowerCase())) continue;
+      if (queryNeedle && ![role, name, value].some((part) => part.toLowerCase().includes(queryNeedle))) continue;
+      semanticRows.push(`${frame.id}|${role}|${name}|${value}`);
+      if (semanticRows.length >= MAX_SNAPSHOT_ELEMENTS) break;
+    }
+    if (semanticRows.length >= MAX_SNAPSHOT_ELEMENTS) break;
+  }
+  return {
+    nodeCount: semanticRows.length,
+    minNodes: minimum,
+    matched: semanticRows.length >= minimum,
+    signature: JSON.stringify(semanticRows),
   };
 }
 
@@ -1522,6 +2152,7 @@ function formatSnapshotLine(element) {
   if (element.disabled === true) parts.push("[disabled]");
   if (element.checked != null) parts.push(`[checked=${element.checked}]`);
   if (element.selected != null) parts.push(`[selected=${element.selected}]`);
+  if (element.pressed != null) parts.push(`[pressed=${element.pressed}]`);
   if (element.frameId) parts.push(`[frame=${element.frameId}]`);
   return parts.join(" ");
 }
@@ -1538,6 +2169,93 @@ function pageKindFromFrames(basePolicy, frames) {
     return "browser-owned-error";
   }
   return basePolicy?.kind || "unknown";
+}
+
+async function browserPdfData({ tabId } = {}) {
+  const tab = await chooseTab(tabId);
+  const policy = classifyBrowserPage(tab);
+  if (!policy.debuggerSupported) throw new Error("PDF data is unavailable on this browser-owned page.");
+  await requireDebuggableTab(tab.id);
+  await attachTab(tab.id);
+  try {
+    const frames = await collectFrameContexts(tab.id);
+    const pageKind = pageKindFromFrames(policy, frames);
+    if (pageKind !== "chrome-pdf-viewer") throw new Error("The selected tab is not a Chrome PDF Viewer document.");
+    const viewerFrame = frames.find((frame) => (
+      frame?.sessionId &&
+      String(frame?.url || "").startsWith(`chrome-extension://${CHROME_PDF_VIEWER_EXTENSION_ID}/`)
+    ));
+    if (!viewerFrame) throw new Error("Chrome PDF Viewer frame is unavailable.");
+    const evaluated = await send(tab.id, "Runtime.evaluate", {
+      awaitPromise: true,
+      returnByValue: true,
+      expression: `(async () => {
+        const maxBytes = ${MAX_PDF_DOCUMENT_BYTES};
+        const viewer = globalThis.viewer || document.getElementById('viewer') || document.querySelector('pdf-viewer');
+        const controller = viewer && (viewer.pluginController_ || viewer.pluginController);
+        if (!controller || typeof controller.getSaveDataBlock !== 'function') {
+          return { unavailable: true, reason: 'plugin_controller_unavailable' };
+        }
+        const chunks = [];
+        let totalFileSize = null;
+        let offset = 0;
+        let requests = 0;
+        while (totalFileSize === null || offset < totalFileSize) {
+          if (++requests > 8) return { unavailable: true, reason: 'pdf_block_limit_exceeded' };
+          const blockSize = totalFileSize === null ? 0 : Math.min(totalFileSize - offset, 4 * 1024 * 1024);
+          const result = await controller.getSaveDataBlock('ORIGINAL', offset, blockSize);
+          const reportedTotal = Number(result && result.totalFileSize);
+          if (!Number.isInteger(reportedTotal) || reportedTotal < 5) {
+            return { unavailable: true, reason: 'pdf_total_size_invalid' };
+          }
+          if (reportedTotal > maxBytes) return { tooLarge: true, byteLength: reportedTotal };
+          if (totalFileSize === null) totalFileSize = reportedTotal;
+          else if (reportedTotal !== totalFileSize) return { unavailable: true, reason: 'pdf_total_size_changed' };
+          const block = result && result.dataToSave;
+          let bytes = null;
+          if (block instanceof ArrayBuffer) bytes = new Uint8Array(block);
+          else if (ArrayBuffer.isView(block)) bytes = new Uint8Array(block.buffer, block.byteOffset, block.byteLength);
+          if (!bytes || bytes.byteLength === 0 || offset + bytes.byteLength > totalFileSize) {
+            return { unavailable: true, reason: 'pdf_bytes_unavailable' };
+          }
+          chunks.push(bytes);
+          offset += bytes.byteLength;
+        }
+        if (offset !== totalFileSize) return { unavailable: true, reason: 'pdf_size_mismatch' };
+        const bytes = new Uint8Array(totalFileSize);
+        let writeOffset = 0;
+        for (const chunk of chunks) {
+          bytes.set(chunk, writeOffset);
+          writeOffset += chunk.byteLength;
+        }
+        let binary = '';
+        const encodeChunkSize = 0x8000;
+        for (let index = 0; index < bytes.byteLength; index += encodeChunkSize) {
+          binary += String.fromCharCode(...bytes.subarray(index, Math.min(bytes.byteLength, index + encodeChunkSize)));
+        }
+        return { byteLength: bytes.byteLength, blockCount: requests, data: btoa(binary) };
+      })()`,
+    }, viewerFrame.sessionId);
+    const value = evaluated?.result?.value;
+    if (value?.tooLarge) {
+      throw new Error(`PDF exceeds the ${MAX_PDF_DOCUMENT_BYTES / 1024 / 1024} MB readable-content limit.`);
+    }
+    if (value?.unavailable || !Number.isInteger(value?.byteLength) || typeof value?.data !== "string") {
+      throw new Error(`Chrome PDF Viewer did not expose readable document bytes${value?.reason ? `: ${value.reason}` : "."}`);
+    }
+    if (value.byteLength < 5 || value.byteLength > MAX_PDF_DOCUMENT_BYTES) {
+      throw new Error(`PDF exceeds the ${MAX_PDF_DOCUMENT_BYTES / 1024 / 1024} MB readable-content limit.`);
+    }
+    return {
+      pdfContentVersion: PDF_CONTENT_VERSION,
+      tabId: tab.id,
+      byteLength: value.byteLength,
+      source: "chrome_pdf_viewer_save_data",
+      data: value.data,
+    };
+  } finally {
+    scheduleDetach(tab.id);
+  }
 }
 
 function normalizeSnapshotOutput(output) {
@@ -1561,10 +2279,17 @@ function projectSnapshotOutput(response, output) {
     ...(response.reason ? { reason: response.reason } : {}),
     ...(response.snapshot ? { snapshot: response.snapshot } : {}),
     ...(Number.isInteger(response.refCount) ? { refCount: response.refCount } : {}),
+    ...(Number.isInteger(response.containerRefCount) ? { containerRefCount: response.containerRefCount } : {}),
+    ...(response.privacy ? { privacy: response.privacy } : {}),
     ...(Number.isInteger(response.elementCount) ? { elementCount: response.elementCount } : {}),
     ...(Number.isInteger(response.returnedElementCount) ? { returnedElementCount: response.returnedElementCount } : {}),
     ...(typeof response.truncated === "boolean" ? { truncated: response.truncated } : {}),
     ...(typeof response.deltaOnly === "boolean" ? { deltaOnly: response.deltaOnly } : {}),
+    ...(Object.hasOwn(response, "currentSnapshotId") ? { currentSnapshotId: response.currentSnapshotId } : {}),
+    ...(typeof response.refContextValid === "boolean" ? { refContextValid: response.refContextValid } : {}),
+    ...(typeof response.freshSnapshotRequired === "boolean" ? { freshSnapshotRequired: response.freshSnapshotRequired } : {}),
+    ...(response.refContextReason ? { refContextReason: response.refContextReason } : {}),
+    ...(Number.isInteger(response.currentDocumentGeneration) ? { currentDocumentGeneration: response.currentDocumentGeneration } : {}),
     outputMode: mode,
   };
   if (mode === "compact") {
@@ -1580,6 +2305,8 @@ function projectSnapshotOutput(response, output) {
       debuggerSupported: response.debuggerSupported,
       ...(response.reason ? { reason: response.reason } : {}),
       ...(response.snapshot ? { snapshot: response.snapshot } : {}),
+      ...(response.privacy ? { privacy: response.privacy } : {}),
+      ...(Number.isInteger(response.containerRefCount) ? { containerRefCount: response.containerRefCount } : {}),
       outputMode: mode,
       text: response.text || "",
     };
@@ -1619,18 +2346,32 @@ async function browserSnapshot({
   rootRef,
   roles,
   query,
+  mainFrameOnly = false,
+  excludeAuxiliaryFrames = false,
+  activeLayerOnly = false,
+  frameId,
+  pruneUnnamedRefs = false,
+  sensitiveText = "allow",
   sinceSnapshotId,
   output = "both",
 } = {}) {
   const snapshotMode = normalizeSnapshotMode(mode, includeReadable);
   const snapshotScope = normalizeSnapshotScope(scope);
   const snapshotOutput = normalizeSnapshotOutput(output);
+  const sensitiveTextMode = String(sensitiveText || "allow").toLowerCase();
+  if (!new Set(["allow", "redact"]).has(sensitiveTextMode)) {
+    throw new Error("sensitiveText must be allow or redact.");
+  }
+  const privacyRedactionEnabled = sensitiveTextMode === "redact";
   const requestedMaxNodes = Math.max(1, Math.min(
     Number.isFinite(Number(maxNodes)) ? Math.floor(Number(maxNodes)) : MAX_SNAPSHOT_ELEMENTS,
     MAX_SNAPSHOT_ELEMENTS,
   ));
   const roleFilter = normalizeSnapshotRoles(roles);
   const queryNeedle = String(query || "").trim().toLowerCase();
+  if (rootRef && (mainFrameOnly || activeLayerOnly || frameId)) {
+    throw new Error("root_ref cannot be combined with main_frame_only, active_layer_only or frame_id.");
+  }
   const filters = {
     mode: snapshotMode,
     scope: snapshotScope,
@@ -1638,8 +2379,15 @@ async function browserSnapshot({
     rootRef: rootRef || null,
     roles: roleFilter ? [...roleFilter].sort() : null,
     query: queryNeedle || null,
+    mainFrameOnly: Boolean(mainFrameOnly),
+    excludeAuxiliaryFrames: Boolean(excludeAuxiliaryFrames),
+    activeLayerOnly: Boolean(activeLayerOnly),
+    frameId: frameId ? String(frameId) : null,
+    pruneUnnamedRefs: Boolean(pruneUnnamedRefs),
+    sensitiveText: sensitiveTextMode,
   };
   const tab = await chooseTab(tabId);
+  const sourceContext = rootRef ? captureRefContextSource(tab.id) : null;
   const baseSnapshot = sinceSnapshotId
     ? snapshotStateById(tab.id, String(sinceSnapshotId))
     : null;
@@ -1660,7 +2408,7 @@ async function browserSnapshot({
     }
     throw error;
   }
-  const rootTarget = rootRef ? lookupRef(tab.id, String(rootRef)) : null;
+  const rootTarget = rootRef ? lookupScopeRef(tab.id, String(rootRef)) : null;
   const frames = await collectFrameContexts(tab.id);
   const pageKind = pageKindFromFrames(policy, frames);
   if (pageKind === "browser-owned-error") {
@@ -1669,14 +2417,24 @@ async function browserSnapshot({
   }
   const generation = currentDocumentGeneration(tab.id);
   const mainFrameId = frames.find((frame) => !frame.parentId && !frame.sessionId)?.id || frames[0]?.id || null;
-  const selectedFrames = rootTarget
-    ? frames.filter((frame) => frame.id === rootTarget.frameId && (frame.sessionId || null) === (rootTarget.sessionId || null))
-    : frames;
+  const selectedFrames = selectSnapshotFrames(frames, {
+    mainFrameId,
+    pageKind,
+    rootTarget,
+    mainFrameOnly,
+    excludeAuxiliaryFrames,
+    activeLayerOnly,
+    frameId,
+  });
   if (rootTarget && selectedFrames.length !== 1) {
     throw new Error(`Snapshot root ref frame is unavailable: ${String(rootRef)}`);
   }
+  const selectedFrameIds = new Set(selectedFrames.map((frame) => frame.id));
   const refs = new Map();
+  const scopeRefs = new Map();
   const elements = [];
+  const broadMailSnapshot = privacyRedactionEnabled && isMailSurfaceUrl(tab.url) && !rootRef && !queryNeedle && !roleFilter && !frameId;
+  let sensitiveRedactionCount = 0;
   let truncated = false;
 
   for (const frame of selectedFrames) {
@@ -1695,73 +2453,126 @@ async function browserSnapshot({
     }
     const viewport = snapshotScope === "viewport" ? await frameViewport(tab.id, frame) : null;
     const nodes = tree?.nodes || [];
+    const axIndex = buildAxTreeIndex(nodes);
+    const fallbackNames = new Map();
+    for (let candidateIndex = 0; candidateIndex < nodes.length; candidateIndex += 1) {
+      const candidateNode = nodes[candidateIndex];
+      const candidateRole = candidateNode?.role?.value || "";
+      if (!INTERACTIVE_ROLES.has(candidateRole) || !Number.isInteger(candidateNode?.backendDOMNodeId)) continue;
+      if (String(candidateNode?.name?.value || "").trim()) continue;
+      const fallback = await fallbackInteractiveName(tab.id, frame, candidateNode.backendDOMNodeId);
+      if (fallback?.name) fallbackNames.set(candidateIndex, fallback);
+    }
+
+    const semanticIdentityCounts = new Map();
+    const containerIdentityCounts = new Map();
+    for (let candidateIndex = 0; candidateIndex < nodes.length; candidateIndex += 1) {
+      const candidateNode = nodes[candidateIndex];
+      const candidateRole = candidateNode?.role?.value || "";
+      const candidateBackendId = candidateNode?.backendDOMNodeId;
+      if (INTERACTIVE_ROLES.has(candidateRole) && Number.isInteger(candidateBackendId)) {
+        const candidateName = fallbackNames.get(candidateIndex)?.name ?? candidateNode?.name?.value ?? "";
+        const candidateIdentity = semanticInteractiveIdentity(frame, candidateNode, axIndex, candidateName);
+        if (candidateIdentity) semanticIdentityCounts.set(candidateIdentity, (semanticIdentityCounts.get(candidateIdentity) || 0) + 1);
+      }
+      const normalizedRole = normalizedIdentityText(candidateRole, 40);
+      if (SEMANTIC_CONTAINER_ROLES.has(normalizedRole) && Number.isInteger(candidateBackendId)) {
+        const summary = boundedSemanticContainerSummary(candidateNode, axIndex, null,
+          broadMailSnapshot && normalizedRole === "row" ? { maxParts: 2, maxChars: 220 } : { maxParts: 4, maxChars: 260 });
+        if (summary) {
+          const identity = `container:${frame.sessionId || "root"}:${frame.id}:${normalizedRole}:${normalizedIdentityText(summary, 260)}`;
+          containerIdentityCounts.set(identity, (containerIdentityCounts.get(identity) || 0) + 1);
+        }
+      }
+    }
+
     for (let nodeIndex = 0; nodeIndex < nodes.length; nodeIndex += 1) {
       const node = nodes[nodeIndex];
       if (node?.ignored) continue;
       const role = node?.role?.value || "";
-      const name = node?.name?.value || "";
-      const value = node?.value?.value ?? null;
+      const normalizedRole = normalizedIdentityText(role, 40);
       const backendNodeId = node?.backendDOMNodeId;
       const interactive = INTERACTIVE_ROLES.has(role) && Number.isInteger(backendNodeId);
-      const readable = READABLE_ROLES.has(role) && Boolean(name);
-      const modeMatched = (
-        (snapshotMode !== "readable" && interactive) ||
-        (snapshotMode !== "interactive" && readable)
-      );
+      const container = SEMANTIC_CONTAINER_ROLES.has(normalizedRole) && Number.isInteger(backendNodeId);
+      const fallback = interactive ? fallbackNames.get(nodeIndex) : null;
+      let rawName = String(fallback?.name ?? node?.name?.value ?? "");
+      const rawValue = node?.value?.value ?? null;
+      const readable = READABLE_ROLES.has(role) && Boolean(rawName);
+      const mailRowAncestor = broadMailSnapshot && !container ? nearestSemanticAncestor(node, axIndex, new Set(["row"])) : null;
+      if (mailRowAncestor && readable && !interactive) continue;
+      if (broadMailSnapshot && interactive && mailRowAncestor && rawName.length > 80) {
+        const compact = rawName.split(/[,|–—]/u).map((part) => part.trim()).find(Boolean);
+        rawName = (compact || rawName).slice(0, 80);
+      }
+
+      const containerName = container ? boundedSemanticContainerSummary(node, axIndex, null,
+        broadMailSnapshot && normalizedRole === "row" ? { maxParts: 2, maxChars: 220 } : { maxParts: 4, maxChars: 260 }) : "";
+      const effectiveRawName = container ? containerName : rawName;
+      const containerMatched = container && Boolean(containerName);
+      const modeMatched = containerMatched || (snapshotMode !== "readable" && interactive) || (snapshotMode !== "interactive" && readable);
       if (!modeMatched) continue;
+      if (interactive && pruneUnnamedRefs && !effectiveRawName.trim()) continue;
       if (roleFilter && !roleFilter.has(String(role).toLowerCase())) continue;
       if (queryNeedle) {
-        const haystack = [role, name, value]
-          .filter((part) => part != null)
-          .map((part) => String(part).toLowerCase());
+        const haystack = [role, effectiveRawName, rawValue].filter((part) => part != null).map((part) => String(part).toLowerCase());
         if (!haystack.some((part) => part.includes(queryNeedle))) continue;
       }
       if (snapshotScope === "viewport") {
         const bounds = await backendNodeBounds(tab.id, frame, backendNodeId);
         if (!boundsIntersectViewport(bounds, viewport)) continue;
       }
-      if (elements.length >= requestedMaxNodes) {
-        truncated = true;
-        break;
+      if (elements.length >= requestedMaxNodes) { truncated = true; break; }
+
+      const safeName = privacyRedactionEnabled
+        ? redactSensitiveSnapshotText(effectiveRawName)
+        : { value: effectiveRawName, redacted: false };
+      const safeValue = privacyRedactionEnabled
+        ? redactSensitiveSnapshotText(rawValue)
+        : { value: rawValue, redacted: false };
+      if (safeName.redacted) sensitiveRedactionCount += 1;
+      if (safeValue.redacted) sensitiveRedactionCount += 1;
+      const name = safeName.value || "";
+      const value = safeValue.value;
+      let identityWithinDocument;
+      if (containerMatched) {
+        const semanticContainerIdentity = `container:${frame.sessionId || "root"}:${frame.id}:${normalizedRole}:${normalizedIdentityText(containerName, 260)}`;
+        identityWithinDocument = containerIdentityCounts.get(semanticContainerIdentity) === 1
+          ? semanticContainerIdentity : `container-dom:${frame.sessionId || "root"}:${frame.id}:${backendNodeId}`;
+      } else if (interactive) {
+        const semanticIdentity = semanticInteractiveIdentity(frame, node, axIndex, effectiveRawName);
+        identityWithinDocument = semanticIdentity && semanticIdentityCounts.get(semanticIdentity) === 1
+          ? semanticIdentity : `dom:${frame.sessionId || "root"}:${frame.id}:${backendNodeId}`;
+      } else {
+        identityWithinDocument = `ax:${frame.sessionId || "root"}:${frame.id}:${node?.nodeId || `${nodeIndex}:${role}:${name}:${String(value ?? "")}`}`;
       }
 
-      const identityWithinDocument = interactive
-        ? `dom:${frame.sessionId || "root"}:${frame.id}:${backendNodeId}`
-        : `ax:${frame.sessionId || "root"}:${frame.id}:${node?.nodeId || `${nodeIndex}:${role}:${name}:${String(value ?? "")}`}`;
       const element = {
-        identity: `${generation}:${identityWithinDocument}`,
-        ref: null,
-        role,
-        name,
-        value,
-        frameId: frame.id,
-        frameProcess: frame.isOopif ? "oopif" : "same-process",
-        disabled: axProperty(node, "disabled"),
-        checked: axProperty(node, "checked"),
-        selected: axProperty(node, "selected"),
-        expanded: axProperty(node, "expanded"),
-        required: axProperty(node, "required"),
-        focusable: axProperty(node, "focusable"),
-        backendNodeId: interactive ? backendNodeId : null,
+        identity: `${generation}:${identityWithinDocument}`, ref: null, role, name, value,
+        frameId: frame.id, frameProcess: frame.isOopif ? "oopif" : "same-process",
+        disabled: axProperty(node, "disabled"), checked: axProperty(node, "checked"), selected: axProperty(node, "selected"),
+        pressed: axProperty(node, "pressed"), expanded: axProperty(node, "expanded"), required: axProperty(node, "required"), focusable: axProperty(node, "focusable"),
+        backendNodeId: interactive || containerMatched ? backendNodeId : null,
+        axParentId: node?.parentId == null ? null : String(node.parentId), axOrder: nodeIndex,
+        ...(fallback?.source ? { nameSource: fallback.source } : {}),
+        ...(containerMatched ? { scopeRef: true, interactive: false } : {}),
+        ...(safeName.redacted || safeValue.redacted ? { sensitiveTextRedacted: true } : {}),
+        ...(broadMailSnapshot && normalizedRole === "row" && containerMatched ? { privacyMode: "mail_summary" } : {}),
       };
-      if (interactive) {
+      if (containerMatched) {
+        element.ref = stableContainerRefForIdentity(tab.id, generation, identityWithinDocument);
+        scopeRefs.set(element.ref, { backendNodeId, role, name, frameId: frame.id, value, sessionId: frame.sessionId,
+          targetId: frame.targetId, documentGeneration: generation, kind: "container" });
+      } else if (interactive) {
         element.ref = stableRefForIdentity(tab.id, generation, identityWithinDocument);
-        refs.set(element.ref, {
-          backendNodeId,
-          role,
-          name,
-          frameId: frame.id,
-          value,
-          sessionId: frame.sessionId,
-          targetId: frame.targetId,
-          documentGeneration: generation,
-        });
+        refs.set(element.ref, { backendNodeId, role, name, frameId: frame.id, value, sessionId: frame.sessionId,
+          targetId: frame.targetId, documentGeneration: generation, kind: "interactive" });
       }
       elements.push(element);
     }
     if (truncated) break;
   }
 
+  const normalizedElements = dedupeReadableSnapshotElements(coalesceReadableInlineElements(elements));
   const snapshotId = `${tab.id}:${generation}:${Date.now()}`;
   const mutationCounter = await domMutationCounter(tab.id).catch(() => null);
   refStates.set(tab.id, {
@@ -1770,9 +2581,10 @@ async function browserSnapshot({
     documentGeneration: generation,
     url: tab.url,
     refs,
+    scopeRefs,
   });
-  const historyElements = elements.map((element) => ({ ...element }));
-  const delta = baseSnapshot ? buildSnapshotDelta(baseSnapshot, historyElements, snapshotId) : null;
+  const historyElements = normalizedElements.map((element) => ({ ...element }));
+  const delta = baseSnapshot ? buildSnapshotDelta(baseSnapshot, historyElements, snapshotId, generation) : null;
   rememberSnapshotState(tab.id, {
     id: snapshotId,
     createdAt: Date.now(),
@@ -1782,23 +2594,35 @@ async function browserSnapshot({
     filters,
     elements: historyElements,
   });
+  if (delta?.reset) refStates.delete(tab.id);
   scheduleDetach(tab.id);
 
-  const publicElements = elements.map(publicSnapshotElement);
+  const publicElements = normalizedElements.map(publicSnapshotElement);
   const returnedElements = delta
-    ? [...delta.added, ...delta.changed.map((item) => item.after)]
+    ? (delta.reset ? [] : [...delta.added, ...delta.changed.map((item) => item.after)])
     : publicElements;
   const responseText = delta
-    ? [
-        ...delta.added.map((item) => `+ ${formatSnapshotLine(item)}`),
-        ...delta.changed.map((item) => `~ ${formatSnapshotLine(item.after)}`),
-        ...delta.removed.map((item) => `- ${formatSnapshotLine({ ...item, ref: item.previousRef || null })}`),
-      ].join("\n")
+    ? (delta.reset
+      ? `Δ reset: ${delta.reason}; take a fresh full snapshot`
+      : [
+          ...delta.added.map((item) => `+ ${formatSnapshotLine(item)}`),
+          ...delta.changed.map((item) => `~ ${formatSnapshotLine(item.after)}`),
+          ...delta.removed.map((item) => `- ${formatSnapshotLine({ ...item, ref: item.previousRef || null })}`),
+        ].join("\n"))
     : publicElements.map(formatSnapshotLine).join("\n");
 
   const response = {
     tab: { id: tab.id, windowId: tab.windowId, title: tab.title, url: tab.url, active: tab.active },
     snapshotVersion: SNAPSHOT_VERSION,
+    ...(rootRef
+      ? refOperationMetadata(tab.id, sourceContext, {
+          validReason: "root_snapshot_created",
+          invalidReason: delta?.reset ? `delta_reset:${delta.reason}` : "no_active_snapshot",
+        })
+      : refContextMetadata(tab.id, {
+          validReason: "snapshot_created",
+          invalidReason: delta?.reset ? `delta_reset:${delta.reason}` : "no_active_snapshot",
+        })),
     deltaVersion: DELTA_SNAPSHOT_VERSION,
     restricted: false,
     pageKind,
@@ -1811,9 +2635,21 @@ async function browserSnapshot({
       mutationCounter,
       filters,
     },
-    frames: frames.map((frame) => publicFrameContext(frame, mainFrameId)),
+    privacy: {
+      sensitiveTextMode,
+      sensitiveTextRedaction: privacyRedactionEnabled,
+      sensitiveRedactionCount,
+      broadMailSummary: broadMailSnapshot,
+    },
+    frames: frames.map((frame) => ({
+      ...publicFrameContext(frame, mainFrameId),
+      relevanceScore: snapshotFrameRelevance(frame, mainFrameId, pageKind),
+      auxiliary: isAuxiliaryFrame(frame),
+      selected: selectedFrameIds.has(frame.id),
+    })),
     refCount: refs.size,
-    elementCount: elements.length,
+    containerRefCount: scopeRefs.size,
+    elementCount: normalizedElements.length,
     returnedElementCount: returnedElements.length,
     truncated,
     deltaOnly: Boolean(delta),
@@ -1882,22 +2718,30 @@ async function buildScreenshotAnnotations(tabId, captureClip) {
     height: captureClip.height,
   };
   const labels = [];
+  const mappedOopifRefs = [];
   const skippedOopifRefs = [];
   const skippedOverlapRefs = [];
   const occupied = [];
-  let intersectingRootRefs = 0;
+  let intersectingRefs = 0;
+  const hasOopifRefs = [...state.refs.values()].some((target) => Boolean(target.sessionId));
+  const frameContexts = hasOopifRefs ? await collectFrameContexts(tabId) : null;
   for (const [ref, target] of state.refs.entries()) {
+    const bounds = target.sessionId
+      ? await rootPageBoundsForTarget(tabId, target, frameContexts)
+      : await backendNodeBounds(
+          tabId,
+          { id: target.frameId, sessionId: null },
+          target.backendNodeId,
+        );
     if (target.sessionId) {
-      skippedOopifRefs.push(ref);
-      continue;
+      if (!bounds) {
+        skippedOopifRefs.push(ref);
+        continue;
+      }
+      mappedOopifRefs.push(ref);
     }
-    const bounds = await backendNodeBounds(
-      tabId,
-      { id: target.frameId, sessionId: null },
-      target.backendNodeId,
-    );
     if (!bounds || !boundsIntersectViewport(bounds, viewport)) continue;
-    intersectingRootRefs += 1;
+    intersectingRefs += 1;
     if (labels.length >= MAX_SCREENSHOT_ANNOTATIONS) continue;
     const placed = placeScreenshotAnnotation(
       ref,
@@ -1911,9 +2755,10 @@ async function buildScreenshotAnnotations(tabId, captureClip) {
   }
   return {
     labels,
+    mappedOopifRefs,
     skippedOopifRefs,
     skippedOverlapRefs,
-    truncated: intersectingRootRefs > labels.length,
+    truncated: intersectingRefs > labels.length,
   };
 }
 
@@ -1979,6 +2824,7 @@ async function browserScreenshot({
   }
 
   const tab = await chooseTab(tabId);
+  const sourceContext = ref ? captureRefContextSource(tab.id) : null;
   await requireDebuggableTab(tab.id);
   await attachTab(tab.id);
   await send(tab.id, "Page.bringToFront");
@@ -2002,18 +2848,15 @@ async function browserScreenshot({
   let sourceRef = null;
   let sourceClip = null;
   if (ref) {
-    const target = lookupRef(tab.id, String(ref));
-    if (target.sessionId) {
-      throw new Error(
-        `Ref screenshot for out-of-process iframe targets is not supported safely yet: ${String(ref)}. Use a page clip instead.`,
-      );
-    }
-    const bounds = await backendNodeBounds(
-      tab.id,
-      { id: target.frameId, sessionId: target.sessionId || null },
-      target.backendNodeId,
-    );
-    if (!bounds) throw new Error(`Element has no capturable box: ${String(ref)}`);
+    const target = lookupScopeRef(tab.id, String(ref));
+    const bounds = target.sessionId
+      ? await rootPageBoundsForTarget(tab.id, target)
+      : await backendNodeBounds(
+          tab.id,
+          { id: target.frameId, sessionId: null },
+          target.backendNodeId,
+        );
+    if (!bounds) throw new Error(`Element has no safely mappable capturable box: ${String(ref)}`);
     sourceKind = "ref";
     sourceRef = String(ref);
     sourceClip = {
@@ -2085,12 +2928,13 @@ async function browserScreenshot({
     );
   }
 
-  scheduleDetach(tab.id, 5_000);
+  scheduleDetach(tab.id);
   return {
     tab: { id: tab.id, windowId: tab.windowId, title: tab.title, url: tab.url, active: tab.active },
     screenshotVersion: SCREENSHOT_VERSION,
     source: sourceKind,
     ref: sourceRef,
+    ...(sourceRef ? refOperationMetadata(tab.id, sourceContext, { validReason: "ref_screenshot_captured" }) : {}),
     clip: {
       x: captureClip.x,
       y: captureClip.y,
@@ -2100,6 +2944,7 @@ async function browserScreenshot({
     annotations: {
       requested: Boolean(annotateRefs),
       annotatedRefs: annotationData?.labels?.map((item) => item.ref) || [],
+      mappedOopifRefs: annotationData?.mappedOopifRefs || [],
       skippedOopifRefs: annotationData?.skippedOopifRefs || [],
       skippedOverlapRefs: annotationData?.skippedOverlapRefs || [],
       truncated: Boolean(annotationData?.truncated),
@@ -2258,6 +3103,27 @@ function lookupRef(tabId, ref) {
   return item;
 }
 
+function lookupScopeRef(tabId, ref) {
+  const state = refStates.get(tabId);
+  if (!state) throw new Error("No active snapshot refs for this tab. Take a new snapshot first.");
+  const generation = currentDocumentGeneration(tabId);
+  if (state.documentGeneration !== generation) {
+    refStates.delete(tabId);
+    throw new Error(`Snapshot ref is stale after document/frame navigation: ${ref}`);
+  }
+  const item = state.refs.get(ref) || state.scopeRefs?.get(ref);
+  if (!item) throw new Error(`Snapshot scope ref not found: ${ref}`);
+  if (item.documentGeneration !== generation) {
+    refStates.delete(tabId);
+    throw new Error(`Snapshot ref is stale after document/frame navigation: ${ref}`);
+  }
+  if (item.sessionId && !attachedTabs.get(tabId)?.sessions?.has(item.sessionId)) {
+    refStates.delete(tabId);
+    throw new Error(`Snapshot ref belongs to a detached frame/session: ${ref}`);
+  }
+  return item;
+}
+
 function quadCenter(quad) {
   const xs = [quad[0], quad[2], quad[4], quad[6]];
   const ys = [quad[1], quad[3], quad[5], quad[7]];
@@ -2329,7 +3195,7 @@ async function verifiedClickablePoint(tabId, target, quad, ref) {
         };
         for (const point of candidates) {
           const hit = document.elementFromPoint(point.x, point.y);
-          if (hit && composedContains(this, hit)) return point;
+          if (hit && (composedContains(this, hit) || composedContains(hit, this))) return point;
         }
         return null;
       }`,
@@ -2501,12 +3367,166 @@ async function moveAgentCursorToRef(tabId, ref, { pulse = false, agentName } = {
   };
 }
 
+function isDetachedNodeError(error) {
+  const message = String(error?.message || error || "");
+  return /Node is detached from document|detached from document|node.*detached|not attached to the document/i.test(message);
+}
+
+function isTransientRefActionabilityError(error) {
+  const message = String(error?.message || error || "");
+  return isDetachedNodeError(error)
+    || /Could not compute box model|box model|Element has no visible box|No node with given id|Could not find node|Node with given id|Cannot find context|object.*not found/i.test(message);
+}
+
+async function moveAgentCursorToRefWithRevalidation(tabId, ref, { pulse = false, agentName } = {}) {
+  const sourceState = refStates.get(tabId) || null;
+  const sourceSnapshotId = sourceState?.snapshotId || null;
+  const sourceSnapshot = sourceSnapshotId ? snapshotStateById(tabId, sourceSnapshotId) : null;
+  const sourceElement = sourceSnapshot?.elements?.find((element) => element.ref === ref) || null;
+  const currentGeneration = currentDocumentGeneration(tabId);
+  if (sourceState && sourceState.documentGeneration !== currentGeneration) {
+    const currentTab = await chrome.tabs.get(tabId).catch(() => null);
+    const samePage = Boolean(sourceState.url && currentTab?.url === sourceState.url);
+    return {
+      target: null,
+      point: null,
+      frameId: null,
+      sessionId: null,
+      effectiveRef: null,
+      actionabilityRecovered: false,
+      actionabilityReason: samePage ? "same_page_generation_churn" : "stale_after_navigation",
+      revalidationAttempted: false,
+      revalidatedSnapshotId: null,
+      revalidatedRef: null,
+      revalidationStatus: samePage ? "generation_churn" : "navigation_boundary",
+      retryableStale: samePage,
+    };
+  }
+  const attempt = async (candidateRef = ref) => ({
+    ...(await moveAgentCursorToRef(tabId, candidateRef, { pulse, agentName })),
+    effectiveRef: candidateRef,
+  });
+
+  try {
+    return {
+      ...(await attempt()),
+      actionabilityRecovered: false,
+      actionabilityReason: "clickable",
+      revalidationAttempted: false,
+      revalidatedSnapshotId: null,
+      revalidatedRef: null,
+      revalidationStatus: "not_needed",
+      retryableStale: false,
+    };
+  } catch (error) {
+    if (!isTransientRefActionabilityError(error)) throw error;
+  }
+
+  await sleep(60);
+  try {
+    return {
+      ...(await attempt()),
+      actionabilityRecovered: true,
+      actionabilityReason: "bounded_retry",
+      revalidationAttempted: true,
+      revalidatedSnapshotId: null,
+      revalidatedRef: null,
+      revalidationStatus: "same_ref_retry",
+      retryableStale: false,
+    };
+  } catch (error) {
+    if (!isTransientRefActionabilityError(error)) throw error;
+  }
+
+  let revalidatedSnapshotId = null;
+  let revalidationStatus = "not_found";
+  if (
+    sourceSnapshot &&
+    sourceSnapshot.documentGeneration === currentDocumentGeneration(tabId) &&
+    !sourceSnapshot.filters?.rootRef
+  ) {
+    try {
+      const currentTab = await chrome.tabs.get(tabId).catch(() => null);
+      if (!currentTab || (sourceState?.url && currentTab.url !== sourceState.url)) {
+        return {
+          target: null,
+          point: null,
+          frameId: null,
+          sessionId: null,
+          effectiveRef: null,
+          actionabilityRecovered: false,
+          actionabilityReason: "stale_after_navigation",
+          revalidationAttempted: false,
+          revalidatedSnapshotId: null,
+          revalidatedRef: null,
+          revalidationStatus: "navigation_boundary",
+          retryableStale: false,
+        };
+      }
+      const refreshed = await browserSnapshot({
+        tabId,
+        ...snapshotArgsFromBase(sourceSnapshot),
+        output: "both",
+      });
+      revalidatedSnapshotId = refreshed?.snapshot?.id || null;
+      let candidateRef = refStates.get(tabId)?.refs?.has(ref) ? ref : null;
+      if (!candidateRef && sourceElement && Array.isArray(refreshed?.elements)) {
+        const candidates = refreshed.elements.filter((element) => element.ref && sameReacquireFingerprint(sourceElement, element));
+        if (candidates.length === 1) {
+          candidateRef = candidates[0].ref;
+          revalidationStatus = "semantic_reacquired";
+        } else {
+          revalidationStatus = candidates.length > 1 ? "ambiguous" : "not_found";
+        }
+      } else if (candidateRef) {
+        revalidationStatus = "stable_ref_retained";
+      }
+      if (candidateRef) {
+        try {
+          return {
+            ...(await attempt(candidateRef)),
+            actionabilityRecovered: true,
+            actionabilityReason: candidateRef === ref ? "snapshot_revalidated" : "semantic_reacquired",
+            revalidationAttempted: true,
+            revalidatedSnapshotId,
+            revalidatedRef: candidateRef === ref ? null : candidateRef,
+            revalidationStatus,
+            retryableStale: false,
+          };
+        } catch (error) {
+          if (!isTransientRefActionabilityError(error)) throw error;
+          revalidationStatus = "replacement_became_stale";
+        }
+      }
+    } catch (error) {
+      if (!isTransientRefActionabilityError(error)) {
+        // A refresh can race with a highly dynamic surface. Keep recovery fail-closed instead of leaking raw CDP errors.
+      }
+    }
+  }
+
+  return {
+    target: null,
+    point: null,
+    frameId: null,
+    sessionId: null,
+    effectiveRef: null,
+    actionabilityRecovered: false,
+    actionabilityReason: "stale_or_rerendered",
+    revalidationAttempted: true,
+    revalidatedSnapshotId,
+    revalidatedRef: null,
+    revalidationStatus,
+    retryableStale: false,
+  };
+}
+
 function normalizeActionAfter(after, tabId, actionName = "action") {
   if (after == null) return null;
   if (typeof after !== "object" || Array.isArray(after)) throw new Error(`${actionName} after must be an object`);
   const waitFor = after.waitFor == null ? null : String(after.waitFor);
   const snapshot = after.snapshot == null ? null : String(after.snapshot);
-  if (waitFor && !new Set(["dom_stable", "network_idle"]).has(waitFor)) {
+  if (waitFor && !new Set(["dom_stable", "network_idle", "semantic_ready"]).has(waitFor)) {
     throw new Error(`Unsupported ${actionName} after.waitFor: ${waitFor}`);
   }
   if (snapshot && !new Set(["delta", "full"]).has(snapshot)) {
@@ -2523,18 +3543,72 @@ function normalizeActionAfter(after, tabId, actionName = "action") {
   if (snapshot && baseSnapshot?.filters?.rootRef) {
     throw new Error(`${actionName} compound snapshot does not support a root_ref base; take an unscoped snapshot first`);
   }
-  return { waitFor, snapshot, quietMs, timeoutMs, baseSnapshotId, baseSnapshot };
+  const projection = {};
+  if (after.snapshotMode != null) projection.mode = normalizeSnapshotMode(after.snapshotMode, true);
+  if (after.snapshotScope != null) projection.scope = normalizeSnapshotScope(after.snapshotScope);
+  if (after.snapshotMaxNodes != null) {
+    const value = Number(after.snapshotMaxNodes);
+    if (!Number.isInteger(value) || value < 1 || value > MAX_SNAPSHOT_ELEMENTS) {
+      throw new Error(`${actionName} after.snapshotMaxNodes must be an integer between 1 and ${MAX_SNAPSHOT_ELEMENTS}`);
+    }
+    projection.maxNodes = value;
+  }
+  if (after.snapshotQuery != null) {
+    const value = String(after.snapshotQuery).trim();
+    if (!value || value.length > 1_000) throw new Error(`${actionName} after.snapshotQuery must be 1-1000 characters`);
+    projection.query = value;
+  }
+  if (after.snapshotRoles != null) {
+    const normalized = normalizeSnapshotRoles(after.snapshotRoles);
+    projection.roles = normalized ? [...normalized].sort() : [];
+  }
+  if (Object.keys(projection).length > 0 && !snapshot) {
+    throw new Error(`${actionName} after snapshot projection requires after.snapshot`);
+  }
+  if (snapshot === "delta" && Object.keys(projection).length > 0) {
+    const inherited = snapshotArgsFromBase(baseSnapshot);
+    const effective = { ...inherited, ...projection };
+    const baseFilters = baseSnapshot?.filters || {};
+    const expected = {
+      mode: baseFilters.mode || "balanced",
+      scope: baseFilters.scope || "document",
+      maxNodes: Number(baseFilters.maxNodes) || MAX_SNAPSHOT_ELEMENTS,
+      roles: Array.isArray(baseFilters.roles) ? [...baseFilters.roles].sort() : null,
+      query: baseFilters.query || null,
+    };
+    const actual = {
+      mode: effective.mode || "balanced",
+      scope: effective.scope || "document",
+      maxNodes: Number(effective.maxNodes) || MAX_SNAPSHOT_ELEMENTS,
+      roles: Array.isArray(effective.roles) && effective.roles.length ? [...effective.roles].sort() : null,
+      query: effective.query ? String(effective.query).trim().toLowerCase() : null,
+    };
+    if (JSON.stringify(actual) !== JSON.stringify(expected)) {
+      throw new Error(`${actionName} after.snapshot=delta projection must match the current snapshot projection exactly`);
+    }
+  }
+  return { waitFor, snapshot, quietMs, timeoutMs, baseSnapshotId, baseSnapshot, projection };
 }
 
-function snapshotArgsFromBase(baseSnapshot, { delta = false } = {}) {
+function snapshotArgsFromBase(baseSnapshot, { delta = false, projection = {} } = {}) {
   const filters = baseSnapshot?.filters || {};
   return {
-    mode: filters.mode || "balanced",
-    scope: filters.scope || "document",
-    maxNodes: Number(filters.maxNodes) || MAX_SNAPSHOT_ELEMENTS,
+    mode: projection.mode || filters.mode || "balanced",
+    scope: projection.scope || filters.scope || "document",
+    maxNodes: Number(projection.maxNodes ?? filters.maxNodes) || MAX_SNAPSHOT_ELEMENTS,
     output: "compact",
-    ...(Array.isArray(filters.roles) && filters.roles.length ? { roles: filters.roles } : {}),
-    ...(filters.query ? { query: filters.query } : {}),
+    ...(Object.hasOwn(projection, "roles")
+      ? (projection.roles.length ? { roles: projection.roles } : {})
+      : (Array.isArray(filters.roles) && filters.roles.length ? { roles: filters.roles } : {})),
+    ...(Object.hasOwn(projection, "query")
+      ? (projection.query ? { query: projection.query } : {})
+      : (filters.query ? { query: filters.query } : {})),
+    ...(filters.mainFrameOnly ? { mainFrameOnly: true } : {}),
+    ...(filters.excludeAuxiliaryFrames ? { excludeAuxiliaryFrames: true } : {}),
+    ...(filters.activeLayerOnly ? { activeLayerOnly: true } : {}),
+    ...(filters.frameId ? { frameId: filters.frameId } : {}),
+    ...(filters.pruneUnnamedRefs ? { pruneUnnamedRefs: true } : {}),
+    ...(filters.sensitiveText === "redact" ? { sensitiveText: "redact" } : {}),
     ...(delta && baseSnapshot?.id ? { sinceSnapshotId: baseSnapshot.id } : {}),
   };
 }
@@ -2557,6 +3631,20 @@ async function runActionAfter(tabId, config) {
         quietMs: config.quietMs,
         timeoutMs: config.timeoutMs,
       });
+    } else if (config.waitFor === "semantic_ready") {
+      const semanticProjection = snapshotArgsFromBase(config.baseSnapshot, { projection: config.projection });
+      result.wait = await browserWait({
+        tabId,
+        semanticReady: {
+          ...(semanticProjection.query ? { query: semanticProjection.query } : {}),
+          ...(Array.isArray(semanticProjection.roles) && semanticProjection.roles.length
+            ? { roles: semanticProjection.roles }
+            : {}),
+          minNodes: 1,
+        },
+        quietMs: config.quietMs,
+        timeoutMs: config.timeoutMs,
+      });
     }
   } catch (error) {
     return {
@@ -2570,12 +3658,12 @@ async function runActionAfter(tabId, config) {
     if (config.snapshot === "delta") {
       result.snapshot = await browserSnapshot({
         tabId,
-        ...snapshotArgsFromBase(config.baseSnapshot, { delta: true }),
+        ...snapshotArgsFromBase(config.baseSnapshot, { delta: true, projection: config.projection }),
       });
     } else if (config.snapshot === "full") {
       result.snapshot = await browserSnapshot({
         tabId,
-        ...snapshotArgsFromBase(config.baseSnapshot),
+        ...snapshotArgsFromBase(config.baseSnapshot, { projection: config.projection }),
       });
     }
   } catch (error) {
@@ -2631,6 +3719,7 @@ async function browserClick({
 } = {}) {
   const tab = await chooseTab(tabId);
   const afterConfig = normalizeActionAfter(after, tab.id, "click");
+  const sourceContext = captureRefContextSource(tab.id);
   const requestedClickCount = Number(clickCount);
   if (![1, 2].includes(requestedClickCount)) throw new Error("clickCount must be 1 or 2");
   const requestedButton = normalizeMouseButton(button);
@@ -2647,6 +3736,7 @@ async function browserClick({
       tabId: tab.id,
       ref,
       actionDispatched: false,
+      primaryActionSucceeded: false,
       blockedByDialog: true,
       dialogOpened: existingDialog.dialog,
       button: requestedButton,
@@ -2654,6 +3744,7 @@ async function browserClick({
       delayMs: boundedDelayMs,
       compoundActionVersion: COMPOUND_ACTION_VERSION,
       after: afterConfig ? { ok: false, skipped: true, reason: "blocked_by_dialog" } : null,
+      ...refOperationMetadata(tab.id, sourceContext, { validReason: "blocked_by_dialog" }),
       tabCreationSequenceBefore,
       tabCreationSequenceAfter: tabCreationSequence,
       openedTabs: [],
@@ -2665,11 +3756,55 @@ async function browserClick({
     };
   }
   const dialogSequenceBefore = dialogSequence;
-  const moved = await moveAgentCursorToRef(tab.id, ref, { pulse: true, agentName });
+  const moved = await moveAgentCursorToRefWithRevalidation(tab.id, ref, { pulse: true, agentName });
+  if (!moved.target) {
+    scheduleDetach(tab.id);
+    return {
+      clickVersion: CLICK_VERSION,
+      actionabilityVersion: ACTIONABILITY_VERSION,
+      tabId: tab.id,
+      ref,
+      actionDispatched: false,
+      primaryActionSucceeded: false,
+      outcomeUncertain: false,
+      actionabilityRecovered: false,
+      actionabilityReason: moved.actionabilityReason,
+      revalidationAttempted: moved.revalidationAttempted,
+      revalidatedSnapshotId: moved.revalidatedSnapshotId,
+      revalidatedRef: moved.revalidatedRef || null,
+      revalidationStatus: moved.revalidationStatus || null,
+      retryableStale: Boolean(moved.retryableStale),
+      button: requestedButton,
+      modifiers: modifierInfo.values,
+      delayMs: boundedDelayMs,
+      compoundActionVersion: COMPOUND_ACTION_VERSION,
+      after: afterConfig ? { ok: false, skipped: true, reason: "primary_action_not_dispatched" } : null,
+      refLifecycleVersion: REF_LIFECYCLE_VERSION,
+      sourceSnapshotId: sourceContext.sourceSnapshotId,
+      sourceDocumentGeneration: sourceContext.sourceDocumentGeneration,
+      currentSnapshotId: moved.revalidatedSnapshotId || null,
+      refContextValid: false,
+      freshSnapshotRequired: true,
+      refContextReason: moved.actionabilityReason,
+      currentDocumentGeneration: currentDocumentGeneration(tab.id),
+      tabCreationSequenceBefore,
+      tabCreationSequenceAfter: tabCreationSequence,
+      openedTabs: [],
+      downloadCreationSequenceBefore,
+      downloadCreationSequenceAfter: downloadCreationSequence,
+      downloadCreationsObserved: 0,
+      downloadsStartedTruncated: false,
+      downloadsStarted: [],
+    };
+  }
   const { target, point } = moved;
   let dialog = null;
-  for (let currentClick = 1; currentClick <= requestedClickCount && !dialog; currentClick += 1) {
-    const pressPromise = send(tab.id, "Input.dispatchMouseEvent", {
+  let dispatchStarted = false;
+  let dispatchFailure = null;
+  try {
+    for (let currentClick = 1; currentClick <= requestedClickCount && !dialog; currentClick += 1) {
+      dispatchStarted = true;
+      const pressPromise = send(tab.id, "Input.dispatchMouseEvent", {
       type: "mousePressed",
       ...point,
       button: requestedButton,
@@ -2688,7 +3823,10 @@ async function browserClick({
       modifiers: modifierInfo.mask,
       clickCount: currentClick,
     }, target.sessionId);
-    dialog = await settleCommandOrDialog(tab.id, releasePromise, dialogSequenceBefore);
+      dialog = await settleCommandOrDialog(tab.id, releasePromise, dialogSequenceBefore);
+    }
+  } catch (error) {
+    dispatchFailure = error;
   }
 
   const [openedTabs, downloadsStarted] = await Promise.all([
@@ -2696,16 +3834,78 @@ async function browserClick({
     discoverNewDownloads(downloadCreationSequenceBefore),
   ]);
 
+  if (dispatchFailure) {
+    refStates.delete(tab.id);
+    scheduleDetach(tab.id);
+    return {
+      clickVersion: CLICK_VERSION,
+      actionabilityVersion: ACTIONABILITY_VERSION,
+      tabId: tab.id,
+      ref,
+      point,
+      actionDispatched: dispatchStarted,
+      primaryActionSucceeded: false,
+      outcomeUncertain: dispatchStarted,
+      actionabilityRecovered: moved.actionabilityRecovered,
+      actionabilityReason: dispatchStarted ? "post_dispatch_outcome_uncertain" : "stale_or_rerendered",
+      revalidationAttempted: moved.revalidationAttempted,
+      revalidatedSnapshotId: moved.revalidatedSnapshotId,
+      revalidatedRef: moved.revalidatedRef || null,
+      revalidationStatus: moved.revalidationStatus || null,
+      retryableStale: false,
+      clickCount: requestedClickCount,
+      button: requestedButton,
+      modifiers: modifierInfo.values,
+      delayMs: boundedDelayMs,
+      frameId: target.frameId,
+      sessionScope: target.sessionId ? "child" : "root",
+      dialogOpened: dialog || null,
+      compoundActionVersion: COMPOUND_ACTION_VERSION,
+      after: afterConfig ? { ok: false, skipped: true, reason: "primary_action_outcome_uncertain" } : null,
+      refLifecycleVersion: REF_LIFECYCLE_VERSION,
+      sourceSnapshotId: sourceContext.sourceSnapshotId,
+      sourceDocumentGeneration: sourceContext.sourceDocumentGeneration,
+      currentSnapshotId: null,
+      refContextValid: false,
+      freshSnapshotRequired: true,
+      refContextReason: "post_dispatch_outcome_uncertain",
+      currentDocumentGeneration: currentDocumentGeneration(tab.id),
+      tabCreationSequenceBefore,
+      tabCreationSequenceAfter: tabCreationSequence,
+      openedTabs,
+      downloadCreationSequenceBefore,
+      downloadCreationSequenceAfter: downloadCreationSequence,
+      downloadCreationsObserved: Math.max(0, downloadCreationSequence - downloadCreationSequenceBefore),
+      downloadsStartedTruncated: Math.max(0, downloadCreationSequence - downloadCreationSequenceBefore) > downloadsStarted.length,
+      downloadsStarted,
+    };
+  }
+
   refStates.delete(tab.id);
   const afterResult = dialog || !afterConfig
     ? (afterConfig ? { ok: false, skipped: true, reason: "dialog_opened" } : null)
     : await runActionAfter(tab.id, afterConfig);
-  scheduleDetach(tab.id, 250);
+  scheduleActionDetach(tab.id, { afterResult });
+  const refContext = refOperationMetadata(tab.id, sourceContext, {
+    validReason: "compound_snapshot_created",
+    invalidReason: dialog ? "dialog_opened" : "action_invalidated_snapshot",
+  });
   return {
     clickVersion: CLICK_VERSION,
     tabId: tab.id,
     ref,
     point,
+    actionDispatched: true,
+    primaryActionSucceeded: true,
+    outcomeUncertain: false,
+    actionabilityRecovered: moved.actionabilityRecovered,
+    actionabilityReason: moved.actionabilityReason,
+    revalidationAttempted: moved.revalidationAttempted,
+    revalidatedSnapshotId: moved.revalidatedSnapshotId,
+    revalidatedRef: moved.revalidatedRef || null,
+    revalidationStatus: moved.revalidationStatus || null,
+    retryableStale: Boolean(moved.retryableStale),
+    actionabilityVersion: ACTIONABILITY_VERSION,
     clickCount: requestedClickCount,
     button: requestedButton,
     modifiers: modifierInfo.values,
@@ -2715,6 +3915,7 @@ async function browserClick({
     dialogOpened: dialog || null,
     compoundActionVersion: COMPOUND_ACTION_VERSION,
     after: afterResult,
+    ...refContext,
     tabCreationSequenceBefore,
     tabCreationSequenceAfter: tabCreationSequence,
     openedTabs,
@@ -2886,6 +4087,7 @@ async function browserDrag({ tabId, sourceRef, targetRef, mode = "pointer", step
 
   const tab = await chooseTab(tabId);
   const afterConfig = normalizeActionAfter(after, tab.id, "drag");
+  const sourceContext = captureRefContextSource(tab.id);
   await requireDebuggableTab(tab.id);
   await attachTab(tab.id);
   const sourceTarget = lookupRef(tab.id, sourceRefValue);
@@ -2913,6 +4115,7 @@ async function browserDrag({ tabId, sourceRef, targetRef, mode = "pointer", step
       dialogOpened: existingDialog.dialog,
       compoundActionVersion: COMPOUND_ACTION_VERSION,
       after: afterConfig ? { ok: false, skipped: true, reason: "blocked_by_dialog" } : null,
+      ...refOperationMetadata(tab.id, sourceContext, { validReason: "blocked_by_dialog" }),
     };
   }
 
@@ -2956,10 +4159,16 @@ async function browserDrag({ tabId, sourceRef, targetRef, mode = "pointer", step
     const afterResult = result.dialogOpened || !afterConfig
       ? (afterConfig ? { ok: false, skipped: true, reason: "dialog_opened" } : null)
       : await runActionAfter(tab.id, afterConfig);
+    scheduleActionDetach(tab.id, { afterResult });
+    const refContext = refOperationMetadata(tab.id, sourceContext, {
+      validReason: "compound_snapshot_created",
+      invalidReason: result.dialogOpened ? "dialog_opened" : "action_invalidated_snapshot",
+    });
     return {
       ...result,
       compoundActionVersion: COMPOUND_ACTION_VERSION,
       after: afterResult,
+      ...refContext,
     };
   }
 
@@ -3028,6 +4237,11 @@ async function browserDrag({ tabId, sourceRef, targetRef, mode = "pointer", step
   const afterResult = dialog || !afterConfig
     ? (afterConfig ? { ok: false, skipped: true, reason: "dialog_opened" } : null)
     : await runActionAfter(tab.id, afterConfig);
+  scheduleActionDetach(tab.id, { afterResult });
+  const refContext = refOperationMetadata(tab.id, sourceContext, {
+    validReason: "compound_snapshot_created",
+    invalidReason: dialog ? "dialog_opened" : "action_invalidated_snapshot",
+  });
   return {
     pointerDragVersion: POINTER_DRAG_VERSION,
     mode: "pointer",
@@ -3044,6 +4258,7 @@ async function browserDrag({ tabId, sourceRef, targetRef, mode = "pointer", step
     dialogOpened: dialog || null,
     compoundActionVersion: COMPOUND_ACTION_VERSION,
     after: afterResult,
+    ...refContext,
     tabCreationSequenceBefore,
     tabCreationSequenceAfter: tabCreationSequence,
     openedTabs,
@@ -3065,46 +4280,82 @@ async function refPoint(tabId, ref) {
 
 async function browserHover({ tabId, ref, agentName }) {
   const tab = await chooseTab(tabId);
+  const sourceContext = captureRefContextSource(tab.id);
   await requireDebuggableTab(tab.id);
   await attachTab(tab.id);
-  const moved = await moveAgentCursorToRef(tab.id, ref, { agentName });
+  const moved = await moveAgentCursorToRefWithRevalidation(tab.id, ref, { agentName });
+  if (!moved.target) {
+    scheduleDetach(tab.id);
+    return {
+      actionabilityVersion: ACTIONABILITY_VERSION, tabId: tab.id, ref, hovered: false,
+      actionabilityRecovered: false, actionabilityReason: moved.actionabilityReason,
+      revalidationAttempted: moved.revalidationAttempted, revalidatedSnapshotId: moved.revalidatedSnapshotId,
+      revalidatedRef: moved.revalidatedRef || null, revalidationStatus: moved.revalidationStatus || null,
+      retryableStale: Boolean(moved.retryableStale), freshSnapshotRequired: true, refContextValid: false,
+      refContextReason: moved.actionabilityReason, currentDocumentGeneration: currentDocumentGeneration(tab.id),
+    };
+  }
   refStates.delete(tab.id);
-  scheduleDetach(tab.id, 5_000);
+  scheduleDetach(tab.id);
   return {
     actionabilityVersion: ACTIONABILITY_VERSION,
+    actionabilityRecovered: moved.actionabilityRecovered, actionabilityReason: moved.actionabilityReason,
+    revalidationAttempted: moved.revalidationAttempted, revalidatedSnapshotId: moved.revalidatedSnapshotId,
+    revalidatedRef: moved.revalidatedRef || null, revalidationStatus: moved.revalidationStatus || null,
     tabId: tab.id,
     ref,
     point: moved.point,
     frameId: moved.frameId,
     sessionScope: moved.sessionId ? "child" : "root",
+    ...refOperationMetadata(tab.id, sourceContext, { invalidReason: "hover_invalidated_snapshot" }),
   };
 }
 
 async function browserScrollIntoView({ tabId, ref, agentName }) {
   const tab = await chooseTab(tabId);
+  const sourceContext = captureRefContextSource(tab.id);
   await requireDebuggableTab(tab.id);
   await attachTab(tab.id);
-  const moved = await moveAgentCursorToRef(tab.id, ref, { agentName });
+  const moved = await moveAgentCursorToRefWithRevalidation(tab.id, ref, { agentName });
+  if (!moved.target) {
+    scheduleDetach(tab.id);
+    return {
+      actionabilityVersion: ACTIONABILITY_VERSION, tabId: tab.id, ref, scrolledIntoView: false,
+      actionabilityRecovered: false, actionabilityReason: moved.actionabilityReason,
+      revalidationAttempted: moved.revalidationAttempted, revalidatedSnapshotId: moved.revalidatedSnapshotId,
+      revalidatedRef: moved.revalidatedRef || null, revalidationStatus: moved.revalidationStatus || null,
+      retryableStale: Boolean(moved.retryableStale), freshSnapshotRequired: true, refContextValid: false,
+      refContextReason: moved.actionabilityReason, currentDocumentGeneration: currentDocumentGeneration(tab.id),
+    };
+  }
   refStates.delete(tab.id);
-  scheduleDetach(tab.id, 5_000);
+  scheduleDetach(tab.id);
   return {
     actionabilityVersion: ACTIONABILITY_VERSION,
+    actionabilityRecovered: moved.actionabilityRecovered, actionabilityReason: moved.actionabilityReason,
+    revalidationAttempted: moved.revalidationAttempted, revalidatedSnapshotId: moved.revalidatedSnapshotId,
+    revalidatedRef: moved.revalidatedRef || null, revalidationStatus: moved.revalidationStatus || null,
     tabId: tab.id,
     ref,
     scrolledIntoView: true,
     point: moved.point,
     frameId: moved.frameId,
     sessionScope: moved.sessionId ? "child" : "root",
+    ...refOperationMetadata(tab.id, sourceContext, { invalidReason: "scroll_into_view_invalidated_snapshot" }),
   };
 }
 
 async function browserRefInfo({ tabId, ref }) {
   const tab = await chooseTab(tabId);
+  const sourceContext = captureRefContextSource(tab.id);
   await requireDebuggableTab(tab.id);
   await attachTab(tab.id);
   const target = lookupRef(tab.id, ref);
   const live = await inspectLiveRef(tab.id, ref);
   let box = null;
+  let clickPoint = null;
+  let clickable = false;
+  let actionabilityReason = live.exists ? (live.visible ? (live.enabled ? "no_clickable_box" : "disabled") : "not_visible") : "missing";
   let state = {};
   if (live.exists) {
     const model = await send(tab.id, "DOM.getBoxModel", { backendNodeId: target.backendNodeId }, target.sessionId).catch(() => null);
@@ -3118,6 +4369,17 @@ async function browserRefInfo({ tabId, ref }) {
         width: Math.max(...xs) - Math.min(...xs),
         height: Math.max(...ys) - Math.min(...ys),
       };
+      if (live.visible && live.enabled) {
+        try {
+          clickPoint = await verifiedClickablePoint(tab.id, target, quad, ref);
+          clickable = true;
+          actionabilityReason = "clickable";
+        } catch (error) {
+          actionabilityReason = /unobscured clickable point/i.test(String(error?.message || error))
+            ? "obscured_or_unhittable"
+            : "hit_test_failed";
+        }
+      }
     }
     const resolved = await send(tab.id, "DOM.resolveNode", { backendNodeId: target.backendNodeId }, target.sessionId);
     const objectId = resolved?.object?.objectId;
@@ -3130,6 +4392,7 @@ async function browserRefInfo({ tabId, ref }) {
             checked: 'checked' in this ? Boolean(this.checked) : (this.getAttribute?.('aria-checked') === 'true' ? true : this.getAttribute?.('aria-checked') === 'false' ? false : null),
             selected: 'selected' in this ? Boolean(this.selected) : (this.getAttribute?.('aria-selected') === 'true' ? true : this.getAttribute?.('aria-selected') === 'false' ? false : null),
             expanded: this.getAttribute?.('aria-expanded') === 'true' ? true : this.getAttribute?.('aria-expanded') === 'false' ? false : null,
+            pressed: this.getAttribute?.('aria-pressed') === 'true' ? true : this.getAttribute?.('aria-pressed') === 'false' ? false : null,
             readOnly: Boolean(this.readOnly) || this.getAttribute?.('aria-readonly') === 'true',
             editable: Boolean(this.isContentEditable) || ['INPUT', 'TEXTAREA'].includes(String(this.tagName || '').toUpperCase()),
             tagName: String(this.tagName || '').toLowerCase() || null,
@@ -3141,7 +4404,7 @@ async function browserRefInfo({ tabId, ref }) {
       state = evaluated?.result?.value || {};
     }
   }
-  scheduleDetach(tab.id, 5_000);
+  scheduleDetach(tab.id);
   return {
     actionabilityVersion: ACTIONABILITY_VERSION,
     tabId: tab.id,
@@ -3151,13 +4414,18 @@ async function browserRefInfo({ tabId, ref }) {
     frameId: target.frameId,
     sessionScope: target.sessionId ? "child" : "root",
     ...live,
+    clickable,
+    clickPoint,
+    actionabilityReason,
     ...state,
     box,
+    ...refOperationMetadata(tab.id, sourceContext, { validReason: "ref_inspected" }),
   };
 }
 
 async function browserScroll({ tabId, direction = "down", pixels = 600, ref, agentName }) {
   const tab = await chooseTab(tabId);
+  const sourceContext = ref ? captureRefContextSource(tab.id) : null;
   await requireDebuggableTab(tab.id);
   await attachTab(tab.id);
   await send(tab.id, "Page.bringToFront");
@@ -3185,13 +4453,20 @@ async function browserScroll({ tabId, direction = "down", pixels = 600, ref, age
   if (!delta) throw new Error(`Unsupported scroll direction: ${direction}`);
   await send(tab.id, "Input.dispatchMouseEvent", { type: "mouseWheel", ...point, ...delta }, sessionId);
   refStates.delete(tab.id);
-  scheduleDetach(tab.id, 5_000);
-  return { tabId: tab.id, direction: String(direction).toLowerCase(), pixels: amount, point };
+  scheduleDetach(tab.id);
+  return {
+    tabId: tab.id,
+    direction: String(direction).toLowerCase(),
+    pixels: amount,
+    point,
+    ...(ref ? refOperationMetadata(tab.id, sourceContext, { invalidReason: "scroll_invalidated_snapshot" }) : {}),
+  };
 }
 
 async function browserSelect({ tabId, ref, option, agentName, after }) {
   const tab = await chooseTab(tabId);
   const afterConfig = normalizeActionAfter(after, tab.id, "select");
+  const sourceContext = captureRefContextSource(tab.id);
   await requireDebuggableTab(tab.id);
   await attachTab(tab.id);
   const { target, point, frameId, sessionId } = await moveAgentCursorToRef(tab.id, ref, { pulse: true, agentName });
@@ -3219,7 +4494,11 @@ async function browserSelect({ tabId, ref, option, agentName, after }) {
   if (outcome.selected !== true) throw new Error(`Select postcondition failed for ${ref}`);
   refStates.delete(tab.id);
   const afterResult = await runActionAfter(tab.id, afterConfig);
-  scheduleDetach(tab.id, 5_000);
+  scheduleActionDetach(tab.id, { afterResult });
+  const refContext = refOperationMetadata(tab.id, sourceContext, {
+    validReason: "compound_snapshot_created",
+    invalidReason: "action_invalidated_snapshot",
+  });
   return {
     tabId: tab.id,
     ref,
@@ -3229,51 +4508,425 @@ async function browserSelect({ tabId, ref, option, agentName, after }) {
     ...outcome,
     compoundActionVersion: COMPOUND_ACTION_VERSION,
     after: afterResult,
+    ...refContext,
+  };
+}
+
+function normalizeRangeRequest(value, percent) {
+  const hasValue = value != null;
+  const hasPercent = percent != null;
+  if (hasValue === hasPercent) throw new Error("range_set requires exactly one of value or percent");
+  if (hasValue) {
+    const requestedValue = Number(value);
+    if (!Number.isFinite(requestedValue)) throw new Error("range_set value must be a finite number");
+    return { mode: "value", requestedValue, requestedPercent: null };
+  }
+  const requestedPercent = Number(percent);
+  if (!Number.isFinite(requestedPercent) || requestedPercent < 0 || requestedPercent > 1) {
+    throw new Error("range_set percent must be between 0 and 1");
+  }
+  return { mode: "percent", requestedValue: null, requestedPercent };
+}
+
+async function readRangeState(tabId, target) {
+  const resolved = await send(tabId, "DOM.resolveNode", { backendNodeId: target.backendNodeId }, target.sessionId);
+  const objectId = resolved?.object?.objectId;
+  if (!objectId) throw new Error("Unable to resolve range control");
+  const result = await send(tabId, "Runtime.callFunctionOn", {
+    objectId,
+    functionDeclaration: `function() {
+      const __equinoxRangeState = true;
+      const tag = String(this.tagName || '').toUpperCase();
+      const type = String(this.type || '').toLowerCase();
+      const role = String(this.getAttribute?.('role') || '').toLowerCase();
+      const nativeRange = tag === 'INPUT' && type === 'range';
+      const ariaSlider = role === 'slider';
+      if (!nativeRange && !ariaSlider) return { supported: false, tag: tag.toLowerCase() || null, role: role || null };
+      const numberOrNull = (raw) => {
+        if (raw == null || raw === '') return null;
+        const number = Number(raw);
+        return Number.isFinite(number) ? number : null;
+      };
+      const min = nativeRange ? numberOrNull(this.min) ?? 0 : numberOrNull(this.getAttribute('aria-valuemin'));
+      const max = nativeRange ? numberOrNull(this.max) ?? 100 : numberOrNull(this.getAttribute('aria-valuemax'));
+      const current = nativeRange ? numberOrNull(this.value) : numberOrNull(this.getAttribute('aria-valuenow'));
+      const step = nativeRange ? numberOrNull(this.step) : numberOrNull(this.getAttribute('aria-valuestep'));
+      const orientation = String(this.getAttribute?.('aria-orientation') || 'horizontal').toLowerCase();
+      return {
+        supported: true,
+        kind: nativeRange ? 'native' : 'aria',
+        min,
+        max,
+        current,
+        step,
+        orientation: orientation === 'vertical' ? 'vertical' : 'horizontal',
+      };
+    }`,
+    returnByValue: true,
+  }, target.sessionId);
+  if (result?.exceptionDetails) throw new Error(result.exceptionDetails?.text || "Unable to inspect range control");
+  return { objectId, ...(result?.result?.value || {}) };
+}
+
+function rangeTargetFromRequest(request, state) {
+  const min = Number(state?.min);
+  const max = Number(state?.max);
+  if (!state?.supported || !Number.isFinite(min) || !Number.isFinite(max) || max <= min) {
+    throw new Error("Range control must expose a finite min/max interval");
+  }
+  const target = request.mode === "percent"
+    ? min + (max - min) * request.requestedPercent
+    : request.requestedValue;
+  if (!Number.isFinite(target) || target < min || target > max) {
+    throw new Error(`Requested range value must be between ${min} and ${max}`);
+  }
+  return { min, max, target, percent: (target - min) / (max - min) };
+}
+
+function rangeVerificationTolerance(state, min, max) {
+  const step = Number(state?.step);
+  if (Number.isFinite(step) && step > 0) return Math.max(step * 0.51, 1e-9);
+  return Math.max((max - min) * 0.02, 1e-9);
+}
+
+async function browserRangeSet({ tabId, ref, value, percent, agentName, after } = {}) {
+  const request = normalizeRangeRequest(value, percent);
+  const tab = await chooseTab(tabId);
+  const afterConfig = normalizeActionAfter(after, tab.id, "range_set");
+  const sourceContext = captureRefContextSource(tab.id);
+  await requireDebuggableTab(tab.id);
+  await attachTab(tab.id);
+  const moved = await moveAgentCursorToRefWithRevalidation(tab.id, ref, { pulse: true, agentName });
+  if (!moved.target) {
+    scheduleDetach(tab.id);
+    return {
+      rangeVersion: RANGE_VERSION, actionabilityVersion: ACTIONABILITY_VERSION,
+      tabId: tab.id, ref, actionDispatched: false, primaryActionSucceeded: false, outcomeUncertain: false,
+      actionabilityRecovered: false, actionabilityReason: moved.actionabilityReason,
+      revalidationAttempted: moved.revalidationAttempted, revalidatedSnapshotId: moved.revalidatedSnapshotId,
+      revalidatedRef: moved.revalidatedRef || null, revalidationStatus: moved.revalidationStatus || null,
+      retryableStale: Boolean(moved.retryableStale), freshSnapshotRequired: true, refContextValid: false,
+      refContextReason: moved.actionabilityReason, currentDocumentGeneration: currentDocumentGeneration(tab.id),
+      compoundActionVersion: COMPOUND_ACTION_VERSION,
+      after: afterConfig ? { ok: false, skipped: true, reason: "primary_action_not_dispatched" } : null,
+    };
+  }
+  const target = moved.target;
+  let state;
+  try {
+    state = await readRangeState(tab.id, target);
+  } catch (error) {
+    if (!isTransientRefActionabilityError(error)) throw error;
+    scheduleDetach(tab.id);
+    return {
+      rangeVersion: RANGE_VERSION, actionabilityVersion: ACTIONABILITY_VERSION,
+      tabId: tab.id, ref, actionDispatched: false, primaryActionSucceeded: false, outcomeUncertain: false,
+      actionabilityRecovered: moved.actionabilityRecovered, actionabilityReason: "stale_or_rerendered",
+      revalidationAttempted: true, revalidatedSnapshotId: moved.revalidatedSnapshotId,
+      revalidatedRef: moved.revalidatedRef || null, revalidationStatus: "range_state_stale",
+      retryableStale: false, freshSnapshotRequired: true, refContextValid: false,
+      refContextReason: "stale_or_rerendered", currentDocumentGeneration: currentDocumentGeneration(tab.id),
+      compoundActionVersion: COMPOUND_ACTION_VERSION,
+      after: afterConfig ? { ok: false, skipped: true, reason: "primary_action_not_dispatched" } : null,
+    };
+  }
+  const normalized = rangeTargetFromRequest(request, state);
+  let dispatchStarted = false;
+  let dispatchFailure = null;
+  try {
+    if (state.kind === "native") {
+      dispatchStarted = true;
+      const result = await send(tab.id, "Runtime.callFunctionOn", {
+        objectId: state.objectId,
+        functionDeclaration: `function(wanted) {
+          const __equinoxNativeRangeSet = true;
+          const target = Number(wanted);
+          if (!Number.isFinite(target) || String(this.tagName || '').toUpperCase() !== 'INPUT' || String(this.type || '').toLowerCase() !== 'range') {
+            throw new Error('Target is not a native range input');
+          }
+          const prototype = Object.getPrototypeOf(this);
+          const ownDescriptor = prototype ? Object.getOwnPropertyDescriptor(prototype, 'value') : null;
+          const nativeDescriptor = typeof HTMLInputElement !== 'undefined'
+            ? Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')
+            : null;
+          const setter = ownDescriptor?.set || nativeDescriptor?.set;
+          if (typeof setter !== 'function') throw new Error('Native range value setter is unavailable');
+          setter.call(this, String(target));
+          this.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
+          this.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
+          return { value: Number(this.value) };
+        }`,
+        arguments: [{ value: normalized.target }],
+        returnByValue: true,
+      }, target.sessionId);
+      if (result?.exceptionDetails) throw new Error(result.exceptionDetails?.text || "Native range_set failed");
+    } else if (state.kind === "aria") {
+      const box = await send(tab.id, "DOM.getBoxModel", { backendNodeId: target.backendNodeId }, target.sessionId);
+      const quad = box?.model?.border || box?.model?.content;
+      if (!Array.isArray(quad) || quad.length < 8) throw new Error("ARIA slider has no visible box");
+      const xs = [quad[0], quad[2], quad[4], quad[6]].map(Number);
+      const ys = [quad[1], quad[3], quad[5], quad[7]].map(Number);
+      const left = Math.min(...xs), right = Math.max(...xs), top = Math.min(...ys), bottom = Math.max(...ys);
+      if (!(right > left) || !(bottom > top)) throw new Error("ARIA slider has an invalid box");
+      const point = state.orientation === "vertical"
+        ? { x: (left + right) / 2, y: bottom - normalized.percent * (bottom - top) }
+        : { x: left + normalized.percent * (right - left), y: (top + bottom) / 2 };
+      // Custom ARIA sliders can derive the mutation from their latest hover/pointer
+      // position rather than the coordinates carried only by mousePressed. Move the
+      // real pointer to the semantic target first so center-point actionability
+      // probing cannot leak into the range mutation.
+      await showAgentCursor(tab.id, point, target.sessionId, { agentName });
+      await send(tab.id, "Input.dispatchMouseEvent", { type: "mouseMoved", ...point }, target.sessionId);
+      await sleep(32);
+      dispatchStarted = true;
+      await send(tab.id, "Input.dispatchMouseEvent", { type: "mousePressed", ...point, button: "left", buttons: 1, clickCount: 1 }, target.sessionId);
+      await send(tab.id, "Input.dispatchMouseEvent", { type: "mouseReleased", ...point, button: "left", buttons: 0, clickCount: 1 }, target.sessionId);
+    } else {
+      throw new Error("Target is not a supported range control");
+    }
+  } catch (error) {
+    dispatchFailure = error;
+  }
+  if (dispatchFailure) {
+    refStates.delete(tab.id);
+    scheduleDetach(tab.id);
+    return {
+      rangeVersion: RANGE_VERSION, actionabilityVersion: ACTIONABILITY_VERSION,
+      tabId: tab.id, ref, actionDispatched: dispatchStarted, primaryActionSucceeded: false,
+      outcomeUncertain: dispatchStarted, actionabilityRecovered: moved.actionabilityRecovered,
+      actionabilityReason: dispatchStarted ? "post_dispatch_outcome_uncertain" : "range_not_actionable",
+      revalidationAttempted: moved.revalidationAttempted, revalidatedSnapshotId: moved.revalidatedSnapshotId,
+      revalidatedRef: moved.revalidatedRef || null, revalidationStatus: moved.revalidationStatus || null,
+      retryableStale: false, freshSnapshotRequired: true, refContextValid: false,
+      refContextReason: dispatchStarted ? "post_dispatch_outcome_uncertain" : "range_not_actionable",
+      currentDocumentGeneration: currentDocumentGeneration(tab.id), compoundActionVersion: COMPOUND_ACTION_VERSION,
+      after: afterConfig ? { ok: false, skipped: true, reason: dispatchStarted ? "primary_action_outcome_uncertain" : "primary_action_not_dispatched" } : null,
+    };
+  }
+  const tolerance = rangeVerificationTolerance(state, normalized.min, normalized.max);
+  let finalState = null;
+  let actualValue = null;
+  let verified = false;
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    if (attempt > 0) await sleep(50);
+    try {
+      finalState = await readRangeState(tab.id, target);
+      const candidateValue = Number(finalState?.current);
+      actualValue = Number.isFinite(candidateValue) ? candidateValue : null;
+      verified = actualValue != null && Math.abs(actualValue - normalized.target) <= tolerance;
+      if (verified) break;
+    } catch (error) {
+      finalState = null;
+      actualValue = null;
+      if (isDetachedNodeError(error)) break;
+    }
+  }
+  if (!verified) {
+    const verificationUnavailable = actualValue == null;
+    const failureReason = verificationUnavailable ? "range_postcondition_unavailable" : "range_postcondition_failed";
+    refStates.delete(tab.id);
+    scheduleDetach(tab.id);
+    return {
+      rangeVersion: RANGE_VERSION, actionabilityVersion: ACTIONABILITY_VERSION,
+      tabId: tab.id, ref, actionDispatched: true, primaryActionSucceeded: false, outcomeUncertain: verificationUnavailable,
+      actionabilityRecovered: moved.actionabilityRecovered, actionabilityReason: failureReason,
+      requestedValue: normalized.target, actualValue,
+      min: normalized.min, max: normalized.max, percent: normalized.percent, kind: state.kind,
+      revalidationAttempted: moved.revalidationAttempted, revalidatedSnapshotId: moved.revalidatedSnapshotId,
+      revalidatedRef: moved.revalidatedRef || null, revalidationStatus: moved.revalidationStatus || null,
+      retryableStale: false, freshSnapshotRequired: true, refContextValid: false,
+      refContextReason: failureReason, currentDocumentGeneration: currentDocumentGeneration(tab.id),
+      compoundActionVersion: COMPOUND_ACTION_VERSION,
+      after: afterConfig ? { ok: false, skipped: true, reason: verificationUnavailable ? "primary_action_outcome_uncertain" : "primary_action_postcondition_failed" } : null,
+    };
+  }
+  refStates.delete(tab.id);
+  const afterResult = await runActionAfter(tab.id, afterConfig);
+  scheduleActionDetach(tab.id, { afterResult });
+  const refContext = refOperationMetadata(tab.id, sourceContext, {
+    validReason: "compound_snapshot_created",
+    invalidReason: "action_invalidated_snapshot",
+  });
+  return {
+    rangeVersion: RANGE_VERSION, actionabilityVersion: ACTIONABILITY_VERSION,
+    tabId: tab.id, ref, actionDispatched: true, primaryActionSucceeded: true, outcomeUncertain: false,
+    actionabilityRecovered: moved.actionabilityRecovered, actionabilityReason: moved.actionabilityReason,
+    revalidationAttempted: moved.revalidationAttempted, revalidatedSnapshotId: moved.revalidatedSnapshotId,
+    revalidatedRef: moved.revalidatedRef || null, revalidationStatus: moved.revalidationStatus || null,
+    retryableStale: false, requestedValue: normalized.target, actualValue,
+    min: normalized.min, max: normalized.max, percent: normalized.percent, kind: state.kind,
+    orientation: state.orientation, compoundActionVersion: COMPOUND_ACTION_VERSION, after: afterResult,
+    ...refContext,
   };
 }
 
 async function browserCheck({ tabId, ref, checked = true, agentName, after }) {
   const tab = await chooseTab(tabId);
   const afterConfig = normalizeActionAfter(after, tab.id, "check");
+  const sourceContext = captureRefContextSource(tab.id);
   await requireDebuggableTab(tab.id);
   await attachTab(tab.id);
-  const target = lookupRef(tab.id, ref);
-  if (target.role === "radio" && checked === false) {
+  const sourceTarget = refStates.get(tab.id)?.refs?.get(ref) || null;
+  if (sourceTarget?.role === "radio" && checked === false) {
     throw new Error("Radio controls cannot be unchecked directly; select another radio option instead.");
   }
-  const moved = await moveAgentCursorToRef(tab.id, ref, { pulse: true, agentName });
-  const resolved = await send(tab.id, "DOM.resolveNode", { backendNodeId: target.backendNodeId }, target.sessionId);
+
+  const preDispatchFailure = (moved) => {
+    scheduleDetach(tab.id);
+    return {
+      actionabilityVersion: ACTIONABILITY_VERSION,
+      tabId: tab.id,
+      ref,
+      checked: null,
+      actionDispatched: false,
+      primaryActionSucceeded: false,
+      outcomeUncertain: false,
+      actionabilityRecovered: false,
+      actionabilityReason: moved.actionabilityReason,
+      revalidationAttempted: moved.revalidationAttempted,
+      revalidatedSnapshotId: moved.revalidatedSnapshotId,
+      revalidatedRef: moved.revalidatedRef || null,
+      revalidationStatus: moved.revalidationStatus || null,
+      retryableStale: Boolean(moved.retryableStale),
+      compoundActionVersion: COMPOUND_ACTION_VERSION,
+      after: afterConfig ? { ok: false, skipped: true, reason: "primary_action_not_dispatched" } : null,
+      refLifecycleVersion: REF_LIFECYCLE_VERSION,
+      sourceSnapshotId: sourceContext.sourceSnapshotId,
+      sourceDocumentGeneration: sourceContext.sourceDocumentGeneration,
+      currentSnapshotId: moved.revalidatedSnapshotId || null,
+      refContextValid: false,
+      freshSnapshotRequired: true,
+      refContextReason: moved.actionabilityReason,
+      currentDocumentGeneration: currentDocumentGeneration(tab.id),
+    };
+  };
+
+  let moved = await moveAgentCursorToRefWithRevalidation(tab.id, ref, { pulse: true, agentName });
+  if (!moved.target) return preDispatchFailure(moved);
+
+  let resolved;
+  try {
+    resolved = await send(tab.id, "DOM.resolveNode", { backendNodeId: moved.target.backendNodeId }, moved.target.sessionId);
+  } catch (error) {
+    if (!isTransientRefActionabilityError(error)) throw error;
+    moved = await moveAgentCursorToRefWithRevalidation(tab.id, moved.effectiveRef || ref, { pulse: true, agentName });
+    if (!moved.target) return preDispatchFailure(moved);
+    try {
+      resolved = await send(tab.id, "DOM.resolveNode", { backendNodeId: moved.target.backendNodeId }, moved.target.sessionId);
+    } catch (retryError) {
+      if (!isTransientRefActionabilityError(retryError)) throw retryError;
+      return preDispatchFailure({
+        ...moved,
+        target: null,
+        actionabilityRecovered: false,
+        actionabilityReason: "stale_or_rerendered",
+        revalidationAttempted: true,
+        revalidationStatus: "resolve_failed_after_revalidation",
+        retryableStale: false,
+      });
+    }
+  }
   const objectId = resolved?.object?.objectId;
-  if (!objectId) throw new Error(`Unable to resolve element: ${ref}`);
-  const result = await send(tab.id, "Runtime.callFunctionOn", {
-    objectId,
-    functionDeclaration: `function(wanted) {
-      const desired = Boolean(wanted);
-      if ('checked' in this) {
-        if (Boolean(this.checked) !== desired) this.click();
-        return { checked: Boolean(this.checked) };
-      }
-      const current = this.getAttribute('aria-checked') === 'true';
-      if (current !== desired) this.click();
-      return { checked: this.getAttribute('aria-checked') === 'true' };
-    }`,
-    arguments: [{ value: Boolean(checked) }],
-    returnByValue: true,
-  }, target.sessionId);
+  if (!objectId) {
+    return preDispatchFailure({
+      ...moved,
+      target: null,
+      actionabilityRecovered: false,
+      actionabilityReason: "stale_or_rerendered",
+      revalidationAttempted: true,
+      revalidationStatus: "resolve_missing_object",
+      retryableStale: false,
+    });
+  }
+
+  let result;
+  try {
+    result = await send(tab.id, "Runtime.callFunctionOn", {
+      objectId,
+      functionDeclaration: `function(wanted) {
+        const desired = Boolean(wanted);
+        if ('checked' in this) {
+          if (Boolean(this.checked) !== desired) this.click();
+          return { checked: Boolean(this.checked) };
+        }
+        const current = this.getAttribute('aria-checked') === 'true';
+        if (current !== desired) this.click();
+        return { checked: this.getAttribute('aria-checked') === 'true' };
+      }`,
+      arguments: [{ value: Boolean(checked) }],
+      returnByValue: true,
+    }, moved.target.sessionId);
+  } catch (error) {
+    if (!isDetachedNodeError(error)) throw error;
+    result = { exceptionDetails: { text: String(error?.message || error) } };
+  }
+
+  const dispatchErrorText = result?.exceptionDetails?.text || result?.exceptionDetails?.exception?.description || "";
+  if (dispatchErrorText && isDetachedNodeError(dispatchErrorText)) {
+    refStates.delete(tab.id);
+    scheduleDetach(tab.id);
+    return {
+      actionabilityVersion: ACTIONABILITY_VERSION,
+      tabId: tab.id,
+      ref,
+      checked: null,
+      point: moved.point,
+      actionDispatched: true,
+      primaryActionSucceeded: false,
+      outcomeUncertain: true,
+      actionabilityRecovered: moved.actionabilityRecovered,
+      actionabilityReason: "post_dispatch_outcome_uncertain",
+      revalidationAttempted: moved.revalidationAttempted,
+      revalidatedSnapshotId: moved.revalidatedSnapshotId,
+      revalidatedRef: moved.revalidatedRef || null,
+      revalidationStatus: moved.revalidationStatus || null,
+      retryableStale: false,
+      frameId: moved.frameId,
+      sessionScope: moved.sessionId ? "child" : "root",
+      compoundActionVersion: COMPOUND_ACTION_VERSION,
+      after: afterConfig ? { ok: false, skipped: true, reason: "primary_action_outcome_uncertain" } : null,
+      refLifecycleVersion: REF_LIFECYCLE_VERSION,
+      sourceSnapshotId: sourceContext.sourceSnapshotId,
+      sourceDocumentGeneration: sourceContext.sourceDocumentGeneration,
+      currentSnapshotId: null,
+      refContextValid: false,
+      freshSnapshotRequired: true,
+      refContextReason: "post_dispatch_outcome_uncertain",
+      currentDocumentGeneration: currentDocumentGeneration(tab.id),
+    };
+  }
+  if (result?.exceptionDetails) throw new Error(result.exceptionDetails?.text || `Unable to check element: ${ref}`);
+
   const actualChecked = result?.result?.value?.checked;
   if (actualChecked !== Boolean(checked)) throw new Error(`Check postcondition failed for ${ref}`);
   refStates.delete(tab.id);
   const afterResult = await runActionAfter(tab.id, afterConfig);
-  scheduleDetach(tab.id, 5_000);
+  scheduleActionDetach(tab.id, { afterResult });
+  const refContext = refOperationMetadata(tab.id, sourceContext, {
+    validReason: "compound_snapshot_created",
+    invalidReason: "action_invalidated_snapshot",
+  });
   return {
+    actionabilityVersion: ACTIONABILITY_VERSION,
     tabId: tab.id,
     ref,
     point: moved.point,
+    actionDispatched: true,
+    primaryActionSucceeded: true,
+    outcomeUncertain: false,
+    actionabilityRecovered: moved.actionabilityRecovered,
+    actionabilityReason: moved.actionabilityReason,
+    revalidationAttempted: moved.revalidationAttempted,
+    revalidatedSnapshotId: moved.revalidatedSnapshotId,
+    revalidatedRef: moved.revalidatedRef || null,
+    revalidationStatus: moved.revalidationStatus || null,
+    retryableStale: Boolean(moved.retryableStale),
     frameId: moved.frameId,
     sessionScope: moved.sessionId ? "child" : "root",
     checked: actualChecked,
     compoundActionVersion: COMPOUND_ACTION_VERSION,
     after: afterResult,
+    ...refContext,
   };
 }
 
@@ -3289,6 +4942,7 @@ async function browserWait({
   networkResponse,
   networkIdle = false,
   domStable = false,
+  semanticReady,
   snapshotChanged,
   quietMs = 500,
   timeoutMs = 10_000,
@@ -3305,11 +4959,12 @@ async function browserWait({
     Boolean(networkResponse),
     networkIdle === true,
     domStable === true,
+    Boolean(semanticReady),
     Boolean(snapshotChanged),
   ].filter(Boolean).length;
   if (requested !== 1) {
     throw new Error(
-      "Exactly one wait condition is required: milliseconds, text, urlContains, refVisible, refHidden, refExists, refEnabled, networkResponse, networkIdle, domStable or snapshotChanged",
+      "Exactly one wait condition is required: milliseconds, text, urlContains, refVisible, refHidden, refExists, refEnabled, networkResponse, networkIdle, domStable, semanticReady or snapshotChanged",
     );
   }
   const timeout = Math.max(100, Math.min(Number(timeoutMs) || 10_000, 60_000));
@@ -3321,7 +4976,8 @@ async function browserWait({
   }
 
   const smartRef = refVisible || refHidden || refExists || refEnabled || null;
-  const smartRequested = Boolean(smartRef || networkResponse || networkIdle || domStable || snapshotChanged);
+  const sourceContext = smartRef ? captureRefContextSource(tab.id) : null;
+  const smartRequested = Boolean(smartRef || networkResponse || networkIdle || domStable || semanticReady || snapshotChanged);
   if (smartRequested || text) {
     await requireDebuggableTab(tab.id);
     await attachTab(tab.id);
@@ -3332,6 +4988,9 @@ async function browserWait({
   let stableCounter = null;
   let stableGeneration = currentDocumentGeneration(tab.id);
   let stableSince = Date.now();
+  let semanticState = null;
+  let semanticSince = Date.now();
+  let semanticGeneration = currentDocumentGeneration(tab.id);
   let baseSnapshot = null;
   if (networkIdle) {
     networkState = {
@@ -3354,10 +5013,14 @@ async function browserWait({
     stableCounter = await domMutationCounter(tab.id);
     stableSince = Date.now();
   }
+  if (semanticReady) {
+    semanticState = await semanticProjectionState(tab.id, semanticReady === true ? {} : semanticReady);
+    semanticSince = Date.now();
+  }
   if (snapshotChanged) {
     baseSnapshot = snapshotStateById(tab.id, String(snapshotChanged));
     if (!baseSnapshot) {
-      scheduleDetach(tab.id, 5_000);
+      scheduleDetach(tab.id);
       throw new Error(`Snapshot id is unavailable or outside the bounded history: ${String(snapshotChanged)}`);
     }
   }
@@ -3400,6 +5063,7 @@ async function browserWait({
                   : "ref_enabled",
             ref: smartRef,
             ...live,
+            ...refOperationMetadata(tab.id, sourceContext, { validReason: "wait_ref_matched" }),
           };
         }
       }
@@ -3437,6 +5101,28 @@ async function browserWait({
             quietMs: quiet,
             mutationCounter: counter,
           };
+        }
+      }
+      if (semanticReady) {
+        const generation = currentDocumentGeneration(tab.id);
+        const nextSemantic = await semanticProjectionState(tab.id, semanticReady === true ? {} : semanticReady);
+        if (generation !== semanticGeneration || !semanticState || nextSemantic.signature !== semanticState.signature) {
+          semanticGeneration = generation;
+          semanticState = nextSemantic;
+          semanticSince = Date.now();
+        } else {
+          semanticState = nextSemantic;
+          if (semanticState.matched && current.status === "complete" && Date.now() - semanticSince >= quiet) {
+            return {
+              waitVersion: WAIT_VERSION,
+              tabId: tab.id,
+              matched: "semantic_ready",
+              quietMs: quiet,
+              nodeCount: semanticState.nodeCount,
+              minNodes: semanticState.minNodes,
+              documentGeneration: generation,
+            };
+          }
         }
       }
       if (baseSnapshot) {
@@ -3486,13 +5172,15 @@ async function browserWait({
     if (networkResponseState) {
       removeNetworkResponseWaitState(tab.id, networkResponseState);
     }
-    if (smartRequested || text) scheduleDetach(tab.id, 5_000);
+    if (smartRequested || text) scheduleDetach(tab.id);
   }
 }
 
-async function browserFill({ tabId, ref, value, agentName, after }) {
+async function browserFill({ tabId, ref, value, submit, agentName, after }) {
   const tab = await chooseTab(tabId);
   const afterConfig = normalizeActionAfter(after, tab.id, "fill");
+  const submitKey = normalizeAtomicSubmit(submit, "fill");
+  const sourceContext = captureRefContextSource(tab.id);
   const wanted = String(value ?? "");
   await requireDebuggableTab(tab.id);
   await attachTab(tab.id);
@@ -3531,9 +5219,16 @@ async function browserFill({ tabId, ref, value, agentName, after }) {
   if (result?.exceptionDetails) throw new Error(result.exceptionDetails?.text || `Unable to fill element: ${ref}`);
   const outcome = result?.result?.value || {};
   if (String(outcome.value ?? "") !== wanted) throw new Error(`Fill postcondition failed for ${ref}`);
-  refStates.delete(tab.id);
+  if (submitKey) {
+    await dispatchKeyChord(tab.id, submitKey, target.sessionId || null);
+    refStates.delete(tab.id);
+  }
   const afterResult = await runActionAfter(tab.id, afterConfig);
-  scheduleDetach(tab.id, 100);
+  scheduleActionDetach(tab.id, { afterResult, preserveRefContext: true });
+  const refContext = refOperationMetadata(tab.id, sourceContext, {
+    validReason: afterResult?.snapshot ? "compound_snapshot_created" : "input_target_retained",
+    invalidReason: submitKey ? "atomic_submit_invalidated_snapshot" : "no_active_snapshot",
+  });
   return {
     inputVersion: INPUT_VERSION,
     tabId: tab.id,
@@ -3543,8 +5238,33 @@ async function browserFill({ tabId, ref, value, agentName, after }) {
     sessionScope: sessionId ? "child" : "root",
     value: outcome.value,
     kind: outcome.kind || null,
+    submit: submitKey ? { key: submitKey, dispatched: true } : null,
     compoundActionVersion: COMPOUND_ACTION_VERSION,
     after: afterResult,
+    ...refContext,
+  };
+}
+
+function keyEventMetadata(key, modifiers = 0) {
+  const special = {
+    Enter: { code: "Enter", windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13, text: "\r" },
+    Tab: { code: "Tab", windowsVirtualKeyCode: 9, nativeVirtualKeyCode: 9 },
+    Escape: { code: "Escape", windowsVirtualKeyCode: 27, nativeVirtualKeyCode: 27 },
+    Backspace: { code: "Backspace", windowsVirtualKeyCode: 8, nativeVirtualKeyCode: 8 },
+    Delete: { code: "Delete", windowsVirtualKeyCode: 46, nativeVirtualKeyCode: 46 },
+    ArrowLeft: { code: "ArrowLeft", windowsVirtualKeyCode: 37, nativeVirtualKeyCode: 37 },
+    ArrowUp: { code: "ArrowUp", windowsVirtualKeyCode: 38, nativeVirtualKeyCode: 38 },
+    ArrowRight: { code: "ArrowRight", windowsVirtualKeyCode: 39, nativeVirtualKeyCode: 39 },
+    ArrowDown: { code: "ArrowDown", windowsVirtualKeyCode: 40, nativeVirtualKeyCode: 40 },
+    " ": { code: "Space", windowsVirtualKeyCode: 32, nativeVirtualKeyCode: 32, text: " " },
+  };
+  const metadata = special[key] || {};
+  const text = modifiers === 0 && typeof metadata.text === "string" ? metadata.text : null;
+  return {
+    ...(metadata.code ? { code: metadata.code } : {}),
+    ...(Number.isInteger(metadata.windowsVirtualKeyCode) ? { windowsVirtualKeyCode: metadata.windowsVirtualKeyCode } : {}),
+    ...(Number.isInteger(metadata.nativeVirtualKeyCode) ? { nativeVirtualKeyCode: metadata.nativeVirtualKeyCode } : {}),
+    ...(text != null ? { text, unmodifiedText: text } : {}),
   };
 }
 
@@ -3575,7 +5295,8 @@ function parseKeyChord(chord) {
 }
 
 async function focusRefForInput(tabId, ref, { agentName, requireEditable = false } = {}) {
-  const moved = await moveAgentCursorToRef(tabId, ref, { pulse: true, agentName });
+  const moved = await moveAgentCursorToRefWithRevalidation(tabId, ref, { pulse: true, agentName });
+  if (!moved.target) throw new Error(`Semantic target became stale before keyboard dispatch: ${moved.actionabilityReason}`);
   const target = moved.target;
   const resolved = await send(tabId, "DOM.resolveNode", { backendNodeId: target.backendNodeId }, target.sessionId);
   const objectId = resolved?.object?.objectId;
@@ -3617,30 +5338,52 @@ async function readFocusedEditableValue(tabId, objectId, sessionId) {
   return result?.result?.value ?? null;
 }
 
+async function dispatchKeyChord(tabId, key, sessionId = null) {
+  const chord = parseKeyChord(key);
+  const printable = chord.key.length === 1 && chord.modifiers === 0;
+  const keyMetadata = keyEventMetadata(chord.key, chord.modifiers);
+  await send(tabId, "Input.dispatchKeyEvent", {
+    type: "keyDown",
+    key: chord.key,
+    modifiers: chord.modifiers,
+    ...keyMetadata,
+    ...(printable && !Object.hasOwn(keyMetadata, "text") ? { text: chord.key, unmodifiedText: chord.key } : {}),
+  }, sessionId);
+  await send(tabId, "Input.dispatchKeyEvent", {
+    type: "keyUp",
+    key: chord.key,
+    modifiers: chord.modifiers,
+    ...(keyMetadata.code ? { code: keyMetadata.code } : {}),
+    ...(Number.isInteger(keyMetadata.windowsVirtualKeyCode) ? { windowsVirtualKeyCode: keyMetadata.windowsVirtualKeyCode } : {}),
+    ...(Number.isInteger(keyMetadata.nativeVirtualKeyCode) ? { nativeVirtualKeyCode: keyMetadata.nativeVirtualKeyCode } : {}),
+  }, sessionId);
+  return chord;
+}
+
+function normalizeAtomicSubmit(submit, actionName) {
+  if (submit == null) return null;
+  const key = String(submit);
+  if (key !== "Enter") throw new Error(`${actionName} submit currently supports only Enter`);
+  return key;
+}
+
 async function browserPress({ tabId, key, ref, agentName, after }) {
   const tab = await chooseTab(tabId);
   const afterConfig = normalizeActionAfter(after, tab.id, "press");
+  const sourceContext = ref ? captureRefContextSource(tab.id) : null;
   await requireDebuggableTab(tab.id);
   await attachTab(tab.id);
   await send(tab.id, "Page.bringToFront");
   const focused = ref ? await focusRefForInput(tab.id, ref, { agentName }) : null;
   const sessionId = focused?.sessionId || null;
-  const chord = parseKeyChord(key);
-  const printable = chord.key.length === 1 && chord.modifiers === 0;
-  await send(tab.id, "Input.dispatchKeyEvent", {
-    type: "keyDown",
-    key: chord.key,
-    modifiers: chord.modifiers,
-    ...(printable ? { text: chord.key } : {}),
-  }, sessionId);
-  await send(tab.id, "Input.dispatchKeyEvent", {
-    type: "keyUp",
-    key: chord.key,
-    modifiers: chord.modifiers,
-  }, sessionId);
-  refStates.delete(tab.id);
+  const chord = await dispatchKeyChord(tab.id, key, sessionId);
   const afterResult = await runActionAfter(tab.id, afterConfig);
-  scheduleDetach(tab.id, 5_000);
+  scheduleActionDetach(tab.id, { afterResult, preserveRefContext: Boolean(ref) });
+  const refContext = ref
+    ? refOperationMetadata(tab.id, sourceContext, {
+        validReason: afterResult?.snapshot ? "compound_snapshot_created" : "input_target_retained",
+      })
+    : refContextMetadata(tab.id, { validReason: afterResult?.snapshot ? "compound_snapshot_created" : "current_snapshot" });
   return {
     inputVersion: INPUT_VERSION,
     tabId: tab.id,
@@ -3651,12 +5394,15 @@ async function browserPress({ tabId, key, ref, agentName, after }) {
     sessionScope: sessionId ? "child" : "root",
     compoundActionVersion: COMPOUND_ACTION_VERSION,
     after: afterResult,
+    ...refContext,
   };
 }
 
-async function browserTypeText({ tabId, ref, text, delayMs = 0, agentName, after }) {
+async function browserTypeText({ tabId, ref, text, delayMs = 0, submit, agentName, after }) {
   const tab = await chooseTab(tabId);
   const afterConfig = normalizeActionAfter(after, tab.id, "type_text");
+  const submitKey = normalizeAtomicSubmit(submit, "type_text");
+  const sourceContext = captureRefContextSource(tab.id);
   const value = String(text ?? "");
   if (value.length > 100_000) throw new Error("type_text is limited to 100000 characters");
   const boundedDelayMs = Math.max(0, Math.min(Math.floor(Number(delayMs) || 0), 200));
@@ -3686,9 +5432,16 @@ async function browserTypeText({ tabId, ref, text, delayMs = 0, agentName, after
     await send(tab.id, "Input.insertText", { text: value }, sessionId);
   }
   const actualValue = await readFocusedEditableValue(tab.id, focused.objectId, sessionId);
-  refStates.delete(tab.id);
+  if (submitKey) {
+    await dispatchKeyChord(tab.id, submitKey, sessionId);
+    refStates.delete(tab.id);
+  }
   const afterResult = await runActionAfter(tab.id, afterConfig);
-  scheduleDetach(tab.id, 5_000);
+  scheduleActionDetach(tab.id, { afterResult, preserveRefContext: true });
+  const refContext = refOperationMetadata(tab.id, sourceContext, {
+    validReason: afterResult?.snapshot ? "compound_snapshot_created" : "input_target_retained",
+    invalidReason: submitKey ? "atomic_submit_invalidated_snapshot" : "no_active_snapshot",
+  });
   return {
     inputVersion: INPUT_VERSION,
     tabId: tab.id,
@@ -3697,10 +5450,12 @@ async function browserTypeText({ tabId, ref, text, delayMs = 0, agentName, after
     characters: [...value].length,
     delayMs: boundedDelayMs,
     value: actualValue,
+    submit: submitKey ? { key: submitKey, dispatched: true } : null,
     frameId: focused.frameId,
     sessionScope: sessionId ? "child" : "root",
     compoundActionVersion: COMPOUND_ACTION_VERSION,
     after: afterResult,
+    ...refContext,
   };
 }
 
@@ -3713,7 +5468,7 @@ async function browserEval({ tabId, expression }) {
     awaitPromise: true,
     returnByValue: true,
   });
-  scheduleDetach(tab.id, 5_000);
+  scheduleDetach(tab.id);
   if (evaluated?.exceptionDetails) {
     throw new Error(evaluated.exceptionDetails?.text || "Runtime.evaluate failed");
   }
@@ -3906,17 +5661,32 @@ async function discoverNewDownloads(sequence, graceMs = DOWNLOAD_DISCOVERY_GRACE
   return [];
 }
 
-async function browserDownloadWait({ downloadId, timeoutMs = 60_000 } = {}) {
-  if (!Number.isInteger(downloadId) || downloadId < 0) throw new Error("downloadId is required");
+async function browserDownloadWait({ downloadId, sinceSequence, timeoutMs = 60_000 } = {}) {
+  const hasDownloadId = Number.isInteger(downloadId) && downloadId >= 0;
+  const hasSinceSequence = Number.isInteger(sinceSequence) && sinceSequence >= 0;
+  if (hasDownloadId === hasSinceSequence) {
+    throw new Error("Exactly one of downloadId or sinceSequence is required");
+  }
   if (!chrome.downloads?.search) throw new Error("Chrome downloads API is unavailable");
   const timeout = Math.max(100, Math.min(Number(timeoutMs) || 60_000, 60_000));
   const deadline = Date.now() + timeout;
+  let resolvedDownloadId = hasDownloadId ? downloadId : null;
   while (Date.now() < deadline) {
-    const item = await downloadById(downloadId, { includeFilename: true });
-    if (item && new Set(["complete", "interrupted"]).has(item.state)) return { download: item };
+    if (resolvedDownloadId == null) {
+      const next = (await newDownloadsSince(sinceSequence))[0] || null;
+      if (next?.id != null) resolvedDownloadId = next.id;
+    }
+    if (resolvedDownloadId != null) {
+      const item = await downloadById(resolvedDownloadId, { includeFilename: true });
+      if (item && new Set(["complete", "interrupted"]).has(item.state)) {
+        return { downloadLifecycleVersion: DOWNLOAD_LIFECYCLE_VERSION, download: item };
+      }
+    }
     await sleep(100);
   }
-  throw new Error(`Timed out waiting for download ${downloadId}`);
+  throw new Error(hasDownloadId
+    ? `Timed out waiting for download ${downloadId}`
+    : `Timed out waiting for the next download after sequence ${sinceSequence}`);
 }
 
 async function browserCreateTab({ url = "chrome://newtab/", active = false } = {}) {
@@ -3940,25 +5710,57 @@ async function browserCreateTab({ url = "chrome://newtab/", active = false } = {
   };
 }
 
+async function browserHistoryNavigateViaDebugger(tab, normalizedDirection) {
+  const policy = classifyBrowserPage(tab);
+  if (!policy.debuggerSupported) throw restrictedPageError(policy);
+  const persistent = observationStates.has(tab.id);
+  await attachTab(tab.id, DEFAULT_ATTACH_IDLE_MS, { persistent });
+  await send(tab.id, "Page.enable");
+  const history = await send(tab.id, "Page.getNavigationHistory");
+  const entries = Array.isArray(history?.entries) ? history.entries : [];
+  const currentIndex = Number(history?.currentIndex);
+  if (!Number.isInteger(currentIndex)) throw new Error("Chrome returned an invalid navigation history index");
+  const targetIndex = currentIndex + (normalizedDirection === "forward" ? 1 : -1);
+  const entry = entries[targetIndex];
+  if (!entry || !Number.isInteger(entry.id)) {
+    throw new Error(`Cannot find a ${normalizedDirection === "forward" ? "next" : "previous"} page in Chrome navigation history`);
+  }
+  await send(tab.id, "Page.navigateToHistoryEntry", { entryId: entry.id });
+  if (!persistent) scheduleDetach(tab.id);
+  return entry;
+}
+
 async function browserHistoryNavigate({ tabId, direction } = {}) {
   const normalizedDirection = direction === "forward" ? "forward" : "back";
   const tab = await chooseTab(tabId);
   const initialGeneration = currentDocumentGeneration(tab.id);
   const api = normalizedDirection === "forward" ? chrome.tabs?.goForward : chrome.tabs?.goBack;
-  if (typeof api !== "function") {
-    throw new Error(`Chrome tabs.go${normalizedDirection === "forward" ? "Forward" : "Back"} API is unavailable`);
+  let navigationMethod = "tabs_api";
+  let tabsApiError = null;
+  if (typeof api === "function") {
+    try {
+      await api.call(chrome.tabs, tab.id);
+    } catch (error) {
+      tabsApiError = error instanceof Error ? error.message : String(error);
+    }
+  } else {
+    tabsApiError = `Chrome tabs.go${normalizedDirection === "forward" ? "Forward" : "Back"} API is unavailable`;
   }
-  try {
-    await api.call(chrome.tabs, tab.id);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    throw new Error(`Chrome could not navigate ${normalizedDirection} in tab ${tab.id}: ${message}`);
+  if (tabsApiError) {
+    try {
+      await browserHistoryNavigateViaDebugger(tab, normalizedDirection);
+      navigationMethod = "cdp_history_fallback";
+    } catch (fallbackError) {
+      const fallbackMessage = fallbackError instanceof Error ? fallbackError.message : String(fallbackError);
+      throw new Error(`Chrome could not navigate ${normalizedDirection} in tab ${tab.id}: ${tabsApiError}; fallback failed: ${fallbackMessage}`);
+    }
   }
   const navigation = await waitForHistoryNavigation(tab.id, tab, initialGeneration);
   const updated = navigation.tab;
   const policy = classifyBrowserPage(updated);
   return {
     navigationVersion: NAVIGATION_VERSION,
+    navigationMethod,
     id: updated.id,
     windowId: updated.windowId,
     title: updated.title,
@@ -3996,7 +5798,7 @@ async function browserReload({ tabId, ignoreCache = false } = {}) {
       ignoreCache: Boolean(ignoreCache),
     };
   } finally {
-    if (!persistent) scheduleDetach(tab.id, 5_000);
+    if (!persistent) scheduleDetach(tab.id);
   }
 }
 
@@ -4031,7 +5833,7 @@ async function browserNavigate({ tabId, url, ignoreCache = false } = {}) {
     if (ignoreCache) {
       await send(tab.id, "Network.setCacheDisabled", { cacheDisabled: false }).catch(() => {});
     }
-    if (!persistent) scheduleDetach(tab.id, 5_000);
+    if (!persistent) scheduleDetach(tab.id);
   }
 }
 
@@ -4072,7 +5874,7 @@ async function browserEmulate({
     maxTouchPoints: touch || mobile ? 5 : 1,
   });
   await send(tab.id, "Page.bringToFront");
-  if (!persistent) scheduleDetach(tab.id, 5_000);
+  if (!persistent) scheduleDetach(tab.id);
   return {
     emulationVersion: EMULATION_VERSION,
     tabId: tab.id,
@@ -4119,6 +5921,7 @@ async function dispatchTouchTap(tabId, point, sessionId = null) {
 async function browserTap({ tabId, ref, agentName } = {}) {
   if (!/^@e\d+$/.test(String(ref || ""))) throw new Error("tap requires a current semantic ref.");
   const tab = await chooseTab(tabId);
+  const sourceContext = captureRefContextSource(tab.id);
   await requireDebuggableTab(tab.id);
   const persistent = observationStates.has(tab.id);
   await attachTab(tab.id, DEFAULT_ATTACH_IDLE_MS, { persistent });
@@ -4134,9 +5937,10 @@ async function browserTap({ tabId, ref, agentName } = {}) {
       frameId: moved.frameId,
       sessionScope: moved.sessionId ? "child" : "root",
       gesture: "tap",
+      ...refOperationMetadata(tab.id, sourceContext, { invalidReason: "touch_gesture_invalidated_snapshot" }),
     };
   } finally {
-    if (!persistent) scheduleDetach(tab.id, 5_000);
+    if (!persistent) scheduleDetach(tab.id);
   }
 }
 
@@ -4150,6 +5954,7 @@ async function browserSwipe({ tabId, direction, distance = 400, ref, agentName }
     throw new Error("Swipe distance must be an integer between 40 and 1200 pixels.");
   }
   const tab = await chooseTab(tabId);
+  const sourceContext = ref != null ? captureRefContextSource(tab.id) : null;
   await requireDebuggableTab(tab.id);
   const persistent = observationStates.has(tab.id);
   await attachTab(tab.id, DEFAULT_ATTACH_IDLE_MS, { persistent });
@@ -4200,6 +6005,7 @@ async function browserSwipe({ tabId, direction, distance = 400, ref, agentName }
       await sleep(16);
     }
     await send(tab.id, "Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] }, sessionId);
+    refStates.delete(tab.id);
     return {
       touchGestureVersion: TOUCH_GESTURE_VERSION,
       tabId: tab.id,
@@ -4210,9 +6016,10 @@ async function browserSwipe({ tabId, direction, distance = 400, ref, agentName }
       ref: ref || null,
       frameId,
       sessionScope: sessionId ? "child" : "root",
+      ...(ref != null ? refOperationMetadata(tab.id, sourceContext, { invalidReason: "touch_gesture_invalidated_snapshot" }) : {}),
     };
   } finally {
-    if (!persistent) scheduleDetach(tab.id, 5_000);
+    if (!persistent) scheduleDetach(tab.id);
   }
 }
 
@@ -4225,15 +6032,18 @@ async function browserClearEmulation({ tabId } = {}) {
     send(tab.id, "Emulation.clearDeviceMetricsOverride"),
     send(tab.id, "Emulation.setTouchEmulationEnabled", { enabled: false }),
   ]);
-  if (!persistent) scheduleDetach(tab.id, 5_000);
+  if (!persistent) scheduleDetach(tab.id);
   return { emulationVersion: EMULATION_VERSION, tabId: tab.id, cleared: true };
 }
 
 async function browserOpen({ tabId, url }) {
   const targetUrl = validateOpenUrl(url);
   const tab = await chooseTab(tabId);
-  const persistent = observationStates.has(tab.id) && /^https?:/i.test(targetUrl);
-  if (!persistent) await detachTab(tab.id);
+  const debuggerCompatibleTarget = /^https?:/i.test(targetUrl);
+  const persistent = observationStates.has(tab.id) && debuggerCompatibleTarget;
+  const keepAttached = debuggerCompatibleTarget && attachedTabs.has(tab.id);
+  if (!keepAttached) await detachTab(tab.id);
+  else if (!persistent) scheduleDetach(tab.id);
   await chrome.tabs.update(tab.id, { url: targetUrl, active: true });
   const updated = await waitForTab(
     tab.id,
@@ -4286,6 +6096,7 @@ async function browserClose({ tabId }) {
 
 async function browserUpload({ tabId, ref, selector, files }) {
   const tab = await chooseTab(tabId);
+  const sourceContext = ref ? captureRefContextSource(tab.id) : null;
   await requireDebuggableTab(tab.id);
   await attachTab(tab.id);
   const fileList = Array.isArray(files) ? files.map(String) : [];
@@ -4307,8 +6118,15 @@ async function browserUpload({ tabId, ref, selector, files }) {
     throw new Error("ref or selector is required");
   }
   await send(tab.id, "DOM.setFileInputFiles", params, sessionId);
-  scheduleDetach(tab.id, 5_000);
-  return { tabId: tab.id, uploaded: fileList.length, ref: ref || null, selector: selector || null };
+  refStates.delete(tab.id);
+  scheduleDetach(tab.id);
+  return {
+    tabId: tab.id,
+    uploaded: fileList.length,
+    ref: ref || null,
+    selector: selector || null,
+    ...(ref ? refOperationMetadata(tab.id, sourceContext, { invalidReason: "upload_invalidated_snapshot" }) : {}),
+  };
 }
 
 async function browserObserveStart({ tabId } = {}) {
@@ -4387,7 +6205,7 @@ async function browserDialog({ tabId, action = "status", promptText } = {}) {
   if (!currentDialogRecord(tab.id)) await sleep(40);
   const record = currentDialogRecord(tab.id);
   if (action === "status") {
-    scheduleDetach(tab.id, 5_000);
+    scheduleDetach(tab.id);
     return { tabId: tab.id, open: Boolean(record), dialog: record?.dialog || null };
   }
   if (!record) throw new Error("No JavaScript dialog is currently open for this tab.");
@@ -4398,7 +6216,7 @@ async function browserDialog({ tabId, action = "status", promptText } = {}) {
     ...(promptText != null ? { promptText: String(promptText) } : {}),
   }, record.sessionId);
   clearDialogState(tab.id);
-  scheduleDetach(tab.id, 5_000);
+  scheduleDetach(tab.id);
   return { tabId: tab.id, action, handled };
 }
 
@@ -4705,6 +6523,7 @@ const COMMANDS = {
   emulate: browserEmulate,
   "emulation.clear": browserClearEmulation,
   snapshot: browserSnapshot,
+  "pdf.data": browserPdfData,
   screenshot: browserScreenshot,
   find: browserFind,
   reacquire: browserReacquire,
@@ -4719,6 +6538,7 @@ const COMMANDS = {
   ref_info: browserRefInfo,
   select: browserSelect,
   check: browserCheck,
+  range_set: browserRangeSet,
   wait: browserWait,
   fill: browserFill,
   press: browserPress,
@@ -4899,7 +6719,7 @@ chrome.debugger.onEvent.addListener((source, method, params = {}) => {
   }
   if (method === "Page.javascriptDialogClosed") {
     clearDialogState(tabId);
-    scheduleDetach(tabId, 250);
+    scheduleDetach(tabId);
     return;
   }
 
