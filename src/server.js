@@ -3855,6 +3855,7 @@ await registerEquinoxBrowserTools({
   bridge: equinoxBrowserBridge,
   isBrowserAccessEnabled: () => AGENT_ACCESS.browser,
   ensureAgentBrowserReady: () => equinoxAgentBrowser.ensureReady(),
+  shutdownAgentBrowser: () => equinoxAgentBrowser.shutdown(),
   getAgentBrowserStatus: () => equinoxAgentBrowser.snapshot(),
   withMutationLocks,
   textResult,
@@ -3984,7 +3985,7 @@ equinoxLocalControlApi = createEquinoxLocalControlApi({
       }
     }
     const browserSettings = browserSettingsByContext.user;
-    const agentBrowserStatus = equinoxAgentBrowser.snapshot();
+    const agentBrowserStatus = await equinoxAgentBrowser.status();
     const observabilityHealth = await runtimeObservability.health({
       windowMs: 15 * 60 * 1000,
     });

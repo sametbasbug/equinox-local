@@ -183,6 +183,8 @@ test("control API serves the visual Control Center shell and fixed same-origin a
     assert.match(scriptText, /\/api\/v1\/browser\/settings/u);
     assert.match(scriptText, /\/api\/v1\/browser\/agent\/open/u);
     assert.match(scriptText, /Agent Browser/u);
+    assert.match(scriptText, /setupComplete/u);
+    assert.match(scriptText, /Agent Browser setup is complete and the isolated browser is currently closed/u);
     assert.match(scriptText, /browser-settings-target/u);
     assert.match(scriptText, /npdneefcobilfkjlihghjgjnknenhfoj/u);
     assert.match(scriptText, /control\.rel = "noopener noreferrer"/u);

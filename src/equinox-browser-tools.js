@@ -6,6 +6,13 @@ import path from "node:path";
 
 import { PNG } from "pngjs";
 
+import {
+  extractBrowserPdfText,
+  MAX_BROWSER_PDF_BYTES,
+  MAX_BROWSER_PDF_TEXT_CHARS,
+  MAX_BROWSER_PDF_TEXT_PAGES,
+} from "./browser-pdf-text.js";
+
 const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 const MAX_SCREENSHOT_PNG_BYTES = 32 * 1024 * 1024;
 const MAX_SCREENSHOT_PNG_PIXELS = 20_000_000;
@@ -18,6 +25,154 @@ const SCREENSHOT_MAX_CAPTURE_DIRS = 24;
 const SCREENSHOT_MAX_TREE_ENTRIES = 100;
 const MAX_BROWSER_DOWNLOAD_BYTES = 256 * 1024 * 1024;
 const SAFE_DOWNLOAD_DANGERS = new Set(["safe", "deep_scanned_safe"]);
+const EXPECTED_BROWSER_BRIDGE_PROTOCOL_VERSION = "1";
+
+function decodeBrowserPdfData(payload) {
+  const version = Number(payload?.pdfContentVersion);
+  if (!Number.isFinite(version) || version < 1) {
+    throw new Error("Chrome PDF readable-content response is missing pdfContentVersion 1.");
+  }
+  const byteLength = Number(payload?.byteLength);
+  if (!Number.isInteger(byteLength) || byteLength < 5 || byteLength > MAX_BROWSER_PDF_BYTES) {
+    throw new Error(`Chrome PDF data exceeds the ${MAX_BROWSER_PDF_BYTES / 1024 / 1024} MB parsing limit.`);
+  }
+  const encoded = String(payload?.data || "");
+  if (!encoded || encoded.length > Math.ceil(MAX_BROWSER_PDF_BYTES * 4 / 3) + 16) {
+    throw new Error("Chrome PDF data is empty or exceeds the encoded transport limit.");
+  }
+  const buffer = Buffer.from(encoded, "base64");
+  if (buffer.length !== byteLength || buffer.toString("base64") !== encoded) {
+    throw new Error("Chrome PDF data failed base64 length/integrity validation.");
+  }
+  if (buffer.subarray(0, Math.min(buffer.length, 1024)).indexOf(Buffer.from("%PDF-", "ascii")) < 0) {
+    throw new Error("Chrome PDF data does not contain a valid PDF header.");
+  }
+  return buffer;
+}
+
+function redactSensitivePdfText(rawValue) {
+  let value = String(rawValue || "").replace(/\u0000/gu, "").replace(/\r\n?/gu, "\n");
+  let count = 0;
+  const replace = (pattern, replacement) => {
+    value = value.replace(pattern, (...args) => {
+      count += 1;
+      return typeof replacement === "function" ? replacement(...args) : replacement;
+    });
+  };
+  replace(/\b(Bearer\s+)[A-Za-z0-9._~+\/-]{8,}\b/giu, (_match, prefix) => `${prefix}[REDACTED]`);
+  replace(/\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/gu, "[REDACTED]");
+  replace(/\b(?:api[ _-]?key|secret|token|session|authorization|password|passwd)\s*[:=]\s*[^\s,;]{6,}/giu, (match) => {
+    const separator = match.search(/[:=]/u);
+    return separator >= 0 ? `${match.slice(0, separator + 1)}[REDACTED]` : "[REDACTED]";
+  });
+  replace(/((?:otp|one[- ]time(?: password| code)?|verification code|security code|recovery code|account recovery code|login code|authentication code|confirmation code|passcode|doğrulama kodu|kurtarma kodu|hesap kurtarma kodu|giriş kodu|kimlik doğrulama kodu|onay kodu|tek kullanımlık(?: şifre| kod)?)[^\d]{0,24})\b\d{4,8}\b/giu, (_match, prefix) => `${prefix}[REDACTED]`);
+  replace(/\b[a-f0-9]{40,}\b/giu, "[REDACTED]");
+  replace(/\b[A-Za-z0-9_\-+/]{48,}={0,2}\b/gu, "[REDACTED]");
+  return { value, count };
+}
+
+function pdfSnapshotFrameId(snapshot) {
+  const frames = Array.isArray(snapshot?.frames) ? snapshot.frames : [];
+  return frames.filter((frame) => (
+    frame?.process === "oopif" && frame?.url === snapshot?.tab?.url
+  )).at(-1)?.id || snapshot?.snapshot?.mainFrameId || null;
+}
+
+function augmentSnapshotWithPdfText(snapshot, parsed, maxNodes = 250) {
+  if (!snapshot || typeof snapshot !== "object" || snapshot.deltaOnly) return snapshot;
+  const existingCount = Number.isInteger(snapshot.elementCount) ? snapshot.elementCount : 0;
+  const nodeBudget = Math.max(0, Math.min(250, Number(maxNodes) || 250) - existingCount);
+  const pages = Array.isArray(parsed?.pages) ? parsed.pages : [];
+  const privacyRedactionEnabled = snapshot?.privacy?.sensitiveTextRedaction === true;
+  const processedPages = [];
+  let sensitiveRedactionCount = 0;
+  for (const page of pages) {
+    const pageNumber = Number(page?.pageNumber) || processedPages.length + 1;
+    if (privacyRedactionEnabled) {
+      const redacted = redactSensitivePdfText(page?.text);
+      sensitiveRedactionCount += redacted.count;
+      processedPages.push({ pageNumber, text: redacted.value });
+    } else {
+      processedPages.push({
+        pageNumber,
+        text: String(page?.text || "").replace(/\u0000/gu, "").replace(/\r\n?/gu, "\n"),
+      });
+    }
+  }
+
+  const chunks = [];
+  for (const page of processedPages) {
+    const text = String(page.text || "");
+    if (!text) continue;
+    for (let offset = 0, chunkIndex = 0; offset < text.length; offset += 4_000, chunkIndex += 1) {
+      chunks.push({
+        pageNumber: page.pageNumber,
+        chunkIndex,
+        text: text.slice(offset, offset + 4_000),
+      });
+    }
+  }
+  const returnedChunks = chunks.slice(0, nodeBudget);
+  const pdfTruncated = Boolean(parsed?.truncated) || returnedChunks.length < chunks.length;
+  const returnedPageNumbers = new Set(returnedChunks.map((chunk) => chunk.pageNumber));
+  const frameId = pdfSnapshotFrameId(snapshot);
+  const syntheticElements = returnedChunks.map((chunk) => ({
+    ref: null,
+    role: "StaticText",
+    name: chunk.text,
+    value: null,
+    frameId,
+    frameProcess: frameId && frameId !== snapshot?.snapshot?.mainFrameId ? "oopif" : "same-process",
+    disabled: null,
+    checked: null,
+    selected: null,
+    pressed: null,
+    expanded: null,
+    required: null,
+    focusable: null,
+    contentSource: "macos-pdfkit",
+    pdfPage: chunk.pageNumber,
+    pdfChunk: chunk.chunkIndex,
+  }));
+  const textByPage = new Map();
+  for (const chunk of returnedChunks) {
+    const current = textByPage.get(chunk.pageNumber) || "";
+    textByPage.set(chunk.pageNumber, `${current}${chunk.text}`);
+  }
+  const pdfText = [...textByPage.entries()]
+    .map(([pageNumber, text]) => `[PDF page ${pageNumber}]\n${text}`)
+    .join("\n");
+  const result = {
+    ...snapshot,
+    pdfContent: {
+      version: 1,
+      parser: String(parsed?.parser || "macos-pdfkit"),
+      pageCount: Number(parsed?.pageCount) || 0,
+      parsedPages: processedPages.length,
+      returnedPages: returnedPageNumbers.size,
+      textChunks: returnedChunks.length,
+      textChars: processedPages.reduce((sum, page) => sum + page.text.length, 0),
+      textAvailable: Boolean(pdfText),
+      truncated: pdfTruncated,
+      sensitiveRedactionCount,
+    },
+    privacy: {
+      ...(snapshot.privacy || {}),
+      pdfTextRedaction: privacyRedactionEnabled,
+      sensitiveRedactionCount: Number(snapshot?.privacy?.sensitiveRedactionCount || 0) + sensitiveRedactionCount,
+    },
+    elementCount: existingCount + returnedChunks.length,
+    returnedElementCount: (Number.isInteger(snapshot.returnedElementCount) ? snapshot.returnedElementCount : 0) + returnedChunks.length,
+    truncated: Boolean(snapshot.truncated) || pdfTruncated,
+  };
+  if (Object.hasOwn(snapshot, "text")) {
+    result.text = [snapshot.text, pdfText].filter(Boolean).join("\n");
+  }
+  if (Array.isArray(snapshot.elements)) {
+    result.elements = [...snapshot.elements, ...syntheticElements];
+  }
+  return result;
+}
 
 function validateScreenshotName(value, label) {
   if (typeof value !== "string" || !SCREENSHOT_NAME_PATTERN.test(value)) {
@@ -244,10 +399,12 @@ export async function registerEquinoxBrowserTools({
   bridge: rawBridge,
   isBrowserAccessEnabled = () => true,
   ensureAgentBrowserReady = null,
+  shutdownAgentBrowser = null,
   getAgentBrowserStatus = null,
   withMutationLocks,
   textResult,
   errorResult,
+  extractPdfText = extractBrowserPdfText,
 } = {}) {
   if (
     typeof registerTextTool !== "function" ||
@@ -262,10 +419,12 @@ export async function registerEquinoxBrowserTools({
     !screenshotProjectId.trim() ||
     typeof isBrowserAccessEnabled !== "function" ||
     (ensureAgentBrowserReady !== null && typeof ensureAgentBrowserReady !== "function") ||
+    (shutdownAgentBrowser !== null && typeof shutdownAgentBrowser !== "function") ||
     (getAgentBrowserStatus !== null && typeof getAgentBrowserStatus !== "function") ||
     typeof withMutationLocks !== "function" ||
     typeof textResult !== "function" ||
-    typeof errorResult !== "function"
+    typeof errorResult !== "function" ||
+    typeof extractPdfText !== "function"
   ) {
     throw new Error("Equinox Browser tool registration bağımlılıkları eksik.");
   }
@@ -283,7 +442,7 @@ export async function registerEquinoxBrowserTools({
   const requireAgentBrowserContext = (operation = "Bu işlem") => {
     const context = browserContextStorage.getStore() ?? "agent";
     if (context !== "agent") {
-      throw new Error(`${operation} yalnız Agent Browser'da kullanılabilir; Your Browser bookmark verileri ürün API'sinde bilinçli olarak kapalıdır.`);
+      throw new Error(`${operation} yalnız Agent Browser'da kullanılabilir; Your Browser için bu işlem ürün API'sinde bilinçli olarak kapalıdır.`);
     }
   };
   const baseWithMutationLocks = withMutationLocks;
@@ -318,20 +477,23 @@ export async function registerEquinoxBrowserTools({
     wrapBrowserRegistration(baseRegisterTextTool, name, definition, handler, options);
   registerRawTool = (name, definition, handler, options) =>
     wrapBrowserRegistration(baseRegisterRawTool, name, definition, handler, options);
+  const ensureBrowserContextReady = async (context = browserContextStorage.getStore() ?? "agent") => {
+    assertBrowserAccess();
+    if (
+      context === "agent" &&
+      typeof ensureAgentBrowserReady === "function" &&
+      typeof rawBridge.readyFor === "function" &&
+      !rawBridge.readyFor("agent")
+    ) {
+      await ensureAgentBrowserReady();
+    }
+  };
   const bridge = new Proxy(rawBridge, {
     get(target, property, receiver) {
       if (property === "call") {
         return async (method, args = {}, options = {}) => {
-          assertBrowserAccess();
           const context = browserContextStorage.getStore() ?? "agent";
-          if (
-            context === "agent" &&
-            typeof ensureAgentBrowserReady === "function" &&
-            typeof rawBridge.readyFor === "function" &&
-            !rawBridge.readyFor("agent")
-          ) {
-            await ensureAgentBrowserReady();
-          }
+          await ensureBrowserContextReady(context);
           return target.call(method, args, {
             ...options,
             context,
@@ -358,16 +520,26 @@ export async function registerEquinoxBrowserTools({
     };
   };
   const boundedAfterSchema = () => z.object({
-    wait_for: z.enum(["dom_stable", "network_idle"]).optional(),
+    wait_for: z.enum(["dom_stable", "network_idle", "semantic_ready"]).optional(),
     snapshot: z.enum(["delta", "full"]).optional(),
+    mode: z.enum(["interactive", "readable", "balanced"]).optional(),
+    scope: z.enum(["viewport", "document"]).optional(),
+    max_nodes: z.number().int().min(1).max(250).optional(),
+    query: z.string().min(1).max(1_000).optional(),
+    roles: z.array(z.string().min(1).max(100)).max(50).optional(),
     quiet_ms: z.number().int().min(100).max(5_000).default(500),
     timeout_ms: z.number().int().min(100).max(60_000).default(10_000),
-  }).optional().describe("Tek bounded post-action wait ve/veya snapshot; macro değildir");
+  }).optional().describe("Tek bounded post-action wait ve/veya projection-aware snapshot; macro değildir");
   const mapBoundedAfter = (after) => {
     if (!after) return null;
     const mapped = {
       ...(after.wait_for ? { waitFor: after.wait_for } : {}),
       ...(after.snapshot ? { snapshot: after.snapshot } : {}),
+      ...(after.mode ? { snapshotMode: after.mode } : {}),
+      ...(after.scope ? { snapshotScope: after.scope } : {}),
+      ...(after.max_nodes != null ? { snapshotMaxNodes: after.max_nodes } : {}),
+      ...(after.query ? { snapshotQuery: after.query } : {}),
+      ...(after.roles ? { snapshotRoles: after.roles } : {}),
       quietMs: after.quiet_ms ?? 500,
       timeoutMs: after.timeout_ms ?? 10_000,
     };
@@ -376,6 +548,50 @@ export async function registerEquinoxBrowserTools({
     }
     return mapped;
   };
+  const minimumBrowserCapabilityVersions = Object.freeze({
+    snapshot: 9,
+    deltaSnapshot: 2,
+    screenshot: 4,
+    reacquire: 2,
+    compoundAction: 4,
+    doubleClick: 1,
+    pointerDrag: 1,
+    html5Drag: 1,
+    wait: 3,
+    navigation: 2,
+    emulation: 1,
+    input: 3,
+    actionability: 7,
+    refLifecycle: 1,
+    click: 2,
+    observation: 2,
+    touchGesture: 1,
+    bookmarks: 2,
+    pdfContent: 1,
+    downloadLifecycle: 1,
+    rangeSet: 2,
+  });
+  const classifyBrowserCompatibility = (extension) => {
+    if (!extension || typeof extension !== "object") return null;
+    const reported = extension.capabilityVersions && typeof extension.capabilityVersions === "object"
+      ? extension.capabilityVersions
+      : {};
+    const outdatedCapabilities = Object.entries(minimumBrowserCapabilityVersions)
+      .map(([name, minimum]) => ({ name, minimum, actual: Number(reported[name]) || 0 }))
+      .filter((item) => item.actual < item.minimum);
+    const protocolVersion = extension.protocolVersion == null ? null : String(extension.protocolVersion);
+    const incompatibleProtocol = protocolVersion != null && protocolVersion !== EXPECTED_BROWSER_BRIDGE_PROTOCOL_VERSION;
+    return {
+      compatibility: incompatibleProtocol
+        ? "incompatible"
+        : outdatedCapabilities.length > 0
+          ? "outdated_worker"
+          : "current",
+      ...(incompatibleProtocol ? { expectedProtocolVersion: EXPECTED_BROWSER_BRIDGE_PROTOCOL_VERSION, protocolVersion } : {}),
+      outdatedCapabilities,
+    };
+  };
+
   const requireFeatureVersion = (result, field, minimum, message) => {
     const version = Number(result?.[field]);
     if (!Number.isFinite(version) || version < minimum) throw new Error(message);
@@ -383,6 +599,7 @@ export async function registerEquinoxBrowserTools({
   };
   const requireCapabilityVersion = async (field, minimum, message) => {
     const context = browserContextStorage.getStore() ?? "agent";
+    await ensureBrowserContextReady(context);
     const snapshot = typeof rawBridge.snapshot === "function" ? rawBridge.snapshot() : null;
     const extension = snapshot?.contexts?.[context]?.extension
       ?? (context === "user" ? snapshot?.extension : null);
@@ -398,6 +615,16 @@ export async function registerEquinoxBrowserTools({
     if (!value || typeof value !== "object" || Array.isArray(value)) return value;
     if (value.outputMode === output) return value;
     if (output === "both") return { ...value, outputMode: output, outputProjectedLocally: true };
+    const lifecycle = {
+      ...(Number.isInteger(value.refLifecycleVersion) ? { refLifecycleVersion: value.refLifecycleVersion } : {}),
+      ...(value.sourceSnapshotId != null ? { sourceSnapshotId: value.sourceSnapshotId } : {}),
+      ...(Number.isInteger(value.sourceDocumentGeneration) ? { sourceDocumentGeneration: value.sourceDocumentGeneration } : {}),
+      ...(value.currentSnapshotId != null ? { currentSnapshotId: value.currentSnapshotId } : {}),
+      ...(typeof value.refContextValid === "boolean" ? { refContextValid: value.refContextValid } : {}),
+      ...(typeof value.freshSnapshotRequired === "boolean" ? { freshSnapshotRequired: value.freshSnapshotRequired } : {}),
+      ...(value.refContextReason ? { refContextReason: value.refContextReason } : {}),
+      ...(Number.isInteger(value.currentDocumentGeneration) ? { currentDocumentGeneration: value.currentDocumentGeneration } : {}),
+    };
     const common = {
       tab: value.tab,
       snapshotVersion: value.snapshotVersion,
@@ -408,10 +635,14 @@ export async function registerEquinoxBrowserTools({
       ...(value.reason ? { reason: value.reason } : {}),
       ...(value.snapshot ? { snapshot: value.snapshot } : {}),
       ...(Number.isInteger(value.refCount) ? { refCount: value.refCount } : {}),
+      ...(Number.isInteger(value.containerRefCount) ? { containerRefCount: value.containerRefCount } : {}),
+      ...(value.privacy ? { privacy: value.privacy } : {}),
+      ...(value.pdfContent ? { pdfContent: value.pdfContent } : {}),
       ...(Number.isInteger(value.elementCount) ? { elementCount: value.elementCount } : {}),
       ...(Number.isInteger(value.returnedElementCount) ? { returnedElementCount: value.returnedElementCount } : {}),
       ...(typeof value.truncated === "boolean" ? { truncated: value.truncated } : {}),
       ...(typeof value.deltaOnly === "boolean" ? { deltaOnly: value.deltaOnly } : {}),
+      ...lifecycle,
       outputMode: output,
       outputProjectedLocally: true,
     };
@@ -428,6 +659,9 @@ export async function registerEquinoxBrowserTools({
         debuggerSupported: value.debuggerSupported,
         ...(value.reason ? { reason: value.reason } : {}),
         ...(value.snapshot ? { snapshot: value.snapshot } : {}),
+        ...(value.pdfContent ? { pdfContent: value.pdfContent } : {}),
+        ...(value.privacy ? { privacy: value.privacy } : {}),
+        ...lifecycle,
         outputMode: output,
         outputProjectedLocally: true,
         text: value.text || "",
@@ -439,6 +673,7 @@ export async function registerEquinoxBrowserTools({
     const lifecycle = typeof getAgentBrowserStatus === "function" ? getAgentBrowserStatus() : null;
     const localAgent = local?.contexts?.agent ?? null;
     const ready = Boolean(localAgent?.ready);
+    const compatibility = classifyBrowserCompatibility(localAgent?.extension);
     const supported = lifecycle?.supported ?? null;
     const pairing = Boolean(lifecycle?.pairing);
     const lastLaunchError = lifecycle?.lastLaunchError ?? null;
@@ -446,7 +681,7 @@ export async function registerEquinoxBrowserTools({
       accessEnabled && supported !== false && typeof ensureAgentBrowserReady === "function",
     );
     const state = ready
-      ? "ready"
+      ? (compatibility?.compatibility === "current" || !compatibility ? "ready" : compatibility.compatibility)
       : lastLaunchError
         ? "error"
         : pairing
@@ -460,6 +695,7 @@ export async function registerEquinoxBrowserTools({
       supported,
       pairing,
       lastLaunchError,
+      ...(compatibility || {}),
     };
   };
 
@@ -502,8 +738,16 @@ export async function registerEquinoxBrowserTools({
           local,
           remote: remoteByContext.user,
           contexts: {
-            agent: { local: local.contexts?.agent ?? null, remote: remoteByContext.agent },
-            user: { local: local.contexts?.user ?? null, remote: remoteByContext.user },
+            agent: {
+              local: local.contexts?.agent ?? null,
+              remote: remoteByContext.agent,
+              ...(classifyBrowserCompatibility(local.contexts?.agent?.extension) || {}),
+            },
+            user: {
+              local: local.contexts?.user ?? null,
+              remote: remoteByContext.user,
+              ...(classifyBrowserCompatibility(local.contexts?.user?.extension) || {}),
+            },
           },
         });
       } catch (error) {
@@ -517,7 +761,7 @@ export async function registerEquinoxBrowserTools({
     "equinox_browser_reload_extension",
     {
       description:
-        "Equinox Browser unpacked extension service worker'ına kendini güvenli biçimde reload etmesini söyler. Geliştirme sırasında extension kaynak kodu değiştikten sonra chrome://extensions üzerinde manuel Reload ihtiyacını kaldırmak için kullanılır.",
+        "Development/diagnostics: Equinox Browser unpacked extension service worker'ına kendini güvenli biçimde reload etmesini söyler. Normal web otomasyonu için gerekmez; extension geliştirme sırasında chrome://extensions üzerinde manuel Reload ihtiyacını kaldırır.",
       inputSchema: {},
       annotations: {
         title: "Equinox Browser extension reload",
@@ -592,7 +836,7 @@ export async function registerEquinoxBrowserTools({
     "equinox_browser_open",
     {
       description:
-        "Aktif veya seçilen mevcut Chrome sekmesini aynı tab kimliğini koruyarak HTTP(S) URL'sine ya da Chrome New Tab'a götürür. Yeni sekme yaratmaz; chrome://settings, chrome://extensions ve file:// hedefleri güvenlik nedeniyle açıkça reddedilir.",
+        "Core navigation: aktif veya seçilen mevcut Chrome sekmesini tab-level basit navigation ile aynı tab kimliğini koruyarak HTTP(S) URL'sine ya da Chrome New Tab'a götürür. Observation continuity veya ignore_cache gerekiyorsa navigate kullan; yeni sekme yaratmaz ve hassas chrome:// / file:// hedefleri reddeder.",
       inputSchema: {
         url: z.string().min(1).max(4_000).describe("Açılacak http(s) URL veya chrome://newtab/"),
         tab_id: optionalTabId(),
@@ -620,7 +864,7 @@ export async function registerEquinoxBrowserTools({
     "equinox_browser_navigate",
     {
       description:
-        "Aktif veya seçilen desteklenen web sekmesini CDP Page.navigate ile HTTP(S) URL'sine götürür. Aktif observation session'ı korunur; ignore_cache yalnız bu navigation süresince cache'i geçici kapatır.",
+        "Core navigation: desteklenen web sekmesini CDP Page.navigate ile HTTP(S) URL'sine götürür. open'dan farklı olarak aktif observation session'ını koruyan navigation semantiği ve yalnız bu navigation süresince geçerli ignore_cache seçeneği sunar; Chrome New Tab için open kullan.",
       inputSchema: {
         url: z.string().min(1).max(4_000).describe("Açılacak http(s) URL"),
         ignore_cache: z.boolean().default(false),
@@ -875,7 +1119,7 @@ export async function registerEquinoxBrowserTools({
     "equinox_browser_snapshot",
     {
       description:
-        "Web sayfasının Accessibility ağacından ajan dostu snapshot ve @eN etkileşim referansları üretir. Snapshot v2; içerik modu, document/viewport kapsamı, node sınırı, rol/query filtresi ve önceki bir root ref alt ağacını destekler. since_snapshot_id verilirse aynı filtre projeksiyonundaki bounded önceki snapshot'a göre yalnız delta döner ve aynı document içindeki korunmuş ref'leri bildirir. Chrome New Tab, Web Store ve browser-owned interstitial/internal sayfalarda structured restricted metadata döner; Chrome PDF Viewer OOPIF üzerinden desteklenir.",
+        "Web sayfasının Accessibility ağacından ajan dostu snapshot ve @eN etkileşim referansları üretir. Web içeriği varsayılan olarak sansürlenmez; sensitive_text=redact yalnız ajan açıkça istediğinde OTP/recovery/token benzeri metinleri ve broad mail özetlemesini uygular. İçerik modu, document/viewport kapsamı, node sınırı, rol/query filtresi ve önceki bir root ref alt ağacı desteklenir. since_snapshot_id verilirse aynı filtre projeksiyonundaki bounded önceki snapshot'a göre yalnız delta döner ve aynı document içindeki korunmuş ref'leri bildirir. Chrome New Tab, Web Store ve browser-owned interstitial/internal sayfalarda structured restricted metadata döner; Chrome PDF Viewer OOPIF üzerinden desteklenir.",
       inputSchema: {
         tab_id: optionalTabId(),
         include_readable: z.boolean().default(true)
@@ -886,12 +1130,19 @@ export async function registerEquinoxBrowserTools({
           .describe("Tüm document veya yalnız görünür viewport ile kesişen öğeler"),
         max_nodes: z.number().int().min(1).max(250).default(250)
           .describe("Snapshot'a eklenecek en fazla öğe sayısı"),
-        root_ref: z.string().regex(/^@e\d+$/).optional()
-          .describe("Önceki geçerli snapshot'taki etkileşimli bir ref'in erişilebilirlik alt ağacına daralt"),
+        root_ref: z.string().regex(/^@[ec]\d+$/).optional()
+          .describe("Önceki geçerli snapshot'taki etkileşimli @eN veya semantic container @cN ref alt ağacına daralt"),
         roles: z.array(z.string().min(1).max(100)).max(50).optional()
           .describe("İsteğe bağlı exact accessibility role filtresi"),
         query: z.string().min(1).max(1_000).optional()
           .describe("Role, accessible name veya value içinde büyük/küçük harf duyarsız metin filtresi"),
+        main_frame_only: z.boolean().default(false).describe("Yalnız ana frame'in semantik içeriğini döndür"),
+        exclude_auxiliary_frames: z.boolean().default(false).describe("Reklam/analytics gibi düşük alakalı auxiliary frame'leri snapshot dışında bırak"),
+        active_layer_only: z.boolean().default(false).describe("En alakalı aktif semantik frame/layer ile sınırla; PDF Viewer'da içerik OOPIF'i öne geçebilir"),
+        frame_id: z.string().min(1).max(200).optional().describe("Yalnız exact Chrome frame id için snapshot al"),
+        prune_unnamed_refs: z.boolean().default(false).describe("aria-label/title/alt/nearby-text fallback sonrası hâlâ isimsiz interactive ref'leri çıkar"),
+        sensitive_text: z.enum(["allow", "redact"]).default("allow")
+          .describe("Web sayfası içeriği privacy modu. Varsayılan allow ham web içeriğini korur; redact OTP/recovery/token benzeri hassas metni ve broad mail özetlemesini opt-in olarak uygular."),
         since_snapshot_id: z.string().min(1).max(240).optional()
           .describe("Aynı sekmedeki bounded snapshot geçmişinden base id; aynı filtrelerle delta snapshot üretir"),
         output: z.enum(["compact", "structured", "text", "both"]).default("compact")
@@ -914,12 +1165,19 @@ export async function registerEquinoxBrowserTools({
       root_ref,
       roles,
       query,
+      main_frame_only = false,
+      exclude_auxiliary_frames = false,
+      active_layer_only = false,
+      frame_id,
+      prune_unnamed_refs = false,
+      sensitive_text = "allow",
       since_snapshot_id,
       output = "compact",
     }) => {
       try {
         const advancedRequested = Boolean(
-          mode || scope !== "document" || max_nodes !== 250 || root_ref || roles?.length || query || since_snapshot_id,
+          mode || scope !== "document" || max_nodes !== 250 || root_ref || roles?.length || query ||
+          main_frame_only || exclude_auxiliary_frames || active_layer_only || frame_id || prune_unnamed_refs || since_snapshot_id,
         );
         const snapshotArgs = {
           tabId: tab_id,
@@ -930,14 +1188,60 @@ export async function registerEquinoxBrowserTools({
           ...(root_ref ? { rootRef: root_ref } : {}),
           ...(roles?.length ? { roles } : {}),
           ...(query ? { query } : {}),
+          ...(main_frame_only ? { mainFrameOnly: true } : {}),
+          ...(exclude_auxiliary_frames ? { excludeAuxiliaryFrames: true } : {}),
+          ...(active_layer_only ? { activeLayerOnly: true } : {}),
+          ...(frame_id ? { frameId: frame_id } : {}),
+          ...(prune_unnamed_refs ? { pruneUnnamedRefs: true } : {}),
+          ...(sensitive_text === "redact" ? { sensitiveText: "redact" } : {}),
           ...(since_snapshot_id ? { sinceSnapshotId: since_snapshot_id } : {}),
           output,
         };
-        const result = await bridge.call("snapshot", snapshotArgs);
+        let result = await bridge.call("snapshot", snapshotArgs);
+        requireFeatureVersion(
+          result,
+          "snapshotVersion",
+          9,
+          "Opt-in privacy destekli frame-aware stateful snapshot output için Equinox Browser Snapshot v9 desteği gerekiyor.",
+        );
+        const effectiveMode = mode || (include_readable === false ? "interactive" : "balanced");
+        const pdfReadableRequested = (
+          effectiveMode !== "interactive" && scope === "document" && !root_ref && !roles?.length && !query &&
+          !main_frame_only && !frame_id && !since_snapshot_id
+        );
+        if (pdfReadableRequested && result?.pageKind === "chrome-pdf-viewer" && !result?.deltaOnly) {
+          await requireCapabilityVersion(
+            "pdfContent",
+            1,
+            "Readable PDF content için Equinox Browser pdfContent v1 desteği gerekiyor.",
+          );
+          const pdfPayload = await bridge.call("pdf.data", { tabId: result?.tab?.id ?? tab_id }, { timeoutMs: 45_000 });
+          requireFeatureVersion(
+            pdfPayload,
+            "pdfContentVersion",
+            1,
+            "Readable PDF content için Equinox Browser pdfContent v1 desteği gerekiyor.",
+          );
+          const pdfBuffer = decodeBrowserPdfData(pdfPayload);
+          const remainingNodes = Math.max(1, max_nodes - (Number(result?.elementCount) || 0));
+          const parsedPdf = await extractPdfText(pdfBuffer, {
+            maxPages: Math.min(MAX_BROWSER_PDF_TEXT_PAGES, remainingNodes),
+            maxChars: MAX_BROWSER_PDF_TEXT_CHARS,
+          });
+          result = augmentSnapshotWithPdfText(result, parsedPdf, max_nodes);
+        }
         const snapshotVersion = Number(result?.snapshotVersion);
         if (advancedRequested && (!Number.isFinite(snapshotVersion) || snapshotVersion < 2)) {
           throw new Error(
             "Bu Snapshot v2 filtresi için Equinox Browser uzantısının güncel sürümü gerekiyor. Uzantı güncellendikten sonra tekrar deneyin.",
+          );
+        }
+        const snapshotV5Requested = Boolean(
+          root_ref?.startsWith("@c") || main_frame_only || exclude_auxiliary_frames || active_layer_only || frame_id || prune_unnamed_refs,
+        );
+        if (snapshotV5Requested && (!Number.isFinite(snapshotVersion) || snapshotVersion < 5)) {
+          throw new Error(
+            "Container scope, frame relevance veya unnamed-ref pruning için Equinox Browser Snapshot v5 gerekiyor.",
           );
         }
         if (since_snapshot_id) {
@@ -965,8 +1269,8 @@ export async function registerEquinoxBrowserTools({
         name: z.string().regex(SCREENSHOT_NAME_PATTERN).describe("Çıktı dosya adı; .png eklenir"),
         collection: z.string().regex(SCREENSHOT_NAME_PATTERN).default("captures"),
         full_page: z.boolean().default(false),
-        ref: z.string().regex(/^@e\d+$/).optional()
-          .describe("Son geçerli snapshot'taki öğeyi kırp; OOPIF ref'leri güvenli biçimde reddedilir"),
+        ref: z.string().regex(/^@[ec]\d+$/).optional()
+          .describe("Son geçerli snapshot'taki interactive @eN veya container @cN scope'u kırp; OOPIF ref'leri frame-owner zinciri üzerinden root page koordinatına güvenli biçimde eşlenir"),
         clip: z.object({
           x: z.number().min(0).max(32_000),
           y: z.number().min(0).max(32_000),
@@ -974,7 +1278,7 @@ export async function registerEquinoxBrowserTools({
           height: z.number().positive().max(32_000),
         }).optional().describe("CSS page koordinatlarında bounded screenshot bölgesi"),
         annotate_refs: z.boolean().default(false)
-          .describe("Son geçerli snapshot'taki görünür/interactive root-session @eN ref'lerini PNG üzerine bounded biçimde etiketle; en fazla 50 etiket kullanılır, yoğun bölgelerde overlap kaçınılır ve OOPIF ref'leri güvenli biçimde atlanır"),
+          .describe("Son geçerli snapshot'taki görünür interactive @eN ref'lerini PNG üzerine bounded biçimde etiketle; root ve güvenle eşlenebilen OOPIF ref'leri desteklenir, en fazla 50 etiket kullanılır ve yoğun bölgelerde overlap kaçınılır"),
         tab_id: optionalTabId(),
       },
       annotations: {
@@ -1007,14 +1311,19 @@ export async function registerEquinoxBrowserTools({
             { timeoutMs: full_page ? 120_000 : 45_000 },
           );
           const screenshotVersion = Number(captured?.screenshotVersion);
-          if ((ref || clip) && (!Number.isFinite(screenshotVersion) || screenshotVersion < 2)) {
+          if (ref && (!Number.isFinite(screenshotVersion) || screenshotVersion < 4)) {
             throw new Error(
-              "Ref/clip screenshot için Equinox Browser uzantısının güncel sürümü gerekiyor. Uzantı güncellendikten sonra tekrar deneyin.",
+              "OOPIF-safe ref screenshot için Equinox Browser uzantısının screenshot v4 desteği gerekiyor.",
             );
           }
-          if (annotate_refs && (!Number.isFinite(screenshotVersion) || screenshotVersion < 3)) {
+          if (clip && (!Number.isFinite(screenshotVersion) || screenshotVersion < 2)) {
             throw new Error(
-              "annotate_refs screenshot için Equinox Browser uzantısının güncel sürümü gerekiyor. Uzantı güncellendikten sonra tekrar deneyin.",
+              "Clip screenshot için Equinox Browser uzantısının güncel sürümü gerekiyor. Uzantı güncellendikten sonra tekrar deneyin.",
+            );
+          }
+          if (annotate_refs && (!Number.isFinite(screenshotVersion) || screenshotVersion < 4)) {
+            throw new Error(
+              "OOPIF-aware annotate_refs için Equinox Browser uzantısının screenshot v4 desteği gerekiyor.",
             );
           }
           const { data, ...captureMetadata } = captured || {};
@@ -1107,7 +1416,7 @@ export async function registerEquinoxBrowserTools({
   registerTextTool(
     "equinox_browser_find",
     {
-      description: "Accessibility snapshot üzerinde isim/değer ve isteğe bağlı rolle semantik arama yapar; eşleşmeler varsa mevcut @ref'leri döndürür.",
+      description: "Advanced/secondary discovery: mevcut Accessibility snapshot/context içinde isim/değer ve isteğe bağlı rolle semantik arama yapıp mevcut @ref'leri döndürür. Sonrasında action yapılacak taze hedef keşfi için snapshot(query, roles) tercih edilmelidir; find yeni actionable snapshot oluşturmaz.",
       inputSchema: {
         query: z.string().min(1).max(10_000),
         role: z.string().min(1).max(100).optional(),
@@ -1196,11 +1505,19 @@ export async function registerEquinoxBrowserTools({
         const afterArgs = mapBoundedAfter(after);
         const richRequested = button !== "left" || modifiers.length > 0 || delay_ms > 0;
         return await withMutationLocks(["browser:user"], async () => {
+          await requireCapabilityVersion("actionability", 7, "Phase-aware click stale recovery için Equinox Browser actionability v7 desteği gerekiyor.");
           if (richRequested) {
             await requireCapabilityVersion(
               "click",
               2,
               "Gelişmiş click button/modifier/delay semantiği için Equinox Browser uzantısının güncel sürümü gerekiyor.",
+            );
+          }
+          if (afterArgs) {
+            await requireCapabilityVersion(
+              "compoundAction",
+              4,
+              "Projection-aware click after için Equinox Browser uzantısının compound action v4 desteği gerekiyor.",
             );
           }
           const result = await bridge.call("click", {
@@ -1209,6 +1526,7 @@ export async function registerEquinoxBrowserTools({
             ...(richRequested ? { button, modifiers, delayMs: delay_ms } : {}),
             ...(afterArgs ? { after: afterArgs } : {}),
           });
+          requireFeatureVersion(result, "actionabilityVersion", 7, "Phase-aware click stale recovery için Equinox Browser actionability v7 desteği gerekiyor.");
           if (richRequested) {
             requireFeatureVersion(
               result,
@@ -1221,8 +1539,8 @@ export async function registerEquinoxBrowserTools({
             requireFeatureVersion(
               result,
               "compoundActionVersion",
-              1,
-              "Controlled click after için Equinox Browser uzantısının güncel sürümü gerekiyor. Uzantı güncellendikten sonra tekrar deneyin.",
+              4,
+              "Projection-aware click after için Equinox Browser uzantısının compound action v4 desteği gerekiyor.",
             );
           }
           return jsonText(result);
@@ -1312,12 +1630,7 @@ export async function registerEquinoxBrowserTools({
         "Son Equinox Browser snapshot'ındaki @eN referansına gerçek iki tıklık Chrome mouse dizisi gönderir. Tek tıkla ayrı davranan grid, editör, canvas ve dosya benzeri arayüzlerde gerçek double-click semantiği sağlar. İsteğe bağlı bounded after alanı click ile aynı wait/snapshot zincirini destekler.",
       inputSchema: {
         ref: z.string().regex(/^@e\d+$/).describe("Snapshot referansı; örneğin @e3"),
-        after: z.object({
-          wait_for: z.enum(["dom_stable", "network_idle"]).optional(),
-          snapshot: z.enum(["delta", "full"]).optional(),
-          quiet_ms: z.number().int().min(100).max(5_000).default(500),
-          timeout_ms: z.number().int().min(100).max(60_000).default(10_000),
-        }).optional().describe("Tek bounded post-action wait ve/veya snapshot; macro değildir"),
+        after: boundedAfterSchema(),
         tab_id: optionalTabId(),
       },
       annotations: {
@@ -1330,18 +1643,15 @@ export async function registerEquinoxBrowserTools({
     },
     async ({ ref, after, tab_id }) => {
       try {
-        const afterArgs = after
-          ? {
-              ...(after.wait_for ? { waitFor: after.wait_for } : {}),
-              ...(after.snapshot ? { snapshot: after.snapshot } : {}),
-              quietMs: after.quiet_ms ?? 500,
-              timeoutMs: after.timeout_ms ?? 10_000,
-            }
-          : null;
-        if (afterArgs && !afterArgs.waitFor && !afterArgs.snapshot) {
-          throw new Error("after alanında wait_for ve/veya snapshot verilmelidir.");
-        }
+        const afterArgs = mapBoundedAfter(after);
         return await withMutationLocks(["browser:user"], async () => {
+          if (afterArgs) {
+            await requireCapabilityVersion(
+              "compoundAction",
+              4,
+              "Projection-aware double click after için Equinox Browser uzantısının compound action v4 desteği gerekiyor.",
+            );
+          }
           const result = await bridge.call("double_click", {
             tabId: tab_id,
             ref,
@@ -1351,6 +1661,14 @@ export async function registerEquinoxBrowserTools({
           if (!Number.isFinite(version) || version < 1) {
             throw new Error(
               "Double click için Equinox Browser uzantısının güncel sürümü gerekiyor. Uzantı güncellendikten sonra tekrar deneyin.",
+            );
+          }
+          if (afterArgs) {
+            requireFeatureVersion(
+              result,
+              "compoundActionVersion",
+              4,
+              "Projection-aware double click after için Equinox Browser uzantısının compound action v4 desteği gerekiyor.",
             );
           }
           return jsonText(result);
@@ -1399,7 +1717,7 @@ export async function registerEquinoxBrowserTools({
               : "Semantic pointer drag için Equinox Browser uzantısının güncel sürümü gerekiyor.",
           );
           if (afterArgs) {
-            await requireCapabilityVersion("compoundAction", 2, "Drag after zinciri için Equinox Browser uzantısının güncel sürümü gerekiyor.");
+            await requireCapabilityVersion("compoundAction", 4, "Projection-aware Drag after zinciri için Equinox Browser uzantısının güncel sürümü gerekiyor.");
           }
           const result = await bridge.call("drag", {
             tabId: tab_id,
@@ -1429,8 +1747,8 @@ export async function registerEquinoxBrowserTools({
             requireFeatureVersion(
               result,
               "compoundActionVersion",
-              2,
-              "Drag after zinciri için Equinox Browser uzantısının güncel sürümü gerekiyor.",
+              4,
+              "Projection-aware Drag after zinciri için Equinox Browser uzantısının güncel sürümü gerekiyor.",
             );
           }
           return jsonText(result);
@@ -1445,7 +1763,7 @@ export async function registerEquinoxBrowserTools({
   registerTextTool(
     "equinox_browser_hover",
     {
-      description: "Son snapshot'taki @eN referansının üzerine Chrome Input domainiyle mouse taşır; hover sonrası yeni snapshot alınmalıdır.",
+      description: "Advanced interaction: son snapshot'taki @eN referansının üzerine Chrome Input domainiyle mouse taşır; bounded same-document stale revalidation uygular ve hover sonrası yeni snapshot alınmalıdır.",
       inputSchema: {
         ref: z.string().regex(/^@e\d+$/).describe("Snapshot referansı"),
         tab_id: optionalTabId(),
@@ -1457,15 +1775,15 @@ export async function registerEquinoxBrowserTools({
         return await withMutationLocks(["browser:user"], async () => {
           await requireCapabilityVersion(
             "actionability",
-            1,
-            "Hit-test doğrulamalı hover için Equinox Browser uzantısının güncel sürümü gerekiyor.",
+            7,
+            "Bounded stale-revalidation hover için Equinox Browser actionability v7 desteği gerekiyor.",
           );
           const result = await bridge.call("hover", { tabId: tab_id, ref });
           requireFeatureVersion(
             result,
             "actionabilityVersion",
-            1,
-            "Hit-test doğrulamalı hover için Equinox Browser uzantısının güncel sürümü gerekiyor.",
+            7,
+            "Bounded stale-revalidation hover için Equinox Browser actionability v7 desteği gerekiyor.",
           );
           return jsonText(result);
         });
@@ -1478,7 +1796,7 @@ export async function registerEquinoxBrowserTools({
     "equinox_browser_scroll_into_view",
     {
       description:
-        "Güncel snapshot @ref'ini semantic olarak viewport içine getirir ve gerçek hit-test ile etkileşilebilir bir nokta doğrular. Koordinat fallback yapmaz; sonraki DOM action öncesi fresh snapshot önerilir.",
+        "Advanced interaction/diagnostics: güncel snapshot @ref'ini semantic olarak viewport içine getirir ve gerçek hit-test ile etkileşilebilir bir nokta doğrular. Normal click/check bunu gerektiğinde kendi actionability hattında yapar; koordinat fallback yapmaz.",
       inputSchema: {
         ref: z.string().regex(/^@e\d+$/),
         tab_id: optionalTabId(),
@@ -1490,15 +1808,15 @@ export async function registerEquinoxBrowserTools({
         return await withMutationLocks(["browser:user"], async () => {
           await requireCapabilityVersion(
             "actionability",
-            1,
-            "Semantic scroll_into_view için Equinox Browser uzantısının güncel sürümü gerekiyor.",
+            7,
+            "Bounded stale-revalidation scroll_into_view için Equinox Browser actionability v7 desteği gerekiyor.",
           );
           const result = await bridge.call("scroll_into_view", { tabId: tab_id, ref });
           requireFeatureVersion(
             result,
             "actionabilityVersion",
-            1,
-            "Semantic scroll_into_view için Equinox Browser uzantısının güncel sürümü gerekiyor.",
+            7,
+            "Bounded stale-revalidation scroll_into_view için Equinox Browser actionability v7 desteği gerekiyor.",
           );
           return jsonText(result);
         });
@@ -1511,7 +1829,7 @@ export async function registerEquinoxBrowserTools({
     "equinox_browser_ref_info",
     {
       description:
-        "Güncel semantic @ref için bounded canlı actionability/state metadata döndürür: exists/visible/enabled, role/name, frame/session, box ve uygun kontrollerde checked/selected/expanded/editable/readOnly/value. Generic DOM dump değildir.",
+        "Güncel semantic @ref için bounded canlı actionability/state metadata döndürür: exists/visible/enabled yanında click ile aynı hit-test'ten clickable/clickPoint/actionabilityReason, role/name, frame/session, box ve uygun kontrollerde state/value. ARIA toggle kontrollerinde pressed state dahil edilir. Generic DOM dump değildir.",
       inputSchema: {
         ref: z.string().regex(/^@e\d+$/),
         tab_id: optionalTabId(),
@@ -1524,8 +1842,8 @@ export async function registerEquinoxBrowserTools({
         requireFeatureVersion(
           result,
           "actionabilityVersion",
-          1,
-          "Semantic ref_info için Equinox Browser uzantısının güncel sürümü gerekiyor.",
+          5,
+          "Semantic ref_info hit-test/state uyumu için Equinox Browser uzantısının actionability v5 desteği gerekiyor.",
         );
         return jsonText(result);
       } catch (error) { return errorResult(error); }
@@ -1571,7 +1889,7 @@ export async function registerEquinoxBrowserTools({
         const afterArgs = mapBoundedAfter(after);
         return await withMutationLocks(["browser:user"], async () => {
           if (afterArgs) {
-            await requireCapabilityVersion("compoundAction", 2, "Select after zinciri için Equinox Browser uzantısının güncel sürümü gerekiyor.");
+            await requireCapabilityVersion("compoundAction", 4, "Projection-aware Select after zinciri için Equinox Browser uzantısının güncel sürümü gerekiyor.");
           }
           const result = await bridge.call("select", {
             tabId: tab_id,
@@ -1580,7 +1898,7 @@ export async function registerEquinoxBrowserTools({
             ...(afterArgs ? { after: afterArgs } : {}),
           });
           if (afterArgs) {
-            requireFeatureVersion(result, "compoundActionVersion", 2, "Select after zinciri için Equinox Browser uzantısının güncel sürümü gerekiyor.");
+            requireFeatureVersion(result, "compoundActionVersion", 4, "Projection-aware Select after zinciri için Equinox Browser uzantısının güncel sürümü gerekiyor.");
           }
           return jsonText(result);
         });
@@ -1605,8 +1923,9 @@ export async function registerEquinoxBrowserTools({
       try {
         const afterArgs = mapBoundedAfter(after);
         return await withMutationLocks(["browser:user"], async () => {
+          await requireCapabilityVersion("actionability", 7, "Phase-aware detached-node recovery için Equinox Browser actionability v7 desteği gerekiyor.");
           if (afterArgs) {
-            await requireCapabilityVersion("compoundAction", 2, "Check after zinciri için Equinox Browser uzantısının güncel sürümü gerekiyor.");
+            await requireCapabilityVersion("compoundAction", 4, "Projection-aware Check after zinciri için Equinox Browser uzantısının güncel sürümü gerekiyor.");
           }
           const result = await bridge.call("check", {
             tabId: tab_id,
@@ -1614,9 +1933,48 @@ export async function registerEquinoxBrowserTools({
             checked,
             ...(afterArgs ? { after: afterArgs } : {}),
           });
+          requireFeatureVersion(result, "actionabilityVersion", 7, "Phase-aware detached-node recovery için Equinox Browser actionability v7 desteği gerekiyor.");
           if (afterArgs) {
-            requireFeatureVersion(result, "compoundActionVersion", 2, "Check after zinciri için Equinox Browser uzantısının güncel sürümü gerekiyor.");
+            requireFeatureVersion(result, "compoundActionVersion", 4, "Projection-aware Check after zinciri için Equinox Browser uzantısının güncel sürümü gerekiyor.");
           }
+          return jsonText(result);
+        });
+      } catch (error) { return errorResult(error); }
+    },
+    { projectAware: false },
+  );
+
+  registerTextTool(
+    "equinox_browser_range_set",
+    {
+      description:
+        "Core semantic range action: native input[type=range] veya güvenli ARIA slider @ref'ini absolute value ya da 0..1 percent ile ayarlar. Raw x/y kabul etmez; min/max doğrular, custom slider'da yalnız semantic range + box mapping güvenliyse pointer fallback kullanır ve final değeri doğrulamadan başarı saymaz.",
+      inputSchema: {
+        ref: z.string().regex(/^@e\d+$/).describe("Snapshot'taki range/slider ref'i"),
+        value: z.number().finite().optional().describe("Min/max aralığındaki absolute hedef değer; percent ile birlikte verilemez"),
+        percent: z.number().min(0).max(1).optional().describe("0=min, 1=max olacak şekilde normalize hedef; value ile birlikte verilemez"),
+        after: boundedAfterSchema(),
+        tab_id: optionalTabId(),
+      },
+      annotations: { title: "Equinox Browser range ayarla", readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
+    },
+    async ({ ref, value, percent, after, tab_id }) => {
+      try {
+        if ((value == null) === (percent == null)) throw new Error("range_set için value veya percent alanlarından tam biri verilmelidir.");
+        const afterArgs = mapBoundedAfter(after);
+        return await withMutationLocks(["browser:user"], async () => {
+          await requireCapabilityVersion("rangeSet", 2, "Semantic range_set için Equinox Browser rangeSet v2 desteği gerekiyor.");
+          await requireCapabilityVersion("actionability", 7, "Semantic range_set stale recovery için Equinox Browser actionability v7 desteği gerekiyor.");
+          if (afterArgs) await requireCapabilityVersion("compoundAction", 4, "Projection-aware Range after zinciri için compound action v4 gerekiyor.");
+          const result = await bridge.call("range_set", {
+            tabId: tab_id,
+            ref,
+            ...(value != null ? { value } : { percent }),
+            ...(afterArgs ? { after: afterArgs } : {}),
+          });
+          requireFeatureVersion(result, "rangeVersion", 2, "Semantic range_set için Equinox Browser rangeSet v2 desteği gerekiyor.");
+          requireFeatureVersion(result, "actionabilityVersion", 7, "Semantic range_set stale recovery için Equinox Browser actionability v7 desteği gerekiyor.");
+          if (afterArgs) requireFeatureVersion(result, "compoundActionVersion", 4, "Projection-aware Range after zinciri için compound action v4 gerekiyor.");
           return jsonText(result);
         });
       } catch (error) { return errorResult(error); }
@@ -1628,7 +1986,7 @@ export async function registerEquinoxBrowserTools({
     "equinox_browser_wait",
     {
       description:
-        "Sekmede tek bir bounded koşulu bekler: süre, body metni, URL, canlı snapshot ref durumu, filtrelenmiş network response, DOM kararlılığı, ilgili ağ trafiğinin sakinleşmesi veya bilinen snapshot'tan sonra sayfa değişimi. Stale ref'ler navigasyon sonrası fail-closed kalır.",
+        "Sekmede tek bir bounded koşulu bekler: süre, body metni, URL, canlı snapshot ref durumu, filtrelenmiş network response, DOM kararlılığı, ilgili ağ trafiğinin sakinleşmesi, AX/snapshot semantic readiness veya bilinen snapshot'tan sonra sayfa değişimi. Stale ref'ler navigasyon sonrası fail-closed kalır.",
       inputSchema: {
         milliseconds: z.number().int().min(0).max(60_000).optional(),
         text: z.string().min(1).max(10_000).optional(),
@@ -1647,10 +2005,15 @@ export async function registerEquinoxBrowserTools({
           .describe("İlgili kısa ömürlü ağ istekleri quiet_ms boyunca yoksa tamamlanır; WebSocket/EventSource/Media beklemeyi sonsuza dek açık tutmaz."),
         dom_stable: z.literal(true).optional()
           .describe("Anlamlı DOM mutation sayacı quiet_ms boyunca değişmezse tamamlanır."),
+        semantic_ready: z.object({
+          query: z.string().min(1).max(1_000).optional(),
+          roles: z.array(z.string().min(1).max(80)).max(16).optional(),
+          min_nodes: z.number().int().min(1).max(250).default(1),
+        }).optional().describe("AX/snapshot semantiği quiet_ms boyunca stabil ve hedef query/role/min_nodes koşulunu karşılıyorsa tamamlanır."),
         snapshot_changed: z.string().min(1).max(240).optional()
           .describe("Daha önce bu sekmeden alınmış bounded snapshot id; document generation, URL veya anlamlı DOM mutation değişince tamamlanır."),
         quiet_ms: z.number().int().min(100).max(5_000).default(500)
-          .describe("dom_stable ve network_idle için sessizlik penceresi"),
+          .describe("dom_stable, network_idle ve semantic_ready için sessizlik penceresi"),
         timeout_ms: z.number().int().min(100).max(60_000).default(10_000),
         tab_id: optionalTabId(),
       },
@@ -1667,6 +2030,7 @@ export async function registerEquinoxBrowserTools({
       network_response,
       network_idle,
       dom_stable,
+      semantic_ready,
       snapshot_changed,
       quiet_ms = 500,
       timeout_ms = 10_000,
@@ -1684,17 +2048,19 @@ export async function registerEquinoxBrowserTools({
           Boolean(network_response),
           network_idle === true,
           dom_stable === true,
+          Boolean(semantic_ready),
           Boolean(snapshot_changed),
         ].filter(Boolean).length;
         if (conditionCount !== 1) {
           throw new Error(
-            "milliseconds, text, url_contains, ref_visible, ref_hidden, ref_exists, ref_enabled, network_response, network_idle, dom_stable veya snapshot_changed alanlarından tam olarak biri verilmelidir.",
+            "milliseconds, text, url_contains, ref_visible, ref_hidden, ref_exists, ref_enabled, network_response, network_idle, dom_stable, semantic_ready veya snapshot_changed alanlarından tam olarak biri verilmelidir.",
           );
         }
         const smartRequested = Boolean(
-          ref_visible || ref_hidden || ref_exists || ref_enabled || network_response || network_idle || dom_stable || snapshot_changed,
+          ref_visible || ref_hidden || ref_exists || ref_enabled || network_response || network_idle || dom_stable || semantic_ready || snapshot_changed,
         );
         if (network_response) await requireCapabilityVersion("observation", 2, "Network response wait için Equinox Browser uzantısının güncel sürümü gerekiyor.");
+        if (semantic_ready) await requireCapabilityVersion("wait", 3, "Semantic ready wait için Equinox Browser uzantısının güncel sürümü gerekiyor.");
         const waitArgs = {
           tabId: tab_id,
           milliseconds,
@@ -1713,6 +2079,11 @@ export async function registerEquinoxBrowserTools({
           } } : {}),
           ...(network_idle === true ? { networkIdle: true, quietMs: quiet_ms } : {}),
           ...(dom_stable === true ? { domStable: true, quietMs: quiet_ms } : {}),
+          ...(semantic_ready ? { semanticReady: {
+            ...(semantic_ready.query ? { query: semantic_ready.query } : {}),
+            ...(semantic_ready.roles?.length ? { roles: semantic_ready.roles } : {}),
+            minNodes: semantic_ready.min_nodes ?? 1,
+          }, quietMs: quiet_ms } : {}),
           ...(snapshot_changed ? { snapshotChanged: snapshot_changed } : {}),
         };
         const result = await bridge.call(
@@ -1729,6 +2100,9 @@ export async function registerEquinoxBrowserTools({
         if (network_response) {
           requireFeatureVersion(result, "observationVersion", 2, "Network response wait için Equinox Browser uzantısının güncel sürümü gerekiyor.");
         }
+        if (semantic_ready) {
+          requireFeatureVersion(result, "waitVersion", 3, "Semantic ready wait için Equinox Browser uzantısının güncel sürümü gerekiyor.");
+        }
         return jsonText(result);
       } catch (error) { return errorResult(error); }
     },
@@ -1743,6 +2117,7 @@ export async function registerEquinoxBrowserTools({
       inputSchema: {
         ref: z.string().regex(/^@e\d+$/).describe("Snapshot referansı"),
         value: z.string().max(100_000).describe("Yazılacak değer"),
+        submit: z.enum(["Enter"]).optional().describe("Doldurma ile aynı focused session içinde atomik Enter submit"),
         after: boundedAfterSchema(),
         tab_id: optionalTabId(),
       },
@@ -1754,21 +2129,25 @@ export async function registerEquinoxBrowserTools({
         openWorldHint: true,
       },
     },
-    async ({ ref, value, after, tab_id }) => {
+    async ({ ref, value, submit, after, tab_id }) => {
       try {
         const afterArgs = mapBoundedAfter(after);
         return await withMutationLocks(["browser:user"], async () => {
+          if (submit) {
+            await requireCapabilityVersion("input", 3, "Atomik fill+submit için Equinox Browser uzantısının input v3 desteği gerekiyor.");
+          }
           if (afterArgs) {
-            await requireCapabilityVersion("compoundAction", 2, "Fill after zinciri için Equinox Browser uzantısının güncel sürümü gerekiyor.");
+            await requireCapabilityVersion("compoundAction", 4, "Projection-aware Fill after zinciri için Equinox Browser uzantısının güncel sürümü gerekiyor.");
           }
           const result = await bridge.call("fill", {
             tabId: tab_id,
             ref,
             value,
+            ...(submit ? { submit } : {}),
             ...(afterArgs ? { after: afterArgs } : {}),
           });
           if (afterArgs) {
-            requireFeatureVersion(result, "compoundActionVersion", 2, "Fill after zinciri için Equinox Browser uzantısının güncel sürümü gerekiyor.");
+            requireFeatureVersion(result, "compoundActionVersion", 4, "Projection-aware Fill after zinciri için Equinox Browser uzantısının güncel sürümü gerekiyor.");
           }
           return jsonText(result);
         });
@@ -1804,9 +2183,10 @@ export async function registerEquinoxBrowserTools({
         return await withMutationLocks(["browser:user"], async () => {
           if (ref) {
             await requireCapabilityVersion("input", 1, "Ref-targeted keyboard input için Equinox Browser uzantısının güncel sürümü gerekiyor.");
+            await requireCapabilityVersion("actionability", 7, "Ref-targeted keyboard stale recovery için Equinox Browser actionability v7 desteği gerekiyor.");
           }
           if (afterArgs) {
-            await requireCapabilityVersion("compoundAction", 2, "Press after zinciri için Equinox Browser uzantısının güncel sürümü gerekiyor.");
+            await requireCapabilityVersion("compoundAction", 4, "Projection-aware Press after zinciri için Equinox Browser uzantısının güncel sürümü gerekiyor.");
           }
           const result = await bridge.call("press", {
             tabId: tab_id,
@@ -1818,7 +2198,7 @@ export async function registerEquinoxBrowserTools({
             requireFeatureVersion(result, "inputVersion", 1, "Ref-targeted keyboard input için Equinox Browser uzantısının güncel sürümü gerekiyor.");
           }
           if (afterArgs) {
-            requireFeatureVersion(result, "compoundActionVersion", 2, "Press after zinciri için Equinox Browser uzantısının güncel sürümü gerekiyor.");
+            requireFeatureVersion(result, "compoundActionVersion", 4, "Projection-aware Press after zinciri için Equinox Browser uzantısının güncel sürümü gerekiyor.");
           }
           return jsonText(result);
         });
@@ -1839,29 +2219,33 @@ export async function registerEquinoxBrowserTools({
         text: z.string().max(100_000),
         delay_ms: z.number().int().min(0).max(200).default(0)
           .describe("Sequential key event'ler arasındaki bounded gecikme"),
+        submit: z.enum(["Enter"]).optional().describe("Yazma ile aynı focused session içinde atomik Enter submit"),
         after: boundedAfterSchema(),
         tab_id: optionalTabId(),
       },
       annotations: { title: "Equinox Browser metin yaz", readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
     },
-    async ({ ref, text, delay_ms = 0, after, tab_id }) => {
+    async ({ ref, text, delay_ms = 0, submit, after, tab_id }) => {
       try {
         const afterArgs = mapBoundedAfter(after);
         return await withMutationLocks(["browser:user"], async () => {
-          await requireCapabilityVersion("input", 1, "Gerçek type_text input için Equinox Browser uzantısının güncel sürümü gerekiyor.");
+          await requireCapabilityVersion("input", submit ? 3 : 1, submit
+            ? "Atomik type_text+submit için Equinox Browser uzantısının input v3 desteği gerekiyor."
+            : "Gerçek type_text input için Equinox Browser uzantısının güncel sürümü gerekiyor.");
           if (afterArgs) {
-            await requireCapabilityVersion("compoundAction", 2, "Type text after zinciri için Equinox Browser uzantısının güncel sürümü gerekiyor.");
+            await requireCapabilityVersion("compoundAction", 4, "Projection-aware Type text after zinciri için Equinox Browser uzantısının güncel sürümü gerekiyor.");
           }
           const result = await bridge.call("type_text", {
             tabId: tab_id,
             ref,
             text,
             delayMs: delay_ms,
+            ...(submit ? { submit } : {}),
             ...(afterArgs ? { after: afterArgs } : {}),
           });
           requireFeatureVersion(result, "inputVersion", 1, "Gerçek type_text input için Equinox Browser uzantısının güncel sürümü gerekiyor.");
           if (afterArgs) {
-            requireFeatureVersion(result, "compoundActionVersion", 2, "Type text after zinciri için Equinox Browser uzantısının güncel sürümü gerekiyor.");
+            requireFeatureVersion(result, "compoundActionVersion", 4, "Projection-aware Type text after zinciri için Equinox Browser uzantısının güncel sürümü gerekiyor.");
           }
           return jsonText(result);
         });
@@ -1876,7 +2260,7 @@ export async function registerEquinoxBrowserTools({
     "equinox_browser_eval",
     {
       description:
-        "Seçilen web sekmesinde JavaScript ifadesini Runtime.evaluate ile çalıştırır. Chrome internal sayfalarında çalışmaz.",
+        "Development/diagnostics escape hatch: seçilen web sekmesinde JavaScript ifadesini Runtime.evaluate ile çalıştırır. Normal otomasyonda semantic snapshot/ref araçları tercih edilmelidir; Chrome internal sayfalarında çalışmaz.",
       inputSchema: {
         expression: z.string().min(1).max(200_000).describe("Çalıştırılacak JavaScript ifadesi"),
         tab_id: optionalTabId(),
@@ -2186,6 +2570,36 @@ export async function registerEquinoxBrowserTools({
   );
 
   registerTextTool(
+    "equinox_browser_shutdown",
+    {
+      description:
+        "Yalnız izole Agent Browser Chrome instance'ını güvenli biçimde kapatır. User Browser hedefi fail-closed reddedilir. Profil/veri silinmez; sonraki Agent Browser çağrısı lazy-start ile yeniden açabilir.",
+      inputSchema: {},
+      annotations: {
+        title: "Equinox Agent Browser kapat",
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async () => {
+      try {
+        assertBrowserAccess();
+        requireAgentBrowserContext("Agent Browser shutdown");
+        if (typeof shutdownAgentBrowser !== "function") {
+          throw new Error("Agent Browser shutdown bu runtime'da kullanılamıyor.");
+        }
+        return await withMutationLocks(["browser:user"], async () =>
+          jsonText(await shutdownAgentBrowser()));
+      } catch (error) {
+        return errorResult(error);
+      }
+    },
+    { projectAware: false },
+  );
+
+  registerTextTool(
     "equinox_browser_close",
     {
       description:
@@ -2253,9 +2667,10 @@ export async function registerEquinoxBrowserTools({
     "equinox_browser_download_wait",
     {
       description:
-        "Chrome'da page/user action ile başlamış tek bir download'ın tamamlanmasını bounded biçimde bekler; yalnız güvenli Downloads kökündeki normal dosyayı doğrulayıp ad, MIME, boyut ve SHA-256 döndürür. Absolute dosya yolu model çıktısına çıkarılmaz.",
+        "Chrome'da page/user action ile başlamış tek bir download'ın tamamlanmasını bounded biçimde bekler; download_id bilinmiyorsa click sonucundaki downloadCreationSequenceBefore değeri since_sequence olarak verilerek sonraki download beklenebilir. Yalnız güvenli Downloads kökündeki normal dosyayı doğrulayıp ad, MIME, boyut ve SHA-256 döndürür. Absolute dosya yolu model çıktısına çıkarılmaz.",
       inputSchema: {
-        download_id: z.number().int().nonnegative().describe("equinox_browser_click downloadsStarted sonucundaki Chrome download kimliği"),
+        download_id: z.number().int().nonnegative().optional().describe("equinox_browser_click downloadsStarted sonucundaki Chrome download kimliği"),
+        since_sequence: z.number().int().nonnegative().optional().describe("Download ID kaçırıldıysa click.downloadCreationSequenceBefore değerinden sonraki ilk Chrome download'ını bekle"),
         timeout_ms: z.number().int().min(100).max(60_000).default(60_000),
       },
       annotations: {
@@ -2266,16 +2681,32 @@ export async function registerEquinoxBrowserTools({
         openWorldHint: true,
       },
     },
-    async ({ download_id, timeout_ms }) => {
+    async ({ download_id, since_sequence, timeout_ms }) => {
       try {
+        const hasDownloadId = download_id != null;
+        const hasSinceSequence = since_sequence != null;
+        if (hasDownloadId === hasSinceSequence) {
+          throw new Error("download_id veya since_sequence alanlarından tam biri verilmelidir.");
+        }
+        await requireCapabilityVersion(
+          "downloadLifecycle",
+          1,
+          "Equinox Browser worker download lifecycle v1 desteklemiyor. Extension worker'ını reload edin.",
+        );
         const terminal = await bridge.call(
           "downloads.wait",
-          { downloadId: download_id, timeoutMs: timeout_ms },
+          {
+            ...(hasDownloadId ? { downloadId: download_id } : { sinceSequence: since_sequence }),
+            timeoutMs: timeout_ms,
+          },
           { timeoutMs: Math.min(timeout_ms + 5_000, 65_000) },
         );
         const download = terminal?.download;
-        if (!download || download.id !== download_id) {
+        if (!download || (hasDownloadId && download.id !== download_id)) {
           throw new Error("Chrome download kaydı doğrulanamadı.");
+        }
+        if (!hasDownloadId && !(Number.isInteger(download.createdSequence) && download.createdSequence > since_sequence)) {
+          throw new Error("Chrome download sequence kaydı doğrulanamadı.");
         }
         if (download.state === "interrupted") {
           throw new Error(`Chrome download kesildi${download.error ? ` (${download.error})` : ""}.`);
@@ -2319,7 +2750,7 @@ export async function registerEquinoxBrowserTools({
     "equinox_browser_disconnect",
     {
       description:
-        "Equinox Browser'ın web sekmelerindeki debugger attachment'larını kapatır. Chrome ve extension açık kalır; Native Messaging köprüsünü sökmez.",
+        "Development/diagnostics: Equinox Browser'ın web sekmelerindeki debugger attachment'larını bilinçli olarak kapatır. Normal otomasyon adımı değildir; debugger conflict/lifecycle testi için kullanılır. Chrome ve extension açık kalır; Native Messaging köprüsünü sökmez.",
       inputSchema: {},
       annotations: {
         title: "Equinox Browser debugger bağlantılarını bırak",

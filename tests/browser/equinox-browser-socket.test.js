@@ -17,13 +17,15 @@ test("browser socket path stays short, user-specific and supports isolated smoke
   assert.throws(() => equinoxBrowserSocketPath({ uid, namespace: "../unsafe" }), /namespace is invalid/u);
 });
 
-test("browser socket directory is private and owned by the current user", async (t) => {
+test("browser socket directory is private and owned by the current user in an isolated test namespace", async (t) => {
   const uid = process.getuid?.();
   if (!Number.isInteger(uid) || uid < 1) return;
-  const directory = equinoxBrowserSocketDirectory({ uid });
+  const namespace = `test-${process.pid}`;
+  const directory = equinoxBrowserSocketDirectory({ uid, namespace });
+  assert.notEqual(directory, equinoxBrowserSocketDirectory({ uid }));
   await fs.rm(directory, { recursive: true, force: true });
   t.after(() => fs.rm(directory, { recursive: true, force: true }));
-  assert.equal(await prepareEquinoxBrowserSocketDirectory({ uid }), directory);
+  assert.equal(await prepareEquinoxBrowserSocketDirectory({ uid, namespace }), directory);
   const stat = await fs.lstat(directory);
   assert.equal(stat.isDirectory(), true);
   assert.equal(stat.isSymbolicLink(), false);

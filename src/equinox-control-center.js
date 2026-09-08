@@ -156,9 +156,12 @@ const TR_UI = Object.freeze({
   "Settings are stored independently in each Chrome profile.": "Ayarlar her Chrome profilinde birbirinden bağımsız saklanır.",
   "No silent browser fallback": "Sessiz tarayıcı fallback'i yok",
   "Setup needed": "Kurulum gerekli",
+  "Closed": "Kapalı",
   "Waiting for extension": "Uzantı bekleniyor",
   "Agent Browser · isolated default": "Agent Browser · izole varsayılan",
   "Agent Browser is ready and is the default target for browser automation.": "Agent Browser hazır ve tarayıcı otomasyonunun varsayılan hedefi.",
+  "Agent Browser setup is complete and the isolated browser is currently closed. It will open automatically when an agent needs it.": "Agent Browser kurulumu tamamlandı ve izole tarayıcı şu anda kapalı. Bir ajan ihtiyaç duyduğunda otomatik olarak açılacak.",
+  "Open Agent Browser to manage settings for the already configured isolated profile.": "Yapılandırılmış izole profilin ayarlarını yönetmek için Agent Browser’ı açın.",
   "Waiting for Equinox Browser to connect from the isolated Agent Browser profile.": "Equinox Browser'ın izole Agent Browser profilinden bağlanması bekleniyor.",
   "Equinox Browser is connected in Agent Browser, but browser automation is turned off in that profile.": "Equinox Browser Agent Browser'a bağlı, ancak bu profilde tarayıcı otomasyonu kapalı.",
   "Open the Equinox Browser popup in Agent Browser, review the data-use disclosure, and enable browser control there.": "Agent Browser içinde Equinox Browser açılır penceresini açın, veri kullanımı açıklamasını inceleyin ve tarayıcı kontrolünü oradan etkinleştirin.",
@@ -978,10 +981,12 @@ function renderDashboard() {
         ? "Ready"
         : browser.agentBrowser?.pairing
           ? "Waiting for extension"
-          : "Setup needed";
+          : browser.agentBrowser?.setupComplete
+            ? "Closed"
+            : "Setup needed";
   setText("browser-status", browserLabel);
   setText("browser-version", defaultBrowser.extensionVersion ? `Extension ${defaultBrowser.extensionVersion}` : "Agent Browser · isolated default");
-  setDot("browser-status-dot", defaultBrowser.ready ? (browserConsentRequired || defaultBrowser.controlEnabled === false ? "warn" : "good") : "warn");
+  setDot("browser-status-dot", defaultBrowser.ready ? (browserConsentRequired || defaultBrowser.controlEnabled === false ? "warn" : "good") : browser.agentBrowser?.setupComplete ? "neutral" : "warn");
 
   const peekabooReady = peekaboo.ready === true || (peekaboo.ready === undefined && peekaboo.active === true);
   const peekabooLabel = peekaboo.needsAttention
@@ -1494,10 +1499,14 @@ function renderIntegrations() {
     ? agentBrowser.consentAccepted === false
       ? "Consent required"
       : (agentBrowser.controlEnabled === false ? "Automation off" : "Ready")
-    : browser.agentBrowser?.pairing ? "Waiting for extension" : "Setup needed";
+    : browser.agentBrowser?.pairing
+      ? "Waiting for extension"
+      : browser.agentBrowser?.setupComplete
+        ? "Closed"
+        : "Setup needed";
   const browserTone = agentBrowser.ready
     ? (agentBrowser.consentAccepted === false || agentBrowser.controlEnabled === false ? "warn" : "good")
-    : "warn";
+    : browser.agentBrowser?.setupComplete ? "neutral" : "warn";
   const peekabooReady = peekaboo.ready === true || (peekaboo.ready === undefined && peekaboo.active === true);
   const peekabooStatus = peekaboo.needsAttention
     ? "Needs attention"
@@ -1511,7 +1520,7 @@ function renderIntegrations() {
   list.append(
     createIntegrationCard(
       "Equinox Browser",
-      `Agent Browser ${agentBrowser.ready ? "ready" : "not ready"} · Your Browser ${userBrowser.ready ? "connected" : "not connected"}. Both contexts use the same Chrome Web Store extension and Native Messaging bridge.`,
+      `Agent Browser ${agentBrowser.ready ? "ready" : browser.agentBrowser?.setupComplete ? "closed" : "not ready"} · Your Browser ${userBrowser.ready ? "connected" : "not connected"}. Both contexts use the same Chrome Web Store extension and Native Messaging bridge.`,
       browserStatus,
       browserTone,
       [
@@ -1587,7 +1596,7 @@ function renderBrowserPage() {
   const user = browserContextStatus("user");
   const manager = browser.agentBrowser || {};
   const agentView = browserContextLabel(agent, {
-    unavailableLabel: manager.pairing ? "Waiting for extension" : "Setup needed",
+    unavailableLabel: manager.pairing ? "Waiting for extension" : manager.setupComplete ? "Closed" : "Setup needed",
   });
   const userView = browserContextLabel(user, {
     unavailableLabel: browser.active ? "Extension not connected" : "Unavailable",
@@ -1620,7 +1629,9 @@ function renderBrowserPage() {
           ? "Agent Browser is ready and is the default target for browser automation."
           : manager.pairing
             ? "Waiting for Equinox Browser to connect from the isolated Agent Browser profile."
-            : "On first use, Agent Browser opens Chrome Web Store inside the isolated profile so Equinox Browser can be installed there.",
+            : manager.setupComplete
+              ? "Agent Browser setup is complete and the isolated browser is currently closed. It will open automatically when an agent needs it."
+              : "On first use, Agent Browser opens Chrome Web Store inside the isolated profile so Equinox Browser can be installed there.",
   );
 
   setText("browser-page-status", userView.label);
@@ -1671,7 +1682,9 @@ function renderBrowserPage() {
       : available
         ? "Settings apply immediately through Native Messaging and do not require an Equinox Local restart."
         : state.browserSettingsTarget === "agent"
-          ? "Open Agent Browser and install Equinox Browser in that isolated profile to manage its settings."
+          ? (manager.setupComplete
+            ? "Open Agent Browser to manage settings for the already configured isolated profile."
+            : "Open Agent Browser and install Equinox Browser in that isolated profile to manage its settings.")
           : "Connect Equinox Browser in Your Browser to manage its settings from Control Center.",
   );
 }

@@ -13,23 +13,27 @@ function makeHarness() {
   const tools = new Map();
   const calls = [];
   const capabilityVersions = {
-    snapshot: 3,
-    deltaSnapshot: 1,
-    screenshot: 3,
+    snapshot: 9,
+    deltaSnapshot: 2,
+    screenshot: 4,
     reacquire: 2,
-    compoundAction: 2,
+    compoundAction: 4,
     doubleClick: 1,
     pointerDrag: 1,
     html5Drag: 1,
-    wait: 2,
+    wait: 3,
     navigation: 2,
     emulation: 1,
-    input: 1,
-    actionability: 1,
+    input: 3,
+    actionability: 7,
+    refLifecycle: 1,
     click: 2,
     observation: 2,
     touchGesture: 1,
     bookmarks: 2,
+    pdfContent: 1,
+    downloadLifecycle: 1,
+    rangeSet: 2,
   };
   const bridge = {
     snapshot: () => ({
@@ -51,6 +55,10 @@ function makeHarness() {
         return { bookmarksVersion: 2, method, args };
       }
       if (method === "wait" && args?.networkResponse) return { waitVersion: 2, observationVersion: 2, matched: "network_response" };
+      if (method === "click") return { clickVersion: 2, actionabilityVersion: 7, compoundActionVersion: 4, method, args };
+      if (method === "hover" || method === "scroll_into_view") return { actionabilityVersion: 7, method, args };
+      if (method === "check") return { actionabilityVersion: 7, compoundActionVersion: 4, method, args };
+      if (method === "range_set") return { rangeVersion: 2, actionabilityVersion: 7, compoundActionVersion: 4, method, args };
       return { method, args };
     },
   };
@@ -78,10 +86,12 @@ function makeHarness() {
       screenshotProjectId: "workspace",
       bridge,
       ensureAgentBrowserReady: async () => ({ ready: true }),
+      shutdownAgentBrowser: async () => ({ stopped: true, alreadyStopped: false, processId: 4242 }),
       getAgentBrowserStatus: () => ({ supported: true, pairing: false, lastLaunchError: null }),
       withMutationLocks: async (_scopes, task) => await task(),
       textResult: (text) => ({ content: [{ type: "text", text }] }),
       errorResult: (error) => ({ isError: true, content: [{ type: "text", text: error?.message || String(error) }] }),
+      extractPdfText: async () => ({ parser: "test-pdfkit", pageCount: 1, pages: [], truncated: false, textChars: 0 }),
     },
   };
 }
@@ -123,6 +133,7 @@ test("registers the first-party Equinox Browser primitive surface", async () => 
     "equinox_browser_scroll",
     "equinox_browser_select",
     "equinox_browser_check",
+    "equinox_browser_range_set",
     "equinox_browser_wait",
     "equinox_browser_fill",
     "equinox_browser_press",
@@ -139,6 +150,7 @@ test("registers the first-party Equinox Browser primitive surface", async () => 
     "equinox_browser_bookmark_update_move",
     "equinox_browser_bookmark_remove",
     "equinox_browser_dialog",
+    "equinox_browser_shutdown",
     "equinox_browser_close",
     "equinox_browser_upload_file",
     "equinox_browser_download_wait",
@@ -206,6 +218,73 @@ test("agent browser access can disable automation while keeping status readable"
   assert.equal(tabs.isError, true);
   assert.match(tabs.content[0].text, /disabled in Control Center/u);
   assert.deepEqual(harness.calls, []);
+});
+
+test("browser status reports stale worker capability skew even when extension version is unchanged", async () => {
+  const harness = makeHarness();
+  const staleCapabilities = {
+    snapshot: 3,
+    deltaSnapshot: 1,
+    screenshot: 3,
+    reacquire: 1,
+    compoundAction: 2,
+    doubleClick: 1,
+    pointerDrag: 1,
+    html5Drag: 1,
+    wait: 2,
+    navigation: 1,
+    emulation: 1,
+    input: 1,
+    actionability: 1,
+    click: 2,
+    observation: 2,
+    touchGesture: 1,
+    bookmarks: 2,
+  };
+  harness.bridge.snapshot = () => ({
+    active: true,
+    ready: true,
+    contexts: {
+      agent: { ready: true, extension: { extensionVersion: "0.5.1", protocolVersion: 1, capabilityVersions: staleCapabilities } },
+      user: { ready: true, extension: { extensionVersion: "0.5.1", protocolVersion: 1, capabilityVersions: staleCapabilities } },
+    },
+  });
+  await registerEquinoxBrowserTools(harness.deps);
+
+  const status = parseTextResult(await harness.tools.get("equinox_browser_status").handler({}));
+  assert.equal(status.agentBrowser.state, "outdated_worker");
+  assert.equal(status.agentBrowser.compatibility, "outdated_worker");
+  assert.equal(status.contexts.agent.compatibility, "outdated_worker");
+  assert.equal(status.contexts.user.compatibility, "outdated_worker");
+  assert.deepEqual(
+    status.contexts.agent.outdatedCapabilities.map((item) => item.name).sort(),
+    ["actionability", "compoundAction", "deltaSnapshot", "downloadLifecycle", "input", "navigation", "pdfContent", "rangeSet", "reacquire", "refLifecycle", "screenshot", "snapshot", "wait"],
+  );
+});
+
+test("bridge protocol compatibility uses the Native Messaging protocol version", async () => {
+  const harness = makeHarness();
+  const capabilities = {
+    snapshot: 9, deltaSnapshot: 2, screenshot: 4, reacquire: 2, compoundAction: 4,
+    doubleClick: 1, pointerDrag: 1, html5Drag: 1, wait: 3, navigation: 2,
+    emulation: 1, input: 3, actionability: 7, refLifecycle: 1, click: 2, observation: 2,
+    touchGesture: 1, bookmarks: 2, pdfContent: 1, downloadLifecycle: 1, rangeSet: 2,
+  };
+  harness.bridge.snapshot = () => ({
+    active: true,
+    ready: true,
+    contexts: {
+      agent: { ready: true, extension: { extensionVersion: "0.5.1", protocolVersion: 1, capabilityVersions: capabilities } },
+      user: { ready: true, extension: { extensionVersion: "0.5.1", protocolVersion: 2, capabilityVersions: capabilities } },
+    },
+  });
+  await registerEquinoxBrowserTools(harness.deps);
+
+  const status = parseTextResult(await harness.tools.get("equinox_browser_status").handler({}));
+  assert.equal(status.contexts.agent.compatibility, "current");
+  assert.equal(status.contexts.user.compatibility, "incompatible");
+  assert.equal(status.contexts.user.expectedProtocolVersion, "1");
+  assert.equal(status.contexts.user.protocolVersion, "2");
 });
 
 test("extension reload maps to the first-party self.reload command", async () => {
@@ -391,15 +470,23 @@ test("snapshot preserves @ref workflow arguments", async () => {
   });
 });
 
-test("snapshot v2 maps pruning options and rejects silent downgrade on an old extension", async () => {
+test("snapshot v9 maps pruning options and rejects pre-v9 output", async () => {
   const harness = makeHarness();
   harness.bridge.call = async (method, args, options) => {
     harness.calls.push({ method, args, options });
     if (method === "snapshot") {
       return {
-        snapshotVersion: 2,
-        deltaVersion: 1,
-        snapshot: { id: "42:1:1" },
+        snapshotVersion: 9,
+        deltaVersion: 2,
+        snapshot: { id: "42:2:2" },
+        refLifecycleVersion: 1,
+        sourceSnapshotId: "42:1:1",
+        sourceDocumentGeneration: 1,
+        currentSnapshotId: "42:2:2",
+        refContextValid: true,
+        freshSnapshotRequired: false,
+        refContextReason: "root_snapshot_created",
+        currentDocumentGeneration: 1,
         elements: [{ ref: "@e1", role: "button", name: "Settings" }],
         text: '@e1 button "Settings"',
         refCount: 1,
@@ -436,6 +523,15 @@ test("snapshot v2 maps pruning options and rejects silent downgrade on an old ex
     },
     options: { context: "agent" },
   });
+  const projected = parseTextResult(result);
+  assert.equal(projected.refLifecycleVersion, 1);
+  assert.equal(projected.sourceSnapshotId, "42:1:1");
+  assert.equal(projected.sourceDocumentGeneration, 1);
+  assert.equal(projected.currentSnapshotId, "42:2:2");
+  assert.equal(projected.currentDocumentGeneration, 1);
+  assert.equal(projected.refContextValid, true);
+  assert.equal(projected.freshSnapshotRequired, false);
+  assert.equal(projected.refContextReason, "root_snapshot_created");
   const compact = parseTextResult(result);
   assert.equal(compact.outputMode, "compact");
   assert.equal(compact.outputProjectedLocally, true);
@@ -446,7 +542,191 @@ test("snapshot v2 maps pruning options and rejects silent downgrade on an old ex
   await registerEquinoxBrowserTools(oldExtension.deps);
   const downgraded = await oldExtension.tools.get("equinox_browser_snapshot").handler({ mode: "interactive" });
   assert.equal(downgraded.isError, true);
-  assert.match(downgraded.content[0].text, /Snapshot v2/u);
+  assert.match(downgraded.content[0].text, /Snapshot v9/u);
+});
+
+test("snapshot v9 maps container scope, frame relevance and opt-in privacy metadata without silent downgrade", async () => {
+  const harness = makeHarness();
+  harness.bridge.call = async (method, args, options) => {
+    harness.calls.push({ method, args, options });
+    if (method === "snapshot") {
+      return {
+        snapshotVersion: 9,
+        deltaVersion: 2,
+        snapshot: { id: "42:5:1" },
+        text: '@c1 article "Scoped card"',
+        refCount: 0,
+        containerRefCount: 1,
+        elementCount: 1,
+        privacy: { sensitiveTextMode: "redact", sensitiveTextRedaction: true, sensitiveRedactionCount: 2, broadMailSummary: true },
+      };
+    }
+    return { method, args };
+  };
+  await registerEquinoxBrowserTools(harness.deps);
+
+  const scoped = await harness.tools.get("equinox_browser_snapshot").handler({
+    tab_id: 42,
+    mode: "balanced",
+    frame_id: "frame-cross",
+    exclude_auxiliary_frames: true,
+    prune_unnamed_refs: true,
+    sensitive_text: "redact",
+  });
+  assert.equal(scoped.isError, undefined);
+  assert.deepEqual(harness.calls.at(-1), {
+    method: "snapshot",
+    args: {
+      tabId: 42,
+      includeReadable: true,
+      mode: "balanced",
+      excludeAuxiliaryFrames: true,
+      frameId: "frame-cross",
+      pruneUnnamedRefs: true,
+      sensitiveText: "redact",
+      output: "compact",
+    },
+    options: { context: "agent" },
+  });
+  const projected = parseTextResult(scoped);
+  assert.equal(projected.containerRefCount, 1);
+  assert.deepEqual(projected.privacy, {
+    sensitiveTextMode: "redact",
+    sensitiveTextRedaction: true,
+    sensitiveRedactionCount: 2,
+    broadMailSummary: true,
+  });
+
+  await harness.tools.get("equinox_browser_snapshot").handler({ tab_id: 42, root_ref: "@c1" });
+  assert.equal(harness.calls.at(-1).args.rootRef, "@c1");
+
+  const oldWorker = makeHarness();
+  oldWorker.bridge.call = async (method, args, options) => {
+    oldWorker.calls.push({ method, args, options });
+    if (method === "snapshot") return { snapshotVersion: 6, deltaVersion: 2, text: "legacy" };
+    return { method, args };
+  };
+  await registerEquinoxBrowserTools(oldWorker.deps);
+  const rejected = await oldWorker.tools.get("equinox_browser_snapshot").handler({ main_frame_only: true });
+  assert.equal(rejected.isError, true);
+  assert.match(rejected.content[0].text, /Snapshot v9/u);
+});
+
+test("PDF snapshot enriches readable content through bounded pdf.data without exposing raw bytes", async () => {
+  const harness = makeHarness();
+  const pdf = Buffer.from("%PDF-1.4\nEquinox PDF Fixture\n", "utf8");
+  harness.deps.extractPdfText = async (buffer, options) => {
+    assert.deepEqual(buffer, pdf);
+    assert.equal(options.maxPages > 0, true);
+    return {
+      parser: "macos-pdfkit",
+      pageCount: 1,
+      pages: [{
+        pageNumber: 1,
+        text: "Equinox PDF Fixture\nverification code 123456\ntoken=supersecretvalue",
+      }],
+      truncated: false,
+      textChars: 74,
+    };
+  };
+  harness.bridge.call = async (method, args, options) => {
+    harness.calls.push({ method, args, options });
+    if (method === "snapshot") {
+      return {
+        tab: { id: 44, url: "https://example.test/fixture.pdf", title: "fixture.pdf", active: true },
+        snapshotVersion: 9,
+        deltaVersion: 2,
+        restricted: false,
+        pageKind: "chrome-pdf-viewer",
+        debuggerSupported: true,
+        snapshot: { id: "44:1:1", documentGeneration: 1, mainFrameId: "main", filters: {} },
+        refCount: 0,
+        containerRefCount: 0,
+        privacy: {
+          sensitiveTextMode: args.sensitiveText === "redact" ? "redact" : "allow",
+          sensitiveTextRedaction: args.sensitiveText === "redact",
+          sensitiveRedactionCount: 0,
+          broadMailSummary: false,
+        },
+        elementCount: 4,
+        returnedElementCount: 4,
+        truncated: false,
+        deltaOnly: false,
+        currentSnapshotId: "44:1:1",
+        refContextValid: true,
+        freshSnapshotRequired: false,
+        refContextReason: "snapshot_created",
+        currentDocumentGeneration: 1,
+        outputMode: "compact",
+        text: "toolbar",
+      };
+    }
+    if (method === "pdf.data") {
+      return {
+        pdfContentVersion: 1,
+        tabId: 44,
+        byteLength: pdf.length,
+        source: "chrome_pdf_viewer_save_data",
+        data: pdf.toString("base64"),
+      };
+    }
+    return { method, args };
+  };
+  await registerEquinoxBrowserTools(harness.deps);
+
+  const result = await harness.tools.get("equinox_browser_snapshot").handler({
+    target: "agent",
+    mode: "readable",
+    output: "compact",
+  });
+  assert.equal(result.isError, undefined);
+  const parsed = parseTextResult(result);
+  assert.equal(parsed.pdfContent.version, 1);
+  assert.equal(parsed.pdfContent.parser, "macos-pdfkit");
+  assert.equal(parsed.pdfContent.textAvailable, true);
+  assert.equal(parsed.privacy.pdfTextRedaction, false);
+  assert.match(parsed.text, /Equinox PDF Fixture/u);
+  assert.match(parsed.text, /123456|supersecretvalue/u);
+  assert.doesNotMatch(parsed.text, /\[REDACTED\]/u);
+  assert.equal(JSON.stringify(parsed).includes(pdf.toString("base64")), false);
+  const pdfCall = harness.calls.find((item) => item.method === "pdf.data");
+  assert.deepEqual(pdfCall, {
+    method: "pdf.data",
+    args: { tabId: 44 },
+    options: { context: "agent", timeoutMs: 45_000 },
+  });
+
+  harness.calls.length = 0;
+  const redactedPdf = await harness.tools.get("equinox_browser_snapshot").handler({
+    target: "agent",
+    mode: "readable",
+    sensitive_text: "redact",
+    output: "compact",
+  });
+  assert.equal(redactedPdf.isError, undefined);
+  const redactedParsed = parseTextResult(redactedPdf);
+  assert.equal(redactedParsed.privacy.pdfTextRedaction, true);
+  assert.doesNotMatch(redactedParsed.text, /123456|supersecretvalue/u);
+  assert.match(redactedParsed.text, /\[REDACTED\]/u);
+  assert.equal(harness.calls[0].args.sensitiveText, "redact");
+
+  harness.calls.length = 0;
+  const activeLayer = await harness.tools.get("equinox_browser_snapshot").handler({
+    target: "agent",
+    mode: "readable",
+    active_layer_only: true,
+    output: "compact",
+  });
+  assert.equal(activeLayer.isError, undefined);
+  const activeParsed = parseTextResult(activeLayer);
+  assert.equal(activeParsed.pdfContent.textAvailable, true);
+  assert.match(activeParsed.text, /Equinox PDF Fixture/u);
+  assert.deepEqual(harness.calls[0], {
+    method: "snapshot",
+    args: { tabId: undefined, includeReadable: true, mode: "readable", activeLayerOnly: true, output: "compact" },
+    options: { context: "agent" },
+  });
+  assert.equal(harness.calls.some((item) => item.method === "pdf.data"), true);
 });
 
 test("navigate and reload expose version-gated observation-preserving navigation", async () => {
@@ -741,7 +1021,7 @@ test("annotated screenshot maps annotate_refs and rejects silent extension downg
     harness.calls.push({ method, args, options });
     if (method === "screenshot") {
       return {
-        screenshotVersion: 3,
+        screenshotVersion: 4,
         tab: { id: 44 },
         annotations: { requested: true, annotatedRefs: ["@e1"], skippedOopifRefs: [], truncated: false },
         mimeType: "image/png",
@@ -775,7 +1055,7 @@ test("annotated screenshot maps annotate_refs and rejects silent extension downg
     annotate_refs: true,
   });
   assert.equal(downgraded.isError, true);
-  assert.match(downgraded.content[0].text, /annotate_refs screenshot/u);
+  assert.match(downgraded.content[0].text, /annotate_refs|screenshot v4/u);
 });
 
 test("dedicated screenshot delete safely removes artifacts larger than the generic 10 MB file limit", async () => {
@@ -855,6 +1135,14 @@ test("advanced interaction primitives map to first-party bridge methods", async 
   await harness.tools.get("equinox_browser_check").handler({ ref: "@e7", checked: false, tab_id: 12 });
   assert.deepEqual(harness.calls.at(-1), { method: "check", args: { tabId: 12, ref: "@e7", checked: false }, options: { context: "agent" } });
 
+  const ranged = await harness.tools.get("equinox_browser_range_set").handler({ ref: "@e8", percent: 0.5, tab_id: 12 });
+  assert.equal(ranged.isError, undefined);
+  assert.deepEqual(harness.calls.at(-1), { method: "range_set", args: { tabId: 12, ref: "@e8", percent: 0.5 }, options: { context: "agent" } });
+
+  const invalidRange = await harness.tools.get("equinox_browser_range_set").handler({ ref: "@e8", value: 5, percent: 0.5, tab_id: 12 });
+  assert.equal(invalidRange.isError, true);
+  assert.match(invalidRange.content[0].text, /tam biri/u);
+
   await harness.tools.get("equinox_browser_wait").handler({ text: "Ready", timeout_ms: 2_000, tab_id: 12 });
   assert.deepEqual(harness.calls.at(-1), {
     method: "wait",
@@ -867,16 +1155,21 @@ test("rich input, actionability and generalized after map to versioned bridge co
   const harness = makeHarness();
   harness.bridge.call = async (method, args, options) => {
     harness.calls.push({ method, args, options });
-    if (method === "click") return { clickVersion: 2, compoundActionVersion: 2 };
-    if (method === "hover" || method === "scroll_into_view" || method === "ref_info") {
-      return { actionabilityVersion: 1, ref: args.ref };
+    if (method === "click") return { clickVersion: 2, actionabilityVersion: 7, compoundActionVersion: 4 };
+    if (method === "ref_info") {
+      return { actionabilityVersion: 5, ref: args.ref, pressed: true };
+    }
+    if (method === "hover" || method === "scroll_into_view") {
+      return { actionabilityVersion: 7, ref: args.ref };
     }
     if (method === "press" || method === "type_text") {
-      return { inputVersion: 1, compoundActionVersion: 2, ref: args.ref || null };
+      return { inputVersion: 3, compoundActionVersion: 4, ref: args.ref || null };
     }
     if (["fill", "select", "check", "drag"].includes(method)) {
       return {
-        compoundActionVersion: 2,
+        compoundActionVersion: 4,
+        inputVersion: method === "fill" ? 3 : undefined,
+        ...(method === "check" ? { actionabilityVersion: 7 } : {}),
         ...(method === "drag" ? { pointerDragVersion: 1 } : {}),
       };
     }
@@ -905,10 +1198,21 @@ test("rich input, actionability and generalized after map to versioned bridge co
   assert.equal(info.isError, undefined);
   assert.equal(harness.calls.at(-1).method, "ref_info");
 
+  const oldActionability = makeHarness();
+  oldActionability.bridge.call = async (method, args, options) => {
+    oldActionability.calls.push({ method, args, options });
+    if (method === "ref_info") return { actionabilityVersion: 3, ref: args.ref };
+    return { method, args };
+  };
+  await registerEquinoxBrowserTools(oldActionability.deps);
+  const staleInfo = await oldActionability.tools.get("equinox_browser_ref_info").handler({ ref: "@e4", tab_id: 12 });
+  assert.equal(staleInfo.isError, true);
+  assert.match(staleInfo.content[0].text, /actionability v5/u);
+
   const pressed = await harness.tools.get("equinox_browser_press").handler({
     ref: "@e5",
     key: "Enter",
-    after: { snapshot: "full" },
+    after: { snapshot: "full", mode: "interactive", max_nodes: 25, roles: ["button"], query: "Save" },
   });
   assert.equal(pressed.isError, undefined);
   assert.deepEqual(harness.calls.at(-1), {
@@ -917,7 +1221,15 @@ test("rich input, actionability and generalized after map to versioned bridge co
       tabId: undefined,
       key: "Enter",
       ref: "@e5",
-      after: { snapshot: "full", quietMs: 500, timeoutMs: 10_000 },
+      after: {
+        snapshot: "full",
+        snapshotMode: "interactive",
+        snapshotMaxNodes: 25,
+        snapshotQuery: "Save",
+        snapshotRoles: ["button"],
+        quietMs: 500,
+        timeoutMs: 10_000,
+      },
     },
     options: { context: "agent" },
   });
@@ -927,20 +1239,23 @@ test("rich input, actionability and generalized after map to versioned bridge co
     ref: "@e5",
     text: "Hello",
     delay_ms: 25,
+    submit: "Enter",
   });
   assert.equal(typed.isError, undefined);
   assert.deepEqual(harness.calls.at(-1), {
     method: "type_text",
-    args: { tabId: undefined, ref: "@e5", text: "Hello", delayMs: 25 },
+    args: { tabId: undefined, ref: "@e5", text: "Hello", delayMs: 25, submit: "Enter" },
     options: { context: "user" },
   });
 
   const filled = await harness.tools.get("equinox_browser_fill").handler({
     ref: "@e5",
     value: "x",
+    submit: "Enter",
     after: { wait_for: "dom_stable" },
   });
   assert.equal(filled.isError, undefined);
+  assert.equal(harness.calls.at(-1).args.submit, "Enter");
   assert.equal(harness.calls.at(-1).args.after.waitFor, "dom_stable");
 
   const dragged = await harness.tools.get("equinox_browser_drag").handler({
@@ -970,7 +1285,7 @@ test("controlled click after maps one bounded post-action chain and rejects sile
   harness.bridge.call = async (method, args, options) => {
     harness.calls.push({ method, args, options });
     if (method === "click") {
-      return { compoundActionVersion: 1, after: { ok: true } };
+      return { actionabilityVersion: 7, compoundActionVersion: 4, actionDispatched: true, primaryActionSucceeded: true, after: { ok: true } };
     }
     return { method, args };
   };
@@ -982,11 +1297,18 @@ test("controlled click after maps one bounded post-action chain and rejects sile
     after: {
       wait_for: "dom_stable",
       snapshot: "delta",
+      mode: "interactive",
+      scope: "document",
+      max_nodes: 250,
       quiet_ms: 250,
       timeout_ms: 2_000,
     },
   });
   assert.equal(result.isError, undefined);
+  const parsedResult = parseTextResult(result);
+  assert.equal(parsedResult.actionDispatched, true);
+  assert.equal(parsedResult.primaryActionSucceeded, true);
+  assert.equal(parsedResult.after?.ok, true);
   assert.deepEqual(harness.calls.at(-1), {
     method: "click",
     args: {
@@ -995,6 +1317,9 @@ test("controlled click after maps one bounded post-action chain and rejects sile
       after: {
         waitFor: "dom_stable",
         snapshot: "delta",
+        snapshotMode: "interactive",
+        snapshotScope: "document",
+        snapshotMaxNodes: 250,
         quietMs: 250,
         timeoutMs: 2_000,
       },
@@ -1003,20 +1328,27 @@ test("controlled click after maps one bounded post-action chain and rejects sile
   });
 
   const oldExtension = makeHarness();
+  oldExtension.bridge.snapshot = () => ({
+    active: true, ready: true,
+    contexts: {
+      agent: { ready: true, extension: { extensionVersion: "0.1.0", capabilityVersions: { actionability: 7, compoundAction: 3 } } },
+      user: { ready: true, extension: { extensionVersion: "0.1.0", capabilityVersions: { actionability: 7, compoundAction: 3 } } },
+    },
+  });
   await registerEquinoxBrowserTools(oldExtension.deps);
   const downgraded = await oldExtension.tools.get("equinox_browser_click").handler({
     ref: "@e4",
     after: { snapshot: "full" },
   });
   assert.equal(downgraded.isError, true);
-  assert.match(downgraded.content[0].text, /Controlled click after/u);
+  assert.match(downgraded.content[0].text, /Projection-aware click after|compound action v4/u);
 });
 
 test("double click plus pointer/HTML5 semantic drag map bounded ref actions and reject silent downgrade", async () => {
   const harness = makeHarness();
   harness.bridge.call = async (method, args, options) => {
     harness.calls.push({ method, args, options });
-    if (method === "double_click") return { doubleClickVersion: 1, clickCount: 2, after: { ok: true } };
+    if (method === "double_click") return { doubleClickVersion: 1, compoundActionVersion: 4, clickCount: 2, after: { ok: true } };
     if (method === "drag") {
       if (args.mode === "html5") return { html5DragVersion: 1, mode: "html5", dropDispatched: true };
       return { pointerDragVersion: 1, mode: "pointer", actionDispatched: true };
@@ -1109,7 +1441,9 @@ test("smart wait maps bounded conditions and rejects silent downgrade", async ()
   const harness = makeHarness();
   harness.bridge.call = async (method, args, options) => {
     harness.calls.push({ method, args, options });
-    if (method === "wait") return { waitVersion: 2, matched: "dom_stable" };
+    if (method === "wait") return args?.semanticReady
+      ? { waitVersion: 3, matched: "semantic_ready", nodeCount: 2 }
+      : { waitVersion: 2, matched: "dom_stable" };
     return { method, args };
   };
   await registerEquinoxBrowserTools(harness.deps);
@@ -1133,6 +1467,27 @@ test("smart wait maps bounded conditions and rejects silent downgrade", async ()
       quietMs: 350,
     },
     options: { timeoutMs: 7_000, context: "agent" },
+  });
+
+  const semantic = await harness.tools.get("equinox_browser_wait").handler({
+    semantic_ready: { query: "Results", roles: ["button"], min_nodes: 2 },
+    quiet_ms: 250,
+    timeout_ms: 1_500,
+    tab_id: 12,
+  });
+  assert.equal(semantic.isError, undefined);
+  assert.deepEqual(harness.calls.at(-1), {
+    method: "wait",
+    args: {
+      tabId: 12,
+      milliseconds: undefined,
+      text: undefined,
+      urlContains: undefined,
+      timeoutMs: 1_500,
+      semanticReady: { query: "Results", roles: ["button"], minNodes: 2 },
+      quietMs: 250,
+    },
+    options: { timeoutMs: 6_500, context: "agent" },
   });
 
   const oldExtension = makeHarness();
@@ -1247,6 +1602,78 @@ test("observation v2 rejects cursor clearing conflicts and missing capability be
   assert.equal(rejected.isError, true);
   assert.match(rejected.content[0].text, /Network observation v2/u);
   assert.equal(oldExtension.calls.length, 0);
+});
+
+test("capability-gated Agent Browser tools lazy-start before inspecting worker versions", async () => {
+  const harness = makeHarness();
+  const readySnapshot = harness.bridge.snapshot();
+  let agentReady = false;
+  let ensureReadyCalls = 0;
+  harness.bridge.readyFor = (context) => context === "agent" ? agentReady : true;
+  harness.bridge.snapshot = () => ({
+    ...readySnapshot,
+    contexts: {
+      ...readySnapshot.contexts,
+      agent: agentReady
+        ? readySnapshot.contexts.agent
+        : { ready: false, extension: null },
+    },
+  });
+  harness.deps.ensureAgentBrowserReady = async () => {
+    ensureReadyCalls += 1;
+    agentReady = true;
+    return { ready: true };
+  };
+  await registerEquinoxBrowserTools(harness.deps);
+
+  const searched = await harness.tools.get("equinox_browser_bookmarks_search").handler({ query: "docs", limit: 5 });
+  assert.equal(searched.isError, undefined);
+  assert.equal(ensureReadyCalls, 1);
+  assert.equal(harness.calls.at(-1)?.method, "bookmarks.search");
+  assert.equal(harness.calls.at(-1)?.options?.context, "agent");
+
+  agentReady = false;
+  const ranged = await harness.tools.get("equinox_browser_range_set").handler({ ref: "@e8", value: 5 });
+  assert.equal(ranged.isError, undefined);
+  assert.equal(ensureReadyCalls, 2);
+  assert.equal(harness.calls.at(-1)?.method, "range_set");
+  assert.equal(harness.calls.at(-1)?.options?.context, "agent");
+
+  agentReady = false;
+  const callsBeforeUser = harness.calls.length;
+  const userRejected = await harness.tools.get("equinox_browser_bookmarks_search").handler({ target: "user", query: "docs", limit: 5 });
+  assert.equal(userRejected.isError, true);
+  assert.match(userRejected.content[0].text, /yalnız Agent Browser/u);
+  assert.equal(ensureReadyCalls, 2);
+  assert.equal(harness.calls.length, callsBeforeUser);
+});
+
+test("bookmark mutation can be the first Agent Browser call after shutdown", async () => {
+  const harness = makeHarness();
+  const readySnapshot = harness.bridge.snapshot();
+  let agentReady = false;
+  let ensureReadyCalls = 0;
+  harness.bridge.readyFor = (context) => context === "agent" ? agentReady : true;
+  harness.bridge.snapshot = () => ({
+    ...readySnapshot,
+    contexts: {
+      ...readySnapshot.contexts,
+      agent: agentReady ? readySnapshot.contexts.agent : { ready: false, extension: null },
+    },
+  });
+  harness.deps.ensureAgentBrowserReady = async () => {
+    ensureReadyCalls += 1;
+    agentReady = true;
+    return { ready: true };
+  };
+  await registerEquinoxBrowserTools(harness.deps);
+
+  const created = await harness.tools.get("equinox_browser_bookmark_folder_create").handler({ title: "First call folder", parent_id: "1" });
+  assert.equal(created.isError, undefined);
+  assert.equal(ensureReadyCalls, 1);
+  assert.equal(harness.calls.length, 1);
+  assert.equal(harness.calls[0]?.method, "bookmarks.folder_create");
+  assert.equal(harness.calls[0]?.options?.context, "agent");
 });
 
 test("Agent Browser bookmark tools are bounded, version-gated and reject Your Browser before bridge calls", async () => {
@@ -1403,6 +1830,60 @@ test("download wait returns bounded safe metadata and never exposes the absolute
   await fs.rm(root, { recursive: true, force: true });
 });
 
+test("download wait accepts a creation sequence when click missed the delayed download id", async () => {
+  const harness = makeHarness();
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "equinox-browser-download-sequence-"));
+  const downloadsRoot = path.join(root, "Downloads");
+  await fs.mkdir(downloadsRoot);
+  const absolutePath = path.join(downloadsRoot, "delayed.jpeg");
+  const payload = Buffer.from("delayed download fixture\n", "utf8");
+  await fs.writeFile(absolutePath, payload);
+  harness.deps.downloadsRoot = downloadsRoot;
+  harness.bridge.call = async (method, args, options) => {
+    harness.calls.push({ method, args, options });
+    if (method !== "downloads.wait") return { method, args };
+    return {
+      downloadLifecycleVersion: 1,
+      download: {
+        id: 31,
+        createdSequence: 8,
+        filename: absolutePath,
+        name: "delayed.jpeg",
+        mimeType: "image/jpeg",
+        state: "complete",
+        danger: "safe",
+        fileSize: payload.length,
+        exists: true,
+      },
+    };
+  };
+  await registerEquinoxBrowserTools(harness.deps);
+
+  const result = await harness.tools.get("equinox_browser_download_wait").handler({ since_sequence: 7, timeout_ms: 2_000 });
+  assert.equal(result.isError, undefined);
+  const parsed = parseTextResult(result);
+  assert.equal(parsed.downloadId, 31);
+  assert.equal(parsed.name, "delayed.jpeg");
+  assert.equal(parsed.bytes, payload.length);
+  assert.deepEqual(harness.calls.at(-1), {
+    method: "downloads.wait",
+    args: { sinceSequence: 7, timeoutMs: 2_000 },
+    options: { timeoutMs: 7_000, context: "agent" },
+  });
+  await fs.rm(root, { recursive: true, force: true });
+});
+
+test("download wait requires exactly one id or sequence selector", async () => {
+  const harness = makeHarness();
+  await registerEquinoxBrowserTools(harness.deps);
+  const neither = await harness.tools.get("equinox_browser_download_wait").handler({ timeout_ms: 1_000 });
+  assert.equal(neither.isError, true);
+  assert.match(neither.content[0].text, /tam biri/u);
+  const both = await harness.tools.get("equinox_browser_download_wait").handler({ download_id: 1, since_sequence: 0, timeout_ms: 1_000 });
+  assert.equal(both.isError, true);
+  assert.match(both.content[0].text, /tam biri/u);
+});
+
 test("download wait rejects interrupted and dangerous Chrome downloads before filesystem resolution", async () => {
   for (const fixture of [
     { state: "interrupted", danger: "safe", error: "NETWORK_FAILED", pattern: /download kesildi/i },
@@ -1458,4 +1939,26 @@ test("download file inspection rejects root escape, symlink, size overflow and C
     /boyutu uyuşmuyor/,
   );
   await fs.rm(root, { recursive: true, force: true });
+});
+
+
+test("Agent Browser shutdown is agent-only and never routes through the extension bridge", async () => {
+  const harness = makeHarness();
+  let shutdownCalls = 0;
+  harness.deps.shutdownAgentBrowser = async () => {
+    shutdownCalls += 1;
+    return { stopped: true, alreadyStopped: false, processId: 4242 };
+  };
+  await registerEquinoxBrowserTools(harness.deps);
+
+  const agentResult = parseTextResult(await harness.tools.get("equinox_browser_shutdown").handler({ target: "agent" }));
+  assert.equal(agentResult.stopped, true);
+  assert.equal(shutdownCalls, 1);
+  assert.deepEqual(harness.calls, []);
+
+  const userResult = await harness.tools.get("equinox_browser_shutdown").handler({ target: "user" });
+  assert.equal(userResult.isError, true);
+  assert.match(userResult.content[0].text, /yalnız Agent Browser/u);
+  assert.equal(shutdownCalls, 1);
+  assert.deepEqual(harness.calls, []);
 });

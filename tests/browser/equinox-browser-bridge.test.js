@@ -36,6 +36,41 @@ async function makeSocketPath(name) {
   return { dir, socketPath: path.join(dir, "bridge.sock") };
 }
 
+test("bridge start never unlinks a live socket owned by another bridge", async (t) => {
+  const { dir, socketPath } = await makeSocketPath("live-owner");
+  const owner = net.createServer((socket) => socket.end());
+  await new Promise((resolve, reject) => {
+    owner.once("error", reject);
+    owner.listen(socketPath, resolve);
+  });
+  t.after(async () => {
+    await new Promise((resolve) => owner.close(() => resolve()));
+    await fs.rm(dir, { recursive: true, force: true });
+  });
+
+  const contender = createEquinoxBrowserBridge({ socketPath });
+  await assert.rejects(contender.start(), /already owned by another live bridge/u);
+  await contender.close();
+
+  const probe = net.createConnection(socketPath);
+  await new Promise((resolve, reject) => {
+    probe.once("connect", resolve);
+    probe.once("error", reject);
+  });
+  probe.destroy();
+});
+
+test("bridge start refuses to replace a non-socket filesystem entry", async (t) => {
+  const { dir, socketPath } = await makeSocketPath("non-socket");
+  await fs.writeFile(socketPath, "do not delete\n", { mode: 0o600 });
+  t.after(async () => fs.rm(dir, { recursive: true, force: true }));
+
+  const bridge = createEquinoxBrowserBridge({ socketPath });
+  await assert.rejects(bridge.start(), /occupied by a non-socket entry/u);
+  await bridge.close();
+  assert.equal(await fs.readFile(socketPath, "utf8"), "do not delete\n");
+});
+
 test("Equinox Browser bridge validates host + extension and routes commands", async (t) => {
   const { dir, socketPath } = await makeSocketPath("route");
   const bridge = createEquinoxBrowserBridge({ socketPath, callTimeoutMs: 2_000 });

@@ -6,6 +6,19 @@ This project follows semantic versioning for public releases.
 
 ## [Unreleased]
 
+## [4.6.3] - 2026-09-08
+
+### Changed
+
+- Finalized the Local-facing Equinox Browser 0.5.x capability contract around Snapshot v9, projection-aware semantic waits, stable ref/action lifecycle recovery, explicit primary-action versus postcondition outcomes, and opt-in web-content privacy redaction.
+- Added semantic `range_set` v2 support to the Browser gateway and version negotiation, covering native and ARIA sliders while failing closed against older extension workers.
+- Kept Agent Browser capability-gated operations on the normal lazy-start path so bookmark search/mutations and other versioned calls can be the first operation after the isolated browser was shut down.
+
+### Fixed
+
+- Fixed capability checks that could inspect an idle Agent Browser context before lazy-start and incorrectly report that a current extension version was required.
+- Improved Browser action/result lifecycle handling for delayed downloads, stale same-page controls, compound readiness and post-action failures so agents can distinguish safe retry, completed primary actions and uncertain outcomes.
+
 ## [4.6.2] - 2026-09-07
 
 ### Changed
@@ -204,7 +217,8 @@ This project follows semantic versioning for public releases.
 - Internal release/QA browser surfaces are excluded from the public product capability registry.
 - Private Orbit/deployment configuration and machine-specific development infrastructure are excluded from the public source projection.
 
-[Unreleased]: https://github.com/sametbasbug/equinox-local/compare/v4.6.2...HEAD
+[Unreleased]: https://github.com/sametbasbug/equinox-local/compare/v4.6.3...HEAD
+[4.6.3]: https://github.com/sametbasbug/equinox-local/compare/v4.6.2...v4.6.3
 [4.6.2]: https://github.com/sametbasbug/equinox-local/compare/v4.6.1...v4.6.2
 [4.6.1]: https://github.com/sametbasbug/equinox-local/compare/v4.6.0...v4.6.1
 [4.6.0]: https://github.com/sametbasbug/equinox-local/compare/v4.5.0...v4.6.0

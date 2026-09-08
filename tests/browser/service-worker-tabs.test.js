@@ -21,10 +21,12 @@ function createEvent() {
 async function createHarness({
   openPopupOnClick = false,
   startDownloadOnClick = false,
+  downloadStartDelayMs = 0,
   coveredCenterOnClick = false,
   openDialogOnClick = false,
   historyMode = "document",
   historyCommitDelayMs = 25,
+  historyTabsApiFailure = false,
 } = {}) {
   const debuggerEvent = createEvent();
   const debuggerDetach = createEvent();
@@ -41,6 +43,9 @@ async function createHarness({
   const handledDialogs = [];
   const mouseEvents = [];
   const historyMoves = [];
+  const debuggerHistoryMoves = [];
+  let debuggerAttachCount = 0;
+  let debuggerDetachCount = 0;
   const cursorEvaluations = [];
   const touchEvents = [];
   const emulationCommands = [];
@@ -55,6 +60,12 @@ async function createHarness({
   let nextBookmarkId = 20;
   const tabs = new Map();
   const downloads = new Map();
+  let debuggerHistoryIndex = 1;
+  const debuggerHistoryEntries = [
+    { id: 201, url: "http://127.0.0.1:47850/a", title: "Page A" },
+    { id: 202, url: "http://127.0.0.1:47850/b", title: "Page B" },
+    { id: 203, url: "http://127.0.0.1:47850/c", title: "Page C" },
+  ];
   tabs.set(51, {
     id: 51,
     windowId: 7,
@@ -116,6 +127,13 @@ async function createHarness({
   let popupOpened = false;
   let downloadStarted = false;
   let dialogOpened = false;
+  let semanticAxNodes = [{
+    ignored: false,
+    role: { value: "button" },
+    name: { value: "Open OAuth popup" },
+    backendDOMNodeId: 101,
+    properties: [],
+  }];
   const storageData = {
     browserEnabled: true,
     browserControlConsentVersion: 2,
@@ -128,8 +146,8 @@ async function createHarness({
     debugger: {
       onEvent: debuggerEvent,
       onDetach: debuggerDetach,
-      async attach() {},
-      async detach() {},
+      async attach() { debuggerAttachCount += 1; },
+      async detach() { debuggerDetachCount += 1; },
       async sendCommand(_debuggee, method, params = {}) {
         if (method === "Page.handleJavaScriptDialog") {
           handledDialogs.push({ ...params });
@@ -139,6 +157,24 @@ async function createHarness({
         if (method === "Page.enable" || method === "Target.setAutoAttach" || method === "Accessibility.enable" || method === "Runtime.enable" || method === "Network.enable" || method === "Page.bringToFront" || method === "DOM.scrollIntoViewIfNeeded") return {};
         if (method.startsWith("Emulation.")) {
           emulationCommands.push({ method, params: { ...params } });
+          return {};
+        }
+        if (method === "Page.getNavigationHistory") {
+          return { currentIndex: debuggerHistoryIndex, entries: debuggerHistoryEntries.map((entry) => ({ ...entry })) };
+        }
+        if (method === "Page.navigateToHistoryEntry") {
+          const nextIndex = debuggerHistoryEntries.findIndex((entry) => entry.id === params.entryId);
+          if (nextIndex < 0) throw new Error(`Unknown history entry ${params.entryId}`);
+          debuggerHistoryIndex = nextIndex;
+          debuggerHistoryMoves.push(params.entryId);
+          const entry = debuggerHistoryEntries[nextIndex];
+          setTimeout(() => {
+            const tab = tabs.get(51);
+            tab.url = entry.url;
+            tab.title = entry.title;
+            tab.status = "complete";
+            tabsUpdated.emit(51, { url: tab.url, title: tab.title, status: "complete" }, { ...tab });
+          }, historyCommitDelayMs);
           return {};
         }
         if (method === "Page.getFrameTree") {
@@ -154,15 +190,7 @@ async function createHarness({
           };
         }
         if (method === "Accessibility.getFullAXTree") {
-          return {
-            nodes: [{
-              ignored: false,
-              role: { value: "button" },
-              name: { value: "Open OAuth popup" },
-              backendDOMNodeId: 101,
-              properties: [],
-            }],
-          };
+          return { nodes: semanticAxNodes };
         }
         if (method === "DOM.resolveNode") {
           return { object: { objectId: `node-${params.backendNodeId}` } };
@@ -203,7 +231,9 @@ async function createHarness({
           }
           if (params.type === "mouseReleased" && startDownloadOnClick && !downloadStarted) {
             downloadStarted = true;
-            makeDownload();
+            const startDownload = () => makeDownload({ state: downloadStartDelayMs > 0 ? "complete" : "in_progress" });
+            if (downloadStartDelayMs > 0) setTimeout(startDownload, downloadStartDelayMs);
+            else startDownload();
           }
           if (params.type === "mouseReleased" && openDialogOnClick && !dialogOpened) {
             dialogOpened = true;
@@ -257,6 +287,7 @@ async function createHarness({
         const tab = tabs.get(id);
         if (!tab) throw new Error(`No tab ${id}`);
         historyMoves.push({ id, direction: "back" });
+        if (historyTabsApiFailure) throw new Error("Cannot find a next page in history");
         setTimeout(() => {
           tab.url = "http://127.0.0.1:47850/back";
           tab.title = "Back page";
@@ -276,6 +307,7 @@ async function createHarness({
         const tab = tabs.get(id);
         if (!tab) throw new Error(`No tab ${id}`);
         historyMoves.push({ id, direction: "forward" });
+        if (historyTabsApiFailure) throw new Error("Cannot find a next page in history");
         setTimeout(() => {
           tab.url = "http://127.0.0.1:47850/forward";
           tab.title = "Forward page";
@@ -438,7 +470,7 @@ async function createHarness({
     queueMicrotask,
   };
   vm.runInNewContext(
-    `${source}\n;globalThis.__tabTest = { ensureBrowserEnabledLoaded, setBrowserContext, browserSnapshot, browserClick, browserTap, browserSwipe, browserEmulate, browserClearEmulation, browserDialog, browserTabsList, browserActivate, browserCreateTab, browserHistoryNavigate, browserWait, browserObserveStart, browserConsoleRead, browserNetworkRead, browserBookmarksList, browserBookmarksSearch, browserBookmarkAdd, browserBookmarkFolderCreate, browserBookmarkUpdateMove, browserBookmarkRemove, browserClose, browserDownloadWait, discoverNewTabs, newDownloadsSince, classifyBrowserPage, validateOpenUrl, pageKindFromFrames, normalizeDebuggerAttachError, getTabCreationSequence: () => tabCreationSequence, getDownloadCreationSequence: () => downloadCreationSequence };`,
+    `${source}\n;globalThis.__tabTest = { ensureBrowserEnabledLoaded, setBrowserContext, browserSnapshot, browserClick, browserTap, browserSwipe, browserEmulate, browserClearEmulation, browserDialog, browserTabsList, browserActivate, browserCreateTab, browserHistoryNavigate, browserOpen, browserWait, browserObserveStart, browserConsoleRead, browserNetworkRead, browserBookmarksList, browserBookmarksSearch, browserBookmarkAdd, browserBookmarkFolderCreate, browserBookmarkUpdateMove, browserBookmarkRemove, browserClose, browserDownloadWait, discoverNewTabs, newDownloadsSince, classifyBrowserPage, validateOpenUrl, pageKindFromFrames, normalizeDebuggerAttachError, getTabCreationSequence: () => tabCreationSequence, getDownloadCreationSequence: () => downloadCreationSequence };`,
     context,
     { filename: SERVICE_WORKER_PATH },
   );
@@ -459,8 +491,12 @@ async function createHarness({
     bookmarkNodes,
     storageData,
     historyMoves,
+    debuggerHistoryMoves,
     debuggerEvent,
     cursorEvaluations,
+    getDebuggerAttachCount: () => debuggerAttachCount,
+    getDebuggerDetachCount: () => debuggerDetachCount,
+    setSemanticAxNodes(nodes) { semanticAxNodes = nodes; },
   };
 }
 
@@ -512,6 +548,32 @@ test("history navigation waits for committed metadata before returning", async (
   ]);
 });
 
+test("history navigation falls back to CDP history when Chrome tabs API rejects valid history", async () => {
+  const { api, tabs, historyMoves, debuggerHistoryMoves } = await createHarness({ historyTabsApiFailure: true });
+  const current = tabs.get(51);
+  current.url = "http://127.0.0.1:47850/b";
+  current.title = "Page B";
+
+  const back = await api.browserHistoryNavigate({ tabId: 51, direction: "back" });
+  assert.equal(back.navigationMethod, "cdp_history_fallback");
+  assert.equal(back.url, "http://127.0.0.1:47850/a");
+  assert.equal(back.navigationCommitted, true);
+  assert.equal(back.navigationTimedOut, false);
+  assert.equal(back.metadataSettled, true);
+
+  const forward = await api.browserHistoryNavigate({ tabId: 51, direction: "forward" });
+  assert.equal(forward.navigationMethod, "cdp_history_fallback");
+  assert.equal(forward.url, "http://127.0.0.1:47850/b");
+  assert.equal(forward.navigationCommitted, true);
+  assert.equal(forward.navigationTimedOut, false);
+  assert.equal(forward.metadataSettled, true);
+  assert.deepEqual(JSON.parse(JSON.stringify(historyMoves)), [
+    { id: 51, direction: "back" },
+    { id: 51, direction: "forward" },
+  ]);
+  assert.deepEqual(JSON.parse(JSON.stringify(debuggerHistoryMoves)), [201, 202]);
+});
+
 test("history navigation settles same-document SPA URL changes before returning", async () => {
   const { api } = await createHarness({ historyMode: "spa", historyCommitDelayMs: 30 });
   const back = await api.browserHistoryNavigate({ tabId: 51, direction: "back" });
@@ -536,7 +598,7 @@ test("smart wait resolves live refs and preserves stale-ref failure after naviga
   assert.ok(ref);
 
   const visible = await api.browserWait({ tabId: 51, refVisible: ref, timeoutMs: 500 });
-  assert.equal(visible.waitVersion, 2);
+  assert.equal(visible.waitVersion, 3);
   assert.equal(visible.matched, "ref_visible");
   assert.equal(visible.visible, true);
 
@@ -554,13 +616,39 @@ test("smart wait resolves live refs and preserves stale-ref failure after naviga
 test("smart wait supports DOM stability and bounded network idle", async () => {
   const { api } = await createHarness();
   const stable = await api.browserWait({ tabId: 51, domStable: true, quietMs: 100, timeoutMs: 600 });
-  assert.equal(stable.waitVersion, 2);
+  assert.equal(stable.waitVersion, 3);
   assert.equal(stable.matched, "dom_stable");
   assert.equal(stable.quietMs, 100);
 
   const idle = await api.browserWait({ tabId: 51, networkIdle: true, quietMs: 100, timeoutMs: 600 });
-  assert.equal(idle.waitVersion, 2);
+  assert.equal(idle.waitVersion, 3);
   assert.equal(idle.matched, "network_idle");
+});
+
+test("semantic_ready waits for AX projection to match and remain stable", async () => {
+  const { api, setSemanticAxNodes } = await createHarness();
+  setSemanticAxNodes([{
+    ignored: false, role: { value: "button" }, name: { value: "Loading" }, backendDOMNodeId: 101, properties: [],
+  }]);
+  const startedAt = Date.now();
+  const waiting = api.browserWait({
+    tabId: 51,
+    semanticReady: { query: "Results ready", roles: ["button"], minNodes: 1 },
+    quietMs: 100,
+    timeoutMs: 1_000,
+  });
+  setTimeout(() => {
+    setSemanticAxNodes([{
+      ignored: false, role: { value: "button" }, name: { value: "Results ready" }, backendDOMNodeId: 101, properties: [],
+    }]);
+  }, 80);
+
+  const ready = await waiting;
+  assert.equal(ready.waitVersion, 3);
+  assert.equal(ready.matched, "semantic_ready");
+  assert.equal(ready.nodeCount, 1);
+  assert.equal(ready.minNodes, 1);
+  assert.ok(Date.now() - startedAt >= 150);
 });
 
 test("snapshot_changed completes when document generation advances", async () => {
@@ -575,7 +663,7 @@ test("snapshot_changed completes when document generation advances", async () =>
     );
   }, 50);
   const changed = await waiting;
-  assert.equal(changed.waitVersion, 2);
+  assert.equal(changed.waitVersion, 3);
   assert.equal(changed.matched, "snapshot_changed");
   assert.equal(changed.reason, "document_generation");
 });
@@ -932,10 +1020,29 @@ test("click captures a synchronously started Chrome download without exposing it
   assert.equal(Object.hasOwn(clicked.downloadsStarted[0], "filename"), false);
 });
 
+test("sequence-aware download wait recovers a download created after the click capture window", async () => {
+  const { api } = await createHarness({ startDownloadOnClick: true, downloadStartDelayMs: 400 });
+  const snapshot = await api.browserSnapshot({ tabId: 51 });
+  const button = snapshot.elements.find((item) => item.name === "Open OAuth popup");
+  assert.ok(button?.ref);
+
+  const clicked = await api.browserClick({ tabId: 51, ref: button.ref });
+  assert.equal(clicked.downloadCreationSequenceBefore, 0);
+  assert.equal(clicked.downloadCreationSequenceAfter, 0);
+  assert.deepEqual(JSON.parse(JSON.stringify(clicked.downloadsStarted)), []);
+
+  const recovered = await api.browserDownloadWait({ sinceSequence: clicked.downloadCreationSequenceBefore, timeoutMs: 1_500 });
+  assert.equal(recovered.downloadLifecycleVersion, 1);
+  assert.equal(recovered.download.id, 71);
+  assert.equal(recovered.download.createdSequence, 1);
+  assert.equal(recovered.download.state, "complete");
+});
+
 test("download wait returns terminal complete/interrupted state with filename only for internal resolution", async () => {
   const { api, makeDownload } = await createHarness();
   makeDownload({ id: 72, state: "complete", filename: "/Users/example/Downloads/complete.txt" });
   const complete = await api.browserDownloadWait({ downloadId: 72, timeoutMs: 500 });
+  assert.equal(complete.downloadLifecycleVersion, 1);
   assert.equal(complete.download.state, "complete");
   assert.equal(complete.download.filename, "/Users/example/Downloads/complete.txt");
   assert.equal(complete.download.name, "complete.txt");
@@ -981,6 +1088,20 @@ test("restricted page classifier distinguishes Chrome UI, Web Store, file URLs a
   });
   assert.equal(interstitial.kind, "browser-owned-interstitial");
   assert.equal(interstitial.debuggerSupported, false);
+});
+
+test("open preserves an existing debugger lease across HTTP navigation and releases it for New Tab", async () => {
+  const { api, getDebuggerAttachCount, getDebuggerDetachCount } = await createHarness();
+  await api.browserSnapshot({ tabId: 51, mode: "interactive" });
+  assert.equal(getDebuggerAttachCount(), 1);
+  assert.equal(getDebuggerDetachCount(), 0);
+
+  await api.browserOpen({ tabId: 51, url: "https://example.test/next" });
+  assert.equal(getDebuggerAttachCount(), 1);
+  assert.equal(getDebuggerDetachCount(), 0);
+
+  await api.browserOpen({ tabId: 51, url: "chrome://newtab/" });
+  assert.equal(getDebuggerDetachCount(), 1);
 });
 
 test("open validation keeps New Tab and HTTP(S) but clearly rejects Chrome internal and file destinations", async () => {
