@@ -21,6 +21,41 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..")
 const macTest = process.platform === "darwin" ? test : test.skip;
 const TARGET = process.arch === "x64" ? "darwin-x64" : "darwin-arm64";
 
+test("native app source keeps the menu-bar safety lifecycle", async () => {
+  const source = await fs.readFile(path.join(ROOT, "app", "EquinoxLocalApp.swift"), "utf8");
+  assert.match(source, /NSStatusBar\.system\.statusItem/u);
+  assert.match(source, /applicationShouldTerminateAfterLastWindowClosed[\s\S]*?false/u);
+  assert.match(source, /windowWillClose[\s\S]*?setActivationPolicy\(\.accessory\)/u);
+  assert.match(source, /isReleasedWhenClosed = false/u);
+  assert.match(source, /openControlCenter[\s\S]*?setActivationPolicy\(\.regular\)/u);
+  assert.match(source, /Emergency Stop/u);
+  assert.match(source, /Resume Agent/u);
+  assert.match(source, /\/api\/v1\/agent\/pause/u);
+  assert.match(source, /\/api\/v1\/agent\/resume/u);
+  assert.match(source, /\/api\/v1\/browser\/agent\/open/u);
+  assert.match(source, /\/api\/v1\/runtime\/restart/u);
+  assert.match(source, /Quit Equinox Local/u);
+  assert.match(source, /quitEquinoxLocal[\s\S]*?runtimeLifecycle\.hardStop/u);
+  assert.match(source, /runLaunchctl\(\["bootout"/u);
+  assert.match(source, /runLaunchctl\(\["bootstrap"/u);
+  assert.match(source, /runLaunchctl\(\["kickstart"/u);
+  const quitMethod = source.match(/@objc private func quitEquinoxLocal[\s\S]*?(?=\n    private func configureMainMenu)/u)?.[0] ?? "";
+  assert.match(quitMethod, /runtimeLifecycle\.hardStop/u);
+  assert.doesNotMatch(quitMethod, /\/api\/v1\/agent\/pause/u);
+  assert.match(source, /NSStatusItem\.variableLength/u);
+  assert.match(source, /string: "EL"/u);
+  assert.match(source, /NSFont\.systemFont\(ofSize: 12\.5, weight: \.semibold\)/u);
+});
+
+test("native menu-bar template asset is a bounded transparent 64x64 PNG", async () => {
+  const data = await fs.readFile(path.join(ROOT, "app", "EquinoxLocalMenuBar.png"));
+  assert.equal(data.subarray(0, 8).toString("hex"), "89504e470d0a1a0a");
+  assert.equal(data.readUInt32BE(16), 64);
+  assert.equal(data.readUInt32BE(20), 64);
+  assert.equal(data[25], 6); // RGBA color type.
+  assert.ok(data.length <= 16 * 1024);
+});
+
 macTest("native app build is deterministic and target-native", async (t) => {
   const temp = await fs.mkdtemp(path.join(os.tmpdir(), "equinox-native-app-build-"));
   t.after(() => fs.rm(temp, { recursive: true, force: true }));
@@ -34,6 +69,8 @@ macTest("native app build is deterministic and target-native", async (t) => {
   assert.equal(firstMetadata.shellVersion, EQUINOX_LOCAL_NATIVE_APP_SHELL_VERSION);
   assert.equal(firstMetadata.executableSha256, secondMetadata.executableSha256);
   assert.equal(firstMetadata.iconSha256, secondMetadata.iconSha256);
+  assert.equal(firstMetadata.menuIconSha256, secondMetadata.menuIconSha256);
+  assert.equal(firstMetadata.menuIcon, "EquinoxLocalMenuBar.png");
   assert.deepEqual(
     await fs.readFile(path.join(first, "runtime", "app", "applet")),
     await fs.readFile(path.join(second, "runtime", "app", "applet")),
@@ -90,6 +127,7 @@ macTest("native app host migrates legacy bundle once and restores it for rollbac
   assert.match(infoPlist, /NSAllowsLocalNetworking/u);
   assert.doesNotMatch(infoPlist, /NSCameraUsageDescription|NSMicrophoneUsageDescription|LSUIElement/u);
   assert.equal((await fs.lstat(path.join(migrated.appPath, "Contents", "Resources", "EquinoxLocal.icns"))).isFile(), true);
+  assert.equal((await fs.lstat(path.join(migrated.appPath, "Contents", "Resources", "EquinoxLocalMenuBar.png"))).isFile(), true);
 
   const second = await synchronizeEquinoxLocalNativeAppHost({ homeDir, releaseDir });
   assert.equal(second.changed, false);

@@ -47,13 +47,17 @@ async function readNativeMetadata(releaseDir, fsImpl = fs) {
     || raw?.icon !== "EquinoxLocal.png"
     || !/^[a-f0-9]{64}$/u.test(raw?.executableSha256 ?? "")
     || !/^[a-f0-9]{64}$/u.test(raw?.iconSha256 ?? "")
+    || (raw.shellVersion >= 4 && raw?.menuIcon !== "EquinoxLocalMenuBar.png")
+    || (raw.shellVersion >= 4 && !/^[a-f0-9]{64}$/u.test(raw?.menuIconSha256 ?? ""))
   ) {
     throw new Error("Equinox Local native app metadata is invalid.");
   }
   await assertNormalFile(paths.executable, "Equinox Local native executable", fsImpl);
   await assertNormalFile(paths.icon, "Equinox Local native icon", fsImpl);
+  if (raw.shellVersion >= 4) await assertNormalFile(paths.menuIcon, "Equinox Local native menu-bar icon", fsImpl);
   if (await sha256File(paths.executable, fsImpl) !== raw.executableSha256) throw new Error("Equinox Local native executable digest mismatch.");
   if (await sha256File(paths.icon, fsImpl) !== raw.iconSha256) throw new Error("Equinox Local native icon digest mismatch.");
+  if (raw.shellVersion >= 4 && await sha256File(paths.menuIcon, fsImpl) !== raw.menuIconSha256) throw new Error("Equinox Local native menu-bar icon digest mismatch.");
   return Object.freeze({ paths, metadata: Object.freeze(raw) });
 }
 
@@ -185,6 +189,7 @@ export async function synchronizeEquinoxLocalNativeAppHost({
     await fsImpl.copyFile(paths.executable, path.join(macos, "applet"));
     await fsImpl.chmod(path.join(macos, "applet"), 0o755);
     await createIcns(paths.icon, path.join(resources, "EquinoxLocal.icns"), contents, execFileImpl, fsImpl);
+    if (metadata.shellVersion >= 4) await fsImpl.copyFile(paths.menuIcon, path.join(resources, "EquinoxLocalMenuBar.png"));
     await fsImpl.writeFile(path.join(contents, "Info.plist"), nativeInfoPlist(metadata.shellVersion, metadata.executableSha256), { mode: 0o644 });
     await execFileImpl("/usr/bin/codesign", ["--force", "--sign", "-", "--identifier", EQUINOX_LOCAL_APP_BUNDLE_ID, temporary], {
       timeout: 30_000,

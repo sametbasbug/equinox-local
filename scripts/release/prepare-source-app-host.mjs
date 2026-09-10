@@ -61,15 +61,23 @@ async function assertSourceLauncher(sourceLauncher, { fsImpl = fs, uid = typeof 
   if ((stat.mode & 0o022) !== 0) throw new Error("Developer source launcher must not be group/world writable.");
 }
 
-export function sourceAppRuntimeWrapper(sourceLauncher, peekabooPath = "", { nodePath = process.execPath, configPath = "" } = {}) {
+export function sourceAppRuntimeWrapper(sourceLauncher, peekabooPath = "", {
+  nodePath = process.execPath,
+  configPath = "",
+  tunnelClient = "",
+  tunnelRuntime = "",
+} = {}) {
   const watchdogPath = fileURLToPath(new URL("./watch-source-runtime.mjs", import.meta.url));
   const watchdogCommand = `${shellQuote(nodePath)} ${shellQuote(watchdogPath)} ${shellQuote(configPath)}`;
   const pinnedPeekaboo = peekabooPath ? shellQuote(peekabooPath) : '""';
+  const stopTunnelRuntime = tunnelClient && tunnelRuntime
+    ? `${shellQuote(tunnelClient)} runtimes stop ${shellQuote(tunnelRuntime)} >/dev/null 2>&1 || true`
+    : ":";
   const logMaintenance = launchAgentLogMaintenanceShell({
     stdoutName: "Equinox Local Source.log",
     stderrName: "Equinox Local Source.error.log",
   });
-  return `#!/bin/bash\nset -euo pipefail\n${logMaintenance}RUNTIME_HOST_PID=$PPID\nPEEKABOO=${pinnedPeekaboo}\nPEEKABOO_DAEMON_PID=\"\"\nRUNTIME_WATCHDOG_PID=\"\"\nPARENT_WATCHDOG_PID=\"\"\n\ncleanup() {\n  if [ -n \"$RUNTIME_WATCHDOG_PID\" ]; then\n    kill \"$RUNTIME_WATCHDOG_PID\" >/dev/null 2>&1 || true\n    wait \"$RUNTIME_WATCHDOG_PID\" 2>/dev/null || true\n  fi\n  if [ -n \"$PARENT_WATCHDOG_PID\" ]; then\n    kill \"$PARENT_WATCHDOG_PID\" >/dev/null 2>&1 || true\n    wait \"$PARENT_WATCHDOG_PID\" 2>/dev/null || true\n  fi\n  if [ -n \"$PEEKABOO_DAEMON_PID\" ]; then\n    kill \"$PEEKABOO_DAEMON_PID\" >/dev/null 2>&1 || true\n    wait \"$PEEKABOO_DAEMON_PID\" 2>/dev/null || true\n  fi\n}\nshutdown() {\n  exit 0\n}\ntrap cleanup EXIT\ntrap shutdown INT TERM HUP\n\nwatch_runtime_host() {\n  local log_check_ticks=0\n  while kill -0 \"$RUNTIME_HOST_PID\" >/dev/null 2>&1; do\n    sleep 1\n    log_check_ticks=$((log_check_ticks + 1))\n    if [ \"$log_check_ticks\" -ge \"$LAUNCH_LOG_CHECK_INTERVAL_SECONDS\" ]; then\n      maintain_launch_logs\n      log_check_ticks=0\n    fi\n  done\n  kill -TERM \"$$\" >/dev/null 2>&1 || true\n}\nwatch_runtime_host &\nPARENT_WATCHDOG_PID=$!\n\nif [ -n \"$PEEKABOO\" ] && [ -x \"$PEEKABOO\" ]; then\n  export EQUINOX_PEEKABOO_PATH=\"$PEEKABOO\"\n  \"$PEEKABOO\" daemon run --mode manual --no-remote --log-level warning &\n  PEEKABOO_DAEMON_PID=$!\nfi\n/bin/zsh ${shellQuote(sourceLauncher)}\n# Watch the tunnel, not Peekaboo or remote network readiness.\n${watchdogCommand} &\nRUNTIME_WATCHDOG_PID=$!\nwait \"$RUNTIME_WATCHDOG_PID\"\n`;
+  return `#!/bin/bash\nset -euo pipefail\n${logMaintenance}RUNTIME_HOST_PID=$PPID\nPEEKABOO=${pinnedPeekaboo}\nPEEKABOO_DAEMON_PID=\"\"\nRUNTIME_WATCHDOG_PID=\"\"\nPARENT_WATCHDOG_PID=\"\"\n\ncleanup() {\n  if [ -n \"$RUNTIME_WATCHDOG_PID\" ]; then\n    kill \"$RUNTIME_WATCHDOG_PID\" >/dev/null 2>&1 || true\n    wait \"$RUNTIME_WATCHDOG_PID\" 2>/dev/null || true\n  fi\n  if [ -n \"$PARENT_WATCHDOG_PID\" ]; then\n    kill \"$PARENT_WATCHDOG_PID\" >/dev/null 2>&1 || true\n    wait \"$PARENT_WATCHDOG_PID\" 2>/dev/null || true\n  fi\n  ${stopTunnelRuntime}\n  if [ -n \"$PEEKABOO_DAEMON_PID\" ]; then\n    kill \"$PEEKABOO_DAEMON_PID\" >/dev/null 2>&1 || true\n    wait \"$PEEKABOO_DAEMON_PID\" 2>/dev/null || true\n  fi\n}\nshutdown() {\n  exit 0\n}\ntrap cleanup EXIT\ntrap shutdown INT TERM HUP\n\nwatch_runtime_host() {\n  local log_check_ticks=0\n  while kill -0 \"$RUNTIME_HOST_PID\" >/dev/null 2>&1; do\n    sleep 1\n    log_check_ticks=$((log_check_ticks + 1))\n    if [ \"$log_check_ticks\" -ge \"$LAUNCH_LOG_CHECK_INTERVAL_SECONDS\" ]; then\n      maintain_launch_logs\n      log_check_ticks=0\n    fi\n  done\n  kill -TERM \"$$\" >/dev/null 2>&1 || true\n}\nwatch_runtime_host &\nPARENT_WATCHDOG_PID=$!\n\nif [ -n \"$PEEKABOO\" ] && [ -x \"$PEEKABOO\" ]; then\n  export EQUINOX_PEEKABOO_PATH=\"$PEEKABOO\"\n  \"$PEEKABOO\" daemon run --mode manual --no-remote --log-level warning &\n  PEEKABOO_DAEMON_PID=$!\nfi\n/bin/zsh ${shellQuote(sourceLauncher)}\n# Watch the tunnel, not Peekaboo or remote network readiness.\n${watchdogCommand} &\nRUNTIME_WATCHDOG_PID=$!\nwait \"$RUNTIME_WATCHDOG_PID\"\n`;
 }
 
 export function sourceLaunchAgentPlist({ homeDir, label }) {
@@ -105,7 +113,11 @@ export async function prepareSourceAppHost({
   }
 
   const runtimeWrapperPath = equinoxLocalAppRuntimeWrapperPath(homeDir);
-  await atomicWrite(runtimeWrapperPath, sourceAppRuntimeWrapper(sourceLauncher, peekabooPath, { configPath: loaded.configPath }), 0o700, { fsImpl });
+  await atomicWrite(runtimeWrapperPath, sourceAppRuntimeWrapper(sourceLauncher, peekabooPath, {
+    configPath: loaded.configPath,
+    tunnelClient: loaded.config.tunnelClient,
+    tunnelRuntime: loaded.config.tunnelRuntime,
+  }), 0o700, { fsImpl });
   const launchAgentsRoot = path.join(homeDir, "Library", "LaunchAgents");
   await fsImpl.mkdir(launchAgentsRoot, { recursive: true, mode: 0o700 });
   const launchAgentPath = path.join(launchAgentsRoot, `${launchAgentLabel}.plist`);

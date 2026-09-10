@@ -49,6 +49,9 @@ macTest("source app host routes the LaunchAgent through stable Equinox Local.app
   assert.equal(wrapper.includes('kill -TERM "$$"'), true);
   assert.match(wrapper, /trap cleanup EXIT/u);
   assert.match(wrapper, /trap shutdown INT TERM HUP/u);
+  assert.equal(wrapper.includes(tunnelClient), true);
+  assert.match(wrapper, /runtimes stop/u);
+  assert.match(wrapper, /equinox-local-dev/u);
   assert.match(wrapper, /start-source\.sh/u);
   const plist = await fs.readFile(path.join(homeDir, "Library", "LaunchAgents", "dev.equinox.local.dev.plist"), "utf8");
   assert.match(plist, /Applications\/Equinox Local\.app\/Contents\/MacOS\/applet/u);

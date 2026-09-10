@@ -9,9 +9,10 @@ const FILE_PATH = "/usr/bin/file";
 const NATIVE_SOURCE_DIR = "app";
 const NATIVE_OUTPUT_DIR = path.join("runtime", "app");
 
-export const EQUINOX_LOCAL_NATIVE_APP_SHELL_VERSION = 2;
+export const EQUINOX_LOCAL_NATIVE_APP_SHELL_VERSION = 7;
 export const EQUINOX_LOCAL_NATIVE_APP_EXECUTABLE = "applet";
 export const EQUINOX_LOCAL_NATIVE_APP_ICON = "EquinoxLocal.png";
+export const EQUINOX_LOCAL_NATIVE_APP_MENU_ICON = "EquinoxLocalMenuBar.png";
 export const EQUINOX_LOCAL_NATIVE_APP_METADATA = "native-app.json";
 
 function targetTriple(target) {
@@ -87,13 +88,16 @@ export async function buildEquinoxLocalNativeAppArtifacts({
   const releaseRoot = path.resolve(releaseDir);
   const source = path.join(root, NATIVE_SOURCE_DIR, "EquinoxLocalApp.swift");
   const icon = path.join(root, NATIVE_SOURCE_DIR, EQUINOX_LOCAL_NATIVE_APP_ICON);
+  const menuIcon = path.join(root, NATIVE_SOURCE_DIR, EQUINOX_LOCAL_NATIVE_APP_MENU_ICON);
   await assertNormalFile(source, "Equinox Local native app source");
   await assertNormalFile(icon, "Equinox Local native app icon");
+  await assertNormalFile(menuIcon, "Equinox Local native menu-bar icon");
 
   const outputRoot = path.join(releaseRoot, NATIVE_OUTPUT_DIR);
   await fs.mkdir(outputRoot, { recursive: true, mode: 0o700 });
   const executable = path.join(outputRoot, EQUINOX_LOCAL_NATIVE_APP_EXECUTABLE);
   const outputIcon = path.join(outputRoot, EQUINOX_LOCAL_NATIVE_APP_ICON);
+  const outputMenuIcon = path.join(outputRoot, EQUINOX_LOCAL_NATIVE_APP_MENU_ICON);
 
   await execFileImpl("/usr/bin/xcrun", [
     "swiftc",
@@ -115,6 +119,7 @@ export async function buildEquinoxLocalNativeAppArtifacts({
   }
 
   await fs.copyFile(icon, outputIcon);
+  await fs.copyFile(menuIcon, outputMenuIcon);
   const metadata = Object.freeze({
     schemaVersion: 1,
     shellVersion: EQUINOX_LOCAL_NATIVE_APP_SHELL_VERSION,
@@ -123,6 +128,8 @@ export async function buildEquinoxLocalNativeAppArtifacts({
     executableSha256: await sha256File(executable),
     icon: EQUINOX_LOCAL_NATIVE_APP_ICON,
     iconSha256: await sha256File(outputIcon),
+    menuIcon: EQUINOX_LOCAL_NATIVE_APP_MENU_ICON,
+    menuIconSha256: await sha256File(outputMenuIcon),
   });
   await fs.writeFile(path.join(outputRoot, EQUINOX_LOCAL_NATIVE_APP_METADATA), `${JSON.stringify(metadata, null, 2)}\n`, { mode: 0o644 });
   return metadata;
@@ -134,6 +141,7 @@ export function equinoxLocalNativeAppArtifactPaths(releaseDir) {
     root,
     executable: path.join(root, EQUINOX_LOCAL_NATIVE_APP_EXECUTABLE),
     icon: path.join(root, EQUINOX_LOCAL_NATIVE_APP_ICON),
+    menuIcon: path.join(root, EQUINOX_LOCAL_NATIVE_APP_MENU_ICON),
     metadata: path.join(root, EQUINOX_LOCAL_NATIVE_APP_METADATA),
   });
 }

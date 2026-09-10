@@ -10,6 +10,7 @@ export function registerDesktopGatewayTools({
   extractTextContent,
   textResult,
   errorResult,
+  assertMutationAllowed = () => {},
 } = {}) {
   registerTextTool(
     "desktop_status",
@@ -96,6 +97,7 @@ export function registerDesktopGatewayTools({
         }
 
         if (restart) {
+          assertMutationAllowed("desktop_tools.restart");
           await peekabooBridge.restart();
         }
 

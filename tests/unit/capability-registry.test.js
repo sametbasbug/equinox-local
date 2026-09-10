@@ -295,6 +295,35 @@ test("stable gateways use free-form operation strings and delegate to the regist
   assert.equal(extractText(callResult), "@e4->@e8");
 });
 
+test("stable gateways preserve MCP image content while normalizing structured output", async () => {
+  const registry = createCapabilityRegistry();
+  registry.register({
+    name: "image_view",
+    domain: "files",
+    config: { inputSchema: {}, annotations: { readOnlyHint: true } },
+    invoke: async () => ({
+      content: [
+        { type: "text", text: "image-ok" },
+        { type: "image", data: "aGVsbG8=", mimeType: "image/png" },
+      ],
+      structuredContent: { privateShape: true },
+    }),
+  });
+
+  const registered = new Map();
+  registerStableCapabilityGateways({
+    registerTextTool: (name, config, handler, options) => registered.set(name, { config, handler, options }),
+    registry,
+    textResult,
+  });
+  const result = await registered.get("files_call").handler({ operation: "image_view", arguments: {} });
+  assert.deepEqual(result.content, [
+    { type: "text", text: "image-ok" },
+    { type: "image", data: "aGVsbG8=", mimeType: "image/png" },
+  ]);
+  assert.deepEqual(result.structuredContent, { text: "image-ok" });
+});
+
 test("stable gateways normalize custom structured results to their stable text output schema", async () => {
   const registry = createCapabilityRegistry();
   registry.register({

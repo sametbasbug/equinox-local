@@ -3,52 +3,72 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="color-scheme" content="dark">
-  <meta name="theme-color" content="#08111d">
+  <meta name="color-scheme" content="light dark">
+  <meta name="theme-color" content="#f6f5f2">
   <title>Equinox Local Control Center</title>
   <link rel="icon" href="data:,">
   <link rel="stylesheet" href="/assets/control-center.css">
   <script type="module" src="/assets/control-center.js"></script>
 </head>
 <body>
+  <a class="skip-link" href="#main-content">Skip to content</a>
   <div class="app-shell">
     <aside class="sidebar" aria-label="Primary navigation">
       <div class="brand-block">
         <img class="brand-logo" src="/assets/equinox-local.png" alt="" aria-hidden="true">
         <div>
-          <p class="eyebrow" lang="en">Equinox Local</p>
-          <h1>Control Center</h1>
+          <h1>Equinox Local</h1>
+          <p class="brand-caption">Control Center</p>
         </div>
       </div>
 
       <nav class="nav-list" aria-label="Control Center sections">
+        <p class="nav-group-label">Workspace</p>
         <button class="nav-item is-active" type="button" data-section="dashboard" aria-current="page">
-          <span class="nav-icon" aria-hidden="true">⌂</span>
-          <span>Dashboard</span>
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="2"/><rect x="14" y="3" width="7" height="7" rx="2"/><rect x="3" y="14" width="7" height="7" rx="2"/><rect x="14" y="14" width="7" height="7" rx="2"/></svg>
+          <span>Overview</span>
         </button>
         <button class="nav-item" type="button" data-section="projects">
-          <span class="nav-icon" aria-hidden="true">▦</span>
-          <span>Projects & folders</span>
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 8V6a2 2 0 0 1 2-2h4l2 3h8a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/></svg>
+          <span>Projects</span>
         </button>
         <button class="nav-item" type="button" data-section="browser">
-          <span class="nav-icon" aria-hidden="true">◉</span>
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a17 17 0 0 1 0 18 17 17 0 0 1 0-18Z"/></svg>
           <span>Browser</span>
         </button>
+        <p class="nav-group-label">System</p>
         <button class="nav-item" type="button" data-section="permissions">
-          <span class="nav-icon" aria-hidden="true">◇</span>
-          <span>Permissions</span>
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m12 3 8 3v6c0 4-4 7-8 9-4-2-8-5-8-9V6Z"/><path d="m8 12 3 3 5-6"/></svg>
+          <span>Safety</span>
         </button>
         <button class="nav-item" type="button" data-section="integrations">
-          <span class="nav-icon" aria-hidden="true">⌁</span>
-          <span>Integrations</span>
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3v4m8-4v4M6 7h12v4a6 6 0 0 1-6 6v4m-6-10a6 6 0 0 0 6 6"/></svg>
+          <span>Services</span>
         </button>
         <button class="nav-item" type="button" data-section="activity">
-          <span class="nav-icon" aria-hidden="true">≋</span>
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg>
           <span>Activity</span>
         </button>
       </nav>
 
       <div class="sidebar-footer">
+        <div class="sidebar-preferences">
+          <div class="preference-row">
+            <span>Appearance</span>
+            <div class="theme-switch" role="group" aria-label="Appearance">
+              <button type="button" data-theme-value="system" class="theme-option is-active">System</button>
+              <button type="button" data-theme-value="light" class="theme-option">Light</button>
+              <button type="button" data-theme-value="dark" class="theme-option">Dark</button>
+            </div>
+          </div>
+          <label class="preference-row language-control">
+            <span>Language</span>
+            <select id="language-select" aria-label="Control Center language">
+              <option value="en">English</option>
+              <option value="tr">Türkçe</option>
+            </select>
+          </label>
+        </div>
         <div class="sidebar-health">
           <span id="sidebar-health-dot" class="status-dot is-neutral" aria-hidden="true"></span>
           <div>
@@ -56,29 +76,28 @@
             <span id="sidebar-version">Local runtime</span>
           </div>
         </div>
-        <p>Loopback only · Private to this Mac</p>
+        <p>Private on this Mac · 127.0.0.1</p>
       </div>
     </aside>
 
-    <main class="main-panel">
+    <main class="main-panel" id="main-content" tabindex="-1">
       <header class="topbar">
         <div>
-          <p class="eyebrow" id="section-kicker">Overview</p>
-          <h2 id="section-title">Dashboard</h2>
+          <p class="eyebrow" id="section-kicker">Your workspace</p>
+          <h2 id="section-title">Overview</h2>
         </div>
         <div class="topbar-actions">
-          <label class="language-control">
-            <span>Language</span>
-            <select id="language-select" aria-label="Control Center language">
-              <option value="en">English</option>
-              <option value="tr">Türkçe</option>
-            </select>
-          </label>
           <span id="last-refreshed" class="last-refreshed">Not refreshed yet</span>
-          <button id="restart-runtime-button" class="button secondary" type="button" disabled>Restart</button>
-          <button id="refresh-button" class="button secondary" type="button">Refresh</button>
+          <button id="refresh-button" class="button secondary compact" type="button">Refresh</button>
+          <button id="restart-runtime-button" class="button secondary compact" type="button" disabled>Restart</button>
+          <button id="agent-control-button" class="button danger compact" type="button" disabled>Emergency stop</button>
         </div>
       </header>
+
+      <div id="agent-pause-banner" class="pause-banner" role="status" hidden>
+        <svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m12 3 8 3v6c0 4-4 7-8 9-4-2-8-5-8-9V6Z"/><path d="m8 12 3 3 5-6"/></svg>
+        <div><strong>Agent paused</strong><p>New actions are blocked. Read-only status is still available. Use Resume agent to continue.</p></div>
+      </div>
 
       <div id="restart-banner" class="restart-banner" hidden>
         <div>
@@ -150,7 +169,7 @@
               <label class="field">
                 <span>Runtime API key</span>
                 <input id="onboarding-runtime-key" name="runtimeKey" type="password" autocomplete="off" spellcheck="false" minlength="16" maxlength="4096" required>
-                <small>This secret is written to a private 0600 file and is never returned by the Control Center API.</small>
+                <small>Stored privately on this Mac. Your key is never shown again.</small>
               </label>
               <div class="setup-links">
                 <a href="https://platform.openai.com/settings/organization/tunnels" target="_blank" rel="noopener noreferrer">Open Tunnels</a>
@@ -163,46 +182,62 @@
           </div>
         </article>
 
-        <div class="hero-card">
+        <div class="hero-card" id="runtime-overview">
           <div class="hero-copy">
             <span id="runtime-health-badge" class="badge neutral">Checking runtime</span>
-            <h3>Your local agent control plane, at a glance.</h3>
-            <p>See what is connected, what Equinox Local can reach, and whether anything needs your attention.</p>
+            <h3 id="overview-title">Checking your Mac</h3>
+            <p id="overview-copy">Equinox Local is collecting a private status summary.</p>
+            <div class="hero-metric">
+              <span>Equinox Local</span>
+              <strong id="runtime-version">—</strong>
+              <span class="metric-divider" aria-hidden="true"></span>
+              <small id="runtime-uptime">Uptime unavailable</small>
+            </div>
           </div>
-          <div class="hero-metric">
-            <span>Runtime</span>
-            <strong id="runtime-version">—</strong>
-            <small id="runtime-uptime">Uptime unavailable</small>
+          <div class="connection-map" aria-label="ChatGPT to Mac connection">
+            <div class="connection-nodes" aria-hidden="true">
+              <span class="connection-node"><svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 11a8 8 0 0 1-8 8H7l-5 3 2-6a8 8 0 1 1 17-5Z"/><path d="M8 10h8m-8 4h5"/></svg></span>
+              <span class="connection-line"></span>
+              <img class="connection-logo" src="/assets/equinox-local.png" alt="">
+              <span class="connection-line"></span>
+              <span class="connection-node"><svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="13" rx="2"/><path d="M8 21h8m-4-5v5"/></svg></span>
+            </div>
+            <div class="connection-labels"><span>ChatGPT on the web</span><span>Tools on this Mac</span></div>
+            <span id="chatgpt-connection-badge" class="badge neutral">Checking connection</span>
           </div>
         </div>
+
+        <div class="section-label"><h3>Connected capabilities</h3><span>On this Mac</span></div>
 
         <div class="dashboard-grid three-column">
           <article class="metric-card">
             <div class="card-heading">
-              <span class="card-icon">◉</span>
+              <span class="card-icon"><svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a17 17 0 0 1 0 18 17 17 0 0 1 0-18Z"/></svg></span>
               <span id="browser-status-dot" class="status-dot is-neutral"></span>
             </div>
-            <p class="card-label">Equinox Browser</p>
+            <p class="card-label">Agent Browser</p>
             <strong id="browser-status">Checking…</strong>
             <span id="browser-version" class="muted">Version unavailable</span>
+            <button class="metric-link" type="button" data-jump-section="browser" aria-label="Open Browser settings">↗</button>
           </article>
 
           <article class="metric-card">
             <div class="card-heading">
-              <span class="card-icon">⌘</span>
+              <span class="card-icon"><svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="13" rx="2"/><path d="M8 21h8m-4-5v5"/></svg></span>
               <span id="peekaboo-status-dot" class="status-dot is-neutral"></span>
             </div>
-            <p class="card-label">Desktop bridge</p>
+            <p class="card-label">Desktop</p>
             <strong id="peekaboo-status">Checking…</strong>
             <span id="peekaboo-detail" class="muted">Peekaboo</span>
+            <button class="metric-link" type="button" data-jump-section="integrations" aria-label="Open Services">↗</button>
           </article>
 
           <article class="metric-card">
             <div class="card-heading">
-              <span class="card-icon">▦</span>
+              <span class="card-icon"><svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m10 13 4-4m-6 7-1 1a4 4 0 0 1-6-6l4-4a4 4 0 0 1 6 0m2 1 1-1a4 4 0 0 1 6 6l-4 4a4 4 0 0 1-6 0" transform="translate(1 0)"/></svg></span>
               <span id="api-status-dot" class="status-dot is-neutral"></span>
             </div>
-            <p class="card-label">Control Center API</p>
+            <p class="card-label">Local connection</p>
             <strong id="api-status">Checking…</strong>
             <span id="api-detail" class="muted">127.0.0.1 only</span>
           </article>
@@ -231,7 +266,7 @@
                 <strong id="default-project">—</strong>
               </div>
             </div>
-            <p class="panel-note">Agent file access follows your Agent Access mode. Configured roots remain convenient named shortcuts and stay in your private machine configuration.</p>
+            <p class="panel-note">Your named projects and folders, saved privately on this Mac.</p>
           </article>
 
           <article class="panel-card">
@@ -250,7 +285,7 @@
           </article>
         </div>
 
-        <div class="dashboard-grid">
+        <div class="dashboard-grid maintenance-grid">
           <article class="panel-card doctor-card">
             <div class="panel-header">
               <div>
@@ -260,16 +295,16 @@
               <span id="doctor-badge" class="badge neutral">Checking</span>
             </div>
             <p id="doctor-copy" class="health-copy">Equinox Local is checking the runtime, private configuration, update path and optional integrations.</p>
-            <div id="doctor-list" class="doctor-list" aria-live="polite"></div>
+            <details class="doctor-details">
+              <summary>View all checks</summary>
+              <div id="doctor-list" class="doctor-list" aria-live="polite"></div>
+            </details>
             <div class="health-meta">
               <span id="doctor-summary">—</span>
               <span id="doctor-checked-at">Not checked yet</span>
             </div>
           </article>
-        </div>
-
-        <div class="dashboard-grid">
-          <article class="panel-card">
+          <article class="panel-card update-card">
             <div class="panel-header">
               <div>
                 <p class="eyebrow">Updates</p>
@@ -290,12 +325,10 @@
         </div>
       </section>
 
-      <section id="section-projects" class="page-section" hidden>
+      <section id="section-projects" class="page-section" aria-labelledby="section-title" hidden>
         <div class="section-intro">
           <div>
-            <p class="eyebrow">Access boundaries</p>
-            <h3>Projects & folders</h3>
-            <p>Add or update the roots Equinox Local is allowed to see. Changes are validated by the same configuration layer used by the agent runtime.</p>
+            <p>Keep named shortcuts to your projects and folders. These settings do not limit Terminal access.</p>
           </div>
           <div class="button-group">
             <button id="add-folder-button" class="button secondary" type="button">Add read-only folder</button>
@@ -350,16 +383,14 @@
             </div>
 
             <button id="save-config-button" class="button primary full-width" type="button" disabled>Save configuration</button>
-            <p class="save-hint">Saving writes the validated config with a revision guard. A restart is required before further edits.</p>
+            <p class="save-hint">Save your changes, then restart Equinox Local to apply them.</p>
           </aside>
         </div>
       </section>
 
-      <section id="section-browser" class="page-section" hidden>
+      <section id="section-browser" class="page-section" aria-labelledby="section-title" hidden>
         <div class="section-intro">
           <div>
-            <p class="eyebrow">Browser contexts</p>
-            <h3>Browser</h3>
             <p>Equinox Local keeps the agent's isolated Agent Browser separate from your personal Chrome. Both use the same Equinox Browser extension and Native Messaging capability set.</p>
           </div>
         </div>
@@ -367,7 +398,7 @@
         <div class="dashboard-grid two-column">
           <article class="panel-card">
             <div class="integration-title-row">
-              <div class="integration-icon">◎</div>
+              <div class="integration-icon"><svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="6" width="16" height="14" rx="4"/><path d="M12 3v3m-4 6h.01M16 12h.01M9 16h6"/></svg></div>
               <div>
                 <span class="card-label">Agent Browser</span>
                 <h3 id="agent-browser-page-status">Checking…</h3>
@@ -387,7 +418,7 @@
 
           <article class="panel-card">
             <div class="integration-title-row">
-              <div class="integration-icon">◉</div>
+              <div class="integration-icon"><svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21v-2a8 8 0 0 1 16 0v2"/></svg></div>
               <div>
                 <span class="card-label">Your Browser</span>
                 <h3 id="browser-page-status">Checking…</h3>
@@ -411,8 +442,12 @@
           </article>
 
           <article class="panel-card browser-settings-card">
-            <p class="eyebrow">Browser controls</p>
-            <h3>Local browser settings</h3>
+            <div class="browser-settings-heading">
+              <p class="eyebrow">Browser controls</p>
+              <h3>Local browser settings</h3>
+              <p>Choose a profile. Its settings stay separate.</p>
+            </div>
+            <div class="browser-settings-fields">
             <label class="field">
               <span>Settings target</span>
               <select id="browser-settings-target">
@@ -442,48 +477,57 @@
             </label>
             <button id="apply-browser-settings" class="button primary full-width" type="button" disabled>Apply browser settings</button>
             <p id="browser-settings-note" class="save-hint">Settings apply immediately and do not require a Local restart.</p>
+            </div>
           </article>
         </div>
 
         <article class="panel-card soft-panel browser-boundary-card">
           <p class="eyebrow">Safe boundary</p>
           <h3>No silent browser fallback</h3>
-          <p>Agent Browser and Your Browser are separate contexts on the same Equinox Browser bridge. If Agent Browser is unavailable, Equinox Local fails closed instead of silently using your personal Chrome. Direct user-Chrome CDP fallback remains disabled.</p>
+          <p>If Agent Browser is unavailable, the task stops. Equinox Local never switches to your personal Chrome without an explicit choice.</p>
         </article>
       </section>
 
-      <section id="section-permissions" class="page-section" hidden>
+      <section id="section-permissions" class="page-section" aria-labelledby="section-title" hidden>
         <div class="section-intro">
           <div>
-            <p class="eyebrow">Agent access</p>
-            <h3>Permissions</h3>
-            <p>Equinox Local starts new installations with broad useful access. Narrow these controls when you want the agent contained to selected roots or without local execution.</p>
+            <p>Local execution is Equinox Local's core path. Pause the agent instantly when needed, and keep Browser/Desktop permissions separate from advanced structured-file restrictions.</p>
           </div>
         </div>
+
+        <div class="safety-layout">
+        <article class="panel-card agent-safety-card">
+          <div class="panel-header">
+            <div>
+              <p class="eyebrow">Immediate control</p>
+              <h3>Agent state</h3>
+            </div>
+            <span id="agent-control-badge" class="badge neutral">Loading…</span>
+          </div>
+          <p id="agent-control-copy" class="health-copy">Checking whether the agent is active or paused.</p>
+          <div class="active-work-grid" aria-label="Active managed work">
+            <div><span>Terminal sessions</span><strong id="active-terminal-count">0</strong></div>
+            <div><span>Managed processes</span><strong id="active-process-count">0</strong></div>
+            <div><span>Total active work</span><strong id="active-work-count">0</strong></div>
+          </div>
+          <p class="save-hint">Emergency Stop immediately blocks new mutating agent actions and safely stops Equinox Local-managed Terminal/process work. The MCP connection and read-only status stay alive so the agent can observe the pause and finish its response. Resume never restarts stopped work automatically.</p>
+        </article>
 
         <article class="panel-card agent-access-card">
           <div class="panel-header">
             <div>
-              <p class="eyebrow">Local capabilities</p>
-              <h3>Agent Access</h3>
+              <p class="eyebrow">Capability boundaries</p>
+              <h3>Access settings</h3>
             </div>
             <span id="agent-access-badge" class="badge neutral">Loading…</span>
           </div>
-          <label class="field">
-            <span>Structured roots</span>
-            <select id="agent-files-access">
-              <option value="full">Full access</option>
-              <option value="selected">Selected roots only</option>
-            </select>
-            <small>Controls root-aware project/asset and file-backed special capabilities. Full accepts configured IDs, <code>home</code>, or an accessible absolute folder path; Selected stays on configured roots. Ordinary file, Git and package-manager work uses Terminal.</small>
-          </label>
-          <label class="toggle-field compact-toggle">
+          <div class="access-summary-row">
             <div>
-              <span>Terminal &amp; processes</span>
-              <small>Allow shell commands, interactive shells and managed background processes with your normal macOS user permissions. Terminal commands wait for a bounded foreground window; unfinished work continues as the same managed process instead of being restarted. Terminal is not confined to Selected roots after a shell starts; turn it off if you require strict selected-root containment. Equinox-managed provider credentials are not injected into generic shells or processes.</small>
+              <strong>Local execution</strong>
+              <p>Terminal/process execution is the core terminal-first capability and uses your normal macOS user permissions. Structured folder scope does not sandbox a running shell.</p>
             </div>
-            <input id="agent-terminal-access" type="checkbox" role="switch">
-          </label>
+            <span id="local-execution-badge" class="badge neutral">Checking…</span>
+          </div>
           <label class="toggle-field compact-toggle">
             <div>
               <span>Desktop automation</span>
@@ -498,11 +542,37 @@
             </div>
             <input id="agent-web-access" type="checkbox" role="switch">
           </label>
+
+          <details class="advanced-access">
+            <summary>Advanced restricted mode</summary>
+            <p>These controls exist for specialized containment and legacy configurations. They are not a sandbox for Terminal.</p>
+            <label class="field">
+              <span>Structured file scope</span>
+              <select id="agent-files-access">
+                <option value="full">Open paths (recommended)</option>
+                <option value="selected">Configured roots only</option>
+              </select>
+              <small>Applies only to root-aware structured capabilities such as project discovery and image viewing. Terminal uses the logged-in macOS user's permissions.</small>
+            </label>
+            <label class="toggle-field compact-toggle danger-toggle">
+              <div>
+                <span>Local execution</span>
+                <small>Turning this off disables Terminal, interactive shells and managed processes. Equinox Local becomes heavily restricted and many agent tasks will no longer work.</small>
+              </div>
+              <input id="agent-terminal-access" type="checkbox" role="switch">
+            </label>
+          </details>
+
           <button id="save-agent-access-button" class="button primary full-width" type="button" disabled>Save access settings</button>
-          <p class="save-hint">Access changes use the validated configuration path and require a Local restart.</p>
+          <p class="save-hint">Browser/Desktop and advanced access changes use the validated configuration path and require a Local restart. Emergency Stop/Resume apply immediately and do not edit configuration.</p>
         </article>
 
-        <div id="permissions-list" class="permissions-list"></div>
+        </div>
+        <details class="scope-details panel-card">
+          <summary>Configured folder scope</summary>
+          <p class="card-copy">Named projects and read-only folders used by structured capabilities.</p>
+          <div id="permissions-list" class="permissions-list"></div>
+        </details>
 
         <article id="uninstall-card" class="panel-card danger-panel uninstall-card" hidden>
           <div class="panel-header">
@@ -532,19 +602,17 @@
         </article>
       </section>
 
-      <section id="section-integrations" class="page-section" hidden>
+      <section id="section-integrations" class="page-section" aria-labelledby="section-title" hidden>
         <div class="section-intro">
-          <p>Optional bridges fail independently. Core Equinox Local remains usable even when a browser or desktop integration is unavailable.</p>
+          <p>Connect the tools your agent needs. Optional services can be unavailable without stopping local execution.</p>
         </div>
         <div id="integration-list" class="integration-grid"></div>
       </section>
 
-      <section id="section-activity" class="page-section" hidden>
+      <section id="section-activity" class="page-section" aria-labelledby="section-title" hidden>
         <div class="section-intro">
           <div>
-            <p class="eyebrow">Diagnostics</p>
-            <h3>Activity</h3>
-            <p>This first Control Center slice shows bounded runtime and management-surface activity without exposing raw logs or arbitrary filesystem access.</p>
+            <p>Review recent runtime events and configuration changes. Sensitive details are kept out of this timeline.</p>
           </div>
         </div>
 
@@ -570,7 +638,7 @@
           <div class="panel-header compact">
             <div>
               <p class="eyebrow">Audit timeline</p>
-              <h3>Recent sanitized runtime activity</h3>
+              <h3>Recent activity</h3>
             </div>
             <span class="mini-badge">Last 6 hours · max 30</span>
           </div>
@@ -580,7 +648,7 @@
     </main>
   </div>
 
-  <dialog id="root-dialog" class="root-dialog">
+  <dialog id="root-dialog" class="root-dialog" aria-labelledby="dialog-title">
     <form id="root-form" novalidate>
       <div class="dialog-header">
         <div>
@@ -622,7 +690,7 @@
 
       <div id="readonly-note" class="readonly-note" hidden>
         <strong>Read-only folder</strong>
-        <p>V1 file roots are intentionally read-only and cannot be upgraded to writable from this screen.</p>
+        <p>Additional folders are read-only. This screen cannot grant write access.</p>
       </div>
 
       <p id="dialog-error" class="form-error" role="alert" hidden></p>

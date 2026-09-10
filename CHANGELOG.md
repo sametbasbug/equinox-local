@@ -6,6 +6,24 @@ This project follows semantic versioning for public releases.
 
 ## [Unreleased]
 
+## [4.8.0] - 2026-09-10
+
+### Added
+
+- Added a native macOS menu-bar controller with live Active/Paused/Needs Attention state, Local-managed Terminal/process counts, Open Control Center, Agent Browser status/launch, Restart, Emergency Stop/Resume and safe Quit. Closing Control Center now keeps the menu-bar controller alive while removing the Dock icon; reopening restores the normal Dock/window presence.
+- Added bounded `image_view` support to the Files gateway so an agent can visually inspect a user-supplied local PNG, JPEG or WebP path as real MCP image content. The capability follows structured Agent Access root rules, blocks protected/sensitive paths and symlinks, and enforces byte, dimension and pixel budgets without restoring generic file-read wrappers.
+- Added Control Center Emergency Stop / Resume with bounded Active Work counts and a global paused-state banner. Emergency Stop immediately marks the agent paused, blocks new mutating MCP operations, stops Equinox Local-managed Terminal/process work, keeps read-only status available, and records metadata-only audit events. Resume never restarts stopped work.
+
+### Changed
+
+- Rebuilt Control Center around clearer workspace/system navigation, a focused runtime overview, explicit ChatGPT-to-Mac connection state, collapsible lower-priority diagnostics and persistent `System / Light / Dark` appearance selection. System mode follows macOS theme changes, and small secondary/metadata text was enlarged for better readability at the native window size.
+- Reframed Control Center access around the terminal-first architecture: Local Execution is shown as the core logged-in-user capability; Browser and Desktop remain separate controls; structured Full/Selected scope and Terminal disable stay under Advanced restricted mode instead of being presented as a general sandbox.
+- The menu-bar status item uses a compact native `EL` monogram for clear Equinox Local recognition while preserving Active/Paused/Offline opacity and tooltip cues.
+
+### Fixed
+
+- `Quit Equinox Local` now performs a real fail-closed hard stop: it validates the trusted LaunchAgent, boots it out, stops the source-checkout tunnel-owned runtime when applicable, waits boundedly for Control Center to go offline, and only then exits the native app. Reopening the app safely bootstraps the trusted LaunchAgent without starting source and managed runtimes together.
+
 ## [4.7.0] - 2026-09-08
 
 ### Added
@@ -235,7 +253,8 @@ This project follows semantic versioning for public releases.
 - Internal release/QA browser surfaces are excluded from the public product capability registry.
 - Private Orbit/deployment configuration and machine-specific development infrastructure are excluded from the public source projection.
 
-[Unreleased]: https://github.com/sametbasbug/equinox-local/compare/v4.7.0...HEAD
+[Unreleased]: https://github.com/sametbasbug/equinox-local/compare/v4.8.0...HEAD
+[4.8.0]: https://github.com/sametbasbug/equinox-local/compare/v4.7.0...v4.8.0
 [4.7.0]: https://github.com/sametbasbug/equinox-local/compare/v4.6.3...v4.7.0
 [4.6.3]: https://github.com/sametbasbug/equinox-local/compare/v4.6.2...v4.6.3
 [4.6.2]: https://github.com/sametbasbug/equinox-local/compare/v4.6.1...v4.6.2
