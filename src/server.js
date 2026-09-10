@@ -23,6 +23,9 @@ import {
   probeTcpPort,
 } from "./process-manager.js";
 import {
+  createAgentControlController,
+} from "./equinox-local-agent-control.js";
+import {
   registerProcessTools,
 } from "./equinox-local-process-tools.js";
 import {
@@ -31,6 +34,9 @@ import {
 import {
   registerProjectDiscoveryTools,
 } from "./equinox-local-project-tools.js";
+import {
+  registerImageViewTools,
+} from "./equinox-local-image-tools.js";
 import {
   isPathInside as isPathInsideRoot,
   parseGitWorktreePorcelain,
@@ -563,6 +569,12 @@ const processManager =
   createProcessManager({
     onEvent: recordRuntimeEvent,
   });
+const agentControl =
+  createAgentControlController({
+    terminalManager,
+    processManager,
+    onEvent: recordRuntimeEvent,
+  });
 
 let registeredToolCount = 0;
 const capabilityRegistry = createCapabilityRegistry();
@@ -852,6 +864,16 @@ function registerTextTool(
       if (restartGuardError) {
         return errorResult(restartGuardError);
       }
+      if (
+        options.pauseGuard !== false &&
+        registeredConfig.annotations?.readOnlyHint !== true
+      ) {
+        try {
+          agentControl.assertMutationAllowed(name);
+        } catch (error) {
+          return errorResult(error);
+        }
+      }
 
       const executeHandler = async (
         forwardedArgs,
@@ -976,6 +998,16 @@ function registerRawTool(
     if (restartGuardError) {
       return errorResult(restartGuardError);
     }
+    if (
+      options.pauseGuard !== false &&
+      config.annotations?.readOnlyHint !== true
+    ) {
+      try {
+        agentControl.assertMutationAllowed(name);
+      } catch (error) {
+        return errorResult(error);
+      }
+    }
 
     try {
       return await handler(...args);
@@ -1023,6 +1055,16 @@ registerProjectDiscoveryTools({
   fsImpl: fs,
   gitEnv: process.env,
   textResult,
+});
+
+registerImageViewTools({
+  registerRawTool,
+  z,
+  fullFileAccess: FULL_FILE_ACCESS,
+  fileRootIds: FILE_ROOT_IDS,
+  resolveFileRootContext,
+  homeDir: process.env.HOME,
+  fsImpl: fs,
 });
 
 async function runGitWithCode(
@@ -2851,9 +2893,14 @@ equinoxLocalControlApi = createEquinoxLocalControlApi({
         active: peekabooBridge.active,
         reconnectCount: peekabooBridge.reconnectCount,
       },
+      agentControl: agentControl.snapshot(),
       capabilities: capabilityRegistry.summary(),
     };
   },
+  pauseAgent: async () => withMutationLocks(["agent-control"], async () => (
+    agentControl.pause({ reason: "control_center_emergency_stop" })
+  )),
+  resumeAgent: async () => withMutationLocks(["agent-control"], async () => agentControl.resume()),
   getDoctorStatus: getControlCenterDoctorStatus,
   getActivity: getControlCenterActivity,
   getUpdateStatus: async () => equinoxLocalUpdateCoordinator.snapshot(),
@@ -2994,6 +3041,7 @@ registerDesktopGatewayTools({
   extractTextContent,
   textResult,
   errorResult,
+  assertMutationAllowed: (operationName) => agentControl.assertMutationAllowed(operationName),
 });
 
 registerRestartRuntimeTool({

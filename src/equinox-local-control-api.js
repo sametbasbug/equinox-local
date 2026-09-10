@@ -267,6 +267,8 @@ export function createEquinoxLocalControlApi({
   checkForUpdates = null,
   applyUpdate = null,
   configureTunnel = null,
+  pauseAgent = null,
+  resumeAgent = null,
   restartRuntime = null,
   scheduleUninstall = null,
   chooseFolder = null,
@@ -406,6 +408,34 @@ export function createEquinoxLocalControlApi({
 
       if (req.method === "GET" && url.pathname === "/api/v1/onboarding") {
         jsonBody(res, 200, { ok: true, onboarding: await getOnboardingStatus() });
+        return;
+      }
+
+      if (req.method === "POST" && url.pathname === "/api/v1/agent/pause") {
+        assertMutationRequest(req, { port: actualPort, csrfToken: state.csrfToken });
+        validateEmptyObject(await readJsonRequest(req), "Agent pause");
+        if (typeof pauseAgent !== "function") {
+          const error = new Error("Agent emergency stop is unavailable on this installation.");
+          error.statusCode = 503;
+          throw error;
+        }
+        const agentControl = await pauseAgent();
+        state.mutationCount += 1;
+        jsonBody(res, 200, { ok: true, agentControl });
+        return;
+      }
+
+      if (req.method === "POST" && url.pathname === "/api/v1/agent/resume") {
+        assertMutationRequest(req, { port: actualPort, csrfToken: state.csrfToken });
+        validateEmptyObject(await readJsonRequest(req), "Agent resume");
+        if (typeof resumeAgent !== "function") {
+          const error = new Error("Agent resume is unavailable on this installation.");
+          error.statusCode = 503;
+          throw error;
+        }
+        const agentControl = await resumeAgent();
+        state.mutationCount += 1;
+        jsonBody(res, 200, { ok: true, agentControl });
         return;
       }
 

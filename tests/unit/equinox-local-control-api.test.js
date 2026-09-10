@@ -44,6 +44,8 @@ async function withApi(fn, overrides = {}) {
     checkForUpdates: overrides.checkForUpdates ?? null,
     applyUpdate: overrides.applyUpdate ?? null,
     configureTunnel: overrides.configureTunnel ?? null,
+    pauseAgent: overrides.pauseAgent ?? null,
+    resumeAgent: overrides.resumeAgent ?? null,
     restartRuntime: overrides.restartRuntime ?? null,
     scheduleUninstall: overrides.scheduleUninstall ?? null,
     chooseFolder: overrides.chooseFolder ?? null,
@@ -143,6 +145,9 @@ test("control API serves the visual Control Center shell and fixed same-origin a
     assert.match(shellText, /Equinox Local Control Center/u);
     assert.match(shellText, /id="restart-runtime-button"/u);
     assert.match(shellText, /id="language-select"/u);
+    assert.match(shellText, /data-theme-value="system"/u);
+    assert.match(shellText, /data-theme-value="light"/u);
+    assert.match(shellText, /data-theme-value="dark"/u);
     assert.match(shellText, /<option value="en">English<\/option>/u);
     assert.match(shellText, /<option value="tr">Türkçe<\/option>/u);
     assert.equal(
@@ -158,6 +163,8 @@ test("control API serves the visual Control Center shell and fixed same-origin a
     const cssText = await css.text();
     assert.match(cssText, /\.app-shell/u);
     assert.match(cssText, /\.language-control/u);
+    assert.match(cssText, /:root\[data-theme="dark"\]/u);
+    assert.match(cssText, /\.theme-switch/u);
 
     const logo = await fetch(`${base}/assets/equinox-local.png`);
     assert.equal(logo.status, 200);
@@ -171,6 +178,8 @@ test("control API serves the visual Control Center shell and fixed same-origin a
     assert.match(scriptText, /\/api\/v1\/config/u);
     assert.match(scriptText, /\/api\/v1\/doctor/u);
     assert.equal(scriptText.includes('requestJson("/api/v1/doctor").catch(() => ({ doctor: null }))'), true);
+    assert.match(scriptText, /\/api\/v1\/agent\/pause/u);
+    assert.match(scriptText, /\/api\/v1\/agent\/resume/u);
     assert.match(scriptText, /\/api\/v1\/runtime\/restart/u);
     assert.match(scriptText, /\/api\/v1\/activity/u);
     assert.match(scriptText, /\/api\/v1\/update/u);
@@ -189,6 +198,9 @@ test("control API serves the visual Control Center shell and fixed same-origin a
     assert.match(scriptText, /npdneefcobilfkjlihghjgjnknenhfoj/u);
     assert.match(scriptText, /control\.rel = "noopener noreferrer"/u);
     assert.match(scriptText, /equinox-local-control-center-language/u);
+    assert.match(scriptText, /equinox-local-control-center-theme/u);
+    assert.match(scriptText, /prefers-color-scheme: dark/u);
+    assert.match(scriptText, /localStorage\.setItem\(THEME_STORAGE_KEY/u);
     assert.match(scriptText, /localStorage\.setItem\(LANGUAGE_STORAGE_KEY/u);
     assert.match(scriptText, /navigator\.language/u);
     assert.match(scriptText, /localizeRuntimeEventMessage/u);
@@ -409,6 +421,64 @@ test("onboarding status is read-only and tunnel setup requires same-origin CSRF"
     configureTunnel: async (body) => {
       calls.push(body);
       return { configured: true, tunnelId: body.tunnelId, restartScheduled: true };
+    },
+  });
+});
+
+
+test("agent emergency stop and resume require CSRF and return bounded control state", async () => {
+  const calls = [];
+  await withApi(async ({ api, port, origin }) => {
+    const base = `http://127.0.0.1:${port}`;
+    const rejected = await jsonFetch(`${base}/api/v1/agent/pause`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{}",
+    });
+    assert.equal(rejected.response.status, 403);
+    assert.deepEqual(calls, []);
+
+    const session = await jsonFetch(`${base}/api/v1/session`);
+    const headers = {
+      "content-type": "application/json",
+      origin,
+      "x-equinox-csrf": session.body.csrfToken,
+    };
+
+    const invalid = await jsonFetch(`${base}/api/v1/agent/pause`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ unexpected: true }),
+    });
+    assert.equal(invalid.response.status, 400);
+    assert.deepEqual(calls, []);
+
+    const paused = await jsonFetch(`${base}/api/v1/agent/pause`, {
+      method: "POST",
+      headers,
+      body: "{}",
+    });
+    assert.equal(paused.response.status, 200);
+    assert.equal(paused.body.agentControl.state, "PAUSED");
+    assert.equal(paused.body.agentControl.activeWork.total, 0);
+
+    const resumed = await jsonFetch(`${base}/api/v1/agent/resume`, {
+      method: "POST",
+      headers,
+      body: "{}",
+    });
+    assert.equal(resumed.response.status, 200);
+    assert.equal(resumed.body.agentControl.state, "ACTIVE");
+    assert.deepEqual(calls, ["pause", "resume"]);
+    assert.equal(api.snapshot().mutationCount, 2);
+  }, {
+    pauseAgent: async () => {
+      calls.push("pause");
+      return { state: "PAUSED", paused: true, activeWork: { terminals: 0, processes: 0, total: 0 } };
+    },
+    resumeAgent: async () => {
+      calls.push("resume");
+      return { state: "ACTIVE", paused: false, activeWork: { terminals: 0, processes: 0, total: 0 } };
     },
   });
 });

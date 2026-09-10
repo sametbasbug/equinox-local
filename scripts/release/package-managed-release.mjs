@@ -34,6 +34,7 @@ const STATIC_RELEASE_FILES = Object.freeze([
   "src/equinox-control-center.css",
   "src/equinox-control-center.js",
   "app/EquinoxLocal.png",
+  "app/EquinoxLocalMenuBar.png",
   "package.json",
   "package-lock.json",
 ]);

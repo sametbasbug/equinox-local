@@ -1,11 +1,55 @@
 const $ = (id) => document.getElementById(id);
 
 const LANGUAGE_STORAGE_KEY = "equinox-local-control-center-language";
+const THEME_STORAGE_KEY = "equinox-local-control-center-theme";
+const SUPPORTED_THEMES = new Set(["system", "light", "dark"]);
+const systemThemeMedia = window.matchMedia("(prefers-color-scheme: dark)");
 const SUPPORTED_LANGUAGES = new Set(["en", "tr"]);
 const EQUINOX_BROWSER_STORE_URL =
   "https://chromewebstore.google.com/detail/equinox-browser/npdneefcobilfkjlihghjgjnknenhfoj";
 
 const TR_UI = Object.freeze({
+  "Your local runtime is ready. Add the OpenAI tunnel credentials to finish connecting Equinox Local to ChatGPT.": "Yerel runtime hazır. Equinox Local’i ChatGPT’ye bağlamak için OpenAI tunnel bilgilerini ekleyin.",
+  "Tunnel settings are saved. Equinox Local is switching from local-only setup mode to the private ChatGPT connection.": "Tunnel ayarları kaydedildi. Equinox Local, yerel kurulum modundan özel ChatGPT bağlantısına geçiyor.",
+  "The saved tunnel connection needs attention. Re-enter the Runtime API key to repair it.": "Kaydedilmiş tunnel bağlantısı kontrol edilmeli. Onarmak için Runtime API anahtarını yeniden girin.",
+  "Skip to content": "İçeriğe geç",
+  "Workspace": "Çalışma alanı",
+  "Your workspace": "Çalışma alanınız",
+  "Your Mac, connected": "Mac’iniz, bağlantıda",
+  "Connected capabilities": "Bağlı araçlar",
+  "On this Mac": "Bu Mac’te",
+  "ChatGPT to Mac connection": "ChatGPT ile Mac bağlantısı",
+  "ChatGPT on the web": "ChatGPT web",
+  "Tools on this Mac": "Mac’inizdeki araçlar",
+  "Checking connection": "Bağlantı kontrol ediliyor",
+  "ChatGPT connected": "ChatGPT bağlantısı açık",
+  "ChatGPT not connected": "ChatGPT bağlı değil",
+  "Connection needs attention": "Bağlantı kontrol edilmeli",
+  "Connection status unavailable": "Bağlantı durumu alınamadı",
+  "Desktop": "Masaüstü",
+  "Local connection": "Yerel bağlantı",
+  "Open Browser settings": "Tarayıcı ayarlarını aç",
+  "Open Services": "Servisleri aç",
+  "View all checks": "Tüm kontrolleri göster",
+  "Choose a profile. Its settings stay separate.": "Bir profil seçin. Her profilin ayarları ayrı tutulur.",
+  "Configured folder scope": "Yapılandırılmış klasör kapsamı",
+  "Named projects and read-only folders used by structured capabilities.": "Yapılandırılmış araçların kullandığı adlandırılmış projeler ve salt okunur klasörler.",
+  "Keep named shortcuts to your projects and folders. These settings do not limit Terminal access.": "Proje ve klasörlerinize adlandırılmış kısayollar ekleyin. Bu ayarlar Terminal erişimini sınırlamaz.",
+  "Your named projects and folders, saved privately on this Mac.": "Bu Mac’te özel olarak saklanan proje ve klasör kısayollarınız.",
+  "Access settings": "Erişim ayarları",
+  "Review recent runtime events and configuration changes. Sensitive details are kept out of this timeline.": "Son çalışma olaylarını ve yapılandırma değişikliklerini inceleyin. Hassas ayrıntılar bu akışta gösterilmez.",
+  "Recent activity": "Son etkinlikler",
+  "Connect the tools your agent needs. Optional services can be unavailable without stopping local execution.": "Ajanınızın ihtiyaç duyduğu araçları bağlayın. İsteğe bağlı bir servis kullanılamasa da yerel çalıştırma devam eder.",
+  "Save your changes, then restart Equinox Local to apply them.": "Değişikliklerinizi kaydedin, ardından uygulamak için Equinox Local’i yeniden başlatın.",
+  "Stored privately on this Mac. Your key is never shown again.": "Bu Mac’te özel olarak saklanır. Anahtarınız tekrar gösterilmez.",
+  "Additional folders are read-only. This screen cannot grant write access.": "Ek klasörler salt okunurdur. Bu ekrandan yazma izni verilemez.",
+  "If Agent Browser is unavailable, the task stops. Equinox Local never switches to your personal Chrome without an explicit choice.": "Agent Browser kullanılamıyorsa görev durur. Equinox Local, açık bir seçim olmadan kişisel Chrome’unuza geçmez.",
+  "Agent paused": "Ajan duraklatıldı",
+  "New actions are blocked. Read-only status is still available. Use Resume agent to continue.": "Yeni işlemler engellendi. Salt okunur durum bilgisi erişilebilir. Devam etmek için Ajanı sürdür düğmesini kullanın.",
+  "Your agent is paused": "Ajanınız duraklatıldı",
+  "Local stays connected for read-only status. Resume when you are ready; stopped work will not restart on its own.": "Yerel bağlantı, salt okunur durum bilgisi için açık kalır. Hazır olduğunuzda sürdürün; durdurulan işler kendiliğinden yeniden başlamaz.",
+  "Your Mac is ready": "Mac’iniz hazır",
+  "Local tools are ready. Your agent stays in ChatGPT on the web; its connected tools run here on your Mac.": "Yerel araçlar hazır. Ajanınız ChatGPT web’de kalır; bağlı araçları burada, Mac’inizde çalışır.",
   "Equinox Local Control Center": "Equinox Local Kontrol Merkezi",
   "Primary navigation": "Ana gezinme",
   "Control Center": "Kontrol Merkezi",
@@ -190,6 +234,47 @@ const TR_UI = Object.freeze({
   "Access changes use the validated configuration path and require a Local restart.": "Erişim değişiklikleri doğrulanmış yapılandırma yolunu kullanır ve Local'in yeniden başlatılmasını gerektirir.",
   "Maximum useful access": "Maksimum kullanışlı erişim",
   "Restricted access": "Sınırlı erişim",
+  "Agent control": "Ajan kontrolü",
+  "Safety & access": "Güvenlik ve erişim",
+  "Local execution is Equinox Local's core path. Pause the agent instantly when needed, and keep Browser/Desktop permissions separate from advanced structured-file restrictions.": "Yerel çalıştırma Equinox Local'in temel yoludur. Gerektiğinde ajanı anında duraklatın; Browser/Masaüstü izinlarını gelişmiş yapılandırılmış-dosya kısıtlarından ayrı tutun.",
+  "Emergency stop": "Acil durdur",
+  "Resume agent": "Ajanı sürdür",
+  "Stopping agent…": "Ajan durduruluyor…",
+  "Resuming agent…": "Ajan sürdürülüyor…",
+  "Immediate control": "Anlık kontrol",
+  "Agent state": "Ajan durumu",
+  "Active": "Aktif",
+  "Paused": "Duraklatıldı",
+  "Agent mutations are paused. Read-only status remains available until you resume.": "Ajanın değişiklik yapan işlemleri duraklatıldı. Siz sürdürünceye kadar salt-okunur durum erişimi açık kalır.",
+  "Agent mutations are active. Emergency Stop is available from the top bar at any time.": "Ajanın değişiklik yapan işlemleri aktif. Acil Durdur düğmesine üst çubuktan her zaman erişebilirsiniz.",
+  "Terminal sessions": "Terminal oturumları",
+  "Managed processes": "Yönetilen süreçler",
+  "Total active work": "Toplam aktif iş",
+  "Capability boundaries": "Yetenek sınırları",
+  "Local execution": "Yerel çalıştırma",
+  "Terminal-first": "Terminal-first",
+  "Restricted mode": "Kısıtlı mod",
+  "Core · enabled": "Temel · etkin",
+  "Disabled": "Devre dışı",
+  "Advanced restricted mode": "Gelişmiş kısıtlı mod",
+  "Structured file scope": "Yapılandırılmış dosya kapsamı",
+  "Open paths (recommended)": "Açık yollar (önerilen)",
+  "Configured roots only": "Yalnızca yapılandırılmış kökler",
+  "Checking whether the agent is active or paused.": "Ajanın aktif mi duraklatılmış mı olduğu kontrol ediliyor.",
+  "Active managed work": "Aktif yönetilen işler",
+  "Emergency Stop immediately blocks new mutating agent actions and safely stops Equinox Local-managed Terminal/process work. The MCP connection and read-only status stay alive so the agent can observe the pause and finish its response. Resume never restarts stopped work automatically.": "Acil Durdur, yeni değişiklik yapan ajan eylemlerini anında engeller ve Equinox Local tarafından yönetilen Terminal/süreç işlerini güvenle durdurur. MCP bağlantısı ve salt-okunur durum açık kalır; böylece ajan duraklatmayı fark edip yanıtını tamamlayabilir. Sürdür, durdurulan işleri hiçbir zaman otomatik yeniden başlatmaz.",
+  "Capability boundaries": "Yetenek sınırları",
+  "Agent Access": "Ajan Erişimi",
+  "Terminal/process execution is the core terminal-first capability and uses your normal macOS user permissions. Structured folder scope does not sandbox a running shell.": "Terminal/süreç çalıştırma temel terminal-first yeteneğidir ve normal macOS kullanıcı izinlarınızı kullanır. Yapılandırılmış klasör kapsamı çalışan bir shell'i sandbox içine almaz.",
+  "Allow the first-party desktop tool surface when macOS permissions are also granted.": "macOS izinleri de verildiğinde birinci taraf masaüstü araç yüzeyine izin verin.",
+  "These controls exist for specialized containment and legacy configurations. They are not a sandbox for Terminal.": "Bu kontroller özel kısıtlama ihtiyaçları ve eski yapılandırmalar için korunur. Terminal için bir sandbox değildir.",
+  "Applies only to root-aware structured capabilities such as project discovery and image viewing. Terminal uses the logged-in macOS user's permissions.": "Yalnızca proje keşfi ve görsel görüntüleme gibi kök-farkındalıklı yapılandırılmış yeteneklere uygulanır. Terminal oturum açmış macOS kullanıcısının izinlarını kullanır.",
+  "Turning this off disables Terminal, interactive shells and managed processes. Equinox Local becomes heavily restricted and many agent tasks will no longer work.": "Bunu kapatmak Terminal'i, etkileşimli shell'leri ve yönetilen süreçleri devre dışı bırakır. Equinox Local ciddi biçimde kısıtlanır ve birçok ajan görevi artık çalışmaz.",
+  "Browser/Desktop and advanced access changes use the validated configuration path and require a Local restart. Emergency Stop/Resume apply immediately and do not edit configuration.": "Tarayıcı/Masaüstü ve gelişmiş erişim değişiklikleri doğrulanmış yapılandırma yolunu kullanır ve Local'in yeniden başlatılmasını gerektirir. Acil Durdur/Sürdür anında uygulanır ve yapılandırmayı değiştirmez.",
+  "Agent resumed.": "Ajan sürdürüldü.",
+  "Emergency Stop activated. Agent mutations are paused.": "Acil Durdur etkinleştirildi. Ajanın değişiklik yapan işlemleri duraklatıldı.",
+  "Structured shortcut": "Yapılandırılmış kısayol",
+  "Structured scope": "Yapılandırılmış kapsam",
   "Managed installation": "Yönetilen kurulum",
   "Uninstall Equinox Local": "Equinox Local'i kaldır",
   "Managed only": "Yalnızca yönetilen kurulum",
@@ -344,12 +429,72 @@ const TR_UI = Object.freeze({
   "Equinox Local is restarting safely…": "Equinox Local güvenli biçimde yeniden başlatılıyor…",
   "Configuration saved safely.": "Yapılandırma güvenle kaydedildi.",
   "Saved · restart required": "Kaydedildi · yeniden başlatma gerekli",
+  "Appearance": "Görünüm",
+  "System": "Sistem",
+  "Light": "Aydınlık",
+  "Dark": "Karanlık",
+  "Services": "Servisler",
+  "Safety": "Güvenlik",
+  "Private on this Mac · 127.0.0.1": "Bu Mac’e özel · 127.0.0.1",
+  "Checking your Mac": "Mac’iniz kontrol ediliyor",
+  "Equinox Local is collecting a private status summary.": "Equinox Local özel bir durum özeti topluyor.",
+  "Everything is running normally": "Her şey normal çalışıyor",
+  "Core services are ready. You only need to open a detail page when you want to change something.": "Temel servisler hazır. Yalnızca bir şeyi değiştirmek istediğinizde ayrıntı sayfasını açmanız yeterli.",
+  "Some parts need your attention": "Bazı bölümler dikkatinizi gerektiriyor",
+  "Review the highlighted status below before starting important agent work.": "Önemli ajan işlerine başlamadan önce aşağıdaki işaretli durumu gözden geçirin.",
+  "Status is still loading": "Durum hâlâ yükleniyor",
+  "The local API is reachable, but the runtime summary is not complete yet.": "Yerel API erişilebilir, ancak runtime özeti henüz tamamlanmadı.",
   "HEALTHY": "SAĞLIKLI",
   "DEGRADED": "BOZULMUŞ",
   "RECOVERING": "TOPARLANIYOR",
   "ATTENTION REQUIRED": "DİKKAT GEREKLİ",
   "ATTENTION": "DİKKAT",
 });
+
+function normalizeTheme(value) {
+  return SUPPORTED_THEMES.has(value) ? value : "system";
+}
+
+function initialTheme() {
+  try {
+    const stored = localStorage.getItem(THEME_STORAGE_KEY);
+    if (SUPPORTED_THEMES.has(stored)) return stored;
+  } catch {
+    // A blocked localStorage must not prevent Control Center from loading.
+  }
+  return "system";
+}
+
+function resolvedTheme(theme = state?.theme || "system") {
+  return theme === "system" ? (systemThemeMedia.matches ? "dark" : "light") : theme;
+}
+
+function applyTheme() {
+  const preference = normalizeTheme(state.theme);
+  const resolved = resolvedTheme(preference);
+  document.documentElement.dataset.theme = resolved;
+  document.documentElement.dataset.themePreference = preference;
+  document.documentElement.style.colorScheme = resolved;
+  const themeMeta = document.querySelector('meta[name="theme-color"]');
+  if (themeMeta) themeMeta.content = resolved === "dark" ? "#19191d" : "#f6f5f2";
+  for (const button of document.querySelectorAll("[data-theme-value]")) {
+    const active = button.dataset.themeValue === preference;
+    button.classList.toggle("is-active", active);
+    button.setAttribute("aria-pressed", active ? "true" : "false");
+  }
+}
+
+function setTheme(nextTheme, { persist = true } = {}) {
+  state.theme = normalizeTheme(nextTheme);
+  if (persist) {
+    try {
+      localStorage.setItem(THEME_STORAGE_KEY, state.theme);
+    } catch {
+      // Theme selection still applies for the current page if storage is unavailable.
+    }
+  }
+  applyTheme();
+}
 
 function normalizeLanguage(value) {
   return SUPPORTED_LANGUAGES.has(value) ? value : "en";
@@ -371,6 +516,7 @@ function localeForLanguage(language) {
 
 const state = {
   language: initialLanguage(),
+  theme: initialTheme(),
   activeSection: "dashboard",
   lastRefreshedAt: null,
   config: null,
@@ -398,6 +544,7 @@ const state = {
   integrationBusy: false,
   pickerBusy: false,
   restartBusy: false,
+  agentControlBusy: false,
   runtimeRestartTimer: null,
   dirty: false,
   restartRequired: false,
@@ -469,9 +616,9 @@ function localizeUiText(value) {
 
 const DYNAMIC_TEXT_IDS = new Set([
   "sidebar-health-label", "sidebar-version", "section-kicker", "section-title", "last-refreshed",
-  "restart-runtime-button", "onboarding-copy", "onboarding-badge", "setup-runtime-status",
+  "agent-control-button", "restart-runtime-button", "onboarding-copy", "onboarding-badge", "setup-runtime-status",
   "setup-workspace-status", "setup-browser-status", "setup-tunnel-status", "onboarding-connect-button",
-  "runtime-health-badge", "runtime-version", "runtime-uptime", "browser-status", "browser-version",
+  "runtime-health-badge", "overview-title", "overview-copy", "runtime-version", "runtime-uptime", "browser-status", "browser-version",
   "peekaboo-status", "peekaboo-detail", "api-status", "api-detail", "project-count", "folder-count",
   "default-project", "health-summary-title", "health-summary-badge", "health-summary-copy", "health-event-count",
   "health-evaluated-at", "doctor-title", "doctor-badge", "doctor-copy", "doctor-list", "doctor-summary",
@@ -481,7 +628,8 @@ const DYNAMIC_TEXT_IDS = new Set([
   "save-config-button", "agent-browser-page-status", "agent-browser-page-badge", "agent-browser-page-version", "agent-browser-connected-at",
   "agent-browser-control-state", "open-agent-browser-button", "agent-browser-note", "browser-page-status", "browser-page-badge", "browser-page-version", "browser-connected-at",
   "browser-control-state", "apply-browser-settings", "browser-settings-note", "permissions-list", "agent-access-badge",
-  "save-agent-access-button", "uninstall-badge",
+  "agent-control-badge", "agent-control-copy", "active-terminal-count", "active-process-count", "active-work-count",
+  "local-execution-badge", "save-agent-access-button", "uninstall-badge",
   "uninstall-confirmation-help", "uninstall-button", "integration-list", "request-count", "mutation-count",
   "activity-event-count", "activity-timeline", "dialog-kicker", "dialog-title", "dialog-error", "choose-folder-button",
   "error-message", "toast",
@@ -769,11 +917,11 @@ function setLanguage(nextLanguage, { persist = true } = {}) {
 }
 
 const sectionMeta = {
-  dashboard: ["Overview", "Dashboard"],
-  projects: ["Access boundaries", "Projects & folders"],
+  dashboard: ["Your workspace", "Overview"],
+  projects: ["Your workspace", "Projects & folders"],
   browser: ["Browser contexts", "Browser"],
-  permissions: ["Agent access", "Permissions"],
-  integrations: ["Optional capabilities", "Integrations"],
+  permissions: ["Agent control", "Safety & access"],
+  integrations: ["Optional capabilities", "Services"],
   activity: ["Diagnostics", "Activity"],
 };
 
@@ -930,6 +1078,7 @@ function setConfigEditingEnabled(enabled) {
 
 function switchSection(section) {
   if (!sectionMeta[section]) return;
+  const changed = state.activeSection !== section;
   state.activeSection = section;
   for (const button of document.querySelectorAll(".nav-item")) {
     const active = button.dataset.section === section;
@@ -945,6 +1094,9 @@ function switchSection(section) {
   const [kicker, title] = sectionMeta[section];
   setText("section-kicker", kicker);
   setText("section-title", title);
+  if (changed) {
+    $("main-content").scrollIntoView({ block: "start", behavior: "instant" });
+  }
 }
 
 function statusLabel(active, ready = active) {
@@ -964,6 +1116,33 @@ function renderDashboard() {
   const configStatus = status.config || {};
 
   setBadge("runtime-health-badge", runtimeHealth === "UNKNOWN" ? "Health unavailable" : runtimeHealth, runtimeTone);
+  if (runtimeHealth === "HEALTHY") {
+    setText("overview-title", "Your Mac is ready");
+    setText("overview-copy", "Local tools are ready. Your agent stays in ChatGPT on the web; its connected tools run here on your Mac.");
+  } else if (runtimeHealth === "UNKNOWN") {
+    setText("overview-title", "Status is still loading");
+    setText("overview-copy", "The local API is reachable, but the runtime summary is not complete yet.");
+  } else {
+    setText("overview-title", "Some parts need your attention");
+    setText("overview-copy", "Review the highlighted status below before starting important agent work.");
+  }
+  const paused = status.agentControl?.paused === true || status.agentControl?.state === "PAUSED";
+  if (paused) {
+    setText("overview-title", "Your agent is paused");
+    setText("overview-copy", "Local stays connected for read-only status. Resume when you are ready; stopped work will not restart on its own.");
+  }
+
+  const onboarding = state.onboarding;
+  const connectionLabel = !onboarding?.available
+    ? "Connection status unavailable"
+    : onboarding.needsAttention
+      ? "Connection needs attention"
+      : onboarding.connectedThroughTunnel
+        ? "ChatGPT connected"
+        : "ChatGPT not connected";
+  setBadge("chatgpt-connection-badge", connectionLabel,
+    !onboarding?.available ? "neutral" : onboarding.needsAttention ? "warn" : onboarding.connectedThroughTunnel ? "good" : "neutral");
+
   setBadge("health-summary-badge", runtimeHealth === "UNKNOWN" ? "Unknown" : runtimeHealth, runtimeTone);
   setText("runtime-version", status.server?.version ? `v${status.server.version}` : "—");
   setText("runtime-uptime", formatUptime(status.server?.uptimeSeconds));
@@ -1289,12 +1468,16 @@ function renderPermissions() {
   $("agent-terminal-access").checked = access.terminal !== false;
   $("agent-desktop-access").checked = access.desktop !== false;
   $("agent-web-access").checked = access.browser !== false;
-  const maximum =
-    access.files === "full" && access.terminal && access.desktop && access.browser;
+  const localExecution = access.terminal !== false;
   setBadge(
     "agent-access-badge",
-    maximum ? "Maximum useful access" : "Restricted access",
-    maximum ? "good" : "warn",
+    localExecution ? "Terminal-first" : "Restricted mode",
+    localExecution ? "good" : "warn",
+  );
+  setBadge(
+    "local-execution-badge",
+    localExecution ? "Core · enabled" : "Disabled",
+    localExecution ? "good" : "warn",
   );
   $("save-agent-access-button").disabled = !state.dirty || state.restartRequired;
 
@@ -1305,13 +1488,13 @@ function renderPermissions() {
     meta.className = "permission-meta";
     const title = document.createElement("h4");
     title.textContent = definition.name;
-    const badge = makeMiniBadge(access.files === "full" ? "Configured shortcut" : "Project boundary");
+    const badge = makeMiniBadge(access.files === "full" ? "Structured shortcut" : "Structured scope");
     meta.append(title, badge);
     const copy = document.createElement("p");
     copy.textContent = localizeUiText(
       access.files === "full"
-        ? "This configured project remains a convenient named shortcut. Full access can also address home or other accessible folders without pre-registering them."
-        : "Root-aware structured tools stay contained to this configured root.",
+        ? "This project is a named shortcut for structured capabilities; those capabilities can also use other accessible paths."
+        : "Root-aware structured capabilities stay contained to this configured root. Terminal is not constrained by this scope.",
     );
     const path = document.createElement("span");
     path.className = "permission-path";
@@ -1741,6 +1924,33 @@ function renderActivity() {
   }
 }
 
+function renderAgentControl() {
+  const control = state.status?.agentControl || {};
+  const paused = control.paused === true || control.state === "PAUSED";
+  const activeWork = control.activeWork || {};
+  $("agent-pause-banner").hidden = !paused;
+  setBadge("agent-control-badge", paused ? "Paused" : "Active", paused ? "warn" : "good");
+  setText(
+    "agent-control-copy",
+    paused
+      ? "Agent mutations are paused. Read-only status remains available until you resume."
+      : "Agent mutations are active. Emergency Stop is available from the top bar at any time.",
+  );
+  setText("active-terminal-count", String(activeWork.terminals ?? 0));
+  setText("active-process-count", String(activeWork.processes ?? 0));
+  setText("active-work-count", String(activeWork.total ?? 0));
+
+  const button = $("agent-control-button");
+  if (!button) return;
+  button.disabled = state.agentControlBusy || !state.status?.server?.pid;
+  button.className = paused ? "button primary compact" : "button danger compact";
+  button.textContent = localizeUiText(
+    state.agentControlBusy
+      ? (paused ? "Resuming agent…" : "Stopping agent…")
+      : (paused ? "Resume agent" : "Emergency stop"),
+  );
+}
+
 function renderRuntimeRestartControl() {
   const button = $("restart-runtime-button");
   if (!button) return;
@@ -1759,6 +1969,7 @@ function renderAll() {
   renderIntegrations();
   renderBrowserPage();
   renderActivity();
+  renderAgentControl();
   renderRuntimeRestartControl();
 }
 
@@ -2318,6 +2529,32 @@ async function pollRuntimeRestart(previousPid, attempt = 0) {
   }, 1_000);
 }
 
+async function toggleAgentControl() {
+  if (state.agentControlBusy || !state.status?.server?.pid) return;
+  clearError();
+  const paused = state.status?.agentControl?.paused === true || state.status?.agentControl?.state === "PAUSED";
+  state.agentControlBusy = true;
+  renderAgentControl();
+  try {
+    const endpoint = paused ? "/api/v1/agent/resume" : "/api/v1/agent/pause";
+    const response = await mutationJson(endpoint, "POST", {});
+    state.status = {
+      ...(state.status || {}),
+      agentControl: response.agentControl || {},
+    };
+    showToast(paused ? "Agent resumed." : "Emergency Stop activated. Agent mutations are paused.");
+    const refreshedStatus = await requestJson("/api/v1/status").catch(() => null);
+    if (refreshedStatus?.status) state.status = refreshedStatus.status;
+    const activity = await requestJson("/api/v1/activity").catch(() => null);
+    if (activity?.events) state.activity = activity.events;
+  } catch (error) {
+    showError(error);
+  } finally {
+    state.agentControlBusy = false;
+    renderAll();
+  }
+}
+
 async function restartRuntimeFromControlCenter() {
   if (state.restartBusy) return;
   clearError();
@@ -2394,7 +2631,14 @@ function bindEvents() {
     button.addEventListener("click", () => switchSection(button.dataset.jumpSection));
   }
 
+  for (const button of document.querySelectorAll("[data-theme-value]")) {
+    button.addEventListener("click", () => setTheme(button.dataset.themeValue));
+  }
+  systemThemeMedia.addEventListener?.("change", () => {
+    if (state.theme === "system") applyTheme();
+  });
   $("language-select").addEventListener("change", (event) => setLanguage(event.target.value));
+  $("agent-control-button").addEventListener("click", toggleAgentControl);
   $("restart-runtime-button").addEventListener("click", restartRuntimeFromControlCenter);
   $("refresh-button").addEventListener("click", refreshAll);
   $("onboarding-tunnel-form").addEventListener("submit", submitTunnelOnboarding);
@@ -2458,6 +2702,7 @@ function bindEvents() {
 }
 
 captureStaticTranslatables();
+applyTheme();
 applyStaticLanguage();
 bindEvents();
 switchSection(state.activeSection);

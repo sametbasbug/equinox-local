@@ -134,6 +134,35 @@ test("desktop_tools preserves access gating, restart and single-tool lookup", as
   assert.match(blockedResult.content[0].text, /Desktop automation access is disabled/u);
 });
 
+test("desktop_tools restart cannot bypass the global agent pause guard", async () => {
+  const guarded = createHarness({
+    assertMutationAllowed(operationName) {
+      const error = new Error(`paused:${operationName}`);
+      error.code = "EQUINOX_LOCAL_PAUSED_BY_USER";
+      throw error;
+    },
+  });
+  const registration = guarded.textRegistrations.get("desktop_tools");
+
+  const blocked = await registration.handler({
+    tool_name: undefined,
+    refresh: false,
+    restart: true,
+  });
+  assert.equal(blocked.isError, true);
+  assert.match(blocked.content[0].text, /paused:desktop_tools\.restart/u);
+  assert.equal(guarded.restartCount, 0);
+  assert.deepEqual(guarded.listCalls, []);
+
+  const readOnly = await registration.handler({
+    tool_name: undefined,
+    refresh: false,
+    restart: false,
+  });
+  assert.equal(readOnly.isError, undefined);
+  assert.deepEqual(guarded.listCalls, [false]);
+});
+
 test("desktop_call preserves the desktop mutation lock and structured text output", async () => {
   const harness = createHarness();
   const registration = harness.rawRegistrations.get("desktop_call");

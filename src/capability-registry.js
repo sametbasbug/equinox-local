@@ -115,6 +115,7 @@ const RETIRED_TERMINAL_FIRST_OPERATION_NAMES = new Set([
 ]);
 
 const FILE_OPERATION_NAMES = new Set([
+  "image_view",
   "list_projects",
 ]);
 
@@ -330,12 +331,20 @@ export function createCapabilityRegistry({ inferDomain = inferCapabilityDomain }
 function normalizeGatewayInvocationResult(result, textResult) {
   if (!result || result.isError) return result;
 
-  const text = Array.isArray(result.content)
-    ? result.content
-      .filter((item) => item && item.type === "text" && typeof item.text === "string")
-      .map((item) => item.text)
-      .join("\n")
-    : "";
+  const content = Array.isArray(result.content) ? result.content : [];
+  const text = content
+    .filter((item) => item && item.type === "text" && typeof item.text === "string")
+    .map((item) => item.text)
+    .join("\n");
+  const hasNonTextContent = content.some((item) => item && item.type !== "text");
+
+  if (hasNonTextContent) {
+    return {
+      ...result,
+      content,
+      structuredContent: { text },
+    };
+  }
 
   if (text) return textResult(text);
 
@@ -428,6 +437,9 @@ export function registerStableCapabilityGateways({
         mutationScopes: [],
         mcpExposed: true,
         capability: false,
+        // The gateway must stay callable while paused so the selected
+        // underlying operation can enforce its own read-only annotation.
+        pauseGuard: false,
       },
     );
   }
