@@ -16,11 +16,11 @@ import {
   resolvePeekabooBinary,
 } from "../../src/peekaboo-bridge.js";
 
-test("Peekaboo allowlist excludes AI, browser and clipboard surfaces", () => {
+test("Peekaboo allowlist exposes background-safe clipboard while excluding broader unsafe surfaces", () => {
   assert.equal(PEEKABOO_ALLOWED_TOOLS.includes("agent"), false);
   assert.equal(PEEKABOO_ALLOWED_TOOLS.includes("analyze"), false);
   assert.equal(PEEKABOO_ALLOWED_TOOLS.includes("browser"), false);
-  assert.equal(PEEKABOO_ALLOWED_TOOLS.includes("clipboard"), false);
+  assert.equal(PEEKABOO_ALLOWED_TOOLS.includes("clipboard"), true);
   assert.equal(PEEKABOO_ALLOWED_TOOLS.includes("dialog"), false);
   assert.equal(PEEKABOO_ALLOWED_TOOLS.includes("paste"), false);
   assert.equal(PEEKABOO_ALLOWED_TOOLS.includes("permissions"), true);
@@ -215,8 +215,19 @@ test("v3 perform_action and v4 action accept only AX accessibility actions", () 
   );
 });
 
+test("clipboard get/save arguments pass through the bounded Peekaboo bridge", () => {
+  assert.deepEqual(
+    normalizePeekabooArguments("clipboard", { action: "get" }),
+    { action: "get" },
+  );
+  assert.deepEqual(
+    normalizePeekabooArguments("clipboard", { action: "save", slot: "handoff" }),
+    { action: "save", slot: "handoff" },
+  );
+});
+
 test("blocked Peekaboo tool names never reach the downstream server", () => {
-  for (const name of ["agent", "analyze", "browser", "clipboard", "dialog", "paste", "image", "capture", "swipe"]) {
+  for (const name of ["agent", "analyze", "browser", "dialog", "paste", "image", "capture", "swipe"]) {
     assert.throws(
       () => normalizePeekabooArguments(name, {}),
       /allowlist/u,

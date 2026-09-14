@@ -392,8 +392,30 @@ test("natural PTY shell exit also drains resistant background jobs before finali
   }
 
   const fixture = await createResistantPtyChildFixture();
-  const manager = createTerminalManager({ ownershipMonitorMs: 40, naturalExitOwnershipFreshMs: 120 });
+  let shellPid = null;
   let childPid = null;
+  const pidAlive = (pid) => {
+    if (!Number.isInteger(pid) || pid <= 0) return false;
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch (error) {
+      if (error?.code === "ESRCH") return false;
+      throw error;
+    }
+  };
+  const manager = createTerminalManager({
+    ownershipMonitorMs: 40,
+    naturalExitOwnershipFreshMs: 120,
+    resolveProcessSessionIdImpl: async (pid) => {
+      shellPid = pid;
+      return 77_001;
+    },
+    listProcessSessionPidsImpl: async (sessionId) => {
+      assert.equal(sessionId, 77_001);
+      return [shellPid, childPid].filter((pid) => pidAlive(pid));
+    },
+  });
   try {
     const started = await manager.start({
       projectId: "local",

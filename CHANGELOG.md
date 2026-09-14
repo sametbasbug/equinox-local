@@ -6,6 +6,37 @@ This project follows semantic versioning for public releases.
 
 ## [Unreleased]
 
+No unreleased changes yet.
+
+## [5.0.0] - Continuum
+
+### Added
+
+- Added durable bounded **Task Capsules** for long-running agent work. Capsules persist human-readable objective/completed/next/reference state plus monotonic checkpoint revisions without duplicating ChatGPT transcripts. The store retains at most 50 capsules by default, prunes only oldest terminal records under capacity pressure, and Control Center supports bounded inspection, revision-guarded edits, completion/cancellation, pending-continuation cancellation and confirmed permanent deletion of completed/cancelled capsules.
+- Added explicitly armed one-shot **Auto Continue** for ChatGPT tasks. Each automatic hop binds the exact Browser/profile/tab/conversation/user-turn identity, has a TTL, survives safe Local restarts while still armed, and must be explicitly re-armed; automatic chains are capped at three hops.
+- Added a profile-local Equinox Browser popup selector for Auto Continue targeting: automatic current generating task by default, or one human-pinned open ChatGPT conversation.
+- Added guarded **Fresh Chat Resume** for moving an active Task Capsule into one fresh ChatGPT conversation while preserving root/project scope, durable at-most-once transition state and confirmed destination rebinding without transcript copying.
+- Added Task Recovery UX in Control Center for Fresh Chat Resume waiting/cancelled/ambiguous states, including explicit cancel/clear actions and human-readable stop reasons.
+
+### Changed
+
+- Refreshed the 5.0 runtime baseline to Node `26.8.2`, Peekaboo `4.4.0`, and Zod `4.6.5`; tunnel-client remains current at `0.0.14`, MCP SDK remains current at `1.30.0`, and `node-pty` intentionally stays on the current `1.2.0-beta.15` beta tag rather than regressing to npm's older `1.1.0` stable tag.
+- Reduced the agent-facing MCP connector surface from 15 top-level tools to 7 without removing capabilities: one unified read-only `capabilities` discovery tool plus `runtime_call`, `files_call`, `browser_call`, `desktop_call`, `release_call` and `integrations_call`. The empty Git gateway and duplicated `*_tools` catalogs are removed; release QA/deployment share one domain; desktop maintenance is explicit; Browser exposes short operation aliases while retaining internal compatibility.
+- Control Center task rows and task details now show the durable `task-...` Task Capsule ID so humans can match a visible task to agent handoff/resume instructions without guessing from the title.
+- Control Center navigation now includes Tasks alongside Overview, Projects, Browser, Safety, Services and Activity. Emergency Stop refreshes Task state after retiring pending continuations.
+- The public source projection now includes the Task Capsule and Auto Continue runtime modules plus their regression coverage.
+
+### Fixed
+
+- Fixed PTY natural-exit cleanup so background jobs that detach from the controlling TTY remain owned through their kernel POSIX session and are drained before the terminal session finalizes.
+- Fixed macOS login/reboot startup so the LaunchAgent runtime host automatically restores one foreground Equinox Local shell when none is registered, bringing back the menu bar and Nyx companion without duplicating an already-running shell.
+- Unified native Quit handling so menu-bar Quit, app-menu/Cmd-Q, Dock > Quit, and other normal macOS termination requests all pass through the same verified fail-closed LaunchAgent hard-stop lifecycle. Force Quit remains outside that graceful lifecycle guarantee.
+
+### Security
+
+- Auto Continue is human-first and fail-closed: composing/new user input, Emergency Stop, explicit cancellation, target drift, a closed/navigated pin or an unsafe/non-empty composer prevents the next automatic turn. Stale explicit pins never fall back to another tab/profile. Delivery is reserved before browser mutation, the extension claims a bounded receipt before submission, and ambiguous delivery is never blindly retried.
+- Fresh Chat Resume uses the same fail-closed boundary: destination creation/submission is receipt-guarded and at-most-once, only `prepared` work resumes after restart, and ambiguous browser mutation has no automatic or Control Center retry path. Clearing recovery state never replays the uncertain browser action.
+
 ## [4.8.0] - 2026-09-10
 
 ### Added
@@ -253,7 +284,8 @@ This project follows semantic versioning for public releases.
 - Internal release/QA browser surfaces are excluded from the public product capability registry.
 - Private Orbit/deployment configuration and machine-specific development infrastructure are excluded from the public source projection.
 
-[Unreleased]: https://github.com/sametbasbug/equinox-local/compare/v4.8.0...HEAD
+[Unreleased]: https://github.com/sametbasbug/equinox-local/compare/v5.0.0...HEAD
+[5.0.0]: https://github.com/sametbasbug/equinox-local/compare/v4.8.0...v5.0.0
 [4.8.0]: https://github.com/sametbasbug/equinox-local/compare/v4.7.0...v4.8.0
 [4.7.0]: https://github.com/sametbasbug/equinox-local/compare/v4.6.3...v4.7.0
 [4.6.3]: https://github.com/sametbasbug/equinox-local/compare/v4.6.2...v4.6.3

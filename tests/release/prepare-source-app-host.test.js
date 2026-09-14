@@ -23,7 +23,9 @@ macTest("source app host routes the LaunchAgent through stable Equinox Local.app
   await fs.writeFile(configPath, `launchAgentLabel=dev.equinox.local.dev\ntunnelRuntime=equinox-local-dev\ntunnelClient=${tunnelClient}\npeekabooPath=${peekabooPath}\nsourceLauncher=${sourceLauncher}\n`, { mode: 0o600 });
 
   const appPath = path.join(homeDir, "Applications", "Equinox Local.app");
-  const result = await prepareSourceAppHost({ homeDir, configPath });
+  const nodePath = path.join(root, "stable-node");
+  await fs.symlink(process.execPath, nodePath);
+  const result = await prepareSourceAppHost({ homeDir, configPath, nodePath });
   assert.deepEqual(result, { ready: true, appIdentity: "Equinox Local", bundleId: "dev.equinox.local" });
   const infoPlist = await fs.readFile(path.join(appPath, "Contents", "Info.plist"), "utf8");
   assert.match(infoPlist, /EquinoxLocalNativeShellVersion/u);
@@ -46,6 +48,7 @@ macTest("source app host routes the LaunchAgent through stable Equinox Local.app
   assert.match(wrapper, /watch_runtime_host/u);
   assert.equal(wrapper.includes('wait "$RUNTIME_WATCHDOG_PID"'), true);
   assert.match(wrapper, /watch-source-runtime\.mjs/u);
+  assert.equal(wrapper.includes(nodePath), true, "preserve the stable Node symlink instead of pinning the resolved version");
   assert.equal(wrapper.includes('kill -TERM "$$"'), true);
   assert.match(wrapper, /trap cleanup EXIT/u);
   assert.match(wrapper, /trap shutdown INT TERM HUP/u);

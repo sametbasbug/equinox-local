@@ -39,7 +39,7 @@ let browser = {
   active: true,
   ready: true,
   connectedAt: new Date().toISOString(),
-  extensionVersion: "0.5.2",
+  extensionVersion: "0.6.0",
   controlEnabled: true,
   agentCursorEnabled: true,
   agentCursorName: "Agent",
@@ -51,7 +51,7 @@ let browser = {
     context: "agent",
     isolated: true,
     ready: true,
-    extensionVersion: "0.5.2",
+    extensionVersion: "0.6.0",
     connectedAt: new Date().toISOString(),
     pairing: false,
     setupComplete: true,
@@ -60,7 +60,7 @@ let browser = {
     agent: {
       ready: true,
       connectedAt: new Date().toISOString(),
-      extensionVersion: "0.5.2",
+      extensionVersion: "0.6.0",
       consentAccepted: true,
       controlEnabled: true,
       agentCursorEnabled: true,
@@ -69,7 +69,7 @@ let browser = {
     user: {
       ready: true,
       connectedAt: new Date().toISOString(),
-      extensionVersion: "0.5.2",
+      extensionVersion: "0.6.0",
       consentAccepted: true,
       controlEnabled: true,
       agentCursorEnabled: true,
@@ -77,6 +77,21 @@ let browser = {
     },
   },
 };
+let tasks = [
+  {
+    taskId: "task-visual001", schemaVersion: 1, title: "Finish Auto Continue", objective: "Ship a durable, human-controllable continuation flow without duplicate delivery.", status: "active", checkpointRevision: 3,
+    completed: ["Task Capsule store", "Browser target binding"], next: ["Control Center Tasks panel", "Integrated acceptance"],
+    references: [{ type: "branch", label: "Feature branch", value: "equinox/auto-continue-task-capsules" }],
+    createdAt: new Date(Date.now() - 25 * 60_000).toISOString(), updatedAt: new Date(Date.now() - 2 * 60_000).toISOString(), completedAt: null,
+    continuation: { continuationId: "cont-visual001", status: "armed", checkpointRevision: 3, armedAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 10 * 60_000).toISOString(), chainId: "chain-visual001", hop: 1, reason: null, target: { browserContext: "user", mode: "task-tab", tabId: 7, title: "Equinox Local ve Browser İnşaatı" } },
+  },
+  {
+    taskId: "task-visual002", schemaVersion: 1, title: "Browser efficiency pass", objective: "Keep the browser primitive surface compact and tested.", status: "completed", checkpointRevision: 5,
+    completed: ["Snapshot pruning", "Smart wait", "Bookmarks"], next: [], references: [],
+    createdAt: new Date(Date.now() - 3 * 86400000).toISOString(), updatedAt: new Date(Date.now() - 2 * 86400000).toISOString(), completedAt: new Date(Date.now() - 2 * 86400000).toISOString(), continuation: null,
+  },
+];
+
 let onboarding = {
   available: true,
   managed: true,
@@ -147,6 +162,18 @@ const api = createEquinoxLocalControlApi({
       message: "Runtime started successfully.",
     },
   ],
+  getTasks: async () => structuredClone(tasks),
+  getTask: async (taskId) => structuredClone(tasks.find((task) => task.taskId === taskId)),
+  updateTask: async (taskId, body) => {
+    const index = tasks.findIndex((task) => task.taskId === taskId);
+    const current = tasks[index];
+    if (!current || current.checkpointRevision !== body.expectedRevision) throw new Error("Fixture task revision mismatch");
+    tasks[index] = { ...current, ...body, checkpointRevision: current.checkpointRevision + 1, updatedAt: new Date().toISOString(), continuation: current.continuation?.status === "armed" ? { ...current.continuation, status: "cancelled", reason: "checkpoint_changed" } : current.continuation };
+    return structuredClone(tasks[index]);
+  },
+  completeTask: async (taskId) => { const index = tasks.findIndex((task) => task.taskId === taskId); tasks[index] = { ...tasks[index], status: "completed", completedAt: new Date().toISOString(), updatedAt: new Date().toISOString() }; return structuredClone(tasks[index]); },
+  cancelTask: async (taskId) => { const index = tasks.findIndex((task) => task.taskId === taskId); tasks[index] = { ...tasks[index], status: "cancelled", completedAt: new Date().toISOString(), updatedAt: new Date().toISOString() }; return structuredClone(tasks[index]); },
+  cancelTaskContinuation: async (taskId) => { const index = tasks.findIndex((task) => task.taskId === taskId); tasks[index] = { ...tasks[index], continuation: tasks[index].continuation ? { ...tasks[index].continuation, status: "cancelled", reason: "human_cancelled" } : null, updatedAt: new Date().toISOString() }; return structuredClone(tasks[index]); },
   getOnboardingStatus: async () => ({ ...onboarding }),
   configureTunnel: async ({ tunnelId }) => {
     onboarding = {
@@ -194,13 +221,19 @@ const api = createEquinoxLocalControlApi({
       ...settings,
       nativeHostConnected: true,
       localConnected: true,
-      extensionVersion: "0.5.2",
+      extensionVersion: "0.6.0",
     };
   },
   getUpdateStatus: async () => update,
   checkForUpdates: async () => (update = { ...update, latestVersion: "4.8.0", updateAvailable: true, checkedAt: new Date().toISOString() }),
   applyUpdate: async () => ({ scheduled: true, targetVersion: "4.8.0" }),
-  pauseAgent: async () => ({ paused: (paused = true), state: "PAUSED" }),
+  pauseAgent: async () => {
+    paused = true;
+    tasks = tasks.map((task) => task.continuation?.status === "armed"
+      ? { ...task, continuation: { ...task.continuation, status: "cancelled", reason: "emergency_stop" }, updatedAt: new Date().toISOString() }
+      : task);
+    return { paused: true, state: "PAUSED" };
+  },
   resumeAgent: async () => ({ paused: (paused = false), state: "ACTIVE" }),
   restartRuntime: async () => { pid += 1; return { scheduled: true }; },
   getPeekabooStatus: async () => ({ active: true, ready: !attentionScenario, needsAttention: attentionScenario, version: "4.2.1", permissions: { screenRecording: true, accessibility: true } }),

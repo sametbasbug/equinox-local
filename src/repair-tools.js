@@ -1,9 +1,4 @@
-const REPAIR_RECIPE_IDS = Object.freeze([
-  "peekaboo_bridge_restart",
-  "stale_preview_cleanup",
-  "orphan_process_cleanup",
-  "stale_workflow_recover",
-]);
+import { REPAIR_RECIPE_IDS } from "./repair-engine.js";
 
 const REPAIR_OUTCOMES = Object.freeze([
   "RECOVERED",

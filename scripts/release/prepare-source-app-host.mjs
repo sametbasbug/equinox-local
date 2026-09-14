@@ -89,6 +89,7 @@ export function sourceLaunchAgentPlist({ homeDir, label }) {
 export async function prepareSourceAppHost({
   homeDir = os.homedir(),
   configPath = process.env.EQUINOX_LOCAL_DEV_RUNTIME_CONFIG,
+  nodePath = process.env.EQUINOX_LOCAL_DEV_NODE || process.execPath,
   fsImpl = fs,
   ensureAppHostImpl = null,
 } = {}) {
@@ -114,6 +115,7 @@ export async function prepareSourceAppHost({
 
   const runtimeWrapperPath = equinoxLocalAppRuntimeWrapperPath(homeDir);
   await atomicWrite(runtimeWrapperPath, sourceAppRuntimeWrapper(sourceLauncher, peekabooPath, {
+    nodePath,
     configPath: loaded.configPath,
     tunnelClient: loaded.config.tunnelClient,
     tunnelRuntime: loaded.config.tunnelRuntime,

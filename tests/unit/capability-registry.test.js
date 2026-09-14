@@ -22,8 +22,8 @@ function extractText(result) {
 test("inferCapabilityDomain keeps broad stable domains and excludes already-dynamic bridges", () => {
   assert.equal(inferCapabilityDomain("list_projects"), "files");
   assert.equal(inferCapabilityDomain("equinox_browser_click"), "browser");
-  assert.equal(inferCapabilityDomain("deployment_status"), "services");
-  assert.equal(inferCapabilityDomain("telegram_send_message"), "services");
+  assert.equal(inferCapabilityDomain("deployment_status"), "release");
+  assert.equal(inferCapabilityDomain("telegram_send_message"), "integrations");
   assert.equal(inferCapabilityDomain("system_doctor"), "runtime");
   assert.equal(inferCapabilityDomain("terminal_exec"), "runtime");
   for (const retired of [
@@ -134,7 +134,7 @@ test("terminal_exec is cataloged only under the runtime gateway", () => {
   });
 
   assert.deepEqual(registry.catalog("runtime").operations.map((item) => item.name), ["terminal_exec"]);
-  for (const domain of ["files", "git", "automation", "services", "browser"]) {
+  for (const domain of ["files", "release", "integrations", "browser"]) {
     assert.equal(registry.catalog(domain).operations.some((item) => item.name === "terminal_exec"), false);
   }
 });
@@ -193,9 +193,10 @@ test("registry lists, describes, validates and invokes operations through live s
     /unrecognized|invalid|unknown/i,
   );
   await assert.rejects(
-    registry.invoke("git", "list_projects", { path: "README.md" }),
+    registry.invoke("release", "list_projects", { path: "README.md" }),
     /operation bulunamadı/,
   );
+  assert.throws(() => registry.catalog("git"), /Bilinmeyen capability domain/u);
 });
 
 test("registry can gain a new operation without changing the stable gateway definition", async () => {
@@ -211,7 +212,7 @@ test("registry can gain a new operation without changing the stable gateway defi
   });
 
   const before = registry.catalog("browser");
-  assert.deepEqual(before.operations.map((item) => item.name), ["equinox_browser_status"]);
+  assert.deepEqual(before.operations.map((item) => item.name), ["status"]);
 
   registry.register({
     name: "equinox_browser_future_drag_drop",
@@ -227,31 +228,29 @@ test("registry can gain a new operation without changing the stable gateway defi
 
   const after = registry.catalog("browser");
   assert.deepEqual(after.operations.map((item) => item.name), [
-    "equinox_browser_future_drag_drop",
-    "equinox_browser_status",
+    "future_drag_drop",
+    "status",
   ]);
-  const invoked = await registry.invoke("browser", "equinox_browser_future_drag_drop", {
+  const invoked = await registry.invoke("browser", "future_drag_drop", {
     source_ref: "@e1",
     target_ref: "@e2",
   });
   assert.equal(extractText(invoked), "@e1->@e2");
+  const legacyInternalName = await registry.invoke("browser", "equinox_browser_future_drag_drop", {
+    source_ref: "@e3",
+    target_ref: "@e4",
+  });
+  assert.equal(extractText(legacyInternalName), "@e3->@e4");
 });
 
-test("stable gateways use free-form operation strings and delegate to the registry", async () => {
+test("unified discovery plus semantic call gateways expose the compact stable surface", async () => {
   const registry = createCapabilityRegistry();
   registry.register({
     name: "equinox_browser_future_drag_drop",
     config: {
       description: "Future dynamic browser operation",
-      inputSchema: {
-        source_ref: z.string(),
-        target_ref: z.string(),
-      },
-      annotations: {
-        title: "Drag and drop",
-        readOnlyHint: false,
-        destructiveHint: false,
-      },
+      inputSchema: { source_ref: z.string(), target_ref: z.string() },
+      annotations: { title: "Drag and drop", readOnlyHint: false, destructiveHint: false },
     },
     invoke: async ({ source_ref, target_ref }) => textResult(`${source_ref}->${target_ref}`),
   });
@@ -260,39 +259,75 @@ test("stable gateways use free-form operation strings and delegate to the regist
   const registerTextTool = (name, config, handler, options) => {
     registered.set(name, { config, handler, options });
   };
+  const desktopProvider = {
+    async summary() { return { count: 4 }; },
+    async catalog() {
+      return {
+        domain: "desktop",
+        label: "macOS desktop",
+        count: 4,
+        operations: [
+          { name: "status", title: "Status", description: "Bridge status", readOnly: true, destructive: false },
+          { name: "see", title: "see", description: "Inspect visible desktop UI", readOnly: false, destructive: false },
+          { name: "refresh", title: "Refresh", description: "Refresh tool catalog", readOnly: false, destructive: false },
+          { name: "restart", title: "Restart", description: "Restart bridge", readOnly: false, destructive: false },
+        ],
+      };
+    },
+    async describe(operation) {
+      return { domain: "desktop", name: operation, inputSchema: { type: "object", additionalProperties: false } };
+    },
+  };
 
-  registerStableCapabilityGateways({ registerTextTool, registry, textResult });
+  registerStableCapabilityGateways({
+    registerTextTool,
+    registry,
+    textResult,
+    externalDomains: { desktop: desktopProvider },
+  });
 
-  assert.equal(registered.size, Object.keys(STABLE_CAPABILITY_DOMAINS).length * 2);
-  const browserTools = registered.get("browser_tools");
+  assert.deepEqual([...registered.keys()].sort(), [
+    "browser_call",
+    "capabilities",
+    "files_call",
+    "integrations_call",
+    "release_call",
+    "runtime_call",
+  ]);
+  assert.equal(registered.has("browser_tools"), false);
+  assert.equal(registered.has("git_call"), false);
+  assert.equal(registered.has("automation_call"), false);
+  assert.equal(registered.has("services_call"), false);
+
+  const capabilities = registered.get("capabilities");
   const browserCall = registered.get("browser_call");
-  assert.ok(browserTools);
-  assert.ok(browserCall);
-  assert.equal(browserTools.options.capability, false);
-  assert.equal(browserTools.options.mcpExposed, true);
+  assert.equal(capabilities.options.mcpExposed, true);
   assert.equal(browserCall.options.mcpExposed, true);
   assert.deepEqual(browserCall.options.mutationScopes, []);
 
-  const arbitraryOperationName = "equinox_browser_operation_added_after_public_release";
-  assert.equal(
-    browserCall.config.inputSchema.operation.safeParse(arbitraryOperationName).success,
-    true,
-  );
+  const summary = JSON.parse(extractText(await capabilities.handler({})));
+  assert.equal(summary.domains.some((item) => item.domain === "desktop" && item.count === 4), true);
+  assert.equal(summary.domains.some((item) => item.domain === "git"), false);
 
-  const catalogResult = await browserTools.handler({});
-  const catalog = JSON.parse(extractText(catalogResult));
+  const catalog = JSON.parse(extractText(await capabilities.handler({ domain: "browser" })));
   assert.equal(catalog.count, 1);
-  assert.equal(catalog.operations[0].name, "equinox_browser_future_drag_drop");
+  assert.equal(catalog.operations[0].name, "future_drag_drop");
 
-  const descriptorResult = await browserTools.handler({ operation: "equinox_browser_future_drag_drop" });
-  const descriptor = JSON.parse(extractText(descriptorResult));
+  const filteredDesktop = JSON.parse(extractText(await capabilities.handler({ domain: "desktop", query: "visible" })));
+  assert.deepEqual(filteredDesktop.operations.map((item) => item.name), ["see"]);
+
+  const descriptor = JSON.parse(extractText(await capabilities.handler({ domain: "browser", operation: "future_drag_drop" })));
+  assert.equal(descriptor.name, "future_drag_drop");
   assert.equal(descriptor.inputSchema.properties.source_ref.type, "string");
 
   const callResult = await browserCall.handler({
-    operation: "equinox_browser_future_drag_drop",
+    operation: "future_drag_drop",
     arguments: { source_ref: "@e4", target_ref: "@e8" },
   });
   assert.equal(extractText(callResult), "@e4->@e8");
+
+  await assert.rejects(() => capabilities.handler({ query: "snapshot" }), /domain zorunludur/u);
+  await assert.rejects(() => capabilities.handler({ domain: "browser", query: "snap", operation: "snapshot" }), /aynı anda/u);
 });
 
 test("stable gateways preserve MCP image content while normalizing structured output", async () => {
@@ -322,6 +357,94 @@ test("stable gateways preserve MCP image content while normalizing structured ou
     { type: "image", data: "aGVsbG8=", mimeType: "image/png" },
   ]);
   assert.deepEqual(result.structuredContent, { text: "image-ok" });
+});
+
+test("stable files gateway exposes one native ChatGPT file parameter and injects it into dynamic operation arguments", async () => {
+  const registry = createCapabilityRegistry();
+  const calls = [];
+  registry.register({
+    name: "file_import",
+    domain: "files",
+    config: {
+      inputSchema: {
+        file: z.object({
+          download_url: z.string(),
+          file_id: z.string(),
+          mime_type: z.string().optional(),
+          file_name: z.string().optional(),
+        }),
+      },
+      annotations: { readOnlyHint: false },
+    },
+    invoke: async (input) => {
+      calls.push(input);
+      return textResult("import-ok");
+    },
+  });
+
+  const registered = new Map();
+  registerStableCapabilityGateways({
+    registerTextTool: (name, config, handler, options) => registered.set(name, { config, handler, options }),
+    registry,
+    textResult,
+  });
+
+  const filesCall = registered.get("files_call");
+  const runtimeCall = registered.get("runtime_call");
+  assert.deepEqual(filesCall.config._meta, { "openai/fileParams": ["file"] });
+  assert.equal(filesCall.config.inputSchema.file.safeParse({
+    download_url: "https://files.example.invalid/samet-test.txt",
+    file_id: "file_123",
+    mime_type: "text/plain",
+    file_name: "samet-test.txt",
+  }).success, true);
+  assert.equal(runtimeCall.config._meta, undefined);
+  assert.equal(runtimeCall.config.inputSchema.file, undefined);
+
+  const file = {
+    download_url: "https://files.example.invalid/samet-test.txt",
+    file_id: "file_123",
+    mime_type: "text/plain",
+    file_name: "samet-test.txt",
+  };
+  const result = await filesCall.handler({
+    operation: "file_import",
+    arguments: {},
+    file,
+  });
+  assert.equal(extractText(result), "import-ok");
+  assert.deepEqual(calls, [{ file }]);
+});
+
+test("stable files gateway preserves embedded MCP resource content", async () => {
+  const registry = createCapabilityRegistry();
+  const resource = {
+    type: "resource",
+    resource: {
+      uri: "equinox-local://file-export/selene-test.txt",
+      mimeType: "text/plain",
+      blob: "aGVsbG8=",
+    },
+    annotations: { audience: ["user"], priority: 1 },
+  };
+  registry.register({
+    name: "file_export",
+    domain: "files",
+    config: { inputSchema: {}, annotations: { readOnlyHint: true } },
+    invoke: async () => ({
+      content: [{ type: "text", text: "file-ok" }, resource],
+    }),
+  });
+
+  const registered = new Map();
+  registerStableCapabilityGateways({
+    registerTextTool: (name, config, handler, options) => registered.set(name, { config, handler, options }),
+    registry,
+    textResult,
+  });
+  const result = await registered.get("files_call").handler({ operation: "file_export", arguments: {} });
+  assert.deepEqual(result.content, [{ type: "text", text: "file-ok" }, resource]);
+  assert.deepEqual(result.structuredContent, { text: "file-ok" });
 });
 
 test("stable gateways normalize custom structured results to their stable text output schema", async () => {

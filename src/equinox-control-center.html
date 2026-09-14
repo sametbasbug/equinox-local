@@ -32,6 +32,10 @@
           <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 8V6a2 2 0 0 1 2-2h4l2 3h8a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/></svg>
           <span>Projects</span>
         </button>
+        <button class="nav-item" type="button" data-section="tasks">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 4.5V3h6v1.5M8.5 10h7M8.5 14h7M8.5 18h4"/></svg>
+          <span>Tasks</span>
+        </button>
         <button class="nav-item" type="button" data-section="browser">
           <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a17 17 0 0 1 0 18 17 17 0 0 1 0-18Z"/></svg>
           <span>Browser</span>
@@ -299,6 +303,15 @@
               <summary>View all checks</summary>
               <div id="doctor-list" class="doctor-list" aria-live="polite"></div>
             </details>
+            <section class="doctor-fix-block" aria-labelledby="doctor-fix-title">
+              <div class="doctor-fix-heading">
+                <strong id="doctor-fix-title">Doctor → Fix</strong>
+                <span id="doctor-fix-summary" class="badge neutral">Checking</span>
+              </div>
+              <p id="doctor-fix-copy" class="panel-note">Checking recent diagnosed incidents for safe predefined fixes.</p>
+              <div id="doctor-repair-list" class="doctor-repair-list" aria-live="polite"></div>
+              <div id="doctor-repair-result" class="doctor-repair-result" role="status" hidden></div>
+            </section>
             <div class="health-meta">
               <span id="doctor-summary">—</span>
               <span id="doctor-checked-at">Not checked yet</span>
@@ -385,6 +398,53 @@
             <button id="save-config-button" class="button primary full-width" type="button" disabled>Save configuration</button>
             <p class="save-hint">Save your changes, then restart Equinox Local to apply them.</p>
           </aside>
+        </div>
+      </section>
+
+      <section id="section-tasks" class="page-section" aria-labelledby="section-title" hidden>
+        <div class="section-intro"><div><p>Inspect durable task checkpoints and take control when an automatic continuation should stop or change. Task state stays private on this Mac.</p></div></div>
+        <div class="tasks-workspace">
+          <aside class="task-list-pane" aria-label="Task list">
+            <div class="task-pane-heading"><div><span class="list-title">Recent tasks</span><span id="task-count-label" class="muted">Loading…</span></div></div>
+            <div id="task-list" class="task-list" aria-live="polite"></div>
+          </aside>
+          <section class="task-detail-pane" aria-label="Task details">
+            <div id="task-detail-empty" class="task-detail-empty"><strong>Select a task</strong><p>Choose a task on the left to inspect its latest checkpoint.</p></div>
+            <form id="task-form" hidden>
+              <div class="task-detail-heading">
+                <div><p class="eyebrow">Task Capsule</p><div class="task-heading-line"><h3 id="task-detail-title">Task</h3><span id="task-status-badge" class="badge neutral">Active</span></div><code id="task-detail-id" class="task-detail-id">task—</code><p id="task-detail-meta" class="task-detail-meta">Checkpoint — · Updated —</p></div>
+                <div class="task-continuation-summary"><span>Auto Continue</span><strong id="task-continuation-state">Not armed</strong><small id="task-continuation-target">No browser target</small></div>
+              </div>
+              <section id="task-recovery-panel" class="task-recovery-panel" hidden aria-live="polite">
+                <div class="task-recovery-heading"><span class="eyebrow">Task recovery</span><span id="task-recovery-badge" class="badge neutral">Recoverable</span></div>
+                <strong id="task-recovery-title">Fresh-chat handoff stopped</strong>
+                <p id="task-recovery-message">The saved checkpoint is still available.</p>
+                <small id="task-recovery-code" class="task-recovery-code" hidden></small>
+                <div class="task-recovery-actions">
+                  <button id="task-cancel-fresh-resume-button" class="button secondary" type="button">Cancel fresh-chat handoff</button>
+                  <button id="task-abandon-fresh-resume-button" class="button secondary" type="button">Clear blocked transition</button>
+                </div>
+              </section>
+              <div class="task-editor-fields">
+                <label class="field"><span>Title</span><input id="task-title-input" type="text" maxlength="160" autocomplete="off"></label>
+                <label class="field"><span>Objective</span><textarea id="task-objective-input" rows="5"></textarea></label>
+                <div class="task-editor-columns">
+                  <label class="field"><span>Completed items</span><textarea id="task-completed-input" rows="6" placeholder="One completed item per line"></textarea></label>
+                  <label class="field"><span>Next</span><textarea id="task-next-input" rows="6" placeholder="One next step per line"></textarea></label>
+                </div>
+                <label class="field"><span>References</span><textarea id="task-references-input" rows="4" placeholder="type | label | value"></textarea><small>One safe reference per line: project, branch, commit, file, url or note.</small></label>
+              </div>
+              <div class="task-actions">
+                <button id="task-save-button" class="button primary" type="submit">Save changes</button>
+                <button id="task-cancel-continuation-button" class="button secondary" type="button">Cancel continuation</button>
+                <span class="task-action-spacer"></span>
+                <button id="task-complete-button" class="button secondary" type="button">Mark complete</button>
+                <button id="task-cancel-button" class="button danger" type="button">Cancel task</button>
+                <button id="task-delete-button" class="button danger" type="button" hidden>Delete task</button>
+              </div>
+              <p id="task-readonly-note" class="readonly-note" hidden>This task is terminal and can no longer be edited.</p>
+            </form>
+          </section>
         </div>
       </section>
 

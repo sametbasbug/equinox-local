@@ -3,10 +3,13 @@ import fs from "node:fs/promises";
 import http from "node:http";
 
 import { EQUINOX_LOCAL_CONFIG_ERROR_CODES } from "./equinox-local-config.js";
+import { TASK_CAPSULE_ERROR_CODES } from "./task-capsule-store.js";
+import { REPAIR_RECIPE_IDS } from "./repair-engine.js";
 
 const LOOPBACK_HOST = "127.0.0.1";
 const MAX_REQUEST_BYTES = 256 * 1024;
 const REQUEST_TIMEOUT_MS = 10_000;
+const REPAIR_RECIPE_ID_SET = new Set(REPAIR_RECIPE_IDS);
 const CONTROL_CENTER_CSP = [
   "default-src 'none'",
   "script-src 'self'",
@@ -244,6 +247,21 @@ function validateEmptyObject(body, label) {
   return body;
 }
 
+function validateDoctorRepairRequest(body) {
+  if (body === null || typeof body !== "object" || Array.isArray(body)) {
+    throw badRequest("Doctor repair body must be a JSON object.");
+  }
+  const keys = Object.keys(body).sort();
+  if (keys.length !== 2 || keys[0] !== "incidentId" || keys[1] !== "recipeId") {
+    throw badRequest("Doctor repair accepts only incidentId and recipeId.");
+  }
+  const incidentId = String(body.incidentId ?? "");
+  const recipeId = String(body.recipeId ?? "");
+  if (!/^inc-[a-z0-9-]{4,176}$/u.test(incidentId)) throw badRequest("Doctor repair incidentId is invalid.");
+  if (!REPAIR_RECIPE_ID_SET.has(recipeId)) throw badRequest("Doctor repair recipeId is invalid.");
+  return Object.freeze({ incidentId, recipeId });
+}
+
 function validateUninstallRequest(body) {
   if (body === null || typeof body !== "object" || Array.isArray(body)) {
     throw badRequest("Uninstall body must be a JSON object.");
@@ -257,13 +275,64 @@ function validateUninstallRequest(body) {
   return Object.freeze({ removeUserData: body.removeUserData });
 }
 
+function parseTaskRoute(pathname) {
+  const match = /^\/api\/v1\/tasks\/(task-[a-z0-9-]{6,80})(?:\/(complete|cancel|delete|continuation\/cancel|fresh-resume\/cancel|fresh-resume\/abandon))?$/u.exec(pathname);
+  if (!match) return null;
+  return Object.freeze({ taskId: match[1], action: match[2] || null });
+}
+
+function isAllowedControlCenterNavigationQuery(url) {
+  if (url.pathname !== "/") return false;
+  const keys = [...url.searchParams.keys()];
+  if (keys.some((key) => key !== "section" && key !== "task")) return false;
+  if (url.searchParams.getAll("section").length !== 1) return false;
+  if (url.searchParams.getAll("task").length > 1) return false;
+  if (url.searchParams.get("section") !== "tasks") return false;
+  const taskId = url.searchParams.get("task");
+  return taskId === null || /^task-[a-z0-9-]{6,80}$/u.test(taskId);
+}
+
+function validateTaskUpdateRequest(body) {
+  if (body === null || typeof body !== "object" || Array.isArray(body)) throw badRequest("Task update body must be a JSON object.");
+  const allowed = new Set(["expectedRevision", "title", "objective", "completed", "next", "references"]);
+  const keys = Object.keys(body);
+  if (keys.some((key) => !allowed.has(key))) throw badRequest("Task update body contains an unsupported field.");
+  if (!Number.isInteger(body.expectedRevision) || body.expectedRevision < 1) throw badRequest("expectedRevision must be a positive integer.");
+  if (typeof body.title !== "string" || body.title.trim().length < 1 || body.title.trim().length > 160) throw badRequest("Task title must be 1-160 characters.");
+  if (typeof body.objective !== "string" || body.objective.trim().length < 1 || Buffer.byteLength(body.objective.trim(), "utf8") > 12 * 1024) throw badRequest("Task objective is invalid or too large.");
+  for (const field of ["completed", "next"]) {
+    if (!Array.isArray(body[field]) || body[field].length > 64) throw badRequest(`${field} must be an array with at most 64 items.`);
+    if (body[field].some((item) => typeof item !== "string" || !item.trim() || Buffer.byteLength(item.trim(), "utf8") > 1024)) throw badRequest(`${field} contains an invalid item.`);
+  }
+  if (!Array.isArray(body.references) || body.references.length > 32) throw badRequest("references must be an array with at most 32 items.");
+  for (const reference of body.references) {
+    if (!reference || typeof reference !== "object" || Array.isArray(reference)) throw badRequest("Each task reference must be an object.");
+    if (Object.keys(reference).some((key) => !["type", "label", "value"].includes(key))) throw badRequest("Task reference contains an unsupported field.");
+    if (!["project", "branch", "commit", "file", "url", "note"].includes(reference.type)) throw badRequest("Task reference type is unsupported.");
+    if (typeof reference.label !== "string" || !reference.label.trim() || reference.label.trim().length > 120) throw badRequest("Task reference label is invalid.");
+    if (typeof reference.value !== "string" || !reference.value.trim() || Buffer.byteLength(reference.value.trim(), "utf8") > 2048) throw badRequest("Task reference value is invalid.");
+  }
+  return body;
+}
+
 export function createEquinoxLocalControlApi({
   configManager,
   getStatus = async () => ({}),
   getDoctorStatus = async () => ({}),
+  getDoctorRepairs = null,
+  applyDoctorRepair = null,
   getActivity = async () => [],
   getUpdateStatus = async () => ({}),
   getOnboardingStatus = async () => ({ available: false }),
+  getTasks = null,
+  getTask = null,
+  updateTask = null,
+  completeTask = null,
+  cancelTask = null,
+  deleteTask = null,
+  cancelTaskContinuation = null,
+  cancelTaskFreshResume = null,
+  abandonTaskFreshResume = null,
   checkForUpdates = null,
   applyUpdate = null,
   configureTunnel = null,
@@ -353,7 +422,7 @@ export function createEquinoxLocalControlApi({
       return;
     }
 
-    if (url.search) {
+    if (url.search && !isAllowedControlCenterNavigationQuery(url)) {
       jsonBody(res, 400, { ok: false, error: "Control Center API query parametresi kabul etmiyor." });
       return;
     }
@@ -396,6 +465,22 @@ export function createEquinoxLocalControlApi({
         return;
       }
 
+      if (req.method === "GET" && url.pathname === "/api/v1/doctor/repairs") {
+        if (typeof getDoctorRepairs !== "function") { const error = new Error("Doctor repair planning is unavailable on this installation."); error.statusCode = 503; throw error; }
+        jsonBody(res, 200, { ok: true, repairs: await getDoctorRepairs() });
+        return;
+      }
+
+      if (req.method === "POST" && url.pathname === "/api/v1/doctor/repair") {
+        assertMutationRequest(req, { port: actualPort, csrfToken: state.csrfToken });
+        if (typeof applyDoctorRepair !== "function") { const error = new Error("Doctor repair is unavailable on this installation."); error.statusCode = 503; throw error; }
+        const request = validateDoctorRepairRequest(await readJsonRequest(req));
+        const result = await applyDoctorRepair(request);
+        state.mutationCount += 1;
+        jsonBody(res, 200, { ok: true, result });
+        return;
+      }
+
       if (req.method === "GET" && url.pathname === "/api/v1/activity") {
         jsonBody(res, 200, { ok: true, events: await getActivity() });
         return;
@@ -408,6 +493,60 @@ export function createEquinoxLocalControlApi({
 
       if (req.method === "GET" && url.pathname === "/api/v1/onboarding") {
         jsonBody(res, 200, { ok: true, onboarding: await getOnboardingStatus() });
+        return;
+      }
+
+      if (req.method === "GET" && url.pathname === "/api/v1/tasks") {
+        if (typeof getTasks !== "function") { const error = new Error("Task controls are unavailable on this installation."); error.statusCode = 503; throw error; }
+        jsonBody(res, 200, { ok: true, tasks: await getTasks() });
+        return;
+      }
+
+      const taskRoute = parseTaskRoute(url.pathname);
+      if (req.method === "GET" && taskRoute?.action === null) {
+        if (typeof getTask !== "function") { const error = new Error("Task controls are unavailable on this installation."); error.statusCode = 503; throw error; }
+        jsonBody(res, 200, { ok: true, task: await getTask(taskRoute.taskId) });
+        return;
+      }
+
+      if (req.method === "PUT" && taskRoute?.action === null) {
+        assertMutationRequest(req, { port: actualPort, csrfToken: state.csrfToken });
+        if (typeof updateTask !== "function") { const error = new Error("Task editing is unavailable on this installation."); error.statusCode = 503; throw error; }
+        const task = await updateTask(taskRoute.taskId, validateTaskUpdateRequest(await readJsonRequest(req)));
+        state.mutationCount += 1;
+        jsonBody(res, 200, { ok: true, task });
+        return;
+      }
+
+      if (req.method === "POST" && taskRoute?.action) {
+        assertMutationRequest(req, { port: actualPort, csrfToken: state.csrfToken });
+        validateEmptyObject(await readJsonRequest(req), "Task action");
+        if (taskRoute.action === "delete") {
+          if (typeof deleteTask !== "function") { const error = new Error("Task deletion is unavailable on this installation."); error.statusCode = 503; throw error; }
+          const deleted = await deleteTask(taskRoute.taskId);
+          state.mutationCount += 1;
+          jsonBody(res, 200, { ok: true, deleted });
+          return;
+        }
+        let task;
+        if (taskRoute.action === "complete") {
+          if (typeof completeTask !== "function") { const error = new Error("Task completion is unavailable on this installation."); error.statusCode = 503; throw error; }
+          task = await completeTask(taskRoute.taskId);
+        } else if (taskRoute.action === "cancel") {
+          if (typeof cancelTask !== "function") { const error = new Error("Task cancellation is unavailable on this installation."); error.statusCode = 503; throw error; }
+          task = await cancelTask(taskRoute.taskId);
+        } else if (taskRoute.action === "continuation/cancel") {
+          if (typeof cancelTaskContinuation !== "function") { const error = new Error("Auto Continue cancellation is unavailable on this installation."); error.statusCode = 503; throw error; }
+          task = await cancelTaskContinuation(taskRoute.taskId);
+        } else if (taskRoute.action === "fresh-resume/cancel") {
+          if (typeof cancelTaskFreshResume !== "function") { const error = new Error("Fresh Chat Resume cancellation is unavailable on this installation."); error.statusCode = 503; throw error; }
+          task = await cancelTaskFreshResume(taskRoute.taskId);
+        } else {
+          if (typeof abandonTaskFreshResume !== "function") { const error = new Error("Fresh Chat Resume recovery is unavailable on this installation."); error.statusCode = 503; throw error; }
+          task = await abandonTaskFreshResume(taskRoute.taskId);
+        }
+        state.mutationCount += 1;
+        jsonBody(res, 200, { ok: true, task });
         return;
       }
 
@@ -659,9 +798,11 @@ export function createEquinoxLocalControlApi({
     } catch (error) {
       const statusCode = Number.isInteger(error?.statusCode)
         ? error.statusCode
-        : error?.code === EQUINOX_LOCAL_CONFIG_ERROR_CODES.revisionConflict
+        : error?.code === EQUINOX_LOCAL_CONFIG_ERROR_CODES.revisionConflict || error?.code === TASK_CAPSULE_ERROR_CODES.revisionConflict || error?.code === TASK_CAPSULE_ERROR_CODES.terminalRequired
           ? 409
-          : 500;
+          : error?.code === TASK_CAPSULE_ERROR_CODES.notFound
+            ? 404
+            : 500;
       if (statusCode === 500 && recordInternalError) {
         void Promise.resolve(recordInternalError(error)).catch(() => {});
       }

@@ -1,10 +1,72 @@
+function formatDesktopStatus(status) {
+  return [
+    `Peekaboo: ${status.version}`,
+    `Binary: ${status.binary}`,
+    `Peekaboo MCP köprüsü: ${status.active ? "AKTİF" : "pasif"}`,
+    `Equinox Local allowlist: ${status.allowedToolCount} araç`,
+    `Araçlar: ${status.allowedTools.join(", ")}`,
+    status.compatibility
+      ? `Uyumluluk: ${status.compatibility.ok ? "OK" : "HATA"} | minimum=${status.compatibility.minimumVersion.major}.${status.compatibility.minimumVersion.minor}.${status.compatibility.minimumVersion.patch}${status.compatibility.warnings.length > 0 ? ` | uyarı=${status.compatibility.warnings.join(" | ")}` : ""}`
+      : `Uyumluluk: doğrulanamadı${status.error ? ` | ${status.error}` : ""}`,
+    `MCP yeniden bağlantı: ${status.reconnectCount} | son=${status.lastReconnectAt ? new Date(status.lastReconnectAt).toISOString() : "yok"} | beklenmeyen kapanma=${status.unexpectedCloseCount} | son kapanma=${status.lastUnexpectedCloseAt ? new Date(status.lastUnexpectedCloseAt).toISOString() : "yok"}${status.lastTransportError ? ` | son transport hatası=${status.lastTransportError}` : ""}`,
+    status.permissions
+      ? `İzinler:\n${status.permissions}`
+      : `İzin durumu alınamadı: ${status.error ?? "bilinmeyen hata"}`,
+    status.serverStatus ? `Peekaboo server durumu:\n${status.serverStatus}` : null,
+  ].filter(Boolean).join("\n\n");
+}
+
+const DESKTOP_BRIDGE_OPERATIONS = Object.freeze({
+  status: Object.freeze({
+    name: "status",
+    title: "macOS desktop bridge status",
+    description: "Show Peekaboo version, compatibility, permissions, connection state and Equinox Local desktop allowlist without performing UI actions.",
+    readOnly: true,
+    destructive: false,
+    idempotent: true,
+    openWorld: false,
+    inputSchema: Object.freeze({ type: "object", properties: {}, additionalProperties: false }),
+  }),
+  refresh: Object.freeze({
+    name: "refresh",
+    title: "Refresh desktop tool catalog",
+    description: "Reload the bounded Peekaboo MCP tool catalog without restarting the bridge or changing foreground UI.",
+    readOnly: false,
+    destructive: false,
+    idempotent: true,
+    openWorld: false,
+    inputSchema: Object.freeze({ type: "object", properties: {}, additionalProperties: false }),
+  }),
+  restart: Object.freeze({
+    name: "restart",
+    title: "Restart desktop bridge",
+    description: "Restart only the Peekaboo MCP subprocess and reload its safe tool catalog. Does not restart Equinox Local or applications.",
+    readOnly: false,
+    destructive: false,
+    idempotent: false,
+    openWorld: false,
+    inputSchema: Object.freeze({ type: "object", properties: {}, additionalProperties: false }),
+  }),
+});
+
+function publicDesktopTool(tool) {
+  return {
+    name: tool.name,
+    title: tool.name,
+    description: tool.description ?? "",
+    readOnly: false,
+    destructive: false,
+    idempotent: false,
+    openWorld: false,
+    inputSchema: tool.inputSchema ?? { type: "object", additionalProperties: false },
+  };
+}
+
 export function registerDesktopGatewayTools({
-  registerTextTool,
   registerRawTool,
   z,
   agentAccess,
   peekabooBridge,
-  allowedTools,
   withMutationLocks,
   normalizeChromeToolResult,
   extractTextContent,
@@ -12,180 +74,109 @@ export function registerDesktopGatewayTools({
   errorResult,
   assertMutationAllowed = () => {},
 } = {}) {
-  registerTextTool(
-    "desktop_status",
-    {
-      description:
-        "Peekaboo tabanlı macOS masaüstü köprüsünün sürümünü, izin durumunu ve Equinox Local güvenli araç yüzeyini gösterir. UI eylemi gerçekleştirmez.",
-      inputSchema: {},
-      annotations: {
-        title: "macOS masaüstü köprüsü durumu",
-        readOnlyHint: true,
-        destructiveHint: false,
-        idempotentHint: true,
-        openWorldHint: false,
-      },
+  const desktopTextResult = (text) => ({
+    ...textResult(text),
+    structuredContent: { text },
+  });
+
+  async function listDesktopOperations() {
+    const bridgeOperations = Object.values(DESKTOP_BRIDGE_OPERATIONS);
+    if (!agentAccess.desktop) return bridgeOperations;
+    const tools = await peekabooBridge.listTools(false);
+    return [...bridgeOperations, ...tools.map(publicDesktopTool)];
+  }
+
+  const discovery = Object.freeze({
+    async summary() {
+      const operations = await listDesktopOperations();
+      return { count: operations.length };
     },
-    async () => {
-      try {
-        const status = await peekabooBridge.status();
-        return textResult(
-          [
-            `Peekaboo: ${status.version}`,
-            `Binary: ${status.binary}`,
-            `Peekaboo MCP köprüsü: ${status.active ? "AKTİF" : "pasif"}`,
-            `Equinox Local allowlist: ${status.allowedToolCount} araç`,
-            `Araçlar: ${status.allowedTools.join(", ")}`,
-            status.compatibility
-              ? `Uyumluluk: ${status.compatibility.ok ? "OK" : "HATA"} | minimum=${status.compatibility.minimumVersion.major}.${status.compatibility.minimumVersion.minor}.${status.compatibility.minimumVersion.patch}${status.compatibility.warnings.length > 0 ? ` | uyarı=${status.compatibility.warnings.join(" | ")}` : ""}`
-              : `Uyumluluk: doğrulanamadı${status.error ? ` | ${status.error}` : ""}`,
-            `MCP yeniden bağlantı: ${status.reconnectCount} | son=${status.lastReconnectAt ? new Date(status.lastReconnectAt).toISOString() : "yok"} | beklenmeyen kapanma=${status.unexpectedCloseCount} | son kapanma=${status.lastUnexpectedCloseAt ? new Date(status.lastUnexpectedCloseAt).toISOString() : "yok"}${status.lastTransportError ? ` | son transport hatası=${status.lastTransportError}` : ""}`,
-            status.permissions
-              ? `İzinler:\n${status.permissions}`
-              : `İzin durumu alınamadı: ${status.error ?? "bilinmeyen hata"}`,
-            status.serverStatus
-              ? `Peekaboo server durumu:\n${status.serverStatus}`
-              : null,
-          ]
-            .filter(Boolean)
-            .join("\n\n"),
-        );
-      } catch (error) {
-        return errorResult(error);
+    async catalog() {
+      const operations = await listDesktopOperations();
+      return {
+        domain: "desktop",
+        label: "macOS desktop",
+        count: operations.length,
+        operations: operations.map(({ inputSchema, ...summary }) => summary),
+      };
+    },
+    async describe(operation) {
+      if (Object.hasOwn(DESKTOP_BRIDGE_OPERATIONS, operation)) {
+        return { domain: "desktop", ...DESKTOP_BRIDGE_OPERATIONS[operation] };
       }
-    },
-    {
-      projectAware: false,
-      mcpExposed: true,
-      capability: false,
-    },
-  );
-
-  registerTextTool(
-    "desktop_tools",
-    {
-      description:
-        "Equinox Local tarafından izin verilen Peekaboo macOS araçlarını ve JSON giriş şemalarını listeler. AI agent/analyze, ikinci browser yüzeyi, clipboard, dialog, paste ve ham dosya yakalama araçları bilinçli olarak dışarıda bırakılır.",
-      inputSchema: {
-        tool_name: z
-          .string()
-          .min(1)
-          .max(160)
-          .optional()
-          .describe("İsteğe bağlı güvenli Peekaboo araç adı"),
-        refresh: z
-          .boolean()
-          .default(false)
-          .describe("Peekaboo MCP araç kataloğunu yeniden yükle"),
-        restart: z
-          .boolean()
-          .default(false)
-          .describe("Peekaboo MCP alt sürecini kapatıp yeniden başlat"),
-      },
-      annotations: {
-        title: "macOS masaüstü araç kataloğu",
-        readOnlyHint: true,
-        destructiveHint: false,
-        idempotentHint: true,
-        openWorldHint: false,
-      },
-    },
-    async ({ tool_name, refresh, restart }) => {
-      try {
-        if (!agentAccess.desktop) {
-          throw new Error("Desktop automation access is disabled in Control Center.");
-        }
-
-        if (restart) {
-          assertMutationAllowed("desktop_tools.restart");
-          await peekabooBridge.restart();
-        }
-
-        const tools = await peekabooBridge.listTools(refresh || restart);
-        if (tool_name) {
-          const tool = tools.find((candidate) => candidate.name === tool_name);
-          if (!tool) {
-            throw new Error(
-              `Peekaboo aracı güvenli masaüstü kataloğunda bulunamadı: ${tool_name}`,
-            );
-          }
-          return textResult(JSON.stringify(tool, null, 2));
-        }
-
-        return textResult(
-          [
-            `Equinox Local Peekaboo araç sayısı: ${tools.length}`,
-            `Alt sunucu allowlist'i: ${allowedTools.join(", ")}`,
-            ...tools.map((tool) =>
-              [
-                tool.name,
-                tool.description ?? "",
-                JSON.stringify(tool.inputSchema ?? {}),
-              ].join("\n"),
-            ),
-          ].join("\n\n"),
-        );
-      } catch (error) {
-        return errorResult(error);
+      if (!agentAccess.desktop) {
+        throw new Error("Desktop automation access is disabled in Control Center.");
       }
+      const tools = await peekabooBridge.listTools(false);
+      const tool = tools.find((candidate) => candidate.name === operation);
+      if (!tool) throw new Error(`desktop capability kataloğunda operation bulunamadı: ${operation}`);
+      return { domain: "desktop", ...publicDesktopTool(tool) };
     },
-    {
-      projectAware: false,
-      mcpExposed: true,
-      capability: false,
-    },
-  );
+  });
 
   registerRawTool(
     "desktop_call",
     {
       description:
-        "Peekaboo'nun Equinox Local allowlist'indeki tek bir macOS aracını çağırır. Önce desktop_tools ile şemayı incele. Koordinat tıklama/drag, körlemesine typing, global hotkey, force quit, AI araçları, clipboard/dialog/paste ve sistem menu-extra eylemleri güvenlik katmanında engellenir.",
+        "Background-safe macOS desktop operation çağırır. Önce capabilities({domain: \"desktop\"}) ile operation'ları ve capabilities({domain: \"desktop\", operation: \"...\"}) ile güncel şemayı keşfet. status/refresh/restart bridge operation'larıdır; diğer operation'lar güvenli Peekaboo allowlist'ine gider. Web içeriği için browser_call tercih edilir.",
       inputSchema: {
-        tool_name: z
-          .string()
-          .min(1)
-          .max(160)
-          .describe("Çağrılacak güvenli Peekaboo araç adı"),
-        arguments: z
-          .record(z.string(), z.unknown())
-          .default({})
-          .describe("Peekaboo alt aracının JSON giriş şemasına uyan argümanlar"),
+        operation: z.string().min(1).max(160).describe("Çağrılacak desktop operation adı"),
+        arguments: z.record(z.string(), z.unknown()).default({}).describe("Seçilen operation'ın güncel giriş şemasına uyan argümanlar"),
       },
-      outputSchema: {
-        text: z.string(),
-      },
+      outputSchema: { text: z.string() },
       annotations: {
-        title: "macOS masaüstü aracını çağır",
+        title: "macOS desktop operation çağır",
         readOnlyHint: false,
         destructiveHint: true,
         idempotentHint: false,
         openWorldHint: false,
       },
     },
-    async ({ tool_name, arguments: toolArguments }) => {
+    async ({ operation, arguments: operationArguments }) => {
       try {
+        if (operation === "status") {
+          if (Object.keys(operationArguments ?? {}).length > 0) throw new Error("desktop status arguments kabul etmez.");
+          return desktopTextResult(formatDesktopStatus(await peekabooBridge.status()));
+        }
+
         if (!agentAccess.desktop) {
           throw new Error("Desktop automation access is disabled in Control Center.");
         }
 
+        if (operation === "refresh") {
+          if (Object.keys(operationArguments ?? {}).length > 0) throw new Error("desktop refresh arguments kabul etmez.");
+          assertMutationAllowed("desktop.refresh");
+          const tools = await peekabooBridge.listTools(true);
+          return desktopTextResult(`Peekaboo tool catalog refreshed: ${tools.length} safe tools.`);
+        }
+
+        if (operation === "restart") {
+          if (Object.keys(operationArguments ?? {}).length > 0) throw new Error("desktop restart arguments kabul etmez.");
+          assertMutationAllowed("desktop.restart");
+          return await withMutationLocks(["desktop"], async () => {
+            await peekabooBridge.restart();
+            const tools = await peekabooBridge.listTools(true);
+            return desktopTextResult(`Peekaboo MCP bridge restarted: ${tools.length} safe tools available.`);
+          });
+        }
+
+        assertMutationAllowed(`desktop.${operation}`);
         return await withMutationLocks(["desktop"], async () => {
-          const result = await peekabooBridge.callTool(tool_name, toolArguments);
+          const result = await peekabooBridge.callTool(operation, operationArguments);
           const normalized = normalizeChromeToolResult(result);
           return {
             ...normalized,
-            structuredContent: {
-              text: extractTextContent(normalized),
-            },
+            structuredContent: { text: extractTextContent(normalized) },
           };
         });
       } catch (error) {
         return errorResult(error);
       }
     },
-    {
-      mcpExposed: true,
-      capability: false,
-    },
+    { mcpExposed: true, capability: false, pauseGuard: false },
   );
+
+  return discovery;
 }
+
+export const __test = Object.freeze({ formatDesktopStatus, DESKTOP_BRIDGE_OPERATIONS });

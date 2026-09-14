@@ -59,6 +59,7 @@ const RECIPES = Object.freeze([
   }),
 ]);
 
+export const REPAIR_RECIPE_IDS = Object.freeze(RECIPES.map((recipe) => recipe.id));
 const RECIPE_MAP = new Map(RECIPES.map((recipe) => [recipe.id, recipe]));
 
 function iso(value) {

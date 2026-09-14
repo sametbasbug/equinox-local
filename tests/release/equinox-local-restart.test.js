@@ -5,7 +5,10 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { runEquinoxLocalRestartHelper } from "../../src/equinox-local-restart-helper.js";
+import {
+  captureEquinoxLocalForegroundGui,
+  runEquinoxLocalRestartHelper,
+} from "../../src/equinox-local-restart-helper.js";
 import {
   registerRestartRuntimeTool,
   restartHelperEnvironment,
@@ -40,6 +43,12 @@ test("source-checkout restart uses only private generic developer runtime config
   assert.match(script, /sync-source-peekaboo-runtime\.mjs/u);
   assert.match(script, /peekabooPath/u);
   assert.match(script, /prepare-source-app-host\.mjs/u);
+  assert.match(script, /PRE_RESTART_APP_PIDS/u);
+  assert.match(script, /FOREGROUND_GUI_PIDS/u);
+  assert.match(script, /GUI_WAS_RUNNING/u);
+  assert.match(script, /previous Equinox Local foreground GUI did not stop cleanly/u);
+  assert.equal(script.includes('/usr/bin/open -gn "$APP_PATH" --args --restart-shell'), true);
+  assert.match(script, /Equinox Local foreground GUI did not relaunch after source restart/u);
   assert.match(script, /OLD_PID=.*pgrep/u);
   assert.match(script, /NEW_PID=.*pgrep/u);
   assert.match(script, /pgrep -f "node \$ROOT\/src\/server\.js"/u);
@@ -63,6 +72,10 @@ test("source-checkout restart uses only private generic developer runtime config
   assert.match(script, /launchctl bootstrap/u);
   assert.equal(script.includes('launchctl kickstart "$DOMAIN/$LABEL"'), true);
   assert.doesNotMatch(script, /launchctl kickstart -k/u);
+  assert.ok(
+    script.indexOf('NEW_PID=') < script.indexOf('/usr/bin/open -gn'),
+    "foreground GUI refresh must happen only after the restarted source runtime is healthy",
+  );
   assert.doesNotMatch(script, /^LABEL="[^"\n]+"/mu);
   assert.doesNotMatch(script, /^RUNTIME="[^"\n]+"/mu);
   assert.doesNotMatch(script, /^TUNNEL_CLIENT="\/[^"\n]+"/mu);
@@ -131,7 +144,7 @@ test("restart scheduler rejects an asynchronous helper spawn failure", async () 
   );
 });
 
-test("restart helper validates managed environment and delays before kickstart", async () => {
+test("restart helper refreshes a pre-existing managed foreground shell around kickstart", async () => {
   const events = [];
   const env = {
     HOME: "/Users/example",
@@ -142,13 +155,44 @@ test("restart helper validates managed environment and delays before kickstart",
     argv: ["--restart"],
     env,
     sleepImpl: async () => events.push("sleep"),
+    captureForegroundGuiImpl: async ({ homeDir }) => {
+      events.push("capture");
+      assert.equal(homeDir, "/Users/example");
+      return { pids: [4242] };
+    },
     kickstartImpl: async (resolved) => {
       events.push("kickstart");
       assert.equal(resolved.selfUpdateSupported, true);
     },
+    refreshForegroundGuiImpl: async ({ foreground }) => {
+      events.push("refresh");
+      assert.deepEqual(foreground.pids, [4242]);
+      return { refreshed: true, pid: 4343 };
+    },
   });
-  assert.deepEqual(events, ["sleep", "kickstart"]);
+  assert.deepEqual(events, ["sleep", "capture", "kickstart", "refresh"]);
   assert.equal(result.restarted, true);
+  assert.equal(result.foregroundShellRefreshed, true);
+});
+
+test("managed foreground GUI capture excludes the LaunchAgent runtime host and foreign users", async () => {
+  const appExecutable = "/Users/example/Applications/Equinox Local.app/Contents/MacOS/applet";
+  const calls = [];
+  const result = await captureEquinoxLocalForegroundGui({
+    installation: { launchAgentLabel: "dev.equinox.local" },
+    homeDir: "/Users/example",
+    uid: 501,
+    execFileImpl: async (command, args) => {
+      calls.push([command, ...args]);
+      if (command === "/bin/launchctl") return { stdout: "    pid = 100\n" };
+      if (command === "/usr/bin/pgrep") return { stdout: "100\n200\n201\n" };
+      if (command === "/bin/ps" && args[1] === "200") return { stdout: `501 ${appExecutable} --restart-shell\n` };
+      if (command === "/bin/ps" && args[1] === "201") return { stdout: `502 ${appExecutable}\n` };
+      throw new Error(`Unexpected fixture command: ${command} ${args.join(" ")}`);
+    },
+  });
+  assert.deepEqual(result.pids, [200]);
+  assert.ok(calls.some((call) => call[0] === "/bin/launchctl"));
 });
 
 test("source restart scheduler preserves fixed bash command and minimal env", async () => {
@@ -199,12 +243,19 @@ test("restart_runtime registration preserves managed routing and restart guard c
   const managedCalls = [];
   let pendingCount = 0;
   const managedInstallation = installation();
+  let quiesced = 0;
+  let recovered = 0;
   registerRestartRuntimeTool({
     registerTextTool: (...args) => registrations.push(args),
     installation: managedInstallation,
-    scheduleManagedRestart: async (options) => managedCalls.push(options),
+    scheduleManagedRestart: async (options) => {
+      assert.equal(quiesced, 1);
+      managedCalls.push(options);
+    },
     scheduleSourceRestart: async () => assert.fail("source restart must not run"),
     markRestartPending: () => { pendingCount += 1; },
+    beforeRestart: async () => { quiesced += 1; },
+    restartFailed: async () => { recovered += 1; },
     textResult: (text) => ({ text }),
     errorResult: (error) => ({ error: error.message }),
   });
@@ -222,6 +273,8 @@ test("restart_runtime registration preserves managed routing and restart guard c
   assert.equal(managedCalls.length, 1);
   assert.equal(managedCalls[0].installation, managedInstallation);
   assert.equal(pendingCount, 1);
+  assert.equal(quiesced, 1);
+  assert.equal(recovered, 0);
   assert.match(result.text, /managed yeniden başlatması zamanlandı/u);
 });
 
@@ -229,6 +282,8 @@ test("restart_runtime registration routes source checkout through injected sched
   const registrations = [];
   const sourceCalls = [];
   let pendingCount = 0;
+  let quiesced = 0;
+  let recovered = 0;
   registerRestartRuntimeTool({
     registerTextTool: (...args) => registrations.push(args),
     installation: {
@@ -237,6 +292,7 @@ test("restart_runtime registration routes source checkout through injected sched
     },
     scheduleManagedRestart: async () => assert.fail("managed restart must not run"),
     scheduleSourceRestart: async (options) => {
+      assert.equal(quiesced, 1);
       sourceCalls.push(options);
       return { logPath: "/tmp/equinox-local-restart.log" };
     },
@@ -245,6 +301,8 @@ test("restart_runtime registration routes source checkout through injected sched
     pathImpl: { marker: "path" },
     processImpl: { marker: "process" },
     markRestartPending: () => { pendingCount += 1; },
+    beforeRestart: async () => { quiesced += 1; },
+    restartFailed: async () => { recovered += 1; },
     textResult: (text) => ({ text }),
     errorResult: (error) => ({ error: error.message }),
   });
@@ -256,5 +314,28 @@ test("restart_runtime registration routes source checkout through injected sched
   assert.equal(sourceCalls[0].pathImpl.marker, "path");
   assert.equal(sourceCalls[0].processImpl.marker, "process");
   assert.equal(pendingCount, 1);
+  assert.equal(quiesced, 1);
+  assert.equal(recovered, 0);
   assert.match(result.text, /source-checkout yeniden başlatması zamanlandı/u);
+});
+
+test("restart_runtime restores continuity controllers when scheduling fails", async () => {
+  const registrations = [];
+  let quiesced = 0;
+  let recovered = 0;
+  registerRestartRuntimeTool({
+    registerTextTool: (...args) => registrations.push(args),
+    installation: { managed: false, selfUpdateSupported: false },
+    scheduleManagedRestart: async () => assert.fail("managed restart must not run"),
+    scheduleSourceRestart: async () => { throw new Error("fixture restart scheduling failed"); },
+    beforeRestart: async () => { quiesced += 1; },
+    restartFailed: async () => { recovered += 1; },
+    textResult: (text) => ({ text }),
+    errorResult: (error) => ({ error: error.message }),
+  });
+
+  const result = await registrations[0][2]({});
+  assert.equal(quiesced, 1);
+  assert.equal(recovered, 1);
+  assert.match(result.error, /fixture restart scheduling failed/u);
 });

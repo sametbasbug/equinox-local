@@ -15,6 +15,21 @@ import { equinoxLocalNativeAppArtifactPaths } from "./equinox-local-native-app.j
 const execFile = promisify(execFileCallback);
 const NATIVE_SHELL_PLIST_KEY = "EquinoxLocalNativeShellVersion";
 const NATIVE_EXECUTABLE_SHA_PLIST_KEY = "EquinoxLocalNativeExecutableSha256";
+const NATIVE_PERMISSION_IDENTITY_PLIST_KEY = "EquinoxLocalPermissionIdentity";
+const NATIVE_PERMISSION_IDENTITY_VERSION = "v1";
+
+// Public/source installs intentionally use ad-hoc signing instead of a paid Developer ID.
+// Without an explicit designated requirement, macOS derives a CDHash-only identity and
+// invalidates TCC grants whenever the native shell binary changes. Keep this requirement
+// stable across shell versions; release authenticity remains enforced by the existing
+// signed release/update pipeline rather than by this local permission identity.
+function nativePermissionDesignatedRequirementSource() {
+  return `designated => identifier "${EQUINOX_LOCAL_APP_BUNDLE_ID}" and info[${NATIVE_PERMISSION_IDENTITY_PLIST_KEY}] = "${NATIVE_PERMISSION_IDENTITY_VERSION}"`;
+}
+
+function normalizedNativePermissionDesignatedRequirement() {
+  return `designated => identifier "${EQUINOX_LOCAL_APP_BUNDLE_ID}" and info[${NATIVE_PERMISSION_IDENTITY_PLIST_KEY}] = ${NATIVE_PERMISSION_IDENTITY_VERSION}`;
+}
 
 function homeDirFromInstallation(installation) {
   if (typeof installation?.installRoot !== "string") throw new Error("Managed installation root is required for native app synchronization.");
@@ -49,15 +64,19 @@ async function readNativeMetadata(releaseDir, fsImpl = fs) {
     || !/^[a-f0-9]{64}$/u.test(raw?.iconSha256 ?? "")
     || (raw.shellVersion >= 4 && raw?.menuIcon !== "EquinoxLocalMenuBar.png")
     || (raw.shellVersion >= 4 && !/^[a-f0-9]{64}$/u.test(raw?.menuIconSha256 ?? ""))
+    || (raw.shellVersion >= 11 && raw?.companionAsset !== "EquinoxCompanionNyx.webp")
+    || (raw.shellVersion >= 11 && !/^[a-f0-9]{64}$/u.test(raw?.companionAssetSha256 ?? ""))
   ) {
     throw new Error("Equinox Local native app metadata is invalid.");
   }
   await assertNormalFile(paths.executable, "Equinox Local native executable", fsImpl);
   await assertNormalFile(paths.icon, "Equinox Local native icon", fsImpl);
   if (raw.shellVersion >= 4) await assertNormalFile(paths.menuIcon, "Equinox Local native menu-bar icon", fsImpl);
+  if (raw.shellVersion >= 11) await assertNormalFile(paths.companionAsset, "Equinox Local companion asset", fsImpl);
   if (await sha256File(paths.executable, fsImpl) !== raw.executableSha256) throw new Error("Equinox Local native executable digest mismatch.");
   if (await sha256File(paths.icon, fsImpl) !== raw.iconSha256) throw new Error("Equinox Local native icon digest mismatch.");
   if (raw.shellVersion >= 4 && await sha256File(paths.menuIcon, fsImpl) !== raw.menuIconSha256) throw new Error("Equinox Local native menu-bar icon digest mismatch.");
+  if (raw.shellVersion >= 11 && await sha256File(paths.companionAsset, fsImpl) !== raw.companionAssetSha256) throw new Error("Equinox Local companion asset digest mismatch.");
   return Object.freeze({ paths, metadata: Object.freeze(raw) });
 }
 
@@ -75,10 +94,43 @@ async function readBundleNativeShellVersion(appPath, execFileImpl = execFile) {
   }
 }
 
+async function readBundlePermissionIdentity(appPath, execFileImpl = execFile) {
+  try {
+    const { stdout } = await execFileImpl("/usr/libexec/PlistBuddy", ["-c", `Print :${NATIVE_PERMISSION_IDENTITY_PLIST_KEY}`, path.join(appPath, "Contents", "Info.plist")], {
+      encoding: "utf8",
+      timeout: 5_000,
+      maxBuffer: 16 * 1024,
+    });
+    return String(stdout).trim();
+  } catch {
+    return null;
+  }
+}
+
+async function readBundleDesignatedRequirement(appPath, execFileImpl = execFile) {
+  try {
+    const { stdout = "", stderr = "" } = await execFileImpl("/usr/bin/codesign", ["-d", "-r-", appPath], {
+      encoding: "utf8",
+      timeout: 5_000,
+      maxBuffer: 64 * 1024,
+    });
+    return `${stdout}\n${stderr}`.split(/\r?\n/u).map((line) => line.trim()).find((line) => line.startsWith("designated =>")) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+async function hasStableNativePermissionIdentity(appPath, execFileImpl = execFile) {
+  const permissionIdentity = await readBundlePermissionIdentity(appPath, execFileImpl);
+  if (permissionIdentity !== NATIVE_PERMISSION_IDENTITY_VERSION) return false;
+  const designatedRequirement = await readBundleDesignatedRequirement(appPath, execFileImpl);
+  return designatedRequirement === normalizedNativePermissionDesignatedRequirement();
+}
+
 function nativeInfoPlist(shellVersion, executableSha256) {
   if (!Number.isSafeInteger(shellVersion) || shellVersion < 1) throw new Error("Equinox Local native shell version is invalid.");
   if (!/^[a-f0-9]{64}$/u.test(executableSha256 ?? "")) throw new Error("Equinox Local native executable digest is invalid.");
-  return `<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0">\n<dict>\n  <key>CFBundleDevelopmentRegion</key><string>en</string>\n  <key>CFBundleDisplayName</key><string>${EQUINOX_LOCAL_APP_NAME}</string>\n  <key>CFBundleExecutable</key><string>applet</string>\n  <key>CFBundleIconFile</key><string>EquinoxLocal</string>\n  <key>CFBundleIdentifier</key><string>${EQUINOX_LOCAL_APP_BUNDLE_ID}</string>\n  <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>\n  <key>CFBundleName</key><string>${EQUINOX_LOCAL_APP_NAME}</string>\n  <key>CFBundlePackageType</key><string>APPL</string>\n  <key>CFBundleShortVersionString</key><string>${shellVersion}</string>\n  <key>CFBundleVersion</key><string>${shellVersion}</string>\n  <key>LSMinimumSystemVersion</key><string>13.0</string>\n  <key>${NATIVE_SHELL_PLIST_KEY}</key><integer>${shellVersion}</integer>\n  <key>${NATIVE_EXECUTABLE_SHA_PLIST_KEY}</key><string>${executableSha256}</string>\n  <key>NSAppTransportSecurity</key><dict><key>NSAllowsLocalNetworking</key><true/></dict>\n  <key>NSHighResolutionCapable</key><true/>\n</dict>\n</plist>\n`;
+  return `<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0">\n<dict>\n  <key>CFBundleDevelopmentRegion</key><string>en</string>\n  <key>CFBundleDisplayName</key><string>${EQUINOX_LOCAL_APP_NAME}</string>\n  <key>CFBundleExecutable</key><string>applet</string>\n  <key>CFBundleIconFile</key><string>EquinoxLocal</string>\n  <key>CFBundleIdentifier</key><string>${EQUINOX_LOCAL_APP_BUNDLE_ID}</string>\n  <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>\n  <key>CFBundleName</key><string>${EQUINOX_LOCAL_APP_NAME}</string>\n  <key>CFBundlePackageType</key><string>APPL</string>\n  <key>CFBundleShortVersionString</key><string>${shellVersion}</string>\n  <key>CFBundleVersion</key><string>${shellVersion}</string>\n  <key>LSMinimumSystemVersion</key><string>13.0</string>\n  <key>${NATIVE_SHELL_PLIST_KEY}</key><integer>${shellVersion}</integer>\n  <key>${NATIVE_EXECUTABLE_SHA_PLIST_KEY}</key><string>${executableSha256}</string>\n  <key>${NATIVE_PERMISSION_IDENTITY_PLIST_KEY}</key><string>${NATIVE_PERMISSION_IDENTITY_VERSION}</string>\n  <key>NSAppTransportSecurity</key><dict><key>NSAllowsLocalNetworking</key><true/></dict>\n  <key>NSHighResolutionCapable</key><true/>\n</dict>\n</plist>\n`;
 }
 
 async function createIcns(sourcePng, destination, workingRoot, execFileImpl = execFile, fsImpl = fs) {
@@ -158,7 +210,7 @@ export async function synchronizeEquinoxLocalNativeAppHost({
   try {
     await validateEquinoxLocalAppHost(appPath, { fsImpl, execFileImpl });
     const shellVersion = await readBundleNativeShellVersion(appPath, execFileImpl);
-    if (shellVersion === metadata.shellVersion) {
+    if (shellVersion === metadata.shellVersion && await hasStableNativePermissionIdentity(appPath, execFileImpl)) {
       const installedExecutable = path.join(appPath, "Contents", "MacOS", "applet");
       try {
         await execFileImpl("/usr/bin/codesign", ["--verify", "--deep", "--strict", appPath], {
@@ -190,8 +242,18 @@ export async function synchronizeEquinoxLocalNativeAppHost({
     await fsImpl.chmod(path.join(macos, "applet"), 0o755);
     await createIcns(paths.icon, path.join(resources, "EquinoxLocal.icns"), contents, execFileImpl, fsImpl);
     if (metadata.shellVersion >= 4) await fsImpl.copyFile(paths.menuIcon, path.join(resources, "EquinoxLocalMenuBar.png"));
+    if (metadata.shellVersion >= 11) await fsImpl.copyFile(paths.companionAsset, path.join(resources, "EquinoxCompanionNyx.webp"));
     await fsImpl.writeFile(path.join(contents, "Info.plist"), nativeInfoPlist(metadata.shellVersion, metadata.executableSha256), { mode: 0o644 });
-    await execFileImpl("/usr/bin/codesign", ["--force", "--sign", "-", "--identifier", EQUINOX_LOCAL_APP_BUNDLE_ID, temporary], {
+    await execFileImpl("/usr/bin/codesign", [
+      "--force",
+      "--sign",
+      "-",
+      "--identifier",
+      EQUINOX_LOCAL_APP_BUNDLE_ID,
+      "-r",
+      `=${nativePermissionDesignatedRequirementSource()}`,
+      temporary,
+    ], {
       timeout: 30_000,
       maxBuffer: 1024 * 1024,
     });
