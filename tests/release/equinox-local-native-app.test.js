@@ -97,7 +97,7 @@ test("native app source keeps the menu-bar safety lifecycle", async () => {
   assert.match(source, /Companion'ı Gizle/u);
   assert.match(source, /Companion'ı Göster/u);
   assert.match(source, /window\.performDrag\(with: event\)/u);
-  assert.match(source, /https:\/\/chatgpt\.com\//u);
+  assert.ok(source.includes("https://chatgpt.com/"));
   const quickActions = source.match(/private func configureFloatingPetActionsPanel\(\)[\s\S]*?(?=\n    private func positionFloatingPetActionsPanel)/u)?.[0] ?? "";
   assert.equal((quickActions.match(/makeCompanionActionRow\(/gu) ?? []).length, 3);
   assert.match(quickActions, /"New Chat"/u);
