@@ -38,9 +38,20 @@ async function withApi(fn, overrides = {}) {
     port: 0,
     getStatus: overrides.getStatus ?? (async () => ({ runtime: "healthy", secret: undefined })),
     getDoctorStatus: overrides.getDoctorStatus ?? (async () => ({ state: "HEALTHY", summary: { attention: 0 } })),
+    getDoctorRepairs: overrides.getDoctorRepairs ?? null,
+    applyDoctorRepair: overrides.applyDoctorRepair ?? null,
     getActivity: overrides.getActivity ?? (async () => []),
     getUpdateStatus: overrides.getUpdateStatus ?? (async () => ({ currentVersion: "4.2.0", selfUpdateSupported: false })),
     getOnboardingStatus: overrides.getOnboardingStatus ?? (async () => ({ available: false, managed: false })),
+    getTasks: overrides.getTasks ?? null,
+    getTask: overrides.getTask ?? null,
+    updateTask: overrides.updateTask ?? null,
+    completeTask: overrides.completeTask ?? null,
+    cancelTask: overrides.cancelTask ?? null,
+    deleteTask: overrides.deleteTask ?? null,
+    cancelTaskContinuation: overrides.cancelTaskContinuation ?? null,
+    cancelTaskFreshResume: overrides.cancelTaskFreshResume ?? null,
+    abandonTaskFreshResume: overrides.abandonTaskFreshResume ?? null,
     checkForUpdates: overrides.checkForUpdates ?? null,
     applyUpdate: overrides.applyUpdate ?? null,
     configureTunnel: overrides.configureTunnel ?? null,
@@ -98,6 +109,69 @@ test("control API binds loopback and exposes bounded read-only health/config/sta
   });
 });
 
+test("Doctor repair API exposes bounded plans and requires CSRF plus fixed recipe ids for mutation", async () => {
+  const calls = [];
+  const incidentId = "inc-peekaboo-transport-failure-abc123";
+  await withApi(async ({ api, port, origin }) => {
+    const base = `http://127.0.0.1:${port}`;
+    const plan = await jsonFetch(`${base}/api/v1/doctor/repairs`);
+    assert.equal(plan.response.status, 200);
+    assert.equal(plan.body.repairs.actionableCount, 1);
+    assert.equal(plan.body.repairs.incidents[0].incidentId, incidentId);
+
+    const missingGuard = await jsonFetch(`${base}/api/v1/doctor/repair`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ incidentId, recipeId: "peekaboo_bridge_restart" }),
+    });
+    assert.equal(missingGuard.response.status, 403);
+    assert.equal(calls.length, 1);
+
+    const session = await jsonFetch(`${base}/api/v1/session`);
+    const headers = {
+      "content-type": "application/json",
+      origin,
+      "x-equinox-csrf": session.body.csrfToken,
+    };
+
+    for (const body of [
+      { incidentId, recipeId: "arbitrary_shell" },
+      { incidentId: "invalid", recipeId: "peekaboo_bridge_restart" },
+      { incidentId, recipeId: "peekaboo_bridge_restart", command: "rm -rf /" },
+    ]) {
+      const rejected = await jsonFetch(`${base}/api/v1/doctor/repair`, {
+        method: "POST", headers, body: JSON.stringify(body),
+      });
+      assert.equal(rejected.response.status, 400);
+    }
+    assert.equal(calls.length, 1);
+
+    const applied = await jsonFetch(`${base}/api/v1/doctor/repair`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ incidentId, recipeId: "peekaboo_bridge_restart" }),
+    });
+    assert.equal(applied.response.status, 200);
+    assert.equal(applied.body.result.repair.outcome, "RECOVERED");
+    assert.equal(applied.body.result.verification.resolved, true);
+    assert.deepEqual(calls.at(-1), ["repair", { incidentId, recipeId: "peekaboo_bridge_restart" }]);
+    assert.equal(api.snapshot().mutationCount, 1);
+  }, {
+    getDoctorRepairs: async () => {
+      calls.push(["plan"]);
+      return {
+        evaluatedAt: "2026-09-12T21:00:00.000Z",
+        actionableCount: 1,
+        incidents: [{ incidentId, state: "ACTIVE", fixes: [{ id: "peekaboo_bridge_restart" }] }],
+      };
+    },
+    applyDoctorRepair: async (request) => {
+      calls.push(["repair", request]);
+      return { repair: { outcome: "RECOVERED" }, verification: { resolved: true, incident: null } };
+    },
+  });
+});
+
 test("control API request timeout bounds inbound delivery without timing out slow handler work", async () => {
   await withApi(async ({ port }) => {
     const status = await jsonFetch(`http://127.0.0.1:${port}/api/v1/status`);
@@ -143,6 +217,18 @@ test("control API serves the visual Control Center shell and fixed same-origin a
     assert.equal(shell.headers.get("x-frame-options"), "DENY");
     const shellText = await shell.text();
     assert.match(shellText, /Equinox Local Control Center/u);
+    assert.match(shellText, /Doctor → Fix/u);
+    assert.match(shellText, /id="doctor-repair-list"/u);
+
+    const taskDeepLink = await fetch(`${base}/?section=tasks&task=task-abcdef`);
+    assert.equal(taskDeepLink.status, 200);
+    assert.match(await taskDeepLink.text(), /Equinox Local Control Center/u);
+
+    const invalidTaskDeepLink = await jsonFetch(`${base}/?section=tasks&task=not-a-task`);
+    assert.equal(invalidTaskDeepLink.response.status, 400);
+
+    const unsupportedShellQuery = await jsonFetch(`${base}/?section=tasks&task=task-abcdef&extra=1`);
+    assert.equal(unsupportedShellQuery.response.status, 400);
     assert.match(shellText, /id="restart-runtime-button"/u);
     assert.match(shellText, /id="language-select"/u);
     assert.match(shellText, /data-theme-value="system"/u);
@@ -155,6 +241,8 @@ test("control API serves the visual Control Center shell and fixed same-origin a
       true,
     );
     assert.match(shellText, /Install Equinox Browser/u);
+    assert.match(shellText, /id="task-recovery-panel"/u);
+    assert.match(shellText, /id="task-abandon-fresh-resume-button"/u);
     assert.match(shellText, /target="_blank" rel="noopener noreferrer"/u);
 
     const css = await fetch(`${base}/assets/control-center.css`);
@@ -177,6 +265,9 @@ test("control API serves the visual Control Center shell and fixed same-origin a
     const scriptText = await script.text();
     assert.match(scriptText, /\/api\/v1\/config/u);
     assert.match(scriptText, /\/api\/v1\/doctor/u);
+    assert.match(scriptText, /\/api\/v1\/doctor\/repairs/u);
+    assert.match(scriptText, /\/api\/v1\/doctor\/repair/u);
+    assert.match(scriptText, /runDoctorRepair/u);
     assert.equal(scriptText.includes('requestJson("/api/v1/doctor").catch(() => ({ doctor: null }))'), true);
     assert.match(scriptText, /\/api\/v1\/agent\/pause/u);
     assert.match(scriptText, /\/api\/v1\/agent\/resume/u);
@@ -192,6 +283,10 @@ test("control API serves the visual Control Center shell and fixed same-origin a
     assert.match(scriptText, /\/api\/v1\/browser\/settings/u);
     assert.match(scriptText, /\/api\/v1\/browser\/agent\/open/u);
     assert.match(scriptText, /Agent Browser/u);
+    assert.match(scriptText, /applyInitialNavigationIntent/u);
+    assert.match(scriptText, /URLSearchParams\(window\.location\.search\)/u);
+    assert.match(scriptText, /params\.get\("section"\)/u);
+    assert.match(scriptText, /task-\[a-z0-9-\]/u);
     assert.match(scriptText, /setupComplete/u);
     assert.match(scriptText, /Agent Browser setup is complete and the isolated browser is currently closed/u);
     assert.match(scriptText, /browser-settings-target/u);
@@ -199,18 +294,133 @@ test("control API serves the visual Control Center shell and fixed same-origin a
     assert.match(scriptText, /control\.rel = "noopener noreferrer"/u);
     assert.match(scriptText, /equinox-local-control-center-language/u);
     assert.match(scriptText, /equinox-local-control-center-theme/u);
+    assert.match(scriptText, /task-list-id/u);
+    assert.match(scriptText, /setText\("task-detail-id", task\.taskId\)/u);
+    assert.match(shellText, /id="task-detail-id" class="task-detail-id"/u);
+    assert.match(cssText, /\.task-list-id/u);
+    assert.match(cssText, /\.task-detail-id/u);
     assert.match(scriptText, /prefers-color-scheme: dark/u);
     assert.match(scriptText, /localStorage\.setItem\(THEME_STORAGE_KEY/u);
     assert.match(scriptText, /localStorage\.setItem\(LANGUAGE_STORAGE_KEY/u);
     assert.match(scriptText, /navigator\.language/u);
+    assert.match(scriptText, /__equinoxNativeLanguage/u);
+    assert.match(scriptText, /equinoxNativeLanguage/u);
     assert.match(scriptText, /localizeRuntimeEventMessage/u);
     assert.match(scriptText, /Peekaboo safe tool-surface compatibility check passed\./u);
+    assert.match(scriptText, /fresh-resume\/cancel/u);
+    assert.match(scriptText, /fresh-resume\/abandon/u);
+    assert.match(scriptText, /Delete this task permanently/u);
+    assert.match(scriptText, /task-delete-button/u);
+    assert.match(scriptText, /Needs attention/u);
     assert.doesNotMatch(scriptText, /\/api\/v1\/integrations\/github(?:\/check)?/u);
     assert.doesNotMatch(scriptText, /GitHub CLI/u);
 
     const missing = await jsonFetch(`${base}/missing-control-center-route`);
     assert.equal(missing.response.status, 404);
     assert.match(missing.body.error, /endpoint bulunamadı/u);
+  });
+});
+
+test("Task Control API is bounded, CSRF-protected and maps stale revisions to conflict", async () => {
+  const calls = [];
+  const task = {
+    taskId: "task-abcdef", schemaVersion: 1, title: "Task", objective: "Objective", status: "active",
+    checkpointRevision: 3, completed: ["One"], next: ["Two"], references: [],
+    createdAt: "2026-09-12T00:00:00.000Z", updatedAt: "2026-09-12T00:01:00.000Z", completedAt: null,
+    continuation: { status: "armed", checkpointRevision: 3, target: { browserContext: "user", mode: "task-tab", tabId: 9, title: "ChatGPT" } },
+  };
+  await withApi(async ({ port, origin }) => {
+    const base = `http://127.0.0.1:${port}`;
+    const list = await jsonFetch(`${base}/api/v1/tasks`);
+    assert.equal(list.response.status, 200);
+    assert.equal(list.body.tasks[0].taskId, task.taskId);
+
+    const detail = await jsonFetch(`${base}/api/v1/tasks/${task.taskId}`);
+    assert.equal(detail.response.status, 200);
+    assert.equal(detail.body.task.checkpointRevision, 3);
+
+    const missingGuard = await jsonFetch(`${base}/api/v1/tasks/${task.taskId}`, {
+      method: "PUT", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ expectedRevision: 3, title: "Edited", objective: "Objective", completed: [], next: ["Continue"], references: [] }),
+    });
+    assert.equal(missingGuard.response.status, 403);
+    assert.equal(calls.length, 0);
+
+    const session = await jsonFetch(`${base}/api/v1/session`);
+    const headers = { "content-type": "application/json", origin, "x-equinox-csrf": session.body.csrfToken };
+    const saved = await jsonFetch(`${base}/api/v1/tasks/${task.taskId}`, {
+      method: "PUT", headers,
+      body: JSON.stringify({ expectedRevision: 3, title: "Edited", objective: "Objective", completed: ["One"], next: ["Continue"], references: [] }),
+    });
+    assert.equal(saved.response.status, 200);
+    assert.equal(saved.body.task.title, "Edited");
+    assert.equal(calls[0][0], "update");
+
+    for (const [suffix, name] of [["continuation/cancel", "continuation"], ["fresh-resume/cancel", "fresh-cancel"], ["fresh-resume/abandon", "fresh-abandon"], ["complete", "complete"], ["cancel", "cancel"]]) {
+      const result = await jsonFetch(`${base}/api/v1/tasks/${task.taskId}/${suffix}`, { method: "POST", headers, body: "{}" });
+      assert.equal(result.response.status, 200);
+      assert.equal(calls.at(-1)[0], name);
+    }
+
+    const deleted = await jsonFetch(`${base}/api/v1/tasks/${task.taskId}/delete`, { method: "POST", headers, body: "{}" });
+    assert.equal(deleted.response.status, 200);
+    assert.deepEqual(deleted.body.deleted, { taskId: task.taskId, status: "completed", deleted: true });
+    assert.equal(calls.at(-1)[0], "delete");
+
+    const retryRoute = await jsonFetch(`${base}/api/v1/tasks/${task.taskId}/fresh-resume/retry`, { method: "POST", headers, body: "{}" });
+    assert.equal(retryRoute.response.status, 404);
+
+    const invalidRoute = await jsonFetch(`${base}/api/v1/tasks/${task.taskId}/unexpected`);
+    assert.equal(invalidRoute.response.status, 404);
+  }, {
+    getTasks: async () => [task],
+    getTask: async () => task,
+    updateTask: async (taskId, body) => { calls.push(["update", taskId, body]); return { ...task, ...body, checkpointRevision: 4 }; },
+    completeTask: async (taskId) => { calls.push(["complete", taskId]); return { ...task, status: "completed" }; },
+    cancelTask: async (taskId) => { calls.push(["cancel", taskId]); return { ...task, status: "cancelled" }; },
+    deleteTask: async (taskId) => { calls.push(["delete", taskId]); return { taskId, status: "completed", deleted: true }; },
+    cancelTaskContinuation: async (taskId) => { calls.push(["continuation", taskId]); return { ...task, continuation: { ...task.continuation, status: "cancelled" } }; },
+    cancelTaskFreshResume: async (taskId) => { calls.push(["fresh-cancel", taskId]); return { ...task, freshResume: { status: "cancelled", reason: "human_cancelled" } }; },
+    abandonTaskFreshResume: async (taskId) => { calls.push(["fresh-abandon", taskId]); return { ...task, freshResume: { status: "cancelled", reason: "human_recovered" } }; },
+  });
+});
+
+test("Task Control API maps active task deletion to conflict", async () => {
+  await withApi(async ({ port, origin }) => {
+    const base = `http://127.0.0.1:${port}`;
+    const session = await jsonFetch(`${base}/api/v1/session`);
+    const response = await jsonFetch(`${base}/api/v1/tasks/task-active/delete`, {
+      method: "POST",
+      headers: { "content-type": "application/json", origin, "x-equinox-csrf": session.body.csrfToken },
+      body: "{}",
+    });
+    assert.equal(response.response.status, 409);
+    assert.match(response.body.error, /completed or cancelled before deletion/u);
+  }, {
+    deleteTask: async () => {
+      const error = new Error("Active Task Capsules must be completed or cancelled before deletion.");
+      error.code = "TASK_CAPSULE_TERMINAL_REQUIRED";
+      throw error;
+    },
+  });
+});
+
+test("Task Control API exposes stale revision and missing task as 409/404", async () => {
+  await withApi(async ({ port, origin }) => {
+    const base = `http://127.0.0.1:${port}`;
+    const session = await jsonFetch(`${base}/api/v1/session`);
+    const headers = { "content-type": "application/json", origin, "x-equinox-csrf": session.body.csrfToken };
+    const conflict = await jsonFetch(`${base}/api/v1/tasks/task-abcdef`, {
+      method: "PUT", headers,
+      body: JSON.stringify({ expectedRevision: 2, title: "Task", objective: "Objective", completed: [], next: [], references: [] }),
+    });
+    assert.equal(conflict.response.status, 409);
+    assert.match(conflict.body.error, /changed since revision/u);
+    const missing = await jsonFetch(`${base}/api/v1/tasks/task-missing`);
+    assert.equal(missing.response.status, 404);
+  }, {
+    getTask: async () => { const error = new Error("Task Capsule not found: task-missing"); error.code = "TASK_CAPSULE_NOT_FOUND"; throw error; },
+    updateTask: async () => { const error = new Error("Task Capsule changed since revision 2; current revision is 3. Refresh the task before saving."); error.code = "TASK_CAPSULE_REVISION_CONFLICT"; throw error; },
   });
 });
 

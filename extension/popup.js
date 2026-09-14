@@ -5,6 +5,7 @@ const acceptConsentButton = $("#accept-consent");
 const toggle = $("#enabled-toggle");
 const cursorToggle = $("#cursor-toggle");
 const agentNameInput = $("#agent-name");
+const autoContinueTargetSelect = $("#auto-continue-target");
 const openAgentBrowserButton = $("#open-agent-browser");
 const agentBrowserDescription = $("#agent-browser-description");
 const agentBrowserFeedbackElement = $("#agent-browser-feedback");
@@ -58,6 +59,7 @@ function syncInteractiveDisabled() {
   toggle.disabled = busy || !consentAccepted;
   cursorToggle.disabled = busy;
   agentNameInput.disabled = busy;
+  autoContinueTargetSelect.disabled = busy || !consentAccepted || !lastState?.enabled;
   acceptConsentButton.disabled = busy;
   openAgentBrowserButton.disabled = busy || inAgentBrowser || !lastState?.localConnected;
 }
@@ -82,6 +84,37 @@ function renderAgentBrowserAction(state) {
     agentBrowserFeedbackElement.textContent = "";
     agentBrowserFeedbackElement.classList.remove("error");
   }
+}
+
+function renderAutoContinueTarget(state) {
+  const autoContinue = state.autoContinue || { target: { mode: "task-tab" }, tabs: [] };
+  const target = autoContinue.target || { mode: "task-tab" };
+  const tabs = Array.isArray(autoContinue.tabs) ? autoContinue.tabs : [];
+  const previousValue = target.mode === "pinned" && Number.isInteger(target.tabId)
+    ? `pinned:${target.tabId}`
+    : "task-tab";
+
+  autoContinueTargetSelect.replaceChildren();
+  const automatic = document.createElement("option");
+  automatic.value = "task-tab";
+  automatic.textContent = "Current task’s ChatGPT tab (automatic)";
+  autoContinueTargetSelect.append(automatic);
+
+  for (const tab of tabs) {
+    if (!Number.isInteger(tab?.tabId)) continue;
+    const option = document.createElement("option");
+    option.value = `pinned:${tab.tabId}`;
+    option.textContent = `Pin: ${String(tab.title || "ChatGPT").slice(0, 72)}`;
+    autoContinueTargetSelect.append(option);
+  }
+
+  if (target.mode === "pinned" && !tabs.some((tab) => tab?.tabId === target.tabId)) {
+    const stale = document.createElement("option");
+    stale.value = previousValue;
+    stale.textContent = `Pinned tab unavailable: ${String(target.title || "ChatGPT").slice(0, 56)}`;
+    autoContinueTargetSelect.append(stale);
+  }
+  autoContinueTargetSelect.value = previousValue;
 }
 
 function tabPresentation(state) {
@@ -113,6 +146,7 @@ function render(state) {
     agentNameInput.value = state.agentCursorName || "Agent";
   }
   renderAgentBrowserAction(state);
+  renderAutoContinueTarget(state);
   syncInteractiveDisabled();
   version.textContent = `v${state.extensionVersion || "—"}`;
   offNote.hidden = !consentAccepted || Boolean(state.enabled);
@@ -222,6 +256,25 @@ async function setAgentCursorEnabled(enabled) {
   }
 }
 
+async function setAutoContinueTarget(value) {
+  if (busy) return;
+  busy = true;
+  syncInteractiveDisabled();
+  try {
+    const match = /^pinned:(\d+)$/u.exec(String(value || ""));
+    const state = match
+      ? await send({ type: "equinox.popup.setAutoContinueTarget", mode: "pinned", tabId: Number(match[1]) })
+      : await send({ type: "equinox.popup.setAutoContinueTarget", mode: "task-tab" });
+    render(state);
+  } catch (error) {
+    renderError(error);
+    if (lastState) renderAutoContinueTarget(lastState);
+  } finally {
+    busy = false;
+    syncInteractiveDisabled();
+  }
+}
+
 async function openAgentBrowser() {
   if (busy || lastState?.browserContext === "agent") return;
   busy = true;
@@ -282,6 +335,10 @@ toggle.addEventListener("change", () => {
 
 cursorToggle.addEventListener("change", () => {
   void setAgentCursorEnabled(cursorToggle.checked);
+});
+
+autoContinueTargetSelect.addEventListener("change", () => {
+  void setAutoContinueTarget(autoContinueTargetSelect.value);
 });
 
 agentNameInput.addEventListener("input", queueAgentCursorNameSave);

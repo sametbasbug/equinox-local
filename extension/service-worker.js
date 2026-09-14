@@ -25,6 +25,8 @@ const BOOKMARKS_VERSION = 2;
 const PDF_CONTENT_VERSION = 1;
 const DOWNLOAD_LIFECYCLE_VERSION = 1;
 const RANGE_VERSION = 2;
+const AUTO_CONTINUE_VERSION = 1;
+const FRESH_CHAT_RESUME_VERSION = 1;
 const MAX_PDF_DOCUMENT_BYTES = 16 * 1024 * 1024;
 const MAX_BOOKMARK_PATH_DEPTH = 16;
 const MAX_BOOKMARK_PATH_CHARS = 2_000;
@@ -83,6 +85,11 @@ const AGENT_CURSOR_STORAGE_KEY = "agentCursorEnabled";
 const AGENT_CURSOR_NAME_STORAGE_KEY = "agentCursorName";
 const BROWSER_INSTANCE_ID_STORAGE_KEY = "browserInstanceId";
 const BROWSER_CONTEXT_STORAGE_KEY = "browserContext";
+const AUTO_CONTINUE_TARGET_STORAGE_KEY = "autoContinueTarget";
+const AUTO_CONTINUE_RECEIPTS_STORAGE_KEY = "autoContinueDeliveryReceipts";
+const FRESH_CHAT_RESUME_RECEIPTS_STORAGE_KEY = "freshChatResumeReceipts";
+const MAX_AUTO_CONTINUE_RECEIPTS = 64;
+const MAX_FRESH_CHAT_RESUME_RECEIPTS = 64;
 const BROWSER_CONTEXT_VALUES = new Set(["agent", "user"]);
 const AGENT_CURSOR_HOST_ID = "__equinox_browser_agent_cursor__";
 const SCREENSHOT_ANNOTATION_HOST_ID = "__equinox_browser_ref_annotations__";
@@ -113,6 +120,8 @@ function browserCapabilityVersions() {
     pdfContent: PDF_CONTENT_VERSION,
     downloadLifecycle: DOWNLOAD_LIFECYCLE_VERSION,
     rangeSet: RANGE_VERSION,
+    autoContinue: AUTO_CONTINUE_VERSION,
+    freshChatResume: FRESH_CHAT_RESUME_VERSION,
   };
 }
 
@@ -198,6 +207,11 @@ let browserInstanceId = null;
 let browserContext = "unassigned";
 let browserIdentityLoaded = false;
 let browserIdentityLoadPromise = null;
+let autoContinueTarget = Object.freeze({ mode: "task-tab" });
+let autoContinueTargetLoaded = false;
+let autoContinueTargetLoadPromise = null;
+let autoContinueReceiptMutation = Promise.resolve();
+let freshChatResumeReceiptMutation = Promise.resolve();
 let localBridgeConnected = false;
 let nextLocalRequestId = 1;
 const pendingLocalRequests = new Map();
@@ -496,6 +510,783 @@ async function setBrowserContext(nextContext) {
   };
 }
 
+function chatGptResumeRoute(tabOrUrl) {
+  const tab = typeof tabOrUrl === "string" ? { url: tabOrUrl } : (tabOrUrl || {});
+  let parsed;
+  try {
+    parsed = new URL(String(tab.url || ""));
+  } catch {
+    return null;
+  }
+  if (parsed.protocol !== "https:" || parsed.hostname !== "chatgpt.com") return null;
+  const parts = parsed.pathname.split("/").filter(Boolean);
+  const conversationIdValid = (value) => /^[A-Za-z0-9-]{8,160}$/u.test(String(value || ""));
+  if (parts.length === 2 && parts[0] === "c" && conversationIdValid(parts[1])) {
+    return Object.freeze({
+      scopeKind: "root",
+      scopeToken: null,
+      conversationId: parts[1],
+      canonicalUrl: `https://chatgpt.com/c/${parts[1]}`,
+      freshChatUrl: "https://chatgpt.com/",
+    });
+  }
+  if (parts.length === 4 && parts[0] === "g" && parts[2] === "c" && conversationIdValid(parts[3])) {
+    const scopeToken = String(parts[1] || "");
+    const projectMatch = /^(g-p-[a-f0-9]{32})(?:-[a-z0-9][a-z0-9-]{0,126})?$/u.exec(scopeToken);
+    if (!projectMatch) return null;
+    const projectId = projectMatch[1];
+    return Object.freeze({
+      scopeKind: "project",
+      projectId,
+      scopeToken,
+      conversationId: parts[3],
+      canonicalUrl: `https://chatgpt.com/g/${scopeToken}/c/${parts[3]}`,
+      freshChatUrl: `https://chatgpt.com/g/${projectId}`,
+    });
+  }
+  return null;
+}
+
+function chatGptFreshHomeRoute(tabOrUrl) {
+  const tab = typeof tabOrUrl === "string" ? { url: tabOrUrl } : (tabOrUrl || {});
+  let parsed;
+  try {
+    parsed = new URL(String(tab.url || ""));
+  } catch {
+    return null;
+  }
+  if (parsed.protocol !== "https:" || parsed.hostname !== "chatgpt.com") return null;
+  const parts = parsed.pathname.split("/").filter(Boolean);
+  if (parts.length === 0) {
+    return Object.freeze({ scopeKind: "root", projectId: null, canonicalUrl: "https://chatgpt.com/" });
+  }
+  if (parts.length !== 3 || parts[0] !== "g" || parts[2] !== "project") return null;
+  const projectMatch = /^(g-p-[a-f0-9]{32})(?:-[a-z0-9][a-z0-9-]{0,126})?$/u.exec(String(parts[1] || ""));
+  if (!projectMatch) return null;
+  return Object.freeze({
+    scopeKind: "project",
+    projectId: projectMatch[1],
+    canonicalUrl: `https://chatgpt.com/${parts.join("/")}`,
+  });
+}
+
+function sameFreshChatScope(sourceRoute, destinationRoute) {
+  if (!sourceRoute || !destinationRoute || sourceRoute.scopeKind !== destinationRoute.scopeKind) return false;
+  if (sourceRoute.scopeKind === "root") return true;
+  return sourceRoute.projectId === destinationRoute.projectId;
+}
+
+function withFreshChatResumeReceiptMutation(operation) {
+  const run = freshChatResumeReceiptMutation.then(operation, operation);
+  freshChatResumeReceiptMutation = run.catch(() => {});
+  return run;
+}
+
+async function freshChatResumeReceipts() {
+  const stored = await chrome.storage.local.get(FRESH_CHAT_RESUME_RECEIPTS_STORAGE_KEY);
+  return Array.isArray(stored?.[FRESH_CHAT_RESUME_RECEIPTS_STORAGE_KEY])
+    ? stored[FRESH_CHAT_RESUME_RECEIPTS_STORAGE_KEY]
+    : [];
+}
+
+async function findFreshChatResumeReceipt(resumeId) {
+  return (await freshChatResumeReceipts()).find((item) => item?.resumeId === resumeId) || null;
+}
+
+async function claimFreshChatResumeReceipt(resumeId, sourceRoute) {
+  return await withFreshChatResumeReceiptMutation(async () => {
+    const current = await freshChatResumeReceipts();
+    const existing = current.find((item) => item?.resumeId === resumeId);
+    if (existing) return { claimed: false, receipt: existing };
+    const receipt = {
+      resumeId,
+      status: "claimed",
+      claimedAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      sourceConversationId: sourceRoute.conversationId,
+      scopeKind: sourceRoute.scopeKind,
+      projectId: sourceRoute.scopeKind === "project" ? sourceRoute.projectId : null,
+      destinationTabId: null,
+      destinationConversationId: null,
+      destinationCanonicalUrl: null,
+      reason: null,
+    };
+    await chrome.storage.local.set({
+      [FRESH_CHAT_RESUME_RECEIPTS_STORAGE_KEY]: [...current, receipt].slice(-MAX_FRESH_CHAT_RESUME_RECEIPTS),
+    });
+    return { claimed: true, receipt };
+  });
+}
+
+async function updateFreshChatResumeReceipt(resumeId, patch) {
+  return await withFreshChatResumeReceiptMutation(async () => {
+    const current = await freshChatResumeReceipts();
+    const index = current.findIndex((item) => item?.resumeId === resumeId);
+    if (index < 0) throw new Error("Fresh Chat Resume receipt is missing.");
+    const receipt = { ...current[index], ...patch, updatedAt: new Date().toISOString() };
+    const next = [...current];
+    next[index] = receipt;
+    await chrome.storage.local.set({ [FRESH_CHAT_RESUME_RECEIPTS_STORAGE_KEY]: next });
+    return receipt;
+  });
+}
+
+function freshChatResumeReceiptResult(receipt, duplicatePrevented = false) {
+  return {
+    freshChatResumeVersion: FRESH_CHAT_RESUME_VERSION,
+    resumeId: receipt.resumeId,
+    status: receipt.status,
+    confirmed: receipt.status === "confirmed",
+    ambiguous: receipt.status === "ambiguous" || (duplicatePrevented && receipt.status !== "confirmed"),
+    duplicatePrevented,
+    scopeKind: receipt.scopeKind,
+    projectId: receipt.projectId || null,
+    destinationTabId: Number.isInteger(receipt.destinationTabId) ? receipt.destinationTabId : null,
+    destinationConversationId: receipt.destinationConversationId || null,
+    destinationCanonicalUrl: receipt.destinationCanonicalUrl || null,
+    reason: receipt.reason || null,
+  };
+}
+
+async function freshChatComposerState(tabId) {
+  const tab = await chrome.tabs.get(tabId);
+  const homeRoute = chatGptFreshHomeRoute(tab);
+  if (!homeRoute) throw new Error("Fresh Chat Resume destination is not a supported ChatGPT new-chat page.");
+  await requireDebuggableTab(tabId);
+  await attachTab(tabId);
+  try {
+    const result = await send(tabId, "Runtime.evaluate", {
+      expression: `(() => {
+        /* Fresh Chat Resume composer state */
+        const composer = document.querySelector('#prompt-textarea[contenteditable="true"][role="textbox"]');
+        const userTurns = document.querySelectorAll('[data-message-author-role="user"], section[data-turn="user"]');
+        const assistantTurns = document.querySelectorAll('[data-message-author-role="assistant"], section[data-turn="assistant"]');
+        return {
+          composerReady: Boolean(composer),
+          composerEmpty: Boolean(composer) && !String(composer.textContent || '').trim(),
+          userTurnCount: userTurns.length,
+          assistantTurnCount: assistantTurns.length,
+        };
+      })()`,
+      returnByValue: true,
+    });
+    if (result?.exceptionDetails) throw new Error(result.exceptionDetails?.text || "Could not inspect Fresh Chat Resume composer state.");
+    const state = result?.result?.value;
+    if (!state || typeof state !== "object") throw new Error("Fresh Chat Resume composer state is unavailable.");
+    return {
+      tabId,
+      homeRoute,
+      composerReady: state.composerReady === true,
+      composerEmpty: state.composerEmpty === true,
+      userTurnCount: Number.isInteger(state.userTurnCount) ? state.userTurnCount : 0,
+      assistantTurnCount: Number.isInteger(state.assistantTurnCount) ? state.assistantTurnCount : 0,
+    };
+  } finally {
+    scheduleDetach(tabId);
+  }
+}
+
+async function waitForFreshChatHome(tabId, sourceRoute, timeoutMs = 10_000) {
+  const deadline = Date.now() + timeoutMs;
+  let lastUrl = null;
+  while (Date.now() < deadline) {
+    const tab = await chrome.tabs.get(tabId);
+    lastUrl = tab?.url || null;
+    const homeRoute = chatGptFreshHomeRoute(tab);
+    if (tab?.status === "complete" && sameFreshChatScope(sourceRoute, homeRoute)) return { tab, homeRoute };
+    await sleep(100);
+  }
+  throw new Error(`Fresh Chat Resume destination did not reach the expected new-chat scope: ${lastUrl || "unknown"}`);
+}
+
+async function waitForFreshChatComposer(tabId, sourceRoute, timeoutMs = 10_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      const state = await freshChatComposerState(tabId);
+      if (!sameFreshChatScope(sourceRoute, state.homeRoute)) throw new Error("Fresh Chat Resume destination scope changed.");
+      if (state.userTurnCount || state.assistantTurnCount) throw new Error("Fresh Chat Resume destination is not an empty conversation.");
+      if (state.composerReady && state.composerEmpty) return state;
+    } catch (error) {
+      if (/scope changed|not an empty conversation/u.test(errorMessage(error))) throw error;
+    }
+    await sleep(100);
+  }
+  throw new Error("Fresh Chat Resume destination composer did not become safely ready.");
+}
+
+async function selectorTargetWithActionability(tabId, selector, { label = "selector", agentName } = {}) {
+  await send(tabId, "Page.bringToFront");
+  const activeDeadline = Date.now() + 1_500;
+  while (Date.now() < activeDeadline) {
+    const tab = await chrome.tabs.get(tabId);
+    if (tab?.active) break;
+    await sleep(50);
+  }
+  const activeTab = await chrome.tabs.get(tabId);
+  if (!activeTab?.active) throw new Error(`Fresh Chat Resume could not activate ${label}.`);
+
+  await send(tabId, "DOM.enable");
+  const documentResult = await send(tabId, "DOM.getDocument", { depth: 1 });
+  const rootNodeId = documentResult?.root?.nodeId;
+  if (!Number.isInteger(rootNodeId)) throw new Error(`Fresh Chat Resume could not inspect ${label}.`);
+  const query = await send(tabId, "DOM.querySelector", { nodeId: rootNodeId, selector });
+  if (!Number.isInteger(query?.nodeId) || query.nodeId < 1) throw new Error(`Fresh Chat Resume could not find ${label}.`);
+  const described = await send(tabId, "DOM.describeNode", { nodeId: query.nodeId });
+  const backendNodeId = Number(described?.node?.backendNodeId);
+  if (!Number.isInteger(backendNodeId) || backendNodeId < 1) throw new Error(`Fresh Chat Resume could not resolve ${label}.`);
+
+  const target = { backendNodeId, frameId: null, sessionId: null };
+  await send(tabId, "DOM.scrollIntoViewIfNeeded", { backendNodeId });
+  const box = await send(tabId, "DOM.getBoxModel", { backendNodeId });
+  const quad = box?.model?.border || box?.model?.content;
+  if (!Array.isArray(quad) || quad.length < 8) throw new Error(`Fresh Chat Resume ${label} has no visible box.`);
+  const point = await verifiedClickablePoint(tabId, target, quad, label);
+  await showAgentCursor(tabId, point, null, { pulse: true, agentName });
+  await send(tabId, "Input.dispatchMouseEvent", { type: "mouseMoved", ...point });
+  return { target, point };
+}
+
+async function setEditableTargetValue(tabId, target, value, { label = "element" } = {}) {
+  const wanted = String(value ?? "");
+  const resolved = await send(tabId, "DOM.resolveNode", { backendNodeId: target.backendNodeId }, target.sessionId);
+  const objectId = resolved?.object?.objectId;
+  if (!objectId) throw new Error(`Unable to resolve editable ${label}.`);
+  try {
+    const result = await send(tabId, "Runtime.callFunctionOn", {
+      objectId,
+      functionDeclaration: `function(nextValue) {
+        this.focus();
+        const tag = String(this.tagName || '').toUpperCase();
+        const inputType = String(this.type || '').toLowerCase();
+        const blockedInputTypes = new Set(['button', 'checkbox', 'color', 'file', 'hidden', 'image', 'radio', 'range', 'reset', 'submit']);
+        const nativeEditable = tag === 'TEXTAREA' || (tag === 'INPUT' && !blockedInputTypes.has(inputType));
+        const contentEditable = Boolean(this.isContentEditable);
+        if (!nativeEditable && !contentEditable) throw new Error('Target is not a supported editable control');
+        if (contentEditable) {
+          this.textContent = nextValue;
+        } else {
+          const proto = Object.getPrototypeOf(this);
+          const descriptor = Object.getOwnPropertyDescriptor(proto, 'value')
+            || (globalThis.HTMLInputElement ? Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value') : null)
+            || (globalThis.HTMLTextAreaElement ? Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value') : null);
+          if (descriptor && typeof descriptor.set === 'function') descriptor.set.call(this, nextValue);
+          else this.value = nextValue;
+        }
+        this.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
+        this.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
+        const actual = contentEditable ? String(this.textContent ?? '') : String(this.value ?? '');
+        return { value: actual, editable: true, kind: contentEditable ? 'contenteditable' : tag.toLowerCase() };
+      }`,
+      arguments: [{ value: wanted }],
+      returnByValue: true,
+    }, target.sessionId);
+    if (result?.exceptionDetails) {
+      const description = result.exceptionDetails?.exception?.description || result.exceptionDetails?.text;
+      throw new Error(description || `Unable to fill ${label}.`);
+    }
+    const outcome = result?.result?.value || {};
+    if (String(outcome.value ?? "") !== wanted) throw new Error(`Fill postcondition failed for ${label}.`);
+    return outcome;
+  } finally {
+    await send(tabId, "Runtime.releaseObject", { objectId }, target.sessionId).catch(() => {});
+  }
+}
+
+async function fillSelectorWithSemanticInput(tabId, selector, value, { label = "selector", agentName } = {}) {
+  const { target, point } = await selectorTargetWithActionability(tabId, selector, { label, agentName });
+  const outcome = await setEditableTargetValue(tabId, target, value, { label });
+  return { target, point, kind: outcome.kind || null };
+}
+
+async function clickSelectorWithActionability(tabId, selector, { label = "selector", agentName } = {}) {
+  const { target, point } = await selectorTargetWithActionability(tabId, selector, { label, agentName });
+  const outcome = await dispatchNormalizedSemanticClick(tabId, target, point, {
+    clickCount: 1,
+    button: "left",
+    modifiers: [],
+    delayMs: 0,
+  });
+  if (outcome.dialog) throw new Error(`Fresh Chat Resume ${label} opened a dialog instead of submitting.`);
+  return point;
+}
+
+async function createFreshChatResume({ resumeId, sourceTabId, sourceConversationId, prompt } = {}) {
+  if (typeof resumeId !== "string" || !/^resume-[a-z0-9-]{6,80}$/u.test(resumeId)) {
+    throw new Error("Fresh Chat Resume id is invalid.");
+  }
+  if (!Number.isInteger(sourceTabId) || sourceTabId < 1) throw new Error("Fresh Chat Resume source tab id is invalid.");
+  if (typeof sourceConversationId !== "string" || !/^[A-Za-z0-9-]{8,160}$/u.test(sourceConversationId)) {
+    throw new Error("Fresh Chat Resume source conversation id is invalid.");
+  }
+  const message = String(prompt || "");
+  if (!message || message.length > 2_000 || /\0/u.test(message)) throw new Error("Fresh Chat Resume prompt is invalid.");
+
+  const prior = await findFreshChatResumeReceipt(resumeId);
+  if (prior) {
+    if (prior.sourceConversationId !== sourceConversationId) {
+      throw new Error("Fresh Chat Resume id is already bound to another source conversation.");
+    }
+    return freshChatResumeReceiptResult(prior, true);
+  }
+
+  const sourceTab = await chrome.tabs.get(sourceTabId);
+  const sourceRoute = chatGptResumeRoute(sourceTab);
+  if (!sourceRoute || sourceRoute.conversationId !== sourceConversationId) {
+    throw new Error("Fresh Chat Resume source conversation changed or has an unsupported route.");
+  }
+
+  const claim = await claimFreshChatResumeReceipt(resumeId, sourceRoute);
+  if (!claim.claimed) return freshChatResumeReceiptResult(claim.receipt, true);
+
+  try {
+    if (!chrome.tabs?.create) throw new Error("Chrome tabs.create API is unavailable.");
+    const created = await chrome.tabs.create({ url: sourceRoute.freshChatUrl, active: false });
+    if (!Number.isInteger(created?.id)) throw new Error("Chrome did not return a Fresh Chat Resume destination tab id.");
+    await updateFreshChatResumeReceipt(resumeId, { status: "destination_created", destinationTabId: created.id });
+
+    await waitForFreshChatHome(created.id, sourceRoute);
+    await waitForFreshChatComposer(created.id, sourceRoute);
+
+    await requireDebuggableTab(created.id);
+    await attachTab(created.id);
+    try {
+      await fillSelectorWithSemanticInput(
+        created.id,
+        '#prompt-textarea[contenteditable="true"][role="textbox"]',
+        message,
+        { label: "composer" },
+      );
+      await updateFreshChatResumeReceipt(resumeId, { status: "filled" });
+      const submitDeadline = Date.now() + 4_000;
+      const submitStableMs = 500;
+      let ready = false;
+      let readySince = null;
+      let lastSubmitReason = "not_ready";
+      while (Date.now() < submitDeadline) {
+        const destinationTab = await chrome.tabs.get(created.id);
+        const destinationHomeRoute = chatGptFreshHomeRoute(destinationTab);
+        if (!sameFreshChatScope(sourceRoute, destinationHomeRoute)) {
+          throw new Error("Fresh Chat Resume destination scope changed before submit.");
+        }
+        const submitTarget = await send(created.id, "Runtime.evaluate", {
+          expression: `(() => {
+            // Fresh Chat Resume trusted submit target
+            const composer = document.querySelector('#prompt-textarea[contenteditable="true"][role="textbox"]');
+            const button = document.querySelector('button[data-testid="send-button"][type="submit"]');
+            const turns = document.querySelectorAll('[data-message-author-role], section[data-turn]');
+            if (turns.length) return { ready: false, reason: "destination_not_empty" };
+            if (!composer || !button || !button.isConnected) return { ready: false, reason: "send_button_missing" };
+            if (String(composer.textContent || "") !== ${JSON.stringify(message)}) return { ready: false, reason: "composer_changed" };
+            if (Boolean(button.disabled) || button.getAttribute("aria-disabled") === "true") return { ready: false, reason: "send_disabled" };
+            return { ready: true };
+          })()`,
+          returnByValue: true,
+          silent: true,
+        });
+        if (submitTarget?.exceptionDetails) {
+          const submitError = submitTarget.exceptionDetails?.exception?.description
+            || submitTarget.exceptionDetails?.text
+            || "unknown";
+          throw new Error(`Fresh Chat Resume submit target failed: ${submitError}`);
+        }
+        const candidate = submitTarget?.result?.value;
+        if (candidate?.ready === true) {
+          if (readySince == null) readySince = Date.now();
+          if (Date.now() - readySince >= submitStableMs) {
+            ready = true;
+            break;
+          }
+          await sleep(100);
+          continue;
+        }
+        readySince = null;
+        lastSubmitReason = candidate?.reason || "not_ready";
+        if (lastSubmitReason === "composer_changed" || lastSubmitReason === "destination_not_empty") {
+          throw new Error(`Fresh Chat Resume submit target failed: ${lastSubmitReason}`);
+        }
+        await sleep(100);
+      }
+      if (!ready) throw new Error(`Fresh Chat Resume submit target timed out: ${lastSubmitReason}`);
+      await clickSelectorWithActionability(
+        created.id,
+        'button[data-testid="send-button"][type="submit"]',
+        { label: "send button" },
+      );
+      await updateFreshChatResumeReceipt(resumeId, { status: "submitted" });
+    } finally {
+      scheduleDetach(created.id);
+    }
+
+    const deadline = Date.now() + 10_000;
+    while (Date.now() < deadline) {
+      await sleep(100);
+      const tab = await chrome.tabs.get(created.id);
+      const destinationRoute = chatGptResumeRoute(tab);
+      if (destinationRoute && sameFreshChatScope(sourceRoute, destinationRoute)) {
+        if (destinationRoute.conversationId === sourceRoute.conversationId) {
+          throw new Error("Fresh Chat Resume destination reused the source conversation identity.");
+        }
+        const confirmed = await updateFreshChatResumeReceipt(resumeId, {
+          status: "confirmed",
+          destinationConversationId: destinationRoute.conversationId,
+          destinationCanonicalUrl: destinationRoute.canonicalUrl,
+          reason: null,
+        });
+        return freshChatResumeReceiptResult(confirmed, false);
+      }
+      if (destinationRoute && !sameFreshChatScope(sourceRoute, destinationRoute)) {
+        throw new Error("Fresh Chat Resume destination conversation scope does not match the source.");
+      }
+    }
+    throw new Error("Fresh Chat Resume destination conversation identity could not be confirmed.");
+  } catch (error) {
+    const ambiguous = await updateFreshChatResumeReceipt(resumeId, {
+      status: "ambiguous",
+      reason: errorMessage(error).slice(0, 300),
+    }).catch(() => claim.receipt);
+    return freshChatResumeReceiptResult(ambiguous, false);
+  }
+}
+
+function chatGptConversationIdentity(tabOrUrl) {
+  const tab = typeof tabOrUrl === "string" ? { url: tabOrUrl } : (tabOrUrl || {});
+  const rawUrl = String(tab.url || "");
+  let parsed;
+  try {
+    parsed = new URL(rawUrl);
+  } catch {
+    return null;
+  }
+  if (parsed.protocol !== "https:" || parsed.hostname !== "chatgpt.com") return null;
+  const parts = parsed.pathname.split("/").filter(Boolean);
+  let conversationIndex = -1;
+  for (let index = parts.length - 2; index >= 0; index -= 1) {
+    if (parts[index] === "c") {
+      conversationIndex = index;
+      break;
+    }
+  }
+  if (conversationIndex < 0) return null;
+  const conversationId = String(parts[conversationIndex + 1] || "");
+  if (!/^[A-Za-z0-9-]{8,160}$/u.test(conversationId)) return null;
+  const canonicalPath = `/${parts.slice(0, conversationIndex + 2).join("/")}`;
+  return {
+    conversationId,
+    canonicalUrl: `https://chatgpt.com${canonicalPath}`,
+    title: String(tab.title || "ChatGPT").slice(0, 200),
+  };
+}
+
+function normalizeAutoContinueTarget(value) {
+  if (!value || value.mode === "task-tab") return Object.freeze({ mode: "task-tab" });
+  if (value.mode !== "pinned" || !Number.isInteger(value.tabId) || value.tabId < 1) {
+    return Object.freeze({ mode: "task-tab" });
+  }
+  const conversationId = String(value.conversationId || "");
+  if (!/^[A-Za-z0-9-]{8,160}$/u.test(conversationId)) return Object.freeze({ mode: "task-tab" });
+  return Object.freeze({
+    mode: "pinned",
+    tabId: value.tabId,
+    conversationId,
+    canonicalUrl: String(value.canonicalUrl || "").slice(0, 500),
+    title: String(value.title || "ChatGPT").slice(0, 200),
+  });
+}
+
+async function ensureAutoContinueTargetLoaded() {
+  if (autoContinueTargetLoaded) return autoContinueTarget;
+  if (!autoContinueTargetLoadPromise) {
+    autoContinueTargetLoadPromise = (async () => {
+      try {
+        const stored = await chrome.storage.local.get(AUTO_CONTINUE_TARGET_STORAGE_KEY);
+        autoContinueTarget = normalizeAutoContinueTarget(stored?.[AUTO_CONTINUE_TARGET_STORAGE_KEY]);
+      } catch {
+        autoContinueTarget = Object.freeze({ mode: "task-tab" });
+      }
+      autoContinueTargetLoaded = true;
+      return autoContinueTarget;
+    })();
+  }
+  return await autoContinueTargetLoadPromise;
+}
+
+async function listChatGptConversationTabs() {
+  const tabs = await chrome.tabs.query({});
+  return tabs.flatMap((tab) => {
+    const identity = chatGptConversationIdentity(tab);
+    if (!identity || !Number.isInteger(tab.id)) return [];
+    return [{
+      tabId: tab.id,
+      title: identity.title,
+      conversationId: identity.conversationId,
+      canonicalUrl: identity.canonicalUrl,
+      active: Boolean(tab.active),
+    }];
+  }).slice(0, 50);
+}
+
+async function setAutoContinueTarget({ mode, tabId } = {}) {
+  if (mode === "task-tab") {
+    autoContinueTarget = Object.freeze({ mode: "task-tab" });
+  } else if (mode === "pinned") {
+    if (!Number.isInteger(tabId) || tabId < 1) throw new Error("Pinned Auto Continue target requires a valid tab id.");
+    const tab = await chrome.tabs.get(tabId);
+    const identity = chatGptConversationIdentity(tab);
+    if (!identity) throw new Error("Only an open chatgpt.com conversation can be pinned for Auto Continue.");
+    autoContinueTarget = Object.freeze({ mode: "pinned", tabId, ...identity });
+  } else {
+    throw new Error("Auto Continue target mode must be task-tab or pinned.");
+  }
+  await chrome.storage.local.set({ [AUTO_CONTINUE_TARGET_STORAGE_KEY]: autoContinueTarget });
+  autoContinueTargetLoaded = true;
+  return await autoContinueTargetStatus();
+}
+
+async function autoContinueTargetStatus({ includeTabs = true } = {}) {
+  await ensureAutoContinueTargetLoaded();
+  const tabs = includeTabs ? await listChatGptConversationTabs() : [];
+  let pinnedValid = null;
+  if (autoContinueTarget.mode === "pinned") {
+    const current = tabs.find((tab) => tab.tabId === autoContinueTarget.tabId);
+    pinnedValid = Boolean(current && current.conversationId === autoContinueTarget.conversationId);
+  }
+  return {
+    autoContinueVersion: AUTO_CONTINUE_VERSION,
+    target: { ...autoContinueTarget },
+    pinnedValid,
+    tabs,
+  };
+}
+
+async function chatGptContinuationState(tabId) {
+  const tab = await chooseTab(tabId);
+  const identity = chatGptConversationIdentity(tab);
+  if (!identity) throw new Error("Auto Continue target is not a chatgpt.com conversation.");
+  await requireDebuggableTab(tab.id);
+  await attachTab(tab.id);
+  try {
+    const result = await send(tab.id, "Runtime.evaluate", {
+      expression: `(() => {
+        const last = (values) => values.length ? values[values.length - 1] : null;
+        const userMessages = [...document.querySelectorAll('[data-message-author-role="user"][data-message-id]')];
+        const assistantMessages = [...document.querySelectorAll('[data-message-author-role="assistant"][data-message-id]')];
+        const userTurns = [...document.querySelectorAll('section[data-turn="user"][data-testid]')];
+        const assistantTurns = [...document.querySelectorAll('section[data-turn="assistant"][data-testid]')];
+        const composer = document.querySelector('#prompt-textarea[contenteditable="true"][role="textbox"]');
+        return {
+          generationActive: Boolean(document.querySelector('button[data-testid="stop-button"]')),
+          userEpoch: last(userMessages)?.getAttribute('data-message-id') || last(userTurns)?.getAttribute('data-testid') || null,
+          assistantTurnKey: last(assistantTurns)?.getAttribute('data-testid') || last(assistantMessages)?.getAttribute('data-message-id') || null,
+          composerReady: Boolean(composer),
+          composerEmpty: Boolean(composer) && !String(composer.textContent || '').trim(),
+        };
+      })()`,
+      returnByValue: true,
+    });
+    if (result?.exceptionDetails) throw new Error(result.exceptionDetails?.text || "Could not inspect ChatGPT continuation state.");
+    const state = result?.result?.value;
+    if (!state || typeof state !== "object") throw new Error("ChatGPT continuation state is unavailable.");
+    return {
+      autoContinueVersion: AUTO_CONTINUE_VERSION,
+      tabId: tab.id,
+      ...identity,
+      generationActive: state.generationActive === true,
+      userEpoch: typeof state.userEpoch === "string" ? state.userEpoch.slice(0, 200) : null,
+      assistantTurnKey: typeof state.assistantTurnKey === "string" ? state.assistantTurnKey.slice(0, 200) : null,
+      composerReady: state.composerReady === true,
+      composerEmpty: state.composerEmpty === true,
+    };
+  } finally {
+    scheduleDetach(tab.id);
+  }
+}
+
+async function resolveAutoContinueTarget() {
+  await ensureAutoContinueTargetLoaded();
+  if (autoContinueTarget.mode === "pinned") {
+    let tab;
+    try {
+      tab = await chrome.tabs.get(autoContinueTarget.tabId);
+    } catch {
+      return { autoContinueVersion: AUTO_CONTINUE_VERSION, mode: "pinned", status: "invalid", reason: "pinned_tab_closed" };
+    }
+    const identity = chatGptConversationIdentity(tab);
+    if (!identity || identity.conversationId !== autoContinueTarget.conversationId) {
+      return { autoContinueVersion: AUTO_CONTINUE_VERSION, mode: "pinned", status: "invalid", reason: "pinned_conversation_changed" };
+    }
+    const state = await chatGptContinuationState(tab.id);
+    return {
+      autoContinueVersion: AUTO_CONTINUE_VERSION,
+      mode: "pinned",
+      status: state.generationActive && state.assistantTurnKey ? "ready" : "idle",
+      target: state,
+    };
+  }
+
+  const tabs = await listChatGptConversationTabs();
+  const generating = [];
+  for (const tab of tabs) {
+    try {
+      const state = await chatGptContinuationState(tab.tabId);
+      if (state.generationActive && state.assistantTurnKey) generating.push(state);
+    } catch {
+      // A disappearing or restricted tab is not an eligible task target.
+    }
+  }
+  if (generating.length === 1) {
+    return { autoContinueVersion: AUTO_CONTINUE_VERSION, mode: "task-tab", status: "ready", target: generating[0] };
+  }
+  return {
+    autoContinueVersion: AUTO_CONTINUE_VERSION,
+    mode: "task-tab",
+    status: generating.length === 0 ? "idle" : "ambiguous",
+    reason: generating.length === 0 ? "no_generating_chatgpt_tab" : "multiple_generating_chatgpt_tabs",
+    candidateCount: generating.length,
+  };
+}
+
+function withAutoContinueReceiptMutation(operation) {
+  const run = autoContinueReceiptMutation.then(operation, operation);
+  autoContinueReceiptMutation = run.catch(() => {});
+  return run;
+}
+
+async function hasAutoContinueReceipt(continuationId) {
+  const stored = await chrome.storage.local.get(AUTO_CONTINUE_RECEIPTS_STORAGE_KEY);
+  const current = Array.isArray(stored?.[AUTO_CONTINUE_RECEIPTS_STORAGE_KEY])
+    ? stored[AUTO_CONTINUE_RECEIPTS_STORAGE_KEY]
+    : [];
+  return current.some((item) => item?.continuationId === continuationId);
+}
+
+async function claimAutoContinueReceipt(continuationId) {
+  return await withAutoContinueReceiptMutation(async () => {
+    const stored = await chrome.storage.local.get(AUTO_CONTINUE_RECEIPTS_STORAGE_KEY);
+    const current = Array.isArray(stored?.[AUTO_CONTINUE_RECEIPTS_STORAGE_KEY])
+      ? stored[AUTO_CONTINUE_RECEIPTS_STORAGE_KEY]
+      : [];
+    if (current.some((item) => item?.continuationId === continuationId)) return false;
+    const next = [...current, { continuationId, claimedAt: new Date().toISOString() }]
+      .slice(-MAX_AUTO_CONTINUE_RECEIPTS);
+    await chrome.storage.local.set({ [AUTO_CONTINUE_RECEIPTS_STORAGE_KEY]: next });
+    return true;
+  });
+}
+
+async function deliverAutoContinuation({
+  continuationId,
+  tabId,
+  conversationId,
+  userEpoch,
+  assistantTurnKey,
+  prompt,
+} = {}) {
+  if (typeof continuationId !== "string" || !/^cont-[a-z0-9-]{6,80}$/u.test(continuationId)) {
+    throw new Error("Auto Continue delivery id is invalid.");
+  }
+  if (!Number.isInteger(tabId) || tabId < 1) throw new Error("Auto Continue delivery tab id is invalid.");
+  if (typeof conversationId !== "string" || !/^[A-Za-z0-9-]{8,160}$/u.test(conversationId)) {
+    throw new Error("Auto Continue conversation id is invalid.");
+  }
+  if (typeof userEpoch !== "string" || userEpoch.length < 1 || userEpoch.length > 200) {
+    throw new Error("Auto Continue user epoch is invalid.");
+  }
+  if (typeof assistantTurnKey !== "string" || assistantTurnKey.length < 1 || assistantTurnKey.length > 200) {
+    throw new Error("Auto Continue assistant turn key is invalid.");
+  }
+  const message = String(prompt || "");
+  if (!message || message.length > 2_000 || /\0/u.test(message)) throw new Error("Auto Continue prompt is invalid.");
+
+  if (await hasAutoContinueReceipt(continuationId)) {
+    return {
+      autoContinueVersion: AUTO_CONTINUE_VERSION,
+      continuationId,
+      tabId,
+      confirmed: false,
+      duplicatePrevented: true,
+      ambiguous: false,
+    };
+  }
+
+  const before = await chatGptContinuationState(tabId);
+  if (before.conversationId !== conversationId) throw new Error("Auto Continue conversation changed before delivery.");
+  if (before.userEpoch !== userEpoch) throw new Error("A new user message arrived before Auto Continue delivery.");
+  if (before.assistantTurnKey !== assistantTurnKey) throw new Error("The assistant turn changed before Auto Continue delivery.");
+  if (before.generationActive) throw new Error("ChatGPT is still generating; Auto Continue delivery is not ready.");
+  if (!before.composerReady || !before.composerEmpty) throw new Error("ChatGPT composer is unavailable or contains human input.");
+
+  const claimed = await claimAutoContinueReceipt(continuationId);
+  if (!claimed) {
+    return {
+      autoContinueVersion: AUTO_CONTINUE_VERSION,
+      continuationId,
+      tabId,
+      confirmed: false,
+      duplicatePrevented: true,
+      ambiguous: false,
+    };
+  }
+
+  await requireDebuggableTab(tabId);
+  await attachTab(tabId);
+  const focusResult = await send(tabId, "Runtime.evaluate", {
+    expression: `(() => {
+      const composer = document.querySelector('#prompt-textarea[contenteditable="true"][role="textbox"]');
+      if (!composer) throw new Error('ChatGPT composer is unavailable');
+      if (String(composer.textContent || '').trim()) throw new Error('ChatGPT composer is not empty');
+      composer.focus();
+      return { focused: document.activeElement === composer };
+    })()`,
+    returnByValue: true,
+  });
+  if (focusResult?.exceptionDetails || focusResult?.result?.value?.focused !== true) {
+    throw new Error(focusResult?.exceptionDetails?.text || "Auto Continue could not focus the ChatGPT composer.");
+  }
+  await send(tabId, "Input.insertText", { text: message });
+  const fillResult = await send(tabId, "Runtime.evaluate", {
+    expression: `(() => {
+      const composer = document.querySelector('#prompt-textarea[contenteditable="true"][role="textbox"]');
+      return composer ? String(composer.textContent || '') : null;
+    })()`,
+    returnByValue: true,
+  });
+  if (fillResult?.exceptionDetails || String(fillResult?.result?.value || "") !== message) {
+    throw new Error(fillResult?.exceptionDetails?.text || "Auto Continue composer fill postcondition failed.");
+  }
+  await sleep(50);
+  await dispatchKeyChord(tabId, "Enter", null);
+
+  const deadline = Date.now() + 4_000;
+  while (Date.now() < deadline) {
+    await sleep(100);
+    try {
+      const after = await chatGptContinuationState(tabId);
+      if (after.conversationId !== conversationId) break;
+      if (after.userEpoch && after.userEpoch !== userEpoch) {
+        return {
+          autoContinueVersion: AUTO_CONTINUE_VERSION,
+          continuationId,
+          tabId,
+          confirmed: true,
+          duplicatePrevented: false,
+          ambiguous: false,
+        };
+      }
+    } catch {
+      break;
+    }
+  }
+  return {
+    autoContinueVersion: AUTO_CONTINUE_VERSION,
+    continuationId,
+    tabId,
+    confirmed: false,
+    duplicatePrevented: false,
+    ambiguous: true,
+  };
+}
+
 function clearReconnectSchedule() {
   if (reconnectTimer) clearTimeout(reconnectTimer);
   reconnectTimer = null;
@@ -511,6 +1302,7 @@ async function popupStatus() {
     ensureAgentCursorEnabledLoaded(),
     ensureAgentCursorNameLoaded(),
     ensureBrowserIdentityLoaded(),
+    ensureAutoContinueTargetLoaded(),
   ]);
   const consentAccepted = hasCurrentBrowserControlConsent();
   let tab = null;
@@ -522,6 +1314,7 @@ async function popupStatus() {
     }
   }
   const policy = tab ? classifyBrowserPage(tab) : null;
+  const autoContinue = await autoContinueTargetStatus({ includeTabs: browserEnabled && consentAccepted });
   return {
     enabled: browserEnabled,
     consentAccepted,
@@ -535,6 +1328,7 @@ async function popupStatus() {
     browserContext,
     browserInstanceId,
     lastNativeDisconnectError,
+    autoContinue,
     tab: tab
       ? {
           id: tab.id,
@@ -3707,6 +4501,50 @@ function normalizeInputModifiers(modifiers = []) {
   return { mask, values: normalized };
 }
 
+async function dispatchNormalizedSemanticClick(
+  tabId,
+  target,
+  point,
+  { clickCount = 1, button = "left", modifiers = [], delayMs = 0 } = {},
+) {
+  const requestedClickCount = Number(clickCount);
+  if (![1, 2].includes(requestedClickCount)) throw new Error("clickCount must be 1 or 2");
+  const requestedButton = normalizeMouseButton(button);
+  const modifierInfo = normalizeInputModifiers(modifiers);
+  const boundedDelayMs = Math.max(0, Math.min(Math.floor(Number(delayMs) || 0), 1_000));
+  const dialogSequenceBefore = dialogSequence;
+  let dialog = null;
+  for (let currentClick = 1; currentClick <= requestedClickCount && !dialog; currentClick += 1) {
+    const pressPromise = send(tabId, "Input.dispatchMouseEvent", {
+      type: "mousePressed",
+      ...point,
+      button: requestedButton,
+      buttons: mouseButtonsMask(requestedButton),
+      modifiers: modifierInfo.mask,
+      clickCount: currentClick,
+    }, target.sessionId);
+    dialog = await settleCommandOrDialog(tabId, pressPromise, dialogSequenceBefore);
+    if (dialog) break;
+    if (boundedDelayMs > 0) await sleep(boundedDelayMs);
+    const releasePromise = send(tabId, "Input.dispatchMouseEvent", {
+      type: "mouseReleased",
+      ...point,
+      button: requestedButton,
+      buttons: 0,
+      modifiers: modifierInfo.mask,
+      clickCount: currentClick,
+    }, target.sessionId);
+    dialog = await settleCommandOrDialog(tabId, releasePromise, dialogSequenceBefore);
+  }
+  return {
+    dialog,
+    clickCount: requestedClickCount,
+    button: requestedButton,
+    modifiers: modifierInfo.values,
+    delayMs: boundedDelayMs,
+  };
+}
+
 async function browserClick({
   tabId,
   ref,
@@ -3802,29 +4640,14 @@ async function browserClick({
   let dispatchStarted = false;
   let dispatchFailure = null;
   try {
-    for (let currentClick = 1; currentClick <= requestedClickCount && !dialog; currentClick += 1) {
-      dispatchStarted = true;
-      const pressPromise = send(tab.id, "Input.dispatchMouseEvent", {
-      type: "mousePressed",
-      ...point,
+    dispatchStarted = true;
+    const dispatched = await dispatchNormalizedSemanticClick(tab.id, target, point, {
+      clickCount: requestedClickCount,
       button: requestedButton,
-      buttons: mouseButtonsMask(requestedButton),
-      modifiers: modifierInfo.mask,
-      clickCount: currentClick,
-    }, target.sessionId);
-    dialog = await settleCommandOrDialog(tab.id, pressPromise, dialogSequenceBefore);
-    if (dialog) break;
-    if (boundedDelayMs > 0) await sleep(boundedDelayMs);
-    const releasePromise = send(tab.id, "Input.dispatchMouseEvent", {
-      type: "mouseReleased",
-      ...point,
-      button: requestedButton,
-      buttons: 0,
-      modifiers: modifierInfo.mask,
-      clickCount: currentClick,
-    }, target.sessionId);
-      dialog = await settleCommandOrDialog(tab.id, releasePromise, dialogSequenceBefore);
-    }
+      modifiers: modifierInfo.values,
+      delayMs: boundedDelayMs,
+    });
+    dialog = dispatched.dialog;
   } catch (error) {
     dispatchFailure = error;
   }
@@ -5185,40 +6008,7 @@ async function browserFill({ tabId, ref, value, submit, agentName, after }) {
   await requireDebuggableTab(tab.id);
   await attachTab(tab.id);
   const { target, point, frameId, sessionId } = await moveAgentCursorToRef(tab.id, ref, { pulse: true, agentName });
-  const resolved = await send(tab.id, "DOM.resolveNode", { backendNodeId: target.backendNodeId }, target.sessionId);
-  const objectId = resolved?.object?.objectId;
-  if (!objectId) throw new Error(`Unable to resolve element: ${ref}`);
-  const result = await send(tab.id, "Runtime.callFunctionOn", {
-    objectId,
-    functionDeclaration: `function(nextValue) {
-      this.focus();
-      const tag = String(this.tagName || '').toUpperCase();
-      const inputType = String(this.type || '').toLowerCase();
-      const blockedInputTypes = new Set(['button', 'checkbox', 'color', 'file', 'hidden', 'image', 'radio', 'range', 'reset', 'submit']);
-      const nativeEditable = tag === 'TEXTAREA' || (tag === 'INPUT' && !blockedInputTypes.has(inputType));
-      const contentEditable = Boolean(this.isContentEditable);
-      if (!nativeEditable && !contentEditable) throw new Error('Target is not a supported editable control');
-      if (contentEditable) {
-        this.textContent = nextValue;
-      } else {
-        const proto = Object.getPrototypeOf(this);
-        const descriptor = Object.getOwnPropertyDescriptor(proto, 'value')
-          || (globalThis.HTMLInputElement ? Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value') : null)
-          || (globalThis.HTMLTextAreaElement ? Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value') : null);
-        if (descriptor && typeof descriptor.set === 'function') descriptor.set.call(this, nextValue);
-        else this.value = nextValue;
-      }
-      this.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
-      this.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
-      const actual = contentEditable ? String(this.textContent ?? '') : String(this.value ?? '');
-      return { value: actual, editable: true, kind: contentEditable ? 'contenteditable' : tag.toLowerCase() };
-    }`,
-    arguments: [{ value: wanted }],
-    returnByValue: true,
-  }, target.sessionId);
-  if (result?.exceptionDetails) throw new Error(result.exceptionDetails?.text || `Unable to fill element: ${ref}`);
-  const outcome = result?.result?.value || {};
-  if (String(outcome.value ?? "") !== wanted) throw new Error(`Fill postcondition failed for ${ref}`);
+  const outcome = await setEditableTargetValue(tab.id, target, wanted, { label: ref });
   if (submitKey) {
     await dispatchKeyChord(tab.id, submitKey, target.sessionId || null);
     refStates.delete(tab.id);
@@ -6560,6 +7350,10 @@ const COMMANDS = {
   "downloads.wait": browserDownloadWait,
   disconnect: browserDisconnect,
   "self.reload": browserSelfReload,
+  "continuation.target.resolve": resolveAutoContinueTarget,
+  "continuation.inspect": ({ tabId }) => chatGptContinuationState(tabId),
+  "continuation.deliver": deliverAutoContinuation,
+  "resume.create": createFreshChatResume,
   "settings.status": popupStatus,
   "settings.update": updateBrowserSettings,
   "context.set": async ({ context } = {}) => setBrowserContext(context),
@@ -6932,6 +7726,7 @@ chrome.runtime.onMessage?.addListener((message, _sender, sendResponse) => {
     "equinox.popup.setAgentCursorEnabled",
     "equinox.popup.setAgentCursorName",
     "equinox.popup.openAgentBrowser",
+    "equinox.popup.setAutoContinueTarget",
   ]).has(message.type)) return false;
   const task = message.type === "equinox.popup.setEnabled"
     ? setBrowserEnabled(message.enabled)
@@ -6943,7 +7738,9 @@ chrome.runtime.onMessage?.addListener((message, _sender, sendResponse) => {
           ? setAgentCursorName(message.name)
           : message.type === "equinox.popup.openAgentBrowser"
             ? openAgentBrowserFromPopup()
-            : popupStatus();
+            : message.type === "equinox.popup.setAutoContinueTarget"
+              ? setAutoContinueTarget({ mode: message.mode, tabId: message.tabId }).then(() => popupStatus())
+              : popupStatus();
   Promise.resolve(task).then(
     (result) => sendResponse({ ok: true, result }),
     (error) => sendResponse({ ok: false, error: { message: errorMessage(error) } }),

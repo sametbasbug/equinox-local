@@ -17,6 +17,7 @@ export const PEEKABOO_ALLOWED_TOOLS = Object.freeze([
   "list",
   "inspect_ui",
   "see",
+  "clipboard",
   "app",
   "window",
   "menu",

@@ -31,6 +31,7 @@ The goal is not to turn your computer into an unrestricted remote shell. The goa
 | Git | Project-scoped operations with branch/SHA/worktree guards |
 | Equinox Browser | One extension/Native Messaging engine with isolated-default Agent Browser and explicit Your Browser; per-profile consent/on-off control |
 | Control Center | Native macOS app backed by the loopback-only UI/API on `127.0.0.1:24891` |
+| Task continuity | Durable bounded Task Capsules plus explicitly armed, fail-closed Auto Continue |
 | Updates | Ed25519-signed metadata, bounded downloads, verified activation, automatic rollback |
 | Desktop | Optional Peekaboo bridge with a deliberately reduced allowlist |
 | Telegram | Optional Bot API delivery with a private local credential; agents receive only a send operation |
@@ -41,7 +42,7 @@ The goal is not to turn your computer into an unrestricted remote shell. The goa
 Agent tooling often optimizes for either **maximum capability** or **maximum safety through limitation**. Equinox Local tries to make the boundary itself a product surface:
 
 - **Agent-friendly:** terminal-first local execution, root-aware project discovery, release automation, runtime diagnostics, browser primitives, and credential/deployment integrations.
-- **Human-friendly:** a real English/Türkçe Control Center for health, projects, agent safety, Browser/Desktop access, updates, and uninstall, plus a compact native macOS menu-bar surface for Active/Paused state, active work, Emergency Stop/Resume, Agent Browser launch, runtime health and restart. Closing Control Center keeps the menu-bar controller alive and removes the Dock icon until the window is reopened; **Quit Equinox Local** is distinct from Emergency Stop and fully stops the trusted per-user Local LaunchAgent/runtime until the app is opened again.
+- **Human-friendly:** a real English/Türkçe Control Center for health, projects, durable Tasks, agent safety, Browser/Desktop access, updates, and uninstall, plus a compact native macOS menu-bar surface for Active/Paused state, Emergency Stop/Resume, Agent Browser launch, runtime health and restart. The native menu, companion quick actions, and restrained Nyx speech bubbles follow the same English/Türkçe UI choice as Control Center; task lifecycle messages are automatic while casual/time-aware lines appear only when the human clicks Nyx. Closing Control Center keeps the menu-bar controller alive and removes the Dock icon until the window is reopened; **Quit Equinox Local** is distinct from Emergency Stop and fully stops the trusted per-user Local LaunchAgent/runtime until the app is opened again.
 - **Local-first:** project data and runtime state live on the user's machine unless a requested action needs a connected AI/service provider.
 - **No arbitrary HTTP command console:** Control Center uses bounded management endpoints rather than a generic shell backend.
 - **One browser transport, two explicit contexts:** Equinox Browser powers isolated-default Agent Browser and explicit Your Browser through the same extension/Native Messaging path; there is no hidden QA-browser or CDP fallback.
@@ -76,9 +77,23 @@ See [docs/architecture.md](docs/architecture.md) for the longer version.
 
 Equinox Browser is the companion Chrome extension and the **only product browser transport**. It serves two explicit contexts through the same Chrome Web Store identity and Native Messaging host: **Agent Browser** is the default isolated Equinox Local profile, while **Your Browser** is the user's personal Chrome and is used only when selected explicitly. The two contexts keep independent profile/consent state and never silently fall back to each other. Install the unlisted production extension from [Chrome Web Store](https://chromewebstore.google.com/detail/equinox-browser/npdneefcobilfkjlihghjgjnknenhfoj). Control Center also links directly to the same Store listing from onboarding, the Browser page and Integrations so users do not have to hunt through this README. A fresh extension install starts with browser automation disabled until the user accepts the browser-data disclosure and explicitly enables control.
 
-The extension intentionally has no broad `host_permissions`; browser actions are performed through Chrome's documented debugger interface and a local Native Messaging bridge. Turning browser control off rejects browser-automation commands while allowing the bounded settings channel to remain available. Bookmark automation is intentionally Agent Browser-only; Your Browser bookmark requests fail closed.
+The extension intentionally has no broad `host_permissions`; browser actions are performed through Chrome's documented debugger interface and a local Native Messaging bridge. Turning browser control off rejects browser-automation commands while allowing the bounded settings channel to remain available. Bookmark automation is intentionally Agent Browser-only; Your Browser bookmark requests fail closed. The popup also owns the profile-local Auto Continue target preference: automatic mode binds the one generating ChatGPT task, while an explicit human pin binds one exact open ChatGPT conversation and never falls back if that pin closes or navigates away.
 
 More: [docs/browser.md](docs/browser.md)
+
+## Task Capsules, Auto Continue and Fresh Chat Resume
+
+Task Capsules are small durable checkpoint records, not transcript archives. Each active task keeps bounded human-readable state such as its objective, completed work, next steps, safe references and a monotonically increasing checkpoint revision. The store keeps at most 50 capsules by default; when more space is needed, only the oldest completed/cancelled records are pruned and active work is never evicted. Control Center's **Tasks** workspace lists recent capsules and lets the human inspect or revision-guard edit active work, cancel a pending continuation, complete/cancel the task, or permanently delete a completed/cancelled capsule after confirmation. Active capsules cannot be deleted directly. When a fresh-chat transition fails safely, the same workspace becomes a small recovery console with human-readable state/reason and only state-safe actions.
+
+Auto Continue is deliberately one-shot. An agent must explicitly arm every automatic next turn, and a chain is bounded to three automatic hops before a fresh chain must be started. Local binds the arm to the exact generating ChatGPT conversation (or a human-pinned popup target), waits for generation to finish and the composer to stay safely empty, persists the delivery reservation before crossing the browser-mutation boundary, and never blindly retries an ambiguous send. An armed continuation can survive a Local runtime restart because the Task Capsule is durable.
+
+Fresh Chat Resume explicitly hands an active Task Capsule to one new ChatGPT conversation without copying the transcript. It preserves root/project scope, reserves durable state plus an extension receipt before browser mutation, creates/submits at most one destination and binds the task only after the new conversation identity is confirmed. A prepared handoff can survive a Local restart. If mutation becomes ambiguous, Equinox does **not** retry it automatically; Control Center can clear the blocked transition so work can continue from the saved checkpoint without replaying the uncertain browser action.
+
+The human always wins: typing into the composer, submitting a new message, changing/closing the bound conversation, cancelling from Tasks, or pressing **Emergency Stop** retires the pending continuation before another automatic turn is allowed. A stale explicit pin fails closed instead of silently choosing another ChatGPT tab or Chrome profile.
+
+## Equinox Local 5.0 — Continuum
+
+Version 5.0 is the Continuum release: durable Task Capsules, guarded Auto Continue/Fresh Chat Resume, native ChatGPT ↔ Mac file transfer, unified native Quit behavior, and a deliberately smaller seven-tool agent-facing MCP surface. Upgrading from 4.x is handled by the normal signed updater, but cached ChatGPT connector schemas may require one manual Refresh because the top-level MCP contract intentionally changed. See `docs/migrating-to-5.0.md` for the migration notes.
 
 ## Installation
 
@@ -162,7 +177,7 @@ Tests live under `tests/` on purpose: they remain part of the public trust story
 ### Requirements
 
 - macOS
-- Node.js **26.8.1 or newer**
+- Node.js **26.8.2 or newer**
 - npm
 - Git
 
@@ -172,7 +187,7 @@ npm run check
 npm test
 ```
 
-The public test suite covers browser consent/lifecycle, Agent Access and credential boundaries, project discovery, bounded local-image viewing, terminal execution, Control Center request boundaries, managed install/update/rollback/uninstall, source-runtime synchronization, internal release workflows, repair/recovery, Native Messaging, and runtime observability. The CI badge above is the durable source for the current test status.
+The public test suite covers browser consent/lifecycle, Auto Continue target/delivery guards, Task Capsule persistence, Agent Access and credential boundaries, project discovery, bounded local-image viewing, terminal execution, Control Center request boundaries, managed install/update/rollback/uninstall, source-runtime synchronization, internal release workflows, repair/recovery, Native Messaging, and runtime observability. The CI badge above is the durable source for the current test status.
 
 Source-checkout runtime configuration is intentionally external. Start with [examples/equinox-local-config.example.json](examples/equinox-local-config.example.json) and keep real machine paths/credentials out of the repository. The source restart path synchronizes both the development tunnel client and pinned Peekaboo runtime from the same version/SHA/signing policy used by managed release packaging; System Doctor reports version drift without exposing configured executable paths.
 
@@ -187,6 +202,7 @@ Security-sensitive design choices are documented rather than hidden behind imple
 - mutation scopes/locks around competing operations;
 - minimal credential-free environments for detached helpers;
 - no browser automation before explicit Equinox Browser consent;
+- no unattended Auto Continue after human composing/input, Emergency Stop, target drift or a stale explicit pin;
 - bounded logs/artifacts and redaction before observability persistence;
 - signed managed updates with health-verified rollback.
 

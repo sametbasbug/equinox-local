@@ -7,6 +7,20 @@ ROOT="$(cd "$SCRIPT_DIR/.." && /bin/pwd -P)"
 CONFIG="${EQUINOX_LOCAL_DEV_RUNTIME_CONFIG:-$ROOT/.equinox-local-dev-runtime.conf}"
 DEV_NODE="${EQUINOX_LOCAL_DEV_NODE:-$(command -v node 2>/dev/null || true)}"
 LOG_FILE="${TMPDIR:-/tmp}/equinox-local-restart.log"
+APP_PATH="$HOME/Applications/Equinox Local.app"
+APP_EXECUTABLE="$APP_PATH/Contents/MacOS/applet"
+PRE_RESTART_APP_PIDS=""
+if [ -x "$APP_EXECUTABLE" ] && [ ! -L "$APP_EXECUTABLE" ]; then
+  for app_pid in $(/usr/bin/pgrep -f "$APP_EXECUTABLE" 2>/dev/null || true); do
+    app_uid="$(/bin/ps -p "$app_pid" -o uid= 2>/dev/null | /usr/bin/tr -d ' ' || true)"
+    app_command="$(/bin/ps -p "$app_pid" -o command= 2>/dev/null || true)"
+    if [ "$app_uid" = "$(/usr/bin/id -u)" ]; then
+      case "$app_command" in
+        "$APP_EXECUTABLE"|"$APP_EXECUTABLE "*) PRE_RESTART_APP_PIDS="$PRE_RESTART_APP_PIDS $app_pid" ;;
+      esac
+    fi
+  done
+fi
 
 fail() {
   printf 'Equinox Local source restart: %s\n' "$*" >&2
@@ -29,7 +43,7 @@ esac
 
 EQUINOX_LOCAL_DEV_RUNTIME_CONFIG="$CONFIG" "$DEV_NODE" "$ROOT/scripts/release/sync-source-tunnel-runtime.mjs"
 EQUINOX_LOCAL_DEV_RUNTIME_CONFIG="$CONFIG" "$DEV_NODE" "$ROOT/scripts/release/sync-source-peekaboo-runtime.mjs"
-EQUINOX_LOCAL_DEV_RUNTIME_CONFIG="$CONFIG" "$DEV_NODE" "$ROOT/scripts/release/prepare-source-app-host.mjs"
+EQUINOX_LOCAL_DEV_NODE="$DEV_NODE" EQUINOX_LOCAL_DEV_RUNTIME_CONFIG="$CONFIG" "$DEV_NODE" "$ROOT/scripts/release/prepare-source-app-host.mjs"
 
 LABEL=""
 RUNTIME=""
@@ -118,6 +132,22 @@ DOMAIN="gui/$CURRENT_UID"
   # start a replacement app host in the narrow window before bootout.
   HOST_PID="$(/bin/launchctl print "$DOMAIN/$LABEL" 2>/dev/null | /usr/bin/awk '$1 == "pid" && $2 == "=" { print $3; exit }' || true)"
   VALID_HOST_CHILDREN=""
+  FOREGROUND_GUI_PIDS=""
+  GUI_WAS_RUNNING=0
+  for app_pid in $PRE_RESTART_APP_PIDS; do
+    if [ "$app_pid" != "$HOST_PID" ]; then
+      app_uid="$(/bin/ps -p "$app_pid" -o uid= 2>/dev/null | /usr/bin/tr -d ' ' || true)"
+      app_command="$(/bin/ps -p "$app_pid" -o command= 2>/dev/null || true)"
+      if [ "$app_uid" = "$CURRENT_UID" ]; then
+        case "$app_command" in
+          "$APP_EXECUTABLE"|"$APP_EXECUTABLE "*)
+            FOREGROUND_GUI_PIDS="$FOREGROUND_GUI_PIDS $app_pid"
+            GUI_WAS_RUNNING=1
+            ;;
+        esac
+      fi
+    fi
+  done
   if [[ "$HOST_PID" =~ ^[0-9]+$ ]] && [ "$HOST_PID" -gt 1 ]; then
     HOST_CHILDREN="$(/usr/bin/pgrep -P "$HOST_PID" 2>/dev/null || true)"
     for child_pid in $HOST_CHILDREN; do
@@ -201,6 +231,49 @@ DOMAIN="gui/$CURRENT_UID"
   [ -n "$NEW_PID" ] || fail "source runtime did not start a new Equinox Local server process"
   if [ -n "$OLD_PID" ] && [ "$NEW_PID" = "$OLD_PID" ]; then
     fail "source runtime restart left the previous Equinox Local server process running"
+  fi
+
+  if [ "$GUI_WAS_RUNNING" -eq 1 ]; then
+    for gui_pid in $FOREGROUND_GUI_PIDS; do
+      gui_uid="$(/bin/ps -p "$gui_pid" -o uid= 2>/dev/null | /usr/bin/tr -d ' ' || true)"
+      gui_command="$(/bin/ps -p "$gui_pid" -o command= 2>/dev/null || true)"
+      if [ "$gui_uid" = "$CURRENT_UID" ]; then
+        case "$gui_command" in
+          "$APP_EXECUTABLE"|"$APP_EXECUTABLE "*) /bin/kill -TERM "$gui_pid" >/dev/null 2>&1 || true ;;
+        esac
+      fi
+    done
+    for gui_pid in $FOREGROUND_GUI_PIDS; do
+      for _ in {1..40}; do
+        if ! /bin/kill -0 "$gui_pid" >/dev/null 2>&1; then
+          break
+        fi
+        sleep 0.1
+      done
+      /bin/kill -0 "$gui_pid" >/dev/null 2>&1 && fail "previous Equinox Local foreground GUI did not stop cleanly"
+    done
+
+    /usr/bin/open -gn "$APP_PATH" --args --restart-shell
+    NEW_GUI_PID=""
+    for _ in {1..40}; do
+      NEW_HOST_PID="$(/bin/launchctl print "$DOMAIN/$LABEL" 2>/dev/null | /usr/bin/awk '$1 == "pid" && $2 == "=" { print $3; exit }' || true)"
+      for app_pid in $(/usr/bin/pgrep -f "$APP_EXECUTABLE" 2>/dev/null || true); do
+        [ "$app_pid" = "$NEW_HOST_PID" ] && continue
+        app_uid="$(/bin/ps -p "$app_pid" -o uid= 2>/dev/null | /usr/bin/tr -d ' ' || true)"
+        app_command="$(/bin/ps -p "$app_pid" -o command= 2>/dev/null || true)"
+        if [ "$app_uid" = "$CURRENT_UID" ]; then
+          case "$app_command" in
+            "$APP_EXECUTABLE"|"$APP_EXECUTABLE "*)
+              NEW_GUI_PID="$app_pid"
+              break
+              ;;
+          esac
+        fi
+      done
+      [ -n "$NEW_GUI_PID" ] && break
+      sleep 0.1
+    done
+    [ -n "$NEW_GUI_PID" ] || fail "Equinox Local foreground GUI did not relaunch after source restart"
   fi
 
   printf '[%s] Equinox Local source-checkout restart completed.\n' "$(date '+%Y-%m-%dT%H:%M:%S%z')"

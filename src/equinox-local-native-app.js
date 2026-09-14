@@ -9,10 +9,11 @@ const FILE_PATH = "/usr/bin/file";
 const NATIVE_SOURCE_DIR = "app";
 const NATIVE_OUTPUT_DIR = path.join("runtime", "app");
 
-export const EQUINOX_LOCAL_NATIVE_APP_SHELL_VERSION = 7;
+export const EQUINOX_LOCAL_NATIVE_APP_SHELL_VERSION = 21;
 export const EQUINOX_LOCAL_NATIVE_APP_EXECUTABLE = "applet";
 export const EQUINOX_LOCAL_NATIVE_APP_ICON = "EquinoxLocal.png";
 export const EQUINOX_LOCAL_NATIVE_APP_MENU_ICON = "EquinoxLocalMenuBar.png";
+export const EQUINOX_LOCAL_NATIVE_APP_COMPANION_ASSET = "EquinoxCompanionNyx.webp";
 export const EQUINOX_LOCAL_NATIVE_APP_METADATA = "native-app.json";
 
 function targetTriple(target) {
@@ -89,15 +90,18 @@ export async function buildEquinoxLocalNativeAppArtifacts({
   const source = path.join(root, NATIVE_SOURCE_DIR, "EquinoxLocalApp.swift");
   const icon = path.join(root, NATIVE_SOURCE_DIR, EQUINOX_LOCAL_NATIVE_APP_ICON);
   const menuIcon = path.join(root, NATIVE_SOURCE_DIR, EQUINOX_LOCAL_NATIVE_APP_MENU_ICON);
+  const companionAsset = path.join(root, NATIVE_SOURCE_DIR, EQUINOX_LOCAL_NATIVE_APP_COMPANION_ASSET);
   await assertNormalFile(source, "Equinox Local native app source");
   await assertNormalFile(icon, "Equinox Local native app icon");
   await assertNormalFile(menuIcon, "Equinox Local native menu-bar icon");
+  await assertNormalFile(companionAsset, "Equinox Local companion asset");
 
   const outputRoot = path.join(releaseRoot, NATIVE_OUTPUT_DIR);
   await fs.mkdir(outputRoot, { recursive: true, mode: 0o700 });
   const executable = path.join(outputRoot, EQUINOX_LOCAL_NATIVE_APP_EXECUTABLE);
   const outputIcon = path.join(outputRoot, EQUINOX_LOCAL_NATIVE_APP_ICON);
   const outputMenuIcon = path.join(outputRoot, EQUINOX_LOCAL_NATIVE_APP_MENU_ICON);
+  const outputCompanionAsset = path.join(outputRoot, EQUINOX_LOCAL_NATIVE_APP_COMPANION_ASSET);
 
   await execFileImpl("/usr/bin/xcrun", [
     "swiftc",
@@ -109,6 +113,7 @@ export async function buildEquinoxLocalNativeAppArtifacts({
     "-o", executable,
     "-framework", "AppKit",
     "-framework", "WebKit",
+    "-framework", "UserNotifications",
   ], { timeout: 120_000, maxBuffer: 4 * 1024 * 1024 });
   await normalizeMachOUuid(executable);
   await fs.chmod(executable, 0o755);
@@ -120,6 +125,7 @@ export async function buildEquinoxLocalNativeAppArtifacts({
 
   await fs.copyFile(icon, outputIcon);
   await fs.copyFile(menuIcon, outputMenuIcon);
+  await fs.copyFile(companionAsset, outputCompanionAsset);
   const metadata = Object.freeze({
     schemaVersion: 1,
     shellVersion: EQUINOX_LOCAL_NATIVE_APP_SHELL_VERSION,
@@ -130,6 +136,8 @@ export async function buildEquinoxLocalNativeAppArtifacts({
     iconSha256: await sha256File(outputIcon),
     menuIcon: EQUINOX_LOCAL_NATIVE_APP_MENU_ICON,
     menuIconSha256: await sha256File(outputMenuIcon),
+    companionAsset: EQUINOX_LOCAL_NATIVE_APP_COMPANION_ASSET,
+    companionAssetSha256: await sha256File(outputCompanionAsset),
   });
   await fs.writeFile(path.join(outputRoot, EQUINOX_LOCAL_NATIVE_APP_METADATA), `${JSON.stringify(metadata, null, 2)}\n`, { mode: 0o644 });
   return metadata;
@@ -142,6 +150,7 @@ export function equinoxLocalNativeAppArtifactPaths(releaseDir) {
     executable: path.join(root, EQUINOX_LOCAL_NATIVE_APP_EXECUTABLE),
     icon: path.join(root, EQUINOX_LOCAL_NATIVE_APP_ICON),
     menuIcon: path.join(root, EQUINOX_LOCAL_NATIVE_APP_MENU_ICON),
+    companionAsset: path.join(root, EQUINOX_LOCAL_NATIVE_APP_COMPANION_ASSET),
     metadata: path.join(root, EQUINOX_LOCAL_NATIVE_APP_METADATA),
   });
 }

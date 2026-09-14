@@ -73,6 +73,14 @@
       <p id="agent-name-help">Local name shown next to the cursor.</p>
     </section>
 
+    <section class="auto-continue-card" aria-labelledby="auto-continue-label">
+      <label id="auto-continue-label" for="auto-continue-target">Auto Continue target</label>
+      <select id="auto-continue-target" aria-describedby="auto-continue-help">
+        <option value="task-tab">Current task’s ChatGPT tab (automatic)</option>
+      </select>
+      <p id="auto-continue-help">By default, the agent binds the ChatGPT conversation that is generating when it arms the next checkpoint. Pin a tab only when you want Auto Continue to stay on one conversation.</p>
+    </section>
+
     <section class="status-card" aria-labelledby="connection-title">
       <div class="status-heading">
         <span id="connection-dot" class="status-dot" aria-hidden="true"></span>

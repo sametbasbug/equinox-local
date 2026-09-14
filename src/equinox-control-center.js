@@ -31,6 +31,19 @@ const TR_UI = Object.freeze({
   "Open Browser settings": "Tarayıcı ayarlarını aç",
   "Open Services": "Servisleri aç",
   "View all checks": "Tüm kontrolleri göster",
+  "Doctor → Fix": "Doctor → Fix",
+  "Checking recent diagnosed incidents for safe predefined fixes.": "Güvenli, önceden tanımlı düzeltmeler için son teşhis edilen olaylar kontrol ediliyor.",
+  "No active repairable incidents were diagnosed.": "Düzeltilebilir aktif bir olay teşhis edilmedi.",
+  "Safe fixes available": "Güvenli düzeltmeler hazır",
+  "No fixes needed": "Düzeltme gerekmiyor",
+  "Fix safely": "Güvenli düzelt",
+  "Repair running…": "Düzeltme çalışıyor…",
+  "Restart Peekaboo bridge": "Peekaboo köprüsünü yeniden başlat",
+  "Clean stale preview": "Takılı preview sürecini temizle",
+  "Clean workflow orphan processes": "Workflow yetim süreçlerini temizle",
+  "Resume resumable workflow": "Sürdürülebilir workflow'u devam ettir",
+  "Doctor fix verified.": "Doctor düzeltmesi doğrulandı.",
+  "Doctor fix completed but the incident still needs attention.": "Doctor düzeltmesi tamamlandı ancak olay hâlâ ilgi gerektiriyor.",
   "Choose a profile. Its settings stay separate.": "Bir profil seçin. Her profilin ayarları ayrı tutulur.",
   "Configured folder scope": "Yapılandırılmış klasör kapsamı",
   "Named projects and read-only folders used by structured capabilities.": "Yapılandırılmış araçların kullandığı adlandırılmış projeler ve salt okunur klasörler.",
@@ -56,6 +69,68 @@ const TR_UI = Object.freeze({
   "Control Center sections": "Kontrol Merkezi bölümleri",
   "Dashboard": "Gösterge Paneli",
   "Projects & folders": "Projeler ve klasörler",
+  "Tasks": "Görevler",
+  "Recent tasks": "Son görevler",
+  "Select a task": "Bir görev seçin",
+  "Choose a task on the left to inspect its latest checkpoint.": "Son checkpoint’i incelemek için soldan bir görev seçin.",
+  "Task Capsule": "Görev Kapsülü",
+  "Auto Continue": "Otomatik Devam",
+  "Not armed": "Kurulu değil",
+  "Waiting": "Bekliyor",
+  "Delivering": "Gönderiliyor",
+  "Delivered": "Gönderildi",
+  "Failed": "Başarısız",
+  "Expired": "Süresi doldu",
+  "Cancelled": "İptal edildi",
+  "Completed": "Tamamlandı",
+  "Completed items": "Tamamlananlar",
+  "No browser target": "Tarayıcı hedefi yok",
+  "Title": "Başlık",
+  "Objective": "Amaç",
+  "Next": "Sıradaki",
+  "References": "Referanslar",
+  "One completed item per line": "Her satıra bir tamamlanan madde",
+  "One next step per line": "Her satıra bir sonraki adım",
+  "One safe reference per line: project, branch, commit, file, url or note.": "Her satıra bir güvenli referans: project, branch, commit, file, url veya note.",
+  "Save changes": "Değişiklikleri kaydet",
+  "Cancel continuation": "Otomatik devamı iptal et",
+  "Mark complete": "Tamamlandı olarak işaretle",
+  "Cancel task": "Görevi iptal et",
+  "Delete task": "Görevi sil",
+  "This task is terminal and can no longer be edited.": "Bu görev terminal durumda ve artık düzenlenemez.",
+  "Inspect durable task checkpoints and take control when an automatic continuation should stop or change. Task state stays private on this Mac.": "Kalıcı görev checkpoint’lerini inceleyin; otomatik devamın durması veya değişmesi gerektiğinde kontrolü alın. Görev durumu bu Mac’te özel kalır.",
+  "Task changes saved.": "Görev değişiklikleri kaydedildi.",
+  "Continuation cancelled.": "Otomatik devam iptal edildi.",
+  "Task marked complete.": "Görev tamamlandı olarak işaretlendi.",
+  "Task cancelled.": "Görev iptal edildi.",
+  "Task deleted.": "Görev silindi.",
+  "Mark this task complete?": "Bu görevi tamamlandı olarak işaretlemek istiyor musunuz?",
+  "Cancel this task?": "Bu görevi iptal etmek istiyor musunuz?",
+  "Delete this task permanently? This cannot be undone.": "Bu görevi kalıcı olarak silmek istiyor musunuz? Bu işlem geri alınamaz.",
+  "No Task Capsules yet. Tasks appear here after an agent saves a checkpoint.": "Henüz Görev Kapsülü yok. Bir ajan checkpoint kaydettiğinde görevler burada görünür.",
+  "Task recovery": "Görev kurtarma",
+  "Needs attention": "İlgi gerekiyor",
+  "Recoverable": "Kurtarılabilir",
+  "In progress": "Devam ediyor",
+  "Fresh-chat handoff is waiting": "Yeni sohbet aktarımı bekliyor",
+  "Fresh-chat handoff is in progress": "Yeni sohbet aktarımı devam ediyor",
+  "Fresh-chat handoff needs attention": "Yeni sohbet aktarımı ilgi gerektiriyor",
+  "Fresh-chat handoff stopped": "Yeni sohbet aktarımı durdu",
+  "Cancel fresh-chat handoff": "Yeni sohbet aktarımını iptal et",
+  "Clear blocked transition": "Takılı geçişi temizle",
+  "Fresh-chat handoff cancelled.": "Yeni sohbet aktarımı iptal edildi.",
+  "Blocked transition cleared. Continue from the saved checkpoint in ChatGPT.": "Takılı geçiş temizlendi. ChatGPT'de kayıtlı checkpoint'ten devam edin.",
+  "Clear this blocked fresh-chat transition? This does not retry the browser action.": "Bu takılı yeni sohbet geçişi temizlensin mi? Bu işlem tarayıcı eylemini yeniden denemez.",
+  "Equinox will move this task after the current assistant turn finishes. You can cancel the handoff before browser mutation starts.": "Equinox mevcut asistan turu bittikten sonra bu görevi taşıyacak. Tarayıcı değişikliği başlamadan aktarımı iptal edebilirsiniz.",
+  "Browser mutation has started. Equinox will not start another handoff while this transition is unresolved. Use Emergency Stop if you need to interrupt it.": "Tarayıcı değişikliği başladı. Bu geçiş çözülmeden Equinox başka bir aktarım başlatmaz. Müdahale etmeniz gerekirse Emergency Stop kullanın.",
+  "The fresh-chat handoff became uncertain after browser mutation started. Equinox will not retry it automatically.": "Tarayıcı değişikliği başladıktan sonra yeni sohbet aktarımı belirsiz hale geldi. Equinox bunu otomatik olarak yeniden denemez.",
+  "The browser handoff could not be confirmed. Equinox will not retry it automatically.": "Tarayıcı aktarımı doğrulanamadı. Equinox bunu otomatik olarak yeniden denemez.",
+  "Equinox restarted after browser mutation started, so the handoff could not be proven. It will not retry automatically.": "Tarayıcı değişikliği başladıktan sonra Equinox yeniden başlatıldı; bu yüzden aktarım doğrulanamadı. Otomatik olarak yeniden denenmez.",
+  "Emergency Stop interrupted the handoff after browser mutation started. Equinox will not retry it automatically.": "Emergency Stop, tarayıcı değişikliği başladıktan sonra aktarımı kesti. Equinox bunu otomatik olarak yeniden denemez.",
+  "A safety guard stopped the handoff after browser mutation started. Equinox will not retry it automatically.": "Bir güvenlik koruması, tarayıcı değişikliği başladıktan sonra aktarımı durdurdu. Equinox bunu otomatik olarak yeniden denemez.",
+  "Emergency Stop cancelled the handoff before browser mutation. The saved checkpoint is still available.": "Emergency Stop, tarayıcı değişikliğinden önce aktarımı iptal etti. Kayıtlı checkpoint hâlâ kullanılabilir.",
+  "The fresh-chat handoff was cancelled before browser mutation. The saved checkpoint is still available.": "Yeni sohbet aktarımı tarayıcı değişikliğinden önce iptal edildi. Kayıtlı checkpoint hâlâ kullanılabilir.",
+  "The task checkpoint changed, so the pending fresh-chat handoff was cancelled. The latest checkpoint is ready to continue.": "Görev checkpoint'i değiştiği için bekleyen yeni sohbet aktarımı iptal edildi. En güncel checkpoint devam etmeye hazır.",
   "Browser": "Tarayıcı",
   "Permissions": "İzinler",
   "Integrations": "Entegrasyonlar",
@@ -507,7 +582,16 @@ function initialLanguage() {
   } catch {
     // A blocked localStorage must not prevent Control Center from loading.
   }
+  if (SUPPORTED_LANGUAGES.has(window.__equinoxNativeLanguage)) return window.__equinoxNativeLanguage;
   return String(navigator.language || "").toLowerCase().startsWith("tr") ? "tr" : "en";
+}
+
+function notifyNativeLanguage() {
+  try {
+    window.webkit?.messageHandlers?.equinoxNativeLanguage?.postMessage(state.language);
+  } catch {
+    // External browsers do not expose the native bridge; language still works normally.
+  }
 }
 
 function localeForLanguage(language) {
@@ -524,7 +608,14 @@ const state = {
   status: null,
   health: null,
   doctor: null,
+  doctorRepairs: null,
+  doctorRepairBusy: false,
+  doctorRepairResult: null,
   activity: [],
+  tasks: [],
+  selectedTaskId: null,
+  taskDraft: null,
+  taskBusy: false,
   update: null,
   updateBusy: false,
   updateApplyBusy: false,
@@ -568,6 +659,10 @@ function localizeUiText(value) {
   if (match) return `${match[1]}dk çalışma süresi`;
   match = source.match(/^(\d+) recent events$/u);
   if (match) return `${match[1]} son olay`;
+  match = source.match(/^(\d+) tasks$/u);
+  if (match) return `${match[1]} görev`;
+  match = source.match(/^Checkpoint (\d+) · Updated (.+)$/u);
+  if (match) return `Checkpoint ${match[1]} · Güncellendi ${match[2]}`;
   match = source.match(/^Evaluated (.+)$/u);
   if (match) return `Değerlendirildi: ${match[1]}`;
   match = source.match(/^Checked (.+)$/u);
@@ -622,7 +717,7 @@ const DYNAMIC_TEXT_IDS = new Set([
   "peekaboo-status", "peekaboo-detail", "api-status", "api-detail", "project-count", "folder-count",
   "default-project", "health-summary-title", "health-summary-badge", "health-summary-copy", "health-event-count",
   "health-evaluated-at", "doctor-title", "doctor-badge", "doctor-copy", "doctor-list", "doctor-summary",
-  "doctor-checked-at", "update-title", "update-badge", "update-copy", "update-version", "update-checked-at",
+  "doctor-checked-at", "doctor-fix-title", "doctor-fix-summary", "doctor-fix-copy", "doctor-repair-list", "doctor-repair-result", "update-title", "update-badge", "update-copy", "update-version", "update-checked-at",
   "check-update-button", "install-update-button", "root-count-label", "dirty-state", "project-list",
   "default-project-select", "workspace-project-select", "downloads-root-select", "control-center-address",
   "save-config-button", "agent-browser-page-status", "agent-browser-page-badge", "agent-browser-page-version", "agent-browser-connected-at",
@@ -896,6 +991,7 @@ function localizeRuntimeEventMessage(message) {
 function setLanguage(nextLanguage, { persist = true } = {}) {
   const language = normalizeLanguage(nextLanguage);
   state.language = language;
+  notifyNativeLanguage();
   if (persist) {
     try {
       localStorage.setItem(LANGUAGE_STORAGE_KEY, language);
@@ -919,6 +1015,7 @@ function setLanguage(nextLanguage, { persist = true } = {}) {
 const sectionMeta = {
   dashboard: ["Your workspace", "Overview"],
   projects: ["Your workspace", "Projects & folders"],
+  tasks: ["Your workspace", "Tasks"],
   browser: ["Browser contexts", "Browser"],
   permissions: ["Agent control", "Safety & access"],
   integrations: ["Optional capabilities", "Services"],
@@ -1251,6 +1348,38 @@ function renderOnboarding() {
   $("onboarding-reconnect").hidden = !state.onboardingBusy;
 }
 
+async function runDoctorRepair(incident, fix) {
+  if (state.doctorRepairBusy || !incident?.incidentId || !fix?.id) return;
+  const question = state.language === "tr"
+    ? `“${localizeUiText(fix.label)}” düzeltmesi uygulansın mı?\n\n${fix.description}\n\nEquinox işlemden hemen önce teşhisi yeniden doğrulayacak ve sonrasında sonucu tekrar kontrol edecek.`
+    : `Apply “${fix.label}”?\n\n${fix.description}\n\nEquinox will re-check the diagnosis immediately before the fixed recipe runs and verify the result afterwards.`;
+  if (!window.confirm(question)) return;
+
+  state.doctorRepairBusy = true;
+  state.doctorRepairResult = null;
+  renderDoctor();
+  clearError();
+  try {
+    const response = await mutationJson("/api/v1/doctor/repair", "POST", {
+      incidentId: incident.incidentId,
+      recipeId: fix.id,
+    });
+    state.doctorRepairResult = response.result || null;
+    const [doctor, repairs] = await Promise.all([
+      requestJson("/api/v1/doctor").catch(() => ({ doctor: state.doctor })),
+      requestJson("/api/v1/doctor/repairs").catch(() => ({ repairs: state.doctorRepairs })),
+    ]);
+    state.doctor = doctor.doctor || state.doctor;
+    state.doctorRepairs = repairs.repairs || state.doctorRepairs;
+    showToast(response.result?.verification?.resolved ? "Doctor fix verified." : "Doctor fix completed but the incident still needs attention.");
+  } catch (error) {
+    showError(error);
+  } finally {
+    state.doctorRepairBusy = false;
+    renderDoctor();
+  }
+}
+
 function renderDoctor() {
   const doctor = state.doctor || {};
   const checks = Array.isArray(doctor.checks) ? doctor.checks : [];
@@ -1292,6 +1421,74 @@ function renderDoctor() {
 
     row.append(indicator, copy, badge);
     list.append(row);
+  }
+
+  const plan = state.doctorRepairs || {};
+  const incidents = Array.isArray(plan.incidents) ? plan.incidents : [];
+  const actionable = incidents.filter((incident) => Array.isArray(incident.fixes) && incident.fixes.length > 0 && ["ACTIVE", "ATTENTION REQUIRED"].includes(incident.state));
+  setBadge("doctor-fix-summary", actionable.length > 0 ? "Safe fixes available" : "No fixes needed", actionable.length > 0 ? "warn" : "good");
+  setText("doctor-fix-copy", actionable.length > 0
+    ? `${actionable.length} diagnosed incident${actionable.length === 1 ? " has" : "s have"} a predefined bounded fix. Review exactly what will change before applying it.`
+    : "No active repairable incidents were diagnosed.");
+
+  const repairList = $("doctor-repair-list");
+  if (repairList) {
+    repairList.replaceChildren();
+    for (const incident of actionable) {
+      const card = document.createElement("article");
+      card.className = "doctor-repair-card";
+
+      const head = document.createElement("div");
+      head.className = "doctor-repair-head";
+      const headCopy = document.createElement("div");
+      const title = document.createElement("strong");
+      title.textContent = incident.title || incident.code || "Diagnosed issue";
+      const meta = document.createElement("small");
+      meta.textContent = `${incident.state || "ACTIVE"} · ${incident.component || "runtime"}${incident.projectId ? ` · ${incident.projectId}` : ""}`;
+      headCopy.append(title, meta);
+      const severity = document.createElement("span");
+      setBadge(severity, incident.severity || "warn", ["error", "critical"].includes(incident.severity) ? "warn" : "neutral");
+      head.append(headCopy, severity);
+
+      const summary = document.createElement("p");
+      summary.textContent = incident.summary || incident.recommendation || "Equinox diagnosed a repairable runtime issue.";
+      card.append(head, summary);
+
+      for (const fix of incident.fixes) {
+        const action = document.createElement("div");
+        action.className = "doctor-repair-action";
+        const actionCopy = document.createElement("div");
+        const label = document.createElement("strong");
+        label.textContent = localizeUiText(fix.label || "Fix safely");
+        const description = document.createElement("small");
+        description.textContent = fix.description || "Predefined bounded repair recipe.";
+        actionCopy.append(label, description);
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "button secondary compact";
+        button.textContent = localizeUiText(state.doctorRepairBusy ? "Repair running…" : "Fix safely");
+        button.disabled = state.doctorRepairBusy;
+        button.addEventListener("click", () => { void runDoctorRepair(incident, fix); });
+        action.append(actionCopy, button);
+        card.append(action);
+      }
+      repairList.append(card);
+    }
+  }
+
+  const resultBox = $("doctor-repair-result");
+  if (resultBox) {
+    const result = state.doctorRepairResult;
+    resultBox.hidden = !result;
+    resultBox.className = "doctor-repair-result";
+    if (result) {
+      const resolved = result.verification?.resolved === true;
+      resultBox.classList.add(resolved ? "is-good" : "is-warn");
+      const outcome = result.repair?.outcome || "UNKNOWN";
+      const summary = result.repair?.summary || "Repair finished.";
+      const verification = resolved ? "Verified: the diagnosed incident is resolved." : `Verification: ${result.verification?.incident?.state || "incident still requires attention"}.`;
+      resultBox.textContent = `${outcome} · ${summary} ${verification}`;
+    }
   }
 }
 
@@ -1958,12 +2155,318 @@ function renderRuntimeRestartControl() {
   button.textContent = localizeUiText(state.restartBusy ? "Restarting…" : "Restart");
 }
 
+function taskStatusPresentation(status) {
+  if (status === "active") return { label: "Active", tone: "good" };
+  if (status === "completed") return { label: "Completed", tone: "neutral" };
+  if (status === "cancelled") return { label: "Cancelled", tone: "bad" };
+  return { label: String(status || "Unknown"), tone: "neutral" };
+}
+
+function continuationPresentation(continuation) {
+  if (!continuation) return { label: "Not armed", tone: "neutral" };
+  const map = {
+    armed: ["Waiting", "warn"], delivering: ["Delivering", "warn"], delivered: ["Delivered", "good"],
+    cancelled: ["Cancelled", "neutral"], expired: ["Expired", "neutral"], failed: ["Failed", "bad"],
+  };
+  const item = map[continuation.status] || [String(continuation.status || "Not armed"), "neutral"];
+  return { label: item[0], tone: item[1] };
+}
+
+function taskTargetLabel(continuation) {
+  const target = continuation?.target;
+  if (!target) return localizeUiText("No browser target");
+  const context = target.browserContext === "agent" ? "Agent Browser" : "Your Browser";
+  return `${localizeUiText(context)} · ${String(target.title || "ChatGPT").slice(0, 72)}`;
+}
+
+function freshResumeReasonMessage(freshResume) {
+  const reason = String(freshResume?.reason || "");
+  if (freshResume?.status === "ambiguous") {
+    if (reason.includes("runtime_restart")) return "Equinox restarted after browser mutation started, so the handoff could not be proven. It will not retry automatically.";
+    if (reason.includes("emergency_stop")) return "Emergency Stop interrupted the handoff after browser mutation started. Equinox will not retry it automatically.";
+    if (reason === "resume_guard_failed") return "A safety guard stopped the handoff after browser mutation started. Equinox will not retry it automatically.";
+    if (reason.startsWith("browser_")) return "The browser handoff could not be confirmed. Equinox will not retry it automatically.";
+    return "The fresh-chat handoff became uncertain after browser mutation started. Equinox will not retry it automatically.";
+  }
+  if (freshResume?.status === "cancelled") {
+    if (reason === "emergency_stop") return "Emergency Stop cancelled the handoff before browser mutation. The saved checkpoint is still available.";
+    if (reason === "checkpoint_changed") return "The task checkpoint changed, so the pending fresh-chat handoff was cancelled. The latest checkpoint is ready to continue.";
+    return "The fresh-chat handoff was cancelled before browser mutation. The saved checkpoint is still available.";
+  }
+  return "";
+}
+
+function freshResumeRecoveryPresentation(freshResume) {
+  if (!freshResume || freshResume.status === "confirmed") return null;
+  if (freshResume.status === "prepared") return {
+    label: "Waiting", tone: "warn", title: "Fresh-chat handoff is waiting",
+    message: "Equinox will move this task after the current assistant turn finishes. You can cancel the handoff before browser mutation starts.",
+    blocking: false, cancel: true, abandon: false,
+  };
+  if (freshResume.status === "creating") return {
+    label: "In progress", tone: "warn", title: "Fresh-chat handoff is in progress",
+    message: "Browser mutation has started. Equinox will not start another handoff while this transition is unresolved. Use Emergency Stop if you need to interrupt it.",
+    blocking: true, cancel: false, abandon: false,
+  };
+  if (freshResume.status === "ambiguous") return {
+    label: "Needs attention", tone: "bad", title: "Fresh-chat handoff needs attention",
+    message: freshResumeReasonMessage(freshResume), blocking: true, cancel: false, abandon: true,
+  };
+  if (freshResume.status === "cancelled") return {
+    label: "Recoverable", tone: "warn", title: "Fresh-chat handoff stopped",
+    message: freshResumeReasonMessage(freshResume), blocking: false, cancel: false, abandon: false,
+  };
+  return null;
+}
+
+function taskLines(value) {
+  return String(value || "").split(/\r?\n/u).map((item) => item.trim()).filter(Boolean);
+}
+
+function formatTaskReferences(references) {
+  return (Array.isArray(references) ? references : []).map((item) => `${item.type} | ${item.label} | ${item.value}`).join("\n");
+}
+
+function parseTaskReferences(value) {
+  const allowed = new Set(["project", "branch", "commit", "file", "url", "note"]);
+  return taskLines(value).map((line, index) => {
+    const parts = line.split("|");
+    if (parts.length < 3) throw new Error(`Reference line ${index + 1} must use: type | label | value.`);
+    const type = parts.shift().trim().toLowerCase();
+    const label = parts.shift().trim();
+    const referenceValue = parts.join("|").trim();
+    if (!allowed.has(type) || !label || !referenceValue) throw new Error(`Reference line ${index + 1} is invalid.`);
+    return { type, label, value: referenceValue };
+  });
+}
+
+function replaceTaskInState(task) {
+  const index = state.tasks.findIndex((item) => item.taskId === task.taskId);
+  if (index >= 0) state.tasks[index] = clone(task);
+  else state.tasks.unshift(clone(task));
+  state.selectedTaskId = task.taskId;
+  state.taskDraft = clone(task);
+}
+
+function renderTasks() {
+  const list = $("task-list");
+  if (!list) return;
+  list.replaceChildren();
+  setText("task-count-label", `${state.tasks.length} tasks`);
+
+  if (!state.tasks.length) {
+    const empty = document.createElement("p");
+    empty.className = "task-list-empty";
+    empty.textContent = localizeUiText("No Task Capsules yet. Tasks appear here after an agent saves a checkpoint.");
+    list.append(empty);
+    state.selectedTaskId = null;
+    state.taskDraft = null;
+  } else if (!state.selectedTaskId || !state.tasks.some((task) => task.taskId === state.selectedTaskId)) {
+    state.selectedTaskId = state.tasks.find((task) => task.status === "active")?.taskId || state.tasks[0].taskId;
+    state.taskDraft = clone(state.tasks.find((task) => task.taskId === state.selectedTaskId));
+  }
+
+  for (const task of state.tasks) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = `task-list-item${task.taskId === state.selectedTaskId ? " is-selected" : ""}`;
+    button.dataset.taskId = task.taskId;
+    button.disabled = state.taskBusy;
+    button.setAttribute("aria-pressed", task.taskId === state.selectedTaskId ? "true" : "false");
+
+    const title = document.createElement("span");
+    title.className = "task-list-title";
+    title.textContent = task.title;
+    button.append(title);
+
+    const taskId = document.createElement("code");
+    taskId.className = "task-list-id";
+    taskId.textContent = task.taskId;
+    button.append(taskId);
+
+    const meta = document.createElement("span");
+    meta.className = "task-list-meta";
+    const status = taskStatusPresentation(task.status);
+    const statusBadge = document.createElement("span");
+    statusBadge.className = `badge ${status.tone}`;
+    statusBadge.textContent = localizeUiText(status.label);
+    meta.append(statusBadge, document.createTextNode(`R${task.checkpointRevision} · ${formatDate(task.updatedAt)}`));
+    button.append(meta);
+
+    const continuation = continuationPresentation(task.continuation);
+    const continuationLine = document.createElement("span");
+    continuationLine.className = "task-list-continuation";
+    const continuationBadge = document.createElement("span");
+    continuationBadge.className = `badge ${continuation.tone}`;
+    continuationBadge.textContent = localizeUiText(continuation.label);
+    continuationLine.append(continuationBadge);
+    if (task.continuation?.target) continuationLine.append(document.createTextNode(taskTargetLabel(task.continuation)));
+    button.append(continuationLine);
+
+    const recovery = freshResumeRecoveryPresentation(task.freshResume);
+    if (recovery) {
+      const recoveryLine = document.createElement("span");
+      recoveryLine.className = "task-list-recovery";
+      const recoveryBadge = document.createElement("span");
+      recoveryBadge.className = `badge ${recovery.tone}`;
+      recoveryBadge.textContent = localizeUiText(recovery.label);
+      recoveryLine.append(recoveryBadge, document.createTextNode(localizeUiText(recovery.title)));
+      button.append(recoveryLine);
+    }
+    list.append(button);
+  }
+
+  const task = state.taskDraft?.taskId === state.selectedTaskId ? state.taskDraft : null;
+  $("task-detail-empty").hidden = Boolean(task);
+  $("task-form").hidden = !task;
+  if (!task) return;
+
+  const status = taskStatusPresentation(task.status);
+  const continuation = continuationPresentation(task.continuation);
+  const recovery = freshResumeRecoveryPresentation(task.freshResume);
+  setText("task-detail-title", task.title);
+  setBadge("task-status-badge", status.label, status.tone);
+  setText("task-detail-id", task.taskId);
+  setText("task-detail-meta", `Checkpoint ${task.checkpointRevision} · Updated ${formatDate(task.updatedAt)}`);
+  setText("task-continuation-state", continuation.label);
+  setText("task-continuation-target", taskTargetLabel(task.continuation));
+
+  const recoveryPanel = $("task-recovery-panel");
+  recoveryPanel.hidden = !recovery;
+  if (recovery) {
+    setBadge("task-recovery-badge", recovery.label, recovery.tone);
+    setText("task-recovery-title", recovery.title);
+    setText("task-recovery-message", recovery.message);
+    const reasonCode = String(task.freshResume?.reason || "");
+    const code = $("task-recovery-code");
+    code.hidden = !reasonCode;
+    code.textContent = reasonCode ? `Reason: ${reasonCode}` : "";
+    $("task-cancel-fresh-resume-button").hidden = !recovery.cancel;
+    $("task-abandon-fresh-resume-button").hidden = !recovery.abandon;
+  } else {
+    $("task-cancel-fresh-resume-button").hidden = true;
+    $("task-abandon-fresh-resume-button").hidden = true;
+  }
+
+  $("task-title-input").value = task.title || "";
+  $("task-objective-input").value = task.objective || "";
+  $("task-completed-input").value = (task.completed || []).join("\n");
+  $("task-next-input").value = (task.next || []).join("\n");
+  $("task-references-input").value = formatTaskReferences(task.references);
+
+  const editable = task.status === "active" && !state.taskBusy && !recovery?.blocking;
+  for (const id of ["task-title-input", "task-objective-input", "task-completed-input", "task-next-input", "task-references-input"]) $(id).disabled = !editable;
+  $("task-save-button").disabled = !editable;
+  $("task-complete-button").disabled = !editable;
+  $("task-cancel-button").disabled = !editable;
+  const deletable = task.status === "completed" || task.status === "cancelled";
+  $("task-delete-button").hidden = !deletable;
+  $("task-delete-button").disabled = state.taskBusy || !deletable;
+  $("task-cancel-continuation-button").disabled = !editable || task.continuation?.status !== "armed";
+  $("task-cancel-fresh-resume-button").disabled = state.taskBusy || task.status !== "active" || task.freshResume?.status !== "prepared";
+  $("task-abandon-fresh-resume-button").disabled = state.taskBusy || task.status !== "active" || task.freshResume?.status !== "ambiguous";
+  $("task-readonly-note").hidden = task.status === "active";
+}
+
+async function selectTask(taskId) {
+  if (state.taskBusy || !/^task-[a-z0-9-]{6,80}$/u.test(String(taskId || ""))) return;
+  state.taskBusy = true;
+  renderTasks();
+  try {
+    const result = await requestJson(`/api/v1/tasks/${encodeURIComponent(taskId)}`);
+    replaceTaskInState(result.task);
+    clearError();
+  } catch (error) {
+    showError(error);
+  } finally {
+    state.taskBusy = false;
+    renderTasks();
+  }
+}
+
+async function saveSelectedTask(event) {
+  event.preventDefault();
+  const task = state.taskDraft;
+  if (!task || task.status !== "active" || state.taskBusy) return;
+  let references;
+  try { references = parseTaskReferences($("task-references-input").value); }
+  catch (error) { showError(error); return; }
+  const payload = {
+    expectedRevision: task.checkpointRevision,
+    title: $("task-title-input").value,
+    objective: $("task-objective-input").value,
+    completed: taskLines($("task-completed-input").value),
+    next: taskLines($("task-next-input").value),
+    references,
+  };
+  state.taskBusy = true;
+  renderTasks();
+  try {
+    const result = await mutationJson(`/api/v1/tasks/${encodeURIComponent(task.taskId)}`, "PUT", payload);
+    replaceTaskInState(result.task);
+    showToast("Task changes saved.");
+    clearError();
+  } catch (error) { showError(error); }
+  finally { state.taskBusy = false; renderTasks(); }
+}
+
+async function deleteSelectedTask() {
+  const task = state.taskDraft;
+  if (!task || task.status === "active" || state.taskBusy) return;
+  if (!window.confirm(localizeUiText("Delete this task permanently? This cannot be undone."))) return;
+  state.taskBusy = true;
+  renderTasks();
+  try {
+    await mutationJson(`/api/v1/tasks/${encodeURIComponent(task.taskId)}/delete`, "POST", {});
+    state.tasks = state.tasks.filter((item) => item.taskId !== task.taskId);
+    state.selectedTaskId = null;
+    state.taskDraft = null;
+    const refreshed = await requestJson("/api/v1/tasks").catch(() => null);
+    if (refreshed?.tasks) state.tasks = clone(refreshed.tasks);
+    showToast("Task deleted.");
+    clearError();
+  } catch (error) {
+    showError(error);
+  } finally {
+    state.taskBusy = false;
+    renderTasks();
+  }
+}
+
+async function runTaskAction(action) {
+  const task = state.taskDraft;
+  if (!task || task.status !== "active" || state.taskBusy) return;
+  if (action === "complete" && !window.confirm(localizeUiText("Mark this task complete?"))) return;
+  if (action === "cancel" && !window.confirm(localizeUiText("Cancel this task?"))) return;
+  if (action === "fresh-abandon" && !window.confirm(localizeUiText("Clear this blocked fresh-chat transition? This does not retry the browser action."))) return;
+  const paths = {
+    complete: "complete", cancel: "cancel", continuation: "continuation/cancel",
+    "fresh-cancel": "fresh-resume/cancel", "fresh-abandon": "fresh-resume/abandon",
+  };
+  const messages = {
+    complete: "Task marked complete.", cancel: "Task cancelled.", continuation: "Continuation cancelled.",
+    "fresh-cancel": "Fresh-chat handoff cancelled.",
+    "fresh-abandon": "Blocked transition cleared. Continue from the saved checkpoint in ChatGPT.",
+  };
+  if (!paths[action]) return;
+  state.taskBusy = true;
+  renderTasks();
+  try {
+    const result = await mutationJson(`/api/v1/tasks/${encodeURIComponent(task.taskId)}/${paths[action]}`, "POST", {});
+    replaceTaskInState(result.task);
+    showToast(messages[action]);
+    clearError();
+  } catch (error) { showError(error); }
+  finally { state.taskBusy = false; renderTasks(); }
+}
+
 function renderAll() {
   renderDashboard();
   renderOnboarding();
   renderDoctor();
   renderUpdate();
   renderProjects();
+  renderTasks();
   renderPermissions();
   renderUninstall();
   renderIntegrations();
@@ -1985,14 +2488,16 @@ async function refreshAll() {
   clearError();
   $("refresh-button").disabled = true;
   try {
-    const [health, status, config, activity, update, onboarding, doctor, peekaboo, telegram] = await Promise.all([
+    const [health, status, config, activity, tasks, update, onboarding, doctor, doctorRepairs, peekaboo, telegram] = await Promise.all([
       requestJson("/api/v1/health"),
       requestJson("/api/v1/status"),
       requestJson("/api/v1/config"),
       requestJson("/api/v1/activity").catch(() => ({ events: [] })),
+      requestJson("/api/v1/tasks").catch(() => ({ tasks: [] })),
       requestJson("/api/v1/update"),
       requestJson("/api/v1/onboarding"),
       requestJson("/api/v1/doctor").catch(() => ({ doctor: null })),
+      requestJson("/api/v1/doctor/repairs").catch(() => ({ repairs: null })),
       requestJson("/api/v1/integrations/peekaboo").catch(() => ({ peekaboo: null })),
       requestJson("/api/v1/integrations/telegram").catch(() => ({ telegram: null })),
     ]);
@@ -2001,9 +2506,15 @@ async function refreshAll() {
     state.config = clone(config.config);
     state.revision = config.revision;
     state.activity = Array.isArray(activity.events) ? activity.events : [];
+    state.tasks = Array.isArray(tasks.tasks) ? tasks.tasks : [];
+    if (!state.selectedTaskId || !state.tasks.some((task) => task.taskId === state.selectedTaskId)) {
+      state.selectedTaskId = state.tasks.find((task) => task.status === "active")?.taskId || state.tasks[0]?.taskId || null;
+    }
+    state.taskDraft = state.selectedTaskId ? clone(state.tasks.find((task) => task.taskId === state.selectedTaskId)) : null;
     state.update = update.update || null;
     state.onboarding = onboarding.onboarding || null;
     state.doctor = doctor.doctor || null;
+    state.doctorRepairs = doctorRepairs.repairs || null;
     if (peekaboo.peekaboo) {
       state.status = {
         ...(state.status || {}),
@@ -2547,6 +3058,14 @@ async function toggleAgentControl() {
     if (refreshedStatus?.status) state.status = refreshedStatus.status;
     const activity = await requestJson("/api/v1/activity").catch(() => null);
     if (activity?.events) state.activity = activity.events;
+    const tasks = await requestJson("/api/v1/tasks").catch(() => null);
+    if (tasks?.tasks) {
+      state.tasks = tasks.tasks;
+      if (!state.selectedTaskId || !state.tasks.some((task) => task.taskId === state.selectedTaskId)) {
+        state.selectedTaskId = state.tasks.find((task) => task.status === "active")?.taskId || state.tasks[0]?.taskId || null;
+      }
+      state.taskDraft = state.selectedTaskId ? clone(state.tasks.find((task) => task.taskId === state.selectedTaskId)) : null;
+    }
   } catch (error) {
     showError(error);
   } finally {
@@ -2657,6 +3176,17 @@ function bindEvents() {
   $("choose-folder-button").addEventListener("click", chooseFolderForDialog);
   $("save-config-button").addEventListener("click", saveConfiguration);
   $("save-agent-access-button").addEventListener("click", saveConfiguration);
+  $("task-list").addEventListener("click", (event) => {
+    const button = event.target.closest("[data-task-id]");
+    if (button) void selectTask(button.dataset.taskId);
+  });
+  $("task-form").addEventListener("submit", saveSelectedTask);
+  $("task-cancel-continuation-button").addEventListener("click", () => void runTaskAction("continuation"));
+  $("task-cancel-fresh-resume-button").addEventListener("click", () => void runTaskAction("fresh-cancel"));
+  $("task-abandon-fresh-resume-button").addEventListener("click", () => void runTaskAction("fresh-abandon"));
+  $("task-complete-button").addEventListener("click", () => void runTaskAction("complete"));
+  $("task-cancel-button").addEventListener("click", () => void runTaskAction("cancel"));
+  $("task-delete-button").addEventListener("click", () => void deleteSelectedTask());
   $("open-agent-browser-button").addEventListener("click", openAgentBrowserFromControlCenter);
   $("browser-settings-target").addEventListener("change", (event) => selectBrowserSettingsTarget(event.target.value));
   $("browser-control-toggle").addEventListener("change", updateBrowserDraftFromInputs);
@@ -2701,9 +3231,19 @@ function bindEvents() {
   });
 }
 
+function applyInitialNavigationIntent() {
+  const params = new URLSearchParams(window.location.search);
+  const section = params.get("section");
+  const taskId = params.get("task");
+  if (section && sectionMeta[section]) state.activeSection = section;
+  if (taskId && /^task-[a-z0-9-]{6,80}$/u.test(taskId)) state.selectedTaskId = taskId;
+}
+
+applyInitialNavigationIntent();
 captureStaticTranslatables();
 applyTheme();
 applyStaticLanguage();
+notifyNativeLanguage();
 bindEvents();
 switchSection(state.activeSection);
 renderLastRefreshed();

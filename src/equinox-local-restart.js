@@ -116,6 +116,8 @@ export function registerRestartRuntimeTool({
   pathImpl = path,
   processImpl = process,
   markRestartPending = () => {},
+  beforeRestart = async () => {},
+  restartFailed = async () => {},
   textResult,
   errorResult,
 } = {}) {
@@ -137,7 +139,10 @@ export function registerRestartRuntimeTool({
       },
     },
     async () => {
+      let restartBoundaryEntered = false;
       try {
+        restartBoundaryEntered = true;
+        await beforeRestart();
         if (
           installation.managed &&
           installation.selfUpdateSupported
@@ -150,7 +155,7 @@ export function registerRestartRuntimeTool({
           return textResult(
             [
               "Equinox Local managed yeniden başlatması zamanlandı.",
-              "Bundled LaunchAgent helper kısa bir gecikmeden sonra aktif sürümü yeniden başlatacak.",
+              "Bundled LaunchAgent helper kısa bir gecikmeden sonra aktif sürümü yeniden başlatacak; açık foreground shell varsa yeni bundle ile güvenli biçimde yenilenecek.",
               "Bu çağrıdan sonra aynı asistan turunda başka Equinox Local aracı çağrılmamalı.",
               "MCP bağlantısı kısa süreliğine kesilip yeniden kurulabilir.",
             ].join("\n"),
@@ -168,13 +173,22 @@ export function registerRestartRuntimeTool({
         return textResult(
           [
             "Equinox Local source-checkout yeniden başlatması zamanlandı.",
-            "Private developer runtime config üzerinden yaklaşık 8 saniye içinde başlayacak.",
+            "Private developer runtime config üzerinden yaklaşık 8 saniye içinde başlayacak; açık foreground shell varsa yeni native bundle ile otomatik yenilenecek.",
             "Bu çağrıdan sonra aynı asistan turunda başka Equinox Local aracı çağrılmamalı.",
             "MCP bağlantısı kısa süreliğine kesilip yeniden kurulabilir.",
             `Kayıt: ${sourceRestart.logPath}`,
           ].join("\n"),
         );
       } catch (error) {
+        if (restartBoundaryEntered) {
+          try {
+            await restartFailed();
+          } catch (recoveryError) {
+            const primary = error instanceof Error ? error.message : String(error);
+            const recovery = recoveryError instanceof Error ? recoveryError.message : String(recoveryError);
+            return errorResult(new Error(`${primary}; restart continuity recovery failed: ${recovery}`));
+          }
+        }
         return errorResult(error);
       }
     },

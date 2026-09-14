@@ -38,6 +38,9 @@ import {
   registerImageViewTools,
 } from "./equinox-local-image-tools.js";
 import {
+  registerFileTransferTools,
+} from "./equinox-local-file-transfer.js";
+import {
   isPathInside as isPathInsideRoot,
   parseGitWorktreePorcelain,
   publicWorktreeRecord,
@@ -164,6 +167,11 @@ import {
   createCapabilityRegistry,
   registerStableCapabilityGateways,
 } from "./capability-registry.js";
+import { createTaskCapsuleStore } from "./task-capsule-store.js";
+import { deriveEquinoxLocalPresentationState } from "./equinox-local-presentation-state.js";
+import { createAutoContinueController } from "./auto-continue-controller.js";
+import { createFreshChatResumeController } from "./fresh-chat-resume-controller.js";
+import { registerTaskCapsuleTools } from "./task-capsule-tools.js";
 import { startRuntimeLifecycle } from "./equinox-local-runtime-lifecycle.js";
 
 export async function createEquinoxLocalRuntime() {
@@ -1063,6 +1071,18 @@ registerImageViewTools({
   fullFileAccess: FULL_FILE_ACCESS,
   fileRootIds: FILE_ROOT_IDS,
   resolveFileRootContext,
+  homeDir: process.env.HOME,
+  fsImpl: fs,
+});
+
+registerFileTransferTools({
+  registerRawTool,
+  z,
+  fullFileAccess: FULL_FILE_ACCESS,
+  fileRootIds: FILE_ROOT_IDS,
+  projectIds: PROJECT_IDS,
+  resolveFileRootContext,
+  resolveProjectContext,
   homeDir: process.env.HOME,
   fsImpl: fs,
 });
@@ -2051,6 +2071,7 @@ async function resolveWorkspaceRuntimePaths() {
     visualRoot: path.join(workspace.rootRealPath, "visual-regression"),
     browserScreenshotRoot: path.join(workspace.rootRealPath, "browser-screenshots"),
     workflowRoot: path.join(workspace.rootRealPath, "workflows"),
+    taskRoot: path.join(workspace.rootRealPath, "tasks"),
     releaseGateRoot: path.join(workspace.rootRealPath, "release-gates"),
     observabilityRoot: path.join(workspace.rootRealPath, "observability"),
     repairRoot: path.join(workspace.rootRealPath, "repairs"),
@@ -2066,6 +2087,7 @@ async function ensureWorkspaceRuntimeDirectories() {
     visualRoot,
     browserScreenshotRoot,
     workflowRoot,
+    taskRoot,
     releaseGateRoot,
     observabilityRoot,
     repairRoot,
@@ -2082,6 +2104,7 @@ async function ensureWorkspaceRuntimeDirectories() {
     "/worktrees/",
     "/visual-regression/",
     "/workflows/",
+    "/tasks/",
     "/release-gates/",
     "/observability/",
     "/repairs/",
@@ -2150,6 +2173,10 @@ async function ensureWorkspaceRuntimeDirectories() {
       recursive: true,
       mode: 0o700,
     }),
+    fs.mkdir(taskRoot, {
+      recursive: true,
+      mode: 0o700,
+    }),
     fs.mkdir(releaseGateRoot, {
       recursive: true,
       mode: 0o700,
@@ -2173,6 +2200,7 @@ async function ensureWorkspaceRuntimeDirectories() {
   ]);
   await fs.chmod(browserScreenshotRoot, 0o700).catch(() => {});
   await fs.chmod(workflowRoot, 0o700).catch(() => {});
+  await fs.chmod(taskRoot, 0o700).catch(() => {});
   await fs.chmod(releaseGateRoot, 0o700).catch(() => {});
   await fs.chmod(observabilityRoot, 0o700).catch(() => {});
   await fs.chmod(repairRoot, 0o700).catch(() => {});
@@ -2185,6 +2213,7 @@ async function ensureWorkspaceRuntimeDirectories() {
     visualRoot,
     browserScreenshotRoot,
     workflowRoot,
+    taskRoot,
     releaseGateRoot,
     observabilityRoot,
     repairRoot,
@@ -2431,6 +2460,43 @@ const workflowManager =
       privateWorkflowStepExecutor(releaseGateRuntime),
     onEvent: recordRuntimeEvent,
   });
+const taskCapsuleStore = createTaskCapsuleStore({
+  rootDir: workflowRuntimePaths.taskRoot,
+  onEvent: recordRuntimeEvent,
+});
+await taskCapsuleStore.initialize();
+const autoContinueController = createAutoContinueController({
+  store: taskCapsuleStore,
+  browserBridge: equinoxBrowserBridge,
+  agentControl,
+  onEvent: recordRuntimeEvent,
+});
+const freshChatResumeController = createFreshChatResumeController({
+  store: taskCapsuleStore,
+  browserBridge: equinoxBrowserBridge,
+  autoContinueController,
+  agentControl,
+  onEvent: recordRuntimeEvent,
+});
+registerTaskCapsuleTools({
+  registerRawTool,
+  z,
+  store: taskCapsuleStore,
+  autoContinueController,
+  freshChatResumeController,
+});
+
+async function quiesceContinuityForRestart() {
+  await Promise.all([
+    freshChatResumeController.shutdown(),
+    autoContinueController.shutdown(),
+  ]);
+}
+
+async function resumeContinuityAfterFailedRestart() {
+  await autoContinueController.start();
+  await freshChatResumeController.start();
+}
 
 async function resumeWorkflowSafelyForRepair(workflowId) {
   const current = workflowManager.status(workflowId);
@@ -2809,6 +2875,75 @@ async function getControlCenterDoctorStatus() {
   });
 }
 
+const CONTROL_CENTER_REPAIR_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+
+function compactControlCenterIncident(incident, recipes) {
+  const fixes = recipes
+    .filter((recipe) => recipe.incidentCodes.includes(incident.code))
+    .map((recipe) => ({
+      id: recipe.id,
+      label: recipe.label,
+      description: recipe.description,
+      scope: recipe.scope,
+      risk: recipe.risk,
+    }));
+  return {
+    incidentId: incident.incidentId,
+    code: incident.code,
+    title: incident.title,
+    summary: incident.summary,
+    state: incident.state,
+    severity: incident.severity,
+    component: incident.component,
+    projectId: incident.projectId ?? null,
+    lastSeen: incident.lastSeen,
+    recommendation: incident.recommendation,
+    fixes,
+  };
+}
+
+async function getControlCenterDoctorRepairs({ includeResolved = false } = {}) {
+  const diagnosis = await diagnosisEngine.diagnose({
+    windowMs: CONTROL_CENTER_REPAIR_WINDOW_MS,
+    includeResolved,
+    limit: 50,
+  });
+  const recipes = repairEngine.recipes();
+  const incidents = diagnosis.incidents.map((incident) => compactControlCenterIncident(incident, recipes));
+  return {
+    evaluatedAt: diagnosis.evaluatedAt,
+    incidentCount: incidents.length,
+    actionableCount: incidents.filter((incident) => incident.fixes.length > 0 && ["ACTIVE", "ATTENTION REQUIRED"].includes(incident.state)).length,
+    incidents,
+  };
+}
+
+async function applyControlCenterDoctorRepair({ incidentId, recipeId }) {
+  agentControl.assertMutationAllowed("doctor_repair");
+  return withMutationLocks(["doctor-repair"], async () => {
+    const before = await getControlCenterDoctorRepairs();
+    const incident = before.incidents.find((item) => item.incidentId === incidentId);
+    const fix = incident?.fixes.find((item) => item.id === recipeId);
+    if (!incident || !fix || !["ACTIVE", "ATTENTION REQUIRED"].includes(incident.state)) {
+      const error = new Error("Doctor repair is no longer applicable to this active incident. Refresh diagnosis and try again.");
+      error.statusCode = 409;
+      throw error;
+    }
+
+    const repair = await repairEngine.repairIssue({ incidentId, recipeId });
+    const after = await getControlCenterDoctorRepairs({ includeResolved: true });
+    const verifiedIncident = after.incidents.find((item) => item.incidentId === incidentId) ?? null;
+    return {
+      repair,
+      verification: {
+        evaluatedAt: after.evaluatedAt,
+        resolved: verifiedIncident === null || verifiedIncident.state === "RESOLVED",
+        incident: verifiedIncident,
+      },
+    };
+  });
+}
+
 equinoxLocalControlApi = createEquinoxLocalControlApi({
   configManager: equinoxLocalConfigManager,
   port: EQUINOX_LOCAL_CONFIG.controlCenter.port,
@@ -2831,7 +2966,7 @@ equinoxLocalControlApi = createEquinoxLocalControlApi({
     const observabilityHealth = await runtimeObservability.health({
       windowMs: 15 * 60 * 1000,
     });
-    return {
+    const status = {
       server: {
         name: SERVER_NAME,
         version: SERVER_VERSION,
@@ -2896,12 +3031,22 @@ equinoxLocalControlApi = createEquinoxLocalControlApi({
       agentControl: agentControl.snapshot(),
       capabilities: capabilityRegistry.summary(),
     };
+    const tasks = await taskCapsuleStore.list({ limit: 50 });
+    return {
+      ...status,
+      presentation: deriveEquinoxLocalPresentationState({ status, tasks }),
+    };
   },
-  pauseAgent: async () => withMutationLocks(["agent-control"], async () => (
-    agentControl.pause({ reason: "control_center_emergency_stop" })
-  )),
+  pauseAgent: async () => withMutationLocks(["agent-control"], async () => {
+    const paused = await agentControl.pause({ reason: "control_center_emergency_stop" });
+    await taskCapsuleStore.cancelAllContinuations("emergency_stop");
+    await freshChatResumeController.cancelAll("emergency_stop");
+    return paused;
+  }),
   resumeAgent: async () => withMutationLocks(["agent-control"], async () => agentControl.resume()),
   getDoctorStatus: getControlCenterDoctorStatus,
+  getDoctorRepairs: getControlCenterDoctorRepairs,
+  applyDoctorRepair: applyControlCenterDoctorRepair,
   getActivity: getControlCenterActivity,
   getUpdateStatus: async () => equinoxLocalUpdateCoordinator.snapshot(),
   getOnboardingStatus: async () => getManagedOnboardingStatus({
@@ -2909,44 +3054,75 @@ equinoxLocalControlApi = createEquinoxLocalControlApi({
     homeDir: process.env.HOME,
     supervisorMode: process.env.EQUINOX_LOCAL_SUPERVISOR_MODE || null,
   }),
+  getTasks: async () => taskCapsuleStore.list({ limit: 50 }),
+  getTask: async (taskId) => taskCapsuleStore.read(taskId),
+  updateTask: async (taskId, body) => withMutationLocks([`task:${taskId}`], async () => (
+    taskCapsuleStore.checkpoint({
+      taskId,
+      expectedRevision: body.expectedRevision,
+      title: body.title,
+      objective: body.objective,
+      completed: body.completed,
+      next: body.next,
+      references: body.references,
+    })
+  )),
+  completeTask: async (taskId) => withMutationLocks([`task:${taskId}`], async () => taskCapsuleStore.finish(taskId)),
+  cancelTask: async (taskId) => withMutationLocks([`task:${taskId}`], async () => taskCapsuleStore.cancel(taskId)),
+  deleteTask: async (taskId) => withMutationLocks([`task:${taskId}`], async () => taskCapsuleStore.remove(taskId)),
+  cancelTaskContinuation: async (taskId) => withMutationLocks([`task:${taskId}`], async () => (
+    autoContinueController.cancel(taskId, "human_cancelled")
+  )),
+  cancelTaskFreshResume: async (taskId) => withMutationLocks([`task:${taskId}`], async () => (
+    freshChatResumeController.cancel(taskId, "human_cancelled")
+  )),
+  abandonTaskFreshResume: async (taskId) => withMutationLocks([`task:${taskId}`], async () => (
+    freshChatResumeController.abandon(taskId, "human_recovered")
+  )),
   restartRuntime: async () => withMutationLocks(["local-restart"], async () => {
-    if (equinoxLocalInstallation.managed && equinoxLocalInstallation.selfUpdateSupported) {
-      const result = await scheduleEquinoxLocalRestart({ installation: equinoxLocalInstallation });
-      runtimeRestartPendingUntil = Date.now() + RUNTIME_RESTART_GUARD_MS;
-      return { ...result, installationKind: "managed" };
-    }
+    try {
+      await quiesceContinuityForRestart();
+      if (equinoxLocalInstallation.managed && equinoxLocalInstallation.selfUpdateSupported) {
+        const result = await scheduleEquinoxLocalRestart({ installation: equinoxLocalInstallation });
+        runtimeRestartPendingUntil = Date.now() + RUNTIME_RESTART_GUARD_MS;
+        return { ...result, installationKind: "managed" };
+      }
 
-    const { spawn } = await import("node:child_process");
-    const { fileURLToPath } = await import("node:url");
-    const moduleDir = path.dirname(fileURLToPath(import.meta.url));
-    const sourceRoot = path.basename(moduleDir) === "src" ? path.dirname(moduleDir) : moduleDir;
-    const scriptPath = path.join(sourceRoot, "scripts", "restart-runtime.sh");
-    const scriptStats = await fs.lstat(scriptPath);
-    if (scriptStats.isSymbolicLink() || !scriptStats.isFile()) {
-      throw new Error("Source runtime restart script is not a normal file.");
+      const { spawn } = await import("node:child_process");
+      const { fileURLToPath } = await import("node:url");
+      const moduleDir = path.dirname(fileURLToPath(import.meta.url));
+      const sourceRoot = path.basename(moduleDir) === "src" ? path.dirname(moduleDir) : moduleDir;
+      const scriptPath = path.join(sourceRoot, "scripts", "restart-runtime.sh");
+      const scriptStats = await fs.lstat(scriptPath);
+      if (scriptStats.isSymbolicLink() || !scriptStats.isFile()) {
+        throw new Error("Source runtime restart script is not a normal file.");
+      }
+      const sourceRestartEnv = {
+        HOME: process.env.HOME,
+        USER: process.env.USER,
+        LOGNAME: process.env.LOGNAME,
+        TMPDIR: process.env.TMPDIR,
+        PATH: "/usr/bin:/bin:/usr/sbin:/sbin",
+        EQUINOX_LOCAL_DEV_NODE: process.execPath,
+        EQUINOX_LOCAL_DEV_RUNTIME_CONFIG: process.env.EQUINOX_LOCAL_DEV_RUNTIME_CONFIG,
+      };
+      await launchDetachedHelper({
+        spawnImpl: spawn,
+        command: "/bin/bash",
+        args: [scriptPath],
+        options: {
+          detached: true,
+          stdio: "ignore",
+          env: Object.fromEntries(Object.entries(sourceRestartEnv).filter(([, value]) => typeof value === "string" && value.length > 0)),
+        },
+        label: "Equinox Local source restart helper",
+      });
+      runtimeRestartPendingUntil = Date.now() + RUNTIME_RESTART_GUARD_MS;
+      return { scheduled: true, installationKind: "source" };
+    } catch (error) {
+      await resumeContinuityAfterFailedRestart();
+      throw error;
     }
-    const sourceRestartEnv = {
-      HOME: process.env.HOME,
-      USER: process.env.USER,
-      LOGNAME: process.env.LOGNAME,
-      TMPDIR: process.env.TMPDIR,
-      PATH: "/usr/bin:/bin:/usr/sbin:/sbin",
-      EQUINOX_LOCAL_DEV_NODE: process.execPath,
-      EQUINOX_LOCAL_DEV_RUNTIME_CONFIG: process.env.EQUINOX_LOCAL_DEV_RUNTIME_CONFIG,
-    };
-    await launchDetachedHelper({
-      spawnImpl: spawn,
-      command: "/bin/bash",
-      args: [scriptPath],
-      options: {
-        detached: true,
-        stdio: "ignore",
-        env: Object.fromEntries(Object.entries(sourceRestartEnv).filter(([, value]) => typeof value === "string" && value.length > 0)),
-      },
-      label: "Equinox Local source restart helper",
-    });
-    runtimeRestartPendingUntil = Date.now() + RUNTIME_RESTART_GUARD_MS;
-    return { scheduled: true, installationKind: "source" };
   }),
   configureTunnel: async (body) => withMutationLocks(["local-onboarding"], async () => {
     const configured = await configureManagedTunnel({
@@ -3029,13 +3205,12 @@ equinoxLocalControlApi = createEquinoxLocalControlApi({
     },
   }),
 });
-registerDesktopGatewayTools({
+const desktopCapabilityProvider = registerDesktopGatewayTools({
   registerTextTool,
   registerRawTool,
   z,
   agentAccess: AGENT_ACCESS,
   peekabooBridge,
-  allowedTools: PEEKABOO_ALLOWED_TOOLS,
   withMutationLocks,
   normalizeChromeToolResult,
   extractTextContent,
@@ -3055,6 +3230,8 @@ registerRestartRuntimeTool({
     runtimeRestartPendingUntil =
       Date.now() + RUNTIME_RESTART_GUARD_MS;
   },
+  beforeRestart: quiesceContinuityForRestart,
+  restartFailed: resumeContinuityAfterFailedRestart,
   textResult,
   errorResult,
 });
@@ -3077,6 +3254,7 @@ registerStableCapabilityGateways({
   registerTextTool,
   registry: capabilityRegistry,
   textResult,
+  externalDomains: { desktop: desktopCapabilityProvider },
 });
 
 let localShutdownStarted = false;
@@ -3103,6 +3281,8 @@ async function shutdownLocalResources({ reason = "api" } = {}) {
 
   runtimeJanitor?.stopMaintenance();
   await recoveryPolicyController?.shutdown();
+  await freshChatResumeController.shutdown();
+  await autoContinueController.shutdown();
   await workflowManager.shutdown();
 
   await Promise.all([
@@ -3147,6 +3327,8 @@ async function start({ transport = new StdioServerTransport() } = {}) {
     },
   });
   await equinoxBrowserBridge.start();
+  await autoContinueController.start();
+  await freshChatResumeController.start();
   await repairEngine.initialize();
   await recoveryPolicyController.initialize();
   await runtimeJanitor.initialize();

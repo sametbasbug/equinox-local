@@ -115,6 +115,7 @@ footer {
 .consent-card,
 .control-card,
 .identity-card,
+.auto-continue-card,
 .status-card,
 .tab-card {
   background: var(--surface);
@@ -308,6 +309,46 @@ footer {
 
 .identity-card p {
   margin-top: 6px;
+  color: var(--muted);
+  font-size: 10.5px;
+  line-height: 1.4;
+}
+
+.auto-continue-card {
+  margin-top: 10px;
+  padding: 13px 14px 14px;
+}
+
+.auto-continue-card label {
+  display: block;
+  font-size: 12px;
+  line-height: 1.3;
+  font-weight: 700;
+}
+
+.auto-continue-card select {
+  width: 100%;
+  margin-top: 8px;
+  padding: 9px 30px 9px 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface-soft);
+  color: var(--text);
+  font: 600 11.5px/1.3 inherit;
+}
+
+.auto-continue-card select:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.auto-continue-card select:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+
+.auto-continue-card p {
+  margin-top: 7px;
   color: var(--muted);
   font-size: 10.5px;
   line-height: 1.4;

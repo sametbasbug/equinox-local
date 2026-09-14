@@ -13,6 +13,8 @@ const DEFAULT_OWNERSHIP_MONITOR_MS = 1_000;
 const NATURAL_EXIT_OWNERSHIP_FRESH_MS = 2_500;
 const PS_TIMEOUT_MS = 2_000;
 const PS_MAX_BUFFER = 512 * 1024;
+const NATIVE_SESSION_QUERY_TIMEOUT_MS = 2_000;
+const NATIVE_SESSION_QUERY_MAX_BUFFER = 512 * 1024;
 
 export const TERMINAL_KEYS = Object.freeze([
   "enter",
@@ -157,11 +159,42 @@ export function createTerminalManager({
   ownershipRefreshDelayMs = DEFAULT_OWNERSHIP_REFRESH_DELAY_MS,
   ownershipMonitorMs = DEFAULT_OWNERSHIP_MONITOR_MS,
   naturalExitOwnershipFreshMs = NATURAL_EXIT_OWNERSHIP_FRESH_MS,
+  nativeProcessSessionHelperPath = process.env.EQUINOX_LOCAL_NATIVE_PROCESS_HELPER ?? null,
+  resolveProcessSessionIdImpl = null,
+  listProcessSessionPidsImpl = null,
   onEvent = null,
 } = {}) {
   const sessions = new Map();
   let ptyModulePromise;
   let pendingStarts = 0;
+
+  const nativeSessionHelper = process.platform === "darwin" && typeof nativeProcessSessionHelperPath === "string" && nativeProcessSessionHelperPath.length > 0
+    ? nativeProcessSessionHelperPath
+    : null;
+  const resolveProcessSessionId = resolveProcessSessionIdImpl ?? (nativeSessionHelper
+    ? async (pid) => {
+      const { stdout = "" } = await execFile(nativeSessionHelper, ["--internal-process-session-id", String(pid)], {
+        timeout: NATIVE_SESSION_QUERY_TIMEOUT_MS,
+        maxBuffer: NATIVE_SESSION_QUERY_MAX_BUFFER,
+        encoding: "utf8",
+      });
+      const value = Number.parseInt(String(stdout).trim(), 10);
+      return Number.isInteger(value) && value > 0 ? value : null;
+    }
+    : null);
+  const listProcessSessionPids = listProcessSessionPidsImpl ?? (nativeSessionHelper
+    ? async (sessionId) => {
+      const { stdout = "" } = await execFile(nativeSessionHelper, ["--internal-process-session-pids", String(sessionId)], {
+        timeout: NATIVE_SESSION_QUERY_TIMEOUT_MS,
+        maxBuffer: NATIVE_SESSION_QUERY_MAX_BUFFER,
+        encoding: "utf8",
+      });
+      return String(stdout)
+        .split(/\r?\n/u)
+        .map((line) => Number.parseInt(line.trim(), 10))
+        .filter((pid) => Number.isInteger(pid) && pid > 0);
+    }
+    : null);
 
   const emitEvent = (event) => {
     if (typeof onEvent !== "function") {
@@ -214,6 +247,18 @@ export function createTerminalManager({
 
   const refreshOwnedPids = async (session) => {
     try {
+      if (session.posixSessionId && listProcessSessionPids) {
+        const pids = await listProcessSessionPids(session.posixSessionId);
+        if (!Array.isArray(pids)) throw new Error("PTY POSIX-session inventory returned an invalid result.");
+        const normalized = [...new Set(pids.filter((pid) => Number.isInteger(pid) && pid > 0))];
+        if (!session.shellExited && !normalized.includes(session.pid)) {
+          throw new Error("PTY shell disappeared from its POSIX session inventory.");
+        }
+        session.ownedPids = new Set(normalized);
+        session.ownershipSnapshotAt = Date.now();
+        return true;
+      }
+
       const ttyName = session.ttyName ?? await session.ttyPromise;
       if (!ttyName) return false;
       const pids = await listTtyProcessPidsImpl(ttyName);
@@ -237,6 +282,7 @@ export function createTerminalManager({
   };
 
   const scheduleOwnershipRefresh = (session) => {
+    if (session.posixSessionId && listProcessSessionPids) return;
     if (session.shellExited || session.ownershipRefreshTimer) return;
     session.ownershipRefreshTimer = setTimeout(() => {
       session.ownershipRefreshTimer = null;
@@ -246,6 +292,7 @@ export function createTerminalManager({
   };
 
   const scheduleOwnershipMonitor = (session) => {
+    if (session.posixSessionId && listProcessSessionPids) return;
     if (
       session.shellExited ||
       !session.running ||
@@ -328,6 +375,10 @@ export function createTerminalManager({
   const waitForTrackedOwnershipDrain = async (session, timeoutMs) => {
     const deadline = Date.now() + Math.max(0, timeoutMs);
     while (true) {
+      if (session.posixSessionId && listProcessSessionPids) {
+        const refreshed = await refreshOwnedPids(session);
+        if (!refreshed) return false;
+      }
       const liveDescendants = trackedDescendants(session);
       if (session.shellExited && liveDescendants.length === 0) return true;
       if (Date.now() >= deadline) return false;
@@ -346,7 +397,7 @@ export function createTerminalManager({
       session.cleanupError = null;
       try {
         let ownershipVerified = false;
-        if (!session.shellExited) {
+        if (!session.shellExited || (session.posixSessionId && listProcessSessionPids)) {
           ownershipVerified = await refreshOwnedPids(session);
         } else {
           ownershipVerified = Boolean(
@@ -565,6 +616,7 @@ export function createTerminalManager({
       // keeps startup working if that implementation detail changes in a future pin.
       ttyName: normalizeTtyName(terminal?._pty),
       ttyPromise: null,
+      posixSessionId: null,
       ownedPids: new Set(),
       ownershipSnapshotAt: null,
       ownershipError: null,
@@ -632,7 +684,22 @@ export function createTerminalManager({
     });
 
     await session.ttyPromise;
-    if (process.platform === "darwin" && !session.ttyName) {
+    if (process.platform === "darwin" && resolveProcessSessionId && listProcessSessionPids) {
+      try {
+        const sessionId = await resolveProcessSessionId(session.pid);
+        if (!Number.isInteger(sessionId) || sessionId <= 0) throw new Error("PTY POSIX session id could not be resolved.");
+        session.posixSessionId = sessionId;
+      } catch (error) {
+        setOwnershipError(session, error);
+        if (nativeSessionHelper || resolveProcessSessionIdImpl || listProcessSessionPidsImpl) {
+          session.stopRequested = true;
+          session.terminal.kill("SIGKILL");
+          sessions.delete(id);
+          throw new Error(session.ownershipError || "PTY POSIX session id could not be resolved.");
+        }
+      }
+    }
+    if (process.platform === "darwin" && !session.posixSessionId && !session.ttyName) {
       session.stopRequested = true;
       session.terminal.kill("SIGKILL");
       sessions.delete(id);

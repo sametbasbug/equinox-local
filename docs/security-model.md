@@ -58,6 +58,12 @@ The Native Messaging path binds the expected host/extension relationship, and br
 
 The legacy separate release/QA Chrome backend is retired. Release/visual QA uses Agent Browser through the same first-party extension/Native Messaging path rather than a hidden alternate browser route.
 
+## Task continuity boundary
+
+Task Capsules persist only bounded checkpoint state needed to continue work; Equinox Local does not create a hidden transcript/session archive. Human edits carry an expected checkpoint revision, so a stale Control Center form cannot overwrite a newer agent checkpoint.
+
+Auto Continue is opt-in per hop. A continuation is bound to an immutable verified ChatGPT target and expires if it cannot be safely delivered. Human composing, a new human message, target drift/closure, explicit cancellation and Emergency Stop all win over an armed continuation. Explicit popup pins are profile-local and fail closed when stale. Delivery is reserved durably before browser mutation, the extension claims a bounded receipt before submission, and an ambiguous outcome is never retried blindly.
+
 ## Mutation concurrency
 
 Operations that can conflict acquire bounded mutation scopes/locks. Stable gateway calls delegate to the original guarded handler instead of taking a second independent mutation path.
