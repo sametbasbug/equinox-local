@@ -15,7 +15,7 @@
 [Product site](https://local.sametbasbug.dev/) · [Security](SECURITY.md) · [Architecture](docs/architecture.md) · [Contributing](CONTRIBUTING.md)
 </div>
 
-> **Stable releases:** Apple Silicon and Intel macOS builds are published through the signed stable update channel. Every release must pass public-source CI/CodeQL, native architecture validation, managed smoke, signing verification, and live-channel checks before it is promoted from prerelease to stable.
+> **Current production:** Equinox Local `5.1.0` on the signed stable channel and Equinox Browser `0.7.0` on the permanent Unlisted Chrome Web Store item. Every Local release must pass public-source CI/CodeQL, native architecture validation, managed smoke, signing verification, lifecycle upgrade validation and live-channel checks before promotion.
 
 ## What is Equinox Local?
 
