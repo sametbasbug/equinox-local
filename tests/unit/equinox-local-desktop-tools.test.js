@@ -153,3 +153,29 @@ test("desktop_call preserves the desktop mutation lock and structured text outpu
   assert.deepEqual(harness.bridgeCalls, [{ name: "click", args: { target: "Save" } }]);
   assert.deepEqual(result.structuredContent, { text: "clicked" });
 });
+
+test("desktop_call routes results through Turn Budget without changing the desktop capability catalog", async () => {
+  const events = [];
+  const harness = createHarness({
+    turnBudgetController: {
+      async prepareInvocation(toolName, input) {
+        events.push(["prepare", toolName]);
+        return { input, firstNotice: true, waitClamped: false };
+      },
+      decorateResult(result) {
+        events.push(["decorate"]);
+        return {
+          ...result,
+          content: result.content.map((item) => item.type === "text"
+            ? { ...item, text: `${item.text}\nTURN-BUDGET` }
+            : item),
+        };
+      },
+    },
+  });
+  const registration = harness.rawRegistrations.get("desktop_call");
+  const result = await registration.handler({ operation: "status", arguments: {} });
+  assert.match(result.content[0].text, /TURN-BUDGET/u);
+  assert.deepEqual(events, [["prepare", "desktop_call"], ["decorate"]]);
+  assert.equal((await harness.discovery.summary()).count, 4);
+});

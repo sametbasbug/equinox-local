@@ -16,6 +16,7 @@ trap 'rm -f "$TMP_LIST"; rm -rf "$TMP_DIR"' EXIT
 mkdir -p "$STAGE_DIR"
 
 cat > "$TMP_LIST" <<'FILES'
+chatgpt-continuation-state.js
 icons/icon-128.png
 icons/icon-16.png
 icons/icon-32.png

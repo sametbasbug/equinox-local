@@ -39,6 +39,11 @@ test("Equinox Browser product manifest stays minimal, versioned and icon-complet
   assert.match(manifest.version, /^\d+\.\d+\.\d+$/);
   assert.deepEqual([...manifest.permissions].sort(), EXPECTED_PERMISSIONS);
   assert.equal(Object.hasOwn(manifest, "host_permissions"), false);
+  assert.deepEqual(manifest.content_scripts, [{
+    matches: ["https://chatgpt.com/*"],
+    js: ["chatgpt-continuation-state.js"],
+    run_at: "document_idle",
+  }]);
   assert.equal(typeof manifest.key, "string");
   assert.equal(extensionIdFromManifestKey(manifest.key), EXPECTED_PRODUCTION_ID);
   assert.equal(manifest.background?.service_worker, "service-worker.js");
@@ -80,7 +85,7 @@ test("shipped extension directory contains runtime files only", async () => {
   const rootEntries = (await fs.readdir(EXTENSION_DIR, { withFileTypes: true }))
     .map((entry) => entry.name)
     .sort();
-  assert.deepEqual(rootEntries, ["icons", "manifest.json", "popup.css", "popup.html", "popup.js", "service-worker.js"]);
+  assert.deepEqual(rootEntries, ["chatgpt-continuation-state.js", "icons", "manifest.json", "popup.css", "popup.html", "popup.js", "service-worker.js"]);
 
   const iconEntries = (await fs.readdir(path.join(EXTENSION_DIR, "icons"))).sort();
   assert.deepEqual(iconEntries, ["icon-128.png", "icon-16.png", "icon-32.png", "icon-48.png"]);

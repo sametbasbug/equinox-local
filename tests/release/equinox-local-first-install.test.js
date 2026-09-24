@@ -59,6 +59,7 @@ async function createFixture(version = "4.2.0") {
     "equinox-local-bootstrap.js",
     "equinox-local-supervisor.js",
     "equinox-local-first-install.js",
+    "equinox-local-onboarding.js",
   ]) {
     await fs.writeFile(path.join(releaseDir, relative), "// fixture\n", { mode: 0o600 });
   }
@@ -134,6 +135,14 @@ test("first install promotes the verified release, bootstraps the user and loads
     assert.equal(execCalls.some(([command, args]) => command === "/bin/launchctl" && args[0] === "bootstrap"), true);
     assert.equal(execCalls.some(([command, args]) => command === "/bin/launchctl" && args[0] === "kickstart" && args.includes("-k")), false);
     assert.equal(execCalls.some(([command]) => /sudo/u.test(command)), false);
+    const onboardingStatePath = path.join(fixture.installRoot, "onboarding-state.json");
+    assert.equal(await exists(onboardingStatePath), true);
+    assert.deepEqual(JSON.parse(await fs.readFile(onboardingStatePath, "utf8")), {
+      version: 1,
+      firstAgentCommandAt: null,
+      completedAt: null,
+    });
+    assert.equal((await fs.lstat(onboardingStatePath)).mode & 0o077, 0);
   } finally {
     await fs.rm(fixture.homeDir, { recursive: true, force: true });
   }

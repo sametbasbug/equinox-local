@@ -40,6 +40,8 @@ test("native app source keeps the menu-bar safety lifecycle", async () => {
   const source = await fs.readFile(path.join(ROOT, "app", "EquinoxLocalApp.swift"), "utf8");
   assert.match(source, /NSStatusBar\.system\.statusItem/u);
   assert.match(source, /applicationShouldTerminateAfterLastWindowClosed[\s\S]*?false/u);
+  assert.match(source, /restartShellMode \? \(storedControlCenterVisibility \?\? true\) : true/u);
+  assert.match(source, /windowWillClose[\s\S]*?UserDefaults\.standard\.set\(false, forKey: controlCenterVisibleKey\)/u);
   assert.match(source, /windowWillClose[\s\S]*?setActivationPolicy\(\.accessory\)/u);
   assert.match(source, /isReleasedWhenClosed = false/u);
   assert.match(source, /openControlCenter[\s\S]*?setActivationPolicy\(\.regular\)/u);
@@ -49,6 +51,11 @@ test("native app source keeps the menu-bar safety lifecycle", async () => {
   assert.match(source, /\/api\/v1\/agent\/resume/u);
   assert.match(source, /\/api\/v1\/browser\/agent\/open/u);
   assert.match(source, /\/api\/v1\/runtime\/restart/u);
+  assert.match(source, /X-Equinox-Background-Refresh/u);
+  assert.ok(EQUINOX_LOCAL_NATIVE_APP_SHELL_VERSION >= 22, "background native heartbeat requires the v22+ shell payload");
+  assert.match(source, /refreshMenuStatus\(backgroundRefresh: true\)/u);
+  assert.match(source, /refreshUpdateStatus\(backgroundRefresh: true\)/u);
+  assert.match(source, /controlClient\.get\("\/api\/v1\/status", backgroundRefresh: backgroundRefresh\)/u);
   assert.match(source, /Quit Equinox Local/u);
   assert.match(source, /applicationShouldTerminate\(_ sender: NSApplication\)[\s\S]*?beginHardStopForTermination\(sender\)[\s\S]*?\.terminateLater/u);
   assert.match(source, /runLaunchctl\(\["bootout"/u);
@@ -89,6 +96,13 @@ test("native app source keeps the menu-bar safety lifecycle", async () => {
   assert.match(source, /Hide Companion/u);
   assert.doesNotMatch(source, /No active work/u);
   assert.doesNotMatch(source, /activeWorkMenuItem/u);
+  assert.match(source, /WKUIDelegate/u);
+  assert.match(source, /webView\.uiDelegate = self/u);
+  const confirmHandler = source.match(/runJavaScriptConfirmPanelWithMessage[\s\S]*?(?=\n    func webView\(_ webView: WKWebView, decidePolicyFor navigationAction)/u)?.[0] ?? "";
+  assert.match(confirmHandler, /frame\.isMainFrame/u);
+  assert.match(confirmHandler, /isAllowedControlCenterURL\(url\)/u);
+  assert.match(confirmHandler, /beginSheetModal\(for: window\)/u);
+  assert.match(confirmHandler, /completionHandler\(response == \.alertFirstButtonReturn\)/u);
   assert.match(source, /WKScriptMessageHandler/u);
   assert.match(source, /equinoxNativeLanguage/u);
   assert.match(source, /EquinoxLocalNativeLanguage/u);

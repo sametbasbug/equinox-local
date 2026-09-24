@@ -10,7 +10,7 @@
   <link rel="stylesheet" href="/assets/control-center.css">
   <script type="module" src="/assets/control-center.js"></script>
 </head>
-<body>
+<body class="control-loading">
   <a class="skip-link" href="#main-content">Skip to content</a>
   <div class="app-shell">
     <aside class="sidebar" aria-label="Primary navigation">
@@ -22,7 +22,7 @@
         </div>
       </div>
 
-      <nav class="nav-list" aria-label="Control Center sections">
+      <nav id="control-center-nav" class="nav-list" aria-label="Control Center sections">
         <p class="nav-group-label">Workspace</p>
         <button class="nav-item is-active" type="button" data-section="dashboard" aria-current="page">
           <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="2"/><rect x="14" y="3" width="7" height="7" rx="2"/><rect x="3" y="14" width="7" height="7" rx="2"/><rect x="14" y="14" width="7" height="7" rx="2"/></svg>
@@ -52,6 +52,18 @@
         <button class="nav-item" type="button" data-section="activity">
           <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg>
           <span>Activity</span>
+        </button>
+      </nav>
+
+      <nav id="setup-nav" class="nav-list setup-nav" aria-label="First-time setup" hidden>
+        <p class="nav-group-label">Getting started</p>
+        <button class="nav-item is-active" type="button" data-section="setup" aria-current="page">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m12 3 8 3v6c0 4-4 7-8 9-4-2-8-5-8-9V6Z"/><path d="m8 12 3 3 5-6"/></svg>
+          <span>Setup</span>
+        </button>
+        <button id="setup-uninstall-nav" class="nav-item" type="button">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3m-8 0 1 13h8l1-13"/></svg>
+          <span>Uninstall</span>
         </button>
       </nav>
 
@@ -119,73 +131,151 @@
         <button id="dismiss-error" class="icon-button" type="button" aria-label="Dismiss error">×</button>
       </div>
 
-      <section id="section-dashboard" class="page-section is-active" aria-labelledby="section-title">
-        <article id="onboarding-card" class="onboarding-card" hidden>
-          <div class="onboarding-header">
-            <div>
-              <p class="eyebrow">First-time setup</p>
-              <h3>Finish connecting Equinox Local</h3>
-              <p id="onboarding-copy">Your local runtime is ready. Complete the remaining connection steps without using Terminal.</p>
-            </div>
-            <span id="onboarding-badge" class="badge warn">Setup needed</span>
+      <section id="section-setup" class="page-section setup-section" aria-labelledby="section-title" hidden>
+        <div class="setup-hero">
+          <div>
+            <p class="eyebrow">First-time setup</p>
+            <h3>Connect ChatGPT to this Mac</h3>
+            <p id="onboarding-copy">Follow these steps once. Control Center unlocks after ChatGPT successfully reaches Equinox Local.</p>
           </div>
+          <span id="onboarding-badge" class="badge warn">Setup in progress</span>
+        </div>
 
-          <div class="onboarding-layout">
-            <div class="setup-steps" aria-label="Setup progress">
-              <div class="setup-step">
-                <span class="setup-step-index">1</span>
-                <div><strong>Local runtime</strong><small>Installed and private to this Mac.</small></div>
-                <span id="setup-runtime-status" class="badge good">Ready</span>
-              </div>
-              <div class="setup-step">
-                <span class="setup-step-index">2</span>
-                <div><strong>Equinox Workspace</strong><small>Your managed starter workspace.</small></div>
-                <span id="setup-workspace-status" class="badge good">Ready</span>
-              </div>
-              <div class="setup-step">
-                <span class="setup-step-index">3</span>
-                <div>
-                  <strong>Equinox Browser</strong>
-                  <small>Optional. Install it separately from Chrome Web Store.</small>
-                  <a class="inline-link" href="https://chromewebstore.google.com/detail/equinox-browser/npdneefcobilfkjlihghjgjnknenhfoj" target="_blank" rel="noopener noreferrer">Install extension ↗</a>
-                </div>
-                <span id="setup-browser-status" class="badge neutral">Optional</span>
-              </div>
-              <div class="setup-step">
-                <span class="setup-step-index">4</span>
-                <div><strong>ChatGPT connection</strong><small>Connect this Local runtime through your OpenAI tunnel.</small></div>
-                <span id="setup-tunnel-status" class="badge warn">Not connected</span>
-              </div>
+        <div class="setup-guide">
+          <article class="setup-guide-step">
+            <div class="setup-guide-heading">
+              <span class="setup-step-index">1</span>
+              <div><strong>Equinox Local is installed</strong><p>The private runtime and starter workspace are already on this Mac.</p></div>
+              <span id="setup-runtime-status" class="badge neutral">Checking</span>
             </div>
+          </article>
 
-            <form id="onboarding-tunnel-form" class="setup-form">
-              <div class="setup-form-heading">
-                <div>
-                  <strong>Connect to ChatGPT</strong>
-                  <p>Use a tunnel Runtime API key with Tunnels Read + Use. The key stays only on this Mac.</p>
-                </div>
-              </div>
+          <article class="setup-guide-step">
+            <div class="setup-guide-heading">
+              <span class="setup-step-index">2</span>
+              <div><strong>Create the private OpenAI tunnel</strong><p>The Tunnel ID tells ChatGPT which Equinox Local runtime to reach. The Runtime API key lets this Mac connect to that tunnel.</p></div>
+              <span id="setup-tunnel-status" class="badge warn">Not connected</span>
+            </div>
+            <ol class="setup-instructions">
+              <li>Open OpenAI Tunnels and create a tunnel for this Equinox Local installation.</li>
+              <li>Copy the new tunnel_… ID.</li>
+              <li>Open API keys, create a Restricted key, and grant only Tunnels: Read + Use.</li>
+              <li>Paste both values below. The API key stays only on this Mac and is never shown again.</li>
+            </ol>
+            <div class="setup-links">
+              <a href="https://platform.openai.com/settings/organization/tunnels" target="_blank" rel="noopener noreferrer">Open Tunnels ↗</a>
+              <a href="https://platform.openai.com/settings/organization/api-keys" target="_blank" rel="noopener noreferrer">Open API keys ↗</a>
+            </div>
+            <form id="onboarding-tunnel-form" class="setup-form setup-inline-form">
               <label class="field">
                 <span>Tunnel ID</span>
                 <input id="onboarding-tunnel-id" name="tunnelId" type="text" inputmode="text" autocomplete="off" spellcheck="false" placeholder="tunnel_…" pattern="tunnel_[a-f0-9]{32}" maxlength="39" required>
-                <small>OpenAI tunnel IDs use <code>tunnel_</code> followed by 32 lowercase hexadecimal characters.</small>
+                <small>Use the exact Tunnel ID you will also select in ChatGPT.</small>
               </label>
               <label class="field">
                 <span>Runtime API key</span>
                 <input id="onboarding-runtime-key" name="runtimeKey" type="password" autocomplete="off" spellcheck="false" minlength="16" maxlength="4096" required>
-                <small>Stored privately on this Mac. Your key is never shown again.</small>
+                <small>Stored privately on this Mac. Do not use an admin key.</small>
               </label>
-              <div class="setup-links">
-                <a href="https://platform.openai.com/settings/organization/tunnels" target="_blank" rel="noopener noreferrer">Open Tunnels</a>
-                <a href="https://platform.openai.com/settings/organization/api-keys" target="_blank" rel="noopener noreferrer">Runtime API keys</a>
-                <a href="https://chatgpt.com/#settings/Connectors" target="_blank" rel="noopener noreferrer">ChatGPT connectors</a>
-              </div>
               <button id="onboarding-connect-button" class="button primary full-width" type="submit">Save &amp; connect</button>
               <p id="onboarding-reconnect" class="setup-reconnect" hidden>Restart scheduled. Equinox Local will reconnect here automatically…</p>
             </form>
-          </div>
-        </article>
+          </article>
 
+          <article class="setup-guide-step">
+            <div class="setup-guide-heading">
+              <span class="setup-step-index">3</span>
+              <div><strong>Add Equinox Local to ChatGPT</strong><p>Create or edit the Equinox Local MCP app/connector in ChatGPT and point it at the same tunnel.</p></div>
+              <span id="setup-chatgpt-status" class="badge neutral">Waiting</span>
+            </div>
+            <ol class="setup-instructions">
+              <li>Open ChatGPT connector/app settings and start the custom MCP connection flow available to your account/workspace.</li>
+              <li>Choose Tunnel as the connection type.</li>
+              <li>Select or paste the same Tunnel ID shown below, then save the connector.</li>
+            </ol>
+            <div class="setup-copy-row">
+              <code id="setup-tunnel-copy-value">Tunnel ID appears after step 2</code>
+              <button id="copy-setup-tunnel-id" class="button secondary compact" type="button" disabled>Copy Tunnel ID</button>
+              <a class="button secondary compact" href="https://chatgpt.com/#settings/Connectors" target="_blank" rel="noopener noreferrer">Open ChatGPT settings ↗</a>
+            </div>
+          </article>
+
+          <article class="setup-guide-step">
+            <div class="setup-guide-heading">
+              <span class="setup-step-index">4</span>
+              <div><strong>Install Equinox Browser</strong><p>Equinox Browser is a required part of Equinox Local. It provides the browser-side connection and continuity features.</p></div>
+              <span id="setup-browser-status" class="badge warn">Not connected</span>
+            </div>
+            <ol class="setup-instructions">
+              <li>Install Equinox Browser from Chrome Web Store in the Chrome profile you use with ChatGPT.</li>
+              <li>Open the extension, review and accept the browser-data disclosure.</li>
+              <li>Turn Browser Control on. This setup screen detects the connection automatically.</li>
+            </ol>
+            <div class="setup-links">
+              <a href="https://chromewebstore.google.com/detail/equinox-browser/npdneefcobilfkjlihghjgjnknenhfoj" target="_blank" rel="noopener noreferrer">Install Equinox Browser ↗</a>
+            </div>
+            <p id="setup-browser-detail" class="setup-status-detail">Waiting for Equinox Browser in Your Browser.</p>
+          </article>
+
+          <article id="setup-telegram-step" class="setup-guide-step setup-optional-step">
+            <div class="setup-guide-heading">
+              <span class="setup-step-index">5</span>
+              <div><strong>Connect Telegram</strong><p>Recommended. Telegram lets Equinox Local reach you away from the Mac and will become the remote task inbox for agent replies and controls.</p></div>
+              <span id="setup-telegram-status" class="badge neutral">Recommended</span>
+            </div>
+            <ol class="setup-instructions">
+              <li>Open BotFather in Telegram and send /newbot.</li>
+              <li>Choose a display name and a unique bot username when BotFather asks.</li>
+              <li>Copy the HTTP API token BotFather gives you and paste it below.</li>
+              <li>Choose Pair Telegram, open your new bot, and send /start.</li>
+              <li>Equinox Local will show the detected private account here. Confirm it before anything is saved.</li>
+            </ol>
+            <div class="setup-links">
+              <a href="https://t.me/BotFather" target="_blank" rel="noopener noreferrer">Open BotFather ↗</a>
+              <a id="setup-telegram-bot-link" href="#" target="_blank" rel="noopener noreferrer" hidden>Open your bot ↗</a>
+            </div>
+            <div id="setup-telegram-form" class="setup-form setup-inline-form">
+              <label class="field">
+                <span>Bot token</span>
+                <input id="setup-telegram-token" type="password" autocomplete="off" spellcheck="false" placeholder="123456789:AA…">
+                <small>The token stays only on this Mac. Do not share it with the agent or paste it into chat.</small>
+              </label>
+              <div class="integration-actions">
+                <button id="setup-telegram-start" class="button primary" type="button">Pair Telegram</button>
+                <button id="setup-telegram-skip" class="button secondary" type="button">Skip for now</button>
+              </div>
+            </div>
+            <div id="setup-telegram-pairing" class="setup-form setup-inline-form" hidden>
+              <p id="setup-telegram-detail" class="setup-status-detail setup-status-inline">Waiting for /start from your bot chat.</p>
+              <div class="integration-actions">
+                <button id="setup-telegram-confirm" class="button primary" type="button" hidden>Pair this account</button>
+                <button id="setup-telegram-cancel" class="button secondary" type="button">Cancel pairing</button>
+              </div>
+            </div>
+          </article>
+
+          <article class="setup-guide-step setup-verify-step">
+            <div class="setup-guide-heading">
+              <span class="setup-step-index">6</span>
+              <div><strong>Verify ChatGPT → Mac</strong><p>Send one real tool request from ChatGPT. Setup stays locked until that request reaches this Mac.</p></div>
+              <span id="setup-verify-status" class="badge warn">Waiting</span>
+            </div>
+            <p>After the connector and browser extension are ready, paste this into ChatGPT:</p>
+            <div class="setup-copy-row setup-prompt-row">
+              <code id="setup-test-prompt">Use Equinox Local to check the Equinox Local runtime status on my Mac.</code>
+              <button id="copy-setup-test-prompt" class="button primary compact" type="button">Copy test prompt</button>
+            </div>
+            <p id="setup-verify-detail" class="setup-status-detail">Waiting for the first Equinox Local tool call from ChatGPT.</p>
+          </article>
+        </div>
+
+        <details id="setup-uninstall-details" class="setup-uninstall-details">
+          <summary>Need to remove Equinox Local instead?</summary>
+          <div id="setup-uninstall-slot"></div>
+        </details>
+      </section>
+
+      <section id="section-dashboard" class="page-section is-active" aria-labelledby="section-title">
         <div class="hero-card" id="runtime-overview">
           <div class="hero-copy">
             <span id="runtime-health-badge" class="badge neutral">Checking runtime</span>
@@ -570,6 +660,32 @@
             <div><span>Managed processes</span><strong id="active-process-count">0</strong></div>
             <div><span>Total active work</span><strong id="active-work-count">0</strong></div>
           </div>
+          <div class="panel-header compact-panel-header">
+            <div>
+              <p class="eyebrow">Turn safety</p>
+              <h4>Turn Budget</h4>
+            </div>
+            <span id="turn-budget-badge" class="badge neutral">Loading…</span>
+          </div>
+          <p id="turn-budget-copy" class="health-copy">Tracks the current assistant turn from its first Equinox Local use and warns before the safety cutoff.</p>
+          <div class="active-work-grid" aria-label="Turn budget status">
+            <div><span>Elapsed</span><strong id="turn-budget-elapsed">—</strong></div>
+            <div><span>Remaining</span><strong id="turn-budget-remaining">—</strong></div>
+            <div><span>Stage</span><strong id="turn-budget-stage">Idle</strong></div>
+          </div>
+          <label class="toggle-field compact-toggle">
+            <div>
+              <span>Enable Turn Budget</span>
+              <small>Warn the agent before the per-turn safety cutoff. This never force-stops a turn.</small>
+            </div>
+            <input id="turn-budget-enabled" type="checkbox" role="switch">
+          </label>
+          <label class="field">
+            <span>Safety cutoff (minutes)</span>
+            <input id="turn-budget-cutoff" type="number" min="5" max="120" step="1" inputmode="numeric">
+            <small>Default 22 minutes. The setting applies immediately and does not require a Local restart.</small>
+          </label>
+          <button id="save-turn-budget-button" class="button secondary full-width" type="button">Save Turn Budget</button>
           <p class="save-hint">Emergency Stop immediately blocks new mutating agent actions and safely stops Equinox Local-managed Terminal/process work. The MCP connection and read-only status stay alive so the agent can observe the pause and finish its response. Resume never restarts stopped work automatically.</p>
         </article>
 
@@ -634,6 +750,7 @@
           <div id="permissions-list" class="permissions-list"></div>
         </details>
 
+        <div id="permissions-uninstall-slot">
         <article id="uninstall-card" class="panel-card danger-panel uninstall-card" hidden>
           <div class="panel-header">
             <div>
@@ -660,6 +777,7 @@
             <p id="uninstall-status" class="uninstall-status" hidden>Uninstall scheduled. Equinox Local will stop and this page will disconnect.</p>
           </form>
         </article>
+        </div>
       </section>
 
       <section id="section-integrations" class="page-section" aria-labelledby="section-title" hidden>

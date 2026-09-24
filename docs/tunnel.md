@@ -56,6 +56,8 @@ Equinox Local stores the runtime key in its per-user Application Support area wi
 
 The transport configuration stores the Tunnel ID separately and Local schedules a controlled restart. If tunnel startup fails, the supervisor falls back to local-only Control Center mode instead of exposing a different transport.
 
+On a genuinely fresh managed install, this is only the tunnel step of the dedicated **Setup Mode**. Setup then requires the human to add the same Tunnel ID to the Equinox Local MCP connector in ChatGPT, install/consent/enable **Equinox Browser** in the personal Chrome profile, and send the provided verification prompt. Control Center stays locked to Setup (plus uninstall) until a real ChatGPT MCP tool call reaches the Mac. Successful completion is persisted so later tunnel/browser outages are ordinary attention states rather than another first-run lock.
+
 ## 4. Connect the same tunnel in ChatGPT
 
 Open ChatGPT's app/connector settings and use the custom MCP app flow available to your plan/workspace.

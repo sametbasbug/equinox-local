@@ -19,7 +19,11 @@ export function registerTaskCapsuleTools({ registerRawTool, z, store, autoContin
     description: "Create or update a durable bounded Task Capsule checkpoint for long-running work. Updating an existing task invalidates any older pending continuation.",
     inputSchema: { task_id: taskIdSchema.optional(), ...snapshotSchema },
     annotations: { title: "Save task checkpoint", readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
-  }, async (input) => jsonResult(await store.checkpoint({ ...input, taskId: input.task_id })), { capabilityDomain: "runtime" });
+  }, async (input) => {
+    const task = await store.checkpoint({ ...input, taskId: input.task_id });
+    const bound = await autoContinueController.captureBinding(task.taskId);
+    return jsonResult(bound);
+  }, { capabilityDomain: "runtime" });
 
   registerRawTool("task_read", {
     description: "Read one durable Task Capsule by id.",
@@ -46,10 +50,10 @@ export function registerTaskCapsuleTools({ registerRawTool, z, store, autoContin
   }, async ({ task_id }) => jsonResult(await store.cancel(task_id)), { capabilityDomain: "runtime" });
 
   registerRawTool("continuation_arm", {
-    description: "Arm one bounded next-turn Auto Continue for an active Task Capsule. Browser delivery is bound separately to a verified ChatGPT target; every automatic hop must be armed again.",
+    description: "Arm one bounded next-turn Auto Continue for an active Task Capsule. Prefer the Task Capsule's verified ChatGPT binding when present; otherwise resolve the existing pinned/current generating target. Every automatic hop must be armed again.",
     inputSchema: { task_id: taskIdSchema, ttl_minutes: z.number().int().min(1).max(60).default(15) },
     annotations: { title: "Arm Auto Continue", readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
-  }, async ({ task_id, ttl_minutes }) => jsonResult(await autoContinueController.arm({ taskId: task_id, ttlMinutes: ttl_minutes })), { capabilityDomain: "runtime" });
+  }, async ({ task_id, ttl_minutes }) => jsonResult(await autoContinueController.armBound({ taskId: task_id, ttlMinutes: ttl_minutes })), { capabilityDomain: "runtime" });
 
   registerRawTool("continuation_cancel", {
     description: "Cancel the pending Auto Continue arm for a Task Capsule without cancelling the task.",

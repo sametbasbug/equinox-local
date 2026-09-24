@@ -22,9 +22,13 @@ A ChatGPT conversation that cached the old 4.x connector schema may need one con
 
 5.0 adds durable Task Capsules, explicitly armed one-shot Auto Continue, guarded Fresh Chat Resume, Control Center task recovery, and native ChatGPT ↔ Mac single-file transfer. These features are additive and do not require migrating existing project configuration. Auto Continue and Fresh Chat Resume remain human-first and fail closed on target drift, new human input, Emergency Stop or ambiguous browser delivery.
 
+## Telegram Remote Control
+
+Existing paired Telegram credentials continue to work. Version 5.0 turns the paired private chat into a bounded remote-control/task/chat surface without exposing a generic Telegram inbox to agents. `/status`, `/tasks`, `/chat`, `/unbind` and `/help` are scoped to the paired chat. `/tasks` is the Task-chat switcher and also offers **New task**; only that explicit flow creates one new root ChatGPT conversation and binds it to the newly created Task Capsule. Normal unbound Telegram messages do not create chats. `/status` provides short-lived Emergency Stop/Resume and Restart controls with action-specific confirmation for the high-impact actions. Telegram files are downloaded once to the configured local folder only for a bound Task flow; Chat Bridge passes only `task_id` and optional `local_file`. Upgrading does not require re-pairing the bot.
+
 ## Files and native attachment bridge
 
-Native transfer continues through `files_call`; there is no separate top-level upload/download tool. `file_export` sends a bounded local file to the current ChatGPT conversation and `file_import` saves one native ChatGPT attachment to the Mac. Existing structural protections for credentials, application data, `.git` traversal and symlink escape remain in force.
+Native transfer continues through `files_call`; there is no separate top-level upload/download tool. `file_export` sends a bounded local file to the current ChatGPT conversation and `file_import` saves one native ChatGPT attachment to the Mac. When `file_import` omits `destination`, it uses the Control Center Web file transfer folder, defaulting to `~/Downloads/Equinox Local/Web/`; an explicit destination still overrides the default. Existing structural protections for credentials, application data, `.git` traversal and symlink escape remain in force.
 
 ## Browser companion
 

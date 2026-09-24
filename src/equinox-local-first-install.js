@@ -23,6 +23,7 @@ import {
   managedSupervisorPaths,
   resolveSupervisorRelease,
 } from "./equinox-local-supervisor.js";
+import { initializeManagedOnboardingState } from "./equinox-local-onboarding.js";
 
 const execFile = promisify(execFileCallback);
 const MAX_RELEASE_METADATA_BYTES = 16 * 1024;
@@ -45,6 +46,7 @@ const REQUIRED_RELEASE_FILES = Object.freeze([
   "equinox-local-bootstrap.js",
   "equinox-local-supervisor.js",
   "equinox-local-first-install.js",
+  "equinox-local-onboarding.js",
 ]);
 
 function inside(parent, child) {
@@ -235,6 +237,7 @@ export async function installManagedEquinoxRelease({
   readCurrentImpl = readCurrentReleaseOrNull,
   activateImpl = activatePreparedEquinoxRelease,
   waitForVersionImpl = waitForEquinoxLocalVersion,
+  initializeOnboardingImpl = initializeManagedOnboardingState,
 } = {}) {
   if (platform !== "darwin") throw new Error("Equinox Local first install is supported only on macOS.");
   if (!Number.isInteger(uid) || uid < 1) throw new Error("Do not run the Equinox Local installer with sudo or as root.");
@@ -318,6 +321,7 @@ export async function installManagedEquinoxRelease({
     const installation = installationFor(paths, targetRelease);
     const bootstrap = await bootstrapImpl({ homeDir });
     try {
+      await initializeOnboardingImpl({ installation, homeDir });
       await reloadLaunchAgent(installation, { uid, execFileImpl });
       await waitForVersionImpl(candidate.version);
     } catch (error) {

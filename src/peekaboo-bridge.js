@@ -14,9 +14,9 @@ const RUNTIME_ROOT = path.basename(MODULE_DIR) === "src" ? path.dirname(MODULE_D
 
 export const PEEKABOO_ALLOWED_TOOLS = Object.freeze([
   "permissions",
-  "list",
   "inspect_ui",
   "see",
+  "capture",
   "clipboard",
   "app",
   "window",
@@ -25,13 +25,14 @@ export const PEEKABOO_ALLOWED_TOOLS = Object.freeze([
   "click",
   "drag",
   "move",
-  "hotkey",
   "press",
   "scroll",
   "type",
-  "perform_action",
+  "paste",
+  "dialog",
   "action",
   "set_value",
+  "verify_state",
   "space",
   "sleep",
 ]);
@@ -39,68 +40,51 @@ export const PEEKABOO_ALLOWED_TOOLS = Object.freeze([
 const PEEKABOO_ALLOWED_TOOL_SET = new Set(PEEKABOO_ALLOWED_TOOLS);
 const PEEKABOO_READ_ONLY_TOOL_SET = new Set([
   "permissions",
-  "list",
   "inspect_ui",
   "see",
+  "verify_state",
 ]);
 const PEEKABOO_TOOL_CACHE_MS = 60_000;
-const PEEKABOO_PERMISSION_CACHE_MS = 5_000;
 const MAX_ARGUMENT_BYTES = 100_000;
 const MAX_RESULT_BYTES = 2 * 1024 * 1024;
 const MAX_TEXT_INPUT = 20_000;
 const SAFE_PATH = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin";
-const MIN_PEEKABOO_VERSION = Object.freeze({ major: 3, minor: 9, patch: 9 });
+const PEEKABOO_MCP_ARGS = Object.freeze([
+  "mcp",
+  "--no-remote",
+  "--allow-foreground",
+  "--log-level",
+  "warning",
+  "--input-strategy",
+  "actionFirst",
+]);
+const MIN_PEEKABOO_VERSION = Object.freeze({ major: 4, minor: 5, patch: 0 });
 const MAX_SUPPORTED_PEEKABOO_MAJOR = 4;
 
-const PEEKABOO_V3_REQUIRED_TOOLS = Object.freeze([
-  "permissions", "list", "inspect_ui", "see", "app", "window", "menu", "dock",
-  "click", "drag", "move", "hotkey", "scroll", "type", "perform_action",
-  "set_value", "space", "sleep",
-]);
-
-const PEEKABOO_V4_REQUIRED_TOOLS = Object.freeze([
-  "permissions", "inspect_ui", "see", "app", "window", "menu", "dock",
-  "click", "press", "scroll", "type", "action",
-  "set_value", "space", "sleep",
-]);
-
-const PROTECTED_APPLICATION_NAMES = new Set([
-  "loginwindow",
-  "systemuiserver",
-  "windowmanager",
-  "dock",
-  "accessibility",
-  "control centre",
-  "control center",
-  "com.apple.loginwindow",
-  "com.apple.systemuiserver",
-  "com.apple.windowmanager",
-  "com.apple.dock",
-]);
-
-const DANGEROUS_MENU_PATTERN =
-  /(?:empty\s+(?:bin|trash)|move\s+to\s+(?:bin|trash)|delete\s+immediately|force\s+quit|shut\s+down|restart|log\s+out|lock\s+screen|erase|format)/iu;
+const PEEKABOO_V4_REQUIRED_TOOLS = Object.freeze([...PEEKABOO_ALLOWED_TOOLS]);
 
 const REQUIRED_TOOL_SHAPES = Object.freeze({
   permissions: Object.freeze({ properties: [] }),
-  list: Object.freeze({ properties: ["item_type"] }),
   inspect_ui: Object.freeze({ properties: ["app_target", "snapshot", "max_elements"] }),
-  see: Object.freeze({ properties: ["app_target", "snapshot", "max_elements"] }),
-  app: Object.freeze({ properties: ["action", "name"], actionValues: ["launch", "quit", "list"] }),
-  window: Object.freeze({ properties: ["action", "window_id"], actionValues: ["close", "list"] }),
-  menu: Object.freeze({ properties: ["action", "app", "path"], actionValues: ["list", "click"] }),
-  dock: Object.freeze({ properties: ["action"], actionValues: ["list"] }),
-  click: Object.freeze({ properties: ["on", "query", "snapshot"] }),
-  drag: Object.freeze({ properties: ["from", "to", "snapshot"] }),
-  move: Object.freeze({ properties: ["id", "snapshot"] }),
-  hotkey: Object.freeze({ properties: ["keys", "app", "window_id"] }),
-  press: Object.freeze({ properties: ["keys", "key", "snapshot"] }),
-  scroll: Object.freeze({ properties: ["direction", "on", "snapshot"] }),
-  type: Object.freeze({ properties: ["text", "on", "snapshot"] }),
-  perform_action: Object.freeze({ properties: ["on", "action", "snapshot"] }),
+  see: Object.freeze({ properties: ["app_target", "snapshot", "max_elements", "path"] }),
+  capture: Object.freeze({ properties: ["mode", "source", "capture_focus"] }),
+  clipboard: Object.freeze({ properties: ["action", "text", "file_path"], actionValues: ["get", "set", "clear", "save", "restore"] }),
+  app: Object.freeze({ properties: ["action", "name", "foreground"], actionValues: ["launch", "open", "quit", "relaunch", "focus", "hide", "unhide", "switch", "list"] }),
+  window: Object.freeze({ properties: ["action", "window_id", "foreground"], actionValues: ["list", "close", "minimize", "restore", "maximize", "move", "resize", "set-bounds", "focus"] }),
+  menu: Object.freeze({ properties: ["action", "app", "path", "foreground"], actionValues: ["list", "click"] }),
+  dock: Object.freeze({ properties: ["action"] }),
+  click: Object.freeze({ properties: ["on", "query", "coords", "foreground", "snapshot"] }),
+  drag: Object.freeze({ properties: ["from", "to", "from_coords", "to_coords", "foreground"] }),
+  move: Object.freeze({ properties: ["id", "to", "coordinates", "foreground"] }),
+  press: Object.freeze({ properties: ["keys", "key", "snapshot", "foreground", "app", "window_id"] }),
+  scroll: Object.freeze({ properties: ["direction", "on", "snapshot", "foreground"] }),
+  type: Object.freeze({ properties: ["text", "on", "snapshot", "foreground", "app", "window_id"] }),
+  paste: Object.freeze({ properties: ["text", "app", "pid"] }),
+  dialog: Object.freeze({ properties: ["action", "app", "foreground"], actionValues: ["list", "click", "input", "file", "dismiss"] }),
   action: Object.freeze({ properties: ["on", "action", "snapshot"] }),
   set_value: Object.freeze({ properties: ["on", "value", "snapshot"] }),
-  space: Object.freeze({ properties: ["action"] }),
+  verify_state: Object.freeze({ properties: ["predicates", "app", "pid", "window_id"] }),
+  space: Object.freeze({ properties: ["action", "foreground"], actionValues: ["list", "switch", "move-window"] }),
   sleep: Object.freeze({ properties: ["duration"] }),
 });
 
@@ -168,17 +152,8 @@ function compareVersion(left, right) {
   return 0;
 }
 
-function compatibilityContract(installedVersion, byName) {
-  if (installedVersion?.major === 4) {
-    return { name: "v4", requiredTools: PEEKABOO_V4_REQUIRED_TOOLS };
-  }
-  if (installedVersion?.major === 3) {
-    return { name: "v3", requiredTools: PEEKABOO_V3_REQUIRED_TOOLS };
-  }
-  if (!installedVersion && byName.has("press") && byName.has("action")) {
-    return { name: "v4", requiredTools: PEEKABOO_V4_REQUIRED_TOOLS };
-  }
-  return { name: "v3", requiredTools: PEEKABOO_V3_REQUIRED_TOOLS };
+function compatibilityContract() {
+  return { name: "v4.5", requiredTools: PEEKABOO_V4_REQUIRED_TOOLS };
 }
 
 export function inspectPeekabooCompatibility(tools, versionText = "") {
@@ -284,6 +259,9 @@ function requiredPermissionsForTool(toolName) {
   if (toolName === "see") {
     return ["screenRecording", "accessibility"];
   }
+  if (toolName === "capture") {
+    return ["screenRecording"];
+  }
 
   if (
     [
@@ -294,13 +272,14 @@ function requiredPermissionsForTool(toolName) {
       "click",
       "drag",
       "move",
-      "hotkey",
       "press",
       "scroll",
       "type",
-      "perform_action",
+      "paste",
+      "dialog",
       "action",
       "set_value",
+      "verify_state",
       "space",
     ].includes(toolName)
   ) {
@@ -326,6 +305,24 @@ function isPeekabooTransportError(error) {
   return /(?:connection\s+closed|transport|not\s+connected|broken\s+pipe|\bEPIPE\b|\bECONNRESET\b|\bEOF\b|MCP\s+error\s+-32000)/iu.test(message);
 }
 
+function isPeekabooAmbiguousOutcomeResult(result) {
+  if (!result?.isError) return false;
+  const text = extractTextContent(result);
+  return /did not return (?:an? )?(?:confirmed|accepted) outcome[\s\S]*canonical escalation metadata/iu.test(text);
+}
+
+function normalizePeekabooAmbiguousOutcomeResult(result) {
+  const text = extractTextContent(result);
+  return {
+    ...result,
+    isError: false,
+    content: [{
+      type: "text",
+      text: `[ambiguous] ${text}\nDo not retry blindly; observe the exact target before deciding whether another mutation is needed.`,
+    }],
+  };
+}
+
 function guardPeekabooResult(result) {
   let encoded;
   try {
@@ -339,54 +336,6 @@ function guardPeekabooResult(result) {
   }
 
   return result;
-}
-
-function normalizeApplicationName(value) {
-  return typeof value === "string" ? value.trim().toLowerCase() : "";
-}
-
-function isProtectedApplication(value) {
-  return PROTECTED_APPLICATION_NAMES.has(normalizeApplicationName(value));
-}
-
-function normalizeHotkeyChord(value) {
-  return String(value ?? "")
-    .split(",")
-    .map((part) => part.trim().toLowerCase())
-    .filter(Boolean);
-}
-
-function normalizePressChord(value) {
-  return String(value ?? "")
-    .split(/[+,]/u)
-    .map((part) => part.trim().toLowerCase())
-    .filter(Boolean);
-}
-
-function isDangerousKeyboardChord(parts) {
-  const chord = new Set(parts);
-  return (
-    (chord.has("cmd") && chord.has("delete")) ||
-    (chord.has("cmd") && chord.has("option") && chord.has("escape")) ||
-    (chord.has("cmd") && chord.has("alt") && chord.has("escape")) ||
-    (chord.has("ctrl") && chord.has("cmd") && chord.has("q")) ||
-    (chord.has("control") && chord.has("cmd") && chord.has("q"))
-  );
-}
-
-function hasExplicitSnapshot(args) {
-  return typeof args.snapshot === "string" && args.snapshot.trim().length > 0 && args.snapshot !== "latest";
-}
-
-function hasDesktopTarget(args) {
-  return Boolean(
-    args.on ||
-      args.app ||
-      args.pid !== undefined ||
-      args.window_id !== undefined ||
-      args.window_title ||
-      args.window_index !== undefined,
-  );
 }
 
 function validateTraversalLimits(args) {
@@ -413,331 +362,24 @@ export function normalizePeekabooArguments(toolName, rawArguments = {}) {
   }
 
   assertPlainObject(rawArguments);
-
   const encoded = JSON.stringify(rawArguments);
   if (Buffer.byteLength(encoded, "utf8") > MAX_ARGUMENT_BYTES) {
     throw new Error("Peekaboo araç girdisi 100 KB sınırını aşıyor.");
   }
 
   const args = { ...rawArguments };
-
   if (toolName === "see" || toolName === "inspect_ui") {
     validateTraversalLimits(args);
-    assertStringLimit(args.app_target, "app_target", 300);
-    assertStringLimit(args.snapshot, "snapshot", 200);
-
-    if (toolName === "see" && args.path !== undefined) {
-      throw new Error(
-        "see.path Equinox Local üzerinden kapalıdır; Peekaboo geçici çıktısını kullan.",
-      );
-    }
   }
-
-  if (toolName === "app") {
-    assertStringLimit(args.name, "name", 300);
-    assertStringLimit(args.to, "to", 300);
-    assertStringLimit(args.bundleId, "bundleId", 300);
-
-    if (args.all === true) {
-      throw new Error("Tüm uygulamaları topluca kapatma Equinox Local üzerinden yasak.");
-    }
-
-    if (args.force === true) {
-      throw new Error("Force quit Equinox Local Peekaboo köprüsünde kapalıdır.");
-    }
-
-    if (
-      ["quit", "relaunch", "hide", "unhide"].includes(args.action) &&
-      isProtectedApplication(args.name)
-    ) {
-      throw new Error(`Korunan macOS uygulaması üzerinde '${args.action}' eylemi kapalıdır.`);
-    }
-  }
-
-  if (toolName === "window") {
-    assertStringLimit(args.app, "app", 300);
-    assertStringLimit(args.title, "title", 500);
-    assertOptionalNumber(args.width, "width", { min: 100, max: 16_384 });
-    assertOptionalNumber(args.height, "height", { min: 100, max: 16_384 });
-    assertOptionalNumber(args.x, "x", { min: -16_384, max: 32_768 });
-    assertOptionalNumber(args.y, "y", { min: -16_384, max: 32_768 });
-
-    if (args.action !== "focus" && isProtectedApplication(args.app)) {
-      throw new Error(`Korunan macOS uygulaması penceresinde '${args.action}' eylemi kapalıdır.`);
-    }
-  }
-
-  if (toolName === "menu") {
-    assertStringLimit(args.app, "app", 300);
-    assertStringLimit(args.item, "item", 500);
-    assertStringLimit(args.path, "path", 1_000);
-
-    if (args.action === "list-all" || args.action === "click-extra") {
-      throw new Error(
-        "Tüm uygulama menülerini tarama ve sistem menü-extra tıklama Equinox Local üzerinden kapalıdır.",
-      );
-    }
-
-    if (
-      args.action === "click" &&
-      DANGEROUS_MENU_PATTERN.test(`${args.path ?? ""} ${args.item ?? ""}`)
-    ) {
-      throw new Error("Silme, sistem oturumu veya güç yönetimi menü eylemleri masaüstü köprüsünde kapalıdır.");
-    }
-  }
-
-  if (toolName === "dock") {
-    assertStringLimit(args.app, "app", 300);
-    assertStringLimit(args.select, "select", 500);
-
-    if (args.action === "right-click") {
-      throw new Error("Dock context-menu eylemleri ilk v3.9 güvenli yüzeyinde kapalıdır.");
-    }
-  }
-
-  if (toolName === "click") {
-    assertStringLimit(args.on, "on", 500);
-    assertStringLimit(args.query, "query", 1_000);
-    assertStringLimit(args.snapshot, "snapshot", 200);
-
-    if (args.coords !== undefined) {
-      throw new Error(
-        "Koordinat tabanlı click kapalıdır; see/inspect_ui element ID veya query kullan.",
-      );
-    }
-
-    if (args.foreground === true || args.background === false || args.modifiers !== undefined) {
-      throw new Error(
-        "Foreground/shared-pointer click ve foreground modifier kullanımı Equinox Local üzerinden kapalıdır.",
-      );
-    }
-
-    if (!args.on && !args.query) {
-      throw new Error("click için element ID (on) veya query zorunludur.");
-    }
-
-    if (args.query && DANGEROUS_MENU_PATTERN.test(args.query)) {
-      throw new Error("Silme, sistem oturumu veya güç yönetimi hedeflerine query ile click kapalıdır.");
-    }
-
-    assertOptionalNumber(args.wait_for, "wait_for", {
-      min: 0,
-      max: 30_000,
-      integer: true,
-    });
-  }
-
-  if (toolName === "drag") {
-    assertStringLimit(args.from, "from", 500);
-    assertStringLimit(args.to, "to", 500);
-    assertStringLimit(args.snapshot, "snapshot", 200);
-
-    if (args.from_coords !== undefined || args.to_coords !== undefined) {
-      throw new Error(
-        "Koordinat tabanlı drag kapalıdır; see/inspect_ui element ID veya query kullan.",
-      );
-    }
-
-    if (!args.from || !args.to) {
-      throw new Error("drag için from ve to semantik element hedefleri zorunludur.");
-    }
-
-    assertOptionalNumber(args.duration, "duration", {
-      min: 0,
-      max: 10_000,
-      integer: true,
-    });
-  }
-
-  if (toolName === "move") {
-    assertStringLimit(args.id, "id", 500);
-    assertStringLimit(args.snapshot, "snapshot", 200);
-
-    if (
-      args.coordinates !== undefined ||
-      args.to !== undefined ||
-      args.center === true
-    ) {
-      throw new Error(
-        "Koordinat/merkez tabanlı mouse move kapalıdır; element ID kullan.",
-      );
-    }
-
-    if (!args.id) {
-      throw new Error("move için see/inspect_ui kaynaklı element ID zorunludur.");
-    }
-  }
-
-  if (toolName === "hotkey") {
-    assertStringLimit(args.keys, "keys", 120);
-    assertStringLimit(args.app, "app", 300);
-    assertStringLimit(args.window_title, "window_title", 500);
-
-    if (!hasDesktopTarget(args)) {
-      throw new Error(
-        "Global hotkey gönderimi kapalıdır; app/pid/window hedefi belirt.",
-      );
-    }
-
-    if (isDangerousKeyboardChord(normalizeHotkeyChord(args.keys))) {
-      throw new Error("Silme, Force Quit veya oturum kilitleme hotkey'i masaüstü köprüsünde kapalıdır.");
-    }
-
-    assertOptionalNumber(args.hold_duration, "hold_duration", {
-      min: 0,
-      max: 5_000,
-      integer: true,
-    });
-  }
-
-  if (toolName === "press") {
-    assertStringLimit(args.key, "key", 120);
-    assertStringLimit(args.snapshot, "snapshot", 200);
-
-    if (!hasExplicitSnapshot(args)) {
-      throw new Error(
-        "Peekaboo 4 press için fresh exact snapshot zorunludur; targetless veya implicit latest keyboard gönderimi kapalıdır.",
-      );
-    }
-    if (
-      args.app !== undefined || args.pid !== undefined || args.window_id !== undefined ||
-      args.window_title !== undefined || args.window_index !== undefined || args.foreground !== undefined
-    ) {
-      throw new Error(
-        "Peekaboo 4 press yalnız snapshot-pinned background delivery kullanır; app/pid/window/foreground hedefleri kapalıdır.",
-      );
-    }
-
-    if (args.keys !== undefined) {
-      if (!Array.isArray(args.keys) || args.keys.length === 0 || args.keys.length > 100) {
-        throw new Error("press.keys 1-100 chord içeren bir dizi olmalı.");
-      }
-      for (const chord of args.keys) {
-        assertStringLimit(chord, "press.keys[]", 120);
-        if (isDangerousKeyboardChord(normalizePressChord(chord))) {
-          throw new Error("Silme, Force Quit veya oturum kilitleme press chord'u masaüstü köprüsünde kapalıdır.");
-        }
-      }
-    }
-
-    if (args.modifiers !== undefined && !Array.isArray(args.modifiers)) {
-      throw new Error("press.modifiers bir dizi olmalı.");
-    }
-    if (Array.isArray(args.modifiers)) {
-      for (const modifier of args.modifiers) {
-        assertStringLimit(modifier, "press.modifiers[]", 20);
-      }
-    }
-
-    if (Boolean(args.key) === Array.isArray(args.keys)) {
-      throw new Error("press için keys veya key biçimlerinden tam olarak biri kullanılmalı.");
-    }
-    if (Array.isArray(args.keys) && args.modifiers !== undefined) {
-      throw new Error("press.keys ile modifiers birlikte kullanılamaz.");
-    }
-
-    if (
-      args.key &&
-      isDangerousKeyboardChord([
-        ...(Array.isArray(args.modifiers) ? args.modifiers : []),
-        args.key,
-      ].map((part) => String(part).toLowerCase()))
-    ) {
-      throw new Error("Silme, Force Quit veya oturum kilitleme press chord'u masaüstü köprüsünde kapalıdır.");
-    }
-
-    assertOptionalNumber(args.hold, "hold", { min: 0, max: 10_000, integer: true });
-    assertOptionalNumber(args.delay, "delay", { min: 0, max: 10_000, integer: true });
-    assertOptionalNumber(args.count, "count", { min: 1, max: 100, integer: true });
-  }
-
-  if (toolName === "scroll") {
-    assertStringLimit(args.on, "on", 500);
-    assertStringLimit(args.snapshot, "snapshot", 200);
-
-    if (!args.on) {
-      throw new Error(
-        "Mouse konumunda global scroll kapalıdır; scroll hedef element ID'si belirt.",
-      );
-    }
-
-    if (args.foreground === true || args.smooth === true) {
-      throw new Error(
-        "Foreground/shared-pointer scroll Equinox Local üzerinden kapalıdır.",
-      );
-    }
-
-    assertOptionalNumber(args.amount, "amount", {
-      min: -100,
-      max: 100,
-    });
-    assertOptionalNumber(args.delay, "delay", {
-      min: 0,
-      max: 1_000,
-    });
-  }
-
-  if (toolName === "type") {
+  if (toolName === "type" || toolName === "paste" || toolName === "dialog") {
     assertStringLimit(args.text, "text", MAX_TEXT_INPUT);
-    assertStringLimit(args.on, "on", 500);
-    assertStringLimit(args.snapshot, "snapshot", 200);
-    assertStringLimit(args.app, "app", 300);
-    assertStringLimit(args.window_title, "window_title", 500);
-
-    if (!hasExplicitSnapshot(args) && !hasDesktopTarget(args)) {
-      throw new Error(
-        "Aktif odağa körlemesine yazma kapalıdır; fresh exact snapshot veya açık element/uygulama/pencere hedefi belirt.",
-      );
-    }
-
-    assertOptionalNumber(args.delay, "delay", {
-      min: 0,
-      max: 1_000,
-    });
-    assertOptionalNumber(args.tab, "tab", {
-      min: 0,
-      max: 50,
-      integer: true,
-    });
   }
-
-  if (toolName === "perform_action" || toolName === "action") {
-    assertStringLimit(args.on, "on", 500);
-    assertStringLimit(args.snapshot, "snapshot", 200);
-    assertStringLimit(args.action, "action", 80);
-
-    if (!/^AX[A-Za-z0-9]{1,60}$/u.test(args.action ?? "")) {
-      throw new Error(`${toolName} yalnız AX* accessibility eylemlerini kabul eder.`);
-    }
+  if (toolName === "set_value" && typeof args.value === "string" && args.value.length > MAX_TEXT_INPUT) {
+    throw new Error(`set_value metni ${MAX_TEXT_INPUT} karakter sınırını aşıyor.`);
   }
-
-  if (toolName === "set_value") {
-    assertStringLimit(args.on, "on", 500);
-    assertStringLimit(args.snapshot, "snapshot", 200);
-
-    if (typeof args.value === "string" && args.value.length > MAX_TEXT_INPUT) {
-      throw new Error(`set_value metni ${MAX_TEXT_INPUT} karakter sınırını aşıyor.`);
-    }
-  }
-
-  if (toolName === "space") {
-    assertStringLimit(args.app, "app", 300);
-    assertOptionalNumber(args.to, "to", { min: 1, max: 64, integer: true });
-    assertOptionalNumber(args.window_index, "window_index", {
-      min: 0,
-      max: 1_000,
-      integer: true,
-    });
-  }
-
   if (toolName === "sleep") {
-    assertOptionalNumber(args.duration, "duration", {
-      min: 0,
-      max: 30_000,
-      integer: true,
-    });
+    assertOptionalNumber(args.duration, "duration", { min: 0, max: 30_000, integer: true });
   }
-
   return args;
 }
 
@@ -891,14 +533,7 @@ export function createPeekabooBridge({
 
     const transport = new StdioClientTransport({
       command: binary,
-      args: [
-        "mcp",
-        "--no-remote",
-        "--log-level",
-        "warning",
-        "--input-strategy",
-        "actionFirst",
-      ],
+      args: [...PEEKABOO_MCP_ARGS],
       env: buildSafePeekabooEnvironment(baseEnvironment),
       stderr: "inherit",
     });
@@ -1119,11 +754,7 @@ export function createPeekabooBridge({
 
   const readPermissions = async (refresh = false) => {
     const timestamp = now();
-    if (
-      !refresh &&
-      permissionCache &&
-      timestamp - permissionCache.fetchedAt < PEEKABOO_PERMISSION_CACHE_MS
-    ) {
+    if (!refresh && permissionCache) {
       return permissionCache;
     }
 
@@ -1188,6 +819,9 @@ export function createPeekabooBridge({
   const executeToolOnce = async (toolName, args) => {
     const result = await rawCallTool(toolName, args);
     if (result?.isError) {
+      if (isPeekabooAmbiguousOutcomeResult(result)) {
+        return normalizePeekabooAmbiguousOutcomeResult(result);
+      }
       throw new Error(
         extractTextContent(result) || `${toolName} çağrısı başarısız oldu.`,
       );
@@ -1252,7 +886,7 @@ export function createPeekabooBridge({
 
     if (probePermissions) {
       try {
-        const currentPermissions = await readPermissions(false);
+        const currentPermissions = await readPermissions(true);
         permissions = currentPermissions.text;
         permissionState = {
           screenRecording: currentPermissions.screenRecording,
@@ -1331,19 +965,18 @@ export function createPeekabooBridge({
 
 export const __test = Object.freeze({
   PEEKABOO_TOOL_CACHE_MS,
-  PEEKABOO_PERMISSION_CACHE_MS,
+  PEEKABOO_MCP_ARGS,
   MAX_ARGUMENT_BYTES,
   MAX_RESULT_BYTES,
   MAX_TEXT_INPUT,
   MIN_PEEKABOO_VERSION,
   MAX_SUPPORTED_PEEKABOO_MAJOR,
-  PEEKABOO_V3_REQUIRED_TOOLS,
   PEEKABOO_V4_REQUIRED_TOOLS,
   REQUIRED_TOOL_SHAPES,
-  hasExplicitSnapshot,
-  hasDesktopTarget,
   requiredPermissionsForTool,
   assertPermissionState,
   isPeekabooTransportError,
   guardPeekabooResult,
+  isPeekabooAmbiguousOutcomeResult,
+  normalizePeekabooAmbiguousOutcomeResult,
 });

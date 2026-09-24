@@ -208,12 +208,12 @@ export function registerImageViewTools({
     "image_view",
     {
       description:
-        "Reads one local PNG, JPEG or WebP image as real MCP image content so the model can visually inspect a path the user supplied. This is a bounded read-only visual primitive, not a generic file reader. Selected Agent Access stays inside configured roots; Full mode still blocks protected credential/application-data paths and symlinks.",
+        "Preferred first choice for visually inspecting a PNG, JPEG or WebP that already exists on the Mac. Reads the local path directly as real MCP image content so the model can see it without file_export, ChatGPT attachment upload, or a container-copy workflow. Use file_export only when the user actually wants the file transferred into ChatGPT. This is a bounded read-only visual primitive, not a generic file reader. Selected Agent Access stays inside configured roots; Full mode still blocks protected credential/application-data paths and symlinks.",
       inputSchema: {
         path: z.string().min(1).max(4096).describe("Absolute local path to a PNG, JPEG or WebP image"),
       },
       annotations: {
-        title: "View local image",
+        title: "Inspect local image directly",
         readOnlyHint: true,
         destructiveHint: false,
         idempotentHint: true,

@@ -259,21 +259,38 @@ export async function getEquinoxLocalDoctorStatus({
     }
   }
 
-  if (browser?.ready) {
+  const browserRequired = installation?.managed === true;
+  if (!browser?.ready) {
     checks.push(check(
       "browser",
       "Equinox Browser",
-      "pass",
-      browser.consentAccepted === false
-        ? "The extension is connected; browser automation remains off until the user accepts browser-data consent."
-        : "The first-party Equinox Browser bridge is connected.",
+      browserRequired ? "attention" : "optional",
+      browserRequired
+        ? "Equinox Browser is required but is not connected to the user's Chrome profile."
+        : "Equinox Browser is not connected in this development runtime.",
+    ));
+  } else if (browserRequired && browser.consentAccepted !== true) {
+    checks.push(check(
+      "browser",
+      "Equinox Browser",
+      "attention",
+      "Equinox Browser is connected, but the browser-data disclosure has not been accepted yet.",
+    ));
+  } else if (browserRequired && browser.controlEnabled !== true) {
+    checks.push(check(
+      "browser",
+      "Equinox Browser",
+      "attention",
+      "Equinox Browser is connected and consented, but Browser Control is turned off.",
     ));
   } else {
     checks.push(check(
       "browser",
       "Equinox Browser",
-      "optional",
-      "The Chrome extension is not connected. Core Equinox Local can still run without browser automation.",
+      "pass",
+      browserRequired
+        ? "The required Equinox Browser bridge is connected, consented and Browser Control is enabled."
+        : "The Equinox Browser bridge is connected in this development runtime.",
     ));
   }
 
@@ -311,7 +328,7 @@ export function registerSystemDoctorTool({
     "system_doctor",
     {
       description:
-        "Equinox Local kurulumunu, runtime sağlığını, yapılandırmayı, güvenli güncelleme hazırlığını, ChatGPT bağlantısını ve isteğe bağlı Browser/Desktop köprülerini ürün-dostu ve salt okunur biçimde denetler.",
+        "Equinox Local kurulumunu, runtime sağlığını, yapılandırmayı, güvenli güncelleme hazırlığını, ChatGPT bağlantısını, zorunlu Equinox Browser köprüsünü ve isteğe bağlı Desktop köprüsünü ürün-dostu ve salt okunur biçimde denetler.",
       inputSchema: {},
       annotations: {
         title: "Equinox Local sağlık kontrolü",

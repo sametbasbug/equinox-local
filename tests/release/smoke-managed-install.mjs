@@ -86,7 +86,7 @@ async function main() {
     const configPath = path.join(installRoot, "config.json");
     await setControlCenterPort(configPath);
 
-    assert.equal(await commandText(node, ["--version"]), "v26.8.2");
+    assert.equal(await commandText(node, ["--version"]), "v26.10.0");
     assert.match(await commandText(tunnel, ["--version"]), /^0\.0\.14\+/u);
     assert.match(await commandText(cloudflared, ["--version"]), /cloudflared version/u);
 
@@ -135,6 +135,10 @@ async function main() {
     assert.equal(onboarding.onboarding.transportConfigured, false);
     assert.equal(onboarding.onboarding.supervisorMode, "local-only");
     assert.equal(onboarding.onboarding.connectedThroughTunnel, false);
+    assert.equal(onboarding.onboarding.setupComplete, false);
+    assert.equal(onboarding.onboarding.legacyCompleted, false);
+    assert.equal(onboarding.onboarding.browserRequired, true);
+    assert.equal(onboarding.onboarding.agentCommandReceived, false);
     assert.equal(Object.hasOwn(onboarding.onboarding, "runtimeKey"), false);
     const doctor = await waitForJson(`http://127.0.0.1:${CONTROL_CENTER_PORT}/api/v1/doctor`);
     assert.equal(doctor.doctor.managed, true);
@@ -157,7 +161,7 @@ async function main() {
       ok: true,
       version: EQUINOX_LOCAL_VERSION,
       target,
-      nodeVersion: "26.8.2",
+      nodeVersion: "26.10.0",
       tunnelClientVersion: "0.0.14",
       controlCenterPort: CONTROL_CENTER_PORT,
       controlCenterHealth: status.status.health?.state ?? null,

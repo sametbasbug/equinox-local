@@ -43,6 +43,9 @@ test("image_view returns real MCP image content for a bounded PNG", async (t) =>
 
   assert.equal(tool.name, "image_view");
   assert.equal(tool.toolOptions.capabilityDomain, "files");
+  assert.equal(tool.config.annotations.title, "Inspect local image directly");
+  assert.match(tool.config.description, /Preferred first choice/u);
+  assert.match(tool.config.description, /without file_export/u);
   const result = await tool.handler({ path: filePath });
   assert.equal(result.content[0].type, "text");
   assert.match(result.content[0].text, /2x3/u);

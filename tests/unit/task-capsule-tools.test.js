@@ -15,7 +15,8 @@ test("Task Capsule tools register on the runtime capability surface with bounded
     cancel: async (id) => ({ taskId: id, status: "cancelled" }),
   };
   const autoContinueController = {
-    arm: async (input) => ({ taskId: input.taskId, continuation: { status: "armed" } }),
+    captureBinding: async (id) => ({ taskId: id, checkpointRevision: 1 }),
+    armBound: async (input) => { calls.push(["arm-bound", input]); return { taskId: input.taskId, continuation: { status: "armed" } }; },
     cancel: async (id, reason) => ({ taskId: id, continuation: { status: "cancelled", reason } }),
   };
   const freshChatResumeController = {
@@ -45,4 +46,7 @@ test("Task Capsule tools register on the runtime capability surface with bounded
   assert.match(result.content[0].text, /task-abcdef/u);
   assert.equal(calls[0][0], "checkpoint");
   assert.equal(calls[0][1].taskId, undefined);
+  const armed = await registrations.get("continuation_arm").handler({ task_id: "task-abcdef", ttl_minutes: 15 });
+  assert.match(armed.content[0].text, /armed/u);
+  assert.deepEqual(calls.find((item) => item[0] === "arm-bound"), ["arm-bound", { taskId: "task-abcdef", ttlMinutes: 15 }]);
 });

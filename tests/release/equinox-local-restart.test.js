@@ -39,6 +39,9 @@ test("source-checkout restart uses only private generic developer runtime config
   assert.match(script, /tunnelClient/u);
   assert.match(script, /sourceLauncher/u);
   assert.match(script, /EQUINOX_LOCAL_DEV_NODE/u);
+  assert.equal(script.includes('DEFAULT_DEV_NODE="$HOME/.local/share/equinox-local-developer/bin/node"'), true);
+  assert.equal(script.includes('elif [ -x "$DEFAULT_DEV_NODE" ]; then'), true);
+  assert.match(script, /developer Node runtime path must not contain whitespace/u);
   assert.match(script, /sync-source-tunnel-runtime\.mjs/u);
   assert.match(script, /sync-source-peekaboo-runtime\.mjs/u);
   assert.match(script, /peekabooPath/u);
@@ -56,6 +59,12 @@ test("source-checkout restart uses only private generic developer runtime config
   assert.match(script, /previous Equinox Local server process running/u);
   assert.match(script, /launchctl bootout/u);
   assert.match(script, /launchctl print/u);
+  assert.match(script, /run_bounded/u);
+  assert.match(script, /source LaunchAgent bootout timed out/u);
+  assert.match(script, /source tunnel stop failed or timed out/u);
+  assert.match(script, /source tunnel status failed or timed out/u);
+  assert.match(script, /restart failed at stage=/u);
+  assert.match(script, /another source restart is already running/u);
   assert.match(script, /bootout is asynchronous/u);
   assert.ok(
     script.indexOf('launchctl bootout "$DOMAIN/$LABEL"') <
@@ -72,6 +81,7 @@ test("source-checkout restart uses only private generic developer runtime config
   assert.match(script, /launchctl bootstrap/u);
   assert.equal(script.includes('launchctl kickstart "$DOMAIN/$LABEL"'), true);
   assert.doesNotMatch(script, /launchctl kickstart -k/u);
+  assert.doesNotMatch(script, /launchctl submit/u);
   assert.ok(
     script.indexOf('NEW_PID=') < script.indexOf('/usr/bin/open -gn'),
     "foreground GUI refresh must happen only after the restarted source runtime is healthy",
@@ -218,7 +228,10 @@ test("source restart scheduler preserves fixed bash command and minimal env", as
     },
     spawnImpl: (command, args, options) => {
       calls.push({ command, args, options });
-      return { unref: () => { unrefCount += 1; } };
+      const child = new EventEmitter();
+      child.unref = () => { unrefCount += 1; };
+      queueMicrotask(() => child.emit("spawn"));
+      return child;
     },
     moduleUrl: "file:///tmp/src/equinox-local-restart.js",
   });
@@ -232,10 +245,39 @@ test("source restart scheduler preserves fixed bash command and minimal env", as
   assert.equal(calls[0].options.detached, true);
   assert.equal(calls[0].options.stdio, "ignore");
   assert.equal(calls[0].options.env.HOME, "/Users/example");
-  assert.equal(calls[0].options.env.EQUINOX_LOCAL_DEV_NODE, "/runtime/node");
+  assert.equal(Object.hasOwn(calls[0].options.env, "EQUINOX_LOCAL_DEV_NODE"), false);
   assert.equal(calls[0].options.env.EQUINOX_LOCAL_DEV_RUNTIME_CONFIG, "/private/runtime.conf");
   assert.equal(Object.hasOwn(calls[0].options.env, "OPENAI_API_KEY"), false);
   assert.equal(unrefCount, 1);
+});
+
+test("source restart scheduler rejects an asynchronous helper spawn failure", async () => {
+  await assert.rejects(
+    scheduleSourceCheckoutRestart({
+      fsImpl: {
+        lstat: async () => ({
+          isSymbolicLink: () => false,
+          isFile: () => true,
+        }),
+      },
+      processImpl: {
+        execPath: "/runtime/node",
+        env: {
+          HOME: "/Users/example",
+          TMPDIR: "/tmp/example",
+          EQUINOX_LOCAL_DEV_RUNTIME_CONFIG: "/private/runtime.conf",
+        },
+      },
+      spawnImpl: () => {
+        const child = new EventEmitter();
+        child.unref = () => {};
+        queueMicrotask(() => child.emit("error", new Error("EAGAIN")));
+        return child;
+      },
+      moduleUrl: "file:///tmp/src/equinox-local-restart.js",
+    }),
+    /source restart helper failed to start: EAGAIN/u,
+  );
 });
 
 test("restart_runtime registration preserves managed routing and restart guard callback", async () => {
