@@ -161,7 +161,7 @@ test("managed doctor reports a healthy product install when required files, upda
       config: fixture.config,
       runtimeHealthState: "HEALTHY",
       runtimeVersion: "4.2.0",
-      browser: { ready: true, consentAccepted: true },
+      browser: { ready: true, consentAccepted: true, controlEnabled: true },
       peekaboo: { active: true },
       update: { selfUpdateSupported: true, configured: true },
       onboarding: { connectedThroughTunnel: true, transportConfigured: true, needsAttention: false },
@@ -201,7 +201,7 @@ test("managed doctor fails closed when stable updates or first-run tunnel setup 
     assert.equal(result.state, "ATTENTION");
     assert.equal(result.checks.find((item) => item.id === "updates")?.status, "attention");
     assert.equal(result.checks.find((item) => item.id === "chatgpt-connection")?.status, "attention");
-    assert.equal(result.checks.find((item) => item.id === "browser")?.status, "optional");
+    assert.equal(result.checks.find((item) => item.id === "browser")?.status, "attention");
   } finally {
     await fs.rm(fixture.homeDir, { recursive: true, force: true });
   }

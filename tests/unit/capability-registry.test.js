@@ -24,6 +24,10 @@ test("inferCapabilityDomain keeps broad stable domains and excludes already-dyna
   assert.equal(inferCapabilityDomain("equinox_browser_click"), "browser");
   assert.equal(inferCapabilityDomain("deployment_status"), "release");
   assert.equal(inferCapabilityDomain("telegram_send_message"), "integrations");
+  assert.equal(inferCapabilityDomain("http_profiles"), "integrations");
+  assert.equal(inferCapabilityDomain("http_profile_upsert"), "integrations");
+  assert.equal(inferCapabilityDomain("http_profile_delete"), "integrations");
+  assert.equal(inferCapabilityDomain("authenticated_http_request"), "integrations");
   assert.equal(inferCapabilityDomain("system_doctor"), "runtime");
   assert.equal(inferCapabilityDomain("terminal_exec"), "runtime");
   for (const retired of [
@@ -281,6 +285,7 @@ test("unified discovery plus semantic call gateways expose the compact stable su
 
   registerStableCapabilityGateways({
     registerTextTool,
+    registerRawTool: registerTextTool,
     registry,
     textResult,
     externalDomains: { desktop: desktopProvider },
@@ -301,13 +306,24 @@ test("unified discovery plus semantic call gateways expose the compact stable su
 
   const capabilities = registered.get("capabilities");
   const browserCall = registered.get("browser_call");
+  const filesCall = registered.get("files_call");
   assert.equal(capabilities.options.mcpExposed, true);
   assert.equal(browserCall.options.mcpExposed, true);
   assert.deepEqual(browserCall.options.mutationScopes, []);
+  assert.match(filesCall.config.description, /prefer image_view/u);
+  assert.match(filesCall.config.description, /Do not use file_export/u);
+  assert.equal(filesCall.config.outputSchema, undefined);
 
   const summary = JSON.parse(extractText(await capabilities.handler({})));
   assert.equal(summary.domains.some((item) => item.domain === "desktop" && item.count === 4), true);
   assert.equal(summary.domains.some((item) => item.domain === "git"), false);
+  const filesSummary = summary.domains.find((item) => item.domain === "files");
+  assert.match(filesSummary.usageHint, /image_view/u);
+  assert.match(filesSummary.usageHint, /file_export/u);
+
+  const filesCatalog = JSON.parse(extractText(await capabilities.handler({ domain: "files" })));
+  assert.match(filesCatalog.usageHint, /image_view/u);
+  assert.match(filesCatalog.usageHint, /container/u);
 
   const catalog = JSON.parse(extractText(await capabilities.handler({ domain: "browser" })));
   assert.equal(catalog.count, 1);
@@ -348,6 +364,7 @@ test("stable gateways preserve MCP image content while normalizing structured ou
   const registered = new Map();
   registerStableCapabilityGateways({
     registerTextTool: (name, config, handler, options) => registered.set(name, { config, handler, options }),
+    registerRawTool: (name, config, handler, options) => registered.set(name, { config, handler, options }),
     registry,
     textResult,
   });
@@ -385,6 +402,7 @@ test("stable files gateway exposes one native ChatGPT file parameter and injects
   const registered = new Map();
   registerStableCapabilityGateways({
     registerTextTool: (name, config, handler, options) => registered.set(name, { config, handler, options }),
+    registerRawTool: (name, config, handler, options) => registered.set(name, { config, handler, options }),
     registry,
     textResult,
   });
@@ -439,6 +457,7 @@ test("stable files gateway preserves embedded MCP resource content", async () =>
   const registered = new Map();
   registerStableCapabilityGateways({
     registerTextTool: (name, config, handler, options) => registered.set(name, { config, handler, options }),
+    registerRawTool: (name, config, handler, options) => registered.set(name, { config, handler, options }),
     registry,
     textResult,
   });
@@ -461,6 +480,7 @@ test("stable gateways normalize custom structured results to their stable text o
   const registered = new Map();
   registerStableCapabilityGateways({
     registerTextTool: (name, config, handler, options) => registered.set(name, { config, handler, options }),
+    registerRawTool: (name, config, handler, options) => registered.set(name, { config, handler, options }),
     registry,
     textResult,
   });
@@ -478,4 +498,49 @@ test("registry rejects duplicate operations", () => {
   };
   registry.register(registration);
   assert.throws(() => registry.register(registration), /zaten kayıtlı/);
+});
+
+test("stable capability gateways route top-level calls through Turn Budget preparation and result decoration", async () => {
+  const registry = createCapabilityRegistry();
+  registry.register({
+    name: "equinox_browser_status",
+    config: { inputSchema: {}, annotations: { readOnlyHint: true } },
+    invoke: async () => textResult("browser-ok"),
+  });
+
+  const events = [];
+  const turnBudgetController = {
+    async prepareInvocation(toolName, input) {
+      events.push({ phase: "prepare", toolName, input });
+      return { input, firstNotice: toolName === "capabilities", waitClamped: false };
+    },
+    decorateResult(result, context) {
+      events.push({ phase: "decorate", context });
+      return {
+        ...result,
+        content: result.content.map((item) => item.type === "text"
+          ? { ...item, text: `${item.text}\nTURN-BUDGET` }
+          : item),
+      };
+    },
+  };
+
+  const registered = new Map();
+  registerStableCapabilityGateways({
+    registerTextTool: (name, config, handler, options) => registered.set(name, { config, handler, options }),
+    registerRawTool: (name, config, handler, options) => registered.set(name, { config, handler, options }),
+    registry,
+    textResult,
+    turnBudgetController,
+  });
+
+  const capabilities = await registered.get("capabilities").handler({ domain: "browser" });
+  assert.match(extractText(capabilities), /TURN-BUDGET/u);
+  const browser = await registered.get("browser_call").handler({ operation: "status", arguments: {} });
+  assert.equal(extractText(browser), "browser-ok\nTURN-BUDGET");
+  assert.deepEqual(events.filter((item) => item.phase === "prepare").map((item) => item.toolName), [
+    "capabilities",
+    "browser_call",
+  ]);
+  assert.equal(events.filter((item) => item.phase === "decorate").length, 2);
 });

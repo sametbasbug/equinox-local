@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { TextDecoder } from "node:util";
 
@@ -10,6 +11,53 @@ import { isPathInside } from "./worktree-utils.js";
 export const MAX_FILE_EXPORT_BYTES = 128 * 1024 * 1024;
 export const MAX_FILE_IMPORT_BYTES = 512 * 1024 * 1024;
 export const FILE_IMPORT_TIMEOUT_MS = 3 * 60 * 1000;
+
+export function defaultWebImportRoot(homeDir = os.homedir()) {
+  return path.join(homeDir, "Downloads", "Equinox Local", "Web");
+}
+
+export function defaultWebImportSettingsPath(homeDir = os.homedir()) {
+  return path.join(homeDir, "Library", "Application Support", "Equinox Local", "settings", "web-imports.json");
+}
+
+function normalizeWebImportPath(value) {
+  if (typeof value !== "string" || !path.isAbsolute(value) || value.includes("\0")) throw new Error("Web file transfer folder must be an absolute path.");
+  const normalized = path.resolve(value);
+  if (normalized === path.parse(normalized).root) throw new Error("Web file transfer folder cannot be the filesystem root.");
+  return normalized;
+}
+
+async function ensureNormalDirectory(value, { fsImpl = fs, create = false } = {}) {
+  const normalized = normalizeWebImportPath(value);
+  if (create) await fsImpl.mkdir(normalized, { recursive: true, mode: 0o755 });
+  const stat = await fsImpl.lstat(normalized);
+  if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error("Web file transfer folder must be a normal local directory.");
+  return fsImpl.realpath(normalized);
+}
+
+export async function getWebImportSettings({ settingsPath = defaultWebImportSettingsPath(), homeDir = os.homedir(), fsImpl = fs } = {}) {
+  const defaultPath = defaultWebImportRoot(homeDir);
+  let parsed = null;
+  try { parsed = JSON.parse(await fsImpl.readFile(settingsPath, "utf8")); }
+  catch (error) { if (error?.code !== "ENOENT") throw error; }
+  const configuredPath = parsed?.downloadPath ? normalizeWebImportPath(parsed.downloadPath) : defaultPath;
+  return Object.freeze({ path: configuredPath, isDefault: configuredPath === defaultPath, autoCleanup: false });
+}
+
+export async function setWebImportLocation({ downloadPath = null, settingsPath = defaultWebImportSettingsPath(), homeDir = os.homedir(), fsImpl = fs } = {}) {
+  const defaultPath = defaultWebImportRoot(homeDir);
+  const resetToDefault = downloadPath == null;
+  const defaultReal = await ensureNormalDirectory(defaultPath, { fsImpl, create: true });
+  const selected = resetToDefault
+    ? defaultReal
+    : await ensureNormalDirectory(downloadPath, { fsImpl, create: false });
+  const parent = path.dirname(settingsPath);
+  await fsImpl.mkdir(parent, { recursive: true, mode: 0o700 });
+  await fsImpl.chmod(parent, 0o700).catch(() => {});
+  await fsImpl.writeFile(settingsPath, `${JSON.stringify({ version: 1, downloadPath: resetToDefault || selected === defaultReal ? null : selected }, null, 2)}\n`, { mode: 0o600 });
+  await fsImpl.chmod(settingsPath, 0o600).catch(() => {});
+  return getWebImportSettings({ settingsPath, homeDir, fsImpl });
+}
 
 const MIME_BY_EXTENSION = new Map([
   [".txt", "text/plain"], [".md", "text/markdown"], [".csv", "text/csv"], [".json", "application/json"],
@@ -206,12 +254,17 @@ async function publishImportedFile({ temporaryPath, target, collision, fsImpl = 
   throw new Error("file_import could not find a free destination filename.");
 }
 
-export async function importChatGptFile({ file, destination, collision = "rename", fullFileAccess, projectIds, resolveProjectContext, homeDir, fetchImpl = globalThis.fetch, fsImpl = fs } = {}) {
+export async function importChatGptFile({ file, destination, collision = "rename", fullFileAccess, projectIds, resolveProjectContext, homeDir = os.homedir(), settingsPath = defaultWebImportSettingsPath(homeDir), fetchImpl = globalThis.fetch, fsImpl = fs } = {}) {
   if (!file || typeof file !== "object") throw new Error("file_import requires one ChatGPT attachment on the same user turn.");
   if (typeof file.file_id !== "string" || !file.file_id || typeof file.download_url !== "string") throw new Error("file_import received an incomplete ChatGPT file reference.");
   if (!["rename", "replace", "error"].includes(collision)) throw new Error("file_import collision must be rename, replace, or error.");
   const sourceFileName = safeAttachmentName(file);
-  const resolved = await inspectDestination({ destination, sourceFileName, fullFileAccess, projectIds, resolveProjectContext, homeDir, fsImpl });
+  let effectiveDestination = destination;
+  if (effectiveDestination === undefined) {
+    const settings = await getWebImportSettings({ settingsPath, homeDir, fsImpl });
+    effectiveDestination = await ensureNormalDirectory(settings.path, { fsImpl, create: settings.isDefault });
+  }
+  const resolved = await inspectDestination({ destination: effectiveDestination, sourceFileName, fullFileAccess, projectIds, resolveProjectContext, homeDir, fsImpl });
   const downloaded = await downloadAttachmentToTemp({ file, parentReal: resolved.parentReal, fetchImpl, fsImpl });
   try {
     const published = await publishImportedFile({ temporaryPath: downloaded.temporaryPath, target: resolved.target, collision, fsImpl });
@@ -222,9 +275,9 @@ export async function importChatGptFile({ file, destination, collision = "rename
   }
 }
 
-export function registerFileTransferTools({ registerRawTool, z, fullFileAccess, fileRootIds, projectIds, resolveFileRootContext, resolveProjectContext, homeDir = process.env.HOME, fetchImpl = globalThis.fetch, fsImpl = fs } = {}) {
+export function registerFileTransferTools({ registerRawTool, z, fullFileAccess, fileRootIds, projectIds, resolveFileRootContext, resolveProjectContext, homeDir = process.env.HOME, webImportSettingsPath = defaultWebImportSettingsPath(homeDir), fetchImpl = globalThis.fetch, fsImpl = fs } = {}) {
   registerRawTool("file_export", {
-    description: "Send one normal local file from the Mac to the current ChatGPT conversation as a native downloadable file result. Arbitrary file types are supported up to 128 MiB. Full Agent Access accepts accessible absolute/~/ paths except protected credential/application-data paths; Selected mode stays inside configured roots. Symlinks and .git/sensitive credential paths are blocked.",
+    description: "Intentionally transfer one normal local file from the Mac into the current ChatGPT conversation as a native downloadable file result. Do not use this merely to inspect a local PNG/JPEG/WebP; use image_view so the model can inspect the Mac path directly without a transfer/container-copy workflow. Arbitrary file types are supported up to 128 MiB. Full Agent Access accepts accessible absolute/~/ paths except protected credential/application-data paths; Selected mode stays inside configured roots. Symlinks and .git/sensitive credential paths are blocked.",
     inputSchema: { path: z.string().min(1).max(4096).describe("Absolute local file path or ~/ path to send to ChatGPT") },
     annotations: { title: "Send local file to ChatGPT", readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   }, async ({ path: filePath }) => createFileExportResult({ filePath, fullFileAccess, fileRootIds, resolveFileRootContext, homeDir, fsImpl }), { capabilityDomain: "files", mcpExposed: false });
@@ -233,15 +286,15 @@ export function registerFileTransferTools({ registerRawTool, z, fullFileAccess, 
     download_url: z.string().url(), file_id: z.string().min(1).max(256), mime_type: z.string().min(1).max(200).optional(), file_name: z.string().min(1).max(255).optional(),
   }).strict();
   registerRawTool("file_import", {
-    description: "Save one ChatGPT attachment onto the Mac through the native file bridge. Arbitrary file types are accepted up to 512 MiB and streamed to disk. destination is optional and defaults to ~/Downloads/original-name; an existing directory means save inside it. collision defaults to rename and may be replace or error. Full Agent Access supports accessible absolute/~/ destinations except protected paths; Selected mode writes only inside configured project roots.",
+    description: "Save one ChatGPT attachment onto the Mac through the native file bridge. Arbitrary file types are accepted up to 512 MiB and streamed to disk. destination is optional and defaults to the Control Center Web file transfer folder (~/Downloads/Equinox Local/Web by default); an existing directory means save inside it. collision defaults to rename and may be replace or error. Full Agent Access supports accessible absolute/~/ destinations except protected paths; Selected mode writes only inside configured project roots.",
     inputSchema: {
       file: chatGptFileSchema,
-      destination: z.string().min(1).max(4096).optional().describe("Optional absolute or ~/ destination file/directory path; defaults to ~/Downloads with the original filename"),
+      destination: z.string().min(1).max(4096).optional().describe("Optional absolute or ~/ destination file/directory path; defaults to the configured Web file transfer folder with the original filename"),
       collision: z.enum(["rename", "replace", "error"]).default("rename").describe("rename preserves an existing file by choosing a free name; replace overwrites a normal file; error refuses collisions"),
     },
     annotations: { title: "Save ChatGPT attachment to Mac", readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
   }, async ({ file, destination, collision }) => {
-    const result = await importChatGptFile({ file, destination, collision, fullFileAccess, projectIds, resolveProjectContext, homeDir, fetchImpl, fsImpl });
+    const result = await importChatGptFile({ file, destination, collision, fullFileAccess, projectIds, resolveProjectContext, homeDir, settingsPath: webImportSettingsPath, fetchImpl, fsImpl });
     return { content: [{ type: "text", text: [
       `Saved ChatGPT attachment to ${result.destination}`,
       `Size: ${result.bytes} bytes`,

@@ -3,7 +3,6 @@ set -euo pipefail
 umask 077
 
 UPDATE_BASE="https://local.sametbasbug.dev/downloads/updates"
-CONTROL_CENTER_URL="http://127.0.0.1:24891/"
 MAX_MANIFEST_BYTES=16384
 MAX_ARTIFACT_BYTES=1073741824
 
@@ -42,9 +41,7 @@ case "$HOME_DIR" in
 esac
 [ -d "$HOME_DIR" ] && [ ! -L "$HOME_DIR" ] || fail "the current HOME directory is unsafe"
 [ "$(/usr/bin/stat -f '%u' "$HOME_DIR")" = "$CURRENT_UID" ] || fail "the current HOME directory is not owned by the current user"
-CONTROL_CENTER_APP="$HOME_DIR/Applications/Equinox Local.app"
-
-for command in /usr/bin/curl /usr/bin/shasum /usr/bin/stat /usr/bin/tar /usr/bin/mktemp /usr/bin/uname /usr/bin/id /usr/bin/env /usr/bin/nohup /usr/bin/open /usr/bin/grep /usr/bin/awk; do
+for command in /usr/bin/curl /usr/bin/shasum /usr/bin/stat /usr/bin/tar /usr/bin/mktemp /usr/bin/uname /usr/bin/id /usr/bin/env /usr/bin/grep /usr/bin/awk; do
   require_command "$command"
 done
 /usr/bin/curl --help all 2>/dev/null | /usr/bin/grep -q -- '--max-filesize' || fail "this macOS curl is too old for bounded downloads"
@@ -191,32 +188,5 @@ RESULT="$(/usr/bin/env -i \
   "$NODE" "$FIRST_INSTALL" --staged-release "$SOURCE_RELEASE")" || fail "managed first-install activation failed"
 
 printf '%s\n' "$RESULT"
-info "installation is ready; opening Equinox Local"
-NATIVE_APP_OPENED=0
-CONTROL_CENTER_EXECUTABLE="$CONTROL_CENTER_APP/Contents/MacOS/applet"
-if [ -d "$CONTROL_CENTER_APP" ] && [ ! -L "$CONTROL_CENTER_APP" ] && [ "$(/usr/bin/stat -f '%u' "$CONTROL_CENTER_APP")" = "$CURRENT_UID" ] \
-  && [ -f "$CONTROL_CENTER_EXECUTABLE" ] && [ ! -L "$CONTROL_CENTER_EXECUTABLE" ] && [ -x "$CONTROL_CENTER_EXECUTABLE" ] \
-  && [ "$(/usr/bin/stat -f '%u' "$CONTROL_CENTER_EXECUTABLE")" = "$CURRENT_UID" ]; then
-  /usr/bin/nohup /usr/bin/env -i \
-    HOME="$HOME_DIR" \
-    USER="$CURRENT_USER" \
-    LOGNAME="$CURRENT_USER" \
-    TMPDIR="/tmp" \
-    PATH="/usr/bin:/bin:/usr/sbin:/sbin" \
-    "$CONTROL_CENTER_EXECUTABLE" </dev/null >/dev/null 2>&1 &
-  NATIVE_APP_PID=$!
-  /bin/sleep 1
-  if /bin/kill -0 "$NATIVE_APP_PID" >/dev/null 2>&1; then
-    NATIVE_APP_OPENED=1
-  fi
-
-  if [ "$NATIVE_APP_OPENED" -ne 1 ] && /usr/bin/open -n "$CONTROL_CENTER_APP" >/dev/null 2>&1; then
-    NATIVE_APP_OPENED=1
-  fi
-fi
-
-if [ "$NATIVE_APP_OPENED" -ne 1 ]; then
-  info "native app launch was unavailable; opening the localhost fallback"
-  /usr/bin/open "$CONTROL_CENTER_URL" >/dev/null 2>&1 || true
-fi
+info "installation is ready; Equinox Local is starting through its LaunchAgent"
 info "done"

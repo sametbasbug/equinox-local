@@ -75,14 +75,14 @@ export async function scheduleSourceCheckoutRestart({
     LOGNAME: processImpl.env.LOGNAME,
     TMPDIR: processImpl.env.TMPDIR,
     PATH: "/usr/bin:/bin:/usr/sbin:/sbin",
-    EQUINOX_LOCAL_DEV_NODE: processImpl.execPath,
     EQUINOX_LOCAL_DEV_RUNTIME_CONFIG:
       processImpl.env.EQUINOX_LOCAL_DEV_RUNTIME_CONFIG,
   };
-  const child = spawnImpl(
-    "/bin/bash",
-    [scriptPath],
-    {
+  await launchDetachedHelper({
+    spawnImpl,
+    command: "/bin/bash",
+    args: [scriptPath],
+    options: {
       detached: true,
       stdio: "ignore",
       env: Object.fromEntries(
@@ -93,9 +93,8 @@ export async function scheduleSourceCheckoutRestart({
         ),
       ),
     },
-  );
-
-  child.unref();
+    label: "Equinox Local source restart helper",
+  });
   return Object.freeze({
     scheduled: true,
     scriptPath,

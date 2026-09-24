@@ -45,6 +45,7 @@ export function managedSupervisorPaths(homeDir = os.homedir()) {
     currentLink: path.join(installRoot, "current"),
     transportConfigPath: path.join(installRoot, "transport.json"),
     runtimeKeyPath: path.join(installRoot, "secrets", "openai-runtime-key"),
+    onboardingStatePath: path.join(installRoot, "onboarding-state.json"),
     profileDir: path.join(installRoot, "tunnel-profile"),
   });
 }

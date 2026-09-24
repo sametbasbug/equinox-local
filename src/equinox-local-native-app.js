@@ -9,7 +9,7 @@ const FILE_PATH = "/usr/bin/file";
 const NATIVE_SOURCE_DIR = "app";
 const NATIVE_OUTPUT_DIR = path.join("runtime", "app");
 
-export const EQUINOX_LOCAL_NATIVE_APP_SHELL_VERSION = 21;
+export const EQUINOX_LOCAL_NATIVE_APP_SHELL_VERSION = 23;
 export const EQUINOX_LOCAL_NATIVE_APP_EXECUTABLE = "applet";
 export const EQUINOX_LOCAL_NATIVE_APP_ICON = "EquinoxLocal.png";
 export const EQUINOX_LOCAL_NATIVE_APP_MENU_ICON = "EquinoxLocalMenuBar.png";

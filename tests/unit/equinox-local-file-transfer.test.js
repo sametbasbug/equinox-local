@@ -10,10 +10,13 @@ import * as z from "zod/v4";
 import {
   __test as transferTest,
   createFileExportResult,
+  defaultWebImportRoot,
+  getWebImportSettings,
   importChatGptFile,
   MAX_FILE_EXPORT_BYTES,
   registerFileTransferTools,
   resolveFileExportPath,
+  setWebImportLocation,
 } from "../../src/equinox-local-file-transfer.js";
 
 function registrationHarness(options = {}) {
@@ -46,6 +49,8 @@ test("file transfer tools expose permanent export/import operations without MIME
   const tools = registrationHarness();
   assert.deepEqual([...tools.keys()], ["file_export", "file_import"]);
   assert.equal(tools.get("file_export").config.annotations.readOnlyHint, true);
+  assert.match(tools.get("file_export").config.description, /Do not use this merely to inspect/u);
+  assert.match(tools.get("file_export").config.description, /image_view/u);
   assert.equal(tools.get("file_import").config.annotations.readOnlyHint, false);
   assert.equal(tools.get("file_import").config.annotations.destructiveHint, true);
   assert.equal(tools.get("file_import").toolOptions.mcpExposed, false);
@@ -169,7 +174,7 @@ test("file_export blocks symlinks, sensitive names, and oversized files", async 
   await assert.rejects(resolveFileExportPath({ ...options, filePath: huge }), /128 MiB/u);
 });
 
-test("file_import streams arbitrary binary to Downloads and preserves filename/hash", async (t) => {
+test("file_import defaults to the visible Equinox Local Web folder and preserves filename/hash", async (t) => {
   const homeDir = await fs.mkdtemp(path.join(os.tmpdir(), "equinox-file-import-"));
   t.after(() => fs.rm(homeDir, { recursive: true, force: true }));
   await fs.mkdir(path.join(homeDir, "Downloads"));
@@ -182,7 +187,7 @@ test("file_import streams arbitrary binary to Downloads and preserves filename/h
     homeDir,
     fetchImpl: async () => new Response(body, { status: 200, headers: { "content-type": "application/octet-stream" } }),
   });
-  assert.equal(result.destination, path.join(await fs.realpath(path.join(homeDir, "Downloads")), "photo.raw"));
+  assert.equal(result.destination, path.join(await fs.realpath(defaultWebImportRoot(homeDir)), "photo.raw"));
   assert.equal(result.bytes, body.length);
   assert.equal(result.sha256, createHash("sha256").update(body).digest("hex"));
   assert.deepEqual(await fs.readFile(result.destination), body);
@@ -191,8 +196,8 @@ test("file_import streams arbitrary binary to Downloads and preserves filename/h
 test("file_import default collision renames; replace and error are explicit", async (t) => {
   const homeDir = await fs.mkdtemp(path.join(os.tmpdir(), "equinox-file-import-collision-"));
   t.after(() => fs.rm(homeDir, { recursive: true, force: true }));
-  const downloads = path.join(homeDir, "Downloads");
-  await fs.mkdir(downloads);
+  const downloads = defaultWebImportRoot(homeDir);
+  await fs.mkdir(downloads, { recursive: true });
   const original = path.join(downloads, "same.txt");
   await fs.writeFile(original, "old");
   const common = {
@@ -223,6 +228,37 @@ test("file_import default collision renames; replace and error are explicit", as
   assert.equal(createdWithReplace.replaced, false);
   assert.equal(await fs.readFile(fresh, "utf8"), "fresh");
 
+});
+
+test("Web import settings support custom folder and reset while explicit destination still overrides", async (t) => {
+  const homeDir = await fs.mkdtemp(path.join(os.tmpdir(), "equinox-web-import-settings-"));
+  t.after(() => fs.rm(homeDir, { recursive: true, force: true }));
+  const settingsPath = path.join(homeDir, "settings", "web-imports.json");
+  const custom = path.join(homeDir, "Custom Web");
+  const explicit = path.join(homeDir, "Explicit");
+  await fs.mkdir(custom);
+  await fs.mkdir(explicit);
+  const initial = await getWebImportSettings({ settingsPath, homeDir });
+  assert.equal(initial.path, defaultWebImportRoot(homeDir));
+  assert.equal(initial.isDefault, true);
+  assert.equal(initial.autoCleanup, false);
+  const selected = await setWebImportLocation({ downloadPath: custom, settingsPath, homeDir });
+  assert.equal(selected.path, await fs.realpath(custom));
+  assert.equal(selected.isDefault, false);
+  const imported = await importChatGptFile({
+    file: fileRef({ file_name: "custom.txt" }), fullFileAccess: true, projectIds: [], resolveProjectContext: async () => { throw new Error("unused"); },
+    homeDir, settingsPath, fetchImpl: async () => new Response("custom"),
+  });
+  assert.equal(imported.destination, path.join(await fs.realpath(custom), "custom.txt"));
+  const override = await importChatGptFile({
+    file: fileRef({ file_name: "explicit.txt" }), destination: explicit, fullFileAccess: true, projectIds: [], resolveProjectContext: async () => { throw new Error("unused"); },
+    homeDir, settingsPath, fetchImpl: async () => new Response("explicit"),
+  });
+  assert.equal(override.destination, path.join(await fs.realpath(explicit), "explicit.txt"));
+  const reset = await setWebImportLocation({ downloadPath: null, settingsPath, homeDir });
+  assert.equal(reset.path, defaultWebImportRoot(homeDir));
+  assert.equal(reset.isDefault, true);
+  assert.equal((await fs.lstat(settingsPath)).mode & 0o077, 0);
 });
 
 test("file_import accepts a directory destination and Selected mode writes only in project roots", async (t) => {

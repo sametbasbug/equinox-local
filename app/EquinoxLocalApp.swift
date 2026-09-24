@@ -160,8 +160,19 @@ private final class ControlCenterClient {
     private let origin = "http://127.0.0.1:24891"
     private let maxResponseBytes = 2 * 1024 * 1024
 
-    func get(_ path: String, completion: @escaping (Result<[String: Any], Error>) -> Void) {
-        request(path: path, method: "GET", body: nil, csrfToken: nil, completion: completion)
+    func get(
+        _ path: String,
+        backgroundRefresh: Bool = false,
+        completion: @escaping (Result<[String: Any], Error>) -> Void
+    ) {
+        request(
+            path: path,
+            method: "GET",
+            body: nil,
+            csrfToken: nil,
+            backgroundRefresh: backgroundRefresh,
+            completion: completion
+        )
     }
 
     func mutate(_ path: String, completion: @escaping (Result<[String: Any], Error>) -> Void) {
@@ -178,6 +189,7 @@ private final class ControlCenterClient {
                     method: "POST",
                     body: Data("{}".utf8),
                     csrfToken: csrfToken,
+                    backgroundRefresh: false,
                     completion: completion
                 )
             case let .failure(error):
@@ -191,6 +203,7 @@ private final class ControlCenterClient {
         method: String,
         body: Data?,
         csrfToken: String?,
+        backgroundRefresh: Bool,
         completion: @escaping (Result<[String: Any], Error>) -> Void
     ) {
         guard path.hasPrefix("/"), let url = URL(string: path, relativeTo: baseURL)?.absoluteURL else {
@@ -203,6 +216,9 @@ private final class ControlCenterClient {
         request.cachePolicy = .reloadIgnoringLocalAndRemoteCacheData
         request.timeoutInterval = 2.5
         request.setValue("application/json", forHTTPHeaderField: "Accept")
+        if backgroundRefresh && method == "GET" {
+            request.setValue("1", forHTTPHeaderField: "X-Equinox-Background-Refresh")
+        }
         if method != "GET" {
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
             request.setValue(origin, forHTTPHeaderField: "Origin")
@@ -968,7 +984,7 @@ private final class EquinoxCompanionSpeechView: NSView {
     }
 }
 
-final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKScriptMessageHandler, NSWindowDelegate, NSMenuDelegate, UNUserNotificationCenterDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler, NSWindowDelegate, NSMenuDelegate, UNUserNotificationCenterDelegate {
     private var window: NSWindow!
     private var webView: WKWebView!
     private var retryWorkItem: DispatchWorkItem?
@@ -1029,7 +1045,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         configureMainMenu()
         configureStatusItem()
         let storedControlCenterVisibility = UserDefaults.standard.object(forKey: controlCenterVisibleKey) as? Bool
-        let showControlCenter = restartShellMode ? (storedControlCenterVisibility ?? false) : true
+        let showControlCenter = restartShellMode ? (storedControlCenterVisibility ?? true) : true
         configureWindow(showOnLaunch: showControlCenter)
         configureFloatingPet()
         showStartingPage()
@@ -1182,22 +1198,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         updateTimer?.invalidate()
 
         let statusTimer = Timer(timeInterval: 8.0, repeats: true) { [weak self] _ in
-            self?.refreshMenuStatus()
+            self?.refreshMenuStatus(backgroundRefresh: true)
         }
         self.statusTimer = statusTimer
         RunLoop.main.add(statusTimer, forMode: .common)
 
         let updateTimer = Timer(timeInterval: 300.0, repeats: true) { [weak self] _ in
-            self?.refreshUpdateStatus()
+            self?.refreshUpdateStatus(backgroundRefresh: true)
         }
         self.updateTimer = updateTimer
         RunLoop.main.add(updateTimer, forMode: .common)
     }
 
-    private func refreshMenuStatus() {
+    private func refreshMenuStatus(backgroundRefresh: Bool = false) {
         guard !statusRefreshInFlight else { return }
         statusRefreshInFlight = true
-        controlClient.get("/api/v1/status") { [weak self] result in
+        controlClient.get("/api/v1/status", backgroundRefresh: backgroundRefresh) { [weak self] result in
             guard let self else { return }
             self.statusRefreshInFlight = false
             switch result {
@@ -1392,8 +1408,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         completionHandler()
     }
 
-    private func refreshUpdateStatus() {
-        controlClient.get("/api/v1/update") { [weak self] result in
+    private func refreshUpdateStatus(backgroundRefresh: Bool = false) {
+        controlClient.get("/api/v1/update", backgroundRefresh: backgroundRefresh) { [weak self] result in
             guard let self else { return }
             guard case let .success(payload) = result, let update = payload["update"] as? [String: Any] else {
                 self.availableUpdateVersion = nil
@@ -2056,6 +2072,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 
         webView = WKWebView(frame: .zero, configuration: configuration)
         webView.navigationDelegate = self
+        webView.uiDelegate = self
         webView.setValue(false, forKey: "drawsBackground")
 
         let contentRect = NSRect(x: 0, y: 0, width: 1180, height: 760)
@@ -2129,6 +2146,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
               let raw = message.body as? String,
               let language = NativeLanguage(rawValue: raw) else { return }
         applyNativeLanguage(language)
+    }
+
+    func webView(
+        _ webView: WKWebView,
+        runJavaScriptConfirmPanelWithMessage message: String,
+        initiatedByFrame frame: WKFrameInfo,
+        completionHandler: @escaping (Bool) -> Void
+    ) {
+        guard frame.isMainFrame,
+              let url = frame.request.url,
+              isAllowedControlCenterURL(url),
+              let window, window.isVisible else {
+            completionHandler(false)
+            return
+        }
+
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = localized("Confirm action", "İşlemi onayla")
+        alert.informativeText = message
+        alert.addButton(withTitle: localized("Confirm", "Onayla"))
+        alert.addButton(withTitle: localized("Cancel", "Vazgeç"))
+        alert.beginSheetModal(for: window) { response in
+            completionHandler(response == .alertFirstButtonReturn)
+        }
     }
 
     func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {

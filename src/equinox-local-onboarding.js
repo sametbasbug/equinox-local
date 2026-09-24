@@ -13,7 +13,9 @@ import {
 } from "./equinox-local-supervisor.js";
 
 const MAX_RUNTIME_KEY_BYTES = 4 * 1024;
+const MAX_ONBOARDING_STATE_BYTES = 8 * 1024;
 const MIN_RUNTIME_KEY_CHARS = 16;
+const ONBOARDING_STATE_VERSION = 1;
 
 function assertManagedInstallation(installation) {
   if (
@@ -54,6 +56,67 @@ async function readOptionalNormalFile(filePath, { maxBytes = MAX_RUNTIME_KEY_BYT
     }
     throw error;
   }
+}
+
+function defaultOnboardingState() {
+  return Object.freeze({
+    version: ONBOARDING_STATE_VERSION,
+    firstAgentCommandAt: null,
+    completedAt: null,
+  });
+}
+
+function normalizeTimestamp(value, field) {
+  if (value === null || value === undefined) return null;
+  if (typeof value !== "string" || !Number.isFinite(Date.parse(value))) {
+    throw new Error(`Existing onboarding ${field} is invalid.`);
+  }
+  return new Date(value).toISOString();
+}
+
+function normalizeOnboardingState(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value) || value.version !== ONBOARDING_STATE_VERSION) {
+    throw new Error("Existing onboarding state is invalid.");
+  }
+  const allowed = new Set(["version", "firstAgentCommandAt", "completedAt"]);
+  if (Object.keys(value).some((key) => !allowed.has(key))) throw new Error("Existing onboarding state is invalid.");
+  return Object.freeze({
+    version: ONBOARDING_STATE_VERSION,
+    firstAgentCommandAt: normalizeTimestamp(value.firstAgentCommandAt, "firstAgentCommandAt"),
+    completedAt: normalizeTimestamp(value.completedAt, "completedAt"),
+  });
+}
+
+async function readOnboardingState(paths) {
+  const raw = await readOptionalNormalFile(paths.onboardingStatePath, { maxBytes: MAX_ONBOARDING_STATE_BYTES });
+  if (!raw) return Object.freeze({ exists: false, state: defaultOnboardingState() });
+  try {
+    return Object.freeze({ exists: true, state: normalizeOnboardingState(JSON.parse(raw.toString("utf8"))) });
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith("Existing onboarding")) throw error;
+    throw new Error("Existing onboarding state is invalid.");
+  }
+}
+
+async function writeOnboardingState(paths, state) {
+  const normalized = normalizeOnboardingState(state);
+  await atomicWrite(paths.onboardingStatePath, `${JSON.stringify(normalized, null, 2)}\n`, 0o600);
+  return normalized;
+}
+
+export async function initializeManagedOnboardingState({
+  installation,
+  homeDir = process.env.HOME,
+} = {}) {
+  assertManagedInstallation(installation);
+  const paths = managedSupervisorPaths(homeDir);
+  if (path.resolve(paths.installRoot) !== path.resolve(installation.installRoot)) {
+    throw new Error("Managed onboarding root does not match the active installation.");
+  }
+  const existing = await readOnboardingState(paths);
+  if (existing.exists) return Object.freeze({ created: false, state: existing.state });
+  const state = await writeOnboardingState(paths, defaultOnboardingState());
+  return Object.freeze({ created: true, state });
 }
 
 async function atomicWrite(filePath, contents, mode = 0o600) {
@@ -102,6 +165,9 @@ export async function getManagedOnboardingStatus({
   installation,
   homeDir = process.env.HOME,
   supervisorMode = process.env.EQUINOX_LOCAL_SUPERVISOR_MODE || null,
+  browserUser = null,
+  reconcileCompletion = false,
+  now = () => Date.now(),
 } = {}) {
   if (!installation?.managed || !installation?.selfUpdateSupported) {
     return Object.freeze({
@@ -111,6 +177,9 @@ export async function getManagedOnboardingStatus({
       supervisorMode: "source",
       connectedThroughTunnel: false,
       needsAttention: false,
+      setupComplete: true,
+      firstAgentCommandAt: null,
+      completedAt: null,
     });
   }
   const paths = managedSupervisorPaths(homeDir);
@@ -126,16 +195,72 @@ export async function getManagedOnboardingStatus({
     transportError = error instanceof Error ? error.message : String(error);
   }
   const normalizedMode = supervisorMode === "tunnel" ? "tunnel" : "local-only";
+  const connectedThroughTunnel = Boolean(transport && normalizedMode === "tunnel");
+  const browserConnected = browserUser?.ready === true;
+  const browserConsentAccepted = browserUser?.consentAccepted === true;
+  const browserControlEnabled = browserUser?.controlEnabled === true;
+  const stored = await readOnboardingState(paths);
+  const legacyCompleted = !stored.exists;
+  let state = stored.state;
+  const canComplete = Boolean(
+    connectedThroughTunnel &&
+    browserConnected &&
+    browserConsentAccepted &&
+    browserControlEnabled &&
+    state.firstAgentCommandAt
+  );
+  if (reconcileCompletion && !state.completedAt && canComplete) {
+    state = await writeOnboardingState(paths, {
+      ...state,
+      completedAt: new Date(now()).toISOString(),
+    });
+  }
+
   return Object.freeze({
     available: true,
     managed: true,
     transportConfigured: Boolean(transport),
     tunnelId: transport?.tunnelId ?? null,
     supervisorMode: normalizedMode,
-    connectedThroughTunnel: Boolean(transport && normalizedMode === "tunnel"),
+    connectedThroughTunnel,
     needsAttention: Boolean(transportError || (transport && normalizedMode !== "tunnel")),
     issue: transportError ? "Tunnel configuration needs attention." : null,
+    setupComplete: legacyCompleted || Boolean(state.completedAt),
+    legacyCompleted,
+    firstAgentCommandAt: state.firstAgentCommandAt,
+    completedAt: state.completedAt,
+    browserRequired: true,
+    browserConnected,
+    browserConsentAccepted,
+    browserControlEnabled,
+    agentCommandReceived: Boolean(state.firstAgentCommandAt),
   });
+}
+
+export async function recordManagedAgentCommand({
+  installation,
+  homeDir = process.env.HOME,
+  supervisorMode = process.env.EQUINOX_LOCAL_SUPERVISOR_MODE || null,
+  now = () => Date.now(),
+} = {}) {
+  if (!installation?.managed || !installation?.selfUpdateSupported || supervisorMode !== "tunnel") {
+    return Object.freeze({ recorded: false, reason: "not-managed-tunnel" });
+  }
+  const paths = managedSupervisorPaths(homeDir);
+  if (path.resolve(paths.installRoot) !== path.resolve(installation.installRoot)) {
+    throw new Error("Managed onboarding root does not match the active installation.");
+  }
+  const transport = await readSupervisorTransport(paths);
+  if (!transport) return Object.freeze({ recorded: false, reason: "transport-not-configured" });
+  const stored = await readOnboardingState(paths);
+  if (!stored.exists) return Object.freeze({ recorded: false, reason: "legacy-complete" });
+  const state = stored.state;
+  if (state.firstAgentCommandAt) {
+    return Object.freeze({ recorded: false, reason: "already-recorded", firstAgentCommandAt: state.firstAgentCommandAt });
+  }
+  const firstAgentCommandAt = new Date(now()).toISOString();
+  await writeOnboardingState(paths, { ...state, firstAgentCommandAt });
+  return Object.freeze({ recorded: true, firstAgentCommandAt });
 }
 
 export async function configureManagedTunnel({

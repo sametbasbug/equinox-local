@@ -9,6 +9,8 @@ import {
   __test,
 } from "../../src/terminal-manager.js";
 
+const slowIntegrationTest = process.env.EQUINOX_TEST_PROFILE === "fast" ? test.skip : test;
+
 class FakeTerminal {
   constructor(pid = 4242) {
     this.pid = pid;
@@ -70,6 +72,7 @@ function makeManager(options = {}) {
     resolveProcessTtyImpl: async () => "ttys999",
     listTtyProcessPidsImpl: async () => terminals.map((terminal) => terminal.pid),
     pidExistsImpl: (pid) => terminals.some((terminal) => terminal.pid === pid),
+    nativeProcessSessionHelperPath: null,
     ...options,
   });
 
@@ -196,6 +199,7 @@ test("terminal session limit reserves capacity across async PTY loading", async 
     resolveProcessTtyImpl: async () => "ttys998",
     listTtyProcessPidsImpl: async () => [5001],
     pidExistsImpl: (pid) => pid === 5001,
+    nativeProcessSessionHelperPath: null,
     randomId: () => "reserve1",
   });
 
@@ -231,6 +235,7 @@ test("terminal start reservation is released after spawn failure", async () => {
     resolveProcessTtyImpl: async () => "ttys997",
     listTtyProcessPidsImpl: async () => [5002],
     pidExistsImpl: (pid) => pid === 5002,
+    nativeProcessSessionHelperPath: null,
     randomId: () => "reserve2",
   });
 
@@ -342,7 +347,7 @@ async function createResistantPtyChildFixture() {
   return { root, childScript, pidFile };
 }
 
-test("real PTY stop drains a resistant background job from the owned controlling TTY", async (t) => {
+slowIntegrationTest("real PTY stop drains a resistant background job from the owned controlling TTY", async (t) => {
   if (process.platform !== "darwin") {
     t.skip("macOS PTY process-session semantics are required");
     return;
@@ -385,7 +390,7 @@ test("real PTY stop drains a resistant background job from the owned controlling
   }
 });
 
-test("natural PTY shell exit also drains resistant background jobs before finalizing", async (t) => {
+slowIntegrationTest("natural PTY shell exit also drains resistant background jobs before finalizing", async (t) => {
   if (process.platform !== "darwin") {
     t.skip("macOS PTY process-session semantics are required");
     return;
@@ -407,6 +412,7 @@ test("natural PTY shell exit also drains resistant background jobs before finali
   const manager = createTerminalManager({
     ownershipMonitorMs: 40,
     naturalExitOwnershipFreshMs: 120,
+    nativeProcessSessionHelperPath: null,
     resolveProcessSessionIdImpl: async (pid) => {
       shellPid = pid;
       return 77_001;

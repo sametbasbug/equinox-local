@@ -7,6 +7,8 @@ import test from "node:test";
 import {
   configureManagedTunnel,
   getManagedOnboardingStatus,
+  initializeManagedOnboardingState,
+  recordManagedAgentCommand,
   validateTunnelOnboardingInput,
 } from "../../src/equinox-local-onboarding.js";
 import { managedSupervisorPaths } from "../../src/equinox-local-supervisor.js";
@@ -94,4 +96,126 @@ test("source checkout onboarding reports unavailable without touching disk", asy
   });
   assert.equal(status.available, false);
   assert.equal(status.supervisorMode, "source");
+});
+
+
+test("first agent command milestone records only for a configured managed tunnel", async (t) => {
+  const fixture = await makeManagedFixture();
+  t.after(() => fs.rm(fixture.root, { recursive: true, force: true }));
+  await initializeManagedOnboardingState({ installation: fixture.installation, homeDir: fixture.homeDir });
+
+  const localOnly = await recordManagedAgentCommand({
+    installation: fixture.installation,
+    homeDir: fixture.homeDir,
+    supervisorMode: "local-only",
+    now: () => Date.parse("2026-09-20T12:00:00.000Z"),
+  });
+  assert.equal(localOnly.recorded, false);
+
+  await configureManagedTunnel({
+    installation: fixture.installation,
+    homeDir: fixture.homeDir,
+    tunnelId: TUNNEL_ID,
+    runtimeKey: RUNTIME_KEY,
+  });
+  const recorded = await recordManagedAgentCommand({
+    installation: fixture.installation,
+    homeDir: fixture.homeDir,
+    supervisorMode: "tunnel",
+    now: () => Date.parse("2026-09-20T12:01:02.000Z"),
+  });
+  assert.equal(recorded.recorded, true);
+  assert.equal(recorded.firstAgentCommandAt, "2026-09-20T12:01:02.000Z");
+  assert.equal((await fs.lstat(fixture.paths.onboardingStatePath)).mode & 0o077, 0);
+
+  const repeated = await recordManagedAgentCommand({
+    installation: fixture.installation,
+    homeDir: fixture.homeDir,
+    supervisorMode: "tunnel",
+    now: () => Date.parse("2026-09-20T12:05:00.000Z"),
+  });
+  assert.equal(repeated.recorded, false);
+  assert.equal(repeated.reason, "already-recorded");
+  assert.equal(repeated.firstAgentCommandAt, "2026-09-20T12:01:02.000Z");
+});
+
+test("setup completes durably only after tunnel, required Browser state and first agent command", async (t) => {
+  const fixture = await makeManagedFixture();
+  t.after(() => fs.rm(fixture.root, { recursive: true, force: true }));
+  await initializeManagedOnboardingState({ installation: fixture.installation, homeDir: fixture.homeDir });
+  await configureManagedTunnel({
+    installation: fixture.installation,
+    homeDir: fixture.homeDir,
+    tunnelId: TUNNEL_ID,
+    runtimeKey: RUNTIME_KEY,
+  });
+
+  let status = await getManagedOnboardingStatus({
+    installation: fixture.installation,
+    homeDir: fixture.homeDir,
+    supervisorMode: "tunnel",
+    browserUser: { ready: true, consentAccepted: true, controlEnabled: true },
+    reconcileCompletion: true,
+    now: () => Date.parse("2026-09-20T12:00:00.000Z"),
+  });
+  assert.equal(status.setupComplete, false);
+  assert.equal(status.agentCommandReceived, false);
+
+  await recordManagedAgentCommand({
+    installation: fixture.installation,
+    homeDir: fixture.homeDir,
+    supervisorMode: "tunnel",
+    now: () => Date.parse("2026-09-20T12:01:00.000Z"),
+  });
+
+  status = await getManagedOnboardingStatus({
+    installation: fixture.installation,
+    homeDir: fixture.homeDir,
+    supervisorMode: "tunnel",
+    browserUser: { ready: true, consentAccepted: true, controlEnabled: false },
+    reconcileCompletion: true,
+    now: () => Date.parse("2026-09-20T12:02:00.000Z"),
+  });
+  assert.equal(status.setupComplete, false);
+  assert.equal(status.browserControlEnabled, false);
+  assert.equal(status.firstAgentCommandAt, "2026-09-20T12:01:00.000Z");
+
+  status = await getManagedOnboardingStatus({
+    installation: fixture.installation,
+    homeDir: fixture.homeDir,
+    supervisorMode: "tunnel",
+    browserUser: { ready: true, consentAccepted: true, controlEnabled: true },
+    reconcileCompletion: true,
+    now: () => Date.parse("2026-09-20T12:03:00.000Z"),
+  });
+  assert.equal(status.setupComplete, true);
+  assert.equal(status.completedAt, "2026-09-20T12:03:00.000Z");
+
+  const laterFailure = await getManagedOnboardingStatus({
+    installation: fixture.installation,
+    homeDir: fixture.homeDir,
+    supervisorMode: "local-only",
+    browserUser: { ready: false, consentAccepted: false, controlEnabled: false },
+    reconcileCompletion: true,
+    now: () => Date.parse("2026-09-20T12:10:00.000Z"),
+  });
+  assert.equal(laterFailure.setupComplete, true);
+  assert.equal(laterFailure.completedAt, "2026-09-20T12:03:00.000Z");
+  assert.equal(laterFailure.connectedThroughTunnel, false);
+});
+
+
+test("managed installs upgraded from before setup-state persistence are treated as legacy complete", async (t) => {
+  const fixture = await makeManagedFixture();
+  t.after(() => fs.rm(fixture.root, { recursive: true, force: true }));
+  const status = await getManagedOnboardingStatus({
+    installation: fixture.installation,
+    homeDir: fixture.homeDir,
+    supervisorMode: "local-only",
+    browserUser: { ready: false, consentAccepted: false, controlEnabled: false },
+    reconcileCompletion: true,
+  });
+  assert.equal(status.setupComplete, true);
+  assert.equal(status.legacyCompleted, true);
+  assert.equal(await fs.stat(fixture.paths.onboardingStatePath).then(() => true).catch((error) => error?.code === "ENOENT" ? false : Promise.reject(error)), false);
 });

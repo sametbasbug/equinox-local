@@ -124,6 +124,83 @@ export function createAutoContinueController({
     };
   };
 
+  const reacquireBoundTab = async ({ context, conversationId }) => {
+    const tabs = await callContext(context, "tabs.list", {}, 5_000);
+    const matches = (Array.isArray(tabs) ? tabs : []).filter((tab) => {
+      try {
+        const url = new URL(String(tab?.url || ""));
+        const match = url.pathname.match(/\/c\/([^/]+)\/?$/u);
+        return match?.[1] === conversationId;
+      } catch {
+        return false;
+      }
+    });
+    if (matches.length !== 1) {
+      if (matches.length > 1) throw new Error("More than one ChatGPT tab matches the task's exact conversation; Auto Continue will not guess.");
+      throw new Error("The task's bound ChatGPT conversation is not open in the expected Browser context.");
+    }
+    const tabId = Number(matches[0]?.id ?? matches[0]?.tabId);
+    if (!Number.isInteger(tabId) || tabId < 1) throw new Error("The reacquired ChatGPT tab id is invalid.");
+    return { tabId, canonicalUrl: String(matches[0]?.url || "") };
+  };
+
+  const resolveBoundTarget = async (taskId) => {
+    const task = await store.readInternal(taskId);
+    const binding = task.chatBinding || task.continuation?.target || null;
+    if (!binding) return resolveTarget();
+    const snapshot = browserBridge.snapshot();
+    const contextState = snapshot?.contexts?.[binding.browserContext];
+    if (!contextState?.ready) throw new Error("The task's bound ChatGPT browser context is not connected.");
+    const instanceId = contextState.extension?.instanceId || contextState.host?.instanceId || null;
+    if (!instanceId || instanceId !== binding.browserInstanceId) throw new Error("The task's bound ChatGPT browser instance changed. Open the task conversation and checkpoint it again.");
+    const autoContinueVersion = extensionAutoContinueVersion(contextState);
+    if (autoContinueVersion < REQUIRED_AUTO_CONTINUE_VERSION) throw new Error("The task's bound browser needs the current Equinox Browser Auto Continue capability.");
+    let tabId = binding.tabId;
+    let canonicalUrl = binding.canonicalUrl;
+    let inspected = null;
+    try {
+      inspected = await callContext(binding.browserContext, "continuation.inspect", { tabId });
+    } catch {
+      inspected = null;
+    }
+    if (inspected?.conversationId !== binding.conversationId) {
+      const reacquired = await reacquireBoundTab({ context: binding.browserContext, conversationId: binding.conversationId });
+      tabId = reacquired.tabId;
+      canonicalUrl = reacquired.canonicalUrl || canonicalUrl;
+      inspected = await callContext(binding.browserContext, "continuation.inspect", { tabId });
+      if (inspected?.conversationId !== binding.conversationId) throw new Error("The reacquired ChatGPT tab no longer contains the expected conversation.");
+      await store.bindChat({ taskId, binding: {
+        browserContext: binding.browserContext,
+        browserInstanceId: instanceId,
+        tabId,
+        conversationId: binding.conversationId,
+        canonicalUrl,
+      } });
+    }
+    if (!inspected?.userEpoch || !inspected?.assistantTurnKey) throw new Error("The task's bound ChatGPT conversation does not expose a complete turn identity yet.");
+    return {
+      browserContext: binding.browserContext,
+      browserInstanceId: instanceId,
+      mode: "task-tab",
+      tabId,
+      conversationId: binding.conversationId,
+      canonicalUrl,
+      title: inspected.title || task.title || "ChatGPT",
+      userEpoch: inspected.userEpoch,
+      assistantTurnKey: inspected.assistantTurnKey,
+      autoContinueVersion,
+    };
+  };
+
+  const captureBinding = async (taskId) => {
+    try {
+      const target = await resolveTarget();
+      return await store.bindChat({ taskId, binding: { browserContext: target.browserContext, browserInstanceId: target.browserInstanceId, tabId: target.tabId, conversationId: target.conversationId, canonicalUrl: target.canonicalUrl } });
+    } catch {
+      return store.read(taskId);
+    }
+  };
+
   const cancelForReason = async (taskId, continuationId, reason) => {
     clearMonitor(continuationId);
     try {
@@ -247,7 +324,7 @@ export function createAutoContinueController({
     }
   };
 
-  const arm = async ({ taskId, ttlMinutes = 15 } = {}) => {
+  const armWithResolver = async ({ taskId, ttlMinutes = 15, resolver }) => {
     agentControl.assertMutationAllowed("continuation_arm");
     const task = await store.readInternal(taskId);
     if (task.status !== "active") throw new Error("Only an active Task Capsule can arm Auto Continue.");
@@ -255,17 +332,13 @@ export function createAutoContinueController({
     const continuingChain = previous?.status === "delivered" && previous.chainId;
     const hop = continuingChain ? previous.hop + 1 : 1;
     if (hop > MAX_CHAIN_HOPS) throw new Error(`Auto Continue chain reached the ${MAX_CHAIN_HOPS}-turn safety limit. Arm a new task/checkpoint chain explicitly.`);
-    const target = await resolveTarget();
-    const armed = await store.armContinuation({
-      taskId,
-      ttlMinutes,
-      chainId: continuingChain ? previous.chainId : null,
-      hop,
-      target,
-    });
+    const target = await resolver(taskId);
+    const armed = await store.armContinuation({ taskId, ttlMinutes, chainId: continuingChain ? previous.chainId : null, hop, target });
     schedule(taskId, armed.continuation.continuationId);
     return armed;
   };
+  const arm = async ({ taskId, ttlMinutes = 15 } = {}) => armWithResolver({ taskId, ttlMinutes, resolver: async () => resolveTarget() });
+  const armBound = async ({ taskId, ttlMinutes = 15 } = {}) => armWithResolver({ taskId, ttlMinutes, resolver: resolveBoundTarget });
 
   const cancel = async (taskId, reason = "agent_cancelled") => {
     const current = await store.readInternal(taskId);
@@ -288,5 +361,5 @@ export function createAutoContinueController({
     await Promise.allSettled([...inFlightTicks]);
   };
 
-  return Object.freeze({ arm, cancel, start, shutdown, resolveTarget });
+  return Object.freeze({ arm, armBound, cancel, start, shutdown, resolveTarget, resolveBoundTarget, captureBinding });
 }

@@ -128,6 +128,48 @@ function normalizeFreshResumeDestination(value, source = null) {
   }
   return binding;
 }
+function normalizeHumanAttachments(value = []) {
+  if (!Array.isArray(value) || value.length > 4) throw new Error("Task human input attachments must contain at most 4 items.");
+  return value.map((item, index) => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) throw new Error(`Task human input attachment ${index} must be an object.`);
+    const attachmentId = boundedText(item.attachmentId, { label: `human attachment ${index} id`, maxChars: 120 });
+    if (!/^tgatt-[a-z0-9-]{6,100}$/u.test(attachmentId)) throw new Error(`Task human input attachment ${index} id is invalid.`);
+    if (!["photo", "document"].includes(item.kind)) throw new Error(`Task human input attachment ${index} kind is invalid.`);
+    const fileName = boundedText(item.fileName, { label: `human attachment ${index} filename`, maxChars: 255 });
+    if (path.basename(fileName) !== fileName || fileName === "." || fileName === ".." || fileName.includes("\0")) throw new Error(`Task human input attachment ${index} filename is invalid.`);
+    const mimeType = boundedText(item.mimeType || "application/octet-stream", { label: `human attachment ${index} mime type`, maxChars: 200 });
+    if (!Number.isSafeInteger(item.bytes) || item.bytes < 1 || item.bytes > 20 * 1024 * 1024) throw new Error(`Task human input attachment ${index} size is invalid.`);
+    const sha256 = boundedText(item.sha256, { label: `human attachment ${index} sha256`, maxChars: 64 });
+    if (!/^[a-f0-9]{64}$/u.test(sha256)) throw new Error(`Task human input attachment ${index} sha256 is invalid.`);
+    const storagePath = boundedText(item.storagePath, { label: `human attachment ${index} storage path`, maxChars: 4096 });
+    if (!path.isAbsolute(storagePath) || storagePath.includes("\0")) throw new Error(`Task human input attachment ${index} storage path is invalid.`);
+    return { attachmentId, kind: item.kind, fileName, mimeType, bytes: item.bytes, sha256, storagePath };
+  });
+}
+function normalizeHumanInput(value) {
+  if (value === null || value === undefined) return null;
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Task human input must be an object.");
+  const inputId = boundedText(value.inputId, { label: "human input id", maxChars: 120 });
+  if (!/^input-[a-z0-9-]{6,100}$/u.test(inputId)) throw new Error("Task human input id is invalid.");
+  const source = boundedText(value.source, { label: "human input source", maxChars: 40 });
+  if (source !== "telegram") throw new Error("Task human input source is unsupported.");
+  const sourceId = boundedText(value.sourceId, { label: "human input source id", maxChars: 120 });
+  const text = boundedText(value.text, { label: "human input text", maxChars: 4_000, maxBytes: 12 * 1024 });
+  const attachments = normalizeHumanAttachments(value.attachments ?? []);
+  if (typeof value.receivedAt !== "string" || !Number.isFinite(Date.parse(value.receivedAt))) throw new Error("Task human input timestamp is invalid.");
+  return { inputId, source, sourceId, text, attachments, receivedAt: new Date(value.receivedAt).toISOString() };
+}
+function cloneHumanInput(value) {
+  return value ? { ...value, attachments: (value.attachments ?? []).map((item) => ({ ...item })) } : null;
+}
+function publicHumanInput(value) {
+  return value ? {
+    inputId: value.inputId, source: value.source, text: value.text,
+    attachments: (value.attachments ?? []).map(({ storagePath: _storagePath, ...item }) => ({ ...item })),
+    receivedAt: value.receivedAt,
+  } : null;
+}
+
 function cloneFreshResume(value) {
   return value ? { ...value, source: value.source ? { ...value.source } : null, destination: value.destination ? { ...value.destination } : null } : null;
 }
@@ -159,6 +201,7 @@ function cloneContinuationRecord(record) {
     continuation: cloneContinuation(record.continuation),
     freshResume: cloneFreshResume(record.freshResume),
     chatBinding: cloneChatBinding(record.chatBinding),
+    humanInput: cloneHumanInput(record.humanInput),
   };
 }
 function publicContinuation(value) {
@@ -176,6 +219,7 @@ function publicTask(record) {
     references: record.references.map((item) => ({ ...item })), createdAt: record.createdAt, updatedAt: record.updatedAt,
     completedAt: record.completedAt, continuation: publicContinuation(record.continuation),
     freshResume: publicFreshResume(record.freshResume), chatBinding: publicChatBinding(record.chatBinding),
+    humanInput: publicHumanInput(record.humanInput),
   });
 }
 function validateStoredRecord(record) {
@@ -206,7 +250,11 @@ function validateStoredRecord(record) {
     freshResume = { ...freshResume, source, destination, reason: freshResume.reason ?? null };
   }
   const chatBinding = normalizeChatBinding(record.chatBinding ?? null);
-  return { ...record, ...normalized, continuation: cloneContinuation(continuation), freshResume: cloneFreshResume(freshResume), chatBinding: cloneChatBinding(chatBinding) };
+  const humanInput = normalizeHumanInput(record.humanInput ?? null);
+  const lastHumanInputSourceId = record.lastHumanInputSourceId == null
+    ? null
+    : boundedText(record.lastHumanInputSourceId, { label: "last human input source id", maxChars: 120 });
+  return { ...record, ...normalized, continuation: cloneContinuation(continuation), freshResume: cloneFreshResume(freshResume), chatBinding: cloneChatBinding(chatBinding), humanInput: cloneHumanInput(humanInput), lastHumanInputSourceId };
 }
 
 export function createTaskCapsuleStore({ rootDir, now = () => Date.now(), randomId = () => randomUUID().slice(0, 10), maxRetained = DEFAULT_MAX_RETAINED, maxStateBytes = DEFAULT_MAX_STATE_BYTES, onEvent = null } = {}) {
@@ -306,6 +354,7 @@ export function createTaskCapsuleStore({ rootDir, now = () => Date.now(), random
       clearContinuation(record, "checkpoint_changed");
       clearPreparedFreshResume(record, "checkpoint_changed");
       Object.assign(record, snapshot);
+      record.humanInput = null;
       record.checkpointRevision += 1;
       record.updatedAt = iso(now());
       await persist(record);
@@ -315,7 +364,7 @@ export function createTaskCapsuleStore({ rootDir, now = () => Date.now(), random
     await prune();
     const taskId = `task-${randomId()}`;
     const timestamp = iso(now());
-    const record = { taskId, schemaVersion: TASK_CAPSULE_SCHEMA_VERSION, ...snapshot, status: "active", checkpointRevision: 1, createdAt: timestamp, updatedAt: timestamp, completedAt: null, continuation: null, freshResume: null, chatBinding: null };
+    const record = { taskId, schemaVersion: TASK_CAPSULE_SCHEMA_VERSION, ...snapshot, status: "active", checkpointRevision: 1, createdAt: timestamp, updatedAt: timestamp, completedAt: null, continuation: null, freshResume: null, chatBinding: null, humanInput: null, lastHumanInputSourceId: null };
     await persist(record);
     records.set(taskId, record);
     emit({ component: "task-capsule", type: "task.created", severity: "info", status: "active", message: "Task Capsule was created.", details: { taskId, checkpointRevision: 1 } });
@@ -337,7 +386,7 @@ export function createTaskCapsuleStore({ rootDir, now = () => Date.now(), random
     assertFreshResumeNotUnresolved(record, "finish");
     clearContinuation(record, "task_completed");
     clearPreparedFreshResume(record, "task_completed");
-    record.status = "completed"; record.completedAt = iso(now()); record.updatedAt = record.completedAt;
+    record.status = "completed"; record.humanInput = null; record.completedAt = iso(now()); record.updatedAt = record.completedAt;
     await persist(record);
     emit({ component: "task-capsule", type: "task.completed", severity: "info", status: "completed", message: "Task Capsule was completed.", details: { taskId: record.taskId } });
     return publicTask(record);
@@ -351,7 +400,7 @@ export function createTaskCapsuleStore({ rootDir, now = () => Date.now(), random
     assertFreshResumeNotUnresolved(record, "cancel");
     clearContinuation(record, "task_cancelled");
     clearPreparedFreshResume(record, "task_cancelled");
-    record.status = "cancelled"; record.completedAt = iso(now()); record.updatedAt = record.completedAt;
+    record.status = "cancelled"; record.humanInput = null; record.completedAt = iso(now()); record.updatedAt = record.completedAt;
     await persist(record);
     emit({ component: "task-capsule", type: "task.cancelled", severity: "info", status: "cancelled", message: "Task Capsule was cancelled.", details: { taskId: record.taskId } });
     return publicTask(record);
@@ -369,6 +418,49 @@ export function createTaskCapsuleStore({ rootDir, now = () => Date.now(), random
     emit({ component: "task-capsule", type: "task.deleted", severity: "info", status: "deleted", message: "Terminal Task Capsule was deleted.", details: { taskId: record.taskId, previousStatus: record.status } });
     return Object.freeze({ taskId: record.taskId, status: record.status, deleted: true });
   });
+  const bindChat = ({ taskId, binding } = {}) => withMutation(async () => {
+    await initialize();
+    const record = requireTask(taskId);
+    if (record.status !== "active") return publicTask(record);
+    const normalized = normalizeChatBinding(binding);
+    if (!normalized) throw new Error("Task chat binding is required.");
+    const current = record.chatBinding;
+    if (current && current.browserContext === normalized.browserContext && current.browserInstanceId === normalized.browserInstanceId && current.tabId === normalized.tabId && current.conversationId === normalized.conversationId && current.canonicalUrl === normalized.canonicalUrl) {
+      return publicTask(record);
+    }
+    record.chatBinding = normalized;
+    await persist(record);
+    emit({ component: "task-capsule", type: "task.chat_bound", severity: "info", status: "updated", message: "Task Capsule was bound to a ChatGPT conversation.", details: { taskId: record.taskId, browserContext: normalized.browserContext } });
+    return publicTask(record);
+  });
+  const queueHumanInput = ({ taskId, source = "telegram", sourceId, text, attachments = [] } = {}) => withMutation(async () => {
+    await initialize();
+    const record = requireTask(taskId);
+    if (record.status !== "active") throw new Error("Only active Task Capsules can receive human input.");
+    const normalizedSource = boundedText(source, { label: "human input source", maxChars: 40 });
+    if (normalizedSource !== "telegram") throw new Error("Task human input source is unsupported.");
+    const normalizedSourceId = boundedText(sourceId, { label: "human input source id", maxChars: 120 });
+    if (record.lastHumanInputSourceId === normalizedSourceId) return publicTask(record);
+    assertDeliveryNotCommitted(record, "receive human input");
+    assertFreshResumeNotUnresolved(record, "receive human input");
+    clearContinuation(record, "human_input_received");
+    clearPreparedFreshResume(record, "human_input_received");
+    record.humanInput = {
+      inputId: `input-${randomId()}`,
+      source: normalizedSource,
+      sourceId: normalizedSourceId,
+      text: boundedText(text, { label: "human input text", maxChars: 4_000, maxBytes: 12 * 1024 }),
+      attachments: normalizeHumanAttachments(attachments),
+      receivedAt: iso(now()),
+    };
+    record.lastHumanInputSourceId = normalizedSourceId;
+    record.checkpointRevision += 1;
+    record.updatedAt = record.humanInput.receivedAt;
+    await persist(record);
+    emit({ component: "task-capsule", type: "task.human_input", severity: "info", status: "updated", message: "Task Capsule received bounded human input.", details: { taskId: record.taskId, source: normalizedSource, checkpointRevision: record.checkpointRevision } });
+    return publicTask(record);
+  });
+
   const armContinuation = ({ taskId, ttlMinutes = 15, chainId = null, hop = 1, target = null } = {}) => withMutation(async () => {
     await initialize();
     const record = requireTask(taskId);
@@ -640,5 +732,5 @@ export function createTaskCapsuleStore({ rootDir, now = () => Date.now(), random
     }
     return { resumable, retired };
   });
-  return Object.freeze({ initialize, checkpoint, read, readInternal, list, finish, cancel, remove, armContinuation, cancelContinuation, cancelAllContinuations, pendingContinuations, reserveContinuationDelivery, settleContinuationDelivery, expireContinuation, reconcileContinuationsAfterRestart, prepareFreshResume, reserveFreshResumeMutation, settleFreshResume, cancelFreshResume, abandonFreshResume, cancelAllFreshResumes, reconcileFreshResumesAfterRestart, snapshot: async () => ({ tasks: await list({ limit: 50 }), loadErrors: [...loadErrors] }) });
+  return Object.freeze({ initialize, checkpoint, read, readInternal, list, finish, cancel, remove, bindChat, queueHumanInput, armContinuation, cancelContinuation, cancelAllContinuations, pendingContinuations, reserveContinuationDelivery, settleContinuationDelivery, expireContinuation, reconcileContinuationsAfterRestart, prepareFreshResume, reserveFreshResumeMutation, settleFreshResume, cancelFreshResume, abandonFreshResume, cancelAllFreshResumes, reconcileFreshResumesAfterRestart, snapshot: async () => ({ tasks: await list({ limit: 50 }), loadErrors: [...loadErrors] }) });
 }

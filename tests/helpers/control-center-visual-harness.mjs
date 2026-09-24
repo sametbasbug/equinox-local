@@ -39,7 +39,7 @@ let browser = {
   active: true,
   ready: true,
   connectedAt: new Date().toISOString(),
-  extensionVersion: "0.6.0",
+  extensionVersion: "0.7.0",
   controlEnabled: true,
   agentCursorEnabled: true,
   agentCursorName: "Agent",
@@ -51,7 +51,7 @@ let browser = {
     context: "agent",
     isolated: true,
     ready: true,
-    extensionVersion: "0.6.0",
+    extensionVersion: "0.7.0",
     connectedAt: new Date().toISOString(),
     pairing: false,
     setupComplete: true,
@@ -60,7 +60,7 @@ let browser = {
     agent: {
       ready: true,
       connectedAt: new Date().toISOString(),
-      extensionVersion: "0.6.0",
+      extensionVersion: "0.7.0",
       consentAccepted: true,
       controlEnabled: true,
       agentCursorEnabled: true,
@@ -69,7 +69,7 @@ let browser = {
     user: {
       ready: true,
       connectedAt: new Date().toISOString(),
-      extensionVersion: "0.6.0",
+      extensionVersion: "0.7.0",
       consentAccepted: true,
       controlEnabled: true,
       agentCursorEnabled: true,
@@ -99,8 +99,17 @@ let onboarding = {
   supervisorMode: onboardingScenario ? "local-only" : "tunnel",
   connectedThroughTunnel: !onboardingScenario,
   needsAttention: false,
-  tunnelId: null,
+  tunnelId: onboardingScenario ? null : "tunnel_0123456789abcdef0123456789abcdef",
   issue: null,
+  setupComplete: !onboardingScenario,
+  legacyCompleted: false,
+  firstAgentCommandAt: onboardingScenario ? null : new Date().toISOString(),
+  completedAt: onboardingScenario ? null : new Date().toISOString(),
+  browserRequired: true,
+  browserConnected: !onboardingScenario,
+  browserConsentAccepted: !onboardingScenario,
+  browserControlEnabled: !onboardingScenario,
+  agentCommandReceived: !onboardingScenario,
 };
 
 const api = createEquinoxLocalControlApi({
@@ -221,7 +230,7 @@ const api = createEquinoxLocalControlApi({
       ...settings,
       nativeHostConnected: true,
       localConnected: true,
-      extensionVersion: "0.6.0",
+      extensionVersion: "0.7.0",
     };
   },
   getUpdateStatus: async () => update,

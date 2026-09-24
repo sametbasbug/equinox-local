@@ -27,6 +27,10 @@ The extension popup exposes a profile-local **Auto Continue target** selector on
 
 Auto Continue uses dedicated internal bridge commands for target resolution, inspection and guarded delivery rather than exposing a generic ChatGPT/session automation API. The delivery path verifies the bound conversation, latest user epoch, assistant turn, generation state and empty composer; it claims a bounded extension-local delivery receipt before inserting/submitting the deterministic continuation prompt so ambiguous retries cannot duplicate a turn. Human composing or a new user message wins over the pending continuation.
 
+Telegram Chat Bridge uses separate internal capabilities instead of pretending bridge messages are Auto Continue turns. `chat_bridge.deliver` reuses exact-conversation/user-epoch/assistant-turn/composer guards with a separate bounded receipt namespace; `chat_bridge.inspect` stays text-free and bridge debugger leases receive short detach cleanup. Attachments remain local and are never uploaded again through the ChatGPT UI. The bridge message itself carries only the user text plus `task_id` for Task-bound chats and optional `local_file` for a downloaded Telegram file. There is no attachment-resolver Browser/Local protocol in the Chat Bridge path.
+
+Chat Bridge v9 keeps normal Telegram chat Task-scoped. Existing bound-chat delivery uses guarded CDP `Input.insertText`, real send-button pointer click and debugger-backed user-epoch confirmation. Stale tab ids may be refreshed only through a unique exact-conversation match in the same Browser instance; ambiguity still fails closed. The only fresh-chat path is explicit **New task** creation from Telegram: Local uses existing generic Browser primitives (`tabs.create`, `snapshot`, `type_text`, `tabs.list`) to create one root ChatGPT conversation for the new Task, confirms its conversation id, binds it to that Task Capsule, and then uses the same `chat_bridge.read_final` lane for the first assistant response; a null previous-assistant key is valid only for that first Task turn.
+
 ## Connection path
 
 ```text

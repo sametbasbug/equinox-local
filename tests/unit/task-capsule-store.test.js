@@ -58,6 +58,58 @@ test("checkpoint revision guard rejects stale human edits atomically", async (t)
   assert.deepEqual((await store.read(created.taskId)).next, ["Second revision"]);
 });
 
+test("bounded human input increments the checkpoint, deduplicates source updates and clears on the next agent checkpoint", async (t) => {
+  const { store, tick } = await fixture(t);
+  const task = await store.checkpoint(base);
+  await store.armContinuation({ taskId: task.taskId });
+  tick();
+  const queued = await store.queueHumanInput({ taskId: task.taskId, source: "telegram", sourceId: "telegram:42", text: "Check Browser first." });
+  assert.equal(queued.checkpointRevision, 2);
+  assert.deepEqual(queued.humanInput, {
+    inputId: queued.humanInput.inputId, source: "telegram", text: "Check Browser first.", attachments: [], receivedAt: queued.humanInput.receivedAt,
+  });
+  assert.equal(queued.continuation.status, "cancelled");
+  assert.equal(queued.continuation.reason, "human_input_received");
+  const duplicate = await store.queueHumanInput({ taskId: task.taskId, source: "telegram", sourceId: "telegram:42", text: "duplicate must not replace" });
+  assert.equal(duplicate.checkpointRevision, 2);
+  assert.equal(duplicate.humanInput.text, "Check Browser first.");
+  tick();
+  const checkpointed = await store.checkpoint({ ...base, taskId: task.taskId, next: ["Apply the human instruction"] });
+  assert.equal(checkpointed.checkpointRevision, 3);
+  assert.equal(checkpointed.humanInput, null);
+  const internal = await store.readInternal(task.taskId);
+  assert.equal(internal.lastHumanInputSourceId, "telegram:42");
+});
+
+test("Telegram human-input attachments expose bounded metadata but keep private storage paths internal", async (t) => {
+  const { store } = await fixture(t);
+  const task = await store.checkpoint(base);
+  const attachment = {
+    attachmentId: "tgatt-000123",
+    kind: "document",
+    fileName: "report.pdf",
+    mimeType: "application/pdf",
+    bytes: 1234,
+    sha256: "a".repeat(64),
+    storagePath: "/private/tmp/equinox-telegram/report.pdf",
+  };
+  const queued = await store.queueHumanInput({
+    taskId: task.taskId, source: "telegram", sourceId: "telegram:123",
+    text: "Please inspect the report.", attachments: [attachment],
+  });
+  assert.deepEqual(queued.humanInput.attachments, [{
+    attachmentId: attachment.attachmentId, kind: attachment.kind, fileName: attachment.fileName,
+    mimeType: attachment.mimeType, bytes: attachment.bytes, sha256: attachment.sha256,
+  }]);
+  assert.equal(JSON.stringify(queued).includes(attachment.storagePath), false);
+  const internal = await store.readInternal(task.taskId);
+  assert.equal(internal.humanInput.attachments[0].storagePath, attachment.storagePath);
+  await assert.rejects(() => store.queueHumanInput({
+    taskId: task.taskId, source: "telegram", sourceId: "telegram:124", text: "bad",
+    attachments: [{ ...attachment, storagePath: "relative/path" }],
+  }), /storage path is invalid/u);
+});
+
 test("new checkpoint cancels an older continuation and terminal states stay terminal", async (t) => {
   const { store } = await fixture(t);
   const created = await store.checkpoint(base);
@@ -139,6 +191,22 @@ const continuationTarget = {
   assistantTurnKey: "conversation-turn-8",
   autoContinueVersion: 1,
 };
+test("task chat binding is durable but private conversation metadata stays internal", async (t) => {
+  const { root, store } = await fixture(t);
+  const task = await store.checkpoint(base);
+  await store.bindChat({ taskId: task.taskId, binding: {
+    browserContext: continuationTarget.browserContext, browserInstanceId: continuationTarget.browserInstanceId,
+    tabId: continuationTarget.tabId, conversationId: continuationTarget.conversationId, canonicalUrl: continuationTarget.canonicalUrl,
+  } });
+  const publicTask = await store.read(task.taskId);
+  assert.deepEqual(publicTask.chatBinding, { browserContext: "user", tabId: 42 });
+  const internal = await store.readInternal(task.taskId);
+  assert.equal(internal.chatBinding.conversationId, continuationTarget.conversationId);
+  const reloaded = createTaskCapsuleStore({ rootDir: root });
+  await reloaded.initialize();
+  assert.equal((await reloaded.readInternal(task.taskId)).chatBinding.canonicalUrl, continuationTarget.canonicalUrl);
+});
+
 
 test("delivery reservation is durable, private target fields stay internal and restart never retries ambiguous delivery", async (t) => {
   const { root, store } = await fixture(t);

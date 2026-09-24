@@ -5,6 +5,7 @@ export const STABLE_CAPABILITY_DOMAINS = Object.freeze({
     label: "Projects & assets",
     callTool: "files_call",
     openWorldHint: false,
+    usageHint: "For a PNG, JPEG or WebP that already exists on the Mac, prefer image_view when the task is visual inspection. Do not use file_export or copy the image into ChatGPT/container merely to inspect it; file_export is for intentional file transfer. If you already have a local path, use it directly. For opaque Task Capsule attachment references, use the exact task-scoped attachment reader only when the task actually needs file contents.",
   }),
   browser: Object.freeze({
     label: "Equinox Browser",
@@ -120,6 +121,7 @@ const FILE_OPERATION_NAMES = new Set([
   "file_export",
   "file_import",
   "image_view",
+  "telegram_attachment_open",
   "list_projects",
 ]);
 
@@ -129,8 +131,13 @@ const RELEASE_OPERATION_NAMES = new Set([
 ]);
 
 const INTEGRATION_OPERATION_NAMES = new Set([
+  "authenticated_http_request",
   "credential_status",
+  "http_profile_delete",
+  "http_profile_upsert",
+  "http_profiles",
   "telegram_send_message",
+  "telegram_send_file",
 ]);
 
 const EXCLUDED_PREFIXES = Object.freeze([
@@ -305,6 +312,7 @@ export function createCapabilityRegistry({ inferDomain = inferCapabilityDomain }
     return {
       domain,
       label: STABLE_CAPABILITY_DOMAINS[domain].label,
+      usageHint: STABLE_CAPABILITY_DOMAINS[domain].usageHint ?? null,
       count: operations.length,
       operations,
     };
@@ -375,13 +383,26 @@ function normalizeGatewayInvocationResult(result, textResult) {
 
 export function registerStableCapabilityGateways({
   registerTextTool,
+  registerRawTool = null,
   registry,
   textResult,
   externalDomains = {},
+  turnBudgetController = null,
 } = {}) {
   if (typeof registerTextTool !== "function" || !registry || typeof textResult !== "function") {
     throw new Error("Stable capability gateway registration bağımlılıkları eksik.");
   }
+  const rawGatewayRegister = typeof registerRawTool === "function" ? registerRawTool : registerTextTool;
+
+  const runBudgeted = async (toolName, input, invoke) => {
+    const prepared = turnBudgetController?.prepareInvocation
+      ? await turnBudgetController.prepareInvocation(toolName, input)
+      : { input, firstNotice: false, waitClamped: false };
+    const result = await invoke(prepared.input);
+    return turnBudgetController?.decorateResult
+      ? turnBudgetController.decorateResult(result, prepared)
+      : result;
+  };
 
   const compactCatalog = (catalog, query) => {
     const normalizedQuery = typeof query === "string" ? query.trim().toLocaleLowerCase("en-US") : "";
@@ -405,6 +426,7 @@ export function registerStableCapabilityGateways({
     return {
       domain: catalog.domain,
       label: catalog.label,
+      usageHint: catalog.usageHint ?? null,
       count: operations.length,
       totalCount: catalog.count ?? operations.length,
       operations,
@@ -429,7 +451,7 @@ export function registerStableCapabilityGateways({
         openWorldHint: false,
       },
     },
-    async ({ domain, query, operation }) => {
+    async (input) => runBudgeted("capabilities", input, async ({ domain, query, operation }) => {
       if ((query || operation) && !domain) {
         throw new Error("capabilities query/operation kullanırken domain zorunludur.");
       }
@@ -466,7 +488,7 @@ export function registerStableCapabilityGateways({
 
       if (operation) return textResult(JSON.stringify(registry.describe(domain, operation), null, 2));
       return textResult(JSON.stringify(compactCatalog(registry.catalog(domain), query), null, 2));
-    },
+    }),
     {
       projectAware: false,
       mutationScopes: [],
@@ -491,7 +513,8 @@ export function registerStableCapabilityGateways({
       callMeta["openai/fileParams"] = ["file"];
     }
 
-    registerTextTool(
+    const registerGateway = domain === "files" ? rawGatewayRegister : registerTextTool;
+    registerGateway(
       definition.callTool,
       {
         description:
@@ -509,13 +532,13 @@ export function registerStableCapabilityGateways({
         },
         ...(domain === "files" ? { _meta: callMeta } : {}),
       },
-      async ({ operation, arguments: operationArguments, file }) => {
+      async (input) => runBudgeted(definition.callTool, input, async ({ operation, arguments: operationArguments, file }) => {
         const invocationArguments = domain === "files" && file !== undefined
           ? { ...operationArguments, file }
           : operationArguments;
         const result = await registry.invoke(domain, operation, invocationArguments);
         return normalizeGatewayInvocationResult(result, textResult);
-      },
+      }),
       {
         projectAware: false,
         mutationScopes: [],

@@ -5,7 +5,14 @@ umask 077
 SCRIPT_DIR="$(cd "$(dirname "$0")" && /bin/pwd -P)"
 ROOT="$(cd "$SCRIPT_DIR/.." && /bin/pwd -P)"
 CONFIG="${EQUINOX_LOCAL_DEV_RUNTIME_CONFIG:-$ROOT/.equinox-local-dev-runtime.conf}"
-DEV_NODE="${EQUINOX_LOCAL_DEV_NODE:-$(command -v node 2>/dev/null || true)}"
+DEFAULT_DEV_NODE="$HOME/.local/share/equinox-local-developer/bin/node"
+if [ -n "${EQUINOX_LOCAL_DEV_NODE:-}" ]; then
+  DEV_NODE="$EQUINOX_LOCAL_DEV_NODE"
+elif [ -x "$DEFAULT_DEV_NODE" ]; then
+  DEV_NODE="$DEFAULT_DEV_NODE"
+else
+  DEV_NODE="$(command -v node 2>/dev/null || true)"
+fi
 LOG_FILE="${TMPDIR:-/tmp}/equinox-local-restart.log"
 APP_PATH="$HOME/Applications/Equinox Local.app"
 APP_EXECUTABLE="$APP_PATH/Contents/MacOS/applet"
@@ -27,6 +34,82 @@ fail() {
   exit 1
 }
 
+RESTART_STAGE="preflight"
+RESTART_LOCK_DIR="$(/usr/bin/dirname "$LOG_FILE")/equinox-local-restart.lock"
+BOUNDED_PID=""
+
+timestamp() {
+  date '+%Y-%m-%dT%H:%M:%S%z'
+}
+
+cleanup_restart() {
+  status=$?
+  if [ -n "$BOUNDED_PID" ]; then
+    /bin/kill -TERM "$BOUNDED_PID" >/dev/null 2>&1 || true
+    wait "$BOUNDED_PID" >/dev/null 2>&1 || true
+  fi
+  if [ -d "$RESTART_LOCK_DIR" ] && [ -f "$RESTART_LOCK_DIR/pid" ]; then
+    lock_pid="$(/bin/cat "$RESTART_LOCK_DIR/pid" 2>/dev/null || true)"
+    if [ "$lock_pid" = "$$" ]; then
+      /bin/rm -rf "$RESTART_LOCK_DIR"
+    fi
+  fi
+  if [ "$status" -ne 0 ]; then
+    printf '[%s] Equinox Local source-checkout restart failed at stage=%s exit=%s.
+' "$(timestamp)" "$RESTART_STAGE" "$status" >> "$LOG_FILE"
+  fi
+}
+
+interrupt_restart() {
+  fail "restart helper interrupted at stage=$RESTART_STAGE"
+}
+
+run_bounded() {
+  attempts="$1"
+  shift
+  "$@" &
+  BOUNDED_PID=$!
+  for _ in $(/usr/bin/seq 1 "$attempts"); do
+    if ! /bin/kill -0 "$BOUNDED_PID" >/dev/null 2>&1; then
+      set +e
+      wait "$BOUNDED_PID"
+      status=$?
+      set -e
+      BOUNDED_PID=""
+      return "$status"
+    fi
+    sleep 0.25
+  done
+  /bin/kill -TERM "$BOUNDED_PID" >/dev/null 2>&1 || true
+  sleep 0.25
+  /bin/kill -KILL "$BOUNDED_PID" >/dev/null 2>&1 || true
+  set +e
+  wait "$BOUNDED_PID" >/dev/null 2>&1
+  set -e
+  BOUNDED_PID=""
+  return 124
+}
+
+acquire_restart_lock() {
+  if /bin/mkdir "$RESTART_LOCK_DIR" 2>/dev/null; then
+    printf '%s
+' "$$" > "$RESTART_LOCK_DIR/pid"
+    return
+  fi
+  existing_pid="$(/bin/cat "$RESTART_LOCK_DIR/pid" 2>/dev/null || true)"
+  if [[ "$existing_pid" =~ ^[0-9]+$ ]] && /bin/kill -0 "$existing_pid" >/dev/null 2>&1; then
+    fail "another source restart is already running (pid $existing_pid)"
+  fi
+  /bin/rm -rf "$RESTART_LOCK_DIR"
+  /bin/mkdir "$RESTART_LOCK_DIR" || fail "could not acquire source restart lock"
+  printf '%s
+' "$$" > "$RESTART_LOCK_DIR/pid"
+}
+
+trap cleanup_restart EXIT
+trap interrupt_restart HUP INT TERM
+acquire_restart_lock
+
 [ -f "$CONFIG" ] && [ ! -L "$CONFIG" ] || fail "private developer runtime config is missing: $CONFIG"
 CURRENT_UID="$(/usr/bin/id -u)"
 [ "$(/usr/bin/stat -f '%u' "$CONFIG")" = "$CURRENT_UID" ] || fail "developer runtime config is not owned by the current user"
@@ -38,6 +121,9 @@ esac
 case "$DEV_NODE" in
   /*) ;;
   *) fail "EQUINOX_LOCAL_DEV_NODE must be an absolute executable path" ;;
+esac
+case "$DEV_NODE" in
+  *[[:space:]]*) fail "developer Node runtime path must not contain whitespace" ;;
 esac
 [ -x "$DEV_NODE" ] || fail "configured developer Node runtime is not executable"
 
@@ -130,6 +216,7 @@ DOMAIN="gui/$CURRENT_UID"
   # Capture only the app host's validated direct children before bootout. Do not
   # terminate them while KeepAlive is still active: doing that can make launchd
   # start a replacement app host in the narrow window before bootout.
+  RESTART_STAGE="inspect-launch-agent"
   HOST_PID="$(/bin/launchctl print "$DOMAIN/$LABEL" 2>/dev/null | /usr/bin/awk '$1 == "pid" && $2 == "=" { print $3; exit }' || true)"
   VALID_HOST_CHILDREN=""
   FOREGROUND_GUI_PIDS=""
@@ -160,7 +247,13 @@ DOMAIN="gui/$CURRENT_UID"
     done
   fi
 
-  /bin/launchctl bootout "$DOMAIN/$LABEL" >/dev/null 2>&1 || true
+  RESTART_STAGE="launch-agent-bootout"
+  if run_bounded 40 /bin/launchctl bootout "$DOMAIN/$LABEL" >/dev/null 2>&1; then
+    :
+  else
+    bootout_status=$?
+    [ "$bootout_status" -ne 124 ] || fail "source LaunchAgent bootout timed out"
+  fi
 
   # launchctl bootout is asynchronous. Wait for KeepAlive ownership to disappear
   # before touching the captured wrapper children or the tunnel runtime.
@@ -195,7 +288,8 @@ DOMAIN="gui/$CURRENT_UID"
   # Stop the tunnel only after KeepAlive is gone. Stopping it while the
   # LaunchAgent is still active lets the source launcher race us and create a
   # replacement server before bootout, leaving that replacement orphaned.
-  "$TUNNEL_CLIENT" runtimes stop "$RUNTIME" || true
+  RESTART_STAGE="tunnel-stop"
+  run_bounded 80 "$TUNNEL_CLIENT" runtimes stop "$RUNTIME" || fail "source tunnel stop failed or timed out"
 
   # Do not relaunch while any previous source server is still alive. The
   # tunnel runtime can take a moment to finish process teardown after reporting
@@ -213,19 +307,22 @@ DOMAIN="gui/$CURRENT_UID"
   RESIDUAL_PID="$(/usr/bin/pgrep -f "node $ROOT/src/server.js" | /usr/bin/head -n 1 || true)"
   [ -z "$RESIDUAL_PID" ] || fail "source runtime left a residual Equinox Local server process before relaunch"
 
+  RESTART_STAGE="launch-agent-bootstrap"
   BOOTSTRAPPED=0
   for _ in {1..12}; do
-    if /bin/launchctl bootstrap "$DOMAIN" "$PLIST"; then
+    if run_bounded 40 /bin/launchctl bootstrap "$DOMAIN" "$PLIST"; then
       BOOTSTRAPPED=1
       break
     fi
     sleep 1
   done
   [ "$BOOTSTRAPPED" -eq 1 ] || fail "source LaunchAgent bootstrap failed after bounded retries"
-  /bin/launchctl kickstart "$DOMAIN/$LABEL"
+  RESTART_STAGE="launch-agent-kickstart"
+  run_bounded 40 /bin/launchctl kickstart "$DOMAIN/$LABEL" || fail "source LaunchAgent kickstart failed or timed out"
 
+  RESTART_STAGE="runtime-ready"
   sleep 8
-  "$TUNNEL_CLIENT" runtimes status "$RUNTIME"
+  run_bounded 80 "$TUNNEL_CLIENT" runtimes status "$RUNTIME" || fail "source tunnel status failed or timed out"
 
   NEW_PID="$(/usr/bin/pgrep -f "node $ROOT/src/server.js" | /usr/bin/head -n 1 || true)"
   [ -n "$NEW_PID" ] || fail "source runtime did not start a new Equinox Local server process"
@@ -253,7 +350,8 @@ DOMAIN="gui/$CURRENT_UID"
       /bin/kill -0 "$gui_pid" >/dev/null 2>&1 && fail "previous Equinox Local foreground GUI did not stop cleanly"
     done
 
-    /usr/bin/open -gn "$APP_PATH" --args --restart-shell
+    RESTART_STAGE="foreground-gui-relaunch"
+    run_bounded 40 /usr/bin/open -gn "$APP_PATH" --args --restart-shell || fail "Equinox Local foreground GUI open failed or timed out"
     NEW_GUI_PID=""
     for _ in {1..40}; do
       NEW_HOST_PID="$(/bin/launchctl print "$DOMAIN/$LABEL" 2>/dev/null | /usr/bin/awk '$1 == "pid" && $2 == "=" { print $3; exit }' || true)"

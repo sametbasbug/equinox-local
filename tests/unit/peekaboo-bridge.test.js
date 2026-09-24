@@ -16,30 +16,24 @@ import {
   resolvePeekabooBinary,
 } from "../../src/peekaboo-bridge.js";
 
-test("Peekaboo allowlist exposes background-safe clipboard while excluding broader unsafe surfaces", () => {
-  assert.equal(PEEKABOO_ALLOWED_TOOLS.includes("agent"), false);
-  assert.equal(PEEKABOO_ALLOWED_TOOLS.includes("analyze"), false);
-  assert.equal(PEEKABOO_ALLOWED_TOOLS.includes("browser"), false);
-  assert.equal(PEEKABOO_ALLOWED_TOOLS.includes("clipboard"), true);
-  assert.equal(PEEKABOO_ALLOWED_TOOLS.includes("dialog"), false);
-  assert.equal(PEEKABOO_ALLOWED_TOOLS.includes("paste"), false);
-  assert.equal(PEEKABOO_ALLOWED_TOOLS.includes("permissions"), true);
-  assert.equal(PEEKABOO_ALLOWED_TOOLS.includes("see"), true);
-  assert.equal(PEEKABOO_ALLOWED_TOOLS.includes("inspect_ui"), true);
-  assert.equal(PEEKABOO_ALLOWED_TOOLS.includes("press"), true);
-  assert.equal(PEEKABOO_ALLOWED_TOOLS.includes("action"), true);
+test("Peekaboo exposes the foreground-capable native desktop surface without duplicate AI or browser stacks", () => {
+  for (const name of ["capture", "dialog", "paste", "drag", "move", "verify_state", "clipboard", "app", "press"]) {
+    assert.equal(PEEKABOO_ALLOWED_TOOLS.includes(name), true, name);
+  }
+  for (const name of ["agent", "analyze", "browser", "image"]) {
+    assert.equal(PEEKABOO_ALLOWED_TOOLS.includes(name), false, name);
+  }
+  assert.equal(PEEKABOO_ALLOWED_TOOLS.length, 22);
+  assert.deepEqual(__test.PEEKABOO_MCP_ARGS, [
+    "mcp", "--no-remote", "--allow-foreground", "--log-level", "warning", "--input-strategy", "actionFirst",
+  ]);
 });
 
 test("safe Peekaboo environment does not inherit provider credentials", () => {
   const env = buildSafePeekabooEnvironment({
-    HOME: "/Users/demo",
-    USER: "demo",
-    OPENAI_API_KEY: "secret-openai",
-    ANTHROPIC_API_KEY: "secret-anthropic",
-    GH_TOKEN: "secret-github",
-    PATH: "/unsafe/path",
+    HOME: "/Users/demo", USER: "demo", OPENAI_API_KEY: "secret-openai",
+    ANTHROPIC_API_KEY: "secret-anthropic", GH_TOKEN: "secret-github", PATH: "/unsafe/path",
   });
-
   assert.equal(env.HOME, "/Users/demo");
   assert.equal(env.USER, "demo");
   assert.equal(env.OPENAI_API_KEY, undefined);
@@ -61,344 +55,136 @@ test("Peekaboo resolution uses only an explicit or release-bundled runtime", asy
   );
 });
 
-test("semantic desktop targeting is enforced for click, drag, scroll and move", () => {
-  assert.deepEqual(
-    normalizePeekabooArguments("click", { on: "B1", snapshot: "snap-1" }),
-    { on: "B1", snapshot: "snap-1" },
-  );
-
-  assert.throws(
-    () => normalizePeekabooArguments("click", { coords: "100,200" }),
-    /Koordinat tabanlı click/u,
-  );
-  assert.throws(
-    () => normalizePeekabooArguments("click", { on: "B1", foreground: true }),
-    /Foreground\/shared-pointer click/u,
-  );
-  assert.throws(
-    () => normalizePeekabooArguments("drag", { from_coords: "1,2", to_coords: "3,4" }),
-    /Koordinat tabanlı drag/u,
-  );
-  assert.throws(
-    () => normalizePeekabooArguments("scroll", { direction: "down" }),
-    /scroll hedef element/u,
-  );
-  assert.throws(
-    () => normalizePeekabooArguments("scroll", { direction: "down", on: "B2", foreground: true }),
-    /Foreground\/shared-pointer scroll/u,
-  );
-  assert.throws(
-    () => normalizePeekabooArguments("move", { center: true }),
-    /Koordinat\/merkez/u,
-  );
+test("foreground mouse, keyboard and lifecycle arguments pass through unchanged", () => {
+  const cases = [
+    ["click", { coords: "100,200", foreground: true, double: true }],
+    ["drag", { from_coords: "1,2", to_coords: "300,400", foreground: true, profile: "human" }],
+    ["move", { center: true, foreground: true, smooth: true }],
+    ["scroll", { direction: "down", foreground: true, smooth: true, amount: 12 }],
+    ["press", { keys: ["cmd+delete"], app: "Finder", foreground: true }],
+    ["type", { text: "hello", app: "TextEdit", foreground: true }],
+    ["app", { action: "quit", name: "Finder", force: true }],
+    ["app", { action: "quit", all: true, except: "Finder" }],
+    ["menu", { action: "click", app: "Finder", path: "Finder > Empty Bin", foreground: true }],
+    ["window", { action: "focus", app: "TextEdit" }],
+    ["space", { action: "switch", to: 2, foreground: true }],
+  ];
+  for (const [name, args] of cases) assert.deepEqual(normalizePeekabooArguments(name, args), args);
 });
 
-test("blind typing and global keyboard input are rejected", () => {
-  assert.throws(
-    () => normalizePeekabooArguments("type", { text: "hello" }),
-    /Aktif odağa körlemesine/u,
-  );
-  assert.throws(
-    () => normalizePeekabooArguments("hotkey", { keys: "cmd,c" }),
-    /Global hotkey/u,
-  );
-  assert.throws(
-    () => normalizePeekabooArguments("press", { keys: ["cmd+c"] }),
-    /fresh exact snapshot/u,
-  );
-  assert.throws(
-    () => normalizePeekabooArguments("press", { keys: ["cmd+c"], snapshot: "latest" }),
-    /implicit latest/u,
-  );
-  assert.throws(
-    () => normalizePeekabooArguments("press", { keys: ["cmd+c"], snapshot: "snap-2", app: "TextEdit" }),
-    /snapshot-pinned/u,
-  );
+test("foreground utility tools and direct filesystem options are available while local bounds remain", () => {
+  for (const [name, args] of [
+    ["see", { path: "/tmp/capture.png", app_target: "Finder" }],
+    ["capture", { mode: "frontmost", capture_focus: "foreground", output_dir: "/tmp/peekaboo" }],
+    ["clipboard", { action: "set", text: "hello" }],
+    ["clipboard", { action: "restore", slot: "handoff" }],
+    ["paste", { text: "hello", app: "TextEdit" }],
+    ["dialog", { action: "file", app: "TextEdit", path: "/tmp", name: "note.txt", foreground: true }],
+    ["action", { on: "B7", action: "AXShowMenu" }],
+    ["verify_state", { app: "TextEdit", predicates: [{ kind: "window_exists", expected: true }] }],
+  ]) assert.deepEqual(normalizePeekabooArguments(name, args), args);
 
-  assert.deepEqual(
-    normalizePeekabooArguments("type", {
-      on: "T2",
-      snapshot: "snap-2",
-      text: "hello",
-    }),
-    { on: "T2", snapshot: "snap-2", text: "hello" },
-  );
-  assert.deepEqual(
-    normalizePeekabooArguments("type", {
-      snapshot: "snap-2",
-      text: "hello",
-    }),
-    { snapshot: "snap-2", text: "hello" },
-  );
-  assert.deepEqual(
-    normalizePeekabooArguments("hotkey", {
-      keys: "cmd,c",
-      app: "TextEdit",
-    }),
-    { keys: "cmd,c", app: "TextEdit" },
-  );
-  assert.deepEqual(
-    normalizePeekabooArguments("press", {
-      keys: ["cmd+c"],
-      snapshot: "snap-2",
-    }),
-    { keys: ["cmd+c"], snapshot: "snap-2" },
-  );
+  assert.throws(() => normalizePeekabooArguments("inspect_ui", { max_elements: 5001 }), /max_elements/u);
+  assert.throws(() => normalizePeekabooArguments("type", { text: "x".repeat(__test.MAX_TEXT_INPUT + 1) }), /20000/u);
+  assert.throws(() => normalizePeekabooArguments("sleep", { duration: 30001 }), /duration/u);
 });
 
-test("mass quit, force quit and broad menu or Dock actions are blocked", () => {
-  assert.throws(
-    () => normalizePeekabooArguments("app", { action: "quit", all: true }),
-    /topluca kapatma/u,
-  );
-  assert.throws(
-    () => normalizePeekabooArguments("app", { action: "quit", name: "Finder", force: true }),
-    /Force quit/u,
-  );
-  assert.throws(
-    () => normalizePeekabooArguments("menu", { action: "list-all" }),
-    /sistem menü-extra/u,
-  );
-  assert.throws(
-    () => normalizePeekabooArguments("dock", { action: "right-click", app: "Finder" }),
-    /Dock context-menu/u,
-  );
-});
-
-test("see cannot write arbitrary paths and traversal bounds are capped", () => {
-  assert.throws(
-    () => normalizePeekabooArguments("see", { path: "/tmp/capture.png" }),
-    /see\.path/u,
-  );
-  assert.throws(
-    () => normalizePeekabooArguments("inspect_ui", { max_elements: 5001 }),
-    /max_elements/u,
-  );
-
-  assert.deepEqual(
-    normalizePeekabooArguments("inspect_ui", {
-      app_target: "Finder",
-      max_depth: 20,
-      max_elements: 2000,
-    }),
-    { app_target: "Finder", max_depth: 20, max_elements: 2000 },
-  );
-});
-
-test("v3 perform_action and v4 action accept only AX accessibility actions", () => {
-  assert.deepEqual(
-    normalizePeekabooArguments("perform_action", {
-      on: "B7",
-      action: "AXPress",
-    }),
-    { on: "B7", action: "AXPress" },
-  );
-
-  assert.throws(
-    () => normalizePeekabooArguments("perform_action", {
-      on: "B7",
-      action: "press",
-    }),
-    /yalnız AX/u,
-  );
-
-  assert.deepEqual(
-    normalizePeekabooArguments("action", {
-      on: "B7",
-      action: "AXPress",
-    }),
-    { on: "B7", action: "AXPress" },
-  );
-  assert.throws(
-    () => normalizePeekabooArguments("action", { on: "B7", action: "press" }),
-    /yalnız AX/u,
-  );
-});
-
-test("clipboard get/save arguments pass through the bounded Peekaboo bridge", () => {
-  assert.deepEqual(
-    normalizePeekabooArguments("clipboard", { action: "get" }),
-    { action: "get" },
-  );
-  assert.deepEqual(
-    normalizePeekabooArguments("clipboard", { action: "save", slot: "handoff" }),
-    { action: "save", slot: "handoff" },
-  );
-});
-
-test("blocked Peekaboo tool names never reach the downstream server", () => {
-  for (const name of ["agent", "analyze", "browser", "dialog", "paste", "image", "capture", "swipe"]) {
-    assert.throws(
-      () => normalizePeekabooArguments(name, {}),
-      /allowlist/u,
-    );
+test("non-desktop Peekaboo AI/browser surfaces remain outside the gateway", () => {
+  for (const name of ["agent", "analyze", "browser", "image", "swipe", "hotkey", "perform_action", "list"]) {
+    assert.throws(() => normalizePeekabooArguments(name, {}), /allowlist/u);
   }
 });
 
-function makeCompatibleToolCatalog(major = 3) {
-  const names = major === 4
-    ? __test.PEEKABOO_V4_REQUIRED_TOOLS
-    : __test.PEEKABOO_V3_REQUIRED_TOOLS;
-  return names.map((name) => {
+function makeCompatibleToolCatalog() {
+  return __test.PEEKABOO_V4_REQUIRED_TOOLS.map((name) => {
     const shape = __test.REQUIRED_TOOL_SHAPES[name];
-    const properties = Object.fromEntries(
-      shape.properties.map((property) => [property, {}]),
-    );
-    if (shape.actionValues) {
-      properties.action = { enum: [...shape.actionValues] };
-    }
-    return {
-      name,
-      inputSchema: {
-        type: "object",
-        properties,
-      },
-    };
+    const properties = Object.fromEntries(shape.properties.map((property) => [property, {}]));
+    if (shape.actionValues) properties.action = { enum: [...shape.actionValues] };
+    return { name, inputSchema: { type: "object", properties } };
   });
 }
 
-test("Peekaboo compatibility gate catches old versions and schema drift", () => {
+test("Peekaboo compatibility gate requires the validated 4.5 foreground surface and catches schema drift", () => {
   const tools = makeCompatibleToolCatalog();
-  const current = inspectPeekabooCompatibility(tools, "Peekaboo 3.9.9");
+  const current = inspectPeekabooCompatibility(tools, "Peekaboo 4.5.0");
   assert.equal(current.ok, true);
+  assert.equal(current.contract, "v4.5");
   assert.deepEqual(current.errors, []);
+  assert.equal(__test.PEEKABOO_V4_REQUIRED_TOOLS.includes("drag"), true);
+  assert.equal(__test.PEEKABOO_V4_REQUIRED_TOOLS.includes("move"), true);
+  assert.equal(__test.PEEKABOO_V4_REQUIRED_TOOLS.includes("dialog"), true);
+  assert.equal(__test.PEEKABOO_V4_REQUIRED_TOOLS.includes("verify_state"), true);
 
-  const v4 = inspectPeekabooCompatibility(makeCompatibleToolCatalog(4), "Peekaboo 4.3.0");
-  assert.equal(v4.ok, true);
-  assert.equal(v4.contract, "v4");
-  assert.deepEqual(v4.errors, []);
-  assert.equal(__test.PEEKABOO_V4_REQUIRED_TOOLS.includes("drag"), false);
-  assert.equal(__test.PEEKABOO_V4_REQUIRED_TOOLS.includes("move"), false);
-  assert.equal(__test.PEEKABOO_V4_REQUIRED_TOOLS.includes("hotkey"), false);
-
-  const old = inspectPeekabooCompatibility(tools, "Peekaboo 3.9.8");
+  const old = inspectPeekabooCompatibility(tools, "Peekaboo 4.4.9");
   assert.equal(old.ok, false);
-  assert.match(old.errors.join("\n"), /3\.9\.9/u);
+  assert.match(old.errors.join("\n"), /4\.5\.0/u);
 
   const drifted = structuredClone(tools);
-  delete drifted.find((tool) => tool.name === "click").inputSchema.properties.on;
-  const drift = inspectPeekabooCompatibility(drifted, "Peekaboo 3.9.9");
+  delete drifted.find((tool) => tool.name === "click").inputSchema.properties.foreground;
+  const drift = inspectPeekabooCompatibility(drifted, "Peekaboo 4.5.0");
   assert.equal(drift.ok, false);
-  assert.match(drift.errors.join("\n"), /click.*'on'/u);
+  assert.match(drift.errors.join("\n"), /click.*'foreground'/u);
 
-  const wrongV4Surface = inspectPeekabooCompatibility(tools, "Peekaboo 4.0.0");
-  assert.equal(wrongV4Surface.ok, false);
-  assert.match(wrongV4Surface.errors.join("\n"), /press/u);
-  assert.match(wrongV4Surface.errors.join("\n"), /action/u);
-
-  const future = inspectPeekabooCompatibility(makeCompatibleToolCatalog(4), "Peekaboo 5.0.0");
+  const future = inspectPeekabooCompatibility(tools, "Peekaboo 5.0.0");
   assert.equal(future.ok, false);
   assert.match(future.errors.join("\n"), /major version 5/u);
 });
 
 test("Peekaboo permission parser and preflight distinguish granted permissions", () => {
-  assert.deepEqual(
-    parsePeekabooPermissions(
-      "Screen Recording: [ok] Granted\nAccessibility: [warn] Not Granted",
-    ),
-    { screenRecording: true, accessibility: false },
-  );
-  assert.deepEqual(
-    parsePeekabooPermissions(
-      "Screen Recording (Required): [ok] Granted\nAccessibility (Required): [ok] Granted\nEvent Synthesizing (Action-specific): [ok] Granted",
-    ),
-    { screenRecording: true, accessibility: true },
-  );
-
-  assert.doesNotThrow(() =>
-    __test.assertPermissionState("see", {
-      screenRecording: true,
-      accessibility: true,
-    }),
-  );
-  assert.throws(
-    () =>
-      __test.assertPermissionState("click", {
-        screenRecording: true,
-        accessibility: false,
-      }),
-    /Accessibility izni gerekli/u,
-  );
+  assert.deepEqual(parsePeekabooPermissions(
+    "Screen Recording: [ok] Granted\nAccessibility: [warn] Not Granted",
+  ), { screenRecording: true, accessibility: false });
+  assert.deepEqual(parsePeekabooPermissions(
+    "Screen Recording (Required): [ok] Granted\nAccessibility (Required): [ok] Granted\nEvent Synthesizing (Action-specific): [ok] Granted",
+  ), { screenRecording: true, accessibility: true });
+  assert.doesNotThrow(() => __test.assertPermissionState("capture", { screenRecording: true, accessibility: false }));
+  assert.throws(() => __test.assertPermissionState("click", { screenRecording: true, accessibility: false }), /Accessibility izni gerekli/u);
 });
 
 test("Control Center readiness trusts verified compatibility and permissions over optional status noise", () => {
   const readyStatus = {
-    active: true,
-    compatibility: { ok: true },
-    permissionState: { screenRecording: true, accessibility: true },
-    error: "server_status",
+    active: true, compatibility: { ok: true },
+    permissionState: { screenRecording: true, accessibility: true }, error: "server_status",
   };
   assert.equal(isPeekabooStatusReady(readyStatus), true);
   assert.equal(isPeekabooStatusReady({ ...readyStatus, permissionState: { screenRecording: true, accessibility: false } }), false);
   assert.equal(isPeekabooStatusReady({ ...readyStatus, compatibility: { ok: false } }), false);
   assert.equal(isPeekabooStatusReady({ ...readyStatus, active: false }), false);
-  assert.equal(isPeekabooStatusReady({
-    active: true,
-    compatibility: { ok: true },
-    permissions: "Screen Recording: [ok] Granted\nAccessibility: [ok] Granted",
-  }), true);
 });
 
 test("Control Center passive readiness never treats unknown permissions as an attention state", () => {
-  const passiveStatus = {
-    active: true,
-    compatibility: { ok: true },
-    permissionState: null,
-    permissions: null,
-  };
+  const passiveStatus = { active: true, compatibility: { ok: true }, permissionState: null, permissions: null };
   assert.equal(isPeekabooControlCenterReady(passiveStatus), true);
-  assert.equal(isPeekabooControlCenterReady({
-    ...passiveStatus,
-    permissionState: { screenRecording: true, accessibility: false },
-  }), false);
+  assert.equal(isPeekabooControlCenterReady({ ...passiveStatus, permissionState: { screenRecording: true, accessibility: false } }), false);
   assert.equal(isPeekabooControlCenterReady({ ...passiveStatus, compatibility: { ok: false } }), false);
   assert.equal(isPeekabooControlCenterReady({ ...passiveStatus, active: false }), false);
 });
 
-test("destructive desktop shortcuts and protected system processes are blocked", () => {
-  assert.throws(
-    () => normalizePeekabooArguments("hotkey", { keys: "cmd,delete", app: "Finder" }),
-    /Silme, Force Quit/u,
-  );
-  assert.throws(
-    () => normalizePeekabooArguments("hotkey", { keys: "ctrl,cmd,q", app: "Finder" }),
-    /oturum kilitleme/u,
-  );
-  assert.throws(
-    () => normalizePeekabooArguments("press", { keys: ["cmd+delete"], snapshot: "snap-safe" }),
-    /press chord/u,
-  );
-  assert.throws(
-    () => normalizePeekabooArguments("press", { key: "q", modifiers: ["ctrl", "cmd"], snapshot: "snap-safe" }),
-    /press chord/u,
-  );
-  assert.throws(
-    () => normalizePeekabooArguments("menu", { action: "click", app: "Finder", path: "Finder > Empty Bin" }),
-    /Silme, sistem oturumu/u,
-  );
-  assert.throws(
-    () => normalizePeekabooArguments("click", { query: "Shut Down" }),
-    /güç yönetimi/u,
-  );
-  assert.throws(
-    () => normalizePeekabooArguments("app", { action: "quit", name: "SystemUIServer" }),
-    /Korunan macOS uygulaması/u,
-  );
-  assert.throws(
-    () => normalizePeekabooArguments("window", { action: "close", app: "Dock" }),
-    /Korunan macOS uygulaması/u,
-  );
+test("ambiguous foreground outcomes remain observable instead of becoming hard tool errors", () => {
+  const ambiguous = {
+    isError: true,
+    content: [{ type: "text", text: "Click did not return a confirmed outcome. Follow the canonical escalation metadata before deciding whether to retry." }],
+  };
+  assert.equal(__test.isPeekabooAmbiguousOutcomeResult(ambiguous), true);
+  const normalized = __test.normalizePeekabooAmbiguousOutcomeResult(ambiguous);
+  assert.equal(normalized.isError, false);
+  assert.match(normalized.content[0].text, /^\[ambiguous\]/u);
+  assert.match(normalized.content[0].text, /observe the exact target/u);
+  assert.equal(__test.isPeekabooAmbiguousOutcomeResult({
+    isError: true,
+    content: [{ type: "text", text: "Press sequence stopped after 0 completed press(es)." }],
+  }), false);
 });
 
-test("transport errors and oversized downstream results are guarded", () => {
+test("transport errors, oversized inputs and oversized downstream results are guarded", () => {
   assert.equal(__test.isPeekabooTransportError(new Error("Connection closed")), true);
   assert.equal(__test.isPeekabooTransportError(new Error("button not found")), false);
-
   assert.throws(
-    () =>
-      __test.guardPeekabooResult({
-        content: [{ type: "text", text: "x".repeat(__test.MAX_RESULT_BYTES + 1) }],
-      }),
+    () => normalizePeekabooArguments("click", { query: "x".repeat(__test.MAX_ARGUMENT_BYTES + 1) }),
+    /100 KB/u,
+  );
+  assert.throws(
+    () => __test.guardPeekabooResult({ content: [{ type: "text", text: "x".repeat(__test.MAX_RESULT_BYTES + 1) }] }),
     /2 MB/u,
   );
 });

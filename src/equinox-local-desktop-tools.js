@@ -73,6 +73,7 @@ export function registerDesktopGatewayTools({
   textResult,
   errorResult,
   assertMutationAllowed = () => {},
+  turnBudgetController = null,
 } = {}) {
   const desktopTextResult = (text) => ({
     ...textResult(text),
@@ -132,46 +133,48 @@ export function registerDesktopGatewayTools({
         openWorldHint: false,
       },
     },
-    async ({ operation, arguments: operationArguments }) => {
+    async (input) => {
+      const prepared = turnBudgetController?.prepareInvocation
+        ? await turnBudgetController.prepareInvocation("desktop_call", input)
+        : { input, firstNotice: false, waitClamped: false };
+      const { operation, arguments: operationArguments } = prepared.input;
+      let result;
       try {
         if (operation === "status") {
           if (Object.keys(operationArguments ?? {}).length > 0) throw new Error("desktop status arguments kabul etmez.");
-          return desktopTextResult(formatDesktopStatus(await peekabooBridge.status()));
-        }
-
-        if (!agentAccess.desktop) {
+          result = desktopTextResult(formatDesktopStatus(await peekabooBridge.status()));
+        } else if (!agentAccess.desktop) {
           throw new Error("Desktop automation access is disabled in Control Center.");
-        }
-
-        if (operation === "refresh") {
+        } else if (operation === "refresh") {
           if (Object.keys(operationArguments ?? {}).length > 0) throw new Error("desktop refresh arguments kabul etmez.");
           assertMutationAllowed("desktop.refresh");
           const tools = await peekabooBridge.listTools(true);
-          return desktopTextResult(`Peekaboo tool catalog refreshed: ${tools.length} safe tools.`);
-        }
-
-        if (operation === "restart") {
+          result = desktopTextResult(`Peekaboo tool catalog refreshed: ${tools.length} safe tools.`);
+        } else if (operation === "restart") {
           if (Object.keys(operationArguments ?? {}).length > 0) throw new Error("desktop restart arguments kabul etmez.");
           assertMutationAllowed("desktop.restart");
-          return await withMutationLocks(["desktop"], async () => {
+          result = await withMutationLocks(["desktop"], async () => {
             await peekabooBridge.restart();
             const tools = await peekabooBridge.listTools(true);
             return desktopTextResult(`Peekaboo MCP bridge restarted: ${tools.length} safe tools available.`);
           });
+        } else {
+          assertMutationAllowed(`desktop.${operation}`);
+          result = await withMutationLocks(["desktop"], async () => {
+            const toolResult = await peekabooBridge.callTool(operation, operationArguments);
+            const normalized = normalizeChromeToolResult(toolResult);
+            return {
+              ...normalized,
+              structuredContent: { text: extractTextContent(normalized) },
+            };
+          });
         }
-
-        assertMutationAllowed(`desktop.${operation}`);
-        return await withMutationLocks(["desktop"], async () => {
-          const result = await peekabooBridge.callTool(operation, operationArguments);
-          const normalized = normalizeChromeToolResult(result);
-          return {
-            ...normalized,
-            structuredContent: { text: extractTextContent(normalized) },
-          };
-        });
       } catch (error) {
-        return errorResult(error);
+        result = errorResult(error);
       }
+      return turnBudgetController?.decorateResult
+        ? turnBudgetController.decorateResult(result, prepared)
+        : result;
     },
     { mcpExposed: true, capability: false, pauseGuard: false },
   );

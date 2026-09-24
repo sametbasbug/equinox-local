@@ -4,13 +4,15 @@ Thanks for taking an interest in Equinox Local. The project welcomes focused bug
 
 ## Before you start
 
-Equinox Local currently targets macOS. Use Node.js 26.8.2 or newer.
+Equinox Local currently targets macOS. Use Node.js 26.10.0 or newer.
 
 ```bash
 npm ci
 npm run check
-npm test
+npm run test:fast
 ```
+
+Use the fast profile for normal local iteration. Run the full `npm test` suite before release/publication and when changing release/install/update/native-lifecycle behavior.
 
 Keep changes narrow enough to review. If a proposal changes a major product boundary, opening an issue first is usually more useful than arriving with a large implementation.
 
@@ -31,7 +33,7 @@ A pull request should:
 
 1. explain the user-visible or security-relevant behavior being changed;
 2. include regression coverage when behavior changes;
-3. keep `npm run check` and `npm test` green;
+3. keep `npm run check` and `npm run test:fast` green during iteration, and the full `npm test` suite green before release/publication;
 4. avoid unrelated formatting or refactors; and
 5. update documentation when a public contract changes.
 
@@ -60,7 +62,7 @@ Tests intentionally live under `tests/` rather than beside every source file. Ad
 - `tests/release/`
 - `tests/fixtures/`
 
-The root test runner discovers `*.test.js` recursively.
+The root test runner discovers `*.test.js` recursively. `npm run test:fast` selects the unit/browser profile; `npm test` includes release coverage as well.
 
 ## Security reports
 

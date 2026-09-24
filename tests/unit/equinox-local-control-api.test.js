@@ -37,6 +37,8 @@ async function withApi(fn, overrides = {}) {
     configManager,
     port: 0,
     getStatus: overrides.getStatus ?? (async () => ({ runtime: "healthy", secret: undefined })),
+    getTurnBudget: overrides.getTurnBudget ?? null,
+    updateTurnBudget: overrides.updateTurnBudget ?? null,
     getDoctorStatus: overrides.getDoctorStatus ?? (async () => ({ state: "HEALTHY", summary: { attention: 0 } })),
     getDoctorRepairs: overrides.getDoctorRepairs ?? null,
     applyDoctorRepair: overrides.applyDoctorRepair ?? null,
@@ -65,9 +67,22 @@ async function withApi(fn, overrides = {}) {
     checkGitHub: overrides.checkGitHub ?? null,
     getPeekabooStatus: overrides.getPeekabooStatus ?? null,
     getTelegramStatus: overrides.getTelegramStatus ?? null,
+    getWebImportSettings: overrides.getWebImportSettings ?? null,
+    updateWebImportDownloads: overrides.updateWebImportDownloads ?? null,
+    updateTelegramRemoteControl: overrides.updateTelegramRemoteControl ?? null,
+    updateTelegramDownloads: overrides.updateTelegramDownloads ?? null,
     configureTelegram: overrides.configureTelegram ?? null,
+    startTelegramPairing: overrides.startTelegramPairing ?? null,
+    pollTelegramPairing: overrides.pollTelegramPairing ?? null,
+    confirmTelegramPairing: overrides.confirmTelegramPairing ?? null,
+    cancelTelegramPairing: overrides.cancelTelegramPairing ?? null,
     testTelegram: overrides.testTelegram ?? null,
     disconnectTelegram: overrides.disconnectTelegram ?? null,
+    getHttpProfiles: overrides.getHttpProfiles ?? null,
+    setHttpProfileManagement: overrides.setHttpProfileManagement ?? null,
+    upsertHttpProfile: overrides.upsertHttpProfile ?? null,
+    testHttpProfile: overrides.testHttpProfile ?? null,
+    deleteHttpProfile: overrides.deleteHttpProfile ?? null,
     recordInternalError: overrides.recordInternalError ?? null,
     requestTimeoutMs: overrides.requestTimeoutMs,
   });
@@ -106,6 +121,29 @@ test("control API binds loopback and exposes bounded read-only health/config/sta
     assert.equal(doctor.body.doctor.state, "HEALTHY");
     assert.equal(doctor.body.doctor.summary.attention, 0);
     assert.equal(api.snapshot().requestCount, 4);
+  });
+});
+
+test("background auto-refresh GETs do not inflate the Control Center request counter", async () => {
+  await withApi(async ({ api, port }) => {
+    const base = `http://127.0.0.1:${port}`;
+    assert.equal(api.snapshot().requestCount, 0);
+
+    const background = await jsonFetch(`${base}/api/v1/status`, {
+      headers: { "x-equinox-background-refresh": "1" },
+    });
+    assert.equal(background.response.status, 200);
+    assert.equal(api.snapshot().requestCount, 0);
+
+    const normal = await jsonFetch(`${base}/api/v1/status`);
+    assert.equal(normal.response.status, 200);
+    assert.equal(api.snapshot().requestCount, 1);
+
+    const nonBackgroundPath = await jsonFetch(`${base}/api/v1/session`, {
+      headers: { "x-equinox-background-refresh": "1" },
+    });
+    assert.equal(nonBackgroundPath.response.status, 200);
+    assert.equal(api.snapshot().requestCount, 2);
   });
 });
 
@@ -241,6 +279,22 @@ test("control API serves the visual Control Center shell and fixed same-origin a
       true,
     );
     assert.match(shellText, /Install Equinox Browser/u);
+    assert.match(shellText, /id="section-setup"/u);
+    assert.match(shellText, /id="control-center-nav"/u);
+    assert.match(shellText, /id="setup-nav"/u);
+    assert.match(shellText, /id="setup-uninstall-slot"/u);
+    assert.match(shellText, /id="permissions-uninstall-slot"/u);
+    assert.match(shellText, /Add Equinox Local to ChatGPT/u);
+    assert.match(shellText, /Verify ChatGPT → Mac/u);
+    assert.match(shellText, /id="setup-telegram-step"/u);
+    assert.match(shellText, /Recommended\. Telegram lets Equinox Local/u);
+    assert.match(shellText, /https:\/\/t\.me\/BotFather/u);
+    assert.match(shellText, /id="setup-telegram-token"/u);
+    assert.match(shellText, /id="setup-telegram-confirm"/u);
+    assert.match(shellText, /id="setup-telegram-skip"/u);
+    assert.match(shellText, /<span class="setup-step-index">6<\/span>[\s\S]*Verify ChatGPT → Mac/u);
+    assert.match(shellText, /Browser Control/u);
+    assert.equal(shellText.includes('id="onboarding-card"'), false);
     assert.match(shellText, /id="task-recovery-panel"/u);
     assert.match(shellText, /id="task-abandon-fresh-resume-button"/u);
     assert.match(shellText, /target="_blank" rel="noopener noreferrer"/u);
@@ -253,6 +307,8 @@ test("control API serves the visual Control Center shell and fixed same-origin a
     assert.match(cssText, /\.language-control/u);
     assert.match(cssText, /:root\[data-theme="dark"\]/u);
     assert.match(cssText, /\.theme-switch/u);
+    assert.match(cssText, /\.setup-section/u);
+    assert.match(cssText, /body\.setup-mode/u);
 
     const logo = await fetch(`${base}/assets/equinox-local.png`);
     assert.equal(logo.status, 200);
@@ -277,6 +333,41 @@ test("control API serves the visual Control Center shell and fixed same-origin a
     assert.match(scriptText, /\/api\/v1\/update\/check/u);
     assert.match(scriptText, /\/api\/v1\/update\/apply/u);
     assert.match(scriptText, /\/api\/v1\/onboarding/u);
+    assert.match(scriptText, /state\.setupMode/u);
+    assert.match(scriptText, /refreshLiveState/u);
+    assert.match(scriptText, /refreshMediumState/u);
+    assert.match(scriptText, /refreshSlowState/u);
+    assert.match(scriptText, /startTelegramPairingUi/u);
+    assert.match(scriptText, /refreshTelegramPairing/u);
+    assert.match(scriptText, /confirmTelegramPairingUi/u);
+    assert.match(scriptText, /changeTelegramDownloadFolder/u);
+    assert.match(scriptText, /createWebFileTransferCard/u);
+    assert.match(scriptText, /changeWebImportFolder/u);
+    assert.match(scriptText, /\/api\/v1\/files\/import-settings/u);
+    assert.match(scriptText, /resetTelegramDownloadFolder/u);
+    assert.match(scriptText, /\/api\/v1\/integrations\/telegram\/downloads/u);
+    assert.match(scriptText, /Incoming Telegram photos and documents are saved here/u);
+    assert.match(scriptText, /\/api\/v1\/integrations\/telegram\/pair\/start/u);
+    assert.match(scriptText, /\/api\/v1\/integrations\/telegram\/pair\/confirm/u);
+    assert.equal(scriptText.includes("Your Telegram ID"), false);
+    assert.match(scriptText, /x-equinox-background-refresh/u);
+    assert.match(scriptText, /status\.chatgptConnection/u);
+    assert.match(scriptText, /MCP runtime connected/u);
+    assert.match(scriptText, /previousStatus\.peekaboo/u);
+    assert.match(scriptText, /status\.status\?\.peekaboo/u);
+    assert.match(scriptText, /AUTO_REFRESH_LIVE_MS = 3_000/u);
+    assert.match(scriptText, /AUTO_REFRESH_MEDIUM_MS = 15_000/u);
+    assert.match(scriptText, /AUTO_REFRESH_SLOW_MS = 60_000/u);
+    assert.match(scriptText, /document\.hidden/u);
+    assert.match(scriptText, /window\.addEventListener\("focus", refreshVisibleControlCenter\)/u);
+    assert.match(scriptText, /visibilitychange/u);
+    assert.match(scriptText, /taskDraftDirty/u);
+    assert.match(scriptText, /if \(!state\.taskDraftDirty\)/u);
+    assert.equal(scriptText.includes("refreshOnboardingProgress"), false);
+    assert.equal(scriptText.includes("refreshTurnBudgetStatus"), false);
+    assert.match(scriptText, /setupComplete/u);
+    assert.match(scriptText, /browserControlEnabled/u);
+    assert.match(scriptText, /agentCommandReceived/u);
     assert.match(scriptText, /\/api\/v1\/onboarding\/tunnel/u);
     assert.match(scriptText, /\/api\/v1\/uninstall/u);
     assert.match(scriptText, /\/api\/v1\/folder-picker/u);
@@ -312,6 +403,13 @@ test("control API serves the visual Control Center shell and fixed same-origin a
     assert.match(scriptText, /Delete this task permanently/u);
     assert.match(scriptText, /task-delete-button/u);
     assert.match(scriptText, /Needs attention/u);
+    assert.match(scriptText, /\/api\/v1\/integrations\/http-profiles/u);
+    assert.match(scriptText, /\/api\/v1\/turn-budget/u);
+    assert.match(shellText, /id="turn-budget-badge"/u);
+    assert.match(shellText, /id="turn-budget-cutoff"/u);
+    assert.match(scriptText, /Authenticated HTTP profiles/u);
+    assert.match(scriptText, /write-only/u);
+    assert.match(cssText, /\.http-profile-card/u);
     assert.doesNotMatch(scriptText, /\/api\/v1\/integrations\/github(?:\/check)?/u);
     assert.doesNotMatch(scriptText, /GitHub CLI/u);
 
@@ -927,6 +1025,349 @@ test("bounded Control Center actions expose activity, Browser/GitHub controls an
     disconnectTelegram: async () => {
       calls.push(["telegram-disconnect"]);
       return { disconnected: true };
+    },
+  });
+});
+
+
+test("Telegram pairing routes are bounded, CSRF-protected and keep token/user ID write-only", async () => {
+  const calls = [];
+  await withApi(async ({ api, port, origin }) => {
+    const base = `http://127.0.0.1:${port}`;
+    const session = await jsonFetch(`${base}/api/v1/session`);
+    const headers = { "content-type": "application/json", origin, "x-equinox-csrf": session.body.csrfToken };
+
+    const start = await jsonFetch(`${base}/api/v1/integrations/telegram/pair/start`, {
+      method: "POST", headers, body: JSON.stringify({ botToken: "secret-token" }),
+    });
+    assert.equal(start.response.status, 200);
+    assert.deepEqual(start.body.pairing, { active: true, candidateFound: false, botUsername: "eqxbot", expiresAt: "2026-09-20T19:00:00.000Z", candidateLabel: null, userIdHint: null });
+    assert.equal(JSON.stringify(start.body).includes("secret-token"), false);
+
+    const invalidStart = await jsonFetch(`${base}/api/v1/integrations/telegram/pair/start`, {
+      method: "POST", headers, body: JSON.stringify({ botToken: "secret-token", telegramUserId: "123" }),
+    });
+    assert.equal(invalidStart.response.status, 400);
+
+    const poll = await jsonFetch(`${base}/api/v1/integrations/telegram/pair`, {
+      headers: { "x-equinox-background-refresh": "1" },
+    });
+    assert.equal(poll.response.status, 200);
+    assert.deepEqual(poll.body.pairing, { active: true, candidateFound: true, botUsername: "eqxbot", expiresAt: "2026-09-20T19:00:00.000Z", candidateLabel: "@samet", userIdHint: "…6789" });
+    assert.equal(JSON.stringify(poll.body).includes("123456789"), false);
+
+    const missingCsrf = await jsonFetch(`${base}/api/v1/integrations/telegram/pair/confirm`, {
+      method: "POST", headers: { "content-type": "application/json", origin }, body: "{}",
+    });
+    assert.equal(missingCsrf.response.status, 403);
+
+    const confirm = await jsonFetch(`${base}/api/v1/integrations/telegram/pair/confirm`, {
+      method: "POST", headers, body: "{}",
+    });
+    assert.equal(confirm.response.status, 200);
+    assert.deepEqual(confirm.body.telegram, { configured: true, ready: true, needsAttention: false, userIdHint: "…6789" });
+
+    const cancel = await jsonFetch(`${base}/api/v1/integrations/telegram/pair/cancel`, {
+      method: "POST", headers, body: "{}",
+    });
+    assert.equal(cancel.response.status, 200);
+    assert.deepEqual(cancel.body.result, { cancelled: true });
+
+    assert.deepEqual(calls, [
+      ["pair-start", { botToken: "secret-token" }],
+      ["pair-poll"],
+      ["pair-confirm"],
+      ["pair-cancel"],
+    ]);
+    assert.equal(api.snapshot().mutationCount, 3);
+  }, {
+    startTelegramPairing: async (body) => {
+      calls.push(["pair-start", body]);
+      return { active: true, candidateFound: false, botUsername: "eqxbot", expiresAt: "2026-09-20T19:00:00.000Z", candidateLabel: null, userIdHint: null };
+    },
+    pollTelegramPairing: async () => {
+      calls.push(["pair-poll"]);
+      return { active: true, candidateFound: true, botUsername: "eqxbot", expiresAt: "2026-09-20T19:00:00.000Z", candidateLabel: "@samet", userIdHint: "…6789" };
+    },
+    confirmTelegramPairing: async () => {
+      calls.push(["pair-confirm"]);
+      return { configured: true, ready: true, needsAttention: false, userIdHint: "…6789" };
+    },
+    cancelTelegramPairing: async () => {
+      calls.push(["pair-cancel"]);
+      return { cancelled: true };
+    },
+  });
+});
+
+test("Web file transfer settings expose default and require CSRF for path changes", async () => {
+  const calls = [];
+  await withApi(async ({ api, port, origin }) => {
+    const base = `http://127.0.0.1:${port}`;
+    const status = await jsonFetch(`${base}/api/v1/files/import-settings`);
+    assert.equal(status.response.status, 200);
+    assert.equal(status.body.webFileTransfer.path, "/Users/example/Downloads/Equinox Local/Web");
+    const session = await jsonFetch(`${base}/api/v1/session`);
+    const headers = { "content-type": "application/json", origin, "x-equinox-csrf": session.body.csrfToken };
+    const missingCsrf = await jsonFetch(`${base}/api/v1/files/import-settings`, { method: "PUT", headers: { "content-type": "application/json", origin }, body: JSON.stringify({ path: "/tmp/Web" }) });
+    assert.equal(missingCsrf.response.status, 403);
+    const custom = await jsonFetch(`${base}/api/v1/files/import-settings`, { method: "PUT", headers, body: JSON.stringify({ path: "/Users/example/Web" }) });
+    assert.equal(custom.response.status, 200);
+    const reset = await jsonFetch(`${base}/api/v1/files/import-settings`, { method: "PUT", headers, body: JSON.stringify({ path: null }) });
+    assert.equal(reset.response.status, 200);
+    assert.deepEqual(calls, [{ path: "/Users/example/Web" }, { path: null }]);
+    assert.equal(api.snapshot().mutationCount, 2);
+  }, {
+    getWebImportSettings: async () => ({ path: "/Users/example/Downloads/Equinox Local/Web", isDefault: true, autoCleanup: false }),
+    updateWebImportDownloads: async (body) => { calls.push(body); return { path: body.path || "/Users/example/Downloads/Equinox Local/Web", isDefault: body.path === null, autoCleanup: false }; },
+  });
+});
+
+test("Telegram remote-control toggle is CSRF-protected and accepts only a boolean", async () => {
+  const calls = [];
+  await withApi(async ({ api, port, origin }) => {
+    const base = `http://127.0.0.1:${port}`;
+    const session = await jsonFetch(`${base}/api/v1/session`);
+    const headers = { "content-type": "application/json", origin, "x-equinox-csrf": session.body.csrfToken };
+    const missingCsrf = await jsonFetch(`${base}/api/v1/integrations/telegram/remote-control`, { method: "PUT", headers: { "content-type": "application/json", origin }, body: JSON.stringify({ enabled: false }) });
+    assert.equal(missingCsrf.response.status, 403);
+    const invalid = await jsonFetch(`${base}/api/v1/integrations/telegram/remote-control`, { method: "PUT", headers, body: JSON.stringify({ enabled: "no" }) });
+    assert.equal(invalid.response.status, 400);
+    const off = await jsonFetch(`${base}/api/v1/integrations/telegram/remote-control`, { method: "PUT", headers, body: JSON.stringify({ enabled: false }) });
+    assert.equal(off.response.status, 200);
+    assert.deepEqual(off.body.remoteControl, { enabled: false });
+    assert.deepEqual(calls, [{ enabled: false }]);
+    assert.equal(api.snapshot().mutationCount, 1);
+  }, {
+    updateTelegramRemoteControl: async (body) => { calls.push(body); return { enabled: body.enabled }; },
+  });
+});
+
+test("Telegram download location update is CSRF-protected and accepts only path or null reset", async () => {
+  const calls = [];
+  await withApi(async ({ api, port, origin }) => {
+    const base = `http://127.0.0.1:${port}`;
+    const session = await jsonFetch(`${base}/api/v1/session`);
+    const headers = { "content-type": "application/json", origin, "x-equinox-csrf": session.body.csrfToken };
+
+    const missingCsrf = await jsonFetch(`${base}/api/v1/integrations/telegram/downloads`, {
+      method: "PUT", headers: { "content-type": "application/json", origin }, body: JSON.stringify({ path: "/Users/example/Downloads" }),
+    });
+    assert.equal(missingCsrf.response.status, 403);
+
+    const invalid = await jsonFetch(`${base}/api/v1/integrations/telegram/downloads`, {
+      method: "PUT", headers, body: JSON.stringify({ path: "/Users/example/Downloads", extra: true }),
+    });
+    assert.equal(invalid.response.status, 400);
+
+    const custom = await jsonFetch(`${base}/api/v1/integrations/telegram/downloads`, {
+      method: "PUT", headers, body: JSON.stringify({ path: "/Users/example/Downloads/Telegram" }),
+    });
+    assert.equal(custom.response.status, 200);
+    assert.deepEqual(custom.body.downloads, { path: "/Users/example/Downloads/Telegram", isDefault: false, autoCleanup: false, knownRoots: ["/Users/example/Downloads/Telegram"] });
+
+    const reset = await jsonFetch(`${base}/api/v1/integrations/telegram/downloads`, {
+      method: "PUT", headers, body: JSON.stringify({ path: null }),
+    });
+    assert.equal(reset.response.status, 200);
+    assert.equal(reset.body.downloads.isDefault, true);
+    assert.deepEqual(calls, [
+      ["downloads", { path: "/Users/example/Downloads/Telegram" }],
+      ["downloads", { path: null }],
+    ]);
+    assert.equal(api.snapshot().mutationCount, 2);
+  }, {
+    updateTelegramDownloads: async (body) => {
+      calls.push(["downloads", body]);
+      return body.path === null
+        ? { path: "/Users/example/Downloads/Equinox Local/Telegram", isDefault: true, autoCleanup: false, knownRoots: ["/Users/example/Downloads/Telegram", "/Users/example/Downloads/Equinox Local/Telegram"] }
+        : { path: body.path, isDefault: false, autoCleanup: false, knownRoots: [body.path] };
+    },
+  });
+});
+
+test("authenticated HTTP Control Center routes are fixed, CSRF-protected and keep credentials write-only", async () => {
+  const calls = [];
+  const safeProfile = {
+    id: "moltbook",
+    label: "Moltbook",
+    origin: "https://example.com",
+    basePath: "/api/v1",
+    authType: "bearer",
+    authHeader: "authorization",
+    allowedMethods: ["GET", "POST"],
+    allowedPathPrefixes: ["/posts"],
+    allowedAgentHeaders: ["x-client-version"],
+    timeoutMs: 10_000,
+    ready: true,
+    needsCredential: false,
+  };
+
+  await withApi(async ({ api, port, origin }) => {
+    const base = `http://127.0.0.1:${port}`;
+    const session = await jsonFetch(`${base}/api/v1/session`);
+    const mutationHeaders = {
+      "content-type": "application/json",
+      origin,
+      "x-equinox-csrf": session.body.csrfToken,
+    };
+
+    const list = await jsonFetch(`${base}/api/v1/integrations/http-profiles`);
+    assert.equal(list.response.status, 200);
+    assert.equal(list.body.httpProfiles.agentProfileManagementEnabled, true);
+    assert.equal(list.body.httpProfiles.profiles[0].id, "moltbook");
+    assert.equal(JSON.stringify(list.body).includes("super-http-secret"), false);
+
+    const missingGuard = await jsonFetch(`${base}/api/v1/integrations/http-profiles/management`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ enabled: false }),
+    });
+    assert.equal(missingGuard.response.status, 403);
+
+    const management = await jsonFetch(`${base}/api/v1/integrations/http-profiles/management`, {
+      method: "PUT",
+      headers: mutationHeaders,
+      body: JSON.stringify({ enabled: false }),
+    });
+    assert.equal(management.response.status, 200);
+    assert.equal(management.body.httpProfiles.agentProfileManagementEnabled, false);
+
+    const upsert = await jsonFetch(`${base}/api/v1/integrations/http-profiles/profile`, {
+      method: "PUT",
+      headers: mutationHeaders,
+      body: JSON.stringify({
+        profile: {
+          id: "moltbook",
+          label: "Moltbook",
+          origin: "https://example.com",
+          basePath: "/api/v1",
+          auth: { type: "bearer" },
+          allowedMethods: ["GET", "POST"],
+          allowedPathPrefixes: ["/posts"],
+          allowedAgentHeaders: ["x-client-version"],
+          timeoutMs: 10_000,
+        },
+        credential: "super-http-secret",
+      }),
+    });
+    assert.equal(upsert.response.status, 200);
+    assert.equal(upsert.body.profile.id, "moltbook");
+    assert.equal(JSON.stringify(upsert.body).includes("super-http-secret"), false);
+    assert.equal(Object.hasOwn(upsert.body.profile, "credential"), false);
+
+    const arbitraryUrl = await jsonFetch(`${base}/api/v1/integrations/http-profiles/test`, {
+      method: "POST",
+      headers: mutationHeaders,
+      body: JSON.stringify({
+        profileId: "moltbook",
+        method: "GET",
+        path: "/posts",
+        url: "https://evil.example/",
+      }),
+    });
+    assert.equal(arbitraryUrl.response.status, 400);
+
+    const tested = await jsonFetch(`${base}/api/v1/integrations/http-profiles/test`, {
+      method: "POST",
+      headers: mutationHeaders,
+      body: JSON.stringify({
+        profileId: "moltbook",
+        method: "GET",
+        path: "/posts",
+        query: { limit: 1 },
+        headers: { "x-client-version": "1" },
+        timeoutMs: 5000,
+      }),
+    });
+    assert.equal(tested.response.status, 200);
+    assert.equal(tested.body.result.status, 200);
+
+    const deleted = await jsonFetch(`${base}/api/v1/integrations/http-profiles/delete`, {
+      method: "POST",
+      headers: mutationHeaders,
+      body: JSON.stringify({ profileId: "moltbook" }),
+    });
+    assert.equal(deleted.response.status, 200);
+    assert.equal(deleted.body.result.deleted, true);
+
+    assert.equal(api.snapshot().mutationCount, 4);
+    assert.deepEqual(calls.map(([name]) => name), [
+      "http-list",
+      "http-management",
+      "http-upsert",
+      "http-test",
+      "http-delete",
+    ]);
+    assert.equal(calls[2][1].credential, "super-http-secret");
+    assert.equal(calls[3][1].profileId, "moltbook");
+    assert.equal(Object.hasOwn(calls[3][1], "url"), false);
+  }, {
+    getHttpProfiles: async () => {
+      calls.push(["http-list"]);
+      return { agentProfileManagementEnabled: true, profiles: [safeProfile] };
+    },
+    setHttpProfileManagement: async ({ enabled }) => {
+      calls.push(["http-management", { enabled }]);
+      return { agentProfileManagementEnabled: enabled, profiles: [safeProfile] };
+    },
+    upsertHttpProfile: async (request) => {
+      calls.push(["http-upsert", request]);
+      return safeProfile;
+    },
+    testHttpProfile: async (request) => {
+      calls.push(["http-test", request]);
+      return { ok: true, status: 200, headers: {}, body: { ok: true }, truncated: false, durationMs: 4 };
+    },
+    deleteHttpProfile: async (request) => {
+      calls.push(["http-delete", request]);
+      return { deleted: true, profileId: request.profileId };
+    },
+  });
+});
+
+test("Turn Budget status is readable and settings update is immediate and CSRF-guarded", async () => {
+  let current = { enabled: true, cutoffMinutes: 22, active: null };
+  const updates = [];
+  await withApi(async ({ origin }) => {
+    const status = await jsonFetch(`${origin}/api/v1/turn-budget`);
+    assert.equal(status.response.status, 200);
+    assert.deepEqual(status.body.turnBudget, current);
+
+    const missingGuard = await jsonFetch(`${origin}/api/v1/turn-budget`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ enabled: true, cutoffMinutes: 19 }),
+    });
+    assert.equal(missingGuard.response.status, 403);
+
+    const session = await jsonFetch(`${origin}/api/v1/session`);
+    const headers = {
+      "content-type": "application/json",
+      origin,
+      "x-equinox-csrf": session.body.csrfToken,
+    };
+    const invalid = await jsonFetch(`${origin}/api/v1/turn-budget`, {
+      method: "PUT",
+      headers,
+      body: JSON.stringify({ enabled: true, cutoffMinutes: 4 }),
+    });
+    assert.equal(invalid.response.status, 400);
+
+    const updated = await jsonFetch(`${origin}/api/v1/turn-budget`, {
+      method: "PUT",
+      headers,
+      body: JSON.stringify({ enabled: false, cutoffMinutes: 19 }),
+    });
+    assert.equal(updated.response.status, 200);
+    assert.deepEqual(updated.body.turnBudget, { enabled: false, cutoffMinutes: 19, active: null });
+    assert.deepEqual(updates, [{ enabled: false, cutoffMinutes: 19 }]);
+  }, {
+    getTurnBudget: async () => current,
+    updateTurnBudget: async (next) => {
+      updates.push(next);
+      current = { ...next, active: null };
+      return current;
     },
   });
 });

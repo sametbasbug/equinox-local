@@ -11,7 +11,7 @@ function event() {
   return { addListener(fn) { listeners.push(fn); }, emit(...args) { for (const fn of listeners) fn(...args); } };
 }
 
-async function harness({ freshCreateMode = "normal", freshSubmitReadyAfter = 0 } = {}) {
+async function harness({ freshCreateMode = "normal", freshSubmitReadyAfter = 0, chatComposerChangedProbes = 0 } = {}) {
   const runtimeStartup = event();
   const runtimeInstalled = event();
   const runtimeMessage = event();
@@ -43,6 +43,7 @@ async function harness({ freshCreateMode = "normal", freshSubmitReadyAfter = 0 }
   ]);
   const keyEvents = [];
   const filledPrompts = [];
+  const uploadedFiles = [];
   const pointerEvents = [];
   const broughtToFront = [];
   const composerValues = new Map();
@@ -50,6 +51,9 @@ async function harness({ freshCreateMode = "normal", freshSubmitReadyAfter = 0 }
   let nextTabId = 100;
   let nativePort = null;
   let freshSubmitProbeCount = 0;
+  let chatSubmitProbeCount = 0;
+  let debuggerAttachCount = 0;
+  let debuggerDetachCount = 0;
 
   const chrome = {
     runtime: {
@@ -58,7 +62,7 @@ async function harness({ freshCreateMode = "normal", freshSubmitReadyAfter = 0 }
       onStartup: runtimeStartup,
       onInstalled: runtimeInstalled,
       onMessage: runtimeMessage,
-      getManifest: () => ({ version: "0.6.0" }),
+      getManifest: () => ({ version: "0.7.0" }),
       connectNative() {
         nativePort = { onMessage: event(), onDisconnect: event(), postMessage() {} };
         return nativePort;
@@ -78,8 +82,8 @@ async function harness({ freshCreateMode = "normal", freshSubmitReadyAfter = 0 }
     debugger: {
       onEvent: debuggerEvent,
       onDetach: debuggerDetach,
-      async attach() {},
-      async detach() {},
+      async attach() { debuggerAttachCount += 1; },
+      async detach() { debuggerDetachCount += 1; },
       async sendCommand(debuggee, method, params = {}) {
         if (method === "Page.enable" || method === "Target.setAutoAttach") return {};
         if (method === "Page.bringToFront") {
@@ -90,11 +94,13 @@ async function harness({ freshCreateMode = "normal", freshSubmitReadyAfter = 0 }
         if (method === "DOM.enable") return {};
         if (method === "DOM.getDocument") return { root: { nodeId: 1 } };
         if (method === "DOM.querySelector") {
-          if (params.selector === 'button[data-testid="send-button"][type="submit"]') return { nodeId: 2 };
+          if (String(params.selector || "").includes('send-button') || String(params.selector || "").includes('composer-submit-button')) return { nodeId: 2 };
           if (params.selector === '#prompt-textarea[contenteditable="true"][role="textbox"]') return { nodeId: 3 };
+          if (params.selector === '#upload-files') return { nodeId: 4 };
           return { nodeId: 0 };
         }
-        if (method === "DOM.describeNode") return { node: { backendNodeId: params.nodeId === 3 ? 2003 : 2002 } };
+        if (method === "DOM.describeNode") return { node: { backendNodeId: params.nodeId === 3 ? 2003 : params.nodeId === 4 ? 2004 : 2002 } };
+        if (method === "DOM.setFileInputFiles") { uploadedFiles.push({ tabId: debuggee.tabId, files: [...(params.files || [])], nodeId: params.nodeId ?? null, backendNodeId: params.backendNodeId ?? null }); return {}; }
         if (method === "DOM.scrollIntoViewIfNeeded") return {};
         if (method === "DOM.getBoxModel") return { model: { border: [1430, 311, 1466, 311, 1466, 347, 1430, 347] } };
         if (method === "DOM.resolveNode") return { object: { objectId: `node-${debuggee.tabId}-${params.backendNodeId}` } };
@@ -131,6 +137,24 @@ async function harness({ freshCreateMode = "normal", freshSubmitReadyAfter = 0 }
           if (expression.includes("ChatGPT composer is unavailable")) {
             return { result: { value: { focused: true } } };
           }
+          if (expression.includes("Chat Bridge attachment submit readiness.")) {
+            return { result: { value: { ready: true } } };
+          }
+          if (expression.includes("Chat Bridge trusted submit readiness after real Input.insertText.")) {
+            chatSubmitProbeCount += 1;
+            const value = composerValues.get(debuggee.tabId) ?? "";
+            if (!value) return { result: { value: { ready: false, reason: "composer_missing", lengths: null } } };
+            const canonical = value.replace(/[\u200B\u2060\uFEFF]/gu, "").replace(/\s+/gu, " ").trim();
+            if (chatSubmitProbeCount <= chatComposerChangedProbes) {
+              return { result: { value: { ready: false, reason: "composer_changed", lengths: { expected: canonical.length, inner: canonical.length + 1, text: canonical.length + 1 } } } };
+            }
+            return { result: { value: { ready: true, reason: null, lengths: { expected: canonical.length, inner: canonical.length, text: canonical.length } } } };
+          }
+          if (expression.includes("Chat Bridge final response: read only the exact completed assistant turn requested by Local.")) {
+            const state = states.get(debuggee.tabId) || {};
+            if (!state.assistantText) return { result: { value: { found: false } } };
+            return { result: { value: { found: true, empty: false, text: state.assistantText, truncated: Boolean(state.responseTruncated) } } };
+          }
           if (expression.includes("data-message-author-role")) {
             return { result: { value: { ...(states.get(debuggee.tabId) || {}) } } };
           }
@@ -159,6 +183,9 @@ async function harness({ freshCreateMode = "normal", freshSubmitReadyAfter = 0 }
                 ? "https://chatgpt.com/c/dddddddd-eeee-ffff-aaaa-bbbbbbbbbbbb"
                 : `https://chatgpt.com/g/${token}/c/dddddddd-eeee-ffff-aaaa-bbbbbbbbbbbb`;
               states.set(debuggee.tabId, { ...current, generationActive: true, userEpoch: "fresh-project-user", assistantTurnKey: null, composerReady: true, composerEmpty: true });
+            } else if (current.userEpoch && composerValues.get(debuggee.tabId)) {
+              states.set(debuggee.tabId, { ...current, generationActive: true, userEpoch: `${current.userEpoch}-continued`, composerReady: true, composerEmpty: true });
+              composerValues.set(debuggee.tabId, "");
             }
           }
           return {};
@@ -196,6 +223,12 @@ async function harness({ freshCreateMode = "normal", freshSubmitReadyAfter = 0 }
         if (!tab) throw new Error("No tab");
         return { ...tab };
       },
+      async sendMessage(id, message) {
+        const tab = tabs.get(id);
+        if (!tab || !String(tab.url || "").startsWith("https://chatgpt.com/")) throw new Error("No receiver");
+        if (message?.type !== "equinox.chatgpt.continuationState.get") throw new Error("Unexpected content-script message");
+        return { state: { ...(states.get(id) || {}) } };
+      },
       async create({ url, active = false } = {}) {
         const id = nextTabId++;
         let finalUrl = String(url || "chrome://newtab/");
@@ -216,9 +249,9 @@ async function harness({ freshCreateMode = "normal", freshSubmitReadyAfter = 0 }
 
   const source = await fs.readFile(SERVICE_WORKER_PATH, "utf8");
   const context = { chrome, crypto: { randomUUID: () => "11111111-2222-4333-8444-555555555555" }, console, URL, InputEvent: class {}, Event: class {}, setTimeout, clearTimeout, queueMicrotask };
-  vm.runInNewContext(`${source}\n;globalThis.__auto = { resolveAutoContinueTarget, setAutoContinueTarget, autoContinueTargetStatus, chatGptContinuationState, chatGptResumeRoute, chatGptFreshHomeRoute, createFreshChatResume, deliverAutoContinuation, browserCapabilityVersions };`, context, { filename: SERVICE_WORKER_PATH });
+  vm.runInNewContext(`${source}\n;globalThis.__auto = { resolveAutoContinueTarget, setAutoContinueTarget, autoContinueTargetStatus, chatGptContinuationState, chatGptResumeRoute, chatGptFreshHomeRoute, createFreshChatResume, deliverAutoContinuation, inspectChatBridgeState, deliverChatBridgeMessage, readChatBridgeFinalResponse, browserCapabilityVersions, attachTab, detachTab };`, context, { filename: SERVICE_WORKER_PATH });
   await Promise.resolve();
-  return { api: context.__auto, storageData, tabs, states, keyEvents, pointerEvents, broughtToFront, filledPrompts, createdTabs, freshSubmitProbeCount: () => freshSubmitProbeCount };
+  return { api: context.__auto, storageData, tabs, states, keyEvents, pointerEvents, broughtToFront, filledPrompts, uploadedFiles, createdTabs, freshSubmitProbeCount: () => freshSubmitProbeCount, chatSubmitProbeCount: () => chatSubmitProbeCount, debuggerAttachCount: () => debuggerAttachCount, debuggerDetachCount: () => debuggerDetachCount };
 }
 
 test("Fresh Chat Resume route preserves stable project identity and root scope", async () => {
@@ -275,6 +308,10 @@ test("Fresh Chat Resume waits for delayed send readiness, creates one same-proje
   assert.ok(h.freshSubmitProbeCount() >= 8, `expected stable readiness probes, got ${h.freshSubmitProbeCount()}`);
   assert.equal(h.keyEvents.filter((event) => event.key === "Enter").length, 0);
   assert.equal(h.api.browserCapabilityVersions().freshChatResume, 1);
+  assert.ok(h.debuggerAttachCount() > 0, "Fresh Chat Resume delivery should use debugger-backed mutation");
+  assert.equal(h.debuggerDetachCount(), 0);
+  await new Promise((resolve) => setTimeout(resolve, 350));
+  assert.ok(h.debuggerDetachCount() > 0, "Fresh Chat Resume should release its debugger lease shortly after submit");
 
   const replay = await h.api.createFreshChatResume(input);
   assert.equal(replay.confirmed, true);
@@ -343,6 +380,7 @@ test("Auto Continue default target resolves the one generating ChatGPT conversat
   assert.equal(result.target.tabId, 41);
   assert.equal(result.target.conversationId, "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee");
   assert.equal(h.api.browserCapabilityVersions().autoContinue, 1);
+  assert.equal(h.debuggerAttachCount(), 0, "passive target resolution must not attach chrome.debugger");
 });
 
 test("pinned Auto Continue target is profile-local and fails closed after conversation drift", async () => {
@@ -354,6 +392,100 @@ test("pinned Auto Continue target is profile-local and fails closed after conver
   const drifted = await h.api.resolveAutoContinueTarget();
   assert.equal(drifted.status, "invalid");
   assert.equal(drifted.reason, "pinned_conversation_changed");
+});
+
+test("Chat Bridge v9 inspect reads turn identity without the passive content-script observer", async () => {
+  const h = await harness();
+  const state = await h.api.inspectChatBridgeState({ tabId: 42 });
+  assert.equal(state.chatBridgeVersion, 9);
+  assert.equal(state.tabId, 42);
+  assert.equal(state.conversationId, "11111111-2222-3333-4444-555555555555");
+  assert.equal(state.userEpoch, "user-b");
+  assert.equal(state.assistantTurnKey, "conversation-turn-4");
+  assert.equal(state.composerReady, true);
+  assert.equal(state.composerEmpty, true);
+  assert.ok(h.debuggerAttachCount() >= 1);
+});
+
+test("Chat Bridge delivery uses its own receipt namespace and blocks duplicate replay", async () => {
+  const h = await harness();
+  const input = {
+    deliveryId: "tgb-abcdef12",
+    tabId: 42,
+    conversationId: "11111111-2222-3333-4444-555555555555",
+    userEpoch: "user-b",
+    assistantTurnKey: "conversation-turn-4",
+    text: "hello from telegram",
+  };
+  const first = await h.api.deliverChatBridgeMessage(input);
+  assert.equal(first.chatBridgeVersion, 9);
+  assert.equal(first.confirmed, true);
+  assert.equal(first.duplicatePrevented, false);
+  assert.equal(h.api.browserCapabilityVersions().chatBridge, 9);
+  assert.equal(h.filledPrompts.filter((value) => value === "hello from telegram").length, 1);
+  assert.equal(h.storageData.chatBridgeDeliveryReceipts.length, 1);
+  assert.equal(h.storageData.autoContinueDeliveryReceipts, undefined);
+
+  const replay = await h.api.deliverChatBridgeMessage(input);
+  assert.equal(replay.confirmed, false);
+  assert.equal(replay.duplicatePrevented, true);
+  assert.equal(h.filledPrompts.filter((value) => value === "hello from telegram").length, 1);
+  assert.equal(h.storageData.chatBridgeDeliveryReceipts.length, 1);
+});
+
+test("Chat Bridge v9 uses real Input.insertText before trusted local-reference submit", async () => {
+  const h = await harness();
+  assert.equal(h.api.browserCapabilityVersions().chatBridge, 9);
+  assert.equal(typeof h.api.uploadChatBridgeAttachment, "undefined");
+  const delivered = await h.api.deliverChatBridgeMessage({
+    deliveryId: "tgb-attach12", tabId: 42, conversationId: "11111111-2222-3333-4444-555555555555",
+    userEpoch: "user-b", assistantTurnKey: "conversation-turn-4", text: "Review this file.\n\n[Equinox Local Telegram attachment]\ntask_id: task-abcdef12\nattachment_id: tgatt-000095",
+  });
+  assert.equal(delivered.confirmed, true);
+  assert.equal(delivered.chatBridgeVersion, 9);
+  assert.equal(h.uploadedFiles.length, 0);
+  assert.equal(h.storageData.chatBridgeDeliveryReceipts.length, 1);
+  assert.equal(h.keyEvents.filter((event) => event.key === "Enter").length, 0);
+  assert.equal(h.pointerEvents.filter((event) => event.type === "mouseReleased" && event.button === "left").length, 1);
+  assert.ok(h.chatSubmitProbeCount() >= 1, `expected Chat Bridge submit readiness probe, got ${h.chatSubmitProbeCount()} probes`);
+  assert.equal(h.filledPrompts.filter((value) => value.includes("tgatt-000095")).length, 1);
+  assert.equal(h.debuggerDetachCount(), 0);
+  await new Promise((resolve) => setTimeout(resolve, 350));
+  assert.ok(h.debuggerDetachCount() > 0, "Chat Bridge should release its debugger lease shortly after delivery");
+});
+
+
+test("Chat Bridge final reader returns only the expected completed assistant turn and fails closed on user drift", async () => {
+  const h = await harness();
+  h.states.set(42, {
+    generationActive: false, userEpoch: "bridge-user-2", assistantTurnKey: "assistant-turn-5",
+    composerReady: true, composerEmpty: true, assistantText: "final bridge response",
+  });
+  const ready = await h.api.readChatBridgeFinalResponse({
+    tabId: 42, conversationId: "11111111-2222-3333-4444-555555555555",
+    userEpoch: "bridge-user-2", previousAssistantTurnKey: "conversation-turn-4",
+  });
+  assert.equal(ready.chatBridgeVersion, 9);
+  assert.equal(ready.status, "ready");
+  assert.equal(ready.assistantTurnKey, "assistant-turn-5");
+  assert.equal(ready.text, "final bridge response");
+  assert.equal(ready.truncated, false);
+
+  h.states.set(42, { ...h.states.get(42), generationActive: true });
+  const waiting = await h.api.readChatBridgeFinalResponse({
+    tabId: 42, conversationId: "11111111-2222-3333-4444-555555555555",
+    userEpoch: "bridge-user-2", previousAssistantTurnKey: "conversation-turn-4",
+  });
+  assert.equal(waiting.status, "waiting");
+
+  h.states.set(42, { ...h.states.get(42), generationActive: false, userEpoch: "human-user-3" });
+  const drifted = await h.api.readChatBridgeFinalResponse({
+    tabId: 42, conversationId: "11111111-2222-3333-4444-555555555555",
+    userEpoch: "bridge-user-2", previousAssistantTurnKey: "conversation-turn-4",
+  });
+  assert.equal(drifted.chatBridgeVersion, 9);
+  assert.equal(drifted.status, "drifted");
+  assert.equal(drifted.reason, "user_epoch_changed");
 });
 
 test("Auto Continue delivery claims receipt before one submit and blocks duplicate replay", async () => {
@@ -369,13 +501,36 @@ test("Auto Continue delivery claims receipt before one submit and blocks duplica
   };
   const first = await h.api.deliverAutoContinuation(input);
   assert.equal(first.confirmed, true);
+  assert.ok(h.debuggerAttachCount() > 0, "delivery mutation should still use debugger-backed browser control");
   assert.equal(h.filledPrompts.length, 1);
   assert.equal(h.keyEvents.filter((event) => event.key === "Enter" && event.type === "keyUp").length, 1);
+  assert.equal(h.debuggerDetachCount(), 0);
+  await new Promise((resolve) => setTimeout(resolve, 350));
+  assert.ok(h.debuggerDetachCount() > 0, "Auto Continue should release a debugger attachment it created");
   const second = await h.api.deliverAutoContinuation(input);
   assert.equal(second.duplicatePrevented, true);
   assert.equal(h.filledPrompts.length, 1);
 });
 
+
+test("Auto Continue preserves an already-active normal browser debugger lease", async () => {
+  const h = await harness();
+  h.states.set(41, { generationActive: false, userEpoch: "user-a", assistantTurnKey: "conversation-turn-8", composerReady: true, composerEmpty: true });
+  await h.api.attachTab(41);
+  assert.equal(h.debuggerAttachCount(), 1);
+  const result = await h.api.deliverAutoContinuation({
+    continuationId: "cont-existing12",
+    tabId: 41,
+    conversationId: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+    userEpoch: "user-a",
+    assistantTurnKey: "conversation-turn-8",
+    prompt: "Continue task task-existing from checkpoint 1.",
+  });
+  assert.equal(result.confirmed, true);
+  await new Promise((resolve) => setTimeout(resolve, 350));
+  assert.equal(h.debuggerDetachCount(), 0, "continuation must not shorten a pre-existing normal automation lease");
+  await h.api.detachTab(41);
+});
 
 test("pinned Auto Continue target fails closed when the pinned tab is closed", async () => {
   const h = await harness();

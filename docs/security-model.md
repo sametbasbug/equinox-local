@@ -50,7 +50,7 @@ The management API intentionally does not expose a generic command/shell endpoin
 
 ## Browser boundary
 
-Equinox Browser is the only product browser transport. Agent Browser is the isolated default context and Your Browser is explicit personal Chrome; the two contexts never silently fall back to each other.
+Equinox Browser is the required product browser transport. Agent Browser is the isolated default context and Your Browser is explicit personal Chrome; the two contexts never silently fall back to each other. Fresh managed Setup requires the Your Browser context to be connected, consented and enabled before onboarding can complete. After the durable first-run completion milestone is written, a later Browser outage is surfaced as an attention state rather than relocking Control Center.
 
 A fresh extension install keeps automation off until the user accepts the current browser-data disclosure. Turning control off causes browser automation commands to be rejected; the local settings channel may remain connected so status/settings stay manageable.
 
@@ -103,7 +103,7 @@ Legacy QA-browser repair recipes were retired with that backend; the public prod
 
 ## Optional desktop control
 
-Peekaboo is optional. Equinox Local presents a reduced allowlist rather than forwarding its entire downstream tool catalog. Broad/destructive keyboard, browser, clipboard, force-quit, and arbitrary path behavior is intentionally blocked.
+Peekaboo is optional. Equinox Local runs its pinned 4.5+ MCP child with explicit foreground authority and exposes the native desktop automation subset needed for effective UI work, including coordinate/pointer input, keyboard input, lifecycle controls, dialogs, paste, clipboard mutation, capture, and state verification. Peekaboo's duplicate AI/analyze/image/browser stacks stay outside the Desktop gateway. The retained boundaries are local pinned execution (`--no-remote`), credential stripping, macOS permission preflight, live version/schema compatibility checks, and bounded input/output.
 
 ## Security regression rule
 

@@ -165,3 +165,74 @@ test("an ambiguous browser delivery failure is persisted as failed and never ret
   assert.equal(delivers, 1);
   assert.equal((await store.read(task.taskId)).continuation.reason, "browser_delivery_ambiguous_error");
 });
+
+
+test("bound Auto Continue resumes an idle exact task conversation without requiring a generating target search", async (t) => {
+  const store = await makeStore(t);
+  const task = await store.checkpoint(base);
+  await store.bindChat({ taskId: task.taskId, binding: {
+    browserContext: "user", browserInstanceId: "bound-instance", tabId: 55,
+    conversationId: "12345678-aaaa-bbbb-cccc-1234567890ab",
+    canonicalUrl: "https://chatgpt.com/c/12345678-aaaa-bbbb-cccc-1234567890ab",
+  } });
+  let delivered = 0;
+  const browserBridge = {
+    snapshot: () => ({ contexts: {
+      agent: { ready: false },
+      user: { ready: true, extension: { instanceId: "bound-instance", capabilityVersions: { autoContinue: 1 } } },
+    } }),
+    call: async (method, args) => {
+      if (method === "continuation.target.resolve") throw new Error("bound continuation must not search for a generating target");
+      if (method === "continuation.inspect") {
+        assert.equal(args.tabId, 55);
+        return { conversationId: "12345678-aaaa-bbbb-cccc-1234567890ab", title: "Bound task", generationActive: false, userEpoch: "user-bound", assistantTurnKey: "turn-bound", composerReady: true, composerEmpty: true };
+      }
+      if (method === "continuation.deliver") { delivered += 1; return { confirmed: true }; }
+      throw new Error(`Unexpected method ${method}`);
+    },
+  };
+  const controller = createAutoContinueController({ store, browserBridge, agentControl: activeAgentControl(), pollMs: 5, quietMs: 5 });
+  t.after(() => controller.shutdown());
+  const armed = await controller.armBound({ taskId: task.taskId, ttlMinutes: 1 });
+  assert.equal(armed.continuation.target.tabId, 55);
+  await waitFor(async () => (await store.read(task.taskId)).continuation.status === "delivered");
+  assert.equal(delivered, 1);
+});
+
+test("bound Auto Continue reacquires one exact task conversation after tab id drift and refreshes the binding", async (t) => {
+  const store = await makeStore(t);
+  const task = await store.checkpoint(base);
+  const conversationId = "12345678-aaaa-bbbb-cccc-1234567890ab";
+  const canonicalUrl = "https://chatgpt.com/c/" + conversationId;
+  await store.bindChat({ taskId: task.taskId, binding: {
+    browserContext: "user", browserInstanceId: "bound-instance", tabId: 55,
+    conversationId, canonicalUrl,
+  } });
+  let delivered = 0;
+  const calls = [];
+  const browserBridge = {
+    snapshot: () => ({ contexts: {
+      agent: { ready: false },
+      user: { ready: true, extension: { instanceId: "bound-instance", capabilityVersions: { autoContinue: 1 } } },
+    } }),
+    call: async (method, args) => {
+      calls.push([method, structuredClone(args)]);
+      if (method === "continuation.target.resolve") throw new Error("bound continuation must not search for a generating target");
+      if (method === "continuation.inspect" && args.tabId === 55) throw new Error("No tab with id: 55");
+      if (method === "tabs.list") return [{ id: 66, url: canonicalUrl, title: "Reacquired Task - ChatGPT" }];
+      if (method === "continuation.inspect" && args.tabId === 66) {
+        return { conversationId, title: "Reacquired Task", generationActive: false, userEpoch: "user-bound", assistantTurnKey: "turn-bound", composerReady: true, composerEmpty: true };
+      }
+      if (method === "continuation.deliver") { delivered += 1; return { confirmed: true }; }
+      throw new Error("Unexpected method " + method);
+    },
+  };
+  const controller = createAutoContinueController({ store, browserBridge, agentControl: activeAgentControl(), pollMs: 5, quietMs: 5 });
+  t.after(() => controller.shutdown());
+  const armed = await controller.armBound({ taskId: task.taskId, ttlMinutes: 1 });
+  assert.equal(armed.continuation.target.tabId, 66);
+  assert.equal((await store.readInternal(task.taskId)).chatBinding.tabId, 66);
+  await waitFor(async () => (await store.read(task.taskId)).continuation.status === "delivered");
+  assert.equal(delivered, 1);
+  assert.equal(calls.some((call) => call[0] === "continuation.target.resolve"), false);
+});

@@ -22,15 +22,19 @@ macTest("source app host routes the LaunchAgent through stable Equinox Local.app
   await fs.writeFile(peekabooPath, "#!/bin/sh\nexit 0\n", { mode: 0o700 });
   await fs.writeFile(configPath, `launchAgentLabel=dev.equinox.local.dev\ntunnelRuntime=equinox-local-dev\ntunnelClient=${tunnelClient}\npeekabooPath=${peekabooPath}\nsourceLauncher=${sourceLauncher}\n`, { mode: 0o600 });
 
-  const appPath = path.join(homeDir, "Applications", "Equinox Local.app");
   const nodePath = path.join(root, "stable-node");
   await fs.symlink(process.execPath, nodePath);
-  const result = await prepareSourceAppHost({ homeDir, configPath, nodePath });
+  let ensuredHomeDir = null;
+  const result = await prepareSourceAppHost({
+    homeDir,
+    configPath,
+    nodePath,
+    ensureAppHostImpl: async ({ homeDir: requestedHomeDir }) => {
+      ensuredHomeDir = requestedHomeDir;
+    },
+  });
   assert.deepEqual(result, { ready: true, appIdentity: "Equinox Local", bundleId: "dev.equinox.local" });
-  const infoPlist = await fs.readFile(path.join(appPath, "Contents", "Info.plist"), "utf8");
-  assert.match(infoPlist, /EquinoxLocalNativeShellVersion/u);
-  assert.match(infoPlist, /CFBundleIconFile/u);
-  assert.equal((await fs.lstat(path.join(appPath, "Contents", "Resources", "EquinoxLocal.icns"))).isFile(), true);
+  assert.equal(ensuredHomeDir, homeDir);
 
   const wrapper = await fs.readFile(path.join(homeDir, "Library", "Application Support", "Equinox Local", "equinox-local-app-runtime"), "utf8");
   assert.match(wrapper, /\/bin\/zsh/u);

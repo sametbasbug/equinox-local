@@ -5,6 +5,10 @@ import http from "node:http";
 import { EQUINOX_LOCAL_CONFIG_ERROR_CODES } from "./equinox-local-config.js";
 import { TASK_CAPSULE_ERROR_CODES } from "./task-capsule-store.js";
 import { REPAIR_RECIPE_IDS } from "./repair-engine.js";
+import {
+  AUTHENTICATED_HTTP_LIMITS,
+  validateAuthenticatedHttpProfileInput,
+} from "./authenticated-http-integration.js";
 
 const LOOPBACK_HOST = "127.0.0.1";
 const MAX_REQUEST_BYTES = 256 * 1024;
@@ -20,6 +24,29 @@ const CONTROL_CENTER_CSP = [
   "base-uri 'none'",
   "form-action 'self'",
 ].join("; ");
+const CONTROL_CENTER_BACKGROUND_REFRESH_PATHS = new Set([
+  "/api/v1/health",
+  "/api/v1/status",
+  "/api/v1/activity",
+  "/api/v1/tasks",
+  "/api/v1/onboarding",
+  "/api/v1/doctor",
+  "/api/v1/doctor/repairs",
+  "/api/v1/integrations/peekaboo",
+  "/api/v1/integrations/telegram",
+  "/api/v1/files/import-settings",
+  "/api/v1/integrations/telegram/pair",
+  "/api/v1/integrations/http-profiles",
+  "/api/v1/config",
+  "/api/v1/update",
+]);
+
+function isBackgroundRefreshRequest(req, url) {
+  return req.method === "GET"
+    && req.headers["x-equinox-background-refresh"] === "1"
+    && CONTROL_CENTER_BACKGROUND_REFRESH_PATHS.has(url.pathname);
+}
+
 const CONTROL_CENTER_ASSETS = new Map([
   ["/", Object.freeze({
     urls: Object.freeze([
@@ -247,6 +274,100 @@ function validateEmptyObject(body, label) {
   return body;
 }
 
+function validateExactObject(body, allowedKeys, label) {
+  if (body === null || typeof body !== "object" || Array.isArray(body)) {
+    throw badRequest(`${label} body must be a JSON object.`);
+  }
+  if (Object.keys(body).some((key) => !allowedKeys.includes(key))) {
+    throw badRequest(`${label} body contains an unsupported field.`);
+  }
+  return body;
+}
+
+function validateHttpProfileControlUpsert(body) {
+  const value = validateExactObject(body, ["profile", "credential"], "Authenticated HTTP profile");
+  if (value.profile === null || typeof value.profile !== "object" || Array.isArray(value.profile)) {
+    throw badRequest("Authenticated HTTP profile metadata must be a JSON object.");
+  }
+  let profile;
+  try {
+    profile = validateAuthenticatedHttpProfileInput(value.profile);
+  } catch (error) {
+    throw badRequest(error instanceof Error ? error.message : String(error));
+  }
+  let credential;
+  if (Object.hasOwn(value, "credential")) {
+    if (
+      typeof value.credential !== "string" ||
+      /[\u0000-\u001f\u007f]/u.test(value.credential) ||
+      Buffer.byteLength(value.credential, "utf8") > AUTHENTICATED_HTTP_LIMITS.maxCredentialBytes
+    ) {
+      throw badRequest("Authenticated HTTP credential must be bounded control-character-free text.");
+    }
+    credential = value.credential;
+  }
+  return { profile, ...(credential !== undefined ? { credential } : {}) };
+}
+
+function validateTurnBudgetRequest(body) {
+  const value = validateExactObject(body, ["enabled", "cutoffMinutes"], "Turn Budget settings");
+  if (typeof value.enabled !== "boolean") throw badRequest("Turn Budget enabled must be boolean.");
+  if (!Number.isInteger(value.cutoffMinutes) || value.cutoffMinutes < 5 || value.cutoffMinutes > 120) {
+    throw badRequest("Turn Budget cutoffMinutes must be an integer between 5 and 120.");
+  }
+  return { enabled: value.enabled, cutoffMinutes: value.cutoffMinutes };
+}
+
+function validateHttpProfileManagementRequest(body) {
+  const value = validateExactObject(body, ["enabled"], "Authenticated HTTP profile management");
+  if (typeof value.enabled !== "boolean") {
+    throw badRequest("Authenticated HTTP profile management enabled must be boolean.");
+  }
+  return { enabled: value.enabled };
+}
+
+function validateHttpProfileDeleteRequest(body) {
+  const value = validateExactObject(body, ["profileId"], "Authenticated HTTP profile delete");
+  if (typeof value.profileId !== "string" || !/^[a-z][a-z0-9._-]{0,63}$/u.test(value.profileId)) {
+    throw badRequest("Authenticated HTTP profile id is invalid.");
+  }
+  return { profileId: value.profileId };
+}
+
+function validateHttpProfileTestRequest(body) {
+  const value = validateExactObject(
+    body,
+    ["profileId", "method", "path", "query", "headers", "body", "timeoutMs"],
+    "Authenticated HTTP profile test",
+  );
+  if (typeof value.profileId !== "string" || !/^[a-z][a-z0-9._-]{0,63}$/u.test(value.profileId)) {
+    throw badRequest("Authenticated HTTP profile id is invalid.");
+  }
+  if (!["GET", "POST", "PUT", "PATCH", "DELETE"].includes(value.method)) {
+    throw badRequest("Authenticated HTTP test method is invalid.");
+  }
+  if (
+    typeof value.path !== "string" ||
+    value.path.length < 1 ||
+    value.path.length > AUTHENTICATED_HTTP_LIMITS.maxPathChars
+  ) {
+    throw badRequest("Authenticated HTTP test path is invalid.");
+  }
+  if (value.query !== undefined && (value.query === null || typeof value.query !== "object" || Array.isArray(value.query))) {
+    throw badRequest("Authenticated HTTP test query must be a JSON object.");
+  }
+  if (value.headers !== undefined && (value.headers === null || typeof value.headers !== "object" || Array.isArray(value.headers))) {
+    throw badRequest("Authenticated HTTP test headers must be a JSON object.");
+  }
+  if (
+    value.timeoutMs !== undefined &&
+    (!Number.isInteger(value.timeoutMs) || value.timeoutMs < 1000 || value.timeoutMs > AUTHENTICATED_HTTP_LIMITS.maxTimeoutMs)
+  ) {
+    throw badRequest("Authenticated HTTP test timeout is invalid.");
+  }
+  return value;
+}
+
 function validateDoctorRepairRequest(body) {
   if (body === null || typeof body !== "object" || Array.isArray(body)) {
     throw badRequest("Doctor repair body must be a JSON object.");
@@ -318,6 +439,8 @@ function validateTaskUpdateRequest(body) {
 export function createEquinoxLocalControlApi({
   configManager,
   getStatus = async () => ({}),
+  getTurnBudget = null,
+  updateTurnBudget = null,
   getDoctorStatus = async () => ({}),
   getDoctorRepairs = null,
   applyDoctorRepair = null,
@@ -346,9 +469,22 @@ export function createEquinoxLocalControlApi({
   checkGitHub = null,
   getPeekabooStatus = null,
   getTelegramStatus = null,
+  getWebImportSettings = null,
+  updateWebImportDownloads = null,
+  updateTelegramRemoteControl = null,
+  updateTelegramDownloads = null,
   configureTelegram = null,
+  startTelegramPairing = null,
+  pollTelegramPairing = null,
+  confirmTelegramPairing = null,
+  cancelTelegramPairing = null,
   testTelegram = null,
   disconnectTelegram = null,
+  getHttpProfiles = null,
+  setHttpProfileManagement = null,
+  upsertHttpProfile = null,
+  testHttpProfile = null,
+  deleteHttpProfile = null,
   recordInternalError = null,
   host = LOOPBACK_HOST,
   port,
@@ -405,7 +541,6 @@ export function createEquinoxLocalControlApi({
   });
 
   const handler = async (req, res) => {
-    state.requestCount += 1;
     res.setHeader("connection", "close");
 
     const actualPort = state.actualPort;
@@ -423,9 +558,12 @@ export function createEquinoxLocalControlApi({
     }
 
     if (url.search && !isAllowedControlCenterNavigationQuery(url)) {
+      state.requestCount += 1;
       jsonBody(res, 400, { ok: false, error: "Control Center API query parametresi kabul etmiyor." });
       return;
     }
+
+    if (!isBackgroundRefreshRequest(req, url)) state.requestCount += 1;
 
     try {
       const asset = CONTROL_CENTER_ASSETS.get(url.pathname);
@@ -457,6 +595,21 @@ export function createEquinoxLocalControlApi({
 
       if (req.method === "GET" && url.pathname === "/api/v1/status") {
         jsonBody(res, 200, { ok: true, status: await getStatus() });
+        return;
+      }
+
+      if (req.method === "GET" && url.pathname === "/api/v1/turn-budget") {
+        if (typeof getTurnBudget !== "function") { const error = new Error("Turn Budget is unavailable."); error.statusCode = 503; throw error; }
+        jsonBody(res, 200, { ok: true, turnBudget: await getTurnBudget() });
+        return;
+      }
+
+      if (req.method === "PUT" && url.pathname === "/api/v1/turn-budget") {
+        assertMutationRequest(req, { port: actualPort, csrfToken: state.csrfToken });
+        if (typeof updateTurnBudget !== "function") { const error = new Error("Turn Budget settings are unavailable."); error.statusCode = 503; throw error; }
+        const turnBudget = await updateTurnBudget(validateTurnBudgetRequest(await readJsonRequest(req)));
+        state.mutationCount += 1;
+        jsonBody(res, 200, { ok: true, turnBudget });
         return;
       }
 
@@ -738,6 +891,92 @@ export function createEquinoxLocalControlApi({
         return;
       }
 
+      if (req.method === "GET" && url.pathname === "/api/v1/integrations/http-profiles") {
+        if (typeof getHttpProfiles !== "function") {
+          const error = new Error("Authenticated HTTP profiles are unavailable.");
+          error.statusCode = 503;
+          throw error;
+        }
+        jsonBody(res, 200, { ok: true, httpProfiles: await getHttpProfiles() });
+        return;
+      }
+
+      if (req.method === "PUT" && url.pathname === "/api/v1/integrations/http-profiles/management") {
+        assertMutationRequest(req, { port: actualPort, csrfToken: state.csrfToken });
+        if (typeof setHttpProfileManagement !== "function") {
+          const error = new Error("Authenticated HTTP profile management is unavailable.");
+          error.statusCode = 503;
+          throw error;
+        }
+        const request = validateHttpProfileManagementRequest(await readJsonRequest(req));
+        const httpProfiles = await setHttpProfileManagement(request);
+        state.mutationCount += 1;
+        jsonBody(res, 200, { ok: true, httpProfiles });
+        return;
+      }
+
+      if (req.method === "PUT" && url.pathname === "/api/v1/integrations/http-profiles/profile") {
+        assertMutationRequest(req, { port: actualPort, csrfToken: state.csrfToken });
+        if (typeof upsertHttpProfile !== "function") {
+          const error = new Error("Authenticated HTTP profile setup is unavailable.");
+          error.statusCode = 503;
+          throw error;
+        }
+        const request = validateHttpProfileControlUpsert(await readJsonRequest(req));
+        const profile = await upsertHttpProfile(request);
+        state.mutationCount += 1;
+        jsonBody(res, 200, { ok: true, profile });
+        return;
+      }
+
+      if (req.method === "POST" && url.pathname === "/api/v1/integrations/http-profiles/test") {
+        assertMutationRequest(req, { port: actualPort, csrfToken: state.csrfToken });
+        if (typeof testHttpProfile !== "function") {
+          const error = new Error("Authenticated HTTP profile test is unavailable.");
+          error.statusCode = 503;
+          throw error;
+        }
+        const request = validateHttpProfileTestRequest(await readJsonRequest(req));
+        const result = await testHttpProfile(request);
+        state.mutationCount += 1;
+        jsonBody(res, 200, { ok: true, result });
+        return;
+      }
+
+      if (req.method === "POST" && url.pathname === "/api/v1/integrations/http-profiles/delete") {
+        assertMutationRequest(req, { port: actualPort, csrfToken: state.csrfToken });
+        if (typeof deleteHttpProfile !== "function") {
+          const error = new Error("Authenticated HTTP profile deletion is unavailable.");
+          error.statusCode = 503;
+          throw error;
+        }
+        const request = validateHttpProfileDeleteRequest(await readJsonRequest(req));
+        const result = await deleteHttpProfile(request);
+        state.mutationCount += 1;
+        jsonBody(res, 200, { ok: true, result });
+        return;
+      }
+
+      if (req.method === "GET" && url.pathname === "/api/v1/files/import-settings") {
+        if (typeof getWebImportSettings !== "function") { const error = new Error("Web file transfer settings are unavailable."); error.statusCode = 503; throw error; }
+        jsonBody(res, 200, { ok: true, webFileTransfer: await getWebImportSettings() });
+        return;
+      }
+
+      if (req.method === "PUT" && url.pathname === "/api/v1/files/import-settings") {
+        assertMutationRequest(req, { port: actualPort, csrfToken: state.csrfToken });
+        if (typeof updateWebImportDownloads !== "function") { const error = new Error("Web file transfer settings control is unavailable."); error.statusCode = 503; throw error; }
+        const body = await readJsonRequest(req);
+        const keys = body && typeof body === "object" && !Array.isArray(body) ? Object.keys(body) : [];
+        if (keys.length !== 1 || keys[0] !== "path" || !(body.path === null || typeof body.path === "string")) {
+          const error = new Error("Web file transfer settings accept only path as an absolute folder path or null for default."); error.statusCode = 400; throw error;
+        }
+        const webFileTransfer = await updateWebImportDownloads({ path: body.path });
+        state.mutationCount += 1;
+        jsonBody(res, 200, { ok: true, webFileTransfer });
+        return;
+      }
+
       if (req.method === "GET" && url.pathname === "/api/v1/integrations/telegram") {
         if (typeof getTelegramStatus !== "function") {
           const error = new Error("Telegram integration is unavailable.");
@@ -745,6 +984,46 @@ export function createEquinoxLocalControlApi({
           throw error;
         }
         jsonBody(res, 200, { ok: true, telegram: await getTelegramStatus() });
+        return;
+      }
+
+      if (req.method === "PUT" && url.pathname === "/api/v1/integrations/telegram/remote-control") {
+        assertMutationRequest(req, { port: actualPort, csrfToken: state.csrfToken });
+        if (typeof updateTelegramRemoteControl !== "function") {
+          const error = new Error("Telegram remote-control settings are unavailable.");
+          error.statusCode = 503;
+          throw error;
+        }
+        const body = await readJsonRequest(req);
+        const keys = body && typeof body === "object" && !Array.isArray(body) ? Object.keys(body) : [];
+        if (keys.length !== 1 || keys[0] !== "enabled" || typeof body.enabled !== "boolean") {
+          const error = new Error("Telegram remote-control settings accept only enabled as a boolean.");
+          error.statusCode = 400;
+          throw error;
+        }
+        const remoteControl = await updateTelegramRemoteControl({ enabled: body.enabled });
+        state.mutationCount += 1;
+        jsonBody(res, 200, { ok: true, remoteControl });
+        return;
+      }
+
+      if (req.method === "PUT" && url.pathname === "/api/v1/integrations/telegram/downloads") {
+        assertMutationRequest(req, { port: actualPort, csrfToken: state.csrfToken });
+        if (typeof updateTelegramDownloads !== "function") {
+          const error = new Error("Telegram download location control is unavailable.");
+          error.statusCode = 503;
+          throw error;
+        }
+        const body = await readJsonRequest(req);
+        const keys = body && typeof body === "object" && !Array.isArray(body) ? Object.keys(body) : [];
+        if (keys.length !== 1 || keys[0] !== "path" || !(body.path === null || typeof body.path === "string")) {
+          const error = new Error("Telegram download settings accept only path as an absolute folder path or null for default.");
+          error.statusCode = 400;
+          throw error;
+        }
+        const downloads = await updateTelegramDownloads({ path: body.path });
+        state.mutationCount += 1;
+        jsonBody(res, 200, { ok: true, downloads });
         return;
       }
 
@@ -758,6 +1037,64 @@ export function createEquinoxLocalControlApi({
         const telegram = await configureTelegram(await readJsonRequest(req));
         state.mutationCount += 1;
         jsonBody(res, 200, { ok: true, telegram });
+        return;
+      }
+
+      if (req.method === "POST" && url.pathname === "/api/v1/integrations/telegram/pair/start") {
+        assertMutationRequest(req, { port: actualPort, csrfToken: state.csrfToken });
+        if (typeof startTelegramPairing !== "function") {
+          const error = new Error("Telegram pairing is unavailable.");
+          error.statusCode = 503;
+          throw error;
+        }
+        const body = await readJsonRequest(req);
+        const keys = body && typeof body === "object" && !Array.isArray(body) ? Object.keys(body) : [];
+        if (keys.length !== 1 || keys[0] !== "botToken" || typeof body.botToken !== "string") {
+          const error = new Error("Telegram pairing start accepts only botToken.");
+          error.statusCode = 400;
+          throw error;
+        }
+        const pairing = await startTelegramPairing({ botToken: body.botToken });
+        state.mutationCount += 1;
+        jsonBody(res, 200, { ok: true, pairing });
+        return;
+      }
+
+      if (req.method === "GET" && url.pathname === "/api/v1/integrations/telegram/pair") {
+        if (typeof pollTelegramPairing !== "function") {
+          const error = new Error("Telegram pairing status is unavailable.");
+          error.statusCode = 503;
+          throw error;
+        }
+        jsonBody(res, 200, { ok: true, pairing: await pollTelegramPairing() });
+        return;
+      }
+
+      if (req.method === "POST" && url.pathname === "/api/v1/integrations/telegram/pair/confirm") {
+        assertMutationRequest(req, { port: actualPort, csrfToken: state.csrfToken });
+        validateEmptyObject(await readJsonRequest(req), "Telegram pairing confirmation");
+        if (typeof confirmTelegramPairing !== "function") {
+          const error = new Error("Telegram pairing confirmation is unavailable.");
+          error.statusCode = 503;
+          throw error;
+        }
+        const telegram = await confirmTelegramPairing();
+        state.mutationCount += 1;
+        jsonBody(res, 200, { ok: true, telegram });
+        return;
+      }
+
+      if (req.method === "POST" && url.pathname === "/api/v1/integrations/telegram/pair/cancel") {
+        assertMutationRequest(req, { port: actualPort, csrfToken: state.csrfToken });
+        validateEmptyObject(await readJsonRequest(req), "Telegram pairing cancellation");
+        if (typeof cancelTelegramPairing !== "function") {
+          const error = new Error("Telegram pairing cancellation is unavailable.");
+          error.statusCode = 503;
+          throw error;
+        }
+        const result = await cancelTelegramPairing();
+        state.mutationCount += 1;
+        jsonBody(res, 200, { ok: true, result });
         return;
       }
 

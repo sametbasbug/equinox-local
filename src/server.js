@@ -8,6 +8,7 @@ import { execFile as execFileCallback } from "node:child_process";
 import { promisify } from "node:util";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { pathToFileURL } from "node:url";
+import { createMcpToolReplayGuard } from "./mcp-tool-replay-guard.js";
 import {
   createProtectedAgentPathChecker,
   isSensitiveAgentName,
@@ -38,7 +39,10 @@ import {
   registerImageViewTools,
 } from "./equinox-local-image-tools.js";
 import {
+  getWebImportSettings,
   registerFileTransferTools,
+  resolveFileExportPath,
+  setWebImportLocation,
 } from "./equinox-local-file-transfer.js";
 import {
   isPathInside as isPathInsideRoot,
@@ -111,12 +115,34 @@ import {
   createEquinoxLocalControlApi,
 } from "./equinox-local-control-api.js";
 import {
+  cancelTelegramPairing,
   configureTelegramIntegration,
+  confirmTelegramPairing,
   disconnectTelegramIntegration,
+  getTelegramDownloadSettings,
   getTelegramIntegrationStatus,
+  setTelegramRemoteControlEnabled,
+  sendTelegramTyping,
+  pollTelegramPairing,
   registerTelegramSendTool,
+  sendTelegramMessage,
+  setTelegramDownloadLocation,
+  startTelegramPairing,
+  syncTelegramBotCommands,
   testTelegramIntegration,
 } from "./telegram-integration.js";
+import { createTelegramTaskInboxController } from "./telegram-task-inbox-controller.js";
+import { createTelegramChatBridgeController } from "./telegram-chat-bridge-controller.js";
+import {
+  registerAuthenticatedHttpTools,
+} from "./authenticated-http-tools.js";
+import {
+  authenticatedHttpRequest,
+  deleteAuthenticatedHttpProfile,
+  getAuthenticatedHttpProfiles,
+  setAuthenticatedHttpAgentManagement,
+  upsertAuthenticatedHttpProfileFromControlCenter,
+} from "./authenticated-http-integration.js";
 import {
   resolveEquinoxLocalInstallation,
 } from "./equinox-local-installation.js";
@@ -129,6 +155,7 @@ import {
 import {
   configureManagedTunnel,
   getManagedOnboardingStatus,
+  recordManagedAgentCommand,
 } from "./equinox-local-onboarding.js";
 import {
   registerRestartRuntimeTool,
@@ -173,6 +200,7 @@ import { createAutoContinueController } from "./auto-continue-controller.js";
 import { createFreshChatResumeController } from "./fresh-chat-resume-controller.js";
 import { registerTaskCapsuleTools } from "./task-capsule-tools.js";
 import { startRuntimeLifecycle } from "./equinox-local-runtime-lifecycle.js";
+import { createTurnBudgetController } from "./turn-budget-controller.js";
 
 export async function createEquinoxLocalRuntime() {
 const execFile = promisify(execFileCallback);
@@ -534,6 +562,18 @@ const equinoxLocalUpdateCoordinator = createEquinoxLocalUpdateCoordinator({
   updater: equinoxLocalUpdater,
 });
 
+async function noteManagedAgentCommand() {
+  try {
+    await recordManagedAgentCommand({
+      installation: equinoxLocalInstallation,
+      homeDir: process.env.HOME,
+      supervisorMode: process.env.EQUINOX_LOCAL_SUPERVISOR_MODE || null,
+    });
+  } catch (error) {
+    console.error(`[Equinox Local] First-agent-command milestone could not be recorded: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
 const server = new McpServer({
   name: SERVER_NAME,
   version: SERVER_VERSION,
@@ -568,6 +608,17 @@ function recordRuntimeEvent(event) {
       return null;
     });
 }
+
+const mcpToolReplayGuard = createMcpToolReplayGuard({
+  onReplay: ({ toolName, mode, ageMs, settled }) => recordRuntimeEvent({
+    component: "mcp",
+    type: "mcp.tool_replay_suppressed",
+    severity: "info",
+    status: "healthy",
+    message: "Duplicate MCP tool delivery was suppressed.",
+    details: { toolName, mode, ageMs, settled },
+  }),
+});
 
 const terminalManager =
   createTerminalManager({
@@ -867,7 +918,7 @@ function registerTextTool(
       },
   };
 
-  const wrappedHandler = async (...args) => {
+  const executeWrappedHandler = async (...args) => {
       const restartGuardError = runtimeRestartGuardError(name);
       if (restartGuardError) {
         return errorResult(restartGuardError);
@@ -881,6 +932,10 @@ function registerTextTool(
         } catch (error) {
           return errorResult(error);
         }
+      }
+
+      if (exposeToMcp) {
+        await noteManagedAgentCommand();
       }
 
       const executeHandler = async (
@@ -966,6 +1021,15 @@ function registerTextTool(
       }
     };
 
+  const wrappedHandler = (...args) => exposeToMcp
+    ? mcpToolReplayGuard.run({
+        toolName: name,
+        input: args[0],
+        extra: args[1],
+        invoke: () => executeWrappedHandler(...args),
+      })
+    : executeWrappedHandler(...args);
+
   const registration = exposeToMcp
     ? server.registerTool(
         name,
@@ -1001,7 +1065,7 @@ function registerRawTool(
     options.capability ?? true;
   const exposeToMcp =
     options.mcpExposed ?? false;
-  const wrappedHandler = async (...args) => {
+  const executeWrappedHandler = async (...args) => {
     const restartGuardError = runtimeRestartGuardError(name);
     if (restartGuardError) {
       return errorResult(restartGuardError);
@@ -1017,12 +1081,24 @@ function registerRawTool(
       }
     }
 
+    if (exposeToMcp) {
+      await noteManagedAgentCommand();
+    }
+
     try {
       return await handler(...args);
     } catch (error) {
       return errorResult(error);
     }
   };
+  const wrappedHandler = (...args) => exposeToMcp
+    ? mcpToolReplayGuard.run({
+        toolName: name,
+        input: args[0],
+        extra: args[1],
+        invoke: () => executeWrappedHandler(...args),
+      })
+    : executeWrappedHandler(...args);
   const registration = exposeToMcp
     ? server.registerTool(
         name,
@@ -2263,6 +2339,52 @@ equinoxAgentBrowser = createEquinoxAgentBrowser({
   recordEvent: recordRuntimeEvent,
 });
 
+async function resolveTurnBudgetIdentity() {
+  const snapshot = equinoxBrowserBridge.snapshot();
+  const candidates = [];
+  const idleContexts = [];
+  for (const browserContext of ["agent", "user"]) {
+    if (!snapshot?.contexts?.[browserContext]?.ready) continue;
+    try {
+      const resolved = await equinoxBrowserBridge.call("continuation.target.resolve", {}, {
+        context: browserContext,
+        timeoutMs: 1_500,
+      });
+      const target = resolved?.target;
+      if (resolved?.status === "ready" && target?.generationActive && target.assistantTurnKey) {
+        candidates.push({ browserContext, mode: resolved.mode, target });
+      } else if (resolved?.status === "idle") {
+        idleContexts.push(browserContext);
+      }
+    } catch {
+      // Turn Budget keeps its last safe state when Browser probing is temporarily unavailable.
+    }
+  }
+  const pinned = candidates.filter((item) => item.mode === "pinned");
+  const selected = pinned.length === 1
+    ? pinned[0]
+    : candidates.length === 1
+      ? candidates[0]
+      : null;
+  if (!selected) {
+    return idleContexts.length > 0
+      ? { status: "idle", idleContexts }
+      : null;
+  }
+  return {
+    browserContext: selected.browserContext,
+    conversationId: selected.target.conversationId ?? null,
+    userEpoch: selected.target.userEpoch ?? null,
+    assistantTurnKey: selected.target.assistantTurnKey,
+    title: selected.target.title ?? "ChatGPT",
+  };
+}
+
+const turnBudgetController = createTurnBudgetController({
+  resolveTurnIdentity: resolveTurnBudgetIdentity,
+});
+await turnBudgetController.initialize();
+
 registerPrivateVisualTools({
   registerTextTool,
   processJsonResult,
@@ -2478,6 +2600,45 @@ const freshChatResumeController = createFreshChatResumeController({
   agentControl,
   onEvent: recordRuntimeEvent,
 });
+const telegramChatBridgeController = createTelegramChatBridgeController({
+  browserBridge: equinoxBrowserBridge,
+  agentControl,
+});
+const telegramTaskInboxController = createTelegramTaskInboxController({
+  store: taskCapsuleStore,
+  autoContinueController,
+  getRemoteStatus: async () => {
+    const [tasks, health] = await Promise.all([
+      taskCapsuleStore.list({ limit: 50 }),
+      runtimeObservability.health({ windowMs: 15 * 60 * 1000 }),
+    ]);
+    const browser = equinoxBrowserBridge.snapshot();
+    const active = tasks.filter((task) => task.status === "active");
+    return {
+      version: SERVER_VERSION,
+      health: health.state,
+      agentPaused: Boolean(agentControl.snapshot().paused),
+      agentBrowserReady: Boolean(browser.contexts?.agent?.ready),
+      userBrowserReady: Boolean(browser.contexts?.user?.ready),
+      activeTasks: active.length,
+      waitingTasks: active.filter((task) => Boolean(task.humanInput)).length,
+      continuingTasks: active.filter((task) => ["armed", "delivering"].includes(task.continuation?.status)).length,
+    };
+  },
+  getAgentActivity: async () => {
+    const budget = await turnBudgetController.refreshSnapshot();
+    return { working: budget?.active?.source === "browser", startedAt: budget?.active?.startedAt ?? null };
+  },
+  sendTyping: () => sendTelegramTyping(),
+  pauseAgent: () => pauseAgentForHuman("telegram_emergency_stop"),
+  resumeAgent: resumeAgentForHuman,
+  requestRestart: requestTelegramRuntimeRestart,
+  deliverChatMessage: (input) => telegramChatBridgeController.deliverText(input),
+  readChatResponse: (input) => telegramChatBridgeController.readFinal(input),
+  inspectChatIdentity: (input) => telegramChatBridgeController.inspectTurnIdentity(input),
+  startTaskChat: (input) => telegramChatBridgeController.startTaskChat(input),
+  onEvent: recordRuntimeEvent,
+});
 registerTaskCapsuleTools({
   registerRawTool,
   z,
@@ -2487,6 +2648,7 @@ registerTaskCapsuleTools({
 });
 
 async function quiesceContinuityForRestart() {
+  await telegramTaskInboxController.shutdown();
   await Promise.all([
     freshChatResumeController.shutdown(),
     autoContinueController.shutdown(),
@@ -2496,6 +2658,104 @@ async function quiesceContinuityForRestart() {
 async function resumeContinuityAfterFailedRestart() {
   await autoContinueController.start();
   await freshChatResumeController.start();
+  await telegramTaskInboxController.start();
+}
+
+async function pauseAgentForHuman(reason = "human_emergency_stop") {
+  return withMutationLocks(["agent-control"], async () => {
+    const paused = await agentControl.pause({ reason });
+    await taskCapsuleStore.cancelAllContinuations("emergency_stop");
+    await freshChatResumeController.cancelAll("emergency_stop");
+    return paused;
+  });
+}
+
+async function resumeAgentForHuman() {
+  return withMutationLocks(["agent-control"], async () => agentControl.resume());
+}
+
+async function restartLocalRuntime() {
+  return withMutationLocks(["local-restart"], async () => {
+    try {
+      await quiesceContinuityForRestart();
+      if (equinoxLocalInstallation.managed && equinoxLocalInstallation.selfUpdateSupported) {
+        const result = await scheduleEquinoxLocalRestart({ installation: equinoxLocalInstallation });
+        runtimeRestartPendingUntil = Date.now() + RUNTIME_RESTART_GUARD_MS;
+        return { ...result, installationKind: "managed" };
+      }
+
+      const { spawn } = await import("node:child_process");
+      const { fileURLToPath } = await import("node:url");
+      const moduleDir = path.dirname(fileURLToPath(import.meta.url));
+      const sourceRoot = path.basename(moduleDir) === "src" ? path.dirname(moduleDir) : moduleDir;
+      const scriptPath = path.join(sourceRoot, "scripts", "restart-runtime.sh");
+      const scriptStats = await fs.lstat(scriptPath);
+      if (scriptStats.isSymbolicLink() || !scriptStats.isFile()) {
+        throw new Error("Source runtime restart script is not a normal file.");
+      }
+      const sourceRestartEnv = {
+        HOME: process.env.HOME,
+        USER: process.env.USER,
+        LOGNAME: process.env.LOGNAME,
+        TMPDIR: process.env.TMPDIR,
+        PATH: "/usr/bin:/bin:/usr/sbin:/sbin",
+        EQUINOX_LOCAL_DEV_NODE: process.execPath,
+        EQUINOX_LOCAL_DEV_RUNTIME_CONFIG: process.env.EQUINOX_LOCAL_DEV_RUNTIME_CONFIG,
+      };
+      await launchDetachedHelper({
+        spawnImpl: spawn,
+        command: "/bin/bash",
+        args: [scriptPath],
+        options: {
+          detached: true,
+          stdio: "ignore",
+          env: Object.fromEntries(Object.entries(sourceRestartEnv).filter(([, value]) => typeof value === "string" && value.length > 0)),
+        },
+        label: "Equinox Local source restart helper",
+      });
+      runtimeRestartPendingUntil = Date.now() + RUNTIME_RESTART_GUARD_MS;
+      return { scheduled: true, installationKind: "source" };
+    } catch (error) {
+      await resumeContinuityAfterFailedRestart();
+      throw error;
+    }
+  });
+}
+
+async function requestTelegramRuntimeRestart() {
+  const timer = setTimeout(() => {
+    void restartLocalRuntime().catch(async (error) => {
+      recordRuntimeEvent({
+        component: "telegram-task-inbox",
+        type: "telegram.restart_failed",
+        severity: "error",
+        status: "failed",
+        message: "Telegram-requested runtime restart failed.",
+        details: { error: error instanceof Error ? error.message.slice(0, 240) : String(error).slice(0, 240) },
+      });
+      await sendTelegramMessage({
+        message: `⚠️ Equinox Local restart failed: ${error instanceof Error ? error.message.slice(0, 160) : String(error).slice(0, 160)}`,
+      }).catch(() => {});
+    });
+  }, 1_500);
+  timer.unref?.();
+  return { scheduled: true };
+}
+
+async function syncTelegramCommandMenuSafely(source) {
+  try {
+    return await syncTelegramBotCommands();
+  } catch (error) {
+    await recordRuntimeEvent({
+      component: "telegram-task-inbox",
+      type: "telegram.command_menu_sync_failed",
+      severity: "warn",
+      status: "failed",
+      message: "Telegram command menu sync failed.",
+      details: { source, error: error instanceof Error ? error.message.slice(0, 240) : String(error).slice(0, 240) },
+    }).catch(() => {});
+    return { configured: true, synced: false, commandCount: 0 };
+  }
 }
 
 async function resumeWorkflowSafelyForRepair(workflowId) {
@@ -2837,7 +3097,7 @@ async function getControlCenterDoctorStatus() {
   let browserSettings = null;
   if (browser.ready) {
     try {
-      browserSettings = await equinoxBrowserBridge.call("settings.status", {}, { timeoutMs: 2_500 });
+      browserSettings = await equinoxBrowserBridge.call("settings.status", {}, { timeoutMs: 2_500, context: "user" });
     } catch {
       // Browser settings are optional doctor context; bridge readiness remains useful on its own.
     }
@@ -2863,8 +3123,9 @@ async function getControlCenterDoctorStatus() {
     runtimeVersion: SERVER_VERSION,
     sourceCheckoutVersion: sourceCheckout?.version ?? null,
     browser: {
-      ready: Boolean(browser.ready),
+      ready: Boolean(browser.contexts?.user?.ready),
       consentAccepted: typeof browserSettings?.consentAccepted === "boolean" ? browserSettings.consentAccepted : null,
+      controlEnabled: typeof browserSettings?.enabled === "boolean" ? browserSettings.enabled : null,
     },
     peekaboo: peekabooStatus,
     update: equinoxLocalUpdateCoordinator.snapshot(),
@@ -2944,6 +3205,29 @@ async function applyControlCenterDoctorRepair({ incidentId, recipeId }) {
   });
 }
 
+async function getControlCenterOnboardingStatus() {
+  const browser = equinoxBrowserBridge.snapshot();
+  let browserSettings = null;
+  if (browser.contexts?.user?.ready) {
+    try {
+      browserSettings = await equinoxBrowserBridge.call("settings.status", {}, { timeoutMs: 2_500, context: "user" });
+    } catch {
+      // Setup remains incomplete until the required Browser profile is reachable and consented.
+    }
+  }
+  return getManagedOnboardingStatus({
+    installation: equinoxLocalInstallation,
+    homeDir: process.env.HOME,
+    supervisorMode: process.env.EQUINOX_LOCAL_SUPERVISOR_MODE || null,
+    browserUser: {
+      ready: Boolean(browser.contexts?.user?.ready),
+      consentAccepted: browserSettings?.consentAccepted === true,
+      controlEnabled: browserSettings?.enabled === true,
+    },
+    reconcileCompletion: true,
+  });
+}
+
 equinoxLocalControlApi = createEquinoxLocalControlApi({
   configManager: equinoxLocalConfigManager,
   port: EQUINOX_LOCAL_CONFIG.controlCenter.port,
@@ -2966,6 +3250,21 @@ equinoxLocalControlApi = createEquinoxLocalControlApi({
     const observabilityHealth = await runtimeObservability.health({
       windowMs: 15 * 60 * 1000,
     });
+    const supervisorMode = process.env.EQUINOX_LOCAL_SUPERVISOR_MODE || null;
+    const managedConnection = equinoxLocalInstallation.managed === true;
+    const chatgptConnection = managedConnection
+      ? {
+          available: true,
+          connected: supervisorMode === "tunnel",
+          needsAttention: supervisorMode !== "tunnel",
+          mode: supervisorMode === "tunnel" ? "tunnel" : "local-only",
+        }
+      : {
+          available: true,
+          connected: true,
+          needsAttention: false,
+          mode: "source",
+        };
     const status = {
       server: {
         name: SERVER_NAME,
@@ -2979,6 +3278,7 @@ equinoxLocalControlApi = createEquinoxLocalControlApi({
         recentEventCount: observabilityHealth.recentEventCount,
         reasonCount: observabilityHealth.reasons.length,
       },
+      chatgptConnection,
       config: {
         version: EQUINOX_LOCAL_CONFIG.version,
         revision: EQUINOX_LOCAL_CONFIG_SNAPSHOT.revision,
@@ -3029,6 +3329,7 @@ equinoxLocalControlApi = createEquinoxLocalControlApi({
         reconnectCount: peekabooBridge.reconnectCount,
       },
       agentControl: agentControl.snapshot(),
+      turnBudget: await turnBudgetController.refreshSnapshot(),
       capabilities: capabilityRegistry.summary(),
     };
     const tasks = await taskCapsuleStore.list({ limit: 50 });
@@ -3037,23 +3338,16 @@ equinoxLocalControlApi = createEquinoxLocalControlApi({
       presentation: deriveEquinoxLocalPresentationState({ status, tasks }),
     };
   },
-  pauseAgent: async () => withMutationLocks(["agent-control"], async () => {
-    const paused = await agentControl.pause({ reason: "control_center_emergency_stop" });
-    await taskCapsuleStore.cancelAllContinuations("emergency_stop");
-    await freshChatResumeController.cancelAll("emergency_stop");
-    return paused;
-  }),
-  resumeAgent: async () => withMutationLocks(["agent-control"], async () => agentControl.resume()),
+  getTurnBudget: async () => turnBudgetController.refreshSnapshot(),
+  updateTurnBudget: async (settings) => turnBudgetController.updateSettings(settings),
+  pauseAgent: () => pauseAgentForHuman("control_center_emergency_stop"),
+  resumeAgent: resumeAgentForHuman,
   getDoctorStatus: getControlCenterDoctorStatus,
   getDoctorRepairs: getControlCenterDoctorRepairs,
   applyDoctorRepair: applyControlCenterDoctorRepair,
   getActivity: getControlCenterActivity,
   getUpdateStatus: async () => equinoxLocalUpdateCoordinator.snapshot(),
-  getOnboardingStatus: async () => getManagedOnboardingStatus({
-    installation: equinoxLocalInstallation,
-    homeDir: process.env.HOME,
-    supervisorMode: process.env.EQUINOX_LOCAL_SUPERVISOR_MODE || null,
-  }),
+  getOnboardingStatus: getControlCenterOnboardingStatus,
   getTasks: async () => taskCapsuleStore.list({ limit: 50 }),
   getTask: async (taskId) => taskCapsuleStore.read(taskId),
   updateTask: async (taskId, body) => withMutationLocks([`task:${taskId}`], async () => (
@@ -3079,51 +3373,7 @@ equinoxLocalControlApi = createEquinoxLocalControlApi({
   abandonTaskFreshResume: async (taskId) => withMutationLocks([`task:${taskId}`], async () => (
     freshChatResumeController.abandon(taskId, "human_recovered")
   )),
-  restartRuntime: async () => withMutationLocks(["local-restart"], async () => {
-    try {
-      await quiesceContinuityForRestart();
-      if (equinoxLocalInstallation.managed && equinoxLocalInstallation.selfUpdateSupported) {
-        const result = await scheduleEquinoxLocalRestart({ installation: equinoxLocalInstallation });
-        runtimeRestartPendingUntil = Date.now() + RUNTIME_RESTART_GUARD_MS;
-        return { ...result, installationKind: "managed" };
-      }
-
-      const { spawn } = await import("node:child_process");
-      const { fileURLToPath } = await import("node:url");
-      const moduleDir = path.dirname(fileURLToPath(import.meta.url));
-      const sourceRoot = path.basename(moduleDir) === "src" ? path.dirname(moduleDir) : moduleDir;
-      const scriptPath = path.join(sourceRoot, "scripts", "restart-runtime.sh");
-      const scriptStats = await fs.lstat(scriptPath);
-      if (scriptStats.isSymbolicLink() || !scriptStats.isFile()) {
-        throw new Error("Source runtime restart script is not a normal file.");
-      }
-      const sourceRestartEnv = {
-        HOME: process.env.HOME,
-        USER: process.env.USER,
-        LOGNAME: process.env.LOGNAME,
-        TMPDIR: process.env.TMPDIR,
-        PATH: "/usr/bin:/bin:/usr/sbin:/sbin",
-        EQUINOX_LOCAL_DEV_NODE: process.execPath,
-        EQUINOX_LOCAL_DEV_RUNTIME_CONFIG: process.env.EQUINOX_LOCAL_DEV_RUNTIME_CONFIG,
-      };
-      await launchDetachedHelper({
-        spawnImpl: spawn,
-        command: "/bin/bash",
-        args: [scriptPath],
-        options: {
-          detached: true,
-          stdio: "ignore",
-          env: Object.fromEntries(Object.entries(sourceRestartEnv).filter(([, value]) => typeof value === "string" && value.length > 0)),
-        },
-        label: "Equinox Local source restart helper",
-      });
-      runtimeRestartPendingUntil = Date.now() + RUNTIME_RESTART_GUARD_MS;
-      return { scheduled: true, installationKind: "source" };
-    } catch (error) {
-      await resumeContinuityAfterFailedRestart();
-      throw error;
-    }
-  }),
+  restartRuntime: restartLocalRuntime,
   configureTunnel: async (body) => withMutationLocks(["local-onboarding"], async () => {
     const configured = await configureManagedTunnel({
       installation: equinoxLocalInstallation,
@@ -3183,16 +3433,74 @@ equinoxLocalControlApi = createEquinoxLocalControlApi({
       runGhWithCode,
     });
   },
-  getTelegramStatus: async () => getTelegramIntegrationStatus(),
-  configureTelegram: async (body) => withMutationLocks(["telegram"], async () => (
-    configureTelegramIntegration({
+  getWebImportSettings: async () => getWebImportSettings(),
+  updateWebImportDownloads: async ({ path: downloadPath }) => withMutationLocks(["file-import-settings"], async () => (
+    setWebImportLocation({ downloadPath })
+  )),
+  getTelegramStatus: async () => ({
+    ...(await getTelegramIntegrationStatus()),
+    downloads: await getTelegramDownloadSettings(),
+    taskInbox: telegramTaskInboxController.snapshot(),
+  }),
+  updateTelegramRemoteControl: async ({ enabled }) => withMutationLocks(["telegram"], async () => (
+    setTelegramRemoteControlEnabled({ enabled })
+  )),
+  updateTelegramDownloads: async ({ path: downloadPath }) => withMutationLocks(["telegram"], async () => (
+    setTelegramDownloadLocation({ downloadPath })
+  )),
+  configureTelegram: async (body) => withMutationLocks(["telegram"], async () => {
+    const telegram = await configureTelegramIntegration({
       botToken: body?.botToken,
       telegramUserId: body?.telegramUserId,
-    })
+    });
+    await telegramTaskInboxController.reset({ persistState: true });
+    await syncTelegramCommandMenuSafely("configure");
+    return telegram;
+  }),
+  startTelegramPairing: async (body) => withMutationLocks(["telegram"], async () => (
+    startTelegramPairing({ botToken: body?.botToken })
   )),
+  pollTelegramPairing: async () => pollTelegramPairing(),
+  confirmTelegramPairing: async () => withMutationLocks(["telegram"], async () => {
+    const telegram = await confirmTelegramPairing();
+    await telegramTaskInboxController.reset({ persistState: true });
+    await syncTelegramCommandMenuSafely("pairing_confirm");
+    return telegram;
+  }),
+  cancelTelegramPairing: async () => withMutationLocks(["telegram"], async () => cancelTelegramPairing()),
   testTelegram: async () => withMutationLocks(["telegram"], async () => testTelegramIntegration()),
-  disconnectTelegram: async () => withMutationLocks(["telegram"], async () => (
-    disconnectTelegramIntegration()
+  disconnectTelegram: async () => withMutationLocks(["telegram"], async () => {
+    await telegramTaskInboxController.reset({ persistState: false });
+    return disconnectTelegramIntegration();
+  }),
+  getHttpProfiles: async () => getAuthenticatedHttpProfiles(),
+  setHttpProfileManagement: async ({ enabled }) => withMutationLocks(["authenticated-http-profiles"], async () => {
+    await setAuthenticatedHttpAgentManagement({ enabled });
+    return getAuthenticatedHttpProfiles();
+  }),
+  upsertHttpProfile: async ({ profile, credential }) => withMutationLocks(["authenticated-http-profiles"], async () => (
+    upsertAuthenticatedHttpProfileFromControlCenter({ profile, credential })
+  )),
+  testHttpProfile: async (request) => withMutationLocks(["authenticated-http-profiles"], async () => {
+    try {
+      return await authenticatedHttpRequest({
+        profileId: request.profileId,
+        method: request.method,
+        path: request.path,
+        query: request.query ?? {},
+        headers: request.headers ?? {},
+        body: request.body,
+        timeoutMs: request.timeoutMs,
+        captureResponseReference: false,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      error.statusCode = /timed out/iu.test(message) ? 504 : /failed before a response/iu.test(message) ? 502 : 400;
+      throw error;
+    }
+  }),
+  deleteHttpProfile: async ({ profileId }) => withMutationLocks(["authenticated-http-profiles"], async () => (
+    deleteAuthenticatedHttpProfile({ profileId })
   )),
   recordInternalError: (error) => recordRuntimeEvent({
     component: "control-center",
@@ -3217,6 +3525,7 @@ const desktopCapabilityProvider = registerDesktopGatewayTools({
   textResult,
   errorResult,
   assertMutationAllowed: (operationName) => agentControl.assertMutationAllowed(operationName),
+  turnBudgetController,
 });
 
 registerRestartRuntimeTool({
@@ -3238,6 +3547,23 @@ registerRestartRuntimeTool({
 
 registerTelegramSendTool({
   registerTextTool,
+  registerRawTool,
+  z,
+  taskStore: taskCapsuleStore,
+  resolveOutboundFile: async (filePath) => resolveFileExportPath({
+    filePath,
+    fullFileAccess: FULL_FILE_ACCESS,
+    fileRootIds: FILE_ROOT_IDS,
+    resolveFileRootContext,
+    homeDir: process.env.HOME,
+    fsImpl: fs,
+  }),
+  textResult,
+  errorResult,
+});
+
+registerAuthenticatedHttpTools({
+  registerTextTool,
   z,
   textResult,
   errorResult,
@@ -3252,9 +3578,11 @@ registerSystemDoctorTool({
 
 registerStableCapabilityGateways({
   registerTextTool,
+  registerRawTool,
   registry: capabilityRegistry,
   textResult,
   externalDomains: { desktop: desktopCapabilityProvider },
+  turnBudgetController,
 });
 
 let localShutdownStarted = false;
@@ -3281,6 +3609,7 @@ async function shutdownLocalResources({ reason = "api" } = {}) {
 
   runtimeJanitor?.stopMaintenance();
   await recoveryPolicyController?.shutdown();
+  await telegramTaskInboxController.shutdown();
   await freshChatResumeController.shutdown();
   await autoContinueController.shutdown();
   await workflowManager.shutdown();
@@ -3329,6 +3658,8 @@ async function start({ transport = new StdioServerTransport() } = {}) {
   await equinoxBrowserBridge.start();
   await autoContinueController.start();
   await freshChatResumeController.start();
+  await telegramTaskInboxController.start();
+  setTimeout(() => { void syncTelegramCommandMenuSafely("runtime_start"); }, 250).unref?.();
   await repairEngine.initialize();
   await recoveryPolicyController.initialize();
   await runtimeJanitor.initialize();
@@ -3359,6 +3690,7 @@ return Object.freeze({
     started: runtimeStarted,
     browser: equinoxBrowserBridge.snapshot(),
     controlCenter: equinoxLocalControlApi?.snapshot?.() ?? null,
+    telegramTaskInbox: telegramTaskInboxController.snapshot(),
   }),
 });
 }

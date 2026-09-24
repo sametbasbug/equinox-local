@@ -9,6 +9,75 @@ const EQUINOX_BROWSER_STORE_URL =
   "https://chromewebstore.google.com/detail/equinox-browser/npdneefcobilfkjlihghjgjnknenhfoj";
 
 const TR_UI = Object.freeze({
+  "Getting started": "Başlarken",
+  "Setup": "Kurulum",
+  "Setup Equinox Local": "Equinox Local’i kur",
+  "First-time setup": "İlk kurulum",
+  "Connect ChatGPT to this Mac": "ChatGPT’yi bu Mac’e bağlayın",
+  "Follow these steps once. Control Center unlocks after ChatGPT successfully reaches Equinox Local.": "Bu adımları bir kez tamamlayın. ChatGPT, Equinox Local’e başarıyla ulaştığında Kontrol Merkezi açılır.",
+  "Setup in progress": "Kurulum sürüyor",
+  "Equinox Local is installed": "Equinox Local kuruldu",
+  "The private runtime and starter workspace are already on this Mac.": "Özel runtime ve başlangıç çalışma alanı bu Mac’te hazır.",
+  "Create the private OpenAI tunnel": "Özel OpenAI tunnel’ını oluşturun",
+  "The Tunnel ID tells ChatGPT which Equinox Local runtime to reach. The Runtime API key lets this Mac connect to that tunnel.": "Tunnel ID, ChatGPT’nin hangi Equinox Local runtime’ına ulaşacağını belirtir. Runtime API anahtarı bu Mac’in tunnel’a bağlanmasını sağlar.",
+  "Not connected": "Bağlı değil",
+  "Open Tunnels ↗": "Tunnels’ı aç ↗",
+  "Open API keys ↗": "API anahtarlarını aç ↗",
+  "Use the exact Tunnel ID you will also select in ChatGPT.": "ChatGPT’de de seçeceğiniz aynı Tunnel ID’yi kullanın.",
+  "Stored privately on this Mac. Do not use an admin key.": "Bu Mac’te özel olarak saklanır. Admin anahtarı kullanmayın.",
+  "Add Equinox Local to ChatGPT": "Equinox Local’i ChatGPT’ye ekleyin",
+  "Create or edit the Equinox Local MCP app/connector in ChatGPT and point it at the same tunnel.": "ChatGPT’de Equinox Local MCP uygulamasını/bağlayıcısını oluşturun veya düzenleyin ve aynı tunnel’ı seçin.",
+  "Waiting": "Bekliyor",
+  "Tunnel ID appears after step 2": "Tunnel ID 2. adımdan sonra görünür",
+  "Copy Tunnel ID": "Tunnel ID’yi kopyala",
+  "Open ChatGPT settings ↗": "ChatGPT ayarlarını aç ↗",
+  "Install Equinox Browser": "Equinox Browser’ı yükleyin",
+  "Equinox Browser is a required part of Equinox Local. It provides the browser-side connection and continuity features.": "Equinox Browser, Equinox Local’in zorunlu bir parçasıdır. Tarayıcı tarafı bağlantı ve devamlılık özelliklerini sağlar.",
+  "Install Equinox Browser ↗": "Equinox Browser’ı yükle ↗",
+  "Waiting for Equinox Browser in Your Browser.": "Kendi tarayıcınızdaki Equinox Browser bekleniyor.",
+  "Verify ChatGPT → Mac": "ChatGPT → Mac bağlantısını doğrulayın",
+  "Send one real tool request from ChatGPT. Setup stays locked until that request reaches this Mac.": "ChatGPT’den gerçek bir araç isteği gönderin. Bu istek Mac’e ulaşana kadar kurulum kilitli kalır.",
+  "Copy test prompt": "Test promptunu kopyala",
+  "Waiting for the first Equinox Local tool call from ChatGPT.": "ChatGPT’den ilk Equinox Local araç çağrısı bekleniyor.",
+  "Need to remove Equinox Local instead?": "Bunun yerine Equinox Local’i kaldırmak mı istiyorsunuz?",
+  "Uninstall": "Kaldır",
+  "Connected": "Bağlı",
+  "Configure in ChatGPT": "ChatGPT’de yapılandır",
+  "Waiting for tunnel": "Tunnel bekleniyor",
+  "Verified": "Doğrulandı",
+  "Accept disclosure": "Bilgilendirmeyi kabul edin",
+  "Enable Browser Control": "Browser Control’u açın",
+  "Command received": "Komut alındı",
+  "Ready to verify": "Doğrulamaya hazır",
+  "Setup complete. ChatGPT can now reach this Mac.": "Kurulum tamamlandı. ChatGPT artık bu Mac’e ulaşabiliyor.",
+  "Tunnel ID copied.": "Tunnel ID kopyalandı.",
+  "Test prompt copied.": "Test promptu kopyalandı.",
+  "Create the tunnel, add Equinox Local to ChatGPT, install Equinox Browser, then verify the first real tool call.": "Tunnel’ı oluşturun, Equinox Local’i ChatGPT’ye ekleyin, Equinox Browser’ı kurun ve ardından ilk gerçek araç çağrısını doğrulayın.",
+  "Open OpenAI Tunnels and create a tunnel for this Equinox Local installation.": "OpenAI Tunnels’ı açın ve bu Equinox Local kurulumu için bir tunnel oluşturun.",
+  "Copy the new tunnel_… ID.": "Yeni tunnel_… kimliğini kopyalayın.",
+  "Open API keys, create a Restricted key, and grant only Tunnels: Read + Use.": "API anahtarlarını açın, Restricted bir anahtar oluşturun ve yalnızca Tunnels: Read + Use izni verin.",
+  "Choose Tunnel as the connection type.": "Bağlantı türü olarak Tunnel seçin.",
+  "Select or paste the same Tunnel ID shown below, then save the connector.": "Aşağıda gösterilen aynı Tunnel ID’yi seçin veya yapıştırın ve bağlayıcıyı kaydedin.",
+  "Install Equinox Browser from Chrome Web Store in the Chrome profile you use with ChatGPT.": "Equinox Browser’ı Chrome Web Store’dan ChatGPT ile kullandığınız Chrome profiline yükleyin.",
+  "Turn Browser Control on. This setup screen detects the connection automatically.": "Browser Control’u açın. Bu kurulum ekranı bağlantıyı otomatik algılar.",
+  "Paste both values below. The API key stays only on this Mac and is never shown again.": "İki değeri de aşağıya yapıştırın. API anahtarı yalnızca bu Mac’te kalır ve tekrar gösterilmez.",
+  "Open ChatGPT connector/app settings and start the custom MCP connection flow available to your account/workspace.": "ChatGPT bağlayıcı/uygulama ayarlarını açın ve hesabınızda/çalışma alanınızda bulunan özel MCP bağlantı akışını başlatın.",
+  "Open the extension, review and accept the browser-data disclosure.": "Uzantıyı açın, tarayıcı verisi bilgilendirmesini inceleyip kabul edin.",
+  "After the connector and browser extension are ready, paste this into ChatGPT:": "Bağlayıcı ve tarayıcı uzantısı hazır olduğunda bunu ChatGPT’ye yapıştırın:",
+  "Install Equinox Browser in Your Browser and open the extension.": "Equinox Browser’ı kendi tarayıcınıza yükleyin ve uzantıyı açın.",
+  "Equinox Browser is connected. Review and accept the browser-data disclosure in the extension.": "Equinox Browser bağlı. Uzantıdaki tarayıcı verisi bilgilendirmesini inceleyip kabul edin.",
+  "Disclosure accepted. Turn Browser Control on to finish the required browser connection.": "Bilgilendirme kabul edildi. Gerekli tarayıcı bağlantısını tamamlamak için Browser Control’u açın.",
+  "Equinox Browser is connected, consented and Browser Control is on.": "Equinox Browser bağlı, bilgilendirme kabul edildi ve Browser Control açık.",
+  "Waiting for the first Equinox Local tool call from ChatGPT. This is the final setup check.": "ChatGPT’den ilk Equinox Local araç çağrısı bekleniyor. Bu son kurulum kontrolüdür.",
+  "Finish the remaining steps. Setup unlocks only after a real ChatGPT tool request reaches this Mac.": "Kalan adımları tamamlayın. Kurulum ancak ChatGPT’den gerçek bir araç isteği bu Mac’e ulaştığında açılır.",
+  "Tunnel settings are saved. Equinox Local is reconnecting through your private tunnel.": "Tunnel ayarları kaydedildi. Equinox Local özel tunnel üzerinden yeniden bağlanıyor.",
+  "The saved tunnel connection needs attention. Re-enter the Runtime API key to repair it.": "Kayıtlı tunnel bağlantısının ilgilenilmesi gerekiyor. Düzeltmek için Runtime API anahtarını yeniden girin.",
+  "OpenAI Tunnels": "OpenAI Tunnels",
+  "API keys": "API anahtarları",
+  "Restricted": "Restricted",
+  "Tunnel": "Tunnel",
+  "Equinox Browser": "Equinox Browser",
+  "Browser Control": "Browser Control",
   "Your local runtime is ready. Add the OpenAI tunnel credentials to finish connecting Equinox Local to ChatGPT.": "Yerel runtime hazır. Equinox Local’i ChatGPT’ye bağlamak için OpenAI tunnel bilgilerini ekleyin.",
   "Tunnel settings are saved. Equinox Local is switching from local-only setup mode to the private ChatGPT connection.": "Tunnel ayarları kaydedildi. Equinox Local, yerel kurulum modundan özel ChatGPT bağlantısına geçiyor.",
   "The saved tunnel connection needs attention. Re-enter the Runtime API key to repair it.": "Kaydedilmiş tunnel bağlantısı kontrol edilmeli. Onarmak için Runtime API anahtarını yeniden girin.",
@@ -26,6 +95,7 @@ const TR_UI = Object.freeze({
   "ChatGPT not connected": "ChatGPT bağlı değil",
   "Connection needs attention": "Bağlantı kontrol edilmeli",
   "Connection status unavailable": "Bağlantı durumu alınamadı",
+  "MCP runtime connected": "MCP runtime bağlı",
   "Desktop": "Masaüstü",
   "Local connection": "Yerel bağlantı",
   "Open Browser settings": "Tarayıcı ayarlarını aç",
@@ -75,6 +145,29 @@ const TR_UI = Object.freeze({
   "Choose a task on the left to inspect its latest checkpoint.": "Son checkpoint’i incelemek için soldan bir görev seçin.",
   "Task Capsule": "Görev Kapsülü",
   "Auto Continue": "Otomatik Devam",
+  "Turn safety": "Tur güvenliği",
+  "Turn Budget": "Tur Bütçesi",
+  "Tracks the current assistant turn from its first Equinox Local use and warns before the safety cutoff.": "Mevcut asistan turunu ilk Equinox Local kullanımından itibaren izler ve güvenlik süresi dolmadan önce uyarır.",
+  "Elapsed": "Geçen",
+  "Remaining": "Kalan",
+  "Stage": "Aşama",
+  "Idle": "Beklemede",
+  "Enable Turn Budget": "Tur Bütçesini etkinleştir",
+  "Warn the agent before the per-turn safety cutoff. This never force-stops a turn.": "Tur başına güvenlik süresi dolmadan önce ajanı uyarır. Turu hiçbir zaman zorla durdurmaz.",
+  "Safety cutoff (minutes)": "Güvenlik süresi (dakika)",
+  "Default 22 minutes. The setting applies immediately and does not require a Local restart.": "Varsayılan 22 dakika. Ayar anında uygulanır ve Local yeniden başlatma gerektirmez.",
+  "Save Turn Budget": "Tur Bütçesini kaydet",
+  "Off": "Kapalı",
+  "Disabled": "Devre dışı",
+  "Running": "Çalışıyor",
+  "Checkpoint soon": "Checkpoint yaklaşıyor",
+  "Finalizing": "Final hazırlanıyor",
+  "Cutoff reached": "Güvenlik süresi doldu",
+  "Turn Budget is disabled. Equinox Local will not add per-turn finalization guidance.": "Tur Bütçesi devre dışı. Equinox Local tur sonlandırma yönlendirmesi eklemeyecek.",
+  "Waiting for the first Equinox Local call in an assistant turn.": "Asistan turundaki ilk Equinox Local çağrısı bekleniyor.",
+  "Bound to the current ChatGPT assistant turn through Equinox Browser.": "Equinox Browser üzerinden mevcut ChatGPT asistan turuna bağlı.",
+  "Using first-Local-call fallback because browser turn identity is unavailable.": "Tarayıcı tur kimliği kullanılamadığı için ilk Local çağrısı fallback'i kullanılıyor.",
+  "Turn Budget updated immediately.": "Tur Bütçesi anında güncellendi.",
   "Not armed": "Kurulu değil",
   "Waiting": "Bekliyor",
   "Delivering": "Gönderiliyor",
@@ -360,7 +453,7 @@ const TR_UI = Object.freeze({
   "to confirm": "yazın",
   "Workspace and configuration will be preserved unless the option above is enabled.": "Yukarıdaki seçenek etkinleştirilmedikçe çalışma alanı ve yapılandırma korunur.",
   "Uninstall scheduled. Equinox Local will stop and this page will disconnect.": "Kaldırma planlandı. Equinox Local duracak ve bu sayfanın bağlantısı kesilecek.",
-  "Optional bridges fail independently. Core Equinox Local remains usable even when a browser or desktop integration is unavailable.": "İsteğe bağlı köprüler birbirinden bağımsız hata verir. Tarayıcı veya masaüstü entegrasyonu kullanılamasa bile temel Equinox Local kullanılabilir kalır.",
+  "Optional integrations fail independently. Equinox Browser is required for the supported managed product path; Desktop and other optional integrations remain isolated.": "İsteğe bağlı entegrasyonlar birbirinden bağımsız hata verir. Desteklenen yönetilen ürün akışında Equinox Browser zorunludur; Masaüstü ve diğer isteğe bağlı entegrasyonlar bağımsız kalır.",
   "Diagnostics": "Tanılama",
   "This first Control Center slice shows bounded runtime and management-surface activity without exposing raw logs or arbitrary filesystem access.": "Kontrol Merkezi, ham logları veya sınırsız dosya sistemi erişimini açmadan sınırlandırılmış runtime ve yönetim yüzeyi etkinliğini gösterir.",
   "Control Center requests": "Kontrol Merkezi istekleri",
@@ -379,6 +472,16 @@ const TR_UI = Object.freeze({
   "Display name": "Görünen ad",
   "Absolute folder path": "Mutlak klasör yolu",
   "Choose folder…": "Klasör seç…",
+  "Web file transfer": "Web dosya aktarımı",
+  "Files sent from ChatGPT to this Mac are saved here by default. Explicit destinations still override this folder.": "ChatGPT’den bu Mac’e gönderilen dosyalar varsayılan olarak buraya kaydedilir. Açıkça belirtilen hedef klasörler bu ayarı geçersiz kılar.",
+  "Web file transfer folder updated.": "Web dosya aktarım klasörü güncellendi.",
+  "Web file transfer folder reset to default.": "Web dosya aktarım klasörü varsayılana döndürüldü.",
+  "Download folder": "İndirme klasörü",
+  "Change folder…": "Klasörü değiştir…",
+  "Reset to default": "Varsayılana dön",
+  "Incoming Telegram photos and documents are saved here. Changing this affects only new files; existing task attachments stay where they are. Files in this user-visible folder are not auto-deleted.": "Telegram’dan gelen fotoğraf ve belgeler buraya kaydedilir. Bu ayarı değiştirmek yalnızca yeni dosyaları etkiler; mevcut görev ekleri bulundukları yerde kalır. Kullanıcıya görünür bu klasördeki dosyalar otomatik silinmez.",
+  "Telegram download folder updated.": "Telegram indirme klasörü güncellendi.",
+  "Telegram download folder reset to default.": "Telegram indirme klasörü varsayılana döndürüldü.",
   "Choosing…": "Seçiliyor…",
   "Use the macOS folder picker or enter an absolute path manually. Equinox Local validates the selection and never grants the filesystem root.": "macOS klasör seçicisini kullanın veya mutlak yolu elle girin. Equinox Local seçimi doğrular ve dosya sisteminin kökünü hiçbir zaman açmaz.",
   "Managed worktrees": "Yönetilen worktree'ler",
@@ -415,7 +518,7 @@ const TR_UI = Object.freeze({
   "Open the diagnostics tools for detail. The Control Center summary intentionally avoids exposing raw runtime logs.": "Ayrıntılar için tanılama araçlarını açın. Kontrol Merkezi özeti bilinçli olarak ham runtime loglarını göstermez.",
   "Your setup checks out": "Kurulumunuz sağlıklı",
   "A few setup checks need attention": "Bazı kurulum kontrolleri dikkat gerektiriyor",
-  "Equinox Local checked the managed runtime, private configuration, update path and optional bridges without exposing local paths or secrets.": "Equinox Local yerel yolları veya gizli değerleri açığa çıkarmadan yönetilen runtime'ı, özel yapılandırmayı, güncelleme yolunu ve isteğe bağlı köprüleri kontrol etti.",
+  "Equinox Local checked the runtime, private configuration, update path, Equinox Browser and optional integrations without exposing local paths or secrets.": "Equinox Local yerel yolları veya gizli değerleri açığa çıkarmadan runtime'ı, özel yapılandırmayı, güncelleme yolunu, Equinox Browser'ı ve isteğe bağlı entegrasyonları kontrol etti.",
   "Review the checks below. Optional items do not block core Equinox Local, but attention items should be fixed before public-style use.": "Aşağıdaki kontrolleri inceleyin. İsteğe bağlı öğeler temel Equinox Local'i engellemez; dikkat gerektiren öğeler genel kullanımdan önce düzeltilmelidir.",
   "Check": "Kontrol",
   "No additional detail.": "Ek ayrıntı yok.",
@@ -461,13 +564,38 @@ const TR_UI = Object.freeze({
   "Scheduling uninstall…": "Kaldırma planlanıyor…",
   "Uninstall & delete local data": "Kaldır ve yerel verileri sil",
   "Telegram": "Telegram",
+  "Connect Telegram": "Telegram’ı bağlayın",
+  "Recommended": "Önerilen",
+  "Pairing": "Eşleştiriliyor",
+  "Confirm account": "Hesabı doğrulayın",
+  "Skipped": "Atlandı",
+  "Pair Telegram": "Telegram’ı eşleştir",
+  "Pair this account": "Bu hesabı eşleştir",
+  "Cancel pairing": "Eşleştirmeyi iptal et",
+  "Open BotFather ↗": "BotFather’ı aç ↗",
+  "Open your bot ↗": "Botunu aç ↗",
+  "Skip for now": "Şimdilik geç",
+  "Starting pairing…": "Eşleştirme başlatılıyor…",
+  "Telegram pairing started. Send /start to your bot.": "Telegram eşleştirmesi başladı. Botuna /start gönder.",
+  "Telegram paired successfully.": "Telegram başarıyla eşleştirildi.",
+  "Telegram pairing cancelled.": "Telegram eşleştirmesi iptal edildi.",
+  "Pair a Telegram bot to one private account. No Telegram user ID is required.": "Bir Telegram botunu tek bir özel hesaba eşleştirin. Telegram kullanıcı ID’si gerekmez.",
+  "Create a bot with BotFather using /newbot, copy its HTTP API token, then start pairing here. You will confirm the detected private account before Equinox Local saves it.": "BotFather’da /newbot ile bir bot oluşturun, HTTP API tokenını kopyalayın ve eşleştirmeyi buradan başlatın. Equinox Local kaydetmeden önce algılanan özel hesabı siz doğrulayacaksınız.",
+  "The token stays only on this Mac. Telegram user ID is discovered during pairing.": "Token yalnızca bu Mac’te kalır. Telegram kullanıcı ID’si eşleştirme sırasında otomatik bulunur.",
+  "Recommended. Telegram lets Equinox Local reach you away from the Mac and will become the remote task inbox for agent replies and controls.": "Önerilen. Telegram, Mac’in başında değilken Equinox Local’in size ulaşmasını sağlar ve ajan yanıtları ile kontrolleri için uzaktan görev gelen kutusu olacaktır.",
+  "Open BotFather in Telegram and send /newbot.": "Telegram’da BotFather’ı açın ve /newbot gönderin.",
+  "Choose a display name and a unique bot username when BotFather asks.": "BotFather istediğinde görünen bir ad ve benzersiz bir bot kullanıcı adı seçin.",
+  "Copy the HTTP API token BotFather gives you and paste it below.": "BotFather’ın verdiği HTTP API tokenını kopyalayıp aşağıya yapıştırın.",
+  "Choose Pair Telegram, open your new bot, and send /start.": "Telegram’ı eşleştir’i seçin, yeni botunuzu açın ve /start gönderin.",
+  "Equinox Local will show the detected private account here. Confirm it before anything is saved.": "Equinox Local algılanan özel hesabı burada gösterecek. Herhangi bir şey kaydedilmeden önce hesabı doğrulayın.",
+  "The token stays only on this Mac. Do not share it with the agent or paste it into chat.": "Token yalnızca bu Mac’te kalır. Ajanla paylaşmayın veya sohbete yapıştırmayın.",
+  "Waiting for /start from your bot chat.": "Bot sohbetinizden /start bekleniyor.",
+  "Skipped for now. Telegram remains available later in Control Center → Services.": "Şimdilik atlandı. Telegram daha sonra Kontrol Merkezi → Servisler bölümünden bağlanabilir.",
   "Saved Telegram credentials need attention. Reconnect the bot to replace them safely.": "Kaydedilmiş Telegram kimlik bilgileri dikkat gerektiriyor. Güvenle değiştirmek için botu yeniden bağlayın.",
   "Connect a Telegram bot to one Telegram account. Groups and channels are not supported, and agents cannot choose another recipient.": "Bir Telegram botunu tek bir Telegram hesabına bağlayın. Gruplar ve kanallar desteklenmez; ajanlar başka bir alıcı seçemez.",
   "Send test": "Test gönder",
   "Disconnect": "Bağlantıyı kes",
   "Bot token": "Bot tokenı",
-  "Your Telegram ID": "Telegram ID'niz",
-  "Connect & test": "Bağlan ve test et",
   "Consent required": "Onay gerekli",
   "Automation off": "Otomasyon kapalı",
   "Browser settings": "Tarayıcı ayarları",
@@ -498,7 +626,42 @@ const TR_UI = Object.freeze({
   "Browser settings updated.": "Tarayıcı ayarları güncellendi.",
   "Telegram connected and test message sent.": "Telegram bağlandı ve test mesajı gönderildi.",
   "Telegram test message sent.": "Telegram test mesajı gönderildi.",
+  "Telegram remote control": "Telegram uzaktan kontrolü",
+  "Allow the paired Telegram account to control Tasks, Chat Bridge and Local controls. Turning this off ignores and discards inbound Telegram commands/messages while outbound notifications remain available.": "Eşleştirilmiş Telegram hesabının Task'ları, Chat Bridge'i ve Local kontrollerini yönetmesine izin ver. Bunu kapatmak gelen Telegram komut ve mesajlarını yok sayıp siler; giden bildirimler kullanılabilir kalır.",
+  "Telegram remote control enabled.": "Telegram uzaktan kontrolü açıldı.",
+  "Telegram remote control disabled.": "Telegram uzaktan kontrolü kapatıldı.",
   "Telegram disconnected.": "Telegram bağlantısı kesildi.",
+  "Authenticated HTTP profiles": "Kimlik doğrulamalı HTTP profilleri",
+  "Keep API credentials on this Mac while allowing agents to make bounded requests only to the HTTPS origins, methods and paths you approve.": "API kimlik bilgilerini bu Mac’te tutarken ajanların yalnızca onayladığınız HTTPS origin, yöntem ve yollara sınırlı istekler göndermesine izin verin.",
+  "Allow agents to manage HTTP profiles": "Ajanların HTTP profillerini yönetmesine izin ver",
+  "Agents may create, edit and delete profile structure. Credentials remain human-only and are never exposed to the agent.": "Ajanlar profil yapısını oluşturabilir, düzenleyebilir ve silebilir. Kimlik bilgileri yalnızca insana aittir ve ajana hiçbir zaman gösterilmez.",
+  "Add profile": "Profil ekle",
+  "No authenticated HTTP profiles are configured yet.": "Henüz kimlik doğrulamalı HTTP profili yapılandırılmadı.",
+  "Needs credential": "Kimlik bilgisi gerekli",
+  "Test": "Test et",
+  "Delete": "Sil",
+  "Profile ID": "Profil kimliği",
+  "Display name": "Görünen ad",
+  "HTTPS origin": "HTTPS origin",
+  "Base path": "Temel yol",
+  "Authentication": "Kimlik doğrulama",
+  "Bearer token": "Bearer tokenı",
+  "Secret header": "Gizli header",
+  "Secret header name": "Gizli header adı",
+  "Allowed methods": "İzin verilen yöntemler",
+  "Allowed path prefixes": "İzin verilen yol önekleri",
+  "Allowed agent headers": "İzin verilen ajan header’ları",
+  "Request timeout (ms)": "İstek zaman aşımı (ms)",
+  "Credential": "Kimlik bilgisi",
+  "Leave blank to keep the saved credential. Saved credentials are write-only and are never loaded back into this page.": "Kayıtlı kimlik bilgisini korumak için boş bırakın. Kaydedilmiş kimlik bilgileri yalnızca yazılabilir ve bu sayfaya hiçbir zaman geri yüklenmez.",
+  "Save profile": "Profili kaydet",
+  "Cancel": "İptal",
+  "Agent management on": "Ajan yönetimi açık",
+  "Agent management off": "Ajan yönetimi kapalı",
+  "Profile saved.": "Profil kaydedildi.",
+  "Profile deleted.": "Profil silindi.",
+  "HTTP profile management updated.": "HTTP profil yönetimi güncellendi.",
+  "Delete this HTTP profile and its saved credential?": "Bu HTTP profilini ve kayıtlı kimlik bilgisini silmek istiyor musunuz?",
   "Equinox Local is connected to ChatGPT.": "Equinox Local ChatGPT'ye bağlı.",
   "Tunnel settings saved. Equinox Local is restarting safely…": "Tunnel ayarları kaydedildi. Equinox Local güvenli biçimde yeniden başlatılıyor…",
   "Equinox Local is restarting safely…": "Equinox Local güvenli biçimde yeniden başlatılıyor…",
@@ -602,7 +765,9 @@ const state = {
   language: initialLanguage(),
   theme: initialTheme(),
   activeSection: "dashboard",
+  setupMode: false,
   lastRefreshedAt: null,
+  refreshAllBusy: false,
   config: null,
   revision: null,
   status: null,
@@ -615,6 +780,7 @@ const state = {
   tasks: [],
   selectedTaskId: null,
   taskDraft: null,
+  taskDraftDirty: false,
   taskBusy: false,
   update: null,
   updateBusy: false,
@@ -625,8 +791,14 @@ const state = {
   uninstallBusy: false,
   uninstallScheduled: false,
   telegram: null,
+  webFileTransfer: null,
   telegramBotToken: "",
-  telegramUserId: "",
+  telegramPairingPollBusy: false,
+  telegramSetupSkipped: false,
+  httpProfiles: null,
+  httpProfileDraft: null,
+  httpProfileBusy: false,
+  httpProfileTestResults: {},
   browserDraft: null,
   browserSettingsTarget: "user",
   browserSettingsDirty: false,
@@ -636,6 +808,10 @@ const state = {
   pickerBusy: false,
   restartBusy: false,
   agentControlBusy: false,
+  turnBudget: null,
+  turnBudgetDraft: null,
+  turnBudgetDirty: false,
+  turnBudgetBusy: false,
   runtimeRestartTimer: null,
   dirty: false,
   restartRequired: false,
@@ -643,7 +819,16 @@ const state = {
   dialogKind: "project",
   editingId: null,
   toastTimer: null,
+  autoRefreshLiveBusy: false,
+  autoRefreshMediumBusy: false,
+  autoRefreshSlowBusy: false,
+  lastAutoRefreshAt: 0,
 };
+
+const AUTO_REFRESH_LIVE_MS = 3_000;
+const AUTO_REFRESH_MEDIUM_MS = 15_000;
+const AUTO_REFRESH_SLOW_MS = 60_000;
+const AUTO_REFRESH_FOCUS_DEBOUNCE_MS = 750;
 
 function localizeUiText(value) {
   const source = String(value ?? "");
@@ -701,6 +886,25 @@ function localizeUiText(value) {
   if (match) return `Equinox Local kaynak sürümü ${match[1]}, çalışan süreç ise ${match[2]}.`;
   match = source.match(/^(\d+) passed · (\d+) attention · (\d+) optional$/u);
   if (match) return `${match[1]} geçti · ${match[2]} dikkat · ${match[3]} isteğe bağlı`;
+  match = source.match(/^Bot is paired(?: to private user (.+))?\. Task replies, files\/photos and inline controls are (active|starting); agents can still send only to this account\.$/u);
+  if (match) {
+    const user = match[1] ? ` ${match[1]} özel kullanıcısına` : "";
+    const stateText = match[2] === "active" ? "aktif" : "başlatılıyor";
+    return `Bot${user} eşleştirildi. Görev yanıtları, dosya/fotoğraf alışverişi ve satır içi kontroller ${stateText}; ajanlar yine yalnızca bu hesaba mesaj gönderebilir.`;
+  }
+  match = source.match(/^Bot is paired(?: to private user (.+))?\. Agents can send only to this account; the private inbound queue uses the same one-human boundary\.$/u);
+  if (match) {
+    const user = match[1] ? ` ${match[1]} özel kullanıcısına` : "";
+    return `Bot${user} eşleştirildi. Ajanlar yalnızca bu hesaba mesaj gönderebilir; özel gelen kutusu aynı tek-insan sınırını kullanır.`;
+  }
+  match = source.match(/^Private account (.+) is waiting for your confirmation\.$/u);
+  if (match) return `${match[1]} özel hesabı doğrulamanızı bekliyor.`;
+  match = source.match(/^Pairing is active(?: for @(.+))?\. Open the bot and send \/start\.$/u);
+  if (match) return `Eşleştirme${match[1] ? ` @${match[1]} için` : ""} aktif. Botu açın ve /start gönderin.`;
+  match = source.match(/^Detected (.+)\. Confirm that this is you\.$/u);
+  if (match) return `${match[1]} algılandı. Bunun siz olduğunuzu doğrulayın.`;
+  match = source.match(/^Telegram is paired(?: to private user (.+))?\. You can manage it later in Services\.$/u);
+  if (match) return `Telegram${match[1] ? ` ${match[1]} özel kullanıcısına` : ""} eşleştirildi. Daha sonra Servisler bölümünden yönetebilirsiniz.`;
   match = source.match(/^Bot API is connected(?: to user (.+))?\. Agents can send messages only to this Telegram account; the recipient cannot be changed by an agent\.$/u);
   if (match) {
     const user = match[1] ? ` ${match[1]} kullanıcısına` : "";
@@ -712,7 +916,7 @@ function localizeUiText(value) {
 const DYNAMIC_TEXT_IDS = new Set([
   "sidebar-health-label", "sidebar-version", "section-kicker", "section-title", "last-refreshed",
   "agent-control-button", "restart-runtime-button", "onboarding-copy", "onboarding-badge", "setup-runtime-status",
-  "setup-workspace-status", "setup-browser-status", "setup-tunnel-status", "onboarding-connect-button",
+  "setup-workspace-status", "setup-browser-status", "setup-tunnel-status", "setup-telegram-status", "setup-telegram-detail", "onboarding-connect-button",
   "runtime-health-badge", "overview-title", "overview-copy", "runtime-version", "runtime-uptime", "browser-status", "browser-version",
   "peekaboo-status", "peekaboo-detail", "api-status", "api-detail", "project-count", "folder-count",
   "default-project", "health-summary-title", "health-summary-badge", "health-summary-copy", "health-event-count",
@@ -724,6 +928,7 @@ const DYNAMIC_TEXT_IDS = new Set([
   "agent-browser-control-state", "open-agent-browser-button", "agent-browser-note", "browser-page-status", "browser-page-badge", "browser-page-version", "browser-connected-at",
   "browser-control-state", "apply-browser-settings", "browser-settings-note", "permissions-list", "agent-access-badge",
   "agent-control-badge", "agent-control-copy", "active-terminal-count", "active-process-count", "active-work-count",
+  "turn-budget-badge", "turn-budget-copy", "turn-budget-elapsed", "turn-budget-remaining", "turn-budget-stage", "save-turn-budget-button",
   "local-execution-badge", "save-agent-access-button", "uninstall-badge",
   "uninstall-confirmation-help", "uninstall-button", "integration-list", "request-count", "mutation-count",
   "activity-event-count", "activity-timeline", "dialog-kicker", "dialog-title", "dialog-error", "choose-folder-button",
@@ -1013,6 +1218,7 @@ function setLanguage(nextLanguage, { persist = true } = {}) {
 }
 
 const sectionMeta = {
+  setup: ["Getting started", "Setup Equinox Local"],
   dashboard: ["Your workspace", "Overview"],
   projects: ["Your workspace", "Projects & folders"],
   tasks: ["Your workspace", "Tasks"],
@@ -1078,10 +1284,14 @@ function formatUptime(totalSeconds) {
 }
 
 async function requestJson(path, options = {}) {
+  const { backgroundRefresh = false, headers: optionHeaders = {}, ...fetchOptions } = options;
+  const headers = { ...optionHeaders };
+  if (backgroundRefresh) headers["x-equinox-background-refresh"] = "1";
   const response = await fetch(path, {
     cache: "no-store",
     credentials: "same-origin",
-    ...options,
+    ...fetchOptions,
+    ...(Object.keys(headers).length > 0 ? { headers } : {}),
   });
   let body;
   try {
@@ -1175,6 +1385,8 @@ function setConfigEditingEnabled(enabled) {
 
 function switchSection(section) {
   if (!sectionMeta[section]) return;
+  if (state.setupMode && section !== "setup") return;
+  if (!state.setupMode && section === "setup") return;
   const changed = state.activeSection !== section;
   state.activeSection = section;
   for (const button of document.querySelectorAll(".nav-item")) {
@@ -1230,15 +1442,23 @@ function renderDashboard() {
   }
 
   const onboarding = state.onboarding;
-  const connectionLabel = !onboarding?.available
+  const connection = status.chatgptConnection || null;
+  const connectionAvailable = connection?.available === true || (!connection && onboarding?.available === true);
+  const connectionNeedsAttention = connection
+    ? connection.needsAttention === true
+    : onboarding?.needsAttention === true;
+  const connectionConnected = connection
+    ? connection.connected === true
+    : onboarding?.connectedThroughTunnel === true;
+  const connectionLabel = !connectionAvailable
     ? "Connection status unavailable"
-    : onboarding.needsAttention
+    : connectionNeedsAttention
       ? "Connection needs attention"
-      : onboarding.connectedThroughTunnel
-        ? "ChatGPT connected"
+      : connectionConnected
+        ? (connection?.mode === "source" ? "MCP runtime connected" : "ChatGPT connected")
         : "ChatGPT not connected";
   setBadge("chatgpt-connection-badge", connectionLabel,
-    !onboarding?.available ? "neutral" : onboarding.needsAttention ? "warn" : onboarding.connectedThroughTunnel ? "good" : "neutral");
+    !connectionAvailable ? "neutral" : connectionNeedsAttention ? "warn" : connectionConnected ? "good" : "neutral");
 
   setBadge("health-summary-badge", runtimeHealth === "UNKNOWN" ? "Unknown" : runtimeHealth, runtimeTone);
   setText("runtime-version", status.server?.version ? `v${status.server.version}` : "—");
@@ -1299,46 +1519,55 @@ function renderDashboard() {
   setText("health-evaluated-at", healthSummary.evaluatedAt ? `Evaluated ${formatDate(healthSummary.evaluatedAt)}` : "Not evaluated yet");
 }
 
+function moveUninstallCard(setupMode) {
+  const card = $("uninstall-card");
+  const target = setupMode ? $("setup-uninstall-slot") : $("permissions-uninstall-slot");
+  if (card && target && card.parentElement !== target) target.appendChild(card);
+}
+
+function applySetupMode(setupMode) {
+  const previous = state.setupMode;
+  state.setupMode = setupMode;
+  document.body.classList.toggle("setup-mode", setupMode);
+  $("control-center-nav").hidden = setupMode;
+  $("setup-nav").hidden = !setupMode;
+  moveUninstallCard(setupMode);
+  if (setupMode && state.activeSection !== "setup") switchSection("setup");
+  if (!setupMode && state.activeSection === "setup") switchSection("dashboard");
+  if (previous && !setupMode) showToast("Setup complete. ChatGPT can now reach this Mac.");
+}
+
 function renderOnboarding() {
   const onboarding = state.onboarding || {};
-  const card = $("onboarding-card");
-  if (!card) return;
-
-  const connected = onboarding.available === true && onboarding.connectedThroughTunnel === true;
-  card.hidden = onboarding.available !== true || connected;
-  if (card.hidden) return;
+  const setupMode = onboarding.available === true && onboarding.setupComplete !== true;
+  applySetupMode(setupMode);
+  if (!setupMode) return;
 
   const runtimeReady = Boolean(state.health?.controlCenter?.active && state.status?.server?.version);
-  const workspaceReady = Boolean(
-    state.config?.projects?.workspace &&
-    state.config?.runtime?.workspaceProject === "workspace"
-  );
-  const browserReady = Boolean(state.status?.browser?.ready);
-
   setBadge("setup-runtime-status", runtimeReady ? "Ready" : "Checking", runtimeReady ? "good" : "neutral");
-  setBadge("setup-workspace-status", workspaceReady ? "Ready" : "Needs attention", workspaceReady ? "good" : "warn");
-  setBadge("setup-browser-status", browserReady ? "Ready" : "Optional", browserReady ? "good" : "neutral");
 
   if (onboarding.needsAttention) {
     setBadge("setup-tunnel-status", "Needs attention", "warn");
-    setBadge("onboarding-badge", "Action needed", "warn");
     setText("onboarding-copy", onboarding.issue || "The saved tunnel connection needs attention. Re-enter the Runtime API key to repair it.");
+  } else if (onboarding.connectedThroughTunnel) {
+    setBadge("setup-tunnel-status", "Connected", "good");
+    setText("onboarding-copy", "Finish the remaining steps. Setup unlocks only after a real ChatGPT tool request reaches this Mac.");
   } else if (onboarding.transportConfigured) {
-    setBadge("setup-tunnel-status", "Restarting", "warn");
-    setBadge("onboarding-badge", "Connecting", "warn");
-    setText("onboarding-copy", "Tunnel settings are saved. Equinox Local is switching from local-only setup mode to the private ChatGPT connection.");
+    setBadge("setup-tunnel-status", "Connecting", "warn");
+    setText("onboarding-copy", "Tunnel settings are saved. Equinox Local is reconnecting through your private tunnel.");
   } else {
     setBadge("setup-tunnel-status", "Not connected", "warn");
-    setBadge("onboarding-badge", "Setup needed", "warn");
-    setText("onboarding-copy", "Your local runtime is ready. Add the OpenAI tunnel credentials to finish connecting Equinox Local to ChatGPT.");
+    setText("onboarding-copy", "Create the tunnel, add Equinox Local to ChatGPT, install Equinox Browser, then verify the first real tool call.");
   }
 
   const tunnelIdInput = $("onboarding-tunnel-id");
   if (tunnelIdInput && document.activeElement !== tunnelIdInput && onboarding.tunnelId && !tunnelIdInput.value) {
     tunnelIdInput.value = onboarding.tunnelId;
   }
-  const connectButton = $("onboarding-connect-button");
   const runtimeKeyInput = $("onboarding-runtime-key");
+  const connectButton = $("onboarding-connect-button");
+  const tunnelForm = $("onboarding-tunnel-form");
+  if (tunnelForm) tunnelForm.hidden = onboarding.connectedThroughTunnel === true && onboarding.needsAttention !== true;
   if (connectButton) {
     connectButton.disabled = state.onboardingBusy;
     connectButton.textContent = localizeUiText(state.onboardingBusy ? "Connecting…" : "Save & connect");
@@ -1346,6 +1575,100 @@ function renderOnboarding() {
   if (tunnelIdInput) tunnelIdInput.disabled = state.onboardingBusy;
   if (runtimeKeyInput) runtimeKeyInput.disabled = state.onboardingBusy;
   $("onboarding-reconnect").hidden = !state.onboardingBusy;
+
+  const tunnelCopy = $("setup-tunnel-copy-value");
+  if (tunnelCopy) tunnelCopy.textContent = onboarding.tunnelId || localizeUiText("Tunnel ID appears after step 2");
+  const tunnelCopyButton = $("copy-setup-tunnel-id");
+  if (tunnelCopyButton) tunnelCopyButton.disabled = !onboarding.tunnelId;
+
+  if (onboarding.agentCommandReceived) {
+    setBadge("setup-chatgpt-status", "Verified", "good");
+  } else if (onboarding.connectedThroughTunnel) {
+    setBadge("setup-chatgpt-status", "Configure in ChatGPT", "warn");
+  } else {
+    setBadge("setup-chatgpt-status", "Waiting for tunnel", "neutral");
+  }
+
+  if (!onboarding.browserConnected) {
+    setBadge("setup-browser-status", "Not connected", "warn");
+    setText("setup-browser-detail", "Install Equinox Browser in Your Browser and open the extension.");
+  } else if (!onboarding.browserConsentAccepted) {
+    setBadge("setup-browser-status", "Accept disclosure", "warn");
+    setText("setup-browser-detail", "Equinox Browser is connected. Review and accept the browser-data disclosure in the extension.");
+  } else if (!onboarding.browserControlEnabled) {
+    setBadge("setup-browser-status", "Enable Browser Control", "warn");
+    setText("setup-browser-detail", "Disclosure accepted. Turn Browser Control on to finish the required browser connection.");
+  } else {
+    setBadge("setup-browser-status", "Ready", "good");
+    setText("setup-browser-detail", "Equinox Browser is connected, consented and Browser Control is on.");
+  }
+
+  const telegram = state.telegram || {};
+  const telegramPairing = telegram.pairing || {};
+  const telegramReady = telegram.configured === true && telegram.ready === true;
+  const telegramForm = $("setup-telegram-form");
+  const telegramPairingBox = $("setup-telegram-pairing");
+  const telegramToken = $("setup-telegram-token");
+  const telegramBotLink = $("setup-telegram-bot-link");
+  const telegramConfirm = $("setup-telegram-confirm");
+  if (telegramToken && document.activeElement !== telegramToken && !telegramToken.value) telegramToken.value = state.telegramBotToken;
+  if (telegramReady) {
+    setBadge("setup-telegram-status", "Ready", "good");
+    if (telegramForm) telegramForm.hidden = true;
+    if (telegramPairingBox) telegramPairingBox.hidden = false;
+    setText("setup-telegram-detail", `Telegram is paired${telegram.userIdHint ? ` to private user ${telegram.userIdHint}` : ""}. You can manage it later in Services.`);
+    if (telegramConfirm) telegramConfirm.hidden = true;
+    $("setup-telegram-cancel").hidden = true;
+  } else if (state.telegramSetupSkipped && !telegramPairing.active) {
+    setBadge("setup-telegram-status", "Skipped", "neutral");
+    if (telegramForm) telegramForm.hidden = true;
+    if (telegramPairingBox) telegramPairingBox.hidden = false;
+    setText("setup-telegram-detail", "Skipped for now. Telegram remains available later in Control Center → Services.");
+    if (telegramConfirm) telegramConfirm.hidden = true;
+    $("setup-telegram-cancel").hidden = true;
+  } else if (telegramPairing.active) {
+    setBadge("setup-telegram-status", telegramPairing.candidateFound ? "Confirm account" : "Pairing", "warn");
+    if (telegramForm) telegramForm.hidden = true;
+    if (telegramPairingBox) telegramPairingBox.hidden = false;
+    setText("setup-telegram-detail", telegramPairing.candidateFound
+      ? `Detected ${telegramPairing.candidateLabel || telegramPairing.userIdHint || "a private Telegram account"}. Confirm that this is you.`
+      : `Pairing is active${telegramPairing.botUsername ? ` for @${telegramPairing.botUsername}` : ""}. Open the bot and send /start.`);
+    if (telegramConfirm) telegramConfirm.hidden = !telegramPairing.candidateFound;
+    $("setup-telegram-cancel").hidden = false;
+  } else {
+    setBadge("setup-telegram-status", "Recommended", "neutral");
+    if (telegramForm) telegramForm.hidden = false;
+    if (telegramPairingBox) telegramPairingBox.hidden = true;
+  }
+  if (telegramBotLink) {
+    telegramBotLink.hidden = !telegramPairing.botUsername;
+    if (telegramPairing.botUsername) telegramBotLink.href = `https://t.me/${telegramPairing.botUsername}`;
+  }
+  $("setup-telegram-start").disabled = state.integrationBusy || !state.telegramBotToken.trim();
+
+  if (onboarding.agentCommandReceived) {
+    setBadge("setup-verify-status", "Command received", "good");
+    setText("setup-verify-detail", state.language === "tr"
+      ? `İlk Equinox Local araç çağrısı ${formatDate(onboarding.firstAgentCommandAt)} tarihinde alındı.`
+      : `First Equinox Local tool call received ${formatDate(onboarding.firstAgentCommandAt)}.`);
+  } else {
+    setBadge("setup-verify-status", "Waiting", "warn");
+    setText("setup-verify-detail", "Waiting for the first Equinox Local tool call from ChatGPT. This is the final setup check.");
+  }
+
+  const browserReady = onboarding.browserConnected && onboarding.browserConsentAccepted && onboarding.browserControlEnabled;
+  const almostReady = onboarding.connectedThroughTunnel && browserReady;
+  setBadge("onboarding-badge", almostReady ? "Ready to verify" : "Setup in progress", almostReady ? "good" : "warn");
+}
+
+async function copySetupText(text, successMessage) {
+  if (!text) return;
+  try {
+    await navigator.clipboard.writeText(text);
+    showToast(successMessage);
+  } catch (error) {
+    showError(new Error(`Could not copy to clipboard: ${error instanceof Error ? error.message : String(error)}`));
+  }
 }
 
 async function runDoctorRepair(incident, fix) {
@@ -1392,7 +1715,7 @@ function renderDoctor() {
   setText(
     "doctor-copy",
     healthy
-      ? "Equinox Local checked the managed runtime, private configuration, update path and optional bridges without exposing local paths or secrets."
+      ? "Equinox Local checked the runtime, private configuration, update path, Equinox Browser and optional integrations without exposing local paths or secrets."
       : "Review the checks below. Optional items do not block core Equinox Local, but attention items should be fixed before public-style use.",
   );
   setText("doctor-summary", `${doctor.summary?.pass ?? 0} passed · ${attention} attention · ${optional} optional`);
@@ -1800,34 +2123,110 @@ function createIntegrationCard(titleText, description, statusText, tone, actions
 }
 
 function createTelegramIntegrationCard() {
-  const telegram = state.telegram;
-  const configured = Boolean(telegram?.configured && telegram?.ready);
-  const needsAttention = Boolean(telegram?.needsAttention);
+  const telegram = state.telegram || {};
+  const configured = Boolean(telegram.configured && telegram.ready);
+  const needsAttention = Boolean(telegram.needsAttention);
+  const pairing = telegram.pairing || {};
   const card = createIntegrationCard(
     "Telegram",
     configured
-      ? `Bot API is connected${telegram.userIdHint ? ` to user ${telegram.userIdHint}` : ""}. Agents can send messages only to this Telegram account; the recipient cannot be changed by an agent.`
+      ? `Bot is paired${telegram.userIdHint ? ` to private user ${telegram.userIdHint}` : ""}. Telegram remote control is ${telegram.remoteControl?.enabled === false ? "off" : "on"}; task replies, files/photos and inline controls are ${telegram.taskInbox?.running ? "active" : "starting"}. Agents can still send only to this account.`
       : needsAttention
-        ? "Saved Telegram credentials need attention. Reconnect the bot to replace them safely."
-        : "Connect a Telegram bot to one Telegram account. Groups and channels are not supported, and agents cannot choose another recipient.",
-    configured ? "Ready" : needsAttention ? "Needs attention" : "Not connected",
-    configured ? "good" : needsAttention ? "warn" : "neutral",
+        ? "Saved Telegram state needs attention. Disconnect and pair the bot again safely."
+        : pairing.active
+          ? pairing.candidateFound
+            ? `Private account ${pairing.candidateLabel || pairing.userIdHint || "detected"} is waiting for your confirmation.`
+            : `Pairing is active${pairing.botUsername ? ` for @${pairing.botUsername}` : ""}. Open the bot and send /start.`
+          : "Pair a Telegram bot to one private account. No Telegram user ID is required.",
+    configured ? "Ready" : needsAttention ? "Needs attention" : pairing.active ? "Pairing" : "Not connected",
+    configured ? "good" : needsAttention ? "warn" : pairing.active ? "warn" : "neutral",
     configured
       ? [
           { label: "Send test", onClick: testTelegramConnection },
           { label: "Disconnect", onClick: disconnectTelegramConnection },
         ]
-      : [],
+      : pairing.active
+        ? pairing.candidateFound
+          ? [
+              { label: "Pair this account", primary: true, onClick: confirmTelegramPairingUi },
+              { label: "Cancel pairing", onClick: cancelTelegramPairingUi },
+            ]
+          : [
+              ...(pairing.botUsername ? [{ label: "Open your bot ↗", href: `https://t.me/${pairing.botUsername}` }] : []),
+              { label: "Cancel pairing", onClick: cancelTelegramPairingUi },
+            ]
+        : [],
   );
 
-  if (!configured) {
+  if (configured) {
+    const remoteControl = telegram.remoteControl || { enabled: true };
+    const toggle = document.createElement("label");
+    toggle.className = "toggle-field";
+    const copy = document.createElement("div");
+    const title = document.createElement("strong");
+    title.textContent = localizeUiText("Telegram remote control");
+    const help = document.createElement("small");
+    help.textContent = localizeUiText("Allow the paired Telegram account to control Tasks, Chat Bridge and Local controls. Turning this off ignores and discards inbound Telegram commands/messages while outbound notifications remain available.");
+    copy.append(title, help);
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.checked = remoteControl.enabled !== false;
+    checkbox.disabled = state.integrationBusy;
+    checkbox.addEventListener("change", () => void updateTelegramRemoteControlUi(checkbox.checked));
+    toggle.append(copy, checkbox);
+    card.append(toggle);
+  }
+
+  const downloads = telegram.downloads || null;
+  if (downloads?.path) {
+    const downloadBox = document.createElement("div");
+    downloadBox.className = "integration-form";
+    const title = document.createElement("strong");
+    title.textContent = localizeUiText("Download folder");
+    const location = document.createElement("code");
+    location.textContent = downloads.path;
+    location.style.overflowWrap = "anywhere";
+    const help = document.createElement("small");
+    help.textContent = localizeUiText("Incoming Telegram photos and documents are saved here. Changing this affects only new files; existing task attachments stay where they are. Files in this user-visible folder are not auto-deleted.");
+    const actions = document.createElement("div");
+    actions.className = "integration-actions";
+    const changeButton = document.createElement("button");
+    changeButton.type = "button";
+    changeButton.className = "button secondary";
+    changeButton.textContent = localizeUiText("Change folder…");
+    changeButton.disabled = state.integrationBusy || state.pickerBusy;
+    changeButton.addEventListener("click", () => void changeTelegramDownloadFolder());
+    const resetButton = document.createElement("button");
+    resetButton.type = "button";
+    resetButton.className = "button secondary";
+    resetButton.textContent = localizeUiText("Reset to default");
+    resetButton.disabled = state.integrationBusy || state.pickerBusy || downloads.isDefault === true;
+    resetButton.addEventListener("click", () => void resetTelegramDownloadFolder());
+    actions.append(changeButton, resetButton);
+    downloadBox.append(title, location, help, actions);
+    card.append(downloadBox);
+  }
+
+  if (!configured && !pairing.active) {
+    const instructions = document.createElement("p");
+    instructions.className = "integration-helper";
+    instructions.textContent = localizeUiText("Create a bot with BotFather using /newbot, copy its HTTP API token, then start pairing here. You will confirm the detected private account before Equinox Local saves it.");
+    card.append(instructions);
+
+    const botFather = document.createElement("a");
+    botFather.className = "button secondary";
+    botFather.href = "https://t.me/BotFather";
+    botFather.target = "_blank";
+    botFather.rel = "noopener noreferrer";
+    botFather.textContent = localizeUiText("Open BotFather ↗");
+    card.append(botFather);
+
     const form = document.createElement("form");
     form.className = "integration-form";
     form.addEventListener("submit", (event) => {
       event.preventDefault();
-      void connectTelegramIntegration();
+      void startTelegramPairingUi();
     });
-
     const tokenLabel = document.createElement("label");
     tokenLabel.className = "field";
     const tokenTitle = document.createElement("span");
@@ -1839,33 +2238,354 @@ function createTelegramIntegrationCard() {
     tokenInput.placeholder = "123456789:AA…";
     tokenInput.value = state.telegramBotToken;
     tokenInput.disabled = state.integrationBusy;
-    tokenInput.addEventListener("input", () => { state.telegramBotToken = tokenInput.value; });
-    tokenLabel.append(tokenTitle, tokenInput);
-
-    const chatLabel = document.createElement("label");
-    chatLabel.className = "field";
-    const chatTitle = document.createElement("span");
-    chatTitle.textContent = localizeUiText("Your Telegram ID");
-    const chatInput = document.createElement("input");
-    chatInput.type = "text";
-    chatInput.inputMode = "numeric";
-    chatInput.autocomplete = "off";
-    chatInput.spellcheck = false;
-    chatInput.placeholder = "123456789";
-    chatInput.value = state.telegramUserId;
-    chatInput.disabled = state.integrationBusy;
-    chatInput.addEventListener("input", () => { state.telegramUserId = chatInput.value; });
-    chatLabel.append(chatTitle, chatInput);
-
+    tokenInput.addEventListener("input", () => {
+      state.telegramBotToken = tokenInput.value;
+      button.disabled = state.integrationBusy || !state.telegramBotToken.trim();
+    });
+    const tokenHelp = document.createElement("small");
+    tokenHelp.textContent = localizeUiText("The token stays only on this Mac. Telegram user ID is discovered during pairing.");
+    tokenLabel.append(tokenTitle, tokenInput, tokenHelp);
     const button = document.createElement("button");
     button.type = "submit";
     button.className = "button primary";
-    button.textContent = localizeUiText(state.integrationBusy ? "Connecting…" : "Connect & test");
-    button.disabled = state.integrationBusy;
-    form.append(tokenLabel, chatLabel, button);
+    button.textContent = localizeUiText(state.integrationBusy ? "Starting pairing…" : "Pair Telegram");
+    button.disabled = state.integrationBusy || !state.telegramBotToken.trim();
+    form.append(tokenLabel, button);
     card.append(form);
   }
   return card;
+}
+
+function httpProfileDraftFrom(profile = null) {
+  if (!profile) {
+    return {
+      existing: false,
+      id: "",
+      label: "",
+      origin: "https://",
+      basePath: "/api",
+      authType: "bearer",
+      authHeader: "x-api-key",
+      allowedMethods: ["GET"],
+      allowedPathPrefixes: ["/"],
+      allowedAgentHeaders: [],
+      timeoutMs: 10_000,
+    };
+  }
+  return {
+    existing: true,
+    id: profile.id,
+    label: profile.label,
+    origin: profile.origin,
+    basePath: profile.basePath,
+    authType: profile.authType,
+    authHeader: profile.authType === "secret_header" ? profile.authHeader : "x-api-key",
+    allowedMethods: [...(profile.allowedMethods || ["GET"])],
+    allowedPathPrefixes: [...(profile.allowedPathPrefixes || ["/"])],
+    allowedAgentHeaders: [...(profile.allowedAgentHeaders || [])],
+    timeoutMs: profile.timeoutMs || 10_000,
+  };
+}
+
+function setHttpProfileDraft(profile = null) {
+  state.httpProfileDraft = profile === false ? null : httpProfileDraftFrom(profile);
+  renderIntegrations();
+}
+
+function createHttpProfileField(labelText, control, helpText = "") {
+  const label = document.createElement("label");
+  label.className = "field";
+  const title = document.createElement("span");
+  title.textContent = localizeUiText(labelText);
+  label.append(title, control);
+  if (helpText) {
+    const help = document.createElement("small");
+    help.textContent = localizeUiText(helpText);
+    label.append(help);
+  }
+  return label;
+}
+
+function createAuthenticatedHttpProfileForm() {
+  const draft = state.httpProfileDraft;
+  if (!draft) return null;
+  const form = document.createElement("form");
+  form.className = "integration-form http-profile-form";
+  form.addEventListener("submit", (event) => {
+    event.preventDefault();
+    void saveHttpProfile(form);
+  });
+
+  const grid = document.createElement("div");
+  grid.className = "http-profile-form-grid";
+
+  const idInput = document.createElement("input");
+  idInput.name = "id";
+  idInput.type = "text";
+  idInput.autocomplete = "off";
+  idInput.spellcheck = false;
+  idInput.value = draft.id;
+  idInput.placeholder = "moltbook";
+  idInput.readOnly = draft.existing;
+  idInput.disabled = state.httpProfileBusy;
+  grid.append(createHttpProfileField("Profile ID", idInput));
+
+  const labelInput = document.createElement("input");
+  labelInput.name = "label";
+  labelInput.type = "text";
+  labelInput.autocomplete = "off";
+  labelInput.value = draft.label;
+  labelInput.placeholder = "Moltbook";
+  labelInput.disabled = state.httpProfileBusy;
+  grid.append(createHttpProfileField("Display name", labelInput));
+
+  const originInput = document.createElement("input");
+  originInput.name = "origin";
+  originInput.type = "url";
+  originInput.autocomplete = "off";
+  originInput.spellcheck = false;
+  originInput.value = draft.origin;
+  originInput.placeholder = "https://api.example.com";
+  originInput.disabled = state.httpProfileBusy;
+  grid.append(createHttpProfileField("HTTPS origin", originInput));
+
+  const basePathInput = document.createElement("input");
+  basePathInput.name = "basePath";
+  basePathInput.type = "text";
+  basePathInput.autocomplete = "off";
+  basePathInput.spellcheck = false;
+  basePathInput.value = draft.basePath;
+  basePathInput.placeholder = "/api/v1";
+  basePathInput.disabled = state.httpProfileBusy;
+  grid.append(createHttpProfileField("Base path", basePathInput));
+
+  const authSelect = document.createElement("select");
+  authSelect.name = "authType";
+  for (const [value, label] of [["bearer", "Bearer token"], ["secret_header", "Secret header"]]) {
+    const option = document.createElement("option");
+    option.value = value;
+    option.textContent = localizeUiText(label);
+    option.selected = draft.authType === value;
+    authSelect.append(option);
+  }
+  authSelect.disabled = state.httpProfileBusy;
+
+  const headerInput = document.createElement("input");
+  headerInput.name = "authHeader";
+  headerInput.type = "text";
+  headerInput.autocomplete = "off";
+  headerInput.spellcheck = false;
+  headerInput.value = draft.authHeader || "x-api-key";
+  headerInput.placeholder = "x-api-key";
+  headerInput.disabled = state.httpProfileBusy || draft.authType !== "secret_header";
+  authSelect.addEventListener("change", () => {
+    headerInput.disabled = state.httpProfileBusy || authSelect.value !== "secret_header";
+  });
+  grid.append(createHttpProfileField("Authentication", authSelect));
+  grid.append(createHttpProfileField("Secret header name", headerInput));
+
+  const paths = document.createElement("textarea");
+  paths.name = "allowedPathPrefixes";
+  paths.rows = 3;
+  paths.spellcheck = false;
+  paths.value = draft.allowedPathPrefixes.join("\n");
+  paths.placeholder = "/posts\n/profile";
+  paths.disabled = state.httpProfileBusy;
+  grid.append(createHttpProfileField("Allowed path prefixes", paths));
+
+  const headers = document.createElement("textarea");
+  headers.name = "allowedAgentHeaders";
+  headers.rows = 3;
+  headers.spellcheck = false;
+  headers.value = draft.allowedAgentHeaders.join("\n");
+  headers.placeholder = "x-client-version";
+  headers.disabled = state.httpProfileBusy;
+  grid.append(createHttpProfileField("Allowed agent headers", headers));
+
+  const timeoutInput = document.createElement("input");
+  timeoutInput.name = "timeoutMs";
+  timeoutInput.type = "number";
+  timeoutInput.min = "1000";
+  timeoutInput.max = "30000";
+  timeoutInput.step = "1000";
+  timeoutInput.value = String(draft.timeoutMs);
+  timeoutInput.disabled = state.httpProfileBusy;
+  grid.append(createHttpProfileField("Request timeout (ms)", timeoutInput));
+
+  const credential = document.createElement("input");
+  credential.name = "credential";
+  credential.type = "password";
+  credential.autocomplete = "new-password";
+  credential.spellcheck = false;
+  credential.placeholder = draft.existing ? "••••••••" : "";
+  credential.disabled = state.httpProfileBusy;
+  grid.append(createHttpProfileField(
+    "Credential",
+    credential,
+    "Leave blank to keep the saved credential. Saved credentials are write-only and are never loaded back into this page.",
+  ));
+
+  const methods = document.createElement("fieldset");
+  methods.className = "http-methods";
+  methods.disabled = state.httpProfileBusy;
+  const legend = document.createElement("legend");
+  legend.textContent = localizeUiText("Allowed methods");
+  methods.append(legend);
+  for (const method of ["GET", "POST", "PUT", "PATCH", "DELETE"]) {
+    const label = document.createElement("label");
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.name = "allowedMethod";
+    checkbox.value = method;
+    checkbox.checked = draft.allowedMethods.includes(method);
+    const text = document.createElement("span");
+    text.textContent = method;
+    label.append(checkbox, text);
+    methods.append(label);
+  }
+
+  const actions = document.createElement("div");
+  actions.className = "integration-actions";
+  const save = document.createElement("button");
+  save.type = "submit";
+  save.className = "button primary";
+  save.textContent = localizeUiText("Save profile");
+  save.disabled = state.httpProfileBusy;
+  const cancel = document.createElement("button");
+  cancel.type = "button";
+  cancel.className = "button secondary";
+  cancel.textContent = localizeUiText("Cancel");
+  cancel.disabled = state.httpProfileBusy;
+  cancel.addEventListener("click", () => setHttpProfileDraft(false));
+  actions.append(save, cancel);
+
+  form.append(grid, methods, actions);
+  return form;
+}
+
+
+function createAuthenticatedHttpProfilesCard() {
+  const data = state.httpProfiles || { agentProfileManagementEnabled: true, profiles: [] };
+  const profiles = Array.isArray(data.profiles) ? data.profiles : [];
+  const managementEnabled = data.agentProfileManagementEnabled !== false;
+  const card = createIntegrationCard(
+    "Authenticated HTTP profiles",
+    "Keep API credentials on this Mac while allowing agents to make bounded requests only to the HTTPS origins, methods and paths you approve.",
+    managementEnabled ? "Agent management on" : "Agent management off",
+    managementEnabled ? "good" : "neutral",
+    [{ label: "Add profile", onClick: () => setHttpProfileDraft(null), primary: profiles.length === 0, disabled: state.httpProfileBusy }],
+  );
+  card.classList.add("http-profile-card", "integration-card-wide");
+
+  const toggle = document.createElement("label");
+  toggle.className = "toggle-field http-profile-management";
+  const toggleCopy = document.createElement("div");
+  const toggleTitle = document.createElement("strong");
+  toggleTitle.textContent = localizeUiText("Allow agents to manage HTTP profiles");
+  const toggleHelp = document.createElement("small");
+  toggleHelp.textContent = localizeUiText("Agents may create, edit and delete profile structure. Credentials remain human-only and are never exposed to the agent.");
+  toggleCopy.append(toggleTitle, toggleHelp);
+  const checkbox = document.createElement("input");
+  checkbox.type = "checkbox";
+  checkbox.checked = managementEnabled;
+  checkbox.disabled = state.httpProfileBusy;
+  checkbox.addEventListener("change", () => {
+    void updateHttpProfileManagement(checkbox.checked);
+  });
+  toggle.append(toggleCopy, checkbox);
+  card.append(toggle);
+
+  const profileList = document.createElement("div");
+  profileList.className = "http-profile-list";
+  if (profiles.length === 0) {
+    const empty = document.createElement("p");
+    empty.className = "http-profile-empty";
+    empty.textContent = localizeUiText("No authenticated HTTP profiles are configured yet.");
+    profileList.append(empty);
+  } else {
+    for (const profile of profiles) {
+      const row = document.createElement("article");
+      row.className = "http-profile-row";
+      const heading = document.createElement("div");
+      heading.className = "http-profile-heading";
+      const title = document.createElement("div");
+      const name = document.createElement("strong");
+      name.textContent = profile.label;
+      const id = document.createElement("code");
+      id.textContent = profile.id;
+      title.append(name, id);
+      const badge = document.createElement("span");
+      setBadge(badge, profile.ready ? "Ready" : "Needs credential", profile.ready ? "good" : "warn");
+      heading.append(title, badge);
+
+      const endpoint = document.createElement("code");
+      endpoint.className = "http-profile-endpoint";
+      endpoint.textContent = `${profile.origin}${profile.basePath === "/" ? "" : profile.basePath}`;
+
+      const scope = document.createElement("p");
+      const paths = (profile.allowedPathPrefixes || []).join(", ");
+      scope.textContent = `${(profile.allowedMethods || []).join(" · ")} · ${paths || "/"}`;
+
+      const actions = document.createElement("div");
+      actions.className = "integration-actions";
+      const edit = document.createElement("button");
+      edit.type = "button";
+      edit.className = "button secondary";
+      edit.textContent = localizeUiText("Edit");
+      edit.disabled = state.httpProfileBusy;
+      edit.addEventListener("click", () => setHttpProfileDraft(profile));
+
+      const test = document.createElement("button");
+      test.type = "button";
+      test.className = "button secondary";
+      test.textContent = localizeUiText("Test");
+      test.disabled = state.httpProfileBusy || !profile.ready;
+      test.addEventListener("click", () => void testHttpProfileConnection(profile));
+
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.className = "button danger";
+      remove.textContent = localizeUiText("Delete");
+      remove.disabled = state.httpProfileBusy;
+      remove.addEventListener("click", () => void deleteHttpProfileFromControlCenter(profile));
+
+      actions.append(edit, test, remove);
+      row.append(heading, endpoint, scope, actions);
+      const lastTest = state.httpProfileTestResults[profile.id];
+      if (lastTest) {
+        const testResult = document.createElement("small");
+        testResult.className = "http-profile-test-result";
+        testResult.textContent = lastTest;
+        row.append(testResult);
+      }
+      profileList.append(row);
+    }
+  }
+  card.append(profileList);
+
+  const form = createAuthenticatedHttpProfileForm();
+  if (form) card.append(form);
+  return card;
+}
+
+
+function createWebFileTransferCard() {
+  const settings = state.webFileTransfer || {};
+  const card = createIntegrationCard(
+    "Web file transfer",
+    "Files sent from ChatGPT to this Mac are saved here by default. Explicit destinations still override this folder.",
+    settings.path ? "Ready" : "Not available",
+    settings.path ? "good" : "neutral",
+  );
+  if (!settings.path) return card;
+  const box = document.createElement("div");
+  box.className = "integration-form";
+  const title = document.createElement("strong"); title.textContent = localizeUiText("Download folder");
+  const location = document.createElement("code"); location.textContent = settings.path; location.style.overflowWrap = "anywhere";
+  const actions = document.createElement("div"); actions.className = "integration-actions";
+  const change = document.createElement("button"); change.type = "button"; change.className = "button secondary"; change.textContent = localizeUiText("Change folder…"); change.disabled = state.integrationBusy || state.pickerBusy; change.addEventListener("click", () => void changeWebImportFolder());
+  const reset = document.createElement("button"); reset.type = "button"; reset.className = "button secondary"; reset.textContent = localizeUiText("Reset to default"); reset.disabled = state.integrationBusy || state.pickerBusy || settings.isDefault === true; reset.addEventListener("click", () => void resetWebImportFolder());
+  actions.append(change, reset); box.append(title, location, actions); card.append(box); return card;
 }
 
 function renderIntegrations() {
@@ -1916,7 +2636,9 @@ function renderIntegrations() {
       peekabooStatus,
       peekabooTone,
     ),
+    createWebFileTransferCard(),
     createTelegramIntegrationCard(),
+    createAuthenticatedHttpProfilesCard(),
   );
 }
 
@@ -2121,6 +2843,78 @@ function renderActivity() {
   }
 }
 
+function formatTurnBudgetDuration(ms) {
+  if (!Number.isFinite(ms)) return "—";
+  const totalSeconds = Math.max(0, Math.floor(ms / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${minutes}:${String(seconds).padStart(2, "0")}`;
+}
+
+function turnBudgetStageFor(elapsedMs, cutoffMinutes) {
+  const cutoffMs = cutoffMinutes * 60_000;
+  if (elapsedMs >= cutoffMs) return "overdue";
+  if (elapsedMs >= Math.max(0, cutoffMs - 2 * 60_000)) return "finalize";
+  if (elapsedMs >= Math.max(0, cutoffMs - 4 * 60_000)) return "checkpoint";
+  return "running";
+}
+
+function renderTurnBudgetLive() {
+  const budget = state.turnBudget || state.status?.turnBudget || null;
+  if (!budget?.enabled) {
+    setBadge("turn-budget-badge", "Off", "neutral");
+    setText("turn-budget-elapsed", "—");
+    setText("turn-budget-remaining", "—");
+    setText("turn-budget-stage", "Disabled");
+    setText("turn-budget-copy", "Turn Budget is disabled. Equinox Local will not add per-turn finalization guidance.");
+    return;
+  }
+  const active = budget.active;
+  if (!active) {
+    setBadge("turn-budget-badge", `${budget.cutoffMinutes} min`, "good");
+    setText("turn-budget-elapsed", "—");
+    setText("turn-budget-remaining", "—");
+    setText("turn-budget-stage", "Idle");
+    setText("turn-budget-copy", "Waiting for the first Equinox Local call in an assistant turn.");
+    return;
+  }
+  const startedAtMs = Date.parse(active.startedAt);
+  const elapsedMs = Number.isFinite(startedAtMs) ? Math.max(0, Date.now() - startedAtMs) : Number(active.elapsedMs) || 0;
+  const remainingMs = Math.max(0, budget.cutoffMinutes * 60_000 - elapsedMs);
+  const stage = turnBudgetStageFor(elapsedMs, budget.cutoffMinutes);
+  const presentation = {
+    running: ["Running", "good"],
+    checkpoint: ["Checkpoint soon", "warn"],
+    finalize: ["Finalizing", "warn"],
+    overdue: ["Cutoff reached", "bad"],
+  }[stage];
+  setBadge("turn-budget-badge", presentation[0], presentation[1]);
+  setText("turn-budget-elapsed", formatTurnBudgetDuration(elapsedMs));
+  setText("turn-budget-remaining", formatTurnBudgetDuration(remainingMs));
+  setText("turn-budget-stage", presentation[0]);
+  setText("turn-budget-copy", active.source === "browser"
+    ? "Bound to the current ChatGPT assistant turn through Equinox Browser."
+    : "Using first-Local-call fallback because browser turn identity is unavailable.");
+}
+
+function renderTurnBudget() {
+  const draft = state.turnBudgetDraft || { enabled: true, cutoffMinutes: 22 };
+  const enabled = $("turn-budget-enabled");
+  const cutoff = $("turn-budget-cutoff");
+  const save = $("save-turn-budget-button");
+  if (enabled) enabled.checked = draft.enabled !== false;
+  if (cutoff) {
+    cutoff.value = String(draft.cutoffMinutes || 22);
+    cutoff.disabled = draft.enabled === false || state.turnBudgetBusy;
+  }
+  if (enabled) enabled.disabled = state.turnBudgetBusy;
+  if (save) {
+    save.disabled = state.turnBudgetBusy || !state.turnBudgetDirty;
+    save.textContent = localizeUiText(state.turnBudgetBusy ? "Saving…" : "Save Turn Budget");
+  }
+  renderTurnBudgetLive();
+}
+
 function renderAgentControl() {
   const control = state.status?.agentControl || {};
   const paused = control.paused === true || control.state === "PAUSED";
@@ -2136,6 +2930,7 @@ function renderAgentControl() {
   setText("active-terminal-count", String(activeWork.terminals ?? 0));
   setText("active-process-count", String(activeWork.processes ?? 0));
   setText("active-work-count", String(activeWork.total ?? 0));
+  renderTurnBudget();
 
   const button = $("agent-control-button");
   if (!button) return;
@@ -2246,6 +3041,7 @@ function replaceTaskInState(task) {
   else state.tasks.unshift(clone(task));
   state.selectedTaskId = task.taskId;
   state.taskDraft = clone(task);
+  state.taskDraftDirty = false;
 }
 
 function renderTasks() {
@@ -2261,9 +3057,11 @@ function renderTasks() {
     list.append(empty);
     state.selectedTaskId = null;
     state.taskDraft = null;
+    state.taskDraftDirty = false;
   } else if (!state.selectedTaskId || !state.tasks.some((task) => task.taskId === state.selectedTaskId)) {
     state.selectedTaskId = state.tasks.find((task) => task.status === "active")?.taskId || state.tasks[0].taskId;
     state.taskDraft = clone(state.tasks.find((task) => task.taskId === state.selectedTaskId));
+    state.taskDraftDirty = false;
   }
 
   for (const task of state.tasks) {
@@ -2348,11 +3146,13 @@ function renderTasks() {
     $("task-abandon-fresh-resume-button").hidden = true;
   }
 
-  $("task-title-input").value = task.title || "";
-  $("task-objective-input").value = task.objective || "";
-  $("task-completed-input").value = (task.completed || []).join("\n");
-  $("task-next-input").value = (task.next || []).join("\n");
-  $("task-references-input").value = formatTaskReferences(task.references);
+  if (!state.taskDraftDirty) {
+    $("task-title-input").value = task.title || "";
+    $("task-objective-input").value = task.objective || "";
+    $("task-completed-input").value = (task.completed || []).join("\n");
+    $("task-next-input").value = (task.next || []).join("\n");
+    $("task-references-input").value = formatTaskReferences(task.references);
+  }
 
   const editable = task.status === "active" && !state.taskBusy && !recovery?.blocking;
   for (const id of ["task-title-input", "task-objective-input", "task-completed-input", "task-next-input", "task-references-input"]) $(id).disabled = !editable;
@@ -2371,6 +3171,7 @@ function renderTasks() {
 async function selectTask(taskId) {
   if (state.taskBusy || !/^task-[a-z0-9-]{6,80}$/u.test(String(taskId || ""))) return;
   state.taskBusy = true;
+  state.taskDraftDirty = false;
   renderTasks();
   try {
     const result = await requestJson(`/api/v1/tasks/${encodeURIComponent(taskId)}`);
@@ -2421,6 +3222,7 @@ async function deleteSelectedTask() {
     state.tasks = state.tasks.filter((item) => item.taskId !== task.taskId);
     state.selectedTaskId = null;
     state.taskDraft = null;
+    state.taskDraftDirty = false;
     const refreshed = await requestJson("/api/v1/tasks").catch(() => null);
     if (refreshed?.tasks) state.tasks = clone(refreshed.tasks);
     showToast("Task deleted.");
@@ -2484,11 +3286,12 @@ function updateRestartState() {
 }
 
 async function refreshAll() {
-  if (state.restartRequired) return;
+  if (state.restartRequired || state.refreshAllBusy) return;
+  state.refreshAllBusy = true;
   clearError();
   $("refresh-button").disabled = true;
   try {
-    const [health, status, config, activity, tasks, update, onboarding, doctor, doctorRepairs, peekaboo, telegram] = await Promise.all([
+    const [health, status, config, activity, tasks, update, onboarding, doctor, doctorRepairs, peekaboo, telegram, webFileTransfer, httpProfiles] = await Promise.all([
       requestJson("/api/v1/health"),
       requestJson("/api/v1/status"),
       requestJson("/api/v1/config"),
@@ -2500,17 +3303,29 @@ async function refreshAll() {
       requestJson("/api/v1/doctor/repairs").catch(() => ({ repairs: null })),
       requestJson("/api/v1/integrations/peekaboo").catch(() => ({ peekaboo: null })),
       requestJson("/api/v1/integrations/telegram").catch(() => ({ telegram: null })),
+      requestJson("/api/v1/files/import-settings").catch(() => ({ webFileTransfer: null })),
+      requestJson("/api/v1/integrations/http-profiles").catch(() => ({ httpProfiles: null })),
     ]);
     state.health = health;
     state.status = status.status;
+    state.turnBudget = status.status?.turnBudget || null;
+    if (!state.turnBudgetDirty && state.turnBudget) {
+      state.turnBudgetDraft = {
+        enabled: state.turnBudget.enabled !== false,
+        cutoffMinutes: Number(state.turnBudget.cutoffMinutes) || 22,
+      };
+    }
     state.config = clone(config.config);
     state.revision = config.revision;
     state.activity = Array.isArray(activity.events) ? activity.events : [];
     state.tasks = Array.isArray(tasks.tasks) ? tasks.tasks : [];
     if (!state.selectedTaskId || !state.tasks.some((task) => task.taskId === state.selectedTaskId)) {
       state.selectedTaskId = state.tasks.find((task) => task.status === "active")?.taskId || state.tasks[0]?.taskId || null;
+      state.taskDraftDirty = false;
     }
-    state.taskDraft = state.selectedTaskId ? clone(state.tasks.find((task) => task.taskId === state.selectedTaskId)) : null;
+    if (!state.taskDraftDirty) {
+      state.taskDraft = state.selectedTaskId ? clone(state.tasks.find((task) => task.taskId === state.selectedTaskId)) : null;
+    }
     state.update = update.update || null;
     state.onboarding = onboarding.onboarding || null;
     state.doctor = doctor.doctor || null;
@@ -2522,18 +3337,149 @@ async function refreshAll() {
       };
     }
     state.telegram = telegram.telegram || null;
-    state.browserDraft = null;
-    state.browserSettingsDirty = false;
+    state.webFileTransfer = webFileTransfer.webFileTransfer || null;
+    state.httpProfiles = httpProfiles.httpProfiles || null;
+    if (!state.browserSettingsDirty) state.browserDraft = null;
     state.restartRequired = false;
     markClean();
     renderAll();
+    document.body.classList.remove("control-loading");
     state.lastRefreshedAt = new Date();
     renderLastRefreshed();
   } catch (error) {
     showError(error);
   } finally {
+    state.refreshAllBusy = false;
     $("refresh-button").disabled = state.restartRequired || state.restartBusy;
   }
+}
+
+function autoRefreshAllowed() {
+  return !document.hidden && !state.restartRequired && !state.restartBusy && !state.refreshAllBusy;
+}
+
+function reconcileLiveTasks(nextTasks) {
+  state.tasks = Array.isArray(nextTasks) ? clone(nextTasks) : [];
+  if (!state.selectedTaskId || !state.tasks.some((task) => task.taskId === state.selectedTaskId)) {
+    state.selectedTaskId = state.tasks.find((task) => task.status === "active")?.taskId || state.tasks[0]?.taskId || null;
+    state.taskDraftDirty = false;
+  }
+  if (!state.taskDraftDirty && !state.taskBusy) {
+    state.taskDraft = state.selectedTaskId ? clone(state.tasks.find((task) => task.taskId === state.selectedTaskId)) : null;
+  }
+}
+
+async function refreshLiveState() {
+  if (!autoRefreshAllowed() || state.autoRefreshLiveBusy || state.onboardingBusy) return;
+  state.autoRefreshLiveBusy = true;
+  try {
+    const [health, status, activity, tasks, onboarding] = await Promise.all([
+      requestJson("/api/v1/health", { backgroundRefresh: true }),
+      requestJson("/api/v1/status", { backgroundRefresh: true }),
+      requestJson("/api/v1/activity", { backgroundRefresh: true }).catch(() => null),
+      requestJson("/api/v1/tasks", { backgroundRefresh: true }).catch(() => null),
+      requestJson("/api/v1/onboarding", { backgroundRefresh: true }).catch(() => null),
+    ]);
+    state.health = health;
+    const previousStatus = state.status || {};
+    state.status = {
+      ...previousStatus,
+      ...status.status,
+      peekaboo: {
+        ...(previousStatus.peekaboo || {}),
+        ...(status.status?.peekaboo || {}),
+      },
+    };
+    state.turnBudget = status.status?.turnBudget || state.turnBudget;
+    if (!state.turnBudgetDirty && state.turnBudget) {
+      state.turnBudgetDraft = {
+        enabled: state.turnBudget.enabled !== false,
+        cutoffMinutes: Number(state.turnBudget.cutoffMinutes) || 22,
+      };
+    }
+    if (activity?.events) state.activity = activity.events;
+    if (tasks?.tasks) reconcileLiveTasks(tasks.tasks);
+    if (onboarding?.onboarding) state.onboarding = onboarding.onboarding;
+    renderDashboard();
+    renderOnboarding();
+    renderTasks();
+    renderActivity();
+    renderBrowserPage();
+    renderAgentControl();
+    renderRuntimeRestartControl();
+    renderTurnBudget();
+    state.lastRefreshedAt = new Date();
+    renderLastRefreshed();
+  } catch {
+    // Automatic polling is best-effort. Manual Refresh remains the explicit error surface.
+  } finally {
+    state.autoRefreshLiveBusy = false;
+  }
+}
+
+async function refreshMediumState() {
+  if (!autoRefreshAllowed() || state.autoRefreshMediumBusy) return;
+  state.autoRefreshMediumBusy = true;
+  try {
+    const [doctor, doctorRepairs, peekaboo, telegram, webFileTransfer, httpProfiles] = await Promise.all([
+      requestJson("/api/v1/doctor", { backgroundRefresh: true }).catch(() => null),
+      requestJson("/api/v1/doctor/repairs", { backgroundRefresh: true }).catch(() => null),
+      requestJson("/api/v1/integrations/peekaboo", { backgroundRefresh: true }).catch(() => null),
+      requestJson("/api/v1/integrations/telegram", { backgroundRefresh: true }).catch(() => null),
+      requestJson("/api/v1/files/import-settings", { backgroundRefresh: true }).catch(() => null),
+      state.httpProfileDraft ? Promise.resolve(null) : requestJson("/api/v1/integrations/http-profiles", { backgroundRefresh: true }).catch(() => null),
+    ]);
+    if (doctor?.doctor) state.doctor = doctor.doctor;
+    if (doctorRepairs?.repairs) state.doctorRepairs = doctorRepairs.repairs;
+    if (peekaboo?.peekaboo) {
+      state.status = { ...(state.status || {}), peekaboo: peekaboo.peekaboo };
+    }
+    if (telegram?.telegram) state.telegram = telegram.telegram;
+    if (webFileTransfer?.webFileTransfer) state.webFileTransfer = webFileTransfer.webFileTransfer;
+    if (httpProfiles?.httpProfiles && !state.httpProfileDraft) state.httpProfiles = httpProfiles.httpProfiles;
+    renderDoctor();
+    if (!state.httpProfileDraft) renderIntegrations();
+    renderBrowserPage();
+    renderDashboard();
+  } catch {
+    // Best-effort background refresh; do not interrupt the user for transient failures.
+  } finally {
+    state.autoRefreshMediumBusy = false;
+  }
+}
+
+async function refreshSlowState() {
+  if (!autoRefreshAllowed() || state.autoRefreshSlowBusy) return;
+  state.autoRefreshSlowBusy = true;
+  try {
+    const [config, update] = await Promise.all([
+      state.dirty || state.dialogMode ? Promise.resolve(null) : requestJson("/api/v1/config", { backgroundRefresh: true }).catch(() => null),
+      state.updateBusy || state.updateApplyBusy ? Promise.resolve(null) : requestJson("/api/v1/update", { backgroundRefresh: true }).catch(() => null),
+    ]);
+    if (config?.config && !state.dirty && !state.dialogMode) {
+      state.config = clone(config.config);
+      state.revision = config.revision;
+      renderProjects();
+      renderPermissions();
+    }
+    if (update?.update && !state.updateBusy && !state.updateApplyBusy) {
+      state.update = update.update;
+      renderUpdate();
+    }
+  } catch {
+    // Best-effort background refresh; manual Refresh can surface persistent errors.
+  } finally {
+    state.autoRefreshSlowBusy = false;
+  }
+}
+
+function refreshVisibleControlCenter() {
+  if (document.hidden) return;
+  const now = Date.now();
+  if (now - state.lastAutoRefreshAt < AUTO_REFRESH_FOCUS_DEBOUNCE_MS) return;
+  state.lastAutoRefreshAt = now;
+  void refreshLiveState();
+  void refreshMediumState();
 }
 
 function validateRootForm({ id, name, root }) {
@@ -2770,21 +3716,161 @@ async function saveBrowserSettings() {
   }
 }
 
-async function connectTelegramIntegration() {
+async function startTelegramPairingUi() {
+  if (state.integrationBusy || !state.telegramBotToken.trim()) return;
+  clearError();
+  state.integrationBusy = true;
+  renderIntegrations();
+  renderOnboarding();
+  try {
+    const result = await mutationJson("/api/v1/integrations/telegram/pair/start", "POST", {
+      botToken: state.telegramBotToken.trim(),
+    });
+    state.telegram = { ...(state.telegram || {}), configured: false, ready: false, needsAttention: false, pairing: result.pairing };
+    state.telegramBotToken = "";
+    if ($("setup-telegram-token")) $("setup-telegram-token").value = "";
+    state.telegramSetupSkipped = false;
+    if (state.health?.controlCenter) state.health.controlCenter.mutationCount += 1;
+    showToast("Telegram pairing started. Send /start to your bot.");
+  } catch (error) {
+    showError(error);
+  } finally {
+    state.integrationBusy = false;
+    renderIntegrations();
+    renderOnboarding();
+  }
+}
+
+async function refreshTelegramPairing() {
+  const pairing = state.telegram?.pairing;
+  if (document.hidden || state.telegramPairingPollBusy || !pairing?.active || pairing.candidateFound) return;
+  state.telegramPairingPollBusy = true;
+  try {
+    const result = await requestJson("/api/v1/integrations/telegram/pair", { backgroundRefresh: true });
+    state.telegram = { ...(state.telegram || {}), pairing: result.pairing };
+    renderIntegrations();
+    renderOnboarding();
+  } catch {
+    // Pairing polling is best-effort; explicit actions remain the error surface.
+  } finally {
+    state.telegramPairingPollBusy = false;
+  }
+}
+
+async function confirmTelegramPairingUi() {
+  if (state.integrationBusy || !state.telegram?.pairing?.candidateFound) return;
+  clearError();
+  state.integrationBusy = true;
+  renderIntegrations();
+  renderOnboarding();
+  try {
+    const result = await mutationJson("/api/v1/integrations/telegram/pair/confirm", "POST", {});
+    state.telegram = { ...(result.telegram || {}), pairing: { active: false, candidateFound: false }, pendingInboundCount: 0 };
+    state.telegramSetupSkipped = false;
+    if (state.health?.controlCenter) state.health.controlCenter.mutationCount += 1;
+    showToast("Telegram paired successfully.");
+  } catch (error) {
+    showError(error);
+  } finally {
+    state.integrationBusy = false;
+    renderIntegrations();
+    renderOnboarding();
+  }
+}
+
+async function cancelTelegramPairingUi() {
+  if (state.integrationBusy) return;
+  clearError();
+  state.integrationBusy = true;
+  try {
+    await mutationJson("/api/v1/integrations/telegram/pair/cancel", "POST", {});
+    state.telegram = { ...(state.telegram || {}), configured: false, ready: false, needsAttention: false, pairing: { active: false, candidateFound: false } };
+    if (state.health?.controlCenter) state.health.controlCenter.mutationCount += 1;
+    showToast("Telegram pairing cancelled.");
+  } catch (error) {
+    showError(error);
+  } finally {
+    state.integrationBusy = false;
+    renderIntegrations();
+    renderOnboarding();
+  }
+}
+
+async function changeWebImportFolder() {
+  if (state.integrationBusy || state.pickerBusy) return;
+  clearError(); state.integrationBusy = true; state.pickerBusy = true; renderIntegrations();
+  try {
+    const picked = await mutationJson("/api/v1/folder-picker", "POST", {});
+    if (picked.cancelled) return showToast("Folder selection cancelled.");
+    const result = await mutationJson("/api/v1/files/import-settings", "PUT", { path: picked.path });
+    state.webFileTransfer = result.webFileTransfer;
+    if (state.health?.controlCenter) state.health.controlCenter.mutationCount += 1;
+    showToast("Web file transfer folder updated.");
+  } catch (error) { showError(error); } finally { state.pickerBusy = false; state.integrationBusy = false; renderIntegrations(); }
+}
+
+async function resetWebImportFolder() {
+  if (state.integrationBusy || state.pickerBusy || state.webFileTransfer?.isDefault) return;
+  clearError(); state.integrationBusy = true; renderIntegrations();
+  try {
+    const result = await mutationJson("/api/v1/files/import-settings", "PUT", { path: null });
+    state.webFileTransfer = result.webFileTransfer;
+    if (state.health?.controlCenter) state.health.controlCenter.mutationCount += 1;
+    showToast("Web file transfer folder reset to default.");
+  } catch (error) { showError(error); } finally { state.integrationBusy = false; renderIntegrations(); }
+}
+
+async function changeTelegramDownloadFolder() {
+  if (state.integrationBusy || state.pickerBusy) return;
+  clearError();
+  state.pickerBusy = true;
+  state.integrationBusy = true;
+  renderIntegrations();
+  try {
+    const picked = await mutationJson("/api/v1/folder-picker", "POST", {});
+    if (picked.cancelled) return showToast("Folder selection cancelled.");
+    if (typeof picked.path !== "string" || !picked.path.startsWith("/")) throw new Error("Folder picker returned an invalid path.");
+    const result = await mutationJson("/api/v1/integrations/telegram/downloads", "PUT", { path: picked.path });
+    state.telegram = { ...(state.telegram || {}), downloads: result.downloads };
+    if (state.health?.controlCenter) state.health.controlCenter.mutationCount += 1;
+    showToast("Telegram download folder updated.");
+  } catch (error) {
+    showError(error);
+  } finally {
+    state.pickerBusy = false;
+    state.integrationBusy = false;
+    renderIntegrations();
+  }
+}
+
+async function resetTelegramDownloadFolder() {
+  if (state.integrationBusy || state.pickerBusy || state.telegram?.downloads?.isDefault) return;
+  clearError();
+  state.integrationBusy = true;
+  renderIntegrations();
+  try {
+    const result = await mutationJson("/api/v1/integrations/telegram/downloads", "PUT", { path: null });
+    state.telegram = { ...(state.telegram || {}), downloads: result.downloads };
+    if (state.health?.controlCenter) state.health.controlCenter.mutationCount += 1;
+    showToast("Telegram download folder reset to default.");
+  } catch (error) {
+    showError(error);
+  } finally {
+    state.integrationBusy = false;
+    renderIntegrations();
+  }
+}
+
+async function updateTelegramRemoteControlUi(enabled) {
   if (state.integrationBusy) return;
   clearError();
   state.integrationBusy = true;
   renderIntegrations();
   try {
-    const result = await mutationJson("/api/v1/integrations/telegram", "PUT", {
-      botToken: state.telegramBotToken.trim(),
-      telegramUserId: state.telegramUserId.trim(),
-    });
-    state.telegram = result.telegram || null;
-    state.telegramBotToken = "";
-    state.telegramUserId = "";
+    const result = await mutationJson("/api/v1/integrations/telegram/remote-control", "PUT", { enabled: Boolean(enabled) });
+    state.telegram = { ...(state.telegram || {}), remoteControl: result.remoteControl };
     if (state.health?.controlCenter) state.health.controlCenter.mutationCount += 1;
-    showToast("Telegram connected and test message sent.");
+    showToast(enabled ? "Telegram remote control enabled." : "Telegram remote control disabled.");
   } catch (error) {
     showError(error);
   } finally {
@@ -2817,7 +3903,7 @@ async function disconnectTelegramConnection() {
   renderIntegrations();
   try {
     await mutationJson("/api/v1/integrations/telegram/disconnect", "POST", {});
-    state.telegram = { configured: false, ready: false, needsAttention: false, userIdHint: null };
+    state.telegram = { configured: false, ready: false, needsAttention: false, userIdHint: null, pairing: { active: false, candidateFound: false }, pendingInboundCount: 0 };
     if (state.health?.controlCenter) state.health.controlCenter.mutationCount += 1;
     showToast("Telegram disconnected.");
   } catch (error) {
@@ -2827,6 +3913,142 @@ async function disconnectTelegramConnection() {
     renderIntegrations();
   }
 }
+
+async function refreshHttpProfiles() {
+  const result = await requestJson("/api/v1/integrations/http-profiles");
+  state.httpProfiles = result.httpProfiles || { agentProfileManagementEnabled: true, profiles: [] };
+  return state.httpProfiles;
+}
+
+async function updateHttpProfileManagement(enabled) {
+  if (state.httpProfileBusy) return;
+  clearError();
+  state.httpProfileBusy = true;
+  renderIntegrations();
+  try {
+    const result = await mutationJson("/api/v1/integrations/http-profiles/management", "PUT", { enabled });
+    state.httpProfiles = result.httpProfiles || state.httpProfiles;
+    if (state.health?.controlCenter) state.health.controlCenter.mutationCount += 1;
+    showToast("HTTP profile management updated.");
+  } catch (error) {
+    showError(error);
+  } finally {
+    state.httpProfileBusy = false;
+    renderIntegrations();
+  }
+}
+
+function linesFromField(value) {
+  return String(value || "")
+    .split(/\r?\n/u)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+async function saveHttpProfile(form) {
+  if (state.httpProfileBusy) return;
+  clearError();
+  const data = new FormData(form);
+  const id = String(data.get("id") || "").trim();
+  const label = String(data.get("label") || "").trim();
+  const origin = String(data.get("origin") || "").trim();
+  const basePath = String(data.get("basePath") || "").trim();
+  const authType = String(data.get("authType") || "");
+  const authHeader = String(data.get("authHeader") || "").trim();
+  const allowedMethods = data.getAll("allowedMethod").map(String);
+  const allowedPathPrefixes = linesFromField(data.get("allowedPathPrefixes"));
+  const allowedAgentHeaders = linesFromField(data.get("allowedAgentHeaders"));
+  const timeoutMs = Number.parseInt(String(data.get("timeoutMs") || ""), 10);
+  const credential = String(data.get("credential") || "");
+
+  if (!/^[a-z][a-z0-9._-]{0,63}$/u.test(id)) return showError(new Error("Profile ID must start with a lowercase letter and use only lowercase letters, numbers, dots, underscores or hyphens."));
+  if (!label || label.length > 100) return showError(new Error("Display name must be 1-100 characters."));
+  if (!origin.startsWith("https://")) return showError(new Error("HTTPS origin must start with https://."));
+  if (!basePath.startsWith("/") || basePath.startsWith("//")) return showError(new Error("Base path must begin with exactly one /."));
+  if (allowedMethods.length < 1) return showError(new Error("Choose at least one allowed method."));
+  if (allowedPathPrefixes.length < 1) return showError(new Error("Add at least one allowed path prefix."));
+  if (authType === "secret_header" && !authHeader) return showError(new Error("Secret header name is required."));
+  if (!Number.isInteger(timeoutMs) || timeoutMs < 1000 || timeoutMs > 30000) return showError(new Error("Request timeout must be between 1000 and 30000 ms."));
+
+  const profile = {
+    id,
+    label,
+    origin,
+    basePath,
+    auth: authType === "secret_header" ? { type: "secret_header", headerName: authHeader } : { type: "bearer" },
+    allowedMethods,
+    allowedPathPrefixes,
+    allowedAgentHeaders,
+    timeoutMs,
+  };
+
+  state.httpProfileBusy = true;
+  renderIntegrations();
+  try {
+    await mutationJson("/api/v1/integrations/http-profiles/profile", "PUT", {
+      profile,
+      ...(credential ? { credential } : {}),
+    });
+    await refreshHttpProfiles();
+    state.httpProfileDraft = null;
+    if (state.health?.controlCenter) state.health.controlCenter.mutationCount += 1;
+    showToast("Profile saved.");
+  } catch (error) {
+    showError(error);
+  } finally {
+    state.httpProfileBusy = false;
+    renderIntegrations();
+  }
+}
+
+async function testHttpProfileConnection(profile) {
+  if (state.httpProfileBusy || !profile?.ready) return;
+  clearError();
+  state.httpProfileBusy = true;
+  renderIntegrations();
+  try {
+    const method = profile.allowedMethods?.includes("GET") ? "GET" : profile.allowedMethods?.[0];
+    const path = profile.allowedPathPrefixes?.[0] || "/";
+    const response = await mutationJson("/api/v1/integrations/http-profiles/test", "POST", {
+      profileId: profile.id,
+      method,
+      path,
+      query: {},
+      headers: {},
+    });
+    const result = response.result || {};
+    state.httpProfileTestResults[profile.id] = `HTTP ${result.status ?? 0} · ${result.durationMs ?? 0} ms`;
+    if (state.health?.controlCenter) state.health.controlCenter.mutationCount += 1;
+    showToast(`HTTP test returned status ${result.status ?? 0}.`);
+  } catch (error) {
+    showError(error);
+  } finally {
+    state.httpProfileBusy = false;
+    renderIntegrations();
+  }
+}
+
+async function deleteHttpProfileFromControlCenter(profile) {
+  if (state.httpProfileBusy || !profile?.id) return;
+  if (!window.confirm(localizeUiText("Delete this HTTP profile and its saved credential?"))) return;
+  clearError();
+  state.httpProfileBusy = true;
+  renderIntegrations();
+  try {
+    await mutationJson("/api/v1/integrations/http-profiles/delete", "POST", { profileId: profile.id });
+    await refreshHttpProfiles();
+    if (state.httpProfileDraft?.id === profile.id) state.httpProfileDraft = null;
+    delete state.httpProfileTestResults[profile.id];
+    if (state.health?.controlCenter) state.health.controlCenter.mutationCount += 1;
+    showToast("Profile deleted.");
+  } catch (error) {
+    showError(error);
+  } finally {
+    state.httpProfileBusy = false;
+    renderIntegrations();
+  }
+}
+
 
 async function checkForUpdates() {
   if (state.updateBusy || !state.update?.selfUpdateSupported) return;
@@ -3074,6 +4296,34 @@ async function toggleAgentControl() {
   }
 }
 
+async function saveTurnBudgetSettings() {
+  if (state.turnBudgetBusy || !state.turnBudgetDraft) return;
+  const cutoffMinutes = Number(state.turnBudgetDraft.cutoffMinutes);
+  if (!Number.isInteger(cutoffMinutes) || cutoffMinutes < 5 || cutoffMinutes > 120) {
+    showError(new Error("Turn Budget cutoff must be an integer between 5 and 120 minutes."));
+    return;
+  }
+  clearError();
+  state.turnBudgetBusy = true;
+  renderTurnBudget();
+  try {
+    const response = await mutationJson("/api/v1/turn-budget", "PUT", {
+      enabled: state.turnBudgetDraft.enabled !== false,
+      cutoffMinutes,
+    });
+    state.turnBudget = response.turnBudget;
+    state.status = { ...(state.status || {}), turnBudget: response.turnBudget };
+    state.turnBudgetDraft = { enabled: response.turnBudget.enabled !== false, cutoffMinutes: response.turnBudget.cutoffMinutes };
+    state.turnBudgetDirty = false;
+    showToast("Turn Budget updated immediately.");
+  } catch (error) {
+    showError(error);
+  } finally {
+    state.turnBudgetBusy = false;
+    renderTurnBudget();
+  }
+}
+
 async function restartRuntimeFromControlCenter() {
   if (state.restartBusy) return;
   clearError();
@@ -3157,10 +4407,37 @@ function bindEvents() {
     if (state.theme === "system") applyTheme();
   });
   $("language-select").addEventListener("change", (event) => setLanguage(event.target.value));
+  window.addEventListener("focus", refreshVisibleControlCenter);
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) refreshVisibleControlCenter();
+  });
   $("agent-control-button").addEventListener("click", toggleAgentControl);
+  $("turn-budget-enabled").addEventListener("change", (event) => {
+    state.turnBudgetDraft = { ...(state.turnBudgetDraft || { cutoffMinutes: 22 }), enabled: event.target.checked };
+    state.turnBudgetDirty = true;
+    renderTurnBudget();
+  });
+  $("turn-budget-cutoff").addEventListener("input", (event) => {
+    state.turnBudgetDraft = { ...(state.turnBudgetDraft || { enabled: true }), cutoffMinutes: Number(event.target.value) };
+    state.turnBudgetDirty = true;
+    $("save-turn-budget-button").disabled = state.turnBudgetBusy;
+  });
+  $("save-turn-budget-button").addEventListener("click", saveTurnBudgetSettings);
   $("restart-runtime-button").addEventListener("click", restartRuntimeFromControlCenter);
   $("refresh-button").addEventListener("click", refreshAll);
   $("onboarding-tunnel-form").addEventListener("submit", submitTunnelOnboarding);
+  $("copy-setup-tunnel-id").addEventListener("click", () => void copySetupText(state.onboarding?.tunnelId || "", "Tunnel ID copied."));
+  $("copy-setup-test-prompt").addEventListener("click", () => void copySetupText($("setup-test-prompt").textContent.trim(), "Test prompt copied."));
+  $("setup-telegram-token").addEventListener("input", (event) => { state.telegramBotToken = event.target.value; renderOnboarding(); });
+  $("setup-telegram-start").addEventListener("click", () => void startTelegramPairingUi());
+  $("setup-telegram-confirm").addEventListener("click", () => void confirmTelegramPairingUi());
+  $("setup-telegram-cancel").addEventListener("click", () => void cancelTelegramPairingUi());
+  $("setup-telegram-skip").addEventListener("click", () => { state.telegramSetupSkipped = true; renderOnboarding(); });
+  $("setup-uninstall-nav").addEventListener("click", () => {
+    const details = $("setup-uninstall-details");
+    details.open = true;
+    details.scrollIntoView({ block: "start", behavior: "smooth" });
+  });
   $("uninstall-form").addEventListener("submit", submitUninstall);
   $("uninstall-confirmation").addEventListener("input", renderUninstall);
   $("uninstall-remove-data").addEventListener("change", renderUninstall);
@@ -3181,6 +4458,9 @@ function bindEvents() {
     if (button) void selectTask(button.dataset.taskId);
   });
   $("task-form").addEventListener("submit", saveSelectedTask);
+  for (const id of ["task-title-input", "task-objective-input", "task-completed-input", "task-next-input", "task-references-input"]) {
+    $(id).addEventListener("input", () => { state.taskDraftDirty = true; });
+  }
   $("task-cancel-continuation-button").addEventListener("click", () => void runTaskAction("continuation"));
   $("task-cancel-fresh-resume-button").addEventListener("click", () => void runTaskAction("fresh-cancel"));
   $("task-abandon-fresh-resume-button").addEventListener("click", () => void runTaskAction("fresh-abandon"));
@@ -3247,4 +4527,9 @@ notifyNativeLanguage();
 bindEvents();
 switchSection(state.activeSection);
 renderLastRefreshed();
+setInterval(renderTurnBudgetLive, 1_000);
+setInterval(() => { void refreshLiveState(); }, AUTO_REFRESH_LIVE_MS);
+setInterval(() => { void refreshMediumState(); }, AUTO_REFRESH_MEDIUM_MS);
+setInterval(() => { void refreshTelegramPairing(); }, 2_500);
+setInterval(() => { void refreshSlowState(); }, AUTO_REFRESH_SLOW_MS);
 void refreshAll();
