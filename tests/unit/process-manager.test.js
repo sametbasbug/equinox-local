@@ -51,6 +51,7 @@ test("process manager starts, captures logs and stops a process group", async ()
         child.emit("close", 0, signal);
       });
     },
+    groupExistsImpl: () => false,
     randomId: () => "test0001",
   });
 
