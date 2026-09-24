@@ -152,10 +152,16 @@ async function ensurePrivateDirectory(directory, { fsImpl = fs } = {}) {
 }
 
 async function atomicWriteCredential(filePath, contents, { fsImpl = fs } = {}) {
+  if (typeof contents !== "string" || Buffer.byteLength(contents, "utf8") > MAX_INBOX_BYTES) {
+    throw new Error("Telegram private state payload is invalid or too large.");
+  }
   const parent = path.dirname(filePath);
   await ensurePrivateDirectory(parent, { fsImpl });
   const temp = path.join(parent, `.equinox-telegram-${process.pid}-${randomBytes(8).toString("hex")}.tmp`);
   try {
+    // Telegram intentionally persists only bounded, validated private state (pairing/inbox/credentials)
+    // to fixed Equinox Local-owned paths. Network-derived fields are normalized before reaching here.
+    // lgtm[js/http-to-file-access]
     await fsImpl.writeFile(temp, contents, { flag: "wx", mode: 0o600 });
     await fsImpl.rename(temp, filePath);
     await fsImpl.chmod(filePath, 0o600);

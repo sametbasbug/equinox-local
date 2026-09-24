@@ -548,7 +548,10 @@ test("task card send/edit/callback APIs keep recipient fixed and validate bounde
     assert.deepEqual(await editTelegramTaskCard({ messageId: 77, text: "Updated", keyboard, credentialPath, fetchImpl }), { edited: true, messageId: 77 });
     assert.deepEqual(await answerTelegramTaskCallback({ callbackQueryId: "cb-1", text: "Continue armed.", credentialPath, fetchImpl }), { answered: true });
     await assert.rejects(() => sendTelegramTaskCard({ text: "bad", keyboard: [[{ text: "Bad", callbackData: "evil:route" }]], credentialPath, fetchImpl }), /callback data is invalid/u);
-    await assert.rejects(() => sendTelegramTaskCard({ text: "bad", keyboard: [[{ text: "Bad", url: "https://example.com/" }]], credentialPath, fetchImpl }), /chatgpt.com/u);
+    await assert.rejects(
+      () => sendTelegramTaskCard({ text: "bad", keyboard: [[{ text: "Bad", url: "https://example.com/" }]], credentialPath, fetchImpl }),
+      /^Error: Telegram task link must be a chatgpt\.com HTTPS URL\.$/u,
+    );
   });
 });
 

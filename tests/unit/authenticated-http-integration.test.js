@@ -100,11 +100,16 @@ test("agent-created profiles persist as private 0600 records and need a human cr
     assert.equal(created.needsCredential, true);
     assert.equal(Object.hasOwn(created, "credential"), false);
 
-    const stat = await fs.stat(storePath);
-    assert.equal(stat.mode & 0o777, 0o600);
-    const raw = JSON.parse(await fs.readFile(storePath, "utf8"));
-    assert.equal(raw.agentProfileManagementEnabled, true);
-    assert.equal(Object.hasOwn(raw.profiles[0], "credential"), false);
+    const handle = await fs.open(storePath, "r");
+    try {
+      const stat = await handle.stat();
+      assert.equal(stat.mode & 0o777, 0o600);
+      const raw = JSON.parse(await handle.readFile("utf8"));
+      assert.equal(raw.agentProfileManagementEnabled, true);
+      assert.equal(Object.hasOwn(raw.profiles[0], "credential"), false);
+    } finally {
+      await handle.close();
+    }
   });
 });
 

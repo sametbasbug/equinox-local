@@ -41,6 +41,7 @@ This project follows semantic versioning for public releases.
 
 ### Fixed
 
+- Resolved release-gate CodeQL findings in authenticated-HTTP and Telegram tests, and documented the intentionally bounded/private persistence boundary for validated Telegram network state.
 - Completed/cancelled Task Capsules no longer remain usable as Telegram Chat Bridge targets. Any already-pending final response may settle first, then Local auto-unbinds the Task; terminal cards keep **Open in ChatGPT** but cannot be rebound, and each new bridged send re-checks Task status before browser mutation.
 - Fixed clean first installs spawning two Equinox Local foreground shells (and therefore duplicate menu-bar/Nyx companion instances). The installer now leaves foreground-shell ownership entirely to the LaunchAgent runtime host; a fresh profile defaults the first runtime-host shell to a visible Control Center, while later restarts continue honoring the user's stored window visibility.
 - Fixed Turn Budget / Auto Continue passive state checks keeping Chrome's **“Equinox Browser started debugging this browser”** infobar visible throughout long turns. ChatGPT continuity state now comes from a narrowly scoped content-script observer/cache, while `chrome.debugger` remains reserved for actual browser-control and continuation-delivery mutations.
