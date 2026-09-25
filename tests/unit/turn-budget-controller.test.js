@@ -21,12 +21,14 @@ function textResult(text = "ok") {
 }
 
 test("turn budget defaults and stages are bounded", () => {
-  assert.deepEqual(__test.normalizeSettings(), { enabled: true, cutoffMinutes: 22 });
+  assert.deepEqual(__test.normalizeSettings(), { enabled: true, cutoffMinutes: 22, fallbackResetMinutes: 5 });
   assert.equal(__test.stageForElapsed(17 * 60_000, 22), "running");
   assert.equal(__test.stageForElapsed(18 * 60_000, 22), "checkpoint");
   assert.equal(__test.stageForElapsed(20 * 60_000, 22), "finalize");
   assert.equal(__test.stageForElapsed(22 * 60_000, 22), "overdue");
   assert.throws(() => __test.normalizeSettings({ cutoffMinutes: 4 }), /between 5 and 120/u);
+  assert.throws(() => __test.normalizeSettings({ cutoffMinutes: 22, fallbackResetMinutes: 0 }), /between 1 and cutoffMinutes/u);
+  assert.throws(() => __test.normalizeSettings({ cutoffMinutes: 10, fallbackResetMinutes: 11 }), /between 1 and cutoffMinutes/u);
 });
 
 test("controller persists immediate runtime settings with private permissions", async () => {
@@ -35,12 +37,15 @@ test("controller persists immediate runtime settings with private permissions", 
     const controller = createTurnBudgetController({ settingsPath });
     await controller.initialize();
     assert.equal(controller.snapshot().cutoffMinutes, 22);
-    await controller.updateSettings({ enabled: true, cutoffMinutes: 19 });
+    assert.equal(controller.snapshot().fallbackResetMinutes, 5);
+    await controller.updateSettings({ enabled: true, cutoffMinutes: 19, fallbackResetMinutes: 3 });
     assert.equal(controller.snapshot().cutoffMinutes, 19);
+    assert.equal(controller.snapshot().fallbackResetMinutes, 3);
     assert.equal((await fs.stat(settingsPath)).mode & 0o777, 0o600);
     const reloaded = createTurnBudgetController({ settingsPath });
     await reloaded.initialize();
     assert.equal(reloaded.snapshot().cutoffMinutes, 19);
+    assert.equal(reloaded.snapshot().fallbackResetMinutes, 3);
   });
 });
 
@@ -137,17 +142,21 @@ test("runtime blocking waits are clamped only inside finalization window", async
   assert.match(result.content[0].text, /blocking wait was shortened/u);
 });
 
-test("fallback timer resets after inactivity when browser identity is unavailable", async () => {
+test("fallback timer becomes idle after configurable inactivity when browser identity is unavailable", async () => {
   let now = 0;
   const controller = createTurnBudgetController({ now: () => now, resolveTurnIdentity: async () => null });
   await controller.initialize();
+  await controller.updateSettings({ enabled: true, cutoffMinutes: 22, fallbackResetMinutes: 2 });
   await controller.prepareInvocation("runtime_call", { operation: "status", arguments: {} });
-  now += TURN_BUDGET_DEFAULTS.fallbackResetMs - 1;
-  await controller.prepareInvocation("runtime_call", { operation: "status", arguments: {} });
-  assert.equal(controller.snapshot().active.elapsedMs, TURN_BUDGET_DEFAULTS.fallbackResetMs - 1);
-  now += TURN_BUDGET_DEFAULTS.fallbackResetMs + 1;
-  await controller.prepareInvocation("runtime_call", { operation: "status", arguments: {} });
-  assert.equal(controller.snapshot().active.elapsedMs, 0);
+  now = 2 * 60_000 - 1;
+  assert.notEqual((await controller.refreshSnapshot()).active, null);
+  now = 2 * 60_000;
+  assert.equal((await controller.refreshSnapshot()).active, null, "passive refresh must retire stale fallback work without a new tool call");
+  now += 10 * 60_000;
+  assert.equal(controller.snapshot().active, null, "plain snapshots must not resurrect or keep counting a stale fallback");
+  const prepared = await controller.prepareInvocation("runtime_call", { operation: "status", arguments: {} });
+  assert.equal(prepared.firstNotice, true);
+  assert.equal(controller.snapshot().active.elapsedMs, 0, "next Local use starts a fresh fallback burst");
 });
 
 

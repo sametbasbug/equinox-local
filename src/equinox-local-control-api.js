@@ -310,12 +310,16 @@ function validateHttpProfileControlUpsert(body) {
 }
 
 function validateTurnBudgetRequest(body) {
-  const value = validateExactObject(body, ["enabled", "cutoffMinutes"], "Turn Budget settings");
+  const value = validateExactObject(body, ["enabled", "cutoffMinutes", "fallbackResetMinutes"], "Turn Budget settings");
   if (typeof value.enabled !== "boolean") throw badRequest("Turn Budget enabled must be boolean.");
   if (!Number.isInteger(value.cutoffMinutes) || value.cutoffMinutes < 5 || value.cutoffMinutes > 120) {
     throw badRequest("Turn Budget cutoffMinutes must be an integer between 5 and 120.");
   }
-  return { enabled: value.enabled, cutoffMinutes: value.cutoffMinutes };
+  const fallbackResetMinutes = value.fallbackResetMinutes === undefined ? 5 : value.fallbackResetMinutes;
+  if (!Number.isInteger(fallbackResetMinutes) || fallbackResetMinutes < 1 || fallbackResetMinutes > value.cutoffMinutes) {
+    throw badRequest("Turn Budget fallbackResetMinutes must be an integer between 1 and cutoffMinutes.");
+  }
+  return { enabled: value.enabled, cutoffMinutes: value.cutoffMinutes, fallbackResetMinutes };
 }
 
 function validateHttpProfileManagementRequest(body) {

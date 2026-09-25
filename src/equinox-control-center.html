@@ -685,6 +685,11 @@
             <input id="turn-budget-cutoff" type="number" min="5" max="120" step="1" inputmode="numeric">
             <small>Default 22 minutes. The setting applies immediately and does not require a Local restart.</small>
           </label>
+          <label class="field">
+            <span>Fallback idle timeout (minutes)</span>
+            <input id="turn-budget-fallback-reset" type="number" min="1" max="22" step="1" inputmode="numeric">
+            <small>Default 5 minutes. Used only when Browser turn identity is unavailable; after this much Local inactivity the fallback turn becomes Idle.</small>
+          </label>
           <button id="save-turn-budget-button" class="button secondary full-width" type="button">Save Turn Budget</button>
           <p class="save-hint">Emergency Stop immediately blocks new mutating agent actions and safely stops Equinox Local-managed Terminal/process work. The MCP connection and read-only status stay alive so the agent can observe the pause and finish its response. Resume never restarts stopped work automatically.</p>
         </article>

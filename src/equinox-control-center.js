@@ -928,7 +928,7 @@ const DYNAMIC_TEXT_IDS = new Set([
   "agent-browser-control-state", "open-agent-browser-button", "agent-browser-note", "browser-page-status", "browser-page-badge", "browser-page-version", "browser-connected-at",
   "browser-control-state", "apply-browser-settings", "browser-settings-note", "permissions-list", "agent-access-badge",
   "agent-control-badge", "agent-control-copy", "active-terminal-count", "active-process-count", "active-work-count",
-  "turn-budget-badge", "turn-budget-copy", "turn-budget-elapsed", "turn-budget-remaining", "turn-budget-stage", "save-turn-budget-button",
+  "turn-budget-badge", "turn-budget-copy", "turn-budget-elapsed", "turn-budget-remaining", "turn-budget-stage", "turn-budget-fallback-reset", "save-turn-budget-button",
   "local-execution-badge", "save-agent-access-button", "uninstall-badge",
   "uninstall-confirmation-help", "uninstall-button", "integration-list", "request-count", "mutation-count",
   "activity-event-count", "activity-timeline", "dialog-kicker", "dialog-title", "dialog-error", "choose-folder-button",
@@ -2898,14 +2898,20 @@ function renderTurnBudgetLive() {
 }
 
 function renderTurnBudget() {
-  const draft = state.turnBudgetDraft || { enabled: true, cutoffMinutes: 22 };
+  const draft = state.turnBudgetDraft || { enabled: true, cutoffMinutes: 22, fallbackResetMinutes: 5 };
   const enabled = $("turn-budget-enabled");
   const cutoff = $("turn-budget-cutoff");
+  const fallbackReset = $("turn-budget-fallback-reset");
   const save = $("save-turn-budget-button");
   if (enabled) enabled.checked = draft.enabled !== false;
   if (cutoff) {
     cutoff.value = String(draft.cutoffMinutes || 22);
     cutoff.disabled = draft.enabled === false || state.turnBudgetBusy;
+  }
+  if (fallbackReset) {
+    fallbackReset.value = String(draft.fallbackResetMinutes || 5);
+    fallbackReset.max = String(draft.cutoffMinutes || 22);
+    fallbackReset.disabled = draft.enabled === false || state.turnBudgetBusy;
   }
   if (enabled) enabled.disabled = state.turnBudgetBusy;
   if (save) {
@@ -3313,6 +3319,7 @@ async function refreshAll() {
       state.turnBudgetDraft = {
         enabled: state.turnBudget.enabled !== false,
         cutoffMinutes: Number(state.turnBudget.cutoffMinutes) || 22,
+        fallbackResetMinutes: Number(state.turnBudget.fallbackResetMinutes) || 5,
       };
     }
     state.config = clone(config.config);
@@ -3395,6 +3402,7 @@ async function refreshLiveState() {
       state.turnBudgetDraft = {
         enabled: state.turnBudget.enabled !== false,
         cutoffMinutes: Number(state.turnBudget.cutoffMinutes) || 22,
+        fallbackResetMinutes: Number(state.turnBudget.fallbackResetMinutes) || 5,
       };
     }
     if (activity?.events) state.activity = activity.events;
@@ -4299,8 +4307,13 @@ async function toggleAgentControl() {
 async function saveTurnBudgetSettings() {
   if (state.turnBudgetBusy || !state.turnBudgetDraft) return;
   const cutoffMinutes = Number(state.turnBudgetDraft.cutoffMinutes);
+  const fallbackResetMinutes = Number(state.turnBudgetDraft.fallbackResetMinutes);
   if (!Number.isInteger(cutoffMinutes) || cutoffMinutes < 5 || cutoffMinutes > 120) {
     showError(new Error("Turn Budget cutoff must be an integer between 5 and 120 minutes."));
+    return;
+  }
+  if (!Number.isInteger(fallbackResetMinutes) || fallbackResetMinutes < 1 || fallbackResetMinutes > cutoffMinutes) {
+    showError(new Error("Fallback idle timeout must be an integer between 1 minute and the safety cutoff."));
     return;
   }
   clearError();
@@ -4310,10 +4323,11 @@ async function saveTurnBudgetSettings() {
     const response = await mutationJson("/api/v1/turn-budget", "PUT", {
       enabled: state.turnBudgetDraft.enabled !== false,
       cutoffMinutes,
+      fallbackResetMinutes,
     });
     state.turnBudget = response.turnBudget;
     state.status = { ...(state.status || {}), turnBudget: response.turnBudget };
-    state.turnBudgetDraft = { enabled: response.turnBudget.enabled !== false, cutoffMinutes: response.turnBudget.cutoffMinutes };
+    state.turnBudgetDraft = { enabled: response.turnBudget.enabled !== false, cutoffMinutes: response.turnBudget.cutoffMinutes, fallbackResetMinutes: response.turnBudget.fallbackResetMinutes };
     state.turnBudgetDirty = false;
     showToast("Turn Budget updated immediately.");
   } catch (error) {
@@ -4413,12 +4427,17 @@ function bindEvents() {
   });
   $("agent-control-button").addEventListener("click", toggleAgentControl);
   $("turn-budget-enabled").addEventListener("change", (event) => {
-    state.turnBudgetDraft = { ...(state.turnBudgetDraft || { cutoffMinutes: 22 }), enabled: event.target.checked };
+    state.turnBudgetDraft = { ...(state.turnBudgetDraft || { cutoffMinutes: 22, fallbackResetMinutes: 5 }), enabled: event.target.checked };
     state.turnBudgetDirty = true;
     renderTurnBudget();
   });
   $("turn-budget-cutoff").addEventListener("input", (event) => {
-    state.turnBudgetDraft = { ...(state.turnBudgetDraft || { enabled: true }), cutoffMinutes: Number(event.target.value) };
+    state.turnBudgetDraft = { ...(state.turnBudgetDraft || { enabled: true, fallbackResetMinutes: 5 }), cutoffMinutes: Number(event.target.value) };
+    state.turnBudgetDirty = true;
+    renderTurnBudget();
+  });
+  $("turn-budget-fallback-reset").addEventListener("input", (event) => {
+    state.turnBudgetDraft = { ...(state.turnBudgetDraft || { enabled: true, cutoffMinutes: 22 }), fallbackResetMinutes: Number(event.target.value) };
     state.turnBudgetDirty = true;
     $("save-turn-budget-button").disabled = state.turnBudgetBusy;
   });

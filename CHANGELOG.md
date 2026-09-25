@@ -8,6 +8,8 @@ This project follows semantic versioning for public releases.
 
 ## [5.2.0] - 2026-09-26
 
+- Fixed Turn Budget fallback accounting when Browser turn identity is unavailable: fallback work now becomes Idle after configurable Local inactivity instead of counting forever, and Control Center exposes a `Fallback idle timeout` setting (default 5 minutes, bounded to the safety cutoff).
+- Hardened Telegram pairing/inbox persistence by canonicalizing bounded network-derived state on both write and read boundaries; this resolves the outstanding Medium `js/http-to-file-access` CodeQL finding without removing restart-safe Telegram state.
 - Updated the bundled OpenAI `tunnel-client` runtime from `0.0.14` to `0.0.15` for Apple Silicon and Intel managed releases using the upstream release checksums; the verified tunnel bundle carries cloudflared `2026.8.2`.
 - Hardened fresh managed installation: first activation now gets a 60-second health budget, preserves the verified `current` release on startup failure instead of deleting the backend underneath an installed native app, stops the failed LaunchAgent cleanly, and reports bounded LaunchAgent/error-log diagnostics so a retry is recoverable and actionable.
 - Managed release smoke now exercises a real isolated macOS `launchctl -> runtime host -> app runtime wrapper -> supervisor -> server` lifecycle instead of stubbing both LaunchAgent activation and health verification.

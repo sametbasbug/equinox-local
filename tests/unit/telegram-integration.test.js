@@ -375,6 +375,22 @@ test("pairing cancellation removes only transient pairing state", async () => {
   });
 });
 
+test("persisted Telegram inbox is schema-normalized and rejects untrusted malformed entries", async () => {
+  await withTempCredential(async ({ credentialPath, inboxPath }) => {
+    await fs.mkdir(path.dirname(credentialPath), { recursive: true, mode: 0o700 });
+    await fs.writeFile(credentialPath, `${JSON.stringify({ version: 2, botToken: TOKEN, telegramUserId: "123456789" })}\n`, { mode: 0o600 });
+    await fs.writeFile(inboxPath, `${JSON.stringify({
+      version: 1,
+      nextUpdateId: 5,
+      pending: [{ updateId: 4, kind: "message", messageId: 2, text: "ok", attachment: { kind: "document", fileId: "id", fileName: "../../evil", mimeType: "text/plain", bytes: 4 }, receivedAt: "not-a-date" }],
+    })}\n`, { mode: 0o600 });
+    await assert.rejects(
+      pollTelegramInboundOnce({ credentialPath, inboxPath, fetchImpl: telegramJsonFetch([]) }),
+      /Telegram inbox state is invalid/u,
+    );
+  });
+});
+
 test("inbound polling accepts only the paired private user and persists restart-safe offset", async () => {
   await withTempCredential(async ({ credentialPath, inboxPath }) => {
     await fs.mkdir(path.dirname(credentialPath), { recursive: true, mode: 0o700 });

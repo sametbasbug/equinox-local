@@ -407,6 +407,7 @@ test("control API serves the visual Control Center shell and fixed same-origin a
     assert.match(scriptText, /\/api\/v1\/turn-budget/u);
     assert.match(shellText, /id="turn-budget-badge"/u);
     assert.match(shellText, /id="turn-budget-cutoff"/u);
+    assert.match(shellText, /id="turn-budget-fallback-reset"/u);
     assert.match(scriptText, /Authenticated HTTP profiles/u);
     assert.match(scriptText, /write-only/u);
     assert.match(cssText, /\.http-profile-card/u);
@@ -1327,7 +1328,7 @@ test("authenticated HTTP Control Center routes are fixed, CSRF-protected and kee
 });
 
 test("Turn Budget status is readable and settings update is immediate and CSRF-guarded", async () => {
-  let current = { enabled: true, cutoffMinutes: 22, active: null };
+  let current = { enabled: true, cutoffMinutes: 22, fallbackResetMinutes: 5, active: null };
   const updates = [];
   await withApi(async ({ origin }) => {
     const status = await jsonFetch(`${origin}/api/v1/turn-budget`);
@@ -1337,7 +1338,7 @@ test("Turn Budget status is readable and settings update is immediate and CSRF-g
     const missingGuard = await jsonFetch(`${origin}/api/v1/turn-budget`, {
       method: "PUT",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ enabled: true, cutoffMinutes: 19 }),
+      body: JSON.stringify({ enabled: true, cutoffMinutes: 19, fallbackResetMinutes: 5 }),
     });
     assert.equal(missingGuard.response.status, 403);
 
@@ -1350,18 +1351,25 @@ test("Turn Budget status is readable and settings update is immediate and CSRF-g
     const invalid = await jsonFetch(`${origin}/api/v1/turn-budget`, {
       method: "PUT",
       headers,
-      body: JSON.stringify({ enabled: true, cutoffMinutes: 4 }),
+      body: JSON.stringify({ enabled: true, cutoffMinutes: 4, fallbackResetMinutes: 5 }),
     });
     assert.equal(invalid.response.status, 400);
+
+    const invalidFallback = await jsonFetch(`${origin}/api/v1/turn-budget`, {
+      method: "PUT",
+      headers,
+      body: JSON.stringify({ enabled: true, cutoffMinutes: 19, fallbackResetMinutes: 20 }),
+    });
+    assert.equal(invalidFallback.response.status, 400);
 
     const updated = await jsonFetch(`${origin}/api/v1/turn-budget`, {
       method: "PUT",
       headers,
-      body: JSON.stringify({ enabled: false, cutoffMinutes: 19 }),
+      body: JSON.stringify({ enabled: false, cutoffMinutes: 19, fallbackResetMinutes: 7 }),
     });
     assert.equal(updated.response.status, 200);
-    assert.deepEqual(updated.body.turnBudget, { enabled: false, cutoffMinutes: 19, active: null });
-    assert.deepEqual(updates, [{ enabled: false, cutoffMinutes: 19 }]);
+    assert.deepEqual(updated.body.turnBudget, { enabled: false, cutoffMinutes: 19, fallbackResetMinutes: 7, active: null });
+    assert.deepEqual(updates, [{ enabled: false, cutoffMinutes: 19, fallbackResetMinutes: 7 }]);
   }, {
     getTurnBudget: async () => current,
     updateTurnBudget: async (next) => {

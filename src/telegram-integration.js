@@ -161,7 +161,7 @@ async function atomicWriteCredential(filePath, contents, { fsImpl = fs } = {}) {
   try {
     // Telegram intentionally persists only bounded, validated private state (pairing/inbox/credentials)
     // to fixed Equinox Local-owned paths. Network-derived fields are normalized before reaching here.
-    // lgtm[js/http-to-file-access]
+    // codeql[js/http-to-file-access]
     await fsImpl.writeFile(temp, contents, { flag: "wx", mode: 0o600 });
     await fsImpl.rename(temp, filePath);
     await fsImpl.chmod(filePath, 0o600);
@@ -371,6 +371,86 @@ function maxNextUpdateId(updates, fallback = 0) {
   return next;
 }
 
+function normalizeStoredAttachment(value) {
+  if (!value || typeof value !== "object" || !["photo", "document"].includes(value.kind)) return null;
+  const fileId = sanitizeTelegramLabel(value.fileId, 256);
+  if (!fileId) return null;
+  const fileUniqueId = sanitizeTelegramLabel(value.fileUniqueId, 256);
+  const kind = value.kind;
+  const fallback = kind === "photo"
+    ? `telegram-photo-${(fileUniqueId || "image").replace(/[^A-Za-z0-9._-]/gu, "-").slice(0, 60)}.jpg`
+    : `telegram-document-${(fileUniqueId || "file").replace(/[^A-Za-z0-9._-]/gu, "-").slice(0, 60)}.bin`;
+  const fileName = safeTelegramAttachmentName(value.fileName, fallback);
+  const mimeType = sanitizeTelegramLabel(value.mimeType, 200) || (kind === "photo" ? "image/jpeg" : "application/octet-stream");
+  const bytes = value.bytes === null || value.bytes === undefined
+    ? null
+    : Number.isSafeInteger(value.bytes) && value.bytes >= 0 && value.bytes <= MAX_TELEGRAM_DOWNLOAD_BYTES
+      ? value.bytes
+      : null;
+  return { fileId, fileUniqueId, kind, fileName, mimeType, bytes };
+}
+
+function normalizeTelegramInboxItem(value) {
+  if (!value || typeof value !== "object" || !Number.isSafeInteger(value.updateId) || value.updateId < 0) return null;
+  const receivedMs = Date.parse(value.receivedAt);
+  if (!Number.isFinite(receivedMs)) return null;
+  const receivedAt = new Date(receivedMs).toISOString();
+  const messageId = Number.isSafeInteger(value.messageId) && value.messageId > 0 ? value.messageId : null;
+  if (value.kind === "message") {
+    const replyToMessageId = Number.isSafeInteger(value.replyToMessageId) && value.replyToMessageId > 0 ? value.replyToMessageId : null;
+    const text = value.text == null ? null : boundedInboundText(value.text);
+    const attachment = value.attachment == null ? null : normalizeStoredAttachment(value.attachment);
+    if (!text && !attachment) return null;
+    return { updateId: value.updateId, kind: "message", messageId, replyToMessageId, text, attachment, receivedAt };
+  }
+  if (value.kind === "callback") {
+    const callbackQueryId = sanitizeTelegramLabel(value.callbackQueryId, 160);
+    const data = boundedInboundText(value.data);
+    if (!callbackQueryId || !data) return null;
+    return { updateId: value.updateId, kind: "callback", callbackQueryId, messageId, data, receivedAt };
+  }
+  return null;
+}
+
+function normalizeTelegramInboxState(value) {
+  if (!value || value.version !== 1 || !Number.isSafeInteger(value.nextUpdateId) || value.nextUpdateId < 0 || !Array.isArray(value.pending)) {
+    throw credentialError("Telegram inbox state is invalid.");
+  }
+  const pending = value.pending.slice(-MAX_INBOX_MESSAGES).map(normalizeTelegramInboxItem);
+  if (pending.some((item) => item === null)) throw credentialError("Telegram inbox state is invalid.");
+  return { version: 1, nextUpdateId: value.nextUpdateId, pending };
+}
+
+function normalizeTelegramPairingState(value) {
+  if (!value || value.version !== 1 || typeof value.expiresAt !== "string" || !Number.isFinite(Date.parse(value.expiresAt))) {
+    throw credentialError("Telegram pairing state is invalid.");
+  }
+  const state = {
+    version: 1,
+    botToken: validateBotToken(value.botToken),
+    botUsername: sanitizeTelegramLabel(value.botUsername),
+    expiresAt: new Date(value.expiresAt).toISOString(),
+    nextUpdateId: Number.isSafeInteger(value.nextUpdateId) && value.nextUpdateId >= 0 ? value.nextUpdateId : 0,
+    candidate: null,
+  };
+  if (value.candidate) {
+    const telegramUserId = validateTelegramUserId(value.candidate.telegramUserId);
+    state.candidate = {
+      telegramUserId,
+      label: sanitizeTelegramLabel(value.candidate.label) || telegramUserHint(telegramUserId),
+    };
+  }
+  return state;
+}
+
+async function persistTelegramPairingState(filePath, value, { fsImpl = fs } = {}) {
+  await writePrivateJson(filePath, normalizeTelegramPairingState(value), { fsImpl });
+}
+
+async function persistTelegramInboxState(filePath, value, { fsImpl = fs } = {}) {
+  await writePrivateJson(filePath, normalizeTelegramInboxState(value), { fsImpl });
+}
+
 function pairingPublicState(state) {
   if (!state) return Object.freeze({ active: false, candidateFound: false, botUsername: null, expiresAt: null, candidateLabel: null, userIdHint: null });
   const candidate = state.candidate || null;
@@ -387,23 +467,7 @@ function pairingPublicState(state) {
 async function readTelegramPairingState({ pairingPath = defaultTelegramPairingPath(), fsImpl = fs, now = () => Date.now() } = {}) {
   const parsed = await readPrivateJson(pairingPath, { fsImpl, maxBytes: MAX_PAIRING_BYTES, label: "Telegram pairing state" });
   if (!parsed) return null;
-  if (parsed.version !== 1 || typeof parsed.expiresAt !== "string" || !Number.isFinite(Date.parse(parsed.expiresAt))) {
-    throw credentialError("Telegram pairing state is invalid.");
-  }
-  const state = {
-    version: 1,
-    botToken: validateBotToken(parsed.botToken),
-    botUsername: sanitizeTelegramLabel(parsed.botUsername),
-    expiresAt: new Date(parsed.expiresAt).toISOString(),
-    nextUpdateId: Number.isSafeInteger(parsed.nextUpdateId) && parsed.nextUpdateId >= 0 ? parsed.nextUpdateId : 0,
-    candidate: null,
-  };
-  if (parsed.candidate) {
-    state.candidate = {
-      telegramUserId: validateTelegramUserId(parsed.candidate.telegramUserId),
-      label: sanitizeTelegramLabel(parsed.candidate.label) || telegramUserHint(parsed.candidate.telegramUserId),
-    };
-  }
+  const state = normalizeTelegramPairingState(parsed);
   if (Date.parse(state.expiresAt) <= now()) {
     await fsImpl.rm(pairingPath, { force: true });
     return null;
@@ -441,7 +505,7 @@ export async function startTelegramPairing({
     nextUpdateId: maxNextUpdateId(backlog, 0),
     candidate: null,
   };
-  await writePrivateJson(pairingPath, state, { fsImpl });
+  await persistTelegramPairingState(pairingPath, state, { fsImpl });
   return pairingPublicState(state);
 }
 
@@ -477,7 +541,7 @@ export async function pollTelegramPairing({
     const candidate = pairingCandidateFromUpdate(update);
     if (candidate) { state.candidate = candidate; break; }
   }
-  await writePrivateJson(pairingPath, state, { fsImpl });
+  await persistTelegramPairingState(pairingPath, state, { fsImpl });
   return pairingPublicState(state);
 }
 
@@ -488,10 +552,7 @@ function defaultInboxState(nextUpdateId = 0) {
 async function readTelegramInboxState({ inboxPath = defaultTelegramInboxPath(), fsImpl = fs } = {}) {
   const parsed = await readPrivateJson(inboxPath, { fsImpl, maxBytes: MAX_INBOX_BYTES, label: "Telegram inbox state" });
   if (!parsed) return defaultInboxState();
-  if (parsed.version !== 1 || !Number.isSafeInteger(parsed.nextUpdateId) || parsed.nextUpdateId < 0 || !Array.isArray(parsed.pending)) {
-    throw credentialError("Telegram inbox state is invalid.");
-  }
-  return { version: 1, nextUpdateId: parsed.nextUpdateId, pending: parsed.pending.slice(-MAX_INBOX_MESSAGES) };
+  return normalizeTelegramInboxState(parsed);
 }
 
 export async function confirmTelegramPairing({
@@ -507,7 +568,7 @@ export async function confirmTelegramPairing({
   const credential = { botToken: state.botToken, telegramUserId: state.candidate.telegramUserId };
   await sendTelegramChunk({ ...credential, text: "Equinox Local is paired. ✅", fetchImpl });
   await writePrivateJson(credentialPath, { version: 2, ...credential }, { fsImpl });
-  await writePrivateJson(inboxPath, defaultInboxState(state.nextUpdateId), { fsImpl });
+  await persistTelegramInboxState(inboxPath, defaultInboxState(state.nextUpdateId), { fsImpl });
   await fsImpl.rm(pairingPath, { force: true });
   return telegramStatusFromCredential(credential);
 }
@@ -610,7 +671,7 @@ export async function pollTelegramInboundOnce({
     }
   }
   inbox.pending = inbox.pending.slice(-MAX_INBOX_MESSAGES);
-  await writePrivateJson(inboxPath, inbox, { fsImpl });
+  await persistTelegramInboxState(inboxPath, inbox, { fsImpl });
   return Object.freeze({ configured: true, received, pendingCount: inbox.pending.length, nextUpdateId: inbox.nextUpdateId });
 }
 
@@ -963,7 +1024,7 @@ export async function acknowledgeTelegramInboundUpdate(updateId, { inboxPath = d
   const inbox = await readTelegramInboxState({ inboxPath, fsImpl });
   const before = inbox.pending.length;
   inbox.pending = inbox.pending.filter((item) => item?.updateId !== updateId);
-  if (inbox.pending.length !== before) await writePrivateJson(inboxPath, inbox, { fsImpl });
+  if (inbox.pending.length !== before) await persistTelegramInboxState(inboxPath, inbox, { fsImpl });
   return Object.freeze({ acknowledged: before !== inbox.pending.length, pendingCount: inbox.pending.length });
 }
 
