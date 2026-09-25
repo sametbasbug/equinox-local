@@ -9,7 +9,9 @@ export const TURN_BUDGET_DEFAULTS = Object.freeze({
   finalizeLeadMinutes: 2,
   maxCutoffMinutes: 120,
   minCutoffMinutes: 5,
-  fallbackResetMs: 5 * 60_000,
+  fallbackResetMinutes: 5,
+  minFallbackResetMinutes: 1,
+  maxFallbackResetMinutes: 120,
   finalizationReserveMs: 60_000,
 });
 
@@ -21,7 +23,18 @@ function normalizeSettings(value = {}) {
   if (!Number.isInteger(cutoffMinutes) || cutoffMinutes < TURN_BUDGET_DEFAULTS.minCutoffMinutes || cutoffMinutes > TURN_BUDGET_DEFAULTS.maxCutoffMinutes) {
     throw new Error(`Turn Budget cutoffMinutes must be between ${TURN_BUDGET_DEFAULTS.minCutoffMinutes} and ${TURN_BUDGET_DEFAULTS.maxCutoffMinutes}.`);
   }
-  return Object.freeze({ enabled, cutoffMinutes });
+  const fallbackResetMinutes = value.fallbackResetMinutes === undefined
+    ? TURN_BUDGET_DEFAULTS.fallbackResetMinutes
+    : value.fallbackResetMinutes;
+  if (
+    !Number.isInteger(fallbackResetMinutes) ||
+    fallbackResetMinutes < TURN_BUDGET_DEFAULTS.minFallbackResetMinutes ||
+    fallbackResetMinutes > TURN_BUDGET_DEFAULTS.maxFallbackResetMinutes ||
+    fallbackResetMinutes > cutoffMinutes
+  ) {
+    throw new Error(`Turn Budget fallbackResetMinutes must be between ${TURN_BUDGET_DEFAULTS.minFallbackResetMinutes} and cutoffMinutes (${cutoffMinutes}).`);
+  }
+  return Object.freeze({ enabled, cutoffMinutes, fallbackResetMinutes });
 }
 
 export function defaultTurnBudgetSettingsPath(homeDir = os.homedir()) {
@@ -89,6 +102,17 @@ export function createTurnBudgetController({ settingsPath = defaultTurnBudgetSet
     if (!settings.enabled) active = null;
     return snapshot();
   }
+  function expireStaleFallback(timestamp = now()) {
+    if (
+      active?.source === "fallback" &&
+      timestamp - active.lastInvocationAtMs >= settings.fallbackResetMinutes * 60_000
+    ) {
+      active = null;
+      return true;
+    }
+    return false;
+  }
+
   async function resolveIdentitySafe() {
     try {
       const result = await resolveTurnIdentity();
@@ -119,11 +143,12 @@ export function createTurnBudgetController({ settingsPath = defaultTurnBudgetSet
   async function prepareInvocation(toolName, input) {
     const timestamp = now();
     if (!settings.enabled) { active = null; return Object.freeze({ input, firstNotice: false, waitClamped: false }); }
+    expireStaleFallback(timestamp);
     const probe = await resolveIdentitySafe();
     const identity = probe.status === "active" ? probe.identity : null;
     if (identity) {
       if (!active || active.key !== identity.key) active = { key: identity.key, source: "browser", browserContext: identity.browserContext, title: identity.title, startedAtMs: timestamp, lastInvocationAtMs: timestamp, notices: new Set() };
-    } else if (!active || (active.source === "fallback" && timestamp - active.lastInvocationAtMs > TURN_BUDGET_DEFAULTS.fallbackResetMs)) {
+    } else if (!active) {
       active = { key: `fallback:${timestamp}`, source: "fallback", browserContext: null, title: null, startedAtMs: timestamp, lastInvocationAtMs: timestamp, notices: new Set() };
     }
     active.lastInvocationAtMs = timestamp;
@@ -156,7 +181,10 @@ export function createTurnBudgetController({ settingsPath = defaultTurnBudgetSet
     return appendNotice(result, notices.filter(Boolean).join("\n"));
   }
   async function refreshSnapshot() {
-    if (!settings.enabled || !active) return snapshot();
+    if (!settings.enabled) return snapshot();
+    const timestamp = now();
+    expireStaleFallback(timestamp);
+    if (!active) return snapshot();
     const probe = await resolveIdentitySafe();
     if (active?.source === "browser") {
       if (probe.status === "idle" && probe.idleContexts.includes(active.browserContext)) {
@@ -171,11 +199,13 @@ export function createTurnBudgetController({ settingsPath = defaultTurnBudgetSet
 
   function snapshot() {
     const timestamp = now();
-    if (!settings.enabled) return Object.freeze({ enabled: false, cutoffMinutes: settings.cutoffMinutes, active: null });
-    if (!active) return Object.freeze({ enabled: true, cutoffMinutes: settings.cutoffMinutes, active: null });
+    if (settings.enabled) expireStaleFallback(timestamp);
+    const base = { enabled: settings.enabled, cutoffMinutes: settings.cutoffMinutes, fallbackResetMinutes: settings.fallbackResetMinutes };
+    if (!settings.enabled) return Object.freeze({ ...base, active: null });
+    if (!active) return Object.freeze({ ...base, active: null });
     const elapsedMs = Math.max(0, timestamp - active.startedAtMs);
     const cutoffMs = settings.cutoffMinutes * 60_000;
-    return Object.freeze({ enabled: true, cutoffMinutes: settings.cutoffMinutes, active: Object.freeze({ source: active.source, browserContext: active.browserContext, title: active.title, startedAt: new Date(active.startedAtMs).toISOString(), elapsedMs, remainingMs: Math.max(0, cutoffMs - elapsedMs), stage: stageForElapsed(elapsedMs, settings.cutoffMinutes) }) });
+    return Object.freeze({ ...base, active: Object.freeze({ source: active.source, browserContext: active.browserContext, title: active.title, startedAt: new Date(active.startedAtMs).toISOString(), elapsedMs, remainingMs: Math.max(0, cutoffMs - elapsedMs), stage: stageForElapsed(elapsedMs, settings.cutoffMinutes) }) });
   }
   return Object.freeze({ initialize, updateSettings, prepareInvocation, decorateResult, refreshSnapshot, snapshot });
 }

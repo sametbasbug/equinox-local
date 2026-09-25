@@ -16,7 +16,7 @@ import {
   readSourceRuntimeConfig,
 } from "../../src/equinox-local-source-runtime.js";
 
-async function fixture(t, version = "0.0.14") {
+async function fixture(t, version = "0.0.15") {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "equinox-source-runtime-"));
   t.after(() => fs.rm(root, { recursive: true, force: true }));
   const binary = path.join(root, "equinox-tunnel-client");
@@ -34,7 +34,7 @@ test("source runtime config is bounded, private and parses only supported fields
   assert.equal(loaded.configured, true);
   assert.equal(loaded.config.tunnelClient, item.binary);
   assert.throws(() => parseSourceRuntimeConfig(`tunnelClient=${item.binary}\nextra=value\n`), /unsupported field/u);
-  assert.equal(parseTunnelClientVersion("0.0.14+abcdef (git sha: abcdef)"), "0.0.14");
+  assert.equal(parseTunnelClientVersion("0.0.15+abcdef (git sha: abcdef)"), "0.0.15");
 });
 
 test("source checkout version inspection defaults to the tracked src directory", async () => {
@@ -58,7 +58,7 @@ test("source tunnel inspection reports pinned-version drift without exposing pat
   const item = await fixture(t, "0.0.12");
   const result = await inspectSourceTunnelRuntime({ configPath: item.configPath });
   assert.equal(result.configured, true);
-  assert.equal(result.expectedVersion, "0.0.14");
+  assert.equal(result.expectedVersion, "0.0.15");
   assert.equal(result.actualVersion, "0.0.12");
   assert.equal(result.synchronized, false);
   assert.equal(result.needsAttention, true);
@@ -84,7 +84,7 @@ test("missing source tunnel config is optional rather than a false drift alert",
   const result = await inspectSourceTunnelRuntime({ configPath: path.join(root, "missing.conf") });
   assert.deepEqual(result, {
     configured: false,
-    expectedVersion: "0.0.14",
+    expectedVersion: "0.0.15",
     actualVersion: null,
     synchronized: null,
     needsAttention: false,
