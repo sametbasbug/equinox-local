@@ -29,6 +29,9 @@ const execFile = promisify(execFileCallback);
 const MAX_RELEASE_METADATA_BYTES = 16 * 1024;
 const MAX_RELEASE_ENTRIES = 20_000;
 const MAX_RELEASE_BYTES = 2 * 1024 * 1024 * 1024;
+const FIRST_INSTALL_HEALTH_ATTEMPTS = 120;
+const FIRST_INSTALL_HEALTH_DELAY_MS = 500;
+const FIRST_INSTALL_DIAGNOSTIC_BYTES = 12 * 1024;
 const REQUIRED_RUNTIME_FILES = Object.freeze([
   path.join("runtime", "node", "bin", "node"),
   path.join("runtime", "tunnel", "tunnel-client"),
@@ -205,6 +208,55 @@ async function atomicInitialCurrentLink(paths, targetRelease, { fsImpl = fs } = 
   }
 }
 
+function boundedDiagnostic(value, maxChars = 1_200) {
+  return String(value ?? "")
+    .replace(/[\r\u0000-\u001f\u007f]+/gu, " ")
+    .replace(/\n{3,}/gu, "\n\n")
+    .trim()
+    .slice(-maxChars);
+}
+
+async function readDiagnosticTail(filePath, { fsImpl = fs, maxBytes = FIRST_INSTALL_DIAGNOSTIC_BYTES } = {}) {
+  try {
+    const stat = await fsImpl.lstat(filePath);
+    if (!stat.isFile() || stat.isSymbolicLink() || stat.size < 1 || typeof fsImpl.open !== "function") return null;
+    const length = Math.min(stat.size, maxBytes);
+    const offset = Math.max(0, stat.size - length);
+    const handle = await fsImpl.open(filePath, "r");
+    try {
+      const buffer = Buffer.alloc(length);
+      const { bytesRead } = await handle.read(buffer, 0, length, offset);
+      return boundedDiagnostic(buffer.subarray(0, bytesRead).toString("utf8"));
+    } finally {
+      await handle.close();
+    }
+  } catch {
+    return null;
+  }
+}
+
+async function firstInstallActivationDiagnostics({ homeDir, uid, execFileImpl = execFile, fsImpl = fs } = {}) {
+  const parts = [];
+  const service = `gui/${uid}/${EQUINOX_LOCAL_LAUNCH_AGENT_LABEL}`;
+  try {
+    const result = await execFileImpl("/bin/launchctl", ["print", service], {
+      timeout: 5_000,
+      maxBuffer: 1024 * 1024,
+    });
+    const output = String(result?.stdout ?? "");
+    const state = /^\s*state = (.+)$/mu.exec(output)?.[1]?.trim() ?? null;
+    const pid = /^\s*pid = (\d+)$/mu.exec(output)?.[1] ?? null;
+    const lastExit = /^\s*last exit code = (.+)$/mu.exec(output)?.[1]?.trim() ?? null;
+    const summary = [state ? `state=${state}` : null, pid ? `pid=${pid}` : null, lastExit ? `lastExit=${lastExit}` : null].filter(Boolean).join(", ");
+    if (summary) parts.push(`LaunchAgent ${summary}`);
+  } catch (error) {
+    parts.push(`LaunchAgent unavailable (${boundedDiagnostic(error instanceof Error ? error.message : error, 240)})`);
+  }
+  const errorLog = await readDiagnosticTail(path.join(homeDir, "Library", "Logs", "Equinox Local.error.log"), { fsImpl });
+  if (errorLog) parts.push(`error log tail: ${errorLog}`);
+  return boundedDiagnostic(parts.join(" | "), 1_800);
+}
+
 async function reloadLaunchAgent(installation, {
   uid,
   execFileImpl = execFile,
@@ -274,8 +326,12 @@ export async function installManagedEquinoxRelease({
     if (comparison === 0) {
       const installation = installationFor(paths, current.releaseDir);
       const bootstrap = await bootstrapImpl({ homeDir });
+      await initializeOnboardingImpl({ installation, homeDir });
       await reloadLaunchAgent(installation, { uid, execFileImpl });
-      await waitForVersionImpl(current.version);
+      await waitForVersionImpl(current.version, {
+        attempts: FIRST_INSTALL_HEALTH_ATTEMPTS,
+        delayMs: FIRST_INSTALL_HEALTH_DELAY_MS,
+      });
       return Object.freeze({
         status: "already-installed",
         version: current.version,
@@ -285,7 +341,6 @@ export async function installManagedEquinoxRelease({
     }
   }
 
-  let promoted = false;
   try {
     const existing = await fsImpl.lstat(targetRelease).catch((error) => {
       if (error?.code === "ENOENT") return null;
@@ -297,8 +352,6 @@ export async function installManagedEquinoxRelease({
       await fsImpl.rm(targetRelease, { recursive: true, force: false });
     }
     await fsImpl.rename(stagedReal, targetRelease);
-    promoted = true;
-
     if (current) {
       const currentInstallation = installationFor(paths, current.releaseDir);
       await bootstrapImpl({ homeDir });
@@ -306,7 +359,6 @@ export async function installManagedEquinoxRelease({
         installation: currentInstallation,
         targetVersion: candidate.version,
       });
-      const activeInstallation = installationFor(paths, targetRelease);
       const bootstrap = await bootstrapImpl({ homeDir });
       return Object.freeze({
         status: activation.status,
@@ -323,15 +375,19 @@ export async function installManagedEquinoxRelease({
     try {
       await initializeOnboardingImpl({ installation, homeDir });
       await reloadLaunchAgent(installation, { uid, execFileImpl });
-      await waitForVersionImpl(candidate.version);
+      await waitForVersionImpl(candidate.version, {
+        attempts: FIRST_INSTALL_HEALTH_ATTEMPTS,
+        delayMs: FIRST_INSTALL_HEALTH_DELAY_MS,
+      });
     } catch (error) {
+      const diagnostics = await firstInstallActivationDiagnostics({ homeDir, uid, execFileImpl, fsImpl });
       await execFileImpl("/bin/launchctl", ["bootout", `gui/${uid}/${EQUINOX_LOCAL_LAUNCH_AGENT_LABEL}`], {
         timeout: 15_000,
         maxBuffer: 1024 * 1024,
       }).catch(() => ({ stdout: "", stderr: "" }));
-      await fsImpl.rm(paths.currentLink, { force: true }).catch(() => {});
-      if (promoted) await fsImpl.rm(targetRelease, { recursive: true, force: true }).catch(() => {});
-      throw error;
+      const reason = error instanceof Error ? error.message : String(error);
+      const detail = diagnostics ? ` ${diagnostics}` : "";
+      throw new Error(`${reason} First-install files were preserved so the verified release can be retried safely.${detail}`);
     }
 
     return Object.freeze({

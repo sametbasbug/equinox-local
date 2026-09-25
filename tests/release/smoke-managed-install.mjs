@@ -30,6 +30,68 @@ async function waitForJson(url, attempts = 40) {
   throw lastError || new Error(`Timed out waiting for ${url}`);
 }
 
+function xmlEscape(value) {
+  return String(value)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&apos;");
+}
+
+async function runRealLaunchAgentWrapperSmoke({ homeDir, installRoot, expectedVersion }) {
+  if (process.platform !== "darwin" || typeof process.getuid !== "function") return;
+  const uid = process.getuid();
+  const label = `dev.equinox.local.release-smoke.${process.pid}`;
+  const domain = `gui/${uid}`;
+  const service = `${domain}/${label}`;
+  const helper = path.join(homeDir, "launch-agent-runtime-host");
+  const plist = path.join(homeDir, `${label}.plist`);
+  const stdoutLog = path.join(homeDir, "launch-agent.stdout.log");
+  const stderrLog = path.join(homeDir, "launch-agent.stderr.log");
+  const wrapper = path.join(installRoot, "equinox-local-app-runtime");
+
+  await fs.writeFile(helper, `#!/bin/bash\nset -euo pipefail\n${JSON.stringify(wrapper)}\n`, { mode: 0o700 });
+  await fs.chmod(helper, 0o700);
+  await fs.writeFile(plist, `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>Label</key><string>${xmlEscape(label)}</string>
+<key>ProgramArguments</key><array><string>${xmlEscape(helper)}</string></array>
+<key>EnvironmentVariables</key><dict>
+<key>HOME</key><string>${xmlEscape(homeDir)}</string>
+<key>EQUINOX_LOCAL_INSTALL_ROOT</key><string>${xmlEscape(installRoot)}</string>
+<key>EQUINOX_LOCAL_BROWSER_SOCKET_NAMESPACE</key><string>release-smoke-${process.pid}</string>
+</dict>
+<key>RunAtLoad</key><true/>
+<key>KeepAlive</key><true/>
+<key>ProcessType</key><string>Background</string>
+<key>StandardOutPath</key><string>${xmlEscape(stdoutLog)}</string>
+<key>StandardErrorPath</key><string>${xmlEscape(stderrLog)}</string>
+</dict></plist>\n`, { mode: 0o600 });
+
+  await execFile("/bin/launchctl", ["bootout", service], { timeout: 10_000, maxBuffer: 1024 * 1024 }).catch(() => {});
+  try {
+    await execFile("/bin/launchctl", ["bootstrap", domain, plist], { timeout: 15_000, maxBuffer: 1024 * 1024 });
+    await execFile("/bin/launchctl", ["kickstart", service], { timeout: 15_000, maxBuffer: 1024 * 1024 });
+    let status;
+    try {
+      status = await waitForJson(`http://127.0.0.1:${CONTROL_CENTER_PORT}/api/v1/status`, 120);
+    } catch (error) {
+      const launchState = await execFile("/bin/launchctl", ["print", service], { timeout: 5_000, maxBuffer: 1024 * 1024 })
+        .then(({ stdout }) => stdout.slice(-8_000))
+        .catch((launchError) => `launchctl print failed: ${launchError.message}`);
+      const stderr = await fs.readFile(stderrLog, "utf8").then((value) => value.slice(-8_000)).catch(() => "(empty)");
+      throw new Error(`Real LaunchAgent wrapper smoke did not become healthy: ${error instanceof Error ? error.message : error}\nLaunchAgent:\n${launchState}\nStderr:\n${stderr}`);
+    }
+    assert.equal(status.status.server.version, expectedVersion);
+    assert.equal(status.status.health?.state, "HEALTHY");
+  } finally {
+    await execFile("/bin/launchctl", ["bootout", service], { timeout: 15_000, maxBuffer: 1024 * 1024 }).catch(() => {});
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+}
+
 async function setControlCenterPort(configPath) {
   const config = JSON.parse(await fs.readFile(configPath, "utf8"));
   assert.deepEqual(config.agentAccess, {
@@ -86,8 +148,14 @@ async function main() {
     const configPath = path.join(installRoot, "config.json");
     await setControlCenterPort(configPath);
 
+    await runRealLaunchAgentWrapperSmoke({
+      homeDir,
+      installRoot,
+      expectedVersion: EQUINOX_LOCAL_VERSION,
+    });
+
     assert.equal(await commandText(node, ["--version"]), "v26.10.0");
-    assert.match(await commandText(tunnel, ["--version"]), /^0\.0\.14\+/u);
+    assert.match(await commandText(tunnel, ["--version"]), /^0\.0\.15\+/u);
     assert.match(await commandText(cloudflared, ["--version"]), /cloudflared version/u);
 
     const fakeKey = path.join(installRoot, "secrets", "openai-runtime-key");
@@ -162,7 +230,7 @@ async function main() {
       version: EQUINOX_LOCAL_VERSION,
       target,
       nodeVersion: "26.10.0",
-      tunnelClientVersion: "0.0.14",
+      tunnelClientVersion: "0.0.15",
       controlCenterPort: CONTROL_CENTER_PORT,
       controlCenterHealth: status.status.health?.state ?? null,
       artifact,

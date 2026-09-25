@@ -148,6 +148,79 @@ test("first install promotes the verified release, bootstraps the user and loads
   }
 });
 
+test("fresh activation failure preserves the verified release and reports bounded LaunchAgent diagnostics", async () => {
+  const fixture = await createFixture("5.2.0");
+  const uid = typeof process.getuid === "function" ? process.getuid() : 501;
+  const execCalls = [];
+  const waitOptions = [];
+  const errorLog = path.join(fixture.homeDir, "Library", "Logs", "Equinox Local.error.log");
+  await fs.mkdir(path.dirname(errorLog), { recursive: true, mode: 0o700 });
+  await fs.writeFile(errorLog, "[Equinox Local supervisor] delayed VM startup fixture\n", { mode: 0o600 });
+  try {
+    await assert.rejects(
+      installManagedEquinoxRelease({
+        stagedReleaseDir: fixture.releaseDir,
+        homeDir: fixture.homeDir,
+        uid,
+        platform: "darwin",
+        target: TARGET,
+        readCurrentImpl: async () => null,
+        bootstrapImpl: async () => ({ configCreated: true, controlCenterUrl: "http://127.0.0.1:24891/" }),
+        execFileImpl: async (command, args) => {
+          execCalls.push([command, args]);
+          if (command === "/bin/launchctl" && args[0] === "print") {
+            return { stdout: "state = running\n\tpid = 4242\n\tlast exit code = 0\n", stderr: "" };
+          }
+          return { stdout: "", stderr: "" };
+        },
+        waitForVersionImpl: async (_version, options) => {
+          waitOptions.push(options);
+          throw new Error("Equinox Local 5.2.0 did not become healthy: fetch failed");
+        },
+      }),
+      (error) => {
+        assert.match(error.message, /files were preserved/u);
+        assert.match(error.message, /LaunchAgent state=running, pid=4242, lastExit=0/u);
+        assert.match(error.message, /delayed VM startup fixture/u);
+        return true;
+      },
+    );
+    const targetRelease = path.join(fixture.installRoot, "releases", "5.2.0");
+    assert.equal(await exists(targetRelease), true);
+    assert.equal(await fs.readlink(path.join(fixture.installRoot, "current")), "releases/5.2.0");
+    assert.deepEqual(waitOptions, [{ attempts: 120, delayMs: 500 }]);
+    assert.equal(execCalls.some(([command, args]) => command === "/bin/launchctl" && args[0] === "bootout"), true);
+  } finally {
+    await fs.rm(fixture.homeDir, { recursive: true, force: true });
+  }
+});
+
+test("same-version retry keeps the extended first-install health budget", async () => {
+  const fixture = await createFixture("5.2.0");
+  const uid = typeof process.getuid === "function" ? process.getuid() : 501;
+  const targetRelease = path.join(fixture.installRoot, "releases", "5.2.0");
+  await fs.mkdir(targetRelease, { recursive: true, mode: 0o700 });
+  const waitOptions = [];
+  try {
+    const result = await installManagedEquinoxRelease({
+      stagedReleaseDir: fixture.releaseDir,
+      homeDir: fixture.homeDir,
+      uid,
+      platform: "darwin",
+      target: TARGET,
+      readCurrentImpl: async () => ({ version: "5.2.0", releaseDir: targetRelease }),
+      bootstrapImpl: async () => ({ configCreated: false, controlCenterUrl: "http://127.0.0.1:24891/" }),
+      execFileImpl: async () => ({ stdout: "", stderr: "" }),
+      waitForVersionImpl: async (_version, options) => { waitOptions.push(options); return true; },
+    });
+    assert.equal(result.status, "already-installed");
+    assert.deepEqual(waitOptions, [{ attempts: 120, delayMs: 500 }]);
+    assert.equal(await exists(path.join(fixture.installRoot, "onboarding-state.json")), true);
+  } finally {
+    await fs.rm(fixture.homeDir, { recursive: true, force: true });
+  }
+});
+
 test("first installer refuses root and never downgrades an existing managed release", async () => {
   const fixture = await createFixture("4.2.0");
   const uid = typeof process.getuid === "function" ? process.getuid() : 501;

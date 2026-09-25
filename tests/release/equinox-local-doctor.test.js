@@ -60,7 +60,7 @@ test("source checkout doctor stays healthy without requiring managed-only files"
       runtimeHealthState: "HEALTHY",
       runtimeVersion: "4.2.0",
       sourceCheckoutVersion: "4.2.0",
-      developmentTunnel: { configured: true, expectedVersion: "0.0.14", actualVersion: "0.0.14", synchronized: true },
+      developmentTunnel: { configured: true, expectedVersion: "0.0.15", actualVersion: "0.0.15", synchronized: true },
       developmentPeekaboo: { configured: true, expectedVersion: "4.3.0", actualVersion: "4.3.0", synchronized: true },
       browser: { ready: false },
       peekaboo: { active: false },
@@ -91,7 +91,7 @@ test("source checkout doctor detects a stale running process after source versio
       runtimeHealthState: "HEALTHY",
       runtimeVersion: "4.2.2",
       sourceCheckoutVersion: "4.2.3",
-      developmentTunnel: { configured: true, expectedVersion: "0.0.14", actualVersion: "0.0.14", synchronized: true },
+      developmentTunnel: { configured: true, expectedVersion: "0.0.15", actualVersion: "0.0.15", synchronized: true },
       browser: { ready: false },
       peekaboo: { active: false },
     });
@@ -114,14 +114,14 @@ test("source checkout doctor surfaces a stale developer tunnel runtime without e
       config: { version: 1, runtime: { workspaceProject: "workspace" }, projects: { workspace: { root: workspace } } },
       runtimeHealthState: "HEALTHY",
       runtimeVersion: "4.3.0",
-      developmentTunnel: { configured: true, expectedVersion: "0.0.14", actualVersion: "0.0.12", synchronized: false },
+      developmentTunnel: { configured: true, expectedVersion: "0.0.15", actualVersion: "0.0.12", synchronized: false },
       browser: { ready: false },
       peekaboo: { active: false },
     });
     const tunnel = result.checks.find((item) => item.id === "development-tunnel");
     assert.equal(result.state, "ATTENTION");
     assert.equal(tunnel?.status, "attention");
-    assert.match(tunnel?.detail || "", /0\.0\.12.*0\.0\.14/u);
+    assert.match(tunnel?.detail || "", /0\.0\.12.*0\.0\.15/u);
     assert.equal(JSON.stringify(result).includes(root), false);
   } finally {
     await fs.rm(root, { recursive: true, force: true });
@@ -138,7 +138,7 @@ test("source checkout doctor surfaces a stale developer Peekaboo runtime without
       config: { version: 1, runtime: { workspaceProject: "workspace" }, projects: { workspace: { root: workspace } } },
       runtimeHealthState: "HEALTHY",
       runtimeVersion: "4.3.1",
-      developmentTunnel: { configured: true, expectedVersion: "0.0.14", actualVersion: "0.0.14", synchronized: true },
+      developmentTunnel: { configured: true, expectedVersion: "0.0.15", actualVersion: "0.0.15", synchronized: true },
       developmentPeekaboo: { configured: true, expectedVersion: "4.3.0", actualVersion: "4.1.0", synchronized: false },
       browser: { ready: false },
       peekaboo: { active: false },
