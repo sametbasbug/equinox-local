@@ -195,6 +195,43 @@ test("fresh activation failure preserves the verified release and reports bounde
   }
 });
 
+test("fresh activation diagnostics never follow a symlinked error log", async () => {
+  const fixture = await createFixture("5.2.0");
+  const uid = typeof process.getuid === "function" ? process.getuid() : 501;
+  const logsDir = path.join(fixture.homeDir, "Library", "Logs");
+  const secretPath = path.join(fixture.homeDir, "diagnostic-secret.txt");
+  const errorLog = path.join(logsDir, "Equinox Local.error.log");
+  await fs.mkdir(logsDir, { recursive: true, mode: 0o700 });
+  await fs.writeFile(secretPath, "must-not-be-followed\n", { mode: 0o600 });
+  await fs.symlink(secretPath, errorLog);
+  try {
+    await assert.rejects(
+      installManagedEquinoxRelease({
+        stagedReleaseDir: fixture.releaseDir,
+        homeDir: fixture.homeDir,
+        uid,
+        platform: "darwin",
+        target: TARGET,
+        readCurrentImpl: async () => null,
+        bootstrapImpl: async () => ({ configCreated: true, controlCenterUrl: "http://127.0.0.1:24891/" }),
+        execFileImpl: async (command, args) => {
+          if (command === "/bin/launchctl" && args[0] === "print") {
+            return { stdout: "state = waiting\n", stderr: "" };
+          }
+          return { stdout: "", stderr: "" };
+        },
+        waitForVersionImpl: async () => { throw new Error("health failed"); },
+      }),
+      (error) => {
+        assert.doesNotMatch(error.message, /must-not-be-followed/u);
+        return true;
+      },
+    );
+  } finally {
+    await fs.rm(fixture.homeDir, { recursive: true, force: true });
+  }
+});
+
 test("same-version retry keeps the extended first-install health budget", async () => {
   const fixture = await createFixture("5.2.0");
   const uid = typeof process.getuid === "function" ? process.getuid() : 501;

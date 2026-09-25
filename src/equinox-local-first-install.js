@@ -1,4 +1,5 @@
 import { execFile as execFileCallback } from "node:child_process";
+import { constants as fsConstants } from "node:fs";
 import { randomBytes } from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
@@ -217,21 +218,21 @@ function boundedDiagnostic(value, maxChars = 1_200) {
 }
 
 async function readDiagnosticTail(filePath, { fsImpl = fs, maxBytes = FIRST_INSTALL_DIAGNOSTIC_BYTES } = {}) {
+  if (typeof fsImpl.open !== "function") return null;
+  let handle = null;
   try {
-    const stat = await fsImpl.lstat(filePath);
-    if (!stat.isFile() || stat.isSymbolicLink() || stat.size < 1 || typeof fsImpl.open !== "function") return null;
+    handle = await fsImpl.open(filePath, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
+    const stat = await handle.stat();
+    if (!stat.isFile() || stat.size < 1) return null;
     const length = Math.min(stat.size, maxBytes);
     const offset = Math.max(0, stat.size - length);
-    const handle = await fsImpl.open(filePath, "r");
-    try {
-      const buffer = Buffer.alloc(length);
-      const { bytesRead } = await handle.read(buffer, 0, length, offset);
-      return boundedDiagnostic(buffer.subarray(0, bytesRead).toString("utf8"));
-    } finally {
-      await handle.close();
-    }
+    const buffer = Buffer.alloc(length);
+    const { bytesRead } = await handle.read(buffer, 0, length, offset);
+    return boundedDiagnostic(buffer.subarray(0, bytesRead).toString("utf8"));
   } catch {
     return null;
+  } finally {
+    if (handle) await handle.close().catch(() => {});
   }
 }
 
