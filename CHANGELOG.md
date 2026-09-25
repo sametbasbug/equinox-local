@@ -340,7 +340,8 @@ This project follows semantic versioning for public releases.
 - Internal release/QA browser surfaces are excluded from the public product capability registry.
 - Private Orbit/deployment configuration and machine-specific development infrastructure are excluded from the public source projection.
 
-[Unreleased]: https://github.com/sametbasbug/equinox-local/compare/v5.1.0...HEAD
+[Unreleased]: https://github.com/sametbasbug/equinox-local/compare/v5.2.0...HEAD
+[5.2.0]: https://github.com/sametbasbug/equinox-local/compare/v5.1.0...v5.2.0
 [5.1.0]: https://github.com/sametbasbug/equinox-local/compare/v5.0.0...v5.1.0
 [5.0.0]: https://github.com/sametbasbug/equinox-local/compare/v4.8.0...v5.0.0
 [4.8.0]: https://github.com/sametbasbug/equinox-local/compare/v4.7.0...v4.8.0
