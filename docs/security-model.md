@@ -87,7 +87,7 @@ Before activation, Local verifies:
 5. archive/tree safety; and
 6. release metadata/runtime expectations.
 
-Activation is versioned and health-checked. If the requested new version fails health/version verification, Local restores the previous release and verifies the rollback target.
+Activation is versioned and health-checked. During an upgrade, if the requested new version fails health/version verification, Local restores the previous release and verifies the rollback target. During a fresh first install there is no rollback target: Local stops the failed LaunchAgent but preserves the already verified release/current pointer for a safe retry, and exposes only bounded LaunchAgent/error-log diagnostics.
 
 Equinox Browser is updated by Chrome Web Store, not by the Local updater.
 

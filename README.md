@@ -15,7 +15,11 @@
 [Product site](https://local.sametbasbug.dev/) · [Security](SECURITY.md) · [Architecture](docs/architecture.md) · [Contributing](CONTRIBUTING.md)
 </div>
 
-> **Current production:** Equinox Local `5.1.0` on the signed stable channel and Equinox Browser `0.7.0` on the permanent Unlisted Chrome Web Store item. Every Local release must pass public-source CI/CodeQL, native architecture validation, managed smoke, signing verification, lifecycle upgrade validation and live-channel checks before promotion.
+> **Current production:** Equinox Local `5.2.0` on the signed stable channel and Equinox Browser `0.7.0` on the permanent Unlisted Chrome Web Store item. Every Local release must pass public-source CI/CodeQL, native architecture validation, managed smoke, signing verification, lifecycle upgrade validation and live-channel checks before promotion.
+
+## Current release notes
+
+Equinox Local `5.2.0` is the expedited fresh-install recovery release. It extends first-activation health time, preserves a verified fresh-install backend instead of deleting it when activation fails, adds real isolated LaunchAgent lifecycle smoke coverage, updates OpenAI `tunnel-client` to `0.0.15`, fixes Turn Budget fallback idle accounting with a configurable Control Center timeout, and hardens restart-safe Telegram state persistence. Equinox Browser remains `0.7.0`.
 
 ## What is Equinox Local?
 
@@ -87,7 +91,7 @@ Task Capsules are small durable checkpoint records, not transcript archives. Eac
 
 Auto Continue is deliberately one-shot. An agent must explicitly arm every automatic next turn, and a chain is bounded to three automatic hops before a fresh chain must be started. Local binds the arm to the exact generating ChatGPT conversation (or a human-pinned popup target), waits for generation to finish and the composer to stay safely empty, persists the delivery reservation before crossing the browser-mutation boundary, and never blindly retries an ambiguous send. An armed continuation can survive a Local runtime restart because the Task Capsule is durable. One-shot Auto Continue/Fresh Chat Resume mutations release debugger attachments on a short 250 ms lease when they acquired the attachment themselves; the normal 60-second browser-automation lease is preserved when an attachment was already active.
 
-Turn Budget protects the end of long ChatGPT Web turns without introducing another hard stop. It is enabled by default with a 22-minute safety cutoff measured from the first Equinox Local use in that assistant turn. When Equinox Browser can identify the active generation, Local uses the current user epoch as the primary turn identity and the assistant-turn key as fallback; otherwise it uses a conservative first-Local-call fallback. Passive status reads retire a finished browser turn back to Idle, while a new turn starts its budget only on that turn's first Equinox Local call. Tool results progressively tell the agent to stop starting major work, save a safe Task Capsule checkpoint, arm Auto Continue when more work remains, and send a normal final response before the platform timeout. Long Local blocking waits are shortened inside the finalization window so control returns to the agent. Control Center → **Safety** shows live elapsed/remaining/stage state and lets the human enable/disable the feature or change the cutoff immediately without restarting Local. Turn Budget never arms Auto Continue or terminates a turn by itself.
+Turn Budget protects the end of long ChatGPT Web turns without introducing another hard stop. It is enabled by default with a 22-minute safety cutoff measured from the first Equinox Local use in that assistant turn. When Equinox Browser can identify the active generation, Local uses the current user epoch as the primary turn identity and the assistant-turn key as fallback; otherwise it uses a conservative first-Local-call fallback. That fallback now retires itself to Idle after configurable Local inactivity instead of counting wall-clock time forever; the Control Center setting defaults to 5 minutes, cannot exceed the selected safety cutoff, and passive Control Center/status refreshes do not extend the fallback. Passive status reads retire a finished browser turn back to Idle, while a new turn starts its budget only on that turn's first Equinox Local call. Tool results progressively tell the agent to stop starting major work, save a safe Task Capsule checkpoint, arm Auto Continue when more work remains, and send a normal final response before the platform timeout. Long Local blocking waits are shortened inside the finalization window so control returns to the agent. Control Center → **Safety** shows live elapsed/remaining/stage state and lets the human enable/disable the feature or change the cutoff/fallback timeout immediately without restarting Local. Turn Budget never arms Auto Continue or terminates a turn by itself.
 
 Fresh Chat Resume explicitly hands an active Task Capsule to one new ChatGPT conversation without copying the transcript. It preserves root/project scope, reserves durable state plus an extension receipt before browser mutation, creates/submits at most one destination and binds the task only after the new conversation identity is confirmed. A prepared handoff can survive a Local restart. If mutation becomes ambiguous, Equinox does **not** retry it automatically; Control Center can clear the blocked transition so work can continue from the saved checkpoint without replaying the uncertain browser action.
 
@@ -113,7 +117,10 @@ The public path is a small user-level macOS bootstrap that:
 4. verifies exact release byte count and SHA-256 before extraction;
 5. installs the self-contained managed runtime under the user's Library;
 6. registers the per-user LaunchAgent and Equinox Browser Native Messaging host; and
-7. installs the native `Equinox Local.app` shell and opens it for onboarding.
+7. installs the native `Equinox Local.app` shell and opens it for onboarding; and
+8. allows up to 60 seconds for the first managed activation to become healthy.
+
+If that first activation still fails, Local stops the failed LaunchAgent but preserves the already verified release/current pointer for a safe retry and reports bounded LaunchAgent/error-log diagnostics instead of deleting the backend underneath the installed native shell.
 
 It does **not** require Git, Homebrew, a system Node installation, a separate Peekaboo installation, administrator authentication, or a paid Apple Developer membership. The managed release bundles its verified Peekaboo desktop runtime alongside the pinned Node and tunnel runtimes.
 

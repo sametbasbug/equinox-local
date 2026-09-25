@@ -13,7 +13,10 @@ The public first-install path is a user-level HTTPS shell bootstrap. It is desig
 5. verify the expected artifact byte count and SHA-256 before activation,
 6. install under the current user's `~/Library/Application Support/Equinox Local/` tree,
 7. register the per-user LaunchAgent and Native Messaging host,
-8. start Equinox Local in local-only onboarding mode when transport setup is not complete.
+8. start Equinox Local in local-only onboarding mode when transport setup is not complete,
+9. allow up to 60 seconds for the first managed activation to become healthy.
+
+If a fresh first activation still fails, Local stops the failed LaunchAgent but **preserves the verified release and `current` pointer** so the same install can be retried safely. The terminal error includes bounded LaunchAgent state and the tail of `~/Library/Logs/Equinox Local.error.log` when available. This avoids leaving an installed native app/menu-bar shell with its backend release deleted.
 
 The installer does not disable Gatekeeper and does not require global security-policy changes.
 
@@ -39,7 +42,7 @@ The runtime validates the signature and the pinned URL shape before accepting an
 
 A verified update is staged as a versioned release. Activation switches the managed `current` pointer, restarts the managed runtime, and then verifies that the requested version becomes healthy.
 
-If the target version fails its post-restart health check, Equinox Local automatically restores the previous release and verifies the rollback target before reporting failure.
+For an **upgrade**, if the target version fails its post-restart health check, Equinox Local automatically restores the previous release and verifies the rollback target before reporting failure. A **fresh first install** has no previous release to restore, so it stops the failed LaunchAgent while preserving the verified candidate/current pointer for an explicit retry and diagnostics.
 
 ```text
 signed manifest
@@ -60,7 +63,7 @@ The Local updater owns only Equinox Local runtime releases. Equinox Browser rema
 
 Release helpers live under [`scripts/release/`](../scripts/release/). Private signing material is intentionally not part of this repository.
 
-The release tests under [`tests/release/`](../tests/release/) cover deterministic packaging, signature verification, bootstrap manifest generation, managed installation and rollback behavior.
+The release tests under [`tests/release/`](../tests/release/) cover deterministic packaging, signature verification, bootstrap manifest generation, managed installation and rollback behavior. Release smoke also exercises an isolated real macOS `launchctl -> runtime host -> app runtime wrapper -> supervisor -> server` lifecycle rather than stubbing LaunchAgent activation and health success.
 
 ## Security expectations for maintainers
 
