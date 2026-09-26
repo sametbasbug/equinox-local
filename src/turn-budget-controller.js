@@ -2,6 +2,8 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
+import { equinoxLocalPlatformPaths } from "./equinox-local-platform.js";
+
 export const TURN_BUDGET_DEFAULTS = Object.freeze({
   enabled: true,
   cutoffMinutes: 22,
@@ -37,8 +39,8 @@ function normalizeSettings(value = {}) {
   return Object.freeze({ enabled, cutoffMinutes, fallbackResetMinutes });
 }
 
-export function defaultTurnBudgetSettingsPath(homeDir = os.homedir()) {
-  return path.join(homeDir, "Library", "Application Support", "Equinox Local", "turn-budget.json");
+export function defaultTurnBudgetSettingsPath(homeDir = os.homedir(), { platform = process.platform, arch = process.arch, env = process.env } = {}) {
+  return equinoxLocalPlatformPaths({ platform, arch, homeDir, env }).turnBudgetPath;
 }
 
 async function readSettingsFile(settingsPath, fsImpl) {
@@ -123,11 +125,12 @@ export function createTurnBudgetController({ settingsPath = defaultTurnBudgetSet
           : [];
         return Object.freeze({ status: "idle", idleContexts: Object.freeze([...new Set(idleContexts)]) });
       }
-      if (!result.assistantTurnKey) return Object.freeze({ status: "unknown" });
+      const userEpoch = typeof result.userEpoch === "string" && result.userEpoch ? result.userEpoch : null;
+      const assistantTurnKey = typeof result.assistantTurnKey === "string" && result.assistantTurnKey ? result.assistantTurnKey : null;
+      if (!userEpoch && !assistantTurnKey) return Object.freeze({ status: "unknown" });
       const context = result.browserContext || "unknown";
       const conversationId = result.conversationId || "unknown";
-      const userEpoch = typeof result.userEpoch === "string" && result.userEpoch ? result.userEpoch : null;
-      const turnKey = userEpoch ? `user:${userEpoch}` : `assistant:${result.assistantTurnKey}`;
+      const turnKey = userEpoch ? `user:${userEpoch}` : `assistant:${assistantTurnKey}`;
       return Object.freeze({
         status: "active",
         identity: Object.freeze({

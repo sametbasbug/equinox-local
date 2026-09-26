@@ -3,6 +3,7 @@ import fs from "node:fs/promises";
 import test from "node:test";
 
 import {
+  equinoxBrowserIpcEndpoint,
   equinoxBrowserSocketDirectory,
   equinoxBrowserSocketPath,
   prepareEquinoxBrowserSocketDirectory,
@@ -39,4 +40,19 @@ test("root or missing uid is rejected", async () => {
     prepareEquinoxBrowserSocketDirectory({ uid: 0 }),
     /non-root user id/u,
   );
+});
+
+
+test("browser IPC contract models a future Windows named pipe without claiming it is implemented", () => {
+  assert.deepEqual(equinoxBrowserIpcEndpoint({ platform: "darwin", uid: 501, namespace: "smoke" }), {
+    kind: "unix",
+    endpoint: "/tmp/equinox-local-501-smoke/browser.sock",
+    implemented: true,
+  });
+  assert.deepEqual(equinoxBrowserIpcEndpoint({ platform: "win32", namespace: "smoke" }), {
+    kind: "named-pipe",
+    endpoint: "\\\\.\\pipe\\equinox-local-browser-smoke",
+    implemented: false,
+  });
+  assert.throws(() => equinoxBrowserIpcEndpoint({ platform: "linux" }), /unsupported/u);
 });

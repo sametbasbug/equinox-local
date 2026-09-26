@@ -6,6 +6,8 @@ This project follows semantic versioning for public releases.
 
 ## [Unreleased]
 
+- Updated Equinox Browser development turn observation for the current ChatGPT DOM: Browser 0.7.1 recognizes `data-turn-key`/current search-unit/composer markers, Turn Budget uses a dedicated browser identity resolver and can bind to the current user epoch before the assistant turn key exists, while Auto Continue remains strict and fail-closed.
+- Restored successful fresh-install presentation without reintroducing duplicate native shells: the terminal installer now asks LaunchServices to reopen the existing verified `Equinox Local.app` bundle, never force-starts a second instance, and opens the localhost Control Center in the default browser only when native reopening is unavailable.
 ## [5.2.0] - 2026-09-26
 
 - Fixed Turn Budget fallback accounting when Browser turn identity is unavailable: fallback work now becomes Idle after configurable Local inactivity instead of counting forever, and Control Center exposes a `Fallback idle timeout` setting (default 5 minutes, bounded to the safety cutoff).

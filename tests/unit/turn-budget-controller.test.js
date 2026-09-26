@@ -142,6 +142,24 @@ test("runtime blocking waits are clamped only inside finalization window", async
   assert.match(result.content[0].text, /blocking wait was shortened/u);
 });
 
+test("browser turn identity can use userEpoch before assistantTurnKey exists", async () => {
+  let now = 0;
+  const controller = createTurnBudgetController({
+    now: () => now,
+    resolveTurnIdentity: async () => ({
+      browserContext: "user",
+      conversationId: "conv-live",
+      userEpoch: "user-live",
+      assistantTurnKey: null,
+      title: "ChatGPT",
+    }),
+  });
+  await controller.initialize();
+  await controller.prepareInvocation("runtime_call", { operation: "status", arguments: {} });
+  assert.equal(controller.snapshot().active.source, "browser");
+  assert.equal(controller.snapshot().active.browserContext, "user");
+});
+
 test("fallback timer becomes idle after configurable inactivity when browser identity is unavailable", async () => {
   let now = 0;
   const controller = createTurnBudgetController({ now: () => now, resolveTurnIdentity: async () => null });

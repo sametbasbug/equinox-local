@@ -3,7 +3,7 @@ import net from "node:net";
 import path from "node:path";
 
 import {
-  equinoxBrowserSocketPath,
+  equinoxBrowserIpcEndpoint,
   prepareEquinoxBrowserSocketDirectory,
 } from "./equinox-browser-socket.js";
 
@@ -15,7 +15,10 @@ export const EQUINOX_BROWSER_MIGRATION_EXTENSION_IDS = Object.freeze([
   EQUINOX_BROWSER_EXTENSION_ID,
   EQUINOX_BROWSER_LEGACY_EXTENSION_ID,
 ]);
-export const EQUINOX_BROWSER_SOCKET_PATH = equinoxBrowserSocketPath();
+const DEFAULT_EQUINOX_BROWSER_IPC_ENDPOINT = equinoxBrowserIpcEndpoint();
+export const EQUINOX_BROWSER_SOCKET_PATH = DEFAULT_EQUINOX_BROWSER_IPC_ENDPOINT.kind === "unix" && DEFAULT_EQUINOX_BROWSER_IPC_ENDPOINT.implemented
+  ? DEFAULT_EQUINOX_BROWSER_IPC_ENDPOINT.endpoint
+  : null;
 export const EQUINOX_BROWSER_CONTEXTS = Object.freeze(["agent", "user"]);
 export const DEFAULT_EQUINOX_BROWSER_CONTEXT = "user";
 
@@ -665,6 +668,9 @@ export function createEquinoxBrowserBridge({
 
   async function start() {
     if (server) return snapshot();
+    if (!socketPath) {
+      throw new Error("Equinox Browser local IPC transport is not implemented on this platform yet.");
+    }
     if (socketPath === EQUINOX_BROWSER_SOCKET_PATH) {
       await prepareEquinoxBrowserSocketDirectory();
     } else {

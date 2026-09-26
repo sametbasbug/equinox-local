@@ -1,8 +1,13 @@
 import { verify as verifySignature } from "node:crypto";
 
+import {
+  EQUINOX_LOCAL_SUPPORTED_RELEASE_TARGETS,
+  equinoxLocalReleaseTarget,
+} from "./equinox-local-platform.js";
+
 export const EQUINOX_LOCAL_UPDATE_SCHEMA_VERSION = 1;
 export const EQUINOX_LOCAL_UPDATE_CHANNEL = "stable";
-export const EQUINOX_LOCAL_SUPPORTED_UPDATE_TARGETS = Object.freeze(["darwin-arm64", "darwin-x64"]);
+export const EQUINOX_LOCAL_SUPPORTED_UPDATE_TARGETS = EQUINOX_LOCAL_SUPPORTED_RELEASE_TARGETS;
 
 const UPDATE_ORIGIN = "https://local.sametbasbug.dev";
 const UPDATE_PATH_PREFIX = "/downloads/updates/";
@@ -11,12 +16,8 @@ const CHECK_TIMEOUT_MS = 8_000;
 const VERSION_PATTERN = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/u;
 const UPDATE_TARGET_SET = new Set(EQUINOX_LOCAL_SUPPORTED_UPDATE_TARGETS);
 
-export function equinoxLocalUpdateTarget({ platform = process.platform, arch = process.arch } = {}) {
-  const target = `${platform}-${arch}`;
-  if (!UPDATE_TARGET_SET.has(target)) {
-    throw new Error(`Unsupported Equinox Local update target: ${target}`);
-  }
-  return target;
+export function equinoxLocalUpdateTarget(options = {}) {
+  return equinoxLocalReleaseTarget(options);
 }
 
 export function equinoxLocalUpdateManifestUrl(target) {

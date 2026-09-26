@@ -2,14 +2,12 @@ import fs from "node:fs/promises";
 
 import { TERMINAL_KEYS } from "./terminal-manager.js";
 import { buildGenericExecutionEnvironment } from "./equinox-local-generic-execution.js";
+import { equinoxLocalFiniteShell, equinoxLocalInteractiveShells } from "./equinox-local-platform.js";
 
-function resolveTerminalShell(shell) {
-  if (shell === "zsh") return "/bin/zsh";
-  if (shell === "bash") return "/bin/bash";
-  throw new Error(`Desteklenmeyen terminal kabuğu: ${shell}`);
-}
 
 export function registerTerminalTools({
+  platform = process.platform,
+  arch = process.arch,
   registerTextTool,
   z,
   terminalManager,
@@ -26,6 +24,10 @@ export function registerTerminalTools({
   textResult,
   errorResult,
 } = {}) {
+  const finiteShell = equinoxLocalFiniteShell({ platform, arch });
+  const interactiveShells = equinoxLocalInteractiveShells({ platform, arch });
+  const interactiveShellNames = Object.keys(interactiveShells.shells);
+  if (interactiveShellNames.length === 0) throw new Error("No interactive shell is configured for this platform.");
   const terminalJsonResult = (value) => textResult(JSON.stringify(value, null, 2));
   const recordTerminalExecEvent = async (projectId, state, snapshot, durationMs) => {
     if (typeof recordEvent !== "function") return;
@@ -56,7 +58,7 @@ export function registerTerminalTools({
     "terminal_exec",
     {
       description:
-        "Seçilen proje içinde zsh komut zincirini managed process olarak başlatır. Kısa işler tek çağrıda tamamlanır; wait_ms içinde bitmeyen iş öldürülmeden aynı process_id ile process_logs üzerinden devam eder. Etkileşimli TTY için terminal_start kullanılır.",
+        `Seçilen proje içinde platformun sonlu komut kabuğunu (${finiteShell.command}) managed process olarak başlatır. Kısa işler tek çağrıda tamamlanır; wait_ms içinde bitmeyen iş öldürülmeden aynı process_id ile process_logs üzerinden devam eder. Etkileşimli TTY için terminal_start kullanılır.`,
       inputSchema: {
         command: z.string().min(1).max(20_000),
         cwd: z.string().default(".").describe("Proje köküne göre göreli başlangıç klasörü"),
@@ -91,6 +93,8 @@ export function registerTerminalTools({
             runtimeEnv,
             projectId,
             projectRoot: getActiveProjectRoot(),
+            platform,
+            arch,
           }),
           PAGER: "cat",
           GIT_PAGER: "cat",
@@ -102,8 +106,8 @@ export function registerTerminalTools({
           projectId,
           projectName,
           cwd: resolvedCwd,
-          command: "/bin/zsh",
-          args: ["-lc", command],
+          command: finiteShell.command,
+          args: finiteShell.argsFor(command),
           purpose: "terminal_exec",
           env: executionEnv,
           label: `${projectId}:terminal-exec`,
@@ -192,10 +196,10 @@ export function registerTerminalTools({
     "terminal_start",
     {
       description:
-        "Seçilen proje içinde kalıcı bir gerçek PTY terminal oturumu başlatır. Etkileşimli/ön-plan TTY işleri içindir; uzun yaşayan arka plan servisleri process_start kullanır. Zsh veya Bash çalışır; sonraki çağrılar terminal_write, terminal_read, terminal_resize ve terminal_stop ile yapılır.",
+        `Seçilen proje içinde kalıcı bir gerçek PTY terminal oturumu başlatır. Etkileşimli/ön-plan TTY işleri içindir; uzun yaşayan arka plan servisleri process_start kullanır. Bu platformda kullanılabilir kabuklar: ${interactiveShellNames.join(", ")}. Sonraki çağrılar terminal_write, terminal_read, terminal_resize ve terminal_stop ile yapılır.`,
       inputSchema: {
         cwd: z.string().default(".").describe("Proje köküne göre göreli başlangıç klasörü"),
-        shell: z.enum(["zsh", "bash"]).default("zsh"),
+        shell: z.enum(interactiveShellNames).default(interactiveShells.defaultShell),
         cols: z.number().int().min(20).max(400).default(120),
         rows: z.number().int().min(5).max(200).default(30),
         label: z.string().min(1).max(80).optional(),
@@ -221,16 +225,20 @@ export function registerTerminalTools({
         }
 
         const projectId = getActiveProjectId();
+        const shellConfig = interactiveShells.shells[shell];
+        if (!shellConfig) throw new Error(`Desteklenmeyen terminal kabuğu: ${shell}`);
         const session = await terminalManager.start({
           projectId,
           projectName: getActiveProjectName(),
           cwd: resolvedCwd,
-          shell: resolveTerminalShell(shell),
-          shellArgs: ["-l"],
+          shell: shellConfig.command,
+          shellArgs: [...shellConfig.args],
           env: buildGenericExecutionEnvironmentImpl({
             runtimeEnv,
             projectId,
             projectRoot: getActiveProjectRoot(),
+            platform,
+            arch,
           }),
           cols,
           rows,

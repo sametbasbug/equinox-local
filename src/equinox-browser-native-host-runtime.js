@@ -7,7 +7,8 @@ export const MAX_OUTBOUND_QUEUE_BYTES = 72 * 1024 * 1024;
 export const MAX_NATIVE_OUTPUT_QUEUE_BYTES = 72 * 1024 * 1024;
 
 export function createEquinoxBrowserNativeHostRuntime({
-  socketPath,
+  bridgeEndpoint = null,
+  socketPath = null,
   origin = null,
   input = process.stdin,
   output = process.stdout,
@@ -20,7 +21,12 @@ export function createEquinoxBrowserNativeHostRuntime({
   maxOutboundQueueBytes = MAX_OUTBOUND_QUEUE_BYTES,
   maxNativeOutputQueueBytes = MAX_NATIVE_OUTPUT_QUEUE_BYTES,
 } = {}) {
-  if (!socketPath) throw new Error("socketPath is required");
+  const endpoint = bridgeEndpoint ?? (socketPath
+    ? Object.freeze({ kind: "unix", endpoint: socketPath, implemented: true })
+    : null);
+  if (!endpoint || typeof endpoint.endpoint !== "string" || !endpoint.endpoint) throw new Error("bridgeEndpoint is required");
+  if (!new Set(["unix", "named-pipe"]).has(endpoint.kind)) throw new Error("bridgeEndpoint kind is unsupported");
+  if (endpoint.implemented !== true) throw new Error(`Bridge IPC endpoint ${endpoint.kind} is not implemented.`);
 
   let socket = null;
   let socketLineChunks = [];
@@ -198,7 +204,7 @@ export function createEquinoxBrowserNativeHostRuntime({
 
   function connectBridge() {
     if (closing || connected || (socket && !socket.destroyed)) return;
-    const nextSocket = createConnection(socketPath);
+    const nextSocket = createConnection(endpoint.endpoint);
     socket = nextSocket;
 
     nextSocket.on("connect", () => {

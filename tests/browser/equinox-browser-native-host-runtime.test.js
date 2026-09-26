@@ -81,6 +81,15 @@ class FakeOutput extends EventEmitter {
   }
 }
 
+test("native host runtime refuses an unimplemented Windows named-pipe endpoint before connecting", () => {
+  let connectionCalls = 0;
+  assert.throws(() => createEquinoxBrowserNativeHostRuntime({
+    bridgeEndpoint: { kind: "named-pipe", endpoint: "\\\\.\\pipe\\equinox-local-browser", implemented: false },
+    createConnection: () => { connectionCalls += 1; return new FakeSocket(); },
+  }), /not implemented/u);
+  assert.equal(connectionCalls, 0);
+});
+
 async function startSocketServer(socketPath) {
   const messages = [];
   const sockets = new Set();

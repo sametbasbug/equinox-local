@@ -36,6 +36,14 @@ async function makeSocketPath(name) {
   return { dir, socketPath: path.join(dir, "bridge.sock") };
 }
 
+test("bridge can exist headlessly when the platform Browser IPC transport is not implemented", async () => {
+  const bridge = createEquinoxBrowserBridge({ socketPath: null });
+  assert.equal(bridge.snapshot().active, false);
+  assert.equal(bridge.snapshot().socketPath, null);
+  await assert.rejects(bridge.start(), /IPC transport is not implemented/u);
+  await bridge.close();
+});
+
 test("bridge start never unlinks a live socket owned by another bridge", async (t) => {
   const { dir, socketPath } = await makeSocketPath("live-owner");
   const owner = net.createServer((socket) => socket.end());

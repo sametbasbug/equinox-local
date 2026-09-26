@@ -6,11 +6,16 @@ import { fileURLToPath } from "node:url";
 
 const SCRIPT_PATH = fileURLToPath(new URL("../../extension/chatgpt-continuation-state.js", import.meta.url));
 
-function node(attrs = {}, textContent = "") {
-  return { textContent, getAttribute(name) { return attrs[name] ?? null; } };
+function node(attrs = {}, textContent = "", selectors = {}, selectorLists = {}) {
+  return {
+    textContent,
+    getAttribute(name) { return attrs[name] ?? null; },
+    querySelector(selector) { return selectors[selector] ?? null; },
+    querySelectorAll(selector) { return selectorLists[selector] ?? []; },
+  };
 }
 
-async function harness({ enabled = true, consentVersion = 2 } = {}) {
+async function harness({ enabled = true, consentVersion = 2, modern = false } = {}) {
   const messages = [];
   let runtimeListener = null;
   let observerCallback = null;
@@ -19,12 +24,29 @@ async function harness({ enabled = true, consentVersion = 2 } = {}) {
   const storageData = { browserEnabled: enabled, browserControlConsentVersion: consentVersion };
   const state = {
     stop: true,
-    user: [node({ "data-message-id": "user-1" })],
-    assistant: [node({ "data-message-id": "assistant-1" })],
-    userTurns: [node({ "data-testid": "conversation-turn-1" })],
-    assistantTurns: [node({ "data-testid": "conversation-turn-2" })],
-    composer: node({}, ""),
+    user: modern ? [] : [node({ "data-message-id": "user-1" })],
+    assistant: modern ? [] : [node({ "data-message-id": "assistant-1" })],
+    userTurns: modern ? [] : [node({ "data-testid": "conversation-turn-1" })],
+    assistantTurns: modern ? [] : [node({ "data-testid": "conversation-turn-2" })],
+    composer: modern ? null : node({}, ""),
+    modernAssistantUnits: [],
+    modernTurns: [],
+    modernUserUnits: modern ? [node({ "data-chatgpt-search-message-ids": "modern-user-1", "data-chatgpt-search-unit-key": "fallback-turn-1:0:user" })] : [],
+    modernComposer: modern ? node({ "data-composer-markdown": "" }, "") : null,
+    modernPrimaryActions: modern ? [node({}, "", {
+      'svg[viewBox="0 0 20 20"]': node({}, "", {
+        path: { getBBox() { return { x: 4.5, y: 4.5, width: 11, height: 11 }; } },
+      }),
+    })] : [],
   };
+  if (modern) {
+    state.modernTurns = [node(
+      { "data-turn-key": "modern-user-1" },
+      "",
+      {},
+      { '[data-chatgpt-search-unit-key$=":assistant"][data-chatgpt-search-message-ids]': state.modernAssistantUnits },
+    )];
+  }
   const document = {
     documentElement: {},
     querySelectorAll(selector) {
@@ -32,11 +54,16 @@ async function harness({ enabled = true, consentVersion = 2 } = {}) {
       if (selector.includes('data-message-author-role="assistant"')) return state.assistant;
       if (selector.includes('data-turn="user"')) return state.userTurns;
       if (selector.includes('data-turn="assistant"')) return state.assistantTurns;
+      if (selector === '[data-turn-key]') return state.modernTurns;
+      if (selector.includes('data-chatgpt-search-unit-key$=":user"')) return state.modernUserUnits;
+      if (selector.includes('data-chatgpt-search-unit-key$=":assistant"')) return state.modernAssistantUnits;
+      if (selector.includes('[data-composer-body] button.bg-composer-primary')) return state.modernPrimaryActions;
       return [];
     },
     querySelector(selector) {
-      if (selector === 'button[data-testid="stop-button"]') return state.stop ? node() : null;
-      if (selector.startsWith('#prompt-textarea')) return state.composer;
+      if (selector === 'button[data-testid="stop-button"]') return modern ? null : (state.stop ? node() : null);
+      if (selector.startsWith('#prompt-textarea')) return modern ? null : state.composer;
+      if (selector.startsWith('[data-composer-markdown]')) return state.modernComposer;
       return null;
     },
     addEventListener() {},
@@ -144,4 +171,24 @@ test("ChatGPT continuation observer does not inspect or publish before browser c
 
   await h.setAccess({ nextEnabled: false });
   assert.equal(h.get().state, null);
+});
+
+test("ChatGPT continuation observer supports the current data-turn-key DOM without localized labels", async () => {
+  const h = await harness({ modern: true });
+  const first = h.get().state;
+  assert.equal(first.generationActive, true);
+  assert.equal(first.userEpoch, "modern-user-1");
+  assert.equal(first.assistantTurnKey, null);
+  assert.equal(first.composerReady, true);
+
+  h.state.modernPrimaryActions = [];
+  h.state.modernAssistantUnits.push(node({
+    "data-chatgpt-search-message-ids": "modern-assistant-1 modern-assistant-1",
+    "data-chatgpt-search-unit-key": "fallback-turn-1:2:assistant",
+  }));
+  h.mutate();
+  const finished = h.get().state;
+  assert.equal(finished.generationActive, false);
+  assert.equal(finished.userEpoch, "modern-user-1");
+  assert.equal(finished.assistantTurnKey, "modern-assistant-1");
 });

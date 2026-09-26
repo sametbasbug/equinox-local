@@ -1,6 +1,9 @@
 import fs from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 
+import { equinoxLocalHostDescriptor } from "./equinox-local-platform.js";
+import { inspectPrivateStatePath } from "./equinox-local-private-state.js";
 import { readManagedCurrentRelease } from "./equinox-local-update-activation.js";
 
 const NATIVE_HOST_NAME = "dev.equinox.browser";
@@ -55,12 +58,21 @@ export async function getEquinoxLocalDoctorStatus({
   onboarding = {},
   developmentTunnel = null,
   developmentPeekaboo = null,
-  homeDir = process.env.HOME,
+  host = null,
+  homeDir = os.homedir(),
   fsImpl = fs,
+  verifyWindowsAcl = null,
   readCurrentReleaseImpl = readManagedCurrentRelease,
   now = () => new Date(),
 } = {}) {
   const checks = [];
+  const hostDescriptor = host || (() => {
+    try {
+      return equinoxLocalHostDescriptor();
+    } catch {
+      return Object.freeze({ platform: process.platform, arch: process.arch, target: null, displayName: process.platform, supported: false });
+    }
+  })();
   const healthyRuntime = runtimeHealthState === "HEALTHY";
   checks.push(check(
     "runtime",
@@ -120,39 +132,48 @@ export async function getEquinoxLocalDoctorStatus({
       ));
     }
 
-    const [launchAgent, configFile, hostWrapper, hostManifest] = await Promise.all([
-      inspectPath(installation.launchAgentPath, { type: "file", mode: "600", fsImpl }),
-      inspectPath(path.join(installation.installRoot, "config.json"), { type: "file", mode: "600", fsImpl }),
-      inspectPath(path.join(installation.installRoot, "equinox-browser-native-host"), { type: "file", mode: "700", fsImpl }),
-      typeof homeDir === "string" && path.isAbsolute(homeDir)
-        ? inspectPath(path.join(homeDir, "Library", "Application Support", "Google", "Chrome", "NativeMessagingHosts", `${NATIVE_HOST_NAME}.json`), { type: "file", mode: "600", fsImpl })
-        : Promise.resolve(Object.freeze({ exists: false, safe: false })),
-    ]);
+    if ((installation.lifecycleKind || "launch-agent") === "launch-agent") {
+      const [launchAgent, configFile, hostWrapper, hostManifest] = await Promise.all([
+        inspectPrivateStatePath(installation.launchAgentPath, { platform: hostDescriptor.platform, type: "file", mode: "600", fsImpl, verifyWindowsAcl }),
+        inspectPrivateStatePath(path.join(installation.installRoot, "config.json"), { platform: hostDescriptor.platform, type: "file", mode: "600", fsImpl, verifyWindowsAcl }),
+        inspectPrivateStatePath(path.join(installation.installRoot, "equinox-browser-native-host"), { platform: hostDescriptor.platform, type: "file", mode: "700", fsImpl, verifyWindowsAcl }),
+        typeof homeDir === "string" && path.isAbsolute(homeDir)
+          ? inspectPrivateStatePath(path.join(homeDir, "Library", "Application Support", "Google", "Chrome", "NativeMessagingHosts", `${NATIVE_HOST_NAME}.json`), { platform: hostDescriptor.platform, type: "file", mode: "600", fsImpl, verifyWindowsAcl })
+          : Promise.resolve(Object.freeze({ exists: false, safe: false })),
+      ]);
 
-    checks.push(check(
-      "launch-agent",
-      "LaunchAgent",
-      launchAgent.safe ? "pass" : "attention",
-      launchAgent.safe
-        ? "The per-user LaunchAgent is installed with private permissions."
-        : "The per-user LaunchAgent is missing, unsafe, or has unexpected permissions.",
-    ));
-    checks.push(check(
-      "config-file",
-      "Private config file",
-      configFile.safe ? "pass" : "attention",
-      configFile.safe
-        ? "The managed config file is private to the user."
-        : "The managed config file is missing, unsafe, or has unexpected permissions.",
-    ));
-    checks.push(check(
-      "native-host",
-      "Equinox Browser host",
-      hostWrapper.safe && hostManifest.safe ? "pass" : "attention",
-      hostWrapper.safe && hostManifest.safe
-        ? "The Native Messaging host is installed with bounded per-user files."
-        : "The Equinox Browser Native Messaging host needs repair or reinstall.",
-    ));
+      checks.push(check(
+        "launch-agent",
+        "LaunchAgent",
+        launchAgent.safe ? "pass" : "attention",
+        launchAgent.safe
+          ? "The per-user LaunchAgent is installed with private permissions."
+          : "The per-user LaunchAgent is missing, unsafe, or has unexpected permissions.",
+      ));
+      checks.push(check(
+        "config-file",
+        "Private config file",
+        configFile.safe ? "pass" : "attention",
+        configFile.safe
+          ? "The managed config file is private to the user."
+          : "The managed config file is missing, unsafe, or has unexpected permissions.",
+      ));
+      checks.push(check(
+        "native-host",
+        "Equinox Browser host",
+        hostWrapper.safe && hostManifest.safe ? "pass" : "attention",
+        hostWrapper.safe && hostManifest.safe
+          ? "The Native Messaging host is installed with bounded per-user files."
+          : "The Equinox Browser Native Messaging host needs repair or reinstall.",
+      ));
+    } else {
+      checks.push(check(
+        "windows-lifecycle",
+        "Windows user lifecycle",
+        "attention",
+        "The Windows managed lifecycle contract exists, but its native verifier is not implemented yet.",
+      ));
+    }
 
     checks.push(check(
       "updates",
@@ -313,6 +334,13 @@ export async function getEquinoxLocalDoctorStatus({
     checkedAt: now().toISOString(),
     installationKind: installation?.kind ?? "source",
     managed: Boolean(installation?.managed),
+    host: Object.freeze({
+      platform: hostDescriptor.platform,
+      arch: hostDescriptor.arch,
+      target: hostDescriptor.target ?? null,
+      displayName: hostDescriptor.displayName || hostDescriptor.platform,
+      supported: hostDescriptor.supported !== false,
+    }),
     summary,
     checks: Object.freeze(checks),
   });

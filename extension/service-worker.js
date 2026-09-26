@@ -1164,6 +1164,27 @@ async function resolveAutoContinueTarget() {
   };
 }
 
+async function resolveTurnBudgetTarget() {
+  const tabs = await listChatGptConversationTabs();
+  const generating = [];
+  for (const tab of tabs) {
+    try {
+      const state = await chatGptContinuationState(tab.tabId);
+      if (state.generationActive && (state.userEpoch || state.assistantTurnKey)) generating.push(state);
+    } catch {
+      // A disappearing/restricted tab or missing observer is not an eligible active turn.
+    }
+  }
+  if (generating.length === 1) {
+    return { status: "ready", target: generating[0] };
+  }
+  return {
+    status: generating.length === 0 ? "idle" : "ambiguous",
+    reason: generating.length === 0 ? "no_generating_chatgpt_tab" : "multiple_generating_chatgpt_tabs",
+    candidateCount: generating.length,
+  };
+}
+
 function withAutoContinueReceiptMutation(operation) {
   const run = autoContinueReceiptMutation.then(operation, operation);
   autoContinueReceiptMutation = run.catch(() => {});
@@ -7666,6 +7687,7 @@ const COMMANDS = {
   "self.reload": browserSelfReload,
   "continuation.target.resolve": resolveAutoContinueTarget,
   "continuation.inspect": ({ tabId }) => chatGptContinuationState(tabId),
+  "turn_budget.identity.resolve": resolveTurnBudgetTarget,
   "continuation.deliver": deliverAutoContinuation,
   "chat_bridge.inspect": inspectChatBridgeState,
   "chat_bridge.deliver": deliverChatBridgeMessage,

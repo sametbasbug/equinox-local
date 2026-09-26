@@ -2,6 +2,8 @@ import { randomUUID } from "node:crypto";
 import { execFile as execFileCallback } from "node:child_process";
 import { promisify } from "node:util";
 
+import { assertProcessOwnershipImplemented, createTerminalProcessOwnershipAdapter } from "./equinox-local-process-ownership.js";
+
 const execFile = promisify(execFileCallback);
 
 const DEFAULT_MAX_ACTIVE_SESSIONS = 8;
@@ -146,6 +148,9 @@ function publicSession(session) {
 }
 
 export function createTerminalManager({
+  platform = process.platform,
+  arch = process.arch,
+  ownershipAdapter = null,
   ptyModuleLoader = () => import("node-pty"),
   now = () => Date.now(),
   randomId = () => randomUUID().slice(0, 8),
@@ -165,10 +170,11 @@ export function createTerminalManager({
   onEvent = null,
 } = {}) {
   const sessions = new Map();
+  const terminalOwnership = ownershipAdapter ?? createTerminalProcessOwnershipAdapter({ platform, arch });
   let ptyModulePromise;
   let pendingStarts = 0;
 
-  const nativeSessionHelper = process.platform === "darwin" && typeof nativeProcessSessionHelperPath === "string" && nativeProcessSessionHelperPath.length > 0
+  const nativeSessionHelper = terminalOwnership.kind === "posix-session-or-tty" && typeof nativeProcessSessionHelperPath === "string" && nativeProcessSessionHelperPath.length > 0
     ? nativeProcessSessionHelperPath
     : null;
   const resolveProcessSessionId = resolveProcessSessionIdImpl ?? (nativeSessionHelper
@@ -407,7 +413,7 @@ export function createTerminalManager({
           );
         }
 
-        if (process.platform === "darwin" && !ownershipVerified) {
+        if (terminalOwnership.requiresVerifiedOwnership && !ownershipVerified) {
           if (naturalExit) {
             session.cleanupVerified = null;
             finalizeSession(session);
@@ -418,13 +424,13 @@ export function createTerminalManager({
           );
         }
 
-        signalTrackedOwnership(session, force ? "SIGKILL" : "SIGHUP");
+        signalTrackedOwnership(session, force ? terminalOwnership.forceSignal : terminalOwnership.gracefulSignal);
         let drained = await waitForTrackedOwnershipDrain(
           session,
           force ? Math.min(timeoutMs, 700) : timeoutMs,
         );
         if (!drained && !force) {
-          signalTrackedOwnership(session, "SIGKILL");
+          signalTrackedOwnership(session, terminalOwnership.forceSignal);
           drained = await waitForTrackedOwnershipDrain(session, 700);
         }
 
@@ -568,6 +574,7 @@ export function createTerminalManager({
     rows = 30,
     label,
   }) => {
+    assertProcessOwnershipImplemented(terminalOwnership, "PTY terminal execution");
     pruneRetainedSessions();
 
     const { spawn } = await loadPtyModule();
@@ -684,7 +691,7 @@ export function createTerminalManager({
     });
 
     await session.ttyPromise;
-    if (process.platform === "darwin" && resolveProcessSessionId && listProcessSessionPids) {
+    if (terminalOwnership.kind === "posix-session-or-tty" && resolveProcessSessionId && listProcessSessionPids) {
       try {
         const sessionId = await resolveProcessSessionId(session.pid);
         if (!Number.isInteger(sessionId) || sessionId <= 0) throw new Error("PTY POSIX session id could not be resolved.");
@@ -699,7 +706,7 @@ export function createTerminalManager({
         }
       }
     }
-    if (process.platform === "darwin" && !session.posixSessionId && !session.ttyName) {
+    if (terminalOwnership.requiresVerifiedOwnership && !session.posixSessionId && !session.ttyName) {
       session.stopRequested = true;
       session.terminal.kill("SIGKILL");
       sessions.delete(id);

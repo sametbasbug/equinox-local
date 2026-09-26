@@ -92,6 +92,19 @@ async function startFake(manager) {
   });
 }
 
+test("Windows terminal manager refuses to spawn before Job Object PTY ownership exists", async () => {
+  let ptyLoads = 0;
+  const manager = createTerminalManager({
+    platform: "win32",
+    arch: "x64",
+    ptyModuleLoader: async () => { ptyLoads += 1; return { spawn: () => new FakeTerminal() }; },
+  });
+  await assert.rejects(() => manager.start({
+    projectId: "workspace", projectName: "Workspace", cwd: "C:\\Work", shell: "powershell.exe", shellArgs: ["-NoLogo"], env: {}, cols: 100, rows: 25,
+  }), /implemented process-ownership adapter/u);
+  assert.equal(ptyLoads, 0);
+});
+
 test("terminal manager starts, writes, resizes and stops a PTY", async () => {
   const { manager, terminals } = makeManager();
   const session = await startFake(manager);

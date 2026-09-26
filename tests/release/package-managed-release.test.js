@@ -66,24 +66,30 @@ test("local module parser finds static relative imports without treating package
   );
 });
 
-test("pinned Node runtime metadata covers both supported macOS architectures", () => {
+test("pinned Node runtime metadata covers production macOS plus Windows x64 headless target", () => {
   assert.equal(EQUINOX_LOCAL_NODE_VERSION, "26.10.0");
-  assert.deepEqual(Object.keys(NODE_DISTRIBUTIONS).sort(), ["darwin-arm64", "darwin-x64"]);
+  assert.deepEqual(Object.keys(NODE_DISTRIBUTIONS).sort(), ["darwin-arm64", "darwin-x64", "win32-x64"]);
   assert.match(NODE_DISTRIBUTIONS["darwin-arm64"].sha256, /^[a-f0-9]{64}$/u);
   assert.match(NODE_DISTRIBUTIONS["darwin-x64"].sha256, /^[a-f0-9]{64}$/u);
   assert.equal(NODE_DISTRIBUTIONS["darwin-arm64"].fileArchitecture, "arm64");
   assert.equal(NODE_DISTRIBUTIONS["darwin-x64"].fileArchitecture, "x86_64");
+  assert.equal(NODE_DISTRIBUTIONS["win32-x64"].filename, "node-v26.10.0-win-x64.zip");
+  assert.equal(NODE_DISTRIBUTIONS["win32-x64"].sha256, "9fef7eca6743a6b910989cd8e78712376b394fcb9b6e1e9c44a0799a287f90c5");
+  assert.equal(NODE_DISTRIBUTIONS["win32-x64"].fileArchitecture, "x86_64");
 });
 
-test("pinned tunnel runtime metadata covers both supported macOS architectures", () => {
+test("pinned tunnel runtime metadata covers production macOS plus Windows x64 headless target", () => {
   assert.equal(EQUINOX_LOCAL_TUNNEL_CLIENT_VERSION, "0.0.15");
-  assert.deepEqual(Object.keys(TUNNEL_CLIENT_DISTRIBUTIONS).sort(), ["darwin-arm64", "darwin-x64"]);
+  assert.deepEqual(Object.keys(TUNNEL_CLIENT_DISTRIBUTIONS).sort(), ["darwin-arm64", "darwin-x64", "win32-x64"]);
   assert.match(TUNNEL_CLIENT_DISTRIBUTIONS["darwin-arm64"].sha256, /^[a-f0-9]{64}$/u);
   assert.match(TUNNEL_CLIENT_DISTRIBUTIONS["darwin-x64"].sha256, /^[a-f0-9]{64}$/u);
   assert.equal(TUNNEL_CLIENT_DISTRIBUTIONS["darwin-arm64"].fileArchitecture, "arm64");
   assert.equal(TUNNEL_CLIENT_DISTRIBUTIONS["darwin-x64"].fileArchitecture, "x86_64");
   assert.equal(TUNNEL_CLIENT_DISTRIBUTIONS["darwin-arm64"].filename, "tunnel-client-v0.0.15-darwin-arm64.zip");
   assert.equal(TUNNEL_CLIENT_DISTRIBUTIONS["darwin-x64"].filename, "tunnel-client-v0.0.15-darwin-amd64.zip");
+  assert.equal(TUNNEL_CLIENT_DISTRIBUTIONS["win32-x64"].assetTag, "windows-amd64");
+  assert.equal(TUNNEL_CLIENT_DISTRIBUTIONS["win32-x64"].filename, "tunnel-client-v0.0.15-windows-amd64.zip");
+  assert.equal(TUNNEL_CLIENT_DISTRIBUTIONS["win32-x64"].sha256, "3b53133a1e24d43f63088d843860cb1701a4c3ed6390de2e19f69089e43bddc1");
 });
 
 test("pinned Peekaboo runtime metadata is universal and fixed to the verified OpenClaw release", () => {

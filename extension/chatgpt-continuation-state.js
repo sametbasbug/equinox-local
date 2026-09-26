@@ -8,16 +8,56 @@
 
   const last = (values) => values.length ? values[values.length - 1] : null;
 
+  function firstMessageId(value) {
+    const text = String(value || "").trim();
+    return text ? text.split(/\s+/u)[0].slice(0, 200) : null;
+  }
+
+  function looksLikeModernStopAction(button) {
+    if (!button?.querySelector) return false;
+    const svg = button.querySelector('svg[viewBox="0 0 20 20"]');
+    const path = svg?.querySelector?.('path');
+    if (!path || typeof path.getBBox !== "function") return false;
+    try {
+      const box = path.getBBox();
+      return box.x >= 4 && box.x <= 5.5
+        && box.y >= 4 && box.y <= 5.5
+        && box.width >= 10 && box.width <= 12
+        && box.height >= 10 && box.height <= 12
+        && Math.abs(box.width - box.height) <= 1;
+    } catch {
+      return false;
+    }
+  }
+
   function readState() {
     const userMessages = [...document.querySelectorAll('[data-message-author-role="user"][data-message-id]')];
     const assistantMessages = [...document.querySelectorAll('[data-message-author-role="assistant"][data-message-id]')];
     const userTurns = [...document.querySelectorAll('section[data-turn="user"][data-testid]')];
     const assistantTurns = [...document.querySelectorAll('section[data-turn="assistant"][data-testid]')];
-    const composer = document.querySelector('#prompt-textarea[contenteditable="true"][role="textbox"]');
+    const modernTurns = [...document.querySelectorAll('[data-turn-key]')];
+    const modernUserUnits = [...document.querySelectorAll('[data-chatgpt-search-unit-key$=":user"][data-chatgpt-search-message-ids]')];
+    const composer = document.querySelector('#prompt-textarea[contenteditable="true"][role="textbox"]')
+      || document.querySelector('[data-composer-markdown][contenteditable="true"][role="textbox"]');
+    const modernPrimaryActions = [...document.querySelectorAll('[data-composer-body] button.bg-composer-primary')];
+    const modernGenerationActive = modernPrimaryActions.some(looksLikeModernStopAction);
+    const modernTurn = last(modernTurns);
+    const modernUserEpoch = modernTurn?.getAttribute('data-turn-key')
+      || firstMessageId(last(modernUserUnits)?.getAttribute('data-chatgpt-search-message-ids'));
+    const modernAssistantUnits = modernTurn?.querySelectorAll
+      ? [...modernTurn.querySelectorAll('[data-chatgpt-search-unit-key$=":assistant"][data-chatgpt-search-message-ids]')]
+      : [];
+    const modernAssistantTurnKey = firstMessageId(last(modernAssistantUnits)?.getAttribute('data-chatgpt-search-message-ids'));
     return {
-      generationActive: Boolean(document.querySelector('button[data-testid="stop-button"]')),
-      userEpoch: last(userMessages)?.getAttribute('data-message-id') || last(userTurns)?.getAttribute('data-testid') || null,
-      assistantTurnKey: last(assistantTurns)?.getAttribute('data-testid') || last(assistantMessages)?.getAttribute('data-message-id') || null,
+      generationActive: Boolean(document.querySelector('button[data-testid="stop-button"]')) || modernGenerationActive,
+      userEpoch: last(userMessages)?.getAttribute('data-message-id')
+        || last(userTurns)?.getAttribute('data-testid')
+        || modernUserEpoch
+        || null,
+      assistantTurnKey: last(assistantTurns)?.getAttribute('data-testid')
+        || last(assistantMessages)?.getAttribute('data-message-id')
+        || modernAssistantTurnKey
+        || null,
       composerReady: Boolean(composer),
       composerEmpty: Boolean(composer) && !String(composer.textContent || '').trim(),
     };
@@ -66,7 +106,12 @@
       childList: true,
       attributes: true,
       characterData: true,
-      attributeFilter: ["data-message-id", "data-testid", "disabled", "aria-disabled"],
+      attributeFilter: [
+        "data-message-id", "data-testid", "data-turn-key",
+        "data-chatgpt-search-message-ids", "data-chatgpt-search-unit-key",
+        "data-content-search-unit-key", "data-composer-markdown",
+        "disabled", "aria-disabled",
+      ],
     });
     publishState({ force: true });
   }

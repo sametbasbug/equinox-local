@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { chooseLocalFolder, __test } from "../../src/control-center-platform.js";
+import { chooseLocalFolder, openLocalUrl, revealLocalPath, __test } from "../../src/control-center-platform.js";
 
 test("folder picker is a fixed macOS osascript flow and returns a resolved directory", async () => {
   const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "equinox-picker-"));
@@ -41,4 +41,26 @@ test("folder picker fails closed off macOS", async () => {
     chooseLocalFolder({ platform: "linux", execFileAsync: async () => ({ stdout: "/tmp/x\n" }) }),
     (error) => error?.statusCode === 501 && /macOS/u.test(error.message),
   );
+});
+
+
+test("host URL open uses argument-safe platform executables", async () => {
+  const calls = [];
+  const execFileAsync = async (command, args, options) => { calls.push({ command, args, options }); return { stdout: "", stderr: "" }; };
+  await openLocalUrl({ url: "http://127.0.0.1:24891/", platform: "darwin", execFileAsync });
+  await openLocalUrl({ url: "http://127.0.0.1:24891/", platform: "win32", execFileAsync });
+  assert.deepEqual(calls[0].args, ["http://127.0.0.1:24891/"]);
+  assert.equal(calls[0].command, "/usr/bin/open");
+  assert.deepEqual(calls[1].args, ["http://127.0.0.1:24891/"]);
+  assert.equal(calls[1].command, "explorer.exe");
+  await assert.rejects(() => openLocalUrl({ url: "file:///etc/passwd", platform: "darwin", execFileAsync }), /HTTP/u);
+});
+
+test("host reveal keeps paths as arguments instead of shell strings", async () => {
+  const calls = [];
+  const execFileAsync = async (command, args, options) => { calls.push({ command, args, options }); return { stdout: "", stderr: "" }; };
+  await revealLocalPath({ targetPath: "/Users/example/My File.txt", kind: "file", platform: "darwin", execFileAsync });
+  await revealLocalPath({ targetPath: "C:\\Users\\Example User\\My File.txt", kind: "file", platform: "win32", execFileAsync });
+  assert.deepEqual(calls[0].args, ["-R", "/Users/example/My File.txt"]);
+  assert.deepEqual(calls[1].args, ["/select,", "C:\\Users\\Example User\\My File.txt"]);
 });

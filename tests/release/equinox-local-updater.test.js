@@ -6,6 +6,9 @@ import {
   canonicalUpdateManifestPayload,
   compareEquinoxVersions,
   createEquinoxLocalUpdater,
+  equinoxLocalUpdateManifestUrl,
+  equinoxLocalUpdateTarget,
+  EQUINOX_LOCAL_SUPPORTED_UPDATE_TARGETS,
   validateSignedUpdateManifest,
 } from "../../src/equinox-local-updater.js";
 import { resolveEquinoxLocalInstallation } from "../../src/equinox-local-installation.js";
@@ -55,6 +58,22 @@ test("shipped stable update keyring contains the provisioned Ed25519 public key"
   assert.equal(createPublicKey(pem).asymmetricKeyType, "ed25519");
 });
 
+test("update routing recognizes the four product targets and rejects unsupported hosts", () => {
+  assert.deepEqual(EQUINOX_LOCAL_SUPPORTED_UPDATE_TARGETS, [
+    "darwin-arm64",
+    "darwin-x64",
+    "win32-arm64",
+    "win32-x64",
+  ]);
+  assert.equal(equinoxLocalUpdateTarget({ platform: "darwin", arch: "arm64" }), "darwin-arm64");
+  assert.equal(equinoxLocalUpdateTarget({ platform: "darwin", arch: "x64" }), "darwin-x64");
+  assert.equal(equinoxLocalUpdateTarget({ platform: "win32", arch: "arm64" }), "win32-arm64");
+  assert.equal(equinoxLocalUpdateTarget({ platform: "win32", arch: "x64" }), "win32-x64");
+  assert.equal(equinoxLocalUpdateManifestUrl("win32-x64"), "https://local.sametbasbug.dev/downloads/updates/stable-win32-x64.json");
+  assert.throws(() => equinoxLocalUpdateTarget({ platform: "linux", arch: "x64" }), /Unsupported Equinox Local release target/u);
+  assert.throws(() => equinoxLocalUpdateManifestUrl("linux-x64"), /Unsupported Equinox Local update target/u);
+});
+
 test("version comparison is strict and monotonic", () => {
   assert.equal(compareEquinoxVersions("4.2.0", "4.2.0"), 0);
   assert.equal(compareEquinoxVersions("4.2.0", "4.2.1"), -1);
@@ -88,6 +107,30 @@ test("managed installation is accepted only in the per-user Equinox Local releas
   const source = resolveEquinoxLocalInstallation({ homeDir: home, env: {} });
   assert.equal(source.kind, "source");
   assert.equal(source.selfUpdateSupported, false);
+});
+
+test("Windows managed installation layout is recognized but update activation remains fail-closed until implemented", () => {
+  const home = "C:\\Users\\Example";
+  const localAppData = "C:\\Users\\Example\\AppData\\Local";
+  const root = `${localAppData}\\Equinox Local`;
+  const installation = resolveEquinoxLocalInstallation({
+    platform: "win32",
+    arch: "x64",
+    homeDir: home,
+    env: {
+      LOCALAPPDATA: localAppData,
+      EQUINOX_LOCAL_INSTALL_ROOT: root,
+      EQUINOX_LOCAL_RELEASE_DIR: `${root}\\releases\\5.2.1`,
+    },
+  });
+  assert.equal(installation.kind, "unsupported");
+  assert.equal(installation.managed, false);
+  assert.equal(installation.selfUpdateSupported, false);
+  assert.equal(installation.target, "win32-x64");
+  assert.equal(installation.lifecycleKind, "windows-user");
+  assert.equal(installation.currentLink, null);
+  assert.equal(installation.currentPointer, `${root}\\current.version`);
+  assert.match(installation.reason, /modeled but not implemented/u);
 });
 
 test("signed update manifest is pinned to Equinox HTTPS paths and trusted Ed25519 keys", () => {

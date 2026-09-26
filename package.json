@@ -11,13 +11,15 @@
     "start": "node src/server.js",
     "browser:package": "bash scripts/package-browser-extension.sh",
     "local:release:package": "node scripts/release/package-managed-release.mjs",
-    "local:smoke:managed": "node tests/release/smoke-managed-install.mjs"
+    "local:smoke:managed": "node tests/release/smoke-managed-install.mjs",
+    "smoke:windows-headless": "node tests/release/windows-headless-runtime-smoke.mjs"
   },
   "engines": {
     "node": ">=26.10.0"
   },
   "os": [
-    "darwin"
+    "darwin",
+    "win32"
   ],
   "keywords": [
     "mcp",
@@ -25,7 +27,8 @@
     "local-first",
     "browser-automation",
     "developer-tools",
-    "macos"
+    "macos",
+    "windows"
   ],
   "author": "Samet Basbug",
   "license": "AGPL-3.0-only",
