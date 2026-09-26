@@ -1,4 +1,5 @@
-const GENERIC_PATH_PREFIX = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin";
+import { equinoxLocalFiniteShell } from "./equinox-local-platform.js";
+
 const DEFAULT_EXEC_TIMEOUT_MS = 30_000;
 const DEFAULT_EXEC_MAX_OUTPUT_CHARS = 40_000;
 const FORCE_KILL_DELAY_MS = 250;
@@ -18,6 +19,8 @@ export function buildGenericExecutionEnvironment({
   extraEnv = {},
   projectId = null,
   projectRoot = null,
+  platform = process.platform,
+  arch = process.arch,
 } = {}) {
   const env = {};
 
@@ -38,9 +41,11 @@ export function buildGenericExecutionEnvironment({
     : typeof runtimeEnv?.PATH === "string"
       ? runtimeEnv.PATH
       : "";
-  env.PATH = inheritedPath
-    ? `${GENERIC_PATH_PREFIX}:${inheritedPath}`
-    : GENERIC_PATH_PREFIX;
+  const shell = equinoxLocalFiniteShell({ platform, arch });
+  if (shell.pathPrefix && inheritedPath) env.PATH = `${shell.pathPrefix}${shell.pathDelimiter}${inheritedPath}`;
+  else if (shell.pathPrefix) env.PATH = shell.pathPrefix;
+  else if (inheritedPath) env.PATH = inheritedPath;
+  else env.PATH = "";
 
   if (typeof projectId === "string" && projectId) {
     env.EQUINOX_PROJECT_ID = projectId;

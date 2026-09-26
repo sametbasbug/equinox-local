@@ -7,6 +7,7 @@ import {
   readBoundedNormalFile,
   SAFE_FILE_ERROR_CODES,
 } from "./equinox-local-safe-file.js";
+import { equinoxLocalPlatformPaths } from "./equinox-local-platform.js";
 
 export const EQUINOX_LOCAL_CONFIG_VERSION = 1;
 export const DEFAULT_CONTROL_CENTER_PORT = 24891;
@@ -239,11 +240,8 @@ export function equinoxLocalConfigRevision(config) {
   return createHash("sha256").update(serializeEquinoxLocalConfig(config), "utf8").digest("hex");
 }
 
-export function defaultEquinoxLocalConfigPath(homeDir = os.homedir()) {
-  if (typeof homeDir !== "string" || !path.isAbsolute(homeDir)) {
-    throw new Error("Equinox Local config için mutlak HOME yolu gerekli.");
-  }
-  return path.join(homeDir, "Library", "Application Support", "Equinox Local", "config.json");
+export function defaultEquinoxLocalConfigPath(homeDir = os.homedir(), { platform = process.platform, arch = process.arch, env = process.env } = {}) {
+  return equinoxLocalPlatformPaths({ platform, arch, homeDir, env }).configPath;
 }
 
 async function readConfigFile(configPath) {
@@ -280,15 +278,19 @@ async function readConfigFile(configPath) {
 }
 
 export function createEquinoxLocalConfigManager({
+  platform = process.platform,
+  arch = process.arch,
+  env = process.env,
   homeDir = os.homedir(),
-  configPath = process.env.EQUINOX_LOCAL_CONFIG_PATH || defaultEquinoxLocalConfigPath(homeDir),
+  configPath = env.EQUINOX_LOCAL_CONFIG_PATH || defaultEquinoxLocalConfigPath(homeDir, { platform, arch, env }),
 } = {}) {
-  if (typeof configPath !== "string" || !path.isAbsolute(configPath)) {
+  const pathApi = platform === "win32" ? path.win32 : path.posix;
+  if (typeof configPath !== "string" || !pathApi.isAbsolute(configPath)) {
     throw new Error("EQUINOX_LOCAL_CONFIG_PATH mutlak bir yol olmalı.");
   }
 
   const state = {
-    configPath: path.normalize(configPath),
+    configPath: pathApi.normalize(configPath),
     config: null,
     revision: null,
     loadedAt: null,

@@ -1,1 +1,1 @@
-export const EQUINOX_LOCAL_VERSION = "5.2.0";
+export const EQUINOX_LOCAL_VERSION = "5.2.1";

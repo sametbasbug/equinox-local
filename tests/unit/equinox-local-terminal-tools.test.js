@@ -192,6 +192,35 @@ test("terminal tools preserve registration metadata and start routing", async ()
   );
 });
 
+test("terminal tools route Windows finite and interactive shells through the shared platform contract", async () => {
+  const harness = createHarness({
+    platform: "win32",
+    arch: "x64",
+    runtimeEnv: { PATH: "C:\\Windows\\System32", USERPROFILE: "C:\\Users\\Example" },
+  });
+
+  const exec = harness.registrations.get("terminal_exec");
+  const execResult = parseText(await exec.handler({
+    command: "Write-Output ok", cwd: ".", wait_ms: 30_000, max_output_chars: 40_000,
+  }));
+  assert.equal(execResult.ok, true);
+  const processStart = harness.calls.find(([name]) => name === "processStart");
+  assert.equal(processStart[1].command, "powershell.exe");
+  assert.deepEqual(processStart[1].args, ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", "Write-Output ok"]);
+  assert.equal(processStart[1].env.PATH, "C:\\Windows\\System32");
+
+  const start = harness.registrations.get("terminal_start");
+  const parsed = start.config.inputSchema.shell.safeParse("powershell");
+  assert.equal(parsed.success, true);
+  assert.equal(start.config.inputSchema.shell.safeParse("zsh").success, false);
+  const result = parseText(await start.handler({ cwd: ".", shell: "powershell", cols: 120, rows: 30 }));
+  assert.equal(result.ok, true);
+  const terminalStart = harness.calls.find(([name]) => name === "start");
+  assert.equal(terminalStart[1].shell, "powershell.exe");
+  assert.deepEqual(terminalStart[1].shellArgs, ["-NoLogo", "-NoProfile"]);
+  assert.equal(terminalStart[1].env.PATH, "C:\\Windows\\System32");
+});
+
 test("terminal_exec promotes an unfinished command without killing or restarting it", async () => {
   const harness = createHarness();
   harness.processManager.waitForExit = async (input) => {

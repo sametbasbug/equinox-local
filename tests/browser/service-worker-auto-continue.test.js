@@ -249,7 +249,7 @@ async function harness({ freshCreateMode = "normal", freshSubmitReadyAfter = 0, 
 
   const source = await fs.readFile(SERVICE_WORKER_PATH, "utf8");
   const context = { chrome, crypto: { randomUUID: () => "11111111-2222-4333-8444-555555555555" }, console, URL, InputEvent: class {}, Event: class {}, setTimeout, clearTimeout, queueMicrotask };
-  vm.runInNewContext(`${source}\n;globalThis.__auto = { resolveAutoContinueTarget, setAutoContinueTarget, autoContinueTargetStatus, chatGptContinuationState, chatGptResumeRoute, chatGptFreshHomeRoute, createFreshChatResume, deliverAutoContinuation, inspectChatBridgeState, deliverChatBridgeMessage, readChatBridgeFinalResponse, browserCapabilityVersions, attachTab, detachTab };`, context, { filename: SERVICE_WORKER_PATH });
+  vm.runInNewContext(`${source}\n;globalThis.__auto = { resolveAutoContinueTarget, resolveTurnBudgetTarget, setAutoContinueTarget, autoContinueTargetStatus, chatGptContinuationState, chatGptResumeRoute, chatGptFreshHomeRoute, createFreshChatResume, deliverAutoContinuation, inspectChatBridgeState, deliverChatBridgeMessage, readChatBridgeFinalResponse, browserCapabilityVersions, attachTab, detachTab };`, context, { filename: SERVICE_WORKER_PATH });
   await Promise.resolve();
   return { api: context.__auto, storageData, tabs, states, keyEvents, pointerEvents, broughtToFront, filledPrompts, uploadedFiles, createdTabs, freshSubmitProbeCount: () => freshSubmitProbeCount, chatSubmitProbeCount: () => chatSubmitProbeCount, debuggerAttachCount: () => debuggerAttachCount, debuggerDetachCount: () => debuggerDetachCount };
 }
@@ -381,6 +381,19 @@ test("Auto Continue default target resolves the one generating ChatGPT conversat
   assert.equal(result.target.conversationId, "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee");
   assert.equal(h.api.browserCapabilityVersions().autoContinue, 1);
   assert.equal(h.debuggerAttachCount(), 0, "passive target resolution must not attach chrome.debugger");
+});
+
+test("Turn Budget identity accepts a generating user epoch before an assistant turn key exists", async () => {
+  const h = await harness();
+  h.states.set(41, { generationActive: true, userEpoch: "user-live", assistantTurnKey: null, composerReady: true, composerEmpty: true });
+  const budget = await h.api.resolveTurnBudgetTarget();
+  assert.equal(budget.status, "ready");
+  assert.equal(budget.target.tabId, 41);
+  assert.equal(budget.target.userEpoch, "user-live");
+  assert.equal(budget.target.assistantTurnKey, null);
+  const auto = await h.api.resolveAutoContinueTarget();
+  assert.equal(auto.status, "idle", "Auto Continue must remain strict until the assistant turn key exists");
+  assert.equal(h.debuggerAttachCount(), 0);
 });
 
 test("pinned Auto Continue target is profile-local and fails closed after conversation drift", async () => {

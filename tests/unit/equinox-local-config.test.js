@@ -42,6 +42,19 @@ async function withTempDir(fn) {
   }
 }
 
+test("config manager derives Windows config path from injected LOCALAPPDATA without HOME assumptions", () => {
+  const manager = createEquinoxLocalConfigManager({
+    platform: "win32",
+    arch: "x64",
+    homeDir: "C:\\Users\\Samet",
+    env: { LOCALAPPDATA: "C:\\Users\\Samet\\AppData\\Local" },
+  });
+  assert.equal(
+    manager.configPath,
+    "C:\\Users\\Samet\\AppData\\Local\\Equinox Local\\state\\config.json",
+  );
+});
+
 test("config validation normalizes a generic project/file-root registry", () => {
   const config = validateEquinoxLocalConfig(fixture());
   assert.equal(config.version, 1);

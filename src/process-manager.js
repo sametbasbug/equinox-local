@@ -2,6 +2,8 @@ import { randomUUID } from "node:crypto";
 import { spawn as nodeSpawn } from "node:child_process";
 import { createConnection } from "node:net";
 
+import { assertProcessOwnershipImplemented, createBackgroundProcessOwnershipAdapter } from "./equinox-local-process-ownership.js";
+
 const DEFAULT_MAX_ACTIVE_PROCESSES = 12;
 const DEFAULT_MAX_RETAINED_PROCESSES = 32;
 const DEFAULT_MAX_BUFFER_CHARS = 4_000_000;
@@ -126,9 +128,12 @@ function defaultProcessGroupExists(pid) {
 }
 
 export function createProcessManager({
+  platform = process.platform,
+  arch = process.arch,
   spawnImpl = nodeSpawn,
   killImpl = process.kill.bind(process),
   groupExistsImpl = defaultProcessGroupExists,
+  ownershipAdapter = null,
   now = () => Date.now(),
   randomId = () => randomUUID().slice(0, 8),
   maxActiveProcesses = DEFAULT_MAX_ACTIVE_PROCESSES,
@@ -138,6 +143,12 @@ export function createProcessManager({
   onEvent = null,
 } = {}) {
   const sessions = new Map();
+  const processOwnership = ownershipAdapter ?? createBackgroundProcessOwnershipAdapter({
+    platform,
+    arch,
+    groupExists: groupExistsImpl,
+    signalGroup: (pid, signal) => killImpl(-pid, signal),
+  });
 
   if (!Number.isInteger(groupPollMs) || groupPollMs < 1 || groupPollMs > 5000) {
     throw new Error("Process group poll interval is invalid.");
@@ -393,6 +404,7 @@ export function createProcessManager({
       throw new Error("Süreç amacı geçersiz.");
     }
 
+    assertProcessOwnershipImplemented(processOwnership, "background process execution");
     pruneRetainedProcesses();
 
     const id = `proc-${randomId()}`;
@@ -410,7 +422,7 @@ export function createProcessManager({
           GIT_TERMINAL_PROMPT: "0",
           NO_COLOR: env.NO_COLOR ?? "1",
         },
-        detached: true,
+        detached: processOwnership.detached,
         shell: false,
         stdio: ["ignore", "pipe", "pipe"],
       });
@@ -671,7 +683,7 @@ export function createProcessManager({
 
     if (Number.isInteger(session.pid)) {
       try {
-        killImpl(-session.pid, signal);
+        processOwnership.signalOwnedSet(session.pid, signal);
         return;
       } catch (error) {
         groupError = error;

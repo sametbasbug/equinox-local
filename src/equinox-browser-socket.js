@@ -22,6 +22,30 @@ export function equinoxBrowserSocketPath(options = {}) {
   return path.join(equinoxBrowserSocketDirectory(options), "browser.sock");
 }
 
+export function equinoxBrowserIpcEndpoint({
+  platform = process.platform,
+  uid = process.getuid?.(),
+  namespace = null,
+} = {}) {
+  const normalizedNamespace = normalizeSocketNamespace(namespace);
+  if (platform === "darwin") {
+    return Object.freeze({
+      kind: "unix",
+      endpoint: equinoxBrowserSocketPath({ uid, namespace: normalizedNamespace }),
+      implemented: true,
+    });
+  }
+  if (platform === "win32") {
+    const suffix = normalizedNamespace ? `-${normalizedNamespace}` : "";
+    return Object.freeze({
+      kind: "named-pipe",
+      endpoint: `\\\\.\\pipe\\equinox-local-browser${suffix}`,
+      implemented: false,
+    });
+  }
+  throw new Error(`Equinox Browser IPC is unsupported on ${platform}.`);
+}
+
 export async function prepareEquinoxBrowserSocketDirectory({
   uid = process.getuid?.(),
   namespace = null,

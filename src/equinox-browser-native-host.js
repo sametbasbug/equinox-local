@@ -1,13 +1,13 @@
 #!/usr/bin/env node
 
 import { createEquinoxBrowserNativeHostRuntime } from "./equinox-browser-native-host-runtime.js";
-import { equinoxBrowserSocketPath } from "./equinox-browser-socket.js";
+import { equinoxBrowserIpcEndpoint } from "./equinox-browser-socket.js";
 
-const SOCKET_PATH = equinoxBrowserSocketPath();
+const BRIDGE_ENDPOINT = equinoxBrowserIpcEndpoint();
 const origin = process.argv[2] || null;
 
 const runtime = createEquinoxBrowserNativeHostRuntime({
-  socketPath: SOCKET_PATH,
+  bridgeEndpoint: BRIDGE_ENDPOINT,
   origin,
   onFatal: ({ code }) => {
     process.exitCode = code;

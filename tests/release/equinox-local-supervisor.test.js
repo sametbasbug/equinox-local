@@ -54,6 +54,12 @@ async function makeFixture({ transport = false, malformedTransport = false } = {
   return { root, homeDir, paths, releaseDir, nodeBinary, tunnelDir };
 }
 
+test("supervisor lifecycle fails closed for Windows before touching managed files", async () => {
+  await assert.rejects(() => runManagedSupervisor({
+    platform: "win32", arch: "x64", homeDir: "C:\\Users\\Example", sourceEnv: {},
+  }), /not implemented for win32-x64/u);
+});
+
 test("managed supervisor resolves only the current target-specific release", async (t) => {
   const fixture = await makeFixture();
   t.after(() => fs.rm(fixture.root, { recursive: true, force: true }));

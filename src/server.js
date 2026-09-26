@@ -3,6 +3,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import * as z from "zod/v4";
 
 import fs from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { execFile as execFileCallback } from "node:child_process";
 import { promisify } from "node:util";
@@ -76,7 +77,7 @@ import {
   createEquinoxBrowserBridge,
 } from "./equinox-browser-bridge.js";
 import {
-  equinoxBrowserSocketPath,
+  equinoxBrowserIpcEndpoint,
 } from "./equinox-browser-socket.js";
 import {
   registerEquinoxBrowserTools,
@@ -202,11 +203,21 @@ import { registerTaskCapsuleTools } from "./task-capsule-tools.js";
 import { startRuntimeLifecycle } from "./equinox-local-runtime-lifecycle.js";
 import { createTurnBudgetController } from "./turn-budget-controller.js";
 
-export async function createEquinoxLocalRuntime() {
+export async function createEquinoxLocalRuntime({
+  platform = process.platform,
+  arch = process.arch,
+  env = process.env,
+  homeDir = os.homedir(),
+} = {}) {
 const execFile = promisify(execFileCallback);
+const runtimeHomeDir = homeDir;
+const runtimeEnv = env;
 
 const equinoxLocalConfigManager = createEquinoxLocalConfigManager({
-  homeDir: process.env.HOME,
+  platform,
+  arch,
+  env: runtimeEnv,
+  homeDir: runtimeHomeDir,
 });
 const EQUINOX_LOCAL_CONFIG_SNAPSHOT = await equinoxLocalConfigManager.initialize();
 const EQUINOX_LOCAL_CONFIG = EQUINOX_LOCAL_CONFIG_SNAPSHOT.config;
@@ -250,7 +261,7 @@ const IGNORED_DIRECTORIES = new Set([
   ".git",
 ]);
 
-const isProtectedAgentPath = createProtectedAgentPathChecker(process.env.HOME);
+const isProtectedAgentPath = createProtectedAgentPathChecker(runtimeHomeDir, { platform });
 
 function assertNotProtectedAgentPath(absolutePath) {
   if (isProtectedAgentPath(absolutePath)) {
@@ -266,7 +277,7 @@ async function resolveProjectContext(
   const adHocRoot =
     !configuredDefinition && FULL_FILE_ACCESS
       ? projectId === "home"
-        ? process.env.HOME
+        ? runtimeHomeDir
         : path.isAbsolute(projectId)
           ? projectId
           : null
@@ -364,7 +375,7 @@ async function resolveFileRootContext(
   const adHocRoot =
     !configuredDefinition && FULL_FILE_ACCESS
       ? rootId === "home"
-        ? process.env.HOME
+        ? runtimeHomeDir
         : path.isAbsolute(rootId)
           ? rootId
           : null
@@ -549,8 +560,10 @@ const SERVER_NAME =
   "equinox-local-multiproject";
 const SERVER_VERSION = EQUINOX_LOCAL_VERSION;
 const equinoxLocalInstallation = resolveEquinoxLocalInstallation({
-  homeDir: process.env.HOME,
-  env: process.env,
+  platform,
+  arch,
+  homeDir: runtimeHomeDir,
+  env: runtimeEnv,
 });
 const equinoxLocalUpdater = createEquinoxLocalUpdater({
   currentVersion: SERVER_VERSION,
@@ -566,7 +579,7 @@ async function noteManagedAgentCommand() {
   try {
     await recordManagedAgentCommand({
       installation: equinoxLocalInstallation,
-      homeDir: process.env.HOME,
+      homeDir: runtimeHomeDir,
       supervisorMode: process.env.EQUINOX_LOCAL_SUPERVISOR_MODE || null,
     });
   } catch (error) {
@@ -622,10 +635,14 @@ const mcpToolReplayGuard = createMcpToolReplayGuard({
 
 const terminalManager =
   createTerminalManager({
+    platform,
+    arch,
     onEvent: recordRuntimeEvent,
   });
 const processManager =
   createProcessManager({
+    platform,
+    arch,
     onEvent: recordRuntimeEvent,
   });
 const agentControl =
@@ -1147,7 +1164,7 @@ registerImageViewTools({
   fullFileAccess: FULL_FILE_ACCESS,
   fileRootIds: FILE_ROOT_IDS,
   resolveFileRootContext,
-  homeDir: process.env.HOME,
+  homeDir: runtimeHomeDir,
   fsImpl: fs,
 });
 
@@ -1159,7 +1176,7 @@ registerFileTransferTools({
   projectIds: PROJECT_IDS,
   resolveFileRootContext,
   resolveProjectContext,
-  homeDir: process.env.HOME,
+  homeDir: runtimeHomeDir,
   fsImpl: fs,
 });
 
@@ -2302,10 +2319,12 @@ const processJsonResult = (value) =>
   textResult(JSON.stringify(value, null, 2));
 
 let equinoxAgentBrowser = null;
+const equinoxBrowserIpc = equinoxBrowserIpcEndpoint({
+  platform,
+  namespace: runtimeEnv.EQUINOX_LOCAL_BROWSER_SOCKET_NAMESPACE || null,
+});
 const equinoxBrowserBridge = createEquinoxBrowserBridge({
-  socketPath: equinoxBrowserSocketPath({
-    namespace: process.env.EQUINOX_LOCAL_BROWSER_SOCKET_NAMESPACE || null,
-  }),
+  socketPath: equinoxBrowserIpc.implemented ? equinoxBrowserIpc.endpoint : null,
   recordEvent: recordRuntimeEvent,
   handleExtensionRequest: async ({ context, method, args }) => {
     if (method !== "agent_browser.open") {
@@ -2334,7 +2353,8 @@ const equinoxBrowserBridge = createEquinoxBrowserBridge({
 });
 equinoxAgentBrowser = createEquinoxAgentBrowser({
   bridge: equinoxBrowserBridge,
-  homeDir: process.env.HOME,
+  homeDir: runtimeHomeDir,
+  platform,
   execFileAsync: execFile,
   recordEvent: recordRuntimeEvent,
 });
@@ -2346,13 +2366,13 @@ async function resolveTurnBudgetIdentity() {
   for (const browserContext of ["agent", "user"]) {
     if (!snapshot?.contexts?.[browserContext]?.ready) continue;
     try {
-      const resolved = await equinoxBrowserBridge.call("continuation.target.resolve", {}, {
+      const resolved = await equinoxBrowserBridge.call("turn_budget.identity.resolve", {}, {
         context: browserContext,
         timeoutMs: 1_500,
       });
       const target = resolved?.target;
-      if (resolved?.status === "ready" && target?.generationActive && target.assistantTurnKey) {
-        candidates.push({ browserContext, mode: resolved.mode, target });
+      if (resolved?.status === "ready" && target?.generationActive && (target.userEpoch || target.assistantTurnKey)) {
+        candidates.push({ browserContext, target });
       } else if (resolved?.status === "idle") {
         idleContexts.push(browserContext);
       }
@@ -2360,12 +2380,7 @@ async function resolveTurnBudgetIdentity() {
       // Turn Budget keeps its last safe state when Browser probing is temporarily unavailable.
     }
   }
-  const pinned = candidates.filter((item) => item.mode === "pinned");
-  const selected = pinned.length === 1
-    ? pinned[0]
-    : candidates.length === 1
-      ? candidates[0]
-      : null;
+  const selected = candidates.length === 1 ? candidates[0] : null;
   if (!selected) {
     return idleContexts.length > 0
       ? { status: "idle", idleContexts }
@@ -2694,7 +2709,7 @@ async function restartLocalRuntime() {
         throw new Error("Source runtime restart script is not a normal file.");
       }
       const sourceRestartEnv = {
-        HOME: process.env.HOME,
+        HOME: runtimeHomeDir,
         USER: process.env.USER,
         LOGNAME: process.env.LOGNAME,
         TMPDIR: process.env.TMPDIR,
@@ -3034,7 +3049,7 @@ const CONTROL_CENTER_REDACTED_PATHS = Object.freeze(
   [...new Set([
     ...Object.values(EQUINOX_LOCAL_CONFIG.projects).map((definition) => definition.root),
     ...Object.values(EQUINOX_LOCAL_CONFIG.fileRoots).map((definition) => definition.root),
-    process.env.HOME,
+    runtimeHomeDir,
   ].filter((value) => typeof value === "string" && value.length > 1))]
     .sort((left, right) => right.length - left.length),
 );
@@ -3107,7 +3122,7 @@ async function getControlCenterDoctorStatus() {
   });
   const onboarding = await getManagedOnboardingStatus({
     installation: equinoxLocalInstallation,
-    homeDir: process.env.HOME,
+    homeDir: runtimeHomeDir,
     supervisorMode: process.env.EQUINOX_LOCAL_SUPERVISOR_MODE || null,
   });
   const [developmentTunnel, developmentPeekaboo, sourceCheckout, peekabooStatus] = await Promise.all([
@@ -3132,7 +3147,7 @@ async function getControlCenterDoctorStatus() {
     onboarding,
     developmentTunnel,
     developmentPeekaboo,
-    homeDir: process.env.HOME,
+    homeDir: runtimeHomeDir,
   });
 }
 
@@ -3217,7 +3232,7 @@ async function getControlCenterOnboardingStatus() {
   }
   return getManagedOnboardingStatus({
     installation: equinoxLocalInstallation,
-    homeDir: process.env.HOME,
+    homeDir: runtimeHomeDir,
     supervisorMode: process.env.EQUINOX_LOCAL_SUPERVISOR_MODE || null,
     browserUser: {
       ready: Boolean(browser.contexts?.user?.ready),
@@ -3377,7 +3392,7 @@ equinoxLocalControlApi = createEquinoxLocalControlApi({
   configureTunnel: async (body) => withMutationLocks(["local-onboarding"], async () => {
     const configured = await configureManagedTunnel({
       installation: equinoxLocalInstallation,
-      homeDir: process.env.HOME,
+      homeDir: runtimeHomeDir,
       tunnelId: body?.tunnelId,
       runtimeKey: body?.runtimeKey,
     });
@@ -3555,7 +3570,7 @@ registerTelegramSendTool({
     fullFileAccess: FULL_FILE_ACCESS,
     fileRootIds: FILE_ROOT_IDS,
     resolveFileRootContext,
-    homeDir: process.env.HOME,
+    homeDir: runtimeHomeDir,
     fsImpl: fs,
   }),
   textResult,
@@ -3655,7 +3670,9 @@ async function start({ transport = new StdioServerTransport() } = {}) {
       pid: process.pid,
     },
   });
-  await equinoxBrowserBridge.start();
+  if (equinoxBrowserIpc.implemented) {
+    await equinoxBrowserBridge.start();
+  }
   await autoContinueController.start();
   await freshChatResumeController.start();
   await telegramTaskInboxController.start();

@@ -65,3 +65,16 @@ test("generic execution secret-name classifier is provider-aware without blockin
     assert.equal(isSensitiveGenericExecutionEnvName(name), false, name);
   }
 });
+
+
+test("generic execution preserves Windows PATH semantics without injecting macOS prefixes", () => {
+  const env = buildGenericExecutionEnvironment({
+    platform: "win32",
+    arch: "x64",
+    runtimeEnv: { PATH: "C:\\Windows\\System32;C:\\Tools", USERPROFILE: "C:\\Users\\Test" },
+    extraEnv: { PATH: "C:\\Project\\bin;C:\\Windows\\System32" },
+  });
+  assert.equal(env.PATH, "C:\\Project\\bin;C:\\Windows\\System32");
+  assert.equal(env.USERPROFILE, "C:\\Users\\Test");
+  assert.equal(env.PATH.includes("/opt/homebrew"), false);
+});

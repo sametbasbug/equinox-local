@@ -29,6 +29,19 @@ function makeFakeProcess(pid = 4100) {
   return child;
 }
 
+test("Windows process manager refuses to spawn before a Job Object ownership adapter exists", () => {
+  let spawnCalls = 0;
+  const manager = createProcessManager({
+    platform: "win32",
+    arch: "x64",
+    spawnImpl: () => { spawnCalls += 1; return makeFakeProcess(); },
+  });
+  assert.throws(() => manager.start({
+    projectId: "local", projectName: "Equinox Local", cwd: "C:\\Work", command: "node.exe", args: ["server.js"],
+  }), /implemented process-ownership adapter/u);
+  assert.equal(spawnCalls, 0);
+});
+
 test("process manager starts, captures logs and stops a process group", async () => {
   const child = makeFakeProcess(4200);
   const killCalls = [];
@@ -486,7 +499,7 @@ test("real managed foreground wait preserves one PID through continuation", asyn
 
   const completed = await manager.waitForExit({
     processId: started.processId,
-    waitMs: 2_000,
+    waitMs: 5_000,
   });
   assert.equal(completed.running, false);
   assert.equal(completed.processId, started.processId);

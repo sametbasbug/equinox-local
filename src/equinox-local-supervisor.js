@@ -5,6 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
+import { equinoxLocalManagedLifecycle } from "./equinox-local-platform.js";
 import { readBoundedNormalFile } from "./equinox-local-safe-file.js";
 import { equinoxLocalUpdateTarget, parseEquinoxVersion } from "./equinox-local-updater.js";
 
@@ -192,12 +193,17 @@ async function runChild(command, args, options = {}) {
 }
 
 export async function runManagedSupervisor({
+  platform = process.platform,
+  arch = process.arch,
   homeDir = os.homedir(),
   sourceEnv = process.env,
   execFileImpl = execFile,
   runChildImpl = runChild,
 } = {}) {
-  if (process.platform !== "darwin") throw new Error("Managed Equinox Local supervisor is supported only on macOS.");
+  const lifecycle = equinoxLocalManagedLifecycle({ platform, arch });
+  if (!lifecycle.implemented || lifecycle.kind !== "launch-agent") {
+    throw new Error(`Managed Equinox Local supervisor lifecycle is not implemented for ${lifecycle.host.target}.`);
+  }
   const paths = managedSupervisorPaths(homeDir);
   const configuredRoot = sourceEnv.EQUINOX_LOCAL_INSTALL_ROOT;
   if (configuredRoot && path.resolve(configuredRoot) !== paths.installRoot) {
