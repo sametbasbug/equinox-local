@@ -26,6 +26,7 @@ function validateBounds(minBytes, maxBytes) {
 
 export async function readBoundedNormalFile(filePath, {
   fsImpl = fs,
+  platform = process.platform,
   minBytes = 0,
   maxBytes,
   encoding = null,
@@ -38,11 +39,26 @@ export async function readBoundedNormalFile(filePath, {
   if (encoding !== null && encoding !== "utf8") {
     throw new Error("Safe file reads support only raw bytes or UTF-8 text.");
   }
-  if (!Number.isInteger(fsConstants.O_NOFOLLOW)) {
+  const hasNoFollow = Number.isInteger(fsConstants.O_NOFOLLOW);
+  if (platform !== "win32" && !hasNoFollow) {
     throw new Error("This platform does not provide O_NOFOLLOW for safe file reads.");
   }
 
-  const flags = fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW;
+  let expectedIdentity = null;
+  if (platform === "win32") {
+    const before = await fsImpl.lstat(filePath);
+    if (before.isSymbolicLink() || !before.isFile()) {
+      throw safeFileError(`${label} must be a normal, non-symlink file.`, SAFE_FILE_ERROR_CODES.notNormal);
+    }
+    if (before.dev === undefined || before.ino === undefined || (before.dev === 0 && before.ino === 0)) {
+      throw safeFileError(`${label} file identity could not be verified safely.`, SAFE_FILE_ERROR_CODES.notNormal);
+    }
+    expectedIdentity = Object.freeze({ dev: before.dev, ino: before.ino });
+  }
+
+  const flags = platform === "win32"
+    ? fsConstants.O_RDONLY
+    : fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW;
   let handle;
   try {
     handle = await fsImpl.open(filePath, flags);
@@ -57,6 +73,9 @@ export async function readBoundedNormalFile(filePath, {
     const stat = await handle.stat();
     if (!stat.isFile()) {
       throw safeFileError(`${label} must be a normal file.`, SAFE_FILE_ERROR_CODES.notNormal);
+    }
+    if (expectedIdentity && (stat.dev !== expectedIdentity.dev || stat.ino !== expectedIdentity.ino)) {
+      throw safeFileError(`${label} changed while it was being opened.`, SAFE_FILE_ERROR_CODES.notNormal);
     }
     if (stat.size < minBytes) {
       throw safeFileError(`${label} is smaller than the allowed minimum.`, SAFE_FILE_ERROR_CODES.tooSmall);

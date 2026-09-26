@@ -46,6 +46,94 @@ test("safe file reader refuses final-component symlinks", async () => {
   }
 });
 
+
+
+test("Windows safe reader rejects link-like entries and file-identity swaps before reading", async () => {
+  const fileStat = {
+    dev: 7,
+    ino: 11,
+    size: 5,
+    isFile: () => true,
+    isSymbolicLink: () => false,
+  };
+  const linkStat = {
+    dev: 7,
+    ino: 12,
+    size: 0,
+    isFile: () => false,
+    isSymbolicLink: () => true,
+  };
+
+  let opened = false;
+  await assert.rejects(
+    readBoundedNormalFile("C:\\State\\config.json", {
+      platform: "win32",
+      maxBytes: 16,
+      fsImpl: {
+        lstat: async () => linkStat,
+        open: async () => { opened = true; throw new Error("must not open"); },
+      },
+      label: "Fixture",
+    }),
+    (error) => error?.code === SAFE_FILE_ERROR_CODES.notNormal,
+  );
+  assert.equal(opened, false);
+
+  let readCalled = false;
+  let closed = false;
+  await assert.rejects(
+    readBoundedNormalFile("C:\\State\\config.json", {
+      platform: "win32",
+      maxBytes: 16,
+      fsImpl: {
+        lstat: async () => fileStat,
+        open: async () => ({
+          stat: async () => ({ ...fileStat, ino: 99 }),
+          read: async () => { readCalled = true; return { bytesRead: 0 }; },
+          close: async () => { closed = true; },
+        }),
+      },
+      label: "Fixture",
+    }),
+    (error) => error?.code === SAFE_FILE_ERROR_CODES.notNormal,
+  );
+  assert.equal(readCalled, false);
+  assert.equal(closed, true);
+});
+
+test("Windows safe reader accepts a stable regular file handle identity", async () => {
+  const stat = {
+    dev: 7,
+    ino: 11,
+    size: 5,
+    isFile: () => true,
+    isSymbolicLink: () => false,
+  };
+  let reads = 0;
+  const result = await readBoundedNormalFile("C:\\State\\config.json", {
+    platform: "win32",
+    minBytes: 1,
+    maxBytes: 16,
+    encoding: "utf8",
+    fsImpl: {
+      lstat: async () => stat,
+      open: async () => ({
+        stat: async () => stat,
+        read: async (buffer, offset, length, position) => {
+          reads += 1;
+          if (position > 0) return { bytesRead: 0 };
+          Buffer.from("hello").copy(buffer, offset, 0, Math.min(length, 5));
+          return { bytesRead: 5 };
+        },
+        close: async () => {},
+      }),
+    },
+    label: "Fixture",
+  });
+  assert.equal(result.data, "hello");
+  assert.equal(reads, 2);
+});
+
 test("safe file reader enforces the read bound even if the stat-sized file is too large", async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "equinox-safe-file-bound-"));
   try {
