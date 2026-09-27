@@ -112,6 +112,7 @@ test("Windows shell user-login startup registration is per-user, owned and non-i
     source("StartupRegistration.cs"),
     source("TrayIconController.cs"),
   ]);
+  assert.match(startup, /using System\.IO;/u);
   assert.match(startup, /Registry\.CurrentUser/u);
   assert.match(startup, /Software\\Microsoft\\Windows\\CurrentVersion\\Run/u);
   assert.match(startup, /RegistryValueKind\.String/u);

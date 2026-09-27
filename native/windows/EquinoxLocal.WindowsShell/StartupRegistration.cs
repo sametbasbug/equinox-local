@@ -1,4 +1,5 @@
 using Microsoft.Win32;
+using System.IO;
 
 namespace EquinoxLocal.WindowsShell;
 
@@ -22,7 +23,7 @@ internal sealed class StartupRegistration
     internal StartupRegistration(string? executablePath = null, string? valueName = null)
     {
         var candidate = executablePath ?? Environment.ProcessPath;
-        if (string.IsNullOrWhiteSpace(candidate) || !Path.IsPathFullyQualified(candidate))
+        if (candidate is null || string.IsNullOrWhiteSpace(candidate) || !Path.IsPathFullyQualified(candidate))
         {
             throw new InvalidOperationException("A trusted absolute Windows shell path is required for startup registration.");
         }
