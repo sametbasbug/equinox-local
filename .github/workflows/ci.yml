@@ -65,6 +65,23 @@ jobs:
       - name: Build Windows native shell
         run: dotnet build native/windows/EquinoxLocal.WindowsShell/EquinoxLocal.WindowsShell.csproj --configuration Release -p:Platform=x64
 
+      - name: Windows native shell branding smoke
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem native/windows/EquinoxLocal.WindowsShell/bin/Release -Filter EquinoxLocal.exe -Recurse | Select-Object -First 1
+          if ($null -eq $exe) { throw "EquinoxLocal.exe was not built" }
+          Add-Type -AssemblyName System.Drawing
+          $icon = [System.Drawing.Icon]::ExtractAssociatedIcon($exe.FullName)
+          if ($null -eq $icon) { throw "EquinoxLocal.exe has no embedded application icon" }
+          try {
+            if ($icon.Width -lt 16 -or $icon.Height -lt 16) { throw "Embedded Equinox icon is unexpectedly small" }
+            $bitmap = $icon.ToBitmap()
+            try {
+              $pixel = $bitmap.GetPixel([int]($bitmap.Width / 2), [int]($bitmap.Height / 2))
+              if ($pixel.A -eq 0) { throw "Embedded Equinox icon center is transparent" }
+            } finally { $bitmap.Dispose() }
+          } finally { $icon.Dispose() }
+
       - name: Windows native shell runtime supervision smoke
         shell: pwsh
         run: |
