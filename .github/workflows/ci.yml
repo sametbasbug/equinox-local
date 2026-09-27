@@ -65,6 +65,12 @@ jobs:
       - name: Build Windows native shell
         run: dotnet build native/windows/EquinoxLocal.WindowsShell/EquinoxLocal.WindowsShell.csproj --configuration Release -p:Platform=x64
 
+      - name: Windows native shell runtime supervision smoke
+        shell: pwsh
+        run: |
+          $env:EQUINOX_TEST_NODE_EXE = (Get-Command node).Source
+          dotnet run --project tests/windows/EquinoxLocal.WindowsShell.RuntimeHarness/EquinoxLocal.WindowsShell.RuntimeHarness.csproj --configuration Release
+
       - name: Windows headless runtime smoke
         run: npm run smoke:windows-headless
 

@@ -9,7 +9,7 @@ internal sealed class TrayIconController : IDisposable
     private readonly NotifyIcon _notifyIcon;
     private readonly ToolStripMenuItem _runtimeStatusItem;
 
-    internal TrayIconController(Action openControlCenter, Action openBrowser, Action exitApplication)
+    internal TrayIconController(Action openControlCenter, Action openBrowser, Action startRuntime, Action restartRuntime, Action stopRuntime, Action exitApplication)
     {
         _menu = new ContextMenuStrip();
         _runtimeStatusItem = new ToolStripMenuItem("Runtime: Checking") { Enabled = false };
@@ -17,6 +17,10 @@ internal sealed class TrayIconController : IDisposable
         _menu.Items.Add(new ToolStripSeparator());
         _menu.Items.Add(new ToolStripMenuItem("Open Control Center", null, (_, _) => openControlCenter()));
         _menu.Items.Add(new ToolStripMenuItem("Open in browser", null, (_, _) => openBrowser()));
+        _menu.Items.Add(new ToolStripSeparator());
+        _menu.Items.Add(new ToolStripMenuItem("Start Runtime", null, (_, _) => startRuntime()));
+        _menu.Items.Add(new ToolStripMenuItem("Restart Runtime", null, (_, _) => restartRuntime()));
+        _menu.Items.Add(new ToolStripMenuItem("Stop Runtime", null, (_, _) => stopRuntime()));
         _menu.Items.Add(new ToolStripSeparator());
         _menu.Items.Add(new ToolStripMenuItem("Exit Equinox Local", null, (_, _) => exitApplication()));
 
