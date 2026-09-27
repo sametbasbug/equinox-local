@@ -125,12 +125,14 @@ async function verifyWindowsAgentBrowserLifecycle(root) {
     lastDiagnostics = decoded.filter((row) => row && typeof row === "object").map((row) => {
       const executable = typeof row.ExecutablePath === "string" ? path.win32.normalize(row.ExecutablePath).toLowerCase() : "";
       const command = String(row.CommandLine || "").toLowerCase();
+      const profileIndex = command.indexOf("--user-data-dir");
       return {
         pid: Number(row.ProcessId) || null,
         executableMatch: executable === normalizedChrome,
-        hasUserDataDir: command.includes("--user-data-dir"),
+        hasUserDataDir: profileIndex >= 0,
         hasProfileText: command.includes(normalizedProfile),
         hasTypeFlag: /(?:^|\s)--type=/u.test(command.replaceAll('"', "")),
+        userDataDirFragment: profileIndex >= 0 ? command.slice(profileIndex, profileIndex + 220) : null,
       };
     });
     const pids = parseWindowsAgentBrowserMainPids(stdout, profileRoot, chromePath);
