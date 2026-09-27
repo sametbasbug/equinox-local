@@ -16,11 +16,21 @@ import { createAgentControlController } from "../../src/equinox-local-agent-cont
 import { createProcessManager } from "../../src/process-manager.js";
 import { createTerminalManager } from "../../src/terminal-manager.js";
 import { createEquinoxLocalRuntime } from "../../src/server.js";
+import { createEquinoxBrowserNativeHostRuntime } from "../../src/equinox-browser-native-host-runtime.js";
+import { equinoxBrowserIpcEndpoint } from "../../src/equinox-browser-socket.js";
+import { EQUINOX_BROWSER_EXTENSION_ID } from "../../src/equinox-browser-bridge.js";
 
 const execFile = promisify(execFileCallback);
 
 if (process.platform !== "win32" || process.arch !== "x64") {
   throw new Error(`Windows headless smoke requires win32-x64; got ${process.platform}-${process.arch}.`);
+}
+
+function encodeNativeMessage(message) {
+  const payload = Buffer.from(JSON.stringify(message), "utf8");
+  const header = Buffer.allocUnsafe(4);
+  header.writeUInt32LE(payload.length, 0);
+  return Buffer.concat([header, payload]);
 }
 
 async function reserveLoopbackPort() {
@@ -529,6 +539,8 @@ const transport = {
 
 let runtime = null;
 let lifecycle = null;
+let nativeHost = null;
+let nativeInput = null;
 try {
   await fs.mkdir(stateDir, { recursive: true });
   await fs.mkdir(workspaceDir, { recursive: true });
@@ -547,9 +559,35 @@ try {
   assert.equal(transport.started, true, "MCP transport did not start");
   const snapshot = runtime.snapshot();
   assert.equal(snapshot.started, true, "runtime did not enter started state");
-  assert.equal(snapshot.browser.active, false, "Windows Browser IPC must remain inactive until W4");
+  assert.equal(snapshot.browser.active, true, "Windows Browser named-pipe bridge did not start");
+  assert.equal(snapshot.browser.transportKind, "named-pipe");
   assert.equal(snapshot.controlCenter?.active, true, "Control Center did not start");
   assert.equal(snapshot.controlCenter?.port, port, "Control Center started on an unexpected port");
+
+  const browserEndpoint = equinoxBrowserIpcEndpoint({ platform: "win32", namespace: runtimeEnv.EQUINOX_LOCAL_BROWSER_SOCKET_NAMESPACE });
+  nativeInput = new (await import("node:stream")).PassThrough();
+  const nativeOutput = new (await import("node:stream")).PassThrough();
+  const nativeError = new (await import("node:stream")).PassThrough();
+  nativeHost = createEquinoxBrowserNativeHostRuntime({
+    bridgeEndpoint: browserEndpoint,
+    origin: `chrome-extension://${EQUINOX_BROWSER_EXTENSION_ID}/`,
+    input: nativeInput,
+    output: nativeOutput,
+    errorOutput: nativeError,
+    reconnectDelayMs: 25,
+  });
+  nativeHost.start();
+  nativeInput.write(encodeNativeMessage({
+    type: "extension.hello",
+    extensionId: EQUINOX_BROWSER_EXTENSION_ID,
+    extensionVersion: "0.7.1-windows-smoke",
+    protocolVersion: 1,
+    capabilities: ["ping"],
+    instanceId: "11111111-1111-4111-8111-111111111111",
+    browserContext: "user",
+  }));
+  const browserReady = await waitFor(() => runtime.snapshot().browser?.contexts?.user?.ready === true, "Windows Native Messaging runtime did not connect through named pipe");
+  assert.equal(browserReady, true);
 
   const baseUrl = `http://127.0.0.1:${port}`;
   const health = await getJson(baseUrl, "/api/v1/health");
@@ -583,6 +621,7 @@ try {
     controlCenterPort: port,
     doctorState: doctor.doctor?.state ?? null,
     browserIpcActive: snapshot.browser.active,
+    browserNamedPipeReady: runtime.snapshot().browser?.contexts?.user?.ready === true,
     tunnel,
     jobObject,
     helperLoss,
@@ -592,6 +631,8 @@ try {
   }, null, 2)}\n`);
 } finally {
   process.stdout.write("[windows-smoke] START runtime-shutdown\n");
+  nativeHost?.close();
+  nativeInput?.end();
   if (lifecycle) await lifecycle.shutdown().catch(() => {});
   else if (runtime) await runtime.shutdown({ reason: "windows-smoke-cleanup" }).catch(() => {});
   process.stdout.write("[windows-smoke] PASS runtime-shutdown\n");

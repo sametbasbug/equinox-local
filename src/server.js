@@ -2324,7 +2324,7 @@ const equinoxBrowserIpc = equinoxBrowserIpcEndpoint({
   namespace: runtimeEnv.EQUINOX_LOCAL_BROWSER_SOCKET_NAMESPACE || null,
 });
 const equinoxBrowserBridge = createEquinoxBrowserBridge({
-  socketPath: equinoxBrowserIpc.implemented ? equinoxBrowserIpc.endpoint : null,
+  bridgeEndpoint: equinoxBrowserIpc,
   recordEvent: recordRuntimeEvent,
   handleExtensionRequest: async ({ context, method, args }) => {
     if (method !== "agent_browser.open") {
