@@ -87,14 +87,14 @@ export function resolveEquinoxLocalInstallation({
     return Object.freeze({
       ...baseResult({
         platform, arch, lifecycle, kind: "unsupported",
-        reason: "The Windows managed lifecycle is modeled but not implemented yet.",
+        reason: `The managed lifecycle is not implemented for ${lifecycle.host.target}.`,
       }),
       installRoot,
       releasesRoot,
       releaseDir,
       stagingRoot: pathApi.join(installRoot, "staging"),
-      currentLink: null,
-      currentPointer: pathApi.join(installRoot, "current.version"),
+      currentLink: platform === "darwin" ? layout.currentPointer : null,
+      currentPointer: layout.currentPointer,
     });
   }
 
@@ -109,10 +109,14 @@ export function resolveEquinoxLocalInstallation({
     installRoot,
     releasesRoot,
     releaseDir,
-    currentLink: pathApi.join(installRoot, "current"),
-    currentPointer: pathApi.join(installRoot, "current"),
+    currentLink: platform === "darwin" ? layout.currentPointer : null,
+    currentPointer: layout.currentPointer,
     stagingRoot: pathApi.join(installRoot, "staging"),
-    launchAgentPath: pathApi.join(homeDir, "Library", "LaunchAgents", `${EQUINOX_LOCAL_INSTALL_LABEL}.plist`),
-    launchAgentLabel: EQUINOX_LOCAL_INSTALL_LABEL,
+    programRoot: layout.programRoot,
+    nativeMessagingManifestRoot: layout.nativeMessagingManifestRoot,
+    launchAgentPath: platform === "darwin"
+      ? pathApi.join(homeDir, "Library", "LaunchAgents", `${EQUINOX_LOCAL_INSTALL_LABEL}.plist`)
+      : null,
+    launchAgentLabel: platform === "darwin" ? EQUINOX_LOCAL_INSTALL_LABEL : null,
   });
 }

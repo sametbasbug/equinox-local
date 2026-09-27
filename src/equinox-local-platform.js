@@ -72,6 +72,7 @@ export function equinoxLocalPlatformPaths({
       configPath: path.posix.join(appDataRoot, "config.json"),
       turnBudgetPath: path.posix.join(appDataRoot, "turn-budget.json"),
       nativeMessagingManifestRoot: path.posix.join(home, "Library", "Application Support", "Google", "Chrome", "NativeMessagingHosts"),
+      currentPointer: path.posix.join(appDataRoot, "current"),
     });
   }
 
@@ -93,6 +94,7 @@ export function equinoxLocalPlatformPaths({
     configPath: path.win32.join(stateRoot, "config.json"),
     turnBudgetPath: path.win32.join(stateRoot, "turn-budget.json"),
     nativeMessagingManifestRoot: path.win32.join(appDataRoot, "browser", "native-messaging"),
+    currentPointer: path.win32.join(appDataRoot, "current-version.json"),
   });
 }
 
@@ -110,7 +112,7 @@ export function equinoxLocalManagedLifecycle({ platform = process.platform, arch
   return Object.freeze({
     host,
     kind: "windows-user",
-    implemented: false,
+    implemented: arch === "x64",
     currentPointerKind: "version-file",
     processOwnership: "job-object",
   });

@@ -109,7 +109,7 @@ test("managed installation is accepted only in the per-user Equinox Local releas
   assert.equal(source.selfUpdateSupported, false);
 });
 
-test("Windows managed installation layout is recognized but update activation remains fail-closed until implemented", () => {
+test("Windows x64 managed installation uses the per-user version-file lifecycle", () => {
   const home = "C:\\Users\\Example";
   const localAppData = "C:\\Users\\Example\\AppData\\Local";
   const root = `${localAppData}\\Equinox Local`;
@@ -123,14 +123,29 @@ test("Windows managed installation layout is recognized but update activation re
       EQUINOX_LOCAL_RELEASE_DIR: `${root}\\releases\\5.2.1`,
     },
   });
-  assert.equal(installation.kind, "unsupported");
-  assert.equal(installation.managed, false);
-  assert.equal(installation.selfUpdateSupported, false);
+  assert.equal(installation.kind, "managed");
+  assert.equal(installation.managed, true);
+  assert.equal(installation.selfUpdateSupported, true);
   assert.equal(installation.target, "win32-x64");
   assert.equal(installation.lifecycleKind, "windows-user");
   assert.equal(installation.currentLink, null);
-  assert.equal(installation.currentPointer, `${root}\\current.version`);
-  assert.match(installation.reason, /modeled but not implemented/u);
+  assert.equal(installation.currentPointer, `${root}\\current-version.json`);
+  assert.equal(installation.programRoot, `${localAppData}\\Programs\\Equinox Local`);
+  assert.equal(installation.launchAgentLabel, null);
+
+  const arm64 = resolveEquinoxLocalInstallation({
+    platform: "win32",
+    arch: "arm64",
+    homeDir: home,
+    env: {
+      LOCALAPPDATA: localAppData,
+      EQUINOX_LOCAL_INSTALL_ROOT: root,
+      EQUINOX_LOCAL_RELEASE_DIR: `${root}\\releases\\5.2.1`,
+    },
+  });
+  assert.equal(arm64.kind, "unsupported");
+  assert.equal(arm64.selfUpdateSupported, false);
+  assert.match(arm64.reason, /win32-arm64/u);
 });
 
 test("signed update manifest is pinned to Equinox HTTPS paths and trusted Ed25519 keys", () => {
