@@ -109,9 +109,46 @@ const namespace = `launcher-smoke-${process.pid}`;
 const endpoint = equinoxBrowserIpcEndpoint({ platform: "win32", namespace });
 const bridge = createEquinoxBrowserBridge({ bridgeEndpoint: endpoint, callTimeoutMs: 5_000 });
 const manifestRoot = path.join(root, "Native Messaging Ü");
-let child = null;
+const children = new Set();
 let registration = null;
-let stderr = "";
+
+function startNativeHost({ launcherPath, releaseDir, origin, parentWindow }) {
+  const state = { child: null, messages: [], stderr: "" };
+  const child = spawn(launcherPath, [origin, `--parent-window=${parentWindow}`], {
+    cwd: releaseDir,
+    env: { ...process.env, EQUINOX_LOCAL_BROWSER_SOCKET_NAMESPACE: namespace },
+    stdio: ["pipe", "pipe", "pipe"],
+    windowsHide: true,
+  });
+  state.child = child;
+  children.add(child);
+  child.once("exit", () => children.delete(child));
+  child.stderr.setEncoding("utf8");
+  child.stderr.on("data", (chunk) => { state.stderr += chunk; });
+  state.messages = collectNativeMessages(child.stdout);
+  return state;
+}
+
+async function waitForNativeConnect(state, label) {
+  await waitFor(
+    () => state.messages.find((message) => message?.type === "host.status" && message.localConnected === true),
+    `${label} launcher did not expose Native Messaging stdout after named-pipe connect; stderr=${state.stderr}`,
+  );
+}
+
+async function stopNativeHost(state, label) {
+  if (!state?.child) return;
+  const child = state.child;
+  if (child.exitCode !== null) return;
+  const exit = new Promise((resolve, reject) => {
+    child.once("error", reject);
+    child.once("exit", (code) => resolve(code));
+  });
+  child.stdin.end();
+  const exitCode = await exit;
+  assert.equal(exitCode, 0, `${label} launcher/native host exited unsuccessfully; stderr=${state.stderr}`);
+}
+
 try {
   const existingRegistry = await readWindowsNativeMessagingRegistryValue();
   assert.equal(existingRegistry, null, "Windows runner already has an Equinox Browser Native Messaging registration");
@@ -126,47 +163,88 @@ try {
 
   await bridge.start();
   const origin = `chrome-extension://${EQUINOX_BROWSER_EXTENSION_ID}/`;
-  child = spawn(launcherPath, [origin, "--parent-window=4242"], {
-    cwd: releaseDir,
-    env: { ...process.env, EQUINOX_LOCAL_BROWSER_SOCKET_NAMESPACE: namespace },
-    stdio: ["pipe", "pipe", "pipe"],
-    windowsHide: true,
-  });
-  child.stderr.setEncoding("utf8");
-  child.stderr.on("data", (chunk) => { stderr += chunk; });
-  const nativeMessages = collectNativeMessages(child.stdout);
 
-  await waitFor(
-    () => nativeMessages.find((message) => message?.type === "host.status" && message.localConnected === true),
-    `launcher did not expose Native Messaging stdout after named-pipe connect; stderr=${stderr}`,
-  );
-  child.stdin.write(encodeNativeMessage({
+  const user = startNativeHost({ launcherPath, releaseDir, origin, parentWindow: 4242 });
+  await waitForNativeConnect(user, "Your Browser");
+  user.child.stdin.write(encodeNativeMessage({
     type: "extension.hello",
     extensionId: EQUINOX_BROWSER_EXTENSION_ID,
-    extensionVersion: "0.7.1-windows-launcher-smoke",
+    extensionVersion: "0.7.1-windows-user-smoke",
     protocolVersion: 1,
     capabilities: ["ping"],
-    instanceId: "22222222-2222-4222-8222-222222222222",
+    instanceId: "11111111-1111-4111-8111-111111111111",
     browserContext: "user",
   }));
   await bridge.waitUntilReady(5_000, { context: "user" });
 
-  const callPromise = bridge.call("launcher.echo", { marker: "stdio-ok" }, { context: "user", timeoutMs: 5_000 });
-  const command = await waitFor(
-    () => nativeMessages.find((message) => message?.type === "command" && message.method === "launcher.echo"),
-    `launcher did not forward bridge command to Native Messaging stdout; stderr=${stderr}`,
+  bridge.expectContext("agent", { timeoutMs: 5_000 });
+  const agent = startNativeHost({ launcherPath, releaseDir, origin, parentWindow: 4343 });
+  await waitForNativeConnect(agent, "Agent Browser");
+  agent.child.stdin.write(encodeNativeMessage({
+    type: "extension.hello",
+    extensionId: EQUINOX_BROWSER_EXTENSION_ID,
+    extensionVersion: "0.7.1-windows-agent-smoke",
+    protocolVersion: 1,
+    capabilities: ["ping"],
+    instanceId: "22222222-2222-4222-8222-222222222222",
+    browserContext: "unassigned",
+  }));
+  await bridge.waitUntilReady(5_000, { context: "agent" });
+  const contextSet = await waitFor(
+    () => agent.messages.find((message) => message?.type === "command" && message.method === "context.set"),
+    `Agent Browser did not receive its exact context persistence command; stderr=${agent.stderr}`,
   );
-  assert.deepEqual(command.args, { marker: "stdio-ok" });
-  child.stdin.write(encodeNativeMessage({ type: "response", id: command.id, ok: true, result: { marker: "stdio-ok" } }));
-  assert.deepEqual(await callPromise, { marker: "stdio-ok" });
+  assert.deepEqual(contextSet.args, { context: "agent" });
+  agent.child.stdin.write(encodeNativeMessage({
+    type: "response",
+    id: contextSet.id,
+    ok: true,
+    result: { context: "agent" },
+  }));
 
-  child.stdin.end();
-  const exitCode = await new Promise((resolve, reject) => {
-    child.once("error", reject);
-    child.once("exit", (code) => resolve(code));
-  });
-  assert.equal(exitCode, 0, `launcher/native host exited unsuccessfully; stderr=${stderr}`);
-  child = null;
+  assert.equal(bridge.snapshot().contexts.user.ready, true);
+  assert.equal(bridge.snapshot().contexts.agent.ready, true);
+
+  const userBefore = user.messages.length;
+  const agentBeforeUserCall = agent.messages.length;
+  const userCall = bridge.call("context.echo.user", { marker: "user-only" }, { context: "user", timeoutMs: 5_000 });
+  const userCommand = await waitFor(
+    () => user.messages.slice(userBefore).find((message) => message?.type === "command" && message.method === "context.echo.user"),
+    `Your Browser did not receive its explicitly targeted command; stderr=${user.stderr}`,
+  );
+  assert.equal(agent.messages.slice(agentBeforeUserCall).some((message) => message?.method === "context.echo.user"), false);
+  user.child.stdin.write(encodeNativeMessage({ type: "response", id: userCommand.id, ok: true, result: { marker: "user-only" } }));
+  assert.deepEqual(await userCall, { marker: "user-only" });
+
+  const agentBefore = agent.messages.length;
+  const userBeforeAgentCall = user.messages.length;
+  const agentCall = bridge.call("context.echo.agent", { marker: "agent-only" }, { context: "agent", timeoutMs: 5_000 });
+  const agentCommand = await waitFor(
+    () => agent.messages.slice(agentBefore).find((message) => message?.type === "command" && message.method === "context.echo.agent"),
+    `Agent Browser did not receive its explicitly targeted command; stderr=${agent.stderr}`,
+  );
+  assert.equal(user.messages.slice(userBeforeAgentCall).some((message) => message?.method === "context.echo.agent"), false);
+  agent.child.stdin.write(encodeNativeMessage({ type: "response", id: agentCommand.id, ok: true, result: { marker: "agent-only" } }));
+  assert.deepEqual(await agentCall, { marker: "agent-only" });
+
+  await stopNativeHost(agent, "Agent Browser");
+  await waitFor(
+    () => bridge.snapshot().contexts.agent.ready === false,
+    "Agent Browser context remained ready after its exact Native Host exited",
+  );
+  assert.equal(bridge.snapshot().contexts.user.ready, true, "Your Browser must remain connected when Agent Browser exits");
+  const userBeforeNoFallback = user.messages.length;
+  await assert.rejects(
+    bridge.call("context.must-not-fallback", {}, { context: "agent", timeoutMs: 300 }),
+    /Agent Browser bağlı değil/u,
+  );
+  assert.equal(
+    user.messages.slice(userBeforeNoFallback).some((message) => message?.method === "context.must-not-fallback"),
+    false,
+    "missing Agent Browser must never route a command to Your Browser",
+  );
+
+  await stopNativeHost(user, "Your Browser");
 
   const removed = await unregisterWindowsNativeMessagingHost({
     manifestPath: registration.manifestPath,
@@ -184,9 +262,12 @@ try {
     namedPipe: endpoint.endpoint,
     bidirectionalStdio: true,
     originForwarded: true,
+    dualContextIsolation: true,
+    agentPairing: true,
+    noCrossContextFallback: true,
   }, null, 2)}\n`);
 } finally {
-  if (child) {
+  for (const child of children) {
     child.stdin?.end();
     child.kill();
   }

@@ -281,37 +281,85 @@ export async function getEquinoxLocalDoctorStatus({
   }
 
   const browserRequired = installation?.managed === true;
-  if (!browser?.ready) {
+  const browserUser = browser?.contexts?.user ?? browser?.user ?? browser ?? {};
+  const browserAgent = browser?.contexts?.agent ?? browser?.agent ?? {};
+  const agentBrowser = browser?.agentBrowser ?? {};
+  if (!browserUser?.ready) {
     checks.push(check(
       "browser",
-      "Equinox Browser",
+      "Equinox Browser · Your Browser",
       browserRequired ? "attention" : "optional",
       browserRequired
-        ? "Equinox Browser is required but is not connected to the user's Chrome profile."
-        : "Equinox Browser is not connected in this development runtime.",
+        ? "Equinox Browser is required but is not connected to Your Browser."
+        : "Equinox Browser is not connected in Your Browser for this development runtime.",
     ));
-  } else if (browserRequired && browser.consentAccepted !== true) {
+  } else if (browserRequired && browserUser.consentAccepted !== true) {
     checks.push(check(
       "browser",
-      "Equinox Browser",
+      "Equinox Browser · Your Browser",
       "attention",
-      "Equinox Browser is connected, but the browser-data disclosure has not been accepted yet.",
+      "Your Browser is connected, but the browser-data disclosure has not been accepted yet.",
     ));
-  } else if (browserRequired && browser.controlEnabled !== true) {
+  } else if (browserRequired && browserUser.controlEnabled !== true) {
     checks.push(check(
       "browser",
-      "Equinox Browser",
+      "Equinox Browser · Your Browser",
       "attention",
-      "Equinox Browser is connected and consented, but Browser Control is turned off.",
+      "Your Browser is connected and consented, but Browser Control is turned off.",
     ));
   } else {
     checks.push(check(
       "browser",
-      "Equinox Browser",
+      "Equinox Browser · Your Browser",
       "pass",
       browserRequired
-        ? "The required Equinox Browser bridge is connected, consented and Browser Control is enabled."
-        : "The Equinox Browser bridge is connected in this development runtime.",
+        ? "The required Your Browser context is connected, consented and Browser Control is enabled."
+        : "Your Browser is connected in this development runtime.",
+    ));
+  }
+
+  if (browserAgent?.ready) {
+    const agentNeedsConsent = browserAgent.consentAccepted === false;
+    const agentControlOff = browserAgent.controlEnabled === false;
+    checks.push(check(
+      "agent-browser",
+      "Equinox Browser · Agent Browser",
+      agentNeedsConsent || agentControlOff ? "attention" : "pass",
+      agentNeedsConsent
+        ? "Agent Browser is connected, but its browser-data disclosure has not been accepted yet."
+        : agentControlOff
+          ? "Agent Browser is connected, but Browser Control is turned off in the isolated profile."
+          : "Agent Browser is connected as the isolated default browser context.",
+    ));
+  } else if (agentBrowser?.pairing) {
+    checks.push(check(
+      "agent-browser",
+      "Equinox Browser · Agent Browser",
+      "attention",
+      "Agent Browser is open and waiting for the isolated Equinox Browser profile to finish pairing.",
+    ));
+  } else if (agentBrowser?.setupComplete) {
+    checks.push(check(
+      "agent-browser",
+      "Equinox Browser · Agent Browser",
+      "pass",
+      "Agent Browser setup is complete and the isolated browser is currently closed; it will open on demand.",
+    ));
+  } else if (agentBrowser?.lastLaunchError) {
+    checks.push(check(
+      "agent-browser",
+      "Equinox Browser · Agent Browser",
+      "attention",
+      "Agent Browser needs attention after its most recent launch attempt.",
+    ));
+  } else {
+    checks.push(check(
+      "agent-browser",
+      "Equinox Browser · Agent Browser",
+      "optional",
+      agentBrowser?.supported === false
+        ? "Agent Browser is not available on this host."
+        : "Agent Browser has not been set up yet; it remains isolated from Your Browser and will be prepared on first use.",
     ));
   }
 
