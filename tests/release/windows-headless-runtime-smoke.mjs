@@ -473,7 +473,11 @@ try {
     conpty,
   }, null, 2)}\n`);
 } finally {
+  process.stdout.write("[windows-smoke] START runtime-shutdown\n");
   if (lifecycle) await lifecycle.shutdown().catch(() => {});
   else if (runtime) await runtime.shutdown({ reason: "windows-smoke-cleanup" }).catch(() => {});
+  process.stdout.write("[windows-smoke] PASS runtime-shutdown\n");
+  process.stdout.write("[windows-smoke] START temp-root-remove\n");
   await fs.rm(root, { recursive: true, force: true }).catch(() => {});
+  process.stdout.write("[windows-smoke] PASS temp-root-remove\n");
 }

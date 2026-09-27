@@ -39,7 +39,7 @@ class FakeTerminal {
 
   kill(signal) {
     this.kills.push(signal);
-    this.emitExit(0, signal === "SIGKILL" ? 9 : 1);
+    this.emitExit(0, signal === undefined ? 0 : signal === "SIGKILL" ? 9 : 1);
   }
 
   emitData(value) {
@@ -152,6 +152,7 @@ test("Windows terminal manager verifies Job Object ownership before exposing Con
   assert.equal(stopped.running, false);
   assert.equal(stopped.cleanupVerified, true);
   assert.deepEqual(calls.at(-1), ["terminate", "SIGTERM"]);
+  assert.deepEqual(terminal.kills, [undefined], "Windows Job cleanup must dispose node-pty without a POSIX signal");
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(closed, true);
 });

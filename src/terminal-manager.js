@@ -416,6 +416,14 @@ export function createTerminalManager({
     }
   };
 
+  const disposeJobObjectTerminalTransport = (session) => {
+    if (terminalOwnership.kind !== "job-object" || session.transportDisposed) return;
+    session.transportDisposed = true;
+    // Job Object ownership is responsible for process-tree termination. This
+    // signal-free node-pty call only releases its ConPTY/socket/worker handles.
+    session.terminal.kill();
+  };
+
   const cleanupOwnedSession = (session, {
     force = false,
     timeoutMs = 1500,
@@ -438,6 +446,7 @@ export function createTerminalManager({
           const drained = await waitForJobObjectDrain(session, force ? Math.min(timeoutMs, 700) : timeoutMs);
           session.cleanupVerified = drained;
           if (!drained) throw new Error("Windows PTY Job Object could not be fully drained.");
+          disposeJobObjectTerminalTransport(session);
           finalizeSession(session);
           return publicSession(session);
         }
@@ -746,6 +755,7 @@ export function createTerminalManager({
       cleanupVerified: null,
       cleanupError: null,
       cleanupPromise: null,
+      transportDisposed: false,
       startupMarker,
       startupBuffer: "",
       startupReady: !startupMarker,
@@ -783,6 +793,7 @@ export function createTerminalManager({
     });
 
     terminal.onExit(({ exitCode, signal }) => {
+      if (session.transportDisposed && session.shellExited) return;
       if (!session.startupReady) {
         session.startupFailure = `Windows interactive shell exited before readiness (exit=${exitCode ?? "null"}, signal=${signal ?? "null"}).`;
         session.resolveStartupReady?.();
