@@ -6,6 +6,7 @@ This project follows semantic versioning for public releases.
 
 ## [Unreleased]
 
+- Added an origin-bound native Windows folder picker bridge for the WPF/WebView2 shell. Shared Control Center folder actions use the native dialog when hosted by the shell, retain the existing API/manual-path fallback elsewhere, and now accept Windows absolute paths without weakening server-side root validation.
 - Raised the guarded Auto Continue chain bound from five to eight explicitly armed hops for long checkpointed tasks; TTL, exact-chat binding, per-hop re-arm, pre-mutation reservation and ambiguous-delivery no-retry guards are unchanged, and hop nine fails before browser target resolution.
 - Fixed source-checkout restart ownership on macOS: restart now escapes the Local runtime LaunchAgent into a separate one-shot, non-KeepAlive LaunchAgent before booting the runtime service out, so Terminal/Control Center restart cannot terminate its own restart worker. The helper carries only the minimal source-runtime identity/environment, stays single-flight, and cleans up its temporary job/plist after completion.
 - Raised the guarded Auto Continue chain bound from three to five explicitly armed hops; checkpoint, TTL, exact-chat binding, pre-mutation delivery reservation and ambiguous-delivery no-retry guarantees are unchanged, and hop six fails before browser target resolution.

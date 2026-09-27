@@ -126,6 +126,27 @@ test("Windows shell user-login startup registration is per-user, owned and non-i
   assert.match(tray, /registration conflict/u);
 });
 
+test("Windows shell exposes one origin-bound native folder picker bridge", async () => {
+  const [window, picker, client] = await Promise.all([
+    source("MainWindow.xaml.cs"),
+    source("NativeFolderPicker.cs"),
+    fs.readFile(path.join(ROOT, "src", "equinox-control-center.js"), "utf8"),
+  ]);
+  assert.match(window, /WebMessageReceived/u);
+  assert.match(window, /equinox-folder-picker/u);
+  assert.match(window, /127\.0\.0\.1/u);
+  assert.match(window, /uri\.Port == 24891/u);
+  assert.match(window, /IsSafeRequestId/u);
+  assert.match(picker, /new FolderBrowserDialog/u);
+  assert.match(picker, /FileAttributes\.ReparsePoint/u);
+  assert.match(picker, /filesystem root cannot be granted/u);
+  assert.doesNotMatch(picker, /powershell|cmd\.exe|Process\.Start/iu);
+  assert.match(client, /window\.chrome\?\.webview/u);
+  assert.match(client, /pickLocalFolder/u);
+  assert.match(client, /equinox-folder-picker-result/u);
+  assert.ok(client.includes(`if (/^[A-Za-z]:[\\\\/](?!$)/u.test(value)) return true;`));
+});
+
 test("public Windows CI restores and builds the native x64 shell", async () => {
   const publicCi = path.join(ROOT, ".github", "workflows", "ci.yml");
   const factoryCi = path.join(ROOT, "factory", "local", "public-template", ".github", "workflows", "ci.yml");
@@ -138,4 +159,5 @@ test("public Windows CI restores and builds the native x64 shell", async () => {
   assert.match(ci, /EquinoxLocal\.WindowsShell\.RuntimeHarness/u);
   assert.match(ci, /EQUINOX_TEST_NODE_EXE/u);
   assert.match(ci, /EquinoxLocal\.WindowsShell\.StartupHarness/u);
+  assert.match(ci, /EquinoxLocal\.WindowsShell\.FolderPickerHarness/u);
 });
