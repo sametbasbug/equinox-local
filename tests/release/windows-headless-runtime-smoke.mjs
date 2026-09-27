@@ -153,6 +153,27 @@ async function verifyWindowsManagedProcessLifecycle(root) {
   return Object.freeze({ descendantRetainedAfterLeaderExit: true, stopDrainedDescendant: true, naturalExit: true });
 }
 
+async function withWindowsConPtyStage(label, operation, timeoutMs = 12_000) {
+  const startedAt = Date.now();
+  process.stdout.write(`[windows-conpty] START ${label}\n`);
+  let timer = null;
+  try {
+    const result = await Promise.race([
+      Promise.resolve().then(operation),
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`Windows ConPTY stage timed out: ${label} after ${timeoutMs}ms`)), timeoutMs);
+      }),
+    ]);
+    process.stdout.write(`[windows-conpty] PASS ${label} ${Date.now() - startedAt}ms\n`);
+    return result;
+  } catch (error) {
+    process.stderr.write(`[windows-conpty] FAIL ${label} ${Date.now() - startedAt}ms: ${error instanceof Error ? error.message : String(error)}\n`);
+    throw error;
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 async function readTerminalUntil(manager, sessionId, pattern, timeoutMs = 8_000) {
   let cursor = 0;
   let combined = "";
@@ -173,8 +194,12 @@ async function verifyWindowsConPtyLifecycle(root) {
   const naturalPidPath = path.join(root, "conpty natural child pid.txt");
   let stopChildPid = null;
   let naturalChildPid = null;
+  const watchdog = setTimeout(() => {
+    process.stderr.write("[windows-conpty] FATAL lifecycle watchdog exceeded 70s\n");
+    process.exit(124);
+  }, 70_000);
   try {
-    const started = await manager.start({
+    const started = await withWindowsConPtyStage("explicit:start", () => manager.start({
       projectId: "windows-smoke",
       projectName: "Windows Smoke",
       cwd: root,
@@ -184,17 +209,23 @@ async function verifyWindowsConPtyLifecycle(root) {
       cols: 100,
       rows: 28,
       label: "windows-conpty-stop",
-    });
+    }));
     assert.equal(started.running, true, "Windows ConPTY did not start");
     assert.ok(Number.isInteger(started.pid) && started.pid > 0, "Windows ConPTY gate PID is missing");
 
-    const startupOutput = await manager.read({ sessionId: started.sessionId, cursor: 0, maxChars: 20_000, stripAnsiCodes: true, waitMs: 0 });
+    const startupOutput = await withWindowsConPtyStage("explicit:startup-buffer", () => manager.read({
+      sessionId: started.sessionId, cursor: 0, maxChars: 20_000, stripAnsiCodes: true, waitMs: 0,
+    }), 4_000);
     assert.doesNotMatch(startupOutput.output, /__EQUINOX_INNER_PTY_READY__/u, "internal ConPTY readiness marker leaked to terminal output");
+
     manager.write({ sessionId: started.sessionId, data: "Write-Output ([string]::Concat('__EQUINOX_','CONPTY_OK__'))", key: "enter" });
-    await readTerminalUntil(manager, started.sessionId, /__EQUINOX_CONPTY_OK__/u);
-    const resized = manager.resize({ sessionId: started.sessionId, cols: 137, rows: 41 });
-    assert.equal(resized.cols, 137);
-    assert.equal(resized.rows, 41);
+    await withWindowsConPtyStage("explicit:interactive-io", () => readTerminalUntil(manager, started.sessionId, /__EQUINOX_CONPTY_OK__/u), 10_000);
+
+    await withWindowsConPtyStage("explicit:resize", async () => {
+      const resized = manager.resize({ sessionId: started.sessionId, cols: 137, rows: 41 });
+      assert.equal(resized.cols, 137);
+      assert.equal(resized.rows, 41);
+    }, 4_000);
 
     const childCommand = [
       "$child = Start-Process -FilePath powershell.exe -ArgumentList @('-NoLogo','-NoProfile','-NonInteractive','-Command','Start-Sleep -Seconds 60') -PassThru -WindowStyle Hidden",
@@ -202,20 +233,20 @@ async function verifyWindowsConPtyLifecycle(root) {
       "Write-Output '__EQUINOX_PTY_CHILD_READY__'",
     ].join("; ");
     manager.write({ sessionId: started.sessionId, data: childCommand, key: "enter" });
-    await readTerminalUntil(manager, started.sessionId, /__EQUINOX_PTY_CHILD_READY__/u);
-    stopChildPid = await waitFor(async () => {
+    await withWindowsConPtyStage("explicit:child-command-output", () => readTerminalUntil(manager, started.sessionId, /__EQUINOX_PTY_CHILD_READY__/u), 10_000);
+    stopChildPid = await withWindowsConPtyStage("explicit:child-pid", () => waitFor(async () => {
       const text = await fs.readFile(stopPidPath, "utf8").catch(() => "");
       const value = Number.parseInt(text.trim(), 10);
       return Number.isInteger(value) && value > 0 ? value : null;
-    }, "Windows ConPTY stop fixture did not create a descendant");
+    }, "Windows ConPTY stop fixture did not create a descendant"), 10_000);
     assert.equal(pidExists(stopChildPid), true, "Windows ConPTY descendant disappeared before stop");
 
-    const stopped = await manager.stop({ sessionId: started.sessionId, timeoutMs: 2_500 });
+    const stopped = await withWindowsConPtyStage("explicit:stop", () => manager.stop({ sessionId: started.sessionId, timeoutMs: 2_500 }), 8_000);
     assert.equal(stopped.running, false, "Windows ConPTY stop did not finalize");
     assert.equal(stopped.cleanupVerified, true, "Windows ConPTY stop did not verify Job Object cleanup");
-    await waitFor(() => !pidExists(stopChildPid), "Windows ConPTY stop did not drain its descendant");
+    await withWindowsConPtyStage("explicit:descendant-drain", () => waitFor(() => !pidExists(stopChildPid), "Windows ConPTY stop did not drain its descendant"), 10_000);
 
-    const natural = await manager.start({
+    const natural = await withWindowsConPtyStage("natural:start", () => manager.start({
       projectId: "windows-smoke",
       projectName: "Windows Smoke",
       cwd: root,
@@ -225,7 +256,7 @@ async function verifyWindowsConPtyLifecycle(root) {
       cols: 90,
       rows: 24,
       label: "windows-conpty-natural",
-    });
+    }));
     const naturalCommand = [
       "$child = Start-Process -FilePath powershell.exe -ArgumentList @('-NoLogo','-NoProfile','-NonInteractive','-Command','Start-Sleep -Seconds 60') -PassThru -WindowStyle Hidden",
       "[IO.File]::WriteAllText($env:EQUINOX_PTY_CHILD_PID, [string]$child.Id)",
@@ -233,18 +264,18 @@ async function verifyWindowsConPtyLifecycle(root) {
       "exit",
     ].join("; ");
     manager.write({ sessionId: natural.sessionId, data: naturalCommand, key: "enter" });
-    await readTerminalUntil(manager, natural.sessionId, /__EQUINOX_PTY_NATURAL__/u);
-    naturalChildPid = await waitFor(async () => {
+    await withWindowsConPtyStage("natural:command-output", () => readTerminalUntil(manager, natural.sessionId, /__EQUINOX_PTY_NATURAL__/u), 10_000);
+    naturalChildPid = await withWindowsConPtyStage("natural:child-pid", () => waitFor(async () => {
       const text = await fs.readFile(naturalPidPath, "utf8").catch(() => "");
       const value = Number.parseInt(text.trim(), 10);
       return Number.isInteger(value) && value > 0 ? value : null;
-    }, "Windows ConPTY natural-exit fixture did not create a descendant");
-    const finalNatural = await waitFor(() => {
+    }, "Windows ConPTY natural-exit fixture did not create a descendant"), 10_000);
+    const finalNatural = await withWindowsConPtyStage("natural:finalize", () => waitFor(() => {
       const state = manager.list().find((item) => item.sessionId === natural.sessionId);
       return state && !state.running ? state : null;
-    }, "Windows ConPTY natural exit did not finalize");
+    }, "Windows ConPTY natural exit did not finalize"), 10_000);
     assert.equal(finalNatural.cleanupVerified, true, "Windows ConPTY natural exit did not verify Job Object cleanup");
-    await waitFor(() => !pidExists(naturalChildPid), "Windows ConPTY natural exit did not drain its descendant");
+    await withWindowsConPtyStage("natural:descendant-drain", () => waitFor(() => !pidExists(naturalChildPid), "Windows ConPTY natural exit did not drain its descendant"), 10_000);
 
     return Object.freeze({
       interactiveIo: true,
@@ -253,7 +284,10 @@ async function verifyWindowsConPtyLifecycle(root) {
       naturalExitDrainedDescendant: true,
     });
   } finally {
-    await manager.shutdown().catch(() => {});
+    clearTimeout(watchdog);
+    await withWindowsConPtyStage("manager:shutdown", () => manager.shutdown(), 8_000).catch((error) => {
+      process.stderr.write(`[windows-conpty] shutdown cleanup failed: ${error instanceof Error ? error.message : String(error)}\n`);
+    });
     for (const pid of [stopChildPid, naturalChildPid]) {
       if (Number.isInteger(pid) && pidExists(pid)) {
         try { process.kill(pid); } catch {}
