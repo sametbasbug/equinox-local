@@ -17,6 +17,7 @@ const PS_TIMEOUT_MS = 2_000;
 const PS_MAX_BUFFER = 512 * 1024;
 const NATIVE_SESSION_QUERY_TIMEOUT_MS = 2_000;
 const NATIVE_SESSION_QUERY_MAX_BUFFER = 512 * 1024;
+const DEFAULT_WINDOWS_PTY_READY_TIMEOUT_MS = 5_000;
 
 export const TERMINAL_KEYS = Object.freeze([
   "enter",
@@ -164,6 +165,7 @@ export function createTerminalManager({
   ownershipRefreshDelayMs = DEFAULT_OWNERSHIP_REFRESH_DELAY_MS,
   ownershipMonitorMs = DEFAULT_OWNERSHIP_MONITOR_MS,
   naturalExitOwnershipFreshMs = NATURAL_EXIT_OWNERSHIP_FRESH_MS,
+  windowsPtyReadyTimeoutMs = DEFAULT_WINDOWS_PTY_READY_TIMEOUT_MS,
   nativeProcessSessionHelperPath = process.env.EQUINOX_LOCAL_NATIVE_PROCESS_HELPER ?? null,
   resolveProcessSessionIdImpl = null,
   listProcessSessionPidsImpl = null,
@@ -253,6 +255,12 @@ export function createTerminalManager({
 
   const refreshOwnedPids = async (session) => {
     try {
+      if (terminalOwnership.kind === "job-object") {
+        if (!session.ownedSet) return false;
+        await terminalOwnership.ownedSetExists(session.ownedSet);
+        session.ownershipSnapshotAt = Date.now();
+        return true;
+      }
       if (session.posixSessionId && listProcessSessionPids) {
         const pids = await listProcessSessionPids(session.posixSessionId);
         if (!Array.isArray(pids)) throw new Error("PTY POSIX-session inventory returned an invalid result.");
@@ -288,6 +296,7 @@ export function createTerminalManager({
   };
 
   const scheduleOwnershipRefresh = (session) => {
+    if (terminalOwnership.kind === "job-object") return;
     if (session.posixSessionId && listProcessSessionPids) return;
     if (session.shellExited || session.ownershipRefreshTimer) return;
     session.ownershipRefreshTimer = setTimeout(() => {
@@ -298,6 +307,7 @@ export function createTerminalManager({
   };
 
   const scheduleOwnershipMonitor = (session) => {
+    if (terminalOwnership.kind === "job-object") return;
     if (session.posixSessionId && listProcessSessionPids) return;
     if (
       session.shellExited ||
@@ -342,6 +352,11 @@ export function createTerminalManager({
     session.lastActivityAt = session.exitedAt;
     notifyWaiters(session);
     session.resolveExit?.();
+    if (session.ownedSet && typeof terminalOwnership.closeOwnedSet === "function") {
+      const ownedSet = session.ownedSet;
+      session.ownedSet = null;
+      void Promise.resolve(terminalOwnership.closeOwnedSet(ownedSet)).catch(() => {});
+    }
 
     const failed = Boolean(
       !session.stopRequested &&
@@ -392,6 +407,23 @@ export function createTerminalManager({
     }
   };
 
+  const waitForJobObjectDrain = async (session, timeoutMs) => {
+    const deadline = Date.now() + Math.max(0, timeoutMs);
+    while (true) {
+      if (!session.ownedSet || !await terminalOwnership.ownedSetExists(session.ownedSet)) return true;
+      if (Date.now() >= deadline) return false;
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+  };
+
+  const disposeJobObjectTerminalTransport = (session) => {
+    if (terminalOwnership.kind !== "job-object" || session.transportDisposed) return;
+    session.transportDisposed = true;
+    // Job Object ownership is responsible for process-tree termination. This
+    // signal-free node-pty call only releases its ConPTY/socket/worker handles.
+    session.terminal.kill();
+  };
+
   const cleanupOwnedSession = (session, {
     force = false,
     timeoutMs = 1500,
@@ -402,6 +434,23 @@ export function createTerminalManager({
     session.cleanupPromise = (async () => {
       session.cleanupError = null;
       try {
+        if (terminalOwnership.kind === "job-object") {
+          if (!session.ownedSet) throw new Error("Windows PTY Job Object ownership handle is missing.");
+          await refreshOwnedPids(session);
+          if (await terminalOwnership.ownedSetExists(session.ownedSet)) {
+            await terminalOwnership.signalOwnedSet(
+              session.ownedSet,
+              force ? terminalOwnership.forceSignal : terminalOwnership.gracefulSignal,
+            );
+          }
+          const drained = await waitForJobObjectDrain(session, force ? Math.min(timeoutMs, 700) : timeoutMs);
+          session.cleanupVerified = drained;
+          if (!drained) throw new Error("Windows PTY Job Object could not be fully drained.");
+          disposeJobObjectTerminalTransport(session);
+          finalizeSession(session);
+          return publicSession(session);
+        }
+
         let ownershipVerified = false;
         if (!session.shellExited || (session.posixSessionId && listProcessSessionPids)) {
           ownershipVerified = await refreshOwnedPids(session);
@@ -443,6 +492,9 @@ export function createTerminalManager({
       } catch (error) {
         session.cleanupVerified = false;
         session.cleanupError = error instanceof Error ? error.message : String(error);
+        if (terminalOwnership.kind === "job-object" && session.shellExited) {
+          try { disposeJobObjectTerminalTransport(session); } catch {}
+        }
         emitEvent({
           component: "terminal",
           type: "terminal.cleanup_failed",
@@ -502,6 +554,59 @@ export function createTerminalManager({
 
     notifyWaiters(session);
     scheduleOwnershipRefresh(session);
+  };
+
+  const consumeStartupData = (session, data) => {
+    const text = String(data ?? "");
+    if (!text) return;
+    if (!session.startupMarker || session.startupReady) {
+      appendOutput(session, text);
+      return;
+    }
+
+    const marker = session.startupMarker;
+    const combined = session.startupBuffer + text;
+    const markerIndex = combined.indexOf(marker);
+    if (markerIndex >= 0) {
+      const before = combined.slice(0, markerIndex);
+      let after = combined.slice(markerIndex + marker.length);
+      if (after.startsWith("\r\n")) after = after.slice(2);
+      else if (after.startsWith("\n") || after.startsWith("\r")) after = after.slice(1);
+      session.startupBuffer = "";
+      session.startupReady = true;
+      session.resolveStartupReady?.();
+      if (before) appendOutput(session, before);
+      if (after) appendOutput(session, after);
+      return;
+    }
+
+    let keep = 0;
+    const maxKeep = Math.min(marker.length - 1, combined.length);
+    for (let length = maxKeep; length > 0; length -= 1) {
+      if (marker.startsWith(combined.slice(-length))) {
+        keep = length;
+        break;
+      }
+    }
+    const publish = combined.slice(0, combined.length - keep);
+    session.startupBuffer = keep > 0 ? combined.slice(-keep) : "";
+    if (publish) appendOutput(session, publish);
+  };
+
+  const waitForStartupReady = async (session) => {
+    if (!session.startupMarker || session.startupReady) return;
+    let timer = null;
+    await Promise.race([
+      session.startupReadyPromise,
+      new Promise((resolve) => {
+        timer = setTimeout(resolve, windowsPtyReadyTimeoutMs);
+        timer.unref?.();
+      }),
+    ]);
+    if (timer !== null) clearTimeout(timer);
+    if (session.startupReady) return;
+    if (session.startupFailure) throw new Error(session.startupFailure);
+    throw new Error("Windows interactive PowerShell did not become ready before timeout.");
   };
 
   const pruneRetainedSessions = () => {
@@ -580,20 +685,40 @@ export function createTerminalManager({
     const { spawn } = await loadPtyModule();
     const id = `term-${randomId()}`;
     const createdAt = now();
-    const terminal = spawn(shell, shellArgs, {
-      name: "xterm-256color",
-      cols,
-      rows,
-      cwd,
-      env: {
-        ...env,
-        TERM: "xterm-256color",
-        COLORTERM: "truecolor",
-        PAGER: "cat",
-        GIT_PAGER: "cat",
-      },
-      handleFlowControl: true,
-    });
+    const baseEnv = {
+      ...env,
+      TERM: "xterm-256color",
+      COLORTERM: "truecolor",
+      PAGER: "cat",
+      GIT_PAGER: "cat",
+    };
+    let ownedSet = null;
+    let spawnShell = shell;
+    let spawnArgs = shellArgs;
+    let spawnEnv = baseEnv;
+    let startupMarker = null;
+    if (terminalOwnership.kind === "job-object") {
+      ownedSet = await terminalOwnership.createOwnedSet();
+      const spec = terminalOwnership.spawnSpec(shell, shellArgs, baseEnv);
+      spawnShell = spec.command;
+      spawnArgs = [...spec.args];
+      spawnEnv = { ...spec.env };
+      startupMarker = typeof spec.readyMarker === "string" && spec.readyMarker ? spec.readyMarker : null;
+    }
+    let terminal;
+    try {
+      terminal = spawn(spawnShell, spawnArgs, {
+        name: "xterm-256color",
+        cols,
+        rows,
+        cwd,
+        env: spawnEnv,
+        handleFlowControl: true,
+      });
+    } catch (error) {
+      try { await terminalOwnership.closeOwnedSet?.(ownedSet); } catch {}
+      throw error;
+    }
 
     const session = {
       id,
@@ -604,6 +729,7 @@ export function createTerminalManager({
       shell,
       pid: terminal.pid ?? null,
       terminal,
+      ownedSet,
       running: true,
       cols,
       rows,
@@ -632,6 +758,13 @@ export function createTerminalManager({
       cleanupVerified: null,
       cleanupError: null,
       cleanupPromise: null,
+      transportDisposed: false,
+      startupMarker,
+      startupBuffer: "",
+      startupReady: !startupMarker,
+      startupFailure: null,
+      startupReadyPromise: null,
+      resolveStartupReady: null,
       waiters: new Set(),
       exitPromise: null,
       resolveExit: null,
@@ -640,19 +773,86 @@ export function createTerminalManager({
     session.exitPromise = new Promise((resolve) => {
       session.resolveExit = resolve;
     });
-    session.ttyPromise = session.ttyName
-      ? Promise.resolve(session.ttyName)
-      : Promise.resolve(resolveProcessTtyImpl(session.pid))
-        .then((ttyName) => {
-          session.ttyName = normalizeTtyName(ttyName);
-          return session.ttyName;
-        })
-      .catch((error) => {
-        setOwnershipError(session, error);
-        return null;
-      });
+    session.startupReadyPromise = new Promise((resolve) => {
+      session.resolveStartupReady = resolve;
+    });
+    session.ttyPromise = terminalOwnership.kind === "job-object"
+      ? Promise.resolve(null)
+      : session.ttyName
+        ? Promise.resolve(session.ttyName)
+        : Promise.resolve(resolveProcessTtyImpl(session.pid))
+          .then((ttyName) => {
+            session.ttyName = normalizeTtyName(ttyName);
+            return session.ttyName;
+          })
+          .catch((error) => {
+            setOwnershipError(session, error);
+            return null;
+          });
 
     sessions.set(id, session);
+    terminal.onData((data) => {
+      consumeStartupData(session, data);
+    });
+
+    terminal.onExit(({ exitCode, signal }) => {
+      if (session.transportDisposed && session.shellExited) return;
+      if (!session.startupReady) {
+        session.startupFailure = `Windows interactive shell exited before readiness (exit=${exitCode ?? "null"}, signal=${signal ?? "null"}).`;
+        session.resolveStartupReady?.();
+      }
+      session.shellExited = true;
+      session.exitCode = exitCode ?? null;
+      session.signal = signal ?? null;
+      session.lastActivityAt = now();
+      notifyWaiters(session);
+      if (!session.stopRequested) {
+        void cleanupOwnedSession(session, {
+          force: false,
+          timeoutMs: 800,
+          naturalExit: true,
+        }).catch(() => {});
+      }
+    });
+
+    await session.ttyPromise;
+    if (terminalOwnership.kind === "job-object") {
+      try {
+        const ownedPid = await terminalOwnership.attachAndRelease(session.ownedSet, terminal);
+        if (Number.isInteger(ownedPid) && ownedPid > 0) session.pid = ownedPid;
+        if (!await refreshOwnedPids(session)) throw new Error("Windows PTY Job Object ownership could not be verified.");
+        await waitForStartupReady(session);
+      } catch (error) {
+        session.stopRequested = true;
+        try { terminal.kill(); } catch {}
+        try { await terminalOwnership.closeOwnedSet?.(session.ownedSet); } catch {}
+        session.ownedSet = null;
+        sessions.delete(id);
+        throw error;
+      }
+    }
+    if (terminalOwnership.kind === "posix-session-or-tty" && resolveProcessSessionId && listProcessSessionPids) {
+      try {
+        const sessionId = await resolveProcessSessionId(session.pid);
+        if (!Number.isInteger(sessionId) || sessionId <= 0) throw new Error("PTY POSIX session id could not be resolved.");
+        session.posixSessionId = sessionId;
+      } catch (error) {
+        setOwnershipError(session, error);
+        if (nativeSessionHelper || resolveProcessSessionIdImpl || listProcessSessionPidsImpl) {
+          session.stopRequested = true;
+          session.terminal.kill("SIGKILL");
+          sessions.delete(id);
+          throw new Error(session.ownershipError || "PTY POSIX session id could not be resolved.");
+        }
+      }
+    }
+    if (terminalOwnership.kind !== "job-object" && terminalOwnership.requiresVerifiedOwnership && !session.posixSessionId && !session.ttyName) {
+      session.stopRequested = true;
+      session.terminal.kill("SIGKILL");
+      sessions.delete(id);
+      throw new Error(session.ownershipError || "PTY controlling TTY could not be resolved.");
+    }
+    await refreshOwnedPids(session);
     emitEvent({
       component: "terminal",
       type: "terminal.started",
@@ -671,48 +871,6 @@ export function createTerminalManager({
       },
     });
 
-    terminal.onData((data) => {
-      appendOutput(session, data);
-    });
-
-    terminal.onExit(({ exitCode, signal }) => {
-      session.shellExited = true;
-      session.exitCode = exitCode ?? null;
-      session.signal = signal ?? null;
-      session.lastActivityAt = now();
-      notifyWaiters(session);
-      if (!session.stopRequested) {
-        void cleanupOwnedSession(session, {
-          force: false,
-          timeoutMs: 800,
-          naturalExit: true,
-        }).catch(() => {});
-      }
-    });
-
-    await session.ttyPromise;
-    if (terminalOwnership.kind === "posix-session-or-tty" && resolveProcessSessionId && listProcessSessionPids) {
-      try {
-        const sessionId = await resolveProcessSessionId(session.pid);
-        if (!Number.isInteger(sessionId) || sessionId <= 0) throw new Error("PTY POSIX session id could not be resolved.");
-        session.posixSessionId = sessionId;
-      } catch (error) {
-        setOwnershipError(session, error);
-        if (nativeSessionHelper || resolveProcessSessionIdImpl || listProcessSessionPidsImpl) {
-          session.stopRequested = true;
-          session.terminal.kill("SIGKILL");
-          sessions.delete(id);
-          throw new Error(session.ownershipError || "PTY POSIX session id could not be resolved.");
-        }
-      }
-    }
-    if (terminalOwnership.requiresVerifiedOwnership && !session.posixSessionId && !session.ttyName) {
-      session.stopRequested = true;
-      session.terminal.kill("SIGKILL");
-      sessions.delete(id);
-      throw new Error(session.ownershipError || "PTY controlling TTY could not be resolved.");
-    }
-    await refreshOwnedPids(session);
     scheduleOwnershipMonitor(session);
     return publicSession(session);
   };

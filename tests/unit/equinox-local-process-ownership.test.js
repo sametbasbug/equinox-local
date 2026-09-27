@@ -25,7 +25,7 @@ test("Darwin background ownership delegates exact group probe/signal semantics",
   assert.deepEqual(signals, [[42, "SIGTERM"]]);
 });
 
-test("Windows background ownership is implemented while PTY ownership remains fail-closed", () => {
+test("Windows background and PTY ownership use Job Object adapters", () => {
   const background = createBackgroundProcessOwnershipAdapter({ platform: "win32", arch: "x64" });
   const terminal = createTerminalProcessOwnershipAdapter({ platform: "win32", arch: "x64" });
   assert.equal(background.kind, "job-object");
@@ -36,8 +36,11 @@ test("Windows background ownership is implemented while PTY ownership remains fa
   assert.equal(typeof background.attachAndRelease, "function");
   assert.doesNotThrow(() => assertProcessOwnershipImplemented(background, "background process execution"));
   assert.equal(terminal.kind, "job-object");
-  assert.equal(terminal.implemented, false);
-  assert.throws(() => assertProcessOwnershipImplemented(terminal, "PTY terminal execution"), /implemented process-ownership adapter/u);
+  assert.equal(terminal.implemented, true);
+  assert.equal(typeof terminal.createOwnedSet, "function");
+  assert.equal(typeof terminal.spawnSpec, "function");
+  assert.equal(typeof terminal.attachAndRelease, "function");
+  assert.doesNotThrow(() => assertProcessOwnershipImplemented(terminal, "PTY terminal execution"));
 });
 
 test("Darwin terminal ownership preserves POSIX-session/TTY cleanup signals", () => {

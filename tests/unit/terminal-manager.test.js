@@ -39,7 +39,7 @@ class FakeTerminal {
 
   kill(signal) {
     this.kills.push(signal);
-    this.emitExit(0, signal === "SIGKILL" ? 9 : 1);
+    this.emitExit(0, signal === undefined ? 0 : signal === "SIGKILL" ? 9 : 1);
   }
 
   emitData(value) {
@@ -92,17 +92,126 @@ async function startFake(manager) {
   });
 }
 
-test("Windows terminal manager refuses to spawn before Job Object PTY ownership exists", async () => {
-  let ptyLoads = 0;
+test("Windows terminal manager verifies Job Object ownership before exposing ConPTY", async () => {
+  const terminal = new FakeTerminal(0);
+  setTimeout(() => { terminal.pid = 6100; terminal.emitData("\u001b[0m"); }, 10);
+  let active = true;
+  let closed = false;
+  const ownedSet = { id: "job-pty-1" };
+  const calls = [];
+  const ownershipAdapter = {
+    kind: "job-object",
+    implemented: true,
+    requiresVerifiedOwnership: true,
+    gracefulSignal: "SIGTERM",
+    forceSignal: "SIGKILL",
+    async createOwnedSet() { calls.push("create"); return ownedSet; },
+    spawnSpec(command, args, env) {
+      calls.push(["spec", command, args]);
+      return { command: "powershell.exe", args: ["-File", "pty-gate.ps1"], env: { ...env, EQUINOX_TEST_PTY_GATE: "1" }, readyMarker: "__INNER_READY__" };
+    },
+    async attachAndRelease(set, instance) {
+      assert.equal(set, ownedSet);
+      assert.equal(instance, terminal);
+      calls.push("attach-release");
+      instance.write("EQUINOX_GO\r");
+      queueMicrotask(() => instance.emitData("__INNER_READY__\r\n"));
+    },
+    async ownedSetExists(set) { assert.equal(set, ownedSet); return active; },
+    async signalOwnedSet(set, signal) { assert.equal(set, ownedSet); calls.push(["terminate", signal]); active = false; },
+    async closeOwnedSet(set) { assert.equal(set, ownedSet); closed = true; },
+  };
+  const spawnCalls = [];
   const manager = createTerminalManager({
     platform: "win32",
     arch: "x64",
-    ptyModuleLoader: async () => { ptyLoads += 1; return { spawn: () => new FakeTerminal() }; },
+    ownershipAdapter,
+    ptyModuleLoader: async () => ({
+      spawn: (command, args, options) => { spawnCalls.push({ command, args, options }); return terminal; },
+    }),
+    randomId: () => "winpty1",
   });
-  await assert.rejects(() => manager.start({
+  const started = await manager.start({
     projectId: "workspace", projectName: "Workspace", cwd: "C:\\Work", shell: "powershell.exe", shellArgs: ["-NoLogo"], env: {}, cols: 100, rows: 25,
-  }), /implemented process-ownership adapter/u);
-  assert.equal(ptyLoads, 0);
+  });
+  assert.equal(started.running, true);
+  assert.equal(started.sessionId, "term-winpty1");
+  assert.equal(spawnCalls[0].command, "powershell.exe");
+  assert.deepEqual(spawnCalls[0].args, ["-File", "pty-gate.ps1"]);
+  assert.deepEqual(calls.slice(0, 3), ["create", ["spec", "powershell.exe", ["-NoLogo"]], "attach-release"]);
+  assert.deepEqual(terminal.writes, ["EQUINOX_GO\r"]);
+  const startupRead = await manager.read({ sessionId: started.sessionId, cursor: 0 });
+  assert.doesNotMatch(startupRead.output, /__INNER_READY__/u);
+
+  manager.write({ sessionId: started.sessionId, data: "Write-Output ok", key: "enter" });
+  manager.resize({ sessionId: started.sessionId, cols: 140, rows: 42 });
+  assert.deepEqual(terminal.resizes, [[140, 42]]);
+  assert.deepEqual(terminal.writes.slice(1), ["Write-Output ok", "\r"]);
+
+  const stopped = await manager.stop({ sessionId: started.sessionId });
+  assert.equal(stopped.running, false);
+  assert.equal(stopped.cleanupVerified, true);
+  assert.deepEqual(calls.at(-1), ["terminate", "SIGTERM"]);
+  assert.deepEqual(terminal.kills, [undefined], "Windows Job cleanup must dispose node-pty without a POSIX signal");
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(closed, true);
+});
+
+test("Windows ConPTY helper loss finalizes fail-closed and still disposes node-pty transport", async () => {
+  const terminal = new FakeTerminal(0);
+  setTimeout(() => { terminal.pid = 6200; terminal.emitData("\u001b[0m"); }, 10);
+  let helperLost = false;
+  let closed = false;
+  const events = [];
+  const ownedSet = { id: "job-pty-lost" };
+  const manager = createTerminalManager({
+    platform: "win32",
+    arch: "x64",
+    ownershipAdapter: {
+      kind: "job-object",
+      implemented: true,
+      requiresVerifiedOwnership: true,
+      gracefulSignal: "SIGTERM",
+      forceSignal: "SIGKILL",
+      async createOwnedSet() { return ownedSet; },
+      spawnSpec(command, args, env) {
+        return { command: "powershell.exe", args: ["-File", "pty-gate.ps1"], env, readyMarker: "__INNER_READY__" };
+      },
+      async attachAndRelease() {
+        terminal.write("EQUINOX_GO\r");
+        queueMicrotask(() => terminal.emitData("__INNER_READY__\r\n"));
+        return 6200;
+      },
+      async ownedSetExists() {
+        if (helperLost) throw new Error("Windows Job Object helper is not available.");
+        return true;
+      },
+      async signalOwnedSet() { throw new Error("helper lost"); },
+      async closeOwnedSet() { closed = true; },
+    },
+    ptyModuleLoader: async () => ({ spawn: () => terminal }),
+    randomId: () => "lostpty1",
+    onEvent: async (event) => events.push(event),
+  });
+
+  const started = await manager.start({
+    projectId: "workspace", projectName: "Workspace", cwd: "C:\\Work", shell: "powershell.exe", shellArgs: ["-NoLogo"], env: {}, cols: 100, rows: 25,
+  });
+  assert.equal(started.running, true);
+
+  helperLost = true;
+  terminal.emitExit(143, 0);
+  for (let attempt = 0; attempt < 20 && manager.list()[0]?.running; attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+
+  const final = manager.list()[0];
+  assert.equal(final.running, false);
+  assert.equal(final.cleanupVerified, false);
+  assert.deepEqual(terminal.kills, [undefined], "helper loss must still dispose node-pty transport without a POSIX signal");
+  assert.equal(events.some((event) => event.type === "terminal.cleanup_failed"), true);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(closed, true);
 });
 
 test("terminal manager starts, writes, resizes and stops a PTY", async () => {
