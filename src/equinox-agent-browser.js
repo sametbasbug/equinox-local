@@ -333,9 +333,24 @@ export function createEquinoxAgentBrowser({
     }
     if (pids.length !== 1) throw new Error("Agent Browser ana process eşleşmesi belirsiz; güvenli kapanış reddedildi.");
     const [pid] = pids;
-    if (platform === "darwin") signalProcess(pid, "SIGTERM");
-    else await execFileAsync(WINDOWS_TASKKILL_BINARY, ["/PID", String(pid), "/T"], { timeout: 5_000, maxBuffer: 64 * 1024, windowsHide: true, env });
-    emit("shutdown_requested", { platform });
+    let forced = false;
+    if (platform === "darwin") {
+      signalProcess(pid, "SIGTERM");
+    } else {
+      const options = { timeout: 5_000, maxBuffer: 64 * 1024, windowsHide: true, env };
+      try {
+        await execFileAsync(WINDOWS_TASKKILL_BINARY, ["/PID", String(pid), "/T"], options);
+      } catch (error) {
+        if (!processAlive(pid)) {
+          emit("shutdown_graceful_race", { platform });
+        } else {
+          forced = true;
+          emit("shutdown_force_fallback", { platform });
+          await execFileAsync(WINDOWS_TASKKILL_BINARY, ["/PID", String(pid), "/T", "/F"], options);
+        }
+      }
+    }
+    emit("shutdown_requested", { platform, forced });
     const deadline = Date.now() + boundedTimeout;
     while (Date.now() < deadline) {
       if (!processAlive(pid) && !bridge.readyFor(EQUINOX_AGENT_BROWSER_CONTEXT)) {
@@ -344,7 +359,7 @@ export function createEquinoxAgentBrowser({
       }
       await new Promise((resolve) => setTimeout(resolve, 50));
     }
-    throw new Error("Agent Browser güvenli kapanış süresinde tamamen durmadı; zorla kapatma uygulanmadı.");
+    throw new Error("Agent Browser güvenli kapanış süresinde tamamen durmadı.");
   }
 
   async function ensureReady({ timeoutMs = DEFAULT_READY_TIMEOUT_MS } = {}) {
