@@ -3,7 +3,9 @@
 import { createEquinoxBrowserNativeHostRuntime } from "./equinox-browser-native-host-runtime.js";
 import { equinoxBrowserIpcEndpoint } from "./equinox-browser-socket.js";
 
-const BRIDGE_ENDPOINT = equinoxBrowserIpcEndpoint();
+const BRIDGE_ENDPOINT = equinoxBrowserIpcEndpoint({
+  namespace: process.env.EQUINOX_LOCAL_BROWSER_SOCKET_NAMESPACE || null,
+});
 const origin = process.argv[2] || null;
 
 const runtime = createEquinoxBrowserNativeHostRuntime({
