@@ -147,6 +147,27 @@ test("Windows shell exposes one origin-bound native folder picker bridge", async
   assert.ok(client.includes(`if (/^[A-Za-z]:[\\\\/](?!$)/u.test(value)) return true;`));
 });
 
+test("Windows shell branding reuses canonical Equinox artwork across window, executable and tray", async () => {
+  const [project, windowXaml, tray, iconBytes] = await Promise.all([
+    source("EquinoxLocal.WindowsShell.csproj"),
+    source("MainWindow.xaml"),
+    source("TrayIconController.cs"),
+    fs.readFile(path.join(SHELL, "Assets", "EquinoxLocal.ico")),
+  ]);
+
+  assert.match(project, /<ApplicationIcon>Assets\\EquinoxLocal\.ico<\/ApplicationIcon>/u);
+  assert.match(project, /\.\.\/\.\.\/\.\.\/app\/EquinoxLocal\.png/u);
+  assert.match(project, /Link="Assets\\EquinoxLocal\.png"/u);
+  assert.match(windowXaml, /Icon="Assets\/EquinoxLocal\.png"/u);
+  assert.match(tray, /Icon\.ExtractAssociatedIcon/u);
+  assert.match(tray, /Icon\s*=\s*_applicationIcon/u);
+  assert.match(tray, /_applicationIcon\.Dispose\(\)/u);
+  assert.doesNotMatch(tray, /Icon\s*=\s*SystemIcons\.Application/u);
+  assert.equal(iconBytes.readUInt16LE(0), 0);
+  assert.equal(iconBytes.readUInt16LE(2), 1);
+  assert.ok(iconBytes.readUInt16LE(4) >= 8, "Windows ICO should carry multiple native icon sizes");
+});
+
 test("public Windows CI restores and builds the native x64 shell", async () => {
   const publicCi = path.join(ROOT, ".github", "workflows", "ci.yml");
   const factoryCi = path.join(ROOT, "factory", "local", "public-template", ".github", "workflows", "ci.yml");
@@ -160,4 +181,6 @@ test("public Windows CI restores and builds the native x64 shell", async () => {
   assert.match(ci, /EQUINOX_TEST_NODE_EXE/u);
   assert.match(ci, /EquinoxLocal\.WindowsShell\.StartupHarness/u);
   assert.match(ci, /EquinoxLocal\.WindowsShell\.FolderPickerHarness/u);
+  assert.match(ci, /Windows native shell branding smoke/u);
+  assert.match(ci, /ExtractAssociatedIcon/u);
 });

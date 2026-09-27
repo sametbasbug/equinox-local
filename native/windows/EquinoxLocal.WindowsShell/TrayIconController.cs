@@ -5,6 +5,7 @@ namespace EquinoxLocal.WindowsShell;
 
 internal sealed class TrayIconController : IDisposable
 {
+    private readonly Icon _applicationIcon;
     private readonly ContextMenuStrip _menu;
     private readonly NotifyIcon _notifyIcon;
     private readonly ToolStripMenuItem _runtimeStatusItem;
@@ -27,14 +28,33 @@ internal sealed class TrayIconController : IDisposable
         _menu.Items.Add(new ToolStripSeparator());
         _menu.Items.Add(new ToolStripMenuItem("Exit Equinox Local", null, (_, _) => exitApplication()));
 
+        _applicationIcon = LoadApplicationIcon();
         _notifyIcon = new NotifyIcon
         {
-            Icon = SystemIcons.Application,
+            Icon = _applicationIcon,
             Text = "Equinox Local",
             ContextMenuStrip = _menu,
             Visible = true,
         };
         _notifyIcon.DoubleClick += (_, _) => openControlCenter();
+    }
+
+
+    private static Icon LoadApplicationIcon()
+    {
+        try
+        {
+            var executablePath = Environment.ProcessPath;
+            if (string.IsNullOrWhiteSpace(executablePath))
+                executablePath = System.Windows.Forms.Application.ExecutablePath;
+            using var extracted = Icon.ExtractAssociatedIcon(executablePath);
+            if (extracted is not null) return (Icon)extracted.Clone();
+        }
+        catch
+        {
+            // Branding must not make the resident tray shell fail to start.
+        }
+        return (Icon)SystemIcons.Application.Clone();
     }
 
     internal void SetRuntimeStatus(RuntimeHealthSnapshot status)
@@ -63,6 +83,7 @@ internal sealed class TrayIconController : IDisposable
     {
         _notifyIcon.Visible = false;
         _notifyIcon.Dispose();
+        _applicationIcon.Dispose();
         _menu.Dispose();
     }
 }
