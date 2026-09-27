@@ -202,6 +202,7 @@ import { createFreshChatResumeController } from "./fresh-chat-resume-controller.
 import { registerTaskCapsuleTools } from "./task-capsule-tools.js";
 import { startRuntimeLifecycle } from "./equinox-local-runtime-lifecycle.js";
 import { createTurnBudgetController } from "./turn-budget-controller.js";
+import { equinoxLocalPlatformPaths } from "./equinox-local-platform.js";
 
 export async function createEquinoxLocalRuntime({
   platform = process.platform,
@@ -212,6 +213,7 @@ export async function createEquinoxLocalRuntime({
 const execFile = promisify(execFileCallback);
 const runtimeHomeDir = homeDir;
 const runtimeEnv = env;
+const runtimePlatformPaths = equinoxLocalPlatformPaths({ platform, arch, homeDir: runtimeHomeDir, env: runtimeEnv });
 
 const equinoxLocalConfigManager = createEquinoxLocalConfigManager({
   platform,
@@ -2354,7 +2356,9 @@ const equinoxBrowserBridge = createEquinoxBrowserBridge({
 equinoxAgentBrowser = createEquinoxAgentBrowser({
   bridge: equinoxBrowserBridge,
   homeDir: runtimeHomeDir,
+  profileRoot: runtimePlatformPaths.browserRoot,
   platform,
+  env: runtimeEnv,
   execFileAsync: execFile,
   recordEvent: recordRuntimeEvent,
 });

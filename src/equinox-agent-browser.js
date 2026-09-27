@@ -5,34 +5,52 @@ import path from "node:path";
 export const EQUINOX_AGENT_BROWSER_CONTEXT = "agent";
 export const EQUINOX_BROWSER_STORE_URL = "https://chromewebstore.google.com/detail/equinox-browser/npdneefcobilfkjlihghjgjnknenhfoj";
 
-const OPEN_BINARY = "/usr/bin/open";
-const PS_BINARY = "/bin/ps";
-const CHROME_MAIN_PROCESS_FRAGMENT = "/Google Chrome.app/Contents/MacOS/Google Chrome ";
+const DARWIN_OPEN_BINARY = "/usr/bin/open";
+const DARWIN_PS_BINARY = "/bin/ps";
+const DARWIN_CHROME_MAIN_PROCESS_FRAGMENT = "/Google Chrome.app/Contents/MacOS/Google Chrome ";
+const WINDOWS_POWERSHELL_BINARY = "powershell.exe";
+const WINDOWS_TASKKILL_BINARY = "taskkill.exe";
 const DEFAULT_SHUTDOWN_TIMEOUT_MS = 5_000;
 const CHROME_APP_NAME = "Google Chrome";
 const NATIVE_HOST_NAME = "dev.equinox.browser";
 const PRODUCTION_EXTENSION_ORIGIN = "chrome-extension://npdneefcobilfkjlihghjgjnknenhfoj/";
 const READY_MARKER = ".equinox-agent-browser-ready";
 const DEFAULT_READY_TIMEOUT_MS = 8_000;
+const WINDOWS_CHROME_PROCESS_QUERY = "[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false); Get-CimInstance Win32_Process -Filter \"Name='chrome.exe'\" | Select-Object ProcessId,ExecutablePath,CommandLine | ConvertTo-Json -Compress";
+const WINDOWS_CHROME_LAUNCH_SCRIPT = "$profileArg = '--user-data-dir=\"' + $env:EQUINOX_AGENT_PROFILE + '\"'; Start-Process -FilePath $env:EQUINOX_AGENT_CHROME -ArgumentList @($profileArg,'--no-first-run','--no-default-browser-check',$env:EQUINOX_AGENT_URL) | Out-Null";
 
 function errorMessage(error) {
   return error instanceof Error ? error.message : String(error);
 }
 
-function agentBrowserRoot(homeDir) {
-  if (typeof homeDir !== "string" || !path.isAbsolute(homeDir)) {
-    throw new Error("Agent Browser için geçerli bir home dizini gerekli.");
-  }
-  return path.join(homeDir, "Library", "Application Support", "Equinox Local", "Agent Browser");
+function supportedPlatform(platform) {
+  return platform === "darwin" || platform === "win32";
 }
 
-async function ensurePrivateDirectory(directory) {
+function pathApiFor(platform) {
+  return platform === "win32" ? path.win32 : path.posix;
+}
+
+function requireAbsoluteForPlatform(value, platform, label) {
+  const pathApi = pathApiFor(platform);
+  if (typeof value !== "string" || !pathApi.isAbsolute(value)) throw new Error(`${label} geçersiz.`);
+  return pathApi.normalize(value);
+}
+
+function defaultAgentBrowserRoot(homeDir) {
+  if (typeof homeDir !== "string" || !path.posix.isAbsolute(homeDir)) {
+    throw new Error("Agent Browser için geçerli bir home dizini gerekli.");
+  }
+  return path.posix.join(homeDir, "Library", "Application Support", "Equinox Local", "Agent Browser");
+}
+
+async function ensurePrivateDirectory(directory, { platform = process.platform } = {}) {
   await fs.mkdir(directory, { recursive: true, mode: 0o700 });
   const stat = await fs.lstat(directory);
   if (!stat.isDirectory() || stat.isSymbolicLink()) {
     throw new Error("Agent Browser profil kökü güvenli bir klasör değil.");
   }
-  await fs.chmod(directory, 0o700);
+  if (platform === "darwin") await fs.chmod(directory, 0o700);
 }
 
 function agentNativeMessagingPaths(homeDir, profileRoot) {
@@ -74,10 +92,7 @@ async function assertSafeNativeHostWrapper(hostWrapperPath) {
 
 async function atomicWritePrivateManifest(manifestPath, content) {
   const parent = path.dirname(manifestPath);
-  const temporary = path.join(
-    parent,
-    `.${NATIVE_HOST_NAME}-${process.pid}-${randomBytes(8).toString("hex")}.tmp`,
-  );
+  const temporary = path.join(parent, `.${NATIVE_HOST_NAME}-${process.pid}-${randomBytes(8).toString("hex")}.tmp`);
   const handle = await fs.open(temporary, "wx", 0o600);
   try {
     await handle.writeFile(content, "utf8");
@@ -101,18 +116,12 @@ export async function ensureAgentBrowserNativeMessagingManifest({ homeDir, profi
   if (typeof profileRoot !== "string" || !path.isAbsolute(profileRoot)) {
     throw new Error("Agent Browser Native Messaging kurulumu için geçerli profil kökü gerekli.");
   }
-  await ensurePrivateDirectory(profileRoot);
+  await ensurePrivateDirectory(profileRoot, { platform: "darwin" });
   const paths = agentNativeMessagingPaths(homeDir, profileRoot);
   await assertSafeNativeHostWrapper(paths.hostWrapperPath);
-  await ensurePrivateDirectory(paths.manifestRoot);
-  await atomicWritePrivateManifest(
-    paths.manifestPath,
-    agentNativeMessagingManifest(paths.hostWrapperPath),
-  );
-  return Object.freeze({
-    manifestPath: paths.manifestPath,
-    hostWrapperPath: paths.hostWrapperPath,
-  });
+  await ensurePrivateDirectory(paths.manifestRoot, { platform: "darwin" });
+  await atomicWritePrivateManifest(paths.manifestPath, agentNativeMessagingManifest(paths.hostWrapperPath));
+  return Object.freeze({ manifestPath: paths.manifestPath, hostWrapperPath: paths.hostWrapperPath });
 }
 
 async function hasReadyMarker(profileRoot) {
@@ -122,61 +131,102 @@ async function hasReadyMarker(profileRoot) {
     throw error;
   });
   if (!stat) return false;
-  if (!stat.isFile() || stat.isSymbolicLink()) {
-    throw new Error("Agent Browser hazır işareti güvenli bir normal dosya değil.");
-  }
+  if (!stat.isFile() || stat.isSymbolicLink()) throw new Error("Agent Browser hazır işareti güvenli bir normal dosya değil.");
   return true;
 }
 
-async function writeReadyMarker(profileRoot) {
+async function writeReadyMarker(profileRoot, { platform = process.platform } = {}) {
   const marker = path.join(profileRoot, READY_MARKER);
   const temporary = path.join(profileRoot, `${READY_MARKER}.tmp`);
   await fs.rm(temporary, { force: true }).catch(() => {});
   try {
     await fs.writeFile(temporary, "ready\n", { flag: "wx", mode: 0o600 });
     await fs.rename(temporary, marker);
-    await fs.chmod(marker, 0o600);
+    if (platform === "darwin") await fs.chmod(marker, 0o600);
   } finally {
     await fs.rm(temporary, { force: true }).catch(() => {});
   }
 }
 
 export function buildAgentBrowserLaunchArgs(profileRoot, { setup = false } = {}) {
-  if (typeof profileRoot !== "string" || !path.isAbsolute(profileRoot)) {
-    throw new Error("Agent Browser profil kökü geçersiz.");
-  }
+  if (typeof profileRoot !== "string" || !path.isAbsolute(profileRoot)) throw new Error("Agent Browser profil kökü geçersiz.");
   return [
-    "-na",
-    CHROME_APP_NAME,
-    "--args",
-    `--user-data-dir=${profileRoot}`,
+    "-na", CHROME_APP_NAME, "--args", `--user-data-dir=${profileRoot}`,
+    "--no-first-run", "--no-default-browser-check", setup ? EQUINOX_BROWSER_STORE_URL : "about:blank",
+  ];
+}
+
+export function buildWindowsAgentBrowserLaunchArgs(profileRoot, { setup = false } = {}) {
+  const normalized = requireAbsoluteForPlatform(profileRoot, "win32", "Agent Browser profil kökü");
+  return [
+    `--user-data-dir=${normalized}`,
     "--no-first-run",
     "--no-default-browser-check",
     setup ? EQUINOX_BROWSER_STORE_URL : "about:blank",
   ];
 }
 
+export function windowsChromeInstallCandidates(env = process.env) {
+  const roots = [env?.LOCALAPPDATA, env?.ProgramFiles, env?.["ProgramFiles(x86)"]];
+  const seen = new Set();
+  const candidates = [];
+  for (const root of roots) {
+    if (typeof root !== "string" || !path.win32.isAbsolute(root)) continue;
+    const candidate = path.win32.join(root, "Google", "Chrome", "Application", "chrome.exe");
+    const key = candidate.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    candidates.push(candidate);
+  }
+  return Object.freeze(candidates);
+}
+
+export async function discoverWindowsChrome({ env = process.env, fsImpl = fs } = {}) {
+  for (const candidate of windowsChromeInstallCandidates(env)) {
+    const stat = await fsImpl.lstat(candidate).catch((error) => {
+      if (error?.code === "ENOENT") return null;
+      throw error;
+    });
+    if (stat?.isFile?.() && !stat.isSymbolicLink?.()) return candidate;
+  }
+  throw new Error("Google Chrome güvenilir Windows kurulum yollarında bulunamadı.");
+}
 
 export function parseAgentBrowserMainPids(psOutput, profileRoot) {
-  if (typeof profileRoot !== "string" || !path.isAbsolute(profileRoot)) {
-    throw new Error("Agent Browser profil kökü geçersiz.");
-  }
+  if (typeof profileRoot !== "string" || !path.isAbsolute(profileRoot)) throw new Error("Agent Browser profil kökü geçersiz.");
   const profileFlag = `--user-data-dir=${profileRoot}`;
-  return String(psOutput || "")
-    .split(/\r?\n/u)
-    .map((line) => line.trim())
-    .filter(Boolean)
+  return String(psOutput || "").split(/\r?\n/u).map((line) => line.trim()).filter(Boolean)
     .filter((line) => line.includes(profileFlag))
-    .filter((line) => line.includes(CHROME_MAIN_PROCESS_FRAGMENT))
+    .filter((line) => line.includes(DARWIN_CHROME_MAIN_PROCESS_FRAGMENT))
     .filter((line) => !line.includes("/Helpers/"))
     .map((line) => Number.parseInt(line.match(/^(\d+)\s+/u)?.[1] || "", 10))
+    .filter((pid) => Number.isInteger(pid) && pid > 1);
+}
+
+export function parseWindowsAgentBrowserMainPids(jsonOutput, profileRoot, chromePath) {
+  const normalizedProfile = requireAbsoluteForPlatform(profileRoot, "win32", "Agent Browser profil kökü").toLowerCase();
+  const normalizedChrome = requireAbsoluteForPlatform(chromePath, "win32", "Chrome executable").toLowerCase();
+  if (!String(jsonOutput || "").trim()) return [];
+  let decoded;
+  try { decoded = JSON.parse(String(jsonOutput)); } catch { throw new Error("Windows Chrome process inventory JSON is invalid."); }
+  const rows = Array.isArray(decoded) ? decoded : [decoded];
+  const profileFlag = `--user-data-dir=${normalizedProfile}`;
+  return rows.filter((row) => row && typeof row === "object")
+    .filter((row) => typeof row.ExecutablePath === "string" && path.win32.normalize(row.ExecutablePath).toLowerCase() === normalizedChrome)
+    .filter((row) => {
+      const command = String(row.CommandLine || "").replaceAll('"', "").toLowerCase();
+      return command.includes(profileFlag) && !/(?:^|\s)--type=/u.test(command);
+    })
+    .map((row) => Number(row.ProcessId))
     .filter((pid) => Number.isInteger(pid) && pid > 1);
 }
 
 export function createEquinoxAgentBrowser({
   bridge,
   homeDir = process.env.HOME,
+  profileRoot = null,
   platform = process.platform,
+  env = process.env,
   execFileAsync,
   signalProcess = process.kill.bind(process),
   recordEvent = () => {},
@@ -184,93 +234,93 @@ export function createEquinoxAgentBrowser({
   if (!bridge?.readyFor || !bridge?.waitUntilReady || !bridge?.expectContext || !bridge?.cancelExpectedContext) {
     throw new Error("Agent Browser için context-aware Equinox Browser bridge gerekli.");
   }
-  if (typeof execFileAsync !== "function") {
-    throw new Error("Agent Browser için execFileAsync gerekli.");
-  }
-  if (typeof signalProcess !== "function") {
-    throw new Error("Agent Browser için signalProcess gerekli.");
-  }
-  if (typeof recordEvent !== "function") {
-    throw new Error("Agent Browser recordEvent fonksiyonu geçersiz.");
-  }
+  if (typeof execFileAsync !== "function") throw new Error("Agent Browser için execFileAsync gerekli.");
+  if (typeof signalProcess !== "function") throw new Error("Agent Browser için signalProcess gerekli.");
+  if (typeof recordEvent !== "function") throw new Error("Agent Browser recordEvent fonksiyonu geçersiz.");
 
-  const profileRoot = agentBrowserRoot(homeDir);
+  const resolvedProfileRoot = profileRoot == null
+    ? defaultAgentBrowserRoot(homeDir)
+    : requireAbsoluteForPlatform(profileRoot, platform, "Agent Browser profil kökü");
   let lastLaunchAt = null;
   let lastLaunchSetup = null;
   let lastLaunchError = null;
   let setupComplete = null;
+  let lastChromePath = null;
 
   function emit(type, data = {}) {
     try {
-      const result = recordEvent({
-        component: "agent-browser",
-        type,
-        at: new Date().toISOString(),
-        ...data,
-      });
+      const result = recordEvent({ component: "agent-browser", type, at: new Date().toISOString(), ...data });
       if (result && typeof result.catch === "function") void result.catch(() => {});
-    } catch {
-      // Observability must never block browser startup.
-    }
+    } catch {}
+  }
+
+  async function resolveWindowsChrome() {
+    const chromePath = await discoverWindowsChrome({ env });
+    lastChromePath = chromePath;
+    return chromePath;
   }
 
   async function launch({ setup = false } = {}) {
-    if (platform !== "darwin") {
-      throw new Error("Agent Browser şu anda yalnız macOS üzerinde destekleniyor.");
-    }
-    await ensurePrivateDirectory(profileRoot);
-    await ensureAgentBrowserNativeMessagingManifest({ homeDir, profileRoot });
+    if (!supportedPlatform(platform)) throw new Error("Agent Browser bu platformda desteklenmiyor.");
+    await ensurePrivateDirectory(resolvedProfileRoot, { platform });
+    if (platform === "darwin") await ensureAgentBrowserNativeMessagingManifest({ homeDir, profileRoot: resolvedProfileRoot });
     bridge.expectContext(EQUINOX_AGENT_BROWSER_CONTEXT);
-    setupComplete = await hasReadyMarker(profileRoot);
+    setupComplete = await hasReadyMarker(resolvedProfileRoot);
     const shouldSetup = Boolean(setup || !setupComplete);
     try {
-      await execFileAsync(OPEN_BINARY, buildAgentBrowserLaunchArgs(profileRoot, { setup: shouldSetup }), {
-        timeout: 10_000,
-        maxBuffer: 64 * 1024,
-        env: {
-          HOME: homeDir,
-          PATH: "/usr/bin:/bin:/usr/sbin:/sbin",
-        },
-      });
+      if (platform === "darwin") {
+        await execFileAsync(DARWIN_OPEN_BINARY, buildAgentBrowserLaunchArgs(resolvedProfileRoot, { setup: shouldSetup }), {
+          timeout: 10_000, maxBuffer: 64 * 1024,
+          env: { HOME: homeDir, PATH: "/usr/bin:/bin:/usr/sbin:/sbin" },
+        });
+      } else {
+        const chromePath = await resolveWindowsChrome();
+        const chromeArgs = buildWindowsAgentBrowserLaunchArgs(resolvedProfileRoot, { setup: shouldSetup });
+        await execFileAsync(WINDOWS_POWERSHELL_BINARY, ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", WINDOWS_CHROME_LAUNCH_SCRIPT], {
+          timeout: 10_000, maxBuffer: 64 * 1024, windowsHide: true,
+          env: {
+            ...env,
+            EQUINOX_AGENT_CHROME: chromePath,
+            EQUINOX_AGENT_PROFILE: resolvedProfileRoot,
+            EQUINOX_AGENT_URL: chromeArgs.at(-1),
+          },
+        });
+      }
       lastLaunchAt = new Date().toISOString();
       lastLaunchSetup = shouldSetup;
       lastLaunchError = null;
-      emit("launch_requested", { setup: shouldSetup });
+      emit("launch_requested", { setup: shouldSetup, platform });
       return snapshot();
     } catch (error) {
       bridge.cancelExpectedContext();
       lastLaunchError = errorMessage(error).slice(0, 500);
-      emit("launch_failed", { message: lastLaunchError });
+      emit("launch_failed", { message: lastLaunchError, platform });
       throw new Error(`Agent Browser başlatılamadı: ${lastLaunchError}`);
     }
   }
 
   async function listMainProcessPids() {
-    const { stdout = "" } = await execFileAsync(PS_BINARY, ["-axo", "pid=,command="], {
-      timeout: 5_000,
-      maxBuffer: 512 * 1024,
-      env: {
-        HOME: homeDir,
-        PATH: "/usr/bin:/bin:/usr/sbin:/sbin",
-      },
+    if (platform === "darwin") {
+      const { stdout = "" } = await execFileAsync(DARWIN_PS_BINARY, ["-axo", "pid=,command="], {
+        timeout: 5_000, maxBuffer: 512 * 1024,
+        env: { HOME: homeDir, PATH: "/usr/bin:/bin:/usr/sbin:/sbin" },
+      });
+      return parseAgentBrowserMainPids(stdout, resolvedProfileRoot);
+    }
+    const chromePath = lastChromePath ?? await resolveWindowsChrome();
+    const { stdout = "" } = await execFileAsync(WINDOWS_POWERSHELL_BINARY, ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", WINDOWS_CHROME_PROCESS_QUERY], {
+      timeout: 5_000, maxBuffer: 512 * 1024, windowsHide: true, env,
     });
-    return parseAgentBrowserMainPids(stdout, profileRoot);
+    return parseWindowsAgentBrowserMainPids(stdout, resolvedProfileRoot, chromePath);
   }
 
   function processAlive(pid) {
-    try {
-      signalProcess(pid, 0);
-      return true;
-    } catch (error) {
-      if (error?.code === "ESRCH") return false;
-      throw error;
-    }
+    try { signalProcess(pid, 0); return true; }
+    catch (error) { if (error?.code === "ESRCH") return false; throw error; }
   }
 
   async function shutdown({ timeoutMs = DEFAULT_SHUTDOWN_TIMEOUT_MS } = {}) {
-    if (platform !== "darwin") {
-      throw new Error("Agent Browser şu anda yalnız macOS üzerinde destekleniyor.");
-    }
+    if (!supportedPlatform(platform)) throw new Error("Agent Browser bu platformda desteklenmiyor.");
     const boundedTimeout = Math.min(15_000, Math.max(500, Number(timeoutMs) || DEFAULT_SHUTDOWN_TIMEOUT_MS));
     bridge.cancelExpectedContext();
     const pids = await listMainProcessPids();
@@ -281,40 +331,51 @@ export function createEquinoxAgentBrowser({
       emit("shutdown_noop", {});
       return { ...snapshot(), stopped: true, alreadyStopped: true, processId: null };
     }
-    if (pids.length !== 1) {
-      throw new Error("Agent Browser ana process eşleşmesi belirsiz; güvenli kapanış reddedildi.");
-    }
+    if (pids.length !== 1) throw new Error("Agent Browser ana process eşleşmesi belirsiz; güvenli kapanış reddedildi.");
     const [pid] = pids;
-    signalProcess(pid, "SIGTERM");
-    emit("shutdown_requested", {});
+    let forced = false;
+    if (platform === "darwin") {
+      signalProcess(pid, "SIGTERM");
+    } else {
+      const options = { timeout: 5_000, maxBuffer: 64 * 1024, windowsHide: true, env };
+      try {
+        await execFileAsync(WINDOWS_TASKKILL_BINARY, ["/PID", String(pid), "/T"], options);
+      } catch (error) {
+        if (!processAlive(pid)) {
+          emit("shutdown_graceful_race", { platform });
+        } else {
+          forced = true;
+          emit("shutdown_force_fallback", { platform });
+          await execFileAsync(WINDOWS_TASKKILL_BINARY, ["/PID", String(pid), "/T", "/F"], options);
+        }
+      }
+    }
+    emit("shutdown_requested", { platform, forced });
     const deadline = Date.now() + boundedTimeout;
     while (Date.now() < deadline) {
       if (!processAlive(pid) && !bridge.readyFor(EQUINOX_AGENT_BROWSER_CONTEXT)) {
-        emit("shutdown_complete", {});
+        emit("shutdown_complete", { platform });
         return { ...snapshot(), stopped: true, alreadyStopped: false, processId: pid };
       }
       await new Promise((resolve) => setTimeout(resolve, 50));
     }
-    throw new Error("Agent Browser güvenli kapanış süresinde tamamen durmadı; zorla kapatma uygulanmadı.");
+    throw new Error("Agent Browser güvenli kapanış süresinde tamamen durmadı.");
   }
 
   async function ensureReady({ timeoutMs = DEFAULT_READY_TIMEOUT_MS } = {}) {
     if (bridge.readyFor(EQUINOX_AGENT_BROWSER_CONTEXT)) {
-      await ensurePrivateDirectory(profileRoot);
-      await writeReadyMarker(profileRoot);
+      await ensurePrivateDirectory(resolvedProfileRoot, { platform });
+      await writeReadyMarker(resolvedProfileRoot, { platform });
       setupComplete = true;
       return bridge.snapshotContext(EQUINOX_AGENT_BROWSER_CONTEXT);
     }
-
     await launch({ setup: false });
     try {
       const ready = await bridge.waitUntilReady(timeoutMs, { context: EQUINOX_AGENT_BROWSER_CONTEXT });
       bridge.cancelExpectedContext();
-      await writeReadyMarker(profileRoot);
+      await writeReadyMarker(resolvedProfileRoot, { platform });
       setupComplete = true;
-      emit("ready", {
-        extensionVersion: ready.extension?.extensionVersion ?? null,
-      });
+      emit("ready", { extensionVersion: ready.extension?.extensionVersion ?? null });
       return ready;
     } catch (error) {
       const pairing = bridge.snapshot().pairing;
@@ -326,14 +387,14 @@ export function createEquinoxAgentBrowser({
   }
 
   async function status() {
-    setupComplete = platform === "darwin" ? await hasReadyMarker(profileRoot) : false;
+    setupComplete = supportedPlatform(platform) ? await hasReadyMarker(resolvedProfileRoot) : false;
     return snapshot();
   }
 
   function snapshot() {
     const browser = bridge.snapshotContext(EQUINOX_AGENT_BROWSER_CONTEXT);
     return {
-      supported: platform === "darwin",
+      supported: supportedPlatform(platform),
       context: EQUINOX_AGENT_BROWSER_CONTEXT,
       isolated: true,
       ready: Boolean(browser.ready),
@@ -344,15 +405,10 @@ export function createEquinoxAgentBrowser({
       lastLaunchAt,
       lastLaunchSetup,
       lastLaunchError,
+      chromePath: lastChromePath,
       storeUrl: EQUINOX_BROWSER_STORE_URL,
     };
   }
 
-  return Object.freeze({
-    launch,
-    ensureReady,
-    shutdown,
-    status,
-    snapshot,
-  });
+  return Object.freeze({ launch, ensureReady, shutdown, status, snapshot });
 }
