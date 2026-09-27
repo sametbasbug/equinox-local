@@ -121,11 +121,21 @@ export function createTerminalProcessOwnershipAdapter({
       });
     },
     async attachAndRelease(ownedSet, terminal) {
-      if (!ownedSet || !Number.isInteger(terminal?.pid) || terminal.pid <= 0) {
+      if (!ownedSet || !terminal) {
         throw new Error("Windows PTY could not be attached before gate release.");
       }
-      await ownedSet.assign(terminal.pid);
+      const deadline = Date.now() + 5_000;
+      let pid = Number.isInteger(terminal.pid) && terminal.pid > 0 ? terminal.pid : null;
+      while (!pid && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        pid = Number.isInteger(terminal.pid) && terminal.pid > 0 ? terminal.pid : null;
+      }
+      if (!pid) {
+        throw new Error("Windows ConPTY process id did not become ready before Job Object assignment.");
+      }
+      await ownedSet.assign(pid);
       terminal.write("EQUINOX_GO\r");
+      return pid;
     },
     async ownedSetExists(ownedSet) {
       if (!ownedSet) return false;

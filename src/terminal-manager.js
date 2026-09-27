@@ -734,7 +734,8 @@ export function createTerminalManager({
     await session.ttyPromise;
     if (terminalOwnership.kind === "job-object") {
       try {
-        await terminalOwnership.attachAndRelease(session.ownedSet, terminal);
+        const ownedPid = await terminalOwnership.attachAndRelease(session.ownedSet, terminal);
+        if (Number.isInteger(ownedPid) && ownedPid > 0) session.pid = ownedPid;
         if (!await refreshOwnedPids(session)) throw new Error("Windows PTY Job Object ownership could not be verified.");
       } catch (error) {
         session.stopRequested = true;

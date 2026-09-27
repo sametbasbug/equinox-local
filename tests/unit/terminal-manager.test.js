@@ -93,7 +93,8 @@ async function startFake(manager) {
 }
 
 test("Windows terminal manager verifies Job Object ownership before exposing ConPTY", async () => {
-  const terminal = new FakeTerminal(6100);
+  const terminal = new FakeTerminal(0);
+  setTimeout(() => { terminal.pid = 6100; terminal.emitData("\u001b[0m"); }, 10);
   let active = true;
   let closed = false;
   const ownedSet = { id: "job-pty-1" };

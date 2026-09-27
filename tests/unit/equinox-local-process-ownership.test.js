@@ -25,7 +25,7 @@ test("Darwin background ownership delegates exact group probe/signal semantics",
   assert.deepEqual(signals, [[42, "SIGTERM"]]);
 });
 
-test("Windows background ownership is implemented while PTY ownership remains fail-closed", () => {
+test("Windows background and PTY ownership use Job Object adapters", () => {
   const background = createBackgroundProcessOwnershipAdapter({ platform: "win32", arch: "x64" });
   const terminal = createTerminalProcessOwnershipAdapter({ platform: "win32", arch: "x64" });
   assert.equal(background.kind, "job-object");

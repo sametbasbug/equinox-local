@@ -1,5 +1,8 @@
 $ErrorActionPreference = 'Stop'
 
+[Console]::Out.Write(([char]27).ToString() + '[0m')
+[Console]::Out.Flush()
+
 $gate = [Console]::In.ReadLine()
 if ($gate -ne 'EQUINOX_GO') {
     [Console]::Error.WriteLine('Equinox Windows PTY gate was not released.')
