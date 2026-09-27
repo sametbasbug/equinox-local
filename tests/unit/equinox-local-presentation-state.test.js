@@ -52,6 +52,36 @@ test("active task alone remains idle while preserving bounded task context", () 
   assert.equal(presentation.task.title, "Build native presentation foundation");
 });
 
+
+test("incomplete managed onboarding becomes shared setup-required presentation", () => {
+  const presentation = deriveEquinoxLocalPresentationState({
+    status: baseStatus(),
+    onboarding: { available: true, setupComplete: false, needsAttention: false, connectedThroughTunnel: false },
+    now: NOW,
+  });
+
+  assert.equal(presentation.state, "setup_required");
+  assert.equal(presentation.label, "Setup Required");
+  assert.equal(presentation.detail, "Open Control Center to finish first-time setup");
+  assert.deepEqual(presentation.setup, { available: true, complete: false, needsAttention: false });
+});
+
+test("setup attention uses shared presentation without overriding emergency stop", () => {
+  const onboarding = { available: true, setupComplete: false, needsAttention: true, issue: "Tunnel configuration needs attention." };
+  const attention = deriveEquinoxLocalPresentationState({ status: baseStatus(), onboarding, now: NOW });
+  assert.equal(attention.state, "needs_attention");
+  assert.equal(attention.detail, "Tunnel configuration needs attention.");
+
+  const stopped = deriveEquinoxLocalPresentationState({
+    status: baseStatus({
+      agentControl: { state: "PAUSED", paused: true, activeWork: { terminals: 0, processes: 0, total: 0 } },
+    }),
+    onboarding,
+    now: NOW,
+  });
+  assert.equal(stopped.state, "emergency_stopped");
+});
+
 test("managed active work drives working state independently of task lifetime", () => {
   const presentation = deriveEquinoxLocalPresentationState({
     status: baseStatus({

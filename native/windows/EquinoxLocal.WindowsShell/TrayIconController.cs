@@ -8,14 +8,17 @@ internal sealed class TrayIconController : IDisposable
     private readonly Icon _applicationIcon;
     private readonly ContextMenuStrip _menu;
     private readonly NotifyIcon _notifyIcon;
-    private readonly ToolStripMenuItem _runtimeStatusItem;
+    private readonly ToolStripMenuItem _presentationStatusItem;
+    private readonly ToolStripMenuItem _presentationDetailItem;
     private readonly ToolStripMenuItem _startupItem;
 
     internal TrayIconController(Action openControlCenter, Action openBrowser, Action startRuntime, Action restartRuntime, Action stopRuntime, Action toggleStartup, Action exitApplication)
     {
         _menu = new ContextMenuStrip();
-        _runtimeStatusItem = new ToolStripMenuItem("Runtime: Checking") { Enabled = false };
-        _menu.Items.Add(_runtimeStatusItem);
+        _presentationStatusItem = new ToolStripMenuItem("Status: Connecting") { Enabled = false };
+        _presentationDetailItem = new ToolStripMenuItem("Waiting for runtime") { Enabled = false };
+        _menu.Items.Add(_presentationStatusItem);
+        _menu.Items.Add(_presentationDetailItem);
         _menu.Items.Add(new ToolStripSeparator());
         _menu.Items.Add(new ToolStripMenuItem("Open Control Center", null, (_, _) => openControlCenter()));
         _menu.Items.Add(new ToolStripMenuItem("Open in browser", null, (_, _) => openBrowser()));
@@ -57,16 +60,12 @@ internal sealed class TrayIconController : IDisposable
         return (Icon)SystemIcons.Application.Clone();
     }
 
-    internal void SetRuntimeStatus(RuntimeHealthSnapshot status)
+    internal void SetPresentationStatus(ShellPresentationSnapshot status)
     {
-        var label = status.State switch
-        {
-            RuntimeHealthState.Healthy => "Healthy",
-            RuntimeHealthState.Unavailable => "Unavailable",
-            _ => "Checking",
-        };
-        _runtimeStatusItem.Text = $"Runtime: {label}";
-        _notifyIcon.Text = $"Equinox Local · {label}";
+        _presentationStatusItem.Text = $"Status: {status.Label}";
+        _presentationDetailItem.Text = status.Detail;
+        var tooltip = $"Equinox Local · {status.Label}";
+        _notifyIcon.Text = tooltip.Length <= 127 ? tooltip : tooltip[..126] + "…";
     }
 
     internal void SetStartupStatus(StartupRegistrationSnapshot status)

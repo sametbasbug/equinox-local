@@ -77,9 +77,10 @@ function notificationFor({ tasks, healthState, nowMs }) {
   return null;
 }
 
-export function deriveEquinoxLocalPresentationState({ status, tasks = [], now = Date.now() } = {}) {
+export function deriveEquinoxLocalPresentationState({ status, tasks = [], onboarding = null, now = Date.now() } = {}) {
   const safeStatus = status && typeof status === "object" ? status : {};
   const safeTasks = Array.isArray(tasks) ? tasks.filter((task) => task && typeof task === "object") : [];
+  const safeOnboarding = onboarding && typeof onboarding === "object" ? onboarding : {};
   const nowMs = Number.isFinite(now) ? now : Date.now();
   const healthState = String(safeStatus.health?.state ?? "UNKNOWN").toUpperCase();
   const paused = safeStatus.agentControl?.paused === true || safeStatus.agentControl?.state === "PAUSED";
@@ -106,6 +107,10 @@ export function deriveEquinoxLocalPresentationState({ status, tasks = [], now = 
     && nowMs >= completedAtMs
     && nowMs - completedAtMs <= SUCCESS_STATE_WINDOW_MS;
   const healthNeedsAttention = healthState !== "HEALTHY";
+  const setupAvailable = safeOnboarding.available === true;
+  const setupComplete = !setupAvailable || safeOnboarding.setupComplete === true;
+  const setupRequired = setupAvailable && !setupComplete;
+  const setupNeedsAttention = setupRequired && safeOnboarding.needsAttention === true;
 
   let state = "idle";
   let label = "Idle";
@@ -115,12 +120,22 @@ export function deriveEquinoxLocalPresentationState({ status, tasks = [], now = 
     state = "emergency_stopped";
     label = "Emergency Stopped";
     detail = "Agent mutations are paused";
-  } else if (attentionTask || healthNeedsAttention) {
+  } else if (attentionTask || healthNeedsAttention || setupNeedsAttention) {
     state = "needs_attention";
     label = "Needs Attention";
     detail = attentionTask
       ? `${boundedTitle(attentionTask.title)} needs recovery`
-      : "Runtime health needs attention";
+      : setupNeedsAttention
+        ? (typeof safeOnboarding.issue === "string" && safeOnboarding.issue.trim()
+          ? safeOnboarding.issue.trim().slice(0, 160)
+          : "First-time setup needs attention")
+        : "Runtime health needs attention";
+  } else if (setupRequired) {
+    state = "setup_required";
+    label = "Setup Required";
+    detail = safeOnboarding.connectedThroughTunnel === true
+      ? "Finish first-time setup in Control Center"
+      : "Open Control Center to finish first-time setup";
   } else if (waitingTask) {
     state = "waiting";
     label = "Waiting";
@@ -149,6 +164,11 @@ export function deriveEquinoxLocalPresentationState({ status, tasks = [], now = 
     }),
     browser: Object.freeze({
       agentReady: agentBrowserReady,
+    }),
+    setup: Object.freeze({
+      available: setupAvailable,
+      complete: setupComplete,
+      needsAttention: setupNeedsAttention,
     }),
     notification: notificationFor({ tasks: safeTasks, healthState, nowMs }),
   });
