@@ -110,11 +110,35 @@ async function verifyWindowsAgentBrowserLifecycle(root) {
   assert.equal(path.win32.normalize(launched.chromePath).toLowerCase(), path.win32.normalize(chromePath).toLowerCase());
 
   const processQuery = "Get-CimInstance Win32_Process -Filter \"Name='chrome.exe'\" | Select-Object ProcessId,ExecutablePath,CommandLine | ConvertTo-Json -Compress";
+  let lastInventory = "";
+  let lastDiagnostics = [];
   const processId = await waitFor(async () => {
     const { stdout = "" } = await execFile("powershell.exe", ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", processQuery], { timeout: 5_000, windowsHide: true });
+    lastInventory = stdout;
+    let decoded = [];
+    try {
+      const raw = stdout.trim() ? JSON.parse(stdout) : [];
+      decoded = Array.isArray(raw) ? raw : [raw];
+    } catch {}
+    const normalizedChrome = path.win32.normalize(chromePath).toLowerCase();
+    const normalizedProfile = path.win32.normalize(profileRoot).toLowerCase();
+    lastDiagnostics = decoded.filter((row) => row && typeof row === "object").map((row) => {
+      const executable = typeof row.ExecutablePath === "string" ? path.win32.normalize(row.ExecutablePath).toLowerCase() : "";
+      const command = String(row.CommandLine || "").toLowerCase();
+      return {
+        pid: Number(row.ProcessId) || null,
+        executableMatch: executable === normalizedChrome,
+        hasUserDataDir: command.includes("--user-data-dir"),
+        hasProfileText: command.includes(normalizedProfile),
+        hasTypeFlag: /(?:^|\s)--type=/u.test(command.replaceAll('"', "")),
+      };
+    });
     const pids = parseWindowsAgentBrowserMainPids(stdout, profileRoot, chromePath);
     return pids.length === 1 ? pids[0] : null;
-  }, "Windows Agent Browser exact isolated Chrome main process did not appear", 10_000);
+  }, `Windows Agent Browser exact isolated Chrome main process did not appear; inventory=${JSON.stringify(lastDiagnostics)}`, 10_000).catch((error) => {
+    process.stdout.write(`[windows-agent-browser] diagnostics ${JSON.stringify(lastDiagnostics)}\n`);
+    throw error;
+  });
   assert.equal(pidExists(processId), true);
 
   const stopped = await manager.shutdown({ timeoutMs: 8_000 });
