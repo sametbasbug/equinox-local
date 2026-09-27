@@ -92,17 +92,64 @@ async function startFake(manager) {
   });
 }
 
-test("Windows terminal manager refuses to spawn before Job Object PTY ownership exists", async () => {
-  let ptyLoads = 0;
+test("Windows terminal manager verifies Job Object ownership before exposing ConPTY", async () => {
+  const terminal = new FakeTerminal(6100);
+  let active = true;
+  let closed = false;
+  const ownedSet = { id: "job-pty-1" };
+  const calls = [];
+  const ownershipAdapter = {
+    kind: "job-object",
+    implemented: true,
+    requiresVerifiedOwnership: true,
+    gracefulSignal: "SIGTERM",
+    forceSignal: "SIGKILL",
+    async createOwnedSet() { calls.push("create"); return ownedSet; },
+    spawnSpec(command, args, env) {
+      calls.push(["spec", command, args]);
+      return { command: "powershell.exe", args: ["-File", "pty-gate.ps1"], env: { ...env, EQUINOX_TEST_PTY_GATE: "1" } };
+    },
+    async attachAndRelease(set, instance) {
+      assert.equal(set, ownedSet);
+      assert.equal(instance, terminal);
+      calls.push("attach-release");
+      instance.write("EQUINOX_GO\r");
+    },
+    async ownedSetExists(set) { assert.equal(set, ownedSet); return active; },
+    async signalOwnedSet(set, signal) { assert.equal(set, ownedSet); calls.push(["terminate", signal]); active = false; },
+    async closeOwnedSet(set) { assert.equal(set, ownedSet); closed = true; },
+  };
+  const spawnCalls = [];
   const manager = createTerminalManager({
     platform: "win32",
     arch: "x64",
-    ptyModuleLoader: async () => { ptyLoads += 1; return { spawn: () => new FakeTerminal() }; },
+    ownershipAdapter,
+    ptyModuleLoader: async () => ({
+      spawn: (command, args, options) => { spawnCalls.push({ command, args, options }); return terminal; },
+    }),
+    randomId: () => "winpty1",
   });
-  await assert.rejects(() => manager.start({
+  const started = await manager.start({
     projectId: "workspace", projectName: "Workspace", cwd: "C:\\Work", shell: "powershell.exe", shellArgs: ["-NoLogo"], env: {}, cols: 100, rows: 25,
-  }), /implemented process-ownership adapter/u);
-  assert.equal(ptyLoads, 0);
+  });
+  assert.equal(started.running, true);
+  assert.equal(started.sessionId, "term-winpty1");
+  assert.equal(spawnCalls[0].command, "powershell.exe");
+  assert.deepEqual(spawnCalls[0].args, ["-File", "pty-gate.ps1"]);
+  assert.deepEqual(calls.slice(0, 3), ["create", ["spec", "powershell.exe", ["-NoLogo"]], "attach-release"]);
+  assert.deepEqual(terminal.writes, ["EQUINOX_GO\r"]);
+
+  manager.write({ sessionId: started.sessionId, data: "Write-Output ok", key: "enter" });
+  manager.resize({ sessionId: started.sessionId, cols: 140, rows: 42 });
+  assert.deepEqual(terminal.resizes, [[140, 42]]);
+  assert.deepEqual(terminal.writes.slice(1), ["Write-Output ok", "\r"]);
+
+  const stopped = await manager.stop({ sessionId: started.sessionId });
+  assert.equal(stopped.running, false);
+  assert.equal(stopped.cleanupVerified, true);
+  assert.deepEqual(calls.at(-1), ["terminate", "SIGTERM"]);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(closed, true);
 });
 
 test("terminal manager starts, writes, resizes and stops a PTY", async () => {

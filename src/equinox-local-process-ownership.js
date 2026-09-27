@@ -5,8 +5,13 @@ import { equinoxLocalReleaseTarget } from "./equinox-local-platform.js";
 import { createWindowsJobObjectLease } from "./equinox-local-windows-job-object.js";
 
 const WINDOWS_GATE_PATH = path.join(path.dirname(fileURLToPath(import.meta.url)), "equinox-local-windows-process-gate.ps1");
+const WINDOWS_PTY_GATE_PATH = path.join(path.dirname(fileURLToPath(import.meta.url)), "equinox-local-windows-pty-gate.ps1");
 
 function encodeWindowsOwnedProcess(command, args) {
+  return Buffer.from(JSON.stringify({ command, args }), "utf8").toString("base64");
+}
+
+function encodeWindowsOwnedPty(command, args) {
   return Buffer.from(JSON.stringify({ command, args }), "utf8").toString("base64");
 }
 
@@ -96,10 +101,44 @@ export function createTerminalProcessOwnershipAdapter({
   }
   return Object.freeze({
     kind: "job-object",
-    implemented: false,
+    implemented: true,
     requiresVerifiedOwnership: true,
-    gracefulSignal: null,
-    forceSignal: null,
+    gracefulSignal: "SIGTERM",
+    forceSignal: "SIGKILL",
+    async createOwnedSet() {
+      return createWindowsJobObjectLease({ platform });
+    },
+    spawnSpec(command, args, env) {
+      return Object.freeze({
+        command: "powershell.exe",
+        args: Object.freeze([
+          "-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", WINDOWS_PTY_GATE_PATH,
+        ]),
+        env: Object.freeze({
+          ...env,
+          EQUINOX_LOCAL_OWNED_PTY_SPEC: encodeWindowsOwnedPty(command, args),
+        }),
+      });
+    },
+    async attachAndRelease(ownedSet, terminal) {
+      if (!ownedSet || !Number.isInteger(terminal?.pid) || terminal.pid <= 0) {
+        throw new Error("Windows PTY could not be attached before gate release.");
+      }
+      await ownedSet.assign(terminal.pid);
+      terminal.write("EQUINOX_GO\r");
+    },
+    async ownedSetExists(ownedSet) {
+      if (!ownedSet) return false;
+      const status = await ownedSet.status();
+      return Number(status.activeProcesses) > 0;
+    },
+    async signalOwnedSet(ownedSet, signal) {
+      if (!ownedSet) throw new Error("Windows PTY Job Object ownership handle is missing.");
+      await ownedSet.terminate(signal === "SIGKILL" ? 137 : 143);
+    },
+    async closeOwnedSet(ownedSet) {
+      await ownedSet?.close?.();
+    },
   });
 }
 
