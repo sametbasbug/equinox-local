@@ -17,7 +17,7 @@ const PRODUCTION_EXTENSION_ORIGIN = "chrome-extension://npdneefcobilfkjlihghjgjn
 const READY_MARKER = ".equinox-agent-browser-ready";
 const DEFAULT_READY_TIMEOUT_MS = 8_000;
 const WINDOWS_CHROME_PROCESS_QUERY = "Get-CimInstance Win32_Process -Filter \"Name='chrome.exe'\" | Select-Object ProcessId,ExecutablePath,CommandLine | ConvertTo-Json -Compress";
-const WINDOWS_CHROME_LAUNCH_SCRIPT = "Start-Process -FilePath $env:EQUINOX_AGENT_CHROME -ArgumentList @($env:EQUINOX_AGENT_PROFILE_ARG,'--no-first-run','--no-default-browser-check',$env:EQUINOX_AGENT_URL) | Out-Null";
+const WINDOWS_CHROME_LAUNCH_SCRIPT = "$profileArg = '--user-data-dir=\"' + $env:EQUINOX_AGENT_PROFILE + '\"'; Start-Process -FilePath $env:EQUINOX_AGENT_CHROME -ArgumentList @($profileArg,'--no-first-run','--no-default-browser-check',$env:EQUINOX_AGENT_URL) | Out-Null";
 
 function errorMessage(error) {
   return error instanceof Error ? error.message : String(error);
@@ -281,7 +281,7 @@ export function createEquinoxAgentBrowser({
           env: {
             ...env,
             EQUINOX_AGENT_CHROME: chromePath,
-            EQUINOX_AGENT_PROFILE_ARG: chromeArgs[0],
+            EQUINOX_AGENT_PROFILE: resolvedProfileRoot,
             EQUINOX_AGENT_URL: chromeArgs.at(-1),
           },
         });
