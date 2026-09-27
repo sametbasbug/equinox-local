@@ -381,6 +381,7 @@ test("terminal_exec-purpose non-zero exit is a command result, not a runtime cra
   const events = [];
   const manager = createProcessManager({
     spawnImpl: () => child,
+    groupExistsImpl: () => false,
     randomId: () => "cmdexit1",
     onEvent: (event) => events.push(event),
   });

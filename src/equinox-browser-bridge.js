@@ -110,6 +110,7 @@ function sameSocketIdentity(left, right) {
 }
 
 export function createEquinoxBrowserBridge({
+  bridgeEndpoint = null,
   socketPath = EQUINOX_BROWSER_SOCKET_PATH,
   expectedExtensionIds = EQUINOX_BROWSER_EXTENSION_IDS,
   callTimeoutMs = 15_000,
@@ -122,6 +123,17 @@ export function createEquinoxBrowserBridge({
   maxPendingCalls = MAX_BRIDGE_PENDING_CALLS,
   partialLineTimeoutMs = DEFAULT_PARTIAL_LINE_TIMEOUT_MS,
 } = {}) {
+  const transportEndpoint = bridgeEndpoint ?? (socketPath
+    ? Object.freeze({ kind: "unix", endpoint: socketPath, implemented: true })
+    : null);
+  if (transportEndpoint && !new Set(["unix", "named-pipe"]).has(transportEndpoint.kind)) {
+    throw new Error("Equinox Browser IPC endpoint kind is unsupported.");
+  }
+  if (transportEndpoint && transportEndpoint.implemented !== true) {
+    throw new Error(`Equinox Browser IPC endpoint ${transportEndpoint.kind} is not implemented.`);
+  }
+  const transportPath = transportEndpoint?.endpoint ?? null;
+
   let server = null;
   let startedAt = null;
   let nextCommandId = 1;
@@ -668,28 +680,32 @@ export function createEquinoxBrowserBridge({
 
   async function start() {
     if (server) return snapshot();
-    if (!socketPath) {
+    if (!transportPath) {
       throw new Error("Equinox Browser local IPC transport is not implemented on this platform yet.");
     }
-    if (socketPath === EQUINOX_BROWSER_SOCKET_PATH) {
-      await prepareEquinoxBrowserSocketDirectory();
-    } else {
-      await fs.mkdir(path.dirname(socketPath), { recursive: true });
+    if (transportEndpoint.kind === "unix") {
+      if (transportPath === EQUINOX_BROWSER_SOCKET_PATH) {
+        await prepareEquinoxBrowserSocketDirectory();
+      } else {
+        await fs.mkdir(path.dirname(transportPath), { recursive: true });
+      }
+      await prepareBridgeSocketPath(transportPath);
     }
-    await prepareBridgeSocketPath(socketPath);
 
     server = net.createServer(attachHost);
     try {
       await new Promise((resolve, reject) => {
         server.once("error", reject);
-        server.listen(socketPath, resolve);
+        server.listen(transportPath, resolve);
       });
-      await fs.chmod(socketPath, 0o600);
-      const socketStat = await fs.lstat(socketPath);
-      if (!socketStat.isSocket() || socketStat.isSymbolicLink()) {
-        throw new Error("Equinox Browser bridge did not create a safe Unix socket.");
+      if (transportEndpoint.kind === "unix") {
+        await fs.chmod(transportPath, 0o600);
+        const socketStat = await fs.lstat(transportPath);
+        if (!socketStat.isSocket() || socketStat.isSymbolicLink()) {
+          throw new Error("Equinox Browser bridge did not create a safe Unix socket.");
+        }
+        ownedSocketIdentity = { dev: socketStat.dev, ino: socketStat.ino };
       }
-      ownedSocketIdentity = { dev: socketStat.dev, ino: socketStat.ino };
     } catch (error) {
       const failedServer = server;
       server = null;
@@ -697,7 +713,7 @@ export function createEquinoxBrowserBridge({
       throw error;
     }
     startedAt = nowIso();
-    emit("started", { socketPath });
+    emit("started", { socketPath: transportPath, transportKind: transportEndpoint.kind });
     return snapshot();
   }
 
@@ -718,12 +734,12 @@ export function createEquinoxBrowserBridge({
       await new Promise((resolve) => closingServer.close(() => resolve()));
     }
     if (ownedSocketIdentity) {
-      const current = await fs.lstat(socketPath).catch((error) => {
+      const current = await fs.lstat(transportPath).catch((error) => {
         if (error?.code === "ENOENT") return null;
         throw error;
       });
       if (sameSocketIdentity(current, ownedSocketIdentity)) {
-        await fs.rm(socketPath, { force: true });
+        await fs.rm(transportPath, { force: true });
       }
       ownedSocketIdentity = null;
     }
@@ -743,7 +759,8 @@ export function createEquinoxBrowserBridge({
     return {
       active: Boolean(server),
       ready: user.ready,
-      socketPath,
+      socketPath: transportPath,
+      transportKind: transportEndpoint?.kind ?? null,
       expectedExtensionId,
       expectedExtensionIds: acceptedExtensionIds,
       expectedOrigin,
@@ -826,7 +843,7 @@ export function createEquinoxBrowserBridge({
       return contextIsReady(DEFAULT_EQUINOX_BROWSER_CONTEXT);
     },
     get socketPath() {
-      return socketPath;
+      return transportPath;
     },
   };
 }

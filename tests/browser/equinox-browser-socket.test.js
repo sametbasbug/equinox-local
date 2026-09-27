@@ -43,7 +43,7 @@ test("root or missing uid is rejected", async () => {
 });
 
 
-test("browser IPC contract models a future Windows named pipe without claiming it is implemented", () => {
+test("browser IPC contract exposes the implemented Windows named pipe", () => {
   assert.deepEqual(equinoxBrowserIpcEndpoint({ platform: "darwin", uid: 501, namespace: "smoke" }), {
     kind: "unix",
     endpoint: "/tmp/equinox-local-501-smoke/browser.sock",
@@ -52,7 +52,7 @@ test("browser IPC contract models a future Windows named pipe without claiming i
   assert.deepEqual(equinoxBrowserIpcEndpoint({ platform: "win32", namespace: "smoke" }), {
     kind: "named-pipe",
     endpoint: "\\\\.\\pipe\\equinox-local-browser-smoke",
-    implemented: false,
+    implemented: true,
   });
   assert.throws(() => equinoxBrowserIpcEndpoint({ platform: "linux" }), /unsupported/u);
 });

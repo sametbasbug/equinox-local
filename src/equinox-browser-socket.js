@@ -40,7 +40,7 @@ export function equinoxBrowserIpcEndpoint({
     return Object.freeze({
       kind: "named-pipe",
       endpoint: `\\\\.\\pipe\\equinox-local-browser${suffix}`,
-      implemented: false,
+      implemented: true,
     });
   }
   throw new Error(`Equinox Browser IPC is unsupported on ${platform}.`);
