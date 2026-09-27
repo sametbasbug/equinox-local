@@ -1,7 +1,7 @@
 const REQUIRED_AUTO_CONTINUE_VERSION = 1;
 const DEFAULT_POLL_MS = 600;
 const DEFAULT_QUIET_MS = 1_200;
-const MAX_CHAIN_HOPS = 3;
+const MAX_CHAIN_HOPS = 5;
 
 function errorMessage(error) {
   return error instanceof Error ? error.message : String(error);

@@ -467,7 +467,7 @@ export function createTaskCapsuleStore({ rootDir, now = () => Date.now(), random
     if (record.status !== "active") throw new Error("Only active Task Capsules can arm Auto Continue.");
     assertNoLiveFreshResume(record, "arm Auto Continue");
     if (!Number.isInteger(ttlMinutes) || ttlMinutes < 1 || ttlMinutes > MAX_TTL_MINUTES) throw new Error(`Auto Continue TTL must be between 1 and ${MAX_TTL_MINUTES} minutes.`);
-    if (!Number.isInteger(hop) || hop < 1 || hop > 3) throw new Error("Auto Continue hop must be between 1 and 3.");
+    if (!Number.isInteger(hop) || hop < 1 || hop > 5) throw new Error("Auto Continue hop must be between 1 and 5.");
     const armedAtMs = now();
     record.continuation = { continuationId: `cont-${randomId()}`, status: "armed", checkpointRevision: record.checkpointRevision, armedAt: iso(armedAtMs), expiresAt: iso(armedAtMs + ttlMinutes * 60_000), chainId: chainId || `chain-${randomId()}`, hop, target: normalizeContinuationTarget(target), reason: null };
     record.updatedAt = iso(now());

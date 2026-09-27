@@ -9,7 +9,7 @@
         MinHeight="620"
         WindowStartupLocation="CenterScreen"
         Loaded="OnLoaded"
-        Closed="OnClosed">
+        Closing="OnClosing">
   <Grid>
     <wv2:WebView2 x:Name="ControlCenterView" />
 

@@ -2,9 +2,11 @@ using System.Windows;
 
 namespace EquinoxLocal.WindowsShell;
 
-public partial class App : Application
+public partial class App : System.Windows.Application
 {
     private SingleInstanceCoordinator? _singleInstance;
+    private TrayIconController? _trayIcon;
+    private MainWindow? _window;
 
     protected override void OnStartup(StartupEventArgs e)
     {
@@ -29,16 +31,32 @@ public partial class App : Application
             return;
         }
 
-        var window = new MainWindow();
-        MainWindow = window;
+        _window = new MainWindow();
+        MainWindow = _window;
         _singleInstance.ReopenRequested += (_, _) =>
-            Dispatcher.BeginInvoke(new Action(window.ActivateFromReopen));
+            Dispatcher.BeginInvoke(new Action(_window.ActivateFromReopen));
         _singleInstance.StartListening();
-        window.Show();
+
+        _trayIcon = new TrayIconController(
+            openControlCenter: () => Dispatcher.BeginInvoke(new Action(_window.ActivateFromReopen)),
+            openBrowser: () => Dispatcher.BeginInvoke(new Action(() => _window.OpenControlCenterInBrowser(force: true))),
+            exitApplication: () => Dispatcher.BeginInvoke(new Action(ExitApplication)));
+
+        _window.Show();
+    }
+
+    private void ExitApplication()
+    {
+        _window?.PrepareForExit();
+        _trayIcon?.Dispose();
+        _trayIcon = null;
+        Shutdown();
     }
 
     protected override void OnExit(ExitEventArgs e)
     {
+        _trayIcon?.Dispose();
+        _trayIcon = null;
         _singleInstance?.Dispose();
         base.OnExit(e);
     }
