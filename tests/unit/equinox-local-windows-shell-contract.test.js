@@ -19,6 +19,7 @@ test("Windows shell is a thin x64 WPF/WebView2 host for the shared Control Cente
 
   assert.match(project, /<TargetFramework>net8\.0-windows10\.0\.19041\.0<\/TargetFramework>/u);
   assert.match(project, /<UseWPF>true<\/UseWPF>/u);
+  assert.match(project, /<UseWindowsForms>true<\/UseWindowsForms>/u);
   assert.match(project, /<PlatformTarget>x64<\/PlatformTarget>/u);
   assert.match(project, /Microsoft\.Web\.WebView2/u);
   assert.match(window, /http:\/\/127\.0\.0\.1:24891\//u);
@@ -41,6 +42,28 @@ test("Windows shell single-instance reopen channel is local-user-only", async ()
   assert.match(coordinator, /NamedPipeServerStream/u);
   assert.match(coordinator, /PipeOptions\.CurrentUserOnly/u);
   assert.match(coordinator, /string\.Equals\(command, "reopen", StringComparison\.Ordinal\)/u);
+});
+
+
+test("Windows shell tray lifecycle keeps close-to-tray distinct from explicit exit", async () => {
+  const [app, window, tray] = await Promise.all([
+    source("App.xaml.cs"),
+    source("MainWindow.xaml.cs"),
+    source("TrayIconController.cs"),
+  ]);
+
+  assert.match(tray, /new NotifyIcon/u);
+  assert.match(tray, /new ContextMenuStrip/u);
+  assert.match(tray, /Open Control Center/u);
+  assert.match(tray, /Open in browser/u);
+  assert.match(tray, /Exit Equinox Local/u);
+  assert.match(tray, /DoubleClick/u);
+  assert.match(window, /e\.Cancel\s*=\s*true/u);
+  assert.match(window, /Hide\(\)/u);
+  assert.match(window, /PrepareForExit/u);
+  assert.match(app, /new TrayIconController/u);
+  assert.match(app, /PrepareForExit\(\)/u);
+  assert.match(app, /Shutdown\(\)/u);
 });
 
 test("public Windows CI restores and builds the native x64 shell", async () => {

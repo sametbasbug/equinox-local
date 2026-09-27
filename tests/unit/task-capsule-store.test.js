@@ -110,6 +110,18 @@ test("Telegram human-input attachments expose bounded metadata but keep private 
   }), /storage path is invalid/u);
 });
 
+
+test("Auto Continue hop validation allows five and rejects a sixth automatic hop", async (t) => {
+  const { store } = await fixture(t);
+  const task = await store.checkpoint(base);
+  const armed = await store.armContinuation({ taskId: task.taskId, chainId: "chain-five-hop", hop: 5 });
+  assert.equal(armed.continuation.hop, 5);
+  await assert.rejects(
+    () => store.armContinuation({ taskId: task.taskId, chainId: "chain-five-hop", hop: 6 }),
+    /between 1 and 5/u,
+  );
+});
+
 test("new checkpoint cancels an older continuation and terminal states stay terminal", async (t) => {
   const { store } = await fixture(t);
   const created = await store.checkpoint(base);

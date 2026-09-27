@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Diagnostics;
 using System.Windows;
 using Microsoft.Web.WebView2.Core;
@@ -8,6 +9,7 @@ public partial class MainWindow : Window
 {
     internal const string ControlCenterUrl = "http://127.0.0.1:24891/";
     private bool _fallbackOpened;
+    private bool _exitRequested;
 
     public MainWindow()
     {
@@ -44,7 +46,7 @@ public partial class MainWindow : Window
         OpenControlCenterInBrowser(force: true);
     }
 
-    private void OpenControlCenterInBrowser(bool force = false)
+    internal void OpenControlCenterInBrowser(bool force = false)
     {
         if (_fallbackOpened && !force) return;
         _fallbackOpened = true;
@@ -74,8 +76,15 @@ public partial class MainWindow : Window
         Focus();
     }
 
-    private void OnClosed(object? sender, EventArgs e)
+    internal void PrepareForExit()
     {
-        Application.Current.Shutdown();
+        _exitRequested = true;
+    }
+
+    private void OnClosing(object? sender, CancelEventArgs e)
+    {
+        if (_exitRequested) return;
+        e.Cancel = true;
+        Hide();
     }
 }
