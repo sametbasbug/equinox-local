@@ -6,7 +6,7 @@ This project follows semantic versioning for public releases.
 
 ## [Unreleased]
 
-- Updated Equinox Browser development turn observation for the current ChatGPT DOM: Browser 0.7.1 recognizes `data-turn-key`/current search-unit/composer markers, Turn Budget uses a dedicated browser identity resolver and can bind to the current user epoch before the assistant turn key exists, while Auto Continue remains strict and fail-closed.
+- Updated Equinox Browser development turn observation for the current ChatGPT DOM: Browser 0.7.1 recognizes `data-turn-key`/current search-unit/composer markers, uses the modern `data-turn-key` as the stable continuity identity before and after late assistant search-unit hydration, and keeps Turn Budget, Auto Continue and Fresh Chat Resume on the same fail-closed turn boundary.
 - Restored successful fresh-install presentation without reintroducing duplicate native shells: the terminal installer now asks LaunchServices to reopen the existing verified `Equinox Local.app` bundle, never force-starts a second instance, and opens the localhost Control Center in the default browser only when native reopening is unavailable.
 ## [5.2.0] - 2026-09-26
 
