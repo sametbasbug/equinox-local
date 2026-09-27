@@ -3113,14 +3113,16 @@ async function getControlCenterPeekabooStatus() {
 
 async function getControlCenterDoctorStatus() {
   const browser = equinoxBrowserBridge.snapshot();
-  let browserSettings = null;
-  if (browser.ready) {
+  const browserSettingsByContext = { agent: null, user: null };
+  for (const context of ["agent", "user"]) {
+    if (!browser.contexts?.[context]?.ready) continue;
     try {
-      browserSettings = await equinoxBrowserBridge.call("settings.status", {}, { timeoutMs: 2_500, context: "user" });
+      browserSettingsByContext[context] = await equinoxBrowserBridge.call("settings.status", {}, { timeoutMs: 2_500, context });
     } catch {
       // Browser settings are optional doctor context; bridge readiness remains useful on its own.
     }
   }
+  const agentBrowserStatus = await equinoxAgentBrowser.status();
   const observabilityHealth = await runtimeObservability.health({
     windowMs: 15 * 60 * 1000,
   });
@@ -3142,9 +3144,19 @@ async function getControlCenterDoctorStatus() {
     runtimeVersion: SERVER_VERSION,
     sourceCheckoutVersion: sourceCheckout?.version ?? null,
     browser: {
-      ready: Boolean(browser.contexts?.user?.ready),
-      consentAccepted: typeof browserSettings?.consentAccepted === "boolean" ? browserSettings.consentAccepted : null,
-      controlEnabled: typeof browserSettings?.enabled === "boolean" ? browserSettings.enabled : null,
+      contexts: {
+        agent: {
+          ready: Boolean(browser.contexts?.agent?.ready),
+          consentAccepted: typeof browserSettingsByContext.agent?.consentAccepted === "boolean" ? browserSettingsByContext.agent.consentAccepted : null,
+          controlEnabled: typeof browserSettingsByContext.agent?.enabled === "boolean" ? browserSettingsByContext.agent.enabled : null,
+        },
+        user: {
+          ready: Boolean(browser.contexts?.user?.ready),
+          consentAccepted: typeof browserSettingsByContext.user?.consentAccepted === "boolean" ? browserSettingsByContext.user.consentAccepted : null,
+          controlEnabled: typeof browserSettingsByContext.user?.enabled === "boolean" ? browserSettingsByContext.user.enabled : null,
+        },
+      },
+      agentBrowser: agentBrowserStatus,
     },
     peekaboo: peekabooStatus,
     update: equinoxLocalUpdateCoordinator.snapshot(),

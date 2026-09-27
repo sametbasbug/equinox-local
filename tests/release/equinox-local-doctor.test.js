@@ -104,6 +104,60 @@ test("doctor data model accepts an explicit supported Windows host descriptor wi
   }
 });
 
+test("doctor keeps Your Browser required state separate from healthy Agent Browser state", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "equinox-doctor-browser-contexts-"));
+  try {
+    const workspace = path.join(root, "workspace");
+    await fs.mkdir(workspace, { mode: 0o700 });
+    const result = await getEquinoxLocalDoctorStatus({
+      installation: { kind: "source", managed: false, selfUpdateSupported: false },
+      config: { version: 1, runtime: { workspaceProject: "workspace" }, projects: { workspace: { root: workspace } } },
+      runtimeHealthState: "HEALTHY",
+      runtimeVersion: "5.2.1",
+      browser: {
+        contexts: {
+          agent: { ready: true, consentAccepted: true, controlEnabled: true },
+          user: { ready: false, consentAccepted: null, controlEnabled: null },
+        },
+        agentBrowser: { supported: true, setupComplete: true, pairing: false },
+      },
+      peekaboo: {},
+      host: { platform: "win32", arch: "x64", target: "win32-x64", displayName: "Windows", supported: true },
+    });
+    assert.equal(result.checks.find((item) => item.id === "browser")?.status, "optional");
+    assert.match(result.checks.find((item) => item.id === "browser")?.label || "", /Your Browser/u);
+    assert.equal(result.checks.find((item) => item.id === "agent-browser")?.status, "pass");
+    assert.match(result.checks.find((item) => item.id === "agent-browser")?.detail || "", /isolated default/u);
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test("doctor treats a configured but closed Agent Browser as healthy instead of substituting Your Browser", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "equinox-doctor-agent-closed-"));
+  try {
+    const workspace = path.join(root, "workspace");
+    await fs.mkdir(workspace, { mode: 0o700 });
+    const result = await getEquinoxLocalDoctorStatus({
+      installation: { kind: "source", managed: false, selfUpdateSupported: false },
+      config: { version: 1, runtime: { workspaceProject: "workspace" }, projects: { workspace: { root: workspace } } },
+      runtimeHealthState: "HEALTHY",
+      runtimeVersion: "5.2.1",
+      browser: {
+        contexts: { agent: { ready: false }, user: { ready: true, consentAccepted: true, controlEnabled: true } },
+        agentBrowser: { supported: true, setupComplete: true, pairing: false },
+      },
+      peekaboo: {},
+      host: { platform: "win32", arch: "x64", target: "win32-x64", displayName: "Windows", supported: true },
+    });
+    assert.equal(result.checks.find((item) => item.id === "browser")?.status, "pass");
+    assert.equal(result.checks.find((item) => item.id === "agent-browser")?.status, "pass");
+    assert.match(result.checks.find((item) => item.id === "agent-browser")?.detail || "", /currently closed/u);
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
 test("source checkout doctor detects a stale running process after source version changes", async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "equinox-doctor-source-version-drift-"));
   try {
