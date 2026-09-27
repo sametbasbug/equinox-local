@@ -8,18 +8,21 @@ public partial class App : System.Windows.Application
     private TrayIconController? _trayIcon;
     private RuntimeStatusMonitor? _runtimeStatus;
     private RuntimeSupervisor? _runtimeSupervisor;
+    private StartupRegistration? _startupRegistration;
     private MainWindow? _window;
+    private bool _startedAtLogin;
 
     protected override void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
+        _startedAtLogin = e.Args.Any(arg => string.Equals(arg, "--startup", StringComparison.OrdinalIgnoreCase));
 
         _singleInstance = new SingleInstanceCoordinator();
         if (!_singleInstance.IsPrimary)
         {
             try
             {
-                _singleInstance.SignalPrimaryAsync().GetAwaiter().GetResult();
+                if (!_startedAtLogin) _singleInstance.SignalPrimaryAsync().GetAwaiter().GetResult();
             }
             catch
             {
@@ -39,13 +42,19 @@ public partial class App : System.Windows.Application
             Dispatcher.BeginInvoke(new Action(_window.ActivateFromReopen));
         _singleInstance.StartListening();
 
+        _startupRegistration = new StartupRegistration();
+        var startupStatus = _startupRegistration.Read();
+
         _trayIcon = new TrayIconController(
             openControlCenter: () => Dispatcher.BeginInvoke(new Action(_window.ActivateFromReopen)),
             openBrowser: () => Dispatcher.BeginInvoke(new Action(() => _window.OpenControlCenterInBrowser(force: true))),
             startRuntime: () => _ = StartRuntimeAsync(),
             restartRuntime: () => _ = RestartRuntimeAsync(),
             stopRuntime: () => _ = StopRuntimeAsync(),
+            toggleStartup: ToggleStartupRegistration,
             exitApplication: () => _ = ExitApplicationAsync());
+
+        _trayIcon.SetStartupStatus(startupStatus);
 
         _runtimeSupervisor = RuntimeSupervisor.TryCreateFromEnvironment();
         _runtimeStatus = new RuntimeStatusMonitor();
@@ -55,7 +64,17 @@ public partial class App : System.Windows.Application
         _runtimeStatus.Start();
         if (_runtimeSupervisor is not null) _ = StartRuntimeAsync();
 
-        _window.Show();
+        if (!_startedAtLogin) _window.Show();
+    }
+
+    private void ToggleStartupRegistration()
+    {
+        if (_startupRegistration is null) return;
+        var current = _startupRegistration.Read();
+        var next = current.State == StartupRegistrationState.Enabled
+            ? _startupRegistration.Disable()
+            : _startupRegistration.Enable();
+        _trayIcon?.SetStartupStatus(next);
     }
 
     private async Task StartRuntimeAsync()

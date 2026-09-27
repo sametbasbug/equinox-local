@@ -106,6 +106,25 @@ test("Windows shell runtime supervisor uses the existing Job Object gate with bo
   assert.match(tray, /Stop Runtime/u);
 });
 
+test("Windows shell user-login startup registration is per-user, owned and non-intrusive", async () => {
+  const [app, startup, tray] = await Promise.all([
+    source("App.xaml.cs"),
+    source("StartupRegistration.cs"),
+    source("TrayIconController.cs"),
+  ]);
+  assert.match(startup, /Registry\.CurrentUser/u);
+  assert.match(startup, /Software\\Microsoft\\Windows\\CurrentVersion\\Run/u);
+  assert.match(startup, /RegistryValueKind\.String/u);
+  assert.match(startup, /StartupRegistrationState\.Foreign/u);
+  assert.match(startup, /DeleteValue/u);
+  assert.doesNotMatch(startup, /LocalMachine|HKEY_LOCAL_MACHINE|schtasks|Task Scheduler/iu);
+  assert.match(app, /--startup/u);
+  assert.match(app, /if \(!_startedAtLogin\) _window\.Show\(\)/u);
+  assert.match(app, /if \(!_startedAtLogin\) _singleInstance\.SignalPrimaryAsync/u);
+  assert.match(tray, /Start at login/u);
+  assert.match(tray, /registration conflict/u);
+});
+
 test("public Windows CI restores and builds the native x64 shell", async () => {
   const publicCi = path.join(ROOT, ".github", "workflows", "ci.yml");
   const factoryCi = path.join(ROOT, "factory", "local", "public-template", ".github", "workflows", "ci.yml");
@@ -117,4 +136,5 @@ test("public Windows CI restores and builds the native x64 shell", async () => {
   assert.match(ci, /-p:Platform=x64/u);
   assert.match(ci, /EquinoxLocal\.WindowsShell\.RuntimeHarness/u);
   assert.match(ci, /EQUINOX_TEST_NODE_EXE/u);
+  assert.match(ci, /EquinoxLocal\.WindowsShell\.StartupHarness/u);
 });
