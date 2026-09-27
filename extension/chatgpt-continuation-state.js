@@ -42,7 +42,8 @@
     const modernPrimaryActions = [...document.querySelectorAll('[data-composer-body] button.bg-composer-primary')];
     const modernGenerationActive = modernPrimaryActions.some(looksLikeModernStopAction);
     const modernTurn = last(modernTurns);
-    const modernUserEpoch = modernTurn?.getAttribute('data-turn-key')
+    const modernTurnKey = firstMessageId(modernTurn?.getAttribute('data-turn-key'));
+    const modernUserEpoch = modernTurnKey
       || firstMessageId(last(modernUserUnits)?.getAttribute('data-chatgpt-search-message-ids'));
     const modernAssistantUnits = modernTurn?.querySelectorAll
       ? [...modernTurn.querySelectorAll('[data-chatgpt-search-unit-key$=":assistant"][data-chatgpt-search-message-ids]')]
@@ -50,11 +51,13 @@
     const modernAssistantTurnKey = firstMessageId(last(modernAssistantUnits)?.getAttribute('data-chatgpt-search-message-ids'));
     return {
       generationActive: Boolean(document.querySelector('button[data-testid="stop-button"]')) || modernGenerationActive,
-      userEpoch: last(userMessages)?.getAttribute('data-message-id')
+      userEpoch: modernTurnKey
+        || last(userMessages)?.getAttribute('data-message-id')
         || last(userTurns)?.getAttribute('data-testid')
         || modernUserEpoch
         || null,
-      assistantTurnKey: last(assistantTurns)?.getAttribute('data-testid')
+      assistantTurnKey: modernTurnKey
+        || last(assistantTurns)?.getAttribute('data-testid')
         || last(assistantMessages)?.getAttribute('data-message-id')
         || modernAssistantTurnKey
         || null,

@@ -178,7 +178,7 @@ test("ChatGPT continuation observer supports the current data-turn-key DOM witho
   const first = h.get().state;
   assert.equal(first.generationActive, true);
   assert.equal(first.userEpoch, "modern-user-1");
-  assert.equal(first.assistantTurnKey, null);
+  assert.equal(first.assistantTurnKey, "modern-user-1", "data-turn-key must be usable before assistant search units hydrate");
   assert.equal(first.composerReady, true);
 
   h.state.modernPrimaryActions = [];
@@ -190,5 +190,5 @@ test("ChatGPT continuation observer supports the current data-turn-key DOM witho
   const finished = h.get().state;
   assert.equal(finished.generationActive, false);
   assert.equal(finished.userEpoch, "modern-user-1");
-  assert.equal(finished.assistantTurnKey, "modern-assistant-1");
+  assert.equal(finished.assistantTurnKey, "modern-user-1", "the continuity key must not drift when a late assistant message id appears");
 });
