@@ -8,7 +8,7 @@ namespace EquinoxLocal.WindowsShell;
 internal sealed class RuntimeSupervisor : IAsyncDisposable
 {
     private const int MaxAutomaticRestarts = 3;
-    private static readonly TimeSpan ProtocolTimeout = TimeSpan.FromSeconds(5);
+    private static readonly TimeSpan ProtocolTimeout = TimeSpan.FromSeconds(15);
     private static readonly TimeSpan ExitTimeout = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan[] RecoveryDelays = [TimeSpan.FromMilliseconds(250), TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(2)];
 
