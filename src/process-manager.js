@@ -225,11 +225,29 @@ export function createProcessManager({
     notifyWaiters(session);
   };
 
-  const processGroupExists = (session) => {
-    if (!Number.isInteger(session.pid)) {
-      return false;
+  const processGroupExists = async (session) => {
+    if (processOwnership.kind === "job-object") {
+      if (!session.ownedSet) return false;
+      try {
+        return Boolean(await processOwnership.ownedSetExists(session.ownedSet));
+      } catch (error) {
+        if (!session.groupProbeErrorNotified) {
+          session.groupProbeErrorNotified = true;
+          emitEvent({
+            component: "process",
+            type: "process.group_probe_failed",
+            severity: "warn",
+            status: "degraded",
+            projectId: session.projectId,
+            correlationId: session.id,
+            message: "Windows Job Object liveness could not be queried; helper loss closes the Job and drains the owned tree.",
+            details: { processId: session.id, label: session.label, error: error instanceof Error ? error.message : String(error) },
+          });
+        }
+        return false;
+      }
     }
-
+    if (!Number.isInteger(session.pid)) return false;
     try {
       return Boolean(groupExistsImpl(session.pid));
     } catch (error) {
@@ -243,11 +261,7 @@ export function createProcessManager({
           projectId: session.projectId,
           correlationId: session.id,
           message: "Managed process group liveness could not be verified; ownership is being retained fail-closed.",
-          details: {
-            processId: session.id,
-            label: session.label,
-            error: error instanceof Error ? error.message : String(error),
-          },
+          details: { processId: session.id, label: session.label, error: error instanceof Error ? error.message : String(error) },
         });
       }
       return true;
@@ -273,6 +287,11 @@ export function createProcessManager({
     session.lastActivityAt = session.exitedAt;
     notifyWaiters(session);
     session.resolveExit?.();
+    if (session.ownedSet && typeof processOwnership.closeOwnedSet === "function") {
+      const ownedSet = session.ownedSet;
+      session.ownedSet = null;
+      void Promise.resolve(processOwnership.closeOwnedSet(ownedSet)).catch(() => {});
+    }
 
     const failed = Boolean(
       session.spawnError ||
@@ -315,17 +334,14 @@ export function createProcessManager({
     session.groupMonitorTimer = setTimeout(() => {
       session.groupMonitorTimer = null;
       if (!session.running || !session.leaderExited) return;
-
-      if (processGroupExists(session)) {
-        scheduleGroupMonitor(session);
-        return;
-      }
-
-      if (!session.leaderClosed) return;
-      finalizeSession(session, {
-        code: session.leaderExitCode,
-        signal: session.leaderSignal,
-      });
+      void (async () => {
+        if (await processGroupExists(session)) {
+          scheduleGroupMonitor(session);
+          return;
+        }
+        if (!session.leaderClosed) return;
+        finalizeSession(session, { code: session.leaderExitCode, signal: session.leaderSignal });
+      })();
     }, groupPollMs);
     session.groupMonitorTimer.unref?.();
   };
@@ -369,7 +385,7 @@ export function createProcessManager({
     });
   };
 
-  const start = ({
+  const start = async ({
     projectId,
     projectName,
     cwd,
@@ -410,26 +426,45 @@ export function createProcessManager({
     const id = `proc-${randomId()}`;
     const createdAt = now();
     const ports = normalizeExpectedPorts(expectedPorts);
+    const baseEnv = {
+      ...env,
+      PAGER: "cat",
+      GIT_PAGER: "cat",
+      GIT_TERMINAL_PROMPT: "0",
+      NO_COLOR: env.NO_COLOR ?? "1",
+    };
     let child;
+    let ownedSet = null;
+    let spawnCommand = command;
+    let spawnArgs = args;
+    let spawnEnv = baseEnv;
+    let stdinMode = "ignore";
+
+    if (processOwnership.kind === "job-object") {
+      ownedSet = await processOwnership.createOwnedSet();
+      const spec = processOwnership.spawnSpec(command, args, baseEnv);
+      spawnCommand = spec.command;
+      spawnArgs = [...spec.args];
+      spawnEnv = { ...spec.env };
+      stdinMode = spec.stdin ?? "pipe";
+    }
 
     try {
-      child = spawnImpl(command, args, {
+      child = spawnImpl(spawnCommand, spawnArgs, {
         cwd,
-        env: {
-          ...env,
-          PAGER: "cat",
-          GIT_PAGER: "cat",
-          GIT_TERMINAL_PROMPT: "0",
-          NO_COLOR: env.NO_COLOR ?? "1",
-        },
+        env: spawnEnv,
         detached: processOwnership.detached,
         shell: false,
-        stdio: ["ignore", "pipe", "pipe"],
+        stdio: [stdinMode, "pipe", "pipe"],
+        ...(processOwnership.kind === "job-object" ? { windowsHide: true } : {}),
       });
+      if (processOwnership.kind === "job-object") {
+        await processOwnership.attachAndRelease(ownedSet, child);
+      }
     } catch (error) {
-      throw new Error(
-        `Süreç başlatılamadı: ${error instanceof Error ? error.message : String(error)}`,
-      );
+      try { child?.kill?.(); } catch {}
+      try { await processOwnership.closeOwnedSet?.(ownedSet); } catch {}
+      throw new Error(`Süreç başlatılamadı: ${error instanceof Error ? error.message : String(error)}`);
     }
 
     const session = {
@@ -444,6 +479,7 @@ export function createProcessManager({
       expectedPorts: ports,
       pid: Number.isInteger(child.pid) ? child.pid : null,
       child,
+      ownedSet,
       running: true,
       createdAt,
       startedAt: createdAt,
@@ -518,13 +554,14 @@ export function createProcessManager({
     });
 
     child.once("exit", (code, signal) => {
+      void (async () => {
       session.leaderExited = true;
       session.leaderExitCode = Number.isInteger(code) ? code : null;
       session.leaderSignal = signal === null || signal === undefined
         ? null
         : String(signal);
 
-      if (processGroupExists(session)) {
+      if (await processGroupExists(session)) {
         session.lastActivityAt = now();
         notifyWaiters(session);
         emitEvent({
@@ -553,9 +590,14 @@ export function createProcessManager({
         session.lastActivityAt = now();
         notifyWaiters(session);
       }
+      })().catch((error) => {
+        session.spawnError = error instanceof Error ? error.message : String(error);
+        finalizeSession(session, { code, signal });
+      });
     });
 
     child.once("close", (code, signal) => {
+      void (async () => {
       session.leaderClosed = true;
       if (!session.leaderExited) {
         session.leaderExited = true;
@@ -563,13 +605,17 @@ export function createProcessManager({
         session.leaderSignal = signal === null || signal === undefined ? null : String(signal);
       }
       if (!session.running) return;
-      if (processGroupExists(session)) {
+      if (await processGroupExists(session)) {
         scheduleGroupMonitor(session);
         return;
       }
       finalizeSession(session, {
         code: session.leaderExitCode,
         signal: session.leaderSignal,
+      });
+      })().catch((error) => {
+        session.spawnError = error instanceof Error ? error.message : String(error);
+        finalizeSession(session, { code, signal });
       });
     });
 
@@ -674,16 +720,17 @@ export function createProcessManager({
     };
   };
 
-  const sendSignal = (session, signal) => {
+  const sendSignal = async (session, signal) => {
     if (!session.running) {
       return;
     }
 
     let groupError = null;
 
-    if (Number.isInteger(session.pid)) {
+    const ownershipTarget = processOwnership.kind === "job-object" ? session.ownedSet : session.pid;
+    if (ownershipTarget) {
       try {
-        processOwnership.signalOwnedSet(session.pid, signal);
+        await processOwnership.signalOwnedSet(ownershipTarget, signal);
         return;
       } catch (error) {
         groupError = error;
@@ -691,7 +738,7 @@ export function createProcessManager({
     }
 
     if (session.leaderExited) {
-      if (!processGroupExists(session)) {
+      if (!(await processGroupExists(session))) {
         finalizeSession(session, {
           code: session.leaderExitCode,
           signal: session.leaderSignal,
@@ -742,7 +789,7 @@ export function createProcessManager({
           force,
         },
       });
-      sendSignal(session, force ? "SIGKILL" : "SIGTERM");
+      await sendSignal(session, force ? "SIGKILL" : "SIGTERM");
 
       await Promise.race([
         session.exitPromise,
@@ -750,7 +797,7 @@ export function createProcessManager({
       ]);
 
       if (session.running && !force) {
-        sendSignal(session, "SIGKILL");
+        await sendSignal(session, "SIGKILL");
         await Promise.race([
           session.exitPromise,
           new Promise((resolve) => setTimeout(resolve, 700)),

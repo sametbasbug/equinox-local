@@ -102,7 +102,7 @@ export function registerTerminalTools({
           NO_COLOR: "1",
         };
         const startedAt = Date.now();
-        const processInfo = processManager.start({
+        const processInfo = await processManager.start({
           projectId,
           projectName,
           cwd: resolvedCwd,

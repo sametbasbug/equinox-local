@@ -12,6 +12,7 @@ import {
   TUNNEL_CLIENT_DISTRIBUTIONS,
 } from "../../src/equinox-local-runtime-versions.js";
 import { createWindowsJobObjectLease } from "../../src/equinox-local-windows-job-object.js";
+import { createProcessManager } from "../../src/process-manager.js";
 import { createEquinoxLocalRuntime } from "../../src/server.js";
 
 const execFile = promisify(execFileCallback);
@@ -103,6 +104,52 @@ async function verifyWindowsJobObjectContainment(root) {
       try { process.kill(childPid); } catch {}
     }
   }
+}
+
+async function verifyWindowsManagedProcessLifecycle(root) {
+  const manager = createProcessManager({ platform: "win32", arch: "x64", groupPollMs: 50 });
+  const descendantScript = [
+    "$child = Start-Process -FilePath powershell.exe -ArgumentList @('-NoLogo','-NoProfile','-NonInteractive','-Command','Start-Sleep -Seconds 60') -PassThru -WindowStyle Hidden",
+    "Write-Output ('DESCENDANT=' + $child.Id)",
+  ].join("; ");
+  const started = await manager.start({
+    projectId: "windows-smoke",
+    projectName: "Windows Smoke",
+    cwd: root,
+    command: "powershell.exe",
+    args: ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", descendantScript],
+    purpose: "background",
+    env: process.env,
+    label: "windows-job-descendant",
+  });
+  const logs = await manager.readLogs({ processId: started.processId, cursor: 0, waitMs: 3_000 });
+  const match = logs.output.match(/DESCENDANT=(\d+)/u);
+  assert.ok(match, `managed Windows process did not report descendant PID: ${logs.output}`);
+  const descendantPid = Number.parseInt(match[1], 10);
+  await waitFor(() => !pidExists(started.pid), "Windows managed gate leader did not exit after user command completed");
+  const retained = await manager.waitForExit({ processId: started.processId, waitMs: 250 });
+  assert.equal(retained.running, true, "process manager finalized while a Job Object descendant was still alive");
+  assert.equal(pidExists(descendantPid), true, "managed descendant disappeared before stop");
+  const stopped = await manager.stop({ processId: started.processId, timeoutMs: 2_500 });
+  assert.equal(stopped.running, false, "Windows managed process did not finalize after Job Object stop");
+  await waitFor(() => !pidExists(descendantPid), "Windows managed process stop did not drain the descendant");
+
+  const natural = await manager.start({
+    projectId: "windows-smoke",
+    projectName: "Windows Smoke",
+    cwd: root,
+    command: "powershell.exe",
+    args: ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", "Write-Output 'NATURAL_OK'"],
+    purpose: "terminal_exec",
+    env: process.env,
+    label: "windows-natural-exit",
+  });
+  const naturalExit = await manager.waitForExit({ processId: natural.processId, waitMs: 5_000 });
+  assert.equal(naturalExit.running, false, "Windows managed natural exit did not finalize");
+  const naturalLogs = await manager.readLogs({ processId: natural.processId, cursor: 0 });
+  assert.match(naturalLogs.output, /NATURAL_OK/u);
+  await manager.shutdown();
+  return Object.freeze({ descendantRetainedAfterLeaderExit: true, stopDrainedDescendant: true, naturalExit: true });
 }
 
 async function verifyPinnedWindowsTunnelClient(root) {
@@ -262,6 +309,7 @@ try {
 
   const tunnel = await verifyPinnedWindowsTunnelClient(root);
   const jobObject = await verifyWindowsJobObjectContainment(root);
+  const managedProcess = await verifyWindowsManagedProcessLifecycle(root);
 
   const htmlResponse = await fetch(`${baseUrl}/`, { signal: AbortSignal.timeout(5_000) });
   assert.equal(htmlResponse.status, 200);
@@ -276,6 +324,7 @@ try {
     browserIpcActive: snapshot.browser.active,
     tunnel,
     jobObject,
+    managedProcess,
   }, null, 2)}\n`);
 } finally {
   if (lifecycle) await lifecycle.shutdown().catch(() => {});
