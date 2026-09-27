@@ -76,6 +76,7 @@ test("Windows platform paths are per-user LocalAppData and preserve spaces/unico
   assert.equal(result.programRoot, path.win32.join(localAppData, "Programs", "Equinox Local"));
   assert.equal(result.configPath, path.win32.join(localAppData, "Equinox Local", "state", "config.json"));
   assert.equal(result.turnBudgetPath, path.win32.join(localAppData, "Equinox Local", "state", "turn-budget.json"));
+  assert.equal(result.currentPointer, path.win32.join(localAppData, "Equinox Local", "current-version.json"));
 });
 
 test("Windows platform paths fail closed without trusted absolute LocalAppData and home paths", () => {
@@ -90,7 +91,7 @@ test("Windows platform paths fail closed without trusted absolute LocalAppData a
 });
 
 
-test("platform lifecycle and shell contracts are explicit without claiming Windows implementation", () => {
+test("platform lifecycle and shell contracts enable Windows x64 without inferring ARM64", () => {
   const macLifecycle = equinoxLocalManagedLifecycle({ platform: "darwin", arch: "arm64" });
   assert.equal(macLifecycle.kind, "launch-agent");
   assert.equal(macLifecycle.implemented, true);
@@ -99,9 +100,10 @@ test("platform lifecycle and shell contracts are explicit without claiming Windo
 
   const windowsLifecycle = equinoxLocalManagedLifecycle({ platform: "win32", arch: "x64" });
   assert.equal(windowsLifecycle.kind, "windows-user");
-  assert.equal(windowsLifecycle.implemented, false);
+  assert.equal(windowsLifecycle.implemented, true);
   assert.equal(windowsLifecycle.currentPointerKind, "version-file");
   assert.equal(windowsLifecycle.processOwnership, "job-object");
+  assert.equal(equinoxLocalManagedLifecycle({ platform: "win32", arch: "arm64" }).implemented, false);
 
   const macFinite = equinoxLocalFiniteShell({ platform: "darwin", arch: "arm64" });
   assert.equal(macFinite.command, "/bin/zsh");
