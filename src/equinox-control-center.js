@@ -8,6 +8,52 @@ const SUPPORTED_LANGUAGES = new Set(["en", "tr"]);
 const EQUINOX_BROWSER_STORE_URL =
   "https://chromewebstore.google.com/detail/equinox-browser/npdneefcobilfkjlihghjgjnknenhfoj";
 
+function isAbsoluteLocalFolderPath(value) {
+  if (typeof value !== "string" || !value || value.length > 1024) return false;
+  if (value.startsWith("/") && value !== "/") return true;
+  if (/^[A-Za-z]:[\\/](?!$)/u.test(value)) return true;
+  return /^\\\\[^\\/]+[\\/][^\\/]+[\\/].+/u.test(value);
+}
+
+async function pickLocalFolder() {
+  const bridge = window.chrome?.webview;
+  if (
+    typeof bridge?.postMessage !== "function"
+    || typeof bridge?.addEventListener !== "function"
+    || typeof bridge?.removeEventListener !== "function"
+  ) {
+    return mutationJson("/api/v1/folder-picker", "POST", {});
+  }
+
+  const requestId = typeof crypto.randomUUID === "function"
+    ? crypto.randomUUID()
+    : `picker_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+  return new Promise((resolve, reject) => {
+    let timeout = null;
+    const cleanup = () => {
+      if (timeout !== null) clearTimeout(timeout);
+      bridge.removeEventListener("message", onMessage);
+    };
+    const onMessage = (event) => {
+      const message = event?.data;
+      if (message?.type !== "equinox-folder-picker-result" || message.requestId !== requestId) return;
+      cleanup();
+      if (typeof message.error === "string" && message.error) {
+        reject(new Error(message.error));
+        return;
+      }
+      const path = typeof message.path === "string" ? message.path : null;
+      resolve({ cancelled: message.cancelled === true, path });
+    };
+    bridge.addEventListener("message", onMessage);
+    timeout = setTimeout(() => {
+      cleanup();
+      reject(new Error("Native folder selection timed out."));
+    }, 120_000);
+    bridge.postMessage(JSON.stringify({ type: "equinox-folder-picker", requestId }));
+  });
+}
+
 const TR_UI = Object.freeze({
   "Getting started": "Başlarken",
   "Setup": "Kurulum",
@@ -483,7 +529,7 @@ const TR_UI = Object.freeze({
   "Telegram download folder updated.": "Telegram indirme klasörü güncellendi.",
   "Telegram download folder reset to default.": "Telegram indirme klasörü varsayılana döndürüldü.",
   "Choosing…": "Seçiliyor…",
-  "Use the macOS folder picker or enter an absolute path manually. Equinox Local validates the selection and never grants the filesystem root.": "macOS klasör seçicisini kullanın veya mutlak yolu elle girin. Equinox Local seçimi doğrular ve dosya sisteminin kökünü hiçbir zaman açmaz.",
+  "Use the native folder picker or enter an absolute path manually. Equinox Local validates the selection and never grants the filesystem root.": "Yerel klasör seçicisini kullanın veya mutlak yolu elle girin. Equinox Local seçimi doğrular ve dosya sisteminin kökünü hiçbir zaman açmaz.",
   "Managed worktrees": "Yönetilen worktree'ler",
   "Include this project in Equinox Local managed-worktree maintenance and cleanup tracking.": "Bu projeyi Equinox Local yönetilen-worktree bakım ve temizlik takibine dahil edin.",
   "Read-only folder": "Salt okunur klasör",
@@ -616,7 +662,7 @@ const TR_UI = Object.freeze({
   "Edit read-only folder": "Salt okunur klasörü düzenle",
   "Identifier must use lowercase letters, numbers, dots, underscores or hyphens.": "Kimlik küçük harfler, sayılar, noktalar, alt çizgiler veya tireler kullanmalıdır.",
   "Display name must be 1-100 characters.": "Görünen ad 1-100 karakter olmalıdır.",
-  "Folder path must be absolute and start with /.": "Klasör yolu mutlak olmalı ve / ile başlamalıdır.",
+  "Folder path must be an absolute non-root local path.": "Klasör yolu mutlak, yerel ve dosya sistemi kökünden farklı olmalıdır.",
   "The filesystem root itself cannot be granted.": "Dosya sisteminin kökü doğrudan verilemez.",
   "Folder path is too long.": "Klasör yolu çok uzun.",
   "That identifier is already in use by another configured root.": "Bu kimlik başka bir yapılandırılmış kök tarafından zaten kullanılıyor.",
@@ -3495,8 +3541,7 @@ function validateRootForm({ id, name, root }) {
     return "Identifier must use lowercase letters, numbers, dots, underscores or hyphens.";
   }
   if (!name.trim() || name.trim().length > 100) return "Display name must be 1-100 characters.";
-  if (!root.startsWith("/")) return "Folder path must be absolute and start with /.";
-  if (root === "/") return "The filesystem root itself cannot be granted.";
+  if (!isAbsoluteLocalFolderPath(root)) return "Folder path must be an absolute non-root local path.";
   if (root.length > 1024) return "Folder path is too long.";
   return null;
 }
@@ -3606,12 +3651,12 @@ async function chooseFolderForDialog() {
   button.textContent = localizeUiText("Choosing…");
   $("dialog-error").hidden = true;
   try {
-    const result = await mutationJson("/api/v1/folder-picker", "POST", {});
+    const result = await pickLocalFolder();
     if (result.cancelled) {
       showToast("Folder selection cancelled.");
       return;
     }
-    if (typeof result.path === "string" && result.path.startsWith("/")) {
+    if (isAbsoluteLocalFolderPath(result.path)) {
       $("root-path").value = result.path;
       $("root-path").focus();
     }
@@ -3808,7 +3853,7 @@ async function changeWebImportFolder() {
   if (state.integrationBusy || state.pickerBusy) return;
   clearError(); state.integrationBusy = true; state.pickerBusy = true; renderIntegrations();
   try {
-    const picked = await mutationJson("/api/v1/folder-picker", "POST", {});
+    const picked = await pickLocalFolder();
     if (picked.cancelled) return showToast("Folder selection cancelled.");
     const result = await mutationJson("/api/v1/files/import-settings", "PUT", { path: picked.path });
     state.webFileTransfer = result.webFileTransfer;
@@ -3835,9 +3880,9 @@ async function changeTelegramDownloadFolder() {
   state.integrationBusy = true;
   renderIntegrations();
   try {
-    const picked = await mutationJson("/api/v1/folder-picker", "POST", {});
+    const picked = await pickLocalFolder();
     if (picked.cancelled) return showToast("Folder selection cancelled.");
-    if (typeof picked.path !== "string" || !picked.path.startsWith("/")) throw new Error("Folder picker returned an invalid path.");
+    if (!isAbsoluteLocalFolderPath(picked.path)) throw new Error("Folder picker returned an invalid path.");
     const result = await mutationJson("/api/v1/integrations/telegram/downloads", "PUT", { path: picked.path });
     state.telegram = { ...(state.telegram || {}), downloads: result.downloads };
     if (state.health?.controlCenter) state.health.controlCenter.mutationCount += 1;

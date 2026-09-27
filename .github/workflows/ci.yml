@@ -74,6 +74,9 @@ jobs:
       - name: Windows native shell startup registration smoke
         run: dotnet run --project tests/windows/EquinoxLocal.WindowsShell.StartupHarness/EquinoxLocal.WindowsShell.StartupHarness.csproj --configuration Release
 
+      - name: Windows native shell folder picker smoke
+        run: dotnet run --project tests/windows/EquinoxLocal.WindowsShell.FolderPickerHarness/EquinoxLocal.WindowsShell.FolderPickerHarness.csproj --configuration Release
+
       - name: Windows headless runtime smoke
         run: npm run smoke:windows-headless
 
