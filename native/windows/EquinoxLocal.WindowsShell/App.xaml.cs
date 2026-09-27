@@ -2,7 +2,7 @@ using System.Windows;
 
 namespace EquinoxLocal.WindowsShell;
 
-public partial class App : Application
+public partial class App : System.Windows.Application
 {
     private SingleInstanceCoordinator? _singleInstance;
     private TrayIconController? _trayIcon;

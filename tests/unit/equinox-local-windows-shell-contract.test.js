@@ -35,6 +35,7 @@ test("Windows shell single-instance reopen channel is local-user-only", async ()
     source("SingleInstanceCoordinator.cs"),
   ]);
 
+  assert.match(app, /class App : System\.Windows\.Application/u);
   assert.match(app, /if \(!_singleInstance\.IsPrimary\)/u);
   assert.match(app, /SignalPrimaryAsync/u);
   assert.match(app, /ActivateFromReopen/u);
