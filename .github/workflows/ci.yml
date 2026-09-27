@@ -57,6 +57,12 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Windows managed activation rollback tests
+        shell: pwsh
+        run: |
+          node --test tests/release/equinox-local-current-release.test.js
+          node --test --test-name-pattern "Windows activation rollback restores current-version.json and the previous exact release" tests/release/equinox-local-update-activation.test.js
+
       - name: Set up .NET SDK
         uses: actions/setup-dotnet@v5
         with:

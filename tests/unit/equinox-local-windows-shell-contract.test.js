@@ -197,6 +197,9 @@ test("public Windows CI restores and builds the native x64 shell", async () => {
   const factoryCi = path.join(ROOT, "factory", "local", "public-template", ".github", "workflows", "ci.yml");
   const ciPath = await fs.access(publicCi).then(() => publicCi).catch(() => factoryCi);
   const ci = await fs.readFile(ciPath, "utf8");
+  assert.match(ci, /Windows managed activation rollback tests/u);
+  assert.match(ci, /node --test tests\/release\/equinox-local-current-release\.test\.js/u);
+  assert.ok(ci.includes('node --test --test-name-pattern "Windows activation rollback restores current-version.json and the previous exact release" tests/release/equinox-local-update-activation.test.js'));
   assert.match(ci, /actions\/setup-dotnet@v5/u);
   assert.match(ci, /dotnet-version:\s*8\.0\.x/u);
   assert.match(ci, /dotnet build native\/windows\/EquinoxLocal\.WindowsShell\/EquinoxLocal\.WindowsShell\.csproj/u);
