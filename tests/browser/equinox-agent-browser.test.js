@@ -7,9 +7,13 @@ import test from "node:test";
 
 import {
   buildAgentBrowserLaunchArgs,
+  buildWindowsAgentBrowserLaunchArgs,
   createEquinoxAgentBrowser,
+  discoverWindowsChrome,
   ensureAgentBrowserNativeMessagingManifest,
   parseAgentBrowserMainPids,
+  parseWindowsAgentBrowserMainPids,
+  windowsChromeInstallCandidates,
   EQUINOX_BROWSER_STORE_URL,
 } from "../../src/equinox-agent-browser.js";
 
@@ -220,7 +224,7 @@ test("Agent Browser fails closed off macOS", async () => {
       throw new Error("must not launch");
     },
   });
-  await assert.rejects(manager.launch(), /yalnız macOS/u);
+  await assert.rejects(manager.launch(), /bu platformda desteklenmiyor/u);
 });
 
 
@@ -280,4 +284,54 @@ test("Agent Browser shutdown terminates only its exact main process and waits fo
   assert.equal(result.ready, false);
   assert.equal(signals.some((item) => item.pid === 5252), false);
   assert.deepEqual(signals.slice(0, 2), [{ pid: 4242, signal: "SIGTERM" }, { pid: 4242, signal: 0 }]);
+});
+
+
+test("Windows Agent Browser launch args keep the isolated profile and never enable remote debugging", () => {
+  const profileRoot = "C:\\Users\\Example User\\AppData\\Local\\Equinox Local\\browser";
+  const args = buildWindowsAgentBrowserLaunchArgs(profileRoot, { setup: true });
+  assert.equal(args[0], `--user-data-dir=${path.win32.normalize(profileRoot)}`);
+  assert.ok(args.includes(EQUINOX_BROWSER_STORE_URL));
+  assert.equal(args.some((arg) => /remote-debugging/iu.test(arg)), false);
+});
+
+test("Windows Chrome discovery stays inside bounded trusted install roots", async () => {
+  const env = {
+    LOCALAPPDATA: "C:\\Users\\Example\\AppData\\Local",
+    ProgramFiles: "C:\\Program Files",
+    "ProgramFiles(x86)": "C:\\Program Files (x86)",
+    PATH: "C:\\untrusted\\bin",
+  };
+  const candidates = windowsChromeInstallCandidates(env);
+  assert.deepEqual(candidates, [
+    "C:\\Users\\Example\\AppData\\Local\\Google\\Chrome\\Application\\chrome.exe",
+    "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+    "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe",
+  ]);
+  assert.equal(candidates.some((candidate) => candidate.includes("untrusted")), false);
+  const visited = [];
+  const chromePath = await discoverWindowsChrome({
+    env,
+    fsImpl: {
+      async lstat(candidate) {
+        visited.push(candidate);
+        if (candidate === candidates[1]) return { isFile: () => true, isSymbolicLink: () => false };
+        const error = new Error("missing"); error.code = "ENOENT"; throw error;
+      },
+    },
+  });
+  assert.equal(chromePath, candidates[1]);
+  assert.deepEqual(visited, candidates.slice(0, 2));
+});
+
+test("Windows Agent Browser process parser selects only exact Chrome main process for the isolated profile", () => {
+  const profileRoot = "C:\\Users\\Example\\AppData\\Local\\Equinox Local\\browser";
+  const chromePath = "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe";
+  const inventory = JSON.stringify([
+    { ProcessId: 7001, ExecutablePath: chromePath, CommandLine: `"${chromePath}" --user-data-dir="${profileRoot}" --no-first-run` },
+    { ProcessId: 7002, ExecutablePath: chromePath, CommandLine: `"${chromePath}" --type=renderer --user-data-dir="${profileRoot}"` },
+    { ProcessId: 7003, ExecutablePath: chromePath, CommandLine: `"${chromePath}" --user-data-dir="C:\\Users\\Example\\Personal"` },
+    { ProcessId: 7004, ExecutablePath: "D:\\Fake\\chrome.exe", CommandLine: `"D:\\Fake\\chrome.exe" --user-data-dir="${profileRoot}"` },
+  ]);
+  assert.deepEqual(parseWindowsAgentBrowserMainPids(inventory, profileRoot, chromePath), [7001]);
 });

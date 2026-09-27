@@ -19,6 +19,11 @@ import { createEquinoxLocalRuntime } from "../../src/server.js";
 import { createEquinoxBrowserNativeHostRuntime } from "../../src/equinox-browser-native-host-runtime.js";
 import { equinoxBrowserIpcEndpoint } from "../../src/equinox-browser-socket.js";
 import { EQUINOX_BROWSER_EXTENSION_ID } from "../../src/equinox-browser-bridge.js";
+import {
+  createEquinoxAgentBrowser,
+  discoverWindowsChrome,
+  parseWindowsAgentBrowserMainPids,
+} from "../../src/equinox-agent-browser.js";
 
 const execFile = promisify(execFileCallback);
 
@@ -71,6 +76,53 @@ async function waitFor(predicate, message, timeoutMs = 8_000) {
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
   throw new Error(message);
+}
+
+async function verifyWindowsAgentBrowserLifecycle(root) {
+  const profileRoot = path.join(root, "Agent Browser Profile Ü");
+  await fs.mkdir(profileRoot, { recursive: true });
+  await fs.writeFile(path.join(profileRoot, ".equinox-agent-browser-ready"), "ready\n", { flag: "wx" });
+
+  let agentReady = false;
+  let pairing = null;
+  const bridge = {
+    readyFor(context) { assert.equal(context, "agent"); return agentReady; },
+    expectContext(context) { assert.equal(context, "agent"); pairing = { context: "agent" }; return pairing; },
+    cancelExpectedContext() { const previous = pairing; pairing = null; return previous; },
+    async waitUntilReady() { throw new Error("Native Messaging registry is intentionally deferred until the next W4 checkpoint"); },
+    snapshotContext(context) { assert.equal(context, "agent"); return { context: "agent", ready: agentReady, connectedAt: null, extension: null }; },
+    snapshot() { return { pairing }; },
+  };
+
+  const manager = createEquinoxAgentBrowser({
+    bridge,
+    homeDir: process.env.USERPROFILE,
+    profileRoot,
+    platform: "win32",
+    env: process.env,
+    execFileAsync: execFile,
+  });
+  const chromePath = await discoverWindowsChrome({ env: process.env });
+  const launched = await manager.launch({ setup: false });
+  assert.equal(launched.supported, true);
+  assert.equal(launched.isolated, true);
+  assert.equal(launched.lastLaunchSetup, false);
+  assert.equal(path.win32.normalize(launched.chromePath).toLowerCase(), path.win32.normalize(chromePath).toLowerCase());
+
+  const processQuery = "Get-CimInstance Win32_Process -Filter \"Name='chrome.exe'\" | Select-Object ProcessId,ExecutablePath,CommandLine | ConvertTo-Json -Compress";
+  const processId = await waitFor(async () => {
+    const { stdout = "" } = await execFile("powershell.exe", ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", processQuery], { timeout: 5_000, windowsHide: true });
+    const pids = parseWindowsAgentBrowserMainPids(stdout, profileRoot, chromePath);
+    return pids.length === 1 ? pids[0] : null;
+  }, "Windows Agent Browser exact isolated Chrome main process did not appear", 10_000);
+  assert.equal(pidExists(processId), true);
+
+  const stopped = await manager.shutdown({ timeoutMs: 8_000 });
+  assert.equal(stopped.stopped, true);
+  assert.equal(stopped.alreadyStopped, false);
+  assert.equal(stopped.processId, processId);
+  await waitFor(() => !pidExists(processId), "Windows Agent Browser main process survived bounded shutdown", 8_000);
+  return Object.freeze({ chromePath, processId, isolatedProfile: true, stopped: true });
 }
 
 async function verifyWindowsJobObjectContainment(root) {
@@ -609,6 +661,7 @@ try {
   const managedProcess = await verifyWindowsManagedProcessLifecycle(root);
   const conpty = await verifyWindowsConPtyLifecycle(root);
   const emergencyStop = await verifyWindowsEmergencyStop(root);
+  const agentBrowser = await verifyWindowsAgentBrowserLifecycle(root);
 
   const htmlResponse = await fetch(`${baseUrl}/`, { signal: AbortSignal.timeout(5_000) });
   assert.equal(htmlResponse.status, 200);
@@ -628,6 +681,7 @@ try {
     managedProcess,
     conpty,
     emergencyStop,
+    agentBrowser,
   }, null, 2)}\n`);
 } finally {
   process.stdout.write("[windows-smoke] START runtime-shutdown\n");
