@@ -95,7 +95,8 @@ async function harness({ freshCreateMode = "normal", freshSubmitReadyAfter = 0, 
         if (method === "DOM.getDocument") return { root: { nodeId: 1 } };
         if (method === "DOM.querySelector") {
           if (String(params.selector || "").includes('send-button') || String(params.selector || "").includes('composer-submit-button')) return { nodeId: 2 };
-          if (params.selector === '#prompt-textarea[contenteditable="true"][role="textbox"]') return { nodeId: 3 };
+          // Model the current ChatGPT DOM: the modern composer exists and legacy #prompt-textarea does not.
+          if (String(params.selector || '').includes('[data-composer-markdown]')) return { nodeId: 3 };
           if (params.selector === '#upload-files') return { nodeId: 4 };
           return { nodeId: 0 };
         }

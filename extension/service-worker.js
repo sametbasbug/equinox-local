@@ -668,7 +668,7 @@ async function freshChatComposerState(tabId) {
     const result = await send(tabId, "Runtime.evaluate", {
       expression: `(() => {
         /* Fresh Chat Resume composer state */
-        const composer = document.querySelector('#prompt-textarea[contenteditable="true"][role="textbox"]');
+        const composer = document.querySelector('#prompt-textarea[contenteditable="true"][role="textbox"], [data-composer-markdown][contenteditable="true"][role="textbox"]');
         const userTurns = document.querySelectorAll('[data-message-author-role="user"], section[data-turn="user"]');
         const assistantTurns = document.querySelectorAll('[data-message-author-role="assistant"], section[data-turn="assistant"]');
         return {
@@ -680,7 +680,7 @@ async function freshChatComposerState(tabId) {
       })()`,
       returnByValue: true,
     });
-    if (result?.exceptionDetails) throw new Error(result.exceptionDetails?.text || "Could not inspect Fresh Chat Resume composer state.");
+    if (result?.exceptionDetails) throw new Error(result.exceptionDetails?.exception?.description || result.exceptionDetails?.text || "Could not inspect Fresh Chat Resume composer state.");
     const state = result?.result?.value;
     if (!state || typeof state !== "object") throw new Error("Fresh Chat Resume composer state is unavailable.");
     return {
@@ -863,7 +863,7 @@ async function createFreshChatResume({ resumeId, sourceTabId, sourceConversation
     try {
       await fillSelectorWithSemanticInput(
         created.id,
-        '#prompt-textarea[contenteditable="true"][role="textbox"]',
+        '#prompt-textarea[contenteditable="true"][role="textbox"], [data-composer-markdown][contenteditable="true"][role="textbox"]',
         message,
         { label: "composer" },
       );
@@ -882,7 +882,7 @@ async function createFreshChatResume({ resumeId, sourceTabId, sourceConversation
         const submitTarget = await send(created.id, "Runtime.evaluate", {
           expression: `(() => {
             // Fresh Chat Resume trusted submit target
-            const composer = document.querySelector('#prompt-textarea[contenteditable="true"][role="textbox"]');
+            const composer = document.querySelector('#prompt-textarea[contenteditable="true"][role="textbox"], [data-composer-markdown][contenteditable="true"][role="textbox"]');
             const button = document.querySelector('button[data-testid="send-button"][type="submit"]');
             const turns = document.querySelectorAll('[data-message-author-role], section[data-turn]');
             if (turns.length) return { ready: false, reason: "destination_not_empty" };
@@ -1301,7 +1301,7 @@ async function deliverAutoContinuation({
   try {
     const focusResult = await send(tabId, "Runtime.evaluate", {
     expression: `(() => {
-      const composer = document.querySelector('#prompt-textarea[contenteditable="true"][role="textbox"]');
+      const composer = document.querySelector('#prompt-textarea[contenteditable="true"][role="textbox"], [data-composer-markdown][contenteditable="true"][role="textbox"]');
       if (!composer) throw new Error('ChatGPT composer is unavailable');
       if (String(composer.textContent || '').trim()) throw new Error('ChatGPT composer is not empty');
       composer.focus();
@@ -1310,18 +1310,18 @@ async function deliverAutoContinuation({
     returnByValue: true,
   });
   if (focusResult?.exceptionDetails || focusResult?.result?.value?.focused !== true) {
-    throw new Error(focusResult?.exceptionDetails?.text || "Auto Continue could not focus the ChatGPT composer.");
+    throw new Error(focusResult?.exceptionDetails?.exception?.description || focusResult?.exceptionDetails?.text || "Auto Continue could not focus the ChatGPT composer.");
   }
   await send(tabId, "Input.insertText", { text: message });
   const fillResult = await send(tabId, "Runtime.evaluate", {
     expression: `(() => {
-      const composer = document.querySelector('#prompt-textarea[contenteditable="true"][role="textbox"]');
+      const composer = document.querySelector('#prompt-textarea[contenteditable="true"][role="textbox"], [data-composer-markdown][contenteditable="true"][role="textbox"]');
       return composer ? String(composer.textContent || '') : null;
     })()`,
     returnByValue: true,
   });
   if (fillResult?.exceptionDetails || String(fillResult?.result?.value || "") !== message) {
-    throw new Error(fillResult?.exceptionDetails?.text || "Auto Continue composer fill postcondition failed.");
+    throw new Error(fillResult?.exceptionDetails?.exception?.description || fillResult?.exceptionDetails?.text || "Auto Continue composer fill postcondition failed.");
   }
   await sleep(50);
   await dispatchKeyChord(tabId, "Enter", null);
@@ -1372,7 +1372,7 @@ async function readChatBridgeAttachedState(tabId) {
       const assistantMessages = [...document.querySelectorAll('[data-message-author-role="assistant"][data-message-id]')];
       const userTurns = [...document.querySelectorAll('section[data-turn="user"][data-testid]')];
       const assistantTurns = [...document.querySelectorAll('section[data-turn="assistant"][data-testid]')];
-      const composer = document.querySelector('#prompt-textarea[contenteditable="true"][role="textbox"]');
+      const composer = document.querySelector('#prompt-textarea[contenteditable="true"][role="textbox"], [data-composer-markdown][contenteditable="true"][role="textbox"]');
       return {
         generationActive: Boolean(document.querySelector('button[data-testid="stop-button"]')),
         userEpoch: last(userMessages)?.getAttribute('data-message-id') || last(userTurns)?.getAttribute('data-testid') || null,
@@ -1384,7 +1384,7 @@ async function readChatBridgeAttachedState(tabId) {
     returnByValue: true,
     silent: true,
   });
-  if (result?.exceptionDetails) throw new Error(result.exceptionDetails.text || "Chat Bridge attached state failed.");
+  if (result?.exceptionDetails) throw new Error(result.exceptionDetails?.exception?.description || result.exceptionDetails?.text || "Chat Bridge attached state failed.");
   const state = normalizeChatGptContinuationState(result?.result?.value);
   if (!state) throw new Error("Chat Bridge attached state returned invalid turn state.");
   return state;
@@ -1474,7 +1474,7 @@ async function deliverChatBridgeMessage({
 
     const focusResult = await send(tabId, "Runtime.evaluate", {
       expression: `(() => {
-        const composer = document.querySelector('#prompt-textarea[contenteditable="true"][role="textbox"]');
+        const composer = document.querySelector('#prompt-textarea[contenteditable="true"][role="textbox"], [data-composer-markdown][contenteditable="true"][role="textbox"]');
         if (!composer) throw new Error('ChatGPT composer is unavailable');
         if (String(composer.textContent || '').trim()) throw new Error('ChatGPT composer is not empty');
         composer.focus();
@@ -1484,7 +1484,7 @@ async function deliverChatBridgeMessage({
       silent: true,
     });
     if (focusResult?.exceptionDetails || focusResult?.result?.value?.focused !== true) {
-      throw new Error(focusResult?.exceptionDetails?.text || "Chat Bridge could not focus the ChatGPT composer.");
+      throw new Error(focusResult?.exceptionDetails?.exception?.description || focusResult?.exceptionDetails?.text || "Chat Bridge could not focus the ChatGPT composer.");
     }
     await send(tabId, "Input.insertText", { text: message });
     stage = "filled";
@@ -1497,7 +1497,7 @@ async function deliverChatBridgeMessage({
       const submitTarget = await send(tabId, "Runtime.evaluate", {
         expression: `(() => {
           // Chat Bridge trusted submit readiness after real Input.insertText.
-          const composer = document.querySelector('#prompt-textarea[contenteditable="true"][role="textbox"]');
+          const composer = document.querySelector('#prompt-textarea[contenteditable="true"][role="textbox"], [data-composer-markdown][contenteditable="true"][role="textbox"]');
           const button = document.querySelector(${JSON.stringify(chatBridgeSendSelector)});
           if (!composer) return { ready: false, reason: "composer_missing" };
           if (!String(composer.textContent || '').trim()) return { ready: false, reason: "composer_empty" };
@@ -1509,7 +1509,7 @@ async function deliverChatBridgeMessage({
         returnByValue: true,
         silent: true,
       });
-      if (submitTarget?.exceptionDetails) throw new Error(submitTarget.exceptionDetails?.text || "Chat Bridge submit readiness failed.");
+      if (submitTarget?.exceptionDetails) throw new Error(submitTarget.exceptionDetails?.exception?.description || submitTarget.exceptionDetails?.text || "Chat Bridge submit readiness failed.");
       const candidate = submitTarget?.result?.value;
       if (candidate?.ready === true) { submitReady = true; break; }
       lastSubmitReason = candidate?.reason || "not_ready";
