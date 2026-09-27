@@ -200,6 +200,8 @@ test("public Windows CI restores and builds the native x64 shell", async () => {
   assert.match(ci, /actions\/setup-dotnet@v5/u);
   assert.match(ci, /dotnet-version:\s*8\.0\.x/u);
   assert.match(ci, /dotnet build native\/windows\/EquinoxLocal\.WindowsShell\/EquinoxLocal\.WindowsShell\.csproj/u);
+  const runtimeHarness = await fs.readFile(path.join(ROOT, "tests", "windows", "EquinoxLocal.WindowsShell.RuntimeHarness", "EquinoxLocal.WindowsShell.RuntimeHarness.csproj"), "utf8");
+  assert.match(runtimeHarness, /WindowsManagedReleaseLocator\.cs/u);
   assert.match(ci, /-p:Platform=x64/u);
   assert.match(ci, /EquinoxLocal\.WindowsShell\.RuntimeHarness/u);
   assert.match(ci, /EQUINOX_TEST_NODE_EXE/u);
