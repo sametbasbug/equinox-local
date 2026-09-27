@@ -109,7 +109,7 @@ async function verifyWindowsAgentBrowserLifecycle(root) {
   assert.equal(launched.lastLaunchSetup, false);
   assert.equal(path.win32.normalize(launched.chromePath).toLowerCase(), path.win32.normalize(chromePath).toLowerCase());
 
-  const processQuery = "Get-CimInstance Win32_Process -Filter \"Name='chrome.exe'\" | Select-Object ProcessId,ExecutablePath,CommandLine | ConvertTo-Json -Compress";
+  const processQuery = "[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false); Get-CimInstance Win32_Process -Filter \"Name='chrome.exe'\" | Select-Object ProcessId,ExecutablePath,CommandLine | ConvertTo-Json -Compress";
   let lastInventory = "";
   let lastDiagnostics = [];
   const processId = await waitFor(async () => {

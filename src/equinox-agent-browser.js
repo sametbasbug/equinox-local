@@ -16,7 +16,7 @@ const NATIVE_HOST_NAME = "dev.equinox.browser";
 const PRODUCTION_EXTENSION_ORIGIN = "chrome-extension://npdneefcobilfkjlihghjgjnknenhfoj/";
 const READY_MARKER = ".equinox-agent-browser-ready";
 const DEFAULT_READY_TIMEOUT_MS = 8_000;
-const WINDOWS_CHROME_PROCESS_QUERY = "Get-CimInstance Win32_Process -Filter \"Name='chrome.exe'\" | Select-Object ProcessId,ExecutablePath,CommandLine | ConvertTo-Json -Compress";
+const WINDOWS_CHROME_PROCESS_QUERY = "[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false); Get-CimInstance Win32_Process -Filter \"Name='chrome.exe'\" | Select-Object ProcessId,ExecutablePath,CommandLine | ConvertTo-Json -Compress";
 const WINDOWS_CHROME_LAUNCH_SCRIPT = "$profileArg = '--user-data-dir=\"' + $env:EQUINOX_AGENT_PROFILE + '\"'; Start-Process -FilePath $env:EQUINOX_AGENT_CHROME -ArgumentList @($profileArg,'--no-first-run','--no-default-browser-check',$env:EQUINOX_AGENT_URL) | Out-Null";
 
 function errorMessage(error) {
