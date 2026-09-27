@@ -77,7 +77,9 @@ async function compileLauncher(releaseDir) {
   const command = `""${vcvars}" >nul && cl.exe /nologo /std:c++17 /O2 /EHsc /DUNICODE /D_UNICODE "${source}" /Fe:equinox-browser-native-host.exe"`;
   await execFile("cmd.exe", ["/d", "/s", "/c", command], {
     cwd: browserDir,
-    timeout: 60_000,
+    // Hosted Windows images can cold-start the VS toolchain slowly after an image refresh.
+    // Keep this bounded, but do not turn a successful compile into a 60s infrastructure flake.
+    timeout: 180_000,
     maxBuffer: 4 * 1024 * 1024,
     windowsHide: true,
     windowsVerbatimArguments: true,

@@ -52,6 +52,8 @@ async function createFixture(version = "4.2.0") {
   for (const name of ["LICENSE", "README.md", "VERSION"]) {
     await fs.writeFile(path.join(releaseDir, "runtime", "peekaboo", name), name === "VERSION" ? "4.3.0\n" : "fixture\n", { mode: 0o600 });
   }
+  await fs.writeFile(path.join(releaseDir, "runtime", "tunnel", "LICENSE"), "fixture tunnel license\n", { mode: 0o600 });
+  await fs.writeFile(path.join(releaseDir, "runtime", "tunnel", "NOTICE"), "fixture tunnel notice\n", { mode: 0o600 });
   await fs.writeFile(path.join(releaseDir, "runtime", "app", "EquinoxLocal.png"), "fixture\n", { mode: 0o600 });
   await fs.writeFile(path.join(releaseDir, "runtime", "app", "native-app.json"), "{}\n", { mode: 0o600 });
   for (const relative of [
@@ -87,6 +89,57 @@ test("first-install release validation requires exact target metadata and bundle
     );
   } finally {
     await fs.rm(fixture.homeDir, { recursive: true, force: true });
+  }
+});
+
+
+test("Windows x64 first-install release validation accepts native runtime names without Peekaboo", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "equinox-first-install-windows-contract-"));
+  const releaseDir = path.join(root, "release");
+  try {
+    await fs.mkdir(path.join(releaseDir, "runtime", "node", "bin"), { recursive: true });
+    await fs.mkdir(path.join(releaseDir, "runtime", "tunnel"), { recursive: true });
+    await fs.mkdir(path.join(releaseDir, "runtime", "browser"), { recursive: true });
+    await fs.writeFile(path.join(releaseDir, "release.json"), `${JSON.stringify({
+      schemaVersion: 1,
+      version: "5.2.1",
+      target: "win32-x64",
+      nodeVersion: "26.10.0",
+      tunnelClientVersion: "0.0.15",
+      serverEntry: "server.js",
+    })}\n`);
+    for (const relative of [
+      path.join("runtime", "node", "bin", "node.exe"),
+      path.join("runtime", "tunnel", "tunnel-client.exe"),
+      path.join("runtime", "tunnel", "cloudflared.exe"),
+      path.join("runtime", "browser", "equinox-browser-native-host.exe"),
+    ]) {
+      await fs.writeFile(path.join(releaseDir, relative), "fixture\n");
+    }
+    for (const relative of [
+      path.join("runtime", "tunnel", "LICENSE"),
+      path.join("runtime", "tunnel", "NOTICE"),
+      "server.js",
+      "equinox-browser-native-host.js",
+      "equinox-browser-native-host-runtime.js",
+      "equinox-browser-socket.js",
+      "equinox-local-windows-job-object.ps1",
+      "equinox-local-windows-process-gate.ps1",
+    ]) {
+      await fs.writeFile(path.join(releaseDir, relative), "fixture\n");
+    }
+    const result = await validateFirstInstallRelease(releaseDir, { target: "win32-x64" });
+    assert.equal(result.target, "win32-x64");
+    assert.equal(result.version, "5.2.1");
+    await assert.rejects(fs.lstat(path.join(releaseDir, "runtime", "peekaboo")), /ENOENT/u);
+
+    await fs.rm(path.join(releaseDir, "runtime", "browser", "equinox-browser-native-host.exe"));
+    await assert.rejects(
+      validateFirstInstallRelease(releaseDir, { target: "win32-x64" }),
+      /equinox-browser-native-host\.exe/u,
+    );
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
   }
 });
 
