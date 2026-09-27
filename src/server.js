@@ -3363,10 +3363,23 @@ equinoxLocalControlApi = createEquinoxLocalControlApi({
       turnBudget: await turnBudgetController.refreshSnapshot(),
       capabilities: capabilityRegistry.summary(),
     };
-    const tasks = await taskCapsuleStore.list({ limit: 50 });
+    const [tasks, onboarding] = await Promise.all([
+      taskCapsuleStore.list({ limit: 50 }),
+      getManagedOnboardingStatus({
+        installation: equinoxLocalInstallation,
+        homeDir: runtimeHomeDir,
+        supervisorMode: process.env.EQUINOX_LOCAL_SUPERVISOR_MODE || null,
+        browserUser: {
+          ready: Boolean(browser.contexts?.user?.ready),
+          consentAccepted: browserSettingsByContext.user?.consentAccepted === true,
+          controlEnabled: browserSettingsByContext.user?.enabled === true,
+        },
+        reconcileCompletion: true,
+      }),
+    ]);
     return {
       ...status,
-      presentation: deriveEquinoxLocalPresentationState({ status, tasks }),
+      presentation: deriveEquinoxLocalPresentationState({ status, tasks, onboarding }),
     };
   },
   getTurnBudget: async () => turnBudgetController.refreshSnapshot(),

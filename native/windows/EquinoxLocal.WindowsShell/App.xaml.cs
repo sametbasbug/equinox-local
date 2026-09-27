@@ -6,7 +6,7 @@ public partial class App : System.Windows.Application
 {
     private SingleInstanceCoordinator? _singleInstance;
     private TrayIconController? _trayIcon;
-    private RuntimeStatusMonitor? _runtimeStatus;
+    private ShellPresentationMonitor? _presentationStatus;
     private RuntimeSupervisor? _runtimeSupervisor;
     private StartupRegistration? _startupRegistration;
     private MainWindow? _window;
@@ -57,11 +57,11 @@ public partial class App : System.Windows.Application
         _trayIcon.SetStartupStatus(startupStatus);
 
         _runtimeSupervisor = RuntimeSupervisor.TryCreateFromEnvironment();
-        _runtimeStatus = new RuntimeStatusMonitor();
-        _trayIcon.SetRuntimeStatus(_runtimeStatus.Current);
-        _runtimeStatus.StatusChanged += (_, status) =>
-            Dispatcher.BeginInvoke(new Action(() => _trayIcon?.SetRuntimeStatus(status)));
-        _runtimeStatus.Start();
+        _presentationStatus = new ShellPresentationMonitor();
+        _trayIcon.SetPresentationStatus(_presentationStatus.Current);
+        _presentationStatus.StatusChanged += (_, status) =>
+            Dispatcher.BeginInvoke(new Action(() => _trayIcon?.SetPresentationStatus(status)));
+        _presentationStatus.Start();
         if (_runtimeSupervisor is not null) _ = StartRuntimeAsync();
 
         if (!_startedAtLogin) _window.Show();
@@ -99,8 +99,8 @@ public partial class App : System.Windows.Application
     {
         _window?.PrepareForExit();
         if (_runtimeSupervisor is not null) await _runtimeSupervisor.StopAsync();
-        _runtimeStatus?.Dispose();
-        _runtimeStatus = null;
+        _presentationStatus?.Dispose();
+        _presentationStatus = null;
         if (_runtimeSupervisor is not null) await _runtimeSupervisor.DisposeAsync();
         _runtimeSupervisor = null;
         _trayIcon?.Dispose();
@@ -110,8 +110,8 @@ public partial class App : System.Windows.Application
 
     protected override void OnExit(ExitEventArgs e)
     {
-        _runtimeStatus?.Dispose();
-        _runtimeStatus = null;
+        _presentationStatus?.Dispose();
+        _presentationStatus = null;
         if (_runtimeSupervisor is not null)
         {
             _runtimeSupervisor.DisposeAsync().AsTask().GetAwaiter().GetResult();

@@ -67,21 +67,25 @@ test("Windows shell tray lifecycle keeps close-to-tray distinct from explicit ex
   assert.match(app, /Shutdown\(\)/u);
 });
 
-test("Windows shell exposes bounded runtime health in the tray without duplicating Control Center logic", async () => {
+test("Windows shell consumes shared bounded presentation status without duplicating onboarding logic", async () => {
   const [app, monitor, tray] = await Promise.all([
     source("App.xaml.cs"),
-    source("RuntimeStatusMonitor.cs"),
+    source("ShellPresentationMonitor.cs"),
     source("TrayIconController.cs"),
   ]);
 
-  assert.match(app, /new RuntimeStatusMonitor/u);
-  assert.match(app, /StatusChanged/u);
-  assert.match(monitor, /127\.0\.0\.1:24891\/api\/v1\/health/u);
+  assert.match(app, /new ShellPresentationMonitor/u);
+  assert.match(app, /SetPresentationStatus/u);
+  assert.match(monitor, /using System\.IO;/u);
+  assert.match(monitor, /127\.0\.0\.1:24891\/api\/v1\/status/u);
+  assert.match(monitor, /X-Equinox-Background-Refresh/u);
+  assert.match(monitor, /MaxStatusBytes = 64 \* 1024/u);
+  assert.match(monitor, /setup_required/u);
   assert.match(monitor, /TimeSpan\.FromSeconds\(1\)/u);
   assert.match(monitor, /TimeSpan\.FromSeconds\(2\)/u);
   assert.match(monitor, /HttpCompletionOption\.ResponseHeadersRead/u);
-  assert.match(tray, /Runtime: \{label\}/u);
-  assert.doesNotMatch(monitor, /server\.js|node(?:\.exe)?|Process\.Start|powershell/iu);
+  assert.match(tray, /Status: \{status\.Label\}/u);
+  assert.doesNotMatch(monitor, /browserConnected|connectedThroughTunnel|setupComplete|server\.js|node(?:\.exe)?|Process\.Start|powershell/iu);
 });
 
 test("Windows shell runtime supervisor uses the existing Job Object gate with bounded recovery", async () => {
@@ -181,6 +185,7 @@ test("public Windows CI restores and builds the native x64 shell", async () => {
   assert.match(ci, /EQUINOX_TEST_NODE_EXE/u);
   assert.match(ci, /EquinoxLocal\.WindowsShell\.StartupHarness/u);
   assert.match(ci, /EquinoxLocal\.WindowsShell\.FolderPickerHarness/u);
+  assert.match(ci, /EquinoxLocal\.WindowsShell\.PresentationHarness/u);
   assert.match(ci, /Windows native shell branding smoke/u);
   assert.match(ci, /ExtractAssociatedIcon/u);
 });
