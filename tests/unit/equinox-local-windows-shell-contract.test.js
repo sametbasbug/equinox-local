@@ -84,6 +84,28 @@ test("Windows shell exposes bounded runtime health in the tray without duplicati
   assert.doesNotMatch(monitor, /server\.js|node(?:\.exe)?|Process\.Start|powershell/iu);
 });
 
+test("Windows shell runtime supervisor uses the existing Job Object gate with bounded recovery", async () => {
+  const [app, supervisor, tray] = await Promise.all([
+    source("App.xaml.cs"),
+    source("RuntimeSupervisor.cs"),
+    source("TrayIconController.cs"),
+  ]);
+  assert.match(app, /RuntimeSupervisor\.TryCreateFromEnvironment/u);
+  assert.match(app, /await _runtimeSupervisor\.StopAsync/u);
+  assert.match(supervisor, /EQUINOX_LOCAL_RELEASE_DIR/u);
+  assert.match(supervisor, /using System\.IO;/u);
+  assert.match(supervisor, /equinox-local-windows-job-object\.ps1/u);
+  assert.match(supervisor, /equinox-local-windows-process-gate\.ps1/u);
+  assert.match(supervisor, /EQUINOX_LOCAL_OWNED_PROCESS_SPEC/u);
+  assert.match(supervisor, /EQUINOX_GO/u);
+  assert.match(supervisor, /MaxAutomaticRestarts = 3/u);
+  assert.match(supervisor, /EQUINOX_LOCAL_SUPERVISOR_MODE/u);
+  assert.doesNotMatch(supervisor, /taskkill|current-version\.json|cmd\.exe/iu);
+  assert.match(tray, /Start Runtime/u);
+  assert.match(tray, /Restart Runtime/u);
+  assert.match(tray, /Stop Runtime/u);
+});
+
 test("public Windows CI restores and builds the native x64 shell", async () => {
   const publicCi = path.join(ROOT, ".github", "workflows", "ci.yml");
   const factoryCi = path.join(ROOT, "factory", "local", "public-template", ".github", "workflows", "ci.yml");
@@ -93,4 +115,6 @@ test("public Windows CI restores and builds the native x64 shell", async () => {
   assert.match(ci, /dotnet-version:\s*8\.0\.x/u);
   assert.match(ci, /dotnet build native\/windows\/EquinoxLocal\.WindowsShell\/EquinoxLocal\.WindowsShell\.csproj/u);
   assert.match(ci, /-p:Platform=x64/u);
+  assert.match(ci, /EquinoxLocal\.WindowsShell\.RuntimeHarness/u);
+  assert.match(ci, /EQUINOX_TEST_NODE_EXE/u);
 });
