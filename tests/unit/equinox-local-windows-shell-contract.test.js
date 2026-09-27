@@ -76,6 +76,7 @@ test("Windows shell consumes shared bounded presentation status without duplicat
 
   assert.match(app, /new ShellPresentationMonitor/u);
   assert.match(app, /SetPresentationStatus/u);
+  assert.match(monitor, /using System\.IO;/u);
   assert.match(monitor, /127\.0\.0\.1:24891\/api\/v1\/status/u);
   assert.match(monitor, /X-Equinox-Background-Refresh/u);
   assert.match(monitor, /MaxStatusBytes = 64 \* 1024/u);
