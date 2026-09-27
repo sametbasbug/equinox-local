@@ -57,6 +57,14 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Set up .NET SDK
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Build Windows native shell
+        run: dotnet build native/windows/EquinoxLocal.WindowsShell/EquinoxLocal.WindowsShell.csproj --configuration Release -p:Platform=x64
+
       - name: Windows headless runtime smoke
         run: npm run smoke:windows-headless
 
