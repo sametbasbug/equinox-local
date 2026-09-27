@@ -21,6 +21,12 @@ test("Windows shell is a thin x64 WPF/WebView2 host for the shared Control Cente
   assert.match(project, /<UseWPF>true<\/UseWPF>/u);
   assert.match(project, /<UseWindowsForms>true<\/UseWindowsForms>/u);
   assert.match(project, /<PlatformTarget>x64<\/PlatformTarget>/u);
+  assert.match(project, /RuntimeIdentifier[^\n]*win-x64|\$\(RuntimeIdentifier\)' == 'win-x64'/u);
+  assert.match(project, /<SelfContained>true<\/SelfContained>/u);
+  assert.match(project, /<PublishSingleFile>false<\/PublishSingleFile>/u);
+  assert.match(project, /<PublishTrimmed>false<\/PublishTrimmed>/u);
+  assert.match(project, /ValidateWindowsShellRuntimeIdentifier/u);
+  assert.match(project, /Windows ARM64 is enabled separately in W8/u);
   assert.match(project, /Microsoft\.Web\.WebView2/u);
   assert.match(window, /http:\/\/127\.0\.0\.1:24891\//u);
   assert.match(window, /EnsureCoreWebView2Async/u);
@@ -186,6 +192,12 @@ test("public Windows CI restores and builds the native x64 shell", async () => {
   assert.match(ci, /EquinoxLocal\.WindowsShell\.StartupHarness/u);
   assert.match(ci, /EquinoxLocal\.WindowsShell\.FolderPickerHarness/u);
   assert.match(ci, /EquinoxLocal\.WindowsShell\.PresentationHarness/u);
+  assert.match(ci, /dotnet publish native\/windows\/EquinoxLocal\.WindowsShell\/EquinoxLocal\.WindowsShell\.csproj[^\n]*--runtime win-x64[^\n]*--self-contained true/u);
+  assert.match(ci, /artifacts\/windows-shell\/win-x64/u);
+  assert.match(ci, /coreclr\.dll/u);
+  assert.match(ci, /hostfxr\.dll/u);
+  assert.match(ci, /0x8664/u);
+  assert.match(ci, /WebView2Loader\.dll/u);
   assert.match(ci, /Windows native shell branding smoke/u);
   assert.match(ci, /ExtractAssociatedIcon/u);
 });

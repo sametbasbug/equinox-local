@@ -6,6 +6,7 @@ This project follows semantic versioning for public releases.
 
 ## [Unreleased]
 
+- Locked the Windows x64 native shell publish contract to a self-contained, folder-based `win-x64` output with explicit x64 PE validation and WebView2/.NET runtime presence checks; Windows ARM64 remains a separate W8 enablement rather than an inferred cross-build.
 - Unified Windows native-shell onboarding/status presentation with the shared backend presentation model: first-time managed installs now surface `Setup Required` in the tray while all setup steps remain in the shared Control Center; Windows consumes only bounded `/api/v1/status` presentation fields with background-refresh accounting.
 - Branded the native Windows shell with the canonical Equinox Local artwork: the WPF window reuses `app/EquinoxLocal.png`, the executable embeds its Windows ICO derivative, and the tray reads that embedded application icon instead of defaulting to the generic Windows application glyph.
 - Added an origin-bound native Windows folder picker bridge for the WPF/WebView2 shell. Shared Control Center folder actions use the native dialog when hosted by the shell, retain the existing API/manual-path fallback elsewhere, and now accept Windows absolute paths without weakening server-side root validation.

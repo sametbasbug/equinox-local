@@ -65,6 +65,26 @@ jobs:
       - name: Build Windows native shell
         run: dotnet build native/windows/EquinoxLocal.WindowsShell/EquinoxLocal.WindowsShell.csproj --configuration Release -p:Platform=x64
 
+      - name: Publish Windows x64 native shell
+        run: dotnet publish native/windows/EquinoxLocal.WindowsShell/EquinoxLocal.WindowsShell.csproj --configuration Release --runtime win-x64 --self-contained true -p:Platform=x64 --output artifacts/windows-shell/win-x64
+
+      - name: Windows x64 native shell publish smoke
+        shell: pwsh
+        run: |
+          $publish = Join-Path $PWD 'artifacts/windows-shell/win-x64'
+          $exe = Join-Path $publish 'EquinoxLocal.exe'
+          foreach ($required in @($exe, (Join-Path $publish 'coreclr.dll'), (Join-Path $publish 'hostfxr.dll'), (Join-Path $publish 'Microsoft.Web.WebView2.Core.dll'))) {
+            if (-not (Test-Path -LiteralPath $required -PathType Leaf)) { throw "Missing published Windows shell component: $required" }
+          }
+          $bytes = [System.IO.File]::ReadAllBytes($exe)
+          if ($bytes.Length -lt 64) { throw 'Published EquinoxLocal.exe is unexpectedly small' }
+          $peOffset = [BitConverter]::ToInt32($bytes, 0x3c)
+          if ($peOffset -lt 0 -or ($peOffset + 6) -gt $bytes.Length) { throw 'Published EquinoxLocal.exe has an invalid PE header offset' }
+          $machine = [BitConverter]::ToUInt16($bytes, $peOffset + 4)
+          if ($machine -ne 0x8664) { throw ("Published EquinoxLocal.exe is not x64 (machine=0x{0:X4})" -f $machine) }
+          $loader = Get-ChildItem $publish -Filter WebView2Loader.dll -Recurse | Select-Object -First 1
+          if ($null -eq $loader) { throw 'Published shell is missing WebView2Loader.dll' }
+
       - name: Windows native shell branding smoke
         shell: pwsh
         run: |
