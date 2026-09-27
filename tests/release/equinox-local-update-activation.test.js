@@ -10,6 +10,7 @@ import {
   kickstartEquinoxLocalLaunchAgent,
   readManagedCurrentRelease,
 } from "../../src/equinox-local-update-activation.js";
+import { writeEquinoxLocalCurrentVersionPointer } from "../../src/equinox-local-current-release.js";
 import { equinoxLocalUpdateTarget } from "../../src/equinox-local-updater.js";
 
 async function makeInstall() {
@@ -229,4 +230,77 @@ test("managed release validation permits pre-4.4.0 rollback trees without bundle
   await fs.rm(fixture.installation.currentLink);
   await fs.symlink("releases/4.4.0", fixture.installation.currentLink, "dir");
   await assert.rejects(readManagedCurrentRelease(fixture.installation), /peekaboo/u);
+});
+
+
+test("Windows activation rollback restores current-version.json and the previous exact release", { skip: process.platform !== "win32" }, async (t) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "equinox-windows-activation-"));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const installRoot = path.join(root, "Equinox Local");
+  const releasesRoot = path.join(installRoot, "releases");
+  const currentPointer = path.join(installRoot, "current-version.json");
+  await fs.mkdir(releasesRoot, { recursive: true });
+  for (const version of ["4.2.0", "4.3.0"]) {
+    const release = path.join(releasesRoot, version);
+    const nodeDir = path.join(release, "runtime", "node", "bin");
+    const tunnelDir = path.join(release, "runtime", "tunnel");
+    await fs.mkdir(nodeDir, { recursive: true });
+    await fs.mkdir(tunnelDir, { recursive: true });
+    await fs.writeFile(path.join(release, "release.json"), JSON.stringify({
+      schemaVersion: 1,
+      version,
+      target: "win32-x64",
+      nodeVersion: "26.10.0",
+      tunnelClientVersion: "0.0.15",
+      serverEntry: "server.js",
+    }));
+    await fs.writeFile(path.join(nodeDir, "node.exe"), "fixture\n");
+    await fs.writeFile(path.join(tunnelDir, "tunnel-client.exe"), "fixture\n");
+    await fs.writeFile(path.join(tunnelDir, "cloudflared.exe"), "fixture\n");
+  }
+  await writeEquinoxLocalCurrentVersionPointer(currentPointer, {
+    version: "4.2.0",
+    platform: "win32",
+    target: "win32-x64",
+  });
+  const installation = {
+    kind: "managed",
+    managed: true,
+    selfUpdateSupported: true,
+    platform: "win32",
+    arch: "x64",
+    target: "win32-x64",
+    lifecycleKind: "windows-user",
+    installRoot,
+    releasesRoot,
+    currentLink: null,
+    currentPointer,
+  };
+  const restarts = [];
+  let targetAttempts = 0;
+  const fetchImpl = async () => {
+    const version = (await readManagedCurrentRelease(installation)).version;
+    if (version === "4.3.0") {
+      targetAttempts += 1;
+      throw new Error("candidate runtime unavailable");
+    }
+    return new Response(JSON.stringify({ status: { server: { version }, health: { state: "HEALTHY" } } }), { status: 200 });
+  };
+  await assert.rejects(
+    activatePreparedEquinoxRelease({
+      installation,
+      targetVersion: "4.3.0",
+      kickstartImpl: async (version) => restarts.push(version),
+      syncAppHostImpl: async () => {},
+      fetchImpl,
+      sleepImpl: async () => {},
+      healthAttempts: 2,
+    }),
+    /rolled back to 4\.2\.0/u,
+  );
+  assert.equal(targetAttempts, 2);
+  assert.deepEqual(restarts, ["4.3.0", "4.2.0"]);
+  assert.equal((await readManagedCurrentRelease(installation)).version, "4.2.0");
+  const pointer = JSON.parse(await fs.readFile(currentPointer, "utf8"));
+  assert.deepEqual(pointer, { schemaVersion: 1, target: "win32-x64", version: "4.2.0" });
 });

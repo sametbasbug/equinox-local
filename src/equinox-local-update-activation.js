@@ -4,9 +4,11 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 
+import { readEquinoxLocalCurrentVersionPointer, writeEquinoxLocalCurrentVersionPointer } from "./equinox-local-current-release.js";
 import { synchronizeEquinoxLocalAppHostForRelease } from "./equinox-local-native-app-host.js";
 import { EQUINOX_LOCAL_BUNDLED_PEEKABOO_SINCE_VERSION } from "./equinox-local-runtime-versions.js";
 import { compareEquinoxVersions, equinoxLocalUpdateTarget, parseEquinoxVersion } from "./equinox-local-updater.js";
+import { requestWindowsShellRuntimeRestart } from "./equinox-local-windows-shell-control.js";
 
 const execFile = promisify(execFileCallback);
 export const EQUINOX_LOCAL_CONTROL_CENTER_STATUS_URL = "http://127.0.0.1:24891/api/v1/status";
@@ -21,10 +23,23 @@ function boundedMessage(value) {
     .slice(0, 300);
 }
 
+function installationPathApi(installation) {
+  return installation?.platform === "win32" ? path.win32 : path.posix;
+}
+
+function installationTarget(installation) {
+  if (typeof installation?.target === "string" && installation.target) return installation.target;
+  return equinoxLocalUpdateTarget({
+    platform: installation?.platform ?? process.platform,
+    arch: installation?.arch ?? process.arch,
+  });
+}
+
 function releasePathFor(installation, version) {
   const normalized = parseEquinoxVersion(version).text;
-  const target = path.join(installation.releasesRoot, normalized);
-  if (path.dirname(target) !== installation.releasesRoot) {
+  const pathApi = installationPathApi(installation);
+  const target = pathApi.join(installation.releasesRoot, normalized);
+  if (pathApi.dirname(target) !== installation.releasesRoot) {
     throw new Error("Managed release path escaped the releases root.");
   }
   return target;
@@ -36,8 +51,9 @@ async function assertReleaseDirectory(installation, version) {
   if (!stat.isDirectory() || stat.isSymbolicLink()) {
     throw new Error(`Managed release ${version} is not a normal directory.`);
   }
-  const metadata = JSON.parse(await fs.readFile(path.join(target, "release.json"), "utf8"));
-  const expectedTarget = equinoxLocalUpdateTarget();
+  const pathApi = installationPathApi(installation);
+  const metadata = JSON.parse(await fs.readFile(pathApi.join(target, "release.json"), "utf8"));
+  const expectedTarget = installationTarget(installation);
   if (
     metadata?.schemaVersion !== 1 ||
     metadata?.version !== version ||
@@ -51,20 +67,27 @@ async function assertReleaseDirectory(installation, version) {
   ) {
     throw new Error(`Managed release ${version} metadata is invalid for ${expectedTarget}.`);
   }
-  const requiredExecutables = [
-    path.join("runtime", "node", "bin", "node"),
-    path.join("runtime", "tunnel", "tunnel-client"),
-    path.join("runtime", "tunnel", "cloudflared"),
-  ];
-  if (compareEquinoxVersions(version, EQUINOX_LOCAL_BUNDLED_PEEKABOO_SINCE_VERSION) >= 0) {
+  const windows = installation?.platform === "win32";
+  const requiredExecutables = windows
+    ? [
+        pathApi.join("runtime", "node", "bin", "node.exe"),
+        pathApi.join("runtime", "tunnel", "tunnel-client.exe"),
+        pathApi.join("runtime", "tunnel", "cloudflared.exe"),
+      ]
+    : [
+        pathApi.join("runtime", "node", "bin", "node"),
+        pathApi.join("runtime", "tunnel", "tunnel-client"),
+        pathApi.join("runtime", "tunnel", "cloudflared"),
+      ];
+  if (!windows && compareEquinoxVersions(version, EQUINOX_LOCAL_BUNDLED_PEEKABOO_SINCE_VERSION) >= 0) {
     requiredExecutables.push(
-      path.join("runtime", "peekaboo", "peekaboo"),
-      path.join("runtime", "peekaboo", "libswiftCompatibilitySpan.dylib"),
+      pathApi.join("runtime", "peekaboo", "peekaboo"),
+      pathApi.join("runtime", "peekaboo", "libswiftCompatibilitySpan.dylib"),
     );
   }
   for (const relative of requiredExecutables) {
-    const executable = await fs.lstat(path.join(target, relative));
-    if (!executable.isFile() || executable.isSymbolicLink() || (executable.mode & 0o111) === 0) {
+    const executable = await fs.lstat(pathApi.join(target, relative));
+    if (!executable.isFile() || executable.isSymbolicLink() || (!windows && (executable.mode & 0o111) === 0)) {
       throw new Error(`Managed release ${version} runtime executable is invalid: ${relative}.`);
     }
   }
@@ -72,23 +95,34 @@ async function assertReleaseDirectory(installation, version) {
 }
 
 export async function readManagedCurrentRelease(installation) {
-  if (!installation?.selfUpdateSupported || typeof installation.currentLink !== "string") {
+  if (!installation?.selfUpdateSupported) {
     throw new Error("A managed Equinox Local installation is required.");
   }
+  if (installation.platform === "win32") {
+    if (typeof installation.currentPointer !== "string") throw new Error("Managed Windows current-version pointer is unavailable.");
+    const pointer = await readEquinoxLocalCurrentVersionPointer(installation.currentPointer, {
+      platform: "win32",
+      target: installationTarget(installation),
+    });
+    const target = await assertReleaseDirectory(installation, pointer.version);
+    return Object.freeze({ version: pointer.version, releaseDir: target });
+  }
+  if (typeof installation.currentLink !== "string") throw new Error("Managed current symlink is unavailable.");
   const linkStat = await fs.lstat(installation.currentLink);
   if (!linkStat.isSymbolicLink()) throw new Error("Managed current pointer must be a symbolic link.");
   const rawTarget = await fs.readlink(installation.currentLink);
-  const resolved = path.resolve(path.dirname(installation.currentLink), rawTarget);
-  if (path.dirname(resolved) !== installation.releasesRoot) {
+  const resolved = path.posix.resolve(path.posix.dirname(installation.currentLink), rawTarget);
+  if (path.posix.dirname(resolved) !== installation.releasesRoot) {
     throw new Error("Managed current pointer escaped the releases root.");
   }
-  const version = path.basename(resolved);
+  const version = path.posix.basename(resolved);
   parseEquinoxVersion(version);
   const target = await assertReleaseDirectory(installation, version);
   return Object.freeze({ version, releaseDir: target });
 }
 
-async function syncDirectory(directory) {
+async function syncDirectory(directory, platform = process.platform) {
+  if (platform === "win32") return;
   const handle = await fs.open(directory, "r");
   try {
     await handle.sync();
@@ -104,17 +138,31 @@ export async function atomicSwitchCurrentRelease(installation, targetVersion) {
     return Object.freeze({ previous, current: previous, changed: false });
   }
 
-  const tempLink = path.join(
+  if (installation.platform === "win32") {
+    if (typeof installation.currentPointer !== "string") throw new Error("Managed Windows current-version pointer is unavailable.");
+    await writeEquinoxLocalCurrentVersionPointer(installation.currentPointer, {
+      version: targetVersion,
+      platform: "win32",
+      target: installationTarget(installation),
+    });
+    return Object.freeze({
+      previous,
+      current: Object.freeze({ version: targetVersion, releaseDir: targetReleaseDir }),
+      changed: true,
+    });
+  }
+
+  const tempLink = path.posix.join(
     installation.installRoot,
     `.current-next-${process.pid}-${randomBytes(8).toString("hex")}`,
   );
-  const relativeTarget = path.relative(installation.installRoot, targetReleaseDir);
+  const relativeTarget = path.posix.relative(installation.installRoot, targetReleaseDir);
   if (!relativeTarget.startsWith("releases/")) throw new Error("Managed release link target is invalid.");
 
   try {
     await fs.symlink(relativeTarget, tempLink, "dir");
     await fs.rename(tempLink, installation.currentLink);
-    await syncDirectory(installation.installRoot);
+    await syncDirectory(installation.installRoot, installation.platform);
   } catch (error) {
     await fs.rm(tempLink, { force: true }).catch(() => {});
     throw error;
@@ -263,14 +311,24 @@ async function writeActivationState(installation, state) {
   const temp = `${target}.tmp-${process.pid}-${randomBytes(8).toString("hex")}`;
   await fs.writeFile(temp, `${JSON.stringify(state, null, 2)}\n`, { mode: 0o600, flag: "wx" });
   await fs.rename(temp, target);
-  await syncDirectory(installation.installRoot);
+  await syncDirectory(installation.installRoot, installation.platform);
+}
+
+async function synchronizeManagedShellForRelease(installation, release) {
+  if (installation?.platform === "win32") return Object.freeze({ synchronized: false, reason: "windows-stable-shell" });
+  return synchronizeEquinoxLocalAppHostForRelease({ installation, releaseDir: release.releaseDir });
+}
+
+async function restartManagedInstallation(installation) {
+  if (installation?.platform === "win32") return requestWindowsShellRuntimeRestart({ platform: "win32" });
+  return kickstartEquinoxLocalLaunchAgent(installation);
 }
 
 export async function activatePreparedEquinoxRelease({
   installation,
   targetVersion,
-  kickstartImpl = () => kickstartEquinoxLocalLaunchAgent(installation),
-  syncAppHostImpl = ({ releaseDir }) => synchronizeEquinoxLocalAppHostForRelease({ installation, releaseDir }),
+  kickstartImpl = () => restartManagedInstallation(installation),
+  syncAppHostImpl = ({ version, releaseDir }) => synchronizeManagedShellForRelease(installation, { version, releaseDir }),
   fetchImpl = globalThis.fetch,
   sleepImpl,
   healthAttempts = HEALTH_ATTEMPTS,

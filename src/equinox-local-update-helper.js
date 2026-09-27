@@ -9,7 +9,7 @@ const START_DELAY_MS = 1_500;
 export async function runEquinoxLocalUpdateHelper({
   argv = process.argv.slice(2),
   env = process.env,
-  homeDir = env.HOME,
+  homeDir = env.USERPROFILE ?? env.HOME,
   sleepImpl = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
   activateImpl = activatePreparedEquinoxRelease,
 } = {}) {

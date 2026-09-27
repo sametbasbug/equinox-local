@@ -40,6 +40,8 @@ public partial class App : System.Windows.Application
         MainWindow = _window;
         _singleInstance.ReopenRequested += (_, _) =>
             Dispatcher.BeginInvoke(new Action(_window.ActivateFromReopen));
+        _singleInstance.RuntimeRestartRequested += (_, _) =>
+            Dispatcher.BeginInvoke(new Action(() => _ = RestartRuntimeAsync()));
         _singleInstance.StartListening();
 
         _startupRegistration = new StartupRegistration();
@@ -56,7 +58,7 @@ public partial class App : System.Windows.Application
 
         _trayIcon.SetStartupStatus(startupStatus);
 
-        _runtimeSupervisor = RuntimeSupervisor.TryCreateFromEnvironment();
+        _runtimeSupervisor = RuntimeSupervisor.TryCreateFromEnvironmentOrManagedInstall();
         _presentationStatus = new ShellPresentationMonitor();
         _trayIcon.SetPresentationStatus(_presentationStatus.Current);
         _presentationStatus.StatusChanged += (_, status) =>

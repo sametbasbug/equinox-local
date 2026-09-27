@@ -12,11 +12,7 @@ internal sealed class RuntimeSupervisor : IAsyncDisposable
     private static readonly TimeSpan ExitTimeout = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan[] RecoveryDelays = [TimeSpan.FromMilliseconds(250), TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(2)];
 
-    private readonly string _releaseDir;
-    private readonly string _nodePath;
-    private readonly string _serverPath;
-    private readonly string _jobHelperPath;
-    private readonly string _processGatePath;
+    private readonly Func<WindowsReleaseLocation> _releaseResolver;
     private readonly SemaphoreSlim _lifecycle = new(1, 1);
     private readonly SemaphoreSlim _protocol = new(1, 1);
     private Process? _jobHelper;
@@ -31,17 +27,19 @@ internal sealed class RuntimeSupervisor : IAsyncDisposable
     {
         if (string.IsNullOrWhiteSpace(releaseDir) || !Path.IsPathFullyQualified(releaseDir))
             throw new ArgumentException("Runtime release directory must be absolute.", nameof(releaseDir));
-        _releaseDir = Path.GetFullPath(releaseDir);
-        _nodePath = Path.Combine(_releaseDir, "runtime", "node", "bin", "node.exe");
-        _serverPath = Path.Combine(_releaseDir, "server.js");
-        _jobHelperPath = Path.Combine(_releaseDir, "equinox-local-windows-job-object.ps1");
-        _processGatePath = Path.Combine(_releaseDir, "equinox-local-windows-process-gate.ps1");
+        var fixedRelease = Path.GetFullPath(releaseDir);
+        var installRoot = Environment.GetEnvironmentVariable("EQUINOX_LOCAL_INSTALL_ROOT");
+        _releaseResolver = () => new WindowsReleaseLocation(fixedRelease, string.IsNullOrWhiteSpace(installRoot) ? null : Path.GetFullPath(installRoot));
     }
 
-    internal static RuntimeSupervisor? TryCreateFromEnvironment()
+    private RuntimeSupervisor(Func<WindowsReleaseLocation> releaseResolver) => _releaseResolver = releaseResolver;
+
+    internal static RuntimeSupervisor? TryCreateFromEnvironmentOrManagedInstall()
     {
         var releaseDir = Environment.GetEnvironmentVariable("EQUINOX_LOCAL_RELEASE_DIR");
-        return string.IsNullOrWhiteSpace(releaseDir) ? null : new RuntimeSupervisor(releaseDir);
+        if (!string.IsNullOrWhiteSpace(releaseDir)) return new RuntimeSupervisor(releaseDir);
+        if (!WindowsManagedReleaseLocator.HasCurrentPointer()) return null;
+        return new RuntimeSupervisor(WindowsManagedReleaseLocator.ResolveCurrentRelease);
     }
 
     internal int? RuntimeProcessId => _gate is { HasExited: false } process ? process.Id : null;
@@ -93,17 +91,24 @@ internal sealed class RuntimeSupervisor : IAsyncDisposable
 
     private async Task StartCoreAsync(CancellationToken cancellationToken)
     {
-        ValidateReleaseFiles();
+        var location = _releaseResolver();
+        var releaseDir = location.ReleaseDir;
+        var nodePath = Path.Combine(releaseDir, "runtime", "node", "bin", "node.exe");
+        var serverPath = Path.Combine(releaseDir, "server.js");
+        var jobHelperPath = Path.Combine(releaseDir, "equinox-local-windows-job-object.ps1");
+        var processGatePath = Path.Combine(releaseDir, "equinox-local-windows-process-gate.ps1");
+        ValidateReleaseFiles(nodePath, serverPath, jobHelperPath, processGatePath);
         await CloseJobHelperAsync(CancellationToken.None).ConfigureAwait(false);
-        _jobHelper = StartPowerShell(_jobHelperPath, redirectOutput: true);
+        _jobHelper = StartPowerShell(jobHelperPath, redirectOutput: true);
         var ready = await ReadReplyAsync(_jobHelper, cancellationToken).ConfigureAwait(false);
         if (!ready.GetProperty("ok").GetBoolean() || !ready.GetProperty("ready").GetBoolean())
             throw new InvalidOperationException("Windows Job Object helper did not become ready.");
 
-        var payload = Convert.ToBase64String(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new { command = _nodePath, args = new[] { _serverPath } })));
-        var startInfo = PowerShellStartInfo(_processGatePath);
+        var payload = Convert.ToBase64String(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new { command = nodePath, args = new[] { serverPath } })));
+        var startInfo = PowerShellStartInfo(processGatePath);
         startInfo.Environment["EQUINOX_LOCAL_OWNED_PROCESS_SPEC"] = payload;
-        startInfo.Environment["EQUINOX_LOCAL_RELEASE_DIR"] = _releaseDir;
+        startInfo.Environment["EQUINOX_LOCAL_RELEASE_DIR"] = releaseDir;
+        if (!string.IsNullOrWhiteSpace(location.InstallRoot)) startInfo.Environment["EQUINOX_LOCAL_INSTALL_ROOT"] = location.InstallRoot;
         startInfo.Environment["EQUINOX_LOCAL_SUPERVISOR_MODE"] = "local-only";
         var gate = new Process { StartInfo = startInfo, EnableRaisingEvents = true };
         if (!gate.Start()) throw new InvalidOperationException("Windows runtime process gate did not start.");
@@ -244,9 +249,9 @@ internal sealed class RuntimeSupervisor : IAsyncDisposable
         Arguments = $"-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File \"{scriptPath}\"",
     };
 
-    private void ValidateReleaseFiles()
+    private static void ValidateReleaseFiles(params string[] files)
     {
-        foreach (var file in new[] { _nodePath, _serverPath, _jobHelperPath, _processGatePath })
+        foreach (var file in files)
             if (!File.Exists(file)) throw new FileNotFoundException("Windows runtime release is incomplete.", file);
     }
 
