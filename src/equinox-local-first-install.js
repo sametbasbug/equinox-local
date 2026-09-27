@@ -25,6 +25,7 @@ import {
   resolveSupervisorRelease,
 } from "./equinox-local-supervisor.js";
 import { initializeManagedOnboardingState } from "./equinox-local-onboarding.js";
+import { equinoxLocalReleaseRuntimeContract } from "./equinox-local-release-runtime-contract.js";
 
 const execFile = promisify(execFileCallback);
 const MAX_RELEASE_METADATA_BYTES = 16 * 1024;
@@ -33,26 +34,6 @@ const MAX_RELEASE_BYTES = 2 * 1024 * 1024 * 1024;
 const FIRST_INSTALL_HEALTH_ATTEMPTS = 120;
 const FIRST_INSTALL_HEALTH_DELAY_MS = 500;
 const FIRST_INSTALL_DIAGNOSTIC_BYTES = 12 * 1024;
-const REQUIRED_RUNTIME_FILES = Object.freeze([
-  path.join("runtime", "node", "bin", "node"),
-  path.join("runtime", "tunnel", "tunnel-client"),
-  path.join("runtime", "tunnel", "cloudflared"),
-  path.join("runtime", "peekaboo", "peekaboo"),
-  path.join("runtime", "peekaboo", "libswiftCompatibilitySpan.dylib"),
-]);
-const REQUIRED_RUNTIME_DOCUMENTS = Object.freeze([
-  path.join("runtime", "peekaboo", "LICENSE"),
-  path.join("runtime", "peekaboo", "README.md"),
-  path.join("runtime", "peekaboo", "VERSION"),
-]);
-const REQUIRED_RELEASE_FILES = Object.freeze([
-  "server.js",
-  "equinox-local-bootstrap.js",
-  "equinox-local-supervisor.js",
-  "equinox-local-first-install.js",
-  "equinox-local-onboarding.js",
-]);
-
 function inside(parent, child) {
   const relative = path.relative(parent, child);
   return relative !== "" && !relative.startsWith("..") && !path.isAbsolute(relative);
@@ -128,7 +109,11 @@ export async function validateFirstInstallRelease(releaseDir, {
   const metadataPath = path.join(releaseDir, "release.json");
   await assertNormalFile(metadataPath, "Release metadata", { maxBytes: MAX_RELEASE_METADATA_BYTES, fsImpl });
   const metadata = JSON.parse(await fsImpl.readFile(metadataPath, "utf8"));
-  exactKeys(metadata, ["schemaVersion", "version", "target", "nodeVersion", "tunnelClientVersion", "nativeAppShellVersion", "serverEntry"], "Release metadata");
+  const runtimeContract = equinoxLocalReleaseRuntimeContract({ target, version: metadata.version });
+  const metadataKeys = runtimeContract.platform === "darwin"
+    ? ["schemaVersion", "version", "target", "nodeVersion", "tunnelClientVersion", "nativeAppShellVersion", "serverEntry"]
+    : ["schemaVersion", "version", "target", "nodeVersion", "tunnelClientVersion", "serverEntry"];
+  exactKeys(metadata, metadataKeys, "Release metadata");
   if (
     metadata.schemaVersion !== 1 ||
     metadata.target !== target ||
@@ -137,22 +122,23 @@ export async function validateFirstInstallRelease(releaseDir, {
     !/^\d+\.\d+\.\d+$/u.test(metadata.nodeVersion) ||
     typeof metadata.tunnelClientVersion !== "string" ||
     !/^\d+\.\d+\.\d+$/u.test(metadata.tunnelClientVersion) ||
-    !Number.isSafeInteger(metadata.nativeAppShellVersion) ||
-    metadata.nativeAppShellVersion < 1
+    (runtimeContract.platform === "darwin" && (!Number.isSafeInteger(metadata.nativeAppShellVersion) || metadata.nativeAppShellVersion < 1))
   ) {
     throw new Error(`Staged Equinox Local release metadata is invalid for ${target}.`);
   }
   parseEquinoxVersion(metadata.version);
-  for (const relative of REQUIRED_RUNTIME_FILES) {
-    await assertNormalFile(path.join(releaseDir, relative), `Runtime ${relative}`, { executable: true, fsImpl });
+  for (const relative of runtimeContract.runtimeExecutables) {
+    await assertNormalFile(path.join(releaseDir, relative), `Runtime ${relative}`, { executable: runtimeContract.executableModeRequired, fsImpl });
   }
-  for (const relative of REQUIRED_RUNTIME_DOCUMENTS) {
+  for (const relative of runtimeContract.runtimeDocuments) {
     await assertNormalFile(path.join(releaseDir, relative), `Runtime ${relative}`, { fsImpl });
   }
-  await assertNormalFile(path.join(releaseDir, "runtime", "app", "applet"), "Native app executable", { executable: true, fsImpl });
-  await assertNormalFile(path.join(releaseDir, "runtime", "app", "EquinoxLocal.png"), "Native app icon", { fsImpl });
-  await assertNormalFile(path.join(releaseDir, "runtime", "app", "native-app.json"), "Native app metadata", { fsImpl });
-  for (const relative of REQUIRED_RELEASE_FILES) {
+  if (runtimeContract.nativeAppKind === "macos-app") {
+    await assertNormalFile(path.join(releaseDir, "runtime", "app", "applet"), "Native app executable", { executable: true, fsImpl });
+    await assertNormalFile(path.join(releaseDir, "runtime", "app", "EquinoxLocal.png"), "Native app icon", { fsImpl });
+    await assertNormalFile(path.join(releaseDir, "runtime", "app", "native-app.json"), "Native app metadata", { fsImpl });
+  }
+  for (const relative of runtimeContract.requiredReleaseFiles) {
     await assertNormalFile(path.join(releaseDir, relative), `Release ${relative}`, { fsImpl });
   }
   return Object.freeze({
