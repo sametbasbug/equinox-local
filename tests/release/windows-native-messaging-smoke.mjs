@@ -74,12 +74,13 @@ async function compileLauncher(releaseDir) {
   assert.ok(installation, "Visual Studio C++ toolchain is unavailable on the Windows runner");
   const vcvars = path.join(installation, "VC", "Auxiliary", "Build", "vcvars64.bat");
   const source = path.join(REPO_ROOT, "native", "windows", "equinox-browser-native-host-launcher.cpp");
-  const command = `call "${vcvars}" >nul && cl.exe /nologo /std:c++17 /O2 /EHsc /DUNICODE /D_UNICODE "${source}" /Fe:equinox-browser-native-host.exe`;
+  const command = `""${vcvars}" >nul && cl.exe /nologo /std:c++17 /O2 /EHsc /DUNICODE /D_UNICODE "${source}" /Fe:equinox-browser-native-host.exe"`;
   await execFile("cmd.exe", ["/d", "/s", "/c", command], {
     cwd: browserDir,
     timeout: 60_000,
     maxBuffer: 4 * 1024 * 1024,
     windowsHide: true,
+    windowsVerbatimArguments: true,
   });
   const stat = await fs.lstat(launcherPath);
   assert.equal(stat.isFile(), true, "Windows Native Messaging launcher was not compiled");
