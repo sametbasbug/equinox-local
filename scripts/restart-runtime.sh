@@ -14,6 +14,13 @@ else
   DEV_NODE="$(command -v node 2>/dev/null || true)"
 fi
 LOG_FILE="${TMPDIR:-/tmp}/equinox-local-restart.log"
+RESTART_HELPER_LABEL="dev.equinox.local.source-restart-helper"
+RESTART_HELPER_PLIST="${TMPDIR:-/tmp}/equinox-local-source-restart-helper.plist"
+WORKER_MODE=0
+if [ "${1:-}" = "--worker" ]; then
+  WORKER_MODE=1
+  shift
+fi
 APP_PATH="$HOME/Applications/Equinox Local.app"
 APP_EXECUTABLE="$APP_PATH/Contents/MacOS/applet"
 PRE_RESTART_APP_PIDS=""
@@ -33,6 +40,82 @@ fail() {
   printf 'Equinox Local source restart: %s\n' "$*" >&2
   exit 1
 }
+
+xml_escape() {
+  printf '%s' "$1" | /usr/bin/sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' -e 's/"/\&quot;/g' -e "s/'/\&apos;/g"
+}
+
+schedule_restart_worker() {
+  worker_domain="gui/$(/usr/bin/id -u)"
+  if /bin/launchctl print "$worker_domain/$RESTART_HELPER_LABEL" >/dev/null 2>&1; then
+    existing_helper_pid="$(/bin/launchctl print "$worker_domain/$RESTART_HELPER_LABEL" 2>/dev/null | /usr/bin/awk '$1 == "pid" && $2 == "=" { print $3; exit }' || true)"
+    if [[ "$existing_helper_pid" =~ ^[0-9]+$ ]] && /bin/kill -0 "$existing_helper_pid" >/dev/null 2>&1; then
+      fail "another source restart is already running (helper pid $existing_helper_pid)"
+    fi
+    /bin/launchctl bootout "$worker_domain/$RESTART_HELPER_LABEL" >/dev/null 2>&1 || true
+  fi
+
+  /bin/rm -f "$RESTART_HELPER_PLIST"
+  escaped_script="$(xml_escape "$ROOT/scripts/restart-runtime.sh")"
+  escaped_log="$(xml_escape "$LOG_FILE")"
+  escaped_home="$(xml_escape "$HOME")"
+  escaped_tmpdir="$(xml_escape "${TMPDIR:-/tmp}")"
+  escaped_config="$(xml_escape "$CONFIG")"
+  escaped_node="$(xml_escape "$DEV_NODE")"
+  escaped_user="$(xml_escape "$(/usr/bin/id -un)")"
+  /bin/cat > "$RESTART_HELPER_PLIST" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>$RESTART_HELPER_LABEL</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>$escaped_script</string>
+    <string>--worker</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>HOME</key>
+    <string>$escaped_home</string>
+    <key>USER</key>
+    <string>$escaped_user</string>
+    <key>LOGNAME</key>
+    <string>$escaped_user</string>
+    <key>TMPDIR</key>
+    <string>$escaped_tmpdir</string>
+    <key>PATH</key>
+    <string>/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <key>EQUINOX_LOCAL_DEV_RUNTIME_CONFIG</key>
+    <string>$escaped_config</string>
+    <key>EQUINOX_LOCAL_DEV_NODE</key>
+    <string>$escaped_node</string>
+  </dict>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <false/>
+  <key>ProcessType</key>
+  <string>Background</string>
+  <key>StandardOutPath</key>
+  <string>$escaped_log</string>
+  <key>StandardErrorPath</key>
+  <string>$escaped_log</string>
+</dict>
+</plist>
+EOF
+  /bin/chmod 600 "$RESTART_HELPER_PLIST"
+  /bin/launchctl bootstrap "$worker_domain" "$RESTART_HELPER_PLIST" || fail "could not bootstrap the independent source restart helper"
+  /bin/launchctl print "$worker_domain/$RESTART_HELPER_LABEL" >/dev/null 2>&1 || fail "source restart helper was not registered after bootstrap"
+  printf 'Equinox Local source restart scheduled through independent LaunchAgent helper.\n'
+}
+
+if [ "$WORKER_MODE" -eq 0 ]; then
+  schedule_restart_worker
+  exit 0
+fi
 
 RESTART_STAGE="preflight"
 RESTART_LOCK_DIR="$(/usr/bin/dirname "$LOG_FILE")/equinox-local-restart.lock"
@@ -55,8 +138,13 @@ cleanup_restart() {
     fi
   fi
   if [ "$status" -ne 0 ]; then
-    printf '[%s] Equinox Local source-checkout restart failed at stage=%s exit=%s.
-' "$(timestamp)" "$RESTART_STAGE" "$status" >> "$LOG_FILE"
+    printf '[%s] Equinox Local source-checkout restart failed at stage=%s exit=%s.\n' "$(timestamp)" "$RESTART_STAGE" "$status" >> "$LOG_FILE"
+  fi
+  if [ "$WORKER_MODE" -eq 1 ]; then
+    helper_domain="gui/$(/usr/bin/id -u)"
+    /bin/rm -f "$RESTART_HELPER_PLIST"
+    trap - EXIT HUP INT TERM
+    /bin/launchctl bootout "$helper_domain/$RESTART_HELPER_LABEL" >/dev/null 2>&1 || true
   fi
 }
 

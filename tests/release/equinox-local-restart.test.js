@@ -82,6 +82,17 @@ test("source-checkout restart uses only private generic developer runtime config
   assert.equal(script.includes('launchctl kickstart "$DOMAIN/$LABEL"'), true);
   assert.doesNotMatch(script, /launchctl kickstart -k/u);
   assert.doesNotMatch(script, /launchctl submit/u);
+  assert.match(script, /dev\.equinox\.local\.source-restart-helper/u);
+  assert.match(script, /--worker/u);
+  assert.match(script, /<key>KeepAlive<\/key>\n  <false\/>/u);
+  assert.match(script, /source restart scheduled through independent LaunchAgent helper/u);
+  assert.match(script, /<key>TMPDIR<\/key>/u);
+  assert.match(script, /EQUINOX_LOCAL_DEV_RUNTIME_CONFIG/u);
+  assert.match(script, /EQUINOX_LOCAL_DEV_NODE/u);
+  assert.ok(
+    script.indexOf("schedule_restart_worker") < script.indexOf('launchctl bootout \"$DOMAIN/$LABEL\"'),
+    "source restart must escape the runtime LaunchAgent before booting that service out",
+  );
   assert.ok(
     script.indexOf('NEW_PID=') < script.indexOf('/usr/bin/open -gn'),
     "foreground GUI refresh must happen only after the restarted source runtime is healthy",
