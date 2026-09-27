@@ -57,7 +57,7 @@ export function registerProcessTools({
         }
 
         const projectId = getActiveProjectId();
-        const processInfo = processManager.start({
+        const processInfo = await processManager.start({
           projectId,
           projectName: getActiveProjectName(),
           cwd: resolvedCwd,

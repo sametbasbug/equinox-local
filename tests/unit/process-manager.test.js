@@ -29,17 +29,40 @@ function makeFakeProcess(pid = 4100) {
   return child;
 }
 
-test("Windows process manager refuses to spawn before a Job Object ownership adapter exists", () => {
-  let spawnCalls = 0;
+test("Windows process manager prepares a Job Object gate before spawning user work", async () => {
+  const child = makeFakeProcess(4100);
+  child.stdin = new PassThrough();
+  const calls = [];
+  const ownedSet = { id: "job-1" };
   const manager = createProcessManager({
     platform: "win32",
     arch: "x64",
-    spawnImpl: () => { spawnCalls += 1; return makeFakeProcess(); },
+    ownershipAdapter: {
+      kind: "job-object",
+      implemented: true,
+      detached: false,
+      async createOwnedSet() { calls.push("create"); return ownedSet; },
+      spawnSpec(command, args, env) { calls.push(["spec", command, args]); return { command: "powershell.exe", args: ["gate.ps1"], env, stdin: "pipe" }; },
+      async attachAndRelease(job, spawned) { calls.push(["attach", job, spawned.pid]); },
+      async ownedSetExists() { return false; },
+      async signalOwnedSet() {},
+      async closeOwnedSet() { calls.push("close"); },
+    },
+    spawnImpl: (command, args, options) => {
+      calls.push(["spawn", command, args, options.stdio[0], options.windowsHide]);
+      return child;
+    },
   });
-  assert.throws(() => manager.start({
+  const started = await manager.start({
     projectId: "local", projectName: "Equinox Local", cwd: "C:\\Work", command: "node.exe", args: ["server.js"],
-  }), /implemented process-ownership adapter/u);
-  assert.equal(spawnCalls, 0);
+  });
+  assert.equal(started.pid, 4100);
+  assert.deepEqual(calls.slice(0, 4), [
+    "create",
+    ["spec", "node.exe", ["server.js"]],
+    ["spawn", "powershell.exe", ["gate.ps1"], "pipe", true],
+    ["attach", ownedSet, 4100],
+  ]);
 });
 
 test("process manager starts, captures logs and stops a process group", async () => {
@@ -68,7 +91,7 @@ test("process manager starts, captures logs and stops a process group", async ()
     randomId: () => "test0001",
   });
 
-  const started = manager.start({
+  const started = await manager.start({
     projectId: "blog",
     projectName: "Ana Blog",
     cwd: "/tmp/project",
@@ -108,7 +131,7 @@ test("process manager exposes bounded separate and ordered output snapshots", as
     spawnImpl: () => child,
     randomId: () => "snapshot1",
   });
-  const started = manager.start({
+  const started = await manager.start({
     projectId: "local",
     projectName: "Equinox Local",
     cwd: "/tmp",
@@ -145,7 +168,7 @@ test("process wait expiry leaves the exact managed process running", async () =>
     spawnImpl: () => child,
     randomId: () => "waitkeep1",
   });
-  const started = manager.start({
+  const started = await manager.start({
     projectId: "local",
     projectName: "Equinox Local",
     cwd: "/tmp",
@@ -186,7 +209,7 @@ test("process manager keeps descendants managed after the group leader exits", a
     randomId: () => "group001",
   });
 
-  const started = manager.start({
+  const started = await manager.start({
     projectId: "local",
     projectName: "Equinox Local",
     cwd: "/tmp",
@@ -221,7 +244,7 @@ test("process manager finalizes after the last descendant exits naturally", asyn
     randomId: () => "group002",
   });
 
-  const started = manager.start({
+  const started = await manager.start({
     projectId: "local",
     projectName: "Equinox Local",
     cwd: "/tmp",
@@ -257,7 +280,7 @@ test("process manager retains late stdout after exit until close", async () => {
     randomId: () => "lateout1",
   });
 
-  const started = manager.start({
+  const started = await manager.start({
     projectId: "local",
     projectName: "Equinox Local",
     cwd: "/tmp",
@@ -289,7 +312,7 @@ test("process log cursors remain stable and report dropped data", async () => {
     randomId: () => "test0002",
   });
 
-  const started = manager.start({
+  const started = await manager.start({
     projectId: "workspace",
     projectName: "Selene Workspace",
     cwd: "/tmp",
@@ -315,7 +338,7 @@ test("process log cursors remain stable and report dropped data", async () => {
   await manager.shutdown();
 });
 
-test("process manager enforces active process limit and port lookup", () => {
+test("process manager enforces active process limit and port lookup", async () => {
   let nextPid = 4400;
   const manager = createProcessManager({
     spawnImpl: () => makeFakeProcess(nextPid++),
@@ -326,7 +349,7 @@ test("process manager enforces active process limit and port lookup", () => {
     })(),
   });
 
-  manager.start({
+  await manager.start({
     projectId: "ai",
     projectName: "AI Sitesi",
     cwd: "/tmp",
@@ -341,7 +364,7 @@ test("process manager enforces active process limit and port lookup", () => {
     [4173, 4321],
   );
 
-  assert.throws(
+  await assert.rejects(
     () => manager.start({
       projectId: "ai",
       projectName: "AI Sitesi",
@@ -361,7 +384,7 @@ test("terminal_exec-purpose non-zero exit is a command result, not a runtime cra
     randomId: () => "cmdexit1",
     onEvent: (event) => events.push(event),
   });
-  const started = manager.start({
+  const started = await manager.start({
     projectId: "local",
     projectName: "Equinox Local",
     cwd: "/tmp",
@@ -392,7 +415,7 @@ test("process lifecycle emits observability events without command arguments", a
     onEvent: (event) => events.push(event),
   });
 
-  const started = manager.start({
+  const started = await manager.start({
     projectId: "local",
     projectName: "Equinox Local",
     cwd: "/tmp",
@@ -471,7 +494,7 @@ test("TCP port probe distinguishes listening and closed ports", async () => {
 
 test("real managed foreground wait preserves one PID through continuation", async () => {
   const manager = createProcessManager();
-  const started = manager.start({
+  const started = await manager.start({
     projectId: "local",
     projectName: "Equinox Local",
     cwd: process.cwd(),
@@ -518,7 +541,7 @@ test("real managed foreground wait preserves one PID through continuation", asyn
 
 test("real managed process produces output and exits", async () => {
   const manager = createProcessManager();
-  const started = manager.start({
+  const started = await manager.start({
     projectId: "local",
     projectName: "Equinox Local",
     cwd: process.cwd(),

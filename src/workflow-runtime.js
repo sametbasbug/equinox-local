@@ -130,7 +130,7 @@ async function runManagedNpmScript({
 }) {
   const npmBinary = await resolveNpmBinary();
   const startedAt = Date.now();
-  const processInfo = processManager.start({
+  const processInfo = await processManager.start({
     projectId: workflow.projectId,
     projectName: workflow.projectName,
     cwd: workflow.projectRoot,
@@ -282,7 +282,7 @@ async function runPreviewSmoke({
   });
   const args = buildPreviewNpmArgs(step, port);
   const startedAt = Date.now();
-  const processInfo = processManager.start({
+  const processInfo = await processManager.start({
     projectId: workflow.projectId,
     projectName: workflow.projectName,
     cwd: workflow.projectRoot,
