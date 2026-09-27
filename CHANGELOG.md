@@ -6,6 +6,7 @@ This project follows semantic versioning for public releases.
 
 ## [Unreleased]
 
+- Hardened Windows native runtime supervision for cold/busy hosts by keeping Job Object helper protocol waits bounded but allowing up to 15 seconds for PowerShell startup/round-trip readiness.
 - Locked the Windows x64 native shell publish contract to a self-contained, folder-based `win-x64` output with explicit x64 PE validation and WebView2/.NET runtime presence checks; Windows ARM64 remains a separate W8 enablement rather than an inferred cross-build.
 - Unified Windows native-shell onboarding/status presentation with the shared backend presentation model: first-time managed installs now surface `Setup Required` in the tray while all setup steps remain in the shared Control Center; Windows consumes only bounded `/api/v1/status` presentation fields with background-refresh accounting.
 - Branded the native Windows shell with the canonical Equinox Local artwork: the WPF window reuses `app/EquinoxLocal.png`, the executable embeds its Windows ICO derivative, and the tray reads that embedded application icon instead of defaulting to the generic Windows application glyph.

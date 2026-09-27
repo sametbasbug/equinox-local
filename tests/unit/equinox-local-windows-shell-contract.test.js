@@ -109,6 +109,7 @@ test("Windows shell runtime supervisor uses the existing Job Object gate with bo
   assert.match(supervisor, /EQUINOX_LOCAL_OWNED_PROCESS_SPEC/u);
   assert.match(supervisor, /EQUINOX_GO/u);
   assert.match(supervisor, /MaxAutomaticRestarts = 3/u);
+  assert.match(supervisor, /ProtocolTimeout = TimeSpan\.FromSeconds\(15\)/u);
   assert.match(supervisor, /EQUINOX_LOCAL_SUPERVISOR_MODE/u);
   assert.doesNotMatch(supervisor, /taskkill|current-version\.json|cmd\.exe/iu);
   assert.match(tray, /Start Runtime/u);
