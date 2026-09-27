@@ -17,6 +17,7 @@ const PS_TIMEOUT_MS = 2_000;
 const PS_MAX_BUFFER = 512 * 1024;
 const NATIVE_SESSION_QUERY_TIMEOUT_MS = 2_000;
 const NATIVE_SESSION_QUERY_MAX_BUFFER = 512 * 1024;
+const DEFAULT_WINDOWS_PTY_READY_TIMEOUT_MS = 5_000;
 
 export const TERMINAL_KEYS = Object.freeze([
   "enter",
@@ -164,6 +165,7 @@ export function createTerminalManager({
   ownershipRefreshDelayMs = DEFAULT_OWNERSHIP_REFRESH_DELAY_MS,
   ownershipMonitorMs = DEFAULT_OWNERSHIP_MONITOR_MS,
   naturalExitOwnershipFreshMs = NATURAL_EXIT_OWNERSHIP_FRESH_MS,
+  windowsPtyReadyTimeoutMs = DEFAULT_WINDOWS_PTY_READY_TIMEOUT_MS,
   nativeProcessSessionHelperPath = process.env.EQUINOX_LOCAL_NATIVE_PROCESS_HELPER ?? null,
   resolveProcessSessionIdImpl = null,
   listProcessSessionPidsImpl = null,
@@ -542,6 +544,59 @@ export function createTerminalManager({
     scheduleOwnershipRefresh(session);
   };
 
+  const consumeStartupData = (session, data) => {
+    const text = String(data ?? "");
+    if (!text) return;
+    if (!session.startupMarker || session.startupReady) {
+      appendOutput(session, text);
+      return;
+    }
+
+    const marker = session.startupMarker;
+    const combined = session.startupBuffer + text;
+    const markerIndex = combined.indexOf(marker);
+    if (markerIndex >= 0) {
+      const before = combined.slice(0, markerIndex);
+      let after = combined.slice(markerIndex + marker.length);
+      if (after.startsWith("\r\n")) after = after.slice(2);
+      else if (after.startsWith("\n") || after.startsWith("\r")) after = after.slice(1);
+      session.startupBuffer = "";
+      session.startupReady = true;
+      session.resolveStartupReady?.();
+      if (before) appendOutput(session, before);
+      if (after) appendOutput(session, after);
+      return;
+    }
+
+    let keep = 0;
+    const maxKeep = Math.min(marker.length - 1, combined.length);
+    for (let length = maxKeep; length > 0; length -= 1) {
+      if (marker.startsWith(combined.slice(-length))) {
+        keep = length;
+        break;
+      }
+    }
+    const publish = combined.slice(0, combined.length - keep);
+    session.startupBuffer = keep > 0 ? combined.slice(-keep) : "";
+    if (publish) appendOutput(session, publish);
+  };
+
+  const waitForStartupReady = async (session) => {
+    if (!session.startupMarker || session.startupReady) return;
+    let timer = null;
+    await Promise.race([
+      session.startupReadyPromise,
+      new Promise((resolve) => {
+        timer = setTimeout(resolve, windowsPtyReadyTimeoutMs);
+        timer.unref?.();
+      }),
+    ]);
+    if (timer !== null) clearTimeout(timer);
+    if (session.startupReady) return;
+    if (session.startupFailure) throw new Error(session.startupFailure);
+    throw new Error("Windows interactive PowerShell did not become ready before timeout.");
+  };
+
   const pruneRetainedSessions = () => {
     if (sessions.size < maxRetainedSessions) {
       return;
@@ -629,12 +684,14 @@ export function createTerminalManager({
     let spawnShell = shell;
     let spawnArgs = shellArgs;
     let spawnEnv = baseEnv;
+    let startupMarker = null;
     if (terminalOwnership.kind === "job-object") {
       ownedSet = await terminalOwnership.createOwnedSet();
       const spec = terminalOwnership.spawnSpec(shell, shellArgs, baseEnv);
       spawnShell = spec.command;
       spawnArgs = [...spec.args];
       spawnEnv = { ...spec.env };
+      startupMarker = typeof spec.readyMarker === "string" && spec.readyMarker ? spec.readyMarker : null;
     }
     let terminal;
     try {
@@ -689,6 +746,12 @@ export function createTerminalManager({
       cleanupVerified: null,
       cleanupError: null,
       cleanupPromise: null,
+      startupMarker,
+      startupBuffer: "",
+      startupReady: !startupMarker,
+      startupFailure: null,
+      startupReadyPromise: null,
+      resolveStartupReady: null,
       waiters: new Set(),
       exitPromise: null,
       resolveExit: null,
@@ -696,6 +759,9 @@ export function createTerminalManager({
 
     session.exitPromise = new Promise((resolve) => {
       session.resolveExit = resolve;
+    });
+    session.startupReadyPromise = new Promise((resolve) => {
+      session.resolveStartupReady = resolve;
     });
     session.ttyPromise = terminalOwnership.kind === "job-object"
       ? Promise.resolve(null)
@@ -713,10 +779,14 @@ export function createTerminalManager({
 
     sessions.set(id, session);
     terminal.onData((data) => {
-      appendOutput(session, data);
+      consumeStartupData(session, data);
     });
 
     terminal.onExit(({ exitCode, signal }) => {
+      if (!session.startupReady) {
+        session.startupFailure = `Windows interactive shell exited before readiness (exit=${exitCode ?? "null"}, signal=${signal ?? "null"}).`;
+        session.resolveStartupReady?.();
+      }
       session.shellExited = true;
       session.exitCode = exitCode ?? null;
       session.signal = signal ?? null;
@@ -737,6 +807,7 @@ export function createTerminalManager({
         const ownedPid = await terminalOwnership.attachAndRelease(session.ownedSet, terminal);
         if (Number.isInteger(ownedPid) && ownedPid > 0) session.pid = ownedPid;
         if (!await refreshOwnedPids(session)) throw new Error("Windows PTY Job Object ownership could not be verified.");
+        await waitForStartupReady(session);
       } catch (error) {
         session.stopRequested = true;
         try { terminal.kill(); } catch {}

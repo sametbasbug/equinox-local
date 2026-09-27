@@ -188,7 +188,9 @@ async function verifyWindowsConPtyLifecycle(root) {
     assert.equal(started.running, true, "Windows ConPTY did not start");
     assert.ok(Number.isInteger(started.pid) && started.pid > 0, "Windows ConPTY gate PID is missing");
 
-    manager.write({ sessionId: started.sessionId, data: "Write-Output '__EQUINOX_CONPTY_OK__'", key: "enter" });
+    const startupOutput = await manager.read({ sessionId: started.sessionId, cursor: 0, maxChars: 20_000, stripAnsiCodes: true, waitMs: 0 });
+    assert.doesNotMatch(startupOutput.output, /__EQUINOX_INNER_PTY_READY__/u, "internal ConPTY readiness marker leaked to terminal output");
+    manager.write({ sessionId: started.sessionId, data: "Write-Output ([string]::Concat('__EQUINOX_','CONPTY_OK__'))", key: "enter" });
     await readTerminalUntil(manager, started.sessionId, /__EQUINOX_CONPTY_OK__/u);
     const resized = manager.resize({ sessionId: started.sessionId, cols: 137, rows: 41 });
     assert.equal(resized.cols, 137);

@@ -108,13 +108,14 @@ test("Windows terminal manager verifies Job Object ownership before exposing Con
     async createOwnedSet() { calls.push("create"); return ownedSet; },
     spawnSpec(command, args, env) {
       calls.push(["spec", command, args]);
-      return { command: "powershell.exe", args: ["-File", "pty-gate.ps1"], env: { ...env, EQUINOX_TEST_PTY_GATE: "1" } };
+      return { command: "powershell.exe", args: ["-File", "pty-gate.ps1"], env: { ...env, EQUINOX_TEST_PTY_GATE: "1" }, readyMarker: "__INNER_READY__" };
     },
     async attachAndRelease(set, instance) {
       assert.equal(set, ownedSet);
       assert.equal(instance, terminal);
       calls.push("attach-release");
       instance.write("EQUINOX_GO\r");
+      queueMicrotask(() => instance.emitData("__INNER_READY__\r\n"));
     },
     async ownedSetExists(set) { assert.equal(set, ownedSet); return active; },
     async signalOwnedSet(set, signal) { assert.equal(set, ownedSet); calls.push(["terminate", signal]); active = false; },
@@ -139,6 +140,8 @@ test("Windows terminal manager verifies Job Object ownership before exposing Con
   assert.deepEqual(spawnCalls[0].args, ["-File", "pty-gate.ps1"]);
   assert.deepEqual(calls.slice(0, 3), ["create", ["spec", "powershell.exe", ["-NoLogo"]], "attach-release"]);
   assert.deepEqual(terminal.writes, ["EQUINOX_GO\r"]);
+  const startupRead = await manager.read({ sessionId: started.sessionId, cursor: 0 });
+  assert.doesNotMatch(startupRead.output, /__INNER_READY__/u);
 
   manager.write({ sessionId: started.sessionId, data: "Write-Output ok", key: "enter" });
   manager.resize({ sessionId: started.sessionId, cols: 140, rows: 42 });

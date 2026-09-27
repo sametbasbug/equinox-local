@@ -6,6 +6,7 @@ import { createWindowsJobObjectLease } from "./equinox-local-windows-job-object.
 
 const WINDOWS_GATE_PATH = path.join(path.dirname(fileURLToPath(import.meta.url)), "equinox-local-windows-process-gate.ps1");
 const WINDOWS_PTY_GATE_PATH = path.join(path.dirname(fileURLToPath(import.meta.url)), "equinox-local-windows-pty-gate.ps1");
+const WINDOWS_PTY_INNER_READY_MARKER = "__EQUINOX_INNER_PTY_READY__";
 
 function encodeWindowsOwnedProcess(command, args) {
   return Buffer.from(JSON.stringify({ command, args }), "utf8").toString("base64");
@@ -117,7 +118,9 @@ export function createTerminalProcessOwnershipAdapter({
         env: Object.freeze({
           ...env,
           EQUINOX_LOCAL_OWNED_PTY_SPEC: encodeWindowsOwnedPty(command, args),
+          EQUINOX_LOCAL_PTY_READY_MARKER: WINDOWS_PTY_INNER_READY_MARKER,
         }),
+        readyMarker: WINDOWS_PTY_INNER_READY_MARKER,
       });
     },
     async attachAndRelease(ownedSet, terminal) {
