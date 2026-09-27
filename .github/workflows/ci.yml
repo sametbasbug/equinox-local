@@ -68,7 +68,7 @@ jobs:
       - name: Windows native shell branding smoke
         shell: pwsh
         run: |
-          $exe = Get-ChildItem native/windows/EquinoxLocal.WindowsShell/bin/Release -Filter EquinoxLocal.exe -Recurse | Select-Object -First 1
+          $exe = Get-ChildItem native/windows/EquinoxLocal.WindowsShell/bin -Filter EquinoxLocal.exe -Recurse | Select-Object -First 1
           if ($null -eq $exe) { throw "EquinoxLocal.exe was not built" }
           Add-Type -AssemblyName System.Drawing
           $icon = [System.Drawing.Icon]::ExtractAssociatedIcon($exe.FullName)
