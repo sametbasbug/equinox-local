@@ -7,10 +7,14 @@ internal sealed class TrayIconController : IDisposable
 {
     private readonly ContextMenuStrip _menu;
     private readonly NotifyIcon _notifyIcon;
+    private readonly ToolStripMenuItem _runtimeStatusItem;
 
     internal TrayIconController(Action openControlCenter, Action openBrowser, Action exitApplication)
     {
         _menu = new ContextMenuStrip();
+        _runtimeStatusItem = new ToolStripMenuItem("Runtime: Checking") { Enabled = false };
+        _menu.Items.Add(_runtimeStatusItem);
+        _menu.Items.Add(new ToolStripSeparator());
         _menu.Items.Add(new ToolStripMenuItem("Open Control Center", null, (_, _) => openControlCenter()));
         _menu.Items.Add(new ToolStripMenuItem("Open in browser", null, (_, _) => openBrowser()));
         _menu.Items.Add(new ToolStripSeparator());
@@ -24,6 +28,18 @@ internal sealed class TrayIconController : IDisposable
             Visible = true,
         };
         _notifyIcon.DoubleClick += (_, _) => openControlCenter();
+    }
+
+    internal void SetRuntimeStatus(RuntimeHealthSnapshot status)
+    {
+        var label = status.State switch
+        {
+            RuntimeHealthState.Healthy => "Healthy",
+            RuntimeHealthState.Unavailable => "Unavailable",
+            _ => "Checking",
+        };
+        _runtimeStatusItem.Text = $"Runtime: {label}";
+        _notifyIcon.Text = $"Equinox Local · {label}";
     }
 
     public void Dispose()

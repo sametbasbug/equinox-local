@@ -67,6 +67,23 @@ test("Windows shell tray lifecycle keeps close-to-tray distinct from explicit ex
   assert.match(app, /Shutdown\(\)/u);
 });
 
+test("Windows shell exposes bounded runtime health in the tray without duplicating Control Center logic", async () => {
+  const [app, monitor, tray] = await Promise.all([
+    source("App.xaml.cs"),
+    source("RuntimeStatusMonitor.cs"),
+    source("TrayIconController.cs"),
+  ]);
+
+  assert.match(app, /new RuntimeStatusMonitor/u);
+  assert.match(app, /StatusChanged/u);
+  assert.match(monitor, /127\.0\.0\.1:24891\/api\/v1\/health/u);
+  assert.match(monitor, /TimeSpan\.FromSeconds\(1\)/u);
+  assert.match(monitor, /TimeSpan\.FromSeconds\(2\)/u);
+  assert.match(monitor, /HttpCompletionOption\.ResponseHeadersRead/u);
+  assert.match(tray, /Runtime: \{label\}/u);
+  assert.doesNotMatch(monitor, /server\.js|node(?:\.exe)?|Process\.Start|powershell/iu);
+});
+
 test("public Windows CI restores and builds the native x64 shell", async () => {
   const publicCi = path.join(ROOT, ".github", "workflows", "ci.yml");
   const factoryCi = path.join(ROOT, "factory", "local", "public-template", ".github", "workflows", "ci.yml");

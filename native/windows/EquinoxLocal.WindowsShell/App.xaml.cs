@@ -6,6 +6,7 @@ public partial class App : System.Windows.Application
 {
     private SingleInstanceCoordinator? _singleInstance;
     private TrayIconController? _trayIcon;
+    private RuntimeStatusMonitor? _runtimeStatus;
     private MainWindow? _window;
 
     protected override void OnStartup(StartupEventArgs e)
@@ -42,12 +43,20 @@ public partial class App : System.Windows.Application
             openBrowser: () => Dispatcher.BeginInvoke(new Action(() => _window.OpenControlCenterInBrowser(force: true))),
             exitApplication: () => Dispatcher.BeginInvoke(new Action(ExitApplication)));
 
+        _runtimeStatus = new RuntimeStatusMonitor();
+        _trayIcon.SetRuntimeStatus(_runtimeStatus.Current);
+        _runtimeStatus.StatusChanged += (_, status) =>
+            Dispatcher.BeginInvoke(new Action(() => _trayIcon?.SetRuntimeStatus(status)));
+        _runtimeStatus.Start();
+
         _window.Show();
     }
 
     private void ExitApplication()
     {
         _window?.PrepareForExit();
+        _runtimeStatus?.Dispose();
+        _runtimeStatus = null;
         _trayIcon?.Dispose();
         _trayIcon = null;
         Shutdown();
@@ -55,6 +64,8 @@ public partial class App : System.Windows.Application
 
     protected override void OnExit(ExitEventArgs e)
     {
+        _runtimeStatus?.Dispose();
+        _runtimeStatus = null;
         _trayIcon?.Dispose();
         _trayIcon = null;
         _singleInstance?.Dispose();
