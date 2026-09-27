@@ -1,0 +1,40 @@
+<Window x:Class="EquinoxLocal.WindowsShell.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:wv2="clr-namespace:Microsoft.Web.WebView2.Wpf;assembly=Microsoft.Web.WebView2.Wpf"
+        Title="Equinox Local"
+        Width="1180"
+        Height="760"
+        MinWidth="920"
+        MinHeight="620"
+        WindowStartupLocation="CenterScreen"
+        Loaded="OnLoaded"
+        Closed="OnClosed">
+  <Grid>
+    <wv2:WebView2 x:Name="ControlCenterView" />
+
+    <Border x:Name="FallbackPanel"
+            Visibility="Collapsed"
+            Background="{DynamicResource {x:Static SystemColors.WindowBrushKey}}"
+            Padding="36">
+      <StackPanel HorizontalAlignment="Center"
+                  VerticalAlignment="Center"
+                  MaxWidth="560">
+        <TextBlock Text="Equinox Local"
+                   FontSize="28"
+                   FontWeight="SemiBold"
+                   HorizontalAlignment="Center"
+                   Margin="0,0,0,12" />
+        <TextBlock x:Name="FallbackMessage"
+                   Text="The native Control Center could not be opened."
+                   TextWrapping="Wrap"
+                   TextAlignment="Center"
+                   Margin="0,0,0,20" />
+        <Button Content="Open Control Center in browser"
+                Padding="18,9"
+                HorizontalAlignment="Center"
+                Click="OpenBrowserFallback" />
+      </StackPanel>
+    </Border>
+  </Grid>
+</Window>
