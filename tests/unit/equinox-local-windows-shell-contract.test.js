@@ -93,6 +93,7 @@ test("Windows shell runtime supervisor uses the existing Job Object gate with bo
   assert.match(app, /RuntimeSupervisor\.TryCreateFromEnvironment/u);
   assert.match(app, /await _runtimeSupervisor\.StopAsync/u);
   assert.match(supervisor, /EQUINOX_LOCAL_RELEASE_DIR/u);
+  assert.match(supervisor, /using System\.IO;/u);
   assert.match(supervisor, /equinox-local-windows-job-object\.ps1/u);
   assert.match(supervisor, /equinox-local-windows-process-gate\.ps1/u);
   assert.match(supervisor, /EQUINOX_LOCAL_OWNED_PROCESS_SPEC/u);

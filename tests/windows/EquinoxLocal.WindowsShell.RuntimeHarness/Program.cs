@@ -3,7 +3,7 @@ using System.Net.Http;
 using System.Net.Sockets;
 using EquinoxLocal.WindowsShell;
 
-var repo = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", ".."));
+var repo = Environment.CurrentDirectory;
 var nodeSource = Environment.GetEnvironmentVariable("EQUINOX_TEST_NODE_EXE");
 if (string.IsNullOrWhiteSpace(nodeSource) || !File.Exists(nodeSource)) throw new InvalidOperationException("EQUINOX_TEST_NODE_EXE is required.");
 var root = Path.Combine(Path.GetTempPath(), $"equinox-shell-runtime-{Guid.NewGuid():N}");
@@ -13,9 +13,9 @@ File.Copy(nodeSource, Path.Combine(nodeDir, "node.exe"));
 File.Copy(Path.Combine(repo, "src", "equinox-local-windows-job-object.ps1"), Path.Combine(root, "equinox-local-windows-job-object.ps1"));
 File.Copy(Path.Combine(repo, "src", "equinox-local-windows-process-gate.ps1"), Path.Combine(root, "equinox-local-windows-process-gate.ps1"));
 await File.WriteAllTextAsync(Path.Combine(root, "server.js"), """
-import net from 'node:net';
+import { spawn } from 'node:child_process';
 import http from 'node:http';
-const child = net.createServer(); child.listen(24892, '127.0.0.1');
+spawn(process.execPath, ['-e', `require('node:net').createServer().listen(24892,'127.0.0.1');setInterval(()=>{},1000)`], { stdio: 'ignore' });
 const server = http.createServer((req,res) => { if (req.url === '/api/v1/health') { res.writeHead(200); res.end('ok'); } else { res.writeHead(404); res.end(); } });
 server.listen(24891, '127.0.0.1'); setInterval(() => {}, 1000);
 """);
