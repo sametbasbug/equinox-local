@@ -9,5 +9,6 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="../../../native/windows/EquinoxLocal.WindowsShell/RuntimeSupervisor.cs" Link="RuntimeSupervisor.cs" />
+    <Compile Include="../../../native/windows/EquinoxLocal.WindowsShell/WindowsManagedReleaseLocator.cs" Link="WindowsManagedReleaseLocator.cs" />
   </ItemGroup>
 </Project>

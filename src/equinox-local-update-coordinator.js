@@ -8,12 +8,17 @@ import { compareEquinoxVersions, parseEquinoxVersion } from "./equinox-local-upd
 const DEFAULT_HELPER_PATH = fileURLToPath(new URL("./equinox-local-update-helper.js", import.meta.url));
 
 function helperEnvironment(installation, sourceEnv = process.env) {
+  const windows = installation?.platform === "win32";
   const env = {
     HOME: sourceEnv.HOME,
+    USERPROFILE: windows ? sourceEnv.USERPROFILE : undefined,
+    LOCALAPPDATA: windows ? sourceEnv.LOCALAPPDATA : undefined,
+    SystemRoot: windows ? sourceEnv.SystemRoot : undefined,
+    WINDIR: windows ? sourceEnv.WINDIR : undefined,
     USER: sourceEnv.USER,
     LOGNAME: sourceEnv.LOGNAME,
     TMPDIR: sourceEnv.TMPDIR,
-    PATH: "/usr/bin:/bin:/usr/sbin:/sbin",
+    PATH: windows ? undefined : "/usr/bin:/bin:/usr/sbin:/sbin",
     EQUINOX_LOCAL_INSTALL_ROOT: installation.installRoot,
     EQUINOX_LOCAL_RELEASE_DIR: installation.releaseDir,
   };

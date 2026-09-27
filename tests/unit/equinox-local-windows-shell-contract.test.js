@@ -35,7 +35,7 @@ test("Windows shell is a thin x64 WPF/WebView2 host for the shared Control Cente
   assert.doesNotMatch(window, /cmd\.exe|powershell(?:\.exe)?|ProcessStartInfo\s*\([^)]*\/c/iu);
 });
 
-test("Windows shell single-instance reopen channel is local-user-only", async () => {
+test("Windows shell single-instance and runtime-restart channel is local-user-only", async () => {
   const [app, coordinator] = await Promise.all([
     source("App.xaml.cs"),
     source("SingleInstanceCoordinator.cs"),
@@ -49,6 +49,9 @@ test("Windows shell single-instance reopen channel is local-user-only", async ()
   assert.match(coordinator, /NamedPipeServerStream/u);
   assert.match(coordinator, /PipeOptions\.CurrentUserOnly/u);
   assert.match(coordinator, /string\.Equals\(command, "reopen", StringComparison\.Ordinal\)/u);
+  assert.match(coordinator, /string\.Equals\(command, "restart-runtime", StringComparison\.Ordinal\)/u);
+  assert.match(app, /RuntimeRestartRequested/u);
+  assert.match(app, /RestartRuntimeAsync/u);
 });
 
 
@@ -95,12 +98,13 @@ test("Windows shell consumes shared bounded presentation status without duplicat
 });
 
 test("Windows shell runtime supervisor uses the existing Job Object gate with bounded recovery", async () => {
-  const [app, supervisor, tray] = await Promise.all([
+  const [app, supervisor, locator, tray] = await Promise.all([
     source("App.xaml.cs"),
     source("RuntimeSupervisor.cs"),
+    source("WindowsManagedReleaseLocator.cs"),
     source("TrayIconController.cs"),
   ]);
-  assert.match(app, /RuntimeSupervisor\.TryCreateFromEnvironment/u);
+  assert.match(app, /RuntimeSupervisor\.TryCreateFromEnvironmentOrManagedInstall/u);
   assert.match(app, /await _runtimeSupervisor\.StopAsync/u);
   assert.match(supervisor, /EQUINOX_LOCAL_RELEASE_DIR/u);
   assert.match(supervisor, /using System\.IO;/u);
@@ -111,7 +115,16 @@ test("Windows shell runtime supervisor uses the existing Job Object gate with bo
   assert.match(supervisor, /MaxAutomaticRestarts = 3/u);
   assert.match(supervisor, /ProtocolTimeout = TimeSpan\.FromSeconds\(15\)/u);
   assert.match(supervisor, /EQUINOX_LOCAL_SUPERVISOR_MODE/u);
+  assert.match(supervisor, /_releaseResolver/u);
+  assert.match(supervisor, /EQUINOX_LOCAL_INSTALL_ROOT/u);
   assert.doesNotMatch(supervisor, /taskkill|current-version\.json|cmd\.exe/iu);
+  assert.match(locator, /current-version\.json/u);
+  assert.match(locator, /Environment\.SpecialFolder\.LocalApplicationData/u);
+  assert.match(locator, /win32-x64/u);
+  assert.match(locator, /schemaVersion/u);
+  assert.match(locator, /release\.json/u);
+  assert.match(locator, /FileAttributes\.ReparsePoint/u);
+  assert.match(locator, /RequireExactProperties/u);
   assert.match(tray, /Start Runtime/u);
   assert.match(tray, /Restart Runtime/u);
   assert.match(tray, /Stop Runtime/u);
@@ -184,9 +197,14 @@ test("public Windows CI restores and builds the native x64 shell", async () => {
   const factoryCi = path.join(ROOT, "factory", "local", "public-template", ".github", "workflows", "ci.yml");
   const ciPath = await fs.access(publicCi).then(() => publicCi).catch(() => factoryCi);
   const ci = await fs.readFile(ciPath, "utf8");
+  assert.match(ci, /Windows managed activation rollback tests/u);
+  assert.match(ci, /node --test tests\/release\/equinox-local-current-release\.test\.js/u);
+  assert.ok(ci.includes('node --test --test-name-pattern "Windows activation rollback restores current-version.json and the previous exact release" tests/release/equinox-local-update-activation.test.js'));
   assert.match(ci, /actions\/setup-dotnet@v5/u);
   assert.match(ci, /dotnet-version:\s*8\.0\.x/u);
   assert.match(ci, /dotnet build native\/windows\/EquinoxLocal\.WindowsShell\/EquinoxLocal\.WindowsShell\.csproj/u);
+  const runtimeHarness = await fs.readFile(path.join(ROOT, "tests", "windows", "EquinoxLocal.WindowsShell.RuntimeHarness", "EquinoxLocal.WindowsShell.RuntimeHarness.csproj"), "utf8");
+  assert.match(runtimeHarness, /WindowsManagedReleaseLocator\.cs/u);
   assert.match(ci, /-p:Platform=x64/u);
   assert.match(ci, /EquinoxLocal\.WindowsShell\.RuntimeHarness/u);
   assert.match(ci, /EQUINOX_TEST_NODE_EXE/u);

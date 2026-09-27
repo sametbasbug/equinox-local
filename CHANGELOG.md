@@ -6,6 +6,7 @@ This project follows semantic versioning for public releases.
 
 ## [Unreleased]
 
+- Added Windows x64 managed activation groundwork: the native shell resolves `current-version.json` from per-user LocalAppData on each runtime start/restart, update rollback can atomically restore the version-file pointer, and detached activation signals the existing current-user-only shell pipe instead of creating a second runtime supervisor.
 - Added the Windows x64 managed-lifecycle foundation with a strict target-bound `current-version.json` pointer under per-user LocalAppData; Windows ARM64 remains fail-closed until its dedicated W8 phase.
 - Hardened Windows native runtime supervision for cold/busy hosts by keeping Job Object helper protocol waits bounded but allowing up to 15 seconds for PowerShell startup/round-trip readiness.
 - Locked the Windows x64 native shell publish contract to a self-contained, folder-based `win-x64` output with explicit x64 PE validation and WebView2/.NET runtime presence checks; Windows ARM64 remains a separate W8 enablement rather than an inferred cross-build.

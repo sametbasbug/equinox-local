@@ -28,6 +28,7 @@ internal sealed class SingleInstanceCoordinator : IDisposable
     internal bool IsPrimary => _ownsMutex;
 
     internal event EventHandler? ReopenRequested;
+    internal event EventHandler? RuntimeRestartRequested;
 
     internal void StartListening()
     {
@@ -69,6 +70,10 @@ internal sealed class SingleInstanceCoordinator : IDisposable
                 if (string.Equals(command, "reopen", StringComparison.Ordinal))
                 {
                     ReopenRequested?.Invoke(this, EventArgs.Empty);
+                }
+                else if (string.Equals(command, "restart-runtime", StringComparison.Ordinal))
+                {
+                    RuntimeRestartRequested?.Invoke(this, EventArgs.Empty);
                 }
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
