@@ -185,7 +185,7 @@ export function createTelegramChatBridgeController({ browserBridge, agentControl
         const result = await callContext("user", "eval", {
           tabId: createdTabId,
           expression: `(() => {
-            const composer = document.querySelector('#prompt-textarea[contenteditable="true"][role="textbox"]');
+            const composer = document.querySelector('#prompt-textarea[contenteditable="true"][role="textbox"], [data-composer-markdown][contenteditable="true"][role="textbox"]');
             return {
               present: Boolean(composer),
               text: composer ? String(composer.textContent || '').trim() : '',
@@ -263,7 +263,7 @@ export function createTelegramChatBridgeController({ browserBridge, agentControl
             tabId: createdTabId,
             expression: `(() => {
               const selector = 'button[data-testid="send-button"][type="submit"], button#composer-submit-button[type="submit"]:not([data-testid="stop-button"])';
-              const composer = document.querySelector('#prompt-textarea[contenteditable="true"][role="textbox"]');
+              const composer = document.querySelector('#prompt-textarea[contenteditable="true"][role="textbox"], [data-composer-markdown][contenteditable="true"][role="textbox"]');
               const button = document.querySelector(selector);
               const text = composer ? String(composer.textContent || '').trim() : '';
               if (!composer) return { ready: false, reason: "composer_missing", name: null, text };
