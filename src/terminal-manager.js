@@ -492,6 +492,9 @@ export function createTerminalManager({
       } catch (error) {
         session.cleanupVerified = false;
         session.cleanupError = error instanceof Error ? error.message : String(error);
+        if (terminalOwnership.kind === "job-object" && session.shellExited) {
+          try { disposeJobObjectTerminalTransport(session); } catch {}
+        }
         emitEvent({
           component: "terminal",
           type: "terminal.cleanup_failed",

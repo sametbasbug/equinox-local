@@ -12,6 +12,7 @@ import {
   TUNNEL_CLIENT_DISTRIBUTIONS,
 } from "../../src/equinox-local-runtime-versions.js";
 import { createWindowsJobObjectLease } from "../../src/equinox-local-windows-job-object.js";
+import { createAgentControlController } from "../../src/equinox-local-agent-control.js";
 import { createProcessManager } from "../../src/process-manager.js";
 import { createTerminalManager } from "../../src/terminal-manager.js";
 import { createEquinoxLocalRuntime } from "../../src/server.js";
@@ -107,6 +108,49 @@ async function verifyWindowsJobObjectContainment(root) {
   }
 }
 
+async function verifyWindowsJobObjectHelperLoss(root) {
+  const gatePath = path.join(root, "helper loss gate.txt");
+  const childPidPath = path.join(root, "helper loss child pid.txt");
+  const script = [
+    "while (-not (Test-Path -LiteralPath $env:EQUINOX_JOB_GATE)) { Start-Sleep -Milliseconds 25 }",
+    "$child = Start-Process -FilePath powershell.exe -ArgumentList @('-NoLogo','-NoProfile','-NonInteractive','-Command','Start-Sleep -Seconds 60') -PassThru -WindowStyle Hidden",
+    "[IO.File]::WriteAllText($env:EQUINOX_JOB_CHILD_PID, [string]$child.Id)",
+    "Start-Sleep -Seconds 60",
+  ].join("; ");
+  const parent = spawn("powershell.exe", ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script], {
+    env: { ...process.env, EQUINOX_JOB_GATE: gatePath, EQUINOX_JOB_CHILD_PID: childPidPath },
+    windowsHide: true,
+    shell: false,
+    stdio: "ignore",
+  });
+  const lease = await createWindowsJobObjectLease();
+  let childPid = null;
+  try {
+    assert.ok(Number.isInteger(lease.helperPid) && lease.helperPid > 0, "Windows Job Object helper PID is missing");
+    await lease.assign(parent.pid);
+    await fs.writeFile(gatePath, "go", { flag: "wx" });
+    childPid = await waitFor(async () => {
+      const text = await fs.readFile(childPidPath, "utf8").catch(() => "");
+      const value = Number.parseInt(text.trim(), 10);
+      return Number.isInteger(value) && value > 0 ? value : null;
+    }, "Windows helper-loss fixture did not create a descendant");
+    const status = await lease.status();
+    assert.ok(status.activeProcesses >= 2, "helper-loss Job Object did not contain parent + descendant");
+
+    process.kill(lease.helperPid);
+    await waitFor(() => !pidExists(lease.helperPid), "Windows Job Object helper did not exit after forced loss");
+    await waitFor(() => !pidExists(parent.pid) && !pidExists(childPid), "KILL_ON_JOB_CLOSE did not drain parent + descendant after helper loss");
+    await assert.rejects(() => lease.status(), /not available|exited unexpectedly/u);
+    return Object.freeze({ helperLossDrainedOwnedTree: true });
+  } finally {
+    await lease.close().catch(() => {});
+    if (pidExists(parent.pid)) parent.kill();
+    if (Number.isInteger(childPid) && pidExists(childPid)) {
+      try { process.kill(childPid); } catch {}
+    }
+  }
+}
+
 async function verifyWindowsManagedProcessLifecycle(root) {
   const manager = createProcessManager({ platform: "win32", arch: "x64", groupPollMs: 50 });
   const descendantScript = [
@@ -150,7 +194,7 @@ async function verifyWindowsManagedProcessLifecycle(root) {
   const naturalLogs = await manager.readLogs({ processId: natural.processId, cursor: 0 });
   assert.match(naturalLogs.output, /NATURAL_OK/u);
   await manager.shutdown();
-  return Object.freeze({ descendantRetainedAfterLeaderExit: true, stopDrainedDescendant: true, naturalExit: true });
+  return Object.freeze({ waitTimeoutPreservedOwnedTree: true, descendantRetainedAfterLeaderExit: true, stopDrainedDescendant: true, naturalExit: true });
 }
 
 async function withWindowsConPtyStage(label, operation, timeoutMs = 12_000) {
@@ -289,6 +333,76 @@ async function verifyWindowsConPtyLifecycle(root) {
       process.stderr.write(`[windows-conpty] shutdown cleanup failed: ${error instanceof Error ? error.message : String(error)}\n`);
     });
     for (const pid of [stopChildPid, naturalChildPid]) {
+      if (Number.isInteger(pid) && pidExists(pid)) {
+        try { process.kill(pid); } catch {}
+      }
+    }
+  }
+}
+
+async function verifyWindowsEmergencyStop(root) {
+  const processManager = createProcessManager({ platform: "win32", arch: "x64", groupPollMs: 50 });
+  const terminalManager = createTerminalManager({ platform: "win32", arch: "x64" });
+  const terminalPidPath = path.join(root, "emergency terminal child pid.txt");
+  let processChildPid = null;
+  let terminalChildPid = null;
+  try {
+    const managed = await processManager.start({
+      projectId: "windows-smoke",
+      projectName: "Windows Smoke",
+      cwd: root,
+      command: "powershell.exe",
+      args: ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", [
+        "$child = Start-Process -FilePath powershell.exe -ArgumentList @('-NoLogo','-NoProfile','-NonInteractive','-Command','Start-Sleep -Seconds 60') -PassThru -WindowStyle Hidden",
+        "Write-Output ('EMERGENCY_PROCESS_CHILD=' + $child.Id)",
+        "Start-Sleep -Seconds 60",
+      ].join("; ")],
+      purpose: "background",
+      env: process.env,
+      label: "windows-emergency-process",
+    });
+    const processLogs = await processManager.readLogs({ processId: managed.processId, cursor: 0, waitMs: 3_000 });
+    const processMatch = processLogs.output.match(/EMERGENCY_PROCESS_CHILD=(\d+)/u);
+    assert.ok(processMatch, `Emergency Stop process fixture did not report descendant: ${processLogs.output}`);
+    processChildPid = Number.parseInt(processMatch[1], 10);
+
+    const terminal = await terminalManager.start({
+      projectId: "windows-smoke",
+      projectName: "Windows Smoke",
+      cwd: root,
+      shell: "powershell.exe",
+      shellArgs: ["-NoLogo", "-NoProfile"],
+      env: { ...process.env, EQUINOX_PTY_CHILD_PID: terminalPidPath },
+      cols: 100,
+      rows: 28,
+      label: "windows-emergency-terminal",
+    });
+    terminalManager.write({ sessionId: terminal.sessionId, data: [
+      "$child = Start-Process -FilePath powershell.exe -ArgumentList @('-NoLogo','-NoProfile','-NonInteractive','-Command','Start-Sleep -Seconds 60') -PassThru -WindowStyle Hidden",
+      "[IO.File]::WriteAllText($env:EQUINOX_PTY_CHILD_PID, [string]$child.Id)",
+      "Write-Output '__EQUINOX_EMERGENCY_PTY_READY__'",
+    ].join("; "), key: "enter" });
+    await readTerminalUntil(terminalManager, terminal.sessionId, /__EQUINOX_EMERGENCY_PTY_READY__/u);
+    terminalChildPid = await waitFor(async () => {
+      const text = await fs.readFile(terminalPidPath, "utf8").catch(() => "");
+      const value = Number.parseInt(text.trim(), 10);
+      return Number.isInteger(value) && value > 0 ? value : null;
+    }, "Emergency Stop ConPTY fixture did not create a descendant");
+
+    const control = createAgentControlController({ terminalManager, processManager });
+    const paused = await control.pause({ reason: "windows_w3_acceptance" });
+    assert.equal(paused.state, "PAUSED");
+    assert.equal(paused.activeWork.total, 0, "Emergency Stop left managed work active");
+    assert.equal(paused.lastStop.failureCount, 0, "Emergency Stop reported cleanup failures");
+    await waitFor(
+      () => !pidExists(managed.pid) && !pidExists(processChildPid) && !pidExists(terminal.pid) && !pidExists(terminalChildPid),
+      "Emergency Stop did not drain all Windows Job-owned process trees",
+    );
+    return Object.freeze({ jobOwnedProcessAndConPtyDrained: true });
+  } finally {
+    await terminalManager.shutdown().catch(() => {});
+    await processManager.shutdown().catch(() => {});
+    for (const pid of [processChildPid, terminalChildPid]) {
       if (Number.isInteger(pid) && pidExists(pid)) {
         try { process.kill(pid); } catch {}
       }
@@ -453,8 +567,10 @@ try {
 
   const tunnel = await verifyPinnedWindowsTunnelClient(root);
   const jobObject = await verifyWindowsJobObjectContainment(root);
+  const helperLoss = await verifyWindowsJobObjectHelperLoss(root);
   const managedProcess = await verifyWindowsManagedProcessLifecycle(root);
   const conpty = await verifyWindowsConPtyLifecycle(root);
+  const emergencyStop = await verifyWindowsEmergencyStop(root);
 
   const htmlResponse = await fetch(`${baseUrl}/`, { signal: AbortSignal.timeout(5_000) });
   assert.equal(htmlResponse.status, 200);
@@ -469,8 +585,10 @@ try {
     browserIpcActive: snapshot.browser.active,
     tunnel,
     jobObject,
+    helperLoss,
     managedProcess,
     conpty,
+    emergencyStop,
   }, null, 2)}\n`);
 } finally {
   process.stdout.write("[windows-smoke] START runtime-shutdown\n");

@@ -157,6 +157,63 @@ test("Windows terminal manager verifies Job Object ownership before exposing Con
   assert.equal(closed, true);
 });
 
+test("Windows ConPTY helper loss finalizes fail-closed and still disposes node-pty transport", async () => {
+  const terminal = new FakeTerminal(0);
+  setTimeout(() => { terminal.pid = 6200; terminal.emitData("\u001b[0m"); }, 10);
+  let helperLost = false;
+  let closed = false;
+  const events = [];
+  const ownedSet = { id: "job-pty-lost" };
+  const manager = createTerminalManager({
+    platform: "win32",
+    arch: "x64",
+    ownershipAdapter: {
+      kind: "job-object",
+      implemented: true,
+      requiresVerifiedOwnership: true,
+      gracefulSignal: "SIGTERM",
+      forceSignal: "SIGKILL",
+      async createOwnedSet() { return ownedSet; },
+      spawnSpec(command, args, env) {
+        return { command: "powershell.exe", args: ["-File", "pty-gate.ps1"], env, readyMarker: "__INNER_READY__" };
+      },
+      async attachAndRelease() {
+        terminal.write("EQUINOX_GO\r");
+        queueMicrotask(() => terminal.emitData("__INNER_READY__\r\n"));
+        return 6200;
+      },
+      async ownedSetExists() {
+        if (helperLost) throw new Error("Windows Job Object helper is not available.");
+        return true;
+      },
+      async signalOwnedSet() { throw new Error("helper lost"); },
+      async closeOwnedSet() { closed = true; },
+    },
+    ptyModuleLoader: async () => ({ spawn: () => terminal }),
+    randomId: () => "lostpty1",
+    onEvent: async (event) => events.push(event),
+  });
+
+  const started = await manager.start({
+    projectId: "workspace", projectName: "Workspace", cwd: "C:\\Work", shell: "powershell.exe", shellArgs: ["-NoLogo"], env: {}, cols: 100, rows: 25,
+  });
+  assert.equal(started.running, true);
+
+  helperLost = true;
+  terminal.emitExit(143, 0);
+  for (let attempt = 0; attempt < 20 && manager.list()[0]?.running; attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+
+  const final = manager.list()[0];
+  assert.equal(final.running, false);
+  assert.equal(final.cleanupVerified, false);
+  assert.deepEqual(terminal.kills, [undefined], "helper loss must still dispose node-pty transport without a POSIX signal");
+  assert.equal(events.some((event) => event.type === "terminal.cleanup_failed"), true);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(closed, true);
+});
+
 test("terminal manager starts, writes, resizes and stops a PTY", async () => {
   const { manager, terminals } = makeManager();
   const session = await startFake(manager);
