@@ -14,11 +14,13 @@ import {
   launchAgentLogMaintenanceShell,
 } from "./equinox-local-app-host.js";
 import { synchronizeEquinoxLocalNativeAppHost } from "./equinox-local-native-app-host.js";
+import { readEquinoxLocalCurrentVersionPointer } from "./equinox-local-current-release.js";
 import { readBoundedNormalFile } from "./equinox-local-safe-file.js";
 import {
   managedSupervisorPaths,
   resolveSupervisorRelease,
 } from "./equinox-local-supervisor.js";
+import { equinoxLocalUpdateTarget } from "./equinox-local-updater.js";
 
 export const EQUINOX_BROWSER_PRODUCTION_EXTENSION_ID = "npdneefcobilfkjlihghjgjnknenhfoj";
 export const EQUINOX_BROWSER_NATIVE_HOST_NAME = "dev.equinox.browser";
@@ -280,50 +282,100 @@ async function ensureInitialConfig({ homeDir, installRoot, configPath }) {
   return Object.freeze({ created: true, revision: manager.revision });
 }
 
+async function resolveBootstrapRelease(paths, {
+  platform = process.platform,
+  target,
+  fsImpl = fs,
+} = {}) {
+  if (platform === "darwin") return resolveSupervisorRelease(paths);
+  if (platform !== "win32") throw new Error(`Equinox Local managed bootstrap is not implemented for ${platform}.`);
+  const pointer = await readEquinoxLocalCurrentVersionPointer(paths.currentPointer, {
+    fsImpl,
+    platform: "win32",
+    target,
+  });
+  const releaseDir = path.win32.join(paths.releasesRoot, pointer.version);
+  if (path.win32.dirname(releaseDir) !== paths.releasesRoot) throw new Error("Managed Windows release escaped the releases root.");
+  const stat = await fsImpl.lstat(releaseDir);
+  if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error("Managed Windows release must be a normal directory.");
+  const { data } = await readBoundedNormalFile(path.win32.join(releaseDir, "release.json"), {
+    fsImpl,
+    platform: "win32",
+    minBytes: 1,
+    maxBytes: 16 * 1024,
+    encoding: "utf8",
+    label: "Managed Windows release metadata",
+  });
+  const metadata = JSON.parse(data);
+  if (metadata?.schemaVersion !== 1 || metadata?.version !== pointer.version || metadata?.target !== target || metadata?.serverEntry !== "server.js") {
+    throw new Error(`Managed Windows release metadata is invalid for ${target}.`);
+  }
+  return Object.freeze({ version: pointer.version, releaseDir, metadata: Object.freeze({ ...metadata }) });
+}
+
 export async function bootstrapManagedEquinoxUser({
   homeDir = os.homedir(),
+  platform = process.platform,
+  arch = process.arch,
+  env = process.env,
   ensureAppHostImpl = null,
+  fsImpl = fs,
 } = {}) {
-  if (process.platform !== "darwin") throw new Error("Equinox Local managed bootstrap is supported only on macOS.");
-  const paths = managedSupervisorPaths(homeDir);
-  const release = await resolveSupervisorRelease(paths);
-  const configPath = path.join(paths.installRoot, "config.json");
-  const workspaceRoot = path.join(paths.installRoot, "workspace");
-  const downloadsRoot = path.join(homeDir, "Downloads");
-  const secretsRoot = path.join(paths.installRoot, "secrets");
-  const logsRoot = path.join(homeDir, "Library", "Logs");
+  if (platform !== "darwin" && !(platform === "win32" && arch === "x64")) {
+    throw new Error(`Equinox Local managed bootstrap is not implemented for ${platform}-${arch}.`);
+  }
+  const target = equinoxLocalUpdateTarget({ platform, arch });
+  const paths = managedSupervisorPaths(homeDir, { platform, arch, env });
+  const release = await resolveBootstrapRelease(paths, { platform, target, fsImpl });
+  const pathApi = platform === "win32" ? path.win32 : path.posix;
+  const workspaceRoot = pathApi.join(paths.installRoot, "workspace");
+  const secretsRoot = pathApi.join(paths.installRoot, "secrets");
 
   await ensureDirectory(paths.installRoot, 0o700);
+  await ensureDirectory(paths.stateRoot, 0o700);
   await ensureDirectory(workspaceRoot, 0o700);
   await ensureWorkspaceGitRepository(workspaceRoot);
-  await ensureDirectory(downloadsRoot, 0o700, { enforceMode: false });
+  await ensureDirectory(paths.downloadsRoot, 0o700, { enforceMode: false });
   await ensureDirectory(secretsRoot, 0o700);
-  await ensureDirectory(logsRoot, 0o700, { enforceMode: false });
+  await ensureDirectory(paths.logsRoot, 0o700, { enforceMode: false });
 
-  const config = await ensureInitialConfig({ homeDir, installRoot: paths.installRoot, configPath });
+  const config = await ensureInitialConfig({ homeDir, installRoot: paths.installRoot, configPath: paths.configPath });
+  if (platform === "win32") {
+    return Object.freeze({
+      version: release.version,
+      installRoot: paths.installRoot,
+      releaseDir: release.releaseDir,
+      configPath: paths.configPath,
+      configCreated: config.created,
+      configRevision: config.revision,
+      programRoot: paths.programRoot,
+      controlCenterUrl: "http://127.0.0.1:24891/",
+    });
+  }
+
   const appHost = ensureAppHostImpl
     ? await ensureAppHostImpl({ homeDir })
     : await synchronizeEquinoxLocalNativeAppHost({ homeDir, releaseDir: release.releaseDir });
   const appRuntimeWrapperPath = equinoxLocalAppRuntimeWrapperPath(homeDir);
   await atomicWrite(appRuntimeWrapperPath, appRuntimeWrapper({ installRoot: paths.installRoot }), 0o700);
 
-  const launchAgentsRoot = path.join(homeDir, "Library", "LaunchAgents");
+  const launchAgentsRoot = path.posix.join(homeDir, "Library", "LaunchAgents");
   await ensureDirectory(launchAgentsRoot, 0o700, { enforceMode: false });
-  const launchAgentPath = path.join(launchAgentsRoot, `${EQUINOX_LOCAL_LAUNCH_AGENT_LABEL}.plist`);
+  const launchAgentPath = path.posix.join(launchAgentsRoot, `${EQUINOX_LOCAL_LAUNCH_AGENT_LABEL}.plist`);
   await atomicWrite(launchAgentPath, launchAgentPlist({ homeDir, installRoot: paths.installRoot }), 0o600);
 
-  const nativeHostRoot = path.join(homeDir, "Library", "Application Support", "Google", "Chrome", "NativeMessagingHosts");
+  const nativeHostRoot = paths.nativeMessagingManifestRoot;
   await ensureDirectory(nativeHostRoot, 0o700, { enforceMode: false });
-  const hostWrapperPath = path.join(paths.installRoot, "equinox-browser-native-host");
+  const hostWrapperPath = path.posix.join(paths.installRoot, "equinox-browser-native-host");
   await atomicWrite(hostWrapperPath, nativeHostWrapper({ installRoot: paths.installRoot }), 0o700);
-  const nativeHostManifestPath = path.join(nativeHostRoot, `${EQUINOX_BROWSER_NATIVE_HOST_NAME}.json`);
+  const nativeHostManifestPath = path.posix.join(nativeHostRoot, `${EQUINOX_BROWSER_NATIVE_HOST_NAME}.json`);
   await atomicWrite(nativeHostManifestPath, nativeHostManifest(hostWrapperPath), 0o600);
 
   return Object.freeze({
     version: release.version,
     installRoot: paths.installRoot,
     releaseDir: release.releaseDir,
-    configPath,
+    configPath: paths.configPath,
     configCreated: config.created,
     configRevision: config.revision,
     launchAgentPath,

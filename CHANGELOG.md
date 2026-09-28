@@ -6,6 +6,7 @@ This project follows semantic versioning for public releases.
 
 ## [Unreleased]
 
+- Prepared the Windows x64 fresh managed-install lifecycle: canonical per-user state/config paths, strict initial `current-version.json` promotion, atomic verified stable-shell synchronization, and real Windows CI coverage while keeping update-time running-shell replacement fail-closed for a later W6 checkpoint.
 - Made the managed supervisor path contract platform-aware: Darwin keeps its existing per-user layout while Windows x64 now resolves managed releases, the strict `current-version.json` pointer and stable native-shell program root from the canonical `%LOCALAPPDATA%` layout without POSIX path interpretation.
 - Added bounded Windows x64 managed-release ZIP inspection and extraction for updater preparation. Windows update archives now fail closed on path traversal/root escape, reserved or ambiguous Windows names, case-insensitive collisions, symlink/reparse metadata, unsupported entry types and entry/byte bounds before promotion; real Windows CI exercises both a valid extraction and malicious ZIP fixtures.
 - Added a target-aware managed release runtime contract for Windows x64: release validation now expects native `.exe` runtime/Browser host names, Windows Job Object helpers and no Peekaboo payload while preserving the existing macOS runtime/native-app rules; Windows ARM64 remains fail-closed until W8.
