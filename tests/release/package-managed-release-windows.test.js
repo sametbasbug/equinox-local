@@ -72,6 +72,14 @@ test("Windows pinned dependency ZIP extraction uses bounded native tar instead o
   assert.doesNotMatch(source, /Expand-Archive/u);
 });
 
+
+test("Windows release ZIP helper explicitly references compression assemblies for PowerShell 5.1", async () => {
+  const helper = await fs.readFile(new URL("../../src/equinox-local-windows-release-zip.ps1", import.meta.url), "utf8");
+  assert.match(helper, /ZipArchive\]\.Assembly\.Location/u);
+  assert.match(helper, /ZipFile\]\.Assembly\.Location/u);
+  assert.match(helper, /-ReferencedAssemblies @\(\$CompressionAssembly, \$CompressionFileSystemAssembly\)/u);
+});
+
 test("Windows managed package builder fails closed off win32-x64", async () => {
   if (process.platform === "win32" && process.arch === "x64") return;
   await assert.rejects(packageManagedEquinoxWindowsRelease(), /requires win32-x64/u);

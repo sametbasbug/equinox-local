@@ -6,6 +6,8 @@ param(
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.IO.Compression
 Add-Type -AssemblyName System.IO.Compression.FileSystem
+$CompressionAssembly = [System.IO.Compression.ZipArchive].Assembly.Location
+$CompressionFileSystemAssembly = [System.IO.Compression.ZipFile].Assembly.Location
 Add-Type -TypeDefinition @'
 using System;
 using System.Collections.Generic;
@@ -157,7 +159,7 @@ public static class EquinoxWindowsReleaseZip
         }
     }
 }
-'@
+'@ -ReferencedAssemblies @($CompressionAssembly, $CompressionFileSystemAssembly)
 $archive = [System.IO.Path]::GetFullPath($ArchivePath)
 if (-not [System.IO.File]::Exists($archive)) { throw 'Windows release ZIP is missing.' }
 if ($Mode -eq 'Inspect') {
