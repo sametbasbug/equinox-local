@@ -18,6 +18,7 @@ import { validateFirstInstallRelease } from "../../src/equinox-local-first-insta
 const execFile = promisify(execFileCallback);
 const TARGET = "win32-x64";
 const MAX_DEPENDENCY_ARCHIVE_BYTES = 128 * 1024 * 1024;
+const WINDOWS_ZIP_TIMEOUT_MS = 300_000;
 const WINDOWS_EXTRA_RELEASE_FILES = Object.freeze([
   "src/equinox-local-windows-job-object.ps1",
   "src/equinox-local-windows-process-gate.ps1",
@@ -230,10 +231,19 @@ async function compileBrowserLauncher(rootDir, releaseDir) {
 async function createManagedZip(rootDir, releaseDir, artifactPath) {
   const helper = path.join(path.dirname(fileURLToPath(import.meta.url)), "windows-managed-zip.ps1");
   await fs.rm(artifactPath, { force: true });
-  await execFile("powershell.exe", [
-    "-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", helper,
-    "-SourceDirectory", releaseDir, "-DestinationZip", artifactPath,
-  ], { timeout: 180_000, maxBuffer: 4 * 1024 * 1024, windowsHide: true });
+  try {
+    await execFile("powershell.exe", [
+      "-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", helper,
+      "-SourceDirectory", releaseDir, "-DestinationZip", artifactPath,
+    ], { timeout: WINDOWS_ZIP_TIMEOUT_MS, maxBuffer: 4 * 1024 * 1024, windowsHide: true });
+  } catch (error) {
+    if (error && typeof error === "object" && (error.killed === true || error.signal)) {
+      throw new Error(`Windows managed ZIP creation exceeded ${WINDOWS_ZIP_TIMEOUT_MS} ms.`);
+    }
+    const stderr = error && typeof error === "object" && typeof error.stderr === "string" ? error.stderr.trim() : "";
+    if (stderr) throw new Error(`Windows managed ZIP creation failed: ${stderr.slice(0, 2000)}`);
+    throw error;
+  }
 }
 
 export async function packageManagedEquinoxWindowsRelease({

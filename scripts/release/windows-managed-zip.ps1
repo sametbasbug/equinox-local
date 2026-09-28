@@ -29,7 +29,7 @@ try {
         $entry = $zip.CreateEntry($name.TrimEnd('/') + '/',[System.IO.Compression.CompressionLevel]::NoCompression)
         $entry.LastWriteTime = $fixedTime; $entry.ExternalAttributes = 0
       } else {
-        $entry = $zip.CreateEntry($name,[System.IO.Compression.CompressionLevel]::Optimal)
+        $entry = $zip.CreateEntry($name,[System.IO.Compression.CompressionLevel]::Fastest)
         $entry.LastWriteTime = $fixedTime; $entry.ExternalAttributes = 0
         $input = [System.IO.File]::Open($item.FullName,[System.IO.FileMode]::Open,[System.IO.FileAccess]::Read,[System.IO.FileShare]::Read)
         try {

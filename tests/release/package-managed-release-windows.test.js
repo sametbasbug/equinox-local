@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import fs from "node:fs/promises";
 import test from "node:test";
 
 import { packageManagedEquinoxWindowsRelease, windowsManagedPackageContract, windowsManagedReleaseDestinationRelative } from "../../scripts/release/package-managed-release-windows.mjs";
@@ -22,6 +23,16 @@ test("Windows release source mapping is separator-independent and flattens src",
   assert.equal(windowsManagedReleaseDestinationRelative("src\\server.js"), "server.js");
   assert.equal(windowsManagedReleaseDestinationRelative("package.json"), "package.json");
   assert.throws(() => windowsManagedReleaseDestinationRelative("../server.js"), /unsafe/u);
+});
+
+
+test("Windows managed ZIP helper uses bounded fast compression", async () => {
+  const helper = await fs.readFile(new URL("./windows-managed-zip.ps1", import.meta.url), "utf8");
+  assert.ok(helper.includes("CompressionLevel]::Fastest"));
+  assert.ok(!helper.includes("CompressionLevel]::Optimal"));
+  const source = await fs.readFile(new URL("./package-managed-release-windows.mjs", import.meta.url), "utf8");
+  assert.match(source, /WINDOWS_ZIP_TIMEOUT_MS = 300_000/u);
+  assert.match(source, /Windows managed ZIP creation exceeded/u);
 });
 
 test("Windows managed package builder fails closed off win32-x64", async () => {
