@@ -33,6 +33,12 @@ test("Windows x64 release runtime contract uses native executable names and excl
   assert.equal(contract.requiredReleaseFiles.includes("equinox-local-windows-job-object.ps1"), true);
   assert.equal(contract.requiredReleaseFiles.includes("equinox-local-windows-process-gate.ps1"), true);
   assert.equal(contract.nativeAppKind, "windows-shell");
+  assert.deepEqual(contract.nativeShellFiles.map((value) => value.replaceAll("\\", "/")), [
+    "runtime/shell/EquinoxLocal.exe",
+    "runtime/shell/coreclr.dll",
+    "runtime/shell/hostfxr.dll",
+    "runtime/shell/Microsoft.Web.WebView2.Core.dll",
+  ]);
 });
 
 test("Windows ARM64 release runtime remains fail-closed until W8", () => {

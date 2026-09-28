@@ -30,6 +30,12 @@ const SHARED_RUNTIME_DOCUMENTS = Object.freeze([
   path.join("runtime", "tunnel", "LICENSE"),
   path.join("runtime", "tunnel", "NOTICE"),
 ]);
+const WINDOWS_SHELL_FILES = Object.freeze([
+  path.join("runtime", "shell", "EquinoxLocal.exe"),
+  path.join("runtime", "shell", "coreclr.dll"),
+  path.join("runtime", "shell", "hostfxr.dll"),
+  path.join("runtime", "shell", "Microsoft.Web.WebView2.Core.dll"),
+]);
 const DARWIN_RELEASE_FILES = Object.freeze([
   "server.js",
   "equinox-local-bootstrap.js",
@@ -68,6 +74,7 @@ export function equinoxLocalReleaseRuntimeContract({ target, version } = {}) {
         ...(peekaboo ? DARWIN_PEEKABOO_DOCUMENTS : []),
       ]),
       requiredReleaseFiles: DARWIN_RELEASE_FILES,
+      nativeShellFiles: Object.freeze([]),
       nativeAppKind: "macos-app",
     });
   }
@@ -81,6 +88,7 @@ export function equinoxLocalReleaseRuntimeContract({ target, version } = {}) {
       runtimeExecutables: WINDOWS_EXECUTABLES,
       runtimeDocuments: SHARED_RUNTIME_DOCUMENTS,
       requiredReleaseFiles: WINDOWS_RELEASE_FILES,
+      nativeShellFiles: WINDOWS_SHELL_FILES,
       nativeAppKind: "windows-shell",
     });
   }

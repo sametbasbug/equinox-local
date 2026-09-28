@@ -130,3 +130,21 @@ jobs:
 
       - name: Windows Native Messaging launcher smoke
         run: node tests/release/windows-native-messaging-smoke.mjs
+
+      - name: Windows managed package assembly smoke
+        shell: pwsh
+        env:
+          EQUINOX_WINDOWS_SHELL_PUBLISH_DIR: artifacts/windows-shell/win-x64
+        run: |
+          npm run local:release:package:windows
+          $artifact = Get-ChildItem backups/local-packages -Filter 'equinox-local-*-win32-x64.zip' | Select-Object -First 1
+          if ($null -eq $artifact) { throw 'Windows managed ZIP artifact was not created' }
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $zip = [System.IO.Compression.ZipFile]::OpenRead($artifact.FullName)
+          try {
+            $names = @($zip.Entries | ForEach-Object FullName)
+            foreach ($required in @('release/release.json','release/runtime/node/bin/node.exe','release/runtime/tunnel/tunnel-client.exe','release/runtime/tunnel/cloudflared.exe','release/runtime/browser/equinox-browser-native-host.exe','release/runtime/shell/EquinoxLocal.exe')) {
+              if ($names -notcontains $required) { throw "Windows managed ZIP is missing $required" }
+            }
+            if ($names | Where-Object { $_ -like 'release/runtime/peekaboo/*' }) { throw 'Windows managed ZIP unexpectedly contains Peekaboo' }
+          } finally { $zip.Dispose() }
