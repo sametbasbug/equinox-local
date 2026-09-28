@@ -8,6 +8,7 @@ import {
   installManagedEquinoxRelease,
   validateFirstInstallRelease,
 } from "../../src/equinox-local-first-install.js";
+import { equinoxLocalReleaseRuntimeContract } from "../../src/equinox-local-release-runtime-contract.js";
 
 const TARGET = "darwin-arm64";
 
@@ -97,10 +98,7 @@ test("Windows x64 first-install release validation accepts native runtime names 
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "equinox-first-install-windows-contract-"));
   const releaseDir = path.join(root, "release");
   try {
-    await fs.mkdir(path.join(releaseDir, "runtime", "node", "bin"), { recursive: true });
-    await fs.mkdir(path.join(releaseDir, "runtime", "tunnel"), { recursive: true });
-    await fs.mkdir(path.join(releaseDir, "runtime", "browser"), { recursive: true });
-    await fs.mkdir(path.join(releaseDir, "runtime", "shell"), { recursive: true });
+    await fs.mkdir(releaseDir, { recursive: true });
     await fs.writeFile(path.join(releaseDir, "release.json"), `${JSON.stringify({
       schemaVersion: 1,
       version: "5.2.1",
@@ -109,28 +107,15 @@ test("Windows x64 first-install release validation accepts native runtime names 
       tunnelClientVersion: "0.0.15",
       serverEntry: "server.js",
     })}\n`);
-    for (const relative of [
-      path.join("runtime", "node", "bin", "node.exe"),
-      path.join("runtime", "tunnel", "tunnel-client.exe"),
-      path.join("runtime", "tunnel", "cloudflared.exe"),
-      path.join("runtime", "browser", "equinox-browser-native-host.exe"),
-      path.join("runtime", "shell", "EquinoxLocal.exe"),
-      path.join("runtime", "shell", "coreclr.dll"),
-      path.join("runtime", "shell", "hostfxr.dll"),
-      path.join("runtime", "shell", "Microsoft.Web.WebView2.Core.dll"),
-    ]) {
-      await fs.writeFile(path.join(releaseDir, relative), "fixture\n");
-    }
-    for (const relative of [
-      path.join("runtime", "tunnel", "LICENSE"),
-      path.join("runtime", "tunnel", "NOTICE"),
-      "server.js",
-      "equinox-browser-native-host.js",
-      "equinox-browser-native-host-runtime.js",
-      "equinox-browser-socket.js",
-      "equinox-local-windows-job-object.ps1",
-      "equinox-local-windows-process-gate.ps1",
-    ]) {
+    const contract = equinoxLocalReleaseRuntimeContract({ target: "win32-x64", version: "5.2.1" });
+    const fixtureFiles = new Set([
+      ...contract.runtimeExecutables,
+      ...contract.runtimeDocuments,
+      ...contract.requiredReleaseFiles,
+      ...contract.nativeShellFiles,
+    ]);
+    for (const relative of fixtureFiles) {
+      await fs.mkdir(path.dirname(path.join(releaseDir, relative)), { recursive: true });
       await fs.writeFile(path.join(releaseDir, relative), "fixture\n");
     }
     const result = await validateFirstInstallRelease(releaseDir, { target: "win32-x64" });

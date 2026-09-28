@@ -6,6 +6,7 @@ This project follows semantic versioning for public releases.
 
 ## [Unreleased]
 
+- Added bounded Windows x64 managed-release ZIP inspection and extraction for updater preparation. Windows update archives now fail closed on path traversal/root escape, reserved or ambiguous Windows names, case-insensitive collisions, symlink/reparse metadata, unsupported entry types and entry/byte bounds before promotion; real Windows CI exercises both a valid extraction and malicious ZIP fixtures.
 - Added a target-aware managed release runtime contract for Windows x64: release validation now expects native `.exe` runtime/Browser host names, Windows Job Object helpers and no Peekaboo payload while preserving the existing macOS runtime/native-app rules; Windows ARM64 remains fail-closed until W8.
 - Added Windows x64 managed activation groundwork: the native shell resolves `current-version.json` from per-user LocalAppData on each runtime start/restart, update rollback can atomically restore the version-file pointer, and detached activation signals the existing current-user-only shell pipe instead of creating a second runtime supervisor.
 - Added the Windows x64 managed-lifecycle foundation with a strict target-bound `current-version.json` pointer under per-user LocalAppData; Windows ARM64 remains fail-closed until its dedicated W8 phase.
