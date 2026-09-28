@@ -99,7 +99,7 @@ try {
     @{ Name='release/A.txt'; Content='b'; ExternalAttributes=$null }
   )
 
-  $symlinkAttributes = [System.BitConverter]::ToInt32([System.BitConverter]::GetBytes([uint32]0xA1FF0000), 0)
+  $symlinkAttributes = [System.BitConverter]::ToInt32([byte[]](0x00,0x00,0xFF,0xA1), 0)
   Assert-RejectedEntry -Label 'symlink-metadata' -Entries @(@{ Name='release/link'; Content='target'; ExternalAttributes=$symlinkAttributes })
   Assert-RejectedEntry -Label 'reparse-metadata' -Entries @(@{ Name='release/reparse'; Content='x'; ExternalAttributes=0x400 })
 
