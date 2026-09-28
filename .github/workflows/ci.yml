@@ -38,10 +38,10 @@ jobs:
       - name: Test
         run: npm test
 
-  windows-headless:
-    name: Windows x64 headless / Node 26
+  windows-runtime:
+    name: Windows x64 runtime / Node 26
     runs-on: windows-latest
-    timeout-minutes: 15
+    timeout-minutes: 8
 
     steps:
       - name: Checkout
@@ -64,6 +64,27 @@ jobs:
           node --test --test-name-pattern "Windows x64 first-install release validation accepts native runtime names without Peekaboo" tests/release/equinox-local-first-install.test.js
           node --test tests/release/equinox-local-current-release.test.js
           node --test --test-name-pattern "Windows activation rollback restores current-version.json and the previous exact release" tests/release/equinox-local-update-activation.test.js
+
+      - name: Windows headless runtime smoke
+        run: npm run smoke:windows-headless
+
+      - name: Windows Native Messaging launcher smoke
+        run: node tests/release/windows-native-messaging-smoke.mjs
+
+  windows-shell:
+    name: Windows x64 native shell
+    runs-on: windows-latest
+    timeout-minutes: 8
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 26.10.0
+          architecture: x64
 
       - name: Set up .NET SDK
         uses: actions/setup-dotnet@v5
@@ -125,11 +146,32 @@ jobs:
       - name: Windows native shell presentation smoke
         run: dotnet run --project tests/windows/EquinoxLocal.WindowsShell.PresentationHarness/EquinoxLocal.WindowsShell.PresentationHarness.csproj --configuration Release
 
-      - name: Windows headless runtime smoke
-        run: npm run smoke:windows-headless
+  windows-package:
+    name: Windows x64 managed package
+    runs-on: windows-latest
+    timeout-minutes: 8
 
-      - name: Windows Native Messaging launcher smoke
-        run: node tests/release/windows-native-messaging-smoke.mjs
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 26.10.0
+          architecture: x64
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Set up .NET SDK
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Publish package shell payload
+        run: dotnet publish native/windows/EquinoxLocal.WindowsShell/EquinoxLocal.WindowsShell.csproj --configuration Release --runtime win-x64 --self-contained true -p:Platform=x64 --output artifacts/windows-shell/win-x64
 
       - name: Windows managed package assembly smoke
         shell: pwsh
@@ -148,3 +190,21 @@ jobs:
             }
             if ($names | Where-Object { $_ -like 'release/runtime/peekaboo/*' }) { throw 'Windows managed ZIP unexpectedly contains Peekaboo' }
           } finally { $zip.Dispose() }
+
+  windows-headless:
+    name: Windows x64 headless / Node 26
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    if: ${{ always() }}
+    needs: [windows-runtime, windows-shell, windows-package]
+
+    steps:
+      - name: Verify parallel Windows acceptance
+        env:
+          RUNTIME_RESULT: ${{ needs.windows-runtime.result }}
+          SHELL_RESULT: ${{ needs.windows-shell.result }}
+          PACKAGE_RESULT: ${{ needs.windows-package.result }}
+        run: |
+          test "$RUNTIME_RESULT" = success
+          test "$SHELL_RESULT" = success
+          test "$PACKAGE_RESULT" = success

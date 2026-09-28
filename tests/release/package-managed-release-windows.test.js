@@ -37,8 +37,10 @@ test("Windows managed ZIP helper uses bounded fast compression", async () => {
     }
   }
   assert.equal(typeof helper, "string");
-  assert.ok(helper.includes("CompressionLevel]::Fastest"));
-  assert.ok(!helper.includes("CompressionLevel]::Optimal"));
+  assert.ok(helper.includes("public static class EquinoxManagedZip"));
+  assert.ok(helper.includes("items.Sort"));
+  assert.ok(helper.includes("CompressionLevel.Fastest"));
+  assert.ok(!helper.includes("Get-ChildItem -LiteralPath $source -Recurse"));
   let source;
   for (const relative of ["./package-managed-release-windows.mjs", "../../scripts/release/package-managed-release-windows.mjs"]) {
     try {
@@ -49,7 +51,7 @@ test("Windows managed ZIP helper uses bounded fast compression", async () => {
     }
   }
   assert.equal(typeof source, "string");
-  assert.match(source, /WINDOWS_ZIP_TIMEOUT_MS = 600_000/u);
+  assert.match(source, /WINDOWS_ZIP_TIMEOUT_MS = 180_000/u);
   assert.match(source, /Windows managed ZIP creation exceeded/u);
 });
 
