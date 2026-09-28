@@ -41,8 +41,14 @@ function Invoke-ReleaseZip {
   )
   $args = @('-NoLogo','-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',$Helper,'-Mode',$Mode,'-ArchivePath',$Archive)
   if ($Mode -eq 'Extract') { $args += @('-DestinationPath',$Destination) }
-  $output = & powershell.exe @args 2>&1
-  $exit = $LASTEXITCODE
+  $previousErrorActionPreference = $ErrorActionPreference
+  $ErrorActionPreference = 'Continue'
+  try {
+    $output = & powershell.exe @args 2>&1
+    $exit = $LASTEXITCODE
+  } finally {
+    $ErrorActionPreference = $previousErrorActionPreference
+  }
   if ($ShouldPass -and $exit -ne 0) { throw "$Label unexpectedly failed: $($output -join ' ')" }
   if (-not $ShouldPass -and $exit -eq 0) { throw "$Label unexpectedly passed." }
   return @($output)
