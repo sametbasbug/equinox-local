@@ -1,6 +1,6 @@
-import { execFile as execFileCallback } from "node:child_process";
+import { execFile as execFileCallback, spawn as spawnChild } from "node:child_process";
 import { constants as fsConstants } from "node:fs";
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -13,6 +13,7 @@ import {
 } from "./equinox-local-bootstrap.js";
 import {
   activatePreparedEquinoxRelease,
+  readManagedCurrentRelease,
   waitForEquinoxLocalVersion,
 } from "./equinox-local-update-activation.js";
 import {
@@ -20,10 +21,8 @@ import {
   equinoxLocalUpdateTarget,
   parseEquinoxVersion,
 } from "./equinox-local-updater.js";
-import {
-  managedSupervisorPaths,
-  resolveSupervisorRelease,
-} from "./equinox-local-supervisor.js";
+import { managedSupervisorPaths } from "./equinox-local-supervisor.js";
+import { writeEquinoxLocalCurrentVersionPointer } from "./equinox-local-current-release.js";
 import { initializeManagedOnboardingState } from "./equinox-local-onboarding.js";
 import { equinoxLocalReleaseRuntimeContract } from "./equinox-local-release-runtime-contract.js";
 
@@ -34,9 +33,12 @@ const MAX_RELEASE_BYTES = 2 * 1024 * 1024 * 1024;
 const FIRST_INSTALL_HEALTH_ATTEMPTS = 120;
 const FIRST_INSTALL_HEALTH_DELAY_MS = 500;
 const FIRST_INSTALL_DIAGNOSTIC_BYTES = 12 * 1024;
-function inside(parent, child) {
-  const relative = path.relative(parent, child);
-  return relative !== "" && !relative.startsWith("..") && !path.isAbsolute(relative);
+const MAX_WINDOWS_SHELL_ENTRIES = 5_000;
+const MAX_WINDOWS_SHELL_BYTES = 512 * 1024 * 1024;
+
+function inside(parent, child, pathApi = path) {
+  const relative = pathApi.relative(parent, child);
+  return relative !== "" && !relative.startsWith("..") && !pathApi.isAbsolute(relative);
 }
 
 function exactKeys(value, expected, label) {
@@ -50,15 +52,23 @@ function exactKeys(value, expected, label) {
   }
 }
 
-async function assertOwnedNormalDirectory(directory, { uid, fsImpl = fs, create = false, mode = 0o700 } = {}) {
+async function assertOwnedNormalDirectory(directory, {
+  uid,
+  platform = process.platform,
+  fsImpl = fs,
+  create = false,
+  mode = 0o700,
+} = {}) {
   if (create) await fsImpl.mkdir(directory, { recursive: true, mode });
   const stat = await fsImpl.lstat(directory);
   if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error(`Unsafe managed directory: ${directory}`);
-  if (Number.isInteger(uid) && Number.isInteger(stat.uid) && stat.uid !== uid) {
-    throw new Error(`Managed directory is not owned by the current user: ${directory}`);
+  if (platform === "darwin") {
+    if (Number.isInteger(uid) && Number.isInteger(stat.uid) && stat.uid !== uid) {
+      throw new Error(`Managed directory is not owned by the current user: ${directory}`);
+    }
+    if ((stat.mode & 0o022) !== 0) throw new Error(`Managed directory is writable by group or other users: ${directory}`);
+    await fsImpl.chmod(directory, mode).catch(() => {});
   }
-  if ((stat.mode & 0o022) !== 0) throw new Error(`Managed directory is writable by group or other users: ${directory}`);
-  await fsImpl.chmod(directory, mode).catch(() => {});
   return stat;
 }
 
@@ -153,42 +163,62 @@ export async function validateFirstInstallRelease(releaseDir, {
   });
 }
 
-async function readCurrentReleaseOrNull(paths, { fsImpl = fs } = {}) {
-  try {
-    return await resolveSupervisorRelease(paths);
-  } catch (error) {
-    if (error?.code === "ENOENT") return null;
-    throw error;
-  }
-}
-
-function installationFor(paths, releaseDir) {
+function installationFor(paths, releaseDir, {
+  platform = process.platform,
+  arch = process.arch,
+  target = equinoxLocalUpdateTarget({ platform, arch }),
+} = {}) {
+  const pathApi = platform === "win32" ? path.win32 : path.posix;
   return Object.freeze({
     kind: "managed",
     managed: true,
     selfUpdateSupported: true,
+    platform,
+    arch,
+    target,
+    lifecycleKind: platform === "win32" ? "windows-user" : "launch-agent",
     installRoot: paths.installRoot,
     releasesRoot: paths.releasesRoot,
     releaseDir,
-    currentLink: paths.currentLink,
-    stagingRoot: path.join(paths.installRoot, "staging"),
-    launchAgentPath: path.join(paths.homeDir, "Library", "LaunchAgents", `${EQUINOX_LOCAL_LAUNCH_AGENT_LABEL}.plist`),
-    launchAgentLabel: EQUINOX_LOCAL_LAUNCH_AGENT_LABEL,
+    currentLink: platform === "darwin" ? paths.currentLink : null,
+    currentPointer: paths.currentPointer,
+    programRoot: paths.programRoot,
+    stagingRoot: pathApi.join(paths.installRoot, "staging"),
+    launchAgentPath: platform === "darwin"
+      ? path.posix.join(paths.homeDir, "Library", "LaunchAgents", `${EQUINOX_LOCAL_LAUNCH_AGENT_LABEL}.plist`)
+      : null,
+    launchAgentLabel: platform === "darwin" ? EQUINOX_LOCAL_LAUNCH_AGENT_LABEL : null,
   });
 }
 
-async function atomicInitialCurrentLink(paths, targetRelease, { fsImpl = fs } = {}) {
+async function atomicInitialCurrentPointer(paths, targetRelease, candidate, {
+  platform = process.platform,
+  target = candidate.target,
+  fsImpl = fs,
+} = {}) {
+  const pathApi = platform === "win32" ? path.win32 : path.posix;
+  const pointerPath = platform === "win32" ? paths.currentPointer : paths.currentLink;
   try {
-    await fsImpl.lstat(paths.currentLink);
+    await fsImpl.lstat(pointerPath);
     throw new Error("Managed current pointer appeared during first-install promotion.");
   } catch (error) {
     if (error?.code !== "ENOENT") throw error;
   }
-  const relative = path.relative(paths.installRoot, targetRelease);
-  if (!relative.startsWith(`releases${path.sep}`) || path.dirname(targetRelease) !== paths.releasesRoot) {
+  if (pathApi.dirname(targetRelease) !== paths.releasesRoot) {
     throw new Error("First-install current pointer target is unsafe.");
   }
-  const temporary = path.join(paths.installRoot, `.current-install-${process.pid}-${randomBytes(8).toString("hex")}`);
+  if (platform === "win32") {
+    await writeEquinoxLocalCurrentVersionPointer(paths.currentPointer, {
+      version: candidate.version,
+      fsImpl,
+      platform: "win32",
+      target,
+    });
+    return;
+  }
+  const relative = path.posix.relative(paths.installRoot, targetRelease);
+  if (!relative.startsWith("releases/")) throw new Error("First-install current pointer target is unsafe.");
+  const temporary = path.posix.join(paths.installRoot, `.current-install-${process.pid}-${randomBytes(8).toString("hex")}`);
   try {
     await fsImpl.symlink(relative, temporary, "dir");
     await fsImpl.rename(temporary, paths.currentLink);
@@ -196,6 +226,105 @@ async function atomicInitialCurrentLink(paths, targetRelease, { fsImpl = fs } = 
     await fsImpl.rm(temporary, { force: true }).catch(() => {});
     throw error;
   }
+}
+
+async function sha256File(filePath, fsImpl = fs) {
+  const digest = createHash("sha256");
+  const handle = await fsImpl.open(filePath, "r");
+  try {
+    for await (const chunk of handle.createReadStream()) digest.update(chunk);
+  } finally {
+    await handle.close().catch(() => {});
+  }
+  return digest.digest("hex");
+}
+
+async function snapshotNormalTree(root, { fsImpl = fs } = {}) {
+  const rootStat = await fsImpl.lstat(root);
+  if (!rootStat.isDirectory() || rootStat.isSymbolicLink()) throw new Error(`Windows stable shell root is unsafe: ${root}`);
+  const rows = [];
+  const stack = [{ absolute: root, relative: "" }];
+  let totalBytes = 0;
+  while (stack.length) {
+    const current = stack.pop();
+    const entries = await fsImpl.readdir(current.absolute, { withFileTypes: true });
+    for (const entry of entries) {
+      if (rows.length >= MAX_WINDOWS_SHELL_ENTRIES) throw new Error("Windows stable shell contains too many entries.");
+      const absolute = path.join(current.absolute, entry.name);
+      const relative = current.relative ? `${current.relative}/${entry.name}` : entry.name;
+      const stat = await fsImpl.lstat(absolute);
+      if (stat.isSymbolicLink()) throw new Error("Windows stable shell may not contain symbolic links or junctions.");
+      if (stat.isDirectory()) {
+        stack.push({ absolute, relative });
+        continue;
+      }
+      if (!stat.isFile()) throw new Error("Windows stable shell contains an unsupported filesystem entry.");
+      totalBytes += stat.size;
+      if (totalBytes > MAX_WINDOWS_SHELL_BYTES) throw new Error("Windows stable shell exceeds the size limit.");
+      rows.push(Object.freeze({ relative, bytes: stat.size, sha256: await sha256File(absolute, fsImpl) }));
+    }
+  }
+  rows.sort((a, b) => a.relative.localeCompare(b.relative, "en"));
+  return Object.freeze(rows);
+}
+
+function sameTree(left, right) {
+  return left.length === right.length && left.every((entry, index) => {
+    const other = right[index];
+    return entry.relative === other.relative && entry.bytes === other.bytes && entry.sha256 === other.sha256;
+  });
+}
+
+export async function synchronizeFreshWindowsShell({ releaseDir, programRoot, fsImpl = fs } = {}) {
+  if (typeof releaseDir !== "string" || typeof programRoot !== "string") throw new Error("Windows stable shell paths are required.");
+  const sourceRoot = path.join(releaseDir, "runtime", "shell");
+  const sourceSnapshot = await snapshotNormalTree(sourceRoot, { fsImpl });
+  if (!sourceSnapshot.some((entry) => entry.relative === "EquinoxLocal.exe")) throw new Error("Verified Windows shell is missing EquinoxLocal.exe.");
+  try {
+    const existing = await fsImpl.lstat(programRoot);
+    if (!existing.isDirectory() || existing.isSymbolicLink()) throw new Error("Existing Windows stable shell root is unsafe.");
+    const existingSnapshot = await snapshotNormalTree(programRoot, { fsImpl });
+    if (!sameTree(sourceSnapshot, existingSnapshot)) throw new Error("Existing Windows stable shell does not match the verified release.");
+    return Object.freeze({ synchronized: false, reused: true, shellExecutable: path.join(programRoot, "EquinoxLocal.exe") });
+  } catch (error) {
+    if (error?.code !== "ENOENT") throw error;
+  }
+
+  const parent = path.dirname(programRoot);
+  await fsImpl.mkdir(parent, { recursive: true });
+  const parentStat = await fsImpl.lstat(parent);
+  if (!parentStat.isDirectory() || parentStat.isSymbolicLink()) throw new Error("Windows stable program parent is unsafe.");
+  const temporary = path.join(parent, `.equinox-shell-install-${process.pid}-${randomBytes(8).toString("hex")}`);
+  try {
+    await fsImpl.cp(sourceRoot, temporary, { recursive: true, force: false, errorOnExist: true, dereference: false });
+    const copiedSnapshot = await snapshotNormalTree(temporary, { fsImpl });
+    if (!sameTree(sourceSnapshot, copiedSnapshot)) throw new Error("Copied Windows stable shell failed integrity verification.");
+    await fsImpl.rename(temporary, programRoot);
+  } catch (error) {
+    await fsImpl.rm(temporary, { recursive: true, force: true }).catch(() => {});
+    throw error;
+  }
+  return Object.freeze({ synchronized: true, reused: false, shellExecutable: path.join(programRoot, "EquinoxLocal.exe") });
+}
+
+export async function launchFreshWindowsShell(shellExecutable, {
+  spawnImpl = spawnChild,
+} = {}) {
+  if (typeof shellExecutable !== "string" || !path.isAbsolute(shellExecutable)) throw new Error("Windows stable shell executable path must be absolute.");
+  const child = spawnImpl(shellExecutable, [], {
+    cwd: path.dirname(shellExecutable),
+    detached: true,
+    stdio: "ignore",
+    windowsHide: false,
+  });
+  await new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error("Windows stable shell launch did not start within 5 seconds.")), 5_000);
+    timer.unref?.();
+    child.once("spawn", () => { clearTimeout(timer); resolve(); });
+    child.once("error", (error) => { clearTimeout(timer); reject(error); });
+  });
+  child.unref();
+  return Object.freeze({ launched: true, pid: Number.isInteger(child.pid) ? child.pid : null });
 }
 
 function boundedDiagnostic(value, maxChars = 1_200) {
@@ -272,37 +401,62 @@ export async function installManagedEquinoxRelease({
   homeDir = os.homedir(),
   uid = typeof process.getuid === "function" ? process.getuid() : null,
   platform = process.platform,
-  target = equinoxLocalUpdateTarget(),
+  arch = process.arch,
+  target = null,
+  env = process.env,
   fsImpl = fs,
   execFileImpl = execFile,
   bootstrapImpl = bootstrapManagedEquinoxUser,
-  readCurrentImpl = readCurrentReleaseOrNull,
+  readCurrentImpl = readManagedCurrentRelease,
   activateImpl = activatePreparedEquinoxRelease,
   waitForVersionImpl = waitForEquinoxLocalVersion,
   initializeOnboardingImpl = initializeManagedOnboardingState,
+  syncWindowsShellImpl = synchronizeFreshWindowsShell,
+  launchWindowsShellImpl = launchFreshWindowsShell,
 } = {}) {
-  if (platform !== "darwin") throw new Error("Equinox Local first install is supported only on macOS.");
-  if (!Number.isInteger(uid) || uid < 1) throw new Error("Do not run the Equinox Local installer with sudo or as root.");
-  if (typeof homeDir !== "string" || !path.isAbsolute(homeDir)) throw new Error("A trusted absolute HOME is required for Equinox Local first install.");
+  if (platform !== "darwin" && !(platform === "win32" && arch === "x64")) {
+    throw new Error(`Equinox Local first install is not implemented for ${platform}-${arch}.`);
+  }
+  const expectedTarget = target || equinoxLocalUpdateTarget({ platform, arch });
+  if (platform === "win32" && expectedTarget !== "win32-x64") throw new Error("Windows first install currently supports only win32-x64.");
+  const pathApi = platform === "win32" ? path.win32 : path.posix;
+  if (platform === "darwin" && (!Number.isInteger(uid) || uid < 1)) throw new Error("Do not run the Equinox Local installer with sudo or as root.");
+  if (typeof homeDir !== "string" || !pathApi.isAbsolute(homeDir)) throw new Error("A trusted absolute HOME is required for Equinox Local first install.");
 
   const homeStat = await fsImpl.lstat(homeDir);
   if (!homeStat.isDirectory() || homeStat.isSymbolicLink()) throw new Error("The current HOME directory is unsafe.");
-  if (Number.isInteger(homeStat.uid) && homeStat.uid !== uid) throw new Error("The current HOME directory is not owned by the current user.");
+  if (platform === "darwin" && Number.isInteger(homeStat.uid) && homeStat.uid !== uid) throw new Error("The current HOME directory is not owned by the current user.");
 
-  const paths = managedSupervisorPaths(homeDir);
-  const stagingRoot = path.join(paths.installRoot, "staging");
-  await assertOwnedNormalDirectory(paths.installRoot, { uid, fsImpl, create: true });
-  await assertOwnedNormalDirectory(paths.releasesRoot, { uid, fsImpl, create: true });
-  await assertOwnedNormalDirectory(stagingRoot, { uid, fsImpl, create: true });
+  const paths = managedSupervisorPaths(homeDir, { platform, arch, env });
+  const stagingRoot = pathApi.join(paths.installRoot, "staging");
+  await assertOwnedNormalDirectory(paths.installRoot, { uid, platform, fsImpl, create: true });
+  await assertOwnedNormalDirectory(paths.releasesRoot, { uid, platform, fsImpl, create: true });
+  await assertOwnedNormalDirectory(stagingRoot, { uid, platform, fsImpl, create: true });
 
   const stagedReal = await fsImpl.realpath(stagedReleaseDir);
   const stagingReal = await fsImpl.realpath(stagingRoot);
-  if (!inside(stagingReal, stagedReal)) throw new Error("Staged Equinox Local release escaped the managed staging directory.");
-  const candidate = await validateFirstInstallRelease(stagedReal, { target, fsImpl });
-  const targetRelease = path.join(paths.releasesRoot, candidate.version);
-  if (path.dirname(targetRelease) !== paths.releasesRoot) throw new Error("Candidate release path escaped the managed releases root.");
+  if (!inside(stagingReal, stagedReal, pathApi)) throw new Error("Staged Equinox Local release escaped the managed staging directory.");
+  const candidate = await validateFirstInstallRelease(stagedReal, { target: expectedTarget, fsImpl });
+  const targetRelease = pathApi.join(paths.releasesRoot, candidate.version);
+  if (pathApi.dirname(targetRelease) !== paths.releasesRoot) throw new Error("Candidate release path escaped the managed releases root.");
 
-  const current = await readCurrentImpl(paths, { fsImpl });
+  const baseInstallation = installationFor(paths, null, { platform, arch, target: expectedTarget });
+  let current = null;
+  try {
+    current = await readCurrentImpl(baseInstallation);
+  } catch (error) {
+    if (error?.code !== "ENOENT") throw error;
+  }
+
+  const startRuntime = async (installation) => {
+    if (platform === "darwin") {
+      await reloadLaunchAgent(installation, { uid, execFileImpl });
+      return;
+    }
+    const shell = await syncWindowsShellImpl({ releaseDir: installation.releaseDir, programRoot: installation.programRoot, fsImpl });
+    await launchWindowsShellImpl(shell.shellExecutable);
+  };
+
   if (current) {
     const comparison = compareEquinoxVersions(current.version, candidate.version);
     if (comparison > 0) {
@@ -314,10 +468,10 @@ export async function installManagedEquinoxRelease({
       });
     }
     if (comparison === 0) {
-      const installation = installationFor(paths, current.releaseDir);
-      const bootstrap = await bootstrapImpl({ homeDir });
+      const installation = installationFor(paths, current.releaseDir, { platform, arch, target: expectedTarget });
+      const bootstrap = await bootstrapImpl({ homeDir, platform, arch, env, fsImpl });
       await initializeOnboardingImpl({ installation, homeDir });
-      await reloadLaunchAgent(installation, { uid, execFileImpl });
+      await startRuntime(installation);
       await waitForVersionImpl(current.version, {
         attempts: FIRST_INSTALL_HEALTH_ATTEMPTS,
         delayMs: FIRST_INSTALL_HEALTH_DELAY_MS,
@@ -329,66 +483,73 @@ export async function installManagedEquinoxRelease({
         controlCenterUrl: bootstrap.controlCenterUrl || "http://127.0.0.1:24891/",
       });
     }
+    if (platform === "win32") {
+      throw new Error("Windows bootstrap update/reinstall is not enabled yet; use the installed updater once the stable-shell replacement checkpoint is complete.");
+    }
   }
 
-  try {
-    const existing = await fsImpl.lstat(targetRelease).catch((error) => {
-      if (error?.code === "ENOENT") return null;
-      throw error;
-    });
-    if (existing) {
-      if (!existing.isDirectory() || existing.isSymbolicLink()) throw new Error("Existing target release path is unsafe.");
-      if (current?.releaseDir === targetRelease) throw new Error("Active target release state is inconsistent.");
-      await fsImpl.rm(targetRelease, { recursive: true, force: false });
-    }
-    await fsImpl.rename(stagedReal, targetRelease);
-    if (current) {
-      const currentInstallation = installationFor(paths, current.releaseDir);
-      await bootstrapImpl({ homeDir });
-      const activation = await activateImpl({
-        installation: currentInstallation,
-        targetVersion: candidate.version,
-      });
-      const bootstrap = await bootstrapImpl({ homeDir });
-      return Object.freeze({
-        status: activation.status,
-        version: candidate.version,
-        previousVersion: activation.previousVersion,
-        configCreated: Boolean(bootstrap.configCreated),
-        controlCenterUrl: bootstrap.controlCenterUrl || "http://127.0.0.1:24891/",
-      });
-    }
+  const existing = await fsImpl.lstat(targetRelease).catch((error) => {
+    if (error?.code === "ENOENT") return null;
+    throw error;
+  });
+  if (existing) {
+    if (!existing.isDirectory() || existing.isSymbolicLink()) throw new Error("Existing target release path is unsafe.");
+    if (current?.releaseDir === targetRelease) throw new Error("Active target release state is inconsistent.");
+    await fsImpl.rm(targetRelease, { recursive: true, force: false });
+  }
+  await fsImpl.rename(stagedReal, targetRelease);
 
-    await atomicInitialCurrentLink(paths, targetRelease, { fsImpl });
-    const installation = installationFor(paths, targetRelease);
-    const bootstrap = await bootstrapImpl({ homeDir });
-    try {
-      await initializeOnboardingImpl({ installation, homeDir });
-      await reloadLaunchAgent(installation, { uid, execFileImpl });
-      await waitForVersionImpl(candidate.version, {
-        attempts: FIRST_INSTALL_HEALTH_ATTEMPTS,
-        delayMs: FIRST_INSTALL_HEALTH_DELAY_MS,
-      });
-    } catch (error) {
-      const diagnostics = await firstInstallActivationDiagnostics({ homeDir, uid, execFileImpl, fsImpl });
+  if (current) {
+    const currentInstallation = installationFor(paths, current.releaseDir, { platform, arch, target: expectedTarget });
+    await bootstrapImpl({ homeDir, platform, arch, env, fsImpl });
+    const activation = await activateImpl({
+      installation: currentInstallation,
+      targetVersion: candidate.version,
+    });
+    const bootstrap = await bootstrapImpl({ homeDir, platform, arch, env, fsImpl });
+    return Object.freeze({
+      status: activation.status,
+      version: candidate.version,
+      previousVersion: activation.previousVersion,
+      configCreated: Boolean(bootstrap.configCreated),
+      controlCenterUrl: bootstrap.controlCenterUrl || "http://127.0.0.1:24891/",
+    });
+  }
+
+  await atomicInitialCurrentPointer(paths, targetRelease, candidate, {
+    platform,
+    target: expectedTarget,
+    fsImpl,
+  });
+  const installation = installationFor(paths, targetRelease, { platform, arch, target: expectedTarget });
+  const bootstrap = await bootstrapImpl({ homeDir, platform, arch, env, fsImpl });
+  try {
+    await initializeOnboardingImpl({ installation, homeDir });
+    await startRuntime(installation);
+    await waitForVersionImpl(candidate.version, {
+      attempts: FIRST_INSTALL_HEALTH_ATTEMPTS,
+      delayMs: FIRST_INSTALL_HEALTH_DELAY_MS,
+    });
+  } catch (error) {
+    let diagnostics = "";
+    if (platform === "darwin") {
+      diagnostics = await firstInstallActivationDiagnostics({ homeDir, uid, execFileImpl, fsImpl });
       await execFileImpl("/bin/launchctl", ["bootout", `gui/${uid}/${EQUINOX_LOCAL_LAUNCH_AGENT_LABEL}`], {
         timeout: 15_000,
         maxBuffer: 1024 * 1024,
       }).catch(() => ({ stdout: "", stderr: "" }));
-      const reason = error instanceof Error ? error.message : String(error);
-      const detail = diagnostics ? ` ${diagnostics}` : "";
-      throw new Error(`${reason} First-install files were preserved so the verified release can be retried safely.${detail}`);
     }
-
-    return Object.freeze({
-      status: "installed",
-      version: candidate.version,
-      configCreated: Boolean(bootstrap.configCreated),
-      controlCenterUrl: bootstrap.controlCenterUrl || "http://127.0.0.1:24891/",
-    });
-  } catch (error) {
-    throw error;
+    const reason = error instanceof Error ? error.message : String(error);
+    const detail = diagnostics ? ` ${diagnostics}` : "";
+    throw new Error(`${reason} First-install files were preserved so the verified release can be retried safely.${detail}`);
   }
+
+  return Object.freeze({
+    status: "installed",
+    version: candidate.version,
+    configCreated: Boolean(bootstrap.configCreated),
+    controlCenterUrl: bootstrap.controlCenterUrl || "http://127.0.0.1:24891/",
+  });
 }
 
 function parseCli(argv) {

@@ -61,7 +61,8 @@ jobs:
         shell: pwsh
         run: |
           node --test tests/release/equinox-local-release-runtime-contract.test.js
-          node --test --test-name-pattern "Windows x64 first-install release validation accepts native runtime names without Peekaboo" tests/release/equinox-local-first-install.test.js
+          node --test --test-name-pattern "Windows x64 first-install release validation accepts native runtime names without Peekaboo|Windows x64 fresh first install promotes current-version and stable shell without admin" tests/release/equinox-local-first-install.test.js
+          node --test --test-name-pattern "Windows x64 managed user bootstrap uses state config and omits Darwin/native-host lifecycle" tests/release/equinox-local-bootstrap.test.js
           node --test tests/release/equinox-local-current-release.test.js
           node --test --test-name-pattern "Windows activation rollback restores current-version.json and the previous exact release" tests/release/equinox-local-update-activation.test.js
 

@@ -189,3 +189,41 @@ test("managed user bootstrap is idempotent and preserves user configuration", as
   assert.equal(configAfter, configBefore);
   assert.equal(second.configRevision, first.configRevision);
 });
+
+
+test("Windows x64 managed user bootstrap uses state config and omits Darwin/native-host lifecycle", { skip: process.platform !== "win32" }, async (t) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "equinox-bootstrap-win-"));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const homeDir = path.join(root, "Türk User Home");
+  const localAppData = path.join(root, "Local App Data");
+  const env = { ...process.env, LOCALAPPDATA: localAppData };
+  await fs.mkdir(homeDir, { recursive: true });
+  const paths = managedSupervisorPaths(homeDir, { platform: "win32", arch: "x64", env });
+  const releaseDir = path.join(paths.releasesRoot, "5.2.1");
+  await fs.mkdir(releaseDir, { recursive: true });
+  await fs.writeFile(path.join(releaseDir, "release.json"), `${JSON.stringify({
+    schemaVersion: 1,
+    version: "5.2.1",
+    target: "win32-x64",
+    nodeVersion: "26.10.0",
+    tunnelClientVersion: "0.0.15",
+    serverEntry: "server.js",
+  })}\n`);
+  await fs.mkdir(paths.installRoot, { recursive: true });
+  await fs.writeFile(paths.currentPointer, `${JSON.stringify({ schemaVersion: 1, target: "win32-x64", version: "5.2.1" }, null, 2)}\n`);
+
+  const first = await bootstrapManagedEquinoxUser({ homeDir, platform: "win32", arch: "x64", env });
+  assert.equal(first.version, "5.2.1");
+  assert.equal(first.configCreated, true);
+  assert.equal(first.configPath, path.join(localAppData, "Equinox Local", "state", "config.json"));
+  assert.equal(first.programRoot, path.join(localAppData, "Programs", "Equinox Local"));
+  assert.equal("launchAgentPath" in first, false);
+  assert.equal("nativeHostManifestPath" in first, false);
+  const config = JSON.parse(await fs.readFile(first.configPath, "utf8"));
+  assert.equal(config.projects.workspace.root, path.join(localAppData, "Equinox Local", "workspace"));
+  assert.equal(config.fileRoots.downloads.root, path.join(homeDir, "Downloads"));
+
+  const second = await bootstrapManagedEquinoxUser({ homeDir, platform: "win32", arch: "x64", env });
+  assert.equal(second.configCreated, false);
+  assert.equal(second.configRevision, first.configRevision);
+});

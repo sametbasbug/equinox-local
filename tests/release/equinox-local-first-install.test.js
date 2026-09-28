@@ -6,6 +6,7 @@ import test from "node:test";
 
 import {
   installManagedEquinoxRelease,
+  synchronizeFreshWindowsShell,
   validateFirstInstallRelease,
 } from "../../src/equinox-local-first-install.js";
 import { equinoxLocalReleaseRuntimeContract } from "../../src/equinox-local-release-runtime-contract.js";
@@ -378,4 +379,96 @@ test("installing over an older managed release delegates activation to the rollb
   } finally {
     await fs.rm(fixture.homeDir, { recursive: true, force: true });
   }
+});
+
+
+test("fresh Windows stable-shell synchronization is atomic, idempotent and refuses drift", async (t) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "equinox-windows-shell-sync-"));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const releaseDir = path.join(root, "release");
+  const shellDir = path.join(releaseDir, "runtime", "shell");
+  const programRoot = path.join(root, "Programs", "Equinox Local");
+  await fs.mkdir(path.join(shellDir, "nested"), { recursive: true });
+  await fs.writeFile(path.join(shellDir, "EquinoxLocal.exe"), "exe-fixture\n");
+  await fs.writeFile(path.join(shellDir, "coreclr.dll"), "coreclr-fixture\n");
+  await fs.writeFile(path.join(shellDir, "nested", "WebView2Loader.dll"), "loader-fixture\n");
+
+  const first = await synchronizeFreshWindowsShell({ releaseDir, programRoot });
+  assert.equal(first.synchronized, true);
+  assert.equal(first.reused, false);
+  assert.equal(await fs.readFile(path.join(programRoot, "EquinoxLocal.exe"), "utf8"), "exe-fixture\n");
+  assert.deepEqual((await fs.readdir(path.dirname(programRoot))).filter((name) => name.startsWith(".equinox-shell-install-")), []);
+
+  const second = await synchronizeFreshWindowsShell({ releaseDir, programRoot });
+  assert.equal(second.synchronized, false);
+  assert.equal(second.reused, true);
+
+  await fs.writeFile(path.join(programRoot, "coreclr.dll"), "foreign-drift\n");
+  await assert.rejects(
+    synchronizeFreshWindowsShell({ releaseDir, programRoot }),
+    /does not match the verified release/u,
+  );
+  assert.equal(await fs.readFile(path.join(programRoot, "coreclr.dll"), "utf8"), "foreign-drift\n");
+});
+
+async function createRealWindowsFirstInstallFixture(version = "5.2.1") {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "equinox-win-first-install-"));
+  const homeDir = path.join(root, "Türk User Home");
+  const localAppData = path.join(root, "Local App Data");
+  const installRoot = path.join(localAppData, "Equinox Local");
+  const releaseDir = path.join(installRoot, "staging", `fixture-${Math.random().toString(16).slice(2)}`, "release");
+  await fs.mkdir(homeDir, { recursive: true });
+  await fs.mkdir(releaseDir, { recursive: true });
+  await fs.writeFile(path.join(releaseDir, "release.json"), `${JSON.stringify({
+    schemaVersion: 1,
+    version,
+    target: "win32-x64",
+    nodeVersion: "26.10.0",
+    tunnelClientVersion: "0.0.15",
+    serverEntry: "server.js",
+  })}\n`);
+  const contract = equinoxLocalReleaseRuntimeContract({ target: "win32-x64", version });
+  const fixtureFiles = new Set([
+    ...contract.runtimeExecutables,
+    ...contract.runtimeDocuments,
+    ...contract.requiredReleaseFiles,
+    ...contract.nativeShellFiles,
+  ]);
+  for (const relative of fixtureFiles) {
+    const absolute = path.join(releaseDir, relative);
+    await fs.mkdir(path.dirname(absolute), { recursive: true });
+    await fs.writeFile(absolute, `fixture:${relative}\n`);
+  }
+  return { root, homeDir, localAppData, installRoot, releaseDir, version };
+}
+
+test("Windows x64 fresh first install promotes current-version and stable shell without admin", { skip: process.platform !== "win32" }, async (t) => {
+  const fixture = await createRealWindowsFirstInstallFixture();
+  t.after(() => fs.rm(fixture.root, { recursive: true, force: true }));
+  const launches = [];
+  const result = await installManagedEquinoxRelease({
+    stagedReleaseDir: fixture.releaseDir,
+    homeDir: fixture.homeDir,
+    platform: "win32",
+    arch: "x64",
+    target: "win32-x64",
+    env: { ...process.env, LOCALAPPDATA: fixture.localAppData },
+    bootstrapImpl: async () => ({ configCreated: true, controlCenterUrl: "http://127.0.0.1:24891/" }),
+    initializeOnboardingImpl: async () => ({ created: true }),
+    launchWindowsShellImpl: async (shellExecutable) => { launches.push(shellExecutable); return { launched: true }; },
+    waitForVersionImpl: async () => true,
+  });
+  assert.equal(result.status, "installed");
+  const pointerPath = path.join(fixture.installRoot, "current-version.json");
+  assert.deepEqual(JSON.parse(await fs.readFile(pointerPath, "utf8")), {
+    schemaVersion: 1,
+    target: "win32-x64",
+    version: fixture.version,
+  });
+  const promoted = path.join(fixture.installRoot, "releases", fixture.version);
+  assert.equal((await fs.lstat(promoted)).isDirectory(), true);
+  const stableExe = path.join(fixture.localAppData, "Programs", "Equinox Local", "EquinoxLocal.exe");
+  assert.equal(await fs.readFile(stableExe, "utf8"), "fixture:runtime\\shell\\EquinoxLocal.exe\n");
+  assert.deepEqual(launches, [stableExe]);
+  assert.equal(await exists(fixture.releaseDir), false);
 });

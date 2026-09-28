@@ -204,7 +204,10 @@ test("public Windows CI restores and builds the native x64 shell", async () => {
   assert.match(ci, /name: Windows x64 managed package/u);
   assert.match(ci, /Windows managed release contract and activation rollback tests/u);
   assert.match(ci, /node --test tests\/release\/equinox-local-release-runtime-contract\.test\.js/u);
-  assert.ok(ci.includes('node --test --test-name-pattern "Windows x64 first-install release validation accepts native runtime names without Peekaboo" tests/release/equinox-local-first-install.test.js'));
+  assert.ok(ci.includes('Windows x64 first-install release validation accepts native runtime names without Peekaboo|Windows x64 fresh first install promotes current-version and stable shell without admin'));
+  assert.ok(ci.includes('tests/release/equinox-local-first-install.test.js'));
+  assert.ok(ci.includes('Windows x64 managed user bootstrap uses state config and omits Darwin/native-host lifecycle'));
+  assert.ok(ci.includes('tests/release/equinox-local-bootstrap.test.js'));
   assert.match(ci, /node --test tests\/release\/equinox-local-current-release\.test\.js/u);
   assert.ok(ci.includes('node --test --test-name-pattern "Windows activation rollback restores current-version.json and the previous exact release" tests/release/equinox-local-update-activation.test.js'));
   assert.match(ci, /actions\/setup-dotnet@v5/u);
