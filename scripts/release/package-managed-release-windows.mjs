@@ -29,6 +29,15 @@ const REQUIRED_SHELL_FILES = Object.freeze([
   "Microsoft.Web.WebView2.Core.dll",
 ]);
 
+export function windowsManagedReleaseDestinationRelative(relative) {
+  if (typeof relative !== "string" || relative.length === 0) throw new Error("Windows managed release source path is invalid.");
+  const normalized = relative.replaceAll("\\", "/");
+  if (normalized.startsWith("/") || normalized.split("/").some((part) => part === ".." || part === "")) {
+    throw new Error(`Windows managed release source path is unsafe: ${relative}`);
+  }
+  return normalized.startsWith("src/") ? normalized.slice(4) : normalized;
+}
+
 export function windowsManagedPackageContract() {
   return Object.freeze({
     target: TARGET,
@@ -121,7 +130,7 @@ async function copyReleaseSources(rootDir, releaseDir) {
   const files = await collectManagedReleaseSourceFiles(rootDir);
   for (const relative of [...files, ...WINDOWS_EXTRA_RELEASE_FILES]) {
     const source = path.join(rootDir, relative);
-    const destinationRelative = relative.startsWith("src/") ? relative.slice(4) : relative;
+    const destinationRelative = windowsManagedReleaseDestinationRelative(relative);
     const destination = path.join(releaseDir, destinationRelative);
     await fs.mkdir(path.dirname(destination), { recursive: true });
     await fs.copyFile(source, destination);

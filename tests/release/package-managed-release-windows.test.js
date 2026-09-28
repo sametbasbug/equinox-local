@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { packageManagedEquinoxWindowsRelease, windowsManagedPackageContract } from "../../scripts/release/package-managed-release-windows.mjs";
+import { packageManagedEquinoxWindowsRelease, windowsManagedPackageContract, windowsManagedReleaseDestinationRelative } from "../../scripts/release/package-managed-release-windows.mjs";
 
 test("Windows managed package contract is x64 ZIP with versioned shell payload and lifecycle helpers", () => {
   const contract = windowsManagedPackageContract();
@@ -14,6 +14,14 @@ test("Windows managed package contract is x64 ZIP with versioned shell payload a
   assert.deepEqual(contract.requiredShellFiles, [
     "EquinoxLocal.exe", "coreclr.dll", "hostfxr.dll", "Microsoft.Web.WebView2.Core.dll",
   ]);
+});
+
+
+test("Windows release source mapping is separator-independent and flattens src", () => {
+  assert.equal(windowsManagedReleaseDestinationRelative("src/server.js"), "server.js");
+  assert.equal(windowsManagedReleaseDestinationRelative("src\\server.js"), "server.js");
+  assert.equal(windowsManagedReleaseDestinationRelative("package.json"), "package.json");
+  assert.throws(() => windowsManagedReleaseDestinationRelative("../server.js"), /unsafe/u);
 });
 
 test("Windows managed package builder fails closed off win32-x64", async () => {
