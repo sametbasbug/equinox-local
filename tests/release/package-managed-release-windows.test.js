@@ -55,6 +55,22 @@ test("Windows managed ZIP helper uses bounded fast compression", async () => {
   assert.match(source, /Windows managed ZIP creation exceeded/u);
 });
 
+test("Windows pinned dependency ZIP extraction uses bounded native tar instead of Expand-Archive", async () => {
+  let source;
+  for (const relative of ["./package-managed-release-windows.mjs", "../../scripts/release/package-managed-release-windows.mjs"]) {
+    try {
+      source = await fs.readFile(new URL(relative, import.meta.url), "utf8");
+      break;
+    } catch (error) {
+      if (!error || typeof error !== "object" || error.code !== "ENOENT") throw error;
+    }
+  }
+  assert.equal(typeof source, "string");
+  assert.ok(source.includes('execFile("tar.exe", ["-xf", archive, "-C", destination]'));
+  assert.match(source, /timeout:\s*60_000/u);
+  assert.doesNotMatch(source, /Expand-Archive/u);
+});
+
 test("Windows managed package builder fails closed off win32-x64", async () => {
   if (process.platform === "win32" && process.arch === "x64") return;
   await assert.rejects(packageManagedEquinoxWindowsRelease(), /requires win32-x64/u);

@@ -102,11 +102,7 @@ async function downloadVerified(url, destination, expectedSha256, { fetchImpl = 
 
 async function expandTrustedPinnedZip(archive, destination) {
   await fs.mkdir(destination, { recursive: true });
-  await execFile("powershell.exe", [
-    "-NoLogo", "-NoProfile", "-NonInteractive", "-Command",
-    "Expand-Archive -LiteralPath $env:EQUINOX_ARCHIVE -DestinationPath $env:EQUINOX_DESTINATION -Force",
-  ], {
-    env: { ...process.env, EQUINOX_ARCHIVE: archive, EQUINOX_DESTINATION: destination },
+  await execFile("tar.exe", ["-xf", archive, "-C", destination], {
     timeout: 60_000,
     maxBuffer: 4 * 1024 * 1024,
     windowsHide: true,
