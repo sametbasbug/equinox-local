@@ -27,11 +27,29 @@ test("Windows release source mapping is separator-independent and flattens src",
 
 
 test("Windows managed ZIP helper uses bounded fast compression", async () => {
-  const helper = await fs.readFile(new URL("./windows-managed-zip.ps1", import.meta.url), "utf8");
+  let helper;
+  for (const relative of ["./windows-managed-zip.ps1", "../../scripts/release/windows-managed-zip.ps1"]) {
+    try {
+      helper = await fs.readFile(new URL(relative, import.meta.url), "utf8");
+      break;
+    } catch (error) {
+      if (!error || typeof error !== "object" || error.code !== "ENOENT") throw error;
+    }
+  }
+  assert.equal(typeof helper, "string");
   assert.ok(helper.includes("CompressionLevel]::Fastest"));
   assert.ok(!helper.includes("CompressionLevel]::Optimal"));
-  const source = await fs.readFile(new URL("./package-managed-release-windows.mjs", import.meta.url), "utf8");
-  assert.match(source, /WINDOWS_ZIP_TIMEOUT_MS = 300_000/u);
+  let source;
+  for (const relative of ["./package-managed-release-windows.mjs", "../../scripts/release/package-managed-release-windows.mjs"]) {
+    try {
+      source = await fs.readFile(new URL(relative, import.meta.url), "utf8");
+      break;
+    } catch (error) {
+      if (!error || typeof error !== "object" || error.code !== "ENOENT") throw error;
+    }
+  }
+  assert.equal(typeof source, "string");
+  assert.match(source, /WINDOWS_ZIP_TIMEOUT_MS = 600_000/u);
   assert.match(source, /Windows managed ZIP creation exceeded/u);
 });
 
