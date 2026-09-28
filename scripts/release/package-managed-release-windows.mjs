@@ -22,6 +22,7 @@ const WINDOWS_ZIP_TIMEOUT_MS = 180_000;
 const WINDOWS_EXTRA_RELEASE_FILES = Object.freeze([
   "src/equinox-local-windows-job-object.ps1",
   "src/equinox-local-windows-process-gate.ps1",
+  "src/equinox-local-windows-release-zip.ps1",
 ]);
 const REQUIRED_SHELL_FILES = Object.freeze([
   "EquinoxLocal.exe",

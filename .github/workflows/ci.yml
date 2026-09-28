@@ -173,6 +173,10 @@ jobs:
       - name: Publish package shell payload
         run: dotnet publish native/windows/EquinoxLocal.WindowsShell/EquinoxLocal.WindowsShell.csproj --configuration Release --runtime win-x64 --self-contained true -p:Platform=x64 --output artifacts/windows-shell/win-x64
 
+      - name: Windows release ZIP security acceptance
+        shell: pwsh
+        run: powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File tests/release/windows-release-zip-smoke.ps1
+
       - name: Windows managed package assembly smoke
         shell: pwsh
         env:

@@ -50,6 +50,7 @@ const WINDOWS_RELEASE_FILES = Object.freeze([
   "equinox-browser-socket.js",
   "equinox-local-windows-job-object.ps1",
   "equinox-local-windows-process-gate.ps1",
+  "equinox-local-windows-release-zip.ps1",
 ]);
 
 export function equinoxLocalReleaseRuntimeContract({ target, version } = {}) {

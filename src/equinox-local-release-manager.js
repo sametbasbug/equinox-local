@@ -2,6 +2,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { execFile as execFileCallback } from "node:child_process";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
 import { equinoxLocalReleaseRuntimeContract } from "./equinox-local-release-runtime-contract.js";
@@ -9,6 +10,9 @@ import { parseEquinoxVersion } from "./equinox-local-updater.js";
 
 const execFile = promisify(execFileCallback);
 const TAR_PATH = "/usr/bin/tar";
+const WINDOWS_TARGET = "win32-x64";
+const MANAGED_TARGET_PATTERN = /^(?:darwin-(?:arm64|x64)|win32-x64)$/u;
+const WINDOWS_ZIP_HELPER_PATH = fileURLToPath(new URL("./equinox-local-windows-release-zip.ps1", import.meta.url));
 const MAX_ARCHIVE_ENTRIES = 20_000;
 const MAX_EXTRACTED_BYTES = 2 * 1024 * 1024 * 1024;
 const MAX_ENTRY_NAME = 500;
@@ -56,9 +60,36 @@ function parseVerboseEntries(output) {
     });
 }
 
+function parseWindowsZipSummary(stdout) {
+  let value;
+  try { value = JSON.parse(String(stdout ?? "").trim()); } catch { throw new Error("Windows release ZIP helper returned invalid JSON."); }
+  const keys = Object.keys(value ?? {}).sort();
+  if (keys.length !== 2 || keys[0] !== "entryCount" || keys[1] !== "extractedBytes") throw new Error("Windows release ZIP helper returned invalid fields.");
+  if (!Number.isSafeInteger(value.entryCount) || value.entryCount < 1 || value.entryCount > MAX_ARCHIVE_ENTRIES) throw new Error("Windows release ZIP entry count is outside the allowed bounds.");
+  if (!Number.isSafeInteger(value.extractedBytes) || value.extractedBytes < 0 || value.extractedBytes > MAX_EXTRACTED_BYTES) throw new Error("Windows release ZIP extracted size is outside the allowed bounds.");
+  return Object.freeze({ entryCount: value.entryCount, extractedBytes: value.extractedBytes });
+}
+
+async function runWindowsZipHelper(mode, archivePath, destinationPath, execFileImpl) {
+  const args = [
+    "-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
+    "-File", WINDOWS_ZIP_HELPER_PATH, "-Mode", mode, "-ArchivePath", archivePath,
+  ];
+  if (destinationPath) args.push("-DestinationPath", destinationPath);
+  const { stdout } = await execFileImpl("powershell.exe", args, {
+    timeout: mode === "Extract" ? 180_000 : 60_000,
+    maxBuffer: 4 * 1024 * 1024,
+    windowsHide: true,
+  });
+  return parseWindowsZipSummary(stdout);
+}
+
 export async function inspectEquinoxReleaseArchive(archivePath, {
+  target = "darwin-arm64",
   execFileImpl = execFile,
 } = {}) {
+  if (target === WINDOWS_TARGET) return runWindowsZipHelper("Inspect", archivePath, null, execFileImpl);
+  if (!/^darwin-(?:arm64|x64)$/u.test(target)) throw new Error(`Managed release archive inspection is not implemented for ${target}.`);
   const [{ stdout: namesOutput }, { stdout: verboseOutput }] = await Promise.all([
     execFileImpl(TAR_PATH, ["-tzf", archivePath], {
       timeout: 20_000,
@@ -95,6 +126,20 @@ export async function inspectEquinoxReleaseArchive(archivePath, {
   return Object.freeze({ entryCount: names.length, extractedBytes });
 }
 
+export async function extractEquinoxReleaseArchive(archivePath, destinationPath, {
+  target = "darwin-arm64",
+  execFileImpl = execFile,
+} = {}) {
+  if (target === WINDOWS_TARGET) return runWindowsZipHelper("Extract", archivePath, destinationPath, execFileImpl);
+  if (!/^darwin-(?:arm64|x64)$/u.test(target)) throw new Error(`Managed release archive extraction is not implemented for ${target}.`);
+  await fs.mkdir(destinationPath, { recursive: true, mode: 0o700 });
+  await execFileImpl(TAR_PATH, ["-xzf", archivePath, "-C", destinationPath, "--no-same-owner"], {
+    timeout: 60_000,
+    maxBuffer: 8 * 1024 * 1024,
+  });
+  return null;
+}
+
 async function removeIfPresent(target) {
   await fs.rm(target, { recursive: true, force: true }).catch(() => {});
 }
@@ -126,7 +171,7 @@ export async function downloadVerifiedUpdateArtifact(artifact, destinationPath, 
       redirect: "error",
       cache: "no-store",
       credentials: "omit",
-      headers: { accept: "application/gzip, application/octet-stream" },
+      headers: { accept: "application/gzip, application/zip, application/octet-stream" },
       signal: controller.signal,
     });
     if (!response?.ok || !response.body) {
@@ -274,7 +319,7 @@ export async function prepareManagedEquinoxRelease({
   if (!installation?.selfUpdateSupported || typeof installation.stagingRoot !== "string" || typeof installation.releasesRoot !== "string") {
     throw new Error("A managed Equinox Local installation is required to prepare an update.");
   }
-  if (!manifest?.artifact || typeof manifest.target !== "string" || !/^darwin-(?:arm64|x64)$/u.test(manifest.target)) {
+  if (!manifest?.artifact || typeof manifest.target !== "string" || !MANAGED_TARGET_PATTERN.test(manifest.target)) {
     throw new Error("A verified target-specific update manifest is required.");
   }
   const version = parseEquinoxVersion(manifest.version).text;
@@ -291,17 +336,13 @@ export async function prepareManagedEquinoxRelease({
   await fs.mkdir(installation.stagingRoot, { recursive: true, mode: 0o700 });
   await fs.mkdir(installation.releasesRoot, { recursive: true, mode: 0o700 });
   const transactionRoot = path.join(installation.stagingRoot, `update-${version}-${randomBytes(8).toString("hex")}`);
-  const archivePath = path.join(transactionRoot, "release.tar.gz");
+  const archivePath = path.join(transactionRoot, manifest.target === WINDOWS_TARGET ? "release.zip" : "release.tar.gz");
   const extractionRoot = path.join(transactionRoot, "extracted");
-  await fs.mkdir(extractionRoot, { recursive: true, mode: 0o700 });
 
   try {
     await downloadVerifiedUpdateArtifact(manifest.artifact, archivePath, { fetchImpl });
-    await inspectEquinoxReleaseArchive(archivePath, { execFileImpl });
-    await execFileImpl(TAR_PATH, ["-xzf", archivePath, "-C", extractionRoot, "--no-same-owner"], {
-      timeout: 60_000,
-      maxBuffer: 8 * 1024 * 1024,
-    });
+    await inspectEquinoxReleaseArchive(archivePath, { target: manifest.target, execFileImpl });
+    await extractEquinoxReleaseArchive(archivePath, extractionRoot, { target: manifest.target, execFileImpl });
     const releaseDir = path.join(extractionRoot, "release");
     const tree = await validateExtractedTree(releaseDir);
     const metadata = await readReleaseMetadata(releaseDir, version, manifest.target);
