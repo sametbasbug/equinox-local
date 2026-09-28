@@ -256,6 +256,12 @@ async function readReleaseMetadata(releaseDir, expectedVersion, expectedTarget) 
       throw new Error(`Release must contain normal runtime document ${relative}.`);
     }
   }
+  for (const relative of runtimeContract.nativeShellFiles) {
+    const shellFile = await fs.lstat(path.join(releaseDir, relative));
+    if (!shellFile.isFile() || shellFile.isSymbolicLink()) {
+      throw new Error(`Release must contain normal native shell file ${relative}.`);
+    }
+  }
   return Object.freeze(metadata);
 }
 

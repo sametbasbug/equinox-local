@@ -133,6 +133,9 @@ export async function validateFirstInstallRelease(releaseDir, {
   for (const relative of runtimeContract.runtimeDocuments) {
     await assertNormalFile(path.join(releaseDir, relative), `Runtime ${relative}`, { fsImpl });
   }
+  for (const relative of runtimeContract.nativeShellFiles) {
+    await assertNormalFile(path.join(releaseDir, relative), `Native shell ${relative}`, { fsImpl });
+  }
   if (runtimeContract.nativeAppKind === "macos-app") {
     await assertNormalFile(path.join(releaseDir, "runtime", "app", "applet"), "Native app executable", { executable: true, fsImpl });
     await assertNormalFile(path.join(releaseDir, "runtime", "app", "EquinoxLocal.png"), "Native app icon", { fsImpl });

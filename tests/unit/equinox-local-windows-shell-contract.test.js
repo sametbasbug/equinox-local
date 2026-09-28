@@ -197,6 +197,11 @@ test("public Windows CI restores and builds the native x64 shell", async () => {
   const factoryCi = path.join(ROOT, "factory", "local", "public-template", ".github", "workflows", "ci.yml");
   const ciPath = await fs.access(publicCi).then(() => publicCi).catch(() => factoryCi);
   const ci = await fs.readFile(ciPath, "utf8");
+  assert.match(ci, /windows-runtime:/u);
+  assert.match(ci, /windows-shell:/u);
+  assert.match(ci, /windows-package:/u);
+  assert.match(ci, /needs: \[windows-runtime, windows-shell, windows-package\]/u);
+  assert.match(ci, /name: Windows x64 managed package/u);
   assert.match(ci, /Windows managed release contract and activation rollback tests/u);
   assert.match(ci, /node --test tests\/release\/equinox-local-release-runtime-contract\.test\.js/u);
   assert.ok(ci.includes('node --test --test-name-pattern "Windows x64 first-install release validation accepts native runtime names without Peekaboo" tests/release/equinox-local-first-install.test.js'));

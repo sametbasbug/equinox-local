@@ -100,6 +100,7 @@ test("Windows x64 first-install release validation accepts native runtime names 
     await fs.mkdir(path.join(releaseDir, "runtime", "node", "bin"), { recursive: true });
     await fs.mkdir(path.join(releaseDir, "runtime", "tunnel"), { recursive: true });
     await fs.mkdir(path.join(releaseDir, "runtime", "browser"), { recursive: true });
+    await fs.mkdir(path.join(releaseDir, "runtime", "shell"), { recursive: true });
     await fs.writeFile(path.join(releaseDir, "release.json"), `${JSON.stringify({
       schemaVersion: 1,
       version: "5.2.1",
@@ -113,6 +114,10 @@ test("Windows x64 first-install release validation accepts native runtime names 
       path.join("runtime", "tunnel", "tunnel-client.exe"),
       path.join("runtime", "tunnel", "cloudflared.exe"),
       path.join("runtime", "browser", "equinox-browser-native-host.exe"),
+      path.join("runtime", "shell", "EquinoxLocal.exe"),
+      path.join("runtime", "shell", "coreclr.dll"),
+      path.join("runtime", "shell", "hostfxr.dll"),
+      path.join("runtime", "shell", "Microsoft.Web.WebView2.Core.dll"),
     ]) {
       await fs.writeFile(path.join(releaseDir, relative), "fixture\n");
     }
@@ -132,6 +137,15 @@ test("Windows x64 first-install release validation accepts native runtime names 
     assert.equal(result.target, "win32-x64");
     assert.equal(result.version, "5.2.1");
     await assert.rejects(fs.lstat(path.join(releaseDir, "runtime", "peekaboo")), /ENOENT/u);
+
+    const shellExecutable = path.join(releaseDir, "runtime", "shell", "EquinoxLocal.exe");
+    await fs.rm(shellExecutable);
+    await assert.rejects(
+      validateFirstInstallRelease(releaseDir, { target: "win32-x64" }),
+      /EquinoxLocal\.exe|Native shell/u,
+      "Windows release validation must reject a missing versioned native shell payload",
+    );
+    await fs.writeFile(shellExecutable, "fixture\n");
 
     await fs.rm(path.join(releaseDir, "runtime", "browser", "equinox-browser-native-host.exe"));
     await assert.rejects(
