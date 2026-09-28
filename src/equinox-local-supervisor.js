@@ -5,7 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
-import { equinoxLocalManagedLifecycle } from "./equinox-local-platform.js";
+import { equinoxLocalManagedLifecycle, equinoxLocalPlatformPaths } from "./equinox-local-platform.js";
 import { readBoundedNormalFile } from "./equinox-local-safe-file.js";
 import { equinoxLocalUpdateTarget, parseEquinoxVersion } from "./equinox-local-updater.js";
 
@@ -34,20 +34,25 @@ function log(message) {
   process.stderr.write(`[Equinox Local supervisor] ${boundedMessage(message)}\n`);
 }
 
-export function managedSupervisorPaths(homeDir = os.homedir()) {
-  if (typeof homeDir !== "string" || !path.isAbsolute(homeDir)) {
-    throw new Error("A trusted absolute HOME is required for the managed supervisor.");
-  }
-  const installRoot = path.join(homeDir, "Library", "Application Support", "Equinox Local");
+export function managedSupervisorPaths(homeDir = os.homedir(), {
+  platform = process.platform,
+  arch = process.arch,
+  env = process.env,
+} = {}) {
+  const layout = equinoxLocalPlatformPaths({ platform, arch, homeDir, env });
+  const pathApi = platform === "win32" ? path.win32 : path.posix;
+  const installRoot = layout.appDataRoot;
   return Object.freeze({
-    homeDir,
+    homeDir: layout.homeDir,
     installRoot,
-    releasesRoot: path.join(installRoot, "releases"),
-    currentLink: path.join(installRoot, "current"),
-    transportConfigPath: path.join(installRoot, "transport.json"),
-    runtimeKeyPath: path.join(installRoot, "secrets", "openai-runtime-key"),
-    onboardingStatePath: path.join(installRoot, "onboarding-state.json"),
-    profileDir: path.join(installRoot, "tunnel-profile"),
+    releasesRoot: layout.releasesRoot,
+    currentLink: platform === "darwin" ? layout.currentPointer : null,
+    currentPointer: layout.currentPointer,
+    programRoot: layout.programRoot,
+    transportConfigPath: pathApi.join(installRoot, "transport.json"),
+    runtimeKeyPath: pathApi.join(installRoot, "secrets", "openai-runtime-key"),
+    onboardingStatePath: pathApi.join(installRoot, "onboarding-state.json"),
+    profileDir: pathApi.join(installRoot, "tunnel-profile"),
   });
 }
 

@@ -54,6 +54,25 @@ async function makeFixture({ transport = false, malformedTransport = false } = {
   return { root, homeDir, paths, releaseDir, nodeBinary, tunnelDir };
 }
 
+test("managed supervisor paths use the Windows per-user layout without POSIX path drift", () => {
+  const homeDir = "C:\\Users\\Türk User";
+  const localAppData = "C:\\Users\\Türk User\\AppData\\Local";
+  const paths = managedSupervisorPaths(homeDir, {
+    platform: "win32",
+    arch: "x64",
+    env: { LOCALAPPDATA: localAppData },
+  });
+  const installRoot = path.win32.join(localAppData, "Equinox Local");
+  assert.equal(paths.homeDir, path.win32.normalize(homeDir));
+  assert.equal(paths.installRoot, installRoot);
+  assert.equal(paths.releasesRoot, path.win32.join(installRoot, "releases"));
+  assert.equal(paths.currentLink, null);
+  assert.equal(paths.currentPointer, path.win32.join(installRoot, "current-version.json"));
+  assert.equal(paths.programRoot, path.win32.join(localAppData, "Programs", "Equinox Local"));
+  assert.equal(paths.transportConfigPath, path.win32.join(installRoot, "transport.json"));
+  assert.equal(paths.runtimeKeyPath, path.win32.join(installRoot, "secrets", "openai-runtime-key"));
+});
+
 test("supervisor lifecycle fails closed for Windows before touching managed files", async () => {
   await assert.rejects(() => runManagedSupervisor({
     platform: "win32", arch: "x64", homeDir: "C:\\Users\\Example", sourceEnv: {},
