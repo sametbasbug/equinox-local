@@ -22,6 +22,8 @@ const UPDATE_ORIGIN = "https://local.sametbasbug.dev";
 const UPDATE_PATH_PREFIX = "/downloads/updates/";
 const KEY_ID_PATTERN = /^[a-z0-9][a-z0-9._-]{0,63}$/u;
 const MAX_PRIVATE_KEY_BYTES = 16 * 1024;
+const WINDOWS_INSTALLER_TEMPLATE_SHA = "__EQUINOX_ZIP_HELPER_SHA256__";
+const WINDOWS_INSTALLER_TEMPLATE_BYTES = "__EQUINOX_ZIP_HELPER_BYTES__";
 
 function inside(parent, child) {
   const relative = path.relative(parent, child);
@@ -48,7 +50,8 @@ export function updateArtifactUrl({ version, target }) {
   if (!EQUINOX_LOCAL_SUPPORTED_UPDATE_TARGETS.includes(target)) {
     throw new Error(`Unsupported Equinox Local update target: ${target}`);
   }
-  return `${UPDATE_ORIGIN}${UPDATE_PATH_PREFIX}equinox-local-${version}-${target}.tar.gz`;
+  const extension = target.startsWith("win32-") ? "zip" : "tar.gz";
+  return `${UPDATE_ORIGIN}${UPDATE_PATH_PREFIX}equinox-local-${version}-${target}.${extension}`;
 }
 
 export async function readPrivateUpdateSigningKey(privateKeyPath, {
@@ -198,12 +201,16 @@ export async function writeSignedUpdateBundle({
   });
   const resolvedOutput = path.resolve(outputDir);
   await fs.mkdir(resolvedOutput, { recursive: true, mode: 0o700 });
-  const artifactName = `equinox-local-${version}-${target}.tar.gz`;
+  const windows = target.startsWith("win32-");
+  const artifactName = `equinox-local-${version}-${target}.${windows ? "zip" : "tar.gz"}`;
   const destinationArtifact = path.join(resolvedOutput, artifactName);
   const manifestPath = path.join(resolvedOutput, `stable-${target}.json`);
   const bootstrapManifestPath = path.join(resolvedOutput, `bootstrap-${target}.txt`);
-  const installerSourcePath = path.join(path.resolve(repositoryRoot), "scripts", "install-equinox-local.sh");
-  const installerPath = path.join(resolvedOutput, "install-equinox-local.sh");
+  const installerName = windows ? "install-equinox-local.ps1" : "install-equinox-local.sh";
+  const installerSourcePath = path.join(path.resolve(repositoryRoot), "scripts", installerName);
+  const installerPath = path.join(resolvedOutput, installerName);
+  const zipHelperSourcePath = windows ? path.join(path.resolve(repositoryRoot), "src", "equinox-local-windows-release-zip.ps1") : null;
+  const zipHelperPath = windows ? path.join(resolvedOutput, "equinox-local-windows-release-zip.ps1") : null;
   const tempManifest = `${manifestPath}.part-${process.pid}`;
   const tempBootstrapManifest = `${bootstrapManifestPath}.part-${process.pid}`;
 
@@ -219,8 +226,25 @@ export async function writeSignedUpdateBundle({
     await fs.rm(destinationArtifact, { force: true });
     throw new Error("Copied update artifact failed final SHA-256 verification.");
   }
-  await fs.copyFile(installerSourcePath, installerPath);
-  await fs.chmod(installerPath, 0o644);
+  if (windows) {
+    const helperStat = await fs.lstat(zipHelperSourcePath);
+    if (!helperStat.isFile() || helperStat.isSymbolicLink() || helperStat.size < 1 || helperStat.size > 1024 * 1024) {
+      throw new Error("Tracked Windows ZIP helper is missing or unsafe.");
+    }
+    await fs.copyFile(zipHelperSourcePath, zipHelperPath);
+    const helperDigest = await sha256File(zipHelperPath);
+    let installerTemplate = await fs.readFile(installerSourcePath, "utf8");
+    if (!installerTemplate.includes(WINDOWS_INSTALLER_TEMPLATE_SHA) || !installerTemplate.includes(WINDOWS_INSTALLER_TEMPLATE_BYTES)) {
+      throw new Error("Windows installer template is missing ZIP helper pin placeholders.");
+    }
+    installerTemplate = installerTemplate
+      .replaceAll(WINDOWS_INSTALLER_TEMPLATE_SHA, helperDigest.sha256)
+      .replaceAll(WINDOWS_INSTALLER_TEMPLATE_BYTES, String(helperDigest.bytes));
+    await fs.writeFile(installerPath, installerTemplate, { mode: 0o644 });
+  } else {
+    await fs.copyFile(installerSourcePath, installerPath);
+    await fs.chmod(installerPath, 0o644);
+  }
   const installerDigest = await sha256File(installerPath);
   try {
     await fs.writeFile(tempBootstrapManifest, renderBootstrapInstallManifest(result.manifest), { flag: "wx", mode: 0o600 });
@@ -239,6 +263,7 @@ export async function writeSignedUpdateBundle({
     installerPath,
     installerBytes: installerDigest.bytes,
     installerSha256: installerDigest.sha256,
+    zipHelperPath,
     publicKeyPem: result.publicKeyPem,
     bytes: result.bytes,
     sha256: result.sha256,

@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const INSTALLER = path.join(ROOT, "scripts", "install-equinox-local.sh");
+const WINDOWS_INSTALLER = path.join(ROOT, "scripts", "install-equinox-local.ps1");
 
 test("public shell installer stays user-level, pinned to Equinox HTTPS and bounded", async () => {
   const source = await fs.readFile(INSTALLER, "utf8");
@@ -47,4 +48,29 @@ test("public shell installer supports only the two managed macOS release targets
   assert.match(source, /x86_64\) TARGET="darwin-x64"/u);
   assert.match(source, /unsupported Mac architecture/u);
   assert.match(source, /bootstrap-\$TARGET\.txt/u);
+});
+
+
+test("public Windows installer is x64-only, fixed-origin, bounded and delegates ZIP extraction to the pinned helper", async () => {
+  const source = await fs.readFile(WINDOWS_INSTALLER, "utf8");
+  assert.match(source, /\$UpdateBase = 'https:\/\/local\.sametbasbug\.dev\/downloads\/updates'/u);
+  assert.match(source, /\$Target = 'win32-x64'/u);
+  assert.match(source, /Is64BitProcess/u);
+  assert.match(source, /PROCESSOR_ARCHITECTURE -ne 'AMD64'/u);
+  assert.match(source, /Save-BoundedHttpsFile/u);
+  assert.match(source, /ContentLength -gt \$MaxBytes/u);
+  assert.match(source, /\$total -gt \$MaxBytes/u);
+  assert.match(source, /bootstrap-\$Target\.txt/u);
+  assert.match(source, /equinox-local-\$\(\$values\.version\)-\$Target\.zip/u);
+  assert.match(source, /Get-FileHash -LiteralPath \$Path -Algorithm SHA256/u);
+  assert.match(source, /__EQUINOX_ZIP_HELPER_SHA256__/u);
+  assert.match(source, /__EQUINOX_ZIP_HELPER_BYTES__/u);
+  assert.match(source, /-Mode Inspect -ArchivePath \$artifactPath/u);
+  assert.match(source, /-Mode Extract -ArchivePath \$artifactPath -DestinationPath \$stage/u);
+  assert.match(source, /runtime\\node\\bin\\node\.exe/u);
+  assert.match(source, /equinox-local-first-install\.js/u);
+  assert.match(source, /EnvironmentVariables\.Clear\(\)/u);
+  assert.doesNotMatch(source, /Expand-Archive/u);
+  assert.doesNotMatch(source, /Start-Process[^\n]+-Verb\s+RunAs/u);
+  assert.doesNotMatch(source, /\bsudo\b/u);
 });
