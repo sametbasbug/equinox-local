@@ -125,6 +125,6 @@ test("Windows running stable shell is stopped before real NTFS replacement", { s
   });
   assert.equal(result.synchronized, true);
   assert.equal(shutdowns, 1);
-  assert.equal(child.exitCode !== null, true);
+  assert.equal(child.exitCode !== null || child.signalCode !== null, true);
   assert.equal(await fs.readFile(path.join(fixture.programRoot, "coreclr.dll"), "utf8"), "new-core\n");
 });
