@@ -6,6 +6,7 @@ This project follows semantic versioning for public releases.
 
 ## [Unreleased]
 
+- Replaced the macOS-only Browser PDFKit/osascript text extractor with bounded `pdfjs-dist` parsing so readable Chrome PDF snapshots use the same parser on macOS and Windows x64; raw PDF bytes remain bounded and are never returned to the agent. Real Windows CI now runs the PDF parser fixture directly.
 - Made the Auto Continue maximum chain length configurable in Control Center with a default of 10 and a bounded 1–20 range; per-hop explicit arming, TTL, exact-chat binding, pre-mutation reservation and ambiguous-delivery no-retry guarantees are unchanged.
 - Suppressed bounded in-flight semantic MCP transport replays even when connector redelivery arrives with a new request/session id, preventing ambiguous `terminal_exec` delivery from spawning a second identical managed process while preserving later intentional identical calls after the original settles.
 - Added the ownership-safe Windows x64 uninstall handoff: the CurrentUserOnly native shell launches the release-local helper outside the runtime Job Object, validates its exact startup registration without mutating it, drains the runtime after acknowledgement, and the helper refuses cleanup until current-release, stable-shell, startup and Native Messaging ownership are proven. Preserve-data mode keeps managed state/workspace while full uninstall removes the remaining app data.

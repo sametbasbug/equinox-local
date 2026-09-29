@@ -619,7 +619,7 @@ test("PDF snapshot enriches readable content through bounded pdf.data without ex
     assert.deepEqual(buffer, pdf);
     assert.equal(options.maxPages > 0, true);
     return {
-      parser: "macos-pdfkit",
+      parser: "pdfjs-dist",
       pageCount: 1,
       pages: [{
         pageNumber: 1,
@@ -682,7 +682,7 @@ test("PDF snapshot enriches readable content through bounded pdf.data without ex
   assert.equal(result.isError, undefined);
   const parsed = parseTextResult(result);
   assert.equal(parsed.pdfContent.version, 1);
-  assert.equal(parsed.pdfContent.parser, "macos-pdfkit");
+  assert.equal(parsed.pdfContent.parser, "pdfjs-dist");
   assert.equal(parsed.pdfContent.textAvailable, true);
   assert.equal(parsed.privacy.pdfTextRedaction, false);
   assert.match(parsed.text, /Equinox PDF Fixture/u);

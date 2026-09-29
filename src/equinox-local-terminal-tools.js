@@ -1,9 +1,35 @@
+import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 
 import { TERMINAL_KEYS } from "./terminal-manager.js";
 import { buildGenericExecutionEnvironment } from "./equinox-local-generic-execution.js";
 import { equinoxLocalFiniteShell, equinoxLocalInteractiveShells } from "./equinox-local-platform.js";
 
+const TERMINAL_EXEC_REPLAY_WINDOW_MS = 5 * 60 * 1000;
+const TERMINAL_EXEC_REPLAY_MAX_LEASES = 64;
+
+function terminalExecFingerprint({ projectId, cwd, command, args }) {
+  return createHash("sha256")
+    .update(JSON.stringify([projectId, cwd, command, args]))
+    .digest("hex");
+}
+
+function sameStringArray(left, right) {
+  return Array.isArray(left) && Array.isArray(right) &&
+    left.length === right.length && left.every((value, index) => value === right[index]);
+}
+
+function processMatchesTerminalExec(process, spec) {
+  return Boolean(
+    process &&
+    process.running === true &&
+    process.purpose === "terminal_exec" &&
+    process.projectId === spec.projectId &&
+    process.cwd === spec.cwd &&
+    process.command === spec.command &&
+    sameStringArray(process.args, spec.args)
+  );
+}
 
 export function registerTerminalTools({
   platform = process.platform,
@@ -20,6 +46,7 @@ export function registerTerminalTools({
   getActiveProjectRoot,
   runtimeEnv = process.env,
   buildGenericExecutionEnvironmentImpl = buildGenericExecutionEnvironment,
+  now = () => Date.now(),
   recordEvent = null,
   textResult,
   errorResult,
@@ -29,6 +56,30 @@ export function registerTerminalTools({
   const interactiveShellNames = Object.keys(interactiveShells.shells);
   if (interactiveShellNames.length === 0) throw new Error("No interactive shell is configured for this platform.");
   const terminalJsonResult = (value) => textResult(JSON.stringify(value, null, 2));
+  const promotedExecReplayLeases = new Map();
+
+  const rememberPromotedExec = (fingerprint, processId) => {
+    promotedExecReplayLeases.delete(fingerprint);
+    promotedExecReplayLeases.set(fingerprint, { processId, promotedAt: now() });
+    while (promotedExecReplayLeases.size > TERMINAL_EXEC_REPLAY_MAX_LEASES) {
+      promotedExecReplayLeases.delete(promotedExecReplayLeases.keys().next().value);
+    }
+  };
+
+  const findPromotedExecReplay = (fingerprint, spec) => {
+    const lease = promotedExecReplayLeases.get(fingerprint);
+    if (!lease) return null;
+    if (Math.max(0, now() - lease.promotedAt) > TERMINAL_EXEC_REPLAY_WINDOW_MS) {
+      promotedExecReplayLeases.delete(fingerprint);
+      return null;
+    }
+    const process = processManager.list().find((candidate) => candidate.processId === lease.processId);
+    if (!processMatchesTerminalExec(process, spec)) {
+      promotedExecReplayLeases.delete(fingerprint);
+      return null;
+    }
+    return process;
+  };
   const recordTerminalExecEvent = async (projectId, state, snapshot, durationMs) => {
     if (typeof recordEvent !== "function") return;
     await Promise.resolve(recordEvent({
@@ -88,6 +139,49 @@ export function registerTerminalTools({
 
         const projectId = getActiveProjectId();
         const projectName = getActiveProjectName();
+        const processArgs = finiteShell.argsFor(command);
+        const execSpec = {
+          projectId,
+          cwd: resolvedCwd,
+          command: finiteShell.command,
+          args: processArgs,
+        };
+        const execFingerprint = terminalExecFingerprint(execSpec);
+        const replayProcess = findPromotedExecReplay(execFingerprint, execSpec);
+        if (replayProcess) {
+          const replaySnapshot = processManager.snapshotOutput({
+            processId: replayProcess.processId,
+            maxChars: max_output_chars,
+            stripAnsiCodes: true,
+          });
+          if (replaySnapshot.process.running) {
+            return terminalJsonResult({
+              ok: true,
+              completed: false,
+              promoted: true,
+              replayRecovered: true,
+              message: "Önceki terminal_exec teslimi yeniden geldi; yeni süreç başlatılmadan aynı managed process kullanılmaya devam ediyor.",
+              projectId,
+              projectName,
+              initialCwd: resolvedCwd,
+              processId: replaySnapshot.process.processId,
+              process: replaySnapshot.process,
+              nextCursor: replaySnapshot.nextCursor,
+              stdout: replaySnapshot.stdout,
+              stderr: replaySnapshot.stderr,
+              combinedOutput: replaySnapshot.combinedOutput,
+              stdoutTruncated: replaySnapshot.stdoutTruncated,
+              stderrTruncated: replaySnapshot.stderrTruncated,
+              combinedOutputTruncated: replaySnapshot.combinedOutputTruncated,
+              stdoutDroppedChars: replaySnapshot.stdoutDroppedChars,
+              stderrDroppedChars: replaySnapshot.stderrDroppedChars,
+              combinedOutputDroppedChars: replaySnapshot.combinedOutputDroppedChars,
+              next: "Sonlu iş için process_wait ile tamamlanmayı bekle; akış çıktısı için process_logs kullan, gerekirse process_stop ile durdur.",
+            });
+          }
+          promotedExecReplayLeases.delete(execFingerprint);
+        }
+
         const executionEnv = {
           ...buildGenericExecutionEnvironmentImpl({
             runtimeEnv,
@@ -101,13 +195,13 @@ export function registerTerminalTools({
           GIT_TERMINAL_PROMPT: "0",
           NO_COLOR: "1",
         };
-        const startedAt = Date.now();
+        const startedAt = now();
         const processInfo = await processManager.start({
           projectId,
           projectName,
           cwd: resolvedCwd,
           command: finiteShell.command,
-          args: finiteShell.argsFor(command),
+          args: processArgs,
           purpose: "terminal_exec",
           env: executionEnv,
           label: `${projectId}:terminal-exec`,
@@ -124,7 +218,7 @@ export function registerTerminalTools({
           stripAnsiCodes: true,
         });
         const running = snapshot.process.running;
-        const durationMs = Math.max(0, Date.now() - startedAt);
+        const durationMs = Math.max(0, now() - startedAt);
         await recordTerminalExecEvent(
           projectId,
           running ? "running" : "completed",
@@ -133,6 +227,7 @@ export function registerTerminalTools({
         );
 
         if (running) {
+          rememberPromotedExec(execFingerprint, snapshot.process.processId);
           return terminalJsonResult({
             ok: true,
             completed: false,

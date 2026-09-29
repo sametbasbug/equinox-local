@@ -57,6 +57,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Windows browser PDF text extraction smoke
+        run: node --test tests/browser/browser-pdf-text.test.js
+
       - name: Windows managed release contract and activation rollback tests
         shell: pwsh
         run: |
