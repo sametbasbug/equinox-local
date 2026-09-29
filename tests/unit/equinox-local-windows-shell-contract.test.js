@@ -227,7 +227,10 @@ test("public Windows CI restores and builds the native x64 shell", async () => {
   assert.match(ci, /name: Windows PowerShell 5\.1 bootstrap acceptance/u);
   assert.match(ci, /& powershell\.exe .*windows-installer-bootstrap-smoke\.ps1/u);
   assert.match(ci, /if \(\$LASTEXITCODE -ne 0\) \{ exit \$LASTEXITCODE \}/u);
-  assert.ok(ci.includes('node --test --test-name-pattern "Windows activation rollback restores current-version.json and the previous exact release" tests/release/equinox-local-update-activation.test.js'));
+  assert.ok(ci.includes('node --test tests/release/equinox-local-windows-stable-shell.test.js'));
+  assert.ok(ci.includes('Windows managed activation rotates pointer stable shell and Native Messaging together'));
+  assert.ok(ci.includes('Windows managed activation forced health failure restores pointer stable shell and Native Messaging'));
+  assert.ok(ci.includes('tests/release/equinox-local-update-activation.test.js'));
   assert.match(ci, /actions\/setup-dotnet@v5/u);
   assert.match(ci, /dotnet-version:\s*8\.0\.x/u);
   assert.match(ci, /dotnet build native\/windows\/EquinoxLocal\.WindowsShell\/EquinoxLocal\.WindowsShell\.csproj/u);
@@ -249,4 +252,17 @@ test("public Windows CI restores and builds the native x64 shell", async () => {
   assert.match(ci, /WebView2Loader\.dll/u);
   assert.match(ci, /Windows native shell branding smoke/u);
   assert.match(ci, /ExtractAssociatedIcon/u);
+});
+
+
+test("Windows shell update handoff acknowledges before draining the runtime and exposes rollback shutdown", async () => {
+  const coordinator = await fs.readFile(path.join(ROOT, "native", "windows", "EquinoxLocal.WindowsShell", "SingleInstanceCoordinator.cs"), "utf8");
+  const app = await fs.readFile(path.join(ROOT, "native", "windows", "EquinoxLocal.WindowsShell", "App.xaml.cs"), "utf8");
+  const launchIndex = coordinator.indexOf("ManagedUpdateHandoff.Launch(version)");
+  const ackIndex = coordinator.indexOf('WriteLineAsync("ok")');
+  const shutdownIndex = coordinator.indexOf("UpdateShutdownRequested?.Invoke", ackIndex);
+  assert.ok(launchIndex >= 0 && ackIndex > launchIndex && shutdownIndex > ackIndex);
+  assert.match(coordinator, /shutdown-for-update/u);
+  assert.match(app, /UpdateShutdownRequested/u);
+  assert.match(app, /ExitApplicationAsync/u);
 });

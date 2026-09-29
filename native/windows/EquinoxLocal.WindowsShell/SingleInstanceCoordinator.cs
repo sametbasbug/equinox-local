@@ -29,6 +29,7 @@ internal sealed class SingleInstanceCoordinator : IDisposable
 
     internal event EventHandler? ReopenRequested;
     internal event EventHandler? RuntimeRestartRequested;
+    internal event EventHandler? UpdateShutdownRequested;
 
     internal void StartListening()
     {
@@ -75,6 +76,10 @@ internal sealed class SingleInstanceCoordinator : IDisposable
                 {
                     RuntimeRestartRequested?.Invoke(this, EventArgs.Empty);
                 }
+                else if (string.Equals(command, "shutdown-for-update", StringComparison.Ordinal))
+                {
+                    UpdateShutdownRequested?.Invoke(this, EventArgs.Empty);
+                }
                 else if (command is not null && command.StartsWith("activate-release:", StringComparison.Ordinal))
                 {
                     var version = command["activate-release:".Length..];
@@ -83,6 +88,7 @@ internal sealed class SingleInstanceCoordinator : IDisposable
                     {
                         ManagedUpdateHandoff.Launch(version);
                         await writer.WriteLineAsync("ok").ConfigureAwait(false);
+                        UpdateShutdownRequested?.Invoke(this, EventArgs.Empty);
                     }
                     catch (Exception error)
                     {

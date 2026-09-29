@@ -6,6 +6,7 @@ import {
   EQUINOX_LOCAL_WINDOWS_SHELL_PIPE,
   requestWindowsShellManagedActivation,
   requestWindowsShellRuntimeRestart,
+  requestWindowsShellUpdateShutdown,
 } from "../../src/equinox-local-windows-shell-control.js";
 
 test("Windows update helper signals the current-user shell restart pipe without spawning commands", async () => {
@@ -33,6 +34,36 @@ test("Windows update helper signals the current-user shell restart pipe without 
 test("Windows shell restart signaling fails closed off Windows", async () => {
   await assert.rejects(
     requestWindowsShellRuntimeRestart({ platform: "darwin" }),
+    /only on Windows/u,
+  );
+});
+
+
+test("Windows update helper can request bounded shell shutdown through the same current-user pipe", async () => {
+  let options = null;
+  let written = null;
+  const socket = new EventEmitter();
+  socket.destroy = () => {};
+  socket.end = (value, callback) => {
+    written = value;
+    queueMicrotask(callback);
+  };
+  const result = await requestWindowsShellUpdateShutdown({
+    platform: "win32",
+    connectImpl: (value) => {
+      options = value;
+      queueMicrotask(() => socket.emit("connect"));
+      return socket;
+    },
+  });
+  assert.equal(result.requested, true);
+  assert.deepEqual(options, { path: EQUINOX_LOCAL_WINDOWS_SHELL_PIPE });
+  assert.equal(written, "shutdown-for-update\n");
+});
+
+test("Windows update shutdown signaling fails closed off Windows", async () => {
+  await assert.rejects(
+    requestWindowsShellUpdateShutdown({ platform: "darwin" }),
     /only on Windows/u,
   );
 });

@@ -104,6 +104,36 @@ export async function readWindowsNativeMessagingRegistryValue({
   return path.win32.normalize(parsed);
 }
 
+export async function assertWindowsNativeMessagingHostOwnership({
+  manifestRoot,
+  acceptedLauncherPaths,
+  execFileAsync = execFile,
+  fsImpl = fs,
+  env = process.env,
+} = {}) {
+  if (typeof manifestRoot !== "string" || !manifestRoot) throw new Error("Windows Native Messaging manifest root is required.");
+  if (!Array.isArray(acceptedLauncherPaths) || acceptedLauncherPaths.length < 1 || acceptedLauncherPaths.length > 2) {
+    throw new Error("Windows Native Messaging ownership check requires one or two accepted launchers.");
+  }
+  const accepted = acceptedLauncherPaths.map((value) => requireAbsolute(value, "Accepted Windows Native Messaging launcher"));
+  const manifestPath = path.join(manifestRoot, `${EQUINOX_BROWSER_HOST_NAME}.json`);
+  const registered = await readWindowsNativeMessagingRegistryValue({ execFileAsync, env });
+  if (registered === null) throw new Error("Windows Native Messaging registry ownership is missing during managed update.");
+  if (!sameWindowsPath(registered, manifestPath)) {
+    throw new Error(`Windows Native Messaging registry is owned by another manifest: ${registered}`);
+  }
+  const { data } = await readBoundedNormalFile(manifestPath, {
+    fsImpl,
+    platform: process.platform,
+    maxBytes: MANIFEST_MAX_BYTES,
+    encoding: "utf8",
+    label: "Windows Native Messaging manifest",
+  });
+  const matched = accepted.find((launcherPath) => data === windowsNativeMessagingManifest(launcherPath));
+  if (!matched) throw new Error("Windows Native Messaging manifest is foreign or outside the accepted update ownership set.");
+  return Object.freeze({ manifestPath, launcherPath: matched, registryKey: EQUINOX_BROWSER_WINDOWS_REGISTRY_KEY });
+}
+
 export async function registerWindowsNativeMessagingHost({
   manifestRoot,
   launcherPath,
