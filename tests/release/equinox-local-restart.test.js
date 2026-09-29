@@ -107,6 +107,18 @@ test("source-checkout restart uses only private generic developer runtime config
   assert.match(example, /sourceLauncher=\/absolute\/path\/to\/private-source-launcher\.sh/u);
 });
 
+test("Control Center source restart reuses the canonical scheduler instead of forwarding process.execPath", async () => {
+  const server = await fs.readFile(path.join(ROOT, "src", "server.js"), "utf8");
+  const start = server.indexOf("async function restartLocalRuntime()");
+  const end = server.indexOf("async function requestTelegramRuntimeRestart()", start);
+  assert.ok(start >= 0 && end > start, "restartLocalRuntime source block must remain discoverable");
+  const block = server.slice(start, end);
+  assert.match(block, /scheduleSourceCheckoutRestart\(\{[\s\S]*moduleUrl: import\.meta\.url/u);
+  assert.doesNotMatch(block, /EQUINOX_LOCAL_DEV_NODE/u);
+  assert.doesNotMatch(block, /process\.execPath/u);
+  assert.doesNotMatch(block, /launchDetachedHelper/u);
+});
+
 test("restart helper environment is minimal and credential-free", () => {
   const env = restartHelperEnvironment(installation(), {
     HOME: "/Users/example",
