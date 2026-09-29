@@ -201,6 +201,8 @@ const TR_UI = Object.freeze({
   "Enable Turn Budget": "Tur Bütçesini etkinleştir",
   "Warn the agent before the per-turn safety cutoff. This never force-stops a turn.": "Tur başına güvenlik süresi dolmadan önce ajanı uyarır. Turu hiçbir zaman zorla durdurmaz.",
   "Safety cutoff (minutes)": "Güvenlik süresi (dakika)",
+  "Auto Continue maximum hops": "Auto Continue maksimum hop sayısı",
+  "Default 10. Each hop must still be armed explicitly; this only changes the maximum chain length.": "Varsayılan 10. Her hop yine açıkça kurulmalıdır; bu ayar yalnızca zincirin maksimum uzunluğunu değiştirir.",
   "Default 22 minutes. The setting applies immediately and does not require a Local restart.": "Varsayılan 22 dakika. Ayar anında uygulanır ve Local yeniden başlatma gerektirmez.",
   "Save Turn Budget": "Tur Bütçesini kaydet",
   "Off": "Kapalı",
@@ -974,7 +976,7 @@ const DYNAMIC_TEXT_IDS = new Set([
   "agent-browser-control-state", "open-agent-browser-button", "agent-browser-note", "browser-page-status", "browser-page-badge", "browser-page-version", "browser-connected-at",
   "browser-control-state", "apply-browser-settings", "browser-settings-note", "permissions-list", "agent-access-badge",
   "agent-control-badge", "agent-control-copy", "active-terminal-count", "active-process-count", "active-work-count",
-  "turn-budget-badge", "turn-budget-copy", "turn-budget-elapsed", "turn-budget-remaining", "turn-budget-stage", "turn-budget-fallback-reset", "save-turn-budget-button",
+  "turn-budget-badge", "turn-budget-copy", "turn-budget-elapsed", "turn-budget-remaining", "turn-budget-stage", "turn-budget-fallback-reset", "auto-continue-max-hops", "save-turn-budget-button",
   "local-execution-badge", "save-agent-access-button", "uninstall-badge",
   "uninstall-confirmation-help", "uninstall-button", "integration-list", "request-count", "mutation-count",
   "activity-event-count", "activity-timeline", "dialog-kicker", "dialog-title", "dialog-error", "choose-folder-button",
@@ -2944,10 +2946,11 @@ function renderTurnBudgetLive() {
 }
 
 function renderTurnBudget() {
-  const draft = state.turnBudgetDraft || { enabled: true, cutoffMinutes: 22, fallbackResetMinutes: 5 };
+  const draft = state.turnBudgetDraft || { enabled: true, cutoffMinutes: 22, fallbackResetMinutes: 5, autoContinueMaxHops: 10 };
   const enabled = $("turn-budget-enabled");
   const cutoff = $("turn-budget-cutoff");
   const fallbackReset = $("turn-budget-fallback-reset");
+  const autoContinueMaxHops = $("auto-continue-max-hops");
   const save = $("save-turn-budget-button");
   if (enabled) enabled.checked = draft.enabled !== false;
   if (cutoff) {
@@ -2958,6 +2961,10 @@ function renderTurnBudget() {
     fallbackReset.value = String(draft.fallbackResetMinutes || 5);
     fallbackReset.max = String(draft.cutoffMinutes || 22);
     fallbackReset.disabled = draft.enabled === false || state.turnBudgetBusy;
+  }
+  if (autoContinueMaxHops) {
+    autoContinueMaxHops.value = String(draft.autoContinueMaxHops || 10);
+    autoContinueMaxHops.disabled = state.turnBudgetBusy;
   }
   if (enabled) enabled.disabled = state.turnBudgetBusy;
   if (save) {
@@ -3366,6 +3373,7 @@ async function refreshAll() {
         enabled: state.turnBudget.enabled !== false,
         cutoffMinutes: Number(state.turnBudget.cutoffMinutes) || 22,
         fallbackResetMinutes: Number(state.turnBudget.fallbackResetMinutes) || 5,
+        autoContinueMaxHops: Number(state.turnBudget.autoContinueMaxHops) || 10,
       };
     }
     state.config = clone(config.config);
@@ -3449,6 +3457,7 @@ async function refreshLiveState() {
         enabled: state.turnBudget.enabled !== false,
         cutoffMinutes: Number(state.turnBudget.cutoffMinutes) || 22,
         fallbackResetMinutes: Number(state.turnBudget.fallbackResetMinutes) || 5,
+        autoContinueMaxHops: Number(state.turnBudget.autoContinueMaxHops) || 10,
       };
     }
     if (activity?.events) state.activity = activity.events;
@@ -4353,12 +4362,17 @@ async function saveTurnBudgetSettings() {
   if (state.turnBudgetBusy || !state.turnBudgetDraft) return;
   const cutoffMinutes = Number(state.turnBudgetDraft.cutoffMinutes);
   const fallbackResetMinutes = Number(state.turnBudgetDraft.fallbackResetMinutes);
+  const autoContinueMaxHops = Number(state.turnBudgetDraft.autoContinueMaxHops);
   if (!Number.isInteger(cutoffMinutes) || cutoffMinutes < 5 || cutoffMinutes > 120) {
     showError(new Error("Turn Budget cutoff must be an integer between 5 and 120 minutes."));
     return;
   }
   if (!Number.isInteger(fallbackResetMinutes) || fallbackResetMinutes < 1 || fallbackResetMinutes > cutoffMinutes) {
     showError(new Error("Fallback idle timeout must be an integer between 1 minute and the safety cutoff."));
+    return;
+  }
+  if (!Number.isInteger(autoContinueMaxHops) || autoContinueMaxHops < 1 || autoContinueMaxHops > 20) {
+    showError(new Error("Auto Continue maximum hops must be an integer between 1 and 20."));
     return;
   }
   clearError();
@@ -4369,10 +4383,11 @@ async function saveTurnBudgetSettings() {
       enabled: state.turnBudgetDraft.enabled !== false,
       cutoffMinutes,
       fallbackResetMinutes,
+      autoContinueMaxHops,
     });
     state.turnBudget = response.turnBudget;
     state.status = { ...(state.status || {}), turnBudget: response.turnBudget };
-    state.turnBudgetDraft = { enabled: response.turnBudget.enabled !== false, cutoffMinutes: response.turnBudget.cutoffMinutes, fallbackResetMinutes: response.turnBudget.fallbackResetMinutes };
+    state.turnBudgetDraft = { enabled: response.turnBudget.enabled !== false, cutoffMinutes: response.turnBudget.cutoffMinutes, fallbackResetMinutes: response.turnBudget.fallbackResetMinutes, autoContinueMaxHops: response.turnBudget.autoContinueMaxHops };
     state.turnBudgetDirty = false;
     showToast("Turn Budget updated immediately.");
   } catch (error) {
@@ -4483,6 +4498,11 @@ function bindEvents() {
   });
   $("turn-budget-fallback-reset").addEventListener("input", (event) => {
     state.turnBudgetDraft = { ...(state.turnBudgetDraft || { enabled: true, cutoffMinutes: 22 }), fallbackResetMinutes: Number(event.target.value) };
+    state.turnBudgetDirty = true;
+    $("save-turn-budget-button").disabled = state.turnBudgetBusy;
+  });
+  $("auto-continue-max-hops").addEventListener("input", (event) => {
+    state.turnBudgetDraft = { ...(state.turnBudgetDraft || { enabled: true, cutoffMinutes: 22, fallbackResetMinutes: 5 }), autoContinueMaxHops: Number(event.target.value) };
     state.turnBudgetDirty = true;
     $("save-turn-budget-button").disabled = state.turnBudgetBusy;
   });

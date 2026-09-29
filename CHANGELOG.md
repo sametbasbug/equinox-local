@@ -6,6 +6,8 @@ This project follows semantic versioning for public releases.
 
 ## [Unreleased]
 
+- Made the Auto Continue maximum chain length configurable in Control Center with a default of 10 and a bounded 1–20 range; per-hop explicit arming, TTL, exact-chat binding, pre-mutation reservation and ambiguous-delivery no-retry guarantees are unchanged.
+- Suppressed bounded in-flight semantic MCP transport replays even when connector redelivery arrives with a new request/session id, preventing ambiguous `terminal_exec` delivery from spawning a second identical managed process while preserving later intentional identical calls after the original settles.
 - Added the ownership-safe Windows x64 uninstall handoff: the CurrentUserOnly native shell launches the release-local helper outside the runtime Job Object, validates its exact startup registration without mutating it, drains the runtime after acknowledgement, and the helper refuses cleanup until current-release, stable-shell, startup and Native Messaging ownership are proven. Preserve-data mode keeps managed state/workspace while full uninstall removes the remaining app data.
 - Control Center source-runtime restart now reuses the canonical restart scheduler instead of forwarding Node's resolved `process.execPath`, keeping the whitespace-free developer Node alias intact on every restart surface.
 - Windows managed updates now drain the native shell before bounded stable-shell replacement, share one hashed shell staging primitive with first install, and preflight/rotate Native Messaging ownership for rollback-safe activation.

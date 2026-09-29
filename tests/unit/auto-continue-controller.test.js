@@ -238,37 +238,37 @@ test("bound Auto Continue reacquires one exact task conversation after tab id dr
 });
 
 
-test("Auto Continue chain permits eight hops and blocks the ninth before browser mutation", async (t) => {
+test("Auto Continue chain uses the configured maximum and blocks the next hop before browser mutation", async (t) => {
   const store = await makeStore(t);
   const task = await store.checkpoint(base);
-  const previous = await store.armContinuation({ taskId: task.taskId, chainId: "chain-eight-hop", hop: 7, target: {
+  const previous = await store.armContinuation({ taskId: task.taskId, chainId: "chain-ten-hop", hop: 9, target: {
     browserContext: "user", mode: "task-tab", browserInstanceId: "bound-instance", tabId: 42, title: "Task chat",
     conversationId: "abcdef12-3456-7890-abcd-ef1234567890", canonicalUrl: "https://chatgpt.com/c/abcdef12-3456-7890-abcd-ef1234567890",
-    userEpoch: "user-epoch-1", assistantTurnKey: "conversation-turn-8", autoContinueVersion: 1,
+    userEpoch: "user-epoch-1", assistantTurnKey: "conversation-turn-10", autoContinueVersion: 1,
   } });
   await store.reserveContinuationDelivery(task.taskId, previous.continuation.continuationId);
   await store.settleContinuationDelivery(task.taskId, previous.continuation.continuationId, "delivered");
 
   let targetResolves = 0;
   const browserBridge = {
-    snapshot: () => ({ contexts: { agent: { ready: false }, user: { ready: true, extension: { instanceId: "instance-user-eight", capabilityVersions: { autoContinue: 1 } } } } }),
+    snapshot: () => ({ contexts: { agent: { ready: false }, user: { ready: true, extension: { instanceId: "instance-user-ten", capabilityVersions: { autoContinue: 1 } } } } }),
     call: async (method) => {
       if (method === "continuation.target.resolve") { targetResolves += 1; return targetResult(); }
       if (method === "continuation.inspect") return { ...targetResult().target, generationActive: true };
       throw new Error(`Unexpected method ${method}`);
     },
   };
-  const controller = createAutoContinueController({ store, browserBridge, agentControl: activeAgentControl(), pollMs: 100_000, quietMs: 100_000 });
+  const controller = createAutoContinueController({ store, browserBridge, agentControl: activeAgentControl(), pollMs: 100_000, quietMs: 100_000, getMaxChainHops: () => 10 });
   t.after(() => controller.shutdown());
 
-  const eighth = await controller.arm({ taskId: task.taskId, ttlMinutes: 1 });
-  assert.equal(eighth.continuation.hop, 8);
-  assert.equal(eighth.continuation.chainId, "chain-eight-hop");
+  const tenth = await controller.arm({ taskId: task.taskId, ttlMinutes: 1 });
+  assert.equal(tenth.continuation.hop, 10);
+  assert.equal(tenth.continuation.chainId, "chain-ten-hop");
   assert.equal(targetResolves, 1);
   await controller.shutdown();
 
-  await store.reserveContinuationDelivery(task.taskId, eighth.continuation.continuationId);
-  await store.settleContinuationDelivery(task.taskId, eighth.continuation.continuationId, "delivered");
-  await assert.rejects(() => controller.arm({ taskId: task.taskId, ttlMinutes: 1 }), /8-turn safety limit/u);
-  assert.equal(targetResolves, 1, "ninth hop must fail before resolving or mutating the browser");
+  await store.reserveContinuationDelivery(task.taskId, tenth.continuation.continuationId);
+  await store.settleContinuationDelivery(task.taskId, tenth.continuation.continuationId, "delivered");
+  await assert.rejects(() => controller.arm({ taskId: task.taskId, ttlMinutes: 1 }), /10-turn safety limit/u);
+  assert.equal(targetResolves, 1, "hop above the configured maximum must fail before resolving or mutating the browser");
 });

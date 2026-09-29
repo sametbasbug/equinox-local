@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 
 const DEFAULT_SETTLED_TTL_MS = 10 * 60 * 1000;
 const DEFAULT_ABORT_REPLAY_WINDOW_MS = 5 * 60 * 1000;
+const DEFAULT_IN_FLIGHT_REPLAY_WINDOW_MS = 5 * 60 * 1000;
 const DEFAULT_MAX_RECORDS = 256;
 
 function canonicalize(value) {
@@ -36,6 +37,7 @@ export function createMcpToolReplayGuard({
   now = () => Date.now(),
   settledTtlMs = DEFAULT_SETTLED_TTL_MS,
   abortReplayWindowMs = DEFAULT_ABORT_REPLAY_WINDOW_MS,
+  inFlightReplayWindowMs = DEFAULT_IN_FLIGHT_REPLAY_WINDOW_MS,
   maxRecords = DEFAULT_MAX_RECORDS,
   onReplay = null,
 } = {}) {
@@ -102,8 +104,16 @@ export function createMcpToolReplayGuard({
     }
 
     const previous = latestByFingerprint.get(inputFingerprint);
-    const previousAborted = previous?.signal?.aborted === true;
     const previousAge = previous ? Math.max(0, now() - previous.createdAt) : Infinity;
+    const previousStillInFlight = previous?.settledAt === null;
+    if (previous && previousStillInFlight && previousAge <= inFlightReplayWindowMs) {
+      previous.requestKeys.add(key);
+      byRequest.set(key, previous);
+      noteReplay(previous, toolName, "inflight_semantic");
+      return previous.promise;
+    }
+
+    const previousAborted = previous?.signal?.aborted === true;
     if (previous && previousAborted && previousAge <= abortReplayWindowMs) {
       previous.requestKeys.add(key);
       byRequest.set(key, previous);

@@ -12,6 +12,9 @@ export const TURN_BUDGET_DEFAULTS = Object.freeze({
   maxCutoffMinutes: 120,
   minCutoffMinutes: 5,
   fallbackResetMinutes: 5,
+  autoContinueMaxHops: 10,
+  minAutoContinueMaxHops: 1,
+  maxAutoContinueMaxHops: 20,
   minFallbackResetMinutes: 1,
   maxFallbackResetMinutes: 120,
   finalizationReserveMs: 60_000,
@@ -36,7 +39,13 @@ function normalizeSettings(value = {}) {
   ) {
     throw new Error(`Turn Budget fallbackResetMinutes must be between ${TURN_BUDGET_DEFAULTS.minFallbackResetMinutes} and cutoffMinutes (${cutoffMinutes}).`);
   }
-  return Object.freeze({ enabled, cutoffMinutes, fallbackResetMinutes });
+  const autoContinueMaxHops = value.autoContinueMaxHops === undefined
+    ? TURN_BUDGET_DEFAULTS.autoContinueMaxHops
+    : value.autoContinueMaxHops;
+  if (!Number.isInteger(autoContinueMaxHops) || autoContinueMaxHops < TURN_BUDGET_DEFAULTS.minAutoContinueMaxHops || autoContinueMaxHops > TURN_BUDGET_DEFAULTS.maxAutoContinueMaxHops) {
+    throw new Error(`Auto Continue max hops must be between ${TURN_BUDGET_DEFAULTS.minAutoContinueMaxHops} and ${TURN_BUDGET_DEFAULTS.maxAutoContinueMaxHops}.`);
+  }
+  return Object.freeze({ enabled, cutoffMinutes, fallbackResetMinutes, autoContinueMaxHops });
 }
 
 export function defaultTurnBudgetSettingsPath(homeDir = os.homedir(), { platform = process.platform, arch = process.arch, env = process.env } = {}) {
@@ -203,7 +212,7 @@ export function createTurnBudgetController({ settingsPath = defaultTurnBudgetSet
   function snapshot() {
     const timestamp = now();
     if (settings.enabled) expireStaleFallback(timestamp);
-    const base = { enabled: settings.enabled, cutoffMinutes: settings.cutoffMinutes, fallbackResetMinutes: settings.fallbackResetMinutes };
+    const base = { enabled: settings.enabled, cutoffMinutes: settings.cutoffMinutes, fallbackResetMinutes: settings.fallbackResetMinutes, autoContinueMaxHops: settings.autoContinueMaxHops };
     if (!settings.enabled) return Object.freeze({ ...base, active: null });
     if (!active) return Object.freeze({ ...base, active: null });
     const elapsedMs = Math.max(0, timestamp - active.startedAtMs);

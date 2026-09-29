@@ -21,7 +21,7 @@ function textResult(text = "ok") {
 }
 
 test("turn budget defaults and stages are bounded", () => {
-  assert.deepEqual(__test.normalizeSettings(), { enabled: true, cutoffMinutes: 22, fallbackResetMinutes: 5 });
+  assert.deepEqual(__test.normalizeSettings(), { enabled: true, cutoffMinutes: 22, fallbackResetMinutes: 5, autoContinueMaxHops: 10 });
   assert.equal(__test.stageForElapsed(17 * 60_000, 22), "running");
   assert.equal(__test.stageForElapsed(18 * 60_000, 22), "checkpoint");
   assert.equal(__test.stageForElapsed(20 * 60_000, 22), "finalize");
@@ -29,6 +29,7 @@ test("turn budget defaults and stages are bounded", () => {
   assert.throws(() => __test.normalizeSettings({ cutoffMinutes: 4 }), /between 5 and 120/u);
   assert.throws(() => __test.normalizeSettings({ cutoffMinutes: 22, fallbackResetMinutes: 0 }), /between 1 and cutoffMinutes/u);
   assert.throws(() => __test.normalizeSettings({ cutoffMinutes: 10, fallbackResetMinutes: 11 }), /between 1 and cutoffMinutes/u);
+  assert.throws(() => __test.normalizeSettings({ autoContinueMaxHops: 21 }), /between 1 and 20/u);
 });
 
 test("controller persists immediate runtime settings with private permissions", async () => {
@@ -38,14 +39,17 @@ test("controller persists immediate runtime settings with private permissions", 
     await controller.initialize();
     assert.equal(controller.snapshot().cutoffMinutes, 22);
     assert.equal(controller.snapshot().fallbackResetMinutes, 5);
-    await controller.updateSettings({ enabled: true, cutoffMinutes: 19, fallbackResetMinutes: 3 });
+    assert.equal(controller.snapshot().autoContinueMaxHops, 10);
+    await controller.updateSettings({ enabled: true, cutoffMinutes: 19, fallbackResetMinutes: 3, autoContinueMaxHops: 14 });
     assert.equal(controller.snapshot().cutoffMinutes, 19);
     assert.equal(controller.snapshot().fallbackResetMinutes, 3);
+    assert.equal(controller.snapshot().autoContinueMaxHops, 14);
     assert.equal((await fs.stat(settingsPath)).mode & 0o777, 0o600);
     const reloaded = createTurnBudgetController({ settingsPath });
     await reloaded.initialize();
     assert.equal(reloaded.snapshot().cutoffMinutes, 19);
     assert.equal(reloaded.snapshot().fallbackResetMinutes, 3);
+    assert.equal(reloaded.snapshot().autoContinueMaxHops, 14);
   });
 });
 

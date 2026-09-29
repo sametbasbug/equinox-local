@@ -310,7 +310,7 @@ function validateHttpProfileControlUpsert(body) {
 }
 
 function validateTurnBudgetRequest(body) {
-  const value = validateExactObject(body, ["enabled", "cutoffMinutes", "fallbackResetMinutes"], "Turn Budget settings");
+  const value = validateExactObject(body, ["enabled", "cutoffMinutes", "fallbackResetMinutes", "autoContinueMaxHops"], "Turn Budget settings");
   if (typeof value.enabled !== "boolean") throw badRequest("Turn Budget enabled must be boolean.");
   if (!Number.isInteger(value.cutoffMinutes) || value.cutoffMinutes < 5 || value.cutoffMinutes > 120) {
     throw badRequest("Turn Budget cutoffMinutes must be an integer between 5 and 120.");
@@ -319,7 +319,11 @@ function validateTurnBudgetRequest(body) {
   if (!Number.isInteger(fallbackResetMinutes) || fallbackResetMinutes < 1 || fallbackResetMinutes > value.cutoffMinutes) {
     throw badRequest("Turn Budget fallbackResetMinutes must be an integer between 1 and cutoffMinutes.");
   }
-  return { enabled: value.enabled, cutoffMinutes: value.cutoffMinutes, fallbackResetMinutes };
+  const autoContinueMaxHops = value.autoContinueMaxHops === undefined ? 10 : value.autoContinueMaxHops;
+  if (!Number.isInteger(autoContinueMaxHops) || autoContinueMaxHops < 1 || autoContinueMaxHops > 20) {
+    throw badRequest("Auto Continue max hops must be an integer between 1 and 20.");
+  }
+  return { enabled: value.enabled, cutoffMinutes: value.cutoffMinutes, fallbackResetMinutes, autoContinueMaxHops };
 }
 
 function validateHttpProfileManagementRequest(body) {
