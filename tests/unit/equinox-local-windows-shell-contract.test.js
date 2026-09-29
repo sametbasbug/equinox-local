@@ -209,6 +209,9 @@ test("public Windows CI restores and builds the native x64 shell", async () => {
   assert.ok(ci.includes('Windows x64 managed user bootstrap uses state config and omits Darwin/native-host lifecycle'));
   assert.ok(ci.includes('tests/release/equinox-local-bootstrap.test.js'));
   assert.match(ci, /node --test tests\/release\/equinox-local-current-release\.test\.js/u);
+  assert.match(ci, /name: Windows PowerShell 5\.1 bootstrap acceptance/u);
+  assert.match(ci, /& powershell\.exe .*windows-installer-bootstrap-smoke\.ps1/u);
+  assert.match(ci, /if \(\$LASTEXITCODE -ne 0\) \{ exit \$LASTEXITCODE \}/u);
   assert.ok(ci.includes('node --test --test-name-pattern "Windows activation rollback restores current-version.json and the previous exact release" tests/release/equinox-local-update-activation.test.js'));
   assert.match(ci, /actions\/setup-dotnet@v5/u);
   assert.match(ci, /dotnet-version:\s*8\.0\.x/u);

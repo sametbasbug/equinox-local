@@ -66,6 +66,12 @@ jobs:
           node --test tests/release/equinox-local-current-release.test.js
           node --test --test-name-pattern "Windows activation rollback restores current-version.json and the previous exact release" tests/release/equinox-local-update-activation.test.js
 
+      - name: Windows PowerShell 5.1 bootstrap acceptance
+        shell: pwsh
+        run: |
+          & powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File tests/release/windows-installer-bootstrap-smoke.ps1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
       - name: Windows headless runtime smoke
         run: npm run smoke:windows-headless
 
