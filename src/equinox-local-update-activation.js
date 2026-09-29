@@ -8,7 +8,15 @@ import { readEquinoxLocalCurrentVersionPointer, writeEquinoxLocalCurrentVersionP
 import { synchronizeEquinoxLocalAppHostForRelease } from "./equinox-local-native-app-host.js";
 import { EQUINOX_LOCAL_BUNDLED_PEEKABOO_SINCE_VERSION } from "./equinox-local-runtime-versions.js";
 import { compareEquinoxVersions, equinoxLocalUpdateTarget, parseEquinoxVersion } from "./equinox-local-updater.js";
-import { requestWindowsShellRuntimeRestart } from "./equinox-local-windows-shell-control.js";
+import {
+  assertWindowsNativeMessagingHostOwnership,
+  registerWindowsNativeMessagingHost,
+  windowsNativeMessagingLauncherPath,
+} from "./equinox-browser-windows-native-messaging.js";
+import {
+  launchWindowsStableShell,
+  replaceWindowsStableShellForRelease,
+} from "./equinox-local-windows-stable-shell.js";
 
 const execFile = promisify(execFileCallback);
 export const EQUINOX_LOCAL_CONTROL_CENTER_STATUS_URL = "http://127.0.0.1:24891/api/v1/status";
@@ -315,12 +323,37 @@ async function writeActivationState(installation, state) {
 }
 
 async function synchronizeManagedShellForRelease(installation, release) {
-  if (installation?.platform === "win32") return Object.freeze({ synchronized: false, reason: "windows-stable-shell" });
-  return synchronizeEquinoxLocalAppHostForRelease({ installation, releaseDir: release.releaseDir });
+  if (installation?.platform !== "win32") {
+    return synchronizeEquinoxLocalAppHostForRelease({ installation, releaseDir: release.releaseDir });
+  }
+  if (typeof installation.programRoot !== "string" || typeof installation.nativeMessagingManifestRoot !== "string") {
+    throw new Error("Managed Windows shell/native-host paths are unavailable.");
+  }
+  if (typeof release.previousReleaseDir !== "string") throw new Error("Previous Windows release is required for update ownership.");
+  const launcherPath = windowsNativeMessagingLauncherPath(release.releaseDir);
+  const previousLauncherPath = windowsNativeMessagingLauncherPath(release.previousReleaseDir);
+  await assertWindowsNativeMessagingHostOwnership({
+    manifestRoot: installation.nativeMessagingManifestRoot,
+    acceptedLauncherPaths: [launcherPath, previousLauncherPath],
+  });
+  const shell = await replaceWindowsStableShellForRelease({
+    releaseDir: release.releaseDir,
+    previousReleaseDir: release.previousReleaseDir,
+    programRoot: installation.programRoot,
+  });
+  await registerWindowsNativeMessagingHost({
+    manifestRoot: installation.nativeMessagingManifestRoot,
+    launcherPath,
+    expectedPreviousLauncherPath: previousLauncherPath,
+  });
+  return shell;
 }
 
 async function restartManagedInstallation(installation) {
-  if (installation?.platform === "win32") return requestWindowsShellRuntimeRestart({ platform: "win32" });
+  if (installation?.platform === "win32") {
+    if (typeof installation.programRoot !== "string") throw new Error("Managed Windows program root is unavailable.");
+    return launchWindowsStableShell(path.win32.join(installation.programRoot, "EquinoxLocal.exe"));
+  }
   return kickstartEquinoxLocalLaunchAgent(installation);
 }
 
@@ -342,7 +375,7 @@ export async function activatePreparedEquinoxRelease({
   }
 
   try {
-    await syncAppHostImpl({ version: targetVersion, releaseDir: switchResult.current.releaseDir });
+    await syncAppHostImpl({ version: targetVersion, releaseDir: switchResult.current.releaseDir, previousVersion: switchResult.previous.version, previousReleaseDir: switchResult.previous.releaseDir });
     await kickstartImpl(targetVersion);
     await waitForEquinoxLocalVersion(targetVersion, {
       fetchImpl,
@@ -364,7 +397,7 @@ export async function activatePreparedEquinoxRelease({
   } catch (activationError) {
     try {
       await atomicSwitchCurrentRelease(installation, switchResult.previous.version);
-      await syncAppHostImpl({ version: switchResult.previous.version, releaseDir: switchResult.previous.releaseDir });
+      await syncAppHostImpl({ version: switchResult.previous.version, releaseDir: switchResult.previous.releaseDir, previousVersion: targetVersion, previousReleaseDir: switchResult.current.releaseDir });
       await kickstartImpl(switchResult.previous.version);
       await waitForEquinoxLocalVersion(switchResult.previous.version, {
         fetchImpl,

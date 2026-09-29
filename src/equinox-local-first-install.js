@@ -25,6 +25,17 @@ import { managedSupervisorPaths } from "./equinox-local-supervisor.js";
 import { writeEquinoxLocalCurrentVersionPointer } from "./equinox-local-current-release.js";
 import { initializeManagedOnboardingState } from "./equinox-local-onboarding.js";
 import { equinoxLocalReleaseRuntimeContract } from "./equinox-local-release-runtime-contract.js";
+import {
+  launchWindowsStableShell,
+  synchronizeFreshWindowsShell,
+} from "./equinox-local-windows-stable-shell.js";
+export {
+  sameWindowsStableShellTree,
+  snapshotWindowsStableShellTree,
+  stageWindowsStableShellForRelease,
+  synchronizeFreshWindowsShell,
+} from "./equinox-local-windows-stable-shell.js";
+export { launchWindowsStableShell as launchFreshWindowsShell } from "./equinox-local-windows-stable-shell.js";
 
 const execFile = promisify(execFileCallback);
 const MAX_RELEASE_METADATA_BYTES = 16 * 1024;
@@ -33,8 +44,6 @@ const MAX_RELEASE_BYTES = 2 * 1024 * 1024 * 1024;
 const FIRST_INSTALL_HEALTH_ATTEMPTS = 120;
 const FIRST_INSTALL_HEALTH_DELAY_MS = 500;
 const FIRST_INSTALL_DIAGNOSTIC_BYTES = 12 * 1024;
-const MAX_WINDOWS_SHELL_ENTRIES = 5_000;
-const MAX_WINDOWS_SHELL_BYTES = 512 * 1024 * 1024;
 
 function inside(parent, child, pathApi = path) {
   const relative = pathApi.relative(parent, child);
@@ -228,105 +237,6 @@ async function atomicInitialCurrentPointer(paths, targetRelease, candidate, {
   }
 }
 
-async function sha256File(filePath, fsImpl = fs) {
-  const digest = createHash("sha256");
-  const handle = await fsImpl.open(filePath, "r");
-  try {
-    for await (const chunk of handle.createReadStream()) digest.update(chunk);
-  } finally {
-    await handle.close().catch(() => {});
-  }
-  return digest.digest("hex");
-}
-
-async function snapshotNormalTree(root, { fsImpl = fs } = {}) {
-  const rootStat = await fsImpl.lstat(root);
-  if (!rootStat.isDirectory() || rootStat.isSymbolicLink()) throw new Error(`Windows stable shell root is unsafe: ${root}`);
-  const rows = [];
-  const stack = [{ absolute: root, relative: "" }];
-  let totalBytes = 0;
-  while (stack.length) {
-    const current = stack.pop();
-    const entries = await fsImpl.readdir(current.absolute, { withFileTypes: true });
-    for (const entry of entries) {
-      if (rows.length >= MAX_WINDOWS_SHELL_ENTRIES) throw new Error("Windows stable shell contains too many entries.");
-      const absolute = path.join(current.absolute, entry.name);
-      const relative = current.relative ? `${current.relative}/${entry.name}` : entry.name;
-      const stat = await fsImpl.lstat(absolute);
-      if (stat.isSymbolicLink()) throw new Error("Windows stable shell may not contain symbolic links or junctions.");
-      if (stat.isDirectory()) {
-        stack.push({ absolute, relative });
-        continue;
-      }
-      if (!stat.isFile()) throw new Error("Windows stable shell contains an unsupported filesystem entry.");
-      totalBytes += stat.size;
-      if (totalBytes > MAX_WINDOWS_SHELL_BYTES) throw new Error("Windows stable shell exceeds the size limit.");
-      rows.push(Object.freeze({ relative, bytes: stat.size, sha256: await sha256File(absolute, fsImpl) }));
-    }
-  }
-  rows.sort((a, b) => a.relative.localeCompare(b.relative, "en"));
-  return Object.freeze(rows);
-}
-
-function sameTree(left, right) {
-  return left.length === right.length && left.every((entry, index) => {
-    const other = right[index];
-    return entry.relative === other.relative && entry.bytes === other.bytes && entry.sha256 === other.sha256;
-  });
-}
-
-export async function synchronizeFreshWindowsShell({ releaseDir, programRoot, fsImpl = fs } = {}) {
-  if (typeof releaseDir !== "string" || typeof programRoot !== "string") throw new Error("Windows stable shell paths are required.");
-  const sourceRoot = path.join(releaseDir, "runtime", "shell");
-  const sourceSnapshot = await snapshotNormalTree(sourceRoot, { fsImpl });
-  if (!sourceSnapshot.some((entry) => entry.relative === "EquinoxLocal.exe")) throw new Error("Verified Windows shell is missing EquinoxLocal.exe.");
-  try {
-    const existing = await fsImpl.lstat(programRoot);
-    if (!existing.isDirectory() || existing.isSymbolicLink()) throw new Error("Existing Windows stable shell root is unsafe.");
-    const existingSnapshot = await snapshotNormalTree(programRoot, { fsImpl });
-    if (!sameTree(sourceSnapshot, existingSnapshot)) throw new Error("Existing Windows stable shell does not match the verified release.");
-    return Object.freeze({ synchronized: false, reused: true, shellExecutable: path.join(programRoot, "EquinoxLocal.exe") });
-  } catch (error) {
-    if (error?.code !== "ENOENT") throw error;
-  }
-
-  const parent = path.dirname(programRoot);
-  await fsImpl.mkdir(parent, { recursive: true });
-  const parentStat = await fsImpl.lstat(parent);
-  if (!parentStat.isDirectory() || parentStat.isSymbolicLink()) throw new Error("Windows stable program parent is unsafe.");
-  const temporary = path.join(parent, `.equinox-shell-install-${process.pid}-${randomBytes(8).toString("hex")}`);
-  try {
-    await fsImpl.cp(sourceRoot, temporary, { recursive: true, force: false, errorOnExist: true, dereference: false });
-    const copiedSnapshot = await snapshotNormalTree(temporary, { fsImpl });
-    if (!sameTree(sourceSnapshot, copiedSnapshot)) throw new Error("Copied Windows stable shell failed integrity verification.");
-    await fsImpl.rename(temporary, programRoot);
-  } catch (error) {
-    await fsImpl.rm(temporary, { recursive: true, force: true }).catch(() => {});
-    throw error;
-  }
-  return Object.freeze({ synchronized: true, reused: false, shellExecutable: path.join(programRoot, "EquinoxLocal.exe") });
-}
-
-export async function launchFreshWindowsShell(shellExecutable, {
-  spawnImpl = spawnChild,
-} = {}) {
-  if (typeof shellExecutable !== "string" || !path.isAbsolute(shellExecutable)) throw new Error("Windows stable shell executable path must be absolute.");
-  const child = spawnImpl(shellExecutable, [], {
-    cwd: path.dirname(shellExecutable),
-    detached: true,
-    stdio: "ignore",
-    windowsHide: false,
-  });
-  await new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error("Windows stable shell launch did not start within 5 seconds.")), 5_000);
-    timer.unref?.();
-    child.once("spawn", () => { clearTimeout(timer); resolve(); });
-    child.once("error", (error) => { clearTimeout(timer); reject(error); });
-  });
-  child.unref();
-  return Object.freeze({ launched: true, pid: Number.isInteger(child.pid) ? child.pid : null });
-}
-
 function boundedDiagnostic(value, maxChars = 1_200) {
   return String(value ?? "")
     .replace(/[\r\u0000-\u001f\u007f]+/gu, " ")
@@ -412,7 +322,7 @@ export async function installManagedEquinoxRelease({
   waitForVersionImpl = waitForEquinoxLocalVersion,
   initializeOnboardingImpl = initializeManagedOnboardingState,
   syncWindowsShellImpl = synchronizeFreshWindowsShell,
-  launchWindowsShellImpl = launchFreshWindowsShell,
+  launchWindowsShellImpl = launchWindowsStableShell,
 } = {}) {
   if (platform !== "darwin" && !(platform === "win32" && arch === "x64")) {
     throw new Error(`Equinox Local first install is not implemented for ${platform}-${arch}.`);

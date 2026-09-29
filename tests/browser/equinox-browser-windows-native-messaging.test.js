@@ -5,6 +5,7 @@ import path from "node:path";
 import test from "node:test";
 
 import {
+  assertWindowsNativeMessagingHostOwnership,
   EQUINOX_BROWSER_WINDOWS_REGISTRY_KEY,
   readWindowsNativeMessagingRegistryValue,
   registerWindowsNativeMessagingHost,
@@ -243,5 +244,32 @@ test("Windows Native Messaging unregister preserves HKCU when the canonical mani
   assert.equal(result.reason, "foreign-manifest");
   assert.equal(registry.value, manifestPath);
   assert.equal(await fs.readFile(manifestPath, "utf8"), foreign);
+  assert.equal(registry.calls.filter((call) => call.command === "reg.exe").length, 0);
+});
+
+
+test("Windows Native Messaging update ownership check is read-only and accepts only the bounded launcher set", async (t) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "equinox-win-native-host-ownership-"));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const manifestPath = path.join(root, "dev.equinox.browser.json");
+  await fs.writeFile(manifestPath, windowsNativeMessagingManifest(OLD_LAUNCHER));
+  const registry = registryMock(manifestPath);
+  const result = await assertWindowsNativeMessagingHostOwnership({
+    manifestRoot: root,
+    acceptedLauncherPaths: [OLD_LAUNCHER, LAUNCHER],
+    execFileAsync: registry.execFileAsync,
+  });
+  assert.equal(result.launcherPath, OLD_LAUNCHER);
+  assert.equal(registry.calls.filter((call) => call.command === "reg.exe").length, 0);
+
+  await fs.writeFile(manifestPath, windowsNativeMessagingManifest("C:\\Foreign\\host.exe"));
+  await assert.rejects(
+    assertWindowsNativeMessagingHostOwnership({
+      manifestRoot: root,
+      acceptedLauncherPaths: [OLD_LAUNCHER, LAUNCHER],
+      execFileAsync: registry.execFileAsync,
+    }),
+    /outside the accepted update ownership set/u,
+  );
   assert.equal(registry.calls.filter((call) => call.command === "reg.exe").length, 0);
 });

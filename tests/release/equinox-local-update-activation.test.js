@@ -12,6 +12,13 @@ import {
 } from "../../src/equinox-local-update-activation.js";
 import { writeEquinoxLocalCurrentVersionPointer } from "../../src/equinox-local-current-release.js";
 import { equinoxLocalUpdateTarget } from "../../src/equinox-local-updater.js";
+import {
+  registerWindowsNativeMessagingHost,
+  unregisterWindowsNativeMessagingHost,
+  windowsNativeMessagingLauncherPath,
+  windowsNativeMessagingManifest,
+} from "../../src/equinox-browser-windows-native-messaging.js";
+import { snapshotWindowsStableShellTree } from "../../src/equinox-local-windows-stable-shell.js";
 
 async function makeInstall() {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "equinox-activation-"));
@@ -303,4 +310,124 @@ test("Windows activation rollback restores current-version.json and the previous
   assert.equal((await readManagedCurrentRelease(installation)).version, "4.2.0");
   const pointer = JSON.parse(await fs.readFile(currentPointer, "utf8"));
   assert.deepEqual(pointer, { schemaVersion: 1, target: "win32-x64", version: "4.2.0" });
+});
+
+
+async function makeWindowsActivationFixture(t) {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "equinox-windows-full-activation-"));
+  const installRoot = path.join(root, "Equinox Local");
+  const releasesRoot = path.join(installRoot, "releases");
+  const currentPointer = path.join(installRoot, "current-version.json");
+  const programRoot = path.join(root, "Programs", "Equinox Local");
+  const nativeMessagingManifestRoot = path.join(root, "NativeMessagingHosts");
+  await fs.mkdir(releasesRoot, { recursive: true });
+  const versions = ["5.2.0", "5.3.0"];
+  for (const version of versions) {
+    const release = path.join(releasesRoot, version);
+    const nodeDir = path.join(release, "runtime", "node", "bin");
+    const tunnelDir = path.join(release, "runtime", "tunnel");
+    const browserDir = path.join(release, "runtime", "browser");
+    const shellDir = path.join(release, "runtime", "shell");
+    await Promise.all([nodeDir, tunnelDir, browserDir, shellDir].map((dir) => fs.mkdir(dir, { recursive: true })));
+    await fs.writeFile(path.join(release, "release.json"), JSON.stringify({
+      schemaVersion: 1,
+      version,
+      target: "win32-x64",
+      nodeVersion: "26.10.0",
+      tunnelClientVersion: "0.0.15",
+      serverEntry: "server.js",
+    }));
+    await fs.writeFile(path.join(nodeDir, "node.exe"), "fixture\n");
+    await fs.writeFile(path.join(tunnelDir, "tunnel-client.exe"), "fixture\n");
+    await fs.writeFile(path.join(tunnelDir, "cloudflared.exe"), "fixture\n");
+    await fs.writeFile(path.join(browserDir, "equinox-browser-native-host.exe"), `launcher-${version}\n`);
+    await fs.writeFile(path.join(shellDir, "EquinoxLocal.exe"), `shell-${version}\n`);
+    await fs.writeFile(path.join(shellDir, "coreclr.dll"), `core-${version}\n`);
+  }
+  await fs.mkdir(path.dirname(programRoot), { recursive: true });
+  await fs.cp(path.join(releasesRoot, "5.2.0", "runtime", "shell"), programRoot, { recursive: true });
+  await writeEquinoxLocalCurrentVersionPointer(currentPointer, { version: "5.2.0", platform: "win32", target: "win32-x64" });
+  const previousLauncher = windowsNativeMessagingLauncherPath(path.join(releasesRoot, "5.2.0"));
+  const targetLauncher = windowsNativeMessagingLauncherPath(path.join(releasesRoot, "5.3.0"));
+  const registration = await registerWindowsNativeMessagingHost({ manifestRoot: nativeMessagingManifestRoot, launcherPath: previousLauncher });
+  t.after(async () => {
+    for (const launcherPath of [previousLauncher, targetLauncher]) {
+      await unregisterWindowsNativeMessagingHost({ manifestPath: registration.manifestPath, launcherPath }).catch(() => {});
+    }
+    await fs.rm(root, { recursive: true, force: true });
+  });
+  return {
+    root,
+    previousLauncher,
+    targetLauncher,
+    manifestPath: registration.manifestPath,
+    installation: {
+      kind: "managed",
+      managed: true,
+      selfUpdateSupported: true,
+      platform: "win32",
+      arch: "x64",
+      target: "win32-x64",
+      lifecycleKind: "windows-user",
+      installRoot,
+      releasesRoot,
+      currentLink: null,
+      currentPointer,
+      programRoot,
+      nativeMessagingManifestRoot,
+    },
+  };
+}
+
+async function assertWindowsActivationState(fixture, version, launcherPath) {
+  assert.equal((await readManagedCurrentRelease(fixture.installation)).version, version);
+  assert.deepEqual(
+    await snapshotWindowsStableShellTree(fixture.installation.programRoot),
+    await snapshotWindowsStableShellTree(path.join(fixture.installation.releasesRoot, version, "runtime", "shell")),
+  );
+  assert.equal(await fs.readFile(fixture.manifestPath, "utf8"), windowsNativeMessagingManifest(launcherPath));
+}
+
+test("Windows managed activation rotates pointer stable shell and Native Messaging together", { skip: process.platform !== "win32" }, async (t) => {
+  const fixture = await makeWindowsActivationFixture(t);
+  const restarts = [];
+  const result = await activatePreparedEquinoxRelease({
+    installation: fixture.installation,
+    targetVersion: "5.3.0",
+    kickstartImpl: async (version) => { restarts.push(version); },
+    fetchImpl: async () => new Response(JSON.stringify({ status: { server: { version: "5.3.0" }, health: { state: "HEALTHY" } } }), { status: 200 }),
+    sleepImpl: async () => {},
+    healthAttempts: 1,
+  });
+  assert.equal(result.status, "activated");
+  assert.deepEqual(restarts, ["5.3.0"]);
+  await assertWindowsActivationState(fixture, "5.3.0", fixture.targetLauncher);
+});
+
+test("Windows managed activation forced health failure restores pointer stable shell and Native Messaging", { skip: process.platform !== "win32" }, async (t) => {
+  const fixture = await makeWindowsActivationFixture(t);
+  const restarts = [];
+  let targetAttempts = 0;
+  const fetchImpl = async () => {
+    const version = (await readManagedCurrentRelease(fixture.installation)).version;
+    if (version === "5.3.0") {
+      targetAttempts += 1;
+      throw new Error("forced candidate health failure");
+    }
+    return new Response(JSON.stringify({ status: { server: { version }, health: { state: "HEALTHY" } } }), { status: 200 });
+  };
+  await assert.rejects(
+    activatePreparedEquinoxRelease({
+      installation: fixture.installation,
+      targetVersion: "5.3.0",
+      kickstartImpl: async (version) => { restarts.push(version); },
+      fetchImpl,
+      sleepImpl: async () => {},
+      healthAttempts: 2,
+    }),
+    /rolled back to 5\.2\.0/u,
+  );
+  assert.equal(targetAttempts, 2);
+  assert.deepEqual(restarts, ["5.3.0", "5.2.0"]);
+  await assertWindowsActivationState(fixture, "5.2.0", fixture.previousLauncher);
 });

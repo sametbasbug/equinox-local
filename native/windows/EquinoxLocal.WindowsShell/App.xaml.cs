@@ -42,6 +42,8 @@ public partial class App : System.Windows.Application
             Dispatcher.BeginInvoke(new Action(_window.ActivateFromReopen));
         _singleInstance.RuntimeRestartRequested += (_, _) =>
             Dispatcher.BeginInvoke(new Action(() => _ = RestartRuntimeAsync()));
+        _singleInstance.UpdateShutdownRequested += (_, _) =>
+            Dispatcher.BeginInvoke(new Action(() => _ = ExitApplicationAsync()));
         _singleInstance.StartListening();
 
         _startupRegistration = new StartupRegistration();

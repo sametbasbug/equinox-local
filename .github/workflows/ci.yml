@@ -66,7 +66,8 @@ jobs:
           node --test --test-name-pattern "Windows x64 first-install release validation accepts native runtime names without Peekaboo|Windows x64 fresh first install promotes current-version and stable shell without admin" tests/release/equinox-local-first-install.test.js
           node --test --test-name-pattern "Windows x64 managed user bootstrap uses state config and Windows Native Messaging without Darwin lifecycle" tests/release/equinox-local-bootstrap.test.js
           node --test tests/release/equinox-local-current-release.test.js
-          node --test --test-name-pattern "Windows activation rollback restores current-version.json and the previous exact release" tests/release/equinox-local-update-activation.test.js
+          node --test tests/release/equinox-local-windows-stable-shell.test.js
+          node --test --test-name-pattern "Windows activation rollback restores current-version.json and the previous exact release|Windows managed activation rotates pointer stable shell and Native Messaging together|Windows managed activation forced health failure restores pointer stable shell and Native Messaging" tests/release/equinox-local-update-activation.test.js
 
       - name: Windows PowerShell 5.1 bootstrap acceptance
         shell: pwsh
