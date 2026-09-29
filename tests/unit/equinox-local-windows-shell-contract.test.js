@@ -235,6 +235,8 @@ test("public Windows CI restores and builds the native x64 shell", async () => {
   assert.match(runtimeHarness, /WindowsManagedReleaseLocator\.cs/u);
   assert.match(ci, /-p:Platform=x64/u);
   assert.match(ci, /EquinoxLocal\.WindowsShell\.RuntimeHarness/u);
+  assert.match(ci, /Windows native shell update handoff smoke/u);
+  assert.match(ci, /EquinoxLocal\.WindowsShell\.UpdateHandoffHarness/u);
   assert.match(ci, /EQUINOX_TEST_NODE_EXE/u);
   assert.match(ci, /EquinoxLocal\.WindowsShell\.StartupHarness/u);
   assert.match(ci, /EquinoxLocal\.WindowsShell\.FolderPickerHarness/u);

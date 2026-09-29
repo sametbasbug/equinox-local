@@ -146,6 +146,12 @@ jobs:
           $env:EQUINOX_TEST_NODE_EXE = (Get-Command node).Source
           dotnet run --project tests/windows/EquinoxLocal.WindowsShell.RuntimeHarness/EquinoxLocal.WindowsShell.RuntimeHarness.csproj --configuration Release
 
+      - name: Windows native shell update handoff smoke
+        shell: pwsh
+        run: |
+          $env:EQUINOX_TEST_NODE_EXE = (Get-Command node).Source
+          dotnet run --project tests/windows/EquinoxLocal.WindowsShell.UpdateHandoffHarness/EquinoxLocal.WindowsShell.UpdateHandoffHarness.csproj --configuration Release
+
       - name: Windows native shell startup registration smoke
         run: dotnet run --project tests/windows/EquinoxLocal.WindowsShell.StartupHarness/EquinoxLocal.WindowsShell.StartupHarness.csproj --configuration Release
 
