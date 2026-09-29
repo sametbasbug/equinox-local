@@ -195,6 +195,7 @@ test("Windows Native Messaging registry read uses locale-independent JSON and pr
   const value = await readWindowsNativeMessagingRegistryValue({
     execFileAsync: async (_command, _args, options) => {
       assert.equal(options.env.EQUINOX_BROWSER_NATIVE_HOST_REGISTRY_KEY, EQUINOX_BROWSER_WINDOWS_REGISTRY_KEY);
+      assert.equal(options.timeout, 15_000);
       return { stdout: '"C:\\\\Users\\\\Çağrı\\\\Equinox Local\\\\dev.equinox.browser.json"\n', stderr: "" };
     },
   });

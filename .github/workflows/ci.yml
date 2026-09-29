@@ -60,6 +60,8 @@ jobs:
       - name: Windows managed release contract and activation rollback tests
         shell: pwsh
         run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
           node --test tests/release/equinox-local-release-runtime-contract.test.js
           node --test --test-name-pattern "Windows x64 first-install release validation accepts native runtime names without Peekaboo|Windows x64 fresh first install promotes current-version and stable shell without admin" tests/release/equinox-local-first-install.test.js
           node --test --test-name-pattern "Windows x64 managed user bootstrap uses state config and Windows Native Messaging without Darwin lifecycle" tests/release/equinox-local-bootstrap.test.js

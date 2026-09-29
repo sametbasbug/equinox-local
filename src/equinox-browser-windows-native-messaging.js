@@ -91,7 +91,7 @@ export async function readWindowsNativeMessagingRegistryValue({
   const { stdout } = await execFileAsync("powershell.exe", [
     "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", READ_REGISTRY_SCRIPT,
   ], {
-    timeout: 5_000,
+    timeout: 15_000,
     maxBuffer: 64 * 1024,
     windowsHide: true,
     env: { ...env, [REGISTRY_ENV_KEY]: EQUINOX_BROWSER_WINDOWS_REGISTRY_KEY },
