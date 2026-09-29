@@ -161,8 +161,8 @@ import {
 import {
   registerRestartRuntimeTool,
   scheduleEquinoxLocalRestart,
+  scheduleSourceCheckoutRestart,
 } from "./equinox-local-restart.js";
-import { launchDetachedHelper } from "./equinox-local-detached-helper.js";
 import {
   createMutationPathLockManager,
   resolveGitCommonDirectory,
@@ -2703,34 +2703,8 @@ async function restartLocalRuntime() {
         return { ...result, installationKind: "managed" };
       }
 
-      const { spawn } = await import("node:child_process");
-      const { fileURLToPath } = await import("node:url");
-      const moduleDir = path.dirname(fileURLToPath(import.meta.url));
-      const sourceRoot = path.basename(moduleDir) === "src" ? path.dirname(moduleDir) : moduleDir;
-      const scriptPath = path.join(sourceRoot, "scripts", "restart-runtime.sh");
-      const scriptStats = await fs.lstat(scriptPath);
-      if (scriptStats.isSymbolicLink() || !scriptStats.isFile()) {
-        throw new Error("Source runtime restart script is not a normal file.");
-      }
-      const sourceRestartEnv = {
-        HOME: runtimeHomeDir,
-        USER: process.env.USER,
-        LOGNAME: process.env.LOGNAME,
-        TMPDIR: process.env.TMPDIR,
-        PATH: "/usr/bin:/bin:/usr/sbin:/sbin",
-        EQUINOX_LOCAL_DEV_NODE: process.execPath,
-        EQUINOX_LOCAL_DEV_RUNTIME_CONFIG: process.env.EQUINOX_LOCAL_DEV_RUNTIME_CONFIG,
-      };
-      await launchDetachedHelper({
-        spawnImpl: spawn,
-        command: "/bin/bash",
-        args: [scriptPath],
-        options: {
-          detached: true,
-          stdio: "ignore",
-          env: Object.fromEntries(Object.entries(sourceRestartEnv).filter(([, value]) => typeof value === "string" && value.length > 0)),
-        },
-        label: "Equinox Local source restart helper",
+      await scheduleSourceCheckoutRestart({
+        moduleUrl: import.meta.url,
       });
       runtimeRestartPendingUntil = Date.now() + RUNTIME_RESTART_GUARD_MS;
       return { scheduled: true, installationKind: "source" };
