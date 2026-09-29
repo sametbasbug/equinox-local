@@ -34,8 +34,16 @@ function createHarness(overrides = {}) {
       return { sessionId: input.sessionId, running: false };
     },
   };
+  let processSequence = 0;
+  let processStarted = false;
   const processState = {
     processId: "proc-exec-1",
+    projectId: "local",
+    projectName: "Equinox Local",
+    cwd: "/tmp/project",
+    command: "/bin/zsh",
+    args: [],
+    purpose: "terminal_exec",
     running: true,
     exitCode: null,
     signal: null,
@@ -44,9 +52,26 @@ function createHarness(overrides = {}) {
   const processManager = {
     start(input) {
       calls.push(["processStart", input]);
-      processState.running = true;
-      processState.exitCode = null;
-      return { ...processState };
+      processSequence += 1;
+      processStarted = true;
+      Object.assign(processState, {
+        processId: `proc-exec-${processSequence}`,
+        projectId: input.projectId,
+        projectName: input.projectName,
+        cwd: input.cwd,
+        command: input.command,
+        args: [...input.args],
+        purpose: input.purpose,
+        running: true,
+        exitCode: null,
+        signal: null,
+        spawnError: null,
+      });
+      return { ...processState, args: [...processState.args] };
+    },
+    list() {
+      calls.push(["processList"]);
+      return processStarted ? [{ ...processState, args: [...processState.args] }] : [];
     },
     async waitForExit(input) {
       calls.push(["processWait", input]);
@@ -72,6 +97,8 @@ function createHarness(overrides = {}) {
     },
     async stop(input) {
       calls.push(["processStop", input]);
+      processState.running = false;
+      if (input.remove) processStarted = false;
       return { ...processState, running: false };
     },
   };
@@ -244,6 +271,69 @@ test("terminal_exec promotes an unfinished command without killing or restarting
   assert.equal(harness.calls.filter(([name]) => name === "processStart").length, 1);
   assert.equal(harness.calls.some(([name]) => name === "processStop"), false);
   assert.equal(harness.events.at(-1).type, "terminal.exec_promoted");
+});
+
+
+test("terminal_exec reuses one promoted exact managed process across a replayed delivery", async () => {
+  let currentTime = 1_000;
+  const harness = createHarness({ now: () => currentTime });
+  harness.processManager.waitForExit = async (input) => {
+    harness.calls.push(["processWait", input]);
+    return { ...harness.processState, running: true };
+  };
+  const exec = harness.registrations.get("terminal_exec");
+  const input = { command: "npm run gate:public", cwd: ".", wait_ms: 120_000, max_output_chars: 5000 };
+
+  const first = parseText(await exec.handler(input));
+  assert.equal(first.promoted, true);
+  assert.equal(first.processId, "proc-exec-1");
+
+  currentTime += 2_000;
+  const replay = parseText(await exec.handler(input));
+  assert.equal(replay.promoted, true);
+  assert.equal(replay.replayRecovered, true);
+  assert.equal(replay.processId, "proc-exec-1");
+  assert.equal(harness.calls.filter(([name]) => name === "processStart").length, 1);
+  assert.equal(harness.calls.filter(([name]) => name === "processWait").length, 1);
+});
+
+
+test("terminal_exec replay lease expires even while an identical managed process is still running", async () => {
+  let currentTime = 1_000;
+  const harness = createHarness({ now: () => currentTime });
+  harness.processManager.waitForExit = async (input) => {
+    harness.calls.push(["processWait", input]);
+    return { ...harness.processState, running: true };
+  };
+  const exec = harness.registrations.get("terminal_exec");
+  const input = { command: "npm run gate:public", cwd: ".", wait_ms: 120_000, max_output_chars: 5000 };
+
+  assert.equal(parseText(await exec.handler(input)).processId, "proc-exec-1");
+  currentTime += 5 * 60 * 1000 + 1;
+  assert.equal(parseText(await exec.handler(input)).processId, "proc-exec-2");
+  assert.equal(harness.calls.filter(([name]) => name === "processStart").length, 2);
+});
+
+test("terminal_exec starts a fresh identical command after the promoted process has exited", async () => {
+  let currentTime = 1_000;
+  const harness = createHarness({ now: () => currentTime });
+  harness.processManager.waitForExit = async (input) => {
+    harness.calls.push(["processWait", input]);
+    return { ...harness.processState, running: true };
+  };
+  const exec = harness.registrations.get("terminal_exec");
+  const input = { command: "npm run gate:public", cwd: ".", wait_ms: 120_000, max_output_chars: 5000 };
+
+  const first = parseText(await exec.handler(input));
+  assert.equal(first.processId, "proc-exec-1");
+  harness.processState.running = false;
+  harness.processState.exitCode = 0;
+  currentTime += 2_000;
+
+  const second = parseText(await exec.handler(input));
+  assert.equal(second.processId, "proc-exec-2");
+  assert.equal(second.replayRecovered, undefined);
+  assert.equal(harness.calls.filter(([name]) => name === "processStart").length, 2);
 });
 
 test("terminal read/write/resize/stop adapters preserve argument mapping and global mutation scopes", async () => {

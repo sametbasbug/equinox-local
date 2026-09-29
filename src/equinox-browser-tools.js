@@ -146,7 +146,7 @@ function augmentSnapshotWithPdfText(snapshot, parsed, maxNodes = 250) {
     ...snapshot,
     pdfContent: {
       version: 1,
-      parser: String(parsed?.parser || "macos-pdfkit"),
+      parser: String(parsed?.parser || "pdfjs-dist"),
       pageCount: Number(parsed?.pageCount) || 0,
       parsedPages: processedPages.length,
       returnedPages: returnedPageNumbers.size,

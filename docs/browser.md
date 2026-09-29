@@ -59,7 +59,7 @@ The extension can show a visible agent cursor and a local display name while an 
 
 ## Development
 
-Browser-focused tests live under [`tests/browser/`](../tests/browser/). They cover lifecycle/reconnect behavior, consent, popup settings, Auto Continue automatic/pinned target resolution and duplicate-delivery guards, tab relationships, frame routing, restricted pages, dialogs, downloads and interaction primitives.
+Browser-focused tests live under [`tests/browser/`](../tests/browser/). They cover lifecycle/reconnect behavior, consent, popup settings, Auto Continue automatic/pinned target resolution and duplicate-delivery guards, tab relationships, frame routing, restricted pages, dialogs, downloads and interaction primitives. Readable Chrome PDF snapshots use the same bounded `pdfjs-dist` text extractor on macOS and Windows; raw PDF bytes are not exposed in tool results.
 
 Package the extension source with:
 
