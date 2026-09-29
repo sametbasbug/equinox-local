@@ -43,9 +43,22 @@ fs.writeFileSync(marker, JSON.stringify({ count: count + 1, release: process.arg
 process.stdout.write(JSON.stringify({ ok: true, count: count + 1 }));
 '@
   [IO.File]::WriteAllText((Join-Path $Release 'equinox-local-first-install.js'), $Stub, (New-Object Text.UTF8Encoding($false)))
+  Add-Type -AssemblyName System.IO.Compression
   Add-Type -AssemblyName System.IO.Compression.FileSystem
   $Artifact = Join-Path $Work 'equinox-local-9.8.7-win32-x64.zip'
-  [IO.Compression.ZipFile]::CreateFromDirectory($ArchiveRoot, $Artifact, [IO.Compression.CompressionLevel]::Optimal, $false)
+  $zipStream = New-Object IO.FileStream($Artifact, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
+  $zip = New-Object IO.Compression.ZipArchive($zipStream, [IO.Compression.ZipArchiveMode]::Create, $false)
+  try {
+    foreach ($spec in @(
+      @('release/runtime/node/bin/node.exe', (Join-Path $NodeDir 'node.exe')),
+      @('release/equinox-local-first-install.js', (Join-Path $Release 'equinox-local-first-install.js'))
+    )) {
+      $entry = $zip.CreateEntry($spec[0], [IO.Compression.CompressionLevel]::Optimal)
+      $entryStream = $entry.Open()
+      $inputStream = [IO.File]::OpenRead($spec[1])
+      try { $inputStream.CopyTo($entryStream) } finally { $inputStream.Dispose(); $entryStream.Dispose() }
+    }
+  } finally { $zip.Dispose(); $zipStream.Dispose() }
   $artifactBytes = (Get-Item -LiteralPath $Artifact).Length
   $artifactSha = (Get-FileHash -LiteralPath $Artifact -Algorithm SHA256).Hash.ToLowerInvariant()
   $Manifest = Join-Path $Work 'bootstrap-win32-x64.txt'

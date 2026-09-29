@@ -216,10 +216,12 @@ export async function writeSignedUpdateBundle({
 
   const sourceStat = await fs.lstat(artifactPath);
   if (!sourceStat.isFile() || sourceStat.isSymbolicLink()) throw new Error("Update artifact changed before bundle write.");
-  const installerStat = await fs.lstat(installerSourcePath);
-  if (!installerStat.isFile() || installerStat.isSymbolicLink() || installerStat.size < 1 || installerStat.size > 64 * 1024) {
-    throw new Error("Tracked Equinox Local public installer is missing or unsafe.");
-  }
+  const installerSource = await readBoundedNormalFile(installerSourcePath, {
+    minBytes: 1,
+    maxBytes: 64 * 1024,
+    encoding: "utf8",
+    label: "Tracked Equinox Local public installer",
+  });
   await fs.copyFile(artifactPath, destinationArtifact);
   const copied = await sha256File(destinationArtifact);
   if (copied.bytes !== result.bytes || copied.sha256 !== result.sha256) {
@@ -227,23 +229,26 @@ export async function writeSignedUpdateBundle({
     throw new Error("Copied update artifact failed final SHA-256 verification.");
   }
   if (windows) {
-    const helperStat = await fs.lstat(zipHelperSourcePath);
-    if (!helperStat.isFile() || helperStat.isSymbolicLink() || helperStat.size < 1 || helperStat.size > 1024 * 1024) {
-      throw new Error("Tracked Windows ZIP helper is missing or unsafe.");
-    }
-    await fs.copyFile(zipHelperSourcePath, zipHelperPath);
-    const helperDigest = await sha256File(zipHelperPath);
-    let installerTemplate = await fs.readFile(installerSourcePath, "utf8");
+    const zipHelperSource = await readBoundedNormalFile(zipHelperSourcePath, {
+      minBytes: 1,
+      maxBytes: 1024 * 1024,
+      label: "Tracked Windows ZIP helper",
+    });
+    await fs.writeFile(zipHelperPath, zipHelperSource.data, { flag: "wx", mode: 0o644 });
+    const helperDigest = Object.freeze({
+      bytes: zipHelperSource.data.byteLength,
+      sha256: createHash("sha256").update(zipHelperSource.data).digest("hex"),
+    });
+    let installerTemplate = installerSource.data;
     if (!installerTemplate.includes(WINDOWS_INSTALLER_TEMPLATE_SHA) || !installerTemplate.includes(WINDOWS_INSTALLER_TEMPLATE_BYTES)) {
       throw new Error("Windows installer template is missing ZIP helper pin placeholders.");
     }
     installerTemplate = installerTemplate
       .replaceAll(WINDOWS_INSTALLER_TEMPLATE_SHA, helperDigest.sha256)
       .replaceAll(WINDOWS_INSTALLER_TEMPLATE_BYTES, String(helperDigest.bytes));
-    await fs.writeFile(installerPath, installerTemplate, { mode: 0o644 });
+    await fs.writeFile(installerPath, installerTemplate, { flag: "wx", mode: 0o644 });
   } else {
-    await fs.copyFile(installerSourcePath, installerPath);
-    await fs.chmod(installerPath, 0o644);
+    await fs.writeFile(installerPath, installerSource.data, { flag: "wx", mode: 0o644 });
   }
   const installerDigest = await sha256File(installerPath);
   try {
