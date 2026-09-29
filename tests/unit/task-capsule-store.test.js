@@ -111,14 +111,14 @@ test("Telegram human-input attachments expose bounded metadata but keep private 
 });
 
 
-test("Auto Continue hop validation allows eight and rejects a ninth automatic hop", async (t) => {
+test("Auto Continue persisted hop validation supports the configurable upper bound", async (t) => {
   const { store } = await fixture(t);
   const task = await store.checkpoint(base);
-  const armed = await store.armContinuation({ taskId: task.taskId, chainId: "chain-eight-hop", hop: 8 });
-  assert.equal(armed.continuation.hop, 8);
+  const armed = await store.armContinuation({ taskId: task.taskId, chainId: "chain-configurable-hop", hop: 20 });
+  assert.equal(armed.continuation.hop, 20);
   await assert.rejects(
-    () => store.armContinuation({ taskId: task.taskId, chainId: "chain-eight-hop", hop: 9 }),
-    /between 1 and 8/u,
+    () => store.armContinuation({ taskId: task.taskId, chainId: "chain-configurable-hop", hop: 21 }),
+    /between 1 and 20/u,
   );
 });
 

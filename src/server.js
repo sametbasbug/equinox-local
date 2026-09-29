@@ -2611,6 +2611,7 @@ const autoContinueController = createAutoContinueController({
   browserBridge: equinoxBrowserBridge,
   agentControl,
   onEvent: recordRuntimeEvent,
+  getMaxChainHops: () => turnBudgetController.snapshot().autoContinueMaxHops,
 });
 const freshChatResumeController = createFreshChatResumeController({
   store: taskCapsuleStore,

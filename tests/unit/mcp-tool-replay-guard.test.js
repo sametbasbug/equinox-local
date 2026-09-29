@@ -126,6 +126,78 @@ test("an in-flight invocation still deduplicates when request id is redelivered 
   assert.equal(calls, 1);
 });
 
+test("same in-flight semantic call with a new request id reuses the original invocation", async () => {
+  let currentTime = 1_000;
+  const replays = [];
+  const guard = createMcpToolReplayGuard({
+    now: () => currentTime,
+    onReplay: (event) => replays.push(event),
+  });
+  let calls = 0;
+  let release;
+  const pending = new Promise((resolve) => { release = resolve; });
+  const input = { operation: "terminal_exec", arguments: { project: "/tmp/repo", command: "npm run gate:full" } };
+
+  const first = guard.run({
+    toolName: "runtime_call",
+    input,
+    extra: extra("req-original", { sessionId: "session-old" }),
+    invoke: async () => {
+      calls += 1;
+      await pending;
+      return { processId: "proc-original", exitCode: 0 };
+    },
+  });
+  await Promise.resolve();
+  assert.equal(calls, 1);
+
+  currentTime += 2 * 60 * 1000;
+  const replay = guard.run({
+    toolName: "runtime_call",
+    input,
+    extra: extra("req-replayed", { sessionId: "session-new" }),
+    invoke: async () => {
+      calls += 1;
+      return { processId: "proc-duplicate", exitCode: 0 };
+    },
+  });
+  await Promise.resolve();
+  assert.equal(calls, 1, "transport replay must not spawn a second semantic terminal invocation");
+
+  release();
+  assert.deepEqual(await first, { processId: "proc-original", exitCode: 0 });
+  assert.deepEqual(await replay, { processId: "proc-original", exitCode: 0 });
+  assert.equal(calls, 1);
+  assert.equal(replays.at(-1).mode, "inflight_semantic");
+});
+
+test("in-flight semantic dedup expires so a stale invocation cannot suppress a later call forever", async () => {
+  let currentTime = 1_000;
+  const guard = createMcpToolReplayGuard({ now: () => currentTime, inFlightReplayWindowMs: 1_000 });
+  let calls = 0;
+  let release;
+  const pending = new Promise((resolve) => { release = resolve; });
+  const input = { operation: "terminal_exec", arguments: { command: "long task" } };
+  const first = guard.run({
+    toolName: "runtime_call",
+    input,
+    extra: extra("req-old"),
+    invoke: async () => { calls += 1; await pending; return "old"; },
+  });
+  await Promise.resolve();
+  currentTime += 1_001;
+  const second = guard.run({
+    toolName: "runtime_call",
+    input,
+    extra: extra("req-new"),
+    invoke: async () => { calls += 1; return "new"; },
+  });
+  assert.equal(await second, "new");
+  assert.equal(calls, 2);
+  release();
+  assert.equal(await first, "old");
+});
+
 test("a new intentional identical request executes again when the prior transport was not aborted", async () => {
   const guard = createMcpToolReplayGuard();
   let calls = 0;
