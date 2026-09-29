@@ -76,9 +76,15 @@ process.stdout.write(JSON.stringify({ ok: true, count: count + 1 }));
   $OriginalLocalAppData = $env:LOCALAPPDATA
   $OriginalArch = $env:PROCESSOR_ARCHITECTURE
   $OriginalOpenAi = $env:OPENAI_API_KEY
+  $OriginalTemp = $env:TEMP
+  $OriginalTmp = $env:TMP
   $LocalState = Join-Path $Work 'Türk User\Local App Data'
+  $BootstrapTemp = Join-Path $Work 'Bootstrap Temp Türk User'
   [IO.Directory]::CreateDirectory($LocalState) | Out-Null
+  [IO.Directory]::CreateDirectory($BootstrapTemp) | Out-Null
   $env:LOCALAPPDATA = $LocalState
+  $env:TEMP = $BootstrapTemp
+  $env:TMP = $BootstrapTemp
   $env:PROCESSOR_ARCHITECTURE = 'AMD64'
   $env:OPENAI_API_KEY = 'must-not-leak'
 
@@ -91,10 +97,11 @@ process.stdout.write(JSON.stringify({ ok: true, count: count + 1 }));
 
   Invoke-EquinoxLocalInstall | Out-Null
   Invoke-EquinoxLocalInstall | Out-Null
-  $marker = Get-Content -LiteralPath (Join-Path $LocalState 'bootstrap-smoke.json') -Raw | ConvertFrom-Json
+  $markerPath = Join-Path $LocalState 'bootstrap-smoke.json'
+  $marker = [IO.File]::ReadAllText($markerPath, (New-Object Text.UTF8Encoding($false, $true))) | ConvertFrom-Json
   Assert-True ($marker.count -eq 2) 'Windows bootstrap retry did not reach the bundled first-install helper twice.'
   Assert-True (-not $marker.leaked) 'Windows bootstrap leaked provider credentials into bundled Node.'
-  Assert-True ($marker.release -match 'Equinox Bootstrap Türk User') 'Windows bootstrap lost the spaced/non-ASCII staging path.'
+  Assert-True ($marker.release -match 'Bootstrap Temp Türk User') 'Windows bootstrap lost the spaced/non-ASCII staging path.'
 
   $corrupt = $manifestText.Replace("artifactSha256=$artifactSha", ('artifactSha256=' + ('0' * 64)))
   [IO.File]::WriteAllText($Manifest, $corrupt, (New-Object Text.UTF8Encoding($false)))
@@ -105,6 +112,8 @@ process.stdout.write(JSON.stringify({ ok: true, count: count + 1 }));
   if (Get-Variable OriginalLocalAppData -ErrorAction SilentlyContinue) { $env:LOCALAPPDATA = $OriginalLocalAppData }
   if (Get-Variable OriginalArch -ErrorAction SilentlyContinue) { $env:PROCESSOR_ARCHITECTURE = $OriginalArch }
   if (Get-Variable OriginalOpenAi -ErrorAction SilentlyContinue) { $env:OPENAI_API_KEY = $OriginalOpenAi }
+  if (Get-Variable OriginalTemp -ErrorAction SilentlyContinue) { $env:TEMP = $OriginalTemp }
+  if (Get-Variable OriginalTmp -ErrorAction SilentlyContinue) { $env:TMP = $OriginalTmp }
   Remove-Item Function:\Save-BoundedHttpsFile -ErrorAction SilentlyContinue
   Remove-Item -LiteralPath $Work -Recurse -Force -ErrorAction SilentlyContinue
 }
