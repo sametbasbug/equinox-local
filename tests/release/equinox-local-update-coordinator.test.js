@@ -91,6 +91,36 @@ test("detached activation helper waits for spawn and receives only a minimal cre
   assert.equal("GITHUB_TOKEN" in options.env, false);
 });
 
+
+
+test("Windows activation scheduling hands ownership to the shell instead of spawning inside the runtime Job Object", async () => {
+  const installRoot = String.raw`C:\Users\Samet\AppData\Local\Equinox Local`;
+  const installation = {
+    kind: "managed",
+    managed: true,
+    selfUpdateSupported: true,
+    platform: "win32",
+    arch: "x64",
+    installRoot,
+    releasesRoot: `${installRoot}\\releases`,
+    stagingRoot: `${installRoot}\\staging`,
+    currentPointer: `${installRoot}\\current-version.json`,
+    releaseDir: `${installRoot}\\releases\\5.2.1`,
+  };
+  const handoffs = [];
+  const result = await scheduleEquinoxLocalActivation({
+    installation,
+    version: "5.3.0",
+    spawnImpl: () => { throw new Error("Windows runtime must not spawn the update helper directly"); },
+    requestWindowsActivationImpl: async (version, options) => {
+      handoffs.push({ version, options });
+      return { requested: true, version };
+    },
+  });
+  assert.deepEqual(result, { scheduled: true, version: "5.3.0", handoff: "windows-shell" });
+  assert.deepEqual(handoffs, [{ version: "5.3.0", options: { platform: "win32" } }]);
+});
+
 test("activation scheduler rejects an asynchronous helper spawn failure", async () => {
   await assert.rejects(
     scheduleEquinoxLocalActivation({

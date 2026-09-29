@@ -47,11 +47,28 @@ internal static partial class WindowsManagedReleaseLocator
         if (version is null || !VersionPattern().IsMatch(version))
             throw new InvalidDataException("Managed current-version pointer contains an invalid version.");
 
+        return ResolveRelease(version, installRoot, releasesRoot);
+    }
+
+    internal static WindowsReleaseLocation ResolveRelease(string version)
+    {
+        var localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+        if (string.IsNullOrWhiteSpace(localAppData))
+            throw new InvalidDataException("LocalAppData is unavailable for the managed Equinox Local installation.");
+        var installRoot = Path.GetFullPath(Path.Combine(localAppData, "Equinox Local"));
+        var releasesRoot = Path.GetFullPath(Path.Combine(installRoot, "releases"));
+        return ResolveRelease(version, installRoot, releasesRoot);
+    }
+
+    private static WindowsReleaseLocation ResolveRelease(string version, string installRoot, string releasesRoot)
+    {
+        if (!VersionPattern().IsMatch(version))
+            throw new InvalidDataException("Managed Windows release version is invalid.");
         var releaseDir = Path.GetFullPath(Path.Combine(releasesRoot, version));
         if (!string.Equals(Path.GetDirectoryName(releaseDir), releasesRoot, StringComparison.OrdinalIgnoreCase))
-            throw new InvalidDataException("Managed current-version pointer escaped the releases root.");
+            throw new InvalidDataException("Managed release escaped the releases root.");
         RejectReparsePoint(releaseDir, "release directory");
-        if (!Directory.Exists(releaseDir)) throw new InvalidDataException("Managed current release directory is missing.");
+        if (!Directory.Exists(releaseDir)) throw new InvalidDataException("Managed release directory is missing.");
 
         var releaseMetadataPath = Path.Combine(releaseDir, "release.json");
         RejectReparsePoint(releaseMetadataPath, "release metadata");
@@ -65,7 +82,7 @@ internal static partial class WindowsManagedReleaseLocator
             || !string.Equals(metadata.GetProperty("version").GetString(), version, StringComparison.Ordinal)
             || !string.Equals(metadata.GetProperty("target").GetString(), Target, StringComparison.Ordinal)
             || !string.Equals(metadata.GetProperty("serverEntry").GetString(), "server.js", StringComparison.Ordinal))
-            throw new InvalidDataException("Managed release metadata does not match the active Windows release.");
+            throw new InvalidDataException("Managed release metadata does not match the requested Windows release.");
 
         return new WindowsReleaseLocation(releaseDir, installRoot);
     }

@@ -60,7 +60,7 @@ internal sealed class SingleInstanceCoordinator : IDisposable
             {
                 await using var server = new NamedPipeServerStream(
                     PipeName,
-                    PipeDirection.In,
+                    PipeDirection.InOut,
                     1,
                     PipeTransmissionMode.Byte,
                     PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly);
@@ -74,6 +74,22 @@ internal sealed class SingleInstanceCoordinator : IDisposable
                 else if (string.Equals(command, "restart-runtime", StringComparison.Ordinal))
                 {
                     RuntimeRestartRequested?.Invoke(this, EventArgs.Empty);
+                }
+                else if (command is not null && command.StartsWith("activate-release:", StringComparison.Ordinal))
+                {
+                    var version = command["activate-release:".Length..];
+                    await using var writer = new StreamWriter(server, new UTF8Encoding(false), leaveOpen: true) { AutoFlush = true };
+                    try
+                    {
+                        ManagedUpdateHandoff.Launch(version);
+                        await writer.WriteLineAsync("ok").ConfigureAwait(false);
+                    }
+                    catch (Exception error)
+                    {
+                        var message = error.Message.Replace('\r', ' ').Replace('\n', ' ');
+                        if (message.Length > 200) message = message[..200];
+                        await writer.WriteLineAsync($"error:{message}").ConfigureAwait(false);
+                    }
                 }
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
