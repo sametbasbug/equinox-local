@@ -5,6 +5,7 @@ import test from "node:test";
 import {
   EQUINOX_LOCAL_WINDOWS_SHELL_PIPE,
   requestWindowsShellManagedActivation,
+  requestWindowsShellManagedUninstall,
   requestWindowsShellRuntimeRestart,
   requestWindowsShellUpdateShutdown,
 } from "../../src/equinox-local-windows-shell-control.js";
@@ -115,4 +116,20 @@ test("Windows managed activation handoff rejects shell refusal and malformed ver
     requestWindowsShellManagedActivation("5.3", { platform: "win32" }),
     /exact semantic version/u,
   );
+});
+
+test("Windows managed uninstall handoff is acknowledged with an exact data policy", async () => {
+  let written = null;
+  const socket = new EventEmitter();
+  socket.destroy = () => {};
+  socket.setEncoding = () => {};
+  socket.write = (value) => { written = value; queueMicrotask(() => socket.emit("data", "ok\n")); return true; };
+  const result = await requestWindowsShellManagedUninstall(true, {
+    platform: "win32",
+    connectImpl: () => { queueMicrotask(() => socket.emit("connect")); return socket; },
+  });
+  assert.deepEqual(result, { requested: true, removeUserData: true });
+  assert.equal(written, "uninstall:remove-user-data\n");
+  await assert.rejects(requestWindowsShellManagedUninstall(true, { platform: "darwin" }), /only on Windows/u);
+  await assert.rejects(requestWindowsShellManagedUninstall("yes", { platform: "win32" }), /explicit data policy/u);
 });

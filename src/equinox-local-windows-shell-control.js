@@ -110,3 +110,40 @@ export async function requestWindowsShellManagedActivation(version, {
     socket.once("connect", () => socket.write(`activate-release:${version}\n`));
   });
 }
+export async function requestWindowsShellManagedUninstall(removeUserData, {
+  platform = process.platform,
+  connectImpl = net.createConnection,
+  timeoutMs = 5_000,
+} = {}) {
+  if (platform !== "win32") throw new Error("Windows managed uninstall handoff is available only on Windows.");
+  if (typeof removeUserData !== "boolean") throw new Error("Windows managed uninstall requires an explicit data policy.");
+  if (!Number.isInteger(timeoutMs) || timeoutMs < 250 || timeoutMs > 15_000) throw new Error("Windows managed uninstall handoff timeout is out of bounds.");
+  const mode = removeUserData ? "remove-user-data" : "preserve-user-data";
+  return await new Promise((resolve, reject) => {
+    let settled = false;
+    let response = "";
+    const socket = connectImpl({ path: EQUINOX_LOCAL_WINDOWS_SHELL_PIPE });
+    const finish = (error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      socket.removeAllListeners();
+      socket.destroy?.();
+      if (error) reject(error);
+      else resolve(Object.freeze({ requested: true, removeUserData }));
+    };
+    const timer = setTimeout(() => finish(new Error("Equinox Local Windows shell did not acknowledge the managed uninstall handoff in time.")), timeoutMs);
+    socket.setEncoding?.("utf8");
+    socket.once("error", (error) => finish(new Error(`Equinox Local Windows uninstall handoff failed: ${error.message}`)));
+    socket.on("data", (chunk) => {
+      response += String(chunk);
+      const newline = response.indexOf("\n");
+      if (newline < 0) { if (response.length > 512) finish(new Error("Equinox Local Windows uninstall handoff reply exceeded the bound.")); return; }
+      const line = response.slice(0, newline).trim();
+      if (line === "ok") finish();
+      else if (line.startsWith("error:")) finish(new Error(`Equinox Local Windows uninstall handoff was refused: ${line.slice(6, 306)}`));
+      else finish(new Error("Equinox Local Windows uninstall handoff returned an invalid reply."));
+    });
+    socket.once("connect", () => socket.write(`uninstall:${mode}\n`));
+  });
+}

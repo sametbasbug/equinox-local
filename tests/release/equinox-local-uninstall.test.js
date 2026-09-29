@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { runEquinoxLocalUninstallHelper } from "../../src/equinox-local-uninstall-helper.js";
+import { readWindowsStartupRegistrationOwnership, runEquinoxLocalUninstallHelper, runWindowsEquinoxLocalUninstall, unregisterWindowsStartupRegistration } from "../../src/equinox-local-uninstall-helper.js";
 import { scheduleEquinoxLocalUninstall, uninstallHelperEnvironment } from "../../src/equinox-local-uninstall.js";
 
 async function exists(target) {
@@ -127,6 +127,118 @@ test("uninstall scheduler waits for detached helper spawn with explicit data mod
   assert.deepEqual(calls[0].args, ["/managed/uninstall-helper.js", "--uninstall", "--remove-user-data"]);
   assert.equal(calls[0].options.detached, true);
   assert.equal(calls[0].options.env.OPENAI_API_KEY, undefined);
+});
+
+
+
+test("Windows startup uninstall primitive deletes only the exact owned command", async () => {
+  const expected = '"C:\\Users\\example\\AppData\\Local\\Programs\\Equinox Local\\EquinoxLocal.exe" --startup';
+  const calls = [];
+  let current = expected;
+  const execFileImpl = async (command, args, options) => {
+    calls.push({ command, args, options });
+    if (command === "powershell.exe") return { stdout: current === null ? "null\n" : `${JSON.stringify(current)}\n`, stderr: "" };
+    if (command === "reg.exe") { current = null; return { stdout: "", stderr: "" }; }
+    throw new Error(`unexpected command ${command}`);
+  };
+  const ownership = await readWindowsStartupRegistrationOwnership({ expectedCommand: expected, execFileImpl, env: {} });
+  assert.equal(ownership.enabled, true);
+  const removed = await unregisterWindowsStartupRegistration({ expectedCommand: expected, execFileImpl, env: {} });
+  assert.equal(removed.removed, true);
+  assert.equal(calls.filter((call) => call.command === "reg.exe").length, 1);
+});
+
+test("Windows startup uninstall primitive refuses a foreign command without mutation", async () => {
+  const expected = '"C:\\Owned\\EquinoxLocal.exe" --startup';
+  let mutations = 0;
+  const execFileImpl = async (command) => {
+    if (command === "powershell.exe") return { stdout: `${JSON.stringify('\"C:\\Foreign\\Other.exe\" --startup')}\n`, stderr: "" };
+    mutations += 1;
+    return { stdout: "", stderr: "" };
+  };
+  await assert.rejects(readWindowsStartupRegistrationOwnership({ expectedCommand: expected, execFileImpl, env: {} }), /foreign/u);
+  assert.equal(mutations, 0);
+});
+
+test("Windows managed uninstall is handed to the native shell instead of a runtime-owned detached helper", async () => {
+  const calls = [];
+  const result = await scheduleEquinoxLocalUninstall({
+    installation: {
+      managed: true, selfUpdateSupported: true, platform: "win32",
+      installRoot: "C:\\Users\\example\\AppData\\Local\\Equinox Local",
+      releaseDir: "C:\\Users\\example\\AppData\\Local\\Equinox Local\\releases\\5.2.1",
+    },
+    removeUserData: false,
+    requestWindowsUninstallImpl: async (...args) => { calls.push(args); return { requested: true }; },
+    spawnImpl: () => { throw new Error("runtime-owned spawn must not run on Windows"); },
+  });
+  assert.deepEqual(result, { scheduled: true, removeUserData: false });
+  assert.deepEqual(calls, [[false, { platform: "win32" }]]);
+});
+
+test("Windows uninstall validates ownership before deleting exact managed paths", async () => {
+  const removed = [];
+  const installation = {
+    platform: "win32", arch: "x64", target: "win32-x64",
+    installRoot: "C:\\Users\\example\\AppData\\Local\\Equinox Local",
+    releaseDir: "C:\\Users\\example\\AppData\\Local\\Equinox Local\\releases\\5.2.1",
+    releasesRoot: "C:\\Users\\example\\AppData\\Local\\Equinox Local\\releases",
+    stagingRoot: "C:\\Users\\example\\AppData\\Local\\Equinox Local\\staging",
+    currentPointer: "C:\\Users\\example\\AppData\\Local\\Equinox Local\\current-version.json",
+    programRoot: "C:\\Users\\example\\AppData\\Local\\Programs\\Equinox Local",
+    nativeMessagingManifestRoot: "C:\\Users\\example\\AppData\\Local\\Equinox Local\\browser\\native-messaging",
+  };
+  let shellChecks = 0;
+  let nativeChecks = 0;
+  const result = await runWindowsEquinoxLocalUninstall({
+    installation, removeUserData: false,
+    env: { LOCALAPPDATA: "C:\\Users\\example\\AppData\\Local", USERPROFILE: "C:\\Users\\example",
+      EQUINOX_LOCAL_EXPECTED_STARTUP_COMMAND: '"C:\\Users\\example\\AppData\\Local\\Programs\\Equinox Local\\EquinoxLocal.exe" --startup' },
+    homeDir: "C:\\Users\\example", shellPid: 4242, processAliveImpl: () => false,
+    readCurrentImpl: async () => ({ version: "5.2.1", releaseDir: installation.releaseDir }),
+    assertStableShellImpl: async () => { shellChecks += 1; return { owned: true }; },
+    readStartupImpl: async () => ({ enabled: true }),
+    unregisterStartupImpl: async () => ({ removed: true }),
+    assertNativeMessagingImpl: async () => { nativeChecks += 1; return { manifestPath: `${installation.nativeMessagingManifestRoot}\\dev.equinox.browser.json` }; },
+    unregisterNativeMessagingImpl: async () => ({ removed: true, manifestRemoved: true, reason: null }),
+    launcherPathImpl: (releaseDir) => `${releaseDir}\\runtime\\browser\\equinox-browser-native-host.exe`,
+    platformPathsImpl: () => ({ appDataRoot: installation.installRoot, programRoot: installation.programRoot,
+      nativeMessagingManifestRoot: installation.nativeMessagingManifestRoot, runtimeRoot: `${installation.installRoot}\\runtime`, logsRoot: `${installation.installRoot}\\logs` }),
+    removePathImpl: async (target, options) => { removed.push([target, options.recursive === true]); return true; },
+  });
+  assert.deepEqual(result, { uninstalled: true, userDataRemoved: false, userDataPreserved: true });
+  assert.equal(shellChecks, 1);
+  assert.equal(nativeChecks, 1);
+  assert.deepEqual(removed[0], [installation.programRoot, true]);
+  assert.ok(removed.some(([target]) => target === installation.currentPointer));
+  assert.ok(!removed.some(([target]) => target.toLowerCase().endsWith("\\state")));
+  assert.ok(!removed.some(([target]) => target.toLowerCase().endsWith("\\workspace")));
+});
+
+test("Windows uninstall fails closed before deleting files when Native Messaging ownership is foreign", async () => {
+  let removed = false;
+  const installation = {
+    platform: "win32", arch: "x64", target: "win32-x64",
+    installRoot: "C:\\Users\\example\\AppData\\Local\\Equinox Local",
+    releaseDir: "C:\\Users\\example\\AppData\\Local\\Equinox Local\\releases\\5.2.1",
+    releasesRoot: "C:\\Users\\example\\AppData\\Local\\Equinox Local\\releases",
+    stagingRoot: "C:\\Users\\example\\AppData\\Local\\Equinox Local\\staging",
+    currentPointer: "C:\\Users\\example\\AppData\\Local\\Equinox Local\\current-version.json",
+    programRoot: "C:\\Users\\example\\AppData\\Local\\Programs\\Equinox Local",
+    nativeMessagingManifestRoot: "C:\\Users\\example\\AppData\\Local\\Equinox Local\\browser\\native-messaging",
+  };
+  await assert.rejects(runWindowsEquinoxLocalUninstall({
+    installation, removeUserData: true, homeDir: "C:\\Users\\example", shellPid: 4242, processAliveImpl: () => false,
+    env: { EQUINOX_LOCAL_EXPECTED_STARTUP_COMMAND: '"C:\\Users\\example\\AppData\\Local\\Programs\\Equinox Local\\EquinoxLocal.exe" --startup' },
+    readCurrentImpl: async () => ({ version: "5.2.1", releaseDir: installation.releaseDir }),
+    assertStableShellImpl: async () => ({ owned: true }),
+    readStartupImpl: async () => ({ enabled: true }),
+    unregisterStartupImpl: async () => { removed = true; },
+    assertNativeMessagingImpl: async () => { throw new Error("foreign registry owner"); },
+    launcherPathImpl: (releaseDir) => `${releaseDir}\\runtime\\browser\\equinox-browser-native-host.exe`,
+    removePathImpl: async () => { removed = true; },
+  }), /foreign registry owner/u);
+  assert.equal(removed, false);
 });
 
 test("uninstall scheduler rejects an asynchronous helper spawn failure", async () => {

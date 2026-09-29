@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <PlatformTarget>x64</PlatformTarget>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../../../native/windows/EquinoxLocal.WindowsShell/ManagedUninstallHandoff.cs" Link="ManagedUninstallHandoff.cs" />
+    <Compile Include="../../../native/windows/EquinoxLocal.WindowsShell/StartupRegistration.cs" Link="StartupRegistration.cs" />
+    <Compile Include="../../../native/windows/EquinoxLocal.WindowsShell/WindowsManagedReleaseLocator.cs" Link="WindowsManagedReleaseLocator.cs" />
+  </ItemGroup>
+</Project>

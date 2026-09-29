@@ -36,11 +36,12 @@ test("Windows shell is a thin x64 WPF/WebView2 host for the shared Control Cente
 });
 
 test("Windows shell single-instance and runtime-restart channel is local-user-only", async () => {
-  const [app, coordinator, handoff, locator] = await Promise.all([
+  const [app, coordinator, handoff, locator, uninstallHandoff] = await Promise.all([
     source("App.xaml.cs"),
     source("SingleInstanceCoordinator.cs"),
     source("ManagedUpdateHandoff.cs"),
     source("WindowsManagedReleaseLocator.cs"),
+    source("ManagedUninstallHandoff.cs"),
   ]);
 
   assert.match(app, /class App : System\.Windows\.Application/u);
@@ -66,6 +67,15 @@ test("Windows shell single-instance and runtime-restart channel is local-user-on
   assert.match(handoff, /EQUINOX_LOCAL_RELEASE_DIR/u);
   assert.doesNotMatch(handoff, /cmd\.exe|powershell(?:\.exe)?/iu);
   assert.match(locator, /ResolveRelease\(string version\)/u);
+  assert.match(coordinator, /uninstall:/u);
+  assert.match(coordinator, /ManagedUninstallHandoff\.Launch/u);
+  assert.match(uninstallHandoff, /ResolveCurrentRelease/u);
+  assert.match(uninstallHandoff, /new StartupRegistration/u);
+  assert.match(uninstallHandoff, /StartupRegistrationState\.Foreign/u);
+  assert.match(uninstallHandoff, /Environment\.Clear\(\)/u);
+  assert.match(uninstallHandoff, /EQUINOX_LOCAL_EXPECTED_STARTUP_COMMAND/u);
+  assert.match(uninstallHandoff, /EQUINOX_LOCAL_UNINSTALL_SHELL_PID/u);
+  assert.doesNotMatch(uninstallHandoff, /cmd\.exe|powershell(?:\.exe)?/iu);
 });
 
 
@@ -240,6 +250,9 @@ test("public Windows CI restores and builds the native x64 shell", async () => {
   assert.match(ci, /EquinoxLocal\.WindowsShell\.RuntimeHarness/u);
   assert.match(ci, /Windows native shell update handoff smoke/u);
   assert.match(ci, /EquinoxLocal\.WindowsShell\.UpdateHandoffHarness/u);
+  assert.match(ci, /Windows native shell uninstall handoff smoke/u);
+  assert.match(ci, /EquinoxLocal\.WindowsShell\.UninstallHandoffHarness/u);
+  assert.match(ci, /tests\/release\/equinox-local-windows-lifecycle\.test\.js/u);
   assert.match(ci, /EQUINOX_TEST_NODE_EXE/u);
   assert.match(ci, /EquinoxLocal\.WindowsShell\.StartupHarness/u);
   assert.match(ci, /EquinoxLocal\.WindowsShell\.FolderPickerHarness/u);
@@ -259,7 +272,7 @@ test("Windows shell update handoff acknowledges before draining the runtime and 
   const coordinator = await fs.readFile(path.join(ROOT, "native", "windows", "EquinoxLocal.WindowsShell", "SingleInstanceCoordinator.cs"), "utf8");
   const app = await fs.readFile(path.join(ROOT, "native", "windows", "EquinoxLocal.WindowsShell", "App.xaml.cs"), "utf8");
   const launchIndex = coordinator.indexOf("ManagedUpdateHandoff.Launch(version)");
-  const ackIndex = coordinator.indexOf('WriteLineAsync("ok")');
+  const ackIndex = coordinator.indexOf('WriteLineAsync("ok")', launchIndex);
   const shutdownIndex = coordinator.indexOf("UpdateShutdownRequested?.Invoke", ackIndex);
   assert.ok(launchIndex >= 0 && ackIndex > launchIndex && shutdownIndex > ackIndex);
   assert.match(coordinator, /shutdown-for-update/u);

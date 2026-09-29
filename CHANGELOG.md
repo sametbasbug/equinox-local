@@ -6,6 +6,7 @@ This project follows semantic versioning for public releases.
 
 ## [Unreleased]
 
+- Added the ownership-safe Windows x64 uninstall handoff: the CurrentUserOnly native shell launches the release-local helper outside the runtime Job Object, validates its exact startup registration without mutating it, drains the runtime after acknowledgement, and the helper refuses cleanup until current-release, stable-shell, startup and Native Messaging ownership are proven. Preserve-data mode keeps managed state/workspace while full uninstall removes the remaining app data.
 - Control Center source-runtime restart now reuses the canonical restart scheduler instead of forwarding Node's resolved `process.execPath`, keeping the whitespace-free developer Node alias intact on every restart surface.
 - Windows managed updates now drain the native shell before bounded stable-shell replacement, share one hashed shell staging primitive with first install, and preflight/rotate Native Messaging ownership for rollback-safe activation.
 - Added the Windows update ownership handoff foundation: the runtime now asks the current-user-only native shell to launch the verified target release update helper outside the runtime Job Object, with an acknowledged bounded pipe command, exact target-release validation and a credential-minimal system-only helper environment. Actual running-shell file replacement/rollback remains a separate W6 checkpoint.

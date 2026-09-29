@@ -84,6 +84,16 @@ export async function stageWindowsStableShellForRelease({ releaseDir, programRoo
   }
 }
 
+export async function assertWindowsStableShellOwnedByRelease({ releaseDir, programRoot, fsImpl = fs } = {}) {
+  if (typeof releaseDir !== "string" || typeof programRoot !== "string") throw new Error("Windows stable shell paths are required.");
+  const desired = await verifiedReleaseShell(releaseDir, { fsImpl });
+  const installed = await snapshotWindowsStableShellTree(programRoot, { fsImpl });
+  if (!sameWindowsStableShellTree(desired.sourceSnapshot, installed)) {
+    throw new Error("Existing Windows stable shell does not match the active managed release.");
+  }
+  return Object.freeze({ owned: true, shellExecutable: path.join(programRoot, "EquinoxLocal.exe") });
+}
+
 export async function synchronizeFreshWindowsShell({ releaseDir, programRoot, fsImpl = fs } = {}) {
   if (typeof releaseDir !== "string" || typeof programRoot !== "string") throw new Error("Windows stable shell paths are required.");
   const { sourceSnapshot } = await verifiedReleaseShell(releaseDir, { fsImpl });
