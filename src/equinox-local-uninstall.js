@@ -2,6 +2,7 @@ import { spawn as spawnChild } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 import { launchDetachedHelper } from "./equinox-local-detached-helper.js";
+import { requestWindowsShellManagedUninstall } from "./equinox-local-windows-shell-control.js";
 
 const DEFAULT_HELPER_PATH = fileURLToPath(new URL("./equinox-local-uninstall-helper.js", import.meta.url));
 
@@ -25,11 +26,16 @@ export async function scheduleEquinoxLocalUninstall({
   nodePath = process.execPath,
   helperPath = DEFAULT_HELPER_PATH,
   sourceEnv = process.env,
+  requestWindowsUninstallImpl = requestWindowsShellManagedUninstall,
 } = {}) {
   if (!installation?.selfUpdateSupported || !installation?.managed) {
     throw new Error("A managed Equinox Local installation is required to schedule uninstall.");
   }
   if (typeof removeUserData !== "boolean") throw new Error("removeUserData must be boolean.");
+  if (installation.platform === "win32") {
+    await requestWindowsUninstallImpl(removeUserData, { platform: "win32" });
+    return Object.freeze({ scheduled: true, removeUserData });
+  }
   const mode = removeUserData ? "--remove-user-data" : "--preserve-user-data";
   await launchDetachedHelper({
     spawnImpl,

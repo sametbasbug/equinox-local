@@ -80,6 +80,23 @@ internal sealed class SingleInstanceCoordinator : IDisposable
                 {
                     UpdateShutdownRequested?.Invoke(this, EventArgs.Empty);
                 }
+                else if (command is not null && command.StartsWith("uninstall:", StringComparison.Ordinal))
+                {
+                    var mode = command["uninstall:".Length..];
+                    await using var writer = new StreamWriter(server, new UTF8Encoding(false), leaveOpen: true) { AutoFlush = true };
+                    try
+                    {
+                        ManagedUninstallHandoff.Launch(mode);
+                        await writer.WriteLineAsync("ok").ConfigureAwait(false);
+                        UpdateShutdownRequested?.Invoke(this, EventArgs.Empty);
+                    }
+                    catch (Exception error)
+                    {
+                        var message = error.Message.Replace('\r', ' ').Replace('\n', ' ');
+                        if (message.Length > 200) message = message[..200];
+                        await writer.WriteLineAsync($"error:{message}").ConfigureAwait(false);
+                    }
+                }
                 else if (command is not null && command.StartsWith("activate-release:", StringComparison.Ordinal))
                 {
                     var version = command["activate-release:".Length..];
