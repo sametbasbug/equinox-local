@@ -36,9 +36,11 @@ test("Windows shell is a thin x64 WPF/WebView2 host for the shared Control Cente
 });
 
 test("Windows shell single-instance and runtime-restart channel is local-user-only", async () => {
-  const [app, coordinator] = await Promise.all([
+  const [app, coordinator, handoff, locator] = await Promise.all([
     source("App.xaml.cs"),
     source("SingleInstanceCoordinator.cs"),
+    source("ManagedUpdateHandoff.cs"),
+    source("WindowsManagedReleaseLocator.cs"),
   ]);
 
   assert.match(app, /class App : System\.Windows\.Application/u);
@@ -52,6 +54,18 @@ test("Windows shell single-instance and runtime-restart channel is local-user-on
   assert.match(coordinator, /string\.Equals\(command, "restart-runtime", StringComparison\.Ordinal\)/u);
   assert.match(app, /RuntimeRestartRequested/u);
   assert.match(app, /RestartRuntimeAsync/u);
+  assert.match(coordinator, /PipeDirection\.InOut/u);
+  assert.match(coordinator, /activate-release:/u);
+  assert.match(coordinator, /ManagedUpdateHandoff\.Launch/u);
+  assert.match(handoff, /ProcessStartInfo/u);
+  assert.match(handoff, /Environment\.Clear\(\)/u);
+  assert.match(handoff, /runtime.*node.*bin.*node\.exe/su);
+  assert.match(handoff, /equinox-local-update-helper\.js/u);
+  assert.match(handoff, /System32/u);
+  assert.match(handoff, /EQUINOX_LOCAL_INSTALL_ROOT/u);
+  assert.match(handoff, /EQUINOX_LOCAL_RELEASE_DIR/u);
+  assert.doesNotMatch(handoff, /cmd\.exe|powershell(?:\.exe)?/iu);
+  assert.match(locator, /ResolveRelease\(string version\)/u);
 });
 
 
@@ -221,6 +235,8 @@ test("public Windows CI restores and builds the native x64 shell", async () => {
   assert.match(runtimeHarness, /WindowsManagedReleaseLocator\.cs/u);
   assert.match(ci, /-p:Platform=x64/u);
   assert.match(ci, /EquinoxLocal\.WindowsShell\.RuntimeHarness/u);
+  assert.match(ci, /Windows native shell update handoff smoke/u);
+  assert.match(ci, /EquinoxLocal\.WindowsShell\.UpdateHandoffHarness/u);
   assert.match(ci, /EQUINOX_TEST_NODE_EXE/u);
   assert.match(ci, /EquinoxLocal\.WindowsShell\.StartupHarness/u);
   assert.match(ci, /EquinoxLocal\.WindowsShell\.FolderPickerHarness/u);

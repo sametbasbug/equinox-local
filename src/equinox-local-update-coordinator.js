@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { launchDetachedHelper } from "./equinox-local-detached-helper.js";
 import { prepareManagedEquinoxRelease } from "./equinox-local-release-manager.js";
 import { compareEquinoxVersions, parseEquinoxVersion } from "./equinox-local-updater.js";
+import { requestWindowsShellManagedActivation } from "./equinox-local-windows-shell-control.js";
 
 const DEFAULT_HELPER_PATH = fileURLToPath(new URL("./equinox-local-update-helper.js", import.meta.url));
 
@@ -32,9 +33,14 @@ export async function scheduleEquinoxLocalActivation({
   nodePath = process.execPath,
   helperPath = DEFAULT_HELPER_PATH,
   sourceEnv = process.env,
+  requestWindowsActivationImpl = requestWindowsShellManagedActivation,
 } = {}) {
   if (!installation?.selfUpdateSupported) throw new Error("A managed Equinox Local installation is required to schedule activation.");
   const normalizedVersion = parseEquinoxVersion(version).text;
+  if (installation.platform === "win32") {
+    await requestWindowsActivationImpl(normalizedVersion, { platform: "win32" });
+    return Object.freeze({ scheduled: true, version: normalizedVersion, handoff: "windows-shell" });
+  }
   await launchDetachedHelper({
     spawnImpl,
     command: nodePath,
@@ -57,6 +63,7 @@ export function createEquinoxLocalUpdateCoordinator({
   nodePath = process.execPath,
   helperPath = DEFAULT_HELPER_PATH,
   sourceEnv = process.env,
+  requestWindowsActivationImpl = requestWindowsShellManagedActivation,
 } = {}) {
   if (!updater || typeof updater.snapshot !== "function" || typeof updater.candidate !== "function") {
     throw new Error("Equinox Local updater is required by the update coordinator.");
@@ -94,6 +101,7 @@ export function createEquinoxLocalUpdateCoordinator({
         nodePath,
         helperPath,
         sourceEnv,
+        requestWindowsActivationImpl,
       });
       restartScheduledFor = candidate.version;
       return Object.freeze({
