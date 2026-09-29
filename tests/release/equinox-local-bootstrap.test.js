@@ -191,7 +191,7 @@ test("managed user bootstrap is idempotent and preserves user configuration", as
 });
 
 
-test("Windows x64 managed user bootstrap uses state config and omits Darwin/native-host lifecycle", { skip: process.platform !== "win32" }, async (t) => {
+test("Windows x64 managed user bootstrap uses state config and Windows Native Messaging without Darwin lifecycle", { skip: process.platform !== "win32" }, async (t) => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "equinox-bootstrap-win-"));
   t.after(() => fs.rm(root, { recursive: true, force: true }));
   const homeDir = path.join(root, "Türk User Home");
@@ -212,18 +212,44 @@ test("Windows x64 managed user bootstrap uses state config and omits Darwin/nati
   await fs.mkdir(paths.installRoot, { recursive: true });
   await fs.writeFile(paths.currentPointer, `${JSON.stringify({ schemaVersion: 1, target: "win32-x64", version: "5.2.1" }, null, 2)}\n`);
 
-  const first = await bootstrapManagedEquinoxUser({ homeDir, platform: "win32", arch: "x64", env });
+  const registrations = [];
+  const registerWindowsNativeMessagingHostImpl = async (options) => {
+    registrations.push(options);
+    return {
+      manifestPath: path.join(options.manifestRoot, "dev.equinox.browser.json"),
+      launcherPath: options.launcherPath,
+      idempotent: registrations.length > 1,
+    };
+  };
+  const first = await bootstrapManagedEquinoxUser({
+    homeDir,
+    platform: "win32",
+    arch: "x64",
+    env,
+    registerWindowsNativeMessagingHostImpl,
+  });
   assert.equal(first.version, "5.2.1");
   assert.equal(first.configCreated, true);
   assert.equal(first.configPath, path.join(localAppData, "Equinox Local", "state", "config.json"));
   assert.equal(first.programRoot, path.join(localAppData, "Programs", "Equinox Local"));
   assert.equal("launchAgentPath" in first, false);
-  assert.equal("nativeHostManifestPath" in first, false);
+  assert.equal(first.nativeHostManifestPath, path.join(localAppData, "Equinox Local", "browser", "native-messaging", "dev.equinox.browser.json"));
+  assert.equal(first.nativeHostLauncherPath, path.join(releaseDir, "runtime", "browser", "equinox-browser-native-host.exe"));
+  assert.equal(registrations.length, 1);
+  assert.equal(registrations[0].manifestRoot, path.join(localAppData, "Equinox Local", "browser", "native-messaging"));
   const config = JSON.parse(await fs.readFile(first.configPath, "utf8"));
   assert.equal(config.projects.workspace.root, path.join(localAppData, "Equinox Local", "workspace"));
   assert.equal(config.fileRoots.downloads.root, path.join(homeDir, "Downloads"));
 
-  const second = await bootstrapManagedEquinoxUser({ homeDir, platform: "win32", arch: "x64", env });
+  const second = await bootstrapManagedEquinoxUser({
+    homeDir,
+    platform: "win32",
+    arch: "x64",
+    env,
+    registerWindowsNativeMessagingHostImpl,
+  });
   assert.equal(second.configCreated, false);
+  assert.equal(second.nativeHostRegistrationIdempotent, true);
+  assert.equal(registrations.length, 2);
   assert.equal(second.configRevision, first.configRevision);
 });
