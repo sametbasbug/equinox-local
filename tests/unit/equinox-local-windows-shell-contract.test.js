@@ -203,10 +203,11 @@ test("public Windows CI restores and builds the native x64 shell", async () => {
   assert.match(ci, /needs: \[windows-runtime, windows-shell, windows-package\]/u);
   assert.match(ci, /name: Windows x64 managed package/u);
   assert.match(ci, /Windows managed release contract and activation rollback tests/u);
+  assert.match(ci, /\$PSNativeCommandUseErrorActionPreference = \$true/u);
   assert.match(ci, /node --test tests\/release\/equinox-local-release-runtime-contract\.test\.js/u);
   assert.ok(ci.includes('Windows x64 first-install release validation accepts native runtime names without Peekaboo|Windows x64 fresh first install promotes current-version and stable shell without admin'));
   assert.ok(ci.includes('tests/release/equinox-local-first-install.test.js'));
-  assert.ok(ci.includes('Windows x64 managed user bootstrap uses state config and omits Darwin/native-host lifecycle'));
+  assert.ok(ci.includes('Windows x64 managed user bootstrap uses state config and Windows Native Messaging without Darwin lifecycle'));
   assert.ok(ci.includes('tests/release/equinox-local-bootstrap.test.js'));
   assert.match(ci, /node --test tests\/release\/equinox-local-current-release\.test\.js/u);
   assert.match(ci, /name: Windows PowerShell 5\.1 bootstrap acceptance/u);

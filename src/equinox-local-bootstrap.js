@@ -14,6 +14,10 @@ import {
   launchAgentLogMaintenanceShell,
 } from "./equinox-local-app-host.js";
 import { synchronizeEquinoxLocalNativeAppHost } from "./equinox-local-native-app-host.js";
+import {
+  registerWindowsNativeMessagingHost,
+  windowsNativeMessagingLauncherPath,
+} from "./equinox-browser-windows-native-messaging.js";
 import { readEquinoxLocalCurrentVersionPointer } from "./equinox-local-current-release.js";
 import { readBoundedNormalFile } from "./equinox-local-safe-file.js";
 import {
@@ -319,6 +323,7 @@ export async function bootstrapManagedEquinoxUser({
   arch = process.arch,
   env = process.env,
   ensureAppHostImpl = null,
+  registerWindowsNativeMessagingHostImpl = registerWindowsNativeMessagingHost,
   fsImpl = fs,
 } = {}) {
   if (platform !== "darwin" && !(platform === "win32" && arch === "x64")) {
@@ -341,6 +346,12 @@ export async function bootstrapManagedEquinoxUser({
 
   const config = await ensureInitialConfig({ homeDir, installRoot: paths.installRoot, configPath: paths.configPath });
   if (platform === "win32") {
+    const nativeHost = await registerWindowsNativeMessagingHostImpl({
+      manifestRoot: paths.nativeMessagingManifestRoot,
+      launcherPath: windowsNativeMessagingLauncherPath(release.releaseDir),
+      fsImpl,
+      env,
+    });
     return Object.freeze({
       version: release.version,
       installRoot: paths.installRoot,
@@ -349,6 +360,9 @@ export async function bootstrapManagedEquinoxUser({
       configCreated: config.created,
       configRevision: config.revision,
       programRoot: paths.programRoot,
+      nativeHostManifestPath: nativeHost.manifestPath,
+      nativeHostLauncherPath: nativeHost.launcherPath,
+      nativeHostRegistrationIdempotent: Boolean(nativeHost.idempotent),
       controlCenterUrl: "http://127.0.0.1:24891/",
     });
   }

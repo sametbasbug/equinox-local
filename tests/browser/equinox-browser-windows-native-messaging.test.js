@@ -14,6 +14,31 @@ import {
 } from "../../src/equinox-browser-windows-native-messaging.js";
 
 const LAUNCHER = "C:\\Program Files\\Equinox Local\\releases\\5.3.0\\runtime\\browser\\equinox-browser-native-host.exe";
+const OLD_LAUNCHER = "C:\\Program Files\\Equinox Local\\releases\\5.2.1\\runtime\\browser\\equinox-browser-native-host.exe";
+
+function registryMock(initial = null) {
+  let value = initial;
+  const calls = [];
+  return {
+    calls,
+    get value() { return value; },
+    execFileAsync: async (command, args, options) => {
+      calls.push({ command, args, options });
+      if (command === "powershell.exe") {
+        return { stdout: `${JSON.stringify(value)}\n`, stderr: "" };
+      }
+      if (command === "reg.exe" && args[0] === "ADD") {
+        value = args[args.indexOf("/d") + 1];
+        return { stdout: "", stderr: "" };
+      }
+      if (command === "reg.exe" && args[0] === "DELETE") {
+        value = null;
+        return { stdout: "", stderr: "" };
+      }
+      throw new Error(`unexpected command: ${command} ${args.join(" ")}`);
+    },
+  };
+}
 
 test("Windows Native Messaging release contract is release-local and production-origin only", () => {
   assert.equal(
@@ -26,34 +51,164 @@ test("Windows Native Messaging release contract is release-local and production-
   assert.deepEqual(manifest.allowed_origins, ["chrome-extension://npdneefcobilfkjlihghjgjnknenhfoj/"]);
 });
 
-test("Windows Native Messaging registration writes a bounded manifest and exact HKCU default value", async (t) => {
+test("Windows Native Messaging fresh registration writes one bounded manifest and exact HKCU default value", async (t) => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "equinox-win-native-host-"));
   t.after(() => fs.rm(root, { recursive: true, force: true }));
-  const calls = [];
-  const execFileAsync = async (command, args, options) => {
-    calls.push({ command, args, options });
-    return { stdout: "", stderr: "" };
-  };
+  const registry = registryMock();
   const result = await registerWindowsNativeMessagingHost({
     manifestRoot: root,
     launcherPath: LAUNCHER,
-    execFileAsync,
+    execFileAsync: registry.execFileAsync,
     verifyLauncher: false,
   });
   assert.equal(result.registryKey, EQUINOX_BROWSER_WINDOWS_REGISTRY_KEY);
+  assert.equal(result.manifestChanged, true);
+  assert.equal(result.registryChanged, true);
+  assert.equal(result.idempotent, false);
   const manifest = JSON.parse(await fs.readFile(result.manifestPath, "utf8"));
   assert.equal(manifest.path, LAUNCHER);
-  assert.deepEqual(calls[0].args, ["ADD", EQUINOX_BROWSER_WINDOWS_REGISTRY_KEY, "/ve", "/t", "REG_SZ", "/d", result.manifestPath, "/f"]);
+  const mutation = registry.calls.find((call) => call.command === "reg.exe");
+  assert.deepEqual(mutation.args, ["ADD", EQUINOX_BROWSER_WINDOWS_REGISTRY_KEY, "/ve", "/t", "REG_SZ", "/d", result.manifestPath, "/f"]);
 });
 
-test("Windows registry read uses locale-independent JSON and preserves Unicode paths", async () => {
+test("Windows Native Messaging exact owned registration is mutation-free and idempotent", async (t) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "equinox-win-native-host-idempotent-"));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const manifestPath = path.join(root, "dev.equinox.browser.json");
+  await fs.writeFile(manifestPath, windowsNativeMessagingManifest(LAUNCHER));
+  const registry = registryMock(manifestPath);
+  const result = await registerWindowsNativeMessagingHost({
+    manifestRoot: root,
+    launcherPath: LAUNCHER,
+    execFileAsync: registry.execFileAsync,
+    verifyLauncher: false,
+  });
+  assert.equal(result.idempotent, true);
+  assert.equal(result.manifestChanged, false);
+  assert.equal(result.registryChanged, false);
+  assert.equal(registry.calls.filter((call) => call.command === "reg.exe").length, 0);
+  assert.equal(await fs.readFile(manifestPath, "utf8"), windowsNativeMessagingManifest(LAUNCHER));
+});
+
+test("Windows Native Messaging registration refuses a foreign HKCU manifest owner", async (t) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "equinox-win-native-host-foreign-registry-"));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const registry = registryMock("C:\\Other\\dev.equinox.browser.json");
+  await assert.rejects(
+    registerWindowsNativeMessagingHost({
+      manifestRoot: root,
+      launcherPath: LAUNCHER,
+      execFileAsync: registry.execFileAsync,
+      verifyLauncher: false,
+    }),
+    /owned by another manifest/u,
+  );
+  assert.equal(registry.calls.filter((call) => call.command === "reg.exe").length, 0);
+  await assert.rejects(fs.lstat(path.join(root, "dev.equinox.browser.json")), (error) => error?.code === "ENOENT");
+});
+
+test("Windows Native Messaging registration refuses foreign or malformed manifest content", async (t) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "equinox-win-native-host-foreign-manifest-"));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const manifestPath = path.join(root, "dev.equinox.browser.json");
+  const foreign = '{"name":"dev.equinox.browser","path":"C:\\\\Foreign\\\\host.exe"}\n';
+  await fs.writeFile(manifestPath, foreign);
+  const registry = registryMock();
+  await assert.rejects(
+    registerWindowsNativeMessagingHost({
+      manifestRoot: root,
+      launcherPath: LAUNCHER,
+      execFileAsync: registry.execFileAsync,
+      verifyLauncher: false,
+    }),
+    /foreign or malformed/u,
+  );
+  assert.equal(await fs.readFile(manifestPath, "utf8"), foreign);
+  assert.equal(registry.calls.filter((call) => call.command === "reg.exe").length, 0);
+});
+
+test("Windows Native Messaging launcher rotation requires the exact expected previous owned manifest", async (t) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "equinox-win-native-host-rotate-"));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const manifestPath = path.join(root, "dev.equinox.browser.json");
+  await fs.writeFile(manifestPath, windowsNativeMessagingManifest(OLD_LAUNCHER));
+  const registry = registryMock(manifestPath);
+
+  await assert.rejects(
+    registerWindowsNativeMessagingHost({
+      manifestRoot: root,
+      launcherPath: LAUNCHER,
+      execFileAsync: registry.execFileAsync,
+      verifyLauncher: false,
+    }),
+    /foreign or malformed/u,
+  );
+  assert.equal(await fs.readFile(manifestPath, "utf8"), windowsNativeMessagingManifest(OLD_LAUNCHER));
+
+  const result = await registerWindowsNativeMessagingHost({
+    manifestRoot: root,
+    launcherPath: LAUNCHER,
+    expectedPreviousLauncherPath: OLD_LAUNCHER,
+    execFileAsync: registry.execFileAsync,
+    verifyLauncher: false,
+  });
+  assert.equal(result.manifestChanged, true);
+  assert.equal(result.registryChanged, false);
+  assert.equal(await fs.readFile(manifestPath, "utf8"), windowsNativeMessagingManifest(LAUNCHER));
+  assert.equal(registry.calls.filter((call) => call.command === "reg.exe").length, 0);
+});
+
+test("Windows Native Messaging manifest replacement rejects concurrent drift", async (t) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "equinox-win-native-host-drift-"));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const manifestPath = path.join(root, "dev.equinox.browser.json");
+  await fs.writeFile(manifestPath, windowsNativeMessagingManifest(OLD_LAUNCHER));
+  const registry = registryMock(manifestPath);
+  const foreign = '{"foreign":true}\n';
+  let drifted = false;
+  const fsImpl = {
+    ...fs,
+    lstat: async (target) => {
+      if (!drifted && target === manifestPath) {
+        drifted = true;
+        await fs.writeFile(manifestPath, foreign);
+      }
+      return fs.lstat(target);
+    },
+  };
+  await assert.rejects(
+    registerWindowsNativeMessagingHost({
+      manifestRoot: root,
+      launcherPath: LAUNCHER,
+      expectedPreviousLauncherPath: OLD_LAUNCHER,
+      execFileAsync: registry.execFileAsync,
+      fsImpl,
+      verifyLauncher: false,
+    }),
+    /SHA-256 guard mismatch|foreign or malformed/u,
+  );
+  assert.equal(await fs.readFile(manifestPath, "utf8"), foreign);
+  assert.equal(registry.calls.filter((call) => call.command === "reg.exe").length, 0);
+});
+
+test("Windows Native Messaging registry read uses locale-independent JSON and preserves Unicode paths", async () => {
   const value = await readWindowsNativeMessagingRegistryValue({
     execFileAsync: async (_command, _args, options) => {
       assert.equal(options.env.EQUINOX_BROWSER_NATIVE_HOST_REGISTRY_KEY, EQUINOX_BROWSER_WINDOWS_REGISTRY_KEY);
+      assert.equal(options.timeout, 15_000);
       return { stdout: '"C:\\\\Users\\\\Çağrı\\\\Equinox Local\\\\dev.equinox.browser.json"\n', stderr: "" };
     },
   });
   assert.equal(value, "C:\\Users\\Çağrı\\Equinox Local\\dev.equinox.browser.json");
+});
+
+test("Windows Native Messaging registry read rejects a malformed non-string default value", async () => {
+  await assert.rejects(
+    readWindowsNativeMessagingRegistryValue({
+      execFileAsync: async () => ({ stdout: "42\n", stderr: "" }),
+    }),
+    /registry default value is malformed/u,
+  );
 });
 
 test("Windows Native Messaging unregister refuses a registry key owned by another manifest", async () => {
@@ -70,4 +225,23 @@ test("Windows Native Messaging unregister refuses a registry key owned by anothe
   assert.equal(result.removed, false);
   assert.equal(result.reason, "foreign-registry-owner");
   assert.equal(calls.length, 1);
+});
+
+test("Windows Native Messaging unregister preserves HKCU when the canonical manifest is foreign", async (t) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "equinox-win-native-host-unregister-foreign-"));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const manifestPath = path.join(root, "dev.equinox.browser.json");
+  const foreign = '{"foreign":true}\n';
+  await fs.writeFile(manifestPath, foreign);
+  const registry = registryMock(manifestPath);
+  const result = await unregisterWindowsNativeMessagingHost({
+    manifestPath,
+    launcherPath: LAUNCHER,
+    execFileAsync: registry.execFileAsync,
+  });
+  assert.equal(result.removed, false);
+  assert.equal(result.reason, "foreign-manifest");
+  assert.equal(registry.value, manifestPath);
+  assert.equal(await fs.readFile(manifestPath, "utf8"), foreign);
+  assert.equal(registry.calls.filter((call) => call.command === "reg.exe").length, 0);
 });

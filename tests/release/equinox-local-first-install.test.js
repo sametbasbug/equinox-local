@@ -10,6 +10,11 @@ import {
   validateFirstInstallRelease,
 } from "../../src/equinox-local-first-install.js";
 import { equinoxLocalReleaseRuntimeContract } from "../../src/equinox-local-release-runtime-contract.js";
+import {
+  readWindowsNativeMessagingRegistryValue,
+  unregisterWindowsNativeMessagingHost,
+  windowsNativeMessagingLauncherPath,
+} from "../../src/equinox-browser-windows-native-messaging.js";
 
 const TARGET = "darwin-arm64";
 
@@ -444,7 +449,13 @@ async function createRealWindowsFirstInstallFixture(version = "5.2.1") {
 
 test("Windows x64 fresh first install promotes current-version and stable shell without admin", { skip: process.platform !== "win32" }, async (t) => {
   const fixture = await createRealWindowsFirstInstallFixture();
-  t.after(() => fs.rm(fixture.root, { recursive: true, force: true }));
+  const promoted = path.join(fixture.installRoot, "releases", fixture.version);
+  const manifestPath = path.join(fixture.installRoot, "browser", "native-messaging", "dev.equinox.browser.json");
+  const launcherPath = windowsNativeMessagingLauncherPath(promoted);
+  t.after(async () => {
+    await unregisterWindowsNativeMessagingHost({ manifestPath, launcherPath }).catch(() => {});
+    await fs.rm(fixture.root, { recursive: true, force: true });
+  });
   const launches = [];
   const result = await installManagedEquinoxRelease({
     stagedReleaseDir: fixture.releaseDir,
@@ -453,7 +464,6 @@ test("Windows x64 fresh first install promotes current-version and stable shell 
     arch: "x64",
     target: "win32-x64",
     env: { ...process.env, LOCALAPPDATA: fixture.localAppData },
-    bootstrapImpl: async () => ({ configCreated: true, controlCenterUrl: "http://127.0.0.1:24891/" }),
     initializeOnboardingImpl: async () => ({ created: true }),
     launchWindowsShellImpl: async (shellExecutable) => { launches.push(shellExecutable); return { launched: true }; },
     waitForVersionImpl: async () => true,
@@ -465,10 +475,12 @@ test("Windows x64 fresh first install promotes current-version and stable shell 
     target: "win32-x64",
     version: fixture.version,
   });
-  const promoted = path.join(fixture.installRoot, "releases", fixture.version);
   assert.equal((await fs.lstat(promoted)).isDirectory(), true);
   const stableExe = path.join(fixture.localAppData, "Programs", "Equinox Local", "EquinoxLocal.exe");
   assert.equal(await fs.readFile(stableExe, "utf8"), "fixture:runtime\\shell\\EquinoxLocal.exe\n");
   assert.deepEqual(launches, [stableExe]);
   assert.equal(await exists(fixture.releaseDir), false);
+  assert.equal(path.win32.normalize(await readWindowsNativeMessagingRegistryValue()).toLowerCase(), path.win32.normalize(manifestPath).toLowerCase());
+  const nativeManifest = JSON.parse(await fs.readFile(manifestPath, "utf8"));
+  assert.equal(path.win32.normalize(nativeManifest.path).toLowerCase(), path.win32.normalize(launcherPath).toLowerCase());
 });
