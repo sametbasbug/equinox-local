@@ -361,7 +361,7 @@ export async function activatePreparedEquinoxRelease({
   installation,
   targetVersion,
   kickstartImpl = () => restartManagedInstallation(installation),
-  syncAppHostImpl = ({ version, releaseDir }) => synchronizeManagedShellForRelease(installation, { version, releaseDir }),
+  syncAppHostImpl = (release) => synchronizeManagedShellForRelease(installation, release),
   fetchImpl = globalThis.fetch,
   sleepImpl,
   healthAttempts = HEALTH_ATTEMPTS,
