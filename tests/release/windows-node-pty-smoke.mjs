@@ -98,6 +98,9 @@ async function runNativeConptySmoke() {
   trace("write:return");
   await completed;
   trace("completed");
+  trace("transport-dispose:start");
+  terminal.kill();
+  trace("transport-dispose:return");
   assert.match(output, /__EQUINOX_CONPTY_OK__/u);
   process.stdout.write(`${JSON.stringify({ ok: true, platform: process.platform, arch: process.arch, conpty: true }, null, 2)}\n`);
 }
