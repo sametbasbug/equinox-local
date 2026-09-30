@@ -21,6 +21,14 @@ import {
 const execFile = promisify(execFileCallback);
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 
+function installerCleanEnvironment(env = process.env) {
+  const names = ["SystemRoot", "WINDIR", "ComSpec", "TEMP", "TMP", "USERPROFILE", "LOCALAPPDATA", "APPDATA", "USERNAME", "USERDOMAIN", "PATH", "PATHEXT"];
+  return Object.fromEntries(names.flatMap((name) => {
+    const value = env[name];
+    return typeof value === "string" && value.length > 0 ? [[name, value]] : [];
+  }));
+}
+
 const TARGET = `${process.platform}-${process.arch}`;
 const TARGET_CONFIG = {
   "win32-x64": { component: "Microsoft.VisualStudio.Component.VC.Tools.x86.x64", vcvars: "vcvars64.bat", peMachine: 0x8664 },
@@ -167,13 +175,15 @@ async function stopNativeHost(state, label) {
 }
 
 try {
-  const existingRegistry = await readWindowsNativeMessagingRegistryValue();
+  const cleanInstallerEnv = installerCleanEnvironment();
+  assert.equal("PSModulePath" in cleanInstallerEnv, false, "installer-equivalent Native Messaging environment must not inherit PSModulePath");
+  const existingRegistry = await readWindowsNativeMessagingRegistryValue({ env: cleanInstallerEnv });
   assert.equal(existingRegistry, null, "Windows runner already has an Equinox Browser Native Messaging registration");
 
   const { releaseDir, launcherPath } = await prepareReleaseLayout(root);
-  registration = await registerWindowsNativeMessagingHost({ manifestRoot, launcherPath });
+  registration = await registerWindowsNativeMessagingHost({ manifestRoot, launcherPath, env: cleanInstallerEnv });
   assert.equal(
-    path.win32.normalize(await readWindowsNativeMessagingRegistryValue()).toLowerCase(),
+    path.win32.normalize(await readWindowsNativeMessagingRegistryValue({ env: cleanInstallerEnv })).toLowerCase(),
     path.win32.normalize(registration.manifestPath).toLowerCase(),
     "HKCU Native Messaging registration did not round-trip",
   );
@@ -266,9 +276,10 @@ try {
   const removed = await unregisterWindowsNativeMessagingHost({
     manifestPath: registration.manifestPath,
     launcherPath,
+    env: cleanInstallerEnv,
   });
   assert.equal(removed.manifestRemoved, true);
-  assert.equal(await readWindowsNativeMessagingRegistryValue(), null, "HKCU Native Messaging key survived unregister");
+  assert.equal(await readWindowsNativeMessagingRegistryValue({ env: cleanInstallerEnv }), null, "HKCU Native Messaging key survived unregister");
   await assert.rejects(fs.lstat(registration.manifestPath), (error) => error?.code === "ENOENT");
   registration = null;
 

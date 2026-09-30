@@ -17,6 +17,12 @@ import {
 const LAUNCHER = "C:\\Program Files\\Equinox Local\\releases\\5.3.0\\runtime\\browser\\equinox-browser-native-host.exe";
 const OLD_LAUNCHER = "C:\\Program Files\\Equinox Local\\releases\\5.2.1\\runtime\\browser\\equinox-browser-native-host.exe";
 
+function registryReadOutput(value) {
+  if (value === null) return "missing\n";
+  if (typeof value !== "string" || !value) return "invalid\n";
+  return `value:${Buffer.from(value, "utf8").toString("hex").toUpperCase()}\n`;
+}
+
 function registryMock(initial = null) {
   let value = initial;
   const calls = [];
@@ -25,8 +31,8 @@ function registryMock(initial = null) {
     get value() { return value; },
     execFileAsync: async (command, args, options) => {
       calls.push({ command, args, options });
-      if (command === "powershell.exe") {
-        return { stdout: `${JSON.stringify(value)}\n`, stderr: "" };
+      if (command.toLowerCase().endsWith("powershell.exe")) {
+        return { stdout: registryReadOutput(value), stderr: "" };
       }
       if (command === "reg.exe" && args[0] === "ADD") {
         value = args[args.indexOf("/d") + 1];
@@ -192,24 +198,45 @@ test("Windows Native Messaging manifest replacement rejects concurrent drift", a
   assert.equal(registry.calls.filter((call) => call.command === "reg.exe").length, 0);
 });
 
-test("Windows Native Messaging registry read uses locale-independent JSON and preserves Unicode paths", async () => {
+test("Windows Native Messaging registry read is module-independent, credential-scrubbed and preserves Unicode paths", async () => {
+  const expected = "C:\\Users\\Çağrı\\Equinox Local\\dev.equinox.browser.json";
+  const env = {
+    SystemRoot: "C:\\Windows",
+    WINDIR: "C:\\Windows",
+    USERPROFILE: "C:\\Users\\Çağrı",
+    LOCALAPPDATA: "C:\\Users\\Çağrı\\AppData\\Local",
+    TEMP: "C:\\Temp",
+    TMP: "C:\\Temp",
+    PSModulePath: "C:\\Untrusted\\Modules",
+    OPENAI_API_KEY: "must-not-propagate",
+  };
   const value = await readWindowsNativeMessagingRegistryValue({
-    execFileAsync: async (_command, _args, options) => {
-      assert.equal(options.env.EQUINOX_BROWSER_NATIVE_HOST_REGISTRY_KEY, EQUINOX_BROWSER_WINDOWS_REGISTRY_KEY);
+    env,
+    execFileAsync: async (command, args, options) => {
+      assert.equal(command, "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe");
       assert.equal(options.timeout, 15_000);
-      return { stdout: '"C:\\\\Users\\\\Çağrı\\\\Equinox Local\\\\dev.equinox.browser.json"\n', stderr: "" };
+      assert.equal(options.env.SystemRoot, env.SystemRoot);
+      assert.equal(options.env.EQUINOX_BROWSER_NATIVE_HOST_REGISTRY_SUBKEY, "Software\\Google\\Chrome\\NativeMessagingHosts\\dev.equinox.browser");
+      assert.equal("PSModulePath" in options.env, false);
+      assert.equal("OPENAI_API_KEY" in options.env, false);
+      const script = args.at(-1);
+      assert.match(script, /Microsoft\.Win32\.Registry/u);
+      assert.doesNotMatch(script, /Get-Item|ConvertTo-Json|Import-Module/u);
+      return { stdout: registryReadOutput(expected), stderr: "" };
     },
   });
-  assert.equal(value, "C:\\Users\\Çağrı\\Equinox Local\\dev.equinox.browser.json");
+  assert.equal(value, expected);
 });
 
-test("Windows Native Messaging registry read rejects a malformed non-string default value", async () => {
-  await assert.rejects(
-    readWindowsNativeMessagingRegistryValue({
-      execFileAsync: async () => ({ stdout: "42\n", stderr: "" }),
-    }),
-    /registry default value is malformed/u,
-  );
+test("Windows Native Messaging registry read rejects malformed helper protocol", async () => {
+  for (const stdout of ["invalid\n", "42\n", "value:GG\n", "value:\n"]) {
+    await assert.rejects(
+      readWindowsNativeMessagingRegistryValue({
+        execFileAsync: async () => ({ stdout, stderr: "" }),
+      }),
+      /registry default value is malformed/u,
+    );
+  }
 });
 
 test("Windows Native Messaging unregister refuses a registry key owned by another manifest", async () => {
@@ -219,7 +246,7 @@ test("Windows Native Messaging unregister refuses a registry key owned by anothe
     launcherPath: LAUNCHER,
     execFileAsync: async (command, args) => {
       calls.push({ command, args });
-      if (command === "powershell.exe") return { stdout: '"C:\\\\Other\\\\dev.equinox.browser.json"\n', stderr: "" };
+      if (command.toLowerCase().endsWith("powershell.exe")) return { stdout: registryReadOutput("C:\\Other\\dev.equinox.browser.json"), stderr: "" };
       throw new Error("unexpected mutation");
     },
   });
