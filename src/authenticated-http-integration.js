@@ -8,6 +8,8 @@ import {
   SAFE_FILE_ERROR_CODES,
 } from "./equinox-local-safe-file.js";
 import { sanitizeWorkflowOutput } from "./workflow-security.js";
+import { equinoxLocalPlatformPaths } from "./equinox-local-platform.js";
+import { inspectPrivateStatePath, protectWindowsPrivateStatePath, verifyWindowsPrivateStateAcl } from "./equinox-local-private-state.js";
 import {
   applyAuthenticatedHttpResponseBindings,
   createAuthenticatedHttpResponseReferenceStore,
@@ -249,15 +251,60 @@ function publicProfile(record) {
   });
 }
 
-export function defaultAuthenticatedHttpStorePath(homeDir = os.homedir()) {
-  return path.join(homeDir, "Library", "Application Support", "Equinox Local", "secrets", "authenticated-http.json");
+export function defaultAuthenticatedHttpStorePath(homeDir = os.homedir(), { platform = process.platform, env = process.env } = {}) {
+  const paths = equinoxLocalPlatformPaths({ platform, homeDir, env });
+  const pathApi = platform === "win32" ? path.win32 : path.posix;
+  return pathApi.join(paths.stateRoot, "secrets", "authenticated-http.json");
 }
 
-async function ensurePrivateDirectory(directory, { fsImpl = fs } = {}) {
-  await fsImpl.mkdir(directory, { recursive: true, mode: 0o700 });
+function privateStateError(reason = "unsafe") {
+  const error = profileError("Authenticated HTTP credential storage permissions need attention.");
+  error.reason = reason;
+  return error;
+}
+
+async function inspectWindowsPrivateState(target, type, { fsImpl, verifyWindowsAcl }) {
+  const inspection = await inspectPrivateStatePath(target, { platform: "win32", type, fsImpl, verifyWindowsAcl });
+  if (inspection.exists && !inspection.safe) throw privateStateError(inspection.reason);
+  return inspection;
+}
+
+async function ensurePrivateDirectory(directory, {
+  fsImpl = fs,
+  platform = process.platform,
+  verifyWindowsAcl = verifyWindowsPrivateStateAcl,
+  protectWindowsAcl = protectWindowsPrivateStatePath,
+} = {}) {
+  if (platform !== "win32") {
+    await fsImpl.mkdir(directory, { recursive: true, mode: 0o700 });
+    const stat = await fsImpl.lstat(directory);
+    if (!stat.isDirectory() || stat.isSymbolicLink()) throw profileError("Authenticated HTTP credential directory is unsafe.");
+    await fsImpl.chmod(directory, 0o700);
+    return;
+  }
+
+  let existed = true;
+  try { await fsImpl.lstat(directory); }
+  catch (error) { if (error?.code === "ENOENT") existed = false; else throw error; }
+  if (existed) {
+    await inspectWindowsPrivateState(directory, "directory", { fsImpl, verifyWindowsAcl });
+    return;
+  }
+  const created = await fsImpl.mkdir(directory, { recursive: true });
+  if (created === undefined) {
+    await inspectWindowsPrivateState(directory, "directory", { fsImpl, verifyWindowsAcl });
+    return;
+  }
   const stat = await fsImpl.lstat(directory);
-  if (!stat.isDirectory() || stat.isSymbolicLink()) throw profileError("Authenticated HTTP credential directory is unsafe.");
-  await fsImpl.chmod(directory, 0o700);
+  if (!stat.isDirectory() || stat.isSymbolicLink()) throw privateStateError("type");
+  await protectWindowsAcl({ target: directory, type: "directory" });
+  await inspectWindowsPrivateState(directory, "directory", { fsImpl, verifyWindowsAcl });
+}
+
+async function inspectWindowsPrivateFile(filePath, { fsImpl, verifyWindowsAcl, allowMissing = false }) {
+  const inspection = await inspectWindowsPrivateState(filePath, "file", { fsImpl, verifyWindowsAcl });
+  if (!inspection.exists && !allowMissing) throw privateStateError("missing");
+  return inspection;
 }
 
 function emptyStore() {
@@ -287,9 +334,18 @@ function validateStore(raw) {
   return { version: STORE_VERSION, agentProfileManagementEnabled: object.agentProfileManagementEnabled, profiles };
 }
 
-async function readStore({ storePath = defaultAuthenticatedHttpStorePath(), fsImpl = fs } = {}) {
+async function readStore({
+  storePath = defaultAuthenticatedHttpStorePath(),
+  fsImpl = fs,
+  platform = process.platform,
+  verifyWindowsAcl = verifyWindowsPrivateStateAcl,
+} = {}) {
   let text;
   let stat;
+  if (platform === "win32") {
+    const security = await inspectWindowsPrivateFile(storePath, { fsImpl, verifyWindowsAcl, allowMissing: true });
+    if (!security.exists) return emptyStore();
+  }
   try {
     ({ data: text, stat } = await readBoundedNormalFile(storePath, {
       fsImpl,
@@ -305,9 +361,13 @@ async function readStore({ storePath = defaultAuthenticatedHttpStorePath(), fsIm
     }
     throw error;
   }
-  if ((stat.mode & 0o777) !== 0o600) throw profileError();
-  const uid = typeof process.getuid === "function" ? process.getuid() : null;
-  if (Number.isInteger(uid) && Number.isInteger(stat.uid) && stat.uid !== uid) throw profileError();
+  if (platform === "win32") {
+    await inspectWindowsPrivateFile(storePath, { fsImpl, verifyWindowsAcl });
+  } else {
+    if ((stat.mode & 0o777) !== 0o600) throw profileError();
+    const uid = typeof process.getuid === "function" ? process.getuid() : null;
+    if (Number.isInteger(uid) && Number.isInteger(stat.uid) && stat.uid !== uid) throw profileError();
+  }
   try {
     return validateStore(JSON.parse(text));
   } catch (error) {
@@ -316,19 +376,37 @@ async function readStore({ storePath = defaultAuthenticatedHttpStorePath(), fsIm
   }
 }
 
-async function writeStore(store, { storePath = defaultAuthenticatedHttpStorePath(), fsImpl = fs } = {}) {
+async function writeStore(store, {
+  storePath = defaultAuthenticatedHttpStorePath(),
+  fsImpl = fs,
+  platform = process.platform,
+  verifyWindowsAcl = verifyWindowsPrivateStateAcl,
+  protectWindowsAcl = protectWindowsPrivateStatePath,
+} = {}) {
   const normalized = validateStore(store);
   const payload = `${JSON.stringify(normalized, null, 2)}\n`;
   if (Buffer.byteLength(payload, "utf8") > AUTHENTICATED_HTTP_LIMITS.maxStoreBytes) {
     throw profileError("Authenticated HTTP profile store is too large.");
   }
   const parent = path.dirname(storePath);
-  await ensurePrivateDirectory(parent, { fsImpl });
+  await ensurePrivateDirectory(parent, { fsImpl, platform, verifyWindowsAcl, protectWindowsAcl });
+  if (platform === "win32") {
+    await inspectWindowsPrivateFile(storePath, { fsImpl, verifyWindowsAcl, allowMissing: true });
+  }
   const temp = path.join(parent, `.equinox-auth-http-${process.pid}-${randomBytes(8).toString("hex")}.tmp`);
   try {
     await fsImpl.writeFile(temp, payload, { flag: "wx", mode: 0o600 });
+    if (platform === "win32") {
+      await protectWindowsAcl({ target: temp, type: "file" });
+      await inspectWindowsPrivateFile(temp, { fsImpl, verifyWindowsAcl });
+    }
     await fsImpl.rename(temp, storePath);
-    await fsImpl.chmod(storePath, 0o600);
+    if (platform === "win32") {
+      await protectWindowsAcl({ target: storePath, type: "file" });
+      await inspectWindowsPrivateFile(storePath, { fsImpl, verifyWindowsAcl });
+    } else {
+      await fsImpl.chmod(storePath, 0o600);
+    }
   } catch (error) {
     await fsImpl.rm(temp, { force: true }).catch(() => {});
     throw error;

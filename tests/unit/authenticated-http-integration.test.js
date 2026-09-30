@@ -59,6 +59,10 @@ test("default store is empty, safe and enables agent profile management", async 
     defaultAuthenticatedHttpStorePath("/Users/example"),
     "/Users/example/Library/Application Support/Equinox Local/secrets/authenticated-http.json",
   );
+  assert.equal(
+    defaultAuthenticatedHttpStorePath("C:\\Users\\Türk User", { platform: "win32", env: { LOCALAPPDATA: "C:\\Users\\Türk User\\AppData\\Local" } }),
+    "C:\\Users\\Türk User\\AppData\\Local\\Equinox Local\\state\\secrets\\authenticated-http.json",
+  );
   await withTempStore(async ({ storePath }) => {
     assert.deepEqual(await getAuthenticatedHttpProfiles({ storePath }), {
       agentProfileManagementEnabled: true,
