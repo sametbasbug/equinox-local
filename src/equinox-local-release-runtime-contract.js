@@ -49,6 +49,7 @@ const WINDOWS_RELEASE_FILES = Object.freeze([
   "equinox-browser-native-host-runtime.js",
   "equinox-browser-socket.js",
   "equinox-local-windows-job-object.ps1",
+  "equinox-local-windows-private-state.ps1",
   "equinox-local-windows-process-gate.ps1",
   "equinox-local-windows-release-zip.ps1",
 ]);

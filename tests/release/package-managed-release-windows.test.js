@@ -10,6 +10,7 @@ test("Windows managed package contract is x64 ZIP with versioned shell payload a
   assert.equal(contract.artifactSuffix, "win32-x64.zip");
   assert.deepEqual(contract.extraReleaseFiles, [
     "src/equinox-local-windows-job-object.ps1",
+    "src/equinox-local-windows-private-state.ps1",
     "src/equinox-local-windows-process-gate.ps1",
     "src/equinox-local-windows-release-zip.ps1",
   ]);

@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { readBoundedNormalFile } from "./equinox-local-safe-file.js";
+import { inspectPrivateStatePath, protectWindowsPrivateStatePath, verifyWindowsPrivateStateAcl } from "./equinox-local-private-state.js";
 import {
   acknowledgeTelegramInboundUpdate,
   answerTelegramTaskCallback,
@@ -32,15 +33,52 @@ const CALLBACK_RE = /^eqx:([abcdfxpurentq]):([a-z0-9-]{6,40})$/u;
 function iso(now) { return new Date(now).toISOString(); }
 function errorMessage(error) { return error instanceof Error ? error.message : String(error); }
 
+async function inspectWindowsTaskState(target, type, fsImpl) {
+  const inspection = await inspectPrivateStatePath(target, {
+    platform: "win32", type, fsImpl, verifyWindowsAcl: verifyWindowsPrivateStateAcl,
+  });
+  if (inspection.exists && !inspection.safe) {
+    const error = new Error(`Telegram task state permissions need attention (${inspection.reason}).`);
+    error.code = "EQUINOX_TELEGRAM_PRIVATE_STATE_SECURITY";
+    throw error;
+  }
+  return inspection;
+}
+
+async function ensureTaskStateDirectory(parent, fsImpl) {
+  if (process.platform !== "win32") {
+    await fsImpl.mkdir(parent, { recursive: true, mode: 0o700 });
+    await fsImpl.chmod(parent, 0o700).catch(() => {});
+    return;
+  }
+  let existed = true;
+  try { await fsImpl.lstat(parent); }
+  catch (error) { if (error?.code === "ENOENT") existed = false; else throw error; }
+  if (existed) { await inspectWindowsTaskState(parent, "directory", fsImpl); return; }
+  const created = await fsImpl.mkdir(parent, { recursive: true });
+  if (created === undefined) { await inspectWindowsTaskState(parent, "directory", fsImpl); return; }
+  await protectWindowsPrivateStatePath({ target: parent, type: "directory" });
+  await inspectWindowsTaskState(parent, "directory", fsImpl);
+}
+
 async function atomicWrite(filePath, value, fsImpl = fs) {
   const parent = path.dirname(filePath);
-  await fsImpl.mkdir(parent, { recursive: true, mode: 0o700 });
-  await fsImpl.chmod(parent, 0o700).catch(() => {});
+  await ensureTaskStateDirectory(parent, fsImpl);
+  if (process.platform === "win32") await inspectWindowsTaskState(filePath, "file", fsImpl);
   const temp = path.join(parent, `.telegram-task-${process.pid}-${randomUUID().slice(0, 8)}.tmp`);
   try {
     await fsImpl.writeFile(temp, `${JSON.stringify(value, null, 2)}\n`, { flag: "wx", mode: 0o600 });
+    if (process.platform === "win32") {
+      await protectWindowsPrivateStatePath({ target: temp, type: "file" });
+      await inspectWindowsTaskState(temp, "file", fsImpl);
+    }
     await fsImpl.rename(temp, filePath);
-    await fsImpl.chmod(filePath, 0o600);
+    if (process.platform === "win32") {
+      await protectWindowsPrivateStatePath({ target: filePath, type: "file" });
+      await inspectWindowsTaskState(filePath, "file", fsImpl);
+    } else {
+      await fsImpl.chmod(filePath, 0o600);
+    }
   } catch (error) {
     await fsImpl.rm(temp, { force: true }).catch(() => {});
     throw error;
@@ -428,8 +466,16 @@ export function createTelegramTaskInboxController({
   const initialize = async () => {
     if (state) return snapshot();
     try {
+      if (process.platform === "win32") {
+        const security = await inspectWindowsTaskState(statePath, "file", fsImpl);
+        if (!security.exists) throw Object.assign(new Error("missing"), { code: "ENOENT" });
+      }
       const loaded = await readBoundedNormalFile(statePath, { fsImpl, minBytes: 1, maxBytes: MAX_STATE_BYTES, encoding: "utf8", label: "Telegram task state" });
-      if ((loaded.stat.mode & 0o777) !== 0o600) throw new Error("Telegram task state permissions need attention.");
+      if (process.platform === "win32") {
+        await inspectWindowsTaskState(statePath, "file", fsImpl);
+      } else if ((loaded.stat.mode & 0o777) !== 0o600) {
+        throw new Error("Telegram task state permissions need attention.");
+      }
       state = validateState(JSON.parse(loaded.data));
       let changed = false;
       for (const action of state.actions) {

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { inspectPrivateStatePath } from "../../src/equinox-local-private-state.js";
+import { inspectPrivateStatePath, protectWindowsPrivateStatePath, verifyWindowsPrivateStateAcl } from "../../src/equinox-local-private-state.js";
 
 function fakeFs(stat) {
   return { async lstat() { return stat; } };
@@ -51,4 +51,36 @@ test("private-state inspection rejects symlinks on every supported platform", as
     assert.equal(result.safe, false);
     assert.equal(result.reason, "symlink");
   }
+});
+
+
+test("Windows private-state ACL helper uses fixed PowerShell and parses bounded verification", async () => {
+  const calls = [];
+  const execFileAsync = async (command, args, options) => {
+    calls.push({ command, args, options });
+    return { stdout: '{"safe":true,"reason":null}\n', stderr: '' };
+  };
+  const env = { SystemRoot: "C:\\Windows", PATH: "C:\\Windows\\System32" };
+  const input = { target: "C:\\Users\\Türk User\\AppData\\Local\\Equinox Local\\state\\secrets\\telegram.json", type: "file", execFileAsync, env };
+  assert.deepEqual(await verifyWindowsPrivateStateAcl(input), { safe: true, reason: null });
+  assert.deepEqual(await protectWindowsPrivateStatePath({ ...input, type: "directory", target: "C:\\Users\\Türk User\\AppData\\Local\\Equinox Local\\state\\secrets" }), { safe: true, reason: null });
+  assert.equal(calls.length, 2);
+  for (const call of calls) {
+    assert.equal(call.command, "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe");
+    assert.equal(call.args[0], "-NoLogo");
+    assert.equal(call.args.includes("-File"), true);
+    assert.equal(call.args.includes("-Target"), true);
+    assert.equal(call.options.timeout, 15_000);
+    assert.equal(call.options.windowsHide, true);
+  }
+  assert.equal(calls[0].args[calls[0].args.indexOf("-Action") + 1], "verify");
+  assert.equal(calls[1].args[calls[1].args.indexOf("-Action") + 1], "protect");
+});
+
+test("Windows private-state ACL protection fails closed on unsafe helper output", async () => {
+  const execFileAsync = async () => ({ stdout: '{"safe":false,"reason":"foreign-principal"}\n', stderr: '' });
+  await assert.rejects(
+    protectWindowsPrivateStatePath({ target: "C:\\State\\secret.json", type: "file", execFileAsync, env: { SystemRoot: "C:\\Windows" } }),
+    /foreign-principal/u,
+  );
 });
