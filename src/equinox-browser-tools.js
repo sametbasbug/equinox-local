@@ -130,7 +130,7 @@ function augmentSnapshotWithPdfText(snapshot, parsed, maxNodes = 250) {
     expanded: null,
     required: null,
     focusable: null,
-    contentSource: "macos-pdfkit",
+    contentSource: "pdfjs-dist",
     pdfPage: chunk.pageNumber,
     pdfChunk: chunk.chunkIndex,
   }));

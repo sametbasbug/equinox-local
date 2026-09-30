@@ -59,18 +59,18 @@ const TR_UI = Object.freeze({
   "Setup": "Kurulum",
   "Setup Equinox Local": "Equinox Local’i kur",
   "First-time setup": "İlk kurulum",
-  "Connect ChatGPT to this Mac": "ChatGPT’yi bu Mac’e bağlayın",
+  "Connect ChatGPT to this computer": "ChatGPT’yi bu bilgisayara bağlayın",
   "Follow these steps once. Control Center unlocks after ChatGPT successfully reaches Equinox Local.": "Bu adımları bir kez tamamlayın. ChatGPT, Equinox Local’e başarıyla ulaştığında Kontrol Merkezi açılır.",
   "Setup in progress": "Kurulum sürüyor",
   "Equinox Local is installed": "Equinox Local kuruldu",
-  "The private runtime and starter workspace are already on this Mac.": "Özel runtime ve başlangıç çalışma alanı bu Mac’te hazır.",
+  "The private runtime and starter workspace are already on this computer.": "Özel runtime ve başlangıç çalışma alanı bu bilgisayarda hazır.",
   "Create the private OpenAI tunnel": "Özel OpenAI tunnel’ını oluşturun",
-  "The Tunnel ID tells ChatGPT which Equinox Local runtime to reach. The Runtime API key lets this Mac connect to that tunnel.": "Tunnel ID, ChatGPT’nin hangi Equinox Local runtime’ına ulaşacağını belirtir. Runtime API anahtarı bu Mac’in tunnel’a bağlanmasını sağlar.",
+  "The Tunnel ID tells ChatGPT which Equinox Local runtime to reach. The Runtime API key lets this computer connect to that tunnel.": "Tunnel ID, ChatGPT’nin hangi Equinox Local runtime’ına ulaşacağını belirtir. Runtime API anahtarı bu bilgisayarın tunnel’a bağlanmasını sağlar.",
   "Not connected": "Bağlı değil",
   "Open Tunnels ↗": "Tunnels’ı aç ↗",
   "Open API keys ↗": "API anahtarlarını aç ↗",
   "Use the exact Tunnel ID you will also select in ChatGPT.": "ChatGPT’de de seçeceğiniz aynı Tunnel ID’yi kullanın.",
-  "Stored privately on this Mac. Do not use an admin key.": "Bu Mac’te özel olarak saklanır. Admin anahtarı kullanmayın.",
+  "Stored privately on this computer. Do not use an admin key.": "Bu bilgisayarda özel olarak saklanır. Admin anahtarı kullanmayın.",
   "Add Equinox Local to ChatGPT": "Equinox Local’i ChatGPT’ye ekleyin",
   "Create or edit the Equinox Local MCP app/connector in ChatGPT and point it at the same tunnel.": "ChatGPT’de Equinox Local MCP uygulamasını/bağlayıcısını oluşturun veya düzenleyin ve aynı tunnel’ı seçin.",
   "Waiting": "Bekliyor",
@@ -81,8 +81,8 @@ const TR_UI = Object.freeze({
   "Equinox Browser is a required part of Equinox Local. It provides the browser-side connection and continuity features.": "Equinox Browser, Equinox Local’in zorunlu bir parçasıdır. Tarayıcı tarafı bağlantı ve devamlılık özelliklerini sağlar.",
   "Install Equinox Browser ↗": "Equinox Browser’ı yükle ↗",
   "Waiting for Equinox Browser in Your Browser.": "Kendi tarayıcınızdaki Equinox Browser bekleniyor.",
-  "Verify ChatGPT → Mac": "ChatGPT → Mac bağlantısını doğrulayın",
-  "Send one real tool request from ChatGPT. Setup stays locked until that request reaches this Mac.": "ChatGPT’den gerçek bir araç isteği gönderin. Bu istek Mac’e ulaşana kadar kurulum kilitli kalır.",
+  "Verify ChatGPT → Local": "ChatGPT → Local bağlantısını doğrulayın",
+  "Send one real tool request from ChatGPT. Setup stays locked until that request reaches this computer.": "ChatGPT’den gerçek bir araç isteği gönderin. Bu istek bu bilgisayara ulaşana kadar kurulum kilitli kalır.",
   "Copy test prompt": "Test promptunu kopyala",
   "Waiting for the first Equinox Local tool call from ChatGPT.": "ChatGPT’den ilk Equinox Local araç çağrısı bekleniyor.",
   "Need to remove Equinox Local instead?": "Bunun yerine Equinox Local’i kaldırmak mı istiyorsunuz?",
@@ -95,7 +95,7 @@ const TR_UI = Object.freeze({
   "Enable Browser Control": "Browser Control’u açın",
   "Command received": "Komut alındı",
   "Ready to verify": "Doğrulamaya hazır",
-  "Setup complete. ChatGPT can now reach this Mac.": "Kurulum tamamlandı. ChatGPT artık bu Mac’e ulaşabiliyor.",
+  "Setup complete. ChatGPT can now reach this computer.": "Kurulum tamamlandı. ChatGPT artık bu bilgisayara ulaşabiliyor.",
   "Tunnel ID copied.": "Tunnel ID kopyalandı.",
   "Test prompt copied.": "Test promptu kopyalandı.",
   "Create the tunnel, add Equinox Local to ChatGPT, install Equinox Browser, then verify the first real tool call.": "Tunnel’ı oluşturun, Equinox Local’i ChatGPT’ye ekleyin, Equinox Browser’ı kurun ve ardından ilk gerçek araç çağrısını doğrulayın.",
@@ -106,7 +106,7 @@ const TR_UI = Object.freeze({
   "Select or paste the same Tunnel ID shown below, then save the connector.": "Aşağıda gösterilen aynı Tunnel ID’yi seçin veya yapıştırın ve bağlayıcıyı kaydedin.",
   "Install Equinox Browser from Chrome Web Store in the Chrome profile you use with ChatGPT.": "Equinox Browser’ı Chrome Web Store’dan ChatGPT ile kullandığınız Chrome profiline yükleyin.",
   "Turn Browser Control on. This setup screen detects the connection automatically.": "Browser Control’u açın. Bu kurulum ekranı bağlantıyı otomatik algılar.",
-  "Paste both values below. The API key stays only on this Mac and is never shown again.": "İki değeri de aşağıya yapıştırın. API anahtarı yalnızca bu Mac’te kalır ve tekrar gösterilmez.",
+  "Paste both values below. The API key stays only on this computer and is never shown again.": "İki değeri de aşağıya yapıştırın. API anahtarı yalnızca bu bilgisayarda kalır ve tekrar gösterilmez.",
   "Open ChatGPT connector/app settings and start the custom MCP connection flow available to your account/workspace.": "ChatGPT bağlayıcı/uygulama ayarlarını açın ve hesabınızda/çalışma alanınızda bulunan özel MCP bağlantı akışını başlatın.",
   "Open the extension, review and accept the browser-data disclosure.": "Uzantıyı açın, tarayıcı verisi bilgilendirmesini inceleyip kabul edin.",
   "After the connector and browser extension are ready, paste this into ChatGPT:": "Bağlayıcı ve tarayıcı uzantısı hazır olduğunda bunu ChatGPT’ye yapıştırın:",
@@ -115,7 +115,7 @@ const TR_UI = Object.freeze({
   "Disclosure accepted. Turn Browser Control on to finish the required browser connection.": "Bilgilendirme kabul edildi. Gerekli tarayıcı bağlantısını tamamlamak için Browser Control’u açın.",
   "Equinox Browser is connected, consented and Browser Control is on.": "Equinox Browser bağlı, bilgilendirme kabul edildi ve Browser Control açık.",
   "Waiting for the first Equinox Local tool call from ChatGPT. This is the final setup check.": "ChatGPT’den ilk Equinox Local araç çağrısı bekleniyor. Bu son kurulum kontrolüdür.",
-  "Finish the remaining steps. Setup unlocks only after a real ChatGPT tool request reaches this Mac.": "Kalan adımları tamamlayın. Kurulum ancak ChatGPT’den gerçek bir araç isteği bu Mac’e ulaştığında açılır.",
+  "Finish the remaining steps. Setup unlocks only after a real ChatGPT tool request reaches this computer.": "Kalan adımları tamamlayın. Kurulum ancak ChatGPT’den gerçek bir araç isteği bu bilgisayara ulaştığında açılır.",
   "Tunnel settings are saved. Equinox Local is reconnecting through your private tunnel.": "Tunnel ayarları kaydedildi. Equinox Local özel tunnel üzerinden yeniden bağlanıyor.",
   "The saved tunnel connection needs attention. Re-enter the Runtime API key to repair it.": "Kayıtlı tunnel bağlantısının ilgilenilmesi gerekiyor. Düzeltmek için Runtime API anahtarını yeniden girin.",
   "OpenAI Tunnels": "OpenAI Tunnels",
@@ -130,12 +130,12 @@ const TR_UI = Object.freeze({
   "Skip to content": "İçeriğe geç",
   "Workspace": "Çalışma alanı",
   "Your workspace": "Çalışma alanınız",
-  "Your Mac, connected": "Mac’iniz, bağlantıda",
+  "Your computer, connected": "Bilgisayarınız, bağlantıda",
   "Connected capabilities": "Bağlı araçlar",
-  "On this Mac": "Bu Mac’te",
-  "ChatGPT to Mac connection": "ChatGPT ile Mac bağlantısı",
+  "On this computer": "Bu bilgisayarda",
+  "ChatGPT to local computer connection": "ChatGPT ile yerel bilgisayar bağlantısı",
   "ChatGPT on the web": "ChatGPT web",
-  "Tools on this Mac": "Mac’inizdeki araçlar",
+  "Tools on this computer": "Bu bilgisayardaki araçlar",
   "Checking connection": "Bağlantı kontrol ediliyor",
   "ChatGPT connected": "ChatGPT bağlantısı açık",
   "ChatGPT not connected": "ChatGPT bağlı değil",
@@ -164,21 +164,21 @@ const TR_UI = Object.freeze({
   "Configured folder scope": "Yapılandırılmış klasör kapsamı",
   "Named projects and read-only folders used by structured capabilities.": "Yapılandırılmış araçların kullandığı adlandırılmış projeler ve salt okunur klasörler.",
   "Keep named shortcuts to your projects and folders. These settings do not limit Terminal access.": "Proje ve klasörlerinize adlandırılmış kısayollar ekleyin. Bu ayarlar Terminal erişimini sınırlamaz.",
-  "Your named projects and folders, saved privately on this Mac.": "Bu Mac’te özel olarak saklanan proje ve klasör kısayollarınız.",
+  "Your named projects and folders, saved privately on this computer.": "Bu bilgisayarda özel olarak saklanan proje ve klasör kısayollarınız.",
   "Access settings": "Erişim ayarları",
   "Review recent runtime events and configuration changes. Sensitive details are kept out of this timeline.": "Son çalışma olaylarını ve yapılandırma değişikliklerini inceleyin. Hassas ayrıntılar bu akışta gösterilmez.",
   "Recent activity": "Son etkinlikler",
   "Connect the tools your agent needs. Optional services can be unavailable without stopping local execution.": "Ajanınızın ihtiyaç duyduğu araçları bağlayın. İsteğe bağlı bir servis kullanılamasa da yerel çalıştırma devam eder.",
   "Save your changes, then restart Equinox Local to apply them.": "Değişikliklerinizi kaydedin, ardından uygulamak için Equinox Local’i yeniden başlatın.",
-  "Stored privately on this Mac. Your key is never shown again.": "Bu Mac’te özel olarak saklanır. Anahtarınız tekrar gösterilmez.",
+  "Stored privately on this computer. Your key is never shown again.": "Bu bilgisayarda özel olarak saklanır. Anahtarınız tekrar gösterilmez.",
   "Additional folders are read-only. This screen cannot grant write access.": "Ek klasörler salt okunurdur. Bu ekrandan yazma izni verilemez.",
   "If Agent Browser is unavailable, the task stops. Equinox Local never switches to your personal Chrome without an explicit choice.": "Agent Browser kullanılamıyorsa görev durur. Equinox Local, açık bir seçim olmadan kişisel Chrome’unuza geçmez.",
   "Agent paused": "Ajan duraklatıldı",
   "New actions are blocked. Read-only status is still available. Use Resume agent to continue.": "Yeni işlemler engellendi. Salt okunur durum bilgisi erişilebilir. Devam etmek için Ajanı sürdür düğmesini kullanın.",
   "Your agent is paused": "Ajanınız duraklatıldı",
   "Local stays connected for read-only status. Resume when you are ready; stopped work will not restart on its own.": "Yerel bağlantı, salt okunur durum bilgisi için açık kalır. Hazır olduğunuzda sürdürün; durdurulan işler kendiliğinden yeniden başlamaz.",
-  "Your Mac is ready": "Mac’iniz hazır",
-  "Local tools are ready. Your agent stays in ChatGPT on the web; its connected tools run here on your Mac.": "Yerel araçlar hazır. Ajanınız ChatGPT web’de kalır; bağlı araçları burada, Mac’inizde çalışır.",
+  "Your computer is ready": "Bilgisayarınız hazır",
+  "Local tools are ready. Your agent stays in ChatGPT on the web; its connected tools run here on your computer.": "Yerel araçlar hazır. Ajanınız ChatGPT web’de kalır; bağlı araçları burada, bilgisayarınızda çalışır.",
   "Equinox Local Control Center": "Equinox Local Kontrol Merkezi",
   "Primary navigation": "Ana gezinme",
   "Control Center": "Kontrol Merkezi",
@@ -239,7 +239,7 @@ const TR_UI = Object.freeze({
   "Cancel task": "Görevi iptal et",
   "Delete task": "Görevi sil",
   "This task is terminal and can no longer be edited.": "Bu görev terminal durumda ve artık düzenlenemez.",
-  "Inspect durable task checkpoints and take control when an automatic continuation should stop or change. Task state stays private on this Mac.": "Kalıcı görev checkpoint’lerini inceleyin; otomatik devamın durması veya değişmesi gerektiğinde kontrolü alın. Görev durumu bu Mac’te özel kalır.",
+  "Inspect durable task checkpoints and take control when an automatic continuation should stop or change. Task state stays private on this computer.": "Kalıcı görev checkpoint’lerini inceleyin; otomatik devamın durması veya değişmesi gerektiğinde kontrolü alın. Görev durumu bu bilgisayarda özel kalır.",
   "Task changes saved.": "Görev değişiklikleri kaydedildi.",
   "Continuation cancelled.": "Otomatik devam iptal edildi.",
   "Task marked complete.": "Görev tamamlandı olarak işaretlendi.",
@@ -278,7 +278,7 @@ const TR_UI = Object.freeze({
   "Activity": "Etkinlik",
   "Connecting…": "Bağlanıyor…",
   "Local runtime": "Yerel runtime",
-  "Loopback only · Private to this Mac": "Yalnızca loopback · Bu Mac'e özel",
+  "Loopback only · Private to this computer": "Yalnızca loopback · Bu bilgisayara özel",
   "Overview": "Genel Bakış",
   "Language": "Dil",
   "Control Center language": "Kontrol Merkezi dili",
@@ -296,7 +296,7 @@ const TR_UI = Object.freeze({
   "Your local runtime is ready. Complete the remaining connection steps without using Terminal.": "Yerel runtime hazır. Kalan bağlantı adımlarını Terminal kullanmadan tamamlayın.",
   "Setup needed": "Kurulum gerekli",
   "Setup progress": "Kurulum ilerlemesi",
-  "Installed and private to this Mac.": "Kurulu ve yalnızca bu Mac'e özel.",
+  "Installed and private to this computer.": "Kurulu ve yalnızca bu bilgisayara özel.",
   "Equinox Workspace": "Equinox Çalışma Alanı",
   "Your managed starter workspace.": "Yönetilen başlangıç çalışma alanınız.",
   "Equinox Browser": "Equinox Browser",
@@ -307,7 +307,7 @@ const TR_UI = Object.freeze({
   "Connect this Local runtime through your OpenAI tunnel.": "Bu Local runtime'ını OpenAI tunnel'ınız üzerinden bağlayın.",
   "Not connected": "Bağlı değil",
   "Connect to ChatGPT": "ChatGPT'ye bağlan",
-  "Use a tunnel Runtime API key with Tunnels Read + Use. The key stays only on this Mac.": "Tunnels Read + Use yetkilerine sahip bir tunnel Runtime API anahtarı kullanın. Anahtar yalnızca bu Mac'te kalır.",
+  "Use a tunnel Runtime API key with Tunnels Read + Use. The key stays only on this computer.": "Tunnels Read + Use yetkilerine sahip bir tunnel Runtime API anahtarı kullanın. Anahtar yalnızca bu bilgisayarda kalır.",
   "Tunnel ID": "Tunnel ID",
   "OpenAI tunnel IDs use": "OpenAI tunnel ID'leri",
   "followed by 32 lowercase hexadecimal characters.": "ardından 32 küçük harfli onaltılık karakter kullanır.",
@@ -442,7 +442,7 @@ const TR_UI = Object.freeze({
   "Selected roots only": "Yalnızca seçili kökler",
   "Controls root-aware project/asset and file-backed special capabilities. Full accepts configured IDs, home, or an accessible absolute folder path; Selected stays on configured roots. Ordinary file, Git and package-manager work uses Terminal.": "Kök duyarlı proje/varlık ve dosya destekli özel yetenekleri denetler. Tam erişim yapılandırılmış kimlikleri, home kökünü veya erişilebilir mutlak klasör yolunu kabul eder; Seçili mod yapılandırılmış köklerde kalır. Normal dosya, Git ve paket yöneticisi işleri Terminal kullanır.",
   "Terminal & processes": "Terminal ve süreçler",
-  "Allow shell commands, interactive shells and managed background processes with your normal macOS user permissions. Terminal commands wait for a bounded foreground window; unfinished work continues as the same managed process instead of being restarted. Terminal is not confined to Selected roots after a shell starts; turn it off if you require strict selected-root containment. Equinox-managed provider credentials are not injected into generic shells or processes.": "Normal macOS kullanıcı izinlerinizle kabuk komutlarına, etkileşimli kabuklara ve yönetilen arka plan süreçlerine izin verin. Terminal komutları sınırlı bir ön-plan bekleme penceresi kullanır; bitmeyen iş yeniden başlatılmadan aynı yönetilen süreç olarak devam eder. Bir kabuk başladıktan sonra Terminal Seçili köklerle sınırlı değildir; katı seçili-kök sınırı gerekiyorsa Terminal'i kapatın. Equinox tarafından yönetilen sağlayıcı kimlik bilgileri genel kabuklara veya süreçlere aktarılmaz.",
+  "Allow shell commands, interactive shells and managed background processes with your normal logged-in user permissions. Terminal commands wait for a bounded foreground window; unfinished work continues as the same managed process instead of being restarted. Terminal is not confined to Selected roots after a shell starts; turn it off if you require strict selected-root containment. Equinox-managed provider credentials are not injected into generic shells or processes.": "Normal oturum açmış kullanıcı izinlerinizle kabuk komutlarına, etkileşimli kabuklara ve yönetilen arka plan süreçlerine izin verin. Terminal komutları sınırlı bir ön-plan bekleme penceresi kullanır; bitmeyen iş yeniden başlatılmadan aynı yönetilen süreç olarak devam eder. Bir kabuk başladıktan sonra Terminal Seçili köklerle sınırlı değildir; katı seçili-kök sınırı gerekiyorsa Terminal'i kapatın. Equinox tarafından yönetilen sağlayıcı kimlik bilgileri genel kabuklara veya süreçlere aktarılmaz.",
   "Desktop automation": "Masaüstü otomasyonu",
   "Allow the first-party desktop tool surface when macOS permissions are also granted.": "macOS izinleri de verilmişse birinci taraf masaüstü araç yüzeyine izin verin.",
   "Allow the Equinox Browser lane. Extension consent remains required and cannot be bypassed here.": "Equinox Browser hattına izin verin. Uzantı onayı gerekli kalır ve buradan atlanamaz.",
@@ -481,10 +481,10 @@ const TR_UI = Object.freeze({
   "Emergency Stop immediately blocks new mutating agent actions and safely stops Equinox Local-managed Terminal/process work. The MCP connection and read-only status stay alive so the agent can observe the pause and finish its response. Resume never restarts stopped work automatically.": "Acil Durdur, yeni değişiklik yapan ajan eylemlerini anında engeller ve Equinox Local tarafından yönetilen Terminal/süreç işlerini güvenle durdurur. MCP bağlantısı ve salt-okunur durum açık kalır; böylece ajan duraklatmayı fark edip yanıtını tamamlayabilir. Sürdür, durdurulan işleri hiçbir zaman otomatik yeniden başlatmaz.",
   "Capability boundaries": "Yetenek sınırları",
   "Agent Access": "Ajan Erişimi",
-  "Terminal/process execution is the core terminal-first capability and uses your normal macOS user permissions. Structured folder scope does not sandbox a running shell.": "Terminal/süreç çalıştırma temel terminal-first yeteneğidir ve normal macOS kullanıcı izinlarınızı kullanır. Yapılandırılmış klasör kapsamı çalışan bir shell'i sandbox içine almaz.",
+  "Terminal/process execution is the core terminal-first capability and uses your normal logged-in user permissions. Structured folder scope does not sandbox a running shell.": "Terminal/süreç çalıştırma temel terminal-first yeteneğidir ve normal oturum açmış kullanıcı izinlerinizi kullanır. Yapılandırılmış klasör kapsamı çalışan bir shell'i sandbox içine almaz.",
   "Allow the first-party desktop tool surface when macOS permissions are also granted.": "macOS izinleri de verildiğinde birinci taraf masaüstü araç yüzeyine izin verin.",
   "These controls exist for specialized containment and legacy configurations. They are not a sandbox for Terminal.": "Bu kontroller özel kısıtlama ihtiyaçları ve eski yapılandırmalar için korunur. Terminal için bir sandbox değildir.",
-  "Applies only to root-aware structured capabilities such as project discovery and image viewing. Terminal uses the logged-in macOS user's permissions.": "Yalnızca proje keşfi ve görsel görüntüleme gibi kök-farkındalıklı yapılandırılmış yeteneklere uygulanır. Terminal oturum açmış macOS kullanıcısının izinlarını kullanır.",
+  "Applies only to root-aware structured capabilities such as project discovery and image viewing. Terminal uses the logged-in user's permissions.": "Yalnızca proje keşfi ve görsel görüntüleme gibi kök-farkındalıklı yapılandırılmış yeteneklere uygulanır. Terminal oturum açmış kullanıcının izinlerini kullanır.",
   "Turning this off disables Terminal, interactive shells and managed processes. Equinox Local becomes heavily restricted and many agent tasks will no longer work.": "Bunu kapatmak Terminal'i, etkileşimli shell'leri ve yönetilen süreçleri devre dışı bırakır. Equinox Local ciddi biçimde kısıtlanır ve birçok ajan görevi artık çalışmaz.",
   "Browser/Desktop and advanced access changes use the validated configuration path and require a Local restart. Emergency Stop/Resume apply immediately and do not edit configuration.": "Tarayıcı/Masaüstü ve gelişmiş erişim değişiklikleri doğrulanmış yapılandırma yolunu kullanır ve Local'in yeniden başlatılmasını gerektirir. Acil Durdur/Sürdür anında uygulanır ve yapılandırmayı değiştirmez.",
   "Agent resumed.": "Ajan sürdürüldü.",
@@ -494,7 +494,7 @@ const TR_UI = Object.freeze({
   "Managed installation": "Yönetilen kurulum",
   "Uninstall Equinox Local": "Equinox Local'i kaldır",
   "Managed only": "Yalnızca yönetilen kurulum",
-  "Remove the managed runtime, LaunchAgent, tunnel credentials and Equinox Browser Native Messaging host from this Mac. By default, your Equinox Workspace and Control Center configuration are preserved.": "Yönetilen runtime'ı, LaunchAgent'ı, tunnel kimlik bilgilerini ve Equinox Browser Native Messaging host'unu bu Mac'ten kaldırın. Varsayılan olarak Equinox Çalışma Alanınız ve Kontrol Merkezi yapılandırmanız korunur.",
+  "Remove the managed runtime, startup registration, tunnel credentials and Equinox Browser Native Messaging host from this computer. By default, your Equinox Workspace and Control Center configuration are preserved.": "Yönetilen runtime'ı, başlangıç kaydını, tunnel kimlik bilgilerini ve Equinox Browser Native Messaging host'unu bu bilgisayardan kaldırın. Varsayılan olarak Equinox Çalışma Alanınız ve Kontrol Merkezi yapılandırmanız korunur.",
   "Also delete local user data": "Yerel kullanıcı verilerini de sil",
   "This permanently removes the Equinox Workspace and saved Control Center configuration in addition to the managed runtime.": "Bu seçenek yönetilen runtime'a ek olarak Equinox Çalışma Alanını ve kaydedilmiş Kontrol Merkezi yapılandırmasını kalıcı olarak siler.",
   "Type": "Onay için",
@@ -521,7 +521,7 @@ const TR_UI = Object.freeze({
   "Absolute folder path": "Mutlak klasör yolu",
   "Choose folder…": "Klasör seç…",
   "Web file transfer": "Web dosya aktarımı",
-  "Files sent from ChatGPT to this Mac are saved here by default. Explicit destinations still override this folder.": "ChatGPT’den bu Mac’e gönderilen dosyalar varsayılan olarak buraya kaydedilir. Açıkça belirtilen hedef klasörler bu ayarı geçersiz kılar.",
+  "Files sent from ChatGPT to this computer are saved here by default. Explicit destinations still override this folder.": "ChatGPT’den bu bilgisayara gönderilen dosyalar varsayılan olarak buraya kaydedilir. Açıkça belirtilen hedef klasörler bu ayarı geçersiz kılar.",
   "Web file transfer folder updated.": "Web dosya aktarım klasörü güncellendi.",
   "Web file transfer folder reset to default.": "Web dosya aktarım klasörü varsayılana döndürüldü.",
   "Download folder": "İndirme klasörü",
@@ -629,14 +629,14 @@ const TR_UI = Object.freeze({
   "Telegram pairing cancelled.": "Telegram eşleştirmesi iptal edildi.",
   "Pair a Telegram bot to one private account. No Telegram user ID is required.": "Bir Telegram botunu tek bir özel hesaba eşleştirin. Telegram kullanıcı ID’si gerekmez.",
   "Create a bot with BotFather using /newbot, copy its HTTP API token, then start pairing here. You will confirm the detected private account before Equinox Local saves it.": "BotFather’da /newbot ile bir bot oluşturun, HTTP API tokenını kopyalayın ve eşleştirmeyi buradan başlatın. Equinox Local kaydetmeden önce algılanan özel hesabı siz doğrulayacaksınız.",
-  "The token stays only on this Mac. Telegram user ID is discovered during pairing.": "Token yalnızca bu Mac’te kalır. Telegram kullanıcı ID’si eşleştirme sırasında otomatik bulunur.",
-  "Recommended. Telegram lets Equinox Local reach you away from the Mac and will become the remote task inbox for agent replies and controls.": "Önerilen. Telegram, Mac’in başında değilken Equinox Local’in size ulaşmasını sağlar ve ajan yanıtları ile kontrolleri için uzaktan görev gelen kutusu olacaktır.",
+  "The token stays only on this computer. Telegram user ID is discovered during pairing.": "Token yalnızca bu bilgisayarda kalır. Telegram kullanıcı ID’si eşleştirme sırasında otomatik bulunur.",
+  "Recommended. Telegram lets Equinox Local reach you away from this computer and will become the remote task inbox for agent replies and controls.": "Önerilen. Telegram, bu bilgisayarın başında değilken Equinox Local’in size ulaşmasını sağlar ve ajan yanıtları ile kontrolleri için uzaktan görev gelen kutusu olacaktır.",
   "Open BotFather in Telegram and send /newbot.": "Telegram’da BotFather’ı açın ve /newbot gönderin.",
   "Choose a display name and a unique bot username when BotFather asks.": "BotFather istediğinde görünen bir ad ve benzersiz bir bot kullanıcı adı seçin.",
   "Copy the HTTP API token BotFather gives you and paste it below.": "BotFather’ın verdiği HTTP API tokenını kopyalayıp aşağıya yapıştırın.",
   "Choose Pair Telegram, open your new bot, and send /start.": "Telegram’ı eşleştir’i seçin, yeni botunuzu açın ve /start gönderin.",
   "Equinox Local will show the detected private account here. Confirm it before anything is saved.": "Equinox Local algılanan özel hesabı burada gösterecek. Herhangi bir şey kaydedilmeden önce hesabı doğrulayın.",
-  "The token stays only on this Mac. Do not share it with the agent or paste it into chat.": "Token yalnızca bu Mac’te kalır. Ajanla paylaşmayın veya sohbete yapıştırmayın.",
+  "The token stays only on this computer. Do not share it with the agent or paste it into chat.": "Token yalnızca bu bilgisayarda kalır. Ajanla paylaşmayın veya sohbete yapıştırmayın.",
   "Waiting for /start from your bot chat.": "Bot sohbetinizden /start bekleniyor.",
   "Skipped for now. Telegram remains available later in Control Center → Services.": "Şimdilik atlandı. Telegram daha sonra Kontrol Merkezi → Servisler bölümünden bağlanabilir.",
   "Saved Telegram credentials need attention. Reconnect the bot to replace them safely.": "Kaydedilmiş Telegram kimlik bilgileri dikkat gerektiriyor. Güvenle değiştirmek için botu yeniden bağlayın.",
@@ -680,7 +680,7 @@ const TR_UI = Object.freeze({
   "Telegram remote control disabled.": "Telegram uzaktan kontrolü kapatıldı.",
   "Telegram disconnected.": "Telegram bağlantısı kesildi.",
   "Authenticated HTTP profiles": "Kimlik doğrulamalı HTTP profilleri",
-  "Keep API credentials on this Mac while allowing agents to make bounded requests only to the HTTPS origins, methods and paths you approve.": "API kimlik bilgilerini bu Mac’te tutarken ajanların yalnızca onayladığınız HTTPS origin, yöntem ve yollara sınırlı istekler göndermesine izin verin.",
+  "Keep API credentials on this computer while allowing agents to make bounded requests only to the HTTPS origins, methods and paths you approve.": "API kimlik bilgilerini bu bilgisayarda tutarken ajanların yalnızca onayladığınız HTTPS origin, yöntem ve yollara sınırlı istekler göndermesine izin verin.",
   "Allow agents to manage HTTP profiles": "Ajanların HTTP profillerini yönetmesine izin ver",
   "Agents may create, edit and delete profile structure. Credentials remain human-only and are never exposed to the agent.": "Ajanlar profil yapısını oluşturabilir, düzenleyebilir ve silebilir. Kimlik bilgileri yalnızca insana aittir ve ajana hiçbir zaman gösterilmez.",
   "Add profile": "Profil ekle",
@@ -721,8 +721,8 @@ const TR_UI = Object.freeze({
   "Dark": "Karanlık",
   "Services": "Servisler",
   "Safety": "Güvenlik",
-  "Private on this Mac · 127.0.0.1": "Bu Mac’e özel · 127.0.0.1",
-  "Checking your Mac": "Mac’iniz kontrol ediliyor",
+  "Private on this computer · 127.0.0.1": "Bu bilgisayara özel · 127.0.0.1",
+  "Checking your computer": "Bilgisayarınız kontrol ediliyor",
   "Equinox Local is collecting a private status summary.": "Equinox Local özel bir durum özeti topluyor.",
   "Everything is running normally": "Her şey normal çalışıyor",
   "Core services are ready. You only need to open a detail page when you want to change something.": "Temel servisler hazır. Yalnızca bir şeyi değiştirmek istediğinizde ayrıntı sayfasını açmanız yeterli.",
@@ -1474,8 +1474,8 @@ function renderDashboard() {
 
   setBadge("runtime-health-badge", runtimeHealth === "UNKNOWN" ? "Health unavailable" : runtimeHealth, runtimeTone);
   if (runtimeHealth === "HEALTHY") {
-    setText("overview-title", "Your Mac is ready");
-    setText("overview-copy", "Local tools are ready. Your agent stays in ChatGPT on the web; its connected tools run here on your Mac.");
+    setText("overview-title", "Your computer is ready");
+    setText("overview-copy", "Local tools are ready. Your agent stays in ChatGPT on the web; its connected tools run here on your computer.");
   } else if (runtimeHealth === "UNKNOWN") {
     setText("overview-title", "Status is still loading");
     setText("overview-copy", "The local API is reachable, but the runtime summary is not complete yet.");
@@ -1582,7 +1582,7 @@ function applySetupMode(setupMode) {
   moveUninstallCard(setupMode);
   if (setupMode && state.activeSection !== "setup") switchSection("setup");
   if (!setupMode && state.activeSection === "setup") switchSection("dashboard");
-  if (previous && !setupMode) showToast("Setup complete. ChatGPT can now reach this Mac.");
+  if (previous && !setupMode) showToast("Setup complete. ChatGPT can now reach this computer.");
 }
 
 function renderOnboarding() {
@@ -1599,7 +1599,7 @@ function renderOnboarding() {
     setText("onboarding-copy", onboarding.issue || "The saved tunnel connection needs attention. Re-enter the Runtime API key to repair it.");
   } else if (onboarding.connectedThroughTunnel) {
     setBadge("setup-tunnel-status", "Connected", "good");
-    setText("onboarding-copy", "Finish the remaining steps. Setup unlocks only after a real ChatGPT tool request reaches this Mac.");
+    setText("onboarding-copy", "Finish the remaining steps. Setup unlocks only after a real ChatGPT tool request reaches this computer.");
   } else if (onboarding.transportConfigured) {
     setBadge("setup-tunnel-status", "Connecting", "warn");
     setText("onboarding-copy", "Tunnel settings are saved. Equinox Local is reconnecting through your private tunnel.");
@@ -2291,7 +2291,7 @@ function createTelegramIntegrationCard() {
       button.disabled = state.integrationBusy || !state.telegramBotToken.trim();
     });
     const tokenHelp = document.createElement("small");
-    tokenHelp.textContent = localizeUiText("The token stays only on this Mac. Telegram user ID is discovered during pairing.");
+    tokenHelp.textContent = localizeUiText("The token stays only on this computer. Telegram user ID is discovered during pairing.");
     tokenLabel.append(tokenTitle, tokenInput, tokenHelp);
     const button = document.createElement("button");
     button.type = "submit";
@@ -2518,7 +2518,7 @@ function createAuthenticatedHttpProfilesCard() {
   const managementEnabled = data.agentProfileManagementEnabled !== false;
   const card = createIntegrationCard(
     "Authenticated HTTP profiles",
-    "Keep API credentials on this Mac while allowing agents to make bounded requests only to the HTTPS origins, methods and paths you approve.",
+    "Keep API credentials on this computer while allowing agents to make bounded requests only to the HTTPS origins, methods and paths you approve.",
     managementEnabled ? "Agent management on" : "Agent management off",
     managementEnabled ? "good" : "neutral",
     [{ label: "Add profile", onClick: () => setHttpProfileDraft(null), primary: profiles.length === 0, disabled: state.httpProfileBusy }],
@@ -2621,7 +2621,7 @@ function createWebFileTransferCard() {
   const settings = state.webFileTransfer || {};
   const card = createIntegrationCard(
     "Web file transfer",
-    "Files sent from ChatGPT to this Mac are saved here by default. Explicit destinations still override this folder.",
+    "Files sent from ChatGPT to this computer are saved here by default. Explicit destinations still override this folder.",
     settings.path ? "Ready" : "Not available",
     settings.path ? "good" : "neutral",
   );

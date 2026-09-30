@@ -284,7 +284,7 @@ export async function importChatGptFile({ file, destination, collision = "rename
 
 export function registerFileTransferTools({ registerRawTool, z, fullFileAccess, fileRootIds, projectIds, resolveFileRootContext, resolveProjectContext, homeDir = process.env.HOME, webImportSettingsPath = defaultWebImportSettingsPath(homeDir), fetchImpl = globalThis.fetch, fsImpl = fs } = {}) {
   registerRawTool("file_export", {
-    description: "Intentionally transfer one normal local file from the Mac into the current ChatGPT conversation as a native downloadable file result. Do not use this merely to inspect a local PNG/JPEG/WebP; use image_view so the model can inspect the Mac path directly without a transfer/container-copy workflow. Arbitrary file types are supported up to 128 MiB. Full Agent Access accepts accessible absolute/~/ paths except protected credential/application-data paths; Selected mode stays inside configured roots. Symlinks and .git/sensitive credential paths are blocked.",
+    description: "Intentionally transfer one normal local file from this computer into the current ChatGPT conversation as a native downloadable file result. Do not use this merely to inspect a local PNG/JPEG/WebP; use image_view so the model can inspect the local path directly without a transfer/container-copy workflow. Arbitrary file types are supported up to 128 MiB. Full Agent Access accepts accessible absolute/~/ paths except protected credential/application-data paths; Selected mode stays inside configured roots. Symlinks and .git/sensitive credential paths are blocked.",
     inputSchema: { path: z.string().min(1).max(4096).describe("Absolute local file path or ~/ path to send to ChatGPT") },
     annotations: { title: "Send local file to ChatGPT", readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   }, async ({ path: filePath }) => createFileExportResult({ filePath, fullFileAccess, fileRootIds, resolveFileRootContext, homeDir, fsImpl }), { capabilityDomain: "files", mcpExposed: false });
@@ -293,13 +293,13 @@ export function registerFileTransferTools({ registerRawTool, z, fullFileAccess, 
     download_url: z.string().url(), file_id: z.string().min(1).max(256), mime_type: z.string().min(1).max(200).optional(), file_name: z.string().min(1).max(255).optional(),
   }).strict();
   registerRawTool("file_import", {
-    description: "Save one ChatGPT attachment onto the Mac through the native file bridge. Arbitrary file types are accepted up to 512 MiB and streamed to disk. destination is optional and defaults to the Control Center Web file transfer folder (~/Downloads/Equinox Local/Web by default); an existing directory means save inside it. collision defaults to rename and may be replace or error. Full Agent Access supports accessible absolute/~/ destinations except protected paths; Selected mode writes only inside configured project roots.",
+    description: "Save one ChatGPT attachment onto this computer through the native file bridge. Arbitrary file types are accepted up to 512 MiB and streamed to disk. destination is optional and defaults to the Control Center Web file transfer folder (~/Downloads/Equinox Local/Web by default); an existing directory means save inside it. collision defaults to rename and may be replace or error. Full Agent Access supports accessible absolute/~/ destinations except protected paths; Selected mode writes only inside configured project roots.",
     inputSchema: {
       file: chatGptFileSchema,
       destination: z.string().min(1).max(4096).optional().describe("Optional absolute or ~/ destination file/directory path; defaults to the configured Web file transfer folder with the original filename"),
       collision: z.enum(["rename", "replace", "error"]).default("rename").describe("rename preserves an existing file by choosing a free name; replace overwrites a normal file; error refuses collisions"),
     },
-    annotations: { title: "Save ChatGPT attachment to Mac", readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
+    annotations: { title: "Save ChatGPT attachment locally", readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
   }, async ({ file, destination, collision }) => {
     const result = await importChatGptFile({ file, destination, collision, fullFileAccess, projectIds, resolveProjectContext, homeDir, settingsPath: webImportSettingsPath, fetchImpl, fsImpl });
     return { content: [{ type: "text", text: [

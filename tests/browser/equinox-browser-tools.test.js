@@ -659,6 +659,7 @@ test("PDF snapshot enriches readable content through bounded pdf.data without ex
         currentDocumentGeneration: 1,
         outputMode: "compact",
         text: "toolbar",
+        elements: [],
       };
     }
     if (method === "pdf.data") {
@@ -684,6 +685,7 @@ test("PDF snapshot enriches readable content through bounded pdf.data without ex
   assert.equal(parsed.pdfContent.version, 1);
   assert.equal(parsed.pdfContent.parser, "pdfjs-dist");
   assert.equal(parsed.pdfContent.textAvailable, true);
+  assert.equal(parsed.elements.at(-1).contentSource, "pdfjs-dist");
   assert.equal(parsed.privacy.pdfTextRedaction, false);
   assert.match(parsed.text, /Equinox PDF Fixture/u);
   assert.match(parsed.text, /123456|supersecretvalue/u);
