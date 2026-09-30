@@ -15,6 +15,9 @@ import {
   defaultTelegramCredentialPath,
   defaultTelegramInboxPath,
   defaultTelegramPairingPath,
+  defaultTelegramTaskStatePath,
+  defaultTelegramDownloadSettingsPath,
+  defaultTelegramRemoteControlSettingsPath,
   disconnectTelegramIntegration,
   getTelegramDownloadSettings,
   getTelegramIntegrationStatus,
@@ -41,6 +44,20 @@ import {
 } from "../../src/telegram-integration.js";
 
 const TOKEN = "123456789:abcdefghijklmnopqrstuvwxyzABCDE_12345";
+
+test("Telegram defaults follow the shared Windows per-user path contract", () => {
+  const homeDir = "C:\\Users\\Türk User";
+  const options = { platform: "win32", arch: "x64", env: { LOCALAPPDATA: "C:\\Users\\Türk User\\AppData\\Local" } };
+  const state = "C:\\Users\\Türk User\\AppData\\Local\\Equinox Local\\state";
+  assert.equal(defaultTelegramCredentialPath(homeDir, options), `${state}\\secrets\\telegram.json`);
+  assert.equal(defaultTelegramPairingPath(homeDir, options), `${state}\\secrets\\telegram-pairing.json`);
+  assert.equal(defaultTelegramInboxPath(homeDir, options), `${state}\\secrets\\telegram-inbox.json`);
+  assert.equal(defaultTelegramTaskStatePath(homeDir, options), `${state}\\secrets\\telegram-task-state.json`);
+  assert.equal(defaultTelegramDownloadSettingsPath(homeDir, options), `${state}\\settings\\telegram-downloads.json`);
+  assert.equal(defaultTelegramRemoteControlSettingsPath(homeDir, options), `${state}\\settings\\telegram-remote-control.json`);
+  assert.equal(defaultTelegramAttachmentRoot(homeDir, options), "C:\\Users\\Türk User\\Downloads\\Equinox Local\\Telegram");
+  assert.equal(legacyTelegramAttachmentRoot(homeDir, options), `${state}\\Telegram Inbox`);
+});
 
 async function withTempCredential(run) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "equinox-telegram-"));
