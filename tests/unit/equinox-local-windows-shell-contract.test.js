@@ -11,7 +11,7 @@ async function source(name) {
   return fs.readFile(path.join(SHELL, name), "utf8");
 }
 
-test("Windows shell is a thin x64 WPF/WebView2 host for the shared Control Center", async () => {
+test("Windows shell is a thin x64/ARM64 WPF/WebView2 host for the shared Control Center", async () => {
   const [project, window] = await Promise.all([
     source("EquinoxLocal.WindowsShell.csproj"),
     source("MainWindow.xaml.cs"),
@@ -20,13 +20,16 @@ test("Windows shell is a thin x64 WPF/WebView2 host for the shared Control Cente
   assert.match(project, /<TargetFramework>net8\.0-windows10\.0\.19041\.0<\/TargetFramework>/u);
   assert.match(project, /<UseWPF>true<\/UseWPF>/u);
   assert.match(project, /<UseWindowsForms>true<\/UseWindowsForms>/u);
+  assert.match(project, /<Platforms>x64;ARM64<\/Platforms>/u);
   assert.match(project, /<PlatformTarget>x64<\/PlatformTarget>/u);
-  assert.match(project, /RuntimeIdentifier[^\n]*win-x64|\$\(RuntimeIdentifier\)' == 'win-x64'/u);
+  assert.match(project, /<PlatformTarget>ARM64<\/PlatformTarget>/u);
+  assert.match(project, /win-x64/u);
+  assert.match(project, /win-arm64/u);
   assert.match(project, /<SelfContained>true<\/SelfContained>/u);
   assert.match(project, /<PublishSingleFile>false<\/PublishSingleFile>/u);
   assert.match(project, /<PublishTrimmed>false<\/PublishTrimmed>/u);
   assert.match(project, /ValidateWindowsShellRuntimeIdentifier/u);
-  assert.match(project, /Windows ARM64 is enabled separately in W8/u);
+  assert.match(project, /RuntimeIdentifier=win-x64 or win-arm64/u);
   assert.match(project, /Microsoft\.Web\.WebView2/u);
   assert.match(window, /http:\/\/127\.0\.0\.1:24891\//u);
   assert.match(window, /EnsureCoreWebView2Async/u);
@@ -144,7 +147,9 @@ test("Windows shell runtime supervisor uses the existing Job Object gate with bo
   assert.doesNotMatch(supervisor, /taskkill|current-version\.json|cmd\.exe/iu);
   assert.match(locator, /current-version\.json/u);
   assert.match(locator, /Environment\.SpecialFolder\.LocalApplicationData/u);
-  assert.match(locator, /win32-x64/u);
+  assert.match(locator, /RuntimeInformation\.ProcessArchitecture/u);
+  assert.match(locator, /Architecture\.X64 => "win32-x64"/u);
+  assert.match(locator, /Architecture\.Arm64 => "win32-arm64"/u);
   assert.match(locator, /schemaVersion/u);
   assert.match(locator, /release\.json/u);
   assert.match(locator, /FileAttributes\.ReparsePoint/u);
@@ -224,7 +229,9 @@ test("public Windows CI restores and builds the native x64 shell", async () => {
   assert.match(ci, /windows-runtime:/u);
   assert.match(ci, /windows-shell:/u);
   assert.match(ci, /windows-package:/u);
-  assert.match(ci, /needs: \[windows-runtime, windows-shell, windows-package\]/u);
+  assert.match(ci, /needs: \[windows-runtime, windows-shell, windows-package, windows-arm64-foundation\]/u);
+  assert.match(ci, /ARM64_RESULT: \$\{\{ needs\.windows-arm64-foundation\.result \}\}/u);
+  assert.ok(ci.includes('test "$ARM64_RESULT" = success'));
   assert.match(ci, /name: Windows x64 managed package/u);
   assert.match(ci, /Windows transfer and Telegram path parity smoke/u);
   assert.match(ci, /Windows private-state ACL acceptance/u);
@@ -266,6 +273,14 @@ test("public Windows CI restores and builds the native x64 shell", async () => {
   assert.match(ci, /coreclr\.dll/u);
   assert.match(ci, /hostfxr\.dll/u);
   assert.match(ci, /0x8664/u);
+  assert.match(ci, /windows-arm64-foundation:/u);
+  assert.match(ci, /windows-11-vs2026-arm/u);
+  assert.match(ci, /architecture:\s*arm64/u);
+  assert.match(ci, /windows-node-pty-smoke\.mjs/u);
+  assert.match(ci, /--runtime win-arm64/u);
+  assert.match(ci, /-p:Platform=ARM64/u);
+  assert.match(ci, /0xAA64/u);
+  assert.match(ci, /equinox-local-\*-win32-arm64\.zip/u);
   assert.match(ci, /WebView2Loader\.dll/u);
   assert.match(ci, /Windows native shell branding smoke/u);
   assert.match(ci, /ExtractAssociatedIcon/u);

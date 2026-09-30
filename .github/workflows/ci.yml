@@ -230,12 +230,89 @@ jobs:
             if ($names | Where-Object { $_ -like 'release/runtime/peekaboo/*' }) { throw 'Windows managed ZIP unexpectedly contains Peekaboo' }
           } finally { $zip.Dispose() }
 
+  windows-arm64-foundation:
+    name: Windows ARM64 foundation / Node 26
+    runs-on: windows-11-vs2026-arm
+    timeout-minutes: 12
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up native ARM64 Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 26.10.0
+          architecture: arm64
+          cache: npm
+
+      - name: Verify native ARM64 Node host
+        shell: pwsh
+        run: |
+          if ((node -p "process.platform") -ne 'win32') { throw 'ARM64 lane is not running on Windows' }
+          if ((node -p "process.arch") -ne 'arm64') { throw 'ARM64 lane is not running native ARM64 Node' }
+          if ((node --version) -ne 'v26.10.0') { throw 'ARM64 lane Node version drifted' }
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Native ARM64 node-pty / ConPTY smoke
+        run: node tests/release/windows-node-pty-smoke.mjs
+
+      - name: Native ARM64 Native Messaging launcher smoke
+        run: node tests/release/windows-native-messaging-smoke.mjs
+
+      - name: Set up .NET SDK
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Publish Windows ARM64 native shell
+        run: dotnet publish native/windows/EquinoxLocal.WindowsShell/EquinoxLocal.WindowsShell.csproj --configuration Release --runtime win-arm64 --self-contained true -p:Platform=ARM64 --output artifacts/windows-shell/win-arm64
+
+      - name: Windows ARM64 native shell publish smoke
+        shell: pwsh
+        run: |
+          $publish = Join-Path $PWD 'artifacts/windows-shell/win-arm64'
+          $exe = Join-Path $publish 'EquinoxLocal.exe'
+          foreach ($required in @($exe, (Join-Path $publish 'coreclr.dll'), (Join-Path $publish 'hostfxr.dll'), (Join-Path $publish 'Microsoft.Web.WebView2.Core.dll'))) {
+            if (-not (Test-Path -LiteralPath $required -PathType Leaf)) { throw "Missing published Windows ARM64 shell component: $required" }
+          }
+          $bytes = [System.IO.File]::ReadAllBytes($exe)
+          $peOffset = [BitConverter]::ToInt32($bytes, 0x3c)
+          $machine = [BitConverter]::ToUInt16($bytes, $peOffset + 4)
+          if ($machine -ne 0xAA64) { throw ("Published EquinoxLocal.exe is not ARM64 (machine=0x{0:X4})" -f $machine) }
+          $loader = Get-ChildItem $publish -Filter WebView2Loader.dll -Recurse | Select-Object -First 1
+          if ($null -eq $loader) { throw 'Published ARM64 shell is missing WebView2Loader.dll' }
+
+      - name: Windows ARM64 managed package assembly smoke
+        shell: pwsh
+        env:
+          EQUINOX_WINDOWS_SHELL_PUBLISH_DIR: artifacts/windows-shell/win-arm64
+        run: |
+          npm run local:release:package:windows
+          $artifact = Get-ChildItem backups/local-packages -Filter 'equinox-local-*-win32-arm64.zip' | Select-Object -First 1
+          if ($null -eq $artifact) { throw 'Windows ARM64 managed ZIP artifact was not created' }
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $zip = [System.IO.Compression.ZipFile]::OpenRead($artifact.FullName)
+          try {
+            $names = @($zip.Entries | ForEach-Object FullName)
+            foreach ($required in @('release/release.json','release/runtime/node/bin/node.exe','release/runtime/tunnel/tunnel-client.exe','release/runtime/tunnel/cloudflared.exe','release/runtime/browser/equinox-browser-native-host.exe','release/runtime/shell/EquinoxLocal.exe')) {
+              if ($names -notcontains $required) { throw "Windows ARM64 managed ZIP is missing $required" }
+            }
+            $entry = $zip.GetEntry('release/release.json')
+            $reader = [System.IO.StreamReader]::new($entry.Open())
+            try { $metadata = ($reader.ReadToEnd() | ConvertFrom-Json) } finally { $reader.Dispose() }
+            if ($metadata.target -ne 'win32-arm64') { throw "Windows ARM64 release metadata target mismatch: $($metadata.target)" }
+            if ($names | Where-Object { $_ -like 'release/runtime/peekaboo/*' }) { throw 'Windows ARM64 managed ZIP unexpectedly contains Peekaboo' }
+          } finally { $zip.Dispose() }
+
   windows-headless:
     name: Windows x64 headless / Node 26
     runs-on: ubuntu-latest
     timeout-minutes: 2
     if: ${{ always() }}
-    needs: [windows-runtime, windows-shell, windows-package]
+    needs: [windows-runtime, windows-shell, windows-package, windows-arm64-foundation]
 
     steps:
       - name: Verify parallel Windows acceptance
@@ -243,7 +320,9 @@ jobs:
           RUNTIME_RESULT: ${{ needs.windows-runtime.result }}
           SHELL_RESULT: ${{ needs.windows-shell.result }}
           PACKAGE_RESULT: ${{ needs.windows-package.result }}
+          ARM64_RESULT: ${{ needs.windows-arm64-foundation.result }}
         run: |
           test "$RUNTIME_RESULT" = success
           test "$SHELL_RESULT" = success
           test "$PACKAGE_RESULT" = success
+          test "$ARM64_RESULT" = success

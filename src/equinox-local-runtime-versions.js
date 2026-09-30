@@ -22,6 +22,11 @@ export const NODE_DISTRIBUTIONS = Object.freeze({
     sha256: "ebbe9ab9b58ad6bb54390d6e2c862c1afa7d4475fb7e8ae8146acde211bf70df",
     fileArchitecture: "x86_64",
   }),
+  "win32-arm64": Object.freeze({
+    filename: `node-v${EQUINOX_LOCAL_NODE_VERSION}-win-arm64.zip`,
+    sha256: "b778640d7271566bcaa9679912cdf0684c13e824c114e41a8b696fb14af7a7aa",
+    fileArchitecture: "arm64",
+  }),
   "win32-x64": Object.freeze({
     filename: `node-v${EQUINOX_LOCAL_NODE_VERSION}-win-x64.zip`,
     sha256: "9fef7eca6743a6b910989cd8e78712376b394fcb9b6e1e9c44a0799a287f90c5",
@@ -41,6 +46,12 @@ export const TUNNEL_CLIENT_DISTRIBUTIONS = Object.freeze({
     filename: `tunnel-client-v${EQUINOX_LOCAL_TUNNEL_CLIENT_VERSION}-darwin-amd64.zip`,
     sha256: "9dcae1e2fb121287e73271edb7b853dda52aa86b7bfca1df91bc275371261bdb",
     fileArchitecture: "x86_64",
+  }),
+  "win32-arm64": Object.freeze({
+    assetTag: "windows-arm64",
+    filename: `tunnel-client-v${EQUINOX_LOCAL_TUNNEL_CLIENT_VERSION}-windows-arm64.zip`,
+    sha256: "571e0d59ed9e86d1b105dc34f3267865f654de6968b01efd7c847f0af657d11d",
+    fileArchitecture: "arm64",
   }),
   "win32-x64": Object.freeze({
     assetTag: "windows-amd64",

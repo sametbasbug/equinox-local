@@ -21,8 +21,13 @@ import {
 const execFile = promisify(execFileCallback);
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 
-if (process.platform !== "win32" || process.arch !== "x64") {
-  throw new Error(`Windows Native Messaging smoke requires win32-x64; got ${process.platform}-${process.arch}.`);
+const TARGET = `${process.platform}-${process.arch}`;
+const TARGET_CONFIG = {
+  "win32-x64": { component: "Microsoft.VisualStudio.Component.VC.Tools.x86.x64", vcvars: "vcvars64.bat", peMachine: 0x8664 },
+  "win32-arm64": { component: "Microsoft.VisualStudio.Component.VC.Tools.ARM64", vcvars: "vcvarsarm64.bat", peMachine: 0xaa64 },
+}[TARGET];
+if (!TARGET_CONFIG) {
+  throw new Error(`Windows Native Messaging smoke requires native win32-x64 or win32-arm64; got ${TARGET}.`);
 }
 
 function encodeNativeMessage(message) {
@@ -67,12 +72,12 @@ async function compileLauncher(releaseDir) {
   const { stdout } = await execFile(vswhere, [
     "-latest",
     "-products", "*",
-    "-requires", "Microsoft.VisualStudio.Component.VC.Tools.x86.x64",
+    "-requires", TARGET_CONFIG.component,
     "-property", "installationPath",
   ], { timeout: 10_000, windowsHide: true });
   const installation = stdout.trim();
   assert.ok(installation, "Visual Studio C++ toolchain is unavailable on the Windows runner");
-  const vcvars = path.join(installation, "VC", "Auxiliary", "Build", "vcvars64.bat");
+  const vcvars = path.join(installation, "VC", "Auxiliary", "Build", TARGET_CONFIG.vcvars);
   const source = path.join(REPO_ROOT, "native", "windows", "equinox-browser-native-host-launcher.cpp");
   const command = `""${vcvars}" >nul && cl.exe /nologo /std:c++17 /O2 /EHsc /DUNICODE /D_UNICODE "${source}" /Fe:equinox-browser-native-host.exe"`;
   await execFile("cmd.exe", ["/d", "/s", "/c", command], {
@@ -86,6 +91,10 @@ async function compileLauncher(releaseDir) {
   });
   const stat = await fs.lstat(launcherPath);
   assert.equal(stat.isFile(), true, "Windows Native Messaging launcher was not compiled");
+  const bytes = await fs.readFile(launcherPath);
+  const peOffset = bytes.readInt32LE(0x3c);
+  assert.equal(bytes.toString("ascii", peOffset, peOffset + 4), "PE\0\0", "Windows Native Messaging launcher has an invalid PE header");
+  assert.equal(bytes.readUInt16LE(peOffset + 4), TARGET_CONFIG.peMachine, `Windows Native Messaging launcher architecture does not match ${TARGET}`);
   return launcherPath;
 }
 
@@ -259,6 +268,7 @@ try {
 
   process.stdout.write(`${JSON.stringify({
     ok: true,
+    target: TARGET,
     launcherPath,
     registryRoundTrip: true,
     namedPipe: endpoint.endpoint,

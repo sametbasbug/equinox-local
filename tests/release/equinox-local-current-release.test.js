@@ -21,6 +21,14 @@ test("Windows current-version pointer is exact, target-bound and version-bounded
   });
   assert.deepEqual(pointer, { schemaVersion: 1, target: "win32-x64", version: "5.2.1" });
   assert.match(serializeEquinoxLocalCurrentVersionPointer(pointer), /"target": "win32-x64"/u);
+  const arm64Pointer = parseEquinoxLocalCurrentVersionPointer({
+    schemaVersion: 1,
+    target: "win32-arm64",
+    version: "5.2.1",
+  }, { target: "win32-arm64" });
+  assert.deepEqual(arm64Pointer, { schemaVersion: 1, target: "win32-arm64", version: "5.2.1" });
+  assert.match(serializeEquinoxLocalCurrentVersionPointer({ version: "5.2.1", target: "win32-arm64" }), /"target": "win32-arm64"/u);
+  assert.throws(() => parseEquinoxLocalCurrentVersionPointer(pointer, { target: "win32-arm64" }), /target does not match/u);
   assert.throws(() => parseEquinoxLocalCurrentVersionPointer({
     schemaVersion: 1,
     target: "darwin-arm64",

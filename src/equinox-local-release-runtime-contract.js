@@ -3,7 +3,7 @@ import path from "node:path";
 import { EQUINOX_LOCAL_BUNDLED_PEEKABOO_SINCE_VERSION } from "./equinox-local-runtime-versions.js";
 import { compareEquinoxVersions, parseEquinoxVersion } from "./equinox-local-updater.js";
 
-const WINDOWS_X64_TARGET = "win32-x64";
+const WINDOWS_TARGET_PATTERN = /^win32-(?:arm64|x64)$/u;
 const DARWIN_TARGET_PATTERN = /^darwin-(?:arm64|x64)$/u;
 
 const DARWIN_BASE_EXECUTABLES = Object.freeze([
@@ -80,7 +80,7 @@ export function equinoxLocalReleaseRuntimeContract({ target, version } = {}) {
       nativeAppKind: "macos-app",
     });
   }
-  if (target === WINDOWS_X64_TARGET) {
+  if (WINDOWS_TARGET_PATTERN.test(target)) {
     return Object.freeze({
       target,
       version: normalizedVersion,
