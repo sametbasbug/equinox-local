@@ -38,13 +38,13 @@ The following are generally not vulnerabilities by themselves:
 
 - a user explicitly granting an agent access to a project that contains sensitive files;
 - behavior of a third-party AI provider after the user intentionally connects it;
-- attacks requiring prior arbitrary code execution as the same macOS user, unless they cross a documented Equinox Local protection boundary;
+- attacks requiring prior arbitrary code execution as the same logged-in operating-system user, unless they cross a documented Equinox Local protection boundary;
 - denial of service that only terminates a user-owned local process without persistence, privilege escalation, or boundary bypass;
 - findings against internal/private release infrastructure that is not shipped in the public source or managed release.
 
 ## Automated security scanning
 
-The public repository runs a GitHub CodeQL workflow for JavaScript/TypeScript using the `security-extended` query suite alongside the normal macOS CI/test suite. Private factory/release infrastructure is kept outside the public source boundary rather than relying on a private-publication staging mode for security coverage.
+The public repository runs a GitHub CodeQL workflow for JavaScript/TypeScript using the `security-extended` query suite alongside the normal macOS and Windows x64 CI/test suites. Private factory/release infrastructure is kept outside the public source boundary rather than relying on a private-publication staging mode for security coverage.
 
 CodeQL is a supplement to the explicit security-boundary tests in this repository, not a replacement for them.
 

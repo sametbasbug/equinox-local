@@ -23,6 +23,7 @@ These instructions apply to the entire Equinox Local public repository unless a 
 - Inspect `git status` before editing and preserve existing dirty work. Never reset, discard, or overwrite unrelated changes casually.
 - Work on `equinox/` branches; do not commit directly to `main`.
 - Prefer focused changes and existing modules/APIs over parallel implementations.
+- Keep shared command guidance platform-aware: finite `terminal_exec` uses `/bin/zsh -lc` on macOS and noninteractive `powershell.exe` on Windows, while interactive Terminal exposes only the shells supported by that host. Do not hardcode POSIX/zsh syntax or macOS TTY ownership assumptions into shared Windows-capable workflows; branch explicitly when shell syntax or lifecycle ownership is platform-specific.
 - Treat MCP delivery replay as a lifecycle invariant: transport/orchestration redelivery of one exposed tool invocation must reuse the original invocation/result and must not repeat side effects. A genuinely new identical invocation must remain possible.
 - When modifying an already-dirty file, inspect its current diff first and preserve unfinished work.
 - Do not merge to `main`, create a public release, publish Equinox Browser, or submit Chrome Web Store changes without explicit maintainer authorization.
