@@ -46,6 +46,8 @@ process.stdout.write(JSON.stringify({ ok: true, count: count + 1 }));
   Add-Type -AssemblyName System.IO.Compression
   Add-Type -AssemblyName System.IO.Compression.FileSystem
   $NativeTarget = Get-NativeWindowsTarget
+  $script:Target = $NativeTarget
+  Write-Output "Windows PowerShell bootstrap smoke target: $NativeTarget"
   $Artifact = Join-Path $Work ("equinox-local-9.8.7-$NativeTarget.zip")
   $zipStream = New-Object IO.FileStream($Artifact, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
   $zip = New-Object IO.Compression.ZipArchive($zipStream, [IO.Compression.ZipArchiveMode]::Create, $false)
