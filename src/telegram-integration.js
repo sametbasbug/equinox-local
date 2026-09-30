@@ -8,6 +8,7 @@ import {
   SAFE_FILE_ERROR_CODES,
 } from "./equinox-local-safe-file.js";
 import { inspectImageBuffer, MAX_IMAGE_VIEW_BYTES } from "./equinox-local-image-tools.js";
+import { equinoxLocalPlatformPaths } from "./equinox-local-platform.js";
 
 const TELEGRAM_API_BASE = "https://api.telegram.org";
 const TELEGRAM_REMOTE_COMMANDS = Object.freeze([
@@ -82,64 +83,49 @@ export function validateTelegramMessage(message) {
   return message;
 }
 
-export function defaultTelegramCredentialPath(homeDir = os.homedir()) {
-  return path.join(
-    homeDir,
-    "Library",
-    "Application Support",
-    "Equinox Local",
-    "secrets",
-    "telegram.json",
-  );
+function telegramPlatformPathContext(homeDir, { platform = process.platform, arch = process.arch, env = process.env } = {}) {
+  const paths = equinoxLocalPlatformPaths({ platform, arch, homeDir, env });
+  return { paths, pathApi: platform === "win32" ? path.win32 : path.posix };
 }
 
-export function defaultTelegramPairingPath(homeDir = os.homedir()) {
-  return path.join(
-    homeDir,
-    "Library",
-    "Application Support",
-    "Equinox Local",
-    "secrets",
-    "telegram-pairing.json",
-  );
+export function defaultTelegramCredentialPath(homeDir = os.homedir(), options = {}) {
+  const { paths, pathApi } = telegramPlatformPathContext(homeDir, options);
+  return pathApi.join(paths.stateRoot, "secrets", "telegram.json");
 }
 
-export function defaultTelegramInboxPath(homeDir = os.homedir()) {
-  return path.join(
-    homeDir,
-    "Library",
-    "Application Support",
-    "Equinox Local",
-    "secrets",
-    "telegram-inbox.json",
-  );
+export function defaultTelegramPairingPath(homeDir = os.homedir(), options = {}) {
+  const { paths, pathApi } = telegramPlatformPathContext(homeDir, options);
+  return pathApi.join(paths.stateRoot, "secrets", "telegram-pairing.json");
 }
 
-export function defaultTelegramTaskStatePath(homeDir = os.homedir()) {
-  return path.join(
-    homeDir,
-    "Library",
-    "Application Support",
-    "Equinox Local",
-    "secrets",
-    "telegram-task-state.json",
-  );
+export function defaultTelegramInboxPath(homeDir = os.homedir(), options = {}) {
+  const { paths, pathApi } = telegramPlatformPathContext(homeDir, options);
+  return pathApi.join(paths.stateRoot, "secrets", "telegram-inbox.json");
 }
 
-export function defaultTelegramAttachmentRoot(homeDir = os.homedir()) {
-  return path.join(homeDir, "Downloads", "Equinox Local", "Telegram");
+export function defaultTelegramTaskStatePath(homeDir = os.homedir(), options = {}) {
+  const { paths, pathApi } = telegramPlatformPathContext(homeDir, options);
+  return pathApi.join(paths.stateRoot, "secrets", "telegram-task-state.json");
 }
 
-export function legacyTelegramAttachmentRoot(homeDir = os.homedir()) {
-  return path.join(homeDir, "Library", "Application Support", "Equinox Local", "Telegram Inbox");
+export function defaultTelegramAttachmentRoot(homeDir = os.homedir(), options = {}) {
+  const { paths, pathApi } = telegramPlatformPathContext(homeDir, options);
+  return pathApi.join(paths.downloadsRoot, "Equinox Local", "Telegram");
 }
 
-export function defaultTelegramDownloadSettingsPath(homeDir = os.homedir()) {
-  return path.join(homeDir, "Library", "Application Support", "Equinox Local", "settings", "telegram-downloads.json");
+export function legacyTelegramAttachmentRoot(homeDir = os.homedir(), options = {}) {
+  const { paths, pathApi } = telegramPlatformPathContext(homeDir, options);
+  return pathApi.join(paths.stateRoot, "Telegram Inbox");
 }
 
-export function defaultTelegramRemoteControlSettingsPath(homeDir = os.homedir()) {
-  return path.join(homeDir, "Library", "Application Support", "Equinox Local", "settings", "telegram-remote-control.json");
+export function defaultTelegramDownloadSettingsPath(homeDir = os.homedir(), options = {}) {
+  const { paths, pathApi } = telegramPlatformPathContext(homeDir, options);
+  return pathApi.join(paths.stateRoot, "settings", "telegram-downloads.json");
+}
+
+export function defaultTelegramRemoteControlSettingsPath(homeDir = os.homedir(), options = {}) {
+  const { paths, pathApi } = telegramPlatformPathContext(homeDir, options);
+  return pathApi.join(paths.stateRoot, "settings", "telegram-remote-control.json");
 }
 
 async function ensurePrivateDirectory(directory, { fsImpl = fs } = {}) {

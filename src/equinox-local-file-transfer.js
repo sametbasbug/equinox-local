@@ -5,6 +5,7 @@ import path from "node:path";
 import { TextDecoder } from "node:util";
 
 import { createProtectedAgentPathChecker, isSensitiveAgentName } from "./equinox-local-agent-path-policy.js";
+import { equinoxLocalPlatformPaths } from "./equinox-local-platform.js";
 import { readBoundedNormalFile } from "./equinox-local-safe-file.js";
 import { isPathInside } from "./worktree-utils.js";
 
@@ -12,12 +13,18 @@ export const MAX_FILE_EXPORT_BYTES = 128 * 1024 * 1024;
 export const MAX_FILE_IMPORT_BYTES = 512 * 1024 * 1024;
 export const FILE_IMPORT_TIMEOUT_MS = 3 * 60 * 1000;
 
-export function defaultWebImportRoot(homeDir = os.homedir()) {
-  return path.join(homeDir, "Downloads", "Equinox Local", "Web");
+function platformPathApi(platform) {
+  return platform === "win32" ? path.win32 : path.posix;
 }
 
-export function defaultWebImportSettingsPath(homeDir = os.homedir()) {
-  return path.join(homeDir, "Library", "Application Support", "Equinox Local", "settings", "web-imports.json");
+export function defaultWebImportRoot(homeDir = os.homedir(), { platform = process.platform, arch = process.arch, env = process.env } = {}) {
+  const paths = equinoxLocalPlatformPaths({ platform, arch, homeDir, env });
+  return platformPathApi(platform).join(paths.downloadsRoot, "Equinox Local", "Web");
+}
+
+export function defaultWebImportSettingsPath(homeDir = os.homedir(), { platform = process.platform, arch = process.arch, env = process.env } = {}) {
+  const paths = equinoxLocalPlatformPaths({ platform, arch, homeDir, env });
+  return platformPathApi(platform).join(paths.stateRoot, "settings", "web-imports.json");
 }
 
 function normalizeWebImportPath(value) {

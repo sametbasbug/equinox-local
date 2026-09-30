@@ -6,6 +6,7 @@ This project follows semantic versioning for public releases.
 
 ## [Unreleased]
 
+- Web file-transfer and Telegram default paths now derive from the shared host platform contract, preserving the existing macOS layout while using per-user LocalAppData state and Windows Downloads paths on Windows x64.
 - Replaced the macOS-only Browser PDFKit/osascript text extractor with bounded `pdfjs-dist` parsing so readable Chrome PDF snapshots use the same parser on macOS and Windows x64; raw PDF bytes remain bounded and are never returned to the agent. Real Windows CI now runs the PDF parser fixture directly.
 - Made the Auto Continue maximum chain length configurable in Control Center with a default of 10 and a bounded 1–20 range; per-hop explicit arming, TTL, exact-chat binding, pre-mutation reservation and ambiguous-delivery no-retry guarantees are unchanged.
 - Suppressed bounded in-flight semantic MCP transport replays even when connector redelivery arrives with a new request/session id, preventing ambiguous `terminal_exec` delivery from spawning a second identical managed process while preserving later intentional identical calls after the original settles.

@@ -11,6 +11,7 @@ import {
   __test as transferTest,
   createFileExportResult,
   defaultWebImportRoot,
+  defaultWebImportSettingsPath,
   getWebImportSettings,
   importChatGptFile,
   MAX_FILE_EXPORT_BYTES,
@@ -34,6 +35,13 @@ function registrationHarness(options = {}) {
   });
   return records;
 }
+
+test("Web transfer defaults follow the shared Windows per-user path contract", () => {
+  const homeDir = "C:\\Users\\Türk User";
+  const options = { platform: "win32", arch: "x64", env: { LOCALAPPDATA: "C:\\Users\\Türk User\\AppData\\Local" } };
+  assert.equal(defaultWebImportRoot(homeDir, options), "C:\\Users\\Türk User\\Downloads\\Equinox Local\\Web");
+  assert.equal(defaultWebImportSettingsPath(homeDir, options), "C:\\Users\\Türk User\\AppData\\Local\\Equinox Local\\state\\settings\\web-imports.json");
+});
 
 function fileRef(overrides = {}) {
   return {

@@ -226,6 +226,8 @@ test("public Windows CI restores and builds the native x64 shell", async () => {
   assert.match(ci, /windows-package:/u);
   assert.match(ci, /needs: \[windows-runtime, windows-shell, windows-package\]/u);
   assert.match(ci, /name: Windows x64 managed package/u);
+  assert.match(ci, /Windows transfer and Telegram path parity smoke/u);
+  assert.match(ci, /Web transfer defaults follow the shared Windows per-user path contract\|Telegram defaults follow the shared Windows per-user path contract/u);
   assert.match(ci, /Windows managed release contract and activation rollback tests/u);
   assert.match(ci, /\$PSNativeCommandUseErrorActionPreference = \$true/u);
   assert.match(ci, /node --test tests\/release\/equinox-local-release-runtime-contract\.test\.js/u);
