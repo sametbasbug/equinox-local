@@ -70,6 +70,12 @@ test("public Windows installer selects only native x64/ARM64 targets, stays fixe
   assert.match(source, /Get-FileHash -LiteralPath \$Path -Algorithm SHA256/u);
   assert.match(source, /__EQUINOX_ZIP_HELPER_SHA256__/u);
   assert.match(source, /__EQUINOX_ZIP_HELPER_BYTES__/u);
+  assert.match(source, /function Assert-NormalDirectory/u);
+  assert.match(source, /\$installRoot = Join-Path \$localAppData 'Equinox Local'/u);
+  assert.match(source, /\$stagingRoot = Join-Path \$installRoot 'staging'/u);
+  assert.match(source, /Assert-NormalDirectory \$stagingRoot \$true/u);
+  assert.match(source, /\$stage = Join-Path \$stagingRoot \('bootstrap-' \+ \[Guid\]::NewGuid\(\)\.ToString\('N'\)\)/u);
+  assert.match(source, /ReparsePoint/u);
   assert.match(source, /-Mode Inspect -ArchivePath \$artifactPath/u);
   assert.match(source, /-Mode Extract -ArchivePath \$artifactPath -DestinationPath \$stage/u);
   assert.match(source, /runtime\\node\\bin\\node\.exe/u);

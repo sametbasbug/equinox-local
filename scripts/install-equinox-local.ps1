@@ -32,6 +32,13 @@ function Assert-NormalFile([string]$Path, [long]$MinBytes, [long]$MaxBytes) {
   if ($item.Length -lt $MinBytes -or $item.Length -gt $MaxBytes) { Fail "file size is outside the allowed range: $Path" }
   return $item
 }
+function Assert-NormalDirectory([string]$Path, [bool]$Create) {
+  if ($Create) { [IO.Directory]::CreateDirectory($Path) | Out-Null }
+  if (-not [IO.Directory]::Exists($Path)) { Fail "required directory is missing: $Path" }
+  $item = Get-Item -LiteralPath $Path -Force
+  if (-not $item.PSIsContainer -or (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0)) { Fail "unsafe managed directory: $Path" }
+  return $item
+}
 function Save-BoundedHttpsFile([string]$Url, [string]$Destination, [long]$MaxBytes) {
   $uri = [Uri]$Url
   if ($uri.Scheme -ne 'https') { Fail 'HTTPS is required' }
@@ -112,13 +119,17 @@ function Invoke-EquinoxLocalInstall {
   if (-not [long]::TryParse($ZipHelperBytes, [ref]$helperBytes) -or $helperBytes -lt 1 -or $helperBytes -gt 1048576) { Fail 'installer ZIP helper size pin is invalid' }
   $localAppData = $env:LOCALAPPDATA
   if ([string]::IsNullOrWhiteSpace($localAppData) -or -not [IO.Path]::IsPathRooted($localAppData)) { Fail 'trusted LOCALAPPDATA is required' }
+  $installRoot = Join-Path $localAppData 'Equinox Local'
+  $stagingRoot = Join-Path $installRoot 'staging'
+  Assert-NormalDirectory $installRoot $true | Out-Null
+  Assert-NormalDirectory $stagingRoot $true | Out-Null
   $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ('equinox-local-install-' + [Guid]::NewGuid().ToString('N'))
+  $stage = Join-Path $stagingRoot ('bootstrap-' + [Guid]::NewGuid().ToString('N'))
   [IO.Directory]::CreateDirectory($tempRoot) | Out-Null
   try {
     $manifestPath = Join-Path $tempRoot 'bootstrap.txt'
     $artifactPath = Join-Path $tempRoot 'release.zip'
     $helperPath = Join-Path $tempRoot $ZipHelperName
-    $stage = Join-Path $tempRoot 'stage'
     Write-Info "checking the stable $Target bootstrap manifest"
     Save-BoundedHttpsFile "$UpdateBase/bootstrap-$Target.txt" $manifestPath $MaxManifestBytes
     $manifest = Read-BootstrapManifest $manifestPath
@@ -143,6 +154,12 @@ function Invoke-EquinoxLocalInstall {
     Invoke-CleanNode $node $firstInstall $release
     Write-Info 'done'
   } finally {
+    if ([IO.Directory]::Exists($stage)) {
+      $stageItem = Get-Item -LiteralPath $stage -Force -ErrorAction SilentlyContinue
+      if ($null -ne $stageItem -and $stageItem.PSIsContainer -and (($stageItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -eq 0)) {
+        Remove-Item -LiteralPath $stage -Recurse -Force -ErrorAction SilentlyContinue
+      }
+    }
     if ([IO.Directory]::Exists($tempRoot)) { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
   }
 }

@@ -106,7 +106,10 @@ process.stdout.write(JSON.stringify({ ok: true, count: count + 1 }));
   $marker = [IO.File]::ReadAllText($markerPath, (New-Object Text.UTF8Encoding($false, $true))) | ConvertFrom-Json
   Assert-True ($marker.count -eq 2) 'Windows bootstrap retry did not reach the bundled first-install helper twice.'
   Assert-True (-not $marker.leaked) 'Windows bootstrap leaked provider credentials into bundled Node.'
-  Assert-True ($marker.release -match 'Bootstrap Temp Türk User') 'Windows bootstrap lost the spaced/non-ASCII staging path.'
+  $managedStaging = [IO.Path]::GetFullPath((Join-Path $LocalState 'Equinox Local\staging')).TrimEnd('\') + '\'
+  $markerRelease = [IO.Path]::GetFullPath([string]$marker.release)
+  Assert-True ($markerRelease.StartsWith($managedStaging, [StringComparison]::OrdinalIgnoreCase)) 'Windows bootstrap did not stage the verified release inside the managed staging root.'
+  Assert-True (-not $markerRelease.StartsWith([IO.Path]::GetFullPath($BootstrapTemp), [StringComparison]::OrdinalIgnoreCase)) 'Windows bootstrap still staged the verified release under TEMP.'
 
   $otherTarget = if ($NativeTarget -eq 'win32-arm64') { 'win32-x64' } else { 'win32-arm64' }
   $wrongTarget = $manifestText.Replace("target=$NativeTarget", "target=$otherTarget").Replace("-$NativeTarget.zip", "-$otherTarget.zip")
