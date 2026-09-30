@@ -7,7 +7,9 @@ param(
 $ErrorActionPreference = 'Stop'
 
 function Write-Result([bool]$Safe, [string]$Reason) {
-  [pscustomobject]@{ safe = $Safe; reason = $Reason } | ConvertTo-Json -Compress
+  $safeText = if ($Safe) { 'true' } else { 'false' }
+  $reasonText = if ([string]::IsNullOrEmpty($Reason)) { 'null' } else { '"' + $Reason.Replace('\\', '\\\\').Replace('"', '\\"') + '"' }
+  [Console]::Out.WriteLine('{"safe":' + $safeText + ',"reason":' + $reasonText + '}')
 }
 
 function Get-CurrentSid {
@@ -17,29 +19,39 @@ function Get-CurrentSid {
 }
 
 function Get-SystemSid {
-  return New-Object System.Security.Principal.SecurityIdentifier([System.Security.Principal.WellKnownSidType]::LocalSystemSid, $null)
+  return [System.Security.Principal.SecurityIdentifier]::new([System.Security.Principal.WellKnownSidType]::LocalSystemSid, $null)
 }
 
-function Assert-NormalTarget([System.IO.FileSystemInfo]$Item, [string]$ExpectedType) {
-  if (($Item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'Private state target cannot be a reparse point.' }
-  if ($ExpectedType -eq 'file' -and $Item.PSIsContainer) { throw 'Private state target type mismatch.' }
-  if ($ExpectedType -eq 'directory' -and -not $Item.PSIsContainer) { throw 'Private state target type mismatch.' }
+function Get-TargetAttributes([string]$PathValue, [string]$ExpectedType) {
+  $attributes = [System.IO.File]::GetAttributes($PathValue)
+  if (($attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'Private state target cannot be a reparse point.' }
+  $isDirectory = ($attributes -band [System.IO.FileAttributes]::Directory) -ne 0
+  if ($ExpectedType -eq 'file' -and $isDirectory) { throw 'Private state target type mismatch.' }
+  if ($ExpectedType -eq 'directory' -and -not $isDirectory) { throw 'Private state target type mismatch.' }
+  return $attributes
 }
 
-function Set-PrivateAcl([System.IO.FileSystemInfo]$Item, [string]$ExpectedType) {
+function Get-PrivateAcl([string]$PathValue, [string]$ExpectedType) {
+  if ($ExpectedType -eq 'directory') {
+    return [System.IO.Directory]::GetAccessControl($PathValue)
+  }
+  return [System.IO.File]::GetAccessControl($PathValue)
+}
+
+function Set-PrivateAcl([string]$PathValue, [string]$ExpectedType) {
   $userSid = Get-CurrentSid
   $systemSid = Get-SystemSid
   if ($ExpectedType -eq 'directory') {
-    $acl = New-Object System.Security.AccessControl.DirectorySecurity
+    $acl = [System.Security.AccessControl.DirectorySecurity]::new()
     $inheritance = [System.Security.AccessControl.InheritanceFlags]::ContainerInherit -bor [System.Security.AccessControl.InheritanceFlags]::ObjectInherit
   } else {
-    $acl = New-Object System.Security.AccessControl.FileSecurity
+    $acl = [System.Security.AccessControl.FileSecurity]::new()
     $inheritance = [System.Security.AccessControl.InheritanceFlags]::None
   }
   $acl.SetOwner($userSid)
   $acl.SetAccessRuleProtection($true, $false)
   foreach ($sid in @($userSid, $systemSid)) {
-    $rule = New-Object System.Security.AccessControl.FileSystemAccessRule(
+    $rule = [System.Security.AccessControl.FileSystemAccessRule]::new(
       $sid,
       [System.Security.AccessControl.FileSystemRights]::FullControl,
       $inheritance,
@@ -48,15 +60,19 @@ function Set-PrivateAcl([System.IO.FileSystemInfo]$Item, [string]$ExpectedType) 
     )
     [void]$acl.AddAccessRule($rule)
   }
-  Set-Acl -LiteralPath $Item.FullName -AclObject $acl
+  if ($ExpectedType -eq 'directory') {
+    [System.IO.Directory]::SetAccessControl($PathValue, $acl)
+  } else {
+    [System.IO.File]::SetAccessControl($PathValue, $acl)
+  }
 }
 
-function Test-PrivateAcl([System.IO.FileSystemInfo]$Item, [string]$ExpectedType) {
+function Test-PrivateAcl([string]$PathValue, [string]$ExpectedType) {
   $userSid = Get-CurrentSid
   $systemSid = Get-SystemSid
-  $acl = Get-Acl -LiteralPath $Item.FullName
+  $acl = Get-PrivateAcl $PathValue $ExpectedType
   try {
-    $ownerSid = (New-Object System.Security.Principal.NTAccount($acl.Owner)).Translate([System.Security.Principal.SecurityIdentifier])
+    $ownerSid = $acl.GetOwner([System.Security.Principal.SecurityIdentifier])
   } catch {
     return @{ safe = $false; reason = 'owner-unresolved' }
   }
@@ -86,12 +102,11 @@ function Test-PrivateAcl([System.IO.FileSystemInfo]$Item, [string]$ExpectedType)
   return @{ safe = $true; reason = $null }
 }
 
-$item = Get-Item -LiteralPath $Target -Force
-Assert-NormalTarget $item $Type
+$resolvedTarget = [System.IO.Path]::GetFullPath($Target)
+[void](Get-TargetAttributes $resolvedTarget $Type)
 if ($Action -eq 'protect') {
-  Set-PrivateAcl $item $Type
-  $item = Get-Item -LiteralPath $Target -Force
-  Assert-NormalTarget $item $Type
+  Set-PrivateAcl $resolvedTarget $Type
+  [void](Get-TargetAttributes $resolvedTarget $Type)
 }
-$result = Test-PrivateAcl $item $Type
+$result = Test-PrivateAcl $resolvedTarget $Type
 Write-Result ([bool]$result.safe) ([string]$result.reason)
