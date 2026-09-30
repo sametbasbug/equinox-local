@@ -259,6 +259,12 @@ jobs:
       - name: Windows ARM64 managed lifecycle plumbing smoke
         run: node --test tests/unit/equinox-local-platform.test.js tests/release/equinox-local-windows-arm64-lifecycle.test.js
 
+      - name: Windows ARM64 PowerShell bootstrap contract acceptance
+        shell: pwsh
+        run: |
+          & powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File tests/release/windows-installer-bootstrap-smoke.ps1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
       - name: Native ARM64 node-pty / ConPTY smoke
         timeout-minutes: 1
         run: node tests/release/windows-node-pty-smoke.mjs
@@ -310,6 +316,15 @@ jobs:
             if ($metadata.target -ne 'win32-arm64') { throw "Windows ARM64 release metadata target mismatch: $($metadata.target)" }
             if ($names | Where-Object { $_ -like 'release/runtime/peekaboo/*' }) { throw 'Windows ARM64 managed ZIP unexpectedly contains Peekaboo' }
           } finally { $zip.Dispose() }
+
+      - name: Windows ARM64 real public-installer fresh-install acceptance
+        shell: pwsh
+        run: |
+          $artifact = Get-ChildItem backups/local-packages -Filter 'equinox-local-*-win32-arm64.zip' | Select-Object -First 1
+          if ($null -eq $artifact) { throw 'Windows ARM64 managed ZIP artifact was not found for fresh-install acceptance' }
+          $env:EQUINOX_WINDOWS_INSTALL_ARTIFACT = $artifact.FullName
+          & powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File tests/release/windows-installer-real-package-smoke.ps1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
   windows-headless:
     name: Windows x64 headless / Node 26

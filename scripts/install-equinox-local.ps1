@@ -2,7 +2,7 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version 2.0
 
 $UpdateBase = 'https://local.sametbasbug.dev/downloads/updates'
-$Target = 'win32-x64'
+$Target = $null
 $MaxManifestBytes = 16384
 $MaxArtifactBytes = 1073741824
 $ZipHelperName = 'equinox-local-windows-release-zip.ps1'
@@ -12,6 +12,19 @@ $ZipHelperBytes = '__EQUINOX_ZIP_HELPER_BYTES__'
 function Fail([string]$Message) { throw "Equinox Local installer: $Message" }
 function Write-Info([string]$Message) { Write-Host "Equinox Local installer: $Message" }
 function Get-Sha256([string]$Path) { return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant() }
+function Get-NativeWindowsTarget {
+  if (-not [Environment]::Is64BitProcess) { Fail 'native 64-bit Windows PowerShell is required' }
+  $processArchitecture = [string]$env:PROCESSOR_ARCHITECTURE
+  $nativeArchitecture = [string]$env:PROCESSOR_ARCHITEW6432
+  if (-not [string]::IsNullOrWhiteSpace($nativeArchitecture) -and $nativeArchitecture -cne $processArchitecture) {
+    Fail 'native 64-bit Windows PowerShell is required'
+  }
+  switch ($processArchitecture.ToUpperInvariant()) {
+    'AMD64' { return 'win32-x64' }
+    'ARM64' { return 'win32-arm64' }
+    default { Fail "unsupported Windows architecture: $processArchitecture" }
+  }
+}
 function Assert-NormalFile([string]$Path, [long]$MinBytes, [long]$MaxBytes) {
   if (-not [IO.File]::Exists($Path)) { Fail "required file is missing: $Path" }
   $item = Get-Item -LiteralPath $Path -Force
@@ -93,7 +106,7 @@ function Invoke-CleanNode([string]$Node, [string]$FirstInstall, [string]$Release
 }
 function Invoke-EquinoxLocalInstall {
   if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) { Fail 'Windows is required' }
-  if (-not [Environment]::Is64BitProcess -or $env:PROCESSOR_ARCHITECTURE -ne 'AMD64') { Fail 'Windows x64 PowerShell is required' }
+  $script:Target = Get-NativeWindowsTarget
   if ($ZipHelperSha256 -notmatch '^[a-f0-9]{64}$') { Fail 'installer ZIP helper pin is not materialized' }
   [long]$helperBytes = 0
   if (-not [long]::TryParse($ZipHelperBytes, [ref]$helperBytes) -or $helperBytes -lt 1 -or $helperBytes -gt 1048576) { Fail 'installer ZIP helper size pin is invalid' }
