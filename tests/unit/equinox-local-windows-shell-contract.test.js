@@ -277,6 +277,16 @@ test("public Windows CI restores and builds the native x64 shell", async () => {
   assert.match(ci, /windows-11-vs2026-arm/u);
   assert.match(ci, /architecture:\s*arm64/u);
   assert.match(ci, /windows-node-pty-smoke\.mjs/u);
+  assert.match(ci, /Native ARM64 node-pty \/ ConPTY smoke\n\s+timeout-minutes:\s*1/u);
+  const factoryArmPtySmokePath = path.join(ROOT, "factory", "local", "windows-node-pty-smoke.mjs");
+  const publicArmPtySmokePath = path.join(ROOT, "tests", "release", "windows-node-pty-smoke.mjs");
+  const armPtySmoke = await fs.readFile(
+    await fs.access(factoryArmPtySmokePath).then(() => factoryArmPtySmokePath, () => publicArmPtySmokePath),
+    "utf8",
+  );
+  assert.match(armPtySmoke, /spawnProcess\(process\.execPath/u);
+  assert.match(armPtySmoke, /CHILD_TIMEOUT_MS = 20_000/u);
+  assert.match(armPtySmoke, /taskkill\.exe/u);
   assert.match(ci, /--runtime win-arm64/u);
   assert.match(ci, /-p:Platform=ARM64/u);
   assert.match(ci, /0xAA64/u);

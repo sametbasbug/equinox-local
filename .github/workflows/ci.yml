@@ -257,6 +257,7 @@ jobs:
         run: npm ci
 
       - name: Native ARM64 node-pty / ConPTY smoke
+        timeout-minutes: 1
         run: node tests/release/windows-node-pty-smoke.mjs
 
       - name: Native ARM64 Native Messaging launcher smoke
