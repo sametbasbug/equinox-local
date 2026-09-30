@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn as spawnProcess } from "node:child_process";
+import { writeSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 const CHILD_FLAG = "EQUINOX_WINDOWS_NODE_PTY_SMOKE_CHILD";
@@ -16,6 +17,10 @@ function appendBounded(current, chunk, streamName) {
     throw new Error(`Windows node-pty smoke ${streamName} exceeded ${MAX_CHILD_OUTPUT_BYTES} bytes.`);
   }
   return next;
+}
+
+function trace(stage) {
+  writeSync(2, `[equinox-conpty-smoke] ${stage}\n`);
 }
 
 function terminateChildTree(pid) {
@@ -46,8 +51,9 @@ async function runExternallyBoundedChild() {
 
   const result = await new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
+      const diagnostic = `stdout:\n${stdout || "<empty>"}\nstderr:\n${stderr || "<empty>"}`;
       terminateChildTree(child.pid);
-      reject(new Error(`Windows node-pty/ConPTY smoke child exceeded ${CHILD_TIMEOUT_MS} ms.`));
+      reject(new Error(`Windows node-pty/ConPTY smoke child exceeded ${CHILD_TIMEOUT_MS} ms.\n${diagnostic}`));
     }, CHILD_TIMEOUT_MS);
     child.once("error", (error) => { clearTimeout(timer); reject(error); });
     child.once("close", (code, signal) => { clearTimeout(timer); resolve({ code, signal }); });
@@ -63,22 +69,35 @@ async function runExternallyBoundedChild() {
 }
 
 async function runNativeConptySmoke() {
+  trace("child:start");
+  trace("import-node-pty:start");
   const module = await import("node-pty");
+  trace("import-node-pty:ok");
   const spawnPty = module.spawn ?? module.default?.spawn;
   assert.equal(typeof spawnPty, "function", "node-pty spawn is unavailable");
 
+  trace("spawn:start");
   const terminal = spawnPty("powershell.exe", ["-NoLogo", "-NoProfile"], {
     name: "xterm-256color", cols: 80, rows: 24, cwd: process.cwd(), env: process.env, useConpty: true,
   });
+  trace(`spawn:ok pid=${terminal.pid ?? "unknown"}`);
   let output = "";
+  let sawData = false;
   const completed = new Promise((resolve, reject) => {
-    terminal.onData((data) => { output += data; });
+    terminal.onData((data) => {
+      if (!sawData) { sawData = true; trace("data:first"); }
+      output += data;
+    });
     terminal.onExit(({ exitCode }) => {
+      trace(`exit:${exitCode}`);
       exitCode === 0 ? resolve() : reject(new Error(`Windows node-pty host exited ${exitCode}.`));
     });
   });
+  trace("write:start");
   terminal.write('Write-Output "__EQUINOX_CONPTY_OK__"; exit\r');
+  trace("write:return");
   await completed;
+  trace("completed");
   assert.match(output, /__EQUINOX_CONPTY_OK__/u);
   process.stdout.write(`${JSON.stringify({ ok: true, platform: process.platform, arch: process.arch, conpty: true }, null, 2)}\n`);
 }
