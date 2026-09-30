@@ -30,11 +30,11 @@ function Stop-OwnedShell([string]$StableExe) {
 }
 
 [IO.Directory]::CreateDirectory($Work) | Out-Null
-$OriginalUserProfile = $env:USERPROFILE
 $OriginalLocalAppData = $env:LOCALAPPDATA
-$OriginalAppData = $env:APPDATA
 $OriginalTemp = $env:TEMP
 $OriginalTmp = $env:TMP
+$OwnedInstallRoot = $null
+$OwnedProgramRoot = $null
 $ExpectedManifestPath = $null
 $StableExe = $null
 
@@ -72,12 +72,18 @@ try {
   $manifestText = @('schemaVersion=1', 'channel=stable', 'target=win32-arm64', "version=$Version", "artifactUrl=https://local.sametbasbug.dev/downloads/updates/equinox-local-$Version-win32-arm64.zip", "artifactSha256=$artifactSha", "artifactBytes=$artifactBytes", '') -join "`n"
   [IO.File]::WriteAllText($Manifest, $manifestText, (New-Object Text.UTF8Encoding($false)))
 
-  $UserHome = Join-Path $Work 'ARM Türk User Home'
-  $LocalState = Join-Path $Work 'ARM Türk Local App Data'
-  $RoamingState = Join-Path $Work 'ARM Türk Roaming App Data'
+  $KnownLocalAppData = [Environment]::GetFolderPath([Environment+SpecialFolder]::LocalApplicationData)
+  if ([string]::IsNullOrWhiteSpace($KnownLocalAppData) -or -not [IO.Path]::IsPathRooted($KnownLocalAppData)) { throw 'Windows Known Folder LocalApplicationData is unavailable.' }
+  $OwnedInstallRoot = Join-Path $KnownLocalAppData 'Equinox Local'
+  $OwnedProgramRoot = Join-Path $KnownLocalAppData 'Programs\Equinox Local'
+  if ([IO.Directory]::Exists($OwnedInstallRoot) -or [IO.File]::Exists($OwnedInstallRoot)) { throw 'ARM64 fresh-install smoke requires an unused real per-user Equinox Local install root.' }
+  if ([IO.Directory]::Exists($OwnedProgramRoot) -or [IO.File]::Exists($OwnedProgramRoot)) { throw 'ARM64 fresh-install smoke requires an unused real per-user stable program root.' }
+
   $BootstrapTemp = Join-Path $Work 'ARM Türk Bootstrap Temp'
-  foreach ($directory in @($UserHome, $LocalState, $RoamingState, $BootstrapTemp)) { [IO.Directory]::CreateDirectory($directory) | Out-Null }
-  $env:USERPROFILE = $UserHome; $env:LOCALAPPDATA = $LocalState; $env:APPDATA = $RoamingState; $env:TEMP = $BootstrapTemp; $env:TMP = $BootstrapTemp
+  [IO.Directory]::CreateDirectory($BootstrapTemp) | Out-Null
+  # The real WPF shell resolves LocalApplicationData through the Windows Known Folder API.
+  # Keep the installer on that same real per-user root; only TEMP/TMP stay isolated.
+  $env:LOCALAPPDATA = $KnownLocalAppData; $env:TEMP = $BootstrapTemp; $env:TMP = $BootstrapTemp
 
   function Save-BoundedHttpsFile([string]$Url, [string]$Destination, [long]$MaxBytes) {
     if ($Url.EndsWith('/bootstrap-win32-arm64.txt')) { Copy-Item -LiteralPath $script:Manifest -Destination $Destination; return }
@@ -88,13 +94,13 @@ try {
 
   Invoke-EquinoxLocalInstall | Out-Host
 
-  $InstallRoot = Join-Path $LocalState 'Equinox Local'
+  $InstallRoot = $OwnedInstallRoot
   $pointer = [IO.File]::ReadAllText((Join-Path $InstallRoot 'current-version.json'), (New-Object Text.UTF8Encoding($false, $true))) | ConvertFrom-Json
   Assert-True ($pointer.schemaVersion -eq 1) 'ARM64 current-version schema mismatch.'
   Assert-True ($pointer.target -ceq 'win32-arm64') 'ARM64 current-version target mismatch.'
   Assert-True ($pointer.version -ceq $Version) 'ARM64 current-version version mismatch.'
   $ReleaseDir = Join-Path (Join-Path $InstallRoot 'releases') $Version
-  $StableExe = Join-Path $LocalState 'Programs\Equinox Local\EquinoxLocal.exe'
+  $StableExe = Join-Path $OwnedProgramRoot 'EquinoxLocal.exe'
   Assert-True ([IO.File]::Exists($StableExe)) 'ARM64 stable EquinoxLocal.exe is missing after fresh install.'
   Assert-True ((Read-PeMachine $StableExe) -eq 0xAA64) 'ARM64 stable EquinoxLocal.exe has the wrong PE architecture.'
 
@@ -121,7 +127,9 @@ try {
       if (-not [string]::IsNullOrWhiteSpace($ExpectedManifestPath) -and (Same-Path $value $ExpectedManifestPath)) { Remove-Item -LiteralPath $NativeRegistryKey -Recurse -Force }
     } catch { Write-Warning $_.Exception.Message }
   }
-  $env:USERPROFILE = $OriginalUserProfile; $env:LOCALAPPDATA = $OriginalLocalAppData; $env:APPDATA = $OriginalAppData; $env:TEMP = $OriginalTemp; $env:TMP = $OriginalTmp
+  if (-not [string]::IsNullOrWhiteSpace($OwnedInstallRoot) -and [IO.Directory]::Exists($OwnedInstallRoot)) { Remove-Item -LiteralPath $OwnedInstallRoot -Recurse -Force -ErrorAction SilentlyContinue }
+  if (-not [string]::IsNullOrWhiteSpace($OwnedProgramRoot) -and [IO.Directory]::Exists($OwnedProgramRoot)) { Remove-Item -LiteralPath $OwnedProgramRoot -Recurse -Force -ErrorAction SilentlyContinue }
+  $env:LOCALAPPDATA = $OriginalLocalAppData; $env:TEMP = $OriginalTemp; $env:TMP = $OriginalTmp
   Remove-Item Function:\Save-BoundedHttpsFile -ErrorAction SilentlyContinue
   if ([IO.Directory]::Exists($Work)) { Remove-Item -LiteralPath $Work -Recurse -Force -ErrorAction SilentlyContinue }
 }
