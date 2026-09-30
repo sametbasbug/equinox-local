@@ -8,6 +8,11 @@ import { promisify } from "node:util";
 
 import { protectWindowsPrivateStatePath, verifyWindowsPrivateStateAcl } from "../../src/equinox-local-private-state.js";
 import {
+  getAuthenticatedHttpProfiles,
+  setAuthenticatedHttpAgentManagement,
+  upsertAuthenticatedHttpProfileFromControlCenter,
+} from "../../src/authenticated-http-integration.js";
+import {
   configureTelegramIntegration,
   disconnectTelegramIntegration,
   getTelegramDownloadSettings,
@@ -38,6 +43,20 @@ function noopStore() {
 }
 
 function noopTimer() { return { unref() {} }; }
+
+function authenticatedHttpProfile() {
+  return {
+    id: "windows-acl-test",
+    label: "Windows ACL Test",
+    origin: "https://example.com",
+    basePath: "/api",
+    auth: { type: "bearer" },
+    allowedMethods: ["GET"],
+    allowedPathPrefixes: ["/status"],
+    allowedAgentHeaders: ["Accept"],
+    timeoutMs: 5_000,
+  };
+}
 
 async function assertSafe(target, type) {
   const result = await verifyWindowsPrivateStateAcl({ target, type });
@@ -143,4 +162,60 @@ test("Windows Telegram private state uses current-user ACLs and rejects foreign 
   for (const file of [pairingPath, inboxPath, taskStatePath]) await fs.access(file);
 
   console.log("Windows private-state ACL acceptance passed: Telegram credential/settings/inbox/pairing/task state are current-user protected and foreign ACLs fail closed without mutation.");
+});
+
+
+test("Windows Authenticated HTTP credential store uses current-user ACLs and rejects foreign state without mutation", { skip: process.platform !== "win32" }, async (t) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "Equinox HTTP ACL Türk User "));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const secrets = path.join(root, "HTTP Private State", "secrets");
+  const storePath = path.join(secrets, "authenticated-http.json");
+  const credential = "windows-acl-secret-token";
+
+  const created = await upsertAuthenticatedHttpProfileFromControlCenter({
+    profile: authenticatedHttpProfile(),
+    credential,
+    storePath,
+    platform: "win32",
+  });
+  assert.equal(created.ready, true);
+  await assertSafe(secrets, "directory");
+  await assertSafe(storePath, "file");
+  const listed = await getAuthenticatedHttpProfiles({ storePath, platform: "win32" });
+  assert.equal(listed.profiles.length, 1);
+  assert.equal(listed.profiles[0].ready, true);
+  assert.equal(JSON.stringify(listed).includes(credential), false);
+
+  await injectForeignAce(storePath);
+  const foreign = await verifyWindowsPrivateStateAcl({ target: storePath, type: "file" });
+  assert.equal(foreign.safe, false);
+  assert.equal(foreign.reason, "foreign-principal");
+  const foreignAclBefore = await icaclsSnapshot(storePath);
+  const foreignBytesBefore = await fs.readFile(storePath);
+  await assert.rejects(
+    getAuthenticatedHttpProfiles({ storePath, platform: "win32" }),
+    (error) => error?.code === "EQUINOX_AUTHENTICATED_HTTP_PROFILES" && error?.reason === "foreign-principal",
+  );
+  await assert.rejects(
+    setAuthenticatedHttpAgentManagement({ enabled: false, storePath, platform: "win32" }),
+    (error) => error?.code === "EQUINOX_AUTHENTICATED_HTTP_PROFILES" && error?.reason === "foreign-principal",
+  );
+  assert.deepEqual(await fs.readFile(storePath), foreignBytesBefore);
+  assert.equal(await icaclsSnapshot(storePath), foreignAclBefore, "unsafe HTTP store ACL must remain untouched on refusal");
+  await protectWindowsPrivateStatePath({ target: storePath, type: "file" });
+
+  await enableInheritance(secrets);
+  const inherited = await verifyWindowsPrivateStateAcl({ target: secrets, type: "directory" });
+  assert.equal(inherited.safe, false);
+  assert.ok(["inheritance", "inherited-rule", "foreign-principal"].includes(inherited.reason));
+  const inheritedAclBefore = await icaclsSnapshot(secrets);
+  const inheritedBytesBefore = await fs.readFile(storePath);
+  await assert.rejects(
+    setAuthenticatedHttpAgentManagement({ enabled: false, storePath, platform: "win32" }),
+    (error) => error?.code === "EQUINOX_AUTHENTICATED_HTTP_PROFILES",
+  );
+  assert.deepEqual(await fs.readFile(storePath), inheritedBytesBefore);
+  assert.equal(await icaclsSnapshot(secrets), inheritedAclBefore, "unsafe HTTP credential directory ACL must remain untouched on refusal");
+
+  console.log("Windows authenticated HTTP ACL acceptance passed: credential store and directory are current-user protected and hostile ACLs fail closed without mutation.");
 });
