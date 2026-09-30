@@ -21,6 +21,7 @@ const MAX_DEPENDENCY_ARCHIVE_BYTES = 128 * 1024 * 1024;
 const WINDOWS_ZIP_TIMEOUT_MS = 180_000;
 const WINDOWS_EXTRA_RELEASE_FILES = Object.freeze([
   "src/equinox-local-windows-job-object.ps1",
+  "src/equinox-local-windows-private-state.ps1",
   "src/equinox-local-windows-process-gate.ps1",
   "src/equinox-local-windows-release-zip.ps1",
 ]);

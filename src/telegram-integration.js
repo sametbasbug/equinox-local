@@ -9,6 +9,7 @@ import {
 } from "./equinox-local-safe-file.js";
 import { inspectImageBuffer, MAX_IMAGE_VIEW_BYTES } from "./equinox-local-image-tools.js";
 import { equinoxLocalPlatformPaths } from "./equinox-local-platform.js";
+import { inspectPrivateStatePath, protectWindowsPrivateStatePath, verifyWindowsPrivateStateAcl } from "./equinox-local-private-state.js";
 
 const TELEGRAM_API_BASE = "https://api.telegram.org";
 const TELEGRAM_REMOTE_COMMANDS = Object.freeze([
@@ -40,6 +41,28 @@ function credentialError(message = "Telegram credentials need attention.") {
   const error = new Error(message);
   error.code = "EQUINOX_TELEGRAM_CREDENTIALS";
   return error;
+}
+
+function privateStateSecurityError(label, reason = "unsafe") {
+  const error = credentialError(`${label} permissions need attention.`);
+  error.code = "EQUINOX_TELEGRAM_PRIVATE_STATE_SECURITY";
+  error.reason = reason;
+  return error;
+}
+
+function isPrivateStateSecurityError(error) {
+  return error?.code === "EQUINOX_TELEGRAM_PRIVATE_STATE_SECURITY";
+}
+
+async function inspectWindowsPrivateState(target, type, { fsImpl = fs, label }) {
+  const inspection = await inspectPrivateStatePath(target, {
+    platform: "win32",
+    type,
+    fsImpl,
+    verifyWindowsAcl: verifyWindowsPrivateStateAcl,
+  });
+  if (inspection.exists && !inspection.safe) throw privateStateSecurityError(label, inspection.reason);
+  return inspection;
 }
 
 function validateBotToken(value) {
@@ -129,12 +152,40 @@ export function defaultTelegramRemoteControlSettingsPath(homeDir = os.homedir(),
 }
 
 async function ensurePrivateDirectory(directory, { fsImpl = fs } = {}) {
-  await fsImpl.mkdir(directory, { recursive: true, mode: 0o700 });
-  const stat = await fsImpl.lstat(directory);
-  if (!stat.isDirectory() || stat.isSymbolicLink()) {
-    throw credentialError("Telegram credential directory is unsafe.");
+  if (process.platform !== "win32") {
+    await fsImpl.mkdir(directory, { recursive: true, mode: 0o700 });
+    const stat = await fsImpl.lstat(directory);
+    if (!stat.isDirectory() || stat.isSymbolicLink()) {
+      throw credentialError("Telegram credential directory is unsafe.");
+    }
+    await fsImpl.chmod(directory, 0o700);
+    return;
   }
-  await fsImpl.chmod(directory, 0o700);
+
+  let existed = true;
+  try { await fsImpl.lstat(directory); }
+  catch (error) { if (error?.code === "ENOENT") existed = false; else throw error; }
+  if (existed) {
+    await inspectWindowsPrivateState(directory, "directory", { fsImpl, label: "Telegram private-state directory" });
+    return;
+  }
+  const created = await fsImpl.mkdir(directory, { recursive: true });
+  // mkdir(recursive) returns undefined when another actor won the race. Never repair that state.
+  if (created === undefined) {
+    await inspectWindowsPrivateState(directory, "directory", { fsImpl, label: "Telegram private-state directory" });
+    return;
+  }
+  const stat = await fsImpl.lstat(directory);
+  if (!stat.isDirectory() || stat.isSymbolicLink()) throw privateStateSecurityError("Telegram private-state directory", "type");
+  await protectWindowsPrivateStatePath({ target: directory, type: "directory" });
+  await inspectWindowsPrivateState(directory, "directory", { fsImpl, label: "Telegram private-state directory" });
+}
+
+async function assertPrivateFileSecurity(filePath, { fsImpl = fs, label, allowMissing = false } = {}) {
+  if (process.platform !== "win32") return null;
+  const inspection = await inspectWindowsPrivateState(filePath, "file", { fsImpl, label });
+  if (!inspection.exists && !allowMissing) throw privateStateSecurityError(label, "missing");
+  return inspection;
 }
 
 async function atomicWriteCredential(filePath, contents, { fsImpl = fs } = {}) {
@@ -143,23 +194,48 @@ async function atomicWriteCredential(filePath, contents, { fsImpl = fs } = {}) {
   }
   const parent = path.dirname(filePath);
   await ensurePrivateDirectory(parent, { fsImpl });
+  if (process.platform === "win32") {
+    await assertPrivateFileSecurity(filePath, { fsImpl, label: "Telegram private-state file", allowMissing: true });
+  }
   const temp = path.join(parent, `.equinox-telegram-${process.pid}-${randomBytes(8).toString("hex")}.tmp`);
   try {
     // Telegram intentionally persists only bounded, validated private state (pairing/inbox/credentials)
     // to fixed Equinox Local-owned paths. Network-derived fields are normalized before reaching here.
     // codeql[js/http-to-file-access]
     await fsImpl.writeFile(temp, contents, { flag: "wx", mode: 0o600 });
+    if (process.platform === "win32") {
+      await protectWindowsPrivateStatePath({ target: temp, type: "file" });
+      await assertPrivateFileSecurity(temp, { fsImpl, label: "Telegram private-state temporary file" });
+    }
     await fsImpl.rename(temp, filePath);
-    await fsImpl.chmod(filePath, 0o600);
+    if (process.platform === "win32") {
+      await protectWindowsPrivateStatePath({ target: filePath, type: "file" });
+      await assertPrivateFileSecurity(filePath, { fsImpl, label: "Telegram private-state file" });
+    } else {
+      await fsImpl.chmod(filePath, 0o600);
+    }
   } catch (error) {
     await fsImpl.rm(temp, { force: true }).catch(() => {});
     throw error;
   }
 }
 
+async function removePrivateStateFile(filePath, { fsImpl = fs, label = "Telegram private-state file" } = {}) {
+  if (process.platform === "win32") {
+    const security = await assertPrivateFileSecurity(filePath, { fsImpl, label, allowMissing: true });
+    if (!security.exists) return false;
+  }
+  await fsImpl.rm(filePath, { force: true });
+  return true;
+}
+
 async function readPrivateJson(filePath, { fsImpl = fs, maxBytes, label }) {
   let text;
   let stat;
+  if (process.platform === "win32") {
+    const security = await assertPrivateFileSecurity(filePath, { fsImpl, label, allowMissing: true });
+    if (!security.exists) return null;
+  }
   try {
     ({ data: text, stat } = await readBoundedNormalFile(filePath, {
       fsImpl, minBytes: 1, maxBytes, encoding: "utf8", label,
@@ -168,10 +244,14 @@ async function readPrivateJson(filePath, { fsImpl = fs, maxBytes, label }) {
     if (error?.code === "ENOENT") return null;
     throw error;
   }
-  if ((stat.mode & 0o777) !== 0o600) throw credentialError(`${label} permissions need attention.`);
-  const uid = typeof process.getuid === "function" ? process.getuid() : null;
-  if (Number.isInteger(uid) && Number.isInteger(stat.uid) && stat.uid !== uid) {
-    throw credentialError(`${label} ownership needs attention.`);
+  if (process.platform === "win32") {
+    await assertPrivateFileSecurity(filePath, { fsImpl, label });
+  } else {
+    if ((stat.mode & 0o777) !== 0o600) throw credentialError(`${label} permissions need attention.`);
+    const uid = typeof process.getuid === "function" ? process.getuid() : null;
+    if (Number.isInteger(uid) && Number.isInteger(stat.uid) && stat.uid !== uid) {
+      throw credentialError(`${label} ownership needs attention.`);
+    }
   }
   try {
     return JSON.parse(text);
@@ -202,6 +282,10 @@ async function readTelegramCredentials({
 } = {}) {
   let text;
   let stat;
+  if (process.platform === "win32") {
+    const security = await assertPrivateFileSecurity(credentialPath, { fsImpl, label: "Telegram credential file", allowMissing: true });
+    if (!security.exists) return null;
+  }
   try {
     ({ data: text, stat } = await readBoundedNormalFile(credentialPath, {
       fsImpl,
@@ -221,9 +305,13 @@ async function readTelegramCredentials({
     }
     throw error;
   }
-  if ((stat.mode & 0o777) !== 0o600) throw credentialError();
-  const uid = typeof process.getuid === "function" ? process.getuid() : null;
-  if (Number.isInteger(uid) && Number.isInteger(stat.uid) && stat.uid !== uid) throw credentialError();
+  if (process.platform === "win32") {
+    await assertPrivateFileSecurity(credentialPath, { fsImpl, label: "Telegram credential file" });
+  } else {
+    if ((stat.mode & 0o777) !== 0o600) throw credentialError();
+    const uid = typeof process.getuid === "function" ? process.getuid() : null;
+    if (Number.isInteger(uid) && Number.isInteger(stat.uid) && stat.uid !== uid) throw credentialError();
+  }
 
   let parsed;
   try {
@@ -271,7 +359,8 @@ export async function getTelegramIntegrationStatus(options = {}) {
     try {
       const inbox = await readTelegramInboxState(options);
       pendingInboundCount = inbox.pending.length;
-    } catch {
+    } catch (error) {
+      if (isPrivateStateSecurityError(error)) throw error;
       pendingInboundCount = 0;
     }
     const remoteControl = await getTelegramRemoteControlSettings(options);
@@ -455,7 +544,7 @@ async function readTelegramPairingState({ pairingPath = defaultTelegramPairingPa
   if (!parsed) return null;
   const state = normalizeTelegramPairingState(parsed);
   if (Date.parse(state.expiresAt) <= now()) {
-    await fsImpl.rm(pairingPath, { force: true });
+    await removePrivateStateFile(pairingPath, { fsImpl, label: "Telegram pairing state" });
     return null;
   }
   return state;
@@ -555,12 +644,12 @@ export async function confirmTelegramPairing({
   await sendTelegramChunk({ ...credential, text: "Equinox Local is paired. ✅", fetchImpl });
   await writePrivateJson(credentialPath, { version: 2, ...credential }, { fsImpl });
   await persistTelegramInboxState(inboxPath, defaultInboxState(state.nextUpdateId), { fsImpl });
-  await fsImpl.rm(pairingPath, { force: true });
+  await removePrivateStateFile(pairingPath, { fsImpl, label: "Telegram pairing state" });
   return telegramStatusFromCredential(credential);
 }
 
 export async function cancelTelegramPairing({ pairingPath = defaultTelegramPairingPath(), fsImpl = fs } = {}) {
-  await fsImpl.rm(pairingPath, { force: true });
+  await removePrivateStateFile(pairingPath, { fsImpl, label: "Telegram pairing state" });
   return Object.freeze({ cancelled: true });
 }
 
@@ -685,7 +774,8 @@ export async function getTelegramDownloadSettings({
   let parsed = null;
   try {
     parsed = await readPrivateJson(settingsPath, { fsImpl, maxBytes: 32 * 1024, label: "Telegram download settings" });
-  } catch {
+  } catch (error) {
+    if (isPrivateStateSecurityError(error)) throw error;
     parsed = null;
   }
   const configuredPath = parsed?.downloadPath ? normalizeTelegramDownloadPath(parsed.downloadPath) : defaultPath;
@@ -721,7 +811,8 @@ export async function getTelegramRemoteControlSettings({
   try {
     const parsed = await readPrivateJson(settingsPath, { fsImpl, maxBytes: 8 * 1024, label: "Telegram remote-control settings" });
     return Object.freeze({ enabled: parsed?.version === 1 && typeof parsed.enabled === "boolean" ? parsed.enabled : true });
-  } catch {
+  } catch (error) {
+    if (isPrivateStateSecurityError(error)) throw error;
     return Object.freeze({ enabled: true });
   }
 }
@@ -1204,18 +1295,24 @@ export async function disconnectTelegramIntegration({
   taskStatePath = null,
   fsImpl = fs,
 } = {}) {
-  await readTelegramCredentials({ credentialPath, fsImpl }).catch(() => null);
   const resolvedTaskStatePath = taskStatePath || (
     credentialPath === defaultTelegramCredentialPath()
       ? defaultTelegramTaskStatePath()
       : path.join(path.dirname(credentialPath), "telegram-task-state.json")
   );
-  await Promise.all([
-    fsImpl.rm(credentialPath, { force: true }),
-    fsImpl.rm(pairingPath, { force: true }),
-    fsImpl.rm(inboxPath, { force: true }),
-    fsImpl.rm(resolvedTaskStatePath, { force: true }),
-  ]);
+  const privateFiles = [
+    [credentialPath, "Telegram credential file"],
+    [pairingPath, "Telegram pairing state"],
+    [inboxPath, "Telegram inbox state"],
+    [resolvedTaskStatePath, "Telegram task state"],
+  ];
+  if (process.platform === "win32") {
+    // Verify every owned file before deleting any of them so foreign state cannot cause partial cleanup.
+    for (const [filePath, label] of privateFiles) {
+      await assertPrivateFileSecurity(filePath, { fsImpl, label, allowMissing: true });
+    }
+  }
+  await Promise.all(privateFiles.map(([filePath]) => fsImpl.rm(filePath, { force: true })));
   return Object.freeze({ disconnected: true });
 }
 
