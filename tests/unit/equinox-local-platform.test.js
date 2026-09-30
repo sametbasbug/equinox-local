@@ -91,7 +91,7 @@ test("Windows platform paths fail closed without trusted absolute LocalAppData a
 });
 
 
-test("platform lifecycle and shell contracts enable Windows x64 without inferring ARM64", () => {
+test("platform lifecycle and shell contracts enable both native Windows architectures", () => {
   const macLifecycle = equinoxLocalManagedLifecycle({ platform: "darwin", arch: "arm64" });
   assert.equal(macLifecycle.kind, "launch-agent");
   assert.equal(macLifecycle.implemented, true);
@@ -103,7 +103,11 @@ test("platform lifecycle and shell contracts enable Windows x64 without inferrin
   assert.equal(windowsLifecycle.implemented, true);
   assert.equal(windowsLifecycle.currentPointerKind, "version-file");
   assert.equal(windowsLifecycle.processOwnership, "job-object");
-  assert.equal(equinoxLocalManagedLifecycle({ platform: "win32", arch: "arm64" }).implemented, false);
+  const windowsArm64Lifecycle = equinoxLocalManagedLifecycle({ platform: "win32", arch: "arm64" });
+  assert.equal(windowsArm64Lifecycle.kind, "windows-user");
+  assert.equal(windowsArm64Lifecycle.implemented, true);
+  assert.equal(windowsArm64Lifecycle.currentPointerKind, "version-file");
+  assert.equal(windowsArm64Lifecycle.processOwnership, "job-object");
 
   const macFinite = equinoxLocalFiniteShell({ platform: "darwin", arch: "arm64" });
   assert.equal(macFinite.command, "/bin/zsh");

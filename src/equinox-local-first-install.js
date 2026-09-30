@@ -324,11 +324,14 @@ export async function installManagedEquinoxRelease({
   syncWindowsShellImpl = synchronizeFreshWindowsShell,
   launchWindowsShellImpl = launchWindowsStableShell,
 } = {}) {
-  if (platform !== "darwin" && !(platform === "win32" && arch === "x64")) {
+  if (platform !== "darwin" && !(platform === "win32" && ["arm64", "x64"].includes(arch))) {
     throw new Error(`Equinox Local first install is not implemented for ${platform}-${arch}.`);
   }
-  const expectedTarget = target || equinoxLocalUpdateTarget({ platform, arch });
-  if (platform === "win32" && expectedTarget !== "win32-x64") throw new Error("Windows first install currently supports only win32-x64.");
+  const nativeTarget = equinoxLocalUpdateTarget({ platform, arch });
+  const expectedTarget = target || nativeTarget;
+  if (platform === "win32" && expectedTarget !== nativeTarget) {
+    throw new Error(`Windows first install target ${expectedTarget} does not match native ${nativeTarget}.`);
+  }
   const pathApi = platform === "win32" ? path.win32 : path.posix;
   if (platform === "darwin" && (!Number.isInteger(uid) || uid < 1)) throw new Error("Do not run the Equinox Local installer with sudo or as root.");
   if (typeof homeDir !== "string" || !pathApi.isAbsolute(homeDir)) throw new Error("A trusted absolute HOME is required for Equinox Local first install.");

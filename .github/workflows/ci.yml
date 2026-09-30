@@ -256,6 +256,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Windows ARM64 managed lifecycle plumbing smoke
+        run: node --test tests/unit/equinox-local-platform.test.js tests/release/equinox-local-windows-arm64-lifecycle.test.js
+
       - name: Native ARM64 node-pty / ConPTY smoke
         timeout-minutes: 1
         run: node tests/release/windows-node-pty-smoke.mjs
