@@ -5,7 +5,7 @@ export const STABLE_CAPABILITY_DOMAINS = Object.freeze({
     label: "Projects & assets",
     callTool: "files_call",
     openWorldHint: false,
-    usageHint: "For a PNG, JPEG or WebP that already exists on the Mac, prefer image_view when the task is visual inspection. Do not use file_export or copy the image into ChatGPT/container merely to inspect it; file_export is for intentional file transfer. If you already have a local path, use it directly. For opaque Task Capsule attachment references, use the exact task-scoped attachment reader only when the task actually needs file contents.",
+    usageHint: "For a PNG, JPEG or WebP that already exists on this computer, prefer image_view when the task is visual inspection. Do not use file_export or copy the image into ChatGPT/container merely to inspect it; file_export is for intentional file transfer. If you already have a local path, use it directly. For opaque Task Capsule attachment references, use the exact task-scoped attachment reader only when the task actually needs file contents.",
   }),
   browser: Object.freeze({
     label: "Equinox Browser",

@@ -285,14 +285,16 @@ test("control API serves the visual Control Center shell and fixed same-origin a
     assert.match(shellText, /id="setup-uninstall-slot"/u);
     assert.match(shellText, /id="permissions-uninstall-slot"/u);
     assert.match(shellText, /Add Equinox Local to ChatGPT/u);
-    assert.match(shellText, /Verify ChatGPT → Mac/u);
+    assert.match(shellText, /Verify ChatGPT → Local/u);
+    assert.doesNotMatch(shellText, /this Mac|LaunchAgent/u);
+    assert.match(shellText, /this computer/u);
     assert.match(shellText, /id="setup-telegram-step"/u);
     assert.match(shellText, /Recommended\. Telegram lets Equinox Local/u);
     assert.match(shellText, /https:\/\/t\.me\/BotFather/u);
     assert.match(shellText, /id="setup-telegram-token"/u);
     assert.match(shellText, /id="setup-telegram-confirm"/u);
     assert.match(shellText, /id="setup-telegram-skip"/u);
-    assert.match(shellText, /<span class="setup-step-index">6<\/span>[\s\S]*Verify ChatGPT → Mac/u);
+    assert.match(shellText, /<span class="setup-step-index">6<\/span>[\s\S]*Verify ChatGPT → Local/u);
     assert.match(shellText, /Browser Control/u);
     assert.equal(shellText.includes('id="onboarding-card"'), false);
     assert.match(shellText, /id="task-recovery-panel"/u);
