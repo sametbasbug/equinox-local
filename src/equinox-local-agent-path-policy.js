@@ -1,5 +1,7 @@
 import path from "node:path";
 
+import { equinoxLocalPlatformPaths } from "./equinox-local-platform.js";
+
 const BLOCKED_FILENAMES = new Set([
   ".npmrc",
   ".netrc",
@@ -37,9 +39,11 @@ const AGENT_PROTECTED_HOME_RELATIVE_ROOTS = Object.freeze([
   ".claude/session-env",
   ".claude/shell-snapshots",
   ".claude/credentials.json",
+]);
+
+const DARWIN_PROTECTED_HOME_RELATIVE_ROOTS = Object.freeze([
   "Library/Keychains",
   "Library/Safari",
-  "Library/Application Support/Equinox Local",
   "Library/Application Support/Equinox Local Developer",
   "Library/Application Support/Google/Chrome",
   "Library/Application Support/Chromium",
@@ -47,23 +51,61 @@ const AGENT_PROTECTED_HOME_RELATIVE_ROOTS = Object.freeze([
   "Library/Application Support/BraveSoftware/Brave-Browser",
 ]);
 
+const WINDOWS_BROWSER_LOCALAPPDATA_RELATIVE_ROOTS = Object.freeze([
+  ["Google", "Chrome", "User Data"],
+  ["Chromium", "User Data"],
+  ["Microsoft", "Edge", "User Data"],
+  ["BraveSoftware", "Brave-Browser", "User Data"],
+]);
+
 const SECRET_LIKE_DOTFILE_SUFFIX = /(?:^|[-_.])(?:key|token|secret|credentials?)$/u;
 const PUBLIC_KEY_DOTFILE_SUFFIX = /(?:^|[-_.])public[-_]?key$/u;
 
-function pathComparisonKey(value, platform) {
-  const normalized = path.normalize(value);
-  return platform === "darwin" ? normalized.toLowerCase() : normalized;
+function pathApiFor(platform) {
+  return platform === "win32" ? path.win32 : path.posix;
 }
 
-function isInsideComparisonRoot(rootPath, targetPath, platform) {
-  const root = pathComparisonKey(rootPath, platform);
-  const target = pathComparisonKey(targetPath, platform);
-  const relative = path.relative(root, target);
+function pathComparisonKey(value, platform, pathApi) {
+  const normalized = pathApi.normalize(value);
+  return platform === "darwin" || platform === "win32" ? normalized.toLowerCase() : normalized;
+}
+
+function isInsideComparisonRoot(rootPath, targetPath, platform, pathApi) {
+  const root = pathComparisonKey(rootPath, platform, pathApi);
+  const target = pathComparisonKey(targetPath, platform, pathApi);
+  const relative = pathApi.relative(root, target);
   return relative === "" || (
     relative !== ".." &&
-    !relative.startsWith(`..${path.sep}`) &&
-    !path.isAbsolute(relative)
+    !relative.startsWith(`..${pathApi.sep}`) &&
+    !pathApi.isAbsolute(relative)
   );
+}
+
+function protectedRootsForPlatform(homeDir, { platform, arch, env }) {
+  const pathApi = pathApiFor(platform);
+  const roots = AGENT_PROTECTED_HOME_RELATIVE_ROOTS.map((relativePath) =>
+    pathApi.resolve(homeDir, relativePath),
+  );
+
+  if (platform === "darwin") {
+    const layout = equinoxLocalPlatformPaths({ platform, arch, homeDir, env });
+    roots.push(layout.appDataRoot);
+    roots.push(...DARWIN_PROTECTED_HOME_RELATIVE_ROOTS.map((relativePath) =>
+      path.posix.resolve(homeDir, relativePath),
+    ));
+    return roots;
+  }
+
+  if (platform === "win32") {
+    const layout = equinoxLocalPlatformPaths({ platform, arch, homeDir, env });
+    roots.push(layout.appDataRoot);
+    const localAppData = path.win32.dirname(layout.appDataRoot);
+    roots.push(...WINDOWS_BROWSER_LOCALAPPDATA_RELATIVE_ROOTS.map((segments) =>
+      path.win32.join(localAppData, ...segments),
+    ));
+  }
+
+  return roots;
 }
 
 export function isSensitiveAgentName(name) {
@@ -85,22 +127,21 @@ export function isSensitiveAgentName(name) {
 
 export function createProtectedAgentPathChecker(
   homeDir,
-  { platform = process.platform } = {},
+  { platform = process.platform, arch = process.arch, env = process.env } = {},
 ) {
-  if (typeof homeDir !== "string" || !path.isAbsolute(homeDir)) {
+  const pathApi = pathApiFor(platform);
+  if (typeof homeDir !== "string" || !pathApi.isAbsolute(homeDir)) {
     return () => false;
   }
 
-  const protectedRoots = AGENT_PROTECTED_HOME_RELATIVE_ROOTS.map((relativePath) =>
-    path.resolve(homeDir, relativePath),
-  );
+  const protectedRoots = protectedRootsForPlatform(homeDir, { platform, arch, env });
 
   return (absolutePath) => {
-    if (typeof absolutePath !== "string" || !path.isAbsolute(absolutePath)) {
+    if (typeof absolutePath !== "string" || !pathApi.isAbsolute(absolutePath)) {
       return false;
     }
     return protectedRoots.some((root) =>
-      isInsideComparisonRoot(root, absolutePath, platform),
+      isInsideComparisonRoot(root, absolutePath, platform, pathApi),
     );
   };
 }

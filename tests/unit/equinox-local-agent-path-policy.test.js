@@ -57,3 +57,43 @@ test("agent workspace folders stay open while their credential subpaths remain p
     assert.equal(isProtected(protectedPath), true, `${protectedPath} should remain protected`);
   }
 });
+
+test("Windows protected roots use win32 semantics, platform paths and case-insensitive comparison", () => {
+  const homeDir = "C:\\Users\\Türk User";
+  const localAppData = "C:\\Users\\Türk User\\AppData\\Local";
+  const isProtected = createProtectedAgentPathChecker(homeDir, {
+    platform: "win32",
+    arch: "x64",
+    env: { LOCALAPPDATA: localAppData },
+  });
+
+  for (const accessible of [
+    "C:\\Users\\Türk User\\.codex\\AGENTS.md",
+    "C:\\Users\\Türk User\\.openclaw\\workspace\\README.md",
+    "C:\\Users\\Türk User\\Documents\\photo.png",
+  ]) {
+    assert.equal(isProtected(accessible), false, `${accessible} should remain accessible`);
+  }
+
+  for (const protectedPath of [
+    "C:\\Users\\Türk User\\.ssh\\id_ed25519",
+    "C:\\Users\\Türk User\\.codex\\AUTH.JSON",
+    "C:\\Users\\Türk User\\AppData\\Local\\Equinox Local\\state\\secrets\\telegram.json",
+    "c:\\users\\türk user\\appdata\\local\\equinox local\\browser\\Default\\Cookies",
+    "C:\\Users\\Türk User\\AppData\\Local\\Google\\Chrome\\User Data\\Default\\Cookies",
+    "C:\\Users\\Türk User\\AppData\\Local\\Chromium\\User Data\\Default\\Login Data",
+    "C:\\Users\\Türk User\\AppData\\Local\\Microsoft\\Edge\\User Data\\Default\\Cookies",
+    "C:\\Users\\Türk User\\AppData\\Local\\BraveSoftware\\Brave-Browser\\User Data\\Default\\Login Data",
+  ]) {
+    assert.equal(isProtected(protectedPath), true, `${protectedPath} should be protected`);
+  }
+
+  assert.equal(isProtected("/Users/example/Library/Application Support/Equinox Local/config.json"), false);
+});
+
+test("Windows protected path checker fails closed when required LocalAppData is unavailable", () => {
+  assert.throws(
+    () => createProtectedAgentPathChecker("C:\\Users\\Example", { platform: "win32", arch: "x64", env: {} }),
+    /LOCALAPPDATA must be an absolute path/u,
+  );
+});
