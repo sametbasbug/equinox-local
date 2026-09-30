@@ -89,9 +89,15 @@ async function compileLauncher(releaseDir) {
     windowsHide: true,
     windowsVerbatimArguments: true,
   });
-  const stat = await fs.lstat(launcherPath);
-  assert.equal(stat.isFile(), true, "Windows Native Messaging launcher was not compiled");
-  const bytes = await fs.readFile(launcherPath);
+  const handle = await fs.open(launcherPath, "r");
+  let bytes;
+  try {
+    const stat = await handle.stat();
+    assert.equal(stat.isFile(), true, "Windows Native Messaging launcher was not compiled");
+    bytes = await handle.readFile();
+  } finally {
+    await handle.close();
+  }
   const peOffset = bytes.readInt32LE(0x3c);
   assert.equal(bytes.toString("ascii", peOffset, peOffset + 4), "PE\0\0", "Windows Native Messaging launcher has an invalid PE header");
   assert.equal(bytes.readUInt16LE(peOffset + 4), TARGET_CONFIG.peMachine, `Windows Native Messaging launcher architecture does not match ${TARGET}`);
