@@ -2,9 +2,15 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
+import {
+  assertWindowsNativeMessagingHostOwnership,
+  windowsNativeMessagingLauncherPath,
+} from "./equinox-browser-windows-native-messaging.js";
 import { equinoxLocalHostDescriptor } from "./equinox-local-platform.js";
 import { inspectPrivateStatePath } from "./equinox-local-private-state.js";
 import { readManagedCurrentRelease } from "./equinox-local-update-activation.js";
+import { readWindowsStartupRegistrationOwnership } from "./equinox-local-uninstall-helper.js";
+import { assertWindowsStableShellOwnedByRelease } from "./equinox-local-windows-stable-shell.js";
 
 const NATIVE_HOST_NAME = "dev.equinox.browser";
 
@@ -46,6 +52,28 @@ function summarize(checks) {
   return Object.freeze({ pass, attention, optional, total: checks.length });
 }
 
+function windowsDoctorProbeEnvironment(env = process.env) {
+  const systemRootValue = env?.SystemRoot || env?.SYSTEMROOT;
+  if (typeof systemRootValue !== "string" || !path.win32.isAbsolute(systemRootValue)) {
+    throw new Error("Windows SystemRoot is unavailable for Doctor lifecycle verification.");
+  }
+  const systemRoot = path.win32.normalize(systemRootValue);
+  const windirValue = env?.WINDIR;
+  const windir = typeof windirValue === "string" && path.win32.isAbsolute(windirValue)
+    ? path.win32.normalize(windirValue)
+    : systemRoot;
+  return Object.freeze({
+    SystemRoot: systemRoot,
+    WINDIR: windir,
+    PATH: [
+      path.win32.join(systemRoot, "System32", "WindowsPowerShell", "v1.0"),
+      path.win32.join(systemRoot, "System32"),
+      systemRoot,
+    ].join(";"),
+  });
+}
+
+
 export async function getEquinoxLocalDoctorStatus({
   installation,
   config,
@@ -63,6 +91,10 @@ export async function getEquinoxLocalDoctorStatus({
   fsImpl = fs,
   verifyWindowsAcl = null,
   readCurrentReleaseImpl = readManagedCurrentRelease,
+  assertWindowsStableShellImpl = assertWindowsStableShellOwnedByRelease,
+  assertWindowsNativeHostImpl = assertWindowsNativeMessagingHostOwnership,
+  readWindowsStartupImpl = readWindowsStartupRegistrationOwnership,
+  runtimeEnv = process.env,
   now = () => new Date(),
 } = {}) {
   const checks = [];
@@ -166,12 +198,85 @@ export async function getEquinoxLocalDoctorStatus({
           ? "The Native Messaging host is installed with bounded per-user files."
           : "The Equinox Browser Native Messaging host needs repair or reinstall.",
       ));
+    } else if (installation.lifecycleKind === "windows-user" && hostDescriptor.platform === "win32") {
+      const releaseDir = installation.releaseDir;
+      const programRoot = installation.programRoot;
+      const manifestRoot = installation.nativeMessagingManifestRoot;
+      const shellExecutable = typeof programRoot === "string"
+        ? path.win32.join(programRoot, "EquinoxLocal.exe")
+        : null;
+
+      let shellOwned = false;
+      if (typeof releaseDir === "string" && typeof programRoot === "string") {
+        try {
+          await assertWindowsStableShellImpl({ releaseDir, programRoot, fsImpl });
+          shellOwned = true;
+        } catch {
+          shellOwned = false;
+        }
+      }
+      checks.push(check(
+        "windows-shell",
+        "Windows native shell",
+        shellOwned ? "pass" : "attention",
+        shellOwned
+          ? "The per-user Windows shell matches the active managed release."
+          : "The Windows native shell is missing, unsafe, or does not match the active managed release.",
+      ));
+
+      let startupSafe = false;
+      let startupEnabled = false;
+      if (typeof shellExecutable === "string" && path.win32.isAbsolute(shellExecutable)) {
+        try {
+          const startup = await readWindowsStartupImpl({
+            expectedCommand: `"${shellExecutable}" --startup`,
+            env: windowsDoctorProbeEnvironment(runtimeEnv),
+          });
+          startupSafe = startup?.enabled === true || startup?.enabled === false;
+          startupEnabled = startup?.enabled === true;
+        } catch {
+          startupSafe = false;
+        }
+      }
+      checks.push(check(
+        "windows-startup",
+        "Windows start at login",
+        startupSafe ? "pass" : "attention",
+        startupSafe
+          ? startupEnabled
+            ? "Start at login is registered to the exact per-user Equinox Local shell."
+            : "Start at login is disabled and no foreign registration owns the Equinox Local startup entry."
+          : "The Equinox Local per-user startup registration is unreadable or owned by another command.",
+      ));
+
+      let nativeHostOwned = false;
+      if (typeof releaseDir === "string" && typeof manifestRoot === "string") {
+        try {
+          await assertWindowsNativeHostImpl({
+            manifestRoot,
+            acceptedLauncherPaths: [windowsNativeMessagingLauncherPath(releaseDir)],
+            fsImpl,
+            env: windowsDoctorProbeEnvironment(runtimeEnv),
+          });
+          nativeHostOwned = true;
+        } catch {
+          nativeHostOwned = false;
+        }
+      }
+      checks.push(check(
+        "native-host",
+        "Equinox Browser host",
+        nativeHostOwned ? "pass" : "attention",
+        nativeHostOwned
+          ? "The Windows Native Messaging host is registered to the active managed release."
+          : "The Equinox Browser Windows Native Messaging registration needs repair or reinstall.",
+      ));
     } else {
       checks.push(check(
-        "windows-lifecycle",
-        "Windows user lifecycle",
+        "managed-lifecycle",
+        "Managed lifecycle",
         "attention",
-        "The Windows managed lifecycle contract exists, but its native verifier is not implemented yet.",
+        "The managed lifecycle type does not match this supported host.",
       ));
     }
 

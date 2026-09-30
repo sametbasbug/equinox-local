@@ -231,11 +231,15 @@ test("source checkout doctor surfaces a stale developer Peekaboo runtime without
   }
 });
 
-test("future Windows managed Doctor model never applies LaunchAgent checks", async () => {
+test("managed Windows Doctor validates the accepted per-user lifecycle without LaunchAgent checks", async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "equinox-doctor-windows-managed-"));
   try {
     const workspace = path.join(root, "workspace");
     await fs.mkdir(workspace, { mode: 0o700 });
+    const releaseDir = "C:\\Users\\Example\\AppData\\Local\\Equinox Local\\releases\\5.2.1";
+    const programRoot = "C:\\Users\\Example\\AppData\\Local\\Programs\\Equinox Local";
+    const nativeMessagingManifestRoot = "C:\\Users\\Example\\AppData\\Local\\Equinox Local\\browser\\native-messaging";
+    const calls = [];
     const result = await getEquinoxLocalDoctorStatus({
       installation: {
         kind: "managed",
@@ -243,6 +247,9 @@ test("future Windows managed Doctor model never applies LaunchAgent checks", asy
         selfUpdateSupported: true,
         lifecycleKind: "windows-user",
         installRoot: "C:\\Users\\Example\\AppData\\Local\\Equinox Local",
+        releaseDir,
+        programRoot,
+        nativeMessagingManifestRoot,
       },
       config: { version: 1, runtime: { workspaceProject: "workspace" }, projects: { workspace: { root: workspace } } },
       runtimeHealthState: "HEALTHY",
@@ -253,12 +260,85 @@ test("future Windows managed Doctor model never applies LaunchAgent checks", asy
       onboarding: { connectedThroughTunnel: true },
       host: { platform: "win32", arch: "x64", target: "win32-x64", displayName: "Windows", supported: true },
       homeDir: "C:\\Users\\Example",
-      readCurrentReleaseImpl: async () => ({ version: "5.2.1" }),
-      now: () => new Date("2026-09-27T00:00:00.000Z"),
+      runtimeEnv: { SystemRoot: "C:\\Windows", OPENAI_API_KEY: "must-not-leak" },
+      readCurrentReleaseImpl: async () => ({ version: "5.2.1", releaseDir }),
+      assertWindowsStableShellImpl: async (options) => {
+        calls.push(["shell", options]);
+        return { owned: true };
+      },
+      readWindowsStartupImpl: async (options) => {
+        calls.push(["startup", options]);
+        return { enabled: false, expectedCommand: options.expectedCommand };
+      },
+      assertWindowsNativeHostImpl: async (options) => {
+        calls.push(["native-host", options]);
+        return { manifestPath: path.win32.join(nativeMessagingManifestRoot, "dev.equinox.browser.json") };
+      },
+      now: () => new Date("2026-09-30T00:00:00.000Z"),
     });
+
+    assert.equal(result.state, "HEALTHY");
+    assert.equal(result.summary.attention, 0);
     assert.equal(result.checks.some((item) => item.id === "launch-agent"), false);
-    assert.equal(result.checks.some((item) => item.id === "windows-lifecycle"), true);
-    assert.equal(result.checks.find((item) => item.id === "windows-lifecycle").status, "attention");
+    assert.equal(result.checks.find((item) => item.id === "windows-shell")?.status, "pass");
+    assert.equal(result.checks.find((item) => item.id === "windows-startup")?.status, "pass");
+    assert.match(result.checks.find((item) => item.id === "windows-startup")?.detail || "", /disabled/u);
+    assert.equal(result.checks.find((item) => item.id === "native-host")?.status, "pass");
+    assert.equal(calls[0][0], "shell");
+    assert.deepEqual(calls[0][1], { releaseDir, programRoot, fsImpl: fs });
+    assert.equal(calls[1][0], "startup");
+    assert.equal(calls[1][1].expectedCommand, `"${path.win32.join(programRoot, "EquinoxLocal.exe")}" --startup`);
+    assert.deepEqual(calls[1][1].env, {
+      SystemRoot: "C:\\Windows",
+      WINDIR: "C:\\Windows",
+      PATH: "C:\\Windows\\System32\\WindowsPowerShell\\v1.0;C:\\Windows\\System32;C:\\Windows",
+    });
+    assert.equal(Object.hasOwn(calls[1][1].env, "OPENAI_API_KEY"), false);
+    assert.equal(calls[2][0], "native-host");
+    assert.deepEqual(calls[2][1].acceptedLauncherPaths, [path.win32.join(releaseDir, "runtime", "browser", "equinox-browser-native-host.exe")]);
+    assert.deepEqual(calls[2][1].env, calls[1][1].env);
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test("managed Windows Doctor fails closed on foreign lifecycle ownership without exposing local paths", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "equinox-doctor-windows-foreign-"));
+  try {
+    const workspace = path.join(root, "workspace");
+    await fs.mkdir(workspace, { mode: 0o700 });
+    const releaseDir = "C:\\Users\\Secret Person\\AppData\\Local\\Equinox Local\\releases\\5.2.1";
+    const result = await getEquinoxLocalDoctorStatus({
+      installation: {
+        kind: "managed",
+        managed: true,
+        selfUpdateSupported: true,
+        lifecycleKind: "windows-user",
+        installRoot: "C:\\Users\\Secret Person\\AppData\\Local\\Equinox Local",
+        releaseDir,
+        programRoot: "C:\\Users\\Secret Person\\AppData\\Local\\Programs\\Equinox Local",
+        nativeMessagingManifestRoot: "C:\\Users\\Secret Person\\AppData\\Local\\Equinox Local\\browser\\native-messaging",
+      },
+      config: { version: 1, runtime: { workspaceProject: "workspace" }, projects: { workspace: { root: workspace } } },
+      runtimeHealthState: "HEALTHY",
+      runtimeVersion: "5.2.1",
+      browser: { ready: true, consentAccepted: true, controlEnabled: true },
+      peekaboo: {},
+      update: { selfUpdateSupported: true, configured: true },
+      onboarding: { connectedThroughTunnel: true },
+      host: { platform: "win32", arch: "x64", target: "win32-x64", displayName: "Windows", supported: true },
+      runtimeEnv: { SystemRoot: "C:\\Windows", OPENAI_API_KEY: "must-not-leak" },
+      readCurrentReleaseImpl: async () => ({ version: "5.2.1", releaseDir }),
+      assertWindowsStableShellImpl: async () => { throw new Error(`foreign shell at ${releaseDir}`); },
+      readWindowsStartupImpl: async () => { throw new Error("foreign startup owner"); },
+      assertWindowsNativeHostImpl: async () => { throw new Error("foreign native host owner"); },
+    });
+
+    assert.equal(result.state, "ATTENTION");
+    assert.equal(result.checks.find((item) => item.id === "windows-shell")?.status, "attention");
+    assert.equal(result.checks.find((item) => item.id === "windows-startup")?.status, "attention");
+    assert.equal(result.checks.find((item) => item.id === "native-host")?.status, "attention");
+    assert.equal(JSON.stringify(result).includes("Secret Person"), false);
   } finally {
     await fs.rm(root, { recursive: true, force: true });
   }

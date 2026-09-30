@@ -63,6 +63,9 @@ jobs:
       - name: Windows transfer and Telegram path parity smoke
         run: node --test --test-name-pattern "Web transfer defaults follow the shared Windows per-user path contract|Telegram defaults follow the shared Windows per-user path contract" tests/unit/equinox-local-file-transfer.test.js tests/unit/telegram-integration.test.js
 
+      - name: Windows managed Doctor parity smoke
+        run: node --test --test-name-pattern "managed Windows Doctor" tests/release/equinox-local-doctor.test.js
+
       - name: Windows private-state ACL acceptance
         run: node --test tests/release/equinox-local-windows-private-state.test.js
 
