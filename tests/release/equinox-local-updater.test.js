@@ -109,7 +109,7 @@ test("managed installation is accepted only in the per-user Equinox Local releas
   assert.equal(source.selfUpdateSupported, false);
 });
 
-test("Windows x64 managed installation uses the per-user version-file lifecycle", () => {
+test("Windows managed installations use the per-user version-file lifecycle on x64 and ARM64", () => {
   const home = "C:\\Users\\Example";
   const localAppData = "C:\\Users\\Example\\AppData\\Local";
   const root = `${localAppData}\\Equinox Local`;
@@ -143,9 +143,15 @@ test("Windows x64 managed installation uses the per-user version-file lifecycle"
       EQUINOX_LOCAL_RELEASE_DIR: `${root}\\releases\\5.2.1`,
     },
   });
-  assert.equal(arm64.kind, "unsupported");
-  assert.equal(arm64.selfUpdateSupported, false);
-  assert.match(arm64.reason, /win32-arm64/u);
+  assert.equal(arm64.kind, "managed");
+  assert.equal(arm64.managed, true);
+  assert.equal(arm64.selfUpdateSupported, true);
+  assert.equal(arm64.target, "win32-arm64");
+  assert.equal(arm64.lifecycleKind, "windows-user");
+  assert.equal(arm64.currentLink, null);
+  assert.equal(arm64.currentPointer, `${root}\\current-version.json`);
+  assert.equal(arm64.programRoot, `${localAppData}\\Programs\\Equinox Local`);
+  assert.equal(arm64.launchAgentLabel, null);
 });
 
 test("signed update manifest is pinned to Equinox HTTPS paths and trusted Ed25519 keys", () => {

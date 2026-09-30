@@ -336,7 +336,7 @@ export async function prepareManagedEquinoxRelease({
   await fs.mkdir(installation.stagingRoot, { recursive: true, mode: 0o700 });
   await fs.mkdir(installation.releasesRoot, { recursive: true, mode: 0o700 });
   const transactionRoot = path.join(installation.stagingRoot, `update-${version}-${randomBytes(8).toString("hex")}`);
-  const archivePath = path.join(transactionRoot, manifest.target === WINDOWS_TARGET ? "release.zip" : "release.tar.gz");
+  const archivePath = path.join(transactionRoot, WINDOWS_TARGET_PATTERN.test(manifest.target) ? "release.zip" : "release.tar.gz");
   const extractionRoot = path.join(transactionRoot, "extracted");
 
   try {
