@@ -60,6 +60,9 @@ jobs:
       - name: Windows browser PDF text extraction smoke
         run: node --test tests/browser/browser-pdf-text.test.js
 
+      - name: Windows transfer and Telegram path parity smoke
+        run: node --test --test-name-pattern "Web transfer defaults follow the shared Windows per-user path contract|Telegram defaults follow the shared Windows per-user path contract" tests/unit/equinox-local-file-transfer.test.js tests/unit/telegram-integration.test.js
+
       - name: Windows managed release contract and activation rollback tests
         shell: pwsh
         run: |
