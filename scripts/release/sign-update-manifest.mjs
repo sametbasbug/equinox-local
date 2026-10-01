@@ -45,6 +45,27 @@ async function sha256File(filePath) {
   return Object.freeze({ bytes, sha256: digest.digest("hex") });
 }
 
+async function writeOrVerifySharedPublicFile(filePath, data, { label, maxBytes }) {
+  const payload = Buffer.isBuffer(data) ? data : Buffer.from(data);
+  if (payload.byteLength < 1 || payload.byteLength > maxBytes) {
+    throw new Error(`${label} size is outside the allowed range.`);
+  }
+  try {
+    await fs.writeFile(filePath, payload, { flag: "wx", mode: 0o644 });
+    return;
+  } catch (error) {
+    if (error?.code !== "EEXIST") throw error;
+  }
+  const existing = await readBoundedNormalFile(filePath, {
+    minBytes: 1,
+    maxBytes,
+    label: `Existing ${label}`,
+  });
+  if (!Buffer.from(existing.data).equals(payload)) {
+    throw new Error(`${label} already exists with different contents.`);
+  }
+}
+
 export function updateArtifactUrl({ version, target }) {
   parseEquinoxVersion(version);
   if (!EQUINOX_LOCAL_SUPPORTED_UPDATE_TARGETS.includes(target)) {
@@ -234,7 +255,10 @@ export async function writeSignedUpdateBundle({
       maxBytes: 1024 * 1024,
       label: "Tracked Windows ZIP helper",
     });
-    await fs.writeFile(zipHelperPath, zipHelperSource.data, { flag: "wx", mode: 0o644 });
+    await writeOrVerifySharedPublicFile(zipHelperPath, zipHelperSource.data, {
+      label: "Windows ZIP helper",
+      maxBytes: 1024 * 1024,
+    });
     const helperDigest = Object.freeze({
       bytes: zipHelperSource.data.byteLength,
       sha256: createHash("sha256").update(zipHelperSource.data).digest("hex"),
@@ -246,9 +270,15 @@ export async function writeSignedUpdateBundle({
     installerTemplate = installerTemplate
       .replaceAll(WINDOWS_INSTALLER_TEMPLATE_SHA, helperDigest.sha256)
       .replaceAll(WINDOWS_INSTALLER_TEMPLATE_BYTES, String(helperDigest.bytes));
-    await fs.writeFile(installerPath, installerTemplate, { flag: "wx", mode: 0o644 });
+    await writeOrVerifySharedPublicFile(installerPath, installerTemplate, {
+      label: "Windows installer",
+      maxBytes: 64 * 1024,
+    });
   } else {
-    await fs.writeFile(installerPath, installerSource.data, { flag: "wx", mode: 0o644 });
+    await writeOrVerifySharedPublicFile(installerPath, installerSource.data, {
+      label: "Darwin installer",
+      maxBytes: 64 * 1024,
+    });
   }
   const installerDigest = await sha256File(installerPath);
   try {
