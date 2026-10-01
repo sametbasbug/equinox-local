@@ -148,9 +148,9 @@ jobs:
         run: npm ci --prefer-offline --no-audit --no-fund
 
       - name: Set up .NET SDK
-        uses: actions/setup-dotnet@v5
+        uses: actions/setup-dotnet@v6
         with:
-          dotnet-version: 8.0.x
+          dotnet-version: 10.0.x
 
       - name: Publish native shell payload
         shell: pwsh

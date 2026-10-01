@@ -1,12 +1,12 @@
 export const EQUINOX_LOCAL_NODE_VERSION = "26.10.0";
 export const EQUINOX_LOCAL_TUNNEL_CLIENT_VERSION = "0.0.15";
-export const EQUINOX_LOCAL_PEEKABOO_VERSION = "4.5.0";
+export const EQUINOX_LOCAL_PEEKABOO_VERSION = "4.6.0";
 export const EQUINOX_LOCAL_BUNDLED_PEEKABOO_SINCE_VERSION = "4.4.0";
 export const EQUINOX_LOCAL_PEEKABOO_TEAM_ID = "FWJYW4S8P8";
 
 export const PEEKABOO_DISTRIBUTION = Object.freeze({
   filename: "peekaboo-macos-universal.tar.gz",
-  sha256: "10b409423e5540235c59ef6c3c39d31e236ac528f8b7e116b9ed5a086a1c454e",
+  sha256: "a9179b2bf9f4259cebc67737ae4d444a1dfe9c3fcb60d5922afb7d8f65ef87bf",
   archiveRoot: "peekaboo-macos-universal",
   architectures: Object.freeze(["arm64", "x86_64"]),
 });
