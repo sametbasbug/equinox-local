@@ -186,7 +186,12 @@ jobs:
             if ($releaseMetadata.target -ne '${{ matrix.target }}') { throw "Windows ZIP release target mismatch: $($releaseMetadata.target)" }
           } finally { $zip.Dispose() }
           $metadata = Join-Path 'backups/local-packages' '${{ matrix.target }}-metadata.txt'
-          @('version=' + $result.version, 'target=' + $result.target, 'bytes=' + $file.Length, 'sha256=' + $sha256) | Set-Content -LiteralPath $metadata -Encoding ascii
+          @(
+            "version=$($result.version)"
+            "target=$($result.target)"
+            "bytes=$($file.Length)"
+            "sha256=$sha256"
+          ) | Set-Content -LiteralPath $metadata -Encoding ascii
           "version=$($result.version)" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
           "artifact=$artifact" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
 
