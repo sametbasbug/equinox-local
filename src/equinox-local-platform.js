@@ -3,14 +3,30 @@ import path from "node:path";
 
 export const EQUINOX_LOCAL_SUPPORTED_HOST_PLATFORMS = Object.freeze(["darwin", "win32"]);
 export const EQUINOX_LOCAL_SUPPORTED_ARCHITECTURES = Object.freeze(["arm64", "x64"]);
-export const EQUINOX_LOCAL_SUPPORTED_RELEASE_TARGETS = Object.freeze([
-  "darwin-arm64",
-  "darwin-x64",
-  "win32-arm64",
-  "win32-x64",
+export const EQUINOX_LOCAL_RELEASE_TARGET_MATRIX = Object.freeze([
+  Object.freeze({ target: "darwin-arm64", platform: "darwin", arch: "arm64", artifactExtension: ".tar.gz", buildAuthority: "factory-native", nativeRunner: null }),
+  Object.freeze({ target: "darwin-x64", platform: "darwin", arch: "x64", artifactExtension: ".tar.gz", buildAuthority: "github-native", nativeRunner: "macos-15-intel" }),
+  Object.freeze({ target: "win32-arm64", platform: "win32", arch: "arm64", artifactExtension: ".zip", buildAuthority: "github-native", nativeRunner: "windows-11-vs2026-arm" }),
+  Object.freeze({ target: "win32-x64", platform: "win32", arch: "x64", artifactExtension: ".zip", buildAuthority: "github-native", nativeRunner: "windows-latest" }),
 ]);
+export const EQUINOX_LOCAL_SUPPORTED_RELEASE_TARGETS = Object.freeze(EQUINOX_LOCAL_RELEASE_TARGET_MATRIX.map((entry) => entry.target));
 
 const TARGET_SET = new Set(EQUINOX_LOCAL_SUPPORTED_RELEASE_TARGETS);
+const TARGET_CONTRACTS = new Map(EQUINOX_LOCAL_RELEASE_TARGET_MATRIX.map((entry) => [entry.target, entry]));
+
+export function equinoxLocalReleaseTargetContract(target) {
+  const contract = TARGET_CONTRACTS.get(target);
+  if (!contract) throw new Error(`Unsupported Equinox Local release target: ${target}`);
+  return contract;
+}
+
+export function equinoxLocalReleaseArtifactName(version, target) {
+  if (typeof version !== "string" || !/^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/u.test(version)) {
+    throw new Error("Equinox Local release artifact version is invalid.");
+  }
+  const contract = equinoxLocalReleaseTargetContract(target);
+  return `equinox-local-${version}-${target}${contract.artifactExtension}`;
+}
 
 function requireAbsolute(value, pathApi, label) {
   if (typeof value !== "string" || !value || !pathApi.isAbsolute(value)) {

@@ -3,7 +3,10 @@ import path from "node:path";
 import test from "node:test";
 
 import {
+  EQUINOX_LOCAL_RELEASE_TARGET_MATRIX,
   EQUINOX_LOCAL_SUPPORTED_RELEASE_TARGETS,
+  equinoxLocalReleaseArtifactName,
+  equinoxLocalReleaseTargetContract,
   equinoxLocalFiniteShell,
   equinoxLocalHostDescriptor,
   equinoxLocalInteractiveShells,
@@ -29,6 +32,19 @@ test("release target model covers exactly macOS and Windows x64/ARM64", () => {
   }
   assert.throws(() => equinoxLocalReleaseTarget({ platform: "linux", arch: "x64" }), /Unsupported Equinox Local release target/u);
   assert.throws(() => equinoxLocalReleaseTarget({ platform: "win32", arch: "ia32" }), /Unsupported Equinox Local release target/u);
+});
+
+test("release matrix is the canonical four-target native provenance contract", () => {
+  assert.equal(EQUINOX_LOCAL_RELEASE_TARGET_MATRIX.length, 4);
+  assert.deepEqual(EQUINOX_LOCAL_RELEASE_TARGET_MATRIX.map((entry) => entry.target), EQUINOX_LOCAL_SUPPORTED_RELEASE_TARGETS);
+  assert.deepEqual(EQUINOX_LOCAL_RELEASE_TARGET_MATRIX.map((entry) => entry.artifactExtension), [".tar.gz", ".tar.gz", ".zip", ".zip"]);
+  assert.equal(equinoxLocalReleaseTargetContract("darwin-arm64").buildAuthority, "factory-native");
+  assert.equal(equinoxLocalReleaseTargetContract("darwin-x64").nativeRunner, "macos-15-intel");
+  assert.equal(equinoxLocalReleaseTargetContract("win32-arm64").nativeRunner, "windows-11-vs2026-arm");
+  assert.equal(equinoxLocalReleaseTargetContract("win32-x64").nativeRunner, "windows-latest");
+  assert.equal(equinoxLocalReleaseArtifactName("5.2.1", "darwin-arm64"), "equinox-local-5.2.1-darwin-arm64.tar.gz");
+  assert.equal(equinoxLocalReleaseArtifactName("5.2.1", "win32-arm64"), "equinox-local-5.2.1-win32-arm64.zip");
+  assert.throws(() => equinoxLocalReleaseArtifactName("next", "darwin-arm64"), /version is invalid/u);
 });
 
 test("host descriptor exposes platform semantics without claiming Windows desktop automation", () => {
