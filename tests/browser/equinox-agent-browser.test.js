@@ -13,6 +13,7 @@ import {
   ensureAgentBrowserNativeMessagingManifest,
   parseAgentBrowserMainPids,
   parseWindowsAgentBrowserMainPids,
+  queryWindowsChromeProcessInventory,
   windowsChromeInstallCandidates,
   EQUINOX_BROWSER_STORE_URL,
 } from "../../src/equinox-agent-browser.js";
@@ -322,6 +323,31 @@ test("Windows Chrome discovery stays inside bounded trusted install roots", asyn
   });
   assert.equal(chromePath, candidates[1]);
   assert.deepEqual(visited, candidates.slice(0, 2));
+});
+
+test("Windows Chrome process inventory retries transient PowerShell query failure and stays bounded", async () => {
+  let calls = 0;
+  const stdout = await queryWindowsChromeProcessInventory(async (command, args, options) => {
+    calls += 1;
+    assert.equal(command, "powershell.exe");
+    assert.match(args.at(-1), /Get-CimInstance Win32_Process/u);
+    assert.match(args.at(-1), /ConvertTo-Json -Compress/u);
+    assert.equal(options.timeout, 5_000);
+    if (calls === 1) throw new Error("transient CIM failure");
+    return { stdout: "[]", stderr: "" };
+  }, { LOCALAPPDATA: "C:\\Users\\Example\\AppData\\Local" });
+  assert.equal(stdout, "[]");
+  assert.equal(calls, 2);
+
+  calls = 0;
+  await assert.rejects(
+    queryWindowsChromeProcessInventory(async () => {
+      calls += 1;
+      throw new Error("persistent CIM failure");
+    }, {}),
+    /persistent CIM failure/u,
+  );
+  assert.equal(calls, 3);
 });
 
 test("Windows Agent Browser process parser selects only exact Chrome main process for the isolated profile", () => {
