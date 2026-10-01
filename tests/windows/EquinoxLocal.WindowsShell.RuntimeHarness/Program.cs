@@ -38,23 +38,39 @@ static async Task WaitForAsync(Func<Task<bool>> predicate, string message, int t
     throw new InvalidOperationException(message);
 }
 
+static async Task RunStageAsync(string name, Func<Task> action, int timeoutMs = 45000)
+{
+    Console.WriteLine($"WINDOWS_SHELL_RUNTIME_STAGE {name} START");
+    try
+    {
+        await action().WaitAsync(TimeSpan.FromMilliseconds(timeoutMs));
+        Console.WriteLine($"WINDOWS_SHELL_RUNTIME_STAGE {name} PASS");
+    }
+    catch (Exception error)
+    {
+        Console.Error.WriteLine($"WINDOWS_SHELL_RUNTIME_STAGE {name} FAIL {error.GetType().Name}: {error.Message}");
+        throw;
+    }
+}
+
 try
 {
     await using var supervisor = new RuntimeSupervisor(root);
-    await supervisor.StartAsync();
-    await WaitForAsync(HealthyAsync, "runtime did not become healthy");
-    await WaitForAsync(() => PortOpenAsync(24892), "descendant did not start");
+    await RunStageAsync("start", () => supervisor.StartAsync());
+    await RunStageAsync("initial-health", () => WaitForAsync(HealthyAsync, "runtime did not become healthy"), 15000);
+    await RunStageAsync("descendant-health", () => WaitForAsync(() => PortOpenAsync(24892), "descendant did not start"), 15000);
     var firstPid = supervisor.RuntimeProcessId ?? throw new InvalidOperationException("missing first runtime pid");
-    await supervisor.StartAsync();
+    await RunStageAsync("idempotent-start", () => supervisor.StartAsync());
     if (supervisor.RuntimeProcessId != firstPid) throw new InvalidOperationException("idempotent start duplicated runtime");
-    await supervisor.RestartAsync();
-    await WaitForAsync(HealthyAsync, "runtime did not recover after restart");
+    await RunStageAsync("restart", () => supervisor.RestartAsync());
+    await RunStageAsync("restart-health", () => WaitForAsync(HealthyAsync, "runtime did not recover after restart"), 15000);
     var secondPid = supervisor.RuntimeProcessId ?? throw new InvalidOperationException("missing restarted runtime pid");
     if (secondPid == firstPid) throw new InvalidOperationException("restart did not replace runtime");
+    Console.WriteLine("WINDOWS_SHELL_RUNTIME_STAGE crash-recovery START");
     Process.GetProcessById(secondPid).Kill();
-    await WaitForAsync(async () => supervisor.RuntimeProcessId is int pid && pid != secondPid && await HealthyAsync(), "crash recovery did not replace runtime", 15000);
-    await supervisor.StopAsync();
-    await WaitForAsync(async () => !await HealthyAsync() && !await PortOpenAsync(24892), "stop did not drain owned tree");
+    await RunStageAsync("crash-recovery", () => WaitForAsync(async () => supervisor.RuntimeProcessId is int pid && pid != secondPid && await HealthyAsync(), "crash recovery did not replace runtime", 15000), 20000);
+    await RunStageAsync("stop", () => supervisor.StopAsync());
+    await RunStageAsync("drain", () => WaitForAsync(async () => !await HealthyAsync() && !await PortOpenAsync(24892), "stop did not drain owned tree"), 15000);
     if (supervisor.RuntimeProcessId is not null || supervisor.DesiredRunning) throw new InvalidOperationException("stop left ownership active");
     Console.WriteLine("WINDOWS_SHELL_RUNTIME_SUPERVISION_PASS");
 }
