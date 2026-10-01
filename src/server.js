@@ -119,6 +119,7 @@ import {
   cancelTelegramPairing,
   configureTelegramIntegration,
   confirmTelegramPairing,
+  defaultTelegramTaskStatePath,
   disconnectTelegramIntegration,
   getTelegramDownloadSettings,
   getTelegramIntegrationStatus,
@@ -2627,6 +2628,7 @@ const telegramChatBridgeController = createTelegramChatBridgeController({
 const telegramTaskInboxController = createTelegramTaskInboxController({
   store: taskCapsuleStore,
   autoContinueController,
+  statePath: defaultTelegramTaskStatePath(runtimeHomeDir, { platform, arch, env: runtimeEnv }),
   getRemoteStatus: async () => {
     const [tasks, health] = await Promise.all([
       taskCapsuleStore.list({ limit: 50 }),
