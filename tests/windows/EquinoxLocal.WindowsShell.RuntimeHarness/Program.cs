@@ -53,9 +53,10 @@ static async Task RunStageAsync(string name, Func<Task> action, int timeoutMs = 
     }
 }
 
+RuntimeSupervisor? supervisor = null;
 try
 {
-    await using var supervisor = new RuntimeSupervisor(root);
+    supervisor = new RuntimeSupervisor(root);
     await RunStageAsync("start", () => supervisor.StartAsync());
     await RunStageAsync("initial-health", () => WaitForAsync(HealthyAsync, "runtime did not become healthy"), 15000);
     await RunStageAsync("descendant-health", () => WaitForAsync(() => PortOpenAsync(24892), "descendant did not start"), 15000);
@@ -74,4 +75,11 @@ try
     if (supervisor.RuntimeProcessId is not null || supervisor.DesiredRunning) throw new InvalidOperationException("stop left ownership active");
     Console.WriteLine("WINDOWS_SHELL_RUNTIME_SUPERVISION_PASS");
 }
-finally { try { Directory.Delete(root, recursive: true); } catch { } }
+finally
+{
+    if (supervisor is not null)
+    {
+        await RunStageAsync("dispose", () => supervisor.DisposeAsync().AsTask(), 30000);
+    }
+    try { Directory.Delete(root, recursive: true); } catch { }
+}
