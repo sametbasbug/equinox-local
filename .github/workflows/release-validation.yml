@@ -18,6 +18,7 @@ jobs:
     outputs:
       intel-target: ${{ steps.plan.outputs.intel-target }}
       intel-runner: ${{ steps.plan.outputs.intel-runner }}
+      windows-matrix: ${{ steps.plan.outputs.windows-matrix }}
     steps:
       - name: Checkout exact release commit
         uses: actions/checkout@v7
@@ -33,7 +34,15 @@ jobs:
           if (all.length !== 4 || new Set(all.map((entry) => entry.target)).size !== 4) throw new Error('Canonical release matrix must contain exactly four unique targets.');
           const intel = all.find((entry) => entry.target === 'darwin-x64');
           if (!intel || intel.buildAuthority !== 'github-native' || !intel.nativeRunner) throw new Error('darwin-x64 native release contract is unavailable.');
-          process.stdout.write(`intel-target=${intel.target}\nintel-runner=${intel.nativeRunner}\n`);
+          const windows = all.filter((entry) => entry.platform === 'win32').map((entry) => ({
+            target: entry.target,
+            runner: entry.nativeRunner,
+            arch: entry.arch,
+            shellRid: `win-${entry.arch}`,
+            dotnetPlatform: entry.arch === 'arm64' ? 'ARM64' : 'x64',
+          }));
+          if (windows.length !== 2 || windows.some((entry) => !entry.runner || !['x64', 'arm64'].includes(entry.arch))) throw new Error('Windows native release contracts are incomplete.');
+          process.stdout.write(`intel-target=${intel.target}\nintel-runner=${intel.nativeRunner}\nwindows-matrix=${JSON.stringify({ include: windows })}\n`);
           NODE
 
   intel-x64:
@@ -98,5 +107,95 @@ jobs:
           path: |
             ${{ steps.release.outputs.artifact }}
             backups/local-packages/${{ needs.release-plan.outputs.intel-target }}-metadata.txt
+          if-no-files-found: error
+          retention-days: 7
+
+  windows-native:
+    needs: release-plan
+    name: Windows ${{ matrix.arch }} managed release
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.release-plan.outputs.windows-matrix) }}
+
+    steps:
+      - name: Checkout exact release commit
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.commit }}
+
+      - name: Verify exact release commit
+        shell: pwsh
+        run: |
+          if ((git rev-parse HEAD) -ne '${{ inputs.commit }}') { throw 'Windows release builder checked out the wrong commit' }
+
+      - name: Set up native Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 26.10.0
+          architecture: ${{ matrix.arch }}
+          cache: npm
+
+      - name: Verify native release host
+        shell: pwsh
+        run: |
+          if ((node -p "process.platform") -ne 'win32') { throw 'Windows release builder is not running on Windows' }
+          if ((node -p "process.arch") -ne '${{ matrix.arch }}') { throw 'Windows release builder architecture drifted' }
+          if ((node --version) -ne 'v26.10.0') { throw 'Windows release builder Node version drifted' }
+
+      - name: Install dependencies
+        run: npm ci --prefer-offline --no-audit --no-fund
+
+      - name: Set up .NET SDK
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Publish native shell payload
+        shell: pwsh
+        run: |
+          dotnet publish native/windows/EquinoxLocal.WindowsShell/EquinoxLocal.WindowsShell.csproj --configuration Release --runtime '${{ matrix.shellRid }}' --self-contained true -p:Platform='${{ matrix.dotnetPlatform }}' --output 'artifacts/windows-shell/${{ matrix.shellRid }}'
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Build and verify managed Windows release
+        id: release
+        shell: pwsh
+        env:
+          EQUINOX_WINDOWS_SHELL_PUBLISH_DIR: artifacts/windows-shell/${{ matrix.shellRid }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $raw = npm run --silent local:release:package:windows
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $result = $raw | ConvertFrom-Json
+          if ($result.target -ne '${{ matrix.target }}') { throw "Windows release target mismatch: $($result.target)" }
+          $expectedVersion = node --input-type=module -e 'import { EQUINOX_LOCAL_VERSION } from "./src/equinox-local-version.js"; process.stdout.write(EQUINOX_LOCAL_VERSION)'
+          if ($result.version -ne $expectedVersion) { throw "Windows release version mismatch: $($result.version)" }
+          $artifact = [System.IO.Path]::GetFullPath([string]$result.artifactPath)
+          if (-not (Test-Path -LiteralPath $artifact -PathType Leaf)) { throw 'Windows release artifact is missing' }
+          $file = Get-Item -LiteralPath $artifact
+          $sha256 = (Get-FileHash -LiteralPath $artifact -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($file.Length -ne [int64]$result.bytes -or $sha256 -ne [string]$result.sha256) { throw 'Windows release artifact digest changed after packaging' }
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $zip = [System.IO.Compression.ZipFile]::OpenRead($artifact)
+          try {
+            $entry = $zip.GetEntry('release/release.json')
+            if ($null -eq $entry) { throw 'Windows release ZIP is missing release/release.json' }
+            $reader = [System.IO.StreamReader]::new($entry.Open())
+            try { $releaseMetadata = ($reader.ReadToEnd() | ConvertFrom-Json) } finally { $reader.Dispose() }
+            if ($releaseMetadata.target -ne '${{ matrix.target }}') { throw "Windows ZIP release target mismatch: $($releaseMetadata.target)" }
+          } finally { $zip.Dispose() }
+          $metadata = Join-Path 'backups/local-packages' '${{ matrix.target }}-metadata.txt'
+          @('version=' + $result.version, 'target=' + $result.target, 'bytes=' + $file.Length, 'sha256=' + $sha256) | Set-Content -LiteralPath $metadata -Encoding ascii
+          "version=$($result.version)" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "artifact=$artifact" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+
+      - name: Upload unsigned Windows artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: equinox-local-${{ steps.release.outputs.version }}-${{ matrix.target }}-unsigned
+          path: |
+            ${{ steps.release.outputs.artifact }}
+            backups/local-packages/${{ matrix.target }}-metadata.txt
           if-no-files-found: error
           retention-days: 7
