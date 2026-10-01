@@ -234,9 +234,36 @@ internal sealed class RuntimeSupervisor : IAsyncDisposable
         {
             throw new TimeoutException($"Windows Job Object helper {phase} reply timed out after {(int)ProtocolTimeout.TotalSeconds} seconds.", error);
         }
-        if (string.IsNullOrWhiteSpace(line)) throw new InvalidOperationException("Windows Job Object helper closed its protocol stream.");
+        if (string.IsNullOrWhiteSpace(line))
+        {
+            var detail = await ExitedHelperDetailAsync(helper, cancellationToken).ConfigureAwait(false);
+            throw new InvalidOperationException($"Windows Job Object helper closed its {phase} protocol stream{detail}.");
+        }
         using var document = JsonDocument.Parse(line);
         return document.RootElement.Clone();
+    }
+
+    private static async Task<string> ExitedHelperDetailAsync(Process helper, CancellationToken cancellationToken)
+    {
+        if (!helper.HasExited) return string.Empty;
+        var detail = $" (exit {helper.ExitCode})";
+        try
+        {
+            var stderr = await helper.StandardError.ReadToEndAsync(cancellationToken).WaitAsync(TimeSpan.FromSeconds(1), cancellationToken).ConfigureAwait(false);
+            if (string.IsNullOrWhiteSpace(stderr)) return detail;
+            var builder = new StringBuilder(Math.Min(stderr.Length, 1_200));
+            foreach (var character in stderr)
+            {
+                if (builder.Length >= 1_200) break;
+                builder.Append(char.IsControl(character) ? ' ' : character);
+            }
+            var clean = builder.ToString().Trim();
+            return string.IsNullOrWhiteSpace(clean) ? detail : $"{detail}: {clean}";
+        }
+        catch
+        {
+            return detail;
+        }
     }
 
     private static Process StartPowerShell(string scriptPath, bool redirectOutput)

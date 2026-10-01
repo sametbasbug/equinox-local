@@ -151,6 +151,10 @@ test("Windows shell runtime supervisor uses the existing Job Object gate with bo
   assert.match(supervisor, /ProtocolTimeout = TimeSpan\.FromSeconds\(30\)/u);
   assert.match(supervisor, /ReadReplyAsync\(_jobHelper, "ready", cancellationToken\)/u);
   assert.match(supervisor, /Windows Job Object helper \{phase\} reply timed out after/u);
+  assert.match(supervisor, /ExitedHelperDetailAsync/u);
+  assert.match(supervisor, /ReadToEndAsync\(cancellationToken\)/u);
+  assert.match(supervisor, /builder\.Length >= 1_200/u);
+  assert.match(supervisor, /char\.IsControl/u);
   assert.match(supervisor, /EQUINOX_LOCAL_SUPERVISOR_MODE/u);
   assert.match(supervisor, /_releaseResolver/u);
   assert.match(supervisor, /EQUINOX_LOCAL_INSTALL_ROOT/u);
