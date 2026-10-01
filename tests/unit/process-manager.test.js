@@ -129,6 +129,7 @@ test("process manager exposes bounded separate and ordered output snapshots", as
   const child = makeFakeProcess(4240);
   const manager = createProcessManager({
     spawnImpl: () => child,
+    groupExistsImpl: () => false,
     randomId: () => "snapshot1",
   });
   const started = await manager.start({

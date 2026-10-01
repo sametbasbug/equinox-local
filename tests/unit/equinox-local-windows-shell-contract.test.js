@@ -194,9 +194,18 @@ test("Windows shell runtime supervisor uses the existing Job Object gate with bo
   assert.match(tray, /Stop Runtime/u);
 });
 
-test("Windows runtime harness links the shell diagnostics dependency", async () => {
-  const project = await fs.readFile(path.join(ROOT, "tests", "windows", "EquinoxLocal.WindowsShell.RuntimeHarness", "EquinoxLocal.WindowsShell.RuntimeHarness.csproj"), "utf8");
+test("Windows runtime harness links and owns only its new shell diagnostics", async () => {
+  const harnessRoot = path.join(ROOT, "tests", "windows", "EquinoxLocal.WindowsShell.RuntimeHarness");
+  const [project, program] = await Promise.all([
+    fs.readFile(path.join(harnessRoot, "EquinoxLocal.WindowsShell.RuntimeHarness.csproj"), "utf8"),
+    fs.readFile(path.join(harnessRoot, "Program.cs"), "utf8"),
+  ]);
   assert.match(project, /WindowsShellDiagnostics\.cs/u);
+  assert.match(program, /diagnosticLogExisted = File\.Exists\(diagnosticLog\)/u);
+  assert.match(program, /if \(!diagnosticLogExisted\)/u);
+  assert.match(program, /File\.Delete\(diagnosticLog\)/u);
+  assert.match(program, /Directory\.EnumerateFileSystemEntries\(diagnosticLogsRoot\)\.Any\(\)/u);
+  assert.match(program, /Directory\.EnumerateFileSystemEntries\(diagnosticInstallRoot\)\.Any\(\)/u);
 });
 
 test("Windows shell user-login startup registration is per-user, owned and non-intrusive", async () => {

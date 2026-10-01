@@ -7,6 +7,12 @@ var repo = Environment.CurrentDirectory;
 var nodeSource = Environment.GetEnvironmentVariable("EQUINOX_TEST_NODE_EXE");
 if (string.IsNullOrWhiteSpace(nodeSource) || !File.Exists(nodeSource)) throw new InvalidOperationException("EQUINOX_TEST_NODE_EXE is required.");
 var root = Path.Combine(Path.GetTempPath(), $"equinox-shell-runtime-{Guid.NewGuid():N}");
+var localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+if (string.IsNullOrWhiteSpace(localAppData)) throw new InvalidOperationException("LocalAppData is unavailable.");
+var diagnosticInstallRoot = Path.Combine(localAppData, "Equinox Local");
+var diagnosticLogsRoot = Path.Combine(diagnosticInstallRoot, "logs");
+var diagnosticLog = Path.Combine(diagnosticLogsRoot, WindowsShellDiagnostics.RuntimeFailureLogName);
+var diagnosticLogExisted = File.Exists(diagnosticLog);
 var nodeDir = Path.Combine(root, "runtime", "node", "bin");
 Directory.CreateDirectory(nodeDir);
 File.Copy(nodeSource, Path.Combine(nodeDir, "node.exe"));
@@ -80,6 +86,12 @@ finally
     if (supervisor is not null)
     {
         await RunStageAsync("dispose", () => supervisor.DisposeAsync().AsTask(), 30000);
+    }
+    if (!diagnosticLogExisted)
+    {
+        try { if (File.Exists(diagnosticLog)) File.Delete(diagnosticLog); } catch { }
+        try { if (Directory.Exists(diagnosticLogsRoot) && !Directory.EnumerateFileSystemEntries(diagnosticLogsRoot).Any()) Directory.Delete(diagnosticLogsRoot); } catch { }
+        try { if (Directory.Exists(diagnosticInstallRoot) && !Directory.EnumerateFileSystemEntries(diagnosticInstallRoot).Any()) Directory.Delete(diagnosticInstallRoot); } catch { }
     }
     try { Directory.Delete(root, recursive: true); } catch { }
 }
