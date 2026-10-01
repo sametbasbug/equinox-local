@@ -308,9 +308,12 @@ test("public Windows CI restores and builds the native x64 shell", async () => {
   assert.match(ci, /Windows ARM64 shared core parity suite/u);
   assert.match(ci, /Windows ARM64 headless runtime parity smoke/u);
   assert.match(ci, /tests\/unit\/task-capsule-store\.test\.js/u);
+  assert.match(ci, /tests\/unit\/turn-budget-controller\.test\.js/u);
   assert.match(ci, /tests\/unit\/telegram-integration\.test\.js/u);
   assert.match(ci, /tests\/unit\/authenticated-http-integration\.test\.js/u);
+  assert.match(ci, /tests\/unit\/equinox-local-file-transfer\.test\.js/u);
   assert.match(ci, /tests\/release\/equinox-local-windows-private-state\.test\.js/u);
+  assert.match(ci, /POSIX-only mode\/path assertions/u);
   assert.match(ci, /Windows ARM64 native shell uninstall handoff smoke/u);
   assert.match(ci, /windows-uninstall-handoff\/win-arm64/u);
   assert.match(ci, /UninstallHandoffHarness\.csproj --configuration Release --runtime win-arm64 --self-contained true -p:Platform=ARM64/u);

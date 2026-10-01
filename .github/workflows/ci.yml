@@ -260,22 +260,19 @@ jobs:
         run: node --test tests/unit/equinox-local-platform.test.js tests/release/equinox-local-windows-arm64-lifecycle.test.js
 
       - name: Windows ARM64 shared core parity suite
-        run: >-
-          node --test
-          tests/unit/capability-registry.test.js
-          tests/unit/task-capsule-store.test.js
-          tests/unit/task-capsule-tools.test.js
-          tests/unit/turn-budget-controller.test.js
-          tests/unit/auto-continue-controller.test.js
-          tests/unit/fresh-chat-resume-controller.test.js
-          tests/unit/telegram-integration.test.js
-          tests/unit/telegram-chat-bridge-controller.test.js
-          tests/unit/telegram-task-inbox-controller.test.js
-          tests/unit/authenticated-http-integration.test.js
-          tests/unit/authenticated-http-tools.test.js
-          tests/unit/authenticated-http-response-references.test.js
-          tests/unit/equinox-local-file-transfer.test.js
-          tests/release/equinox-local-windows-private-state.test.js
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          # Shared logic is architecture-neutral. Keep POSIX-only mode/path assertions out of the Windows lane;
+          # exact Windows private-state persistence is exercised by the dedicated ACL acceptance below.
+          node --test tests/unit/capability-registry.test.js tests/unit/task-capsule-tools.test.js tests/unit/auto-continue-controller.test.js tests/unit/fresh-chat-resume-controller.test.js tests/unit/telegram-chat-bridge-controller.test.js tests/unit/authenticated-http-tools.test.js tests/unit/authenticated-http-response-references.test.js
+          node --test --test-name-pattern "^(?!Task Capsule persists bounded checkpoints and increments revisions$).*" tests/unit/task-capsule-store.test.js
+          node --test --test-name-pattern "^(?!controller persists immediate runtime settings with private permissions$).*" tests/unit/turn-budget-controller.test.js
+          node --test --test-name-pattern "^(?!Web import settings support custom folder and reset while explicit destination still overrides$).*" tests/unit/equinox-local-file-transfer.test.js
+          node --test --test-name-pattern "^(?!(default store is empty, safe and enables agent profile management|agent-created profiles persist as private 0600 records and need a human credential)$).*" tests/unit/authenticated-http-integration.test.js
+          node --test --test-name-pattern "Telegram defaults follow the shared Windows per-user path contract|Telegram connection input accepts only a token and positive user ID|Telegram message validation is bounded and rejects empty content|command menu sync is a no-op when Telegram is not configured|failed Telegram validation does not persist credentials or expose the token" tests/unit/telegram-integration.test.js
+          node --test tests/release/equinox-local-windows-private-state.test.js
 
       - name: Windows ARM64 headless runtime parity smoke
         run: npm run smoke:windows-headless
