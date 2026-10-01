@@ -22,6 +22,8 @@ const execFile = promisify(execFileCallback);
 const STARTUP_KEY = "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run";
 const STARTUP_VALUE = "Equinox Local";
 const NATIVE_KEY = "HKCU\\Software\\Google\\Chrome\\NativeMessagingHosts\\dev.equinox.browser";
+const WINDOWS_ARCH = process.arch === "arm64" ? "arm64" : "x64";
+const WINDOWS_TARGET = `win32-${WINDOWS_ARCH}`;
 
 async function exists(target) {
   try { await fs.lstat(target); return true; } catch (error) {
@@ -51,12 +53,12 @@ async function createStagedRelease({ installRoot, version }) {
   await fs.writeFile(path.join(releaseDir, "release.json"), `${JSON.stringify({
     schemaVersion: 1,
     version,
-    target: "win32-x64",
+    target: WINDOWS_TARGET,
     nodeVersion: "26.10.0",
     tunnelClientVersion: "0.0.15",
     serverEntry: "server.js",
   })}\n`);
-  const contract = equinoxLocalReleaseRuntimeContract({ target: "win32-x64", version });
+  const contract = equinoxLocalReleaseRuntimeContract({ target: WINDOWS_TARGET, version });
   const files = new Set([
     ...contract.runtimeExecutables,
     ...contract.runtimeDocuments,
@@ -72,14 +74,14 @@ async function createStagedRelease({ installRoot, version }) {
 }
 
 async function installFixture({ homeDir, env, version }) {
-  const layout = equinoxLocalPlatformPaths({ platform: "win32", arch: "x64", homeDir, env });
+  const layout = equinoxLocalPlatformPaths({ platform: "win32", arch: WINDOWS_ARCH, homeDir, env });
   const stagedReleaseDir = await createStagedRelease({ installRoot: layout.appDataRoot, version });
   return installManagedEquinoxRelease({
     stagedReleaseDir,
     homeDir,
     platform: "win32",
-    arch: "x64",
-    target: "win32-x64",
+    arch: WINDOWS_ARCH,
+    target: WINDOWS_TARGET,
     env,
     initializeOnboardingImpl: async () => ({ created: true }),
     launchWindowsShellImpl: async () => ({ launched: true }),
@@ -88,10 +90,10 @@ async function installFixture({ homeDir, env, version }) {
 }
 
 function installationFor({ homeDir, env, version }) {
-  const layout = equinoxLocalPlatformPaths({ platform: "win32", arch: "x64", homeDir, env });
+  const layout = equinoxLocalPlatformPaths({ platform: "win32", arch: WINDOWS_ARCH, homeDir, env });
   return resolveEquinoxLocalInstallation({
     platform: "win32",
-    arch: "x64",
+    arch: WINDOWS_ARCH,
     homeDir,
     env: {
       ...env,
@@ -102,7 +104,7 @@ function installationFor({ homeDir, env, version }) {
 }
 
 async function addCandidateRelease({ homeDir, env, version }) {
-  const layout = equinoxLocalPlatformPaths({ platform: "win32", arch: "x64", homeDir, env });
+  const layout = equinoxLocalPlatformPaths({ platform: "win32", arch: WINDOWS_ARCH, homeDir, env });
   const staged = await createStagedRelease({ installRoot: layout.appDataRoot, version });
   const target = path.join(layout.releasesRoot, version);
   await fs.rename(staged, target);
@@ -110,7 +112,7 @@ async function addCandidateRelease({ homeDir, env, version }) {
 }
 
 async function cleanupNativeMessaging(homeDir, env, versions) {
-  const layout = equinoxLocalPlatformPaths({ platform: "win32", arch: "x64", homeDir, env });
+  const layout = equinoxLocalPlatformPaths({ platform: "win32", arch: WINDOWS_ARCH, homeDir, env });
   const manifestPath = path.join(layout.nativeMessagingManifestRoot, "dev.equinox.browser.json");
   for (const version of versions) {
     await unregisterWindowsNativeMessagingHost({
@@ -137,7 +139,7 @@ test("Windows clean-machine lifecycle preserves user state across uninstall/rein
 
   const first = await installFixture({ homeDir, env, version: versions[0] });
   assert.equal(first.status, "installed");
-  const layout = equinoxLocalPlatformPaths({ platform: "win32", arch: "x64", homeDir, env });
+  const layout = equinoxLocalPlatformPaths({ platform: "win32", arch: WINDOWS_ARCH, homeDir, env });
   const configPath = layout.configPath;
   const workspaceMarker = path.join(layout.appDataRoot, "workspace", "preserve-marker.txt");
   await fs.writeFile(workspaceMarker, "keep-me\n");
@@ -148,8 +150,8 @@ test("Windows clean-machine lifecycle preserves user state across uninstall/rein
     stagedReleaseDir: retryStage,
     homeDir,
     platform: "win32",
-    arch: "x64",
-    target: "win32-x64",
+    arch: WINDOWS_ARCH,
+    target: WINDOWS_TARGET,
     env,
     initializeOnboardingImpl: async () => ({ created: false }),
     launchWindowsShellImpl: async () => ({ launched: true }),
@@ -230,7 +232,7 @@ test("Windows clean-machine lifecycle preserves user state across uninstall/rein
   assert.equal(await exists(layout.programRoot), false);
   assert.equal(await readStartup(), null);
   assert.equal(await readWindowsNativeMessagingRegistryValue({ env }), null);
-  console.log("Windows clean-machine lifecycle acceptance passed: install/retry/update/rollback/preserve-reinstall/full-uninstall with no owned residue.");
+  console.log(`Windows ${WINDOWS_TARGET} clean-machine lifecycle acceptance passed: install/retry/update/rollback/preserve-reinstall/full-uninstall with no owned residue.`);
 });
 
 test("Windows uninstall refuses foreign startup and Native Messaging ownership before destructive cleanup", { skip: process.platform !== "win32" }, async (t) => {
@@ -247,7 +249,7 @@ test("Windows uninstall refuses foreign startup and Native Messaging ownership b
     await fs.rm(root, { recursive: true, force: true });
   });
   await installFixture({ homeDir, env, version });
-  const layout = equinoxLocalPlatformPaths({ platform: "win32", arch: "x64", homeDir, env });
+  const layout = equinoxLocalPlatformPaths({ platform: "win32", arch: WINDOWS_ARCH, homeDir, env });
   const installation = installationFor({ homeDir, env, version });
   const expectedStartup = `"${path.join(layout.programRoot, "EquinoxLocal.exe")}" --startup`;
 
@@ -271,5 +273,5 @@ test("Windows uninstall refuses foreign startup and Native Messaging ownership b
   assert.equal(await readStartup(), expectedStartup);
   const { stdout } = await execFile("reg.exe", ["QUERY", NATIVE_KEY, "/ve"], { windowsHide: true });
   assert.match(stdout, /C:\\Foreign\\manifest\.json/iu);
-  console.log("Windows foreign-state uninstall acceptance passed: startup and Native Messaging foreign owners survived untouched.");
+  console.log(`Windows ${WINDOWS_TARGET} foreign-state uninstall acceptance passed: startup and Native Messaging foreign owners survived untouched.`);
 });

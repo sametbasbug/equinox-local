@@ -259,6 +259,9 @@ jobs:
       - name: Windows ARM64 managed lifecycle plumbing smoke
         run: node --test tests/unit/equinox-local-platform.test.js tests/release/equinox-local-windows-arm64-lifecycle.test.js
 
+      - name: Windows ARM64 uninstall/reinstall lifecycle acceptance
+        run: node --test tests/release/equinox-local-windows-lifecycle.test.js
+
       - name: Windows ARM64 PowerShell bootstrap contract acceptance
         shell: pwsh
         run: |
@@ -294,6 +297,12 @@ jobs:
           if ($machine -ne 0xAA64) { throw ("Published EquinoxLocal.exe is not ARM64 (machine=0x{0:X4})" -f $machine) }
           $loader = Get-ChildItem $publish -Filter WebView2Loader.dll -Recurse | Select-Object -First 1
           if ($null -eq $loader) { throw 'Published ARM64 shell is missing WebView2Loader.dll' }
+
+      - name: Windows ARM64 native shell uninstall handoff smoke
+        shell: pwsh
+        run: |
+          $env:EQUINOX_TEST_NODE_EXE = (Get-Command node).Source
+          dotnet run --project tests/windows/EquinoxLocal.WindowsShell.UninstallHandoffHarness/EquinoxLocal.WindowsShell.UninstallHandoffHarness.csproj --configuration Release -p:Platform=ARM64
 
       - name: Windows ARM64 managed package assembly smoke
         shell: pwsh

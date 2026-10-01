@@ -27,6 +27,12 @@ internal static class Program
         var nodeSource = Environment.GetEnvironmentVariable("EQUINOX_TEST_NODE_EXE");
         if (string.IsNullOrWhiteSpace(nodeSource) || !File.Exists(nodeSource))
             throw new InvalidOperationException("EQUINOX_TEST_NODE_EXE must point to the real Windows node.exe.");
+        var target = RuntimeInformation.ProcessArchitecture switch
+        {
+            Architecture.X64 => "win32-x64",
+            Architecture.Arm64 => "win32-arm64",
+            _ => throw new PlatformNotSupportedException($"Unsupported uninstall handoff harness architecture: {RuntimeInformation.ProcessArchitecture}"),
+        };
 
         var localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
         if (string.IsNullOrWhiteSpace(localAppData)) throw new InvalidOperationException("LocalAppData is unavailable.");
@@ -48,10 +54,10 @@ internal static class Program
             {
                 schemaVersion = 1,
                 version = Version,
-                target = "win32-x64",
+                target,
                 serverEntry = "server.js",
             }));
-            File.WriteAllText(currentPointer, JsonSerializer.Serialize(new { schemaVersion = 1, target = "win32-x64", version = Version }));
+            File.WriteAllText(currentPointer, JsonSerializer.Serialize(new { schemaVersion = 1, target, version = Version }));
             File.WriteAllText(Path.Combine(releaseDir, "equinox-local-uninstall-helper.js"), """
 const fs = require('node:fs');
 const path = require('node:path');
@@ -114,7 +120,7 @@ setTimeout(() => {}, 30000);
             if (!pathValue.Contains(Path.Combine(systemRoot, "System32"), StringComparison.OrdinalIgnoreCase))
                 throw new InvalidOperationException("Managed uninstall helper PATH does not contain bounded System32.");
 
-            Console.WriteLine("Windows shell-owned uninstall handoff acceptance passed: real node helper executed outside runtime Job Object with clean environment and exact data policy.");
+            Console.WriteLine($"Windows {target} shell-owned uninstall handoff acceptance passed: real node helper executed outside runtime Job Object with clean environment and exact data policy.");
             return 0;
         }
         finally

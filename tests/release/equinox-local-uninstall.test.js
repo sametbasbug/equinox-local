@@ -137,12 +137,19 @@ test("Windows startup uninstall primitive deletes only the exact owned command",
   let current = expected;
   const execFileImpl = async (command, args, options) => {
     calls.push({ command, args, options });
-    if (command === "powershell.exe") return { stdout: current === null ? "null\n" : `${JSON.stringify(current)}\n`, stderr: "" };
+    if (command === "powershell.exe") {
+      const stdout = current === null ? "missing\n" : `value:${Buffer.from(current, "utf8").toString("hex").toUpperCase()}\n`;
+      return { stdout, stderr: "" };
+    }
     if (command === "reg.exe") { current = null; return { stdout: "", stderr: "" }; }
     throw new Error(`unexpected command ${command}`);
   };
   const ownership = await readWindowsStartupRegistrationOwnership({ expectedCommand: expected, execFileImpl, env: {} });
   assert.equal(ownership.enabled, true);
+  const readCall = calls.find((call) => call.command === "powershell.exe");
+  assert.equal(readCall.options.env.EQUINOX_LOCAL_STARTUP_REGISTRY_SUBKEY, "Software\\Microsoft\\Windows\\CurrentVersion\\Run");
+  assert.equal(readCall.options.env.EQUINOX_LOCAL_STARTUP_VALUE_NAME, "Equinox Local");
+  assert.equal(Object.hasOwn(readCall.options.env, "PSModulePath"), false);
   const removed = await unregisterWindowsStartupRegistration({ expectedCommand: expected, execFileImpl, env: {} });
   assert.equal(removed.removed, true);
   assert.equal(calls.filter((call) => call.command === "reg.exe").length, 1);
@@ -151,8 +158,9 @@ test("Windows startup uninstall primitive deletes only the exact owned command",
 test("Windows startup uninstall primitive refuses a foreign command without mutation", async () => {
   const expected = '"C:\\Owned\\EquinoxLocal.exe" --startup';
   let mutations = 0;
+  const foreign = '\"C:\\Foreign\\Other.exe\" --startup';
   const execFileImpl = async (command) => {
-    if (command === "powershell.exe") return { stdout: `${JSON.stringify('\"C:\\Foreign\\Other.exe\" --startup')}\n`, stderr: "" };
+    if (command === "powershell.exe") return { stdout: `value:${Buffer.from(foreign, "utf8").toString("hex").toUpperCase()}\n`, stderr: "" };
     mutations += 1;
     return { stdout: "", stderr: "" };
   };

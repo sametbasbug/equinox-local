@@ -304,6 +304,8 @@ test("public Windows CI restores and builds the native x64 shell", async () => {
   assert.match(ci, /Windows native shell uninstall handoff smoke/u);
   assert.match(ci, /EquinoxLocal\.WindowsShell\.UninstallHandoffHarness/u);
   assert.match(ci, /tests\/release\/equinox-local-windows-lifecycle\.test\.js/u);
+  assert.match(ci, /Windows ARM64 uninstall\/reinstall lifecycle acceptance/u);
+  assert.match(ci, /Windows ARM64 native shell uninstall handoff smoke/u);
   assert.match(ci, /EQUINOX_TEST_NODE_EXE/u);
   assert.match(ci, /EquinoxLocal\.WindowsShell\.StartupHarness/u);
   assert.match(ci, /EquinoxLocal\.WindowsShell\.FolderPickerHarness/u);
