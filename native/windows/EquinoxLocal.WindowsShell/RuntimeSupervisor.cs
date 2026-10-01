@@ -8,7 +8,7 @@ namespace EquinoxLocal.WindowsShell;
 internal sealed class RuntimeSupervisor : IAsyncDisposable
 {
     private const int MaxAutomaticRestarts = 3;
-    private static readonly TimeSpan ProtocolTimeout = TimeSpan.FromSeconds(15);
+    private static readonly TimeSpan ProtocolTimeout = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan ExitTimeout = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan[] RecoveryDelays = [TimeSpan.FromMilliseconds(250), TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(2)];
 
@@ -100,7 +100,7 @@ internal sealed class RuntimeSupervisor : IAsyncDisposable
         ValidateReleaseFiles(nodePath, serverPath, jobHelperPath, processGatePath);
         await CloseJobHelperAsync(CancellationToken.None).ConfigureAwait(false);
         _jobHelper = StartPowerShell(jobHelperPath, redirectOutput: true);
-        var ready = await ReadReplyAsync(_jobHelper, cancellationToken).ConfigureAwait(false);
+        var ready = await ReadReplyAsync(_jobHelper, "ready", cancellationToken).ConfigureAwait(false);
         if (!ready.GetProperty("ok").GetBoolean() || !ready.GetProperty("ready").GetBoolean())
             throw new InvalidOperationException("Windows Job Object helper did not become ready.");
 
@@ -215,7 +215,7 @@ internal sealed class RuntimeSupervisor : IAsyncDisposable
             payload["op"] = operation;
             await helper.StandardInput.WriteLineAsync(JsonSerializer.Serialize(payload)).ConfigureAwait(false);
             await helper.StandardInput.FlushAsync(cancellationToken).ConfigureAwait(false);
-            var response = await ReadReplyAsync(helper, cancellationToken).ConfigureAwait(false);
+            var response = await ReadReplyAsync(helper, operation, cancellationToken).ConfigureAwait(false);
             if (response.GetProperty("id").GetString() != id || !response.GetProperty("ok").GetBoolean())
                 throw new InvalidOperationException("Windows Job Object helper rejected the lifecycle request.");
             return response;
@@ -223,9 +223,17 @@ internal sealed class RuntimeSupervisor : IAsyncDisposable
         finally { _protocol.Release(); }
     }
 
-    private static async Task<JsonElement> ReadReplyAsync(Process helper, CancellationToken cancellationToken)
+    private static async Task<JsonElement> ReadReplyAsync(Process helper, string phase, CancellationToken cancellationToken)
     {
-        var line = await helper.StandardOutput.ReadLineAsync(cancellationToken).AsTask().WaitAsync(ProtocolTimeout, cancellationToken).ConfigureAwait(false);
+        string? line;
+        try
+        {
+            line = await helper.StandardOutput.ReadLineAsync(cancellationToken).AsTask().WaitAsync(ProtocolTimeout, cancellationToken).ConfigureAwait(false);
+        }
+        catch (TimeoutException error)
+        {
+            throw new TimeoutException($"Windows Job Object helper {phase} reply timed out after {(int)ProtocolTimeout.TotalSeconds} seconds.", error);
+        }
         if (string.IsNullOrWhiteSpace(line)) throw new InvalidOperationException("Windows Job Object helper closed its protocol stream.");
         using var document = JsonDocument.Parse(line);
         return document.RootElement.Clone();

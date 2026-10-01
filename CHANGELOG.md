@@ -6,6 +6,7 @@ This project follows semantic versioning for public releases.
 
 ## [Unreleased]
 
+- Hardened cold Windows Job Object helper startup on x64/ARM64 by keeping protocol waits bounded at 30 seconds and reporting the exact timed-out lifecycle phase instead of a generic timeout.
 - Added bounded Windows native-shell runtime-start diagnostics under the per-user Equinox Local logs root and surfaced their tail through first-install failures, so WPF lifecycle exceptions are no longer silently swallowed during managed-install acceptance; diagnostic messages sanitize control characters, omit stack traces and keep the log size bounded.
 - Added the first native Windows ARM64 acceptance lane: managed packaging now derives exact x64/ARM64 dependency pins and shell paths from the native host target, compiles the Equinox Browser launcher with the matching Visual Studio toolchain and PE-machine verification, and CI uses `windows-11-vs2026-arm` to exercise native Node 26, node-pty/ConPTY, Native Messaging, ARM64 WPF publish and ARM64 managed ZIP assembly. Managed ARM64 install/update lifecycle remains fail-closed until this lane is accepted.
 - Began explicit Windows ARM64 shell/runtime enablement: the managed release runtime contract now recognizes `win32-arm64`, the WPF shell has separate `win-arm64`/ARM64 publish targeting, and the native shell binds `current-version.json` plus `release.json` to its actual process architecture. Managed ARM64 lifecycle/update support remains fail-closed until package assembly and native ARM64 CI acceptance are complete.
