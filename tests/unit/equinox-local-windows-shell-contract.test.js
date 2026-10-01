@@ -162,6 +162,9 @@ test("Windows shell runtime supervisor uses the existing Job Object gate with bo
   assert.match(supervisor, /RecordRuntimeState\("runtime-start-phase", "assign-started"\)/u);
   assert.match(supervisor, /RecordRuntimeState\("runtime-start-phase", "assigned"\)/u);
   assert.match(supervisor, /RecordRuntimeState\("runtime-start-phase", "gate-released"\)/u);
+  assert.match(supervisor, /MaxGateDiagnosticChars = 1_200/u);
+  assert.match(supervisor, /gate\.ErrorDataReceived/u);
+  assert.match(supervisor, /RecordRuntimeState\("runtime-gate-exit", detail\)/u);
   assert.match(supervisor, /Windows Job Object helper \{phase\} reply timed out after/u);
   assert.match(supervisor, /ExitedHelperDetailAsync/u);
   assert.match(supervisor, /ReadToEndAsync\(cancellationToken\)/u);
@@ -186,6 +189,11 @@ test("Windows shell runtime supervisor uses the existing Job Object gate with bo
   assert.match(tray, /Start Runtime/u);
   assert.match(tray, /Restart Runtime/u);
   assert.match(tray, /Stop Runtime/u);
+});
+
+test("Windows runtime harness links the shell diagnostics dependency", async () => {
+  const project = await fs.readFile(path.join(ROOT, "tests", "windows", "EquinoxLocal.WindowsShell.RuntimeHarness", "EquinoxLocal.WindowsShell.RuntimeHarness.csproj"), "utf8");
+  assert.match(project, /WindowsShellDiagnostics\.cs/u);
 });
 
 test("Windows shell user-login startup registration is per-user, owned and non-intrusive", async () => {

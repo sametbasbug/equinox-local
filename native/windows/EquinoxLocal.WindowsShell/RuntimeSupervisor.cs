@@ -8,6 +8,7 @@ namespace EquinoxLocal.WindowsShell;
 internal sealed class RuntimeSupervisor : IAsyncDisposable
 {
     private const int MaxAutomaticRestarts = 3;
+    private const int MaxGateDiagnosticChars = 1_200;
     private static readonly TimeSpan ProtocolTimeout = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan ExitTimeout = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan[] RecoveryDelays = [TimeSpan.FromMilliseconds(250), TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(2)];
@@ -113,13 +114,16 @@ internal sealed class RuntimeSupervisor : IAsyncDisposable
         if (!string.IsNullOrWhiteSpace(location.InstallRoot)) startInfo.Environment["EQUINOX_LOCAL_INSTALL_ROOT"] = location.InstallRoot;
         startInfo.Environment["EQUINOX_LOCAL_SUPERVISOR_MODE"] = "local-only";
         var gate = new Process { StartInfo = startInfo, EnableRaisingEvents = true };
+        var gateStderr = new StringBuilder();
+        var gateStderrSync = new object();
+        gate.ErrorDataReceived += (_, eventArgs) => AppendGateDiagnostic(gateStderr, gateStderrSync, eventArgs.Data);
         if (!gate.Start()) throw new InvalidOperationException("Windows runtime process gate did not start.");
         gate.BeginOutputReadLine();
         gate.BeginErrorReadLine();
         _gate = gate;
         WindowsShellDiagnostics.RecordRuntimeState("runtime-start-phase", "gate-started");
         var generation = ++_generation;
-        gate.Exited += (_, _) => OnGateExited(generation);
+        gate.Exited += (_, _) => OnGateExited(generation, gate, gateStderr, gateStderrSync);
         try
         {
             WindowsShellDiagnostics.RecordRuntimeState("runtime-start-phase", "assign-started");
@@ -137,10 +141,39 @@ internal sealed class RuntimeSupervisor : IAsyncDisposable
         }
     }
 
-    private void OnGateExited(int generation)
+    private void OnGateExited(int generation, Process gate, StringBuilder gateStderr, object gateStderrSync)
     {
         if (_disposed || _stopping || !_desiredRunning || generation != _generation) return;
+        try { gate.WaitForExit(); } catch { }
+        var exitCode = gate.HasExited ? gate.ExitCode : -1;
+        var stderr = ReadGateDiagnostic(gateStderr, gateStderrSync);
+        var detail = string.IsNullOrWhiteSpace(stderr) ? $"exit={exitCode}" : $"exit={exitCode}; stderr={stderr}";
+        WindowsShellDiagnostics.RecordRuntimeState("runtime-gate-exit", detail);
         _ = RecoverAsync(generation);
+    }
+
+    private static void AppendGateDiagnostic(StringBuilder builder, object sync, string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return;
+        var clean = new StringBuilder(Math.Min(value.Length, MaxGateDiagnosticChars));
+        foreach (var character in value)
+        {
+            if (clean.Length >= MaxGateDiagnosticChars) break;
+            clean.Append(char.IsControl(character) ? ' ' : character);
+        }
+        var line = clean.ToString().Trim();
+        if (line.Length == 0) return;
+        lock (sync)
+        {
+            if (builder.Length > 0) builder.Append(" | ");
+            builder.Append(line);
+            if (builder.Length > MaxGateDiagnosticChars) builder.Remove(0, builder.Length - MaxGateDiagnosticChars);
+        }
+    }
+
+    private static string ReadGateDiagnostic(StringBuilder builder, object sync)
+    {
+        lock (sync) return builder.ToString().Trim();
     }
 
     private async Task RecoverAsync(int generation)
