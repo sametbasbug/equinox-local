@@ -44,7 +44,7 @@ test("controller persists immediate runtime settings with private permissions", 
     assert.equal(controller.snapshot().cutoffMinutes, 19);
     assert.equal(controller.snapshot().fallbackResetMinutes, 3);
     assert.equal(controller.snapshot().autoContinueMaxHops, 14);
-    assert.equal((await fs.stat(settingsPath)).mode & 0o777, 0o600);
+    if (process.platform !== "win32") assert.equal((await fs.stat(settingsPath)).mode & 0o777, 0o600);
     const reloaded = createTurnBudgetController({ settingsPath });
     await reloaded.initialize();
     assert.equal(reloaded.snapshot().cutoffMinutes, 19);
@@ -165,20 +165,26 @@ test("browser turn identity can use userEpoch before assistantTurnKey exists", a
 });
 
 test("fallback timer becomes idle after configurable inactivity when browser identity is unavailable", async () => {
-  let now = 0;
-  const controller = createTurnBudgetController({ now: () => now, resolveTurnIdentity: async () => null });
-  await controller.initialize();
-  await controller.updateSettings({ enabled: true, cutoffMinutes: 22, fallbackResetMinutes: 2 });
-  await controller.prepareInvocation("runtime_call", { operation: "status", arguments: {} });
-  now = 2 * 60_000 - 1;
-  assert.notEqual((await controller.refreshSnapshot()).active, null);
-  now = 2 * 60_000;
-  assert.equal((await controller.refreshSnapshot()).active, null, "passive refresh must retire stale fallback work without a new tool call");
-  now += 10 * 60_000;
-  assert.equal(controller.snapshot().active, null, "plain snapshots must not resurrect or keep counting a stale fallback");
-  const prepared = await controller.prepareInvocation("runtime_call", { operation: "status", arguments: {} });
-  assert.equal(prepared.firstNotice, true);
-  assert.equal(controller.snapshot().active.elapsedMs, 0, "next Local use starts a fresh fallback burst");
+  await withTempDir(async (root) => {
+    let now = 0;
+    const controller = createTurnBudgetController({
+      settingsPath: path.join(root, "turn-budget.json"),
+      now: () => now,
+      resolveTurnIdentity: async () => null,
+    });
+    await controller.initialize();
+    await controller.updateSettings({ enabled: true, cutoffMinutes: 22, fallbackResetMinutes: 2 });
+    await controller.prepareInvocation("runtime_call", { operation: "status", arguments: {} });
+    now = 2 * 60_000 - 1;
+    assert.notEqual((await controller.refreshSnapshot()).active, null);
+    now = 2 * 60_000;
+    assert.equal((await controller.refreshSnapshot()).active, null, "passive refresh must retire stale fallback work without a new tool call");
+    now += 10 * 60_000;
+    assert.equal(controller.snapshot().active, null, "plain snapshots must not resurrect or keep counting a stale fallback");
+    const prepared = await controller.prepareInvocation("runtime_call", { operation: "status", arguments: {} });
+    assert.equal(prepared.firstNotice, true);
+    assert.equal(controller.snapshot().active.elapsedMs, 0, "next Local use starts a fresh fallback burst");
+  });
 });
 
 

@@ -25,12 +25,43 @@ const START_DELAY_MS = 1_500;
 const NATIVE_HOST_NAME = "dev.equinox.browser";
 const WINDOWS_STARTUP_REGISTRY_KEY = "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run";
 const WINDOWS_STARTUP_VALUE_NAME = "Equinox Local";
+const WINDOWS_STARTUP_SUBKEY_ENV_KEY = "EQUINOX_LOCAL_STARTUP_REGISTRY_SUBKEY";
+const WINDOWS_STARTUP_VALUE_ENV_KEY = "EQUINOX_LOCAL_STARTUP_VALUE_NAME";
+const WINDOWS_STARTUP_REGISTRY_SUBKEY = "Software\\Microsoft\\Windows\\CurrentVersion\\Run";
 const READ_WINDOWS_STARTUP_SCRIPT = [
-  "[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)",
-  "$key = Get-Item -LiteralPath 'Registry::HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Run' -ErrorAction SilentlyContinue",
-  "$value = if ($null -eq $key) { $null } else { $key.GetValue($env:EQUINOX_LOCAL_STARTUP_VALUE_NAME, $null, [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames) }",
-  "if ($null -eq $value) { 'null' } else { $value | ConvertTo-Json -Compress }",
+  "$key = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($env:EQUINOX_LOCAL_STARTUP_REGISTRY_SUBKEY, $false)",
+  "if ($null -eq $key) { [Console]::Out.WriteLine('missing'); exit 0 }",
+  "try {",
+  "  $value = $key.GetValue($env:EQUINOX_LOCAL_STARTUP_VALUE_NAME, $null, [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)",
+  "  if ($null -eq $value) { [Console]::Out.WriteLine('missing'); exit 0 }",
+  "  if ($value -isnot [string]) { [Console]::Out.WriteLine('invalid'); exit 0 }",
+  "  $hex = [BitConverter]::ToString([Text.Encoding]::UTF8.GetBytes($value)).Replace('-', '')",
+  "  [Console]::Out.WriteLine('value:' + $hex)",
+  "} finally { $key.Dispose() }",
 ].join("; ");
+
+function windowsPowerShellPath(env = process.env) {
+  const root = env?.SystemRoot || env?.SYSTEMROOT;
+  if (typeof root === "string" && path.win32.isAbsolute(root)) {
+    return path.win32.join(root, "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
+  }
+  if (process.platform !== "win32") return "powershell.exe";
+  throw new Error("Windows SystemRoot is unavailable for uninstall registry access.");
+}
+
+function windowsStartupRegistryReadEnvironment(env = process.env) {
+  const entries = {
+    SystemRoot: env?.SystemRoot || env?.SYSTEMROOT,
+    WINDIR: env?.WINDIR || env?.SystemRoot || env?.SYSTEMROOT,
+    USERPROFILE: env?.USERPROFILE,
+    LOCALAPPDATA: env?.LOCALAPPDATA,
+    TEMP: env?.TEMP,
+    TMP: env?.TMP,
+    [WINDOWS_STARTUP_SUBKEY_ENV_KEY]: WINDOWS_STARTUP_REGISTRY_SUBKEY,
+    [WINDOWS_STARTUP_VALUE_ENV_KEY]: WINDOWS_STARTUP_VALUE_NAME,
+  };
+  return Object.fromEntries(Object.entries(entries).filter(([, value]) => typeof value === "string" && value.length > 0));
+}
 
 function parseMode(argv) {
   if (argv.length !== 2 || argv[0] !== "--uninstall") {
@@ -96,13 +127,19 @@ export async function readWindowsStartupRegistrationOwnership({
   expectedCommand, execFileImpl = execFile, env = process.env,
 } = {}) {
   if (typeof expectedCommand !== "string" || !expectedCommand) throw new Error("Expected Windows startup command is required for uninstall.");
-  const { stdout } = await execFileImpl("powershell.exe", ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", READ_WINDOWS_STARTUP_SCRIPT], {
+  const { stdout } = await execFileImpl(windowsPowerShellPath(env), ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", READ_WINDOWS_STARTUP_SCRIPT], {
     timeout: 15_000, maxBuffer: 64 * 1024, windowsHide: true,
-    env: { ...env, EQUINOX_LOCAL_STARTUP_VALUE_NAME: WINDOWS_STARTUP_VALUE_NAME },
+    env: windowsStartupRegistryReadEnvironment(env),
   });
-  const parsed = JSON.parse(String(stdout).trim() || "null");
-  if (parsed === null) return Object.freeze({ enabled: false, expectedCommand });
-  if (typeof parsed !== "string" || parsed.toLowerCase() !== expectedCommand.toLowerCase()) {
+  const output = String(stdout).trim();
+  if (output === "missing") return Object.freeze({ enabled: false, expectedCommand });
+  if (!output.startsWith("value:")) throw new Error("Windows startup registration is malformed; refusing managed uninstall.");
+  const hex = output.slice("value:".length);
+  if (!hex || hex.length % 2 !== 0 || !/^[0-9A-F]+$/u.test(hex)) {
+    throw new Error("Windows startup registration is malformed; refusing managed uninstall.");
+  }
+  const parsed = Buffer.from(hex, "hex").toString("utf8");
+  if (!parsed || parsed.toLowerCase() !== expectedCommand.toLowerCase()) {
     throw new Error("Windows startup registration is foreign; refusing managed uninstall.");
   }
   return Object.freeze({ enabled: true, expectedCommand });
@@ -166,8 +203,10 @@ export async function runWindowsEquinoxLocalUninstall({
   launcherPathImpl = windowsNativeMessagingLauncherPath, platformPathsImpl = equinoxLocalPlatformPaths, removePathImpl = removeNormalPath,
   readStartupImpl = readWindowsStartupRegistrationOwnership, unregisterStartupImpl = unregisterWindowsStartupRegistration, execFileImpl = execFile,
 } = {}) {
-  if (installation?.platform !== "win32" || installation?.arch !== "x64" || installation?.target !== "win32-x64") {
-    throw new Error("Windows uninstall requires a managed win32-x64 installation.");
+  const expectedTarget = installation?.arch === "x64" ? "win32-x64"
+    : installation?.arch === "arm64" ? "win32-arm64" : null;
+  if (installation?.platform !== "win32" || expectedTarget === null || installation?.target !== expectedTarget) {
+    throw new Error("Windows uninstall requires an exact native win32-x64 or win32-arm64 managed installation.");
   }
   if (typeof removeUserData !== "boolean") throw new Error("Windows uninstall requires an explicit data policy.");
   await waitForProcessExit(shellPid, { processAliveImpl, sleepImpl });
@@ -184,7 +223,7 @@ export async function runWindowsEquinoxLocalUninstall({
   const removedNativeHost = await unregisterNativeMessagingImpl({ manifestPath: ownership.manifestPath, launcherPath, fsImpl, env });
   if (removedNativeHost.reason) throw new Error(`Windows Native Messaging ownership changed during uninstall: ${removedNativeHost.reason}`);
 
-  const layout = platformPathsImpl({ platform: "win32", arch: "x64", homeDir, env });
+  const layout = platformPathsImpl({ platform: "win32", arch: installation.arch, homeDir, env });
   if (!sameWindowsPath(layout.appDataRoot, installation.installRoot)
       || !sameWindowsPath(layout.programRoot, installation.programRoot)
       || !sameWindowsPath(layout.nativeMessagingManifestRoot, installation.nativeMessagingManifestRoot)) {

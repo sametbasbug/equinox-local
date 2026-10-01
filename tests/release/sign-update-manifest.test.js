@@ -164,11 +164,10 @@ test("signed update bundle copies verified artifact and writes public update plu
 });
 
 
-test("Windows signed bundle uses ZIP URL and materializes the pinned PowerShell helper", async () => {
+test("Windows signed bundles emit target-specific x64 and ARM64 bootstrap metadata with one materialized PowerShell installer", async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "equinox-sign-windows-"));
   const repositoryRoot = path.join(root, "repo");
   const keysRoot = path.join(root, "keys");
-  const outputDir = path.join(root, "publish");
   await fs.mkdir(path.join(repositoryRoot, "scripts"), { recursive: true, mode: 0o700 });
   await fs.mkdir(path.join(repositoryRoot, "src"), { recursive: true, mode: 0o700 });
   await fs.mkdir(keysRoot, { mode: 0o700 });
@@ -182,26 +181,24 @@ test("Windows signed bundle uses ZIP URL and materializes the pinned PowerShell 
     await fs.writeFile(path.join(repositoryRoot, "scripts", "install-equinox-local.ps1"), template);
     await fs.writeFile(path.join(repositoryRoot, "src", "equinox-local-windows-release-zip.ps1"), "Write-Output 'helper'\n");
 
-    const result = await writeSignedUpdateBundle({
-      repositoryRoot,
-      version: "4.2.1",
-      target: "win32-x64",
-      artifactPath,
-      privateKeyPath,
-      keyId: "stable-2026",
-      outputDir,
-      publishedAt: "2026-08-25T03:00:00.000Z",
-    });
-    assert.equal(path.basename(result.artifactPath), "equinox-local-4.2.1-win32-x64.zip");
-    assert.equal(path.basename(result.bootstrapManifestPath), "bootstrap-win32-x64.txt");
-    assert.equal(path.basename(result.installerPath), "install-equinox-local.ps1");
-    assert.equal(path.basename(result.zipHelperPath), "equinox-local-windows-release-zip.ps1");
-    const manifest = JSON.parse(await fs.readFile(result.manifestPath, "utf8"));
-    assert.equal(manifest.artifact.url, "https://local.sametbasbug.dev/downloads/updates/equinox-local-4.2.1-win32-x64.zip");
-    const materialized = await fs.readFile(result.installerPath, "utf8");
-    assert.doesNotMatch(materialized, /__EQUINOX_ZIP_HELPER_/u);
-    assert.match(materialized, /[a-f0-9]{64}/u);
-    assert.match(materialized, /\$ZipHelperBytes = '\d+'/u);
+    for (const target of ["win32-x64", "win32-arm64"]) {
+      const result = await writeSignedUpdateBundle({
+        repositoryRoot, version: "4.2.1", target, artifactPath, privateKeyPath, keyId: "stable-2026",
+        outputDir: path.join(root, `publish-${target}`), publishedAt: "2026-08-25T03:00:00.000Z",
+      });
+      assert.equal(path.basename(result.artifactPath), `equinox-local-4.2.1-${target}.zip`);
+      assert.equal(path.basename(result.bootstrapManifestPath), `bootstrap-${target}.txt`);
+      assert.equal(path.basename(result.installerPath), "install-equinox-local.ps1");
+      assert.equal(path.basename(result.zipHelperPath), "equinox-local-windows-release-zip.ps1");
+      const manifest = JSON.parse(await fs.readFile(result.manifestPath, "utf8"));
+      assert.equal(manifest.target, target);
+      assert.equal(manifest.artifact.url, `https://local.sametbasbug.dev/downloads/updates/equinox-local-4.2.1-${target}.zip`);
+      assert.equal(await fs.readFile(result.bootstrapManifestPath, "utf8"), renderBootstrapInstallManifest(manifest));
+      const materialized = await fs.readFile(result.installerPath, "utf8");
+      assert.doesNotMatch(materialized, /__EQUINOX_ZIP_HELPER_/u);
+      assert.match(materialized, /[a-f0-9]{64}/u);
+      assert.match(materialized, /\$ZipHelperBytes = '\d+'/u);
+    }
   } finally {
     await fs.rm(root, { recursive: true, force: true });
   }

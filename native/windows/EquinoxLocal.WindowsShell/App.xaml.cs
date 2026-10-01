@@ -61,6 +61,9 @@ public partial class App : System.Windows.Application
         _trayIcon.SetStartupStatus(startupStatus);
 
         _runtimeSupervisor = RuntimeSupervisor.TryCreateFromEnvironmentOrManagedInstall();
+        WindowsShellDiagnostics.RecordRuntimeState(
+            "runtime-discovery",
+            $"arch={System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture}; managedPointer={WindowsManagedReleaseLocator.HasCurrentPointer()}; supervisor={_runtimeSupervisor is not null}");
         _presentationStatus = new ShellPresentationMonitor();
         _trayIcon.SetPresentationStatus(_presentationStatus.Current);
         _presentationStatus.StatusChanged += (_, status) =>
@@ -84,13 +87,15 @@ public partial class App : System.Windows.Application
     private async Task StartRuntimeAsync()
     {
         if (_runtimeSupervisor is null) return;
-        try { await _runtimeSupervisor.StartAsync(); } catch { }
+        try { await _runtimeSupervisor.StartAsync(); }
+        catch (Exception error) { WindowsShellDiagnostics.RecordRuntimeFailure("runtime-start", error); }
     }
 
     private async Task RestartRuntimeAsync()
     {
         if (_runtimeSupervisor is null) return;
-        try { await _runtimeSupervisor.RestartAsync(); } catch { }
+        try { await _runtimeSupervisor.RestartAsync(); }
+        catch (Exception error) { WindowsShellDiagnostics.RecordRuntimeFailure("runtime-restart", error); }
     }
 
     private async Task StopRuntimeAsync()

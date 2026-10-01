@@ -27,6 +27,7 @@ import { initializeManagedOnboardingState } from "./equinox-local-onboarding.js"
 import { equinoxLocalReleaseRuntimeContract } from "./equinox-local-release-runtime-contract.js";
 import {
   launchWindowsStableShell,
+  renameWindowsPathWhenUnlocked,
   synchronizeFreshWindowsShell,
 } from "./equinox-local-windows-stable-shell.js";
 export {
@@ -264,6 +265,11 @@ async function readDiagnosticTail(filePath, { fsImpl = fs, maxBytes = FIRST_INST
   }
 }
 
+async function windowsFirstInstallActivationDiagnostics({ paths, fsImpl = fs } = {}) {
+  const errorLog = await readDiagnosticTail(path.win32.join(paths.logsRoot, "windows-shell-runtime.log"), { fsImpl });
+  return errorLog ? boundedDiagnostic(`Windows shell runtime error log tail: ${errorLog}`, 1_800) : "";
+}
+
 async function firstInstallActivationDiagnostics({ homeDir, uid, execFileImpl = execFile, fsImpl = fs } = {}) {
   const parts = [];
   const service = `gui/${uid}/${EQUINOX_LOCAL_LAUNCH_AGENT_LABEL}`;
@@ -323,12 +329,16 @@ export async function installManagedEquinoxRelease({
   initializeOnboardingImpl = initializeManagedOnboardingState,
   syncWindowsShellImpl = synchronizeFreshWindowsShell,
   launchWindowsShellImpl = launchWindowsStableShell,
+  windowsRenameSleepImpl = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
 } = {}) {
-  if (platform !== "darwin" && !(platform === "win32" && arch === "x64")) {
+  if (platform !== "darwin" && !(platform === "win32" && ["arm64", "x64"].includes(arch))) {
     throw new Error(`Equinox Local first install is not implemented for ${platform}-${arch}.`);
   }
-  const expectedTarget = target || equinoxLocalUpdateTarget({ platform, arch });
-  if (platform === "win32" && expectedTarget !== "win32-x64") throw new Error("Windows first install currently supports only win32-x64.");
+  const nativeTarget = equinoxLocalUpdateTarget({ platform, arch });
+  const expectedTarget = target || nativeTarget;
+  if (platform === "win32" && expectedTarget !== nativeTarget) {
+    throw new Error(`Windows first install target ${expectedTarget} does not match native ${nativeTarget}.`);
+  }
   const pathApi = platform === "win32" ? path.win32 : path.posix;
   if (platform === "darwin" && (!Number.isInteger(uid) || uid < 1)) throw new Error("Do not run the Equinox Local installer with sudo or as root.");
   if (typeof homeDir !== "string" || !pathApi.isAbsolute(homeDir)) throw new Error("A trusted absolute HOME is required for Equinox Local first install.");
@@ -407,7 +417,11 @@ export async function installManagedEquinoxRelease({
     if (current?.releaseDir === targetRelease) throw new Error("Active target release state is inconsistent.");
     await fsImpl.rm(targetRelease, { recursive: true, force: false });
   }
-  await fsImpl.rename(stagedReal, targetRelease);
+  if (platform === "win32") {
+    await renameWindowsPathWhenUnlocked(stagedReal, targetRelease, { fsImpl, sleepImpl: windowsRenameSleepImpl });
+  } else {
+    await fsImpl.rename(stagedReal, targetRelease);
+  }
 
   if (current) {
     const currentInstallation = installationFor(paths, current.releaseDir, { platform, arch, target: expectedTarget });
@@ -448,6 +462,8 @@ export async function installManagedEquinoxRelease({
         timeout: 15_000,
         maxBuffer: 1024 * 1024,
       }).catch(() => ({ stdout: "", stderr: "" }));
+    } else if (platform === "win32") {
+      diagnostics = await windowsFirstInstallActivationDiagnostics({ paths, fsImpl });
     }
     const reason = error instanceof Error ? error.message : String(error);
     const detail = diagnostics ? ` ${diagnostics}` : "";

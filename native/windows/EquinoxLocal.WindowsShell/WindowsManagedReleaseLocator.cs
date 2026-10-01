@@ -1,4 +1,5 @@
 using System.IO;
+using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 
@@ -8,7 +9,12 @@ internal sealed record WindowsReleaseLocation(string ReleaseDir, string? Install
 
 internal static partial class WindowsManagedReleaseLocator
 {
-    private const string Target = "win32-x64";
+    private static readonly string Target = RuntimeInformation.ProcessArchitecture switch
+    {
+        Architecture.X64 => "win32-x64",
+        Architecture.Arm64 => "win32-arm64",
+        _ => throw new PlatformNotSupportedException($"Unsupported Windows architecture: {RuntimeInformation.ProcessArchitecture}."),
+    };
     private const long MaxPointerBytes = 4 * 1024;
     private const long MaxReleaseMetadataBytes = 16 * 1024;
 
@@ -42,7 +48,7 @@ internal static partial class WindowsManagedReleaseLocator
         if (pointer.GetProperty("schemaVersion").GetInt32() != 1)
             throw new InvalidDataException("Unsupported current-version pointer schema.");
         if (!string.Equals(pointer.GetProperty("target").GetString(), Target, StringComparison.Ordinal))
-            throw new InvalidDataException("Managed current-version pointer target does not match win32-x64.");
+            throw new InvalidDataException($"Managed current-version pointer target does not match {Target}.");
         var version = pointer.GetProperty("version").GetString();
         if (version is null || !VersionPattern().IsMatch(version))
             throw new InvalidDataException("Managed current-version pointer contains an invalid version.");

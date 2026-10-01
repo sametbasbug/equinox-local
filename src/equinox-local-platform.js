@@ -112,7 +112,7 @@ export function equinoxLocalManagedLifecycle({ platform = process.platform, arch
   return Object.freeze({
     host,
     kind: "windows-user",
-    implemented: arch === "x64",
+    implemented: true,
     currentPointerKind: "version-file",
     processOwnership: "job-object",
   });

@@ -10,8 +10,8 @@ import { parseEquinoxVersion } from "./equinox-local-updater.js";
 
 const execFile = promisify(execFileCallback);
 const TAR_PATH = "/usr/bin/tar";
-const WINDOWS_TARGET = "win32-x64";
-const MANAGED_TARGET_PATTERN = /^(?:darwin-(?:arm64|x64)|win32-x64)$/u;
+const WINDOWS_TARGET_PATTERN = /^win32-(?:arm64|x64)$/u;
+const MANAGED_TARGET_PATTERN = /^(?:darwin-(?:arm64|x64)|win32-(?:arm64|x64))$/u;
 const WINDOWS_ZIP_HELPER_PATH = fileURLToPath(new URL("./equinox-local-windows-release-zip.ps1", import.meta.url));
 const MAX_ARCHIVE_ENTRIES = 20_000;
 const MAX_EXTRACTED_BYTES = 2 * 1024 * 1024 * 1024;
@@ -88,7 +88,7 @@ export async function inspectEquinoxReleaseArchive(archivePath, {
   target = "darwin-arm64",
   execFileImpl = execFile,
 } = {}) {
-  if (target === WINDOWS_TARGET) return runWindowsZipHelper("Inspect", archivePath, null, execFileImpl);
+  if (WINDOWS_TARGET_PATTERN.test(target)) return runWindowsZipHelper("Inspect", archivePath, null, execFileImpl);
   if (!/^darwin-(?:arm64|x64)$/u.test(target)) throw new Error(`Managed release archive inspection is not implemented for ${target}.`);
   const [{ stdout: namesOutput }, { stdout: verboseOutput }] = await Promise.all([
     execFileImpl(TAR_PATH, ["-tzf", archivePath], {
@@ -130,7 +130,7 @@ export async function extractEquinoxReleaseArchive(archivePath, destinationPath,
   target = "darwin-arm64",
   execFileImpl = execFile,
 } = {}) {
-  if (target === WINDOWS_TARGET) return runWindowsZipHelper("Extract", archivePath, destinationPath, execFileImpl);
+  if (WINDOWS_TARGET_PATTERN.test(target)) return runWindowsZipHelper("Extract", archivePath, destinationPath, execFileImpl);
   if (!/^darwin-(?:arm64|x64)$/u.test(target)) throw new Error(`Managed release archive extraction is not implemented for ${target}.`);
   await fs.mkdir(destinationPath, { recursive: true, mode: 0o700 });
   await execFileImpl(TAR_PATH, ["-xzf", archivePath, "-C", destinationPath, "--no-same-owner"], {
@@ -336,7 +336,7 @@ export async function prepareManagedEquinoxRelease({
   await fs.mkdir(installation.stagingRoot, { recursive: true, mode: 0o700 });
   await fs.mkdir(installation.releasesRoot, { recursive: true, mode: 0o700 });
   const transactionRoot = path.join(installation.stagingRoot, `update-${version}-${randomBytes(8).toString("hex")}`);
-  const archivePath = path.join(transactionRoot, manifest.target === WINDOWS_TARGET ? "release.zip" : "release.tar.gz");
+  const archivePath = path.join(transactionRoot, WINDOWS_TARGET_PATTERN.test(manifest.target) ? "release.zip" : "release.tar.gz");
   const extractionRoot = path.join(transactionRoot, "extracted");
 
   try {

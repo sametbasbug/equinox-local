@@ -51,12 +51,17 @@ test("public shell installer supports only the two managed macOS release targets
 });
 
 
-test("public Windows installer is x64-only, fixed-origin, bounded and delegates ZIP extraction to the pinned helper", async () => {
+test("public Windows installer selects only native x64/ARM64 targets, stays fixed-origin and delegates ZIP extraction to the pinned helper", async () => {
   const source = await fs.readFile(WINDOWS_INSTALLER, "utf8");
   assert.match(source, /\$UpdateBase = 'https:\/\/local\.sametbasbug\.dev\/downloads\/updates'/u);
-  assert.match(source, /\$Target = 'win32-x64'/u);
+  assert.match(source, /\$Target = \$null/u);
+  assert.match(source, /function Get-NativeWindowsTarget/u);
   assert.match(source, /Is64BitProcess/u);
-  assert.match(source, /PROCESSOR_ARCHITECTURE -ne 'AMD64'/u);
+  assert.match(source, /'AMD64' \{ return 'win32-x64' \}/u);
+  assert.match(source, /'ARM64' \{ return 'win32-arm64' \}/u);
+  assert.match(source, /PROCESSOR_ARCHITEW6432/u);
+  assert.match(source, /native 64-bit Windows PowerShell is required/u);
+  assert.match(source, /unsupported Windows architecture/u);
   assert.match(source, /Save-BoundedHttpsFile/u);
   assert.match(source, /ContentLength -gt \$MaxBytes/u);
   assert.match(source, /\$total -gt \$MaxBytes/u);
@@ -65,6 +70,12 @@ test("public Windows installer is x64-only, fixed-origin, bounded and delegates 
   assert.match(source, /Get-FileHash -LiteralPath \$Path -Algorithm SHA256/u);
   assert.match(source, /__EQUINOX_ZIP_HELPER_SHA256__/u);
   assert.match(source, /__EQUINOX_ZIP_HELPER_BYTES__/u);
+  assert.match(source, /function Assert-NormalDirectory/u);
+  assert.match(source, /\$installRoot = Join-Path \$localAppData 'Equinox Local'/u);
+  assert.match(source, /\$stagingRoot = Join-Path \$installRoot 'staging'/u);
+  assert.match(source, /Assert-NormalDirectory \$stagingRoot \$true/u);
+  assert.match(source, /\$stage = Join-Path \$stagingRoot \('bootstrap-' \+ \[Guid\]::NewGuid\(\)\.ToString\('N'\)\)/u);
+  assert.match(source, /ReparsePoint/u);
   assert.match(source, /-Mode Inspect -ArchivePath \$artifactPath/u);
   assert.match(source, /-Mode Extract -ArchivePath \$artifactPath -DestinationPath \$stage/u);
   assert.match(source, /runtime\\node\\bin\\node\.exe/u);

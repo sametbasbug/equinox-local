@@ -2,7 +2,6 @@ $ErrorActionPreference = 'Stop'
 
 Add-Type -TypeDefinition @'
 using System;
-using System.ComponentModel;
 using System.Runtime.InteropServices;
 
 public static class EquinoxJobObjectNative {
@@ -77,8 +76,12 @@ public static class EquinoxJobObjectNative {
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool CloseHandle(IntPtr handle);
 
+    private static void ThrowWin32Error(string operation, int error) {
+        throw new InvalidOperationException(operation + " failed with Win32 error " + error + ".");
+    }
+
     private static void ThrowLast(string operation) {
-        throw new Win32Exception(Marshal.GetLastWin32Error(), operation + " failed");
+        ThrowWin32Error(operation, Marshal.GetLastWin32Error());
     }
 
     public static IntPtr CreateKillOnCloseJob() {
@@ -94,7 +97,7 @@ public static class EquinoxJobObjectNative {
             if (!SetInformationJobObject(job, 9, buffer, (uint)size)) {
                 int error = Marshal.GetLastWin32Error();
                 CloseHandle(job);
-                throw new Win32Exception(error, "SetInformationJobObject failed");
+                ThrowWin32Error("SetInformationJobObject", error);
             }
         } finally {
             Marshal.FreeHGlobal(buffer);

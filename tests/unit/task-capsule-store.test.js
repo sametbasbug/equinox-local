@@ -39,7 +39,7 @@ test("Task Capsule persists bounded checkpoints and increments revisions", async
   const updated = await store.checkpoint({ ...base, taskId: created.taskId, next: ["Register tools"] });
   assert.equal(updated.checkpointRevision, 2);
   assert.deepEqual(updated.next, ["Register tools"]);
-  assert.equal((await fs.stat(path.join(root, `${created.taskId}.json`))).mode & 0o777, 0o600);
+  if (process.platform !== "win32") assert.equal((await fs.stat(path.join(root, `${created.taskId}.json`))).mode & 0o777, 0o600);
   const reloaded = createTaskCapsuleStore({ rootDir: root });
   await reloaded.initialize();
   assert.equal((await reloaded.read(created.taskId)).checkpointRevision, 2);

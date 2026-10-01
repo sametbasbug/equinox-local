@@ -41,9 +41,14 @@ test("Windows x64 release runtime contract uses native executable names and excl
   ]);
 });
 
-test("Windows ARM64 release runtime remains fail-closed until W8", () => {
-  assert.throws(
-    () => equinoxLocalReleaseRuntimeContract({ target: "win32-arm64", version: "5.2.1" }),
-    /not implemented for win32-arm64/u,
-  );
+test("Windows ARM64 release runtime uses the same native Windows shape with exact target binding", () => {
+  const contract = equinoxLocalReleaseRuntimeContract({ target: "win32-arm64", version: "5.2.1" });
+  assert.equal(contract.target, "win32-arm64");
+  assert.equal(contract.platform, "win32");
+  assert.equal(contract.executableModeRequired, false);
+  assert.equal(contract.bundledPeekaboo, false);
+  assert.equal(contract.nativeAppKind, "windows-shell");
+  assert.equal(contract.runtimeExecutables.includes(path.join("runtime", "node", "bin", "node.exe")), true);
+  assert.equal(contract.runtimeExecutables.includes(path.join("runtime", "browser", "equinox-browser-native-host.exe")), true);
+  assert.equal(contract.nativeShellFiles.includes(path.join("runtime", "shell", "EquinoxLocal.exe")), true);
 });

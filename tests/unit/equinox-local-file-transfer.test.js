@@ -266,7 +266,7 @@ test("Web import settings support custom folder and reset while explicit destina
   const reset = await setWebImportLocation({ downloadPath: null, settingsPath, homeDir });
   assert.equal(reset.path, defaultWebImportRoot(homeDir));
   assert.equal(reset.isDefault, true);
-  assert.equal((await fs.lstat(settingsPath)).mode & 0o077, 0);
+  if (process.platform !== "win32") assert.equal((await fs.lstat(settingsPath)).mode & 0o077, 0);
 });
 
 test("file_import accepts a directory destination and Selected mode writes only in project roots", async (t) => {

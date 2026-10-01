@@ -11,7 +11,7 @@ async function source(name) {
   return fs.readFile(path.join(SHELL, name), "utf8");
 }
 
-test("Windows shell is a thin x64 WPF/WebView2 host for the shared Control Center", async () => {
+test("Windows shell is a thin x64/ARM64 WPF/WebView2 host for the shared Control Center", async () => {
   const [project, window] = await Promise.all([
     source("EquinoxLocal.WindowsShell.csproj"),
     source("MainWindow.xaml.cs"),
@@ -20,13 +20,16 @@ test("Windows shell is a thin x64 WPF/WebView2 host for the shared Control Cente
   assert.match(project, /<TargetFramework>net8\.0-windows10\.0\.19041\.0<\/TargetFramework>/u);
   assert.match(project, /<UseWPF>true<\/UseWPF>/u);
   assert.match(project, /<UseWindowsForms>true<\/UseWindowsForms>/u);
+  assert.match(project, /<Platforms>x64;ARM64<\/Platforms>/u);
   assert.match(project, /<PlatformTarget>x64<\/PlatformTarget>/u);
-  assert.match(project, /RuntimeIdentifier[^\n]*win-x64|\$\(RuntimeIdentifier\)' == 'win-x64'/u);
+  assert.match(project, /<PlatformTarget>ARM64<\/PlatformTarget>/u);
+  assert.match(project, /win-x64/u);
+  assert.match(project, /win-arm64/u);
   assert.match(project, /<SelfContained>true<\/SelfContained>/u);
   assert.match(project, /<PublishSingleFile>false<\/PublishSingleFile>/u);
   assert.match(project, /<PublishTrimmed>false<\/PublishTrimmed>/u);
   assert.match(project, /ValidateWindowsShellRuntimeIdentifier/u);
-  assert.match(project, /Windows ARM64 is enabled separately in W8/u);
+  assert.match(project, /RuntimeIdentifier=win-x64 or win-arm64/u);
   assert.match(project, /Microsoft\.Web\.WebView2/u);
   assert.match(window, /http:\/\/127\.0\.0\.1:24891\//u);
   assert.match(window, /EnsureCoreWebView2Async/u);
@@ -122,29 +125,66 @@ test("Windows shell consumes shared bounded presentation status without duplicat
 });
 
 test("Windows shell runtime supervisor uses the existing Job Object gate with bounded recovery", async () => {
-  const [app, supervisor, locator, tray] = await Promise.all([
+  const [app, supervisor, locator, tray, diagnostics, jobHelper] = await Promise.all([
     source("App.xaml.cs"),
     source("RuntimeSupervisor.cs"),
     source("WindowsManagedReleaseLocator.cs"),
     source("TrayIconController.cs"),
+    source("WindowsShellDiagnostics.cs"),
+    fs.readFile(path.join(ROOT, "src", "equinox-local-windows-job-object.ps1"), "utf8"),
   ]);
   assert.match(app, /RuntimeSupervisor\.TryCreateFromEnvironmentOrManagedInstall/u);
+  assert.match(app, /WindowsShellDiagnostics\.RecordRuntimeFailure\("runtime-start"/u);
+  assert.match(app, /WindowsShellDiagnostics\.RecordRuntimeFailure\("runtime-restart"/u);
+  assert.match(app, /WindowsShellDiagnostics\.RecordRuntimeState\(/u);
+  assert.match(app, /runtime-discovery/u);
+  assert.match(app, /managedPointer=/u);
+  assert.match(app, /supervisor=/u);
   assert.match(app, /await _runtimeSupervisor\.StopAsync/u);
+  assert.match(diagnostics, /windows-shell-runtime\.log/u);
+  assert.match(diagnostics, /LocalApplicationData/u);
+  assert.match(diagnostics, /MaxLogBytes = 64 \* 1024/u);
+  assert.match(diagnostics, /char\.IsControl/u);
+  assert.doesNotMatch(diagnostics, /error\.(?:StackTrace|ToString\(\))/u);
+  assert.match(diagnostics, /RecordRuntimeState/u);
+  assert.match(diagnostics, /RecordLine/u);
   assert.match(supervisor, /EQUINOX_LOCAL_RELEASE_DIR/u);
   assert.match(supervisor, /using System\.IO;/u);
   assert.match(supervisor, /equinox-local-windows-job-object\.ps1/u);
   assert.match(supervisor, /equinox-local-windows-process-gate\.ps1/u);
   assert.match(supervisor, /EQUINOX_LOCAL_OWNED_PROCESS_SPEC/u);
   assert.match(supervisor, /EQUINOX_GO/u);
+  assert.match(supervisor, /gate\.StandardInput\.FlushAsync/u);
+  assert.doesNotMatch(supervisor, /gate\.StandardInput\.Close\(\)/u);
   assert.match(supervisor, /MaxAutomaticRestarts = 3/u);
-  assert.match(supervisor, /ProtocolTimeout = TimeSpan\.FromSeconds\(15\)/u);
+  assert.match(supervisor, /ProtocolTimeout = TimeSpan\.FromSeconds\(30\)/u);
+  assert.match(supervisor, /ReadReplyAsync\(_jobHelper, "ready", cancellationToken\)/u);
+  assert.match(supervisor, /RecordRuntimeState\("runtime-start-phase", "helper-started"\)/u);
+  assert.match(supervisor, /RecordRuntimeState\("runtime-start-phase", "helper-ready"\)/u);
+  assert.match(supervisor, /RecordRuntimeState\("runtime-start-phase", "assign-started"\)/u);
+  assert.match(supervisor, /RecordRuntimeState\("runtime-start-phase", "assigned"\)/u);
+  assert.match(supervisor, /RecordRuntimeState\("runtime-start-phase", "gate-released"\)/u);
+  assert.match(supervisor, /MaxGateDiagnosticChars = 1_200/u);
+  assert.match(supervisor, /gate\.ErrorDataReceived/u);
+  assert.match(supervisor, /RecordRuntimeState\("runtime-gate-exit", detail\)/u);
+  assert.doesNotMatch(supervisor, /OnGateExited[\s\S]{0,700}gate\.WaitForExit\(\)/u);
+  assert.match(supervisor, /Windows Job Object helper \{phase\} reply timed out after/u);
+  assert.match(supervisor, /ExitedHelperDetailAsync/u);
+  assert.match(supervisor, /ReadToEndAsync\(cancellationToken\)/u);
+  assert.match(supervisor, /builder\.Length >= 1_200/u);
+  assert.match(supervisor, /char\.IsControl/u);
   assert.match(supervisor, /EQUINOX_LOCAL_SUPERVISOR_MODE/u);
   assert.match(supervisor, /_releaseResolver/u);
   assert.match(supervisor, /EQUINOX_LOCAL_INSTALL_ROOT/u);
   assert.doesNotMatch(supervisor, /taskkill|current-version\.json|cmd\.exe/iu);
+  assert.match(jobHelper, /new InvalidOperationException\(operation \+ " failed with Win32 error "/u);
+  assert.match(jobHelper, /Marshal\.GetLastWin32Error\(\)/u);
+  assert.doesNotMatch(jobHelper, /System\.ComponentModel|Win32Exception/u);
   assert.match(locator, /current-version\.json/u);
   assert.match(locator, /Environment\.SpecialFolder\.LocalApplicationData/u);
-  assert.match(locator, /win32-x64/u);
+  assert.match(locator, /RuntimeInformation\.ProcessArchitecture/u);
+  assert.match(locator, /Architecture\.X64 => "win32-x64"/u);
+  assert.match(locator, /Architecture\.Arm64 => "win32-arm64"/u);
   assert.match(locator, /schemaVersion/u);
   assert.match(locator, /release\.json/u);
   assert.match(locator, /FileAttributes\.ReparsePoint/u);
@@ -152,6 +192,20 @@ test("Windows shell runtime supervisor uses the existing Job Object gate with bo
   assert.match(tray, /Start Runtime/u);
   assert.match(tray, /Restart Runtime/u);
   assert.match(tray, /Stop Runtime/u);
+});
+
+test("Windows runtime harness links and owns only its new shell diagnostics", async () => {
+  const harnessRoot = path.join(ROOT, "tests", "windows", "EquinoxLocal.WindowsShell.RuntimeHarness");
+  const [project, program] = await Promise.all([
+    fs.readFile(path.join(harnessRoot, "EquinoxLocal.WindowsShell.RuntimeHarness.csproj"), "utf8"),
+    fs.readFile(path.join(harnessRoot, "Program.cs"), "utf8"),
+  ]);
+  assert.match(project, /WindowsShellDiagnostics\.cs/u);
+  assert.match(program, /diagnosticLogExisted = File\.Exists\(diagnosticLog\)/u);
+  assert.match(program, /if \(!diagnosticLogExisted\)/u);
+  assert.match(program, /File\.Delete\(diagnosticLog\)/u);
+  assert.match(program, /Directory\.EnumerateFileSystemEntries\(diagnosticLogsRoot\)\.Any\(\)/u);
+  assert.match(program, /Directory\.EnumerateFileSystemEntries\(diagnosticInstallRoot\)\.Any\(\)/u);
 });
 
 test("Windows shell user-login startup registration is per-user, owned and non-intrusive", async () => {
@@ -224,7 +278,13 @@ test("public Windows CI restores and builds the native x64 shell", async () => {
   assert.match(ci, /windows-runtime:/u);
   assert.match(ci, /windows-shell:/u);
   assert.match(ci, /windows-package:/u);
-  assert.match(ci, /needs: \[windows-runtime, windows-shell, windows-package\]/u);
+  assert.match(ci, /needs: \[windows-runtime, windows-shell, windows-package, windows-arm64-shared-core, windows-arm64-bootstrap, windows-arm64-foundation\]/u);
+  assert.match(ci, /ARM64_SHARED_RESULT: \$\{\{ needs\.windows-arm64-shared-core\.result \}\}/u);
+  assert.match(ci, /ARM64_BOOTSTRAP_RESULT: \$\{\{ needs\.windows-arm64-bootstrap\.result \}\}/u);
+  assert.match(ci, /ARM64_RESULT: \$\{\{ needs\.windows-arm64-foundation\.result \}\}/u);
+  assert.ok(ci.includes('test "$ARM64_SHARED_RESULT" = success'));
+  assert.ok(ci.includes('test "$ARM64_BOOTSTRAP_RESULT" = success'));
+  assert.ok(ci.includes('test "$ARM64_RESULT" = success'));
   assert.match(ci, /name: Windows x64 managed package/u);
   assert.match(ci, /Windows transfer and Telegram path parity smoke/u);
   assert.match(ci, /Windows private-state ACL acceptance/u);
@@ -257,6 +317,32 @@ test("public Windows CI restores and builds the native x64 shell", async () => {
   assert.match(ci, /Windows native shell uninstall handoff smoke/u);
   assert.match(ci, /EquinoxLocal\.WindowsShell\.UninstallHandoffHarness/u);
   assert.match(ci, /tests\/release\/equinox-local-windows-lifecycle\.test\.js/u);
+  assert.match(ci, /Windows ARM64 uninstall\/reinstall lifecycle acceptance/u);
+  assert.match(ci, /Windows ARM64 shared core parity suite/u);
+  assert.match(ci, /Windows ARM64 headless runtime parity smoke/u);
+  assert.match(ci, /tests\/unit\/task-capsule-store\.test\.js/u);
+  assert.match(ci, /tests\/unit\/turn-budget-controller\.test\.js/u);
+  assert.match(ci, /tests\/unit\/telegram-integration\.test\.js/u);
+  assert.match(ci, /tests\/unit\/authenticated-http-integration\.test\.js/u);
+  assert.match(ci, /tests\/unit\/equinox-local-file-transfer\.test\.js/u);
+  assert.match(ci, /tests\/release\/equinox-local-windows-private-state\.test\.js/u);
+  assert.match(ci, /POSIX-only mode\/path assertions/u);
+  assert.match(ci, /Windows ARM64 native shell uninstall handoff smoke/u);
+  assert.match(ci, /windows-uninstall-handoff\/win-arm64/u);
+  assert.match(ci, /UninstallHandoffHarness\.csproj --configuration Release --runtime win-arm64 --self-contained true -p:Platform=ARM64/u);
+  const uninstallHarnessProject = await fs.readFile(path.join(ROOT, "tests", "windows", "EquinoxLocal.WindowsShell.UninstallHandoffHarness", "EquinoxLocal.WindowsShell.UninstallHandoffHarness.csproj"), "utf8");
+  assert.match(uninstallHarnessProject, /<Platforms>x64;ARM64<\/Platforms>/u);
+  assert.match(uninstallHarnessProject, /<PlatformTarget Condition=.*win-arm64.*>ARM64<\/PlatformTarget>/u);
+  const uninstallHarnessSource = await fs.readFile(path.join(ROOT, "tests", "windows", "EquinoxLocal.WindowsShell.UninstallHandoffHarness", "Program.cs"), "utf8");
+  assert.match(uninstallHarnessSource, /refuses non-empty or reparse-point per-user Equinox Local state/u);
+  assert.match(uninstallHarnessSource, /DescribeInstallRootResidue/u);
+  assert.match(uninstallHarnessSource, /Path\.GetRelativePath/u);
+  assert.match(uninstallHarnessSource, /ContainsOnlyEmptyDirectories/u);
+  assert.match(uninstallHarnessSource, /PruneEmptyDirectories/u);
+  assert.match(uninstallHarnessSource, /helper\?\.WaitForExit\(5_000\)/u);
+  assert.match(uninstallHarnessSource, /runtime\?\.WaitForExit\(5_000\)/u);
+  assert.match(uninstallHarnessSource, /File\.Delete\(currentPointer\)/u);
+  assert.match(uninstallHarnessSource, /cleanup left owned per-user state/u);
   assert.match(ci, /EQUINOX_TEST_NODE_EXE/u);
   assert.match(ci, /EquinoxLocal\.WindowsShell\.StartupHarness/u);
   assert.match(ci, /EquinoxLocal\.WindowsShell\.FolderPickerHarness/u);
@@ -266,6 +352,26 @@ test("public Windows CI restores and builds the native x64 shell", async () => {
   assert.match(ci, /coreclr\.dll/u);
   assert.match(ci, /hostfxr\.dll/u);
   assert.match(ci, /0x8664/u);
+  assert.match(ci, /windows-arm64-shared-core:/u);
+  assert.match(ci, /windows-arm64-bootstrap:/u);
+  assert.match(ci, /windows-arm64-foundation:/u);
+  assert.match(ci, /windows-11-vs2026-arm/u);
+  assert.match(ci, /architecture:\s*arm64/u);
+  assert.match(ci, /windows-node-pty-smoke\.mjs/u);
+  assert.match(ci, /Native ARM64 node-pty \/ ConPTY smoke\n\s+timeout-minutes:\s*1/u);
+  const factoryArmPtySmokePath = path.join(ROOT, "factory", "local", "windows-node-pty-smoke.mjs");
+  const publicArmPtySmokePath = path.join(ROOT, "tests", "release", "windows-node-pty-smoke.mjs");
+  const armPtySmoke = await fs.readFile(
+    await fs.access(factoryArmPtySmokePath).then(() => factoryArmPtySmokePath, () => publicArmPtySmokePath),
+    "utf8",
+  );
+  assert.match(armPtySmoke, /spawnProcess\(process\.execPath/u);
+  assert.match(armPtySmoke, /CHILD_TIMEOUT_MS = 20_000/u);
+  assert.match(armPtySmoke, /taskkill\.exe/u);
+  assert.match(ci, /--runtime win-arm64/u);
+  assert.match(ci, /-p:Platform=ARM64/u);
+  assert.match(ci, /0xAA64/u);
+  assert.match(ci, /equinox-local-\*-win32-arm64\.zip/u);
   assert.match(ci, /WebView2Loader\.dll/u);
   assert.match(ci, /Windows native shell branding smoke/u);
   assert.match(ci, /ExtractAssociatedIcon/u);
@@ -275,6 +381,11 @@ test("public Windows CI restores and builds the native x64 shell", async () => {
 test("Windows shell update handoff acknowledges before draining the runtime and exposes rollback shutdown", async () => {
   const coordinator = await fs.readFile(path.join(ROOT, "native", "windows", "EquinoxLocal.WindowsShell", "SingleInstanceCoordinator.cs"), "utf8");
   const app = await fs.readFile(path.join(ROOT, "native", "windows", "EquinoxLocal.WindowsShell", "App.xaml.cs"), "utf8");
+  const updateHarnessSource = await fs.readFile(path.join(ROOT, "tests", "windows", "EquinoxLocal.WindowsShell.UpdateHandoffHarness", "Program.cs"), "utf8");
+  assert.match(updateHarnessSource, /helper\?\.WaitForExit\(5_000\)/u);
+  assert.match(updateHarnessSource, /runtime\?\.WaitForExit\(5_000\)/u);
+  assert.match(updateHarnessSource, /Directory\.EnumerateFileSystemEntries\(releasesRoot\)\.Any\(\)/u);
+  assert.match(updateHarnessSource, /Directory\.EnumerateFileSystemEntries\(installRoot\)\.Any\(\)/u);
   const launchIndex = coordinator.indexOf("ManagedUpdateHandoff.Launch(version)");
   const ackIndex = coordinator.indexOf('WriteLineAsync("ok")', launchIndex);
   const shutdownIndex = coordinator.indexOf("UpdateShutdownRequested?.Invoke", ackIndex);

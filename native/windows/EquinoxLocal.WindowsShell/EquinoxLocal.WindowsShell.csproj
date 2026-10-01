@@ -9,15 +9,19 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <AssemblyName>EquinoxLocal</AssemblyName>
     <RootNamespace>EquinoxLocal.WindowsShell</RootNamespace>
-    <Platforms>x64</Platforms>
-    <PlatformTarget>x64</PlatformTarget>
+    <Platforms>x64;ARM64</Platforms>
     <!-- Windows ICO is the platform container derived from the canonical app/EquinoxLocal.png artwork. -->
     <ApplicationIcon>Assets\EquinoxLocal.ico</ApplicationIcon>
   </PropertyGroup>
 
-  <!-- W5 publishes one architecture-specific, folder-based, self-contained shell. W8 adds ARM64 explicitly. -->
-  <PropertyGroup Condition="'$(RuntimeIdentifier)' == 'win-x64'">
+  <!-- Windows shell publishes one architecture-specific, folder-based, self-contained payload per release target. -->
+  <PropertyGroup Condition="'$(RuntimeIdentifier)' == 'win-x64' Or ('$(RuntimeIdentifier)' == '' And '$(Platform)' == 'x64')">
     <PlatformTarget>x64</PlatformTarget>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(RuntimeIdentifier)' == 'win-arm64' Or ('$(RuntimeIdentifier)' == '' And '$(Platform)' == 'ARM64')">
+    <PlatformTarget>ARM64</PlatformTarget>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(RuntimeIdentifier)' == 'win-x64' Or '$(RuntimeIdentifier)' == 'win-arm64'">
     <SelfContained>true</SelfContained>
     <PublishSingleFile>false</PublishSingleFile>
     <PublishTrimmed>false</PublishTrimmed>
@@ -25,7 +29,7 @@
   </PropertyGroup>
 
   <Target Name="ValidateWindowsShellRuntimeIdentifier" BeforeTargets="PrepareForPublish">
-    <Error Condition="'$(RuntimeIdentifier)' != 'win-x64'" Text="Equinox Local Windows shell publishing currently requires RuntimeIdentifier=win-x64. Windows ARM64 is enabled separately in W8." />
+    <Error Condition="'$(RuntimeIdentifier)' != 'win-x64' And '$(RuntimeIdentifier)' != 'win-arm64'" Text="Equinox Local Windows shell publishing requires RuntimeIdentifier=win-x64 or win-arm64." />
   </Target>
 
   <ItemGroup>

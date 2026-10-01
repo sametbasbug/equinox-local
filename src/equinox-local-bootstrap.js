@@ -326,7 +326,7 @@ export async function bootstrapManagedEquinoxUser({
   registerWindowsNativeMessagingHostImpl = registerWindowsNativeMessagingHost,
   fsImpl = fs,
 } = {}) {
-  if (platform !== "darwin" && !(platform === "win32" && arch === "x64")) {
+  if (platform !== "darwin" && !(platform === "win32" && ["arm64", "x64"].includes(arch))) {
     throw new Error(`Equinox Local managed bootstrap is not implemented for ${platform}-${arch}.`);
   }
   const target = equinoxLocalUpdateTarget({ platform, arch });

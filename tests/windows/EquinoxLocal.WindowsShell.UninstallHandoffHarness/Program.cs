@@ -27,14 +27,22 @@ internal static class Program
         var nodeSource = Environment.GetEnvironmentVariable("EQUINOX_TEST_NODE_EXE");
         if (string.IsNullOrWhiteSpace(nodeSource) || !File.Exists(nodeSource))
             throw new InvalidOperationException("EQUINOX_TEST_NODE_EXE must point to the real Windows node.exe.");
+        var target = RuntimeInformation.ProcessArchitecture switch
+        {
+            Architecture.X64 => "win32-x64",
+            Architecture.Arm64 => "win32-arm64",
+            _ => throw new PlatformNotSupportedException($"Unsupported uninstall handoff harness architecture: {RuntimeInformation.ProcessArchitecture}"),
+        };
 
         var localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
         if (string.IsNullOrWhiteSpace(localAppData)) throw new InvalidOperationException("LocalAppData is unavailable.");
         var installRoot = Path.Combine(localAppData, "Equinox Local");
-        var releaseDir = Path.Combine(installRoot, "releases", Version);
+        var releasesRoot = Path.Combine(installRoot, "releases");
+        var releaseDir = Path.Combine(releasesRoot, Version);
         var currentPointer = Path.Combine(installRoot, "current-version.json");
         var markerPath = Path.Combine(releaseDir, "uninstall-handoff-marker.json");
-        if (Directory.Exists(releaseDir)) Directory.Delete(releaseDir, recursive: true);
+        if (File.Exists(installRoot) || (Directory.Exists(installRoot) && !ContainsOnlyEmptyDirectories(installRoot)))
+            throw new InvalidOperationException($"Uninstall handoff harness refuses non-empty or reparse-point per-user Equinox Local state; residue={DescribeInstallRootResidue(installRoot)}.");
 
         Process? runtime = null;
         Process? helper = null;
@@ -48,10 +56,10 @@ internal static class Program
             {
                 schemaVersion = 1,
                 version = Version,
-                target = "win32-x64",
+                target,
                 serverEntry = "server.js",
             }));
-            File.WriteAllText(currentPointer, JsonSerializer.Serialize(new { schemaVersion = 1, target = "win32-x64", version = Version }));
+            File.WriteAllText(currentPointer, JsonSerializer.Serialize(new { schemaVersion = 1, target, version = Version }));
             File.WriteAllText(Path.Combine(releaseDir, "equinox-local-uninstall-helper.js"), """
 const fs = require('node:fs');
 const path = require('node:path');
@@ -114,19 +122,78 @@ setTimeout(() => {}, 30000);
             if (!pathValue.Contains(Path.Combine(systemRoot, "System32"), StringComparison.OrdinalIgnoreCase))
                 throw new InvalidOperationException("Managed uninstall helper PATH does not contain bounded System32.");
 
-            Console.WriteLine("Windows shell-owned uninstall handoff acceptance passed: real node helper executed outside runtime Job Object with clean environment and exact data policy.");
-            return 0;
+            Console.WriteLine($"Windows {target} shell-owned uninstall handoff acceptance passed: real node helper executed outside runtime Job Object with clean environment and exact data policy.");
         }
         finally
         {
             Environment.SetEnvironmentVariable("OPENAI_API_KEY", oldSecret);
-            try { if (helper is { HasExited: false }) helper.Kill(entireProcessTree: true); } catch { }
-            try { if (runtime is { HasExited: false }) runtime.Kill(entireProcessTree: true); } catch { }
+            try
+            {
+                if (helper is { HasExited: false }) helper.Kill(entireProcessTree: true);
+                helper?.WaitForExit(5_000);
+            }
+            catch { }
+            try
+            {
+                if (runtime is { HasExited: false }) runtime.Kill(entireProcessTree: true);
+                runtime?.WaitForExit(5_000);
+            }
+            catch { }
             helper?.Dispose();
             runtime?.Dispose();
             if (runtimeJob != IntPtr.Zero) CloseHandle(runtimeJob);
             try { if (File.Exists(currentPointer)) File.Delete(currentPointer); } catch { }
             try { if (Directory.Exists(releaseDir)) Directory.Delete(releaseDir, recursive: true); } catch { }
+            try { PruneEmptyDirectories(installRoot); } catch { }
         }
+        if (File.Exists(installRoot) || Directory.Exists(installRoot))
+            throw new InvalidOperationException($"Uninstall handoff harness cleanup left owned per-user state; residue={DescribeInstallRootResidue(installRoot)}.");
+        return 0;
+    }
+
+
+    private static string DescribeInstallRootResidue(string root)
+    {
+        if (File.Exists(root)) return "file:root";
+        if (!Directory.Exists(root)) return "missing";
+        var entries = new List<string>();
+        Walk(new DirectoryInfo(root), 0);
+        return entries.Count == 0 ? "empty" : string.Join(",", entries);
+
+        void Walk(DirectoryInfo directory, int depth)
+        {
+            if (depth > 3 || entries.Count >= 16) return;
+            foreach (var entry in directory.EnumerateFileSystemInfos().OrderBy(item => item.Name, StringComparer.OrdinalIgnoreCase))
+            {
+                if (entries.Count >= 16) break;
+                var relative = Path.GetRelativePath(root, entry.FullName).Replace('\\', '/');
+                var safe = new string(relative.Select(ch => char.IsLetterOrDigit(ch) || ch is '.' or '-' or '_' or '/' ? ch : '?').Take(120).ToArray());
+                var reparse = (entry.Attributes & FileAttributes.ReparsePoint) != 0;
+                var kind = reparse ? "reparse" : entry is DirectoryInfo ? "dir" : "file";
+                entries.Add($"{kind}:{safe}");
+                if (!reparse && entry is DirectoryInfo child && depth < 3) Walk(child, depth + 1);
+            }
+        }
+    }
+
+    private static bool ContainsOnlyEmptyDirectories(string root)
+    {
+        var info = new DirectoryInfo(root);
+        if ((info.Attributes & FileAttributes.ReparsePoint) != 0) return false;
+        foreach (var entry in info.EnumerateFileSystemInfos())
+        {
+            if ((entry.Attributes & FileAttributes.ReparsePoint) != 0 || entry is not DirectoryInfo directory) return false;
+            if (!ContainsOnlyEmptyDirectories(directory.FullName)) return false;
+        }
+        return true;
+    }
+
+    private static void PruneEmptyDirectories(string root)
+    {
+        if (!Directory.Exists(root)) return;
+        var info = new DirectoryInfo(root);
+        if ((info.Attributes & FileAttributes.ReparsePoint) != 0) return;
+        foreach (var directory in info.EnumerateDirectories().ToArray()) PruneEmptyDirectories(directory.FullName);
+        if (!info.EnumerateFileSystemInfos().Any()) info.Delete();
     }
 }

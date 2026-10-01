@@ -9,13 +9,42 @@ import { readBoundedNormalFile, writeBoundedUtf8File } from "./equinox-local-saf
 
 const execFile = promisify(execFileCallback);
 export const EQUINOX_BROWSER_WINDOWS_REGISTRY_KEY = `HKCU\\Software\\Google\\Chrome\\NativeMessagingHosts\\${EQUINOX_BROWSER_HOST_NAME}`;
-const REGISTRY_ENV_KEY = "EQUINOX_BROWSER_NATIVE_HOST_REGISTRY_KEY";
+const REGISTRY_SUBKEY_ENV_KEY = "EQUINOX_BROWSER_NATIVE_HOST_REGISTRY_SUBKEY";
+const WINDOWS_NATIVE_MESSAGING_REGISTRY_SUBKEY = `Software\\Google\\Chrome\\NativeMessagingHosts\\${EQUINOX_BROWSER_HOST_NAME}`;
 const READ_REGISTRY_SCRIPT = [
-  "[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)",
-  "$key = Get-Item -LiteralPath ('Registry::' + $env:EQUINOX_BROWSER_NATIVE_HOST_REGISTRY_KEY) -ErrorAction SilentlyContinue",
-  "if ($null -eq $key) { 'null' } else { $key.GetValue('') | ConvertTo-Json -Compress }",
+  "$key = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($env:EQUINOX_BROWSER_NATIVE_HOST_REGISTRY_SUBKEY, $false)",
+  "if ($null -eq $key) { [Console]::Out.WriteLine('missing'); exit 0 }",
+  "try {",
+  "  $value = $key.GetValue($null, $null, [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)",
+  "  if ($null -eq $value) { [Console]::Out.WriteLine('missing'); exit 0 }",
+  "  if ($value -isnot [string]) { [Console]::Out.WriteLine('invalid'); exit 0 }",
+  "  $hex = [BitConverter]::ToString([Text.Encoding]::UTF8.GetBytes($value)).Replace('-', '')",
+  "  [Console]::Out.WriteLine('value:' + $hex)",
+  "} finally { $key.Dispose() }",
 ].join("; ");
 const MANIFEST_MAX_BYTES = 16 * 1024;
+
+function windowsPowerShellPath(env = process.env) {
+  const root = env?.SystemRoot || env?.SYSTEMROOT;
+  if (typeof root === "string" && path.win32.isAbsolute(root)) {
+    return path.win32.join(root, "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
+  }
+  if (process.platform !== "win32") return "powershell.exe";
+  throw new Error("Windows SystemRoot is unavailable for Native Messaging registry access.");
+}
+
+function windowsRegistryReadEnvironment(env = process.env) {
+  const entries = {
+    SystemRoot: env?.SystemRoot || env?.SYSTEMROOT,
+    WINDIR: env?.WINDIR || env?.SystemRoot || env?.SYSTEMROOT,
+    USERPROFILE: env?.USERPROFILE,
+    LOCALAPPDATA: env?.LOCALAPPDATA,
+    TEMP: env?.TEMP,
+    TMP: env?.TMP,
+    [REGISTRY_SUBKEY_ENV_KEY]: WINDOWS_NATIVE_MESSAGING_REGISTRY_SUBKEY,
+  };
+  return Object.fromEntries(Object.entries(entries).filter(([, value]) => typeof value === "string" && value.length > 0));
+}
 
 function requireAbsolute(value, label) {
   if (typeof value !== "string" || !value || !path.win32.isAbsolute(value)) throw new Error(`${label} must be an absolute Windows path.`);
@@ -88,20 +117,26 @@ export async function readWindowsNativeMessagingRegistryValue({
   execFileAsync = execFile,
   env = process.env,
 } = {}) {
-  const { stdout } = await execFileAsync("powershell.exe", [
+  const { stdout } = await execFileAsync(windowsPowerShellPath(env), [
     "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", READ_REGISTRY_SCRIPT,
   ], {
     timeout: 15_000,
     maxBuffer: 64 * 1024,
     windowsHide: true,
-    env: { ...env, [REGISTRY_ENV_KEY]: EQUINOX_BROWSER_WINDOWS_REGISTRY_KEY },
+    env: windowsRegistryReadEnvironment(env),
   });
-  const parsed = JSON.parse(String(stdout).trim() || "null");
-  if (parsed === null) return null;
-  if (typeof parsed !== "string" || !parsed) {
+  const output = String(stdout).trim();
+  if (output === "missing") return null;
+  if (!output.startsWith("value:")) {
     throw new Error("Windows Native Messaging registry default value is malformed.");
   }
-  return path.win32.normalize(parsed);
+  const hex = output.slice("value:".length);
+  if (!hex || hex.length % 2 !== 0 || !/^[0-9A-F]+$/u.test(hex)) {
+    throw new Error("Windows Native Messaging registry default value is malformed.");
+  }
+  const decoded = Buffer.from(hex, "hex").toString("utf8");
+  if (!decoded) throw new Error("Windows Native Messaging registry default value is malformed.");
+  return path.win32.normalize(decoded);
 }
 
 export async function assertWindowsNativeMessagingHostOwnership({

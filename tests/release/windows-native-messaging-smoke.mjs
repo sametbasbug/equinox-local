@@ -21,8 +21,21 @@ import {
 const execFile = promisify(execFileCallback);
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 
-if (process.platform !== "win32" || process.arch !== "x64") {
-  throw new Error(`Windows Native Messaging smoke requires win32-x64; got ${process.platform}-${process.arch}.`);
+function installerCleanEnvironment(env = process.env) {
+  const names = ["SystemRoot", "WINDIR", "ComSpec", "TEMP", "TMP", "USERPROFILE", "LOCALAPPDATA", "APPDATA", "USERNAME", "USERDOMAIN", "PATH", "PATHEXT"];
+  return Object.fromEntries(names.flatMap((name) => {
+    const value = env[name];
+    return typeof value === "string" && value.length > 0 ? [[name, value]] : [];
+  }));
+}
+
+const TARGET = `${process.platform}-${process.arch}`;
+const TARGET_CONFIG = {
+  "win32-x64": { component: "Microsoft.VisualStudio.Component.VC.Tools.x86.x64", vcvars: "vcvars64.bat", peMachine: 0x8664 },
+  "win32-arm64": { component: "Microsoft.VisualStudio.Component.VC.Tools.ARM64", vcvars: "vcvarsarm64.bat", peMachine: 0xaa64 },
+}[TARGET];
+if (!TARGET_CONFIG) {
+  throw new Error(`Windows Native Messaging smoke requires native win32-x64 or win32-arm64; got ${TARGET}.`);
 }
 
 function encodeNativeMessage(message) {
@@ -67,12 +80,12 @@ async function compileLauncher(releaseDir) {
   const { stdout } = await execFile(vswhere, [
     "-latest",
     "-products", "*",
-    "-requires", "Microsoft.VisualStudio.Component.VC.Tools.x86.x64",
+    "-requires", TARGET_CONFIG.component,
     "-property", "installationPath",
   ], { timeout: 10_000, windowsHide: true });
   const installation = stdout.trim();
   assert.ok(installation, "Visual Studio C++ toolchain is unavailable on the Windows runner");
-  const vcvars = path.join(installation, "VC", "Auxiliary", "Build", "vcvars64.bat");
+  const vcvars = path.join(installation, "VC", "Auxiliary", "Build", TARGET_CONFIG.vcvars);
   const source = path.join(REPO_ROOT, "native", "windows", "equinox-browser-native-host-launcher.cpp");
   const command = `""${vcvars}" >nul && cl.exe /nologo /std:c++17 /O2 /EHsc /DUNICODE /D_UNICODE "${source}" /Fe:equinox-browser-native-host.exe"`;
   await execFile("cmd.exe", ["/d", "/s", "/c", command], {
@@ -84,8 +97,18 @@ async function compileLauncher(releaseDir) {
     windowsHide: true,
     windowsVerbatimArguments: true,
   });
-  const stat = await fs.lstat(launcherPath);
-  assert.equal(stat.isFile(), true, "Windows Native Messaging launcher was not compiled");
+  const handle = await fs.open(launcherPath, "r");
+  let bytes;
+  try {
+    const stat = await handle.stat();
+    assert.equal(stat.isFile(), true, "Windows Native Messaging launcher was not compiled");
+    bytes = await handle.readFile();
+  } finally {
+    await handle.close();
+  }
+  const peOffset = bytes.readInt32LE(0x3c);
+  assert.equal(bytes.toString("ascii", peOffset, peOffset + 4), "PE\0\0", "Windows Native Messaging launcher has an invalid PE header");
+  assert.equal(bytes.readUInt16LE(peOffset + 4), TARGET_CONFIG.peMachine, `Windows Native Messaging launcher architecture does not match ${TARGET}`);
   return launcherPath;
 }
 
@@ -152,13 +175,15 @@ async function stopNativeHost(state, label) {
 }
 
 try {
-  const existingRegistry = await readWindowsNativeMessagingRegistryValue();
+  const cleanInstallerEnv = installerCleanEnvironment();
+  assert.equal("PSModulePath" in cleanInstallerEnv, false, "installer-equivalent Native Messaging environment must not inherit PSModulePath");
+  const existingRegistry = await readWindowsNativeMessagingRegistryValue({ env: cleanInstallerEnv });
   assert.equal(existingRegistry, null, "Windows runner already has an Equinox Browser Native Messaging registration");
 
   const { releaseDir, launcherPath } = await prepareReleaseLayout(root);
-  registration = await registerWindowsNativeMessagingHost({ manifestRoot, launcherPath });
+  registration = await registerWindowsNativeMessagingHost({ manifestRoot, launcherPath, env: cleanInstallerEnv });
   assert.equal(
-    path.win32.normalize(await readWindowsNativeMessagingRegistryValue()).toLowerCase(),
+    path.win32.normalize(await readWindowsNativeMessagingRegistryValue({ env: cleanInstallerEnv })).toLowerCase(),
     path.win32.normalize(registration.manifestPath).toLowerCase(),
     "HKCU Native Messaging registration did not round-trip",
   );
@@ -251,14 +276,16 @@ try {
   const removed = await unregisterWindowsNativeMessagingHost({
     manifestPath: registration.manifestPath,
     launcherPath,
+    env: cleanInstallerEnv,
   });
   assert.equal(removed.manifestRemoved, true);
-  assert.equal(await readWindowsNativeMessagingRegistryValue(), null, "HKCU Native Messaging key survived unregister");
+  assert.equal(await readWindowsNativeMessagingRegistryValue({ env: cleanInstallerEnv }), null, "HKCU Native Messaging key survived unregister");
   await assert.rejects(fs.lstat(registration.manifestPath), (error) => error?.code === "ENOENT");
   registration = null;
 
   process.stdout.write(`${JSON.stringify({
     ok: true,
+    target: TARGET,
     launcherPath,
     registryRoundTrip: true,
     namedPipe: endpoint.endpoint,
