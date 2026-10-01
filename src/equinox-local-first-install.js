@@ -264,6 +264,11 @@ async function readDiagnosticTail(filePath, { fsImpl = fs, maxBytes = FIRST_INST
   }
 }
 
+async function windowsFirstInstallActivationDiagnostics({ paths, fsImpl = fs } = {}) {
+  const errorLog = await readDiagnosticTail(path.win32.join(paths.logsRoot, "windows-shell-runtime.log"), { fsImpl });
+  return errorLog ? boundedDiagnostic(`Windows shell runtime error log tail: ${errorLog}`, 1_800) : "";
+}
+
 async function firstInstallActivationDiagnostics({ homeDir, uid, execFileImpl = execFile, fsImpl = fs } = {}) {
   const parts = [];
   const service = `gui/${uid}/${EQUINOX_LOCAL_LAUNCH_AGENT_LABEL}`;
@@ -451,6 +456,8 @@ export async function installManagedEquinoxRelease({
         timeout: 15_000,
         maxBuffer: 1024 * 1024,
       }).catch(() => ({ stdout: "", stderr: "" }));
+    } else if (platform === "win32") {
+      diagnostics = await windowsFirstInstallActivationDiagnostics({ paths, fsImpl });
     }
     const reason = error instanceof Error ? error.message : String(error);
     const detail = diagnostics ? ` ${diagnostics}` : "";

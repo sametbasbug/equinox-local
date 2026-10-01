@@ -92,7 +92,23 @@ try {
     throw "unexpected ARM64 fresh-install URL: $Url"
   }
 
-  Invoke-EquinoxLocalInstall | Out-Host
+  try {
+    Invoke-EquinoxLocalInstall | Out-Host
+  } catch {
+    $diagnosticLog = Join-Path $OwnedInstallRoot 'logs\windows-shell-runtime.log'
+    $stableCandidate = Join-Path $OwnedProgramRoot 'EquinoxLocal.exe'
+    $ownedCount = 0
+    if ([IO.File]::Exists($stableCandidate)) {
+      $ownedCount = @((Get-CimInstance Win32_Process -Filter "Name='EquinoxLocal.exe'" -ErrorAction SilentlyContinue | Where-Object { -not [string]::IsNullOrWhiteSpace($_.ExecutablePath) -and (Same-Path $_.ExecutablePath $stableCandidate) })).Count
+    }
+    Write-Output ("ARM64 fresh-install diagnostic: pointer={0}; stableExe={1}; ownedShellCount={2}; runtimeLog={3}" -f [IO.File]::Exists((Join-Path $OwnedInstallRoot 'current-version.json')), [IO.File]::Exists($stableCandidate), $ownedCount, [IO.File]::Exists($diagnosticLog))
+    if ([IO.File]::Exists($diagnosticLog)) {
+      $tail = [IO.File]::ReadAllText($diagnosticLog, (New-Object Text.UTF8Encoding($false, $true)))
+      if ($tail.Length -gt 4000) { $tail = $tail.Substring($tail.Length - 4000) }
+      Write-Output ("ARM64 fresh-install runtime diagnostic tail: " + $tail.Replace("`r", ' ').Replace("`n", ' '))
+    }
+    throw
+  }
 
   $InstallRoot = $OwnedInstallRoot
   $pointer = [IO.File]::ReadAllText((Join-Path $InstallRoot 'current-version.json'), (New-Object Text.UTF8Encoding($false, $true))) | ConvertFrom-Json
