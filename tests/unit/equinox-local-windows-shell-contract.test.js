@@ -136,12 +136,18 @@ test("Windows shell runtime supervisor uses the existing Job Object gate with bo
   assert.match(app, /RuntimeSupervisor\.TryCreateFromEnvironmentOrManagedInstall/u);
   assert.match(app, /WindowsShellDiagnostics\.RecordRuntimeFailure\("runtime-start"/u);
   assert.match(app, /WindowsShellDiagnostics\.RecordRuntimeFailure\("runtime-restart"/u);
+  assert.match(app, /WindowsShellDiagnostics\.RecordRuntimeState\(/u);
+  assert.match(app, /runtime-discovery/u);
+  assert.match(app, /managedPointer=/u);
+  assert.match(app, /supervisor=/u);
   assert.match(app, /await _runtimeSupervisor\.StopAsync/u);
   assert.match(diagnostics, /windows-shell-runtime\.log/u);
   assert.match(diagnostics, /LocalApplicationData/u);
   assert.match(diagnostics, /MaxLogBytes = 64 \* 1024/u);
   assert.match(diagnostics, /char\.IsControl/u);
   assert.doesNotMatch(diagnostics, /error\.(?:StackTrace|ToString\(\))/u);
+  assert.match(diagnostics, /RecordRuntimeState/u);
+  assert.match(diagnostics, /RecordLine/u);
   assert.match(supervisor, /EQUINOX_LOCAL_RELEASE_DIR/u);
   assert.match(supervisor, /using System\.IO;/u);
   assert.match(supervisor, /equinox-local-windows-job-object\.ps1/u);

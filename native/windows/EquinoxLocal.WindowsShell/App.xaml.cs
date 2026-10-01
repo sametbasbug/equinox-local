@@ -61,6 +61,9 @@ public partial class App : System.Windows.Application
         _trayIcon.SetStartupStatus(startupStatus);
 
         _runtimeSupervisor = RuntimeSupervisor.TryCreateFromEnvironmentOrManagedInstall();
+        WindowsShellDiagnostics.RecordRuntimeState(
+            "runtime-discovery",
+            $"arch={System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture}; managedPointer={WindowsManagedReleaseLocator.HasCurrentPointer()}; supervisor={_runtimeSupervisor is not null}");
         _presentationStatus = new ShellPresentationMonitor();
         _trayIcon.SetPresentationStatus(_presentationStatus.Current);
         _presentationStatus.StatusChanged += (_, status) =>

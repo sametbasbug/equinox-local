@@ -6,6 +6,7 @@ This project follows semantic versioning for public releases.
 
 ## [Unreleased]
 
+- Added a bounded path-free Windows shell startup discovery diagnostic (`arch`, managed-pointer visibility and supervisor creation) so first-install acceptance can distinguish managed-install discovery from runtime-start failures without exposing local paths.
 - Made the Windows Job Object PowerShell 5.1 helper ARM64-safe by removing its runtime `System.ComponentModel.Win32Exception` Add-Type dependency while preserving bounded Win32 error codes, Job Object ownership and kill-on-close behavior.
 - Hardened Windows Job Object helper startup diagnostics on x64/ARM64: protocol waits remain bounded at 30 seconds with exact lifecycle-phase timeout messages, and a helper that exits before replying now reports only its bounded, control-character-sanitized stderr plus exit code for actionable startup diagnosis.
 - Added bounded Windows native-shell runtime-start diagnostics under the per-user Equinox Local logs root and surfaced their tail through first-install failures, so WPF lifecycle exceptions are no longer silently swallowed during managed-install acceptance; diagnostic messages sanitize control characters, omit stack traces and keep the log size bounded.

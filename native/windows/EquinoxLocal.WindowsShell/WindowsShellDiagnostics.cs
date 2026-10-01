@@ -9,7 +9,13 @@ internal static class WindowsShellDiagnostics
     private const int MaxMessageChars = 1_500;
     private const long MaxLogBytes = 64 * 1024;
 
-    internal static void RecordRuntimeFailure(string operation, Exception error)
+    internal static void RecordRuntimeFailure(string operation, Exception error) =>
+        RecordLine(operation, $"{Clean(error.GetType().Name, 120)}: {Clean(error.Message, MaxMessageChars)}");
+
+    internal static void RecordRuntimeState(string operation, string detail) =>
+        RecordLine(operation, Clean(detail, MaxMessageChars));
+
+    private static void RecordLine(string operation, string detail)
     {
         try
         {
@@ -19,9 +25,7 @@ internal static class WindowsShellDiagnostics
             Directory.CreateDirectory(logsRoot);
             var logPath = Path.Combine(logsRoot, RuntimeFailureLogName);
             TrimIfNeeded(logPath);
-            var kind = Clean(error.GetType().Name, 120);
-            var message = Clean(error.Message, MaxMessageChars);
-            var line = $"{DateTimeOffset.UtcNow:O} {Clean(operation, 80)} {kind}: {message}{Environment.NewLine}";
+            var line = $"{DateTimeOffset.UtcNow:O} {Clean(operation, 80)} {detail}{Environment.NewLine}";
             File.AppendAllText(logPath, line, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
         }
         catch
