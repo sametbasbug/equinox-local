@@ -278,8 +278,12 @@ test("public Windows CI restores and builds the native x64 shell", async () => {
   assert.match(ci, /windows-runtime:/u);
   assert.match(ci, /windows-shell:/u);
   assert.match(ci, /windows-package:/u);
-  assert.match(ci, /needs: \[windows-runtime, windows-shell, windows-package, windows-arm64-foundation\]/u);
+  assert.match(ci, /needs: \[windows-runtime, windows-shell, windows-package, windows-arm64-shared-core, windows-arm64-bootstrap, windows-arm64-foundation\]/u);
+  assert.match(ci, /ARM64_SHARED_RESULT: \$\{\{ needs\.windows-arm64-shared-core\.result \}\}/u);
+  assert.match(ci, /ARM64_BOOTSTRAP_RESULT: \$\{\{ needs\.windows-arm64-bootstrap\.result \}\}/u);
   assert.match(ci, /ARM64_RESULT: \$\{\{ needs\.windows-arm64-foundation\.result \}\}/u);
+  assert.ok(ci.includes('test "$ARM64_SHARED_RESULT" = success'));
+  assert.ok(ci.includes('test "$ARM64_BOOTSTRAP_RESULT" = success'));
   assert.ok(ci.includes('test "$ARM64_RESULT" = success'));
   assert.match(ci, /name: Windows x64 managed package/u);
   assert.match(ci, /Windows transfer and Telegram path parity smoke/u);
@@ -331,6 +335,8 @@ test("public Windows CI restores and builds the native x64 shell", async () => {
   assert.match(uninstallHarnessProject, /<PlatformTarget Condition=.*win-arm64.*>ARM64<\/PlatformTarget>/u);
   const uninstallHarnessSource = await fs.readFile(path.join(ROOT, "tests", "windows", "EquinoxLocal.WindowsShell.UninstallHandoffHarness", "Program.cs"), "utf8");
   assert.match(uninstallHarnessSource, /refuses non-empty or reparse-point per-user Equinox Local state/u);
+  assert.match(uninstallHarnessSource, /DescribeInstallRootResidue/u);
+  assert.match(uninstallHarnessSource, /Path\.GetRelativePath/u);
   assert.match(uninstallHarnessSource, /ContainsOnlyEmptyDirectories/u);
   assert.match(uninstallHarnessSource, /PruneEmptyDirectories/u);
   assert.match(uninstallHarnessSource, /helper\?\.WaitForExit\(5_000\)/u);
@@ -344,6 +350,8 @@ test("public Windows CI restores and builds the native x64 shell", async () => {
   assert.match(ci, /coreclr\.dll/u);
   assert.match(ci, /hostfxr\.dll/u);
   assert.match(ci, /0x8664/u);
+  assert.match(ci, /windows-arm64-shared-core:/u);
+  assert.match(ci, /windows-arm64-bootstrap:/u);
   assert.match(ci, /windows-arm64-foundation:/u);
   assert.match(ci, /windows-11-vs2026-arm/u);
   assert.match(ci, /architecture:\s*arm64/u);

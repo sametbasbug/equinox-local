@@ -42,7 +42,7 @@ internal static class Program
         var currentPointer = Path.Combine(installRoot, "current-version.json");
         var markerPath = Path.Combine(releaseDir, "uninstall-handoff-marker.json");
         if (File.Exists(installRoot) || (Directory.Exists(installRoot) && !ContainsOnlyEmptyDirectories(installRoot)))
-            throw new InvalidOperationException("Uninstall handoff harness refuses non-empty or reparse-point per-user Equinox Local state.");
+            throw new InvalidOperationException($"Uninstall handoff harness refuses non-empty or reparse-point per-user Equinox Local state; residue={DescribeInstallRootResidue(installRoot)}.");
 
         Process? runtime = null;
         Process? helper = null;
@@ -145,6 +145,31 @@ setTimeout(() => {}, 30000);
             if (runtimeJob != IntPtr.Zero) CloseHandle(runtimeJob);
             try { if (Directory.Exists(releaseDir)) Directory.Delete(releaseDir, recursive: true); } catch { }
             try { PruneEmptyDirectories(installRoot); } catch { }
+        }
+    }
+
+
+    private static string DescribeInstallRootResidue(string root)
+    {
+        if (File.Exists(root)) return "file:root";
+        if (!Directory.Exists(root)) return "missing";
+        var entries = new List<string>();
+        Walk(new DirectoryInfo(root), 0);
+        return entries.Count == 0 ? "empty" : string.Join(",", entries);
+
+        void Walk(DirectoryInfo directory, int depth)
+        {
+            if (depth > 3 || entries.Count >= 16) return;
+            foreach (var entry in directory.EnumerateFileSystemInfos().OrderBy(item => item.Name, StringComparer.OrdinalIgnoreCase))
+            {
+                if (entries.Count >= 16) break;
+                var relative = Path.GetRelativePath(root, entry.FullName).Replace('\\', '/');
+                var safe = new string(relative.Select(ch => char.IsLetterOrDigit(ch) || ch is '.' or '-' or '_' or '/' ? ch : '?').Take(120).ToArray());
+                var reparse = (entry.Attributes & FileAttributes.ReparsePoint) != 0;
+                var kind = reparse ? "reparse" : entry is DirectoryInfo ? "dir" : "file";
+                entries.Add($"{kind}:{safe}");
+                if (!reparse && entry is DirectoryInfo child && depth < 3) Walk(child, depth + 1);
+            }
         }
     }
 

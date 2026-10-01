@@ -230,6 +230,69 @@ jobs:
             if ($names | Where-Object { $_ -like 'release/runtime/peekaboo/*' }) { throw 'Windows managed ZIP unexpectedly contains Peekaboo' }
           } finally { $zip.Dispose() }
 
+  windows-arm64-shared-core:
+    name: Windows ARM64 shared core / Node 26
+    runs-on: windows-11-vs2026-arm
+    timeout-minutes: 6
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up native ARM64 Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 26.10.0
+          architecture: arm64
+          cache: npm
+
+      - name: Verify native ARM64 Node host
+        shell: pwsh
+        run: |
+          if ((node -p "process.platform") -ne 'win32') { throw 'ARM64 shared-core lane is not running on Windows' }
+          if ((node -p "process.arch") -ne 'arm64') { throw 'ARM64 shared-core lane is not running native ARM64 Node' }
+
+      - name: Install dependencies
+        run: npm ci --prefer-offline --no-audit --no-fund
+
+      - name: Windows ARM64 shared core parity suite
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          # Shared logic remains a real ARM64 acceptance requirement, but it runs in parallel with native lifecycle/package work.
+          # Keep POSIX-only mode/path assertions out of the Windows lane; exact Windows private-state persistence has dedicated ACL acceptance.
+          node --test tests/unit/capability-registry.test.js tests/unit/task-capsule-tools.test.js tests/unit/auto-continue-controller.test.js tests/unit/fresh-chat-resume-controller.test.js tests/unit/telegram-chat-bridge-controller.test.js tests/unit/authenticated-http-tools.test.js tests/unit/authenticated-http-response-references.test.js
+          node --test tests/unit/task-capsule-store.test.js tests/unit/turn-budget-controller.test.js tests/unit/equinox-local-file-transfer.test.js tests/unit/authenticated-http-integration.test.js
+          node --test --test-name-pattern "Telegram defaults follow the shared Windows per-user path contract|Telegram connection input accepts only a token and positive user ID|Telegram message validation is bounded and rejects empty content|command menu sync is a no-op when Telegram is not configured|failed Telegram validation does not persist credentials or expose the token" tests/unit/telegram-integration.test.js
+          node --test tests/release/equinox-local-windows-private-state.test.js
+
+  windows-arm64-bootstrap:
+    name: Windows ARM64 bootstrap / Node 26
+    runs-on: windows-11-vs2026-arm
+    timeout-minutes: 4
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up native ARM64 Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 26.10.0
+          architecture: arm64
+
+      - name: Verify native ARM64 Node host
+        shell: pwsh
+        run: |
+          if ((node -p "process.arch") -ne 'arm64') { throw 'ARM64 bootstrap lane is not running native ARM64 Node' }
+
+      - name: Windows ARM64 PowerShell bootstrap contract acceptance
+        shell: pwsh
+        run: |
+          & powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File tests/release/windows-installer-bootstrap-smoke.ps1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
   windows-arm64-foundation:
     name: Windows ARM64 foundation / Node 26
     runs-on: windows-11-vs2026-arm
@@ -254,34 +317,16 @@ jobs:
           if ((node --version) -ne 'v26.10.0') { throw 'ARM64 lane Node version drifted' }
 
       - name: Install dependencies
-        run: npm ci
+        run: npm ci --prefer-offline --no-audit --no-fund
 
       - name: Windows ARM64 managed lifecycle plumbing smoke
         run: node --test tests/unit/equinox-local-platform.test.js tests/release/equinox-local-windows-arm64-lifecycle.test.js
-
-      - name: Windows ARM64 shared core parity suite
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $PSNativeCommandUseErrorActionPreference = $true
-          # Shared logic is architecture-neutral. Keep POSIX-only mode/path assertions out of the Windows lane;
-          # exact Windows private-state persistence is exercised by the dedicated ACL acceptance below.
-          node --test tests/unit/capability-registry.test.js tests/unit/task-capsule-tools.test.js tests/unit/auto-continue-controller.test.js tests/unit/fresh-chat-resume-controller.test.js tests/unit/telegram-chat-bridge-controller.test.js tests/unit/authenticated-http-tools.test.js tests/unit/authenticated-http-response-references.test.js
-          node --test tests/unit/task-capsule-store.test.js tests/unit/turn-budget-controller.test.js tests/unit/equinox-local-file-transfer.test.js tests/unit/authenticated-http-integration.test.js
-          node --test --test-name-pattern "Telegram defaults follow the shared Windows per-user path contract|Telegram connection input accepts only a token and positive user ID|Telegram message validation is bounded and rejects empty content|command menu sync is a no-op when Telegram is not configured|failed Telegram validation does not persist credentials or expose the token" tests/unit/telegram-integration.test.js
-          node --test tests/release/equinox-local-windows-private-state.test.js
 
       - name: Windows ARM64 headless runtime parity smoke
         run: npm run smoke:windows-headless
 
       - name: Windows ARM64 uninstall/reinstall lifecycle acceptance
         run: node --test tests/release/equinox-local-windows-lifecycle.test.js
-
-      - name: Windows ARM64 PowerShell bootstrap contract acceptance
-        shell: pwsh
-        run: |
-          & powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File tests/release/windows-installer-bootstrap-smoke.ps1
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Native ARM64 node-pty / ConPTY smoke
         timeout-minutes: 1
@@ -358,7 +403,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 2
     if: ${{ always() }}
-    needs: [windows-runtime, windows-shell, windows-package, windows-arm64-foundation]
+    needs: [windows-runtime, windows-shell, windows-package, windows-arm64-shared-core, windows-arm64-bootstrap, windows-arm64-foundation]
 
     steps:
       - name: Verify parallel Windows acceptance
@@ -366,9 +411,13 @@ jobs:
           RUNTIME_RESULT: ${{ needs.windows-runtime.result }}
           SHELL_RESULT: ${{ needs.windows-shell.result }}
           PACKAGE_RESULT: ${{ needs.windows-package.result }}
+          ARM64_SHARED_RESULT: ${{ needs.windows-arm64-shared-core.result }}
+          ARM64_BOOTSTRAP_RESULT: ${{ needs.windows-arm64-bootstrap.result }}
           ARM64_RESULT: ${{ needs.windows-arm64-foundation.result }}
         run: |
           test "$RUNTIME_RESULT" = success
           test "$SHELL_RESULT" = success
           test "$PACKAGE_RESULT" = success
+          test "$ARM64_SHARED_RESULT" = success
+          test "$ARM64_BOOTSTRAP_RESULT" = success
           test "$ARM64_RESULT" = success
