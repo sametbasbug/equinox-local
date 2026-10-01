@@ -458,15 +458,11 @@ test("Windows x64 fresh first install promotes current-version and stable shell 
   });
   const launches = [];
   let promotionRenameAttempts = 0;
-  const stagedNormalized = path.win32.normalize(fixture.releaseDir).toLowerCase();
   const promotedNormalized = path.win32.normalize(promoted).toLowerCase();
   const fsImpl = {
     ...fs,
     rename: async (source, destination) => {
-      if (
-        path.win32.normalize(source).toLowerCase() === stagedNormalized &&
-        path.win32.normalize(destination).toLowerCase() === promotedNormalized
-      ) {
+      if (path.win32.normalize(destination).toLowerCase() === promotedNormalized) {
         promotionRenameAttempts += 1;
         if (promotionRenameAttempts === 1) {
           throw Object.assign(new Error("fixture transient Windows release promotion lock"), { code: "EPERM" });
