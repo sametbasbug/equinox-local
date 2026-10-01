@@ -31,7 +31,8 @@ internal static class Program
         var localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
         if (string.IsNullOrWhiteSpace(localAppData)) throw new InvalidOperationException("LocalAppData is unavailable.");
         var installRoot = Path.Combine(localAppData, "Equinox Local");
-        var releaseDir = Path.Combine(installRoot, "releases", Version);
+        var releasesRoot = Path.Combine(installRoot, "releases");
+        var releaseDir = Path.Combine(releasesRoot, Version);
         var markerPath = Path.Combine(releaseDir, "handoff-marker.json");
         if (Directory.Exists(releaseDir)) Directory.Delete(releaseDir, recursive: true);
 
@@ -108,12 +109,24 @@ setTimeout(() => {}, 30000);
         finally
         {
             Environment.SetEnvironmentVariable("OPENAI_API_KEY", oldSecret);
-            try { if (helper is { HasExited: false }) helper.Kill(entireProcessTree: true); } catch { }
-            try { if (runtime is { HasExited: false }) runtime.Kill(entireProcessTree: true); } catch { }
+            try
+            {
+                if (helper is { HasExited: false }) helper.Kill(entireProcessTree: true);
+                helper?.WaitForExit(5_000);
+            }
+            catch { }
+            try
+            {
+                if (runtime is { HasExited: false }) runtime.Kill(entireProcessTree: true);
+                runtime?.WaitForExit(5_000);
+            }
+            catch { }
             helper?.Dispose();
             runtime?.Dispose();
             if (runtimeJob != IntPtr.Zero) CloseHandle(runtimeJob);
             try { if (Directory.Exists(releaseDir)) Directory.Delete(releaseDir, recursive: true); } catch { }
+            try { if (Directory.Exists(releasesRoot) && !Directory.EnumerateFileSystemEntries(releasesRoot).Any()) Directory.Delete(releasesRoot); } catch { }
+            try { if (Directory.Exists(installRoot) && !Directory.EnumerateFileSystemEntries(installRoot).Any()) Directory.Delete(installRoot); } catch { }
         }
     }
 }

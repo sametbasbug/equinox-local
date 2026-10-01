@@ -41,8 +41,8 @@ internal static class Program
         var releaseDir = Path.Combine(releasesRoot, Version);
         var currentPointer = Path.Combine(installRoot, "current-version.json");
         var markerPath = Path.Combine(releaseDir, "uninstall-handoff-marker.json");
-        if (Directory.Exists(installRoot) || File.Exists(installRoot))
-            throw new InvalidOperationException("Uninstall handoff harness requires an unused real per-user Equinox Local install root.");
+        if (File.Exists(installRoot) || (Directory.Exists(installRoot) && !ContainsOnlyEmptyDirectories(installRoot)))
+            throw new InvalidOperationException("Uninstall handoff harness refuses non-empty or reparse-point per-user Equinox Local state.");
 
         Process? runtime = null;
         Process? helper = null;
@@ -143,7 +143,29 @@ setTimeout(() => {}, 30000);
             helper?.Dispose();
             runtime?.Dispose();
             if (runtimeJob != IntPtr.Zero) CloseHandle(runtimeJob);
-            try { if (Directory.Exists(installRoot)) Directory.Delete(installRoot, recursive: true); } catch { }
+            try { if (Directory.Exists(releaseDir)) Directory.Delete(releaseDir, recursive: true); } catch { }
+            try { PruneEmptyDirectories(installRoot); } catch { }
         }
+    }
+
+    private static bool ContainsOnlyEmptyDirectories(string root)
+    {
+        var info = new DirectoryInfo(root);
+        if ((info.Attributes & FileAttributes.ReparsePoint) != 0) return false;
+        foreach (var entry in info.EnumerateFileSystemInfos())
+        {
+            if ((entry.Attributes & FileAttributes.ReparsePoint) != 0 || entry is not DirectoryInfo directory) return false;
+            if (!ContainsOnlyEmptyDirectories(directory.FullName)) return false;
+        }
+        return true;
+    }
+
+    private static void PruneEmptyDirectories(string root)
+    {
+        if (!Directory.Exists(root)) return;
+        var info = new DirectoryInfo(root);
+        if ((info.Attributes & FileAttributes.ReparsePoint) != 0) return;
+        foreach (var directory in info.EnumerateDirectories().ToArray()) PruneEmptyDirectories(directory.FullName);
+        if (!info.EnumerateFileSystemInfos().Any()) info.Delete();
     }
 }

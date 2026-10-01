@@ -321,10 +321,11 @@ test("public Windows CI restores and builds the native x64 shell", async () => {
   assert.match(uninstallHarnessProject, /<Platforms>x64;ARM64<\/Platforms>/u);
   assert.match(uninstallHarnessProject, /<PlatformTarget Condition=.*win-arm64.*>ARM64<\/PlatformTarget>/u);
   const uninstallHarnessSource = await fs.readFile(path.join(ROOT, "tests", "windows", "EquinoxLocal.WindowsShell.UninstallHandoffHarness", "Program.cs"), "utf8");
-  assert.match(uninstallHarnessSource, /requires an unused real per-user Equinox Local install root/u);
+  assert.match(uninstallHarnessSource, /refuses non-empty or reparse-point per-user Equinox Local state/u);
+  assert.match(uninstallHarnessSource, /ContainsOnlyEmptyDirectories/u);
+  assert.match(uninstallHarnessSource, /PruneEmptyDirectories/u);
   assert.match(uninstallHarnessSource, /helper\?\.WaitForExit\(5_000\)/u);
   assert.match(uninstallHarnessSource, /runtime\?\.WaitForExit\(5_000\)/u);
-  assert.match(uninstallHarnessSource, /Directory\.Delete\(installRoot, recursive: true\)/u);
   assert.match(ci, /EQUINOX_TEST_NODE_EXE/u);
   assert.match(ci, /EquinoxLocal\.WindowsShell\.StartupHarness/u);
   assert.match(ci, /EquinoxLocal\.WindowsShell\.FolderPickerHarness/u);
@@ -361,6 +362,11 @@ test("public Windows CI restores and builds the native x64 shell", async () => {
 test("Windows shell update handoff acknowledges before draining the runtime and exposes rollback shutdown", async () => {
   const coordinator = await fs.readFile(path.join(ROOT, "native", "windows", "EquinoxLocal.WindowsShell", "SingleInstanceCoordinator.cs"), "utf8");
   const app = await fs.readFile(path.join(ROOT, "native", "windows", "EquinoxLocal.WindowsShell", "App.xaml.cs"), "utf8");
+  const updateHarnessSource = await fs.readFile(path.join(ROOT, "tests", "windows", "EquinoxLocal.WindowsShell.UpdateHandoffHarness", "Program.cs"), "utf8");
+  assert.match(updateHarnessSource, /helper\?\.WaitForExit\(5_000\)/u);
+  assert.match(updateHarnessSource, /runtime\?\.WaitForExit\(5_000\)/u);
+  assert.match(updateHarnessSource, /Directory\.EnumerateFileSystemEntries\(releasesRoot\)\.Any\(\)/u);
+  assert.match(updateHarnessSource, /Directory\.EnumerateFileSystemEntries\(installRoot\)\.Any\(\)/u);
   const launchIndex = coordinator.indexOf("ManagedUpdateHandoff.Launch(version)");
   const ackIndex = coordinator.indexOf('WriteLineAsync("ok")', launchIndex);
   const shutdownIndex = coordinator.indexOf("UpdateShutdownRequested?.Invoke", ackIndex);
