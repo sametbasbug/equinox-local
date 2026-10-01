@@ -17,6 +17,8 @@
 
 > **Current production:** Equinox Local `5.2.0` on the signed stable channel and Equinox Browser `0.7.0` on the permanent Unlisted Chrome Web Store item. Every Local release must pass public-source CI/CodeQL, native architecture validation, managed smoke, signing verification, lifecycle upgrade validation and live-channel checks before promotion.
 
+> **5.2.1 release readiness:** the release pipeline now validates `darwin-arm64`, `darwin-x64`, `win32-arm64`, and `win32-x64` as one exact-SHA set, signs and verifies all four target artifacts, and supports a non-production end-to-end rehearsal before promotion. Windows x64/ARM64 is not the current stable release until 5.2.1 is actually promoted.
+
 ## Current release notes
 
 Equinox Local `5.2.0` is the expedited fresh-install recovery release. It extends first-activation health time, preserves a verified fresh-install backend instead of deleting it when activation fails, adds real isolated LaunchAgent lifecycle smoke coverage, updates OpenAI `tunnel-client` to `0.0.15`, fixes Turn Budget fallback idle accounting with a configurable Control Center timeout, and hardens restart-safe Telegram state persistence. Equinox Browser remains `0.7.0`.
