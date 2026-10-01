@@ -41,7 +41,8 @@ internal static class Program
         var releaseDir = Path.Combine(releasesRoot, Version);
         var currentPointer = Path.Combine(installRoot, "current-version.json");
         var markerPath = Path.Combine(releaseDir, "uninstall-handoff-marker.json");
-        if (Directory.Exists(releaseDir)) Directory.Delete(releaseDir, recursive: true);
+        if (Directory.Exists(installRoot) || File.Exists(installRoot))
+            throw new InvalidOperationException("Uninstall handoff harness requires an unused real per-user Equinox Local install root.");
 
         Process? runtime = null;
         Process? helper = null;
@@ -127,15 +128,22 @@ setTimeout(() => {}, 30000);
         finally
         {
             Environment.SetEnvironmentVariable("OPENAI_API_KEY", oldSecret);
-            try { if (helper is { HasExited: false }) helper.Kill(entireProcessTree: true); } catch { }
-            try { if (runtime is { HasExited: false }) runtime.Kill(entireProcessTree: true); } catch { }
+            try
+            {
+                if (helper is { HasExited: false }) helper.Kill(entireProcessTree: true);
+                helper?.WaitForExit(5_000);
+            }
+            catch { }
+            try
+            {
+                if (runtime is { HasExited: false }) runtime.Kill(entireProcessTree: true);
+                runtime?.WaitForExit(5_000);
+            }
+            catch { }
             helper?.Dispose();
             runtime?.Dispose();
             if (runtimeJob != IntPtr.Zero) CloseHandle(runtimeJob);
-            try { if (File.Exists(currentPointer)) File.Delete(currentPointer); } catch { }
-            try { if (Directory.Exists(releaseDir)) Directory.Delete(releaseDir, recursive: true); } catch { }
-            try { if (Directory.Exists(releasesRoot) && !Directory.EnumerateFileSystemEntries(releasesRoot).Any()) Directory.Delete(releasesRoot); } catch { }
-            try { if (Directory.Exists(installRoot) && !Directory.EnumerateFileSystemEntries(installRoot).Any()) Directory.Delete(installRoot); } catch { }
+            try { if (Directory.Exists(installRoot)) Directory.Delete(installRoot, recursive: true); } catch { }
         }
     }
 }
