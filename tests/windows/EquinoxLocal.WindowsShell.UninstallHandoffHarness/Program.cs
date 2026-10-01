@@ -123,7 +123,6 @@ setTimeout(() => {}, 30000);
                 throw new InvalidOperationException("Managed uninstall helper PATH does not contain bounded System32.");
 
             Console.WriteLine($"Windows {target} shell-owned uninstall handoff acceptance passed: real node helper executed outside runtime Job Object with clean environment and exact data policy.");
-            return 0;
         }
         finally
         {
@@ -143,9 +142,13 @@ setTimeout(() => {}, 30000);
             helper?.Dispose();
             runtime?.Dispose();
             if (runtimeJob != IntPtr.Zero) CloseHandle(runtimeJob);
+            try { if (File.Exists(currentPointer)) File.Delete(currentPointer); } catch { }
             try { if (Directory.Exists(releaseDir)) Directory.Delete(releaseDir, recursive: true); } catch { }
             try { PruneEmptyDirectories(installRoot); } catch { }
         }
+        if (File.Exists(installRoot) || Directory.Exists(installRoot))
+            throw new InvalidOperationException($"Uninstall handoff harness cleanup left owned per-user state; residue={DescribeInstallRootResidue(installRoot)}.");
+        return 0;
     }
 
 

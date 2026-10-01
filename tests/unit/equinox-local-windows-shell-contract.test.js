@@ -341,6 +341,8 @@ test("public Windows CI restores and builds the native x64 shell", async () => {
   assert.match(uninstallHarnessSource, /PruneEmptyDirectories/u);
   assert.match(uninstallHarnessSource, /helper\?\.WaitForExit\(5_000\)/u);
   assert.match(uninstallHarnessSource, /runtime\?\.WaitForExit\(5_000\)/u);
+  assert.match(uninstallHarnessSource, /File\.Delete\(currentPointer\)/u);
+  assert.match(uninstallHarnessSource, /cleanup left owned per-user state/u);
   assert.match(ci, /EQUINOX_TEST_NODE_EXE/u);
   assert.match(ci, /EquinoxLocal\.WindowsShell\.StartupHarness/u);
   assert.match(ci, /EquinoxLocal\.WindowsShell\.FolderPickerHarness/u);
