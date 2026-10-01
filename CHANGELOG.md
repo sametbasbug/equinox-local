@@ -5,6 +5,8 @@ All notable public changes to Equinox Local will be documented here.
 This project follows semantic versioning for public releases.
 
 ## [Unreleased]
+- Accepted the native Windows ARM64 managed fresh-install path on real GitHub-hosted ARM64 Windows: the public PowerShell installer selects `win32-arm64`, promotes the verified release, registers Native Messaging, launches the ARM64 stable shell and reaches matching runtime health. ARM64 uninstall/reinstall remains a separate W8 acceptance slice.
+- Fixed Windows native-shell crash recovery by avoiding synchronous `Process.WaitForExit()` inside the gate `Exited` callback while asynchronous stdout/stderr drains are active; the bounded real-Windows supervision harness now proves crash recovery, stop, descendant drain and disposal complete without deadlock.
 - Keep the Windows native runtime gate stdin pipe open after ownership release so the MCP runtime does not interpret an immediate inherited stdin EOF as a clean shutdown; stop/restart ownership remains Job Object-driven.
 - Retry verified Windows first-install release promotion only for bounded transient NTFS lock errors (`EACCES`, `EBUSY`, `EPERM`), reusing the accepted stable-shell replacement policy while leaving macOS promotion single-attempt and all containment/integrity checks unchanged.
 - Preserve bounded Windows runtime-gate stderr on unexpected exits so native startup crashes can be diagnosed without changing restart or ownership behavior.
