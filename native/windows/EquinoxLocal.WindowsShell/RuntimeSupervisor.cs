@@ -147,7 +147,9 @@ internal sealed class RuntimeSupervisor : IAsyncDisposable
     private void OnGateExited(int generation, Process gate, StringBuilder gateStderr, object gateStderrSync)
     {
         if (_disposed || _stopping || !_desiredRunning || generation != _generation) return;
-        try { gate.WaitForExit(); } catch { }
+        // The Exited event already proves the gate process is signaled. Do not call synchronous
+        // WaitForExit() here while async stdout/stderr drains are active: that can block the event
+        // callback and prevent bounded crash recovery from ever being scheduled.
         var exitCode = gate.HasExited ? gate.ExitCode : -1;
         var stderr = ReadGateDiagnostic(gateStderr, gateStderrSync);
         var detail = string.IsNullOrWhiteSpace(stderr) ? $"exit={exitCode}" : $"exit={exitCode}; stderr={stderr}";

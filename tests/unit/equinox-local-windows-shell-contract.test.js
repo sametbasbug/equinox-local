@@ -167,6 +167,7 @@ test("Windows shell runtime supervisor uses the existing Job Object gate with bo
   assert.match(supervisor, /MaxGateDiagnosticChars = 1_200/u);
   assert.match(supervisor, /gate\.ErrorDataReceived/u);
   assert.match(supervisor, /RecordRuntimeState\("runtime-gate-exit", detail\)/u);
+  assert.doesNotMatch(supervisor, /OnGateExited[\s\S]{0,700}gate\.WaitForExit\(\)/u);
   assert.match(supervisor, /Windows Job Object helper \{phase\} reply timed out after/u);
   assert.match(supervisor, /ExitedHelperDetailAsync/u);
   assert.match(supervisor, /ReadToEndAsync\(cancellationToken\)/u);
