@@ -27,8 +27,11 @@ import {
 
 const execFile = promisify(execFileCallback);
 
-if (process.platform !== "win32" || process.arch !== "x64") {
-  throw new Error(`Windows headless smoke requires win32-x64; got ${process.platform}-${process.arch}.`);
+const WINDOWS_ARCH = process.arch === "x64" || process.arch === "arm64" ? process.arch : null;
+const WINDOWS_TARGET = WINDOWS_ARCH ? `win32-${WINDOWS_ARCH}` : null;
+
+if (process.platform !== "win32" || WINDOWS_ARCH === null) {
+  throw new Error(`Windows headless smoke requires native win32-x64 or win32-arm64; got ${process.platform}-${process.arch}.`);
 }
 
 function encodeNativeMessage(message) {
@@ -240,7 +243,7 @@ async function verifyWindowsJobObjectHelperLoss(root) {
 }
 
 async function verifyWindowsManagedProcessLifecycle(root) {
-  const manager = createProcessManager({ platform: "win32", arch: "x64", groupPollMs: 50 });
+  const manager = createProcessManager({ platform: "win32", arch: WINDOWS_ARCH, groupPollMs: 50 });
   const descendantScript = [
     "$child = Start-Process -FilePath powershell.exe -ArgumentList @('-NoLogo','-NoProfile','-NonInteractive','-Command','Start-Sleep -Seconds 60') -PassThru -WindowStyle Hidden",
     "Write-Output ('DESCENDANT=' + $child.Id)",
@@ -321,7 +324,7 @@ async function readTerminalUntil(manager, sessionId, pattern, timeoutMs = 8_000)
 }
 
 async function verifyWindowsConPtyLifecycle(root) {
-  const manager = createTerminalManager({ platform: "win32", arch: "x64" });
+  const manager = createTerminalManager({ platform: "win32", arch: WINDOWS_ARCH });
   const stopPidPath = path.join(root, "conpty stop child pid.txt");
   const naturalPidPath = path.join(root, "conpty natural child pid.txt");
   let stopChildPid = null;
@@ -429,8 +432,8 @@ async function verifyWindowsConPtyLifecycle(root) {
 }
 
 async function verifyWindowsEmergencyStop(root) {
-  const processManager = createProcessManager({ platform: "win32", arch: "x64", groupPollMs: 50 });
-  const terminalManager = createTerminalManager({ platform: "win32", arch: "x64" });
+  const processManager = createProcessManager({ platform: "win32", arch: WINDOWS_ARCH, groupPollMs: 50 });
+  const terminalManager = createTerminalManager({ platform: "win32", arch: WINDOWS_ARCH });
   const terminalPidPath = path.join(root, "emergency terminal child pid.txt");
   let processChildPid = null;
   let terminalChildPid = null;
@@ -499,8 +502,8 @@ async function verifyWindowsEmergencyStop(root) {
 }
 
 async function verifyPinnedWindowsTunnelClient(root) {
-  const distribution = TUNNEL_CLIENT_DISTRIBUTIONS["win32-x64"];
-  assert.ok(distribution, "win32-x64 tunnel-client metadata is missing");
+  const distribution = TUNNEL_CLIENT_DISTRIBUTIONS[WINDOWS_TARGET];
+  assert.ok(distribution, `${WINDOWS_TARGET} tunnel-client metadata is missing`);
   const url = `https://github.com/openai/tunnel-client/releases/download/v${EQUINOX_LOCAL_TUNNEL_CLIENT_VERSION}/${distribution.filename}`;
   const response = await fetch(url, {
     redirect: "follow",
@@ -676,7 +679,7 @@ try {
 
   const doctor = await getJson(baseUrl, "/api/v1/doctor");
   assert.equal(doctor.ok, true);
-  assert.equal(doctor.doctor?.host?.target, "win32-x64");
+  assert.equal(doctor.doctor?.host?.target, WINDOWS_TARGET);
   assert.equal(doctor.doctor?.host?.platform, "win32");
   assert.equal(doctor.doctor?.managed, false);
   assert.equal(doctor.doctor?.state, "HEALTHY");
@@ -696,7 +699,7 @@ try {
 
   process.stdout.write(`${JSON.stringify({
     ok: true,
-    target: "win32-x64",
+    target: WINDOWS_TARGET,
     controlCenterPort: port,
     doctorState: doctor.doctor?.state ?? null,
     browserIpcActive: snapshot.browser.active,
