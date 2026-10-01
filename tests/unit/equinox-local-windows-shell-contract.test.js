@@ -306,6 +306,11 @@ test("public Windows CI restores and builds the native x64 shell", async () => {
   assert.match(ci, /tests\/release\/equinox-local-windows-lifecycle\.test\.js/u);
   assert.match(ci, /Windows ARM64 uninstall\/reinstall lifecycle acceptance/u);
   assert.match(ci, /Windows ARM64 native shell uninstall handoff smoke/u);
+  assert.match(ci, /windows-uninstall-handoff\/win-arm64/u);
+  assert.match(ci, /UninstallHandoffHarness\.csproj --configuration Release --runtime win-arm64 --self-contained true -p:Platform=ARM64/u);
+  const uninstallHarnessProject = await fs.readFile(path.join(ROOT, "tests", "windows", "EquinoxLocal.WindowsShell.UninstallHandoffHarness", "EquinoxLocal.WindowsShell.UninstallHandoffHarness.csproj"), "utf8");
+  assert.match(uninstallHarnessProject, /<Platforms>x64;ARM64<\/Platforms>/u);
+  assert.match(uninstallHarnessProject, /<PlatformTarget Condition=.*win-arm64.*>ARM64<\/PlatformTarget>/u);
   assert.match(ci, /EQUINOX_TEST_NODE_EXE/u);
   assert.match(ci, /EquinoxLocal\.WindowsShell\.StartupHarness/u);
   assert.match(ci, /EquinoxLocal\.WindowsShell\.FolderPickerHarness/u);
