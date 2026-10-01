@@ -23,6 +23,7 @@ import {
   createEquinoxAgentBrowser,
   discoverWindowsChrome,
   parseWindowsAgentBrowserMainPids,
+  queryWindowsChromeProcessInventory,
 } from "../../src/equinox-agent-browser.js";
 
 const execFile = promisify(execFileCallback);
@@ -112,11 +113,10 @@ async function verifyWindowsAgentBrowserLifecycle(root) {
   assert.equal(launched.lastLaunchSetup, false);
   assert.equal(path.win32.normalize(launched.chromePath).toLowerCase(), path.win32.normalize(chromePath).toLowerCase());
 
-  const processQuery = "[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false); Get-CimInstance Win32_Process -Filter \"Name='chrome.exe'\" | Select-Object ProcessId,ExecutablePath,CommandLine | ConvertTo-Json -Compress";
   let lastInventory = "";
   let lastDiagnostics = [];
   const processId = await waitFor(async () => {
-    const { stdout = "" } = await execFile("powershell.exe", ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", processQuery], { timeout: 5_000, windowsHide: true });
+    const stdout = await queryWindowsChromeProcessInventory(execFile, process.env);
     lastInventory = stdout;
     let decoded = [];
     try {
