@@ -17,6 +17,8 @@ const PRODUCTION_EXTENSION_ORIGIN = "chrome-extension://npdneefcobilfkjlihghjgjn
 const READY_MARKER = ".equinox-agent-browser-ready";
 const DEFAULT_READY_TIMEOUT_MS = 8_000;
 const WINDOWS_CHROME_PROCESS_QUERY = "[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false); Get-CimInstance Win32_Process -Filter \"Name='chrome.exe'\" | Select-Object ProcessId,ExecutablePath,CommandLine | ConvertTo-Json -Compress";
+const WINDOWS_CHROME_PROCESS_QUERY_ATTEMPTS = 3;
+const WINDOWS_CHROME_PROCESS_QUERY_RETRY_DELAY_MS = 100;
 const WINDOWS_CHROME_LAUNCH_SCRIPT = "$profileArg = '--user-data-dir=\"' + $env:EQUINOX_AGENT_PROFILE + '\"'; Start-Process -FilePath $env:EQUINOX_AGENT_CHROME -ArgumentList @($profileArg,'--no-first-run','--no-default-browser-check',$env:EQUINOX_AGENT_URL) | Out-Null";
 
 function errorMessage(error) {
@@ -203,6 +205,25 @@ export function parseAgentBrowserMainPids(psOutput, profileRoot) {
     .filter((pid) => Number.isInteger(pid) && pid > 1);
 }
 
+export async function queryWindowsChromeProcessInventory(execFileAsync, env = process.env) {
+  if (typeof execFileAsync !== "function") throw new Error("Windows Chrome process inventory requires execFileAsync.");
+  let lastError = null;
+  for (let attempt = 1; attempt <= WINDOWS_CHROME_PROCESS_QUERY_ATTEMPTS; attempt += 1) {
+    try {
+      const { stdout = "" } = await execFileAsync(WINDOWS_POWERSHELL_BINARY, ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", WINDOWS_CHROME_PROCESS_QUERY], {
+        timeout: 5_000, maxBuffer: 512 * 1024, windowsHide: true, env,
+      });
+      return stdout;
+    } catch (error) {
+      lastError = error;
+      if (attempt < WINDOWS_CHROME_PROCESS_QUERY_ATTEMPTS) {
+        await new Promise((resolve) => setTimeout(resolve, WINDOWS_CHROME_PROCESS_QUERY_RETRY_DELAY_MS));
+      }
+    }
+  }
+  throw lastError;
+}
+
 export function parseWindowsAgentBrowserMainPids(jsonOutput, profileRoot, chromePath) {
   const normalizedProfile = requireAbsoluteForPlatform(profileRoot, "win32", "Agent Browser profil kökü").toLowerCase();
   const normalizedChrome = requireAbsoluteForPlatform(chromePath, "win32", "Chrome executable").toLowerCase();
@@ -308,9 +329,7 @@ export function createEquinoxAgentBrowser({
       return parseAgentBrowserMainPids(stdout, resolvedProfileRoot);
     }
     const chromePath = lastChromePath ?? await resolveWindowsChrome();
-    const { stdout = "" } = await execFileAsync(WINDOWS_POWERSHELL_BINARY, ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", WINDOWS_CHROME_PROCESS_QUERY], {
-      timeout: 5_000, maxBuffer: 512 * 1024, windowsHide: true, env,
-    });
+    const stdout = await queryWindowsChromeProcessInventory(execFileAsync, env);
     return parseWindowsAgentBrowserMainPids(stdout, resolvedProfileRoot, chromePath);
   }
 
