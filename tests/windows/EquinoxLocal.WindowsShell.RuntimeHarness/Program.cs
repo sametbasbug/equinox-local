@@ -15,6 +15,8 @@ File.Copy(Path.Combine(repo, "src", "equinox-local-windows-process-gate.ps1"), P
 await File.WriteAllTextAsync(Path.Combine(root, "server.js"), """
 import { spawn } from 'node:child_process';
 import http from 'node:http';
+process.stdin.resume();
+process.stdin.once('end', () => process.exit(42));
 spawn(process.execPath, ['-e', `require('node:net').createServer().listen(24892,'127.0.0.1');setInterval(()=>{},1000)`], { stdio: 'ignore' });
 const server = http.createServer((req,res) => { if (req.url === '/api/v1/health') { res.writeHead(200); res.end('ok'); } else { res.writeHead(404); res.end(); } });
 server.listen(24891, '127.0.0.1'); setInterval(() => {}, 1000);

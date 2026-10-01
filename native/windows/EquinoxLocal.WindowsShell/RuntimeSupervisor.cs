@@ -131,7 +131,10 @@ internal sealed class RuntimeSupervisor : IAsyncDisposable
             WindowsShellDiagnostics.RecordRuntimeState("runtime-start-phase", "assigned");
             await gate.StandardInput.WriteLineAsync("EQUINOX_GO").ConfigureAwait(false);
             await gate.StandardInput.FlushAsync(cancellationToken).ConfigureAwait(false);
-            gate.StandardInput.Close();
+            // Keep the gate stdin pipe open for the child runtime. server.js treats stdin EOF as
+            // an ownership shutdown signal; closing this writer here made GUI-hosted Windows
+            // runtimes shut down cleanly immediately after startup. Job Object termination still
+            // owns stop/restart and closes the process tree without relying on stdin EOF.
             WindowsShellDiagnostics.RecordRuntimeState("runtime-start-phase", "gate-released");
         }
         catch
