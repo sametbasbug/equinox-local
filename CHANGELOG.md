@@ -6,6 +6,7 @@ This project follows semantic versioning for public releases.
 
 ## [Unreleased]
 
+- Made the Windows Job Object PowerShell 5.1 helper ARM64-safe by removing its runtime `System.ComponentModel.Win32Exception` Add-Type dependency while preserving bounded Win32 error codes, Job Object ownership and kill-on-close behavior.
 - Hardened Windows Job Object helper startup diagnostics on x64/ARM64: protocol waits remain bounded at 30 seconds with exact lifecycle-phase timeout messages, and a helper that exits before replying now reports only its bounded, control-character-sanitized stderr plus exit code for actionable startup diagnosis.
 - Added bounded Windows native-shell runtime-start diagnostics under the per-user Equinox Local logs root and surfaced their tail through first-install failures, so WPF lifecycle exceptions are no longer silently swallowed during managed-install acceptance; diagnostic messages sanitize control characters, omit stack traces and keep the log size bounded.
 - Added the first native Windows ARM64 acceptance lane: managed packaging now derives exact x64/ARM64 dependency pins and shell paths from the native host target, compiles the Equinox Browser launcher with the matching Visual Studio toolchain and PE-machine verification, and CI uses `windows-11-vs2026-arm` to exercise native Node 26, node-pty/ConPTY, Native Messaging, ARM64 WPF publish and ARM64 managed ZIP assembly. Managed ARM64 install/update lifecycle remains fail-closed until this lane is accepted.

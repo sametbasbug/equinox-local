@@ -125,12 +125,13 @@ test("Windows shell consumes shared bounded presentation status without duplicat
 });
 
 test("Windows shell runtime supervisor uses the existing Job Object gate with bounded recovery", async () => {
-  const [app, supervisor, locator, tray, diagnostics] = await Promise.all([
+  const [app, supervisor, locator, tray, diagnostics, jobHelper] = await Promise.all([
     source("App.xaml.cs"),
     source("RuntimeSupervisor.cs"),
     source("WindowsManagedReleaseLocator.cs"),
     source("TrayIconController.cs"),
     source("WindowsShellDiagnostics.cs"),
+    fs.readFile(path.join(ROOT, "src", "equinox-local-windows-job-object.ps1"), "utf8"),
   ]);
   assert.match(app, /RuntimeSupervisor\.TryCreateFromEnvironmentOrManagedInstall/u);
   assert.match(app, /WindowsShellDiagnostics\.RecordRuntimeFailure\("runtime-start"/u);
@@ -159,6 +160,9 @@ test("Windows shell runtime supervisor uses the existing Job Object gate with bo
   assert.match(supervisor, /_releaseResolver/u);
   assert.match(supervisor, /EQUINOX_LOCAL_INSTALL_ROOT/u);
   assert.doesNotMatch(supervisor, /taskkill|current-version\.json|cmd\.exe/iu);
+  assert.match(jobHelper, /new InvalidOperationException\(operation \+ " failed with Win32 error "/u);
+  assert.match(jobHelper, /Marshal\.GetLastWin32Error\(\)/u);
+  assert.doesNotMatch(jobHelper, /System\.ComponentModel|Win32Exception/u);
   assert.match(locator, /current-version\.json/u);
   assert.match(locator, /Environment\.SpecialFolder\.LocalApplicationData/u);
   assert.match(locator, /RuntimeInformation\.ProcessArchitecture/u);
