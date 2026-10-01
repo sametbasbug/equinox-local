@@ -37,7 +37,8 @@ internal static class Program
         var localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
         if (string.IsNullOrWhiteSpace(localAppData)) throw new InvalidOperationException("LocalAppData is unavailable.");
         var installRoot = Path.Combine(localAppData, "Equinox Local");
-        var releaseDir = Path.Combine(installRoot, "releases", Version);
+        var releasesRoot = Path.Combine(installRoot, "releases");
+        var releaseDir = Path.Combine(releasesRoot, Version);
         var currentPointer = Path.Combine(installRoot, "current-version.json");
         var markerPath = Path.Combine(releaseDir, "uninstall-handoff-marker.json");
         if (Directory.Exists(releaseDir)) Directory.Delete(releaseDir, recursive: true);
@@ -133,6 +134,8 @@ setTimeout(() => {}, 30000);
             if (runtimeJob != IntPtr.Zero) CloseHandle(runtimeJob);
             try { if (File.Exists(currentPointer)) File.Delete(currentPointer); } catch { }
             try { if (Directory.Exists(releaseDir)) Directory.Delete(releaseDir, recursive: true); } catch { }
+            try { if (Directory.Exists(releasesRoot) && !Directory.EnumerateFileSystemEntries(releasesRoot).Any()) Directory.Delete(releasesRoot); } catch { }
+            try { if (Directory.Exists(installRoot) && !Directory.EnumerateFileSystemEntries(installRoot).Any()) Directory.Delete(installRoot); } catch { }
         }
     }
 }
