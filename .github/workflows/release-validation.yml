@@ -12,9 +12,34 @@ permissions:
   contents: read
 
 jobs:
+  release-plan:
+    name: Release target plan
+    runs-on: ubuntu-latest
+    outputs:
+      intel-target: ${{ steps.plan.outputs.intel-target }}
+      intel-runner: ${{ steps.plan.outputs.intel-runner }}
+    steps:
+      - name: Checkout exact release commit
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.commit }}
+      - name: Read canonical release matrix
+        id: plan
+        shell: bash
+        run: |
+          node --input-type=module <<'NODE' >> "$GITHUB_OUTPUT"
+          import { EQUINOX_LOCAL_RELEASE_TARGET_MATRIX } from './src/equinox-local-platform.js';
+          const all = EQUINOX_LOCAL_RELEASE_TARGET_MATRIX;
+          if (all.length !== 4 || new Set(all.map((entry) => entry.target)).size !== 4) throw new Error('Canonical release matrix must contain exactly four unique targets.');
+          const intel = all.find((entry) => entry.target === 'darwin-x64');
+          if (!intel || intel.buildAuthority !== 'github-native' || !intel.nativeRunner) throw new Error('darwin-x64 native release contract is unavailable.');
+          process.stdout.write(`intel-target=${intel.target}\nintel-runner=${intel.nativeRunner}\n`);
+          NODE
+
   intel-x64:
+    needs: release-plan
     name: Intel x64 managed release
-    runs-on: macos-15-intel
+    runs-on: ${{ needs.release-plan.outputs.intel-runner }}
     timeout-minutes: 35
 
     steps:
@@ -56,12 +81,14 @@ jobs:
         id: release
         run: |
           version="$(node --input-type=module -e 'import { EQUINOX_LOCAL_VERSION } from "./src/equinox-local-version.js"; process.stdout.write(EQUINOX_LOCAL_VERSION)')"
-          artifact="backups/local-packages/equinox-local-${version}-darwin-x64.tar.gz"
+          target="${{ needs.release-plan.outputs.intel-target }}"
+          artifact="backups/local-packages/equinox-local-${version}-${target}.tar.gz"
+          metadata="backups/local-packages/${target}-metadata.txt"
           test -f "$artifact"
           file "$artifact"
           bytes="$(stat -f %z "$artifact")"
           sha256="$(shasum -a 256 "$artifact" | awk '{print $1}')"
-          printf 'version=%s\ntarget=darwin-x64\nbytes=%s\nsha256=%s\n' "$version" "$bytes" "$sha256" | tee backups/local-packages/darwin-x64-metadata.txt
+          printf 'version=%s\ntarget=%s\nbytes=%s\nsha256=%s\n' "$version" "$target" "$bytes" "$sha256" | tee "$metadata"
           printf 'version=%s\nartifact=%s\n' "$version" "$artifact" >> "$GITHUB_OUTPUT"
 
       - name: Upload unsigned x64 artifact
@@ -70,6 +97,6 @@ jobs:
           name: equinox-local-${{ steps.release.outputs.version }}-darwin-x64-unsigned
           path: |
             ${{ steps.release.outputs.artifact }}
-            backups/local-packages/darwin-x64-metadata.txt
+            backups/local-packages/${{ needs.release-plan.outputs.intel-target }}-metadata.txt
           if-no-files-found: error
           retention-days: 7
