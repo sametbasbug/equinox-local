@@ -5,6 +5,7 @@ All notable public changes to Equinox Local will be documented here.
 This project follows semantic versioning for public releases.
 
 ## [Unreleased]
+- Retry verified Windows first-install release promotion only for bounded transient NTFS lock errors (`EACCES`, `EBUSY`, `EPERM`), reusing the accepted stable-shell replacement policy while leaving macOS promotion single-attempt and all containment/integrity checks unchanged.
 - Preserve bounded Windows runtime-gate stderr on unexpected exits so native startup crashes can be diagnosed without changing restart or ownership behavior.
 - Add bounded Windows runtime-start phase diagnostics so ARM64 first-install acceptance can distinguish helper readiness, Job Object assignment, and gate release without logging local paths.
 

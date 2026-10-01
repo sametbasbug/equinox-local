@@ -117,7 +117,11 @@ export async function synchronizeFreshWindowsShell({ releaseDir, programRoot, fs
   return Object.freeze({ synchronized: true, reused: false, shellExecutable: path.join(programRoot, "EquinoxLocal.exe") });
 }
 
-async function renameWhenUnlocked(source, destination, { fsImpl = fs, sleepImpl, attempts = REPLACE_ATTEMPTS } = {}) {
+export async function renameWindowsPathWhenUnlocked(source, destination, {
+  fsImpl = fs,
+  sleepImpl = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+  attempts = REPLACE_ATTEMPTS,
+} = {}) {
   let lastError = null;
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     try {
@@ -156,7 +160,7 @@ export async function replaceWindowsStableShellForRelease({
   let movedPrevious = false;
   try {
     await requestShutdownImpl({ platform: "win32" }).catch(() => null);
-    await renameWhenUnlocked(programRoot, backupRoot, { fsImpl, sleepImpl });
+    await renameWindowsPathWhenUnlocked(programRoot, backupRoot, { fsImpl, sleepImpl });
     movedPrevious = true;
     await fsImpl.rename(staged.stagedRoot, programRoot);
     const installed = await snapshotWindowsStableShellTree(programRoot, { fsImpl });

@@ -457,6 +457,24 @@ test("Windows x64 fresh first install promotes current-version and stable shell 
     await fs.rm(fixture.root, { recursive: true, force: true });
   });
   const launches = [];
+  let promotionRenameAttempts = 0;
+  const stagedNormalized = path.win32.normalize(fixture.releaseDir).toLowerCase();
+  const promotedNormalized = path.win32.normalize(promoted).toLowerCase();
+  const fsImpl = {
+    ...fs,
+    rename: async (source, destination) => {
+      if (
+        path.win32.normalize(source).toLowerCase() === stagedNormalized &&
+        path.win32.normalize(destination).toLowerCase() === promotedNormalized
+      ) {
+        promotionRenameAttempts += 1;
+        if (promotionRenameAttempts === 1) {
+          throw Object.assign(new Error("fixture transient Windows release promotion lock"), { code: "EPERM" });
+        }
+      }
+      return fs.rename(source, destination);
+    },
+  };
   const result = await installManagedEquinoxRelease({
     stagedReleaseDir: fixture.releaseDir,
     homeDir: fixture.homeDir,
@@ -464,11 +482,14 @@ test("Windows x64 fresh first install promotes current-version and stable shell 
     arch: "x64",
     target: "win32-x64",
     env: { ...process.env, LOCALAPPDATA: fixture.localAppData },
+    fsImpl,
+    windowsRenameSleepImpl: async () => {},
     initializeOnboardingImpl: async () => ({ created: true }),
     launchWindowsShellImpl: async (shellExecutable) => { launches.push(shellExecutable); return { launched: true }; },
     waitForVersionImpl: async () => true,
   });
   assert.equal(result.status, "installed");
+  assert.equal(promotionRenameAttempts, 2);
   const pointerPath = path.join(fixture.installRoot, "current-version.json");
   assert.deepEqual(JSON.parse(await fs.readFile(pointerPath, "utf8")), {
     schemaVersion: 1,

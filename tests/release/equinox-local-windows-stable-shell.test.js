@@ -6,6 +6,7 @@ import path from "node:path";
 import test from "node:test";
 
 import {
+  renameWindowsPathWhenUnlocked,
   replaceWindowsStableShellForRelease,
   snapshotWindowsStableShellTree,
 } from "../../src/equinox-local-windows-stable-shell.js";
@@ -24,6 +25,42 @@ async function shellFixture() {
   await fs.cp(path.join(releases, "5.2.0", "runtime", "shell"), programRoot, { recursive: true });
   return { root, releases, programRoot };
 }
+
+
+test("Windows path rename retries only bounded transient lock errors", async () => {
+  const transientCodes = ["EPERM", "EBUSY", "EACCES"];
+  const sleeps = [];
+  let attempts = 0;
+  const fsImpl = {
+    rename: async () => {
+      attempts += 1;
+      const code = transientCodes[attempts - 1];
+      if (code) throw Object.assign(new Error(`transient ${code}`), { code });
+    },
+  };
+  await renameWindowsPathWhenUnlocked("source", "destination", {
+    fsImpl,
+    sleepImpl: async (ms) => { sleeps.push(ms); },
+    attempts: 4,
+  });
+  assert.equal(attempts, 4);
+  assert.deepEqual(sleeps, [100, 100, 100]);
+
+  let fatalAttempts = 0;
+  await assert.rejects(
+    renameWindowsPathWhenUnlocked("source", "destination", {
+      fsImpl: {
+        rename: async () => {
+          fatalAttempts += 1;
+          throw Object.assign(new Error("fatal rename"), { code: "EIO" });
+        },
+      },
+      sleepImpl: async () => { throw new Error("non-retryable rename must not sleep"); },
+    }),
+    /fatal rename/u,
+  );
+  assert.equal(fatalAttempts, 1);
+});
 
 test("Windows stable-shell update stages and replaces only the expected previous tree", async (t) => {
   const fixture = await shellFixture();

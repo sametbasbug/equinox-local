@@ -27,6 +27,7 @@ import { initializeManagedOnboardingState } from "./equinox-local-onboarding.js"
 import { equinoxLocalReleaseRuntimeContract } from "./equinox-local-release-runtime-contract.js";
 import {
   launchWindowsStableShell,
+  renameWindowsPathWhenUnlocked,
   synchronizeFreshWindowsShell,
 } from "./equinox-local-windows-stable-shell.js";
 export {
@@ -328,6 +329,7 @@ export async function installManagedEquinoxRelease({
   initializeOnboardingImpl = initializeManagedOnboardingState,
   syncWindowsShellImpl = synchronizeFreshWindowsShell,
   launchWindowsShellImpl = launchWindowsStableShell,
+  windowsRenameSleepImpl = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
 } = {}) {
   if (platform !== "darwin" && !(platform === "win32" && ["arm64", "x64"].includes(arch))) {
     throw new Error(`Equinox Local first install is not implemented for ${platform}-${arch}.`);
@@ -415,7 +417,11 @@ export async function installManagedEquinoxRelease({
     if (current?.releaseDir === targetRelease) throw new Error("Active target release state is inconsistent.");
     await fsImpl.rm(targetRelease, { recursive: true, force: false });
   }
-  await fsImpl.rename(stagedReal, targetRelease);
+  if (platform === "win32") {
+    await renameWindowsPathWhenUnlocked(stagedReal, targetRelease, { fsImpl, sleepImpl: windowsRenameSleepImpl });
+  } else {
+    await fsImpl.rename(stagedReal, targetRelease);
+  }
 
   if (current) {
     const currentInstallation = installationFor(paths, current.releaseDir, { platform, arch, target: expectedTarget });
