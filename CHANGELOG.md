@@ -5,6 +5,7 @@ All notable public changes to Equinox Local will be documented here.
 This project follows semantic versioning for public releases.
 
 ## [Unreleased]
+- Add bounded Windows runtime-start phase diagnostics so ARM64 first-install acceptance can distinguish helper readiness, Job Object assignment, and gate release without logging local paths.
 
 - Added a bounded path-free Windows shell startup discovery diagnostic (`arch`, managed-pointer visibility and supervisor creation) so first-install acceptance can distinguish managed-install discovery from runtime-start failures without exposing local paths.
 - Made the Windows Job Object PowerShell 5.1 helper ARM64-safe by removing its runtime `System.ComponentModel.Win32Exception` Add-Type dependency while preserving bounded Win32 error codes, Job Object ownership and kill-on-close behavior.

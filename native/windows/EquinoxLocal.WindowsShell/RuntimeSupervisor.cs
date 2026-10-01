@@ -100,9 +100,11 @@ internal sealed class RuntimeSupervisor : IAsyncDisposable
         ValidateReleaseFiles(nodePath, serverPath, jobHelperPath, processGatePath);
         await CloseJobHelperAsync(CancellationToken.None).ConfigureAwait(false);
         _jobHelper = StartPowerShell(jobHelperPath, redirectOutput: true);
+        WindowsShellDiagnostics.RecordRuntimeState("runtime-start-phase", "helper-started");
         var ready = await ReadReplyAsync(_jobHelper, "ready", cancellationToken).ConfigureAwait(false);
         if (!ready.GetProperty("ok").GetBoolean() || !ready.GetProperty("ready").GetBoolean())
             throw new InvalidOperationException("Windows Job Object helper did not become ready.");
+        WindowsShellDiagnostics.RecordRuntimeState("runtime-start-phase", "helper-ready");
 
         var payload = Convert.ToBase64String(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new { command = nodePath, args = new[] { serverPath } })));
         var startInfo = PowerShellStartInfo(processGatePath);
@@ -115,14 +117,18 @@ internal sealed class RuntimeSupervisor : IAsyncDisposable
         gate.BeginOutputReadLine();
         gate.BeginErrorReadLine();
         _gate = gate;
+        WindowsShellDiagnostics.RecordRuntimeState("runtime-start-phase", "gate-started");
         var generation = ++_generation;
         gate.Exited += (_, _) => OnGateExited(generation);
         try
         {
+            WindowsShellDiagnostics.RecordRuntimeState("runtime-start-phase", "assign-started");
             await SendRequestAsync("assign", new Dictionary<string, object?> { ["pid"] = gate.Id }, cancellationToken).ConfigureAwait(false);
+            WindowsShellDiagnostics.RecordRuntimeState("runtime-start-phase", "assigned");
             await gate.StandardInput.WriteLineAsync("EQUINOX_GO").ConfigureAwait(false);
             await gate.StandardInput.FlushAsync(cancellationToken).ConfigureAwait(false);
             gate.StandardInput.Close();
+            WindowsShellDiagnostics.RecordRuntimeState("runtime-start-phase", "gate-released");
         }
         catch
         {
