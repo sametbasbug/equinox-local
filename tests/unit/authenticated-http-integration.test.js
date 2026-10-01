@@ -56,7 +56,7 @@ async function readyProfile(storePath, overrides = {}) {
 
 test("default store is empty, safe and enables agent profile management", async () => {
   assert.equal(
-    defaultAuthenticatedHttpStorePath("/Users/example"),
+    defaultAuthenticatedHttpStorePath("/Users/example", { platform: "darwin", arch: "arm64", env: {} }),
     "/Users/example/Library/Application Support/Equinox Local/secrets/authenticated-http.json",
   );
   assert.equal(
@@ -107,7 +107,7 @@ test("agent-created profiles persist as private 0600 records and need a human cr
     const handle = await fs.open(storePath, "r");
     try {
       const stat = await handle.stat();
-      assert.equal(stat.mode & 0o777, 0o600);
+      if (process.platform !== "win32") assert.equal(stat.mode & 0o777, 0o600);
       const raw = JSON.parse(await handle.readFile("utf8"));
       assert.equal(raw.agentProfileManagementEnabled, true);
       assert.equal(Object.hasOwn(raw.profiles[0], "credential"), false);

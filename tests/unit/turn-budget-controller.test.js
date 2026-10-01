@@ -44,7 +44,7 @@ test("controller persists immediate runtime settings with private permissions", 
     assert.equal(controller.snapshot().cutoffMinutes, 19);
     assert.equal(controller.snapshot().fallbackResetMinutes, 3);
     assert.equal(controller.snapshot().autoContinueMaxHops, 14);
-    assert.equal((await fs.stat(settingsPath)).mode & 0o777, 0o600);
+    if (process.platform !== "win32") assert.equal((await fs.stat(settingsPath)).mode & 0o777, 0o600);
     const reloaded = createTurnBudgetController({ settingsPath });
     await reloaded.initialize();
     assert.equal(reloaded.snapshot().cutoffMinutes, 19);
