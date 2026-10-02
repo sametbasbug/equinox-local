@@ -42,6 +42,41 @@ if (-not (Test-Path -LiteralPath $clipboardHelper -PathType Leaf)) {
 }
 $fixture = Start-Process -FilePath $fixtureExecutable -PassThru
 try {
+  Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+public static class EquinoxWinappSmokeForeground {
+    [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+    [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, IntPtr processId);
+    [DllImport("kernel32.dll")] public static extern uint GetCurrentThreadId();
+    [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] public static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, bool attach);
+    [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] public static extern bool ShowWindowAsync(IntPtr hWnd, int command);
+    [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] public static extern bool BringWindowToTop(IntPtr hWnd);
+    [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] public static extern bool SetForegroundWindow(IntPtr hWnd);
+}
+"@
+  function Set-ControlledFixtureForeground {
+    $fixture.Refresh()
+    $target = $fixture.MainWindowHandle
+    if ($target -eq [IntPtr]::Zero) { throw 'Controlled WinForms fixture has no main window handle for foreground recovery.' }
+    $foreground = [EquinoxWinappSmokeForeground]::GetForegroundWindow()
+    if ($foreground -eq [IntPtr]::Zero) { return $false }
+    $currentThread = [EquinoxWinappSmokeForeground]::GetCurrentThreadId()
+    $foregroundThread = [EquinoxWinappSmokeForeground]::GetWindowThreadProcessId($foreground, [IntPtr]::Zero)
+    $attached = $false
+    try {
+      if ($foregroundThread -ne 0 -and $foregroundThread -ne $currentThread) {
+        $attached = [EquinoxWinappSmokeForeground]::AttachThreadInput($currentThread, $foregroundThread, $true)
+      }
+      [void][EquinoxWinappSmokeForeground]::ShowWindowAsync($target, 9)
+      [void][EquinoxWinappSmokeForeground]::BringWindowToTop($target)
+      [void][EquinoxWinappSmokeForeground]::SetForegroundWindow($target)
+      Start-Sleep -Milliseconds 150
+      return [EquinoxWinappSmokeForeground]::GetForegroundWindow() -eq $target
+    } finally {
+      if ($attached) { [void][EquinoxWinappSmokeForeground]::AttachThreadInput($currentThread, $foregroundThread, $false) }
+    }
+  }
   $ready = $false
   for ($attempt = 0; $attempt -lt 30; $attempt++) {
     $list = (& $winapp ui list-windows -a $fixture.Id --json 2>&1 | Out-String).Trim()
@@ -73,6 +108,12 @@ try {
   $pasteInputSkipped = $false
   $focusInput = (& $winapp ui focus SmokePasteText -a $fixture.Id --json 2>&1 | Out-String).Trim()
   $focusExit = $LASTEXITCODE
+  if ($focusExit -ne 0 -and $focusInput -match 'foreground_not_target') {
+    if (Set-ControlledFixtureForeground) {
+      $focusInput = (& $winapp ui focus SmokePasteText -a $fixture.Id --json 2>&1 | Out-String).Trim()
+      $focusExit = $LASTEXITCODE
+    }
+  }
   if ($focusExit -ne 0) {
     if ($architecture -eq 'Arm64' -and $focusInput -match 'no_interactive_desktop') {
       $pasteInputSkipped = $true
