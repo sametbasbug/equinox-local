@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { PNG } from "pngjs";
 
 import {
   buildSafeWinappEnvironment,
@@ -7,9 +8,16 @@ import {
   WINAPP_ALLOWED_TOOLS,
 } from "../../src/winapp-bridge.js";
 
+function tinyPng() {
+  const png = new PNG({ width: 2, height: 3 });
+  png.data.fill(255);
+  return PNG.sync.write(png);
+}
+
 function createHarness() {
   const calls = [];
   const mkdirs = [];
+  const png = tinyPng();
   const bridge = createWinappBridge({
     platform: "win32",
     baseEnvironment: {
@@ -19,7 +27,11 @@ function createHarness() {
       USERPROFILE: "C:\\Users\\Test",
       OPENAI_API_KEY: "must-not-leak",
     },
-    fsImpl: { mkdir: async (...args) => mkdirs.push(args) },
+    fsImpl: {
+      mkdir: async (...args) => mkdirs.push(args),
+      lstat: async () => ({ isFile: () => true, isSymbolicLink: () => false, size: png.length }),
+      readFile: async () => png,
+    },
     resolveBinaryImpl: async () => "C:\\Equinox\\runtime\\winapp\\winapp.exe",
     execFileImpl: async (binary, args, options) => {
       calls.push({ binary, args, options });
@@ -27,7 +39,7 @@ function createHarness() {
       return { stdout: JSON.stringify({ ok: true, args }), stderr: "" };
     },
   });
-  return { bridge, calls, mkdirs };
+  return { bridge, calls, mkdirs, png };
 }
 
 test("winapp bridge exposes a practical Windows UI surface instead of a crippled semantic subset", async () => {
@@ -65,15 +77,24 @@ test("winapp bridge maps native inspect/search/input options without a shell", a
   assert.equal(calls.at(-1).options.shell, undefined);
 });
 
-test("winapp screenshot defaults to managed temporary output and returns JSON path metadata", async () => {
-  const { bridge, calls, mkdirs } = createHarness();
-  await bridge.callTool("screenshot", { app: "Notepad", focus: true });
+test("winapp managed screenshot returns native MCP image content through the shared image validator", async () => {
+  const { bridge, calls, mkdirs, png } = createHarness();
+  const result = await bridge.callTool("screenshot", { app: "Notepad", focus: true });
   const invocation = calls.at(-1);
   const outputIndex = invocation.args.indexOf("--output");
   assert.notEqual(outputIndex, -1);
   assert.match(invocation.args[outputIndex + 1], /^C:\\Temp\\Equinox Local\\desktop\\capture-/u);
   assert.equal(invocation.args.includes("--focus"), true);
   assert.equal(mkdirs.length, 1);
+  assert.equal(result.content[0].type, "text");
+  assert.deepEqual(result.content[1], { type: "image", data: png.toString("base64"), mimeType: "image/png" });
+});
+
+test("winapp screenshot with explicit output remains file-only instead of becoming an arbitrary-path image reader", async () => {
+  const { bridge } = createHarness();
+  const result = await bridge.callTool("screenshot", { app: "Notepad", output: "C:\\Users\\Test\\Desktop\\capture.png" });
+  assert.equal(result.content.length, 1);
+  assert.equal(result.content[0].type, "text");
 });
 
 test("winapp bridge maps native wheel scrolling without adding duplicate semantic validation", async () => {

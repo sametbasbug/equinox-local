@@ -6,6 +6,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
+import { inspectImageBuffer, MAX_IMAGE_VIEW_BYTES } from "./equinox-local-image-tools.js";
 import { EQUINOX_LOCAL_WINAPP_VERSION } from "./equinox-local-runtime-versions.js";
 
 const execFile = promisify(execFileCallback);
@@ -54,7 +55,7 @@ export const WINAPP_TOOL_DEFINITIONS = Object.freeze({
   get_value: Object.freeze({ name: "get_value", description: "Read the current value/text of a selected Windows control.", readOnly: true, inputSchema: withTarget({ selector, root: selector, type: string("Optional UIA control type filter.", 80), class_name: string("Optional exact UIA ClassName filter.", 200) }, ["selector"]) }),
   get_focused: Object.freeze({ name: "get_focused", description: "Report the focused UI Automation element for the selected Windows app/window.", readOnly: true, inputSchema: withTarget() }),
   wait_for: Object.freeze({ name: "wait_for", description: "Wait boundedly for a Windows UI element to appear/disappear or reach a property/value.", readOnly: true, inputSchema: withTarget({ selector, value: Object.freeze({ type: "string", maxLength: MAX_TEXT_INPUT }), property: string("Optional case-sensitive UI Automation property to compare.", 120), gone: bool("Wait for the selector to disappear."), contains: bool("Use substring matching for value."), timeout_ms: integer("Maximum wait in milliseconds.", 100, MAX_WAIT_MS), root: selector, type: string("Optional UIA control type filter.", 80), class_name: string("Optional exact UIA ClassName filter.", 200) }, ["selector"]) }),
-  screenshot: Object.freeze({ name: "screenshot", description: "Capture a Windows app/window/control as PNG through winapp. Default output is a managed temp file and the JSON result returns its path.", readOnly: true, inputSchema: withTarget({ selector, output: string("Optional output PNG path. Omit to use Equinox-managed temporary output.", MAX_PATH_LENGTH), capture_screen: bool("Capture the live foreground screen region so visible overlays/popups are included."), focus: bool("Foreground the target before ordinary capture.") }) }),
+  screenshot: Object.freeze({ name: "screenshot", description: "Capture a Windows app/window/control as PNG through winapp. When output is omitted, Equinox uses a managed temp file and returns the validated PNG as native MCP image content so the model can see it directly; an explicit output path keeps file-only behavior.", readOnly: true, inputSchema: withTarget({ selector, output: string("Optional output PNG path. Omit for direct model-visible image handoff through Equinox-managed temporary output.", MAX_PATH_LENGTH), capture_screen: bool("Capture the live foreground screen region so visible overlays/popups are included."), focus: bool("Foreground the target before ordinary capture.") }) }),
   set_value: Object.freeze({ name: "set_value", description: "Set an editable control through UIA patterns without foreground keyboard injection.", readOnly: false, inputSchema: withTarget({ selector, value: Object.freeze({ type: "string", maxLength: MAX_TEXT_INPUT }) }, ["selector", "value"]) }),
   invoke: Object.freeze({ name: "invoke", description: "Invoke a Windows UI Automation element through its supported UIA action pattern.", readOnly: false, inputSchema: withTarget({ selector }, ["selector"]) }),
   focus: Object.freeze({ name: "focus", description: "Bring the selected Windows control/window forward and verify keyboard focus.", readOnly: false, inputSchema: withTarget({ selector }, ["selector"]) }),
@@ -166,6 +167,22 @@ function tempRoot(baseEnvironment) {
   return path.win32.join(candidate, "Equinox Local", "desktop");
 }
 
+async function managedScreenshotResult(filePath, parsed, fsImpl) {
+  const stat = await fsImpl.lstat(filePath);
+  if (!stat.isFile() || stat.isSymbolicLink()) throw new Error("Microsoft winapp screenshot did not produce a normal image file.");
+  if (stat.size < 1 || stat.size > MAX_IMAGE_VIEW_BYTES) throw new Error(`Microsoft winapp screenshot must be between 1 byte and ${MAX_IMAGE_VIEW_BYTES / 1024 / 1024} MB.`);
+  const buffer = await fsImpl.readFile(filePath);
+  if (buffer.length !== stat.size) throw new Error("Microsoft winapp screenshot changed while it was being read; retry the capture.");
+  const metadata = inspectImageBuffer(buffer);
+  if (metadata.mimeType !== "image/png") throw new Error("Microsoft winapp screenshot output is not PNG.");
+  return {
+    content: [
+      { type: "text", text: JSON.stringify(parsed, null, 2) },
+      { type: "image", data: buffer.toString("base64"), mimeType: metadata.mimeType },
+    ],
+  };
+}
+
 export function createWinappBridge({ baseEnvironment = process.env, execFileImpl = execFile, resolveBinaryImpl = resolveWinappBinary, fsImpl = fs, platform = process.platform } = {}) {
   let cachedBinary = null;
   async function binary() {
@@ -222,6 +239,7 @@ export function createWinappBridge({ baseEnvironment = process.env, execFileImpl
       const raw = String(result.stdout ?? "").trim();
       let parsed;
       try { parsed = raw ? JSON.parse(raw) : {}; } catch { throw new Error("Microsoft winapp returned invalid JSON."); }
+      if (toolName === "screenshot" && screenshotOutput) return managedScreenshotResult(screenshotOutput, parsed, fsImpl);
       return { content: [{ type: "text", text: JSON.stringify(parsed, null, 2) }] };
     },
     get readOnlyTools() { return new Set(WINAPP_READ_ONLY_TOOLS); },
