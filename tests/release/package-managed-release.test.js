@@ -100,10 +100,10 @@ test("pinned tunnel runtime metadata covers all four production release targets"
 });
 
 test("pinned Peekaboo runtime metadata is universal and fixed to the verified OpenClaw release", () => {
-  assert.equal(EQUINOX_LOCAL_PEEKABOO_VERSION, "4.6.0");
+  assert.equal(EQUINOX_LOCAL_PEEKABOO_VERSION, "4.5.0");
   assert.equal(EQUINOX_LOCAL_PEEKABOO_TEAM_ID, "FWJYW4S8P8");
   assert.equal(PEEKABOO_DISTRIBUTION.filename, "peekaboo-macos-universal.tar.gz");
-  assert.equal(PEEKABOO_DISTRIBUTION.sha256, "a9179b2bf9f4259cebc67737ae4d444a1dfe9c3fcb60d5922afb7d8f65ef87bf");
+  assert.equal(PEEKABOO_DISTRIBUTION.sha256, "10b409423e5540235c59ef6c3c39d31e236ac528f8b7e116b9ed5a086a1c454e");
   assert.deepEqual(PEEKABOO_DISTRIBUTION.architectures, ["arm64", "x86_64"]);
 });
 

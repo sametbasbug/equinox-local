@@ -411,6 +411,8 @@ test("control API serves the visual Control Center shell and fixed same-origin a
     assert.match(shellText, /id="turn-budget-cutoff"/u);
     assert.match(shellText, /id="turn-budget-fallback-reset"/u);
     assert.match(shellText, /id="auto-continue-max-hops"/u);
+    assert.match(scriptText, /state\.restartBusy \|\| state\.turnBudgetBusy/u);
+    assert.match(scriptText, /if \(state\.turnBudgetDirty\) \{\s*const saved = await saveTurnBudgetSettings\(\);\s*if \(!saved\) return;/u);
     assert.match(scriptText, /Authenticated HTTP profiles/u);
     assert.match(scriptText, /write-only/u);
     assert.match(cssText, /\.http-profile-card/u);
