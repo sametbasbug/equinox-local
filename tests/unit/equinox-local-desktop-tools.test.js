@@ -145,6 +145,21 @@ test("desktop refresh and restart are explicit operations; mutations respect pau
   assert.deepEqual(guarded.bridgeCalls, []);
 });
 
+test("desktop_call preserves native MCP image content from a desktop provider", async () => {
+  const image = { type: "image", data: "aW1hZ2U=", mimeType: "image/png" };
+  const bridge = {
+    label: "Windows desktop",
+    async status() { return { engine: "winapp", version: "0.7.1", binary: "winapp.exe", active: true, allowedToolCount: 1, allowedTools: ["screenshot"], compatibility: { warnings: [] } }; },
+    async restart() {},
+    async listTools() { return [{ name: "screenshot", description: "Capture", inputSchema: { type: "object", properties: {}, additionalProperties: false } }]; },
+    async callTool() { return { content: [{ type: "text", text: "captured" }, image] }; },
+  };
+  const harness = createHarness({ desktopBridge: bridge });
+  const result = await harness.rawRegistrations.get("desktop_call").handler({ operation: "screenshot", arguments: {} });
+  assert.deepEqual(result.content[1], image);
+  assert.deepEqual(result.structuredContent, { text: "captured\n" });
+});
+
 test("desktop_call preserves the desktop mutation lock and structured text output", async () => {
   const harness = createHarness();
   const registration = harness.rawRegistrations.get("desktop_call");
