@@ -375,6 +375,15 @@ test("public Windows CI restores and builds the native x64 shell", async () => {
   assert.match(ci, /WebView2Loader\.dll/u);
   assert.match(ci, /Windows native shell branding smoke/u);
   assert.match(ci, /ExtractAssociatedIcon/u);
+  const factoryWinappSmokePath = path.join(ROOT, "factory", "local", "windows-winapp-smoke.ps1");
+  const publicWinappSmokePath = path.join(ROOT, "tests", "release", "windows-winapp-smoke.ps1");
+  const winappSmoke = await fs.readFile(
+    await fs.access(factoryWinappSmokePath).then(() => factoryWinappSmokePath, () => publicWinappSmokePath),
+    "utf8",
+  );
+  assert.match(winappSmoke, /function Invoke-WinappCaptured/u);
+  assert.match(winappSmoke, /ErrorActionPreference = 'Continue'/u);
+  assert.match(winappSmoke, /Set-ControlledFixtureForeground/u);
 });
 
 

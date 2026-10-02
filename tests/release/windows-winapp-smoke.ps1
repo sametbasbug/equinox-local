@@ -42,6 +42,21 @@ if (-not (Test-Path -LiteralPath $clipboardHelper -PathType Leaf)) {
 }
 $fixture = Start-Process -FilePath $fixtureExecutable -PassThru
 try {
+  function Invoke-WinappCaptured {
+    param([Parameter(Mandatory = $true)][string[]]$Arguments)
+    $previousErrorActionPreference = $ErrorActionPreference
+    try {
+      # Windows PowerShell 5.1 promotes native stderr to NativeCommandError when the
+      # script uses ErrorActionPreference=Stop. These probes intentionally need the
+      # real winapp exit code/output so expected environment failures can be classified.
+      $ErrorActionPreference = 'Continue'
+      $output = (& $winapp @Arguments 2>&1 | Out-String).Trim()
+      $exitCode = $LASTEXITCODE
+      return [pscustomobject]@{ Output = $output; ExitCode = $exitCode }
+    } finally {
+      $ErrorActionPreference = $previousErrorActionPreference
+    }
+  }
   Add-Type -TypeDefinition @"
 using System;
 using System.Runtime.InteropServices;
@@ -106,31 +121,28 @@ public static class EquinoxWinappSmokeForeground {
   $clipboardRead = (& powershell.exe -NoLogo -NoProfile -NonInteractive -Sta -ExecutionPolicy Bypass -File $clipboardHelper -Mode Get 2>&1 | Out-String).TrimEnd()
   if ($LASTEXITCODE -ne 0 -or $clipboardRead -ne 'Equinox Clipboard Paste') { throw "Windows clipboard helper roundtrip failed: $clipboardRead" }
   $pasteInputSkipped = $false
-  $focusInput = (& $winapp ui focus SmokePasteText -a $fixture.Id --json 2>&1 | Out-String).Trim()
-  $focusExit = $LASTEXITCODE
-  if ($focusExit -ne 0 -and $focusInput -match 'foreground_not_target') {
+  $focusProbe = Invoke-WinappCaptured -Arguments @('ui', 'focus', 'SmokePasteText', '-a', [string]$fixture.Id, '--json')
+  if ($focusProbe.ExitCode -ne 0 -and $focusProbe.Output -match 'foreground_not_target') {
     if (Set-ControlledFixtureForeground) {
-      $focusInput = (& $winapp ui focus SmokePasteText -a $fixture.Id --json 2>&1 | Out-String).Trim()
-      $focusExit = $LASTEXITCODE
+      $focusProbe = Invoke-WinappCaptured -Arguments @('ui', 'focus', 'SmokePasteText', '-a', [string]$fixture.Id, '--json')
     }
   }
-  if ($focusExit -ne 0) {
-    if ($architecture -eq 'Arm64' -and $focusInput -match 'no_interactive_desktop') {
+  if ($focusProbe.ExitCode -ne 0) {
+    if ($architecture -eq 'Arm64' -and $focusProbe.Output -match 'no_interactive_desktop') {
       $pasteInputSkipped = $true
       Write-Output 'WINDOWS_WINAPP_PASTE_INPUT_SKIPPED architecture=Arm64 reason=no_interactive_desktop'
     } else {
-      throw "winapp could not foreground/focus the controlled paste target: $focusInput"
+      throw "winapp could not foreground/focus the controlled paste target: $($focusProbe.Output)"
     }
   }
   if (-not $pasteInputSkipped) {
-    $pasteInput = (& $winapp ui send-keys 'ctrl+v' -a $fixture.Id --target SmokePasteText --via send-input --json 2>&1 | Out-String).Trim()
-    $pasteExit = $LASTEXITCODE
-    if ($pasteExit -ne 0) {
-      if ($architecture -eq 'Arm64' -and $pasteInput -match 'no_interactive_desktop') {
+    $pasteProbe = Invoke-WinappCaptured -Arguments @('ui', 'send-keys', 'ctrl+v', '-a', [string]$fixture.Id, '--target', 'SmokePasteText', '--via', 'send-input', '--json')
+    if ($pasteProbe.ExitCode -ne 0) {
+      if ($architecture -eq 'Arm64' -and $pasteProbe.Output -match 'no_interactive_desktop') {
         $pasteInputSkipped = $true
         Write-Output 'WINDOWS_WINAPP_PASTE_INPUT_SKIPPED architecture=Arm64 reason=no_interactive_desktop'
       } else {
-        throw "winapp clipboard paste input failed against the controlled fixture: $pasteInput"
+        throw "winapp clipboard paste input failed against the controlled fixture: $($pasteProbe.Output)"
       }
     }
   }
