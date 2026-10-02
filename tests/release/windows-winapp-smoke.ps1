@@ -2,7 +2,9 @@ param(
   [Parameter(Mandatory = $true)]
   [string]$WinappPath,
   [Parameter(Mandatory = $true)]
-  [string]$FixturePath
+  [string]$FixturePath,
+  [Parameter(Mandatory = $true)]
+  [string]$ClipboardHelperPath
 )
 
 $ErrorActionPreference = 'Stop'
@@ -34,6 +36,10 @@ $fixtureExecutable = [System.IO.Path]::GetFullPath($FixturePath)
 if (-not (Test-Path -LiteralPath $fixtureExecutable -PathType Leaf)) {
   throw "Native winapp smoke fixture not found: $fixtureExecutable"
 }
+$clipboardHelper = [System.IO.Path]::GetFullPath($ClipboardHelperPath)
+if (-not (Test-Path -LiteralPath $clipboardHelper -PathType Leaf)) {
+  throw "Packaged clipboard helper not found: $clipboardHelper"
+}
 $fixture = Start-Process -FilePath $fixtureExecutable -PassThru
 try {
   $ready = $false
@@ -57,6 +63,22 @@ try {
   if ($LASTEXITCODE -ne 0) { throw "winapp get-value failed: $valueRaw" }
   $value = $valueRaw | ConvertFrom-Json
   if ($value.text -ne 'Equinox Windows Desktop') { throw "winapp value roundtrip mismatch: $valueRaw" }
+
+  $clipboardInput = Join-Path $root 'clipboard.txt'
+  [System.IO.File]::WriteAllText($clipboardInput, 'Equinox Clipboard Paste', (New-Object System.Text.UTF8Encoding($false)))
+  & powershell.exe -NoLogo -NoProfile -NonInteractive -Sta -ExecutionPolicy Bypass -File $clipboardHelper -Mode Set -InputPath $clipboardInput
+  if ($LASTEXITCODE -ne 0) { throw 'Windows clipboard helper set failed.' }
+  $clipboardRead = (& powershell.exe -NoLogo -NoProfile -NonInteractive -Sta -ExecutionPolicy Bypass -File $clipboardHelper -Mode Get 2>&1 | Out-String).TrimEnd()
+  if ($LASTEXITCODE -ne 0 -or $clipboardRead -ne 'Equinox Clipboard Paste') { throw "Windows clipboard helper roundtrip failed: $clipboardRead" }
+  & $winapp ui set-value SmokeText '' -a $fixture.Id --json | Out-Null
+  & $winapp ui send-keys 'ctrl+v' -a $fixture.Id --target SmokeText --via send-input --json | Out-Null
+  if ($LASTEXITCODE -ne 0) { throw 'winapp clipboard paste input failed against the controlled fixture.' }
+  $pasteRaw = (& $winapp ui get-value SmokeText -a $fixture.Id --json 2>&1 | Out-String).Trim()
+  if ($LASTEXITCODE -ne 0) { throw "winapp clipboard paste readback failed: $pasteRaw" }
+  $pasteValue = $pasteRaw | ConvertFrom-Json
+  if ($pasteValue.text -ne 'Equinox Clipboard Paste') { throw "winapp clipboard paste mismatch: $pasteRaw" }
+  & powershell.exe -NoLogo -NoProfile -NonInteractive -Sta -ExecutionPolicy Bypass -File $clipboardHelper -Mode Clear
+  if ($LASTEXITCODE -ne 0) { throw 'Windows clipboard helper clear failed.' }
 
   & $winapp ui invoke SmokeButton -a $fixture.Id --json | Out-Null
   if ($LASTEXITCODE -ne 0) { throw 'winapp invoke failed against the controlled fixture.' }

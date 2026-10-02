@@ -242,7 +242,7 @@ jobs:
           New-Item -ItemType Directory -Path $extract -Force | Out-Null
           & tar.exe -xf $artifact.FullName -C $extract 'release/runtime/winapp/winapp.exe' 'release/runtime/winapp/libHarfBuzzSharp.dll' 'release/runtime/winapp/libSkiaSharp.dll'
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          & powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File tests/release/windows-winapp-smoke.ps1 -WinappPath (Join-Path $extract 'release/runtime/winapp/winapp.exe') -FixturePath (Join-Path $fixtureOut 'EquinoxLocal.WinappSmokeFixture.exe')
+          & powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File tests/release/windows-winapp-smoke.ps1 -WinappPath (Join-Path $extract 'release/runtime/winapp/winapp.exe') -FixturePath (Join-Path $fixtureOut 'EquinoxLocal.WinappSmokeFixture.exe') -ClipboardHelperPath (Join-Path $extract 'release/equinox-local-windows-clipboard.ps1')
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
   windows-arm64-shared-core:
@@ -416,7 +416,7 @@ jobs:
           New-Item -ItemType Directory -Path $extract -Force | Out-Null
           & tar.exe -xf $artifact.FullName -C $extract 'release/runtime/winapp/winapp.exe' 'release/runtime/winapp/libHarfBuzzSharp.dll' 'release/runtime/winapp/libSkiaSharp.dll'
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          & powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File tests/release/windows-winapp-smoke.ps1 -WinappPath (Join-Path $extract 'release/runtime/winapp/winapp.exe') -FixturePath (Join-Path $fixtureOut 'EquinoxLocal.WinappSmokeFixture.exe')
+          & powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File tests/release/windows-winapp-smoke.ps1 -WinappPath (Join-Path $extract 'release/runtime/winapp/winapp.exe') -FixturePath (Join-Path $fixtureOut 'EquinoxLocal.WinappSmokeFixture.exe') -ClipboardHelperPath (Join-Path $extract 'release/equinox-local-windows-clipboard.ps1')
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Windows ARM64 real public-installer fresh-install acceptance

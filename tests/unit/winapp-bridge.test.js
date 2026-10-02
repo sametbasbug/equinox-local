@@ -17,6 +17,8 @@ function tinyPng() {
 function createHarness() {
   const calls = [];
   const mkdirs = [];
+  const files = new Map();
+  let clipboardText = "initial clipboard";
   const png = tinyPng();
   const bridge = createWinappBridge({
     platform: "win32",
@@ -29,17 +31,25 @@ function createHarness() {
     },
     fsImpl: {
       mkdir: async (...args) => mkdirs.push(args),
-      lstat: async () => ({ isFile: () => true, isSymbolicLink: () => false, size: png.length }),
-      readFile: async () => png,
+      lstat: async (filePath) => ({ isFile: () => true, isSymbolicLink: () => false, size: String(filePath).endsWith(".png") ? png.length : 100 }),
+      readFile: async (filePath) => String(filePath).endsWith(".png") ? png : files.get(filePath),
+      writeFile: async (filePath, data) => { files.set(filePath, Buffer.from(data).toString("utf8")); },
+      unlink: async (filePath) => { files.delete(filePath); },
     },
     resolveBinaryImpl: async () => "C:\\Equinox\\runtime\\winapp\\winapp.exe",
     execFileImpl: async (binary, args, options) => {
       calls.push({ binary, args, options });
       if (args[0] === "--version") return { stdout: "winapp 0.7.1\n", stderr: "" };
+      if (String(binary).toLowerCase().endsWith("powershell.exe")) {
+        const mode = args[args.indexOf("-Mode") + 1];
+        if (mode === "Get") return { stdout: clipboardText, stderr: "" };
+        if (mode === "Set") { clipboardText = files.get(args[args.indexOf("-InputPath") + 1]) ?? ""; return { stdout: "", stderr: "" }; }
+        if (mode === "Clear") { clipboardText = ""; return { stdout: "", stderr: "" }; }
+      }
       return { stdout: JSON.stringify({ ok: true, args }), stderr: "" };
     },
   });
-  return { bridge, calls, mkdirs, png };
+  return { bridge, calls, mkdirs, png, files, clipboard: () => clipboardText };
 }
 
 test("winapp bridge exposes a practical Windows UI surface instead of a crippled semantic subset", async () => {
@@ -95,6 +105,34 @@ test("winapp screenshot with explicit output remains file-only instead of becomi
   const result = await bridge.callTool("screenshot", { app: "Notepad", output: "C:\\Users\\Test\\Desktop\\capture.png" });
   assert.equal(result.content.length, 1);
   assert.equal(result.content[0].type, "text");
+});
+
+test("winapp clipboard get/set/clear uses only the fixed Windows helper boundary", async () => {
+  const { bridge, calls, clipboard, files } = createHarness();
+  const got = await bridge.callTool("clipboard", { action: "get" });
+  assert.match(got.content[0].text, /initial clipboard/u);
+  await bridge.callTool("clipboard", { action: "set", text: "hello ✓" });
+  assert.equal(clipboard(), "hello ✓");
+  assert.equal(files.size, 0);
+  const helperCall = calls.find((call) => String(call.binary).toLowerCase().endsWith("powershell.exe") && call.args.includes("Set"));
+  assert.ok(helperCall);
+  assert.deepEqual(helperCall.args.slice(0, 6), ["-NoLogo", "-NoProfile", "-NonInteractive", "-Sta", "-ExecutionPolicy", "Bypass"]);
+  assert.match(helperCall.args[helperCall.args.indexOf("-File") + 1], /equinox-local-windows-clipboard\.ps1$/u);
+  await bridge.callTool("clipboard", { action: "clear" });
+  assert.equal(clipboard(), "");
+  await assert.rejects(bridge.callTool("clipboard", { action: "set" }), /requires text/u);
+  await assert.rejects(bridge.callTool("clipboard", { action: "get", text: "nope" }), /valid only for set/u);
+});
+
+test("winapp paste sets clipboard text then delegates Ctrl+V targeting to native winapp", async () => {
+  const { bridge, calls, clipboard } = createHarness();
+  const result = await bridge.callTool("paste", { text: "paste me", pid: 4321, target: "SmokeText", via: "send-input", workflow_id: "wf-paste" });
+  assert.equal(clipboard(), "paste me");
+  const invocation = calls.at(-1);
+  assert.match(String(invocation.binary), /winapp\.exe$/u);
+  assert.deepEqual(invocation.args, ["ui", "send-keys", "ctrl+v", "-a", "4321", "--target", "SmokeText", "--via", "send-input", "--json"]);
+  assert.equal(invocation.options.env.WINAPP_UI_WORKFLOW_ID, "wf-paste");
+  assert.match(result.content[0].text, /ctrl\+v/u);
 });
 
 test("winapp bridge maps native wheel scrolling without adding duplicate semantic validation", async () => {
