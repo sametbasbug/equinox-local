@@ -70,15 +70,27 @@ try {
   if ($LASTEXITCODE -ne 0) { throw 'Windows clipboard helper set failed.' }
   $clipboardRead = (& powershell.exe -NoLogo -NoProfile -NonInteractive -Sta -ExecutionPolicy Bypass -File $clipboardHelper -Mode Get 2>&1 | Out-String).TrimEnd()
   if ($LASTEXITCODE -ne 0 -or $clipboardRead -ne 'Equinox Clipboard Paste') { throw "Windows clipboard helper roundtrip failed: $clipboardRead" }
-  $pasteInput = (& $winapp ui send-keys 'ctrl+v' -a $fixture.Id --target SmokePasteText --via send-input --json 2>&1 | Out-String).Trim()
-  $pasteExit = $LASTEXITCODE
   $pasteInputSkipped = $false
-  if ($pasteExit -ne 0) {
-    if ($architecture -eq 'Arm64' -and $pasteInput -match 'no_interactive_desktop') {
+  $focusInput = (& $winapp ui focus SmokePasteText -a $fixture.Id --json 2>&1 | Out-String).Trim()
+  $focusExit = $LASTEXITCODE
+  if ($focusExit -ne 0) {
+    if ($architecture -eq 'Arm64' -and $focusInput -match 'no_interactive_desktop') {
       $pasteInputSkipped = $true
       Write-Output 'WINDOWS_WINAPP_PASTE_INPUT_SKIPPED architecture=Arm64 reason=no_interactive_desktop'
     } else {
-      throw "winapp clipboard paste input failed against the controlled fixture: $pasteInput"
+      throw "winapp could not foreground/focus the controlled paste target: $focusInput"
+    }
+  }
+  if (-not $pasteInputSkipped) {
+    $pasteInput = (& $winapp ui send-keys 'ctrl+v' -a $fixture.Id --target SmokePasteText --via send-input --json 2>&1 | Out-String).Trim()
+    $pasteExit = $LASTEXITCODE
+    if ($pasteExit -ne 0) {
+      if ($architecture -eq 'Arm64' -and $pasteInput -match 'no_interactive_desktop') {
+        $pasteInputSkipped = $true
+        Write-Output 'WINDOWS_WINAPP_PASTE_INPUT_SKIPPED architecture=Arm64 reason=no_interactive_desktop'
+      } else {
+        throw "winapp clipboard paste input failed against the controlled fixture: $pasteInput"
+      }
     }
   }
   if (-not $pasteInputSkipped) {

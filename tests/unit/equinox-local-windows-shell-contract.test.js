@@ -384,6 +384,10 @@ test("Windows shell update handoff acknowledges before draining the runtime and 
   const updateHarnessSource = await fs.readFile(path.join(ROOT, "tests", "windows", "EquinoxLocal.WindowsShell.UpdateHandoffHarness", "Program.cs"), "utf8");
   assert.match(updateHarnessSource, /helper\?\.WaitForExit\(5_000\)/u);
   assert.match(updateHarnessSource, /runtime\?\.WaitForExit\(5_000\)/u);
+  assert.match(updateHarnessSource, /DeleteOwnedFixtureReleaseAsync\(releaseDir\)/u);
+  assert.match(updateHarnessSource, /attempt < 20/u);
+  assert.match(updateHarnessSource, /Task\.Delay\(100\)/u);
+  assert.match(updateHarnessSource, /Could not clean exact update-handoff fixture release/u);
   assert.match(updateHarnessSource, /Directory\.EnumerateFileSystemEntries\(releasesRoot\)\.Any\(\)/u);
   assert.match(updateHarnessSource, /Directory\.EnumerateFileSystemEntries\(installRoot\)\.Any\(\)/u);
   const launchIndex = coordinator.indexOf("ManagedUpdateHandoff.Launch(version)");
