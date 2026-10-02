@@ -52,7 +52,7 @@ try {
   if (-not $ready) { throw 'winapp could not discover the controlled WinForms fixture window.' }
 
   $inspect = (& $winapp ui inspect -a $fixture.Id --depth 5 --json 2>&1 | Out-String).Trim()
-  if ($LASTEXITCODE -ne 0 -or $inspect -notmatch 'SmokeText' -or $inspect -notmatch 'SmokeButton') {
+  if ($LASTEXITCODE -ne 0 -or $inspect -notmatch 'SmokeText' -or $inspect -notmatch 'SmokePasteText' -or $inspect -notmatch 'SmokeButton') {
     throw "winapp inspect did not expose the controlled UIA fixture: $inspect"
   }
 
@@ -70,10 +70,9 @@ try {
   if ($LASTEXITCODE -ne 0) { throw 'Windows clipboard helper set failed.' }
   $clipboardRead = (& powershell.exe -NoLogo -NoProfile -NonInteractive -Sta -ExecutionPolicy Bypass -File $clipboardHelper -Mode Get 2>&1 | Out-String).TrimEnd()
   if ($LASTEXITCODE -ne 0 -or $clipboardRead -ne 'Equinox Clipboard Paste') { throw "Windows clipboard helper roundtrip failed: $clipboardRead" }
-  & $winapp ui set-value SmokeText '' -a $fixture.Id --json | Out-Null
-  & $winapp ui send-keys 'ctrl+v' -a $fixture.Id --target SmokeText --via send-input --json | Out-Null
-  if ($LASTEXITCODE -ne 0) { throw 'winapp clipboard paste input failed against the controlled fixture.' }
-  $pasteRaw = (& $winapp ui get-value SmokeText -a $fixture.Id --json 2>&1 | Out-String).Trim()
+  $pasteInput = (& $winapp ui send-keys 'ctrl+v' -a $fixture.Id --target SmokePasteText --json 2>&1 | Out-String).Trim()
+  if ($LASTEXITCODE -ne 0) { throw "winapp clipboard paste input failed against the controlled fixture: $pasteInput" }
+  $pasteRaw = (& $winapp ui get-value SmokePasteText -a $fixture.Id --json 2>&1 | Out-String).Trim()
   if ($LASTEXITCODE -ne 0) { throw "winapp clipboard paste readback failed: $pasteRaw" }
   $pasteValue = $pasteRaw | ConvertFrom-Json
   if ($pasteValue.text -ne 'Equinox Clipboard Paste') { throw "winapp clipboard paste mismatch: $pasteRaw" }
