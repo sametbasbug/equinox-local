@@ -9,8 +9,10 @@ import { collectManagedReleaseSourceFiles } from "./package-managed-release.mjs"
 import {
   EQUINOX_LOCAL_NODE_VERSION,
   EQUINOX_LOCAL_TUNNEL_CLIENT_VERSION,
+  EQUINOX_LOCAL_WINAPP_VERSION,
   NODE_DISTRIBUTIONS,
   TUNNEL_CLIENT_DISTRIBUTIONS,
+  WINAPP_DISTRIBUTIONS,
 } from "../../src/equinox-local-runtime-versions.js";
 import { EQUINOX_LOCAL_VERSION } from "../../src/equinox-local-version.js";
 import { validateFirstInstallRelease } from "../../src/equinox-local-first-install.js";
@@ -205,6 +207,34 @@ async function installPinnedWindowsTunnel(transaction, releaseDir, fetchImpl, ta
   if (!version.stdout.trim().startsWith(`${EQUINOX_LOCAL_TUNNEL_CLIENT_VERSION}+`)) throw new Error("Pinned Windows tunnel-client version mismatch.");
 }
 
+async function installPinnedWindowsWinapp(transaction, rootDir, releaseDir, fetchImpl, target) {
+  const distribution = WINAPP_DISTRIBUTIONS[target];
+  if (!distribution) throw new Error(`Pinned Microsoft winapp distribution is unavailable for ${target}.`);
+  const archive = path.join(transaction, distribution.filename);
+  const extracted = path.join(transaction, "winapp-extracted");
+  await downloadVerified(`https://github.com/microsoft/winappCli/releases/download/v${EQUINOX_LOCAL_WINAPP_VERSION}/${distribution.filename}`, archive, distribution.sha256, { fetchImpl });
+  await expandTrustedPinnedZip(archive, extracted);
+  await assertNormalTree(extracted);
+  const expected = ["libHarfBuzzSharp.dll", "libHarfBuzzSharp.pdb", "libSkiaSharp.dll", "libSkiaSharp.pdb", "winapp.exe", "winapp.pdb"].sort();
+  const actual = (await fs.readdir(extracted)).sort();
+  if (actual.length !== expected.length || actual.some((value, index) => value !== expected[index])) {
+    throw new Error("Pinned Microsoft winapp archive contents drifted.");
+  }
+  const destination = path.join(releaseDir, "runtime", "winapp");
+  await fs.mkdir(destination, { recursive: true });
+  for (const name of ["winapp.exe", "libHarfBuzzSharp.dll", "libSkiaSharp.dll"]) {
+    await fs.copyFile(path.join(extracted, name), path.join(destination, name));
+  }
+  await fs.copyFile(path.join(rootDir, "third_party", "microsoft-winappCli", "LICENSE"), path.join(destination, "LICENSE"));
+  const machine = await portableExecutableMachine(path.join(destination, "winapp.exe"));
+  const expectedMachine = WINDOWS_TARGETS[target].peMachine;
+  if (machine !== expectedMachine) throw new Error(`Microsoft winapp architecture mismatch for ${target}: 0x${machine.toString(16)}.`);
+  const version = await execFile(path.join(destination, "winapp.exe"), ["--version"], { timeout: 10_000, windowsHide: true });
+  if (!`${version.stdout ?? ""}${version.stderr ?? ""}`.includes(EQUINOX_LOCAL_WINAPP_VERSION)) {
+    throw new Error("Pinned Microsoft winapp version mismatch.");
+  }
+}
+
 async function copyPublishedShell(rootDir, releaseDir, shellPublishDir) {
   const source = path.resolve(rootDir, shellPublishDir);
   for (const required of REQUIRED_SHELL_FILES) {
@@ -301,6 +331,7 @@ export async function packageManagedEquinoxWindowsRelease({
     const sourceFileCount = await copyReleaseSources(rootDir, releaseDir);
     await installPinnedWindowsNode(transaction, releaseDir, fetchImpl, target);
     await installPinnedWindowsTunnel(transaction, releaseDir, fetchImpl, target);
+    await installPinnedWindowsWinapp(transaction, rootDir, releaseDir, fetchImpl, target);
     await copyPublishedShell(rootDir, releaseDir, resolvedShellPublishDir);
     await compileBrowserLauncher(rootDir, releaseDir, contract);
     await fs.writeFile(path.join(releaseDir, "release.json"), `${JSON.stringify({

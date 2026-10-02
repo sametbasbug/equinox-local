@@ -1,6 +1,8 @@
 export const EQUINOX_LOCAL_NODE_VERSION = "26.10.0";
 export const EQUINOX_LOCAL_TUNNEL_CLIENT_VERSION = "0.0.15";
 export const EQUINOX_LOCAL_PEEKABOO_VERSION = "4.5.0";
+export const EQUINOX_LOCAL_WINAPP_VERSION = "0.7.1";
+export const EQUINOX_LOCAL_BUNDLED_WINAPP_SINCE_VERSION = "5.2.1";
 export const EQUINOX_LOCAL_BUNDLED_PEEKABOO_SINCE_VERSION = "4.4.0";
 export const EQUINOX_LOCAL_PEEKABOO_TEAM_ID = "FWJYW4S8P8";
 
@@ -9,6 +11,19 @@ export const PEEKABOO_DISTRIBUTION = Object.freeze({
   sha256: "10b409423e5540235c59ef6c3c39d31e236ac528f8b7e116b9ed5a086a1c454e",
   archiveRoot: "peekaboo-macos-universal",
   architectures: Object.freeze(["arm64", "x86_64"]),
+});
+
+export const WINAPP_DISTRIBUTIONS = Object.freeze({
+  "win32-arm64": Object.freeze({
+    filename: `winappcli-arm64.zip`,
+    sha256: "4ed1edcc6d4a1a7c75bb70dbdbf77a69b3c650823c7e8061aa66f8adb1017f2e",
+    fileArchitecture: "arm64",
+  }),
+  "win32-x64": Object.freeze({
+    filename: `winappcli-x64.zip`,
+    sha256: "d925d1e32cdc320b6d271f653fd2cd3c05b5d7558deb20d1b548bead77900fcf",
+    fileArchitecture: "x86_64",
+  }),
 });
 
 export const NODE_DISTRIBUTIONS = Object.freeze({

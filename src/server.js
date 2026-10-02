@@ -67,6 +67,7 @@ import {
   isPeekabooControlCenterReady,
   PEEKABOO_ALLOWED_TOOLS,
 } from "./peekaboo-bridge.js";
+import { createWinappBridge } from "./winapp-bridge.js";
 import {
   createRuntimeObservability,
 } from "./runtime-observability.js";
@@ -2875,6 +2876,9 @@ const peekabooBridge = createPeekabooBridge({
   listRoots: listProjectClientRoots,
   onEvent: recordRuntimeEvent,
 });
+const winappBridge = createWinappBridge();
+const desktopBridge = process.platform === "win32" ? winappBridge : peekabooBridge;
+const desktopLabel = process.platform === "win32" ? "Windows desktop" : "macOS desktop";
 
 let equinoxLocalControlApi = null;
 
@@ -3539,7 +3543,8 @@ const desktopCapabilityProvider = registerDesktopGatewayTools({
   registerRawTool,
   z,
   agentAccess: AGENT_ACCESS,
-  peekabooBridge,
+  desktopBridge,
+  desktopLabel,
   withMutationLocks,
   normalizeChromeToolResult,
   extractTextContent,

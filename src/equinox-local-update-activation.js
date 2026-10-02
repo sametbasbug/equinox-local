@@ -6,7 +6,7 @@ import { promisify } from "node:util";
 
 import { readEquinoxLocalCurrentVersionPointer, writeEquinoxLocalCurrentVersionPointer } from "./equinox-local-current-release.js";
 import { synchronizeEquinoxLocalAppHostForRelease } from "./equinox-local-native-app-host.js";
-import { EQUINOX_LOCAL_BUNDLED_PEEKABOO_SINCE_VERSION } from "./equinox-local-runtime-versions.js";
+import { EQUINOX_LOCAL_BUNDLED_PEEKABOO_SINCE_VERSION, EQUINOX_LOCAL_BUNDLED_WINAPP_SINCE_VERSION } from "./equinox-local-runtime-versions.js";
 import { compareEquinoxVersions, equinoxLocalUpdateTarget, parseEquinoxVersion } from "./equinox-local-updater.js";
 import {
   assertWindowsNativeMessagingHostOwnership,
@@ -91,6 +91,13 @@ async function assertReleaseDirectory(installation, version) {
     requiredExecutables.push(
       pathApi.join("runtime", "peekaboo", "peekaboo"),
       pathApi.join("runtime", "peekaboo", "libswiftCompatibilitySpan.dylib"),
+    );
+  }
+  if (windows && compareEquinoxVersions(version, EQUINOX_LOCAL_BUNDLED_WINAPP_SINCE_VERSION) >= 0) {
+    requiredExecutables.push(
+      pathApi.join("runtime", "winapp", "winapp.exe"),
+      pathApi.join("runtime", "winapp", "libHarfBuzzSharp.dll"),
+      pathApi.join("runtime", "winapp", "libSkiaSharp.dll"),
     );
   }
   for (const relative of requiredExecutables) {
