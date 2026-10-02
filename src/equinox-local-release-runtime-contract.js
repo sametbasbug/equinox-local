@@ -1,6 +1,6 @@
 import path from "node:path";
 
-import { EQUINOX_LOCAL_BUNDLED_PEEKABOO_SINCE_VERSION } from "./equinox-local-runtime-versions.js";
+import { EQUINOX_LOCAL_BUNDLED_PEEKABOO_SINCE_VERSION, EQUINOX_LOCAL_BUNDLED_WINAPP_SINCE_VERSION } from "./equinox-local-runtime-versions.js";
 import { compareEquinoxVersions, parseEquinoxVersion } from "./equinox-local-updater.js";
 
 const WINDOWS_TARGET_PATTERN = /^win32-(?:arm64|x64)$/u;
@@ -20,11 +20,19 @@ const DARWIN_PEEKABOO_DOCUMENTS = Object.freeze([
   path.join("runtime", "peekaboo", "README.md"),
   path.join("runtime", "peekaboo", "VERSION"),
 ]);
-const WINDOWS_EXECUTABLES = Object.freeze([
+const WINDOWS_BASE_EXECUTABLES = Object.freeze([
   path.join("runtime", "node", "bin", "node.exe"),
   path.join("runtime", "tunnel", "tunnel-client.exe"),
   path.join("runtime", "tunnel", "cloudflared.exe"),
   path.join("runtime", "browser", "equinox-browser-native-host.exe"),
+]);
+const WINDOWS_WINAPP_EXECUTABLES = Object.freeze([
+  path.join("runtime", "winapp", "winapp.exe"),
+  path.join("runtime", "winapp", "libHarfBuzzSharp.dll"),
+  path.join("runtime", "winapp", "libSkiaSharp.dll"),
+]);
+const WINDOWS_WINAPP_DOCUMENTS = Object.freeze([
+  path.join("runtime", "winapp", "LICENSE"),
 ]);
 const SHARED_RUNTIME_DOCUMENTS = Object.freeze([
   path.join("runtime", "tunnel", "LICENSE"),
@@ -81,14 +89,22 @@ export function equinoxLocalReleaseRuntimeContract({ target, version } = {}) {
     });
   }
   if (WINDOWS_TARGET_PATTERN.test(target)) {
+    const winapp = compareEquinoxVersions(normalizedVersion, EQUINOX_LOCAL_BUNDLED_WINAPP_SINCE_VERSION) >= 0;
     return Object.freeze({
       target,
       version: normalizedVersion,
       platform: "win32",
       executableModeRequired: false,
       bundledPeekaboo: false,
-      runtimeExecutables: WINDOWS_EXECUTABLES,
-      runtimeDocuments: SHARED_RUNTIME_DOCUMENTS,
+      bundledWinapp: winapp,
+      runtimeExecutables: Object.freeze([
+        ...WINDOWS_BASE_EXECUTABLES,
+        ...(winapp ? WINDOWS_WINAPP_EXECUTABLES : []),
+      ]),
+      runtimeDocuments: Object.freeze([
+        ...SHARED_RUNTIME_DOCUMENTS,
+        ...(winapp ? WINDOWS_WINAPP_DOCUMENTS : []),
+      ]),
       requiredReleaseFiles: WINDOWS_RELEASE_FILES,
       nativeShellFiles: WINDOWS_SHELL_FILES,
       nativeAppKind: "windows-shell",

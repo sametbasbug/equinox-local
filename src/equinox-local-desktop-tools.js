@@ -1,4 +1,14 @@
 function formatDesktopStatus(status) {
+  if (status?.engine === "winapp") {
+    return [
+      `Microsoft winapp: ${status.version}`,
+      `Binary: ${status.binary}`,
+      `Windows desktop engine: ${status.active ? "AKTİF" : "pasif"}`,
+      `Equinox Local allowlist: ${status.allowedToolCount} araç`,
+      `Araçlar: ${status.allowedTools.join(", ")}`,
+      status.compatibility?.warnings?.length ? `Not: ${status.compatibility.warnings.join(" | ")}` : null,
+    ].filter(Boolean).join("\n\n");
+  }
   return [
     `Peekaboo: ${status.version}`,
     `Binary: ${status.binary}`,
@@ -19,8 +29,8 @@ function formatDesktopStatus(status) {
 const DESKTOP_BRIDGE_OPERATIONS = Object.freeze({
   status: Object.freeze({
     name: "status",
-    title: "macOS desktop bridge status",
-    description: "Show Peekaboo version, compatibility, permissions, connection state and Equinox Local desktop allowlist without performing UI actions.",
+    title: "Desktop engine status",
+    description: "Show the platform desktop engine version, compatibility and Equinox Local allowlist without performing UI actions.",
     readOnly: true,
     destructive: false,
     idempotent: true,
@@ -30,7 +40,7 @@ const DESKTOP_BRIDGE_OPERATIONS = Object.freeze({
   refresh: Object.freeze({
     name: "refresh",
     title: "Refresh desktop tool catalog",
-    description: "Reload the bounded Peekaboo MCP tool catalog without restarting the bridge or changing foreground UI.",
+    description: "Reload the bounded platform desktop tool catalog without changing foreground UI.",
     readOnly: false,
     destructive: false,
     idempotent: true,
@@ -40,7 +50,7 @@ const DESKTOP_BRIDGE_OPERATIONS = Object.freeze({
   restart: Object.freeze({
     name: "restart",
     title: "Restart desktop bridge",
-    description: "Restart only the Peekaboo MCP subprocess and reload its safe tool catalog. Does not restart Equinox Local or applications.",
+    description: "Restart or refresh only the platform desktop engine and reload its bounded tool catalog. Does not restart Equinox Local or applications.",
     readOnly: false,
     destructive: false,
     idempotent: false,
@@ -66,7 +76,9 @@ export function registerDesktopGatewayTools({
   registerRawTool,
   z,
   agentAccess,
-  peekabooBridge,
+  desktopBridge = null,
+  peekabooBridge = null,
+  desktopLabel = null,
   withMutationLocks,
   normalizeChromeToolResult,
   extractTextContent,
@@ -75,6 +87,9 @@ export function registerDesktopGatewayTools({
   assertMutationAllowed = () => {},
   turnBudgetController = null,
 } = {}) {
+  const bridge = desktopBridge ?? peekabooBridge;
+  if (!bridge) throw new Error("Desktop bridge is required.");
+  const resolvedDesktopLabel = desktopLabel ?? bridge.label ?? "Desktop";
   const desktopTextResult = (text) => ({
     ...textResult(text),
     structuredContent: { text },
@@ -83,7 +98,7 @@ export function registerDesktopGatewayTools({
   async function listDesktopOperations() {
     const bridgeOperations = Object.values(DESKTOP_BRIDGE_OPERATIONS);
     if (!agentAccess.desktop) return bridgeOperations;
-    const tools = await peekabooBridge.listTools(false);
+    const tools = await bridge.listTools(false);
     return [...bridgeOperations, ...tools.map(publicDesktopTool)];
   }
 
@@ -96,7 +111,7 @@ export function registerDesktopGatewayTools({
       const operations = await listDesktopOperations();
       return {
         domain: "desktop",
-        label: "macOS desktop",
+        label: resolvedDesktopLabel,
         count: operations.length,
         operations: operations.map(({ inputSchema, ...summary }) => summary),
       };
@@ -108,7 +123,7 @@ export function registerDesktopGatewayTools({
       if (!agentAccess.desktop) {
         throw new Error("Desktop automation access is disabled in Control Center.");
       }
-      const tools = await peekabooBridge.listTools(false);
+      const tools = await bridge.listTools(false);
       const tool = tools.find((candidate) => candidate.name === operation);
       if (!tool) throw new Error(`desktop capability kataloğunda operation bulunamadı: ${operation}`);
       return { domain: "desktop", ...publicDesktopTool(tool) };
@@ -119,14 +134,14 @@ export function registerDesktopGatewayTools({
     "desktop_call",
     {
       description:
-        "Background-safe macOS desktop operation çağırır. Önce capabilities({domain: \"desktop\"}) ile operation'ları ve capabilities({domain: \"desktop\", operation: \"...\"}) ile güncel şemayı keşfet. status/refresh/restart bridge operation'larıdır; diğer operation'lar güvenli Peekaboo allowlist'ine gider. Web içeriği için browser_call tercih edilir.",
+        "Platform desktop operation çağırır. Önce capabilities({domain: \"desktop\"}) ile operation'ları ve capabilities({domain: \"desktop\", operation: \"...\"}) ile güncel şemayı keşfet. macOS Peekaboo, Windows ise pinned Microsoft winapp UI subset kullanır. Web içeriği için browser_call tercih edilir.",
       inputSchema: {
         operation: z.string().min(1).max(160).describe("Çağrılacak desktop operation adı"),
         arguments: z.record(z.string(), z.unknown()).default({}).describe("Seçilen operation'ın güncel giriş şemasına uyan argümanlar"),
       },
       outputSchema: { text: z.string() },
       annotations: {
-        title: "macOS desktop operation çağır",
+        title: "Desktop operation çağır",
         readOnlyHint: false,
         destructiveHint: true,
         idempotentHint: false,
@@ -142,26 +157,26 @@ export function registerDesktopGatewayTools({
       try {
         if (operation === "status") {
           if (Object.keys(operationArguments ?? {}).length > 0) throw new Error("desktop status arguments kabul etmez.");
-          result = desktopTextResult(formatDesktopStatus(await peekabooBridge.status()));
+          result = desktopTextResult(formatDesktopStatus(await bridge.status()));
         } else if (!agentAccess.desktop) {
           throw new Error("Desktop automation access is disabled in Control Center.");
         } else if (operation === "refresh") {
           if (Object.keys(operationArguments ?? {}).length > 0) throw new Error("desktop refresh arguments kabul etmez.");
           assertMutationAllowed("desktop.refresh");
-          const tools = await peekabooBridge.listTools(true);
-          result = desktopTextResult(`Peekaboo tool catalog refreshed: ${tools.length} safe tools.`);
+          const tools = await bridge.listTools(true);
+          result = desktopTextResult(`${resolvedDesktopLabel} tool catalog refreshed: ${tools.length} bounded tools.`);
         } else if (operation === "restart") {
           if (Object.keys(operationArguments ?? {}).length > 0) throw new Error("desktop restart arguments kabul etmez.");
           assertMutationAllowed("desktop.restart");
           result = await withMutationLocks(["desktop"], async () => {
-            await peekabooBridge.restart();
-            const tools = await peekabooBridge.listTools(true);
-            return desktopTextResult(`Peekaboo MCP bridge restarted: ${tools.length} safe tools available.`);
+            await bridge.restart();
+            const tools = await bridge.listTools(true);
+            return desktopTextResult(`${resolvedDesktopLabel} engine refreshed: ${tools.length} bounded tools available.`);
           });
         } else {
           assertMutationAllowed(`desktop.${operation}`);
           result = await withMutationLocks(["desktop"], async () => {
-            const toolResult = await peekabooBridge.callTool(operation, operationArguments);
+            const toolResult = await bridge.callTool(operation, operationArguments);
             const normalized = normalizeChromeToolResult(toolResult);
             return {
               ...normalized,

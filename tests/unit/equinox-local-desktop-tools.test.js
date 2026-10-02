@@ -109,7 +109,7 @@ test("desktop refresh and restart are explicit operations; mutations respect pau
   const harness = createHarness();
   const registration = harness.rawRegistrations.get("desktop_call");
   const refreshed = await registration.handler({ operation: "refresh", arguments: {} });
-  assert.match(refreshed.content[0].text, /refreshed: 1 safe tools/u);
+  assert.match(refreshed.content[0].text, /refreshed: 1 bounded tools/u);
   assert.deepEqual(refreshed.structuredContent, { text: refreshed.content[0].text });
   assert.deepEqual(harness.listCalls, [true]);
   assert.equal(harness.restartCount, 0);

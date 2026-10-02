@@ -20,6 +20,8 @@ function textResult(text = "ok") {
   return { content: [{ type: "text", text }] };
 }
 
+const TEST_SETTINGS_PATH = path.join(os.tmpdir(), `equinox-turn-budget-defaults-${process.pid}.json`);
+
 test("turn budget defaults and stages are bounded", () => {
   assert.deepEqual(__test.normalizeSettings(), { enabled: true, cutoffMinutes: 22, fallbackResetMinutes: 5, autoContinueMaxHops: 10 });
   assert.equal(__test.stageForElapsed(17 * 60_000, 22), "running");
@@ -58,6 +60,7 @@ test("browser assistant turn identity resets the budget and start notice only on
   let turn = "turn-a";
   let userEpoch = "user-a";
   const controller = createTurnBudgetController({
+    settingsPath: TEST_SETTINGS_PATH,
     now: () => now,
     resolveTurnIdentity: async () => ({ browserContext: "user", conversationId: "chat-1", userEpoch, assistantTurnKey: turn, title: "Task" }),
   });
@@ -99,6 +102,7 @@ test("browser assistant turn identity resets the budget and start notice only on
 test("controller emits checkpoint, finalize and overdue notices once", async () => {
   let now = 0;
   const controller = createTurnBudgetController({
+    settingsPath: TEST_SETTINGS_PATH,
     now: () => now,
     resolveTurnIdentity: async () => ({ browserContext: "user", conversationId: "chat-1", assistantTurnKey: "turn-a" }),
   });
@@ -127,6 +131,7 @@ test("controller emits checkpoint, finalize and overdue notices once", async () 
 test("runtime blocking waits are clamped only inside finalization window", async () => {
   let now = 0;
   const controller = createTurnBudgetController({
+    settingsPath: TEST_SETTINGS_PATH,
     now: () => now,
     resolveTurnIdentity: async () => ({ browserContext: "user", conversationId: "chat-1", assistantTurnKey: "turn-a" }),
   });
@@ -149,6 +154,7 @@ test("runtime blocking waits are clamped only inside finalization window", async
 test("browser turn identity can use userEpoch before assistantTurnKey exists", async () => {
   let now = 0;
   const controller = createTurnBudgetController({
+    settingsPath: TEST_SETTINGS_PATH,
     now: () => now,
     resolveTurnIdentity: async () => ({
       browserContext: "user",
@@ -192,6 +198,7 @@ test("passive refresh clears a finished browser turn without starting the next t
   let now = 0;
   let probe = { browserContext: "user", conversationId: "chat-1", userEpoch: "user-a", assistantTurnKey: "turn-a", title: "Task" };
   const controller = createTurnBudgetController({
+    settingsPath: TEST_SETTINGS_PATH,
     now: () => now,
     resolveTurnIdentity: async () => probe,
   });
