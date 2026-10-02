@@ -110,9 +110,9 @@ jobs:
           architecture: x64
 
       - name: Set up .NET SDK
-        uses: actions/setup-dotnet@v5
+        uses: actions/setup-dotnet@v6
         with:
-          dotnet-version: 8.0.x
+          dotnet-version: 10.0.x
 
       - name: Build Windows native shell
         run: dotnet build native/windows/EquinoxLocal.WindowsShell/EquinoxLocal.WindowsShell.csproj --configuration Release -p:Platform=x64
@@ -201,9 +201,9 @@ jobs:
         run: npm ci
 
       - name: Set up .NET SDK
-        uses: actions/setup-dotnet@v5
+        uses: actions/setup-dotnet@v6
         with:
-          dotnet-version: 8.0.x
+          dotnet-version: 10.0.x
 
       - name: Publish package shell payload
         run: dotnet publish native/windows/EquinoxLocal.WindowsShell/EquinoxLocal.WindowsShell.csproj --configuration Release --runtime win-x64 --self-contained true -p:Platform=x64 --output artifacts/windows-shell/win-x64
@@ -336,9 +336,9 @@ jobs:
         run: node tests/release/windows-native-messaging-smoke.mjs
 
       - name: Set up .NET SDK
-        uses: actions/setup-dotnet@v5
+        uses: actions/setup-dotnet@v6
         with:
-          dotnet-version: 8.0.x
+          dotnet-version: 10.0.x
 
       - name: Publish Windows ARM64 native shell
         run: dotnet publish native/windows/EquinoxLocal.WindowsShell/EquinoxLocal.WindowsShell.csproj --configuration Release --runtime win-arm64 --self-contained true -p:Platform=ARM64 --output artifacts/windows-shell/win-arm64

@@ -17,7 +17,7 @@ test("Windows shell is a thin x64/ARM64 WPF/WebView2 host for the shared Control
     source("MainWindow.xaml.cs"),
   ]);
 
-  assert.match(project, /<TargetFramework>net8\.0-windows10\.0\.19041\.0<\/TargetFramework>/u);
+  assert.match(project, /<TargetFramework>net10\.0-windows10\.0\.19041\.0<\/TargetFramework>/u);
   assert.match(project, /<UseWPF>true<\/UseWPF>/u);
   assert.match(project, /<UseWindowsForms>true<\/UseWindowsForms>/u);
   assert.match(project, /<Platforms>x64;ARM64<\/Platforms>/u);
@@ -305,8 +305,8 @@ test("public Windows CI restores and builds the native x64 shell", async () => {
   assert.ok(ci.includes('Windows managed activation rotates pointer stable shell and Native Messaging together'));
   assert.ok(ci.includes('Windows managed activation forced health failure restores pointer stable shell and Native Messaging'));
   assert.ok(ci.includes('tests/release/equinox-local-update-activation.test.js'));
-  assert.match(ci, /actions\/setup-dotnet@v5/u);
-  assert.match(ci, /dotnet-version:\s*8\.0\.x/u);
+  assert.match(ci, /actions\/setup-dotnet@v6/u);
+  assert.match(ci, /dotnet-version:\s*10\.0\.x/u);
   assert.match(ci, /dotnet build native\/windows\/EquinoxLocal\.WindowsShell\/EquinoxLocal\.WindowsShell\.csproj/u);
   const runtimeHarness = await fs.readFile(path.join(ROOT, "tests", "windows", "EquinoxLocal.WindowsShell.RuntimeHarness", "EquinoxLocal.WindowsShell.RuntimeHarness.csproj"), "utf8");
   assert.match(runtimeHarness, /WindowsManagedReleaseLocator\.cs/u);
