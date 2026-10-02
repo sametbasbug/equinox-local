@@ -126,13 +126,16 @@ test("winapp clipboard get/set/clear uses only the fixed Windows helper boundary
 
 test("winapp paste sets clipboard text then delegates Ctrl+V targeting to native winapp", async () => {
   const { bridge, calls, clipboard } = createHarness();
-  const result = await bridge.callTool("paste", { text: "paste me", pid: 4321, target: "SmokeText", via: "send-input", workflow_id: "wf-paste" });
+  const result = await bridge.callTool("paste", { text: "paste me", pid: 4321, target: "SmokeText", workflow_id: "wf-paste" });
   assert.equal(clipboard(), "paste me");
-  const invocation = calls.at(-1);
+  let invocation = calls.at(-1);
   assert.match(String(invocation.binary), /winapp\.exe$/u);
   assert.deepEqual(invocation.args, ["ui", "send-keys", "ctrl+v", "-a", "4321", "--target", "SmokeText", "--via", "send-input", "--json"]);
   assert.equal(invocation.options.env.WINAPP_UI_WORKFLOW_ID, "wf-paste");
   assert.match(result.content[0].text, /ctrl\+v/u);
+  await bridge.callTool("paste", { text: "classic fallback", app: "Notepad", via: "post-message" });
+  invocation = calls.at(-1);
+  assert.deepEqual(invocation.args, ["ui", "send-keys", "ctrl+v", "-a", "Notepad", "--via", "post-message", "--json"]);
 });
 
 test("winapp bridge maps native wheel scrolling without adding duplicate semantic validation", async () => {
