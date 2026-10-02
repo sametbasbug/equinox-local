@@ -23,7 +23,6 @@ function objectSchema(properties, required = []) {
 }
 const string = (description, maxLength = 1000, { minLength = 1 } = {}) => Object.freeze({ type: "string", minLength, maxLength, description });
 const integer = (description, minimum, maximum) => Object.freeze({ type: "integer", minimum, maximum, description });
-const number = (description, minimum, maximum) => Object.freeze({ type: "number", minimum, maximum, description });
 const bool = (description) => Object.freeze({ type: "boolean", description });
 const enumeration = (description, values) => Object.freeze({ type: "string", enum: Object.freeze(values), description });
 
@@ -37,12 +36,11 @@ function withTarget(properties = {}, required = []) {
   return objectSchema({ ...targetProperties, ...properties }, required);
 }
 const selector = string("AutomationId, semantic slug, accessible-text selector, or coordinate accepted by winapp.", 1000);
-const coordinate = string("Screen coordinate in x,y form, in the same coordinate space reported by winapp inspect/search.", 64);
 const direction = enumeration("Direction.", ["up", "down", "left", "right"]);
 
 export const WINAPP_ALLOWED_TOOLS = Object.freeze([
   "list_windows", "inspect_ui", "search", "get_property", "get_value", "get_focused", "wait_for", "screenshot",
-  "set_value", "invoke", "focus", "click", "drag", "hover", "send_keys", "scroll_into_view", "scroll", "touch", "pen", "yield",
+  "set_value", "invoke", "focus", "click", "drag", "hover", "send_keys", "scroll_into_view", "scroll", "yield",
 ]);
 const WINAPP_READ_ONLY_TOOLS = new Set([
   "list_windows", "inspect_ui", "search", "get_property", "get_value", "get_focused", "wait_for", "screenshot",
@@ -66,8 +64,6 @@ export const WINAPP_TOOL_DEFINITIONS = Object.freeze({
   send_keys: Object.freeze({ name: "send_keys", description: "Send bounded keyboard input using winapp's native transport and safety semantics. allow_system_keys delegates to winapp's own opt-in guard; win+l and ctrl+alt+del remain blocked by winapp itself.", readOnly: false, inputSchema: withTarget({ keys: Object.freeze({ type: "string", minLength: 1, maxLength: MAX_TEXT_INPUT }), target: selector, verbatim: bool("Type the whole keys payload literally."), via: enumeration("Keyboard transport.", ["post-message", "send-input"]), allow_system_keys: bool("Opt in to winapp-supported system/global key combinations when using send-input.") }, ["keys"]) }),
   scroll_into_view: Object.freeze({ name: "scroll_into_view", description: "Scroll a Windows UI Automation element into view through UIA.", readOnly: false, inputSchema: withTarget({ selector }, ["selector"]) }),
   scroll: Object.freeze({ name: "scroll", description: "Scroll through UIA direction/to patterns or native mouse-wheel injection. Winapp validates mutually exclusive mode options.", readOnly: false, inputSchema: withTarget({ selector, direction, to: enumeration("Jump destination.", ["top", "bottom"]), wheel: integer("Mouse wheel notches; positive=up, negative=down.", -1000, 1000) }, ["selector"]) }),
-  touch: Object.freeze({ name: "touch", description: "Use winapp's native Windows touch injection for tap, long-press, swipe, pinch or stretch gestures.", readOnly: false, inputSchema: withTarget({ selector, at: coordinate, gesture: enumeration("Touch gesture.", ["tap", "double-tap", "long-press", "swipe", "pinch", "stretch"]), to_point: coordinate, direction, distance: integer("Gesture distance in pixels.", 1, 100_000), hold_ms: integer("Touch hold time in milliseconds.", 0, 60_000), duration_ms: integer("Gesture travel duration in milliseconds.", 0, 60_000), fingers: integer("Touch contact count.", 1, 10) }) }),
-  pen: Object.freeze({ name: "pen", description: "Use winapp's native Windows synthetic pen/stylus API for taps, strokes and erasing.", readOnly: false, inputSchema: withTarget({ selector, at: coordinate, path: string("Whitespace-separated x,y pen stroke path.", 20_000), pressure: number("Pen pressure from 0.0 to 1.0.", 0, 1), tilt_x: integer("Pen X tilt in degrees.", -90, 90), tilt_y: integer("Pen Y tilt in degrees.", -90, 90), eraser: bool("Use the eraser end of the pen."), duration_ms: integer("Total stroke travel duration in milliseconds.", 0, 60_000) }) }),
   yield: Object.freeze({ name: "yield", description: "Release a winapp UI workflow desktop turn immediately instead of waiting for its idle grace.", readOnly: false, inputSchema: objectSchema({ workflow_id: targetProperties.workflow_id }, ["workflow_id"]) }),
 });
 
@@ -131,8 +127,6 @@ function commandArgs(toolName, args, { screenshotOutput = null } = {}) {
     case "send_keys": return ["ui", "send-keys", args.keys, ...target, ...(args.target ? ["--target", args.target] : []), ...(args.verbatim ? ["--verbatim"] : []), ...(args.via ? ["--via", args.via] : []), ...(args.allow_system_keys ? ["--allow-system-keys"] : []), "--json"];
     case "scroll_into_view": return ["ui", "scroll-into-view", args.selector, ...target, "--json"];
     case "scroll": return ["ui", "scroll", args.selector, ...target, ...(args.direction ? ["--direction", args.direction] : []), ...(args.to ? ["--to", args.to] : []), ...(args.wheel !== undefined ? ["--wheel", String(args.wheel)] : []), "--json"];
-    case "touch": return ["ui", "touch", ...(args.selector ? [args.selector] : []), ...target, ...(args.at ? ["--at", args.at] : []), ...(args.gesture ? ["--gesture", args.gesture] : []), ...(args.to_point ? ["--to-point", args.to_point] : []), ...(args.direction ? ["--direction", args.direction] : []), ...(args.distance !== undefined ? ["--distance", String(args.distance)] : []), ...(args.hold_ms !== undefined ? ["--hold-ms", String(args.hold_ms)] : []), ...(args.duration_ms !== undefined ? ["--duration-ms", String(args.duration_ms)] : []), ...(args.fingers !== undefined ? ["--fingers", String(args.fingers)] : []), "--json"];
-    case "pen": return ["ui", "pen", ...(args.selector ? [args.selector] : []), ...target, ...(args.at ? ["--at", args.at] : []), ...(args.path ? ["--path", args.path] : []), ...(args.pressure !== undefined ? ["--pressure", String(args.pressure)] : []), ...(args.tilt_x !== undefined ? ["--tilt-x", String(args.tilt_x)] : []), ...(args.tilt_y !== undefined ? ["--tilt-y", String(args.tilt_y)] : []), ...(args.eraser ? ["--eraser"] : []), ...(args.duration_ms !== undefined ? ["--duration-ms", String(args.duration_ms)] : []), "--json"];
     case "yield": return ["ui", "yield", "--json"];
     default: throw new Error(`winapp tool is not allowed: ${toolName}`);
   }

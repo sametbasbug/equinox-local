@@ -233,13 +233,16 @@ jobs:
       - name: Windows x64 packaged winapp UIA smoke
         shell: pwsh
         run: |
+          $fixtureOut = Join-Path $env:RUNNER_TEMP 'equinox-winapp-fixture-x64'
+          dotnet publish tests/windows/EquinoxLocal.WinappSmokeFixture/EquinoxLocal.WinappSmokeFixture.csproj --configuration Release --runtime win-x64 --self-contained false -p:Platform=x64 --output $fixtureOut
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $artifact = Get-ChildItem backups/local-packages -Filter 'equinox-local-*-win32-x64.zip' | Select-Object -First 1
           if ($null -eq $artifact) { throw 'Windows managed ZIP artifact was not found for winapp acceptance' }
           $extract = Join-Path $env:RUNNER_TEMP 'equinox-winapp-x64'
           New-Item -ItemType Directory -Path $extract -Force | Out-Null
           & tar.exe -xf $artifact.FullName -C $extract 'release/runtime/winapp/winapp.exe' 'release/runtime/winapp/libHarfBuzzSharp.dll' 'release/runtime/winapp/libSkiaSharp.dll'
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          & powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File tests/release/windows-winapp-smoke.ps1 -WinappPath (Join-Path $extract 'release/runtime/winapp/winapp.exe')
+          & powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File tests/release/windows-winapp-smoke.ps1 -WinappPath (Join-Path $extract 'release/runtime/winapp/winapp.exe') -FixturePath (Join-Path $fixtureOut 'EquinoxLocal.WinappSmokeFixture.exe')
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
   windows-arm64-shared-core:
@@ -404,13 +407,16 @@ jobs:
       - name: Windows ARM64 packaged winapp UIA smoke
         shell: pwsh
         run: |
+          $fixtureOut = Join-Path $env:RUNNER_TEMP 'equinox-winapp-fixture-arm64'
+          dotnet publish tests/windows/EquinoxLocal.WinappSmokeFixture/EquinoxLocal.WinappSmokeFixture.csproj --configuration Release --runtime win-arm64 --self-contained false -p:Platform=ARM64 --output $fixtureOut
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $artifact = Get-ChildItem backups/local-packages -Filter 'equinox-local-*-win32-arm64.zip' | Select-Object -First 1
           if ($null -eq $artifact) { throw 'Windows ARM64 managed ZIP artifact was not found for winapp acceptance' }
           $extract = Join-Path $env:RUNNER_TEMP 'equinox-winapp-arm64'
           New-Item -ItemType Directory -Path $extract -Force | Out-Null
           & tar.exe -xf $artifact.FullName -C $extract 'release/runtime/winapp/winapp.exe' 'release/runtime/winapp/libHarfBuzzSharp.dll' 'release/runtime/winapp/libSkiaSharp.dll'
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          & powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File tests/release/windows-winapp-smoke.ps1 -WinappPath (Join-Path $extract 'release/runtime/winapp/winapp.exe')
+          & powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File tests/release/windows-winapp-smoke.ps1 -WinappPath (Join-Path $extract 'release/runtime/winapp/winapp.exe') -FixturePath (Join-Path $fixtureOut 'EquinoxLocal.WinappSmokeFixture.exe')
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Windows ARM64 real public-installer fresh-install acceptance

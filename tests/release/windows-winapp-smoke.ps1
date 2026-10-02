@@ -1,6 +1,8 @@
 param(
   [Parameter(Mandatory = $true)]
-  [string]$WinappPath
+  [string]$WinappPath,
+  [Parameter(Mandatory = $true)]
+  [string]$FixturePath
 )
 
 $ErrorActionPreference = 'Stop'
@@ -27,39 +29,12 @@ if ($machine -ne $expectedMachine) {
 
 $root = Join-Path $env:RUNNER_TEMP ("equinox-winapp-smoke-" + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $root -Force | Out-Null
-$fixturePath = Join-Path $root 'fixture.ps1'
 $screenshotPath = Join-Path $root 'fixture.png'
-
-@'
-Add-Type -AssemblyName System.Windows.Forms
-Add-Type -AssemblyName System.Drawing
-$form = [System.Windows.Forms.Form]::new()
-$form.Text = 'Equinox Winapp Smoke'
-$form.Name = 'EquinoxWinappSmoke'
-$form.StartPosition = 'Manual'
-$form.Location = [System.Drawing.Point]::new(120, 120)
-$form.Size = [System.Drawing.Size]::new(520, 260)
-$text = [System.Windows.Forms.TextBox]::new()
-$text.Name = 'SmokeText'
-$text.Text = 'Initial'
-$text.Location = [System.Drawing.Point]::new(24, 30)
-$text.Size = [System.Drawing.Size]::new(320, 30)
-$button = [System.Windows.Forms.Button]::new()
-$button.Name = 'SmokeButton'
-$button.Text = 'Apply'
-$button.Location = [System.Drawing.Point]::new(365, 28)
-$button.Size = [System.Drawing.Size]::new(100, 34)
-$status = [System.Windows.Forms.Label]::new()
-$status.Name = 'SmokeStatus'
-$status.Text = 'Ready'
-$status.Location = [System.Drawing.Point]::new(24, 95)
-$status.AutoSize = $true
-$button.Add_Click({ $status.Text = 'Clicked' })
-$form.Controls.AddRange(@($text, $button, $status))
-[void]$form.ShowDialog()
-'@ | Set-Content -LiteralPath $fixturePath -Encoding UTF8
-
-$fixture = Start-Process -FilePath 'powershell.exe' -ArgumentList @('-NoLogo','-NoProfile','-STA','-ExecutionPolicy','Bypass','-File',$fixturePath) -PassThru
+$fixtureExecutable = [System.IO.Path]::GetFullPath($FixturePath)
+if (-not (Test-Path -LiteralPath $fixtureExecutable -PathType Leaf)) {
+  throw "Native winapp smoke fixture not found: $fixtureExecutable"
+}
+$fixture = Start-Process -FilePath $fixtureExecutable -PassThru
 try {
   $ready = $false
   for ($attempt = 0; $attempt -lt 30; $attempt++) {

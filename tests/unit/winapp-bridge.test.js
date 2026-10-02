@@ -34,7 +34,7 @@ test("winapp bridge exposes a practical Windows UI surface instead of a crippled
   const { bridge } = createHarness();
   const tools = await bridge.listTools();
   assert.deepEqual(tools.map((tool) => tool.name), [...WINAPP_ALLOWED_TOOLS]);
-  for (const required of ["screenshot", "drag", "hover", "scroll", "touch", "pen", "send_keys", "yield"]) {
+  for (const required of ["screenshot", "drag", "hover", "scroll", "send_keys", "yield"]) {
     assert.equal(tools.some((tool) => tool.name === required), true, `missing ${required}`);
   }
   assert.equal(tools.some((tool) => tool.name === "record"), false, "record stays separate until managed artifact lifecycle is implemented");
@@ -76,20 +76,23 @@ test("winapp screenshot defaults to managed temporary output and returns JSON pa
   assert.equal(mkdirs.length, 1);
 });
 
-test("winapp bridge maps scroll, touch and pen while leaving native semantic validation to winapp", async () => {
+test("winapp bridge maps native wheel scrolling without adding duplicate semantic validation", async () => {
   const { bridge, calls } = createHarness();
   await bridge.callTool("scroll", { app: "Demo", selector: "Pane", wheel: -3 });
   assert.deepEqual(calls.at(-1).args, ["ui", "scroll", "Pane", "-a", "Demo", "--wheel", "-3", "--json"]);
-  await bridge.callTool("touch", { app: "Demo", at: "100,200", gesture: "swipe", to_point: "500,200", duration_ms: 300 });
-  assert.deepEqual(calls.at(-1).args, ["ui", "touch", "-a", "Demo", "--at", "100,200", "--gesture", "swipe", "--to-point", "500,200", "--duration-ms", "300", "--json"]);
-  await bridge.callTool("pen", { app: "Demo", path: "100,100 200,200", pressure: 0.8, tilt_x: 10 });
-  assert.deepEqual(calls.at(-1).args, ["ui", "pen", "-a", "Demo", "--path", "100,100 200,200", "--pressure", "0.8", "--tilt-x", "10", "--json"]);
 });
 
 test("winapp bridge targets an exact process id through winapp -a PID semantics", async () => {
   const { bridge, calls } = createHarness();
   await bridge.callTool("inspect_ui", { pid: 4321, depth: 2 });
   assert.deepEqual(calls.at(-1).args, ["ui", "inspect", "-a", "4321", "--depth", "2", "--json"]);
+});
+
+test("winapp bridge keeps niche touch and pen commands out of the first-release agent surface", async () => {
+  const { bridge } = createHarness();
+  const tools = await bridge.listTools();
+  assert.equal(tools.some((tool) => tool.name === "touch"), false);
+  assert.equal(tools.some((tool) => tool.name === "pen"), false);
 });
 
 test("winapp bridge rejects ambiguous app/window/pid targeting but not native UI behaviors", async () => {
