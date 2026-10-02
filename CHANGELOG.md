@@ -5,6 +5,7 @@ All notable public changes to Equinox Local will be documented here.
 This project follows semantic versioning for public releases.
 
 ## [Unreleased]
+- Control Center runtime restart now flushes dirty Turn Budget settings before scheduling the restart and disables restart while that save is in flight, so custom fallback-idle and Auto Continue hop limits cannot be lost to the previously persisted values during restart.
 - Refreshed the pre-release dependency/runtime baseline: MCP SDK `1.31.0`, patched transitive `fast-uri`/`ip-address` lock entries, Peekaboo `4.6.0`, Microsoft WebView2 `1.0.4258.31`, and the Windows shell/CI toolchain to .NET `10` LTS with `actions/setup-dotnet@v6`. Node `26.10.0`, tunnel-client `0.0.15`, node-pty `1.2.0-beta.15`, pdfjs-dist `6.3.289`, pngjs `7.0.0`, Zod `4.6.5`, and the current Actions major pins were already current.
 - Added a real native Windows ARM64 shared-parity gate covering the existing headless runtime/process/ConPTY/Browser/tunnel smoke plus Task Capsules, Turn Budget, continuation, Telegram, Authenticated HTTP, file-transfer and private-state suites.
 - Extended the ownership-safe Windows managed uninstall/reinstall transaction to the exact native ARM64 target, including preserve-data/full cleanup, foreign registry ownership guards, native shell handoff, and clean-environment startup-registry reads that do not depend on PowerShell provider/module autoloading.

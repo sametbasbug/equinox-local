@@ -3005,7 +3005,7 @@ function renderAgentControl() {
 function renderRuntimeRestartControl() {
   const button = $("restart-runtime-button");
   if (!button) return;
-  button.disabled = state.restartBusy || !state.status?.server?.pid;
+  button.disabled = state.restartBusy || state.turnBudgetBusy || !state.status?.server?.pid;
   button.textContent = localizeUiText(state.restartBusy ? "Restarting…" : "Restart");
 }
 
@@ -4359,25 +4359,27 @@ async function toggleAgentControl() {
 }
 
 async function saveTurnBudgetSettings() {
-  if (state.turnBudgetBusy || !state.turnBudgetDraft) return;
+  if (state.turnBudgetBusy) return false;
+  if (!state.turnBudgetDraft) return true;
   const cutoffMinutes = Number(state.turnBudgetDraft.cutoffMinutes);
   const fallbackResetMinutes = Number(state.turnBudgetDraft.fallbackResetMinutes);
   const autoContinueMaxHops = Number(state.turnBudgetDraft.autoContinueMaxHops);
   if (!Number.isInteger(cutoffMinutes) || cutoffMinutes < 5 || cutoffMinutes > 120) {
     showError(new Error("Turn Budget cutoff must be an integer between 5 and 120 minutes."));
-    return;
+    return false;
   }
   if (!Number.isInteger(fallbackResetMinutes) || fallbackResetMinutes < 1 || fallbackResetMinutes > cutoffMinutes) {
     showError(new Error("Fallback idle timeout must be an integer between 1 minute and the safety cutoff."));
-    return;
+    return false;
   }
   if (!Number.isInteger(autoContinueMaxHops) || autoContinueMaxHops < 1 || autoContinueMaxHops > 20) {
     showError(new Error("Auto Continue maximum hops must be an integer between 1 and 20."));
-    return;
+    return false;
   }
   clearError();
   state.turnBudgetBusy = true;
   renderTurnBudget();
+  renderRuntimeRestartControl();
   try {
     const response = await mutationJson("/api/v1/turn-budget", "PUT", {
       enabled: state.turnBudgetDraft.enabled !== false,
@@ -4390,17 +4392,24 @@ async function saveTurnBudgetSettings() {
     state.turnBudgetDraft = { enabled: response.turnBudget.enabled !== false, cutoffMinutes: response.turnBudget.cutoffMinutes, fallbackResetMinutes: response.turnBudget.fallbackResetMinutes, autoContinueMaxHops: response.turnBudget.autoContinueMaxHops };
     state.turnBudgetDirty = false;
     showToast("Turn Budget updated immediately.");
+    return true;
   } catch (error) {
     showError(error);
+    return false;
   } finally {
     state.turnBudgetBusy = false;
     renderTurnBudget();
+    renderRuntimeRestartControl();
   }
 }
 
 async function restartRuntimeFromControlCenter() {
-  if (state.restartBusy) return;
+  if (state.restartBusy || state.turnBudgetBusy) return;
   clearError();
+  if (state.turnBudgetDirty) {
+    const saved = await saveTurnBudgetSettings();
+    if (!saved) return;
+  }
   stopRuntimeRestartPolling();
   state.restartBusy = true;
   renderRuntimeRestartControl();
