@@ -328,7 +328,9 @@ async function makeWindowsActivationFixture(t) {
     const tunnelDir = path.join(release, "runtime", "tunnel");
     const browserDir = path.join(release, "runtime", "browser");
     const shellDir = path.join(release, "runtime", "shell");
-    await Promise.all([nodeDir, tunnelDir, browserDir, shellDir].map((dir) => fs.mkdir(dir, { recursive: true })));
+    const winappDir = path.join(release, "runtime", "winapp");
+    const runtimeDirs = [nodeDir, tunnelDir, browserDir, shellDir, ...(version === "5.2.0" ? [] : [winappDir])];
+    await Promise.all(runtimeDirs.map((dir) => fs.mkdir(dir, { recursive: true })));
     await fs.writeFile(path.join(release, "release.json"), JSON.stringify({
       schemaVersion: 1,
       version,
@@ -343,6 +345,12 @@ async function makeWindowsActivationFixture(t) {
     await fs.writeFile(path.join(browserDir, "equinox-browser-native-host.exe"), `launcher-${version}\n`);
     await fs.writeFile(path.join(shellDir, "EquinoxLocal.exe"), `shell-${version}\n`);
     await fs.writeFile(path.join(shellDir, "coreclr.dll"), `core-${version}\n`);
+    if (version !== "5.2.0") {
+      await fs.writeFile(path.join(winappDir, "winapp.exe"), `winapp-${version}\n`);
+      await fs.writeFile(path.join(winappDir, "libHarfBuzzSharp.dll"), `harfbuzz-${version}\n`);
+      await fs.writeFile(path.join(winappDir, "libSkiaSharp.dll"), `skia-${version}\n`);
+      await fs.writeFile(path.join(winappDir, "LICENSE"), "fixture MIT license\n");
+    }
   }
   await fs.mkdir(path.dirname(programRoot), { recursive: true });
   await fs.cp(path.join(releasesRoot, "5.2.0", "runtime", "shell"), programRoot, { recursive: true });

@@ -86,6 +86,12 @@ test("winapp bridge maps scroll, touch and pen while leaving native semantic val
   assert.deepEqual(calls.at(-1).args, ["ui", "pen", "-a", "Demo", "--path", "100,100 200,200", "--pressure", "0.8", "--tilt-x", "10", "--json"]);
 });
 
+test("winapp bridge targets an exact process id through winapp -a PID semantics", async () => {
+  const { bridge, calls } = createHarness();
+  await bridge.callTool("inspect_ui", { pid: 4321, depth: 2 });
+  assert.deepEqual(calls.at(-1).args, ["ui", "inspect", "-a", "4321", "--depth", "2", "--json"]);
+});
+
 test("winapp bridge rejects ambiguous app/window/pid targeting but not native UI behaviors", async () => {
   const { bridge } = createHarness();
   await assert.rejects(bridge.callTool("click", { app: "Notepad", window: "1234", selector: "Save" }), /only one of app, window, or pid/u);

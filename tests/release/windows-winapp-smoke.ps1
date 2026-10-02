@@ -63,31 +63,32 @@ $fixture = Start-Process -FilePath 'powershell.exe' -ArgumentList @('-NoLogo','-
 try {
   $ready = $false
   for ($attempt = 0; $attempt -lt 30; $attempt++) {
-    $list = (& $winapp ui list-windows -a 'Equinox Winapp Smoke' --json 2>&1 | Out-String).Trim()
+    $list = (& $winapp ui list-windows -a $fixture.Id --json 2>&1 | Out-String).Trim()
     if ($LASTEXITCODE -eq 0 -and $list -match 'Equinox Winapp Smoke') { $ready = $true; break }
+    if ($fixture.HasExited) { throw ("Controlled WinForms fixture exited before discovery: exit={0}" -f $fixture.ExitCode) }
     Start-Sleep -Milliseconds 250
   }
   if (-not $ready) { throw 'winapp could not discover the controlled WinForms fixture window.' }
 
-  $inspect = (& $winapp ui inspect -a 'Equinox Winapp Smoke' --depth 5 --json 2>&1 | Out-String).Trim()
+  $inspect = (& $winapp ui inspect -a $fixture.Id --depth 5 --json 2>&1 | Out-String).Trim()
   if ($LASTEXITCODE -ne 0 -or $inspect -notmatch 'SmokeText' -or $inspect -notmatch 'SmokeButton') {
     throw "winapp inspect did not expose the controlled UIA fixture: $inspect"
   }
 
-  & $winapp ui set-value SmokeText 'Equinox Windows Desktop' -a 'Equinox Winapp Smoke' --json | Out-Null
+  & $winapp ui set-value SmokeText 'Equinox Windows Desktop' -a $fixture.Id --json | Out-Null
   if ($LASTEXITCODE -ne 0) { throw 'winapp set-value failed against the controlled fixture.' }
 
-  $valueRaw = (& $winapp ui get-value SmokeText -a 'Equinox Winapp Smoke' --json 2>&1 | Out-String).Trim()
+  $valueRaw = (& $winapp ui get-value SmokeText -a $fixture.Id --json 2>&1 | Out-String).Trim()
   if ($LASTEXITCODE -ne 0) { throw "winapp get-value failed: $valueRaw" }
   $value = $valueRaw | ConvertFrom-Json
   if ($value.text -ne 'Equinox Windows Desktop') { throw "winapp value roundtrip mismatch: $valueRaw" }
 
-  & $winapp ui invoke SmokeButton -a 'Equinox Winapp Smoke' --json | Out-Null
+  & $winapp ui invoke SmokeButton -a $fixture.Id --json | Out-Null
   if ($LASTEXITCODE -ne 0) { throw 'winapp invoke failed against the controlled fixture.' }
-  & $winapp ui wait-for SmokeStatus -a 'Equinox Winapp Smoke' --property Name --value Clicked --timeout 5000 --json | Out-Null
+  & $winapp ui wait-for SmokeStatus -a $fixture.Id --property Name --value Clicked --timeout 5000 --json | Out-Null
   if ($LASTEXITCODE -ne 0) { throw 'winapp did not observe the UI mutation produced by invoke.' }
 
-  $capture = (& $winapp ui screenshot -a 'Equinox Winapp Smoke' --output $screenshotPath --json 2>&1 | Out-String).Trim()
+  $capture = (& $winapp ui screenshot -a $fixture.Id --output $screenshotPath --json 2>&1 | Out-String).Trim()
   if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $screenshotPath -PathType Leaf)) {
     throw "winapp screenshot failed against the controlled fixture: $capture"
   }

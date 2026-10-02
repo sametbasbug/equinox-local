@@ -30,7 +30,7 @@ const enumeration = (description, values) => Object.freeze({ type: "string", enu
 const targetProperties = Object.freeze({
   app: string("Process name or window-title fragment used by winapp -a.", 300),
   window: string("Exact HWND returned by list_windows, encoded as decimal or 0x-prefixed text.", 32),
-  pid: integer("Exact process id used by winapp -p.", 1, 0x7fffffff),
+  pid: integer("Exact process id targeted through winapp -a <PID>.", 1, 0x7fffffff),
   workflow_id: string("Optional winapp UI workflow id used for native desktop-turn continuity/arbitration.", 256),
 });
 function withTarget(properties = {}, required = []) {
@@ -101,7 +101,7 @@ function validateArguments(definition, input) {
 function targetArgs(args) {
   if (args.app !== undefined) return ["-a", args.app];
   if (args.window !== undefined) return ["-w", args.window];
-  if (args.pid !== undefined) return ["-p", String(args.pid)];
+  if (args.pid !== undefined) return ["-a", String(args.pid)];
   return [];
 }
 function scopedFilterArgs(args) {
