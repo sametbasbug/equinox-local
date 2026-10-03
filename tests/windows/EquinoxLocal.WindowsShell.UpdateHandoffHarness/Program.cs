@@ -34,7 +34,7 @@ internal static class Program
         var releasesRoot = Path.Combine(installRoot, "releases");
         var releaseDir = Path.Combine(releasesRoot, Version);
         var markerPath = Path.Combine(releaseDir, "handoff-marker.json");
-        if (Directory.Exists(releaseDir)) Directory.Delete(releaseDir, recursive: true);
+        await DeleteOwnedFixtureReleaseAsync(releaseDir);
 
         Process? runtime = null;
         Process? helper = null;
@@ -124,9 +124,29 @@ setTimeout(() => {}, 30000);
             helper?.Dispose();
             runtime?.Dispose();
             if (runtimeJob != IntPtr.Zero) CloseHandle(runtimeJob);
-            try { if (Directory.Exists(releaseDir)) Directory.Delete(releaseDir, recursive: true); } catch { }
+            await DeleteOwnedFixtureReleaseAsync(releaseDir);
             try { if (Directory.Exists(releasesRoot) && !Directory.EnumerateFileSystemEntries(releasesRoot).Any()) Directory.Delete(releasesRoot); } catch { }
             try { if (Directory.Exists(installRoot) && !Directory.EnumerateFileSystemEntries(installRoot).Any()) Directory.Delete(installRoot); } catch { }
         }
+    }
+
+    private static async Task DeleteOwnedFixtureReleaseAsync(string releaseDir)
+    {
+        if (!Directory.Exists(releaseDir)) return;
+        Exception? lastError = null;
+        for (var attempt = 0; attempt < 20; attempt += 1)
+        {
+            try
+            {
+                Directory.Delete(releaseDir, recursive: true);
+                return;
+            }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+            {
+                lastError = error;
+                await Task.Delay(100);
+            }
+        }
+        throw new IOException($"Could not clean exact update-handoff fixture release '{Version}' after bounded retries.", lastError);
     }
 }

@@ -375,6 +375,52 @@ test("public Windows CI restores and builds the native x64 shell", async () => {
   assert.match(ci, /WebView2Loader\.dll/u);
   assert.match(ci, /Windows native shell branding smoke/u);
   assert.match(ci, /ExtractAssociatedIcon/u);
+  const factoryWinappSmokePath = path.join(ROOT, "factory", "local", "windows-winapp-smoke.ps1");
+  const publicWinappSmokePath = path.join(ROOT, "tests", "release", "windows-winapp-smoke.ps1");
+  const winappSmoke = await fs.readFile(
+    await fs.access(factoryWinappSmokePath).then(() => factoryWinappSmokePath, () => publicWinappSmokePath),
+    "utf8",
+  );
+  assert.match(winappSmoke, /function Invoke-WinappCaptured/u);
+  assert.match(winappSmoke, /ErrorActionPreference = 'Continue'/u);
+  assert.match(winappSmoke, /Set-ControlledFixtureForeground/u);
+  assert.match(winappSmoke, /GetWindowThreadProcessId\(\$target, \[ref\]\$targetProcess\)/u);
+  assert.match(winappSmoke, /AttachThreadInput\(\$targetThread, \$foregroundThread, \$true\)/u);
+  assert.match(winappSmoke, /WINDOWS_WINAPP_FOREGROUND_RECOVERY/u);
+  assert.match(winappSmoke, /GetDesktopName\(\$targetThread\)/u);
+  assert.match(winappSmoke, /GetLastWin32Error\(\)/u);
+  assert.match(winappSmoke, /target_session=\{14\} foreground_session=\{15\} current_session=\{16\}/u);
+  assert.match(winappSmoke, /struct MOUSEINPUT/u);
+  assert.match(winappSmoke, /FieldOffset\(0\)\] public MOUSEINPUT mi/u);
+  assert.match(winappSmoke, /SendAltPulse\(\)/u);
+  assert.match(winappSmoke, /if \(\$architecture -eq 'Arm64' -and -not \$setResult\)/u);
+  assert.match(winappSmoke, /alt_input_count=\{25\} alt_input_error=\{26\} set_after_alt=\{27\}/u);
+  assert.match(winappSmoke, /function Test-ProtectedHostedForegroundCeiling/u);
+  assert.match(winappSmoke, /\$architecture -ne 'Arm64'/u);
+  assert.match(winappSmoke, /\$env:GITHUB_ACTIONS -ne 'true'/u);
+  assert.match(winappSmoke, /\$env:RUNNER_ENVIRONMENT -ne 'github-hosted'/u);
+  assert.match(winappSmoke, /foreground_not_target/u);
+  assert.match(winappSmoke, /\$evidence\.TargetPid -eq \$fixture\.Id/u);
+  assert.match(winappSmoke, /\$evidence\.TargetProcess -eq 'EquinoxLocal\.WinappSmokeFixture'/u);
+  assert.match(winappSmoke, /\$evidence\.ForegroundProcess -eq 'WWAHost'/u);
+  assert.match(winappSmoke, /\$evidence\.CurrentProcess -eq 'powershell'/u);
+  assert.match(winappSmoke, /\$evidence\.TargetSession -eq \$evidence\.ForegroundSession/u);
+  assert.match(winappSmoke, /\$evidence\.TargetSession -eq \$evidence\.CurrentSession/u);
+  assert.match(winappSmoke, /\$evidence\.TargetDesktop -eq 'Default'/u);
+  assert.match(winappSmoke, /\$evidence\.CurrentDesktop -eq 'Default'/u);
+  assert.match(winappSmoke, /\$evidence\.ForegroundDesktop -eq '<unavailable:5>'/u);
+  assert.match(winappSmoke, /-not \$evidence\.AttachedTargetForeground/u);
+  assert.match(winappSmoke, /\$evidence\.AttachError -eq 5/u);
+  assert.match(winappSmoke, /\$evidence\.ShowResult -and/u);
+  assert.match(winappSmoke, /\$evidence\.BringResult -and/u);
+  assert.match(winappSmoke, /-not \$evidence\.SetResult/u);
+  assert.match(winappSmoke, /\$evidence\.AltInputCount -eq 2/u);
+  assert.match(winappSmoke, /\$evidence\.AltInputError -eq 0/u);
+  assert.match(winappSmoke, /-not \$evidence\.SetAfterAltResult/u);
+  assert.match(winappSmoke, /\$evidence\.AfterPid -eq \$evidence\.ForegroundPid/u);
+  assert.match(winappSmoke, /\$evidence\.AfterThread -eq \$evidence\.ForegroundThread/u);
+  assert.match(winappSmoke, /\$evidence\.AfterHandle -eq \$evidence\.ForegroundHandle/u);
+  assert.match(winappSmoke, /reason=hosted_runner_protected_wwahost/u);
 });
 
 
@@ -384,6 +430,10 @@ test("Windows shell update handoff acknowledges before draining the runtime and 
   const updateHarnessSource = await fs.readFile(path.join(ROOT, "tests", "windows", "EquinoxLocal.WindowsShell.UpdateHandoffHarness", "Program.cs"), "utf8");
   assert.match(updateHarnessSource, /helper\?\.WaitForExit\(5_000\)/u);
   assert.match(updateHarnessSource, /runtime\?\.WaitForExit\(5_000\)/u);
+  assert.match(updateHarnessSource, /DeleteOwnedFixtureReleaseAsync\(releaseDir\)/u);
+  assert.match(updateHarnessSource, /attempt < 20/u);
+  assert.match(updateHarnessSource, /Task\.Delay\(100\)/u);
+  assert.match(updateHarnessSource, /Could not clean exact update-handoff fixture release/u);
   assert.match(updateHarnessSource, /Directory\.EnumerateFileSystemEntries\(releasesRoot\)\.Any\(\)/u);
   assert.match(updateHarnessSource, /Directory\.EnumerateFileSystemEntries\(installRoot\)\.Any\(\)/u);
   const launchIndex = coordinator.indexOf("ManagedUpdateHandoff.Launch(version)");

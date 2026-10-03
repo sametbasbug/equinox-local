@@ -22,6 +22,7 @@ test("Windows managed package contract keeps x64 stable and defines explicit nat
   assert.equal(arm64.vcvars, "vcvarsarm64.bat");
   assert.equal(arm64.peMachine, 0xaa64);
   assert.deepEqual(arm64.extraReleaseFiles, [
+    "src/equinox-local-windows-clipboard.ps1",
     "src/equinox-local-windows-job-object.ps1",
     "src/equinox-local-windows-private-state.ps1",
     "src/equinox-local-windows-process-gate.ps1",

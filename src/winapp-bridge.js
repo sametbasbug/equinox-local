@@ -18,6 +18,8 @@ const DEFAULT_TIMEOUT_MS = 20_000;
 const MAX_WAIT_MS = 60_000;
 const MAX_TEXT_INPUT = 20_000;
 const MAX_PATH_LENGTH = 4096;
+const MAX_CLIPBOARD_BYTES = 256 * 1024;
+const WINDOWS_CLIPBOARD_HELPER = path.join(MODULE_DIR, "equinox-local-windows-clipboard.ps1");
 
 function objectSchema(properties, required = []) {
   return Object.freeze({ type: "object", properties: Object.freeze(properties), required: Object.freeze(required), additionalProperties: false });
@@ -41,7 +43,7 @@ const direction = enumeration("Direction.", ["up", "down", "left", "right"]);
 
 export const WINAPP_ALLOWED_TOOLS = Object.freeze([
   "list_windows", "inspect_ui", "search", "get_property", "get_value", "get_focused", "wait_for", "screenshot",
-  "set_value", "invoke", "focus", "click", "drag", "hover", "send_keys", "scroll_into_view", "scroll", "yield",
+  "clipboard", "paste", "set_value", "invoke", "focus", "click", "drag", "hover", "send_keys", "scroll_into_view", "scroll", "yield",
 ]);
 const WINAPP_READ_ONLY_TOOLS = new Set([
   "list_windows", "inspect_ui", "search", "get_property", "get_value", "get_focused", "wait_for", "screenshot",
@@ -56,6 +58,8 @@ export const WINAPP_TOOL_DEFINITIONS = Object.freeze({
   get_focused: Object.freeze({ name: "get_focused", description: "Report the focused UI Automation element for the selected Windows app/window.", readOnly: true, inputSchema: withTarget() }),
   wait_for: Object.freeze({ name: "wait_for", description: "Wait boundedly for a Windows UI element to appear/disappear or reach a property/value.", readOnly: true, inputSchema: withTarget({ selector, value: Object.freeze({ type: "string", maxLength: MAX_TEXT_INPUT }), property: string("Optional case-sensitive UI Automation property to compare.", 120), gone: bool("Wait for the selector to disappear."), contains: bool("Use substring matching for value."), timeout_ms: integer("Maximum wait in milliseconds.", 100, MAX_WAIT_MS), root: selector, type: string("Optional UIA control type filter.", 80), class_name: string("Optional exact UIA ClassName filter.", 200) }, ["selector"]) }),
   screenshot: Object.freeze({ name: "screenshot", description: "Capture a Windows app/window/control as PNG through winapp. When output is omitted, Equinox uses a managed temp file and returns the validated PNG as native MCP image content so the model can see it directly; an explicit output path keeps file-only behavior.", readOnly: true, inputSchema: withTarget({ selector, output: string("Optional output PNG path. Omit for direct model-visible image handoff through Equinox-managed temporary output.", MAX_PATH_LENGTH), capture_screen: bool("Capture the live foreground screen region so visible overlays/popups are included."), focus: bool("Foreground the target before ordinary capture.") }) }),
+  clipboard: Object.freeze({ name: "clipboard", description: "Get, set or clear bounded Unicode text on the interactive Windows clipboard through an Equinox-owned fixed helper.", readOnly: false, inputSchema: objectSchema({ action: enumeration("Clipboard action.", ["get", "set", "clear"]), text: Object.freeze({ type: "string", maxLength: MAX_TEXT_INPUT, description: "Text for set. Omit for get/clear." }) }, ["action"]) }),
+  paste: Object.freeze({ name: "paste", description: "Put bounded Unicode text on the Windows clipboard and paste it into a selected app/window/PID/control through winapp Ctrl+V targeting. Defaults to real send-input for reliable modifier-key paste semantics; post-message remains an explicit fallback for compatible classic windows.", readOnly: false, inputSchema: withTarget({ text: Object.freeze({ type: "string", maxLength: MAX_TEXT_INPUT }), target: selector, via: enumeration("Keyboard transport used for Ctrl+V. Defaults to send-input.", ["post-message", "send-input"]) }, ["text"]) }),
   set_value: Object.freeze({ name: "set_value", description: "Set an editable control through UIA patterns without foreground keyboard injection.", readOnly: false, inputSchema: withTarget({ selector, value: Object.freeze({ type: "string", maxLength: MAX_TEXT_INPUT }) }, ["selector", "value"]) }),
   invoke: Object.freeze({ name: "invoke", description: "Invoke a Windows UI Automation element through its supported UIA action pattern.", readOnly: false, inputSchema: withTarget({ selector }, ["selector"]) }),
   focus: Object.freeze({ name: "focus", description: "Bring the selected Windows control/window forward and verify keyboard focus.", readOnly: false, inputSchema: withTarget({ selector }, ["selector"]) }),
@@ -126,6 +130,7 @@ function commandArgs(toolName, args, { screenshotOutput = null } = {}) {
     case "drag": return ["ui", "drag", args.from, args.to, ...target, ...(args.right ? ["--right"] : []), ...(args.hold_ms !== undefined ? ["--hold-ms", String(args.hold_ms)] : []), ...(args.dwell_ms !== undefined ? ["--dwell-ms", String(args.dwell_ms)] : []), "--json"];
     case "hover": return ["ui", "hover", args.selector, ...target, ...(args.dwell_ms !== undefined ? ["--dwell-time", String(args.dwell_ms)] : []), "--json"];
     case "send_keys": return ["ui", "send-keys", args.keys, ...target, ...(args.target ? ["--target", args.target] : []), ...(args.verbatim ? ["--verbatim"] : []), ...(args.via ? ["--via", args.via] : []), ...(args.allow_system_keys ? ["--allow-system-keys"] : []), "--json"];
+    case "paste": return ["ui", "send-keys", "ctrl+v", ...target, ...(args.target ? ["--target", args.target] : []), "--via", args.via ?? "send-input", "--json"];
     case "scroll_into_view": return ["ui", "scroll-into-view", args.selector, ...target, "--json"];
     case "scroll": return ["ui", "scroll", args.selector, ...target, ...(args.direction ? ["--direction", args.direction] : []), ...(args.to ? ["--to", args.to] : []), ...(args.wheel !== undefined ? ["--wheel", String(args.wheel)] : []), "--json"];
     case "yield": return ["ui", "yield", "--json"];
@@ -166,6 +171,13 @@ function tempRoot(baseEnvironment) {
   const candidate = baseEnvironment.TEMP || baseEnvironment.TMP || os.tmpdir();
   return path.win32.join(candidate, "Equinox Local", "desktop");
 }
+function windowsPowerShellPath(baseEnvironment) {
+  const windowsRoot = baseEnvironment.SystemRoot || baseEnvironment.WINDIR || "C:\\Windows";
+  return path.win32.join(windowsRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
+}
+function clipboardPowerShellArgs(mode, inputPath = null) {
+  return ["-NoLogo", "-NoProfile", "-NonInteractive", "-Sta", "-ExecutionPolicy", "Bypass", "-File", WINDOWS_CLIPBOARD_HELPER, "-Mode", mode, ...(inputPath ? ["-InputPath", inputPath] : [])];
+}
 
 async function managedScreenshotResult(filePath, parsed, fsImpl) {
   const stat = await fsImpl.lstat(filePath);
@@ -200,6 +212,31 @@ export function createWinappBridge({ baseEnvironment = process.env, execFileImpl
       throw new Error(`Microsoft winapp failed: ${boundedError(error)}`);
     }
   }
+  async function runClipboard(action, text = null) {
+    const stat = await fsImpl.lstat(WINDOWS_CLIPBOARD_HELPER);
+    if (!stat.isFile() || stat.isSymbolicLink()) throw new Error("Equinox Local Windows clipboard helper is unavailable.");
+    let inputPath = null;
+    try {
+      if (action === "Set") {
+        const encoded = Buffer.from(text ?? "", "utf8");
+        if (encoded.length > MAX_CLIPBOARD_BYTES) throw new Error("Windows clipboard text exceeds the bounded input limit.");
+        const directory = tempRoot(baseEnvironment);
+        await fsImpl.mkdir(directory, { recursive: true });
+        inputPath = path.win32.join(directory, `clipboard-${Date.now()}-${randomUUID()}.txt`);
+        await fsImpl.writeFile(inputPath, encoded, { flag: "wx", mode: 0o600 });
+      }
+      try {
+        const result = await execFileImpl(windowsPowerShellPath(baseEnvironment), clipboardPowerShellArgs(action, inputPath), { env: buildSafeWinappEnvironment(baseEnvironment), timeout: 7_500, maxBuffer: MAX_CLIPBOARD_BYTES + 8192, windowsHide: true, encoding: "utf8" });
+        const stdout = String(result.stdout ?? ""), stderr = String(result.stderr ?? "");
+        if (Buffer.byteLength(stdout, "utf8") > MAX_CLIPBOARD_BYTES) throw new Error("Windows clipboard text exceeds the bounded output limit.");
+        if (stderr.trim()) throw new Error(`Windows clipboard helper failed: ${boundedError({ stderr })}`);
+        return stdout;
+      } catch (error) {
+        if (error instanceof Error && error.message.startsWith("Windows clipboard")) throw error;
+        throw new Error(`Windows clipboard helper failed: ${boundedError(error)}`);
+      }
+    } finally { if (inputPath) await fsImpl.unlink(inputPath).catch(() => {}); }
+  }
   return Object.freeze({
     engine: "winapp",
     label: "Windows desktop",
@@ -228,6 +265,22 @@ export function createWinappBridge({ baseEnvironment = process.env, execFileImpl
       const definition = WINAPP_TOOL_DEFINITIONS[toolName];
       if (!definition) throw new Error(`winapp tool is not allowed: ${toolName}`);
       const args = validateArguments(definition, input);
+      if (toolName === "clipboard") {
+        if (args.action === "set" && !Object.hasOwn(args, "text")) throw new Error("winapp clipboard set requires text.");
+        if (args.action !== "set" && Object.hasOwn(args, "text")) throw new Error("winapp clipboard text is valid only for set.");
+        if (args.action === "get") return { content: [{ type: "text", text: JSON.stringify({ text: await runClipboard("Get") }, null, 2) }] };
+        if (args.action === "set") { await runClipboard("Set", args.text); return { content: [{ type: "text", text: JSON.stringify({ ok: true, action: "set", characters: args.text.length }, null, 2) }] }; }
+        await runClipboard("Clear"); return { content: [{ type: "text", text: JSON.stringify({ ok: true, action: "clear" }, null, 2) }] };
+      }
+      if (toolName === "paste") {
+        await runClipboard("Set", args.text);
+        let result;
+        try { result = await run(commandArgs("paste", args), { workflowId: args.workflow_id ?? null }); }
+        catch (error) { throw new Error(`Clipboard text was set, but paste input failed: ${error instanceof Error ? error.message : String(error)}`); }
+        const raw = String(result.stdout ?? "").trim();
+        let parsed; try { parsed = raw ? JSON.parse(raw) : {}; } catch { throw new Error("Microsoft winapp returned invalid JSON after paste."); }
+        return { content: [{ type: "text", text: JSON.stringify(parsed, null, 2) }] };
+      }
       let screenshotOutput = null;
       if (toolName === "screenshot" && !args.output) {
         const directory = tempRoot(baseEnvironment);
@@ -246,4 +299,4 @@ export function createWinappBridge({ baseEnvironment = process.env, execFileImpl
   });
 }
 
-export const __test = Object.freeze({ validateArguments, commandArgs, tempRoot, MAX_ARGUMENT_BYTES, MAX_RESULT_BYTES, MAX_WAIT_MS });
+export const __test = Object.freeze({ validateArguments, commandArgs, tempRoot, windowsPowerShellPath, clipboardPowerShellArgs, MAX_ARGUMENT_BYTES, MAX_RESULT_BYTES, MAX_WAIT_MS, MAX_CLIPBOARD_BYTES });
