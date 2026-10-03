@@ -70,6 +70,22 @@ public static class EquinoxWinappSmokeForeground {
     [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] public static extern bool SetForegroundWindow(IntPtr hWnd);
     [DllImport("user32.dll", SetLastError = true)] public static extern IntPtr GetThreadDesktop(uint threadId);
     [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)] public static extern bool GetUserObjectInformation(IntPtr handle, int index, System.Text.StringBuilder info, uint length, out uint needed);
+    [StructLayout(LayoutKind.Sequential)] public struct KEYBDINPUT { public ushort wVk; public ushort wScan; public uint dwFlags; public uint time; public UIntPtr dwExtraInfo; }
+    [StructLayout(LayoutKind.Explicit)] public struct INPUTUNION { [FieldOffset(0)] public KEYBDINPUT ki; }
+    [StructLayout(LayoutKind.Sequential)] public struct INPUT { public uint type; public INPUTUNION U; }
+    [DllImport("user32.dll", SetLastError = true)] public static extern uint SendInput(uint inputCount, INPUT[] inputs, int inputSize);
+    public static uint SendAltPulse() {
+        const uint INPUT_KEYBOARD = 1;
+        const ushort VK_MENU = 0x12;
+        const uint KEYEVENTF_KEYUP = 0x0002;
+        var inputs = new INPUT[2];
+        inputs[0].type = INPUT_KEYBOARD;
+        inputs[0].U.ki.wVk = VK_MENU;
+        inputs[1].type = INPUT_KEYBOARD;
+        inputs[1].U.ki.wVk = VK_MENU;
+        inputs[1].U.ki.dwFlags = KEYEVENTF_KEYUP;
+        return SendInput((uint)inputs.Length, inputs, Marshal.SizeOf(typeof(INPUT)));
+    }
     public static string GetDesktopName(uint threadId) {
         IntPtr desktop = GetThreadDesktop(threadId);
         if (desktop == IntPtr.Zero) return "<unavailable:" + Marshal.GetLastWin32Error() + ">";
@@ -125,12 +141,26 @@ public static class EquinoxWinappSmokeForeground {
       $showResult = [EquinoxWinappSmokeForeground]::ShowWindowAsync($target, 9)
       $bringResult = [EquinoxWinappSmokeForeground]::BringWindowToTop($target)
       $setResult = [EquinoxWinappSmokeForeground]::SetForegroundWindow($target)
+      $altInputCount = 0
+      $altInputError = 0
+      $setAfterAltResult = $false
+      if ($architecture -eq 'Arm64' -and -not $setResult) {
+        # Test-only exact-fixture recovery: an ALT key transition releases Windows'
+        # foreground lock without bypassing winapp's product-side safety checks.
+        $altInputCount = [EquinoxWinappSmokeForeground]::SendAltPulse()
+        if ($altInputCount -ne 2) { $altInputError = [Runtime.InteropServices.Marshal]::GetLastWin32Error() }
+        Start-Sleep -Milliseconds 75
+        if ($altInputCount -eq 2) {
+          [void][EquinoxWinappSmokeForeground]::BringWindowToTop($target)
+          $setAfterAltResult = [EquinoxWinappSmokeForeground]::SetForegroundWindow($target)
+        }
+      }
       Start-Sleep -Milliseconds 250
       $after = [EquinoxWinappSmokeForeground]::GetForegroundWindow()
       [uint32]$afterProcess = 0
       $afterThread = if ($after -eq [IntPtr]::Zero) { 0 } else { [EquinoxWinappSmokeForeground]::GetWindowThreadProcessId($after, [ref]$afterProcess) }
       $success = $after -eq $target
-      Write-Host ("WINDOWS_WINAPP_FOREGROUND_RECOVERY result={0} target=0x{1:X} before=0x{2:X} after=0x{3:X} target_thread={4} foreground_thread={5} after_thread={6} current_thread={7} target_pid={8} foreground_pid={9} after_pid={10} target_process={11} foreground_process={12} current_process={13} target_session={14} foreground_session={15} current_session={16} target_desktop={17} foreground_desktop={18} current_desktop={19} attach_target_foreground={20} attach_error={21} show={22} bring={23} set={24}" -f $success, $target.ToInt64(), $foreground.ToInt64(), $after.ToInt64(), $targetThread, $foregroundThread, $afterThread, $currentThread, $targetProcess, $foregroundProcess, $afterProcess, $targetName, $foregroundName, $currentName, $targetSession, $foregroundSession, $currentSession, $targetDesktop, $foregroundDesktop, $currentDesktop, $attachedTargetForeground, $attachError, $showResult, $bringResult, $setResult)
+      Write-Host ("WINDOWS_WINAPP_FOREGROUND_RECOVERY result={0} target=0x{1:X} before=0x{2:X} after=0x{3:X} target_thread={4} foreground_thread={5} after_thread={6} current_thread={7} target_pid={8} foreground_pid={9} after_pid={10} target_process={11} foreground_process={12} current_process={13} target_session={14} foreground_session={15} current_session={16} target_desktop={17} foreground_desktop={18} current_desktop={19} attach_target_foreground={20} attach_error={21} show={22} bring={23} set={24} alt_input_count={25} alt_input_error={26} set_after_alt={27}" -f $success, $target.ToInt64(), $foreground.ToInt64(), $after.ToInt64(), $targetThread, $foregroundThread, $afterThread, $currentThread, $targetProcess, $foregroundProcess, $afterProcess, $targetName, $foregroundName, $currentName, $targetSession, $foregroundSession, $currentSession, $targetDesktop, $foregroundDesktop, $currentDesktop, $attachedTargetForeground, $attachError, $showResult, $bringResult, $setResult, $altInputCount, $altInputError, $setAfterAltResult)
       return $success
     } finally {
       if ($attachedTargetForeground) { [void][EquinoxWinappSmokeForeground]::AttachThreadInput($targetThread, $foregroundThread, $false) }

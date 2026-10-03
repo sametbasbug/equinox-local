@@ -390,6 +390,9 @@ test("public Windows CI restores and builds the native x64 shell", async () => {
   assert.match(winappSmoke, /GetDesktopName\(\$targetThread\)/u);
   assert.match(winappSmoke, /GetLastWin32Error\(\)/u);
   assert.match(winappSmoke, /target_session=\{14\} foreground_session=\{15\} current_session=\{16\}/u);
+  assert.match(winappSmoke, /SendAltPulse\(\)/u);
+  assert.match(winappSmoke, /if \(\$architecture -eq 'Arm64' -and -not \$setResult\)/u);
+  assert.match(winappSmoke, /alt_input_count=\{25\} alt_input_error=\{26\} set_after_alt=\{27\}/u);
 });
 
 
