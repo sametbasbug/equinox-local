@@ -237,19 +237,27 @@ function desktopPowerShellArgs(mode, args = {}) {
 }
 
 async function managedScreenshotResult(filePath, parsed, fsImpl) {
-  const stat = await fsImpl.lstat(filePath);
-  if (!stat.isFile() || stat.isSymbolicLink()) throw new Error("Microsoft winapp screenshot did not produce a normal image file.");
-  if (stat.size < 1 || stat.size > MAX_IMAGE_VIEW_BYTES) throw new Error(`Microsoft winapp screenshot must be between 1 byte and ${MAX_IMAGE_VIEW_BYTES / 1024 / 1024} MB.`);
-  const buffer = await fsImpl.readFile(filePath);
-  if (buffer.length !== stat.size) throw new Error("Microsoft winapp screenshot changed while it was being read; retry the capture.");
-  const metadata = inspectImageBuffer(buffer);
-  if (metadata.mimeType !== "image/png") throw new Error("Microsoft winapp screenshot output is not PNG.");
-  return {
-    content: [
-      { type: "text", text: JSON.stringify(parsed, null, 2) },
-      { type: "image", data: buffer.toString("base64"), mimeType: metadata.mimeType },
-    ],
-  };
+  // Keep validation and content reads on one open handle so the pathname cannot be
+  // swapped between a pre-read metadata check and the actual image read (TOCTOU).
+  const handle = await fsImpl.open(filePath, "r");
+  try {
+    const before = await handle.stat();
+    if (!before.isFile()) throw new Error("Microsoft winapp screenshot did not produce a normal image file.");
+    if (before.size < 1 || before.size > MAX_IMAGE_VIEW_BYTES) throw new Error(`Microsoft winapp screenshot must be between 1 byte and ${MAX_IMAGE_VIEW_BYTES / 1024 / 1024} MB.`);
+    const buffer = await handle.readFile();
+    const after = await handle.stat();
+    if (buffer.length !== before.size || after.size !== before.size) throw new Error("Microsoft winapp screenshot changed while it was being read; retry the capture.");
+    const metadata = inspectImageBuffer(buffer);
+    if (metadata.mimeType !== "image/png") throw new Error("Microsoft winapp screenshot output is not PNG.");
+    return {
+      content: [
+        { type: "text", text: JSON.stringify(parsed, null, 2) },
+        { type: "image", data: buffer.toString("base64"), mimeType: metadata.mimeType },
+      ],
+    };
+  } finally {
+    await handle.close();
+  }
 }
 
 export function createWinappBridge({ baseEnvironment = process.env, execFileImpl = execFile, resolveBinaryImpl = resolveWinappBinary, fsImpl = fs, platform = process.platform } = {}) {
