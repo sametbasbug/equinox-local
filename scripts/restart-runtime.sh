@@ -224,11 +224,15 @@ RUNTIME=""
 TUNNEL_CLIENT=""
 PEEKABOO_PATH=""
 SOURCE_LAUNCHER=""
+PRIVATE_COMPOSITION_MODULE=""
+PRIVATE_COMPOSITION_ROOT=""
 SEEN_LABEL=0
 SEEN_RUNTIME=0
 SEEN_CLIENT=0
 SEEN_PEEKABOO=0
 SEEN_SOURCE_LAUNCHER=0
+SEEN_PRIVATE_COMPOSITION_MODULE=0
+SEEN_PRIVATE_COMPOSITION_ROOT=0
 
 while IFS= read -r line || [ -n "$line" ]; do
   case "$line" in
@@ -263,6 +267,16 @@ while IFS= read -r line || [ -n "$line" ]; do
       SOURCE_LAUNCHER="$value"
       SEEN_SOURCE_LAUNCHER=1
       ;;
+    privateCompositionModule)
+      [ "$SEEN_PRIVATE_COMPOSITION_MODULE" -eq 0 ] || fail "developer runtime config repeats privateCompositionModule"
+      PRIVATE_COMPOSITION_MODULE="$value"
+      SEEN_PRIVATE_COMPOSITION_MODULE=1
+      ;;
+    privateCompositionRoot)
+      [ "$SEEN_PRIVATE_COMPOSITION_ROOT" -eq 0 ] || fail "developer runtime config repeats privateCompositionRoot"
+      PRIVATE_COMPOSITION_ROOT="$value"
+      SEEN_PRIVATE_COMPOSITION_ROOT=1
+      ;;
     *)
       fail "developer runtime config contains an unsupported field: $key"
       ;;
@@ -286,6 +300,11 @@ case "$SOURCE_LAUNCHER" in
   *) fail "sourceLauncher must be an absolute path" ;;
 esac
 [ -f "$SOURCE_LAUNCHER" ] && [ ! -L "$SOURCE_LAUNCHER" ] || fail "configured sourceLauncher is missing or unsafe"
+if [ -n "$PRIVATE_COMPOSITION_MODULE" ] || [ -n "$PRIVATE_COMPOSITION_ROOT" ]; then
+  [ -n "$PRIVATE_COMPOSITION_MODULE" ] && [ -n "$PRIVATE_COMPOSITION_ROOT" ] || fail "private composition module/root must be configured together"
+  case "$PRIVATE_COMPOSITION_MODULE" in /*) ;; *) fail "privateCompositionModule must be an absolute path" ;; esac
+  case "$PRIVATE_COMPOSITION_ROOT" in /*) ;; *) fail "privateCompositionRoot must be an absolute path" ;; esac
+fi
 
 PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
 [ -f "$PLIST" ] && [ ! -L "$PLIST" ] || fail "configured LaunchAgent plist is missing or unsafe"

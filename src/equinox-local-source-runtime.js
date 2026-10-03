@@ -26,7 +26,7 @@ export function parseSourceRuntimeConfig(text) {
     if (index <= 0) throw new Error("Developer runtime config is malformed.");
     const key = line.slice(0, index);
     const value = line.slice(index + 1);
-    if (!new Set(["launchAgentLabel", "tunnelRuntime", "tunnelClient", "peekabooPath", "sourceLauncher"]).has(key)) {
+    if (!new Set(["launchAgentLabel", "tunnelRuntime", "tunnelClient", "peekabooPath", "sourceLauncher", "privateCompositionModule", "privateCompositionRoot"]).has(key)) {
       throw new Error("Developer runtime config contains an unsupported field.");
     }
     if (values.has(key)) throw new Error("Developer runtime config contains a duplicate field.");
@@ -35,15 +35,24 @@ export function parseSourceRuntimeConfig(text) {
   const tunnelClient = values.get("tunnelClient") || "";
   const peekabooPath = values.get("peekabooPath") || "";
   const sourceLauncher = values.get("sourceLauncher") || "";
+  const privateCompositionModule = values.get("privateCompositionModule") || "";
+  const privateCompositionRoot = values.get("privateCompositionRoot") || "";
   if (!path.isAbsolute(tunnelClient)) throw new Error("Developer tunnel-client path is invalid.");
   if (peekabooPath && !path.isAbsolute(peekabooPath)) throw new Error("Developer Peekaboo path is invalid.");
   if (!path.isAbsolute(sourceLauncher)) throw new Error("Developer source launcher path is invalid.");
+  if (Boolean(privateCompositionModule) !== Boolean(privateCompositionRoot)) {
+    throw new Error("Developer private composition module/root must be configured together.");
+  }
+  if (privateCompositionModule && !path.isAbsolute(privateCompositionModule)) throw new Error("Developer private composition module path is invalid.");
+  if (privateCompositionRoot && !path.isAbsolute(privateCompositionRoot)) throw new Error("Developer private composition root path is invalid.");
   return Object.freeze({
     launchAgentLabel: values.get("launchAgentLabel") || "",
     tunnelRuntime: values.get("tunnelRuntime") || "",
     tunnelClient,
     peekabooPath,
     sourceLauncher,
+    privateCompositionModule,
+    privateCompositionRoot,
   });
 }
 
