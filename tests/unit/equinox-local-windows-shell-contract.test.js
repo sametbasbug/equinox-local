@@ -395,6 +395,32 @@ test("public Windows CI restores and builds the native x64 shell", async () => {
   assert.match(winappSmoke, /SendAltPulse\(\)/u);
   assert.match(winappSmoke, /if \(\$architecture -eq 'Arm64' -and -not \$setResult\)/u);
   assert.match(winappSmoke, /alt_input_count=\{25\} alt_input_error=\{26\} set_after_alt=\{27\}/u);
+  assert.match(winappSmoke, /function Test-ProtectedHostedForegroundCeiling/u);
+  assert.match(winappSmoke, /\$architecture -ne 'Arm64'/u);
+  assert.match(winappSmoke, /\$env:GITHUB_ACTIONS -ne 'true'/u);
+  assert.match(winappSmoke, /\$env:RUNNER_ENVIRONMENT -ne 'github-hosted'/u);
+  assert.match(winappSmoke, /foreground_not_target/u);
+  assert.match(winappSmoke, /\$evidence\.TargetPid -eq \$fixture\.Id/u);
+  assert.match(winappSmoke, /\$evidence\.TargetProcess -eq 'EquinoxLocal\.WinappSmokeFixture'/u);
+  assert.match(winappSmoke, /\$evidence\.ForegroundProcess -eq 'WWAHost'/u);
+  assert.match(winappSmoke, /\$evidence\.CurrentProcess -eq 'powershell'/u);
+  assert.match(winappSmoke, /\$evidence\.TargetSession -eq \$evidence\.ForegroundSession/u);
+  assert.match(winappSmoke, /\$evidence\.TargetSession -eq \$evidence\.CurrentSession/u);
+  assert.match(winappSmoke, /\$evidence\.TargetDesktop -eq 'Default'/u);
+  assert.match(winappSmoke, /\$evidence\.CurrentDesktop -eq 'Default'/u);
+  assert.match(winappSmoke, /\$evidence\.ForegroundDesktop -eq '<unavailable:5>'/u);
+  assert.match(winappSmoke, /-not \$evidence\.AttachedTargetForeground/u);
+  assert.match(winappSmoke, /\$evidence\.AttachError -eq 5/u);
+  assert.match(winappSmoke, /\$evidence\.ShowResult -and/u);
+  assert.match(winappSmoke, /\$evidence\.BringResult -and/u);
+  assert.match(winappSmoke, /-not \$evidence\.SetResult/u);
+  assert.match(winappSmoke, /\$evidence\.AltInputCount -eq 2/u);
+  assert.match(winappSmoke, /\$evidence\.AltInputError -eq 0/u);
+  assert.match(winappSmoke, /-not \$evidence\.SetAfterAltResult/u);
+  assert.match(winappSmoke, /\$evidence\.AfterPid -eq \$evidence\.ForegroundPid/u);
+  assert.match(winappSmoke, /\$evidence\.AfterThread -eq \$evidence\.ForegroundThread/u);
+  assert.match(winappSmoke, /\$evidence\.AfterHandle -eq \$evidence\.ForegroundHandle/u);
+  assert.match(winappSmoke, /reason=hosted_runner_protected_wwahost/u);
 });
 
 

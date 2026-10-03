@@ -98,6 +98,38 @@ public static class EquinoxWinappSmokeForeground {
     }
 }
 "@
+  $script:controlledForegroundEvidence = $null
+  function Test-ProtectedHostedForegroundCeiling {
+    param([Parameter(Mandatory = $true)][string]$FocusOutput)
+    $evidence = $script:controlledForegroundEvidence
+    if ($architecture -ne 'Arm64' -or $null -eq $evidence) { return $false }
+    if ($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_ENVIRONMENT -ne 'github-hosted') { return $false }
+    if ($FocusOutput -notmatch '"code"\s*:\s*"foreground_not_target"') { return $false }
+    return (
+      -not $evidence.Success -and
+      $evidence.TargetPid -eq $fixture.Id -and
+      $evidence.TargetProcess -eq 'EquinoxLocal.WinappSmokeFixture' -and
+      $evidence.ForegroundProcess -eq 'WWAHost' -and
+      $evidence.CurrentProcess -eq 'powershell' -and
+      $evidence.TargetSession -ge 0 -and
+      $evidence.TargetSession -eq $evidence.ForegroundSession -and
+      $evidence.TargetSession -eq $evidence.CurrentSession -and
+      $evidence.TargetDesktop -eq 'Default' -and
+      $evidence.CurrentDesktop -eq 'Default' -and
+      $evidence.ForegroundDesktop -eq '<unavailable:5>' -and
+      -not $evidence.AttachedTargetForeground -and
+      $evidence.AttachError -eq 5 -and
+      $evidence.ShowResult -and
+      $evidence.BringResult -and
+      -not $evidence.SetResult -and
+      $evidence.AltInputCount -eq 2 -and
+      $evidence.AltInputError -eq 0 -and
+      -not $evidence.SetAfterAltResult -and
+      $evidence.AfterPid -eq $evidence.ForegroundPid -and
+      $evidence.AfterThread -eq $evidence.ForegroundThread -and
+      $evidence.AfterHandle -eq $evidence.ForegroundHandle
+    )
+  }
   function Set-ControlledFixtureForeground {
     $fixture.Refresh()
     $target = $fixture.MainWindowHandle
@@ -162,6 +194,34 @@ public static class EquinoxWinappSmokeForeground {
       [uint32]$afterProcess = 0
       $afterThread = if ($after -eq [IntPtr]::Zero) { 0 } else { [EquinoxWinappSmokeForeground]::GetWindowThreadProcessId($after, [ref]$afterProcess) }
       $success = $after -eq $target
+      $script:controlledForegroundEvidence = [pscustomobject]@{
+        Success = $success
+        ForegroundHandle = [Int64]$foreground.ToInt64()
+        AfterHandle = [Int64]$after.ToInt64()
+        TargetPid = [int]$targetProcess
+        ForegroundPid = [int]$foregroundProcess
+        AfterPid = [int]$afterProcess
+        TargetThread = [uint32]$targetThread
+        ForegroundThread = [uint32]$foregroundThread
+        AfterThread = [uint32]$afterThread
+        TargetProcess = $targetName
+        ForegroundProcess = $foregroundName
+        CurrentProcess = $currentName
+        TargetSession = [int]$targetSession
+        ForegroundSession = [int]$foregroundSession
+        CurrentSession = [int]$currentSession
+        TargetDesktop = $targetDesktop
+        ForegroundDesktop = $foregroundDesktop
+        CurrentDesktop = $currentDesktop
+        AttachedTargetForeground = [bool]$attachedTargetForeground
+        AttachError = [int]$attachError
+        ShowResult = [bool]$showResult
+        BringResult = [bool]$bringResult
+        SetResult = [bool]$setResult
+        AltInputCount = [uint32]$altInputCount
+        AltInputError = [int]$altInputError
+        SetAfterAltResult = [bool]$setAfterAltResult
+      }
       Write-Host ("WINDOWS_WINAPP_FOREGROUND_RECOVERY result={0} target=0x{1:X} before=0x{2:X} after=0x{3:X} target_thread={4} foreground_thread={5} after_thread={6} current_thread={7} target_pid={8} foreground_pid={9} after_pid={10} target_process={11} foreground_process={12} current_process={13} target_session={14} foreground_session={15} current_session={16} target_desktop={17} foreground_desktop={18} current_desktop={19} attach_target_foreground={20} attach_error={21} show={22} bring={23} set={24} alt_input_count={25} alt_input_error={26} set_after_alt={27}" -f $success, $target.ToInt64(), $foreground.ToInt64(), $after.ToInt64(), $targetThread, $foregroundThread, $afterThread, $currentThread, $targetProcess, $foregroundProcess, $afterProcess, $targetName, $foregroundName, $currentName, $targetSession, $foregroundSession, $currentSession, $targetDesktop, $foregroundDesktop, $currentDesktop, $attachedTargetForeground, $attachError, $showResult, $bringResult, $setResult, $altInputCount, $altInputError, $setAfterAltResult)
       return $success
     } finally {
@@ -207,6 +267,9 @@ public static class EquinoxWinappSmokeForeground {
     if ($architecture -eq 'Arm64' -and $focusProbe.Output -match 'no_interactive_desktop') {
       $pasteInputSkipped = $true
       Write-Output 'WINDOWS_WINAPP_PASTE_INPUT_SKIPPED architecture=Arm64 reason=no_interactive_desktop'
+    } elseif (Test-ProtectedHostedForegroundCeiling -FocusOutput $focusProbe.Output) {
+      $pasteInputSkipped = $true
+      Write-Output 'WINDOWS_WINAPP_PASTE_INPUT_SKIPPED architecture=Arm64 reason=hosted_runner_protected_wwahost'
     } else {
       throw "winapp could not foreground/focus the controlled paste target: $($focusProbe.Output)"
     }
