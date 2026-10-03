@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 
 import { prepareSourceAppHost, sourceAppRuntimeWrapper } from "../../scripts/release/prepare-source-app-host.mjs";
 
-test("source runtime wrapper invokes an existing factory watchdog entrypoint", async () => {
+test("source runtime wrapper invokes an existing canonical watchdog entrypoint", async () => {
   const wrapper = sourceAppRuntimeWrapper("/fixture/start-source.sh", "", {
     nodePath: "/fixture/node",
     configPath: "/fixture/runtime.conf",
@@ -15,7 +15,7 @@ test("source runtime wrapper invokes an existing factory watchdog entrypoint", a
   const watchdogPath = wrapper.match(/'([^'\n]*watch-source-runtime\.mjs)'/u)?.[1];
   assert.ok(watchdogPath, "generated wrapper must contain its watchdog entrypoint");
   assert.equal((await fs.lstat(watchdogPath)).isFile(), true);
-  assert.equal(watchdogPath, fileURLToPath(new URL("../../factory/local/watch-source-runtime.mjs", import.meta.url)));
+  assert.equal(watchdogPath, fileURLToPath(new URL("../../scripts/release/watch-source-runtime.mjs", import.meta.url)));
 });
 
 const macTest = process.platform === "darwin" ? test : test.skip;
