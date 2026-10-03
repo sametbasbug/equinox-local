@@ -64,10 +64,20 @@ public static class EquinoxWinappSmokeForeground {
     [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
     [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
     [DllImport("kernel32.dll")] public static extern uint GetCurrentThreadId();
-    [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] public static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, bool attach);
+    [DllImport("user32.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)] public static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, bool attach);
     [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] public static extern bool ShowWindowAsync(IntPtr hWnd, int command);
     [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] public static extern bool BringWindowToTop(IntPtr hWnd);
     [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] public static extern bool SetForegroundWindow(IntPtr hWnd);
+    [DllImport("user32.dll", SetLastError = true)] public static extern IntPtr GetThreadDesktop(uint threadId);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)] public static extern bool GetUserObjectInformation(IntPtr handle, int index, System.Text.StringBuilder info, uint length, out uint needed);
+    public static string GetDesktopName(uint threadId) {
+        IntPtr desktop = GetThreadDesktop(threadId);
+        if (desktop == IntPtr.Zero) return "<unavailable:" + Marshal.GetLastWin32Error() + ">";
+        var buffer = new System.Text.StringBuilder(256);
+        uint needed;
+        if (!GetUserObjectInformation(desktop, 2, buffer, 512, out needed)) return "<unavailable:" + Marshal.GetLastWin32Error() + ">";
+        return buffer.ToString();
+    }
 }
 "@
   function Set-ControlledFixtureForeground {
@@ -95,9 +105,23 @@ public static class EquinoxWinappSmokeForeground {
     # message queue. This remains bounded to the exact controlled fixture HWND.
     $attachedTargetForeground = $false
     try {
+      $attachError = 0
       if ($targetThread -ne $foregroundThread) {
         $attachedTargetForeground = [EquinoxWinappSmokeForeground]::AttachThreadInput($targetThread, $foregroundThread, $true)
+        if (-not $attachedTargetForeground) { $attachError = [Runtime.InteropServices.Marshal]::GetLastWin32Error() }
       }
+      $targetDesktop = [EquinoxWinappSmokeForeground]::GetDesktopName($targetThread)
+      $foregroundDesktop = [EquinoxWinappSmokeForeground]::GetDesktopName($foregroundThread)
+      $currentDesktop = [EquinoxWinappSmokeForeground]::GetDesktopName($currentThread)
+      $targetInfo = Get-Process -Id ([int]$targetProcess) -ErrorAction SilentlyContinue
+      $foregroundInfo = Get-Process -Id ([int]$foregroundProcess) -ErrorAction SilentlyContinue
+      $currentInfo = Get-Process -Id $PID -ErrorAction SilentlyContinue
+      $targetSession = if ($null -eq $targetInfo) { -1 } else { $targetInfo.SessionId }
+      $foregroundSession = if ($null -eq $foregroundInfo) { -1 } else { $foregroundInfo.SessionId }
+      $currentSession = if ($null -eq $currentInfo) { -1 } else { $currentInfo.SessionId }
+      $targetName = if ($null -eq $targetInfo) { '<missing>' } else { $targetInfo.ProcessName }
+      $foregroundName = if ($null -eq $foregroundInfo) { '<missing>' } else { $foregroundInfo.ProcessName }
+      $currentName = if ($null -eq $currentInfo) { '<missing>' } else { $currentInfo.ProcessName }
       $showResult = [EquinoxWinappSmokeForeground]::ShowWindowAsync($target, 9)
       $bringResult = [EquinoxWinappSmokeForeground]::BringWindowToTop($target)
       $setResult = [EquinoxWinappSmokeForeground]::SetForegroundWindow($target)
@@ -106,7 +130,7 @@ public static class EquinoxWinappSmokeForeground {
       [uint32]$afterProcess = 0
       $afterThread = if ($after -eq [IntPtr]::Zero) { 0 } else { [EquinoxWinappSmokeForeground]::GetWindowThreadProcessId($after, [ref]$afterProcess) }
       $success = $after -eq $target
-      Write-Host ("WINDOWS_WINAPP_FOREGROUND_RECOVERY result={0} target=0x{1:X} before=0x{2:X} after=0x{3:X} target_thread={4} foreground_thread={5} after_thread={6} current_thread={7} target_pid={8} foreground_pid={9} after_pid={10} attach_target_foreground={11} show={12} bring={13} set={14}" -f $success, $target.ToInt64(), $foreground.ToInt64(), $after.ToInt64(), $targetThread, $foregroundThread, $afterThread, $currentThread, $targetProcess, $foregroundProcess, $afterProcess, $attachedTargetForeground, $showResult, $bringResult, $setResult)
+      Write-Host ("WINDOWS_WINAPP_FOREGROUND_RECOVERY result={0} target=0x{1:X} before=0x{2:X} after=0x{3:X} target_thread={4} foreground_thread={5} after_thread={6} current_thread={7} target_pid={8} foreground_pid={9} after_pid={10} target_process={11} foreground_process={12} current_process={13} target_session={14} foreground_session={15} current_session={16} target_desktop={17} foreground_desktop={18} current_desktop={19} attach_target_foreground={20} attach_error={21} show={22} bring={23} set={24}" -f $success, $target.ToInt64(), $foreground.ToInt64(), $after.ToInt64(), $targetThread, $foregroundThread, $afterThread, $currentThread, $targetProcess, $foregroundProcess, $afterProcess, $targetName, $foregroundName, $currentName, $targetSession, $foregroundSession, $currentSession, $targetDesktop, $foregroundDesktop, $currentDesktop, $attachedTargetForeground, $attachError, $showResult, $bringResult, $setResult)
       return $success
     } finally {
       if ($attachedTargetForeground) { [void][EquinoxWinappSmokeForeground]::AttachThreadInput($targetThread, $foregroundThread, $false) }
