@@ -217,10 +217,7 @@ test("private signing key descriptor reader validates mode, ownership, bound and
     handle = await fs.open(keyPath, "r");
     const loaded = readPrivateUpdateSigningKeyFromFd(handle.fd);
     assert.equal(loaded.asymmetricKeyType, "ed25519");
-    await handle.close();
-    handle = null;
-    await fs.chmod(keyPath, 0o644);
-    handle = await fs.open(keyPath, "r");
+    await handle.chmod(0o644);
     assert.throws(() => readPrivateUpdateSigningKeyFromFd(handle.fd), /0600/u);
   } finally {
     await handle?.close().catch(() => {});
