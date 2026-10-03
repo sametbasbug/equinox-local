@@ -6,6 +6,7 @@ import {
   buildSafeWinappEnvironment,
   createWinappBridge,
   WINAPP_ALLOWED_TOOLS,
+  __test,
 } from "../../src/winapp-bridge.js";
 
 function tinyPng() {
@@ -17,6 +18,7 @@ function tinyPng() {
 function createHarness() {
   const calls = [];
   const mkdirs = [];
+  const opened = [];
   const files = new Map();
   let clipboardText = "initial clipboard";
   const png = tinyPng();
@@ -32,7 +34,15 @@ function createHarness() {
     fsImpl: {
       mkdir: async (...args) => mkdirs.push(args),
       lstat: async (filePath) => ({ isFile: () => true, isSymbolicLink: () => false, size: String(filePath).endsWith(".png") ? png.length : 100 }),
-      readFile: async (filePath) => String(filePath).endsWith(".png") ? png : files.get(filePath),
+      open: async (filePath, flags) => {
+        opened.push({ filePath, flags });
+        const data = String(filePath).endsWith(".png") ? png : files.get(filePath);
+        return {
+          stat: async () => ({ isFile: () => true, size: data.length }),
+          readFile: async () => data,
+          close: async () => {},
+        };
+      },
       writeFile: async (filePath, data) => { files.set(filePath, Buffer.from(data).toString("utf8")); },
       unlink: async (filePath) => { files.delete(filePath); },
     },
@@ -49,7 +59,7 @@ function createHarness() {
       return { stdout: JSON.stringify({ ok: true, args }), stderr: "" };
     },
   });
-  return { bridge, calls, mkdirs, png, files, clipboard: () => clipboardText };
+  return { bridge, calls, mkdirs, opened, png, files, clipboard: () => clipboardText };
 }
 
 test("winapp bridge exposes a practical Windows UI surface instead of a crippled semantic subset", async () => {
@@ -87,15 +97,30 @@ test("winapp bridge maps native inspect/search/input options without a shell", a
   assert.equal(calls.at(-1).options.shell, undefined);
 });
 
+test("winapp managed scratch files stay under per-user LocalAppData instead of the shared OS temp directory", () => {
+  assert.equal(
+    __test.tempRoot({ LOCALAPPDATA: "C:\\Users\\Türk User\\AppData\\Local", TEMP: "C:\\SharedTemp" }),
+    "C:\\Users\\Türk User\\AppData\\Local\\Equinox Local\\cache\\desktop",
+  );
+  assert.equal(
+    __test.tempRoot({ USERPROFILE: "C:\\Users\\Fallback", TEMP: "C:\\SharedTemp" }),
+    "C:\\Users\\Fallback\\AppData\\Local\\Equinox Local\\cache\\desktop",
+  );
+  assert.throws(() => __test.tempRoot({ TEMP: "C:\\SharedTemp" }), /scratch root is unavailable/u);
+});
+
 test("winapp managed screenshot returns native MCP image content through the shared image validator", async () => {
-  const { bridge, calls, mkdirs, png } = createHarness();
+  const { bridge, calls, mkdirs, opened, png } = createHarness();
   const result = await bridge.callTool("screenshot", { app: "Notepad", focus: true });
   const invocation = calls.at(-1);
   const outputIndex = invocation.args.indexOf("--output");
   assert.notEqual(outputIndex, -1);
-  assert.match(invocation.args[outputIndex + 1], /^C:\\Temp\\Equinox Local\\desktop\\capture-/u);
+  assert.match(invocation.args[outputIndex + 1], /^C:\\Users\\Test\\AppData\\Local\\Equinox Local\\cache\\desktop\\capture-/u);
   assert.equal(invocation.args.includes("--focus"), true);
   assert.equal(mkdirs.length, 1);
+  assert.equal(opened.length, 1);
+  assert.equal(opened[0].filePath, invocation.args[outputIndex + 1]);
+  assert.equal(opened[0].flags, "r");
   assert.equal(result.content[0].type, "text");
   assert.deepEqual(result.content[1], { type: "image", data: png.toString("base64"), mimeType: "image/png" });
 });
