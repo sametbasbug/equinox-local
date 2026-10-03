@@ -62,7 +62,7 @@ using System;
 using System.Runtime.InteropServices;
 public static class EquinoxWinappSmokeForeground {
     [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
-    [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, IntPtr processId);
+    [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
     [DllImport("kernel32.dll")] public static extern uint GetCurrentThreadId();
     [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] public static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, bool attach);
     [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] public static extern bool ShowWindowAsync(IntPtr hWnd, int command);
@@ -75,21 +75,41 @@ public static class EquinoxWinappSmokeForeground {
     $target = $fixture.MainWindowHandle
     if ($target -eq [IntPtr]::Zero) { throw 'Controlled WinForms fixture has no main window handle for foreground recovery.' }
     $foreground = [EquinoxWinappSmokeForeground]::GetForegroundWindow()
-    if ($foreground -eq [IntPtr]::Zero) { return $false }
+    if ($foreground -eq [IntPtr]::Zero) {
+      Write-Host 'WINDOWS_WINAPP_FOREGROUND_RECOVERY result=no_foreground_window'
+      return $false
+    }
+
+    [uint32]$targetProcess = 0
+    [uint32]$foregroundProcess = 0
+    $targetThread = [EquinoxWinappSmokeForeground]::GetWindowThreadProcessId($target, [ref]$targetProcess)
+    $foregroundThread = [EquinoxWinappSmokeForeground]::GetWindowThreadProcessId($foreground, [ref]$foregroundProcess)
     $currentThread = [EquinoxWinappSmokeForeground]::GetCurrentThreadId()
-    $foregroundThread = [EquinoxWinappSmokeForeground]::GetWindowThreadProcessId($foreground, [IntPtr]::Zero)
-    $attached = $false
+    if ($targetThread -eq 0 -or $foregroundThread -eq 0) {
+      Write-Host ("WINDOWS_WINAPP_FOREGROUND_RECOVERY result=missing_thread target=0x{0:X} foreground=0x{1:X} target_thread={2} foreground_thread={3} current_thread={4} target_pid={5} foreground_pid={6}" -f $target.ToInt64(), $foreground.ToInt64(), $targetThread, $foregroundThread, $currentThread, $targetProcess, $foregroundProcess)
+      return $false
+    }
+
+    # Attach the two GUI input queues directly. Attaching the PowerShell caller thread
+    # is insufficient on hosted ARM64 runners because that thread may not own a GUI
+    # message queue. This remains bounded to the exact controlled fixture HWND.
+    $attachedTargetForeground = $false
     try {
-      if ($foregroundThread -ne 0 -and $foregroundThread -ne $currentThread) {
-        $attached = [EquinoxWinappSmokeForeground]::AttachThreadInput($currentThread, $foregroundThread, $true)
+      if ($targetThread -ne $foregroundThread) {
+        $attachedTargetForeground = [EquinoxWinappSmokeForeground]::AttachThreadInput($targetThread, $foregroundThread, $true)
       }
-      [void][EquinoxWinappSmokeForeground]::ShowWindowAsync($target, 9)
-      [void][EquinoxWinappSmokeForeground]::BringWindowToTop($target)
-      [void][EquinoxWinappSmokeForeground]::SetForegroundWindow($target)
-      Start-Sleep -Milliseconds 150
-      return [EquinoxWinappSmokeForeground]::GetForegroundWindow() -eq $target
+      $showResult = [EquinoxWinappSmokeForeground]::ShowWindowAsync($target, 9)
+      $bringResult = [EquinoxWinappSmokeForeground]::BringWindowToTop($target)
+      $setResult = [EquinoxWinappSmokeForeground]::SetForegroundWindow($target)
+      Start-Sleep -Milliseconds 250
+      $after = [EquinoxWinappSmokeForeground]::GetForegroundWindow()
+      [uint32]$afterProcess = 0
+      $afterThread = if ($after -eq [IntPtr]::Zero) { 0 } else { [EquinoxWinappSmokeForeground]::GetWindowThreadProcessId($after, [ref]$afterProcess) }
+      $success = $after -eq $target
+      Write-Host ("WINDOWS_WINAPP_FOREGROUND_RECOVERY result={0} target=0x{1:X} before=0x{2:X} after=0x{3:X} target_thread={4} foreground_thread={5} after_thread={6} current_thread={7} target_pid={8} foreground_pid={9} after_pid={10} attach_target_foreground={11} show={12} bring={13} set={14}" -f $success, $target.ToInt64(), $foreground.ToInt64(), $after.ToInt64(), $targetThread, $foregroundThread, $afterThread, $currentThread, $targetProcess, $foregroundProcess, $afterProcess, $attachedTargetForeground, $showResult, $bringResult, $setResult)
+      return $success
     } finally {
-      if ($attached) { [void][EquinoxWinappSmokeForeground]::AttachThreadInput($currentThread, $foregroundThread, $false) }
+      if ($attachedTargetForeground) { [void][EquinoxWinappSmokeForeground]::AttachThreadInput($targetThread, $foregroundThread, $false) }
     }
   }
   $ready = $false

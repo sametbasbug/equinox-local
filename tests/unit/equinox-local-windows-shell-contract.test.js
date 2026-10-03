@@ -384,6 +384,9 @@ test("public Windows CI restores and builds the native x64 shell", async () => {
   assert.match(winappSmoke, /function Invoke-WinappCaptured/u);
   assert.match(winappSmoke, /ErrorActionPreference = 'Continue'/u);
   assert.match(winappSmoke, /Set-ControlledFixtureForeground/u);
+  assert.match(winappSmoke, /GetWindowThreadProcessId\(\$target, \[ref\]\$targetProcess\)/u);
+  assert.match(winappSmoke, /AttachThreadInput\(\$targetThread, \$foregroundThread, \$true\)/u);
+  assert.match(winappSmoke, /WINDOWS_WINAPP_FOREGROUND_RECOVERY/u);
 });
 
 
