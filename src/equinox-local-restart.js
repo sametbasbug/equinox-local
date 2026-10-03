@@ -4,20 +4,12 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { launchDetachedHelper } from "./equinox-local-detached-helper.js";
+import { projectDarwinDetachedHelperEnvironment } from "./equinox-local-darwin-helper-environment.js";
 
 const DEFAULT_HELPER_PATH = fileURLToPath(new URL("./equinox-local-restart-helper.js", import.meta.url));
 
 export function restartHelperEnvironment(installation, sourceEnv = process.env) {
-  const env = {
-    HOME: sourceEnv.HOME,
-    USER: sourceEnv.USER,
-    LOGNAME: sourceEnv.LOGNAME,
-    TMPDIR: sourceEnv.TMPDIR,
-    PATH: "/usr/bin:/bin:/usr/sbin:/sbin",
-    EQUINOX_LOCAL_INSTALL_ROOT: installation?.installRoot,
-    EQUINOX_LOCAL_RELEASE_DIR: installation?.releaseDir,
-  };
-  return Object.fromEntries(Object.entries(env).filter(([, value]) => typeof value === "string" && value.length > 0));
+  return projectDarwinDetachedHelperEnvironment({ installation, sourceEnv });
 }
 
 export async function scheduleEquinoxLocalRestart({
@@ -69,15 +61,10 @@ export async function scheduleSourceCheckoutRestart({
     );
   }
 
-  const sourceRestartEnv = {
-    HOME: processImpl.env.HOME,
-    USER: processImpl.env.USER,
-    LOGNAME: processImpl.env.LOGNAME,
-    TMPDIR: processImpl.env.TMPDIR,
-    PATH: "/usr/bin:/bin:/usr/sbin:/sbin",
-    EQUINOX_LOCAL_DEV_RUNTIME_CONFIG:
-      processImpl.env.EQUINOX_LOCAL_DEV_RUNTIME_CONFIG,
-  };
+  const sourceRestartEnv = projectDarwinDetachedHelperEnvironment({
+    sourceEnv: processImpl.env,
+    includeDeveloperRuntimeConfig: true,
+  });
   await launchDetachedHelper({
     spawnImpl,
     command: "/bin/bash",
@@ -85,13 +72,7 @@ export async function scheduleSourceCheckoutRestart({
     options: {
       detached: true,
       stdio: "ignore",
-      env: Object.fromEntries(
-        Object.entries(sourceRestartEnv).filter(
-          ([, value]) =>
-            typeof value === "string" &&
-            value.length > 0,
-        ),
-      ),
+      env: sourceRestartEnv,
     },
     label: "Equinox Local source restart helper",
   });

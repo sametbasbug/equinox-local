@@ -5,6 +5,7 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 
+import { hashFile } from "../lib/package-io.mjs";
 import { collectManagedReleaseSourceFiles } from "./package-managed-release.mjs";
 import {
   EQUINOX_LOCAL_NODE_VERSION,
@@ -75,18 +76,8 @@ export function windowsManagedPackageContract({ target = "win32-x64" } = {}) {
 }
 
 async function sha256File(filePath) {
-  const handle = await fs.open(filePath, "r");
-  const digest = createHash("sha256");
-  let bytes = 0;
-  try {
-    for await (const chunk of handle.createReadStream()) {
-      bytes += chunk.length;
-      digest.update(chunk);
-    }
-  } finally {
-    await handle.close().catch(() => {});
-  }
-  return Object.freeze({ sha256: digest.digest("hex"), bytes });
+  const result = await hashFile(filePath, { suppressCloseErrors: true });
+  return Object.freeze({ sha256: result.sha256, bytes: result.bytes });
 }
 
 async function downloadVerified(url, destination, expectedSha256, { fetchImpl = globalThis.fetch } = {}) {

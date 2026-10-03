@@ -3,8 +3,10 @@ import fs from "node:fs/promises";
 import test from "node:test";
 import vm from "node:vm";
 import { fileURLToPath } from "node:url";
+import { createExtensionVmContext } from "../helpers/extension-vm-import-scripts.mjs";
 
 const SERVICE_WORKER_PATH = fileURLToPath(new URL("../../extension/service-worker.js", import.meta.url));
+const EXTENSION_ROOT = fileURLToPath(new URL("../../extension/", import.meta.url));
 
 function createEvent() {
   const listeners = [];
@@ -146,7 +148,8 @@ async function createLifecycleHarness({
   };
 
   const source = await fs.readFile(SERVICE_WORKER_PATH, "utf8");
-  const context = {
+  const context = createExtensionVmContext({
+    sandbox: {
     chrome,
     crypto: {
       randomUUID: () => "11111111-2222-4333-8444-555555555555",
@@ -156,8 +159,11 @@ async function createLifecycleHarness({
     setTimeout,
     clearTimeout,
     queueMicrotask,
-  };
-  vm.runInNewContext(
+  },
+    extensionRoot: EXTENSION_ROOT,
+    allowedScripts: ["bookmarks.js"],
+  });
+  vm.runInContext(
     `${source}\n;globalThis.__life = { ensureBrowserControlConsentLoaded, ensureBrowserEnabledLoaded, ensureAgentCursorEnabledLoaded, ensureAgentCursorNameLoaded, ensureBrowserIdentityLoaded, setBrowserContext, setBrowserEnabled, acceptBrowserControlConsent, setAgentCursorEnabled, setAgentCursorName, updateBrowserSettings, popupStatus, handleCommand, connectNativeHost, scheduleReconnect, snapshot: () => ({ browserEnabled, browserEnabledLoaded, browserControlConsentVersion, browserControlConsentLoaded, agentCursorEnabled, agentCursorEnabledLoaded, agentCursorName, agentCursorNameLoaded, browserInstanceId, browserContext, browserIdentityLoaded, nativePort: Boolean(nativePort), localBridgeConnected, reconnectDelayMs, immediateReconnectUsed, lastNativeDisconnectError, reconnectTimer: Boolean(reconnectTimer) }) };`,
     context,
     { filename: SERVICE_WORKER_PATH },

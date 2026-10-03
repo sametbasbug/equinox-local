@@ -154,6 +154,57 @@ test("project-root validation accepts direct and worktree metadata without syste
   await assert.rejects(validateIndependentGitProjectRoot(nested), /\.git/u);
 });
 
+test("both bootstrap Git HEAD checks retain the same bounded hash and symbolic-ref acceptance", async (t) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "equinox-git-head-contract-"));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const workspaceRoot = path.join(root, "workspace");
+  const workspaceGit = path.join(workspaceRoot, ".git");
+  const projectRoot = path.join(root, "project");
+  const projectGit = path.join(projectRoot, ".git");
+  await fs.mkdir(path.join(workspaceGit, "objects"), { recursive: true });
+  await fs.mkdir(path.join(workspaceGit, "refs"), { recursive: true });
+  await fs.writeFile(path.join(workspaceGit, "config"), "[core]\n");
+  await fs.mkdir(projectGit, { recursive: true });
+
+  const writeBothHeads = async (head) => {
+    await fs.writeFile(path.join(workspaceGit, "HEAD"), head);
+    await fs.writeFile(path.join(projectGit, "HEAD"), head);
+  };
+  const validHeads = [
+    `${"a".repeat(40)}\n`,
+    `${"b".repeat(64)}\n`,
+    "ref: refs/heads/main\n",
+    "ref: refs/heads/topic with spaces\n",
+    `${" ".repeat(64 * 1024 - 40)}${"c".repeat(40)}`,
+  ];
+  for (const head of validHeads) {
+    await writeBothHeads(head);
+    assert.equal(await ensureWorkspaceGitRepository(workspaceRoot), await fs.realpath(workspaceRoot));
+    assert.equal(await validateIndependentGitProjectRoot(projectRoot), await fs.realpath(projectRoot));
+  }
+
+  const invalidHeads = [
+    `${"A".repeat(40)}\n`,
+    `${"d".repeat(39)}\n`,
+    `${"e".repeat(41)}\n`,
+    "ref: refs/heads/\n",
+    "ref: refs/heads/feature..unsafe\n",
+    "ref: refs/heads/topic@{previous}\n",
+    "ref: refs/heads/topic" + String.fromCharCode(92) + "unsafe\n",
+    "ref: refs/heads/trailing/\n",
+    "not a git head\n",
+  ];
+  for (const head of invalidHeads) {
+    await writeBothHeads(head);
+    await assert.rejects(ensureWorkspaceGitRepository(workspaceRoot), {
+      message: "Existing Equinox Workspace Git HEAD metadata is invalid.",
+    });
+    await assert.rejects(validateIndependentGitProjectRoot(projectRoot), {
+      message: "Configured Git metadata HEAD is invalid.",
+    });
+  }
+});
+
 test("managed user bootstrap is idempotent and preserves user configuration", async (t) => {
   const fixture = await makeManagedHome();
   t.after(() => fs.rm(fixture.root, { recursive: true, force: true }));

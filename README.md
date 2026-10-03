@@ -215,6 +215,8 @@ More: [docs/updates.md](docs/updates.md)
 
 Tests live under `tests/` on purpose: they remain part of the public trust story without turning the repository root into a wall of `*.test.js` files.
 
+Internal modules separate tool registration, workspace/history mechanics, Control Center localization, Browser artifacts and bounded platform/release helpers without changing the MCP, configuration or UI contracts. The [architecture guide](docs/architecture.md#internal-module-boundaries) describes these responsibilities and their preserved security boundaries.
+
 ## Development
 
 ### Requirements

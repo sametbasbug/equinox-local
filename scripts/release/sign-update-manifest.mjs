@@ -8,6 +8,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
+import { hashFile } from "../lib/package-io.mjs";
 import { readBoundedNormalFile } from "../../src/equinox-local-safe-file.js";
 import {
   canonicalUpdateManifestPayload,
@@ -31,18 +32,8 @@ function inside(parent, child) {
 }
 
 async function sha256File(filePath) {
-  const handle = await fs.open(filePath, "r");
-  const digest = createHash("sha256");
-  let bytes = 0;
-  try {
-    for await (const chunk of handle.createReadStream()) {
-      bytes += chunk.length;
-      digest.update(chunk);
-    }
-  } finally {
-    await handle.close().catch(() => {});
-  }
-  return Object.freeze({ bytes, sha256: digest.digest("hex") });
+  const result = await hashFile(filePath, { suppressCloseErrors: true });
+  return Object.freeze({ bytes: result.bytes, sha256: result.sha256 });
 }
 
 async function writeOrVerifySharedPublicFile(filePath, data, { label, maxBytes }) {

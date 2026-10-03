@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import * as z from "zod/v4";
 
-import { registerProcessTools } from "../../src/equinox-local-process-tools.js";
+import { createLocalPortInspector, registerProcessTools } from "../../src/equinox-local-process-tools.js";
 
 function createHarness(overrides = {}) {
   const registrations = new Map();
@@ -80,6 +80,10 @@ function createHarness(overrides = {}) {
     },
     z,
     processManager: manager,
+    inspectLocalPort: async (input) => {
+      calls.push(["inspectLocalPort", input]);
+      return { probe: { listening: true }, listeners: [{ pid: 42 }], lsofError: null, managedProcesses: [], suggestedUrl: `http://${input.host}:${input.port}/` };
+    },
     agentAccess: { terminal: true },
     safeResolve: async (value) => `/tmp/project/${value === "." ? "" : value}`.replace(/\/$/u, ""),
     fsImpl: { stat: async () => ({ isDirectory: () => true }) },
@@ -112,6 +116,7 @@ test("process tools preserve start routing, env projection and initial logs", as
     "process_logs",
     "process_wait",
     "process_stop",
+    "port_status",
   ]);
 
   const result = parseText(await harness.registrations.get("process_start").handler({
@@ -240,6 +245,39 @@ test("process wait reuses managed lifecycle, preserves timeout state and bounded
   });
   assert.equal(missing.isError, true);
   assert.match(missing.content[0].text, /Bilinmeyen süreç kimliği/u);
+});
+
+test("port status restores the advertised read-only loopback inspection adapter", async () => {
+  const harness = createHarness();
+  const portStatus = harness.registrations.get("port_status");
+  assert.equal(portStatus.options.projectAware, false);
+  assert.equal(portStatus.config.annotations.readOnlyHint, true);
+  const result = parseText(await portStatus.handler({ port: 4321, host: "127.0.0.1", timeout_ms: 750 }));
+  assert.equal(result.ok, true);
+  assert.equal(result.probe.listening, true);
+  assert.deepEqual(harness.calls.at(-1), ["inspectLocalPort", { port: 4321, host: "127.0.0.1", timeoutMs: 750 }]);
+});
+
+test("local port inspector preserves lsof evidence on Unix and skips lsof on Windows", async () => {
+  const calls = [];
+  const processManager = { findByPort: (port) => [{ processId: `proc-${port}` }] };
+  const probeTcpPortImpl = async (input) => ({ ...input, listening: true });
+  const execFileImpl = async (...args) => {
+    calls.push(args);
+    return { stdout: "p42\ncnode\nn127.0.0.1:4321\n" };
+  };
+  const unix = createLocalPortInspector({ processManager, platform: "darwin", probeTcpPortImpl, execFileImpl });
+  const unixResult = await unix({ port: 4321, host: "127.0.0.1", timeoutMs: 500 });
+  assert.equal(unixResult.listeners[0].pid, 42);
+  assert.equal(unixResult.managedProcesses[0].processId, "proc-4321");
+  assert.equal(calls.length, 1);
+
+  const windows = createLocalPortInspector({ processManager, platform: "win32", probeTcpPortImpl, execFileImpl });
+  const windowsResult = await windows({ port: 4321, host: "::1", timeoutMs: 500 });
+  assert.deepEqual(windowsResult.listeners, []);
+  assert.equal(windowsResult.lsofError, null);
+  assert.equal(windowsResult.suggestedUrl, "http://[::1]:4321/");
+  assert.equal(calls.length, 1);
 });
 
 test("process start fails closed when process access is disabled", async () => {

@@ -166,6 +166,12 @@ test("coordinator prepares only a newer verified candidate and schedules activat
   assert.equal(prepared.length, 1);
   assert.equal(prepared[0].manifest.version, "4.3.0");
   assert.equal(spawned.length, 1);
+  assert.deepEqual(spawned[0][2].env, {
+    HOME: "/Users/example",
+    PATH: "/usr/bin:/bin:/usr/sbin:/sbin",
+    EQUINOX_LOCAL_INSTALL_ROOT: installation.installRoot,
+    EQUINOX_LOCAL_RELEASE_DIR: installation.releaseDir,
+  });
   assert.equal(coordinator.snapshot().restartScheduledFor, "4.3.0");
 });
 

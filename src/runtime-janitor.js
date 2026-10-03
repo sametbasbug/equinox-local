@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { createRuntimeHistoryStore } from "./runtime-history-store.js";
 
 const JANITOR_SCHEMA_VERSION = 1;
 const HISTORY_LIMIT = 500;
@@ -374,27 +375,6 @@ function cleanupToken(categoryId, candidates) {
   return `jt-${sha256(canonical({ schemaVersion: JANITOR_SCHEMA_VERSION, categoryId, descriptor }))}`;
 }
 
-async function readHistoryFile(historyPath) {
-  let text = "";
-  try {
-    text = await fs.readFile(historyPath, "utf8");
-  } catch (error) {
-    if (error?.code === "ENOENT") return [];
-    throw error;
-  }
-  const records = [];
-  for (const line of text.split(/\r?\n/u)) {
-    if (!line.trim()) continue;
-    try {
-      const parsed = JSON.parse(line);
-      if (parsed?.schemaVersion === JANITOR_SCHEMA_VERSION) records.push(parsed);
-    } catch {
-      // Bounded janitor history yalnız geçerli kendi kayıtlarını kullanır.
-    }
-  }
-  return records;
-}
-
 export function createRuntimeJanitor({
   rootDir,
   workspaceRoot,
@@ -439,9 +419,15 @@ export function createRuntimeJanitor({
     throw new Error("Runtime janitor startup delay geçersiz.");
   }
 
-  const historyPath = path.join(rootDir, "janitor-history.jsonl");
+  const historyStore = createRuntimeHistoryStore({
+    rootDir,
+    fileName: "janitor-history.jsonl",
+    schemaVersion: JANITOR_SCHEMA_VERSION,
+    maxRecords: maxHistoryRecords,
+    randomId,
+  });
+  const { historyPath } = historyStore;
   const activeCategories = new Set();
-  let initialized = false;
   let maintenanceEnabled = false;
   let maintenanceActive = false;
   let maintenanceTimer = null;
@@ -457,39 +443,20 @@ export function createRuntimeJanitor({
     lastRun: lastMaintenance ? { ...lastMaintenance } : null,
   });
 
-  const initialize = async () => {
-    if (initialized) return;
-    await fs.mkdir(rootDir, { recursive: true, mode: 0o700 });
-    await fs.chmod(rootDir, 0o700).catch(() => {});
-    try {
-      await fs.access(historyPath);
-    } catch {
-      await fs.writeFile(historyPath, "", { mode: 0o600 });
-    }
-    await fs.chmod(historyPath, 0o600).catch(() => {});
-    initialized = true;
-  };
+  const initialize = historyStore.initialize;
 
   const emit = async (event) => {
     await observability.record({ component: "janitor", ...event }).catch(() => {});
   };
 
-  const appendHistory = async (record) => {
-    await initialize();
-    const records = await readHistoryFile(historyPath);
-    const next = [...records, record].slice(-maxHistoryRecords);
-    const temp = `${historyPath}.${process.pid}.${randomId()}.tmp`;
-    await fs.writeFile(temp, next.map((item) => JSON.stringify(item)).join("\n") + (next.length ? "\n" : ""), { mode: 0o600 });
-    await fs.rename(temp, historyPath);
-    await fs.chmod(historyPath, 0o600).catch(() => {});
-  };
+  const appendHistory = historyStore.append;
 
   const history = async ({ limit = 50, category = null, outcome = null } = {}) => {
     await initialize();
     if (!Number.isInteger(limit) || limit < 1 || limit > 500) throw new Error("Janitor history limit 1-500 arasında olmalı.");
     if (category && !CATEGORY_MAP.has(category)) throw new Error(`Bilinmeyen janitor kategorisi: ${category}`);
     if (outcome && !HISTORY_OUTCOMES.has(outcome)) throw new Error(`Bilinmeyen janitor outcome: ${outcome}`);
-    const records = await readHistoryFile(historyPath);
+    const records = await historyStore.read();
     return records
       .filter((item) => !category || item.category === category)
       .filter((item) => !outcome || item.outcome === outcome)

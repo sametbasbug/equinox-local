@@ -67,6 +67,18 @@ async function atomicWrite(filePath, content, mode) {
 const WORKSPACE_GIT_HEAD = "ref: refs/heads/main\n";
 const WORKSPACE_GIT_CONFIG = `[core]\n\trepositoryformatversion = 0\n\tfilemode = true\n\tbare = false\n\tlogallrefupdates = true\n`;
 
+function hasAcceptableGitHead(headText) {
+  const head = headText.trim();
+  const detached = /^[a-f0-9]{40}(?:[a-f0-9]{24})?$/u.test(head);
+  const symbolic = head.startsWith("ref: refs/heads/")
+    && head.length > "ref: refs/heads/".length
+    && !head.includes("..")
+    && !head.includes("@{")
+    && !head.includes("\\")
+    && !head.endsWith("/");
+  return detached || symbolic;
+}
+
 async function assertWorkspaceGitDirectory(gitRoot, { fsImpl = fs } = {}) {
   const stat = await fsImpl.lstat(gitRoot);
   if (!stat.isDirectory() || stat.isSymbolicLink()) {
@@ -91,15 +103,7 @@ async function assertWorkspaceGitDirectory(gitRoot, { fsImpl = fs } = {}) {
     encoding: "utf8",
     label: "Existing Equinox Workspace Git HEAD metadata",
   });
-  const head = headText.trim();
-  const detached = /^[a-f0-9]{40}(?:[a-f0-9]{24})?$/u.test(head);
-  const symbolic = head.startsWith("ref: refs/heads/")
-    && head.length > "ref: refs/heads/".length
-    && !head.includes("..")
-    && !head.includes("@{")
-    && !head.includes("\\")
-    && !head.endsWith("/");
-  if (!detached && !symbolic) {
+  if (!hasAcceptableGitHead(headText)) {
     throw new Error("Existing Equinox Workspace Git HEAD metadata is invalid.");
   }
   return gitRoot;
@@ -114,15 +118,7 @@ async function assertNormalGitHead(gitRoot, { fsImpl = fs } = {}) {
     encoding: "utf8",
     label: "Configured Git metadata HEAD",
   });
-  const head = headText.trim();
-  const detached = /^[a-f0-9]{40}(?:[a-f0-9]{24})?$/u.test(head);
-  const symbolic = head.startsWith("ref: refs/heads/")
-    && head.length > "ref: refs/heads/".length
-    && !head.includes("..")
-    && !head.includes("@{")
-    && !head.includes("\\")
-    && !head.endsWith("/");
-  if (!detached && !symbolic) throw new Error("Configured Git metadata HEAD is invalid.");
+  if (!hasAcceptableGitHead(headText)) throw new Error("Configured Git metadata HEAD is invalid.");
 }
 
 export async function validateIndependentGitProjectRoot(projectRoot, { fsImpl = fs } = {}) {

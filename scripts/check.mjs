@@ -1,38 +1,26 @@
-import { spawnSync } from "node:child_process";
-import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { checkProject } from "./lib/factory-tooling.mjs";
+
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const javascript = [];
-const shell = [];
-
-async function walk(relative) {
-  const directory = path.join(root, relative);
-  for (const entry of await fs.readdir(directory, { withFileTypes: true })) {
-    const childRelative = path.join(relative, entry.name);
-    if (entry.isDirectory()) await walk(childRelative);
-    else if (entry.isFile() && /\.(?:js|mjs)$/u.test(entry.name)) javascript.push(childRelative);
-    else if (entry.isFile() && entry.name.endsWith(".sh")) shell.push(childRelative);
-  }
-}
-
-for (const relative of ["src", "scripts", "extension"]) await walk(relative);
-
-for (const file of javascript.sort()) {
-  const result = spawnSync(process.execPath, ["--check", file], { cwd: root, stdio: "inherit" });
-  if (result.status !== 0) process.exit(result.status ?? 1);
-}
-for (const file of shell.sort()) {
-  const result = spawnSync("/bin/bash", ["-n", file], { cwd: root, stdio: "inherit" });
-  if (result.status !== 0) process.exit(result.status ?? 1);
-}
-for (const file of [
+const JSON_FILES = Object.freeze([
   "package.json",
   "extension/manifest.json",
   "examples/equinox-local-config.example.json",
-]) {
-  JSON.parse(await fs.readFile(path.join(root, file), "utf8"));
+]);
+
+export async function checkPublicProject({ rootDir = root, spawnSyncImpl } = {}) {
+  return checkProject({
+    rootDir,
+    recursiveDirectories: ["src", "scripts", "extension"],
+    jsonFiles: JSON_FILES,
+    spawnSyncImpl,
+  });
 }
 
-console.log(`Checked ${javascript.length} JavaScript modules and ${shell.length} shell scripts.`);
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  const report = await checkPublicProject();
+  if (report.exitCode !== 0) process.exit(report.exitCode);
+  console.log(`Checked ${report.javascriptFiles.length} JavaScript modules and ${report.shellFiles.length} shell scripts.`);
+}

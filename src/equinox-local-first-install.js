@@ -30,6 +30,7 @@ import {
   renameWindowsPathWhenUnlocked,
   synchronizeFreshWindowsShell,
 } from "./equinox-local-windows-stable-shell.js";
+import { walkBoundedReleaseTree } from "./equinox-local-release-tree.js";
 export {
   sameWindowsStableShellTree,
   snapshotWindowsStableShellTree,
@@ -40,8 +41,6 @@ export { launchWindowsStableShell as launchFreshWindowsShell } from "./equinox-l
 
 const execFile = promisify(execFileCallback);
 const MAX_RELEASE_METADATA_BYTES = 16 * 1024;
-const MAX_RELEASE_ENTRIES = 20_000;
-const MAX_RELEASE_BYTES = 2 * 1024 * 1024 * 1024;
 const FIRST_INSTALL_HEALTH_ATTEMPTS = 120;
 const FIRST_INSTALL_HEALTH_DELAY_MS = 500;
 const FIRST_INSTALL_DIAGNOSTIC_BYTES = 12 * 1024;
@@ -91,29 +90,16 @@ async function assertNormalFile(filePath, label, { executable = false, maxBytes 
 }
 
 async function validateReleaseTree(root, { fsImpl = fs } = {}) {
-  let entryCount = 0;
-  let totalBytes = 0;
-  const stack = [root];
-  while (stack.length > 0) {
-    const directory = stack.pop();
-    const entries = await fsImpl.readdir(directory, { withFileTypes: true });
-    for (const entry of entries) {
-      entryCount += 1;
-      if (entryCount > MAX_RELEASE_ENTRIES) throw new Error("Staged Equinox Local release contains too many entries.");
-      const absolute = path.join(directory, entry.name);
-      const stat = await fsImpl.lstat(absolute);
-      if (stat.isSymbolicLink()) throw new Error("Staged Equinox Local release may not contain symbolic links.");
-      if (stat.isDirectory()) {
-        stack.push(absolute);
-      } else if (stat.isFile()) {
-        totalBytes += stat.size;
-        if (totalBytes > MAX_RELEASE_BYTES) throw new Error("Staged Equinox Local release exceeds the extracted size limit.");
-      } else {
-        throw new Error("Staged Equinox Local release contains an unsupported filesystem entry.");
-      }
-    }
-  }
-  return Object.freeze({ entryCount, totalBytes });
+  return walkBoundedReleaseTree(root, {
+    fsImpl,
+    countName: "entryCount",
+    errors: {
+      entryLimit: "Staged Equinox Local release contains too many entries.",
+      byteLimit: "Staged Equinox Local release exceeds the extracted size limit.",
+      symlink: "Staged Equinox Local release may not contain symbolic links.",
+      unsupportedEntry: "Staged Equinox Local release contains an unsupported filesystem entry.",
+    },
+  });
 }
 
 export async function validateFirstInstallRelease(releaseDir, {

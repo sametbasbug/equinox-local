@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
-import fs from "node:fs/promises";
 import path from "node:path";
+import { createRuntimeHistoryStore } from "./runtime-history-store.js";
 
 const REPAIR_SCHEMA_VERSION = 1;
 const DEFAULT_MAX_HISTORY_RECORDS = 500;
@@ -155,30 +155,6 @@ function compactWorkflow(record) {
   };
 }
 
-async function readHistoryFile(historyPath) {
-  let text = "";
-  try {
-    text = await fs.readFile(historyPath, "utf8");
-  } catch (error) {
-    if (error?.code === "ENOENT") return [];
-    throw error;
-  }
-
-  const records = [];
-  for (const line of text.split("\n")) {
-    if (!line.trim()) continue;
-    try {
-      const parsed = JSON.parse(line);
-      if (parsed && parsed.schemaVersion === REPAIR_SCHEMA_VERSION) {
-        records.push(parsed);
-      }
-    } catch {
-      // Bounded repair history yalnız geçerli kendi kayıtlarını kullanır.
-    }
-  }
-  return records;
-}
-
 export function createRepairEngine({
   rootDir,
   diagnosisEngine,
@@ -216,33 +192,17 @@ export function createRepairEngine({
     throw new Error("Repair history kayıt sınırı geçersiz.");
   }
 
-  const historyPath = path.join(rootDir, "repair-history.jsonl");
+  const historyStore = createRuntimeHistoryStore({
+    rootDir,
+    fileName: "repair-history.jsonl",
+    schemaVersion: REPAIR_SCHEMA_VERSION,
+    maxRecords: maxHistoryRecords,
+    randomId,
+  });
+  const { historyPath } = historyStore;
+  const initialize = historyStore.initialize;
+  const appendHistory = historyStore.append;
   const activeRepairs = new Set();
-  let initialized = false;
-
-  const initialize = async () => {
-    if (initialized) return;
-    await fs.mkdir(rootDir, { recursive: true, mode: 0o700 });
-    await fs.chmod(rootDir, 0o700).catch(() => {});
-    try {
-      await fs.access(historyPath);
-    } catch {
-      await fs.writeFile(historyPath, "", { mode: 0o600 });
-    }
-    await fs.chmod(historyPath, 0o600).catch(() => {});
-    initialized = true;
-  };
-
-  const appendHistory = async (record) => {
-    await initialize();
-    const existing = await readHistoryFile(historyPath);
-    const next = [...existing, record].slice(-maxHistoryRecords);
-    const temporary = `${historyPath}.${process.pid}.${randomId()}.tmp`;
-    const serialized = next.map((item) => JSON.stringify(item)).join("\n") + (next.length ? "\n" : "");
-    await fs.writeFile(temporary, serialized, { mode: 0o600 });
-    await fs.rename(temporary, historyPath);
-    await fs.chmod(historyPath, 0o600).catch(() => {});
-  };
 
   const listHistory = async ({
     limit = 50,
@@ -257,7 +217,7 @@ export function createRepairEngine({
     if (outcome && !OUTCOMES.includes(outcome)) {
       throw new Error(`Geçersiz repair outcome: ${outcome}`);
     }
-    const records = await readHistoryFile(historyPath);
+    const records = await historyStore.read();
     return records
       .filter((record) => !recipeId || record.recipeId === recipeId)
       .filter((record) => !outcome || record.outcome === outcome)

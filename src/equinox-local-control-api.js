@@ -66,6 +66,10 @@ const CONTROL_CENTER_ASSETS = new Map([
     url: new URL("./equinox-control-center.js", import.meta.url),
     contentType: "text/javascript; charset=utf-8",
   })],
+  ["/assets/equinox-control-center-localization.js", Object.freeze({
+    url: new URL("./equinox-control-center-localization.js", import.meta.url),
+    contentType: "text/javascript; charset=utf-8",
+  })],
   ["/assets/equinox-local.png", Object.freeze({
     urls: Object.freeze([
       new URL("./app/EquinoxLocal.png", import.meta.url),

@@ -81,6 +81,7 @@ test("first-install release validation requires exact target metadata and bundle
     const result = await validateFirstInstallRelease(fixture.releaseDir, { target: TARGET });
     assert.equal(result.version, "4.2.0");
     assert.equal(result.target, TARGET);
+    assert.equal(result.tree.entryCount, 25);
     await fs.writeFile(path.join(fixture.releaseDir, "release.json"), `${JSON.stringify({
       schemaVersion: 1,
       version: "4.2.0",

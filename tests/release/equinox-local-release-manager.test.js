@@ -197,6 +197,7 @@ test("managed release preparation verifies, extracts and atomically promotes the
   });
 
   assert.equal(result.version, "4.3.0");
+  assert.equal(result.fileCount, 22);
   assert.equal(result.targetReleaseDir, path.join(installation.releasesRoot, "4.3.0"));
   assert.equal(JSON.parse(await fs.readFile(path.join(result.targetReleaseDir, "release.json"), "utf8")).version, "4.3.0");
   assert.equal((await fs.lstat(path.join(result.targetReleaseDir, "server.js"))).isFile(), true);
