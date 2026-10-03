@@ -1,5 +1,6 @@
 import { execFile as execFileCallback } from "node:child_process";
-import { createReadStream } from "node:fs";
+import { createHash } from "node:crypto";
+import { constants as fsConstants, createReadStream } from "node:fs";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -8,7 +9,10 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
 import { prepareManagedEquinoxRelease } from "../../src/equinox-local-release-manager.js";
-import { equinoxLocalReleaseArtifactName } from "../../src/equinox-local-platform.js";
+import {
+  equinoxLocalReleaseArtifactName,
+  EQUINOX_LOCAL_SUPPORTED_RELEASE_TARGETS,
+} from "../../src/equinox-local-platform.js";
 import { readBoundedNormalFile } from "../../src/equinox-local-safe-file.js";
 import { activatePreparedEquinoxRelease, readManagedCurrentRelease } from "../../src/equinox-local-update-activation.js";
 import { EQUINOX_LOCAL_UPDATE_KEYS } from "../../src/equinox-local-update-keys.js";
@@ -106,14 +110,39 @@ function normalizeHttps(value, label) {
 
 export function parseReleaseBehaviorCli(argv) {
   const [operation, ...rest] = argv;
-  if (operation !== "describe" && operation !== "managed-upgrade-smoke") {
-    throw new Error("Release behavior operation must be describe or managed-upgrade-smoke.");
+  const allowedOperations = new Set([
+    "describe",
+    "managed-upgrade-smoke",
+    "validate-signed-release",
+    "verify-live-release",
+  ]);
+  if (!allowedOperations.has(operation)) {
+    throw new Error("Unsupported release behavior operation.");
   }
   const values = parsePairs(rest);
   if (operation === "describe") {
     exactKeys(values, ["expected-sha"], ["expected-sha"]);
     if (!SHA_PATTERN.test(values["expected-sha"])) throw new Error("Expected source SHA must be an exact 40-character Git SHA.");
     return Object.freeze({ operation, expectedSha: values["expected-sha"] });
+  }
+  if (operation === "validate-signed-release") {
+    exactKeys(values, ["expected-sha", "version", "signed-dir"], ["expected-sha", "version", "signed-dir"]);
+    if (!SHA_PATTERN.test(values["expected-sha"])) throw new Error("Expected source SHA must be an exact 40-character Git SHA.");
+    const version = parseEquinoxVersion(values.version).text;
+    if (version !== EQUINOX_LOCAL_VERSION) throw new Error(`Release behavior version must match canonical source version ${EQUINOX_LOCAL_VERSION}.`);
+    return Object.freeze({
+      operation,
+      expectedSha: values["expected-sha"],
+      version,
+      signedDir: normalizeAbsolute(values["signed-dir"], "Signed release directory"),
+    });
+  }
+  if (operation === "verify-live-release") {
+    exactKeys(values, ["expected-sha", "version"], ["expected-sha", "version"]);
+    if (!SHA_PATTERN.test(values["expected-sha"])) throw new Error("Expected source SHA must be an exact 40-character Git SHA.");
+    const version = parseEquinoxVersion(values.version).text;
+    if (version !== EQUINOX_LOCAL_VERSION) throw new Error(`Release behavior version must match canonical source version ${EQUINOX_LOCAL_VERSION}.`);
+    return Object.freeze({ operation, expectedSha: values["expected-sha"], version });
   }
   exactKeys(values, [
     "expected-sha",
@@ -194,6 +223,139 @@ async function readCandidateManifest(input) {
     }
   }
   return manifest;
+}
+
+
+async function readValidatedManifestFile(manifestPath, { version, target, publicKeys = EQUINOX_LOCAL_UPDATE_KEYS } = {}) {
+  const { data } = await readBoundedNormalFile(manifestPath, {
+    maxBytes: MAX_MANIFEST_BYTES,
+    encoding: "utf8",
+    label: `${target} signed update manifest`,
+  });
+  let raw;
+  try {
+    raw = JSON.parse(data);
+  } catch {
+    throw new Error(`${target} signed update manifest is not valid JSON.`);
+  }
+  const manifest = validateSignedUpdateManifest(raw, { publicKeys, target });
+  if (manifest.version !== version) throw new Error(`${target} signed update manifest has the wrong version.`);
+  const expectedArtifactUrl = new URL(`./${equinoxLocalReleaseArtifactName(version, target)}`, equinoxLocalUpdateManifestUrl(target)).toString();
+  if (manifest.artifact.url !== expectedArtifactUrl) throw new Error(`${target} signed update artifact URL is not canonical.`);
+  return manifest;
+}
+
+async function hashNormalFile(filePath, { fsImpl = fs, platform = process.platform } = {}) {
+  let expectedIdentity = null;
+  if (platform === "win32") {
+    const before = await fsImpl.lstat(filePath);
+    if (before.isSymbolicLink() || !before.isFile()) throw new Error("Release artifact must be a normal, non-symlink file.");
+    if (before.dev === undefined || before.ino === undefined || (before.dev === 0 && before.ino === 0)) {
+      throw new Error("Release artifact identity could not be verified safely.");
+    }
+    expectedIdentity = Object.freeze({ dev: before.dev, ino: before.ino });
+  } else if (!Number.isInteger(fsConstants.O_NOFOLLOW)) {
+    throw new Error("Release artifact validation requires O_NOFOLLOW on this platform.");
+  }
+  const flags = platform === "win32" ? fsConstants.O_RDONLY : fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW;
+  let handle;
+  try {
+    handle = await fsImpl.open(filePath, flags);
+  } catch (error) {
+    if (error?.code === "ELOOP") throw new Error("Release artifact must be a normal, non-symlink file.");
+    throw error;
+  }
+  try {
+    const stat = await handle.stat();
+    if (!stat.isFile()) throw new Error("Release artifact must be a normal file.");
+    if (expectedIdentity && (stat.dev !== expectedIdentity.dev || stat.ino !== expectedIdentity.ino)) {
+      throw new Error("Release artifact changed while it was being opened.");
+    }
+    const hash = createHash("sha256");
+    let bytes = 0;
+    let position = 0;
+    while (true) {
+      const chunk = Buffer.allocUnsafe(1024 * 1024);
+      const { bytesRead } = await handle.read(chunk, 0, chunk.length, position);
+      if (bytesRead === 0) break;
+      hash.update(chunk.subarray(0, bytesRead));
+      bytes += bytesRead;
+      position += bytesRead;
+    }
+    return Object.freeze({ bytes, sha256: hash.digest("hex") });
+  } finally {
+    await handle.close().catch(() => {});
+  }
+}
+
+export async function runValidateSignedRelease(input, { publicKeys = EQUINOX_LOCAL_UPDATE_KEYS } = {}) {
+  const bundles = {};
+  let publishedAt = null;
+  for (const target of EQUINOX_LOCAL_SUPPORTED_RELEASE_TARGETS) {
+    const manifestPath = path.join(input.signedDir, `stable-${target}.json`);
+    const manifest = await readValidatedManifestFile(manifestPath, { version: input.version, target, publicKeys });
+    const artifactPath = path.join(input.signedDir, equinoxLocalReleaseArtifactName(input.version, target));
+    const digest = await hashNormalFile(artifactPath);
+    if (digest.bytes !== manifest.artifact.bytes || digest.sha256 !== manifest.artifact.sha256) {
+      throw new Error(`${target} release artifact does not match its signed manifest.`);
+    }
+    if (publishedAt === null) publishedAt = manifest.publishedAt;
+    else if (manifest.publishedAt !== publishedAt) throw new Error("Signed release manifests do not share one publishedAt value.");
+    bundles[target] = Object.freeze({
+      target,
+      manifestPath,
+      artifactPath,
+      publishedAt: manifest.publishedAt,
+      artifact: manifest.artifact,
+    });
+  }
+  return Object.freeze({
+    status: "passed",
+    version: input.version,
+    publishedAt,
+    bundles: Object.freeze(bundles),
+  });
+}
+
+export async function runVerifyLiveRelease(input, {
+  publicKeys = EQUINOX_LOCAL_UPDATE_KEYS,
+  fetchImpl = globalThis.fetch,
+} = {}) {
+  const bundles = {};
+  let publishedAt = null;
+  for (const target of EQUINOX_LOCAL_SUPPORTED_RELEASE_TARGETS) {
+    const manifestUrl = equinoxLocalUpdateManifestUrl(target);
+    const response = await fetchImpl(manifestUrl, {
+      headers: { "cache-control": "no-cache" },
+      redirect: "error",
+    });
+    if (!response.ok) throw new Error(`Live manifest ${target} returned HTTP ${response.status}.`);
+    let raw;
+    try {
+      raw = await response.json();
+    } catch {
+      throw new Error(`Live manifest ${target} returned invalid JSON.`);
+    }
+    const manifest = validateSignedUpdateManifest(raw, { publicKeys, target, manifestUrl });
+    if (manifest.version !== input.version) throw new Error(`Live signed manifest ${target} has the wrong version.`);
+    const expectedArtifactUrl = new URL(`./${equinoxLocalReleaseArtifactName(input.version, target)}`, manifestUrl).toString();
+    if (manifest.artifact.url !== expectedArtifactUrl) throw new Error(`Live signed artifact URL is not canonical for ${target}.`);
+    const range = await fetchImpl(manifest.artifact.url, {
+      headers: { range: "bytes=0-0", "cache-control": "no-cache" },
+      redirect: "follow",
+    });
+    if (range.status !== 206 || range.headers.get("content-range") !== `bytes 0-0/${manifest.artifact.bytes}`) {
+      throw new Error(`Live Range verification failed for ${target}.`);
+    }
+    if (publishedAt === null) publishedAt = manifest.publishedAt;
+    else if (manifest.publishedAt !== publishedAt) throw new Error("Live release manifests do not share one publishedAt value.");
+    bundles[target] = Object.freeze({
+      target,
+      publishedAt: manifest.publishedAt,
+      artifact: manifest.artifact,
+    });
+  }
+  return Object.freeze({ status: "passed", version: input.version, publishedAt, bundles: Object.freeze(bundles) });
 }
 
 function candidateFetch(candidateArtifactPath, manifest) {
@@ -304,10 +466,18 @@ export async function runReleaseBehaviorCli(argv) {
       schemaVersion: 1,
       sourceSha: checkout.sourceSha,
       sourceVersion: EQUINOX_LOCAL_VERSION,
-      operations: Object.freeze(["managed-upgrade-smoke"]),
+      operations: Object.freeze([
+        "managed-upgrade-smoke",
+        "validate-signed-release",
+        "verify-live-release",
+      ]),
     });
   }
-  const result = await runManagedUpgradeSmoke(input);
+  const result = input.operation === "managed-upgrade-smoke"
+    ? await runManagedUpgradeSmoke(input)
+    : input.operation === "validate-signed-release"
+      ? await runValidateSignedRelease(input)
+      : await runVerifyLiveRelease(input);
   return Object.freeze({ schemaVersion: 1, sourceSha: checkout.sourceSha, sourceVersion: EQUINOX_LOCAL_VERSION, result });
 }
 

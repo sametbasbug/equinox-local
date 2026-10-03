@@ -1,12 +1,18 @@
 import assert from "node:assert/strict";
+import { createHash, generateKeyPairSync, sign } from "node:crypto";
 import fs from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
+import { equinoxLocalReleaseArtifactName, EQUINOX_LOCAL_SUPPORTED_RELEASE_TARGETS } from "../../src/equinox-local-platform.js";
+import { canonicalUpdateManifestPayload, equinoxLocalUpdateManifestUrl } from "../../src/equinox-local-updater.js";
 import { EQUINOX_LOCAL_VERSION } from "../../src/equinox-local-version.js";
 import {
   assertReleaseBehaviorCheckout,
   parseReleaseBehaviorCli,
+  runValidateSignedRelease,
+  runVerifyLiveRelease,
 } from "../../scripts/release/release-behavior-cli.mjs";
 
 const SHA = "a".repeat(40);
@@ -89,4 +95,97 @@ test("release behavior CLI source owns the updater/release-manager/activation bo
   assert.match(source, /activatePreparedEquinoxRelease/u);
   assert.match(source, /EQUINOX_LOCAL_UPDATE_KEYS/u);
   assert.doesNotMatch(source, /factory\//u);
+});
+
+
+function testSigningMaterial() {
+  const { publicKey, privateKey } = generateKeyPairSync("ed25519");
+  return {
+    keyId: "test-release-key",
+    publicKeys: { "test-release-key": publicKey.export({ type: "spki", format: "pem" }) },
+    privateKey,
+  };
+}
+
+function signedManifest({ target, bytes, sha256, publishedAt, signing }) {
+  const artifact = {
+    url: new URL(`./${equinoxLocalReleaseArtifactName(EQUINOX_LOCAL_VERSION, target)}`, equinoxLocalUpdateManifestUrl(target)).toString(),
+    sha256,
+    bytes,
+  };
+  const unsigned = {
+    schemaVersion: 1,
+    channel: "stable",
+    target,
+    version: EQUINOX_LOCAL_VERSION,
+    publishedAt,
+    artifact,
+  };
+  const value = sign(null, Buffer.from(canonicalUpdateManifestPayload(unsigned), "utf8"), signing.privateKey).toString("base64");
+  return { ...unsigned, signature: { algorithm: "ed25519", keyId: signing.keyId, value } };
+}
+
+test("release behavior CLI parses release-level signed/local and live verification operations", () => {
+  const local = parseReleaseBehaviorCli([
+    "validate-signed-release",
+    "--expected-sha", SHA,
+    "--version", EQUINOX_LOCAL_VERSION,
+    "--signed-dir", "/tmp/equinox-signed",
+  ]);
+  assert.equal(local.operation, "validate-signed-release");
+  assert.equal(local.signedDir, "/tmp/equinox-signed");
+  const live = parseReleaseBehaviorCli([
+    "verify-live-release",
+    "--expected-sha", SHA,
+    "--version", EQUINOX_LOCAL_VERSION,
+  ]);
+  assert.deepEqual(live, { operation: "verify-live-release", expectedSha: SHA, version: EQUINOX_LOCAL_VERSION });
+});
+
+test("signed release validation verifies all canonical manifests and artifact digests", async (t) => {
+  const signedDir = await fs.mkdtemp(path.join(os.tmpdir(), "equinox-signed-release-contract-"));
+  t.after(() => fs.rm(signedDir, { recursive: true, force: true }));
+  const signing = testSigningMaterial();
+  const publishedAt = "2026-10-03T20:00:00.000Z";
+  for (const target of EQUINOX_LOCAL_SUPPORTED_RELEASE_TARGETS) {
+    const bytes = Buffer.from(`artifact:${target}`);
+    const sha256 = createHash("sha256").update(bytes).digest("hex");
+    await fs.writeFile(path.join(signedDir, equinoxLocalReleaseArtifactName(EQUINOX_LOCAL_VERSION, target)), bytes);
+    await fs.writeFile(
+      path.join(signedDir, `stable-${target}.json`),
+      JSON.stringify(signedManifest({ target, bytes: bytes.length, sha256, publishedAt, signing })),
+    );
+  }
+  const result = await runValidateSignedRelease({ version: EQUINOX_LOCAL_VERSION, signedDir }, { publicKeys: signing.publicKeys });
+  assert.equal(result.status, "passed");
+  assert.equal(result.publishedAt, publishedAt);
+  assert.deepEqual(Object.keys(result.bundles), [...EQUINOX_LOCAL_SUPPORTED_RELEASE_TARGETS]);
+  await fs.appendFile(path.join(signedDir, equinoxLocalReleaseArtifactName(EQUINOX_LOCAL_VERSION, "darwin-arm64")), "tamper");
+  await assert.rejects(
+    runValidateSignedRelease({ version: EQUINOX_LOCAL_VERSION, signedDir }, { publicKeys: signing.publicKeys }),
+    /does not match its signed manifest/u,
+  );
+});
+
+test("live release verification validates signatures, canonical URLs and byte ranges for every target", async () => {
+  const signing = testSigningMaterial();
+  const publishedAt = "2026-10-03T20:00:00.000Z";
+  const manifests = new Map();
+  for (const target of EQUINOX_LOCAL_SUPPORTED_RELEASE_TARGETS) {
+    const body = Buffer.from(`live:${target}`);
+    const sha256 = createHash("sha256").update(body).digest("hex");
+    manifests.set(equinoxLocalUpdateManifestUrl(target), signedManifest({ target, bytes: body.length, sha256, publishedAt, signing }));
+  }
+  const fetchImpl = async (url, options = {}) => {
+    const key = String(url);
+    if (manifests.has(key)) return new Response(JSON.stringify(manifests.get(key)), { status: 200, headers: { "content-type": "application/json" } });
+    const manifest = [...manifests.values()].find((item) => item.artifact.url === key);
+    if (!manifest) return new Response("missing", { status: 404 });
+    assert.equal(options.headers?.range, "bytes=0-0");
+    return new Response(Buffer.from([0]), { status: 206, headers: { "content-range": `bytes 0-0/${manifest.artifact.bytes}` } });
+  };
+  const result = await runVerifyLiveRelease({ version: EQUINOX_LOCAL_VERSION }, { publicKeys: signing.publicKeys, fetchImpl });
+  assert.equal(result.status, "passed");
+  assert.equal(result.publishedAt, publishedAt);
+  assert.deepEqual(Object.keys(result.bundles), [...EQUINOX_LOCAL_SUPPORTED_RELEASE_TARGETS]);
 });
