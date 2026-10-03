@@ -4,6 +4,7 @@ import {
   createPublicKey,
   sign as signPayload,
 } from "node:crypto";
+import { fstatSync, readSync } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -64,6 +65,34 @@ export function updateArtifactUrl({ version, target }) {
   }
   const extension = target.startsWith("win32-") ? "zip" : "tar.gz";
   return `${UPDATE_ORIGIN}${UPDATE_PATH_PREFIX}equinox-local-${version}-${target}.${extension}`;
+}
+
+export function readPrivateUpdateSigningKeyFromFd(fd, {
+  uid = typeof process.getuid === "function" ? process.getuid() : null,
+  fstatImpl = fstatSync,
+  readImpl = readSync,
+} = {}) {
+  if (!Number.isInteger(fd) || fd < 3 || fd > 1024) throw new Error("Update signing key file descriptor is invalid.");
+  const stat = fstatImpl(fd);
+  if (!stat.isFile()) throw new Error("Update signing private key descriptor must reference a normal file.");
+  if (!Number.isSafeInteger(stat.size) || stat.size < 1 || stat.size > MAX_PRIVATE_KEY_BYTES) {
+    throw new Error("Update signing private key size is outside the allowed range.");
+  }
+  if ((stat.mode & 0o777) !== 0o600) throw new Error("Update signing private key permissions must be 0600.");
+  if (Number.isInteger(uid) && Number.isInteger(stat.uid) && stat.uid !== uid) {
+    throw new Error("Update signing private key must be owned by the current user.");
+  }
+  const buffer = Buffer.allocUnsafe(MAX_PRIVATE_KEY_BYTES + 1);
+  let total = 0;
+  while (total < buffer.length) {
+    const bytesRead = readImpl(fd, buffer, total, buffer.length - total, total);
+    if (bytesRead === 0) break;
+    total += bytesRead;
+  }
+  if (total < 1 || total > MAX_PRIVATE_KEY_BYTES) throw new Error("Update signing private key size changed while being read.");
+  const privateKey = createPrivateKey(buffer.subarray(0, total));
+  if (privateKey.asymmetricKeyType !== "ed25519") throw new Error("Update signing key must be an Ed25519 private key.");
+  return privateKey;
 }
 
 export async function readPrivateUpdateSigningKey(privateKeyPath, {
@@ -198,11 +227,12 @@ export async function writeSignedUpdateBundle({
   target,
   artifactPath,
   privateKeyPath,
+  privateKey: suppliedPrivateKey = null,
   keyId,
   outputDir,
   publishedAt,
 } = {}) {
-  const privateKey = await readPrivateUpdateSigningKey(privateKeyPath, { repositoryRoot });
+  const privateKey = suppliedPrivateKey ?? await readPrivateUpdateSigningKey(privateKeyPath, { repositoryRoot });
   const result = await createSignedUpdateManifest({
     version,
     target,

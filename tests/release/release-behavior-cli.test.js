@@ -11,6 +11,7 @@ import { EQUINOX_LOCAL_VERSION } from "../../src/equinox-local-version.js";
 import {
   assertReleaseBehaviorCheckout,
   parseReleaseBehaviorCli,
+  runSignRelease,
   runValidateSignedRelease,
   runVerifyLiveRelease,
 } from "../../scripts/release/release-behavior-cli.mjs";
@@ -188,4 +189,62 @@ test("live release verification validates signatures, canonical URLs and byte ra
   assert.equal(result.status, "passed");
   assert.equal(result.publishedAt, publishedAt);
   assert.deepEqual(Object.keys(result.bundles), [...EQUINOX_LOCAL_SUPPORTED_RELEASE_TARGETS]);
+});
+
+
+test("release behavior CLI parses one exact four-target sign-release operation with descriptor-only key access", () => {
+  const args = [
+    "sign-release",
+    "--expected-sha", SHA,
+    "--version", EQUINOX_LOCAL_VERSION,
+    "--key-id", "stable-2026-01",
+    "--key-fd", "3",
+    "--output-dir", "/tmp/equinox-signed",
+    ...EQUINOX_LOCAL_SUPPORTED_RELEASE_TARGETS.flatMap((target) => [`--artifact-${target}`, `/tmp/${target}.bin`]),
+  ];
+  const parsed = parseReleaseBehaviorCli(args);
+  assert.equal(parsed.operation, "sign-release");
+  assert.equal(parsed.keyFd, 3);
+  assert.equal(parsed.keyId, "stable-2026-01");
+  assert.deepEqual(Object.keys(parsed.artifacts), [...EQUINOX_LOCAL_SUPPORTED_RELEASE_TARGETS]);
+  assert.equal(JSON.stringify(parsed).includes("key-file"), false);
+  const wrongFd = [...args];
+  wrongFd[wrongFd.indexOf("--key-fd") + 1] = "4";
+  assert.throws(() => parseReleaseBehaviorCli(wrongFd), /descriptor 3/u);
+});
+
+test("sign-release uses the inherited key object, canonical keyring and one shared timestamp without returning key material", async (t) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "equinox-sign-release-behavior-"));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const signing = testSigningMaterial();
+  const artifacts = {};
+  for (const target of EQUINOX_LOCAL_SUPPORTED_RELEASE_TARGETS) {
+    const artifactPath = path.join(root, `${target}.bin`);
+    await fs.writeFile(artifactPath, `artifact:${target}`);
+    artifacts[target] = artifactPath;
+  }
+  const outputDir = path.join(root, "signed");
+  const calls = [];
+  const result = await runSignRelease({
+    version: EQUINOX_LOCAL_VERSION,
+    keyId: signing.keyId,
+    keyFd: 3,
+    outputDir,
+    publishedAt: "2026-10-04T00:00:00.000Z",
+    artifacts,
+  }, {
+    publicKeys: signing.publicKeys,
+    readPrivateKeyFromFdImpl: (fd) => { assert.equal(fd, 3); return signing.privateKey; },
+    writeBundleImpl: async (input) => {
+      calls.push(input);
+      const content = `artifact:${input.target}`;
+      return { publicKeyPem: signing.publicKeys[signing.keyId], bytes: Buffer.byteLength(content), sha256: createHash("sha256").update(content).digest("hex") };
+    },
+  });
+  assert.equal(result.status, "passed");
+  assert.equal(result.publishedAt, "2026-10-04T00:00:00.000Z");
+  assert.equal(calls.length, 4);
+  assert.equal(calls.every((call) => call.privateKey === signing.privateKey && call.privateKeyPath === undefined), true);
+  assert.equal(JSON.stringify(result).includes("PRIVATE KEY"), false);
+  assert.equal(JSON.stringify(result).includes("publicKeyPem"), false);
 });

@@ -1,5 +1,5 @@
 import { execFile as execFileCallback } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, createPublicKey } from "node:crypto";
 import { constants as fsConstants, createReadStream } from "node:fs";
 import fs from "node:fs/promises";
 import os from "node:os";
@@ -24,6 +24,10 @@ import {
   validateSignedUpdateManifest,
 } from "../../src/equinox-local-updater.js";
 import { EQUINOX_LOCAL_VERSION } from "../../src/equinox-local-version.js";
+import {
+  readPrivateUpdateSigningKeyFromFd,
+  writeSignedUpdateBundle,
+} from "./sign-update-manifest.mjs";
 
 const execFile = promisify(execFileCallback);
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
@@ -113,6 +117,7 @@ export function parseReleaseBehaviorCli(argv) {
   const allowedOperations = new Set([
     "describe",
     "managed-upgrade-smoke",
+    "sign-release",
     "validate-signed-release",
     "verify-live-release",
   ]);
@@ -124,6 +129,35 @@ export function parseReleaseBehaviorCli(argv) {
     exactKeys(values, ["expected-sha"], ["expected-sha"]);
     if (!SHA_PATTERN.test(values["expected-sha"])) throw new Error("Expected source SHA must be an exact 40-character Git SHA.");
     return Object.freeze({ operation, expectedSha: values["expected-sha"] });
+  }
+  if (operation === "sign-release") {
+    const artifactKeys = EQUINOX_LOCAL_SUPPORTED_RELEASE_TARGETS.map((target) => `artifact-${target}`);
+    exactKeys(
+      values,
+      ["expected-sha", "version", "key-id", "key-fd", "output-dir", "published-at", ...artifactKeys],
+      ["expected-sha", "version", "key-id", "key-fd", "output-dir", ...artifactKeys],
+    );
+    if (!SHA_PATTERN.test(values["expected-sha"])) throw new Error("Expected source SHA must be an exact 40-character Git SHA.");
+    const version = parseEquinoxVersion(values.version).text;
+    if (version !== EQUINOX_LOCAL_VERSION) throw new Error(`Release behavior version must match canonical source version ${EQUINOX_LOCAL_VERSION}.`);
+    if (values["key-fd"] !== "3") throw new Error("Release signing key must be inherited as descriptor 3.");
+    if (typeof values["key-id"] !== "string" || !/^[a-z0-9][a-z0-9._-]{0,63}$/u.test(values["key-id"])) throw new Error("Release signing key id is invalid.");
+    const publishedDate = values["published-at"] === undefined ? new Date() : new Date(values["published-at"]);
+    if (Number.isNaN(publishedDate.getTime())) throw new Error("Release signing publishedAt is invalid.");
+    const artifacts = Object.freeze(Object.fromEntries(EQUINOX_LOCAL_SUPPORTED_RELEASE_TARGETS.map((target) => [
+      target,
+      normalizeAbsolute(values[`artifact-${target}`], `${target} release artifact path`),
+    ])));
+    return Object.freeze({
+      operation,
+      expectedSha: values["expected-sha"],
+      version,
+      keyId: values["key-id"],
+      keyFd: 3,
+      outputDir: normalizeAbsolute(values["output-dir"], "Signed release output directory"),
+      publishedAt: publishedDate.toISOString(),
+      artifacts,
+    });
   }
   if (operation === "validate-signed-release") {
     exactKeys(values, ["expected-sha", "version", "signed-dir"], ["expected-sha", "version", "signed-dir"]);
@@ -286,6 +320,43 @@ async function hashNormalFile(filePath, { fsImpl = fs, platform = process.platfo
   } finally {
     await handle.close().catch(() => {});
   }
+}
+
+export async function runSignRelease(input, {
+  publicKeys = EQUINOX_LOCAL_UPDATE_KEYS,
+  readPrivateKeyFromFdImpl = readPrivateUpdateSigningKeyFromFd,
+  writeBundleImpl = writeSignedUpdateBundle,
+} = {}) {
+  const expectedPublicKeyPem = publicKeys?.[input.keyId];
+  if (typeof expectedPublicKeyPem !== "string" || !expectedPublicKeyPem) {
+    throw new Error(`Signing key id ${input.keyId} is not shipped in the canonical Equinox Local public keyring.`);
+  }
+  const privateKey = readPrivateKeyFromFdImpl(input.keyFd);
+  const signingPublicKeyPem = createPublicKey(privateKey).export({ type: "spki", format: "pem" }).toString();
+  if (signingPublicKeyPem !== expectedPublicKeyPem) throw new Error("Production signing key does not match the shipped public keyring.");
+  await fs.mkdir(input.outputDir, { recursive: true, mode: 0o700 });
+  const bundles = {};
+  for (const target of EQUINOX_LOCAL_SUPPORTED_RELEASE_TARGETS) {
+    const bundle = await writeBundleImpl({
+      repositoryRoot: ROOT,
+      version: input.version,
+      target,
+      artifactPath: input.artifacts[target],
+      privateKey,
+      keyId: input.keyId,
+      outputDir: input.outputDir,
+      publishedAt: input.publishedAt,
+    });
+    if (bundle.publicKeyPem !== expectedPublicKeyPem) throw new Error(`Signing key identity drifted for ${target}.`);
+    bundles[target] = Object.freeze({ bytes: bundle.bytes, sha256: bundle.sha256 });
+  }
+  return Object.freeze({
+    status: "passed",
+    version: input.version,
+    keyId: input.keyId,
+    publishedAt: input.publishedAt,
+    bundles: Object.freeze(bundles),
+  });
 }
 
 export async function runValidateSignedRelease(input, { publicKeys = EQUINOX_LOCAL_UPDATE_KEYS } = {}) {
@@ -468,6 +539,7 @@ export async function runReleaseBehaviorCli(argv) {
       sourceVersion: EQUINOX_LOCAL_VERSION,
       operations: Object.freeze([
         "managed-upgrade-smoke",
+        "sign-release",
         "validate-signed-release",
         "verify-live-release",
       ]),
@@ -475,9 +547,11 @@ export async function runReleaseBehaviorCli(argv) {
   }
   const result = input.operation === "managed-upgrade-smoke"
     ? await runManagedUpgradeSmoke(input)
-    : input.operation === "validate-signed-release"
-      ? await runValidateSignedRelease(input)
-      : await runVerifyLiveRelease(input);
+    : input.operation === "sign-release"
+      ? await runSignRelease(input)
+      : input.operation === "validate-signed-release"
+        ? await runValidateSignedRelease(input)
+        : await runVerifyLiveRelease(input);
   return Object.freeze({ schemaVersion: 1, sourceSha: checkout.sourceSha, sourceVersion: EQUINOX_LOCAL_VERSION, result });
 }
 

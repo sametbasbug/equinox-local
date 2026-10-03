@@ -9,6 +9,7 @@ import { validateSignedUpdateManifest } from "../../src/equinox-local-updater.js
 import {
   createSignedUpdateManifest,
   readPrivateUpdateSigningKey,
+  readPrivateUpdateSigningKeyFromFd,
   renderBootstrapInstallManifest,
   updateArtifactUrl,
   writeSignedUpdateBundle,
@@ -200,6 +201,29 @@ test("Windows signed bundles emit target-specific x64 and ARM64 bootstrap metada
       assert.match(materialized, /\$ZipHelperBytes = '\d+'/u);
     }
   } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+
+test("private signing key descriptor reader validates mode, ownership, bound and Ed25519 without a path", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "equinox-sign-fd-"));
+  const keyPath = path.join(root, "release.pem");
+  const keys = keyPair();
+  let handle;
+  try {
+    await fs.writeFile(keyPath, keys.privatePem, { mode: 0o600 });
+    await fs.chmod(keyPath, 0o600);
+    handle = await fs.open(keyPath, "r");
+    const loaded = readPrivateUpdateSigningKeyFromFd(handle.fd);
+    assert.equal(loaded.asymmetricKeyType, "ed25519");
+    await handle.close();
+    handle = null;
+    await fs.chmod(keyPath, 0o644);
+    handle = await fs.open(keyPath, "r");
+    assert.throws(() => readPrivateUpdateSigningKeyFromFd(handle.fd), /0600/u);
+  } finally {
+    await handle?.close().catch(() => {});
     await fs.rm(root, { recursive: true, force: true });
   }
 });
