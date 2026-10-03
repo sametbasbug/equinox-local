@@ -1,7 +1,6 @@
 import { execFile as execFileCallback } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -210,8 +209,13 @@ function boundedError(error) {
   return text.slice(0, 4000) || "Microsoft winapp command failed.";
 }
 function tempRoot(baseEnvironment) {
-  const candidate = baseEnvironment.TEMP || baseEnvironment.TMP || os.tmpdir();
-  return path.win32.join(candidate, "Equinox Local", "desktop");
+  const localAppData = typeof baseEnvironment.LOCALAPPDATA === "string" && path.win32.isAbsolute(baseEnvironment.LOCALAPPDATA)
+    ? baseEnvironment.LOCALAPPDATA
+    : typeof baseEnvironment.USERPROFILE === "string" && path.win32.isAbsolute(baseEnvironment.USERPROFILE)
+      ? path.win32.join(baseEnvironment.USERPROFILE, "AppData", "Local")
+      : null;
+  if (!localAppData) throw new Error("Equinox Local Windows desktop scratch root is unavailable.");
+  return path.win32.join(localAppData, "Equinox Local", "cache", "desktop");
 }
 function windowsPowerShellPath(baseEnvironment) {
   const windowsRoot = baseEnvironment.SystemRoot || baseEnvironment.WINDIR || "C:\\Windows";

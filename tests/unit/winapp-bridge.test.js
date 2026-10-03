@@ -6,6 +6,7 @@ import {
   buildSafeWinappEnvironment,
   createWinappBridge,
   WINAPP_ALLOWED_TOOLS,
+  __test,
 } from "../../src/winapp-bridge.js";
 
 function tinyPng() {
@@ -96,13 +97,25 @@ test("winapp bridge maps native inspect/search/input options without a shell", a
   assert.equal(calls.at(-1).options.shell, undefined);
 });
 
+test("winapp managed scratch files stay under per-user LocalAppData instead of the shared OS temp directory", () => {
+  assert.equal(
+    __test.tempRoot({ LOCALAPPDATA: "C:\\Users\\Türk User\\AppData\\Local", TEMP: "C:\\SharedTemp" }),
+    "C:\\Users\\Türk User\\AppData\\Local\\Equinox Local\\cache\\desktop",
+  );
+  assert.equal(
+    __test.tempRoot({ USERPROFILE: "C:\\Users\\Fallback", TEMP: "C:\\SharedTemp" }),
+    "C:\\Users\\Fallback\\AppData\\Local\\Equinox Local\\cache\\desktop",
+  );
+  assert.throws(() => __test.tempRoot({ TEMP: "C:\\SharedTemp" }), /scratch root is unavailable/u);
+});
+
 test("winapp managed screenshot returns native MCP image content through the shared image validator", async () => {
   const { bridge, calls, mkdirs, opened, png } = createHarness();
   const result = await bridge.callTool("screenshot", { app: "Notepad", focus: true });
   const invocation = calls.at(-1);
   const outputIndex = invocation.args.indexOf("--output");
   assert.notEqual(outputIndex, -1);
-  assert.match(invocation.args[outputIndex + 1], /^C:\\Temp\\Equinox Local\\desktop\\capture-/u);
+  assert.match(invocation.args[outputIndex + 1], /^C:\\Users\\Test\\AppData\\Local\\Equinox Local\\cache\\desktop\\capture-/u);
   assert.equal(invocation.args.includes("--focus"), true);
   assert.equal(mkdirs.length, 1);
   assert.equal(opened.length, 1);
