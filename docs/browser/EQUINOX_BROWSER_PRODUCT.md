@@ -45,10 +45,10 @@ The physical migration was live-proven without changing the permanent production
 ## Native Messaging install / update / uninstall
 
 - Installation order is: install/update Equinox Local first, install its per-user Native Messaging host, then install Equinox Browser from Chrome Web Store (or load the keyed product source during development).
-- `scripts/browser/install-equinox-browser-host.sh` copies the host entrypoint and reconnect runtime into `~/Library/Application Support/Equinox Local/`, pins the current Node executable in a small wrapper, and atomically writes the per-user Chrome Native Messaging manifest.
+- `scripts/install-browser-host.sh` copies the host entrypoint and reconnect runtime into `~/Library/Application Support/Equinox Local/`, pins the current Node executable in a small wrapper, and atomically writes the per-user Chrome Native Messaging manifest.
 - The default installer permits only the permanent production origin. Passing explicit extension IDs is reserved for a deliberate migration/rollback window.
 - Re-running the installer is the update path and is idempotent. It replaces only the known Equinox Browser host runtime files/manifest.
-- `scripts/browser/uninstall-equinox-browser-host.sh` is idempotent and removes only the known Native Messaging manifest/wrapper/runtime files. It deliberately leaves Equinox Local runtime data and sockets untouched.
+- `scripts/uninstall-browser-host.sh` is idempotent and removes only the known Native Messaging manifest/wrapper/runtime files. It deliberately leaves Equinox Local runtime data and sockets untouched.
 - The Native Messaging manifest is installed at the macOS user level; individual Chrome profiles still need the Equinox Browser extension installed/enabled in that profile.
 
 ## Agent Browser vs. Your Browser
