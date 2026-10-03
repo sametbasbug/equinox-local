@@ -1,11 +1,60 @@
 import fs from "node:fs/promises";
 
 import { buildGenericExecutionEnvironment } from "./equinox-local-generic-execution.js";
+import { parseLsofFieldOutput, probeTcpPort } from "./process-manager.js";
+
+export function createLocalPortInspector({
+  processManager,
+  platform = process.platform,
+  probeTcpPortImpl = probeTcpPort,
+  execFileImpl,
+} = {}) {
+  return async function inspectLocalPort({
+    port,
+    host = "127.0.0.1",
+    timeoutMs = 1000,
+  } = {}) {
+    const probe = await probeTcpPortImpl({ host, port, timeoutMs });
+    let listeners = [];
+    let lsofError = null;
+
+    if (platform !== "win32") {
+      try {
+        if (typeof execFileImpl !== "function") {
+          throw new Error("Local port listener inspection requires execFileImpl on this platform.");
+        }
+        const { stdout = "" } = await execFileImpl(
+          "/usr/sbin/lsof",
+          ["-nP", `-iTCP:${port}`, "-sTCP:LISTEN", "-Fpcn"],
+          {
+            timeout: 5000,
+            maxBuffer: 1024 * 1024,
+            env: { PATH: "/usr/sbin:/usr/bin:/bin", LC_ALL: "C" },
+          },
+        );
+        listeners = parseLsofFieldOutput(stdout);
+      } catch (error) {
+        if (error?.code !== 1) {
+          lsofError = error instanceof Error ? error.message : String(error);
+        }
+      }
+    }
+
+    return {
+      probe,
+      listeners,
+      lsofError,
+      managedProcesses: processManager.findByPort(port),
+      suggestedUrl: `http://${host === "::1" ? "[::1]" : host}:${port}/`,
+    };
+  };
+}
 
 export function registerProcessTools({
   registerTextTool,
   z,
   processManager,
+  inspectLocalPort,
   agentAccess,
   safeResolve,
   fsImpl = fs,
@@ -239,6 +288,37 @@ export function registerProcessTools({
       }
     },
     { projectAware: false, mutationScopes: ["global"] },
+  );
+
+  registerTextTool(
+    "port_status",
+    {
+      description:
+        "Yerel loopback üzerindeki tek bir TCP portunun dinlenip dinlenmediğini ölçer; işletim sistemi dinleyici kanıtını ve Equinox Local tarafından o porta bağlanmış yönetilen süreçleri gösterir.",
+      inputSchema: {
+        port: z.number().int().min(1).max(65535),
+        host: z.enum(["127.0.0.1", "localhost", "::1"]).default("127.0.0.1"),
+        timeout_ms: z.number().int().min(100).max(5000).default(1000),
+      },
+      annotations: {
+        title: "Yerel TCP portunu denetle",
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async ({ port, host, timeout_ms }) => {
+      try {
+        return processJsonResult({
+          ok: true,
+          ...(await inspectLocalPort({ port, host, timeoutMs: timeout_ms })),
+        });
+      } catch (error) {
+        return errorResult(error);
+      }
+    },
+    { projectAware: false },
   );
 
 

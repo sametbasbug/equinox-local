@@ -5,6 +5,7 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 
+import { hashFile } from "../lib/package-io.mjs";
 import { readBoundedNormalFile } from "../../src/equinox-local-safe-file.js";
 import {
   EQUINOX_LOCAL_NODE_VERSION,
@@ -40,6 +41,7 @@ const STATIC_RELEASE_FILES = Object.freeze([
   "package-lock.json",
 ]);
 const RELEASE_ENTRYPOINTS = Object.freeze([
+  "src/equinox-control-center.js",
   "src/server.js",
   "src/equinox-local-bootstrap.js",
   "src/equinox-local-first-install.js",
@@ -500,18 +502,8 @@ export async function installPinnedPeekabooRuntime(releaseDir, options = {}) {
 }
 
 async function sha256File(target) {
-  const handle = await fs.open(target, "r");
-  const digest = createHash("sha256");
-  let bytes = 0;
-  try {
-    for await (const chunk of handle.createReadStream()) {
-      bytes += chunk.length;
-      digest.update(chunk);
-    }
-  } finally {
-    await handle.close().catch(() => {});
-  }
-  return Object.freeze({ sha256: digest.digest("hex"), bytes });
+  const result = await hashFile(target, { suppressCloseErrors: true });
+  return Object.freeze({ sha256: result.sha256, bytes: result.bytes });
 }
 
 export async function packageManagedEquinoxRelease({

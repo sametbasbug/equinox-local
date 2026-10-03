@@ -321,6 +321,7 @@ test("control API serves the visual Control Center shell and fixed same-origin a
     assert.equal(script.status, 200);
     assert.match(script.headers.get("content-type"), /^text\/javascript/u);
     const scriptText = await script.text();
+    assert.match(scriptText, /from "\.\/equinox-control-center-localization\.js"/u);
     assert.match(scriptText, /\/api\/v1\/config/u);
     assert.match(scriptText, /\/api\/v1\/doctor/u);
     assert.match(scriptText, /\/api\/v1\/doctor\/repairs/u);
@@ -398,8 +399,7 @@ test("control API serves the visual Control Center shell and fixed same-origin a
     assert.match(scriptText, /navigator\.language/u);
     assert.match(scriptText, /__equinoxNativeLanguage/u);
     assert.match(scriptText, /equinoxNativeLanguage/u);
-    assert.match(scriptText, /localizeRuntimeEventMessage/u);
-    assert.match(scriptText, /Peekaboo safe tool-surface compatibility check passed\./u);
+
     assert.match(scriptText, /fresh-resume\/cancel/u);
     assert.match(scriptText, /fresh-resume\/abandon/u);
     assert.match(scriptText, /Delete this task permanently/u);
@@ -418,6 +418,20 @@ test("control API serves the visual Control Center shell and fixed same-origin a
     assert.match(cssText, /\.http-profile-card/u);
     assert.doesNotMatch(scriptText, /\/api\/v1\/integrations\/github(?:\/check)?/u);
     assert.doesNotMatch(scriptText, /GitHub CLI/u);
+
+    const localizationModule = await fetch(`${base}/assets/equinox-control-center-localization.js`);
+    assert.equal(localizationModule.status, 200);
+    assert.match(localizationModule.headers.get("content-type"), /^text\/javascript/u);
+    const localizationText = await localizationModule.text();
+    const servedLocalization = await import(`data:text/javascript;base64,${Buffer.from(localizationText).toString("base64")}`);
+    assert.deepEqual([...servedLocalization.SUPPORTED_LANGUAGES], ["en", "tr"]);
+    assert.equal(servedLocalization.translateUiText("Dashboard", "tr"), "Gösterge Paneli");
+    assert.equal(
+      servedLocalization.translateRuntimeEventMessage("Workflow completed successfully.", "tr"),
+      "Workflow başarıyla tamamlandı.",
+    );
+    const nonExactLocalizationRoute = await jsonFetch(`${base}/assets/equinox-control-center-localization.js/extra`);
+    assert.equal(nonExactLocalizationRoute.response.status, 404);
 
     const missing = await jsonFetch(`${base}/missing-control-center-route`);
     assert.equal(missing.response.status, 404);

@@ -81,11 +81,33 @@ test("popup ships prominent browser-data consent, accessible controls and local 
   assert.equal(/<script(?![^>]*\bsrc=)[^>]*>/i.test(html), false, "popup must not use inline script");
 });
 
-test("shipped extension directory contains runtime files only", async () => {
+test("browser ZIP allowlist packages each shipped runtime dependency exactly once", async () => {
+  const script = await fs.readFile(path.resolve(DEV_DIR, "../../scripts/package-browser-extension.sh"), "utf8");
+  const lines = script.split("\n");
+  const marker = lines.indexOf(`cat > "$TMP_LIST" <<'FILES'`);
+  const end = lines.indexOf("FILES", marker + 1);
+  const fileList = marker >= 0 && end > marker ? lines.slice(marker + 1, end).join("\n") : null;
+  assert.equal(typeof fileList, "string", "package script must define its explicit FILES allowlist");
+  assert.deepEqual(fileList.split("\n").sort(), [
+    "bookmarks.js",
+    "chatgpt-continuation-state.js",
+    "icons/icon-128.png",
+    "icons/icon-16.png",
+    "icons/icon-32.png",
+    "icons/icon-48.png",
+    "manifest.json",
+    "popup.css",
+    "popup.html",
+    "popup.js",
+    "service-worker.js",
+  ]);
+});
+
+ test("shipped extension directory contains runtime files only", async () => {
   const rootEntries = (await fs.readdir(EXTENSION_DIR, { withFileTypes: true }))
     .map((entry) => entry.name)
     .sort();
-  assert.deepEqual(rootEntries, ["chatgpt-continuation-state.js", "icons", "manifest.json", "popup.css", "popup.html", "popup.js", "service-worker.js"]);
+  assert.deepEqual(rootEntries, ["bookmarks.js", "chatgpt-continuation-state.js", "icons", "manifest.json", "popup.css", "popup.html", "popup.js", "service-worker.js"]);
 
   const iconEntries = (await fs.readdir(path.join(EXTENSION_DIR, "icons"))).sort();
   assert.deepEqual(iconEntries, ["icon-128.png", "icon-16.png", "icon-32.png", "icon-48.png"]);

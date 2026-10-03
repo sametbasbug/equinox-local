@@ -54,6 +54,32 @@ test("managed release source graph follows local imports and excludes developmen
   assert.equal(files.some((value) => value.startsWith("factory/browser/")), false);
 });
 
+test("managed release source graph includes the complete browser UI dependency graph", async (t) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "equinox-ui-source-graph-"));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const fixtureFiles = [
+    "src/server.js", "src/equinox-local-bootstrap.js", "src/equinox-local-first-install.js",
+    "src/equinox-browser-native-host.js", "src/equinox-local-update-helper.js",
+    "src/equinox-local-restart-helper.js", "src/equinox-local-uninstall-helper.js",
+    "src/equinox-local-supervisor.js", "src/equinox-control-center.html",
+    "src/equinox-control-center.css", "src/equinox-control-center.js",
+    "app/EquinoxLocal.png", "app/EquinoxLocalMenuBar.png", "app/EquinoxCompanionNyx.webp",
+    "package.json", "package-lock.json", "src/ui-dependency.js", "src/ui-leaf.js",
+  ];
+  for (const relative of fixtureFiles) {
+    await fs.mkdir(path.dirname(path.join(root, relative)), { recursive: true });
+    await fs.writeFile(path.join(root, relative), "");
+  }
+  await fs.writeFile(path.join(root, "src/equinox-control-center.js"), 'import { label } from "./ui-dependency.js";\n');
+  await fs.writeFile(path.join(root, "src/ui-dependency.js"), 'export { label } from "./ui-leaf.js";\n');
+  await fs.writeFile(path.join(root, "src/ui-leaf.js"), 'export const label = "fixture";\n');
+
+  const files = await collectManagedReleaseSourceFiles(root);
+  assert.equal(files.includes("src/ui-dependency.js"), true, "UI imports must ship with the managed release");
+  assert.equal(files.includes("src/ui-leaf.js"), true, "transitive UI imports must ship with the managed release");
+  assert.equal(files.filter((file) => file === "src/equinox-control-center.js").length, 1);
+});
+
 test("local module parser finds static relative imports without treating packages as release files", () => {
   assert.deepEqual(
     extractLocalModuleSpecifiers(`

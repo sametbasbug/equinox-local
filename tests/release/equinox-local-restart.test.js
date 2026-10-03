@@ -130,6 +130,15 @@ test("restart helper environment is minimal and credential-free", () => {
     CONTROL_PLANE_API_KEY: "secret",
   });
   assert.equal(env.HOME, "/Users/example");
+  assert.deepEqual(env, {
+    HOME: "/Users/example",
+    USER: "example",
+    LOGNAME: "example",
+    TMPDIR: "/tmp/example",
+    PATH: "/usr/bin:/bin:/usr/sbin:/sbin",
+    EQUINOX_LOCAL_INSTALL_ROOT: installation().installRoot,
+    EQUINOX_LOCAL_RELEASE_DIR: installation().releaseDir,
+  });
   assert.equal(env.EQUINOX_LOCAL_INSTALL_ROOT, installation().installRoot);
   assert.equal(env.EQUINOX_LOCAL_RELEASE_DIR, installation().releaseDir);
   assert.equal(Object.hasOwn(env, "OPENAI_API_KEY"), false);

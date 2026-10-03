@@ -3,8 +3,10 @@ import fs from "node:fs/promises";
 import test from "node:test";
 import vm from "node:vm";
 import { fileURLToPath } from "node:url";
+import { createExtensionVmContext } from "../helpers/extension-vm-import-scripts.mjs";
 
 const SERVICE_WORKER_PATH = fileURLToPath(new URL("../../extension/service-worker.js", import.meta.url));
+const EXTENSION_ROOT = fileURLToPath(new URL("../../extension/", import.meta.url));
 
 function createEvent() {
   const listeners = [];
@@ -417,7 +419,8 @@ async function createHarness({
   };
 
   const source = await fs.readFile(SERVICE_WORKER_PATH, "utf8");
-  const context = {
+  const context = createExtensionVmContext({
+    sandbox: {
     chrome,
     console,
     URL,
@@ -427,8 +430,11 @@ async function createHarness({
     },
     clearTimeout,
     queueMicrotask,
-  };
-  vm.runInNewContext(
+  },
+    extensionRoot: EXTENSION_ROOT,
+    allowedScripts: ["bookmarks.js"],
+  });
+  vm.runInContext(
     `${source}\n;globalThis.__frameTest = { ensureBrowserEnabledLoaded, browserSnapshot, browserScreenshot, browserFind, browserReacquire, browserClick, browserDoubleClick, browserDrag, browserHover, browserScrollIntoView, browserRefInfo, browserFill, browserSelect, browserCheck, browserRangeSet, browserPress, browserTypeText, browserScroll, browserWait, browserPdfData, currentDocumentGeneration };`,
     context,
     { filename: SERVICE_WORKER_PATH },

@@ -5,21 +5,23 @@ import { launchDetachedHelper } from "./equinox-local-detached-helper.js";
 import { prepareManagedEquinoxRelease } from "./equinox-local-release-manager.js";
 import { compareEquinoxVersions, parseEquinoxVersion } from "./equinox-local-updater.js";
 import { requestWindowsShellManagedActivation } from "./equinox-local-windows-shell-control.js";
+import { projectDarwinDetachedHelperEnvironment } from "./equinox-local-darwin-helper-environment.js";
 
 const DEFAULT_HELPER_PATH = fileURLToPath(new URL("./equinox-local-update-helper.js", import.meta.url));
 
 function helperEnvironment(installation, sourceEnv = process.env) {
-  const windows = installation?.platform === "win32";
+  if (installation?.platform !== "win32") {
+    return projectDarwinDetachedHelperEnvironment({ installation, sourceEnv });
+  }
   const env = {
     HOME: sourceEnv.HOME,
-    USERPROFILE: windows ? sourceEnv.USERPROFILE : undefined,
-    LOCALAPPDATA: windows ? sourceEnv.LOCALAPPDATA : undefined,
-    SystemRoot: windows ? sourceEnv.SystemRoot : undefined,
-    WINDIR: windows ? sourceEnv.WINDIR : undefined,
+    USERPROFILE: sourceEnv.USERPROFILE,
+    LOCALAPPDATA: sourceEnv.LOCALAPPDATA,
+    SystemRoot: sourceEnv.SystemRoot,
+    WINDIR: sourceEnv.WINDIR,
     USER: sourceEnv.USER,
     LOGNAME: sourceEnv.LOGNAME,
     TMPDIR: sourceEnv.TMPDIR,
-    PATH: windows ? undefined : "/usr/bin:/bin:/usr/sbin:/sbin",
     EQUINOX_LOCAL_INSTALL_ROOT: installation.installRoot,
     EQUINOX_LOCAL_RELEASE_DIR: installation.releaseDir,
   };

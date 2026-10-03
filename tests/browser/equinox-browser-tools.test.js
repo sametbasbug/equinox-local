@@ -1065,7 +1065,7 @@ test("dedicated screenshot delete safely removes artifacts larger than the gener
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "equinox-browser-screenshot-delete-"));
   harness.deps.screenshotRoot = path.join(root, "browser-screenshots");
   const captureId = `capture-${Date.now()}-11111111-1111-1111-1111-111111111111`;
-  const relativePath = path.join("browser-screenshots", captureId, "browser", "large.png");
+  const relativePath = path.posix.join("browser-screenshots", captureId, "browser", "large.png");
   const absolutePath = path.join(root, relativePath);
   await fs.mkdir(path.dirname(absolutePath), { recursive: true });
   const payload = Buffer.alloc(11 * 1024 * 1024, 7);

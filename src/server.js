@@ -10,6 +10,8 @@ import { promisify } from "node:util";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { pathToFileURL } from "node:url";
 import { createMcpToolReplayGuard } from "./mcp-tool-replay-guard.js";
+import { createEquinoxLocalToolRegistrar } from "./equinox-local-tool-registration.js";
+import { createEquinoxLocalWorkspaceRuntime } from "./equinox-local-workspace-runtime.js";
 import {
   createProtectedAgentPathChecker,
   isSensitiveAgentName,
@@ -28,6 +30,7 @@ import {
   createAgentControlController,
 } from "./equinox-local-agent-control.js";
 import {
+  createLocalPortInspector,
   registerProcessTools,
 } from "./equinox-local-process-tools.js";
 import {
@@ -596,6 +599,16 @@ const server = new McpServer({
   version: SERVER_VERSION,
 });
 
+const workspaceRuntime = createEquinoxLocalWorkspaceRuntime({
+  workspaceProjectId: WORKSPACE_PROJECT_ID,
+  resolveProjectContext,
+  fsImpl: fs,
+  pathImpl: path,
+});
+const {
+  resolveWorkspaceRuntimePaths,
+  ensureWorkspaceRuntimeDirectories,
+} = workspaceRuntime;
 const initialRuntimePaths =
   await resolveWorkspaceRuntimePaths();
 const runtimeObservability =
@@ -649,6 +662,11 @@ const processManager =
     arch,
     onEvent: recordRuntimeEvent,
   });
+const inspectLocalPort = createLocalPortInspector({
+  processManager,
+  platform,
+  execFileImpl: execFile,
+});
 const agentControl =
   createAgentControlController({
     terminalManager,
@@ -656,8 +674,26 @@ const agentControl =
     onEvent: recordRuntimeEvent,
   });
 
-let registeredToolCount = 0;
 const capabilityRegistry = createCapabilityRegistry();
+const toolRegistrar = createEquinoxLocalToolRegistrar({
+  server,
+  capabilityRegistry,
+  runtimeRestartGuardError,
+  errorResult,
+  agentControl,
+  noteManagedAgentCommand,
+  mcpToolReplayGuard,
+  getToolMutationScopes,
+  getMutationLockPlan,
+  withMutationLockPlan,
+  projectContextStorage,
+  defaultProject: DEFAULT_PROJECT,
+  projectIdSchema: PROJECT_ID_SCHEMA,
+  resolveProjectContext,
+  z,
+  extractTextContent,
+});
+const { registerTextTool, registerRawTool } = toolRegistrar;
 
 const RUNTIME_RESTART_GUARD_MS = 30_000;
 let runtimeRestartPendingUntil = 0;
@@ -896,254 +932,6 @@ function withMutationLockPlan(plan, task) {
       ? mutationPathLocks.withLock(plan.projectRoot, task)
       : task(),
   );
-}
-
-function registerTextTool(
-  name,
-  config,
-  handler,
-  options = {},
-) {
-  const projectAware =
-    options.projectAware ?? true;
-  const registerCapability =
-    options.capability ?? true;
-  const exposeToMcp =
-    options.mcpExposed ?? false;
-  const projectSchema =
-    options.projectSchema ?? PROJECT_ID_SCHEMA;
-  const resolveContext =
-    options.resolveContext ?? resolveProjectContext;
-
-  const inputSchema = projectAware
-    ? {
-        project: projectSchema,
-        ...(config.inputSchema ?? {}),
-      }
-    : (config.inputSchema ?? {});
-
-  const mutationScopes =
-    getToolMutationScopes(
-      name,
-      config,
-      options,
-      projectAware,
-    );
-
-  const registeredConfig = {
-    ...config,
-    inputSchema,
-    outputSchema:
-      config.outputSchema ?? {
-        text: z.string(),
-      },
-  };
-
-  const executeWrappedHandler = async (...args) => {
-      const restartGuardError = runtimeRestartGuardError(name);
-      if (restartGuardError) {
-        return errorResult(restartGuardError);
-      }
-      if (
-        options.pauseGuard !== false &&
-        registeredConfig.annotations?.readOnlyHint !== true
-      ) {
-        try {
-          agentControl.assertMutationAllowed(name);
-        } catch (error) {
-          return errorResult(error);
-        }
-      }
-
-      if (exposeToMcp) {
-        await noteManagedAgentCommand();
-      }
-
-      const executeHandler = async (
-        forwardedArgs,
-      ) => {
-        const result =
-          await handler(...forwardedArgs);
-
-        if (
-          !result ||
-          result.isError ||
-          result.structuredContent
-        ) {
-          return result;
-        }
-
-        return {
-          ...result,
-          structuredContent: {
-            text: extractTextContent(result),
-          },
-        };
-      };
-
-      if (!projectAware) {
-        try {
-          const lockPlan =
-            getMutationLockPlan(
-              mutationScopes,
-              undefined,
-            );
-
-          return await withMutationLockPlan(
-            lockPlan,
-            () =>
-              executeHandler(args),
-          );
-        } catch (error) {
-          return errorResult(error);
-        }
-      }
-
-      const [rawInput = {}, ...rest] =
-        args;
-
-      const input =
-        rawInput &&
-        typeof rawInput === "object"
-          ? rawInput
-          : {};
-
-      const {
-        project = DEFAULT_PROJECT,
-        ...handlerInput
-      } = input;
-
-      try {
-        const context =
-          await resolveContext(
-            project,
-          );
-
-        const lockPlan =
-          getMutationLockPlan(
-            mutationScopes,
-            context,
-          );
-
-        return projectContextStorage.run(
-          context,
-          () =>
-            withMutationLockPlan(
-              lockPlan,
-              () =>
-                executeHandler([
-                  handlerInput,
-                  ...rest,
-                ]),
-            ),
-        );
-      } catch (error) {
-        return errorResult(error);
-      }
-    };
-
-  const wrappedHandler = (...args) => exposeToMcp
-    ? mcpToolReplayGuard.run({
-        toolName: name,
-        input: args[0],
-        extra: args[1],
-        invoke: () => executeWrappedHandler(...args),
-      })
-    : executeWrappedHandler(...args);
-
-  const registration = exposeToMcp
-    ? server.registerTool(
-        name,
-        registeredConfig,
-        wrappedHandler,
-      )
-    : null;
-
-  if (exposeToMcp) {
-    registeredToolCount += 1;
-  }
-
-  if (registerCapability) {
-    capabilityRegistry.register({
-      name,
-      config: registeredConfig,
-      inputSchema,
-      domain: options.capabilityDomain,
-      invoke: (input) => wrappedHandler(input),
-    });
-  }
-
-  return registration;
-}
-
-function registerRawTool(
-  name,
-  config,
-  handler,
-  options = {},
-) {
-  const registerCapability =
-    options.capability ?? true;
-  const exposeToMcp =
-    options.mcpExposed ?? false;
-  const executeWrappedHandler = async (...args) => {
-    const restartGuardError = runtimeRestartGuardError(name);
-    if (restartGuardError) {
-      return errorResult(restartGuardError);
-    }
-    if (
-      options.pauseGuard !== false &&
-      config.annotations?.readOnlyHint !== true
-    ) {
-      try {
-        agentControl.assertMutationAllowed(name);
-      } catch (error) {
-        return errorResult(error);
-      }
-    }
-
-    if (exposeToMcp) {
-      await noteManagedAgentCommand();
-    }
-
-    try {
-      return await handler(...args);
-    } catch (error) {
-      return errorResult(error);
-    }
-  };
-  const wrappedHandler = (...args) => exposeToMcp
-    ? mcpToolReplayGuard.run({
-        toolName: name,
-        input: args[0],
-        extra: args[1],
-        invoke: () => executeWrappedHandler(...args),
-      })
-    : executeWrappedHandler(...args);
-  const registration = exposeToMcp
-    ? server.registerTool(
-        name,
-        config,
-        wrappedHandler,
-      )
-    : null;
-
-  if (exposeToMcp) {
-    registeredToolCount += 1;
-  }
-
-  if (registerCapability) {
-    capabilityRegistry.register({
-      name,
-      config,
-      inputSchema:
-        config.inputSchema ?? {},
-      domain: options.capabilityDomain,
-      invoke: (input) => wrappedHandler(input),
-    });
-  }
-
-  return registration;
 }
 
 registerProjectDiscoveryTools({
@@ -1920,13 +1708,13 @@ registerProcessTools({
   registerTextTool,
   z,
   processManager,
+  inspectLocalPort,
   agentAccess: AGENT_ACCESS,
   safeResolve,
   getActiveProjectId,
   getActiveProjectName,
   getActiveProjectRoot,
   runtimeEnv: process.env,
-  execFileImpl: execFile,
   textResult,
   errorResult,
 });
@@ -2157,165 +1945,6 @@ async function resolveExplicitProjectPathForWrite(
         context.rootRealPath,
         candidate,
       ),
-  };
-}
-
-async function resolveWorkspaceRuntimePaths() {
-  const workspace = await resolveProjectContext(WORKSPACE_PROJECT_ID);
-  return Object.freeze({
-    workspace,
-    worktreeRoot: path.join(workspace.rootRealPath, "worktrees"),
-    visualRoot: path.join(workspace.rootRealPath, "visual-regression"),
-    browserScreenshotRoot: path.join(workspace.rootRealPath, "browser-screenshots"),
-    workflowRoot: path.join(workspace.rootRealPath, "workflows"),
-    taskRoot: path.join(workspace.rootRealPath, "tasks"),
-    releaseGateRoot: path.join(workspace.rootRealPath, "release-gates"),
-    observabilityRoot: path.join(workspace.rootRealPath, "observability"),
-    repairRoot: path.join(workspace.rootRealPath, "repairs"),
-    recoveryPolicyRoot: path.join(workspace.rootRealPath, "recovery-policies"),
-    janitorRoot: path.join(workspace.rootRealPath, "janitor"),
-  });
-}
-
-async function ensureWorkspaceRuntimeDirectories() {
-  const {
-    workspace,
-    worktreeRoot,
-    visualRoot,
-    browserScreenshotRoot,
-    workflowRoot,
-    taskRoot,
-    releaseGateRoot,
-    observabilityRoot,
-    repairRoot,
-    recoveryPolicyRoot,
-    janitorRoot,
-  } = await resolveWorkspaceRuntimePaths();
-  const gitExcludePath = path.join(
-    workspace.rootRealPath,
-    ".git",
-    "info",
-    "exclude",
-  );
-  const ignoredEntries = [
-    "/worktrees/",
-    "/visual-regression/",
-    "/workflows/",
-    "/tasks/",
-    "/release-gates/",
-    "/observability/",
-    "/repairs/",
-    "/recovery-policies/",
-    "/janitor/",
-    "/V4.0_OBSERVABILITY_SELF_HEALING_PLAN.md",
-  ];
-
-  let existing = "";
-
-  try {
-    existing = await fs.readFile(
-      gitExcludePath,
-      "utf8",
-    );
-  } catch (error) {
-    if (error?.code !== "ENOENT") {
-      throw error;
-    }
-  }
-
-  const existingLines = new Set(
-    existing
-      .split(/\r?\n/u)
-      .map((line) => line.trim()),
-  );
-  const missing = ignoredEntries.filter(
-    (entry) => !existingLines.has(entry),
-  );
-
-  if (missing.length > 0) {
-    await fs.mkdir(
-      path.dirname(gitExcludePath),
-      {
-        recursive: true,
-        mode: 0o755,
-      },
-    );
-
-    const prefix =
-      existing && !existing.endsWith("\n")
-        ? "\n"
-        : "";
-
-    await fs.appendFile(
-      gitExcludePath,
-      `${prefix}${missing.join("\n")}\n`,
-      { mode: 0o644 },
-    );
-  }
-
-  await Promise.all([
-    fs.mkdir(worktreeRoot, {
-      recursive: true,
-      mode: 0o755,
-    }),
-    fs.mkdir(visualRoot, {
-      recursive: true,
-      mode: 0o755,
-    }),
-    fs.mkdir(browserScreenshotRoot, {
-      recursive: true,
-      mode: 0o700,
-    }),
-    fs.mkdir(workflowRoot, {
-      recursive: true,
-      mode: 0o700,
-    }),
-    fs.mkdir(taskRoot, {
-      recursive: true,
-      mode: 0o700,
-    }),
-    fs.mkdir(releaseGateRoot, {
-      recursive: true,
-      mode: 0o700,
-    }),
-    fs.mkdir(observabilityRoot, {
-      recursive: true,
-      mode: 0o700,
-    }),
-    fs.mkdir(repairRoot, {
-      recursive: true,
-      mode: 0o700,
-    }),
-    fs.mkdir(recoveryPolicyRoot, {
-      recursive: true,
-      mode: 0o700,
-    }),
-    fs.mkdir(janitorRoot, {
-      recursive: true,
-      mode: 0o700,
-    }),
-  ]);
-  await fs.chmod(browserScreenshotRoot, 0o700).catch(() => {});
-  await fs.chmod(workflowRoot, 0o700).catch(() => {});
-  await fs.chmod(taskRoot, 0o700).catch(() => {});
-  await fs.chmod(releaseGateRoot, 0o700).catch(() => {});
-  await fs.chmod(observabilityRoot, 0o700).catch(() => {});
-  await fs.chmod(repairRoot, 0o700).catch(() => {});
-  await fs.chmod(recoveryPolicyRoot, 0o700).catch(() => {});
-  await fs.chmod(janitorRoot, 0o700).catch(() => {});
-
-  return {
-    workspace,
-    worktreeRoot,
-    visualRoot,
-    browserScreenshotRoot,
-    workflowRoot,
-    taskRoot,
-    releaseGateRoot,
-    observabilityRoot,
-    repairRoot,
-    recoveryPolicyRoot,
-    janitorRoot,
   };
 }
 

@@ -105,6 +105,15 @@ test("uninstall scheduler waits for detached helper spawn with explicit data mod
     GITHUB_TOKEN: "secret",
   };
   const env = uninstallHelperEnvironment(installation, sourceEnv);
+  assert.deepEqual(env, {
+    HOME: "/Users/example",
+    USER: "example",
+    LOGNAME: "example",
+    TMPDIR: "/tmp/example",
+    PATH: "/usr/bin:/bin:/usr/sbin:/sbin",
+    EQUINOX_LOCAL_INSTALL_ROOT: installation.installRoot,
+    EQUINOX_LOCAL_RELEASE_DIR: installation.releaseDir,
+  });
   assert.equal(env.OPENAI_API_KEY, undefined);
   assert.equal(env.GITHUB_TOKEN, undefined);
 

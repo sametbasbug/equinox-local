@@ -113,6 +113,19 @@ Native app-shell artifacts are versioned with the managed release and synchroniz
 
 Runtime events are bounded, rotated, and sanitized before persistence. Diagnosis converts correlated evidence into explicit incidents. Repair recipes and automatic recovery policies are fixed operations with ownership/health guards; they are not arbitrary commands generated from model output.
 
+## Internal module boundaries
+
+The composition root in `src/server.js` delegates tool registration to `equinox-local-tool-registration.js` and workspace directory preparation to `equinox-local-workspace-runtime.js`. Registration shares restart, pause and replay plumbing while retaining separate text/raw adapters: text operations keep project context, mutation scopes and text normalization; raw operations preserve multimodal content and do not acquire an implicit additional lock.
+
+- `runtime-history-store.js` owns the repair/janitor JSONL read/retain/write mechanics; each caller retains its domain validation and query semantics.
+- `equinox-control-center-localization.js` contains the language catalog and pure translators. The DOM entrypoint remains `equinox-control-center.js`; both are served through explicit same-origin asset routes, and release packaging traverses the UI import graph.
+- `equinox-browser-artifacts.js` owns PDF snapshot enrichment and screenshot storage/integrity/quota helpers; tool routing and Browser-context guards remain in `equinox-browser-tools.js`.
+- The classic extension worker loads `extension/bookmarks.js` with `importScripts`. The bookmark capability retains the Agent Browser-only boundary and existing rollback behavior; it is included in the explicit extension ZIP allowlist.
+- `equinox-local-darwin-helper-environment.js` shares the minimal macOS detached-helper environment, while Windows keeps its platform-specific policy. `equinox-local-release-tree.js` shares bounded tree validation without combining first-install/update lifecycle orchestration.
+- `scripts/lib/factory-tooling.mjs` shares source/test discovery and subprocess mechanics with explicit caller policy. `scripts/lib/package-io.mjs` shares streamed hashing. Extracted lifecycle-sensitive helpers retain the required production-upgrade-smoke classification.
+
+These are internal boundaries, not new MCP operations, configuration keys or management endpoints. Native shells, process ownership and release/signing flows remain separate platform responsibilities.
+
 ## What is intentionally not part of the public product
 
 - private Equinox deployment profiles;

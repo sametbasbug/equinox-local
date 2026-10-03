@@ -7,6 +7,7 @@ import { promisify } from "node:util";
 
 import { equinoxLocalReleaseRuntimeContract } from "./equinox-local-release-runtime-contract.js";
 import { parseEquinoxVersion } from "./equinox-local-updater.js";
+import { walkBoundedReleaseTree } from "./equinox-local-release-tree.js";
 
 const execFile = promisify(execFileCallback);
 const TAR_PATH = "/usr/bin/tar";
@@ -212,30 +213,17 @@ export async function downloadVerifiedUpdateArtifact(artifact, destinationPath, 
   }
 }
 
-async function validateExtractedTree(root) {
-  let fileCount = 0;
-  let totalBytes = 0;
-  const stack = [root];
-  while (stack.length > 0) {
-    const directory = stack.pop();
-    const entries = await fs.readdir(directory, { withFileTypes: true });
-    for (const entry of entries) {
-      fileCount += 1;
-      if (fileCount > MAX_ARCHIVE_ENTRIES) throw new Error("Extracted update contains too many entries.");
-      const absolutePath = path.join(directory, entry.name);
-      const stat = await fs.lstat(absolutePath);
-      if (stat.isSymbolicLink()) throw new Error("Extracted update may not contain symbolic links.");
-      if (stat.isDirectory()) {
-        stack.push(absolutePath);
-      } else if (stat.isFile()) {
-        totalBytes += stat.size;
-        if (totalBytes > MAX_EXTRACTED_BYTES) throw new Error("Extracted update exceeds the size limit.");
-      } else {
-        throw new Error("Extracted update contains an unsupported filesystem entry.");
-      }
-    }
-  }
-  return Object.freeze({ fileCount, totalBytes });
+async function validateExtractedTree(root, { fsImpl = fs } = {}) {
+  return walkBoundedReleaseTree(root, {
+    fsImpl,
+    countName: "fileCount",
+    errors: {
+      entryLimit: "Extracted update contains too many entries.",
+      byteLimit: "Extracted update exceeds the size limit.",
+      symlink: "Extracted update may not contain symbolic links.",
+      unsupportedEntry: "Extracted update contains an unsupported filesystem entry.",
+    },
+  });
 }
 
 async function readReleaseMetadata(releaseDir, expectedVersion, expectedTarget) {
