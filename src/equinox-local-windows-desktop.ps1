@@ -1,6 +1,6 @@
 param(
   [Parameter(Mandatory = $true)]
-  [ValidateSet('AppList','AppLaunch','AppQuit','AppRelaunch','AppFocus','WindowFocus','WindowClose','WindowMinimize','WindowRestore','WindowMaximize','WindowMove','WindowResize','WindowSetBounds')]
+  [ValidateSet('AppList','AppLaunch','AppOpen','AppQuit','AppRelaunch','AppFocus','WindowFocus','WindowClose','WindowMinimize','WindowRestore','WindowMaximize','WindowMove','WindowResize','WindowSetBounds')]
   [string]$Mode,
   [string]$Name = '',
   [int]$TargetPid = 0,
@@ -111,6 +111,16 @@ function Start-App([string]$FileName) {
   return [pscustomobject]@{ ok = $true; action = 'launch'; name = $FileName; pid = $process.Id }
 }
 
+function Open-ShellTarget([string]$Target) {
+  if ([string]::IsNullOrWhiteSpace($Target)) { throw 'App open requires name.' }
+  $startInfo = New-Object System.Diagnostics.ProcessStartInfo
+  $startInfo.FileName = $Target
+  $startInfo.UseShellExecute = $true
+  $process = [System.Diagnostics.Process]::Start($startInfo)
+  $pidValue = if ($null -eq $process) { 0 } else { $process.Id }
+  return [pscustomobject]@{ ok = $true; action = 'open'; name = $Target; pid = $pidValue }
+}
+
 function Quit-Apps([bool]$ForceKill) {
   $targets = @(Get-TargetProcesses)
   $requested = 0
@@ -140,6 +150,7 @@ switch ($Mode) {
     Write-Json ([pscustomobject]@{ apps = $items })
   }
   'AppLaunch' { Write-Json (Start-App $Name) }
+  'AppOpen' { Write-Json (Open-ShellTarget $Name) }
   'AppQuit' { Write-Json (Quit-Apps $Force.IsPresent) }
   'AppRelaunch' {
     try { $quit = Quit-Apps $Force.IsPresent; if (@($quit.stillRunning).Count -gt 0) { throw 'App relaunch refused because the existing process did not exit.' } } catch { if ($_.Exception.Message -notmatch '^No running app matched') { throw } }

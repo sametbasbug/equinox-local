@@ -424,6 +424,8 @@ test("public Windows CI restores and builds the native x64 shell", async () => {
   assert.match(winappSmoke, /DesktopHelperPath/u);
   assert.match(winappSmoke, /Invoke-DesktopHelperCaptured/u);
   assert.match(winappSmoke, /AppLaunch/u);
+  assert.match(winappSmoke, /AppOpen/u);
+  assert.match(winappSmoke, /WINDOWS_DESKTOP_APP_OPEN_SMOKE_PASS/u);
   assert.match(winappSmoke, /AppList/u);
   assert.match(winappSmoke, /WindowMinimize/u);
   assert.match(winappSmoke, /WindowRestore/u);

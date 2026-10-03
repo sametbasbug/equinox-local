@@ -38,7 +38,7 @@ test("Windows managed package contract keeps x64 stable and defines explicit nat
 
 test("Windows desktop lifecycle helper is a fixed Win32 boundary", async () => {
   const helper = await fs.readFile(new URL("../../src/equinox-local-windows-desktop.ps1", import.meta.url), "utf8");
-  assert.match(helper, /ValidateSet\('AppList','AppLaunch','AppQuit','AppRelaunch','AppFocus','WindowFocus','WindowClose','WindowMinimize','WindowRestore','WindowMaximize','WindowMove','WindowResize','WindowSetBounds'\)/u);
+  assert.match(helper, /ValidateSet\('AppList','AppLaunch','AppOpen','AppQuit','AppRelaunch','AppFocus','WindowFocus','WindowClose','WindowMinimize','WindowRestore','WindowMaximize','WindowMove','WindowResize','WindowSetBounds'\)/u);
   assert.match(helper, /SetForegroundWindow/u);
   assert.match(helper, /PostMessage/u);
   assert.match(helper, /SetWindowPos/u);

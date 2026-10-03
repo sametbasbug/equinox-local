@@ -60,6 +60,31 @@ function Invoke-DesktopHelperCaptured {
   try { return $output | ConvertFrom-Json } catch { throw "Windows desktop lifecycle helper returned invalid JSON: $output" }
 }
 $fixture = $null
+$associationProcess = $null
+$associationToken = ([guid]::NewGuid().ToString('N'))
+$associationExtension = '.equinoxopen' + $associationToken
+$associationProgId = 'EquinoxLocal.WinappOpenSmoke.' + $associationToken
+$classesRoot = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Software\Classes', $true)
+if ($null -eq $classesRoot) { throw 'Could not open HKCU Software\Classes for the controlled app-open smoke.' }
+try {
+  if ($null -ne $classesRoot.OpenSubKey($associationExtension) -or $null -ne $classesRoot.OpenSubKey($associationProgId)) { throw 'Controlled app-open association unexpectedly already exists.' }
+  $extensionKey = $classesRoot.CreateSubKey($associationExtension)
+  try { $extensionKey.SetValue('', $associationProgId, [Microsoft.Win32.RegistryValueKind]::String) } finally { $extensionKey.Dispose() }
+  $commandKey = $classesRoot.CreateSubKey(($associationProgId + '\shell\open\command'))
+  try { $commandKey.SetValue('', ('"{0}" "%1"' -f $fixtureExecutable), [Microsoft.Win32.RegistryValueKind]::String) } finally { $commandKey.Dispose() }
+  $associationFile = Join-Path $root ('Equinox Association Open' + $associationExtension)
+  Set-Content -LiteralPath $associationFile -Value 'Equinox shell association smoke' -Encoding UTF8
+  $opened = Invoke-DesktopHelperCaptured -Arguments @('-Mode', 'AppOpen', '-Name', $associationFile)
+  if (-not $opened.ok -or $opened.action -ne 'open' -or [int]$opened.pid -le 0) { throw 'Windows desktop app open did not launch the controlled file association.' }
+  $associationProcess = Get-Process -Id ([int]$opened.pid) -ErrorAction Stop
+  if ($associationProcess.ProcessName -ne 'EquinoxLocal.WinappSmokeFixture') { throw 'Windows desktop app open launched an unexpected process.' }
+  Write-Output ("WINDOWS_DESKTOP_APP_OPEN_SMOKE_PASS architecture={0}" -f $architecture)
+} finally {
+  if ($null -ne $associationProcess -and -not $associationProcess.HasExited) { Stop-Process -Id $associationProcess.Id -Force -ErrorAction SilentlyContinue }
+  try { $classesRoot.DeleteSubKeyTree($associationExtension, $false) } catch {}
+  try { $classesRoot.DeleteSubKeyTree($associationProgId, $false) } catch {}
+  $classesRoot.Dispose()
+}
 $launch = Invoke-DesktopHelperCaptured -Arguments @('-Mode', 'AppLaunch', '-Name', $fixtureExecutable)
 if ([int]$launch.pid -le 0) { throw 'Windows desktop lifecycle helper did not return a launched fixture PID.' }
 $fixture = Get-Process -Id ([int]$launch.pid) -ErrorAction Stop

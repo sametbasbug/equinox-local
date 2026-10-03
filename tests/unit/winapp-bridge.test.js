@@ -176,6 +176,11 @@ test("winapp app lifecycle uses only the fixed Equinox Windows helper", async ()
   assert.equal(invocation.args[invocation.args.indexOf("-Mode") + 1], "AppLaunch");
   assert.equal(invocation.args[invocation.args.indexOf("-Name") + 1], "notepad.exe");
 
+  await bridge.callTool("app", { action: "open", name: "C:\\Users\\Test\\Desktop\\notes.txt" });
+  invocation = calls.at(-1);
+  assert.equal(invocation.args[invocation.args.indexOf("-Mode") + 1], "AppOpen");
+  assert.equal(invocation.args[invocation.args.indexOf("-Name") + 1], "C:\\Users\\Test\\Desktop\\notes.txt");
+
   await bridge.callTool("app", { action: "quit", pid: 4321, force: true });
   invocation = calls.at(-1);
   assert.equal(invocation.args[invocation.args.indexOf("-Mode") + 1], "AppQuit");
@@ -183,6 +188,8 @@ test("winapp app lifecycle uses only the fixed Equinox Windows helper", async ()
   assert.equal(invocation.args.includes("-Force"), true);
 
   await assert.rejects(bridge.callTool("app", { action: "launch", pid: 42 }), /requires name/u);
+  await assert.rejects(bridge.callTool("app", { action: "open", pid: 42 }), /requires name/u);
+  await assert.rejects(bridge.callTool("app", { action: "open", name: "notes.txt", force: true }), /force is valid only/u);
   await assert.rejects(bridge.callTool("app", { action: "focus" }), /requires exactly one/u);
   await assert.rejects(bridge.callTool("app", { action: "focus", name: "Notepad", force: true }), /force is valid only/u);
 });
