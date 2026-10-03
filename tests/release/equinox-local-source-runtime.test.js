@@ -33,6 +33,15 @@ test("source runtime config is bounded, private and parses only supported fields
   const loaded = await readSourceRuntimeConfig({ configPath: item.configPath });
   assert.equal(loaded.configured, true);
   assert.equal(loaded.config.tunnelClient, item.binary);
+  assert.equal(loaded.config.privateCompositionModule, "");
+  assert.equal(loaded.config.privateCompositionRoot, "");
+  const privateModule = path.join(item.root, "private-composition.mjs");
+  const privateRoot = path.join(item.root, "private");
+  const privateConfig = parseSourceRuntimeConfig(`launchAgentLabel=dev.equinox.local.dev\ntunnelRuntime=equinox-local-dev\ntunnelClient=${item.binary}\nsourceLauncher=${path.join(item.root, "start-source.sh")}\nprivateCompositionModule=${privateModule}\nprivateCompositionRoot=${privateRoot}\n`);
+  assert.equal(privateConfig.privateCompositionModule, privateModule);
+  assert.equal(privateConfig.privateCompositionRoot, privateRoot);
+  assert.throws(() => parseSourceRuntimeConfig(`tunnelClient=${item.binary}\nsourceLauncher=${path.join(item.root, "start-source.sh")}\nprivateCompositionModule=relative.mjs\nprivateCompositionRoot=${privateRoot}\n`), /module path is invalid/u);
+  assert.throws(() => parseSourceRuntimeConfig(`tunnelClient=${item.binary}\nsourceLauncher=${path.join(item.root, "start-source.sh")}\nprivateCompositionModule=${privateModule}\n`), /configured together/u);
   assert.throws(() => parseSourceRuntimeConfig(`tunnelClient=${item.binary}\nextra=value\n`), /unsupported field/u);
   assert.equal(parseTunnelClientVersion("0.0.15+abcdef (git sha: abcdef)"), "0.0.15");
 });

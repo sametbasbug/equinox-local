@@ -3,8 +3,20 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
-import { prepareSourceAppHost } from "../../scripts/release/prepare-source-app-host.mjs";
+import { prepareSourceAppHost, sourceAppRuntimeWrapper } from "../../scripts/release/prepare-source-app-host.mjs";
+
+test("source runtime wrapper invokes an existing factory watchdog entrypoint", async () => {
+  const wrapper = sourceAppRuntimeWrapper("/fixture/start-source.sh", "", {
+    nodePath: "/fixture/node",
+    configPath: "/fixture/runtime.conf",
+  });
+  const watchdogPath = wrapper.match(/'([^'\n]*watch-source-runtime\.mjs)'/u)?.[1];
+  assert.ok(watchdogPath, "generated wrapper must contain its watchdog entrypoint");
+  assert.equal((await fs.lstat(watchdogPath)).isFile(), true);
+  assert.equal(watchdogPath, fileURLToPath(new URL("../../factory/local/watch-source-runtime.mjs", import.meta.url)));
+});
 
 const macTest = process.platform === "darwin" ? test : test.skip;
 
@@ -16,11 +28,15 @@ macTest("source app host routes the LaunchAgent through stable Equinox Local.app
   const tunnelClient = path.join(root, "tunnel-client");
   const peekabooPath = path.join(root, "peekaboo");
   const configPath = path.join(root, "runtime.conf");
+  const privateCompositionRoot = path.join(root, "private");
+  const privateCompositionModule = path.join(privateCompositionRoot, "composition.mjs");
   await fs.mkdir(homeDir, { recursive: true });
+  await fs.mkdir(privateCompositionRoot, { recursive: true });
+  await fs.writeFile(privateCompositionModule, "export const fixture = true;\n", { mode: 0o600 });
   await fs.writeFile(sourceLauncher, "#!/bin/sh\nexit 0\n", { mode: 0o700 });
   await fs.writeFile(tunnelClient, "#!/bin/sh\nexit 0\n", { mode: 0o700 });
   await fs.writeFile(peekabooPath, "#!/bin/sh\nexit 0\n", { mode: 0o700 });
-  await fs.writeFile(configPath, `launchAgentLabel=dev.equinox.local.dev\ntunnelRuntime=equinox-local-dev\ntunnelClient=${tunnelClient}\npeekabooPath=${peekabooPath}\nsourceLauncher=${sourceLauncher}\n`, { mode: 0o600 });
+  await fs.writeFile(configPath, `launchAgentLabel=dev.equinox.local.dev\ntunnelRuntime=equinox-local-dev\ntunnelClient=${tunnelClient}\npeekabooPath=${peekabooPath}\nsourceLauncher=${sourceLauncher}\nprivateCompositionModule=${privateCompositionModule}\nprivateCompositionRoot=${privateCompositionRoot}\n`, { mode: 0o600 });
 
   const nodePath = path.join(root, "stable-node");
   await fs.symlink(process.execPath, nodePath);
@@ -60,6 +76,10 @@ macTest("source app host routes the LaunchAgent through stable Equinox Local.app
   assert.match(wrapper, /runtimes stop/u);
   assert.match(wrapper, /equinox-local-dev/u);
   assert.match(wrapper, /start-source\.sh/u);
+  assert.match(wrapper, /EQUINOX_LOCAL_PRIVATE_COMPOSITION_MODULE/u);
+  assert.match(wrapper, /EQUINOX_LOCAL_PRIVATE_COMPOSITION_ROOT/u);
+  assert.equal(wrapper.includes(privateCompositionModule), true);
+  assert.equal(wrapper.includes(privateCompositionRoot), true);
   const plist = await fs.readFile(path.join(homeDir, "Library", "LaunchAgents", "dev.equinox.local.dev.plist"), "utf8");
   assert.match(plist, /Applications\/Equinox Local\.app\/Contents\/MacOS\/applet/u);
   assert.match(plist, /EQUINOX_LOCAL_RUNTIME_HOST/u);
