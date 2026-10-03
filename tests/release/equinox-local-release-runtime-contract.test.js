@@ -35,6 +35,7 @@ test("Windows x64 5.2.1 release runtime bundles native winapp while excluding Pe
   assert.equal(contract.runtimeDocuments.includes(path.join("runtime", "winapp", "LICENSE")), true);
   assert.equal(contract.runtimeExecutables.some((entry) => /peekaboo/iu.test(entry)), false);
   assert.equal(contract.runtimeDocuments.some((entry) => /peekaboo/iu.test(entry)), false);
+  assert.equal(contract.requiredReleaseFiles.includes("equinox-local-windows-desktop.ps1"), true);
   assert.equal(contract.requiredReleaseFiles.includes("equinox-local-windows-job-object.ps1"), true);
   assert.equal(contract.requiredReleaseFiles.includes("equinox-local-windows-process-gate.ps1"), true);
   assert.equal(contract.nativeAppKind, "windows-shell");

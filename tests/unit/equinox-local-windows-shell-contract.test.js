@@ -421,6 +421,22 @@ test("public Windows CI restores and builds the native x64 shell", async () => {
   assert.match(winappSmoke, /\$evidence\.AfterThread -eq \$evidence\.ForegroundThread/u);
   assert.match(winappSmoke, /\$evidence\.AfterHandle -eq \$evidence\.ForegroundHandle/u);
   assert.match(winappSmoke, /reason=hosted_runner_protected_wwahost/u);
+  assert.match(winappSmoke, /DesktopHelperPath/u);
+  assert.match(winappSmoke, /Invoke-DesktopHelperCaptured/u);
+  assert.match(winappSmoke, /AppLaunch/u);
+  assert.match(winappSmoke, /AppList/u);
+  assert.match(winappSmoke, /WindowMinimize/u);
+  assert.match(winappSmoke, /WindowRestore/u);
+  assert.match(winappSmoke, /WindowMaximize/u);
+  assert.match(winappSmoke, /WindowSetBounds/u);
+  assert.match(winappSmoke, /WindowMove/u);
+  assert.match(winappSmoke, /WindowResize/u);
+  assert.match(winappSmoke, /AppRelaunch/u);
+  assert.match(winappSmoke, /WindowClose/u);
+  assert.match(winappSmoke, /AppQuit/u);
+  assert.match(winappSmoke, /WINDOWS_DESKTOP_LIFECYCLE_SMOKE_PASS/u);
+  assert.match(ci, /release\/equinox-local-windows-desktop\.ps1/u);
+  assert.match(ci, /-DesktopHelperPath/u);
 });
 
 

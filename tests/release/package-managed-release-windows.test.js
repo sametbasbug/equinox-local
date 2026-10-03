@@ -23,6 +23,7 @@ test("Windows managed package contract keeps x64 stable and defines explicit nat
   assert.equal(arm64.peMachine, 0xaa64);
   assert.deepEqual(arm64.extraReleaseFiles, [
     "src/equinox-local-windows-clipboard.ps1",
+    "src/equinox-local-windows-desktop.ps1",
     "src/equinox-local-windows-job-object.ps1",
     "src/equinox-local-windows-private-state.ps1",
     "src/equinox-local-windows-process-gate.ps1",
@@ -34,6 +35,17 @@ test("Windows managed package contract keeps x64 stable and defines explicit nat
   assert.throws(() => windowsManagedPackageContract({ target: "win32-ia32" }), /Unsupported Windows managed release target/u);
 });
 
+
+test("Windows desktop lifecycle helper is a fixed Win32 boundary", async () => {
+  const helper = await fs.readFile(new URL("../../src/equinox-local-windows-desktop.ps1", import.meta.url), "utf8");
+  assert.match(helper, /ValidateSet\('AppList','AppLaunch','AppQuit','AppRelaunch','AppFocus','WindowFocus','WindowClose','WindowMinimize','WindowRestore','WindowMaximize','WindowMove','WindowResize','WindowSetBounds'\)/u);
+  assert.match(helper, /SetForegroundWindow/u);
+  assert.match(helper, /PostMessage/u);
+  assert.match(helper, /SetWindowPos/u);
+  assert.match(helper, /CloseMainWindow/u);
+  assert.match(helper, /UseShellExecute = \$true/u);
+  assert.doesNotMatch(helper, /Invoke-Expression|cmd\.exe|Start-Process/u);
+});
 
 test("Windows release source mapping is separator-independent and flattens src", () => {
   assert.equal(windowsManagedReleaseDestinationRelative("src/server.js"), "server.js");

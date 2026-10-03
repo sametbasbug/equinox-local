@@ -56,7 +56,7 @@ test("winapp bridge exposes a practical Windows UI surface instead of a crippled
   const { bridge } = createHarness();
   const tools = await bridge.listTools();
   assert.deepEqual(tools.map((tool) => tool.name), [...WINAPP_ALLOWED_TOOLS]);
-  for (const required of ["screenshot", "drag", "hover", "scroll", "send_keys", "yield"]) {
+  for (const required of ["screenshot", "drag", "hover", "scroll", "send_keys", "app", "window", "yield"]) {
     assert.equal(tools.some((tool) => tool.name === required), true, `missing ${required}`);
   }
   assert.equal(tools.some((tool) => tool.name === "record"), false, "record stays separate until managed artifact lifecycle is implemented");
@@ -136,6 +136,61 @@ test("winapp paste sets clipboard text then delegates Ctrl+V targeting to native
   await bridge.callTool("paste", { text: "classic fallback", app: "Notepad", via: "post-message" });
   invocation = calls.at(-1);
   assert.deepEqual(invocation.args, ["ui", "send-keys", "ctrl+v", "-a", "Notepad", "--via", "post-message", "--json"]);
+});
+
+test("winapp app lifecycle uses only the fixed Equinox Windows helper", async () => {
+  const { bridge, calls } = createHarness();
+  await bridge.callTool("app", { action: "list" });
+  let invocation = calls.at(-1);
+  assert.match(String(invocation.binary).toLowerCase(), /powershell\.exe$/u);
+  assert.match(invocation.args[invocation.args.indexOf("-File") + 1], /equinox-local-windows-desktop\.ps1$/u);
+  assert.deepEqual(invocation.args.slice(invocation.args.indexOf("-Mode"), invocation.args.indexOf("-Mode") + 2), ["-Mode", "AppList"]);
+
+  await bridge.callTool("app", { action: "launch", name: "notepad.exe" });
+  invocation = calls.at(-1);
+  assert.equal(invocation.args[invocation.args.indexOf("-Mode") + 1], "AppLaunch");
+  assert.equal(invocation.args[invocation.args.indexOf("-Name") + 1], "notepad.exe");
+
+  await bridge.callTool("app", { action: "quit", pid: 4321, force: true });
+  invocation = calls.at(-1);
+  assert.equal(invocation.args[invocation.args.indexOf("-Mode") + 1], "AppQuit");
+  assert.equal(invocation.args[invocation.args.indexOf("-TargetPid") + 1], "4321");
+  assert.equal(invocation.args.includes("-Force"), true);
+
+  await assert.rejects(bridge.callTool("app", { action: "launch", pid: 42 }), /requires name/u);
+  await assert.rejects(bridge.callTool("app", { action: "focus" }), /requires exactly one/u);
+  await assert.rejects(bridge.callTool("app", { action: "focus", name: "Notepad", force: true }), /force is valid only/u);
+});
+
+test("winapp window lifecycle combines native window discovery with exact Win32 mutations", async () => {
+  const { bridge, calls } = createHarness();
+  await bridge.callTool("window", { action: "list", app: "Notepad", show_hidden: true });
+  let invocation = calls.at(-1);
+  assert.match(String(invocation.binary), /winapp\.exe$/u);
+  assert.deepEqual(invocation.args, ["ui", "list-windows", "-a", "Notepad", "--show-hidden", "--json"]);
+
+  await bridge.callTool("window", { action: "minimize", window: "0x1234" });
+  invocation = calls.at(-1);
+  assert.match(String(invocation.binary).toLowerCase(), /powershell\.exe$/u);
+  assert.equal(invocation.args[invocation.args.indexOf("-Mode") + 1], "WindowMinimize");
+  assert.equal(invocation.args[invocation.args.indexOf("-Hwnd") + 1], "0x1234");
+
+  await bridge.callTool("window", { action: "move", app: "Notepad", x: -1200, y: 40 });
+  invocation = calls.at(-1);
+  assert.equal(invocation.args[invocation.args.indexOf("-Mode") + 1], "WindowMove");
+  assert.equal(invocation.args[invocation.args.indexOf("-Name") + 1], "Notepad");
+  assert.equal(invocation.args[invocation.args.indexOf("-X") + 1], "-1200");
+  assert.equal(invocation.args[invocation.args.indexOf("-Y") + 1], "40");
+
+  await bridge.callTool("window", { action: "set-bounds", pid: 4321, x: 10, y: 20, width: 1280, height: 720 });
+  invocation = calls.at(-1);
+  assert.equal(invocation.args[invocation.args.indexOf("-Mode") + 1], "WindowSetBounds");
+  assert.equal(invocation.args[invocation.args.indexOf("-Width") + 1], "1280");
+  assert.equal(invocation.args[invocation.args.indexOf("-Height") + 1], "720");
+
+  await assert.rejects(bridge.callTool("window", { action: "minimize" }), /requires exactly one/u);
+  await assert.rejects(bridge.callTool("window", { action: "resize", window: "0x1", width: 900 }), /requires height/u);
+  await assert.rejects(bridge.callTool("window", { action: "focus", window: "0x1", x: 0 }), /does not accept x/u);
 });
 
 test("winapp bridge maps native wheel scrolling without adding duplicate semantic validation", async () => {

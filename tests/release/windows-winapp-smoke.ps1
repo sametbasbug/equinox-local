@@ -4,7 +4,9 @@ param(
   [Parameter(Mandatory = $true)]
   [string]$FixturePath,
   [Parameter(Mandatory = $true)]
-  [string]$ClipboardHelperPath
+  [string]$ClipboardHelperPath,
+  [Parameter(Mandatory = $true)]
+  [string]$DesktopHelperPath
 )
 
 $ErrorActionPreference = 'Stop'
@@ -40,7 +42,27 @@ $clipboardHelper = [System.IO.Path]::GetFullPath($ClipboardHelperPath)
 if (-not (Test-Path -LiteralPath $clipboardHelper -PathType Leaf)) {
   throw "Packaged clipboard helper not found: $clipboardHelper"
 }
-$fixture = Start-Process -FilePath $fixtureExecutable -PassThru
+$desktopHelper = [System.IO.Path]::GetFullPath($DesktopHelperPath)
+if (-not (Test-Path -LiteralPath $desktopHelper -PathType Leaf)) {
+  throw "Packaged desktop lifecycle helper not found: $desktopHelper"
+}
+function Invoke-DesktopHelperCaptured {
+  param([Parameter(Mandatory = $true)][string[]]$Arguments)
+  $previousErrorActionPreference = $ErrorActionPreference
+  try {
+    $ErrorActionPreference = 'Continue'
+    $output = (& powershell.exe -NoLogo -NoProfile -NonInteractive -Sta -ExecutionPolicy Bypass -File $desktopHelper @Arguments 2>&1 | Out-String).Trim()
+    $exitCode = $LASTEXITCODE
+  } finally {
+    $ErrorActionPreference = $previousErrorActionPreference
+  }
+  if ($exitCode -ne 0) { throw "Windows desktop lifecycle helper failed: $output" }
+  try { return $output | ConvertFrom-Json } catch { throw "Windows desktop lifecycle helper returned invalid JSON: $output" }
+}
+$fixture = $null
+$launch = Invoke-DesktopHelperCaptured -Arguments @('-Mode', 'AppLaunch', '-Name', $fixtureExecutable)
+if ([int]$launch.pid -le 0) { throw 'Windows desktop lifecycle helper did not return a launched fixture PID.' }
+$fixture = Get-Process -Id ([int]$launch.pid) -ErrorAction Stop
 try {
   function Invoke-WinappCaptured {
     param([Parameter(Mandatory = $true)][string[]]$Arguments)
@@ -237,6 +259,28 @@ public static class EquinoxWinappSmokeForeground {
   }
   if (-not $ready) { throw 'winapp could not discover the controlled WinForms fixture window.' }
 
+  $appList = Invoke-DesktopHelperCaptured -Arguments @('-Mode', 'AppList')
+  if (@($appList.apps | Where-Object { [int]$_.pid -eq $fixture.Id }).Count -ne 1) { throw 'Windows desktop lifecycle app list did not include the launched fixture.' }
+  $fixture.Refresh()
+  if ($fixture.MainWindowHandle -eq [IntPtr]::Zero) { throw 'Controlled fixture has no HWND for lifecycle acceptance.' }
+  $fixtureHwnd = ('0x{0:X}' -f $fixture.MainWindowHandle.ToInt64())
+
+  $minimized = Invoke-DesktopHelperCaptured -Arguments @('-Mode', 'WindowMinimize', '-Hwnd', $fixtureHwnd)
+  if (-not [bool]$minimized.minimized) { throw 'Windows desktop lifecycle minimize did not iconify the fixture.' }
+  $restored = Invoke-DesktopHelperCaptured -Arguments @('-Mode', 'WindowRestore', '-Hwnd', $fixtureHwnd)
+  if ([bool]$restored.minimized -or [bool]$restored.maximized) { throw 'Windows desktop lifecycle restore did not return the fixture to normal state.' }
+  $maximized = Invoke-DesktopHelperCaptured -Arguments @('-Mode', 'WindowMaximize', '-Hwnd', $fixtureHwnd)
+  if (-not [bool]$maximized.maximized) { throw 'Windows desktop lifecycle maximize did not maximize the fixture.' }
+  $restored = Invoke-DesktopHelperCaptured -Arguments @('-Mode', 'WindowRestore', '-Hwnd', $fixtureHwnd)
+  if ([bool]$restored.minimized -or [bool]$restored.maximized) { throw 'Windows desktop lifecycle restore after maximize did not return to normal state.' }
+
+  $bounded = Invoke-DesktopHelperCaptured -Arguments @('-Mode', 'WindowSetBounds', '-Hwnd', $fixtureHwnd, '-X', '80', '-Y', '90', '-Width', '640', '-Height', '420')
+  if ([int]$bounded.bounds.x -ne 80 -or [int]$bounded.bounds.y -ne 90 -or [int]$bounded.bounds.width -ne 640 -or [int]$bounded.bounds.height -ne 420) { throw 'Windows desktop lifecycle set-bounds roundtrip mismatch.' }
+  $moved = Invoke-DesktopHelperCaptured -Arguments @('-Mode', 'WindowMove', '-Hwnd', $fixtureHwnd, '-X', '120', '-Y', '130')
+  if ([int]$moved.bounds.x -ne 120 -or [int]$moved.bounds.y -ne 130) { throw 'Windows desktop lifecycle move roundtrip mismatch.' }
+  $resized = Invoke-DesktopHelperCaptured -Arguments @('-Mode', 'WindowResize', '-Hwnd', $fixtureHwnd, '-Width', '700', '-Height', '460')
+  if ([int]$resized.bounds.width -ne 700 -or [int]$resized.bounds.height -ne 460) { throw 'Windows desktop lifecycle resize roundtrip mismatch.' }
+
   $inspect = (& $winapp ui inspect -a $fixture.Id --depth 5 --json 2>&1 | Out-String).Trim()
   if ($LASTEXITCODE -ne 0 -or $inspect -notmatch 'SmokeText' -or $inspect -notmatch 'SmokePasteText' -or $inspect -notmatch 'SmokeButton') {
     throw "winapp inspect did not expose the controlled UIA fixture: $inspect"
@@ -305,6 +349,39 @@ public static class EquinoxWinappSmokeForeground {
   }
   if ((Get-Item -LiteralPath $screenshotPath).Length -lt 128) { throw 'winapp screenshot output is unexpectedly empty.' }
 
+  $oldFixtureId = $fixture.Id
+  $relaunched = Invoke-DesktopHelperCaptured -Arguments @('-Mode', 'AppRelaunch', '-Name', $fixtureExecutable)
+  if ([int]$relaunched.pid -le 0 -or [int]$relaunched.pid -eq $oldFixtureId) { throw 'Windows desktop lifecycle relaunch did not return a fresh fixture PID.' }
+  $fixture = Get-Process -Id ([int]$relaunched.pid) -ErrorAction Stop
+  $relaunchReady = $false
+  for ($attempt = 0; $attempt -lt 30; $attempt++) {
+    $fixture.Refresh()
+    if ($fixture.MainWindowHandle -ne [IntPtr]::Zero) { $relaunchReady = $true; break }
+    if ($fixture.HasExited) { throw 'Relaunched fixture exited before creating a window.' }
+    Start-Sleep -Milliseconds 100
+  }
+  if (-not $relaunchReady) { throw 'Relaunched fixture did not create a window.' }
+  $relaunchHwnd = ('0x{0:X}' -f $fixture.MainWindowHandle.ToInt64())
+  [void](Invoke-DesktopHelperCaptured -Arguments @('-Mode', 'WindowClose', '-Hwnd', $relaunchHwnd))
+  for ($attempt = 0; $attempt -lt 30 -and -not $fixture.HasExited; $attempt++) { Start-Sleep -Milliseconds 100; $fixture.Refresh() }
+  if (-not $fixture.HasExited) { throw 'Windows desktop lifecycle window close did not exit the fixture.' }
+
+  $quitLaunch = Invoke-DesktopHelperCaptured -Arguments @('-Mode', 'AppLaunch', '-Name', $fixtureExecutable)
+  $fixture = Get-Process -Id ([int]$quitLaunch.pid) -ErrorAction Stop
+  $quitReady = $false
+  for ($attempt = 0; $attempt -lt 30; $attempt++) {
+    $fixture.Refresh()
+    if ($fixture.MainWindowHandle -ne [IntPtr]::Zero) { $quitReady = $true; break }
+    if ($fixture.HasExited) { throw 'Quit fixture exited before creating a window.' }
+    Start-Sleep -Milliseconds 100
+  }
+  if (-not $quitReady) { throw 'Quit fixture did not create a window.' }
+  $quit = Invoke-DesktopHelperCaptured -Arguments @('-Mode', 'AppQuit', '-TargetPid', [string]$fixture.Id)
+  if (@($quit.stillRunning).Count -ne 0) { throw 'Windows desktop lifecycle graceful app quit left the fixture running.' }
+  $fixture.Refresh()
+  if (-not $fixture.HasExited) { throw 'Windows desktop lifecycle app quit did not exit the fixture.' }
+
+  Write-Output ("WINDOWS_DESKTOP_LIFECYCLE_SMOKE_PASS architecture={0}" -f $architecture)
   Write-Output ("WINDOWS_WINAPP_SMOKE_PASS architecture={0} machine=0x{1:X4} version={2}" -f $architecture, $machine, $version)
 }
 finally {
