@@ -25,11 +25,18 @@ export function createExtensionVmContext({ sandbox = {}, extensionRoot, allowedS
       if (!relative || relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
         throw new Error(`Extension importScripts path escapes the extension root: ${script}`);
       }
-      const stat = fs.lstatSync(filePath);
-      if (!stat.isFile() || stat.isSymbolicLink()) {
-        throw new Error(`Extension importScripts target is not a regular file: ${script}`);
+      const descriptor = fs.openSync(filePath, fs.constants.O_RDONLY);
+      try {
+        const openedStat = fs.fstatSync(descriptor);
+        const pathStat = fs.lstatSync(filePath);
+        const sameFile = openedStat.dev === pathStat.dev && openedStat.ino === pathStat.ino;
+        if (!openedStat.isFile() || !pathStat.isFile() || pathStat.isSymbolicLink() || !sameFile) {
+          throw new Error(`Extension importScripts target is not a stable regular file: ${script}`);
+        }
+        vm.runInContext(fs.readFileSync(descriptor, "utf8"), context, { filename: filePath });
+      } finally {
+        fs.closeSync(descriptor);
       }
-      vm.runInContext(fs.readFileSync(filePath, "utf8"), context, { filename: filePath });
     }
   };
   return context;

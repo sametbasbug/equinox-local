@@ -72,7 +72,7 @@ test("Windows private-state ACL helper uses fixed PowerShell and parses bounded 
     assert.equal(call.args[0], "-NoLogo");
     assert.equal(call.args.includes("-File"), true);
     assert.equal(call.args.includes("-Target"), true);
-    assert.equal(call.options.timeout, 15_000);
+    assert.equal(call.options.timeout, 45_000);
     assert.equal(call.options.windowsHide, true);
     assert.deepEqual(call.options.env, { SystemRoot: "C:\\Windows", WINDIR: "C:\\Windows" });
   }

@@ -6,7 +6,7 @@ import { promisify } from "node:util";
 
 const execFile = promisify(execFileCallback);
 const WINDOWS_PRIVATE_STATE_HELPER = fileURLToPath(new URL("./equinox-local-windows-private-state.ps1", import.meta.url));
-const WINDOWS_PRIVATE_STATE_TIMEOUT_MS = 15_000;
+const WINDOWS_PRIVATE_STATE_TIMEOUT_MS = 45_000;
 
 function fileType(stat) {
   if (stat.isFile()) return "file";

@@ -38,3 +38,17 @@ test("importScripts rejects paths and scripts outside its explicit package allow
     await fs.rm(root, { recursive: true, force: true });
   }
 });
+
+
+test("importScripts rejects allowlisted symlinks instead of following them", async () => {
+  const root = await fs.mkdtemp(path.join(TEMP_ROOT, "equinox-vm-importscripts-"));
+  try {
+    await fs.writeFile(path.join(root, "real.js"), "globalThis.symlinkLoaded = true;\n");
+    await fs.symlink(path.join(root, "real.js"), path.join(root, "capability.js"));
+    const context = createExtensionVmContext({ sandbox: {}, extensionRoot: root, allowedScripts: ["capability.js"] });
+    assert.throws(() => context.importScripts("capability.js"), /stable regular file/u);
+    assert.equal(context.symlinkLoaded, undefined);
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
