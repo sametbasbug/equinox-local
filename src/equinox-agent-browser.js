@@ -250,6 +250,7 @@ export function createEquinoxAgentBrowser({
   env = process.env,
   execFileAsync,
   signalProcess = process.kill.bind(process),
+  discoverWindowsChromeImpl = discoverWindowsChrome,
   recordEvent = () => {},
 } = {}) {
   if (!bridge?.readyFor || !bridge?.waitUntilReady || !bridge?.expectContext || !bridge?.cancelExpectedContext) {
@@ -257,6 +258,7 @@ export function createEquinoxAgentBrowser({
   }
   if (typeof execFileAsync !== "function") throw new Error("Agent Browser için execFileAsync gerekli.");
   if (typeof signalProcess !== "function") throw new Error("Agent Browser için signalProcess gerekli.");
+  if (typeof discoverWindowsChromeImpl !== "function") throw new Error("Agent Browser Windows Chrome resolver geçersiz.");
   if (typeof recordEvent !== "function") throw new Error("Agent Browser recordEvent fonksiyonu geçersiz.");
 
   const resolvedProfileRoot = profileRoot == null
@@ -276,7 +278,7 @@ export function createEquinoxAgentBrowser({
   }
 
   async function resolveWindowsChrome() {
-    const chromePath = await discoverWindowsChrome({ env });
+    const chromePath = await discoverWindowsChromeImpl({ env });
     lastChromePath = chromePath;
     return chromePath;
   }
@@ -357,16 +359,34 @@ export function createEquinoxAgentBrowser({
       signalProcess(pid, "SIGTERM");
     } else {
       const options = { timeout: 5_000, maxBuffer: 64 * 1024, windowsHide: true, env };
+      const forceExactTree = async () => {
+        const exactPids = await listMainProcessPids();
+        if (exactPids.length === 0) {
+          emit("shutdown_graceful_race", { platform });
+          return;
+        }
+        if (exactPids.length !== 1 || exactPids[0] !== pid) {
+          throw new Error("Agent Browser exact ana process kimliği kapanış sırasında değişti; zorla kapatma reddedildi.");
+        }
+        forced = true;
+        emit("shutdown_force_fallback", { platform });
+        await execFileAsync(WINDOWS_TASKKILL_BINARY, ["/PID", String(pid), "/T", "/F"], options);
+      };
+      let gracefulFailed = false;
       try {
         await execFileAsync(WINDOWS_TASKKILL_BINARY, ["/PID", String(pid), "/T"], options);
-      } catch (error) {
-        if (!processAlive(pid)) {
-          emit("shutdown_graceful_race", { platform });
-        } else {
-          forced = true;
-          emit("shutdown_force_fallback", { platform });
-          await execFileAsync(WINDOWS_TASKKILL_BINARY, ["/PID", String(pid), "/T", "/F"], options);
+      } catch {
+        gracefulFailed = true;
+      }
+      if (gracefulFailed) {
+        if (!processAlive(pid)) emit("shutdown_graceful_race", { platform });
+        else await forceExactTree();
+      } else {
+        const gracefulDeadline = Date.now() + Math.min(1_000, Math.max(250, Math.floor(boundedTimeout / 4)));
+        while (Date.now() < gracefulDeadline && processAlive(pid)) {
+          await new Promise((resolve) => setTimeout(resolve, 50));
         }
+        if (processAlive(pid)) await forceExactTree();
       }
     }
     emit("shutdown_requested", { platform, forced });
