@@ -20,6 +20,7 @@ const MAX_TEXT_INPUT = 20_000;
 const MAX_PATH_LENGTH = 4096;
 const MAX_CLIPBOARD_BYTES = 256 * 1024;
 const WINDOWS_CLIPBOARD_HELPER = path.join(MODULE_DIR, "equinox-local-windows-clipboard.ps1");
+const WINDOWS_DESKTOP_HELPER = path.join(MODULE_DIR, "equinox-local-windows-desktop.ps1");
 
 function objectSchema(properties, required = []) {
   return Object.freeze({ type: "object", properties: Object.freeze(properties), required: Object.freeze(required), additionalProperties: false });
@@ -40,10 +41,17 @@ function withTarget(properties = {}, required = []) {
 }
 const selector = string("AutomationId, semantic slug, accessible-text selector, or coordinate accepted by winapp.", 1000);
 const direction = enumeration("Direction.", ["up", "down", "left", "right"]);
+const lifecycleTargetProperties = Object.freeze({
+  app: targetProperties.app,
+  window: targetProperties.window,
+  pid: targetProperties.pid,
+});
+const coordinate = integer("Virtual-screen coordinate; negative values are valid on multi-monitor desktops.", -100_000, 100_000);
+const dimension = integer("Window dimension in pixels.", 1, 100_000);
 
 export const WINAPP_ALLOWED_TOOLS = Object.freeze([
   "list_windows", "inspect_ui", "search", "get_property", "get_value", "get_focused", "wait_for", "screenshot",
-  "clipboard", "paste", "set_value", "invoke", "focus", "click", "drag", "hover", "send_keys", "scroll_into_view", "scroll", "yield",
+  "app", "window", "clipboard", "paste", "set_value", "invoke", "focus", "click", "drag", "hover", "send_keys", "scroll_into_view", "scroll", "yield",
 ]);
 const WINAPP_READ_ONLY_TOOLS = new Set([
   "list_windows", "inspect_ui", "search", "get_property", "get_value", "get_focused", "wait_for", "screenshot",
@@ -58,6 +66,8 @@ export const WINAPP_TOOL_DEFINITIONS = Object.freeze({
   get_focused: Object.freeze({ name: "get_focused", description: "Report the focused UI Automation element for the selected Windows app/window.", readOnly: true, inputSchema: withTarget() }),
   wait_for: Object.freeze({ name: "wait_for", description: "Wait boundedly for a Windows UI element to appear/disappear or reach a property/value.", readOnly: true, inputSchema: withTarget({ selector, value: Object.freeze({ type: "string", maxLength: MAX_TEXT_INPUT }), property: string("Optional case-sensitive UI Automation property to compare.", 120), gone: bool("Wait for the selector to disappear."), contains: bool("Use substring matching for value."), timeout_ms: integer("Maximum wait in milliseconds.", 100, MAX_WAIT_MS), root: selector, type: string("Optional UIA control type filter.", 80), class_name: string("Optional exact UIA ClassName filter.", 200) }, ["selector"]) }),
   screenshot: Object.freeze({ name: "screenshot", description: "Capture a Windows app/window/control as PNG through winapp. When output is omitted, Equinox uses a managed temp file and returns the validated PNG as native MCP image content so the model can see it directly; an explicit output path keeps file-only behavior.", readOnly: true, inputSchema: withTarget({ selector, output: string("Optional output PNG path. Omit for direct model-visible image handoff through Equinox-managed temporary output.", MAX_PATH_LENGTH), capture_screen: bool("Capture the live foreground screen region so visible overlays/popups are included."), focus: bool("Foreground the target before ordinary capture.") }) }),
+  app: Object.freeze({ name: "app", description: "Manage practical Windows app lifecycle through an Equinox-owned Win32 helper: list, launch, quit, relaunch, or focus. Launch/relaunch accept an executable name or path; quit/focus accept a process name/window-title fragment or exact PID.", readOnly: false, inputSchema: objectSchema({ action: enumeration("App lifecycle action.", ["list", "launch", "quit", "relaunch", "focus"]), name: string("Executable name/path for launch/relaunch, or process/window-title target for quit/focus.", MAX_PATH_LENGTH), pid: targetProperties.pid, force: bool("Force termination for quit/relaunch instead of requesting a graceful main-window close.") }, ["action"]) }),
+  window: Object.freeze({ name: "window", description: "Manage Windows top-level windows through stable HWND/Win32 semantics: list, focus, close, minimize, restore, maximize, move, resize, or set bounds. Use list/list_windows to obtain an exact HWND when a process has multiple windows.", readOnly: false, inputSchema: objectSchema({ action: enumeration("Window lifecycle action.", ["list", "focus", "close", "minimize", "restore", "maximize", "move", "resize", "set-bounds"]), ...lifecycleTargetProperties, show_hidden: bool("For list only, include invisible zero-size windows."), x: coordinate, y: coordinate, width: dimension, height: dimension }, ["action"]) }),
   clipboard: Object.freeze({ name: "clipboard", description: "Get, set or clear bounded Unicode text on the interactive Windows clipboard through an Equinox-owned fixed helper.", readOnly: false, inputSchema: objectSchema({ action: enumeration("Clipboard action.", ["get", "set", "clear"]), text: Object.freeze({ type: "string", maxLength: MAX_TEXT_INPUT, description: "Text for set. Omit for get/clear." }) }, ["action"]) }),
   paste: Object.freeze({ name: "paste", description: "Put bounded Unicode text on the Windows clipboard and paste it into a selected app/window/PID/control through winapp Ctrl+V targeting. Defaults to real send-input for reliable modifier-key paste semantics; post-message remains an explicit fallback for compatible classic windows.", readOnly: false, inputSchema: withTarget({ text: Object.freeze({ type: "string", maxLength: MAX_TEXT_INPUT }), target: selector, via: enumeration("Keyboard transport used for Ctrl+V. Defaults to send-input.", ["post-message", "send-input"]) }, ["text"]) }),
   set_value: Object.freeze({ name: "set_value", description: "Set an editable control through UIA patterns without foreground keyboard injection.", readOnly: false, inputSchema: withTarget({ selector, value: Object.freeze({ type: "string", maxLength: MAX_TEXT_INPUT }) }, ["selector", "value"]) }),
@@ -99,6 +109,38 @@ function validateArguments(definition, input) {
   if (Buffer.byteLength(JSON.stringify(input), "utf8") > MAX_ARGUMENT_BYTES) throw new Error("winapp arguments exceed the bounded input limit.");
   return input;
 }
+function validateAppLifecycleArguments(args) {
+  const action = args.action;
+  const hasName = Object.hasOwn(args, "name");
+  const hasPid = Object.hasOwn(args, "pid");
+  if (action === "list") {
+    if (hasName || hasPid || Object.hasOwn(args, "force")) throw new Error("winapp app list takes no target or force option.");
+    return;
+  }
+  if (action === "launch" || action === "relaunch") {
+    if (!hasName || hasPid) throw new Error(`winapp app ${action} requires name and does not accept pid.`);
+  } else if ((hasName ? 1 : 0) + (hasPid ? 1 : 0) !== 1) {
+    throw new Error(`winapp app ${action} requires exactly one of name or pid.`);
+  }
+  if (Object.hasOwn(args, "force") && action !== "quit" && action !== "relaunch") throw new Error("winapp app force is valid only for quit or relaunch.");
+}
+function validateWindowLifecycleArguments(args) {
+  const action = args.action;
+  const targets = ["app", "window", "pid"].filter((key) => Object.hasOwn(args, key));
+  if (targets.length > 1) throw new Error("winapp accepts only one of app, window, or pid per operation.");
+  if (action !== "list" && targets.length !== 1) throw new Error(`winapp window ${action} requires exactly one of app, window, or pid.`);
+  if (action === "list") {
+    for (const key of ["x", "y", "width", "height"]) if (Object.hasOwn(args, key)) throw new Error("winapp window list does not accept bounds.");
+    return;
+  }
+  if (Object.hasOwn(args, "show_hidden")) throw new Error("winapp window show_hidden is valid only for list.");
+  const requiredByAction = { move: ["x", "y"], resize: ["width", "height"], "set-bounds": ["x", "y", "width", "height"] };
+  const required = requiredByAction[action] ?? [];
+  for (const key of required) if (!Object.hasOwn(args, key)) throw new Error(`winapp window ${action} requires ${key}.`);
+  const allowedBounds = new Set(required);
+  for (const key of ["x", "y", "width", "height"]) if (Object.hasOwn(args, key) && !allowedBounds.has(key)) throw new Error(`winapp window ${action} does not accept ${key}.`);
+}
+
 function targetArgs(args) {
   if (args.app !== undefined) return ["-a", args.app];
   if (args.window !== undefined) return ["-w", args.window];
@@ -178,6 +220,21 @@ function windowsPowerShellPath(baseEnvironment) {
 function clipboardPowerShellArgs(mode, inputPath = null) {
   return ["-NoLogo", "-NoProfile", "-NonInteractive", "-Sta", "-ExecutionPolicy", "Bypass", "-File", WINDOWS_CLIPBOARD_HELPER, "-Mode", mode, ...(inputPath ? ["-InputPath", inputPath] : [])];
 }
+function desktopPowerShellArgs(mode, args = {}) {
+  return [
+    "-NoLogo", "-NoProfile", "-NonInteractive", "-Sta", "-ExecutionPolicy", "Bypass",
+    "-File", WINDOWS_DESKTOP_HELPER, "-Mode", mode,
+    ...(args.name ? ["-Name", args.name] : []),
+    ...(args.app ? ["-Name", args.app] : []),
+    ...(args.pid ? ["-TargetPid", String(args.pid)] : []),
+    ...(args.window ? ["-Hwnd", args.window] : []),
+    ...(args.force ? ["-Force"] : []),
+    ...(args.x !== undefined ? ["-X", String(args.x)] : []),
+    ...(args.y !== undefined ? ["-Y", String(args.y)] : []),
+    ...(args.width !== undefined ? ["-Width", String(args.width)] : []),
+    ...(args.height !== undefined ? ["-Height", String(args.height)] : []),
+  ];
+}
 
 async function managedScreenshotResult(filePath, parsed, fsImpl) {
   const stat = await fsImpl.lstat(filePath);
@@ -237,6 +294,21 @@ export function createWinappBridge({ baseEnvironment = process.env, execFileImpl
       }
     } finally { if (inputPath) await fsImpl.unlink(inputPath).catch(() => {}); }
   }
+  async function runDesktopHelper(mode, args = {}) {
+    const stat = await fsImpl.lstat(WINDOWS_DESKTOP_HELPER);
+    if (!stat.isFile() || stat.isSymbolicLink()) throw new Error("Equinox Local Windows desktop lifecycle helper is unavailable.");
+    try {
+      const result = await execFileImpl(windowsPowerShellPath(baseEnvironment), desktopPowerShellArgs(mode, args), { env: buildSafeWinappEnvironment(baseEnvironment), timeout: 10_000, maxBuffer: MAX_RESULT_BYTES, windowsHide: true, encoding: "utf8" });
+      const stdout = String(result.stdout ?? "").trim();
+      const stderr = String(result.stderr ?? "").trim();
+      if (stderr) throw new Error(`Windows desktop lifecycle helper failed: ${boundedError({ stderr })}`);
+      try { return stdout ? JSON.parse(stdout) : {}; } catch { throw new Error("Windows desktop lifecycle helper returned invalid JSON."); }
+    } catch (error) {
+      if (error instanceof Error && error.message.startsWith("Windows desktop lifecycle helper")) throw error;
+      throw new Error(`Windows desktop lifecycle helper failed: ${boundedError(error)}`);
+    }
+  }
+
   return Object.freeze({
     engine: "winapp",
     label: "Windows desktop",
@@ -265,6 +337,24 @@ export function createWinappBridge({ baseEnvironment = process.env, execFileImpl
       const definition = WINAPP_TOOL_DEFINITIONS[toolName];
       if (!definition) throw new Error(`winapp tool is not allowed: ${toolName}`);
       const args = validateArguments(definition, input);
+      if (toolName === "app") {
+        validateAppLifecycleArguments(args);
+        const mode = { list: "AppList", launch: "AppLaunch", quit: "AppQuit", relaunch: "AppRelaunch", focus: "AppFocus" }[args.action];
+        const parsed = await runDesktopHelper(mode, args);
+        return { content: [{ type: "text", text: JSON.stringify(parsed, null, 2) }] };
+      }
+      if (toolName === "window") {
+        validateWindowLifecycleArguments(args);
+        if (args.action === "list") {
+          const result = await run(commandArgs("list_windows", args));
+          const raw = String(result.stdout ?? "").trim();
+          let parsed; try { parsed = raw ? JSON.parse(raw) : {}; } catch { throw new Error("Microsoft winapp returned invalid JSON while listing windows."); }
+          return { content: [{ type: "text", text: JSON.stringify(parsed, null, 2) }] };
+        }
+        const mode = { focus: "WindowFocus", close: "WindowClose", minimize: "WindowMinimize", restore: "WindowRestore", maximize: "WindowMaximize", move: "WindowMove", resize: "WindowResize", "set-bounds": "WindowSetBounds" }[args.action];
+        const parsed = await runDesktopHelper(mode, args);
+        return { content: [{ type: "text", text: JSON.stringify(parsed, null, 2) }] };
+      }
       if (toolName === "clipboard") {
         if (args.action === "set" && !Object.hasOwn(args, "text")) throw new Error("winapp clipboard set requires text.");
         if (args.action !== "set" && Object.hasOwn(args, "text")) throw new Error("winapp clipboard text is valid only for set.");
@@ -299,4 +389,4 @@ export function createWinappBridge({ baseEnvironment = process.env, execFileImpl
   });
 }
 
-export const __test = Object.freeze({ validateArguments, commandArgs, tempRoot, windowsPowerShellPath, clipboardPowerShellArgs, MAX_ARGUMENT_BYTES, MAX_RESULT_BYTES, MAX_WAIT_MS, MAX_CLIPBOARD_BYTES });
+export const __test = Object.freeze({ validateArguments, validateAppLifecycleArguments, validateWindowLifecycleArguments, commandArgs, tempRoot, windowsPowerShellPath, clipboardPowerShellArgs, desktopPowerShellArgs, MAX_ARGUMENT_BYTES, MAX_RESULT_BYTES, MAX_WAIT_MS, MAX_CLIPBOARD_BYTES });
