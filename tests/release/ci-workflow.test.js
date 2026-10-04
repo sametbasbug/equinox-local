@@ -7,6 +7,10 @@ const prepare = await fs.readFile(new URL("../../.github/actions/prepare-arm64-p
   if (error.code !== "ENOENT") throw error;
   return "";
 });
+const inputs = await fs.readFile(new URL("../../.github/actions/prepare-arm64-package/prepare-inputs.ps1", import.meta.url), "utf8").catch((error) => {
+  if (error.code !== "ENOENT") throw error;
+  return "";
+});
 const jobs = new Map([...ci.matchAll(/^  ([\w-]+):\n([\s\S]*?)(?=^  [\w-]+:\n|$(?![\s\S]))/gmu)].map((match) => [match[1], match[2]]));
 const arm64Lanes = ["windows-arm64-runtime", "windows-arm64-package", "windows-arm64-installer"];
 
@@ -65,7 +69,7 @@ test("both package lanes use one maintained native package preparation contract"
   assert.match(prepare, /process\.platform/u);
   assert.match(prepare, /process\.arch/u);
   assert.match(prepare, /v26\.10\.0/u);
-  assert.match(prepare, /run: npm ci --prefer-offline --no-audit --no-fund/u);
+  assert.match(inputs, /ci --prefer-offline --no-audit --no-fund/u);
   assert.match(prepare, /npm run local:release:package:windows/u);
   assert.match(prepare, /if \(\$LASTEXITCODE -ne 0\) \{ exit \$LASTEXITCODE \}/u);
   assert.match(prepare, /0xAA64/u);
@@ -117,5 +121,20 @@ test("NuGet cache is architecture scoped and preserves native build execution", 
   assert.match(prepare, /actions\/cache@v6/u);
   assert.match(prepare, /key: nuget-\$\{\{ runner\.os \}\}-\$\{\{ runner\.arch \}\}-dotnet10-\$\{\{ hashFiles/u);
   assert.match(prepare, /restore-keys:\s*\|\n\s+nuget-\$\{\{ runner\.os \}\}-\$\{\{ runner\.arch \}\}-dotnet10-/u);
-  assert.match(prepare, /dotnet publish native\/windows\/EquinoxLocal\.WindowsShell/u);
+  assert.match(inputs, /dotnet publish native\/windows\/EquinoxLocal\.WindowsShell/u);
+});
+
+test("parallel input preparation requires both native commands and cleans up its own job", () => {
+  assert.match(job("windows-arm64-runtime"), /windows-ci-input-preparation-smoke\.ps1/u);
+  assert.match(prepare, /PREPARE_INPUTS_SCRIPT: \$\{\{ github\.action_path \}\}\/prepare-inputs\.ps1/u);
+  assert.match(inputs, /Start-Job/u);
+  assert.match(inputs, /npm\.cmd/u);
+  assert.match(inputs, /ci --prefer-offline --no-audit --no-fund/u);
+  assert.match(inputs, /\$LASTEXITCODE -ne 0/u);
+  assert.match(inputs, /Wait-Job -Job \$installJob/u);
+  assert.match(inputs, /\$installJob\.State -ne 'Completed'/u);
+  assert.match(inputs, /Receive-Job -Job \$installJob -ErrorAction Stop/u);
+  assert.match(inputs, /finally \{/u);
+  assert.match(inputs, /Stop-Job -Job \$installJob/u);
+  assert.match(inputs, /Remove-Job -Job \$installJob/u);
 });

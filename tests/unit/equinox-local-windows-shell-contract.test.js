@@ -277,7 +277,8 @@ test("public Windows CI restores and builds the native x64 shell", async () => {
   const ciWorkflow = await fs.readFile(ciPath, "utf8");
   assert.match(ciWorkflow, /uses: \.\/\.github\/actions\/prepare-arm64-package/u);
   const arm64Preparation = await fs.readFile(path.join(ROOT, ".github", "actions", "prepare-arm64-package", "action.yml"), "utf8");
-  const ci = `${ciWorkflow}\n${arm64Preparation}`;
+  const arm64Inputs = await fs.readFile(path.join(ROOT, ".github", "actions", "prepare-arm64-package", "prepare-inputs.ps1"), "utf8");
+  const ci = `${ciWorkflow}\n${arm64Preparation}\n${arm64Inputs}`;
   assert.match(ci, /windows-runtime:/u);
   assert.match(ci, /windows-shell:/u);
   assert.match(ci, /windows-package:/u);

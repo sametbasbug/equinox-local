@@ -24,10 +24,6 @@ runs:
         if ((node -p "process.arch") -ne 'arm64') { throw 'ARM64 lane is not running native ARM64 Node' }
         if ((node --version) -ne 'v26.10.0') { throw 'ARM64 lane Node version drifted' }
 
-    - name: Install dependencies
-      shell: pwsh
-      run: npm ci --prefer-offline --no-audit --no-fund
-
     - name: Set up .NET SDK
       uses: actions/setup-dotnet@v6
       with:
@@ -41,9 +37,11 @@ runs:
         restore-keys: |
           nuget-${{ runner.os }}-${{ runner.arch }}-dotnet10-
 
-    - name: Publish Windows ARM64 native shell
+    - name: Prepare native package inputs in parallel
       shell: pwsh
-      run: dotnet publish native/windows/EquinoxLocal.WindowsShell/EquinoxLocal.WindowsShell.csproj --configuration Release --runtime win-arm64 --self-contained true -p:Platform=ARM64 --output artifacts/windows-shell/win-arm64
+      env:
+        PREPARE_INPUTS_SCRIPT: ${{ github.action_path }}/prepare-inputs.ps1
+      run: '& $env:PREPARE_INPUTS_SCRIPT'
 
     - name: Windows ARM64 native shell publish smoke
       shell: pwsh

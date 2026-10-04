@@ -336,6 +336,10 @@ jobs:
       - name: Install dependencies
         run: npm ci --prefer-offline --no-audit --no-fund
 
+      - name: Native CI input success and failure propagation smoke
+        shell: pwsh
+        run: '& ./tests/release/windows-ci-input-preparation-smoke.ps1'
+
       - name: Windows ARM64 managed lifecycle plumbing smoke
         run: node --test tests/unit/equinox-local-platform.test.js tests/release/equinox-local-windows-arm64-lifecycle.test.js
 
