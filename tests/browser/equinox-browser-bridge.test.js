@@ -36,8 +36,13 @@ function writeLine(socket, message) {
   socket.write(`${JSON.stringify(message)}\n`);
 }
 
+async function makeSocketFixtureDirectory(prefix) {
+  const temporaryRoot = process.platform === "darwin" ? await fs.realpath("/tmp") : await fs.realpath(os.tmpdir());
+  return await fs.mkdtemp(path.join(temporaryRoot, prefix));
+}
+
 async function makeSocketPath(name) {
-  const dir = await fs.mkdtemp(path.join(os.tmpdir(), `equinox-browser-${name}-`));
+  const dir = await makeSocketFixtureDirectory(`eqb-${name}-`);
   return { dir, socketPath: path.join(dir, "bridge.sock") };
 }
 
@@ -55,7 +60,7 @@ test("bridge rejects a replaced canonical namespace before probing or removing i
   const namespace = `guard-${randomBytes(10).toString("hex")}`;
   const socketDirectory = equinoxBrowserSocketDirectory({ uid, namespace });
   const endpoint = equinoxBrowserIpcEndpoint({ platform: "darwin", uid, namespace });
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), "equinox-browser-namespace-guard-"));
+  const root = await makeSocketFixtureDirectory("eqb-guard-");
   const displacedDirectory = path.join(root, "displaced");
   const targetDirectory = path.join(root, "target");
   const protectedSocket = path.join(targetDirectory, "browser.sock");
@@ -103,7 +108,7 @@ test("bridge rejects a replaced normal namespace before probing its live socket"
   const namespace = `swap-${randomBytes(10).toString("hex")}`;
   const socketDirectory = equinoxBrowserSocketDirectory({ uid, namespace });
   const endpoint = equinoxBrowserIpcEndpoint({ platform: "darwin", uid, namespace });
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), "equinox-browser-namespace-swap-"));
+  const root = await makeSocketFixtureDirectory("eqb-swap-");
   const displacedDirectory = path.join(root, "displaced");
   const markerPath = path.join(socketDirectory, "protected-marker.txt");
   let originalDirectoryAcquired = false;
