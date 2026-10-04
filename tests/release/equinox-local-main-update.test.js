@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import fs from "node:fs/promises";
 import test from "node:test";
 
 import {
@@ -204,4 +205,22 @@ test("passive checks use a bounded cache", async () => {
   clock += 31_000;
   await value.check();
   assert.equal(calls.length, 2);
+});
+
+
+test("Control Center exposes passive main identity without a source install action", async () => {
+  const [html, ui] = await Promise.all([
+    fs.readFile(new URL("../../src/equinox-control-center.html", import.meta.url), "utf8"),
+    fs.readFile(new URL("../../src/equinox-control-center.js", import.meta.url), "utf8"),
+  ]);
+  for (const id of ["update-main-meta", "update-main-current", "update-main-target", "update-main-distance", "update-main-summaries"]) {
+    assert.equal(html.includes(`id="${id}"`), true);
+  }
+  assert.match(ui, /main\.state === "behind"/u);
+  assert.match(ui, /main\.state === "up_to_date"/u);
+  assert.match(ui, /main\.state === "diverged"/u);
+  assert.match(ui, /main\.state === "unavailable"/u);
+  assert.match(ui, /installButton\.hidden = true/u);
+  assert.match(ui, /installButton\.disabled = true/u);
+  assert.match(ui, /Check main/u);
 });

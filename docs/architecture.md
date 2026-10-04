@@ -8,7 +8,7 @@ Equinox Local is a per-user macOS control plane that exposes bounded local capab
 
 Private factory/ops orchestration is an external client of a clean canonical checkout and exact SHA. The public runtime's private-composition loader keeps a safe generic default; an explicitly configured, admitted external module may supply factory-only hooks without a public import back into private tooling. Private config, signing/provider/tunnel secrets and durable user state remain outside tracked source. Factory is an installation/profile role, not a second mutable product implementation.
 
-Repository cutover is separate from managed-source update implementation. Stable signed-release activation, release authorization and users' existing channels remain unchanged; this document does not promise a main-tracking updater before its separate acceptance.
+Repository cutover is separate from source mutation. Source checkouts now have a passive canonical-`main` identity/discovery surface that reports exact SHA and history distance without changing files or Git refs. Transactional source promotion/restart/rollback remains a separate acceptance milestone. Stable signed-release activation, release authorization and users' existing channels remain unchanged.
 
 ## Main surfaces
 
