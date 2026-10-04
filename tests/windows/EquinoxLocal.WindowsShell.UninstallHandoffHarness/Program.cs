@@ -142,13 +142,27 @@ setTimeout(() => {}, 30000);
             helper?.Dispose();
             runtime?.Dispose();
             if (runtimeJob != IntPtr.Zero) CloseHandle(runtimeJob);
-            try { if (File.Exists(currentPointer)) File.Delete(currentPointer); } catch { }
-            try { if (Directory.Exists(releaseDir)) Directory.Delete(releaseDir, recursive: true); } catch { }
-            try { PruneEmptyDirectories(installRoot); } catch { }
+            CleanupOwnedInstallState(currentPointer, releaseDir, installRoot);
         }
         if (File.Exists(installRoot) || Directory.Exists(installRoot))
             throw new InvalidOperationException($"Uninstall handoff harness cleanup left owned per-user state; residue={DescribeInstallRootResidue(installRoot)}.");
         return 0;
+    }
+
+
+    private static void CleanupOwnedInstallState(string currentPointer, string releaseDir, string installRoot)
+    {
+        // Windows can release the just-terminated helper's executable handle a few
+        // milliseconds after WaitForExit. Keep cleanup bounded and scoped only to
+        // this harness-owned fixture tree instead of treating that timing as residue.
+        for (var attempt = 0; attempt < 20; attempt += 1)
+        {
+            try { if (File.Exists(currentPointer)) File.Delete(currentPointer); } catch { }
+            try { if (Directory.Exists(releaseDir)) Directory.Delete(releaseDir, recursive: true); } catch { }
+            try { PruneEmptyDirectories(installRoot); } catch { }
+            if (!File.Exists(installRoot) && !Directory.Exists(installRoot)) return;
+            Thread.Sleep(100);
+        }
     }
 
 
