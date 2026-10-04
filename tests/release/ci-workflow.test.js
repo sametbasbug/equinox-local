@@ -3,8 +3,12 @@ import fs from "node:fs/promises";
 import test from "node:test";
 
 const ci = await fs.readFile(new URL("../../.github/workflows/ci.yml", import.meta.url), "utf8");
+const prepare = await fs.readFile(new URL("../../.github/actions/prepare-arm64-package/action.yml", import.meta.url), "utf8").catch((error) => {
+  if (error.code !== "ENOENT") throw error;
+  return "";
+});
 const jobs = new Map([...ci.matchAll(/^  ([\w-]+):\n([\s\S]*?)(?=^  [\w-]+:\n|$(?![\s\S]))/gmu)].map((match) => [match[1], match[2]]));
-const arm64Lanes = ["windows-arm64-runtime", "windows-arm64-package", "windows-arm64-winapp", "windows-arm64-installer"];
+const arm64Lanes = ["windows-arm64-runtime", "windows-arm64-package", "windows-arm64-installer"];
 
 function job(name) {
   assert.ok(jobs.has(name), `Missing CI job: ${name}`);
@@ -30,22 +34,19 @@ test("CI retains full PR and main validation without path-based skips", () => {
   assert.match(job("test"), /run: npm test\n/u);
 });
 
-test("native ARM64 runtime and package builds start independently", () => {
+test("all native ARM64 acceptance lanes start independently without an artifact chain", () => {
   for (const name of arm64Lanes) {
     const block = job(name);
     assert.match(block, /runs-on: windows-11-vs2026-arm/u);
-    assert.doesNotMatch(block, /^    if:/mu);
-  }
-  for (const name of ["windows-arm64-runtime", "windows-arm64-package"]) {
-    const block = job(name);
-    assert.doesNotMatch(block, /^    needs:/mu);
-    assert.match(block, /architecture: arm64/u);
-    assert.match(block, /run: npm ci --prefer-offline --no-audit --no-fund/u);
+    assert.doesNotMatch(block, /^    (?:needs|if):/mu);
+    assert.doesNotMatch(block, /download-artifact|upload-artifact/u);
   }
 });
 
-test("ARM64 runtime lane retains native lifecycle, PTY and messaging acceptance", () => {
+test("ARM64 runtime retains native lifecycle, PTY and messaging acceptance", () => {
   const block = job("windows-arm64-runtime");
+  assert.match(block, /architecture: arm64/u);
+  assert.match(block, /run: npm ci --prefer-offline --no-audit --no-fund/u);
   for (const command of [
     "node --test tests/unit/equinox-local-platform.test.js tests/release/equinox-local-windows-arm64-lifecycle.test.js",
     "npm run smoke:windows-headless",
@@ -53,41 +54,46 @@ test("ARM64 runtime lane retains native lifecycle, PTY and messaging acceptance"
     "node tests/release/windows-node-pty-smoke.mjs",
     "node tests/release/windows-native-messaging-smoke.mjs",
   ]) assert.ok(block.includes(command), `Missing native acceptance: ${command}`);
-  assert.doesNotMatch(block, /package:windows|windows-winapp-smoke|windows-installer-real-package-smoke/u);
 });
 
-test("ARM64 package is built once and shared only within the current CI commit and run", () => {
-  const block = job("windows-arm64-package");
-  assert.equal(arm64Lanes.filter((name) => job(name).includes("npm run local:release:package:windows")).length, 1);
-  assert.match(block, /0xAA64/u);
-  assert.match(block, /EquinoxLocal\.WindowsShell\.UninstallHandoffHarness/u);
-  assert.match(block, /Get-FileHash -LiteralPath \$artifact\.FullName -Algorithm SHA256/u);
-  assert.match(block, /actions\/upload-artifact@v7/u);
-  assert.match(block, /name: ci-arm64-package-\$\{\{ github\.sha \}\}/u);
-  assert.match(block, /if-no-files-found: error/u);
-  assert.match(block, /compression-level: 0/u);
-  assert.match(block, /retention-days: 1/u);
-  assert.match(block, /artifact-sha256: \$\{\{ steps\.package\.outputs\.sha256 \}\}/u);
-  assert.match(block, /artifact-bytes: \$\{\{ steps\.package\.outputs\.bytes \}\}/u);
+test("both package lanes use one maintained native package preparation contract", () => {
+  for (const name of ["windows-arm64-package", "windows-arm64-installer"]) {
+    assert.match(job(name), /id: package\n\s+uses: \.\/\.github\/actions\/prepare-arm64-package/u);
+  }
+  assert.match(prepare, /using: composite/u);
+  assert.match(prepare, /architecture: arm64/u);
+  assert.match(prepare, /process\.platform/u);
+  assert.match(prepare, /process\.arch/u);
+  assert.match(prepare, /v26\.10\.0/u);
+  assert.match(prepare, /run: npm ci --prefer-offline --no-audit --no-fund/u);
+  assert.match(prepare, /npm run local:release:package:windows/u);
+  assert.match(prepare, /if \(\$LASTEXITCODE -ne 0\) \{ exit \$LASTEXITCODE \}/u);
+  assert.match(prepare, /0xAA64/u);
+  assert.match(prepare, /release\/runtime\/winapp\/LICENSE/u);
+  assert.match(prepare, /metadata\.target -ne 'win32-arm64'/u);
 });
 
-test("isolated ARM64 UIA and installer jobs fail closed on a missing or changed package", () => {
-  for (const name of ["windows-arm64-winapp", "windows-arm64-installer"]) {
+test("same-runner consumers verify exact prepared package bytes before acceptance", () => {
+  for (const [name, acceptance] of [
+    ["windows-arm64-package", "Windows ARM64 packaged winapp UIA smoke"],
+    ["windows-arm64-installer", "Windows ARM64 real public-installer fresh-install acceptance"],
+  ]) {
     const block = job(name);
-    assert.match(block, /^    needs: windows-arm64-package/mu);
-    assert.match(block, /actions\/download-artifact@v8/u);
-    assert.match(block, /name: ci-arm64-package-\$\{\{ github\.sha \}\}/u);
-    assert.match(block, /EXPECTED_PACKAGE_SHA256: \$\{\{ needs\.windows-arm64-package\.outputs\.artifact-sha256 \}\}/u);
-    assert.match(block, /EXPECTED_PACKAGE_BYTES: \$\{\{ needs\.windows-arm64-package\.outputs\.artifact-bytes \}\}/u);
+    const build = block.indexOf("      - name: Prepare native ARM64 CI package");
+    const verify = block.indexOf("      - name: Verify exact prepared ARM64 CI package bytes");
+    const consume = block.indexOf(`      - name: ${acceptance}`);
+    assert.ok(build >= 0 && verify > build && consume > verify, `${name} must prepare and verify before consuming`);
+    assert.match(block, /EXPECTED_PACKAGE_SHA256: \$\{\{ steps\.package\.outputs\.sha256 \}\}/u);
+    assert.match(block, /EXPECTED_PACKAGE_BYTES: \$\{\{ steps\.package\.outputs\.bytes \}\}/u);
     assert.match(block, /Get-FileHash -LiteralPath \$artifacts\[0\]\.FullName -Algorithm SHA256/u);
     assert.match(block, /\$artifacts\.Count -ne 1/u);
     assert.match(block, /\$sha256 -cne \$env:EXPECTED_PACKAGE_SHA256/u);
     assert.match(block, /\$artifacts\[0\]\.Length -ne \[int64\]\$env:EXPECTED_PACKAGE_BYTES/u);
-    assert.doesNotMatch(block, /github-token:|run-id:|repository:|npm ci|setup-node/u);
   }
-  assert.match(job("windows-arm64-winapp"), /windows-winapp-smoke\.ps1/u);
-  assert.match(job("windows-arm64-winapp"), /-DesktopHelperPath/u);
-  assert.match(job("windows-arm64-installer"), /windows-installer-real-package-smoke\.ps1/u);
+  assert.match(prepare, /sha256:\n\s+description:[^\n]+\n\s+value: \$\{\{ steps\.package\.outputs\.sha256 \}\}/u);
+  assert.match(prepare, /bytes:\n\s+description:[^\n]+\n\s+value: \$\{\{ steps\.package\.outputs\.bytes \}\}/u);
+  assert.match(job("windows-arm64-package"), /EquinoxLocal\.WindowsShell\.UninstallHandoffHarness/u);
+  assert.match(job("windows-arm64-package"), /-DesktopHelperPath/u);
   assert.match(job("windows-arm64-installer"), /EQUINOX_WINDOWS_INSTALL_ARTIFACT/u);
 });
 
@@ -100,30 +106,16 @@ test("stable ARM64 and Windows aggregate checks reject every non-success depende
   ]);
 });
 
-test("package verification precedes every isolated ARM64 package consumer", () => {
-  for (const [name, acceptance] of [
-    ["windows-arm64-winapp", "Windows ARM64 packaged winapp UIA smoke"],
-    ["windows-arm64-installer", "Windows ARM64 real public-installer fresh-install acceptance"],
-  ]) {
-    const block = job(name);
-    const download = block.indexOf("      - name: Download current-run ARM64 CI package");
-    const verify = block.indexOf("      - name: Verify exact ARM64 CI package bytes");
-    const consume = block.indexOf(`      - name: ${acceptance}`);
-    assert.ok(download >= 0 && verify > download && consume > verify, `${name} must verify before consuming package bytes`);
-  }
-});
-
-test("native ARM64 acceptance cannot be disabled by step conditions or tolerated failures", () => {
-  for (const name of arm64Lanes) {
-    assert.doesNotMatch(job(name), /^\s+(?:if|continue-on-error):/mu, `${name} must run its acceptance unconditionally`);
-  }
-});
-
-test("NuGet cache remains architecture scoped and never skips native build or smoke", () => {
-  for (const name of ["windows-arm64-package", "windows-arm64-winapp"]) {
-    const block = job(name);
-    assert.match(block, /actions\/cache@v6/u);
-    assert.match(block, /key: nuget-\$\{\{ runner\.os \}\}-\$\{\{ runner\.arch \}\}-dotnet10-\$\{\{ hashFiles/u);
+test("native ARM64 acceptance and preparation cannot tolerate failures or be skipped", () => {
+  for (const block of [...arm64Lanes.map(job), prepare]) {
+    assert.doesNotMatch(block, /^\s+(?:if|continue-on-error):/mu);
     assert.doesNotMatch(block, /cache-hit|--no-build|--no-restore/u);
   }
+});
+
+test("NuGet cache is architecture scoped and preserves native build execution", () => {
+  assert.match(prepare, /actions\/cache@v6/u);
+  assert.match(prepare, /key: nuget-\$\{\{ runner\.os \}\}-\$\{\{ runner\.arch \}\}-dotnet10-\$\{\{ hashFiles/u);
+  assert.match(prepare, /restore-keys:\s*\|\n\s+nuget-\$\{\{ runner\.os \}\}-\$\{\{ runner\.arch \}\}-dotnet10-/u);
+  assert.match(prepare, /dotnet publish native\/windows\/EquinoxLocal\.WindowsShell/u);
 });
