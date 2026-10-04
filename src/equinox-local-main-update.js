@@ -121,7 +121,7 @@ async function fetchGithubJson(url, { fetchImpl = globalThis.fetch } = {}) {
   }
 }
 
-async function inspectLocalCheckout(sourceRoot, { fsImpl = fs, execFileImpl = execFile } = {}) {
+export async function inspectCanonicalMainCheckout(sourceRoot, { fsImpl = fs, execFileImpl = execFile } = {}) {
   const resolvedRoot = path.resolve(sourceRoot);
   const [stat, realRoot] = await Promise.all([fsImpl.lstat(resolvedRoot), fsImpl.realpath(resolvedRoot)]);
   if (!stat.isDirectory() || stat.isSymbolicLink() || realRoot !== resolvedRoot) {
@@ -166,7 +166,7 @@ async function inspectLocalCheckout(sourceRoot, { fsImpl = fs, execFileImpl = ex
     return { eligible: false, state: "dirty", currentSha, branch, remoteCanonical: true, dirty: true, reason: "The source checkout has uncommitted changes." };
   }
 
-  return { eligible: true, state: "ready", currentSha, branch, remoteCanonical: true, dirty: false, reason: null };
+  return { eligible: true, state: "ready", sourceRoot: resolvedRoot, currentSha, branch, remoteCanonical: true, dirty: false, reason: null };
 }
 
 function summarizeCompareCommit(commit) {
@@ -242,7 +242,7 @@ export function createEquinoxLocalMainUpdateDiscovery({
 
     let local;
     try {
-      local = await inspectLocalCheckout(sourceRoot, { fsImpl, execFileImpl });
+      local = await inspectCanonicalMainCheckout(sourceRoot, { fsImpl, execFileImpl });
     } catch (error) {
       state = Object.freeze({ ...state, checkedAt: currentTime.toISOString(), cacheExpiresAt: null, state: "unsupported", lastError: null, reason: boundedMessage(error instanceof Error ? error.message : error) });
       return state;
