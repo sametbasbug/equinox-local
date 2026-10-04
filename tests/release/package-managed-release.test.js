@@ -161,3 +161,12 @@ test("managed release archive is byte-reproducible across source mtimes and crea
   const { stdout } = await execFile("/usr/bin/tar", ["-tzf", first], { timeout: 5_000, maxBuffer: 1024 * 1024 });
   assert.deepEqual(stdout.trim().split(/\r?\n/u), ["release/", "release/a.txt", "release/nested/", "release/nested/b.txt"]);
 });
+
+test("third-party runtimes are pinned downloads, not vendored source trees", async () => {
+  const packageSource = await fs.readFile(new URL("../../scripts/release/package-managed-release-windows.mjs", import.meta.url), "utf8");
+  assert.match(packageSource, /licenses.*microsoft-winapp-cli\.txt/u);
+  assert.doesNotMatch(packageSource, /third_party/u);
+  await fs.access(new URL("../../licenses/microsoft-winapp-cli.txt", import.meta.url));
+  await fs.access(new URL("../../THIRD_PARTY_NOTICES.md", import.meta.url));
+  await assert.rejects(fs.lstat(new URL("../../third_party", import.meta.url)), { code: "ENOENT" });
+});

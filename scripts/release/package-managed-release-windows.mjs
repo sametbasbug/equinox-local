@@ -218,7 +218,7 @@ async function installPinnedWindowsWinapp(transaction, rootDir, releaseDir, fetc
   for (const name of ["winapp.exe", "libHarfBuzzSharp.dll", "libSkiaSharp.dll"]) {
     await fs.copyFile(path.join(extracted, name), path.join(destination, name));
   }
-  await fs.copyFile(path.join(rootDir, "third_party", "microsoft-winappCli", "LICENSE"), path.join(destination, "LICENSE"));
+  await fs.copyFile(path.join(rootDir, "licenses", "microsoft-winapp-cli.txt"), path.join(destination, "LICENSE"));
   const machine = await portableExecutableMachine(path.join(destination, "winapp.exe"));
   const expectedMachine = WINDOWS_TARGETS[target].peMachine;
   if (machine !== expectedMachine) throw new Error(`Microsoft winapp architecture mismatch for ${target}: 0x${machine.toString(16)}.`);
