@@ -308,10 +308,12 @@ jobs:
           & powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File tests/release/windows-installer-bootstrap-smoke.ps1
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-  windows-arm64-foundation:
-    name: Windows ARM64 foundation / Node 26
+  # Runtime, packaged Desktop/UIA and real installation acceptance are isolated
+  # native ARM64 lanes and start together, without a serial artifact dependency.
+  windows-arm64-runtime:
+    name: Windows ARM64 runtime / Node 26
     runs-on: windows-11-vs2026-arm
-    timeout-minutes: 12
+    timeout-minutes: 6
 
     steps:
       - name: Checkout
@@ -334,6 +336,10 @@ jobs:
       - name: Install dependencies
         run: npm ci --prefer-offline --no-audit --no-fund
 
+      - name: Native CI input success and failure propagation smoke
+        shell: pwsh
+        run: '& ./tests/release/windows-ci-input-preparation-smoke.ps1'
+
       - name: Windows ARM64 managed lifecycle plumbing smoke
         run: node --test tests/unit/equinox-local-platform.test.js tests/release/equinox-local-windows-arm64-lifecycle.test.js
 
@@ -350,28 +356,32 @@ jobs:
       - name: Native ARM64 Native Messaging launcher smoke
         run: node tests/release/windows-native-messaging-smoke.mjs
 
-      - name: Set up .NET SDK
-        uses: actions/setup-dotnet@v6
-        with:
-          dotnet-version: 10.0.x
+  # Each acceptance lane prepares its own exact-checkout package. One bounded
+  # extra build removes the artifact dependency and keeps installer startup warm.
+  windows-arm64-package:
+    name: Windows ARM64 managed package
+    runs-on: windows-11-vs2026-arm
+    timeout-minutes: 6
 
-      - name: Publish Windows ARM64 native shell
-        run: dotnet publish native/windows/EquinoxLocal.WindowsShell/EquinoxLocal.WindowsShell.csproj --configuration Release --runtime win-arm64 --self-contained true -p:Platform=ARM64 --output artifacts/windows-shell/win-arm64
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
 
-      - name: Windows ARM64 native shell publish smoke
+      - name: Prepare native ARM64 CI package
+        id: package
+        uses: ./.github/actions/prepare-arm64-package
+
+      - name: Verify exact prepared ARM64 CI package bytes
         shell: pwsh
+        env:
+          EXPECTED_PACKAGE_SHA256: ${{ steps.package.outputs.sha256 }}
+          EXPECTED_PACKAGE_BYTES: ${{ steps.package.outputs.bytes }}
         run: |
-          $publish = Join-Path $PWD 'artifacts/windows-shell/win-arm64'
-          $exe = Join-Path $publish 'EquinoxLocal.exe'
-          foreach ($required in @($exe, (Join-Path $publish 'coreclr.dll'), (Join-Path $publish 'hostfxr.dll'), (Join-Path $publish 'Microsoft.Web.WebView2.Core.dll'))) {
-            if (-not (Test-Path -LiteralPath $required -PathType Leaf)) { throw "Missing published Windows ARM64 shell component: $required" }
-          }
-          $bytes = [System.IO.File]::ReadAllBytes($exe)
-          $peOffset = [BitConverter]::ToInt32($bytes, 0x3c)
-          $machine = [BitConverter]::ToUInt16($bytes, $peOffset + 4)
-          if ($machine -ne 0xAA64) { throw ("Published EquinoxLocal.exe is not ARM64 (machine=0x{0:X4})" -f $machine) }
-          $loader = Get-ChildItem $publish -Filter WebView2Loader.dll -Recurse | Select-Object -First 1
-          if ($null -eq $loader) { throw 'Published ARM64 shell is missing WebView2Loader.dll' }
+          $artifacts = @(Get-ChildItem backups/local-packages -Filter 'equinox-local-*-win32-arm64.zip')
+          if ($artifacts.Count -ne 1) { throw 'Expected exactly one current-run ARM64 CI package' }
+          if ($env:EXPECTED_PACKAGE_SHA256 -cnotmatch '^[0-9a-f]{64}$' -or $env:EXPECTED_PACKAGE_BYTES -notmatch '^[1-9][0-9]*$') { throw 'ARM64 package producer metadata is missing or invalid' }
+          $sha256 = (Get-FileHash -LiteralPath $artifacts[0].FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($sha256 -cne $env:EXPECTED_PACKAGE_SHA256 -or $artifacts[0].Length -ne [int64]$env:EXPECTED_PACKAGE_BYTES) { throw 'ARM64 CI package digest or length differs from the producer' }
 
       - name: Windows ARM64 native shell uninstall handoff smoke
         shell: pwsh
@@ -381,28 +391,6 @@ jobs:
           dotnet publish tests/windows/EquinoxLocal.WindowsShell.UninstallHandoffHarness/EquinoxLocal.WindowsShell.UninstallHandoffHarness.csproj --configuration Release --runtime win-arm64 --self-contained true -p:Platform=ARM64 --output $publish
           & (Join-Path $publish 'EquinoxLocal.WindowsShell.UninstallHandoffHarness.exe')
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-
-      - name: Windows ARM64 managed package assembly smoke
-        shell: pwsh
-        env:
-          EQUINOX_WINDOWS_SHELL_PUBLISH_DIR: artifacts/windows-shell/win-arm64
-        run: |
-          npm run local:release:package:windows
-          $artifact = Get-ChildItem backups/local-packages -Filter 'equinox-local-*-win32-arm64.zip' | Select-Object -First 1
-          if ($null -eq $artifact) { throw 'Windows ARM64 managed ZIP artifact was not created' }
-          Add-Type -AssemblyName System.IO.Compression.FileSystem
-          $zip = [System.IO.Compression.ZipFile]::OpenRead($artifact.FullName)
-          try {
-            $names = @($zip.Entries | ForEach-Object FullName)
-            foreach ($required in @('release/release.json','release/runtime/node/bin/node.exe','release/runtime/tunnel/tunnel-client.exe','release/runtime/tunnel/cloudflared.exe','release/runtime/browser/equinox-browser-native-host.exe','release/runtime/shell/EquinoxLocal.exe','release/runtime/winapp/winapp.exe','release/runtime/winapp/libHarfBuzzSharp.dll','release/runtime/winapp/libSkiaSharp.dll','release/runtime/winapp/LICENSE')) {
-              if ($names -notcontains $required) { throw "Windows ARM64 managed ZIP is missing $required" }
-            }
-            $entry = $zip.GetEntry('release/release.json')
-            $reader = [System.IO.StreamReader]::new($entry.Open())
-            try { $metadata = ($reader.ReadToEnd() | ConvertFrom-Json) } finally { $reader.Dispose() }
-            if ($metadata.target -ne 'win32-arm64') { throw "Windows ARM64 release metadata target mismatch: $($metadata.target)" }
-            if ($names | Where-Object { $_ -like 'release/runtime/peekaboo/*' }) { throw 'Windows ARM64 managed ZIP unexpectedly contains Peekaboo' }
-          } finally { $zip.Dispose() }
 
       - name: Windows ARM64 packaged winapp UIA smoke
         shell: pwsh
@@ -419,6 +407,31 @@ jobs:
           & powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File tests/release/windows-winapp-smoke.ps1 -WinappPath (Join-Path $extract 'release/runtime/winapp/winapp.exe') -FixturePath (Join-Path $fixtureOut 'EquinoxLocal.WinappSmokeFixture.exe') -ClipboardHelperPath (Join-Path $extract 'release/equinox-local-windows-clipboard.ps1') -DesktopHelperPath (Join-Path $extract 'release/equinox-local-windows-desktop.ps1')
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+  windows-arm64-installer:
+    name: Windows ARM64 public installer acceptance
+    runs-on: windows-11-vs2026-arm
+    timeout-minutes: 6
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Prepare native ARM64 CI package
+        id: package
+        uses: ./.github/actions/prepare-arm64-package
+
+      - name: Verify exact prepared ARM64 CI package bytes
+        shell: pwsh
+        env:
+          EXPECTED_PACKAGE_SHA256: ${{ steps.package.outputs.sha256 }}
+          EXPECTED_PACKAGE_BYTES: ${{ steps.package.outputs.bytes }}
+        run: |
+          $artifacts = @(Get-ChildItem backups/local-packages -Filter 'equinox-local-*-win32-arm64.zip')
+          if ($artifacts.Count -ne 1) { throw 'Expected exactly one current-run ARM64 CI package' }
+          if ($env:EXPECTED_PACKAGE_SHA256 -cnotmatch '^[0-9a-f]{64}$' -or $env:EXPECTED_PACKAGE_BYTES -notmatch '^[1-9][0-9]*$') { throw 'ARM64 package producer metadata is missing or invalid' }
+          $sha256 = (Get-FileHash -LiteralPath $artifacts[0].FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($sha256 -cne $env:EXPECTED_PACKAGE_SHA256 -or $artifacts[0].Length -ne [int64]$env:EXPECTED_PACKAGE_BYTES) { throw 'ARM64 CI package digest or length differs from the producer' }
+
       - name: Windows ARM64 real public-installer fresh-install acceptance
         shell: pwsh
         run: |
@@ -427,6 +440,24 @@ jobs:
           $env:EQUINOX_WINDOWS_INSTALL_ARTIFACT = $artifact.FullName
           & powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File tests/release/windows-installer-real-package-smoke.ps1
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+  windows-arm64-foundation:
+    name: Windows ARM64 foundation / Node 26
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    if: ${{ always() }}
+    needs: [windows-arm64-runtime, windows-arm64-package, windows-arm64-installer]
+
+    steps:
+      - name: Verify parallel native ARM64 acceptance
+        env:
+          ARM64_RUNTIME_RESULT: ${{ needs.windows-arm64-runtime.result }}
+          ARM64_PACKAGE_RESULT: ${{ needs.windows-arm64-package.result }}
+          ARM64_INSTALLER_RESULT: ${{ needs.windows-arm64-installer.result }}
+        run: |
+          test "$ARM64_RUNTIME_RESULT" = success
+          test "$ARM64_PACKAGE_RESULT" = success
+          test "$ARM64_INSTALLER_RESULT" = success
 
   windows-headless:
     name: Windows x64 headless / Node 26

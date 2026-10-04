@@ -59,6 +59,14 @@ Contributions must not quietly weaken these rules:
 
 If a feature appears to require relaxing one of these rules, discuss the design first.
 
+## Continuous integration
+
+CI and CodeQL run on both pull requests and `main`. The complete macOS test suite, Windows x64 acceptance and native ARM64 acceptance remain enabled for every change; no path-based skips or reuse of a different commit's successful checks is involved.
+
+Native ARM64 runtime, packaged Desktop/UIA and real public-installer acceptance start on independent runners. The package and installer lanes use the same maintained composite preparation action to install locked native dependencies and build and validate their own exact-checkout managed ZIP. Independent npm installation and native shell publishing also run in parallel within preparation; packaging cannot start until both have succeeded, and preparation cleans up only its own background job. A bounded second package build removes the serial artifact dependency and keeps preparation and installation on the same runner; each consumer still checks its prepared ZIP's SHA-256 and byte count before acceptance. No package from another run or previously successful commit is reused.
+
+The existing `Windows ARM64 foundation / Node 26` and `Windows x64 headless / Node 26` check names remain fail-closed aggregate gates: a failed, cancelled or skipped acceptance lane cannot produce a successful aggregate. npm and architecture-scoped NuGet caches save downloads; dependency installation, native builds and smoke tests still execute.
+
 ## Tests
 
 Tests intentionally live under `tests/` rather than beside every source file. Add new coverage to the closest existing category:
