@@ -311,6 +311,17 @@ export function createEquinoxLocalMainUpdateTransactionEngine({
     }
   };
 
+  const abortPreparedPromotion = async (transactionId, failure) => {
+    assertTransactionId(transactionId);
+    let receipt = await readActive();
+    if (!receipt || receipt.transactionId !== transactionId) throw new Error("Main update abort does not own the active transaction.");
+    if (receipt.status !== "promoting" || receipt.stage !== "ready_to_switch") throw new Error("Main update transaction cannot be aborted after source activation.");
+    receipt = await writeReceipt(Object.freeze({ ...receipt, status: "failed", stage: "handoff_schedule_failed", updatedAt: now().toISOString(), lastError: boundedMessage(failure) || "Main update handoff scheduling failed." }));
+    await fsImpl.rm(lockPath, { force: true });
+    await syncDirectory(resolvedTransactionRoot, { fsImpl });
+    return receipt;
+  };
+
   const markPromotionSucceeded = async (transactionId) => {
     assertTransactionId(transactionId);
     let receipt = await readActive();
@@ -339,5 +350,5 @@ export function createEquinoxLocalMainUpdateTransactionEngine({
     return true;
   };
 
-  return Object.freeze({ readActive, readReceipt, begin, stage, initializeSourcePointer, preparePromotion, activatePromotion, rollbackPromotion, markPromotionSucceeded, markRollbackFailed, releaseStagedLock, paths: Object.freeze({ transactionRoot: resolvedTransactionRoot, lockPath, receiptsRoot, stagingRoot, sourcePointerPath: resolvedPointerPath, sourceStoreRoot: resolvedSourceStoreRoot }) });
+  return Object.freeze({ readActive, readReceipt, begin, stage, initializeSourcePointer, preparePromotion, activatePromotion, rollbackPromotion, abortPreparedPromotion, markPromotionSucceeded, markRollbackFailed, releaseStagedLock, paths: Object.freeze({ transactionRoot: resolvedTransactionRoot, lockPath, receiptsRoot, stagingRoot, sourcePointerPath: resolvedPointerPath, sourceStoreRoot: resolvedSourceStoreRoot }) });
 }

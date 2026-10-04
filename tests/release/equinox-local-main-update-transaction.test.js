@@ -141,6 +141,18 @@ test("preparePromotion recovers if durable-store rename completed before receipt
   assert.equal(recovered.targetSourceRoot, durableTarget);
 });
 
+test("prepared promotion can abort before pointer activation and release ownership", async (t) => {
+  const f = await fixture(t);
+  const staged = await f.engine.stage({ currentSha: CURRENT, targetSha: TARGET });
+  await f.engine.initializeSourcePointer();
+  await f.engine.preparePromotion(staged.receipt.transactionId);
+  const failed = await f.engine.abortPreparedPromotion(staged.receipt.transactionId, "scheduler unavailable");
+  assert.equal(failed.status, "failed");
+  assert.equal(failed.stage, "handoff_schedule_failed");
+  assert.match(failed.lastError, /scheduler unavailable/u);
+  assert.equal(await f.engine.readActive(), null);
+});
+
 test("source-switched receipt remains durable until explicit rollback", async (t) => {
   const f = await fixture(t);
   const staged = await f.engine.stage({ currentSha: CURRENT, targetSha: TARGET });
