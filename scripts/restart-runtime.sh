@@ -232,6 +232,7 @@ RUNTIME=""
 TUNNEL_CLIENT=""
 PEEKABOO_PATH=""
 SOURCE_LAUNCHER=""
+SOURCE_LAUNCHER_OWNS_LIFECYCLE=""
 PRIVATE_COMPOSITION_MODULE=""
 PRIVATE_COMPOSITION_ROOT=""
 SEEN_LABEL=0
@@ -239,6 +240,7 @@ SEEN_RUNTIME=0
 SEEN_CLIENT=0
 SEEN_PEEKABOO=0
 SEEN_SOURCE_LAUNCHER=0
+SEEN_SOURCE_LAUNCHER_OWNS_LIFECYCLE=0
 SEEN_PRIVATE_COMPOSITION_MODULE=0
 SEEN_PRIVATE_COMPOSITION_ROOT=0
 
@@ -275,6 +277,11 @@ while IFS= read -r line || [ -n "$line" ]; do
       SOURCE_LAUNCHER="$value"
       SEEN_SOURCE_LAUNCHER=1
       ;;
+    sourceLauncherOwnsLifecycle)
+      [ "$SEEN_SOURCE_LAUNCHER_OWNS_LIFECYCLE" -eq 0 ] || fail "developer runtime config repeats sourceLauncherOwnsLifecycle"
+      SOURCE_LAUNCHER_OWNS_LIFECYCLE="$value"
+      SEEN_SOURCE_LAUNCHER_OWNS_LIFECYCLE=1
+      ;;
     privateCompositionModule)
       [ "$SEEN_PRIVATE_COMPOSITION_MODULE" -eq 0 ] || fail "developer runtime config repeats privateCompositionModule"
       PRIVATE_COMPOSITION_MODULE="$value"
@@ -308,6 +315,9 @@ case "$SOURCE_LAUNCHER" in
   *) fail "sourceLauncher must be an absolute path" ;;
 esac
 [ -f "$SOURCE_LAUNCHER" ] && [ ! -L "$SOURCE_LAUNCHER" ] || fail "configured sourceLauncher is missing or unsafe"
+if [ -n "$SOURCE_LAUNCHER_OWNS_LIFECYCLE" ] && [ "$SOURCE_LAUNCHER_OWNS_LIFECYCLE" != "1" ]; then
+  fail "source launcher lifecycle flag must be 1 when configured"
+fi
 if [ -n "$PRIVATE_COMPOSITION_MODULE" ] || [ -n "$PRIVATE_COMPOSITION_ROOT" ]; then
   [ -n "$PRIVATE_COMPOSITION_MODULE" ] && [ -n "$PRIVATE_COMPOSITION_ROOT" ] || fail "private composition module/root must be configured together"
   case "$PRIVATE_COMPOSITION_MODULE" in /*) ;; *) fail "privateCompositionModule must be an absolute path" ;; esac
