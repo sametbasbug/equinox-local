@@ -1,9 +1,11 @@
+import { lstatSync } from "node:fs";
 import fs from "node:fs/promises";
 import net from "node:net";
 import path from "node:path";
 
 import {
   equinoxBrowserIpcEndpoint,
+  equinoxBrowserSocketDirectory,
   prepareEquinoxBrowserSocketDirectory,
 } from "./equinox-browser-socket.js";
 
@@ -32,6 +34,44 @@ const MAX_BRIDGE_WRITE_QUEUE_MESSAGES = 128;
 const MAX_BRIDGE_CONNECTIONS = 8;
 const MAX_BRIDGE_PENDING_CALLS = 128;
 const DEFAULT_PARTIAL_LINE_TIMEOUT_MS = 5_000;
+
+function canonicalBrowserSocketDirectoryOptions(socketPath) {
+  if (typeof socketPath !== "string" || path.basename(socketPath) !== "browser.sock") return null;
+  const uid = process.getuid?.();
+  if (!Number.isInteger(uid) || uid < 1) return null;
+
+  const directory = path.dirname(socketPath);
+  const defaultDirectory = equinoxBrowserSocketDirectory({ uid });
+  if (directory === defaultDirectory) return { uid, namespace: null };
+
+  const namespacePrefix = `${path.basename(defaultDirectory)}-`;
+  const directoryName = path.basename(directory);
+  if (!directoryName.startsWith(namespacePrefix)) return null;
+
+  const namespace = directoryName.slice(namespacePrefix.length);
+  try {
+    if (equinoxBrowserSocketDirectory({ uid, namespace }) !== directory) return null;
+  } catch {
+    return null;
+  }
+  return { uid, namespace };
+}
+
+function socketDirectoryIdentity(stat) {
+  return {
+    dev: stat.dev,
+    ino: stat.ino,
+    uid: typeof stat.uid === "number" ? stat.uid : null,
+  };
+}
+
+function sameSocketDirectoryIdentity(stat, identity) {
+  return Boolean(
+    stat && stat.isDirectory() && !stat.isSymbolicLink() &&
+    stat.dev === identity.dev && stat.ino === identity.ino &&
+    (identity.uid == null || stat.uid === identity.uid),
+  );
+}
 
 function nowIso() {
   return new Date().toISOString();
@@ -133,6 +173,37 @@ export function createEquinoxBrowserBridge({
     throw new Error(`Equinox Browser IPC endpoint ${transportEndpoint.kind} is not implemented.`);
   }
   const transportPath = transportEndpoint?.endpoint ?? null;
+  const canonicalSocketDirectoryOptions = transportEndpoint?.kind === "unix"
+    ? canonicalBrowserSocketDirectoryOptions(transportPath)
+    : null;
+  let canonicalSocketDirectoryIdentity = null;
+  let canonicalSocketDirectoryIdentityError = null;
+  if (canonicalSocketDirectoryOptions) {
+    try {
+      canonicalSocketDirectoryIdentity = socketDirectoryIdentity(lstatSync(path.dirname(transportPath)));
+    } catch (error) {
+      if (error?.code !== "ENOENT") canonicalSocketDirectoryIdentityError = error;
+    }
+  }
+
+  async function verifyCanonicalSocketDirectoryIdentity() {
+    if (canonicalSocketDirectoryIdentityError) throw canonicalSocketDirectoryIdentityError;
+    const directory = path.dirname(transportPath);
+    const current = await fs.lstat(directory).catch((error) => {
+      if (error?.code === "ENOENT") return null;
+      throw error;
+    });
+    if (!current || !current.isDirectory() || current.isSymbolicLink()) {
+      throw new Error("Equinox Browser socket directory is not a normal directory.");
+    }
+    if (canonicalSocketDirectoryIdentity) {
+      if (!sameSocketDirectoryIdentity(current, canonicalSocketDirectoryIdentity)) {
+        throw new Error("Equinox Browser socket directory identity changed before socket preparation.");
+      }
+      return;
+    }
+    canonicalSocketDirectoryIdentity = socketDirectoryIdentity(current);
+  }
 
   let server = null;
   let startedAt = null;
@@ -684,8 +755,12 @@ export function createEquinoxBrowserBridge({
       throw new Error("Equinox Browser local IPC transport is not implemented on this platform yet.");
     }
     if (transportEndpoint.kind === "unix") {
-      if (transportPath === EQUINOX_BROWSER_SOCKET_PATH) {
-        await prepareEquinoxBrowserSocketDirectory();
+      if (canonicalSocketDirectoryOptions) {
+        if (canonicalSocketDirectoryIdentity || canonicalSocketDirectoryIdentityError) {
+          await verifyCanonicalSocketDirectoryIdentity();
+        }
+        await prepareEquinoxBrowserSocketDirectory(canonicalSocketDirectoryOptions);
+        await verifyCanonicalSocketDirectoryIdentity();
       } else {
         await fs.mkdir(path.dirname(transportPath), { recursive: true });
       }

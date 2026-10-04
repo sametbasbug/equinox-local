@@ -56,6 +56,7 @@ import {
 import {
   createWorkflowRuntime,
 } from "./workflow-runtime.js";
+import { buildWorkflowPlan } from "./workflow-recipes.js";
 import {
   createPrivateReleaseGateRuntime,
   privateGitHubStatus,
@@ -2037,6 +2038,7 @@ await turnBudgetController.initialize();
 
 registerPrivateVisualTools({
   registerTextTool,
+  z,
   processJsonResult,
   errorResult,
   projectIdValueSchema: PROJECT_ID_VALUE_SCHEMA,
@@ -2400,6 +2402,7 @@ async function resumeWorkflowSafelyForRepair(workflowId) {
 await registerPrivateReleaseGateTools({
   registerTextTool,
   z,
+  buildWorkflowPlan,
   workflowManager,
   releaseGateRuntime,
   readProjectPackageJson,
