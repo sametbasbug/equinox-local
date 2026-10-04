@@ -217,7 +217,13 @@ Tests live under `tests/` on purpose: they remain part of the public trust story
 
 Internal modules separate tool registration, workspace/history mechanics, Control Center localization, Browser artifacts and bounded platform/release helpers without changing the MCP, configuration or UI contracts. The [architecture guide](docs/architecture.md#internal-module-boundaries) describes these responsibilities and their preserved security boundaries.
 
-## Development
+## Canonical source and development
+
+`sametbasbug/equinox-local` is the single canonical product repository. Product code, platform/native sources, public tests, installers, CI/CodeQL and contributor changes are developed directly here. Fork this repository and send focused PRs to its `main`; there is no factory export or private backport step in the feature/fix lifecycle.
+
+Private factory/ops tooling may consume a clean canonical checkout by repository identity and exact SHA for explicitly authorized release/publication work. A factory installation uses the same product source with external private configuration/state and, when explicitly configured, private composition. Neither that tooling nor private credentials are required to build or test the public product. Do not copy private history, machine paths or secrets into this repository.
+
+This ownership change does not switch installed stable users to `main`, implement a main-source updater, or publish `5.2.1`. Signed numbered releases and Chrome Web Store distribution retain their existing owners and authorization boundaries.
 
 ### Requirements
 

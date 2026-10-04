@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { randomBytes } from "node:crypto";
 import fs from "node:fs/promises";
 import net from "node:net";
 import os from "node:os";
@@ -11,6 +12,10 @@ import {
   EQUINOX_BROWSER_LEGACY_EXTENSION_ID,
   EQUINOX_BROWSER_MIGRATION_EXTENSION_IDS,
 } from "../../src/equinox-browser-bridge.js";
+import {
+  equinoxBrowserIpcEndpoint,
+  equinoxBrowserSocketDirectory,
+} from "../../src/equinox-browser-socket.js";
 
 function waitForLine(socket, onLine) {
   let buffer = "";
@@ -31,8 +36,13 @@ function writeLine(socket, message) {
   socket.write(`${JSON.stringify(message)}\n`);
 }
 
+async function makeSocketFixtureDirectory(prefix) {
+  const temporaryRoot = process.platform === "darwin" ? await fs.realpath("/tmp") : await fs.realpath(os.tmpdir());
+  return await fs.mkdtemp(path.join(temporaryRoot, prefix));
+}
+
 async function makeSocketPath(name) {
-  const dir = await fs.mkdtemp(path.join(os.tmpdir(), `equinox-browser-${name}-`));
+  const dir = await makeSocketFixtureDirectory(`eqb-${name}-`);
   return { dir, socketPath: path.join(dir, "bridge.sock") };
 }
 
@@ -42,6 +52,126 @@ test("bridge can exist headlessly when the platform Browser IPC transport is not
   assert.equal(bridge.snapshot().socketPath, null);
   await assert.rejects(bridge.start(), /IPC transport is not implemented/u);
   await bridge.close();
+});
+
+test("bridge rejects a replaced canonical namespace before probing or removing its socket", { skip: process.platform !== "darwin" }, async (t) => {
+  const uid = process.getuid?.();
+  assert.ok(Number.isInteger(uid) && uid > 0, "canonical Unix socket fixtures require a non-root uid");
+  const namespace = `guard-${randomBytes(10).toString("hex")}`;
+  const socketDirectory = equinoxBrowserSocketDirectory({ uid, namespace });
+  const endpoint = equinoxBrowserIpcEndpoint({ platform: "darwin", uid, namespace });
+  const root = await makeSocketFixtureDirectory("eqb-guard-");
+  const displacedDirectory = path.join(root, "displaced");
+  const targetDirectory = path.join(root, "target");
+  const protectedSocket = path.join(targetDirectory, "browser.sock");
+  const protectedMarker = path.join(targetDirectory, "keep.txt");
+  let acquiredCanonicalDirectory = false;
+  let symlinkInstalled = false;
+  let ownerListening = false;
+  let bridge = null;
+  let probeCount = 0;
+  const owner = net.createServer(() => {
+    probeCount += 1;
+  });
+
+  t.after(async () => {
+    if (bridge) await bridge.close();
+    if (ownerListening) await new Promise((resolve) => owner.close(() => resolve()));
+    if (symlinkInstalled) await fs.unlink(socketDirectory).catch(() => {});
+    if (acquiredCanonicalDirectory) await fs.rmdir(displacedDirectory).catch(() => {});
+    await fs.rm(root, { recursive: true, force: true });
+  });
+
+  await fs.mkdir(socketDirectory, { mode: 0o700 });
+  acquiredCanonicalDirectory = true;
+  await fs.mkdir(targetDirectory, { mode: 0o700 });
+  await fs.writeFile(protectedMarker, "preserve fake Browser socket owner\n", { flag: "wx", mode: 0o600 });
+  bridge = createEquinoxBrowserBridge({ bridgeEndpoint: endpoint });
+  await new Promise((resolve, reject) => {
+    owner.once("error", reject);
+    owner.listen(protectedSocket, resolve);
+  });
+  ownerListening = true;
+  await fs.rename(socketDirectory, displacedDirectory);
+  await fs.symlink(targetDirectory, socketDirectory);
+  symlinkInstalled = true;
+
+  await assert.rejects(bridge.start(), /socket directory is not a normal directory/u);
+  assert.equal(probeCount, 0, "a replaced namespace must be refused before the socket liveness probe");
+  assert.equal(await fs.readFile(protectedMarker, "utf8"), "preserve fake Browser socket owner\n");
+  assert.equal((await fs.lstat(protectedSocket)).isSocket(), true, "the protected mock socket must remain in place");
+});
+
+test("bridge rejects a replaced normal namespace before probing its live socket", { skip: process.platform !== "darwin" }, async (t) => {
+  const uid = process.getuid?.();
+  assert.ok(Number.isInteger(uid) && uid > 0, "canonical Unix socket fixtures require a non-root uid");
+  const namespace = `swap-${randomBytes(10).toString("hex")}`;
+  const socketDirectory = equinoxBrowserSocketDirectory({ uid, namespace });
+  const endpoint = equinoxBrowserIpcEndpoint({ platform: "darwin", uid, namespace });
+  const root = await makeSocketFixtureDirectory("eqb-swap-");
+  const displacedDirectory = path.join(root, "displaced");
+  const markerPath = path.join(socketDirectory, "protected-marker.txt");
+  let originalDirectoryAcquired = false;
+  let originalDirectoryDisplaced = false;
+  let replacementDirectoryAcquired = false;
+  let ownerListening = false;
+  let bridge = null;
+  let probeCount = 0;
+  const owner = net.createServer(() => {
+    probeCount += 1;
+  });
+
+  t.after(async () => {
+    if (bridge) await bridge.close();
+    if (ownerListening) await new Promise((resolve) => owner.close(() => resolve()));
+    if (replacementDirectoryAcquired) {
+      const socketEntry = await fs.lstat(endpoint.endpoint).catch((error) => {
+        if (error?.code === "ENOENT") return null;
+        throw error;
+      });
+      if (socketEntry) {
+        if (!socketEntry.isSocket() || socketEntry.isSymbolicLink()) {
+          throw new Error("Fixture replacement socket changed; leaving it in place.");
+        }
+        await fs.unlink(endpoint.endpoint);
+      }
+      const markerEntry = await fs.lstat(markerPath).catch((error) => {
+        if (error?.code === "ENOENT") return null;
+        throw error;
+      });
+      if (markerEntry) {
+        if (!markerEntry.isFile() || markerEntry.isSymbolicLink()) {
+          throw new Error("Fixture replacement marker changed; leaving it in place.");
+        }
+        await fs.unlink(markerPath);
+      }
+      await fs.rmdir(socketDirectory);
+    }
+    if (originalDirectoryDisplaced) {
+      await fs.rename(displacedDirectory, socketDirectory);
+      if (originalDirectoryAcquired) await fs.rmdir(socketDirectory);
+    }
+    await fs.rm(root, { recursive: true, force: true });
+  });
+
+  await fs.mkdir(socketDirectory, { mode: 0o700 });
+  originalDirectoryAcquired = true;
+  bridge = createEquinoxBrowserBridge({ bridgeEndpoint: endpoint });
+  await fs.rename(socketDirectory, displacedDirectory);
+  originalDirectoryDisplaced = true;
+  await fs.mkdir(socketDirectory, { mode: 0o700 });
+  replacementDirectoryAcquired = true;
+  await fs.writeFile(markerPath, "preserve replaced namespace\n", { flag: "wx", mode: 0o600 });
+  await new Promise((resolve, reject) => {
+    owner.once("error", reject);
+    owner.listen(endpoint.endpoint, resolve);
+  });
+  ownerListening = true;
+
+  await assert.rejects(bridge.start(), /socket directory identity changed/u);
+  assert.equal(probeCount, 0, "the bridge must refuse the replacement before probing its socket");
+  assert.equal(await fs.readFile(markerPath, "utf8"), "preserve replaced namespace\n");
+  assert.equal((await fs.lstat(endpoint.endpoint)).isSocket(), true, "the protected fake socket must remain in place");
 });
 
 test("bridge start never unlinks a live socket owned by another bridge", async (t) => {
