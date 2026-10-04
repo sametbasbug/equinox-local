@@ -124,7 +124,9 @@ test("NuGet cache is architecture scoped and preserves native build execution", 
   assert.match(inputs, /dotnet publish native\/windows\/EquinoxLocal\.WindowsShell/u);
 });
 
-test("parallel input preparation requires both native commands and cleans up its own job", () => {
+test("parallel input preparation requires both native commands and cleans up its own job", async () => {
+  const smoke = await fs.readFile(new URL("./windows-ci-input-preparation-smoke.ps1", import.meta.url), "utf8");
+  assert.match(smoke, /exit 0\s*$/u);
   assert.match(job("windows-arm64-runtime"), /windows-ci-input-preparation-smoke\.ps1/u);
   assert.match(prepare, /PREPARE_INPUTS_SCRIPT: \$\{\{ github\.action_path \}\}\/prepare-inputs\.ps1/u);
   assert.match(inputs, /Start-Job/u);

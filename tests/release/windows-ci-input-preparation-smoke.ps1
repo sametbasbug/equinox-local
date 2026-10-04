@@ -49,3 +49,7 @@ try {
   Set-Location -LiteralPath $originalLocation.Path
   if (Test-Path -LiteralPath $work) { Remove-Item -LiteralPath $work -Recurse -Force }
 }
+
+# Expected native failures leave LASTEXITCODE set. Report success only after
+# every assertion and environment/job cleanup completed without an exception.
+exit 0
