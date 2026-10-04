@@ -49,7 +49,7 @@ TUNNEL_ID="$("$TUNNEL_CLIENT" runtimes list 2>/dev/null | /usr/bin/awk -v alias=
   --profile "$ALIAS" \
   --tunnel-id "$TUNNEL_ID" \
   --runtime-api-key "file:$KEY_FILE" \
-  --mcp-command "$NODE_BIN $MCP_SERVER"
+  --mcp-command "${(qq)NODE_BIN} ${(qq)MCP_SERVER}"
 
 sleep 2
 "$TUNNEL_CLIENT" runtimes status "$ALIAS" 2>/dev/null | /usr/bin/awk '$2 == "ready" { ready=1 } END { exit !ready }' || {

@@ -11,11 +11,11 @@ const execFile = promisify(execFileCallback);
 const launcher = fileURLToPath(new URL("../../scripts/release/start-main-source-runtime.sh", import.meta.url));
 const shellQuote = (value) => `'${String(value).replaceAll("'", `'"'"'`)}'`;
 
-async function fixture(t, { stableConfig = true } = {}) {
+async function fixture(t, { stableConfig = true, sourceDirectory = "source", homeDirectory = "home" } = {}) {
   const root = await fs.mkdtemp(path.join(await fs.realpath(os.tmpdir()), "equinox-main-launcher-"));
   t.after(() => fs.rm(root, { recursive: true, force: true }));
-  const home = path.join(root, "home");
-  const source = path.join(root, "source");
+  const home = path.join(root, homeDirectory);
+  const source = path.join(root, sourceDirectory);
   const state = path.join(home, "Library/Application Support/Equinox Local Developer/main-update");
   const runtimeState = path.join(home, "Library/Application Support/Equinox Local Developer/runtime");
   const nodeAlias = path.join(home, ".local/share/equinox-local-developer/bin/node");
@@ -23,6 +23,7 @@ async function fixture(t, { stableConfig = true } = {}) {
   const keyFile = path.join(home, ".config/tunnel-client/secrets/equinox-local-runtime-key");
   const trace = path.join(root, "tunnel.calls");
   const watchdogMarker = path.join(root, "watchdog.started");
+  const serverMarker = path.join(root, "server.started");
   const client = path.join(root, "tunnel-client");
   const config = stableConfig ? path.join(runtimeState, "source-runtime.conf") : path.join(root, "runtime.conf");
   const pointer = path.join(state, "current-source.conf");
@@ -36,9 +37,9 @@ async function fixture(t, { stableConfig = true } = {}) {
   await fs.writeFile(pinnedNode, `#!/bin/sh\nexec ${shellQuote(process.execPath)} "$@"\n`, { mode: 0o700 });
   await fs.symlink(pinnedNode, nodeAlias);
   await fs.writeFile(keyFile, "fixture-only\n", { mode: 0o600 });
-  await fs.writeFile(path.join(source, "src/server.js"), "export {};\n");
+  await fs.writeFile(path.join(source, "src/server.js"), `import fs from "node:fs";\nfs.writeFileSync(${JSON.stringify(serverMarker)}, process.argv[1]);\n`);
   await fs.writeFile(path.join(source, "scripts/release/watch-source-runtime.mjs"), `import fs from "node:fs";\nfs.writeFileSync(${JSON.stringify(watchdogMarker)}, process.argv[2]);\n`);
-  await fs.writeFile(client, `#!/bin/sh\nprintf '%s\\n' "$*" >> ${shellQuote(trace)}\ncase "$1:$2" in\n  runtimes:list) printf 'fixture-runtime fixture-tunnel\\n' ;;\n  runtimes:status) printf 'fixture-runtime ready\\n' ;;\n  runtimes:stop|runtimes:connect) ;;\n  *) exit 17 ;;\nesac\n`, { mode: 0o700 });
+  await fs.writeFile(client, `#!/bin/sh\nprintf '%s\\n' "$*" >> ${shellQuote(trace)}\ncase "$1:$2" in\n  runtimes:list) printf 'fixture-runtime fixture-tunnel\\n' ;;\n  runtimes:status) printf 'fixture-runtime ready\\n' ;;\n  runtimes:stop) ;;\n  runtimes:connect)\n    while [ "$#" -gt 0 ]; do\n      if [ "$1" = "--mcp-command" ]; then\n        /bin/sh -c "$2"\n        exit "$?"\n      fi\n      shift\n    done\n    exit 18 ;;\n  *) exit 17 ;;\nesac\n`, { mode: 0o700 });
   await fs.writeFile(config, `launchAgentLabel=dev.equinox.fixture\ntunnelRuntime=fixture-runtime\ntunnelClient=${client}\nsourceLauncher=${launcher}\nsourceLauncherOwnsLifecycle=1\n`, { mode: 0o600 });
   const git = async (...args) => execFile("git", ["-C", source, ...args]);
   await git("init", "-b", "main");
@@ -49,7 +50,7 @@ async function fixture(t, { stableConfig = true } = {}) {
   await git("remote", "add", "origin", "https://github.com/sametbasbug/equinox-local.git");
   const { stdout } = await git("rev-parse", "HEAD");
   await fs.writeFile(pointer, `schemaVersion=1\nsourceRoot=${source}\nsha=${stdout.trim()}\n`, { mode: 0o600 });
-  return { root, home, source, nodeAlias, keyFile, config, pointer, trace, watchdogMarker };
+  return { root, home, source, nodeAlias, keyFile, config, pointer, trace, watchdogMarker, serverMarker };
 }
 
 async function run(f, extraEnv = {}) {
@@ -65,7 +66,14 @@ test("canonical main launcher accepts executable Node alias and reaches owned wa
   await run(f);
   const calls = await fs.readFile(f.trace, "utf8");
   assert.match(calls, /runtimes connect/u);
-  assert.ok(calls.includes(`--mcp-command ${f.nodeAlias} ${f.source}/src/server.js`));
+  assert.equal(await fs.readFile(f.serverMarker, "utf8"), path.join(f.source, "src/server.js"));
+  assert.equal(await fs.readFile(f.watchdogMarker, "utf8"), f.config);
+});
+
+test("launcher executes the exact source server when its path contains spaces, quotes and Unicode", { skip: process.platform !== "darwin" }, async (t) => {
+  const f = await fixture(t, { sourceDirectory: "source space ' # Türkçe" });
+  await run(f);
+  assert.equal(await fs.readFile(f.serverMarker, "utf8"), path.join(f.source, "src/server.js"));
   assert.equal(await fs.readFile(f.watchdogMarker, "utf8"), f.config);
 });
 
