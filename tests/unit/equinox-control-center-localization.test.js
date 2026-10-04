@@ -54,6 +54,13 @@ test("UI translator preserves exact catalog text, dynamic values, and unknown te
   assert.equal(translateUiText("Dashboard", "en"), "Dashboard");
   assert.equal(translateUiText("12 tasks", "tr"), "12 görev");
   assert.equal(translateUiText("Checked yesterday", "tr"), "Kontrol edildi: yesterday");
+  assert.equal(translateUiText("Checking canonical main", "tr"), "Canonical main kontrol ediliyor");
+  assert.equal(translateUiText("Current SHA 5df006f", "tr"), "Mevcut SHA 5df006f");
+  assert.equal(translateUiText("Target SHA 500784c", "tr"), "Hedef SHA 500784c");
+  assert.equal(translateUiText("Distance ↓3 ↑0", "tr"), "Mesafe ↓3 ↑0");
+  assert.equal(translateUiText("3 commits available on main", "tr"), "main'de 3 commit kullanılabilir");
+  assert.equal(translateUiText("1 commit available on main", "tr"), "main'de 1 commit kullanılabilir");
+  assert.equal(translateUiText("Main update check needs attention", "tr"), "Main güncelleme kontrolü dikkat gerektiriyor");
   assert.equal(translateUiText("New source text", "tr"), "New source text");
   assert.equal(translateUiText("  Dashboard  ", "tr"), "  Dashboard  ");
 });

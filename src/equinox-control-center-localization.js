@@ -317,6 +317,31 @@ const TR_UI = Object.freeze({
   "Current version —": "Mevcut sürüm —",
   "Check for updates": "Güncellemeleri kontrol et",
   "Update & restart": "Güncelle ve yeniden başlat",
+  "Checking canonical main": "Canonical main kontrol ediliyor",
+  "Reading local Git identity and checking the canonical public main branch without changing the checkout.": "Yerel Git kimliği okunuyor ve checkout değiştirilmeden canonical public main dalı kontrol ediliyor.",
+  "Main update available": "Main güncellemesi var",
+  "A newer canonical main SHA is available. M5 only reports it; no source files, Git refs, runtime state or user data are changed.": "Daha yeni bir canonical main SHA kullanılabilir. M5 bunu yalnızca bildirir; kaynak dosyalar, Git ref'leri, runtime durumu veya kullanıcı verileri değiştirilmez.",
+  "Canonical main is up to date": "Canonical main güncel",
+  "The current source SHA exactly matches the canonical public main branch.": "Mevcut kaynak SHA canonical public main dalıyla tam olarak eşleşiyor.",
+  "Local main is ahead of canonical main": "Yerel main canonical main'in ilerisinde",
+  "This checkout contains commits that are not on canonical main. Automatic main updates remain unavailable until the histories match.": "Bu checkout canonical main'de bulunmayan commit'ler içeriyor. Geçmişler eşleşene kadar otomatik main güncellemeleri kullanılamaz.",
+  "Local ahead": "Yerel dal ileride",
+  "Local and canonical main have diverged": "Yerel ve canonical main ayrışmış",
+  "The histories have commits on both sides. Equinox Local will not treat this as an ordinary update path.": "Her iki geçmişte de yalnızca kendi tarafında bulunan commit'ler var. Equinox Local bunu sıradan bir güncelleme yolu olarak değerlendirmez.",
+  "Diverged": "Ayrışmış",
+  "Main update check is blocked": "Main güncelleme kontrolü engellendi",
+  "This source checkout is not eligible for canonical main tracking.": "Bu kaynak checkout canonical main takibi için uygun değil.",
+  "Unsupported": "Desteklenmiyor",
+  "Main update check needs attention": "Main güncelleme kontrolü dikkat gerektiriyor",
+  "The canonical main branch could not be checked. This is not an up-to-date result.": "Canonical main dalı kontrol edilemedi. Bu sonuç sistemin güncel olduğu anlamına gelmez.",
+  "Check unavailable": "Kontrol kullanılamıyor",
+  "Canonical main channel ready": "Canonical main kanalı hazır",
+  "Check the canonical public main branch without modifying this source checkout.": "Bu kaynak checkout'u değiştirmeden canonical public main dalını kontrol edin.",
+  "Check main": "Main'i kontrol et",
+  "Current SHA —": "Mevcut SHA —",
+  "Target SHA —": "Hedef SHA —",
+  "Commit distance —": "Commit mesafesi —",
+  "This source checkout is not eligible for canonical main discovery.": "Bu kaynak checkout canonical main keşfi için uygun değil.",
   "Access boundaries": "Erişim sınırları",
   "Add or update the roots Equinox Local is allowed to see. Changes are validated by the same configuration layer used by the agent runtime.": "Equinox Local'in görmesine izin verilen kökleri ekleyin veya güncelleyin. Değişiklikler ajan runtime'ının kullandığı aynı yapılandırma katmanında doğrulanır.",
   "Add read-only folder": "Salt okunur klasör ekle",
@@ -718,6 +743,14 @@ export function translateUiText(value, language = "en") {
   if (match) return `Yenilendi: ${match[1]}`;
   match = source.match(/^Current version (.+)$/u);
   if (match) return `Mevcut sürüm ${match[1]}`;
+  match = source.match(/^Current SHA ([a-f0-9]{7})$/u);
+  if (match) return `Mevcut SHA ${match[1]}`;
+  match = source.match(/^Target SHA ([a-f0-9]{7})$/u);
+  if (match) return `Hedef SHA ${match[1]}`;
+  match = source.match(/^Distance ↓(\d+) ↑(\d+)$/u);
+  if (match) return `Mesafe ↓${match[1]} ↑${match[2]}`;
+  match = source.match(/^(\d+) commits? available on main$/u);
+  if (match) return `main'de ${match[1]} commit kullanılabilir`;
   match = source.match(/^(\d+) projects · (\d+) read-only folders?$/u);
   if (match) return `${match[1]} proje · ${match[2]} salt okunur klasör`;
   match = source.match(/^Restarting into Equinox Local (.+)$/u);

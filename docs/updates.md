@@ -20,6 +20,14 @@ If a fresh first activation still fails, Local stops the failed LaunchAgent but 
 
 The installer does not disable Gatekeeper and does not require global security-policy changes.
 
+## Canonical `main` discovery for source checkouts
+
+Source-managed/factory checkouts have a separate **passive** `main` channel alongside the signed Stable release channel. Control Center can report the exact current Git SHA, the current canonical public `main` SHA, behind/ahead distance, divergence, and up to five bounded commit summaries. It also distinguishes dirty worktrees, detached HEADs, non-`main` branches, fork remotes, network failures, and an unavailable/deleted canonical branch.
+
+This check does **not** fetch, pull, reset, switch branches, edit source files, or update local Git refs. Local Git inspection runs with optional Git locks disabled and the remote identity/comparison is read through bounded GitHub HTTPS API responses. A failed remote check is reported as unavailable and is never interpreted as “up to date.” The result is cached briefly to avoid unnecessary repeated network traffic.
+
+M5 is discovery-only: source checkout mutation, transactional promotion, restart and rollback are separate later milestones. Managed signed-release installations continue to use the Stable channel described below.
+
 ## Stable update manifests
 
 Runtime updates use JSON manifests signed with Ed25519. The shipped runtime contains only trusted public keys; release private keys must remain outside the repository.

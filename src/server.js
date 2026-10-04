@@ -160,6 +160,9 @@ import {
   createEquinoxLocalUpdateCoordinator,
 } from "./equinox-local-update-coordinator.js";
 import {
+  createEquinoxLocalMainUpdateDiscovery,
+} from "./equinox-local-main-update.js";
+import {
   configureManagedTunnel,
   getManagedOnboardingStatus,
   recordManagedAgentCommand,
@@ -581,6 +584,13 @@ const equinoxLocalUpdater = createEquinoxLocalUpdater({
 const equinoxLocalUpdateCoordinator = createEquinoxLocalUpdateCoordinator({
   installation: equinoxLocalInstallation,
   updater: equinoxLocalUpdater,
+});
+const equinoxLocalMainUpdateDiscovery = createEquinoxLocalMainUpdateDiscovery({
+  installation: equinoxLocalInstallation,
+});
+const getCombinedUpdateStatus = () => Object.freeze({
+  ...equinoxLocalUpdateCoordinator.snapshot(),
+  main: equinoxLocalMainUpdateDiscovery.snapshot(),
 });
 
 async function noteManagedAgentCommand() {
@@ -3003,7 +3013,7 @@ equinoxLocalControlApi = createEquinoxLocalControlApi({
   getDoctorRepairs: getControlCenterDoctorRepairs,
   applyDoctorRepair: applyControlCenterDoctorRepair,
   getActivity: getControlCenterActivity,
-  getUpdateStatus: async () => equinoxLocalUpdateCoordinator.snapshot(),
+  getUpdateStatus: async () => getCombinedUpdateStatus(),
   getOnboardingStatus: getControlCenterOnboardingStatus,
   getTasks: async () => taskCapsuleStore.list({ limit: 50 }),
   getTask: async (taskId) => taskCapsuleStore.read(taskId),
@@ -3053,8 +3063,12 @@ equinoxLocalControlApi = createEquinoxLocalControlApi({
     })
   )),
   checkForUpdates: async () => {
-    await equinoxLocalUpdater.check();
-    return equinoxLocalUpdateCoordinator.snapshot();
+    if (equinoxLocalInstallation.kind === "source") {
+      await equinoxLocalMainUpdateDiscovery.check({ force: true });
+    } else {
+      await equinoxLocalUpdater.check();
+    }
+    return getCombinedUpdateStatus();
   },
   applyUpdate: async () => withMutationLocks(["local-update"], async () => equinoxLocalUpdateCoordinator.apply()),
   chooseFolder: chooseLocalFolder,
