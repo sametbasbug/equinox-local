@@ -38,6 +38,8 @@ test("source-checkout restart uses only private generic developer runtime config
   assert.match(script, /tunnelRuntime/u);
   assert.match(script, /tunnelClient/u);
   assert.match(script, /sourceLauncher/u);
+  assert.match(script, /sourceLauncherOwnsLifecycle/u);
+  assert.match(script, /source launcher lifecycle flag must be 1 when configured/u);
   assert.match(script, /EQUINOX_LOCAL_DEV_NODE/u);
   assert.equal(script.includes('DEFAULT_DEV_NODE="$HOME/.local/share/equinox-local-developer/bin/node"'), true);
   assert.equal(script.includes('elif [ -x "$DEFAULT_DEV_NODE" ]; then'), true);
@@ -108,6 +110,7 @@ test("source-checkout restart uses only private generic developer runtime config
   assert.match(example, /tunnelRuntime=equinox-local-dev/u);
   assert.match(example, /tunnelClient=\/absolute\/path\/to\/equinox-tunnel-client/u);
   assert.match(example, /peekabooPath=\/absolute\/path\/to\/pinned-peekaboo/u);
+  assert.match(example, /sourceLauncherOwnsLifecycle=1/u);
   assert.match(example, /sourceLauncher=\/absolute\/path\/to\/private-source-launcher\.sh/u);
 });
 
