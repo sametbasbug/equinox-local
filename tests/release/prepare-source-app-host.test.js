@@ -18,6 +18,19 @@ test("source runtime wrapper invokes an existing canonical watchdog entrypoint",
   assert.equal(watchdogPath, fileURLToPath(new URL("../../scripts/release/watch-source-runtime.mjs", import.meta.url)));
 });
 
+
+
+test("source runtime wrapper can delegate complete server/watchdog lifecycle to one admitted launcher", () => {
+  const wrapper = sourceAppRuntimeWrapper("/fixture/pointer-launcher.sh", "", {
+    nodePath: "/fixture/node",
+    configPath: "/fixture/runtime.conf",
+    sourceLauncherOwnsLifecycle: true,
+  });
+  assert.match(wrapper, /pointer-launcher\.sh/u);
+  assert.equal(wrapper.includes('RUNTIME_WATCHDOG_PID=$!'), true);
+  assert.doesNotMatch(wrapper, /watch-source-runtime\.mjs/u);
+});
+
 const macTest = process.platform === "darwin" ? test : test.skip;
 
 macTest("source app host routes the LaunchAgent through stable Equinox Local.app", async (t) => {

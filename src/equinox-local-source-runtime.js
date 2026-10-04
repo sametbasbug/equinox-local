@@ -26,7 +26,7 @@ export function parseSourceRuntimeConfig(text) {
     if (index <= 0) throw new Error("Developer runtime config is malformed.");
     const key = line.slice(0, index);
     const value = line.slice(index + 1);
-    if (!new Set(["launchAgentLabel", "tunnelRuntime", "tunnelClient", "peekabooPath", "sourceLauncher", "privateCompositionModule", "privateCompositionRoot"]).has(key)) {
+    if (!new Set(["launchAgentLabel", "tunnelRuntime", "tunnelClient", "peekabooPath", "sourceLauncher", "sourceLauncherOwnsLifecycle", "privateCompositionModule", "privateCompositionRoot"]).has(key)) {
       throw new Error("Developer runtime config contains an unsupported field.");
     }
     if (values.has(key)) throw new Error("Developer runtime config contains a duplicate field.");
@@ -35,6 +35,9 @@ export function parseSourceRuntimeConfig(text) {
   const tunnelClient = values.get("tunnelClient") || "";
   const peekabooPath = values.get("peekabooPath") || "";
   const sourceLauncher = values.get("sourceLauncher") || "";
+  const sourceLauncherOwnsLifecycleRaw = values.get("sourceLauncherOwnsLifecycle") || "";
+  if (sourceLauncherOwnsLifecycleRaw && sourceLauncherOwnsLifecycleRaw !== "1") throw new Error("Developer source launcher lifecycle flag is invalid.");
+  const sourceLauncherOwnsLifecycle = sourceLauncherOwnsLifecycleRaw === "1";
   const privateCompositionModule = values.get("privateCompositionModule") || "";
   const privateCompositionRoot = values.get("privateCompositionRoot") || "";
   if (!path.isAbsolute(tunnelClient)) throw new Error("Developer tunnel-client path is invalid.");
@@ -51,6 +54,7 @@ export function parseSourceRuntimeConfig(text) {
     tunnelClient,
     peekabooPath,
     sourceLauncher,
+    sourceLauncherOwnsLifecycle,
     privateCompositionModule,
     privateCompositionRoot,
   });
