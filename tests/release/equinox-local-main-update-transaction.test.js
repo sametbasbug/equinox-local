@@ -29,6 +29,7 @@ async function fixture(t, { failValidation = false, stagedHead = TARGET } = {}) 
     if (command === "git" && args.includes("checkout")) return { stdout: "", stderr: "" };
     if (command === "git" && args[0] === "-C" && args[2] === "rev-parse" && args[3] === "--show-toplevel") return { stdout: `${args[1]}\n`, stderr: "" };
     if (command === "git" && args[0] === "-C" && args[2] === "rev-parse" && args[3] === "HEAD") return { stdout: `${stagedHead}\n`, stderr: "" };
+    if (command === "git" && args[0] === "-C" && args[2] === "symbolic-ref") return { stdout: "main\n", stderr: "" };
     if (command === "git" && args[0] === "-C" && args[2] === "remote") return { stdout: `${EQUINOX_LOCAL_MAIN_REMOTE}\n`, stderr: "" };
     if (command === "git" && args[0] === "-C" && args[2] === "status") return { stdout: "", stderr: "" };
     throw new Error(`unexpected command: ${command} ${joined}`);
@@ -80,7 +81,7 @@ test("begin fails closed if active SHA changed after discovery", async (t) => {
   assert.equal(await engine.readActive(), null);
 });
 
-test("stage prepares exact canonical detached bytes without mutating active source", async (t) => {
+test("stage prepares exact canonical main bytes without mutating active source", async (t) => {
   const { engine, sourceRoot, calls, installs, validations } = await fixture(t);
   const before = await fs.readdir(sourceRoot);
   const staged = await engine.stage({ currentSha: CURRENT, targetSha: TARGET });
@@ -90,9 +91,68 @@ test("stage prepares exact canonical detached bytes without mutating active sour
   assert.equal(installs.length, 1); assert.equal(validations.length, 1);
   assert.deepEqual(await fs.readdir(sourceRoot), before);
   assert.equal(calls.some(({ command, args }) => command === "git" && args[0] === "clone" && args.includes(EQUINOX_LOCAL_MAIN_REMOTE)), true);
-  assert.equal(calls.some(({ command, args }) => command === "git" && args.includes("checkout") && args.includes(TARGET)), true);
+  assert.equal(calls.some(({ command, args }) => command === "git" && args.includes("checkout") && args.includes("-B") && args.includes("main") && args.includes(TARGET)), true);
   assert.equal(await engine.releaseStagedLock(staged.receipt.transactionId), true);
   assert.equal(await engine.readActive(), null);
+});
+
+test("promotion moves staged source into durable store, atomically switches pointer and rolls back A to B to A", async (t) => {
+  const { engine, sourceRoot } = await fixture(t);
+  const staged = await engine.stage({ currentSha: CURRENT, targetSha: TARGET });
+  const initialPointer = await engine.initializeSourcePointer();
+  assert.equal(initialPointer.sourceRoot, sourceRoot);
+  assert.equal(initialPointer.sha, CURRENT);
+
+  const prepared = await engine.preparePromotion(staged.receipt.transactionId);
+  assert.equal(prepared.receipt.status, "promoting");
+  assert.equal(prepared.receipt.stage, "ready_to_switch");
+  assert.equal(prepared.receipt.rollbackSourceRoot, sourceRoot);
+  assert.equal(prepared.targetSourceRoot, path.join(engine.paths.sourceStoreRoot, TARGET));
+  await assert.rejects(fs.lstat(staged.stagedSourceRoot), { code: "ENOENT" });
+  assert.equal((await fs.lstat(prepared.targetSourceRoot)).isDirectory(), true);
+
+  const switched = await engine.activatePromotion(staged.receipt.transactionId);
+  assert.equal(switched.status, "verifying");
+  assert.equal(switched.stage, "source_switched");
+  const pointerAfterSwitch = await fs.readFile(engine.paths.sourcePointerPath, "utf8");
+  assert.match(pointerAfterSwitch, new RegExp(`sha=${TARGET}`));
+  assert.match(pointerAfterSwitch, new RegExp(`sourceRoot=${prepared.targetSourceRoot.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
+
+  const rolledBack = await engine.rollbackPromotion(staged.receipt.transactionId, "synthetic health failure");
+  assert.equal(rolledBack.status, "rolled_back");
+  assert.equal(rolledBack.stage, "rollback_source_restored");
+  assert.match(rolledBack.lastError, /synthetic health failure/u);
+  const pointerAfterRollback = await fs.readFile(engine.paths.sourcePointerPath, "utf8");
+  assert.match(pointerAfterRollback, new RegExp(`sha=${CURRENT}`));
+  assert.match(pointerAfterRollback, new RegExp(`sourceRoot=${sourceRoot.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
+  assert.equal(await engine.releaseStagedLock(staged.receipt.transactionId), true);
+});
+
+test("preparePromotion recovers if durable-store rename completed before receipt update", async (t) => {
+  const f = await fixture(t);
+  const staged = await f.engine.stage({ currentSha: CURRENT, targetSha: TARGET });
+  await f.engine.initializeSourcePointer();
+  await fs.mkdir(f.engine.paths.sourceStoreRoot, { recursive: true });
+  const durableTarget = path.join(f.engine.paths.sourceStoreRoot, TARGET);
+  await fs.rename(staged.stagedSourceRoot, durableTarget);
+  assert.equal((await f.engine.readActive()).status, "staged");
+  const recovered = await f.engine.preparePromotion(staged.receipt.transactionId);
+  assert.equal(recovered.receipt.status, "promoting");
+  assert.equal(recovered.targetSourceRoot, durableTarget);
+});
+
+test("source-switched receipt remains durable until explicit rollback", async (t) => {
+  const f = await fixture(t);
+  const staged = await f.engine.stage({ currentSha: CURRENT, targetSha: TARGET });
+  await f.engine.initializeSourcePointer();
+  await f.engine.preparePromotion(staged.receipt.transactionId);
+  await f.engine.activatePromotion(staged.receipt.transactionId);
+  const active = await f.engine.readActive();
+  assert.equal(active.status, "verifying");
+  assert.equal(active.stage, "source_switched");
+  assert.equal((await f.engine.readReceipt(staged.receipt.transactionId)).targetSourceRoot, path.join(f.engine.paths.sourceStoreRoot, TARGET));
+  const rolledBack = await f.engine.rollbackPromotion(staged.receipt.transactionId, "interrupted after pointer switch");
+  assert.equal(rolledBack.status, "rolled_back");
 });
 
 test("staged SHA mismatch records failure and releases handled pre-promotion lock", async (t) => {

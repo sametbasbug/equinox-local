@@ -166,7 +166,7 @@ export async function inspectCanonicalMainCheckout(sourceRoot, { fsImpl = fs, ex
     return { eligible: false, state: "dirty", currentSha, branch, remoteCanonical: true, dirty: true, reason: "The source checkout has uncommitted changes." };
   }
 
-  return { eligible: true, state: "ready", currentSha, branch, remoteCanonical: true, dirty: false, reason: null };
+  return { eligible: true, state: "ready", sourceRoot: resolvedRoot, currentSha, branch, remoteCanonical: true, dirty: false, reason: null };
 }
 
 function summarizeCompareCommit(commit) {

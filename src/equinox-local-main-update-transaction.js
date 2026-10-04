@@ -5,6 +5,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 
+import { readEquinoxLocalMainSourcePointer, writeEquinoxLocalMainSourcePointer } from "./equinox-local-main-source-pointer.js";
 import {
   EQUINOX_LOCAL_MAIN_BRANCH,
   EQUINOX_LOCAL_MAIN_REMOTE,
@@ -30,6 +31,11 @@ function assertSha(value, label) {
 function assertTransactionId(value) {
   if (!TRANSACTION_ID_PATTERN.test(value ?? "")) throw new Error("Main update transaction id is invalid.");
   return value;
+}
+function assertOptionalAbsolutePath(value, label) {
+  if (value === null) return null;
+  if (typeof value !== "string" || !path.isAbsolute(value) || value.includes("\n") || value.includes("\r") || value.includes("\0")) throw new Error(`${label} is invalid.`);
+  return path.resolve(value);
 }
 function isInside(parent, child) {
   const relative = path.relative(parent, child);
@@ -92,9 +98,11 @@ function validateLockMarker(value) {
   return Object.freeze({ ...value });
 }
 function validateReceipt(value) {
-  assertExactKeys(value, ["schemaVersion", "transactionId", "channel", "status", "stage", "currentSha", "targetSha", "rollbackSha", "startedAt", "updatedAt", "lastError"], "Main update receipt");
+  assertExactKeys(value, ["schemaVersion", "transactionId", "channel", "status", "stage", "currentSha", "targetSha", "rollbackSha", "rollbackSourceRoot", "targetSourceRoot", "startedAt", "updatedAt", "lastError"], "Main update receipt");
   assertTransactionId(value.transactionId); assertSha(value.currentSha, "Current SHA"); assertSha(value.targetSha, "Target SHA"); assertSha(value.rollbackSha, "Rollback SHA");
   if (value.rollbackSha !== value.currentSha) throw new Error("Main update receipt rollback SHA does not match the admitted source SHA.");
+  assertOptionalAbsolutePath(value.rollbackSourceRoot, "Main update rollback source root");
+  assertOptionalAbsolutePath(value.targetSourceRoot, "Main update target source root");
   if (value.schemaVersion !== EQUINOX_LOCAL_MAIN_TRANSACTION_SCHEMA_VERSION || value.channel !== "main") throw new Error("Main update receipt identity is invalid.");
   if (!["active", "staged", "failed", "promoting", "verifying", "succeeded", "rolled_back", "rollback_failed"].includes(value.status)) throw new Error("Main update receipt status is invalid.");
   if (typeof value.stage !== "string" || value.stage.length < 1 || value.stage.length > 80) throw new Error("Main update receipt stage is invalid.");
@@ -113,14 +121,18 @@ async function assertStagedCheckout(stageRoot, targetSha, { execFileImpl = execF
   if (head !== targetSha) throw new Error("Staged checkout HEAD does not match the pinned target SHA.");
   const remote = String((await run("git", ["-C", root, "remote", "get-url", "origin"], { execFileImpl })).stdout ?? "").trim();
   if (!isCanonicalMainRemote(remote)) throw new Error("Staged checkout origin is not canonical.");
+  const branch = String((await run("git", ["-C", root, "symbolic-ref", "--quiet", "--short", "HEAD"], { execFileImpl })).stdout ?? "").trim();
+  if (branch !== EQUINOX_LOCAL_MAIN_BRANCH) throw new Error("Staged checkout is not on canonical main.");
   const dirty = String((await run("git", ["-C", root, "status", "--porcelain=v1", "--untracked-files=normal"], { execFileImpl })).stdout ?? "").trim();
   if (dirty) throw new Error("Staged checkout is not clean.");
-  return Object.freeze({ sourceRoot: root, head, remote });
+  return Object.freeze({ sourceRoot: root, head, branch, remote });
 }
 
 export function createEquinoxLocalMainUpdateTransactionEngine({
   sourceRoot,
   transactionRoot,
+  sourcePointerPath = path.join(transactionRoot ?? "", "current-source.conf"),
+  sourceStoreRoot = path.join(transactionRoot ?? "", "sources"),
   fsImpl = fs,
   execFileImpl = execFile,
   now = () => new Date(),
@@ -137,7 +149,10 @@ export function createEquinoxLocalMainUpdateTransactionEngine({
   if (typeof transactionRoot !== "string" || !path.isAbsolute(transactionRoot)) throw new Error("Main update transaction root must be absolute.");
   const resolvedSourceRoot = path.resolve(sourceRoot);
   const resolvedTransactionRoot = path.resolve(transactionRoot);
+  const resolvedPointerPath = path.resolve(sourcePointerPath);
+  const resolvedSourceStoreRoot = path.resolve(sourceStoreRoot);
   if (isInside(resolvedSourceRoot, resolvedTransactionRoot) || isInside(resolvedTransactionRoot, resolvedSourceRoot)) throw new Error("Main update transaction state and active source checkout must not overlap.");
+  if (!isInside(resolvedTransactionRoot, resolvedPointerPath) || !isInside(resolvedTransactionRoot, resolvedSourceStoreRoot)) throw new Error("Main update pointer and source store must remain inside transaction state.");
 
   const lockPath = path.join(resolvedTransactionRoot, "active.json");
   const receiptsRoot = path.join(resolvedTransactionRoot, "receipts");
@@ -152,7 +167,7 @@ export function createEquinoxLocalMainUpdateTransactionEngine({
     try { return await readReceipt(marker.transactionId); }
     catch (error) {
       if (error?.code !== "ENOENT") throw error;
-      return Object.freeze({ ...marker, status: "active", stage: "admitted", rollbackSha: marker.currentSha, updatedAt: marker.startedAt, lastError: null });
+      return Object.freeze({ ...marker, status: "active", stage: "admitted", rollbackSha: marker.currentSha, rollbackSourceRoot: resolvedSourceRoot, targetSourceRoot: null, updatedAt: marker.startedAt, lastError: null });
     }
   };
   const writeReceipt = async (receipt) => {
@@ -181,6 +196,7 @@ export function createEquinoxLocalMainUpdateTransactionEngine({
       schemaVersion: EQUINOX_LOCAL_MAIN_TRANSACTION_SCHEMA_VERSION,
       transactionId, channel: "main", status: "active", stage: "admitted",
       currentSha, targetSha, rollbackSha: currentSha,
+      rollbackSourceRoot: resolvedSourceRoot, targetSourceRoot: null,
       startedAt: timestamp, updatedAt: timestamp, lastError: null,
     });
     let lockHandle;
@@ -209,7 +225,7 @@ export function createEquinoxLocalMainUpdateTransactionEngine({
     try {
       await fsImpl.mkdir(transactionDir, { recursive: false, mode: 0o700 });
       await run("git", ["clone", "--no-checkout", "--filter=blob:none", "--single-branch", "--branch", EQUINOX_LOCAL_MAIN_BRANCH, EQUINOX_LOCAL_MAIN_REMOTE, stagedSourceRoot], { execFileImpl });
-      await run("git", ["-C", stagedSourceRoot, "checkout", "--detach", targetSha], { execFileImpl });
+      await run("git", ["-C", stagedSourceRoot, "checkout", "--force", "-B", EQUINOX_LOCAL_MAIN_BRANCH, targetSha], { execFileImpl });
       await assertStagedCheckout(stagedSourceRoot, targetSha, { execFileImpl, fsImpl });
       receipt = await writeReceipt(Object.freeze({ ...receipt, stage: "dependencies", updatedAt: now().toISOString() }));
       await installDependencies({ stagedSourceRoot, currentSha, targetSha, transactionId: receipt.transactionId });
@@ -227,6 +243,92 @@ export function createEquinoxLocalMainUpdateTransactionEngine({
     }
   };
 
+  const initializeSourcePointer = async () => {
+    const local = await inspectCanonicalMainCheckout(resolvedSourceRoot, { fsImpl, execFileImpl });
+    if (!local.eligible) throw new Error(`Active source checkout is not update-eligible: ${local.reason}`);
+    try {
+      const existing = await readEquinoxLocalMainSourcePointer(resolvedPointerPath, { fsImpl, execFileImpl });
+      if (existing.sourceRoot !== resolvedSourceRoot || existing.sha !== local.currentSha) throw new Error("Existing main source pointer does not match the active checkout.");
+      return existing;
+    } catch (error) {
+      if (error?.code !== "ENOENT") throw error;
+    }
+    return await writeEquinoxLocalMainSourcePointer(resolvedPointerPath, { sourceRoot: resolvedSourceRoot, sha: local.currentSha }, { fsImpl, execFileImpl, randomBytesImpl });
+  };
+
+  const preparePromotion = async (transactionId) => {
+    assertTransactionId(transactionId);
+    let receipt = await readActive();
+    if (!receipt || receipt.transactionId !== transactionId) throw new Error("Main update promotion does not own the active transaction.");
+    if (receipt.status !== "staged") throw new Error("Main update transaction is not staged for promotion.");
+    const pointer = await readEquinoxLocalMainSourcePointer(resolvedPointerPath, { fsImpl, execFileImpl });
+    if (pointer.sha !== receipt.currentSha || pointer.sourceRoot !== receipt.rollbackSourceRoot) throw new Error("Main source pointer changed after transaction admission.");
+    const stagedSourceRoot = path.join(stagingRoot, transactionId, "source");
+    await fsImpl.mkdir(resolvedSourceStoreRoot, { recursive: true, mode: 0o700 });
+    const targetSourceRoot = path.join(resolvedSourceStoreRoot, receipt.targetSha);
+    let durableTargetExists = false;
+    try {
+      const existing = await inspectCanonicalMainCheckout(targetSourceRoot, { fsImpl, execFileImpl });
+      if (!existing.eligible || existing.currentSha !== receipt.targetSha) throw new Error("Existing main source store target is invalid.");
+      durableTargetExists = true;
+    } catch (error) {
+      if (error?.code !== "ENOENT") throw error;
+    }
+    if (durableTargetExists) {
+      await fsImpl.rm(stagedSourceRoot, { recursive: true, force: true });
+    } else {
+      await assertStagedCheckout(stagedSourceRoot, receipt.targetSha, { fsImpl, execFileImpl });
+      await fsImpl.rename(stagedSourceRoot, targetSourceRoot);
+      await syncDirectory(resolvedSourceStoreRoot, { fsImpl });
+    }
+    await assertStagedCheckout(targetSourceRoot, receipt.targetSha, { fsImpl, execFileImpl });
+    receipt = await writeReceipt(Object.freeze({ ...receipt, status: "promoting", stage: "ready_to_switch", targetSourceRoot, updatedAt: now().toISOString() }));
+    return Object.freeze({ receipt, targetSourceRoot, rollbackSourceRoot: receipt.rollbackSourceRoot });
+  };
+
+  const activatePromotion = async (transactionId) => {
+    assertTransactionId(transactionId);
+    let receipt = await readActive();
+    if (!receipt || receipt.transactionId !== transactionId) throw new Error("Main update activation does not own the active transaction.");
+    if (receipt.status !== "promoting" || receipt.stage !== "ready_to_switch" || !receipt.targetSourceRoot) throw new Error("Main update transaction is not ready to switch source.");
+    await writeEquinoxLocalMainSourcePointer(resolvedPointerPath, { sourceRoot: receipt.targetSourceRoot, sha: receipt.targetSha }, { fsImpl, execFileImpl, randomBytesImpl });
+    receipt = await writeReceipt(Object.freeze({ ...receipt, status: "verifying", stage: "source_switched", updatedAt: now().toISOString() }));
+    return receipt;
+  };
+
+  const rollbackPromotion = async (transactionId, failure) => {
+    assertTransactionId(transactionId);
+    let receipt = await readActive();
+    if (!receipt || receipt.transactionId !== transactionId) throw new Error("Main update rollback does not own the active transaction.");
+    if (!receipt.rollbackSourceRoot) throw new Error("Main update rollback source is unavailable.");
+    try {
+      await writeEquinoxLocalMainSourcePointer(resolvedPointerPath, { sourceRoot: receipt.rollbackSourceRoot, sha: receipt.rollbackSha }, { fsImpl, execFileImpl, randomBytesImpl });
+      receipt = await writeReceipt(Object.freeze({ ...receipt, status: "rolled_back", stage: "rollback_source_restored", updatedAt: now().toISOString(), lastError: boundedMessage(failure) || receipt.lastError }));
+      return receipt;
+    } catch (error) {
+      await writeReceipt(Object.freeze({ ...receipt, status: "rollback_failed", stage: "rollback_failed", updatedAt: now().toISOString(), lastError: boundedMessage(error instanceof Error ? error.message : error) })).catch(() => {});
+      throw error;
+    }
+  };
+
+  const markPromotionSucceeded = async (transactionId) => {
+    assertTransactionId(transactionId);
+    let receipt = await readActive();
+    if (!receipt || receipt.transactionId !== transactionId) throw new Error("Main update success does not own the active transaction.");
+    if (receipt.status !== "verifying" || receipt.stage !== "source_switched" || !receipt.targetSourceRoot) throw new Error("Main update transaction is not awaiting target verification.");
+    const pointer = await readEquinoxLocalMainSourcePointer(resolvedPointerPath, { fsImpl, execFileImpl });
+    if (pointer.sha !== receipt.targetSha || pointer.sourceRoot !== receipt.targetSourceRoot) throw new Error("Main source pointer does not match the verified target.");
+    receipt = await writeReceipt(Object.freeze({ ...receipt, status: "succeeded", stage: "healthy", updatedAt: now().toISOString(), lastError: null }));
+    return receipt;
+  };
+
+  const markRollbackFailed = async (transactionId, failure) => {
+    assertTransactionId(transactionId);
+    const receipt = await readActive();
+    if (!receipt || receipt.transactionId !== transactionId) throw new Error("Main update rollback failure does not own the active transaction.");
+    return await writeReceipt(Object.freeze({ ...receipt, status: "rollback_failed", stage: "rollback_failed", updatedAt: now().toISOString(), lastError: boundedMessage(failure) || "Rollback verification failed." }));
+  };
+
   const releaseStagedLock = async (transactionId) => {
     assertTransactionId(transactionId);
     const active = await readActive();
@@ -237,5 +339,5 @@ export function createEquinoxLocalMainUpdateTransactionEngine({
     return true;
   };
 
-  return Object.freeze({ readActive, readReceipt, begin, stage, releaseStagedLock, paths: Object.freeze({ transactionRoot: resolvedTransactionRoot, lockPath, receiptsRoot, stagingRoot }) });
+  return Object.freeze({ readActive, readReceipt, begin, stage, initializeSourcePointer, preparePromotion, activatePromotion, rollbackPromotion, markPromotionSucceeded, markRollbackFailed, releaseStagedLock, paths: Object.freeze({ transactionRoot: resolvedTransactionRoot, lockPath, receiptsRoot, stagingRoot, sourcePointerPath: resolvedPointerPath, sourceStoreRoot: resolvedSourceStoreRoot }) });
 }
