@@ -1,5 +1,9 @@
+import { execFile as execFileCallback } from "node:child_process";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { promisify } from "node:util";
+
+const execFile = promisify(execFileCallback);
 
 const TRANSACTION_ID_PATTERN = /^main-[a-f0-9]{32}$/u;
 const LABEL_PREFIX = "dev.equinox.local.main-update.";
@@ -45,7 +49,7 @@ export async function scheduleEquinoxLocalMainUpdateWorker({
   sourceEnv = process.env,
   uid = process.getuid?.(),
   fsImpl = fs,
-  execFileImpl,
+  execFileImpl = execFile,
 } = {}) {
   assertTransactionId(transactionId);
   const root = assertAbsolute(sourceRoot, "Main update source root");
@@ -69,10 +73,13 @@ export async function scheduleEquinoxLocalMainUpdateWorker({
   const plist = renderMainUpdateLaunchdPlist({ label, nodePath: node, workerPath: worker, sourceRoot: root, transactionRoot: stateRoot, transactionId, logPath, environment });
   const handle = await fsImpl.open(plistPath, "wx", 0o600);
   try { await handle.writeFile(plist, "utf8"); await handle.sync(); } finally { await handle.close(); }
+  let bootstrapped = false;
   try {
     await execFileImpl("/bin/launchctl", ["bootstrap", `gui/${uid}`, plistPath], { timeout: 10_000, maxBuffer: 64 * 1024 });
+    bootstrapped = true;
     await execFileImpl("/bin/launchctl", ["print", `gui/${uid}/${label}`], { timeout: 5_000, maxBuffer: 64 * 1024 });
   } catch (error) {
+    if (bootstrapped) await execFileImpl("/bin/launchctl", ["bootout", `gui/${uid}/${label}`], { timeout: 5_000, maxBuffer: 64 * 1024 }).catch(() => {});
     await fsImpl.rm(plistPath, { force: true }).catch(() => {});
     throw error;
   }

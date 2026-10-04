@@ -49,3 +49,27 @@ test("launchd bootstrap failure removes the unpublished worker plist", async (t)
   const handoffRoot = path.join(stateRoot, "handoff");
   assert.deepEqual(await fs.readdir(handoffRoot), []);
 });
+
+test("launchd print failure boots out the partially registered worker and removes plist", async (t) => {
+  const root = await fs.mkdtemp(path.join(await fs.realpath(os.tmpdir()), "equinox-scheduler-print-fail-"));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const sourceRoot = path.join(root, "source");
+  const stateRoot = path.join(root, "state");
+  const nodePath = path.join(root, "node");
+  const workerPath = path.join(sourceRoot, "worker.js");
+  await fs.mkdir(sourceRoot); await fs.writeFile(nodePath, "node"); await fs.writeFile(workerPath, "worker");
+  const calls = [];
+  await assert.rejects(
+    scheduleEquinoxLocalMainUpdateWorker({
+      transactionId: TX, sourceRoot, transactionRoot: stateRoot, nodePath, workerPath, uid: 501,
+      execFileImpl: async (command, args) => {
+        calls.push([command, ...args]);
+        if (args[0] === "print") throw new Error("print failed");
+        return { stdout: "", stderr: "" };
+      },
+    }),
+    /print failed/u,
+  );
+  assert.equal(calls.some((call) => call[1] === "bootout"), true);
+  assert.deepEqual(await fs.readdir(path.join(stateRoot, "handoff")), []);
+});

@@ -4,6 +4,7 @@ umask 077
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && /bin/pwd -P)"
 ROOT="$(cd "$SCRIPT_DIR/.." && /bin/pwd -P)"
+PREVIOUS_SOURCE_ROOT="${EQUINOX_LOCAL_PREVIOUS_SOURCE_ROOT:-$ROOT}"
 CONFIG="${EQUINOX_LOCAL_DEV_RUNTIME_CONFIG:-$ROOT/.equinox-local-dev-runtime.conf}"
 DEFAULT_DEV_NODE="$HOME/.local/share/equinox-local-developer/bin/node"
 if [ -n "${EQUINOX_LOCAL_DEV_NODE:-}" ]; then
@@ -198,6 +199,13 @@ trap cleanup_restart EXIT
 trap interrupt_restart HUP INT TERM
 acquire_restart_lock
 
+case "$PREVIOUS_SOURCE_ROOT" in
+  /*) ;;
+  *) fail "previous source root must be an absolute path" ;;
+esac
+[ -d "$PREVIOUS_SOURCE_ROOT" ] && [ ! -L "$PREVIOUS_SOURCE_ROOT" ] || fail "previous source root is missing or unsafe"
+PREVIOUS_SOURCE_REAL="$(cd "$PREVIOUS_SOURCE_ROOT" && /bin/pwd -P)"
+[ "$PREVIOUS_SOURCE_REAL" = "$PREVIOUS_SOURCE_ROOT" ] || fail "previous source root must be canonical"
 [ -f "$CONFIG" ] && [ ! -L "$CONFIG" ] || fail "private developer runtime config is missing: $CONFIG"
 CURRENT_UID="$(/usr/bin/id -u)"
 [ "$(/usr/bin/stat -f '%u' "$CONFIG")" = "$CURRENT_UID" ] || fail "developer runtime config is not owned by the current user"
@@ -315,7 +323,7 @@ DOMAIN="gui/$CURRENT_UID"
 
   # Match the server command by its stable script path, not process.execPath. The
   # tunnel runtime may launch the same Node binary through a different symlink.
-  OLD_PID="$(/usr/bin/pgrep -f "node $ROOT/src/server.js" | /usr/bin/head -n 1 || true)"
+  OLD_PID="$(/usr/bin/pgrep -f "node $PREVIOUS_SOURCE_ROOT/src/server.js" | /usr/bin/head -n 1 || true)"
 
   # Let the MCP response reach the client before the source runtime is restarted.
   sleep 8
@@ -411,8 +419,12 @@ DOMAIN="gui/$CURRENT_UID"
     done
     /bin/kill -0 "$OLD_PID" >/dev/null 2>&1 && fail "previous Equinox Local server process did not stop before relaunch"
   fi
-  RESIDUAL_PID="$(/usr/bin/pgrep -f "node $ROOT/src/server.js" | /usr/bin/head -n 1 || true)"
-  [ -z "$RESIDUAL_PID" ] || fail "source runtime left a residual Equinox Local server process before relaunch"
+  PREVIOUS_RESIDUAL_PID="$(/usr/bin/pgrep -f "node $PREVIOUS_SOURCE_ROOT/src/server.js" | /usr/bin/head -n 1 || true)"
+  [ -z "$PREVIOUS_RESIDUAL_PID" ] || fail "previous source runtime left a residual Equinox Local server process before relaunch"
+  if [ "$PREVIOUS_SOURCE_ROOT" != "$ROOT" ]; then
+    TARGET_RESIDUAL_PID="$(/usr/bin/pgrep -f "node $ROOT/src/server.js" | /usr/bin/head -n 1 || true)"
+    [ -z "$TARGET_RESIDUAL_PID" ] || fail "target source runtime was already running before relaunch"
+  fi
 
   RESTART_STAGE="launch-agent-bootstrap"
   BOOTSTRAPPED=0

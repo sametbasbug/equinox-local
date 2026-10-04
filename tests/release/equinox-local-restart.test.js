@@ -52,8 +52,12 @@ test("source-checkout restart uses only private generic developer runtime config
   assert.match(script, /previous Equinox Local foreground GUI did not stop cleanly/u);
   assert.equal(script.includes('/usr/bin/open -gn "$APP_PATH" --args --restart-shell'), true);
   assert.match(script, /Equinox Local foreground GUI did not relaunch after source restart/u);
-  assert.match(script, /OLD_PID=.*pgrep/u);
+  assert.match(script, /PREVIOUS_SOURCE_ROOT/u);
+  assert.match(script, /previous source root must be canonical/u);
+  assert.match(script, /OLD_PID=.*PREVIOUS_SOURCE_ROOT/u);
   assert.match(script, /NEW_PID=.*pgrep/u);
+  assert.match(script, /previous source runtime left a residual Equinox Local server process before relaunch/u);
+  assert.match(script, /target source runtime was already running before relaunch/u);
   assert.match(script, /pgrep -f "node \$ROOT\/src\/server\.js"/u);
   assert.doesNotMatch(script, /pgrep -f "\$DEV_NODE \$ROOT\/src\/server\.js"/u);
   assert.match(script, /previous Equinox Local server process running/u);

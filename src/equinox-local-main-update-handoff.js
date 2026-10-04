@@ -14,7 +14,7 @@ export async function runEquinoxLocalMainUpdateHandoff({
 
   const switched = await engine.activatePromotion(transactionId);
   try {
-    await restartRuntime({ transactionId, sha: switched.targetSha, sourceRoot: switched.targetSourceRoot, rollback: false });
+    await restartRuntime({ transactionId, sha: switched.targetSha, sourceRoot: switched.targetSourceRoot, previousSourceRoot: switched.rollbackSourceRoot, rollback: false });
     const health = await verifyRuntime({ transactionId, sha: switched.targetSha, sourceRoot: switched.targetSourceRoot, rollback: false });
     if (health !== true) throw new Error("Updated Equinox Local runtime did not pass health verification.");
     const succeeded = await engine.markPromotionSucceeded(transactionId);
@@ -25,7 +25,7 @@ export async function runEquinoxLocalMainUpdateHandoff({
     let rolledBack;
     try {
       rolledBack = await engine.rollbackPromotion(transactionId, targetError.message);
-      await restartRuntime({ transactionId, sha: rolledBack.rollbackSha, sourceRoot: rolledBack.rollbackSourceRoot, rollback: true });
+      await restartRuntime({ transactionId, sha: rolledBack.rollbackSha, sourceRoot: rolledBack.rollbackSourceRoot, previousSourceRoot: rolledBack.targetSourceRoot, rollback: true });
       const rollbackHealth = await verifyRuntime({ transactionId, sha: rolledBack.rollbackSha, sourceRoot: rolledBack.rollbackSourceRoot, rollback: true });
       if (rollbackHealth !== true) throw new Error("Rollback Equinox Local runtime did not pass health verification.");
       await engine.releaseStagedLock(transactionId);
