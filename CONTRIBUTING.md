@@ -59,6 +59,14 @@ Contributions must not quietly weaken these rules:
 
 If a feature appears to require relaxing one of these rules, discuss the design first.
 
+## Continuous integration
+
+CI and CodeQL run on both pull requests and `main`. The complete macOS test suite, Windows x64 acceptance and native ARM64 acceptance remain enabled for every change; no path-based skips or reuse of a different commit's successful checks is involved.
+
+The ARM64 runtime and managed-package jobs run independently. One managed ZIP is built per workflow run, then separate native ARM64 runners perform packaged Desktop/UIA and real public-installer acceptance in parallel. Each consumer verifies the producer's SHA-256 and byte count before executing anything from the ZIP. CI artifacts are short-lived test inputs, not signed release artifacts or publication authority.
+
+The existing `Windows ARM64 foundation / Node 26` and `Windows x64 headless / Node 26` check names remain fail-closed aggregate gates: a failed, cancelled or skipped acceptance lane cannot produce a successful aggregate. npm and architecture-scoped NuGet caches save downloads; dependency installation, native builds and smoke tests still execute.
+
 ## Tests
 
 Tests intentionally live under `tests/` rather than beside every source file. Add new coverage to the closest existing category:

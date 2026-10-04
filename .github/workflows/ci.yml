@@ -308,10 +308,12 @@ jobs:
           & powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File tests/release/windows-installer-bootstrap-smoke.ps1
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-  windows-arm64-foundation:
-    name: Windows ARM64 foundation / Node 26
+  # Native runtime and package construction are independent. Desktop UIA and
+  # fresh installation consume the same verified package on isolated runners.
+  windows-arm64-runtime:
+    name: Windows ARM64 runtime / Node 26
     runs-on: windows-11-vs2026-arm
-    timeout-minutes: 12
+    timeout-minutes: 6
 
     steps:
       - name: Checkout
@@ -350,10 +352,47 @@ jobs:
       - name: Native ARM64 Native Messaging launcher smoke
         run: node tests/release/windows-native-messaging-smoke.mjs
 
+  windows-arm64-package:
+    name: Windows ARM64 managed package
+    runs-on: windows-11-vs2026-arm
+    timeout-minutes: 6
+    outputs:
+      artifact-sha256: ${{ steps.package.outputs.sha256 }}
+      artifact-bytes: ${{ steps.package.outputs.bytes }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up native ARM64 Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 26.10.0
+          architecture: arm64
+          cache: npm
+
+      - name: Verify native ARM64 Node host
+        shell: pwsh
+        run: |
+          if ((node -p "process.platform") -ne 'win32') { throw 'ARM64 lane is not running on Windows' }
+          if ((node -p "process.arch") -ne 'arm64') { throw 'ARM64 lane is not running native ARM64 Node' }
+          if ((node --version) -ne 'v26.10.0') { throw 'ARM64 lane Node version drifted' }
+
+      - name: Install dependencies
+        run: npm ci --prefer-offline --no-audit --no-fund
+
       - name: Set up .NET SDK
         uses: actions/setup-dotnet@v6
         with:
           dotnet-version: 10.0.x
+
+      - name: Cache NuGet packages
+        uses: actions/cache@v6
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ runner.arch }}-dotnet10-${{ hashFiles('native/windows/**/*.csproj', 'tests/windows/**/*.csproj') }}
+          restore-keys: |
+            nuget-${{ runner.os }}-${{ runner.arch }}-dotnet10-
 
       - name: Publish Windows ARM64 native shell
         run: dotnet publish native/windows/EquinoxLocal.WindowsShell/EquinoxLocal.WindowsShell.csproj --configuration Release --runtime win-arm64 --self-contained true -p:Platform=ARM64 --output artifacts/windows-shell/win-arm64
@@ -383,13 +422,15 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Windows ARM64 managed package assembly smoke
+        id: package
         shell: pwsh
         env:
           EQUINOX_WINDOWS_SHELL_PUBLISH_DIR: artifacts/windows-shell/win-arm64
         run: |
           npm run local:release:package:windows
-          $artifact = Get-ChildItem backups/local-packages -Filter 'equinox-local-*-win32-arm64.zip' | Select-Object -First 1
-          if ($null -eq $artifact) { throw 'Windows ARM64 managed ZIP artifact was not created' }
+          $artifacts = @(Get-ChildItem backups/local-packages -Filter 'equinox-local-*-win32-arm64.zip')
+          if ($artifacts.Count -ne 1) { throw 'Expected exactly one Windows ARM64 managed ZIP artifact' }
+          $artifact = $artifacts[0]
           Add-Type -AssemblyName System.IO.Compression.FileSystem
           $zip = [System.IO.Compression.ZipFile]::OpenRead($artifact.FullName)
           try {
@@ -403,6 +444,64 @@ jobs:
             if ($metadata.target -ne 'win32-arm64') { throw "Windows ARM64 release metadata target mismatch: $($metadata.target)" }
             if ($names | Where-Object { $_ -like 'release/runtime/peekaboo/*' }) { throw 'Windows ARM64 managed ZIP unexpectedly contains Peekaboo' }
           } finally { $zip.Dispose() }
+          $sha256 = (Get-FileHash -LiteralPath $artifact.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+          "sha256=$sha256" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "bytes=$($artifact.Length)" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+
+      - name: Share verified ARM64 CI package
+        uses: actions/upload-artifact@v7
+        with:
+          name: ci-arm64-package-${{ github.sha }}
+          path: backups/local-packages/equinox-local-*-win32-arm64.zip
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 1
+
+  windows-arm64-winapp:
+    name: Windows ARM64 packaged desktop acceptance
+    needs: windows-arm64-package
+    runs-on: windows-11-vs2026-arm
+    timeout-minutes: 4
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Verify native ARM64 Windows host
+        shell: pwsh
+        run: |
+          if ([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture -ne 'Arm64') { throw 'ARM64 acceptance requires native ARM64 Windows' }
+
+      - name: Download current-run ARM64 CI package
+        uses: actions/download-artifact@v8
+        with:
+          name: ci-arm64-package-${{ github.sha }}
+          path: backups/local-packages
+
+      - name: Verify exact ARM64 CI package bytes
+        shell: pwsh
+        env:
+          EXPECTED_PACKAGE_SHA256: ${{ needs.windows-arm64-package.outputs.artifact-sha256 }}
+          EXPECTED_PACKAGE_BYTES: ${{ needs.windows-arm64-package.outputs.artifact-bytes }}
+        run: |
+          $artifacts = @(Get-ChildItem backups/local-packages -Filter 'equinox-local-*-win32-arm64.zip')
+          if ($artifacts.Count -ne 1) { throw 'Expected exactly one current-run ARM64 CI package' }
+          if ($env:EXPECTED_PACKAGE_SHA256 -cnotmatch '^[0-9a-f]{64}$' -or $env:EXPECTED_PACKAGE_BYTES -notmatch '^[1-9][0-9]*$') { throw 'ARM64 package producer metadata is missing or invalid' }
+          $sha256 = (Get-FileHash -LiteralPath $artifacts[0].FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($sha256 -cne $env:EXPECTED_PACKAGE_SHA256 -or $artifacts[0].Length -ne [int64]$env:EXPECTED_PACKAGE_BYTES) { throw 'ARM64 CI package digest or length differs from the producer' }
+
+      - name: Set up .NET SDK
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Cache NuGet packages
+        uses: actions/cache@v6
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ runner.arch }}-dotnet10-${{ hashFiles('native/windows/**/*.csproj', 'tests/windows/**/*.csproj') }}
+          restore-keys: |
+            nuget-${{ runner.os }}-${{ runner.arch }}-dotnet10-
 
       - name: Windows ARM64 packaged winapp UIA smoke
         shell: pwsh
@@ -419,6 +518,39 @@ jobs:
           & powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File tests/release/windows-winapp-smoke.ps1 -WinappPath (Join-Path $extract 'release/runtime/winapp/winapp.exe') -FixturePath (Join-Path $fixtureOut 'EquinoxLocal.WinappSmokeFixture.exe') -ClipboardHelperPath (Join-Path $extract 'release/equinox-local-windows-clipboard.ps1') -DesktopHelperPath (Join-Path $extract 'release/equinox-local-windows-desktop.ps1')
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+  windows-arm64-installer:
+    name: Windows ARM64 public installer acceptance
+    needs: windows-arm64-package
+    runs-on: windows-11-vs2026-arm
+    timeout-minutes: 4
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Verify native ARM64 Windows host
+        shell: pwsh
+        run: |
+          if ([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture -ne 'Arm64') { throw 'ARM64 acceptance requires native ARM64 Windows' }
+
+      - name: Download current-run ARM64 CI package
+        uses: actions/download-artifact@v8
+        with:
+          name: ci-arm64-package-${{ github.sha }}
+          path: backups/local-packages
+
+      - name: Verify exact ARM64 CI package bytes
+        shell: pwsh
+        env:
+          EXPECTED_PACKAGE_SHA256: ${{ needs.windows-arm64-package.outputs.artifact-sha256 }}
+          EXPECTED_PACKAGE_BYTES: ${{ needs.windows-arm64-package.outputs.artifact-bytes }}
+        run: |
+          $artifacts = @(Get-ChildItem backups/local-packages -Filter 'equinox-local-*-win32-arm64.zip')
+          if ($artifacts.Count -ne 1) { throw 'Expected exactly one current-run ARM64 CI package' }
+          if ($env:EXPECTED_PACKAGE_SHA256 -cnotmatch '^[0-9a-f]{64}$' -or $env:EXPECTED_PACKAGE_BYTES -notmatch '^[1-9][0-9]*$') { throw 'ARM64 package producer metadata is missing or invalid' }
+          $sha256 = (Get-FileHash -LiteralPath $artifacts[0].FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($sha256 -cne $env:EXPECTED_PACKAGE_SHA256 -or $artifacts[0].Length -ne [int64]$env:EXPECTED_PACKAGE_BYTES) { throw 'ARM64 CI package digest or length differs from the producer' }
+
       - name: Windows ARM64 real public-installer fresh-install acceptance
         shell: pwsh
         run: |
@@ -427,6 +559,26 @@ jobs:
           $env:EQUINOX_WINDOWS_INSTALL_ARTIFACT = $artifact.FullName
           & powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File tests/release/windows-installer-real-package-smoke.ps1
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+  windows-arm64-foundation:
+    name: Windows ARM64 foundation / Node 26
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    if: ${{ always() }}
+    needs: [windows-arm64-runtime, windows-arm64-package, windows-arm64-winapp, windows-arm64-installer]
+
+    steps:
+      - name: Verify parallel native ARM64 acceptance
+        env:
+          ARM64_RUNTIME_RESULT: ${{ needs.windows-arm64-runtime.result }}
+          ARM64_PACKAGE_RESULT: ${{ needs.windows-arm64-package.result }}
+          ARM64_WINAPP_RESULT: ${{ needs.windows-arm64-winapp.result }}
+          ARM64_INSTALLER_RESULT: ${{ needs.windows-arm64-installer.result }}
+        run: |
+          test "$ARM64_RUNTIME_RESULT" = success
+          test "$ARM64_PACKAGE_RESULT" = success
+          test "$ARM64_WINAPP_RESULT" = success
+          test "$ARM64_INSTALLER_RESULT" = success
 
   windows-headless:
     name: Windows x64 headless / Node 26
