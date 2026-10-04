@@ -2,6 +2,12 @@
 
 Thanks for taking an interest in Equinox Local. The project welcomes focused bug fixes, tests, documentation improvements, and features that preserve its explicit local security boundaries.
 
+## Canonical repository
+
+`sametbasbug/equinox-local` owns the actual product source, public tests, platform/native code, installers, CI and CodeQL. Start product changes from this repository, use a focused `equinox/` branch and target `main` here. Outside contributors fork this repository directly. No private factory checkout, public projection/export, duplicate product commit or factory backport is required.
+
+Private factory/ops tooling consumes accepted canonical source for maintainer-authorized publication; its credentials, machine configuration and history are outside this contribution boundary. Source ownership does not itself authorize a release or change users' update channel.
+
 ## Before you start
 
 Equinox Local currently targets macOS. Use Node.js 26.10.0 or newer.

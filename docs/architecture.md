@@ -2,6 +2,14 @@
 
 Equinox Local is a per-user macOS control plane that exposes bounded local capabilities to AI clients while giving the human a native macOS Control Center backed by a private loopback management service.
 
+## Repository and installation ownership
+
+`sametbasbug/equinox-local` is the single canonical product source: runtime, native/platform code, installers, public tests and product CI/CodeQL live here. Ordinary feature/fix and contributor PRs target canonical `main` without generating another source tree.
+
+Private factory/ops orchestration is an external client of a clean canonical checkout and exact SHA. The public runtime's private-composition loader keeps a safe generic default; an explicitly configured, admitted external module may supply factory-only hooks without a public import back into private tooling. Private config, signing/provider/tunnel secrets and durable user state remain outside tracked source. Factory is an installation/profile role, not a second mutable product implementation.
+
+Repository cutover is separate from managed-source update implementation. Stable signed-release activation, release authorization and users' existing channels remain unchanged; this document does not promise a main-tracking updater before its separate acceptance.
+
 ## Main surfaces
 
 ```mermaid

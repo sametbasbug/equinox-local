@@ -2,7 +2,15 @@
 
 ## Scope
 
-These instructions apply to the entire Equinox Local public repository unless a deeper `AGENTS.md` overrides them.
+These instructions apply to the entire Equinox Local canonical product repository unless a deeper `AGENTS.md` overrides them.
+
+## Source ownership
+
+- `sametbasbug/equinox-local` is the one canonical product source. Start all product features/fixes, public tests, platform/native work, installer/update changes and contributor PRs here; target this repository's `main`.
+- Private factory/ops tooling is a client of this checkout by canonical repository identity and exact SHA. It may provide explicit external private composition, credentials integration and authorized publication orchestration; ordinary product development, build and tests must not require it.
+- Do not edit a private product mirror, export a second writable source tree, backport product commits to factory, or graft private Git history into this repository. Keep the existing public history and AGPL-3.0-only boundary.
+- A factory installation is a local configuration/profile role, not another product lineage. Keep machine-local config, persistent state and secrets outside tracked source; loading an explicit private composition must not make the default public runtime depend on private files.
+- Canonical repository ownership does not enable main-tracking updates by itself, change stable users' channel, authorize publication, or promote the unreleased development version.
 
 ## Product boundaries
 
