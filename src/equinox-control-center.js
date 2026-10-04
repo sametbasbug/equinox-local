@@ -208,6 +208,7 @@ const DYNAMIC_TEXT_IDS = new Set([
   "default-project", "health-summary-title", "health-summary-badge", "health-summary-copy", "health-event-count",
   "health-evaluated-at", "doctor-title", "doctor-badge", "doctor-copy", "doctor-list", "doctor-summary",
   "doctor-checked-at", "doctor-fix-title", "doctor-fix-summary", "doctor-fix-copy", "doctor-repair-list", "doctor-repair-result", "update-title", "update-badge", "update-copy", "update-version", "update-checked-at",
+  "update-main-current", "update-main-target", "update-main-distance", "update-main-summaries",
   "check-update-button", "install-update-button", "root-count-label", "dirty-state", "project-list",
   "default-project-select", "workspace-project-select", "downloads-root-select", "control-center-address",
   "save-config-button", "agent-browser-page-status", "agent-browser-page-badge", "agent-browser-page-version", "agent-browser-connected-at",
@@ -896,11 +897,77 @@ function renderDoctor() {
   }
 }
 
+function shortUpdateSha(value) {
+  return typeof value === "string" && /^[a-f0-9]{40}$/u.test(value) ? value.slice(0, 7) : null;
+}
+
 function renderUpdate() {
   const update = state.update || {};
+  const main = update.main || {};
+  const sourceMain = update.installationKind === "source" && main.checkSupported === true;
   const checkButton = $("check-update-button");
   const installButton = $("install-update-button");
+  const mainMeta = $("update-main-meta");
   const current = update.currentVersion || state.status?.server?.version || null;
+
+  mainMeta.hidden = !sourceMain;
+  if (sourceMain) {
+    const currentSha = shortUpdateSha(main.currentSha);
+    const targetSha = shortUpdateSha(main.targetSha);
+    setText("update-version", current ? `Equinox Local ${current}` : "Current version unavailable");
+    setText("update-checked-at", main.checkedAt ? `Checked ${formatDate(main.checkedAt)}` : "Not checked yet");
+    setText("update-main-current", currentSha ? `Current SHA ${currentSha}` : "Current SHA —");
+    setText("update-main-target", targetSha ? `Target SHA ${targetSha}` : "Target SHA —");
+    const distance = Number.isInteger(main.behindBy) && Number.isInteger(main.aheadBy)
+      ? `Distance ↓${main.behindBy} ↑${main.aheadBy}`
+      : "Commit distance —";
+    setText("update-main-distance", distance);
+    const summaries = Array.isArray(main.summaries) ? main.summaries.slice(0, 5) : [];
+    const summaryNode = $("update-main-summaries");
+    summaryNode.hidden = summaries.length === 0;
+    summaryNode.textContent = summaries.map((entry) => `${entry.shortSha || "???????"} ${entry.message || "Commit"}`).join(" · ");
+
+    if (state.updateBusy) {
+      setText("update-title", "Checking canonical main");
+      setText("update-copy", "Reading local Git identity and checking the canonical public main branch without changing the checkout.");
+      setBadge("update-badge", "Checking", "neutral");
+    } else if (main.state === "behind") {
+      setText("update-title", `${main.behindBy} ${main.behindBy === 1 ? "commit" : "commits"} available on main`);
+      setText("update-copy", "A newer canonical main SHA is available. M5 only reports it; no source files, Git refs, runtime state or user data are changed.");
+      setBadge("update-badge", "Main update available", "good");
+    } else if (main.state === "up_to_date") {
+      setText("update-title", "Canonical main is up to date");
+      setText("update-copy", "The current source SHA exactly matches the canonical public main branch.");
+      setBadge("update-badge", "Up to date", "good");
+    } else if (main.state === "ahead") {
+      setText("update-title", "Local main is ahead of canonical main");
+      setText("update-copy", "This checkout contains commits that are not on canonical main. Automatic main updates remain unavailable until the histories match.");
+      setBadge("update-badge", "Local ahead", "warn");
+    } else if (main.state === "diverged") {
+      setText("update-title", "Local and canonical main have diverged");
+      setText("update-copy", "The histories have commits on both sides. Equinox Local will not treat this as an ordinary update path.");
+      setBadge("update-badge", "Diverged", "bad");
+    } else if (["dirty", "detached", "unsupported"].includes(main.state)) {
+      setText("update-title", "Main update check is blocked");
+      setText("update-copy", main.reason || "This source checkout is not eligible for canonical main tracking.");
+      setBadge("update-badge", "Unsupported", "warn");
+    } else if (main.state === "unavailable") {
+      setText("update-title", "Main update check needs attention");
+      setText("update-copy", main.lastError || main.reason || "The canonical main branch could not be checked. This is not an up-to-date result.");
+      setBadge("update-badge", "Check unavailable", "bad");
+    } else {
+      setText("update-title", "Canonical main channel ready");
+      setText("update-copy", "Check the canonical public main branch without modifying this source checkout.");
+      setBadge("update-badge", "Ready", "neutral");
+    }
+
+    checkButton.disabled = state.updateBusy;
+    checkButton.textContent = localizeUiText(state.updateBusy ? "Checking…" : "Check main");
+    installButton.hidden = true;
+    installButton.disabled = true;
+    return;
+  }
+
   setText("update-version", current ? `Current version ${current}` : "Current version unavailable");
   setText("update-checked-at", update.checkedAt ? `Checked ${formatDate(update.checkedAt)}` : "Not checked yet");
 
@@ -914,7 +981,7 @@ function renderUpdate() {
     setBadge("update-badge", "Preparing", "warn");
   } else if (update.installationKind === "source") {
     setText("update-title", "Source checkout");
-    setText("update-copy", "This development checkout is never self-updated. Public shell-bootstrap installs use the managed signed update channel.");
+    setText("update-copy", "This source checkout is not eligible for canonical main discovery.");
     setBadge("update-badge", "Development", "neutral");
   } else if (!update.managedInstallation) {
     setText("update-title", "Managed updates unavailable");
@@ -3146,7 +3213,8 @@ async function deleteHttpProfileFromControlCenter(profile) {
 
 
 async function checkForUpdates() {
-  if (state.updateBusy || !state.update?.selfUpdateSupported) return;
+  const sourceMain = state.update?.installationKind === "source" && state.update?.main?.checkSupported === true;
+  if (state.updateBusy || (!state.update?.selfUpdateSupported && !sourceMain)) return;
   clearError();
   state.updateBusy = true;
   renderUpdate();
@@ -3154,7 +3222,15 @@ async function checkForUpdates() {
     const result = await mutationJson("/api/v1/update/check", "POST", {});
     state.update = result.update || state.update;
     renderUpdate();
-    showToast(state.update?.updateAvailable ? `Equinox Local ${state.update.latestVersion} is available.` : "Equinox Local is up to date.");
+    if (sourceMain) {
+      const main = state.update?.main || {};
+      if (main.state === "behind") showToast(`${main.behindBy} ${main.behindBy === 1 ? "commit" : "commits"} available on canonical main.`);
+      else if (main.state === "up_to_date") showToast("Canonical main is up to date.");
+      else if (main.state === "unavailable") showToast("Main update check is unavailable; no up-to-date result was assumed.");
+      else showToast("Main source identity check finished.");
+    } else {
+      showToast(state.update?.updateAvailable ? `Equinox Local ${state.update.latestVersion} is available.` : "Equinox Local is up to date.");
+    }
   } catch (error) {
     showError(error);
     try {
