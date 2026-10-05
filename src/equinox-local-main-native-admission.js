@@ -23,6 +23,13 @@ const SHARED_NATIVE_PATHS = Object.freeze([
   "src/equinox-local-release-runtime-contract.js",
   "src/equinox-local-runtime-versions.js",
 ]);
+const SHARED_NATIVE_ADMISSION_PATHS = Object.freeze([
+  ".github/workflows/main-native-artifacts.yml",
+  "scripts/release/build-main-native-artifact.mjs",
+  "scripts/release/materialize-main-native-artifact.mjs",
+  "scripts/release/plan-main-native-artifacts.mjs",
+  "src/equinox-local-main-native-admission.js",
+]);
 const DARWIN_NATIVE_PATHS = Object.freeze([
   "app/",
   "src/equinox-local-native-app.js",
@@ -206,7 +213,7 @@ export function classifyEquinoxLocalMainNativeImpact(changedPaths = []) {
     const relative = normalizeChangedPath(raw);
     if (seen.has(relative)) continue;
     seen.add(relative);
-    if (SHARED_NATIVE_PATHS.some((rule) => matchesRule(relative, rule))) {
+    if ([...SHARED_NATIVE_PATHS, ...SHARED_NATIVE_ADMISSION_PATHS].some((rule) => matchesRule(relative, rule))) {
       addTargets(targets, ALL_TARGETS);
       reasons.push(Object.freeze({ path: relative, scope: "all" }));
       continue;
