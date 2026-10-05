@@ -43,6 +43,9 @@ const WINDOWS_NATIVE_PATHS = Object.freeze([
   "scripts/release/windows-managed-zip.ps1",
   "src/equinox-local-windows-stable-shell.js",
   "src/equinox-local-windows-shell-control.js",
+  "src/equinox-browser-native-host.js",
+  "src/equinox-browser-native-host-runtime.js",
+  "src/equinox-browser-socket.js",
 ]);
 
 function normalizeChangedPath(value) {
