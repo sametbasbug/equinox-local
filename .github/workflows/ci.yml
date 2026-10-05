@@ -738,6 +738,8 @@ jobs:
           AWS_SECRET_ACCESS_KEY: ${{ secrets.EQUINOX_MAIN_R2_SECRET_ACCESS_KEY }}
           AWS_DEFAULT_REGION: auto
           AWS_EC2_METADATA_DISABLED: 'true'
+          AWS_RETRY_MODE: standard
+          AWS_MAX_ATTEMPTS: '8'
           TARGET_SHA: ${{ needs.main-native-plan.outputs.target-sha }}
           SNAPSHOT_DIR: ${{ runner.temp }}/main-snapshot
           R2_ENDPOINT: https://c1ff8ccffcbffe46094cd3a2729a1c1f.r2.cloudflarestorage.com
@@ -746,11 +748,16 @@ jobs:
           test -n "${AWS_ACCESS_KEY_ID:-}"
           test -n "${AWS_SECRET_ACCESS_KEY:-}"
           aws --version
-          aws s3 cp "$SNAPSHOT_DIR/" "s3://equinox-local-main/snapshots/$TARGET_SHA/" \
-            --recursive \
-            --endpoint-url "$R2_ENDPOINT" \
-            --cache-control 'public,max-age=31536000,immutable' \
-            --only-show-errors
+          for object in "$SNAPSHOT_DIR"/*; do
+            name="$(basename "$object")"
+            aws s3api put-object \
+              --bucket equinox-local-main \
+              --key "snapshots/$TARGET_SHA/$name" \
+              --body "$object" \
+              --endpoint-url "$R2_ENDPOINT" \
+              --cache-control 'public,max-age=31536000,immutable' \
+              >/dev/null
+          done
 
       - name: Verify public snapshot before moving tag
         if: ${{ steps.latest.outputs.publish == 'true' }}
