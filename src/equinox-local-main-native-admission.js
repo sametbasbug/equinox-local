@@ -114,6 +114,89 @@ export async function computeEquinoxLocalMainNativeRuntimeContract({
   });
 }
 
+const MAX_NATIVE_IMPACT_DIFF_BYTES = 8 * 1024 * 1024;
+const MAX_NATIVE_IMPACT_CHANGED_PATHS = 20_000;
+const DEFAULT_CANONICAL_MAIN_REF = "refs/remotes/origin/main";
+
+async function runNativeAdmissionGit(root, args, { execFileImpl = execFile, maxBuffer = 1024 * 1024 } = {}) {
+  return execFileImpl("git", ["-C", root, ...args], {
+    encoding: "utf8",
+    timeout: 10_000,
+    maxBuffer,
+    env: { ...process.env, GIT_OPTIONAL_LOCKS: "0", GIT_TERMINAL_PROMPT: "0" },
+  });
+}
+
+async function resolveExactCommit(root, revision, label, { execFileImpl = execFile } = {}) {
+  const result = await runNativeAdmissionGit(root, ["rev-parse", "--verify", `${revision}^{commit}`], { execFileImpl });
+  const resolved = String(result?.stdout ?? "").trim();
+  if (!SHA_PATTERN.test(resolved)) throw new Error(`${label} did not resolve to an exact commit.`);
+  return resolved;
+}
+
+async function assertGitAncestor(root, ancestor, descendant, message, { execFileImpl = execFile } = {}) {
+  try {
+    await runNativeAdmissionGit(root, ["merge-base", "--is-ancestor", ancestor, descendant], { execFileImpl });
+  } catch {
+    throw new Error(message);
+  }
+}
+
+export async function inspectEquinoxLocalMainNativeImpactRange({
+  rootDir,
+  currentSha,
+  targetSha,
+  canonicalMainRef = DEFAULT_CANONICAL_MAIN_REF,
+  execFileImpl = execFile,
+} = {}) {
+  if (typeof rootDir !== "string" || rootDir.length < 1) throw new Error("Main native-impact Git root is required.");
+  if (!SHA_PATTERN.test(currentSha ?? "")) throw new Error("Main native-impact current SHA is invalid.");
+  if (!SHA_PATTERN.test(targetSha ?? "")) throw new Error("Main native-impact target SHA is invalid.");
+  if (typeof canonicalMainRef !== "string" || canonicalMainRef.length < 1 || canonicalMainRef.length > 256 || /[\u0000-\u001f\u007f]/u.test(canonicalMainRef)) {
+    throw new Error("Main native-impact canonical ref is invalid.");
+  }
+
+  const root = path.resolve(rootDir);
+  const [resolvedCurrent, resolvedTarget, canonicalMainSha] = await Promise.all([
+    resolveExactCommit(root, currentSha, "Main native-impact current SHA", { execFileImpl }),
+    resolveExactCommit(root, targetSha, "Main native-impact target SHA", { execFileImpl }),
+    resolveExactCommit(root, canonicalMainRef, "Main native-impact canonical main ref", { execFileImpl }),
+  ]);
+  if (resolvedCurrent !== currentSha) throw new Error("Main native-impact current SHA does not resolve exactly.");
+  if (resolvedTarget !== targetSha) throw new Error("Main native-impact target SHA does not resolve exactly.");
+
+  await assertGitAncestor(root, currentSha, targetSha, "Main native-impact current SHA is not an ancestor of the target SHA.", { execFileImpl });
+  await assertGitAncestor(root, currentSha, canonicalMainSha, "Main native-impact current SHA is not on canonical main history.", { execFileImpl });
+  await assertGitAncestor(root, targetSha, canonicalMainSha, "Main native-impact target SHA is not on canonical main history.", { execFileImpl });
+
+  if (currentSha === targetSha) {
+    return Object.freeze({
+      currentSha,
+      targetSha,
+      canonicalMainSha,
+      changedPaths: Object.freeze([]),
+      ...classifyEquinoxLocalMainNativeImpact([]),
+    });
+  }
+
+  const diff = await runNativeAdmissionGit(root, [
+    "diff", "--name-only", "-z", "--no-renames", currentSha, targetSha, "--",
+  ], { execFileImpl, maxBuffer: MAX_NATIVE_IMPACT_DIFF_BYTES });
+  const raw = String(diff?.stdout ?? "");
+  if (Buffer.byteLength(raw, "utf8") > MAX_NATIVE_IMPACT_DIFF_BYTES) throw new Error("Main native-impact Git diff exceeds the byte limit.");
+  const changedPaths = raw.split("\0").filter(Boolean).map(normalizeChangedPath);
+  if (changedPaths.length > MAX_NATIVE_IMPACT_CHANGED_PATHS) throw new Error("Main native-impact Git diff contains too many changed paths.");
+  const uniquePaths = Object.freeze([...new Set(changedPaths)]);
+  const impact = classifyEquinoxLocalMainNativeImpact(uniquePaths);
+  return Object.freeze({
+    currentSha,
+    targetSha,
+    canonicalMainSha,
+    changedPaths: uniquePaths,
+    ...impact,
+  });
+}
+
 export function classifyEquinoxLocalMainNativeImpact(changedPaths = []) {
   if (!Array.isArray(changedPaths)) throw new Error("Main native-impact paths must be an array.");
   const targets = new Set();

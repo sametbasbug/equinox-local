@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   classifyEquinoxLocalMainNativeImpact,
   computeEquinoxLocalMainNativeRuntimeContract,
+  inspectEquinoxLocalMainNativeImpactRange,
   validateEquinoxLocalMainNativeArtifactManifest,
 } from "../../src/equinox-local-main-native-admission.js";
 
@@ -54,6 +55,109 @@ test("native-impact path admission is fail-closed for unsafe path syntax", () =>
   assert.throws(() => classifyEquinoxLocalMainNativeImpact(["../app/EquinoxLocalApp.swift"]), /unsafe/u);
   assert.throws(() => classifyEquinoxLocalMainNativeImpact(["native\\windows\\shell.cs"]), /invalid/u);
   assert.throws(() => classifyEquinoxLocalMainNativeImpact("app/EquinoxLocalApp.swift"), /array/u);
+});
+
+test("exact canonical main range derives NUL-safe changed paths and required native targets", async () => {
+  const currentSha = "1".repeat(40);
+  const targetSha = "2".repeat(40);
+  const canonicalMainSha = "3".repeat(40);
+  const calls = [];
+  const execFileImpl = async (_command, args) => {
+    calls.push(args);
+    if (args.includes("rev-parse")) {
+      const revision = args.at(-1).replace(/\^\{commit\}$/u, "");
+      if (revision === currentSha || revision === targetSha) return { stdout: `${revision}\n`, stderr: "" };
+      if (revision === "refs/remotes/origin/main") return { stdout: `${canonicalMainSha}\n`, stderr: "" };
+    }
+    if (args.includes("merge-base")) return { stdout: "", stderr: "" };
+    if (args.includes("diff")) {
+      return {
+        stdout: `src/server.js\0native/windows/EquinoxLocal.WindowsShell/App.xaml.cs\0app/EquinoxLocalApp.swift\0`,
+        stderr: "",
+      };
+    }
+    throw new Error("Unexpected Git call.");
+  };
+  const result = await inspectEquinoxLocalMainNativeImpactRange({
+    rootDir: "/tmp/canonical", currentSha, targetSha, execFileImpl,
+  });
+  assert.equal(result.canonicalMainSha, canonicalMainSha);
+  assert.deepEqual(result.changedPaths, [
+    "src/server.js",
+    "native/windows/EquinoxLocal.WindowsShell/App.xaml.cs",
+    "app/EquinoxLocalApp.swift",
+  ]);
+  assert.deepEqual(result.requiredTargets, ["darwin-arm64", "darwin-x64", "win32-arm64", "win32-x64"]);
+  assert.equal(calls.some((args) => args.includes("diff") && args.includes("--no-renames") && args.includes("-z")), true);
+});
+
+test("exact canonical main range fails closed for divergent or non-canonical history", async () => {
+  const currentSha = "1".repeat(40);
+  const targetSha = "2".repeat(40);
+  const canonicalMainSha = "3".repeat(40);
+  const createExec = (rejectPair) => async (_command, args) => {
+    if (args.includes("rev-parse")) {
+      const revision = args.at(-1).replace(/\^\{commit\}$/u, "");
+      if (revision === currentSha || revision === targetSha) return { stdout: `${revision}\n`, stderr: "" };
+      return { stdout: `${canonicalMainSha}\n`, stderr: "" };
+    }
+    if (args.includes("merge-base")) {
+      const pair = `${args.at(-2)}:${args.at(-1)}`;
+      if (pair === rejectPair) {
+        const error = new Error("not ancestor");
+        error.code = 1;
+        throw error;
+      }
+      return { stdout: "", stderr: "" };
+    }
+    return { stdout: "", stderr: "" };
+  };
+  await assert.rejects(
+    inspectEquinoxLocalMainNativeImpactRange({
+      rootDir: "/tmp/canonical", currentSha, targetSha, execFileImpl: createExec(`${currentSha}:${targetSha}`),
+    }),
+    /not an ancestor/u,
+  );
+  await assert.rejects(
+    inspectEquinoxLocalMainNativeImpactRange({
+      rootDir: "/tmp/canonical", currentSha, targetSha, execFileImpl: createExec(`${targetSha}:${canonicalMainSha}`),
+    }),
+    /not on canonical main history/u,
+  );
+});
+
+test("exact canonical main range rejects malformed diff paths and exact-SHA drift", async () => {
+  const currentSha = "1".repeat(40);
+  const targetSha = "2".repeat(40);
+  const canonicalMainSha = "3".repeat(40);
+  const driftingExec = async (_command, args) => {
+    if (args.includes("rev-parse")) {
+      const revision = args.at(-1).replace(/\^\{commit\}$/u, "");
+      if (revision === currentSha) return { stdout: `${"4".repeat(40)}\n`, stderr: "" };
+      if (revision === targetSha) return { stdout: `${targetSha}\n`, stderr: "" };
+      return { stdout: `${canonicalMainSha}\n`, stderr: "" };
+    }
+    return { stdout: "", stderr: "" };
+  };
+  await assert.rejects(
+    inspectEquinoxLocalMainNativeImpactRange({ rootDir: "/tmp/canonical", currentSha, targetSha, execFileImpl: driftingExec }),
+    /does not resolve exactly/u,
+  );
+
+  const unsafeDiffExec = async (_command, args) => {
+    if (args.includes("rev-parse")) {
+      const revision = args.at(-1).replace(/\^\{commit\}$/u, "");
+      if (revision === currentSha || revision === targetSha) return { stdout: `${revision}\n`, stderr: "" };
+      return { stdout: `${canonicalMainSha}\n`, stderr: "" };
+    }
+    if (args.includes("merge-base")) return { stdout: "", stderr: "" };
+    if (args.includes("diff")) return { stdout: "app/ok.swift\0native/windows/bad\nname.cpp\0", stderr: "" };
+    throw new Error("Unexpected Git call.");
+  };
+  await assert.rejects(
+    inspectEquinoxLocalMainNativeImpactRange({ rootDir: "/tmp/canonical", currentSha, targetSha, execFileImpl: unsafeDiffExec }),
+    /path is invalid/u,
+  );
 });
 
 test("exact-SHA native runtime contract hashes exact Git inputs without binding unrelated commits", async () => {
