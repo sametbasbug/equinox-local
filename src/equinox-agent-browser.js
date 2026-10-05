@@ -370,7 +370,12 @@ export function createEquinoxAgentBrowser({
         }
         forced = true;
         emit("shutdown_force_fallback", { platform });
-        await execFileAsync(WINDOWS_TASKKILL_BINARY, ["/PID", String(pid), "/T", "/F"], options);
+        try {
+          await execFileAsync(WINDOWS_TASKKILL_BINARY, ["/PID", String(pid), "/T", "/F"], options);
+        } catch (error) {
+          if (processAlive(pid)) throw error;
+          emit("shutdown_force_race", { platform });
+        }
       };
       let gracefulFailed = false;
       try {
