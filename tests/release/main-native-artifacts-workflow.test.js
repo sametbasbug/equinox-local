@@ -8,7 +8,8 @@ test("Main native artifact workflow is exact-SHA dispatch-only and impact planne
   assert.match(workflow, /^on:\n  workflow_dispatch:\n    inputs:\n      current:/mu);
   assert.doesNotMatch(workflow, /\n  push:/u);
   assert.doesNotMatch(workflow, /\n  pull_request:/u);
-  assert.match(workflow, /ref: main\n          fetch-depth: 0/u);
+  assert.match(workflow, /ref: \$\{\{ github\.sha \}\}\n          fetch-depth: 0/u);
+  assert.match(workflow, /git fetch --no-tags origin \+refs\/heads\/main:refs\/remotes\/origin\/main/u);
   assert.match(workflow, /plan-main-native-artifacts\.mjs --current-sha/u);
   assert.match(workflow, /githubTargets/u);
   assert.match(workflow, /factoryTargets/u);

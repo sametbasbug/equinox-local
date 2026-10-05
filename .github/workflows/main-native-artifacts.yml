@@ -30,11 +30,15 @@ jobs:
       github-matrix: ${{ steps.plan.outputs.github-matrix }}
       factory-targets: ${{ steps.plan.outputs.factory-targets }}
     steps:
-      - name: Checkout canonical main history
+      - name: Checkout workflow implementation
         uses: actions/checkout@v7
         with:
-          ref: main
+          ref: ${{ github.sha }}
           fetch-depth: 0
+
+      - name: Refresh canonical main ref
+        shell: bash
+        run: git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
 
       - name: Set up Node.js
         uses: actions/setup-node@v7
