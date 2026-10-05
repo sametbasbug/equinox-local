@@ -121,6 +121,7 @@ jobs:
           node --test tests/release/equinox-local-windows-stable-shell.test.js
           node --test --test-name-pattern "Windows activation rollback restores current-version.json and the previous exact release|Windows managed activation rotates pointer stable shell and Native Messaging together|Windows managed activation forced health failure restores pointer stable shell and Native Messaging" tests/release/equinox-local-update-activation.test.js
           node --test tests/release/equinox-local-windows-lifecycle.test.js
+          node --test tests/release/equinox-local-main-native-windows-acceptance.test.js
 
       - name: Windows PowerShell 5.1 bootstrap acceptance
         shell: pwsh
@@ -388,6 +389,9 @@ jobs:
 
       - name: Windows ARM64 uninstall/reinstall lifecycle acceptance
         run: node --test tests/release/equinox-local-windows-lifecycle.test.js
+
+      - name: Windows ARM64 Main native recovery acceptance
+        run: node --test tests/release/equinox-local-main-native-windows-acceptance.test.js
 
       - name: Native ARM64 node-pty / ConPTY smoke
         timeout-minutes: 1
