@@ -31,7 +31,13 @@ test("Main Snapshot publish uses public R2 plus a tag-only pointer and never cre
   assert.match(workflow, /pattern: main-native-\$\{\{ needs\.main-native-plan\.outputs\.target-sha \}\}-\*/u);
   assert.match(workflow, /secrets\.EQUINOX_MAIN_R2_ACCESS_KEY_ID/u);
   assert.match(workflow, /secrets\.EQUINOX_MAIN_R2_SECRET_ACCESS_KEY/u);
-  assert.match(workflow, /s3:\/\/equinox-local-main\/snapshots\/\$TARGET_SHA\//u);
+  assert.match(workflow, /aws s3api put-object/u);
+  assert.match(workflow, /--bucket equinox-local-main/u);
+  assert.match(workflow, /--key "snapshots\/\$TARGET_SHA\/\$name"/u);
+  assert.match(workflow, /AWS_RETRY_MODE: standard/u);
+  assert.match(workflow, /AWS_MAX_ATTEMPTS: '8'/u);
+  assert.doesNotMatch(workflow, /aws s3 cp/u);
+  assert.doesNotMatch(workflow, /--recursive/u);
   assert.match(workflow, /https:\/\/main\.local\.sametbasbug\.dev/u);
   assert.match(workflow, /jq -e --arg sha/u);
   assert.match(workflow, /--range 0-0/u);
