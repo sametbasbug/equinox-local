@@ -4,6 +4,8 @@ import fs from "node:fs/promises";
 import path from "node:path";
 
 import { requestWindowsShellUpdateShutdown } from "./equinox-local-windows-shell-control.js";
+import { fingerprintEquinoxLocalNativeState } from "./equinox-local-native-state-fingerprint.js";
+import { readBoundedNormalFile } from "./equinox-local-safe-file.js";
 
 const MAX_WINDOWS_SHELL_ENTRIES = 5_000;
 const MAX_WINDOWS_SHELL_BYTES = 512 * 1024 * 1024;
@@ -82,6 +84,58 @@ export async function stageWindowsStableShellForRelease({ releaseDir, programRoo
     await fsImpl.rm(stagedRoot, { recursive: true, force: true }).catch(() => {});
     throw error;
   }
+}
+
+export async function snapshotWindowsStableShellForRollback({ programRoot, snapshotReleaseDir, fsImpl = fs } = {}) {
+  if (typeof programRoot !== "string" || typeof snapshotReleaseDir !== "string") throw new Error("Windows stable shell snapshot paths are required.");
+  const sourceSnapshot = await snapshotWindowsStableShellTree(programRoot, { fsImpl });
+  const snapshotRoot = path.join(snapshotReleaseDir, "runtime", "shell");
+  try {
+    await fsImpl.lstat(snapshotReleaseDir);
+    throw Object.assign(new Error("Windows stable shell snapshot destination already exists."), { code: "EEXIST" });
+  } catch (error) {
+    if (error?.code !== "ENOENT") throw error;
+  }
+  await fsImpl.mkdir(path.dirname(snapshotRoot), { recursive: true });
+  try {
+    await fsImpl.cp(programRoot, snapshotRoot, { recursive: true, force: false, errorOnExist: true, dereference: false });
+    const copiedSnapshot = await snapshotWindowsStableShellTree(snapshotRoot, { fsImpl });
+    if (!sameWindowsStableShellTree(sourceSnapshot, copiedSnapshot)) throw new Error("Windows stable shell rollback snapshot failed integrity verification.");
+    const fingerprint = await fingerprintEquinoxLocalNativeState(snapshotRoot, { fsImpl });
+    await fsImpl.writeFile(path.join(snapshotReleaseDir, "rollback.json"), `${JSON.stringify({ schemaVersion: 1, kind: "windows-shell", ...fingerprint }, null, 2)}\n`, { flag: "wx", mode: 0o600 });
+  } catch (error) {
+    await fsImpl.rm(snapshotReleaseDir, { recursive: true, force: true }).catch(() => {});
+    throw error;
+  }
+  return Object.freeze({ snapshotReleaseDir, snapshotRoot, sourceSnapshot });
+}
+
+export async function restoreWindowsStableShellRollbackSnapshot({
+  snapshotReleaseDir,
+  currentReleaseDir,
+  programRoot,
+  fsImpl = fs,
+  requestShutdownImpl = requestWindowsShellUpdateShutdown,
+  sleepImpl = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+} = {}) {
+  if (typeof snapshotReleaseDir !== "string" || typeof currentReleaseDir !== "string" || typeof programRoot !== "string") {
+    throw new Error("Windows stable shell rollback paths are required.");
+  }
+  const manifestPath = path.join(snapshotReleaseDir, "rollback.json");
+  const manifestFile = await readBoundedNormalFile(manifestPath, { fsImpl, minBytes: 1, maxBytes: 4096, encoding: "utf8", label: "Windows stable shell rollback manifest" });
+  const manifest = JSON.parse(manifestFile.data);
+  const fingerprint = await fingerprintEquinoxLocalNativeState(path.join(snapshotReleaseDir, "runtime", "shell"), { fsImpl });
+  if (manifest?.schemaVersion !== 1 || manifest?.kind !== "windows-shell" || manifest?.sha256 !== fingerprint.sha256 || manifest?.entries !== fingerprint.entries || manifest?.bytes !== fingerprint.bytes) {
+    throw new Error("Windows stable shell rollback snapshot fingerprint mismatch.");
+  }
+  return replaceWindowsStableShellForRelease({
+    releaseDir: snapshotReleaseDir,
+    previousReleaseDir: currentReleaseDir,
+    programRoot,
+    fsImpl,
+    requestShutdownImpl,
+    sleepImpl,
+  });
 }
 
 export async function assertWindowsStableShellOwnedByRelease({ releaseDir, programRoot, fsImpl = fs } = {}) {
