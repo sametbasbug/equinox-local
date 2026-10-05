@@ -525,7 +525,7 @@ jobs:
 
   main-native-plan:
     if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch' && inputs.main_native_current != '' && inputs.main_native_target != '' }}
-    name: Exact-SHA native impact plan
+    name: Exact-SHA Main snapshot plan
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
@@ -581,7 +581,7 @@ jobs:
 
   main-native-build:
     needs: main-native-plan
-    if: ${{ needs.main-native-plan.result == 'success' && needs.main-native-plan.outputs.github-count != '0' }}
+    if: ${{ needs.main-native-plan.result == 'success' }}
     name: Main ${{ matrix.target }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 35
@@ -654,7 +654,7 @@ jobs:
   main-native-result:
     needs: [main-native-plan, main-native-build]
     if: ${{ always() && needs.main-native-plan.result != 'skipped' }}
-    name: Main native candidate result
+    name: Main snapshot candidate result
     runs-on: ubuntu-latest
     steps:
       - name: Enforce GitHub-native build result
@@ -664,15 +664,101 @@ jobs:
           GITHUB_RESULT: ${{ needs.main-native-build.result }}
         shell: bash
         run: |
-          if [ "$GITHUB_COUNT" != "0" ] && [ "$GITHUB_RESULT" != "success" ]; then
-            echo "Required GitHub-native Main artifact build failed: $GITHUB_RESULT" >&2
+          if [ "$GITHUB_COUNT" != "4" ] || [ "$GITHUB_RESULT" != "success" ]; then
+            echo "Exact-SHA Main snapshot requires four successful GitHub-native builds; count=$GITHUB_COUNT result=$GITHUB_RESULT" >&2
             exit 1
           fi
           {
-            echo "## Main native candidate validation"
-            echo "- Native impact: $NATIVE_IMPACT"
-            echo "- GitHub-native target count: $GITHUB_COUNT"
-            echo "- Main native targets are built entirely on GitHub; no factory host is required."
+            echo "## Main snapshot candidate validation"
+            echo "- Native impact since previous Main: $NATIVE_IMPACT"
+            echo "- Exact-SHA snapshot target count: $GITHUB_COUNT"
+            echo "- All four Main snapshot targets are built on GitHub; no factory host is required."
             echo ""
-            echo "This workflow creates exact-SHA candidate artifacts only. It does not by itself admit a Main SHA or replace Stable releases."
+            echo "Main Snapshot is a moving pre-release channel. Numbered Stable releases remain deliberate fresh-install/checkpoint baselines."
           } >> "$GITHUB_STEP_SUMMARY"
+
+  main-snapshot-publish:
+    needs: [main-native-plan, main-native-build, main-native-result]
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.main-native-result.result == 'success' }}
+    name: Publish Main Snapshot
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    concurrency:
+      group: equinox-local-main-snapshot-publish
+      cancel-in-progress: false
+    steps:
+      - name: Confirm this run still owns latest Main
+        id: latest
+        shell: bash
+        env:
+          TARGET_SHA: ${{ needs.main-native-plan.outputs.target-sha }}
+        run: |
+          set -euo pipefail
+          latest="$(git ls-remote https://github.com/${{ github.repository }}.git refs/heads/main | awk '{print $1}')"
+          if [ "$latest" = "$TARGET_SHA" ]; then
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            echo "Skipping stale Main snapshot $TARGET_SHA; canonical main is $latest." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Download exact-SHA snapshot candidates
+        if: ${{ steps.latest.outputs.publish == 'true' }}
+        uses: actions/download-artifact@v7
+        with:
+          pattern: main-native-${{ needs.main-native-plan.outputs.target-sha }}-*
+          path: ${{ runner.temp }}/main-snapshot
+          merge-multiple: true
+
+      - name: Validate complete exact-SHA snapshot set
+        if: ${{ steps.latest.outputs.publish == 'true' }}
+        shell: bash
+        env:
+          TARGET_SHA: ${{ needs.main-native-plan.outputs.target-sha }}
+          SNAPSHOT_DIR: ${{ runner.temp }}/main-snapshot
+        run: |
+          set -euo pipefail
+          for target in darwin-arm64 darwin-x64 win32-arm64 win32-x64; do
+            manifest="$SNAPSHOT_DIR/equinox-local-main-$TARGET_SHA-$target.json"
+            if [[ "$target" == darwin-* ]]; then extension='.tar.gz'; else extension='.zip'; fi
+            artifact="$SNAPSHOT_DIR/equinox-local-main-$TARGET_SHA-$target$extension"
+            test -f "$manifest"
+            test -f "$artifact"
+          done
+          count="$(find "$SNAPSHOT_DIR" -maxdepth 1 -type f | wc -l | tr -d ' ')"
+          test "$count" = 8
+
+      - name: Publish moving Main Snapshot pre-release
+        if: ${{ steps.latest.outputs.publish == 'true' }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TARGET_SHA: ${{ needs.main-native-plan.outputs.target-sha }}
+          SNAPSHOT_DIR: ${{ runner.temp }}/main-snapshot
+        run: |
+          set -euo pipefail
+          repo="${{ github.repository }}"
+          latest="$(git ls-remote https://github.com/$repo.git refs/heads/main | awk '{print $1}')"
+          test "$latest" = "$TARGET_SHA"
+
+          if ! gh release view main-snapshot --repo "$repo" >/dev/null 2>&1; then
+            gh release create main-snapshot --repo "$repo" --target "$TARGET_SHA" --title "Equinox Local Main Snapshot" --notes "Moving exact-SHA snapshot for the opt-in Main update channel. Numbered Stable releases remain the fresh-install/checkpoint baseline." --prerelease
+          fi
+
+          gh release upload main-snapshot --repo "$repo" --clobber "$SNAPSHOT_DIR"/*
+
+          latest="$(git ls-remote https://github.com/$repo.git refs/heads/main | awk '{print $1}')"
+          test "$latest" = "$TARGET_SHA"
+          gh api --method PATCH "/repos/$repo/git/refs/tags/main-snapshot" -f sha="$TARGET_SHA" -F force=true >/dev/null
+
+          gh api "/repos/$repo/releases/tags/main-snapshot" --jq '.assets[] | [.id,.name] | @tsv' | while IFS=$'\t' read -r id name; do
+            case "$name" in
+              *"$TARGET_SHA"*) ;;
+              *) gh api --method DELETE "/repos/$repo/releases/assets/$id" >/dev/null ;;
+            esac
+          done
+
+          gh release edit main-snapshot --repo "$repo" --target "$TARGET_SHA" --title "Equinox Local Main Snapshot" --notes "Current opt-in Main snapshot: $TARGET_SHA. Numbered Stable releases remain the fresh-install/checkpoint baseline." --prerelease
+          echo "Published public Main Snapshot for $TARGET_SHA with four exact-SHA platform packages." >> "$GITHUB_STEP_SUMMARY"

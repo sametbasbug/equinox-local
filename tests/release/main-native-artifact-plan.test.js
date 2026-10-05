@@ -18,7 +18,7 @@ const matrix = [
   { target: "win32-x64", platform: "win32", arch: "x64", buildAuthority: "github-native", nativeRunner: "windows-x64" },
 ];
 
-test("Main native planner schedules every required target on GitHub without factory availability", async () => {
+test("Main snapshot planner schedules all four targets on GitHub without factory availability", async () => {
   const mainNativeRunners = { "darwin-arm64": "macos-arm", "darwin-x64": "macos-intel", "win32-arm64": "windows-arm", "win32-x64": "windows-x64" };
   const result = await planEquinoxLocalMainNativeArtifacts({ rootDir: "/tmp/canonical", currentSha: CURRENT, targetSha: TARGET, inspectImpactImpl, targetMatrix: matrix, mainNativeRunners });
   assert.deepEqual(result.githubTargets, [
@@ -29,15 +29,17 @@ test("Main native planner schedules every required target on GitHub without fact
   ]);
 });
 
-test("Main native planner avoids builders for runtime-only changes", async () => {
+test("Main snapshot planner still builds all four exact-SHA targets for runtime-only changes", async () => {
   const runtimeOnly = async () => ({ currentSha: CURRENT, targetSha: TARGET, canonicalMainSha: CANONICAL, changedPaths: ["src/server.js"], nativeImpact: false, requiredTargets: [], reasons: [] });
   const result = await planEquinoxLocalMainNativeArtifacts({ rootDir: "/tmp/canonical", currentSha: CURRENT, targetSha: TARGET, inspectImpactImpl: runtimeOnly, targetMatrix: matrix });
-  assert.deepEqual(result.githubTargets, []);
+  assert.equal(result.nativeImpact, false);
+  assert.deepEqual(result.requiredTargets, []);
+  assert.deepEqual(result.githubTargets.map(({ target }) => target), ["darwin-arm64", "darwin-x64", "win32-arm64", "win32-x64"]);
 });
 
 test("Main native planner fails closed for invalid target contracts", async () => {
   const oneTarget = async () => ({ currentSha: CURRENT, targetSha: TARGET, canonicalMainSha: CANONICAL, changedPaths: ["app/x"], nativeImpact: true, requiredTargets: ["darwin-x64"], reasons: [] });
-  await assert.rejects(planEquinoxLocalMainNativeArtifacts({ rootDir: "/tmp/canonical", currentSha: CURRENT, targetSha: TARGET, inspectImpactImpl: oneTarget, targetMatrix: [{ target: "darwin-x64", platform: "darwin", arch: "x64", buildAuthority: "github-native", nativeRunner: null }], mainNativeRunners: {} }), /no GitHub runner/u);
+  await assert.rejects(planEquinoxLocalMainNativeArtifacts({ rootDir: "/tmp/canonical", currentSha: CURRENT, targetSha: TARGET, inspectImpactImpl: oneTarget, targetMatrix: matrix, mainNativeRunners: { "darwin-arm64": "macos-arm", "win32-arm64": "windows-arm", "win32-x64": "windows-x64" } }), /darwin-x64 has no GitHub runner/u);
   await assert.rejects(planEquinoxLocalMainNativeArtifacts({ rootDir: "/tmp/canonical", currentSha: CURRENT, targetSha: TARGET, inspectImpactImpl: oneTarget, targetMatrix: [] }), /contract is missing/u);
   await assert.rejects(planEquinoxLocalMainNativeArtifacts({ rootDir: "/tmp/canonical", currentSha: CURRENT, targetSha: TARGET, inspectImpactImpl: oneTarget, targetMatrix: [matrix[1], matrix[1]] }), /duplicate targets/u);
 });
