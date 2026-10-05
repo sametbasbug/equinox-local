@@ -5,7 +5,8 @@ import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 
 import { planEquinoxLocalMainNativeTransition } from "./equinox-local-main-native-admission.js";
-import { inspectStagedEquinoxLocalMainSnapshotArtifact } from "./equinox-local-main-snapshot.js";
+import { prepareEquinoxLocalMainNativeCandidate } from "./equinox-local-main-native-candidate.js";
+import { prepareEquinoxLocalMainNativeLifecycle } from "./equinox-local-main-native-activation.js";
 import { equinoxLocalReleaseTarget } from "./equinox-local-platform.js";
 import { createEquinoxLocalMainUpdateTransactionEngine } from "./equinox-local-main-update-transaction.js";
 import { runEquinoxLocalMainUpdateHandoff } from "./equinox-local-main-update-handoff.js";
@@ -86,7 +87,8 @@ export async function runEquinoxLocalMainUpdateWorker({
   engineFactory = (options) => createEquinoxLocalMainUpdateTransactionEngine(options),
   resolveHostTarget = () => equinoxLocalReleaseTarget(),
   planNativeTransition = planEquinoxLocalMainNativeTransition,
-  inspectNativeArtifact = inspectStagedEquinoxLocalMainSnapshotArtifact,
+  prepareNativeCandidate = prepareEquinoxLocalMainNativeCandidate,
+  prepareNativeLifecycle = prepareEquinoxLocalMainNativeLifecycle,
   handoffImpl = runEquinoxLocalMainUpdateHandoff,
   restartRuntimeImpl = (value) => restartSourceRuntime({ ...value, execFileImpl, env }),
   verifyRuntimeImpl,
@@ -99,7 +101,7 @@ export async function runEquinoxLocalMainUpdateWorker({
     if (!active || active.transactionId !== args.transactionId) throw new Error("Main update worker does not own the active transaction.");
     if (active.status !== "promoting" || active.stage !== "ready_to_switch") throw new Error("Main update worker requires a prepared promotion receipt.");
     let nativeTransition;
-    let nativeArtifact = null;
+    let nativeLifecycle = null;
     try {
       const target = resolveHostTarget();
       nativeTransition = await planNativeTransition({
@@ -110,14 +112,25 @@ export async function runEquinoxLocalMainUpdateWorker({
         target,
       });
       if (nativeTransition?.mode === "artifact_required") {
-        nativeArtifact = await inspectNativeArtifact({
+        const candidate = await prepareNativeCandidate({
           sourceSha: active.targetSha,
           target,
           expectedRuntimeContractSha256: nativeTransition.targetRuntimeContractSha256,
           transactionRoot: args.transactionRoot,
           transactionId: args.transactionId,
           fsImpl,
+          execFileImpl,
         });
+        nativeLifecycle = await prepareNativeLifecycle({
+          transition: nativeTransition,
+          candidate,
+          transactionRoot: args.transactionRoot,
+          transactionId: args.transactionId,
+          fsImpl,
+          execFileImpl,
+          env,
+        });
+        await engine.markNativeRollbackReady(args.transactionId);
       } else if (nativeTransition?.mode !== "reuse_native") {
         throw new Error("Main native transition mode is unsupported.");
       }
@@ -132,7 +145,7 @@ export async function runEquinoxLocalMainUpdateWorker({
       engine,
       transactionId: args.transactionId,
       nativeTransition,
-      nativeArtifact,
+      nativeLifecycle,
       restartRuntime: restartRuntimeImpl,
       verifyRuntime: verify,
     });
