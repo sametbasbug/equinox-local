@@ -151,8 +151,13 @@ export function createEquinoxLocalMainUpdateTransactionEngine({
   const resolvedTransactionRoot = path.resolve(transactionRoot);
   const resolvedPointerPath = path.resolve(sourcePointerPath);
   const resolvedSourceStoreRoot = path.resolve(sourceStoreRoot);
-  if (isInside(resolvedSourceRoot, resolvedTransactionRoot) || isInside(resolvedTransactionRoot, resolvedSourceRoot)) throw new Error("Main update transaction state and active source checkout must not overlap.");
   if (!isInside(resolvedTransactionRoot, resolvedPointerPath) || !isInside(resolvedTransactionRoot, resolvedSourceStoreRoot)) throw new Error("Main update pointer and source store must remain inside transaction state.");
+  if (isInside(resolvedSourceRoot, resolvedTransactionRoot)) throw new Error("Main update transaction state must not live inside the active source checkout.");
+  if (isInside(resolvedTransactionRoot, resolvedSourceRoot)) {
+    const sourceBasename = path.basename(resolvedSourceRoot);
+    const isDirectManagedSource = path.dirname(resolvedSourceRoot) === resolvedSourceStoreRoot && SHA_PATTERN.test(sourceBasename);
+    if (!isDirectManagedSource) throw new Error("Main update active source inside transaction state must be a direct SHA-addressed source-store checkout.");
+  }
 
   const lockPath = path.join(resolvedTransactionRoot, "active.json");
   const receiptsRoot = path.join(resolvedTransactionRoot, "receipts");
