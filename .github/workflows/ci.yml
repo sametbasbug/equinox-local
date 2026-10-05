@@ -682,7 +682,7 @@ jobs:
     if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.main-native-result.result == 'success' }}
     name: Publish Main Snapshot
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     permissions:
       contents: write
     concurrency:
@@ -730,35 +730,63 @@ jobs:
           count="$(find "$SNAPSHOT_DIR" -maxdepth 1 -type f | wc -l | tr -d ' ')"
           test "$count" = 8
 
-      - name: Publish moving Main Snapshot pre-release
+      - name: Publish exact-SHA snapshot objects to public R2
+        if: ${{ steps.latest.outputs.publish == 'true' }}
+        shell: bash
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.EQUINOX_MAIN_R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.EQUINOX_MAIN_R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+          AWS_EC2_METADATA_DISABLED: 'true'
+          TARGET_SHA: ${{ needs.main-native-plan.outputs.target-sha }}
+          SNAPSHOT_DIR: ${{ runner.temp }}/main-snapshot
+          R2_ENDPOINT: https://c1ff8ccffcbffe46094cd3a2729a1c1f.r2.cloudflarestorage.com
+        run: |
+          set -euo pipefail
+          test -n "${AWS_ACCESS_KEY_ID:-}"
+          test -n "${AWS_SECRET_ACCESS_KEY:-}"
+          aws --version
+          aws s3 cp "$SNAPSHOT_DIR/" "s3://equinox-local-main/snapshots/$TARGET_SHA/" \
+            --recursive \
+            --endpoint-url "$R2_ENDPOINT" \
+            --cache-control 'public,max-age=31536000,immutable' \
+            --only-show-errors
+
+      - name: Verify public snapshot before moving tag
+        if: ${{ steps.latest.outputs.publish == 'true' }}
+        shell: bash
+        env:
+          TARGET_SHA: ${{ needs.main-native-plan.outputs.target-sha }}
+          PUBLIC_BASE: https://main.local.sametbasbug.dev
+        run: |
+          set -euo pipefail
+          latest="$(git ls-remote https://github.com/${{ github.repository }}.git refs/heads/main | awk '{print $1}')"
+          test "$latest" = "$TARGET_SHA"
+          for target in darwin-arm64 darwin-x64 win32-arm64 win32-x64; do
+            manifest="equinox-local-main-$TARGET_SHA-$target.json"
+            if [[ "$target" == darwin-* ]]; then extension='.tar.gz'; else extension='.zip'; fi
+            artifact="equinox-local-main-$TARGET_SHA-$target$extension"
+            manifest_url="$PUBLIC_BASE/snapshots/$TARGET_SHA/$manifest"
+            artifact_url="$PUBLIC_BASE/snapshots/$TARGET_SHA/$artifact"
+            curl --fail --silent --show-error --location --retry 5 --retry-all-errors --output "$RUNNER_TEMP/$manifest" "$manifest_url"
+            jq -e --arg sha "$TARGET_SHA" --arg target "$target" '.sourceSha == $sha and .target == $target' "$RUNNER_TEMP/$manifest" >/dev/null
+            curl --fail --silent --show-error --location --retry 5 --retry-all-errors --range 0-0 --output /dev/null "$artifact_url"
+          done
+
+      - name: Move tag-only Main Snapshot pointer
         if: ${{ steps.latest.outputs.publish == 'true' }}
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
           TARGET_SHA: ${{ needs.main-native-plan.outputs.target-sha }}
-          SNAPSHOT_DIR: ${{ runner.temp }}/main-snapshot
         run: |
           set -euo pipefail
           repo="${{ github.repository }}"
           latest="$(git ls-remote https://github.com/$repo.git refs/heads/main | awk '{print $1}')"
           test "$latest" = "$TARGET_SHA"
-
-          if ! gh release view main-snapshot --repo "$repo" >/dev/null 2>&1; then
-            gh release create main-snapshot --repo "$repo" --target "$TARGET_SHA" --title "Equinox Local Main Snapshot" --notes "Moving exact-SHA snapshot for the opt-in Main update channel. Numbered Stable releases remain the fresh-install/checkpoint baseline." --prerelease
+          if gh api "/repos/$repo/git/ref/tags/main-snapshot" >/dev/null 2>&1; then
+            gh api --method PATCH "/repos/$repo/git/refs/tags/main-snapshot" -f sha="$TARGET_SHA" -F force=true >/dev/null
+          else
+            gh api --method POST "/repos/$repo/git/refs" -f ref='refs/tags/main-snapshot' -f sha="$TARGET_SHA" >/dev/null
           fi
-
-          gh release upload main-snapshot --repo "$repo" --clobber "$SNAPSHOT_DIR"/*
-
-          latest="$(git ls-remote https://github.com/$repo.git refs/heads/main | awk '{print $1}')"
-          test "$latest" = "$TARGET_SHA"
-          gh api --method PATCH "/repos/$repo/git/refs/tags/main-snapshot" -f sha="$TARGET_SHA" -F force=true >/dev/null
-
-          gh api "/repos/$repo/releases/tags/main-snapshot" --jq '.assets[] | [.id,.name] | @tsv' | while IFS=$'\t' read -r id name; do
-            case "$name" in
-              *"$TARGET_SHA"*) ;;
-              *) gh api --method DELETE "/repos/$repo/releases/assets/$id" >/dev/null ;;
-            esac
-          done
-
-          gh release edit main-snapshot --repo "$repo" --target "$TARGET_SHA" --title "Equinox Local Main Snapshot" --notes "Current opt-in Main snapshot: $TARGET_SHA. Numbered Stable releases remain the fresh-install/checkpoint baseline." --prerelease
-          echo "Published public Main Snapshot for $TARGET_SHA with four exact-SHA platform packages." >> "$GITHUB_STEP_SUMMARY"
+          echo "Published public exact-SHA Main snapshot objects for $TARGET_SHA and moved tag-only main-snapshot. No GitHub Release was created." >> "$GITHUB_STEP_SUMMARY"

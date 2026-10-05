@@ -24,18 +24,21 @@ test("every Main push builds all four exact-SHA snapshot targets on GitHub", () 
   assert.match(workflow, /if \[ "\$GITHUB_COUNT" != "4" \]/u);
 });
 
-test("Main Snapshot publish is public-release based, latest-only and serialized", () => {
+test("Main Snapshot publish uses public R2 plus a tag-only pointer and never creates a GitHub Release", () => {
   assert.match(workflow, /main-snapshot-publish:\n    needs: \[main-native-plan, main-native-build, main-native-result\]/u);
   assert.match(workflow, /permissions:\n      contents: write/u);
   assert.match(workflow, /group: equinox-local-main-snapshot-publish\n      cancel-in-progress: false/u);
-  assert.match(workflow, /git ls-remote https:\/\/github\.com\/\$\{\{ github\.repository \}\}\.git refs\/heads\/main/u);
-  assert.match(workflow, /actions\/download-artifact@v7/u);
   assert.match(workflow, /pattern: main-native-\$\{\{ needs\.main-native-plan\.outputs\.target-sha \}\}-\*/u);
-  assert.match(workflow, /gh release create main-snapshot/u);
-  assert.match(workflow, /gh release upload main-snapshot/u);
+  assert.match(workflow, /secrets\.EQUINOX_MAIN_R2_ACCESS_KEY_ID/u);
+  assert.match(workflow, /secrets\.EQUINOX_MAIN_R2_SECRET_ACCESS_KEY/u);
+  assert.match(workflow, /s3:\/\/equinox-local-main\/snapshots\/\$TARGET_SHA\//u);
+  assert.match(workflow, /https:\/\/main\.local\.sametbasbug\.dev/u);
+  assert.match(workflow, /jq -e --arg sha/u);
+  assert.match(workflow, /--range 0-0/u);
   assert.match(workflow, /git\/refs\/tags\/main-snapshot/u);
-  assert.match(workflow, /gh api --method DELETE "\/repos\/\$repo\/releases\/assets\/\$id"/u);
-  assert.match(workflow, /Numbered Stable releases remain the fresh-install\/checkpoint baseline/u);
+  assert.match(workflow, /refs\/tags\/main-snapshot/u);
+  assert.doesNotMatch(workflow, /gh release (?:create|upload|edit) main-snapshot/u);
+  assert.match(workflow, /No GitHub Release was created/u);
 });
 
 test("main pushes are never cancelled by a newer push while PR runs remain cancelable", () => {
