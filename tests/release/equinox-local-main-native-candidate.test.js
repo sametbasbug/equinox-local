@@ -59,6 +59,7 @@ test("Main native candidate preparation reuses bounded archive validation inside
   assert.equal(result.target, TARGET);
   assert.equal(result.runtimeContractSha256, DIGEST);
   assert.equal(result.payloadVersion, "5.2.1");
+  assert.equal(result.reused, false);
   assert.equal(result.releaseDir, path.join(f.transactionDir, "native-candidate", "release"));
   assert.equal((await fs.lstat(result.releaseDir)).isDirectory(), true);
   await assert.rejects(fs.lstat(path.join(f.transactionDir, "native-candidate", "extracted")), { code: "ENOENT" });
@@ -84,18 +85,22 @@ test("Main native candidate preparation removes only its candidate tree when ext
   assert.equal(await fs.readFile(f.artifactPath, "utf8"), "artifact");
 });
 
-test("Main native candidate preparation refuses a pre-existing candidate destination before archive mutation", async (t) => {
+test("Main native candidate preparation reuses a previously validated candidate after an interrupted extraction", async (t) => {
   const f = await fixture(t);
-  await fs.mkdir(path.join(f.transactionDir, "native-candidate"));
-  let mutated = false;
-  await assert.rejects(prepareEquinoxLocalMainNativeCandidate({
+  const candidateRelease = path.join(f.transactionDir, "native-candidate", "release");
+  await fs.mkdir(candidateRelease, { recursive: true });
+  let archiveMutated = false;
+  const result = await prepareEquinoxLocalMainNativeCandidate({
     sourceSha: SHA,
     target: TARGET,
     expectedRuntimeContractSha256: DIGEST,
     transactionRoot: f.root,
     transactionId: TX,
     inspectStagedArtifact: async () => stagedArtifact(f.artifactPath),
-    inspectArchive: async () => { mutated = true; },
-  }), { code: "EEXIST" });
-  assert.equal(mutated, false);
+    inspectArchive: async () => { archiveMutated = true; },
+    validateRelease: async (releaseDir, options) => ({ version: "5.2.1", target: options.target, releaseDir, tree: {}, metadata: {} }),
+  });
+  assert.equal(result.reused, true);
+  assert.equal(result.releaseDir, candidateRelease);
+  assert.equal(archiveMutated, false);
 });

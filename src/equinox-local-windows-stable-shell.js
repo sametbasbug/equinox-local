@@ -110,6 +110,19 @@ export async function snapshotWindowsStableShellForRollback({ programRoot, snaps
   return Object.freeze({ snapshotReleaseDir, snapshotRoot, sourceSnapshot });
 }
 
+export async function inspectWindowsStableShellRollbackSnapshot({ snapshotReleaseDir, fsImpl = fs } = {}) {
+  if (typeof snapshotReleaseDir !== "string") throw new Error("Windows stable shell rollback snapshot path is required.");
+  const manifestPath = path.join(snapshotReleaseDir, "rollback.json");
+  const manifestFile = await readBoundedNormalFile(manifestPath, { fsImpl, minBytes: 1, maxBytes: 4096, encoding: "utf8", label: "Windows stable shell rollback manifest" });
+  const manifest = JSON.parse(manifestFile.data);
+  const snapshotRoot = path.join(snapshotReleaseDir, "runtime", "shell");
+  const fingerprint = await fingerprintEquinoxLocalNativeState(snapshotRoot, { fsImpl });
+  if (manifest?.schemaVersion !== 1 || manifest?.kind !== "windows-shell" || manifest?.sha256 !== fingerprint.sha256 || manifest?.entries !== fingerprint.entries || manifest?.bytes !== fingerprint.bytes) {
+    throw new Error("Windows stable shell rollback snapshot fingerprint mismatch.");
+  }
+  return Object.freeze({ snapshotReleaseDir, snapshotRoot, manifestPath, fingerprint });
+}
+
 export async function restoreWindowsStableShellRollbackSnapshot({
   snapshotReleaseDir,
   currentReleaseDir,
@@ -121,13 +134,7 @@ export async function restoreWindowsStableShellRollbackSnapshot({
   if (typeof snapshotReleaseDir !== "string" || typeof currentReleaseDir !== "string" || typeof programRoot !== "string") {
     throw new Error("Windows stable shell rollback paths are required.");
   }
-  const manifestPath = path.join(snapshotReleaseDir, "rollback.json");
-  const manifestFile = await readBoundedNormalFile(manifestPath, { fsImpl, minBytes: 1, maxBytes: 4096, encoding: "utf8", label: "Windows stable shell rollback manifest" });
-  const manifest = JSON.parse(manifestFile.data);
-  const fingerprint = await fingerprintEquinoxLocalNativeState(path.join(snapshotReleaseDir, "runtime", "shell"), { fsImpl });
-  if (manifest?.schemaVersion !== 1 || manifest?.kind !== "windows-shell" || manifest?.sha256 !== fingerprint.sha256 || manifest?.entries !== fingerprint.entries || manifest?.bytes !== fingerprint.bytes) {
-    throw new Error("Windows stable shell rollback snapshot fingerprint mismatch.");
-  }
+  await inspectWindowsStableShellRollbackSnapshot({ snapshotReleaseDir, fsImpl });
   return replaceWindowsStableShellForRelease({
     releaseDir: snapshotReleaseDir,
     previousReleaseDir: currentReleaseDir,

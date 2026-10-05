@@ -47,8 +47,20 @@ export async function prepareEquinoxLocalMainNativeCandidate({
   const candidateReleaseDir = path.join(candidateRoot, "release");
   let created = false;
   try {
-    await fsImpl.mkdir(candidateRoot, { recursive: false, mode: 0o700 });
-    created = true;
+    try {
+      await fsImpl.mkdir(candidateRoot, { recursive: false, mode: 0o700 });
+      created = true;
+    } catch (error) {
+      if (error?.code !== "EEXIST") throw error;
+      await assertCanonicalDirectory(candidateRoot, "Main native candidate root", fsImpl);
+      const existing = await validateRelease(candidateReleaseDir, { target, fsImpl });
+      if (existing?.target !== target || existing?.releaseDir !== candidateReleaseDir) throw new Error("Existing Main native candidate identity drifted from the exact transaction target.");
+      return Object.freeze({
+        sourceSha, target, transactionId, runtimeContractSha256: staged.manifest.runtimeContractSha256,
+        artifactSha256: staged.sha256, artifactBytes: staged.bytes, payloadVersion: existing.version,
+        releaseDir: candidateReleaseDir, tree: existing.tree, metadata: existing.metadata, reused: true,
+      });
+    }
     await assertCanonicalDirectory(candidateRoot, "Main native candidate root", fsImpl);
     await inspectArchive(staged.artifactPath, { target, execFileImpl });
     await extractArchive(staged.artifactPath, extractionRoot, { target, execFileImpl });
@@ -74,6 +86,7 @@ export async function prepareEquinoxLocalMainNativeCandidate({
       releaseDir: candidateReleaseDir,
       tree: finalValidation.tree,
       metadata: finalValidation.metadata,
+      reused: false,
     });
   } catch (error) {
     if (created) await fsImpl.rm(candidateRoot, { recursive: true, force: true }).catch(() => {});

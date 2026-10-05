@@ -152,7 +152,9 @@ export async function promoteEquinoxLocalMainNativeCandidate({
   if (path.resolve(candidate.releaseDir ?? "") !== expectedReleaseDir) throw new Error("Main native candidate release path is not transaction-owned.");
 
   try {
-    return Object.freeze({ ...(await inspectEquinoxLocalMainNativeStoredRelease({ transactionRoot, sourceSha: candidate.sourceSha, target: candidate.target, expectedRuntimeContractSha256: candidate.runtimeContractSha256, fsImpl, validateRelease, fingerprintRelease })), reused: true });
+    const stored = await inspectEquinoxLocalMainNativeStoredRelease({ transactionRoot, sourceSha: candidate.sourceSha, target: candidate.target, expectedRuntimeContractSha256: candidate.runtimeContractSha256, fsImpl, validateRelease, fingerprintRelease });
+    await fsImpl.rm(candidateRoot, { recursive: true, force: true });
+    return Object.freeze({ ...stored, reused: true });
   } catch (error) {
     if (error?.code !== "ENOENT") throw error;
   }
