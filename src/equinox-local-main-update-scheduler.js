@@ -40,6 +40,42 @@ export function renderMainUpdateLaunchdPlist({ label, nodePath, workerPath, sour
   return `<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0">\n<dict>\n  <key>Label</key>\n  <string>${xml(label)}</string>\n  <key>ProgramArguments</key>\n  <array>\n${args.map((arg) => `    <string>${xml(arg)}</string>`).join("\n")}\n  </array>\n  <key>EnvironmentVariables</key>\n  <dict>\n${envXml}\n  </dict>\n  <key>RunAtLoad</key>\n  <true/>\n  <key>KeepAlive</key>\n  <false/>\n  <key>ProcessType</key>\n  <string>Background</string>\n  <key>StandardOutPath</key>\n  <string>${xml(logPath)}</string>\n  <key>StandardErrorPath</key>\n  <string>${xml(logPath)}</string>\n</dict>\n</plist>\n`;
 }
 
+
+export async function inspectEquinoxLocalMainUpdateWorkerOwnership({
+  transactionId,
+  uid = process.getuid?.(),
+  execFileImpl = execFile,
+} = {}) {
+  assertTransactionId(transactionId);
+  if (!Number.isInteger(uid) || uid < 1) return Object.freeze({ loaded: false, running: false });
+  const label = mainUpdateLaunchdLabel(transactionId);
+  try {
+    const result = await execFileImpl("/bin/launchctl", ["print", `gui/${uid}/${label}`], { timeout: 5_000, maxBuffer: 64 * 1024 });
+    const output = String(result?.stdout ?? "");
+    const running = /(?:^|\n)\s*state\s*=\s*running\s*(?:\n|$)/u.test(output);
+    return Object.freeze({ loaded: true, running, label });
+  } catch {
+    return Object.freeze({ loaded: false, running: false, label });
+  }
+}
+
+export async function cleanupEquinoxLocalMainUpdateWorkerOwnership({
+  transactionId,
+  transactionRoot,
+  uid = process.getuid?.(),
+  fsImpl = fs,
+  execFileImpl = execFile,
+} = {}) {
+  assertTransactionId(transactionId);
+  const stateRoot = assertAbsolute(transactionRoot, "Main update transaction root");
+  if (!Number.isInteger(uid) || uid < 1) return Object.freeze({ cleaned: false });
+  const label = mainUpdateLaunchdLabel(transactionId);
+  const plistPath = path.join(stateRoot, "handoff", `${transactionId}.plist`);
+  await execFileImpl("/bin/launchctl", ["bootout", `gui/${uid}/${label}`], { timeout: 5_000, maxBuffer: 64 * 1024 }).catch(() => {});
+  await fsImpl.rm(plistPath, { force: true }).catch(() => {});
+  return Object.freeze({ cleaned: true, label, plistPath });
+}
+
 export async function scheduleEquinoxLocalMainUpdateWorker({
   transactionId,
   sourceRoot,

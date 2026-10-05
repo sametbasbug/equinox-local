@@ -73,3 +73,13 @@ test("launchd print failure boots out the partially registered worker and remove
   assert.equal(calls.some((call) => call[1] === "bootout"), true);
   assert.deepEqual(await fs.readdir(path.join(stateRoot, "handoff")), []);
 });
+
+test("worker ownership inspection distinguishes a loaded running job from stale or absent launchd state", async () => {
+  const { inspectEquinoxLocalMainUpdateWorkerOwnership } = await import("../../src/equinox-local-main-update-scheduler.js");
+  const running = await inspectEquinoxLocalMainUpdateWorkerOwnership({ transactionId: TX, uid: 501, execFileImpl: async () => ({ stdout: "state = running\npid = 123\n" }) });
+  assert.equal(running.loaded, true); assert.equal(running.running, true);
+  const stale = await inspectEquinoxLocalMainUpdateWorkerOwnership({ transactionId: TX, uid: 501, execFileImpl: async () => ({ stdout: "state = exited\nlast exit code = 1\n" }) });
+  assert.equal(stale.loaded, true); assert.equal(stale.running, false);
+  const missing = await inspectEquinoxLocalMainUpdateWorkerOwnership({ transactionId: TX, uid: 501, execFileImpl: async () => { throw new Error("not found"); } });
+  assert.equal(missing.loaded, false); assert.equal(missing.running, false);
+});
