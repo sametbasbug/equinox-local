@@ -20,13 +20,13 @@ If a fresh first activation still fails, Local stops the failed LaunchAgent but 
 
 The installer does not disable Gatekeeper and does not require global security-policy changes.
 
-## Canonical `main` discovery for source checkouts
+## Canonical `main` updates for source checkouts
 
-Source-managed/factory checkouts have a separate **passive** `main` channel alongside the signed Stable release channel. Control Center can report the exact current Git SHA, the current canonical public `main` SHA, behind/ahead distance, divergence, and up to five bounded commit summaries. It also distinguishes dirty worktrees, detached HEADs, non-`main` branches, fork remotes, network failures, and an unavailable/deleted canonical branch.
+Source-managed/factory checkouts have a separate `main` channel alongside the signed Stable release channel. The passive check path reports the exact current Git SHA, canonical public `main` SHA, behind/ahead distance, divergence, and up to five bounded commit summaries. It also distinguishes dirty worktrees, detached HEADs, non-`main` branches, fork remotes, network failures, and an unavailable/deleted canonical branch. A check never mutates the checkout or local Git refs; failed remote inspection is reported as unavailable rather than “up to date.”
 
-This check does **not** fetch, pull, reset, switch branches, edit source files, or update local Git refs. Local Git inspection runs with optional Git locks disabled and the remote identity/comparison is read through bounded GitHub HTTPS API responses. A failed remote check is reported as unavailable and is never interpreted as “up to date.” The result is cached briefly to avoid unnecessary repeated network traffic.
+The accepted Main update engine is exact-SHA and transactional. An apply stages the selected canonical commit in durable source storage, promotes one source pointer, restarts through the managed lifecycle, verifies exact source/runtime health, and either commits the transaction or restores the previous source. Native state is admitted independently: every canonical Main push builds exact-SHA snapshots for macOS ARM64/x64 and Windows ARM64/x64, publishes immutable snapshot objects to the public Main distribution surface, verifies them, and only then advances the tag-only `main-snapshot` pointer. GitHub Releases remain reserved for deliberate numbered Stable releases.
 
-M5 is discovery-only: source checkout mutation, transactional promotion, restart and rollback are separate later milestones. Managed signed-release installations continue to use the Stable channel described below.
+If the installed native runtime contract already matches the selected Main SHA, the updater uses `reuse_native` and downloads no native package. Crossing a native boundary requires the exact host snapshot; failure during native/source activation rolls back to the previously admitted source/native state. Main snapshot publication and rollback acceptance are complete across Darwin and Windows x64/ARM64, but the ordinary-user Main apply control remains intentionally gated until its dedicated enablement milestone. Managed signed-release installations therefore continue to use the Stable channel unless Main is explicitly enabled by product policy.
 
 ## Stable update manifests
 
