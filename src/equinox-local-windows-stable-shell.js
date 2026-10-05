@@ -5,6 +5,7 @@ import path from "node:path";
 
 import { requestWindowsShellUpdateShutdown } from "./equinox-local-windows-shell-control.js";
 import { fingerprintEquinoxLocalNativeState } from "./equinox-local-native-state-fingerprint.js";
+import { readBoundedNormalFile } from "./equinox-local-safe-file.js";
 
 const MAX_WINDOWS_SHELL_ENTRIES = 5_000;
 const MAX_WINDOWS_SHELL_BYTES = 512 * 1024 * 1024;
@@ -121,9 +122,8 @@ export async function restoreWindowsStableShellRollbackSnapshot({
     throw new Error("Windows stable shell rollback paths are required.");
   }
   const manifestPath = path.join(snapshotReleaseDir, "rollback.json");
-  const manifestStat = await fsImpl.lstat(manifestPath);
-  if (!manifestStat.isFile() || manifestStat.isSymbolicLink() || manifestStat.size < 1 || manifestStat.size > 4096) throw new Error("Windows stable shell rollback manifest is unsafe.");
-  const manifest = JSON.parse(await fsImpl.readFile(manifestPath, "utf8"));
+  const manifestFile = await readBoundedNormalFile(manifestPath, { fsImpl, minBytes: 1, maxBytes: 4096, encoding: "utf8", label: "Windows stable shell rollback manifest" });
+  const manifest = JSON.parse(manifestFile.data);
   const fingerprint = await fingerprintEquinoxLocalNativeState(path.join(snapshotReleaseDir, "runtime", "shell"), { fsImpl });
   if (manifest?.schemaVersion !== 1 || manifest?.kind !== "windows-shell" || manifest?.sha256 !== fingerprint.sha256 || manifest?.entries !== fingerprint.entries || manifest?.bytes !== fingerprint.bytes) {
     throw new Error("Windows stable shell rollback snapshot fingerprint mismatch.");

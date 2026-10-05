@@ -12,6 +12,7 @@ import {
 } from "./equinox-local-app-host.js";
 import { equinoxLocalNativeAppArtifactPaths } from "./equinox-local-native-app.js";
 import { fingerprintEquinoxLocalNativeState } from "./equinox-local-native-state-fingerprint.js";
+import { readBoundedNormalFile } from "./equinox-local-safe-file.js";
 
 const execFile = promisify(execFileCallback);
 const NATIVE_SHELL_PLIST_KEY = "EquinoxLocalNativeShellVersion";
@@ -313,9 +314,8 @@ export async function restoreEquinoxLocalNativeAppHostSnapshot({
   if (typeof snapshotPath !== "string" || !path.isAbsolute(snapshotPath)) throw new Error("A trusted native app snapshot path is required.");
   await validateEquinoxLocalAppHost(snapshotPath, { fsImpl, execFileImpl });
   const manifestPath = `${snapshotPath}.rollback.json`;
-  const manifestStat = await fsImpl.lstat(manifestPath);
-  if (!manifestStat.isFile() || manifestStat.isSymbolicLink() || manifestStat.size < 1 || manifestStat.size > 4096) throw new Error("Equinox Local native app rollback manifest is unsafe.");
-  const manifest = JSON.parse(await fsImpl.readFile(manifestPath, "utf8"));
+  const manifestFile = await readBoundedNormalFile(manifestPath, { fsImpl, minBytes: 1, maxBytes: 4096, encoding: "utf8", label: "Equinox Local native app rollback manifest" });
+  const manifest = JSON.parse(manifestFile.data);
   const fingerprint = await fingerprintEquinoxLocalNativeState(snapshotPath, { fsImpl });
   if (manifest?.schemaVersion !== 1 || manifest?.kind !== "darwin-app" || manifest?.sha256 !== fingerprint.sha256 || manifest?.entries !== fingerprint.entries || manifest?.bytes !== fingerprint.bytes) {
     throw new Error("Equinox Local native app rollback snapshot fingerprint mismatch.");
