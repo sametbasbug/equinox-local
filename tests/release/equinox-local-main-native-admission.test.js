@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   classifyEquinoxLocalMainNativeImpact,
   computeEquinoxLocalMainNativeRuntimeContract,
+  planEquinoxLocalMainNativeTransition,
   inspectEquinoxLocalMainNativeImpactRange,
   validateEquinoxLocalMainNativeArtifactManifest,
 } from "../../src/equinox-local-main-native-admission.js";
@@ -21,6 +22,9 @@ const manifest = (target = "darwin-arm64") => ({
     bytes: 12345,
   },
 });
+
+const TRANSITION_CURRENT = "a".repeat(40);
+const TRANSITION_TARGET = "b".repeat(40);
 
 test("runtime-only source changes do not require native main artifacts", () => {
   assert.deepEqual(classifyEquinoxLocalMainNativeImpact(["src/server.js", "src/task-capsule-store.js"]), {
@@ -240,4 +244,40 @@ test("native manifest rejects SHA target name digest size and schema drift", () 
   assert.throws(() => validateEquinoxLocalMainNativeArtifactManifest(badSize), /byte size/u);
   const extra = { ...manifest(), unexpected: true };
   assert.throws(() => validateEquinoxLocalMainNativeArtifactManifest(extra), /unsupported fields/u);
+});
+
+
+test("Main native transition reuses the installed shell when exact runtime contracts match", async () => {
+  const calls = [];
+  const digest = "1".repeat(64);
+  const result = await planEquinoxLocalMainNativeTransition({
+    currentRoot: "/current", currentSha: TRANSITION_CURRENT, targetRoot: "/target", targetSha: TRANSITION_TARGET, target: "darwin-arm64",
+    computeRuntimeContractImpl: async (options) => { calls.push(options); return { target: options.target, sha256: digest }; },
+  });
+  assert.equal(result.mode, "reuse_native");
+  assert.equal(result.currentRuntimeContractSha256, digest);
+  assert.equal(result.targetRuntimeContractSha256, digest);
+  assert.deepEqual(calls.map(({ rootDir, sourceSha }) => [rootDir, sourceSha]), [["/current", TRANSITION_CURRENT], ["/target", TRANSITION_TARGET]]);
+});
+
+test("Main native transition requires an exact-SHA artifact when the runtime contract changes", async () => {
+  const result = await planEquinoxLocalMainNativeTransition({
+    currentRoot: "/current", currentSha: TRANSITION_CURRENT, targetRoot: "/target", targetSha: TRANSITION_TARGET, target: "win32-x64",
+    computeRuntimeContractImpl: async ({ rootDir, target }) => ({ target, sha256: (rootDir === "/current" ? "2" : "3").repeat(64) }),
+  });
+  assert.deepEqual(result, {
+    mode: "artifact_required", target: "win32-x64", currentSha: TRANSITION_CURRENT, targetSha: TRANSITION_TARGET,
+    currentRuntimeContractSha256: "2".repeat(64), targetRuntimeContractSha256: "3".repeat(64),
+  });
+});
+
+test("Main native transition fails closed on target or digest drift", async () => {
+  await assert.rejects(planEquinoxLocalMainNativeTransition({
+    currentRoot: "/current", currentSha: TRANSITION_CURRENT, targetRoot: "/target", targetSha: TRANSITION_TARGET, target: "darwin-x64",
+    computeRuntimeContractImpl: async ({ rootDir }) => ({ target: rootDir === "/current" ? "darwin-x64" : "win32-x64", sha256: "4".repeat(64) }),
+  }), /target drifted/u);
+  await assert.rejects(planEquinoxLocalMainNativeTransition({
+    currentRoot: "/current", currentSha: TRANSITION_CURRENT, targetRoot: "/target", targetSha: TRANSITION_TARGET, target: "darwin-x64",
+    computeRuntimeContractImpl: async ({ target }) => ({ target, sha256: "not-a-digest" }),
+  }), /digest is invalid/u);
 });
