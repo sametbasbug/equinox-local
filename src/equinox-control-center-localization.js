@@ -317,26 +317,26 @@ const TR_UI = Object.freeze({
   "Current version —": "Mevcut sürüm —",
   "Check for updates": "Güncellemeleri kontrol et",
   "Update & restart": "Güncelle ve yeniden başlat",
-  "Checking canonical main": "Canonical main kontrol ediliyor",
-  "Reading local Git identity and checking the canonical public main branch without changing the checkout.": "Yerel Git kimliği okunuyor ve checkout değiştirilmeden canonical public main dalı kontrol ediliyor.",
+  "Checking Main snapshot": "Main snapshot kontrol ediliyor",
+  "Reading local Git identity and checking the admitted Main snapshot without changing the checkout.": "Yerel Git kimliği okunuyor ve checkout değiştirilmeden kabul edilmiş Main snapshot kontrol ediliyor.",
   "Main update available": "Main güncellemesi var",
-  "A newer canonical main SHA is available. M5 only reports it; no source files, Git refs, runtime state or user data are changed.": "Daha yeni bir canonical main SHA kullanılabilir. M5 bunu yalnızca bildirir; kaynak dosyalar, Git ref'leri, runtime durumu veya kullanıcı verileri değiştirilmez.",
-  "Canonical main is up to date": "Canonical main güncel",
-  "The current source SHA exactly matches the canonical public main branch.": "Mevcut kaynak SHA canonical public main dalıyla tam olarak eşleşiyor.",
-  "Local main is ahead of canonical main": "Yerel main canonical main'in ilerisinde",
-  "This checkout contains commits that are not on canonical main. Automatic main updates remain unavailable until the histories match.": "Bu checkout canonical main'de bulunmayan commit'ler içeriyor. Geçmişler eşleşene kadar otomatik main güncellemeleri kullanılamaz.",
+  "A newer admitted Main snapshot is available. Checking it does not change source files, Git refs, runtime state or user data.": "Daha yeni bir kabul edilmiş Main snapshot kullanılabilir. Kontrol işlemi kaynak dosyaları, Git ref'lerini, runtime durumunu veya kullanıcı verilerini değiştirmez.",
+  "Main snapshot is up to date": "Main snapshot güncel",
+  "The current source SHA exactly matches the admitted Main snapshot.": "Mevcut kaynak SHA kabul edilmiş Main snapshot ile tam olarak eşleşiyor.",
+  "Local source is ahead of the admitted Main snapshot": "Yerel kaynak kabul edilmiş Main snapshot'ın ilerisinde",
+  "This checkout is ahead of the currently admitted Main snapshot. Automatic Main apply remains unavailable until an admitted snapshot catches up.": "Bu checkout şu an kabul edilmiş Main snapshot'ın ilerisinde. Yeni bir kabul edilmiş snapshot bu seviyeye gelene kadar otomatik Main uygulaması kullanılamaz.",
   "Local ahead": "Yerel dal ileride",
-  "Local and canonical main have diverged": "Yerel ve canonical main ayrışmış",
+  "Local source and admitted Main snapshot have diverged": "Yerel kaynak ile kabul edilmiş Main snapshot ayrışmış",
   "The histories have commits on both sides. Equinox Local will not treat this as an ordinary update path.": "Her iki geçmişte de yalnızca kendi tarafında bulunan commit'ler var. Equinox Local bunu sıradan bir güncelleme yolu olarak değerlendirmez.",
   "Diverged": "Ayrışmış",
   "Main update check is blocked": "Main güncelleme kontrolü engellendi",
   "This source checkout is not eligible for canonical main tracking.": "Bu kaynak checkout canonical main takibi için uygun değil.",
   "Unsupported": "Desteklenmiyor",
   "Main update check needs attention": "Main güncelleme kontrolü dikkat gerektiriyor",
-  "The canonical main branch could not be checked. This is not an up-to-date result.": "Canonical main dalı kontrol edilemedi. Bu sonuç sistemin güncel olduğu anlamına gelmez.",
+  "The admitted Main Snapshot could not be checked. This is not an up-to-date result.": "Kabul edilmiş Main Snapshot kontrol edilemedi. Bu sonuç sistemin güncel olduğu anlamına gelmez.",
   "Check unavailable": "Kontrol kullanılamıyor",
-  "Canonical main channel ready": "Canonical main kanalı hazır",
-  "Check the canonical public main branch without modifying this source checkout.": "Bu kaynak checkout'u değiştirmeden canonical public main dalını kontrol edin.",
+  "Main snapshot channel ready": "Main snapshot kanalı hazır",
+  "Check the admitted Main snapshot without modifying this source checkout.": "Bu kaynak checkout'u değiştirmeden kabul edilmiş Main snapshot'ı kontrol edin.",
   "Check main": "Main'i kontrol et",
   "Current SHA —": "Mevcut SHA —",
   "Target SHA —": "Hedef SHA —",
@@ -749,8 +749,8 @@ export function translateUiText(value, language = "en") {
   if (match) return `Hedef SHA ${match[1]}`;
   match = source.match(/^Distance ↓(\d+) ↑(\d+)$/u);
   if (match) return `Mesafe ↓${match[1]} ↑${match[2]}`;
-  match = source.match(/^(\d+) commits? available on main$/u);
-  if (match) return `main'de ${match[1]} commit kullanılabilir`;
+  match = source.match(/^(\d+) commits? available in Main snapshot$/u);
+  if (match) return `Main snapshot'ta ${match[1]} commit kullanılabilir`;
   match = source.match(/^(\d+) projects · (\d+) read-only folders?$/u);
   if (match) return `${match[1]} proje · ${match[2]} salt okunur klasör`;
   match = source.match(/^Restarting into Equinox Local (.+)$/u);
