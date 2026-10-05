@@ -316,6 +316,34 @@ export function createEquinoxLocalMainUpdateTransactionEngine({
     }
   };
 
+  const abortStagedPreparation = async (transactionId, failure) => {
+    assertTransactionId(transactionId);
+    let receipt = await readActive();
+    if (!receipt || receipt.transactionId !== transactionId) throw new Error("Main update staged abort does not own the active transaction.");
+    if (receipt.status !== "staged" || receipt.stage !== "staged") throw new Error("Main update staged preparation can only be aborted before promotion begins.");
+    receipt = await writeReceipt(Object.freeze({
+      ...receipt,
+      status: "failed",
+      stage: "preparation_failed",
+      updatedAt: now().toISOString(),
+      lastError: boundedMessage(failure) || "Main update preparation failed.",
+    }));
+
+    const transactionDir = path.join(stagingRoot, transactionId);
+    let cleanupError = null;
+    try {
+      await fsImpl.rm(transactionDir, { recursive: true, force: true });
+      await syncDirectory(stagingRoot, { fsImpl });
+    } catch (error) {
+      cleanupError = error;
+    }
+
+    await fsImpl.rm(lockPath, { force: true });
+    await syncDirectory(resolvedTransactionRoot, { fsImpl });
+    if (cleanupError) throw cleanupError;
+    return receipt;
+  };
+
   const abortPreparedPromotion = async (transactionId, failure) => {
     assertTransactionId(transactionId);
     let receipt = await readActive();
@@ -355,5 +383,5 @@ export function createEquinoxLocalMainUpdateTransactionEngine({
     return true;
   };
 
-  return Object.freeze({ readActive, readReceipt, begin, stage, initializeSourcePointer, preparePromotion, activatePromotion, rollbackPromotion, abortPreparedPromotion, markPromotionSucceeded, markRollbackFailed, releaseStagedLock, paths: Object.freeze({ transactionRoot: resolvedTransactionRoot, lockPath, receiptsRoot, stagingRoot, sourcePointerPath: resolvedPointerPath, sourceStoreRoot: resolvedSourceStoreRoot }) });
+  return Object.freeze({ readActive, readReceipt, begin, stage, initializeSourcePointer, preparePromotion, activatePromotion, rollbackPromotion, abortStagedPreparation, abortPreparedPromotion, markPromotionSucceeded, markRollbackFailed, releaseStagedLock, paths: Object.freeze({ transactionRoot: resolvedTransactionRoot, lockPath, receiptsRoot, stagingRoot, sourcePointerPath: resolvedPointerPath, sourceStoreRoot: resolvedSourceStoreRoot }) });
 }
