@@ -287,6 +287,26 @@ test("source-switched receipt remains durable until explicit rollback", async (t
   assert.equal(rolledBack.status, "rolled_back");
 });
 
+test("native-impact rollback is non-terminal until native restore and rollback health complete", async (t) => {
+  const f = await fixture(t);
+  const staged = await f.engine.stage({ currentSha: CURRENT, targetSha: TARGET });
+  await f.engine.initializeSourcePointer();
+  await f.engine.preparePromotion(staged.receipt.transactionId);
+  await f.engine.markNativeRollbackReady(staged.receipt.transactionId);
+  await f.engine.markNativeSwitched(staged.receipt.transactionId);
+  await f.engine.activatePromotion(staged.receipt.transactionId);
+  const sourceRestored = await f.engine.rollbackPromotion(staged.receipt.transactionId, "target failed", { nativeRollbackPending: true });
+  assert.equal(sourceRestored.status, "verifying");
+  assert.equal(sourceRestored.stage, "rollback_source_restored");
+  await assert.rejects(f.engine.releaseStagedLock(staged.receipt.transactionId), /still active/u);
+  const nativeRestored = await f.engine.markNativeRollbackRestored(staged.receipt.transactionId);
+  assert.equal(nativeRestored.stage, "rollback_native_restored");
+  const done = await f.engine.markRollbackSucceeded(staged.receipt.transactionId);
+  assert.equal(done.status, "rolled_back");
+  assert.equal(done.stage, "rollback_healthy");
+  assert.equal(await f.engine.releaseStagedLock(staged.receipt.transactionId), true);
+});
+
 test("staged SHA mismatch records failure and releases handled pre-promotion lock", async (t) => {
   const { engine } = await fixture(t, { stagedHead: "3".repeat(40) });
   await assert.rejects(engine.stage({ currentSha: CURRENT, targetSha: TARGET }), /does not match the pinned target SHA/u);

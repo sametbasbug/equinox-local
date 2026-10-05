@@ -111,9 +111,9 @@ function validateReceipt(value) {
     staged: new Set(["staged"]),
     failed: new Set(["admitted", "dependencies", "validation", "preparation_failed", "handoff_schedule_failed", "native_admission_failed"]),
     promoting: new Set(["ready_to_switch", "native_rollback_ready", "native_switched"]),
-    verifying: new Set(["source_switched"]),
+    verifying: new Set(["source_switched", "rollback_source_restored", "rollback_native_restored"]),
     succeeded: new Set(["healthy"]),
-    rolled_back: new Set(["rollback_source_restored"]),
+    rolled_back: new Set(["rollback_source_restored", "rollback_healthy"]),
     rollback_failed: new Set(["rollback_failed"]),
   });
   if (!allowedStages[value.status]?.has(value.stage)) throw new Error("Main update receipt status and stage are incompatible.");
@@ -336,14 +336,14 @@ export function createEquinoxLocalMainUpdateTransactionEngine({
     return receipt;
   };
 
-  const rollbackPromotion = async (transactionId, failure) => {
+  const rollbackPromotion = async (transactionId, failure, { nativeRollbackPending = false } = {}) => {
     assertTransactionId(transactionId);
     let receipt = await readActive();
     if (!receipt || receipt.transactionId !== transactionId) throw new Error("Main update rollback does not own the active transaction.");
     if (!receipt.rollbackSourceRoot) throw new Error("Main update rollback source is unavailable.");
     try {
       await writeEquinoxLocalMainSourcePointer(resolvedPointerPath, { sourceRoot: receipt.rollbackSourceRoot, sha: receipt.rollbackSha }, { fsImpl, execFileImpl, randomBytesImpl });
-      receipt = await writeReceipt(Object.freeze({ ...receipt, status: "rolled_back", stage: "rollback_source_restored", updatedAt: now().toISOString(), lastError: boundedMessage(failure) || receipt.lastError }));
+      receipt = await writeReceipt(Object.freeze({ ...receipt, status: nativeRollbackPending ? "verifying" : "rolled_back", stage: "rollback_source_restored", updatedAt: now().toISOString(), lastError: boundedMessage(failure) || receipt.lastError }));
       return receipt;
     } catch (error) {
       await writeReceipt(Object.freeze({ ...receipt, status: "rollback_failed", stage: "rollback_failed", updatedAt: now().toISOString(), lastError: boundedMessage(error instanceof Error ? error.message : error) })).catch(() => {});
@@ -403,6 +403,29 @@ export function createEquinoxLocalMainUpdateTransactionEngine({
     return receipt;
   };
 
+  const markNativeRollbackRestored = async (transactionId) => {
+    assertTransactionId(transactionId);
+    let receipt = await readActive();
+    if (!receipt || receipt.transactionId !== transactionId) throw new Error("Main native rollback restore does not own the active transaction.");
+    if (receipt.status !== "verifying" || !["rollback_source_restored", "rollback_native_restored"].includes(receipt.stage)) {
+      throw new Error("Main update transaction is not awaiting native rollback restoration.");
+    }
+    if (receipt.stage === "rollback_native_restored") return receipt;
+    receipt = await writeReceipt(Object.freeze({ ...receipt, stage: "rollback_native_restored", updatedAt: now().toISOString() }));
+    return receipt;
+  };
+
+  const markRollbackSucceeded = async (transactionId) => {
+    assertTransactionId(transactionId);
+    let receipt = await readActive();
+    if (!receipt || receipt.transactionId !== transactionId) throw new Error("Main rollback success does not own the active transaction.");
+    if (receipt.status !== "verifying" || receipt.stage !== "rollback_native_restored") {
+      throw new Error("Main update native rollback is not awaiting health verification.");
+    }
+    receipt = await writeReceipt(Object.freeze({ ...receipt, status: "rolled_back", stage: "rollback_healthy", updatedAt: now().toISOString() }));
+    return receipt;
+  };
+
   const markRollbackFailed = async (transactionId, failure) => {
     assertTransactionId(transactionId);
     const receipt = await readActive();
@@ -420,5 +443,5 @@ export function createEquinoxLocalMainUpdateTransactionEngine({
     return true;
   };
 
-  return Object.freeze({ readActive, readReceipt, begin, stage, initializeSourcePointer, preparePromotion, markNativeRollbackReady, markNativeSwitched, activatePromotion, rollbackPromotion, abortStagedPreparation, abortPreparedPromotion, markPromotionSucceeded, markRollbackFailed, releaseStagedLock, paths: Object.freeze({ transactionRoot: resolvedTransactionRoot, lockPath, receiptsRoot, stagingRoot, sourcePointerPath: resolvedPointerPath, sourceStoreRoot: resolvedSourceStoreRoot }) });
+  return Object.freeze({ readActive, readReceipt, begin, stage, initializeSourcePointer, preparePromotion, markNativeRollbackReady, markNativeSwitched, activatePromotion, rollbackPromotion, abortStagedPreparation, abortPreparedPromotion, markPromotionSucceeded, markNativeRollbackRestored, markRollbackSucceeded, markRollbackFailed, releaseStagedLock, paths: Object.freeze({ transactionRoot: resolvedTransactionRoot, lockPath, receiptsRoot, stagingRoot, sourcePointerPath: resolvedPointerPath, sourceStoreRoot: resolvedSourceStoreRoot }) });
 }
