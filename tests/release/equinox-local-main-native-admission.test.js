@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   classifyEquinoxLocalMainNativeImpact,
+  computeEquinoxLocalMainNativeRuntimeContract,
   validateEquinoxLocalMainNativeArtifactManifest,
 } from "../../src/equinox-local-main-native-admission.js";
 
@@ -55,9 +56,66 @@ test("native-impact path admission is fail-closed for unsafe path syntax", () =>
   assert.throws(() => classifyEquinoxLocalMainNativeImpact("app/EquinoxLocalApp.swift"), /array/u);
 });
 
+test("exact-SHA native runtime contract hashes exact Git inputs without binding unrelated commits", async () => {
+  const entries = [
+    "100644 blob " + "1".repeat(40) + "\t.github/workflows/release-validation.yml",
+    "100644 blob " + "2".repeat(40) + "\tscripts/release/package-managed-release.mjs",
+    "100644 blob " + "3".repeat(40) + "\tsrc/equinox-local-platform.js",
+    "100644 blob " + "4".repeat(40) + "\tsrc/equinox-local-release-runtime-contract.js",
+    "100644 blob " + "5".repeat(40) + "\tsrc/equinox-local-runtime-versions.js",
+    "100644 blob " + "6".repeat(40) + "\tapp/EquinoxLocal.png",
+    "100644 blob " + "7".repeat(40) + "\tapp/EquinoxLocalApp.swift",
+    "100644 blob " + "8".repeat(40) + "\tsrc/equinox-local-native-app.js",
+    "100644 blob " + "9".repeat(40) + "\tsrc/equinox-local-native-app-host.js",
+    "100644 blob " + "a".repeat(40) + "\tscripts/release/prepare-source-app-host.mjs",
+  ];
+  const calls = [];
+  const execFileImpl = async (command, args) => {
+    calls.push([command, args]);
+    if (args.includes("rev-parse")) return { stdout: `${SHA}\n`, stderr: "" };
+    return { stdout: `${entries.reverse().join("\0")}\0`, stderr: "" };
+  };
+  const first = await computeEquinoxLocalMainNativeRuntimeContract({ rootDir: "/tmp/canonical", sourceSha: SHA, target: "darwin-arm64", execFileImpl });
+  entries.reverse();
+  const second = await computeEquinoxLocalMainNativeRuntimeContract({ rootDir: "/tmp/canonical", sourceSha: SHA, target: "darwin-arm64", execFileImpl });
+  assert.match(first.sha256, /^[a-f0-9]{64}$/u);
+  assert.equal(first.sha256, second.sha256);
+  assert.equal(first.inputCount, 10);
+  assert.equal(first.inputs[0].path, ".github/workflows/release-validation.yml");
+  assert.equal(calls.some(([, args]) => args.includes("ls-tree") && args.includes("app")), true);
+});
+
+test("native runtime contract rejects missing unsafe and non-blob exact inputs", async () => {
+  const base = async (_command, args) => args.includes("rev-parse")
+    ? { stdout: `${SHA}\n`, stderr: "" }
+    : { stdout: "", stderr: "" };
+  await assert.rejects(
+    computeEquinoxLocalMainNativeRuntimeContract({ rootDir: "/tmp/canonical", sourceSha: SHA, target: "darwin-arm64", execFileImpl: base }),
+    /input is missing/u,
+  );
+  const symlink = async (_command, args) => args.includes("rev-parse")
+    ? { stdout: `${SHA}\n`, stderr: "" }
+    : { stdout: `120000 blob ${"1".repeat(40)}\tapp/linked\0`, stderr: "" };
+  await assert.rejects(
+    computeEquinoxLocalMainNativeRuntimeContract({ rootDir: "/tmp/canonical", sourceSha: SHA, target: "darwin-arm64", execFileImpl: symlink }),
+    /not a normal Git blob/u,
+  );
+  await assert.rejects(
+    computeEquinoxLocalMainNativeRuntimeContract({ rootDir: "/tmp/canonical", sourceSha: SHA, target: "linux-x64", execFileImpl: base }),
+    /target is unsupported/u,
+  );
+});
+
 test("exact-SHA native manifest binds source target runtime contract and artifact digest", () => {
   const value = manifest("win32-arm64");
-  assert.deepEqual(validateEquinoxLocalMainNativeArtifactManifest(value, { expectedSourceSha: SHA, expectedTarget: "win32-arm64" }), value);
+  assert.deepEqual(validateEquinoxLocalMainNativeArtifactManifest(value, {
+    expectedSourceSha: SHA,
+    expectedTarget: "win32-arm64",
+    expectedRuntimeContractSha256: value.runtimeContractSha256,
+  }), value);
+  assert.throws(() => validateEquinoxLocalMainNativeArtifactManifest(value, {
+    expectedRuntimeContractSha256: "d".repeat(64),
+  }), /exact source contract/u);
 });
 
 test("native manifest rejects SHA target name digest size and schema drift", () => {

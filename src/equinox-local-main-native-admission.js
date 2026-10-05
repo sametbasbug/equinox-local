@@ -1,4 +1,11 @@
+import { execFile as execFileCallback } from "node:child_process";
+import { createHash } from "node:crypto";
+import path from "node:path";
+import { promisify } from "node:util";
+
 import { EQUINOX_LOCAL_SUPPORTED_RELEASE_TARGETS } from "./equinox-local-platform.js";
+
+const execFile = promisify(execFileCallback);
 
 const SHA_PATTERN = /^[a-f0-9]{40}$/u;
 const DIGEST_PATTERN = /^[a-f0-9]{64}$/u;
@@ -32,7 +39,7 @@ const WINDOWS_NATIVE_PATHS = Object.freeze([
 ]);
 
 function normalizeChangedPath(value) {
-  if (typeof value !== "string" || value.length < 1 || value.length > 1024 || /[\r\n\0]/u.test(value) || value.startsWith("/") || value.includes("\\")) {
+  if (typeof value !== "string" || value.length < 1 || value.length > 1024 || /[\u0000-\u001f\u007f]/u.test(value) || value.startsWith("/") || value.includes("\\")) {
     throw new Error("Main native-impact path is invalid.");
   }
   const parts = value.split("/");
@@ -44,6 +51,67 @@ function matchesRule(relative, rule) {
 }
 function addTargets(targets, values) {
   for (const target of values) targets.add(target);
+}
+
+function nativeContractRulesForTarget(target) {
+  if (!ALL_TARGETS.includes(target)) throw new Error("Main native runtime contract target is unsupported.");
+  const platformRules = target.startsWith("darwin-") ? DARWIN_NATIVE_PATHS : WINDOWS_NATIVE_PATHS;
+  return Object.freeze([...new Set([...SHARED_NATIVE_PATHS, ...platformRules])]);
+}
+
+function parseNativeContractTree(raw, rules) {
+  const entries = [];
+  const seen = new Set();
+  for (const record of raw.split("\0")) {
+    if (!record) continue;
+    const separator = record.indexOf("\t");
+    if (separator < 1) throw new Error("Main native runtime contract Git tree output is malformed.");
+    const header = record.slice(0, separator);
+    const relative = normalizeChangedPath(record.slice(separator + 1));
+    const match = /^(100644|100755) blob ([a-f0-9]{40}|[a-f0-9]{64})$/u.exec(header);
+    if (!match) throw new Error(`Main native runtime contract input is not a normal Git blob: ${relative}.`);
+    if (!rules.some((rule) => matchesRule(relative, rule))) throw new Error(`Unexpected Main native runtime contract input: ${relative}.`);
+    if (seen.has(relative)) throw new Error(`Duplicate Main native runtime contract input: ${relative}.`);
+    seen.add(relative);
+    entries.push(Object.freeze({ mode: match[1], objectId: match[2], path: relative }));
+  }
+  for (const rule of rules) {
+    if (!entries.some((entry) => matchesRule(entry.path, rule))) throw new Error(`Main native runtime contract input is missing: ${rule}.`);
+  }
+  entries.sort((left, right) => left.path.localeCompare(right.path, "en"));
+  return Object.freeze(entries);
+}
+
+export async function computeEquinoxLocalMainNativeRuntimeContract({
+  rootDir,
+  sourceSha,
+  target,
+  execFileImpl = execFile,
+} = {}) {
+  if (typeof rootDir !== "string" || rootDir.length < 1) throw new Error("Main native runtime contract root is required.");
+  if (!SHA_PATTERN.test(sourceSha ?? "")) throw new Error("Main native runtime contract source SHA is invalid.");
+  const rules = nativeContractRulesForTarget(target);
+  const root = path.resolve(rootDir);
+  const revision = await execFileImpl("git", ["-C", root, "rev-parse", "--verify", `${sourceSha}^{commit}`], {
+    encoding: "utf8", timeout: 10_000, maxBuffer: 1024 * 1024,
+  });
+  if (String(revision.stdout ?? "").trim() !== sourceSha) throw new Error("Main native runtime contract source SHA is unavailable in the canonical checkout.");
+  const pathspecs = rules.map((rule) => rule.endsWith("/") ? rule.slice(0, -1) : rule);
+  const tree = await execFileImpl("git", ["-C", root, "ls-tree", "-r", "-z", sourceSha, "--", ...pathspecs], {
+    encoding: "utf8", timeout: 10_000, maxBuffer: 8 * 1024 * 1024,
+  });
+  const entries = parseNativeContractTree(String(tree.stdout ?? ""), rules);
+  const digest = createHash("sha256");
+  digest.update("equinox-local-main-native-runtime-contract-v1\0", "utf8");
+  digest.update(`target=${target}\0`, "utf8");
+  for (const entry of entries) digest.update(`${entry.mode}\0${entry.path}\0${entry.objectId}\0`, "utf8");
+  return Object.freeze({
+    schemaVersion: 1,
+    target,
+    sha256: digest.digest("hex"),
+    inputCount: entries.length,
+    inputs: entries,
+  });
 }
 
 export function classifyEquinoxLocalMainNativeImpact(changedPaths = []) {
@@ -81,7 +149,11 @@ function assertExactKeys(value, expected, label) {
   if (actual.length !== wanted.length || actual.some((key, index) => key !== wanted[index])) throw new Error(`${label} contains missing or unsupported fields.`);
 }
 
-export function validateEquinoxLocalMainNativeArtifactManifest(value, { expectedSourceSha = null, expectedTarget = null } = {}) {
+export function validateEquinoxLocalMainNativeArtifactManifest(value, {
+  expectedSourceSha = null,
+  expectedTarget = null,
+  expectedRuntimeContractSha256 = null,
+} = {}) {
   assertExactKeys(value, ["schemaVersion", "channel", "sourceSha", "target", "runtimeContractSha256", "artifact"], "Main native artifact manifest");
   if (value.schemaVersion !== EQUINOX_LOCAL_MAIN_NATIVE_MANIFEST_SCHEMA_VERSION || value.channel !== "main") throw new Error("Main native artifact manifest identity is invalid.");
   if (!SHA_PATTERN.test(value.sourceSha ?? "")) throw new Error("Main native artifact source SHA is invalid.");
@@ -89,6 +161,9 @@ export function validateEquinoxLocalMainNativeArtifactManifest(value, { expected
   if (!ALL_TARGETS.includes(value.target)) throw new Error("Main native artifact target is unsupported.");
   if (expectedTarget !== null && value.target !== expectedTarget) throw new Error("Main native artifact target does not match the host target.");
   if (!DIGEST_PATTERN.test(value.runtimeContractSha256 ?? "")) throw new Error("Main native runtime contract digest is invalid.");
+  if (expectedRuntimeContractSha256 !== null && value.runtimeContractSha256 !== expectedRuntimeContractSha256) {
+    throw new Error("Main native runtime contract digest does not match the exact source contract.");
+  }
   assertExactKeys(value.artifact, ["name", "sha256", "bytes"], "Main native artifact");
   if (typeof value.artifact.name !== "string" || !/^equinox-local-main-[a-f0-9]{40}-(?:darwin|win32)-(?:arm64|x64)\.(?:tar\.gz|zip)$/u.test(value.artifact.name)) {
     throw new Error("Main native artifact name is invalid.");
