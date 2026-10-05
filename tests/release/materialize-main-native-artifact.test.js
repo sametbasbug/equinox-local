@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
-import os from "node:os";
+import { fileURLToPath } from "node:url";
 import path from "node:path";
 import test from "node:test";
 
@@ -9,7 +9,8 @@ import { materializeEquinoxLocalMainNativeArtifact } from "../../scripts/release
 const SHA = "a".repeat(40);
 
 async function fixture(t, suffix = ".tar.gz") {
-  const root = await fs.mkdtemp(path.join(await fs.realpath(os.tmpdir()), "equinox-main-native-"));
+  const fixtureBase = path.dirname(fileURLToPath(import.meta.url));
+  const root = await fs.mkdtemp(path.join(fixtureBase, ".equinox-main-native-"));
   t.after(() => fs.rm(root, { recursive: true, force: true }));
   const candidate = path.join(root, `candidate${suffix}`);
   const output = path.join(root, "out");

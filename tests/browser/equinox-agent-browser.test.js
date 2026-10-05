@@ -396,6 +396,50 @@ test("Windows Agent Browser shutdown force-drains an exact tree that survives su
   ]);
 });
 
+test("Windows Agent Browser shutdown accepts forced taskkill child-race only after the exact main PID is gone", async () => {
+  const profileRoot = "C:\\Users\\Example User\\AppData\\Local\\Equinox Local\\browser";
+  const chromePath = "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe";
+  const pid = 7102;
+  const bridge = createBridgeStub({ ready: false });
+  let alive = true;
+  const inventory = JSON.stringify([
+    { ProcessId: pid, ExecutablePath: chromePath, CommandLine: `"${chromePath}" --user-data-dir="${profileRoot}" --no-first-run` },
+  ]);
+  const manager = createEquinoxAgentBrowser({
+    bridge,
+    homeDir: "C:\\Users\\Example User",
+    profileRoot,
+    platform: "win32",
+    env: { LOCALAPPDATA: "C:\\Users\\Example User\\AppData\\Local" },
+    discoverWindowsChromeImpl: async () => chromePath,
+    execFileAsync: async (command, args) => {
+      if (command === "powershell.exe") return { stdout: inventory, stderr: "" };
+      assert.equal(command, "taskkill.exe");
+      if (args.includes("/F")) {
+        alive = false;
+        const error = new Error("child already exited");
+        error.code = 255;
+        throw error;
+      }
+      return { stdout: "SUCCESS", stderr: "" };
+    },
+    signalProcess: (candidatePid, signal) => {
+      assert.equal(candidatePid, pid);
+      assert.equal(signal, 0);
+      if (!alive) {
+        const error = new Error("gone");
+        error.code = "ESRCH";
+        throw error;
+      }
+      return true;
+    },
+  });
+
+  const result = await manager.shutdown({ timeoutMs: 500 });
+  assert.equal(result.stopped, true);
+  assert.equal(result.processId, pid);
+});
+
 test("Windows Agent Browser process parser selects only exact Chrome main process for the isolated profile", () => {
   const profileRoot = "C:\\Users\\Example\\AppData\\Local\\Equinox Local\\browser";
   const chromePath = "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe";
