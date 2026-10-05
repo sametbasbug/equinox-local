@@ -47,11 +47,18 @@ async function fixture(t, { failValidation = false, stagedHead = TARGET } = {}) 
 }
 
 test("transaction state must live outside the active checkout", () => {
-  assert.throws(() => createEquinoxLocalMainUpdateTransactionEngine({ sourceRoot: "/Users/example/equinox-local", transactionRoot: "/Users/example/equinox-local/.updates" }), /must not overlap/u);
+  assert.throws(() => createEquinoxLocalMainUpdateTransactionEngine({ sourceRoot: "/Users/example/equinox-local", transactionRoot: "/Users/example/equinox-local/.updates" }), /must not live inside/u);
 });
 
-test("transaction state cannot contain the active checkout either", () => {
-  assert.throws(() => createEquinoxLocalMainUpdateTransactionEngine({ sourceRoot: "/Users/example/state/active", transactionRoot: "/Users/example/state" }), /must not overlap/u);
+test("transaction state rejects arbitrary active checkouts beneath itself", () => {
+  assert.throws(() => createEquinoxLocalMainUpdateTransactionEngine({ sourceRoot: "/Users/example/state/active", transactionRoot: "/Users/example/state" }), /direct SHA-addressed source-store checkout/u);
+  assert.throws(() => createEquinoxLocalMainUpdateTransactionEngine({ sourceRoot: `/Users/example/state/sources/${CURRENT}/nested`, transactionRoot: "/Users/example/state" }), /direct SHA-addressed source-store checkout/u);
+  assert.throws(() => createEquinoxLocalMainUpdateTransactionEngine({ sourceRoot: `/Users/example/state/staging/${CURRENT}`, transactionRoot: "/Users/example/state" }), /direct SHA-addressed source-store checkout/u);
+});
+
+test("transaction state accepts the promoted direct SHA-addressed source-store checkout", () => {
+  const engine = createEquinoxLocalMainUpdateTransactionEngine({ sourceRoot: `/Users/example/state/sources/${CURRENT}`, transactionRoot: "/Users/example/state" });
+  assert.equal(engine.paths.sourceStoreRoot, "/Users/example/state/sources");
 });
 
 test("begin acquires one private durable owner and refuses a concurrent updater", async (t) => {
