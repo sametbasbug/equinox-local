@@ -303,14 +303,12 @@ export async function snapshotEquinoxLocalNativeAppHost({
   }
 }
 
-export async function restoreEquinoxLocalNativeAppHostSnapshot({
-  homeDir,
+export async function inspectEquinoxLocalNativeAppHostSnapshot({
   snapshotPath,
   fsImpl = fs,
   execFileImpl = execFile,
 } = {}) {
-  if (process.platform !== "darwin") throw new Error("Equinox Local native app snapshot restore is supported only on macOS.");
-  if (typeof homeDir !== "string" || !path.isAbsolute(homeDir)) throw new Error("A trusted user home directory is required for native app snapshot restore.");
+  if (process.platform !== "darwin") throw new Error("Equinox Local native app snapshot inspection is supported only on macOS.");
   if (typeof snapshotPath !== "string" || !path.isAbsolute(snapshotPath)) throw new Error("A trusted native app snapshot path is required.");
   await validateEquinoxLocalAppHost(snapshotPath, { fsImpl, execFileImpl });
   const manifestPath = `${snapshotPath}.rollback.json`;
@@ -320,6 +318,18 @@ export async function restoreEquinoxLocalNativeAppHostSnapshot({
   if (manifest?.schemaVersion !== 1 || manifest?.kind !== "darwin-app" || manifest?.sha256 !== fingerprint.sha256 || manifest?.entries !== fingerprint.entries || manifest?.bytes !== fingerprint.bytes) {
     throw new Error("Equinox Local native app rollback snapshot fingerprint mismatch.");
   }
+  return Object.freeze({ snapshotPath, manifestPath, fingerprint });
+}
+
+export async function restoreEquinoxLocalNativeAppHostSnapshot({
+  homeDir,
+  snapshotPath,
+  fsImpl = fs,
+  execFileImpl = execFile,
+} = {}) {
+  if (process.platform !== "darwin") throw new Error("Equinox Local native app snapshot restore is supported only on macOS.");
+  if (typeof homeDir !== "string" || !path.isAbsolute(homeDir)) throw new Error("A trusted user home directory is required for native app snapshot restore.");
+  await inspectEquinoxLocalNativeAppHostSnapshot({ snapshotPath, fsImpl, execFileImpl });
   const appPath = equinoxLocalAppPath(homeDir);
   const replacement = path.join(path.dirname(appPath), `.Equinox-Local-rollback-${process.pid}-${randomBytes(8).toString("hex")}.app`);
   try {

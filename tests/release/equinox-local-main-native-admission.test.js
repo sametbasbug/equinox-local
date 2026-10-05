@@ -40,12 +40,16 @@ test("macOS native inputs require both Darwin architectures", () => {
   assert.deepEqual(result.reasons.map((entry) => entry.scope), ["darwin", "darwin"]);
 });
 
-test("Windows native inputs require both Windows architectures", () => {
+test("Windows native inputs and release-local Native Messaging closure require both Windows architectures", () => {
   const result = classifyEquinoxLocalMainNativeImpact([
     "native/windows/EquinoxLocal.WindowsShell/App.xaml.cs",
     "native/windows/equinox-browser-native-host-launcher.cpp",
+    "src/equinox-browser-native-host.js",
+    "src/equinox-browser-native-host-runtime.js",
+    "src/equinox-browser-socket.js",
   ]);
   assert.deepEqual(result.requiredTargets, ["win32-arm64", "win32-x64"]);
+  assert.equal(result.reasons.every((entry) => entry.scope === "windows"), true);
 });
 
 test("shared native contracts require all four release targets and deduplicate paths", () => {

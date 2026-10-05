@@ -135,6 +135,55 @@ test("promotion moves staged source into durable store, atomically switches poin
   assert.equal(await engine.releaseStagedLock(staged.receipt.transactionId), true);
 });
 
+test("native-impact promotion persists rollback readiness and native switch before source activation", async (t) => {
+  const f = await fixture(t);
+  const staged = await f.engine.stage({ currentSha: CURRENT, targetSha: TARGET });
+  await f.engine.initializeSourcePointer();
+  await f.engine.preparePromotion(staged.receipt.transactionId);
+  const pointerBefore = await fs.readFile(f.engine.paths.sourcePointerPath, "utf8");
+
+  const rollbackReady = await f.engine.markNativeRollbackReady(staged.receipt.transactionId);
+  assert.equal(rollbackReady.status, "promoting");
+  assert.equal(rollbackReady.stage, "native_rollback_ready");
+  assert.equal((await f.engine.markNativeRollbackReady(staged.receipt.transactionId)).stage, "native_rollback_ready");
+  assert.equal(await fs.readFile(f.engine.paths.sourcePointerPath, "utf8"), pointerBefore);
+  await assert.rejects(f.engine.activatePromotion(staged.receipt.transactionId), /not ready to switch source/u);
+
+  const nativeSwitched = await f.engine.markNativeSwitched(staged.receipt.transactionId);
+  assert.equal(nativeSwitched.status, "promoting");
+  assert.equal(nativeSwitched.stage, "native_switched");
+  assert.equal((await f.engine.markNativeSwitched(staged.receipt.transactionId)).stage, "native_switched");
+  assert.equal(await fs.readFile(f.engine.paths.sourcePointerPath, "utf8"), pointerBefore);
+
+  const sourceSwitched = await f.engine.activatePromotion(staged.receipt.transactionId);
+  assert.equal(sourceSwitched.status, "verifying");
+  assert.equal(sourceSwitched.stage, "source_switched");
+  assert.match(await fs.readFile(f.engine.paths.sourcePointerPath, "utf8"), new RegExp(`sha=${TARGET}`));
+});
+
+test("native switch cannot be recorded before durable rollback readiness", async (t) => {
+  const f = await fixture(t);
+  const staged = await f.engine.stage({ currentSha: CURRENT, targetSha: TARGET });
+  await f.engine.initializeSourcePointer();
+  await f.engine.preparePromotion(staged.receipt.transactionId);
+  await assert.rejects(
+    f.engine.markNativeSwitched(staged.receipt.transactionId),
+    /has not durably prepared native rollback state/u,
+  );
+  assert.equal((await f.engine.readActive()).stage, "ready_to_switch");
+});
+
+test("receipt validation fails closed on an incompatible status-stage pair", async (t) => {
+  const f = await fixture(t);
+  const staged = await f.engine.stage({ currentSha: CURRENT, targetSha: TARGET });
+  const receiptPath = path.join(f.engine.paths.receiptsRoot, `${staged.receipt.transactionId}.json`);
+  const receipt = JSON.parse(await fs.readFile(receiptPath, "utf8"));
+  receipt.status = "promoting";
+  receipt.stage = "validation";
+  await fs.writeFile(receiptPath, `${JSON.stringify(receipt, null, 2)}\n`);
+  await assert.rejects(f.engine.readReceipt(staged.receipt.transactionId), /status and stage are incompatible/u);
+});
+
 test("preparePromotion recovers if durable-store rename completed before receipt update", async (t) => {
   const f = await fixture(t);
   const staged = await f.engine.stage({ currentSha: CURRENT, targetSha: TARGET });
@@ -236,6 +285,26 @@ test("source-switched receipt remains durable until explicit rollback", async (t
   assert.equal((await f.engine.readReceipt(staged.receipt.transactionId)).targetSourceRoot, path.join(f.engine.paths.sourceStoreRoot, TARGET));
   const rolledBack = await f.engine.rollbackPromotion(staged.receipt.transactionId, "interrupted after pointer switch");
   assert.equal(rolledBack.status, "rolled_back");
+});
+
+test("native-impact rollback is non-terminal until native restore and rollback health complete", async (t) => {
+  const f = await fixture(t);
+  const staged = await f.engine.stage({ currentSha: CURRENT, targetSha: TARGET });
+  await f.engine.initializeSourcePointer();
+  await f.engine.preparePromotion(staged.receipt.transactionId);
+  await f.engine.markNativeRollbackReady(staged.receipt.transactionId);
+  await f.engine.markNativeSwitched(staged.receipt.transactionId);
+  await f.engine.activatePromotion(staged.receipt.transactionId);
+  const sourceRestored = await f.engine.rollbackPromotion(staged.receipt.transactionId, "target failed", { nativeRollbackPending: true });
+  assert.equal(sourceRestored.status, "verifying");
+  assert.equal(sourceRestored.stage, "rollback_source_restored");
+  await assert.rejects(f.engine.releaseStagedLock(staged.receipt.transactionId), /still active/u);
+  const nativeRestored = await f.engine.markNativeRollbackRestored(staged.receipt.transactionId);
+  assert.equal(nativeRestored.stage, "rollback_native_restored");
+  const done = await f.engine.markRollbackSucceeded(staged.receipt.transactionId);
+  assert.equal(done.status, "rolled_back");
+  assert.equal(done.stage, "rollback_healthy");
+  assert.equal(await f.engine.releaseStagedLock(staged.receipt.transactionId), true);
 });
 
 test("staged SHA mismatch records failure and releases handled pre-promotion lock", async (t) => {

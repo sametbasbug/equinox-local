@@ -17,8 +17,11 @@ function engineFixture({ rollbackThrows = null } = {}) {
   return {
     calls,
     engine: {
+      async markNativeSwitched(id) { calls.push(["native_switched", id]); return { ...receipt, status: "promoting", stage: "native_switched" }; },
       async activatePromotion(id) { calls.push(["activate", id]); status = "verifying"; return { ...receipt, status, stage: "source_switched" }; },
-      async rollbackPromotion(id, failure) { calls.push(["rollback", id, failure]); if (rollbackThrows) throw rollbackThrows; status = "rolled_back"; return { ...receipt, status, stage: "rollback_source_restored", lastError: failure }; },
+      async rollbackPromotion(id, failure, options = {}) { calls.push(["rollback", id, failure, options]); if (rollbackThrows) throw rollbackThrows; status = options.nativeRollbackPending ? "verifying" : "rolled_back"; return { ...receipt, status, stage: "rollback_source_restored", lastError: failure }; },
+      async markNativeRollbackRestored(id) { calls.push(["native_restored", id]); status = "verifying"; return { ...receipt, status, stage: "rollback_native_restored" }; },
+      async markRollbackSucceeded(id) { calls.push(["rollback_success", id]); status = "rolled_back"; return { ...receipt, status, stage: "rollback_healthy" }; },
       async markPromotionSucceeded(id) { calls.push(["success", id]); status = "succeeded"; return { ...receipt, status, stage: "healthy" }; },
       async markRollbackFailed(id, failure) { calls.push(["rollback_failed", id, failure]); status = "rollback_failed"; return { ...receipt, status, stage: "rollback_failed", lastError: failure }; },
       async releaseStagedLock(id) { calls.push(["release", id]); return true; },
@@ -79,4 +82,44 @@ test("rollback pointer failure is loud and records rollback_failed without relea
     verifyRuntime: async () => true,
   }), /pointer restore failed/u);
   assert.deepEqual(f.calls.map(([name]) => name), ["activate", "rollback", "rollback_failed"]);
+});
+
+
+test("native-impact handoff switches native before source and commits native identity only after target health", async () => {
+  const f = engineFixture();
+  const events = [];
+  const result = await runEquinoxLocalMainUpdateHandoff({
+    engine: f.engine,
+    transactionId: f.receipt.transactionId,
+    nativeLifecycle: {
+      activate: async () => events.push("native-activate"),
+      rollback: async () => assert.fail("healthy target must not rollback native"),
+      commit: async () => events.push("native-commit"),
+    },
+    restartRuntime: async () => events.push("restart"),
+    verifyRuntime: async () => { events.push("health"); return true; },
+  });
+  assert.equal(result.status, "succeeded");
+  assert.deepEqual(events, ["native-activate", "restart", "health", "native-commit"]);
+  assert.deepEqual(f.calls.map(([name]) => name), ["native_switched", "activate", "success", "release"]);
+});
+
+test("native-impact target failure restores source and native before rollback health becomes terminal", async () => {
+  const f = engineFixture();
+  const events = [];
+  const result = await runEquinoxLocalMainUpdateHandoff({
+    engine: f.engine,
+    transactionId: f.receipt.transactionId,
+    nativeLifecycle: {
+      activate: async () => events.push("native-activate"),
+      rollback: async ({ nativeActivated }) => events.push(`native-rollback:${nativeActivated}`),
+      commit: async () => assert.fail("failed target must not commit native pointer"),
+    },
+    restartRuntime: async ({ rollback }) => events.push(rollback ? "restart-rollback" : "restart-target"),
+    verifyRuntime: async ({ rollback }) => rollback === true,
+  });
+  assert.equal(result.status, "rolled_back");
+  assert.deepEqual(events, ["native-activate", "restart-target", "native-rollback:true", "restart-rollback"]);
+  assert.deepEqual(f.calls.map(([name]) => name), ["native_switched", "activate", "rollback", "native_restored", "rollback_success", "release"]);
+  assert.deepEqual(f.calls.find(([name]) => name === "rollback")[3], { nativeRollbackPending: true });
 });

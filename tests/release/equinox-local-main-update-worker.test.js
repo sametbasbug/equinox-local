@@ -31,7 +31,8 @@ test("launchd worker consumes only the prepared transaction it owns and cleans u
     engineFactory: (options) => { events.push(["engine", options]); return engine; },
     resolveHostTarget: () => "darwin-arm64",
     planNativeTransition: async (value) => { events.push(["plan", value]); return reuseTransition(); },
-    inspectNativeArtifact: async () => assert.fail("reuse_native must not inspect an artifact"),
+    prepareNativeCandidate: async () => assert.fail("reuse_native must not prepare an artifact"),
+    prepareNativeLifecycle: async () => assert.fail("reuse_native must not prepare native lifecycle"),
     handoffImpl: async ({ transactionId, restartRuntime, verifyRuntime }) => {
       events.push(["handoff", transactionId]);
       await restartRuntime({ sourceRoot: "/target", previousSourceRoot: SOURCE, sha: "b".repeat(40), rollback: false });
@@ -69,32 +70,33 @@ test("worker rejects a foreign transaction owner and still cleans the one-shot j
 });
 
 
-test("worker revalidates an exact transaction-owned native artifact before handoff", async () => {
+test("worker prepares exact native candidate and durable rollback lifecycle before handoff", async () => {
   const events = [];
-  const artifact = { artifactPath: `${STATE}/staging/${TX}/native/exact.tar.gz`, sha256: "c".repeat(64), bytes: 42 };
+  const candidate = { sourceSha: B, target: "darwin-arm64", runtimeContractSha256: DIGEST_B, releaseDir: `${STATE}/staging/${TX}/native-candidate/release` };
+  const lifecycle = { activate: async () => {}, rollback: async () => {}, commit: async () => {} };
   const transition = { mode: "artifact_required", target: "darwin-arm64", currentSha: A, targetSha: B, currentRuntimeContractSha256: DIGEST_A, targetRuntimeContractSha256: DIGEST_B };
   const engine = {
     paths: { sourcePointerPath: `${STATE}/current-source.conf` },
     readActive: async () => preparedReceipt(),
-    abortPreparedPromotion: async () => assert.fail("valid artifact must not abort"),
+    abortPreparedPromotion: async () => assert.fail("valid native preparation must not abort"),
+    markNativeRollbackReady: async (id) => events.push(["rollback-ready", id]),
   };
   const result = await runEquinoxLocalMainUpdateWorker({
     argv: argv(),
     engineFactory: () => engine,
     resolveHostTarget: () => "darwin-arm64",
     planNativeTransition: async (value) => { events.push(["plan", value]); return transition; },
-    inspectNativeArtifact: async (value) => { events.push(["inspect", value]); return artifact; },
+    prepareNativeCandidate: async (value) => { events.push(["candidate", value]); return candidate; },
+    prepareNativeLifecycle: async (value) => { events.push(["native-lifecycle", value]); return lifecycle; },
     handoffImpl: async (value) => { events.push(["handoff", value]); return { status: "succeeded" }; },
     cleanupImpl: async () => events.push(["cleanup"]),
   });
   assert.equal(result.status, "succeeded");
-  assert.deepEqual(events.map(([name]) => name), ["plan", "inspect", "handoff", "cleanup"]);
-  assert.equal(events[0][1].currentRoot, SOURCE);
-  assert.equal(events[0][1].targetRoot, "/target");
+  assert.deepEqual(events.map(([name]) => name), ["plan", "candidate", "native-lifecycle", "rollback-ready", "handoff", "cleanup"]);
   assert.equal(events[1][1].sourceSha, B);
   assert.equal(events[1][1].expectedRuntimeContractSha256, DIGEST_B);
-  assert.equal(events[2][1].nativeArtifact, artifact);
-  assert.equal(events[2][1].nativeTransition, transition);
+  assert.equal(events[2][1].transition, transition);
+  assert.equal(events[4][1].nativeLifecycle, lifecycle);
 });
 
 test("worker aborts its own prepared transaction when native admission revalidation fails", async () => {
@@ -110,7 +112,7 @@ test("worker aborts its own prepared transaction when native admission revalidat
     engineFactory: () => engine,
     resolveHostTarget: () => "darwin-arm64",
     planNativeTransition: async () => transition,
-    inspectNativeArtifact: async () => { throw new Error("local artifact digest drift"); },
+    prepareNativeCandidate: async () => { throw new Error("local artifact digest drift"); },
     handoffImpl: async () => assert.fail("admission failure must happen before handoff"),
     cleanupImpl: async () => events.push(["cleanup"]),
   }), /artifact digest drift/u);
