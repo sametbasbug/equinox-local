@@ -23,5 +23,7 @@ test("Main native artifact workflow runs only planned native targets and materia
   assert.match(workflow, /ref: \$\{\{ inputs\.target \}\}\n          fetch-depth: 0/u);
   assert.match(workflow, /build-main-native-artifact\.mjs --source-sha "\$\{\{ inputs\.target \}\}" --target "\$\{\{ matrix\.target \}\}"/u);
   assert.match(workflow, /name: main-native-\$\{\{ inputs\.target \}\}-\$\{\{ matrix\.target \}\}/u);
+  assert.doesNotMatch(workflow, /build-main-native-artifact\.mjs[^\n]*--root/u);
+  assert.doesNotMatch(workflow, /build-main-native-artifact\.mjs[^\n]*--output-dir/u);
   assert.match(workflow, /does not by itself admit a Main SHA or replace Stable releases/u);
 });

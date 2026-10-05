@@ -17,7 +17,7 @@ function parseCliArgs(argv) {
     if (values.has(key)) throw new Error(`Duplicate Main native artifact builder argument: ${key}.`);
     values.set(key, value);
   }
-  const allowed = new Set(["--source-sha", "--target", "--root", "--output-dir"]);
+  const allowed = new Set(["--source-sha", "--target"]);
   for (const key of values.keys()) if (!allowed.has(key)) throw new Error(`Unsupported Main native artifact builder argument: ${key}.`);
   return values;
 }
@@ -70,10 +70,10 @@ const invokedPath = process.argv[1] ? pathToFileURL(path.resolve(process.argv[1]
 if (invokedPath && import.meta.url === invokedPath) {
   try {
     const args = parseCliArgs(process.argv.slice(2));
-    const rootDir = path.resolve(args.get("--root") ?? path.dirname(path.dirname(path.dirname(fileURLToPath(import.meta.url)))));
+    const rootDir = path.dirname(path.dirname(path.dirname(fileURLToPath(import.meta.url))));
     const sourceSha = args.get("--source-sha");
     const target = args.get("--target");
-    const outputDir = path.resolve(args.get("--output-dir") ?? path.join(rootDir, "backups", "main-native", sourceSha ?? "unknown", target ?? "unknown"));
+    const outputDir = path.join(rootDir, "artifacts", "main-native");
     const result = await buildEquinoxLocalMainNativeArtifact({ rootDir, sourceSha, target, outputDir });
     process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
   } catch (error) {

@@ -132,7 +132,7 @@ jobs:
       - name: Build exact-SHA Main native artifact
         env:
           EQUINOX_WINDOWS_SHELL_PUBLISH_DIR: artifacts/windows-shell/${{ matrix.shellRid }}
-        run: node scripts/release/build-main-native-artifact.mjs --source-sha "${{ inputs.target }}" --target "${{ matrix.target }}" --output-dir "artifacts/main-native"
+        run: node scripts/release/build-main-native-artifact.mjs --source-sha "${{ inputs.target }}" --target "${{ matrix.target }}"
 
       - name: Upload exact-SHA Main native candidate
         uses: actions/upload-artifact@v7
