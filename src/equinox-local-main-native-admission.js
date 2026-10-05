@@ -24,7 +24,7 @@ const SHARED_NATIVE_PATHS = Object.freeze([
   "src/equinox-local-runtime-versions.js",
 ]);
 const SHARED_NATIVE_ADMISSION_PATHS = Object.freeze([
-  ".github/workflows/main-native-artifacts.yml",
+  ".github/workflows/ci.yml",
   "scripts/release/build-main-native-artifact.mjs",
   "scripts/release/materialize-main-native-artifact.mjs",
   "scripts/release/plan-main-native-artifacts.mjs",

@@ -5,13 +5,22 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+    inputs:
+      main_native_current:
+        description: Optional exact previous canonical main SHA for native recovery
+        required: false
+        type: string
+      main_native_target:
+        description: Optional exact canonical main SHA for native recovery
+        required: false
+        type: string
 
 permissions:
   contents: read
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   test:
@@ -513,3 +522,157 @@ jobs:
           test "$ARM64_SHARED_RESULT" = success
           test "$ARM64_BOOTSTRAP_RESULT" = success
           test "$ARM64_RESULT" = success
+
+  main-native-plan:
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch' && inputs.main_native_current != '' && inputs.main_native_target != '' }}
+    name: Exact-SHA native impact plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      native-impact: ${{ steps.plan.outputs.native-impact }}
+      target-sha: ${{ steps.plan.outputs.target-sha }}
+      github-count: ${{ steps.plan.outputs.github-count }}
+      github-matrix: ${{ steps.plan.outputs.github-matrix }}
+    steps:
+      - name: Checkout workflow implementation
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Refresh canonical main ref
+        shell: bash
+        run: git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 26.10.0
+
+      - name: Plan exact-SHA native artifacts
+        id: plan
+        shell: bash
+        env:
+          CURRENT_SHA: ${{ github.event_name == 'push' && github.event.before || inputs.main_native_current }}
+          TARGET_SHA: ${{ github.event_name == 'push' && github.sha || inputs.main_native_target }}
+        run: |
+          plan_file="$RUNNER_TEMP/main-native-plan.json"
+          node scripts/release/plan-main-native-artifacts.mjs --current-sha "$CURRENT_SHA" --target-sha "$TARGET_SHA" > "$plan_file"
+          cat "$plan_file"
+          PLAN_FILE="$plan_file" node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          const plan = JSON.parse(fs.readFileSync(process.env.PLAN_FILE, 'utf8'));
+          const lines = [
+            `native-impact=${plan.nativeImpact}`,
+            `target-sha=${plan.targetSha}`,
+            `github-count=${plan.githubTargets.length}`,
+            `github-matrix=${JSON.stringify({ include: plan.githubTargets })}`,
+          ];
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `${lines.join('\n')}\n`);
+          NODE
+
+      - name: Upload exact-SHA build plan
+        uses: actions/upload-artifact@v7
+        with:
+          name: main-native-plan-${{ steps.plan.outputs.target-sha }}
+          path: ${{ runner.temp }}/main-native-plan.json
+          if-no-files-found: error
+          retention-days: 14
+
+  main-native-build:
+    needs: main-native-plan
+    if: ${{ needs.main-native-plan.result == 'success' && needs.main-native-plan.outputs.github-count != '0' }}
+    name: Main ${{ matrix.target }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.main-native-plan.outputs.github-matrix) }}
+    steps:
+      - name: Checkout exact target SHA
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.main-native-plan.outputs.target-sha }}
+          fetch-depth: 0
+
+      - name: Verify exact target SHA
+        shell: bash
+        if: ${{ matrix.platform == 'darwin' }}
+        run: test "$(git rev-parse HEAD)" = "${{ needs.main-native-plan.outputs.target-sha }}"
+
+      - name: Verify exact target SHA on Windows
+        shell: pwsh
+        if: ${{ matrix.platform == 'win32' }}
+        run: |
+          if ((git rev-parse HEAD) -ne '${{ needs.main-native-plan.outputs.target-sha }}') { throw 'Main native builder checked out the wrong target SHA' }
+
+      - name: Set up native Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 26.10.0
+          architecture: ${{ matrix.arch }}
+          cache: npm
+
+      - name: Verify native host target
+        run: |
+          node -e "const expected='${{ matrix.target }}'; const actual=process.platform+'-'+process.arch; if(actual!==expected) throw new Error('Native host drift: '+actual+' != '+expected)"
+
+      - name: Install dependencies
+        run: npm ci --prefer-offline --no-audit --no-fund
+
+      - name: Set up .NET SDK
+        if: ${{ matrix.platform == 'win32' }}
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Publish Windows native shell payload
+        if: ${{ matrix.platform == 'win32' }}
+        shell: pwsh
+        env:
+          EQUINOX_WINDOWS_SHELL_PUBLISH_DIR: ${{ runner.temp }}/windows-shell/${{ matrix.shellRid }}
+          EQUINOX_WINDOWS_SHELL_BIN_DIR: ${{ runner.temp }}/windows-shell-bin/${{ matrix.shellRid }}/
+          EQUINOX_WINDOWS_SHELL_OBJ_DIR: ${{ runner.temp }}/windows-shell-obj/${{ matrix.shellRid }}/
+        run: |
+          dotnet publish native/windows/EquinoxLocal.WindowsShell/EquinoxLocal.WindowsShell.csproj --configuration Release --runtime '${{ matrix.shellRid }}' --self-contained true -p:Platform='${{ matrix.dotnetPlatform }}' -p:BaseOutputPath="$env:EQUINOX_WINDOWS_SHELL_BIN_DIR" -p:BaseIntermediateOutputPath="$env:EQUINOX_WINDOWS_SHELL_OBJ_DIR" --output "$env:EQUINOX_WINDOWS_SHELL_PUBLISH_DIR"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if ((git status --porcelain=v1 --untracked-files=all)) { throw 'Windows native shell publish dirtied the exact-SHA checkout' }
+
+      - name: Build exact-SHA Main native artifact
+        env:
+          EQUINOX_WINDOWS_SHELL_PUBLISH_DIR: ${{ runner.temp }}/windows-shell/${{ matrix.shellRid }}
+        run: node scripts/release/build-main-native-artifact.mjs --source-sha "${{ needs.main-native-plan.outputs.target-sha }}" --target "${{ matrix.target }}"
+
+      - name: Upload exact-SHA Main native candidate
+        uses: actions/upload-artifact@v7
+        with:
+          name: main-native-${{ needs.main-native-plan.outputs.target-sha }}-${{ matrix.target }}
+          path: artifacts/main-native/*
+          if-no-files-found: error
+          retention-days: 14
+
+  main-native-result:
+    needs: [main-native-plan, main-native-build]
+    if: ${{ always() && needs.main-native-plan.result != 'skipped' }}
+    name: Main native candidate result
+    runs-on: ubuntu-latest
+    steps:
+      - name: Enforce GitHub-native build result
+        env:
+          NATIVE_IMPACT: ${{ needs.main-native-plan.outputs.native-impact }}
+          GITHUB_COUNT: ${{ needs.main-native-plan.outputs.github-count }}
+          GITHUB_RESULT: ${{ needs.main-native-build.result }}
+        shell: bash
+        run: |
+          if [ "$GITHUB_COUNT" != "0" ] && [ "$GITHUB_RESULT" != "success" ]; then
+            echo "Required GitHub-native Main artifact build failed: $GITHUB_RESULT" >&2
+            exit 1
+          fi
+          {
+            echo "## Main native candidate validation"
+            echo "- Native impact: $NATIVE_IMPACT"
+            echo "- GitHub-native target count: $GITHUB_COUNT"
+            echo "- Main native targets are built entirely on GitHub; no factory host is required."
+            echo ""
+            echo "This workflow creates exact-SHA candidate artifacts only. It does not by itself admit a Main SHA or replace Stable releases."
+          } >> "$GITHUB_STEP_SUMMARY"
