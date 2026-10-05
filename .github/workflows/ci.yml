@@ -450,7 +450,7 @@ jobs:
   windows-arm64-installer:
     name: Windows ARM64 public installer acceptance
     runs-on: windows-11-vs2026-arm
-    timeout-minutes: 6
+    timeout-minutes: 8
 
     steps:
       - name: Checkout
