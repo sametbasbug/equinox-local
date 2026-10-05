@@ -35,7 +35,14 @@ test("CI retains full PR and main validation without path-based skips", () => {
   assert.match(ci, /^on:\n  push:\n    branches: \[main\]\n  pull_request:\n  workflow_dispatch:/mu);
   assert.match(ci, /^permissions:\n  contents: read/mu);
   assert.doesNotMatch(ci, /pull_request_target:|paths-ignore:|continue-on-error:/u);
+  assert.match(job("test"), /name: macOS ARM64 \/ Node 26/u);
+  assert.match(job("test"), /darwin-arm64/u);
   assert.match(job("test"), /run: npm test\n/u);
+  assert.match(job("macos-x64"), /name: macOS x64 \/ Node 26/u);
+  assert.match(job("macos-x64"), /runs-on: macos-15-intel/u);
+  assert.match(job("macos-x64"), /architecture: x64/u);
+  assert.match(job("macos-x64"), /darwin-x64/u);
+  assert.match(job("macos-x64"), /run: npm test\n/u);
 });
 
 test("all native ARM64 acceptance lanes start independently without an artifact chain", () => {

@@ -1,6 +1,8 @@
 name: Main Native Artifacts
 
 on:
+  push:
+    branches: [main]
   workflow_dispatch:
     inputs:
       current:
@@ -16,7 +18,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: main-native-${{ inputs.target }}
+  group: main-native-${{ github.event_name == 'push' && github.sha || inputs.target }}
   cancel-in-progress: false
 
 jobs:
@@ -26,9 +28,9 @@ jobs:
     timeout-minutes: 5
     outputs:
       native-impact: ${{ steps.plan.outputs.native-impact }}
+      target-sha: ${{ steps.plan.outputs.target-sha }}
       github-count: ${{ steps.plan.outputs.github-count }}
       github-matrix: ${{ steps.plan.outputs.github-matrix }}
-      factory-targets: ${{ steps.plan.outputs.factory-targets }}
     steps:
       - name: Checkout workflow implementation
         uses: actions/checkout@v7
@@ -49,8 +51,8 @@ jobs:
         id: plan
         shell: bash
         env:
-          CURRENT_SHA: ${{ inputs.current }}
-          TARGET_SHA: ${{ inputs.target }}
+          CURRENT_SHA: ${{ github.event_name == 'push' && github.event.before || inputs.current }}
+          TARGET_SHA: ${{ github.event_name == 'push' && github.sha || inputs.target }}
         run: |
           plan_file="$RUNNER_TEMP/main-native-plan.json"
           node scripts/release/plan-main-native-artifacts.mjs --current-sha "$CURRENT_SHA" --target-sha "$TARGET_SHA" > "$plan_file"
@@ -60,9 +62,9 @@ jobs:
           const plan = JSON.parse(fs.readFileSync(process.env.PLAN_FILE, 'utf8'));
           const lines = [
             `native-impact=${plan.nativeImpact}`,
+            `target-sha=${plan.targetSha}`,
             `github-count=${plan.githubTargets.length}`,
             `github-matrix=${JSON.stringify({ include: plan.githubTargets })}`,
-            `factory-targets=${JSON.stringify(plan.factoryTargets)}`,
           ];
           fs.appendFileSync(process.env.GITHUB_OUTPUT, `${lines.join('\n')}\n`);
           NODE
@@ -70,7 +72,7 @@ jobs:
       - name: Upload exact-SHA build plan
         uses: actions/upload-artifact@v7
         with:
-          name: main-native-plan-${{ inputs.target }}
+          name: main-native-plan-${{ steps.plan.outputs.target-sha }}
           path: ${{ runner.temp }}/main-native-plan.json
           if-no-files-found: error
           retention-days: 14
@@ -88,19 +90,19 @@ jobs:
       - name: Checkout exact target SHA
         uses: actions/checkout@v7
         with:
-          ref: ${{ inputs.target }}
+          ref: ${{ needs.plan.outputs.target-sha }}
           fetch-depth: 0
 
       - name: Verify exact target SHA
         shell: bash
         if: ${{ matrix.platform == 'darwin' }}
-        run: test "$(git rev-parse HEAD)" = "${{ inputs.target }}"
+        run: test "$(git rev-parse HEAD)" = "${{ needs.plan.outputs.target-sha }}"
 
       - name: Verify exact target SHA on Windows
         shell: pwsh
         if: ${{ matrix.platform == 'win32' }}
         run: |
-          if ((git rev-parse HEAD) -ne '${{ inputs.target }}') { throw 'Main native builder checked out the wrong target SHA' }
+          if ((git rev-parse HEAD) -ne '${{ needs.plan.outputs.target-sha }}') { throw 'Main native builder checked out the wrong target SHA' }
 
       - name: Set up native Node.js
         uses: actions/setup-node@v7
@@ -137,12 +139,12 @@ jobs:
       - name: Build exact-SHA Main native artifact
         env:
           EQUINOX_WINDOWS_SHELL_PUBLISH_DIR: ${{ runner.temp }}/windows-shell/${{ matrix.shellRid }}
-        run: node scripts/release/build-main-native-artifact.mjs --source-sha "${{ inputs.target }}" --target "${{ matrix.target }}"
+        run: node scripts/release/build-main-native-artifact.mjs --source-sha "${{ needs.plan.outputs.target-sha }}" --target "${{ matrix.target }}"
 
       - name: Upload exact-SHA Main native candidate
         uses: actions/upload-artifact@v7
         with:
-          name: main-native-${{ inputs.target }}-${{ matrix.target }}
+          name: main-native-${{ needs.plan.outputs.target-sha }}-${{ matrix.target }}
           path: artifacts/main-native/*
           if-no-files-found: error
           retention-days: 14
@@ -158,7 +160,6 @@ jobs:
           NATIVE_IMPACT: ${{ needs.plan.outputs.native-impact }}
           GITHUB_COUNT: ${{ needs.plan.outputs.github-count }}
           GITHUB_RESULT: ${{ needs.github-native.result }}
-          FACTORY_TARGETS: ${{ needs.plan.outputs.factory-targets }}
         shell: bash
         run: |
           if [ "$GITHUB_COUNT" != "0" ] && [ "$GITHUB_RESULT" != "success" ]; then
@@ -169,7 +170,7 @@ jobs:
             echo "## Main native candidate validation"
             echo "- Native impact: $NATIVE_IMPACT"
             echo "- GitHub-native target count: $GITHUB_COUNT"
-            echo "- Factory-native targets still requiring separate admission: \`$FACTORY_TARGETS\`"
+            echo "- Main native targets are built entirely on GitHub; no factory host is required."
             echo ""
             echo "This workflow creates exact-SHA candidate artifacts only. It does not by itself admit a Main SHA or replace Stable releases."
           } >> "$GITHUB_STEP_SUMMARY"

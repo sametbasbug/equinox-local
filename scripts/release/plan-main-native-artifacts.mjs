@@ -5,6 +5,12 @@ import { inspectEquinoxLocalMainNativeImpactRange } from "../../src/equinox-loca
 import { EQUINOX_LOCAL_RELEASE_TARGET_MATRIX } from "../../src/equinox-local-platform.js";
 
 const SHA_PATTERN = /^[a-f0-9]{40}$/u;
+const MAIN_NATIVE_RUNNERS = Object.freeze({
+  "darwin-arm64": "macos-latest",
+  "darwin-x64": "macos-15-intel",
+  "win32-arm64": "windows-11-vs2026-arm",
+  "win32-x64": "windows-latest",
+});
 
 function parseCliArgs(argv) {
   const values = new Map();
@@ -20,9 +26,10 @@ function parseCliArgs(argv) {
   return values;
 }
 
-function githubTargetEntry(contract) {
-  if (!contract.nativeRunner) throw new Error(`GitHub-native target ${contract.target} has no native runner.`);
-  const entry = { target: contract.target, runner: contract.nativeRunner, platform: contract.platform, arch: contract.arch };
+function githubTargetEntry(contract, mainNativeRunners) {
+  const runner = mainNativeRunners?.[contract.target];
+  if (typeof runner !== "string" || !runner) throw new Error(`Main native target ${contract.target} has no GitHub runner.`);
+  const entry = { target: contract.target, runner, platform: contract.platform, arch: contract.arch };
   if (contract.platform === "win32") {
     entry.shellRid = `win-${contract.arch}`;
     entry.dotnetPlatform = contract.arch === "arm64" ? "ARM64" : "x64";
@@ -36,6 +43,7 @@ export async function planEquinoxLocalMainNativeArtifacts({
   targetSha,
   inspectImpactImpl = inspectEquinoxLocalMainNativeImpactRange,
   targetMatrix = EQUINOX_LOCAL_RELEASE_TARGET_MATRIX,
+  mainNativeRunners = MAIN_NATIVE_RUNNERS,
 } = {}) {
   if (typeof rootDir !== "string" || !rootDir) throw new Error("Main native artifact planner root is required.");
   if (!SHA_PATTERN.test(currentSha ?? "")) throw new Error("Main native artifact planner current SHA is invalid.");
@@ -46,14 +54,10 @@ export async function planEquinoxLocalMainNativeArtifacts({
   const contracts = new Map(targetMatrix.map((entry) => [entry.target, entry]));
   if (contracts.size !== targetMatrix.length) throw new Error("Main native artifact target matrix contains duplicate targets.");
   const githubTargets = [];
-  const factoryTargets = [];
   for (const target of impact.requiredTargets) {
     const contract = contracts.get(target);
     if (!contract) throw new Error(`Main native artifact target contract is missing: ${target}.`);
-    if (contract.buildAuthority === "github-native") githubTargets.push(githubTargetEntry(contract));
-    else if (contract.buildAuthority === "factory-native") {
-      factoryTargets.push(Object.freeze({ target, platform: contract.platform, arch: contract.arch, buildAuthority: contract.buildAuthority }));
-    } else throw new Error(`Main native artifact build authority is unsupported for ${target}.`);
+    githubTargets.push(githubTargetEntry(contract, mainNativeRunners));
   }
 
   return Object.freeze({
@@ -65,7 +69,6 @@ export async function planEquinoxLocalMainNativeArtifacts({
     changedPathCount: impact.changedPaths.length,
     requiredTargets: Object.freeze([...impact.requiredTargets]),
     githubTargets: Object.freeze(githubTargets),
-    factoryTargets: Object.freeze(factoryTargets),
     reasons: Object.freeze([...impact.reasons]),
   });
 }
