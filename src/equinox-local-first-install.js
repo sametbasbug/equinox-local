@@ -42,8 +42,16 @@ export { launchWindowsStableShell as launchFreshWindowsShell } from "./equinox-l
 const execFile = promisify(execFileCallback);
 const MAX_RELEASE_METADATA_BYTES = 16 * 1024;
 const FIRST_INSTALL_HEALTH_ATTEMPTS = 120;
+const FIRST_INSTALL_WINDOWS_ARM64_HEALTH_ATTEMPTS = 180;
 const FIRST_INSTALL_HEALTH_DELAY_MS = 500;
 const FIRST_INSTALL_DIAGNOSTIC_BYTES = 12 * 1024;
+
+export function equinoxLocalFirstInstallHealthBudget({ platform = process.platform, arch = process.arch } = {}) {
+  const attempts = platform === "win32" && arch === "arm64"
+    ? FIRST_INSTALL_WINDOWS_ARM64_HEALTH_ATTEMPTS
+    : FIRST_INSTALL_HEALTH_ATTEMPTS;
+  return Object.freeze({ attempts, delayMs: FIRST_INSTALL_HEALTH_DELAY_MS });
+}
 
 function inside(parent, child, pathApi = path) {
   const relative = pathApi.relative(parent, child);
@@ -378,10 +386,7 @@ export async function installManagedEquinoxRelease({
       const bootstrap = await bootstrapImpl({ homeDir, platform, arch, env, fsImpl });
       await initializeOnboardingImpl({ installation, homeDir });
       await startRuntime(installation);
-      await waitForVersionImpl(current.version, {
-        attempts: FIRST_INSTALL_HEALTH_ATTEMPTS,
-        delayMs: FIRST_INSTALL_HEALTH_DELAY_MS,
-      });
+      await waitForVersionImpl(current.version, equinoxLocalFirstInstallHealthBudget({ platform, arch }));
       return Object.freeze({
         status: "already-installed",
         version: current.version,
@@ -436,10 +441,7 @@ export async function installManagedEquinoxRelease({
   try {
     await initializeOnboardingImpl({ installation, homeDir });
     await startRuntime(installation);
-    await waitForVersionImpl(candidate.version, {
-      attempts: FIRST_INSTALL_HEALTH_ATTEMPTS,
-      delayMs: FIRST_INSTALL_HEALTH_DELAY_MS,
-    });
+    await waitForVersionImpl(candidate.version, equinoxLocalFirstInstallHealthBudget({ platform, arch }));
   } catch (error) {
     let diagnostics = "";
     if (platform === "darwin") {

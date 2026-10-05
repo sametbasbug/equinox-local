@@ -148,6 +148,46 @@ test("preparePromotion recovers if durable-store rename completed before receipt
   assert.equal(recovered.targetSourceRoot, durableTarget);
 });
 
+test("staged preparation abort records failure, removes transaction staging and preserves source pointer", async (t) => {
+  const f = await fixture(t);
+  const initialPointer = await f.engine.initializeSourcePointer();
+  assert.equal(initialPointer.sourceRoot, f.sourceRoot);
+  assert.equal(initialPointer.sha, CURRENT);
+  const pointerBefore = await fs.readFile(f.engine.paths.sourcePointerPath, "utf8");
+  const staged = await f.engine.stage({ currentSha: CURRENT, targetSha: TARGET });
+  const transactionDir = path.dirname(staged.stagedSourceRoot);
+  await fs.mkdir(path.join(transactionDir, "native"));
+  await fs.writeFile(path.join(transactionDir, "native", "partial.bin"), "partial");
+
+  const failed = await f.engine.abortStagedPreparation(staged.receipt.transactionId, "native snapshot digest mismatch\nsecond line");
+  assert.equal(failed.status, "failed");
+  assert.equal(failed.stage, "preparation_failed");
+  assert.match(failed.lastError, /native snapshot digest mismatch second line/u);
+  assert.equal(failed.lastError.includes("\n"), false);
+  assert.equal(await f.engine.readActive(), null);
+  const durable = await f.engine.readReceipt(staged.receipt.transactionId);
+  assert.equal(durable.status, "failed");
+  assert.equal(durable.stage, "preparation_failed");
+  await assert.rejects(fs.lstat(transactionDir), { code: "ENOENT" });
+  assert.equal(await fs.readFile(f.engine.paths.sourcePointerPath, "utf8"), pointerBefore);
+});
+
+test("staged preparation abort refuses promotion or another transaction owner", async (t) => {
+  const f = await fixture(t);
+  const staged = await f.engine.stage({ currentSha: CURRENT, targetSha: TARGET });
+  await f.engine.initializeSourcePointer();
+  await f.engine.preparePromotion(staged.receipt.transactionId);
+  await assert.rejects(
+    f.engine.abortStagedPreparation(staged.receipt.transactionId, "too late"),
+    /only be aborted before promotion begins/u,
+  );
+  assert.equal((await f.engine.readActive()).status, "promoting");
+  await assert.rejects(
+    f.engine.abortStagedPreparation(`main-${"cd".repeat(16)}`, "wrong owner"),
+    /does not own the active transaction/u,
+  );
+});
+
 test("prepared promotion can abort before pointer activation and release ownership", async (t) => {
   const f = await fixture(t);
   const staged = await f.engine.stage({ currentSha: CURRENT, targetSha: TARGET });

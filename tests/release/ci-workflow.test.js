@@ -54,6 +54,10 @@ test("all native ARM64 acceptance lanes start independently without an artifact 
   }
 });
 
+test("ARM64 installer keeps bounded cold-start diagnostic headroom without slowing the success path", () => {
+  assert.match(job("windows-arm64-installer"), /timeout-minutes: 8/u);
+});
+
 test("ARM64 runtime retains native lifecycle, PTY and messaging acceptance", () => {
   const block = job("windows-arm64-runtime");
   assert.match(block, /architecture: arm64/u);
