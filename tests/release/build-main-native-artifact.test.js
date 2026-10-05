@@ -10,20 +10,20 @@ function materialized(target) {
 test("Main native builder reuses host-native Darwin packager then exact-SHA materializer", async () => {
   const calls = [];
   const result = await buildEquinoxLocalMainNativeArtifact({
-    rootDir: "/tmp/canonical", sourceSha: SHA, target: "darwin-x64", outputDir: "/tmp/output", hostPlatform: "darwin", hostArch: "x64",
-    packageDarwinImpl: async (args) => { calls.push(["darwin", args]); return { target: "darwin-x64", artifactPath: "/tmp/candidate.tar.gz" }; },
+    rootDir: "/workspace/equinox-local", sourceSha: SHA, target: "darwin-x64", outputDir: "/workspace/main-native-output", hostPlatform: "darwin", hostArch: "x64",
+    packageDarwinImpl: async (args) => { calls.push(["darwin", args]); return { target: "darwin-x64", artifactPath: "/workspace/candidate.tar.gz" }; },
     packageWindowsImpl: async () => { throw new Error("wrong packager"); },
     materializeImpl: async (args) => { calls.push(["materialize", args]); return materialized(args.target); },
   });
   assert.equal(result.target, "darwin-x64");
   assert.deepEqual(calls.map(([name]) => name), ["darwin", "materialize"]);
-  assert.equal(calls[1][1].candidateArtifactPath, "/tmp/candidate.tar.gz");
+  assert.equal(calls[1][1].candidateArtifactPath, "/workspace/candidate.tar.gz");
 });
 
 test("Main native builder routes Windows to existing Windows package primitive", async () => {
   let windowsCalled = false;
   await buildEquinoxLocalMainNativeArtifact({
-    rootDir: "/tmp/canonical", sourceSha: SHA, target: "win32-arm64", outputDir: "/tmp/output", hostPlatform: "win32", hostArch: "arm64",
+    rootDir: "/workspace/equinox-local", sourceSha: SHA, target: "win32-arm64", outputDir: "/workspace/main-native-output", hostPlatform: "win32", hostArch: "arm64",
     packageDarwinImpl: async () => { throw new Error("wrong packager"); },
     packageWindowsImpl: async () => { windowsCalled = true; return { target: "win32-arm64", artifactPath: "C:/candidate.zip" }; },
     materializeImpl: async (args) => materialized(args.target),
@@ -32,9 +32,9 @@ test("Main native builder routes Windows to existing Windows package primitive",
 });
 
 test("Main native builder rejects cross-target hosts and invalid candidate metadata", async () => {
-  await assert.rejects(buildEquinoxLocalMainNativeArtifact({ rootDir: "/tmp/canonical", sourceSha: SHA, target: "darwin-arm64", outputDir: "/tmp/output", hostPlatform: "darwin", hostArch: "x64" }), /native host\/target match/u);
+  await assert.rejects(buildEquinoxLocalMainNativeArtifact({ rootDir: "/workspace/equinox-local", sourceSha: SHA, target: "darwin-arm64", outputDir: "/workspace/main-native-output", hostPlatform: "darwin", hostArch: "x64" }), /native host\/target match/u);
   await assert.rejects(buildEquinoxLocalMainNativeArtifact({
-    rootDir: "/tmp/canonical", sourceSha: SHA, target: "darwin-x64", outputDir: "/tmp/output", hostPlatform: "darwin", hostArch: "x64",
-    packageDarwinImpl: async () => ({ target: "darwin-arm64", artifactPath: "/tmp/wrong.tar.gz" }),
+    rootDir: "/workspace/equinox-local", sourceSha: SHA, target: "darwin-x64", outputDir: "/workspace/main-native-output", hostPlatform: "darwin", hostArch: "x64",
+    packageDarwinImpl: async () => ({ target: "darwin-arm64", artifactPath: "/workspace/wrong.tar.gz" }),
   }), /invalid target metadata/u);
 });
