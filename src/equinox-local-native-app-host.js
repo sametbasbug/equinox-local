@@ -11,6 +11,7 @@ import {
   validateEquinoxLocalAppHost,
 } from "./equinox-local-app-host.js";
 import { equinoxLocalNativeAppArtifactPaths } from "./equinox-local-native-app.js";
+import { fingerprintEquinoxLocalNativeState } from "./equinox-local-native-state-fingerprint.js";
 
 const execFile = promisify(execFileCallback);
 const NATIVE_SHELL_PLIST_KEY = "EquinoxLocalNativeShellVersion";
@@ -265,6 +266,72 @@ export async function synchronizeEquinoxLocalNativeAppHost({
     throw error;
   }
   return Object.freeze({ appPath, executablePath: path.join(appPath, "Contents", "MacOS", "applet"), shellVersion: metadata.shellVersion, changed: true, migratedLegacy: true });
+}
+
+export async function snapshotEquinoxLocalNativeAppHost({
+  homeDir,
+  snapshotPath,
+  fsImpl = fs,
+  execFileImpl = execFile,
+} = {}) {
+  if (process.platform !== "darwin") throw new Error("Equinox Local native app snapshot is supported only on macOS.");
+  if (typeof homeDir !== "string" || !path.isAbsolute(homeDir)) throw new Error("A trusted user home directory is required for native app snapshotting.");
+  if (typeof snapshotPath !== "string" || !path.isAbsolute(snapshotPath)) throw new Error("A trusted native app snapshot path is required.");
+  const appPath = equinoxLocalAppPath(homeDir);
+  await validateEquinoxLocalAppHost(appPath, { fsImpl, execFileImpl });
+  const manifestPath = `${snapshotPath}.rollback.json`;
+  for (const destination of [snapshotPath, manifestPath]) {
+    try {
+      await fsImpl.lstat(destination);
+      throw Object.assign(new Error("Equinox Local native app snapshot destination already exists."), { code: "EEXIST" });
+    } catch (error) {
+      if (error?.code !== "ENOENT") throw error;
+    }
+  }
+  await fsImpl.mkdir(path.dirname(snapshotPath), { recursive: true, mode: 0o700 });
+  try {
+    await fsImpl.cp(appPath, snapshotPath, { recursive: true, dereference: false, errorOnExist: true });
+    await validateEquinoxLocalAppHost(snapshotPath, { fsImpl, execFileImpl });
+    const fingerprint = await fingerprintEquinoxLocalNativeState(snapshotPath, { fsImpl });
+    await fsImpl.writeFile(manifestPath, `${JSON.stringify({ schemaVersion: 1, kind: "darwin-app", ...fingerprint }, null, 2)}\n`, { flag: "wx", mode: 0o600 });
+    return Object.freeze({ appPath, snapshotPath, manifestPath, fingerprint });
+  } catch (error) {
+    await fsImpl.rm(snapshotPath, { recursive: true, force: true }).catch(() => {});
+    await fsImpl.rm(manifestPath, { force: true }).catch(() => {});
+    throw error;
+  }
+}
+
+export async function restoreEquinoxLocalNativeAppHostSnapshot({
+  homeDir,
+  snapshotPath,
+  fsImpl = fs,
+  execFileImpl = execFile,
+} = {}) {
+  if (process.platform !== "darwin") throw new Error("Equinox Local native app snapshot restore is supported only on macOS.");
+  if (typeof homeDir !== "string" || !path.isAbsolute(homeDir)) throw new Error("A trusted user home directory is required for native app snapshot restore.");
+  if (typeof snapshotPath !== "string" || !path.isAbsolute(snapshotPath)) throw new Error("A trusted native app snapshot path is required.");
+  await validateEquinoxLocalAppHost(snapshotPath, { fsImpl, execFileImpl });
+  const manifestPath = `${snapshotPath}.rollback.json`;
+  const manifestStat = await fsImpl.lstat(manifestPath);
+  if (!manifestStat.isFile() || manifestStat.isSymbolicLink() || manifestStat.size < 1 || manifestStat.size > 4096) throw new Error("Equinox Local native app rollback manifest is unsafe.");
+  const manifest = JSON.parse(await fsImpl.readFile(manifestPath, "utf8"));
+  const fingerprint = await fingerprintEquinoxLocalNativeState(snapshotPath, { fsImpl });
+  if (manifest?.schemaVersion !== 1 || manifest?.kind !== "darwin-app" || manifest?.sha256 !== fingerprint.sha256 || manifest?.entries !== fingerprint.entries || manifest?.bytes !== fingerprint.bytes) {
+    throw new Error("Equinox Local native app rollback snapshot fingerprint mismatch.");
+  }
+  const appPath = equinoxLocalAppPath(homeDir);
+  const replacement = path.join(path.dirname(appPath), `.Equinox-Local-rollback-${process.pid}-${randomBytes(8).toString("hex")}.app`);
+  try {
+    await fsImpl.cp(snapshotPath, replacement, { recursive: true, dereference: false, errorOnExist: true });
+    await validateEquinoxLocalAppHost(replacement, { fsImpl, execFileImpl });
+    await atomicReplaceApp(appPath, replacement, fsImpl);
+    await validateEquinoxLocalAppHost(appPath, { fsImpl, execFileImpl });
+  } catch (error) {
+    await fsImpl.rm(replacement, { recursive: true, force: true }).catch(() => {});
+    throw error;
+  }
+  return Object.freeze({ appPath, executablePath: path.join(appPath, "Contents", "MacOS", "applet"), restored: true });
 }
 
 export async function restoreLegacyEquinoxLocalAppHost({ homeDir, fsImpl = fs, execFileImpl = execFile } = {}) {
