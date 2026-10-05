@@ -100,3 +100,67 @@ macTest("source app host routes the LaunchAgent through stable Equinox Local.app
   assert.doesNotMatch(plist, /StartInterval/u);
   assert.doesNotMatch(plist, /start-source\.sh/u);
 });
+
+
+macTest("source app host preserves an admitted Main native payload across source restart preparation", async (t) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "equinox-source-main-native-host-"));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const homeDir = path.join(root, "home");
+  const sourceLauncher = path.join(root, "start-source.sh");
+  const tunnelClient = path.join(root, "tunnel-client");
+  const configPath = path.join(root, "runtime.conf");
+  const mainTransactionRoot = path.join(root, "main-update");
+  const target = process.arch === "x64" ? "darwin-x64" : "darwin-arm64";
+  const storedRelease = path.join(mainTransactionRoot, "native-store", target, "a".repeat(40), "release");
+  await fs.mkdir(homeDir, { recursive: true });
+  await fs.writeFile(sourceLauncher, "#!/bin/sh\nexit 0\n", { mode: 0o700 });
+  await fs.writeFile(tunnelClient, "#!/bin/sh\nexit 0\n", { mode: 0o700 });
+  await fs.writeFile(configPath, `launchAgentLabel=dev.equinox.local.dev\ntunnelRuntime=equinox-local-dev\ntunnelClient=${tunnelClient}\nsourceLauncher=${sourceLauncher}\n`, { mode: 0o600 });
+  const nodePath = path.join(root, "stable-node");
+  await fs.symlink(process.execPath, nodePath);
+  const events = [];
+  const result = await prepareSourceAppHost({
+    homeDir,
+    configPath,
+    nodePath,
+    mainTransactionRoot,
+    readMainNativePointerImpl: async (pointerPath, options) => {
+      events.push(["pointer", pointerPath, options]);
+      return { sourceSha: "a".repeat(40), target, runtimeContractSha256: "b".repeat(64), releaseDir: storedRelease };
+    },
+    synchronizeNativeAppImpl: async (value) => events.push(["sync", value]),
+    buildNativeAppImpl: async () => { throw new Error("source native build must not run while Main native pointer exists"); },
+  });
+  assert.equal(result.ready, true);
+  assert.equal(events[0][0], "pointer");
+  assert.equal(events[0][1], path.join(mainTransactionRoot, "current-native.json"));
+  assert.equal(events[0][2].transactionRoot, mainTransactionRoot);
+  assert.equal(events[1][0], "sync");
+  assert.equal(events[1][1].releaseDir, storedRelease);
+  assert.equal(events[1][1].requirePayloadIdentity, true);
+});
+
+macTest("source app host fails closed when Main native pointer validation fails", async (t) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "equinox-source-main-native-invalid-"));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const homeDir = path.join(root, "home");
+  const sourceLauncher = path.join(root, "start-source.sh");
+  const tunnelClient = path.join(root, "tunnel-client");
+  const configPath = path.join(root, "runtime.conf");
+  await fs.mkdir(homeDir, { recursive: true });
+  await fs.writeFile(sourceLauncher, "#!/bin/sh\nexit 0\n", { mode: 0o700 });
+  await fs.writeFile(tunnelClient, "#!/bin/sh\nexit 0\n", { mode: 0o700 });
+  await fs.writeFile(configPath, `launchAgentLabel=dev.equinox.local.dev\ntunnelRuntime=equinox-local-dev\ntunnelClient=${tunnelClient}\nsourceLauncher=${sourceLauncher}\n`, { mode: 0o600 });
+  const nodePath = path.join(root, "stable-node");
+  await fs.symlink(process.execPath, nodePath);
+  let built = false;
+  await assert.rejects(prepareSourceAppHost({
+    homeDir,
+    configPath,
+    nodePath,
+    mainTransactionRoot: path.join(root, "main-update"),
+    readMainNativePointerImpl: async () => { throw new Error("stored Main native fingerprint mismatch"); },
+    buildNativeAppImpl: async () => { built = true; },
+  }), /stored Main native fingerprint mismatch/u);
+  assert.equal(built, false);
+});

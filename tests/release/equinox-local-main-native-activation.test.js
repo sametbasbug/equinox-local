@@ -38,6 +38,7 @@ test("Darwin Main native lifecycle snapshots before activation and advances poin
   await lifecycle.rollback();
   assert.deepEqual(events.map(([name]) => name), ["snapshot", "recovery-descriptor", "activate", "commit", "rollback"]);
   assert.equal(events[2][1].releaseDir, durable);
+  assert.equal(events[2][1].requirePayloadIdentity, true);
   assert.equal(events[3][1].sourceSha, B);
 });
 

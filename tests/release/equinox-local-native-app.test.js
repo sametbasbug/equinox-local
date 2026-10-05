@@ -307,6 +307,7 @@ macTest("native app host migrates legacy bundle once and restores it for rollbac
   const infoPlist = await fs.readFile(path.join(migrated.appPath, "Contents", "Info.plist"), "utf8");
   assert.match(infoPlist, /EquinoxLocalNativeShellVersion/u);
   assert.match(infoPlist, /EquinoxLocalNativeExecutableSha256/u);
+  assert.match(infoPlist, /EquinoxLocalNativePayloadSha256/u);
   assert.match(infoPlist, /EquinoxLocalPermissionIdentity/u);
   assert.match(infoPlist, /NSAllowsLocalNetworking/u);
   assert.doesNotMatch(infoPlist, /NSCameraUsageDescription|NSMicrophoneUsageDescription|LSUIElement/u);
@@ -334,6 +335,12 @@ macTest("native app host migrates legacy bundle once and restores it for rollbac
   const sameShellChangedArtifact = await synchronizeEquinoxLocalNativeAppHost({ homeDir, releaseDir });
   assert.equal(sameShellChangedArtifact.changed, false);
   assert.deepEqual(await fs.readFile(installedExecutable), stableInstalledBytes);
+
+  const strictMainPayload = await synchronizeEquinoxLocalNativeAppHost({ homeDir, releaseDir, requirePayloadIdentity: true });
+  assert.equal(strictMainPayload.changed, true);
+  assert.notDeepEqual(await fs.readFile(installedExecutable), stableInstalledBytes);
+  const strictMainPayloadAgain = await synchronizeEquinoxLocalNativeAppHost({ homeDir, releaseDir, requirePayloadIdentity: true });
+  assert.equal(strictMainPayloadAgain.changed, false);
 
   await fs.appendFile(installedExecutable, Buffer.from([0]));
   const repaired = await synchronizeEquinoxLocalNativeAppHost({ homeDir, releaseDir });

@@ -206,7 +206,7 @@ export async function recoverEquinoxLocalMainNativeLifecycle({
       stored,
       descriptor,
       rollbackPath: snapshotPath,
-      activate: async () => activateDarwinImpl({ installation, releaseDir: stored.releaseDir, fsImpl, execFileImpl }),
+      activate: async () => activateDarwinImpl({ installation, releaseDir: stored.releaseDir, fsImpl, execFileImpl, requirePayloadIdentity: true }),
       rollback: async () => restoreDarwinImpl({ homeDir, snapshotPath, fsImpl, execFileImpl }),
       commit: async () => writePointerImpl(paths.pointerPath, pointerValue, { transactionRoot: paths.root, fsImpl }),
     });

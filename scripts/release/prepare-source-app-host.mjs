@@ -10,6 +10,7 @@ import {
   launchAgentLogMaintenanceShell,
 } from "../../src/equinox-local-app-host.js";
 import { synchronizeEquinoxLocalNativeAppHost } from "../../src/equinox-local-native-app-host.js";
+import { readEquinoxLocalMainNativePointer } from "../../src/equinox-local-main-native-state.js";
 import { buildEquinoxLocalNativeAppArtifacts } from "../../src/equinox-local-native-app.js";
 import { readSourceRuntimeConfig } from "../../src/equinox-local-source-runtime.js";
 
@@ -101,6 +102,10 @@ export async function prepareSourceAppHost({
   nodePath = process.env.EQUINOX_LOCAL_DEV_NODE || process.execPath,
   fsImpl = fs,
   ensureAppHostImpl = null,
+  readMainNativePointerImpl = readEquinoxLocalMainNativePointer,
+  synchronizeNativeAppImpl = synchronizeEquinoxLocalNativeAppHost,
+  buildNativeAppImpl = buildEquinoxLocalNativeAppArtifacts,
+  mainTransactionRoot = path.join(homeDir, "Library", "Application Support", "Equinox Local Developer", "main-update"),
 } = {}) {
   if (process.platform !== "darwin") throw new Error("Source app host is supported only on macOS.");
   const loaded = await readSourceRuntimeConfig({ configPath, fsImpl });
@@ -119,13 +124,25 @@ export async function prepareSourceAppHost({
     await ensureAppHostImpl({ homeDir });
   } else {
     const target = process.arch === "x64" ? "darwin-x64" : "darwin-arm64";
-    const artifactRoot = await fsImpl.mkdtemp(path.join(os.tmpdir(), "equinox-source-native-app-"));
+    const pointerPath = path.join(mainTransactionRoot, "current-native.json");
+    let mainNative = null;
     try {
-      const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
-      await buildEquinoxLocalNativeAppArtifacts({ rootDir: repositoryRoot, releaseDir: artifactRoot, target });
-      await synchronizeEquinoxLocalNativeAppHost({ homeDir, releaseDir: artifactRoot });
-    } finally {
-      await fsImpl.rm(artifactRoot, { recursive: true, force: true });
+      mainNative = await readMainNativePointerImpl(pointerPath, { transactionRoot: mainTransactionRoot, fsImpl });
+    } catch (error) {
+      if (error?.code !== "ENOENT") throw error;
+    }
+    if (mainNative) {
+      if (mainNative.target !== target) throw new Error("Main native pointer does not match the source host platform.");
+      await synchronizeNativeAppImpl({ homeDir, releaseDir: mainNative.releaseDir, fsImpl, requirePayloadIdentity: true });
+    } else {
+      const artifactRoot = await fsImpl.mkdtemp(path.join(os.tmpdir(), "equinox-source-native-app-"));
+      try {
+        const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
+        await buildNativeAppImpl({ rootDir: repositoryRoot, releaseDir: artifactRoot, target });
+        await synchronizeNativeAppImpl({ homeDir, releaseDir: artifactRoot, fsImpl });
+      } finally {
+        await fsImpl.rm(artifactRoot, { recursive: true, force: true });
+      }
     }
   }
 

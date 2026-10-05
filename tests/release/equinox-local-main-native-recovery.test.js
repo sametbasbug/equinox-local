@@ -65,6 +65,7 @@ test("Darwin recovery reconstructs Stable baseline and exact target without curr
   await lifecycle.activate(); await lifecycle.rollback(); await lifecycle.commit();
   assert.deepEqual(events.map(([name]) => name), ["stored", "snapshot", "activate", "rollback", "commit"]);
   assert.equal(events[2][1].releaseDir, stored);
+  assert.equal(events[2][1].requirePayloadIdentity, true);
   assert.equal(events[4][1].sourceSha, B);
 });
 
