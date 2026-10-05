@@ -8,6 +8,7 @@ import test from "node:test";
 import {
   equinoxLocalMainSnapshotArtifactUrl,
   equinoxLocalMainSnapshotManifestUrl,
+  inspectStagedEquinoxLocalMainSnapshotArtifact,
   stageEquinoxLocalMainSnapshotArtifact,
   fetchEquinoxLocalMainSnapshotManifest,
 } from "../../src/equinox-local-main-snapshot.js";
@@ -137,6 +138,15 @@ test("Main snapshot artifact staging streams into transaction-owned storage and 
   assert.equal(result.sha256, artifactSha256);
   assert.equal(await fs.readFile(result.artifactPath, "utf8"), artifactBytes.toString("utf8"));
   assert.equal((await fs.lstat(result.artifactPath)).isFile(), true);
+  assert.deepEqual(JSON.parse(await fs.readFile(result.manifestPath, "utf8")), manifest);
+  const inspected = await inspectStagedEquinoxLocalMainSnapshotArtifact({
+    sourceSha: SHA, target: "darwin-arm64", expectedRuntimeContractSha256: DIGEST,
+    transactionRoot: root, transactionId,
+  });
+  assert.equal(inspected.artifactPath, result.artifactPath);
+  assert.equal(inspected.manifestPath, result.manifestPath);
+  assert.equal(inspected.sha256, artifactSha256);
+  assert.equal(inspected.bytes, artifactBytes.length);
   assert.equal(calls.length, 2);
   assert.equal(calls[1].url, equinoxLocalMainSnapshotArtifactUrl(SHA, "darwin-arm64"));
   assert.equal(calls[1].options.redirect, "error");
@@ -181,4 +191,35 @@ test("Main snapshot artifact staging rejects symlinked transaction storage befor
     transactionRoot: root, transactionId, fetchImpl: async () => { called = true; throw new Error("must not fetch"); },
   }), /canonical normal directory/u);
   assert.equal(called, false);
+});
+
+
+test("staged Main snapshot inspection revalidates local manifest identity, bytes and directory ownership", async (t) => {
+  const fixtureBase = path.dirname(fileURLToPath(import.meta.url));
+  const root = await fs.mkdtemp(path.join(fixtureBase, ".equinox-main-snapshot-inspect-"));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const transactionId = `main-${"2".repeat(32)}`;
+  const nativeDir = path.join(root, "staging", transactionId, "native");
+  await fs.mkdir(nativeDir, { recursive: true, mode: 0o700 });
+  const artifactBytes = Buffer.from("transaction-bound-native-artifact");
+  const artifactSha256 = createHash("sha256").update(artifactBytes).digest("hex");
+  const manifest = manifestWithArtifact({ name: `equinox-local-main-${SHA}-darwin-arm64.tar.gz`, sha256: artifactSha256, bytes: artifactBytes.length });
+  const manifestPath = path.join(nativeDir, `equinox-local-main-${SHA}-darwin-arm64.json`);
+  const artifactPath = path.join(nativeDir, manifest.artifact.name);
+  await fs.writeFile(manifestPath, `${JSON.stringify(manifest)}\n`, { mode: 0o600 });
+  await fs.writeFile(artifactPath, artifactBytes, { mode: 0o600 });
+
+  await assert.rejects(inspectStagedEquinoxLocalMainSnapshotArtifact({
+    sourceSha: SHA, target: "darwin-arm64", expectedRuntimeContractSha256: "e".repeat(64), transactionRoot: root, transactionId,
+  }), /runtime contract digest does not match/u);
+
+  await fs.appendFile(artifactPath, "tamper");
+  await assert.rejects(inspectStagedEquinoxLocalMainSnapshotArtifact({
+    sourceSha: SHA, target: "darwin-arm64", expectedRuntimeContractSha256: DIGEST, transactionRoot: root, transactionId,
+  }), /byte size does not match/u);
+  await fs.writeFile(artifactPath, artifactBytes);
+  await fs.writeFile(path.join(nativeDir, "unexpected.txt"), "nope");
+  await assert.rejects(inspectStagedEquinoxLocalMainSnapshotArtifact({
+    sourceSha: SHA, target: "darwin-arm64", expectedRuntimeContractSha256: DIGEST, transactionRoot: root, transactionId,
+  }), /unexpected entries/u);
 });
