@@ -52,7 +52,7 @@ test("shared native contracts require all four release targets and deduplicate p
 });
 
 test("Main native admission pipeline changes rebuild all targets without entering runtime contract inputs", () => {
-  const result = classifyEquinoxLocalMainNativeImpact([".github/workflows/main-native-artifacts.yml", "scripts/release/materialize-main-native-artifact.mjs"]);
+  const result = classifyEquinoxLocalMainNativeImpact([".github/workflows/ci.yml", "scripts/release/materialize-main-native-artifact.mjs"]);
   assert.deepEqual(result.requiredTargets, ["darwin-arm64", "darwin-x64", "win32-arm64", "win32-x64"]);
   assert.deepEqual(result.reasons.map((entry) => entry.scope), ["all", "all"]);
 });
