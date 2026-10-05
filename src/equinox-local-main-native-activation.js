@@ -20,6 +20,7 @@ import {
   snapshotEquinoxLocalNativeAppHost,
   synchronizeEquinoxLocalAppHostForRelease,
 } from "./equinox-local-native-app-host.js";
+import { writeEquinoxLocalMainNativeRecoveryDescriptor } from "./equinox-local-main-native-recovery.js";
 import {
   inspectWindowsStableShellRollbackSnapshot,
   replaceWindowsStableShellForRelease,
@@ -66,6 +67,7 @@ export async function prepareEquinoxLocalMainNativeLifecycle({
   assertWindowsNativeHostImpl = assertWindowsNativeMessagingHostOwnership,
   registerWindowsNativeHostImpl = registerWindowsNativeMessagingHost,
   windowsLauncherPathImpl = windowsNativeMessagingLauncherPath,
+  writeRecoveryDescriptorImpl = writeEquinoxLocalMainNativeRecoveryDescriptor,
 } = {}) {
   if (transition?.mode !== "artifact_required") throw new Error("Main native lifecycle requires an artifact-required transition.");
   if (!candidate || candidate.sourceSha !== transition.targetSha || candidate.target !== transition.target || candidate.runtimeContractSha256 !== transition.targetRuntimeContractSha256) {
@@ -109,6 +111,7 @@ export async function prepareEquinoxLocalMainNativeLifecycle({
       if (error?.code !== "EEXIST") throw error;
       await inspectDarwinSnapshotImpl({ snapshotPath, fsImpl, execFileImpl });
     }
+    await writeRecoveryDescriptorImpl({ transition, previousPointer, installation, transactionRoot: root, transactionId, fsImpl });
     return Object.freeze({
       target: transition.target,
       stored,
@@ -134,6 +137,7 @@ export async function prepareEquinoxLocalMainNativeLifecycle({
   }
   const previousLauncher = windowsLauncherPathImpl(previousRelease);
   const targetLauncher = windowsLauncherPathImpl(targetRelease);
+  await writeRecoveryDescriptorImpl({ transition, previousPointer, installation, transactionRoot: root, transactionId, fsImpl });
   return Object.freeze({
     target: transition.target,
     stored,

@@ -27,17 +27,18 @@ test("Darwin Main native lifecycle snapshots before activation and advances poin
     promoteCandidateImpl: async () => ({ sourceSha: B, target, runtimeContractSha256: DB, releaseDir: durable }),
     readPointerImpl: async () => { throw Object.assign(new Error("missing"), { code: "ENOENT" }); },
     snapshotDarwinImpl: async (value) => events.push(["snapshot", value]),
+    writeRecoveryDescriptorImpl: async (value) => events.push(["recovery-descriptor", value]),
     activateDarwinImpl: async (value) => events.push(["activate", value]),
     restoreDarwinImpl: async (value) => events.push(["rollback", value]),
     writePointerImpl: async (_path, value) => { events.push(["commit", value]); return value; },
   });
-  assert.deepEqual(events.map(([name]) => name), ["snapshot"]);
+  assert.deepEqual(events.map(([name]) => name), ["snapshot", "recovery-descriptor"]);
   await lifecycle.activate();
   await lifecycle.commit();
   await lifecycle.rollback();
-  assert.deepEqual(events.map(([name]) => name), ["snapshot", "activate", "commit", "rollback"]);
-  assert.equal(events[1][1].releaseDir, durable);
-  assert.equal(events[2][1].sourceSha, B);
+  assert.deepEqual(events.map(([name]) => name), ["snapshot", "recovery-descriptor", "activate", "commit", "rollback"]);
+  assert.equal(events[2][1].releaseDir, durable);
+  assert.equal(events[3][1].sourceSha, B);
 });
 
 test("Windows Main native lifecycle keeps shell and Native Messaging on the same durable release", async () => {
@@ -52,6 +53,7 @@ test("Windows Main native lifecycle keeps shell and Native Messaging on the same
     promoteCandidateImpl: async () => ({ sourceSha: B, target, runtimeContractSha256: DB, releaseDir: durable }),
     readPointerImpl: async () => ({ sourceSha: A, target, runtimeContractSha256: DA, releaseDir: previous }),
     snapshotWindowsImpl: async (value) => events.push(["snapshot", value]),
+    writeRecoveryDescriptorImpl: async (value) => events.push(["recovery-descriptor", value]),
     activateWindowsImpl: async (value) => { events.push(["shell-target", value]); return {}; },
     restoreWindowsImpl: async (value) => { events.push(["shell-rollback", value]); return {}; },
     assertWindowsNativeHostImpl: async (value) => events.push(["ownership", value]),
@@ -62,10 +64,10 @@ test("Windows Main native lifecycle keeps shell and Native Messaging on the same
   await lifecycle.activate();
   await lifecycle.commit();
   await lifecycle.rollback();
-  assert.deepEqual(events.map(([name]) => name), ["snapshot", "ownership", "shell-target", "register", "commit", "shell-rollback", "register"]);
-  assert.equal(events[2][1].previousReleaseDir, previous);
-  assert.equal(events[3][1].launcherPath, launcher(durable));
-  assert.equal(events[6][1].launcherPath, launcher(previous));
+  assert.deepEqual(events.map(([name]) => name), ["snapshot", "recovery-descriptor", "ownership", "shell-target", "register", "commit", "shell-rollback", "register"]);
+  assert.equal(events[3][1].previousReleaseDir, previous);
+  assert.equal(events[4][1].launcherPath, launcher(durable));
+  assert.equal(events[7][1].launcherPath, launcher(previous));
 });
 
 test("Main native lifecycle rejects a stale native pointer before platform mutation", async () => {

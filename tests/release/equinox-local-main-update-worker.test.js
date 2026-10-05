@@ -55,7 +55,7 @@ test("worker rejects an unprepared transaction but still removes launchd ownersh
     argv: argv(),
     engineFactory: () => ({ readActive: async () => ({ transactionId: TX, status: "staged", stage: "staged" }) }),
     cleanupImpl: async () => events.push("cleanup"),
-  }), /requires a prepared promotion receipt/u);
+  }), /requires a resumable promotion receipt/u);
   assert.deepEqual(events, ["cleanup"]);
 });
 
@@ -79,7 +79,7 @@ test("worker prepares exact native candidate and durable rollback lifecycle befo
     paths: { sourcePointerPath: `${STATE}/current-source.conf` },
     readActive: async () => preparedReceipt(),
     abortPreparedPromotion: async () => assert.fail("valid native preparation must not abort"),
-    markNativeRollbackReady: async (id) => events.push(["rollback-ready", id]),
+    markNativeRollbackReady: async (id) => { events.push(["rollback-ready", id]); return preparedReceipt({ stage: "native_rollback_ready" }); },
   };
   const result = await runEquinoxLocalMainUpdateWorker({
     argv: argv(),
@@ -121,4 +121,67 @@ test("worker aborts its own prepared transaction when native admission revalidat
   assert.match(events[0][2], /artifact digest drift/u);
   assert.deepEqual(events[0][3], { stage: "native_admission_failed" });
   assert.equal(events.at(-1)[0], "cleanup");
+});
+
+test("worker resumes native_switched from durable native recovery without candidate extraction", async () => {
+  const events = [];
+  const transition = { mode: "artifact_required", target: "darwin-arm64", currentSha: A, targetSha: B, currentRuntimeContractSha256: DIGEST_A, targetRuntimeContractSha256: DIGEST_B };
+  const lifecycle = { activate: async () => {}, rollback: async () => {}, commit: async () => {} };
+  const receipt = preparedReceipt({ stage: "native_switched" });
+  const engine = { paths: { sourcePointerPath: `${STATE}/current-source.conf` }, readActive: async () => receipt };
+  const result = await runEquinoxLocalMainUpdateWorker({
+    argv: argv(), engineFactory: () => engine, resolveHostTarget: () => "darwin-arm64",
+    planNativeTransition: async () => transition,
+    prepareNativeCandidate: async () => assert.fail("recovery must not re-extract candidate"),
+    prepareNativeLifecycle: async () => assert.fail("recovery must reconstruct durable lifecycle"),
+    recoverNativeLifecycle: async (value) => { events.push(["recover-native", value]); return lifecycle; },
+    handoffImpl: async (value) => { events.push(["handoff", value]); return { status: "succeeded" }; },
+    cleanupImpl: async () => events.push(["cleanup"]),
+  });
+  assert.equal(result.status, "succeeded");
+  assert.deepEqual(events.map(([name]) => name), ["recover-native", "handoff", "cleanup"]);
+  assert.equal(events[1][1].initialReceipt.stage, "native_switched");
+  assert.equal(events[1][1].nativeLifecycle, lifecycle);
+});
+
+test("worker resumes source_switched reuse_native without touching native state", async () => {
+  const events = [];
+  const receipt = preparedReceipt({ status: "verifying", stage: "source_switched" });
+  const engine = { paths: { sourcePointerPath: `${STATE}/current-source.conf` }, readActive: async () => receipt };
+  await runEquinoxLocalMainUpdateWorker({
+    argv: argv(), engineFactory: () => engine, resolveHostTarget: () => "darwin-arm64",
+    planNativeTransition: async () => reuseTransition(),
+    recoverNativeLifecycle: async () => assert.fail("reuse_native must not recover native state"),
+    handoffImpl: async (value) => { events.push(value); return { status: "succeeded" }; }, cleanupImpl: async () => {},
+  });
+  assert.equal(events[0].initialReceipt.stage, "source_switched");
+  assert.equal(events[0].nativeLifecycle, null);
+});
+
+test("worker retains ownership as rollback_failed when post-switch native recovery cannot be proven", async () => {
+  const calls = [];
+  const transition = { mode: "artifact_required", target: "darwin-arm64", currentSha: A, targetSha: B, currentRuntimeContractSha256: DIGEST_A, targetRuntimeContractSha256: DIGEST_B };
+  const receipt = preparedReceipt({ stage: "native_switched" });
+  const engine = {
+    paths: { sourcePointerPath: `${STATE}/current-source.conf` }, readActive: async () => receipt,
+    abortPreparedPromotion: async () => assert.fail("post-switch recovery must never use pre-switch abort"),
+    markRollbackFailed: async (...args) => calls.push(["rollback-failed", ...args]),
+  };
+  await assert.rejects(runEquinoxLocalMainUpdateWorker({
+    argv: argv(), engineFactory: () => engine, resolveHostTarget: () => "darwin-arm64", planNativeTransition: async () => transition,
+    recoverNativeLifecycle: async () => { throw new Error("rollback descriptor drift"); }, cleanupImpl: async () => calls.push(["cleanup"]),
+  }), /descriptor drift/u);
+  assert.equal(calls[0][0], "rollback-failed");
+  assert.equal(calls[0][1], TX);
+  assert.equal(calls.at(-1)[0], "cleanup");
+});
+
+test("worker releases a stale terminal success lock without replaying mutation", async () => {
+  const calls = [];
+  const receipt = preparedReceipt({ status: "succeeded", stage: "healthy" });
+  const engine = { readActive: async () => receipt, releaseStagedLock: async (id) => calls.push(id) };
+  const result = await runEquinoxLocalMainUpdateWorker({ argv: argv(), engineFactory: () => engine, planNativeTransition: async () => assert.fail("terminal receipt must not replan"), cleanupImpl: async () => {} });
+  assert.equal(result.status, "succeeded");
+  assert.equal(result.recovered, true);
+  assert.deepEqual(calls, [TX]);
 });

@@ -7,13 +7,14 @@ import { promisify } from "node:util";
 import { planEquinoxLocalMainNativeTransition } from "./equinox-local-main-native-admission.js";
 import { prepareEquinoxLocalMainNativeCandidate } from "./equinox-local-main-native-candidate.js";
 import { prepareEquinoxLocalMainNativeLifecycle } from "./equinox-local-main-native-activation.js";
+import { recoverEquinoxLocalMainNativeLifecycle } from "./equinox-local-main-native-recovery.js";
 import { equinoxLocalReleaseTarget } from "./equinox-local-platform.js";
 import { createEquinoxLocalMainUpdateTransactionEngine } from "./equinox-local-main-update-transaction.js";
 import { runEquinoxLocalMainUpdateHandoff } from "./equinox-local-main-update-handoff.js";
 import { readEquinoxLocalMainSourcePointer } from "./equinox-local-main-source-pointer.js";
 import { inspectCanonicalMainCheckout } from "./equinox-local-main-update.js";
 import { EQUINOX_LOCAL_CONTROL_CENTER_STATUS_URL } from "./equinox-local-update-activation.js";
-import { mainUpdateLaunchdLabel } from "./equinox-local-main-update-scheduler.js";
+import { cleanupEquinoxLocalMainUpdateWorkerOwnership } from "./equinox-local-main-update-scheduler.js";
 
 const execFile = promisify(execFileCallback);
 const HEALTH_ATTEMPTS = 40;
@@ -68,13 +69,7 @@ async function waitForExactSourceHealth({ sha, sourceRoot, pointerPath, fetchImp
   throw new Error(`Main update runtime did not become healthy: ${lastError instanceof Error ? lastError.message : String(lastError)}`);
 }
 
-async function cleanupLaunchdOwnership({ transactionId, transactionRoot, execFileImpl = execFile, fsImpl = fs, uid = process.getuid?.() }) {
-  if (!Number.isInteger(uid) || uid < 1) return;
-  const label = mainUpdateLaunchdLabel(transactionId);
-  const plistPath = path.join(transactionRoot, "handoff", `${transactionId}.plist`);
-  await fsImpl.rm(plistPath, { force: true }).catch(() => {});
-  await execFileImpl("/bin/launchctl", ["bootout", `gui/${uid}/${label}`], { timeout: 5_000, maxBuffer: 64 * 1024 }).catch(() => {});
-}
+
 
 export async function runEquinoxLocalMainUpdateWorker({
   argv = process.argv.slice(2),
@@ -89,17 +84,32 @@ export async function runEquinoxLocalMainUpdateWorker({
   planNativeTransition = planEquinoxLocalMainNativeTransition,
   prepareNativeCandidate = prepareEquinoxLocalMainNativeCandidate,
   prepareNativeLifecycle = prepareEquinoxLocalMainNativeLifecycle,
+  recoverNativeLifecycle = recoverEquinoxLocalMainNativeLifecycle,
   handoffImpl = runEquinoxLocalMainUpdateHandoff,
   restartRuntimeImpl = (value) => restartSourceRuntime({ ...value, execFileImpl, env }),
   verifyRuntimeImpl,
-  cleanupImpl = (value) => cleanupLaunchdOwnership({ ...value, execFileImpl, fsImpl, uid }),
+  cleanupImpl = (value) => cleanupEquinoxLocalMainUpdateWorkerOwnership({ ...value, execFileImpl, fsImpl, uid }),
 } = {}) {
   const args = parseArgs(argv);
   try {
     const engine = engineFactory({ sourceRoot: args.sourceRoot, transactionRoot: args.transactionRoot });
-    const active = await engine.readActive();
+    let active = await engine.readActive();
     if (!active || active.transactionId !== args.transactionId) throw new Error("Main update worker does not own the active transaction.");
-    if (active.status !== "promoting" || active.stage !== "ready_to_switch") throw new Error("Main update worker requires a prepared promotion receipt.");
+    if (["succeeded", "rolled_back"].includes(active.status)) {
+      await engine.releaseStagedLock(args.transactionId);
+      return Object.freeze({ status: active.status, receipt: active, recovered: true });
+    }
+    if (active.status === "rollback_failed") throw new Error("Main update worker cannot resume a transaction whose rollback already failed.");
+    const resumable = new Set([
+      "promoting:ready_to_switch",
+      "promoting:native_rollback_ready",
+      "promoting:native_switched",
+      "verifying:source_switched",
+      "verifying:rollback_source_restored",
+      "verifying:rollback_native_restored",
+    ]);
+    if (!resumable.has(`${active.status}:${active.stage}`)) throw new Error("Main update worker requires a resumable promotion receipt.");
+    const initialStage = active.stage;
     let nativeTransition;
     let nativeLifecycle = null;
     try {
@@ -112,30 +122,49 @@ export async function runEquinoxLocalMainUpdateWorker({
         target,
       });
       if (nativeTransition?.mode === "artifact_required") {
-        const candidate = await prepareNativeCandidate({
-          sourceSha: active.targetSha,
-          target,
-          expectedRuntimeContractSha256: nativeTransition.targetRuntimeContractSha256,
-          transactionRoot: args.transactionRoot,
-          transactionId: args.transactionId,
-          fsImpl,
-          execFileImpl,
-        });
-        nativeLifecycle = await prepareNativeLifecycle({
-          transition: nativeTransition,
-          candidate,
-          transactionRoot: args.transactionRoot,
-          transactionId: args.transactionId,
-          fsImpl,
-          execFileImpl,
-          env,
-        });
-        await engine.markNativeRollbackReady(args.transactionId);
-      } else if (nativeTransition?.mode !== "reuse_native") {
+        if (initialStage === "ready_to_switch") {
+          const candidate = await prepareNativeCandidate({
+            sourceSha: active.targetSha,
+            target,
+            expectedRuntimeContractSha256: nativeTransition.targetRuntimeContractSha256,
+            transactionRoot: args.transactionRoot,
+            transactionId: args.transactionId,
+            fsImpl,
+            execFileImpl,
+          });
+          nativeLifecycle = await prepareNativeLifecycle({
+            transition: nativeTransition,
+            candidate,
+            transactionRoot: args.transactionRoot,
+            transactionId: args.transactionId,
+            fsImpl,
+            execFileImpl,
+            env,
+          });
+          active = await engine.markNativeRollbackReady(args.transactionId);
+        } else {
+          nativeLifecycle = await recoverNativeLifecycle({
+            transition: nativeTransition,
+            transactionRoot: args.transactionRoot,
+            transactionId: args.transactionId,
+            fsImpl,
+            execFileImpl,
+            env,
+          });
+        }
+      } else if (nativeTransition?.mode === "reuse_native") {
+        if (["native_rollback_ready", "native_switched", "rollback_source_restored", "rollback_native_restored"].includes(initialStage)) {
+          throw new Error("Main update native receipt stage is incompatible with reuse_native recovery.");
+        }
+      } else {
         throw new Error("Main native transition mode is unsupported.");
       }
     } catch (error) {
-      await engine.abortPreparedPromotion(args.transactionId, errorMessage(error), { stage: "native_admission_failed" }).catch(() => {});
+      if (initialStage === "ready_to_switch") {
+        await engine.abortPreparedPromotion(args.transactionId, errorMessage(error), { stage: "native_admission_failed" }).catch(() => {});
+      } else {
+        await engine.markRollbackFailed(args.transactionId, errorMessage(error)).catch(() => {});
+      }
       throw error;
     }
     const verify = typeof verifyRuntimeImpl === "function"
@@ -146,6 +175,7 @@ export async function runEquinoxLocalMainUpdateWorker({
       transactionId: args.transactionId,
       nativeTransition,
       nativeLifecycle,
+      initialReceipt: active,
       restartRuntime: restartRuntimeImpl,
       verifyRuntime: verify,
     });

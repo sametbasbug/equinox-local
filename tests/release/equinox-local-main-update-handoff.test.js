@@ -123,3 +123,69 @@ test("native-impact target failure restores source and native before rollback he
   assert.deepEqual(f.calls.map(([name]) => name), ["native_switched", "activate", "rollback", "native_restored", "rollback_success", "release"]);
   assert.deepEqual(f.calls.find(([name]) => name === "rollback")[3], { nativeRollbackPending: true });
 });
+
+test("handoff resumes native_rollback_ready by ensuring native then switching source", async () => {
+  const f = engineFixture();
+  const events = [];
+  const initial = { ...f.receipt, status: "promoting", stage: "native_rollback_ready" };
+  await runEquinoxLocalMainUpdateHandoff({
+    engine: f.engine, transactionId: f.receipt.transactionId, initialReceipt: initial,
+    nativeLifecycle: { activate: async () => events.push("ensure-target-native"), rollback: async () => {}, commit: async () => events.push("commit-native") },
+    restartRuntime: async () => events.push("restart-target"), verifyRuntime: async () => true,
+  });
+  assert.deepEqual(events, ["ensure-target-native", "restart-target", "commit-native"]);
+  assert.deepEqual(f.calls.map(([name]) => name), ["native_switched", "activate", "success", "release"]);
+});
+
+test("handoff resumes native_switched without rewriting native receipt stage", async () => {
+  const f = engineFixture();
+  const initial = { ...f.receipt, status: "promoting", stage: "native_switched" };
+  let ensured = 0;
+  await runEquinoxLocalMainUpdateHandoff({
+    engine: f.engine, transactionId: f.receipt.transactionId, initialReceipt: initial,
+    nativeLifecycle: { activate: async () => { ensured += 1; }, rollback: async () => {}, commit: async () => {} },
+    restartRuntime: async () => {}, verifyRuntime: async () => true,
+  });
+  assert.equal(ensured, 1);
+  assert.deepEqual(f.calls.map(([name]) => name), ["activate", "success", "release"]);
+});
+
+test("handoff resumes source_switched without switching source twice", async () => {
+  const f = engineFixture();
+  const initial = { ...f.receipt, status: "verifying", stage: "source_switched" };
+  const events = [];
+  await runEquinoxLocalMainUpdateHandoff({
+    engine: f.engine, transactionId: f.receipt.transactionId, initialReceipt: initial,
+    nativeLifecycle: { activate: async () => events.push("ensure-target-native"), rollback: async () => {}, commit: async () => events.push("commit-native") },
+    restartRuntime: async ({ sha }) => events.push(`restart:${sha}`), verifyRuntime: async () => true,
+  });
+  assert.deepEqual(f.calls.map(([name]) => name), ["success", "release"]);
+  assert.deepEqual(events, ["ensure-target-native", `restart:${f.receipt.targetSha}`, "commit-native"]);
+});
+
+test("handoff resumes rollback_source_restored by restoring native then verifying rollback health", async () => {
+  const f = engineFixture();
+  const initial = { ...f.receipt, status: "verifying", stage: "rollback_source_restored", lastError: "target failed" };
+  const events = [];
+  const result = await runEquinoxLocalMainUpdateHandoff({
+    engine: f.engine, transactionId: f.receipt.transactionId, initialReceipt: initial,
+    nativeLifecycle: { activate: async () => {}, rollback: async () => events.push("ensure-old-native"), commit: async () => {} },
+    restartRuntime: async ({ rollback }) => events.push(`restart:${rollback}`), verifyRuntime: async ({ rollback }) => rollback,
+  });
+  assert.equal(result.status, "rolled_back");
+  assert.deepEqual(events, ["ensure-old-native", "restart:true"]);
+  assert.deepEqual(f.calls.map(([name]) => name), ["native_restored", "rollback_success", "release"]);
+});
+
+test("handoff resumes rollback_native_restored with exact native revalidation", async () => {
+  const f = engineFixture();
+  const initial = { ...f.receipt, status: "verifying", stage: "rollback_native_restored", lastError: "target failed" };
+  let restores = 0;
+  await runEquinoxLocalMainUpdateHandoff({
+    engine: f.engine, transactionId: f.receipt.transactionId, initialReceipt: initial,
+    nativeLifecycle: { activate: async () => {}, rollback: async () => { restores += 1; }, commit: async () => {} },
+    restartRuntime: async () => {}, verifyRuntime: async () => true,
+  });
+  assert.equal(restores, 1);
+  assert.deepEqual(f.calls.map(([name]) => name), ["rollback_success", "release"]);
+});
