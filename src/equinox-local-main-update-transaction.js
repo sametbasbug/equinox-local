@@ -106,6 +106,17 @@ function validateReceipt(value) {
   if (value.schemaVersion !== EQUINOX_LOCAL_MAIN_TRANSACTION_SCHEMA_VERSION || value.channel !== "main") throw new Error("Main update receipt identity is invalid.");
   if (!["active", "staged", "failed", "promoting", "verifying", "succeeded", "rolled_back", "rollback_failed"].includes(value.status)) throw new Error("Main update receipt status is invalid.");
   if (typeof value.stage !== "string" || value.stage.length < 1 || value.stage.length > 80) throw new Error("Main update receipt stage is invalid.");
+  const allowedStages = Object.freeze({
+    active: new Set(["admitted", "dependencies", "validation"]),
+    staged: new Set(["staged"]),
+    failed: new Set(["admitted", "dependencies", "validation", "preparation_failed", "handoff_schedule_failed", "native_admission_failed"]),
+    promoting: new Set(["ready_to_switch", "native_rollback_ready", "native_switched"]),
+    verifying: new Set(["source_switched"]),
+    succeeded: new Set(["healthy"]),
+    rolled_back: new Set(["rollback_source_restored"]),
+    rollback_failed: new Set(["rollback_failed"]),
+  });
+  if (!allowedStages[value.status]?.has(value.stage)) throw new Error("Main update receipt status and stage are incompatible.");
   for (const key of ["startedAt", "updatedAt"]) if (typeof value[key] !== "string" || Number.isNaN(Date.parse(value[key]))) throw new Error(`Main update receipt ${key} is invalid.`);
   if (value.lastError !== null && (typeof value.lastError !== "string" || value.lastError.length > MAX_ERROR_LENGTH)) throw new Error("Main update receipt error is invalid.");
   return Object.freeze({ ...value });
@@ -291,11 +302,35 @@ export function createEquinoxLocalMainUpdateTransactionEngine({
     return Object.freeze({ receipt, targetSourceRoot, rollbackSourceRoot: receipt.rollbackSourceRoot });
   };
 
+  const markNativeRollbackReady = async (transactionId) => {
+    assertTransactionId(transactionId);
+    let receipt = await readActive();
+    if (!receipt || receipt.transactionId !== transactionId) throw new Error("Main native rollback readiness does not own the active transaction.");
+    if (receipt.status !== "promoting" || !["ready_to_switch", "native_rollback_ready"].includes(receipt.stage) || !receipt.targetSourceRoot) {
+      throw new Error("Main update transaction is not ready to record native rollback state.");
+    }
+    if (receipt.stage === "native_rollback_ready") return receipt;
+    receipt = await writeReceipt(Object.freeze({ ...receipt, stage: "native_rollback_ready", updatedAt: now().toISOString() }));
+    return receipt;
+  };
+
+  const markNativeSwitched = async (transactionId) => {
+    assertTransactionId(transactionId);
+    let receipt = await readActive();
+    if (!receipt || receipt.transactionId !== transactionId) throw new Error("Main native activation does not own the active transaction.");
+    if (receipt.status !== "promoting" || !["native_rollback_ready", "native_switched"].includes(receipt.stage) || !receipt.targetSourceRoot) {
+      throw new Error("Main update transaction has not durably prepared native rollback state.");
+    }
+    if (receipt.stage === "native_switched") return receipt;
+    receipt = await writeReceipt(Object.freeze({ ...receipt, stage: "native_switched", updatedAt: now().toISOString() }));
+    return receipt;
+  };
+
   const activatePromotion = async (transactionId) => {
     assertTransactionId(transactionId);
     let receipt = await readActive();
     if (!receipt || receipt.transactionId !== transactionId) throw new Error("Main update activation does not own the active transaction.");
-    if (receipt.status !== "promoting" || receipt.stage !== "ready_to_switch" || !receipt.targetSourceRoot) throw new Error("Main update transaction is not ready to switch source.");
+    if (receipt.status !== "promoting" || !["ready_to_switch", "native_switched"].includes(receipt.stage) || !receipt.targetSourceRoot) throw new Error("Main update transaction is not ready to switch source.");
     await writeEquinoxLocalMainSourcePointer(resolvedPointerPath, { sourceRoot: receipt.targetSourceRoot, sha: receipt.targetSha }, { fsImpl, execFileImpl, randomBytesImpl });
     receipt = await writeReceipt(Object.freeze({ ...receipt, status: "verifying", stage: "source_switched", updatedAt: now().toISOString() }));
     return receipt;
@@ -385,5 +420,5 @@ export function createEquinoxLocalMainUpdateTransactionEngine({
     return true;
   };
 
-  return Object.freeze({ readActive, readReceipt, begin, stage, initializeSourcePointer, preparePromotion, activatePromotion, rollbackPromotion, abortStagedPreparation, abortPreparedPromotion, markPromotionSucceeded, markRollbackFailed, releaseStagedLock, paths: Object.freeze({ transactionRoot: resolvedTransactionRoot, lockPath, receiptsRoot, stagingRoot, sourcePointerPath: resolvedPointerPath, sourceStoreRoot: resolvedSourceStoreRoot }) });
+  return Object.freeze({ readActive, readReceipt, begin, stage, initializeSourcePointer, preparePromotion, markNativeRollbackReady, markNativeSwitched, activatePromotion, rollbackPromotion, abortStagedPreparation, abortPreparedPromotion, markPromotionSucceeded, markRollbackFailed, releaseStagedLock, paths: Object.freeze({ transactionRoot: resolvedTransactionRoot, lockPath, receiptsRoot, stagingRoot, sourcePointerPath: resolvedPointerPath, sourceStoreRoot: resolvedSourceStoreRoot }) });
 }
