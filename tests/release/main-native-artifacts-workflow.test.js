@@ -23,6 +23,11 @@ test("Main native artifact workflow runs only planned native targets and materia
   assert.match(workflow, /ref: \$\{\{ inputs\.target \}\}\n          fetch-depth: 0/u);
   assert.match(workflow, /EQUINOX_WINDOWS_SHELL_PUBLISH_DIR: \$\{\{ runner\.temp \}\}\/windows-shell\/\$\{\{ matrix\.shellRid \}\}/u);
   assert.ok(workflow.includes('--output "$env:EQUINOX_WINDOWS_SHELL_PUBLISH_DIR"'));
+  assert.ok(workflow.includes('EQUINOX_WINDOWS_SHELL_BIN_DIR: ${{ runner.temp }}/windows-shell-bin/${{ matrix.shellRid }}/'));
+  assert.ok(workflow.includes('EQUINOX_WINDOWS_SHELL_OBJ_DIR: ${{ runner.temp }}/windows-shell-obj/${{ matrix.shellRid }}/'));
+  assert.ok(workflow.includes('-p:BaseOutputPath=\"$env:EQUINOX_WINDOWS_SHELL_BIN_DIR\"'));
+  assert.ok(workflow.includes('-p:BaseIntermediateOutputPath=\"$env:EQUINOX_WINDOWS_SHELL_OBJ_DIR\"'));
+  assert.match(workflow, /git status --porcelain=v1 --untracked-files=all/u);
   assert.doesNotMatch(workflow, /EQUINOX_WINDOWS_SHELL_PUBLISH_DIR: artifacts\/windows-shell/u);
   assert.match(workflow, /build-main-native-artifact\.mjs --source-sha "\$\{\{ inputs\.target \}\}" --target "\$\{\{ matrix\.target \}\}"/u);
   assert.match(workflow, /name: main-native-\$\{\{ inputs\.target \}\}-\$\{\{ matrix\.target \}\}/u);
