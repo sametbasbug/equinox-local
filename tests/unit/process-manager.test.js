@@ -413,6 +413,7 @@ test("process lifecycle emits observability events without command arguments", a
   const events = [];
   const manager = createProcessManager({
     spawnImpl: () => child,
+    groupExistsImpl: () => false,
     randomId: () => "events01",
     onEvent: (event) => events.push(event),
   });
@@ -428,7 +429,8 @@ test("process lifecycle emits observability events without command arguments", a
   child.stdout.end();
   child.stderr.end();
   child.emit("close", 7, null);
-  await new Promise((resolve) => setImmediate(resolve));
+  const exited = await manager.waitForExit({ processId: started.processId, waitMs: 100 });
+  assert.equal(exited.running, false);
 
   assert.equal(events[0].type, "process.started");
   assert.equal(events[0].details.argumentCount, 1);
