@@ -21,6 +21,9 @@ test("Main native artifact workflow runs only planned native targets and materia
   assert.match(workflow, /runs-on: \$\{\{ matrix\.runner \}\}/u);
   assert.match(workflow, /- name: Verify native host target\n\s+run: \|\n\s+node -e/u);
   assert.match(workflow, /ref: \$\{\{ inputs\.target \}\}\n          fetch-depth: 0/u);
+  assert.match(workflow, /EQUINOX_WINDOWS_SHELL_PUBLISH_DIR: \$\{\{ runner\.temp \}\}\/windows-shell\/\$\{\{ matrix\.shellRid \}\}/u);
+  assert.ok(workflow.includes('--output "$env:EQUINOX_WINDOWS_SHELL_PUBLISH_DIR"'));
+  assert.doesNotMatch(workflow, /EQUINOX_WINDOWS_SHELL_PUBLISH_DIR: artifacts\/windows-shell/u);
   assert.match(workflow, /build-main-native-artifact\.mjs --source-sha "\$\{\{ inputs\.target \}\}" --target "\$\{\{ matrix\.target \}\}"/u);
   assert.match(workflow, /name: main-native-\$\{\{ inputs\.target \}\}-\$\{\{ matrix\.target \}\}/u);
   assert.doesNotMatch(workflow, /build-main-native-artifact\.mjs[^\n]*--root/u);
