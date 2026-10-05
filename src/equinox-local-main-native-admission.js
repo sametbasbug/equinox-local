@@ -121,6 +121,34 @@ export async function computeEquinoxLocalMainNativeRuntimeContract({
   });
 }
 
+export async function planEquinoxLocalMainNativeTransition({
+  currentRoot,
+  currentSha,
+  targetRoot,
+  targetSha,
+  target,
+  computeRuntimeContractImpl = computeEquinoxLocalMainNativeRuntimeContract,
+} = {}) {
+  if (typeof computeRuntimeContractImpl !== "function") throw new Error("Main native transition contract computer is required.");
+  const [currentContract, targetContract] = await Promise.all([
+    computeRuntimeContractImpl({ rootDir: currentRoot, sourceSha: currentSha, target }),
+    computeRuntimeContractImpl({ rootDir: targetRoot, sourceSha: targetSha, target }),
+  ]);
+  if (currentContract?.target !== target || targetContract?.target !== target) throw new Error("Main native transition contract target drifted.");
+  if (!DIGEST_PATTERN.test(currentContract?.sha256 ?? "") || !DIGEST_PATTERN.test(targetContract?.sha256 ?? "")) {
+    throw new Error("Main native transition contract digest is invalid.");
+  }
+  const mode = currentContract.sha256 === targetContract.sha256 ? "reuse_native" : "artifact_required";
+  return Object.freeze({
+    mode,
+    target,
+    currentSha,
+    targetSha,
+    currentRuntimeContractSha256: currentContract.sha256,
+    targetRuntimeContractSha256: targetContract.sha256,
+  });
+}
+
 const MAX_NATIVE_IMPACT_DIFF_BYTES = 8 * 1024 * 1024;
 const MAX_NATIVE_IMPACT_CHANGED_PATHS = 20_000;
 const DEFAULT_CANONICAL_MAIN_REF = "refs/remotes/origin/main";

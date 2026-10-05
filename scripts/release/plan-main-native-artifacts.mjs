@@ -53,12 +53,11 @@ export async function planEquinoxLocalMainNativeArtifacts({
   const impact = await inspectImpactImpl({ rootDir: path.resolve(rootDir), currentSha, targetSha });
   const contracts = new Map(targetMatrix.map((entry) => [entry.target, entry]));
   if (contracts.size !== targetMatrix.length) throw new Error("Main native artifact target matrix contains duplicate targets.");
-  const githubTargets = [];
-  for (const target of impact.requiredTargets) {
-    const contract = contracts.get(target);
-    if (!contract) throw new Error(`Main native artifact target contract is missing: ${target}.`);
-    githubTargets.push(githubTargetEntry(contract, mainNativeRunners));
+  for (const required of EQUINOX_LOCAL_RELEASE_TARGET_MATRIX) {
+    if (!contracts.has(required.target)) throw new Error(`Main native artifact target contract is missing: ${required.target}.`);
   }
+  if (contracts.size !== EQUINOX_LOCAL_RELEASE_TARGET_MATRIX.length) throw new Error("Main native artifact target matrix contains unsupported targets.");
+  const githubTargets = EQUINOX_LOCAL_RELEASE_TARGET_MATRIX.map(({ target }) => githubTargetEntry(contracts.get(target), mainNativeRunners));
 
   return Object.freeze({
     schemaVersion: 1,
