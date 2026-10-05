@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   test:
-    name: macOS / Node 26
+    name: macOS ARM64 / Node 26
     runs-on: macos-latest
     timeout-minutes: 20
 
@@ -31,6 +31,37 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Static checks
+        run: npm run check
+
+      - name: Verify ARM64 host
+        run: test "$(node -p process.platform)-$(node -p process.arch)" = "darwin-arm64"
+
+      - name: Test
+        run: npm test
+
+  macos-x64:
+    name: macOS x64 / Node 26
+    runs-on: macos-15-intel
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 26.10.0
+          architecture: x64
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Verify x64 host
+        run: test "$(node -p process.platform)-$(node -p process.arch)" = "darwin-x64"
 
       - name: Static checks
         run: npm run check
