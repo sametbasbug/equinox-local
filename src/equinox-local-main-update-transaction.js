@@ -344,12 +344,14 @@ export function createEquinoxLocalMainUpdateTransactionEngine({
     return receipt;
   };
 
-  const abortPreparedPromotion = async (transactionId, failure) => {
+  const abortPreparedPromotion = async (transactionId, failure, { stage = "handoff_schedule_failed" } = {}) => {
     assertTransactionId(transactionId);
+    if (!["handoff_schedule_failed", "native_admission_failed"].includes(stage)) throw new Error("Main update prepared abort stage is invalid.");
     let receipt = await readActive();
     if (!receipt || receipt.transactionId !== transactionId) throw new Error("Main update abort does not own the active transaction.");
     if (receipt.status !== "promoting" || receipt.stage !== "ready_to_switch") throw new Error("Main update transaction cannot be aborted after source activation.");
-    receipt = await writeReceipt(Object.freeze({ ...receipt, status: "failed", stage: "handoff_schedule_failed", updatedAt: now().toISOString(), lastError: boundedMessage(failure) || "Main update handoff scheduling failed." }));
+    const fallback = stage === "native_admission_failed" ? "Main native admission failed before activation." : "Main update handoff scheduling failed.";
+    receipt = await writeReceipt(Object.freeze({ ...receipt, status: "failed", stage, updatedAt: now().toISOString(), lastError: boundedMessage(failure) || fallback }));
     await fsImpl.rm(lockPath, { force: true });
     await syncDirectory(resolvedTransactionRoot, { fsImpl });
     return receipt;

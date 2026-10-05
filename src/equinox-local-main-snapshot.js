@@ -1,4 +1,5 @@
 import { createHash, randomBytes } from "node:crypto";
+import { constants as fsConstants } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 
@@ -23,9 +24,13 @@ function snapshotArtifactExtension(target) {
   return target.startsWith("darwin-") ? ".tar.gz" : ".zip";
 }
 
+function snapshotManifestName(sourceSha, target) {
+  return `equinox-local-main-${sourceSha}-${target}.json`;
+}
+
 export function equinoxLocalMainSnapshotManifestUrl(sourceSha, target) {
   assertSnapshotIdentity(sourceSha, target);
-  return `${MAIN_SNAPSHOT_ORIGIN}${MAIN_SNAPSHOT_PREFIX}${sourceSha}/equinox-local-main-${sourceSha}-${target}.json`;
+  return `${MAIN_SNAPSHOT_ORIGIN}${MAIN_SNAPSHOT_PREFIX}${sourceSha}/${snapshotManifestName(sourceSha, target)}`;
 }
 
 export function equinoxLocalMainSnapshotArtifactUrl(sourceSha, target) {
@@ -114,6 +119,73 @@ async function syncDirectory(directory, fsImpl) {
   try { await handle.sync(); } finally { await handle.close(); }
 }
 
+async function readBoundedLocalManifest(filePath, fsImpl) {
+  let handle;
+  try {
+    handle = await fsImpl.open(filePath, fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0));
+    const stat = await handle.stat();
+    if (!stat.isFile() || stat.size < 1 || stat.size > MAX_MANIFEST_BYTES) throw new Error("Main snapshot staged manifest is not an admissible normal file.");
+    const text = await handle.readFile("utf8");
+    if (Buffer.byteLength(text, "utf8") > MAX_MANIFEST_BYTES) throw new Error("Main snapshot staged manifest exceeds the size limit.");
+    try { return JSON.parse(text); } catch { throw new Error("Main snapshot staged manifest is not valid JSON."); }
+  } finally {
+    await handle?.close().catch(() => {});
+  }
+}
+
+async function hashExactNormalFile(filePath, expectedBytes, fsImpl) {
+  let handle;
+  try {
+    handle = await fsImpl.open(filePath, fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0));
+    const stat = await handle.stat();
+    if (!stat.isFile() || stat.size !== expectedBytes) throw new Error("Main snapshot staged artifact byte size does not match the manifest.");
+    const digest = createHash("sha256");
+    const buffer = Buffer.allocUnsafe(1024 * 1024);
+    let bytes = 0;
+    while (bytes < expectedBytes) {
+      const length = Math.min(buffer.length, expectedBytes - bytes);
+      const { bytesRead } = await handle.read(buffer, 0, length, bytes);
+      if (bytesRead < 1) throw new Error("Main snapshot staged artifact ended before the manifest byte size.");
+      digest.update(buffer.subarray(0, bytesRead));
+      bytes += bytesRead;
+    }
+    return Object.freeze({ bytes, sha256: digest.digest("hex") });
+  } finally {
+    await handle?.close().catch(() => {});
+  }
+}
+
+export async function inspectStagedEquinoxLocalMainSnapshotArtifact({
+  sourceSha,
+  target,
+  expectedRuntimeContractSha256,
+  transactionRoot,
+  transactionId,
+  fsImpl = fs,
+} = {}) {
+  assertSnapshotIdentity(sourceSha, target);
+  if (!TRANSACTION_ID_PATTERN.test(transactionId ?? "")) throw new Error("Main snapshot transaction id is invalid.");
+  const root = await assertCanonicalExistingDirectory(transactionRoot, "Main update transaction root", fsImpl);
+  const stagingRoot = await assertCanonicalExistingDirectory(path.join(root, "staging"), "Main update staging root", fsImpl);
+  const transactionDir = await assertCanonicalExistingDirectory(path.join(stagingRoot, transactionId), "Main update transaction directory", fsImpl);
+  const nativeDir = await assertCanonicalExistingDirectory(path.join(transactionDir, "native"), "Main snapshot native staging directory", fsImpl);
+  const manifestPath = path.join(nativeDir, snapshotManifestName(sourceSha, target));
+  const manifest = validateEquinoxLocalMainNativeArtifactManifest(await readBoundedLocalManifest(manifestPath, fsImpl), {
+    expectedSourceSha: sourceSha,
+    expectedTarget: target,
+    expectedRuntimeContractSha256,
+  });
+  const artifactPath = path.join(nativeDir, manifest.artifact.name);
+  const artifact = await hashExactNormalFile(artifactPath, manifest.artifact.bytes, fsImpl);
+  if (artifact.sha256 !== manifest.artifact.sha256) throw new Error("Main snapshot staged artifact SHA-256 does not match the manifest.");
+  const entries = (await fsImpl.readdir(nativeDir)).sort();
+  const expectedEntries = [manifest.artifact.name, path.basename(manifestPath)].sort();
+  if (entries.length !== expectedEntries.length || entries.some((entry, index) => entry !== expectedEntries[index])) {
+    throw new Error("Main snapshot native staging directory contains unexpected entries.");
+  }
+  return Object.freeze({ sourceSha, target, transactionId, manifest, manifestPath, artifactPath, ...artifact });
+}
+
 export async function stageEquinoxLocalMainSnapshotArtifact({
   sourceSha,
   target,
@@ -188,11 +260,20 @@ export async function stageEquinoxLocalMainSnapshotArtifact({
     await syncDirectory(nativeDir, fsImpl);
     const finalStat = await fsImpl.lstat(artifactPath);
     if (finalStat.isSymbolicLink() || !finalStat.isFile() || finalStat.size !== expectedBytes) throw new Error("Main snapshot staged artifact is not the verified normal file.");
+    const manifestPath = path.join(nativeDir, snapshotManifestName(sourceSha, target));
+    const manifestBody = `${JSON.stringify(snapshot.manifest, null, 2)}\n`;
+    handle = await fsImpl.open(manifestPath, "wx", 0o600);
+    await handle.writeFile(manifestBody, "utf8");
+    await handle.sync();
+    await handle.close();
+    handle = null;
+    await syncDirectory(nativeDir, fsImpl);
     return Object.freeze({
       sourceSha,
       target,
       transactionId,
       manifest: snapshot.manifest,
+      manifestPath,
       manifestUrl: snapshot.manifestUrl,
       artifactUrl: snapshot.artifactUrl,
       artifactPath,

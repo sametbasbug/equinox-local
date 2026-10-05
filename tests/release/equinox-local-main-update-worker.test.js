@@ -6,6 +6,18 @@ import { runEquinoxLocalMainUpdateWorker } from "../../src/equinox-local-main-up
 const TX = `main-${"a".repeat(32)}`;
 const SOURCE = "/private/tmp/equinox-source-a";
 const STATE = "/private/tmp/equinox-main-state";
+const A = "1".repeat(40);
+const B = "2".repeat(40);
+const DIGEST_A = "a".repeat(64);
+const DIGEST_B = "b".repeat(64);
+
+function preparedReceipt(overrides = {}) {
+  return { transactionId: TX, status: "promoting", stage: "ready_to_switch", currentSha: A, targetSha: B, rollbackSourceRoot: SOURCE, targetSourceRoot: "/target", ...overrides };
+}
+
+function reuseTransition() {
+  return { mode: "reuse_native", target: "darwin-arm64", currentSha: A, targetSha: B, currentRuntimeContractSha256: DIGEST_A, targetRuntimeContractSha256: DIGEST_A };
+}
 
 function argv() {
   return ["--transaction-id", TX, "--source-root", SOURCE, "--transaction-root", STATE];
@@ -13,10 +25,13 @@ function argv() {
 
 test("launchd worker consumes only the prepared transaction it owns and cleans up after success", async () => {
   const events = [];
-  const engine = { paths: { sourcePointerPath: `${STATE}/current-source.conf` }, readActive: async () => ({ transactionId: TX, status: "promoting", stage: "ready_to_switch" }) };
+  const engine = { paths: { sourcePointerPath: `${STATE}/current-source.conf` }, readActive: async () => preparedReceipt(), abortPreparedPromotion: async () => assert.fail("success must not abort") };
   const result = await runEquinoxLocalMainUpdateWorker({
     argv: argv(),
     engineFactory: (options) => { events.push(["engine", options]); return engine; },
+    resolveHostTarget: () => "darwin-arm64",
+    planNativeTransition: async (value) => { events.push(["plan", value]); return reuseTransition(); },
+    inspectNativeArtifact: async () => assert.fail("reuse_native must not inspect an artifact"),
     handoffImpl: async ({ transactionId, restartRuntime, verifyRuntime }) => {
       events.push(["handoff", transactionId]);
       await restartRuntime({ sourceRoot: "/target", previousSourceRoot: SOURCE, sha: "b".repeat(40), rollback: false });
@@ -28,7 +43,7 @@ test("launchd worker consumes only the prepared transaction it owns and cleans u
     cleanupImpl: async (value) => events.push(["cleanup", value]),
   });
   assert.equal(result.status, "succeeded");
-  assert.deepEqual(events.map(([name]) => name), ["engine", "handoff", "restart", "verify", "cleanup"]);
+  assert.deepEqual(events.map(([name]) => name), ["engine", "plan", "handoff", "restart", "verify", "cleanup"]);
   assert.equal(events[0][1].sourceRoot, SOURCE);
   assert.equal(events.at(-1)[1].transactionId, TX);
 });
@@ -47,8 +62,61 @@ test("worker rejects a foreign transaction owner and still cleans the one-shot j
   let cleaned = false;
   await assert.rejects(runEquinoxLocalMainUpdateWorker({
     argv: argv(),
-    engineFactory: () => ({ readActive: async () => ({ transactionId: `main-${"b".repeat(32)}`, status: "promoting", stage: "ready_to_switch" }) }),
+    engineFactory: () => ({ readActive: async () => preparedReceipt({ transactionId: `main-${"b".repeat(32)}` }) }),
     cleanupImpl: async () => { cleaned = true; },
   }), /does not own/u);
   assert.equal(cleaned, true);
+});
+
+
+test("worker revalidates an exact transaction-owned native artifact before handoff", async () => {
+  const events = [];
+  const artifact = { artifactPath: `${STATE}/staging/${TX}/native/exact.tar.gz`, sha256: "c".repeat(64), bytes: 42 };
+  const transition = { mode: "artifact_required", target: "darwin-arm64", currentSha: A, targetSha: B, currentRuntimeContractSha256: DIGEST_A, targetRuntimeContractSha256: DIGEST_B };
+  const engine = {
+    paths: { sourcePointerPath: `${STATE}/current-source.conf` },
+    readActive: async () => preparedReceipt(),
+    abortPreparedPromotion: async () => assert.fail("valid artifact must not abort"),
+  };
+  const result = await runEquinoxLocalMainUpdateWorker({
+    argv: argv(),
+    engineFactory: () => engine,
+    resolveHostTarget: () => "darwin-arm64",
+    planNativeTransition: async (value) => { events.push(["plan", value]); return transition; },
+    inspectNativeArtifact: async (value) => { events.push(["inspect", value]); return artifact; },
+    handoffImpl: async (value) => { events.push(["handoff", value]); return { status: "succeeded" }; },
+    cleanupImpl: async () => events.push(["cleanup"]),
+  });
+  assert.equal(result.status, "succeeded");
+  assert.deepEqual(events.map(([name]) => name), ["plan", "inspect", "handoff", "cleanup"]);
+  assert.equal(events[0][1].currentRoot, SOURCE);
+  assert.equal(events[0][1].targetRoot, "/target");
+  assert.equal(events[1][1].sourceSha, B);
+  assert.equal(events[1][1].expectedRuntimeContractSha256, DIGEST_B);
+  assert.equal(events[2][1].nativeArtifact, artifact);
+  assert.equal(events[2][1].nativeTransition, transition);
+});
+
+test("worker aborts its own prepared transaction when native admission revalidation fails", async () => {
+  const events = [];
+  const transition = { mode: "artifact_required", target: "darwin-arm64", currentSha: A, targetSha: B, currentRuntimeContractSha256: DIGEST_A, targetRuntimeContractSha256: DIGEST_B };
+  const engine = {
+    paths: { sourcePointerPath: `${STATE}/current-source.conf` },
+    readActive: async () => preparedReceipt(),
+    abortPreparedPromotion: async (...args) => events.push(["abort", ...args]),
+  };
+  await assert.rejects(runEquinoxLocalMainUpdateWorker({
+    argv: argv(),
+    engineFactory: () => engine,
+    resolveHostTarget: () => "darwin-arm64",
+    planNativeTransition: async () => transition,
+    inspectNativeArtifact: async () => { throw new Error("local artifact digest drift"); },
+    handoffImpl: async () => assert.fail("admission failure must happen before handoff"),
+    cleanupImpl: async () => events.push(["cleanup"]),
+  }), /artifact digest drift/u);
+  assert.equal(events[0][0], "abort");
+  assert.equal(events[0][1], TX);
+  assert.match(events[0][2], /artifact digest drift/u);
+  assert.deepEqual(events[0][3], { stage: "native_admission_failed" });
+  assert.equal(events.at(-1)[0], "cleanup");
 });
