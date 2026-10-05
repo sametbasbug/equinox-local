@@ -4,6 +4,9 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 
+import { planEquinoxLocalMainNativeTransition } from "./equinox-local-main-native-admission.js";
+import { inspectStagedEquinoxLocalMainSnapshotArtifact } from "./equinox-local-main-snapshot.js";
+import { equinoxLocalReleaseTarget } from "./equinox-local-platform.js";
 import { createEquinoxLocalMainUpdateTransactionEngine } from "./equinox-local-main-update-transaction.js";
 import { runEquinoxLocalMainUpdateHandoff } from "./equinox-local-main-update-handoff.js";
 import { readEquinoxLocalMainSourcePointer } from "./equinox-local-main-source-pointer.js";
@@ -14,6 +17,10 @@ import { mainUpdateLaunchdLabel } from "./equinox-local-main-update-scheduler.js
 const execFile = promisify(execFileCallback);
 const HEALTH_ATTEMPTS = 40;
 const HEALTH_DELAY_MS = 500;
+
+function errorMessage(error) {
+  return error instanceof Error ? error.message : String(error);
+}
 
 function parseArgs(argv) {
   const result = {};
@@ -77,6 +84,9 @@ export async function runEquinoxLocalMainUpdateWorker({
   env = process.env,
   uid = process.getuid?.(),
   engineFactory = (options) => createEquinoxLocalMainUpdateTransactionEngine(options),
+  resolveHostTarget = () => equinoxLocalReleaseTarget(),
+  planNativeTransition = planEquinoxLocalMainNativeTransition,
+  inspectNativeArtifact = inspectStagedEquinoxLocalMainSnapshotArtifact,
   handoffImpl = runEquinoxLocalMainUpdateHandoff,
   restartRuntimeImpl = (value) => restartSourceRuntime({ ...value, execFileImpl, env }),
   verifyRuntimeImpl,
@@ -88,10 +98,44 @@ export async function runEquinoxLocalMainUpdateWorker({
     const active = await engine.readActive();
     if (!active || active.transactionId !== args.transactionId) throw new Error("Main update worker does not own the active transaction.");
     if (active.status !== "promoting" || active.stage !== "ready_to_switch") throw new Error("Main update worker requires a prepared promotion receipt.");
+    let nativeTransition;
+    let nativeArtifact = null;
+    try {
+      const target = resolveHostTarget();
+      nativeTransition = await planNativeTransition({
+        currentRoot: active.rollbackSourceRoot,
+        currentSha: active.currentSha,
+        targetRoot: active.targetSourceRoot,
+        targetSha: active.targetSha,
+        target,
+      });
+      if (nativeTransition?.mode === "artifact_required") {
+        nativeArtifact = await inspectNativeArtifact({
+          sourceSha: active.targetSha,
+          target,
+          expectedRuntimeContractSha256: nativeTransition.targetRuntimeContractSha256,
+          transactionRoot: args.transactionRoot,
+          transactionId: args.transactionId,
+          fsImpl,
+        });
+      } else if (nativeTransition?.mode !== "reuse_native") {
+        throw new Error("Main native transition mode is unsupported.");
+      }
+    } catch (error) {
+      await engine.abortPreparedPromotion(args.transactionId, errorMessage(error), { stage: "native_admission_failed" }).catch(() => {});
+      throw error;
+    }
     const verify = typeof verifyRuntimeImpl === "function"
       ? verifyRuntimeImpl
       : (value) => waitForExactSourceHealth({ ...value, pointerPath: engine.paths.sourcePointerPath, fetchImpl, sleepImpl });
-    return await handoffImpl({ engine, transactionId: args.transactionId, restartRuntime: restartRuntimeImpl, verifyRuntime: verify });
+    return await handoffImpl({
+      engine,
+      transactionId: args.transactionId,
+      nativeTransition,
+      nativeArtifact,
+      restartRuntime: restartRuntimeImpl,
+      verifyRuntime: verify,
+    });
   } finally {
     await cleanupImpl({ transactionId: args.transactionId, transactionRoot: args.transactionRoot });
   }

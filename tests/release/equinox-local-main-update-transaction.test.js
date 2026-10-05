@@ -200,6 +200,30 @@ test("prepared promotion can abort before pointer activation and release ownersh
   assert.equal(await f.engine.readActive(), null);
 });
 
+test("prepared promotion can record native admission failure before source activation", async (t) => {
+  const f = await fixture(t);
+  const staged = await f.engine.stage({ currentSha: CURRENT, targetSha: TARGET });
+  await f.engine.initializeSourcePointer();
+  await f.engine.preparePromotion(staged.receipt.transactionId);
+  const failed = await f.engine.abortPreparedPromotion(staged.receipt.transactionId, "artifact digest drift", { stage: "native_admission_failed" });
+  assert.equal(failed.status, "failed");
+  assert.equal(failed.stage, "native_admission_failed");
+  assert.match(failed.lastError, /artifact digest drift/u);
+  assert.equal(await f.engine.readActive(), null);
+});
+
+test("prepared promotion rejects arbitrary abort stages without releasing ownership", async (t) => {
+  const f = await fixture(t);
+  const staged = await f.engine.stage({ currentSha: CURRENT, targetSha: TARGET });
+  await f.engine.initializeSourcePointer();
+  await f.engine.preparePromotion(staged.receipt.transactionId);
+  await assert.rejects(
+    f.engine.abortPreparedPromotion(staged.receipt.transactionId, "nope", { stage: "arbitrary" }),
+    /prepared abort stage is invalid/u,
+  );
+  assert.equal((await f.engine.readActive()).stage, "ready_to_switch");
+});
+
 test("source-switched receipt remains durable until explicit rollback", async (t) => {
   const f = await fixture(t);
   const staged = await f.engine.stage({ currentSha: CURRENT, targetSha: TARGET });
