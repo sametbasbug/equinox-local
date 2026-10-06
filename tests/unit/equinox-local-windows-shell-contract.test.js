@@ -153,6 +153,26 @@ test("Windows managed-source runtime separates source, native, and Stable bootst
   assert.match(supervisor, /EQUINOX_LOCAL_INSTALL_ROOT"\] = location\.InstallRoot/u);
 });
 
+test("Windows managed-source acceptance exercises reuse-native, artifact transition, rollback and refuses existing installs", async () => {
+  const harnessRoot = path.join(ROOT, "tests", "windows", "EquinoxLocal.WindowsShell.ManagedSourceHarness");
+  const [project, program] = await Promise.all([
+    fs.readFile(path.join(harnessRoot, "EquinoxLocal.WindowsShell.ManagedSourceHarness.csproj"), "utf8"),
+    fs.readFile(path.join(harnessRoot, "Program.cs"), "utf8"),
+  ]);
+  assert.match(project, /WindowsManagedSourceRuntimeLocator\.cs/u);
+  assert.match(project, /RuntimeSupervisor\.cs/u);
+  assert.match(project, /<Platforms>x64;ARM64<\/Platforms>/u);
+  assert.match(program, /refuses to touch an existing Equinox Local installation/u);
+  assert.match(program, /WindowsManagedSourceRuntimeLocator\.Resolve\(\)/u);
+  assert.match(program, /reuse_native/u);
+  assert.match(program, /artifact_required/u);
+  assert.match(program, /File\.Delete\(nativePointerPath\)/u);
+  assert.match(program, /supervisor\.RestartAsync\(\)/u);
+  assert.match(program, /process\.execPath/u);
+  assert.match(program, /process\.cwd\(\)/u);
+  assert.match(program, /WINDOWS_MANAGED_SOURCE_ACCEPTANCE_PASS/u);
+});
+
 test("Windows shell runtime supervisor uses the existing Job Object gate with bounded recovery", async () => {
   const [app, supervisor, locator, tray, diagnostics, jobHelper] = await Promise.all([
     source("App.xaml.cs"),

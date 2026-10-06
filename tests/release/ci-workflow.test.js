@@ -75,6 +75,17 @@ test("ARM64 runtime retains native lifecycle, PTY and messaging acceptance", () 
   ]) assert.ok(block.includes(command), `Missing native acceptance: ${command}`);
 });
 
+test("managed-source runtime acceptance runs on real Windows x64 and ARM64 hosts", () => {
+  const x64 = job("windows-shell");
+  const arm64 = job("windows-arm64-package");
+  assert.match(x64, /Windows x64 managed-source runtime acceptance/u);
+  assert.match(x64, /EquinoxLocal\.WindowsShell\.ManagedSourceHarness/u);
+  assert.match(x64, /-p:Platform=x64/u);
+  assert.match(arm64, /Windows ARM64 managed-source runtime acceptance/u);
+  assert.match(arm64, /EquinoxLocal\.WindowsShell\.ManagedSourceHarness/u);
+  assert.match(arm64, /-p:Platform=ARM64/u);
+});
+
 test("both package lanes use one maintained native package preparation contract", () => {
   for (const name of ["windows-arm64-package", "windows-arm64-installer"]) {
     assert.match(job(name), /id: package\n\s+uses: \.\/\.github\/actions\/prepare-arm64-package/u);
