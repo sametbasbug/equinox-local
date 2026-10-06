@@ -111,6 +111,23 @@ test("managed-source install stamp pins canonical main identity", () => {
   assert.equal(isCanonicalMainRemote("https://github.com/someone/fork.git"), false);
 });
 
+test("managed-source installations use the same admitted Main discovery contract", async () => {
+  const git = gitMock();
+  const value = createEquinoxLocalMainUpdateDiscovery({
+    installation: { kind: "managed-source" },
+    sourceRoot: ROOT,
+    fsImpl: fsMock(),
+    execFileImpl: git.execFileImpl,
+    fetchImpl: fetchSequence([
+      jsonResponse({ ref: "refs/tags/" + EQUINOX_LOCAL_MAIN_SNAPSHOT_TAG, object: { type: "commit", sha: CURRENT } }),
+    ]),
+  });
+  const status = await value.check({ force: true });
+  assert.equal(status.checkSupported, true);
+  assert.equal(status.state, "up_to_date");
+  assert.equal(status.targetSha, CURRENT);
+});
+
 test("passive main check reports up to date without mutating Git refs", async () => {
   const network = [];
   const { git, value } = discovery({

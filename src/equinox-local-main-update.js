@@ -214,7 +214,7 @@ export function createEquinoxLocalMainUpdateDiscovery({
   cacheTtlMs = DEFAULT_CACHE_TTL_MS,
 } = {}) {
   if (!Number.isSafeInteger(cacheTtlMs) || cacheTtlMs < 0 || cacheTtlMs > 60 * 60 * 1000) throw new Error("Main update cache TTL is invalid.");
-  const checkSupported = installation?.kind === "source";
+  const checkSupported = installation?.kind === "source" || installation?.kind === "managed-source";
   let state = Object.freeze({
     channel: EQUINOX_LOCAL_MAIN_UPDATE_CHANNEL,
     repository: EQUINOX_LOCAL_MAIN_REPOSITORY,
