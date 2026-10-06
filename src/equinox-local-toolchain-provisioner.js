@@ -7,6 +7,7 @@ import { promisify } from "node:util";
 
 import { downloadVerifiedUpdateArtifact } from "./equinox-local-release-manager.js";
 import { equinoxLocalToolchainContract } from "./equinox-local-toolchain-contract.js";
+import { readBoundedNormalFile } from "./equinox-local-safe-file.js";
 
 const execFile = promisify(execFileCallback);
 const WINDOWS_ZIP_HELPER_PATH = fileURLToPath(new URL("./equinox-local-windows-release-zip.ps1", import.meta.url));
@@ -246,12 +247,23 @@ async function writeComponentStamp(root, component, { fsImpl = fs } = {}) {
   await fsImpl.writeFile(stampPath, `${JSON.stringify(componentStamp(component))}\n`, { flag: "wx", mode: 0o600 });
 }
 
-async function validateComponentStamp(root, component, { fsImpl = fs } = {}) {
+async function validateComponentStamp(root, component, { platform = process.platform, fsImpl = fs } = {}) {
   const stampPath = path.join(root, COMPONENT_STAMP);
-  const stat = await fsImpl.lstat(stampPath);
-  if (!stat.isFile() || stat.isSymbolicLink() || stat.size < 1 || stat.size > 4096) throw new Error("Toolchain component stamp is unsafe.");
+  let data;
+  try {
+    ({ data } = await readBoundedNormalFile(stampPath, {
+      fsImpl,
+      platform,
+      minBytes: 1,
+      maxBytes: 4096,
+      encoding: "utf8",
+      label: "Toolchain component stamp",
+    }));
+  } catch {
+    throw new Error("Toolchain component stamp is unsafe or invalid.");
+  }
   let parsed;
-  try { parsed = JSON.parse(await fsImpl.readFile(stampPath, "utf8")); } catch { throw new Error("Toolchain component stamp is invalid."); }
+  try { parsed = JSON.parse(data); } catch { throw new Error("Toolchain component stamp is invalid."); }
   if (JSON.stringify(parsed) !== JSON.stringify(componentStamp(component))) throw new Error("Toolchain component stamp does not match the pinned distribution.");
 }
 
@@ -282,7 +294,7 @@ async function validateComponentIdentity(root, component, contract, { platform, 
   }
 
   if (root === component.root) {
-    await validateComponentStamp(root, component, { fsImpl });
+    await validateComponentStamp(root, component, { platform, fsImpl });
   }
 }
 
