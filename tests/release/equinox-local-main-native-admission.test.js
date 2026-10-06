@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   classifyEquinoxLocalMainNativeImpact,
+  classifyEquinoxLocalMainUpdateImpact,
   computeEquinoxLocalMainNativeRuntimeContract,
   planEquinoxLocalMainNativeTransition,
   inspectEquinoxLocalMainNativeImpactRange,
@@ -25,6 +26,20 @@ const manifest = (target = "darwin-arm64") => ({
 
 const TRANSITION_CURRENT = "a".repeat(40);
 const TRANSITION_TARGET = "b".repeat(40);
+
+test("Main update impact excludes tests CI docs and bounded metadata but includes product and release inputs", () => {
+  assert.equal(classifyEquinoxLocalMainUpdateImpact([
+    "tests/release/main-native-ci.test.js",
+    ".github/workflows/ci.yml",
+    "docs/architecture.md",
+    "README.md",
+    "SECURITY.md",
+  ]), false);
+  assert.equal(classifyEquinoxLocalMainUpdateImpact(["src/server.js"]), true);
+  assert.equal(classifyEquinoxLocalMainUpdateImpact(["scripts/release/build-main-native-artifact.mjs"]), true);
+  assert.equal(classifyEquinoxLocalMainUpdateImpact(["THIRD_PARTY_NOTICES.md"]), true);
+  assert.throws(() => classifyEquinoxLocalMainUpdateImpact(["../tests/bad.js"]), /unsafe/u);
+});
 
 test("runtime-only source changes do not require native main artifacts", () => {
   assert.deepEqual(classifyEquinoxLocalMainNativeImpact(["src/server.js", "src/task-capsule-store.js"]), {
@@ -96,6 +111,7 @@ test("exact canonical main range derives NUL-safe changed paths and required nat
     rootDir: "/tmp/canonical", currentSha, targetSha, execFileImpl,
   });
   assert.equal(result.canonicalMainSha, canonicalMainSha);
+  assert.equal(result.mainUpdateImpact, true);
   assert.deepEqual(result.changedPaths, [
     "src/server.js",
     "native/windows/EquinoxLocal.WindowsShell/App.xaml.cs",
@@ -103,6 +119,27 @@ test("exact canonical main range derives NUL-safe changed paths and required nat
   ]);
   assert.deepEqual(result.requiredTargets, ["darwin-arm64", "darwin-x64", "win32-arm64", "win32-x64"]);
   assert.equal(calls.some((args) => args.includes("diff") && args.includes("--no-renames") && args.includes("-z")), true);
+});
+
+test("exact canonical main range marks test and CI-only changes as non-product", async () => {
+  const currentSha = "4".repeat(40);
+  const targetSha = "5".repeat(40);
+  const canonicalMainSha = targetSha;
+  const execFileImpl = async (_command, args) => {
+    if (args.includes("rev-parse")) {
+      const revision = args.at(-1).replace(/\^\{commit\}$/u, "");
+      if (revision === currentSha || revision === targetSha) return { stdout: `${revision}\n`, stderr: "" };
+      if (revision === "refs/remotes/origin/main") return { stdout: `${canonicalMainSha}\n`, stderr: "" };
+    }
+    if (args.includes("merge-base")) return { stdout: "", stderr: "" };
+    if (args.includes("diff")) return { stdout: "tests/a.test.js\0.github/workflows/ci.yml\0", stderr: "" };
+    throw new Error("Unexpected Git call.");
+  };
+  const result = await inspectEquinoxLocalMainNativeImpactRange({
+    rootDir: "/tmp/canonical", currentSha, targetSha, execFileImpl,
+  });
+  assert.equal(result.mainUpdateImpact, false);
+  assert.equal(result.nativeImpact, true);
 });
 
 test("exact canonical main range fails closed for divergent or non-canonical history", async () => {

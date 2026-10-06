@@ -63,6 +63,31 @@ function addTargets(targets, values) {
   for (const target of values) targets.add(target);
 }
 
+const NON_PRODUCT_MAIN_UPDATE_PREFIXES = Object.freeze(["tests/", ".github/", "docs/"]);
+const NON_PRODUCT_MAIN_UPDATE_FILES = new Set([
+  "AGENTS.md",
+  "README.md",
+  "CONTRIBUTING.md",
+  "CODE_OF_CONDUCT.md",
+  "SECURITY.md",
+  "CHANGELOG.md",
+]);
+function isNonProductMainUpdatePath(relative) {
+  return NON_PRODUCT_MAIN_UPDATE_FILES.has(relative)
+    || NON_PRODUCT_MAIN_UPDATE_PREFIXES.some((prefix) => relative.startsWith(prefix));
+}
+export function classifyEquinoxLocalMainUpdateImpact(changedPaths = []) {
+  if (!Array.isArray(changedPaths)) throw new Error("Main update-impact paths must be an array.");
+  const seen = new Set();
+  for (const raw of changedPaths) {
+    const relative = normalizeChangedPath(raw);
+    if (seen.has(relative)) continue;
+    seen.add(relative);
+    if (!isNonProductMainUpdatePath(relative)) return true;
+  }
+  return false;
+}
+
 function nativeContractRulesForTarget(target) {
   if (!ALL_TARGETS.includes(target)) throw new Error("Main native runtime contract target is unsupported.");
   const platformRules = target.startsWith("darwin-") ? DARWIN_NATIVE_PATHS : WINDOWS_NATIVE_PATHS;
@@ -213,6 +238,7 @@ export async function inspectEquinoxLocalMainNativeImpactRange({
       targetSha,
       canonicalMainSha,
       changedPaths: Object.freeze([]),
+      mainUpdateImpact: false,
       ...classifyEquinoxLocalMainNativeImpact([]),
     });
   }
@@ -231,6 +257,7 @@ export async function inspectEquinoxLocalMainNativeImpactRange({
     targetSha,
     canonicalMainSha,
     changedPaths: uniquePaths,
+    mainUpdateImpact: classifyEquinoxLocalMainUpdateImpact(uniquePaths),
     ...impact,
   });
 }

@@ -64,6 +64,7 @@ export async function planEquinoxLocalMainNativeArtifacts({
     currentSha,
     targetSha,
     canonicalMainSha: impact.canonicalMainSha,
+    mainUpdateImpact: impact.mainUpdateImpact,
     nativeImpact: impact.nativeImpact,
     changedPathCount: impact.changedPaths.length,
     requiredTargets: Object.freeze([...impact.requiredTargets]),
