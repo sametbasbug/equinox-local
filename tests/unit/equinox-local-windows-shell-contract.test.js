@@ -124,6 +124,35 @@ test("Windows shell consumes shared bounded presentation status without duplicat
   assert.doesNotMatch(monitor, /browserConnected|connectedThroughTunnel|setupComplete|server\.js|node(?:\.exe)?|Process\.Start|powershell/iu);
 });
 
+test("Windows managed-source runtime separates source, native, and Stable bootstrap identity", async () => {
+  const [supervisor, locator] = await Promise.all([
+    source("RuntimeSupervisor.cs"),
+    source("WindowsManagedSourceRuntimeLocator.cs"),
+  ]);
+
+  assert.match(locator, /current-source\.conf/u);
+  assert.match(locator, /Path\.Combine\(transactionRoot, "sources"\)/u);
+  assert.match(locator, /Path\.Combine\(sourceRoot, "src", "server\.js"\)/u);
+  assert.match(locator, /Path\.Combine\(sourceRoot, "node_modules"\)/u);
+  assert.match(locator, /current-native\.json/u);
+  assert.match(locator, /Path\.Combine\(transactionRoot, "native-store", Target, sourceSha\)/u);
+  assert.match(locator, /native-store\.json/u);
+  assert.match(locator, /BootstrapReleaseDir/u);
+  assert.match(locator, /stable\.ReleaseDir/u);
+  assert.doesNotMatch(locator, /sourcePointer\.Sha\s*==\s*sourceSha|sourceSha\s*==\s*sourcePointer\.Sha/u);
+
+  assert.match(supervisor, /WindowsManagedSourceRuntimeLocator\.Resolve/u);
+  assert.match(supervisor, /location\.NativeReleaseDir/u);
+  assert.match(supervisor, /location\.SourceRoot/u);
+  assert.match(supervisor, /location\.ServerPath/u);
+  assert.match(supervisor, /Path\.Combine\(nativeReleaseDir, "runtime", "node", "bin", "node\.exe"\)/u);
+  assert.match(supervisor, /Path\.Combine\(nativeReleaseDir, "equinox-local-windows-job-object\.ps1"\)/u);
+  assert.match(supervisor, /Path\.Combine\(nativeReleaseDir, "equinox-local-windows-process-gate\.ps1"\)/u);
+  assert.match(supervisor, /startInfo\.WorkingDirectory = sourceRoot/u);
+  assert.match(supervisor, /EQUINOX_LOCAL_RELEASE_DIR"\] = location\.BootstrapReleaseDir/u);
+  assert.match(supervisor, /EQUINOX_LOCAL_INSTALL_ROOT"\] = location\.InstallRoot/u);
+});
+
 test("Windows shell runtime supervisor uses the existing Job Object gate with bounded recovery", async () => {
   const [app, supervisor, locator, tray, diagnostics, jobHelper] = await Promise.all([
     source("App.xaml.cs"),
@@ -174,7 +203,7 @@ test("Windows shell runtime supervisor uses the existing Job Object gate with bo
   assert.match(supervisor, /builder\.Length >= 1_200/u);
   assert.match(supervisor, /char\.IsControl/u);
   assert.match(supervisor, /EQUINOX_LOCAL_SUPERVISOR_MODE/u);
-  assert.match(supervisor, /_releaseResolver/u);
+  assert.match(supervisor, /_runtimeResolver/u);
   assert.match(supervisor, /EQUINOX_LOCAL_INSTALL_ROOT/u);
   assert.doesNotMatch(supervisor, /taskkill|current-version\.json|cmd\.exe/iu);
   assert.match(jobHelper, /new InvalidOperationException\(operation \+ " failed with Win32 error "/u);
@@ -201,6 +230,7 @@ test("Windows runtime harness links and owns only its new shell diagnostics", as
     fs.readFile(path.join(harnessRoot, "Program.cs"), "utf8"),
   ]);
   assert.match(project, /WindowsShellDiagnostics\.cs/u);
+  assert.match(project, /WindowsManagedSourceRuntimeLocator\.cs/u);
   assert.match(program, /diagnosticLogExisted = File\.Exists\(diagnosticLog\)/u);
   assert.match(program, /if \(!diagnosticLogExisted\)/u);
   assert.match(program, /File\.Delete\(diagnosticLog\)/u);

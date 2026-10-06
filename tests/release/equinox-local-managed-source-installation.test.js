@@ -3,6 +3,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
 import {
   equinoxLocalManagedSourcePaths,
@@ -23,6 +24,15 @@ function base(root) {
     releaseDir: path.join(root, "releases", "5.2.0"),
   };
 }
+
+test("server startup upgrades a trusted managed base installation to managed-source identity", async () => {
+  const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
+  const server = await fs.readFile(path.join(root, "src", "server.js"), "utf8");
+  assert.match(server, /resolveEquinoxLocalManagedSourceInstallation/u);
+  assert.match(server, /const equinoxLocalBaseInstallation = resolveEquinoxLocalInstallation/u);
+  assert.match(server, /const equinoxLocalInstallation = await resolveEquinoxLocalManagedSourceInstallation/u);
+  assert.match(server, /baseInstallation: equinoxLocalBaseInstallation/u);
+});
 
 test("managed-source paths stay product-owned on macOS and Windows", () => {
   const mac = equinoxLocalManagedSourcePaths({ platform: "darwin", arch: "arm64", homeDir: "/Users/example", env: {} });

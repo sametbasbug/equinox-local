@@ -154,6 +154,9 @@ import {
   resolveEquinoxLocalInstallation,
 } from "./equinox-local-installation.js";
 import {
+  resolveEquinoxLocalManagedSourceInstallation,
+} from "./equinox-local-managed-source-installation.js";
+import {
   createEquinoxLocalUpdater,
 } from "./equinox-local-updater.js";
 import {
@@ -570,7 +573,14 @@ function displayPath(absolutePath) {
 const SERVER_NAME =
   "equinox-local-multiproject";
 const SERVER_VERSION = EQUINOX_LOCAL_VERSION;
-const equinoxLocalInstallation = resolveEquinoxLocalInstallation({
+const equinoxLocalBaseInstallation = resolveEquinoxLocalInstallation({
+  platform,
+  arch,
+  homeDir: runtimeHomeDir,
+  env: runtimeEnv,
+});
+const equinoxLocalInstallation = await resolveEquinoxLocalManagedSourceInstallation({
+  baseInstallation: equinoxLocalBaseInstallation,
   platform,
   arch,
   homeDir: runtimeHomeDir,
