@@ -1416,11 +1416,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 self.renderStatusMenu()
                 return
             }
-            let available = update["updateAvailable"] as? Bool ?? false
-            if available, let latest = update["latestVersion"] as? String, !latest.isEmpty {
-                self.availableUpdateVersion = latest
+            let installationKind = update["installationKind"] as? String
+            if installationKind == "managed-source",
+               let main = update["main"] as? [String: Any],
+               main["applyAvailable"] as? Bool == true,
+               let targetSha = main["targetSha"] as? String,
+               targetSha.count == 40 {
+                self.availableUpdateVersion = "Main " + String(targetSha.prefix(7))
             } else {
-                self.availableUpdateVersion = nil
+                let available = update["updateAvailable"] as? Bool ?? false
+                if available, let latest = update["latestVersion"] as? String, !latest.isEmpty {
+                    self.availableUpdateVersion = latest
+                } else {
+                    self.availableUpdateVersion = nil
+                }
             }
             self.renderStatusMenu()
         }

@@ -242,10 +242,11 @@ test("passive checks use a bounded cache", async () => {
 });
 
 
-test("Control Center exposes passive main identity without a source install action", async () => {
-  const [html, ui] = await Promise.all([
+test("Control Center keeps developer source check-only and enables managed-source Main apply", async () => {
+  const [html, ui, macApp] = await Promise.all([
     fs.readFile(new URL("../../src/equinox-control-center.html", import.meta.url), "utf8"),
     fs.readFile(new URL("../../src/equinox-control-center.js", import.meta.url), "utf8"),
+    fs.readFile(new URL("../../app/EquinoxLocalApp.swift", import.meta.url), "utf8"),
   ]);
   for (const id of ["update-main-meta", "update-main-current", "update-main-target", "update-main-distance", "update-main-summaries"]) {
     assert.equal(html.includes(`id="${id}"`), true);
@@ -254,7 +255,14 @@ test("Control Center exposes passive main identity without a source install acti
   assert.match(ui, /main\.state === "up_to_date"/u);
   assert.match(ui, /main\.state === "diverged"/u);
   assert.match(ui, /main\.state === "unavailable"/u);
-  assert.match(ui, /installButton\.hidden = true/u);
-  assert.match(ui, /installButton\.disabled = true/u);
+  assert.match(ui, /\["source", "managed-source"\]\.includes\(update\.installationKind\)/u);
+  assert.match(ui, /managedMain && main\.applyAvailable/u);
+  assert.match(ui, /This developer source checkout remains check-only/u);
+  assert.match(ui, /scheduled\.targetSha/u);
   assert.match(ui, /Check main/u);
+  assert.match(ui, /Update & restart/u);
+  assert.match(macApp, /installationKind == "managed-source"/u);
+  assert.match(macApp, /main\["applyAvailable"\] as\? Bool == true/u);
+  assert.match(macApp, /main\["targetSha"\] as\? String/u);
+  assert.match(macApp, /"Main " \+ String\(targetSha\.prefix\(7\)\)/u);
 });
