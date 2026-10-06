@@ -446,6 +446,41 @@ test("public Windows CI restores and builds the native x64 shell", async () => {
 });
 
 
+test("Windows Main update handoff derives all worker paths from product-owned state and does not preemptively stop the shell", async () => {
+  const [coordinator, handoff] = await Promise.all([
+    source("SingleInstanceCoordinator.cs"),
+    source("MainUpdateHandoff.cs"),
+  ]);
+
+  assert.match(coordinator, /StartsWith\("main-update:", StringComparison\.Ordinal\)/u);
+  assert.match(coordinator, /MainUpdateHandoff\.Launch\(transactionId\)/u);
+  const mainBranchStart = coordinator.indexOf('StartsWith("main-update:"');
+  const nextBranchStart = coordinator.indexOf('StartsWith("activate-release:"', mainBranchStart);
+  const mainBranch = coordinator.slice(mainBranchStart, nextBranchStart);
+  assert.match(mainBranch, /WriteLineAsync\("ok"\)/u);
+  assert.doesNotMatch(mainBranch, /UpdateShutdownRequested\?\.Invoke/u);
+
+  assert.match(handoff, /Path\.Combine\(installRoot, "state", "main-update"\)/u);
+  assert.match(handoff, /Path\.Combine\(transactionRoot, "install\.json"\)/u);
+  assert.match(handoff, /Path\.Combine\(transactionRoot, "active\.json"\)/u);
+  assert.match(handoff, /Path\.Combine\(transactionRoot, "receipts", \$"\{transactionId\}\.json"\)/u);
+  assert.match(handoff, /Path\.Combine\(transactionRoot, "sources"\)/u);
+  assert.match(handoff, /RequireExactSourceRoot/u);
+  assert.match(handoff, /sametbasbug\/equinox-local/u);
+  assert.match(handoff, /runtime", "node", "bin", "node\.exe"/u);
+  assert.match(handoff, /Path\.Combine\(targetSourceRoot, "src", "equinox-local-main-update-worker\.js"\)/u);
+  assert.match(handoff, /startInfo\.ArgumentList\.Add\("--transaction-id"\)/u);
+  assert.match(handoff, /startInfo\.ArgumentList\.Add\("--source-root"\)/u);
+  assert.match(handoff, /startInfo\.ArgumentList\.Add\("--transaction-root"\)/u);
+  assert.match(handoff, /ResolveGitExecutable\(systemRoot\)/u);
+  assert.match(handoff, /where\.exe/u);
+  assert.match(handoff, /git\.exe/u);
+  assert.match(handoff, /WindowsPowerShell", "v1\.0"/u);
+  assert.match(handoff, /string\.Join\(Path\.PathSeparator, \[gitDirectory, powershellDirectory, system32, systemRoot\]\)/u);
+  assert.match(handoff, /Environment\.Clear\(\)/u);
+  assert.doesNotMatch(handoff, /cmd\.exe/iu);
+});
+
 test("Windows shell update handoff acknowledges before draining the runtime and exposes rollback shutdown", async () => {
   const coordinator = await fs.readFile(path.join(ROOT, "native", "windows", "EquinoxLocal.WindowsShell", "SingleInstanceCoordinator.cs"), "utf8");
   const app = await fs.readFile(path.join(ROOT, "native", "windows", "EquinoxLocal.WindowsShell", "App.xaml.cs"), "utf8");

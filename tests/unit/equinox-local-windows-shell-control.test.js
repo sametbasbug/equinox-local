@@ -4,6 +4,7 @@ import test from "node:test";
 
 import {
   EQUINOX_LOCAL_WINDOWS_SHELL_PIPE,
+  requestWindowsShellMainUpdateHandoff,
   requestWindowsShellManagedActivation,
   requestWindowsShellManagedUninstall,
   requestWindowsShellRuntimeRestart,
@@ -109,6 +110,59 @@ test("Windows update shutdown signaling fails closed off Windows", async () => {
   );
 });
 
+
+test("Windows Main update handoff is acknowledged and carries only the exact transaction id", async () => {
+  const transactionId = "main-" + "a".repeat(32);
+  let written = null;
+  const socket = new EventEmitter();
+  socket.destroy = () => {};
+  socket.setEncoding = () => {};
+  socket.write = (value) => {
+    written = value;
+    queueMicrotask(() => socket.emit("data", "ok\n"));
+    return true;
+  };
+  const result = await requestWindowsShellMainUpdateHandoff(transactionId, {
+    platform: "win32",
+    connectImpl: () => {
+      queueMicrotask(() => socket.emit("connect"));
+      return socket;
+    },
+  });
+  assert.deepEqual(result, { requested: true, transactionId });
+  assert.equal(written, "main-update:" + transactionId + "\n");
+  assert.equal(written.includes("\\"), false);
+  assert.equal(written.includes("/"), false);
+});
+
+test("Windows Main update handoff rejects malformed identity and bounded shell refusal", async () => {
+  await assert.rejects(
+    requestWindowsShellMainUpdateHandoff("main-bad", { platform: "win32" }),
+    /exact transaction id/u,
+  );
+  await assert.rejects(
+    requestWindowsShellMainUpdateHandoff("main-" + "a".repeat(32), { platform: "darwin" }),
+    /only on Windows/u,
+  );
+
+  const socket = new EventEmitter();
+  socket.destroy = () => {};
+  socket.setEncoding = () => {};
+  socket.write = () => {
+    queueMicrotask(() => socket.emit("data", "error:receipt identity mismatch\n"));
+    return true;
+  };
+  await assert.rejects(
+    requestWindowsShellMainUpdateHandoff("main-" + "a".repeat(32), {
+      platform: "win32",
+      connectImpl: () => {
+        queueMicrotask(() => socket.emit("connect"));
+        return socket;
+      },
+    }),
+    /receipt identity mismatch/u,
+  );
+});
 
 test("Windows managed activation handoff is acknowledged by the current-user shell pipe", async () => {
   let options = null;

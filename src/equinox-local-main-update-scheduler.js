@@ -3,6 +3,8 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 
+import { requestWindowsShellMainUpdateHandoff } from "./equinox-local-windows-shell-control.js";
+
 const execFile = promisify(execFileCallback);
 
 const TRANSACTION_ID_PATTERN = /^main-[a-f0-9]{32}$/u;
@@ -11,9 +13,10 @@ const LABEL_PREFIX = "dev.equinox.local.main-update.";
 function xml(value) {
   return String(value).replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&apos;");
 }
-function assertAbsolute(value, label) {
-  if (typeof value !== "string" || !path.isAbsolute(value) || /[\r\n\0]/u.test(value)) throw new Error(`${label} must be an absolute path.`);
-  return path.resolve(value);
+function assertAbsolute(value, label, platform = process.platform) {
+  const pathApi = platform === "win32" ? path.win32 : path.posix;
+  if (typeof value !== "string" || !pathApi.isAbsolute(value) || /[\r\n\0]/u.test(value)) throw new Error(label + " must be an absolute path.");
+  return pathApi.resolve(value);
 }
 function assertTransactionId(value) {
   if (!TRANSACTION_ID_PATTERN.test(value ?? "")) throw new Error("Main update transaction id is invalid.");
@@ -43,10 +46,12 @@ export function renderMainUpdateLaunchdPlist({ label, nodePath, workerPath, sour
 
 export async function inspectEquinoxLocalMainUpdateWorkerOwnership({
   transactionId,
+  platform = process.platform,
   uid = process.getuid?.(),
   execFileImpl = execFile,
 } = {}) {
   assertTransactionId(transactionId);
+  if (platform === "win32") return Object.freeze({ loaded: false, running: false, platform: "win32" });
   if (!Number.isInteger(uid) || uid < 1) return Object.freeze({ loaded: false, running: false });
   const label = mainUpdateLaunchdLabel(transactionId);
   try {
@@ -62,12 +67,14 @@ export async function inspectEquinoxLocalMainUpdateWorkerOwnership({
 export async function cleanupEquinoxLocalMainUpdateWorkerOwnership({
   transactionId,
   transactionRoot,
+  platform = process.platform,
   uid = process.getuid?.(),
   fsImpl = fs,
   execFileImpl = execFile,
 } = {}) {
   assertTransactionId(transactionId);
-  const stateRoot = assertAbsolute(transactionRoot, "Main update transaction root");
+  const stateRoot = assertAbsolute(transactionRoot, "Main update transaction root", platform);
+  if (platform === "win32") return Object.freeze({ cleaned: true, platform: "win32" });
   if (!Number.isInteger(uid) || uid < 1) return Object.freeze({ cleaned: false });
   const label = mainUpdateLaunchdLabel(transactionId);
   const plistPath = path.join(stateRoot, "handoff", `${transactionId}.plist`);
@@ -80,24 +87,31 @@ export async function scheduleEquinoxLocalMainUpdateWorker({
   transactionId,
   sourceRoot,
   transactionRoot,
+  platform = process.platform,
   nodePath = process.env.EQUINOX_LOCAL_DEV_NODE || process.execPath,
   workerPath = path.join(sourceRoot ?? "", "src", "equinox-local-main-update-worker.js"),
   sourceEnv = process.env,
   uid = process.getuid?.(),
   fsImpl = fs,
   execFileImpl = execFile,
+  requestWindowsHandoffImpl = requestWindowsShellMainUpdateHandoff,
 } = {}) {
   assertTransactionId(transactionId);
-  const root = assertAbsolute(sourceRoot, "Main update source root");
-  const stateRoot = assertAbsolute(transactionRoot, "Main update transaction root");
-  const node = assertAbsolute(nodePath, "Main update Node runtime");
-  const worker = assertAbsolute(workerPath, "Main update worker");
+  const root = assertAbsolute(sourceRoot, "Main update source root", platform);
+  const stateRoot = assertAbsolute(transactionRoot, "Main update transaction root", platform);
+  const worker = assertAbsolute(workerPath, "Main update worker", platform);
+  const workerStat = await fsImpl.lstat(worker);
+  if (!workerStat.isFile() || workerStat.isSymbolicLink()) throw new Error("Main update worker executable/source is unsafe.");
+  if (platform === "win32") {
+    const handoff = await requestWindowsHandoffImpl(transactionId, { platform: "win32" });
+    return Object.freeze({ scheduled: true, platform: "win32", transactionId, handoff });
+  }
+  if (platform !== "darwin") throw new Error("Main update worker handoff is unsupported on this platform.");
+  const node = assertAbsolute(nodePath, "Main update Node runtime", platform);
   if (!Number.isInteger(uid) || uid < 1) throw new Error("A non-root user id is required to schedule main update handoff.");
   if (typeof execFileImpl !== "function") throw new Error("Main update launchd scheduler requires an exec function.");
-  for (const file of [node, worker]) {
-    const stat = await fsImpl.lstat(file);
-    if (!stat.isFile() || stat.isSymbolicLink()) throw new Error("Main update worker executable/source is unsafe.");
-  }
+  const nodeStat = await fsImpl.lstat(node);
+  if (!nodeStat.isFile() || nodeStat.isSymbolicLink()) throw new Error("Main update worker executable/source is unsafe.");
   const schedulerRoot = path.join(stateRoot, "handoff");
   await fsImpl.mkdir(schedulerRoot, { recursive: true, mode: 0o700 });
   const schedulerReal = await fsImpl.realpath(schedulerRoot);

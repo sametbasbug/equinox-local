@@ -122,6 +122,31 @@ export async function requestWindowsShellUpdateShutdown({
   });
 }
 
+export async function requestWindowsShellMainUpdateHandoff(transactionId, {
+  platform = process.platform,
+  connectImpl = net.createConnection,
+  timeoutMs = DEFAULT_ACK_TIMEOUT_MS,
+} = {}) {
+  if (platform !== "win32") throw new Error("Windows Main update handoff is available only on Windows.");
+  if (typeof transactionId !== "string" || !/^main-[a-f0-9]{32}$/u.test(transactionId)) {
+    throw new Error("Windows Main update handoff requires an exact transaction id.");
+  }
+  if (!Number.isInteger(timeoutMs) || timeoutMs < 250 || timeoutMs > 15_000) {
+    throw new Error("Windows Main update handoff timeout is out of bounds.");
+  }
+  return await requestAcknowledgedShellCommand({
+    connectImpl,
+    timeoutMs,
+    command: "main-update:" + transactionId + "\n",
+    timeoutError: "Equinox Local Windows shell did not acknowledge the Main update handoff in time.",
+    connectionError: "Equinox Local Windows Main update handoff failed: ",
+    replyBoundError: "Equinox Local Windows Main update handoff reply exceeded the bound.",
+    refusalPrefix: "Equinox Local Windows Main update handoff was refused: ",
+    invalidReplyError: "Equinox Local Windows Main update handoff returned an invalid reply.",
+    result: () => Object.freeze({ requested: true, transactionId }),
+  });
+}
+
 export async function requestWindowsShellManagedActivation(version, {
   platform = process.platform,
   connectImpl = net.createConnection,

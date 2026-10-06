@@ -97,6 +97,22 @@ internal sealed class SingleInstanceCoordinator : IDisposable
                         await writer.WriteLineAsync($"error:{message}").ConfigureAwait(false);
                     }
                 }
+                else if (command is not null && command.StartsWith("main-update:", StringComparison.Ordinal))
+                {
+                    var transactionId = command["main-update:".Length..];
+                    await using var writer = new StreamWriter(server, new UTF8Encoding(false), leaveOpen: true) { AutoFlush = true };
+                    try
+                    {
+                        MainUpdateHandoff.Launch(transactionId);
+                        await writer.WriteLineAsync("ok").ConfigureAwait(false);
+                    }
+                    catch (Exception error)
+                    {
+                        var message = error.Message.Replace('\r', ' ').Replace('\n', ' ');
+                        if (message.Length > 200) message = message[..200];
+                        await writer.WriteLineAsync($"error:{message}").ConfigureAwait(false);
+                    }
+                }
                 else if (command is not null && command.StartsWith("activate-release:", StringComparison.Ordinal))
                 {
                     var version = command["activate-release:".Length..];
