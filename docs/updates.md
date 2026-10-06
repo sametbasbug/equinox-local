@@ -28,6 +28,8 @@ The accepted Main update engine is exact-SHA and transactional. An apply stages 
 
 Documentation/metadata-only merges do not advance the admitted Main target: product CI and CodeQL are skipped for the explicit docs-only path allowlist, a lightweight Docs check runs instead, and `main-snapshot` stays on the last accepted executable SHA. The repository `main` branch may therefore be newer than the user-visible Main update target without creating a runtime update.
 
+For operational checks, compare `refs/heads/main` with `refs/tags/main-snapshot`: a gap made only of documentation/metadata commits is intentional and must not be presented to users as an Equinox Local update.
+
 If the installed native runtime contract already matches the selected Main SHA, the updater uses `reuse_native` and downloads no native package. Crossing a native boundary requires the exact host snapshot; failure during native/source activation rolls back to the previously admitted source/native state. Main snapshot publication and rollback acceptance are complete across Darwin and Windows x64/ARM64, but the ordinary-user Main apply control remains intentionally gated until its dedicated enablement milestone. Managed signed-release installations therefore continue to use the Stable channel unless Main is explicitly enabled by product policy.
 
 ## Stable update manifests
