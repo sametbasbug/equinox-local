@@ -508,6 +508,15 @@ test("Windows Main update handoff derives all worker paths from product-owned st
   assert.match(handoff, /WindowsPowerShell", "v1\.0"/u);
   assert.match(handoff, /string\.Join\(Path\.PathSeparator, \[gitDirectory, powershellDirectory, system32, systemRoot\]\)/u);
   assert.match(handoff, /Environment\.Clear\(\)/u);
+  assert.match(handoff, /RandomNumberGenerator\.GetBytes\(32\)/u);
+  assert.match(handoff, /EQUINOX_LOCAL_MAIN_WORKER_TOKEN/u);
+  assert.match(handoff, /process\.StartTime\.ToUniversalTime\(\)\.Ticks/u);
+  assert.match(handoff, /\.windows-worker\.json/u);
+  assert.match(handoff, /RemoveStaleOwnershipOrRejectActive/u);
+  assert.match(handoff, /Main update worker is already active for this transaction/u);
+  assert.match(handoff, /FileStream\(temporaryPath, FileMode\.CreateNew/u);
+  assert.match(handoff, /File\.Move\(temporaryPath, ownershipPath, overwrite: false\)/u);
+  assert.match(handoff, /process\.Kill\(entireProcessTree: true\)/u);
   assert.doesNotMatch(handoff, /cmd\.exe/iu);
 });
 

@@ -3,12 +3,28 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 
+import { readBoundedNormalFile } from "./equinox-local-safe-file.js";
+
 import { requestWindowsShellMainUpdateHandoff } from "./equinox-local-windows-shell-control.js";
 
 const execFile = promisify(execFileCallback);
 
 const TRANSACTION_ID_PATTERN = /^main-[a-f0-9]{32}$/u;
 const LABEL_PREFIX = "dev.equinox.local.main-update.";
+const WINDOWS_WORKER_TOKEN_PATTERN = /^[a-f0-9]{64}$/u;
+const WINDOWS_START_TICKS_PATTERN = /^[0-9]{1,19}$/u;
+const MAX_WINDOWS_OWNERSHIP_BYTES = 8 * 1024;
+const WINDOWS_PROCESS_IDENTITY_SCRIPT = [
+  "$ErrorActionPreference='Stop'",
+  "$p=Get-Process -Id ([int]$args[0]) -ErrorAction SilentlyContinue",
+  "if($null -eq $p){[Console]::Out.Write('missing');exit 0}",
+  "$ticks=$p.StartTime.ToUniversalTime().Ticks.ToString([Globalization.CultureInfo]::InvariantCulture)",
+  "if($ticks -ne $args[1]){[Console]::Out.Write('mismatch');exit 0}",
+  "try{$exe=$p.Path}catch{[Console]::Out.Write('unknown');exit 0}",
+  "if($exe -ine $args[2]){[Console]::Out.Write('mismatch');exit 0}",
+  "[Console]::Out.Write('running')",
+].join(";");
+
 
 function xml(value) {
   return String(value).replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&apos;");
@@ -24,6 +40,59 @@ function assertTransactionId(value) {
 }
 export function mainUpdateLaunchdLabel(transactionId) {
   return `${LABEL_PREFIX}${assertTransactionId(transactionId).slice(5)}`;
+}
+export function windowsMainUpdateWorkerOwnershipPath(transactionRoot, transactionId) {
+  const root = assertAbsolute(transactionRoot, "Main update transaction root", "win32");
+  return path.win32.join(root, "handoff", assertTransactionId(transactionId) + ".windows-worker.json");
+}
+export function parseWindowsMainUpdateWorkerOwnership(value, { transactionId } = {}) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Windows Main worker ownership is invalid.");
+  const keys = Object.keys(value).sort();
+  const expected = ["nodePath", "pid", "schemaVersion", "startTimeUtcTicks", "token", "transactionId"];
+  if (keys.length !== expected.length || keys.some((key, index) => key !== expected[index])) throw new Error("Windows Main worker ownership contains missing or unsupported fields.");
+  if (value.schemaVersion !== 1 || value.transactionId !== assertTransactionId(transactionId ?? value.transactionId)) throw new Error("Windows Main worker ownership identity is invalid.");
+  if (!Number.isSafeInteger(value.pid) || value.pid < 1) throw new Error("Windows Main worker ownership PID is invalid.");
+  if (!WINDOWS_START_TICKS_PATTERN.test(value.startTimeUtcTicks ?? "")) throw new Error("Windows Main worker ownership start identity is invalid.");
+  if (!WINDOWS_WORKER_TOKEN_PATTERN.test(value.token ?? "")) throw new Error("Windows Main worker ownership token is invalid.");
+  const nodePath = assertAbsolute(value.nodePath, "Windows Main worker Node path", "win32");
+  return Object.freeze({ ...value, nodePath });
+}
+export async function readWindowsMainUpdateWorkerOwnership({ transactionId, transactionRoot, fsImpl = fs } = {}) {
+  const ownershipPath = windowsMainUpdateWorkerOwnershipPath(transactionRoot, transactionId);
+  try {
+    const file = await readBoundedNormalFile(ownershipPath, {
+      fsImpl,
+      platform: "win32",
+      minBytes: 2,
+      maxBytes: MAX_WINDOWS_OWNERSHIP_BYTES,
+      encoding: "utf8",
+      label: "Windows Main worker ownership",
+    });
+    return Object.freeze({
+      ownershipPath,
+      ownership: parseWindowsMainUpdateWorkerOwnership(JSON.parse(file.data), { transactionId }),
+    });
+  } catch (error) {
+    if (error?.code === "ENOENT") return Object.freeze({ ownershipPath, ownership: null });
+    throw error;
+  }
+}
+export async function inspectWindowsMainUpdateWorkerProcess(ownership, { execFileImpl = execFile } = {}) {
+  const parsed = parseWindowsMainUpdateWorkerOwnership(ownership);
+  const result = await execFileImpl("powershell.exe", [
+    "-NoLogo",
+    "-NoProfile",
+    "-NonInteractive",
+    "-Command",
+    WINDOWS_PROCESS_IDENTITY_SCRIPT,
+    String(parsed.pid),
+    parsed.startTimeUtcTicks,
+    parsed.nodePath,
+  ], { timeout: 5_000, maxBuffer: 4 * 1024, windowsHide: true });
+  const state = String(result?.stdout ?? "").trim();
+  if (state === "running") return Object.freeze({ running: true, stale: false, uncertain: false });
+  if (state === "missing" || state === "mismatch") return Object.freeze({ running: false, stale: true, uncertain: false });
+  return Object.freeze({ running: false, stale: false, uncertain: true });
 }
 export function mainUpdateWorkerEnvironment(sourceEnv = process.env) {
   const env = {
@@ -46,12 +115,47 @@ export function renderMainUpdateLaunchdPlist({ label, nodePath, workerPath, sour
 
 export async function inspectEquinoxLocalMainUpdateWorkerOwnership({
   transactionId,
+  transactionRoot,
   platform = process.platform,
   uid = process.getuid?.(),
+  fsImpl = fs,
   execFileImpl = execFile,
+  readWindowsOwnershipImpl = readWindowsMainUpdateWorkerOwnership,
+  inspectWindowsProcessImpl = inspectWindowsMainUpdateWorkerProcess,
 } = {}) {
   assertTransactionId(transactionId);
-  if (platform === "win32") return Object.freeze({ loaded: false, running: false, platform: "win32" });
+  if (platform === "win32") {
+    try {
+      const record = await readWindowsOwnershipImpl({ transactionId, transactionRoot, fsImpl });
+      if (!record?.ownership) {
+        return Object.freeze({
+          loaded: false,
+          running: false,
+          stale: false,
+          uncertain: false,
+          platform: "win32",
+          ownershipPath: record?.ownershipPath ?? windowsMainUpdateWorkerOwnershipPath(transactionRoot, transactionId),
+        });
+      }
+      const identity = await inspectWindowsProcessImpl(record.ownership, { execFileImpl });
+      return Object.freeze({
+        loaded: true,
+        platform: "win32",
+        ownershipPath: record.ownershipPath,
+        ownership: record.ownership,
+        ...identity,
+      });
+    } catch (error) {
+      return Object.freeze({
+        loaded: true,
+        running: false,
+        stale: false,
+        uncertain: true,
+        platform: "win32",
+        reason: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
   if (!Number.isInteger(uid) || uid < 1) return Object.freeze({ loaded: false, running: false });
   const label = mainUpdateLaunchdLabel(transactionId);
   try {
@@ -71,10 +175,39 @@ export async function cleanupEquinoxLocalMainUpdateWorkerOwnership({
   uid = process.getuid?.(),
   fsImpl = fs,
   execFileImpl = execFile,
+  ownershipToken = process.env.EQUINOX_LOCAL_MAIN_WORKER_TOKEN,
+  inspectWorkerImpl = inspectEquinoxLocalMainUpdateWorkerOwnership,
+  readWindowsOwnershipImpl = readWindowsMainUpdateWorkerOwnership,
 } = {}) {
   assertTransactionId(transactionId);
   const stateRoot = assertAbsolute(transactionRoot, "Main update transaction root", platform);
-  if (platform === "win32") return Object.freeze({ cleaned: true, platform: "win32" });
+  if (platform === "win32") {
+    const record = await readWindowsOwnershipImpl({ transactionId, transactionRoot: stateRoot, fsImpl });
+    if (!record?.ownership) {
+      return Object.freeze({
+        cleaned: true,
+        platform: "win32",
+        ownershipPath: record?.ownershipPath ?? windowsMainUpdateWorkerOwnershipPath(stateRoot, transactionId),
+      });
+    }
+    if (typeof ownershipToken === "string"
+      && WINDOWS_WORKER_TOKEN_PATTERN.test(ownershipToken)
+      && record.ownership.token === ownershipToken) {
+      await fsImpl.rm(record.ownershipPath, { force: true });
+      return Object.freeze({ cleaned: true, owner: true, platform: "win32", ownershipPath: record.ownershipPath });
+    }
+    const inspected = await inspectWorkerImpl({
+      transactionId,
+      transactionRoot: stateRoot,
+      platform: "win32",
+      fsImpl,
+      execFileImpl,
+    });
+    if (inspected?.running) return Object.freeze({ cleaned: false, running: true, platform: "win32", ownershipPath: record.ownershipPath });
+    if (inspected?.uncertain) return Object.freeze({ cleaned: false, uncertain: true, platform: "win32", ownershipPath: record.ownershipPath });
+    await fsImpl.rm(record.ownershipPath, { force: true });
+    return Object.freeze({ cleaned: true, stale: true, platform: "win32", ownershipPath: record.ownershipPath });
+  }
   if (!Number.isInteger(uid) || uid < 1) return Object.freeze({ cleaned: false });
   const label = mainUpdateLaunchdLabel(transactionId);
   const plistPath = path.join(stateRoot, "handoff", `${transactionId}.plist`);

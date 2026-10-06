@@ -1,4 +1,7 @@
 using System.Diagnostics;
+using System.Globalization;
+using System.Security.Cryptography;
+using System.Text;
 using System.IO;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -91,12 +94,108 @@ internal static partial class MainUpdateHandoff
         CopyEnvironment(startInfo, "TEMP");
         CopyEnvironment(startInfo, "TMP");
         startInfo.Environment["PATH"] = string.Join(Path.PathSeparator, [gitDirectory, powershellDirectory, system32, systemRoot]);
+        var handoffRoot = Path.GetFullPath(Path.Combine(transactionRoot, "handoff"));
+        Directory.CreateDirectory(handoffRoot);
+        RequireNormalDirectory(handoffRoot, "Main update handoff directory");
+        var ownershipPath = Path.Combine(handoffRoot, transactionId + ".windows-worker.json");
+        RemoveStaleOwnershipOrRejectActive(ownershipPath, transactionId);
+        var ownershipToken = Convert.ToHexString(RandomNumberGenerator.GetBytes(32)).ToLowerInvariant();
+
         startInfo.Environment["EQUINOX_LOCAL_INSTALL_ROOT"] = installRoot;
         startInfo.Environment["EQUINOX_LOCAL_RELEASE_DIR"] = bootstrap.ReleaseDir;
+        startInfo.Environment["EQUINOX_LOCAL_MAIN_WORKER_TOKEN"] = ownershipToken;
 
         using var process = Process.Start(startInfo)
             ?? throw new InvalidOperationException("Main update worker did not start.");
+        try
+        {
+            var startTimeUtcTicks = process.StartTime.ToUniversalTime().Ticks.ToString(CultureInfo.InvariantCulture);
+            WriteWorkerOwnership(ownershipPath, transactionId, process.Id, startTimeUtcTicks, ownershipToken, nodePath);
+        }
+        catch
+        {
+            try { if (!process.HasExited) process.Kill(entireProcessTree: true); } catch { }
+            throw;
+        }
         return process.Id;
+    }
+
+    private static void RemoveStaleOwnershipOrRejectActive(string ownershipPath, string transactionId)
+    {
+        if (!File.Exists(ownershipPath)) return;
+        var ownership = ReadState(ownershipPath, "Main update worker ownership");
+        RequireExactProperties(ownership, ["schemaVersion", "transactionId", "pid", "startTimeUtcTicks", "token", "nodePath"], "Main update worker ownership");
+        RequireInt(ownership, "schemaVersion", 1);
+        RequireString(ownership, "transactionId", transactionId);
+        var pid = ownership.GetProperty("pid").GetInt32();
+        if (pid < 1) throw new InvalidDataException("Main update worker ownership PID is invalid.");
+        var startTimeUtcTicks = ownership.GetProperty("startTimeUtcTicks").GetString();
+        if (string.IsNullOrWhiteSpace(startTimeUtcTicks) || startTimeUtcTicks.Length > 19 || !startTimeUtcTicks.All(char.IsDigit))
+            throw new InvalidDataException("Main update worker ownership start identity is invalid.");
+        var token = ownership.GetProperty("token").GetString();
+        if (token is null || token.Length != 64 || token.Any(character => !Uri.IsHexDigit(character)))
+            throw new InvalidDataException("Main update worker ownership token is invalid.");
+        var nodePath = ownership.GetProperty("nodePath").GetString();
+        if (string.IsNullOrWhiteSpace(nodePath) || !Path.IsPathFullyQualified(nodePath))
+            throw new InvalidDataException("Main update worker ownership Node path is invalid.");
+        _ = RequireNormalFile(nodePath, "Main update worker ownership Node runtime");
+
+        try
+        {
+            using var process = Process.GetProcessById(pid);
+            if (!process.HasExited)
+            {
+                var actualTicks = process.StartTime.ToUniversalTime().Ticks.ToString(CultureInfo.InvariantCulture);
+                if (string.Equals(actualTicks, startTimeUtcTicks, StringComparison.Ordinal))
+                    throw new InvalidOperationException("Main update worker is already active for this transaction.");
+            }
+        }
+        catch (ArgumentException)
+        {
+        }
+
+        File.Delete(ownershipPath);
+    }
+
+    private static void WriteWorkerOwnership(
+        string ownershipPath,
+        string transactionId,
+        int pid,
+        string startTimeUtcTicks,
+        string token,
+        string nodePath)
+    {
+        var body = JsonSerializer.Serialize(new
+        {
+            schemaVersion = 1,
+            transactionId,
+            pid,
+            startTimeUtcTicks,
+            token,
+            nodePath,
+        }) + "
+";
+        if (Encoding.UTF8.GetByteCount(body) > 8 * 1024)
+            throw new InvalidDataException("Main update worker ownership record exceeds the size limit.");
+
+        var parent = Path.GetDirectoryName(ownershipPath)
+            ?? throw new InvalidDataException("Main update worker ownership parent is unavailable.");
+        var temporaryPath = Path.Combine(parent, "." + transactionId + "." + token[..16] + ".tmp");
+        try
+        {
+            using (var stream = new FileStream(temporaryPath, FileMode.CreateNew, FileAccess.Write, FileShare.None, 4096, FileOptions.WriteThrough))
+            using (var writer = new StreamWriter(stream, new UTF8Encoding(false), 4096, leaveOpen: true))
+            {
+                writer.Write(body);
+                writer.Flush();
+                stream.Flush(flushToDisk: true);
+            }
+            File.Move(temporaryPath, ownershipPath, overwrite: false);
+        }
+        finally
+        {
+            try { if (File.Exists(temporaryPath)) File.Delete(temporaryPath); } catch { }
+        }
     }
 
     private static string ResolveGitExecutable(string systemRoot)

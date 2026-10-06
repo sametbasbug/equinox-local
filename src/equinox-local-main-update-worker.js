@@ -103,7 +103,7 @@ export async function runEquinoxLocalMainUpdateWorker({
   handoffImpl = runEquinoxLocalMainUpdateHandoff,
   restartRuntimeImpl = (value) => restartEquinoxLocalMainSourceRuntime({ ...value, execFileImpl, env, fsImpl }),
   verifyRuntimeImpl,
-  cleanupImpl = (value) => cleanupEquinoxLocalMainUpdateWorkerOwnership({ ...value, execFileImpl, fsImpl, uid }),
+  cleanupImpl = (value) => cleanupEquinoxLocalMainUpdateWorkerOwnership({ ...value, execFileImpl, fsImpl, uid, ownershipToken: env.EQUINOX_LOCAL_MAIN_WORKER_TOKEN }),
 } = {}) {
   const args = parseArgs(argv);
   try {

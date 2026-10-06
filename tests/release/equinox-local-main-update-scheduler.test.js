@@ -4,7 +4,15 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { mainUpdateWorkerEnvironment, scheduleEquinoxLocalMainUpdateWorker } from "../../src/equinox-local-main-update-scheduler.js";
+import {
+  cleanupEquinoxLocalMainUpdateWorkerOwnership,
+  inspectEquinoxLocalMainUpdateWorkerOwnership,
+  inspectWindowsMainUpdateWorkerProcess,
+  mainUpdateWorkerEnvironment,
+  parseWindowsMainUpdateWorkerOwnership,
+  scheduleEquinoxLocalMainUpdateWorker,
+  windowsMainUpdateWorkerOwnershipPath,
+} from "../../src/equinox-local-main-update-scheduler.js";
 
 const TX = `main-${"a".repeat(32)}`;
 
@@ -52,6 +60,136 @@ test("Windows Main handoff sends only transaction identity to the trusted shell"
   assert.equal(result.scheduled, true);
   assert.equal(result.platform, "win32");
   assert.deepEqual(calls, [[TX, { platform: "win32" }]]);
+});
+
+test("Windows worker ownership contract binds transaction, PID, start identity, token and Node path", () => {
+  const stateRoot = "C:\\Users\\Example\\AppData\\Local\\Equinox Local\\state\\main-update";
+  const nodePath = "C:\\Users\\Example\\AppData\\Local\\Equinox Local\\releases\\5.2.0\\runtime\\node\\bin\\node.exe";
+  assert.equal(
+    windowsMainUpdateWorkerOwnershipPath(stateRoot, TX),
+    stateRoot + "\\handoff\\" + TX + ".windows-worker.json",
+  );
+  const ownership = parseWindowsMainUpdateWorkerOwnership({
+    schemaVersion: 1,
+    transactionId: TX,
+    pid: 4242,
+    startTimeUtcTicks: "638953728000000000",
+    token: "b".repeat(64),
+    nodePath,
+  }, { transactionId: TX });
+  assert.equal(ownership.pid, 4242);
+  assert.equal(ownership.nodePath, nodePath);
+  assert.throws(() => parseWindowsMainUpdateWorkerOwnership({ ...ownership, extra: true }, { transactionId: TX }), /unsupported fields/u);
+  assert.throws(() => parseWindowsMainUpdateWorkerOwnership({ ...ownership, startTimeUtcTicks: "bad" }, { transactionId: TX }), /start identity/u);
+  assert.throws(() => parseWindowsMainUpdateWorkerOwnership({ ...ownership, token: "c".repeat(63) }, { transactionId: TX }), /token/u);
+});
+
+test("Windows worker process inspection distinguishes exact identity, PID reuse and uncertain inspection", async () => {
+  const ownership = {
+    schemaVersion: 1,
+    transactionId: TX,
+    pid: 4242,
+    startTimeUtcTicks: "638953728000000000",
+    token: "b".repeat(64),
+    nodePath: "C:\\Equinox\\runtime\\node\\bin\\node.exe",
+  };
+  const calls = [];
+  const exact = await inspectWindowsMainUpdateWorkerProcess(ownership, {
+    execFileImpl: async (command, args, options) => {
+      calls.push({ command, args, options });
+      return { stdout: "running" };
+    },
+  });
+  assert.deepEqual(exact, { running: true, stale: false, uncertain: false });
+  assert.equal(calls[0].command, "powershell.exe");
+  assert.deepEqual(calls[0].args.slice(-3), ["4242", ownership.startTimeUtcTicks, ownership.nodePath]);
+
+  const reused = await inspectWindowsMainUpdateWorkerProcess(ownership, {
+    execFileImpl: async () => ({ stdout: "mismatch" }),
+  });
+  assert.deepEqual(reused, { running: false, stale: true, uncertain: false });
+
+  const unknown = await inspectWindowsMainUpdateWorkerProcess(ownership, {
+    execFileImpl: async () => ({ stdout: "unknown" }),
+  });
+  assert.deepEqual(unknown, { running: false, stale: false, uncertain: true });
+});
+
+test("Windows ownership inspection fails closed when durable ownership cannot be validated", async () => {
+  const stateRoot = "C:\\Equinox\\state\\main-update";
+  const uncertain = await inspectEquinoxLocalMainUpdateWorkerOwnership({
+    transactionId: TX,
+    transactionRoot: stateRoot,
+    platform: "win32",
+    readWindowsOwnershipImpl: async () => { throw new Error("ownership corrupt"); },
+  });
+  assert.equal(uncertain.running, false);
+  assert.equal(uncertain.uncertain, true);
+  assert.match(uncertain.reason, /ownership corrupt/u);
+
+  const absent = await inspectEquinoxLocalMainUpdateWorkerOwnership({
+    transactionId: TX,
+    transactionRoot: stateRoot,
+    platform: "win32",
+    readWindowsOwnershipImpl: async () => ({ ownershipPath: "marker", ownership: null }),
+  });
+  assert.deepEqual(
+    { loaded: absent.loaded, running: absent.running, stale: absent.stale, uncertain: absent.uncertain },
+    { loaded: false, running: false, stale: false, uncertain: false },
+  );
+});
+
+test("Windows ownership cleanup is token-owned, removes verified stale records, and refuses a live foreign worker", async () => {
+  const stateRoot = "C:\\Equinox\\state\\main-update";
+  const ownershipPath = "C:\\Equinox\\state\\main-update\\handoff\\owner.json";
+  const ownership = {
+    schemaVersion: 1,
+    transactionId: TX,
+    pid: 4242,
+    startTimeUtcTicks: "638953728000000000",
+    token: "b".repeat(64),
+    nodePath: "C:\\Equinox\\node.exe",
+  };
+
+  const ownerRemovals = [];
+  const owner = await cleanupEquinoxLocalMainUpdateWorkerOwnership({
+    transactionId: TX,
+    transactionRoot: stateRoot,
+    platform: "win32",
+    ownershipToken: ownership.token,
+    fsImpl: { rm: async (...args) => ownerRemovals.push(args) },
+    readWindowsOwnershipImpl: async () => ({ ownershipPath, ownership }),
+    inspectWorkerImpl: async () => assert.fail("exact owner cleanup must not inspect its own live process"),
+  });
+  assert.equal(owner.cleaned, true);
+  assert.equal(owner.owner, true);
+  assert.deepEqual(ownerRemovals, [[ownershipPath, { force: true }]]);
+
+  const staleRemovals = [];
+  const stale = await cleanupEquinoxLocalMainUpdateWorkerOwnership({
+    transactionId: TX,
+    transactionRoot: stateRoot,
+    platform: "win32",
+    fsImpl: { rm: async (...args) => staleRemovals.push(args) },
+    readWindowsOwnershipImpl: async () => ({ ownershipPath, ownership }),
+    inspectWorkerImpl: async () => ({ running: false, stale: true, uncertain: false }),
+  });
+  assert.equal(stale.cleaned, true);
+  assert.equal(stale.stale, true);
+  assert.equal(staleRemovals.length, 1);
+
+  const liveRemovals = [];
+  const live = await cleanupEquinoxLocalMainUpdateWorkerOwnership({
+    transactionId: TX,
+    transactionRoot: stateRoot,
+    platform: "win32",
+    fsImpl: { rm: async (...args) => liveRemovals.push(args) },
+    readWindowsOwnershipImpl: async () => ({ ownershipPath, ownership }),
+    inspectWorkerImpl: async () => ({ running: true, stale: false, uncertain: false }),
+  });
+  assert.equal(live.cleaned, false);
+  assert.equal(live.running, true);
+  assert.deepEqual(liveRemovals, []);
 });
 
 test("launchd bootstrap failure removes the unpublished worker plist", async (t) => {
