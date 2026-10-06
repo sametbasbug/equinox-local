@@ -904,14 +904,15 @@ function shortUpdateSha(value) {
 function renderUpdate() {
   const update = state.update || {};
   const main = update.main || {};
-  const sourceMain = update.installationKind === "source" && main.checkSupported === true;
+  const mainChannel = ["source", "managed-source"].includes(update.installationKind) && main.checkSupported === true;
+  const managedMain = update.installationKind === "managed-source";
   const checkButton = $("check-update-button");
   const installButton = $("install-update-button");
   const mainMeta = $("update-main-meta");
   const current = update.currentVersion || state.status?.server?.version || null;
 
-  mainMeta.hidden = !sourceMain;
-  if (sourceMain) {
+  mainMeta.hidden = !mainChannel;
+  if (mainChannel) {
     const currentSha = shortUpdateSha(main.currentSha);
     const targetSha = shortUpdateSha(main.targetSha);
     setText("update-version", current ? `Equinox Local ${current}` : "Current version unavailable");
@@ -927,13 +928,23 @@ function renderUpdate() {
     summaryNode.hidden = summaries.length === 0;
     summaryNode.textContent = summaries.map((entry) => `${entry.shortSha || "???????"} ${entry.message || "Commit"}`).join(" · ");
 
-    if (state.updateBusy) {
+    if (main.restartScheduledFor) {
+      setText("update-title", `Restarting into Main ${shortUpdateSha(main.restartScheduledFor) || "snapshot"}`);
+      setText("update-copy", "The admitted Main update is prepared. Control Center may disconnect briefly while the runtime switches, verifies health and rolls back automatically on failure.");
+      setBadge("update-badge", "Restart scheduled", "warn");
+    } else if (state.updateApplyBusy || main.applying) {
+      setText("update-title", `Preparing Main ${targetSha || "snapshot"}`);
+      setText("update-copy", "Preparing the exact admitted source/native transition before scheduling the managed runtime restart.");
+      setBadge("update-badge", "Preparing", "warn");
+    } else if (state.updateBusy) {
       setText("update-title", "Checking Main snapshot");
       setText("update-copy", "Reading local Git identity and checking the admitted Main snapshot without changing the checkout.");
       setBadge("update-badge", "Checking", "neutral");
     } else if (main.state === "behind") {
       setText("update-title", `${main.behindBy} ${main.behindBy === 1 ? "commit" : "commits"} available in Main snapshot`);
-      setText("update-copy", "A newer admitted Main snapshot is available. Checking it does not change source files, Git refs, runtime state or user data.");
+      setText("update-copy", managedMain
+        ? "A newer admitted Main snapshot is available. Update & restart uses the transactional source/native handoff with health verification and automatic rollback."
+        : "A newer admitted Main snapshot is available. This developer source checkout remains check-only.");
       setBadge("update-badge", "Main update available", "good");
     } else if (main.state === "up_to_date") {
       setText("update-title", "Main snapshot is up to date");
@@ -961,10 +972,13 @@ function renderUpdate() {
       setBadge("update-badge", "Ready", "neutral");
     }
 
-    checkButton.disabled = state.updateBusy;
+    const mainLocked = state.updateBusy || state.updateApplyBusy || Boolean(main.applying) || Boolean(main.restartScheduledFor);
+    checkButton.disabled = mainLocked;
     checkButton.textContent = localizeUiText(state.updateBusy ? "Checking…" : "Check main");
-    installButton.hidden = true;
-    installButton.disabled = true;
+    const canApplyMain = Boolean(managedMain && main.applyAvailable && !main.applyError && !main.restartScheduledFor);
+    installButton.hidden = !managedMain || (!canApplyMain && !state.updateApplyBusy && !main.applying && !main.restartScheduledFor);
+    installButton.disabled = mainLocked || !canApplyMain;
+    installButton.textContent = localizeUiText(state.updateApplyBusy || main.applying ? "Preparing update…" : main.restartScheduledFor ? "Restarting…" : "Update & restart");
     return;
   }
 
@@ -3213,8 +3227,8 @@ async function deleteHttpProfileFromControlCenter(profile) {
 
 
 async function checkForUpdates() {
-  const sourceMain = state.update?.installationKind === "source" && state.update?.main?.checkSupported === true;
-  if (state.updateBusy || (!state.update?.selfUpdateSupported && !sourceMain)) return;
+  const mainChannel = ["source", "managed-source"].includes(state.update?.installationKind) && state.update?.main?.checkSupported === true;
+  if (state.updateBusy || (!state.update?.selfUpdateSupported && !mainChannel)) return;
   clearError();
   state.updateBusy = true;
   renderUpdate();
@@ -3222,7 +3236,7 @@ async function checkForUpdates() {
     const result = await mutationJson("/api/v1/update/check", "POST", {});
     state.update = result.update || state.update;
     renderUpdate();
-    if (sourceMain) {
+    if (mainChannel) {
       const main = state.update?.main || {};
       if (main.state === "behind") showToast(`${main.behindBy} ${main.behindBy === 1 ? "commit" : "commits"} available in admitted Main snapshot.`);
       else if (main.state === "up_to_date") showToast("Main snapshot is up to date.");
@@ -3246,13 +3260,15 @@ async function checkForUpdates() {
 }
 
 async function applyAvailableUpdate() {
-  if (
-    state.updateApplyBusy ||
-    state.updateBusy ||
-    !state.update?.selfUpdateSupported ||
-    state.update?.updateAvailable !== true ||
-    state.update?.lastError
-  ) return;
+  const managedMain = state.update?.installationKind === "managed-source";
+  const canApplyMain = Boolean(managedMain && state.update?.main?.applyAvailable && !state.update?.main?.applyError);
+  const canApplyStable = Boolean(
+    !managedMain
+    && state.update?.selfUpdateSupported
+    && state.update?.updateAvailable === true
+    && !state.update?.lastError
+  );
+  if (state.updateApplyBusy || state.updateBusy || (!canApplyMain && !canApplyStable)) return;
 
   clearError();
   state.updateApplyBusy = true;
@@ -3260,15 +3276,28 @@ async function applyAvailableUpdate() {
   try {
     const result = await mutationJson("/api/v1/update/apply", "POST", {});
     const scheduled = result.result || {};
-    state.update = {
-      ...(state.update || {}),
-      applying: false,
-      restartScheduledFor: scheduled.targetVersion || state.update?.latestVersion || null,
-    };
+    if (managedMain) {
+      state.update = {
+        ...(state.update || {}),
+        main: {
+          ...(state.update?.main || {}),
+          applying: false,
+          restartScheduledFor: scheduled.targetSha || state.update?.main?.targetSha || null,
+        },
+      };
+    } else {
+      state.update = {
+        ...(state.update || {}),
+        applying: false,
+        restartScheduledFor: scheduled.targetVersion || state.update?.latestVersion || null,
+      };
+    }
     if (state.health?.controlCenter) state.health.controlCenter.mutationCount += 1;
     renderUpdate();
     renderActivity();
-    showToast(`Equinox Local ${scheduled.targetVersion || "update"} is prepared. Restarting safely…`);
+    showToast(managedMain
+      ? `Main ${shortUpdateSha(scheduled.targetSha) || "snapshot"} is prepared. Restarting safely…`
+      : `Equinox Local ${scheduled.targetVersion || "update"} is prepared. Restarting safely…`);
   } catch (error) {
     showError(error);
     try {

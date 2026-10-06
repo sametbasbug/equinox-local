@@ -166,6 +166,9 @@ import {
   createEquinoxLocalMainUpdateDiscovery,
 } from "./equinox-local-main-update.js";
 import {
+  createEquinoxLocalMainApplyController,
+} from "./equinox-local-main-apply-controller.js";
+import {
   configureManagedTunnel,
   getManagedOnboardingStatus,
   recordManagedAgentCommand,
@@ -598,9 +601,16 @@ const equinoxLocalUpdateCoordinator = createEquinoxLocalUpdateCoordinator({
 const equinoxLocalMainUpdateDiscovery = createEquinoxLocalMainUpdateDiscovery({
   installation: equinoxLocalInstallation,
 });
+const equinoxLocalMainApplyController = createEquinoxLocalMainApplyController({
+  installation: equinoxLocalInstallation,
+  discovery: equinoxLocalMainUpdateDiscovery,
+});
 const getCombinedUpdateStatus = () => Object.freeze({
   ...equinoxLocalUpdateCoordinator.snapshot(),
-  main: equinoxLocalMainUpdateDiscovery.snapshot(),
+  main: Object.freeze({
+    ...equinoxLocalMainUpdateDiscovery.snapshot(),
+    ...equinoxLocalMainApplyController.snapshot(),
+  }),
 });
 
 async function noteManagedAgentCommand() {
@@ -3073,14 +3083,19 @@ equinoxLocalControlApi = createEquinoxLocalControlApi({
     })
   )),
   checkForUpdates: async () => {
-    if (equinoxLocalInstallation.kind === "source") {
+    if (equinoxLocalInstallation.kind === "source" || equinoxLocalInstallation.kind === "managed-source") {
       await equinoxLocalMainUpdateDiscovery.check({ force: true });
+      equinoxLocalMainApplyController.resetError();
     } else {
       await equinoxLocalUpdater.check();
     }
     return getCombinedUpdateStatus();
   },
-  applyUpdate: async () => withMutationLocks(["local-update"], async () => equinoxLocalUpdateCoordinator.apply()),
+  applyUpdate: async () => withMutationLocks(["local-update"], async () => (
+    equinoxLocalInstallation.kind === "managed-source"
+      ? equinoxLocalMainApplyController.apply()
+      : equinoxLocalUpdateCoordinator.apply()
+  )),
   chooseFolder: chooseLocalFolder,
   openAgentBrowser: async () => withMutationLocks(["browser:agent"], async () => (
     equinoxAgentBrowser.launch({ setup: false })

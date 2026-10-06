@@ -34,6 +34,16 @@ test("server startup upgrades a trusted managed base installation to managed-sou
   assert.match(server, /baseInstallation: equinoxLocalBaseInstallation/u);
 });
 
+test("server routes managed-source Main check/apply without changing Stable routing", async () => {
+  const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
+  const server = await fs.readFile(path.join(root, "src", "server.js"), "utf8");
+  assert.match(server, /createEquinoxLocalMainApplyController/u);
+  assert.match(server, /kind === "source" \|\| equinoxLocalInstallation\.kind === "managed-source"/u);
+  assert.match(server, /equinoxLocalMainApplyController\.resetError\(\)/u);
+  assert.match(server, /kind === "managed-source"[\s\S]*equinoxLocalMainApplyController\.apply\(\)[\s\S]*equinoxLocalUpdateCoordinator\.apply\(\)/u);
+  assert.match(server, /\.\.\.equinoxLocalMainApplyController\.snapshot\(\)/u);
+});
+
 test("managed-source paths stay product-owned on macOS and Windows", () => {
   const mac = equinoxLocalManagedSourcePaths({ platform: "darwin", arch: "arm64", homeDir: "/Users/example", env: {} });
   assert.equal(mac.mainTransactionRoot, "/Users/example/Library/Application Support/Equinox Local/main-update");

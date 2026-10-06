@@ -99,3 +99,22 @@ test("Main apply rejects unsafe identity and handoff drift", async () => {
   await assert.rejects(controller.apply(), /target identity/u);
   assert.match(controller.snapshot().applyError, /target identity/u);
 });
+
+test("a successful Main re-check can clear a previous apply failure for retry", async () => {
+  let fail = true;
+  const controller = createEquinoxLocalMainApplyController({
+    installation: installation(),
+    discovery: discovery({ checkSupported: true, state: "behind", currentSha: A, targetSha: B, dirty: false, remoteCanonical: true }),
+    applyImpl: async () => {
+      if (fail) throw new Error("temporary handoff failure");
+      return { status: "scheduled", transactionId: "main-retry", targetSha: B };
+    },
+  });
+  await assert.rejects(controller.apply(), /temporary handoff failure/u);
+  assert.equal(controller.snapshot().applyAvailable, false);
+  controller.resetError();
+  assert.equal(controller.snapshot().applyAvailable, true);
+  fail = false;
+  const retried = await controller.apply();
+  assert.equal(retried.targetSha, B);
+});

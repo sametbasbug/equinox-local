@@ -61,6 +61,11 @@ export function createEquinoxLocalMainApplyController({
     });
   };
 
+  const resetError = () => {
+    lastError = null;
+    return snapshot();
+  };
+
   const apply = async () => {
     if (applying) throw new Error("A Main update is already being prepared.");
     const status = snapshot();
@@ -102,5 +107,5 @@ export function createEquinoxLocalMainApplyController({
     }
   };
 
-  return Object.freeze({ snapshot, apply });
+  return Object.freeze({ snapshot, apply, resetError });
 }
