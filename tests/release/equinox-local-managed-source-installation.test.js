@@ -1,0 +1,95 @@
+import assert from "node:assert/strict";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import test from "node:test";
+
+import {
+  equinoxLocalManagedSourcePaths,
+  resolveEquinoxLocalManagedSourceInstallation,
+} from "../../src/equinox-local-managed-source-installation.js";
+
+const SHA = "a".repeat(40);
+
+function base(root) {
+  return {
+    kind: "managed",
+    managed: true,
+    selfUpdateSupported: true,
+    platform: "darwin",
+    arch: "arm64",
+    target: "darwin-arm64",
+    installRoot: root,
+    releaseDir: path.join(root, "releases", "5.2.0"),
+  };
+}
+
+test("managed-source paths stay product-owned on macOS and Windows", () => {
+  const mac = equinoxLocalManagedSourcePaths({ platform: "darwin", arch: "arm64", homeDir: "/Users/example", env: {} });
+  assert.equal(mac.mainTransactionRoot, "/Users/example/Library/Application Support/Equinox Local/main-update");
+  assert.equal(mac.installStampPath, mac.mainTransactionRoot + "/install.json");
+
+  const win = equinoxLocalManagedSourcePaths({
+    platform: "win32",
+    arch: "x64",
+    homeDir: String.raw`C:\Users\Example`,
+    env: { LOCALAPPDATA: String.raw`C:\Users\Example\AppData\Local` },
+  });
+  assert.equal(win.mainTransactionRoot, String.raw`C:\Users\Example\AppData\Local\Equinox Local\state\main-update`);
+  assert.equal(win.sourcePointerPath, String.raw`C:\Users\Example\AppData\Local\Equinox Local\state\main-update\current-source.conf`);
+});
+
+test("managed-source resolver requires a private canonical stamp and exact source pointer", async (t) => {
+  const home = await fs.mkdtemp(path.join(os.tmpdir(), "equinox-managed-source-"));
+  t.after(() => fs.rm(home, { recursive: true, force: true }));
+  const installRoot = path.join(home, "Library", "Application Support", "Equinox Local");
+  const paths = equinoxLocalManagedSourcePaths({ platform: "darwin", arch: "arm64", homeDir: home, env: {} });
+  await fs.mkdir(paths.mainTransactionRoot, { recursive: true, mode: 0o700 });
+  await fs.chmod(paths.mainTransactionRoot, 0o700);
+  await fs.writeFile(paths.installStampPath, JSON.stringify({
+    schemaVersion: 1,
+    channel: "main",
+    repository: "sametbasbug/equinox-local",
+    branch: "main",
+    bootstrapSha: SHA,
+  }) + "\n", { mode: 0o600 });
+  const sourceRoot = path.join(paths.mainTransactionRoot, "sources", SHA);
+
+  const resolved = await resolveEquinoxLocalManagedSourceInstallation({
+    baseInstallation: base(installRoot),
+    platform: "darwin",
+    arch: "arm64",
+    homeDir: home,
+    env: {},
+    readPointerImpl: async (pointerPath) => {
+      assert.equal(pointerPath, paths.sourcePointerPath);
+      return { sourceRoot, sha: SHA };
+    },
+  });
+
+  assert.equal(resolved.kind, "managed-source");
+  assert.equal(resolved.channel, "main");
+  assert.equal(resolved.mainUpdateSupported, true);
+  assert.equal(resolved.sourceRoot, sourceRoot);
+  assert.equal(resolved.sourceSha, SHA);
+  assert.equal(resolved.mainTransactionRoot, paths.mainTransactionRoot);
+  assert.equal(resolved.mainInstallStamp.bootstrapSha, SHA);
+});
+
+test("managed-source resolver preserves Stable identity when no stamp exists and fails closed on unsafe stamp", async (t) => {
+  const home = await fs.mkdtemp(path.join(os.tmpdir(), "equinox-managed-source-"));
+  t.after(() => fs.rm(home, { recursive: true, force: true }));
+  const installRoot = path.join(home, "Library", "Application Support", "Equinox Local");
+  const original = base(installRoot);
+  const paths = equinoxLocalManagedSourcePaths({ platform: "darwin", arch: "arm64", homeDir: home, env: {} });
+
+  assert.equal(await resolveEquinoxLocalManagedSourceInstallation({
+    baseInstallation: original, platform: "darwin", arch: "arm64", homeDir: home, env: {},
+  }), original);
+
+  await fs.mkdir(paths.mainTransactionRoot, { recursive: true, mode: 0o700 });
+  await fs.writeFile(paths.installStampPath, "{}\n", { mode: 0o644 });
+  await assert.rejects(resolveEquinoxLocalManagedSourceInstallation({
+    baseInstallation: original, platform: "darwin", arch: "arm64", homeDir: home, env: {},
+  }), /install stamp is not private/u);
+});
