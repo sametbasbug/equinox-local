@@ -571,6 +571,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
+      main-update-impact: ${{ steps.plan.outputs.main-update-impact }}
       native-impact: ${{ steps.plan.outputs.native-impact }}
       target-sha: ${{ steps.plan.outputs.target-sha }}
       github-count: ${{ steps.plan.outputs.github-count }}
@@ -605,6 +606,7 @@ jobs:
           import fs from 'node:fs';
           const plan = JSON.parse(fs.readFileSync(process.env.PLAN_FILE, 'utf8'));
           const lines = [
+            `main-update-impact=${plan.mainUpdateImpact}`,
             `native-impact=${plan.nativeImpact}`,
             `target-sha=${plan.targetSha}`,
             `github-count=${plan.githubTargets.length}`,
@@ -623,7 +625,7 @@ jobs:
 
   main-native-build:
     needs: main-native-plan
-    if: ${{ needs.main-native-plan.result == 'success' }}
+    if: ${{ needs.main-native-plan.result == 'success' && (github.event_name == 'workflow_dispatch' || needs.main-native-plan.outputs.main-update-impact == 'true') }}
     name: Main ${{ matrix.target }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 35
@@ -701,11 +703,21 @@ jobs:
     steps:
       - name: Enforce GitHub-native build result
         env:
+          FORCE_BUILD: ${{ github.event_name == 'workflow_dispatch' }}
+          MAIN_UPDATE_IMPACT: ${{ needs.main-native-plan.outputs.main-update-impact }}
           NATIVE_IMPACT: ${{ needs.main-native-plan.outputs.native-impact }}
           GITHUB_COUNT: ${{ needs.main-native-plan.outputs.github-count }}
           GITHUB_RESULT: ${{ needs.main-native-build.result }}
         shell: bash
         run: |
+          if [ "$MAIN_UPDATE_IMPACT" != "true" ] && [ "$FORCE_BUILD" != "true" ]; then
+            if [ "$GITHUB_RESULT" != "skipped" ]; then
+              echo "Non-product Main change unexpectedly ran native snapshot builds; result=$GITHUB_RESULT" >&2
+              exit 1
+            fi
+            echo "No user-visible Main update: changed paths are limited to tests/CI/docs metadata." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
           if [ "$GITHUB_COUNT" != "4" ] || [ "$GITHUB_RESULT" != "success" ]; then
             echo "Exact-SHA Main snapshot requires four successful GitHub-native builds; count=$GITHUB_COUNT result=$GITHUB_RESULT" >&2
             exit 1
@@ -721,7 +733,7 @@ jobs:
 
   main-snapshot-publish:
     needs: [main-native-plan, main-native-build, main-native-result]
-    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.main-native-result.result == 'success' }}
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.main-native-plan.outputs.main-update-impact == 'true' && needs.main-native-result.result == 'success' }}
     name: Publish Main Snapshot
     runs-on: ubuntu-latest
     timeout-minutes: 15

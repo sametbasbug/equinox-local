@@ -18,12 +18,21 @@ test("normal CI owns automatic Main snapshot production and optional manual reco
 
 test("every product-impacting Main CI push builds all four exact-SHA snapshot targets on GitHub", () => {
   assert.match(workflow, /main-native-build:\n    needs: main-native-plan/u);
-  assert.match(workflow, /if: \$\{\{ needs\.main-native-plan\.result == 'success' \}\}/u);
+  assert.match(workflow, /outputs:\n      main-update-impact: \$\{\{ steps\.plan\.outputs\.main-update-impact \}\}/u);
+  assert.match(workflow, /`main-update-impact=\$\{plan\.mainUpdateImpact\}`/u);
+  assert.match(workflow, /if: \$\{\{ needs\.main-native-plan\.result == 'success' && \(github\.event_name == 'workflow_dispatch' \|\| needs\.main-native-plan\.outputs\.main-update-impact == 'true'\) \}\}/u);
   assert.match(workflow, /matrix: \$\{\{ fromJSON\(needs\.main-native-plan\.outputs\.github-matrix\) \}\}/u);
   assert.match(workflow, /runs-on: \$\{\{ matrix\.runner \}\}/u);
   assert.match(workflow, /build-main-native-artifact\.mjs --source-sha "\$\{\{ needs\.main-native-plan\.outputs\.target-sha \}\}" --target "\$\{\{ matrix\.target \}\}"/u);
   assert.match(workflow, /name: main-native-\$\{\{ needs\.main-native-plan\.outputs\.target-sha \}\}-\$\{\{ matrix\.target \}\}/u);
   assert.match(workflow, /if \[ "\$GITHUB_COUNT" != "4" \]/u);
+});
+
+test("test CI and docs-only Main changes cannot build or publish a user-visible Main snapshot", () => {
+  assert.match(workflow, /MAIN_UPDATE_IMPACT: \$\{\{ needs\.main-native-plan\.outputs\.main-update-impact \}\}/u);
+  assert.match(workflow, /if \[ "\$MAIN_UPDATE_IMPACT" != "true" \] && \[ "\$FORCE_BUILD" != "true" \]/u);
+  assert.match(workflow, /No user-visible Main update: changed paths are limited to tests\/CI\/docs metadata/u);
+  assert.match(workflow, /main-snapshot-publish:[\s\S]*needs\.main-native-plan\.outputs\.main-update-impact == 'true'/u);
 });
 
 test("Main Snapshot publish uses public R2 plus a tag-only pointer and never creates a GitHub Release", () => {
