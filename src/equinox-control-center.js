@@ -928,23 +928,23 @@ function renderUpdate() {
     summaryNode.textContent = summaries.map((entry) => `${entry.shortSha || "???????"} ${entry.message || "Commit"}`).join(" · ");
 
     if (state.updateBusy) {
-      setText("update-title", "Checking canonical main");
-      setText("update-copy", "Reading local Git identity and checking the canonical public main branch without changing the checkout.");
+      setText("update-title", "Checking Main snapshot");
+      setText("update-copy", "Reading local Git identity and checking the admitted Main snapshot without changing the checkout.");
       setBadge("update-badge", "Checking", "neutral");
     } else if (main.state === "behind") {
-      setText("update-title", `${main.behindBy} ${main.behindBy === 1 ? "commit" : "commits"} available on main`);
-      setText("update-copy", "A newer canonical main SHA is available. M5 only reports it; no source files, Git refs, runtime state or user data are changed.");
+      setText("update-title", `${main.behindBy} ${main.behindBy === 1 ? "commit" : "commits"} available in Main snapshot`);
+      setText("update-copy", "A newer admitted Main snapshot is available. Checking it does not change source files, Git refs, runtime state or user data.");
       setBadge("update-badge", "Main update available", "good");
     } else if (main.state === "up_to_date") {
-      setText("update-title", "Canonical main is up to date");
-      setText("update-copy", "The current source SHA exactly matches the canonical public main branch.");
+      setText("update-title", "Main snapshot is up to date");
+      setText("update-copy", "The current source SHA exactly matches the admitted Main snapshot.");
       setBadge("update-badge", "Up to date", "good");
     } else if (main.state === "ahead") {
-      setText("update-title", "Local main is ahead of canonical main");
-      setText("update-copy", "This checkout contains commits that are not on canonical main. Automatic main updates remain unavailable until the histories match.");
+      setText("update-title", "Local source is ahead of the admitted Main snapshot");
+      setText("update-copy", "This checkout is ahead of the currently admitted Main snapshot. Automatic Main apply remains unavailable until an admitted snapshot catches up.");
       setBadge("update-badge", "Local ahead", "warn");
     } else if (main.state === "diverged") {
-      setText("update-title", "Local and canonical main have diverged");
+      setText("update-title", "Local source and admitted Main snapshot have diverged");
       setText("update-copy", "The histories have commits on both sides. Equinox Local will not treat this as an ordinary update path.");
       setBadge("update-badge", "Diverged", "bad");
     } else if (["dirty", "detached", "unsupported"].includes(main.state)) {
@@ -953,11 +953,11 @@ function renderUpdate() {
       setBadge("update-badge", "Unsupported", "warn");
     } else if (main.state === "unavailable") {
       setText("update-title", "Main update check needs attention");
-      setText("update-copy", main.lastError || main.reason || "The canonical main branch could not be checked. This is not an up-to-date result.");
+      setText("update-copy", main.lastError || main.reason || "The admitted Main Snapshot could not be checked. This is not an up-to-date result.");
       setBadge("update-badge", "Check unavailable", "bad");
     } else {
-      setText("update-title", "Canonical main channel ready");
-      setText("update-copy", "Check the canonical public main branch without modifying this source checkout.");
+      setText("update-title", "Main snapshot channel ready");
+      setText("update-copy", "Check the admitted Main snapshot without modifying this source checkout.");
       setBadge("update-badge", "Ready", "neutral");
     }
 
@@ -3224,8 +3224,8 @@ async function checkForUpdates() {
     renderUpdate();
     if (sourceMain) {
       const main = state.update?.main || {};
-      if (main.state === "behind") showToast(`${main.behindBy} ${main.behindBy === 1 ? "commit" : "commits"} available on canonical main.`);
-      else if (main.state === "up_to_date") showToast("Canonical main is up to date.");
+      if (main.state === "behind") showToast(`${main.behindBy} ${main.behindBy === 1 ? "commit" : "commits"} available in admitted Main snapshot.`);
+      else if (main.state === "up_to_date") showToast("Main snapshot is up to date.");
       else if (main.state === "unavailable") showToast("Main update check is unavailable; no up-to-date result was assumed.");
       else showToast("Main source identity check finished.");
     } else {

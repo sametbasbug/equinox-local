@@ -31,10 +31,14 @@ function assertSuccessGate(block, name, dependencies) {
   assert.doesNotMatch(block, /continue-on-error:/u);
 }
 
-test("CI retains full PR and main validation without path-based skips", () => {
-  assert.match(ci, /^on:\n  push:\n    branches: \[main\]\n  pull_request:\n  workflow_dispatch:/mu);
+test("CI retains full product validation while skipping only the explicit docs-only allowlist", () => {
+  assert.match(ci, /^on:\n  push:\n    branches: \[main\]\n    paths-ignore:/mu);
+  assert.match(ci, /  pull_request:\n    paths-ignore:/u);
+  assert.match(ci, /  workflow_dispatch:/u);
   assert.match(ci, /^permissions:\n  contents: read/mu);
-  assert.doesNotMatch(ci, /pull_request_target:|paths-ignore:|continue-on-error:/u);
+  assert.doesNotMatch(ci, /pull_request_target:|continue-on-error:/u);
+  assert.match(ci, /- 'docs\/\*\*'/u);
+  assert.doesNotMatch(ci, /- 'THIRD_PARTY_NOTICES\.md'/u);
   assert.match(job("test"), /name: macOS ARM64 \/ Node 26/u);
   assert.match(job("test"), /darwin-arm64/u);
   assert.match(job("test"), /run: npm test\n/u);

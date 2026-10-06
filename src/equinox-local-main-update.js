@@ -13,6 +13,7 @@ export const EQUINOX_LOCAL_MAIN_REPOSITORY = "sametbasbug/equinox-local";
 export const EQUINOX_LOCAL_MAIN_BRANCH = "main";
 export const EQUINOX_LOCAL_MAIN_REMOTE = `https://github.com/${EQUINOX_LOCAL_MAIN_REPOSITORY}.git`;
 export const EQUINOX_LOCAL_MAIN_UPDATE_CHANNEL = "main";
+export const EQUINOX_LOCAL_MAIN_SNAPSHOT_TAG = "main-snapshot";
 
 const SHA_PATTERN = /^[a-f0-9]{40}$/u;
 const CHECK_TIMEOUT_MS = 5_000;
@@ -230,7 +231,7 @@ export function createEquinoxLocalMainUpdateDiscovery({
     remoteCanonical: null,
     summaries: Object.freeze([]),
     lastError: null,
-    reason: checkSupported ? null : "Main update discovery is available only for source-managed checkouts in M5.",
+    reason: checkSupported ? null : "Main update discovery is available only for source-managed checkouts.",
   });
 
   const snapshot = () => state;
@@ -270,10 +271,12 @@ export function createEquinoxLocalMainUpdateDiscovery({
     }
 
     try {
-      const branchUrl = `https://api.github.com/repos/${EQUINOX_LOCAL_MAIN_REPOSITORY}/branches/${EQUINOX_LOCAL_MAIN_BRANCH}`;
-      const branchPayload = await fetchGithubJson(branchUrl, { fetchImpl });
-      const targetSha = branchPayload?.commit?.sha;
-      if (!SHA_PATTERN.test(targetSha ?? "")) throw new Error("GitHub main branch returned an invalid target SHA.");
+      const snapshotUrl = `https://api.github.com/repos/${EQUINOX_LOCAL_MAIN_REPOSITORY}/git/ref/tags/${EQUINOX_LOCAL_MAIN_SNAPSHOT_TAG}`;
+      const snapshotPayload = await fetchGithubJson(snapshotUrl, { fetchImpl });
+      const targetSha = snapshotPayload?.object?.sha;
+      if (snapshotPayload?.ref !== `refs/tags/${EQUINOX_LOCAL_MAIN_SNAPSHOT_TAG}` || snapshotPayload?.object?.type !== "commit" || !SHA_PATTERN.test(targetSha ?? "")) {
+        throw new Error("GitHub Main Snapshot tag returned an invalid target SHA.");
+      }
 
       let comparison;
       if (targetSha === local.currentSha) {
@@ -313,7 +316,7 @@ export function createEquinoxLocalMainUpdateDiscovery({
         remoteCanonical: true,
         summaries: Object.freeze([]),
         lastError: message,
-        reason: "The canonical main branch could not be checked. This is not an up-to-date result.",
+        reason: "The admitted Main Snapshot could not be checked. This is not an up-to-date result.",
       });
       return state;
     }

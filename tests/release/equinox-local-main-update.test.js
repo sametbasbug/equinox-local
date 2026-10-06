@@ -5,6 +5,7 @@ import test from "node:test";
 import {
   createEquinoxLocalMainUpdateDiscovery,
   EQUINOX_LOCAL_MAIN_REMOTE,
+  EQUINOX_LOCAL_MAIN_SNAPSHOT_TAG,
   isCanonicalMainRemote,
   validateManagedSourceInstallStamp,
 } from "../../src/equinox-local-main-update.js";
@@ -113,7 +114,7 @@ test("managed-source install stamp pins canonical main identity", () => {
 test("passive main check reports up to date without mutating Git refs", async () => {
   const network = [];
   const { git, value } = discovery({
-    fetchImpl: fetchSequence([jsonResponse({ commit: { sha: CURRENT } })], network),
+    fetchImpl: fetchSequence([jsonResponse({ ref: `refs/tags/${EQUINOX_LOCAL_MAIN_SNAPSHOT_TAG}`, object: { type: "commit", sha: CURRENT } })], network),
   });
   const status = await value.check();
   assert.equal(status.state, "up_to_date");
@@ -121,6 +122,8 @@ test("passive main check reports up to date without mutating Git refs", async ()
   assert.equal(status.targetSha, CURRENT);
   assert.equal(status.behindBy, 0);
   assert.equal(network.length, 1);
+  assert.match(network[0].url, /\/git\/ref\/tags\/main-snapshot$/u);
+  assert.equal(network[0].url.includes("/branches/main"), false);
   assert.equal(git.calls.some(({ args }) => args.includes("fetch") || args.includes("pull") || args.includes("reset")), false);
   assert.equal(git.calls.every(({ args }) => args[0] === "-C" && args[1] === ROOT), true);
 });
@@ -128,7 +131,7 @@ test("passive main check reports up to date without mutating Git refs", async ()
 test("passive main check reports behind distance and bounded summaries", async () => {
   const { value } = discovery({
     fetchImpl: fetchSequence([
-      jsonResponse({ commit: { sha: TARGET } }),
+      jsonResponse({ ref: `refs/tags/${EQUINOX_LOCAL_MAIN_SNAPSHOT_TAG}`, object: { type: "commit", sha: TARGET } }),
       jsonResponse(comparePayload({ status: "ahead", aheadBy: 2, behindBy: 0 })),
     ]),
   });
@@ -155,6 +158,20 @@ test("dirty, detached, non-main and fork checkouts fail closed before network", 
   }
 });
 
+test("Main discovery accepts only the exact lightweight main-snapshot commit ref", async () => {
+  for (const payload of [
+    { ref: "refs/tags/main-snapshot", object: { type: "tag", sha: TARGET } },
+    { ref: "refs/tags/other", object: { type: "commit", sha: TARGET } },
+    { ref: "refs/tags/main-snapshot", object: { type: "commit", sha: "BAD" } },
+  ]) {
+    const { value } = discovery({ fetchImpl: fetchSequence([jsonResponse(payload)]) });
+    const status = await value.check({ force: true });
+    assert.equal(status.state, "unavailable");
+    assert.equal(status.targetSha, null);
+    assert.match(status.reason, /not an up-to-date result/u);
+  }
+});
+
 test("network and deleted-main failures are unavailable, never up to date", async () => {
   for (const response of [
     new Error("offline"),
@@ -176,7 +193,7 @@ test("divergent and locally-ahead histories remain distinct states", async () =>
   ]) {
     const { value } = discovery({
       fetchImpl: fetchSequence([
-        jsonResponse({ commit: { sha: TARGET } }),
+        jsonResponse({ ref: `refs/tags/${EQUINOX_LOCAL_MAIN_SNAPSHOT_TAG}`, object: { type: "commit", sha: TARGET } }),
         jsonResponse(comparePayload({ status: remoteStatus, aheadBy, behindBy })),
       ]),
     });
@@ -192,8 +209,8 @@ test("passive checks use a bounded cache", async () => {
   let clock = Date.parse("2026-10-04T09:00:00Z");
   const { value } = discovery({
     fetchImpl: fetchSequence([
-      jsonResponse({ commit: { sha: CURRENT } }),
-      jsonResponse({ commit: { sha: CURRENT } }),
+      jsonResponse({ ref: `refs/tags/${EQUINOX_LOCAL_MAIN_SNAPSHOT_TAG}`, object: { type: "commit", sha: CURRENT } }),
+      jsonResponse({ ref: `refs/tags/${EQUINOX_LOCAL_MAIN_SNAPSHOT_TAG}`, object: { type: "commit", sha: CURRENT } }),
     ], calls),
     now: () => new Date(clock),
     cacheTtlMs: 60_000,

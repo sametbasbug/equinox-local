@@ -5,7 +5,9 @@ import test from "node:test";
 const workflow = fs.readFileSync(new URL("../../.github/workflows/ci.yml", import.meta.url), "utf8");
 
 test("normal CI owns automatic Main snapshot production and optional manual recovery", () => {
-  assert.match(workflow, /^on:\n  push:\n    branches: \[main\]\n  pull_request:\n  workflow_dispatch:\n    inputs:\n      main_native_current:/mu);
+  assert.match(workflow, /^on:\n  push:\n    branches: \[main\]/mu);
+  assert.match(workflow, /  pull_request:\n    paths-ignore:/u);
+  assert.match(workflow, /  workflow_dispatch:\n    inputs:\n      main_native_current:/u);
   assert.match(workflow, /main_native_target:/u);
   assert.match(workflow, /main-native-plan:\n    if: \$\{\{ github\.event_name == 'push'/u);
   assert.match(workflow, /name: Exact-SHA Main snapshot plan/u);
@@ -14,7 +16,7 @@ test("normal CI owns automatic Main snapshot production and optional manual reco
   assert.match(workflow, /plan-main-native-artifacts\.mjs --current-sha/u);
 });
 
-test("every Main push builds all four exact-SHA snapshot targets on GitHub", () => {
+test("every product-impacting Main CI push builds all four exact-SHA snapshot targets on GitHub", () => {
   assert.match(workflow, /main-native-build:\n    needs: main-native-plan/u);
   assert.match(workflow, /if: \$\{\{ needs\.main-native-plan\.result == 'success' \}\}/u);
   assert.match(workflow, /matrix: \$\{\{ fromJSON\(needs\.main-native-plan\.outputs\.github-matrix\) \}\}/u);
