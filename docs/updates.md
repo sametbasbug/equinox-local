@@ -32,6 +32,8 @@ For operational checks, compare `refs/heads/main` with `refs/tags/main-snapshot`
 
 If the installed native runtime contract already matches the selected Main SHA, the updater uses `reuse_native` and downloads no native package. Crossing a native boundary requires the exact host snapshot; failure during native/source activation rolls back to the previously admitted source/native state. Main snapshot publication and rollback acceptance are complete across Darwin and Windows x64/ARM64, but the ordinary-user Main apply control remains intentionally gated until its dedicated enablement milestone. Managed signed-release installations therefore continue to use the Stable channel unless Main is explicitly enabled by product policy.
 
+When ordinary-user managed-source bootstrap/apply is enabled, its updater toolchain is product-owned rather than discovered from the user shell. Equinox Local will install a pinned portable Git runtime for the host target and retain the pinned Node distribution npm tooling, then invoke both through exact product-owned paths. A user must not need a separate Git/npm installation, Homebrew, Xcode Command Line Tools, Visual Studio build tools, or a particular `PATH`. Native npm dependencies must resolve from admitted prebuilt payloads; a missing prebuild is an update/install failure, not permission to compile toolchains on the user machine.
+
 ## Stable update manifests
 
 Runtime updates use JSON manifests signed with Ed25519. The shipped runtime contains only trusted public keys; release private keys must remain outside the repository.

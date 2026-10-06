@@ -36,6 +36,7 @@ These instructions apply to the entire Equinox Local canonical product repositor
 - When modifying an already-dirty file, inspect its current diff first and preserve unfinished work.
 - Do not merge to `main`, create a public release, publish Equinox Browser, or submit Chrome Web Store changes without explicit maintainer authorization.
 - Managed install/update work must preserve source-checkout development behavior rather than replacing it in place.
+- Ordinary managed-source bootstrap/update must not depend on ambient system Git, npm, Homebrew, Xcode Command Line Tools, Visual Studio build tools, or user PATH discovery. Use product-owned pinned update tooling; the M8 design uses a cross-platform embedded Git distribution plus pinned Node-distribution npm, invoked by absolute product-owned paths. Native dependency installation must use admitted prebuilt payloads and fail closed rather than compiling on the user machine.
 
 ## Validation
 
