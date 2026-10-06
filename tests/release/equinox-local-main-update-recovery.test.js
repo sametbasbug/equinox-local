@@ -82,3 +82,41 @@ test("reconciler never interrupts an already running exact transaction worker", 
   assert.equal(result.status, "worker_active");
   assert.deepEqual(calls, []);
 });
+
+
+test("reconciler blocks instead of double-scheduling when Windows ownership identity is uncertain", async () => {
+  const calls = [];
+  const result = await reconcileEquinoxLocalMainUpdate({
+    sourceRoot: NEW,
+    transactionRoot: STATE,
+    engineFactory: () => engineWith(receipt({ status: "verifying", stage: "source_switched" })),
+    inspectWorker: async (value) => {
+      calls.push(["inspect-worker", value]);
+      return { running: false, uncertain: true };
+    },
+    inspectCheckout: async () => { calls.push(["inspect-checkout"]); return { eligible: true, currentSha: B }; },
+    cleanupWorker: async () => calls.push(["cleanup"]),
+    scheduleWorker: async () => calls.push(["schedule"]),
+  });
+  assert.equal(result.status, "blocked");
+  assert.equal(result.reason, "worker_identity_uncertain");
+  assert.equal(calls[0][1].transactionRoot, STATE);
+  assert.equal(calls.some(([name]) => name === "inspect-checkout"), false);
+  assert.equal(calls.some(([name]) => name === "schedule"), false);
+});
+
+test("reconciler cannot schedule a second worker when ownership cleanup refuses", async () => {
+  const calls = [];
+  const result = await reconcileEquinoxLocalMainUpdate({
+    sourceRoot: NEW,
+    transactionRoot: STATE,
+    engineFactory: () => engineWith(receipt({ status: "verifying", stage: "source_switched" })),
+    inspectWorker: async () => ({ running: false, stale: true, uncertain: false }),
+    inspectCheckout: async (root) => { calls.push(["inspect", root]); return await exactInspect(root); },
+    cleanupWorker: async () => { calls.push(["cleanup"]); return { cleaned: false, running: true }; },
+    scheduleWorker: async () => { calls.push(["schedule"]); return { scheduled: true }; },
+  });
+  assert.equal(result.status, "blocked");
+  assert.equal(result.reason, "worker_active");
+  assert.equal(calls.some(([name]) => name === "schedule"), false);
+});

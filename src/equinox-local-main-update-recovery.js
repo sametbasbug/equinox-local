@@ -32,8 +32,9 @@ export async function reconcileEquinoxLocalMainUpdate({
   const engine = engineFactory({ sourceRoot, transactionRoot });
   const active = await engine.readActive();
   if (!active) return Object.freeze({ status: "idle" });
-  const worker = await inspectWorker({ transactionId: active.transactionId });
+  const worker = await inspectWorker({ transactionId: active.transactionId, transactionRoot });
   if (worker?.running) return Object.freeze({ status: "worker_active", transactionId: active.transactionId, stage: active.stage });
+  if (worker?.uncertain) return Object.freeze({ status: "blocked", transactionId: active.transactionId, stage: active.stage, reason: "worker_identity_uncertain" });
 
   if (["succeeded", "rolled_back", "failed"].includes(active.status)) {
     await cleanupWorker({ transactionId: active.transactionId, transactionRoot });
@@ -50,7 +51,15 @@ export async function reconcileEquinoxLocalMainUpdate({
   const rollbackSourceRoot = await assertExactSource(active.rollbackSourceRoot, active.rollbackSha, inspectCheckout);
   const targetSourceRoot = await assertExactSource(active.targetSourceRoot, active.targetSha, inspectCheckout);
   const workerPath = path.join(targetSourceRoot, "src", "equinox-local-main-update-worker.js");
-  await cleanupWorker({ transactionId: active.transactionId, transactionRoot });
+  const cleaned = await cleanupWorker({ transactionId: active.transactionId, transactionRoot });
+  if (cleaned?.cleaned === false) {
+    return Object.freeze({
+      status: "blocked",
+      transactionId: active.transactionId,
+      stage: active.stage,
+      reason: cleaned?.running ? "worker_active" : "worker_cleanup_refused",
+    });
+  }
   const scheduled = await scheduleWorker({
     transactionId: active.transactionId,
     sourceRoot: rollbackSourceRoot,
