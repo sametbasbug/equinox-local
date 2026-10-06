@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { runEquinoxLocalMainUpdateWorker } from "../../src/equinox-local-main-update-worker.js";
+import { restartEquinoxLocalMainSourceRuntime, runEquinoxLocalMainUpdateWorker } from "../../src/equinox-local-main-update-worker.js";
 
 const TX = `main-${"a".repeat(32)}`;
 const SOURCE = "/private/tmp/equinox-source-a";
@@ -22,6 +22,37 @@ function reuseTransition() {
 function argv() {
   return ["--transaction-id", TX, "--source-root", SOURCE, "--transaction-root", STATE];
 }
+
+test("Main worker runtime restart uses the Windows shell handoff without POSIX execution", async () => {
+  const calls = [];
+  const result = await restartEquinoxLocalMainSourceRuntime({
+    platform: "win32",
+    sourceRoot: "C:\Equinox\source",
+    previousSourceRoot: "C:\Equinox\previous",
+    execFileImpl: async () => assert.fail("Windows restart must not invoke /bin/bash"),
+    fsImpl: { lstat: async () => assert.fail("Windows restart must not inspect a POSIX script") },
+    requestWindowsRestartImpl: async (value) => calls.push(value),
+  });
+  assert.deepEqual(calls, [{ platform: "win32" }]);
+  assert.deepEqual(result, { requested: true, platform: "win32" });
+});
+
+test("Main worker runtime restart preserves the existing Darwin restart contract", async () => {
+  const calls = [];
+  const result = await restartEquinoxLocalMainSourceRuntime({
+    platform: "darwin",
+    sourceRoot: "/target",
+    previousSourceRoot: SOURCE,
+    env: { HOME: "/Users/example" },
+    fsImpl: { lstat: async (value) => { calls.push(["stat", value]); return { isFile: () => true, isSymbolicLink: () => false }; } },
+    execFileImpl: async (command, args, options) => calls.push(["exec", command, args, options]),
+  });
+  assert.equal(calls[0][1], "/target/scripts/restart-runtime.sh");
+  assert.equal(calls[1][1], "/bin/bash");
+  assert.deepEqual(calls[1][2], ["/target/scripts/restart-runtime.sh", "--worker"]);
+  assert.equal(calls[1][3].env.EQUINOX_LOCAL_PREVIOUS_SOURCE_ROOT, SOURCE);
+  assert.deepEqual(result, { requested: true, platform: "darwin" });
+});
 
 test("launchd worker consumes only the prepared transaction it owns and cleans up after success", async () => {
   const events = [];
