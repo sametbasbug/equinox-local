@@ -121,8 +121,7 @@ internal static partial class MainUpdateHandoff
             throw new InvalidDataException("Git is unavailable for the Main update handoff.");
 
         var output = process.StandardOutput.ReadToEnd();
-        foreach (var raw in output.Split(['', '
-'], StringSplitOptions.RemoveEmptyEntries))
+        foreach (var raw in output.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries))
         {
             var candidate = raw.Trim();
             if (!Path.IsPathFullyQualified(candidate)) continue;
