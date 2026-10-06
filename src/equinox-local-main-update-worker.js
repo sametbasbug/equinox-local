@@ -14,6 +14,7 @@ import { runEquinoxLocalMainUpdateHandoff } from "./equinox-local-main-update-ha
 import { readEquinoxLocalMainSourcePointer } from "./equinox-local-main-source-pointer.js";
 import { inspectCanonicalMainCheckout } from "./equinox-local-main-update.js";
 import { EQUINOX_LOCAL_CONTROL_CENTER_STATUS_URL } from "./equinox-local-update-activation.js";
+import { requestWindowsShellRuntimeRestart } from "./equinox-local-windows-shell-control.js";
 import { cleanupEquinoxLocalMainUpdateWorkerOwnership } from "./equinox-local-main-update-scheduler.js";
 
 const execFile = promisify(execFileCallback);
@@ -37,15 +38,29 @@ function parseArgs(argv) {
   return Object.freeze({ transactionId: result["--transaction-id"], sourceRoot: path.resolve(result["--source-root"]), transactionRoot: path.resolve(result["--transaction-root"]) });
 }
 
-async function restartSourceRuntime({ sourceRoot, previousSourceRoot, execFileImpl = execFile, env = process.env }) {
+export async function restartEquinoxLocalMainSourceRuntime({
+  sourceRoot,
+  previousSourceRoot,
+  platform = process.platform,
+  execFileImpl = execFile,
+  env = process.env,
+  fsImpl = fs,
+  requestWindowsRestartImpl = requestWindowsShellRuntimeRestart,
+} = {}) {
+  if (platform === "win32") {
+    await requestWindowsRestartImpl({ platform: "win32" });
+    return Object.freeze({ requested: true, platform: "win32" });
+  }
+  if (platform !== "darwin") throw new Error("Main source runtime restart is unsupported on this platform.");
   const scriptPath = path.join(sourceRoot, "scripts", "restart-runtime.sh");
-  const stat = await fs.lstat(scriptPath);
+  const stat = await fsImpl.lstat(scriptPath);
   if (!stat.isFile() || stat.isSymbolicLink()) throw new Error("Main update restart script is unsafe.");
   await execFileImpl("/bin/bash", [scriptPath, "--worker"], {
     timeout: 180_000,
     maxBuffer: 2 * 1024 * 1024,
     env: { ...env, EQUINOX_LOCAL_PREVIOUS_SOURCE_ROOT: previousSourceRoot },
   });
+  return Object.freeze({ requested: true, platform: "darwin" });
 }
 
 async function waitForExactSourceHealth({ sha, sourceRoot, pointerPath, fetchImpl = globalThis.fetch, sleepImpl = (ms) => new Promise((resolve) => setTimeout(resolve, ms)), attempts = HEALTH_ATTEMPTS }) {
@@ -86,7 +101,7 @@ export async function runEquinoxLocalMainUpdateWorker({
   prepareNativeLifecycle = prepareEquinoxLocalMainNativeLifecycle,
   recoverNativeLifecycle = recoverEquinoxLocalMainNativeLifecycle,
   handoffImpl = runEquinoxLocalMainUpdateHandoff,
-  restartRuntimeImpl = (value) => restartSourceRuntime({ ...value, execFileImpl, env }),
+  restartRuntimeImpl = (value) => restartEquinoxLocalMainSourceRuntime({ ...value, execFileImpl, env, fsImpl }),
   verifyRuntimeImpl,
   cleanupImpl = (value) => cleanupEquinoxLocalMainUpdateWorkerOwnership({ ...value, execFileImpl, fsImpl, uid }),
 } = {}) {
