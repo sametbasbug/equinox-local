@@ -230,6 +230,7 @@ test("Windows runtime harness links and owns only its new shell diagnostics", as
     fs.readFile(path.join(harnessRoot, "Program.cs"), "utf8"),
   ]);
   assert.match(project, /WindowsShellDiagnostics\.cs/u);
+  assert.match(project, /WindowsManagedSourceRuntimeLocator\.cs/u);
   assert.match(program, /diagnosticLogExisted = File\.Exists\(diagnosticLog\)/u);
   assert.match(program, /if \(!diagnosticLogExisted\)/u);
   assert.match(program, /File\.Delete\(diagnosticLog\)/u);

@@ -11,5 +11,6 @@
     <Compile Include="../../../native/windows/EquinoxLocal.WindowsShell/RuntimeSupervisor.cs" Link="RuntimeSupervisor.cs" />
     <Compile Include="../../../native/windows/EquinoxLocal.WindowsShell/WindowsShellDiagnostics.cs" Link="WindowsShellDiagnostics.cs" />
     <Compile Include="../../../native/windows/EquinoxLocal.WindowsShell/WindowsManagedReleaseLocator.cs" Link="WindowsManagedReleaseLocator.cs" />
+    <Compile Include="../../../native/windows/EquinoxLocal.WindowsShell/WindowsManagedSourceRuntimeLocator.cs" Link="WindowsManagedSourceRuntimeLocator.cs" />
   </ItemGroup>
 </Project>
