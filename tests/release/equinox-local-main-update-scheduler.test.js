@@ -37,6 +37,23 @@ test("main update handoff is transferred to a one-shot launchd-owned worker", as
   assert.equal((await fs.stat(result.plistPath)).mode & 0o077, 0);
 });
 
+test("Windows Main handoff sends only transaction identity to the trusted shell", async () => {
+  const calls = [];
+  const result = await scheduleEquinoxLocalMainUpdateWorker({
+    transactionId: TX,
+    sourceRoot: "C:\\Users\\Example\\AppData\\Local\\Equinox Local\\state\\main-update\\sources\\1111111111111111111111111111111111111111",
+    transactionRoot: "C:\\Users\\Example\\AppData\\Local\\Equinox Local\\state\\main-update",
+    workerPath: "C:\\Users\\Example\\AppData\\Local\\Equinox Local\\state\\main-update\\sources\\2222222222222222222222222222222222222222\\src\\equinox-local-main-update-worker.js",
+    platform: "win32",
+    fsImpl: { lstat: async () => ({ isFile: () => true, isSymbolicLink: () => false }) },
+    execFileImpl: async () => assert.fail("Windows scheduler must not invoke launchctl or arbitrary commands"),
+    requestWindowsHandoffImpl: async (...args) => { calls.push(args); return { requested: true, transactionId: TX }; },
+  });
+  assert.equal(result.scheduled, true);
+  assert.equal(result.platform, "win32");
+  assert.deepEqual(calls, [[TX, { platform: "win32" }]]);
+});
+
 test("launchd bootstrap failure removes the unpublished worker plist", async (t) => {
   const root = await fs.mkdtemp(path.join(await fs.realpath(os.tmpdir()), "equinox-scheduler-fail-"));
   t.after(() => fs.rm(root, { recursive: true, force: true }));
