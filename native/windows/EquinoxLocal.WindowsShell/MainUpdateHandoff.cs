@@ -173,8 +173,7 @@ internal static partial class MainUpdateHandoff
             startTimeUtcTicks,
             token,
             nodePath,
-        }) + "
-";
+        }) + "\n";
         if (Encoding.UTF8.GetByteCount(body) > 8 * 1024)
             throw new InvalidDataException("Main update worker ownership record exceeds the size limit.");
 
