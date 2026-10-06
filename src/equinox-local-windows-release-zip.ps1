@@ -1,7 +1,8 @@
 param(
   [Parameter(Mandatory=$true)][ValidateSet('Inspect','Extract')][string]$Mode,
   [Parameter(Mandatory=$true)][string]$ArchivePath,
-  [string]$DestinationPath
+  [string]$DestinationPath,
+  [string]$ExpectedRoot = 'release'
 )
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.IO.Compression
@@ -41,8 +42,10 @@ public static class EquinoxWindowsReleaseZip
         }
     }
 
-    static List<Item> ValidateArchive(ZipArchive zip, out long bytes)
+    static List<Item> ValidateArchive(ZipArchive zip, string expectedRoot, out long bytes)
     {
+        if (String.IsNullOrEmpty(expectedRoot) || expectedRoot.IndexOf('/') >= 0 || expectedRoot.IndexOf('\\') >= 0) throw new InvalidDataException("ZIP expected root is invalid.");
+        ValidateSegment(expectedRoot);
         var items = new List<Item>();
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         bytes = 0;
@@ -55,7 +58,7 @@ public static class EquinoxWindowsReleaseZip
             string name = directory ? raw.Substring(0, raw.Length - 1) : raw;
             if (String.IsNullOrEmpty(name) || name.StartsWith("/", StringComparison.Ordinal)) throw new InvalidDataException("ZIP entries must be relative paths.");
             string[] parts = name.Split('/');
-            if (parts.Length == 0 || !String.Equals(parts[0], "release", StringComparison.Ordinal)) throw new InvalidDataException("ZIP must contain only the release/ tree.");
+            if (parts.Length == 0 || !String.Equals(parts[0], expectedRoot, StringComparison.Ordinal)) throw new InvalidDataException("ZIP escaped the expected archive root.");
             foreach (string part in parts) ValidateSegment(part);
             string key = String.Join("/", parts);
             if (!seen.Add(key)) throw new InvalidDataException("ZIP contains a case-insensitive duplicate path.");
@@ -79,12 +82,12 @@ public static class EquinoxWindowsReleaseZip
 
     static string Summary(int entries, long bytes) { return String.Format("{{\"entryCount\":{0},\"extractedBytes\":{1}}}", entries, bytes); }
 
-    public static string Inspect(string archivePath)
+    public static string Inspect(string archivePath, string expectedRoot)
     {
         using (FileStream stream = File.Open(archivePath, FileMode.Open, FileAccess.Read, FileShare.Read))
         using (ZipArchive zip = new ZipArchive(stream, ZipArchiveMode.Read, false)) {
             long bytes;
-            List<Item> items = ValidateArchive(zip, out bytes);
+            List<Item> items = ValidateArchive(zip, expectedRoot, out bytes);
             return Summary(items.Count, bytes);
         }
     }
@@ -119,7 +122,7 @@ public static class EquinoxWindowsReleaseZip
         }
     }
 
-    public static string Extract(string archivePath, string destinationPath)
+    public static string Extract(string archivePath, string destinationPath, string expectedRoot)
     {
         string destination = Path.GetFullPath(destinationPath);
         if (Directory.Exists(destination) || File.Exists(destination)) throw new InvalidDataException("Extraction destination must not already exist.");
@@ -129,7 +132,7 @@ public static class EquinoxWindowsReleaseZip
             using (FileStream stream = File.Open(archivePath, FileMode.Open, FileAccess.Read, FileShare.Read))
             using (ZipArchive zip = new ZipArchive(stream, ZipArchiveMode.Read, false)) {
                 long expectedBytes;
-                List<Item> items = ValidateArchive(zip, out expectedBytes);
+                List<Item> items = ValidateArchive(zip, expectedRoot, out expectedBytes);
                 foreach (Item item in items) {
                     string[] parts = item.Name.Split('/');
                     string target = destination;
@@ -163,8 +166,8 @@ public static class EquinoxWindowsReleaseZip
 $archive = [System.IO.Path]::GetFullPath($ArchivePath)
 if (-not [System.IO.File]::Exists($archive)) { throw 'Windows release ZIP is missing.' }
 if ($Mode -eq 'Inspect') {
-  [EquinoxWindowsReleaseZip]::Inspect($archive)
+  [EquinoxWindowsReleaseZip]::Inspect($archive, $ExpectedRoot)
 } else {
   if ([string]::IsNullOrWhiteSpace($DestinationPath)) { throw 'DestinationPath is required for extraction.' }
-  [EquinoxWindowsReleaseZip]::Extract($archive, [System.IO.Path]::GetFullPath($DestinationPath))
+  [EquinoxWindowsReleaseZip]::Extract($archive, [System.IO.Path]::GetFullPath($DestinationPath), $ExpectedRoot)
 }

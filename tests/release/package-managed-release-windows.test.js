@@ -103,6 +103,9 @@ test("Windows pinned dependency ZIP extraction uses bounded native tar instead o
 
 test("Windows release ZIP helper explicitly references compression assemblies for PowerShell 5.1", async () => {
   const helper = await fs.readFile(new URL("../../src/equinox-local-windows-release-zip.ps1", import.meta.url), "utf8");
+  assert.match(helper, /\$ExpectedRoot = 'release'/u);
+  assert.match(helper, /ValidateArchive\(zip, expectedRoot/u);
+  assert.match(helper, /escaped the expected archive root/u);
   assert.match(helper, /ZipArchive\]\.Assembly\.Location/u);
   assert.match(helper, /ZipFile\]\.Assembly\.Location/u);
   assert.match(helper, /-ReferencedAssemblies @\(\$CompressionAssembly, \$CompressionFileSystemAssembly\)/u);
