@@ -732,8 +732,8 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
   main-snapshot-publish:
-    needs: [main-native-plan, main-native-build, main-native-result]
-    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.main-native-plan.outputs.main-update-impact == 'true' && needs.main-native-result.result == 'success' }}
+    needs: [test, macos-x64, windows-headless, main-native-plan, main-native-build, main-native-result]
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.test.result == 'success' && needs.macos-x64.result == 'success' && needs.windows-headless.result == 'success' && needs.main-native-plan.outputs.main-update-impact == 'true' && needs.main-native-result.result == 'success' }}
     name: Publish Main Snapshot
     runs-on: ubuntu-latest
     timeout-minutes: 15

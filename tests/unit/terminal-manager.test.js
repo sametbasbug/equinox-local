@@ -583,3 +583,9 @@ slowIntegrationTest("natural PTY shell exit also drains resistant background job
     await fs.rm(fixture.root, { recursive: true, force: true });
   }
 });
+
+
+test("Windows PTY default readiness window remains bounded but tolerates slow host startup", async () => {
+  const source = await fs.readFile(new URL("../../src/terminal-manager.js", import.meta.url), "utf8");
+  assert.match(source, /DEFAULT_WINDOWS_PTY_READY_TIMEOUT_MS = 10_000/u);
+});
