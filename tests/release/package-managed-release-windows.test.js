@@ -142,6 +142,8 @@ test("Windows native launcher toolchain is target-specific and architecture-veri
   assert.match(source, /vcvars64\.bat/u);
   assert.match(source, /vcvarsarm64\.bat/u);
   assert.match(source, /vcvarsamd64_arm64\.bat/u);
+  assert.match(source, /EQUINOX_WINDOWS_BROWSER_LAUNCHER_PATH/u);
+  assert.match(source, /copyPrecompiledBrowserLauncher/u);
   assert.ok(source.includes('call "${vcvars}" >nul'));
   assert.match(source, /\.compile-browser-launcher\.cmd/u);
   assert.doesNotMatch(source, /windowsVerbatimArguments:\s*true/u);

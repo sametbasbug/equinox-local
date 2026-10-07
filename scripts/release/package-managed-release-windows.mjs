@@ -333,6 +333,19 @@ async function compileBrowserLauncher(rootDir, releaseDir, contract) {
   }
 }
 
+async function copyPrecompiledBrowserLauncher(browserLauncherPath, releaseDir, contract) {
+  const source = path.resolve(browserLauncherPath);
+  const stat = await fs.lstat(source);
+  if (!stat.isFile() || stat.isSymbolicLink()) throw new Error("Precompiled Windows Native Messaging launcher is unavailable or unsafe.");
+  const machine = await portableExecutableMachine(source);
+  if (machine !== contract.peMachine) {
+    throw new Error(`Precompiled Windows Native Messaging launcher architecture mismatch for ${contract.target}: 0x${machine.toString(16)}.`);
+  }
+  const browserDir = path.join(releaseDir, "runtime", "browser");
+  await fs.mkdir(browserDir, { recursive: true });
+  await fs.copyFile(source, path.join(browserDir, "equinox-browser-native-host.exe"));
+}
+
 async function createManagedZip(rootDir, releaseDir, artifactPath) {
   const helper = path.join(path.dirname(fileURLToPath(import.meta.url)), "windows-managed-zip.ps1");
   await fs.rm(artifactPath, { force: true });
@@ -356,6 +369,7 @@ export async function packageManagedEquinoxWindowsRelease({
   outputDir = path.join(rootDir, "backups", "local-packages"),
   target = process.env.EQUINOX_WINDOWS_PACKAGE_TARGET || `${process.platform}-${process.arch}`,
   shellPublishDir = process.env.EQUINOX_WINDOWS_SHELL_PUBLISH_DIR || null,
+  browserLauncherPath = process.env.EQUINOX_WINDOWS_BROWSER_LAUNCHER_PATH || null,
   fetchImpl = globalThis.fetch,
 } = {}) {
   const hostTarget = `${process.platform}-${process.arch}`;
@@ -379,7 +393,9 @@ export async function packageManagedEquinoxWindowsRelease({
       installPinnedWindowsTunnel(transaction, releaseDir, fetchImpl, target),
       installPinnedWindowsWinapp(transaction, rootDir, releaseDir, fetchImpl, target),
       copyPublishedShell(rootDir, releaseDir, resolvedShellPublishDir),
-      compileBrowserLauncher(rootDir, releaseDir, contract),
+      browserLauncherPath
+        ? copyPrecompiledBrowserLauncher(browserLauncherPath, releaseDir, contract)
+        : compileBrowserLauncher(rootDir, releaseDir, contract),
     ]);
     const preparationFailure = preparationResults.find((result) => result.status === "rejected");
     if (preparationFailure) throw preparationFailure.reason;

@@ -134,6 +134,10 @@ test("one maintained ARM64 package producer exposes exact artifact identity", ()
   assert.match(producer, /id: package\n\s+uses: \.\/\.github\/actions\/prepare-arm64-package/u);
   assert.match(prepare, /using: composite/u);
   assert.match(prepare, /architecture: x64/u);
+  assert.match(prepare, /Cross-compile ARM64 Native Messaging launcher/u);
+  assert.match(prepare, /vcvarsamd64_arm64\.bat/u);
+  assert.match(prepare, /EQUINOX_WINDOWS_BROWSER_LAUNCHER_PATH/u);
+  assert.match(prepare, /machine -ne 0xAA64/u);
   assert.match(prepare, /process\.platform/u);
   assert.match(prepare, /process\.arch/u);
   assert.match(prepare, /v26\.10\.0/u);
