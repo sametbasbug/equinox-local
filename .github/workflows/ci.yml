@@ -346,6 +346,49 @@ jobs:
           & powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File tests/release/windows-winapp-smoke.ps1 -WinappPath (Join-Path $extract 'release/runtime/winapp/winapp.exe') -FixturePath (Join-Path $fixtureOut 'EquinoxLocal.WinappSmokeFixture.exe') -ClipboardHelperPath (Join-Path $extract 'release/equinox-local-windows-clipboard.ps1') -DesktopHelperPath (Join-Path $extract 'release/equinox-local-windows-desktop.ps1')
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+  windows-x64-installer:
+    name: Windows x64 public installer acceptance
+    runs-on: windows-latest
+    timeout-minutes: 12
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 26.10.0
+          architecture: x64
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --prefer-offline --no-audit --no-fund
+
+      - name: Set up .NET SDK
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Build native x64 managed package
+        shell: pwsh
+        env:
+          EQUINOX_WINDOWS_SHELL_PUBLISH_DIR: artifacts/windows-shell/win-x64
+        run: |
+          dotnet publish native/windows/EquinoxLocal.WindowsShell/EquinoxLocal.WindowsShell.csproj --configuration Release --runtime win-x64 --self-contained true -p:Platform=x64 --output artifacts/windows-shell/win-x64
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          npm run local:release:package:windows
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Windows x64 real public-installer fresh-install managed-source acceptance
+        shell: pwsh
+        run: |
+          $artifact = Get-ChildItem backups/local-packages -Filter 'equinox-local-*-win32-x64.zip' | Select-Object -First 1
+          if ($null -eq $artifact) { throw 'Windows x64 managed ZIP artifact was not found for fresh-install acceptance' }
+          $env:EQUINOX_WINDOWS_INSTALL_ARTIFACT = $artifact.FullName
+          & powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File tests/release/windows-installer-real-package-smoke.ps1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
   windows-arm64-shared-core:
     name: Windows ARM64 shared core / Node 26
     runs-on: windows-11-vs2026-arm
@@ -575,7 +618,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 2
     if: ${{ always() }}
-    needs: [windows-runtime, windows-shell, windows-package, windows-arm64-shared-core, windows-arm64-bootstrap, windows-arm64-foundation]
+    needs: [windows-runtime, windows-shell, windows-package, windows-x64-installer, windows-arm64-shared-core, windows-arm64-bootstrap, windows-arm64-foundation]
 
     steps:
       - name: Verify parallel Windows acceptance
@@ -583,6 +626,7 @@ jobs:
           RUNTIME_RESULT: ${{ needs.windows-runtime.result }}
           SHELL_RESULT: ${{ needs.windows-shell.result }}
           PACKAGE_RESULT: ${{ needs.windows-package.result }}
+          X64_INSTALLER_RESULT: ${{ needs.windows-x64-installer.result }}
           ARM64_SHARED_RESULT: ${{ needs.windows-arm64-shared-core.result }}
           ARM64_BOOTSTRAP_RESULT: ${{ needs.windows-arm64-bootstrap.result }}
           ARM64_RESULT: ${{ needs.windows-arm64-foundation.result }}
@@ -590,6 +634,7 @@ jobs:
           test "$RUNTIME_RESULT" = success
           test "$SHELL_RESULT" = success
           test "$PACKAGE_RESULT" = success
+          test "$X64_INSTALLER_RESULT" = success
           test "$ARM64_SHARED_RESULT" = success
           test "$ARM64_BOOTSTRAP_RESULT" = success
           test "$ARM64_RESULT" = success

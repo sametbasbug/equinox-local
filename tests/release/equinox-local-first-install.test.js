@@ -274,6 +274,62 @@ test("fresh source-provenance install stays Stable-first, then enrolls and verif
   }
 });
 
+test("managed-source health failure rolls identity back and restores healthy Stable runtime", async () => {
+  const fixture = await createFixture("5.2.1");
+  const uid = typeof process.getuid === "function" ? process.getuid() : 501;
+  const sourceSha = "d".repeat(40);
+  const metadataPath = path.join(fixture.releaseDir, "release.json");
+  const metadata = JSON.parse(await fs.readFile(metadataPath, "utf8"));
+  await fs.writeFile(metadataPath, `${JSON.stringify({ ...metadata, sourceSha })}\n`);
+  const transactionRoot = path.join(fixture.installRoot, "state", "main-update");
+  const installStampPath = path.join(transactionRoot, "install.json");
+  const sourcePointerPath = path.join(transactionRoot, "current-source.conf");
+  const events = [];
+  try {
+    await assert.rejects(
+      installManagedEquinoxRelease({
+        stagedReleaseDir: fixture.releaseDir,
+        homeDir: fixture.homeDir,
+        uid,
+        platform: "darwin",
+        target: TARGET,
+        readCurrentImpl: async () => null,
+        bootstrapImpl: async () => ({ configCreated: true, controlCenterUrl: "http://127.0.0.1:24891/" }),
+        execFileImpl: async (command, args) => { events.push(["exec", command, args[0]]); return { stdout: "", stderr: "" }; },
+        waitForVersionImpl: async (version) => { events.push(["stable-health", version]); return true; },
+        enrollManagedSourceImpl: async () => {
+          await fs.mkdir(transactionRoot, { recursive: true });
+          await fs.writeFile(installStampPath, `${JSON.stringify({ schemaVersion: 1, channel: "main", repository: "sametbasbug/equinox-local", branch: "main", bootstrapSha: sourceSha })}\n`, { mode: 0o600 });
+          await fs.writeFile(sourcePointerPath, `schemaVersion=1\nsourceRoot=${path.join(transactionRoot, "sources", sourceSha)}\nsha=${sourceSha}\n`, { mode: 0o600 });
+          events.push(["enrolled"]);
+          return { status: "enrolled", bootstrapSha: sourceSha };
+        },
+        waitForManagedSourceImpl: async () => { events.push(["source-health-failed"]); throw new Error("synthetic exact source health failure"); },
+        rollbackManagedSourceImpl: async () => {
+          events.push(["rollback"]);
+          await fs.rm(installStampPath, { force: false });
+          await fs.rm(sourcePointerPath, { force: false });
+          return { rolledBack: true, bootstrapSha: sourceSha };
+        },
+      }),
+      (error) => {
+        assert.match(error.message, /synthetic exact source health failure/u);
+        assert.match(error.message, /Stable Equinox Local remains installed and was restored healthy/u);
+        return true;
+      },
+    );
+    await assert.rejects(fs.lstat(installStampPath), { code: "ENOENT" });
+    await assert.rejects(fs.lstat(sourcePointerPath), { code: "ENOENT" });
+    const failed = events.findIndex((event) => event[0] === "source-health-failed");
+    const rollback = events.findIndex((event) => event[0] === "rollback");
+    assert.equal(rollback > failed, true);
+    assert.equal(events.filter((event) => event[0] === "stable-health").length, 2);
+    assert.equal(events.filter((event) => event[0] === "exec" && event[1] === "/bin/launchctl" && event[2] === "bootstrap").length, 3);
+  } finally {
+    await fs.rm(fixture.homeDir, { recursive: true, force: true });
+  }
+});
+
 test("fresh activation failure preserves the verified release and reports bounded LaunchAgent diagnostics", async () => {
   const fixture = await createFixture("5.2.0");
   const uid = typeof process.getuid === "function" ? process.getuid() : 501;

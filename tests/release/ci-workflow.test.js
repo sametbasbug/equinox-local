@@ -87,6 +87,21 @@ test("Main snapshot publication waits for real macOS managed-source fresh-instal
   assert.match(publish, /needs\.macos-managed-source\.result == 'success'/u);
 });
 
+test("real public installer enters managed-source on native Windows x64 and ARM64", async () => {
+  const smoke = await fs.readFile(new URL("./windows-installer-real-package-smoke.ps1", import.meta.url), "utf8");
+  const x64 = job("windows-x64-installer");
+  const arm64 = job("windows-arm64-installer");
+  assert.match(x64, /name: Windows x64 public installer acceptance/u);
+  assert.match(x64, /runs-on: windows-latest/u);
+  assert.match(x64, /win-x64/u);
+  assert.match(x64, /windows-installer-real-package-smoke\.ps1/u);
+  assert.match(arm64, /windows-installer-real-package-smoke\.ps1/u);
+  assert.match(smoke, /installation\.kind -ceq 'managed-source'/u);
+  assert.match(smoke, /installation\.sourceSha -ceq \$SourceSha/u);
+  assert.match(smoke, /runtime\\toolchain\\git\\2\.53\.0-4/u);
+  assert.match(smoke, /runtime\\toolchain\\node\\26\.10\.0/u);
+});
+
 test("managed-source runtime acceptance runs on real Windows x64 and ARM64 hosts", () => {
   const x64 = job("windows-shell");
   const arm64 = job("windows-arm64-package");
@@ -144,7 +159,7 @@ test("stable ARM64 and Windows aggregate checks reject every non-success depende
   assert.match(foundation, /name: Windows ARM64 foundation \/ Node 26/u);
   assertSuccessGate(foundation, "ARM64 foundation", arm64Lanes);
   assertSuccessGate(job("windows-headless"), "Windows aggregate", [
-    "windows-runtime", "windows-shell", "windows-package", "windows-arm64-shared-core", "windows-arm64-bootstrap", "windows-arm64-foundation",
+    "windows-runtime", "windows-shell", "windows-package", "windows-x64-installer", "windows-arm64-shared-core", "windows-arm64-bootstrap", "windows-arm64-foundation",
   ]);
 });
 
