@@ -492,8 +492,12 @@ jobs:
           if ((node -p "process.arch") -ne 'arm64') { throw 'ARM64 lane is not running native ARM64 Node' }
           if ((node --version) -ne 'v26.10.0') { throw 'ARM64 lane Node version drifted' }
 
-      - name: Install dependencies
-        run: npm ci --prefer-offline --no-audit --no-fund
+      - parallel:
+          - name: Install dependencies
+            run: npm ci --prefer-offline --no-audit --no-fund
+
+          - name: Fresh product-owned ARM64 toolchain provisioning acceptance
+            run: node tests/release/windows-toolchain-provision-smoke.mjs
 
       - name: Native CI input success and failure propagation smoke
         shell: pwsh
@@ -667,6 +671,13 @@ jobs:
               name: windows-arm64-managed-package-${{ github.sha }}
               path: ${{ runner.temp }}/arm64-package
 
+      - name: Restore admitted ARM64 product-owned toolchain cache
+        id: arm64-toolchain-cache
+        uses: actions/cache@v6
+        with:
+          path: ~/AppData/Local/Equinox Local/runtime/toolchain
+          key: equinox-toolchain-win32-arm64-v1-${{ hashFiles('src/equinox-local-runtime-versions.js', 'src/equinox-local-toolchain-contract.js', 'src/equinox-local-toolchain-provisioner.js', 'src/equinox-local-windows-release-zip.ps1') }}
+
       - name: Verify and run ARM64 real public-installer fresh-install acceptance
         shell: pwsh
         env:
@@ -675,6 +686,8 @@ jobs:
           EQUINOX_WINDOWS_INSTALL_VERSION: ${{ needs.windows-arm64-package-build.outputs.version }}
           EQUINOX_WINDOWS_INSTALL_TARGET: ${{ needs.windows-arm64-package-build.outputs.target }}
           EQUINOX_WINDOWS_INSTALL_SOURCE_SHA: ${{ needs.windows-arm64-package-build.outputs.source_sha }}
+          EQUINOX_WINDOWS_TOOLCHAIN_CACHE_MODE: enabled
+          EQUINOX_WINDOWS_TOOLCHAIN_CACHE_HIT: ${{ steps.arm64-toolchain-cache.outputs.cache-hit }}
         run: |
           $artifact = Get-ChildItem (Join-Path $env:RUNNER_TEMP 'arm64-package') -Filter 'equinox-local-*-win32-arm64.zip' | Select-Object -First 1
           if ($null -eq $artifact) { throw 'Windows ARM64 managed ZIP artifact was not found for fresh-install acceptance' }
