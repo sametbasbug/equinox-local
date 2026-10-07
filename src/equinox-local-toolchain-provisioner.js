@@ -306,7 +306,8 @@ async function validateComponentIdentity(root, component, contract, { platform, 
 async function defaultExtractComponent({ archivePath, extractionRoot, component, platform, env, execFileImpl, windowsZipHelperPath }) {
   if (component.distribution.filename.endsWith(".zip")) {
     if (platform !== "win32") throw new Error("ZIP toolchain extraction is only supported on Windows.");
-    await runWindowsZipHelper("Inspect", archivePath, null, component.archiveRoot, { env, execFileImpl, helperPath: windowsZipHelperPath });
+    // Extract validates the bounded ZIP central directory before writing and then validates the extracted tree.
+    // Avoid a redundant standalone Inspect pass on the same already hash-verified archive.
     await runWindowsZipHelper("Extract", archivePath, extractionRoot, component.archiveRoot, { env, execFileImpl, helperPath: windowsZipHelperPath });
     return;
   }

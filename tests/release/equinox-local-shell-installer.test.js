@@ -76,8 +76,9 @@ test("public Windows installer selects only native x64/ARM64 targets, stays fixe
   assert.match(source, /Assert-NormalDirectory \$stagingRoot \$true/u);
   assert.match(source, /\$stage = Join-Path \$stagingRoot \('bootstrap-' \+ \[Guid\]::NewGuid\(\)\.ToString\('N'\)\)/u);
   assert.match(source, /ReparsePoint/u);
-  assert.match(source, /-Mode Inspect -ArchivePath \$artifactPath/u);
+  assert.doesNotMatch(source, /-Mode Inspect -ArchivePath \$artifactPath/u);
   assert.match(source, /-Mode Extract -ArchivePath \$artifactPath -DestinationPath \$stage/u);
+  assert.match(source, /Extract performs the same bounded central-directory validation/u);
   assert.match(source, /runtime\\node\\bin\\node\.exe/u);
   assert.match(source, /equinox-local-first-install\.js/u);
   assert.match(source, /EnvironmentVariables\.Clear\(\)/u);

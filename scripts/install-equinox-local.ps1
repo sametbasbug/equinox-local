@@ -141,8 +141,8 @@ function Invoke-EquinoxLocalInstall {
     Save-BoundedHttpsFile $manifest.ArtifactUrl $artifactPath $manifest.ArtifactBytes
     Assert-NormalFile $artifactPath $manifest.ArtifactBytes $manifest.ArtifactBytes | Out-Null
     if ((Get-Sha256 $artifactPath) -cne $manifest.ArtifactSha256) { Fail 'downloaded release SHA-256 verification failed' }
-    & "$PSHOME\powershell.exe" -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $helperPath -Mode Inspect -ArchivePath $artifactPath | Out-Null
-    if ($LASTEXITCODE -ne 0) { Fail 'verified release ZIP inspection failed' }
+    # Extract performs the same bounded central-directory validation before writing any entry,
+    # so a separate Inspect pass would only scan the verified archive twice.
     & "$PSHOME\powershell.exe" -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $helperPath -Mode Extract -ArchivePath $artifactPath -DestinationPath $stage | Out-Null
     if ($LASTEXITCODE -ne 0) { Fail 'verified release ZIP extraction failed' }
     $release = Join-Path $stage 'release'
