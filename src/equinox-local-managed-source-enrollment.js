@@ -176,6 +176,7 @@ export async function enrollEquinoxLocalManagedSource({
   readPointerImpl = readEquinoxLocalMainSourcePointer,
   writePointerImpl = writeEquinoxLocalMainSourcePointer,
   randomBytesImpl = randomBytes,
+  mainRemote = EQUINOX_LOCAL_MAIN_REMOTE,
 } = {}) {
   const sha = assertSha(bootstrapSha);
   const layout = equinoxLocalPlatformPaths({ platform, arch, homeDir, env });
@@ -217,7 +218,8 @@ export async function enrollEquinoxLocalManagedSource({
     }
     if (!durable?.eligible || durable.currentSha !== sha) {
       if (durable) throw new Error("Existing managed-source bootstrap checkout is invalid.");
-      await run(contract.gitPath, ["clone", "--no-checkout", "--filter=blob:none", "--single-branch", "--branch", EQUINOX_LOCAL_MAIN_BRANCH, EQUINOX_LOCAL_MAIN_REMOTE, stagedSourceRoot], { execFileImpl, env, platform });
+      if (typeof mainRemote !== "string" || mainRemote.length < 1) throw new Error("Managed-source canonical remote is unavailable.");
+      await run(contract.gitPath, ["clone", "--no-checkout", "--filter=blob:none", "--single-branch", "--branch", EQUINOX_LOCAL_MAIN_BRANCH, mainRemote, stagedSourceRoot], { execFileImpl, env, platform });
       await run(contract.gitPath, ["-C", stagedSourceRoot, "checkout", "--force", "-B", EQUINOX_LOCAL_MAIN_BRANCH, sha], { execFileImpl, env, platform });
       const staged = await inspectCheckoutImpl(stagedSourceRoot, { fsImpl, execFileImpl, gitPath: contract.gitPath });
       if (!staged?.eligible || staged.currentSha !== sha) throw new Error("Managed-source bootstrap checkout does not match the Stable source SHA.");

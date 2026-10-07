@@ -42,6 +42,12 @@ test("CI retains full product validation while skipping only the explicit docs-o
   assert.match(job("test"), /name: macOS ARM64 \/ Node 26/u);
   assert.match(job("test"), /darwin-arm64/u);
   assert.match(job("test"), /run: npm test\n/u);
+  const managedSource = job("macos-managed-source");
+  assert.match(managedSource, /name: macOS ARM64 managed-source fresh install/u);
+  assert.match(managedSource, /runs-on: macos-latest/u);
+  assert.match(managedSource, /npm run local:release:package/u);
+  assert.match(managedSource, /node tests\/release\/smoke-managed-install\.mjs/u);
+  assert.doesNotMatch(managedSource, /^    (?:needs|if):/mu);
   assert.match(job("macos-x64"), /name: macOS x64 \/ Node 26/u);
   assert.match(job("macos-x64"), /runs-on: macos-15-intel/u);
   assert.match(job("macos-x64"), /architecture: x64/u);
@@ -73,6 +79,12 @@ test("ARM64 runtime retains native lifecycle, PTY and messaging acceptance", () 
     "node tests/release/windows-node-pty-smoke.mjs",
     "node tests/release/windows-native-messaging-smoke.mjs",
   ]) assert.ok(block.includes(command), `Missing native acceptance: ${command}`);
+});
+
+test("Main snapshot publication waits for real macOS managed-source fresh-install acceptance", () => {
+  const publish = job("main-snapshot-publish");
+  assert.match(publish, /needs: \[test, macos-managed-source, macos-x64, windows-headless, main-native-plan, main-native-build, main-native-result\]/u);
+  assert.match(publish, /needs\.macos-managed-source\.result == 'success'/u);
 });
 
 test("managed-source runtime acceptance runs on real Windows x64 and ARM64 hosts", () => {

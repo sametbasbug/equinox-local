@@ -74,6 +74,35 @@ jobs:
       - name: Test
         run: npm test
 
+  macos-managed-source:
+    name: macOS ARM64 managed-source fresh install
+    runs-on: macos-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 26.10.0
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --prefer-offline --no-audit --no-fund
+
+      - name: Verify ARM64 host
+        run: test "$(node -p process.platform)-$(node -p process.arch)" = "darwin-arm64"
+
+      - name: Build source-provenance Stable package
+        run: npm run local:release:package
+
+      - name: Real managed-source fresh-install acceptance
+        run: node tests/release/smoke-managed-install.mjs
+
   macos-x64:
     name: macOS x64 / Node 26
     runs-on: macos-15-intel
@@ -732,8 +761,8 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
   main-snapshot-publish:
-    needs: [test, macos-x64, windows-headless, main-native-plan, main-native-build, main-native-result]
-    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.test.result == 'success' && needs.macos-x64.result == 'success' && needs.windows-headless.result == 'success' && needs.main-native-plan.outputs.main-update-impact == 'true' && needs.main-native-result.result == 'success' }}
+    needs: [test, macos-managed-source, macos-x64, windows-headless, main-native-plan, main-native-build, main-native-result]
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.test.result == 'success' && needs.macos-managed-source.result == 'success' && needs.macos-x64.result == 'success' && needs.windows-headless.result == 'success' && needs.main-native-plan.outputs.main-update-impact == 'true' && needs.main-native-result.result == 'success' }}
     name: Publish Main Snapshot
     runs-on: ubuntu-latest
     timeout-minutes: 15
