@@ -97,7 +97,7 @@ test("architecture-neutral Windows contract lanes stay off scarce ARM64 runners"
 test("ARM64 runtime retains native lifecycle, PTY and messaging acceptance", () => {
   const block = job("windows-arm64-runtime");
   assert.match(block, /architecture: arm64/u);
-  assert.match(block, /parallel:[\s\S]*run: npm ci --prefer-offline --no-audit --no-fund[\s\S]*Fresh product-owned ARM64 toolchain provisioning acceptance[\s\S]*windows-toolchain-provision-smoke\.mjs/u);
+  assert.match(block, /run: npm ci --prefer-offline --no-audit --no-fund/u);
   for (const command of [
     "node --test tests/unit/equinox-local-platform.test.js tests/release/equinox-local-windows-arm64-lifecycle.test.js",
     "npm run smoke:windows-headless",
@@ -129,11 +129,6 @@ test("real public installer enters managed-source on native Windows x64 and ARM6
   assert.match(smoke, /New-Item -ItemType HardLink/u);
   assert.match(smoke, /runtime\\toolchain\\git\\2\.53\.0-4/u);
   assert.match(smoke, /runtime\\toolchain\\node\\26\.10\.0/u);
-  assert.match(smoke, /Windows fresh-install timing:/u);
-  assert.match(smoke, /gitToolchain/u);
-  assert.match(smoke, /nodeToolchain/u);
-  assert.match(smoke, /sourceNodeModules/u);
-  assert.match(smoke, /installStamp/u);
 });
 
 test("managed-source runtime acceptance runs on real Windows x64 and ARM64 hosts", () => {
@@ -183,12 +178,6 @@ test("ARM64 artifact consumers verify producer identity before acceptance", () =
   assert.match(installer, /EQUINOX_WINDOWS_INSTALL_SOURCE_SHA: \$\{\{ needs\.windows-arm64-package-build\.outputs\.source_sha \}\}/u);
   assert.doesNotMatch(installer, /Get-FileHash -LiteralPath \$artifact\.FullName -Algorithm SHA256/u);
   assert.match(installer, /EQUINOX_WINDOWS_INSTALL_ARTIFACT/u);
-  assert.match(installer, /Restore admitted ARM64 product-owned toolchain cache/u);
-  assert.match(installer, /key: equinox-toolchain-win32-arm64-v2-/u);
-  assert.match(installer, /restore-keys:[\s\S]*equinox-toolchain-win32-arm64-v1-/u);
-  assert.match(installer, /path: ~\/AppData\/Local\/Equinox Local\/runtime\/toolchain/u);
-  assert.match(installer, /EQUINOX_WINDOWS_TOOLCHAIN_CACHE_MODE: enabled/u);
-  assert.match(installer, /EQUINOX_WINDOWS_TOOLCHAIN_CACHE_HIT: \$\{\{ steps\.arm64-toolchain-cache\.outputs\.cache-hit \}\}/u);
   assert.match(prepare, /source_sha:\n\s+description:[^\n]+\n\s+value: \$\{\{ steps\.package\.outputs\.source_sha \}\}/u);
 });
 

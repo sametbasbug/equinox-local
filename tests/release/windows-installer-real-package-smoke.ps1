@@ -37,9 +37,6 @@ $OwnedInstallRoot = $null
 $OwnedProgramRoot = $null
 $ExpectedManifestPath = $null
 $StableExe = $null
-$InstallSucceeded = $false
-$ToolchainCacheEnabled = ([string]$env:EQUINOX_WINDOWS_TOOLCHAIN_CACHE_MODE) -ceq 'enabled'
-$ToolchainCacheHit = $ToolchainCacheEnabled -and (([string]$env:EQUINOX_WINDOWS_TOOLCHAIN_CACHE_HIT) -ceq 'true')
 
 try {
   if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) { throw 'Real Windows installer smoke requires Windows.' }
@@ -102,23 +99,7 @@ try {
   if ([string]::IsNullOrWhiteSpace($KnownLocalAppData) -or -not [IO.Path]::IsPathRooted($KnownLocalAppData)) { throw 'Windows Known Folder LocalApplicationData is unavailable.' }
   $OwnedInstallRoot = Join-Path $KnownLocalAppData 'Equinox Local'
   $OwnedProgramRoot = Join-Path $KnownLocalAppData 'Programs\Equinox Local'
-  if ([IO.Directory]::Exists($OwnedInstallRoot) -or [IO.File]::Exists($OwnedInstallRoot)) {
-    if (-not $ToolchainCacheEnabled) { throw 'Fresh-install smoke requires an unused real per-user Equinox Local install root.' }
-    if (-not [IO.Directory]::Exists($OwnedInstallRoot)) { throw 'ARM64 toolchain cache restored an unsafe install-root file.' }
-    $cachedToolchain = Join-Path $OwnedInstallRoot 'runtime\toolchain'
-    $toolchainTreeRestored = [IO.Directory]::Exists($cachedToolchain)
-    if ($toolchainTreeRestored) {
-      $unexpected = @(Get-ChildItem -LiteralPath $OwnedInstallRoot -Force | Where-Object { $_.Name -cne 'runtime' })
-      $runtimeRoot = Join-Path $OwnedInstallRoot 'runtime'
-      if ([IO.Directory]::Exists($runtimeRoot)) { $unexpected += @(Get-ChildItem -LiteralPath $runtimeRoot -Force | Where-Object { $_.Name -cne 'toolchain' }) }
-      if ($unexpected.Count -ne 0) { throw 'ARM64 toolchain cache restored unexpected managed-install state.' }
-    } else {
-      if ($ToolchainCacheHit) { throw 'ARM64 toolchain cache reported an exact hit without a toolchain tree.' }
-      $entries = @(Get-ChildItem -LiteralPath $OwnedInstallRoot -Force -ErrorAction SilentlyContinue)
-      if ($entries.Count -ne 0) { throw 'Fresh-install cache miss found unexpected managed-install state.' }
-      Remove-Item -LiteralPath $OwnedInstallRoot -Recurse -Force
-    }
-  } elseif ($ToolchainCacheHit) { throw 'ARM64 toolchain cache reported an exact hit without restoring the install root.' }
+  if ([IO.Directory]::Exists($OwnedInstallRoot) -or [IO.File]::Exists($OwnedInstallRoot)) { throw 'Fresh-install smoke requires an unused real per-user Equinox Local install root.' }
   if ([IO.Directory]::Exists($OwnedProgramRoot) -or [IO.File]::Exists($OwnedProgramRoot)) { throw 'Fresh-install smoke requires an unused real per-user stable program root.' }
 
   $BootstrapTemp = Join-Path $Work 'Windows Türk Bootstrap Temp'
@@ -138,7 +119,6 @@ try {
     throw "unexpected Windows fresh-install URL: $Url"
   }
 
-  $InstallStartedUtc = [DateTime]::UtcNow
   try {
     Invoke-EquinoxLocalInstall | Out-Host
   } catch {
@@ -157,7 +137,6 @@ try {
     throw
   }
 
-  $InstallFinishedUtc = [DateTime]::UtcNow
   $InstallRoot = $OwnedInstallRoot
   $pointer = [IO.File]::ReadAllText((Join-Path $InstallRoot 'current-version.json'), (New-Object Text.UTF8Encoding($false, $true))) | ConvertFrom-Json
   Assert-True ($pointer.schemaVersion -eq 1) 'Windows current-version schema mismatch.'
@@ -188,32 +167,11 @@ try {
   $OwnedNode = Join-Path $InstallRoot ("runtime\toolchain\node\26.10.0\$FixtureTarget\node.exe")
   $OwnedNpm = Join-Path $InstallRoot ("runtime\toolchain\node\26.10.0\$FixtureTarget\node_modules\npm\bin\npm-cli.js")
   foreach ($owned in @($OwnedGit,$OwnedNode,$OwnedNpm)) { Assert-True ([IO.File]::Exists($owned)) ("Product-owned toolchain file is missing: $owned") }
-  $timingPaths = [ordered]@{
-    currentVersion = (Join-Path $InstallRoot 'current-version.json')
-    gitToolchain = (Join-Path (Split-Path -Parent (Split-Path -Parent $OwnedGit)) '.equinox-toolchain-component.json')
-    nodeToolchain = (Join-Path (Split-Path -Parent $OwnedNode) '.equinox-toolchain-component.json')
-    sourceGit = (Join-Path $ManagedSourceRoot '.git')
-    sourceNodeModules = (Join-Path $ManagedSourceRoot 'node_modules')
-    sourcePointer = (Join-Path $InstallRoot 'state\main-update\current-source.conf')
-    installStamp = (Join-Path $InstallRoot 'state\main-update\install.json')
-  }
-  $timingParts = @("start=$($InstallStartedUtc.ToString('o'))", "finish=$($InstallFinishedUtc.ToString('o'))")
-  foreach ($entry in $timingPaths.GetEnumerator()) {
-    if (Test-Path -LiteralPath $entry.Value) {
-      $item = Get-Item -LiteralPath $entry.Value -Force
-      $timingParts += ("{0}.created={1}" -f $entry.Key, $item.CreationTimeUtc.ToString('o'))
-      $timingParts += ("{0}.written={1}" -f $entry.Key, $item.LastWriteTimeUtc.ToString('o'))
-    } else {
-      $timingParts += ("{0}=missing" -f $entry.Key)
-    }
-  }
-  Write-Output ("Windows fresh-install timing: " + ($timingParts -join '; '))
   Assert-True ((& $OwnedGit --version) -match '^git version 2\.53\.0\b') 'Product-owned Git version mismatch.'
   Assert-True ((& $OwnedNode --version) -ceq 'v26.10.0') 'Product-owned Node version mismatch.'
   Assert-True ((& $OwnedNode $OwnedNpm --version) -match '^\d+\.\d+\.\d+$') 'Product-owned npm CLI did not execute.'
   $ownedShell = @(Get-CimInstance Win32_Process -Filter "Name='EquinoxLocal.exe'" -ErrorAction SilentlyContinue | Where-Object { -not [string]::IsNullOrWhiteSpace($_.ExecutablePath) -and (Same-Path $_.ExecutablePath $StableExe) })
   Assert-True ($ownedShell.Count -eq 1) 'Windows installer did not leave exactly one owned stable shell running.'
-  $InstallSucceeded = $true
   Write-Output "Windows $FixtureTarget real fresh-install managed-source acceptance passed: public installer promoted $FixtureVersion at $FixtureSourceSha and served the exact managed source runtime."
 } finally {
   if (-not [string]::IsNullOrWhiteSpace($StableExe) -and [IO.File]::Exists($StableExe)) { Stop-OwnedShell $StableExe }
@@ -223,8 +181,7 @@ try {
       if (-not [string]::IsNullOrWhiteSpace($ExpectedManifestPath) -and (Same-Path $value $ExpectedManifestPath)) { Remove-Item -LiteralPath $NativeRegistryKey -Recurse -Force }
     } catch { Write-Warning $_.Exception.Message }
   }
-  $preserveToolchainForCacheSave = $ToolchainCacheEnabled -and (-not $ToolchainCacheHit) -and $InstallSucceeded
-  if (-not $preserveToolchainForCacheSave -and -not [string]::IsNullOrWhiteSpace($OwnedInstallRoot) -and [IO.Directory]::Exists($OwnedInstallRoot)) { Remove-Item -LiteralPath $OwnedInstallRoot -Recurse -Force -ErrorAction SilentlyContinue }
+  if (-not [string]::IsNullOrWhiteSpace($OwnedInstallRoot) -and [IO.Directory]::Exists($OwnedInstallRoot)) { Remove-Item -LiteralPath $OwnedInstallRoot -Recurse -Force -ErrorAction SilentlyContinue }
   if (-not [string]::IsNullOrWhiteSpace($OwnedProgramRoot) -and [IO.Directory]::Exists($OwnedProgramRoot)) { Remove-Item -LiteralPath $OwnedProgramRoot -Recurse -Force -ErrorAction SilentlyContinue }
   $env:LOCALAPPDATA = $OriginalLocalAppData; $env:TEMP = $OriginalTemp; $env:TMP = $OriginalTmp
   Remove-Item Function:\Save-BoundedHttpsFile -ErrorAction SilentlyContinue
