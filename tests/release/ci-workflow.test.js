@@ -138,6 +138,8 @@ test("one maintained ARM64 package producer exposes exact artifact identity", ()
   assert.match(prepare, /vcvarsamd64_arm64\.bat/u);
   assert.match(prepare, /EQUINOX_WINDOWS_BROWSER_LAUNCHER_PATH/u);
   assert.match(prepare, /machine -ne 0xAA64/u);
+  assert.match(prepare, /equinox-browser-native-host-launcher\.obj/u);
+  assert.match(prepare, /\/Fo:/u);
   assert.match(prepare, /process\.platform/u);
   assert.match(prepare, /process\.arch/u);
   assert.match(prepare, /v26\.10\.0/u);
