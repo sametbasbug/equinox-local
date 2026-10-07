@@ -607,7 +607,7 @@ jobs:
           if ($sha256 -cne $env:EXPECTED_PACKAGE_SHA256 -or $artifacts[0].Length -ne [int64]$env:EXPECTED_PACKAGE_BYTES) { throw 'Downloaded ARM64 package identity mismatch' }
 
       - parallel:
-          - name: Windows ARM64 native shell uninstall handoff smoke
+          - name: Windows ARM64 stateful shell lifecycle acceptance
             shell: pwsh
             run: |
               $env:EQUINOX_TEST_NODE_EXE = (Get-Command node).Source
@@ -615,11 +615,6 @@ jobs:
               dotnet publish tests/windows/EquinoxLocal.WindowsShell.UninstallHandoffHarness/EquinoxLocal.WindowsShell.UninstallHandoffHarness.csproj --configuration Release --runtime win-arm64 --self-contained true -p:Platform=ARM64 --output $publish
               & (Join-Path $publish 'EquinoxLocal.WindowsShell.UninstallHandoffHarness.exe')
               if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-
-          - name: Windows ARM64 managed-source runtime acceptance
-            shell: pwsh
-            run: |
-              $env:EQUINOX_TEST_NODE_EXE = (Get-Command node).Source
               dotnet run --project tests/windows/EquinoxLocal.WindowsShell.ManagedSourceHarness/EquinoxLocal.WindowsShell.ManagedSourceHarness.csproj --configuration Release -p:Platform=ARM64
               if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 

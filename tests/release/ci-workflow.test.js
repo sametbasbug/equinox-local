@@ -124,7 +124,7 @@ test("managed-source runtime acceptance runs on real Windows x64 and ARM64 hosts
   assert.match(x64, /Windows x64 managed-source runtime acceptance/u);
   assert.match(x64, /EquinoxLocal\.WindowsShell\.ManagedSourceHarness/u);
   assert.match(x64, /-p:Platform=x64/u);
-  assert.match(arm64, /Windows ARM64 managed-source runtime acceptance/u);
+  assert.match(arm64, /Windows ARM64 stateful shell lifecycle acceptance/u);
   assert.match(arm64, /EquinoxLocal\.WindowsShell\.ManagedSourceHarness/u);
   assert.match(arm64, /-p:Platform=ARM64/u);
 });
@@ -152,7 +152,8 @@ test("ARM64 artifact consumers verify producer identity before acceptance", () =
   const installer = job("windows-arm64-installer");
   assert.match(packageLane, /EXPECTED_PACKAGE_SHA256: \$\{\{ needs\.windows-arm64-package-build\.outputs\.sha256 \}\}/u);
   assert.match(packageLane, /Get-FileHash -LiteralPath \$artifacts\[0\]\.FullName -Algorithm SHA256/u);
-  assert.match(packageLane, /parallel:[\s\S]*Windows ARM64 native shell uninstall handoff smoke[\s\S]*Windows ARM64 managed-source runtime acceptance[\s\S]*Windows ARM64 packaged winapp UIA smoke/u);
+  assert.ok(packageLane.indexOf("EquinoxLocal.WindowsShell.UninstallHandoffHarness") < packageLane.indexOf("EquinoxLocal.WindowsShell.ManagedSourceHarness"));
+  assert.match(packageLane, /parallel:[\s\S]*Windows ARM64 stateful shell lifecycle acceptance[\s\S]*EquinoxLocal\.WindowsShell\.UninstallHandoffHarness[\s\S]*EquinoxLocal\.WindowsShell\.ManagedSourceHarness[\s\S]*Windows ARM64 packaged winapp UIA smoke/u);
   assert.match(installer, /EQUINOX_WINDOWS_INSTALL_SHA256: \$\{\{ needs\.windows-arm64-package-build\.outputs\.sha256 \}\}/u);
   assert.match(installer, /EQUINOX_WINDOWS_INSTALL_SOURCE_SHA: \$\{\{ needs\.windows-arm64-package-build\.outputs\.source_sha \}\}/u);
   assert.match(installer, /Get-FileHash -LiteralPath \$artifact\.FullName -Algorithm SHA256/u);
