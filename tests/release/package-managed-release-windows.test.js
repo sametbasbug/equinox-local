@@ -136,6 +136,9 @@ test("Windows native launcher toolchain is target-specific and architecture-veri
   assert.match(source, /0x8664/u);
   assert.match(source, /0xaa64/u);
   assert.match(source, /architecture mismatch/u);
+  assert.match(source, /\["-latest", "-products", "\*", "-property", "installationPath"\]/u);
+  assert.match(source, /Visual Studio target environment is unavailable/u);
+  assert.match(source, /Promise\.allSettled/u);
 });
 
 test("Windows release ZIP security acceptance is wired to the package CI lane", async () => {

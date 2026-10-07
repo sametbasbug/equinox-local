@@ -264,10 +264,22 @@ async function compileBrowserLauncher(rootDir, releaseDir, contract) {
   const programFilesX86 = process.env["ProgramFiles(x86)"];
   if (!programFilesX86) throw new Error("ProgramFiles(x86) is unavailable.");
   const vswhere = path.join(programFilesX86, "Microsoft Visual Studio", "Installer", "vswhere.exe");
-  const found = await execFile(vswhere, ["-latest", "-products", "*", "-requires", contract.visualStudioComponent, "-property", "installationPath"], { timeout: 10_000, windowsHide: true });
-  const installation = found.stdout.trim();
+  const discoveryOptions = { timeout: 10_000, windowsHide: true };
+  let installation = "";
+  try {
+    const found = await execFile(vswhere, ["-latest", "-products", "*", "-requires", contract.visualStudioComponent, "-property", "installationPath"], discoveryOptions);
+    installation = found.stdout.trim();
+  } catch {
+    // Hosted runner component registration can drift between images even when the target vcvars toolchain is present.
+  }
+  if (!installation) {
+    const found = await execFile(vswhere, ["-latest", "-products", "*", "-property", "installationPath"], discoveryOptions);
+    installation = found.stdout.trim();
+  }
   if (!installation) throw new Error(`Visual Studio C++ toolchain is unavailable for ${contract.target}.`);
   const vcvars = path.join(installation, "VC", "Auxiliary", "Build", contract.vcvars);
+  const vcvarsStat = await fs.lstat(vcvars).catch((error) => error?.code === "ENOENT" ? null : Promise.reject(error));
+  if (!vcvarsStat?.isFile() || vcvarsStat.isSymbolicLink()) throw new Error(`Visual Studio target environment is unavailable for ${contract.target}.`);
   const source = path.join(rootDir, "native", "windows", "equinox-browser-native-host-launcher.cpp");
   const command = `\"\"${vcvars}\" >nul && cl.exe /nologo /std:c++17 /O2 /EHsc /DUNICODE /D_UNICODE \"${source}\" /Fe:equinox-browser-native-host.exe\"`;
   await execFile("cmd.exe", ["/d", "/s", "/c", command], {
@@ -322,12 +334,17 @@ export async function packageManagedEquinoxWindowsRelease({
   const artifactPath = path.join(outputDir, `equinox-local-${EQUINOX_LOCAL_VERSION}-${target}.zip`);
   await fs.mkdir(releaseDir, { recursive: true });
   try {
-    const sourceFileCount = await copyReleaseSources(rootDir, releaseDir);
-    await installPinnedWindowsNode(transaction, releaseDir, fetchImpl, target);
-    await installPinnedWindowsTunnel(transaction, releaseDir, fetchImpl, target);
-    await installPinnedWindowsWinapp(transaction, rootDir, releaseDir, fetchImpl, target);
-    await copyPublishedShell(rootDir, releaseDir, resolvedShellPublishDir);
-    await compileBrowserLauncher(rootDir, releaseDir, contract);
+    const preparationResults = await Promise.allSettled([
+      copyReleaseSources(rootDir, releaseDir),
+      installPinnedWindowsNode(transaction, releaseDir, fetchImpl, target),
+      installPinnedWindowsTunnel(transaction, releaseDir, fetchImpl, target),
+      installPinnedWindowsWinapp(transaction, rootDir, releaseDir, fetchImpl, target),
+      copyPublishedShell(rootDir, releaseDir, resolvedShellPublishDir),
+      compileBrowserLauncher(rootDir, releaseDir, contract),
+    ]);
+    const preparationFailure = preparationResults.find((result) => result.status === "rejected");
+    if (preparationFailure) throw preparationFailure.reason;
+    const sourceFileCount = preparationResults[0].value;
     await fs.writeFile(path.join(releaseDir, "release.json"), `${JSON.stringify({
       schemaVersion: 1,
       version: EQUINOX_LOCAL_VERSION,

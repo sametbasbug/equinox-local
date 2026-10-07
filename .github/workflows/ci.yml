@@ -390,6 +390,8 @@ jobs:
               if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Build native x64 managed package
+        env:
+          EQUINOX_WINDOWS_SHELL_PUBLISH_DIR: ${{ runner.temp }}/windows-shell/win-x64
         run: npm run local:release:package:windows
 
       - name: Windows x64 real public-installer fresh-install managed-source acceptance

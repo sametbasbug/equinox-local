@@ -251,6 +251,7 @@ export async function enrollEquinoxLocalManagedSource({
   randomBytesImpl = randomBytes,
   mainRemote = EQUINOX_LOCAL_MAIN_REMOTE,
   windowsZipHelperPath = undefined,
+  windowsPrivateStateHelperPath = undefined,
   protectWindowsAcl = protectWindowsPrivateStatePath,
   verifyWindowsAcl = verifyWindowsPrivateStateAcl,
 } = {}) {
@@ -258,9 +259,15 @@ export async function enrollEquinoxLocalManagedSource({
   const layout = equinoxLocalPlatformPaths({ platform, arch, homeDir, env });
   if (target !== layout.host.target) throw new Error("Managed-source enrollment target does not match the host target.");
   const paths = equinoxLocalManagedSourcePaths({ platform, arch, homeDir, env });
+  const enrollmentProtectWindowsAcl = platform === "win32" && windowsPrivateStateHelperPath
+    ? (input) => protectWindowsAcl({ ...input, env, helperPath: windowsPrivateStateHelperPath })
+    : protectWindowsAcl;
+  const enrollmentVerifyWindowsAcl = platform === "win32" && windowsPrivateStateHelperPath
+    ? (input) => verifyWindowsAcl({ ...input, env, helperPath: windowsPrivateStateHelperPath })
+    : verifyWindowsAcl;
   await normalDirectory(layout.appDataRoot, { fsImpl });
   await ensureManagedSourcePrivateDirectory(paths.mainTransactionRoot, {
-    platform, fsImpl, env, protectWindowsAcl, verifyWindowsAcl,
+    platform, fsImpl, env, protectWindowsAcl: enrollmentProtectWindowsAcl, verifyWindowsAcl: enrollmentVerifyWindowsAcl,
   });
 
   const provisioned = await provisionToolchainImpl({ runtimeRoot: layout.runtimeRoot, target, platform, env, fsImpl, execFileImpl, windowsZipHelperPath });
@@ -313,10 +320,11 @@ export async function enrollEquinoxLocalManagedSource({
     if (!durableFinal?.eligible || durableFinal.currentSha !== sha) throw new Error("Durable managed-source bootstrap checkout identity is invalid.");
     const pointer = await writePointerImpl(paths.sourcePointerPath, { sourceRoot: durableSourceRoot, sha }, {
       fsImpl, execFileImpl, gitPath: contract.gitPath, randomBytesImpl,
-      platform, env, protectWindowsAcl, verifyWindowsAcl,
+      platform, env, protectWindowsAcl: enrollmentProtectWindowsAcl, verifyWindowsAcl: enrollmentVerifyWindowsAcl,
     });
     await writeManagedSourceInstallStamp(paths.installStampPath, sha, {
-      fsImpl, randomBytesImpl, platform, env, protectWindowsAcl, verifyWindowsAcl,
+      fsImpl, randomBytesImpl, platform, env,
+      protectWindowsAcl: enrollmentProtectWindowsAcl, verifyWindowsAcl: enrollmentVerifyWindowsAcl,
     });
     return Object.freeze({ status: "enrolled", bootstrapSha: sha, sourceRoot: pointer.sourceRoot, contract });
   } finally {

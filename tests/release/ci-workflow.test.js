@@ -209,4 +209,5 @@ test("CI parallelizes independent macOS gates and x64 installer preparation", ()
   assert.match(intel, /- parallel:[\s\S]*Verify x64 host[\s\S]*Static checks[\s\S]*Fast architecture parity suite/u);
   assert.match(installer, /- parallel:[\s\S]*Set up Node\.js[\s\S]*Set up \.NET SDK/u);
   assert.match(installer, /- parallel:[\s\S]*Install dependencies[\s\S]*Publish native x64 shell/u);
+  assert.match(installer, /Build native x64 managed package[\s\S]*EQUINOX_WINDOWS_SHELL_PUBLISH_DIR: \$\{\{ runner\.temp \}\}\/windows-shell\/win-x64/u);
 });

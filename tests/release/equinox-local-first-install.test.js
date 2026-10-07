@@ -19,6 +19,12 @@ import {
 
 const TARGET = "darwin-arm64";
 
+test("Windows first-install enrollment uses durable release-local helper paths after staging promotion", async () => {
+  const source = await fs.readFile(new URL("../../src/equinox-local-first-install.js", import.meta.url), "utf8");
+  assert.match(source, /installation\.releaseDir, "equinox-local-windows-release-zip\.ps1"/u);
+  assert.match(source, /installation\.releaseDir, "equinox-local-windows-private-state\.ps1"/u);
+});
+
 test("first-install health budget gives both Windows architectures bounded cold-start headroom", () => {
   assert.deepEqual(equinoxLocalFirstInstallHealthBudget({ platform: "darwin", arch: "arm64" }), { attempts: 120, delayMs: 500 });
   assert.deepEqual(equinoxLocalFirstInstallHealthBudget({ platform: "win32", arch: "x64" }), { attempts: 180, delayMs: 500 });
