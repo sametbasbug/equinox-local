@@ -44,5 +44,7 @@ test("Windows Job Object transport owns stdin pipe failures instead of emitting 
   const source = await import("node:fs/promises").then(({ readFile }) => readFile(new URL("../../src/equinox-local-windows-job-object.js", import.meta.url), "utf8"));
   assert.match(source, /child\.stdin\?\.on\("error"/u);
   assert.match(source, /Windows Job Object helper input failed/u);
+  assert.match(source, /const failInput =/u);
+  assert.match(source, /child\.stdin\.write[\s\S]*failInput\(error\)/u);
   assert.match(source, /failAll/u);
 });

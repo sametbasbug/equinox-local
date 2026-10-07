@@ -60,10 +60,14 @@ export async function createWindowsJobObjectLease({
     pending.clear();
   };
 
-  child.stdin?.on("error", (error) => {
+  const failInput = (error) => {
     closed = true;
-    failAll(new Error(`Windows Job Object helper input failed: ${error?.message || error}`));
-  });
+    const wrapped = new Error(`Windows Job Object helper input failed: ${error?.message || error}`);
+    failAll(wrapped);
+    return wrapped;
+  };
+
+  child.stdin?.on("error", failInput);
 
   child.once("error", (error) => {
     closed = true;
@@ -114,11 +118,7 @@ export async function createWindowsJobObjectLease({
       pending.set(id, { resolve, reject, timer });
       child.stdin.write(`${JSON.stringify({ id, op, ...payload })}\n`, (error) => {
         if (!error) return;
-        const current = pending.get(id);
-        if (!current) return;
-        pending.delete(id);
-        clearTimeout(current.timer);
-        reject(error);
+        failInput(error);
       });
     });
   };
