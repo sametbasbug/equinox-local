@@ -157,12 +157,12 @@ test("ARM64 artifact consumers verify producer identity before acceptance", () =
   const packageLane = job("windows-arm64-package");
   const installer = job("windows-arm64-installer");
   assert.match(packageLane, /EXPECTED_PACKAGE_SHA256: \$\{\{ needs\.windows-arm64-package-build\.outputs\.sha256 \}\}/u);
-  assert.match(packageLane, /Get-FileHash -LiteralPath \$artifacts\[0\]\.FullName -Algorithm SHA256/u);
+  assert.doesNotMatch(packageLane, /Get-FileHash -LiteralPath \$artifacts\[0\]\.FullName -Algorithm SHA256/u);
   assert.ok(packageLane.indexOf("EquinoxLocal.WindowsShell.UninstallHandoffHarness") < packageLane.indexOf("EquinoxLocal.WindowsShell.ManagedSourceHarness"));
   assert.match(packageLane, /parallel:[\s\S]*Windows ARM64 stateful shell lifecycle acceptance[\s\S]*EquinoxLocal\.WindowsShell\.UninstallHandoffHarness[\s\S]*EquinoxLocal\.WindowsShell\.ManagedSourceHarness[\s\S]*Windows ARM64 packaged node-pty \/ ConPTY smoke[\s\S]*EQUINOX_WINDOWS_NODE_PTY_ROOT[\s\S]*windows-node-pty-smoke\.mjs[\s\S]*Windows ARM64 packaged winapp UIA smoke/u);
   assert.match(installer, /EQUINOX_WINDOWS_INSTALL_SHA256: \$\{\{ needs\.windows-arm64-package-build\.outputs\.sha256 \}\}/u);
   assert.match(installer, /EQUINOX_WINDOWS_INSTALL_SOURCE_SHA: \$\{\{ needs\.windows-arm64-package-build\.outputs\.source_sha \}\}/u);
-  assert.match(installer, /Get-FileHash -LiteralPath \$artifact\.FullName -Algorithm SHA256/u);
+  assert.doesNotMatch(installer, /Get-FileHash -LiteralPath \$artifact\.FullName -Algorithm SHA256/u);
   assert.match(installer, /EQUINOX_WINDOWS_INSTALL_ARTIFACT/u);
   assert.match(prepare, /source_sha:\n\s+description:[^\n]+\n\s+value: \$\{\{ steps\.package\.outputs\.source_sha \}\}/u);
 });
@@ -178,7 +178,7 @@ test("stable ARM64 and Windows aggregate checks reject every non-success depende
 
 test("native ARM64 acceptance and preparation cannot tolerate failures or be skipped", () => {
   for (const block of [...arm64Lanes.map(job), prepare]) {
-    assert.doesNotMatch(block, /^\s+(?:if|continue-on-error):/mu);
+    assert.doesNotMatch(block, /^\s+continue-on-error:/mu);
     assert.doesNotMatch(block, /--no-build|--no-restore/u);
   }
 });

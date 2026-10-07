@@ -22,6 +22,7 @@ foreach ($candidate in @($publishDir, $binDir, $objDir)) {
 # npm writes node_modules; the native WPF project reads only its own sources,
 # pinned NuGet packages and application artwork. These inputs are independent.
 $cacheHit = ([string]$env:EQUINOX_NODE_MODULES_CACHE_HIT) -ceq 'true'
+$shellCacheHit = ([string]$env:EQUINOX_SHELL_CACHE_HIT) -ceq 'true'
 $installJob = Start-Job -ArgumentList $root, $npmCommand, $cacheHit -ScriptBlock {
   param([string]$Workspace, [string]$NpmCommand, [bool]$CacheHit)
   $ErrorActionPreference = 'Stop'
@@ -31,15 +32,19 @@ $installJob = Start-Job -ArgumentList $root, $npmCommand, $cacheHit -ScriptBlock
     if (-not (Test-Path -LiteralPath (Join-Path $Workspace 'node_modules\.package-lock.json') -PathType Leaf)) { throw 'Cached node_modules is missing its npm lock marker.' }
     & $NpmCommand ls --omit=dev --depth=0
     if ($LASTEXITCODE -ne 0) { throw "Cached target-native dependency graph failed npm validation with exit code $LASTEXITCODE." }
+    if (-not (Test-Path -LiteralPath (Join-Path $Workspace 'node_modules\@napi-rs\canvas-win32-arm64-msvc') -PathType Container)) { throw 'Cached dependency graph is not Windows ARM64.' }
+    if (Test-Path -LiteralPath (Join-Path $Workspace 'node_modules\@napi-rs\canvas-win32-x64-msvc')) { throw 'Cached dependency graph contains Windows x64 native canvas.' }
     return
   }
-  & $NpmCommand ci --prefer-offline --no-audit --no-fund
+  & $NpmCommand ci --prefer-offline --no-audit --no-fund --os=win32 --cpu=arm64
   if ($LASTEXITCODE -ne 0) { throw "Locked native npm installation failed with exit code $LASTEXITCODE." }
 }
 
 try {
-  dotnet publish native/windows/EquinoxLocal.WindowsShell/EquinoxLocal.WindowsShell.csproj --configuration Release --runtime win-arm64 --self-contained true -p:Platform=ARM64 -p:BaseOutputPath="$binDir" -p:BaseIntermediateOutputPath="$objDir" --output "$publishDir"
-  if ($LASTEXITCODE -ne 0) { throw "Native ARM64 shell publication failed with exit code $LASTEXITCODE." }
+  if (-not $shellCacheHit) {
+    dotnet publish native/windows/EquinoxLocal.WindowsShell/EquinoxLocal.WindowsShell.csproj --configuration Release --runtime win-arm64 --self-contained true -p:Platform=ARM64 -p:BaseOutputPath="$binDir" -p:BaseIntermediateOutputPath="$objDir" --output "$publishDir"
+    if ($LASTEXITCODE -ne 0) { throw "Native ARM64 shell publication failed with exit code $LASTEXITCODE." }
+  }
 
   $null = Wait-Job -Job $installJob
   if ($installJob.State -ne 'Completed') {
