@@ -238,7 +238,7 @@ async function verifyWindowsJobObjectHelperLoss(root) {
     process.kill(lease.helperPid);
     await waitFor(() => !pidExists(lease.helperPid), "Windows Job Object helper did not exit after forced loss");
     await waitFor(() => !pidExists(parent.pid) && !pidExists(childPid), "KILL_ON_JOB_CLOSE did not drain parent + descendant after helper loss");
-    await assert.rejects(() => lease.status(), /not available|exited unexpectedly/u);
+    await assert.rejects(() => lease.status(), /not available|exited unexpectedly|input failed/u);
     return Object.freeze({ helperLossDrainedOwnedTree: true });
   } finally {
     await lease.close().catch(() => {});

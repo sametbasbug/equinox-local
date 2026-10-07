@@ -60,6 +60,11 @@ export async function createWindowsJobObjectLease({
     pending.clear();
   };
 
+  child.stdin?.on("error", (error) => {
+    closed = true;
+    failAll(new Error(`Windows Job Object helper input failed: ${error?.message || error}`));
+  });
+
   child.once("error", (error) => {
     closed = true;
     failAll(error);

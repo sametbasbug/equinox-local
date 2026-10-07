@@ -38,3 +38,11 @@ test("Windows Job Object lease resolves an explicit product helper override at c
     else process.env.EQUINOX_WINDOWS_JOB_OBJECT_HELPER_PATH = previous;
   }
 });
+
+
+test("Windows Job Object transport owns stdin pipe failures instead of emitting an unhandled error", async () => {
+  const source = await import("node:fs/promises").then(({ readFile }) => readFile(new URL("../../src/equinox-local-windows-job-object.js", import.meta.url), "utf8"));
+  assert.match(source, /child\.stdin\?\.on\("error"/u);
+  assert.match(source, /Windows Job Object helper input failed/u);
+  assert.match(source, /failAll/u);
+});
