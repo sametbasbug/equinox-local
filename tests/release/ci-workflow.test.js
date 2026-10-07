@@ -97,6 +97,8 @@ test("architecture-neutral Windows contract lanes stay off scarce ARM64 runners"
 test("ARM64 runtime retains native lifecycle, PTY and messaging acceptance", () => {
   const block = job("windows-arm64-runtime");
   assert.match(block, /architecture: arm64/u);
+  assert.match(block, /Windows ARM64 PowerShell 5\.1 native target acceptance/u);
+  assert.match(block, /windows-installer-native-target-smoke\.ps1 -ExpectedTarget win32-arm64/u);
   assert.match(block, /run: npm ci --prefer-offline --no-audit --no-fund/u);
   for (const command of [
     "node --test tests/unit/equinox-local-platform.test.js tests/release/equinox-local-windows-arm64-lifecycle.test.js",
@@ -121,7 +123,8 @@ test("real public installer enters managed-source on native Windows x64 and ARM6
   assert.match(x64, /runs-on: windows-latest/u);
   assert.match(x64, /win-x64/u);
   assert.match(x64, /windows-installer-real-package-smoke\.ps1/u);
-  assert.match(arm64, /windows-installer-real-package-smoke\.ps1/u);
+  assert.match(arm64, /& \.\/tests\/release\/windows-installer-real-package-smoke\.ps1/u);
+  assert.doesNotMatch(arm64, /powershell\.exe[^\n]*windows-installer-real-package-smoke/u);
   assert.match(smoke, /installation\.kind -ceq 'managed-source'/u);
   assert.match(smoke, /installation\.sourceSha -ceq \$FixtureSourceSha/u);
   assert.match(smoke, /EQUINOX_WINDOWS_INSTALL_SOURCE_SHA/u);

@@ -198,3 +198,11 @@ test("Windows native Job Object helper uses target-specific MSVC and direct Win3
   assert.match(helper, /QueryInformationJobObject/u);
   assert.match(helper, /TerminateJobObject/u);
 });
+
+
+test("Windows public installer reuses the current PowerShell host for verified ZIP extraction", async () => {
+  const installer = await fs.readFile(new URL("../../scripts/install-equinox-local.ps1", import.meta.url), "utf8");
+  assert.match(installer, /GetCurrentProcess\(\)\.MainModule\.FileName/u);
+  assert.match(installer, /& \$powerShellHost -NoLogo -NoProfile -NonInteractive/u);
+  assert.doesNotMatch(installer, /\$PSHOME\\powershell\.exe/u);
+});

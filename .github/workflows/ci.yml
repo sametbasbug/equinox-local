@@ -496,12 +496,19 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
-      - name: Set up native ARM64 Node.js
-        uses: actions/setup-node@v7
-        with:
-          node-version: 26.10.0
-          architecture: arm64
-          cache: npm
+      - parallel:
+          - name: Set up native ARM64 Node.js
+            uses: actions/setup-node@v7
+            with:
+              node-version: 26.10.0
+              architecture: arm64
+              cache: npm
+
+          - name: Windows ARM64 PowerShell 5.1 native target acceptance
+            shell: pwsh
+            run: |
+              & powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File tests/release/windows-installer-native-target-smoke.ps1 -ExpectedTarget win32-arm64
+              if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Verify native ARM64 Node host
         shell: pwsh
@@ -698,8 +705,7 @@ jobs:
           if ($null -eq $artifact) { throw 'Windows ARM64 managed ZIP artifact was not found for fresh-install acceptance' }
           if ($artifact.Length -ne [int64]$env:EQUINOX_WINDOWS_INSTALL_BYTES) { throw 'Downloaded ARM64 installer package length mismatch' }
           $env:EQUINOX_WINDOWS_INSTALL_ARTIFACT = $artifact.FullName
-          & powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File tests/release/windows-installer-real-package-smoke.ps1
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & ./tests/release/windows-installer-real-package-smoke.ps1
 
   windows-arm64-foundation:
     name: Windows ARM64 foundation / Node 26
