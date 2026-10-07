@@ -306,14 +306,26 @@ async function compileBrowserLauncher(rootDir, releaseDir, contract) {
   const vcvarsStat = await fs.lstat(vcvars).catch((error) => error?.code === "ENOENT" ? null : Promise.reject(error));
   if (!vcvarsStat?.isFile() || vcvarsStat.isSymbolicLink()) throw new Error(`Visual Studio target environment is unavailable for ${contract.target}.`);
   const source = path.join(rootDir, "native", "windows", "equinox-browser-native-host-launcher.cpp");
-  const command = `\"\"${vcvars}\" >nul && cl.exe /nologo /std:c++17 /O2 /EHsc /DUNICODE /D_UNICODE \"${source}\" /Fe:equinox-browser-native-host.exe\"`;
-  await execFile("cmd.exe", ["/d", "/s", "/c", command], {
-    cwd: browserDir,
-    timeout: 180_000,
-    maxBuffer: 4 * 1024 * 1024,
-    windowsHide: true,
-    windowsVerbatimArguments: true,
-  });
+  const compileScript = path.join(browserDir, ".compile-browser-launcher.cmd");
+  const script = [
+    "@echo off",
+    `call "${vcvars}" >nul`,
+    "if errorlevel 1 exit /b %errorlevel%",
+    `cl.exe /nologo /std:c++17 /O2 /EHsc /DUNICODE /D_UNICODE "${source}" /Fe:equinox-browser-native-host.exe`,
+    "exit /b %errorlevel%",
+    "",
+  ].join("\r\n");
+  await fs.writeFile(compileScript, script, { encoding: "utf8", flag: "wx" });
+  try {
+    await execFile("cmd.exe", ["/d", "/c", compileScript], {
+      cwd: browserDir,
+      timeout: 180_000,
+      maxBuffer: 4 * 1024 * 1024,
+      windowsHide: true,
+    });
+  } finally {
+    await fs.rm(compileScript, { force: true });
+  }
   const launcherPath = path.join(browserDir, "equinox-browser-native-host.exe");
   const machine = await portableExecutableMachine(launcherPath);
   if (machine !== contract.peMachine) {
