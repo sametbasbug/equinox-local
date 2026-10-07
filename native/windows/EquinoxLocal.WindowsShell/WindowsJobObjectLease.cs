@@ -5,7 +5,7 @@ namespace EquinoxLocal.WindowsShell;
 
 internal sealed class WindowsJobObjectLease : IDisposable
 {
-    private const uint JobObjectExtendedLimitInformation = 9;
+    private const uint JobObjectExtendedLimitInformationClass = 9;
     private const uint JobObjectLimitKillOnJobClose = 0x00002000;
     private IntPtr _handle;
 
@@ -29,7 +29,7 @@ internal sealed class WindowsJobObjectLease : IDisposable
             try
             {
                 Marshal.StructureToPtr(info, buffer, false);
-                if (!SetInformationJobObject(handle, JobObjectExtendedLimitInformation, buffer, (uint)size))
+                if (!SetInformationJobObject(handle, JobObjectExtendedLimitInformationClass, buffer, (uint)size))
                     ThrowLast("SetInformationJobObject");
             }
             finally { Marshal.FreeHGlobal(buffer); }
