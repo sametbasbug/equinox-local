@@ -6,7 +6,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 
 import { hashFile } from "../lib/package-io.mjs";
-import { collectManagedReleaseSourceFiles } from "./package-managed-release.mjs";
+import { collectManagedReleaseSourceFiles, resolveManagedReleaseSourceSha } from "./package-managed-release.mjs";
 import {
   EQUINOX_LOCAL_NODE_VERSION,
   EQUINOX_LOCAL_TUNNEL_CLIENT_VERSION,
@@ -314,6 +314,7 @@ export async function packageManagedEquinoxWindowsRelease({
     throw new Error(`Windows managed release packaging requires a native win32-x64 or win32-arm64 host/target match; got host=${hostTarget} target=${target}.`);
   }
   const contract = windowsManagedPackageContract({ target });
+  const sourceSha = await resolveManagedReleaseSourceSha(rootDir);
   const resolvedShellPublishDir = shellPublishDir || path.join("artifacts", "windows-shell", contract.shellRid);
   await fs.mkdir(outputDir, { recursive: true });
   const transaction = await fs.mkdtemp(path.join(outputDir, `.build-${EQUINOX_LOCAL_VERSION}-${target}-`));
@@ -331,6 +332,7 @@ export async function packageManagedEquinoxWindowsRelease({
       schemaVersion: 1,
       version: EQUINOX_LOCAL_VERSION,
       target,
+      sourceSha,
       nodeVersion: EQUINOX_LOCAL_NODE_VERSION,
       tunnelClientVersion: EQUINOX_LOCAL_TUNNEL_CLIENT_VERSION,
       serverEntry: "server.js",
@@ -339,7 +341,7 @@ export async function packageManagedEquinoxWindowsRelease({
     await validateFirstInstallRelease(releaseDir, { target });
     await createManagedZip(rootDir, releaseDir, artifactPath);
     const digest = await sha256File(artifactPath);
-    return Object.freeze({ version: EQUINOX_LOCAL_VERSION, target, artifactPath, ...digest, sourceFileCount });
+    return Object.freeze({ version: EQUINOX_LOCAL_VERSION, target, sourceSha, artifactPath, ...digest, sourceFileCount });
   } finally {
     await fs.rm(transaction, { recursive: true, force: true });
   }

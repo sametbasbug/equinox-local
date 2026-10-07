@@ -108,6 +108,30 @@ test("first-install release validation requires exact target metadata and bundle
 });
 
 
+test("first-install release validation accepts exact source provenance while retaining legacy Stable compatibility", async () => {
+  const fixture = await createFixture();
+  try {
+    const metadataPath = path.join(fixture.releaseDir, "release.json");
+    const metadata = JSON.parse(await fs.readFile(metadataPath, "utf8"));
+    const sourceSha = "b".repeat(40);
+    await fs.writeFile(metadataPath, `${JSON.stringify({ ...metadata, sourceSha })}\n`);
+    const current = await validateFirstInstallRelease(fixture.releaseDir, { target: TARGET });
+    assert.equal(current.metadata.sourceSha, sourceSha);
+
+    await fs.writeFile(metadataPath, `${JSON.stringify({ ...metadata, sourceSha: "bad" })}\n`);
+    await assert.rejects(
+      validateFirstInstallRelease(fixture.releaseDir, { target: TARGET }),
+      /metadata is invalid/u,
+    );
+
+    await fs.writeFile(metadataPath, `${JSON.stringify(metadata)}\n`);
+    const legacy = await validateFirstInstallRelease(fixture.releaseDir, { target: TARGET });
+    assert.equal(legacy.metadata.sourceSha, undefined);
+  } finally {
+    await fs.rm(fixture.homeDir, { recursive: true, force: true });
+  }
+});
+
 test("Windows x64 first-install release validation accepts native runtime names without Peekaboo", async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "equinox-first-install-windows-contract-"));
   const releaseDir = path.join(root, "release");

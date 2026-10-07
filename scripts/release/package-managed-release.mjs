@@ -30,6 +30,7 @@ const MAX_TUNNEL_ARCHIVE_BYTES = 100 * 1024 * 1024;
 const MAX_PEEKABOO_ARCHIVE_BYTES = 64 * 1024 * 1024;
 const MAX_RELEASE_SOURCE_BYTES = 2 * 1024 * 1024;
 const LOCAL_MODULE_PATTERN = /(?:from\s+|import\s*\(\s*)["'](\.\.?\/[^"']+)["']/gu;
+const SOURCE_SHA_PATTERN = /^[a-f0-9]{40}$/u;
 const STATIC_RELEASE_FILES = Object.freeze([
   "src/equinox-control-center.html",
   "src/equinox-control-center.css",
@@ -51,6 +52,17 @@ const RELEASE_ENTRYPOINTS = Object.freeze([
   "src/equinox-local-uninstall-helper.js",
   "src/equinox-local-supervisor.js",
 ]);
+
+export async function resolveManagedReleaseSourceSha(rootDir, { execFileImpl = execFile } = {}) {
+  const root = path.resolve(rootDir);
+  const options = { timeout: 10_000, maxBuffer: 1024 * 1024 };
+  const { stdout } = await execFileImpl("git", ["-C", root, "rev-parse", "HEAD"], options);
+  const sourceSha = String(stdout ?? "").trim();
+  if (!SOURCE_SHA_PATTERN.test(sourceSha)) throw new Error("Managed release source SHA is invalid.");
+  const status = await execFileImpl("git", ["-C", root, "status", "--porcelain=v1", "--untracked-files=normal"], options);
+  if (String(status?.stdout ?? "").trim()) throw new Error("Managed release source checkout must be clean.");
+  return sourceSha;
+}
 
 export {
   EQUINOX_LOCAL_NODE_VERSION,
@@ -516,6 +528,7 @@ export async function packageManagedEquinoxRelease({
   if (target !== hostTarget) {
     throw new Error(`Cross-target release builds are disabled because node_modules is target-native (${hostTarget}).`);
   }
+  const sourceSha = await resolveManagedReleaseSourceSha(rootDir);
   const sourceFiles = await collectManagedReleaseSourceFiles(rootDir);
   const transaction = await fs.mkdtemp(path.join(outputDir, `.build-${EQUINOX_LOCAL_VERSION}-${target}-`)).catch(async (error) => {
     if (error?.code !== "ENOENT") throw error;
@@ -537,6 +550,7 @@ export async function packageManagedEquinoxRelease({
       schemaVersion: 1,
       version: EQUINOX_LOCAL_VERSION,
       target,
+      sourceSha,
       nodeVersion: EQUINOX_LOCAL_NODE_VERSION,
       tunnelClientVersion: EQUINOX_LOCAL_TUNNEL_CLIENT_VERSION,
       nativeAppShellVersion: nativeApp.shellVersion,
@@ -552,6 +566,7 @@ export async function packageManagedEquinoxRelease({
     return Object.freeze({
       version: EQUINOX_LOCAL_VERSION,
       target,
+      sourceSha,
       nodeVersion: EQUINOX_LOCAL_NODE_VERSION,
       tunnelClientVersion: EQUINOX_LOCAL_TUNNEL_CLIENT_VERSION,
       artifactPath,

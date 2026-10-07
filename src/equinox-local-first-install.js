@@ -124,14 +124,16 @@ export async function validateFirstInstallRelease(releaseDir, {
   await assertNormalFile(metadataPath, "Release metadata", { maxBytes: MAX_RELEASE_METADATA_BYTES, fsImpl });
   const metadata = JSON.parse(await fsImpl.readFile(metadataPath, "utf8"));
   const runtimeContract = equinoxLocalReleaseRuntimeContract({ target, version: metadata.version });
+  const sourceIdentityKeys = Object.hasOwn(metadata, "sourceSha") ? ["sourceSha"] : [];
   const metadataKeys = runtimeContract.platform === "darwin"
-    ? ["schemaVersion", "version", "target", "nodeVersion", "tunnelClientVersion", "nativeAppShellVersion", "serverEntry"]
-    : ["schemaVersion", "version", "target", "nodeVersion", "tunnelClientVersion", "serverEntry"];
+    ? ["schemaVersion", "version", "target", ...sourceIdentityKeys, "nodeVersion", "tunnelClientVersion", "nativeAppShellVersion", "serverEntry"]
+    : ["schemaVersion", "version", "target", ...sourceIdentityKeys, "nodeVersion", "tunnelClientVersion", "serverEntry"];
   exactKeys(metadata, metadataKeys, "Release metadata");
   if (
     metadata.schemaVersion !== 1 ||
     metadata.target !== target ||
     metadata.serverEntry !== "server.js" ||
+    (metadata.sourceSha !== undefined && (typeof metadata.sourceSha !== "string" || !/^[a-f0-9]{40}$/u.test(metadata.sourceSha))) ||
     typeof metadata.nodeVersion !== "string" ||
     !/^\d+\.\d+\.\d+$/u.test(metadata.nodeVersion) ||
     typeof metadata.tunnelClientVersion !== "string" ||
