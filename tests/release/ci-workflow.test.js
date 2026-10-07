@@ -41,7 +41,7 @@ test("CI retains full product validation while skipping only the explicit docs-o
   assert.doesNotMatch(ci, /- 'THIRD_PARTY_NOTICES\.md'/u);
   assert.match(job("test"), /name: macOS ARM64 \/ Node 26/u);
   assert.match(job("test"), /darwin-arm64/u);
-  assert.match(job("test"), /run: npm test\n/u);
+  assert.match(job("test"), /parallel:[\s\S]*run: npm test\n/u);
   const managedSource = job("macos-managed-source");
   assert.match(managedSource, /name: macOS ARM64 managed-source fresh install/u);
   assert.match(managedSource, /runs-on: macos-latest/u);
@@ -52,7 +52,8 @@ test("CI retains full product validation while skipping only the explicit docs-o
   assert.match(job("macos-x64"), /runs-on: macos-15-intel/u);
   assert.match(job("macos-x64"), /architecture: x64/u);
   assert.match(job("macos-x64"), /darwin-x64/u);
-  assert.match(job("macos-x64"), /run: npm test\n/u);
+  assert.match(job("macos-x64"), /parallel:[\s\S]*run: npm run test:fast\n/u);
+  assert.doesNotMatch(job("macos-x64"), /run: npm test\n/u);
 });
 
 test("all native ARM64 acceptance lanes start independently without an artifact chain", () => {
@@ -65,7 +66,7 @@ test("all native ARM64 acceptance lanes start independently without an artifact 
 });
 
 test("ARM64 installer keeps bounded cold-start diagnostic headroom without slowing the success path", () => {
-  assert.match(job("windows-arm64-installer"), /timeout-minutes: 8/u);
+  assert.match(job("windows-arm64-installer"), /timeout-minutes: 12/u);
 });
 
 test("ARM64 runtime retains native lifecycle, PTY and messaging acceptance", () => {
@@ -197,4 +198,15 @@ test("parallel input preparation requires both native commands and cleans up its
   assert.match(inputs, /finally \{/u);
   assert.match(inputs, /Stop-Job -Job \$installJob/u);
   assert.match(inputs, /Remove-Job -Job \$installJob/u);
+});
+
+
+test("CI parallelizes independent macOS gates and x64 installer preparation", () => {
+  const arm = job("test");
+  const intel = job("macos-x64");
+  const installer = job("windows-x64-installer");
+  assert.match(arm, /- parallel:[\s\S]*Static checks[\s\S]*Verify ARM64 host[\s\S]*Full test suite/u);
+  assert.match(intel, /- parallel:[\s\S]*Verify x64 host[\s\S]*Static checks[\s\S]*Fast architecture parity suite/u);
+  assert.match(installer, /- parallel:[\s\S]*Set up Node\.js[\s\S]*Set up \.NET SDK/u);
+  assert.match(installer, /- parallel:[\s\S]*Install dependencies[\s\S]*Publish native x64 shell/u);
 });

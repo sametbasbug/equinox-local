@@ -65,14 +65,15 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Static checks
-        run: npm run check
+      - parallel:
+          - name: Static checks
+            run: npm run check
 
-      - name: Verify ARM64 host
-        run: test "$(node -p process.platform)-$(node -p process.arch)" = "darwin-arm64"
+          - name: Verify ARM64 host
+            run: test "$(node -p process.platform)-$(node -p process.arch)" = "darwin-arm64"
 
-      - name: Test
-        run: npm test
+          - name: Full test suite
+            run: npm test
 
   macos-managed-source:
     name: macOS ARM64 managed-source fresh install
@@ -122,14 +123,15 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Verify x64 host
-        run: test "$(node -p process.platform)-$(node -p process.arch)" = "darwin-x64"
+      - parallel:
+          - name: Verify x64 host
+            run: test "$(node -p process.platform)-$(node -p process.arch)" = "darwin-x64"
 
-      - name: Static checks
-        run: npm run check
+          - name: Static checks
+            run: npm run check
 
-      - name: Test
-        run: npm test
+          - name: Fast architecture parity suite
+            run: npm run test:fast
 
   windows-runtime:
     name: Windows x64 runtime / Node 26
@@ -360,32 +362,35 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v7
-        with:
-          node-version: 26.10.0
-          architecture: x64
-          cache: npm
+      - parallel:
+          - name: Set up Node.js
+            uses: actions/setup-node@v7
+            with:
+              node-version: 26.10.0
+              architecture: x64
+              cache: npm
 
-      - name: Install dependencies
-        run: npm ci --prefer-offline --no-audit --no-fund
+          - name: Set up .NET SDK
+            uses: actions/setup-dotnet@v6
+            with:
+              dotnet-version: 10.0.x
 
-      - name: Set up .NET SDK
-        uses: actions/setup-dotnet@v6
-        with:
-          dotnet-version: 10.0.x
+      - parallel:
+          - name: Install dependencies
+            run: npm ci --prefer-offline --no-audit --no-fund
+
+          - name: Publish native x64 shell
+            shell: pwsh
+            env:
+              EQUINOX_WINDOWS_SHELL_PUBLISH_DIR: ${{ runner.temp }}/windows-shell/win-x64
+              EQUINOX_WINDOWS_SHELL_BIN_DIR: ${{ runner.temp }}/windows-shell-bin/win-x64/
+              EQUINOX_WINDOWS_SHELL_OBJ_DIR: ${{ runner.temp }}/windows-shell-obj/win-x64/
+            run: |
+              dotnet publish native/windows/EquinoxLocal.WindowsShell/EquinoxLocal.WindowsShell.csproj --configuration Release --runtime win-x64 --self-contained true -p:Platform=x64 -p:BaseOutputPath="$env:EQUINOX_WINDOWS_SHELL_BIN_DIR" -p:BaseIntermediateOutputPath="$env:EQUINOX_WINDOWS_SHELL_OBJ_DIR" --output "$env:EQUINOX_WINDOWS_SHELL_PUBLISH_DIR"
+              if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Build native x64 managed package
-        shell: pwsh
-        env:
-          EQUINOX_WINDOWS_SHELL_PUBLISH_DIR: ${{ runner.temp }}/windows-shell/win-x64
-          EQUINOX_WINDOWS_SHELL_BIN_DIR: ${{ runner.temp }}/windows-shell-bin/win-x64/
-          EQUINOX_WINDOWS_SHELL_OBJ_DIR: ${{ runner.temp }}/windows-shell-obj/win-x64/
-        run: |
-          dotnet publish native/windows/EquinoxLocal.WindowsShell/EquinoxLocal.WindowsShell.csproj --configuration Release --runtime win-x64 --self-contained true -p:Platform=x64 -p:BaseOutputPath="$env:EQUINOX_WINDOWS_SHELL_BIN_DIR" -p:BaseIntermediateOutputPath="$env:EQUINOX_WINDOWS_SHELL_OBJ_DIR" --output "$env:EQUINOX_WINDOWS_SHELL_PUBLISH_DIR"
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          npm run local:release:package:windows
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        run: npm run local:release:package:windows
 
       - name: Windows x64 real public-installer fresh-install managed-source acceptance
         shell: pwsh

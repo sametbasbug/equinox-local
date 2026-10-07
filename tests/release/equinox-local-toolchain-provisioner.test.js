@@ -182,6 +182,33 @@ test("M8 provisioner installs atomically, stamps exact distributions and reuses 
   assert.equal(downloads.length, 0);
 });
 
+test("M8 provisioner starts independent Git and Node component downloads concurrently", async (t) => {
+  const f = await createFixture(t);
+  const started = [];
+  let releaseBoth;
+  const bothStarted = new Promise((resolve) => { releaseBoth = resolve; });
+  const provision = provisionEquinoxLocalToolchain({
+    runtimeRoot: f.runtimeRoot,
+    target: "darwin-arm64",
+    platform: "darwin",
+    downloadImpl: async (artifact, destination) => {
+      started.push(artifact.filename);
+      if (started.length === 2) releaseBoth();
+      await bothStarted;
+      await fs.writeFile(destination, "archive");
+    },
+    extractComponentImpl: fakeExtract,
+    execFileImpl: fakeExec,
+  });
+  await Promise.race([
+    bothStarted,
+    new Promise((_, reject) => setTimeout(() => reject(new Error("toolchain component downloads did not overlap")), 250)),
+  ]);
+  const result = await provision;
+  assert.equal(started.length, 2);
+  assert.deepEqual(result.components.map(({ component }) => component), ["git", "node"]);
+});
+
 test("M8 provisioner fails closed on symlinked ancestors and cleans failed transactions", async (t) => {
   const f = await createFixture(t);
   await fs.mkdir(f.runtimeRoot);

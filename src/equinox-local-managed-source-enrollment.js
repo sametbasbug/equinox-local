@@ -16,6 +16,7 @@ import {
   validateManagedSourceInstallStamp,
 } from "./equinox-local-main-update.js";
 import { equinoxLocalPlatformPaths } from "./equinox-local-platform.js";
+import { inspectPrivateStatePath, protectWindowsPrivateStatePath, verifyWindowsPrivateStateAcl } from "./equinox-local-private-state.js";
 import { equinoxLocalToolchainContract } from "./equinox-local-toolchain-contract.js";
 import { provisionEquinoxLocalToolchain } from "./equinox-local-toolchain-provisioner.js";
 import { readBoundedNormalFile } from "./equinox-local-safe-file.js";
@@ -86,7 +87,39 @@ async function run(command, args, { cwd, execFileImpl = execFile, env = process.
   }
 }
 
-async function atomicInstallStamp(filePath, bootstrapSha, { fsImpl = fs, randomBytesImpl = randomBytes } = {}) {
+export async function ensureManagedSourcePrivateDirectory(directory, {
+  platform = process.platform,
+  fsImpl = fs,
+  env = process.env,
+  protectWindowsAcl = protectWindowsPrivateStatePath,
+  verifyWindowsAcl = verifyWindowsPrivateStateAcl,
+} = {}) {
+  if (platform !== "win32") return normalDirectory(directory, { fsImpl, create: true });
+  const before = await inspectPrivateStatePath(directory, { platform, type: "directory", fsImpl, verifyWindowsAcl });
+  if (before.exists) {
+    if (!before.safe) throw new Error("Managed-source state directory is not private.");
+    return directory;
+  }
+  const created = await fsImpl.mkdir(directory, { recursive: true });
+  if (created === undefined) {
+    const raced = await inspectPrivateStatePath(directory, { platform, type: "directory", fsImpl, verifyWindowsAcl });
+    if (!raced.exists || !raced.safe) throw new Error("Managed-source state directory is not private.");
+    return directory;
+  }
+  await protectWindowsAcl({ target: directory, type: "directory", env });
+  const secured = await inspectPrivateStatePath(directory, { platform, type: "directory", fsImpl, verifyWindowsAcl });
+  if (!secured.exists || !secured.safe) throw new Error("Managed-source state directory protection did not verify.");
+  return directory;
+}
+
+export async function writeManagedSourceInstallStamp(filePath, bootstrapSha, {
+  fsImpl = fs,
+  randomBytesImpl = randomBytes,
+  platform = process.platform,
+  env = process.env,
+  protectWindowsAcl = protectWindowsPrivateStatePath,
+  verifyWindowsAcl = verifyWindowsPrivateStateAcl,
+} = {}) {
   const stamp = validateManagedSourceInstallStamp({
     schemaVersion: EQUINOX_LOCAL_MAIN_UPDATE_SCHEMA_VERSION,
     channel: EQUINOX_LOCAL_MAIN_UPDATE_CHANNEL,
@@ -105,7 +138,16 @@ async function atomicInstallStamp(filePath, bootstrapSha, { fsImpl = fs, randomB
     await handle.close();
   }
   try {
+    if (platform === "win32") {
+      await protectWindowsAcl({ target: temporary, type: "file", env });
+      const temporarySecurity = await inspectPrivateStatePath(temporary, { platform, type: "file", fsImpl, verifyWindowsAcl });
+      if (!temporarySecurity.exists || !temporarySecurity.safe) throw new Error("Managed-source install stamp protection did not verify.");
+    }
     await fsImpl.rename(temporary, filePath);
+    if (platform === "win32") {
+      const finalSecurity = await inspectPrivateStatePath(filePath, { platform, type: "file", fsImpl, verifyWindowsAcl });
+      if (!finalSecurity.exists || !finalSecurity.safe) throw new Error("Managed-source install stamp protection changed during publish.");
+    }
   } catch (error) {
     await fsImpl.rm(temporary, { force: true }).catch(() => {});
     throw error;
@@ -143,17 +185,21 @@ export async function installPrebuiltDependencies(sourceRoot, contract, { execFi
 }
 
 export async function validateManagedSource(sourceRoot, contract, { execFileImpl = execFile, env = process.env, platform = process.platform } = {}) {
+  let checkPromise;
   if (platform === "win32") {
     if (typeof contract.shellPath !== "string" || !path.win32.isAbsolute(contract.shellPath)) {
       throw new Error("Managed-source Windows validation requires the product-owned POSIX shell.");
     }
-    await run(contract.nodePath, [path.join(sourceRoot, "scripts", "check.mjs"), `--shell-command=${contract.shellPath}`], {
+    checkPromise = run(contract.nodePath, [path.join(sourceRoot, "scripts", "check.mjs"), `--shell-command=${contract.shellPath}`], {
       cwd: sourceRoot, execFileImpl, env, platform, pathPrefix: path.dirname(contract.nodePath),
     });
   } else {
-    await run(contract.nodePath, [contract.npmPath, "run", "check"], { cwd: sourceRoot, execFileImpl, env, platform, pathPrefix: path.dirname(contract.nodePath) });
+    checkPromise = run(contract.nodePath, [contract.npmPath, "run", "check"], { cwd: sourceRoot, execFileImpl, env, platform, pathPrefix: path.dirname(contract.nodePath) });
   }
-  await run(contract.nodePath, ["--test", "tests/release/equinox-local-main-update.test.js"], { cwd: sourceRoot, execFileImpl, env, platform, pathPrefix: path.dirname(contract.nodePath) });
+  const updaterTestPromise = run(contract.nodePath, ["--test", "tests/release/equinox-local-main-update.test.js"], {
+    cwd: sourceRoot, execFileImpl, env, platform, pathPrefix: path.dirname(contract.nodePath),
+  });
+  await Promise.all([checkPromise, updaterTestPromise]);
 }
 
 
@@ -205,13 +251,17 @@ export async function enrollEquinoxLocalManagedSource({
   randomBytesImpl = randomBytes,
   mainRemote = EQUINOX_LOCAL_MAIN_REMOTE,
   windowsZipHelperPath = undefined,
+  protectWindowsAcl = protectWindowsPrivateStatePath,
+  verifyWindowsAcl = verifyWindowsPrivateStateAcl,
 } = {}) {
   const sha = assertSha(bootstrapSha);
   const layout = equinoxLocalPlatformPaths({ platform, arch, homeDir, env });
   if (target !== layout.host.target) throw new Error("Managed-source enrollment target does not match the host target.");
   const paths = equinoxLocalManagedSourcePaths({ platform, arch, homeDir, env });
   await normalDirectory(layout.appDataRoot, { fsImpl });
-  await normalDirectory(paths.mainTransactionRoot, { fsImpl, create: true });
+  await ensureManagedSourcePrivateDirectory(paths.mainTransactionRoot, {
+    platform, fsImpl, env, protectWindowsAcl, verifyWindowsAcl,
+  });
 
   const provisioned = await provisionToolchainImpl({ runtimeRoot: layout.runtimeRoot, target, platform, env, fsImpl, execFileImpl, windowsZipHelperPath });
   const contract = provisioned?.contract;
@@ -263,8 +313,11 @@ export async function enrollEquinoxLocalManagedSource({
     if (!durableFinal?.eligible || durableFinal.currentSha !== sha) throw new Error("Durable managed-source bootstrap checkout identity is invalid.");
     const pointer = await writePointerImpl(paths.sourcePointerPath, { sourceRoot: durableSourceRoot, sha }, {
       fsImpl, execFileImpl, gitPath: contract.gitPath, randomBytesImpl,
+      platform, env, protectWindowsAcl, verifyWindowsAcl,
     });
-    await atomicInstallStamp(paths.installStampPath, sha, { fsImpl, randomBytesImpl });
+    await writeManagedSourceInstallStamp(paths.installStampPath, sha, {
+      fsImpl, randomBytesImpl, platform, env, protectWindowsAcl, verifyWindowsAcl,
+    });
     return Object.freeze({ status: "enrolled", bootstrapSha: sha, sourceRoot: pointer.sourceRoot, contract });
   } finally {
     await fsImpl.rm(transactionRoot, { recursive: true, force: true }).catch(() => {});

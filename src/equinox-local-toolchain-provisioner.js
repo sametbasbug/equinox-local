@@ -414,12 +414,17 @@ export async function provisionEquinoxLocalToolchain({
       fetchImpl: toolchainFetchForArtifact(artifact, fetchImpl),
     }));
 
-  const git = await installComponent(contract.git, contract, {
-    platform, env, fsImpl, execFileImpl, downloadImpl: verifiedDownload, extractComponentImpl, windowsZipHelperPath,
-  });
-  const node = await installComponent(contract.node, contract, {
-    platform, env, fsImpl, execFileImpl, downloadImpl: verifiedDownload, extractComponentImpl, windowsZipHelperPath,
-  });
+  const componentResults = await Promise.allSettled([
+    installComponent(contract.git, contract, {
+      platform, env, fsImpl, execFileImpl, downloadImpl: verifiedDownload, extractComponentImpl, windowsZipHelperPath,
+    }),
+    installComponent(contract.node, contract, {
+      platform, env, fsImpl, execFileImpl, downloadImpl: verifiedDownload, extractComponentImpl, windowsZipHelperPath,
+    }),
+  ]);
+  const failed = componentResults.find((result) => result.status === "rejected");
+  if (failed) throw failed.reason;
+  const [git, node] = componentResults.map((result) => result.value);
 
   return Object.freeze({ contract, components: Object.freeze([git, node]) });
 }

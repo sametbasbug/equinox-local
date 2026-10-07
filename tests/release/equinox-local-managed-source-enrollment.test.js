@@ -6,9 +6,11 @@ import test from "node:test";
 
 import {
   enrollEquinoxLocalManagedSource,
+  ensureManagedSourcePrivateDirectory,
   installPrebuiltDependencies,
   rollbackEquinoxLocalManagedSourceEnrollment,
   validateManagedSource,
+  writeManagedSourceInstallStamp,
 } from "../../src/equinox-local-managed-source-enrollment.js";
 import { equinoxLocalManagedSourcePaths } from "../../src/equinox-local-managed-source-installation.js";
 
@@ -41,6 +43,58 @@ function inspectorForSha() {
     return { eligible: true, currentSha: SHA, sourceRoot: root };
   };
 }
+
+test("Windows managed-source state hardens only newly created roots and refuses hostile existing ACLs", async (t) => {
+  const base = await fs.mkdtemp(path.join(os.tmpdir(), "equinox-managed-acl-"));
+  t.after(() => fs.rm(base, { recursive: true, force: true }));
+  const root = path.join(base, "main-update");
+  const protectedTargets = [];
+  let secured = false;
+  const protectWindowsAcl = async ({ target, type }) => {
+    protectedTargets.push([target, type]);
+    secured = true;
+    return { safe: true };
+  };
+  const verifyWindowsAcl = async () => ({ safe: secured, reason: secured ? null : "foreign-principal" });
+
+  await ensureManagedSourcePrivateDirectory(root, {
+    platform: "win32", fsImpl: fs, env: { SystemRoot: "C:\\Windows" }, protectWindowsAcl, verifyWindowsAcl,
+  });
+  assert.deepEqual(protectedTargets, [[root, "directory"]]);
+
+  const hostile = path.join(base, "hostile");
+  await fs.mkdir(hostile);
+  await assert.rejects(ensureManagedSourcePrivateDirectory(hostile, {
+    platform: "win32", fsImpl: fs, env: { SystemRoot: "C:\\Windows" },
+    protectWindowsAcl: async () => assert.fail("pre-existing hostile ACL must not be repaired"),
+    verifyWindowsAcl: async () => ({ safe: false, reason: "foreign-principal" }),
+  }), /state directory is not private/u);
+});
+
+test("Windows managed-source install stamp receives explicit ACL before atomic publish", async (t) => {
+  const temporaryBase = await fs.mkdtemp(path.join(os.tmpdir(), "equinox-managed-stamp-acl-"));
+  const base = await fs.realpath(temporaryBase);
+  t.after(() => fs.rm(base, { recursive: true, force: true }));
+  const stampPath = path.join(base, "install.json");
+  const protectedTargets = [];
+  let protectedFile = false;
+  await writeManagedSourceInstallStamp(stampPath, SHA, {
+    platform: "win32",
+    fsImpl: fs,
+    env: { SystemRoot: "C:\\Windows" },
+    randomBytesImpl: () => Buffer.alloc(8, 0xee),
+    protectWindowsAcl: async ({ target, type }) => {
+      protectedTargets.push([target, type]);
+      protectedFile = true;
+      return { safe: true };
+    },
+    verifyWindowsAcl: async () => ({ safe: protectedFile }),
+  });
+  assert.equal(protectedTargets.length, 1);
+  assert.equal(protectedTargets[0][1], "file");
+  assert.match(path.basename(protectedTargets[0][0]), /^\.install-[a-f0-9]+\.tmp$/u);
+  assert.equal(JSON.parse(await fs.readFile(stampPath, "utf8")).bootstrapSha, SHA);
+});
 
 test("fresh enrollment binds exact Stable source SHA and writes install stamp last", async (t) => {
   const f = await fixture(t);
