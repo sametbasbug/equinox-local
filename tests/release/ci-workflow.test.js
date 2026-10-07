@@ -185,8 +185,10 @@ test("stable ARM64 and Windows aggregate checks reject every non-success depende
   assert.match(foundation, /name: Windows ARM64 foundation \/ Node 26/u);
   assertSuccessGate(foundation, "ARM64 foundation", arm64Lanes);
   assertSuccessGate(job("windows-headless"), "Windows aggregate", [
-    "windows-runtime", "windows-shell", "windows-package", "windows-x64-installer", "windows-arm64-shared-core", "windows-arm64-bootstrap", "windows-arm64-foundation",
+    "windows-runtime", "windows-shell", "windows-package", "windows-x64-installer", "windows-arm64-shared-core", "windows-arm64-bootstrap",
+    "windows-arm64-runtime", "windows-arm64-package", "windows-arm64-installer",
   ]);
+  assert.doesNotMatch(job("windows-headless"), /needs\.windows-arm64-foundation/u);
 });
 
 test("native ARM64 acceptance and preparation cannot tolerate failures or be skipped", () => {

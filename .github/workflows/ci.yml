@@ -702,7 +702,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 2
     if: ${{ always() }}
-    needs: [windows-runtime, windows-shell, windows-package, windows-x64-installer, windows-arm64-shared-core, windows-arm64-bootstrap, windows-arm64-foundation]
+    needs: [windows-runtime, windows-shell, windows-package, windows-x64-installer, windows-arm64-shared-core, windows-arm64-bootstrap, windows-arm64-runtime, windows-arm64-package, windows-arm64-installer]
 
     steps:
       - name: Verify parallel Windows acceptance
@@ -713,7 +713,9 @@ jobs:
           X64_INSTALLER_RESULT: ${{ needs.windows-x64-installer.result }}
           ARM64_SHARED_RESULT: ${{ needs.windows-arm64-shared-core.result }}
           ARM64_BOOTSTRAP_RESULT: ${{ needs.windows-arm64-bootstrap.result }}
-          ARM64_RESULT: ${{ needs.windows-arm64-foundation.result }}
+          ARM64_RUNTIME_RESULT: ${{ needs.windows-arm64-runtime.result }}
+          ARM64_PACKAGE_RESULT: ${{ needs.windows-arm64-package.result }}
+          ARM64_INSTALLER_RESULT: ${{ needs.windows-arm64-installer.result }}
         run: |
           test "$RUNTIME_RESULT" = success
           test "$SHELL_RESULT" = success
@@ -721,7 +723,9 @@ jobs:
           test "$X64_INSTALLER_RESULT" = success
           test "$ARM64_SHARED_RESULT" = success
           test "$ARM64_BOOTSTRAP_RESULT" = success
-          test "$ARM64_RESULT" = success
+          test "$ARM64_RUNTIME_RESULT" = success
+          test "$ARM64_PACKAGE_RESULT" = success
+          test "$ARM64_INSTALLER_RESULT" = success
 
   main-native-plan:
     if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch' && inputs.main_native_current != '' && inputs.main_native_target != '' }}
