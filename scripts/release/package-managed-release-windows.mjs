@@ -34,6 +34,7 @@ const WINDOWS_TARGETS = Object.freeze({
     shellPlatform: "ARM64",
     visualStudioComponent: "Microsoft.VisualStudio.Component.VC.Tools.ARM64",
     vcvars: "vcvarsarm64.bat",
+    crossVcvars: "vcvarsamd64_arm64.bat",
     peMachine: 0xaa64,
   }),
 });
@@ -298,7 +299,10 @@ async function compileBrowserLauncher(rootDir, releaseDir, contract) {
     installation = found.stdout.trim();
   }
   if (!installation) throw new Error(`Visual Studio C++ toolchain is unavailable for ${contract.target}.`);
-  const vcvars = path.join(installation, "VC", "Auxiliary", "Build", contract.vcvars);
+  const vcvarsName = process.arch === "x64" && contract.target === "win32-arm64"
+    ? contract.crossVcvars
+    : contract.vcvars;
+  const vcvars = path.join(installation, "VC", "Auxiliary", "Build", vcvarsName);
   const vcvarsStat = await fs.lstat(vcvars).catch((error) => error?.code === "ENOENT" ? null : Promise.reject(error));
   if (!vcvarsStat?.isFile() || vcvarsStat.isSymbolicLink()) throw new Error(`Visual Studio target environment is unavailable for ${contract.target}.`);
   const source = path.join(rootDir, "native", "windows", "equinox-browser-native-host-launcher.cpp");

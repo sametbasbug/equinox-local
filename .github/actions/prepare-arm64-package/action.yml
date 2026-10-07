@@ -60,6 +60,16 @@ runs:
         EQUINOX_NODE_MODULES_CACHE_HIT: ${{ steps.node-modules-cache.outputs.cache-hit }}
       run: '& $env:PREPARE_INPUTS_SCRIPT'
 
+    - name: Shape target ARM64 node-pty payload
+      shell: pwsh
+      run: |
+        $nodePtyRoot = Join-Path $PWD 'node_modules\node-pty'
+        $nodePtyBuild = Join-Path $nodePtyRoot 'build'
+        if (Test-Path -LiteralPath $nodePtyBuild) { Remove-Item -LiteralPath $nodePtyBuild -Recurse -Force }
+        foreach ($required in @('prebuilds\win32-arm64\conpty.node', 'prebuilds\win32-arm64\conpty_console_list.node')) {
+          if (-not (Test-Path -LiteralPath (Join-Path $nodePtyRoot $required) -PathType Leaf)) { throw "ARM64 node-pty prebuild is missing: $required" }
+        }
+
     - name: Windows ARM64 native shell publish smoke
       shell: pwsh
       env:

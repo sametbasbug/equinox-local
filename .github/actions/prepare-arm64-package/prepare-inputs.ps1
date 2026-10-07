@@ -47,12 +47,6 @@ try {
     throw 'Locked native npm installation did not complete successfully.'
   }
   Receive-Job -Job $installJob -ErrorAction Stop
-  $nodePtyRoot = Join-Path $root 'node_modules\node-pty'
-  $nodePtyBuild = Join-Path $nodePtyRoot 'build'
-  if (Test-Path -LiteralPath $nodePtyBuild) { Remove-Item -LiteralPath $nodePtyBuild -Recurse -Force }
-  foreach ($required in @('prebuilds\win32-arm64\conpty.node', 'prebuilds\win32-arm64\conpty_console_list.node')) {
-    if (-not (Test-Path -LiteralPath (Join-Path $nodePtyRoot $required) -PathType Leaf)) { throw "ARM64 node-pty prebuild is missing: $required" }
-  }
 } finally {
   # Only this preparation step's own job is stopped or removed.
   Stop-Job -Job $installJob -ErrorAction SilentlyContinue

@@ -141,6 +141,7 @@ test("Windows native launcher toolchain is target-specific and architecture-veri
   assert.match(source, /Microsoft\.VisualStudio\.Component\.VC\.Tools\.ARM64/u);
   assert.match(source, /vcvars64\.bat/u);
   assert.match(source, /vcvarsarm64\.bat/u);
+  assert.match(source, /vcvarsamd64_arm64\.bat/u);
   assert.match(source, /0x8664/u);
   assert.match(source, /0xaa64/u);
   assert.match(source, /architecture mismatch/u);
