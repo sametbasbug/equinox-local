@@ -58,7 +58,6 @@ internal sealed class RuntimeSupervisor : IAsyncDisposable
             if (gate is null || pid is null) return null;
             try { return gate.HasExited ? null : pid; }
             catch (InvalidOperationException) { return null; }
-            catch (ObjectDisposedException) { return null; }
         }
     }
     internal bool DesiredRunning => _desiredRunning;
@@ -169,7 +168,6 @@ internal sealed class RuntimeSupervisor : IAsyncDisposable
         var exitCode = -1;
         try { if (gate.HasExited) exitCode = gate.ExitCode; }
         catch (InvalidOperationException) { }
-        catch (ObjectDisposedException) { }
         var stderr = ReadGateDiagnostic(gateStderr, gateStderrSync);
         var detail = string.IsNullOrWhiteSpace(stderr) ? $"exit={exitCode}" : $"exit={exitCode}; stderr={stderr}";
         WindowsShellDiagnostics.RecordRuntimeState("runtime-gate-exit", detail);
