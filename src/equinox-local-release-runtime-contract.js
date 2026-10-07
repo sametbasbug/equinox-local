@@ -4,6 +4,7 @@ import {
   EQUINOX_LOCAL_BUNDLED_PEEKABOO_SINCE_VERSION,
   EQUINOX_LOCAL_BUNDLED_WINAPP_SINCE_VERSION,
   EQUINOX_LOCAL_NATIVE_JOB_OBJECT_HELPER_SINCE_VERSION,
+  EQUINOX_LOCAL_NODE_RUNTIME_GATE_SINCE_VERSION,
 } from "./equinox-local-runtime-versions.js";
 import { compareEquinoxVersions, parseEquinoxVersion } from "./equinox-local-updater.js";
 
@@ -99,6 +100,7 @@ export function equinoxLocalReleaseRuntimeContract({ target, version } = {}) {
   if (WINDOWS_TARGET_PATTERN.test(target)) {
     const winapp = compareEquinoxVersions(normalizedVersion, EQUINOX_LOCAL_BUNDLED_WINAPP_SINCE_VERSION) >= 0;
     const nativeJobObjectHelper = compareEquinoxVersions(normalizedVersion, EQUINOX_LOCAL_NATIVE_JOB_OBJECT_HELPER_SINCE_VERSION) >= 0;
+    const nodeRuntimeGate = compareEquinoxVersions(normalizedVersion, EQUINOX_LOCAL_NODE_RUNTIME_GATE_SINCE_VERSION) >= 0;
     return Object.freeze({
       target,
       version: normalizedVersion,
@@ -107,6 +109,7 @@ export function equinoxLocalReleaseRuntimeContract({ target, version } = {}) {
       bundledPeekaboo: false,
       bundledWinapp: winapp,
       nativeJobObjectHelper,
+      nodeRuntimeGate,
       runtimeExecutables: Object.freeze([
         ...WINDOWS_BASE_EXECUTABLES,
         ...(nativeJobObjectHelper ? WINDOWS_JOB_OBJECT_EXECUTABLES : []),
@@ -118,6 +121,7 @@ export function equinoxLocalReleaseRuntimeContract({ target, version } = {}) {
       ]),
       requiredReleaseFiles: Object.freeze([
         ...WINDOWS_RELEASE_FILES,
+        ...(nodeRuntimeGate ? ["equinox-local-windows-runtime-gate.mjs"] : []),
         ...(!nativeJobObjectHelper ? ["equinox-local-windows-job-object.ps1"] : []),
       ]),
       nativeShellFiles: WINDOWS_SHELL_FILES,

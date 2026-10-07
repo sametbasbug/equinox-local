@@ -18,6 +18,7 @@ Directory.CreateDirectory(nodeDir);
 File.Copy(nodeSource, Path.Combine(nodeDir, "node.exe"));
 File.Copy(Path.Combine(repo, "src", "equinox-local-windows-job-object.ps1"), Path.Combine(root, "equinox-local-windows-job-object.ps1"));
 File.Copy(Path.Combine(repo, "src", "equinox-local-windows-process-gate.ps1"), Path.Combine(root, "equinox-local-windows-process-gate.ps1"));
+File.Copy(Path.Combine(repo, "src", "equinox-local-windows-runtime-gate.mjs"), Path.Combine(root, "equinox-local-windows-runtime-gate.mjs"));
 await File.WriteAllTextAsync(Path.Combine(root, "server.js"), """
 import { spawn } from 'node:child_process';
 import http from 'node:http';

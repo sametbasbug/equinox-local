@@ -9,7 +9,9 @@ internal sealed class RuntimeSupervisor : IAsyncDisposable
 {
     private const int MaxAutomaticRestarts = 3;
     private const int MaxGateDiagnosticChars = 1_200;
+    private const string RuntimeGateReadyMarker = "EQUINOX_RUNTIME_CHILD_STARTED";
     private static readonly TimeSpan ExitTimeout = TimeSpan.FromSeconds(5);
+    private static readonly TimeSpan RuntimeGateStartTimeout = TimeSpan.FromSeconds(15);
     private static readonly TimeSpan[] RecoveryDelays = [TimeSpan.FromMilliseconds(250), TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(2)];
 
     private readonly Func<WindowsRuntimeLocation> _runtimeResolver;
@@ -113,22 +115,28 @@ internal sealed class RuntimeSupervisor : IAsyncDisposable
         var sourceRoot = location.SourceRoot;
         var nodePath = Path.Combine(nativeReleaseDir, "runtime", "node", "bin", "node.exe");
         var serverPath = location.ServerPath;
-        var processGatePath = Path.Combine(nativeReleaseDir, "equinox-local-windows-process-gate.ps1");
+        var processGatePath = Path.Combine(nativeReleaseDir, "equinox-local-windows-runtime-gate.mjs");
         ValidateReleaseFiles(nodePath, serverPath, processGatePath);
         _jobObject?.Dispose();
         _jobObject = WindowsJobObjectLease.Create();
         WindowsShellDiagnostics.RecordRuntimeState("runtime-start-phase", "job-created");
 
         var payload = Convert.ToBase64String(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new { command = nodePath, args = new[] { serverPath } })));
-        var startInfo = PowerShellStartInfo(processGatePath);
+        var startInfo = NodeGateStartInfo(nodePath, processGatePath);
         startInfo.WorkingDirectory = sourceRoot;
         startInfo.Environment["EQUINOX_LOCAL_OWNED_PROCESS_SPEC"] = payload;
         startInfo.Environment["EQUINOX_LOCAL_RELEASE_DIR"] = location.BootstrapReleaseDir;
         startInfo.Environment["EQUINOX_LOCAL_INSTALL_ROOT"] = location.InstallRoot;
         startInfo.Environment["EQUINOX_LOCAL_SUPERVISOR_MODE"] = "local-only";
+        startInfo.Environment["EQUINOX_LOCAL_OWNED_PROCESS_READY_MARKER"] = RuntimeGateReadyMarker;
         var gate = new Process { StartInfo = startInfo, EnableRaisingEvents = true };
         var gateStderr = new StringBuilder();
         var gateStderrSync = new object();
+        var gateReady = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        gate.OutputDataReceived += (_, eventArgs) =>
+        {
+            if (string.Equals(eventArgs.Data, RuntimeGateReadyMarker, StringComparison.Ordinal)) gateReady.TrySetResult(true);
+        };
         gate.ErrorDataReceived += (_, eventArgs) => AppendGateDiagnostic(gateStderr, gateStderrSync, eventArgs.Data);
         if (!gate.Start()) throw new InvalidOperationException("Windows runtime process gate did not start.");
         var gatePid = gate.Id;
@@ -138,7 +146,13 @@ internal sealed class RuntimeSupervisor : IAsyncDisposable
         _gatePid = gatePid;
         WindowsShellDiagnostics.RecordRuntimeState("runtime-start-phase", "gate-started");
         var generation = ++_generation;
-        gate.Exited += (_, _) => OnGateExited(generation, gate, gateStderr, gateStderrSync);
+        gate.Exited += (_, _) =>
+        {
+            gateReady.TrySetException(new InvalidOperationException("Windows runtime gate exited before child startup was acknowledged."));
+            OnGateExited(generation, gate, gateStderr, gateStderrSync);
+        };
+        if (gate.HasExited)
+            gateReady.TrySetException(new InvalidOperationException("Windows runtime gate exited before child startup was acknowledged."));
         try
         {
             WindowsShellDiagnostics.RecordRuntimeState("runtime-start-phase", "assign-started");
@@ -146,11 +160,13 @@ internal sealed class RuntimeSupervisor : IAsyncDisposable
             WindowsShellDiagnostics.RecordRuntimeState("runtime-start-phase", "assigned");
             await gate.StandardInput.WriteLineAsync("EQUINOX_GO").ConfigureAwait(false);
             await gate.StandardInput.FlushAsync(cancellationToken).ConfigureAwait(false);
+            WindowsShellDiagnostics.RecordRuntimeState("runtime-start-phase", "gate-released");
+            await gateReady.Task.WaitAsync(RuntimeGateStartTimeout, cancellationToken).ConfigureAwait(false);
+            WindowsShellDiagnostics.RecordRuntimeState("runtime-start-phase", "child-started");
             // Keep the gate stdin pipe open for the child runtime. server.js treats stdin EOF as
             // an ownership shutdown signal; closing this writer here made GUI-hosted Windows
             // runtimes shut down cleanly immediately after startup. Job Object termination still
             // owns stop/restart and closes the process tree without relying on stdin EOF.
-            WindowsShellDiagnostics.RecordRuntimeState("runtime-start-phase", "gate-released");
         }
         catch
         {
@@ -245,16 +261,20 @@ internal sealed class RuntimeSupervisor : IAsyncDisposable
         finally { gate.Dispose(); }
     }
 
-    private static ProcessStartInfo PowerShellStartInfo(string scriptPath, bool redirectOutput = true) => new()
+    private static ProcessStartInfo NodeGateStartInfo(string nodePath, string scriptPath)
     {
-        FileName = "powershell.exe",
-        UseShellExecute = false,
-        CreateNoWindow = true,
-        RedirectStandardInput = true,
-        RedirectStandardOutput = redirectOutput,
-        RedirectStandardError = true,
-        Arguments = $"-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File \"{scriptPath}\"",
-    };
+        var startInfo = new ProcessStartInfo
+        {
+            FileName = nodePath,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            RedirectStandardInput = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+        };
+        startInfo.ArgumentList.Add(scriptPath);
+        return startInfo;
+    }
 
     private static void ValidateReleaseFiles(params string[] files)
     {

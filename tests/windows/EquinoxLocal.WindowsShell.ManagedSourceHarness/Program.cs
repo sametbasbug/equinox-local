@@ -187,6 +187,7 @@ static async Task WriteRuntimeReleaseAsync(string releaseDir, string version, st
     File.Copy(nodeSource, Path.Combine(nodeDir, "node.exe"), overwrite: false);
     File.Copy(Path.Combine(repo, "src", "equinox-local-windows-job-object.ps1"), Path.Combine(releaseDir, "equinox-local-windows-job-object.ps1"), overwrite: false);
     File.Copy(Path.Combine(repo, "src", "equinox-local-windows-process-gate.ps1"), Path.Combine(releaseDir, "equinox-local-windows-process-gate.ps1"), overwrite: false);
+    File.Copy(Path.Combine(repo, "src", "equinox-local-windows-runtime-gate.mjs"), Path.Combine(releaseDir, "equinox-local-windows-runtime-gate.mjs"), overwrite: false);
     await File.WriteAllTextAsync(
         Path.Combine(releaseDir, "release.json"),
         JsonSerializer.Serialize(new { schemaVersion = 1, version, target, serverEntry = "server.js" }) + "\n");

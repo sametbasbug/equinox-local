@@ -26,6 +26,7 @@ test("Windows managed package contract keeps x64 stable and defines explicit nat
     "src/equinox-local-windows-desktop.ps1",
     "src/equinox-local-windows-private-state.ps1",
     "src/equinox-local-windows-process-gate.ps1",
+    "src/equinox-local-windows-runtime-gate.mjs",
     "src/equinox-local-windows-release-zip.ps1",
   ]);
   assert.deepEqual(arm64.requiredShellFiles, [
@@ -207,4 +208,16 @@ test("Windows public installer reuses the current PowerShell host for verified Z
   assert.match(installer, /GetCurrentProcess\(\)\.MainModule\.FileName/u);
   assert.match(installer, /& \$powerShellHost -NoLogo -NoProfile -NonInteractive/u);
   assert.doesNotMatch(installer, /\$PSHOME\\powershell\.exe/u);
+});
+
+
+test("Windows shell runtime gate is product-owned Node with explicit child-start acknowledgement", async () => {
+  const gate = await fs.readFile(new URL("../../src/equinox-local-windows-runtime-gate.mjs", import.meta.url), "utf8");
+  assert.match(gate, /from "node:child_process"/u);
+  assert.match(gate, /EQUINOX_LOCAL_OWNED_PROCESS_SPEC/u);
+  assert.match(gate, /EQUINOX_LOCAL_OWNED_PROCESS_READY_MARKER/u);
+  assert.match(gate, /stdio: \["inherit", "inherit", "inherit"\]/u);
+  assert.match(gate, /child\.once\("spawn"/u);
+  assert.match(gate, /process\.stdout\.write/u);
+  assert.doesNotMatch(gate, /powershell|cmd\.exe|shell:\s*true/iu);
 });
