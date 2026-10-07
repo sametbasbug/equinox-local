@@ -21,8 +21,9 @@ export async function prepareAndScheduleEquinoxLocalMainUpdate({
   stageNativeArtifact = stageEquinoxLocalMainSnapshotArtifact,
   scheduleWorker = scheduleEquinoxLocalMainUpdateWorker,
   schedulerOptions = {},
+  engineOptions = {},
 } = {}) {
-  const engine = engineFactory({ sourceRoot, transactionRoot });
+  const engine = engineFactory({ sourceRoot, transactionRoot, ...engineOptions });
   await engine.initializeSourcePointer();
   const staged = await engine.stage({ currentSha, targetSha });
   const transactionId = staged.receipt.transactionId;
@@ -36,6 +37,7 @@ export async function prepareAndScheduleEquinoxLocalMainUpdate({
       targetRoot: staged.stagedSourceRoot,
       targetSha,
       target,
+      gitPath: engineOptions.gitPath ?? "git",
     });
     if (nativeTransition?.mode === "artifact_required") {
       await stageNativeArtifact({

@@ -321,6 +321,40 @@ export async function waitForEquinoxLocalVersion(expectedVersion, {
   throw new Error(`Equinox Local ${expectedVersion} did not become healthy: ${boundedMessage(lastError instanceof Error ? lastError.message : lastError)}`);
 }
 
+export async function waitForEquinoxLocalManagedSource(expectedVersion, expectedSourceSha, {
+  fetchImpl = globalThis.fetch,
+  sleepImpl = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+  attempts = HEALTH_ATTEMPTS,
+  delayMs = HEALTH_DELAY_MS,
+} = {}) {
+  parseEquinoxVersion(expectedVersion);
+  if (typeof expectedSourceSha !== "string" || !/^[a-f0-9]{40}$/u.test(expectedSourceSha)) throw new Error("Managed-source health check requires an exact source SHA.");
+  let lastError = null;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try {
+      const response = await fetchImpl(EQUINOX_LOCAL_CONTROL_CENTER_STATUS_URL, {
+        method: "GET",
+        redirect: "error",
+        cache: "no-store",
+        credentials: "omit",
+        headers: { accept: "application/json" },
+      });
+      if (!response?.ok) throw new Error(`Health endpoint returned HTTP ${response?.status ?? "unknown"}.`);
+      const body = await response.json();
+      const reportedVersion = body?.status?.server?.version ?? null;
+      const healthState = body?.status?.health?.state ?? null;
+      const installationKind = body?.status?.installation?.kind ?? null;
+      const sourceSha = body?.status?.installation?.sourceSha ?? null;
+      if (reportedVersion === expectedVersion && healthState === "HEALTHY" && installationKind === "managed-source" && sourceSha === expectedSourceSha) return true;
+      throw new Error(`Health endpoint reported Equinox Local ${reportedVersion ?? "unknown"}, health ${healthState ?? "unknown"}, installation ${installationKind ?? "unknown"}, source ${sourceSha ?? "unknown"}.`);
+    } catch (error) {
+      lastError = error;
+    }
+    if (attempt + 1 < attempts) await sleepImpl(delayMs);
+  }
+  throw new Error(`Equinox Local managed-source ${expectedSourceSha.slice(0, 7)} did not become healthy: ${boundedMessage(lastError instanceof Error ? lastError.message : lastError)}`);
+}
+
 async function writeActivationState(installation, state) {
   const target = path.join(installation.installRoot, "update-state.json");
   const temp = `${target}.tmp-${process.pid}-${randomBytes(8).toString("hex")}`;

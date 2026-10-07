@@ -65,6 +65,7 @@ test("coordinator reuses compatible native shell before preparing and scheduling
     targetRoot: TARGET_ROOT,
     targetSha: B,
     target: "darwin-arm64",
+    gitPath: "git",
   });
   const options = events[4][1];
   assert.equal(options.workerPath, "/state/sources/target/src/equinox-local-main-update-worker.js");

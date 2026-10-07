@@ -88,7 +88,15 @@ export function createEquinoxLocalMainApplyController({
         transactionRoot: path.resolve(installation.mainTransactionRoot),
         currentSha,
         targetSha,
-        schedulerOptions: installation.mainSchedulerOptions ?? {},
+        engineOptions: {
+          gitPath: installation.gitPath ?? "git",
+          nodePath: installation.nodePath ?? process.execPath,
+          npmPath: installation.npmPath ?? null,
+        },
+        schedulerOptions: {
+          ...(installation.mainSchedulerOptions ?? {}),
+          ...(installation.nodePath ? { nodePath: installation.nodePath } : {}),
+        },
       });
       if (result?.targetSha !== targetSha || result?.status !== "scheduled") {
         throw new Error("Main update handoff did not preserve the admitted target identity.");

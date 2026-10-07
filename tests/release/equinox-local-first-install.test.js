@@ -238,6 +238,42 @@ test("first install promotes the verified release, bootstraps the user and loads
   }
 });
 
+test("fresh source-provenance install stays Stable-first, then enrolls and verifies exact managed-source SHA", async () => {
+  const fixture = await createFixture("5.2.1");
+  const uid = typeof process.getuid === "function" ? process.getuid() : 501;
+  const sourceSha = "c".repeat(40);
+  const metadataPath = path.join(fixture.releaseDir, "release.json");
+  const metadata = JSON.parse(await fs.readFile(metadataPath, "utf8"));
+  await fs.writeFile(metadataPath, `${JSON.stringify({ ...metadata, sourceSha })}\n`);
+  const events = [];
+  try {
+    const result = await installManagedEquinoxRelease({
+      stagedReleaseDir: fixture.releaseDir,
+      homeDir: fixture.homeDir,
+      uid,
+      platform: "darwin",
+      target: TARGET,
+      readCurrentImpl: async () => null,
+      bootstrapImpl: async () => ({ configCreated: true, controlCenterUrl: "http://127.0.0.1:24891/" }),
+      execFileImpl: async (command, args) => { events.push(["exec", command, args[0]]); return { stdout: "", stderr: "" }; },
+      waitForVersionImpl: async (version, budget) => { events.push(["stable-health", version, budget]); return true; },
+      enrollManagedSourceImpl: async (value) => { events.push(["enroll", value.bootstrapSha, value.target]); return { status: "enrolled", bootstrapSha: value.bootstrapSha }; },
+      waitForManagedSourceImpl: async (version, sha, budget) => { events.push(["source-health", version, sha, budget]); return true; },
+    });
+    assert.equal(result.status, "installed");
+    assert.equal(result.managedSourceSha, sourceSha);
+    const stableHealth = events.findIndex((event) => event[0] === "stable-health");
+    const enrollment = events.findIndex((event) => event[0] === "enroll");
+    const exactHealth = events.findIndex((event) => event[0] === "source-health");
+    assert.equal(stableHealth >= 0 && enrollment > stableHealth && exactHealth > enrollment, true);
+    assert.deepEqual(events[enrollment].slice(1), [sourceSha, TARGET]);
+    assert.deepEqual(events[exactHealth].slice(1), ["5.2.1", sourceSha, { attempts: 120, delayMs: 500 }]);
+    assert.equal(events.filter((event) => event[0] === "exec" && event[1] === "/bin/launchctl" && event[2] === "bootstrap").length, 2);
+  } finally {
+    await fs.rm(fixture.homeDir, { recursive: true, force: true });
+  }
+});
+
 test("fresh activation failure preserves the verified release and reports bounded LaunchAgent diagnostics", async () => {
   const fixture = await createFixture("5.2.0");
   const uid = typeof process.getuid === "function" ? process.getuid() : 501;

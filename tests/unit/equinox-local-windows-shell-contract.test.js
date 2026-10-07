@@ -522,11 +522,9 @@ test("Windows Main update handoff derives all worker paths from product-owned st
   assert.match(handoff, /startInfo\.ArgumentList\.Add\("--transaction-id"\)/u);
   assert.match(handoff, /startInfo\.ArgumentList\.Add\("--source-root"\)/u);
   assert.match(handoff, /startInfo\.ArgumentList\.Add\("--transaction-root"\)/u);
-  assert.match(handoff, /ResolveGitExecutable\(systemRoot\)/u);
-  assert.match(handoff, /where\.exe/u);
-  assert.match(handoff, /git\.exe/u);
+  assert.doesNotMatch(handoff, /ResolveGitExecutable|where\.exe|gitDirectory/u);
   assert.match(handoff, /WindowsPowerShell", "v1\.0"/u);
-  assert.match(handoff, /string\.Join\(Path\.PathSeparator, \[gitDirectory, powershellDirectory, system32, systemRoot\]\)/u);
+  assert.match(handoff, /string\.Join\(Path\.PathSeparator, \[powershellDirectory, system32, systemRoot\]\)/u);
   assert.match(handoff, /Environment\.Clear\(\)/u);
   assert.match(handoff, /RandomNumberGenerator\.GetBytes\(32\)/u);
   assert.match(handoff, /EQUINOX_LOCAL_MAIN_WORKER_TOKEN/u);

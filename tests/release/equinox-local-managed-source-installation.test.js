@@ -102,8 +102,14 @@ test("managed-source resolver prefers exact product-owned Git when the M8 toolch
   const installRoot = path.join(home, "Library", "Application Support", "Equinox Local");
   const paths = equinoxLocalManagedSourcePaths({ platform: "darwin", arch: "arm64", homeDir: home, env: {} });
   const managedGit = path.join(installRoot, "runtime", "toolchain", "git", "2.53.0-4", "darwin-arm64", "bin", "git");
+  const managedNode = path.join(installRoot, "runtime", "toolchain", "node", "26.10.0", "darwin-arm64", "bin", "node");
+  const managedNpm = path.join(installRoot, "runtime", "toolchain", "node", "26.10.0", "darwin-arm64", "lib", "node_modules", "npm", "bin", "npm-cli.js");
   await fs.mkdir(path.dirname(managedGit), { recursive: true, mode: 0o700 });
+  await fs.mkdir(path.dirname(managedNode), { recursive: true, mode: 0o700 });
+  await fs.mkdir(path.dirname(managedNpm), { recursive: true, mode: 0o700 });
   await fs.writeFile(managedGit, "fixture\n", { mode: 0o700 });
+  await fs.writeFile(managedNode, "fixture\n", { mode: 0o700 });
+  await fs.writeFile(managedNpm, "fixture\n", { mode: 0o600 });
   await fs.mkdir(paths.mainTransactionRoot, { recursive: true, mode: 0o700 });
   await fs.writeFile(paths.installStampPath, JSON.stringify({
     schemaVersion: 1, channel: "main", repository: "sametbasbug/equinox-local", branch: "main", bootstrapSha: SHA,

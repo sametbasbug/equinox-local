@@ -122,17 +122,18 @@ export async function computeEquinoxLocalMainNativeRuntimeContract({
   sourceSha,
   target,
   execFileImpl = execFile,
+  gitPath = "git",
 } = {}) {
   if (typeof rootDir !== "string" || rootDir.length < 1) throw new Error("Main native runtime contract root is required.");
   if (!SHA_PATTERN.test(sourceSha ?? "")) throw new Error("Main native runtime contract source SHA is invalid.");
   const rules = nativeContractRulesForTarget(target);
   const root = path.resolve(rootDir);
-  const revision = await execFileImpl("git", ["-C", root, "rev-parse", "--verify", `${sourceSha}^{commit}`], {
+  const revision = await execFileImpl(gitPath, ["-C", root, "rev-parse", "--verify", `${sourceSha}^{commit}`], {
     encoding: "utf8", timeout: 10_000, maxBuffer: 1024 * 1024,
   });
   if (String(revision.stdout ?? "").trim() !== sourceSha) throw new Error("Main native runtime contract source SHA is unavailable in the canonical checkout.");
   const pathspecs = rules.map((rule) => rule.endsWith("/") ? rule.slice(0, -1) : rule);
-  const tree = await execFileImpl("git", ["-C", root, "ls-tree", "-r", "-z", sourceSha, "--", ...pathspecs], {
+  const tree = await execFileImpl(gitPath, ["-C", root, "ls-tree", "-r", "-z", sourceSha, "--", ...pathspecs], {
     encoding: "utf8", timeout: 10_000, maxBuffer: 8 * 1024 * 1024,
   });
   const entries = parseNativeContractTree(String(tree.stdout ?? ""), rules);
@@ -155,12 +156,13 @@ export async function planEquinoxLocalMainNativeTransition({
   targetRoot,
   targetSha,
   target,
+  gitPath = "git",
   computeRuntimeContractImpl = computeEquinoxLocalMainNativeRuntimeContract,
 } = {}) {
   if (typeof computeRuntimeContractImpl !== "function") throw new Error("Main native transition contract computer is required.");
   const [currentContract, targetContract] = await Promise.all([
-    computeRuntimeContractImpl({ rootDir: currentRoot, sourceSha: currentSha, target }),
-    computeRuntimeContractImpl({ rootDir: targetRoot, sourceSha: targetSha, target }),
+    computeRuntimeContractImpl({ rootDir: currentRoot, sourceSha: currentSha, target, gitPath }),
+    computeRuntimeContractImpl({ rootDir: targetRoot, sourceSha: targetSha, target, gitPath }),
   ]);
   if (currentContract?.target !== target || targetContract?.target !== target) throw new Error("Main native transition contract target drifted.");
   if (!DIGEST_PATTERN.test(currentContract?.sha256 ?? "") || !DIGEST_PATTERN.test(targetContract?.sha256 ?? "")) {

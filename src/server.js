@@ -2953,6 +2953,10 @@ equinoxLocalControlApi = createEquinoxLocalControlApi({
         recentEventCount: observabilityHealth.recentEventCount,
         reasonCount: observabilityHealth.reasons.length,
       },
+      installation: {
+        kind: equinoxLocalInstallation.kind,
+        sourceSha: equinoxLocalInstallation.kind === "managed-source" ? equinoxLocalInstallation.sourceSha : null,
+      },
       chatgptConnection,
       config: {
         version: EQUINOX_LOCAL_CONFIG.version,
