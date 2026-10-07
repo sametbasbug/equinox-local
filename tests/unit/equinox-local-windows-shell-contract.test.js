@@ -271,6 +271,9 @@ test("Windows runtime harness links and owns only its new shell diagnostics", as
   assert.match(program, /File\.Delete\(diagnosticLog\)/u);
   assert.match(program, /Directory\.EnumerateFileSystemEntries\(diagnosticLogsRoot\)\.Any\(\)/u);
   assert.match(program, /Directory\.EnumerateFileSystemEntries\(diagnosticInstallRoot\)\.Any\(\)/u);
+  assert.match(program, /RuntimeHealthTimeoutMs = 20_000/u);
+  assert.match(program, /RuntimeHealthStageTimeoutMs = 25_000/u);
+  assert.match(program, /initial-health[\s\S]*RuntimeHealthTimeoutMs[\s\S]*RuntimeHealthStageTimeoutMs/u);
 });
 
 test("Windows shell user-login startup registration is per-user, owned and non-intrusive", async () => {
