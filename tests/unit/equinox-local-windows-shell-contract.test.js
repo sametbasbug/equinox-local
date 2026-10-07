@@ -177,6 +177,10 @@ test("Windows managed-source acceptance exercises reuse-native, artifact transit
   assert.match(program, /process\.execPath/u);
   assert.match(program, /process\.cwd\(\)/u);
   assert.match(program, /WINDOWS_MANAGED_SOURCE_ACCEPTANCE_PASS/u);
+  assert.match(program, /CleanupManagedSourceInstallState\(installRoot\)/u);
+  assert.match(program, /for \(var attempt = 0; attempt < 20; attempt \+= 1\)/u);
+  assert.match(program, /Thread\.Sleep\(100\)/u);
+  assert.match(program, /cleanup left owned per-user state/u);
 });
 
 test("Windows shell runtime supervisor uses the existing Job Object gate with bounded recovery", async () => {

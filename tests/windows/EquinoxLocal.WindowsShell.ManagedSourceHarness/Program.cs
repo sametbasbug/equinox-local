@@ -163,7 +163,21 @@ finally
     }
     Environment.SetEnvironmentVariable("EQUINOX_TEST_MANAGED_SOURCE_PORT", previousPort);
     Environment.SetEnvironmentVariable("EQUINOX_LOCAL_RELEASE_DIR", previousRelease);
-    try { if (Directory.Exists(installRoot)) Directory.Delete(installRoot, recursive: true); } catch { }
+    CleanupManagedSourceInstallState(installRoot);
+}
+
+static void CleanupManagedSourceInstallState(string installRoot)
+{
+    // Windows can retain the just-stopped node executable handle briefly after the
+    // Job Object drains. Retry only this harness-owned fixture root and fail closed
+    // if it cannot be removed, so later stateful harnesses never inherit residue.
+    for (var attempt = 0; attempt < 20; attempt += 1)
+    {
+        try { if (Directory.Exists(installRoot)) Directory.Delete(installRoot, recursive: true); } catch { }
+        if (!Directory.Exists(installRoot) && !File.Exists(installRoot)) return;
+        Thread.Sleep(100);
+    }
+    throw new InvalidOperationException("Managed-source acceptance cleanup left owned per-user state.");
 }
 
 static async Task WriteRuntimeReleaseAsync(string releaseDir, string version, string target, string nodeSource, string repo)
