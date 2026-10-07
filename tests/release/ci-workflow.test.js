@@ -234,7 +234,9 @@ test("CI parallelizes independent macOS gates and x64 installer preparation", ()
   const installer = job("windows-x64-installer");
   assert.match(arm, /- parallel:[\s\S]*Static checks[\s\S]*Verify ARM64 host[\s\S]*Full test suite/u);
   assert.match(intel, /- parallel:[\s\S]*Verify x64 host[\s\S]*Static checks[\s\S]*Fast architecture parity suite/u);
-  assert.match(installer, /- parallel:[\s\S]*Set up Node\.js[\s\S]*Set up \.NET SDK/u);
-  assert.match(installer, /- parallel:[\s\S]*Install dependencies[\s\S]*Publish native x64 shell/u);
+  assert.match(installer, /Cache x64 shell publish[\s\S]*actions\/cache@v6[\s\S]*windows-shell-\$\{\{ runner\.os \}\}-x64-dotnet10-/u);
+  assert.match(installer, /- parallel:[\s\S]*Set up Node\.js[\s\S]*Set up \.NET SDK[\s\S]*steps\.x64-shell-cache\.outputs\.cache-hit != 'true'[\s\S]*Cache x64 NuGet packages/u);
+  assert.match(installer, /Cache x64 NuGet packages[\s\S]*nuget-\$\{\{ runner\.os \}\}-target-x64-dotnet10-/u);
+  assert.match(installer, /- parallel:[\s\S]*Install dependencies[\s\S]*Publish native x64 shell[\s\S]*steps\.x64-shell-cache\.outputs\.cache-hit != 'true'/u);
   assert.match(installer, /Build native x64 managed package[\s\S]*EQUINOX_WINDOWS_SHELL_PUBLISH_DIR: \$\{\{ runner\.temp \}\}\/windows-shell\/win-x64/u);
 });

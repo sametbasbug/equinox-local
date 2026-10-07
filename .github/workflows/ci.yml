@@ -362,6 +362,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
+      - name: Cache x64 shell publish
+        id: x64-shell-cache
+        uses: actions/cache@v6
+        with:
+          path: ${{ runner.temp }}/windows-shell/win-x64
+          key: windows-shell-${{ runner.os }}-x64-dotnet10-${{ hashFiles('native/windows/EquinoxLocal.WindowsShell/**', 'app/EquinoxLocal.png') }}
+
       - parallel:
           - name: Set up Node.js
             uses: actions/setup-node@v7
@@ -371,15 +378,26 @@ jobs:
               cache: npm
 
           - name: Set up .NET SDK
+            if: ${{ steps.x64-shell-cache.outputs.cache-hit != 'true' }}
             uses: actions/setup-dotnet@v6
             with:
               dotnet-version: 10.0.x
+
+          - name: Cache x64 NuGet packages
+            if: ${{ steps.x64-shell-cache.outputs.cache-hit != 'true' }}
+            uses: actions/cache@v6
+            with:
+              path: ~/.nuget/packages
+              key: nuget-${{ runner.os }}-target-x64-dotnet10-${{ hashFiles('native/windows/**/*.csproj', 'tests/windows/**/*.csproj') }}
+              restore-keys: |
+                nuget-${{ runner.os }}-target-x64-dotnet10-
 
       - parallel:
           - name: Install dependencies
             run: npm ci --prefer-offline --no-audit --no-fund
 
           - name: Publish native x64 shell
+            if: ${{ steps.x64-shell-cache.outputs.cache-hit != 'true' }}
             shell: pwsh
             env:
               EQUINOX_WINDOWS_SHELL_PUBLISH_DIR: ${{ runner.temp }}/windows-shell/win-x64
