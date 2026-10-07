@@ -146,7 +146,8 @@ test("Windows managed-source runtime separates source, native, and Stable bootst
   assert.match(supervisor, /location\.SourceRoot/u);
   assert.match(supervisor, /location\.ServerPath/u);
   assert.match(supervisor, /Path\.Combine\(nativeReleaseDir, "runtime", "node", "bin", "node\.exe"\)/u);
-  assert.match(supervisor, /Path\.Combine\(nativeReleaseDir, "equinox-local-windows-job-object\.ps1"\)/u);
+  assert.doesNotMatch(supervisor, /Path\.Combine\(nativeReleaseDir, "equinox-local-windows-job-object\.ps1"\)/u);
+  assert.match(supervisor, /WindowsJobObjectLease\.Create\(\)/u);
   assert.match(supervisor, /Path\.Combine\(nativeReleaseDir, "equinox-local-windows-process-gate\.ps1"\)/u);
   assert.match(supervisor, /startInfo\.WorkingDirectory = sourceRoot/u);
   assert.match(supervisor, /EQUINOX_LOCAL_RELEASE_DIR"\] = location\.BootstrapReleaseDir/u);
@@ -174,12 +175,13 @@ test("Windows managed-source acceptance exercises reuse-native, artifact transit
 });
 
 test("Windows shell runtime supervisor uses the existing Job Object gate with bounded recovery", async () => {
-  const [app, supervisor, locator, tray, diagnostics, jobHelper] = await Promise.all([
+  const [app, supervisor, locator, tray, diagnostics, jobLease, jobHelper] = await Promise.all([
     source("App.xaml.cs"),
     source("RuntimeSupervisor.cs"),
     source("WindowsManagedReleaseLocator.cs"),
     source("TrayIconController.cs"),
     source("WindowsShellDiagnostics.cs"),
+    source("WindowsJobObjectLease.cs"),
     fs.readFile(path.join(ROOT, "src", "equinox-local-windows-job-object.ps1"), "utf8"),
   ]);
   assert.match(app, /RuntimeSupervisor\.TryCreateFromEnvironmentOrManagedInstall/u);
@@ -199,19 +201,17 @@ test("Windows shell runtime supervisor uses the existing Job Object gate with bo
   assert.match(diagnostics, /RecordLine/u);
   assert.match(supervisor, /EQUINOX_LOCAL_RELEASE_DIR/u);
   assert.match(supervisor, /using System\.IO;/u);
-  assert.match(supervisor, /equinox-local-windows-job-object\.ps1/u);
+  assert.doesNotMatch(supervisor, /equinox-local-windows-job-object\.ps1/u);
   assert.match(supervisor, /equinox-local-windows-process-gate\.ps1/u);
+  assert.match(supervisor, /WindowsJobObjectLease\.Create\(\)/u);
+  assert.match(supervisor, /_jobObject\.Assign\(gate\)/u);
+  assert.match(supervisor, /jobObject\.Terminate\(143\)/u);
   assert.match(supervisor, /EQUINOX_LOCAL_OWNED_PROCESS_SPEC/u);
   assert.match(supervisor, /EQUINOX_GO/u);
   assert.match(supervisor, /gate\.StandardInput\.FlushAsync/u);
   assert.doesNotMatch(supervisor, /gate\.StandardInput\.Close\(\)/u);
   assert.match(supervisor, /MaxAutomaticRestarts = 3/u);
-  assert.match(supervisor, /HelperReadyTimeout = TimeSpan\.FromSeconds\(45\)/u);
-  assert.match(supervisor, /ProtocolTimeout = TimeSpan\.FromSeconds\(30\)/u);
-  assert.match(supervisor, /ReadReplyAsync\(_jobHelper, "ready", cancellationToken, HelperReadyTimeout\)/u);
-  assert.match(supervisor, /var timeout = replyTimeout \?\? ProtocolTimeout/u);
-  assert.match(supervisor, /RecordRuntimeState\("runtime-start-phase", "helper-started"\)/u);
-  assert.match(supervisor, /RecordRuntimeState\("runtime-start-phase", "helper-ready"\)/u);
+  assert.match(supervisor, /RecordRuntimeState\("runtime-start-phase", "job-created"\)/u);
   assert.match(supervisor, /RecordRuntimeState\("runtime-start-phase", "assign-started"\)/u);
   assert.match(supervisor, /RecordRuntimeState\("runtime-start-phase", "assigned"\)/u);
   assert.match(supervisor, /RecordRuntimeState\("runtime-start-phase", "gate-released"\)/u);
@@ -219,11 +219,15 @@ test("Windows shell runtime supervisor uses the existing Job Object gate with bo
   assert.match(supervisor, /gate\.ErrorDataReceived/u);
   assert.match(supervisor, /RecordRuntimeState\("runtime-gate-exit", detail\)/u);
   assert.doesNotMatch(supervisor, /OnGateExited[\s\S]{0,700}gate\.WaitForExit\(\)/u);
-  assert.match(supervisor, /Windows Job Object helper \{phase\} reply timed out after/u);
-  assert.match(supervisor, /ExitedHelperDetailAsync/u);
-  assert.match(supervisor, /ReadToEndAsync\(cancellationToken\)/u);
-  assert.match(supervisor, /builder\.Length >= 1_200/u);
+  assert.match(supervisor, /clean\.Length >= MaxGateDiagnosticChars/u);
   assert.match(supervisor, /char\.IsControl/u);
+  assert.match(jobLease, /CreateJobObject/u);
+  assert.match(jobLease, /SetInformationJobObject/u);
+  assert.match(jobLease, /JobObjectLimitKillOnJobClose = 0x00002000/u);
+  assert.match(jobLease, /AssignProcessToJobObject/u);
+  assert.match(jobLease, /TerminateJobObject/u);
+  assert.match(jobLease, /Interlocked\.Exchange/u);
+  assert.match(jobLease, /Marshal\.GetLastWin32Error\(\)/u);
   assert.match(supervisor, /EQUINOX_LOCAL_SUPERVISOR_MODE/u);
   assert.match(supervisor, /_runtimeResolver/u);
   assert.match(supervisor, /EQUINOX_LOCAL_INSTALL_ROOT/u);

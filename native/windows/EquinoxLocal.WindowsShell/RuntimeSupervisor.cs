@@ -9,15 +9,12 @@ internal sealed class RuntimeSupervisor : IAsyncDisposable
 {
     private const int MaxAutomaticRestarts = 3;
     private const int MaxGateDiagnosticChars = 1_200;
-    private static readonly TimeSpan HelperReadyTimeout = TimeSpan.FromSeconds(45);
-    private static readonly TimeSpan ProtocolTimeout = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan ExitTimeout = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan[] RecoveryDelays = [TimeSpan.FromMilliseconds(250), TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(2)];
 
     private readonly Func<WindowsRuntimeLocation> _runtimeResolver;
     private readonly SemaphoreSlim _lifecycle = new(1, 1);
-    private readonly SemaphoreSlim _protocol = new(1, 1);
-    private Process? _jobHelper;
+    private WindowsJobObjectLease? _jobObject;
     private Process? _gate;
     private bool _desiredRunning;
     private bool _stopping;
@@ -105,16 +102,11 @@ internal sealed class RuntimeSupervisor : IAsyncDisposable
         var sourceRoot = location.SourceRoot;
         var nodePath = Path.Combine(nativeReleaseDir, "runtime", "node", "bin", "node.exe");
         var serverPath = location.ServerPath;
-        var jobHelperPath = Path.Combine(nativeReleaseDir, "equinox-local-windows-job-object.ps1");
         var processGatePath = Path.Combine(nativeReleaseDir, "equinox-local-windows-process-gate.ps1");
-        ValidateReleaseFiles(nodePath, serverPath, jobHelperPath, processGatePath);
-        await CloseJobHelperAsync(CancellationToken.None).ConfigureAwait(false);
-        _jobHelper = StartPowerShell(jobHelperPath, redirectOutput: true);
-        WindowsShellDiagnostics.RecordRuntimeState("runtime-start-phase", "helper-started");
-        var ready = await ReadReplyAsync(_jobHelper, "ready", cancellationToken, HelperReadyTimeout).ConfigureAwait(false);
-        if (!ready.GetProperty("ok").GetBoolean() || !ready.GetProperty("ready").GetBoolean())
-            throw new InvalidOperationException("Windows Job Object helper did not become ready.");
-        WindowsShellDiagnostics.RecordRuntimeState("runtime-start-phase", "helper-ready");
+        ValidateReleaseFiles(nodePath, serverPath, processGatePath);
+        _jobObject?.Dispose();
+        _jobObject = WindowsJobObjectLease.Create();
+        WindowsShellDiagnostics.RecordRuntimeState("runtime-start-phase", "job-created");
 
         var payload = Convert.ToBase64String(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new { command = nodePath, args = new[] { serverPath } })));
         var startInfo = PowerShellStartInfo(processGatePath);
@@ -137,7 +129,7 @@ internal sealed class RuntimeSupervisor : IAsyncDisposable
         try
         {
             WindowsShellDiagnostics.RecordRuntimeState("runtime-start-phase", "assign-started");
-            await SendRequestAsync("assign", new Dictionary<string, object?> { ["pid"] = gate.Id }, cancellationToken).ConfigureAwait(false);
+            _jobObject.Assign(gate);
             WindowsShellDiagnostics.RecordRuntimeState("runtime-start-phase", "assigned");
             await gate.StandardInput.WriteLineAsync("EQUINOX_GO").ConfigureAwait(false);
             await gate.StandardInput.FlushAsync(cancellationToken).ConfigureAwait(false);
@@ -220,12 +212,14 @@ internal sealed class RuntimeSupervisor : IAsyncDisposable
         _generation++;
         var gate = _gate;
         _gate = null;
-        if (_jobHelper is { HasExited: false })
+        var jobObject = _jobObject;
+        _jobObject = null;
+        if (jobObject is not null)
         {
-            try { await SendRequestAsync("terminate", new Dictionary<string, object?> { ["exitCode"] = 143 }, cancellationToken).ConfigureAwait(false); }
+            try { jobObject.Terminate(143); }
             catch { }
+            finally { jobObject.Dispose(); }
         }
-        await CloseJobHelperAsync(cancellationToken).ConfigureAwait(false);
         if (gate is null) return;
         try
         {
@@ -233,99 +227,6 @@ internal sealed class RuntimeSupervisor : IAsyncDisposable
         }
         catch { }
         finally { gate.Dispose(); }
-    }
-
-    private async Task CloseJobHelperAsync(CancellationToken cancellationToken)
-    {
-        var helper = _jobHelper;
-        _jobHelper = null;
-        if (helper is null) return;
-        try
-        {
-            if (!helper.HasExited) await SendRequestAsync(helper, "close", new Dictionary<string, object?>(), cancellationToken).ConfigureAwait(false);
-        }
-        catch { }
-        try
-        {
-            if (!helper.HasExited) await helper.WaitForExitAsync(cancellationToken).WaitAsync(ExitTimeout, cancellationToken).ConfigureAwait(false);
-        }
-        catch
-        {
-            try { if (!helper.HasExited) helper.Kill(); } catch { }
-        }
-        helper.Dispose();
-    }
-
-    private Task<JsonElement> SendRequestAsync(string operation, Dictionary<string, object?> payload, CancellationToken cancellationToken) =>
-        SendRequestAsync(_jobHelper ?? throw new InvalidOperationException("Windows Job Object helper is unavailable."), operation, payload, cancellationToken);
-
-    private async Task<JsonElement> SendRequestAsync(Process helper, string operation, Dictionary<string, object?> payload, CancellationToken cancellationToken)
-    {
-        await _protocol.WaitAsync(cancellationToken).ConfigureAwait(false);
-        try
-        {
-            var id = Guid.NewGuid().ToString("D");
-            payload["id"] = id;
-            payload["op"] = operation;
-            await helper.StandardInput.WriteLineAsync(JsonSerializer.Serialize(payload)).ConfigureAwait(false);
-            await helper.StandardInput.FlushAsync(cancellationToken).ConfigureAwait(false);
-            var response = await ReadReplyAsync(helper, operation, cancellationToken).ConfigureAwait(false);
-            if (response.GetProperty("id").GetString() != id || !response.GetProperty("ok").GetBoolean())
-                throw new InvalidOperationException("Windows Job Object helper rejected the lifecycle request.");
-            return response;
-        }
-        finally { _protocol.Release(); }
-    }
-
-    private static async Task<JsonElement> ReadReplyAsync(Process helper, string phase, CancellationToken cancellationToken, TimeSpan? replyTimeout = null)
-    {
-        var timeout = replyTimeout ?? ProtocolTimeout;
-        string? line;
-        try
-        {
-            line = await helper.StandardOutput.ReadLineAsync(cancellationToken).AsTask().WaitAsync(timeout, cancellationToken).ConfigureAwait(false);
-        }
-        catch (TimeoutException error)
-        {
-            throw new TimeoutException($"Windows Job Object helper {phase} reply timed out after {(int)timeout.TotalSeconds} seconds.", error);
-        }
-        if (string.IsNullOrWhiteSpace(line))
-        {
-            var detail = await ExitedHelperDetailAsync(helper, cancellationToken).ConfigureAwait(false);
-            throw new InvalidOperationException($"Windows Job Object helper closed its {phase} protocol stream{detail}.");
-        }
-        using var document = JsonDocument.Parse(line);
-        return document.RootElement.Clone();
-    }
-
-    private static async Task<string> ExitedHelperDetailAsync(Process helper, CancellationToken cancellationToken)
-    {
-        if (!helper.HasExited) return string.Empty;
-        var detail = $" (exit {helper.ExitCode})";
-        try
-        {
-            var stderr = await helper.StandardError.ReadToEndAsync(cancellationToken).WaitAsync(TimeSpan.FromSeconds(1), cancellationToken).ConfigureAwait(false);
-            if (string.IsNullOrWhiteSpace(stderr)) return detail;
-            var builder = new StringBuilder(Math.Min(stderr.Length, 1_200));
-            foreach (var character in stderr)
-            {
-                if (builder.Length >= 1_200) break;
-                builder.Append(char.IsControl(character) ? ' ' : character);
-            }
-            var clean = builder.ToString().Trim();
-            return string.IsNullOrWhiteSpace(clean) ? detail : $"{detail}: {clean}";
-        }
-        catch
-        {
-            return detail;
-        }
-    }
-
-    private static Process StartPowerShell(string scriptPath, bool redirectOutput)
-    {
-        var process = new Process { StartInfo = PowerShellStartInfo(scriptPath, redirectOutput) };
-        if (!process.Start()) throw new InvalidOperationException("Windows lifecycle helper did not start.");
-        return process;
     }
 
     private static ProcessStartInfo PowerShellStartInfo(string scriptPath, bool redirectOutput = true) => new()
@@ -353,6 +254,5 @@ internal sealed class RuntimeSupervisor : IAsyncDisposable
         await StopAsync().ConfigureAwait(false);
         _disposed = true;
         _lifecycle.Dispose();
-        _protocol.Dispose();
     }
 }
