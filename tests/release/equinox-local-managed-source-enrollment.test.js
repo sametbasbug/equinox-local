@@ -51,7 +51,8 @@ test("fresh enrollment binds exact Stable source SHA and writes install stamp la
     arch: "arm64",
     homeDir: f.homeDir,
     env: {},
-    provisionToolchainImpl: async (value) => { events.push(["provision", value.target]); await fs.mkdir(f.contract.runtimeRoot, { recursive: true }); return { contract: f.contract }; },
+    windowsZipHelperPath: "/durable/release/equinox-local-windows-release-zip.ps1",
+    provisionToolchainImpl: async (value) => { events.push(["provision", value.target, value.windowsZipHelperPath]); await fs.mkdir(f.contract.runtimeRoot, { recursive: true }); return { contract: f.contract }; },
     execFileImpl: async (command, args) => {
       events.push(["exec", command, [...args]]);
       if (command !== f.contract.gitPath) throw new Error(`unexpected command ${command}`);
@@ -73,7 +74,7 @@ test("fresh enrollment binds exact Stable source SHA and writes install stamp la
   assert.equal(result.status, "enrolled");
   assert.equal(result.bootstrapSha, SHA);
   assert.equal(result.sourceRoot, path.join(f.paths.mainTransactionRoot, "sources", SHA));
-  assert.deepEqual(events[0], ["provision", "darwin-arm64"]);
+  assert.deepEqual(events[0], ["provision", "darwin-arm64", "/durable/release/equinox-local-windows-release-zip.ps1"]);
   const clone = events.find((event) => event[0] === "exec" && event[2][0] === "clone");
   assert.equal(clone[1], f.contract.gitPath);
   assert.equal(clone[2].includes("https://github.com/sametbasbug/equinox-local.git"), true);

@@ -394,6 +394,9 @@ export async function installManagedEquinoxRelease({
         env,
         fsImpl,
         execFileImpl,
+        windowsZipHelperPath: platform === "win32"
+          ? path.win32.join(installation.releaseDir, "equinox-local-windows-release-zip.ps1")
+          : undefined,
       });
       if (platform === "darwin") await reloadLaunchAgent(installation, { uid, execFileImpl });
       else await requestWindowsRestartImpl({ platform: "win32" });

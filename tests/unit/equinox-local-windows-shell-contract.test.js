@@ -206,8 +206,10 @@ test("Windows shell runtime supervisor uses the existing Job Object gate with bo
   assert.match(supervisor, /gate\.StandardInput\.FlushAsync/u);
   assert.doesNotMatch(supervisor, /gate\.StandardInput\.Close\(\)/u);
   assert.match(supervisor, /MaxAutomaticRestarts = 3/u);
+  assert.match(supervisor, /HelperReadyTimeout = TimeSpan\.FromSeconds\(45\)/u);
   assert.match(supervisor, /ProtocolTimeout = TimeSpan\.FromSeconds\(30\)/u);
-  assert.match(supervisor, /ReadReplyAsync\(_jobHelper, "ready", cancellationToken\)/u);
+  assert.match(supervisor, /ReadReplyAsync\(_jobHelper, "ready", cancellationToken, HelperReadyTimeout\)/u);
+  assert.match(supervisor, /var timeout = replyTimeout \?\? ProtocolTimeout/u);
   assert.match(supervisor, /RecordRuntimeState\("runtime-start-phase", "helper-started"\)/u);
   assert.match(supervisor, /RecordRuntimeState\("runtime-start-phase", "helper-ready"\)/u);
   assert.match(supervisor, /RecordRuntimeState\("runtime-start-phase", "assign-started"\)/u);

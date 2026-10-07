@@ -179,6 +179,7 @@ export async function enrollEquinoxLocalManagedSource({
   writePointerImpl = writeEquinoxLocalMainSourcePointer,
   randomBytesImpl = randomBytes,
   mainRemote = EQUINOX_LOCAL_MAIN_REMOTE,
+  windowsZipHelperPath = undefined,
 } = {}) {
   const sha = assertSha(bootstrapSha);
   const layout = equinoxLocalPlatformPaths({ platform, arch, homeDir, env });
@@ -187,7 +188,7 @@ export async function enrollEquinoxLocalManagedSource({
   await normalDirectory(layout.appDataRoot, { fsImpl });
   await normalDirectory(paths.mainTransactionRoot, { fsImpl, create: true });
 
-  const provisioned = await provisionToolchainImpl({ runtimeRoot: layout.runtimeRoot, target, platform, env, fsImpl, execFileImpl });
+  const provisioned = await provisionToolchainImpl({ runtimeRoot: layout.runtimeRoot, target, platform, env, fsImpl, execFileImpl, windowsZipHelperPath });
   const contract = provisioned?.contract;
   if (!contract || contract.target !== target || contract.runtimeRoot !== layout.runtimeRoot || contract.ambientPathDiscovery !== false) {
     throw new Error("Managed-source enrollment toolchain identity is invalid.");

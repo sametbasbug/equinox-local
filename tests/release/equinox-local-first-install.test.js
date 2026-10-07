@@ -580,7 +580,12 @@ test("Windows x64 fresh first install promotes current-version and stable shell 
     await unregisterWindowsNativeMessagingHost({ manifestPath, launcherPath }).catch(() => {});
     await fs.rm(fixture.root, { recursive: true, force: true });
   });
+  const sourceSha = "e".repeat(40);
+  const metadataPath = path.join(fixture.releaseDir, "release.json");
+  const metadata = JSON.parse(await fs.readFile(metadataPath, "utf8"));
+  await fs.writeFile(metadataPath, `${JSON.stringify({ ...metadata, sourceSha })}\n`);
   const launches = [];
+  let enrollmentArgs = null;
   let promotionRenameAttempts = 0;
   const promotedNormalized = path.win32.normalize(promoted).toLowerCase();
   const fsImpl = {
@@ -607,9 +612,23 @@ test("Windows x64 fresh first install promotes current-version and stable shell 
     initializeOnboardingImpl: async () => ({ created: true }),
     launchWindowsShellImpl: async (shellExecutable) => { launches.push(shellExecutable); return { launched: true }; },
     waitForVersionImpl: async () => true,
+    enrollManagedSourceImpl: async (value) => {
+      enrollmentArgs = value;
+      assert.equal(await exists(fixture.releaseDir), false);
+      assert.equal(await exists(value.windowsZipHelperPath), true);
+      return { status: "enrolled", bootstrapSha: value.bootstrapSha };
+    },
+    requestWindowsRestartImpl: async () => ({ requested: true }),
+    waitForManagedSourceImpl: async () => true,
   });
   assert.equal(result.status, "installed");
+  assert.equal(result.managedSourceSha, sourceSha);
   assert.equal(promotionRenameAttempts, 2);
+  assert.equal(enrollmentArgs.bootstrapSha, sourceSha);
+  assert.equal(
+    path.win32.normalize(enrollmentArgs.windowsZipHelperPath).toLowerCase(),
+    path.win32.normalize(path.join(promoted, "equinox-local-windows-release-zip.ps1")).toLowerCase(),
+  );
   const pointerPath = path.join(fixture.installRoot, "current-version.json");
   assert.deepEqual(JSON.parse(await fs.readFile(pointerPath, "utf8")), {
     schemaVersion: 1,

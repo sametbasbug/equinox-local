@@ -9,6 +9,7 @@ internal sealed class RuntimeSupervisor : IAsyncDisposable
 {
     private const int MaxAutomaticRestarts = 3;
     private const int MaxGateDiagnosticChars = 1_200;
+    private static readonly TimeSpan HelperReadyTimeout = TimeSpan.FromSeconds(45);
     private static readonly TimeSpan ProtocolTimeout = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan ExitTimeout = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan[] RecoveryDelays = [TimeSpan.FromMilliseconds(250), TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(2)];
@@ -110,7 +111,7 @@ internal sealed class RuntimeSupervisor : IAsyncDisposable
         await CloseJobHelperAsync(CancellationToken.None).ConfigureAwait(false);
         _jobHelper = StartPowerShell(jobHelperPath, redirectOutput: true);
         WindowsShellDiagnostics.RecordRuntimeState("runtime-start-phase", "helper-started");
-        var ready = await ReadReplyAsync(_jobHelper, "ready", cancellationToken).ConfigureAwait(false);
+        var ready = await ReadReplyAsync(_jobHelper, "ready", cancellationToken, HelperReadyTimeout).ConfigureAwait(false);
         if (!ready.GetProperty("ok").GetBoolean() || !ready.GetProperty("ready").GetBoolean())
             throw new InvalidOperationException("Windows Job Object helper did not become ready.");
         WindowsShellDiagnostics.RecordRuntimeState("runtime-start-phase", "helper-ready");
@@ -276,16 +277,17 @@ internal sealed class RuntimeSupervisor : IAsyncDisposable
         finally { _protocol.Release(); }
     }
 
-    private static async Task<JsonElement> ReadReplyAsync(Process helper, string phase, CancellationToken cancellationToken)
+    private static async Task<JsonElement> ReadReplyAsync(Process helper, string phase, CancellationToken cancellationToken, TimeSpan? replyTimeout = null)
     {
+        var timeout = replyTimeout ?? ProtocolTimeout;
         string? line;
         try
         {
-            line = await helper.StandardOutput.ReadLineAsync(cancellationToken).AsTask().WaitAsync(ProtocolTimeout, cancellationToken).ConfigureAwait(false);
+            line = await helper.StandardOutput.ReadLineAsync(cancellationToken).AsTask().WaitAsync(timeout, cancellationToken).ConfigureAwait(false);
         }
         catch (TimeoutException error)
         {
-            throw new TimeoutException($"Windows Job Object helper {phase} reply timed out after {(int)ProtocolTimeout.TotalSeconds} seconds.", error);
+            throw new TimeoutException($"Windows Job Object helper {phase} reply timed out after {(int)timeout.TotalSeconds} seconds.", error);
         }
         if (string.IsNullOrWhiteSpace(line))
         {

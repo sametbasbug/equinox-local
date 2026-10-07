@@ -133,6 +133,22 @@ function fakeExec(command) {
   throw new Error(`unexpected executable: ${command}`);
 }
 
+
+test("M8 Windows provisioner rejects a non-absolute or renamed ZIP helper before filesystem mutation", async () => {
+  await assert.rejects(provisionEquinoxLocalToolchain({
+    runtimeRoot: "C:\\Users\\fixture\\Equinox Local\\runtime",
+    target: "win32-x64",
+    platform: "win32",
+    windowsZipHelperPath: "relative\\equinox-local-windows-release-zip.ps1",
+  }), /ZIP helper path is invalid/u);
+  await assert.rejects(provisionEquinoxLocalToolchain({
+    runtimeRoot: "C:\\Users\\fixture\\Equinox Local\\runtime",
+    target: "win32-x64",
+    platform: "win32",
+    windowsZipHelperPath: "C:\\Users\\fixture\\other.ps1",
+  }), /ZIP helper path is invalid/u);
+});
+
 test("M8 provisioner installs atomically, stamps exact distributions and reuses them", async (t) => {
   const f = await createFixture(t);
   const downloads = [];
