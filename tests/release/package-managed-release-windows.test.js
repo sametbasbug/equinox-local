@@ -24,7 +24,6 @@ test("Windows managed package contract keeps x64 stable and defines explicit nat
   assert.deepEqual(arm64.extraReleaseFiles, [
     "src/equinox-local-windows-clipboard.ps1",
     "src/equinox-local-windows-desktop.ps1",
-    "src/equinox-local-windows-job-object.ps1",
     "src/equinox-local-windows-private-state.ps1",
     "src/equinox-local-windows-process-gate.ps1",
     "src/equinox-local-windows-release-zip.ps1",
@@ -183,4 +182,19 @@ test("Windows release ZIP security acceptance is wired to the package CI lane", 
   const packageLane = workflow.slice(packageStart, aggregateStart);
   assert.match(packageLane, /Windows release ZIP security acceptance/u);
   assert.match(packageLane, /windows-release-zip-smoke\.ps1/u);
+});
+
+
+test("Windows native Job Object helper uses target-specific MSVC and direct Win32 ownership", async () => {
+  const source = await fs.readFile(new URL("../../scripts/release/package-managed-release-windows.mjs", import.meta.url), "utf8");
+  const helper = await fs.readFile(new URL("../../native/windows/equinox-local-job-object-helper.cpp", import.meta.url), "utf8");
+  assert.match(source, /compileWindowsJobObjectHelper/u);
+  assert.match(source, /equinox-local-job-object-helper\.cpp/u);
+  assert.match(source, /\/MT \/DUNICODE/u);
+  assert.match(source, /Windows Job Object helper architecture mismatch/u);
+  assert.match(helper, /CreateJobObjectW/u);
+  assert.match(helper, /JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE/u);
+  assert.match(helper, /AssignProcessToJobObject/u);
+  assert.match(helper, /QueryInformationJobObject/u);
+  assert.match(helper, /TerminateJobObject/u);
 });

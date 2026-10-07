@@ -43,7 +43,6 @@ const WINDOWS_ZIP_TIMEOUT_MS = 180_000;
 const WINDOWS_EXTRA_RELEASE_FILES = Object.freeze([
   "src/equinox-local-windows-clipboard.ps1",
   "src/equinox-local-windows-desktop.ps1",
-  "src/equinox-local-windows-job-object.ps1",
   "src/equinox-local-windows-private-state.ps1",
   "src/equinox-local-windows-process-gate.ps1",
   "src/equinox-local-windows-release-zip.ps1",
@@ -293,9 +292,7 @@ async function portableExecutableMachine(filePath) {
   return bytes.readUInt16LE(peOffset + 4);
 }
 
-async function compileBrowserLauncher(rootDir, releaseDir, contract) {
-  const browserDir = path.join(releaseDir, "runtime", "browser");
-  await fs.mkdir(browserDir, { recursive: true });
+async function resolveVisualStudioVcvars(contract) {
   const programFilesX86 = process.env["ProgramFiles(x86)"];
   if (!programFilesX86) throw new Error("ProgramFiles(x86) is unavailable.");
   const vswhere = path.join(programFilesX86, "Microsoft Visual Studio", "Installer", "vswhere.exe");
@@ -305,19 +302,57 @@ async function compileBrowserLauncher(rootDir, releaseDir, contract) {
     const found = await execFile(vswhere, ["-latest", "-products", "*", "-requires", contract.visualStudioComponent, "-property", "installationPath"], discoveryOptions);
     installation = found.stdout.trim();
   } catch {
-    // Hosted runner component registration can drift between images even when the target vcvars toolchain is present.
+    // Hosted runner component registration can drift even when target vcvars is present.
   }
   if (!installation) {
     const found = await execFile(vswhere, ["-latest", "-products", "*", "-property", "installationPath"], discoveryOptions);
     installation = found.stdout.trim();
   }
   if (!installation) throw new Error(`Visual Studio C++ toolchain is unavailable for ${contract.target}.`);
-  const vcvarsName = process.arch === "x64" && contract.target === "win32-arm64"
-    ? contract.crossVcvars
-    : contract.vcvars;
+  const vcvarsName = process.arch === "x64" && contract.target === "win32-arm64" ? contract.crossVcvars : contract.vcvars;
   const vcvars = path.join(installation, "VC", "Auxiliary", "Build", vcvarsName);
-  const vcvarsStat = await fs.lstat(vcvars).catch((error) => error?.code === "ENOENT" ? null : Promise.reject(error));
-  if (!vcvarsStat?.isFile() || vcvarsStat.isSymbolicLink()) throw new Error(`Visual Studio target environment is unavailable for ${contract.target}.`);
+  const stat = await fs.lstat(vcvars).catch((error) => error?.code === "ENOENT" ? null : Promise.reject(error));
+  if (!stat?.isFile() || stat.isSymbolicLink()) throw new Error(`Visual Studio target environment is unavailable for ${contract.target}.`);
+  return vcvars;
+}
+
+export async function compileWindowsJobObjectHelper({
+  rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../.."),
+  outputDir,
+  target = `${process.platform}-${process.arch}`,
+} = {}) {
+  if (!outputDir) throw new Error("Windows Job Object helper output directory is required.");
+  const contract = windowsManagedPackageContract({ target });
+  const vcvars = await resolveVisualStudioVcvars(contract);
+  const destination = path.resolve(outputDir);
+  await fs.mkdir(destination, { recursive: true });
+  const source = path.join(rootDir, "native", "windows", "equinox-local-job-object-helper.cpp");
+  const compileScript = path.join(destination, ".compile-job-object-helper.cmd");
+  const script = [
+    "@echo off",
+    `call "${vcvars}" >nul`,
+    "if errorlevel 1 exit /b %errorlevel%",
+    `cl.exe /nologo /std:c++17 /O2 /EHsc /MT /DUNICODE /D_UNICODE "${source}" /Fe:equinox-local-job-object-helper.exe`,
+    "exit /b %errorlevel%",
+    "",
+  ].join("\r\n");
+  await fs.writeFile(compileScript, script, { encoding: "utf8", flag: "wx" });
+  try {
+    await execFile("cmd.exe", ["/d", "/c", compileScript], { cwd: destination, timeout: 180_000, maxBuffer: 4 * 1024 * 1024, windowsHide: true });
+  } finally {
+    await fs.rm(compileScript, { force: true });
+    await fs.rm(path.join(destination, "equinox-local-job-object-helper.obj"), { force: true });
+  }
+  const helperPath = path.join(destination, "equinox-local-job-object-helper.exe");
+  const machine = await portableExecutableMachine(helperPath);
+  if (machine !== contract.peMachine) throw new Error(`Windows Job Object helper architecture mismatch for ${target}: 0x${machine.toString(16)}.`);
+  return helperPath;
+}
+
+async function compileBrowserLauncher(rootDir, releaseDir, contract) {
+  const browserDir = path.join(releaseDir, "runtime", "browser");
+  await fs.mkdir(browserDir, { recursive: true });
+  const vcvars = await resolveVisualStudioVcvars(contract);
   const source = path.join(rootDir, "native", "windows", "equinox-browser-native-host-launcher.cpp");
   const compileScript = path.join(browserDir, ".compile-browser-launcher.cmd");
   const script = [
@@ -407,6 +442,7 @@ export async function packageManagedEquinoxWindowsRelease({
       installPinnedWindowsTunnel(transaction, releaseDir, fetchImpl, target, { canExecuteTarget }),
       installPinnedWindowsWinapp(transaction, rootDir, releaseDir, fetchImpl, target, { canExecuteTarget }),
       copyPublishedShell(rootDir, releaseDir, resolvedShellPublishDir),
+      compileWindowsJobObjectHelper({ rootDir, outputDir: path.join(releaseDir, "runtime", "job"), target }),
       browserLauncherPath
         ? copyPrecompiledBrowserLauncher(browserLauncherPath, releaseDir, contract)
         : compileBrowserLauncher(rootDir, releaseDir, contract),
