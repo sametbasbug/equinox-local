@@ -618,6 +618,19 @@ jobs:
               dotnet run --project tests/windows/EquinoxLocal.WindowsShell.ManagedSourceHarness/EquinoxLocal.WindowsShell.ManagedSourceHarness.csproj --configuration Release -p:Platform=ARM64
               if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+          - name: Windows ARM64 packaged node-pty / ConPTY smoke
+            shell: pwsh
+            run: |
+              $artifact = Get-ChildItem (Join-Path $env:RUNNER_TEMP 'arm64-package') -Filter 'equinox-local-*-win32-arm64.zip' | Select-Object -First 1
+              if ($null -eq $artifact) { throw 'Windows ARM64 managed ZIP artifact was not found for node-pty acceptance' }
+              $extract = Join-Path $env:RUNNER_TEMP 'equinox-node-pty-arm64'
+              New-Item -ItemType Directory -Path $extract -Force | Out-Null
+              & tar.exe -xf $artifact.FullName -C $extract 'release/node_modules/node-pty'
+              if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+              $env:EQUINOX_WINDOWS_NODE_PTY_ROOT = Join-Path $extract 'release/node_modules/node-pty'
+              node tests/release/windows-node-pty-smoke.mjs
+              if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
           - name: Windows ARM64 packaged winapp UIA smoke
             shell: pwsh
             run: |

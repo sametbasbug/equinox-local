@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { spawn as spawnProcess } from "node:child_process";
 import { writeSync } from "node:fs";
-import { fileURLToPath } from "node:url";
+import path from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const CHILD_FLAG = "EQUINOX_WINDOWS_NODE_PTY_SMOKE_CHILD";
 const CHILD_TIMEOUT_MS = 20_000;
@@ -71,7 +72,11 @@ async function runExternallyBoundedChild() {
 async function runNativeConptySmoke() {
   trace("child:start");
   trace("import-node-pty:start");
-  const module = await import("node-pty");
+  const packagedRoot = process.env.EQUINOX_WINDOWS_NODE_PTY_ROOT;
+  const moduleSpecifier = packagedRoot
+    ? pathToFileURL(path.join(packagedRoot, "lib", "index.js")).href
+    : "node-pty";
+  const module = await import(moduleSpecifier);
   trace("import-node-pty:ok");
   const spawnPty = module.spawn ?? module.default?.spawn;
   assert.equal(typeof spawnPty, "function", "node-pty spawn is unavailable");

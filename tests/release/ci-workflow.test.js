@@ -153,7 +153,7 @@ test("ARM64 artifact consumers verify producer identity before acceptance", () =
   assert.match(packageLane, /EXPECTED_PACKAGE_SHA256: \$\{\{ needs\.windows-arm64-package-build\.outputs\.sha256 \}\}/u);
   assert.match(packageLane, /Get-FileHash -LiteralPath \$artifacts\[0\]\.FullName -Algorithm SHA256/u);
   assert.ok(packageLane.indexOf("EquinoxLocal.WindowsShell.UninstallHandoffHarness") < packageLane.indexOf("EquinoxLocal.WindowsShell.ManagedSourceHarness"));
-  assert.match(packageLane, /parallel:[\s\S]*Windows ARM64 stateful shell lifecycle acceptance[\s\S]*EquinoxLocal\.WindowsShell\.UninstallHandoffHarness[\s\S]*EquinoxLocal\.WindowsShell\.ManagedSourceHarness[\s\S]*Windows ARM64 packaged winapp UIA smoke/u);
+  assert.match(packageLane, /parallel:[\s\S]*Windows ARM64 stateful shell lifecycle acceptance[\s\S]*EquinoxLocal\.WindowsShell\.UninstallHandoffHarness[\s\S]*EquinoxLocal\.WindowsShell\.ManagedSourceHarness[\s\S]*Windows ARM64 packaged node-pty \/ ConPTY smoke[\s\S]*EQUINOX_WINDOWS_NODE_PTY_ROOT[\s\S]*windows-node-pty-smoke\.mjs[\s\S]*Windows ARM64 packaged winapp UIA smoke/u);
   assert.match(installer, /EQUINOX_WINDOWS_INSTALL_SHA256: \$\{\{ needs\.windows-arm64-package-build\.outputs\.sha256 \}\}/u);
   assert.match(installer, /EQUINOX_WINDOWS_INSTALL_SOURCE_SHA: \$\{\{ needs\.windows-arm64-package-build\.outputs\.source_sha \}\}/u);
   assert.match(installer, /Get-FileHash -LiteralPath \$artifact\.FullName -Algorithm SHA256/u);

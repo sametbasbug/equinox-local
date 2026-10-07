@@ -22,10 +22,8 @@ foreach ($candidate in @($publishDir, $binDir, $objDir)) {
 # npm writes node_modules; the native WPF project reads only its own sources,
 # pinned NuGet packages and application artwork. These inputs are independent.
 $cacheHit = ([string]$env:EQUINOX_NODE_MODULES_CACHE_HIT) -ceq 'true'
-$targetArch = [string]$env:EQUINOX_NPM_TARGET_ARCH
-if ($targetArch -cne 'arm64') { throw 'ARM64 package preparation requires target arch arm64.' }
-$installJob = Start-Job -ArgumentList $root, $npmCommand, $cacheHit, $targetArch -ScriptBlock {
-  param([string]$Workspace, [string]$NpmCommand, [bool]$CacheHit, [string]$TargetArch)
+$installJob = Start-Job -ArgumentList $root, $npmCommand, $cacheHit -ScriptBlock {
+  param([string]$Workspace, [string]$NpmCommand, [bool]$CacheHit)
   $ErrorActionPreference = 'Stop'
   $PSNativeCommandUseErrorActionPreference = $true
   Set-Location -LiteralPath $Workspace
@@ -35,7 +33,6 @@ $installJob = Start-Job -ArgumentList $root, $npmCommand, $cacheHit, $targetArch
     if ($LASTEXITCODE -ne 0) { throw "Cached target-native dependency graph failed npm validation with exit code $LASTEXITCODE." }
     return
   }
-  $env:npm_config_arch = $TargetArch
   & $NpmCommand ci --prefer-offline --no-audit --no-fund
   if ($LASTEXITCODE -ne 0) { throw "Locked native npm installation failed with exit code $LASTEXITCODE." }
 }
@@ -50,6 +47,12 @@ try {
     throw 'Locked native npm installation did not complete successfully.'
   }
   Receive-Job -Job $installJob -ErrorAction Stop
+  $nodePtyRoot = Join-Path $root 'node_modules\node-pty'
+  $nodePtyBuild = Join-Path $nodePtyRoot 'build'
+  if (Test-Path -LiteralPath $nodePtyBuild) { Remove-Item -LiteralPath $nodePtyBuild -Recurse -Force }
+  foreach ($required in @('prebuilds\win32-arm64\conpty.node', 'prebuilds\win32-arm64\conpty_console_list.node')) {
+    if (-not (Test-Path -LiteralPath (Join-Path $nodePtyRoot $required) -PathType Leaf)) { throw "ARM64 node-pty prebuild is missing: $required" }
+  }
 } finally {
   # Only this preparation step's own job is stopped or removed.
   Stop-Job -Job $installJob -ErrorAction SilentlyContinue

@@ -58,7 +58,6 @@ runs:
       env:
         PREPARE_INPUTS_SCRIPT: ${{ github.action_path }}/prepare-inputs.ps1
         EQUINOX_NODE_MODULES_CACHE_HIT: ${{ steps.node-modules-cache.outputs.cache-hit }}
-        EQUINOX_NPM_TARGET_ARCH: arm64
       run: '& $env:PREPARE_INPUTS_SCRIPT'
 
     - name: Windows ARM64 native shell publish smoke
