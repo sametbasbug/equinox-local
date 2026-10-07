@@ -63,11 +63,15 @@ test("ARM64 package is built once and exact-byte consumers fan out in parallel",
   assert.match(producer, /uses: \.\/\.github\/actions\/prepare-arm64-package/u);
   assert.match(producer, /actions\/upload-artifact@v7/u);
   assert.match(producer, /compression-level: 0/u);
+  assert.match(producer, /Get-ChildItem backups\/local-packages -Filter 'equinox-local-\*-win32-arm64\.zip'/u);
+  assert.doesNotMatch(producer, /Get-ChildItem \(Join-Path \$env:RUNNER_TEMP 'arm64-package'\)/u);
   for (const name of ["windows-arm64-package", "windows-arm64-installer"]) {
     const block = job(name);
     assert.match(block, /runs-on: windows-11-vs2026-arm/u);
     assert.match(block, /^    needs: \[windows-arm64-package-build\]/mu);
     assert.match(block, /actions\/download-artifact@v7/u);
+    assert.match(block, /path: \$\{\{ runner\.temp \}\}\/arm64-package/u);
+    assert.match(block, /Join-Path \$env:RUNNER_TEMP 'arm64-package'/u);
     assert.doesNotMatch(block, /uses: \.\/\.github\/actions\/prepare-arm64-package/u);
   }
   assert.doesNotMatch(job("windows-arm64-runtime"), /^    (?:needs|if):/mu);

@@ -544,7 +544,7 @@ jobs:
           EXPECTED_PACKAGE_SHA256: ${{ steps.package.outputs.sha256 }}
           EXPECTED_PACKAGE_BYTES: ${{ steps.package.outputs.bytes }}
         run: |
-          $artifacts = @(Get-ChildItem (Join-Path $env:RUNNER_TEMP 'arm64-package') -Filter 'equinox-local-*-win32-arm64.zip')
+          $artifacts = @(Get-ChildItem backups/local-packages -Filter 'equinox-local-*-win32-arm64.zip')
           if ($artifacts.Count -ne 1) { throw 'Expected exactly one current-run ARM64 CI package' }
           if ($env:EXPECTED_PACKAGE_SHA256 -cnotmatch '^[0-9a-f]{64}$' -or $env:EXPECTED_PACKAGE_BYTES -notmatch '^[1-9][0-9]*$') { throw 'ARM64 package producer metadata is missing or invalid' }
           $sha256 = (Get-FileHash -LiteralPath $artifacts[0].FullName -Algorithm SHA256).Hash.ToLowerInvariant()
