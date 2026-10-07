@@ -116,6 +116,8 @@ test("Windows release ZIP helper explicitly references compression assemblies fo
   assert.match(helper, /ZipArchive\]\.Assembly\.Location/u);
   assert.match(helper, /ZipFile\]\.Assembly\.Location/u);
   assert.match(helper, /-ReferencedAssemblies @\(\$CompressionAssembly, \$CompressionFileSystemAssembly\)/u);
+  assert.match(helper, /\$PSVersionTable\.PSEdition -eq 'Core'/u);
+  assert.match(helper, /Add-Type -TypeDefinition \$TypeDefinition/u);
 });
 
 test("Windows managed package builder allows only native targets plus x64-to-ARM64 cross-packaging", async () => {
