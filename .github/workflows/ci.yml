@@ -676,7 +676,9 @@ jobs:
         uses: actions/cache@v6
         with:
           path: ~/AppData/Local/Equinox Local/runtime/toolchain
-          key: equinox-toolchain-win32-arm64-v1-${{ hashFiles('src/equinox-local-runtime-versions.js', 'src/equinox-local-toolchain-contract.js', 'src/equinox-local-toolchain-provisioner.js', 'src/equinox-local-windows-release-zip.ps1') }}
+          key: equinox-toolchain-win32-arm64-v2-${{ hashFiles('src/equinox-local-runtime-versions.js', 'src/equinox-local-toolchain-contract.js', 'src/equinox-local-windows-release-zip.ps1') }}
+          restore-keys: |
+            equinox-toolchain-win32-arm64-v1-
 
       - name: Verify and run ARM64 real public-installer fresh-install acceptance
         shell: pwsh

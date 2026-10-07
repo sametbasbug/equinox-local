@@ -184,6 +184,8 @@ test("ARM64 artifact consumers verify producer identity before acceptance", () =
   assert.doesNotMatch(installer, /Get-FileHash -LiteralPath \$artifact\.FullName -Algorithm SHA256/u);
   assert.match(installer, /EQUINOX_WINDOWS_INSTALL_ARTIFACT/u);
   assert.match(installer, /Restore admitted ARM64 product-owned toolchain cache/u);
+  assert.match(installer, /key: equinox-toolchain-win32-arm64-v2-/u);
+  assert.match(installer, /restore-keys:[\s\S]*equinox-toolchain-win32-arm64-v1-/u);
   assert.match(installer, /path: ~\/AppData\/Local\/Equinox Local\/runtime\/toolchain/u);
   assert.match(installer, /EQUINOX_WINDOWS_TOOLCHAIN_CACHE_MODE: enabled/u);
   assert.match(installer, /EQUINOX_WINDOWS_TOOLCHAIN_CACHE_HIT: \$\{\{ steps\.arm64-toolchain-cache\.outputs\.cache-hit \}\}/u);

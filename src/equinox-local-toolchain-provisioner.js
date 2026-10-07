@@ -210,14 +210,20 @@ async function mapBounded(items, concurrency, visit) {
 async function validateExtractedTree(root, { platform, fsImpl = fs }) {
   let entryCount = 0;
   let totalBytes = 0;
-  const stack = [root];
+  let frontier = [root];
   const rootReal = await fsImpl.realpath(root);
-  while (stack.length > 0) {
-    const directory = stack.pop();
-    const entries = await fsImpl.readdir(directory, { withFileTypes: true });
-    entryCount += entries.length;
-    if (entryCount > MAX_ARCHIVE_ENTRIES) throw new Error("Extracted toolchain contains too many entries.");
-    const inspected = await mapBounded(entries, TREE_VALIDATION_CONCURRENCY, async (entry) => {
+  while (frontier.length > 0) {
+    const directoryBatches = await mapBounded(frontier, 8, async (directory) => ({
+      directory,
+      entries: await fsImpl.readdir(directory, { withFileTypes: true }),
+    }));
+    const pending = [];
+    for (const { directory, entries } of directoryBatches) {
+      entryCount += entries.length;
+      if (entryCount > MAX_ARCHIVE_ENTRIES) throw new Error("Extracted toolchain contains too many entries.");
+      for (const entry of entries) pending.push({ directory, entry });
+    }
+    const inspected = await mapBounded(pending, TREE_VALIDATION_CONCURRENCY, async ({ directory, entry }) => {
       const absolute = path.join(directory, entry.name);
       const stat = await fsImpl.lstat(absolute);
       if (stat.isSymbolicLink()) {
@@ -232,14 +238,16 @@ async function validateExtractedTree(root, { platform, fsImpl = fs }) {
       if (stat.isFile()) return Object.freeze({ type: "file", size: stat.size });
       throw new Error("Extracted toolchain contains an unsupported filesystem entry.");
     });
+    const nextFrontier = [];
     for (const item of inspected) {
       if (item.type === "directory") {
-        stack.push(item.absolute);
+        nextFrontier.push(item.absolute);
       } else if (item.type === "file") {
         if (item.size > MAX_EXTRACTED_BYTES - totalBytes) throw new Error("Extracted toolchain exceeds the size limit.");
         totalBytes += item.size;
       }
     }
+    frontier = nextFrontier;
   }
   return Object.freeze({ entryCount, totalBytes });
 }

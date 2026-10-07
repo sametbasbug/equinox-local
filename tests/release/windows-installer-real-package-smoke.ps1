@@ -106,18 +106,19 @@ try {
     if (-not $ToolchainCacheEnabled) { throw 'Fresh-install smoke requires an unused real per-user Equinox Local install root.' }
     if (-not [IO.Directory]::Exists($OwnedInstallRoot)) { throw 'ARM64 toolchain cache restored an unsafe install-root file.' }
     $cachedToolchain = Join-Path $OwnedInstallRoot 'runtime\toolchain'
-    if ($ToolchainCacheHit) {
-      if (-not [IO.Directory]::Exists($cachedToolchain)) { throw 'ARM64 toolchain cache reported a hit without a toolchain tree.' }
+    $toolchainTreeRestored = [IO.Directory]::Exists($cachedToolchain)
+    if ($toolchainTreeRestored) {
       $unexpected = @(Get-ChildItem -LiteralPath $OwnedInstallRoot -Force | Where-Object { $_.Name -cne 'runtime' })
       $runtimeRoot = Join-Path $OwnedInstallRoot 'runtime'
       if ([IO.Directory]::Exists($runtimeRoot)) { $unexpected += @(Get-ChildItem -LiteralPath $runtimeRoot -Force | Where-Object { $_.Name -cne 'toolchain' }) }
       if ($unexpected.Count -ne 0) { throw 'ARM64 toolchain cache restored unexpected managed-install state.' }
     } else {
+      if ($ToolchainCacheHit) { throw 'ARM64 toolchain cache reported an exact hit without a toolchain tree.' }
       $entries = @(Get-ChildItem -LiteralPath $OwnedInstallRoot -Force -ErrorAction SilentlyContinue)
       if ($entries.Count -ne 0) { throw 'Fresh-install cache miss found unexpected managed-install state.' }
       Remove-Item -LiteralPath $OwnedInstallRoot -Recurse -Force
     }
-  } elseif ($ToolchainCacheHit) { throw 'ARM64 toolchain cache reported a hit without restoring the install root.' }
+  } elseif ($ToolchainCacheHit) { throw 'ARM64 toolchain cache reported an exact hit without restoring the install root.' }
   if ([IO.Directory]::Exists($OwnedProgramRoot) -or [IO.File]::Exists($OwnedProgramRoot)) { throw 'Fresh-install smoke requires an unused real per-user stable program root.' }
 
   $BootstrapTemp = Join-Path $Work 'Windows Türk Bootstrap Temp'

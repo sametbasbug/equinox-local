@@ -199,8 +199,20 @@ test("M8 reuse validation overlaps bounded filesystem metadata checks", async (t
   }
   let active = 0;
   let peak = 0;
+  let activeReaddir = 0;
+  let peakReaddir = 0;
   const fsImpl = {
     ...fs,
+    readdir: async (...args) => {
+      activeReaddir += 1;
+      peakReaddir = Math.max(peakReaddir, activeReaddir);
+      try {
+        await new Promise((resolve) => setTimeout(resolve, 2));
+        return await fs.readdir(...args);
+      } finally {
+        activeReaddir -= 1;
+      }
+    },
     lstat: async (...args) => {
       active += 1;
       peak = Math.max(peak, active);
@@ -224,6 +236,8 @@ test("M8 reuse validation overlaps bounded filesystem metadata checks", async (t
   assert.deepEqual(reused.components.map(({ status }) => status), ["reused", "reused"]);
   assert.ok(peak > 1, `expected metadata validation overlap, peak=${peak}`);
   assert.ok(peak <= 32, `metadata validation exceeded bound, peak=${peak}`);
+  assert.ok(peakReaddir > 1, `expected directory validation overlap, peak=${peakReaddir}`);
+  assert.ok(peakReaddir <= 16, `directory validation exceeded global bound, peak=${peakReaddir}`);
 });
 
 test("M8 provisioner starts independent Git and Node component downloads concurrently", async (t) => {
