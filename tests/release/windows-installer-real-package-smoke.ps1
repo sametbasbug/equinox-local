@@ -44,23 +44,43 @@ try {
   if ([string]::IsNullOrWhiteSpace($Artifact) -or -not [IO.Path]::IsPathRooted($Artifact) -or -not [IO.File]::Exists($Artifact)) { throw 'EQUINOX_WINDOWS_INSTALL_ARTIFACT must point to the real native managed ZIP.' }
   if (Test-Path -LiteralPath $NativeRegistryKey) { throw 'Fresh-install smoke requires an unowned Native Messaging registry key.' }
 
-  Add-Type -AssemblyName System.IO.Compression
-  Add-Type -AssemblyName System.IO.Compression.FileSystem
-  $zip = [IO.Compression.ZipFile]::OpenRead($Artifact)
-  try {
-    $entry = $zip.GetEntry('release/release.json')
-    if ($null -eq $entry) { throw 'Managed ZIP is missing release/release.json.' }
-    $reader = New-Object IO.StreamReader($entry.Open(), (New-Object Text.UTF8Encoding($false, $true)))
-    try { $metadata = ($reader.ReadToEnd() | ConvertFrom-Json) } finally { $reader.Dispose() }
-  } finally { $zip.Dispose() }
-  if ($metadata.schemaVersion -ne 1 -or [string]::IsNullOrWhiteSpace($metadata.target) -or [string]::IsNullOrWhiteSpace($metadata.version)) { throw 'Managed ZIP metadata is invalid.' }
-  $FixtureTarget = [string]$metadata.target
+  $fixtureMetadata = @(
+    [string]$env:EQUINOX_WINDOWS_INSTALL_TARGET,
+    [string]$env:EQUINOX_WINDOWS_INSTALL_VERSION,
+    [string]$env:EQUINOX_WINDOWS_INSTALL_SOURCE_SHA,
+    [string]$env:EQUINOX_WINDOWS_INSTALL_SHA256,
+    [string]$env:EQUINOX_WINDOWS_INSTALL_BYTES
+  )
+  $useVerifiedMetadata = -not [string]::IsNullOrWhiteSpace($fixtureMetadata[0])
+  if ($useVerifiedMetadata -and @($fixtureMetadata | Where-Object { [string]::IsNullOrWhiteSpace($_) }).Count -ne 0) { throw 'Verified installer fixture metadata is incomplete.' }
+  if ($useVerifiedMetadata) {
+    $FixtureTarget = $fixtureMetadata[0]
+    $FixtureVersion = $fixtureMetadata[1]
+    $FixtureSourceSha = $fixtureMetadata[2]
+    $artifactSha = $fixtureMetadata[3]
+    $artifactBytes = [int64]$fixtureMetadata[4]
+  } else {
+    Add-Type -AssemblyName System.IO.Compression
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $zip = [IO.Compression.ZipFile]::OpenRead($Artifact)
+    try {
+      $entry = $zip.GetEntry('release/release.json')
+      if ($null -eq $entry) { throw 'Managed ZIP is missing release/release.json.' }
+      $reader = New-Object IO.StreamReader($entry.Open(), (New-Object Text.UTF8Encoding($false, $true)))
+      try { $metadata = ($reader.ReadToEnd() | ConvertFrom-Json) } finally { $reader.Dispose() }
+    } finally { $zip.Dispose() }
+    if ($metadata.schemaVersion -ne 1 -or [string]::IsNullOrWhiteSpace($metadata.target) -or [string]::IsNullOrWhiteSpace($metadata.version)) { throw 'Managed ZIP metadata is invalid.' }
+    $FixtureTarget = [string]$metadata.target
+    $FixtureVersion = [string]$metadata.version
+    $FixtureSourceSha = [string]$metadata.sourceSha
+    $artifactBytes = (Get-Item -LiteralPath $Artifact).Length
+    $artifactSha = (Get-FileHash -LiteralPath $Artifact -Algorithm SHA256).Hash.ToLowerInvariant()
+  }
   if ($FixtureTarget -notin @('win32-x64','win32-arm64')) { throw 'Managed ZIP target is unsupported.' }
-  $FixtureSourceSha = [string]$metadata.sourceSha
   if ($FixtureSourceSha -cnotmatch '^[a-f0-9]{40}$') { throw 'Managed ZIP sourceSha is invalid.' }
-  $FixtureExpectedMachine = if ($FixtureTarget -ceq 'win32-arm64') { 0xAA64 } else { 0x8664 }
-  $FixtureVersion = [string]$metadata.version
   if ($FixtureVersion -notmatch '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$') { throw 'Managed ZIP version is invalid.' }
+  if ($artifactSha -cnotmatch '^[a-f0-9]{64}$' -or $artifactBytes -lt 1 -or (Get-Item -LiteralPath $Artifact).Length -ne $artifactBytes) { throw 'Managed ZIP verified identity is invalid.' }
+  $FixtureExpectedMachine = if ($FixtureTarget -ceq 'win32-arm64') { 0xAA64 } else { 0x8664 }
 
   $helperBytes = (Get-Item -LiteralPath $HelperSource).Length
   $helperSha = (Get-FileHash -LiteralPath $HelperSource -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -71,8 +91,6 @@ try {
   . $Installer
   Assert-True ((Get-NativeWindowsTarget) -ceq $FixtureTarget) "Public installer did not select $FixtureTarget on the native runner."
 
-  $artifactBytes = (Get-Item -LiteralPath $Artifact).Length
-  $artifactSha = (Get-FileHash -LiteralPath $Artifact -Algorithm SHA256).Hash.ToLowerInvariant()
   $Manifest = Join-Path $Work ("bootstrap-$FixtureTarget.txt")
   $manifestText = @('schemaVersion=1', 'channel=stable', "target=$FixtureTarget", "version=$FixtureVersion", "artifactUrl=https://local.sametbasbug.dev/downloads/updates/equinox-local-$FixtureVersion-$FixtureTarget.zip", "artifactSha256=$artifactSha", "artifactBytes=$artifactBytes", '') -join "`n"
   [IO.File]::WriteAllText($Manifest, $manifestText, (New-Object Text.UTF8Encoding($false)))
@@ -93,7 +111,11 @@ try {
   function Save-BoundedHttpsFile([string]$Url, [string]$Destination, [long]$MaxBytes) {
     if ($Url.EndsWith("/bootstrap-$script:FixtureTarget.txt")) { Copy-Item -LiteralPath $script:Manifest -Destination $Destination; return }
     if ($Url.EndsWith('/equinox-local-windows-release-zip.ps1')) { Copy-Item -LiteralPath $script:HelperSource -Destination $Destination; return }
-    if ($Url.EndsWith("/equinox-local-$script:FixtureVersion-$script:FixtureTarget.zip")) { Copy-Item -LiteralPath $script:Artifact -Destination $Destination; return }
+    if ($Url.EndsWith("/equinox-local-$script:FixtureVersion-$script:FixtureTarget.zip")) {
+      try { New-Item -ItemType HardLink -Path $Destination -Target $script:Artifact -ErrorAction Stop | Out-Null }
+      catch { Copy-Item -LiteralPath $script:Artifact -Destination $Destination }
+      return
+    }
     throw "unexpected Windows fresh-install URL: $Url"
   }
 

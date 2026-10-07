@@ -7,6 +7,15 @@ outputs:
   bytes:
     description: Byte length of the prepared managed ZIP
     value: ${{ steps.package.outputs.bytes }}
+  version:
+    description: Equinox Local version encoded in the prepared managed ZIP
+    value: ${{ steps.package.outputs.version }}
+  target:
+    description: Release target encoded in the prepared managed ZIP
+    value: ${{ steps.package.outputs.target }}
+  source_sha:
+    description: Exact source SHA encoded in the prepared managed ZIP
+    value: ${{ steps.package.outputs.source_sha }}
 runs:
   using: composite
   steps:
@@ -85,5 +94,10 @@ runs:
           if ($names | Where-Object { $_ -like 'release/runtime/peekaboo/*' }) { throw 'Windows ARM64 managed ZIP unexpectedly contains Peekaboo' }
         } finally { $zip.Dispose() }
         $sha256 = (Get-FileHash -LiteralPath $artifact.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+        if ([string]$metadata.version -notmatch '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$') { throw 'Windows ARM64 release metadata version is invalid' }
+        if ([string]$metadata.sourceSha -cnotmatch '^[a-f0-9]{40}$') { throw 'Windows ARM64 release metadata sourceSha is invalid' }
         "sha256=$sha256" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
         "bytes=$($artifact.Length)" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+        "version=$($metadata.version)" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+        "target=$($metadata.target)" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+        "source_sha=$($metadata.sourceSha)" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append

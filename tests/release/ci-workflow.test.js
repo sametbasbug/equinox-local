@@ -56,17 +56,25 @@ test("CI retains full product validation while skipping only the explicit docs-o
   assert.doesNotMatch(job("macos-x64"), /run: npm test\n/u);
 });
 
-test("all native ARM64 acceptance lanes start independently without an artifact chain", () => {
-  for (const name of arm64Lanes) {
+test("ARM64 package is built once and exact-byte consumers fan out in parallel", () => {
+  const producer = job("windows-arm64-package-build");
+  assert.match(producer, /runs-on: windows-11-vs2026-arm/u);
+  assert.doesNotMatch(producer, /^    (?:needs|if):/mu);
+  assert.match(producer, /uses: \.\/\.github\/actions\/prepare-arm64-package/u);
+  assert.match(producer, /actions\/upload-artifact@v7/u);
+  assert.match(producer, /compression-level: 0/u);
+  for (const name of ["windows-arm64-package", "windows-arm64-installer"]) {
     const block = job(name);
     assert.match(block, /runs-on: windows-11-vs2026-arm/u);
-    assert.doesNotMatch(block, /^    (?:needs|if):/mu);
-    assert.doesNotMatch(block, /download-artifact|upload-artifact/u);
+    assert.match(block, /^    needs: \[windows-arm64-package-build\]/mu);
+    assert.match(block, /actions\/download-artifact@v7/u);
+    assert.doesNotMatch(block, /uses: \.\/\.github\/actions\/prepare-arm64-package/u);
   }
+  assert.doesNotMatch(job("windows-arm64-runtime"), /^    (?:needs|if):/mu);
 });
 
-test("ARM64 installer keeps bounded cold-start diagnostic headroom without slowing the success path", () => {
-  assert.match(job("windows-arm64-installer"), /timeout-minutes: 12/u);
+test("ARM64 installer has a tighter bound after duplicate package construction is removed", () => {
+  assert.match(job("windows-arm64-installer"), /timeout-minutes: 7/u);
 });
 
 test("ARM64 runtime retains native lifecycle, PTY and messaging acceptance", () => {
@@ -99,7 +107,9 @@ test("real public installer enters managed-source on native Windows x64 and ARM6
   assert.match(arm64, /windows-installer-real-package-smoke\.ps1/u);
   assert.match(smoke, /installation\.kind -ceq 'managed-source'/u);
   assert.match(smoke, /installation\.sourceSha -ceq \$FixtureSourceSha/u);
-  assert.doesNotMatch(smoke, /\$(?:Target|Version|SourceSha)\b/u);
+  assert.match(smoke, /EQUINOX_WINDOWS_INSTALL_SOURCE_SHA/u);
+  assert.match(smoke, /EQUINOX_WINDOWS_INSTALL_SHA256/u);
+  assert.match(smoke, /New-Item -ItemType HardLink/u);
   assert.match(smoke, /runtime\\toolchain\\git\\2\.53\.0-4/u);
   assert.match(smoke, /runtime\\toolchain\\node\\26\.10\.0/u);
 });
@@ -115,10 +125,9 @@ test("managed-source runtime acceptance runs on real Windows x64 and ARM64 hosts
   assert.match(arm64, /-p:Platform=ARM64/u);
 });
 
-test("both package lanes use one maintained native package preparation contract", () => {
-  for (const name of ["windows-arm64-package", "windows-arm64-installer"]) {
-    assert.match(job(name), /id: package\n\s+uses: \.\/\.github\/actions\/prepare-arm64-package/u);
-  }
+test("one maintained ARM64 package producer exposes exact artifact identity", () => {
+  const producer = job("windows-arm64-package-build");
+  assert.match(producer, /id: package\n\s+uses: \.\/\.github\/actions\/prepare-arm64-package/u);
   assert.match(prepare, /using: composite/u);
   assert.match(prepare, /architecture: arm64/u);
   assert.match(prepare, /process\.platform/u);
@@ -126,34 +135,25 @@ test("both package lanes use one maintained native package preparation contract"
   assert.match(prepare, /v26\.10\.0/u);
   assert.match(inputs, /ci --prefer-offline --no-audit --no-fund/u);
   assert.match(prepare, /npm run local:release:package:windows/u);
-  assert.match(prepare, /if \(\$LASTEXITCODE -ne 0\) \{ exit \$LASTEXITCODE \}/u);
   assert.match(prepare, /0xAA64/u);
   assert.match(prepare, /release\/runtime\/winapp\/LICENSE/u);
   assert.match(prepare, /metadata\.target -ne 'win32-arm64'/u);
+  for (const output of ["sha256", "bytes", "version", "target", "source_sha"]) {
+    assert.ok(producer.includes("      " + output + ": ${{ steps.package.outputs." + output + " }}"), `producer must expose ${output}`);
+  }
 });
 
-test("same-runner consumers verify exact prepared package bytes before acceptance", () => {
-  for (const [name, acceptance] of [
-    ["windows-arm64-package", "Windows ARM64 packaged winapp UIA smoke"],
-    ["windows-arm64-installer", "Windows ARM64 real public-installer fresh-install acceptance"],
-  ]) {
-    const block = job(name);
-    const build = block.indexOf("      - name: Prepare native ARM64 CI package");
-    const verify = block.indexOf("      - name: Verify exact prepared ARM64 CI package bytes");
-    const consume = block.indexOf(`      - name: ${acceptance}`);
-    assert.ok(build >= 0 && verify > build && consume > verify, `${name} must prepare and verify before consuming`);
-    assert.match(block, /EXPECTED_PACKAGE_SHA256: \$\{\{ steps\.package\.outputs\.sha256 \}\}/u);
-    assert.match(block, /EXPECTED_PACKAGE_BYTES: \$\{\{ steps\.package\.outputs\.bytes \}\}/u);
-    assert.match(block, /Get-FileHash -LiteralPath \$artifacts\[0\]\.FullName -Algorithm SHA256/u);
-    assert.match(block, /\$artifacts\.Count -ne 1/u);
-    assert.match(block, /\$sha256 -cne \$env:EXPECTED_PACKAGE_SHA256/u);
-    assert.match(block, /\$artifacts\[0\]\.Length -ne \[int64\]\$env:EXPECTED_PACKAGE_BYTES/u);
-  }
-  assert.match(prepare, /sha256:\n\s+description:[^\n]+\n\s+value: \$\{\{ steps\.package\.outputs\.sha256 \}\}/u);
-  assert.match(prepare, /bytes:\n\s+description:[^\n]+\n\s+value: \$\{\{ steps\.package\.outputs\.bytes \}\}/u);
-  assert.match(job("windows-arm64-package"), /EquinoxLocal\.WindowsShell\.UninstallHandoffHarness/u);
-  assert.match(job("windows-arm64-package"), /-DesktopHelperPath/u);
-  assert.match(job("windows-arm64-installer"), /EQUINOX_WINDOWS_INSTALL_ARTIFACT/u);
+test("ARM64 artifact consumers verify producer identity before acceptance", () => {
+  const packageLane = job("windows-arm64-package");
+  const installer = job("windows-arm64-installer");
+  assert.match(packageLane, /EXPECTED_PACKAGE_SHA256: \$\{\{ needs\.windows-arm64-package-build\.outputs\.sha256 \}\}/u);
+  assert.match(packageLane, /Get-FileHash -LiteralPath \$artifacts\[0\]\.FullName -Algorithm SHA256/u);
+  assert.match(packageLane, /parallel:[\s\S]*Windows ARM64 native shell uninstall handoff smoke[\s\S]*Windows ARM64 managed-source runtime acceptance[\s\S]*Windows ARM64 packaged winapp UIA smoke/u);
+  assert.match(installer, /EQUINOX_WINDOWS_INSTALL_SHA256: \$\{\{ needs\.windows-arm64-package-build\.outputs\.sha256 \}\}/u);
+  assert.match(installer, /EQUINOX_WINDOWS_INSTALL_SOURCE_SHA: \$\{\{ needs\.windows-arm64-package-build\.outputs\.source_sha \}\}/u);
+  assert.match(installer, /Get-FileHash -LiteralPath \$artifact\.FullName -Algorithm SHA256/u);
+  assert.match(installer, /EQUINOX_WINDOWS_INSTALL_ARTIFACT/u);
+  assert.match(prepare, /source_sha:\n\s+description:[^\n]+\n\s+value: \$\{\{ steps\.package\.outputs\.source_sha \}\}/u);
 });
 
 test("stable ARM64 and Windows aggregate checks reject every non-success dependency", () => {
