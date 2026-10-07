@@ -481,7 +481,7 @@ test("public Windows CI restores and builds the native x64 shell", async () => {
   assert.match(winappSmoke, /\$evidence\.TargetPid -eq \$fixture\.Id/u);
   assert.match(winappSmoke, /\$evidence\.TargetProcess -eq 'EquinoxLocal\.WinappSmokeFixture'/u);
   assert.match(winappSmoke, /\$evidence\.ForegroundProcess -eq 'WWAHost'/u);
-  assert.match(winappSmoke, /\$evidence\.CurrentProcess -eq 'powershell'/u);
+  assert.match(winappSmoke, /\$evidence\.CurrentProcess -eq \$smokePowerShellProcessName/u);
   assert.match(winappSmoke, /\$evidence\.TargetSession -eq \$evidence\.ForegroundSession/u);
   assert.match(winappSmoke, /\$evidence\.TargetSession -eq \$evidence\.CurrentSession/u);
   assert.match(winappSmoke, /\$evidence\.TargetDesktop -eq 'Default'/u);
