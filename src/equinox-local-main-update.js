@@ -62,8 +62,8 @@ export function isCanonicalMainRemote(value) {
     || remote === `ssh://git@github.com/${EQUINOX_LOCAL_MAIN_REPOSITORY}.git`;
 }
 
-async function runGit(sourceRoot, args, { execFileImpl = execFile } = {}) {
-  const result = await execFileImpl("git", ["-C", sourceRoot, ...args], {
+async function runGit(sourceRoot, args, { execFileImpl = execFile, gitPath = "git" } = {}) {
+  const result = await execFileImpl(gitPath, ["-C", sourceRoot, ...args], {
     timeout: CHECK_TIMEOUT_MS,
     maxBuffer: 1024 * 1024,
     env: { ...process.env, GIT_OPTIONAL_LOCKS: "0", GIT_TERMINAL_PROMPT: "0" },
@@ -122,7 +122,7 @@ async function fetchGithubJson(url, { fetchImpl = globalThis.fetch } = {}) {
   }
 }
 
-export async function inspectCanonicalMainCheckout(sourceRoot, { fsImpl = fs, execFileImpl = execFile } = {}) {
+export async function inspectCanonicalMainCheckout(sourceRoot, { fsImpl = fs, execFileImpl = execFile, gitPath = "git" } = {}) {
   const resolvedRoot = path.resolve(sourceRoot);
   const [stat, realRoot] = await Promise.all([fsImpl.lstat(resolvedRoot), fsImpl.realpath(resolvedRoot)]);
   if (!stat.isDirectory() || stat.isSymbolicLink() || realRoot !== resolvedRoot) {
@@ -131,7 +131,7 @@ export async function inspectCanonicalMainCheckout(sourceRoot, { fsImpl = fs, ex
 
   let topLevel;
   try {
-    topLevel = await runGit(resolvedRoot, ["rev-parse", "--show-toplevel"], { execFileImpl });
+    topLevel = await runGit(resolvedRoot, ["rev-parse", "--show-toplevel"], { execFileImpl, gitPath });
   } catch {
     return { eligible: false, state: "unsupported", reason: "The active source directory is not a Git checkout." };
   }
@@ -139,12 +139,12 @@ export async function inspectCanonicalMainCheckout(sourceRoot, { fsImpl = fs, ex
     return { eligible: false, state: "unsupported", reason: "The active source directory is not the checkout root." };
   }
 
-  const currentSha = await runGit(resolvedRoot, ["rev-parse", "HEAD"], { execFileImpl });
+  const currentSha = await runGit(resolvedRoot, ["rev-parse", "HEAD"], { execFileImpl, gitPath });
   if (!SHA_PATTERN.test(currentSha)) return { eligible: false, state: "unsupported", reason: "The current source SHA is invalid." };
 
   let branch = null;
   try {
-    branch = await runGit(resolvedRoot, ["symbolic-ref", "--quiet", "--short", "HEAD"], { execFileImpl });
+    branch = await runGit(resolvedRoot, ["symbolic-ref", "--quiet", "--short", "HEAD"], { execFileImpl, gitPath });
   } catch {
     return { eligible: false, state: "detached", currentSha, branch: null, reason: "The source checkout is detached from main." };
   }
@@ -154,7 +154,7 @@ export async function inspectCanonicalMainCheckout(sourceRoot, { fsImpl = fs, ex
 
   let remote;
   try {
-    remote = await runGit(resolvedRoot, ["remote", "get-url", "origin"], { execFileImpl });
+    remote = await runGit(resolvedRoot, ["remote", "get-url", "origin"], { execFileImpl, gitPath });
   } catch {
     return { eligible: false, state: "unsupported", currentSha, branch, reason: "The source checkout has no canonical origin remote." };
   }
@@ -162,7 +162,7 @@ export async function inspectCanonicalMainCheckout(sourceRoot, { fsImpl = fs, ex
     return { eligible: false, state: "unsupported", currentSha, branch, remoteCanonical: false, reason: "The origin remote is not the canonical Equinox Local repository." };
   }
 
-  const dirtyOutput = await runGit(resolvedRoot, ["status", "--porcelain=v1", "--untracked-files=normal"], { execFileImpl });
+  const dirtyOutput = await runGit(resolvedRoot, ["status", "--porcelain=v1", "--untracked-files=normal"], { execFileImpl, gitPath });
   if (dirtyOutput) {
     return { eligible: false, state: "dirty", currentSha, branch, remoteCanonical: true, dirty: true, reason: "The source checkout has uncommitted changes." };
   }
@@ -209,6 +209,7 @@ export function createEquinoxLocalMainUpdateDiscovery({
   sourceRoot = DEFAULT_SOURCE_ROOT,
   fsImpl = fs,
   execFileImpl = execFile,
+  gitPath = installation?.gitPath ?? "git",
   fetchImpl = globalThis.fetch,
   now = () => new Date(),
   cacheTtlMs = DEFAULT_CACHE_TTL_MS,
@@ -243,7 +244,7 @@ export function createEquinoxLocalMainUpdateDiscovery({
 
     let local;
     try {
-      local = await inspectCanonicalMainCheckout(sourceRoot, { fsImpl, execFileImpl });
+      local = await inspectCanonicalMainCheckout(sourceRoot, { fsImpl, execFileImpl, gitPath });
     } catch (error) {
       state = Object.freeze({ ...state, checkedAt: currentTime.toISOString(), cacheExpiresAt: null, state: "unsupported", lastError: null, reason: boundedMessage(error instanceof Error ? error.message : error) });
       return state;

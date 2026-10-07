@@ -43,7 +43,7 @@ function parsePointer(text) {
   });
 }
 
-export async function readEquinoxLocalMainSourcePointer(pointerPath, { fsImpl = fs, execFileImpl } = {}) {
+export async function readEquinoxLocalMainSourcePointer(pointerPath, { fsImpl = fs, execFileImpl, gitPath = "git" } = {}) {
   const resolvedPath = assertAbsoluteNormalPath(pointerPath, "Main source pointer path");
   let handle;
   try {
@@ -54,7 +54,7 @@ export async function readEquinoxLocalMainSourcePointer(pointerPath, { fsImpl = 
     const body = await handle.readFile("utf8");
     if (Buffer.byteLength(body) > MAX_BYTES) throw new Error("Main source pointer exceeds the size limit.");
     const value = parsePointer(body);
-    const checkout = await inspectCanonicalMainCheckout(value.sourceRoot, { fsImpl, execFileImpl });
+    const checkout = await inspectCanonicalMainCheckout(value.sourceRoot, { fsImpl, execFileImpl, gitPath });
     if (!checkout.eligible) throw new Error(`Main source pointer target is not update-eligible: ${checkout.reason}`);
     if (checkout.currentSha !== value.sha) throw new Error("Main source pointer SHA does not match its checkout.");
     return Object.freeze({ ...value, sourceRoot: checkout.sourceRoot ?? value.sourceRoot });
@@ -63,11 +63,11 @@ export async function readEquinoxLocalMainSourcePointer(pointerPath, { fsImpl = 
   }
 }
 
-export async function writeEquinoxLocalMainSourcePointer(pointerPath, { sourceRoot, sha }, { fsImpl = fs, execFileImpl, randomBytesImpl = randomBytes } = {}) {
+export async function writeEquinoxLocalMainSourcePointer(pointerPath, { sourceRoot, sha }, { fsImpl = fs, execFileImpl, gitPath = "git", randomBytesImpl = randomBytes } = {}) {
   const resolvedPath = assertAbsoluteNormalPath(pointerPath, "Main source pointer path");
   const resolvedRoot = assertAbsoluteNormalPath(sourceRoot, "Main source pointer sourceRoot");
   assertSha(sha);
-  const checkout = await inspectCanonicalMainCheckout(resolvedRoot, { fsImpl, execFileImpl });
+  const checkout = await inspectCanonicalMainCheckout(resolvedRoot, { fsImpl, execFileImpl, gitPath });
   if (!checkout.eligible) throw new Error(`Main source pointer target is not update-eligible: ${checkout.reason}`);
   if (checkout.currentSha !== sha) throw new Error("Main source pointer target SHA changed before activation.");
   const parent = path.dirname(resolvedPath);
@@ -87,5 +87,5 @@ export async function writeEquinoxLocalMainSourcePointer(pointerPath, { sourceRo
     await fsImpl.rm(tempPath, { force: true }).catch(() => {});
     throw error;
   }
-  return await readEquinoxLocalMainSourcePointer(resolvedPath, { fsImpl, execFileImpl });
+  return await readEquinoxLocalMainSourcePointer(resolvedPath, { fsImpl, execFileImpl, gitPath });
 }

@@ -600,6 +600,7 @@ const equinoxLocalUpdateCoordinator = createEquinoxLocalUpdateCoordinator({
 });
 const equinoxLocalMainUpdateDiscovery = createEquinoxLocalMainUpdateDiscovery({
   installation: equinoxLocalInstallation,
+  gitPath: equinoxLocalInstallation.gitPath ?? "git",
 });
 const equinoxLocalMainApplyController = createEquinoxLocalMainApplyController({
   installation: equinoxLocalInstallation,

@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
 import { equinoxLocalManagedLifecycle, equinoxLocalPlatformPaths } from "./equinox-local-platform.js";
+import { resolveEquinoxLocalManagedSourceInstallation } from "./equinox-local-managed-source-installation.js";
 import { readBoundedNormalFile } from "./equinox-local-safe-file.js";
 import { equinoxLocalUpdateTarget, parseEquinoxVersion } from "./equinox-local-updater.js";
 
@@ -162,10 +163,10 @@ export function supervisorChildEnvironment({ paths, releaseDir, sourceEnv = proc
   return Object.freeze(env);
 }
 
-export function tunnelInitArguments({ paths, releaseDir, transport }) {
-  const nodeBinary = path.join(releaseDir, "runtime", "node", "bin", "node");
-  const serverPath = path.join(releaseDir, "server.js");
-  const mcpCommand = `${shellQuote(nodeBinary)} ${shellQuote(serverPath)}`;
+export function tunnelInitArguments({ paths, releaseDir, transport, nodePath = null, serverPath = null }) {
+  const nodeBinary = nodePath || path.join(releaseDir, "runtime", "node", "bin", "node");
+  const serverEntry = serverPath || path.join(releaseDir, "server.js");
+  const mcpCommand = `${shellQuote(nodeBinary)} ${shellQuote(serverEntry)}`;
   return Object.freeze([
     "init",
     "--force",
@@ -209,6 +210,7 @@ export async function runManagedSupervisor({
   sourceEnv = process.env,
   execFileImpl = execFile,
   runChildImpl = runChild,
+  resolveManagedSourceImpl = resolveEquinoxLocalManagedSourceInstallation,
 } = {}) {
   const lifecycle = equinoxLocalManagedLifecycle({ platform, arch });
   if (!lifecycle.implemented || lifecycle.kind !== "launch-agent") {
@@ -221,11 +223,26 @@ export async function runManagedSupervisor({
   }
   const release = await resolveSupervisorRelease(paths);
   const logicalReleaseDir = path.join(paths.releasesRoot, release.version);
+  const baseInstallation = Object.freeze({
+    kind: "managed", managed: true, selfUpdateSupported: true,
+    platform, arch, target: lifecycle.host.target, lifecycleKind: lifecycle.kind,
+    installRoot: paths.installRoot, releasesRoot: paths.releasesRoot, releaseDir: logicalReleaseDir,
+  });
+  const installation = await resolveManagedSourceImpl({
+    baseInstallation, platform, arch, homeDir, env: sourceEnv,
+  });
+  const managedSource = installation?.kind === "managed-source";
+  const sourceRoot = managedSource ? path.resolve(installation.sourceRoot) : release.releaseDir;
+  const serverPath = managedSource ? path.join(sourceRoot, "src", "server.js") : path.join(release.releaseDir, "server.js");
+  if (managedSource) {
+    const [sourceStat, serverStat] = await Promise.all([fs.lstat(sourceRoot), fs.lstat(serverPath)]);
+    if (!sourceStat.isDirectory() || sourceStat.isSymbolicLink()) throw new Error("Managed source runtime root is unsafe.");
+    if (!serverStat.isFile() || serverStat.isSymbolicLink()) throw new Error("Managed source runtime server is unsafe.");
+  }
   const env = supervisorChildEnvironment({ paths, releaseDir: logicalReleaseDir, sourceEnv });
   const tunnelEnv = Object.freeze({ ...env, EQUINOX_LOCAL_SUPERVISOR_MODE: "tunnel" });
   const localOnlyEnv = Object.freeze({ ...env, EQUINOX_LOCAL_SUPERVISOR_MODE: "local-only" });
   const nodeBinary = path.join(release.releaseDir, "runtime", "node", "bin", "node");
-  const serverPath = path.join(release.releaseDir, "server.js");
   const tunnelBinary = path.join(release.releaseDir, "runtime", "tunnel", "tunnel-client");
 
   let transport = null;
@@ -239,13 +256,15 @@ export async function runManagedSupervisor({
     try {
       await fs.mkdir(paths.profileDir, { recursive: true, mode: 0o700 });
       await fs.chmod(paths.profileDir, 0o700).catch(() => {});
-      await execFileImpl(tunnelBinary, tunnelInitArguments({ paths, releaseDir: release.releaseDir, transport }), {
+      await execFileImpl(tunnelBinary, tunnelInitArguments({ paths, releaseDir: release.releaseDir, transport, nodePath: nodeBinary, serverPath }), {
+        cwd: sourceRoot,
         env,
         timeout: 15_000,
         maxBuffer: 4 * 1024 * 1024,
       });
-      log(`Starting Equinox Local ${release.version} through the OpenAI tunnel transport.`);
+      log(`Starting Equinox Local ${release.version}${managedSource ? " managed-source" : ""} through the OpenAI tunnel transport.`);
       const result = await runChildImpl(tunnelBinary, ["run", "--profile", PROFILE_NAME, "--profile-dir", paths.profileDir], {
+        cwd: sourceRoot,
         env: tunnelEnv,
         stdio: ["ignore", "inherit", "inherit"],
       });
@@ -255,10 +274,11 @@ export async function runManagedSupervisor({
       log(`Tunnel transport could not start; falling back to local-only Control Center: ${error instanceof Error ? error.message : error}`);
     }
   } else {
-    log(`No tunnel transport is configured; starting Equinox Local ${release.version} in local-only onboarding mode.`);
+    log(`No tunnel transport is configured; starting Equinox Local ${release.version}${managedSource ? " managed-source" : ""} in local-only onboarding mode.`);
   }
 
   const result = await runChildImpl(nodeBinary, [serverPath], {
+    cwd: sourceRoot,
     env: localOnlyEnv,
     stdio: ["pipe", "inherit", "inherit"],
   });
