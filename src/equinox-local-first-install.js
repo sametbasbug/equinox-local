@@ -45,13 +45,13 @@ export { launchWindowsStableShell as launchFreshWindowsShell } from "./equinox-l
 const execFile = promisify(execFileCallback);
 const MAX_RELEASE_METADATA_BYTES = 16 * 1024;
 const FIRST_INSTALL_HEALTH_ATTEMPTS = 120;
-const FIRST_INSTALL_WINDOWS_ARM64_HEALTH_ATTEMPTS = 180;
+const FIRST_INSTALL_WINDOWS_HEALTH_ATTEMPTS = 180;
 const FIRST_INSTALL_HEALTH_DELAY_MS = 500;
 const FIRST_INSTALL_DIAGNOSTIC_BYTES = 12 * 1024;
 
 export function equinoxLocalFirstInstallHealthBudget({ platform = process.platform, arch = process.arch } = {}) {
-  const attempts = platform === "win32" && arch === "arm64"
-    ? FIRST_INSTALL_WINDOWS_ARM64_HEALTH_ATTEMPTS
+  const attempts = platform === "win32" && ["x64", "arm64"].includes(arch)
+    ? FIRST_INSTALL_WINDOWS_HEALTH_ATTEMPTS
     : FIRST_INSTALL_HEALTH_ATTEMPTS;
   return Object.freeze({ attempts, delayMs: FIRST_INSTALL_HEALTH_DELAY_MS });
 }

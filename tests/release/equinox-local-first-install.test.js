@@ -19,9 +19,9 @@ import {
 
 const TARGET = "darwin-arm64";
 
-test("first-install health budget gives only Windows ARM64 extra cold-start headroom", () => {
+test("first-install health budget gives both Windows architectures bounded cold-start headroom", () => {
   assert.deepEqual(equinoxLocalFirstInstallHealthBudget({ platform: "darwin", arch: "arm64" }), { attempts: 120, delayMs: 500 });
-  assert.deepEqual(equinoxLocalFirstInstallHealthBudget({ platform: "win32", arch: "x64" }), { attempts: 120, delayMs: 500 });
+  assert.deepEqual(equinoxLocalFirstInstallHealthBudget({ platform: "win32", arch: "x64" }), { attempts: 180, delayMs: 500 });
   assert.deepEqual(equinoxLocalFirstInstallHealthBudget({ platform: "win32", arch: "arm64" }), { attempts: 180, delayMs: 500 });
 });
 
