@@ -185,7 +185,7 @@ async function copyReleaseSources(rootDir, releaseDir) {
   return files.length;
 }
 
-async function installPinnedWindowsNode(transaction, releaseDir, fetchImpl, target) {
+async function installPinnedWindowsNode(transaction, releaseDir, fetchImpl, target, { canExecuteTarget = true } = {}) {
   const distribution = NODE_DISTRIBUTIONS[target];
   const archive = path.join(transaction, distribution.filename);
   const extracted = path.join(transaction, "node-extracted");
@@ -195,13 +195,18 @@ async function installPinnedWindowsNode(transaction, releaseDir, fetchImpl, targ
   const sourceRoot = path.join(extracted, distribution.filename.replace(/\.zip$/u, ""));
   const destination = path.join(releaseDir, "runtime", "node");
   await fs.mkdir(path.join(destination, "bin"), { recursive: true });
-  await fs.copyFile(path.join(sourceRoot, "node.exe"), path.join(destination, "bin", "node.exe"));
+  const nodePath = path.join(destination, "bin", "node.exe");
+  await fs.copyFile(path.join(sourceRoot, "node.exe"), nodePath);
   await fs.copyFile(path.join(sourceRoot, "LICENSE"), path.join(destination, "LICENSE"));
-  const version = await execFile(path.join(destination, "bin", "node.exe"), ["--version"], { timeout: 10_000, windowsHide: true });
-  if (version.stdout.trim() !== `v${EQUINOX_LOCAL_NODE_VERSION}`) throw new Error("Pinned Windows Node version mismatch.");
+  const nodeMachine = await portableExecutableMachine(nodePath);
+  if (nodeMachine !== WINDOWS_TARGETS[target].peMachine) throw new Error(`Pinned Windows Node architecture mismatch for ${target}: 0x${nodeMachine.toString(16)}.`);
+  if (canExecuteTarget) {
+    const version = await execFile(nodePath, ["--version"], { timeout: 10_000, windowsHide: true });
+    if (version.stdout.trim() !== `v${EQUINOX_LOCAL_NODE_VERSION}`) throw new Error("Pinned Windows Node version mismatch.");
+  }
 }
 
-async function installPinnedWindowsTunnel(transaction, releaseDir, fetchImpl, target) {
+async function installPinnedWindowsTunnel(transaction, releaseDir, fetchImpl, target, { canExecuteTarget = true } = {}) {
   const distribution = TUNNEL_CLIENT_DISTRIBUTIONS[target];
   const archive = path.join(transaction, distribution.filename);
   const extracted = path.join(transaction, "tunnel-extracted");
@@ -218,11 +223,17 @@ async function installPinnedWindowsTunnel(transaction, releaseDir, fetchImpl, ta
   const destination = path.join(releaseDir, "runtime", "tunnel");
   await fs.mkdir(destination, { recursive: true });
   for (const name of expected) await fs.copyFile(path.join(extracted, name), path.join(destination, name));
-  const version = await execFile(path.join(destination, "tunnel-client.exe"), ["--version"], { timeout: 10_000, windowsHide: true });
-  if (!version.stdout.trim().startsWith(`${EQUINOX_LOCAL_TUNNEL_CLIENT_VERSION}+`)) throw new Error("Pinned Windows tunnel-client version mismatch.");
+  for (const name of ["tunnel-client.exe", "cloudflared.exe"]) {
+    const machine = await portableExecutableMachine(path.join(destination, name));
+    if (machine !== WINDOWS_TARGETS[target].peMachine) throw new Error(`Pinned Windows ${name} architecture mismatch for ${target}: 0x${machine.toString(16)}.`);
+  }
+  if (canExecuteTarget) {
+    const version = await execFile(path.join(destination, "tunnel-client.exe"), ["--version"], { timeout: 10_000, windowsHide: true });
+    if (!version.stdout.trim().startsWith(`${EQUINOX_LOCAL_TUNNEL_CLIENT_VERSION}+`)) throw new Error("Pinned Windows tunnel-client version mismatch.");
+  }
 }
 
-async function installPinnedWindowsWinapp(transaction, rootDir, releaseDir, fetchImpl, target) {
+async function installPinnedWindowsWinapp(transaction, rootDir, releaseDir, fetchImpl, target, { canExecuteTarget = true } = {}) {
   const distribution = WINAPP_DISTRIBUTIONS[target];
   if (!distribution) throw new Error(`Pinned Microsoft winapp distribution is unavailable for ${target}.`);
   const archive = path.join(transaction, distribution.filename);
@@ -244,9 +255,11 @@ async function installPinnedWindowsWinapp(transaction, rootDir, releaseDir, fetc
   const machine = await portableExecutableMachine(path.join(destination, "winapp.exe"));
   const expectedMachine = WINDOWS_TARGETS[target].peMachine;
   if (machine !== expectedMachine) throw new Error(`Microsoft winapp architecture mismatch for ${target}: 0x${machine.toString(16)}.`);
-  const version = await execFile(path.join(destination, "winapp.exe"), ["--version"], { timeout: 10_000, windowsHide: true });
-  if (!`${version.stdout ?? ""}${version.stderr ?? ""}`.includes(EQUINOX_LOCAL_WINAPP_VERSION)) {
-    throw new Error("Pinned Microsoft winapp version mismatch.");
+  if (canExecuteTarget) {
+    const version = await execFile(path.join(destination, "winapp.exe"), ["--version"], { timeout: 10_000, windowsHide: true });
+    if (!`${version.stdout ?? ""}${version.stderr ?? ""}`.includes(EQUINOX_LOCAL_WINAPP_VERSION)) {
+      throw new Error("Pinned Microsoft winapp version mismatch.");
+    }
   }
 }
 
@@ -387,11 +400,12 @@ export async function packageManagedEquinoxWindowsRelease({
   const artifactPath = path.join(outputDir, `equinox-local-${EQUINOX_LOCAL_VERSION}-${target}.zip`);
   await fs.mkdir(releaseDir, { recursive: true });
   try {
+    const canExecuteTarget = target === hostTarget;
     const preparationResults = await Promise.allSettled([
       copyReleaseSources(rootDir, releaseDir),
-      installPinnedWindowsNode(transaction, releaseDir, fetchImpl, target),
-      installPinnedWindowsTunnel(transaction, releaseDir, fetchImpl, target),
-      installPinnedWindowsWinapp(transaction, rootDir, releaseDir, fetchImpl, target),
+      installPinnedWindowsNode(transaction, releaseDir, fetchImpl, target, { canExecuteTarget }),
+      installPinnedWindowsTunnel(transaction, releaseDir, fetchImpl, target, { canExecuteTarget }),
+      installPinnedWindowsWinapp(transaction, rootDir, releaseDir, fetchImpl, target, { canExecuteTarget }),
       copyPublishedShell(rootDir, releaseDir, resolvedShellPublishDir),
       browserLauncherPath
         ? copyPrecompiledBrowserLauncher(browserLauncherPath, releaseDir, contract)
