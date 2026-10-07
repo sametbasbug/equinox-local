@@ -148,6 +148,12 @@ test("Windows managed-source runtime separates source, native, and Stable bootst
   assert.match(supervisor, /Path\.Combine\(nativeReleaseDir, "runtime", "node", "bin", "node\.exe"\)/u);
   assert.doesNotMatch(supervisor, /Path\.Combine\(nativeReleaseDir, "equinox-local-windows-job-object\.ps1"\)/u);
   assert.match(supervisor, /WindowsJobObjectLease\.Create\(\)/u);
+  assert.match(supervisor, /private int\? _gatePid/u);
+  assert.match(supervisor, /var gatePid = gate\.Id/u);
+  assert.match(supervisor, /_gatePid = gatePid/u);
+  assert.match(supervisor, /_gatePid = null/u);
+  assert.match(supervisor, /catch \(InvalidOperationException\) \{ return null; \}/u);
+  assert.match(supervisor, /catch \(ObjectDisposedException\) \{ return null; \}/u);
   assert.match(supervisor, /Path\.Combine\(nativeReleaseDir, "equinox-local-windows-process-gate\.ps1"\)/u);
   assert.match(supervisor, /startInfo\.WorkingDirectory = sourceRoot/u);
   assert.match(supervisor, /EQUINOX_LOCAL_RELEASE_DIR"\] = location\.BootstrapReleaseDir/u);

@@ -16,6 +16,7 @@ internal sealed class RuntimeSupervisor : IAsyncDisposable
     private readonly SemaphoreSlim _lifecycle = new(1, 1);
     private WindowsJobObjectLease? _jobObject;
     private Process? _gate;
+    private int? _gatePid;
     private bool _desiredRunning;
     private bool _stopping;
     private bool _disposed;
@@ -48,7 +49,18 @@ internal sealed class RuntimeSupervisor : IAsyncDisposable
         return new RuntimeSupervisor(WindowsManagedSourceRuntimeLocator.Resolve);
     }
 
-    internal int? RuntimeProcessId => _gate is { HasExited: false } process ? process.Id : null;
+    internal int? RuntimeProcessId
+    {
+        get
+        {
+            var gate = _gate;
+            var pid = _gatePid;
+            if (gate is null || pid is null) return null;
+            try { return gate.HasExited ? null : pid; }
+            catch (InvalidOperationException) { return null; }
+            catch (ObjectDisposedException) { return null; }
+        }
+    }
     internal bool DesiredRunning => _desiredRunning;
 
     internal async Task StartAsync(CancellationToken cancellationToken = default)
@@ -120,9 +132,11 @@ internal sealed class RuntimeSupervisor : IAsyncDisposable
         var gateStderrSync = new object();
         gate.ErrorDataReceived += (_, eventArgs) => AppendGateDiagnostic(gateStderr, gateStderrSync, eventArgs.Data);
         if (!gate.Start()) throw new InvalidOperationException("Windows runtime process gate did not start.");
+        var gatePid = gate.Id;
         gate.BeginOutputReadLine();
         gate.BeginErrorReadLine();
         _gate = gate;
+        _gatePid = gatePid;
         WindowsShellDiagnostics.RecordRuntimeState("runtime-start-phase", "gate-started");
         var generation = ++_generation;
         gate.Exited += (_, _) => OnGateExited(generation, gate, gateStderr, gateStderrSync);
@@ -152,7 +166,10 @@ internal sealed class RuntimeSupervisor : IAsyncDisposable
         // The Exited event already proves the gate process is signaled. Do not call synchronous
         // WaitForExit() here while async stdout/stderr drains are active: that can block the event
         // callback and prevent bounded crash recovery from ever being scheduled.
-        var exitCode = gate.HasExited ? gate.ExitCode : -1;
+        var exitCode = -1;
+        try { if (gate.HasExited) exitCode = gate.ExitCode; }
+        catch (InvalidOperationException) { }
+        catch (ObjectDisposedException) { }
         var stderr = ReadGateDiagnostic(gateStderr, gateStderrSync);
         var detail = string.IsNullOrWhiteSpace(stderr) ? $"exit={exitCode}" : $"exit={exitCode}; stderr={stderr}";
         WindowsShellDiagnostics.RecordRuntimeState("runtime-gate-exit", detail);
@@ -212,6 +229,7 @@ internal sealed class RuntimeSupervisor : IAsyncDisposable
         _generation++;
         var gate = _gate;
         _gate = null;
+        _gatePid = null;
         var jobObject = _jobObject;
         _jobObject = null;
         if (jobObject is not null)
