@@ -182,6 +182,50 @@ test("M8 provisioner installs atomically, stamps exact distributions and reuses 
   assert.equal(downloads.length, 0);
 });
 
+test("M8 reuse validation overlaps bounded filesystem metadata checks", async (t) => {
+  const f = await createFixture(t);
+  const installed = await provisionEquinoxLocalToolchain({
+    runtimeRoot: f.runtimeRoot,
+    target: "darwin-arm64",
+    platform: "darwin",
+    downloadImpl: async (_artifact, destination) => fs.writeFile(destination, "archive"),
+    extractComponentImpl: fakeExtract,
+    execFileImpl: fakeExec,
+  });
+  for (const component of [installed.contract.git, installed.contract.node]) {
+    const bulk = path.join(component.root, "validation-fixture");
+    await fs.mkdir(bulk);
+    await Promise.all(Array.from({ length: 96 }, (_, index) => fs.writeFile(path.join(bulk, `file-${index}.txt`), "x")));
+  }
+  let active = 0;
+  let peak = 0;
+  const fsImpl = {
+    ...fs,
+    lstat: async (...args) => {
+      active += 1;
+      peak = Math.max(peak, active);
+      try {
+        await new Promise((resolve) => setTimeout(resolve, 2));
+        return await fs.lstat(...args);
+      } finally {
+        active -= 1;
+      }
+    },
+  };
+  const reused = await provisionEquinoxLocalToolchain({
+    runtimeRoot: f.runtimeRoot,
+    target: "darwin-arm64",
+    platform: "darwin",
+    fsImpl,
+    downloadImpl: async () => assert.fail("reuse must not download"),
+    extractComponentImpl: async () => assert.fail("reuse must not extract"),
+    execFileImpl: fakeExec,
+  });
+  assert.deepEqual(reused.components.map(({ status }) => status), ["reused", "reused"]);
+  assert.ok(peak > 1, `expected metadata validation overlap, peak=${peak}`);
+  assert.ok(peak <= 32, `metadata validation exceeded bound, peak=${peak}`);
+});
+
 test("M8 provisioner starts independent Git and Node component downloads concurrently", async (t) => {
   const f = await createFixture(t);
   const started = [];

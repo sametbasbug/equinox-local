@@ -189,6 +189,24 @@ async function runWindowsZipHelper(mode, archivePath, destinationPath, expectedR
   });
 }
 
+const TREE_VALIDATION_CONCURRENCY = 16;
+
+async function mapBounded(items, concurrency, visit) {
+  const results = new Array(items.length);
+  let cursor = 0;
+  async function worker() {
+    while (true) {
+      const index = cursor;
+      cursor += 1;
+      if (index >= items.length) return;
+      results[index] = await visit(items[index], index);
+    }
+  }
+  const workers = Array.from({ length: Math.min(concurrency, items.length) }, () => worker());
+  await Promise.all(workers);
+  return results;
+}
+
 async function validateExtractedTree(root, { platform, fsImpl = fs }) {
   let entryCount = 0;
   let totalBytes = 0;
@@ -197,9 +215,9 @@ async function validateExtractedTree(root, { platform, fsImpl = fs }) {
   while (stack.length > 0) {
     const directory = stack.pop();
     const entries = await fsImpl.readdir(directory, { withFileTypes: true });
-    for (const entry of entries) {
-      entryCount += 1;
-      if (entryCount > MAX_ARCHIVE_ENTRIES) throw new Error("Extracted toolchain contains too many entries.");
+    entryCount += entries.length;
+    if (entryCount > MAX_ARCHIVE_ENTRIES) throw new Error("Extracted toolchain contains too many entries.");
+    const inspected = await mapBounded(entries, TREE_VALIDATION_CONCURRENCY, async (entry) => {
       const absolute = path.join(directory, entry.name);
       const stat = await fsImpl.lstat(absolute);
       if (stat.isSymbolicLink()) {
@@ -208,13 +226,18 @@ async function validateExtractedTree(root, { platform, fsImpl = fs }) {
         if (path.isAbsolute(target)) throw new Error("Extracted toolchain contains an absolute symbolic link.");
         const resolved = await fsImpl.realpath(absolute);
         if (resolved !== rootReal && !inside(rootReal, resolved)) throw new Error("Extracted toolchain symbolic link escaped its root.");
-      } else if (stat.isDirectory()) {
-        stack.push(absolute);
-      } else if (stat.isFile()) {
-        if (stat.size > MAX_EXTRACTED_BYTES - totalBytes) throw new Error("Extracted toolchain exceeds the size limit.");
-        totalBytes += stat.size;
-      } else {
-        throw new Error("Extracted toolchain contains an unsupported filesystem entry.");
+        return Object.freeze({ type: "symlink" });
+      }
+      if (stat.isDirectory()) return Object.freeze({ type: "directory", absolute });
+      if (stat.isFile()) return Object.freeze({ type: "file", size: stat.size });
+      throw new Error("Extracted toolchain contains an unsupported filesystem entry.");
+    });
+    for (const item of inspected) {
+      if (item.type === "directory") {
+        stack.push(item.absolute);
+      } else if (item.type === "file") {
+        if (item.size > MAX_EXTRACTED_BYTES - totalBytes) throw new Error("Extracted toolchain exceeds the size limit.");
+        totalBytes += item.size;
       }
     }
   }
