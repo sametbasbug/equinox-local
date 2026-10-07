@@ -119,6 +119,7 @@ try {
     throw "unexpected Windows fresh-install URL: $Url"
   }
 
+  $InstallStartedUtc = [DateTime]::UtcNow
   try {
     Invoke-EquinoxLocalInstall | Out-Host
   } catch {
@@ -137,6 +138,7 @@ try {
     throw
   }
 
+  $InstallFinishedUtc = [DateTime]::UtcNow
   $InstallRoot = $OwnedInstallRoot
   $pointer = [IO.File]::ReadAllText((Join-Path $InstallRoot 'current-version.json'), (New-Object Text.UTF8Encoding($false, $true))) | ConvertFrom-Json
   Assert-True ($pointer.schemaVersion -eq 1) 'Windows current-version schema mismatch.'
@@ -167,6 +169,26 @@ try {
   $OwnedNode = Join-Path $InstallRoot ("runtime\toolchain\node\26.10.0\$FixtureTarget\node.exe")
   $OwnedNpm = Join-Path $InstallRoot ("runtime\toolchain\node\26.10.0\$FixtureTarget\node_modules\npm\bin\npm-cli.js")
   foreach ($owned in @($OwnedGit,$OwnedNode,$OwnedNpm)) { Assert-True ([IO.File]::Exists($owned)) ("Product-owned toolchain file is missing: $owned") }
+  $timingPaths = [ordered]@{
+    currentVersion = (Join-Path $InstallRoot 'current-version.json')
+    gitToolchain = (Join-Path (Split-Path -Parent (Split-Path -Parent $OwnedGit)) '.equinox-toolchain-component.json')
+    nodeToolchain = (Join-Path (Split-Path -Parent $OwnedNode) '.equinox-toolchain-component.json')
+    sourceGit = (Join-Path $ManagedSourceRoot '.git')
+    sourceNodeModules = (Join-Path $ManagedSourceRoot 'node_modules')
+    sourcePointer = (Join-Path $InstallRoot 'state\main-update\current-source.conf')
+    installStamp = (Join-Path $InstallRoot 'state\main-update\install.json')
+  }
+  $timingParts = @("start=$($InstallStartedUtc.ToString('o'))", "finish=$($InstallFinishedUtc.ToString('o'))")
+  foreach ($entry in $timingPaths.GetEnumerator()) {
+    if (Test-Path -LiteralPath $entry.Value) {
+      $item = Get-Item -LiteralPath $entry.Value -Force
+      $timingParts += ("{0}.created={1}" -f $entry.Key, $item.CreationTimeUtc.ToString('o'))
+      $timingParts += ("{0}.written={1}" -f $entry.Key, $item.LastWriteTimeUtc.ToString('o'))
+    } else {
+      $timingParts += ("{0}=missing" -f $entry.Key)
+    }
+  }
+  Write-Output ("Windows fresh-install timing: " + ($timingParts -join '; '))
   Assert-True ((& $OwnedGit --version) -match '^git version 2\.53\.0\b') 'Product-owned Git version mismatch.'
   Assert-True ((& $OwnedNode --version) -ceq 'v26.10.0') 'Product-owned Node version mismatch.'
   Assert-True ((& $OwnedNode $OwnedNpm --version) -match '^\d+\.\d+\.\d+$') 'Product-owned npm CLI did not execute.'

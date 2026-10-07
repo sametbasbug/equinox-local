@@ -129,6 +129,11 @@ test("real public installer enters managed-source on native Windows x64 and ARM6
   assert.match(smoke, /New-Item -ItemType HardLink/u);
   assert.match(smoke, /runtime\\toolchain\\git\\2\.53\.0-4/u);
   assert.match(smoke, /runtime\\toolchain\\node\\26\.10\.0/u);
+  assert.match(smoke, /Windows fresh-install timing:/u);
+  assert.match(smoke, /gitToolchain/u);
+  assert.match(smoke, /nodeToolchain/u);
+  assert.match(smoke, /sourceNodeModules/u);
+  assert.match(smoke, /installStamp/u);
 });
 
 test("managed-source runtime acceptance runs on real Windows x64 and ARM64 hosts", () => {
