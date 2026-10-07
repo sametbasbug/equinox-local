@@ -20,6 +20,9 @@ test("M8 toolchain contract derives exact product-owned identities for all targe
     assert.equal(contract.nodePath, windows
       ? p.join(runtimeRoot, "toolchain", "node", "26.10.0", target, "node.exe")
       : p.join(runtimeRoot, "toolchain", "node", "26.10.0", target, "bin", "node"));
+    assert.equal(contract.shellPath, windows
+      ? p.join(runtimeRoot, "toolchain", "git", "2.53.0-4", target, "usr", "bin", "sh.exe")
+      : null);
     const npmRoot = windows ? ["node_modules", "npm", "bin"] : ["lib", "node_modules", "npm", "bin"];
     assert.equal(contract.npmPath, p.join(runtimeRoot, "toolchain", "node", "26.10.0", target, ...npmRoot, "npm-cli.js"));
     assert.equal(contract.npxPath, p.join(runtimeRoot, "toolchain", "node", "26.10.0", target, ...npmRoot, "npx-cli.js"));

@@ -270,8 +270,13 @@ async function validateComponentStamp(root, component, { platform = process.plat
 async function validateComponentIdentity(root, component, contract, { platform, fsImpl = fs, execFileImpl = execFile }) {
   await validateExtractedTree(root, { platform, fsImpl });
   if (component.component === "git") {
-    const gitPath = path.join(root, platform === "win32" ? "cmd/git.exe" : "bin/git");
+    const pathApi = platform === "win32" ? path.win32 : path.posix;
+    const gitPath = pathApi.join(root, platform === "win32" ? "cmd/git.exe" : "bin/git");
     await assertNormalFile(gitPath, "Product-owned Git", { executable: platform !== "win32", platform, fsImpl });
+    if (platform === "win32") {
+      const shellPath = pathApi.join(root, "usr", "bin", "sh.exe");
+      await assertNormalFile(shellPath, "Product-owned POSIX shell", { platform, fsImpl });
+    }
     const { stdout } = await execFileImpl(gitPath, ["--version"], { timeout: 20_000, maxBuffer: 1024 * 1024, windowsHide: true });
     const upstreamVersion = component.version.split("-")[0];
     if (!String(stdout ?? "").trim().startsWith(`git version ${upstreamVersion}`)) throw new Error("Product-owned Git version does not match its pinned distribution.");

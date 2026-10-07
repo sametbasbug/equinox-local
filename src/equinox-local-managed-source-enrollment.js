@@ -127,7 +127,16 @@ export async function installPrebuiltDependencies(sourceRoot, contract, { execFi
 }
 
 export async function validateManagedSource(sourceRoot, contract, { execFileImpl = execFile, env = process.env, platform = process.platform } = {}) {
-  await run(contract.nodePath, [contract.npmPath, "run", "check"], { cwd: sourceRoot, execFileImpl, env, platform, pathPrefix: path.dirname(contract.nodePath) });
+  if (platform === "win32") {
+    if (typeof contract.shellPath !== "string" || !path.win32.isAbsolute(contract.shellPath)) {
+      throw new Error("Managed-source Windows validation requires the product-owned POSIX shell.");
+    }
+    await run(contract.nodePath, [path.join(sourceRoot, "scripts", "check.mjs"), `--shell-command=${contract.shellPath}`], {
+      cwd: sourceRoot, execFileImpl, env, platform, pathPrefix: path.dirname(contract.nodePath),
+    });
+  } else {
+    await run(contract.nodePath, [contract.npmPath, "run", "check"], { cwd: sourceRoot, execFileImpl, env, platform, pathPrefix: path.dirname(contract.nodePath) });
+  }
   await run(contract.nodePath, ["--test", "tests/release/equinox-local-main-update.test.js"], { cwd: sourceRoot, execFileImpl, env, platform, pathPrefix: path.dirname(contract.nodePath) });
 }
 

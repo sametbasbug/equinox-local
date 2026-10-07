@@ -8,6 +8,7 @@ import {
   enrollEquinoxLocalManagedSource,
   installPrebuiltDependencies,
   rollbackEquinoxLocalManagedSourceEnrollment,
+  validateManagedSource,
 } from "../../src/equinox-local-managed-source-enrollment.js";
 import { equinoxLocalManagedSourcePaths } from "../../src/equinox-local-managed-source-installation.js";
 
@@ -134,6 +135,37 @@ test("enrollment rollback removes identity state but preserves reusable source a
   await assert.rejects(fs.lstat(f.paths.sourcePointerPath), { code: "ENOENT" });
   assert.equal((await fs.stat(path.join(f.paths.mainTransactionRoot, "sources", SHA))).isDirectory(), true);
   assert.equal((await fs.stat(f.contract.runtimeRoot)).isDirectory(), true);
+});
+
+
+test("Windows managed-source validation uses product-owned Node and Dugite sh without ambient bash", async () => {
+  const calls = [];
+  const contract = {
+    nodePath: "/owned/node",
+    npmPath: "/owned/npm-cli.js",
+    shellPath: "C:\\owned\\git\\usr\\bin\\sh.exe",
+  };
+  await validateManagedSource("/managed/source", contract, {
+    platform: "win32",
+    env: { SystemRoot: "C:\\Windows", PATH: "ambient-must-not-be-used" },
+    execFileImpl: async (command, args, options) => {
+      calls.push({ command, args: [...args], env: options.env });
+      return { stdout: "", stderr: "" };
+    },
+  });
+  assert.equal(calls.length, 2);
+  assert.deepEqual(calls[0].args, [
+    "/managed/source/scripts/check.mjs",
+    "--shell-command=C:\\owned\\git\\usr\\bin\\sh.exe",
+  ]);
+  assert.equal(calls[0].command, contract.nodePath);
+  assert.equal(calls[0].args.includes(contract.npmPath), false);
+  assert.equal(calls[0].env.PATH.includes("ambient-must-not-be-used"), false);
+  assert.deepEqual(calls[1].args, ["--test", "tests/release/equinox-local-main-update.test.js"]);
+  await assert.rejects(validateManagedSource("/managed/source", { ...contract, shellPath: null }, {
+    platform: "win32",
+    execFileImpl: async () => assert.fail("validation must fail before spawning"),
+  }), /product-owned POSIX shell/u);
 });
 
 test("prebuilt dependency install never exposes node-gyp fallback", async (t) => {
