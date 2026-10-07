@@ -404,36 +404,36 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
   windows-arm64-shared-core:
-    name: Windows ARM64 shared core / Node 26
-    runs-on: windows-11-vs2026-arm
-    timeout-minutes: 6
+    name: Windows shared core / Node 26
+    runs-on: windows-latest
+    timeout-minutes: 5
 
     steps:
       - name: Checkout
         uses: actions/checkout@v7
 
-      - name: Set up native ARM64 Node.js
+      - name: Set up Windows x64 Node.js
         uses: actions/setup-node@v7
         with:
           node-version: 26.10.0
-          architecture: arm64
+          architecture: x64
           cache: npm
 
-      - name: Verify native ARM64 Node host
+      - name: Verify Windows x64 shared-core host
         shell: pwsh
         run: |
-          if ((node -p "process.platform") -ne 'win32') { throw 'ARM64 shared-core lane is not running on Windows' }
-          if ((node -p "process.arch") -ne 'arm64') { throw 'ARM64 shared-core lane is not running native ARM64 Node' }
+          if ((node -p "process.platform") -ne 'win32') { throw 'Windows shared-core lane is not running on Windows' }
+          if ((node -p "process.arch") -ne 'x64') { throw 'Windows shared-core lane is not running x64 Node' }
 
       - name: Install dependencies
         run: npm ci --prefer-offline --no-audit --no-fund
 
-      - name: Windows ARM64 shared core parity suite
+      - name: Windows shared core parity suite
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
           $PSNativeCommandUseErrorActionPreference = $true
-          # Shared logic remains a real ARM64 acceptance requirement, but it runs in parallel with native lifecycle/package work.
+          # Architecture-neutral Windows shared logic stays off scarce ARM64 runners; native ARM64 behavior is covered separately.
           # Keep POSIX-only mode/path assertions out of the Windows lane; exact Windows private-state persistence has dedicated ACL acceptance.
           node --test tests/unit/capability-registry.test.js tests/unit/task-capsule-tools.test.js tests/unit/auto-continue-controller.test.js tests/unit/fresh-chat-resume-controller.test.js tests/unit/telegram-chat-bridge-controller.test.js tests/unit/authenticated-http-tools.test.js tests/unit/authenticated-http-response-references.test.js
           node --test tests/unit/task-capsule-store.test.js tests/unit/turn-budget-controller.test.js tests/unit/equinox-local-file-transfer.test.js tests/unit/authenticated-http-integration.test.js
@@ -441,26 +441,27 @@ jobs:
           node --test tests/release/equinox-local-windows-private-state.test.js
 
   windows-arm64-bootstrap:
-    name: Windows ARM64 bootstrap / Node 26
-    runs-on: windows-11-vs2026-arm
-    timeout-minutes: 4
+    name: Windows bootstrap contract / Node 26
+    runs-on: windows-latest
+    timeout-minutes: 3
 
     steps:
       - name: Checkout
         uses: actions/checkout@v7
 
-      - name: Set up native ARM64 Node.js
+      - name: Set up Windows x64 Node.js
         uses: actions/setup-node@v7
         with:
           node-version: 26.10.0
-          architecture: arm64
+          architecture: x64
 
-      - name: Verify native ARM64 Node host
+      - name: Verify Windows x64 bootstrap-contract host
         shell: pwsh
         run: |
-          if ((node -p "process.arch") -ne 'arm64') { throw 'ARM64 bootstrap lane is not running native ARM64 Node' }
+          if ((node -p "process.platform") -ne 'win32') { throw 'Windows bootstrap contract lane is not running on Windows' }
+          if ((node -p "process.arch") -ne 'x64') { throw 'Windows bootstrap contract lane is not running x64 Node' }
 
-      - name: Windows ARM64 PowerShell bootstrap contract acceptance
+      - name: Windows PowerShell bootstrap contract acceptance
         shell: pwsh
         run: |
           & powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File tests/release/windows-installer-bootstrap-smoke.ps1

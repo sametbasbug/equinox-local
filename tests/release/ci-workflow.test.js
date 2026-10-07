@@ -81,6 +81,19 @@ test("ARM64 installer has a tighter bound after duplicate package construction i
   assert.match(job("windows-arm64-installer"), /timeout-minutes: 7/u);
 });
 
+test("architecture-neutral Windows contract lanes stay off scarce ARM64 runners", () => {
+  const shared = job("windows-arm64-shared-core");
+  const bootstrap = job("windows-arm64-bootstrap");
+  for (const block of [shared, bootstrap]) {
+    assert.match(block, /runs-on: windows-latest/u);
+    assert.match(block, /architecture: x64/u);
+    assert.doesNotMatch(block, /runs-on: windows-11-vs2026-arm/u);
+  }
+  assert.match(shared, /name: Windows shared core \/ Node 26/u);
+  assert.match(bootstrap, /name: Windows bootstrap contract \/ Node 26/u);
+  assert.match(bootstrap, /windows-installer-bootstrap-smoke\.ps1/u);
+});
+
 test("ARM64 runtime retains native lifecycle, PTY and messaging acceptance", () => {
   const block = job("windows-arm64-runtime");
   assert.match(block, /architecture: arm64/u);

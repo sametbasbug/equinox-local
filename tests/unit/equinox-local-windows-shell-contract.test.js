@@ -376,7 +376,7 @@ test("public Windows CI restores and builds the native x64 shell", async () => {
   assert.match(ci, /EquinoxLocal\.WindowsShell\.UninstallHandoffHarness/u);
   assert.match(ci, /tests\/release\/equinox-local-windows-lifecycle\.test\.js/u);
   assert.match(ci, /Windows ARM64 uninstall\/reinstall lifecycle acceptance/u);
-  assert.match(ci, /Windows ARM64 shared core parity suite/u);
+  assert.match(ci, /Windows shared core parity suite/u);
   assert.match(ci, /Windows ARM64 headless runtime parity smoke/u);
   assert.match(ci, /tests\/unit\/task-capsule-store\.test\.js/u);
   assert.match(ci, /tests\/unit\/turn-budget-controller\.test\.js/u);
