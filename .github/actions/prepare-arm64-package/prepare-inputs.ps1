@@ -7,11 +7,14 @@ if ([string]::IsNullOrWhiteSpace($root) -or -not [IO.Path]::IsPathRooted($root) 
 }
 Set-Location -LiteralPath $root
 $npmCommand = (Get-Command npm.cmd -ErrorAction Stop).Source
-$publishDir = [string]$env:EQUINOX_ARM64_SHELL_PUBLISH_DIR
-$binDir = [string]$env:EQUINOX_ARM64_SHELL_BIN_DIR
-$objDir = [string]$env:EQUINOX_ARM64_SHELL_OBJ_DIR
+$runnerTemp = [string]$env:RUNNER_TEMP
+if ([string]::IsNullOrWhiteSpace($runnerTemp) -or -not [IO.Path]::IsPathRooted($runnerTemp)) {
+  throw 'Native ARM64 CI preparation requires an absolute RUNNER_TEMP.'
+}
+$publishDir = Join-Path $runnerTemp 'windows-shell\win-arm64'
+$binDir = (Join-Path $runnerTemp 'windows-shell-bin\win-arm64') + [IO.Path]::DirectorySeparatorChar
+$objDir = (Join-Path $runnerTemp 'windows-shell-obj\win-arm64') + [IO.Path]::DirectorySeparatorChar
 foreach ($candidate in @($publishDir, $binDir, $objDir)) {
-  if ([string]::IsNullOrWhiteSpace($candidate) -or -not [IO.Path]::IsPathRooted($candidate)) { throw 'Native ARM64 CI shell output paths must be absolute.' }
   $relative = [IO.Path]::GetRelativePath($root, $candidate)
   if (-not $relative.StartsWith('..' + [IO.Path]::DirectorySeparatorChar) -and $relative -ne '..') { throw 'Native ARM64 CI shell outputs must stay outside the source checkout.' }
 }

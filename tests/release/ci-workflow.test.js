@@ -174,6 +174,10 @@ test("NuGet cache is architecture scoped and preserves native build execution", 
   assert.match(prepare, /actions\/cache@v6/u);
   assert.match(prepare, /key: nuget-\$\{\{ runner\.os \}\}-\$\{\{ runner\.arch \}\}-dotnet10-\$\{\{ hashFiles/u);
   assert.match(prepare, /restore-keys:\s*\|\n\s+nuget-\$\{\{ runner\.os \}\}-\$\{\{ runner\.arch \}\}-dotnet10-/u);
+  assert.match(prepare, /runner\.temp \}\}\/windows-shell\/win-arm64/u);
+  assert.match(inputs, /RUNNER_TEMP/u);
+  assert.match(inputs, /BaseOutputPath/u);
+  assert.match(inputs, /BaseIntermediateOutputPath/u);
   assert.match(inputs, /dotnet publish native\/windows\/EquinoxLocal\.WindowsShell/u);
 });
 

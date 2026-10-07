@@ -45,8 +45,10 @@ runs:
 
     - name: Windows ARM64 native shell publish smoke
       shell: pwsh
+      env:
+        EQUINOX_ARM64_SHELL_PUBLISH_DIR: ${{ runner.temp }}/windows-shell/win-arm64
       run: |
-        $publish = Join-Path $PWD 'artifacts/windows-shell/win-arm64'
+        $publish = $env:EQUINOX_ARM64_SHELL_PUBLISH_DIR
         $exe = Join-Path $publish 'EquinoxLocal.exe'
         foreach ($required in @($exe, (Join-Path $publish 'coreclr.dll'), (Join-Path $publish 'hostfxr.dll'), (Join-Path $publish 'Microsoft.Web.WebView2.Core.dll'))) {
           if (-not (Test-Path -LiteralPath $required -PathType Leaf)) { throw "Missing published Windows ARM64 shell component: $required" }
