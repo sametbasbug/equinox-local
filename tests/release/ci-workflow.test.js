@@ -97,7 +97,8 @@ test("real public installer enters managed-source on native Windows x64 and ARM6
   assert.match(x64, /windows-installer-real-package-smoke\.ps1/u);
   assert.match(arm64, /windows-installer-real-package-smoke\.ps1/u);
   assert.match(smoke, /installation\.kind -ceq 'managed-source'/u);
-  assert.match(smoke, /installation\.sourceSha -ceq \$SourceSha/u);
+  assert.match(smoke, /installation\.sourceSha -ceq \$FixtureSourceSha/u);
+  assert.doesNotMatch(smoke, /\$(?:Target|Version|SourceSha)\b/u);
   assert.match(smoke, /runtime\\toolchain\\git\\2\.53\.0-4/u);
   assert.match(smoke, /runtime\\toolchain\\node\\26\.10\.0/u);
 });

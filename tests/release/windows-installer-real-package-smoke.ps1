@@ -54,13 +54,13 @@ try {
     try { $metadata = ($reader.ReadToEnd() | ConvertFrom-Json) } finally { $reader.Dispose() }
   } finally { $zip.Dispose() }
   if ($metadata.schemaVersion -ne 1 -or [string]::IsNullOrWhiteSpace($metadata.target) -or [string]::IsNullOrWhiteSpace($metadata.version)) { throw 'Managed ZIP metadata is invalid.' }
-  $Target = [string]$metadata.target
-  if ($Target -notin @('win32-x64','win32-arm64')) { throw 'Managed ZIP target is unsupported.' }
-  $SourceSha = [string]$metadata.sourceSha
-  if ($SourceSha -cnotmatch '^[a-f0-9]{40}$') { throw 'Managed ZIP sourceSha is invalid.' }
-  $ExpectedMachine = if ($Target -ceq 'win32-arm64') { 0xAA64 } else { 0x8664 }
-  $Version = [string]$metadata.version
-  if ($Version -notmatch '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$') { throw 'Managed ZIP version is invalid.' }
+  $FixtureTarget = [string]$metadata.target
+  if ($FixtureTarget -notin @('win32-x64','win32-arm64')) { throw 'Managed ZIP target is unsupported.' }
+  $FixtureSourceSha = [string]$metadata.sourceSha
+  if ($FixtureSourceSha -cnotmatch '^[a-f0-9]{40}$') { throw 'Managed ZIP sourceSha is invalid.' }
+  $FixtureExpectedMachine = if ($FixtureTarget -ceq 'win32-arm64') { 0xAA64 } else { 0x8664 }
+  $FixtureVersion = [string]$metadata.version
+  if ($FixtureVersion -notmatch '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$') { throw 'Managed ZIP version is invalid.' }
 
   $helperBytes = (Get-Item -LiteralPath $HelperSource).Length
   $helperSha = (Get-FileHash -LiteralPath $HelperSource -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -69,12 +69,12 @@ try {
   $Installer = Join-Path $Work 'install-equinox-local.materialized.ps1'
   [IO.File]::WriteAllText($Installer, $materialized, (New-Object Text.UTF8Encoding($false)))
   . $Installer
-  Assert-True ((Get-NativeWindowsTarget) -ceq $Target) "Public installer did not select $Target on the native runner."
+  Assert-True ((Get-NativeWindowsTarget) -ceq $FixtureTarget) "Public installer did not select $FixtureTarget on the native runner."
 
   $artifactBytes = (Get-Item -LiteralPath $Artifact).Length
   $artifactSha = (Get-FileHash -LiteralPath $Artifact -Algorithm SHA256).Hash.ToLowerInvariant()
-  $Manifest = Join-Path $Work ("bootstrap-$Target.txt")
-  $manifestText = @('schemaVersion=1', 'channel=stable', "target=$Target", "version=$Version", "artifactUrl=https://local.sametbasbug.dev/downloads/updates/equinox-local-$Version-$Target.zip", "artifactSha256=$artifactSha", "artifactBytes=$artifactBytes", '') -join "`n"
+  $Manifest = Join-Path $Work ("bootstrap-$FixtureTarget.txt")
+  $manifestText = @('schemaVersion=1', 'channel=stable', "target=$FixtureTarget", "version=$FixtureVersion", "artifactUrl=https://local.sametbasbug.dev/downloads/updates/equinox-local-$FixtureVersion-$FixtureTarget.zip", "artifactSha256=$artifactSha", "artifactBytes=$artifactBytes", '') -join "`n"
   [IO.File]::WriteAllText($Manifest, $manifestText, (New-Object Text.UTF8Encoding($false)))
 
   $KnownLocalAppData = [Environment]::GetFolderPath([Environment+SpecialFolder]::LocalApplicationData)
@@ -91,9 +91,9 @@ try {
   $env:LOCALAPPDATA = $KnownLocalAppData; $env:TEMP = $BootstrapTemp; $env:TMP = $BootstrapTemp
 
   function Save-BoundedHttpsFile([string]$Url, [string]$Destination, [long]$MaxBytes) {
-    if ($Url.EndsWith("/bootstrap-$script:Target.txt")) { Copy-Item -LiteralPath $script:Manifest -Destination $Destination; return }
+    if ($Url.EndsWith("/bootstrap-$script:FixtureTarget.txt")) { Copy-Item -LiteralPath $script:Manifest -Destination $Destination; return }
     if ($Url.EndsWith('/equinox-local-windows-release-zip.ps1')) { Copy-Item -LiteralPath $script:HelperSource -Destination $Destination; return }
-    if ($Url.EndsWith("/equinox-local-$script:Version-$script:Target.zip")) { Copy-Item -LiteralPath $script:Artifact -Destination $Destination; return }
+    if ($Url.EndsWith("/equinox-local-$script:FixtureVersion-$script:FixtureTarget.zip")) { Copy-Item -LiteralPath $script:Artifact -Destination $Destination; return }
     throw "unexpected Windows fresh-install URL: $Url"
   }
 
@@ -118,12 +118,12 @@ try {
   $InstallRoot = $OwnedInstallRoot
   $pointer = [IO.File]::ReadAllText((Join-Path $InstallRoot 'current-version.json'), (New-Object Text.UTF8Encoding($false, $true))) | ConvertFrom-Json
   Assert-True ($pointer.schemaVersion -eq 1) 'Windows current-version schema mismatch.'
-  Assert-True ($pointer.target -ceq $Target) 'Windows current-version target mismatch.'
-  Assert-True ($pointer.version -ceq $Version) 'Windows current-version version mismatch.'
-  $ReleaseDir = Join-Path (Join-Path $InstallRoot 'releases') $Version
+  Assert-True ($pointer.target -ceq $FixtureTarget) 'Windows current-version target mismatch.'
+  Assert-True ($pointer.version -ceq $FixtureVersion) 'Windows current-version version mismatch.'
+  $ReleaseDir = Join-Path (Join-Path $InstallRoot 'releases') $FixtureVersion
   $StableExe = Join-Path $OwnedProgramRoot 'EquinoxLocal.exe'
   Assert-True ([IO.File]::Exists($StableExe)) 'Windows stable EquinoxLocal.exe is missing after fresh install.'
-  Assert-True ((Read-PeMachine $StableExe) -eq $ExpectedMachine) 'Windows stable EquinoxLocal.exe has the wrong PE architecture.'
+  Assert-True ((Read-PeMachine $StableExe) -eq $FixtureExpectedMachine) 'Windows stable EquinoxLocal.exe has the wrong PE architecture.'
 
   $ExpectedManifestPath = Join-Path $InstallRoot 'browser\native-messaging\dev.equinox.browser.json'
   Assert-True ([IO.File]::Exists($ExpectedManifestPath)) 'Windows Native Messaging manifest is missing after fresh install.'
@@ -132,25 +132,25 @@ try {
   $nativeManifest = [IO.File]::ReadAllText($ExpectedManifestPath, (New-Object Text.UTF8Encoding($false, $true))) | ConvertFrom-Json
   $ExpectedLauncher = Join-Path $ReleaseDir 'runtime\browser\equinox-browser-native-host.exe'
   Assert-True (Same-Path ([string]$nativeManifest.path) $ExpectedLauncher) 'Windows Native Messaging manifest does not point at the promoted launcher.'
-  Assert-True ((Read-PeMachine $ExpectedLauncher) -eq $ExpectedMachine) 'Promoted Native Messaging launcher has the wrong PE architecture.'
+  Assert-True ((Read-PeMachine $ExpectedLauncher) -eq $FixtureExpectedMachine) 'Promoted Native Messaging launcher has the wrong PE architecture.'
 
   $status = (Invoke-WebRequest -UseBasicParsing -Uri 'http://127.0.0.1:24891/api/v1/status' -TimeoutSec 5).Content | ConvertFrom-Json
   Assert-True ($status.ok -eq $true) 'Windows Control Center status endpoint is not healthy after installer launch.'
-  Assert-True ([string]$status.status.server.version -ceq $Version) 'Windows runtime version does not match the installed release.'
+  Assert-True ([string]$status.status.server.version -ceq $FixtureVersion) 'Windows runtime version does not match the installed release.'
   Assert-True ([string]$status.status.installation.kind -ceq 'managed-source') 'Windows fresh install did not enter managed-source mode.'
-  Assert-True ([string]$status.status.installation.sourceSha -ceq $SourceSha) 'Windows managed-source runtime SHA does not match release sourceSha.'
-  $ManagedSourceRoot = Join-Path $InstallRoot ("state\main-update\sources\$SourceSha")
+  Assert-True ([string]$status.status.installation.sourceSha -ceq $FixtureSourceSha) 'Windows managed-source runtime SHA does not match release sourceSha.'
+  $ManagedSourceRoot = Join-Path $InstallRoot ("state\main-update\sources\$FixtureSourceSha")
   Assert-True ([IO.File]::Exists((Join-Path $ManagedSourceRoot 'src\server.js'))) 'Windows managed-source checkout is missing the exact source server.'
-  $OwnedGit = Join-Path $InstallRoot ("runtime\toolchain\git\2.53.0-4\$Target\cmd\git.exe")
-  $OwnedNode = Join-Path $InstallRoot ("runtime\toolchain\node\26.10.0\$Target\node.exe")
-  $OwnedNpm = Join-Path $InstallRoot ("runtime\toolchain\node\26.10.0\$Target\node_modules\npm\bin\npm-cli.js")
+  $OwnedGit = Join-Path $InstallRoot ("runtime\toolchain\git\2.53.0-4\$FixtureTarget\cmd\git.exe")
+  $OwnedNode = Join-Path $InstallRoot ("runtime\toolchain\node\26.10.0\$FixtureTarget\node.exe")
+  $OwnedNpm = Join-Path $InstallRoot ("runtime\toolchain\node\26.10.0\$FixtureTarget\node_modules\npm\bin\npm-cli.js")
   foreach ($owned in @($OwnedGit,$OwnedNode,$OwnedNpm)) { Assert-True ([IO.File]::Exists($owned)) ("Product-owned toolchain file is missing: $owned") }
   Assert-True ((& $OwnedGit --version) -match '^git version 2\.53\.0\b') 'Product-owned Git version mismatch.'
   Assert-True ((& $OwnedNode --version) -ceq 'v26.10.0') 'Product-owned Node version mismatch.'
   Assert-True ((& $OwnedNode $OwnedNpm --version) -match '^\d+\.\d+\.\d+$') 'Product-owned npm CLI did not execute.'
   $ownedShell = @(Get-CimInstance Win32_Process -Filter "Name='EquinoxLocal.exe'" -ErrorAction SilentlyContinue | Where-Object { -not [string]::IsNullOrWhiteSpace($_.ExecutablePath) -and (Same-Path $_.ExecutablePath $StableExe) })
   Assert-True ($ownedShell.Count -eq 1) 'Windows installer did not leave exactly one owned stable shell running.'
-  Write-Output "Windows $Target real fresh-install managed-source acceptance passed: public installer promoted $Version at $SourceSha and served the exact managed source runtime."
+  Write-Output "Windows $FixtureTarget real fresh-install managed-source acceptance passed: public installer promoted $FixtureVersion at $FixtureSourceSha and served the exact managed source runtime."
 } finally {
   if (-not [string]::IsNullOrWhiteSpace($StableExe) -and [IO.File]::Exists($StableExe)) { Stop-OwnedShell $StableExe }
   if (Test-Path -LiteralPath $NativeRegistryKey) {
