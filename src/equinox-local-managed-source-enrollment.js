@@ -61,13 +61,29 @@ async function normalDirectory(directory, { fsImpl = fs, create = false } = {}) 
   return directory;
 }
 
+function boundedCommandDiagnostic(value, maximum = 1_200) {
+  return String(value ?? "")
+    .replace(/[\r\u0000-\u001f\u007f]+/gu, " ")
+    .replace(/\s+/gu, " ")
+    .trim()
+    .slice(-maximum);
+}
+
 async function run(command, args, { cwd, execFileImpl = execFile, env = process.env, platform = process.platform, pathPrefix = null } = {}) {
-  return await execFileImpl(command, args, {
-    cwd,
-    timeout: COMMAND_TIMEOUT_MS,
-    maxBuffer: 4 * 1024 * 1024,
-    env: managedSourceCommandEnvironment(env, platform, pathPrefix),
-  });
+  try {
+    return await execFileImpl(command, args, {
+      cwd,
+      timeout: COMMAND_TIMEOUT_MS,
+      maxBuffer: 4 * 1024 * 1024,
+      env: managedSourceCommandEnvironment(env, platform, pathPrefix),
+    });
+  } catch (error) {
+    const message = boundedCommandDiagnostic(error instanceof Error ? error.message : error, 1_200) || "Managed-source command failed.";
+    const stdout = boundedCommandDiagnostic(error?.stdout);
+    const stderr = boundedCommandDiagnostic(error?.stderr);
+    const detail = [stdout ? `stdout: ${stdout}` : null, stderr ? `stderr: ${stderr}` : null].filter(Boolean).join(" ");
+    throw new Error(detail ? `${message} ${detail}` : message, { cause: error });
+  }
 }
 
 async function atomicInstallStamp(filePath, bootstrapSha, { fsImpl = fs, randomBytesImpl = randomBytes } = {}) {

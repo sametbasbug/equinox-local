@@ -168,6 +168,30 @@ test("Windows managed-source validation uses product-owned Node and Dugite sh wi
   }), /product-owned POSIX shell/u);
 });
 
+test("managed-source command failures retain bounded child diagnostics", async () => {
+  const contract = {
+    nodePath: "/owned/node",
+    npmPath: "/owned/npm-cli.js",
+    shellPath: "C:\\owned\\git\\usr\\bin\\sh.exe",
+  };
+  await assert.rejects(validateManagedSource("/managed/source", contract, {
+    platform: "win32",
+    env: { SystemRoot: "C:\\Windows" },
+    execFileImpl: async () => {
+      const error = new Error("synthetic validation failure");
+      error.stdout = "tap output\nfailed assertion\n";
+      error.stderr = "syntax detail\r\n";
+      throw error;
+    },
+  }), (error) => {
+    assert.match(error.message, /synthetic validation failure/u);
+    assert.match(error.message, /stdout: tap output failed assertion/u);
+    assert.match(error.message, /stderr: syntax detail/u);
+    assert.equal(error.message.includes("\n"), false);
+    return true;
+  });
+});
+
 test("prebuilt dependency install never exposes node-gyp fallback", async (t) => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "equinox-prebuild-install-"));
   t.after(() => fs.rm(root, { recursive: true, force: true }));
