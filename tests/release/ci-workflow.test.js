@@ -143,6 +143,8 @@ test("managed-source runtime acceptance runs on real Windows x64 and ARM64 hosts
   assert.match(arm64, /Windows ARM64 stateful shell lifecycle acceptance/u);
   assert.match(arm64, /EquinoxLocal\.WindowsShell\.ManagedSourceHarness/u);
   assert.match(arm64, /-p:Platform=ARM64/u);
+  assert.match(arm64, /windows-winapp-smoke\.ps1[\s\S]*-HelperPowerShellPath \$nativePwsh/u);
+  assert.doesNotMatch(arm64, /powershell\.exe[^\n]*windows-winapp-smoke\.ps1/u);
 });
 
 test("one maintained ARM64 package producer exposes exact artifact identity", () => {
@@ -242,4 +244,15 @@ test("CI parallelizes independent macOS gates and x64 installer preparation", ()
   assert.match(installer, /Cache x64 NuGet packages[\s\S]*nuget-\$\{\{ runner\.os \}\}-target-x64-dotnet10-/u);
   assert.match(installer, /- parallel:[\s\S]*Install dependencies[\s\S]*Publish native x64 shell[\s\S]*steps\.x64-shell-cache\.outputs\.cache-hit != 'true'/u);
   assert.match(installer, /Build native x64 managed package[\s\S]*EQUINOX_WINDOWS_SHELL_PUBLISH_DIR: \$\{\{ runner\.temp \}\}\/windows-shell\/win-x64/u);
+});
+
+
+test("ARM64 winapp smoke can use a native PowerShell helper host without weakening x64 PS5.1 coverage", async () => {
+  const smoke = await fs.readFile(new URL("./windows-winapp-smoke.ps1", import.meta.url), "utf8");
+  const x64 = job("windows-package");
+  assert.match(smoke, /HelperPowerShellPath = 'powershell\.exe'/u);
+  assert.match(smoke, /Get-Command \$HelperPowerShellPath/u);
+  assert.match(smoke, /& \$helperPowerShell -NoLogo -NoProfile -NonInteractive -Sta/u);
+  assert.match(smoke, /CurrentProcess -eq \$smokePowerShellProcessName/u);
+  assert.match(x64, /powershell\.exe[^\n]*windows-winapp-smoke\.ps1/u);
 });
