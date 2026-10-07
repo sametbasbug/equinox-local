@@ -79,6 +79,8 @@ test("fresh enrollment binds exact Stable source SHA and writes install stamp la
   assert.equal(clone[2].includes("https://github.com/sametbasbug/equinox-local.git"), true);
   const checkout = events.find((event) => event[0] === "exec" && event[2].includes("checkout"));
   assert.equal(checkout[2].at(-1), SHA);
+  const canonicalOrigin = events.find((event) => event[0] === "exec" && event[2].includes("set-url"));
+  assert.deepEqual(canonicalOrigin[2].slice(-3), ["set-url", "origin", "https://github.com/sametbasbug/equinox-local.git"]);
   assert.equal(events.some((event) => event[0] === "dependencies" && event[2] === f.contract.nodePath && event[3] === f.contract.npmPath), true);
   assert.equal(events.at(-1)[0], "pointer");
   const stamp = JSON.parse(await fs.readFile(f.paths.installStampPath, "utf8"));
@@ -142,10 +144,15 @@ test("prebuilt dependency install never exposes node-gyp fallback", async (t) =>
   await fs.writeFile(path.join(nodePty, "scripts", "post-install.js"), "// fixture\n");
   const calls = [];
   const contract = { nodePath: "/owned/node", npmPath: "/owned/npm-cli.js" };
-  await installPrebuiltDependencies(root, contract, { execFileImpl: async (command, args, options) => { calls.push({ command, args: [...args], cwd: options.cwd, env: options.env }); return { stdout: "", stderr: "" }; } });
+  await installPrebuiltDependencies(root, contract, {
+    env: { HOME: "/tmp/fixture", PATH: "ambient-tools-must-not-be-used" },
+    execFileImpl: async (command, args, options) => { calls.push({ command, args: [...args], cwd: options.cwd, env: options.env }); return { stdout: "", stderr: "" }; },
+  });
   assert.deepEqual(calls[0].args, [contract.npmPath, "ci", "--ignore-scripts", "--no-audit", "--no-fund"]);
   assert.equal(calls[0].command, contract.nodePath);
-  assert.equal(calls[0].env.npm_config_build_from_source, "false");
+  assert.equal(calls[0].env.PATH.startsWith(`${path.dirname(contract.nodePath)}:`), true);
+  assert.equal(calls[0].env.PATH.includes("ambient-tools-must-not-be-used"), false);
+  assert.equal(Object.hasOwn(calls[0].env, "npm_config_build_from_source"), false);
   assert.equal(calls[1].args[0], path.join(nodePty, "scripts", "prebuild.js"));
   assert.equal(calls[2].args[0], path.join(nodePty, "scripts", "post-install.js"));
   assert.equal(calls.some((call) => call.command.includes("node-gyp") || call.args.some((arg) => String(arg).includes("node-gyp"))), false);

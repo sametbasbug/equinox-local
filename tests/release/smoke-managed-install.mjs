@@ -3,7 +3,7 @@ import { execFile as execFileCallback, spawn } from "node:child_process";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 
 import { installManagedEquinoxRelease } from "../../src/equinox-local-first-install.js";
@@ -116,7 +116,7 @@ async function main() {
   const artifact = process.argv[2]
     ? path.resolve(process.argv[2])
     : path.join(rootDir, "backups", "local-packages", `equinox-local-${EQUINOX_LOCAL_VERSION}-${target}.tar.gz`);
-  const testRoot = await fs.mkdtemp(path.join(os.tmpdir(), "equinox-managed-smoke-"));
+  const testRoot = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "equinox-managed-smoke-")));
   const homeDir = path.join(testRoot, "Home With Space");
   const installRoot = path.join(homeDir, "Library", "Application Support", "Equinox Local");
   const releasesRoot = path.join(installRoot, "releases");
@@ -141,7 +141,7 @@ async function main() {
     const canonicalRemote = path.join(testRoot, "canonical-main.git");
     await execFile("/usr/bin/git", ["init", "--bare", canonicalRemote], { timeout: 15_000, maxBuffer: 1024 * 1024 });
     await execFile("/usr/bin/git", ["-C", rootDir, "push", "--force", canonicalRemote, `${sourceSha}:refs/heads/main`], { timeout: 30_000, maxBuffer: 4 * 1024 * 1024 });
-    const mainRemote = new URL(`file://${canonicalRemote}`).href;
+    const mainRemote = pathToFileURL(canonicalRemote).href;
     const configPath = path.join(installRoot, "config.json");
     let stableHealth = null;
     let sourceHealth = null;

@@ -25,25 +25,27 @@ const SHA_PATTERN = /^[a-f0-9]{40}$/u;
 const COMMAND_TIMEOUT_MS = 10 * 60 * 1000;
 const MAX_STAMP_BYTES = 8 * 1024;
 
-export function managedSourceCommandEnvironment(baseEnv = process.env, platform = process.platform) {
+export function managedSourceCommandEnvironment(baseEnv = process.env, platform = process.platform, pathPrefix = null) {
   const safe = {};
   for (const key of ["HOME", "USER", "LOGNAME", "TMPDIR", "LANG", "LC_ALL", "SystemRoot", "SYSTEMROOT", "WINDIR"]) {
     const value = baseEnv?.[key];
     if (typeof value === "string" && value.length > 0 && value.length <= 10_000) safe[key] = value;
   }
   const systemRoot = safe.SystemRoot || safe.SYSTEMROOT || safe.WINDIR || "C:\\Windows";
+  const systemPath = platform === "win32"
+    ? [path.win32.join(systemRoot, "System32", "WindowsPowerShell", "v1.0"), path.win32.join(systemRoot, "System32"), systemRoot].join(";")
+    : "/usr/bin:/bin:/usr/sbin:/sbin";
+  const delimiter = platform === "win32" ? ";" : ":";
+  const managedPrefix = typeof pathPrefix === "string" && pathPrefix.length > 0 ? `${pathPrefix}${delimiter}` : "";
   return Object.freeze({
     ...safe,
-    PATH: platform === "win32"
-      ? [path.win32.join(systemRoot, "System32", "WindowsPowerShell", "v1.0"), path.win32.join(systemRoot, "System32"), systemRoot].join(";")
-      : "/usr/bin:/bin:/usr/sbin:/sbin",
+    PATH: `${managedPrefix}${systemPath}`,
     CI: "1",
     NO_COLOR: "1",
     GIT_TERMINAL_PROMPT: "0",
     npm_config_audit: "false",
     npm_config_fund: "false",
     npm_config_update_notifier: "false",
-    npm_config_build_from_source: "false",
   });
 }
 
@@ -59,12 +61,12 @@ async function normalDirectory(directory, { fsImpl = fs, create = false } = {}) 
   return directory;
 }
 
-async function run(command, args, { cwd, execFileImpl = execFile, env = process.env, platform = process.platform } = {}) {
+async function run(command, args, { cwd, execFileImpl = execFile, env = process.env, platform = process.platform, pathPrefix = null } = {}) {
   return await execFileImpl(command, args, {
     cwd,
     timeout: COMMAND_TIMEOUT_MS,
     maxBuffer: 4 * 1024 * 1024,
-    env: managedSourceCommandEnvironment(env, platform),
+    env: managedSourceCommandEnvironment(env, platform, pathPrefix),
   });
 }
 
@@ -112,7 +114,7 @@ async function readExistingStamp(filePath, { fsImpl = fs } = {}) {
 }
 
 export async function installPrebuiltDependencies(sourceRoot, contract, { execFileImpl = execFile, fsImpl = fs, env = process.env, platform = process.platform } = {}) {
-  await run(contract.nodePath, [contract.npmPath, "ci", "--ignore-scripts", "--no-audit", "--no-fund"], { cwd: sourceRoot, execFileImpl, env, platform });
+  await run(contract.nodePath, [contract.npmPath, "ci", "--ignore-scripts", "--no-audit", "--no-fund"], { cwd: sourceRoot, execFileImpl, env, platform, pathPrefix: path.dirname(contract.nodePath) });
   const nodePtyRoot = path.join(sourceRoot, "node_modules", "node-pty");
   const prebuildCheck = path.join(nodePtyRoot, "scripts", "prebuild.js");
   const postInstall = path.join(nodePtyRoot, "scripts", "post-install.js");
@@ -120,13 +122,13 @@ export async function installPrebuiltDependencies(sourceRoot, contract, { execFi
     const stat = await fsImpl.lstat(script);
     if (!stat.isFile() || stat.isSymbolicLink()) throw new Error("Managed-source node-pty lifecycle script is missing or unsafe.");
   }
-  await run(contract.nodePath, [prebuildCheck], { cwd: nodePtyRoot, execFileImpl, env, platform });
-  await run(contract.nodePath, [postInstall], { cwd: nodePtyRoot, execFileImpl, env, platform });
+  await run(contract.nodePath, [prebuildCheck], { cwd: nodePtyRoot, execFileImpl, env, platform, pathPrefix: path.dirname(contract.nodePath) });
+  await run(contract.nodePath, [postInstall], { cwd: nodePtyRoot, execFileImpl, env, platform, pathPrefix: path.dirname(contract.nodePath) });
 }
 
 export async function validateManagedSource(sourceRoot, contract, { execFileImpl = execFile, env = process.env, platform = process.platform } = {}) {
-  await run(contract.nodePath, [contract.npmPath, "run", "check"], { cwd: sourceRoot, execFileImpl, env, platform });
-  await run(contract.nodePath, ["--test", "tests/release/equinox-local-main-update.test.js"], { cwd: sourceRoot, execFileImpl, env, platform });
+  await run(contract.nodePath, [contract.npmPath, "run", "check"], { cwd: sourceRoot, execFileImpl, env, platform, pathPrefix: path.dirname(contract.nodePath) });
+  await run(contract.nodePath, ["--test", "tests/release/equinox-local-main-update.test.js"], { cwd: sourceRoot, execFileImpl, env, platform, pathPrefix: path.dirname(contract.nodePath) });
 }
 
 
@@ -221,6 +223,7 @@ export async function enrollEquinoxLocalManagedSource({
       if (typeof mainRemote !== "string" || mainRemote.length < 1) throw new Error("Managed-source canonical remote is unavailable.");
       await run(contract.gitPath, ["clone", "--no-checkout", "--filter=blob:none", "--single-branch", "--branch", EQUINOX_LOCAL_MAIN_BRANCH, mainRemote, stagedSourceRoot], { execFileImpl, env, platform });
       await run(contract.gitPath, ["-C", stagedSourceRoot, "checkout", "--force", "-B", EQUINOX_LOCAL_MAIN_BRANCH, sha], { execFileImpl, env, platform });
+      await run(contract.gitPath, ["-C", stagedSourceRoot, "remote", "set-url", "origin", EQUINOX_LOCAL_MAIN_REMOTE], { execFileImpl, env, platform });
       const staged = await inspectCheckoutImpl(stagedSourceRoot, { fsImpl, execFileImpl, gitPath: contract.gitPath });
       if (!staged?.eligible || staged.currentSha !== sha) throw new Error("Managed-source bootstrap checkout does not match the Stable source SHA.");
       await installDependenciesImpl(stagedSourceRoot, contract, { execFileImpl, fsImpl, env, platform });
