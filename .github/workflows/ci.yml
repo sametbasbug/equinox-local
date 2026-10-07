@@ -307,7 +307,12 @@ jobs:
           dotnet-version: 10.0.x
 
       - name: Publish package shell payload
-        run: dotnet publish native/windows/EquinoxLocal.WindowsShell/EquinoxLocal.WindowsShell.csproj --configuration Release --runtime win-x64 --self-contained true -p:Platform=x64 --output artifacts/windows-shell/win-x64
+        shell: pwsh
+        env:
+          EQUINOX_WINDOWS_SHELL_PUBLISH_DIR: ${{ runner.temp }}/windows-shell/win-x64
+          EQUINOX_WINDOWS_SHELL_BIN_DIR: ${{ runner.temp }}/windows-shell-bin/win-x64/
+          EQUINOX_WINDOWS_SHELL_OBJ_DIR: ${{ runner.temp }}/windows-shell-obj/win-x64/
+        run: dotnet publish native/windows/EquinoxLocal.WindowsShell/EquinoxLocal.WindowsShell.csproj --configuration Release --runtime win-x64 --self-contained true -p:Platform=x64 -p:BaseOutputPath="$env:EQUINOX_WINDOWS_SHELL_BIN_DIR" -p:BaseIntermediateOutputPath="$env:EQUINOX_WINDOWS_SHELL_OBJ_DIR" --output "$env:EQUINOX_WINDOWS_SHELL_PUBLISH_DIR"
 
       - name: Windows release ZIP security acceptance
         shell: pwsh
@@ -316,7 +321,7 @@ jobs:
       - name: Windows managed package assembly smoke
         shell: pwsh
         env:
-          EQUINOX_WINDOWS_SHELL_PUBLISH_DIR: artifacts/windows-shell/win-x64
+          EQUINOX_WINDOWS_SHELL_PUBLISH_DIR: ${{ runner.temp }}/windows-shell/win-x64
         run: |
           npm run local:release:package:windows
           $artifact = Get-ChildItem backups/local-packages -Filter 'equinox-local-*-win32-x64.zip' | Select-Object -First 1
@@ -373,9 +378,11 @@ jobs:
       - name: Build native x64 managed package
         shell: pwsh
         env:
-          EQUINOX_WINDOWS_SHELL_PUBLISH_DIR: artifacts/windows-shell/win-x64
+          EQUINOX_WINDOWS_SHELL_PUBLISH_DIR: ${{ runner.temp }}/windows-shell/win-x64
+          EQUINOX_WINDOWS_SHELL_BIN_DIR: ${{ runner.temp }}/windows-shell-bin/win-x64/
+          EQUINOX_WINDOWS_SHELL_OBJ_DIR: ${{ runner.temp }}/windows-shell-obj/win-x64/
         run: |
-          dotnet publish native/windows/EquinoxLocal.WindowsShell/EquinoxLocal.WindowsShell.csproj --configuration Release --runtime win-x64 --self-contained true -p:Platform=x64 --output artifacts/windows-shell/win-x64
+          dotnet publish native/windows/EquinoxLocal.WindowsShell/EquinoxLocal.WindowsShell.csproj --configuration Release --runtime win-x64 --self-contained true -p:Platform=x64 -p:BaseOutputPath="$env:EQUINOX_WINDOWS_SHELL_BIN_DIR" -p:BaseIntermediateOutputPath="$env:EQUINOX_WINDOWS_SHELL_OBJ_DIR" --output "$env:EQUINOX_WINDOWS_SHELL_PUBLISH_DIR"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           npm run local:release:package:windows
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

@@ -62,7 +62,7 @@ runs:
       id: package
       shell: pwsh
       env:
-        EQUINOX_WINDOWS_SHELL_PUBLISH_DIR: artifacts/windows-shell/win-arm64
+        EQUINOX_WINDOWS_SHELL_PUBLISH_DIR: ${{ runner.temp }}/windows-shell/win-arm64
       run: |
         npm run local:release:package:windows
         if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

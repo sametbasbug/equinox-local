@@ -7,6 +7,14 @@ if ([string]::IsNullOrWhiteSpace($root) -or -not [IO.Path]::IsPathRooted($root) 
 }
 Set-Location -LiteralPath $root
 $npmCommand = (Get-Command npm.cmd -ErrorAction Stop).Source
+$publishDir = [string]$env:EQUINOX_ARM64_SHELL_PUBLISH_DIR
+$binDir = [string]$env:EQUINOX_ARM64_SHELL_BIN_DIR
+$objDir = [string]$env:EQUINOX_ARM64_SHELL_OBJ_DIR
+foreach ($candidate in @($publishDir, $binDir, $objDir)) {
+  if ([string]::IsNullOrWhiteSpace($candidate) -or -not [IO.Path]::IsPathRooted($candidate)) { throw 'Native ARM64 CI shell output paths must be absolute.' }
+  $relative = [IO.Path]::GetRelativePath($root, $candidate)
+  if (-not $relative.StartsWith('..' + [IO.Path]::DirectorySeparatorChar) -and $relative -ne '..') { throw 'Native ARM64 CI shell outputs must stay outside the source checkout.' }
+}
 
 # npm writes node_modules; the native WPF project reads only its own sources,
 # pinned NuGet packages and application artwork. These inputs are independent.
@@ -20,7 +28,7 @@ $installJob = Start-Job -ArgumentList $root, $npmCommand -ScriptBlock {
 }
 
 try {
-  dotnet publish native/windows/EquinoxLocal.WindowsShell/EquinoxLocal.WindowsShell.csproj --configuration Release --runtime win-arm64 --self-contained true -p:Platform=ARM64 --output artifacts/windows-shell/win-arm64
+  dotnet publish native/windows/EquinoxLocal.WindowsShell/EquinoxLocal.WindowsShell.csproj --configuration Release --runtime win-arm64 --self-contained true -p:Platform=ARM64 -p:BaseOutputPath="$binDir" -p:BaseIntermediateOutputPath="$objDir" --output "$publishDir"
   if ($LASTEXITCODE -ne 0) { throw "Native ARM64 shell publication failed with exit code $LASTEXITCODE." }
 
   $null = Wait-Job -Job $installJob
