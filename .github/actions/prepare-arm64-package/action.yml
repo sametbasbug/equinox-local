@@ -19,18 +19,18 @@ outputs:
 runs:
   using: composite
   steps:
-    - name: Set up native ARM64 Node.js
+    - name: Set up x64 Node.js for ARM64 cross-package
       uses: actions/setup-node@v7
       with:
         node-version: 26.10.0
-        architecture: arm64
+        architecture: x64
         cache: npm
 
-    - name: Verify native ARM64 Node host
+    - name: Verify Windows x64 cross-package host
       shell: pwsh
       run: |
         if ((node -p "process.platform") -ne 'win32') { throw 'ARM64 lane is not running on Windows' }
-        if ((node -p "process.arch") -ne 'arm64') { throw 'ARM64 lane is not running native ARM64 Node' }
+        if ((node -p "process.arch") -ne 'x64') { throw 'ARM64 package producer is not running x64 Node' }
         if ((node --version) -ne 'v26.10.0') { throw 'ARM64 lane Node version drifted' }
 
     - name: Set up .NET SDK
@@ -42,14 +42,23 @@ runs:
       uses: actions/cache@v6
       with:
         path: ~/.nuget/packages
-        key: nuget-${{ runner.os }}-${{ runner.arch }}-dotnet10-${{ hashFiles('native/windows/**/*.csproj', 'tests/windows/**/*.csproj') }}
+        key: nuget-${{ runner.os }}-target-arm64-dotnet10-${{ hashFiles('native/windows/**/*.csproj', 'tests/windows/**/*.csproj') }}
         restore-keys: |
-          nuget-${{ runner.os }}-${{ runner.arch }}-dotnet10-
+          nuget-${{ runner.os }}-target-arm64-dotnet10-
+
+    - name: Cache target-native node_modules
+      id: node-modules-cache
+      uses: actions/cache@v6
+      with:
+        path: node_modules
+        key: node-modules-${{ runner.os }}-target-arm64-node26-${{ hashFiles('package-lock.json') }}
 
     - name: Prepare native package inputs in parallel
       shell: pwsh
       env:
         PREPARE_INPUTS_SCRIPT: ${{ github.action_path }}/prepare-inputs.ps1
+        EQUINOX_NODE_MODULES_CACHE_HIT: ${{ steps.node-modules-cache.outputs.cache-hit }}
+        EQUINOX_NPM_TARGET_ARCH: arm64
       run: '& $env:PREPARE_INPUTS_SCRIPT'
 
     - name: Windows ARM64 native shell publish smoke
@@ -74,6 +83,7 @@ runs:
       shell: pwsh
       env:
         EQUINOX_WINDOWS_SHELL_PUBLISH_DIR: ${{ runner.temp }}/windows-shell/win-arm64
+        EQUINOX_WINDOWS_PACKAGE_TARGET: win32-arm64
       run: |
         npm run local:release:package:windows
         if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -84,7 +94,7 @@ runs:
         $zip = [System.IO.Compression.ZipFile]::OpenRead($artifact.FullName)
         try {
           $names = @($zip.Entries | ForEach-Object FullName)
-          foreach ($required in @('release/release.json','release/runtime/node/bin/node.exe','release/runtime/tunnel/tunnel-client.exe','release/runtime/tunnel/cloudflared.exe','release/runtime/browser/equinox-browser-native-host.exe','release/runtime/shell/EquinoxLocal.exe','release/runtime/winapp/winapp.exe','release/runtime/winapp/libHarfBuzzSharp.dll','release/runtime/winapp/libSkiaSharp.dll','release/runtime/winapp/LICENSE')) {
+          foreach ($required in @('release/release.json','release/runtime/node/bin/node.exe','release/runtime/tunnel/tunnel-client.exe','release/runtime/tunnel/cloudflared.exe','release/runtime/browser/equinox-browser-native-host.exe','release/runtime/shell/EquinoxLocal.exe','release/runtime/winapp/winapp.exe','release/runtime/winapp/libHarfBuzzSharp.dll','release/runtime/winapp/libSkiaSharp.dll','release/runtime/winapp/LICENSE','release/node_modules/node-pty/prebuilds/win32-arm64/conpty.node')) {
             if ($names -notcontains $required) { throw "Windows ARM64 managed ZIP is missing $required" }
           }
           $entry = $zip.GetEntry('release/release.json')

@@ -171,6 +171,43 @@ async function readExistingStamp(filePath, { fsImpl = fs } = {}) {
   }
 }
 
+export async function seedPrebuiltDependenciesFromStableRelease(sourceRoot, releaseDir, { fsImpl = fs } = {}) {
+  if (typeof releaseDir !== "string" || !path.isAbsolute(releaseDir)) throw new Error("Managed-source Stable seed release path is invalid.");
+  const sourcePackage = await fsImpl.readFile(path.join(sourceRoot, "package.json"));
+  const sourceLock = await fsImpl.readFile(path.join(sourceRoot, "package-lock.json"));
+  const releasePackage = await fsImpl.readFile(path.join(releaseDir, "package.json"));
+  const releaseLock = await fsImpl.readFile(path.join(releaseDir, "package-lock.json"));
+  if (!sourcePackage.equals(releasePackage) || !sourceLock.equals(releaseLock)) throw new Error("Managed-source Stable dependency seed does not match the exact source package identity.");
+  const sourceModules = path.join(releaseDir, "node_modules");
+  const destinationModules = path.join(sourceRoot, "node_modules");
+  const sourceStat = await fsImpl.lstat(sourceModules);
+  if (!sourceStat.isDirectory() || sourceStat.isSymbolicLink()) throw new Error("Managed-source Stable dependency seed is unavailable or unsafe.");
+  await fsImpl.mkdir(destinationModules, { recursive: false });
+  const stack = [[sourceModules, destinationModules]];
+  while (stack.length > 0) {
+    const [from, to] = stack.pop();
+    const copies = [];
+    for (const entry of await fsImpl.readdir(from, { withFileTypes: true })) {
+      const source = path.join(from, entry.name);
+      const destination = path.join(to, entry.name);
+      const stat = await fsImpl.lstat(source);
+      if (stat.isSymbolicLink()) throw new Error("Managed-source Stable dependency seed contains a symbolic link.");
+      if (stat.isDirectory()) {
+        await fsImpl.mkdir(destination, { recursive: false });
+        stack.push([source, destination]);
+      } else if (stat.isFile()) {
+        copies.push(fsImpl.copyFile(source, destination));
+        if (copies.length >= 16) {
+          await Promise.all(copies.splice(0));
+        }
+      } else {
+        throw new Error("Managed-source Stable dependency seed contains an unsupported filesystem entry.");
+      }
+    }
+    await Promise.all(copies);
+  }
+}
+
 export async function installPrebuiltDependencies(sourceRoot, contract, { execFileImpl = execFile, fsImpl = fs, env = process.env, platform = process.platform } = {}) {
   await run(contract.nodePath, [contract.npmPath, "ci", "--ignore-scripts", "--no-audit", "--no-fund"], { cwd: sourceRoot, execFileImpl, env, platform, pathPrefix: path.dirname(contract.nodePath) });
   const nodePtyRoot = path.join(sourceRoot, "node_modules", "node-pty");
@@ -252,6 +289,7 @@ export async function enrollEquinoxLocalManagedSource({
   mainRemote = EQUINOX_LOCAL_MAIN_REMOTE,
   windowsZipHelperPath = undefined,
   windowsPrivateStateHelperPath = undefined,
+  stableReleaseDir = undefined,
   protectWindowsAcl = protectWindowsPrivateStatePath,
   verifyWindowsAcl = verifyWindowsPrivateStateAcl,
 } = {}) {
@@ -309,7 +347,11 @@ export async function enrollEquinoxLocalManagedSource({
       await run(contract.gitPath, ["-C", stagedSourceRoot, "remote", "set-url", "origin", EQUINOX_LOCAL_MAIN_REMOTE], { execFileImpl, env, platform });
       const staged = await inspectCheckoutImpl(stagedSourceRoot, { fsImpl, execFileImpl, gitPath: contract.gitPath });
       if (!staged?.eligible || staged.currentSha !== sha) throw new Error("Managed-source bootstrap checkout does not match the Stable source SHA.");
-      await installDependenciesImpl(stagedSourceRoot, contract, { execFileImpl, fsImpl, env, platform });
+      if (platform === "win32" && stableReleaseDir) {
+        await seedPrebuiltDependenciesFromStableRelease(stagedSourceRoot, stableReleaseDir, { fsImpl });
+      } else {
+        await installDependenciesImpl(stagedSourceRoot, contract, { execFileImpl, fsImpl, env, platform });
+      }
       await validateSourceImpl(stagedSourceRoot, contract, { execFileImpl, fsImpl, env, platform });
       const validated = await inspectCheckoutImpl(stagedSourceRoot, { fsImpl, execFileImpl, gitPath: contract.gitPath });
       if (!validated?.eligible || validated.currentSha !== sha) throw new Error("Managed-source bootstrap checkout changed during validation.");

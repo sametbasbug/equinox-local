@@ -521,7 +521,7 @@ jobs:
   # public-installer acceptance consume the same verified bytes in parallel.
   windows-arm64-package-build:
     name: Windows ARM64 package build
-    runs-on: windows-11-vs2026-arm
+    runs-on: windows-latest
     timeout-minutes: 5
     outputs:
       sha256: ${{ steps.package.outputs.sha256 }}

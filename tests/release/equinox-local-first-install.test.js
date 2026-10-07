@@ -622,6 +622,7 @@ test("Windows x64 fresh first install promotes current-version and stable shell 
       enrollmentArgs = value;
       assert.equal(await exists(fixture.releaseDir), false);
       assert.equal(await exists(value.windowsZipHelperPath), true);
+      assert.equal(path.win32.normalize(value.stableReleaseDir).toLowerCase(), path.win32.normalize(promoted).toLowerCase());
       return { status: "enrolled", bootstrapSha: value.bootstrapSha };
     },
     requestWindowsRestartImpl: async () => ({ requested: true }),

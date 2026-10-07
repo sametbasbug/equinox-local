@@ -9,6 +9,7 @@ import {
   ensureManagedSourcePrivateDirectory,
   installPrebuiltDependencies,
   rollbackEquinoxLocalManagedSourceEnrollment,
+  seedPrebuiltDependenciesFromStableRelease,
   validateManagedSource,
   writeManagedSourceInstallStamp,
 } from "../../src/equinox-local-managed-source-enrollment.js";
@@ -244,6 +245,36 @@ test("managed-source command failures retain bounded child diagnostics", async (
     assert.equal(error.message.includes("\n"), false);
     return true;
   });
+});
+
+test("Windows Stable dependency seed copies only exact package identity without sharing rollback inodes", async (t) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "equinox-stable-seed-"));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const sourceRoot = path.join(root, "source");
+  const releaseRoot = path.join(root, "release");
+  await fs.mkdir(path.join(sourceRoot, "node_modules"), { recursive: true }).catch(() => {});
+  await fs.rm(path.join(sourceRoot, "node_modules"), { recursive: true, force: true });
+  await fs.mkdir(path.join(releaseRoot, "node_modules", "fixture"), { recursive: true });
+  const packageJson = Buffer.from('{"name":"fixture","version":"1.0.0"}\n');
+  const packageLock = Buffer.from('{"name":"fixture","lockfileVersion":3}\n');
+  for (const dir of [sourceRoot, releaseRoot]) {
+    await fs.mkdir(dir, { recursive: true });
+    await fs.writeFile(path.join(dir, "package.json"), packageJson);
+    await fs.writeFile(path.join(dir, "package-lock.json"), packageLock);
+  }
+  const seededFile = path.join(releaseRoot, "node_modules", "fixture", "index.js");
+  await fs.writeFile(seededFile, "module.exports = 1;\n");
+  await seedPrebuiltDependenciesFromStableRelease(sourceRoot, releaseRoot);
+  const linkedFile = path.join(sourceRoot, "node_modules", "fixture", "index.js");
+  assert.equal(await fs.readFile(linkedFile, "utf8"), "module.exports = 1;\n");
+  const [sourceStat, linkedStat] = await Promise.all([fs.stat(seededFile), fs.stat(linkedFile)]);
+  assert.notEqual(sourceStat.ino, linkedStat.ino);
+
+  const mismatch = path.join(root, "mismatch");
+  await fs.mkdir(mismatch, { recursive: true });
+  await fs.writeFile(path.join(mismatch, "package.json"), Buffer.from('{"name":"other"}\n'));
+  await fs.writeFile(path.join(mismatch, "package-lock.json"), packageLock);
+  await assert.rejects(seedPrebuiltDependenciesFromStableRelease(mismatch, releaseRoot), /does not match the exact source package identity/u);
 });
 
 test("prebuilt dependency install never exposes node-gyp fallback", async (t) => {

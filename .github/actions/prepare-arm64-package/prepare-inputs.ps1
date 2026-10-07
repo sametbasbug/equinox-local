@@ -21,11 +21,21 @@ foreach ($candidate in @($publishDir, $binDir, $objDir)) {
 
 # npm writes node_modules; the native WPF project reads only its own sources,
 # pinned NuGet packages and application artwork. These inputs are independent.
-$installJob = Start-Job -ArgumentList $root, $npmCommand -ScriptBlock {
-  param([string]$Workspace, [string]$NpmCommand)
+$cacheHit = ([string]$env:EQUINOX_NODE_MODULES_CACHE_HIT) -ceq 'true'
+$targetArch = [string]$env:EQUINOX_NPM_TARGET_ARCH
+if ($targetArch -cne 'arm64') { throw 'ARM64 package preparation requires target arch arm64.' }
+$installJob = Start-Job -ArgumentList $root, $npmCommand, $cacheHit, $targetArch -ScriptBlock {
+  param([string]$Workspace, [string]$NpmCommand, [bool]$CacheHit, [string]$TargetArch)
   $ErrorActionPreference = 'Stop'
   $PSNativeCommandUseErrorActionPreference = $true
   Set-Location -LiteralPath $Workspace
+  if ($CacheHit) {
+    if (-not (Test-Path -LiteralPath (Join-Path $Workspace 'node_modules\.package-lock.json') -PathType Leaf)) { throw 'Cached node_modules is missing its npm lock marker.' }
+    & $NpmCommand ls --omit=dev --depth=0
+    if ($LASTEXITCODE -ne 0) { throw "Cached target-native dependency graph failed npm validation with exit code $LASTEXITCODE." }
+    return
+  }
+  $env:npm_config_arch = $TargetArch
   & $NpmCommand ci --prefer-offline --no-audit --no-fund
   if ($LASTEXITCODE -ne 0) { throw "Locked native npm installation failed with exit code $LASTEXITCODE." }
 }

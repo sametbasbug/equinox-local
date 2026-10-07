@@ -140,6 +140,36 @@ async function assertNormalTree(root) {
   }
 }
 
+async function hardlinkNormalTree(sourceRoot, destinationRoot) {
+  const sourceStat = await fs.lstat(sourceRoot);
+  if (!sourceStat.isDirectory() || sourceStat.isSymbolicLink()) throw new Error("Hardlink source tree is unavailable or unsafe.");
+  await fs.mkdir(destinationRoot, { recursive: true });
+  const stack = [[sourceRoot, destinationRoot]];
+  while (stack.length > 0) {
+    const [sourceDir, destinationDir] = stack.pop();
+    for (const entry of await fs.readdir(sourceDir, { withFileTypes: true })) {
+      if (entry.name === ".bin" && sourceDir === sourceRoot) continue;
+      const source = path.join(sourceDir, entry.name);
+      const destination = path.join(destinationDir, entry.name);
+      const stat = await fs.lstat(source);
+      if (stat.isSymbolicLink()) throw new Error(`Hardlink source tree contains a symbolic link: ${source}`);
+      if (stat.isDirectory()) {
+        await fs.mkdir(destination, { recursive: false });
+        stack.push([source, destination]);
+      } else if (stat.isFile()) {
+        try {
+          await fs.link(source, destination);
+        } catch (error) {
+          if (!["EXDEV", "EPERM"].includes(error?.code)) throw error;
+          await fs.copyFile(source, destination);
+        }
+      } else {
+        throw new Error(`Hardlink source tree contains an unsupported filesystem entry: ${source}`);
+      }
+    }
+  }
+}
+
 async function copyReleaseSources(rootDir, releaseDir) {
   const files = await collectManagedReleaseSourceFiles(rootDir);
   for (const relative of [...files, ...WINDOWS_EXTRA_RELEASE_FILES]) {
@@ -150,16 +180,7 @@ async function copyReleaseSources(rootDir, releaseDir) {
     await fs.copyFile(source, destination);
   }
   const modulesSource = path.join(rootDir, "node_modules");
-  const modulesStat = await fs.lstat(modulesSource);
-  if (!modulesStat.isDirectory() || modulesStat.isSymbolicLink()) throw new Error("Production node_modules is unavailable.");
-  await fs.cp(modulesSource, path.join(releaseDir, "node_modules"), {
-    recursive: true,
-    dereference: false,
-    filter: (candidate) => {
-      const relative = path.relative(modulesSource, candidate);
-      return relative !== ".bin" && !relative.startsWith(`.bin${path.sep}`);
-    },
-  });
+  await hardlinkNormalTree(modulesSource, path.join(releaseDir, "node_modules"));
   return files.length;
 }
 
@@ -317,15 +338,17 @@ async function createManagedZip(rootDir, releaseDir, artifactPath) {
 export async function packageManagedEquinoxWindowsRelease({
   rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../.."),
   outputDir = path.join(rootDir, "backups", "local-packages"),
-  target = `${process.platform}-${process.arch}`,
+  target = process.env.EQUINOX_WINDOWS_PACKAGE_TARGET || `${process.platform}-${process.arch}`,
   shellPublishDir = process.env.EQUINOX_WINDOWS_SHELL_PUBLISH_DIR || null,
   fetchImpl = globalThis.fetch,
 } = {}) {
   const hostTarget = `${process.platform}-${process.arch}`;
-  if (target !== hostTarget || process.platform !== "win32" || !["x64", "arm64"].includes(process.arch)) {
-    throw new Error(`Windows managed release packaging requires a native win32-x64 or win32-arm64 host/target match; got host=${hostTarget} target=${target}.`);
-  }
   const contract = windowsManagedPackageContract({ target });
+  const supportedHost = process.platform === "win32" && ["x64", "arm64"].includes(process.arch);
+  const supportedPair = supportedHost && (target === hostTarget || (process.arch === "x64" && target === "win32-arm64"));
+  if (!supportedPair) {
+    throw new Error(`Windows managed release packaging requires a supported native or x64-to-ARM64 Windows host/target pair; got host=${hostTarget} target=${target}.`);
+  }
   const sourceSha = await resolveManagedReleaseSourceSha(rootDir);
   const resolvedShellPublishDir = shellPublishDir || path.join("artifacts", "windows-shell", contract.shellRid);
   await fs.mkdir(outputDir, { recursive: true });

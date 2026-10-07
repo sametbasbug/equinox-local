@@ -400,6 +400,7 @@ export async function installManagedEquinoxRelease({
         windowsPrivateStateHelperPath: platform === "win32"
           ? path.win32.join(installation.releaseDir, "equinox-local-windows-private-state.ps1")
           : undefined,
+        stableReleaseDir: platform === "win32" ? installation.releaseDir : undefined,
       });
       if (platform === "darwin") await reloadLaunchAgent(installation, { uid, execFileImpl });
       else await requestWindowsRestartImpl({ platform: "win32" });

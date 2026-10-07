@@ -84,6 +84,14 @@ test("Windows managed ZIP helper uses bounded fast compression", async () => {
   assert.match(source, /Windows managed ZIP creation exceeded/u);
 });
 
+test("Windows package stages node_modules through normal-file hardlinks", async () => {
+  const source = await fs.readFile(new URL("../../scripts/release/package-managed-release-windows.mjs", import.meta.url), "utf8");
+  assert.match(source, /async function hardlinkNormalTree/u);
+  assert.match(source, /await fs\.link\(source, destination\)/u);
+  assert.match(source, /if \(entry\.name === "\.bin" && sourceDir === sourceRoot\) continue/u);
+  assert.doesNotMatch(source, /await fs\.cp\(modulesSource, path\.join\(releaseDir, "node_modules"\)/u);
+});
+
 test("Windows pinned dependency ZIP extraction uses bounded native tar instead of Expand-Archive", async () => {
   let source;
   for (const relative of ["./package-managed-release-windows.mjs", "../../scripts/release/package-managed-release-windows.mjs"]) {
@@ -111,9 +119,9 @@ test("Windows release ZIP helper explicitly references compression assemblies fo
   assert.match(helper, /-ReferencedAssemblies @\(\$CompressionAssembly, \$CompressionFileSystemAssembly\)/u);
 });
 
-test("Windows managed package builder requires a native x64/ARM64 host-target match", async () => {
+test("Windows managed package builder allows only native targets plus x64-to-ARM64 cross-packaging", async () => {
   if (process.platform === "win32" && ["x64", "arm64"].includes(process.arch)) return;
-  await assert.rejects(packageManagedEquinoxWindowsRelease(), /requires a native win32-x64 or win32-arm64 host\/target match/u);
+  await assert.rejects(packageManagedEquinoxWindowsRelease({ target: "win32-arm64" }), /requires a supported native or x64-to-ARM64 Windows host\/target pair/u);
 });
 
 

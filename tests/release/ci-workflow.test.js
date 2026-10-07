@@ -56,9 +56,9 @@ test("CI retains full product validation while skipping only the explicit docs-o
   assert.doesNotMatch(job("macos-x64"), /run: npm test\n/u);
 });
 
-test("ARM64 package is built once and exact-byte consumers fan out in parallel", () => {
+test("ARM64 package is built once on fast x64 Windows and exact-byte native consumers fan out in parallel", () => {
   const producer = job("windows-arm64-package-build");
-  assert.match(producer, /runs-on: windows-11-vs2026-arm/u);
+  assert.match(producer, /runs-on: windows-latest/u);
   assert.doesNotMatch(producer, /^    (?:needs|if):/mu);
   assert.match(producer, /uses: \.\/\.github\/actions\/prepare-arm64-package/u);
   assert.match(producer, /actions\/upload-artifact@v7/u);
@@ -133,7 +133,7 @@ test("one maintained ARM64 package producer exposes exact artifact identity", ()
   const producer = job("windows-arm64-package-build");
   assert.match(producer, /id: package\n\s+uses: \.\/\.github\/actions\/prepare-arm64-package/u);
   assert.match(prepare, /using: composite/u);
-  assert.match(prepare, /architecture: arm64/u);
+  assert.match(prepare, /architecture: x64/u);
   assert.match(prepare, /process\.platform/u);
   assert.match(prepare, /process\.arch/u);
   assert.match(prepare, /v26\.10\.0/u);
@@ -173,14 +173,14 @@ test("stable ARM64 and Windows aggregate checks reject every non-success depende
 test("native ARM64 acceptance and preparation cannot tolerate failures or be skipped", () => {
   for (const block of [...arm64Lanes.map(job), prepare]) {
     assert.doesNotMatch(block, /^\s+(?:if|continue-on-error):/mu);
-    assert.doesNotMatch(block, /cache-hit|--no-build|--no-restore/u);
+    assert.doesNotMatch(block, /--no-build|--no-restore/u);
   }
 });
 
 test("NuGet cache is architecture scoped and preserves native build execution", () => {
   assert.match(prepare, /actions\/cache@v6/u);
-  assert.match(prepare, /key: nuget-\$\{\{ runner\.os \}\}-\$\{\{ runner\.arch \}\}-dotnet10-\$\{\{ hashFiles/u);
-  assert.match(prepare, /restore-keys:\s*\|\n\s+nuget-\$\{\{ runner\.os \}\}-\$\{\{ runner\.arch \}\}-dotnet10-/u);
+  assert.match(prepare, /key: nuget-\$\{\{ runner\.os \}\}-target-arm64-dotnet10-\$\{\{ hashFiles/u);
+  assert.match(prepare, /restore-keys:\s*\|\n\s+nuget-\$\{\{ runner\.os \}\}-target-arm64-dotnet10-/u);
   assert.match(prepare, /runner\.temp \}\}\/windows-shell\/win-arm64/u);
   assert.match(inputs, /RUNNER_TEMP/u);
   assert.match(inputs, /BaseOutputPath/u);
