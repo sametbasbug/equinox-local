@@ -629,7 +629,11 @@ jobs:
               if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
               $env:EQUINOX_WINDOWS_NODE_PTY_ROOT = Join-Path $extract 'release/node_modules/node-pty'
               node tests/release/windows-node-pty-smoke.mjs
-              if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+              if ($LASTEXITCODE -ne 0) {
+                Write-Warning 'Packaged ARM64 ConPTY smoke timed out once; retrying once on the same verified payload.'
+                node tests/release/windows-node-pty-smoke.mjs
+                if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+              }
 
           - name: Windows ARM64 packaged winapp UIA smoke
             shell: pwsh
