@@ -127,8 +127,6 @@ test("real public installer enters managed-source on native Windows x64 and ARM6
   assert.match(smoke, /EQUINOX_WINDOWS_INSTALL_SOURCE_SHA/u);
   assert.match(smoke, /EQUINOX_WINDOWS_INSTALL_SHA256/u);
   assert.match(smoke, /New-Item -ItemType HardLink/u);
-  assert.match(smoke, /VerifiedFixtureArtifactSha/u);
-  assert.match(smoke, /GetFileName\(\[IO\.Path\]::GetFullPath\(\$Path\)\) -ceq 'release\.zip'/u);
   assert.match(smoke, /runtime\\toolchain\\git\\2\.53\.0-4/u);
   assert.match(smoke, /runtime\\toolchain\\node\\26\.10\.0/u);
 });

@@ -89,14 +89,6 @@ try {
   $Installer = Join-Path $Work 'install-equinox-local.materialized.ps1'
   [IO.File]::WriteAllText($Installer, $materialized, (New-Object Text.UTF8Encoding($false)))
   . $Installer
-  # The producer already established the exact managed ZIP SHA and GitHub artifact download
-  # preserves those bytes. Reuse that admitted digest here instead of hashing the same large
-  # fixture again; the separate bootstrap smoke still exercises SHA mismatch/corruption failure.
-  $script:VerifiedFixtureArtifactSha = $artifactSha
-  function Get-Sha256([string]$Path) {
-    if ([IO.Path]::GetFileName([IO.Path]::GetFullPath($Path)) -ceq 'release.zip') { return $script:VerifiedFixtureArtifactSha }
-    return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()
-  }
   Assert-True ((Get-NativeWindowsTarget) -ceq $FixtureTarget) "Public installer did not select $FixtureTarget on the native runner."
 
   $Manifest = Join-Path $Work ("bootstrap-$FixtureTarget.txt")
