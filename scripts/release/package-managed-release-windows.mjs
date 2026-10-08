@@ -297,7 +297,7 @@ async function portableExecutableMachine(filePath) {
 // executable. Reject CMD metacharacters rather than trusting runner environment
 // or checkout paths just because a corresponding filesystem entry exists.
 export function assertWindowsBatchQuotedPath(value) {
-  if (typeof value !== "string" || !/^[A-Za-z]:\\[A-Za-z0-9 _().\\-]+$/u.test(value)) {
+  if (typeof value !== "string" || !/^[A-Za-z]:\\[\p{L}\p{M}\p{N} _().\\-]+$/u.test(value)) {
     throw new Error("Windows native compile path contains unsafe CMD characters.");
   }
   return value;
@@ -349,7 +349,7 @@ export async function compileWindowsJobObjectHelper({
   ].join("\r\n");
   await fs.writeFile(compileScript, script, { encoding: "utf8", flag: "wx" });
   try {
-    await execFile("cmd.exe", ["/d", "/c", compileScript], { cwd: destination, timeout: 180_000, maxBuffer: 4 * 1024 * 1024, windowsHide: true });
+    await execFile("cmd.exe", ["/d", "/c", ".\\.compile-job-object-helper.cmd"], { cwd: destination, timeout: 180_000, maxBuffer: 4 * 1024 * 1024, windowsHide: true });
   } finally {
     await fs.rm(compileScript, { force: true });
     await fs.rm(path.join(destination, "equinox-local-job-object-helper.obj"), { force: true });
@@ -376,7 +376,7 @@ async function compileBrowserLauncher(rootDir, releaseDir, contract) {
   ].join("\r\n");
   await fs.writeFile(compileScript, script, { encoding: "utf8", flag: "wx" });
   try {
-    await execFile("cmd.exe", ["/d", "/c", compileScript], {
+    await execFile("cmd.exe", ["/d", "/c", ".\\.compile-browser-launcher.cmd"], {
       cwd: browserDir,
       timeout: 180_000,
       maxBuffer: 4 * 1024 * 1024,

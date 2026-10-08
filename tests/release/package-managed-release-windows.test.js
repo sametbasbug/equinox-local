@@ -158,6 +158,9 @@ test("Windows native launcher toolchain is target-specific and architecture-veri
   assert.match(source, /architecture mismatch/u);
   assert.match(source, /\["-latest", "-products", "\*", "-property", "installationPath"\]/u);
   assert.match(source, /Visual Studio target environment is unavailable/u);
+  assert.ok(source.includes(JSON.stringify(".\\.compile-job-object-helper.cmd")));
+  assert.ok(source.includes(JSON.stringify(".\\.compile-browser-launcher.cmd")));
+  assert.doesNotMatch(source, /\["\/d", "\/c", compileScript\]/u);
   assert.match(source, /Promise\.allSettled/u);
 });
 
@@ -226,6 +229,7 @@ test("Windows shell runtime gate is product-owned Node with explicit child-start
 test("Windows VC and C++ compile script paths reject CMD metacharacters before script creation", () => {
   const safe = "C:\\Program Files (x86)\\Microsoft Visual Studio\\2022\\VC\\Auxiliary\\Build\\vcvars64.bat";
   assert.equal(assertWindowsBatchQuotedPath(safe), safe);
+  assert.equal(assertWindowsBatchQuotedPath("C:\\Users\\Özge Şahin\\Proje\\vcvars64.bat"), "C:\\Users\\Özge Şahin\\Proje\\vcvars64.bat");
   assert.equal(assertWindowsBatchQuotedPath("D:\\a\\equinox-local\\native\\windows\\job-object.cpp"), "D:\\a\\equinox-local\\native\\windows\\job-object.cpp");
   for (const value of [
     `${safe}" & whoami & rem \"`, `${safe}%USERNAME%`, `${safe}!USERNAME!`, `${safe}&echo injected`,
