@@ -17,9 +17,9 @@
 
 > **Current production:** Equinox Local `5.2.0` on the signed stable channel and Equinox Browser `0.7.0` on the permanent Unlisted Chrome Web Store item. Every Local release must pass public-source CI/CodeQL, native architecture validation, managed smoke, signing verification, lifecycle upgrade validation and live-channel checks before promotion.
 
-> **5.2.1 release readiness:** the release pipeline now validates `darwin-arm64`, `darwin-x64`, `win32-arm64`, and `win32-x64` as one exact-SHA set, signs and verifies all four target artifacts, and supports a non-production end-to-end rehearsal before promotion. Windows x64/ARM64 is not the current stable release until 5.2.1 is actually promoted.
+> **6.0.0 release readiness:** the release pipeline now validates `darwin-arm64`, `darwin-x64`, `win32-arm64`, and `win32-x64` as one exact-SHA set, signs and verifies all four target artifacts, and supports a non-production end-to-end rehearsal before promotion. Windows x64/ARM64 will become publicly Stable-supported after 6.0.0 is successfully promoted.
 
-> **Channel choice (development installers):** fresh installation stays **Stable** by default. Main requires explicit consent: macOS `--enroll-existing-main`, Windows `-EnrollExistingMain`; the existing flag also covers fresh onboarding. Run the downloaded script with `--help` / `-Help` for the actual choices and see [Stable/Main enrollment and rollback](docs/updates.md#stable-or-main-explicit-user-choice). Factory is Main plus external private diagnostics/composition, not a separate release lineage. This does not publish Local `5.2.1` or Browser `0.7.1`, or change current production.
+> **Channel choice (development installers):** fresh installation stays **Stable** by default. Main requires explicit consent: macOS `--enroll-existing-main`, Windows `-EnrollExistingMain`; the existing flag also covers fresh onboarding. Run the downloaded script with `--help` / `-Help` for the actual choices and see [Stable/Main enrollment and rollback](docs/updates.md#stable-or-main-explicit-user-choice). Factory is Main plus external private diagnostics/composition, not a separate release lineage. This channel-option documentation does not itself publish a new release or change current production.
 
 ## Current release notes
 

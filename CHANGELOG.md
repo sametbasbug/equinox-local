@@ -5,6 +5,16 @@ All notable public changes to Equinox Local will be documented here.
 This project follows semantic versioning for public releases.
 
 ## [Unreleased]
+
+## [6.0.0] - 2026-10-09
+
+### Release highlights
+
+- Major milestone for Equinox Local and Equinox Browser 1.0.0 interoperability, including current ChatGPT Web send/continuation flows, Task Capsules, Telegram New Task and exact-bound follow-up chats.
+- Redesigned Control Center updates UX with compact sidebar notices, explicit Main SHA display, periodic background update awareness and independent Stable/Main notices without silent channel switching.
+- Expanded native Windows x64 and ARM64 installation, lifecycle, rollback and guarded desktop automation support, alongside macOS ARM64/x64 package and update paths.
+- Updated verified dependencies: Node 26.11.1, MCP SDK 1.32.1, PDF.js 6.4.299, Tunnel Client 0.0.16 and macOS Peekaboo 4.9.0.
+
 - Prepared Equinox Browser 1.0.0 Store review candidate: updated ChatGPT Web native composer submit selectors for Telegram new-task, Fresh Chat Resume and bound Chat Bridge; reused modern Auto Continue turn observation for bound chats and exact assistant-response extraction, without relaxing existing send/receipt guards.
 - Fixed the managed Stable release update validator refusing canonical packages whose `release.json` includes a validated 40-hex `sourceSha`; historical source-less Stable archives and strict metadata shape checks remain supported.
 - Fixed real macOS `artifact_required` Main upgrades: the detached launchd worker preserves non-secret managed installation paths for future updates and independently reconstructs an exact trusted managed installation from its own HOME, transaction root and current native release pointer when an older A scheduler drops those fields; credentials remain excluded and foreign paths are rejected.

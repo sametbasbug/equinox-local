@@ -26,7 +26,7 @@ With the downloaded public installer, choose:
 
 The existing `--enroll-existing-main` opt-in deliberately also covers **fresh** installs; its trusted JavaScript API is `allowExistingStableToMainMigration: true` (default `false`). Main first installs and health-checks the verified Stable baseline, then enrolls the exact source SHA. Fresh explicit Main without source provenance fails before activation rather than silently ignoring the choice. Existing same-version migration additionally requires identical provenance in the installed and staged release; different-version migration requires the Stable updater first. A routine rerun does not undo a previously selected Main channel or remove private composition/configuration.
 
-These are development installer semantics, not a publication announcement: production Local `5.2.0` and Browser `0.7.0` are unchanged; Local `5.2.1` and Browser `0.7.1` remain unpublished.
+These installer semantics are independent of release publication: Stable stays on its last verified signed release until the 6.0.0 manifest is published and the production upgrade gates succeed.
 
 ## First install
 
