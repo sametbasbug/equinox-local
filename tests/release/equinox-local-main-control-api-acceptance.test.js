@@ -112,7 +112,15 @@ for (const failure of [false, true]) {
       configManager: { snapshot: () => ({ revision: "a".repeat(64), config: {} }), replacePersisted: async () => ({}) },
       getUpdateStatus: async () => ({ installationKind: "managed-source", main: { ...discovery.snapshot(), ...controller.snapshot() } }),
       checkForUpdates: async () => { checked = true; events.push("check"); return { installationKind: "managed-source", main: { ...discovery.snapshot(), ...controller.snapshot() } }; },
-      applyUpdate: async () => await controller.apply(),
+      applyUpdate: async () => {
+        try { return await controller.apply(); }
+        catch (error) {
+          // This is a scratch-only CI acceptance fixture: surface the exact
+          // internal failure instead of a generic HTTP 500 for diagnosis.
+          console.error("Main acceptance update apply failed:", error?.message ?? error);
+          throw error;
+        }
+      },
     });
     const { port } = await api.start();
     t.after(() => api.close());
