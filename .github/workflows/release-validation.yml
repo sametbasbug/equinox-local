@@ -18,6 +18,7 @@ jobs:
     outputs:
       intel-target: ${{ steps.plan.outputs.intel-target }}
       intel-runner: ${{ steps.plan.outputs.intel-runner }}
+      arm-target: ${{ steps.plan.outputs.arm-target }}
       windows-matrix: ${{ steps.plan.outputs.windows-matrix }}
     steps:
       - name: Checkout exact release commit
@@ -34,6 +35,10 @@ jobs:
           if (all.length !== 4 || new Set(all.map((entry) => entry.target)).size !== 4) throw new Error('Canonical release matrix must contain exactly four unique targets.');
           const intel = all.find((entry) => entry.target === 'darwin-x64');
           if (!intel || intel.buildAuthority !== 'github-native' || !intel.nativeRunner) throw new Error('darwin-x64 native release contract is unavailable.');
+          // ARM64 signing is owned by the factory, but release validation must
+          // independently test its exact unsigned package on a native runner.
+          const arm = all.find((entry) => entry.target === 'darwin-arm64');
+          if (!arm || arm.buildAuthority !== 'factory-native' || arm.platform !== 'darwin' || arm.arch !== 'arm64') throw new Error('darwin-arm64 factory-native release contract is unavailable.');
           const windows = all.filter((entry) => entry.platform === 'win32').map((entry) => ({
             target: entry.target,
             runner: entry.nativeRunner,
@@ -42,7 +47,7 @@ jobs:
             dotnetPlatform: entry.arch === 'arm64' ? 'ARM64' : 'x64',
           }));
           if (windows.length !== 2 || windows.some((entry) => !entry.runner || !['x64', 'arm64'].includes(entry.arch))) throw new Error('Windows native release contracts are incomplete.');
-          process.stdout.write(`intel-target=${intel.target}\nintel-runner=${intel.nativeRunner}\nwindows-matrix=${JSON.stringify({ include: windows })}\n`);
+          process.stdout.write(`intel-target=${intel.target}\nintel-runner=${intel.nativeRunner}\narm-target=${arm.target}\nwindows-matrix=${JSON.stringify({ include: windows })}\n`);
           NODE
 
   intel-x64:
@@ -78,9 +83,9 @@ jobs:
       - name: Static checks
         run: npm run check
 
-      - name: Test
-        run: npm test
-
+      # The admitted exact commit already passed full macOS CI. Do not repeat
+      # the 3+ minute unit suite during each manual *release package* validation.
+      # Keep the native packaged install/smoke and exact-SHA checks here.
       - name: Build managed x64 release
         run: npm run local:release:package
 
@@ -108,6 +113,73 @@ jobs:
           path: |
             ${{ steps.release.outputs.artifact }}
             backups/local-packages/${{ needs.release-plan.outputs.intel-target }}-metadata.txt
+          if-no-files-found: error
+          retention-days: 7
+
+  arm64-managed:
+    needs: release-plan
+    name: macOS ARM64 managed release
+    runs-on: macos-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout exact release commit
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.commit }}
+          fetch-depth: 0
+
+      - name: Verify exact release commit and native architecture
+        run: |
+          test "$(git rev-parse HEAD)" = "${{ inputs.commit }}"
+          test "$(uname -m)" = "arm64"
+          node -e 'if (process.arch !== "arm64") process.exit(1)'
+
+      - name: Set up ARM64 Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 26.10.0
+          architecture: arm64
+          cache: npm
+
+      - name: Verify ARM64 Node.js host
+        run: |
+          test "$(node -p process.platform)-$(node -p process.arch)" = "darwin-arm64"
+          test "$(node --version)" = "v26.10.0"
+
+      - name: Install dependencies
+        run: npm ci --prefer-offline --no-audit --no-fund
+
+      - name: Static checks
+        run: npm run check
+
+      - name: Build managed ARM64 release
+        run: npm run local:release:package
+
+      - name: Smoke managed ARM64 release
+        run: npm run local:smoke:managed
+
+      - name: Record ARM64 artifact metadata
+        id: release
+        run: |
+          version="$(node --input-type=module -e 'import { EQUINOX_LOCAL_VERSION } from "./src/equinox-local-version.js"; process.stdout.write(EQUINOX_LOCAL_VERSION)')"
+          target="${{ needs.release-plan.outputs.arm-target }}"
+          artifact="backups/local-packages/equinox-local-${version}-${target}.tar.gz"
+          metadata="backups/local-packages/${target}-metadata.txt"
+          test -f "$artifact"
+          file "$artifact"
+          bytes="$(stat -f %z "$artifact")"
+          sha256="$(shasum -a 256 "$artifact" | awk '{print $1}')"
+          printf 'version=%s\ntarget=%s\nbytes=%s\nsha256=%s\n' "$version" "$target" "$bytes" "$sha256" | tee "$metadata"
+          printf 'version=%s\nartifact=%s\n' "$version" "$artifact" >> "$GITHUB_OUTPUT"
+
+      - name: Upload unsigned ARM64 validation artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: equinox-local-${{ steps.release.outputs.version }}-darwin-arm64-validation-unsigned
+          path: |
+            ${{ steps.release.outputs.artifact }}
+            backups/local-packages/${{ needs.release-plan.outputs.arm-target }}-metadata.txt
           if-no-files-found: error
           retention-days: 7
 

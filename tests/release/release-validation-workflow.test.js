@@ -25,3 +25,22 @@ test("Release Validation .NET native outputs cannot dirty canonical source ident
   assert.match(ignore, /^native\/windows\/\*\*\/obj\/$/mu);
   assert.match(ignore, /^artifacts\/windows-shell\/$/mu);
 });
+
+
+test("Release Validation covers all four platforms and does not duplicate full Intel CI tests", () => {
+  const workflow = fs.readFileSync(new URL("../../.github/workflows/release-validation.yml", import.meta.url), "utf8");
+  const intel = workflow.split("  intel-x64:")[1]?.split("  arm64-managed:")[0] ?? "";
+  const arm = workflow.split("  arm64-managed:")[1]?.split("  windows-native:")[0] ?? "";
+  assert.match(workflow, /arm-target: \$\{\{ steps\.plan\.outputs\.arm-target \}\}/u);
+  assert.match(intel, /npm run local:release:package/u);
+  assert.match(intel, /npm run local:smoke:managed/u);
+  assert.doesNotMatch(intel, /run: npm test/u);
+  assert.match(arm, /runs-on: macos-latest/u);
+  assert.match(arm, /test "\$\(uname -m\)" = "arm64"/u);
+  assert.match(arm, /node-version: 26\.10\.0/u);
+  assert.match(arm, /npm run local:release:package/u);
+  assert.match(arm, /npm run local:smoke:managed/u);
+  assert.match(arm, /darwin-arm64-validation-unsigned/u);
+  assert.doesNotMatch(arm, /run: npm test/u);
+  assert.match(workflow, /^  windows-native:$/mu);
+});
