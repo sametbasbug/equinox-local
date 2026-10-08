@@ -1,6 +1,6 @@
 # Connect Equinox Local through OpenAI Secure MCP Tunnel
 
-Equinox Local is a local MCP runtime. ChatGPT does not connect directly to `localhost`, so a managed Equinox Local install uses OpenAI Secure MCP Tunnel as its remote transport without exposing an inbound port on the Mac.
+Equinox Local is a local MCP runtime. ChatGPT does not connect directly to `localhost`, so a managed Equinox Local install uses OpenAI Secure MCP Tunnel as its remote transport without exposing an inbound port on the user’s Mac or Windows PC.
 
 ## What you need
 
@@ -52,7 +52,7 @@ Under **Connect to ChatGPT**:
 2. paste the Runtime API key;
 3. choose **Save & connect**.
 
-Equinox Local stores the runtime key in its per-user Application Support area with private file permissions (`0600`). The Control Center API never returns the secret after it has been saved.
+Equinox Local stores the runtime key in its per-user Application Support area with platform-appropriate private state protections (`0600` on macOS or current-user ACLs on Windows). The Control Center API never returns the secret after it has been saved.
 
 The transport configuration stores the Tunnel ID separately and Local schedules a controlled restart. If tunnel startup fails, the supervisor falls back to local-only Control Center mode instead of exposing a different transport.
 

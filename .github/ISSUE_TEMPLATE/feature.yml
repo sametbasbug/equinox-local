@@ -1,33 +1,46 @@
-name: Feature request
-description: Suggest a bounded product improvement
+name: ✨ Feature idea
+description: Suggest a new capability or usability improvement
 title: "[Feature]: "
 labels: [enhancement]
 body:
   - type: markdown
     attributes:
       value: |
-        Equinox Local favors explicit, reviewable capabilities over broad generic execution surfaces. Explain the user problem first; the implementation can follow.
+        Describe the **problem** and desired experience rather than prescribing implementation. Equinox Local supports macOS/Windows and keeps browser/agent permissions explicit.
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Control Center / usability
+        - Equinox Browser
+        - Tasks / Telegram
+        - Terminal / desktop automation
+        - Installation / updates
+        - Documentation / onboarding
+        - Other
+    validations:
+      required: true
   - type: textarea
     id: problem
     attributes:
-      label: Problem
-      description: What is difficult or missing today?
+      label: What problem are you trying to solve?
     validations:
       required: true
   - type: textarea
-    id: outcome
+    id: experience
     attributes:
-      label: Desired outcome
-      description: What should the user or agent be able to accomplish?
+      label: What would the ideal experience look like?
+      description: A brief example or user story is welcome.
     validations:
       required: true
-  - type: textarea
-    id: boundaries
-    attributes:
-      label: Security / permission boundaries
-      description: What should the feature explicitly not be allowed to do?
   - type: textarea
     id: alternatives
     attributes:
-      label: Alternatives considered
-      description: Optional — other approaches or workarounds you tried.
+      label: Workarounds or related tools
+      description: Optional. What have you tried?
+  - type: textarea
+    id: boundaries
+    attributes:
+      label: Permissions or privacy considerations
+      description: Optional. Should an action require confirmation, specific consent or an opt-in?

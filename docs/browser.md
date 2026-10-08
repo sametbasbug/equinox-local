@@ -1,6 +1,6 @@
 # Equinox Browser
 
-**Current Chrome Web Store production release:** `0.7.0` on the permanent Unlisted item. **Next review candidate:** `1.0.0` (not live until accepted).
+**Current Chrome Web Store release:** [`1.0.0`](https://chromewebstore.google.com/detail/equinox-browser/npdneefcobilfkjlihghjgjnknenhfoj) on the permanent Unlisted listing. Extension updates are delivered by Chrome Web Store, independently of Equinox Local Stable releases.
 
 Equinox Browser is the only browser-automation transport exposed by Equinox Local.
 
@@ -31,7 +31,7 @@ Auto Continue uses dedicated internal bridge commands for target resolution, ins
 
 Telegram Chat Bridge uses separate internal capabilities instead of pretending bridge messages are Auto Continue turns. `chat_bridge.deliver` reuses exact-conversation/user-epoch/assistant-turn/composer guards with a separate bounded receipt namespace; `chat_bridge.inspect` stays text-free and bridge debugger leases receive short detach cleanup. Attachments remain local and are never uploaded again through the ChatGPT UI. The bridge message itself carries only the user text plus `task_id` for Task-bound chats and optional `local_file` for a downloaded Telegram file. There is no attachment-resolver Browser/Local protocol in the Chat Bridge path.
 
-Chat Bridge v9 keeps normal Telegram chat Task-scoped. Existing bound-chat delivery uses guarded CDP `Input.insertText`, real send-button pointer click and debugger-backed user-epoch confirmation. Stale tab ids may be refreshed only through a unique exact-conversation match in the same Browser instance; ambiguity still fails closed. The only fresh-chat path is explicit **New task** creation from Telegram: Local uses existing generic Browser primitives (`tabs.create`, `snapshot`, `type_text`, `tabs.list`) to create one root ChatGPT conversation for the new Task, confirms its conversation id, binds it to that Task Capsule, and then uses the same `chat_bridge.read_final` lane for the first assistant response; a null previous-assistant key is valid only for that first Task turn.
+Chat Bridge v9 keeps normal Telegram chat Task-scoped. Existing bound-chat delivery uses guarded CDP `Input.insertText`, focus of the exact, enabled ChatGPT Send button followed by a trusted Enter key, with debugger-backed user-epoch confirmation. Stale tab ids may be refreshed only through a unique exact-conversation match in the same Browser instance; ambiguity still fails closed. The only fresh-chat path is explicit **New task** creation from Telegram: Local uses existing generic Browser primitives (`tabs.create`, `snapshot`, `type_text`, `tabs.list`) to create one root ChatGPT conversation for the new Task, confirms its conversation id, binds it to that Task Capsule, and then uses the same `chat_bridge.read_final` lane for the first assistant response; a null previous-assistant key is valid only for that first Task turn.
 
 ## Connection path
 
@@ -39,13 +39,13 @@ Chat Bridge v9 keeps normal Telegram chat Task-scoped. Existing bound-chat deliv
 Agent
   -> Equinox Local capabilities(domain=browser) + browser_call (target=agent|user)
       -> Equinox Browser bridge
-          -> per-user Unix socket
+          -> per-user IPC (macOS Unix socket / Windows named pipe)
               -> Native Messaging host
                   -> Equinox Browser extension in the selected profile
                       -> Agent Browser tab OR Your Browser tab
 ```
 
-The socket directory is user-specific and private. The bridge authenticates the expected native-host origin and extension identity before routing commands.
+The transport endpoint belongs to the signed-in user: a private Unix socket on macOS or a scoped named pipe on Windows. The bridge authenticates the expected native-host origin and extension identity before routing commands.
 
 ## Chrome Web Store updates
 

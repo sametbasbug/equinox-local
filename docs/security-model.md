@@ -103,7 +103,7 @@ Legacy QA-browser repair recipes were retired with that backend; the public prod
 
 ## Optional desktop control
 
-Peekaboo is optional. Equinox Local runs its pinned 4.5+ MCP child with explicit foreground authority and exposes the native desktop automation subset needed for effective UI work, including coordinate/pointer input, keyboard input, lifecycle controls, dialogs, paste, clipboard mutation, capture, and state verification. Peekaboo's duplicate AI/analyze/image/browser stacks stay outside the Desktop gateway. The retained boundaries are local pinned execution (`--no-remote`), credential stripping, macOS permission preflight, live version/schema compatibility checks, and bounded input/output.
+Desktop control is optional. On macOS, Equinox Local runs its pinned Peekaboo 4.9.0 MCP child with explicit foreground authority and exposes the native desktop automation subset needed for effective UI work, including coordinate/pointer input, keyboard input, lifecycle controls, dialogs, paste, clipboard mutation, capture, and state verification. Peekaboo's duplicate AI/analyze/image/browser stacks stay outside the Desktop gateway. The retained macOS boundaries are local pinned execution (`--no-remote`), credential stripping, permission preflight, live version/schema compatibility checks, and bounded input/output. On Windows the separate pinned Microsoft winapp CLI integration provides a bounded UI automation subset; it is not presented as a macOS Peekaboo capability.
 
 ## Security regression rule
 

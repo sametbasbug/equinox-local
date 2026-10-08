@@ -1,6 +1,6 @@
 # Architecture
 
-Equinox Local is a per-user macOS control plane that exposes bounded local capabilities to AI clients while giving the human a native macOS Control Center backed by a private loopback management service.
+Equinox Local is a per-user **macOS and Windows** runtime that exposes local capabilities to AI clients while providing a native Control Center backed by a private loopback management service. Native shells and process supervision follow each platform’s lifecycle rules.
 
 ## Repository and installation ownership
 
@@ -115,7 +115,7 @@ A dedicated internal Telegram task inbox controller maps one bot message to one 
 
 ## Managed installation
 
-A managed install is per-user and versioned, with one platform-owned active-release pointer: macOS uses the managed `current` symlink, while Windows x64 uses the guarded `current-version.json` version file. macOS runs the managed runtime through the stable `Equinox Local.app` LaunchAgent identity; Windows x64 uses the stable WPF shell at the per-user Program root, which supervises the release-local runtime through the accepted Job Object lifecycle. The Browser Native Messaging registration follows the active managed release through the platform ownership contract instead of a developer checkout.
+A managed install is per-user and versioned, with one platform-owned active-release pointer: macOS uses the managed `current` symlink, while Windows x64/ARM64 use the guarded `current-version.json` version file. macOS runs the managed runtime through the stable `Equinox Local.app` LaunchAgent identity; Windows x64/ARM64 use the stable WPF shell at the per-user Program root, which supervises the release-local runtime through the accepted Job Object lifecycle. The Browser Native Messaging registration follows the active managed release through the platform ownership contract instead of a developer checkout.
 
 Native app-shell artifacts are versioned with the managed release and synchronized before runtime activation; activation rollback restores the app shell that belongs to the previous release. The first-install bootstrap and updater share the same release validation/activation concepts so the product has one managed lifecycle instead of separate installation and update worlds. Fresh-install activation gets a longer health budget than ordinary polling; if it still cannot become healthy, the verified release and active-release selection are preserved for a safe retry rather than deleting the backend underneath the installed native shell. Once Stable is healthy and its release metadata carries canonical `sourceSha`, the managed-source enrollment transaction may commit the exact source identity as described above. Lifecycle-specific recovery remains bounded: macOS reports/stops a failed LaunchAgent, while Windows preserves the owned stable-shell/current-version state for retry. On Windows 5.2.1+, shell runtime supervision uses the release-owned Node executable for a Job Object gate and waits for an explicit child-spawn acknowledgement before startup is considered released.
 
