@@ -15,15 +15,15 @@
 [Product site](https://local.sametbasbug.dev/) · [Security](SECURITY.md) · [Architecture](docs/architecture.md) · [Contributing](CONTRIBUTING.md)
 </div>
 
-> **Current production:** Equinox Local `5.2.0` on the signed stable channel and Equinox Browser `0.7.0` on the permanent Unlisted Chrome Web Store item. Every Local release must pass public-source CI/CodeQL, native architecture validation, managed smoke, signing verification, lifecycle upgrade validation and live-channel checks before promotion.
+> **Current production:** Equinox Local `6.0.0` on the signed Stable channel and Equinox Browser `1.0.0` on the permanent Unlisted Chrome Web Store item. Every Local release must pass public-source CI/CodeQL, native architecture validation, managed smoke, signing verification, lifecycle upgrade validation and live-channel checks before promotion.
 
-> **6.0.0 release readiness:** the release pipeline now validates `darwin-arm64`, `darwin-x64`, `win32-arm64`, and `win32-x64` as one exact-SHA set, signs and verifies all four target artifacts, and supports a non-production end-to-end rehearsal before promotion. Windows x64/ARM64 will become publicly Stable-supported after 6.0.0 is successfully promoted.
+> **6.0.0 production release:** the release pipeline now validates `darwin-arm64`, `darwin-x64`, `win32-arm64`, and `win32-x64` as one exact-SHA set, signs and verifies all four target artifacts, and supports a non-production end-to-end rehearsal before promotion. Windows x64/ARM64 are now included in the signed, verified Stable 6.0.0 release alongside macOS ARM64/x64.
 
 > **Channel choice (development installers):** fresh installation stays **Stable** by default. Main requires explicit consent: macOS `--enroll-existing-main`, Windows `-EnrollExistingMain`; the existing flag also covers fresh onboarding. Run the downloaded script with `--help` / `-Help` for the actual choices and see [Stable/Main enrollment and rollback](docs/updates.md#stable-or-main-explicit-user-choice). Factory is Main plus external private diagnostics/composition, not a separate release lineage. This channel-option documentation does not itself publish a new release or change current production.
 
 ## Current release notes
 
-Equinox Local `5.2.0` is the expedited fresh-install recovery release. It extends first-activation health time, preserves a verified fresh-install backend instead of deleting it when activation fails, adds real isolated LaunchAgent lifecycle smoke coverage, updates OpenAI `tunnel-client` to `0.0.15`, fixes Turn Budget fallback idle accounting with a configurable Control Center timeout, and hardens restart-safe Telegram state persistence. Equinox Browser remains `0.7.0`.
+Equinox Local `6.0.0` is the current Stable release, paired with Equinox Browser `1.0.0` in the Chrome Web Store. This release brings signed macOS/Windows ARM64/x64 packages, live-tested Stable-to-Main managed enrollment and upgrade/rollback paths, the compact Control Center sidebar update hub with background channel checks, and ChatGPT Web/Telegram task-continuation compatibility. Pinned runtimes now include Node `26.11.1`, Tunnel Client `0.0.16` and macOS Peekaboo `4.9.0`. For historical `5.2.0` recovery changes, see [CHANGELOG](CHANGELOG.md).
 
 ## What is Equinox Local?
 
@@ -225,7 +225,7 @@ Internal modules separate tool registration, workspace/history mechanics, Contro
 
 Private factory/ops tooling may consume a clean canonical checkout by repository identity and exact SHA for explicitly authorized release/publication work. A factory installation uses the same product source with external private configuration/state and, when explicitly configured, private composition. Neither that tooling nor private credentials are required to build or test the public product. Do not copy private history, machine paths or secrets into this repository.
 
-Repository ownership does not switch installed Stable users to `main` or publish `5.2.1`. The Main updater is available only through admitted managed-source identity after explicit opt-in; normal source checkouts remain check-only. Signed numbered releases and Chrome Web Store distribution retain their existing owners and authorization boundaries.
+Repository ownership does not switch installed Stable users to `main` or publish a new version by itself. The Main updater is available only through admitted managed-source identity after explicit opt-in; normal source checkouts remain check-only. Signed numbered releases and Chrome Web Store distribution retain their existing owners and authorization boundaries.
 
 ### Requirements
 
