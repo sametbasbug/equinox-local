@@ -117,7 +117,7 @@ async function run() {
   if (typeof artifact !== "string" || !path.isAbsolute(artifact) || !SHA.test(previousSha ?? "") || !SHA.test(targetSha ?? "") || previousSha === targetSha) {
     throw new Error("Usage: smoke-main-upgrade-macos.mjs /absolute/old-release.tar.gz <admitted-A-SHA> <admitted-B-SHA>");
   }
-  assert.equal(process.arch, "arm64", "run on a native macOS ARM64 hosted runner");
+  assert.ok(["arm64", "x64"].includes(process.arch), "use a native macOS ARM64 or Intel x64 hosted runner");
   const scenario = process.env.M8_ACCEPTANCE_SCENARIO || "positive";
   if (!["positive", "target-health-failure"].includes(scenario)) throw new Error("Unsupported native M8 acceptance scenario.");
   const negative = scenario === "target-health-failure";
