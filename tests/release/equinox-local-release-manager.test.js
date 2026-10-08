@@ -15,7 +15,7 @@ import {
 
 const execFile = promisify(execFileCallback);
 
-async function makeFixture({ version = "4.3.0", target = "darwin-arm64", withSymlink = false, nativeApp = false, withPeekaboo = true } = {}) {
+async function makeFixture({ version = "4.3.0", target = "darwin-arm64", withSymlink = false, nativeApp = false, withPeekaboo = true, sourceSha = null } = {}) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "equinox-release-manager-"));
   const sourceRoot = path.join(root, "source");
   const releaseRoot = path.join(sourceRoot, "release");
@@ -29,6 +29,7 @@ async function makeFixture({ version = "4.3.0", target = "darwin-arm64", withSym
     target,
     nodeVersion: "24.19.0",
     tunnelClientVersion: "0.0.12",
+    ...(sourceSha !== null ? { sourceSha } : {}),
     ...(nativeApp ? { nativeAppShellVersion: 1 } : {}),
     serverEntry: "server.js",
   }));
@@ -241,6 +242,26 @@ test("managed release preparation accepts the native app shell while keeping leg
   const metadata = JSON.parse(await fs.readFile(path.join(result.targetReleaseDir, "release.json"), "utf8"));
   assert.equal(metadata.nativeAppShellVersion, 1);
   assert.equal((await fs.lstat(path.join(result.targetReleaseDir, "runtime", "app", "applet"))).isFile(), true);
+});
+
+test("managed-source release metadata accepts exact canonical source SHA without relaxing legacy or extra-field policy", async (t) => {
+  const sha = "a".repeat(40);
+  const good = await makeFixture({ sourceSha: sha, nativeApp: true });
+  const bad = await makeFixture({ sourceSha: "not-a-git-sha", nativeApp: true });
+  t.after(() => Promise.all([good, bad].map((fixture) => fs.rm(fixture.root, { recursive: true, force: true }))));
+  const manifest = (fixture) => ({
+    version: fixture.version, target: fixture.target,
+    artifact: { url: "https://local.sametbasbug.dev/downloads/updates/equinox-local-4.3.0-darwin-arm64.tar.gz", sha256: fixture.sha256, bytes: fixture.bytes.length },
+  });
+  const installed = await prepareManagedEquinoxRelease({
+    installation: installationFor(good.root), manifest: manifest(good),
+    fetchImpl: async () => responseFor(good.bytes),
+  });
+  assert.equal(installed.metadata.sourceSha, sha);
+  await assert.rejects(prepareManagedEquinoxRelease({
+    installation: installationFor(bad.root), manifest: manifest(bad),
+    fetchImpl: async () => responseFor(bad.bytes),
+  }), /Release metadata does not match/u);
 });
 
 test("historical release preparation may omit bundled Peekaboo while 4.4.0 and newer require it", async (t) => {

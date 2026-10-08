@@ -233,14 +233,18 @@ async function readReleaseMetadata(releaseDir, expectedVersion, expectedTarget) 
   const keys = Object.keys(metadata).sort();
   const legacyKeys = ["nodeVersion", "schemaVersion", "serverEntry", "target", "tunnelClientVersion", "version"].sort();
   const nativeKeys = [...legacyKeys, "nativeAppShellVersion"].sort();
+  // Canonical managed-source packages include an exact public source commit;
+  // numbered historical Stable archives legitimately omit this newer field.
+  const sourceKeys = Object.hasOwn(metadata, "sourceSha") ? ["sourceSha"] : [];
   const matches = (expected) => keys.length === expected.length && keys.every((key, index) => key === expected[index]);
-  if (!matches(legacyKeys) && !matches(nativeKeys)) {
+  if (!matches([...legacyKeys, ...sourceKeys].sort()) && !matches([...nativeKeys, ...sourceKeys].sort())) {
     throw new Error("Release metadata contains missing or unsupported fields.");
   }
   if (
     metadata.schemaVersion !== 1 ||
     metadata.version !== expectedVersion ||
     metadata.target !== expectedTarget ||
+    (metadata.sourceSha !== undefined && (typeof metadata.sourceSha !== "string" || !/^[a-f0-9]{40}$/u.test(metadata.sourceSha))) ||
     typeof metadata.nodeVersion !== "string" ||
     !/^\d+\.\d+\.\d+$/u.test(metadata.nodeVersion) ||
     typeof metadata.tunnelClientVersion !== "string" ||
