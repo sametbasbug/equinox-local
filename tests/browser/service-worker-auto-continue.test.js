@@ -13,7 +13,7 @@ function event() {
   return { addListener(fn) { listeners.push(fn); }, emit(...args) { for (const fn of listeners) fn(...args); } };
 }
 
-async function harness({ freshCreateMode = "normal", freshSubmitReadyAfter = 0, chatComposerChangedProbes = 0 } = {}) {
+async function harness({ freshCreateMode = "normal", freshSubmitReadyAfter = 0, chatComposerChangedProbes = 0, chatSubmitFocusMode = "normal" } = {}) {
   const runtimeStartup = event();
   const runtimeInstalled = event();
   const runtimeMessage = event();
@@ -44,6 +44,7 @@ async function harness({ freshCreateMode = "normal", freshSubmitReadyAfter = 0, 
     [44, { generationActive: false, userEpoch: "user-project", assistantTurnKey: "conversation-turn-2", composerReady: true, composerEmpty: true }],
   ]);
   const keyEvents = [];
+  const chatSubmitFocus = new Set();
   const filledPrompts = [];
   const uploadedFiles = [];
   const pointerEvents = [];
@@ -153,6 +154,14 @@ async function harness({ freshCreateMode = "normal", freshSubmitReadyAfter = 0, 
             }
             return { result: { value: { ready: true, reason: null, lengths: { expected: canonical.length, inner: canonical.length, text: canonical.length } } } };
           }
+          if (expression.includes("Chat Bridge coordinate-free submit: focus the trusted Send button.")) {
+            if (chatSubmitFocusMode === "composer_changed") return { result: { value: { focused: false, reason: "composer_changed" } } };
+            if (chatSubmitFocusMode === "button_missing") return { result: { value: { focused: false, reason: "send_button_missing" } } };
+            if (chatSubmitFocusMode === "focus_failed") return { result: { value: { focused: false, reason: "send_focus_failed" } } };
+            if (!composerValues.get(debuggee.tabId)) return { result: { value: { focused: false, reason: "composer_changed" } } };
+            chatSubmitFocus.add(debuggee.tabId);
+            return { result: { value: { focused: true, reason: null } } };
+          }
           if (expression.includes("Chat Bridge final response: read only the exact completed assistant turn requested by Local.")) {
             const state = states.get(debuggee.tabId) || {};
             if (!state.assistantText) return { result: { value: { found: false } } };
@@ -196,6 +205,7 @@ async function harness({ freshCreateMode = "normal", freshSubmitReadyAfter = 0, 
         if (method === "Input.dispatchKeyEvent") {
           keyEvents.push({ tabId: debuggee.tabId, ...params });
           if (params.type === "keyUp" && params.key === "Enter") {
+            const focusedSend = chatSubmitFocus.delete(debuggee.tabId);
             const current = states.get(debuggee.tabId) || {};
             const tab = tabs.get(debuggee.tabId);
             if (!current.userEpoch && tab?.url === "https://chatgpt.com/") {
@@ -207,8 +217,9 @@ async function harness({ freshCreateMode = "normal", freshSubmitReadyAfter = 0, 
                 ? "https://chatgpt.com/c/dddddddd-eeee-ffff-aaaa-bbbbbbbbbbbb"
                 : `https://chatgpt.com/g/${token}/c/dddddddd-eeee-ffff-aaaa-bbbbbbbbbbbb`;
               states.set(debuggee.tabId, { ...current, generationActive: true, userEpoch: "fresh-project-user", assistantTurnKey: null, composerReady: true, composerEmpty: true });
-            } else {
+            } else if (focusedSend || current.userEpoch) {
               states.set(debuggee.tabId, { ...current, generationActive: true, userEpoch: `${current.userEpoch}-continued` });
+              if (focusedSend) composerValues.set(debuggee.tabId, "");
             }
           }
           return {};
@@ -453,7 +464,7 @@ test("Chat Bridge delivery uses its own receipt namespace and blocks duplicate r
   assert.equal(h.storageData.chatBridgeDeliveryReceipts.length, 1);
 });
 
-test("Chat Bridge v9 uses real Input.insertText before trusted local-reference submit", async () => {
+test("Chat Bridge uses trusted keyboard activation of the exact Send button, without coordinate mouse clicks", async () => {
   const h = await harness();
   assert.equal(h.api.browserCapabilityVersions().chatBridge, 9);
   assert.equal(typeof h.api.uploadChatBridgeAttachment, "undefined");
@@ -465,8 +476,8 @@ test("Chat Bridge v9 uses real Input.insertText before trusted local-reference s
   assert.equal(delivered.chatBridgeVersion, 9);
   assert.equal(h.uploadedFiles.length, 0);
   assert.equal(h.storageData.chatBridgeDeliveryReceipts.length, 1);
-  assert.equal(h.keyEvents.filter((event) => event.key === "Enter").length, 0);
-  assert.equal(h.pointerEvents.filter((event) => event.type === "mouseReleased" && event.button === "left").length, 1);
+  assert.equal(h.keyEvents.filter((event) => event.key === "Enter" && event.type === "keyUp").length, 1);
+  assert.equal(h.pointerEvents.filter((event) => event.type === "mouseReleased" && event.button === "left").length, 0);
   assert.ok(h.chatSubmitProbeCount() >= 1, `expected Chat Bridge submit readiness probe, got ${h.chatSubmitProbeCount()} probes`);
   assert.equal(h.filledPrompts.filter((value) => value.includes("tgatt-000095")).length, 1);
   assert.equal(h.debuggerDetachCount(), 0);
@@ -474,6 +485,25 @@ test("Chat Bridge v9 uses real Input.insertText before trusted local-reference s
   assert.ok(h.debuggerDetachCount() > 0, "Chat Bridge should release its debugger lease shortly after delivery");
 });
 
+
+test("Chat Bridge refuses keyboard submit if exact Send target cannot be safely focused", async () => {
+  for (const chatSubmitFocusMode of ["composer_changed", "button_missing", "focus_failed"]) {
+    const h = await harness({ chatSubmitFocusMode });
+    await assert.rejects(h.api.deliverChatBridgeMessage({
+      deliveryId: "tgb-focusguard", tabId: 42, conversationId: "11111111-2222-3333-4444-555555555555",
+      userEpoch: "user-b", assistantTurnKey: "conversation-turn-4", text: "hello from telegram",
+    }), /could not focus the trusted Send button/iu);
+    assert.equal(h.filledPrompts.filter((v) => v === "hello from telegram").length, 1);
+    assert.equal(h.keyEvents.filter((event) => event.key === "Enter").length, 0);
+    assert.equal(h.pointerEvents.filter((event) => event.type === "mouseReleased").length, 0);
+    assert.equal(h.storageData.chatBridgeDeliveryReceipts.length, 1);
+    const replay = await h.api.deliverChatBridgeMessage({
+      deliveryId: "tgb-focusguard", tabId: 42, conversationId: "11111111-2222-3333-4444-555555555555",
+      userEpoch: "user-b", assistantTurnKey: "conversation-turn-4", text: "hello from telegram",
+    });
+    assert.equal(replay.duplicatePrevented, true);
+  }
+});
 
 test("Chat Bridge final reader returns only the expected completed assistant turn and fails closed on user drift", async () => {
   const h = await harness();

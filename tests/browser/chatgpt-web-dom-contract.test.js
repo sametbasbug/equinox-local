@@ -16,7 +16,9 @@ test("Telegram new Task, Fresh Chat Resume and Chat Bridge trust the modern comp
   assert.match(browser, /const chatBridgeSendSelector = CHATGPT_SEND_SELECTOR;/u);
   assert.match(browser, /const button = document.querySelector\(\$\{JSON\.stringify\(CHATGPT_SEND_SELECTOR\)\}\);/u);
   assert.match(browser, /await clickSelectorWithActionability\(\s*created\.id,\s*CHATGPT_SEND_SELECTOR/u);
-  assert.match(browser, /await clickSelectorWithActionability\(tabId, chatBridgeSendSelector/u);
+  assert.match(browser, /Chat Bridge coordinate-free submit: focus the trusted Send button\./u);
+  assert.match(browser, /await dispatchKeyChord\(tabId, "Enter"\)/u);
+  assert.doesNotMatch(browser.slice(browser.indexOf("async function deliverChatBridgeMessage("), browser.indexOf("async function readChatBridgeFinalResponse(")), /await clickSelectorWithActionability\(tabId/u);
 });
 
 test("Chat Bridge and Auto Continue share modern turn identity rather than removed legacy selectors", () => {
