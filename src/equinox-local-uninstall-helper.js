@@ -10,6 +10,8 @@ import {
   validateEquinoxLocalAppHost,
 } from "./equinox-local-app-host.js";
 import { resolveEquinoxLocalInstallation } from "./equinox-local-installation.js";
+import { validateManagedSourceInstallStamp } from "./equinox-local-main-update.js";
+import { equinoxLocalManagedSourcePaths } from "./equinox-local-managed-source-installation.js";
 import { readBoundedNormalFile } from "./equinox-local-safe-file.js";
 import {
   assertWindowsNativeMessagingHostOwnership,
@@ -73,14 +75,88 @@ function parseMode(argv) {
 }
 
 async function removeIfExists(target, { recursive = false, fsImpl = fs } = {}) {
+  let stat;
   try {
-    await fsImpl.lstat(target);
+    stat = await fsImpl.lstat(target);
   } catch (error) {
     if (error?.code === "ENOENT") return false;
     throw error;
   }
+  if (recursive && (!stat.isDirectory() || stat.isSymbolicLink())) {
+    throw new Error("Refusing recursive uninstall of an unowned directory or symlink.");
+  }
   await fsImpl.rm(target, { recursive, force: false });
   return true;
+}
+
+async function verifyUninstallDirectoryIfPresent(target, { fsImpl = fs } = {}) {
+  try {
+    const stat = await fsImpl.lstat(target);
+    if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error(`Unsafe uninstall directory: ${target}`);
+  } catch (error) { if (error?.code !== "ENOENT") throw error; }
+}
+
+// Preserve-mode uninstall must not mistake legacy 5.2.x data (or a foreign
+// directory with the same name) for an admitted managed-source enrollment.
+const OWNED_MAIN_ENTRIES = new Set([
+  "install.json", "current-source.conf", "sources", "enrollment-staging", "active.json",
+  "receipts", "staging", "handoff", "current-native.json", "native-store",
+]);
+const MAIN_SOURCE_SHA = /^[a-f0-9]{40}$/u;
+
+export async function inspectOwnedMainUninstallState({ platform, arch, homeDir, env, fsImpl = fs } = {}) {
+  const paths = equinoxLocalManagedSourcePaths({ platform, arch, homeDir, env });
+  const root = paths.mainTransactionRoot;
+  let stat;
+  try { stat = await fsImpl.lstat(root); }
+  catch (error) { if (error?.code === "ENOENT") return null; throw error; }
+  if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error("Main uninstall state root is not a normal owned directory.");
+  const pathApi = platform === "win32" ? path.win32 : path.posix;
+  await verifyUninstallDirectoryIfPresent(pathApi.dirname(root), { fsImpl });
+  const realRoot = await fsImpl.realpath(root);
+  const expectedRealRoot = pathApi.join(await fsImpl.realpath(pathApi.dirname(root)), pathApi.basename(root));
+  if ((platform === "win32" ? pathApi.normalize(realRoot).toLowerCase() : realRoot)
+      !== (platform === "win32" ? pathApi.normalize(expectedRealRoot).toLowerCase() : expectedRealRoot)) {
+    throw new Error("Main uninstall state root has an unsafe path identity.");
+  }
+  // Legacy Stable installations carry no managed-source stamp. In that case
+  // leave any unclaimed update state alone instead of adopting it as ours.
+  let stampData;
+  try {
+    ({ data: stampData } = await readBoundedNormalFile(paths.installStampPath, {
+      fsImpl, minBytes: 2, maxBytes: 8 * 1024, encoding: "utf8", label: "Main uninstall install stamp",
+    }));
+  } catch (error) { if (error?.code === "ENOENT") return null; throw error; }
+  try { validateManagedSourceInstallStamp(JSON.parse(stampData)); }
+  catch { throw new Error("Main uninstall state has an invalid managed-source install stamp."); }
+  const { data: pointer } = await readBoundedNormalFile(paths.sourcePointerPath, {
+    fsImpl, minBytes: 1, maxBytes: 8 * 1024, encoding: "utf8", label: "Main uninstall source pointer",
+  });
+  const fields = pointer.trimEnd().split(/\r?\n/u).map((entry) => entry.split("="));
+  if (fields.length !== 3 || fields.some(([key, value], index) => !value ||
+    key !== ["schemaVersion", "sourceRoot", "sha"][index])) {
+    throw new Error("Main uninstall source pointer is malformed.");
+  }
+  const sha = fields[2][1];
+  if (fields[0][1] !== "1" || !MAIN_SOURCE_SHA.test(sha) ||
+      fields[1].slice(1).join("=") !== pathApi.join(root, "sources", sha)) {
+    throw new Error("Main uninstall source pointer is not product-owned.");
+  }
+  for (const name of await fsImpl.readdir(root)) {
+    if (!OWNED_MAIN_ENTRIES.has(name)) throw new Error("Main uninstall state contains a foreign entry; refusing cleanup.");
+    if (name === "active.json") throw new Error("Main update is active or interrupted; refusing concurrent uninstall.");
+  }
+  const sourcesRoot = pathApi.join(root, "sources");
+  let sourcesStat;
+  try { sourcesStat = await fsImpl.lstat(sourcesRoot); }
+  catch (error) { if (error?.code === "ENOENT") throw new Error("Main uninstall owned sources are missing."); throw error; }
+  if (!sourcesStat.isDirectory() || sourcesStat.isSymbolicLink()) throw new Error("Main uninstall owned sources directory is unsafe.");
+  for (const name of await fsImpl.readdir(sourcesRoot)) {
+    if (!MAIN_SOURCE_SHA.test(name)) throw new Error("Main uninstall source store contains foreign data.");
+    const entry = await fsImpl.lstat(pathApi.join(sourcesRoot, name));
+    if (!entry.isDirectory() || entry.isSymbolicLink()) throw new Error("Main uninstall source store contains an unsafe checkout.");
+  }
+  return root;
 }
 
 async function removeOwnedNativeHostManifest({ homeDir, installRoot, fsImpl = fs }) {
@@ -201,7 +277,8 @@ export async function runWindowsEquinoxLocalUninstall({
   readCurrentImpl = readManagedCurrentRelease, assertStableShellImpl = assertWindowsStableShellOwnedByRelease,
   assertNativeMessagingImpl = assertWindowsNativeMessagingHostOwnership, unregisterNativeMessagingImpl = unregisterWindowsNativeMessagingHost,
   launcherPathImpl = windowsNativeMessagingLauncherPath, platformPathsImpl = equinoxLocalPlatformPaths, removePathImpl = removeNormalPath,
-  readStartupImpl = readWindowsStartupRegistrationOwnership, unregisterStartupImpl = unregisterWindowsStartupRegistration, execFileImpl = execFile,
+  readStartupImpl = readWindowsStartupRegistrationOwnership, unregisterStartupImpl = unregisterWindowsStartupRegistration,
+  inspectOwnedMainStateImpl = inspectOwnedMainUninstallState, execFileImpl = execFile,
 } = {}) {
   const expectedTarget = installation?.arch === "x64" ? "win32-x64"
     : installation?.arch === "arm64" ? "win32-arm64" : null;
@@ -219,16 +296,20 @@ export async function runWindowsEquinoxLocalUninstall({
   const ownership = await assertNativeMessagingImpl({
     manifestRoot: installation.nativeMessagingManifestRoot, acceptedLauncherPaths: [launcherPath], fsImpl, env,
   });
-  await unregisterStartupImpl({ expectedCommand: expectedStartupCommand, execFileImpl, env });
-  const removedNativeHost = await unregisterNativeMessagingImpl({ manifestPath: ownership.manifestPath, launcherPath, fsImpl, env });
-  if (removedNativeHost.reason) throw new Error(`Windows Native Messaging ownership changed during uninstall: ${removedNativeHost.reason}`);
-
   const layout = platformPathsImpl({ platform: "win32", arch: installation.arch, homeDir, env });
   if (!sameWindowsPath(layout.appDataRoot, installation.installRoot)
       || !sameWindowsPath(layout.programRoot, installation.programRoot)
       || !sameWindowsPath(layout.nativeMessagingManifestRoot, installation.nativeMessagingManifestRoot)) {
     throw new Error("Windows uninstall managed layout changed unexpectedly.");
   }
+  const mainRoot = removeUserData ? null : await inspectOwnedMainStateImpl({
+    platform: "win32", arch: installation.arch, homeDir, env, fsImpl,
+  });
+  if (!removeUserData) await verifyUninstallDirectoryIfPresent(layout.runtimeRoot, { fsImpl });
+  await unregisterStartupImpl({ expectedCommand: expectedStartupCommand, execFileImpl, env });
+  const removedNativeHost = await unregisterNativeMessagingImpl({ manifestPath: ownership.manifestPath, launcherPath, fsImpl, env });
+  if (removedNativeHost.reason) throw new Error(`Windows Native Messaging ownership changed during uninstall: ${removedNativeHost.reason}`);
+
   await removePathImpl(installation.programRoot, { recursive: true, fsImpl });
   if (removeUserData) {
     await removePathImpl(installation.installRoot, { recursive: true, fsImpl });
@@ -236,6 +317,7 @@ export async function runWindowsEquinoxLocalUninstall({
     const directoryTargets = [installation.releasesRoot, installation.stagingRoot, layout.runtimeRoot, layout.logsRoot,
       path.win32.join(installation.installRoot, "secrets"), path.win32.join(installation.installRoot, "tunnel-profile")];
     const fileTargets = [installation.currentPointer, path.win32.join(installation.installRoot, "transport.json"), path.win32.join(installation.installRoot, "update-state.json")];
+    if (mainRoot) directoryTargets.push(mainRoot);
     for (const target of directoryTargets) await removePathImpl(target, { recursive: true, fsImpl });
     for (const target of fileTargets) await removePathImpl(target, { fsImpl });
   }
@@ -265,6 +347,9 @@ export async function runEquinoxLocalUninstallHelper({
   }
   if (!Number.isInteger(uid) || uid <= 0) throw new Error("A non-root user id is required for Equinox Local uninstall.");
 
+  const layout = equinoxLocalPlatformPaths({ platform, arch, homeDir, env });
+  const mainRoot = removeUserData ? null : await inspectOwnedMainUninstallState({ platform, arch, homeDir, env, fsImpl });
+  if (!removeUserData) await verifyUninstallDirectoryIfPresent(layout.runtimeRoot, { fsImpl });
   await sleepImpl(START_DELAY_MS);
   await execFileImpl("/bin/launchctl", [
     "bootout",
@@ -285,6 +370,8 @@ export async function runEquinoxLocalUninstallHelper({
       installation.currentLink,
       installation.releasesRoot,
       installation.stagingRoot,
+      layout.runtimeRoot,
+      ...(mainRoot ? [mainRoot] : []),
       path.join(installation.installRoot, "secrets"),
       path.join(installation.installRoot, "transport.json"),
       path.join(installation.installRoot, "tunnel-profile"),
@@ -293,7 +380,7 @@ export async function runEquinoxLocalUninstallHelper({
       path.join(installation.installRoot, "update-state.json"),
     ]) {
       await removeIfExists(target, {
-        recursive: target === installation.releasesRoot || target === installation.stagingRoot || target.endsWith("/secrets") || target.endsWith("/tunnel-profile"),
+        recursive: target === installation.releasesRoot || target === installation.stagingRoot || target === layout.runtimeRoot || target === mainRoot || target.endsWith("/secrets") || target.endsWith("/tunnel-profile"),
         fsImpl,
       });
     }
