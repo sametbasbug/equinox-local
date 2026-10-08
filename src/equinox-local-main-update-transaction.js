@@ -7,6 +7,7 @@ import { promisify } from "node:util";
 
 import { readEquinoxLocalMainSourcePointer, writeEquinoxLocalMainSourcePointer } from "./equinox-local-main-source-pointer.js";
 import { equinoxLocalGitExecutionEnvironment } from "./equinox-local-toolchain-contract.js";
+import { installPrebuiltDependencies, validateManagedSource } from "./equinox-local-managed-source-enrollment.js";
 import {
   EQUINOX_LOCAL_MAIN_BRANCH,
   EQUINOX_LOCAL_MAIN_REMOTE,
@@ -152,6 +153,7 @@ export function createEquinoxLocalMainUpdateTransactionEngine({
   gitPath = "git",
   nodePath = process.execPath,
   npmPath = null,
+  shellPath = null,
   installDependencies = async ({ stagedSourceRoot }) => {
     if (npmPath) {
       await installPrebuiltDependencies(stagedSourceRoot, { nodePath, npmPath }, { execFileImpl, fsImpl });
@@ -161,7 +163,7 @@ export function createEquinoxLocalMainUpdateTransactionEngine({
   },
   validateStagedSource = async ({ stagedSourceRoot }) => {
     if (npmPath) {
-      await validateManagedSource(stagedSourceRoot, { nodePath, npmPath }, { execFileImpl, fsImpl });
+      await validateManagedSource(stagedSourceRoot, { nodePath, npmPath, shellPath }, { execFileImpl, fsImpl });
       return;
     }
     await run("npm", ["run", "check"], { cwd: stagedSourceRoot, execFileImpl });

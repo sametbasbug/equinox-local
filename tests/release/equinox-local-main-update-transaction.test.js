@@ -10,16 +10,28 @@ import { EQUINOX_LOCAL_MAIN_REMOTE } from "../../src/equinox-local-main-update.j
 const CURRENT = "1".repeat(40);
 const TARGET = "2".repeat(40);
 
-async function fixture(t, { failValidation = false, stagedHead = TARGET } = {}) {
+async function fixture(t, { failValidation = false, stagedHead = TARGET, usePinnedDefaults = false } = {}) {
   const parent = await fs.mkdtemp(path.join(await fs.realpath(os.tmpdir()), "equinox-m6-"));
   const sourceRoot = path.join(parent, "active");
   const transactionRoot = path.join(parent, "state");
   await fs.mkdir(sourceRoot);
   t.after(() => fs.rm(parent, { recursive: true, force: true }));
   const calls = [];
+  const ownedNode = path.join(parent, "pinned-node");
+  const ownedNpm = path.join(parent, "pinned-npm-cli.js");
   const execFileImpl = async (command, args, options = {}) => {
     calls.push({ command, args: [...args], cwd: options.cwd ?? null });
     const joined = args.join(" ");
+    if (command === ownedNode) {
+      if (args[0] === ownedNpm && args[1] === "ci") {
+        const lifecycleDir = path.join(options.cwd, "node_modules", "node-pty", "scripts");
+        await fs.mkdir(lifecycleDir, { recursive: true });
+        for (const name of ["prebuild.js", "post-install.js"]) {
+          await fs.writeFile(path.join(lifecycleDir, name), "// fake pinned prebuilt acceptance\n");
+        }
+      }
+      return { stdout: "", stderr: "" };
+    }
     if (command === "git" && joined === `-C ${sourceRoot} rev-parse --show-toplevel`) return { stdout: `${sourceRoot}\n`, stderr: "" };
     if (command === "git" && joined === `-C ${sourceRoot} rev-parse HEAD`) return { stdout: `${CURRENT}\n`, stderr: "" };
     if (command === "git" && joined === `-C ${sourceRoot} symbolic-ref --quiet --short HEAD`) return { stdout: "main\n", stderr: "" };
@@ -40,8 +52,14 @@ async function fixture(t, { failValidation = false, stagedHead = TARGET } = {}) 
     sourceRoot, transactionRoot, execFileImpl,
     now: (() => { let n = 0; return () => new Date(1_800_000_000_000 + n++ * 1000); })(),
     randomBytesImpl: () => Buffer.alloc(16, 0xab),
-    installDependencies: async (value) => installs.push(value),
-    validateStagedSource: async (value) => { validations.push(value); if (failValidation) throw new Error("synthetic staged validation failure\nsecond line"); },
+    ...(usePinnedDefaults ? {
+      nodePath: ownedNode,
+      npmPath: ownedNpm,
+      shellPath: process.platform === "win32" ? "C:\\owned\\git\\usr\\bin\\sh.exe" : null,
+    } : {
+      installDependencies: async (value) => installs.push(value),
+      validateStagedSource: async (value) => { validations.push(value); if (failValidation) throw new Error("synthetic staged validation failure\nsecond line"); },
+    }),
   });
   return { sourceRoot, calls, installs, validations, engine };
 }
@@ -86,6 +104,20 @@ test("begin fails closed if active SHA changed after discovery", async (t) => {
   const { engine } = await fixture(t);
   await assert.rejects(engine.begin({ currentSha: TARGET, targetSha: "3".repeat(40) }), /changed after update discovery/u);
   assert.equal(await engine.readActive(), null);
+});
+
+test("pinned production defaults run owned npm, node-pty prebuilt scripts and staged validation before Main promotion", async (t) => {
+  const { engine, calls } = await fixture(t, { usePinnedDefaults: true });
+  const staged = await engine.stage({ currentSha: CURRENT, targetSha: TARGET });
+  assert.equal(staged.receipt.status, "staged");
+  const ownedCalls = calls.filter(({ command }) => command.includes("pinned-node"));
+  assert.equal(ownedCalls.length, 5);
+  assert.deepEqual(ownedCalls[0].args.slice(0, 3), [path.join(path.dirname(engine.paths.transactionRoot), "pinned-npm-cli.js"), "ci", "--ignore-scripts"]);
+  assert.equal(ownedCalls.some(({ args }) => args.some((arg) => arg.endsWith("prebuild.js"))), true);
+  assert.equal(ownedCalls.some(({ args }) => args.some((arg) => arg.endsWith("post-install.js"))), true);
+  assert.equal(ownedCalls.some(({ args }) => args.includes("run") && args.includes("check")), true);
+  assert.equal(ownedCalls.some(({ args }) => args.includes("tests/release/equinox-local-main-update.test.js")), true);
+  await engine.releaseStagedLock(staged.receipt.transactionId);
 });
 
 test("stage prepares exact canonical main bytes without mutating active source", async (t) => {

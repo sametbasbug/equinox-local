@@ -104,6 +104,7 @@ export async function resolveEquinoxLocalManagedSourceInstallation({
     gitPath: managedGitPath,
     nodePath: managedGitPath ? toolchain.nodePath : null,
     npmPath: managedGitPath ? toolchain.npmPath : null,
+    shellPath: managedGitPath ? toolchain.shellPath : null,
     toolchainRoot: managedGitPath ? toolchain.toolchainRoot : null,
   });
 }

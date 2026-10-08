@@ -130,6 +130,7 @@ test("managed-source resolver prefers exact product-owned Git when the M8 toolch
   assert.equal(resolved.gitPath, managedGit);
   assert.match(resolved.nodePath, /runtime\/toolchain\/node\/26\.10\.0\/darwin-arm64\/bin\/node$/u);
   assert.match(resolved.npmPath, /npm-cli\.js$/u);
+  assert.equal(resolved.shellPath, null);
 });
 
 test("managed-source resolver preserves Stable identity when no stamp exists and fails closed on unsafe stamp", async (t) => {

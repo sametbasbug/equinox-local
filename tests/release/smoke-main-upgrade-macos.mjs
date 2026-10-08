@@ -44,6 +44,34 @@ async function jsonApi(route, { mutate = false, token = null } = {}) {
   return body;
 }
 
+// Hosted-runner-only failure evidence. Preserve Control Center's generic HTTP
+// 500 response for every real user; never log raw local files or credentials.
+function boundedDiagnostic(value) {
+  return String(value ?? "unknown")
+    .replace(/\b(?:Bearer\s+\S+|github_pat_\w+|gh[pousr]_\w+)\b/giu, "[REDACTED]")
+    .replace(/\b(?:token|secret|password|credential|api[_-]?key)\s*[:=]\s*[^\s,;]+/giu, "[REDACTED]")
+    .replace(/\bhttps?:\/\/[^\s]+/giu, "[REDACTED_URL]")
+    .replace(/(?:\/Users\/|\/private\/|\/var\/|\/tmp\/)[^\s"'`;,]*/gu, "[REDACTED_PATH]")
+    .replace(/[\r\n\x00-\x1f\x7f]+/gu, " ")
+    .slice(0, 350);
+}
+
+async function printApplyFailureEvidence(transactionRoot) {
+  try {
+    const result = await jsonApi("/api/v1/update");
+    const main = result.update?.main;
+    console.error(`[M8 native diagnostic] applyError=${boundedDiagnostic(main?.applyError)} applyAvailable=${Boolean(main?.applyAvailable)} state=${boundedDiagnostic(main?.state)} transition=${boundedDiagnostic(main?.targetSha)}`);
+  } catch { console.error("[M8 native diagnostic] updater snapshot unavailable"); }
+  try {
+    const root = path.join(transactionRoot, "receipts");
+    const files = (await fs.readdir(root)).filter((name) => /^main-[a-f0-9]{32}\.json$/u.test(name)).slice(-4);
+    for (const name of files) {
+      const record = JSON.parse((await fs.readFile(path.join(root, name), "utf8")).slice(0, 65536));
+      console.error(`[M8 native diagnostic] receipt status=${boundedDiagnostic(record.status)} stage=${boundedDiagnostic(record.stage)} error=${boundedDiagnostic(record.lastError)}`);
+    }
+  } catch { console.error("[M8 native diagnostic] no readable transaction receipts"); }
+}
+
 async function awaitHealthy(expectedSha, { kind = "managed-source", timeoutMs = 120_000 } = {}) {
   return await poll(async () => {
     const { status } = await jsonApi("/api/v1/status");
@@ -126,7 +154,13 @@ async function run() {
     const discovery = await jsonApi("/api/v1/update");
     assert.equal(discovery.update?.main?.targetSha, targetSha, "the separately admitted Main snapshot must be the exact target");
     assert.equal(discovery.update?.main?.applyAvailable, true);
-    const response = await jsonApi("/api/v1/update/apply", { mutate: true, token: csrfToken });
+    let response;
+    try {
+      response = await jsonApi("/api/v1/update/apply", { mutate: true, token: csrfToken });
+    } catch (error) {
+      await printApplyFailureEvidence(transactionRoot);
+      throw error;
+    }
     assert.equal(response.result?.targetSha, targetSha);
     const transactionId = response.result.transactionId;
     assert.match(transactionId, /^main-[a-f0-9]{32}$/u);
