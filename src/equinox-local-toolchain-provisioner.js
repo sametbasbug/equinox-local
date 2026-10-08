@@ -304,6 +304,29 @@ async function validateComponentIdentity(root, component, contract, { platform, 
     const pathApi = platform === "win32" ? path.win32 : path.posix;
     const gitPath = pathApi.join(root, platform === "win32" ? "cmd/git.exe" : "bin/git");
     await assertNormalFile(gitPath, "Product-owned Git", { executable: platform !== "win32", platform, fsImpl });
+    if (platform === "darwin") {
+      // A valid `git --version` cannot prove HTTPS works: pinned macOS Dugite
+      // reports //libexec/git-core unless the product selects its helpers.
+      // Verify both real helpers and templates on *every* install/reuse before
+      // a user reaches Main enrollment or a detached update transaction.
+      const helpers = path.join(root, "libexec", "git-core");
+      const templates = path.join(root, "share", "git-core", "templates");
+      for (const directory of [helpers, templates]) {
+        const [info, real] = await Promise.all([fsImpl.lstat(directory), fsImpl.realpath(directory)]);
+        if (!info.isDirectory() || info.isSymbolicLink() || real !== directory) {
+          throw new Error("Product-owned macOS Git helpers or templates are unsafe.");
+        }
+      }
+      const remoteHttps = path.join(helpers, "git-remote-https");
+      const resolved = await fsImpl.realpath(remoteHttps);
+      if (!resolved.startsWith(`${helpers}${path.sep}`)) {
+        throw new Error("Product-owned macOS Git HTTPS helper escaped its pinned distribution.");
+      }
+      const helperStat = await fsImpl.stat(remoteHttps);
+      if (!helperStat.isFile() || (helperStat.mode & 0o111) === 0) {
+        throw new Error("Product-owned macOS Git HTTPS helper is missing or not executable.");
+      }
+    }
     if (platform === "win32") {
       const shellPath = pathApi.join(root, "usr", "bin", "sh.exe");
       await assertNormalFile(shellPath, "Product-owned POSIX shell", { platform, fsImpl });

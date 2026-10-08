@@ -5,6 +5,7 @@ All notable public changes to Equinox Local will be documented here.
 This project follows semantic versioning for public releases.
 
 ## [Unreleased]
+- Validate the bundled macOS Git HTTPS helper and template directory during pinned toolchain install/reuse, rejecting incomplete or tampered archives before managed-source enrollment.
 - Fixed the pinned macOS Dugite Git distribution's root-relative helper discovery: managed-source enrollment and Main update transactions now explicitly select product-owned `libexec/git-core`/`share/git-core/templates`, allowing HTTPS clone/fetch without ambient system Git. Proven using the exact SHA-256-pinned Git 2.53.0-4 archive after a real isolated macOS installation smoke found `git-remote-https` missing.
 - Added an opt-in GitHub-hosted macOS ARM64 installed-Main upgrade smoke: build a separately admitted source-A package, launch the real private-user native LaunchAgent and Control Center, upgrade through the production Update & restart API to the latest admitted Main snapshot, and verify the detached worker receipt plus healthy source-B runtime without touching developer machines. This is the positive-path first phase; forced-failure/rollback and Windows installed-host acceptance remain pending.
 - Fixed workflow terminal state visibility racing ahead of its durable JSON publication, including completed, failed, paused and cancelled transitions; added repeated immediate-disk-read regression coverage.
