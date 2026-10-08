@@ -128,3 +128,9 @@ The release tests under [`tests/release/`](../tests/release/) cover deterministi
 - Never commit a private key, credential, tunnel runtime key, or generated signed release bundle.
 - Treat a key rotation as an explicit trust-root change requiring review.
 - Publish artifacts only after the source tree, public tests and clean-machine release gates are green.
+
+## Dependency refresh before Equinox Local 6.0.0
+
+The pre-6.0.0 maintenance branch updates the product's pinned Node.js toolchain to **26.11.1** on all four supported native release targets, MCP SDK to **1.32.1**, PDF.js to **6.4.299**, Tunnel Client to **0.0.16** (macOS/Windows ARM64/x64), and universal macOS Peekaboo to **4.9.0**. Each native artifact's length/checksum remains explicitly pinned against the official release's published distribution metadata. The macOS ARM64 Node/Tunnel/Peekaboo release archives were also downloaded and verified locally, and the new binaries were exercised. No installed client is implicitly migrated to a different update channel.
+
+Dugite Native **2.53.0-4**, Windows WinApp CLI **0.7.1**, Microsoft WebView2 **1.0.4258.31**, and the existing stable GitHub Actions major versions were checked and retained because no newer applicable stable upstream release was found at this checkpoint. `node-pty` remains on **1.2.0-beta.15** (latest beta); npm's generic `latest` dist-tag points to older stable 1.1.0 and should not be used as a downgrade. The dependencies update does **not** itself publish a Stable Equinox Local 6.0.0 release or a new Equinox Browser package.

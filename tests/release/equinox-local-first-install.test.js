@@ -156,8 +156,8 @@ test("Windows x64 first-install release validation accepts native runtime names 
       schemaVersion: 1,
       version: "5.2.1",
       target: "win32-x64",
-      nodeVersion: "26.10.0",
-      tunnelClientVersion: "0.0.15",
+      nodeVersion: "26.11.1",
+      tunnelClientVersion: "0.0.16",
       serverEntry: "server.js",
     })}\n`);
     const contract = equinoxLocalReleaseRuntimeContract({ target: "win32-x64", version: "5.2.1" });
@@ -610,8 +610,8 @@ async function createRealWindowsFirstInstallFixture(version = "5.2.1") {
     schemaVersion: 1,
     version,
     target: "win32-x64",
-    nodeVersion: "26.10.0",
-    tunnelClientVersion: "0.0.15",
+    nodeVersion: "26.11.1",
+    tunnelClientVersion: "0.0.16",
     serverEntry: "server.js",
   })}\n`);
   const contract = equinoxLocalReleaseRuntimeContract({ target: "win32-x64", version });
