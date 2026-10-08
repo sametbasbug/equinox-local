@@ -658,6 +658,11 @@ function freshChatResumeReceiptResult(receipt, duplicatePrevented = false) {
   };
 }
 
+// Shared trusted submit target for Fresh Chat Resume and Telegram Chat Bridge.
+// Current ChatGPT: primary action is type=submit after typing (voice/stop stay type=button).
+// Previous ChatGPT variants: legacy send test-id or composer-submit-button.
+const CHATGPT_SEND_SELECTOR = '[data-composer-body] button.bg-composer-primary[type="submit"], button[data-testid="send-button"][type="submit"], button#composer-submit-button[type="submit"]:not([data-testid="stop-button"])';
+
 async function freshChatComposerState(tabId) {
   const tab = await chrome.tabs.get(tabId);
   const homeRoute = chatGptFreshHomeRoute(tab);
@@ -883,8 +888,8 @@ async function createFreshChatResume({ resumeId, sourceTabId, sourceConversation
           expression: `(() => {
             // Fresh Chat Resume trusted submit target
             const composer = document.querySelector('#prompt-textarea[contenteditable="true"][role="textbox"], [data-composer-markdown][contenteditable="true"][role="textbox"]');
-            const button = document.querySelector('button[data-testid="send-button"][type="submit"]');
-            const turns = document.querySelectorAll('[data-message-author-role], section[data-turn]');
+            const button = document.querySelector(${JSON.stringify(CHATGPT_SEND_SELECTOR)});
+            const turns = document.querySelectorAll('[data-message-author-role], section[data-turn], [data-turn-key]');
             if (turns.length) return { ready: false, reason: "destination_not_empty" };
             if (!composer || !button || !button.isConnected) return { ready: false, reason: "send_button_missing" };
             if (String(composer.textContent || "") !== ${JSON.stringify(message)}) return { ready: false, reason: "composer_changed" };
@@ -920,7 +925,7 @@ async function createFreshChatResume({ resumeId, sourceTabId, sourceConversation
       if (!ready) throw new Error(`Fresh Chat Resume submit target timed out: ${lastSubmitReason}`);
       await clickSelectorWithActionability(
         created.id,
-        'button[data-testid="send-button"][type="submit"]',
+        CHATGPT_SEND_SELECTOR,
         { label: "send button" },
       );
       await updateFreshChatResumeReceipt(resumeId, { status: "submitted" });
@@ -1364,30 +1369,14 @@ async function deliverAutoContinuation({
 
 
 async function readChatBridgeAttachedState(tabId) {
-  const result = await send(tabId, "Runtime.evaluate", {
-    expression: `(() => {
-      // Chat Bridge attached state: identity only; never read transcript text.
-      const last = (values) => values.length ? values[values.length - 1] : null;
-      const userMessages = [...document.querySelectorAll('[data-message-author-role="user"][data-message-id]')];
-      const assistantMessages = [...document.querySelectorAll('[data-message-author-role="assistant"][data-message-id]')];
-      const userTurns = [...document.querySelectorAll('section[data-turn="user"][data-testid]')];
-      const assistantTurns = [...document.querySelectorAll('section[data-turn="assistant"][data-testid]')];
-      const composer = document.querySelector('#prompt-textarea[contenteditable="true"][role="textbox"], [data-composer-markdown][contenteditable="true"][role="textbox"]');
-      return {
-        generationActive: Boolean(document.querySelector('button[data-testid="stop-button"]')),
-        userEpoch: last(userMessages)?.getAttribute('data-message-id') || last(userTurns)?.getAttribute('data-testid') || null,
-        assistantTurnKey: last(assistantTurns)?.getAttribute('data-testid') || last(assistantMessages)?.getAttribute('data-message-id') || null,
-        composerReady: Boolean(composer),
-        composerEmpty: Boolean(composer) && !String(composer.textContent || '').trim(),
-      };
-    })()`,
-    returnByValue: true,
-    silent: true,
-  });
-  if (result?.exceptionDetails) throw new Error(result.exceptionDetails?.exception?.description || result.exceptionDetails?.text || "Chat Bridge attached state failed.");
-  const state = normalizeChatGptContinuationState(result?.result?.value);
-  if (!state) throw new Error("Chat Bridge attached state returned invalid turn state.");
-  return state;
+  // The existing Auto Continue content observer is the canonical, modern
+  // data-turn-key/search-unit/ProseMirror reader. Chat Bridge must use the SAME
+  // user/assistant epochs and generation state instead of the removed legacy
+  // data-message-id DOM; never infer an idle conversation from missing old nodes.
+  const state = await chatGptContinuationState(tabId);
+  const normalized = normalizeChatGptContinuationState(state);
+  if (!normalized) throw new Error("Chat Bridge current ChatGPT observer returned invalid turn state.");
+  return normalized;
 }
 
 async function inspectChatBridgeState({ tabId } = {}) {
@@ -1489,7 +1478,7 @@ async function deliverChatBridgeMessage({
     await send(tabId, "Input.insertText", { text: message });
     stage = "filled";
 
-    const chatBridgeSendSelector = 'button[data-testid="send-button"][type="submit"], button#composer-submit-button[type="submit"]:not([data-testid="stop-button"])';
+    const chatBridgeSendSelector = CHATGPT_SEND_SELECTOR;
     const submitDeadline = Date.now() + 4_000;
     let submitReady = false;
     let lastSubmitReason = "not_ready";
@@ -1586,12 +1575,20 @@ async function readChatBridgeFinalResponse({
       expression: `(() => {
         // Chat Bridge final response: read only the exact completed assistant turn requested by Local.
         const key = ${JSON.stringify(state.assistantTurnKey)};
-        const roots = [...document.querySelectorAll('section[data-turn="assistant"][data-testid], [data-message-author-role="assistant"][data-message-id]')];
-        const root = roots.find((node) => node.getAttribute('data-testid') === key || node.getAttribute('data-message-id') === key);
+        // In current ChatGPT the observer's assistantTurnKey is the parent
+        // data-turn-key (the user epoch), not an old data-message-id. Resolve
+        // the *same exact turn* and read only its assistant render subtree.
+        const modernTurn = [...document.querySelectorAll('[data-turn-key]')]
+          .find((node) => node.getAttribute('data-turn-key') === key);
+        const modernAssistant = modernTurn?.querySelector('[data-chatgpt-search-unit-key$=":assistant"][data-chatgpt-search-message-ids]');
+        const legacyRoots = [...document.querySelectorAll('section[data-turn="assistant"][data-testid], [data-message-author-role="assistant"][data-message-id]')];
+        const legacyRoot = legacyRoots.find((node) => node.getAttribute('data-testid') === key || node.getAttribute('data-message-id') === key);
+        const root = modernAssistant || legacyRoot;
         if (!root) return { found: false };
-        const body = root.matches('[data-message-author-role="assistant"]')
-          ? root
-          : (root.querySelector('[data-message-author-role="assistant"]') || root);
+        const body = modernAssistant
+          ? (modernAssistant.querySelector('[data-chatgpt-selection-message-id]') || modernAssistant)
+          : (legacyRoot.matches('[data-message-author-role="assistant"]')
+            ? legacyRoot : (legacyRoot.querySelector('[data-message-author-role="assistant"]') || legacyRoot));
         const raw = String(body.innerText || body.textContent || '').trim();
         if (!raw) return { found: true, empty: true };
         const chars = [...raw];

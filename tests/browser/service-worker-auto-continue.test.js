@@ -414,7 +414,7 @@ test("pinned Auto Continue target is profile-local and fails closed after conver
   assert.equal(drifted.reason, "pinned_conversation_changed");
 });
 
-test("Chat Bridge v9 inspect reads turn identity without the passive content-script observer", async () => {
+test("Chat Bridge v9 inspect reads the same modern turn identity as Auto Continue", async () => {
   const h = await harness();
   const state = await h.api.inspectChatBridgeState({ tabId: 42 });
   assert.equal(state.chatBridgeVersion, 9);
