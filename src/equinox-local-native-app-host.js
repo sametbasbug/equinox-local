@@ -395,10 +395,11 @@ export async function synchronizeEquinoxLocalAppHostForRelease({
   releaseDir,
   fsImpl = fs,
   execFileImpl = execFile,
+  requirePayloadIdentity = false,
 } = {}) {
   const homeDir = homeDirFromInstallation(installation);
   try {
-    return await synchronizeEquinoxLocalNativeAppHost({ homeDir, releaseDir, fsImpl, execFileImpl });
+    return await synchronizeEquinoxLocalNativeAppHost({ homeDir, releaseDir, fsImpl, execFileImpl, requirePayloadIdentity });
   } catch (error) {
     if (error?.code !== "ENOENT") throw error;
     try {
