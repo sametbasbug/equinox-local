@@ -38,6 +38,17 @@ async function nativeAppSignatureInfo(appPath) {
 
 test("native app source keeps the menu-bar safety lifecycle", async () => {
   const source = await fs.readFile(path.join(ROOT, "app", "EquinoxLocalApp.swift"), "utf8");
+  // A detached managed LaunchAgent may use a contained alternate HOME. The
+  // bundled Swift host must follow that trusted installRoot, not the fixed OS
+  // account home, while its foreground app keeps the normal user-home path.
+  const wrapperSelection = source.match(/private func runtimeWrapperURL\(\) -> URL \{[\s\S]*?\n\}/u)?.[0] ?? "";
+  assert.match(wrapperSelection, /EQUINOX_LOCAL_RUNTIME_HOST/u);
+  assert.match(wrapperSelection, /EQUINOX_LOCAL_INSTALL_ROOT/u);
+  assert.match(wrapperSelection, /environment\["HOME"\]/u);
+  assert.match(wrapperSelection, /rootURL\.path == expectedRoot\.path/u);
+  assert.match(wrapperSelection, /homeURL\.path == home/u);
+  assert.match(wrapperSelection, /return defaultRoot\.appendingPathComponent/u);
+
   assert.match(source, /NSStatusBar\.system\.statusItem/u);
   assert.match(source, /applicationShouldTerminateAfterLastWindowClosed[\s\S]*?false/u);
   assert.match(source, /restartShellMode \? \(storedControlCenterVisibility \?\? true\) : true/u);
