@@ -63,7 +63,7 @@ async function fixture(t) {
     sourceRoot, transactionRoot, execFileImpl: gitForLocalAdmission,
     installDependencies: async () => {},
     validateStagedSource: async ({ stagedSourceRoot }) => {
-      assert.equal(await fs.readFile(path.join(stagedSourceRoot, "fixture.txt"), "utf8"), "version-B\n");
+      assert.equal((await fs.readFile(path.join(stagedSourceRoot, "fixture.txt"), "utf8")).replace(/\r\n/gu, "\n"), "version-B\n");
     },
   });
   return { root, sourceRoot, transactionRoot, A, B, engine, gitForLocalAdmission };
@@ -175,7 +175,7 @@ for (const failure of [false, true]) {
         const { stdout } = await execFile(process.execPath, ["-e", probe, pointerPath], { timeout: 10_000, windowsHide: true });
         const measured = JSON.parse(stdout);
         assert.equal(measured.sha, pointer.sha);
-        assert.equal(measured.content, rollback ? "version-A\n" : "version-B\n");
+        assert.equal(measured.content.replace(/\r\n/gu, "\n"), rollback ? "version-A\n" : "version-B\n");
         runtime.state = measured.health;
         events.push(rollback ? "restart-A" : "restart-B");
       },
