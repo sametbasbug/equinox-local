@@ -67,10 +67,15 @@ export async function restartEquinoxLocalMainSourceRuntime({
   return Object.freeze({ requested: true, platform: "darwin" });
 }
 
-async function waitForExactSourceHealth({ sha, sourceRoot, pointerPath, gitPath = "git", fetchImpl = globalThis.fetch, sleepImpl = (ms) => new Promise((resolve) => setTimeout(resolve, ms)), attempts = HEALTH_ATTEMPTS }) {
-  const pointer = await readEquinoxLocalMainSourcePointer(pointerPath, { gitPath });
+export async function waitForExactSourceHealth({
+  sha, sourceRoot, pointerPath, gitPath = "git", fetchImpl = globalThis.fetch,
+  sleepImpl = (ms) => new Promise((resolve) => setTimeout(resolve, ms)), attempts = HEALTH_ATTEMPTS,
+  readPointerImpl = readEquinoxLocalMainSourcePointer,
+  inspectCheckoutImpl = inspectCanonicalMainCheckout,
+}) {
+  const pointer = await readPointerImpl(pointerPath, { gitPath });
   if (pointer.sha !== sha || pointer.sourceRoot !== sourceRoot) throw new Error("Main update source pointer does not match the expected runtime identity.");
-  const checkout = await inspectCanonicalMainCheckout(sourceRoot, { gitPath });
+  const checkout = await inspectCheckoutImpl(sourceRoot, { gitPath });
   if (!checkout.eligible || checkout.currentSha !== sha) throw new Error("Main update runtime checkout does not match the expected canonical SHA.");
   let lastError = null;
   for (let attempt = 0; attempt < attempts; attempt += 1) {
@@ -78,8 +83,13 @@ async function waitForExactSourceHealth({ sha, sourceRoot, pointerPath, gitPath 
       const response = await fetchImpl(EQUINOX_LOCAL_CONTROL_CENTER_STATUS_URL, { method: "GET", redirect: "error", cache: "no-store", credentials: "omit", headers: { accept: "application/json" } });
       if (!response?.ok) throw new Error(`HTTP ${response?.status ?? "unknown"}`);
       const body = await response.json();
-      if (body?.status?.health?.state === "HEALTHY") return true;
-      throw new Error(`health=${body?.status?.health?.state ?? "unknown"}`);
+      const observed = body?.status;
+      if (observed?.health?.state === "HEALTHY"
+        && observed?.installation?.kind === "managed-source"
+        && observed?.installation?.sourceSha === sha) return true;
+      // A native relaunch can race the old A server staying HEALTHY on the
+      // loopback port. Never call source B admitted until B itself responds.
+      throw new Error("Main update runtime health or installed source SHA has not converged.");
     } catch (error) {
       lastError = error;
       if (attempt + 1 < attempts) await sleepImpl(HEALTH_DELAY_MS);
@@ -123,6 +133,7 @@ export async function runEquinoxLocalMainUpdateWorker({
       gitPath: toolchain.gitPath,
       nodePath: toolchain.nodePath,
       npmPath: toolchain.npmPath,
+      shellPath: toolchain.shellPath,
     });
     let active = await engine.readActive();
     if (!active || active.transactionId !== args.transactionId) throw new Error("Main update worker does not own the active transaction.");

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { restartEquinoxLocalMainSourceRuntime, runEquinoxLocalMainUpdateWorker } from "../../src/equinox-local-main-update-worker.js";
+import { restartEquinoxLocalMainSourceRuntime, runEquinoxLocalMainUpdateWorker, waitForExactSourceHealth } from "../../src/equinox-local-main-update-worker.js";
 
 const TX = `main-${"a".repeat(32)}`;
 const SOURCE = "/private/tmp/equinox-source-a";
@@ -217,4 +217,46 @@ test("worker releases a stale terminal success lock without replaying mutation",
   assert.equal(result.status, "succeeded");
   assert.equal(result.recovered, true);
   assert.deepEqual(calls, [TX]);
+});
+
+
+test("native health rejects healthy A until restarted Control Center actually serves exact source B", async () => {
+  const states = [
+    { health: { state: "HEALTHY" }, installation: { kind: "managed-source", sourceSha: A } },
+    { health: { state: "HEALTHY" }, installation: { kind: "managed", sourceSha: B } },
+    { health: { state: "HEALTHY" }, installation: { kind: "managed-source", sourceSha: B } },
+  ];
+  let requests = 0;
+  const result = await waitForExactSourceHealth({
+    sha: B, sourceRoot: SOURCE, pointerPath: `${STATE}/current-source.conf`, gitPath: "/pinned/git",
+    attempts: states.length, sleepImpl: async () => {},
+    readPointerImpl: async () => ({ sha: B, sourceRoot: SOURCE }),
+    inspectCheckoutImpl: async () => ({ eligible: true, currentSha: B }),
+    fetchImpl: async () => ({ ok: true, json: async () => ({ status: states[requests++] }) }),
+  });
+  assert.equal(result, true);
+  assert.equal(requests, 3, "old A and Stable must never be mistaken for restarted managed-source B");
+});
+
+test("native health fails closed when old A remains HEALTHY after requested restart", async () => {
+  let requests = 0;
+  await assert.rejects(waitForExactSourceHealth({
+    sha: B, sourceRoot: SOURCE, pointerPath: `${STATE}/current-source.conf`, attempts: 2,
+    readPointerImpl: async () => ({ sha: B, sourceRoot: SOURCE }),
+    inspectCheckoutImpl: async () => ({ eligible: true, currentSha: B }),
+    sleepImpl: async () => {},
+    fetchImpl: async () => { requests++; return { ok: true, json: async () => ({ status: { health: { state: "HEALTHY" }, installation: { kind: "managed-source", sourceSha: A } } }) }; },
+  }), /has not converged/u);
+  assert.equal(requests, 2);
+});
+
+test("Main worker passes pinned Windows Git shell into recovery engine", async () => {
+  let options;
+  await runEquinoxLocalMainUpdateWorker({
+    argv: argv(), resolveHostTarget: () => "win32-arm64",
+    engineFactory: (input) => { options = input; return { readActive: async () => preparedReceipt({ status: "succeeded", stage: "healthy" }), releaseStagedLock: async () => true }; },
+    cleanupImpl: async () => {},
+  });
+  assert.match(options.shellPath, /\\git\\[^\\]+\\win32-arm64\\usr\\bin\\sh\.exe$/iu);
+  assert.match(options.gitPath, /\\cmd\\git\.exe$/iu);
 });
