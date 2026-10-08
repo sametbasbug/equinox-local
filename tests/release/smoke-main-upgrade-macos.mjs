@@ -159,6 +159,29 @@ async function run() {
   const authHook = path.join(scratch, "github-discovery-read-auth.mjs");
   await fs.writeFile(tokenFile, githubReadToken, { flag: "wx", mode: 0o600 });
   const authCode = String.raw`import fs from "node:fs";
+import childProcess from "node:child_process";
+import { syncBuiltinESMExports } from "node:module";
+// The real product supervisor correctly strips NODE_OPTIONS for child servers.
+// Only on this isolated hosted runner, and only for this owned Main server,
+// re-apply the test preload without changing the shipped product boundary.
+if (process.argv[1]?.endsWith("/equinox-local-supervisor.js")) {
+  const originalSpawn = childProcess.spawn;
+  const ownedRoot = ${JSON.stringify(installRoot)};
+  childProcess.spawn = (file, args, options = {}) => {
+    const script = Array.isArray(args) ? args[0] : null;
+    if (typeof file === "string" && file.endsWith("/node") &&
+        typeof script === "string" && script.startsWith(ownedRoot + "/") &&
+        (script.endsWith("/server.js") || script.endsWith("/src/server.js")) &&
+        typeof options.cwd === "string" && options.cwd.startsWith(ownedRoot + "/")) {
+      return originalSpawn(file, args, {
+        ...options,
+        env: { ...options.env, NODE_OPTIONS: "--import=" + import.meta.url },
+      });
+    }
+    return originalSpawn(file, args, options);
+  };
+  syncBuiltinESMExports();
+}
 const original = globalThis.fetch;
 const token = fs.readFileSync(${JSON.stringify(tokenFile)}, "utf8").trim();
 globalThis.fetch = (resource, init = {}) => {
