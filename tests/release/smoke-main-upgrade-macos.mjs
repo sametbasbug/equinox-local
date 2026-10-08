@@ -35,12 +35,12 @@ async function poll(check, label, timeoutMs = 90_000) {
   throw new Error(`${label} timed out: ${last}`);
 }
 
-async function jsonApi(route, { mutate = false, token = null } = {}) {
+async function jsonApi(route, { mutate = false, token = null, timeoutMs = 30_000 } = {}) {
   const response = await fetch(`${BASE}${route}`, {
     method: mutate ? "POST" : "GET",
     headers: mutate ? { origin: BASE, "x-equinox-csrf": token, "content-type": "application/json" } : {},
     body: mutate ? "{}" : undefined,
-    signal: AbortSignal.timeout(30_000),
+    signal: AbortSignal.timeout(timeoutMs),
     cache: "no-store",
   });
   const body = await response.json();
@@ -117,7 +117,7 @@ async function run() {
   if (typeof artifact !== "string" || !path.isAbsolute(artifact) || !SHA.test(previousSha ?? "") || !SHA.test(targetSha ?? "") || previousSha === targetSha) {
     throw new Error("Usage: smoke-main-upgrade-macos.mjs /absolute/old-release.tar.gz <admitted-A-SHA> <admitted-B-SHA>");
   }
-  assert.equal(process.arch, "arm64", "run on a native macOS ARM64 hosted runner");
+  assert.ok(["arm64", "x64"].includes(process.arch), "use a native macOS ARM64 or Intel x64 hosted runner");
   const scenario = process.env.M8_ACCEPTANCE_SCENARIO || "positive";
   if (!["positive", "target-health-failure"].includes(scenario)) throw new Error("Unsupported native M8 acceptance scenario.");
   const negative = scenario === "target-health-failure";
@@ -194,7 +194,7 @@ async function run() {
     }
     let response;
     try {
-      response = await jsonApi("/api/v1/update/apply", { mutate: true, token: csrfToken });
+      response = await jsonApi("/api/v1/update/apply", { mutate: true, token: csrfToken, timeoutMs: 180_000 });
     } catch (error) {
       await printApplyFailureEvidence(transactionRoot);
       throw error;

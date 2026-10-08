@@ -10,6 +10,14 @@ on:
         required: true
         default: e6f5fa6e1d264c233c94c4e87097e53b9bb6288a
         type: string
+      architecture:
+        description: Native macOS host architecture
+        required: true
+        default: arm64
+        type: choice
+        options:
+          - arm64
+          - x64
       scenario:
         description: Native installed-host path to accept
         required: true
@@ -27,9 +35,9 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  macos-arm64:
-    name: macOS ARM64 real installed A-to-Main upgrade
-    runs-on: macos-latest
+  macos-native:
+    name: macOS ${{ inputs.architecture }} real installed A-to-Main upgrade
+    runs-on: ${{ inputs.architecture == 'x64' && 'macos-15-intel' || 'macos-latest' }}
     timeout-minutes: 25
     env:
       OLD_SHA: ${{ inputs.previous_main_sha }}
@@ -52,7 +60,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test "$(node -p 'process.platform + "/" + process.arch')" = 'darwin/arm64'
+          test "$(node -p 'process.platform + "/" + process.arch')" = 'darwin/${{ inputs.architecture }}'
           test "$GITHUB_REPOSITORY" = "$EXPECTED_REPOSITORY"
           [[ "$OLD_SHA" =~ ^[a-f0-9]{40}$ ]]
           git cat-file -e "$OLD_SHA^{commit}"
@@ -66,7 +74,9 @@ jobs:
           git merge-base --is-ancestor "$tag" "$current"
           while IFS= read -r changed; do
             case "$changed" in
-              '.github/workflows/main-installed-acceptance.yml'|'tests/release/smoke-main-upgrade-macos.mjs') ;;
+              '.github/workflows/main-installed-acceptance.yml'|'tests/release/smoke-main-upgrade-macos.mjs'|\
+              '.github/workflows/main-installed-windows-acceptance.yml'|'tests/release/smoke-main-upgrade-windows.mjs'|\
+              'tests/release/smoke-main-upgrade-windows-fault.ps1'|'tests/release/windows-installer-real-package-smoke.ps1') ;;
               *) echo "Unadmitted production change in harness checkout: $changed" >&2; exit 1 ;;
             esac
           done < <(git diff --name-only "$tag" "$current")
@@ -82,7 +92,7 @@ jobs:
           cd "$RUNNER_TEMP/equinox-old-main"
           npm ci --prefer-offline --no-audit --no-fund
           npm run local:release:package
-          artifact="backups/local-packages/equinox-local-5.2.1-darwin-arm64.tar.gz"
+          artifact="backups/local-packages/equinox-local-5.2.1-darwin-${{ inputs.architecture }}.tar.gz"
           test -s "$artifact"
           echo "OLD_RELEASE_ARTIFACT=$PWD/$artifact" >> "$GITHUB_ENV"
 
