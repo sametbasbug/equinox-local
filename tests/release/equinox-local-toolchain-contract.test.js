@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import path from "node:path";
 import test from "node:test";
 
-import { equinoxLocalToolchainContract } from "../../src/equinox-local-toolchain-contract.js";
+import { equinoxLocalGitExecutionEnvironment, equinoxLocalToolchainContract } from "../../src/equinox-local-toolchain-contract.js";
 
 const DARWIN_RUNTIME = "/Users/example/Library/Application Support/Equinox Local/runtime";
 const WINDOWS_RUNTIME = "C:\\Users\\Example\\AppData\\Local\\Equinox Local\\runtime";
@@ -54,4 +54,22 @@ test("M8 toolchain contract rejects unsupported targets and unsafe roots", () =>
   assert.throws(() => equinoxLocalToolchainContract({ runtimeRoot: "relative/runtime", target: "darwin-arm64" }), /absolute path/u);
   assert.throws(() => equinoxLocalToolchainContract({ runtimeRoot: "/", target: "darwin-arm64" }), /filesystem root/u);
   assert.throws(() => equinoxLocalToolchainContract({ runtimeRoot: "C:\\", target: "win32-x64" }), /filesystem root/u);
+});
+
+
+test("managed-source Dugite Git finds HTTPS helpers in its pinned macOS distribution, never the host root", () => {
+  for (const target of ["darwin-arm64", "darwin-x64"]) {
+    const contract = equinoxLocalToolchainContract({ runtimeRoot: DARWIN_RUNTIME, target });
+    const hostileBase = { HOME: "/isolated/home", GIT_EXEC_PATH: "/untrusted/helper", GIT_TEMPLATE_DIR: "/untrusted/templates", PATH: "/usr/bin:/bin" };
+    const env = equinoxLocalGitExecutionEnvironment(contract.gitPath, hostileBase, { platform: "darwin" });
+    assert.equal(env.GIT_EXEC_PATH, path.posix.join(contract.git.root, "libexec", "git-core"));
+    assert.equal(env.GIT_TEMPLATE_DIR, path.posix.join(contract.git.root, "share", "git-core", "templates"));
+    assert.equal(env.HOME, "/isolated/home");
+    assert.equal(env.PATH, "/usr/bin:/bin");
+    assert.equal(hostileBase.GIT_EXEC_PATH, "/untrusted/helper");
+  }
+  const ambient = { HOME: "/isolated", PATH: "/usr/bin" };
+  assert.deepEqual(equinoxLocalGitExecutionEnvironment("git", ambient, { platform: "darwin" }), ambient);
+  const windows = equinoxLocalToolchainContract({ runtimeRoot: WINDOWS_RUNTIME, target: "win32-x64" });
+  assert.deepEqual(equinoxLocalGitExecutionEnvironment(windows.gitPath, ambient, { platform: "win32" }), ambient);
 });

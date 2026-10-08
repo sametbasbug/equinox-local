@@ -38,6 +38,21 @@ function nodeArchiveRoot(filename) {
   throw new Error("Pinned Node distribution has an unsupported archive type.");
 }
 
+// Dugite's macOS Git executable is built with a root-relative exec path
+// (//libexec/git-core). Set its helpers and templates relative to the pinned,
+// verified product-owned distribution; never fall back to ambient Git.
+export function equinoxLocalGitExecutionEnvironment(gitPath, env = process.env, { platform = process.platform } = {}) {
+  if (platform !== "darwin" || typeof gitPath !== "string" ||
+      !/\/runtime\/toolchain\/git\/[^/]+\/darwin-(?:arm64|x64)\/bin\/git$/u.test(gitPath) ||
+      !path.posix.isAbsolute(gitPath)) return { ...env };
+  const gitRoot = path.posix.dirname(path.posix.dirname(gitPath));
+  return {
+    ...env,
+    GIT_EXEC_PATH: path.posix.join(gitRoot, "libexec", "git-core"),
+    GIT_TEMPLATE_DIR: path.posix.join(gitRoot, "share", "git-core", "templates"),
+  };
+}
+
 export function equinoxLocalToolchainContract({ runtimeRoot, target }) {
   const targetContract = equinoxLocalReleaseTargetContract(target);
   const windows = targetContract.platform === "win32";
