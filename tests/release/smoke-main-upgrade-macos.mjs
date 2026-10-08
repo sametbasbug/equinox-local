@@ -1,6 +1,7 @@
 // Explicit, opt-in genuine hosted-macOS native Main update acceptance.
 // Never run beside someone's existing dev.equinox.local LaunchAgent.
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { execFile as execFileCallback } from "node:child_process";
 import fs from "node:fs/promises";
 import os from "node:os";
@@ -121,6 +122,8 @@ async function run() {
   const scenario = process.env.M8_ACCEPTANCE_SCENARIO || "positive";
   if (!["positive", "target-health-failure"].includes(scenario)) throw new Error("Unsupported native M8 acceptance scenario.");
   const negative = scenario === "target-health-failure";
+  const expectedNativeMode = process.env.M8_EXPECTED_NATIVE_MODE || "reuse_native";
+  if (!["reuse_native", "artifact_required"].includes(expectedNativeMode)) throw new Error("Unsupported required M8 native transition mode.");
   // Ensure tests never bootout or replace an existing user's instance. An
   // occupied port or managed LaunchAgent means this machine isn't isolated.
   const uid = process.getuid();
@@ -135,6 +138,13 @@ async function run() {
   const homeDir = path.join(scratch, "isolated-home");
   const installRoot = path.join(homeDir, "Library", "Application Support", "Equinox Local");
   const transactionRoot = path.join(installRoot, "main-update");
+  const nativePointerPath = path.join(transactionRoot, "current-native.json");
+  const nativeExecutable = path.join(homeDir, "Applications", "Equinox Local.app", "Contents", "MacOS", "applet");
+  const nativeHash = async () => createHash("sha256").update(await fs.readFile(nativeExecutable)).digest("hex");
+  const readNativePointer = async () => fs.readFile(nativePointerPath, "utf8").then((content) => JSON.parse(content), (error) => {
+    if (error?.code === "ENOENT") return null;
+    throw error;
+  });
   const env = { ...process.env, HOME: homeDir };
   // The historically admitted A Swift app gets its runtime wrapper path from
   // FileManager.homeDirectoryForCurrentUser (the OS account home), not $HOME.
@@ -178,6 +188,13 @@ async function run() {
     ownedService.started = true;
     assert.equal(result.managedSourceSha, previousSha);
     const before = await awaitHealthy(previousSha);
+    const beforeNativeSha256 = await nativeHash();
+    const beforeNativePointer = await readNativePointer();
+    if (expectedNativeMode === "artifact_required") {
+      // The initial real A package is native Stable with admitted Main source;
+      // no previous Main native artifact has yet been installed.
+      assert.equal(beforeNativePointer, null, "unexpected pre-existing Main native artifact pointer");
+    }
     assert.equal(before.installation?.kind, "managed-source");
     const toolchain = equinoxLocalToolchainContract({ runtimeRoot: path.join(installRoot, "runtime"), target: equinoxLocalUpdateTarget() });
     const getPointer = () => readEquinoxLocalMainSourcePointer(path.join(transactionRoot, "current-source.conf"), { gitPath: toolchain.gitPath });
@@ -200,6 +217,7 @@ async function run() {
       throw error;
     }
     assert.equal(response.result?.targetSha, targetSha);
+    assert.equal(response.result?.nativeTransition?.mode, expectedNativeMode, "the real updater must require the selected native transition mode");
     const transactionId = response.result.transactionId;
     assert.match(transactionId, /^main-[a-f0-9]{32}$/u);
     ownedService.transactionId = transactionId;
@@ -224,14 +242,31 @@ async function run() {
         "the real B must become healthy before the hosted-only observation fault triggers");
       const rollback = await awaitHealthy(previousSha, { timeoutMs: 60_000 });
       assert.equal(rollback.installation?.kind, "managed-source");
+      const recoveredNativeSha256 = await nativeHash();
+      assert.equal(recoveredNativeSha256, beforeNativeSha256,
+        "real macOS native app binary must be restored byte-for-byte on rollback");
+      const rollbackNativePointer = await readNativePointer();
+      assert.deepEqual(rollbackNativePointer, beforeNativePointer, "Main native artifact pointer must return to its exact original state");
       assert.equal((await fs.lstat(path.join(installRoot, "current"))).isSymbolicLink(), true);
-      process.stdout.write(`${JSON.stringify({ ok: true, scenario, platform: process.platform, arch: process.arch, from: previousSha, refusedTarget: targetSha, rollbackSha: receipt.rollbackSha, restartHealth: rollback.health?.state, receipt: receipt.status, injectedObservations: observations.trim().split("\n").length })}\n`);
+      process.stdout.write(`${JSON.stringify({ ok: true, scenario, platform: process.platform, arch: process.arch, from: previousSha, refusedTarget: targetSha, rollbackSha: receipt.rollbackSha, nativeMode: expectedNativeMode, nativeBinaryRestored: recoveredNativeSha256 === beforeNativeSha256, nativePointerRestored: true, restartHealth: rollback.health?.state, receipt: receipt.status, injectedObservations: observations.trim().split("\n").length })}\n`);
     } else {
       assert.equal((await getPointer()).sha, targetSha);
       const after = await awaitHealthy(targetSha, { timeoutMs: 60_000 });
       assert.equal(after.installation?.kind, "managed-source");
+      const afterNativeSha256 = await nativeHash();
+      const afterNativePointer = await readNativePointer();
+      if (expectedNativeMode === "artifact_required") {
+        assert.notEqual(afterNativeSha256, beforeNativeSha256, "real native app binary must change on artifact_required");
+        assert.equal(afterNativePointer?.channel, "main");
+        assert.equal(afterNativePointer?.sourceSha, targetSha, "native artifact pointer must be exact admitted B");
+        assert.equal(afterNativePointer?.target, equinoxLocalUpdateTarget());
+        assert.match(afterNativePointer?.runtimeContractSha256 ?? "", /^[a-f0-9]{64}$/u);
+      } else {
+        assert.equal(afterNativeSha256, beforeNativeSha256, "native app must be reused for reuse_native");
+        assert.deepEqual(afterNativePointer, beforeNativePointer);
+      }
       assert.equal((await fs.lstat(path.join(installRoot, "current"))).isSymbolicLink(), true);
-      process.stdout.write(`${JSON.stringify({ ok: true, scenario, platform: process.platform, arch: process.arch, from: previousSha, to: targetSha, nativeMode: response.result.nativeTransition?.mode, restartHealth: after.health?.state, receipt: receipt.status })}\n`);
+      process.stdout.write(`${JSON.stringify({ ok: true, scenario, platform: process.platform, arch: process.arch, from: previousSha, to: targetSha, nativeMode: response.result.nativeTransition?.mode, nativeBinaryChanged: afterNativeSha256 !== beforeNativeSha256, nativePointerSha: afterNativePointer?.sourceSha ?? null, restartHealth: after.health?.state, receipt: receipt.status })}\n`);
     }
   } finally {
     if (ownedService.preload) await execFile("/bin/launchctl", ["unsetenv", "NODE_OPTIONS"], { timeout: 5_000 }).catch(() => {});

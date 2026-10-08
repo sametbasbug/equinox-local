@@ -18,6 +18,14 @@ on:
         options:
           - arm64
           - x64
+      expected_native_mode:
+        description: Require genuine native transition mode (default preserves previous smoke)
+        required: true
+        default: reuse_native
+        type: choice
+        options:
+          - reuse_native
+          - artifact_required
       scenario:
         description: Native installed-host path to accept
         required: true
@@ -101,6 +109,7 @@ jobs:
         env:
           TARGET_SHA: ${{ steps.identity.outputs.target_sha }}
           M8_ACCEPTANCE_SCENARIO: ${{ inputs.scenario }}
+          M8_EXPECTED_NATIVE_MODE: ${{ inputs.expected_native_mode }}
         run: |
           set -euo pipefail
           node tests/release/smoke-main-upgrade-macos.mjs "$OLD_RELEASE_ARTIFACT" "$OLD_SHA" "$TARGET_SHA"
