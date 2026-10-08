@@ -17,7 +17,7 @@ The optional ChatGPT continuity content script on `chatgpt.com` observes bounded
 ## Pre-submit gate
 
 1. Public PR/CI and CodeQL pass; `npm run check`, full `npm test`, browser-focused modern ChatGPT DOM tests pass.
-2. From exact public `main`, run `npm run browser:package`. Check ZIP SHA-256, `manifest.version === "1.0.0"`, 10-file allowlist, unchanged permissions and stable extension ID.
+2. From exact public `main`, run `npm run browser:package`. Check ZIP SHA-256, `manifest.version === "1.0.0"`, 11-file allowlist, unchanged permissions and stable extension ID.
 3. Open [Chrome Web Store Developer Dashboard](https://chrome.google.com/webstore/devconsole) with the human's authorized developer account. Choose the **existing** item by exact extension ID, upload `equinox-browser-1.0.0.zip` and inspect warnings, privacy declarations and reviewer-access instructions before submission.
 4. Explicitly **submit for review**. Confirm dashboard says *in review/submitted*; an uploaded draft is **not** a review submission. Preserve Unlisted visibility.
 5. **Only after approval** coordinate the separate Equinox Local `6.0.0` production-release gate. Do not auto-deploy Local merely because the Browser ZIP was built or submitted.
