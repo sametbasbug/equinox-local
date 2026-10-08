@@ -75,7 +75,18 @@ async function run() {
   const installRoot = path.join(homeDir, "Library", "Application Support", "Equinox Local");
   const transactionRoot = path.join(installRoot, "main-update");
   const env = { ...process.env, HOME: homeDir };
-  const ownedService = { started: false, transactionId: null };
+  // The historically admitted A Swift app gets its runtime wrapper path from
+  // FileManager.homeDirectoryForCurrentUser (the OS account home), not $HOME.
+  // Preserve its exact binary/provenance and bridge only that fixed pathname to
+  // the isolated managed install on a dedicated ephemeral hosted runner.
+  const accountHome = os.userInfo().homedir;
+  if (path.resolve(process.env.HOME || "") !== accountHome || accountHome === homeDir) {
+    throw new Error("Refusing native host shim outside an isolated runner account HOME.");
+  }
+  const nativeHostDirectory = path.join(accountHome, "Library", "Application Support", "Equinox Local");
+  const nativeHostWrapperAlias = path.join(nativeHostDirectory, "equinox-local-app-runtime");
+  const actualWrapper = path.join(installRoot, "equinox-local-app-runtime");
+  const ownedService = { started: false, transactionId: null, wrapperAlias: false };
   const trackedExecFile = async (command, args, options = {}) => {
     if (command === "/bin/launchctl" && args[0] === "bootstrap" && args[1] === `gui/${uid}`) {
       ownedService.started = true;
@@ -84,6 +95,12 @@ async function run() {
   };
   try {
     await fs.mkdir(homeDir, { recursive: true, mode: 0o700 });
+    await fs.mkdir(nativeHostDirectory, { recursive: true, mode: 0o700 });
+    if ((await fs.readdir(nativeHostDirectory)).length !== 0) {
+      throw new Error("Refusing native host shim: the runner account already has Equinox Local files.");
+    }
+    await fs.symlink(actualWrapper, nativeHostWrapperAlias);
+    ownedService.wrapperAlias = true;
     const staging = path.join(installRoot, "staging", "native-acceptance");
     await fs.mkdir(staging, { recursive: true, mode: 0o700 });
     await execFile("/usr/bin/tar", ["-xzf", artifact, "-C", staging], { timeout: 120_000, maxBuffer: 8 * 1024 * 1024 });
@@ -135,6 +152,13 @@ async function run() {
       await execFile("/bin/launchctl", ["bootout", workerService], { timeout: 15_000 }).catch(() => {});
     }
     await sleep(1500);
+    if (ownedService.wrapperAlias) {
+      const alias = await fs.lstat(nativeHostWrapperAlias);
+      if (!alias.isSymbolicLink() || await fs.readlink(nativeHostWrapperAlias) !== actualWrapper) {
+        throw new Error("Native host test alias identity changed during cleanup.");
+      }
+      await fs.unlink(nativeHostWrapperAlias);
+    }
     await fs.rm(scratch, { recursive: true, force: true });
   }
 }
