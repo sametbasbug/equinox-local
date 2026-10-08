@@ -229,6 +229,7 @@ test("Windows shell runtime gate is product-owned Node with explicit child-start
 test("Windows VC and C++ compile script paths reject CMD metacharacters before script creation", () => {
   const safe = "C:\\Program Files (x86)\\Microsoft Visual Studio\\2022\\VC\\Auxiliary\\Build\\vcvars64.bat";
   assert.equal(assertWindowsBatchQuotedPath(safe), safe);
+  assert.equal(assertWindowsBatchQuotedPath("C:\\Users\\Özge Şahin\\Proje\\vcvars64.bat"), "C:\\Users\\Özge Şahin\\Proje\\vcvars64.bat");
   assert.equal(assertWindowsBatchQuotedPath("D:\\a\\equinox-local\\native\\windows\\job-object.cpp"), "D:\\a\\equinox-local\\native\\windows\\job-object.cpp");
   for (const value of [
     `${safe}" & whoami & rem \"`, `${safe}%USERNAME%`, `${safe}!USERNAME!`, `${safe}&echo injected`,

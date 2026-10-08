@@ -297,7 +297,7 @@ async function portableExecutableMachine(filePath) {
 // executable. Reject CMD metacharacters rather than trusting runner environment
 // or checkout paths just because a corresponding filesystem entry exists.
 export function assertWindowsBatchQuotedPath(value) {
-  if (typeof value !== "string" || !/^[A-Za-z]:\\[A-Za-z0-9 _().\\-]+$/u.test(value)) {
+  if (typeof value !== "string" || !/^[A-Za-z]:\\[\p{L}\p{M}\p{N} _().\\-]+$/u.test(value)) {
     throw new Error("Windows native compile path contains unsafe CMD characters.");
   }
   return value;
