@@ -118,6 +118,10 @@ async function fakeExtract({ extractionRoot, component }) {
   if (component.component === "git") {
     await fs.mkdir(path.join(root, "bin"), { recursive: true });
     await fs.writeFile(path.join(root, "bin", "git"), "git\n", { mode: 0o700 });
+    await fs.mkdir(path.join(root, "libexec", "git-core"), { recursive: true });
+    await fs.mkdir(path.join(root, "share", "git-core", "templates"), { recursive: true });
+    await fs.writeFile(path.join(root, "libexec", "git-core", "git-remote-http"), "pinned helper\n", { mode: 0o700 });
+    await fs.symlink("git-remote-http", path.join(root, "libexec", "git-core", "git-remote-https"));
   } else {
     await fs.mkdir(path.join(root, "bin"), { recursive: true });
     await fs.mkdir(path.join(root, "lib", "node_modules", "npm", "bin"), { recursive: true });
@@ -320,4 +324,32 @@ test("M8 provisioner rejects tampered installed stamps without replacing the com
     extractComponentImpl: fakeExtract,
     execFileImpl: fakeExec,
   }), /stamp does not match/u);
+});
+
+
+test("M8 provisioner rejects an incomplete pinned macOS Git before falsely accepting reuse", async (t) => {
+  const f = await createFixture(t);
+  const installed = await provisionEquinoxLocalToolchain({
+    runtimeRoot: f.runtimeRoot, target: "darwin-arm64", platform: "darwin",
+    downloadImpl: async (_artifact, destination) => fs.writeFile(destination, "archive"),
+    extractComponentImpl: fakeExtract, execFileImpl: fakeExec,
+  });
+  const helperPath = path.join(installed.contract.git.root, "libexec", "git-core", "git-remote-https");
+  await fs.unlink(helperPath);
+  await assert.rejects(provisionEquinoxLocalToolchain({
+    runtimeRoot: f.runtimeRoot, target: "darwin-arm64", platform: "darwin",
+    downloadImpl: async () => assert.fail("reinstall must not mask tampered Git"),
+    extractComponentImpl: async () => assert.fail("reuse must not extract"),
+    execFileImpl: fakeExec,
+  }), { code: "ENOENT" });
+  await fs.symlink("git-remote-http", helperPath);
+  const templates = path.join(installed.contract.git.root, "share", "git-core", "templates");
+  await fs.rm(templates, { recursive: true });
+  await fs.symlink(f.base, templates);
+  await assert.rejects(provisionEquinoxLocalToolchain({
+    runtimeRoot: f.runtimeRoot, target: "darwin-arm64", platform: "darwin",
+    downloadImpl: async () => assert.fail("untrusted template must not trigger download"),
+    extractComponentImpl: async () => assert.fail("reuse must not extract"),
+    execFileImpl: fakeExec,
+  }), /absolute symbolic link|unsafe/u);
 });
