@@ -64,7 +64,7 @@ function boundedDiagnostic(value) {
 // Disposable hosted-runner-only preload, inherited by a REAL launchd worker.
 // It refuses only a verified healthy B observation so that the unmodified
 // native worker performs actual restart, durable rollback and A health checks.
-async function installTargetHealthFailurePreload({ scratch, targetSha }) {
+async function installTargetHealthFailurePreload({ scratch, targetSha, authPreloadUrl = null }) {
   const hook = path.join(scratch, "native-target-health-failure.mjs");
   const marker = path.join(scratch, "target-health-injection-observed");
   const code = String.raw`import fs from "node:fs/promises";
@@ -83,7 +83,8 @@ if (process.argv[1]?.endsWith("/equinox-local-main-update-worker.js")) {
 }
 `;
   await fs.writeFile(hook, code, { mode: 0o600, flag: "wx" });
-  await execFile("/bin/launchctl", ["setenv", "NODE_OPTIONS", `--import=${pathToFileURL(hook).href}`], { timeout: 5_000 });
+  const imports = [authPreloadUrl, pathToFileURL(hook).href].filter(Boolean).map((url) => `--import=${url}`).join(" ");
+  await execFile("/bin/launchctl", ["setenv", "NODE_OPTIONS", imports], { timeout: 5_000 });
   return marker;
 }
 
@@ -146,6 +147,57 @@ async function run() {
     throw error;
   });
   const env = { ...process.env, HOME: homeDir };
+  // Public GitHub API traffic from shared hosted-runner IPs can be rate-limited
+  // (HTTP 403) before an actual Main rollback is exercised. Authenticate ONLY
+  // the exact read-only Main discovery requests in this disposable hosted test,
+  // leaving the shipped product API, native process and rollback unchanged.
+  const githubReadToken = process.env.M8_GITHUB_READ_TOKEN;
+  if (typeof githubReadToken !== "string" || githubReadToken.length < 10) {
+    throw new Error("Hosted real Main acceptance requires the runner's scoped GitHub read token.");
+  }
+  const tokenFile = path.join(scratch, "github-discovery-read-token");
+  const authHook = path.join(scratch, "github-discovery-read-auth.mjs");
+  await fs.writeFile(tokenFile, githubReadToken, { flag: "wx", mode: 0o600 });
+  const authCode = String.raw`import fs from "node:fs";
+import childProcess from "node:child_process";
+import { syncBuiltinESMExports } from "node:module";
+// The real product supervisor correctly strips NODE_OPTIONS for child servers.
+// Only on this isolated hosted runner, and only for this owned Main server,
+// re-apply the test preload without changing the shipped product boundary.
+if (process.argv[1]?.endsWith("/equinox-local-supervisor.js")) {
+  const originalSpawn = childProcess.spawn;
+  const ownedRoot = ${JSON.stringify(installRoot)};
+  childProcess.spawn = (file, args, options = {}) => {
+    const script = Array.isArray(args) ? args[0] : null;
+    if (typeof file === "string" && file.endsWith("/node") &&
+        typeof script === "string" && script.startsWith(ownedRoot + "/") &&
+        (script.endsWith("/server.js") || script.endsWith("/src/server.js")) &&
+        typeof options.cwd === "string" && options.cwd.startsWith(ownedRoot + "/")) {
+      return originalSpawn(file, args, {
+        ...options,
+        env: { ...options.env, NODE_OPTIONS: "--import=" + import.meta.url },
+      });
+    }
+    return originalSpawn(file, args, options);
+  };
+  syncBuiltinESMExports();
+}
+const original = globalThis.fetch;
+const token = fs.readFileSync(${JSON.stringify(tokenFile)}, "utf8").trim();
+globalThis.fetch = (resource, init = {}) => {
+  let url;
+  try { url = new URL(typeof resource === "string" ? resource : resource?.url); }
+  catch { return original(resource, init); }
+  if (url.origin !== "https://api.github.com" ||
+      !/^\/repos\/sametbasbug\/equinox-local\/(?:git\/ref\/tags\/main-snapshot|compare\/)/u.test(url.pathname)) {
+    return original(resource, init);
+  }
+  const headers = new Headers(init?.headers ?? resource?.headers ?? {});
+  headers.set("authorization", "Bearer " + token);
+  return original(resource, { ...init, headers });
+};`;
+  await fs.writeFile(authHook, authCode, { flag: "wx", mode: 0o600 });
+  const authPreloadUrl = pathToFileURL(authHook).href;
   // The historically admitted A Swift app gets its runtime wrapper path from
   // FileManager.homeDirectoryForCurrentUser (the OS account home), not $HOME.
   // Preserve its exact binary/provenance and bridge only that fixed pathname to
@@ -165,6 +217,8 @@ async function run() {
     return await execFile(command, args, options);
   };
   try {
+    await execFile("/bin/launchctl", ["setenv", "NODE_OPTIONS", `--import=${authPreloadUrl}`], { timeout: 5_000 });
+    ownedService.preload = true;
     await fs.mkdir(homeDir, { recursive: true, mode: 0o700 });
     await fs.mkdir(nativeHostDirectory, { recursive: true, mode: 0o700 });
     if ((await fs.readdir(nativeHostDirectory)).length !== 0) {
@@ -210,7 +264,7 @@ async function run() {
     assert.equal(discovery.update?.main?.applyAvailable, true);
     let injectionMarker = null;
     if (negative) {
-      injectionMarker = await installTargetHealthFailurePreload({ scratch, targetSha });
+      injectionMarker = await installTargetHealthFailurePreload({ scratch, targetSha, authPreloadUrl });
       ownedService.preload = true;
     }
     let response;

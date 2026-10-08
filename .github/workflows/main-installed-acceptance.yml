@@ -110,6 +110,10 @@ jobs:
           TARGET_SHA: ${{ steps.identity.outputs.target_sha }}
           M8_ACCEPTANCE_SCENARIO: ${{ inputs.scenario }}
           M8_EXPECTED_NATIVE_MODE: ${{ inputs.expected_native_mode }}
+          # Scoped, ephemeral Actions read credential; consumed only by the
+          # disposable runner's pinned github.com discovery preload, not a
+          # default product runtime config or any release artifact.
+          M8_GITHUB_READ_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           node tests/release/smoke-main-upgrade-macos.mjs "$OLD_RELEASE_ARTIFACT" "$OLD_SHA" "$TARGET_SHA"
