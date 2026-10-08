@@ -5,6 +5,7 @@ All notable public changes to Equinox Local will be documented here.
 This project follows semantic versioning for public releases.
 
 ## [Unreleased]
+- Prepared Equinox Browser 1.0.0 Store review candidate: updated ChatGPT Web native composer submit selectors for Telegram new-task, Fresh Chat Resume and bound Chat Bridge; reused modern Auto Continue turn observation for bound chats and exact assistant-response extraction, without relaxing existing send/receipt guards.
 - Fixed the managed Stable release update validator refusing canonical packages whose `release.json` includes a validated 40-hex `sourceSha`; historical source-less Stable archives and strict metadata shape checks remain supported.
 - Fixed real macOS `artifact_required` Main upgrades: the detached launchd worker preserves non-secret managed installation paths for future updates and independently reconstructs an exact trusted managed installation from its own HOME, transaction root and current native release pointer when an older A scheduler drops those fields; credentials remain excluded and foreign paths are rejected.
 - Fixed the macOS native LaunchAgent runtime host using the OS account home instead of the exact managed `EQUINOX_LOCAL_INSTALL_ROOT` under its declared `HOME`; isolated managed users and native app refreshes now resolve the trusted runtime wrapper consistently, while foreground launches retain the normal account-home fallback.

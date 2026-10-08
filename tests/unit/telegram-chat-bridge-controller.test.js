@@ -183,7 +183,7 @@ test("Telegram Chat Bridge v9 opens one root ChatGPT conversation only for new T
       if (method === "tabs.create") { assert.equal(args.url, "https://chatgpt.com/"); return { id: 88 }; }
       if (method === "snapshot") {
         if (args.roles?.includes("textbox")) return { refContextValid: true, elements: [{ ref: "@e1", role: "textbox", name: "Prompt" }] };
-        if (args.roles?.includes("button")) return { refContextValid: true, elements: [{ ref: "@send", role: "button", name: "Send prompt" }] };
+        if (args.roles?.includes("button")) return { refContextValid: true, elements: [{ ref: "@send", role: "button", name: "Gönder" }] };
       }
       if (method === "type_text") {
         assert.equal(args.tabId, 88);
@@ -193,7 +193,10 @@ test("Telegram Chat Bridge v9 opens one root ChatGPT conversation only for new T
         return { ok: true };
       }
       if (method === "eval") {
-        if (args.expression.includes("send-button")) return { value: { ready: true, reason: null, name: "Send prompt", text: typedText } };
+        if (args.expression.includes("send-button")) {
+          assert.match(args.expression, /\[data-composer-body\] button\.bg-composer-primary\[type=/u, "new Task must find modern ChatGPT submit action");
+          return { value: { ready: true, reason: null, name: "Gönder", text: typedText } };
+        }
         return { value: { present: true, text: typedText, generationActive: false } };
       }
       if (method === "click") {

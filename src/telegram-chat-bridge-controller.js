@@ -262,7 +262,9 @@ export function createTelegramChatBridgeController({ browserBridge, agentControl
           const readiness = await callContext("user", "eval", {
             tabId: createdTabId,
             expression: `(() => {
-              const selector = 'button[data-testid="send-button"][type="submit"], button#composer-submit-button[type="submit"]:not([data-testid="stop-button"])';
+              // The current ChatGPT UI uses an unnamed primary composer action (type=submit) for Send.
+              // Keep older explicit ids as safe fallbacks; never target voice/stop (type=button).
+              const selector = '[data-composer-body] button.bg-composer-primary[type="submit"], button[data-testid="send-button"][type="submit"], button#composer-submit-button[type="submit"]:not([data-testid="stop-button"])';
               const composer = document.querySelector('#prompt-textarea[contenteditable="true"][role="textbox"], [data-composer-markdown][contenteditable="true"][role="textbox"]');
               const button = document.querySelector(selector);
               const text = composer ? String(composer.textContent || '').trim() : '';

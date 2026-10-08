@@ -1,6 +1,6 @@
 # Equinox Browser
 
-**Current Chrome Web Store production release:** `0.7.0` on the permanent Unlisted item.
+**Current Chrome Web Store production release:** `0.7.0` on the permanent Unlisted item. **Next review candidate:** `1.0.0` (not live until accepted).
 
 Equinox Browser is the only browser-automation transport exposed by Equinox Local.
 
