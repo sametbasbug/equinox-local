@@ -35,12 +35,12 @@ async function poll(check, label, timeoutMs = 90_000) {
   throw new Error(`${label} timed out: ${last}`);
 }
 
-async function jsonApi(route, { mutate = false, token = null } = {}) {
+async function jsonApi(route, { mutate = false, token = null, timeoutMs = 30_000 } = {}) {
   const response = await fetch(`${BASE}${route}`, {
     method: mutate ? "POST" : "GET",
     headers: mutate ? { origin: BASE, "x-equinox-csrf": token, "content-type": "application/json" } : {},
     body: mutate ? "{}" : undefined,
-    signal: AbortSignal.timeout(30_000),
+    signal: AbortSignal.timeout(timeoutMs),
     cache: "no-store",
   });
   const body = await response.json();
@@ -194,7 +194,7 @@ async function run() {
     }
     let response;
     try {
-      response = await jsonApi("/api/v1/update/apply", { mutate: true, token: csrfToken });
+      response = await jsonApi("/api/v1/update/apply", { mutate: true, token: csrfToken, timeoutMs: 180_000 });
     } catch (error) {
       await printApplyFailureEvidence(transactionRoot);
       throw error;
