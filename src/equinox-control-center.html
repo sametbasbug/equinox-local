@@ -92,9 +92,50 @@
             <span id="sidebar-version">Local runtime</span>
           </div>
         </div>
-        <p>Private on this computer · 127.0.0.1</p>
+        <div class="sidebar-updates">
+          <button id="sidebar-update-button" class="sidebar-update-button" type="button" aria-haspopup="dialog" aria-controls="update-dialog">
+            <svg class="sidebar-update-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 7v5h-5"/><path d="M4 17v-5h5"/><path d="M5.8 9A7 7 0 0 1 18 7l2 5M4 12l2 5a7 7 0 0 0 12.2-2"/></svg>
+            <span>Check for updates</span>
+            <svg class="sidebar-update-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 18 6-6-6-6"/></svg>
+          </button>
+          <span id="sidebar-update-indicator" class="sidebar-update-indicator" role="status" hidden>Update available</span>
+        </div>
       </div>
     </aside>
+
+    <dialog id="update-dialog" class="update-dialog" aria-labelledby="update-dialog-heading">
+      <div class="update-dialog-heading">
+        <div class="update-dialog-mark" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12m-5-5 5 5 5-5"/><path d="M4 16v4h16v-4"/></svg></div>
+        <button id="close-update-dialog" class="update-dialog-close" type="button" aria-label="Close updates">×</button>
+        <h2 id="update-dialog-heading">Equinox Local updates</h2>
+        <span id="update-badge" class="badge neutral">Checking</span>
+      </div>
+      <div class="update-dialog-body">
+        <h3 id="update-title">Checking installation channel</h3>
+        <p id="update-copy" class="health-copy">Looking for updates.</p>
+        <div class="update-dialog-facts">
+          <span id="update-version">Current version —</span>
+          <span id="update-checked-at">Not checked yet</span>
+        </div>
+        <div id="update-main-meta" class="update-dialog-main" hidden>
+          <div class="update-dialog-facts">
+            <span id="update-main-current">Current SHA —</span>
+            <span id="update-main-target">Target SHA —</span>
+            <span id="update-main-distance">Commit distance —</span>
+          </div>
+          <p id="update-main-caption" class="update-dialog-caption">Recent Main changes</p>
+          <ul id="update-main-summaries" class="update-dialog-changes" hidden></ul>
+        </div>
+        <div id="update-stable-main-notice" class="update-dialog-main-notice" hidden>
+          <strong>Main channel</strong>
+          <p id="update-stable-main-copy">An admitted Main snapshot is available separately from Stable.</p>
+        </div>
+      </div>
+      <div class="update-dialog-actions">
+        <button id="check-update-button" class="button secondary" type="button">Check for updates</button>
+        <button id="install-update-button" class="button primary" type="button" hidden>Update &amp; restart</button>
+      </div>
+    </dialog>
 
     <main class="main-panel" id="main-content" tabindex="-1">
       <header class="topbar">
@@ -407,32 +448,7 @@
               <span id="doctor-checked-at">Not checked yet</span>
             </div>
           </article>
-          <article class="panel-card update-card">
-            <div class="panel-header">
-              <div>
-                <p class="eyebrow">Updates</p>
-                <h3 id="update-title">Checking installation channel</h3>
-              </div>
-              <span id="update-badge" class="badge neutral">Checking</span>
-            </div>
-            <p id="update-copy" class="health-copy">Managed installs can check the signed Equinox Local stable update channel without exposing local paths.</p>
-            <div class="health-meta">
-              <span id="update-version">Current version —</span>
-              <span id="update-checked-at">Not checked yet</span>
-            </div>
-            <div id="update-main-meta" hidden>
-              <div class="health-meta">
-                <span id="update-main-current">Current SHA —</span>
-                <span id="update-main-target">Target SHA —</span>
-                <span id="update-main-distance">Commit distance —</span>
-              </div>
-              <p id="update-main-summaries" class="panel-note" hidden></p>
-            </div>
-            <div class="button-group">
-              <button id="check-update-button" class="button secondary" type="button">Check for updates</button>
-              <button id="install-update-button" class="button primary" type="button" hidden>Update &amp; restart</button>
-            </div>
-          </article>
+
         </div>
       </section>
 

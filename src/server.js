@@ -168,6 +168,7 @@ import {
 import {
   createEquinoxLocalMainApplyController,
 } from "./equinox-local-main-apply-controller.js";
+import { createEquinoxLocalMainChannelNotice } from "./equinox-local-update-awareness.js";
 import {
   configureManagedTunnel,
   getManagedOnboardingStatus,
@@ -606,8 +607,23 @@ const equinoxLocalMainApplyController = createEquinoxLocalMainApplyController({
   installation: equinoxLocalInstallation,
   discovery: equinoxLocalMainUpdateDiscovery,
 });
+const equinoxMainChannelNotice = createEquinoxLocalMainChannelNotice();
+const checkInstalledChannelForUpdates = async ({ force = false } = {}) => {
+  if (["source", "managed-source"].includes(equinoxLocalInstallation.kind)) {
+    await equinoxLocalMainUpdateDiscovery.check({ force });
+  } else {
+    // A Stable installation learns about Main, but never downloads or applies Main.
+    await Promise.allSettled([equinoxLocalUpdater.check(), equinoxMainChannelNotice.check({ force })]);
+  }
+};
+// Keep update awareness alive when Control Center is closed. All checks are
+// bounded, informational and use the existing verified update channels.
+const automaticUpdateCheck = () => { void checkInstalledChannelForUpdates().catch(() => {}); };
+setTimeout(automaticUpdateCheck, 5_000).unref?.();
+setInterval(automaticUpdateCheck, 6 * 60 * 60_000).unref?.();
 const getCombinedUpdateStatus = () => Object.freeze({
   ...equinoxLocalUpdateCoordinator.snapshot(),
+  mainNotice: equinoxMainChannelNotice.snapshot(),
   main: Object.freeze({
     ...equinoxLocalMainUpdateDiscovery.snapshot(),
     ...equinoxLocalMainApplyController.snapshot(),
@@ -3088,12 +3104,8 @@ equinoxLocalControlApi = createEquinoxLocalControlApi({
     })
   )),
   checkForUpdates: async () => {
-    if (equinoxLocalInstallation.kind === "source" || equinoxLocalInstallation.kind === "managed-source") {
-      await equinoxLocalMainUpdateDiscovery.check({ force: true });
-      equinoxLocalMainApplyController.resetError();
-    } else {
-      await equinoxLocalUpdater.check();
-    }
+    await checkInstalledChannelForUpdates({ force: true });
+    if (["source", "managed-source"].includes(equinoxLocalInstallation.kind)) equinoxLocalMainApplyController.resetError();
     return getCombinedUpdateStatus();
   },
   applyUpdate: async () => withMutationLocks(["local-update"], async () => (

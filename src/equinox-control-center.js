@@ -200,7 +200,7 @@ function localizeUiText(value) {
 }
 
 const DYNAMIC_TEXT_IDS = new Set([
-  "sidebar-health-label", "sidebar-version", "section-kicker", "section-title", "last-refreshed",
+  "sidebar-health-label", "sidebar-version", "sidebar-update-indicator", "section-kicker", "section-title", "last-refreshed",
   "agent-control-button", "restart-runtime-button", "onboarding-copy", "onboarding-badge", "setup-runtime-status",
   "setup-workspace-status", "setup-browser-status", "setup-tunnel-status", "setup-telegram-status", "setup-telegram-detail", "onboarding-connect-button",
   "runtime-health-badge", "overview-title", "overview-copy", "runtime-version", "runtime-uptime", "browser-status", "browser-version",
@@ -208,7 +208,7 @@ const DYNAMIC_TEXT_IDS = new Set([
   "default-project", "health-summary-title", "health-summary-badge", "health-summary-copy", "health-event-count",
   "health-evaluated-at", "doctor-title", "doctor-badge", "doctor-copy", "doctor-list", "doctor-summary",
   "doctor-checked-at", "doctor-fix-title", "doctor-fix-summary", "doctor-fix-copy", "doctor-repair-list", "doctor-repair-result", "update-title", "update-badge", "update-copy", "update-version", "update-checked-at",
-  "update-main-current", "update-main-target", "update-main-distance", "update-main-summaries",
+  "update-main-current", "update-main-target", "update-main-distance", "update-main-summaries", "update-stable-main-copy",
   "check-update-button", "install-update-button", "root-count-label", "dirty-state", "project-list",
   "default-project-select", "workspace-project-select", "downloads-root-select", "control-center-address",
   "save-config-button", "agent-browser-page-status", "agent-browser-page-badge", "agent-browser-page-version", "agent-browser-connected-at",
@@ -545,7 +545,12 @@ function renderDashboard() {
   setBadge("health-summary-badge", runtimeHealth === "UNKNOWN" ? "Unknown" : runtimeHealth, runtimeTone);
   setText("runtime-version", status.server?.version ? `v${status.server.version}` : "—");
   setText("runtime-uptime", formatUptime(status.server?.uptimeSeconds));
-  setText("sidebar-version", status.server?.version ? `Equinox Local ${status.server.version}` : "Local runtime");
+  const channel = state.update || {};
+  const onMain = ["source", "managed-source"].includes(channel.installationKind) && channel.main?.checkSupported === true;
+  const currentSha = shortUpdateSha(channel.main?.currentSha || status.installation?.sourceSha);
+  setText("sidebar-version", status.server?.version
+    ? `${status.server.version}${onMain && currentSha ? ` - ${currentSha}` : ""}`
+    : "Local runtime");
   setText("sidebar-health-label", runtimeHealth === "HEALTHY" ? "Runtime healthy" : runtimeHealth.toLowerCase().replaceAll("_", " "));
   setDot("sidebar-health-dot", dotToneForHealth(runtimeHealth));
 
@@ -901,6 +906,26 @@ function shortUpdateSha(value) {
   return typeof value === "string" && /^[a-f0-9]{40}$/u.test(value) ? value.slice(0, 7) : null;
 }
 
+function renderSidebarUpdateNotice(update, main, mainChannel) {
+  const badge = $("sidebar-update-indicator");
+  badge.hidden = true;
+  badge.classList.remove("is-main", "is-warning");
+  let label = null;
+  if (mainChannel && main.state === "behind") label = "Update available";
+  else if (mainChannel && main.state === "unavailable") {
+    label = "Check unavailable";
+    badge.classList.add("is-warning");
+  } else if (!mainChannel && update.updateAvailable === true) label = "Update available";
+  else if (!mainChannel && update.mainNotice?.targetSha) {
+    label = "Main snapshot available";
+    badge.classList.add("is-main");
+  }
+  if (label) {
+    badge.hidden = false;
+    setText("sidebar-update-indicator", label);
+  }
+}
+
 function renderUpdate() {
   const update = state.update || {};
   const main = update.main || {};
@@ -911,6 +936,17 @@ function renderUpdate() {
   const mainMeta = $("update-main-meta");
   const current = update.currentVersion || state.status?.server?.version || null;
 
+  renderSidebarUpdateNotice(update, main, mainChannel);
+  const runningVersion = state.status?.server?.version;
+  const runningSha = shortUpdateSha(main.currentSha || state.status?.installation?.sourceSha);
+  if (runningVersion) setText("sidebar-version", `${runningVersion}${mainChannel && runningSha ? ` - ${runningSha}` : ""}`);
+  const mainNotice = $("update-stable-main-notice");
+  mainNotice.hidden = mainChannel || !update.mainNotice?.targetSha;
+  if (!mainNotice.hidden) {
+    setText("update-stable-main-copy", state.language === "tr"
+      ? `Onaylanmış Main ${shortUpdateSha(update.mainNotice.targetSha)} mevcut. Stable kanalı kendiliğinden değişmez.`
+      : `Admitted Main ${shortUpdateSha(update.mainNotice.targetSha)} is available separately. Stable will not change channels automatically.`);
+  }
   mainMeta.hidden = !mainChannel;
   if (mainChannel) {
     const currentSha = shortUpdateSha(main.currentSha);
@@ -926,7 +962,12 @@ function renderUpdate() {
     const summaries = Array.isArray(main.summaries) ? main.summaries.slice(0, 5) : [];
     const summaryNode = $("update-main-summaries");
     summaryNode.hidden = summaries.length === 0;
-    summaryNode.textContent = summaries.map((entry) => `${entry.shortSha || "???????"} ${entry.message || "Commit"}`).join(" · ");
+    $("update-main-caption").hidden = summaries.length === 0;
+    summaryNode.replaceChildren(...summaries.map((entry) => {
+      const item = document.createElement("li");
+      item.textContent = `${entry.shortSha || "???????"} · ${entry.message || "Commit"}`;
+      return item;
+    }));
 
     if (main.restartScheduledFor) {
       setText("update-title", `Restarting into Main ${shortUpdateSha(main.restartScheduledFor) || "snapshot"}`);
@@ -1024,7 +1065,7 @@ function renderUpdate() {
   }
 
   const updateLocked = state.updateBusy || state.updateApplyBusy || Boolean(update.applying) || Boolean(update.restartScheduledFor);
-  checkButton.disabled = updateLocked || !update.selfUpdateSupported;
+  checkButton.disabled = updateLocked || (!update.selfUpdateSupported && !update.managedInstallation);
   checkButton.textContent = localizeUiText(state.updateBusy ? "Checking…" : "Check for updates");
 
   const canApply = Boolean(
@@ -3228,7 +3269,7 @@ async function deleteHttpProfileFromControlCenter(profile) {
 
 async function checkForUpdates() {
   const mainChannel = ["source", "managed-source"].includes(state.update?.installationKind) && state.update?.main?.checkSupported === true;
-  if (state.updateBusy || (!state.update?.selfUpdateSupported && !mainChannel)) return;
+  if (state.updateBusy || (!state.update?.selfUpdateSupported && !mainChannel && !state.update?.managedInstallation)) return;
   clearError();
   state.updateBusy = true;
   renderUpdate();
@@ -3243,7 +3284,10 @@ async function checkForUpdates() {
       else if (main.state === "unavailable") showToast("Main update check is unavailable; no up-to-date result was assumed.");
       else showToast("Main source identity check finished.");
     } else {
-      showToast(state.update?.updateAvailable ? `Equinox Local ${state.update.latestVersion} is available.` : "Equinox Local is up to date.");
+      if (state.update?.updateAvailable) showToast(`Equinox Local ${state.update.latestVersion} is available.`);
+      else if (state.update?.mainNotice?.targetSha) showToast("Main snapshot available separately from Stable.");
+      else if (state.update?.lastError) showToast("Stable update check unavailable.");
+      else showToast("Equinox Local is up to date.");
     }
   } catch (error) {
     showError(error);
@@ -3672,6 +3716,14 @@ function bindEvents() {
   $("uninstall-form").addEventListener("submit", submitUninstall);
   $("uninstall-confirmation").addEventListener("input", renderUninstall);
   $("uninstall-remove-data").addEventListener("change", renderUninstall);
+  $("sidebar-update-button").addEventListener("click", () => {
+    $("update-dialog").showModal();
+    void checkForUpdates();
+  });
+  $("close-update-dialog").addEventListener("click", () => $("update-dialog").close());
+  $("update-dialog").addEventListener("click", (event) => {
+    if (event.target === $("update-dialog")) $("update-dialog").close();
+  });
   $("check-update-button").addEventListener("click", checkForUpdates);
   $("install-update-button").addEventListener("click", applyAvailableUpdate);
   $("dismiss-error").addEventListener("click", clearError);
