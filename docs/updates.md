@@ -46,6 +46,10 @@ For deliberate same-version migration, the installer accepts `--enroll-existing-
 
 The Control Center Main `Update & restart` action maps to the same-origin/CSRF-protected `/api/v1/update/check` and `/api/v1/update/apply` routes. Main runtime admission is pinned to the `main-snapshot` SHA and must not mutate source A before the durable worker handoff. A local exact-Git integration acceptance exercises source A and source B as separate commits through the real API and transaction engine; it validates both `reuse_native` and `artifact_required` planning, a separate Node process reading the promoted pointer, and successful B health or forced A rollback. Windows x64 and native ARM64 execute these paths in the runtime CI lanes. This source/HTTP/process-chain test supplements, but does not replace, end-to-end OS native shell and real Control Center installed-machine acceptance required to close M8.
 
+## Optional real installed-host Main smoke
+
+The `Main Installed Upgrade Acceptance` workflow (`.github/workflows/main-installed-acceptance.yml`) is an **opt-in** runner-only acceptance, not a routine PR or push gate. It refuses an existing `dev.equinox.local` LaunchAgent or occupied Control Center port, builds a previously admitted Main A package in the disposable hosted runner, uses the real managed bootstrap and product-owned toolchain, then calls the real loopback Control Center `check`/`apply` to a separately admitted latest `main-snapshot` B. It requires the exact tag to match canonical HEAD, watches the detached worker receipt and checks that the real restarted native-host runtime is `HEALTHY` at B. The test must never run against a developer's active Mac installation; its fixed launchd label and port are intentionally isolated to the GitHub runner. Do not present this initial success-path smoke as coverage of forced-failure rollback or genuine Windows installed-host acceptance: both are independent M8 exit requirements.
+
 ## Stable update manifests
 
 Runtime updates use JSON manifests signed with Ed25519. The shipped runtime contains only trusted public keys; release private keys must remain outside the repository.

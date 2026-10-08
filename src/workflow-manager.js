@@ -181,6 +181,15 @@ export function createWorkflowManager({
     await fs.chmod(target, 0o600).catch(() => {});
   };
 
+  // A terminal status is observable only after its durable JSON has been
+  // atomically renamed into place. Otherwise status() can report completed
+  // while an immediate disk read still sees running under CI I/O pressure.
+  const publishStatus = async (record, changes) => {
+    const next = { ...record, ...changes };
+    await persist(next);
+    Object.assign(record, next);
+  };
+
   const appendLog = async (record, level, message) => {
     const value = String(message ?? "");
 
@@ -267,12 +276,13 @@ export function createWorkflowManager({
         : "Workflow was cancelled by the user.";
     }
 
-    record.status = mode === "pause" ? "paused" : "cancelled";
-    record.error = mode === "pause"
-      ? "Workflow was paused because the runtime is shutting down."
-      : "Workflow was cancelled by the user.";
-    record.completedAt = mode === "cancel" ? iso(now()) : null;
-    await persist(record);
+    await publishStatus(record, {
+      status: mode === "pause" ? "paused" : "cancelled",
+      error: mode === "pause"
+        ? "Workflow was paused because the runtime is shutting down."
+        : "Workflow was cancelled by the user.",
+      completedAt: mode === "cancel" ? iso(now()) : null,
+    });
     await appendLog(
       record,
       mode === "pause" ? "warn" : "info",
@@ -375,10 +385,7 @@ export function createWorkflowManager({
           step.status = "failed";
           step.completedAt = iso(now());
           step.error = message;
-          record.status = "failed";
-          record.error = message;
-          record.completedAt = iso(now());
-          await persist(record);
+          await publishStatus(record, { status: "failed", error: message, completedAt: iso(now()) });
           await appendLog(record, "error", `Step failed: ${step.label}\n${message}`);
           emitEvent({
             component: "workflow",
@@ -402,10 +409,7 @@ export function createWorkflowManager({
 
       record.currentStepIndex = record.steps.length;
       await appendLog(record, "info", "Workflow completed successfully.");
-      record.status = "completed";
-      record.error = null;
-      record.completedAt = iso(now());
-      await persist(record);
+      await publishStatus(record, { status: "completed", error: null, completedAt: iso(now()) });
       emitEvent({
         component: "workflow",
         type: "workflow.completed",
@@ -422,10 +426,7 @@ export function createWorkflowManager({
       });
     } catch (error) {
       const message = cleanError(error);
-      record.status = "failed";
-      record.error = message;
-      record.completedAt = iso(now());
-      await persist(record).catch(() => {});
+      await publishStatus(record, { status: "failed", error: message, completedAt: iso(now()) }).catch(() => {});
       await appendLog(record, "error", `Workflow engine error: ${message}`).catch(() => {});
       emitEvent({
         component: "workflow",
