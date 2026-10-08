@@ -103,6 +103,12 @@ export function mainUpdateWorkerEnvironment(sourceEnv = process.env) {
     PATH: "/usr/bin:/bin:/usr/sbin:/sbin",
     EQUINOX_LOCAL_DEV_RUNTIME_CONFIG: sourceEnv.EQUINOX_LOCAL_DEV_RUNTIME_CONFIG,
     EQUINOX_LOCAL_DEV_NODE: sourceEnv.EQUINOX_LOCAL_DEV_NODE,
+    // The native worker is a separate launchd job; without the managed
+    // installation identity it resolves as a source checkout and refuses the
+    // REAL artifact_required native lifecycle even though source-only Main
+    // updates work. Pass only these non-secret, separately validated paths.
+    EQUINOX_LOCAL_INSTALL_ROOT: sourceEnv.EQUINOX_LOCAL_INSTALL_ROOT,
+    EQUINOX_LOCAL_RELEASE_DIR: sourceEnv.EQUINOX_LOCAL_RELEASE_DIR,
   };
   return Object.fromEntries(Object.entries(env).filter(([, value]) => typeof value === "string" && value.length > 0));
 }

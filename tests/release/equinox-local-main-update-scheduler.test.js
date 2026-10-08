@@ -21,6 +21,23 @@ test("main update worker environment is minimal and credential-free", () => {
   assert.deepEqual(env, { HOME: "/Users/example", USER: "example", LOGNAME: "example", TMPDIR: "/tmp/x", PATH: "/usr/bin:/bin:/usr/sbin:/sbin", EQUINOX_LOCAL_DEV_RUNTIME_CONFIG: "/private/runtime.conf", EQUINOX_LOCAL_DEV_NODE: "/runtime/node" });
 });
 
+test("launchd detached Main worker keeps exact non-secret managed installation identity for native artifact transitions", () => {
+  const HOME = "/Users/isolated/home";
+  const EQUINOX_LOCAL_INSTALL_ROOT = `${HOME}/Library/Application Support/Equinox Local`;
+  const EQUINOX_LOCAL_RELEASE_DIR = `${EQUINOX_LOCAL_INSTALL_ROOT}/releases/5.2.1`;
+  const env = mainUpdateWorkerEnvironment({
+    HOME, USER: "runner", LOGNAME: "runner",
+    EQUINOX_LOCAL_INSTALL_ROOT, EQUINOX_LOCAL_RELEASE_DIR,
+    OPENAI_API_KEY: "private", GITHUB_TOKEN: "private", NODE_OPTIONS: "--import=/dangerous/hook",
+  });
+  assert.equal(env.EQUINOX_LOCAL_INSTALL_ROOT, EQUINOX_LOCAL_INSTALL_ROOT);
+  assert.equal(env.EQUINOX_LOCAL_RELEASE_DIR, EQUINOX_LOCAL_RELEASE_DIR);
+  assert.equal(env.HOME, HOME);
+  assert.equal(env.NODE_OPTIONS, undefined);
+  assert.equal(env.OPENAI_API_KEY, undefined);
+  assert.equal(env.GITHUB_TOKEN, undefined);
+});
+
 test("main update handoff is transferred to a one-shot launchd-owned worker", async (t) => {
   const root = await fs.mkdtemp(path.join(await fs.realpath(os.tmpdir()), "equinox-scheduler-"));
   t.after(() => fs.rm(root, { recursive: true, force: true }));

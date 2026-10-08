@@ -5,6 +5,7 @@ All notable public changes to Equinox Local will be documented here.
 This project follows semantic versioning for public releases.
 
 ## [Unreleased]
+- Fixed real macOS `artifact_required` Main upgrades: the detached launchd worker preserves non-secret managed installation paths for future updates and independently reconstructs an exact trusted managed installation from its own HOME, transaction root and current native release pointer when an older A scheduler drops those fields; credentials remain excluded and foreign paths are rejected.
 - Fixed the macOS native LaunchAgent runtime host using the OS account home instead of the exact managed `EQUINOX_LOCAL_INSTALL_ROOT` under its declared `HOME`; isolated managed users and native app refreshes now resolve the trusted runtime wrapper consistently, while foreground launches retain the normal account-home fallback.
 - Require the restarted native Main Control Center itself to identify as `managed-source` at the exact target SHA before completing update health verification, preventing the still-running old A runtime from being mistaken for healthy B; preserve pinned Windows shell identity in detached worker recovery.
 - Fixed a real native Main update apply failure: the pinned prebuilt dependency and staged-source validator functions were used without being imported by the transaction engine. Exercised the real default pinned Node/npm lifecycle path in regression tests and propagated the owned Windows POSIX shell for staged-source validation.

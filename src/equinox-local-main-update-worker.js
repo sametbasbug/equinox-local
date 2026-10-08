@@ -9,7 +9,7 @@ import { prepareEquinoxLocalMainNativeCandidate } from "./equinox-local-main-nat
 import { prepareEquinoxLocalMainNativeLifecycle } from "./equinox-local-main-native-activation.js";
 import { recoverEquinoxLocalMainNativeLifecycle } from "./equinox-local-main-native-recovery.js";
 import { equinoxLocalReleaseTarget } from "./equinox-local-platform.js";
-import { EQUINOX_LOCAL_INSTALL_LABEL } from "./equinox-local-installation.js";
+import { EQUINOX_LOCAL_INSTALL_LABEL, resolveEquinoxLocalInstallation } from "./equinox-local-installation.js";
 import { kickstartEquinoxLocalLaunchAgent } from "./equinox-local-update-activation.js";
 import { equinoxLocalToolchainContract } from "./equinox-local-toolchain-contract.js";
 import { createEquinoxLocalMainUpdateTransactionEngine } from "./equinox-local-main-update-transaction.js";
@@ -100,6 +100,34 @@ export async function waitForExactSourceHealth({
 
 
 
+// Older admitted A versions schedule the B worker with a minimal launchd
+// environment that omits both managed installation paths. Derive identity
+// from the actual owned current-release pointer and the tightly constrained
+// transactionRoot, not arbitrary caller-supplied environment path strings.
+export async function resolveEquinoxLocalMainWorkerNativeInstallation({
+  transactionRoot, env = process.env, platform = process.platform, arch = process.arch, fsImpl = fs,
+} = {}) {
+  if (platform !== "darwin") return resolveEquinoxLocalInstallation({ platform, arch, env });
+  const homeDir = env?.HOME;
+  if (typeof homeDir !== "string" || !path.posix.isAbsolute(homeDir)
+    || path.posix.normalize(homeDir) !== homeDir) {
+    throw new Error("Detached Main native worker HOME is not canonical.");
+  }
+  const installRoot = path.posix.join(homeDir, "Library", "Application Support", "Equinox Local");
+  if (path.posix.resolve(transactionRoot ?? "") !== path.posix.join(installRoot, "main-update")) {
+    throw new Error("Detached Main native worker transaction root does not belong to its managed HOME.");
+  }
+  const releaseDir = await fsImpl.realpath(path.posix.join(installRoot, "current"));
+  const installation = resolveEquinoxLocalInstallation({
+    platform, arch, homeDir,
+    env: { ...env, EQUINOX_LOCAL_INSTALL_ROOT: installRoot, EQUINOX_LOCAL_RELEASE_DIR: releaseDir },
+  });
+  if (!installation.managed || !installation.selfUpdateSupported) {
+    throw new Error("Detached Main native worker release identity is not a trusted managed installation.");
+  }
+  return installation;
+}
+
 export async function runEquinoxLocalMainUpdateWorker({
   argv = process.argv.slice(2),
   execFileImpl = execFile,
@@ -117,6 +145,7 @@ export async function runEquinoxLocalMainUpdateWorker({
   handoffImpl = runEquinoxLocalMainUpdateHandoff,
   restartRuntimeImpl = (value) => restartEquinoxLocalMainSourceRuntime({ ...value, execFileImpl, env, fsImpl }),
   verifyRuntimeImpl,
+  resolveNativeInstallation = resolveEquinoxLocalMainWorkerNativeInstallation,
   cleanupImpl = (value) => cleanupEquinoxLocalMainUpdateWorkerOwnership({ ...value, execFileImpl, fsImpl, uid, ownershipToken: env.EQUINOX_LOCAL_MAIN_WORKER_TOKEN }),
 } = {}) {
   const args = parseArgs(argv);
@@ -165,6 +194,10 @@ export async function runEquinoxLocalMainUpdateWorker({
         gitPath: toolchain.gitPath,
       });
       if (nativeTransition?.mode === "artifact_required") {
+        const installation = await resolveNativeInstallation({ transactionRoot: args.transactionRoot, env, platform: process.platform, fsImpl });
+        if (!installation?.managed || !installation?.selfUpdateSupported || installation.target !== nativeTransition.target) {
+          throw new Error("Detached Main worker native installation does not match the exact target.");
+        }
         if (initialStage === "ready_to_switch") {
           const candidate = await prepareNativeCandidate({
             sourceSha: active.targetSha,
@@ -178,6 +211,7 @@ export async function runEquinoxLocalMainUpdateWorker({
           nativeLifecycle = await prepareNativeLifecycle({
             transition: nativeTransition,
             candidate,
+            installation,
             transactionRoot: args.transactionRoot,
             transactionId: args.transactionId,
             fsImpl,
@@ -188,6 +222,7 @@ export async function runEquinoxLocalMainUpdateWorker({
         } else {
           nativeLifecycle = await recoverNativeLifecycle({
             transition: nativeTransition,
+            installation,
             transactionRoot: args.transactionRoot,
             transactionId: args.transactionId,
             fsImpl,
