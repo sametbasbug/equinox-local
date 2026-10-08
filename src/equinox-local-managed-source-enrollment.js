@@ -17,7 +17,7 @@ import {
 } from "./equinox-local-main-update.js";
 import { equinoxLocalPlatformPaths } from "./equinox-local-platform.js";
 import { inspectPrivateStatePath, protectWindowsPrivateStatePath, verifyWindowsPrivateStateAcl } from "./equinox-local-private-state.js";
-import { equinoxLocalToolchainContract } from "./equinox-local-toolchain-contract.js";
+import { equinoxLocalGitExecutionEnvironment, equinoxLocalToolchainContract } from "./equinox-local-toolchain-contract.js";
 import { provisionEquinoxLocalToolchain } from "./equinox-local-toolchain-provisioner.js";
 import { readBoundedNormalFile } from "./equinox-local-safe-file.js";
 
@@ -76,7 +76,7 @@ async function run(command, args, { cwd, execFileImpl = execFile, env = process.
       cwd,
       timeout: COMMAND_TIMEOUT_MS,
       maxBuffer: 4 * 1024 * 1024,
-      env: managedSourceCommandEnvironment(env, platform, pathPrefix),
+      env: equinoxLocalGitExecutionEnvironment(command, managedSourceCommandEnvironment(env, platform, pathPrefix), { platform }),
     });
   } catch (error) {
     const message = boundedCommandDiagnostic(error instanceof Error ? error.message : error, 1_200) || "Managed-source command failed.";

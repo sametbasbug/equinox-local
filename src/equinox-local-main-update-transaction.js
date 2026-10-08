@@ -6,6 +6,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 
 import { readEquinoxLocalMainSourcePointer, writeEquinoxLocalMainSourcePointer } from "./equinox-local-main-source-pointer.js";
+import { equinoxLocalGitExecutionEnvironment } from "./equinox-local-toolchain-contract.js";
 import {
   EQUINOX_LOCAL_MAIN_BRANCH,
   EQUINOX_LOCAL_MAIN_REMOTE,
@@ -122,7 +123,7 @@ function validateReceipt(value) {
   return Object.freeze({ ...value });
 }
 async function run(command, args, { cwd, execFileImpl = execFile, timeout = COMMAND_TIMEOUT_MS } = {}) {
-  return await execFileImpl(command, args, { cwd, timeout, maxBuffer: 4 * 1024 * 1024, env: { ...process.env, GIT_TERMINAL_PROMPT: "0", npm_config_audit: "false", npm_config_fund: "false" } });
+  return await execFileImpl(command, args, { cwd, timeout, maxBuffer: 4 * 1024 * 1024, env: equinoxLocalGitExecutionEnvironment(command, { ...process.env, GIT_TERMINAL_PROMPT: "0", npm_config_audit: "false", npm_config_fund: "false" }) });
 }
 async function assertStagedCheckout(stageRoot, targetSha, { execFileImpl = execFile, fsImpl = fs, gitPath = "git" } = {}) {
   const root = await assertCanonicalDirectory(stageRoot, { fsImpl });

@@ -3,6 +3,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
+import { equinoxLocalGitExecutionEnvironment } from "./equinox-local-toolchain-contract.js";
 
 const execFile = promisify(execFileCallback);
 const MODULE_DIR = path.dirname(fileURLToPath(import.meta.url));
@@ -66,7 +67,7 @@ async function runGit(sourceRoot, args, { execFileImpl = execFile, gitPath = "gi
   const result = await execFileImpl(gitPath, ["-C", sourceRoot, ...args], {
     timeout: CHECK_TIMEOUT_MS,
     maxBuffer: 1024 * 1024,
-    env: { ...process.env, GIT_OPTIONAL_LOCKS: "0", GIT_TERMINAL_PROMPT: "0" },
+    env: equinoxLocalGitExecutionEnvironment(gitPath, { ...process.env, GIT_OPTIONAL_LOCKS: "0", GIT_TERMINAL_PROMPT: "0" }),
   });
   return String(result?.stdout ?? "").trim();
 }
