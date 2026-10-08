@@ -6,7 +6,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 
 import { hashFile } from "../lib/package-io.mjs";
-import { collectManagedReleaseSourceFiles } from "./package-managed-release.mjs";
+import { collectManagedReleaseSourceFiles, resolveManagedReleaseSourceSha } from "./package-managed-release.mjs";
 import {
   EQUINOX_LOCAL_NODE_VERSION,
   EQUINOX_LOCAL_TUNNEL_CLIENT_VERSION,
@@ -34,6 +34,7 @@ const WINDOWS_TARGETS = Object.freeze({
     shellPlatform: "ARM64",
     visualStudioComponent: "Microsoft.VisualStudio.Component.VC.Tools.ARM64",
     vcvars: "vcvarsarm64.bat",
+    crossVcvars: "vcvarsamd64_arm64.bat",
     peMachine: 0xaa64,
   }),
 });
@@ -42,9 +43,9 @@ const WINDOWS_ZIP_TIMEOUT_MS = 180_000;
 const WINDOWS_EXTRA_RELEASE_FILES = Object.freeze([
   "src/equinox-local-windows-clipboard.ps1",
   "src/equinox-local-windows-desktop.ps1",
-  "src/equinox-local-windows-job-object.ps1",
   "src/equinox-local-windows-private-state.ps1",
   "src/equinox-local-windows-process-gate.ps1",
+  "src/equinox-local-windows-runtime-gate.mjs",
   "src/equinox-local-windows-release-zip.ps1",
 ]);
 const REQUIRED_SHELL_FILES = Object.freeze([
@@ -140,6 +141,36 @@ async function assertNormalTree(root) {
   }
 }
 
+async function hardlinkNormalTree(sourceRoot, destinationRoot) {
+  const sourceStat = await fs.lstat(sourceRoot);
+  if (!sourceStat.isDirectory() || sourceStat.isSymbolicLink()) throw new Error("Hardlink source tree is unavailable or unsafe.");
+  await fs.mkdir(destinationRoot, { recursive: true });
+  const stack = [[sourceRoot, destinationRoot]];
+  while (stack.length > 0) {
+    const [sourceDir, destinationDir] = stack.pop();
+    for (const entry of await fs.readdir(sourceDir, { withFileTypes: true })) {
+      if (entry.name === ".bin" && sourceDir === sourceRoot) continue;
+      const source = path.join(sourceDir, entry.name);
+      const destination = path.join(destinationDir, entry.name);
+      const stat = await fs.lstat(source);
+      if (stat.isSymbolicLink()) throw new Error(`Hardlink source tree contains a symbolic link: ${source}`);
+      if (stat.isDirectory()) {
+        await fs.mkdir(destination, { recursive: false });
+        stack.push([source, destination]);
+      } else if (stat.isFile()) {
+        try {
+          await fs.link(source, destination);
+        } catch (error) {
+          if (!["EXDEV", "EPERM"].includes(error?.code)) throw error;
+          await fs.copyFile(source, destination);
+        }
+      } else {
+        throw new Error(`Hardlink source tree contains an unsupported filesystem entry: ${source}`);
+      }
+    }
+  }
+}
+
 async function copyReleaseSources(rootDir, releaseDir) {
   const files = await collectManagedReleaseSourceFiles(rootDir);
   for (const relative of [...files, ...WINDOWS_EXTRA_RELEASE_FILES]) {
@@ -150,20 +181,11 @@ async function copyReleaseSources(rootDir, releaseDir) {
     await fs.copyFile(source, destination);
   }
   const modulesSource = path.join(rootDir, "node_modules");
-  const modulesStat = await fs.lstat(modulesSource);
-  if (!modulesStat.isDirectory() || modulesStat.isSymbolicLink()) throw new Error("Production node_modules is unavailable.");
-  await fs.cp(modulesSource, path.join(releaseDir, "node_modules"), {
-    recursive: true,
-    dereference: false,
-    filter: (candidate) => {
-      const relative = path.relative(modulesSource, candidate);
-      return relative !== ".bin" && !relative.startsWith(`.bin${path.sep}`);
-    },
-  });
+  await hardlinkNormalTree(modulesSource, path.join(releaseDir, "node_modules"));
   return files.length;
 }
 
-async function installPinnedWindowsNode(transaction, releaseDir, fetchImpl, target) {
+async function installPinnedWindowsNode(transaction, releaseDir, fetchImpl, target, { canExecuteTarget = true } = {}) {
   const distribution = NODE_DISTRIBUTIONS[target];
   const archive = path.join(transaction, distribution.filename);
   const extracted = path.join(transaction, "node-extracted");
@@ -173,13 +195,18 @@ async function installPinnedWindowsNode(transaction, releaseDir, fetchImpl, targ
   const sourceRoot = path.join(extracted, distribution.filename.replace(/\.zip$/u, ""));
   const destination = path.join(releaseDir, "runtime", "node");
   await fs.mkdir(path.join(destination, "bin"), { recursive: true });
-  await fs.copyFile(path.join(sourceRoot, "node.exe"), path.join(destination, "bin", "node.exe"));
+  const nodePath = path.join(destination, "bin", "node.exe");
+  await fs.copyFile(path.join(sourceRoot, "node.exe"), nodePath);
   await fs.copyFile(path.join(sourceRoot, "LICENSE"), path.join(destination, "LICENSE"));
-  const version = await execFile(path.join(destination, "bin", "node.exe"), ["--version"], { timeout: 10_000, windowsHide: true });
-  if (version.stdout.trim() !== `v${EQUINOX_LOCAL_NODE_VERSION}`) throw new Error("Pinned Windows Node version mismatch.");
+  const nodeMachine = await portableExecutableMachine(nodePath);
+  if (nodeMachine !== WINDOWS_TARGETS[target].peMachine) throw new Error(`Pinned Windows Node architecture mismatch for ${target}: 0x${nodeMachine.toString(16)}.`);
+  if (canExecuteTarget) {
+    const version = await execFile(nodePath, ["--version"], { timeout: 10_000, windowsHide: true });
+    if (version.stdout.trim() !== `v${EQUINOX_LOCAL_NODE_VERSION}`) throw new Error("Pinned Windows Node version mismatch.");
+  }
 }
 
-async function installPinnedWindowsTunnel(transaction, releaseDir, fetchImpl, target) {
+async function installPinnedWindowsTunnel(transaction, releaseDir, fetchImpl, target, { canExecuteTarget = true } = {}) {
   const distribution = TUNNEL_CLIENT_DISTRIBUTIONS[target];
   const archive = path.join(transaction, distribution.filename);
   const extracted = path.join(transaction, "tunnel-extracted");
@@ -196,11 +223,17 @@ async function installPinnedWindowsTunnel(transaction, releaseDir, fetchImpl, ta
   const destination = path.join(releaseDir, "runtime", "tunnel");
   await fs.mkdir(destination, { recursive: true });
   for (const name of expected) await fs.copyFile(path.join(extracted, name), path.join(destination, name));
-  const version = await execFile(path.join(destination, "tunnel-client.exe"), ["--version"], { timeout: 10_000, windowsHide: true });
-  if (!version.stdout.trim().startsWith(`${EQUINOX_LOCAL_TUNNEL_CLIENT_VERSION}+`)) throw new Error("Pinned Windows tunnel-client version mismatch.");
+  for (const name of ["tunnel-client.exe", "cloudflared.exe"]) {
+    const machine = await portableExecutableMachine(path.join(destination, name));
+    if (machine !== WINDOWS_TARGETS[target].peMachine) throw new Error(`Pinned Windows ${name} architecture mismatch for ${target}: 0x${machine.toString(16)}.`);
+  }
+  if (canExecuteTarget) {
+    const version = await execFile(path.join(destination, "tunnel-client.exe"), ["--version"], { timeout: 10_000, windowsHide: true });
+    if (!version.stdout.trim().startsWith(`${EQUINOX_LOCAL_TUNNEL_CLIENT_VERSION}+`)) throw new Error("Pinned Windows tunnel-client version mismatch.");
+  }
 }
 
-async function installPinnedWindowsWinapp(transaction, rootDir, releaseDir, fetchImpl, target) {
+async function installPinnedWindowsWinapp(transaction, rootDir, releaseDir, fetchImpl, target, { canExecuteTarget = true } = {}) {
   const distribution = WINAPP_DISTRIBUTIONS[target];
   if (!distribution) throw new Error(`Pinned Microsoft winapp distribution is unavailable for ${target}.`);
   const archive = path.join(transaction, distribution.filename);
@@ -222,9 +255,11 @@ async function installPinnedWindowsWinapp(transaction, rootDir, releaseDir, fetc
   const machine = await portableExecutableMachine(path.join(destination, "winapp.exe"));
   const expectedMachine = WINDOWS_TARGETS[target].peMachine;
   if (machine !== expectedMachine) throw new Error(`Microsoft winapp architecture mismatch for ${target}: 0x${machine.toString(16)}.`);
-  const version = await execFile(path.join(destination, "winapp.exe"), ["--version"], { timeout: 10_000, windowsHide: true });
-  if (!`${version.stdout ?? ""}${version.stderr ?? ""}`.includes(EQUINOX_LOCAL_WINAPP_VERSION)) {
-    throw new Error("Pinned Microsoft winapp version mismatch.");
+  if (canExecuteTarget) {
+    const version = await execFile(path.join(destination, "winapp.exe"), ["--version"], { timeout: 10_000, windowsHide: true });
+    if (!`${version.stdout ?? ""}${version.stderr ?? ""}`.includes(EQUINOX_LOCAL_WINAPP_VERSION)) {
+      throw new Error("Pinned Microsoft winapp version mismatch.");
+    }
   }
 }
 
@@ -258,30 +293,106 @@ async function portableExecutableMachine(filePath) {
   return bytes.readUInt16LE(peOffset + 4);
 }
 
-async function compileBrowserLauncher(rootDir, releaseDir, contract) {
-  const browserDir = path.join(releaseDir, "runtime", "browser");
-  await fs.mkdir(browserDir, { recursive: true });
+async function resolveVisualStudioVcvars(contract) {
   const programFilesX86 = process.env["ProgramFiles(x86)"];
   if (!programFilesX86) throw new Error("ProgramFiles(x86) is unavailable.");
   const vswhere = path.join(programFilesX86, "Microsoft Visual Studio", "Installer", "vswhere.exe");
-  const found = await execFile(vswhere, ["-latest", "-products", "*", "-requires", contract.visualStudioComponent, "-property", "installationPath"], { timeout: 10_000, windowsHide: true });
-  const installation = found.stdout.trim();
+  const discoveryOptions = { timeout: 10_000, windowsHide: true };
+  let installation = "";
+  try {
+    const found = await execFile(vswhere, ["-latest", "-products", "*", "-requires", contract.visualStudioComponent, "-property", "installationPath"], discoveryOptions);
+    installation = found.stdout.trim();
+  } catch {
+    // Hosted runner component registration can drift even when target vcvars is present.
+  }
+  if (!installation) {
+    const found = await execFile(vswhere, ["-latest", "-products", "*", "-property", "installationPath"], discoveryOptions);
+    installation = found.stdout.trim();
+  }
   if (!installation) throw new Error(`Visual Studio C++ toolchain is unavailable for ${contract.target}.`);
-  const vcvars = path.join(installation, "VC", "Auxiliary", "Build", contract.vcvars);
+  const vcvarsName = process.arch === "x64" && contract.target === "win32-arm64" ? contract.crossVcvars : contract.vcvars;
+  const vcvars = path.join(installation, "VC", "Auxiliary", "Build", vcvarsName);
+  const stat = await fs.lstat(vcvars).catch((error) => error?.code === "ENOENT" ? null : Promise.reject(error));
+  if (!stat?.isFile() || stat.isSymbolicLink()) throw new Error(`Visual Studio target environment is unavailable for ${contract.target}.`);
+  return vcvars;
+}
+
+export async function compileWindowsJobObjectHelper({
+  rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../.."),
+  outputDir,
+  target = `${process.platform}-${process.arch}`,
+} = {}) {
+  if (!outputDir) throw new Error("Windows Job Object helper output directory is required.");
+  const contract = windowsManagedPackageContract({ target });
+  const vcvars = await resolveVisualStudioVcvars(contract);
+  const destination = path.resolve(outputDir);
+  await fs.mkdir(destination, { recursive: true });
+  const source = path.join(rootDir, "native", "windows", "equinox-local-job-object-helper.cpp");
+  const compileScript = path.join(destination, ".compile-job-object-helper.cmd");
+  const script = [
+    "@echo off",
+    `call "${vcvars}" >nul`,
+    "if errorlevel 1 exit /b %errorlevel%",
+    `cl.exe /nologo /std:c++17 /O2 /EHsc /MT /DUNICODE /D_UNICODE "${source}" /Fe:equinox-local-job-object-helper.exe`,
+    "exit /b %errorlevel%",
+    "",
+  ].join("\r\n");
+  await fs.writeFile(compileScript, script, { encoding: "utf8", flag: "wx" });
+  try {
+    await execFile("cmd.exe", ["/d", "/c", compileScript], { cwd: destination, timeout: 180_000, maxBuffer: 4 * 1024 * 1024, windowsHide: true });
+  } finally {
+    await fs.rm(compileScript, { force: true });
+    await fs.rm(path.join(destination, "equinox-local-job-object-helper.obj"), { force: true });
+  }
+  const helperPath = path.join(destination, "equinox-local-job-object-helper.exe");
+  const machine = await portableExecutableMachine(helperPath);
+  if (machine !== contract.peMachine) throw new Error(`Windows Job Object helper architecture mismatch for ${target}: 0x${machine.toString(16)}.`);
+  return helperPath;
+}
+
+async function compileBrowserLauncher(rootDir, releaseDir, contract) {
+  const browserDir = path.join(releaseDir, "runtime", "browser");
+  await fs.mkdir(browserDir, { recursive: true });
+  const vcvars = await resolveVisualStudioVcvars(contract);
   const source = path.join(rootDir, "native", "windows", "equinox-browser-native-host-launcher.cpp");
-  const command = `\"\"${vcvars}\" >nul && cl.exe /nologo /std:c++17 /O2 /EHsc /DUNICODE /D_UNICODE \"${source}\" /Fe:equinox-browser-native-host.exe\"`;
-  await execFile("cmd.exe", ["/d", "/s", "/c", command], {
-    cwd: browserDir,
-    timeout: 180_000,
-    maxBuffer: 4 * 1024 * 1024,
-    windowsHide: true,
-    windowsVerbatimArguments: true,
-  });
+  const compileScript = path.join(browserDir, ".compile-browser-launcher.cmd");
+  const script = [
+    "@echo off",
+    `call "${vcvars}" >nul`,
+    "if errorlevel 1 exit /b %errorlevel%",
+    `cl.exe /nologo /std:c++17 /O2 /EHsc /DUNICODE /D_UNICODE "${source}" /Fe:equinox-browser-native-host.exe`,
+    "exit /b %errorlevel%",
+    "",
+  ].join("\r\n");
+  await fs.writeFile(compileScript, script, { encoding: "utf8", flag: "wx" });
+  try {
+    await execFile("cmd.exe", ["/d", "/c", compileScript], {
+      cwd: browserDir,
+      timeout: 180_000,
+      maxBuffer: 4 * 1024 * 1024,
+      windowsHide: true,
+    });
+  } finally {
+    await fs.rm(compileScript, { force: true });
+  }
   const launcherPath = path.join(browserDir, "equinox-browser-native-host.exe");
   const machine = await portableExecutableMachine(launcherPath);
   if (machine !== contract.peMachine) {
     throw new Error(`Windows Native Messaging launcher architecture mismatch for ${contract.target}: 0x${machine.toString(16)}.`);
   }
+}
+
+async function copyPrecompiledBrowserLauncher(browserLauncherPath, releaseDir, contract) {
+  const source = path.resolve(browserLauncherPath);
+  const stat = await fs.lstat(source);
+  if (!stat.isFile() || stat.isSymbolicLink()) throw new Error("Precompiled Windows Native Messaging launcher is unavailable or unsafe.");
+  const machine = await portableExecutableMachine(source);
+  if (machine !== contract.peMachine) {
+    throw new Error(`Precompiled Windows Native Messaging launcher architecture mismatch for ${contract.target}: 0x${machine.toString(16)}.`);
+  }
+  const browserDir = path.join(releaseDir, "runtime", "browser");
+  await fs.mkdir(browserDir, { recursive: true });
+  await fs.copyFile(source, path.join(browserDir, "equinox-browser-native-host.exe"));
 }
 
 async function createManagedZip(rootDir, releaseDir, artifactPath) {
@@ -305,15 +416,19 @@ async function createManagedZip(rootDir, releaseDir, artifactPath) {
 export async function packageManagedEquinoxWindowsRelease({
   rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../.."),
   outputDir = path.join(rootDir, "backups", "local-packages"),
-  target = `${process.platform}-${process.arch}`,
+  target = process.env.EQUINOX_WINDOWS_PACKAGE_TARGET || `${process.platform}-${process.arch}`,
   shellPublishDir = process.env.EQUINOX_WINDOWS_SHELL_PUBLISH_DIR || null,
+  browserLauncherPath = process.env.EQUINOX_WINDOWS_BROWSER_LAUNCHER_PATH || null,
   fetchImpl = globalThis.fetch,
 } = {}) {
   const hostTarget = `${process.platform}-${process.arch}`;
-  if (target !== hostTarget || process.platform !== "win32" || !["x64", "arm64"].includes(process.arch)) {
-    throw new Error(`Windows managed release packaging requires a native win32-x64 or win32-arm64 host/target match; got host=${hostTarget} target=${target}.`);
-  }
   const contract = windowsManagedPackageContract({ target });
+  const supportedHost = process.platform === "win32" && ["x64", "arm64"].includes(process.arch);
+  const supportedPair = supportedHost && (target === hostTarget || (process.arch === "x64" && target === "win32-arm64"));
+  if (!supportedPair) {
+    throw new Error(`Windows managed release packaging requires a supported native or x64-to-ARM64 Windows host/target pair; got host=${hostTarget} target=${target}.`);
+  }
+  const sourceSha = await resolveManagedReleaseSourceSha(rootDir);
   const resolvedShellPublishDir = shellPublishDir || path.join("artifacts", "windows-shell", contract.shellRid);
   await fs.mkdir(outputDir, { recursive: true });
   const transaction = await fs.mkdtemp(path.join(outputDir, `.build-${EQUINOX_LOCAL_VERSION}-${target}-`));
@@ -321,16 +436,26 @@ export async function packageManagedEquinoxWindowsRelease({
   const artifactPath = path.join(outputDir, `equinox-local-${EQUINOX_LOCAL_VERSION}-${target}.zip`);
   await fs.mkdir(releaseDir, { recursive: true });
   try {
-    const sourceFileCount = await copyReleaseSources(rootDir, releaseDir);
-    await installPinnedWindowsNode(transaction, releaseDir, fetchImpl, target);
-    await installPinnedWindowsTunnel(transaction, releaseDir, fetchImpl, target);
-    await installPinnedWindowsWinapp(transaction, rootDir, releaseDir, fetchImpl, target);
-    await copyPublishedShell(rootDir, releaseDir, resolvedShellPublishDir);
-    await compileBrowserLauncher(rootDir, releaseDir, contract);
+    const canExecuteTarget = target === hostTarget;
+    const preparationResults = await Promise.allSettled([
+      copyReleaseSources(rootDir, releaseDir),
+      installPinnedWindowsNode(transaction, releaseDir, fetchImpl, target, { canExecuteTarget }),
+      installPinnedWindowsTunnel(transaction, releaseDir, fetchImpl, target, { canExecuteTarget }),
+      installPinnedWindowsWinapp(transaction, rootDir, releaseDir, fetchImpl, target, { canExecuteTarget }),
+      copyPublishedShell(rootDir, releaseDir, resolvedShellPublishDir),
+      compileWindowsJobObjectHelper({ rootDir, outputDir: path.join(releaseDir, "runtime", "job"), target }),
+      browserLauncherPath
+        ? copyPrecompiledBrowserLauncher(browserLauncherPath, releaseDir, contract)
+        : compileBrowserLauncher(rootDir, releaseDir, contract),
+    ]);
+    const preparationFailure = preparationResults.find((result) => result.status === "rejected");
+    if (preparationFailure) throw preparationFailure.reason;
+    const sourceFileCount = preparationResults[0].value;
     await fs.writeFile(path.join(releaseDir, "release.json"), `${JSON.stringify({
       schemaVersion: 1,
       version: EQUINOX_LOCAL_VERSION,
       target,
+      sourceSha,
       nodeVersion: EQUINOX_LOCAL_NODE_VERSION,
       tunnelClientVersion: EQUINOX_LOCAL_TUNNEL_CLIENT_VERSION,
       serverEntry: "server.js",
@@ -339,7 +464,7 @@ export async function packageManagedEquinoxWindowsRelease({
     await validateFirstInstallRelease(releaseDir, { target });
     await createManagedZip(rootDir, releaseDir, artifactPath);
     const digest = await sha256File(artifactPath);
-    return Object.freeze({ version: EQUINOX_LOCAL_VERSION, target, artifactPath, ...digest, sourceFileCount });
+    return Object.freeze({ version: EQUINOX_LOCAL_VERSION, target, sourceSha, artifactPath, ...digest, sourceFileCount });
   } finally {
     await fs.rm(transaction, { recursive: true, force: true });
   }

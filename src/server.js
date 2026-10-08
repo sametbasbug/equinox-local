@@ -600,6 +600,7 @@ const equinoxLocalUpdateCoordinator = createEquinoxLocalUpdateCoordinator({
 });
 const equinoxLocalMainUpdateDiscovery = createEquinoxLocalMainUpdateDiscovery({
   installation: equinoxLocalInstallation,
+  gitPath: equinoxLocalInstallation.gitPath ?? "git",
 });
 const equinoxLocalMainApplyController = createEquinoxLocalMainApplyController({
   installation: equinoxLocalInstallation,
@@ -2951,6 +2952,10 @@ equinoxLocalControlApi = createEquinoxLocalControlApi({
         evaluatedAt: observabilityHealth.evaluatedAt,
         recentEventCount: observabilityHealth.recentEventCount,
         reasonCount: observabilityHealth.reasons.length,
+      },
+      installation: {
+        kind: equinoxLocalInstallation.kind,
+        sourceSha: equinoxLocalInstallation.kind === "managed-source" ? equinoxLocalInstallation.sourceSha : null,
       },
       chatgptConnection,
       config: {

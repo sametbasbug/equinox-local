@@ -64,3 +64,22 @@ test("main source pointer rejects symlink substitution", async (t) => {
   await fs.symlink(real, f.pointerPath);
   await assert.rejects(readEquinoxLocalMainSourcePointer(f.pointerPath, { execFileImpl: f.execFileImpl }));
 });
+
+test("Windows main source pointer receives explicit ACL before atomic publish", async (t) => {
+  const f = await fixture(t);
+  const protectedTargets = [];
+  const written = await writeEquinoxLocalMainSourcePointer(f.pointerPath, { sourceRoot: f.sourceRoot, sha: SHA }, {
+    execFileImpl: f.execFileImpl,
+    platform: "win32",
+    env: { SystemRoot: "C:\\Windows" },
+    protectWindowsAcl: async ({ target, type }) => {
+      protectedTargets.push([target, type]);
+      return { safe: true };
+    },
+    verifyWindowsAcl: async () => ({ safe: true }),
+  });
+  assert.equal(written.sha, SHA);
+  assert.equal(protectedTargets.length, 1);
+  assert.equal(protectedTargets[0][1], "file");
+  assert.match(path.basename(protectedTargets[0][0]), /^\.main-source-.*\.tmp$/u);
+});

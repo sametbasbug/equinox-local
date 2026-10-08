@@ -146,8 +146,14 @@ test("Windows managed-source runtime separates source, native, and Stable bootst
   assert.match(supervisor, /location\.SourceRoot/u);
   assert.match(supervisor, /location\.ServerPath/u);
   assert.match(supervisor, /Path\.Combine\(nativeReleaseDir, "runtime", "node", "bin", "node\.exe"\)/u);
-  assert.match(supervisor, /Path\.Combine\(nativeReleaseDir, "equinox-local-windows-job-object\.ps1"\)/u);
-  assert.match(supervisor, /Path\.Combine\(nativeReleaseDir, "equinox-local-windows-process-gate\.ps1"\)/u);
+  assert.doesNotMatch(supervisor, /Path\.Combine\(nativeReleaseDir, "equinox-local-windows-job-object\.ps1"\)/u);
+  assert.match(supervisor, /WindowsJobObjectLease\.Create\(\)/u);
+  assert.match(supervisor, /private int\? _gatePid/u);
+  assert.match(supervisor, /var gatePid = gate\.Id/u);
+  assert.match(supervisor, /_gatePid = gatePid/u);
+  assert.match(supervisor, /_gatePid = null/u);
+  assert.match(supervisor, /catch \(InvalidOperationException\) \{ return null; \}/u);
+  assert.match(supervisor, /Path\.Combine\(nativeReleaseDir, "equinox-local-windows-runtime-gate\.mjs"\)/u);
   assert.match(supervisor, /startInfo\.WorkingDirectory = sourceRoot/u);
   assert.match(supervisor, /EQUINOX_LOCAL_RELEASE_DIR"\] = location\.BootstrapReleaseDir/u);
   assert.match(supervisor, /EQUINOX_LOCAL_INSTALL_ROOT"\] = location\.InstallRoot/u);
@@ -171,15 +177,20 @@ test("Windows managed-source acceptance exercises reuse-native, artifact transit
   assert.match(program, /process\.execPath/u);
   assert.match(program, /process\.cwd\(\)/u);
   assert.match(program, /WINDOWS_MANAGED_SOURCE_ACCEPTANCE_PASS/u);
+  assert.match(program, /CleanupManagedSourceInstallState\(installRoot\)/u);
+  assert.match(program, /for \(var attempt = 0; attempt < 20; attempt \+= 1\)/u);
+  assert.match(program, /Thread\.Sleep\(100\)/u);
+  assert.match(program, /cleanup left owned per-user state/u);
 });
 
 test("Windows shell runtime supervisor uses the existing Job Object gate with bounded recovery", async () => {
-  const [app, supervisor, locator, tray, diagnostics, jobHelper] = await Promise.all([
+  const [app, supervisor, locator, tray, diagnostics, jobLease, jobHelper] = await Promise.all([
     source("App.xaml.cs"),
     source("RuntimeSupervisor.cs"),
     source("WindowsManagedReleaseLocator.cs"),
     source("TrayIconController.cs"),
     source("WindowsShellDiagnostics.cs"),
+    source("WindowsJobObjectLease.cs"),
     fs.readFile(path.join(ROOT, "src", "equinox-local-windows-job-object.ps1"), "utf8"),
   ]);
   assert.match(app, /RuntimeSupervisor\.TryCreateFromEnvironmentOrManagedInstall/u);
@@ -199,17 +210,24 @@ test("Windows shell runtime supervisor uses the existing Job Object gate with bo
   assert.match(diagnostics, /RecordLine/u);
   assert.match(supervisor, /EQUINOX_LOCAL_RELEASE_DIR/u);
   assert.match(supervisor, /using System\.IO;/u);
-  assert.match(supervisor, /equinox-local-windows-job-object\.ps1/u);
-  assert.match(supervisor, /equinox-local-windows-process-gate\.ps1/u);
+  assert.doesNotMatch(supervisor, /equinox-local-windows-job-object\.ps1/u);
+  assert.match(supervisor, /equinox-local-windows-runtime-gate\.mjs/u);
+  assert.match(supervisor, /WindowsJobObjectLease\.Create\(\)/u);
+  assert.match(supervisor, /_jobObject\.Assign\(gate\)/u);
+  assert.match(supervisor, /jobObject\.Terminate\(143\)/u);
   assert.match(supervisor, /EQUINOX_LOCAL_OWNED_PROCESS_SPEC/u);
   assert.match(supervisor, /EQUINOX_GO/u);
   assert.match(supervisor, /gate\.StandardInput\.FlushAsync/u);
+  assert.match(supervisor, /NodeGateStartInfo\(nodePath, processGatePath\)/u);
+  assert.match(supervisor, /EQUINOX_LOCAL_OWNED_PROCESS_READY_MARKER/u);
+  assert.match(supervisor, /RuntimeGateReadyMarker/u);
+  assert.match(supervisor, /gateReady\.Task\.WaitAsync\(RuntimeGateStartTimeout/u);
+  assert.match(supervisor, /if \(gate\.HasExited\)[\s\S]*gateReady\.TrySetException/u);
+  assert.match(supervisor, /RecordRuntimeState\("runtime-start-phase", "child-started"\)/u);
+  assert.doesNotMatch(supervisor, /FileName = "powershell\.exe"/u);
   assert.doesNotMatch(supervisor, /gate\.StandardInput\.Close\(\)/u);
   assert.match(supervisor, /MaxAutomaticRestarts = 3/u);
-  assert.match(supervisor, /ProtocolTimeout = TimeSpan\.FromSeconds\(30\)/u);
-  assert.match(supervisor, /ReadReplyAsync\(_jobHelper, "ready", cancellationToken\)/u);
-  assert.match(supervisor, /RecordRuntimeState\("runtime-start-phase", "helper-started"\)/u);
-  assert.match(supervisor, /RecordRuntimeState\("runtime-start-phase", "helper-ready"\)/u);
+  assert.match(supervisor, /RecordRuntimeState\("runtime-start-phase", "job-created"\)/u);
   assert.match(supervisor, /RecordRuntimeState\("runtime-start-phase", "assign-started"\)/u);
   assert.match(supervisor, /RecordRuntimeState\("runtime-start-phase", "assigned"\)/u);
   assert.match(supervisor, /RecordRuntimeState\("runtime-start-phase", "gate-released"\)/u);
@@ -217,11 +235,15 @@ test("Windows shell runtime supervisor uses the existing Job Object gate with bo
   assert.match(supervisor, /gate\.ErrorDataReceived/u);
   assert.match(supervisor, /RecordRuntimeState\("runtime-gate-exit", detail\)/u);
   assert.doesNotMatch(supervisor, /OnGateExited[\s\S]{0,700}gate\.WaitForExit\(\)/u);
-  assert.match(supervisor, /Windows Job Object helper \{phase\} reply timed out after/u);
-  assert.match(supervisor, /ExitedHelperDetailAsync/u);
-  assert.match(supervisor, /ReadToEndAsync\(cancellationToken\)/u);
-  assert.match(supervisor, /builder\.Length >= 1_200/u);
+  assert.match(supervisor, /clean\.Length >= MaxGateDiagnosticChars/u);
   assert.match(supervisor, /char\.IsControl/u);
+  assert.match(jobLease, /CreateJobObject/u);
+  assert.match(jobLease, /SetInformationJobObject/u);
+  assert.match(jobLease, /JobObjectLimitKillOnJobClose = 0x00002000/u);
+  assert.match(jobLease, /AssignProcessToJobObject/u);
+  assert.match(jobLease, /TerminateJobObject/u);
+  assert.match(jobLease, /Interlocked\.Exchange/u);
+  assert.match(jobLease, /Marshal\.GetLastWin32Error\(\)/u);
   assert.match(supervisor, /EQUINOX_LOCAL_SUPERVISOR_MODE/u);
   assert.match(supervisor, /_runtimeResolver/u);
   assert.match(supervisor, /EQUINOX_LOCAL_INSTALL_ROOT/u);
@@ -256,6 +278,9 @@ test("Windows runtime harness links and owns only its new shell diagnostics", as
   assert.match(program, /File\.Delete\(diagnosticLog\)/u);
   assert.match(program, /Directory\.EnumerateFileSystemEntries\(diagnosticLogsRoot\)\.Any\(\)/u);
   assert.match(program, /Directory\.EnumerateFileSystemEntries\(diagnosticInstallRoot\)\.Any\(\)/u);
+  assert.match(program, /RuntimeHealthTimeoutMs = 20_000/u);
+  assert.match(program, /RuntimeHealthStageTimeoutMs = 25_000/u);
+  assert.match(program, /initial-health[\s\S]*RuntimeHealthTimeoutMs[\s\S]*RuntimeHealthStageTimeoutMs/u);
 });
 
 test("Windows shell user-login startup registration is per-user, owned and non-intrusive", async () => {
@@ -332,13 +357,19 @@ test("public Windows CI restores and builds the native x64 shell", async () => {
   assert.match(ci, /windows-runtime:/u);
   assert.match(ci, /windows-shell:/u);
   assert.match(ci, /windows-package:/u);
-  assert.match(ci, /needs: \[windows-runtime, windows-shell, windows-package, windows-arm64-shared-core, windows-arm64-bootstrap, windows-arm64-foundation\]/u);
+  assert.match(ci, /needs: \[windows-runtime, windows-shell, windows-package, windows-x64-installer, windows-arm64-shared-core, windows-arm64-bootstrap, windows-arm64-runtime, windows-arm64-package, windows-arm64-installer\]/u);
+  assert.match(ci, /X64_INSTALLER_RESULT: \$\{\{ needs\.windows-x64-installer\.result \}\}/u);
+  assert.ok(ci.includes('test "$X64_INSTALLER_RESULT" = success'));
   assert.match(ci, /ARM64_SHARED_RESULT: \$\{\{ needs\.windows-arm64-shared-core\.result \}\}/u);
   assert.match(ci, /ARM64_BOOTSTRAP_RESULT: \$\{\{ needs\.windows-arm64-bootstrap\.result \}\}/u);
-  assert.match(ci, /ARM64_RESULT: \$\{\{ needs\.windows-arm64-foundation\.result \}\}/u);
+  assert.match(ci, /ARM64_RUNTIME_RESULT: \$\{\{ needs\.windows-arm64-runtime\.result \}\}/u);
+  assert.match(ci, /ARM64_PACKAGE_RESULT: \$\{\{ needs\.windows-arm64-package\.result \}\}/u);
+  assert.match(ci, /ARM64_INSTALLER_RESULT: \$\{\{ needs\.windows-arm64-installer\.result \}\}/u);
   assert.ok(ci.includes('test "$ARM64_SHARED_RESULT" = success'));
   assert.ok(ci.includes('test "$ARM64_BOOTSTRAP_RESULT" = success'));
-  assert.ok(ci.includes('test "$ARM64_RESULT" = success'));
+  assert.ok(ci.includes('test "$ARM64_RUNTIME_RESULT" = success'));
+  assert.ok(ci.includes('test "$ARM64_PACKAGE_RESULT" = success'));
+  assert.ok(ci.includes('test "$ARM64_INSTALLER_RESULT" = success'));
   assert.match(ci, /name: Windows x64 managed package/u);
   assert.match(ci, /Windows transfer and Telegram path parity smoke/u);
   assert.match(ci, /Windows private-state ACL acceptance/u);
@@ -372,7 +403,7 @@ test("public Windows CI restores and builds the native x64 shell", async () => {
   assert.match(ci, /EquinoxLocal\.WindowsShell\.UninstallHandoffHarness/u);
   assert.match(ci, /tests\/release\/equinox-local-windows-lifecycle\.test\.js/u);
   assert.match(ci, /Windows ARM64 uninstall\/reinstall lifecycle acceptance/u);
-  assert.match(ci, /Windows ARM64 shared core parity suite/u);
+  assert.match(ci, /Windows shared core parity suite/u);
   assert.match(ci, /Windows ARM64 headless runtime parity smoke/u);
   assert.match(ci, /tests\/unit\/task-capsule-store\.test\.js/u);
   assert.match(ci, /tests\/unit\/turn-budget-controller\.test\.js/u);
@@ -381,7 +412,7 @@ test("public Windows CI restores and builds the native x64 shell", async () => {
   assert.match(ci, /tests\/unit\/equinox-local-file-transfer\.test\.js/u);
   assert.match(ci, /tests\/release\/equinox-local-windows-private-state\.test\.js/u);
   assert.match(ci, /POSIX-only mode\/path assertions/u);
-  assert.match(ci, /Windows ARM64 native shell uninstall handoff smoke/u);
+  assert.match(ci, /Windows ARM64 stateful shell lifecycle acceptance/u);
   assert.match(ci, /windows-uninstall-handoff\/win-arm64/u);
   assert.match(ci, /UninstallHandoffHarness\.csproj --configuration Release --runtime win-arm64 --self-contained true -p:Platform=ARM64/u);
   const uninstallHarnessProject = await fs.readFile(path.join(ROOT, "tests", "windows", "EquinoxLocal.WindowsShell.UninstallHandoffHarness", "EquinoxLocal.WindowsShell.UninstallHandoffHarness.csproj"), "utf8");
@@ -457,7 +488,7 @@ test("public Windows CI restores and builds the native x64 shell", async () => {
   assert.match(winappSmoke, /\$evidence\.TargetPid -eq \$fixture\.Id/u);
   assert.match(winappSmoke, /\$evidence\.TargetProcess -eq 'EquinoxLocal\.WinappSmokeFixture'/u);
   assert.match(winappSmoke, /\$evidence\.ForegroundProcess -eq 'WWAHost'/u);
-  assert.match(winappSmoke, /\$evidence\.CurrentProcess -eq 'powershell'/u);
+  assert.match(winappSmoke, /\$evidence\.CurrentProcess -eq \$smokePowerShellProcessName/u);
   assert.match(winappSmoke, /\$evidence\.TargetSession -eq \$evidence\.ForegroundSession/u);
   assert.match(winappSmoke, /\$evidence\.TargetSession -eq \$evidence\.CurrentSession/u);
   assert.match(winappSmoke, /\$evidence\.TargetDesktop -eq 'Default'/u);
@@ -522,11 +553,9 @@ test("Windows Main update handoff derives all worker paths from product-owned st
   assert.match(handoff, /startInfo\.ArgumentList\.Add\("--transaction-id"\)/u);
   assert.match(handoff, /startInfo\.ArgumentList\.Add\("--source-root"\)/u);
   assert.match(handoff, /startInfo\.ArgumentList\.Add\("--transaction-root"\)/u);
-  assert.match(handoff, /ResolveGitExecutable\(systemRoot\)/u);
-  assert.match(handoff, /where\.exe/u);
-  assert.match(handoff, /git\.exe/u);
+  assert.doesNotMatch(handoff, /ResolveGitExecutable|where\.exe|gitDirectory/u);
   assert.match(handoff, /WindowsPowerShell", "v1\.0"/u);
-  assert.match(handoff, /string\.Join\(Path\.PathSeparator, \[gitDirectory, powershellDirectory, system32, systemRoot\]\)/u);
+  assert.match(handoff, /string\.Join\(Path\.PathSeparator, \[powershellDirectory, system32, systemRoot\]\)/u);
   assert.match(handoff, /Environment\.Clear\(\)/u);
   assert.match(handoff, /RandomNumberGenerator\.GetBytes\(32\)/u);
   assert.match(handoff, /EQUINOX_LOCAL_MAIN_WORKER_TOKEN/u);

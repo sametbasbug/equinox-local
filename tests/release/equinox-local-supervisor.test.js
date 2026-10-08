@@ -161,6 +161,38 @@ test("local-only mode keeps Control Center available before tunnel onboarding", 
   assert.equal(children[0][2].env.EQUINOX_LOCAL_SUPERVISOR_MODE, "local-only");
 });
 
+test("managed supervisor runs canonical managed-source server bytes on Stable runtime Node", async (t) => {
+  const fixture = await makeFixture();
+  t.after(() => fs.rm(fixture.root, { recursive: true, force: true }));
+  const sourceRoot = path.join(fixture.paths.installRoot, "main-update", "sources", "a".repeat(40));
+  const sourceServer = path.join(sourceRoot, "src", "server.js");
+  await fs.mkdir(path.dirname(sourceServer), { recursive: true, mode: 0o700 });
+  await fs.writeFile(sourceServer, "// managed source fixture\n");
+  const children = [];
+  const result = await runManagedSupervisor({
+    homeDir: fixture.homeDir,
+    sourceEnv: { EQUINOX_LOCAL_INSTALL_ROOT: fixture.paths.installRoot, USER: "example" },
+    execFileImpl: async () => { throw new Error("must not initialize tunnel"); },
+    resolveManagedSourceImpl: async ({ baseInstallation }) => Object.freeze({
+      ...baseInstallation,
+      kind: "managed-source",
+      sourceRoot,
+      sourceSha: "a".repeat(40),
+    }),
+    runChildImpl: async (...args) => {
+      children.push(args);
+      return { code: 0, signal: null, terminatingSignal: "SIGTERM" };
+    },
+  });
+  assert.equal(result.mode, "local-only");
+  assert.equal(children.length, 1);
+  const realReleaseDir = await fs.realpath(fixture.releaseDir);
+  assert.equal(children[0][0], path.join(realReleaseDir, "runtime", "node", "bin", "node"));
+  assert.deepEqual(children[0][1], [sourceServer]);
+  assert.equal(children[0][2].cwd, sourceRoot);
+  assert.equal(children[0][2].env.EQUINOX_LOCAL_RELEASE_DIR, fixture.releaseDir);
+});
+
 test("configured tunnel mode materializes a profile and supervises the bundled tunnel runtime", async (t) => {
   const fixture = await makeFixture({ transport: true });
   t.after(() => fs.rm(fixture.root, { recursive: true, force: true }));
@@ -183,6 +215,8 @@ test("configured tunnel mode materializes a profile and supervises the bundled t
   assert.equal(children.length, 1);
   assert.equal(children[0][0], tunnelBinary);
   assert.deepEqual(children[0][1], ["run", "--profile", "equinox-local", "--profile-dir", fixture.paths.profileDir]);
+  assert.equal(children[0][2].cwd, realReleaseDir);
+  assert.equal(initCalls[0][2].cwd, realReleaseDir);
   assert.equal(children[0][2].env.EQUINOX_LOCAL_RELEASE_DIR, fixture.releaseDir);
   assert.equal(children[0][2].env.EQUINOX_LOCAL_SUPERVISOR_MODE, "tunnel");
 });

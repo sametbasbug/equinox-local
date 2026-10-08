@@ -4,7 +4,7 @@ import path from "node:path";
 import { EventEmitter } from "node:events";
 import test from "node:test";
 import { checkProject, collectFiles, discoverTests, parseTestProfile, runNodeTests } from "../../scripts/lib/factory-tooling.mjs";
-import { checkPublicProject } from "../../scripts/check.mjs";
+import { checkPublicProject, parseCheckShellCommand } from "../../scripts/check.mjs";
 import { discoverPublicTestFiles, runPublicTests } from "../../scripts/run-tests.mjs";
 
 async function withTempRoot(run) {
@@ -32,6 +32,37 @@ test("profile parsing preserves default, first matching flag, and literal profil
   assert.equal(parseTestProfile([]), "full");
   assert.equal(parseTestProfile(["--profile=fast", "--profile=full"]), "fast");
   assert.equal(parseTestProfile(["--profile="]), "");
+});
+
+
+test("public checker accepts one explicit absolute shell command", async () => {
+  assert.equal(parseCheckShellCommand([]), undefined);
+  assert.equal(parseCheckShellCommand(["--shell-command=/owned/sh"]), "/owned/sh");
+  assert.throws(() => parseCheckShellCommand(["--shell-command=relative/sh"]), /absolute path/u);
+  assert.throws(() => parseCheckShellCommand(["--shell-command=/one", "--shell-command=/two"]), /Only one/u);
+
+  await withTempRoot(async (root) => {
+    await Promise.all([
+      writeFile(root, "scripts/check-fixture.sh", "#!/bin/sh\necho fixture\n"),
+      writeFile(root, "src/a.js"),
+      writeFile(root, "extension/a.js"),
+      writeFile(root, "package.json", "{}\n"),
+      writeFile(root, "extension/manifest.json", "{}\n"),
+      writeFile(root, "examples/equinox-local-config.example.json", "{}\n"),
+    ]);
+    const calls = [];
+    const report = await checkPublicProject({
+      rootDir: root,
+      shellCommand: "/owned/sh",
+      spawnSyncImpl: (command, args, options) => {
+        calls.push({ command, args: [...args], options });
+        return { status: 0 };
+      },
+    });
+    const shellCall = calls.find((call) => call.args[0] === "-n");
+    assert.deepEqual([shellCall.command, ...shellCall.args], ["/owned/sh", "-n", "scripts/check-fixture.sh"]);
+    assert.equal(report.exitCode, 0);
+  });
 });
 
 test("filesystem discovery recurses selected roots and keeps factory roots top-level-only", async () => {

@@ -133,6 +133,22 @@ function fakeExec(command) {
   throw new Error(`unexpected executable: ${command}`);
 }
 
+
+test("M8 Windows provisioner rejects a non-absolute or renamed ZIP helper before filesystem mutation", async () => {
+  await assert.rejects(provisionEquinoxLocalToolchain({
+    runtimeRoot: "C:\\Users\\fixture\\Equinox Local\\runtime",
+    target: "win32-x64",
+    platform: "win32",
+    windowsZipHelperPath: "relative\\equinox-local-windows-release-zip.ps1",
+  }), /ZIP helper path is invalid/u);
+  await assert.rejects(provisionEquinoxLocalToolchain({
+    runtimeRoot: "C:\\Users\\fixture\\Equinox Local\\runtime",
+    target: "win32-x64",
+    platform: "win32",
+    windowsZipHelperPath: "C:\\Users\\fixture\\other.ps1",
+  }), /ZIP helper path is invalid/u);
+});
+
 test("M8 provisioner installs atomically, stamps exact distributions and reuses them", async (t) => {
   const f = await createFixture(t);
   const downloads = [];
@@ -164,6 +180,91 @@ test("M8 provisioner installs atomically, stamps exact distributions and reuses 
   });
   assert.deepEqual(reused.components.map(({ status }) => status), ["reused", "reused"]);
   assert.equal(downloads.length, 0);
+});
+
+test("M8 reuse validation overlaps bounded filesystem metadata checks", async (t) => {
+  const f = await createFixture(t);
+  const installed = await provisionEquinoxLocalToolchain({
+    runtimeRoot: f.runtimeRoot,
+    target: "darwin-arm64",
+    platform: "darwin",
+    downloadImpl: async (_artifact, destination) => fs.writeFile(destination, "archive"),
+    extractComponentImpl: fakeExtract,
+    execFileImpl: fakeExec,
+  });
+  for (const component of [installed.contract.git, installed.contract.node]) {
+    const bulk = path.join(component.root, "validation-fixture");
+    await fs.mkdir(bulk);
+    await Promise.all(Array.from({ length: 96 }, (_, index) => fs.writeFile(path.join(bulk, `file-${index}.txt`), "x")));
+  }
+  let active = 0;
+  let peak = 0;
+  let activeReaddir = 0;
+  let peakReaddir = 0;
+  const fsImpl = {
+    ...fs,
+    readdir: async (...args) => {
+      activeReaddir += 1;
+      peakReaddir = Math.max(peakReaddir, activeReaddir);
+      try {
+        await new Promise((resolve) => setTimeout(resolve, 2));
+        return await fs.readdir(...args);
+      } finally {
+        activeReaddir -= 1;
+      }
+    },
+    lstat: async (...args) => {
+      active += 1;
+      peak = Math.max(peak, active);
+      try {
+        await new Promise((resolve) => setTimeout(resolve, 2));
+        return await fs.lstat(...args);
+      } finally {
+        active -= 1;
+      }
+    },
+  };
+  const reused = await provisionEquinoxLocalToolchain({
+    runtimeRoot: f.runtimeRoot,
+    target: "darwin-arm64",
+    platform: "darwin",
+    fsImpl,
+    downloadImpl: async () => assert.fail("reuse must not download"),
+    extractComponentImpl: async () => assert.fail("reuse must not extract"),
+    execFileImpl: fakeExec,
+  });
+  assert.deepEqual(reused.components.map(({ status }) => status), ["reused", "reused"]);
+  assert.ok(peak > 1, `expected metadata validation overlap, peak=${peak}`);
+  assert.ok(peak <= 32, `metadata validation exceeded bound, peak=${peak}`);
+  assert.ok(peakReaddir > 1, `expected directory validation overlap, peak=${peakReaddir}`);
+  assert.ok(peakReaddir <= 16, `directory validation exceeded global bound, peak=${peakReaddir}`);
+});
+
+test("M8 provisioner starts independent Git and Node component downloads concurrently", async (t) => {
+  const f = await createFixture(t);
+  const started = [];
+  let releaseBoth;
+  const bothStarted = new Promise((resolve) => { releaseBoth = resolve; });
+  const provision = provisionEquinoxLocalToolchain({
+    runtimeRoot: f.runtimeRoot,
+    target: "darwin-arm64",
+    platform: "darwin",
+    downloadImpl: async (artifact, destination) => {
+      started.push(artifact.filename);
+      if (started.length === 2) releaseBoth();
+      await bothStarted;
+      await fs.writeFile(destination, "archive");
+    },
+    extractComponentImpl: fakeExtract,
+    execFileImpl: fakeExec,
+  });
+  await Promise.race([
+    bothStarted,
+    new Promise((_, reject) => setTimeout(() => reject(new Error("toolchain component downloads did not overlap")), 250)),
+  ]);
+  const result = await provision;
+  assert.equal(started.length, 2);
+  assert.deepEqual(result.components.map(({ component }) => component), ["git", "node"]);
 });
 
 test("M8 provisioner fails closed on symlinked ancestors and cleans failed transactions", async (t) => {

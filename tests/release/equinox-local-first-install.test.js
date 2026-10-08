@@ -19,9 +19,15 @@ import {
 
 const TARGET = "darwin-arm64";
 
-test("first-install health budget gives only Windows ARM64 extra cold-start headroom", () => {
+test("Windows first-install enrollment uses durable release-local helper paths after staging promotion", async () => {
+  const source = await fs.readFile(new URL("../../src/equinox-local-first-install.js", import.meta.url), "utf8");
+  assert.match(source, /installation\.releaseDir, "equinox-local-windows-release-zip\.ps1"/u);
+  assert.match(source, /installation\.releaseDir, "equinox-local-windows-private-state\.ps1"/u);
+});
+
+test("first-install health budget gives both Windows architectures bounded cold-start headroom", () => {
   assert.deepEqual(equinoxLocalFirstInstallHealthBudget({ platform: "darwin", arch: "arm64" }), { attempts: 120, delayMs: 500 });
-  assert.deepEqual(equinoxLocalFirstInstallHealthBudget({ platform: "win32", arch: "x64" }), { attempts: 120, delayMs: 500 });
+  assert.deepEqual(equinoxLocalFirstInstallHealthBudget({ platform: "win32", arch: "x64" }), { attempts: 180, delayMs: 500 });
   assert.deepEqual(equinoxLocalFirstInstallHealthBudget({ platform: "win32", arch: "arm64" }), { attempts: 180, delayMs: 500 });
 });
 
@@ -107,6 +113,30 @@ test("first-install release validation requires exact target metadata and bundle
   }
 });
 
+
+test("first-install release validation accepts exact source provenance while retaining legacy Stable compatibility", async () => {
+  const fixture = await createFixture();
+  try {
+    const metadataPath = path.join(fixture.releaseDir, "release.json");
+    const metadata = JSON.parse(await fs.readFile(metadataPath, "utf8"));
+    const sourceSha = "b".repeat(40);
+    await fs.writeFile(metadataPath, `${JSON.stringify({ ...metadata, sourceSha })}\n`);
+    const current = await validateFirstInstallRelease(fixture.releaseDir, { target: TARGET });
+    assert.equal(current.metadata.sourceSha, sourceSha);
+
+    await fs.writeFile(metadataPath, `${JSON.stringify({ ...metadata, sourceSha: "bad" })}\n`);
+    await assert.rejects(
+      validateFirstInstallRelease(fixture.releaseDir, { target: TARGET }),
+      /metadata is invalid/u,
+    );
+
+    await fs.writeFile(metadataPath, `${JSON.stringify(metadata)}\n`);
+    const legacy = await validateFirstInstallRelease(fixture.releaseDir, { target: TARGET });
+    assert.equal(legacy.metadata.sourceSha, undefined);
+  } finally {
+    await fs.rm(fixture.homeDir, { recursive: true, force: true });
+  }
+});
 
 test("Windows x64 first-install release validation accepts native runtime names without Peekaboo", async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "equinox-first-install-windows-contract-"));
@@ -209,6 +239,98 @@ test("first install promotes the verified release, bootstraps the user and loads
       completedAt: null,
     });
     assert.equal((await fs.lstat(onboardingStatePath)).mode & 0o077, 0);
+  } finally {
+    await fs.rm(fixture.homeDir, { recursive: true, force: true });
+  }
+});
+
+test("fresh source-provenance install stays Stable-first, then enrolls and verifies exact managed-source SHA", async () => {
+  const fixture = await createFixture("5.2.1");
+  const uid = typeof process.getuid === "function" ? process.getuid() : 501;
+  const sourceSha = "c".repeat(40);
+  const metadataPath = path.join(fixture.releaseDir, "release.json");
+  const metadata = JSON.parse(await fs.readFile(metadataPath, "utf8"));
+  await fs.writeFile(metadataPath, `${JSON.stringify({ ...metadata, sourceSha })}\n`);
+  const events = [];
+  try {
+    const result = await installManagedEquinoxRelease({
+      stagedReleaseDir: fixture.releaseDir,
+      homeDir: fixture.homeDir,
+      uid,
+      platform: "darwin",
+      target: TARGET,
+      readCurrentImpl: async () => null,
+      bootstrapImpl: async () => ({ configCreated: true, controlCenterUrl: "http://127.0.0.1:24891/" }),
+      execFileImpl: async (command, args) => { events.push(["exec", command, args[0]]); return { stdout: "", stderr: "" }; },
+      waitForVersionImpl: async (version, budget) => { events.push(["stable-health", version, budget]); return true; },
+      enrollManagedSourceImpl: async (value) => { events.push(["enroll", value.bootstrapSha, value.target]); return { status: "enrolled", bootstrapSha: value.bootstrapSha }; },
+      waitForManagedSourceImpl: async (version, sha, budget) => { events.push(["source-health", version, sha, budget]); return true; },
+    });
+    assert.equal(result.status, "installed");
+    assert.equal(result.managedSourceSha, sourceSha);
+    const stableHealth = events.findIndex((event) => event[0] === "stable-health");
+    const enrollment = events.findIndex((event) => event[0] === "enroll");
+    const exactHealth = events.findIndex((event) => event[0] === "source-health");
+    assert.equal(stableHealth >= 0 && enrollment > stableHealth && exactHealth > enrollment, true);
+    assert.deepEqual(events[enrollment].slice(1), [sourceSha, TARGET]);
+    assert.deepEqual(events[exactHealth].slice(1), ["5.2.1", sourceSha, { attempts: 120, delayMs: 500 }]);
+    assert.equal(events.filter((event) => event[0] === "exec" && event[1] === "/bin/launchctl" && event[2] === "bootstrap").length, 2);
+  } finally {
+    await fs.rm(fixture.homeDir, { recursive: true, force: true });
+  }
+});
+
+test("managed-source health failure rolls identity back and restores healthy Stable runtime", async () => {
+  const fixture = await createFixture("5.2.1");
+  const uid = typeof process.getuid === "function" ? process.getuid() : 501;
+  const sourceSha = "d".repeat(40);
+  const metadataPath = path.join(fixture.releaseDir, "release.json");
+  const metadata = JSON.parse(await fs.readFile(metadataPath, "utf8"));
+  await fs.writeFile(metadataPath, `${JSON.stringify({ ...metadata, sourceSha })}\n`);
+  const transactionRoot = path.join(fixture.installRoot, "state", "main-update");
+  const installStampPath = path.join(transactionRoot, "install.json");
+  const sourcePointerPath = path.join(transactionRoot, "current-source.conf");
+  const events = [];
+  try {
+    await assert.rejects(
+      installManagedEquinoxRelease({
+        stagedReleaseDir: fixture.releaseDir,
+        homeDir: fixture.homeDir,
+        uid,
+        platform: "darwin",
+        target: TARGET,
+        readCurrentImpl: async () => null,
+        bootstrapImpl: async () => ({ configCreated: true, controlCenterUrl: "http://127.0.0.1:24891/" }),
+        execFileImpl: async (command, args) => { events.push(["exec", command, args[0]]); return { stdout: "", stderr: "" }; },
+        waitForVersionImpl: async (version) => { events.push(["stable-health", version]); return true; },
+        enrollManagedSourceImpl: async () => {
+          await fs.mkdir(transactionRoot, { recursive: true });
+          await fs.writeFile(installStampPath, `${JSON.stringify({ schemaVersion: 1, channel: "main", repository: "sametbasbug/equinox-local", branch: "main", bootstrapSha: sourceSha })}\n`, { mode: 0o600 });
+          await fs.writeFile(sourcePointerPath, `schemaVersion=1\nsourceRoot=${path.join(transactionRoot, "sources", sourceSha)}\nsha=${sourceSha}\n`, { mode: 0o600 });
+          events.push(["enrolled"]);
+          return { status: "enrolled", bootstrapSha: sourceSha };
+        },
+        waitForManagedSourceImpl: async () => { events.push(["source-health-failed"]); throw new Error("synthetic exact source health failure"); },
+        rollbackManagedSourceImpl: async () => {
+          events.push(["rollback"]);
+          await fs.rm(installStampPath, { force: false });
+          await fs.rm(sourcePointerPath, { force: false });
+          return { rolledBack: true, bootstrapSha: sourceSha };
+        },
+      }),
+      (error) => {
+        assert.match(error.message, /synthetic exact source health failure/u);
+        assert.match(error.message, /Stable Equinox Local remains installed and was restored healthy/u);
+        return true;
+      },
+    );
+    await assert.rejects(fs.lstat(installStampPath), { code: "ENOENT" });
+    await assert.rejects(fs.lstat(sourcePointerPath), { code: "ENOENT" });
+    const failed = events.findIndex((event) => event[0] === "source-health-failed");
+    const rollback = events.findIndex((event) => event[0] === "rollback");
+    assert.equal(rollback > failed, true);
+    assert.equal(events.filter((event) => event[0] === "stable-health").length, 2);
+    assert.equal(events.filter((event) => event[0] === "exec" && event[1] === "/bin/launchctl" && event[2] === "bootstrap").length, 3);
   } finally {
     await fs.rm(fixture.homeDir, { recursive: true, force: true });
   }
@@ -464,7 +586,12 @@ test("Windows x64 fresh first install promotes current-version and stable shell 
     await unregisterWindowsNativeMessagingHost({ manifestPath, launcherPath }).catch(() => {});
     await fs.rm(fixture.root, { recursive: true, force: true });
   });
+  const sourceSha = "e".repeat(40);
+  const metadataPath = path.join(fixture.releaseDir, "release.json");
+  const metadata = JSON.parse(await fs.readFile(metadataPath, "utf8"));
+  await fs.writeFile(metadataPath, `${JSON.stringify({ ...metadata, sourceSha })}\n`);
   const launches = [];
+  let enrollmentArgs = null;
   let promotionRenameAttempts = 0;
   const promotedNormalized = path.win32.normalize(promoted).toLowerCase();
   const fsImpl = {
@@ -491,9 +618,24 @@ test("Windows x64 fresh first install promotes current-version and stable shell 
     initializeOnboardingImpl: async () => ({ created: true }),
     launchWindowsShellImpl: async (shellExecutable) => { launches.push(shellExecutable); return { launched: true }; },
     waitForVersionImpl: async () => true,
+    enrollManagedSourceImpl: async (value) => {
+      enrollmentArgs = value;
+      assert.equal(await exists(fixture.releaseDir), false);
+      assert.equal(await exists(value.windowsZipHelperPath), true);
+      assert.equal(path.win32.normalize(value.stableReleaseDir).toLowerCase(), path.win32.normalize(promoted).toLowerCase());
+      return { status: "enrolled", bootstrapSha: value.bootstrapSha };
+    },
+    requestWindowsRestartImpl: async () => ({ requested: true }),
+    waitForManagedSourceImpl: async () => true,
   });
   assert.equal(result.status, "installed");
+  assert.equal(result.managedSourceSha, sourceSha);
   assert.equal(promotionRenameAttempts, 2);
+  assert.equal(enrollmentArgs.bootstrapSha, sourceSha);
+  assert.equal(
+    path.win32.normalize(enrollmentArgs.windowsZipHelperPath).toLowerCase(),
+    path.win32.normalize(path.join(promoted, "equinox-local-windows-release-zip.ps1")).toLowerCase(),
+  );
   const pointerPath = path.join(fixture.installRoot, "current-version.json");
   assert.deepEqual(JSON.parse(await fs.readFile(pointerPath, "utf8")), {
     schemaVersion: 1,

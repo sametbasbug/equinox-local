@@ -7,21 +7,44 @@ if ([string]::IsNullOrWhiteSpace($root) -or -not [IO.Path]::IsPathRooted($root) 
 }
 Set-Location -LiteralPath $root
 $npmCommand = (Get-Command npm.cmd -ErrorAction Stop).Source
+$runnerTemp = [string]$env:RUNNER_TEMP
+if ([string]::IsNullOrWhiteSpace($runnerTemp) -or -not [IO.Path]::IsPathRooted($runnerTemp)) {
+  throw 'Native ARM64 CI preparation requires an absolute RUNNER_TEMP.'
+}
+$publishDir = Join-Path $runnerTemp 'windows-shell\win-arm64'
+$binDir = (Join-Path $runnerTemp 'windows-shell-bin\win-arm64') + [IO.Path]::DirectorySeparatorChar
+$objDir = (Join-Path $runnerTemp 'windows-shell-obj\win-arm64') + [IO.Path]::DirectorySeparatorChar
+foreach ($candidate in @($publishDir, $binDir, $objDir)) {
+  $relative = [IO.Path]::GetRelativePath($root, $candidate)
+  if (-not $relative.StartsWith('..' + [IO.Path]::DirectorySeparatorChar) -and $relative -ne '..') { throw 'Native ARM64 CI shell outputs must stay outside the source checkout.' }
+}
 
 # npm writes node_modules; the native WPF project reads only its own sources,
 # pinned NuGet packages and application artwork. These inputs are independent.
-$installJob = Start-Job -ArgumentList $root, $npmCommand -ScriptBlock {
-  param([string]$Workspace, [string]$NpmCommand)
+$cacheHit = ([string]$env:EQUINOX_NODE_MODULES_CACHE_HIT) -ceq 'true'
+$shellCacheHit = ([string]$env:EQUINOX_SHELL_CACHE_HIT) -ceq 'true'
+$installJob = Start-Job -ArgumentList $root, $npmCommand, $cacheHit -ScriptBlock {
+  param([string]$Workspace, [string]$NpmCommand, [bool]$CacheHit)
   $ErrorActionPreference = 'Stop'
   $PSNativeCommandUseErrorActionPreference = $true
   Set-Location -LiteralPath $Workspace
-  & $NpmCommand ci --prefer-offline --no-audit --no-fund
+  if ($CacheHit) {
+    if (-not (Test-Path -LiteralPath (Join-Path $Workspace 'node_modules\.package-lock.json') -PathType Leaf)) { throw 'Cached node_modules is missing its npm lock marker.' }
+    & $NpmCommand ls --omit=dev --depth=0
+    if ($LASTEXITCODE -ne 0) { throw "Cached target-native dependency graph failed npm validation with exit code $LASTEXITCODE." }
+    if (-not (Test-Path -LiteralPath (Join-Path $Workspace 'node_modules\@napi-rs\canvas-win32-arm64-msvc') -PathType Container)) { throw 'Cached dependency graph is not Windows ARM64.' }
+    if (Test-Path -LiteralPath (Join-Path $Workspace 'node_modules\@napi-rs\canvas-win32-x64-msvc')) { throw 'Cached dependency graph contains Windows x64 native canvas.' }
+    return
+  }
+  & $NpmCommand ci --prefer-offline --no-audit --no-fund --os=win32 --cpu=arm64
   if ($LASTEXITCODE -ne 0) { throw "Locked native npm installation failed with exit code $LASTEXITCODE." }
 }
 
 try {
-  dotnet publish native/windows/EquinoxLocal.WindowsShell/EquinoxLocal.WindowsShell.csproj --configuration Release --runtime win-arm64 --self-contained true -p:Platform=ARM64 --output artifacts/windows-shell/win-arm64
-  if ($LASTEXITCODE -ne 0) { throw "Native ARM64 shell publication failed with exit code $LASTEXITCODE." }
+  if (-not $shellCacheHit) {
+    dotnet publish native/windows/EquinoxLocal.WindowsShell/EquinoxLocal.WindowsShell.csproj --configuration Release --runtime win-arm64 --self-contained true -p:Platform=ARM64 -p:BaseOutputPath="$binDir" -p:BaseIntermediateOutputPath="$objDir" --output "$publishDir"
+    if ($LASTEXITCODE -ne 0) { throw "Native ARM64 shell publication failed with exit code $LASTEXITCODE." }
+  }
 
   $null = Wait-Job -Job $installJob
   if ($installJob.State -ne 'Completed') {

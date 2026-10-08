@@ -16,6 +16,9 @@ function installation(extra = {}) {
     mainUpdateSupported: true,
     sourceRoot: "/owned/main-update/sources/current",
     mainTransactionRoot: "/owned/main-update",
+    gitPath: "/owned/runtime/toolchain/git/bin/git",
+    nodePath: "/owned/runtime/toolchain/node/bin/node",
+    npmPath: "/owned/runtime/toolchain/node/npm-cli.js",
     ...extra,
   };
 }
@@ -56,7 +59,12 @@ test("managed-source apply controller binds apply to the exact admitted discover
     transactionRoot: "/owned/main-update",
     currentSha: A,
     targetSha: B,
-    schedulerOptions: {},
+    engineOptions: {
+      gitPath: "/owned/runtime/toolchain/git/bin/git",
+      nodePath: "/owned/runtime/toolchain/node/bin/node",
+      npmPath: "/owned/runtime/toolchain/node/npm-cli.js",
+    },
+    schedulerOptions: { nodePath: "/owned/runtime/toolchain/node/bin/node" },
   }]);
 });
 

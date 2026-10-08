@@ -9,6 +9,9 @@ import { prepareEquinoxLocalMainNativeCandidate } from "./equinox-local-main-nat
 import { prepareEquinoxLocalMainNativeLifecycle } from "./equinox-local-main-native-activation.js";
 import { recoverEquinoxLocalMainNativeLifecycle } from "./equinox-local-main-native-recovery.js";
 import { equinoxLocalReleaseTarget } from "./equinox-local-platform.js";
+import { EQUINOX_LOCAL_INSTALL_LABEL } from "./equinox-local-installation.js";
+import { kickstartEquinoxLocalLaunchAgent } from "./equinox-local-update-activation.js";
+import { equinoxLocalToolchainContract } from "./equinox-local-toolchain-contract.js";
 import { createEquinoxLocalMainUpdateTransactionEngine } from "./equinox-local-main-update-transaction.js";
 import { runEquinoxLocalMainUpdateHandoff } from "./equinox-local-main-update-handoff.js";
 import { readEquinoxLocalMainSourcePointer } from "./equinox-local-main-source-pointer.js";
@@ -46,27 +49,28 @@ export async function restartEquinoxLocalMainSourceRuntime({
   env = process.env,
   fsImpl = fs,
   requestWindowsRestartImpl = requestWindowsShellRuntimeRestart,
+  restartDarwinImpl = kickstartEquinoxLocalLaunchAgent,
+  uid = typeof process.getuid === "function" ? process.getuid() : null,
 } = {}) {
   if (platform === "win32") {
     await requestWindowsRestartImpl({ platform: "win32" });
     return Object.freeze({ requested: true, platform: "win32" });
   }
   if (platform !== "darwin") throw new Error("Main source runtime restart is unsupported on this platform.");
-  const scriptPath = path.join(sourceRoot, "scripts", "restart-runtime.sh");
-  const stat = await fsImpl.lstat(scriptPath);
-  if (!stat.isFile() || stat.isSymbolicLink()) throw new Error("Main update restart script is unsafe.");
-  await execFileImpl("/bin/bash", [scriptPath, "--worker"], {
-    timeout: 180_000,
-    maxBuffer: 2 * 1024 * 1024,
-    env: { ...env, EQUINOX_LOCAL_PREVIOUS_SOURCE_ROOT: previousSourceRoot },
+  const homeDir = env?.HOME;
+  if (typeof homeDir !== "string" || !path.posix.isAbsolute(homeDir)) throw new Error("Managed Main restart requires an absolute HOME.");
+  const installation = Object.freeze({
+    launchAgentLabel: EQUINOX_LOCAL_INSTALL_LABEL,
+    launchAgentPath: path.posix.join(homeDir, "Library", "LaunchAgents", `${EQUINOX_LOCAL_INSTALL_LABEL}.plist`),
   });
+  await restartDarwinImpl(installation, { execFileImpl, uid });
   return Object.freeze({ requested: true, platform: "darwin" });
 }
 
-async function waitForExactSourceHealth({ sha, sourceRoot, pointerPath, fetchImpl = globalThis.fetch, sleepImpl = (ms) => new Promise((resolve) => setTimeout(resolve, ms)), attempts = HEALTH_ATTEMPTS }) {
-  const pointer = await readEquinoxLocalMainSourcePointer(pointerPath);
+async function waitForExactSourceHealth({ sha, sourceRoot, pointerPath, gitPath = "git", fetchImpl = globalThis.fetch, sleepImpl = (ms) => new Promise((resolve) => setTimeout(resolve, ms)), attempts = HEALTH_ATTEMPTS }) {
+  const pointer = await readEquinoxLocalMainSourcePointer(pointerPath, { gitPath });
   if (pointer.sha !== sha || pointer.sourceRoot !== sourceRoot) throw new Error("Main update source pointer does not match the expected runtime identity.");
-  const checkout = await inspectCanonicalMainCheckout(sourceRoot);
+  const checkout = await inspectCanonicalMainCheckout(sourceRoot, { gitPath });
   if (!checkout.eligible || checkout.currentSha !== sha) throw new Error("Main update runtime checkout does not match the expected canonical SHA.");
   let lastError = null;
   for (let attempt = 0; attempt < attempts; attempt += 1) {
@@ -106,8 +110,20 @@ export async function runEquinoxLocalMainUpdateWorker({
   cleanupImpl = (value) => cleanupEquinoxLocalMainUpdateWorkerOwnership({ ...value, execFileImpl, fsImpl, uid, ownershipToken: env.EQUINOX_LOCAL_MAIN_WORKER_TOKEN }),
 } = {}) {
   const args = parseArgs(argv);
+  const hostTarget = resolveHostTarget();
+  const pathApi = process.platform === "win32" ? path.win32 : path.posix;
+  const runtimeRoot = process.platform === "win32"
+    ? pathApi.join(pathApi.dirname(pathApi.dirname(args.transactionRoot)), "runtime")
+    : pathApi.join(pathApi.dirname(args.transactionRoot), "runtime");
+  const toolchain = equinoxLocalToolchainContract({ runtimeRoot, target: hostTarget });
   try {
-    const engine = engineFactory({ sourceRoot: args.sourceRoot, transactionRoot: args.transactionRoot });
+    const engine = engineFactory({
+      sourceRoot: args.sourceRoot,
+      transactionRoot: args.transactionRoot,
+      gitPath: toolchain.gitPath,
+      nodePath: toolchain.nodePath,
+      npmPath: toolchain.npmPath,
+    });
     let active = await engine.readActive();
     if (!active || active.transactionId !== args.transactionId) throw new Error("Main update worker does not own the active transaction.");
     if (["succeeded", "rolled_back"].includes(active.status)) {
@@ -128,13 +144,14 @@ export async function runEquinoxLocalMainUpdateWorker({
     let nativeTransition;
     let nativeLifecycle = null;
     try {
-      const target = resolveHostTarget();
+      const target = hostTarget;
       nativeTransition = await planNativeTransition({
         currentRoot: active.rollbackSourceRoot,
         currentSha: active.currentSha,
         targetRoot: active.targetSourceRoot,
         targetSha: active.targetSha,
         target,
+        gitPath: toolchain.gitPath,
       });
       if (nativeTransition?.mode === "artifact_required") {
         if (initialStage === "ready_to_switch") {
@@ -184,7 +201,7 @@ export async function runEquinoxLocalMainUpdateWorker({
     }
     const verify = typeof verifyRuntimeImpl === "function"
       ? verifyRuntimeImpl
-      : (value) => waitForExactSourceHealth({ ...value, pointerPath: engine.paths.sourcePointerPath, fetchImpl, sleepImpl });
+      : (value) => waitForExactSourceHealth({ ...value, pointerPath: engine.paths.sourcePointerPath, gitPath: toolchain.gitPath, fetchImpl, sleepImpl });
     return await handoffImpl({
       engine,
       transactionId: args.transactionId,

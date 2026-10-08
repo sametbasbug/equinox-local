@@ -80,6 +80,28 @@ test("Windows private-state ACL helper uses fixed PowerShell and parses bounded 
   assert.equal(calls[1].args[calls[1].args.indexOf("-Action") + 1], "protect");
 });
 
+test("Windows private-state ACL helper accepts one explicit durable release-local helper path", async () => {
+  const calls = [];
+  const helperPath = String.raw`C:\Users\Example\AppData\Local\Equinox Local\releases\5.2.1\equinox-local-windows-private-state.ps1`;
+  const execFileAsync = async (command, args) => {
+    calls.push({ command, args });
+    return { stdout: JSON.stringify({ safe: true, reason: null }) };
+  };
+  await protectWindowsPrivateStatePath({
+    target: String.raw`C:\Users\Example\AppData\Local\Equinox Local\state\main-update`,
+    type: "directory",
+    helperPath,
+    execFileAsync,
+    env: { SystemRoot: String.raw`C:\Windows` },
+  });
+  assert.equal(calls[0].args[calls[0].args.indexOf("-File") + 1], helperPath);
+  await assert.rejects(protectWindowsPrivateStatePath({
+    target: String.raw`C:\State\main-update`, type: "directory",
+    helperPath: String.raw`C:\State\other.ps1`, execFileAsync,
+    env: { SystemRoot: String.raw`C:\Windows` },
+  }), /helper path is invalid/u);
+});
+
 test("Windows private-state ACL protection fails closed on unsafe helper output", async () => {
   const execFileAsync = async () => ({ stdout: '{"safe":false,"reason":"foreign-principal"}\n', stderr: '' });
   await assert.rejects(

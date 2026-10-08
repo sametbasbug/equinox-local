@@ -17,11 +17,40 @@ import {
   extractLocalModuleSpecifiers,
   NODE_DISTRIBUTIONS,
   PEEKABOO_DISTRIBUTION,
+  resolveManagedReleaseSourceSha,
   TUNNEL_CLIENT_DISTRIBUTIONS,
 } from "../../scripts/release/package-managed-release.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const execFile = promisify(execFileCallback);
+
+test("managed release provenance binds packaging to an exact clean Git HEAD", async () => {
+  const root = "/tmp/equinox-release-source";
+  const sha = "a".repeat(40);
+  const calls = [];
+  const clean = await resolveManagedReleaseSourceSha(root, {
+    execFileImpl: async (command, args) => {
+      calls.push([command, args]);
+      if (args.includes("rev-parse")) return { stdout: `${sha}\n` };
+      return { stdout: "" };
+    },
+  });
+  assert.equal(clean, sha);
+  assert.deepEqual(calls.map(([, args]) => args.slice(2)), [
+    ["rev-parse", "HEAD"],
+    ["status", "--porcelain=v1", "--untracked-files=normal"],
+  ]);
+
+  await assert.rejects(resolveManagedReleaseSourceSha(root, {
+    execFileImpl: async (_command, args) => args.includes("rev-parse")
+      ? { stdout: `${sha}\n` }
+      : { stdout: " M src/server.js\n" },
+  }), /must be clean/u);
+
+  await assert.rejects(resolveManagedReleaseSourceSha(root, {
+    execFileImpl: async () => ({ stdout: "not-a-sha\n" }),
+  }), /source SHA is invalid/u);
+});
 
 test("managed release source graph follows local imports and excludes development-only surfaces", async () => {
   const files = await collectManagedReleaseSourceFiles(ROOT);

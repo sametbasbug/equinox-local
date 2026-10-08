@@ -14,6 +14,7 @@ import {
 import {
   activatePreparedEquinoxRelease,
   readManagedCurrentRelease,
+  waitForEquinoxLocalManagedSource,
   waitForEquinoxLocalVersion,
 } from "./equinox-local-update-activation.js";
 import {
@@ -22,6 +23,8 @@ import {
   parseEquinoxVersion,
 } from "./equinox-local-updater.js";
 import { managedSupervisorPaths } from "./equinox-local-supervisor.js";
+import { enrollEquinoxLocalManagedSource, rollbackEquinoxLocalManagedSourceEnrollment } from "./equinox-local-managed-source-enrollment.js";
+import { requestWindowsShellRuntimeRestart } from "./equinox-local-windows-shell-control.js";
 import { writeEquinoxLocalCurrentVersionPointer } from "./equinox-local-current-release.js";
 import { initializeManagedOnboardingState } from "./equinox-local-onboarding.js";
 import { equinoxLocalReleaseRuntimeContract } from "./equinox-local-release-runtime-contract.js";
@@ -42,13 +45,13 @@ export { launchWindowsStableShell as launchFreshWindowsShell } from "./equinox-l
 const execFile = promisify(execFileCallback);
 const MAX_RELEASE_METADATA_BYTES = 16 * 1024;
 const FIRST_INSTALL_HEALTH_ATTEMPTS = 120;
-const FIRST_INSTALL_WINDOWS_ARM64_HEALTH_ATTEMPTS = 180;
+const FIRST_INSTALL_WINDOWS_HEALTH_ATTEMPTS = 180;
 const FIRST_INSTALL_HEALTH_DELAY_MS = 500;
 const FIRST_INSTALL_DIAGNOSTIC_BYTES = 12 * 1024;
 
 export function equinoxLocalFirstInstallHealthBudget({ platform = process.platform, arch = process.arch } = {}) {
-  const attempts = platform === "win32" && arch === "arm64"
-    ? FIRST_INSTALL_WINDOWS_ARM64_HEALTH_ATTEMPTS
+  const attempts = platform === "win32" && ["x64", "arm64"].includes(arch)
+    ? FIRST_INSTALL_WINDOWS_HEALTH_ATTEMPTS
     : FIRST_INSTALL_HEALTH_ATTEMPTS;
   return Object.freeze({ attempts, delayMs: FIRST_INSTALL_HEALTH_DELAY_MS });
 }
@@ -124,14 +127,16 @@ export async function validateFirstInstallRelease(releaseDir, {
   await assertNormalFile(metadataPath, "Release metadata", { maxBytes: MAX_RELEASE_METADATA_BYTES, fsImpl });
   const metadata = JSON.parse(await fsImpl.readFile(metadataPath, "utf8"));
   const runtimeContract = equinoxLocalReleaseRuntimeContract({ target, version: metadata.version });
+  const sourceIdentityKeys = Object.hasOwn(metadata, "sourceSha") ? ["sourceSha"] : [];
   const metadataKeys = runtimeContract.platform === "darwin"
-    ? ["schemaVersion", "version", "target", "nodeVersion", "tunnelClientVersion", "nativeAppShellVersion", "serverEntry"]
-    : ["schemaVersion", "version", "target", "nodeVersion", "tunnelClientVersion", "serverEntry"];
+    ? ["schemaVersion", "version", "target", ...sourceIdentityKeys, "nodeVersion", "tunnelClientVersion", "nativeAppShellVersion", "serverEntry"]
+    : ["schemaVersion", "version", "target", ...sourceIdentityKeys, "nodeVersion", "tunnelClientVersion", "serverEntry"];
   exactKeys(metadata, metadataKeys, "Release metadata");
   if (
     metadata.schemaVersion !== 1 ||
     metadata.target !== target ||
     metadata.serverEntry !== "server.js" ||
+    (metadata.sourceSha !== undefined && (typeof metadata.sourceSha !== "string" || !/^[a-f0-9]{40}$/u.test(metadata.sourceSha))) ||
     typeof metadata.nodeVersion !== "string" ||
     !/^\d+\.\d+\.\d+$/u.test(metadata.nodeVersion) ||
     typeof metadata.tunnelClientVersion !== "string" ||
@@ -320,6 +325,10 @@ export async function installManagedEquinoxRelease({
   readCurrentImpl = readManagedCurrentRelease,
   activateImpl = activatePreparedEquinoxRelease,
   waitForVersionImpl = waitForEquinoxLocalVersion,
+  waitForManagedSourceImpl = waitForEquinoxLocalManagedSource,
+  enrollManagedSourceImpl = enrollEquinoxLocalManagedSource,
+  rollbackManagedSourceImpl = rollbackEquinoxLocalManagedSourceEnrollment,
+  requestWindowsRestartImpl = requestWindowsShellRuntimeRestart,
   initializeOnboardingImpl = initializeManagedOnboardingState,
   syncWindowsShellImpl = synchronizeFreshWindowsShell,
   launchWindowsShellImpl = launchWindowsStableShell,
@@ -371,6 +380,53 @@ export async function installManagedEquinoxRelease({
     await launchWindowsShellImpl(shell.shellExecutable);
   };
 
+  const enrollAfterStableHealth = async (installation, candidateValue) => {
+    const bootstrapSha = candidateValue.metadata?.sourceSha ?? null;
+    if (!bootstrapSha) return null;
+    let enrollment;
+    try {
+      enrollment = await enrollManagedSourceImpl({
+        bootstrapSha,
+        target: expectedTarget,
+        platform,
+        arch,
+        homeDir,
+        env,
+        fsImpl,
+        execFileImpl,
+        windowsZipHelperPath: platform === "win32"
+          ? path.win32.join(installation.releaseDir, "equinox-local-windows-release-zip.ps1")
+          : undefined,
+        windowsPrivateStateHelperPath: platform === "win32"
+          ? path.win32.join(installation.releaseDir, "equinox-local-windows-private-state.ps1")
+          : undefined,
+        stableReleaseDir: platform === "win32" ? installation.releaseDir : undefined,
+      });
+      if (platform === "darwin") await reloadLaunchAgent(installation, { uid, execFileImpl });
+      else await requestWindowsRestartImpl({ platform: "win32" });
+      await waitForManagedSourceImpl(candidateValue.version, bootstrapSha, equinoxLocalFirstInstallHealthBudget({ platform, arch }));
+      return enrollment;
+    } catch (error) {
+      let rollback = null;
+      try {
+        rollback = await rollbackManagedSourceImpl({
+          bootstrapSha, target: expectedTarget, platform, arch, homeDir, env, fsImpl, execFileImpl,
+        });
+        if (rollback?.rolledBack) {
+          if (platform === "darwin") await reloadLaunchAgent(installation, { uid, execFileImpl });
+          else await requestWindowsRestartImpl({ platform: "win32" });
+          await waitForVersionImpl(candidateValue.version, equinoxLocalFirstInstallHealthBudget({ platform, arch }));
+        }
+      } catch (rollbackError) {
+        const primary = error instanceof Error ? error.message : String(error);
+        const recovery = rollbackError instanceof Error ? rollbackError.message : String(rollbackError);
+        throw new Error(`Managed-source enrollment failed and Stable recovery did not complete: ${primary}; recovery: ${recovery}`);
+      }
+      const reason = error instanceof Error ? error.message : String(error);
+      throw new Error(`${reason} Stable Equinox Local remains installed${rollback?.rolledBack ? " and was restored healthy" : " and healthy"}; managed-source enrollment can be retried.`);
+    }
+  };
+
   if (current) {
     const comparison = compareEquinoxVersions(current.version, candidate.version);
     if (comparison > 0) {
@@ -387,9 +443,11 @@ export async function installManagedEquinoxRelease({
       await initializeOnboardingImpl({ installation, homeDir });
       await startRuntime(installation);
       await waitForVersionImpl(current.version, equinoxLocalFirstInstallHealthBudget({ platform, arch }));
+      const enrollment = await enrollAfterStableHealth(installation, candidate);
       return Object.freeze({
         status: "already-installed",
         version: current.version,
+        managedSourceSha: enrollment?.bootstrapSha ?? null,
         configCreated: Boolean(bootstrap.configCreated),
         controlCenterUrl: bootstrap.controlCenterUrl || "http://127.0.0.1:24891/",
       });
@@ -457,10 +515,12 @@ export async function installManagedEquinoxRelease({
     const detail = diagnostics ? ` ${diagnostics}` : "";
     throw new Error(`${reason} First-install files were preserved so the verified release can be retried safely.${detail}`);
   }
+  await enrollAfterStableHealth(installation, candidate);
 
   return Object.freeze({
     status: "installed",
     version: candidate.version,
+    managedSourceSha: candidate.metadata?.sourceSha ?? null,
     configCreated: Boolean(bootstrap.configCreated),
     controlCenterUrl: bootstrap.controlCenterUrl || "http://127.0.0.1:24891/",
   });

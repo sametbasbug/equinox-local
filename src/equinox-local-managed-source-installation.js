@@ -4,6 +4,7 @@ import path from "node:path";
 import { validateManagedSourceInstallStamp } from "./equinox-local-main-update.js";
 import { readEquinoxLocalMainSourcePointer } from "./equinox-local-main-source-pointer.js";
 import { equinoxLocalPlatformPaths } from "./equinox-local-platform.js";
+import { equinoxLocalToolchainContract } from "./equinox-local-toolchain-contract.js";
 import { inspectPrivateStatePath, verifyWindowsPrivateStateAcl } from "./equinox-local-private-state.js";
 import { readBoundedNormalFile } from "./equinox-local-safe-file.js";
 
@@ -40,6 +41,27 @@ export async function resolveEquinoxLocalManagedSourceInstallation({
   }
 
   const paths = equinoxLocalManagedSourcePaths({ platform, arch, homeDir, env });
+  const layout = equinoxLocalPlatformPaths({ platform, arch, homeDir, env });
+  const toolchain = equinoxLocalToolchainContract({ runtimeRoot: layout.runtimeRoot, target: `${platform}-${arch}` });
+  let managedGitPath = null;
+  try {
+    const [gitStat, nodeStat, npmStat] = await Promise.all([
+      fsImpl.lstat(toolchain.gitPath),
+      fsImpl.lstat(toolchain.nodePath),
+      fsImpl.lstat(toolchain.npmPath),
+    ]);
+    if (!gitStat.isFile() || gitStat.isSymbolicLink()) throw new Error("Managed Git executable is unsafe.");
+    if (!nodeStat.isFile() || nodeStat.isSymbolicLink()) throw new Error("Managed Node executable is unsafe.");
+    if (!npmStat.isFile() || npmStat.isSymbolicLink()) throw new Error("Managed npm CLI is unsafe.");
+    if (platform !== "win32" && ((gitStat.mode & 0o111) === 0 || (nodeStat.mode & 0o111) === 0)) throw new Error("Managed toolchain executable is not executable.");
+    managedGitPath = toolchain.gitPath;
+  } catch (error) {
+    if (error?.code !== "ENOENT") throw error;
+    const anyToolchainState = await Promise.all([toolchain.gitPath, toolchain.nodePath, toolchain.npmPath].map(async (candidate) => {
+      try { await fsImpl.lstat(candidate); return true; } catch (inner) { if (inner?.code === "ENOENT") return false; throw inner; }
+    }));
+    if (anyToolchainState.some(Boolean)) throw new Error("Managed product-owned toolchain is incomplete.");
+  }
   const directorySecurity = await inspectPrivateStatePath(paths.mainTransactionRoot, {
     platform, type: "directory", mode: "700", fsImpl, verifyWindowsAcl,
   });
@@ -65,7 +87,10 @@ export async function resolveEquinoxLocalManagedSourceInstallation({
   catch { throw new Error("Managed-source install stamp is not valid JSON."); }
   const stamp = validateManagedSourceInstallStamp(parsed);
 
-  const pointer = await readPointerImpl(paths.sourcePointerPath, { fsImpl });
+  const pointer = await readPointerImpl(paths.sourcePointerPath, {
+    fsImpl,
+    ...(managedGitPath ? { gitPath: managedGitPath } : {}),
+  });
   return Object.freeze({
     ...baseInstallation,
     kind: "managed-source",
@@ -76,5 +101,9 @@ export async function resolveEquinoxLocalManagedSourceInstallation({
     sourceSha: pointer.sha,
     mainTransactionRoot: paths.mainTransactionRoot,
     mainInstallStamp: stamp,
+    gitPath: managedGitPath,
+    nodePath: managedGitPath ? toolchain.nodePath : null,
+    npmPath: managedGitPath ? toolchain.npmPath : null,
+    toolchainRoot: managedGitPath ? toolchain.toolchainRoot : null,
   });
 }

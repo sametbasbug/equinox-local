@@ -37,13 +37,15 @@ test("test CI and docs-only Main changes cannot build or publish a user-visible 
 
 test("Main Snapshot publish waits for the complete product CI aggregate", () => {
   assert.match(workflow, /windows-arm64-foundation:[\s\S]*needs: \[windows-arm64-runtime, windows-arm64-package, windows-arm64-installer\]/u);
-  assert.match(workflow, /windows-headless:[\s\S]*needs: \[windows-runtime, windows-shell, windows-package, windows-arm64-shared-core, windows-arm64-bootstrap, windows-arm64-foundation\]/u);
-  assert.match(workflow, /main-snapshot-publish:[\s\S]*needs\.test\.result == 'success'[\s\S]*needs\.macos-x64\.result == 'success'[\s\S]*needs\.windows-headless\.result == 'success'/u);
+  assert.match(workflow, /windows-headless:[\s\S]*needs: \[windows-runtime, windows-shell, windows-package, windows-x64-installer, windows-arm64-shared-core, windows-arm64-bootstrap, windows-arm64-runtime, windows-arm64-package, windows-arm64-installer\]/u);
+  assert.doesNotMatch(workflow.match(/windows-headless:[\s\S]*?(?=\n  main-native-plan:)/u)?.[0] ?? "", /windows-arm64-foundation/u);
+  assert.match(workflow, /main-snapshot-publish:[\s\S]*needs\.test\.result == 'success'[\s\S]*needs\.macos-managed-source\.result == 'success'[\s\S]*needs\.macos-x64\.result == 'success'[\s\S]*needs\.windows-headless\.result == 'success'/u);
 });
 
 test("Main Snapshot publish uses public R2 plus a tag-only pointer and never creates a GitHub Release", () => {
-  assert.match(workflow, /main-snapshot-publish:\n    needs: \[test, macos-x64, windows-headless, main-native-plan, main-native-build, main-native-result\]/u);
+  assert.match(workflow, /main-snapshot-publish:\n    needs: \[test, macos-managed-source, macos-x64, windows-headless, main-native-plan, main-native-build, main-native-result\]/u);
   assert.match(workflow, /needs\.test\.result == 'success'/u);
+  assert.match(workflow, /needs\.macos-managed-source\.result == 'success'/u);
   assert.match(workflow, /needs\.macos-x64\.result == 'success'/u);
   assert.match(workflow, /needs\.windows-headless\.result == 'success'/u);
   assert.match(workflow, /permissions:\n      contents: write/u);

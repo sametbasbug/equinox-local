@@ -1,11 +1,26 @@
 import { randomUUID } from "node:crypto";
 import { spawn as nodeSpawn } from "node:child_process";
+import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const DEFAULT_TIMEOUT_MS = 5_000;
 const MAX_STDERR_CHARS = 16_384;
-const DEFAULT_HELPER_PATH = path.join(path.dirname(fileURLToPath(import.meta.url)), "equinox-local-windows-job-object.ps1");
+function defaultHelperLaunchSpec() {
+  const override = String(process.env.EQUINOX_WINDOWS_JOB_OBJECT_HELPER_PATH ?? "").trim();
+  if (override) return Object.freeze({ command: override, args: Object.freeze([]) });
+  const moduleRoot = path.dirname(fileURLToPath(import.meta.url));
+  const nativeHelper = path.join(moduleRoot, "runtime", "job", "equinox-local-job-object-helper.exe");
+  if (existsSync(nativeHelper)) return Object.freeze({ command: nativeHelper, args: Object.freeze([]) });
+  const developerFallback = path.join(moduleRoot, "equinox-local-windows-job-object.ps1");
+  if (existsSync(developerFallback)) {
+    return Object.freeze({
+      command: "powershell.exe",
+      args: Object.freeze(["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", developerFallback]),
+    });
+  }
+  return Object.freeze({ command: nativeHelper, args: Object.freeze([]) });
+}
 
 function boundedTail(current, addition) {
   const combined = current + String(addition ?? "");
@@ -14,22 +29,17 @@ function boundedTail(current, addition) {
 
 export async function createWindowsJobObjectLease({
   platform = process.platform,
-  helperPath = DEFAULT_HELPER_PATH,
+  helperPath = null,
   spawnImpl = nodeSpawn,
   timeoutMs = DEFAULT_TIMEOUT_MS,
 } = {}) {
   if (platform !== "win32") throw new Error("Windows Job Object leases are available only on win32.");
   if (!Number.isInteger(timeoutMs) || timeoutMs < 100 || timeoutMs > 30_000) throw new Error("Windows Job Object timeout is invalid.");
 
-  const child = spawnImpl("powershell.exe", [
-    "-NoLogo",
-    "-NoProfile",
-    "-NonInteractive",
-    "-ExecutionPolicy",
-    "Bypass",
-    "-File",
-    helperPath,
-  ], {
+  const launch = helperPath
+    ? Object.freeze({ command: helperPath, args: Object.freeze([]) })
+    : defaultHelperLaunchSpec();
+  const child = spawnImpl(launch.command, [...launch.args], {
     windowsHide: true,
     shell: false,
     stdio: ["pipe", "pipe", "pipe"],
@@ -49,6 +59,15 @@ export async function createWindowsJobObjectLease({
     }
     pending.clear();
   };
+
+  const failInput = (error) => {
+    closed = true;
+    const wrapped = new Error(`Windows Job Object helper input failed: ${error?.message || error}`);
+    failAll(wrapped);
+    return wrapped;
+  };
+
+  child.stdin?.on("error", failInput);
 
   child.once("error", (error) => {
     closed = true;
@@ -99,11 +118,7 @@ export async function createWindowsJobObjectLease({
       pending.set(id, { resolve, reject, timer });
       child.stdin.write(`${JSON.stringify({ id, op, ...payload })}\n`, (error) => {
         if (!error) return;
-        const current = pending.get(id);
-        if (!current) return;
-        pending.delete(id);
-        clearTimeout(current.timer);
-        reject(error);
+        failInput(error);
       });
     });
   };

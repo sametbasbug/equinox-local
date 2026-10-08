@@ -37,13 +37,22 @@ function windowsPrivateStateEnvironment(env = process.env) {
   return Object.fromEntries(Object.entries(entries).filter(([, value]) => typeof value === "string" && value.length > 0));
 }
 
-async function runWindowsPrivateStateAcl(action, { target, type, execFileAsync = execFile, env = process.env } = {}) {
+async function runWindowsPrivateStateAcl(action, {
+  target,
+  type,
+  execFileAsync = execFile,
+  env = process.env,
+  helperPath = WINDOWS_PRIVATE_STATE_HELPER,
+} = {}) {
   if (!['protect', 'verify'].includes(action)) throw new Error("Windows private-state ACL action is invalid.");
   if (type !== "file" && type !== "directory") throw new Error("Windows private-state ACL type is invalid.");
   if (typeof target !== "string" || !path.win32.isAbsolute(target) || target.includes("\0")) throw new Error("Windows private-state target must be an absolute path.");
+  if (typeof helperPath !== "string" || !path.win32.isAbsolute(helperPath) || helperPath.includes("\0") || path.win32.basename(helperPath) !== "equinox-local-windows-private-state.ps1") {
+    throw new Error("Windows private-state helper path is invalid.");
+  }
   const { stdout } = await execFileAsync(windowsPowerShellPath(env), [
     "-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
-    "-File", WINDOWS_PRIVATE_STATE_HELPER, "-Action", action, "-Target", target, "-Type", type,
+    "-File", helperPath, "-Action", action, "-Target", target, "-Type", type,
   ], { windowsHide: true, timeout: WINDOWS_PRIVATE_STATE_TIMEOUT_MS, maxBuffer: 16 * 1024, env: windowsPrivateStateEnvironment(env) });
   let parsed;
   try { parsed = JSON.parse(String(stdout).trim()); }

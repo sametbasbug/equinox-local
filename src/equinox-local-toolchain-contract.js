@@ -53,6 +53,7 @@ export function equinoxLocalToolchainContract({ runtimeRoot, target }) {
   const gitPath = windows
     ? pathApi.join(gitRoot, "cmd", "git.exe")
     : pathApi.join(gitRoot, "bin", "git");
+  const shellPath = windows ? pathApi.join(gitRoot, "usr", "bin", "sh.exe") : null;
   const nodePath = windows
     ? pathApi.join(nodeRoot, "node.exe")
     : pathApi.join(nodeRoot, "bin", "node");
@@ -78,6 +79,7 @@ export function equinoxLocalToolchainContract({ runtimeRoot, target }) {
     toolchainRoot,
     ambientPathDiscovery: false,
     gitPath,
+    shellPath,
     nodePath,
     npmPath,
     npxPath,

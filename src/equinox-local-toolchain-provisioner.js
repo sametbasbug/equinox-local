@@ -172,11 +172,11 @@ async function extractTarArchive(archivePath, destinationPath, { platform, env, 
   await execFileImpl(tarPath, args, { timeout: 180_000, maxBuffer: 8 * 1024 * 1024, windowsHide: true });
 }
 
-async function runWindowsZipHelper(mode, archivePath, destinationPath, expectedRoot, { env, execFileImpl }) {
+async function runWindowsZipHelper(mode, archivePath, destinationPath, expectedRoot, { env, execFileImpl, helperPath }) {
   const powershell = windowsSystemTools(env).powershell;
   const args = [
     "-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
-    "-File", WINDOWS_ZIP_HELPER_PATH,
+    "-File", helperPath,
     "-Mode", mode,
     "-ArchivePath", archivePath,
     "-ExpectedRoot", expectedRoot,
@@ -189,17 +189,41 @@ async function runWindowsZipHelper(mode, archivePath, destinationPath, expectedR
   });
 }
 
+const TREE_VALIDATION_CONCURRENCY = 16;
+
+async function mapBounded(items, concurrency, visit) {
+  const results = new Array(items.length);
+  let cursor = 0;
+  async function worker() {
+    while (true) {
+      const index = cursor;
+      cursor += 1;
+      if (index >= items.length) return;
+      results[index] = await visit(items[index], index);
+    }
+  }
+  const workers = Array.from({ length: Math.min(concurrency, items.length) }, () => worker());
+  await Promise.all(workers);
+  return results;
+}
+
 async function validateExtractedTree(root, { platform, fsImpl = fs }) {
   let entryCount = 0;
   let totalBytes = 0;
-  const stack = [root];
+  let frontier = [root];
   const rootReal = await fsImpl.realpath(root);
-  while (stack.length > 0) {
-    const directory = stack.pop();
-    const entries = await fsImpl.readdir(directory, { withFileTypes: true });
-    for (const entry of entries) {
-      entryCount += 1;
+  while (frontier.length > 0) {
+    const directoryBatches = await mapBounded(frontier, 8, async (directory) => ({
+      directory,
+      entries: await fsImpl.readdir(directory, { withFileTypes: true }),
+    }));
+    const pending = [];
+    for (const { directory, entries } of directoryBatches) {
+      entryCount += entries.length;
       if (entryCount > MAX_ARCHIVE_ENTRIES) throw new Error("Extracted toolchain contains too many entries.");
+      for (const entry of entries) pending.push({ directory, entry });
+    }
+    const inspected = await mapBounded(pending, TREE_VALIDATION_CONCURRENCY, async ({ directory, entry }) => {
       const absolute = path.join(directory, entry.name);
       const stat = await fsImpl.lstat(absolute);
       if (stat.isSymbolicLink()) {
@@ -208,15 +232,22 @@ async function validateExtractedTree(root, { platform, fsImpl = fs }) {
         if (path.isAbsolute(target)) throw new Error("Extracted toolchain contains an absolute symbolic link.");
         const resolved = await fsImpl.realpath(absolute);
         if (resolved !== rootReal && !inside(rootReal, resolved)) throw new Error("Extracted toolchain symbolic link escaped its root.");
-      } else if (stat.isDirectory()) {
-        stack.push(absolute);
-      } else if (stat.isFile()) {
-        if (stat.size > MAX_EXTRACTED_BYTES - totalBytes) throw new Error("Extracted toolchain exceeds the size limit.");
-        totalBytes += stat.size;
-      } else {
-        throw new Error("Extracted toolchain contains an unsupported filesystem entry.");
+        return Object.freeze({ type: "symlink" });
+      }
+      if (stat.isDirectory()) return Object.freeze({ type: "directory", absolute });
+      if (stat.isFile()) return Object.freeze({ type: "file", size: stat.size });
+      throw new Error("Extracted toolchain contains an unsupported filesystem entry.");
+    });
+    const nextFrontier = [];
+    for (const item of inspected) {
+      if (item.type === "directory") {
+        nextFrontier.push(item.absolute);
+      } else if (item.type === "file") {
+        if (item.size > MAX_EXTRACTED_BYTES - totalBytes) throw new Error("Extracted toolchain exceeds the size limit.");
+        totalBytes += item.size;
       }
     }
+    frontier = nextFrontier;
   }
   return Object.freeze({ entryCount, totalBytes });
 }
@@ -270,8 +301,13 @@ async function validateComponentStamp(root, component, { platform = process.plat
 async function validateComponentIdentity(root, component, contract, { platform, fsImpl = fs, execFileImpl = execFile }) {
   await validateExtractedTree(root, { platform, fsImpl });
   if (component.component === "git") {
-    const gitPath = path.join(root, platform === "win32" ? "cmd/git.exe" : "bin/git");
+    const pathApi = platform === "win32" ? path.win32 : path.posix;
+    const gitPath = pathApi.join(root, platform === "win32" ? "cmd/git.exe" : "bin/git");
     await assertNormalFile(gitPath, "Product-owned Git", { executable: platform !== "win32", platform, fsImpl });
+    if (platform === "win32") {
+      const shellPath = pathApi.join(root, "usr", "bin", "sh.exe");
+      await assertNormalFile(shellPath, "Product-owned POSIX shell", { platform, fsImpl });
+    }
     const { stdout } = await execFileImpl(gitPath, ["--version"], { timeout: 20_000, maxBuffer: 1024 * 1024, windowsHide: true });
     const upstreamVersion = component.version.split("-")[0];
     if (!String(stdout ?? "").trim().startsWith(`git version ${upstreamVersion}`)) throw new Error("Product-owned Git version does not match its pinned distribution.");
@@ -298,11 +334,12 @@ async function validateComponentIdentity(root, component, contract, { platform, 
   }
 }
 
-async function defaultExtractComponent({ archivePath, extractionRoot, component, platform, env, execFileImpl }) {
+async function defaultExtractComponent({ archivePath, extractionRoot, component, platform, env, execFileImpl, windowsZipHelperPath }) {
   if (component.distribution.filename.endsWith(".zip")) {
     if (platform !== "win32") throw new Error("ZIP toolchain extraction is only supported on Windows.");
-    await runWindowsZipHelper("Inspect", archivePath, null, component.archiveRoot, { env, execFileImpl });
-    await runWindowsZipHelper("Extract", archivePath, extractionRoot, component.archiveRoot, { env, execFileImpl });
+    // Extract validates the bounded ZIP central directory before writing and then validates the extracted tree.
+    // Avoid a redundant standalone Inspect pass on the same already hash-verified archive.
+    await runWindowsZipHelper("Extract", archivePath, extractionRoot, component.archiveRoot, { env, execFileImpl, helperPath: windowsZipHelperPath });
     return;
   }
   if (!component.distribution.filename.endsWith(".tar.gz")) throw new Error("Unsupported toolchain archive type.");
@@ -341,6 +378,7 @@ async function installComponent(component, contract, {
   execFileImpl,
   downloadImpl,
   extractComponentImpl,
+  windowsZipHelperPath,
 }) {
   const existing = await fsImpl.lstat(component.root).catch((error) => error?.code === "ENOENT" ? null : Promise.reject(error));
   if (existing) {
@@ -361,7 +399,7 @@ async function installComponent(component, contract, {
   await fsImpl.mkdir(transaction, { recursive: false, mode: 0o700 });
   try {
     await downloadImpl(component.distribution, archivePath);
-    await extractComponentImpl({ archivePath, extractionRoot, component, contract, platform, env, execFileImpl });
+    await extractComponentImpl({ archivePath, extractionRoot, component, contract, platform, env, execFileImpl, windowsZipHelperPath });
     const sourceRoot = component.archiveRoot === "." ? extractionRoot : pathApi.join(extractionRoot, component.archiveRoot);
     const sourceStat = await fsImpl.lstat(sourceRoot);
     if (!sourceStat.isDirectory() || sourceStat.isSymbolicLink()) throw new Error(`${component.component} toolchain archive root is unsafe.`);
@@ -385,11 +423,18 @@ export async function provisionEquinoxLocalToolchain({
   fetchImpl = globalThis.fetch,
   downloadImpl = null,
   extractComponentImpl = defaultExtractComponent,
+  windowsZipHelperPath = WINDOWS_ZIP_HELPER_PATH,
 } = {}) {
   const contract = equinoxLocalToolchainContract({ runtimeRoot, target });
   if (contract.platform !== platform) throw new Error(`Toolchain target ${target} does not match host platform ${platform}.`);
 
   const pathApi = platform === "win32" ? path.win32 : path.posix;
+  if (platform === "win32") {
+    if (typeof windowsZipHelperPath !== "string" || !path.win32.isAbsolute(windowsZipHelperPath) || path.win32.basename(windowsZipHelperPath) !== "equinox-local-windows-release-zip.ps1") {
+      throw new Error("Windows toolchain ZIP helper path is invalid.");
+    }
+    await assertNormalFile(windowsZipHelperPath, "Windows toolchain ZIP helper", { platform, fsImpl });
+  }
   const runtimeParent = pathApi.dirname(contract.runtimeRoot);
   await ensureNormalDirectory(runtimeParent, { fsImpl });
   await ensureNormalDirectory(contract.runtimeRoot, { fsImpl, create: true });
@@ -401,12 +446,17 @@ export async function provisionEquinoxLocalToolchain({
       fetchImpl: toolchainFetchForArtifact(artifact, fetchImpl),
     }));
 
-  const git = await installComponent(contract.git, contract, {
-    platform, env, fsImpl, execFileImpl, downloadImpl: verifiedDownload, extractComponentImpl,
-  });
-  const node = await installComponent(contract.node, contract, {
-    platform, env, fsImpl, execFileImpl, downloadImpl: verifiedDownload, extractComponentImpl,
-  });
+  const componentResults = await Promise.allSettled([
+    installComponent(contract.git, contract, {
+      platform, env, fsImpl, execFileImpl, downloadImpl: verifiedDownload, extractComponentImpl, windowsZipHelperPath,
+    }),
+    installComponent(contract.node, contract, {
+      platform, env, fsImpl, execFileImpl, downloadImpl: verifiedDownload, extractComponentImpl, windowsZipHelperPath,
+    }),
+  ]);
+  const failed = componentResults.find((result) => result.status === "rejected");
+  if (failed) throw failed.reason;
+  const [git, node] = componentResults.map((result) => result.value);
 
   return Object.freeze({ contract, components: Object.freeze([git, node]) });
 }

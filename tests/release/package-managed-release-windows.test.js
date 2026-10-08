@@ -24,9 +24,9 @@ test("Windows managed package contract keeps x64 stable and defines explicit nat
   assert.deepEqual(arm64.extraReleaseFiles, [
     "src/equinox-local-windows-clipboard.ps1",
     "src/equinox-local-windows-desktop.ps1",
-    "src/equinox-local-windows-job-object.ps1",
     "src/equinox-local-windows-private-state.ps1",
     "src/equinox-local-windows-process-gate.ps1",
+    "src/equinox-local-windows-runtime-gate.mjs",
     "src/equinox-local-windows-release-zip.ps1",
   ]);
   assert.deepEqual(arm64.requiredShellFiles, [
@@ -84,6 +84,14 @@ test("Windows managed ZIP helper uses bounded fast compression", async () => {
   assert.match(source, /Windows managed ZIP creation exceeded/u);
 });
 
+test("Windows package stages node_modules through normal-file hardlinks", async () => {
+  const source = await fs.readFile(new URL("../../scripts/release/package-managed-release-windows.mjs", import.meta.url), "utf8");
+  assert.match(source, /async function hardlinkNormalTree/u);
+  assert.match(source, /await fs\.link\(source, destination\)/u);
+  assert.match(source, /if \(entry\.name === "\.bin" && sourceDir === sourceRoot\) continue/u);
+  assert.doesNotMatch(source, /await fs\.cp\(modulesSource, path\.join\(releaseDir, "node_modules"\)/u);
+});
+
 test("Windows pinned dependency ZIP extraction uses bounded native tar instead of Expand-Archive", async () => {
   let source;
   for (const relative of ["./package-managed-release-windows.mjs", "../../scripts/release/package-managed-release-windows.mjs"]) {
@@ -109,11 +117,13 @@ test("Windows release ZIP helper explicitly references compression assemblies fo
   assert.match(helper, /ZipArchive\]\.Assembly\.Location/u);
   assert.match(helper, /ZipFile\]\.Assembly\.Location/u);
   assert.match(helper, /-ReferencedAssemblies @\(\$CompressionAssembly, \$CompressionFileSystemAssembly\)/u);
+  assert.match(helper, /\$PSVersionTable\.PSEdition -eq 'Core'/u);
+  assert.match(helper, /Add-Type -TypeDefinition \$TypeDefinition/u);
 });
 
-test("Windows managed package builder requires a native x64/ARM64 host-target match", async () => {
+test("Windows managed package builder allows only native targets plus x64-to-ARM64 cross-packaging", async () => {
   if (process.platform === "win32" && ["x64", "arm64"].includes(process.arch)) return;
-  await assert.rejects(packageManagedEquinoxWindowsRelease(), /requires a native win32-x64 or win32-arm64 host\/target match/u);
+  await assert.rejects(packageManagedEquinoxWindowsRelease({ target: "win32-arm64" }), /requires a supported native or x64-to-ARM64 Windows host\/target pair/u);
 });
 
 
@@ -133,9 +143,22 @@ test("Windows native launcher toolchain is target-specific and architecture-veri
   assert.match(source, /Microsoft\.VisualStudio\.Component\.VC\.Tools\.ARM64/u);
   assert.match(source, /vcvars64\.bat/u);
   assert.match(source, /vcvarsarm64\.bat/u);
+  assert.match(source, /vcvarsamd64_arm64\.bat/u);
+  assert.match(source, /EQUINOX_WINDOWS_BROWSER_LAUNCHER_PATH/u);
+  assert.match(source, /copyPrecompiledBrowserLauncher/u);
+  assert.match(source, /const canExecuteTarget = target === hostTarget/u);
+  assert.match(source, /Pinned Windows Node architecture mismatch/u);
+  assert.ok(source.includes('Pinned Windows ${name} architecture mismatch'));
+  assert.match(source, /if \(canExecuteTarget\)/u);
+  assert.ok(source.includes('call "${vcvars}" >nul'));
+  assert.match(source, /\.compile-browser-launcher\.cmd/u);
+  assert.doesNotMatch(source, /windowsVerbatimArguments:\s*true/u);
   assert.match(source, /0x8664/u);
   assert.match(source, /0xaa64/u);
   assert.match(source, /architecture mismatch/u);
+  assert.match(source, /\["-latest", "-products", "\*", "-property", "installationPath"\]/u);
+  assert.match(source, /Visual Studio target environment is unavailable/u);
+  assert.match(source, /Promise\.allSettled/u);
 });
 
 test("Windows release ZIP security acceptance is wired to the package CI lane", async () => {
@@ -162,4 +185,39 @@ test("Windows release ZIP security acceptance is wired to the package CI lane", 
   const packageLane = workflow.slice(packageStart, aggregateStart);
   assert.match(packageLane, /Windows release ZIP security acceptance/u);
   assert.match(packageLane, /windows-release-zip-smoke\.ps1/u);
+});
+
+
+test("Windows native Job Object helper uses target-specific MSVC and direct Win32 ownership", async () => {
+  const source = await fs.readFile(new URL("../../scripts/release/package-managed-release-windows.mjs", import.meta.url), "utf8");
+  const helper = await fs.readFile(new URL("../../native/windows/equinox-local-job-object-helper.cpp", import.meta.url), "utf8");
+  assert.match(source, /compileWindowsJobObjectHelper/u);
+  assert.match(source, /equinox-local-job-object-helper\.cpp/u);
+  assert.match(source, /\/MT \/DUNICODE/u);
+  assert.match(source, /Windows Job Object helper architecture mismatch/u);
+  assert.match(helper, /CreateJobObjectW/u);
+  assert.match(helper, /JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE/u);
+  assert.match(helper, /AssignProcessToJobObject/u);
+  assert.match(helper, /QueryInformationJobObject/u);
+  assert.match(helper, /TerminateJobObject/u);
+});
+
+
+test("Windows public installer reuses the current PowerShell host for verified ZIP extraction", async () => {
+  const installer = await fs.readFile(new URL("../../scripts/install-equinox-local.ps1", import.meta.url), "utf8");
+  assert.match(installer, /GetCurrentProcess\(\)\.MainModule\.FileName/u);
+  assert.match(installer, /& \$powerShellHost -NoLogo -NoProfile -NonInteractive/u);
+  assert.doesNotMatch(installer, /\$PSHOME\\powershell\.exe/u);
+});
+
+
+test("Windows shell runtime gate is product-owned Node with explicit child-start acknowledgement", async () => {
+  const gate = await fs.readFile(new URL("../../src/equinox-local-windows-runtime-gate.mjs", import.meta.url), "utf8");
+  assert.match(gate, /from "node:child_process"/u);
+  assert.match(gate, /EQUINOX_LOCAL_OWNED_PROCESS_SPEC/u);
+  assert.match(gate, /EQUINOX_LOCAL_OWNED_PROCESS_READY_MARKER/u);
+  assert.match(gate, /stdio: \["inherit", "inherit", "inherit"\]/u);
+  assert.match(gate, /child\.once\("spawn"/u);
+  assert.match(gate, /process\.stdout\.write/u);
+  assert.doesNotMatch(gate, /powershell|cmd\.exe|shell:\s*true/iu);
 });

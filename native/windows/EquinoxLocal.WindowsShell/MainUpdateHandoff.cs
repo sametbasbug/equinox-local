@@ -82,10 +82,6 @@ internal static partial class MainUpdateHandoff
         var system32 = Path.Combine(systemRoot, "System32");
         var powershellDirectory = Path.Combine(system32, "WindowsPowerShell", "v1.0");
         RequireNormalFile(Path.Combine(powershellDirectory, "powershell.exe"), "Windows PowerShell runtime");
-        var gitPath = ResolveGitExecutable(systemRoot);
-        var gitDirectory = Path.GetDirectoryName(gitPath)
-            ?? throw new InvalidDataException("Git executable directory is unavailable.");
-
         startInfo.Environment.Clear();
         CopyEnvironment(startInfo, "USERPROFILE");
         CopyEnvironment(startInfo, "LOCALAPPDATA");
@@ -93,7 +89,7 @@ internal static partial class MainUpdateHandoff
         CopyEnvironment(startInfo, "WINDIR");
         CopyEnvironment(startInfo, "TEMP");
         CopyEnvironment(startInfo, "TMP");
-        startInfo.Environment["PATH"] = string.Join(Path.PathSeparator, [gitDirectory, powershellDirectory, system32, systemRoot]);
+        startInfo.Environment["PATH"] = string.Join(Path.PathSeparator, [powershellDirectory, system32, systemRoot]);
         var handoffRoot = Path.GetFullPath(Path.Combine(transactionRoot, "handoff"));
         Directory.CreateDirectory(handoffRoot);
         RequireNormalDirectory(handoffRoot, "Main update handoff directory");
@@ -195,38 +191,6 @@ internal static partial class MainUpdateHandoff
         {
             try { if (File.Exists(temporaryPath)) File.Delete(temporaryPath); } catch { }
         }
-    }
-
-    private static string ResolveGitExecutable(string systemRoot)
-    {
-        var wherePath = RequireNormalFile(Path.Combine(systemRoot, "System32", "where.exe"), "Windows where executable");
-        var startInfo = new ProcessStartInfo(wherePath)
-        {
-            UseShellExecute = false,
-            CreateNoWindow = true,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-        };
-        startInfo.ArgumentList.Add("git.exe");
-        using var process = Process.Start(startInfo)
-            ?? throw new InvalidOperationException("Git discovery process did not start.");
-        if (!process.WaitForExit(5_000))
-        {
-            try { process.Kill(entireProcessTree: true); } catch { }
-            throw new InvalidDataException("Git discovery timed out for the Main update handoff.");
-        }
-        if (process.ExitCode != 0)
-            throw new InvalidDataException("Git is unavailable for the Main update handoff.");
-
-        var output = process.StandardOutput.ReadToEnd();
-        foreach (var raw in output.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries))
-        {
-            var candidate = raw.Trim();
-            if (!Path.IsPathFullyQualified(candidate)) continue;
-            try { return RequireNormalFile(candidate, "Git executable"); }
-            catch (InvalidDataException) { }
-        }
-        throw new InvalidDataException("Git discovery did not return a safe executable.");
     }
 
     private static void ValidateInstallStamp(string stampPath)

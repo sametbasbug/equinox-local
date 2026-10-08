@@ -1,0 +1,301 @@
+import assert from "node:assert/strict";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import test from "node:test";
+
+import {
+  enrollEquinoxLocalManagedSource,
+  ensureManagedSourcePrivateDirectory,
+  installPrebuiltDependencies,
+  rollbackEquinoxLocalManagedSourceEnrollment,
+  seedPrebuiltDependenciesFromStableRelease,
+  validateManagedSource,
+  writeManagedSourceInstallStamp,
+} from "../../src/equinox-local-managed-source-enrollment.js";
+import { equinoxLocalManagedSourcePaths } from "../../src/equinox-local-managed-source-installation.js";
+
+const SHA = "a".repeat(40);
+
+async function fixture(t) {
+  const temporaryHome = await fs.mkdtemp(path.join(os.tmpdir(), "equinox-enroll-"));
+  const homeDir = await fs.realpath(temporaryHome);
+  t.after(() => fs.rm(homeDir, { recursive: true, force: true }));
+  const appDataRoot = path.join(homeDir, "Library", "Application Support", "Equinox Local");
+  await fs.mkdir(appDataRoot, { recursive: true, mode: 0o700 });
+  const paths = equinoxLocalManagedSourcePaths({ platform: "darwin", arch: "arm64", homeDir, env: {} });
+  const runtimeRoot = path.join(appDataRoot, "runtime");
+  const contract = Object.freeze({
+    target: "darwin-arm64",
+    runtimeRoot,
+    ambientPathDiscovery: false,
+    gitPath: path.join(runtimeRoot, "toolchain", "git", "bin", "git"),
+    nodePath: path.join(runtimeRoot, "toolchain", "node", "bin", "node"),
+    npmPath: path.join(runtimeRoot, "toolchain", "node", "npm-cli.js"),
+  });
+  return { homeDir, paths, contract };
+}
+
+function inspectorForSha() {
+  return async (root) => {
+    let stat;
+    try { stat = await fs.lstat(root); } catch (error) { if (error?.code === "ENOENT") throw error; throw error; }
+    if (!stat.isDirectory()) return { eligible: false };
+    return { eligible: true, currentSha: SHA, sourceRoot: root };
+  };
+}
+
+test("Windows managed-source state hardens only newly created roots and refuses hostile existing ACLs", async (t) => {
+  const base = await fs.mkdtemp(path.join(os.tmpdir(), "equinox-managed-acl-"));
+  t.after(() => fs.rm(base, { recursive: true, force: true }));
+  const root = path.join(base, "main-update");
+  const protectedTargets = [];
+  let secured = false;
+  const protectWindowsAcl = async ({ target, type }) => {
+    protectedTargets.push([target, type]);
+    secured = true;
+    return { safe: true };
+  };
+  const verifyWindowsAcl = async () => ({ safe: secured, reason: secured ? null : "foreign-principal" });
+
+  await ensureManagedSourcePrivateDirectory(root, {
+    platform: "win32", fsImpl: fs, env: { SystemRoot: "C:\\Windows" }, protectWindowsAcl, verifyWindowsAcl,
+  });
+  assert.deepEqual(protectedTargets, [[root, "directory"]]);
+
+  const hostile = path.join(base, "hostile");
+  await fs.mkdir(hostile);
+  await assert.rejects(ensureManagedSourcePrivateDirectory(hostile, {
+    platform: "win32", fsImpl: fs, env: { SystemRoot: "C:\\Windows" },
+    protectWindowsAcl: async () => assert.fail("pre-existing hostile ACL must not be repaired"),
+    verifyWindowsAcl: async () => ({ safe: false, reason: "foreign-principal" }),
+  }), /state directory is not private/u);
+});
+
+test("Windows managed-source install stamp receives explicit ACL before atomic publish", async (t) => {
+  const temporaryBase = await fs.mkdtemp(path.join(os.tmpdir(), "equinox-managed-stamp-acl-"));
+  const base = await fs.realpath(temporaryBase);
+  t.after(() => fs.rm(base, { recursive: true, force: true }));
+  const stampPath = path.join(base, "install.json");
+  const protectedTargets = [];
+  let protectedFile = false;
+  await writeManagedSourceInstallStamp(stampPath, SHA, {
+    platform: "win32",
+    fsImpl: fs,
+    env: { SystemRoot: "C:\\Windows" },
+    randomBytesImpl: () => Buffer.alloc(8, 0xee),
+    protectWindowsAcl: async ({ target, type }) => {
+      protectedTargets.push([target, type]);
+      protectedFile = true;
+      return { safe: true };
+    },
+    verifyWindowsAcl: async () => ({ safe: protectedFile }),
+  });
+  assert.equal(protectedTargets.length, 1);
+  assert.equal(protectedTargets[0][1], "file");
+  assert.match(path.basename(protectedTargets[0][0]), /^\.install-[a-f0-9]+\.tmp$/u);
+  assert.equal(JSON.parse(await fs.readFile(stampPath, "utf8")).bootstrapSha, SHA);
+});
+
+test("fresh enrollment binds exact Stable source SHA and writes install stamp last", async (t) => {
+  const f = await fixture(t);
+  const events = [];
+  const result = await enrollEquinoxLocalManagedSource({
+    bootstrapSha: SHA,
+    target: "darwin-arm64",
+    platform: "darwin",
+    arch: "arm64",
+    homeDir: f.homeDir,
+    env: {},
+    windowsZipHelperPath: "/durable/release/equinox-local-windows-release-zip.ps1",
+    provisionToolchainImpl: async (value) => { events.push(["provision", value.target, value.windowsZipHelperPath]); await fs.mkdir(f.contract.runtimeRoot, { recursive: true }); return { contract: f.contract }; },
+    execFileImpl: async (command, args) => {
+      events.push(["exec", command, [...args]]);
+      if (command !== f.contract.gitPath) throw new Error(`unexpected command ${command}`);
+      if (args[0] === "clone") await fs.mkdir(args.at(-1), { recursive: true });
+      return { stdout: "", stderr: "" };
+    },
+    inspectCheckoutImpl: inspectorForSha(),
+    installDependenciesImpl: async (root, contract) => { events.push(["dependencies", root, contract.nodePath, contract.npmPath]); },
+    validateSourceImpl: async (root) => { events.push(["validate", root]); },
+    writePointerImpl: async (pointerPath, value, options) => {
+      events.push(["pointer", pointerPath, value.sha, options.gitPath]);
+      await assert.rejects(fs.lstat(f.paths.installStampPath), { code: "ENOENT" });
+      await fs.writeFile(pointerPath, `schemaVersion=1\nsourceRoot=${value.sourceRoot}\nsha=${value.sha}\n`, { mode: 0o600 });
+      return value;
+    },
+    randomBytesImpl: () => Buffer.alloc(8, 0xab),
+  });
+
+  assert.equal(result.status, "enrolled");
+  assert.equal(result.bootstrapSha, SHA);
+  assert.equal(result.sourceRoot, path.join(f.paths.mainTransactionRoot, "sources", SHA));
+  assert.deepEqual(events[0], ["provision", "darwin-arm64", "/durable/release/equinox-local-windows-release-zip.ps1"]);
+  const clone = events.find((event) => event[0] === "exec" && event[2][0] === "clone");
+  assert.equal(clone[1], f.contract.gitPath);
+  assert.equal(clone[2].includes("https://github.com/sametbasbug/equinox-local.git"), true);
+  const checkout = events.find((event) => event[0] === "exec" && event[2].includes("checkout"));
+  assert.equal(checkout[2].at(-1), SHA);
+  const canonicalOrigin = events.find((event) => event[0] === "exec" && event[2].includes("set-url"));
+  assert.deepEqual(canonicalOrigin[2].slice(-3), ["set-url", "origin", "https://github.com/sametbasbug/equinox-local.git"]);
+  assert.equal(events.some((event) => event[0] === "dependencies" && event[2] === f.contract.nodePath && event[3] === f.contract.npmPath), true);
+  assert.equal(events.at(-1)[0], "pointer");
+  const stamp = JSON.parse(await fs.readFile(f.paths.installStampPath, "utf8"));
+  assert.deepEqual(stamp, { schemaVersion: 1, channel: "main", repository: "sametbasbug/equinox-local", branch: "main", bootstrapSha: SHA });
+  assert.equal((await fs.stat(f.paths.installStampPath)).mode & 0o077, 0);
+  assert.deepEqual(await fs.readdir(path.join(f.paths.mainTransactionRoot, "enrollment-staging")), []);
+});
+
+test("enrollment failure before commit point preserves Stable identity and cleans staging", async (t) => {
+  const f = await fixture(t);
+  await assert.rejects(enrollEquinoxLocalManagedSource({
+    bootstrapSha: SHA,
+    target: "darwin-arm64",
+    platform: "darwin",
+    arch: "arm64",
+    homeDir: f.homeDir,
+    env: {},
+    provisionToolchainImpl: async () => { await fs.mkdir(f.contract.runtimeRoot, { recursive: true }); return { contract: f.contract }; },
+    execFileImpl: async (_command, args) => { if (args[0] === "clone") await fs.mkdir(args.at(-1), { recursive: true }); return { stdout: "", stderr: "" }; },
+    inspectCheckoutImpl: inspectorForSha(),
+    installDependenciesImpl: async () => {},
+    validateSourceImpl: async () => { throw new Error("synthetic validation failure"); },
+    randomBytesImpl: () => Buffer.alloc(8, 0xcd),
+  }), /synthetic validation failure/u);
+  await assert.rejects(fs.lstat(f.paths.installStampPath), { code: "ENOENT" });
+  await assert.rejects(fs.lstat(f.paths.sourcePointerPath), { code: "ENOENT" });
+  assert.deepEqual(await fs.readdir(path.join(f.paths.mainTransactionRoot, "enrollment-staging")), []);
+});
+
+test("enrollment rollback removes identity state but preserves reusable source and toolchain", async (t) => {
+  const f = await fixture(t);
+  await fs.mkdir(f.contract.runtimeRoot, { recursive: true });
+  await fs.mkdir(path.join(f.paths.mainTransactionRoot, "sources", SHA), { recursive: true });
+  await fs.writeFile(f.paths.installStampPath, `${JSON.stringify({
+    schemaVersion: 1, channel: "main", repository: "sametbasbug/equinox-local", branch: "main", bootstrapSha: SHA,
+  })}\n`, { mode: 0o600 });
+  await fs.writeFile(f.paths.sourcePointerPath, `schemaVersion=1\nsourceRoot=${path.join(f.paths.mainTransactionRoot, "sources", SHA)}\nsha=${SHA}\n`, { mode: 0o600 });
+
+  const result = await rollbackEquinoxLocalManagedSourceEnrollment({
+    bootstrapSha: SHA,
+    target: "darwin-arm64",
+    platform: "darwin",
+    arch: "arm64",
+    homeDir: f.homeDir,
+    env: {},
+    readPointerImpl: async () => ({ sourceRoot: path.join(f.paths.mainTransactionRoot, "sources", SHA), sha: SHA }),
+  });
+  assert.equal(result.rolledBack, true);
+  await assert.rejects(fs.lstat(f.paths.installStampPath), { code: "ENOENT" });
+  await assert.rejects(fs.lstat(f.paths.sourcePointerPath), { code: "ENOENT" });
+  assert.equal((await fs.stat(path.join(f.paths.mainTransactionRoot, "sources", SHA))).isDirectory(), true);
+  assert.equal((await fs.stat(f.contract.runtimeRoot)).isDirectory(), true);
+});
+
+
+test("Windows managed-source validation uses product-owned Node and Dugite sh without ambient bash", async () => {
+  const calls = [];
+  const contract = {
+    nodePath: "/owned/node",
+    npmPath: "/owned/npm-cli.js",
+    shellPath: "C:\\owned\\git\\usr\\bin\\sh.exe",
+  };
+  await validateManagedSource("/managed/source", contract, {
+    platform: "win32",
+    env: { SystemRoot: "C:\\Windows", PATH: "ambient-must-not-be-used" },
+    execFileImpl: async (command, args, options) => {
+      calls.push({ command, args: [...args], env: options.env });
+      return { stdout: "", stderr: "" };
+    },
+  });
+  assert.equal(calls.length, 2);
+  assert.deepEqual(calls[0].args, [
+    "/managed/source/scripts/check.mjs",
+    "--shell-command=C:\\owned\\git\\usr\\bin\\sh.exe",
+  ]);
+  assert.equal(calls[0].command, contract.nodePath);
+  assert.equal(calls[0].args.includes(contract.npmPath), false);
+  assert.equal(calls[0].env.PATH.includes("ambient-must-not-be-used"), false);
+  assert.deepEqual(calls[1].args, ["--test", "tests/release/equinox-local-main-update.test.js"]);
+  await assert.rejects(validateManagedSource("/managed/source", { ...contract, shellPath: null }, {
+    platform: "win32",
+    execFileImpl: async () => assert.fail("validation must fail before spawning"),
+  }), /product-owned POSIX shell/u);
+});
+
+test("managed-source command failures retain bounded child diagnostics", async () => {
+  const contract = {
+    nodePath: "/owned/node",
+    npmPath: "/owned/npm-cli.js",
+    shellPath: "C:\\owned\\git\\usr\\bin\\sh.exe",
+  };
+  await assert.rejects(validateManagedSource("/managed/source", contract, {
+    platform: "win32",
+    env: { SystemRoot: "C:\\Windows" },
+    execFileImpl: async () => {
+      const error = new Error("synthetic validation failure");
+      error.stdout = "tap output\nfailed assertion\n";
+      error.stderr = "syntax detail\r\n";
+      throw error;
+    },
+  }), (error) => {
+    assert.match(error.message, /synthetic validation failure/u);
+    assert.match(error.message, /stdout: tap output failed assertion/u);
+    assert.match(error.message, /stderr: syntax detail/u);
+    assert.equal(error.message.includes("\n"), false);
+    return true;
+  });
+});
+
+test("Windows Stable dependency seed copies only exact package identity without sharing rollback inodes", async (t) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "equinox-stable-seed-"));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const sourceRoot = path.join(root, "source");
+  const releaseRoot = path.join(root, "release");
+  await fs.mkdir(path.join(sourceRoot, "node_modules"), { recursive: true }).catch(() => {});
+  await fs.rm(path.join(sourceRoot, "node_modules"), { recursive: true, force: true });
+  await fs.mkdir(path.join(releaseRoot, "node_modules", "fixture"), { recursive: true });
+  const packageJson = Buffer.from('{"name":"fixture","version":"1.0.0"}\n');
+  const packageLock = Buffer.from('{"name":"fixture","lockfileVersion":3}\n');
+  for (const dir of [sourceRoot, releaseRoot]) {
+    await fs.mkdir(dir, { recursive: true });
+    await fs.writeFile(path.join(dir, "package.json"), packageJson);
+    await fs.writeFile(path.join(dir, "package-lock.json"), packageLock);
+  }
+  const seededFile = path.join(releaseRoot, "node_modules", "fixture", "index.js");
+  await fs.writeFile(seededFile, "module.exports = 1;\n");
+  await seedPrebuiltDependenciesFromStableRelease(sourceRoot, releaseRoot);
+  const linkedFile = path.join(sourceRoot, "node_modules", "fixture", "index.js");
+  assert.equal(await fs.readFile(linkedFile, "utf8"), "module.exports = 1;\n");
+  const [sourceStat, linkedStat] = await Promise.all([fs.stat(seededFile), fs.stat(linkedFile)]);
+  assert.notEqual(sourceStat.ino, linkedStat.ino);
+
+  const mismatch = path.join(root, "mismatch");
+  await fs.mkdir(mismatch, { recursive: true });
+  await fs.writeFile(path.join(mismatch, "package.json"), Buffer.from('{"name":"other"}\n'));
+  await fs.writeFile(path.join(mismatch, "package-lock.json"), packageLock);
+  await assert.rejects(seedPrebuiltDependenciesFromStableRelease(mismatch, releaseRoot), /does not match the exact source package identity/u);
+});
+
+test("prebuilt dependency install never exposes node-gyp fallback", async (t) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "equinox-prebuild-install-"));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const nodePty = path.join(root, "node_modules", "node-pty");
+  await fs.mkdir(path.join(nodePty, "scripts"), { recursive: true });
+  await fs.writeFile(path.join(nodePty, "scripts", "prebuild.js"), "// fixture\n");
+  await fs.writeFile(path.join(nodePty, "scripts", "post-install.js"), "// fixture\n");
+  const calls = [];
+  const contract = { nodePath: "/owned/node", npmPath: "/owned/npm-cli.js" };
+  await installPrebuiltDependencies(root, contract, {
+    env: { HOME: "/tmp/fixture", PATH: "ambient-tools-must-not-be-used" },
+    execFileImpl: async (command, args, options) => { calls.push({ command, args: [...args], cwd: options.cwd, env: options.env }); return { stdout: "", stderr: "" }; },
+  });
+  assert.deepEqual(calls[0].args, [contract.npmPath, "ci", "--ignore-scripts", "--no-audit", "--no-fund"]);
+  assert.equal(calls[0].command, contract.nodePath);
+  assert.equal(calls[0].env.PATH.startsWith(`${path.dirname(contract.nodePath)}:`), true);
+  assert.equal(calls[0].env.PATH.includes("ambient-tools-must-not-be-used"), false);
+  assert.equal(Object.hasOwn(calls[0].env, "npm_config_build_from_source"), false);
+  assert.equal(calls[1].args[0], path.join(nodePty, "scripts", "prebuild.js"));
+  assert.equal(calls[2].args[0], path.join(nodePty, "scripts", "post-install.js"));
+  assert.equal(calls.some((call) => call.command.includes("node-gyp") || call.args.some((arg) => String(arg).includes("node-gyp"))), false);
+});

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
+import path from "node:path";
 import test from "node:test";
 
 import {
@@ -10,7 +11,7 @@ import {
   validateManagedSourceInstallStamp,
 } from "../../src/equinox-local-main-update.js";
 
-const ROOT = "/Users/example/equinox-local";
+const ROOT = path.join(path.parse(process.cwd()).root, "equinox-main-update-fixture");
 const CURRENT = "1".repeat(40);
 const TARGET = "2".repeat(40);
 

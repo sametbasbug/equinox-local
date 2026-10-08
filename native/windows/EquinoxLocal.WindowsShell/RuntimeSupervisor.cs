@@ -9,15 +9,16 @@ internal sealed class RuntimeSupervisor : IAsyncDisposable
 {
     private const int MaxAutomaticRestarts = 3;
     private const int MaxGateDiagnosticChars = 1_200;
-    private static readonly TimeSpan ProtocolTimeout = TimeSpan.FromSeconds(30);
+    private const string RuntimeGateReadyMarker = "EQUINOX_RUNTIME_CHILD_STARTED";
     private static readonly TimeSpan ExitTimeout = TimeSpan.FromSeconds(5);
+    private static readonly TimeSpan RuntimeGateStartTimeout = TimeSpan.FromSeconds(15);
     private static readonly TimeSpan[] RecoveryDelays = [TimeSpan.FromMilliseconds(250), TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(2)];
 
     private readonly Func<WindowsRuntimeLocation> _runtimeResolver;
     private readonly SemaphoreSlim _lifecycle = new(1, 1);
-    private readonly SemaphoreSlim _protocol = new(1, 1);
-    private Process? _jobHelper;
+    private WindowsJobObjectLease? _jobObject;
     private Process? _gate;
+    private int? _gatePid;
     private bool _desiredRunning;
     private bool _stopping;
     private bool _disposed;
@@ -50,7 +51,17 @@ internal sealed class RuntimeSupervisor : IAsyncDisposable
         return new RuntimeSupervisor(WindowsManagedSourceRuntimeLocator.Resolve);
     }
 
-    internal int? RuntimeProcessId => _gate is { HasExited: false } process ? process.Id : null;
+    internal int? RuntimeProcessId
+    {
+        get
+        {
+            var gate = _gate;
+            var pid = _gatePid;
+            if (gate is null || pid is null) return null;
+            try { return gate.HasExited ? null : pid; }
+            catch (InvalidOperationException) { return null; }
+        }
+    }
     internal bool DesiredRunning => _desiredRunning;
 
     internal async Task StartAsync(CancellationToken cancellationToken = default)
@@ -104,47 +115,58 @@ internal sealed class RuntimeSupervisor : IAsyncDisposable
         var sourceRoot = location.SourceRoot;
         var nodePath = Path.Combine(nativeReleaseDir, "runtime", "node", "bin", "node.exe");
         var serverPath = location.ServerPath;
-        var jobHelperPath = Path.Combine(nativeReleaseDir, "equinox-local-windows-job-object.ps1");
-        var processGatePath = Path.Combine(nativeReleaseDir, "equinox-local-windows-process-gate.ps1");
-        ValidateReleaseFiles(nodePath, serverPath, jobHelperPath, processGatePath);
-        await CloseJobHelperAsync(CancellationToken.None).ConfigureAwait(false);
-        _jobHelper = StartPowerShell(jobHelperPath, redirectOutput: true);
-        WindowsShellDiagnostics.RecordRuntimeState("runtime-start-phase", "helper-started");
-        var ready = await ReadReplyAsync(_jobHelper, "ready", cancellationToken).ConfigureAwait(false);
-        if (!ready.GetProperty("ok").GetBoolean() || !ready.GetProperty("ready").GetBoolean())
-            throw new InvalidOperationException("Windows Job Object helper did not become ready.");
-        WindowsShellDiagnostics.RecordRuntimeState("runtime-start-phase", "helper-ready");
+        var processGatePath = Path.Combine(nativeReleaseDir, "equinox-local-windows-runtime-gate.mjs");
+        ValidateReleaseFiles(nodePath, serverPath, processGatePath);
+        _jobObject?.Dispose();
+        _jobObject = WindowsJobObjectLease.Create();
+        WindowsShellDiagnostics.RecordRuntimeState("runtime-start-phase", "job-created");
 
         var payload = Convert.ToBase64String(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new { command = nodePath, args = new[] { serverPath } })));
-        var startInfo = PowerShellStartInfo(processGatePath);
+        var startInfo = NodeGateStartInfo(nodePath, processGatePath);
         startInfo.WorkingDirectory = sourceRoot;
         startInfo.Environment["EQUINOX_LOCAL_OWNED_PROCESS_SPEC"] = payload;
         startInfo.Environment["EQUINOX_LOCAL_RELEASE_DIR"] = location.BootstrapReleaseDir;
         startInfo.Environment["EQUINOX_LOCAL_INSTALL_ROOT"] = location.InstallRoot;
         startInfo.Environment["EQUINOX_LOCAL_SUPERVISOR_MODE"] = "local-only";
+        startInfo.Environment["EQUINOX_LOCAL_OWNED_PROCESS_READY_MARKER"] = RuntimeGateReadyMarker;
         var gate = new Process { StartInfo = startInfo, EnableRaisingEvents = true };
         var gateStderr = new StringBuilder();
         var gateStderrSync = new object();
+        var gateReady = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        gate.OutputDataReceived += (_, eventArgs) =>
+        {
+            if (string.Equals(eventArgs.Data, RuntimeGateReadyMarker, StringComparison.Ordinal)) gateReady.TrySetResult(true);
+        };
         gate.ErrorDataReceived += (_, eventArgs) => AppendGateDiagnostic(gateStderr, gateStderrSync, eventArgs.Data);
         if (!gate.Start()) throw new InvalidOperationException("Windows runtime process gate did not start.");
+        var gatePid = gate.Id;
         gate.BeginOutputReadLine();
         gate.BeginErrorReadLine();
         _gate = gate;
+        _gatePid = gatePid;
         WindowsShellDiagnostics.RecordRuntimeState("runtime-start-phase", "gate-started");
         var generation = ++_generation;
-        gate.Exited += (_, _) => OnGateExited(generation, gate, gateStderr, gateStderrSync);
+        gate.Exited += (_, _) =>
+        {
+            gateReady.TrySetException(new InvalidOperationException("Windows runtime gate exited before child startup was acknowledged."));
+            OnGateExited(generation, gate, gateStderr, gateStderrSync);
+        };
+        if (gate.HasExited)
+            gateReady.TrySetException(new InvalidOperationException("Windows runtime gate exited before child startup was acknowledged."));
         try
         {
             WindowsShellDiagnostics.RecordRuntimeState("runtime-start-phase", "assign-started");
-            await SendRequestAsync("assign", new Dictionary<string, object?> { ["pid"] = gate.Id }, cancellationToken).ConfigureAwait(false);
+            _jobObject.Assign(gate);
             WindowsShellDiagnostics.RecordRuntimeState("runtime-start-phase", "assigned");
             await gate.StandardInput.WriteLineAsync("EQUINOX_GO").ConfigureAwait(false);
             await gate.StandardInput.FlushAsync(cancellationToken).ConfigureAwait(false);
+            WindowsShellDiagnostics.RecordRuntimeState("runtime-start-phase", "gate-released");
+            await gateReady.Task.WaitAsync(RuntimeGateStartTimeout, cancellationToken).ConfigureAwait(false);
+            WindowsShellDiagnostics.RecordRuntimeState("runtime-start-phase", "child-started");
             // Keep the gate stdin pipe open for the child runtime. server.js treats stdin EOF as
             // an ownership shutdown signal; closing this writer here made GUI-hosted Windows
             // runtimes shut down cleanly immediately after startup. Job Object termination still
             // owns stop/restart and closes the process tree without relying on stdin EOF.
-            WindowsShellDiagnostics.RecordRuntimeState("runtime-start-phase", "gate-released");
         }
         catch
         {
@@ -159,7 +181,9 @@ internal sealed class RuntimeSupervisor : IAsyncDisposable
         // The Exited event already proves the gate process is signaled. Do not call synchronous
         // WaitForExit() here while async stdout/stderr drains are active: that can block the event
         // callback and prevent bounded crash recovery from ever being scheduled.
-        var exitCode = gate.HasExited ? gate.ExitCode : -1;
+        var exitCode = -1;
+        try { if (gate.HasExited) exitCode = gate.ExitCode; }
+        catch (InvalidOperationException) { }
         var stderr = ReadGateDiagnostic(gateStderr, gateStderrSync);
         var detail = string.IsNullOrWhiteSpace(stderr) ? $"exit={exitCode}" : $"exit={exitCode}; stderr={stderr}";
         WindowsShellDiagnostics.RecordRuntimeState("runtime-gate-exit", detail);
@@ -219,12 +243,15 @@ internal sealed class RuntimeSupervisor : IAsyncDisposable
         _generation++;
         var gate = _gate;
         _gate = null;
-        if (_jobHelper is { HasExited: false })
+        _gatePid = null;
+        var jobObject = _jobObject;
+        _jobObject = null;
+        if (jobObject is not null)
         {
-            try { await SendRequestAsync("terminate", new Dictionary<string, object?> { ["exitCode"] = 143 }, cancellationToken).ConfigureAwait(false); }
+            try { jobObject.Terminate(143); }
             catch { }
+            finally { jobObject.Dispose(); }
         }
-        await CloseJobHelperAsync(cancellationToken).ConfigureAwait(false);
         if (gate is null) return;
         try
         {
@@ -234,108 +261,20 @@ internal sealed class RuntimeSupervisor : IAsyncDisposable
         finally { gate.Dispose(); }
     }
 
-    private async Task CloseJobHelperAsync(CancellationToken cancellationToken)
+    private static ProcessStartInfo NodeGateStartInfo(string nodePath, string scriptPath)
     {
-        var helper = _jobHelper;
-        _jobHelper = null;
-        if (helper is null) return;
-        try
+        var startInfo = new ProcessStartInfo
         {
-            if (!helper.HasExited) await SendRequestAsync(helper, "close", new Dictionary<string, object?>(), cancellationToken).ConfigureAwait(false);
-        }
-        catch { }
-        try
-        {
-            if (!helper.HasExited) await helper.WaitForExitAsync(cancellationToken).WaitAsync(ExitTimeout, cancellationToken).ConfigureAwait(false);
-        }
-        catch
-        {
-            try { if (!helper.HasExited) helper.Kill(); } catch { }
-        }
-        helper.Dispose();
+            FileName = nodePath,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            RedirectStandardInput = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+        };
+        startInfo.ArgumentList.Add(scriptPath);
+        return startInfo;
     }
-
-    private Task<JsonElement> SendRequestAsync(string operation, Dictionary<string, object?> payload, CancellationToken cancellationToken) =>
-        SendRequestAsync(_jobHelper ?? throw new InvalidOperationException("Windows Job Object helper is unavailable."), operation, payload, cancellationToken);
-
-    private async Task<JsonElement> SendRequestAsync(Process helper, string operation, Dictionary<string, object?> payload, CancellationToken cancellationToken)
-    {
-        await _protocol.WaitAsync(cancellationToken).ConfigureAwait(false);
-        try
-        {
-            var id = Guid.NewGuid().ToString("D");
-            payload["id"] = id;
-            payload["op"] = operation;
-            await helper.StandardInput.WriteLineAsync(JsonSerializer.Serialize(payload)).ConfigureAwait(false);
-            await helper.StandardInput.FlushAsync(cancellationToken).ConfigureAwait(false);
-            var response = await ReadReplyAsync(helper, operation, cancellationToken).ConfigureAwait(false);
-            if (response.GetProperty("id").GetString() != id || !response.GetProperty("ok").GetBoolean())
-                throw new InvalidOperationException("Windows Job Object helper rejected the lifecycle request.");
-            return response;
-        }
-        finally { _protocol.Release(); }
-    }
-
-    private static async Task<JsonElement> ReadReplyAsync(Process helper, string phase, CancellationToken cancellationToken)
-    {
-        string? line;
-        try
-        {
-            line = await helper.StandardOutput.ReadLineAsync(cancellationToken).AsTask().WaitAsync(ProtocolTimeout, cancellationToken).ConfigureAwait(false);
-        }
-        catch (TimeoutException error)
-        {
-            throw new TimeoutException($"Windows Job Object helper {phase} reply timed out after {(int)ProtocolTimeout.TotalSeconds} seconds.", error);
-        }
-        if (string.IsNullOrWhiteSpace(line))
-        {
-            var detail = await ExitedHelperDetailAsync(helper, cancellationToken).ConfigureAwait(false);
-            throw new InvalidOperationException($"Windows Job Object helper closed its {phase} protocol stream{detail}.");
-        }
-        using var document = JsonDocument.Parse(line);
-        return document.RootElement.Clone();
-    }
-
-    private static async Task<string> ExitedHelperDetailAsync(Process helper, CancellationToken cancellationToken)
-    {
-        if (!helper.HasExited) return string.Empty;
-        var detail = $" (exit {helper.ExitCode})";
-        try
-        {
-            var stderr = await helper.StandardError.ReadToEndAsync(cancellationToken).WaitAsync(TimeSpan.FromSeconds(1), cancellationToken).ConfigureAwait(false);
-            if (string.IsNullOrWhiteSpace(stderr)) return detail;
-            var builder = new StringBuilder(Math.Min(stderr.Length, 1_200));
-            foreach (var character in stderr)
-            {
-                if (builder.Length >= 1_200) break;
-                builder.Append(char.IsControl(character) ? ' ' : character);
-            }
-            var clean = builder.ToString().Trim();
-            return string.IsNullOrWhiteSpace(clean) ? detail : $"{detail}: {clean}";
-        }
-        catch
-        {
-            return detail;
-        }
-    }
-
-    private static Process StartPowerShell(string scriptPath, bool redirectOutput)
-    {
-        var process = new Process { StartInfo = PowerShellStartInfo(scriptPath, redirectOutput) };
-        if (!process.Start()) throw new InvalidOperationException("Windows lifecycle helper did not start.");
-        return process;
-    }
-
-    private static ProcessStartInfo PowerShellStartInfo(string scriptPath, bool redirectOutput = true) => new()
-    {
-        FileName = "powershell.exe",
-        UseShellExecute = false,
-        CreateNoWindow = true,
-        RedirectStandardInput = true,
-        RedirectStandardOutput = redirectOutput,
-        RedirectStandardError = true,
-        Arguments = $"-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File \"{scriptPath}\"",
-    };
 
     private static void ValidateReleaseFiles(params string[] files)
     {
@@ -351,6 +290,5 @@ internal sealed class RuntimeSupervisor : IAsyncDisposable
         await StopAsync().ConfigureAwait(false);
         _disposed = true;
         _lifecycle.Dispose();
-        _protocol.Dispose();
     }
 }

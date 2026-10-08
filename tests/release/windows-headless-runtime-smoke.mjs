@@ -12,6 +12,7 @@ import {
   TUNNEL_CLIENT_DISTRIBUTIONS,
 } from "../../src/equinox-local-runtime-versions.js";
 import { createWindowsJobObjectLease } from "../../src/equinox-local-windows-job-object.js";
+import { compileWindowsJobObjectHelper } from "../../scripts/release/package-managed-release-windows.mjs";
 import { createAgentControlController } from "../../src/equinox-local-agent-control.js";
 import { createProcessManager } from "../../src/process-manager.js";
 import { createTerminalManager } from "../../src/terminal-manager.js";
@@ -27,6 +28,12 @@ import {
 } from "../../src/equinox-agent-browser.js";
 
 const execFile = promisify(execFileCallback);
+const jobHelperRoot = await fs.mkdtemp(path.join(os.tmpdir(), "equinox-job-helper-"));
+const jobHelperPath = await compileWindowsJobObjectHelper({
+  outputDir: jobHelperRoot,
+  target: `win32-${process.arch}`,
+});
+process.env.EQUINOX_WINDOWS_JOB_OBJECT_HELPER_PATH = jobHelperPath;
 
 const WINDOWS_ARCH = process.arch === "x64" || process.arch === "arm64" ? process.arch : null;
 const WINDOWS_TARGET = WINDOWS_ARCH ? `win32-${WINDOWS_ARCH}` : null;
@@ -231,7 +238,7 @@ async function verifyWindowsJobObjectHelperLoss(root) {
     process.kill(lease.helperPid);
     await waitFor(() => !pidExists(lease.helperPid), "Windows Job Object helper did not exit after forced loss");
     await waitFor(() => !pidExists(parent.pid) && !pidExists(childPid), "KILL_ON_JOB_CLOSE did not drain parent + descendant after helper loss");
-    await assert.rejects(() => lease.status(), /not available|exited unexpectedly/u);
+    await assert.rejects(() => lease.status(), /not available|exited unexpectedly|input failed/u);
     return Object.freeze({ helperLossDrainedOwnedTree: true });
   } finally {
     await lease.close().catch(() => {});
@@ -721,5 +728,6 @@ try {
   process.stdout.write("[windows-smoke] PASS runtime-shutdown\n");
   process.stdout.write("[windows-smoke] START temp-root-remove\n");
   await fs.rm(root, { recursive: true, force: true }).catch(() => {});
+  await fs.rm(jobHelperRoot, { recursive: true, force: true }).catch(() => {});
   process.stdout.write("[windows-smoke] PASS temp-root-remove\n");
 }

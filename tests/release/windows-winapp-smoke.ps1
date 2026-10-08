@@ -6,7 +6,8 @@ param(
   [Parameter(Mandatory = $true)]
   [string]$ClipboardHelperPath,
   [Parameter(Mandatory = $true)]
-  [string]$DesktopHelperPath
+  [string]$DesktopHelperPath,
+  [string]$HelperPowerShellPath = 'powershell.exe'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -46,12 +47,15 @@ $desktopHelper = [System.IO.Path]::GetFullPath($DesktopHelperPath)
 if (-not (Test-Path -LiteralPath $desktopHelper -PathType Leaf)) {
   throw "Packaged desktop lifecycle helper not found: $desktopHelper"
 }
+$helperPowerShellCommand = Get-Command $HelperPowerShellPath -ErrorAction Stop
+$helperPowerShell = [System.IO.Path]::GetFullPath($helperPowerShellCommand.Source)
+$smokePowerShellProcessName = [System.IO.Path]::GetFileNameWithoutExtension([Diagnostics.Process]::GetCurrentProcess().MainModule.FileName)
 function Invoke-DesktopHelperCaptured {
   param([Parameter(Mandatory = $true)][string[]]$Arguments)
   $previousErrorActionPreference = $ErrorActionPreference
   try {
     $ErrorActionPreference = 'Continue'
-    $output = (& powershell.exe -NoLogo -NoProfile -NonInteractive -Sta -ExecutionPolicy Bypass -File $desktopHelper @Arguments 2>&1 | Out-String).Trim()
+    $output = (& $helperPowerShell -NoLogo -NoProfile -NonInteractive -Sta -ExecutionPolicy Bypass -File $desktopHelper @Arguments 2>&1 | Out-String).Trim()
     $exitCode = $LASTEXITCODE
   } finally {
     $ErrorActionPreference = $previousErrorActionPreference
@@ -157,7 +161,7 @@ public static class EquinoxWinappSmokeForeground {
       $evidence.TargetPid -eq $fixture.Id -and
       $evidence.TargetProcess -eq 'EquinoxLocal.WinappSmokeFixture' -and
       $evidence.ForegroundProcess -eq 'WWAHost' -and
-      $evidence.CurrentProcess -eq 'powershell' -and
+      $evidence.CurrentProcess -eq $smokePowerShellProcessName -and
       $evidence.TargetSession -ge 0 -and
       $evidence.TargetSession -eq $evidence.ForegroundSession -and
       $evidence.TargetSession -eq $evidence.CurrentSession -and
@@ -321,9 +325,9 @@ public static class EquinoxWinappSmokeForeground {
 
   $clipboardInput = Join-Path $root 'clipboard.txt'
   [System.IO.File]::WriteAllText($clipboardInput, 'Equinox Clipboard Paste', (New-Object System.Text.UTF8Encoding($false)))
-  & powershell.exe -NoLogo -NoProfile -NonInteractive -Sta -ExecutionPolicy Bypass -File $clipboardHelper -Mode Set -InputPath $clipboardInput
+  & $helperPowerShell -NoLogo -NoProfile -NonInteractive -Sta -ExecutionPolicy Bypass -File $clipboardHelper -Mode Set -InputPath $clipboardInput
   if ($LASTEXITCODE -ne 0) { throw 'Windows clipboard helper set failed.' }
-  $clipboardRead = (& powershell.exe -NoLogo -NoProfile -NonInteractive -Sta -ExecutionPolicy Bypass -File $clipboardHelper -Mode Get 2>&1 | Out-String).TrimEnd()
+  $clipboardRead = (& $helperPowerShell -NoLogo -NoProfile -NonInteractive -Sta -ExecutionPolicy Bypass -File $clipboardHelper -Mode Get 2>&1 | Out-String).TrimEnd()
   if ($LASTEXITCODE -ne 0 -or $clipboardRead -ne 'Equinox Clipboard Paste') { throw "Windows clipboard helper roundtrip failed: $clipboardRead" }
   $pasteInputSkipped = $false
   $focusProbe = Invoke-WinappCaptured -Arguments @('ui', 'focus', 'SmokePasteText', '-a', [string]$fixture.Id, '--json')
@@ -360,7 +364,7 @@ public static class EquinoxWinappSmokeForeground {
     $pasteValue = $pasteRaw | ConvertFrom-Json
     if ($pasteValue.text -ne 'Equinox Clipboard Paste') { throw "winapp clipboard paste mismatch: $pasteRaw" }
   }
-  & powershell.exe -NoLogo -NoProfile -NonInteractive -Sta -ExecutionPolicy Bypass -File $clipboardHelper -Mode Clear
+  & $helperPowerShell -NoLogo -NoProfile -NonInteractive -Sta -ExecutionPolicy Bypass -File $clipboardHelper -Mode Clear
   if ($LASTEXITCODE -ne 0) { throw 'Windows clipboard helper clear failed.' }
 
   & $winapp ui invoke SmokeButton -a $fixture.Id --json | Out-Null

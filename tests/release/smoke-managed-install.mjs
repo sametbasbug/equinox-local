@@ -3,10 +3,12 @@ import { execFile as execFileCallback, spawn } from "node:child_process";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 
 import { installManagedEquinoxRelease } from "../../src/equinox-local-first-install.js";
+import { enrollEquinoxLocalManagedSource } from "../../src/equinox-local-managed-source-enrollment.js";
+import { equinoxLocalToolchainContract } from "../../src/equinox-local-toolchain-contract.js";
 import { EQUINOX_LOCAL_VERSION } from "../../src/equinox-local-version.js";
 import { equinoxLocalUpdateTarget } from "../../src/equinox-local-updater.js";
 
@@ -39,7 +41,7 @@ function xmlEscape(value) {
     .replaceAll("'", "&apos;");
 }
 
-async function runRealLaunchAgentWrapperSmoke({ homeDir, installRoot, expectedVersion }) {
+async function runRealLaunchAgentWrapperSmoke({ homeDir, installRoot, expectedVersion, expectedInstallationKind, expectedSourceSha = null }) {
   if (process.platform !== "darwin" || typeof process.getuid !== "function") return;
   const uid = process.getuid();
   const label = `dev.equinox.local.release-smoke.${process.pid}`;
@@ -86,6 +88,9 @@ async function runRealLaunchAgentWrapperSmoke({ homeDir, installRoot, expectedVe
     }
     assert.equal(status.status.server.version, expectedVersion);
     assert.equal(status.status.health?.state, "HEALTHY");
+    assert.equal(status.status.installation?.kind, expectedInstallationKind);
+    assert.equal(status.status.installation?.sourceSha ?? null, expectedSourceSha);
+    return status;
   } finally {
     await execFile("/bin/launchctl", ["bootout", service], { timeout: 15_000, maxBuffer: 1024 * 1024 }).catch(() => {});
     await new Promise((resolve) => setTimeout(resolve, 500));
@@ -111,7 +116,7 @@ async function main() {
   const artifact = process.argv[2]
     ? path.resolve(process.argv[2])
     : path.join(rootDir, "backups", "local-packages", `equinox-local-${EQUINOX_LOCAL_VERSION}-${target}.tar.gz`);
-  const testRoot = await fs.mkdtemp(path.join(os.tmpdir(), "equinox-managed-smoke-"));
+  const testRoot = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "equinox-managed-smoke-")));
   const homeDir = path.join(testRoot, "Home With Space");
   const installRoot = path.join(homeDir, "Library", "Application Support", "Equinox Local");
   const releasesRoot = path.join(installRoot, "releases");
@@ -128,32 +133,64 @@ async function main() {
     const stagedRoot = path.join(installRoot, "staging", "smoke");
     await fs.mkdir(stagedRoot, { recursive: true, mode: 0o700 });
     await execFile(TAR, ["-xzf", artifact, "-C", stagedRoot], { timeout: 120_000, maxBuffer: 8 * 1024 * 1024 });
+    const stagedReleaseDir = path.join(stagedRoot, "release");
+    const releaseMetadata = JSON.parse(await fs.readFile(path.join(stagedReleaseDir, "release.json"), "utf8"));
+    const sourceSha = releaseMetadata.sourceSha;
+    assert.match(sourceSha, /^[a-f0-9]{40}$/u);
+
+    const canonicalRemote = path.join(testRoot, "canonical-main.git");
+    await execFile("/usr/bin/git", ["init", "--bare", canonicalRemote], { timeout: 15_000, maxBuffer: 1024 * 1024 });
+    await execFile("/usr/bin/git", ["-C", rootDir, "push", "--force", canonicalRemote, `${sourceSha}:refs/heads/main`], { timeout: 30_000, maxBuffer: 4 * 1024 * 1024 });
+    const mainRemote = pathToFileURL(canonicalRemote).href;
+    const configPath = path.join(installRoot, "config.json");
+    let stableHealth = null;
+    let sourceHealth = null;
+
     const installResult = await installManagedEquinoxRelease({
-      stagedReleaseDir: path.join(stagedRoot, "release"),
+      stagedReleaseDir,
       homeDir,
       uid: typeof process.getuid === "function" ? process.getuid() : 501,
       platform: "darwin",
       target,
       execFileImpl: async () => ({ stdout: "", stderr: "" }),
-      waitForVersionImpl: async () => true,
+      waitForVersionImpl: async (version) => {
+        await setControlCenterPort(configPath);
+        stableHealth = await runRealLaunchAgentWrapperSmoke({
+          homeDir, installRoot, expectedVersion: version, expectedInstallationKind: "managed", expectedSourceSha: null,
+        });
+        return true;
+      },
+      enrollManagedSourceImpl: async (options) => enrollEquinoxLocalManagedSource({
+        ...options,
+        env: { ...options.env, PATH: "/ambient-tools-must-not-be-used" },
+        execFileImpl: execFile,
+        mainRemote,
+      }),
+      waitForManagedSourceImpl: async (version, sha) => {
+        sourceHealth = await runRealLaunchAgentWrapperSmoke({
+          homeDir, installRoot, expectedVersion: version, expectedInstallationKind: "managed-source", expectedSourceSha: sha,
+        });
+        return true;
+      },
     });
     assert.equal(installResult.status, "installed");
     assert.equal(installResult.version, EQUINOX_LOCAL_VERSION);
+    assert.equal(installResult.managedSourceSha, sourceSha);
     assert.equal(installResult.configCreated, true);
+    assert.equal(stableHealth?.status?.installation?.kind, "managed");
+    assert.equal(sourceHealth?.status?.installation?.kind, "managed-source");
+    assert.equal(sourceHealth?.status?.installation?.sourceSha, sourceSha);
     assert.equal(await fs.readlink(current), `releases/${EQUINOX_LOCAL_VERSION}`);
     assert.equal(await fs.realpath(current), await fs.realpath(releaseDir));
 
     const launchAgent = path.join(homeDir, "Library", "LaunchAgents", "dev.equinox.local.plist");
     await execFile(PLUTIL, ["-lint", launchAgent], { timeout: 5_000, maxBuffer: 1024 * 1024 });
-    const configPath = path.join(installRoot, "config.json");
-    await setControlCenterPort(configPath);
 
-    await runRealLaunchAgentWrapperSmoke({
-      homeDir,
-      installRoot,
-      expectedVersion: EQUINOX_LOCAL_VERSION,
-    });
-
+    const toolchain = equinoxLocalToolchainContract({ runtimeRoot: path.join(installRoot, "runtime"), target });
+    assert.equal(toolchain.ambientPathDiscovery, false);
+    assert.match(await commandText(toolchain.gitPath, ["--version"]), /^git version 2\.53\.0\b/u);
+    assert.equal(await commandText(toolchain.nodePath, ["--version"]), "v26.10.0");
+    assert.match(await commandText(toolchain.nodePath, [toolchain.npmPath, "--version"]), /^\d+\.\d+\.\d+$/u);
     assert.equal(await commandText(node, ["--version"]), "v26.10.0");
     assert.match(await commandText(tunnel, ["--version"]), /^0\.0\.15\+/u);
     assert.match(await commandText(cloudflared, ["--version"]), /cloudflared version/u);
@@ -197,6 +234,8 @@ async function main() {
       throw new Error(`Managed supervisor did not expose Control Center: ${error instanceof Error ? error.message : error}\nSupervisor stderr:\n${stderr || "(empty)"}`);
     }
     assert.equal(status.status.server.version, EQUINOX_LOCAL_VERSION);
+    assert.equal(status.status.installation?.kind, "managed-source");
+    assert.equal(status.status.installation?.sourceSha, sourceSha);
     const onboarding = await waitForJson(`http://127.0.0.1:${CONTROL_CENTER_PORT}/api/v1/onboarding`);
     assert.equal(onboarding.onboarding.available, true);
     assert.equal(onboarding.onboarding.managed, true);
@@ -210,7 +249,7 @@ async function main() {
     assert.equal(Object.hasOwn(onboarding.onboarding, "runtimeKey"), false);
     const doctor = await waitForJson(`http://127.0.0.1:${CONTROL_CENTER_PORT}/api/v1/doctor`);
     assert.equal(doctor.doctor.managed, true);
-    assert.equal(doctor.doctor.installationKind, "managed");
+    assert.equal(doctor.doctor.installationKind, "managed-source");
     assert.equal(Array.isArray(doctor.doctor.checks), true);
     assert.equal(doctor.doctor.checks.some((item) => item.id === "runtime" && item.status === "pass"), true);
     assert.equal(doctor.doctor.checks.some((item) => item.id === "chatgpt-connection" && item.status === "attention"), true);
@@ -233,6 +272,8 @@ async function main() {
       tunnelClientVersion: "0.0.15",
       controlCenterPort: CONTROL_CENTER_PORT,
       controlCenterHealth: status.status.health?.state ?? null,
+      sourceSha,
+      installationKind: status.status.installation?.kind ?? null,
       artifact,
     }, null, 2)}\n`);
   } finally {

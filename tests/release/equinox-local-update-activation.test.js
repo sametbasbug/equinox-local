@@ -9,6 +9,7 @@ import {
   atomicSwitchCurrentRelease,
   kickstartEquinoxLocalLaunchAgent,
   readManagedCurrentRelease,
+  waitForEquinoxLocalManagedSource,
 } from "../../src/equinox-local-update-activation.js";
 import { writeEquinoxLocalCurrentVersionPointer } from "../../src/equinox-local-current-release.js";
 import { equinoxLocalUpdateTarget } from "../../src/equinox-local-updater.js";
@@ -76,6 +77,29 @@ async function makeInstall() {
 async function currentVersion(installation) {
   return (await readManagedCurrentRelease(installation)).version;
 }
+
+
+test("managed-source health requires healthy runtime plus exact installation SHA", async () => {
+  const sha = "a".repeat(40);
+  let attempts = 0;
+  const result = await waitForEquinoxLocalManagedSource("5.2.1", sha, {
+    attempts: 2,
+    sleepImpl: async () => {},
+    fetchImpl: async () => {
+      attempts += 1;
+      return new Response(JSON.stringify({
+        status: {
+          server: { version: "5.2.1" },
+          health: { state: "HEALTHY" },
+          installation: { kind: "managed-source", sourceSha: attempts === 1 ? "b".repeat(40) : sha },
+        },
+      }), { status: 200 });
+    },
+  });
+  assert.equal(result, true);
+  assert.equal(attempts, 2);
+  await assert.rejects(waitForEquinoxLocalManagedSource("5.2.1", "bad", { attempts: 1 }), /exact source SHA/u);
+});
 
 test("current release switch is atomic and remains inside the managed releases root", async (t) => {
   const fixture = await makeInstall();

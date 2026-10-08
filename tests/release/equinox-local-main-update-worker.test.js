@@ -37,20 +37,22 @@ test("Main worker runtime restart uses the Windows shell handoff without POSIX e
   assert.deepEqual(result, { requested: true, platform: "win32" });
 });
 
-test("Main worker runtime restart preserves the existing Darwin restart contract", async () => {
+test("Main worker runtime restart uses the managed Darwin LaunchAgent instead of developer source scripts", async () => {
   const calls = [];
   const result = await restartEquinoxLocalMainSourceRuntime({
     platform: "darwin",
     sourceRoot: "/target",
     previousSourceRoot: SOURCE,
     env: { HOME: "/Users/example" },
-    fsImpl: { lstat: async (value) => { calls.push(["stat", value]); return { isFile: () => true, isSymbolicLink: () => false }; } },
-    execFileImpl: async (command, args, options) => calls.push(["exec", command, args, options]),
+    uid: 501,
+    fsImpl: { lstat: async () => assert.fail("managed restart must not inspect source restart scripts") },
+    execFileImpl: async () => assert.fail("restart primitive owns launchctl execution"),
+    restartDarwinImpl: async (installation, options) => calls.push([installation, options.uid]),
   });
-  assert.equal(calls[0][1], "/target/scripts/restart-runtime.sh");
-  assert.equal(calls[1][1], "/bin/bash");
-  assert.deepEqual(calls[1][2], ["/target/scripts/restart-runtime.sh", "--worker"]);
-  assert.equal(calls[1][3].env.EQUINOX_LOCAL_PREVIOUS_SOURCE_ROOT, SOURCE);
+  assert.deepEqual(calls, [[{
+    launchAgentLabel: "dev.equinox.local",
+    launchAgentPath: "/Users/example/Library/LaunchAgents/dev.equinox.local.plist",
+  }, 501]]);
   assert.deepEqual(result, { requested: true, platform: "darwin" });
 });
 
