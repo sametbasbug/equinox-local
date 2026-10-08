@@ -63,6 +63,7 @@ test("managed-source apply controller binds apply to the exact admitted discover
       gitPath: "/owned/runtime/toolchain/git/bin/git",
       nodePath: "/owned/runtime/toolchain/node/bin/node",
       npmPath: "/owned/runtime/toolchain/node/npm-cli.js",
+      shellPath: null,
     },
     schedulerOptions: { nodePath: "/owned/runtime/toolchain/node/bin/node" },
   }]);

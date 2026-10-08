@@ -92,6 +92,7 @@ export function createEquinoxLocalMainApplyController({
           gitPath: installation.gitPath ?? "git",
           nodePath: installation.nodePath ?? process.execPath,
           npmPath: installation.npmPath ?? null,
+          shellPath: installation.shellPath ?? null,
         },
         schedulerOptions: {
           ...(installation.mainSchedulerOptions ?? {}),
