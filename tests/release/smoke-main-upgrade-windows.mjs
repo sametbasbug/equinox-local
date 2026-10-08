@@ -28,12 +28,12 @@ async function poll(fn, label, timeout = 210_000) {
   throw new Error(`${label} timeout: ${last}`);
 }
 
-async function api(route, { csrfToken = null } = {}) {
+async function api(route, { csrfToken = null, timeoutMs = 15_000 } = {}) {
   const write = csrfToken !== null;
   const response = await fetch(`${BASE}${route}`, {
     method: write ? "POST" : "GET", cache: "no-store",
     headers: write ? { origin: BASE, "x-equinox-csrf": csrfToken, "content-type": "application/json" } : {},
-    body: write ? "{}" : undefined, signal: AbortSignal.timeout(15_000),
+    body: write ? "{}" : undefined, signal: AbortSignal.timeout(timeoutMs),
   });
   const body = await response.json();
   if (!response.ok || body.ok !== true) throw new Error(`Installed Control Center ${route} returned HTTP ${response.status}`);
@@ -73,7 +73,9 @@ async function main() {
   assert.equal(checked.update?.main?.applyAvailable, true);
   let applied;
   try {
-    applied = await api("/api/v1/update/apply", { csrfToken });
+    // Native Windows staging runs pinned npm and prebuilt validation before
+    // the detached worker is scheduled; do not abort legitimate work at 15s.
+    applied = await api("/api/v1/update/apply", { csrfToken, timeoutMs: 180_000 });
   } catch (error) {
     const diagnostic = await api("/api/v1/update").catch(() => null);
     const message = String(diagnostic?.update?.main?.applyError ?? "none");
