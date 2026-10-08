@@ -38,7 +38,7 @@ test("server routes managed-source Main check/apply without changing Stable rout
   const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
   const server = await fs.readFile(path.join(root, "src", "server.js"), "utf8");
   assert.match(server, /createEquinoxLocalMainApplyController/u);
-  assert.match(server, /kind === "source" \|\| equinoxLocalInstallation\.kind === "managed-source"/u);
+  assert.match(server, /\["source", "managed-source"\]\.includes\(equinoxLocalInstallation\.kind\)/u);
   assert.match(server, /equinoxLocalMainApplyController\.resetError\(\)/u);
   assert.match(server, /kind === "managed-source"[\s\S]*equinoxLocalMainApplyController\.apply\(\)[\s\S]*equinoxLocalUpdateCoordinator\.apply\(\)/u);
   assert.match(server, /\.\.\.equinoxLocalMainApplyController\.snapshot\(\)/u);
