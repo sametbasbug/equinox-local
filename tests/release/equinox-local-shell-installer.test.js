@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -7,6 +8,27 @@ import { fileURLToPath } from "node:url";
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const INSTALLER = path.join(ROOT, "scripts", "install-equinox-local.sh");
 const WINDOWS_INSTALLER = path.join(ROOT, "scripts", "install-equinox-local.ps1");
+
+test("macOS installer forwards zero or one Main argument safely under system Bash nounset", { skip: process.platform !== "darwin" }, async () => {
+  const source = await fs.readFile(INSTALLER, "utf8");
+  const parser = source.slice(source.indexOf("MAIN_ARGS=()"), source.indexOf('[ "$(/usr/bin/uname -s)"'));
+  const forwarded = source.match(/--staged-release "\$SOURCE_RELEASE" (.+)\)" \|\| fail/u)[1];
+  const harness = `set -eu\nfail() { exit 2; }\n${parser}\nprintf '%s\\n' stable ${forwarded}`;
+  assert.equal(execFileSync("/bin/bash", ["-c", harness, "installer"], { encoding: "utf8" }), "stable\n");
+  assert.equal(execFileSync("/bin/bash", ["-c", harness, "installer", "--enroll-existing-main"], { encoding: "utf8" }), "stable\n--enroll-existing-main\n");
+});
+
+test("public installers expose explicit Main choice while defaulting to Stable", async () => {
+  const mac = await fs.readFile(INSTALLER, "utf8");
+  const windows = await fs.readFile(WINDOWS_INSTALLER, "utf8");
+  assert.match(mac, /MAIN_ARGS=\(\)/u);
+  assert.match(mac, /--enroll-existing-main\) MAIN_ARGS=\(--enroll-existing-main\)/u);
+  assert.ok(mac.includes('"$SOURCE_RELEASE" ${MAIN_ARGS[@]+"${MAIN_ARGS[@]}"}'));
+  assert.match(mac, /Stable \(default\)/u);
+  assert.match(windows, /param\(\[switch\]\$EnrollExistingMain, \[switch\]\$Help\)/u);
+  assert.match(windows, /if \(\$EnrollExistingMain\) \{ \$psi\.Arguments \+= ' --enroll-existing-main' \}/u);
+  assert.match(windows, /Stable \(default\)/u);
+});
 
 test("public shell installer stays user-level, pinned to Equinox HTTPS and bounded", async () => {
   const source = await fs.readFile(INSTALLER, "utf8");

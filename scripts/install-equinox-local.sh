@@ -30,6 +30,17 @@ require_private_directory() {
   /bin/chmod 700 "$directory" 2>/dev/null || true
 }
 
+MAIN_ARGS=()
+for argument in "$@"; do
+  case "$argument" in
+    --enroll-existing-main) MAIN_ARGS=(--enroll-existing-main) ;;
+    --help|-h)
+      printf '%s\n' 'Usage: install-equinox-local.sh [--enroll-existing-main]' 'Stable (default): latest numbered release.' 'Main (explicit opt-in): enroll after Stable health; fresh or same-version matching installed provenance.'
+      exit 0 ;;
+    *) fail "unknown argument: $argument (use --help)" ;;
+  esac
+done
+
 [ "$(/usr/bin/uname -s)" = "Darwin" ] || fail "macOS is required"
 CURRENT_UID="$(/usr/bin/id -u)"
 [ "$CURRENT_UID" -gt 0 ] || fail "do not run this installer with sudo or as root"
@@ -188,7 +199,7 @@ RESULT="$(/usr/bin/env -i \
   LOGNAME="$CURRENT_USER" \
   TMPDIR="/tmp" \
   PATH="/usr/bin:/bin:/usr/sbin:/sbin" \
-  "$NODE" "$FIRST_INSTALL" --staged-release "$SOURCE_RELEASE")" || fail "managed first-install activation failed"
+  "$NODE" "$FIRST_INSTALL" --staged-release "$SOURCE_RELEASE" ${MAIN_ARGS[@]+"${MAIN_ARGS[@]}"})" || fail "managed first-install activation failed"
 
 printf '%s\n' "$RESULT"
 info "installation is ready; opening Equinox Local"
