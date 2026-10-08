@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import fs from "node:fs/promises";
 import test from "node:test";
 
 import { prepareEquinoxLocalMainNativeLifecycle } from "../../src/equinox-local-main-native-activation.js";
@@ -9,6 +10,13 @@ const DA = "a".repeat(64);
 const DB = "b".repeat(64);
 const TX = `main-${"c".repeat(32)}`;
 const ROOT = "/private/tmp/equinox-main-state";
+
+test("hosted native smoke reports bounded discovery failures before exact-target assertions", async () => {
+  const source = await fs.readFile(new URL("./smoke-main-upgrade-macos.mjs", import.meta.url), "utf8");
+  assert.match(source, /checkError=\$\{boundedDiagnostic\(main\?\.lastError\)\}/u);
+  assert.match(source, /reason=\$\{boundedDiagnostic\(main\?\.reason\)\}/u);
+  assert.match(source, /const discovery = await jsonApi\("\/api\/v1\/update"\);\s*if \(discovery\.update\?\.main\?\.targetSha !== targetSha \|\| discovery\.update\?\.main\?\.applyAvailable !== true\) \{\s*await printApplyFailureEvidence\(transactionRoot\);\s*\}\s*assert\.equal\(discovery\.update\?\.main\?\.targetSha, targetSha/u);
+});
 
 function transition(target) {
   return { mode: "artifact_required", target, currentSha: A, targetSha: B, currentRuntimeContractSha256: DA, targetRuntimeContractSha256: DB };

@@ -82,7 +82,7 @@ jobs:
           git merge-base --is-ancestor "$tag" "$current"
           while IFS= read -r changed; do
             case "$changed" in
-              '.github/workflows/main-installed-acceptance.yml'|'tests/release/smoke-main-upgrade-macos.mjs'|\
+              '.github/workflows/main-installed-acceptance.yml'|'tests/release/smoke-main-upgrade-macos.mjs'|'tests/release/equinox-local-main-native-activation.test.js'|\
               '.github/workflows/main-installed-windows-acceptance.yml'|'tests/release/smoke-main-upgrade-windows.mjs'|\
               'tests/release/smoke-main-upgrade-windows-fault.ps1'|'tests/release/windows-installer-real-package-smoke.ps1') ;;
               *) echo "Unadmitted production change in harness checkout: $changed" >&2; exit 1 ;;
