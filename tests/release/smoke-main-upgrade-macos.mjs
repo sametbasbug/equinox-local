@@ -170,7 +170,7 @@ globalThis.fetch = (resource, init = {}) => {
     return original(resource, init);
   }
   const headers = new Headers(init?.headers ?? resource?.headers ?? {});
-  headers.set("authorization", \`Bearer \${token}\`);
+  headers.set("authorization", "Bearer " + token);
   return original(resource, { ...init, headers });
 };`;
   await fs.writeFile(authHook, authCode, { flag: "wx", mode: 0o600 });
