@@ -54,8 +54,8 @@ async function createStagedRelease({ installRoot, version }) {
     schemaVersion: 1,
     version,
     target: WINDOWS_TARGET,
-    nodeVersion: "26.10.0",
-    tunnelClientVersion: "0.0.15",
+    nodeVersion: "26.11.1",
+    tunnelClientVersion: "0.0.16",
     serverEntry: "server.js",
   })}\n`);
   const contract = equinoxLocalReleaseRuntimeContract({ target: WINDOWS_TARGET, version });

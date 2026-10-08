@@ -131,7 +131,7 @@ test("real public installer enters managed-source on native Windows x64 and ARM6
   assert.match(smoke, /EQUINOX_WINDOWS_INSTALL_SHA256/u);
   assert.match(smoke, /New-Item -ItemType HardLink/u);
   assert.match(smoke, /runtime\\toolchain\\git\\2\.53\.0-4/u);
-  assert.match(smoke, /runtime\\toolchain\\node\\26\.10\.0/u);
+  assert.match(smoke, /runtime\\toolchain\\node\\26\.11\.1/u);
 });
 
 test("managed-source runtime acceptance runs on real Windows x64 and ARM64 hosts", () => {
@@ -160,7 +160,7 @@ test("one maintained ARM64 package producer exposes exact artifact identity", ()
   assert.match(prepare, /\/Fo:/u);
   assert.match(prepare, /process\.platform/u);
   assert.match(prepare, /process\.arch/u);
-  assert.match(prepare, /v26\.10\.0/u);
+  assert.match(prepare, /v26\.11\.1/u);
   assert.match(inputs, /ci --prefer-offline --no-audit --no-fund/u);
   assert.match(prepare, /npm run local:release:package:windows/u);
   assert.match(prepare, /0xAA64/u);

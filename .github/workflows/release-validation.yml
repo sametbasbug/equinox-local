@@ -138,14 +138,14 @@ jobs:
       - name: Set up ARM64 Node.js
         uses: actions/setup-node@v7
         with:
-          node-version: 26.10.0
+          node-version: 26.11.1
           architecture: arm64
           cache: npm
 
       - name: Verify ARM64 Node.js host
         run: |
           test "$(node -p process.platform)-$(node -p process.arch)" = "darwin-arm64"
-          test "$(node --version)" = "v26.10.0"
+          test "$(node --version)" = "v26.11.1"
 
       - name: Install dependencies
         run: npm ci --prefer-offline --no-audit --no-fund
@@ -206,7 +206,7 @@ jobs:
       - name: Set up native Node.js
         uses: actions/setup-node@v7
         with:
-          node-version: 26.10.0
+          node-version: 26.11.1
           architecture: ${{ matrix.arch }}
           cache: npm
 
@@ -215,7 +215,7 @@ jobs:
         run: |
           if ((node -p "process.platform") -ne 'win32') { throw 'Windows release builder is not running on Windows' }
           if ((node -p "process.arch") -ne '${{ matrix.arch }}') { throw 'Windows release builder architecture drifted' }
-          if ((node --version) -ne 'v26.10.0') { throw 'Windows release builder Node version drifted' }
+          if ((node --version) -ne 'v26.11.1') { throw 'Windows release builder Node version drifted' }
 
       - name: Install dependencies
         run: npm ci --prefer-offline --no-audit --no-fund

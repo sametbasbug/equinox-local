@@ -1,8 +1,8 @@
-export const EQUINOX_LOCAL_NODE_VERSION = "26.10.0";
+export const EQUINOX_LOCAL_NODE_VERSION = "26.11.1";
 export const EQUINOX_LOCAL_DUGITE_VERSION = "2.53.0-4";
 export const EQUINOX_LOCAL_DUGITE_BUILD = "4098283";
-export const EQUINOX_LOCAL_TUNNEL_CLIENT_VERSION = "0.0.15";
-export const EQUINOX_LOCAL_PEEKABOO_VERSION = "4.5.0";
+export const EQUINOX_LOCAL_TUNNEL_CLIENT_VERSION = "0.0.16";
+export const EQUINOX_LOCAL_PEEKABOO_VERSION = "4.9.0";
 export const EQUINOX_LOCAL_WINAPP_VERSION = "0.7.1";
 export const EQUINOX_LOCAL_BUNDLED_WINAPP_SINCE_VERSION = "5.2.1";
 export const EQUINOX_LOCAL_NATIVE_JOB_OBJECT_HELPER_SINCE_VERSION = "5.2.1";
@@ -12,7 +12,7 @@ export const EQUINOX_LOCAL_PEEKABOO_TEAM_ID = "FWJYW4S8P8";
 
 export const PEEKABOO_DISTRIBUTION = Object.freeze({
   filename: "peekaboo-macos-universal.tar.gz",
-  sha256: "10b409423e5540235c59ef6c3c39d31e236ac528f8b7e116b9ed5a086a1c454e",
+  sha256: "64884da09af4f707267ee5ee7364f31c34bfeb8a6f1404478e1babc9ff412230",
   archiveRoot: "peekaboo-macos-universal",
   architectures: Object.freeze(["arm64", "x86_64"]),
 });
@@ -56,26 +56,26 @@ export const DUGITE_DISTRIBUTIONS = Object.freeze({
 export const NODE_DISTRIBUTIONS = Object.freeze({
   "darwin-arm64": Object.freeze({
     filename: `node-v${EQUINOX_LOCAL_NODE_VERSION}-darwin-arm64.tar.gz`,
-    bytes: 58_175_384,
-    sha256: "751fdf7439f115d87ee2a8f3f18c065b6151852068e3e666ac60ac2996f75ac9",
+    bytes: 58_283_153,
+    sha256: "d916511b55965e91be7a88e17f88d895b6793ceaba3e6c9b194aefe51c2c65ac",
     fileArchitecture: "arm64",
   }),
   "darwin-x64": Object.freeze({
     filename: `node-v${EQUINOX_LOCAL_NODE_VERSION}-darwin-x64.tar.gz`,
-    bytes: 59_578_150,
-    sha256: "ebbe9ab9b58ad6bb54390d6e2c862c1afa7d4475fb7e8ae8146acde211bf70df",
+    bytes: 59_713_543,
+    sha256: "9a8129bd9ab08039793dd1143a7aedee6b5d60ac06592ad938d8bddf36142f3a",
     fileArchitecture: "x86_64",
   }),
   "win32-arm64": Object.freeze({
     filename: `node-v${EQUINOX_LOCAL_NODE_VERSION}-win-arm64.zip`,
-    bytes: 37_149_989,
-    sha256: "b778640d7271566bcaa9679912cdf0684c13e824c114e41a8b696fb14af7a7aa",
+    bytes: 37_238_969,
+    sha256: "8dd03add3ed431eb436306f9abe946434bce928d2bf967b04117dc3755051208",
     fileArchitecture: "arm64",
   }),
   "win32-x64": Object.freeze({
     filename: `node-v${EQUINOX_LOCAL_NODE_VERSION}-win-x64.zip`,
-    bytes: 41_688_989,
-    sha256: "9fef7eca6743a6b910989cd8e78712376b394fcb9b6e1e9c44a0799a287f90c5",
+    bytes: 41_809_787,
+    sha256: "97f36a8a9684ff0d3e35758b4610fef5b628a5880e96f2ccc11240e5daf9934e",
     fileArchitecture: "x86_64",
   }),
 });
@@ -84,25 +84,25 @@ export const TUNNEL_CLIENT_DISTRIBUTIONS = Object.freeze({
   "darwin-arm64": Object.freeze({
     assetTag: "darwin-arm64",
     filename: `tunnel-client-v${EQUINOX_LOCAL_TUNNEL_CLIENT_VERSION}-darwin-arm64.zip`,
-    sha256: "b2cae3aa9df45b4c2fe9b1d700ebacce39f9feb6a6b46b86e6499f9a51bf72ff",
+    sha256: "a160820d45089b5253d8d671fe2a689bde0f73d78c135d1497a7b33f28a3ac62",
     fileArchitecture: "arm64",
   }),
   "darwin-x64": Object.freeze({
     assetTag: "darwin-amd64",
     filename: `tunnel-client-v${EQUINOX_LOCAL_TUNNEL_CLIENT_VERSION}-darwin-amd64.zip`,
-    sha256: "9dcae1e2fb121287e73271edb7b853dda52aa86b7bfca1df91bc275371261bdb",
+    sha256: "57b3dd73f2d042c7aeb5664681f7538078359f55538b9e048640f1df71a0c83f",
     fileArchitecture: "x86_64",
   }),
   "win32-arm64": Object.freeze({
     assetTag: "windows-arm64",
     filename: `tunnel-client-v${EQUINOX_LOCAL_TUNNEL_CLIENT_VERSION}-windows-arm64.zip`,
-    sha256: "571e0d59ed9e86d1b105dc34f3267865f654de6968b01efd7c847f0af657d11d",
+    sha256: "ecd748288b9bd9cc8f5a963855eb143f4788b831475156703d0bafdcd2dcb149",
     fileArchitecture: "arm64",
   }),
   "win32-x64": Object.freeze({
     assetTag: "windows-amd64",
     filename: `tunnel-client-v${EQUINOX_LOCAL_TUNNEL_CLIENT_VERSION}-windows-amd64.zip`,
-    sha256: "3b53133a1e24d43f63088d843860cb1701a4c3ed6390de2e19f69089e43bddc1",
+    sha256: "edef7241b0c647fcb30f1a80ff376b6b25c51927960f257a3f01e21b17c2aba6",
     fileArchitecture: "x86_64",
   }),
 });

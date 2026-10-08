@@ -22,7 +22,7 @@ runs:
     - name: Set up x64 Node.js for ARM64 cross-package
       uses: actions/setup-node@v7
       with:
-        node-version: 26.10.0
+        node-version: 26.11.1
         architecture: x64
         cache: npm
 
@@ -31,7 +31,7 @@ runs:
       run: |
         if ((node -p "process.platform") -ne 'win32') { throw 'ARM64 lane is not running on Windows' }
         if ((node -p "process.arch") -ne 'x64') { throw 'ARM64 package producer is not running x64 Node' }
-        if ((node --version) -ne 'v26.10.0') { throw 'ARM64 lane Node version drifted' }
+        if ((node --version) -ne 'v26.11.1') { throw 'ARM64 lane Node version drifted' }
 
     - name: Cache ARM64 shell publish
       id: shell-cache

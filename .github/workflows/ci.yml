@@ -59,7 +59,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v7
         with:
-          node-version: 26.10.0
+          node-version: 26.11.1
           cache: npm
 
       - name: Install dependencies
@@ -89,7 +89,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v7
         with:
-          node-version: 26.10.0
+          node-version: 26.11.1
           cache: npm
 
       - name: Install dependencies
@@ -116,7 +116,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v7
         with:
-          node-version: 26.10.0
+          node-version: 26.11.1
           architecture: x64
           cache: npm
 
@@ -145,7 +145,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v7
         with:
-          node-version: 26.10.0
+          node-version: 26.11.1
           architecture: x64
           cache: npm
 
@@ -203,7 +203,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v7
         with:
-          node-version: 26.10.0
+          node-version: 26.11.1
           architecture: x64
 
       - name: Set up .NET SDK
@@ -297,7 +297,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v7
         with:
-          node-version: 26.10.0
+          node-version: 26.11.1
           architecture: x64
           cache: npm
 
@@ -374,7 +374,7 @@ jobs:
           - name: Set up Node.js
             uses: actions/setup-node@v7
             with:
-              node-version: 26.10.0
+              node-version: 26.11.1
               architecture: x64
               cache: npm
 
@@ -434,7 +434,7 @@ jobs:
       - name: Set up Windows x64 Node.js
         uses: actions/setup-node@v7
         with:
-          node-version: 26.10.0
+          node-version: 26.11.1
           architecture: x64
           cache: npm
 
@@ -471,7 +471,7 @@ jobs:
       - name: Set up Windows x64 Node.js
         uses: actions/setup-node@v7
         with:
-          node-version: 26.10.0
+          node-version: 26.11.1
           architecture: x64
 
       - name: Verify Windows x64 bootstrap-contract host
@@ -501,7 +501,7 @@ jobs:
           - name: Set up native ARM64 Node.js
             uses: actions/setup-node@v7
             with:
-              node-version: 26.10.0
+              node-version: 26.11.1
               architecture: arm64
               cache: npm
 
@@ -516,7 +516,7 @@ jobs:
         run: |
           if ((node -p "process.platform") -ne 'win32') { throw 'ARM64 lane is not running on Windows' }
           if ((node -p "process.arch") -ne 'arm64') { throw 'ARM64 lane is not running native ARM64 Node' }
-          if ((node --version) -ne 'v26.10.0') { throw 'ARM64 lane Node version drifted' }
+          if ((node --version) -ne 'v26.11.1') { throw 'ARM64 lane Node version drifted' }
 
       - name: Install dependencies
         run: npm ci --prefer-offline --no-audit --no-fund
@@ -603,7 +603,7 @@ jobs:
           - name: Set up native ARM64 Node.js
             uses: actions/setup-node@v7
             with:
-              node-version: 26.10.0
+              node-version: 26.11.1
               architecture: arm64
 
           - name: Set up .NET SDK
@@ -784,7 +784,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v7
         with:
-          node-version: 26.10.0
+          node-version: 26.11.1
 
       - name: Plan exact-SHA native artifacts
         id: plan
@@ -847,7 +847,7 @@ jobs:
       - name: Set up native Node.js
         uses: actions/setup-node@v7
         with:
-          node-version: 26.10.0
+          node-version: 26.11.1
           architecture: ${{ matrix.arch }}
           cache: npm
 

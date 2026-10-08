@@ -42,10 +42,10 @@
   },
   "homepage": "https://local.sametbasbug.dev/",
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.31.0",
+    "@modelcontextprotocol/sdk": "^1.32.1",
     "fast-uri": "^4.2.1",
     "node-pty": "1.2.0-beta.15",
-    "pdfjs-dist": "6.3.289",
+    "pdfjs-dist": "^6.4.299",
     "pngjs": "7.0.0",
     "zod": "^4.6.5"
   },

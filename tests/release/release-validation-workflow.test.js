@@ -37,7 +37,7 @@ test("Release Validation covers all four platforms and does not duplicate full I
   assert.doesNotMatch(intel, /run: npm test/u);
   assert.match(arm, /runs-on: macos-latest/u);
   assert.match(arm, /test "\$\(uname -m\)" = "arm64"/u);
-  assert.match(arm, /node-version: 26\.10\.0/u);
+  assert.match(arm, /node-version: 26\.11\.1/u);
   assert.match(arm, /npm run local:release:package/u);
   assert.match(arm, /npm run local:smoke:managed/u);
   assert.match(arm, /darwin-arm64-validation-unsigned/u);

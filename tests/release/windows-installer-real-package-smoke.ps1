@@ -166,11 +166,11 @@ try {
   $ManagedSourceRoot = Join-Path $InstallRoot ("state\main-update\sources\$FixtureSourceSha")
   Assert-True ([IO.File]::Exists((Join-Path $ManagedSourceRoot 'src\server.js'))) 'Windows managed-source checkout is missing the exact source server.'
   $OwnedGit = Join-Path $InstallRoot ("runtime\toolchain\git\2.53.0-4\$FixtureTarget\cmd\git.exe")
-  $OwnedNode = Join-Path $InstallRoot ("runtime\toolchain\node\26.10.0\$FixtureTarget\node.exe")
-  $OwnedNpm = Join-Path $InstallRoot ("runtime\toolchain\node\26.10.0\$FixtureTarget\node_modules\npm\bin\npm-cli.js")
+  $OwnedNode = Join-Path $InstallRoot ("runtime\toolchain\node\26.11.1\$FixtureTarget\node.exe")
+  $OwnedNpm = Join-Path $InstallRoot ("runtime\toolchain\node\26.11.1\$FixtureTarget\node_modules\npm\bin\npm-cli.js")
   foreach ($owned in @($OwnedGit,$OwnedNode,$OwnedNpm)) { Assert-True ([IO.File]::Exists($owned)) ("Product-owned toolchain file is missing: $owned") }
   Assert-True ((& $OwnedGit --version) -match '^git version 2\.53\.0\b') 'Product-owned Git version mismatch.'
-  Assert-True ((& $OwnedNode --version) -ceq 'v26.10.0') 'Product-owned Node version mismatch.'
+  Assert-True ((& $OwnedNode --version) -ceq 'v26.11.1') 'Product-owned Node version mismatch.'
   Assert-True ((& $OwnedNode $OwnedNpm --version) -match '^\d+\.\d+\.\d+$') 'Product-owned npm CLI did not execute.'
   $ownedShell = @(Get-CimInstance Win32_Process -Filter "Name='EquinoxLocal.exe'" -ErrorAction SilentlyContinue | Where-Object { -not [string]::IsNullOrWhiteSpace($_.ExecutablePath) -and (Same-Path $_.ExecutablePath $StableExe) })
   Assert-True ($ownedShell.Count -eq 1) 'Windows installer did not leave exactly one owned stable shell running.'

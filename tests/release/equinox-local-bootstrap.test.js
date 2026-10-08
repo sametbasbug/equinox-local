@@ -256,8 +256,8 @@ test("Windows x64 managed user bootstrap uses state config and Windows Native Me
     schemaVersion: 1,
     version: "5.2.1",
     target: "win32-x64",
-    nodeVersion: "26.10.0",
-    tunnelClientVersion: "0.0.15",
+    nodeVersion: "26.11.1",
+    tunnelClientVersion: "0.0.16",
     serverEntry: "server.js",
   })}\n`);
   await fs.mkdir(paths.installRoot, { recursive: true });

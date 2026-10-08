@@ -19,8 +19,8 @@ async function makeArm64Release(releaseDir) {
     schemaVersion: 1,
     version: VERSION,
     target: TARGET,
-    nodeVersion: "26.10.0",
-    tunnelClientVersion: "0.0.15",
+    nodeVersion: "26.11.1",
+    tunnelClientVersion: "0.0.16",
     serverEntry: "server.js",
   })}\n`);
   const contract = equinoxLocalReleaseRuntimeContract({ target: TARGET, version: VERSION });

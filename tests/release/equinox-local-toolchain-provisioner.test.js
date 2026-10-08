@@ -42,20 +42,20 @@ test("M8 toolchain network policy permits only the exact GitHub release CDN redi
 
 test("M8 tar inspection accepts bounded internal Node/Dugite symlinks", () => {
   const result = validateToolchainTarListing({
-    expectedRoot: "node-v26.10.0-darwin-arm64",
+    expectedRoot: "node-v26.11.1-darwin-arm64",
     namesOutput: [
-      "node-v26.10.0-darwin-arm64/",
-      "node-v26.10.0-darwin-arm64/bin/",
-      "node-v26.10.0-darwin-arm64/bin/node",
-      "node-v26.10.0-darwin-arm64/bin/npm",
-      "node-v26.10.0-darwin-arm64/lib/node_modules/npm/bin/npm-cli.js",
+      "node-v26.11.1-darwin-arm64/",
+      "node-v26.11.1-darwin-arm64/bin/",
+      "node-v26.11.1-darwin-arm64/bin/node",
+      "node-v26.11.1-darwin-arm64/bin/npm",
+      "node-v26.11.1-darwin-arm64/lib/node_modules/npm/bin/npm-cli.js",
     ].join("\n"),
     verboseOutput: [
-      verbose("d", 0, "node-v26.10.0-darwin-arm64/"),
-      verbose("d", 0, "node-v26.10.0-darwin-arm64/bin/"),
-      verbose("-", 10, "node-v26.10.0-darwin-arm64/bin/node"),
-      verbose("l", 0, "node-v26.10.0-darwin-arm64/bin/npm", "../lib/node_modules/npm/bin/npm-cli.js"),
-      verbose("-", 5, "node-v26.10.0-darwin-arm64/lib/node_modules/npm/bin/npm-cli.js"),
+      verbose("d", 0, "node-v26.11.1-darwin-arm64/"),
+      verbose("d", 0, "node-v26.11.1-darwin-arm64/bin/"),
+      verbose("-", 10, "node-v26.11.1-darwin-arm64/bin/node"),
+      verbose("l", 0, "node-v26.11.1-darwin-arm64/bin/npm", "../lib/node_modules/npm/bin/npm-cli.js"),
+      verbose("-", 5, "node-v26.11.1-darwin-arm64/lib/node_modules/npm/bin/npm-cli.js"),
     ].join("\n"),
   });
   assert.deepEqual(result, { entryCount: 5, extractedBytes: 15 });
@@ -133,7 +133,7 @@ async function fakeExtract({ extractionRoot, component }) {
 
 function fakeExec(command) {
   if (command.endsWith("/git")) return Promise.resolve({ stdout: "git version 2.53.0\n", stderr: "" });
-  if (command.endsWith("/node")) return Promise.resolve({ stdout: "v26.10.0\n", stderr: "" });
+  if (command.endsWith("/node")) return Promise.resolve({ stdout: "v26.11.1\n", stderr: "" });
   throw new Error(`unexpected executable: ${command}`);
 }
 
