@@ -5,6 +5,7 @@ import { execFile as execFileCallback } from "node:child_process";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 
 import { installManagedEquinoxRelease } from "../../src/equinox-local-first-install.js";
@@ -25,7 +26,10 @@ async function poll(check, label, timeoutMs = 90_000) {
     try {
       const result = await check();
       if (result) return result;
-    } catch (error) { last = error?.message ?? String(error); }
+    } catch (error) {
+      if (error?.smokeTerminal === true) throw error;
+      last = error?.message ?? String(error);
+    }
     await sleep(500);
   }
   throw new Error(`${label} timed out: ${last}`);
@@ -54,6 +58,32 @@ function boundedDiagnostic(value) {
     .replace(/(?:\/Users\/|\/private\/|\/var\/|\/tmp\/)[^\s"'`;,]*/gu, "[REDACTED_PATH]")
     .replace(/[\r\n\x00-\x1f\x7f]+/gu, " ")
     .slice(0, 350);
+}
+
+// Disposable hosted-runner-only preload, inherited by a REAL launchd worker.
+// It refuses only a verified healthy B observation so that the unmodified
+// native worker performs actual restart, durable rollback and A health checks.
+async function installTargetHealthFailurePreload({ scratch, targetSha }) {
+  const hook = path.join(scratch, "native-target-health-failure.mjs");
+  const marker = path.join(scratch, "target-health-injection-observed");
+  const code = String.raw`import fs from "node:fs/promises";
+if (process.argv[1]?.endsWith("/equinox-local-main-update-worker.js")) {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (...args) => {
+    const response = await originalFetch(...args);
+    if (!String(args[0]).endsWith("/api/v1/status") || !response.ok) return response;
+    const body = await response.clone().json().catch(() => null);
+    if (body?.status?.health?.state !== "HEALTHY" || body?.status?.installation?.sourceSha !== ${JSON.stringify(targetSha)}) return response;
+    await fs.appendFile(${JSON.stringify(marker)}, "rejected-healthy-target\n", { mode: 0o600 });
+    return new Response(JSON.stringify({ ...body, status: { ...body.status, health: { state: "UNHEALTHY" } } }), {
+      status: response.status, headers: { "content-type": "application/json" },
+    });
+  };
+}
+`;
+  await fs.writeFile(hook, code, { mode: 0o600, flag: "wx" });
+  await execFile("/bin/launchctl", ["setenv", "NODE_OPTIONS", `--import=${pathToFileURL(hook).href}`], { timeout: 5_000 });
+  return marker;
 }
 
 async function printApplyFailureEvidence(transactionRoot) {
@@ -88,6 +118,9 @@ async function run() {
     throw new Error("Usage: smoke-main-upgrade-macos.mjs /absolute/old-release.tar.gz <admitted-A-SHA> <admitted-B-SHA>");
   }
   assert.equal(process.arch, "arm64", "run on a native macOS ARM64 hosted runner");
+  const scenario = process.env.M8_ACCEPTANCE_SCENARIO || "positive";
+  if (!["positive", "target-health-failure"].includes(scenario)) throw new Error("Unsupported native M8 acceptance scenario.");
+  const negative = scenario === "target-health-failure";
   // Ensure tests never bootout or replace an existing user's instance. An
   // occupied port or managed LaunchAgent means this machine isn't isolated.
   const uid = process.getuid();
@@ -114,7 +147,7 @@ async function run() {
   const nativeHostDirectory = path.join(accountHome, "Library", "Application Support", "Equinox Local");
   const nativeHostWrapperAlias = path.join(nativeHostDirectory, "equinox-local-app-runtime");
   const actualWrapper = path.join(installRoot, "equinox-local-app-runtime");
-  const ownedService = { started: false, transactionId: null, wrapperAlias: false };
+  const ownedService = { started: false, transactionId: null, wrapperAlias: false, preload: false };
   const trackedExecFile = async (command, args, options = {}) => {
     if (command === "/bin/launchctl" && args[0] === "bootstrap" && args[1] === `gui/${uid}`) {
       ownedService.started = true;
@@ -154,6 +187,11 @@ async function run() {
     const discovery = await jsonApi("/api/v1/update");
     assert.equal(discovery.update?.main?.targetSha, targetSha, "the separately admitted Main snapshot must be the exact target");
     assert.equal(discovery.update?.main?.applyAvailable, true);
+    let injectionMarker = null;
+    if (negative) {
+      injectionMarker = await installTargetHealthFailurePreload({ scratch, targetSha });
+      ownedService.preload = true;
+    }
     let response;
     try {
       response = await jsonApi("/api/v1/update/apply", { mutate: true, token: csrfToken });
@@ -168,18 +206,35 @@ async function run() {
     const receiptPath = path.join(transactionRoot, "receipts", `${transactionId}.json`);
     const receipt = await poll(async () => {
       const data = JSON.parse(await fs.readFile(receiptPath, "utf8"));
-      if (data.status === "failed" || data.status === "rollback_failed" || data.status === "rolled_back") {
-        throw new Error(`Main updater did not accept B: ${data.status}: ${data.lastError}`);
+      if (["failed", "rollback_failed"].includes(data.status)
+        || (negative && data.status === "succeeded")
+        || (!negative && data.status === "rolled_back")) {
+        const terminal = new Error(`Unexpected native Main result: ${data.status}: ${String(data.lastError || "no error").slice(0, 250)}`);
+        terminal.smokeTerminal = true;
+        throw terminal;
       }
-      return data.status === "succeeded" ? data : null;
+      return data.status === (negative ? "rolled_back" : "succeeded") ? data : null;
     }, "detached native Main updater completion", 240_000);
     assert.equal(receipt.targetSha, targetSha);
-    assert.equal((await getPointer()).sha, targetSha);
-    const after = await awaitHealthy(targetSha, { timeoutMs: 60_000 });
-    assert.equal(after.installation?.kind, "managed-source");
-    assert.equal((await fs.lstat(path.join(installRoot, "current"))).isSymbolicLink(), true);
-    process.stdout.write(`${JSON.stringify({ ok: true, platform: process.platform, arch: process.arch, from: previousSha, to: targetSha, nativeMode: response.result.nativeTransition?.mode, restartHealth: after.health?.state, receipt: receipt.status })}\n`);
+    if (negative) {
+      assert.equal(receipt.rollbackSha, previousSha);
+      assert.equal((await getPointer()).sha, previousSha);
+      const observations = await fs.readFile(injectionMarker, "utf8");
+      assert.match(observations, /rejected-healthy-target/u,
+        "the real B must become healthy before the hosted-only observation fault triggers");
+      const rollback = await awaitHealthy(previousSha, { timeoutMs: 60_000 });
+      assert.equal(rollback.installation?.kind, "managed-source");
+      assert.equal((await fs.lstat(path.join(installRoot, "current"))).isSymbolicLink(), true);
+      process.stdout.write(`${JSON.stringify({ ok: true, scenario, platform: process.platform, arch: process.arch, from: previousSha, refusedTarget: targetSha, rollbackSha: receipt.rollbackSha, restartHealth: rollback.health?.state, receipt: receipt.status, injectedObservations: observations.trim().split("\n").length })}\n`);
+    } else {
+      assert.equal((await getPointer()).sha, targetSha);
+      const after = await awaitHealthy(targetSha, { timeoutMs: 60_000 });
+      assert.equal(after.installation?.kind, "managed-source");
+      assert.equal((await fs.lstat(path.join(installRoot, "current"))).isSymbolicLink(), true);
+      process.stdout.write(`${JSON.stringify({ ok: true, scenario, platform: process.platform, arch: process.arch, from: previousSha, to: targetSha, nativeMode: response.result.nativeTransition?.mode, restartHealth: after.health?.state, receipt: receipt.status })}\n`);
+    }
   } finally {
+    if (ownedService.preload) await execFile("/bin/launchctl", ["unsetenv", "NODE_OPTIONS"], { timeout: 5_000 }).catch(() => {});
     if (ownedService.started) await execFile("/bin/launchctl", ["bootout", service], { timeout: 15_000 }).catch(() => {});
     if (ownedService.transactionId) {
       const workerService = `gui/${uid}/dev.equinox.local.main-update.${ownedService.transactionId.slice(5)}`;
