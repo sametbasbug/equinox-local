@@ -10,6 +10,14 @@ on:
         required: true
         default: 8dbe965d28e76026123ce8de34d8f1aa27c10465
         type: string
+      scenario:
+        description: Actual installed Windows Main update path
+        required: true
+        default: positive
+        type: choice
+        options:
+          - positive
+          - target-crash
       previous_main_run:
         description: Successful exact-A Main CI run with native build artifacts (retained for 14 days)
         required: true
@@ -77,7 +85,8 @@ jobs:
             'tests/release/smoke-main-upgrade-macos.mjs',
             '.github/workflows/main-installed-windows-acceptance.yml',
             'tests/release/windows-installer-real-package-smoke.ps1',
-            'tests/release/smoke-main-upgrade-windows.mjs'
+            'tests/release/smoke-main-upgrade-windows.mjs',
+            'tests/release/smoke-main-upgrade-windows-fault.ps1'
           )
           $changed = @(& git diff --name-only $sha HEAD)
           foreach ($file in $changed) {
@@ -125,5 +134,6 @@ jobs:
           if ($release.sourceSha -cne $env:OLD_SHA -or $release.target -cne $env:TARGET -or [string]$release.version -notmatch '^\d+\.\d+\.\d+$') { throw 'Admitted A release JSON identity mismatch.' }
           $env:EQUINOX_WINDOWS_INSTALL_VERSION = [string]$release.version
           $env:EQUINOX_WINDOWS_MAIN_ACCEPT_TARGET_SHA = $env:TARGET_SHA
+          $env:EQUINOX_WINDOWS_MAIN_ACCEPT_SCENARIO = '${{ inputs.scenario }}'
           & powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File tests/release/windows-installer-real-package-smoke.ps1
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
