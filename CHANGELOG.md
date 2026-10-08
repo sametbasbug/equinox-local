@@ -5,6 +5,7 @@ All notable public changes to Equinox Local will be documented here.
 This project follows semantic versioning for public releases.
 
 ## [Unreleased]
+- Require the restarted native Main Control Center itself to identify as `managed-source` at the exact target SHA before completing update health verification, preventing the still-running old A runtime from being mistaken for healthy B; preserve pinned Windows shell identity in detached worker recovery.
 - Fixed a real native Main update apply failure: the pinned prebuilt dependency and staged-source validator functions were used without being imported by the transaction engine. Exercised the real default pinned Node/npm lifecycle path in regression tests and propagated the owned Windows POSIX shell for staged-source validation.
 - Validate the bundled macOS Git HTTPS helper and template directory during pinned toolchain install/reuse, rejecting incomplete or tampered archives before managed-source enrollment.
 - Fixed the pinned macOS Dugite Git distribution's root-relative helper discovery: managed-source enrollment and Main update transactions now explicitly select product-owned `libexec/git-core`/`share/git-core/templates`, allowing HTTPS clone/fetch without ambient system Git. Proven using the exact SHA-256-pinned Git 2.53.0-4 archive after a real isolated macOS installation smoke found `git-remote-https` missing.
