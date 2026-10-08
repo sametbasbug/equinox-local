@@ -13,6 +13,7 @@ import { createEquinoxLocalMainUpdateTransactionEngine } from "../../src/equinox
 import { runEquinoxLocalMainUpdateHandoff } from "../../src/equinox-local-main-update-handoff.js";
 import { readEquinoxLocalMainSourcePointer } from "../../src/equinox-local-main-source-pointer.js";
 import { EQUINOX_LOCAL_MAIN_REMOTE } from "../../src/equinox-local-main-update.js";
+import { protectWindowsPrivateStatePath } from "../../src/equinox-local-private-state.js";
 
 const execFile = promisify(callbackExecFile);
 const DIGEST = "d".repeat(64);
@@ -27,6 +28,12 @@ async function fixture(t) {
   const sourceRoot = path.join(root, "active");
   const transactionRoot = path.join(root, "main-update");
   const remoteRoot = path.join(root, "remote.git");
+  // Production creates this state boundary with a private Windows ACL. An
+  // ordinary tmp directory is intentionally rejected by the real pointer writer.
+  if (process.platform === "win32") {
+    await fs.mkdir(transactionRoot, { recursive: true, mode: 0o700 });
+    await protectWindowsPrivateStatePath({ target: transactionRoot, type: "directory" });
+  }
   await fs.mkdir(sourceRoot);
   await git(["init", "-b", "main", sourceRoot]);
   await git(["-C", sourceRoot, "config", "user.name", "Equinox acceptance"]);
