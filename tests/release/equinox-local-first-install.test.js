@@ -1,8 +1,10 @@
+import { execFileSync } from "node:child_process";
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
 import {
   equinoxLocalFirstInstallHealthBudget,
@@ -18,6 +20,13 @@ import {
 } from "../../src/equinox-browser-windows-native-messaging.js";
 
 const TARGET = "darwin-arm64";
+
+test("first-install CLI help explains Stable default and explicit fresh or existing Main choice", () => {
+  const help = execFileSync(process.execPath, [fileURLToPath(new URL("../../src/equinox-local-first-install.js", import.meta.url)), "--help"], { encoding: "utf8" });
+  assert.match(help, /Stable \(default\)/u);
+  assert.match(help, /--enroll-existing-main/u);
+  assert.match(help, /fresh or same-version/u);
+});
 
 test("Windows first-install enrollment uses durable release-local helper paths after staging promotion", async () => {
   const source = await fs.readFile(new URL("../../src/equinox-local-first-install.js", import.meta.url), "utf8");
@@ -244,6 +253,47 @@ test("first install promotes the verified release, bootstraps the user and loads
   }
 });
 
+test("fresh source-provenance installation defaults to Stable without Main enrollment", async () => {
+  const fixture = await createFixture("5.2.1");
+  const metadataPath = path.join(fixture.releaseDir, "release.json");
+  const metadata = JSON.parse(await fs.readFile(metadataPath, "utf8"));
+  await fs.writeFile(metadataPath, `${JSON.stringify({ ...metadata, sourceSha: "c".repeat(40) })}\n`);
+  const events = [];
+  try {
+    const result = await installManagedEquinoxRelease({
+      stagedReleaseDir: fixture.releaseDir, homeDir: fixture.homeDir,
+      uid: process.getuid?.() ?? 501, platform: "darwin", target: TARGET,
+      readCurrentImpl: async () => null,
+      bootstrapImpl: async () => ({ configCreated: true }),
+      execFileImpl: async () => ({ stdout: "", stderr: "" }),
+      waitForVersionImpl: async () => { events.push("stable-health"); },
+      enrollManagedSourceImpl: async () => { events.push("enroll"); return { bootstrapSha: "c".repeat(40) }; },
+      waitForManagedSourceImpl: async () => { events.push("main-health"); },
+    });
+    assert.deepEqual(events, ["stable-health"]);
+    assert.equal(result.managedSourceSha, null);
+    await assert.rejects(fs.lstat(path.join(fixture.installRoot, "state", "main-update", "install.json")), { code: "ENOENT" });
+  } finally { await fs.rm(fixture.homeDir, { recursive: true, force: true }); }
+});
+
+test("fresh explicit Main choice rejects missing source provenance before activation", async () => {
+  const fixture = await createFixture("5.2.1");
+  let mutations = 0;
+  try {
+    await assert.rejects(installManagedEquinoxRelease({
+      stagedReleaseDir: fixture.releaseDir, homeDir: fixture.homeDir,
+      uid: process.getuid?.() ?? 501, platform: "darwin", target: TARGET,
+      allowExistingStableToMainMigration: true,
+      readCurrentImpl: async () => null,
+      bootstrapImpl: async () => { mutations++; return {}; },
+      execFileImpl: async () => { mutations++; return { stdout: "", stderr: "" }; },
+      waitForVersionImpl: async () => { mutations++; },
+    }), /Main enrollment requires exact source provenance/u);
+    assert.equal(mutations, 0);
+    assert.equal(await exists(path.join(fixture.installRoot, "current")), false);
+  } finally { await fs.rm(fixture.homeDir, { recursive: true, force: true }); }
+});
+
 test("fresh source-provenance install stays Stable-first, then enrolls and verifies exact managed-source SHA", async () => {
   const fixture = await createFixture("5.2.1");
   const uid = typeof process.getuid === "function" ? process.getuid() : 501;
@@ -263,6 +313,7 @@ test("fresh source-provenance install stays Stable-first, then enrolls and verif
       bootstrapImpl: async () => ({ configCreated: true, controlCenterUrl: "http://127.0.0.1:24891/" }),
       execFileImpl: async (command, args) => { events.push(["exec", command, args[0]]); return { stdout: "", stderr: "" }; },
       waitForVersionImpl: async (version, budget) => { events.push(["stable-health", version, budget]); return true; },
+      allowExistingStableToMainMigration: true,
       enrollManagedSourceImpl: async (value) => { events.push(["enroll", value.bootstrapSha, value.target]); return { status: "enrolled", bootstrapSha: value.bootstrapSha }; },
       waitForManagedSourceImpl: async (version, sha, budget) => { events.push(["source-health", version, sha, budget]); return true; },
     });
@@ -303,6 +354,7 @@ test("managed-source health failure rolls identity back and restores healthy Sta
         bootstrapImpl: async () => ({ configCreated: true, controlCenterUrl: "http://127.0.0.1:24891/" }),
         execFileImpl: async (command, args) => { events.push(["exec", command, args[0]]); return { stdout: "", stderr: "" }; },
         waitForVersionImpl: async (version) => { events.push(["stable-health", version]); return true; },
+        allowExistingStableToMainMigration: true,
         enrollManagedSourceImpl: async () => {
           await fs.mkdir(transactionRoot, { recursive: true });
           await fs.writeFile(installStampPath, `${JSON.stringify({ schemaVersion: 1, channel: "main", repository: "sametbasbug/equinox-local", branch: "main", bootstrapSha: sourceSha })}\n`, { mode: 0o600 });
@@ -618,6 +670,7 @@ test("Windows x64 fresh first install promotes current-version and stable shell 
     initializeOnboardingImpl: async () => ({ created: true }),
     launchWindowsShellImpl: async (shellExecutable) => { launches.push(shellExecutable); return { launched: true }; },
     waitForVersionImpl: async () => true,
+    allowExistingStableToMainMigration: true,
     enrollManagedSourceImpl: async (value) => {
       enrollmentArgs = value;
       assert.equal(await exists(fixture.releaseDir), false);
@@ -688,6 +741,47 @@ test("historical 5.2.x Stable reinstall does not silently enroll Main even if st
   } finally { await fs.rm(fixture.homeDir, { recursive: true, force: true }); }
 });
 
+test("provenance-bearing Stable rerun preserves Factory composition and does not infer Main consent", async () => {
+  const sha = "a".repeat(40);
+  const fixture = await createExistingStableFixture("5.2.1", sha);
+  const metadataPath = path.join(fixture.releaseDir, "release.json");
+  const metadata = JSON.parse(await fs.readFile(metadataPath, "utf8"));
+  await fs.writeFile(metadataPath, `${JSON.stringify({ ...metadata, sourceSha: sha })}\n`);
+  // These are isolated fixture bytes, never the active Factory configuration.
+  const privateRoot = path.join(fixture.homeDir, "external-private");
+  await fs.mkdir(privateRoot, { recursive: true });
+  const privateModule = path.join(privateRoot, "composition.mjs");
+  const configPath = path.join(fixture.installRoot, "config.json");
+  const sourceConfigPath = path.join(fixture.installRoot, "source-runtime.conf");
+  const files = new Map([
+    [privateModule, "export const diagnosticFixture = true;\n"],
+    [configPath, `${JSON.stringify({ privateCompositionModule: privateModule, privateCompositionRoot: privateRoot })}\n`],
+    [sourceConfigPath, `privateCompositionModule=${privateModule}\nprivateCompositionRoot=${privateRoot}\n`],
+  ]);
+  for (const [file, bytes] of files) await fs.writeFile(file, bytes, { mode: 0o600 });
+  const events = [];
+  try {
+    const common = {
+      stagedReleaseDir: fixture.releaseDir, homeDir: fixture.homeDir, platform: "darwin",
+      target: TARGET, uid: process.getuid?.() ?? 501,
+      readCurrentImpl: async () => ({ version: "5.2.1", releaseDir: fixture.currentRelease }),
+      bootstrapImpl: async () => ({ configCreated: false }),
+      execFileImpl: async () => ({ stdout: "", stderr: "" }),
+      waitForVersionImpl: async () => { events.push("stable-health"); },
+      enrollManagedSourceImpl: async (value) => { events.push("main-enrollment"); return { bootstrapSha: value.bootstrapSha }; },
+      waitForManagedSourceImpl: async () => { events.push("main-health"); },
+    };
+    const stable = await installManagedEquinoxRelease(common);
+    assert.equal(stable.managedSourceSha, null);
+    assert.deepEqual(events, ["stable-health"]);
+    events.length = 0;
+    const main = await installManagedEquinoxRelease({ ...common, allowExistingStableToMainMigration: true });
+    assert.equal(main.managedSourceSha, sha);
+    assert.deepEqual(events, ["stable-health", "main-enrollment", "main-health"]);
+    for (const [file, bytes] of files) assert.equal(await fs.readFile(file, "utf8"), bytes);
+  } finally { await fs.rm(fixture.homeDir, { recursive: true, force: true }); }
+});
+
 test("explicit existing-Stable Main opt-in requires matching installed and staged source provenance before lifecycle mutation", async () => {
   const installedSha = "a".repeat(40);
   const fixture = await createExistingStableFixture("5.2.1", installedSha);
@@ -717,6 +811,30 @@ test("explicit existing-Stable Main opt-in requires matching installed and stage
     assert.equal(result.status, "already-installed");
     assert.equal(result.managedSourceSha, installedSha);
     assert.deepEqual(events, ["stable-health", "enrollment", "main-health"]);
+  } finally { await fs.rm(fixture.homeDir, { recursive: true, force: true }); }
+});
+
+test("explicit Main choice rejects an older candidate while ordinary reinstall preserves newer Stable", async () => {
+  const fixture = await createExistingStableFixture("5.2.2", "a".repeat(40));
+  const stagedMetadata = path.join(fixture.releaseDir, "release.json");
+  const original = JSON.parse(await fs.readFile(stagedMetadata, "utf8"));
+  await fs.writeFile(stagedMetadata, `${JSON.stringify({ ...original, version: "5.2.1", sourceSha: "a".repeat(40) })}\n`);
+  let mutations = 0;
+  const common = {
+    stagedReleaseDir: fixture.releaseDir, homeDir: fixture.homeDir, platform: "darwin", target: TARGET,
+    uid: process.getuid?.() ?? 501,
+    readCurrentImpl: async () => ({ version: "5.2.2", releaseDir: fixture.currentRelease }),
+    bootstrapImpl: async () => { mutations++; return {}; },
+    execFileImpl: async () => { mutations++; return { stdout: "", stderr: "" }; },
+    enrollManagedSourceImpl: async () => { mutations++; return {}; },
+  };
+  try {
+    const normal = await installManagedEquinoxRelease(common);
+    assert.equal(normal.status, "newer-installed");
+    assert.equal(normal.version, "5.2.2");
+    await assert.rejects(installManagedEquinoxRelease({ ...common, allowExistingStableToMainMigration: true }), /installer migration cannot replace a different active Stable version/u);
+    assert.equal(mutations, 0);
+    assert.equal(JSON.parse(await fs.readFile(path.join(fixture.currentRelease, "release.json"), "utf8")).version, "5.2.2");
   } finally { await fs.rm(fixture.homeDir, { recursive: true, force: true }); }
 });
 
@@ -757,6 +875,7 @@ test("existing provenance-bearing Stable migration failure removes Main identity
         return { stdout: "", stderr: "" };
       },
       waitForVersionImpl: async () => { events.push("stable-health"); return true; },
+      allowExistingStableToMainMigration: true,
       enrollManagedSourceImpl: async () => {
         await fs.mkdir(mainRoot, { recursive: true });
         await fs.writeFile(path.join(mainRoot, "install.json"), "fixture");

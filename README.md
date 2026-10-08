@@ -19,6 +19,8 @@
 
 > **5.2.1 release readiness:** the release pipeline now validates `darwin-arm64`, `darwin-x64`, `win32-arm64`, and `win32-x64` as one exact-SHA set, signs and verifies all four target artifacts, and supports a non-production end-to-end rehearsal before promotion. Windows x64/ARM64 is not the current stable release until 5.2.1 is actually promoted.
 
+> **Channel choice (development installers):** fresh installation stays **Stable** by default. Main requires explicit consent: macOS `--enroll-existing-main`, Windows `-EnrollExistingMain`; the existing flag also covers fresh onboarding. Run the downloaded script with `--help` / `-Help` for the actual choices and see [Stable/Main enrollment and rollback](docs/updates.md#stable-or-main-explicit-user-choice). Factory is Main plus external private diagnostics/composition, not a separate release lineage. This does not publish Local `5.2.1` or Browser `0.7.1`, or change current production.
+
 ## Current release notes
 
 Equinox Local `5.2.0` is the expedited fresh-install recovery release. It extends first-activation health time, preserves a verified fresh-install backend instead of deleting it when activation fails, adds real isolated LaunchAgent lifecycle smoke coverage, updates OpenAI `tunnel-client` to `0.0.15`, fixes Turn Budget fallback idle accounting with a configurable Control Center timeout, and hardens restart-safe Telegram state persistence. Equinox Browser remains `0.7.0`.
@@ -223,7 +225,7 @@ Internal modules separate tool registration, workspace/history mechanics, Contro
 
 Private factory/ops tooling may consume a clean canonical checkout by repository identity and exact SHA for explicitly authorized release/publication work. A factory installation uses the same product source with external private configuration/state and, when explicitly configured, private composition. Neither that tooling nor private credentials are required to build or test the public product. Do not copy private history, machine paths or secrets into this repository.
 
-This ownership change does not switch installed stable users to `main`, implement a main-source updater, or publish `5.2.1`. Signed numbered releases and Chrome Web Store distribution retain their existing owners and authorization boundaries.
+Repository ownership does not switch installed Stable users to `main` or publish `5.2.1`. The Main updater is available only through admitted managed-source identity after explicit opt-in; normal source checkouts remain check-only. Signed numbered releases and Chrome Web Store distribution retain their existing owners and authorization boundaries.
 
 ### Requirements
 

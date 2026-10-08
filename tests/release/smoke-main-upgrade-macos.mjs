@@ -180,6 +180,7 @@ async function run() {
     assert.equal(metadata.sourceSha, previousSha);
     assert.equal(metadata.target, equinoxLocalUpdateTarget());
     const result = await installManagedEquinoxRelease({
+      allowExistingStableToMainMigration: true,
       stagedReleaseDir: release, homeDir, env, uid,
       execFileImpl: trackedExecFile,
       waitForVersionImpl: async () => { ownedService.started = true; await awaitHealthy(null, { kind: "managed" }); return true; },

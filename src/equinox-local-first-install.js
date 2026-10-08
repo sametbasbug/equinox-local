@@ -318,6 +318,8 @@ export async function installManagedEquinoxRelease({
   platform = process.platform,
   arch = process.arch,
   target = null,
+  // Retain the existing API/CLI opt-in: it now covers fresh enrollment too.
+  // Provenance alone is never user consent to leave Stable.
   allowExistingStableToMainMigration = false,
   env = process.env,
   fsImpl = fs,
@@ -373,6 +375,10 @@ export async function installManagedEquinoxRelease({
     current = await readCurrentImpl(baseInstallation);
   } catch (error) {
     if (error?.code !== "ENOENT") throw error;
+  }
+
+  if (!current && allowExistingStableToMainMigration && !candidate.metadata?.sourceSha) {
+    throw new Error("Main enrollment requires exact source provenance in the requested Stable release.");
   }
 
   const startRuntime = async (installation) => {
@@ -433,6 +439,9 @@ export async function installManagedEquinoxRelease({
 
   if (current) {
     const comparison = compareEquinoxVersions(current.version, candidate.version);
+    if (allowExistingStableToMainMigration && comparison !== 0) {
+      throw new Error("Upgrade the existing Stable release with the Stable updater before explicitly enrolling Main; installer migration cannot replace a different active Stable version.");
+    }
     if (comparison > 0) {
       return Object.freeze({
         status: "newer-installed",
@@ -469,9 +478,6 @@ export async function installManagedEquinoxRelease({
         configCreated: Boolean(bootstrap.configCreated),
         controlCenterUrl: bootstrap.controlCenterUrl || "http://127.0.0.1:24891/",
       });
-    }
-    if (allowExistingStableToMainMigration) {
-      throw new Error("Upgrade the existing Stable release with the Stable updater before explicitly enrolling Main; installer migration cannot replace a different active Stable version.");
     }
     if (platform === "win32") {
       throw new Error("Windows bootstrap update/reinstall is not enabled yet; use the installed updater once the stable-shell replacement checkpoint is complete.");
@@ -536,12 +542,14 @@ export async function installManagedEquinoxRelease({
     const detail = diagnostics ? ` ${diagnostics}` : "";
     throw new Error(`${reason} First-install files were preserved so the verified release can be retried safely.${detail}`);
   }
-  await enrollAfterStableHealth(installation, candidate);
+  const enrollment = allowExistingStableToMainMigration
+    ? await enrollAfterStableHealth(installation, candidate)
+    : null;
 
   return Object.freeze({
     status: "installed",
     version: candidate.version,
-    managedSourceSha: candidate.metadata?.sourceSha ?? null,
+    managedSourceSha: enrollment?.bootstrapSha ?? null,
     configCreated: Boolean(bootstrap.configCreated),
     controlCenterUrl: bootstrap.controlCenterUrl || "http://127.0.0.1:24891/",
   });
@@ -557,10 +565,14 @@ function parseCli(argv) {
 
 const invokedPath = process.argv[1] ? path.resolve(process.argv[1]) : null;
 if (invokedPath && path.basename(invokedPath) === path.basename(fileURLToPath(import.meta.url))) {
-  installManagedEquinoxRelease(parseCli(process.argv.slice(2)))
-    .then((result) => process.stdout.write(`${JSON.stringify(result, null, 2)}\n`))
-    .catch((error) => {
-      process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
-      process.exitCode = 1;
-    });
+  if (process.argv.length === 3 && process.argv[2] === "--help") {
+    process.stdout.write("Usage: equinox-local-first-install.js --staged-release /absolute/path/to/release [--enroll-existing-main]\nStable (default): latest numbered release.\nMain (explicit opt-in): --enroll-existing-main enrolls fresh or same-version existing Stable after health; exact source provenance is required.\n");
+  } else {
+    installManagedEquinoxRelease(parseCli(process.argv.slice(2)))
+      .then((result) => process.stdout.write(`${JSON.stringify(result, null, 2)}\n`))
+      .catch((error) => {
+        process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+        process.exitCode = 1;
+      });
+  }
 }

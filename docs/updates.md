@@ -2,6 +2,32 @@
 
 Equinox Local uses a self-hosted, signed stable-update channel. The baseline distribution path does not depend on the Mac App Store, Developer ID, notarization, or a paid Apple Developer Program membership.
 
+## Stable or Main: explicit user choice
+
+**Stable is the default** for fresh installs and routine installer reruns, even when a verified release has `sourceSha`. It follows the latest published numbered release. **Main is opt-in**, follows admitted exact-SHA canonical snapshots, and uses the existing managed-source toolchain/enrollment/update/rollback transaction—not another update server or browser transport. Factory means Main plus explicitly configured private diagnostics/composition, not another product lineage; private state/configuration is not enrollment consent and must remain external and preserved.
+
+With the downloaded public installer, choose:
+
+```sh
+# macOS: Stable (default)
+/bin/bash install-equinox-local.sh
+# macOS: explicit Main, fresh or eligible existing Stable
+/bin/bash install-equinox-local.sh --enroll-existing-main
+/bin/bash install-equinox-local.sh --help
+```
+
+```powershell
+# Windows: Stable (default)
+.\install-equinox-local.ps1
+# Windows: explicit Main, fresh or eligible existing Stable
+.\install-equinox-local.ps1 -EnrollExistingMain
+.\install-equinox-local.ps1 -Help
+```
+
+The existing `--enroll-existing-main` opt-in deliberately also covers **fresh** installs; its trusted JavaScript API is `allowExistingStableToMainMigration: true` (default `false`). Main first installs and health-checks the verified Stable baseline, then enrolls the exact source SHA. Fresh explicit Main without source provenance fails before activation rather than silently ignoring the choice. Existing same-version migration additionally requires identical provenance in the installed and staged release; different-version migration requires the Stable updater first. A routine rerun does not undo a previously selected Main channel or remove private composition/configuration.
+
+These are development installer semantics, not a publication announcement: production Local `5.2.0` and Browser `0.7.0` are unchanged; Local `5.2.1` and Browser `0.7.1` remain unpublished.
+
 ## First install
 
 The public first-install path is a user-level HTTPS shell bootstrap. It is designed to:
@@ -30,15 +56,15 @@ Documentation/metadata-only merges do not advance the admitted Main target: prod
 
 For operational checks, compare `refs/heads/main` with `refs/tags/main-snapshot`: a gap made only of documentation/metadata commits is intentional and must not be presented to users as an Equinox Local update.
 
-If the installed native runtime contract already matches the selected Main SHA, the updater uses `reuse_native` and downloads no native package. Crossing a native boundary requires the exact host snapshot; failure during native/source activation rolls back to the previously admitted source/native state. Main snapshot publication and rollback acceptance are complete across Darwin and Windows x64/ARM64. Trusted `managed-source` installations can apply the admitted Main snapshot from Control Center with **Update & restart**; developer source checkouts remain check-only, and ordinary numbered Stable installations remain on the Stable updater.
+If the installed native runtime contract already matches the selected Main SHA, the updater uses `reuse_native` and downloads no native package. Crossing a native boundary requires the exact host snapshot; failure during native/source activation rolls back to the previously admitted source/native state. Exact-SHA snapshot publication covers Darwin and Windows x64/ARM64, and installed upgrade/rollback acceptance has been established across those four targets for `reuse_native`. That is not four-platform installed-host `artifact_required` acceptance: the real macOS ARM64/x64 replacement-and-rollback gates remain separate, and Windows `artifact_required` acceptance is explicitly deferred until the first useful genuine Windows-native change. Trusted `managed-source` installations can apply the admitted Main snapshot from Control Center with **Update & restart**; developer source checkouts remain check-only, and ordinary numbered Stable installations remain on the Stable updater.
 
-M8 fresh-install enrollment is now admitted on Main at `b73de11`. A verified Stable artifact binds its exact clean canonical source SHA in `release.json`; after Stable first becomes healthy, Local provisions the pinned product-owned Dugite Native `v2.53.0-4` and Node `v26.10.0` toolchain, uses only the resulting absolute `gitPath`/`nodePath`/`npmPath` identities to stage that exact source, installs admitted prebuilt dependencies without compiling on the user machine, validates the checkout, and atomically promotes it into the managed source store. The source pointer is written only after the durable checkout exists and `install.json` is written last as the managed-source commit point, so any earlier failure leaves the user on the already healthy numbered Stable installation. Ordinary managed-source discovery, staging, update, recovery and worker execution likewise use product-owned tool paths rather than ambient Git/npm/Node or user `PATH`.
+M8 enrollment machinery was admitted on Main at `b73de11`; M9 makes its use conditional on explicit Main opt-in. A verified Stable artifact binds its exact clean canonical source SHA in `release.json`; after Stable first becomes healthy, Local provisions the pinned product-owned Dugite Native `v2.53.0-4` and Node `v26.10.0` toolchain, uses only the resulting absolute `gitPath`/`nodePath`/`npmPath` identities to stage that exact source, installs admitted prebuilt dependencies without compiling on the user machine, validates the checkout, and atomically promotes it into the managed source store. The source pointer is written only after the durable checkout exists and `install.json` is written last as the managed-source commit point, so any earlier failure leaves the user on the already healthy numbered Stable installation. Ordinary managed-source discovery, staging, update, recovery and worker execution likewise use product-owned tool paths rather than ambient Git/npm/Node or user `PATH`.
 
 Windows x64 and ARM64 fresh-install acceptance exercise the same path. The 5.2.1 Windows shell also supervises its runtime through a product-owned Node gate inside the Job Object lifecycle and requires an explicit bounded child-start acknowledgement before considering startup released; the historical PowerShell gate remains only where older compatibility contracts still require it. A user does not need a separate Git/npm installation, Homebrew, Xcode Command Line Tools, Visual Studio build tools, or a particular `PATH`. Missing admitted native/prebuilt payloads fail closed instead of invoking a local compiler.
 
 ## Existing Stable 5.2.x migration boundary
 
-A first install with admitted `sourceSha` enrolls managed-source only after Stable activation becomes healthy. An **existing** numbered Stable installation stays on Stable if the installer is run again; the downloaded candidate's `sourceSha` is not proof that a historical 5.2.x installation opted into Main.
+A first install with admitted `sourceSha` stays Stable by default; only explicit Main opt-in enrolls managed-source after Stable activation becomes healthy. An **existing** numbered Stable installation stays on Stable if the installer is run again; the downloaded candidate's `sourceSha` is not proof that a historical 5.2.x installation opted into Main.
 
 For deliberate same-version migration, the installer accepts `--enroll-existing-main` only with explicit operator intent and only when both the currently installed and staged verified Stable release contain **the same exact source SHA**. The installed release, not just the downloaded candidate, must carry that provenance; a legacy 5.2.0/5.2.x layout without it first requires a normal Stable update to a provenance-bearing version. A cross-version reinstall with Main opt-in is rejected in favor of the rollback-capable Stable updater (including Windows x64/ARM64 native-shell ownership). A failed source-health check rolls the Main pointer back and preserves healthy Stable. Ordinary uninstall removes validated product-owned source/update/toolchain state while preserving workspace and configuration; full uninstall removes the explicitly owned application-data boundary.
 

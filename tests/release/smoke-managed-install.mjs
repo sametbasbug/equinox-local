@@ -147,6 +147,7 @@ async function main() {
     let sourceHealth = null;
 
     const installResult = await installManagedEquinoxRelease({
+      allowExistingStableToMainMigration: true,
       stagedReleaseDir,
       homeDir,
       uid: typeof process.getuid === "function" ? process.getuid() : 501,

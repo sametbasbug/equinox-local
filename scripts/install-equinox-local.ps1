@@ -1,3 +1,10 @@
+param([switch]$EnrollExistingMain, [switch]$Help)
+if ($Help) {
+  Write-Output 'Usage: install-equinox-local.ps1 [-EnrollExistingMain] [-Help]'
+  Write-Output 'Stable (default): latest numbered release.'
+  Write-Output 'Main (explicit opt-in): enroll after Stable health; fresh or same-version matching installed provenance.'
+  return
+}
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version 2.0
 
@@ -99,6 +106,7 @@ function Invoke-CleanNode([string]$Node, [string]$FirstInstall, [string]$Release
   $psi.RedirectStandardOutput = $true
   $psi.RedirectStandardError = $true
   $psi.Arguments = '"' + $FirstInstall.Replace('"','\"') + '" --staged-release "' + $ReleaseDir.Replace('"','\"') + '"'
+  if ($EnrollExistingMain) { $psi.Arguments += ' --enroll-existing-main' }
   $psi.EnvironmentVariables.Clear()
   foreach ($name in @('SystemRoot','WINDIR','ComSpec','TEMP','TMP','USERPROFILE','LOCALAPPDATA','APPDATA','USERNAME','USERDOMAIN','PATH','PATHEXT')) {
     $value = [Environment]::GetEnvironmentVariable($name)

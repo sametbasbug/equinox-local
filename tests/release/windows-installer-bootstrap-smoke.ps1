@@ -39,7 +39,7 @@ fs.mkdirSync(root, { recursive: true });
 const marker = path.join(root, "bootstrap-smoke.json");
 let count = 0;
 try { count = JSON.parse(fs.readFileSync(marker, "utf8")).count || 0; } catch {}
-fs.writeFileSync(marker, JSON.stringify({ count: count + 1, release: process.argv[index + 1], leaked: Boolean(process.env.OPENAI_API_KEY) }));
+fs.writeFileSync(marker, JSON.stringify({ count: count + 1, release: process.argv[index + 1], leaked: Boolean(process.env.OPENAI_API_KEY), mainOptIn: process.argv.includes("--enroll-existing-main") }));
 process.stdout.write(JSON.stringify({ ok: true, count: count + 1 }));
 '@
   [IO.File]::WriteAllText((Join-Path $Release 'equinox-local-first-install.js'), $Stub, (New-Object Text.UTF8Encoding($false)))
@@ -106,6 +106,12 @@ process.stdout.write(JSON.stringify({ ok: true, count: count + 1 }));
   $marker = [IO.File]::ReadAllText($markerPath, (New-Object Text.UTF8Encoding($false, $true))) | ConvertFrom-Json
   Assert-True ($marker.count -eq 2) 'Windows bootstrap retry did not reach the bundled first-install helper twice.'
   Assert-True (-not $marker.leaked) 'Windows bootstrap leaked provider credentials into bundled Node.'
+  Assert-True (-not $marker.mainOptIn) 'Default Windows bootstrap silently requested Main.'
+  $EnrollExistingMain = $true
+  Invoke-EquinoxLocalInstall | Out-Null
+  $mainMarker = [IO.File]::ReadAllText($markerPath, (New-Object Text.UTF8Encoding($false, $true))) | ConvertFrom-Json
+  Assert-True ($mainMarker.count -eq 3 -and $mainMarker.mainOptIn) 'Explicit Windows Main choice did not reach bundled first-install helper.'
+  $EnrollExistingMain = $false
   $managedStaging = [IO.Path]::GetFullPath((Join-Path $LocalState 'Equinox Local\staging')).TrimEnd('\') + '\'
   $markerRelease = [IO.Path]::GetFullPath([string]$marker.release)
   Assert-True ($markerRelease.StartsWith($managedStaging, [StringComparison]::OrdinalIgnoreCase)) 'Windows bootstrap did not stage the verified release inside the managed staging root.'

@@ -120,6 +120,8 @@ try {
   }
 
   try {
+    # This smoke intentionally accepts Main onboarding, not default Stable.
+    $EnrollExistingMain = $true
     Invoke-EquinoxLocalInstall | Out-Host
   } catch {
     $diagnosticLog = Join-Path $OwnedInstallRoot 'logs\windows-shell-runtime.log'
