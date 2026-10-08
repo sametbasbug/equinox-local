@@ -1,0 +1,129 @@
+name: Main Windows Installed Upgrade Acceptance
+
+# Expensive real per-user Windows installer/shell/Control Center/worker smoke.
+# Deliberately manual, NEVER part of routine PR/push CI.
+on:
+  workflow_dispatch:
+    inputs:
+      previous_main_sha:
+        description: Separately admitted immutable Main A SHA
+        required: true
+        default: 8dbe965d28e76026123ce8de34d8f1aa27c10465
+        type: string
+      previous_main_run:
+        description: Successful exact-A Main CI run with native build artifacts (retained for 14 days)
+        required: true
+        default: '37739535304'
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: main-windows-installed-acceptance
+  cancel-in-progress: false
+
+jobs:
+  installed-update:
+    name: Windows ${{ matrix.target }} real installed A-to-B Main upgrade
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 24
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: win32-x64
+            runner: windows-latest
+            arch: x64
+          - target: win32-arm64
+            runner: windows-11-vs2026-arm
+            arch: arm64
+    env:
+      OLD_SHA: ${{ inputs.previous_main_sha }}
+      EXPECTED_REPOSITORY: sametbasbug/equinox-local
+      TARGET: ${{ matrix.target }}
+
+    steps:
+      - name: Checkout harness with immutable native product evidence
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install native Node 26
+        uses: actions/setup-node@v7
+        with:
+          node-version: 26.10.0
+          architecture: ${{ matrix.arch }}
+
+      - name: Verify disposable machine, source A ancestry and admitted B
+        id: identity
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:GITHUB_REPOSITORY -cne $env:EXPECTED_REPOSITORY -or (node -p 'process.platform + "-" + process.arch') -cne $env:TARGET) { throw 'Host platform or expected repository drift.' }
+          if ($env:OLD_SHA -cnotmatch '^[a-f0-9]{40}$') { throw 'Invalid A SHA.' }
+          if (Test-Path 'Registry::HKEY_CURRENT_USER\Software\Google\Chrome\NativeMessagingHosts\dev.equinox.browser') { throw 'Runner has pre-existing Equinox Local Native Messaging ownership.' }
+          $line = (& git ls-remote origin refs/tags/main-snapshot | Select-Object -First 1)
+          $sha = ([string]$line -split '\s+')[0]
+          if ($sha -cnotmatch '^[a-f0-9]{40}$' -or $sha -ceq $env:OLD_SHA) { throw 'Expected a newer admitted B snapshot.' }
+          & git merge-base --is-ancestor $env:OLD_SHA $sha
+          if ($LASTEXITCODE -ne 0) { throw 'A is not an ancestor of B.' }
+          & git merge-base --is-ancestor $sha HEAD
+          if ($LASTEXITCODE -ne 0) { throw 'Harness branch is not descended from admitted B.' }
+          $allowed = @(
+            '.github/workflows/main-installed-acceptance.yml',
+            'tests/release/smoke-main-upgrade-macos.mjs',
+            '.github/workflows/main-installed-windows-acceptance.yml',
+            'tests/release/windows-installer-real-package-smoke.ps1',
+            'tests/release/smoke-main-upgrade-windows.mjs'
+          )
+          $changed = @(& git diff --name-only $sha HEAD)
+          foreach ($file in $changed) {
+            if ($file -cnotin $allowed) { throw "Unadmitted production code or unrelated change after snapshot: $file" }
+          }
+          "target_sha=$sha" >> $env:GITHUB_OUTPUT
+
+      - name: Download archived, already-admitted native Windows A artifact
+        uses: actions/download-artifact@v7
+        with:
+          name: main-native-${{ inputs.previous_main_sha }}-${{ matrix.target }}
+          run-id: ${{ inputs.previous_main_run }}
+          github-token: ${{ github.token }}
+          repository: sametbasbug/equinox-local
+          path: ${{ runner.temp }}/old-main
+
+      - name: Verify native package manifest and run REAL Windows public installer plus Control Center A-to-B
+        shell: pwsh
+        env:
+          TARGET_SHA: ${{ steps.identity.outputs.target_sha }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $root = Join-Path $env:RUNNER_TEMP 'old-main'
+          $manifestPath = Join-Path $root "equinox-local-main-$env:OLD_SHA-$env:TARGET.json"
+          if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) { throw 'Exact source-A Main native manifest missing.' }
+          $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
+          if ($manifest.schemaVersion -ne 1 -or $manifest.channel -cne 'main' -or $manifest.sourceSha -cne $env:OLD_SHA -or $manifest.target -cne $env:TARGET) { throw 'Immutable source-A manifest identity mismatch.' }
+          $artifact = Join-Path $root ([string]$manifest.artifact.name)
+          if ([IO.Path]::GetFullPath($artifact) -cne [IO.Path]::GetFullPath((Join-Path $root "equinox-local-main-$env:OLD_SHA-$env:TARGET.zip"))) { throw 'Unexpected A ZIP path.' }
+          $file = Get-Item -LiteralPath $artifact -ErrorAction Stop
+          if ($file.Length -ne [int64]$manifest.artifact.bytes -or (Get-FileHash -LiteralPath $artifact -Algorithm SHA256).Hash.ToLowerInvariant() -cne [string]$manifest.artifact.sha256) { throw 'Source-A archive hash/bytes mismatch.' }
+          $env:EQUINOX_WINDOWS_INSTALL_ARTIFACT = $artifact
+          $env:EQUINOX_WINDOWS_INSTALL_SHA256 = [string]$manifest.artifact.sha256
+          $env:EQUINOX_WINDOWS_INSTALL_BYTES = [string]$manifest.artifact.bytes
+          $env:EQUINOX_WINDOWS_INSTALL_TARGET = [string]$manifest.target
+          $env:EQUINOX_WINDOWS_INSTALL_SOURCE_SHA = [string]$manifest.sourceSha
+          Add-Type -AssemblyName System.IO.Compression
+          $archive = [IO.Compression.ZipFile]::OpenRead($artifact)
+          try {
+            $entry = $archive.GetEntry('release/release.json')
+            if ($null -eq $entry -or $entry.Length -gt 16384) { throw 'Admitted A archive release metadata is missing or oversized.' }
+            $reader = New-Object IO.StreamReader($entry.Open(), (New-Object Text.UTF8Encoding($false, $true)))
+            try { $release = $reader.ReadToEnd() | ConvertFrom-Json } finally { $reader.Dispose() }
+          } finally { $archive.Dispose() }
+          if ($release.sourceSha -cne $env:OLD_SHA -or $release.target -cne $env:TARGET -or [string]$release.version -notmatch '^\d+\.\d+\.\d+$') { throw 'Admitted A release JSON identity mismatch.' }
+          $env:EQUINOX_WINDOWS_INSTALL_VERSION = [string]$release.version
+          $env:EQUINOX_WINDOWS_MAIN_ACCEPT_TARGET_SHA = $env:TARGET_SHA
+          & powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File tests/release/windows-installer-real-package-smoke.ps1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
