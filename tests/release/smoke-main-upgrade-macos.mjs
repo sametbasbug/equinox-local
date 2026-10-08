@@ -91,7 +91,7 @@ async function printApplyFailureEvidence(transactionRoot) {
   try {
     const result = await jsonApi("/api/v1/update");
     const main = result.update?.main;
-    console.error(`[M8 native diagnostic] applyError=${boundedDiagnostic(main?.applyError)} applyAvailable=${Boolean(main?.applyAvailable)} state=${boundedDiagnostic(main?.state)} transition=${boundedDiagnostic(main?.targetSha)}`);
+    console.error(`[M8 native diagnostic] checkError=${boundedDiagnostic(main?.lastError)} reason=${boundedDiagnostic(main?.reason)} applyError=${boundedDiagnostic(main?.applyError)} applyAvailable=${Boolean(main?.applyAvailable)} state=${boundedDiagnostic(main?.state)} transition=${boundedDiagnostic(main?.targetSha)}`);
   } catch { console.error("[M8 native diagnostic] updater snapshot unavailable"); }
   try {
     const root = path.join(transactionRoot, "receipts");
@@ -202,6 +202,9 @@ async function run() {
     const { csrfToken } = await jsonApi("/api/v1/session");
     await jsonApi("/api/v1/update/check", { mutate: true, token: csrfToken });
     const discovery = await jsonApi("/api/v1/update");
+    if (discovery.update?.main?.targetSha !== targetSha || discovery.update?.main?.applyAvailable !== true) {
+      await printApplyFailureEvidence(transactionRoot);
+    }
     assert.equal(discovery.update?.main?.targetSha, targetSha, "the separately admitted Main snapshot must be the exact target");
     assert.equal(discovery.update?.main?.applyAvailable, true);
     let injectionMarker = null;
