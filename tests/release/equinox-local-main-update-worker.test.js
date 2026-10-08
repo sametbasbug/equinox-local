@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import test from "node:test";
 
-import { restartEquinoxLocalMainSourceRuntime, runEquinoxLocalMainUpdateWorker, waitForExactSourceHealth } from "../../src/equinox-local-main-update-worker.js";
+import { resolveEquinoxLocalMainWorkerNativeInstallation, restartEquinoxLocalMainSourceRuntime, runEquinoxLocalMainUpdateWorker, waitForExactSourceHealth } from "../../src/equinox-local-main-update-worker.js";
 
 const TX = `main-${"a".repeat(32)}`;
 const SOURCE = "/private/tmp/equinox-source-a";
@@ -103,6 +106,33 @@ test("worker rejects a foreign transaction owner and still cleans the one-shot j
 });
 
 
+test("detached old-A macOS launchd worker reconstructs trusted managed release without forwarded identity fields", async (t) => {
+  const root = await fs.mkdtemp(path.join(await fs.realpath(os.tmpdir()), "equinox-worker-native-"));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const homeDir = path.join(root, "home");
+  const installRoot = path.join(homeDir, "Library", "Application Support", "Equinox Local");
+  const releaseDir = path.join(installRoot, "releases", "5.2.1");
+  await fs.mkdir(releaseDir, { recursive: true });
+  await fs.symlink(path.join("releases", "5.2.1"), path.join(installRoot, "current"));
+  const identity = await resolveEquinoxLocalMainWorkerNativeInstallation({
+    transactionRoot: path.join(installRoot, "main-update"), env: { HOME: homeDir, PATH: "/usr/bin:/bin" },
+    platform: "darwin", arch: "arm64",
+  });
+  assert.equal(identity.managed, true);
+  assert.equal(identity.selfUpdateSupported, true);
+  assert.equal(identity.target, "darwin-arm64");
+  assert.equal(identity.installRoot, installRoot);
+  assert.equal(identity.releaseDir, releaseDir);
+  await assert.rejects(resolveEquinoxLocalMainWorkerNativeInstallation({
+    transactionRoot: path.join(root, "other", "main-update"), env: { HOME: homeDir }, platform: "darwin", arch: "arm64",
+  }), /transaction root/u);
+  await fs.rm(path.join(installRoot, "current"));
+  await fs.symlink(path.join(root, "outside"), path.join(installRoot, "current"));
+  await assert.rejects(resolveEquinoxLocalMainWorkerNativeInstallation({
+    transactionRoot: path.join(installRoot, "main-update"), env: { HOME: homeDir }, platform: "darwin", arch: "arm64",
+  }));
+});
+
 test("worker prepares exact native candidate and durable rollback lifecycle before handoff", async () => {
   const events = [];
   const candidate = { sourceSha: B, target: "darwin-arm64", runtimeContractSha256: DIGEST_B, releaseDir: `${STATE}/staging/${TX}/native-candidate/release` };
@@ -119,6 +149,7 @@ test("worker prepares exact native candidate and durable rollback lifecycle befo
     engineFactory: () => engine,
     resolveHostTarget: () => "darwin-arm64",
     planNativeTransition: async (value) => { events.push(["plan", value]); return transition; },
+    resolveNativeInstallation: async () => ({ managed: true, selfUpdateSupported: true, target: "darwin-arm64" }),
     prepareNativeCandidate: async (value) => { events.push(["candidate", value]); return candidate; },
     prepareNativeLifecycle: async (value) => { events.push(["native-lifecycle", value]); return lifecycle; },
     handoffImpl: async (value) => { events.push(["handoff", value]); return { status: "succeeded" }; },
@@ -145,6 +176,7 @@ test("worker aborts its own prepared transaction when native admission revalidat
     engineFactory: () => engine,
     resolveHostTarget: () => "darwin-arm64",
     planNativeTransition: async () => transition,
+    resolveNativeInstallation: async () => ({ managed: true, selfUpdateSupported: true, target: "darwin-arm64" }),
     prepareNativeCandidate: async () => { throw new Error("local artifact digest drift"); },
     handoffImpl: async () => assert.fail("admission failure must happen before handoff"),
     cleanupImpl: async () => events.push(["cleanup"]),
@@ -165,6 +197,7 @@ test("worker resumes native_switched from durable native recovery without candid
   const result = await runEquinoxLocalMainUpdateWorker({
     argv: argv(), engineFactory: () => engine, resolveHostTarget: () => "darwin-arm64",
     planNativeTransition: async () => transition,
+    resolveNativeInstallation: async () => ({ managed: true, selfUpdateSupported: true, target: "darwin-arm64" }),
     prepareNativeCandidate: async () => assert.fail("recovery must not re-extract candidate"),
     prepareNativeLifecycle: async () => assert.fail("recovery must reconstruct durable lifecycle"),
     recoverNativeLifecycle: async (value) => { events.push(["recover-native", value]); return lifecycle; },
@@ -202,6 +235,7 @@ test("worker retains ownership as rollback_failed when post-switch native recove
   };
   await assert.rejects(runEquinoxLocalMainUpdateWorker({
     argv: argv(), engineFactory: () => engine, resolveHostTarget: () => "darwin-arm64", planNativeTransition: async () => transition,
+    resolveNativeInstallation: async () => ({ managed: true, selfUpdateSupported: true, target: "darwin-arm64" }),
     recoverNativeLifecycle: async () => { throw new Error("rollback descriptor drift"); }, cleanupImpl: async () => calls.push(["cleanup"]),
   }), /descriptor drift/u);
   assert.equal(calls[0][0], "rollback-failed");
