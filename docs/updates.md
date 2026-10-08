@@ -36,6 +36,12 @@ M8 fresh-install enrollment is now admitted on Main at `b73de11`. A verified Sta
 
 Windows x64 and ARM64 fresh-install acceptance exercise the same path. The 5.2.1 Windows shell also supervises its runtime through a product-owned Node gate inside the Job Object lifecycle and requires an explicit bounded child-start acknowledgement before considering startup released; the historical PowerShell gate remains only where older compatibility contracts still require it. A user does not need a separate Git/npm installation, Homebrew, Xcode Command Line Tools, Visual Studio build tools, or a particular `PATH`. Missing admitted native/prebuilt payloads fail closed instead of invoking a local compiler.
 
+## Existing Stable 5.2.x migration boundary
+
+A first install with admitted `sourceSha` enrolls managed-source only after Stable activation becomes healthy. An **existing** numbered Stable installation stays on Stable if the installer is run again; the downloaded candidate's `sourceSha` is not proof that a historical 5.2.x installation opted into Main.
+
+For deliberate same-version migration, the installer accepts `--enroll-existing-main` only with explicit operator intent and only when both the currently installed and staged verified Stable release contain **the same exact source SHA**. The installed release, not just the downloaded candidate, must carry that provenance; a legacy 5.2.0/5.2.x layout without it first requires a normal Stable update to a provenance-bearing version. A cross-version reinstall with Main opt-in is rejected in favor of the rollback-capable Stable updater (including Windows x64/ARM64 native-shell ownership). A failed source-health check rolls the Main pointer back and preserves healthy Stable. Ordinary uninstall removes validated product-owned source/update/toolchain state while preserving workspace and configuration; full uninstall removes the explicitly owned application-data boundary.
+
 ## Stable update manifests
 
 Runtime updates use JSON manifests signed with Ed25519. The shipped runtime contains only trusted public keys; release private keys must remain outside the repository.

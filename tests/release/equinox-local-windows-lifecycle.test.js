@@ -146,6 +146,9 @@ test("Windows clean-machine lifecycle preserves user state across uninstall/rein
   const configBefore = await fs.readFile(configPath, "utf8");
 
   const retryStage = await createStagedRelease({ installRoot: layout.appDataRoot, version: versions[0] });
+  const retryMetadataPath = path.join(retryStage, "release.json");
+  const retryMetadata = JSON.parse(await fs.readFile(retryMetadataPath, "utf8"));
+  await fs.writeFile(retryMetadataPath, `${JSON.stringify({ ...retryMetadata, sourceSha: "a".repeat(40) })}\n`);
   const retry = await installManagedEquinoxRelease({
     stagedReleaseDir: retryStage,
     homeDir,
@@ -158,6 +161,14 @@ test("Windows clean-machine lifecycle preserves user state across uninstall/rein
     waitForVersionImpl: async () => true,
   });
   assert.equal(retry.status, "already-installed");
+  assert.equal(retry.managedSourceSha, null, "Windows Stable 5.2.x must never silently switch to Main");
+  await assert.rejects(installManagedEquinoxRelease({
+    stagedReleaseDir: retryStage,
+    homeDir, platform: "win32", arch: WINDOWS_ARCH, target: WINDOWS_TARGET, env,
+    allowExistingStableToMainMigration: true,
+    initializeOnboardingImpl: async () => { throw new Error("Migration must fail before onboarding mutation"); },
+  }), /source provenance does not match/u);
+  assert.equal((await readManagedCurrentRelease(installationFor({ homeDir, env, version: versions[0] }))).version, versions[0]);
   await fs.rm(path.dirname(retryStage), { recursive: true, force: true });
 
   await addCandidateRelease({ homeDir, env, version: versions[1] });

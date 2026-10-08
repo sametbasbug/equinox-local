@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import test from "node:test";
 
-import { packageManagedEquinoxWindowsRelease, windowsManagedPackageContract, windowsManagedReleaseDestinationRelative } from "../../scripts/release/package-managed-release-windows.mjs";
+import { assertWindowsBatchQuotedPath, packageManagedEquinoxWindowsRelease, windowsManagedPackageContract, windowsManagedReleaseDestinationRelative } from "../../scripts/release/package-managed-release-windows.mjs";
 
 test("Windows managed package contract keeps x64 stable and defines explicit native ARM64 tooling", () => {
   const x64 = windowsManagedPackageContract();
@@ -220,4 +220,18 @@ test("Windows shell runtime gate is product-owned Node with explicit child-start
   assert.match(gate, /child\.once\("spawn"/u);
   assert.match(gate, /process\.stdout\.write/u);
   assert.doesNotMatch(gate, /powershell|cmd\.exe|shell:\s*true/iu);
+});
+
+
+test("Windows VC and C++ compile script paths reject CMD metacharacters before script creation", () => {
+  const safe = "C:\\Program Files (x86)\\Microsoft Visual Studio\\2022\\VC\\Auxiliary\\Build\\vcvars64.bat";
+  assert.equal(assertWindowsBatchQuotedPath(safe), safe);
+  assert.equal(assertWindowsBatchQuotedPath("D:\\a\\equinox-local\\native\\windows\\job-object.cpp"), "D:\\a\\equinox-local\\native\\windows\\job-object.cpp");
+  for (const value of [
+    `${safe}" & whoami & rem \"`, `${safe}%USERNAME%`, `${safe}!USERNAME!`, `${safe}&echo injected`,
+    `${safe}|echo injected`, `${safe}^&echo`, `${safe}\r\necho injected`, `${safe}<input`, `${safe}>output`,
+    "C:relative\\vcvars64.bat", "\\\\server\\share\\vcvars64.bat", "", null,
+  ]) {
+    assert.throws(() => assertWindowsBatchQuotedPath(value), /unsafe CMD characters/u);
+  }
 });

@@ -318,6 +318,7 @@ export async function installManagedEquinoxRelease({
   platform = process.platform,
   arch = process.arch,
   target = null,
+  allowExistingStableToMainMigration = false,
   env = process.env,
   fsImpl = fs,
   execFileImpl = execFile,
@@ -350,6 +351,9 @@ export async function installManagedEquinoxRelease({
   if (!homeStat.isDirectory() || homeStat.isSymbolicLink()) throw new Error("The current HOME directory is unsafe.");
   if (platform === "darwin" && Number.isInteger(homeStat.uid) && homeStat.uid !== uid) throw new Error("The current HOME directory is not owned by the current user.");
 
+  if (typeof allowExistingStableToMainMigration !== "boolean") {
+    throw new Error("Existing Stable-to-Main migration requires an explicit boolean opt-in.");
+  }
   const paths = managedSupervisorPaths(homeDir, { platform, arch, env });
   const stagingRoot = pathApi.join(paths.installRoot, "staging");
   await assertOwnedNormalDirectory(paths.installRoot, { uid, platform, fsImpl, create: true });
@@ -438,12 +442,26 @@ export async function installManagedEquinoxRelease({
       });
     }
     if (comparison === 0) {
+      // Re-running the website installer is not consent to move an existing
+      // numbered Stable installation onto Main. Explicit migration requires
+      // matching installed provenance, not just the staged download's stamp.
+      if (allowExistingStableToMainMigration) {
+        if (!candidate.metadata?.sourceSha) {
+          throw new Error("Stable-to-Main migration requires exact source provenance in the requested Stable release.");
+        }
+        const installed = await validateFirstInstallRelease(current.releaseDir, { target: expectedTarget, fsImpl });
+        if (installed.version !== current.version || installed.metadata.sourceSha !== candidate.metadata.sourceSha) {
+          throw new Error("Existing Stable release source provenance does not match the requested Main enrollment.");
+        }
+      }
       const installation = installationFor(paths, current.releaseDir, { platform, arch, target: expectedTarget });
       const bootstrap = await bootstrapImpl({ homeDir, platform, arch, env, fsImpl });
       await initializeOnboardingImpl({ installation, homeDir });
       await startRuntime(installation);
       await waitForVersionImpl(current.version, equinoxLocalFirstInstallHealthBudget({ platform, arch }));
-      const enrollment = await enrollAfterStableHealth(installation, candidate);
+      const enrollment = allowExistingStableToMainMigration
+        ? await enrollAfterStableHealth(installation, candidate)
+        : null;
       return Object.freeze({
         status: "already-installed",
         version: current.version,
@@ -451,6 +469,9 @@ export async function installManagedEquinoxRelease({
         configCreated: Boolean(bootstrap.configCreated),
         controlCenterUrl: bootstrap.controlCenterUrl || "http://127.0.0.1:24891/",
       });
+    }
+    if (allowExistingStableToMainMigration) {
+      throw new Error("Upgrade the existing Stable release with the Stable updater before explicitly enrolling Main; installer migration cannot replace a different active Stable version.");
     }
     if (platform === "win32") {
       throw new Error("Windows bootstrap update/reinstall is not enabled yet; use the installed updater once the stable-shell replacement checkpoint is complete.");
@@ -527,15 +548,16 @@ export async function installManagedEquinoxRelease({
 }
 
 function parseCli(argv) {
-  if (argv.length !== 2 || argv[0] !== "--staged-release" || !path.isAbsolute(argv[1])) {
-    throw new Error("Usage: equinox-local-first-install.js --staged-release /absolute/path/to/release");
+  if ((argv.length !== 2 && argv.length !== 3) || argv[0] !== "--staged-release" || !path.isAbsolute(argv[1]) ||
+      (argv.length === 3 && argv[2] !== "--enroll-existing-main")) {
+    throw new Error("Usage: equinox-local-first-install.js --staged-release /absolute/path/to/release [--enroll-existing-main]");
   }
-  return argv[1];
+  return { stagedReleaseDir: argv[1], allowExistingStableToMainMigration: argv.length === 3 };
 }
 
 const invokedPath = process.argv[1] ? path.resolve(process.argv[1]) : null;
 if (invokedPath && path.basename(invokedPath) === path.basename(fileURLToPath(import.meta.url))) {
-  installManagedEquinoxRelease({ stagedReleaseDir: parseCli(process.argv.slice(2)) })
+  installManagedEquinoxRelease(parseCli(process.argv.slice(2)))
     .then((result) => process.stdout.write(`${JSON.stringify(result, null, 2)}\n`))
     .catch((error) => {
       process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
