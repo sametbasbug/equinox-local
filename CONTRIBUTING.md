@@ -10,7 +10,7 @@ Private factory/ops tooling consumes accepted canonical source for maintainer-au
 
 ## Before you start
 
-Equinox Local currently targets macOS. Use Node.js 26.10.0 or newer.
+Equinox Local targets macOS and Windows on ARM64/x64. Use the pinned **Node.js 26.11.1** for development (see `src/equinox-local-runtime-versions.js` for release toolchain contracts). Windows native-shell work may additionally require the platform SDKs/tooling exercised in CI; ordinary users do not need those tools installed.
 
 ```bash
 npm ci
@@ -61,11 +61,9 @@ If a feature appears to require relaxing one of these rules, discuss the design 
 
 ## Continuous integration
 
-CI and CodeQL run on both pull requests and `main`. The complete macOS test suite, Windows x64 acceptance and native ARM64 acceptance remain enabled for every change; no path-based skips or reuse of a different commit's successful checks is involved.
+Product-impacting changes run the required CI/CodeQL and macOS/Windows native acceptance gates. **Documentation/metadata-only changes** use a separate lightweight Docs workflow and do not advance the admitted `main-snapshot` runtime SHA. CI status is visible on each PR; do not publish a numbered Stable release from PR checks alone.
 
-Native ARM64 runtime, packaged Desktop/UIA and real public-installer acceptance start on independent runners. The package and installer lanes use the same maintained composite preparation action to install locked native dependencies and build and validate their own exact-checkout managed ZIP. Independent npm installation and native shell publishing also run in parallel within preparation; packaging cannot start until both have succeeded, and preparation cleans up only its own background job. A bounded second package build removes the serial artifact dependency and keeps preparation and installation on the same runner; each consumer still checks its prepared ZIP's SHA-256 and byte count before acceptance. No package from another run or previously successful commit is reused.
-
-The existing `Windows ARM64 foundation / Node 26` and `Windows x64 headless / Node 26` check names remain fail-closed aggregate gates: a failed, cancelled or skipped acceptance lane cannot produce a successful aggregate. npm and architecture-scoped NuGet caches save downloads; dependency installation, native builds and smoke tests still execute.
+macOS/Windows ARM64 and x64 release artifacts and installer smoke have separate platform ownership. Native packaging cannot borrow a successful test or artifact from a different commit. See [architecture](docs/architecture.md) and [updates](docs/updates.md) for the detailed admission and rollback model.
 
 ## Tests
 

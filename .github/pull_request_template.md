@@ -1,25 +1,24 @@
-## What changed
+## Summary
 
-<!-- Describe the user-visible or architectural change. -->
+<!-- What changed, and why does it matter to users or maintainers? Keep it brief. -->
 
-## Why
+## Scope
 
-<!-- What problem does this solve? -->
+<!-- macOS, Windows, Browser, Control Center, Telegram, update/release, docs only, etc. -->
 
-## Security boundaries
+## Verification
 
-- [ ] I did not add a generic shell/command execution surface.
-- [ ] Project and file access remains explicit and path-contained.
-- [ ] Credentials, runtime keys, private paths and sensitive machine details are not exposed.
-- [ ] Equinox Browser remains the only product browser-automation lane.
-- [ ] Equinox Local updates do not sideload or overwrite the Chrome extension.
+<!-- Tick what you ran. Docs/metadata-only PRs do not need full product/native tests. -->
 
-## Validation
+- [ ] `npm run check` (or equivalent focused check)
+- [ ] `npm run test:fast` / focused tests (if behavior changed)
+- [ ] `npm test` / platform-specific acceptance (if native, installer, updater or release behavior changed)
+- [ ] Not applicable — documentation/metadata only
 
-- [ ] `npm run check`
-- [ ] `npm test`
-- [ ] Relevant new/changed behavior has tests
+## Boundaries & rollout
 
-## Notes
+- [ ] New/changed permissions, file/terminal scope, secrets, Browser context and update-channel behavior are documented (or none changed).
+- [ ] No private credentials, personal machine paths, generated release archives or unredacted diagnostics were committed.
+- [ ] User-facing changes have updated docs and regression coverage where appropriate.
 
-<!-- Screenshots, migration notes, follow-up work, or anything reviewers should know. -->
+<!-- Screenshots for UI changes, migration details, known limitations, or follow-up work. -->

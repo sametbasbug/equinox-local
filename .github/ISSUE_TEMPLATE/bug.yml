@@ -1,18 +1,56 @@
-name: Bug report
-description: Report a reproducible Equinox Local problem
+name: 🐛 Bug report
+description: Report a reproducible Equinox Local or Equinox Browser problem
 title: "[Bug]: "
 labels: [bug]
 body:
   - type: markdown
     attributes:
       value: |
-        Thanks for helping improve Equinox Local. Please do not include credentials, runtime keys, private file contents, or other secrets.
+        Thank you for reporting a bug! **Do not paste API keys, tokens, private file contents, account identifiers or unredacted logs.** For vulnerabilities, use [private security reporting](https://github.com/sametbasbug/equinox-local/security/advisories/new).
+  - type: dropdown
+    id: component
+    attributes:
+      label: Which part?
+      options:
+        - Equinox Local / Control Center
+        - Equinox Browser (Chrome extension)
+        - Telegram / Task Capsules
+        - Installer / updates
+        - Terminal / desktop automation
+        - Other / not sure
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Operating system & architecture
+      options:
+        - macOS (Apple silicon / ARM64)
+        - macOS (Intel / x64)
+        - Windows (ARM64)
+        - Windows (x64)
+        - Not sure / does not apply
+    validations:
+      required: true
+  - type: input
+    id: versions
+    attributes:
+      label: Versions
+      description: Equinox Local Stable version or Main version + short SHA; add Browser version when relevant.
+      placeholder: "Equinox Local 6.0.0 (Stable), Browser 1.0.0"
+    validations:
+      required: true
   - type: textarea
-    id: summary
+    id: actual
     attributes:
       label: What happened?
-      description: Describe the problem and what you expected instead.
-      placeholder: A clear, concise description of the behavior.
+      description: Include any error message, with private details removed.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect?
     validations:
       required: true
   - type: textarea
@@ -21,44 +59,20 @@ body:
       label: Steps to reproduce
       placeholder: |
         1. Open ...
-        2. Run ...
+        2. Choose ...
         3. Observe ...
-    validations:
-      required: true
-  - type: input
-    id: version
-    attributes:
-      label: Equinox Local version
-      placeholder: e.g. 4.2.0
-    validations:
-      required: true
-  - type: dropdown
-    id: architecture
-    attributes:
-      label: Mac architecture
-      options:
-        - Apple silicon (arm64)
-        - Intel (x86_64)
-        - Not sure
-    validations:
-      required: true
-  - type: input
-    id: macos
-    attributes:
-      label: macOS version
-      placeholder: e.g. macOS 15.x
     validations:
       required: true
   - type: textarea
     id: diagnostics
     attributes:
-      label: Safe diagnostics
-      description: Paste only redacted output from System Doctor or other non-secret diagnostics.
+      label: Optional diagnostics
+      description: Share redacted System Doctor output, screenshots or logs (no credentials, chat transcripts or private paths).
       render: text
   - type: checkboxes
-    id: checks
+    id: safety
     attributes:
-      label: Safety check
+      label: Before submitting
       options:
-        - label: I removed credentials, tokens, private keys and sensitive file contents from this report.
+        - label: I removed credentials, secrets and personal information from this report.
           required: true

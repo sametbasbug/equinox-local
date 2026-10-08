@@ -6,7 +6,7 @@ Equinox Local is a local control plane with intentionally security-sensitive bou
 
 Please **do not open a public issue for an unpatched vulnerability**.
 
-Report security issues to **iletisim@sametbasbug.dev** with:
+Report security issues privately through [GitHub Security Advisories](https://github.com/sametbasbug/equinox-local/security/advisories/new) (preferred), or by email to **iletisim@sametbasbug.dev**, with:
 
 - the affected Equinox Local / Equinox Browser version or commit;
 - the operating-system and architecture involved;
@@ -30,7 +30,7 @@ Reports are especially useful when they demonstrate a concrete bypass of one of 
 - Managed update manifests cannot be accepted without a trusted Ed25519 signature and pinned update origin.
 - A failed managed update cannot silently replace the last verified healthy release.
 - Detached helpers do not inherit provider credentials or arbitrary command arguments.
-- Optional desktop control cannot escape the documented reduced Peekaboo allowlist.
+- Optional desktop control must respect the documented, bounded platform-specific Peekaboo (macOS) or winapp (Windows) automation surface.
 
 ## Out of scope
 
@@ -44,7 +44,7 @@ The following are generally not vulnerabilities by themselves:
 
 ## Automated security scanning
 
-The public repository runs a GitHub CodeQL workflow for JavaScript/TypeScript using the `security-extended` query suite alongside the normal macOS and Windows x64 CI/test suites. Private factory/release infrastructure is kept outside the public source boundary rather than relying on a private-publication staging mode for security coverage.
+The public repository runs a GitHub CodeQL workflow for JavaScript/TypeScript using the `security-extended` query suite alongside the normal macOS and Windows x64/ARM64 CI/test suites. Private factory/release infrastructure is kept outside the public source boundary rather than relying on a private-publication staging mode for security coverage.
 
 CodeQL is a supplement to the explicit security-boundary tests in this repository, not a replacement for them.
 
