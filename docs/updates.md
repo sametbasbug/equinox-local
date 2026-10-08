@@ -42,6 +42,10 @@ A first install with admitted `sourceSha` enrolls managed-source only after Stab
 
 For deliberate same-version migration, the installer accepts `--enroll-existing-main` only with explicit operator intent and only when both the currently installed and staged verified Stable release contain **the same exact source SHA**. The installed release, not just the downloaded candidate, must carry that provenance; a legacy 5.2.0/5.2.x layout without it first requires a normal Stable update to a provenance-bearing version. A cross-version reinstall with Main opt-in is rejected in favor of the rollback-capable Stable updater (including Windows x64/ARM64 native-shell ownership). A failed source-health check rolls the Main pointer back and preserves healthy Stable. Ordinary uninstall removes validated product-owned source/update/toolchain state while preserving workspace and configuration; full uninstall removes the explicitly owned application-data boundary.
 
+## Main A → B API and transaction acceptance
+
+The Control Center Main `Update & restart` action maps to the same-origin/CSRF-protected `/api/v1/update/check` and `/api/v1/update/apply` routes. Main runtime admission is pinned to the `main-snapshot` SHA and must not mutate source A before the durable worker handoff. A local exact-Git integration acceptance exercises source A and source B as separate commits through the real API and transaction engine; it validates both `reuse_native` and `artifact_required` planning, a separate Node process reading the promoted pointer, and successful B health or forced A rollback. Windows x64 and native ARM64 execute these paths in the runtime CI lanes. This source/HTTP/process-chain test supplements, but does not replace, end-to-end OS native shell and real Control Center installed-machine acceptance required to close M8.
+
 ## Stable update manifests
 
 Runtime updates use JSON manifests signed with Ed25519. The shipped runtime contains only trusted public keys; release private keys must remain outside the repository.

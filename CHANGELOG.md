@@ -5,6 +5,8 @@ All notable public changes to Equinox Local will be documented here.
 This project follows semantic versioning for public releases.
 
 ## [Unreleased]
+- Added real Git A→B Control Center loopback check/apply acceptance with durable Main source transactions, fresh subprocess SHA/health inspection, reusable native versus artifact-required handoff, and forced rollback-to-A coverage on macOS plus native Windows x64/ARM64 CI. Full native desktop lifecycle remains a separate M8 exit gate.
+- Updated Windows managed release build to invoke fixed relative batch script names under the exact build working directory instead of interpolating an environment-derived absolute `.cmd` path into `cmd.exe /c` (CodeQL Medium #49 follow-up).
 - Guarded legacy 5.2.x Stable-to-Main migration: an existing numbered Stable installation is never enrolled by a routine installer retry, and explicit `--enroll-existing-main` requires matching source provenance in the already installed and staged Stable release before any lifecycle mutation. Windows native lifecycle acceptance covers the opt-in rejection path.
 - Restricted dynamically generated Windows MSVC `.cmd` batch operands to validated absolute drive paths without CMD metacharacters, addressing CodeQL Medium alert #49 without weakening x64/ARM64 packaging.
 - Hardened legacy 5.2.x and managed-source uninstall ownership: preserve-data mode removes product-owned runtime/toolchain and admitted Main source/update state while keeping workspace/config, refuses foreign source pointers and symlinked runtime directories, and leaves unstamped unknown state untouched. Full uninstall still removes the exact managed application-data boundary.
