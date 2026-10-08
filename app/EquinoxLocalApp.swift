@@ -78,8 +78,24 @@ private enum NativeLanguage: String {
 }
 
 private func runtimeWrapperURL() -> URL {
-    FileManager.default.homeDirectoryForCurrentUser
-        .appendingPathComponent("Library/Application Support/Equinox Local/equinox-local-app-runtime")
+    let defaultRoot = FileManager.default.homeDirectoryForCurrentUser
+        .appendingPathComponent("Library/Application Support/Equinox Local", isDirectory: true)
+    let environment = ProcessInfo.processInfo.environment
+    // Only the managed, explicitly marked LaunchAgent runtime host may use an
+    // alternate HOME. The install root must be exactly the canonical app data
+    // directory under that HOME, never an arbitrary launcher-selected path.
+    if environment["EQUINOX_LOCAL_RUNTIME_HOST"] == "1",
+       let home = environment["HOME"], home.hasPrefix("/"),
+       let root = environment["EQUINOX_LOCAL_INSTALL_ROOT"], root.hasPrefix("/") {
+        let homeURL = URL(fileURLWithPath: home, isDirectory: true).standardizedFileURL
+        let rootURL = URL(fileURLWithPath: root, isDirectory: true).standardizedFileURL
+        let expectedRoot = homeURL
+            .appendingPathComponent("Library/Application Support/Equinox Local", isDirectory: true)
+        if homeURL.path == home, rootURL.path == root, rootURL.path == expectedRoot.path {
+            return rootURL.appendingPathComponent("equinox-local-app-runtime")
+        }
+    }
+    return defaultRoot.appendingPathComponent("equinox-local-app-runtime")
 }
 
 private func shouldRunAsRuntimeHost() -> Bool {
