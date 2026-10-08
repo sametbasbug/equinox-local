@@ -10,6 +10,14 @@ on:
         required: true
         default: e6f5fa6e1d264c233c94c4e87097e53b9bb6288a
         type: string
+      scenario:
+        description: Native installed-host path to accept
+        required: true
+        default: positive
+        type: choice
+        options:
+          - positive
+          - target-health-failure
 
 permissions:
   contents: read
@@ -82,6 +90,7 @@ jobs:
         shell: bash
         env:
           TARGET_SHA: ${{ steps.identity.outputs.target_sha }}
+          M8_ACCEPTANCE_SCENARIO: ${{ inputs.scenario }}
         run: |
           set -euo pipefail
           node tests/release/smoke-main-upgrade-macos.mjs "$OLD_RELEASE_ARTIFACT" "$OLD_SHA" "$TARGET_SHA"
