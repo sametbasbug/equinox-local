@@ -293,6 +293,16 @@ async function portableExecutableMachine(filePath) {
   return bytes.readUInt16LE(peOffset + 4);
 }
 
+// These arguments are embedded into a .cmd file, not passed directly to an
+// executable. Reject CMD metacharacters rather than trusting runner environment
+// or checkout paths just because a corresponding filesystem entry exists.
+export function assertWindowsBatchQuotedPath(value) {
+  if (typeof value !== "string" || !/^[A-Za-z]:\\[A-Za-z0-9 _().\\-]+$/u.test(value)) {
+    throw new Error("Windows native compile path contains unsafe CMD characters.");
+  }
+  return value;
+}
+
 async function resolveVisualStudioVcvars(contract) {
   const programFilesX86 = process.env["ProgramFiles(x86)"];
   if (!programFilesX86) throw new Error("ProgramFiles(x86) is unavailable.");
@@ -314,7 +324,7 @@ async function resolveVisualStudioVcvars(contract) {
   const vcvars = path.join(installation, "VC", "Auxiliary", "Build", vcvarsName);
   const stat = await fs.lstat(vcvars).catch((error) => error?.code === "ENOENT" ? null : Promise.reject(error));
   if (!stat?.isFile() || stat.isSymbolicLink()) throw new Error(`Visual Studio target environment is unavailable for ${contract.target}.`);
-  return vcvars;
+  return assertWindowsBatchQuotedPath(vcvars);
 }
 
 export async function compileWindowsJobObjectHelper({
@@ -327,7 +337,7 @@ export async function compileWindowsJobObjectHelper({
   const vcvars = await resolveVisualStudioVcvars(contract);
   const destination = path.resolve(outputDir);
   await fs.mkdir(destination, { recursive: true });
-  const source = path.join(rootDir, "native", "windows", "equinox-local-job-object-helper.cpp");
+  const source = assertWindowsBatchQuotedPath(path.join(rootDir, "native", "windows", "equinox-local-job-object-helper.cpp"));
   const compileScript = path.join(destination, ".compile-job-object-helper.cmd");
   const script = [
     "@echo off",
@@ -354,7 +364,7 @@ async function compileBrowserLauncher(rootDir, releaseDir, contract) {
   const browserDir = path.join(releaseDir, "runtime", "browser");
   await fs.mkdir(browserDir, { recursive: true });
   const vcvars = await resolveVisualStudioVcvars(contract);
-  const source = path.join(rootDir, "native", "windows", "equinox-browser-native-host-launcher.cpp");
+  const source = assertWindowsBatchQuotedPath(path.join(rootDir, "native", "windows", "equinox-browser-native-host-launcher.cpp"));
   const compileScript = path.join(browserDir, ".compile-browser-launcher.cmd");
   const script = [
     "@echo off",

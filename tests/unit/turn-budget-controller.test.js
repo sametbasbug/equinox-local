@@ -219,7 +219,7 @@ test("passive refresh clears a finished browser turn without starting the next t
 test("passive refresh preserves browser timer when identity probing is temporarily unavailable", async () => {
   let now = 0;
   let probe = { browserContext: "user", conversationId: "chat-1", userEpoch: "user-a", assistantTurnKey: "turn-a" };
-  const controller = createTurnBudgetController({ now: () => now, resolveTurnIdentity: async () => probe });
+  const controller = createTurnBudgetController({ settingsPath: TEST_SETTINGS_PATH, now: () => now, resolveTurnIdentity: async () => probe });
   await controller.initialize();
   await controller.prepareInvocation("runtime_call", { operation: "status", arguments: {} });
   now = 45_000;
@@ -232,7 +232,7 @@ test("passive refresh preserves browser timer when identity probing is temporari
 test("passive refresh retires an old turn when a different browser turn is already generating", async () => {
   let now = 0;
   let probe = { browserContext: "user", conversationId: "chat-1", userEpoch: "user-a", assistantTurnKey: "turn-a" };
-  const controller = createTurnBudgetController({ now: () => now, resolveTurnIdentity: async () => probe });
+  const controller = createTurnBudgetController({ settingsPath: TEST_SETTINGS_PATH, now: () => now, resolveTurnIdentity: async () => probe });
   await controller.initialize();
   await controller.prepareInvocation("runtime_call", { operation: "status", arguments: {} });
   now = 20_000;
