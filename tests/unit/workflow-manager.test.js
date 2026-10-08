@@ -280,3 +280,30 @@ test("terminal workflow records can be removed but active records are protected"
   await assert.rejects(fs.access(path.join(root, `${started.workflowId}.json`)));
   await assert.rejects(fs.access(path.join(root, `${started.workflowId}.log`)));
 });
+
+test("terminal workflow status is visible only after the matching disk state is durable", async (t) => {
+  const root = await createTempRoot(t);
+  const manager = createWorkflowManager({
+    rootDir: root,
+    executeStep: async ({ step }) => {
+      if (step.id === "failing") throw new Error("fixture failure");
+      return { ok: true };
+    },
+  });
+  await manager.initialize();
+  for (let i = 0; i < 14; i += 1) {
+    const failed = i % 3 === 0;
+    const started = await manager.start(sampleStart({
+      label: `terminal-persistence-${i}`,
+      steps: [{ id: failed ? "failing" : "success", kind: "fake", label: "Acceptance" }],
+    }));
+    const terminalStatus = failed ? "failed" : "completed";
+    const visible = await waitForStatus(manager, started.workflowId, terminalStatus);
+    // No retry or sleeps here: an observable terminal status must have already
+    // published its matching terminal JSON even under a saturated I/O runner.
+    const disk = JSON.parse(await fs.readFile(path.join(root, `${started.workflowId}.json`), "utf8"));
+    assert.equal(disk.status, visible.status);
+    assert.equal(disk.completedAt, visible.completedAt);
+    assert.equal(disk.steps.at(-1).status, visible.steps.at(-1).status);
+  }
+});

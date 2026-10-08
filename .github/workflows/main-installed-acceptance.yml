@@ -1,0 +1,77 @@
+name: Main Installed Upgrade Acceptance
+
+# Expensive, isolated real native-host smoke. It is deliberately not part of
+# the routine PR/push gate, and never runs on a developer's Mac mini.
+on:
+  workflow_dispatch:
+    inputs:
+      previous_main_sha:
+        description: Exact previously admitted Main SHA to install as A
+        required: true
+        default: e6f5fa6e1d264c233c94c4e87097e53b9bb6288a
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: main-installed-acceptance
+  cancel-in-progress: false
+
+jobs:
+  macos-arm64:
+    name: macOS ARM64 real installed A-to-Main upgrade
+    runs-on: macos-latest
+    timeout-minutes: 25
+    env:
+      OLD_SHA: ${{ inputs.previous_main_sha }}
+      EXPECTED_REPOSITORY: sametbasbug/equinox-local
+    steps:
+      - name: Checkout current canonical product
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install Node 26
+        uses: actions/setup-node@v7
+        with:
+          node-version: 26.10.0
+          cache: npm
+
+      - name: Check isolated runner and admitted snapshot SHA
+        id: identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(node -p 'process.platform + "/" + process.arch')" = 'darwin/arm64'
+          test "$GITHUB_REPOSITORY" = "$EXPECTED_REPOSITORY"
+          [[ "$OLD_SHA" =~ ^[a-f0-9]{40}$ ]]
+          git cat-file -e "$OLD_SHA^{commit}"
+          current="$(git rev-parse HEAD)"
+          tag="$(git ls-remote origin refs/tags/main-snapshot | cut -f1)"
+          [[ "$tag" =~ ^[a-f0-9]{40}$ ]]
+          test "$tag" = "$current" || { echo 'The latest canonical commit is not yet admitted by Main snapshot; refusing live acceptance.' >&2; exit 1; }
+          test "$OLD_SHA" != "$tag"
+          git merge-base --is-ancestor "$OLD_SHA" "$tag"
+          echo "target_sha=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Build previously admitted A release in an ephemeral runner worktree
+        shell: bash
+        run: |
+          set -euo pipefail
+          git worktree add --detach "$RUNNER_TEMP/equinox-old-main" "$OLD_SHA"
+          cd "$RUNNER_TEMP/equinox-old-main"
+          npm ci --prefer-offline --no-audit --no-fund
+          npm run local:release:package
+          artifact="backups/local-packages/equinox-local-5.2.1-darwin-arm64.tar.gz"
+          test -s "$artifact"
+          echo "OLD_RELEASE_ARTIFACT=$PWD/$artifact" >> "$GITHUB_ENV"
+
+      - name: Install old Main A and run actual LaunchAgent Control Center upgrade to admitted B
+        shell: bash
+        env:
+          TARGET_SHA: ${{ steps.identity.outputs.target_sha }}
+        run: |
+          set -euo pipefail
+          node tests/release/smoke-main-upgrade-macos.mjs "$OLD_RELEASE_ARTIFACT" "$OLD_SHA" "$TARGET_SHA"
