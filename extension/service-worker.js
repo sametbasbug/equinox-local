@@ -1513,8 +1513,37 @@ async function deliverChatBridgeMessage({
     if (!submitReady) throw new Error(`Chat Bridge submit target timed out: ${lastSubmitReason}.`);
     stage = "submit_ready";
 
-    await clickSelectorWithActionability(tabId, chatBridgeSendSelector, { label: "Chat Bridge send button" });
-    stage = "clicked";
+    // Activating the exact submit control with a trusted Enter key avoids a
+    // coordinate click against ChatGPT's moving, 36px composer action. A
+    // missed mouse click previously left the Telegram message staged forever.
+    // Do not fall back to a second submit: the durable receipt owns this one
+    // attempt, and only a changed user epoch can confirm delivery.
+    const submitFocus = await send(tabId, "Runtime.evaluate", {
+      expression: `(() => {
+        // Chat Bridge coordinate-free submit: focus the trusted Send button.
+        const composer = document.querySelector('#prompt-textarea[contenteditable="true"][role="textbox"], [data-composer-markdown][contenteditable="true"][role="textbox"]');
+        const button = document.querySelector(${JSON.stringify(chatBridgeSendSelector)});
+        if (!composer || String(composer.textContent || '') !== ${JSON.stringify(message)}) return { focused: false, reason: "composer_changed" };
+        if (!button || !button.isConnected || button.type !== 'submit') return { focused: false, reason: "send_button_missing" };
+        const form = composer.closest('form');
+        if (!form || button.closest('form') !== form) return { focused: false, reason: "send_button_scope_changed" };
+        if (button.disabled || button.getAttribute('aria-disabled') === 'true') return { focused: false, reason: "send_disabled" };
+        button.focus({ preventScroll: true });
+        return { focused: document.activeElement === button, reason: document.activeElement === button ? null : "send_focus_failed" };
+      })()`,
+      returnByValue: true,
+      silent: true,
+    });
+    if (submitFocus?.exceptionDetails || submitFocus?.result?.value?.focused !== true) {
+      const reason = submitFocus?.exceptionDetails?.exception?.description
+        || submitFocus?.exceptionDetails?.text
+        || submitFocus?.result?.value?.reason
+        || "unknown";
+      throw new Error(`Chat Bridge could not focus the trusted Send button: ${reason}.`);
+    }
+    stage = "submit_focused";
+    await dispatchKeyChord(tabId, "Enter");
+    stage = "submitted_keyboard";
 
     const deadline = Date.now() + 6_000;
     while (Date.now() < deadline) {
