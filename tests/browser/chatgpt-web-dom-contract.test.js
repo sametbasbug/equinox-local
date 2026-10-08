@@ -38,3 +38,11 @@ test("Chat Bridge final response reads the exact modern assistant message inside
   assert.match(responseReader, /modernAssistant\.querySelector\('\[data-chatgpt-selection-message-id\]'\)/u);
   assert.match(responseReader, /if \(!root\) return \{ found: false \}/u);
 });
+
+
+test("Fresh Chat Resume rejects a non-empty modern turn before submission", () => {
+  const reader = browser.slice(browser.indexOf("async function freshChatComposerState("), browser.indexOf("async function waitForFreshChatHome("));
+  assert.match(reader, /const modernTurns = document\.querySelectorAll\('\[data-turn-key\]'\)/u);
+  assert.match(reader, /userTurnCount: userTurns\.length \+ modernTurns\.length/u);
+  assert.match(browser, /if \(state\.userTurnCount \|\| state\.assistantTurnCount\) throw new Error\("Fresh Chat Resume destination is not an empty conversation\."\)/u);
+});

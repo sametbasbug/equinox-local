@@ -676,10 +676,13 @@ async function freshChatComposerState(tabId) {
         const composer = document.querySelector('#prompt-textarea[contenteditable="true"][role="textbox"], [data-composer-markdown][contenteditable="true"][role="textbox"]');
         const userTurns = document.querySelectorAll('[data-message-author-role="user"], section[data-turn="user"]');
         const assistantTurns = document.querySelectorAll('[data-message-author-role="assistant"], section[data-turn="assistant"]');
+        const modernTurns = document.querySelectorAll('[data-turn-key]');
+        // Modern ChatGPT removed the legacy role nodes. A hydrated turn on a
+        // supposedly new/empty destination must fail closed before any send.
         return {
           composerReady: Boolean(composer),
           composerEmpty: Boolean(composer) && !String(composer.textContent || '').trim(),
-          userTurnCount: userTurns.length,
+          userTurnCount: userTurns.length + modernTurns.length,
           assistantTurnCount: assistantTurns.length,
         };
       })()`,
