@@ -7,3 +7,8 @@ coverage/
 .env
 .env.*
 !.env.example
+
+# Generated .NET shell build outputs must not dirty an immutable release checkout.
+native/windows/**/bin/
+native/windows/**/obj/
+artifacts/windows-shell/
