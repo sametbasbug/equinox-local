@@ -16,6 +16,7 @@ import {
 } from "../../src/equinox-local-native-app.js";
 import {
   restoreLegacyEquinoxLocalAppHost,
+  synchronizeEquinoxLocalAppHostForRelease,
   synchronizeEquinoxLocalNativeAppHost,
 } from "../../src/equinox-local-native-app-host.js";
 
@@ -347,10 +348,13 @@ macTest("native app host migrates legacy bundle once and restores it for rollbac
   assert.equal(sameShellChangedArtifact.changed, false);
   assert.deepEqual(await fs.readFile(installedExecutable), stableInstalledBytes);
 
-  const strictMainPayload = await synchronizeEquinoxLocalNativeAppHost({ homeDir, releaseDir, requirePayloadIdentity: true });
+  // Exercise the real managed-release wrapper used by Main activation, not
+  // only its low-level synchronizer: the strict payload policy must cross it.
+  const installation = { installRoot: path.join(homeDir, "Library", "Application Support", "Equinox Local") };
+  const strictMainPayload = await synchronizeEquinoxLocalAppHostForRelease({ installation, releaseDir, requirePayloadIdentity: true });
   assert.equal(strictMainPayload.changed, true);
   assert.notDeepEqual(await fs.readFile(installedExecutable), stableInstalledBytes);
-  const strictMainPayloadAgain = await synchronizeEquinoxLocalNativeAppHost({ homeDir, releaseDir, requirePayloadIdentity: true });
+  const strictMainPayloadAgain = await synchronizeEquinoxLocalAppHostForRelease({ installation, releaseDir, requirePayloadIdentity: true });
   assert.equal(strictMainPayloadAgain.changed, false);
 
   await fs.appendFile(installedExecutable, Buffer.from([0]));
