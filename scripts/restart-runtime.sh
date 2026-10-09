@@ -331,6 +331,13 @@ DOMAIN="gui/$CURRENT_UID"
 {
   printf '\n[%s] Equinox Local source-checkout restart started.\n' "$(date '+%Y-%m-%dT%H:%M:%S%z')"
 
+  # Resolve the exact admitted source target before changing any lifecycle
+  # state. A helper launched from the previous SHA must not assume its own
+  # checkout ROOT is the source the LaunchAgent is about to start.
+  RESTART_STAGE="resolve-target"
+  TARGET_SOURCE_ROOT="$("$DEV_NODE" "$ROOT/scripts/release/resolve-source-restart-target.mjs" "$ROOT")" || fail "could not validate expected source restart target"
+  [ -n "$TARGET_SOURCE_ROOT" ] || fail "expected source restart target is empty"
+
   # Match the server command by its stable script path, not process.execPath. The
   # tunnel runtime may launch the same Node binary through a different symlink.
   OLD_PID="$(/usr/bin/pgrep -f "node $PREVIOUS_SOURCE_ROOT/src/server.js" | /usr/bin/head -n 1 || true)"
@@ -431,8 +438,8 @@ DOMAIN="gui/$CURRENT_UID"
   fi
   PREVIOUS_RESIDUAL_PID="$(/usr/bin/pgrep -f "node $PREVIOUS_SOURCE_ROOT/src/server.js" | /usr/bin/head -n 1 || true)"
   [ -z "$PREVIOUS_RESIDUAL_PID" ] || fail "previous source runtime left a residual Equinox Local server process before relaunch"
-  if [ "$PREVIOUS_SOURCE_ROOT" != "$ROOT" ]; then
-    TARGET_RESIDUAL_PID="$(/usr/bin/pgrep -f "node $ROOT/src/server.js" | /usr/bin/head -n 1 || true)"
+  if [ "$PREVIOUS_SOURCE_ROOT" != "$TARGET_SOURCE_ROOT" ]; then
+    TARGET_RESIDUAL_PID="$(/usr/bin/pgrep -f "node $TARGET_SOURCE_ROOT/src/server.js" | /usr/bin/head -n 1 || true)"
     [ -z "$TARGET_RESIDUAL_PID" ] || fail "target source runtime was already running before relaunch"
   fi
 
@@ -453,7 +460,11 @@ DOMAIN="gui/$CURRENT_UID"
   sleep 8
   run_bounded 80 "$TUNNEL_CLIENT" runtimes status "$RUNTIME" || fail "source tunnel status failed or timed out"
 
-  NEW_PID="$(/usr/bin/pgrep -f "node $ROOT/src/server.js" | /usr/bin/head -n 1 || true)"
+  # Verify the admitted source did not change underneath this restart. A
+  # surprising pointer change must not silently authenticate another process.
+  CONFIRMED_SOURCE_ROOT="$("$DEV_NODE" "$ROOT/scripts/release/resolve-source-restart-target.mjs" "$ROOT")" || fail "source restart target changed or failed validation"
+  [ "$CONFIRMED_SOURCE_ROOT" = "$TARGET_SOURCE_ROOT" ] || fail "source restart target changed during relaunch"
+  NEW_PID="$(/usr/bin/pgrep -f "node $TARGET_SOURCE_ROOT/src/server.js" | /usr/bin/head -n 1 || true)"
   [ -n "$NEW_PID" ] || fail "source runtime did not start a new Equinox Local server process"
   if [ -n "$OLD_PID" ] && [ "$NEW_PID" = "$OLD_PID" ]; then
     fail "source runtime restart left the previous Equinox Local server process running"
