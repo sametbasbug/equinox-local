@@ -11,6 +11,16 @@ const $ = (id) => document.getElementById(id);
 
 const LANGUAGE_STORAGE_KEY = "equinox-local-control-center-language";
 const THEME_STORAGE_KEY = "equinox-local-control-center-theme";
+const SECTION_STORAGE_KEY = "equinox-local-control-center-last-section";
+const NAVIGATION_SHORTCUTS = Object.freeze({
+  Digit1: "dashboard",
+  Digit2: "projects",
+  Digit3: "tasks",
+  Digit4: "browser",
+  Digit5: "permissions",
+  Digit6: "integrations",
+  Digit7: "activity",
+});
 const SUPPORTED_THEMES = new Set(["system", "light", "dark"]);
 const systemThemeMedia = window.matchMedia("(prefers-color-scheme: dark)");
 const EQUINOX_BROWSER_STORE_URL =
@@ -465,12 +475,19 @@ function setConfigEditingEnabled(enabled) {
   if (!enabled && $("save-agent-access-button")) $("save-agent-access-button").disabled = true;
 }
 
-function switchSection(section) {
+function switchSection(section, { remember = false } = {}) {
   if (!sectionMeta[section]) return;
   if (state.setupMode && section !== "setup") return;
   if (!state.setupMode && section === "setup") return;
   const changed = state.activeSection !== section;
   state.activeSection = section;
+  if (remember && section !== "setup") {
+    try {
+      localStorage.setItem(SECTION_STORAGE_KEY, section);
+    } catch {
+      // A disabled storage permission must not block navigation.
+    }
+  }
   for (const button of document.querySelectorAll(".nav-item")) {
     const active = button.dataset.section === section;
     button.classList.toggle("is-active", active);
@@ -3657,12 +3674,24 @@ async function saveConfiguration() {
   }
 }
 
+function onNavigationShortcut(event) {
+  if (!event.altKey || !event.shiftKey || event.ctrlKey || event.metaKey || event.repeat || event.isComposing) return;
+  if (state.setupMode || document.body.classList.contains("control-loading") || document.querySelector("dialog[open]")) return;
+  // Never steal keystrokes from editable content, including nested task editors.
+  if (event.target instanceof Element && event.target.closest('input, textarea, select, [contenteditable], [role="textbox"]')) return;
+  const section = NAVIGATION_SHORTCUTS[event.code];
+  if (!section) return;
+  event.preventDefault();
+  switchSection(section, { remember: true });
+}
+
 function bindEvents() {
+  document.addEventListener("keydown", onNavigationShortcut);
   for (const button of document.querySelectorAll(".nav-item")) {
-    button.addEventListener("click", () => switchSection(button.dataset.section));
+    button.addEventListener("click", () => switchSection(button.dataset.section, { remember: true }));
   }
   for (const button of document.querySelectorAll("[data-jump-section]")) {
-    button.addEventListener("click", () => switchSection(button.dataset.jumpSection));
+    button.addEventListener("click", () => switchSection(button.dataset.jumpSection, { remember: true }));
   }
 
   for (const button of document.querySelectorAll("[data-theme-value]")) {
@@ -3798,7 +3827,17 @@ function applyInitialNavigationIntent() {
   const params = new URLSearchParams(window.location.search);
   const section = params.get("section");
   const taskId = params.get("task");
+  // Explicit links always take priority over the last section opened by hand.
   if (section && sectionMeta[section]) state.activeSection = section;
+  else if (taskId && /^task-[a-z0-9-]{6,80}$/u.test(taskId)) state.activeSection = "tasks";
+  else {
+    try {
+      const remembered = localStorage.getItem(SECTION_STORAGE_KEY);
+      if (remembered && remembered !== "setup" && sectionMeta[remembered]) state.activeSection = remembered;
+    } catch {
+      // Read-only/blocked storage should fall back to Overview.
+    }
+  }
   if (taskId && /^task-[a-z0-9-]{6,80}$/u.test(taskId)) state.selectedTaskId = taskId;
 }
 
