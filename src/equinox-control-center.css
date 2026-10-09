@@ -1,4 +1,4 @@
-/* Equinox Local — a quiet workspace for the agent on your Mac. */
+/* Equinox Local — an approachable local workspace on macOS and Windows. */
 :root {
   color-scheme: light;
   --bg: #f6f5f2;
@@ -23,6 +23,7 @@
   --danger-soft: #fbecef;
   --hero: #25262d;
   --hero-line: #474750;
+  --hero-glow: #8672c933;
   --shadow-sm: 0 2px 3px #24242803;
   --shadow-lg: 0 24px 80px #19182229;
   --radius-lg: 20px;
@@ -56,6 +57,7 @@
   --danger-soft: #442c33;
   --hero: #27252f;
   --hero-line: #4c4659;
+  --hero-glow: #aa90ff25;
   --shadow-sm: none;
   --shadow-lg: 0 24px 80px #0006;
 }
@@ -91,11 +93,15 @@ code { font-size: .92em; overflow-wrap: anywhere; }
 .nav-list { display: grid; gap: 5px; }
 .nav-group-label { padding-inline: 14px; margin: 8px 0 6px; }
 .nav-item + .nav-group-label { margin-top: 26px; }
-.nav-item { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 44px; padding: 10px 13px; border: 1px solid transparent; border-radius: 9px; background: transparent; color: var(--text-2); text-align: left; font-size: 13px; font-weight: 550; transition: background .16s, color .16s; }
+.nav-item { position: relative; display: flex; align-items: center; gap: 12px; width: 100%; min-height: 44px; padding: 10px 13px; border: 1px solid transparent; border-radius: 10px; background: transparent; color: var(--text-2); text-align: left; font-size: 13px; font-weight: 550; transition: background .16s, color .16s, border-color .16s; }
 .nav-item:hover { background: var(--surface-hover); color: var(--text); }
-.nav-item.is-active { color: var(--accent); background: var(--surface); border-color: var(--line); box-shadow: var(--shadow-sm); font-weight: 650; }
-.nav-item.is-active::after { content: ""; margin-left: auto; width: 5px; height: 5px; border-radius: 50%; background: var(--accent); }
+.nav-item.is-active { color: var(--accent); background: color-mix(in srgb, var(--accent) 9%, var(--surface)); border-color: color-mix(in srgb, var(--accent) 23%, var(--line)); font-weight: 650; }
+.nav-item.is-active::before { content: ""; position: absolute; left: -1px; top: 11px; bottom: 11px; width: 3px; border-radius: 3px; background: var(--accent); }
 .nav-icon { width: 19px; height: 19px; }
+.nav-hotkey { margin-left: auto; display: grid; place-items: center; flex: 0 0 22px; height: 22px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--muted); font-family: inherit; font-size: 11px; font-weight: 600; line-height: 1; opacity: .42; transition: opacity .16s, border-color .16s; }
+.nav-item:hover .nav-hotkey, .nav-item:focus-visible .nav-hotkey, .nav-item.is-active .nav-hotkey { opacity: .9; border-color: color-mix(in srgb, var(--accent) 30%, var(--line)); }
+.navigation-shortcuts-hint { margin: 13px 0 0; padding: 0 12px; color: var(--muted); font-size: 10px; letter-spacing: .005em; }
+body.setup-mode .navigation-shortcuts-hint { display: none; }
 .sidebar-footer { display: grid; gap: 20px; margin-top: auto; padding: 28px 10px 0; }
 .sidebar-preferences { display: grid; gap: 15px; }
 .preference-row { display: grid; gap: 7px; color: var(--muted); font-size: 12px; }
@@ -199,7 +205,7 @@ code { font-size: .92em; overflow-wrap: anywhere; }
 .section-label > span { color: var(--muted); font-size: 12px; }
 
 /* Overview: runtime health and the ChatGPT connection are different signals. */
-.hero-card { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(230px, .8fr); align-items: center; gap: 40px; min-height: 246px; padding: 32px; border: 1px solid var(--hero-line); border-radius: var(--radius-lg); color: #f6f4fa; background: var(--hero); }
+.hero-card { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(230px, .8fr); align-items: center; gap: 40px; min-height: 246px; padding: 32px; border: 1px solid var(--hero-line); border-radius: var(--radius-lg); color: #f6f4fa; background: radial-gradient(ellipse at 82% 15%, var(--hero-glow) 0, transparent 56%), var(--hero); }
 .hero-copy h3 { max-width: 560px; margin: 15px 0 0; font-size: clamp(25px, 2.2vw, 33px); font-weight: 570; letter-spacing: -.045em; line-height: 1.18; text-wrap: balance; }
 .hero-copy p { max-width: 540px; margin: 13px 0 0; color: #bcbac6; font-size: 13px; line-height: 1.65; }
 .hero-card .badge { border-radius: 6px; font-size: 11px; letter-spacing: .02em; }
@@ -225,6 +231,7 @@ code { font-size: .92em; overflow-wrap: anywhere; }
 .maintenance-grid { align-items: start; }
 .section-label + .dashboard-grid { margin-top: 0; }
 .metric-card, .panel-card, .settings-card, .onboarding-card, .integration-card, .permission-card { min-width: 0; border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--surface); box-shadow: var(--shadow-sm); }
+.metric-card:has(.metric-link):hover { border-color: color-mix(in srgb, var(--accent) 26%, var(--line)); }
 .metric-card { position: relative; padding: 20px 22px; }
 .card-heading { display: flex; justify-content: space-between; align-items: center; margin-bottom: 18px; }
 .card-icon { display: grid; place-items: center; width: 35px; height: 35px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface-2); color: var(--text-2); }
@@ -248,7 +255,6 @@ code { font-size: .92em; overflow-wrap: anywhere; }
 .stat-row strong { overflow: hidden; font-size: 20px; font-weight: 550; letter-spacing: -.03em; white-space: nowrap; text-overflow: ellipsis; }
 .stat-row > div:last-child strong { font-size: 13px; padding-top: 4px; letter-spacing: -.01em; }
 .health-meta { display: flex; flex-wrap: wrap; gap: 5px 16px; margin-top: 18px; color: var(--muted); font-size: 12px; }
-.update-card .button-group { margin-top: 20px; }
 summary { font-size: 13px; font-weight: 600; color: var(--text); list-style-position: outside; margin-left: 16px; }
 summary::marker { color: var(--muted); font-size: .8em; }
 .doctor-details { margin-top: 18px; padding-top: 15px; border-top: 1px solid var(--line); }
@@ -558,6 +564,8 @@ input::placeholder, textarea::placeholder { color: var(--muted); }
   .browser-settings-card { grid-template-columns: 1fr; gap: 20px; }
 }
 @media (max-width: 760px) {
+  /* Compact navigation has no need for hardware-keyboard labels. */
+  .nav-hotkey, .navigation-shortcuts-hint { display: none; }
   html { scroll-padding-top: 165px; }
   .app-shell { grid-template-columns: 1fr; }
   .sidebar { position: static; height: auto; min-height: 0; padding: 18px 18px 12px; border-right: 0; border-bottom: 1px solid var(--line); }

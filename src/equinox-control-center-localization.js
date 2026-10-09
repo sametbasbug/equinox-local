@@ -138,6 +138,7 @@ const TR_UI = Object.freeze({
   "Primary navigation": "Ana gezinme",
   "Control Center": "Kontrol Merkezi",
   "Control Center sections": "Kontrol Merkezi bölümleri",
+  "Shortcuts: Alt/Option + Shift + 1–7": "Kısayollar: Alt/Option + Shift + 1–7",
   "Dashboard": "Gösterge Paneli",
   "Projects & folders": "Projeler ve klasörler",
   "Tasks": "Görevler",

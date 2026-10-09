@@ -414,15 +414,23 @@ function parseTaskRoute(pathname) {
   return Object.freeze({ taskId: match[1], action: match[2] || null });
 }
 
-function isAllowedControlCenterNavigationQuery(url) {
-  if (url.pathname !== "/") return false;
+const CONTROL_CENTER_NAVIGATION_SECTIONS = new Set([
+  "dashboard", "projects", "tasks", "browser", "permissions", "integrations", "activity",
+]);
+
+function isAllowedControlCenterNavigationQuery(url, method) {
+  // Only the HTML entry page may accept a bounded navigation intent.
+  // API/asset URLs and all mutations still reject query strings.
+  if (method !== "GET" || url.pathname !== "/") return false;
   const keys = [...url.searchParams.keys()];
   if (keys.some((key) => key !== "section" && key !== "task")) return false;
-  if (url.searchParams.getAll("section").length !== 1) return false;
-  if (url.searchParams.getAll("task").length > 1) return false;
-  if (url.searchParams.get("section") !== "tasks") return false;
+  if (url.searchParams.getAll("section").length > 1 || url.searchParams.getAll("task").length > 1) return false;
+  const section = url.searchParams.get("section");
   const taskId = url.searchParams.get("task");
-  return taskId === null || /^task-[a-z0-9-]{6,80}$/u.test(taskId);
+  if (!section && !taskId) return false;
+  if (section !== null && !CONTROL_CENTER_NAVIGATION_SECTIONS.has(section)) return false;
+  if (taskId !== null && (!/^task-[a-z0-9-]{6,80}$/u.test(taskId) || (section !== null && section !== "tasks"))) return false;
+  return true;
 }
 
 function validateTaskUpdateRequest(body) {
@@ -569,7 +577,7 @@ export function createEquinoxLocalControlApi({
       return;
     }
 
-    if (url.search && !isAllowedControlCenterNavigationQuery(url)) {
+    if (url.search && !isAllowedControlCenterNavigationQuery(url, req.method)) {
       state.requestCount += 1;
       jsonBody(res, 400, { ok: false, error: "Control Center API query parametresi kabul etmiyor." });
       return;

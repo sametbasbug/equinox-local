@@ -258,6 +258,21 @@ test("control API serves the visual Control Center shell and fixed same-origin a
     assert.match(shellText, /Doctor → Fix/u);
     assert.match(shellText, /id="doctor-repair-list"/u);
 
+    const browserDeepLink = await fetch(`${base}/?section=browser`);
+    assert.equal(browserDeepLink.status, 200);
+    assert.match(await browserDeepLink.text(), /id="section-browser"/u);
+    const taskOnlyDeepLink = await fetch(`${base}/?task=task-abcdef`);
+    assert.equal(taskOnlyDeepLink.status, 200);
+    const invalidSection = await jsonFetch(`${base}/?section=unknown`);
+    assert.equal(invalidSection.response.status, 400);
+    const mismatchedTask = await jsonFetch(`${base}/?section=browser&task=task-abcdef`);
+    assert.equal(mismatchedTask.response.status, 400);
+    const duplicateSection = await jsonFetch(`${base}/?section=browser&section=tasks`);
+    assert.equal(duplicateSection.response.status, 400);
+    const apiQuery = await jsonFetch(`${base}/api/v1/health?section=browser`);
+    assert.equal(apiQuery.response.status, 400);
+    const postQuery = await jsonFetch(`${base}/?section=browser`, { method: "POST" });
+    assert.equal(postQuery.response.status, 400);
     const taskDeepLink = await fetch(`${base}/?section=tasks&task=task-abcdef`);
     assert.equal(taskDeepLink.status, 200);
     assert.match(await taskDeepLink.text(), /Equinox Local Control Center/u);
