@@ -123,7 +123,7 @@ test("source-checkout restart uses only private generic developer runtime config
 });
 
 test("restart target resolves an exact admitted successor from the managed Developer source store", async () => {
-  const home = "/Users/example";
+  const home = process.platform === "win32" ? "C:\\Users\\example" : "/Users/example";
   const store = path.join(home, "Library/Application Support/Equinox Local Developer/main-update/sources");
   const before = "a".repeat(40);
   const after = "b".repeat(40);
@@ -144,16 +144,17 @@ test("restart target resolves an exact admitted successor from the managed Devel
 
 test("ordinary source checkout does not inherit an unrelated Developer source pointer", async () => {
   let reads = 0;
-  const repo = "/Users/example/projects/equinox-local";
+  const home = process.platform === "win32" ? "C:\\Users\\example" : "/Users/example";
+  const repo = path.join(home, "projects", "equinox-local");
   assert.equal(await resolveSourceRestartTarget(repo, {
-    home: "/Users/example",
+    home,
     readPointer: async () => { reads += 1; throw new Error("not expected"); },
   }), repo);
   assert.equal(reads, 0);
 });
 
 test("restart target fails closed on invalid, absent and escaping managed-source pointers", async () => {
-  const home = "/Users/example";
+  const home = process.platform === "win32" ? "C:\\Users\\example" : "/Users/example";
   const store = path.join(home, "Library/Application Support/Equinox Local Developer/main-update/sources");
   const oldRoot = path.join(store, "a".repeat(40));
   for (const result of [
