@@ -9,6 +9,8 @@ import {
   captureEquinoxLocalForegroundGui,
   runEquinoxLocalRestartHelper,
 } from "../../src/equinox-local-restart-helper.js";
+import { resolveSourceRestartTarget } from "../../scripts/release/resolve-source-restart-target.mjs";
+
 import {
   registerRestartRuntimeTool,
   restartHelperEnvironment,
@@ -60,7 +62,13 @@ test("source-checkout restart uses only private generic developer runtime config
   assert.match(script, /NEW_PID=.*pgrep/u);
   assert.match(script, /previous source runtime left a residual Equinox Local server process before relaunch/u);
   assert.match(script, /target source runtime was already running before relaunch/u);
-  assert.match(script, /pgrep -f "node \$ROOT\/src\/server\.js"/u);
+  assert.match(script, /pgrep -f "node \$TARGET_SOURCE_ROOT\/src\/server\.js"/u);
+  assert.doesNotMatch(script, /pgrep -f "node \$ROOT\/src\/server\.js"/u);
+  assert.match(script, /RESTART_STAGE="resolve-target"/u);
+  assert.match(script, /resolve-source-restart-target\.mjs/u);
+  assert.match(script, /CONFIRMED_SOURCE_ROOT/u);
+  assert.match(script, /source restart target changed during relaunch/u);
+  assert.ok(script.indexOf('TARGET_SOURCE_ROOT=') < script.indexOf('launchctl bootout "$DOMAIN/$LABEL"'), "target must be validated before stopping live service");
   assert.doesNotMatch(script, /pgrep -f "\$DEV_NODE \$ROOT\/src\/server\.js"/u);
   assert.match(script, /previous Equinox Local server process running/u);
   assert.match(script, /launchctl bootout/u);
@@ -112,6 +120,55 @@ test("source-checkout restart uses only private generic developer runtime config
   assert.match(example, /peekabooPath=\/absolute\/path\/to\/pinned-peekaboo/u);
   assert.match(example, /sourceLauncherOwnsLifecycle=1/u);
   assert.match(example, /sourceLauncher=\/absolute\/path\/to\/private-source-launcher\.sh/u);
+});
+
+test("restart target resolves an exact admitted successor from the managed Developer source store", async () => {
+  const home = process.platform === "win32" ? "C:\\Users\\example" : "/Users/example";
+  const store = path.join(home, "Library/Application Support/Equinox Local Developer/main-update/sources");
+  const before = "a".repeat(40);
+  const after = "b".repeat(40);
+  const oldRoot = path.join(store, before);
+  const newRoot = path.join(store, after);
+  let seenPointer;
+  const actual = await resolveSourceRestartTarget(oldRoot, {
+    home,
+    readPointer: async (pointerPath) => {
+      seenPointer = pointerPath;
+      return { sourceRoot: newRoot, sha: after };
+    },
+  });
+  assert.equal(actual, newRoot);
+  assert.equal(seenPointer, path.join(home, "Library/Application Support/Equinox Local Developer/main-update/current-source.conf"));
+  assert.notEqual(actual, oldRoot, "cross-source restarts must verify the successor's path");
+});
+
+test("ordinary source checkout does not inherit an unrelated Developer source pointer", async () => {
+  let reads = 0;
+  const home = process.platform === "win32" ? "C:\\Users\\example" : "/Users/example";
+  const repo = path.join(home, "projects", "equinox-local");
+  assert.equal(await resolveSourceRestartTarget(repo, {
+    home,
+    readPointer: async () => { reads += 1; throw new Error("not expected"); },
+  }), repo);
+  assert.equal(reads, 0);
+});
+
+test("restart target fails closed on invalid, absent and escaping managed-source pointers", async () => {
+  const home = process.platform === "win32" ? "C:\\Users\\example" : "/Users/example";
+  const store = path.join(home, "Library/Application Support/Equinox Local Developer/main-update/sources");
+  const oldRoot = path.join(store, "a".repeat(40));
+  for (const result of [
+    { sourceRoot: "/tmp/rogue", sha: "b".repeat(40) },
+    { sourceRoot: path.join(store, "b".repeat(40)), sha: "c".repeat(40) },
+    { sourceRoot: path.join(store, "b".repeat(40)), sha: "B".repeat(40) },
+    { sourceRoot: path.join(store, "b".repeat(40), "nested"), sha: "b".repeat(40) },
+  ]) {
+    await assert.rejects(resolveSourceRestartTarget(oldRoot, { home, readPointer: async () => result }), /outside the verified source store/u);
+  }
+  await assert.rejects(resolveSourceRestartTarget(oldRoot, {
+    home, readPointer: async () => { const error = new Error("missing"); error.code = "ENOENT"; throw error; },
+  }), /missing/u);
+  await assert.rejects(resolveSourceRestartTarget("relative/root", { home }), /must be absolute/u);
 });
 
 test("Control Center source restart reuses the canonical scheduler instead of forwarding process.execPath", async () => {
