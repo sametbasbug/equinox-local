@@ -172,6 +172,21 @@ try {
   Assert-True ((& $OwnedGit --version) -match '^git version 2\.53\.0\b') 'Product-owned Git version mismatch.'
   Assert-True ((& $OwnedNode --version) -ceq 'v26.11.1') 'Product-owned Node version mismatch.'
   Assert-True ((& $OwnedNode $OwnedNpm --version) -match '^\d+\.\d+\.\d+$') 'Product-owned npm CLI did not execute.'
+  # A real installed Windows app must be discoverable and uninstallable by OS UI.
+  $AppsKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Equinox Local'
+  $AppsRegistration = Get-ItemProperty -LiteralPath $AppsKey -ErrorAction Stop
+  Assert-True ($AppsRegistration.EquinoxLocalManagedInstall -eq 1) 'Windows Installed Apps ownership marker is missing.'
+  Assert-True ([string]$AppsRegistration.DisplayName -ceq 'Equinox Local') 'Windows Installed Apps display name is incorrect.'
+  Assert-True ([string]$AppsRegistration.DisplayVersion -ceq $FixtureVersion) 'Windows Installed Apps version is incorrect.'
+  Assert-True (Same-Path ([string]$AppsRegistration.InstallLocation) $OwnedProgramRoot) 'Windows Installed Apps program root does not match.'
+  Assert-True ([string]$AppsRegistration.UninstallString -ceq ('"' + $StableExe + '" --uninstall')) 'Windows Installed Apps uninstaller command does not target the native app.'
+  $StartMenuPrograms = [Environment]::GetFolderPath([Environment+SpecialFolder]::Programs)
+  Assert-True (-not [string]::IsNullOrWhiteSpace($StartMenuPrograms)) 'Current-user Start Menu programs directory is unavailable.'
+  $StartMenuShortcut = Join-Path $StartMenuPrograms 'Equinox Local.lnk'
+  Assert-True ([IO.File]::Exists($StartMenuShortcut)) 'Equinox Local Start Menu shortcut was not registered.'
+  $ShellCom = New-Object -ComObject WScript.Shell
+  try { $ShortcutCom = $ShellCom.CreateShortcut($StartMenuShortcut); Assert-True (Same-Path ([string]$ShortcutCom.TargetPath) $StableExe) 'Start Menu shortcut points at the wrong binary.' }
+  finally { [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($ShellCom) }
   $ownedShell = @(Get-CimInstance Win32_Process -Filter "Name='EquinoxLocal.exe'" -ErrorAction SilentlyContinue | Where-Object { -not [string]::IsNullOrWhiteSpace($_.ExecutablePath) -and (Same-Path $_.ExecutablePath $StableExe) })
   Assert-True ($ownedShell.Count -eq 1) 'Windows installer did not leave exactly one owned stable shell running.'
   if ($env:EQUINOX_WINDOWS_MAIN_ACCEPT_TARGET_SHA) {
@@ -189,6 +204,12 @@ try {
     Assert-True (Same-Path ([string]$afterManifest.path) $ExpectedLauncher) 'Native Messaging executable identity changed during source-only Main update.'
     Write-Output "Real Windows $FixtureTarget installed Main A-to-B native shell and Native Messaging acceptance PASSED."
   }
+  # Execute the real shipped registry+shortcut cleanup after verifying
+  # their ownership, without deleting the healthy runtime or user data.
+  & $OwnedNode (Join-Path $Root 'tests/release/windows-installed-app-registration-cleanup.mjs') $ManagedSourceRoot $OwnedProgramRoot
+  if ($LASTEXITCODE -ne 0) { throw 'Managed Windows shell registration cleanup failed.' }
+  Assert-True (-not (Test-Path -LiteralPath $AppsKey)) 'Uninstall integration did not remove the owned Installed Apps entry.'
+  Assert-True (-not [IO.File]::Exists($StartMenuShortcut)) 'Uninstall integration did not remove the owned Start Menu shortcut.'
   Write-Output "Windows $FixtureTarget real fresh-install managed-source acceptance passed: public installer promoted $FixtureVersion at $FixtureSourceSha and served the exact managed source runtime."
 } finally {
   if (-not [string]::IsNullOrWhiteSpace($StableExe) -and [IO.File]::Exists($StableExe)) { Stop-OwnedShell $StableExe }
@@ -197,6 +218,29 @@ try {
       $value = [string](Get-Item -LiteralPath $NativeRegistryKey -ErrorAction Stop).GetValue('')
       if (-not [string]::IsNullOrWhiteSpace($ExpectedManifestPath) -and (Same-Path $value $ExpectedManifestPath)) { Remove-Item -LiteralPath $NativeRegistryKey -Recurse -Force }
     } catch { Write-Warning $_.Exception.Message }
+  }
+  # The acceptance job intentionally removes only registration entries that
+  # still identify its own exact managed test instance.
+  $AppsKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Equinox Local'
+  if (Test-Path -LiteralPath $AppsKey) {
+    $ownedApps = Get-ItemProperty -LiteralPath $AppsKey -ErrorAction SilentlyContinue
+    if ($null -ne $ownedApps -and $ownedApps.EquinoxLocalManagedInstall -eq 1 -and
+        -not [string]::IsNullOrWhiteSpace($StableExe) -and
+        [string]$ownedApps.UninstallString -ceq ('"' + $StableExe + '" --uninstall')) {
+      Remove-Item -LiteralPath $AppsKey -Recurse -Force -ErrorAction SilentlyContinue
+    }
+  }
+  $startPrograms = [Environment]::GetFolderPath([Environment+SpecialFolder]::Programs)
+  if (-not [string]::IsNullOrWhiteSpace($startPrograms)) {
+    $shortcutPath = Join-Path $startPrograms 'Equinox Local.lnk'
+    if ([IO.File]::Exists($shortcutPath)) {
+      try {
+        $shellCom = New-Object -ComObject WScript.Shell
+        try { $shortcut = $shellCom.CreateShortcut($shortcutPath); $linked = [string]$shortcut.TargetPath }
+        finally { [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($shellCom) }
+        if (-not [string]::IsNullOrWhiteSpace($StableExe) -and (Same-Path $linked $StableExe)) { Remove-Item -LiteralPath $shortcutPath -Force -ErrorAction SilentlyContinue }
+      } catch { Write-Warning 'Could not clean the owned Start Menu test shortcut.' }
+    }
   }
   if (-not [string]::IsNullOrWhiteSpace($OwnedInstallRoot) -and [IO.Directory]::Exists($OwnedInstallRoot)) { Remove-Item -LiteralPath $OwnedInstallRoot -Recurse -Force -ErrorAction SilentlyContinue }
   if (-not [string]::IsNullOrWhiteSpace($OwnedProgramRoot) -and [IO.Directory]::Exists($OwnedProgramRoot)) { Remove-Item -LiteralPath $OwnedProgramRoot -Recurse -Force -ErrorAction SilentlyContinue }

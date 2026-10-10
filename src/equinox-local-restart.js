@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 
 import { launchDetachedHelper } from "./equinox-local-detached-helper.js";
 import { projectDarwinDetachedHelperEnvironment } from "./equinox-local-darwin-helper-environment.js";
+import { requestWindowsShellRuntimeRestart } from "./equinox-local-windows-shell-control.js";
 
 const DEFAULT_HELPER_PATH = fileURLToPath(new URL("./equinox-local-restart-helper.js", import.meta.url));
 
@@ -18,10 +19,20 @@ export async function scheduleEquinoxLocalRestart({
   nodePath = process.execPath,
   helperPath = DEFAULT_HELPER_PATH,
   sourceEnv = process.env,
+  platform = process.platform,
+  requestWindowsRestartImpl = requestWindowsShellRuntimeRestart,
 } = {}) {
   if (!installation?.selfUpdateSupported || !installation?.managed) {
     throw new Error("A managed Equinox Local installation is required to schedule restart.");
   }
+  if (platform === "win32") {
+    // Windows is supervised by its native WPF shell. The detached macOS
+    // launchctl helper cannot restart it; use the existing same-user pipe.
+    const response = await requestWindowsRestartImpl({ platform });
+    if (response?.requested !== true) throw new Error("Windows shell did not accept the runtime restart request.");
+    return Object.freeze({ scheduled: true });
+  }
+  if (platform !== "darwin") throw new Error("Runtime restart is unsupported on this platform.");
   await launchDetachedHelper({
     spawnImpl,
     command: nodePath,

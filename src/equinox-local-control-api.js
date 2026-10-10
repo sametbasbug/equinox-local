@@ -319,7 +319,7 @@ function validateTurnBudgetRequest(body) {
   if (!Number.isInteger(value.cutoffMinutes) || value.cutoffMinutes < 5 || value.cutoffMinutes > 120) {
     throw badRequest("Turn Budget cutoffMinutes must be an integer between 5 and 120.");
   }
-  const fallbackResetMinutes = value.fallbackResetMinutes === undefined ? 5 : value.fallbackResetMinutes;
+  const fallbackResetMinutes = value.fallbackResetMinutes === undefined ? 2 : value.fallbackResetMinutes;
   if (!Number.isInteger(fallbackResetMinutes) || fallbackResetMinutes < 1 || fallbackResetMinutes > value.cutoffMinutes) {
     throw badRequest("Turn Budget fallbackResetMinutes must be an integer between 1 and cutoffMinutes.");
   }

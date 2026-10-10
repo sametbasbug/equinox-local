@@ -219,7 +219,7 @@
               <label class="field">
                 <span>Tunnel ID</span>
                 <input id="onboarding-tunnel-id" name="tunnelId" type="text" inputmode="text" autocomplete="off" spellcheck="false" placeholder="tunnel_…" pattern="tunnel_[a-f0-9]{32}" maxlength="39" required>
-                <small>Use the exact Tunnel ID you will also select in ChatGPT.</small>
+                <small>Save this Tunnel ID here. ChatGPT will fill it automatically when you select Tunnel.</small>
               </label>
               <label class="field">
                 <span>Runtime API key</span>
@@ -229,6 +229,10 @@
               <button id="onboarding-connect-button" class="button primary full-width" type="submit">Save &amp; connect</button>
               <p id="onboarding-reconnect" class="setup-reconnect" hidden>Restart scheduled. Equinox Local will reconnect here automatically…</p>
             </form>
+            <div class="setup-copy-row">
+              <code id="setup-tunnel-copy-value">Tunnel ID appears after step 2</code>
+              <button id="copy-setup-tunnel-id" class="button secondary compact" type="button" disabled>Copy Tunnel ID</button>
+            </div>
           </article>
 
           <article class="setup-guide-step">
@@ -238,14 +242,12 @@
               <span id="setup-chatgpt-status" class="badge neutral">Waiting</span>
             </div>
             <ol class="setup-instructions">
-              <li>Open ChatGPT connector/app settings and start the custom MCP connection flow available to your account/workspace.</li>
-              <li>Choose Tunnel as the connection type.</li>
-              <li>Select or paste the same Tunnel ID shown below, then save the connector.</li>
+              <li>Open ChatGPT Plugins and choose Add custom MCP server.</li>
+              <li>On the next screen, choose Tunnel. The Tunnel ID is populated automatically; do not enter it again.</li>
+              <li>Set Authentication to No authentication and save the MCP server.</li>
             </ol>
-            <div class="setup-copy-row">
-              <code id="setup-tunnel-copy-value">Tunnel ID appears after step 2</code>
-              <button id="copy-setup-tunnel-id" class="button secondary compact" type="button" disabled>Copy Tunnel ID</button>
-              <a class="button secondary compact" href="https://chatgpt.com/#settings/Connectors" target="_blank" rel="noopener noreferrer">Open ChatGPT settings ↗</a>
+            <div class="setup-links">
+              <a class="button secondary compact" href="https://chatgpt.com/plugins" target="_blank" rel="noopener noreferrer">Open ChatGPT Plugins ↗</a>
             </div>
           </article>
 
@@ -720,7 +722,7 @@
           <label class="field">
             <span>Fallback idle timeout (minutes)</span>
             <input id="turn-budget-fallback-reset" type="number" min="1" max="22" step="1" inputmode="numeric">
-            <small>Default 5 minutes. Used only when Browser turn identity is unavailable; after this much Local inactivity the fallback turn becomes Idle.</small>
+            <small>Default 2 minutes. Used only when Browser turn identity is unavailable; after this much Local inactivity the fallback turn becomes Idle.</small>
           </label>
           <label class="field">
             <span>Auto Continue maximum hops</span>

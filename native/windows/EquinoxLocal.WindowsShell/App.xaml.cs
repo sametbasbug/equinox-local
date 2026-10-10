@@ -17,22 +17,47 @@ public partial class App : System.Windows.Application
         base.OnStartup(e);
         _startedAtLogin = e.Args.Any(arg => string.Equals(arg, "--startup", StringComparison.OrdinalIgnoreCase));
 
+        // Windows Installed Apps invokes this exact native shell with --uninstall.
+        // Keep user data by default; deletion is an explicit Control Center choice.
+        var uninstallRequested = e.Args.Length == 1 && string.Equals(e.Args[0], "--uninstall", StringComparison.OrdinalIgnoreCase);
+        if (uninstallRequested)
+        {
+            var choice = System.Windows.MessageBox.Show("Uninstall Equinox Local? Local configuration and projects will be preserved.",
+                "Uninstall Equinox Local", MessageBoxButton.YesNo, MessageBoxImage.Question);
+            if (choice != MessageBoxResult.Yes) { Shutdown(); return; }
+        }
+
         _singleInstance = new SingleInstanceCoordinator();
         if (!_singleInstance.IsPrimary)
         {
             try
             {
-                if (!_startedAtLogin) _singleInstance.SignalPrimaryAsync().GetAwaiter().GetResult();
+                if (uninstallRequested) _singleInstance.RequestManagedUninstallAsync().GetAwaiter().GetResult();
+                else if (!_startedAtLogin) _singleInstance.SignalPrimaryAsync().GetAwaiter().GetResult();
             }
-            catch
+            catch (Exception error)
             {
-                // A second process must never become a competing shell merely because
-                // the primary is still starting. The next explicit launch can retry.
+                // An uninstall failure must be visible to the user; regular
+                // single-instance reopen failures are still safely ignored.
+                if (uninstallRequested)
+                    System.Windows.MessageBox.Show("Uninstall could not be started. " + error.Message,
+                        "Equinox Local", MessageBoxButton.OK, MessageBoxImage.Error);
             }
             finally
             {
                 Shutdown();
             }
+            return;
+        }
+
+        if (uninstallRequested)
+        {
+            try { ManagedUninstallHandoff.Launch("preserve-user-data"); }
+            catch (Exception error)
+            {
+                System.Windows.MessageBox.Show("Uninstall could not be started. " + error.Message, "Equinox Local", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+            Shutdown();
             return;
         }
 
@@ -45,6 +70,11 @@ public partial class App : System.Windows.Application
         _singleInstance.UpdateShutdownRequested += (_, _) =>
             Dispatcher.BeginInvoke(new Action(() => _ = ExitApplicationAsync()));
         _singleInstance.StartListening();
+
+        // Repair the per-user Start Menu and Installed Apps entries on every
+        // verified managed launch (including users upgrading from 6.0.0).
+        try { WindowsShellRegistration.EnsureForActiveManagedShell(); }
+        catch (Exception error) { WindowsShellDiagnostics.RecordRuntimeFailure("windows-shell-registration", error); }
 
         _startupRegistration = new StartupRegistration();
         var startupStatus = _startupRegistration.Read();

@@ -235,6 +235,35 @@ test("restart scheduler waits for detached helper spawn and unreferences it", as
   assert.equal(unrefCount, 1);
 });
 
+test("Windows managed restart routes to the existing shell pipe instead of macOS LaunchAgent", async () => {
+  const calls = [];
+  const result = await scheduleEquinoxLocalRestart({
+    installation: installation(),
+    platform: "win32",
+    requestWindowsRestartImpl: async ({ platform }) => {
+      calls.push(platform);
+      return { requested: true };
+    },
+    spawnImpl: () => { throw new Error("macOS detached restart helper must never launch on Windows"); },
+  });
+  assert.equal(result.scheduled, true);
+  assert.deepEqual(calls, ["win32"]);
+});
+
+test("Windows managed restart refuses failed shell handoff and unsupported platform", async () => {
+  await assert.rejects(scheduleEquinoxLocalRestart({
+    installation: installation(), platform: "win32",
+    requestWindowsRestartImpl: async () => ({ requested: false }),
+  }), /Windows shell did not accept/u);
+  await assert.rejects(scheduleEquinoxLocalRestart({
+    installation: installation(), platform: "win32",
+    requestWindowsRestartImpl: async () => { throw new Error("named pipe unavailable"); },
+  }), /named pipe unavailable/u);
+  await assert.rejects(scheduleEquinoxLocalRestart({
+    installation: installation(), platform: "linux",
+  }), /unsupported on this platform/u);
+});
+
 test("restart scheduler rejects an asynchronous helper spawn failure", async () => {
   await assert.rejects(
     scheduleEquinoxLocalRestart({

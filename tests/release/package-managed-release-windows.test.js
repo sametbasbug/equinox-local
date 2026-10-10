@@ -27,6 +27,7 @@ test("Windows managed package contract keeps x64 stable and defines explicit nat
     "src/equinox-local-windows-private-state.ps1",
     "src/equinox-local-windows-process-gate.ps1",
     "src/equinox-local-windows-runtime-gate.mjs",
+    "src/equinox-local-windows-runtime-supervisor.js",
     "src/equinox-local-windows-release-zip.ps1",
   ]);
   assert.deepEqual(arm64.requiredShellFiles, [

@@ -188,6 +188,14 @@ static async Task WriteRuntimeReleaseAsync(string releaseDir, string version, st
     File.Copy(Path.Combine(repo, "src", "equinox-local-windows-job-object.ps1"), Path.Combine(releaseDir, "equinox-local-windows-job-object.ps1"), overwrite: false);
     File.Copy(Path.Combine(repo, "src", "equinox-local-windows-process-gate.ps1"), Path.Combine(releaseDir, "equinox-local-windows-process-gate.ps1"), overwrite: false);
     File.Copy(Path.Combine(repo, "src", "equinox-local-windows-runtime-gate.mjs"), Path.Combine(releaseDir, "equinox-local-windows-runtime-gate.mjs"), overwrite: false);
+    // Test the managed-source handoff through the new native supervisor path.
+    // This fixture intentionally runs without real OpenAI tunnel credentials.
+    await File.WriteAllTextAsync(Path.Combine(releaseDir, "equinox-local-windows-runtime-supervisor.js"), """
+import { spawn } from 'node:child_process';
+const child = spawn(process.execPath, [process.argv[2]], { stdio: 'inherit', windowsHide: true });
+child.once('error', () => { process.exitCode = 1; });
+child.once('exit', (code) => { process.exitCode = code ?? 1; });
+""");
     await File.WriteAllTextAsync(
         Path.Combine(releaseDir, "release.json"),
         JsonSerializer.Serialize(new { schemaVersion = 1, version, target, serverEntry = "server.js" }) + "\n");

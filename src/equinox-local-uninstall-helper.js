@@ -30,6 +30,56 @@ const WINDOWS_STARTUP_VALUE_NAME = "Equinox Local";
 const WINDOWS_STARTUP_SUBKEY_ENV_KEY = "EQUINOX_LOCAL_STARTUP_REGISTRY_SUBKEY";
 const WINDOWS_STARTUP_VALUE_ENV_KEY = "EQUINOX_LOCAL_STARTUP_VALUE_NAME";
 const WINDOWS_STARTUP_REGISTRY_SUBKEY = "Software\\Microsoft\\Windows\\CurrentVersion\\Run";
+const WINDOWS_SHELL_REGISTRATION_CLEANUP_SCRIPT = [
+  "$ErrorActionPreference = 'Stop'",
+  "$exe = Join-Path $env:EQUINOX_LOCAL_EXPECTED_PROGRAM_ROOT 'EquinoxLocal.exe'",
+  "$expectedUninstall = '" + '"' + "' + $exe + '" + '"' + " --uninstall'",
+  "$subkey = 'Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\Equinox Local'",
+  "$registry = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($subkey, $true)",
+  "if ($null -ne $registry) {",
+  "  try {",
+  "    if ($registry.GetValue('EquinoxLocalManagedInstall') -ne 1 -or $registry.GetValue('DisplayName') -cne 'Equinox Local' -or $registry.GetValue('InstallLocation') -ne $env:EQUINOX_LOCAL_EXPECTED_PROGRAM_ROOT -or $registry.GetValue('UninstallString') -cne $expectedUninstall) { throw 'Foreign Windows app uninstall registration; refusing cleanup' }",
+  "  } finally { $registry.Dispose() }",
+  "}",
+  "$programs = [Environment]::GetFolderPath('Programs')",
+  "if ([string]::IsNullOrWhiteSpace($programs)) {",
+  "  $appData = $env:APPDATA",
+  "  if ([string]::IsNullOrWhiteSpace($appData)) {",
+  "    if ([string]::IsNullOrWhiteSpace($env:USERPROFILE)) { throw 'Windows user profile is unavailable' }",
+  "    $appData = Join-Path (Join-Path $env:USERPROFILE 'AppData') 'Roaming'",
+  "  }",
+  "  if (-not [IO.Path]::IsPathRooted($appData)) { throw 'Windows Start Menu path is not absolute' }",
+  "  $programs = Join-Path (Join-Path (Join-Path (Join-Path $appData 'Microsoft') 'Windows') 'Start Menu') 'Programs'",
+  "}",
+  "$shortcutPath = Join-Path $programs 'Equinox Local.lnk'",
+  "if ([IO.File]::Exists($shortcutPath)) {",
+  "  $info = New-Object IO.FileInfo($shortcutPath)",
+  "  if (($info.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'Start Menu shortcut is not owned' }",
+  "  $shell = New-Object -ComObject WScript.Shell",
+  "  try {",
+  "    $shortcut = $shell.CreateShortcut($shortcutPath)",
+  "    if (-not [string]::Equals([IO.Path]::GetFullPath($shortcut.TargetPath), [IO.Path]::GetFullPath($exe), [StringComparison]::OrdinalIgnoreCase)) { throw 'Start Menu shortcut is foreign' }",
+  "  } finally { [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($shell) }",
+  "  [IO.File]::Delete($shortcutPath)",
+  "}",
+  "if ([Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($subkey) -ne $null) {",
+  "  [Microsoft.Win32.Registry]::CurrentUser.DeleteSubKey($subkey, $false)",
+  "}",
+].join("\n");
+
+export async function removeWindowsShellRegistration({ programRoot, execFileImpl = execFile, env = process.env } = {}) {
+  if (typeof programRoot !== 'string' || !path.win32.isAbsolute(programRoot) ||
+      !path.win32.basename(programRoot).toLowerCase().endsWith('equinox local')) {
+    throw new Error('Windows shell integration cleanup requires the validated program root.');
+  }
+  const spawnEnv = { ...windowsStartupRegistryReadEnvironment(env), EQUINOX_LOCAL_EXPECTED_PROGRAM_ROOT: programRoot };
+  const encodedScript = Buffer.from(WINDOWS_SHELL_REGISTRATION_CLEANUP_SCRIPT, "utf16le").toString("base64");
+  await execFileImpl(windowsPowerShellPath(env), ["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand", encodedScript], {
+    env: spawnEnv, timeout: 60_000, maxBuffer: 4096, windowsHide: true,
+  });
+  return Object.freeze({ cleaned: true });
+}
+
 const READ_WINDOWS_STARTUP_SCRIPT = [
   "$key = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($env:EQUINOX_LOCAL_STARTUP_REGISTRY_SUBKEY, $false)",
   "if ($null -eq $key) { [Console]::Out.WriteLine('missing'); exit 0 }",
@@ -57,6 +107,7 @@ function windowsStartupRegistryReadEnvironment(env = process.env) {
     WINDIR: env?.WINDIR || env?.SystemRoot || env?.SYSTEMROOT,
     USERPROFILE: env?.USERPROFILE,
     LOCALAPPDATA: env?.LOCALAPPDATA,
+    APPDATA: env?.APPDATA,
     TEMP: env?.TEMP,
     TMP: env?.TMP,
     [WINDOWS_STARTUP_SUBKEY_ENV_KEY]: WINDOWS_STARTUP_REGISTRY_SUBKEY,
@@ -278,6 +329,7 @@ export async function runWindowsEquinoxLocalUninstall({
   assertNativeMessagingImpl = assertWindowsNativeMessagingHostOwnership, unregisterNativeMessagingImpl = unregisterWindowsNativeMessagingHost,
   launcherPathImpl = windowsNativeMessagingLauncherPath, platformPathsImpl = equinoxLocalPlatformPaths, removePathImpl = removeNormalPath,
   readStartupImpl = readWindowsStartupRegistrationOwnership, unregisterStartupImpl = unregisterWindowsStartupRegistration,
+  cleanupShellRegistrationImpl = removeWindowsShellRegistration,
   inspectOwnedMainStateImpl = inspectOwnedMainUninstallState, execFileImpl = execFile,
 } = {}) {
   const expectedTarget = installation?.arch === "x64" ? "win32-x64"
@@ -306,6 +358,7 @@ export async function runWindowsEquinoxLocalUninstall({
     platform: "win32", arch: installation.arch, homeDir, env, fsImpl,
   });
   if (!removeUserData) await verifyUninstallDirectoryIfPresent(layout.runtimeRoot, { fsImpl });
+  await cleanupShellRegistrationImpl({ programRoot: installation.programRoot, execFileImpl, env });
   await unregisterStartupImpl({ expectedCommand: expectedStartupCommand, execFileImpl, env });
   const removedNativeHost = await unregisterNativeMessagingImpl({ manifestPath: ownership.manifestPath, launcherPath, fsImpl, env });
   if (removedNativeHost.reason) throw new Error(`Windows Native Messaging ownership changed during uninstall: ${removedNativeHost.reason}`);

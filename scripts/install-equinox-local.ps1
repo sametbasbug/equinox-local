@@ -153,8 +153,21 @@ function Invoke-EquinoxLocalInstall {
     # so a separate Inspect pass would only scan the verified archive twice.
     $powerShellHost = [Diagnostics.Process]::GetCurrentProcess().MainModule.FileName
     if ([string]::IsNullOrWhiteSpace($powerShellHost) -or -not [IO.File]::Exists($powerShellHost)) { Fail 'current PowerShell host executable is unavailable' }
-    & $powerShellHost -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $helperPath -Mode Extract -ArchivePath $artifactPath -DestinationPath $stage | Out-Null
-    if ($LASTEXITCODE -ne 0) { Fail 'verified release ZIP extraction failed' }
+    # Capture bounded diagnostic *classification*, not raw helper output.
+    # Raw PowerShell exception text can include private user paths; never echo it.
+    $extractionOutput = @(& $powerShellHost -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $helperPath -Mode Extract -ArchivePath $artifactPath -DestinationPath $stage 2>&1)
+    $extractExitCode = $LASTEXITCODE
+    if ($extractExitCode -ne 0) {
+      $extractionText = (($extractionOutput | Out-String) -replace '[\r\n]+',' ')
+      if ($extractionText.Length -gt 4096) { $extractionText = $extractionText.Substring($extractionText.Length - 4096) }
+      if ($extractionText -match '(?i)UnauthorizedAccessException|access is denied|access to the path|access denied|virus|malware|threat|blocked by|antivirus') {
+        Fail 'verified release ZIP extraction failed: Windows denied access to a file. Check your security product detection logs for blocked or removed files; do not disable protection'
+      }
+      if ($extractionText -match '(?i)IOException|could not find|not found|cannot find|does not exist|file is missing') {
+        Fail 'verified release ZIP extraction failed: a staged file was unavailable. Check whether security software removed it during extraction, and verify disk and folder permissions'
+      }
+      Fail 'verified release ZIP extraction failed: the verified archive could not be unpacked. Check disk space, folder permissions and security-product detection logs before retrying'
+    }
     $release = Join-Path $stage 'release'
     $node = Join-Path $release 'runtime\node\bin\node.exe'
     $firstInstall = Join-Path $release 'equinox-local-first-install.js'

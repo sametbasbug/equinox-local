@@ -24,7 +24,7 @@ internal static class ManagedUninstallHandoff
         startInfo.ArgumentList.Add("--uninstall");
         startInfo.ArgumentList.Add($"--{mode}");
         startInfo.Environment.Clear();
-        foreach (var name in new[] { "USERPROFILE", "LOCALAPPDATA", "SystemRoot", "WINDIR", "TEMP", "TMP" }) CopyEnvironment(startInfo, name);
+        foreach (var name in new[] { "USERPROFILE", "LOCALAPPDATA", "APPDATA", "SystemRoot", "WINDIR", "TEMP", "TMP" }) CopyEnvironment(startInfo, name);
         var systemRoot = Environment.GetEnvironmentVariable("SystemRoot");
         if (string.IsNullOrWhiteSpace(systemRoot)) throw new InvalidOperationException("SystemRoot is unavailable for the managed uninstall handoff.");
         startInfo.Environment["PATH"] = $"{Path.Combine(systemRoot, "System32")};{systemRoot}";

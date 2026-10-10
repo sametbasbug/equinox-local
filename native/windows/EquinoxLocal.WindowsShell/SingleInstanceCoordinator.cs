@@ -53,6 +53,18 @@ internal sealed class SingleInstanceCoordinator : IDisposable
         await writer.WriteLineAsync("reopen").ConfigureAwait(false);
     }
 
+    internal async Task RequestManagedUninstallAsync()
+    {
+        using var client = new NamedPipeClientStream(".", PipeName, PipeDirection.InOut, PipeOptions.Asynchronous);
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        await client.ConnectAsync(timeout.Token).ConfigureAwait(false);
+        await using var writer = new StreamWriter(client, new UTF8Encoding(false), leaveOpen: true) { AutoFlush = true };
+        await writer.WriteLineAsync("uninstall:preserve-user-data").ConfigureAwait(false);
+        using var reader = new StreamReader(client, Encoding.UTF8, leaveOpen: true);
+        var response = await reader.ReadLineAsync(timeout.Token).ConfigureAwait(false);
+        if (response != "ok") throw new InvalidOperationException("The running Equinox Local instance refused the uninstall request.");
+    }
+
     private async Task ListenLoopAsync(CancellationToken cancellationToken)
     {
         while (!cancellationToken.IsCancellationRequested)

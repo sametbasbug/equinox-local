@@ -19,6 +19,14 @@ File.Copy(nodeSource, Path.Combine(nodeDir, "node.exe"));
 File.Copy(Path.Combine(repo, "src", "equinox-local-windows-job-object.ps1"), Path.Combine(root, "equinox-local-windows-job-object.ps1"));
 File.Copy(Path.Combine(repo, "src", "equinox-local-windows-process-gate.ps1"), Path.Combine(root, "equinox-local-windows-process-gate.ps1"));
 File.Copy(Path.Combine(repo, "src", "equinox-local-windows-runtime-gate.mjs"), Path.Combine(root, "equinox-local-windows-runtime-gate.mjs"));
+// The lifecycle harness uses a fixture-only wrapper to exercise the native
+// gate + Job Object contract without requiring real OpenAI tunnel credentials.
+await File.WriteAllTextAsync(Path.Combine(root, "equinox-local-windows-runtime-supervisor.js"), """
+import { spawn } from 'node:child_process';
+const child = spawn(process.execPath, [process.argv[2]], { stdio: 'inherit', windowsHide: true });
+child.once('error', () => { process.exitCode = 1; });
+child.once('exit', (code) => { process.exitCode = code ?? 1; });
+""");
 await File.WriteAllTextAsync(Path.Combine(root, "server.js"), """
 import { spawn } from 'node:child_process';
 import http from 'node:http';

@@ -215,6 +215,7 @@ test("Windows uninstall validates ownership before deleting exact managed paths"
     readCurrentImpl: async () => ({ version: "5.2.1", releaseDir: installation.releaseDir }),
     assertStableShellImpl: async () => { shellChecks += 1; return { owned: true }; },
     readStartupImpl: async () => ({ enabled: true }),
+    cleanupShellRegistrationImpl: async () => ({ cleaned: true }),
     unregisterStartupImpl: async () => ({ removed: true }),
     assertNativeMessagingImpl: async () => { nativeChecks += 1; return { manifestPath: `${installation.nativeMessagingManifestRoot}\\dev.equinox.browser.json` }; },
     unregisterNativeMessagingImpl: async () => ({ removed: true, manifestRemoved: true, reason: null }),
@@ -484,6 +485,7 @@ test("Windows preserve uninstall includes exact product-owned Main state cleanup
       readCurrentImpl: async () => ({ releaseDir: installation.releaseDir }),
       assertStableShellImpl: async () => ({}), readStartupImpl: async () => ({}),
       assertNativeMessagingImpl: async () => ({ manifestPath: `${installation.nativeMessagingManifestRoot}\\dev.equinox.browser.json` }),
+      cleanupShellRegistrationImpl: async () => ({ cleaned: true }),
       unregisterStartupImpl: async () => ({}), unregisterNativeMessagingImpl: async () => ({}),
       launcherPathImpl: (dir) => `${dir}\\runtime\\equinox-browser-native-host.exe`,
       platformPathsImpl: () => ({ appDataRoot: root, programRoot: installation.programRoot,
@@ -552,6 +554,7 @@ test("Windows native filesystem accepts and removes exact owned Main state while
     const result = await runWindowsEquinoxLocalUninstall({
       installation, removeUserData: false, env, homeDir, shellPid: 1234, processAliveImpl: () => false,
       readCurrentImpl: async () => ({ releaseDir }), assertStableShellImpl: async () => ({}),
+      cleanupShellRegistrationImpl: async () => ({ cleaned: true }),
       readStartupImpl: async () => ({}), unregisterStartupImpl: async () => ({}),
       assertNativeMessagingImpl: async () => ({ manifestPath: "test" }),
       unregisterNativeMessagingImpl: async () => ({ removed: false, reason: null }),
