@@ -63,6 +63,7 @@ export async function runWindowsSupervisorChild(command, args, options, {
     let retryRequested = false;
     let closed = false;
     let reconnectTimer = null;
+    let failedProbes = 0;
     const scheduleProbe = () => {
       if (!reconnect || closed || terminatingSignal) return;
       reconnectTimer = setTimeoutImpl(async () => {
@@ -75,9 +76,10 @@ export async function runWindowsSupervisorChild(command, args, options, {
           // force-kill or interrupt unrelated Windows processes/tasks.
           child.stdin.end();
         } catch {
+          failedProbes++;
           if (!closed) scheduleProbe();
         }
-      }, reconnect.delayMs);
+      }, Math.min(RECONNECT_MAX_DELAY_MS, reconnect.delayMs * 2 ** Math.min(failedProbes, 8)));
     };
     const onSignal = (signal) => { terminatingSignal = signal; if (!child.killed) child.kill(signal); };
     const term = () => onSignal("SIGTERM");

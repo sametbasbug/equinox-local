@@ -141,6 +141,7 @@ test("local-only supervisor keeps an owned server alive on failed probe and grac
   let timer = null;
   let checks = 0;
   let opts;
+  const delays = [];
   child.stdin = { end: () => { events.push("stdin-eof"); child.emit("exit", 0, null); } };
   child.killed = false;
   child.kill = () => { throw Error("Must not kill local-only server for probe"); };
@@ -152,7 +153,7 @@ test("local-only supervisor keeps an owned server alive on failed probe and grac
   }, {
     spawnImpl: (_executable, _args, options) => { opts = options; return child; },
     processLike,
-    setTimeoutImpl: (fn, delay) => { assert.equal(delay, 5); timer = fn; return 1; },
+    setTimeoutImpl: (fn, delay) => { delays.push(delay); timer = fn; return 1; },
     clearTimeoutImpl: () => { timer = null; },
   });
   assert.deepEqual(opts.stdio, ["pipe", "inherit", "inherit"]);
@@ -163,6 +164,7 @@ test("local-only supervisor keeps an owned server alive on failed probe and grac
   await timer();
   const result = await promise;
   assert.deepEqual(events, ["preflight-ready", "stdin-eof"]);
+  assert.deepEqual(delays, [5, 10]);
   assert.equal(result.retryRequested, true);
   assert.equal(processLike.listenerCount("SIGTERM"), 0);
   assert.equal(processLike.listenerCount("SIGINT"), 0);
