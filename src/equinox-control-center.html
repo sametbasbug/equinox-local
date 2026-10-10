@@ -136,7 +136,11 @@
         </div>
         <div id="update-stable-main-notice" class="update-dialog-main-notice" hidden>
           <strong>Main channel</strong>
-          <p id="update-stable-main-copy">An admitted Main snapshot is available separately from Stable.</p>
+          <p id="update-stable-main-copy">An admitted Main snapshot is available. You can switch from Stable to Main explicitly; your existing configuration is preserved.</p>
+          <p>Run the official installer you downloaded with the Main enrollment option:</p>
+          <p><strong>Windows:</strong> <code>.\install-equinox-local.ps1 -EnrollExistingMain</code></p>
+          <p><strong>macOS:</strong> <code>/bin/bash install-equinox-local.sh --enroll-existing-main</code></p>
+          <p><a href="https://github.com/sametbasbug/equinox-local/blob/main/docs/updates.md#stable-or-main-explicit-user-choice" target="_blank" rel="noopener noreferrer">Stable → Main enrollment instructions</a></p>
         </div>
       </div>
       <div class="update-dialog-actions">

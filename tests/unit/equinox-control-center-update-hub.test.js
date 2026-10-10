@@ -27,3 +27,13 @@ test("Main and Stable current-version display differ and background checks do no
   assert.doesNotMatch(automatic, /\.apply\(/u);
   assert.match(automatic, /Promise\.allSettled/u);
 });
+
+test("Stable Update dialog exposes existing-to-Main enrollment instead of a dead-end notice", async () => {
+  const markup = html;
+  const controller = js;
+  assert.match(markup, /id="update-stable-main-notice"/u);
+  assert.match(markup, /install-equinox-local\.ps1 -EnrollExistingMain/u);
+  assert.match(markup, /install-equinox-local\.sh --enroll-existing-main/u);
+  assert.match(markup, /docs\/updates\.md#stable-or-main-explicit-user-choice/u);
+  assert.match(controller, /Use the official installer enrollment option below to switch from Stable/u);
+});
