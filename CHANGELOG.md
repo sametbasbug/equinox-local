@@ -6,6 +6,10 @@ This project follows semantic versioning for public releases.
 
 ## [Unreleased]
 
+### Changed
+
+- Public installers automatically enroll the trusted Main update stream after verified signed Stable first activation. Existing Stable users will receive a one-time signed bridge that performs exact-SHA Main enrollment and health verification, reverting to the healthy signed Stable baseline if enrollment fails.
+
 ### Fixed
 
 - Windows tunnel disconnects and failed tunnel initialization no longer leave a configured managed installation indefinitely stranded in local-only mode. An independently supervised local Control Center stays reachable during bounded retry preflight (30 seconds up to 10 minutes of backoff); after the verified tunnel preflight succeeds, only its owned local-only server is gracefully stopped before re-entering tunnel mode. Explicit shutdown does not trigger reconnect, and missing/unsafe tunnel configuration still fails closed.

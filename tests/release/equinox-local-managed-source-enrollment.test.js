@@ -193,6 +193,33 @@ test("enrollment rollback removes identity state but preserves reusable source a
 });
 
 
+test("incomplete Main enrollment rollback removes only exact orphan pointer, preserving Stable and source", async (t) => {
+  const f = await fixture(t);
+  const sourceRoot = path.join(f.paths.mainTransactionRoot, "sources", SHA);
+  await fs.mkdir(sourceRoot, { recursive: true });
+  await fs.writeFile(f.paths.sourcePointerPath, `schemaVersion=1\nsourceRoot=${sourceRoot}\nsha=${SHA}\n`, { mode: 0o600 });
+  const rolledBack = await rollbackEquinoxLocalManagedSourceEnrollment({
+    bootstrapSha: SHA, target: "darwin-arm64", platform: "darwin", arch: "arm64", homeDir: f.homeDir,
+    env: {}, readPointerImpl: async () => ({ sourceRoot, sha: SHA }),
+  });
+  assert.equal(rolledBack.rolledBack, true);
+  assert.equal(rolledBack.partial, true);
+  await assert.rejects(fs.lstat(f.paths.sourcePointerPath), { code: "ENOENT" });
+  await assert.rejects(fs.lstat(f.paths.installStampPath), { code: "ENOENT" });
+  assert.equal((await fs.stat(sourceRoot)).isDirectory(), true);
+});
+
+test("partial enrollment rollback refuses foreign pointer identity without deleting anything", async (t) => {
+  const f = await fixture(t);
+  await fs.mkdir(f.paths.mainTransactionRoot, { recursive: true });
+  await fs.writeFile(f.paths.sourcePointerPath, "foreign-pointer", { mode: 0o600 });
+  await assert.rejects(rollbackEquinoxLocalManagedSourceEnrollment({
+    bootstrapSha: SHA, target: "darwin-arm64", platform: "darwin", arch: "arm64", homeDir: f.homeDir,
+    env: {}, readPointerImpl: async () => ({ sourceRoot: "/foreign", sha: "b".repeat(40) }),
+  }), /source identity mismatch/u);
+  assert.equal(await fs.readFile(f.paths.sourcePointerPath, "utf8"), "foreign-pointer");
+});
+
 test("Windows managed-source validation uses product-owned Node and Dugite sh without ambient bash", async () => {
   const calls = [];
   const contract = {

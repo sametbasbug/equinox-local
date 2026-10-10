@@ -203,10 +203,38 @@ test("update helper validates managed environment and delegates activation after
       activations.push(args);
       return { status: "activated", version: args.targetVersion };
     },
+    bridgeImpl: async ({version}) => {
+      assert.equal(version, "4.3.0");
+      return { status: "main-activated" };
+    },
   });
   assert.deepEqual(delays, [1500]);
   assert.equal(activations.length, 1);
   assert.equal(activations[0].targetVersion, "4.3.0");
   assert.equal(activations[0].installation.selfUpdateSupported, true);
   assert.equal(result.status, "activated");
+  assert.equal(result.mainBridge, "main-activated");
+});
+
+test("macOS new helper can run the bridge independently after legacy Stable updater activation", async () => {
+  const home="/Users/example";
+  const env={HOME:home,EQUINOX_LOCAL_INSTALL_ROOT:`${home}/Library/Application Support/Equinox Local`,EQUINOX_LOCAL_RELEASE_DIR:`${home}/Library/Application Support/Equinox Local/releases/6.0.4`};
+  let bridged=false;
+  const result=await runEquinoxLocalUpdateHelper({argv:["--bridge-after-upgrade","6.0.4"],env,homeDir:home,
+    activateImpl:async()=>assert.fail("New helper must not activate Stable again"),
+    macBridgeWorkerImpl:async({installation,version})=>{bridged=true;assert.equal(installation.platform,"darwin");assert.equal(version,"6.0.4");return {status:"main-activated"};},
+  });
+  assert.equal(bridged,true);
+  assert.equal(result.status,"main-activated");
+});
+
+test("update helper never migrates when signed Stable activation has rolled back", async () => {
+  const result = await runEquinoxLocalUpdateHelper({
+    argv: ["--activate", "4.3.0"], homeDir: "/Users/example",
+    env: { HOME: "/Users/example", EQUINOX_LOCAL_INSTALL_ROOT: "/Users/example/Library/Application Support/Equinox Local", EQUINOX_LOCAL_RELEASE_DIR: "/Users/example/Library/Application Support/Equinox Local/releases/4.2.0" },
+    sleepImpl: async () => {},
+    activateImpl: async () => ({status:"rolled-back",version:"4.2.0"}),
+    bridgeImpl: async () => { throw Error("bridge must not run"); },
+  });
+  assert.equal(result.status, "rolled-back");
 });
