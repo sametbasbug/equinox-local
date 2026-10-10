@@ -172,6 +172,9 @@ try {
   Assert-True ((& $OwnedGit --version) -match '^git version 2\.53\.0\b') 'Product-owned Git version mismatch.'
   Assert-True ((& $OwnedNode --version) -ceq 'v26.11.1') 'Product-owned Node version mismatch.'
   Assert-True ((& $OwnedNode $OwnedNpm --version) -match '^\d+\.\d+\.\d+$') 'Product-owned npm CLI did not execute.'
+  # Exercise the actual packaged CLI with a throwaway offline profile.
+  & $OwnedNode (Join-Path $Root 'tests/release/windows-tunnel-offline-init-smoke.mjs') $ManagedSourceRoot $ReleaseDir
+  if ($LASTEXITCODE -ne 0) { throw 'Windows real bundled tunnel-client offline init acceptance failed.' }
   # A real installed Windows app must be discoverable and uninstallable by OS UI.
   $AppsKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Equinox Local'
   $AppsRegistration = Get-ItemProperty -LiteralPath $AppsKey -ErrorAction Stop

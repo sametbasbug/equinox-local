@@ -9,6 +9,11 @@ test('read-only Windows tunnel diagnostics never disclose secrets, profiles, raw
   assert.match(source, /LastShellPhase/u);
   assert.match(source, /RuntimeKeyFileExists/u);
   assert.match(source, /RecentGateExitCount/u);
+  assert.match(source, /RuntimeKeyAcl = Test-PrivateStateAcl/u);
+  assert.match(source, /TunnelProfileAcl = Test-PrivateStateAcl/u);
+  assert.match(source, /TunnelClientExeExists/u);
+  assert.match(source, /TunnelProfileYamlPresent/u);
+  assert.match(source, /-Action verify -Target \$Target -Type \$Type/u);
   assert.doesNotMatch(source, /Get-Content\s+.*(?:transport\.json|runtime-key|tunnel-profile)/iu);
   assert.doesNotMatch(source, /\$line\s*\|\s*(?:Write-|Out-)/iu);
   assert.doesNotMatch(source, /\$line\s*$\{|\bCommandLine\b|Get-ItemProperty.*NativeMessaging/u);
@@ -23,4 +28,15 @@ test('setup no longer offers redundant Tunnel ID copy and distinguishes reconnec
   assert.match(js, /previousServerPid !== nextPid/u);
   assert.match(js, /not through the tunnel/u);
   assert.match(js, /local Control Center did not respond after restart/u);
+});
+
+
+test('actual Windows installer acceptance must exercise real bundled tunnel-client offline init', () => {
+  const installer = readFileSync(new URL('./windows-installer-real-package-smoke.ps1', import.meta.url), 'utf8');
+  const smoke = readFileSync(new URL('./windows-tunnel-offline-init-smoke.mjs', import.meta.url), 'utf8');
+  assert.match(installer, /windows-tunnel-offline-init-smoke\.mjs/u);
+  assert.match(smoke, /windowsTunnelInitArguments/u);
+  assert.match(smoke, /tunnel-client\.exe/u);
+  assert.match(smoke, /tunnel_00000000000000000000000000000000/u);
+  assert.doesNotMatch(smoke, /\brun\b.*--profile.*--profile-dir/u);
 });
