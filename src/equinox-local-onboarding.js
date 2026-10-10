@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { protectWindowsPrivateStatePath } from "./equinox-local-private-state.js";
 
 import {
   readBoundedNormalFile,
@@ -125,8 +126,13 @@ async function atomicWrite(filePath, contents, mode = 0o600) {
   const temp = path.join(parent, `.equinox-onboarding-${process.pid}-${randomBytes(8).toString("hex")}.tmp`);
   try {
     await fs.writeFile(temp, contents, { flag: "wx", mode });
+    if (process.platform === "win32") {
+      // Protect temporary bytes BEFORE they become the active credential;
+      // Windows chmod(0600) does not establish current-user ACL isolation.
+      await protectWindowsPrivateStatePath({ target: temp, type: "file" });
+    }
     await fs.rename(temp, filePath);
-    await fs.chmod(filePath, mode);
+    if (process.platform !== "win32") await fs.chmod(filePath, mode);
   } catch (error) {
     await fs.rm(temp, { force: true }).catch(() => {});
     throw error;

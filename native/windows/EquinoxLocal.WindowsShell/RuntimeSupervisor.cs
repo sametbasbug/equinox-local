@@ -116,18 +116,20 @@ internal sealed class RuntimeSupervisor : IAsyncDisposable
         var nodePath = Path.Combine(nativeReleaseDir, "runtime", "node", "bin", "node.exe");
         var serverPath = location.ServerPath;
         var processGatePath = Path.Combine(nativeReleaseDir, "equinox-local-windows-runtime-gate.mjs");
-        ValidateReleaseFiles(nodePath, serverPath, processGatePath);
+        var supervisorPath = Path.Combine(nativeReleaseDir, "equinox-local-windows-runtime-supervisor.js");
+        ValidateReleaseFiles(nodePath, serverPath, processGatePath, supervisorPath);
         _jobObject?.Dispose();
         _jobObject = WindowsJobObjectLease.Create();
         WindowsShellDiagnostics.RecordRuntimeState("runtime-start-phase", "job-created");
 
-        var payload = Convert.ToBase64String(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new { command = nodePath, args = new[] { serverPath } })));
+        var payload = Convert.ToBase64String(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new { command = nodePath, args = new[] { supervisorPath, serverPath } })));
         var startInfo = NodeGateStartInfo(nodePath, processGatePath);
         startInfo.WorkingDirectory = sourceRoot;
         startInfo.Environment["EQUINOX_LOCAL_OWNED_PROCESS_SPEC"] = payload;
         startInfo.Environment["EQUINOX_LOCAL_RELEASE_DIR"] = location.BootstrapReleaseDir;
         startInfo.Environment["EQUINOX_LOCAL_INSTALL_ROOT"] = location.InstallRoot;
-        startInfo.Environment["EQUINOX_LOCAL_SUPERVISOR_MODE"] = "local-only";
+        // The bounded Node supervisor selects tunnel/local-only from verified
+        // private credentials. The native Job Object owns the whole tree.
         startInfo.Environment["EQUINOX_LOCAL_OWNED_PROCESS_READY_MARKER"] = RuntimeGateReadyMarker;
         var gate = new Process { StartInfo = startInfo, EnableRaisingEvents = true };
         var gateStderr = new StringBuilder();

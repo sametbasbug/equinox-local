@@ -8,6 +8,7 @@ import { promisify } from "node:util";
 import { equinoxLocalManagedLifecycle, equinoxLocalPlatformPaths } from "./equinox-local-platform.js";
 import { resolveEquinoxLocalManagedSourceInstallation } from "./equinox-local-managed-source-installation.js";
 import { readBoundedNormalFile } from "./equinox-local-safe-file.js";
+import { verifyWindowsPrivateStateAcl } from "./equinox-local-private-state.js";
 import { equinoxLocalUpdateTarget, parseEquinoxVersion } from "./equinox-local-updater.js";
 
 const execFile = promisify(execFileCallback);
@@ -111,7 +112,10 @@ export async function resolveSupervisorRelease(paths) {
   return Object.freeze({ version, releaseDir, metadata: Object.freeze({ ...metadata }) });
 }
 
-export async function readSupervisorTransport(paths) {
+export async function readSupervisorTransport(paths, {
+  platform = process.platform,
+  verifyWindowsAcl = verifyWindowsPrivateStateAcl,
+} = {}) {
   let text;
   try {
     ({ data: text } = await readBoundedNormalFile(paths.transportConfigPath, {
@@ -140,7 +144,12 @@ export async function readSupervisorTransport(paths) {
     throw new Error("Transport configuration is invalid.");
   }
   const keyStat = await assertNormalFile(paths.runtimeKeyPath, "OpenAI runtime key", { maxBytes: MAX_RUNTIME_KEY_BYTES });
-  if ((keyStat.mode & 0o077) !== 0) throw new Error("OpenAI runtime key permissions must not allow group or other access.");
+  if (platform === "win32") {
+    const verified = await verifyWindowsAcl({ target: paths.runtimeKeyPath, type: "file" });
+    if (!verified?.safe) throw new Error("OpenAI runtime key ACL must be current-user protected.");
+  } else if ((keyStat.mode & 0o077) !== 0) {
+    throw new Error("OpenAI runtime key permissions must not allow group or other access.");
+  }
   return Object.freeze({ version: raw.version, mode: raw.mode, tunnelId: raw.tunnelId });
 }
 

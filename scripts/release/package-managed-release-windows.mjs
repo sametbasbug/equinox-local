@@ -46,6 +46,7 @@ const WINDOWS_EXTRA_RELEASE_FILES = Object.freeze([
   "src/equinox-local-windows-private-state.ps1",
   "src/equinox-local-windows-process-gate.ps1",
   "src/equinox-local-windows-runtime-gate.mjs",
+  "src/equinox-local-windows-runtime-supervisor.js",
   "src/equinox-local-windows-release-zip.ps1",
 ]);
 const REQUIRED_SHELL_FILES = Object.freeze([

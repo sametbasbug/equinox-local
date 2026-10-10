@@ -102,6 +102,24 @@ test("transport config is optional and requires a private fixed runtime key", as
   await assert.rejects(readSupervisorTransport(configured.paths), /permissions/u);
 });
 
+test("Windows supervisor validates current-user runtime-key ACL, not POSIX mode bits", async (t) => {
+  const fixture = await makeFixture({ transport: true });
+  t.after(() => fs.rm(fixture.root, { recursive: true, force: true }));
+  const checked = [];
+  const transport = await readSupervisorTransport(fixture.paths, {
+    platform: "win32",
+    verifyWindowsAcl: async ({ target, type }) => {
+      checked.push({ target, type });
+      return { safe: true };
+    },
+  });
+  assert.equal(transport.tunnelId, "tunnel_0123456789abcdef0123456789abcdef");
+  assert.deepEqual(checked, [{ target: fixture.paths.runtimeKeyPath, type: "file" }]);
+  await assert.rejects(readSupervisorTransport(fixture.paths, {
+    platform: "win32", verifyWindowsAcl: async () => ({ safe: false, reason: "foreign-user" }),
+  }), /current-user protected/u);
+});
+
 test("supervisor child environment keeps managed paths but drops provider credentials", async (t) => {
   const fixture = await makeFixture();
   t.after(() => fs.rm(fixture.root, { recursive: true, force: true }));

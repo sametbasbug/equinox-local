@@ -244,7 +244,8 @@ test("Windows shell runtime supervisor uses the existing Job Object gate with bo
   assert.match(jobLease, /TerminateJobObject/u);
   assert.match(jobLease, /Interlocked\.Exchange/u);
   assert.match(jobLease, /Marshal\.GetLastWin32Error\(\)/u);
-  assert.match(supervisor, /EQUINOX_LOCAL_SUPERVISOR_MODE/u);
+  assert.match(supervisor, /equinox-local-windows-runtime-supervisor\.js/u);
+  assert.doesNotMatch(supervisor, /startInfo\.Environment\["EQUINOX_LOCAL_SUPERVISOR_MODE"\] = "local-only"/u);
   assert.match(supervisor, /_runtimeResolver/u);
   assert.match(supervisor, /EQUINOX_LOCAL_INSTALL_ROOT/u);
   assert.doesNotMatch(supervisor, /taskkill|current-version\.json|cmd\.exe/iu);

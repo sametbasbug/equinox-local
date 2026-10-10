@@ -104,6 +104,12 @@ test("public Windows installer selects only native x64/ARM64 targets, stays fixe
   assert.match(source, /runtime\\node\\bin\\node\.exe/u);
   assert.match(source, /equinox-local-first-install\.js/u);
   assert.match(source, /EnvironmentVariables\.Clear\(\)/u);
+  assert.match(source, /\$extractionOutput = @\(& \$powerShellHost/u);
+  assert.match(source, /\$extractExitCode = \$LASTEXITCODE/u);
+  assert.match(source, /Check your security product detection logs/u);
+  assert.match(source, /Windows denied access to a file/u);
+  assert.match(source, /a staged file was unavailable/u);
+  assert.doesNotMatch(source, /\$extractionOutput.*Write-Host/u);
   assert.doesNotMatch(source, /Expand-Archive/u);
   assert.doesNotMatch(source, /Start-Process[^\n]+-Verb\s+RunAs/u);
   assert.doesNotMatch(source, /\bsudo\b/u);
