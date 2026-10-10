@@ -603,3 +603,11 @@ test("Windows desktop Control Center displays the pinned winapp state through th
   assert.match(ui, /Microsoft winapp desktop bridge/u);
   assert.match(ui, /previousStatus\.peekaboo\?\.engine === "winapp"/u);
 });
+
+test("native Windows runtime records only whitelisted tunnel phases", async () => {
+  const supervisor = await fs.readFile(path.join(ROOT, "native", "windows", "EquinoxLocal.WindowsShell", "RuntimeSupervisor.cs"), "utf8");
+  assert.match(supervisor, /RecordBoundedTunnelPhase\(eventArgs\.Data\)/u);
+  assert.match(supervisor, /WindowsShellDiagnostics\.RecordRuntimeState\("tunnel-transport", phase\)/u);
+  assert.match(supervisor, /"tunnel-exited", "tunnel-retry-ready"/u);
+  assert.doesNotMatch(supervisor, /RecordRuntimeState\("tunnel-transport", (?:line|eventArgs\.Data)\)/u);
+});

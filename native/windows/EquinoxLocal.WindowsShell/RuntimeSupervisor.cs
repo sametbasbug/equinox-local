@@ -139,7 +139,11 @@ internal sealed class RuntimeSupervisor : IAsyncDisposable
         {
             if (string.Equals(eventArgs.Data, RuntimeGateReadyMarker, StringComparison.Ordinal)) gateReady.TrySetResult(true);
         };
-        gate.ErrorDataReceived += (_, eventArgs) => AppendGateDiagnostic(gateStderr, gateStderrSync, eventArgs.Data);
+        gate.ErrorDataReceived += (_, eventArgs) =>
+        {
+            AppendGateDiagnostic(gateStderr, gateStderrSync, eventArgs.Data);
+            RecordBoundedTunnelPhase(eventArgs.Data);
+        };
         if (!gate.Start()) throw new InvalidOperationException("Windows runtime process gate did not start.");
         var gatePid = gate.Id;
         gate.BeginOutputReadLine();
@@ -190,6 +194,29 @@ internal sealed class RuntimeSupervisor : IAsyncDisposable
         var detail = string.IsNullOrWhiteSpace(stderr) ? $"exit={exitCode}" : $"exit={exitCode}; stderr={stderr}";
         WindowsShellDiagnostics.RecordRuntimeState("runtime-gate-exit", detail);
         _ = RecoverAsync(generation);
+    }
+
+    private static readonly string[] TunnelPhases = [
+        "tunnel-not-configured", "tunnel-config-invalid", "tunnel-starting",
+        "tunnel-init-failed", "tunnel-exited", "tunnel-retry-ready",
+    ];
+
+    private static void RecordBoundedTunnelPhase(string? line)
+    {
+        // Child stderr may contain tunnel identifiers or sensitive information.
+        // Persist ONLY a fixed known phase token, never the child stderr line.
+        const string marker = "[Equinox Windows supervisor] state=";
+        if (line is null || !line.StartsWith(marker, StringComparison.Ordinal)) return;
+        foreach (var phase in TunnelPhases)
+        {
+            if (line.AsSpan(marker.Length).StartsWith(phase.AsSpan(), StringComparison.Ordinal)
+                && (line.Length == marker.Length + phase.Length
+                    || line[marker.Length + phase.Length] is ';' or '.'))
+            {
+                WindowsShellDiagnostics.RecordRuntimeState("tunnel-transport", phase);
+                return;
+            }
+        }
     }
 
     private static void AppendGateDiagnostic(StringBuilder builder, object sync, string? value)

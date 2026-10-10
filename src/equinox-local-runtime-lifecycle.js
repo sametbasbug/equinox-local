@@ -62,6 +62,10 @@ export async function startRuntimeLifecycle({
 
   const signalHandlers = new Map(signals.map((signal) => [signal, () => onSignal(signal)]));
   stdin.once("end", onStdinEnd);
+  // A supervised Node child receives a pipe, not a TTY. Without flowing its
+  // readable stdin, an EOF alone need not emit `end`, which can strand the
+  // old local-only Control Center during Windows tunnel auto-reconnect.
+  if (typeof stdin.resume === "function") stdin.resume();
   for (const signal of signals) {
     processLike.once(signal, signalHandlers.get(signal));
   }

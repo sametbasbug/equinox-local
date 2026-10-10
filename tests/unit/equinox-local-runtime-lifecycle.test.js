@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
+import { spawn } from "node:child_process";
 import test from "node:test";
 
 import { startRuntimeLifecycle } from "../../src/equinox-local-runtime-lifecycle.js";
@@ -118,4 +119,46 @@ test("runtime lifecycle detaches listeners when connect fails", async () => {
   assert.equal(processLike.listenerCount("SIGINT"), 0);
   assert.equal(processLike.listenerCount("SIGTERM"), 0);
   assert.equal(processLike.listenerCount("SIGHUP"), 0);
+});
+
+test("runtime lifecycle consumes an owned stdin EOF for graceful Windows transport handoff", async () => {
+  const stdin = new EventEmitter();
+  const processLike = new EventEmitter();
+  let resumes = 0;
+  let shutsDown = 0;
+  stdin.resume = () => { resumes++; };
+  await startRuntimeLifecycle({
+    stdin, processLike, connect: async () => {},
+    shutdown: async () => { shutsDown++; },
+    exit: () => { throw new Error("Owned stdin shutdown must not hard-exit"); },
+  });
+  assert.equal(resumes, 1);
+  stdin.emit("end");
+  await waitFor(() => shutsDown === 1);
+});
+
+test("real Node managed runtime consumes owned stdin EOF and exits after graceful shutdown", async (t) => {
+  const moduleUrl = new URL("../../src/equinox-local-runtime-lifecycle.js", import.meta.url);
+  const source = `import { startRuntimeLifecycle } from ${JSON.stringify(moduleUrl.href)}; ` +
+    `const interval = setInterval(() => {}, 100); ` +
+    `await startRuntimeLifecycle({ connect: async () => { process.stdout.write("READY\\n"); }, ` +
+    `shutdown: async () => { clearInterval(interval); process.stdout.write("STOPPED\\n"); } });`;
+  const child = spawn(process.execPath, ["--input-type=module", "-e", source], { stdio: ["pipe", "pipe", "pipe"] });
+  t.after(() => { if (!child.killed) child.kill(); });
+  let output = "";
+  let stderr = "";
+  const ready = new Promise((resolve) => child.stdout.on("data", (chunk) => {
+    output += chunk.toString();
+    if (output.includes("READY")) resolve();
+  }));
+  child.stderr.on("data", (chunk) => { stderr += chunk.toString(); });
+  const exit = new Promise((resolve, reject) => {
+    child.once("exit", (code) => resolve(code));
+    child.once("error", reject);
+  });
+  await Promise.race([ready, new Promise((_, reject) => setTimeout(() => reject(new Error("Managed child did not start")), 4000))]);
+  child.stdin.end();
+  const code = await Promise.race([exit, new Promise((_, reject) => setTimeout(() => reject(new Error("Owned EOF did not terminate runtime")), 4000))]);
+  assert.equal(code, 0, stderr);
+  assert.match(output, /STOPPED/u);
 });
