@@ -14,7 +14,11 @@ function quoteMcpPath(value) {
   if (typeof value !== "string" || !path.win32.isAbsolute(value) || /["%!\r\n\0]/u.test(value)) {
     throw new Error("Windows MCP command path contains unsupported characters.");
   }
-  return `"${value}"`;
+  // tunnel-client's stdio command parser interprets Windows backslashes as
+  // escapes (C:\Users -> C:Users). Go/Node on Windows accept forward slashes
+  // for absolute paths, so normalize only the --mcp-command executable/argv.
+  // Never change the underlying Windows filesystem or the file: key ref.
+  return `"${value.replaceAll("\\", "/")}"`;
 }
 
 export function windowsTunnelInitArguments({ paths, nodePath, serverPath, tunnelId }) {

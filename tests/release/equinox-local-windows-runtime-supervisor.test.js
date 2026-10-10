@@ -65,7 +65,7 @@ test("Windows tunnel initialization failure leaves local-only Control Center rea
 test("Windows tunnel command bounds command paths and never embeds the Runtime API key",()=>{
   const paths={profileDir:"C:\\Profiles\\eq",runtimeKeyPath:"C:\\secrets\\runtime-key"};
   const args=windowsTunnelInitArguments({paths,tunnelId,nodePath:"C:\\Program Files\\node.exe",serverPath:"C:\\Program Files\\server.js"});
-  assert.equal(args[args.indexOf("--mcp-command")+1],'"C:\\Program Files\\node.exe" "C:\\Program Files\\server.js"');
+  assert.equal(args[args.indexOf("--mcp-command")+1], '"C:/Program Files/node.exe" "C:/Program Files/server.js"');
   assert.equal(args[args.indexOf("--control-plane-api-key-ref")+1],"file:C:\\secrets\\runtime-key");
   assert.throws(()=>windowsTunnelInitArguments({paths,tunnelId,nodePath:"C:\\Users\\%BAD%\\node.exe",serverPath:"C:\\server.js"}),/unsupported/u);
 });
