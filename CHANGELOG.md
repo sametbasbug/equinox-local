@@ -6,6 +6,18 @@ This project follows semantic versioning for public releases.
 
 ## [Unreleased]
 
+## [6.0.2] - 2026-10-10
+
+### Fixed
+
+- Fixed Windows Tunnel reconnect after Save & connect: the bundled tunnel-client treats backslashes in quoted `--mcp-command` paths as escape sequences, so the Windows native shell now passes forward-slash-normalized absolute Node and MCP server paths. Real packaged tunnel-client offline `init` acceptance tests cover both Windows x64 and ARM64, reproducing the old error before the fix and passing afterward.
+- Added guarded recovery for a missing product-owned Windows Chrome Native Messaging manifest when the managed install ownership and launcher have been positively verified. Unrecognized, foreign or symlinked registrations remain protected; no registry hijacking or antivirus exception is involved.
+- The Windows website bootstrapper now warns early when an installed numbered Stable version requires an in-app update instead of downloading a new release for an unsupported cross-version first-install operation.
+- Removed the redundant **Copy Tunnel ID** button from the card where users enter their own Tunnel ID. Improved reconnect failure messages to distinguish a local-only restart from an unreachable Control Center without exposing credentials.
+- Added privacy-preserving Windows Tunnel diagnostics and real packaged tunnel-client `init` tests to guard against future Windows command-line parser incompatibilities.
+
+This maintenance release does not change Equinox Browser 1.0.0, does not reintroduce the deferred WPF/WebView2 visual redesign, and preserves the signed 6.0.1 archives unchanged. A user Windows Tunnel connection and first actual MCP tool invocation must still be verified after installing 6.0.2.
+
 ## [6.0.1] - 2026-10-10
 
 ### Fixed
