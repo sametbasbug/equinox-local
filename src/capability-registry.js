@@ -38,6 +38,16 @@ export const EXTERNAL_CAPABILITY_DOMAINS = Object.freeze({
   }),
 });
 
+export function externalCapabilityDomainDefinition(domain, platform = process.platform) {
+  const definition = EXTERNAL_CAPABILITY_DOMAINS[domain];
+  if (!definition) return null;
+  if (domain === "desktop" && platform === "win32") {
+    return Object.freeze({ ...definition, label: "Windows desktop",
+      usageHint: "Windows UI automation through pinned Microsoft winapp. Use browser_call for web content instead of desktop automation." });
+  }
+  return definition;
+}
+
 export const CAPABILITY_DOMAIN_NAMES = Object.freeze([
   ...Object.keys(STABLE_CAPABILITY_DOMAINS),
   ...Object.keys(EXTERNAL_CAPABILITY_DOMAINS),
@@ -466,10 +476,10 @@ export function registerStableCapabilityGateways({
           const summary = provider?.summary ? await provider.summary() : { count: 0 };
           externalSummaries.push({
             domain: externalDomain,
-            label: definition.label,
+            label: externalCapabilityDomainDefinition(externalDomain).label,
             count: summary.count ?? 0,
             callTool: definition.callTool,
-            usageHint: definition.usageHint ?? null,
+            usageHint: externalCapabilityDomainDefinition(externalDomain).usageHint ?? null,
           });
         }
         const domains = [...staticSummary.domains, ...externalSummaries];

@@ -325,6 +325,24 @@ test("Windows Chrome discovery stays inside bounded trusted install roots", asyn
   assert.deepEqual(visited, candidates.slice(0, 2));
 });
 
+test("Windows Chrome discovery survives native-shell environment without ProgramFiles", async () => {
+  const env = { LOCALAPPDATA: "C:\\Users\\Example\\AppData\\Local", SystemRoot: "C:\\Windows" };
+  const candidates = windowsChromeInstallCandidates(env);
+  assert.deepEqual(candidates, [
+    "C:\\Users\\Example\\AppData\\Local\\Google\\Chrome\\Application\\chrome.exe",
+    "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+    "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe",
+  ]);
+  const found = await discoverWindowsChrome({ env, fsImpl: {
+    async lstat(name) {
+      if (name === candidates[1]) return { isFile: () => true, isSymbolicLink: () => false };
+      throw Object.assign(new Error("missing"), { code: "ENOENT" });
+    },
+  }});
+  assert.equal(found, candidates[1]);
+  assert.deepEqual(windowsChromeInstallCandidates({ LOCALAPPDATA: env.LOCALAPPDATA, PATH: "C:\\bad" }), [candidates[0]]);
+});
+
 test("Windows Chrome process inventory retries transient PowerShell query failure and stays bounded", async () => {
   let calls = 0;
   const stdout = await queryWindowsChromeProcessInventory(async (command, args, options) => {

@@ -169,7 +169,17 @@ export function buildWindowsAgentBrowserLaunchArgs(profileRoot, { setup = false 
 }
 
 export function windowsChromeInstallCandidates(env = process.env) {
-  const roots = [env?.LOCALAPPDATA, env?.ProgramFiles, env?.["ProgramFiles(x86)"]];
+  // Native Windows shell handoffs deliberately sanitize their environment and may
+  // omit ProgramFiles even though SystemRoot is available. Recover only the two
+  // well-known OS installation roots from the trusted Windows drive anchor;
+  // never discover Chrome from PATH, app paths, or arbitrary process commands.
+  const systemRoot = env?.SystemRoot || env?.SYSTEMROOT || env?.WINDIR;
+  const windowsDrive = typeof systemRoot === "string" && path.win32.isAbsolute(systemRoot)
+    ? path.win32.parse(systemRoot).root : null;
+  const roots = [
+    env?.LOCALAPPDATA, env?.ProgramFiles, env?.["ProgramFiles(x86)"],
+    ...(windowsDrive ? [path.win32.join(windowsDrive, "Program Files"), path.win32.join(windowsDrive, "Program Files (x86)")] : []),
+  ];
   const seen = new Set();
   const candidates = [];
   for (const root of roots) {

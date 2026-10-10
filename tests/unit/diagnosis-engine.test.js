@@ -285,3 +285,16 @@ test("hard runtime interruption is diagnosed as an active paused workflow", asyn
   assert.equal(result.incidents[0].state, "ACTIVE");
   assert.equal(result.incidents[0].details.resumable, true);
 });
+
+test("Agent Browser launch failures are diagnosed and resolved by a later successful launch request", async () => {
+  const nowMs = 1_800_000_600_000;
+  const failures = [event({ id: "browser-failed", ms: nowMs - 2000, component: "agent-browser", type: "launch_failed", message: "Chrome was not found" })];
+  const engine = createDiagnosisEngine({ observability: fakeObservability(failures, nowMs), now: () => nowMs });
+  const result = await engine.diagnose({ windowMs: 10000, component: "agent-browser" });
+  assert.equal(result.incidentCount, 1);
+  assert.equal(result.incidents[0].code, "AGENT_BROWSER_LAUNCH_FAILURE");
+  assert.equal(result.incidents[0].state, "ACTIVE");
+  failures.push(event({ id: "browser-launched", ms: nowMs - 1000, component: "agent-browser", type: "launch_requested" }));
+  const recovered = await engine.diagnose({ windowMs: 10000 });
+  assert.equal(recovered.incidents.find((item) => item.code === "AGENT_BROWSER_LAUNCH_FAILURE")?.state, "RESOLVED");
+});

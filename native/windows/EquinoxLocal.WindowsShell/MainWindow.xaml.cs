@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using System.Diagnostics;
+using System.IO;
 using System.Text.Json;
 using System.Windows;
 using Microsoft.Web.WebView2.Core;
@@ -24,7 +25,14 @@ public partial class MainWindow : Window
         try
         {
             _ = CoreWebView2Environment.GetAvailableBrowserVersionString();
-            await ControlCenterView.EnsureCoreWebView2Async();
+            // Never create mutable WebView2 caches beside the signed native shell.
+            // An ordinary page visit must not poison native ownership checks,
+            // future upgrades or managed uninstall.
+            var userData = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "Equinox Local", "state", "webview2");
+            Directory.CreateDirectory(userData);
+            var webEnvironment = await CoreWebView2Environment.CreateAsync(userDataFolder: userData);
+            await ControlCenterView.EnsureCoreWebView2Async(webEnvironment);
             ControlCenterView.CoreWebView2.WebMessageReceived += OnNativeWebMessageReceived;
             ControlCenterView.Source = new Uri(ControlCenterUrl, UriKind.Absolute);
         }

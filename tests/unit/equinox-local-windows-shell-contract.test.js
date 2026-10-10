@@ -33,6 +33,8 @@ test("Windows shell is a thin x64/ARM64 WPF/WebView2 host for the shared Control
   assert.match(project, /Microsoft\.Web\.WebView2/u);
   assert.match(window, /http:\/\/127\.0\.0\.1:24891\//u);
   assert.match(window, /EnsureCoreWebView2Async/u);
+  assert.match(window, /CoreWebView2Environment\.CreateAsync\(userDataFolder: userData\)/u);
+  assert.match(window, /"Equinox Local", "state", "webview2"/u);
   assert.match(window, /GetAvailableBrowserVersionString/u);
   assert.match(window, /UseShellExecute\s*=\s*true/u);
   assert.doesNotMatch(window, /cmd\.exe|powershell(?:\.exe)?|ProcessStartInfo\s*\([^)]*\/c/iu);
@@ -589,4 +591,15 @@ test("Windows shell update handoff acknowledges before draining the runtime and 
   assert.match(coordinator, /shutdown-for-update/u);
   assert.match(app, /UpdateShutdownRequested/u);
   assert.match(app, /ExitApplicationAsync/u);
+});
+
+test("Windows desktop Control Center displays the pinned winapp state through the existing bridge slot", async () => {
+  const [server, ui] = await Promise.all([
+    fs.readFile(path.join(ROOT, "src", "server.js"), "utf8"),
+    fs.readFile(path.join(ROOT, "src", "equinox-control-center.js"), "utf8"),
+  ]);
+  assert.match(server, /engine: "winapp", available: true/u);
+  assert.match(ui, /peekaboo\.engine === "winapp"/u);
+  assert.match(ui, /Microsoft winapp desktop bridge/u);
+  assert.match(ui, /previousStatus\.peekaboo\?\.engine === "winapp"/u);
 });

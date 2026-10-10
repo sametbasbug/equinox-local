@@ -15,6 +15,7 @@ export async function registerDiagnosisTools({
     "deployment",
     "peekaboo",
     "chrome",
+    "agent-browser",
   ]);
 
   registerTextTool(

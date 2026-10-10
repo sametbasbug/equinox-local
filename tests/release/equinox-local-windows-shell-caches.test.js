@@ -1,0 +1,35 @@
+import assert from "node:assert/strict";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import test from "node:test";
+import { assertWindowsStableShellOwnedByRelease, snapshotWindowsStableShellTree } from "../../src/equinox-local-windows-stable-shell.js";
+
+test("Windows stable ownership keeps signed binary hashes exact but ignores two known legacy WPF cache roots", async (t) => {
+  const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "win-shell-cache-test-"));
+  t.after(() => fs.rm(tmp, { recursive: true, force: true }));
+  const releaseDir = path.join(tmp, "releases", "6.0.2");
+  const reference = path.join(releaseDir, "runtime", "shell");
+  const installed = path.join(tmp, "Programs", "Equinox Local");
+  await fs.mkdir(reference, { recursive: true });
+  await fs.mkdir(installed, { recursive: true });
+  await fs.writeFile(path.join(reference, "EquinoxLocal.exe"), "binary:signed");
+  await fs.writeFile(path.join(installed, "EquinoxLocal.exe"), "binary:signed");
+  const cache = path.join(installed, "EquinoxLocal.exe.WebView2", "EBWebView");
+  const winrtCache = path.join(installed, "%SystemDrive%", "ProgramData", "Microsoft", "Windows", "Caches");
+  await fs.mkdir(cache, { recursive: true });
+  await fs.mkdir(winrtCache, { recursive: true });
+  await fs.writeFile(path.join(cache, "Local State"), "generated");
+  await fs.writeFile(path.join(winrtCache, "cversions.2.db"), "generated");
+  assert.equal((await snapshotWindowsStableShellTree(installed)).length, 3);
+  assert.equal((await snapshotWindowsStableShellTree(installed, { ignoreLegacyCache: true })).length, 1);
+  assert.equal((await assertWindowsStableShellOwnedByRelease({ releaseDir, programRoot: installed })).owned, true);
+  await fs.writeFile(path.join(installed, "unknown.dll"), "tampered");
+  await assert.rejects(assertWindowsStableShellOwnedByRelease({ releaseDir, programRoot: installed }), /does not match/u);
+  await fs.rm(path.join(installed, "unknown.dll"));
+  await fs.symlink(path.join(tmp, "foreign"), path.join(cache, "unsafe-link"));
+  await assert.rejects(assertWindowsStableShellOwnedByRelease({ releaseDir, programRoot: installed }), /symbolic link/u);
+  await fs.unlink(path.join(cache, "unsafe-link"));
+  await fs.writeFile(path.join(installed, "EquinoxLocal.exe"), "binary:modified");
+  await assert.rejects(assertWindowsStableShellOwnedByRelease({ releaseDir, programRoot: installed }), /does not match/u);
+});

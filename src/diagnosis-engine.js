@@ -8,6 +8,7 @@ const COMPONENTS = Object.freeze([
   "deployment",
   "peekaboo",
   "chrome",
+  "agent-browser",
 ]);
 
 const SEVERITY_RANK = Object.freeze({
@@ -405,6 +406,15 @@ export function createDiagnosisEngine({
     }
 
     const bridgeDefinitions = [
+      {
+        component: "agent-browser",
+        failureTypes: new Set(["launch_failed"]),
+        recoveryTypes: new Set(["launch_requested"]),
+        code: "AGENT_BROWSER_LAUNCH_FAILURE",
+        title: "Agent Browser başlatılamadı",
+        summary: "İzole Agent Browser başlatılırken Chrome keşfi veya profil açılışı başarısız oldu.",
+        recommendation: "Agent Browser launch error kaydını incele; Chrome kurulum yolu ve özel profil izinlerini kontrol et. Personal Chrome'a sessiz fallback yapılmaz.",
+      },
       {
         component: "peekaboo",
         failureTypes: new Set(["peekaboo.error", "peekaboo.unexpected_close"]),
