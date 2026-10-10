@@ -15,6 +15,7 @@ import {
   parseWindowsAgentBrowserMainPids,
   queryWindowsChromeProcessInventory,
   windowsChromeInstallCandidates,
+  windowsAgentBrowserSystemTool,
   EQUINOX_BROWSER_STORE_URL,
 } from "../../src/equinox-agent-browser.js";
 
@@ -347,13 +348,13 @@ test("Windows Chrome process inventory retries transient PowerShell query failur
   let calls = 0;
   const stdout = await queryWindowsChromeProcessInventory(async (command, args, options) => {
     calls += 1;
-    assert.equal(command, "powershell.exe");
+    assert.equal(command, "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe");
     assert.match(args.at(-1), /Get-CimInstance Win32_Process/u);
     assert.match(args.at(-1), /ConvertTo-Json -Compress/u);
     assert.equal(options.timeout, 5_000);
     if (calls === 1) throw new Error("transient CIM failure");
     return { stdout: "[]", stderr: "" };
-  }, { LOCALAPPDATA: "C:\\Users\\Example\\AppData\\Local" });
+  }, { LOCALAPPDATA: "C:\\Users\\Example\\AppData\\Local", SystemRoot: "C:\\Windows" });
   assert.equal(stdout, "[]");
   assert.equal(calls, 2);
 
@@ -362,7 +363,7 @@ test("Windows Chrome process inventory retries transient PowerShell query failur
     queryWindowsChromeProcessInventory(async () => {
       calls += 1;
       throw new Error("persistent CIM failure");
-    }, {}),
+    }, { SystemRoot: "C:\\Windows" }),
     /persistent CIM failure/u,
   );
   assert.equal(calls, 3);
@@ -384,11 +385,11 @@ test("Windows Agent Browser shutdown force-drains an exact tree that survives su
     homeDir: "C:\\Users\\Example User",
     profileRoot,
     platform: "win32",
-    env: { LOCALAPPDATA: "C:\\Users\\Example User\\AppData\\Local" },
+    env: { LOCALAPPDATA: "C:\\Users\\Example User\\AppData\\Local", SystemRoot: "C:\\Windows" },
     discoverWindowsChromeImpl: async () => chromePath,
     execFileAsync: async (command, args) => {
-      if (command === "powershell.exe") return { stdout: inventory, stderr: "" };
-      assert.equal(command, "taskkill.exe");
+      if (command === "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe") return { stdout: inventory, stderr: "" };
+      assert.equal(command, "C:\\Windows\\System32\\taskkill.exe");
       taskkillCalls.push([...args]);
       if (args.includes("/F")) alive = false;
       return { stdout: "SUCCESS", stderr: "" };
@@ -428,11 +429,11 @@ test("Windows Agent Browser shutdown accepts forced taskkill child-race only aft
     homeDir: "C:\\Users\\Example User",
     profileRoot,
     platform: "win32",
-    env: { LOCALAPPDATA: "C:\\Users\\Example User\\AppData\\Local" },
+    env: { LOCALAPPDATA: "C:\\Users\\Example User\\AppData\\Local", SystemRoot: "C:\\Windows" },
     discoverWindowsChromeImpl: async () => chromePath,
     execFileAsync: async (command, args) => {
-      if (command === "powershell.exe") return { stdout: inventory, stderr: "" };
-      assert.equal(command, "taskkill.exe");
+      if (command === "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe") return { stdout: inventory, stderr: "" };
+      assert.equal(command, "C:\\Windows\\System32\\taskkill.exe");
       if (args.includes("/F")) {
         alive = false;
         const error = new Error("child already exited");
@@ -468,4 +469,41 @@ test("Windows Agent Browser process parser selects only exact Chrome main proces
     { ProcessId: 7004, ExecutablePath: "D:\\Fake\\chrome.exe", CommandLine: `"D:\\Fake\\chrome.exe" --user-data-dir="${profileRoot}"` },
   ]);
   assert.deepEqual(parseWindowsAgentBrowserMainPids(inventory, profileRoot, chromePath), [7001]);
+});
+
+test("Windows Agent Browser OS tool lookup ignores PATH and refuses a missing SystemRoot", () => {
+  const env = { SystemRoot: "C:\\Windows", PATH: "C:\\untrusted\\binary", LOCALAPPDATA: "C:\\Users\\Example\\AppData\\Local" };
+  assert.equal(windowsAgentBrowserSystemTool("powershell", env), "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe");
+  assert.equal(windowsAgentBrowserSystemTool("taskkill", env), "C:\\Windows\\System32\\taskkill.exe");
+  assert.throws(() => windowsAgentBrowserSystemTool("powershell", { PATH: "C:\\untrusted" }), /SystemRoot/u);
+  assert.throws(() => windowsAgentBrowserSystemTool("taskkill", { SystemRoot: "relative\\Windows" }), /SystemRoot/u);
+  assert.throws(() => windowsAgentBrowserSystemTool("cmd", env), /Unsupported/u);
+});
+
+test("Windows Agent Browser inventory refuses PATH search if SystemRoot is missing", async () => {
+  let launched = false;
+  await assert.rejects(queryWindowsChromeProcessInventory(async () => { launched = true; }, { PATH: "C:\\untrusted" }), /SystemRoot/u);
+  assert.equal(launched, false);
+});
+
+test("Windows Agent Browser launch uses absolute system PowerShell under scrubbed PATH", { skip: process.platform !== "win32" }, async (t) => {
+  const profileRoot = await fs.mkdtemp(path.join(os.tmpdir(), "equinox-agent-powershell-"));
+  t.after(() => fs.rm(profileRoot, { recursive: true, force: true }));
+  const env = { SystemRoot: "C:\\Windows", LOCALAPPDATA: os.tmpdir(), PATH: "C:\\malicious\\bin" };
+  const bridge = createBridgeStub();
+  const calls = [];
+  const manager = createEquinoxAgentBrowser({
+    bridge, platform: "win32", env, homeDir: os.homedir(), profileRoot,
+    discoverWindowsChromeImpl: async () => "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+    execFileAsync: async (command, args, options) => {
+      calls.push({ command, args, options });
+      return { stdout: "", stderr: "" };
+    },
+  });
+  await manager.launch({ setup: true });
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].command, "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe");
+  assert.match(calls[0].args.at(-1), /Start-Process/u);
+  assert.equal(calls[0].options.env.EQUINOX_AGENT_CHROME, "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe");
+  assert.equal(calls[0].options.env.PATH, "C:\\malicious\\bin");
 });

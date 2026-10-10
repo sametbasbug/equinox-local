@@ -6,6 +6,13 @@ This project follows semantic versioning for public releases.
 
 ## [Unreleased]
 
+## [Unreleased]
+
+### Fixed
+
+- Fixed Windows Agent Browser startup failing with `spawn powershell.exe ENOENT` after Windows native runtime sanitizes `PATH`. Agent Browser now uses absolute, SystemRoot-pinned Windows PowerShell and taskkill executable paths for isolated Chrome launch, process inventory, and exact-process shutdown; missing trusted roots fail closed rather than searching ambient PATH.
+- Added regression tests for scrubbed Windows environments and PATH-hijack avoidance, including a Windows-native launch acceptance.
+
 ## [6.0.3] - 2026-10-10
 
 ### Fixed

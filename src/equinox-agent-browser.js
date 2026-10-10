@@ -8,8 +8,18 @@ export const EQUINOX_BROWSER_STORE_URL = "https://chromewebstore.google.com/deta
 const DARWIN_OPEN_BINARY = "/usr/bin/open";
 const DARWIN_PS_BINARY = "/bin/ps";
 const DARWIN_CHROME_MAIN_PROCESS_FRAGMENT = "/Google Chrome.app/Contents/MacOS/Google Chrome ";
-const WINDOWS_POWERSHELL_BINARY = "powershell.exe";
-const WINDOWS_TASKKILL_BINARY = "taskkill.exe";
+// The managed Windows runtime deliberately removes ambient PATH entries.
+// Never resolve Windows OS tools by bare executable name or through PATH.
+export function windowsAgentBrowserSystemTool(command, env = process.env) {
+  const systemRoot = env?.SystemRoot || env?.SYSTEMROOT || env?.WINDIR;
+  if (typeof systemRoot !== "string" || !path.win32.isAbsolute(systemRoot)) {
+    throw new Error("Windows SystemRoot is unavailable for Agent Browser process control.");
+  }
+  const root = path.win32.normalize(systemRoot);
+  if (command === "powershell") return path.win32.join(root, "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
+  if (command === "taskkill") return path.win32.join(root, "System32", "taskkill.exe");
+  throw new Error("Unsupported Agent Browser Windows system tool.");
+}
 const DEFAULT_SHUTDOWN_TIMEOUT_MS = 5_000;
 const CHROME_APP_NAME = "Google Chrome";
 const NATIVE_HOST_NAME = "dev.equinox.browser";
@@ -217,10 +227,11 @@ export function parseAgentBrowserMainPids(psOutput, profileRoot) {
 
 export async function queryWindowsChromeProcessInventory(execFileAsync, env = process.env) {
   if (typeof execFileAsync !== "function") throw new Error("Windows Chrome process inventory requires execFileAsync.");
+  const powershellPath = windowsAgentBrowserSystemTool("powershell", env);
   let lastError = null;
   for (let attempt = 1; attempt <= WINDOWS_CHROME_PROCESS_QUERY_ATTEMPTS; attempt += 1) {
     try {
-      const { stdout = "" } = await execFileAsync(WINDOWS_POWERSHELL_BINARY, ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", WINDOWS_CHROME_PROCESS_QUERY], {
+      const { stdout = "" } = await execFileAsync(powershellPath, ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", WINDOWS_CHROME_PROCESS_QUERY], {
         timeout: 5_000, maxBuffer: 512 * 1024, windowsHide: true, env,
       });
       return stdout;
@@ -308,8 +319,9 @@ export function createEquinoxAgentBrowser({
         });
       } else {
         const chromePath = await resolveWindowsChrome();
+        const powershellPath = windowsAgentBrowserSystemTool("powershell", env);
         const chromeArgs = buildWindowsAgentBrowserLaunchArgs(resolvedProfileRoot, { setup: shouldSetup });
-        await execFileAsync(WINDOWS_POWERSHELL_BINARY, ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", WINDOWS_CHROME_LAUNCH_SCRIPT], {
+        await execFileAsync(powershellPath, ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", WINDOWS_CHROME_LAUNCH_SCRIPT], {
           timeout: 10_000, maxBuffer: 64 * 1024, windowsHide: true,
           env: {
             ...env,
@@ -369,6 +381,7 @@ export function createEquinoxAgentBrowser({
       signalProcess(pid, "SIGTERM");
     } else {
       const options = { timeout: 5_000, maxBuffer: 64 * 1024, windowsHide: true, env };
+      const taskkillPath = windowsAgentBrowserSystemTool("taskkill", env);
       const forceExactTree = async () => {
         const exactPids = await listMainProcessPids();
         if (exactPids.length === 0) {
@@ -381,7 +394,7 @@ export function createEquinoxAgentBrowser({
         forced = true;
         emit("shutdown_force_fallback", { platform });
         try {
-          await execFileAsync(WINDOWS_TASKKILL_BINARY, ["/PID", String(pid), "/T", "/F"], options);
+          await execFileAsync(taskkillPath, ["/PID", String(pid), "/T", "/F"], options);
         } catch (error) {
           if (processAlive(pid)) throw error;
           emit("shutdown_force_race", { platform });
@@ -389,7 +402,7 @@ export function createEquinoxAgentBrowser({
       };
       let gracefulFailed = false;
       try {
-        await execFileAsync(WINDOWS_TASKKILL_BINARY, ["/PID", String(pid), "/T"], options);
+        await execFileAsync(taskkillPath, ["/PID", String(pid), "/T"], options);
       } catch {
         gracefulFailed = true;
       }
