@@ -141,6 +141,6 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for the supported Node version, full test
 
 ## Releases & license
 
-**Equinox Local 6.0.2** is the current Stable release, paired with **Equinox Browser 1.0.0** on Chrome Web Store. Stable packages cover macOS and Windows on ARM64 and x64. [Latest release](https://github.com/sametbasbug/equinox-local/releases/latest) · [Product website](https://local.sametbasbug.dev/) · [Release notes](CHANGELOG.md).
+**Equinox Local 6.0.3** is the current Stable release, paired with **Equinox Browser 1.0.0** on Chrome Web Store. Stable packages cover macOS and Windows on ARM64 and x64. [Latest release](https://github.com/sametbasbug/equinox-local/releases/latest) · [Product website](https://local.sametbasbug.dev/) · [Release notes](CHANGELOG.md).
 
 Licensed under **[AGPL-3.0-only](LICENSE)**. Contributions are welcome; see [CONTRIBUTING.md](CONTRIBUTING.md) and [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md).
