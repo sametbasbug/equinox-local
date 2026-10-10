@@ -6,6 +6,18 @@ This project follows semantic versioning for public releases.
 
 ## [Unreleased]
 
+## [6.0.3] - 2026-10-10
+
+### Fixed
+
+- Fixed Windows Agent Browser failing to find installed Google Chrome after the managed runtime sanitizes its environment. The trusted Chrome discovery path now also derives the two standard Program Files locations from the absolute Windows SystemRoot drive, without following ambient PATH or another Chrome profile.
+- Fixed Windows native WPF shell integrity failures caused by WebView2 and Windows runtime caches being written alongside the signed native application. New WebView2 profiles live in per-user Equinox Local state; already-installed 6.0.2 shells tolerate only two known historical cache subtrees with bounded, symlink-safe validation, while release payloads and all signed binary hashes remain strictly checked.
+- Corrected Windows System Doctor, capability catalog and Control Center to show the actual Microsoft winapp desktop bridge rather than treating macOS Peekaboo as the Windows desktop engine, including across dashboard refreshes.
+- Added actionable Agent Browser startup failure incidents to runtime diagnostics and platform-focused regression coverage.
+- Added a guarded, audit-first Windows recovery utility for interrupted Stable update/uninstall paths; resets quarantine, rather than delete, verified product-owned directories.
+
+Equinox Browser remains at Chrome Web Store version 1.0.0. These changes repair observed 6.0.2 Windows onboarding issues without switching installed Stable users to Main or redesigning the WPF UI.
+
 ## [6.0.2] - 2026-10-10
 
 ### Fixed
