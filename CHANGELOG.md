@@ -6,6 +6,19 @@ This project follows semantic versioning for public releases.
 
 ## [Unreleased]
 
+## [6.0.1] - 2026-10-10
+
+### Fixed
+
+- Fixed Windows Tunnel onboarding after entering the Tunnel ID and Runtime API Key: the native shell now supervises the verified tunnel-client rather than forcing local-only mode, and managed restarts use the Windows Shell IPC instead of macOS `launchctl`.
+- Protected Windows onboarding credentials with current-user ACLs, including temporary files, and verified the ACL when reading the Runtime API Key.
+- Made Windows installer ZIP extraction errors actionable without printing secrets or unchecked user file paths. ESET's previously reported detection of two native helpers was independently confirmed and corrected by ESET; no antivirus exclusion is necessary.
+- Registered the Windows native app in the current user's Start menu and Installed Apps (including a guarded, data-preserving default uninstall entry), with real x64/ARM64 installation and cleanup acceptance.
+- Corrected the bilingual ChatGPT Plugins setup instructions to **Add custom MCP server → Tunnel → Authentication: No authentication**; the Tunnel ID is automatically populated in ChatGPT and must not be entered twice.
+- Changed the default Browser turn-identity fallback idle timeout from 5 minutes to **2 minutes** without overriding existing saved user settings.
+
+The WPF/WebView2 visual redesign is reserved for a later release. This maintenance release covers macOS and Windows on ARM64/x64 and does not change the separate Equinox Browser 1.0.0 Chrome Web Store version.
+
 ## [6.0.0] - 2026-10-09
 
 ### Release highlights
