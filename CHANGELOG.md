@@ -6,6 +6,8 @@ This project follows semantic versioning for public releases.
 
 ## [Unreleased]
 
+## [6.0.4] - Pending signed migration bridge
+
 ### Changed
 
 - Public installers automatically enroll the trusted Main update stream after verified signed Stable first activation. Existing Stable users will receive a one-time signed bridge that performs exact-SHA Main enrollment and health verification, reverting to the healthy signed Stable baseline if enrollment fails.
