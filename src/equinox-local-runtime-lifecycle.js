@@ -11,6 +11,7 @@ export async function startRuntimeLifecycle({
   connect,
   shutdown,
   stdin = process.stdin,
+  consumeOwnedStdin = false,
   processLike = process,
   exit = (code) => process.exit(code),
   signals = DEFAULT_SIGNALS,
@@ -32,6 +33,7 @@ export async function startRuntimeLifecycle({
 
   let detached = false;
   let shutdownPromise = null;
+  let ownedStdinResumed = false;
 
   const beginShutdown = (reason = "api") => {
     if (!shutdownPromise) {
@@ -44,6 +46,7 @@ export async function startRuntimeLifecycle({
     if (detached) return;
     detached = true;
     stdin.off("end", onStdinEnd);
+    if (ownedStdinResumed && typeof stdin.pause === "function") stdin.pause();
     for (const signal of signals) {
       processLike.off(signal, signalHandlers.get(signal));
     }
@@ -62,10 +65,13 @@ export async function startRuntimeLifecycle({
 
   const signalHandlers = new Map(signals.map((signal) => [signal, () => onSignal(signal)]));
   stdin.once("end", onStdinEnd);
-  // A supervised Node child receives a pipe, not a TTY. Without flowing its
-  // readable stdin, an EOF alone need not emit `end`, which can strand the
-  // old local-only Control Center during Windows tunnel auto-reconnect.
-  if (typeof stdin.resume === "function") stdin.resume();
+  // Only a supervised Windows local-only child expects a deliberate EOF to
+  // hand off its port to a recovered tunnel. Other runtimes must not acquire
+  // a new stdin reader or keep the process alive after explicit shutdown.
+  if (consumeOwnedStdin && typeof stdin.resume === "function") {
+    stdin.resume();
+    ownedStdinResumed = true;
+  }
   for (const signal of signals) {
     processLike.once(signal, signalHandlers.get(signal));
   }

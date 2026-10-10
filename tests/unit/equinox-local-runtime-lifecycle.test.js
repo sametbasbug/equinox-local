@@ -127,21 +127,24 @@ test("runtime lifecycle consumes an owned stdin EOF for graceful Windows transpo
   let resumes = 0;
   let shutsDown = 0;
   stdin.resume = () => { resumes++; };
+  let pauses = 0;
+  stdin.pause = () => { pauses++; };
   await startRuntimeLifecycle({
-    stdin, processLike, connect: async () => {},
+    stdin, consumeOwnedStdin: true, processLike, connect: async () => {},
     shutdown: async () => { shutsDown++; },
     exit: () => { throw new Error("Owned stdin shutdown must not hard-exit"); },
   });
   assert.equal(resumes, 1);
   stdin.emit("end");
   await waitFor(() => shutsDown === 1);
+  await waitFor(() => pauses === 1);
 });
 
 test("real Node managed runtime consumes owned stdin EOF and exits after graceful shutdown", async (t) => {
   const moduleUrl = new URL("../../src/equinox-local-runtime-lifecycle.js", import.meta.url);
   const source = `import { startRuntimeLifecycle } from ${JSON.stringify(moduleUrl.href)}; ` +
     `const interval = setInterval(() => {}, 100); ` +
-    `await startRuntimeLifecycle({ connect: async () => { process.stdout.write("READY\\n"); }, ` +
+    `await startRuntimeLifecycle({ consumeOwnedStdin: true, connect: async () => { process.stdout.write("READY\\n"); }, ` +
     `shutdown: async () => { clearInterval(interval); process.stdout.write("STOPPED\\n"); } });`;
   const child = spawn(process.execPath, ["--input-type=module", "-e", source], { stdio: ["pipe", "pipe", "pipe"] });
   t.after(() => { if (!child.killed) child.kill(); });

@@ -3409,6 +3409,8 @@ async function start({ transport = new StdioServerTransport() } = {}) {
   return startRuntimeLifecycle({
     connect: () => server.connect(transport),
     shutdown: shutdownLocalResources,
+    consumeOwnedStdin: process.platform === "win32"
+      && process.env.EQUINOX_LOCAL_SUPERVISOR_MODE === "local-only",
   });
 }
 
