@@ -33,12 +33,12 @@ test("bridge verifies exact active source version and target, forbids unowned re
   const installation = install("win32");
   const base = {
     readCurrentImpl: async () => ({ version:targetVersion,releaseDir:installation.releaseDir }),
-    fsImpl: {lstat:async () => ({isFile:()=>true,isSymbolicLink:()=>false,size:180}),readFile:async () => JSON.stringify({version:targetVersion,target:installation.target,sourceSha:SHA})},
+    fsImpl: {open:async () => ({stat:async () => ({isFile:()=>true,size:180}),readFile:async () => JSON.stringify({version:targetVersion,target:installation.target,sourceSha:SHA}),close:async()=>{}})},
   };
   assert.deepEqual(await readVerifiedBridgeSourceIdentity(installation,targetVersion,base),identity(installation));
   await assert.rejects(readVerifiedBridgeSourceIdentity(installation,"6.0.5",base),/nonactive/u);
-  await assert.rejects(readVerifiedBridgeSourceIdentity(installation,targetVersion,{ ...base,fsImpl:{ ...base.fsImpl,readFile:async () => JSON.stringify({version:targetVersion,target:installation.target,sourceSha:"INVALID"}) }}),/matching, exact/u);
-  await assert.rejects(readVerifiedBridgeSourceIdentity(installation,targetVersion,{ ...base,fsImpl:{ ...base.fsImpl,lstat:async () => ({isFile:()=>true,isSymbolicLink:()=>true,size:200}) }}),/unsafe/u);
+  await assert.rejects(readVerifiedBridgeSourceIdentity(installation,targetVersion,{ ...base,fsImpl:{ open:async () => ({stat:async () => ({isFile:()=>true,size:180}),readFile:async () => JSON.stringify({version:targetVersion,target:installation.target,sourceSha:"INVALID"}),close:async()=>{}}) }}),/matching, exact/u);
+  await assert.rejects(readVerifiedBridgeSourceIdentity(installation,targetVersion,{ ...base,fsImpl:{ open:async () => ({stat:async () => ({isFile:()=>false,size:200}),readFile:async()=>assert.fail("must not read unsafe metadata"),close:async()=>{}}) }}),/unsafe/u);
 });
 
 test("after health, Windows bridge enrolls exact signed source, then restarts and verifies managed Main", async () => {

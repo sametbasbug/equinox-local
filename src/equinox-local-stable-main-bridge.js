@@ -1,4 +1,5 @@
 import fs from "node:fs/promises";
+import { constants as fsConstants } from "node:fs";
 import path from "node:path";
 
 import { readManagedCurrentRelease, kickstartEquinoxLocalLaunchAgent, waitForEquinoxLocalManagedSource, waitForEquinoxLocalVersion } from "./equinox-local-update-activation.js";
@@ -15,11 +16,19 @@ export async function readVerifiedBridgeSourceIdentity(installation, targetVersi
   if (current.version !== targetVersion) throw new Error("Stable-to-Main bridge refuses a nonactive signed Stable version.");
   const pathApi = installation.platform === "win32" ? path.win32 : path.posix;
   const metadataPath = pathApi.join(current.releaseDir, "release.json");
-  const stat = await fsImpl.lstat(metadataPath);
-  if (!stat.isFile() || stat.isSymbolicLink() || stat.size < 2 || stat.size > MAX_RELEASE_JSON_BYTES) {
-    throw new Error("Stable-to-Main bridge release metadata is unavailable or unsafe.");
+  // The signed release metadata must be checked and read from the SAME
+  // no-follow file descriptor; path lstat + readFile is a TOCTOU hole.
+  const handle = await fsImpl.open(metadataPath, fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0));
+  let metadata;
+  try {
+    const stat = await handle.stat();
+    if (!stat.isFile() || stat.size < 2 || stat.size > MAX_RELEASE_JSON_BYTES) {
+      throw new Error("Stable-to-Main bridge release metadata is unavailable or unsafe.");
+    }
+    metadata = JSON.parse(await handle.readFile("utf8"));
+  } finally {
+    await handle.close();
   }
-  const metadata = JSON.parse(await fsImpl.readFile(metadataPath, "utf8"));
   if (metadata?.version !== targetVersion || metadata?.target !== installation.target || !SHA.test(metadata.sourceSha ?? "")) {
     throw new Error("Stable-to-Main bridge requires matching, exact signed source provenance.");
   }
