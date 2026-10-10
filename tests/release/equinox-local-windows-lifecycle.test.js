@@ -211,6 +211,10 @@ test("Windows clean-machine lifecycle preserves user state across uninstall/rein
     shellPid: 424242,
     processAliveImpl: () => false,
     sleepImpl: async () => {},
+    // Legacy fixture never launches the native WPF shell and therefore has
+    // no installed-app/Start Menu ownership to remove. Real entries are
+    // exercised separately by the genuine Windows public installer gate.
+    cleanupShellRegistrationImpl: async () => ({ cleaned: true }),
   });
   assert.equal(preserved.userDataPreserved, true);
   assert.equal(await exists(configPath), true);
@@ -237,6 +241,10 @@ test("Windows clean-machine lifecycle preserves user state across uninstall/rein
     shellPid: 424243,
     processAliveImpl: () => false,
     sleepImpl: async () => {},
+    // Legacy fixture never launches the native WPF shell and therefore has
+    // no installed-app/Start Menu ownership to remove. Real entries are
+    // exercised separately by the genuine Windows public installer gate.
+    cleanupShellRegistrationImpl: async () => ({ cleaned: true }),
   });
   assert.equal(removed.userDataRemoved, true);
   assert.equal(await exists(layout.appDataRoot), false);

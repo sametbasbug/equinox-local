@@ -204,6 +204,13 @@ try {
     Assert-True (Same-Path ([string]$afterManifest.path) $ExpectedLauncher) 'Native Messaging executable identity changed during source-only Main update.'
     Write-Output "Real Windows $FixtureTarget installed Main A-to-B native shell and Native Messaging acceptance PASSED."
   }
+  # Execute the real shipped registry+shortcut cleanup after verifying
+  # their ownership, without deleting the healthy runtime or user data.
+  $cleanupJs = 'import path from "node:path"; import {pathToFileURL} from "node:url"; const modulePath = pathToFileURL(path.join(process.argv[1],"src","equinox-local-uninstall-helper.js")).href; const {removeWindowsShellRegistration} = await import(modulePath); await removeWindowsShellRegistration({ programRoot: process.argv[2] });'
+  & $OwnedNode --input-type=module -e $cleanupJs $ManagedSourceRoot $OwnedProgramRoot
+  if ($LASTEXITCODE -ne 0) { throw 'Managed Windows shell registration cleanup failed.' }
+  Assert-True (-not (Test-Path -LiteralPath $AppsKey)) 'Uninstall integration did not remove the owned Installed Apps entry.'
+  Assert-True (-not [IO.File]::Exists($StartMenuShortcut)) 'Uninstall integration did not remove the owned Start Menu shortcut.'
   Write-Output "Windows $FixtureTarget real fresh-install managed-source acceptance passed: public installer promoted $FixtureVersion at $FixtureSourceSha and served the exact managed source runtime."
 } finally {
   if (-not [string]::IsNullOrWhiteSpace($StableExe) -and [IO.File]::Exists($StableExe)) { Stop-OwnedShell $StableExe }
