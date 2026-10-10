@@ -120,8 +120,9 @@ try {
   }
 
   try {
-    # This smoke intentionally accepts Main onboarding, not default Stable.
-    $EnrollExistingMain = $true
+    # Exercise the public installer DEFAULT. Main enrollment must no longer
+    # require a legacy explicit switch or a second installation command.
+    Assert-True (-not $EnrollExistingMain) 'Windows public installer acceptance requires an unselected legacy Main switch.'
     Invoke-EquinoxLocalInstall | Out-Host
   } catch {
     $diagnosticLog = Join-Path $OwnedInstallRoot 'logs\windows-shell-runtime.log'
