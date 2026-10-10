@@ -26,7 +26,7 @@ With the downloaded public installer, choose:
 
 The existing `--enroll-existing-main` opt-in deliberately also covers **fresh** installs; its trusted JavaScript API is `allowExistingStableToMainMigration: true` (default `false`). Main first installs and health-checks the verified Stable baseline, then enrolls the exact source SHA. Fresh explicit Main without source provenance fails before activation rather than silently ignoring the choice. Existing same-version migration additionally requires identical provenance in the installed and staged release; different-version migration requires the Stable updater first. A routine rerun does not undo a previously selected Main channel or remove private composition/configuration.
 
-These installer semantics are independent of publication. Stable 6.0.0 shipped signed artifacts for macOS and Windows ARM64/x64; 6.0.1 retains the signed four-target release contract while fixing Windows Tunnel onboarding, native Start menu/Installed Apps registration and ZIP extraction diagnostics. Stable follows only the last admitted signed release; Main still requires explicit opt-in.
+These installer semantics are independent of publication. Stable 6.0.0 shipped signed artifacts for macOS and Windows ARM64/x64; 6.0.1 retained the signed four-target release contract; 6.0.2 fixes Windows tunnel-client executable-path escaping, safely recovers positively owned missing Native Messaging manifests and adds real x64/ARM64 tunnel init acceptance coverage. Stable follows only the last admitted signed release; Main still requires explicit opt-in.
 
 ## First install
 
