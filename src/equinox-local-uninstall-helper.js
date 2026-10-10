@@ -75,7 +75,7 @@ export async function removeWindowsShellRegistration({ programRoot, execFileImpl
   const spawnEnv = { ...windowsStartupRegistryReadEnvironment(env), EQUINOX_LOCAL_EXPECTED_PROGRAM_ROOT: programRoot };
   const encodedScript = Buffer.from(WINDOWS_SHELL_REGISTRATION_CLEANUP_SCRIPT, "utf16le").toString("base64");
   await execFileImpl(windowsPowerShellPath(env), ["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand", encodedScript], {
-    env: spawnEnv, timeout: 20_000, maxBuffer: 4096, windowsHide: true,
+    env: spawnEnv, timeout: 60_000, maxBuffer: 4096, windowsHide: true,
   });
   return Object.freeze({ cleaned: true });
 }

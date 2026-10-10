@@ -206,8 +206,7 @@ try {
   }
   # Execute the real shipped registry+shortcut cleanup after verifying
   # their ownership, without deleting the healthy runtime or user data.
-  $cleanupJs = 'import path from "node:path"; import {pathToFileURL} from "node:url"; const modulePath = pathToFileURL(path.join(process.argv[1],"src","equinox-local-uninstall-helper.js")).href; const {removeWindowsShellRegistration} = await import(modulePath); await removeWindowsShellRegistration({ programRoot: process.argv[2] });'
-  & $OwnedNode --input-type=module -e $cleanupJs $ManagedSourceRoot $OwnedProgramRoot
+  & $OwnedNode (Join-Path $Root 'tests/release/windows-installed-app-registration-cleanup.mjs') $ManagedSourceRoot $OwnedProgramRoot
   if ($LASTEXITCODE -ne 0) { throw 'Managed Windows shell registration cleanup failed.' }
   Assert-True (-not (Test-Path -LiteralPath $AppsKey)) 'Uninstall integration did not remove the owned Installed Apps entry.'
   Assert-True (-not [IO.File]::Exists($StartMenuShortcut)) 'Uninstall integration did not remove the owned Start Menu shortcut.'
