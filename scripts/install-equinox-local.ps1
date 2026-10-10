@@ -119,6 +119,24 @@ function Invoke-CleanNode([string]$Node, [string]$FirstInstall, [string]$Release
   if ($process.ExitCode -ne 0) { Fail ("managed first-install activation failed: " + ($stderr.Trim() -replace '[\r\n]+',' ')) }
   if (-not [string]::IsNullOrWhiteSpace($stdout)) { Write-Output $stdout.TrimEnd() }
 }
+function Assert-ExistingStableUpgradeRoute([string]$InstallRoot, [string]$RequestedVersion, [string]$ExpectedTarget) {
+  $currentPointer = Join-Path $InstallRoot 'current-version.json'
+  if (-not [IO.File]::Exists($currentPointer)) { return }
+  Assert-NormalFile $currentPointer 1 4096 | Out-Null
+  $current = $null
+  try { $current = [IO.File]::ReadAllText($currentPointer, (New-Object Text.UTF8Encoding($false, $true))) | ConvertFrom-Json -ErrorAction Stop }
+  catch { Fail 'existing Windows Stable version pointer is malformed; open Equinox Local Control Center for diagnosis' }
+  $keys = @($current.PSObject.Properties.Name | Sort-Object)
+  if ($null -eq $current -or $current.schemaVersion -ne 1 -or $current.target -cne $ExpectedTarget -or
+      $keys.Count -ne 3 -or ($keys -join ',') -cne 'schemaVersion,target,version' -or
+      $current.version -isnot [string] -or
+      $current.version -notmatch '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$') {
+    Fail 'existing Windows Stable version pointer has invalid ownership; open Equinox Local Control Center for diagnosis'
+  }
+  if ($current.version -cne $RequestedVersion) {
+    Fail "Windows Stable $($current.version) is already installed. To upgrade to $RequestedVersion, open Equinox Local Control Center > Check for updates > Update & restart. The website installer is only for first install or same-version repair; it does not switch versions on Windows."
+  }
+}
 function Invoke-EquinoxLocalInstall {
   if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) { Fail 'Windows is required' }
   $script:Target = Get-NativeWindowsTarget
@@ -141,6 +159,7 @@ function Invoke-EquinoxLocalInstall {
     Write-Info "checking the stable $Target bootstrap manifest"
     Save-BoundedHttpsFile "$UpdateBase/bootstrap-$Target.txt" $manifestPath $MaxManifestBytes
     $manifest = Read-BootstrapManifest $manifestPath
+    Assert-ExistingStableUpgradeRoute $installRoot $manifest.Version $Target
     Write-Info 'downloading the verified ZIP helper'
     Save-BoundedHttpsFile "$UpdateBase/$ZipHelperName" $helperPath $helperBytes
     $helper = Assert-NormalFile $helperPath $helperBytes $helperBytes

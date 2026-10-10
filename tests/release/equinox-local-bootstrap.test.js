@@ -288,6 +288,7 @@ test("Windows x64 managed user bootstrap uses state config and Windows Native Me
   assert.equal(first.nativeHostLauncherPath, path.join(releaseDir, "runtime", "browser", "equinox-browser-native-host.exe"));
   assert.equal(registrations.length, 1);
   assert.equal(registrations[0].manifestRoot, path.join(localAppData, "Equinox Local", "browser", "native-messaging"));
+  assert.equal(registrations[0].recoverMissingOwnedManifest, true);
   const config = JSON.parse(await fs.readFile(first.configPath, "utf8"));
   assert.equal(config.projects.workspace.root, path.join(localAppData, "Equinox Local", "workspace"));
   assert.equal(config.fileRoots.downloads.root, path.join(homeDir, "Downloads"));
