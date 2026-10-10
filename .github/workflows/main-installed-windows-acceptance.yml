@@ -5,6 +5,11 @@ name: Main Windows Installed Upgrade Acceptance
 on:
   workflow_dispatch:
     inputs:
+      stable_bridge_acceptance:
+        description: Run hosted Stable-to-Main unsigned candidate bridge acceptance, not Main-to-Main
+        required: false
+        default: false
+        type: boolean
       previous_main_sha:
         description: Separately admitted immutable Main A SHA
         required: true
@@ -34,6 +39,7 @@ concurrency:
 
 jobs:
   installed-update:
+    if: ${{ !inputs.stable_bridge_acceptance }}
     name: Windows ${{ matrix.target }} real installed A-to-B Main upgrade
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 24
@@ -135,5 +141,68 @@ jobs:
           $env:EQUINOX_WINDOWS_INSTALL_VERSION = [string]$release.version
           $env:EQUINOX_WINDOWS_MAIN_ACCEPT_TARGET_SHA = $env:TARGET_SHA
           $env:EQUINOX_WINDOWS_MAIN_ACCEPT_SCENARIO = '${{ inputs.scenario }}'
+          & powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File tests/release/windows-installer-real-package-smoke.ps1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+  # Optional genuine native hosted-OS bridge smoke. No production signing.
+  stable-bridge-windows:
+    if: ${{ inputs.stable_bridge_acceptance }}
+    name: Windows ${{ matrix.arch }} owned WPF Stable-to-Main bridge and recovery
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 22
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: x64, runner: windows-latest, rid: win-x64, platform: x64 }
+          - { arch: arm64, runner: windows-11-vs2026-arm, rid: win-arm64, platform: ARM64 }
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 26.11.1
+          architecture: ${{ matrix.arch }}
+          cache: npm
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: 10.0.x
+      - name: Verify disposable native host and unowned installer state
+        shell: pwsh
+        run: |
+          if ($env:GITHUB_REPOSITORY -cne 'sametbasbug/equinox-local' -or
+              $env:GITHUB_ACTIONS -cne 'true' -or
+              (node -p 'process.platform + "-" + process.arch') -cne 'win32-${{ matrix.arch }}') {
+            throw 'Hosted bridge acceptance native runner identity mismatch'
+          }
+          $appRoot = Join-Path ([Environment]::GetFolderPath([Environment+SpecialFolder]::LocalApplicationData)) 'Equinox Local'
+          if (Test-Path -LiteralPath $appRoot) { throw 'Refusing to modify a preexisting Equinox Local Windows installation' }
+          if (Test-Path 'Registry::HKEY_CURRENT_USER\Software\Google\Chrome\NativeMessagingHosts\dev.equinox.browser') {
+            throw 'Refusing to replace a pre-existing Browser Native Messaging registry key'
+          }
+      - run: npm ci --prefer-offline --no-audit --no-fund
+      - name: Publish exact native WPF for this hosted architecture
+        shell: pwsh
+        env:
+          EQUINOX_WINDOWS_SHELL_PUBLISH_DIR: ${{ runner.temp }}/stable-bridge-shell/${{ matrix.rid }}
+          EQUINOX_WINDOWS_SHELL_BIN_DIR: ${{ runner.temp }}/stable-bridge-bin/${{ matrix.rid }}/
+          EQUINOX_WINDOWS_SHELL_OBJ_DIR: ${{ runner.temp }}/stable-bridge-obj/${{ matrix.rid }}/
+        run: |
+          dotnet publish native/windows/EquinoxLocal.WindowsShell/EquinoxLocal.WindowsShell.csproj --configuration Release --runtime '${{ matrix.rid }}' --self-contained true -p:Platform='${{ matrix.platform }}' -p:BaseOutputPath="$env:EQUINOX_WINDOWS_SHELL_BIN_DIR" -p:BaseIntermediateOutputPath="$env:EQUINOX_WINDOWS_SHELL_OBJ_DIR" --output "$env:EQUINOX_WINDOWS_SHELL_PUBLISH_DIR"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Build exact checkout managed native release ZIP
+        env:
+          EQUINOX_WINDOWS_SHELL_PUBLISH_DIR: ${{ runner.temp }}/stable-bridge-shell/${{ matrix.rid }}
+        run: npm run local:release:package:windows
+      - name: Install REAL native WPF with default Main, then exercise Stable bridge and failure rollback
+        shell: pwsh
+        env:
+          EQUINOX_WINDOWS_STABLE_BRIDGE_ACCEPTANCE: 'true'
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $artifact = Get-ChildItem backups/local-packages -Filter 'equinox-local-*-win32-${{ matrix.arch }}.zip' | Select-Object -First 1
+          if ($null -eq $artifact) { throw 'Managed native bridge acceptance ZIP missing' }
+          $env:EQUINOX_WINDOWS_INSTALL_ARTIFACT = $artifact.FullName
           & powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File tests/release/windows-installer-real-package-smoke.ps1
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

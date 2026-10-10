@@ -164,6 +164,11 @@ try {
   Assert-True ([string]$status.status.server.version -ceq $FixtureVersion) 'Windows runtime version does not match the installed release.'
   Assert-True ([string]$status.status.installation.kind -ceq 'managed-source') 'Windows fresh install did not enter managed-source mode.'
   Assert-True ([string]$status.status.installation.sourceSha -ceq $FixtureSourceSha) 'Windows managed-source runtime SHA does not match release sourceSha.'
+  if ($env:EQUINOX_WINDOWS_STABLE_BRIDGE_ACCEPTANCE -ceq 'true') {
+    if ($env:GITHUB_ACTIONS -cne 'true') { throw 'Native Stable bridge acceptance requires a disposable hosted runner.' }
+    & node (Join-Path $Root 'tests/release/smoke-stable-main-bridge-windows.mjs') $InstallRoot $ReleaseDir $FixtureVersion $FixtureSourceSha
+    if ($LASTEXITCODE -ne 0) { throw 'Real Windows WPF Stable-to-Main bridge recovery acceptance failed.' }
+  }
   $ManagedSourceRoot = Join-Path $InstallRoot ("state\main-update\sources\$FixtureSourceSha")
   Assert-True ([IO.File]::Exists((Join-Path $ManagedSourceRoot 'src\server.js'))) 'Windows managed-source checkout is missing the exact source server.'
   $OwnedGit = Join-Path $InstallRoot ("runtime\toolchain\git\2.53.0-4\$FixtureTarget\cmd\git.exe")

@@ -5,6 +5,11 @@ name: Main Installed Upgrade Acceptance
 on:
   workflow_dispatch:
     inputs:
+      stable_bridge_acceptance:
+        description: Run hosted Stable-to-Main unsigned candidate bridge acceptance, not Main-to-Main
+        required: false
+        default: false
+        type: boolean
       previous_main_sha:
         description: Exact previously admitted Main SHA to install as A
         required: true
@@ -44,6 +49,7 @@ concurrency:
 
 jobs:
   macos-native:
+    if: ${{ !inputs.stable_bridge_acceptance }}
     name: macOS ${{ inputs.architecture }} real installed A-to-Main upgrade
     runs-on: ${{ inputs.architecture == 'x64' && 'macos-15-intel' || 'macos-latest' }}
     timeout-minutes: 25
@@ -117,3 +123,36 @@ jobs:
         run: |
           set -euo pipefail
           node tests/release/smoke-main-upgrade-macos.mjs "$OLD_RELEASE_ARTIFACT" "$OLD_SHA" "$TARGET_SHA"
+
+  # Optional genuine native hosted-OS bridge smoke. No production signing.
+  stable-bridge-macos:
+    if: ${{ inputs.stable_bridge_acceptance }}
+    name: macOS ${{ matrix.arch }} owned LaunchAgent Stable-to-Main bridge and recovery
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 18
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: arm64, runner: macos-latest }
+          - { arch: x64, runner: macos-15-intel }
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 26.11.1
+          architecture: ${{ matrix.arch }}
+          cache: npm
+      - name: Verify disposable native host
+        run: |
+          test "$GITHUB_REPOSITORY" = sametbasbug/equinox-local
+          test "$(node -p 'process.platform + "-" + process.arch')" = 'darwin-${{ matrix.arch }}'
+          test "$GITHUB_ACTIONS" = true
+      - run: npm ci --prefer-offline --no-audit --no-fund
+      - name: Package exact checkout in disposable hosted runner
+        run: npm run local:release:package
+      - name: Run REAL isolated LaunchAgent Stable to Main bridge, forced rollback, Main recovery
+        run: node tests/release/smoke-managed-install.mjs
