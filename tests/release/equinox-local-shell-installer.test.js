@@ -88,6 +88,11 @@ test("public Windows installer selects only native x64/ARM64 targets, stays fixe
   assert.match(source, /ContentLength -gt \$MaxBytes/u);
   assert.match(source, /\$total -gt \$MaxBytes/u);
   assert.match(source, /bootstrap-\$Target\.txt/u);
+  assert.match(source, /function Assert-ExistingStableUpgradeRoute/u);
+  assert.match(source, /Assert-ExistingStableUpgradeRoute \$installRoot \$manifest\.Version \$Target/u);
+  assert.match(source, /current-version\.json/u);
+  assert.match(source, /The website installer is only for first install or same-version repair/u);
+  assert.ok(source.indexOf("Assert-ExistingStableUpgradeRoute $installRoot $manifest.Version $Target") < source.indexOf("Write-Info 'downloading the verified ZIP helper'"));
   assert.match(source, /equinox-local-\$\(\$values\.version\)-\$Target\.zip/u);
   assert.match(source, /Get-FileHash -LiteralPath \$Path -Algorithm SHA256/u);
   assert.match(source, /__EQUINOX_ZIP_HELPER_SHA256__/u);

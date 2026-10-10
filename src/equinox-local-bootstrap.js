@@ -345,6 +345,10 @@ export async function bootstrapManagedEquinoxUser({
     const nativeHost = await registerWindowsNativeMessagingHostImpl({
       manifestRoot: paths.nativeMessagingManifestRoot,
       launcherPath: windowsNativeMessagingLauncherPath(release.releaseDir),
+      // resolveBootstrapRelease already validated the product-owned current
+      // version pointer and release metadata. Only that managed-install
+      // context may reconstruct its missing canonical Native Messaging file.
+      recoverMissingOwnedManifest: true,
       fsImpl,
       env,
     });

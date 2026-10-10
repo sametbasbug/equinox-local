@@ -14,6 +14,7 @@ import { equinoxBrowserIpcEndpoint } from "../../src/equinox-browser-socket.js";
 import {
   readWindowsNativeMessagingRegistryValue,
   registerWindowsNativeMessagingHost,
+  windowsNativeMessagingManifest,
   unregisterWindowsNativeMessagingHost,
   windowsNativeMessagingLauncherPath,
 } from "../../src/equinox-browser-windows-native-messaging.js";
@@ -272,6 +273,26 @@ try {
   );
 
   await stopNativeHost(user, "Your Browser");
+
+  // Simulate a partial previous installer cleanup: HKCU still identifies
+  // our exact registered path but the owned manifest has disappeared.
+  // Default registration must refuse, while explicit managed recovery
+  // reconstructs only our verified manifest without altering the key.
+  await fs.unlink(registration.manifestPath);
+  await assert.rejects(registerWindowsNativeMessagingHost({
+    manifestRoot, launcherPath, env: cleanInstallerEnv,
+  }), /refusing to repair ambiguous ownership/u);
+  const recovered = await registerWindowsNativeMessagingHost({
+    manifestRoot, launcherPath, env: cleanInstallerEnv,
+    recoverMissingOwnedManifest: true,
+  });
+  assert.equal(recovered.manifestChanged, true);
+  assert.equal(recovered.registryChanged, false);
+  assert.equal(await fs.readFile(registration.manifestPath, "utf8"), windowsNativeMessagingManifest(launcherPath));
+  assert.equal(
+    path.win32.normalize(await readWindowsNativeMessagingRegistryValue({ env: cleanInstallerEnv })).toLowerCase(),
+    path.win32.normalize(registration.manifestPath).toLowerCase(),
+  );
 
   const removed = await unregisterWindowsNativeMessagingHost({
     manifestPath: registration.manifestPath,

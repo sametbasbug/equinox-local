@@ -177,6 +177,7 @@ export async function registerWindowsNativeMessagingHost({
   fsImpl = fs,
   env = process.env,
   verifyLauncher = true,
+  recoverMissingOwnedManifest = false,
 } = {}) {
   if (typeof manifestRoot !== "string" || !manifestRoot) throw new Error("Windows Native Messaging manifest root is required.");
   const executable = requireAbsolute(launcherPath, "Windows Native Messaging launcher");
@@ -201,7 +202,25 @@ export async function registerWindowsNativeMessagingHost({
     fsImpl,
   });
   if (registered !== null && manifestState === null) {
-    throw new Error("Windows Native Messaging registry points to a missing manifest; refusing to repair ambiguous ownership.");
+    if (recoverMissingOwnedManifest !== true || !verifyLauncher) {
+      throw new Error("Windows Native Messaging registry points to a missing manifest; refusing to repair ambiguous ownership.");
+    }
+    // Recovery is only permitted by a caller that has already validated the
+    // managed current-release pointer + release metadata. Never infer this
+    // permission from HKCU alone; do not replace a foreign manifest.
+    const beforeRepair = await readWindowsNativeMessagingRegistryValue({ execFileAsync, env });
+    if (!sameWindowsPath(beforeRepair, manifestPath)) {
+      throw new Error("Windows Native Messaging registry changed ownership before missing-manifest recovery.");
+    }
+    // An ENOENT on open must not turn a dangling symlink or foreign special
+    // file into a new product-owned manifest. The final write is no-clobber.
+    const manifestEntry = await fsImpl.lstat(manifestPath).catch((error) => {
+      if (error?.code === "ENOENT") return null;
+      throw error;
+    });
+    if (manifestEntry !== null) {
+      throw new Error("Windows Native Messaging missing-manifest recovery refuses an existing entry.");
+    }
   }
 
   let manifestChanged = false;
@@ -215,6 +234,13 @@ export async function registerWindowsNativeMessagingHost({
       label: "Windows Native Messaging manifest",
     });
     manifestChanged = true;
+  }
+
+  if (registered !== null && manifestChanged && recoverMissingOwnedManifest === true) {
+    const afterRepair = await readWindowsNativeMessagingRegistryValue({ execFileAsync, env });
+    if (!sameWindowsPath(afterRepair, manifestPath)) {
+      throw new Error("Windows Native Messaging registry changed ownership during missing-manifest recovery.");
+    }
   }
 
   let registryChanged = false;
