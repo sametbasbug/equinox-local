@@ -256,6 +256,7 @@ test("managed Windows Doctor validates the accepted per-user lifecycle without L
       runtimeVersion: "5.2.1",
       browser: { ready: true, consentAccepted: true, controlEnabled: true },
       peekaboo: {},
+      desktop: { engine: "winapp", active: true, version: "0.7.1", compatibility: { ok: true } },
       update: { selfUpdateSupported: true, configured: true },
       onboarding: { connectedThroughTunnel: true },
       host: { platform: "win32", arch: "x64", target: "win32-x64", displayName: "Windows", supported: true },
@@ -281,6 +282,9 @@ test("managed Windows Doctor validates the accepted per-user lifecycle without L
     assert.equal(result.summary.attention, 0);
     assert.equal(result.checks.some((item) => item.id === "launch-agent"), false);
     assert.equal(result.checks.find((item) => item.id === "windows-shell")?.status, "pass");
+    assert.equal(result.checks.find((item) => item.id === "desktop")?.status, "pass");
+    assert.match(result.checks.find((item) => item.id === "desktop")?.detail || "", /winapp 0\.7\.1/u);
+    assert.equal(result.checks.some((item) => item.id === "peekaboo"), false);
     assert.equal(result.checks.find((item) => item.id === "windows-startup")?.status, "pass");
     assert.match(result.checks.find((item) => item.id === "windows-startup")?.detail || "", /disabled/u);
     assert.equal(result.checks.find((item) => item.id === "native-host")?.status, "pass");

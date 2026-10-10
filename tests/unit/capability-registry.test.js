@@ -5,6 +5,7 @@ import * as z from "zod/v4";
 import {
   STABLE_CAPABILITY_DOMAINS,
   createCapabilityRegistry,
+  externalCapabilityDomainDefinition,
   inferCapabilityDomain,
   registerStableCapabilityGateways,
 } from "../../src/capability-registry.js";
@@ -543,4 +544,10 @@ test("stable capability gateways route top-level calls through Turn Budget prepa
     "browser_call",
   ]);
   assert.equal(events.filter((item) => item.phase === "decorate").length, 2);
+});
+
+test("desktop capability metadata follows the actual Windows engine without rewriting macOS", () => {
+  assert.equal(externalCapabilityDomainDefinition("desktop", "win32").label, "Windows desktop");
+  assert.match(externalCapabilityDomainDefinition("desktop", "win32").usageHint, /winapp/u);
+  assert.equal(externalCapabilityDomainDefinition("desktop", "darwin").label, "macOS desktop");
 });

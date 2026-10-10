@@ -597,7 +597,9 @@ function renderDashboard() {
         ? "Not available"
         : "Not checked";
   setText("peekaboo-status", peekabooLabel);
-  setText("peekaboo-detail", peekaboo.version ? `Peekaboo ${peekaboo.version}` : "Optional desktop capability");
+  setText("peekaboo-detail", peekaboo.version
+    ? `${peekaboo.engine === "winapp" ? "Microsoft winapp" : "Peekaboo"} ${peekaboo.version}`
+    : "Optional desktop capability");
   setDot("peekaboo-status-dot", peekaboo.needsAttention ? "warn" : peekabooReady ? "good" : "neutral");
 
   setText("api-status", controlCenter.active ? "Listening" : "Unavailable");
@@ -1844,10 +1846,12 @@ function renderIntegrations() {
       ],
     ),
     createIntegrationCard(
-      "Peekaboo desktop bridge",
-      peekaboo.version
-        ? `Optional macOS desktop capability · Peekaboo ${peekaboo.version}.`
-        : "Optional macOS desktop capability. It is not required for Terminal, GitHub or Browser operations.",
+      peekaboo.engine === "winapp" ? "Microsoft winapp desktop bridge" : "Peekaboo desktop bridge",
+      peekaboo.engine === "winapp"
+        ? (peekaboo.version ? `Optional Windows UI automation · Microsoft winapp ${peekaboo.version}.` : "Optional Windows desktop capability. Browser, Terminal and Git do not depend on it.")
+        : peekaboo.version
+          ? `Optional macOS desktop capability · Peekaboo ${peekaboo.version}.`
+          : "Optional macOS desktop capability. It is not required for Terminal, GitHub or Browser operations.",
       peekabooStatus,
       peekabooTone,
     ),

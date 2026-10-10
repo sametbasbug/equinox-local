@@ -2748,6 +2748,19 @@ function publicPeekabooVersion(value) {
 }
 
 async function getControlCenterPeekabooStatus() {
+  // The existing Control Center desktop-status slot is shared across hosts.
+  // On Windows, report the actual pinned winapp engine rather than probing
+  // the macOS-only Peekaboo bridge and claiming Windows desktop is absent.
+  if (process.platform === "win32") {
+    try {
+      const status = await winappBridge.status();
+      return Object.freeze({ engine: "winapp", available: true, active: true, ready: true,
+        needsAttention: false, version: status.version, reconnectCount: 0 });
+    } catch {
+      return Object.freeze({ engine: "winapp", available: false, active: false, ready: false,
+        needsAttention: false, version: null, reconnectCount: 0 });
+    }
+  }
   try {
     const status = await peekabooBridge.status({ probePermissions: false });
     const ready = isPeekabooControlCenterReady(status);
@@ -2819,6 +2832,7 @@ async function getControlCenterDoctorStatus() {
       agentBrowser: agentBrowserStatus,
     },
     peekaboo: peekabooStatus,
+    desktop: process.platform === "win32" ? await winappBridge.status().catch(() => ({ engine: "winapp", active: false })) : {},
     update: equinoxLocalUpdateCoordinator.snapshot(),
     onboarding,
     developmentTunnel,

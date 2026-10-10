@@ -82,6 +82,7 @@ export async function getEquinoxLocalDoctorStatus({
   sourceCheckoutVersion = null,
   browser = {},
   peekaboo = {},
+  desktop = {},
   update = {},
   onboarding = {},
   developmentTunnel = null,
@@ -468,6 +469,17 @@ export async function getEquinoxLocalDoctorStatus({
     ));
   }
 
+  if (hostDescriptor.platform === "win32") {
+    const winappReady = desktop?.engine === "winapp" && desktop?.active === true && desktop?.compatibility?.ok !== false;
+    checks.push(check(
+      "desktop",
+      "Windows desktop · winapp",
+      winappReady ? "pass" : "optional",
+      winappReady
+        ? `Microsoft winapp ${desktop.version ?? "desktop bridge"} is available.`
+        : "Windows desktop automation is optional and is not currently available.",
+    ));
+  } else {
   const peekabooReady = peekaboo?.ready === true || (peekaboo?.ready === undefined && peekaboo?.active === true);
   const peekabooNeedsAttention = peekaboo?.needsAttention === true;
   checks.push(check(
@@ -480,6 +492,8 @@ export async function getEquinoxLocalDoctorStatus({
         ? "Peekaboo desktop automation is available."
         : "Peekaboo is optional and is not currently available.",
   ));
+
+  }
 
   const summary = summarize(checks);
   return Object.freeze({

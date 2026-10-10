@@ -33,6 +33,8 @@ test("Windows shell is a thin x64/ARM64 WPF/WebView2 host for the shared Control
   assert.match(project, /Microsoft\.Web\.WebView2/u);
   assert.match(window, /http:\/\/127\.0\.0\.1:24891\//u);
   assert.match(window, /EnsureCoreWebView2Async/u);
+  assert.match(window, /CoreWebView2Environment\.CreateAsync\(userDataFolder: userData\)/u);
+  assert.match(window, /"Equinox Local", "state", "webview2"/u);
   assert.match(window, /GetAvailableBrowserVersionString/u);
   assert.match(window, /UseShellExecute\s*=\s*true/u);
   assert.doesNotMatch(window, /cmd\.exe|powershell(?:\.exe)?|ProcessStartInfo\s*\([^)]*\/c/iu);

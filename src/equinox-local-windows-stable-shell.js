@@ -24,7 +24,35 @@ async function sha256File(filePath, fsImpl = fs) {
   return digest.digest("hex");
 }
 
-export async function snapshotWindowsStableShellTree(root, { fsImpl = fs } = {}) {
+// 6.0.0-6.0.2 WPF accidentally created WebView2 and WinRT cache trees
+// inside the installed shell. Ignore only these exact *top-level directory*
+// names while checking an already installed shell. Signed release trees and
+// freshly staged copies must still match byte-for-byte without exceptions.
+const LEGACY_WINDOWS_SHELL_RUNTIME_CACHE = new Set(["EquinoxLocal.exe.WebView2", "%SystemDrive%"]);
+
+async function assertLegacyShellCacheTree(directory, { fsImpl = fs } = {}) {
+  // Ignoring runtime-only content must not turn an unexpected junction into
+  // a trusted part of the installed application's ownership boundary.
+  const pending = [directory];
+  let count = 0;
+  let bytes = 0;
+  while (pending.length) {
+    const current = pending.pop();
+    for (const entry of await fsImpl.readdir(current)) {
+      if (++count > MAX_WINDOWS_SHELL_ENTRIES) throw new Error("Windows legacy shell cache exceeds the entry limit.");
+      const absolute = path.join(current, entry);
+      const stat = await fsImpl.lstat(absolute);
+      if (stat.isSymbolicLink()) throw new Error("Windows legacy shell cache contains a symbolic link or junction.");
+      if (stat.isDirectory()) pending.push(absolute);
+      else if (stat.isFile()) {
+        bytes += stat.size;
+        if (bytes > MAX_WINDOWS_SHELL_BYTES) throw new Error("Windows legacy shell cache exceeds the byte limit.");
+      } else throw new Error("Windows legacy shell cache contains an unsupported filesystem entry.");
+    }
+  }
+}
+
+export async function snapshotWindowsStableShellTree(root, { fsImpl = fs, ignoreLegacyCache = false } = {}) {
   const rootStat = await fsImpl.lstat(root);
   if (!rootStat.isDirectory() || rootStat.isSymbolicLink()) throw new Error(`Windows stable shell root is unsafe: ${root}`);
   const rows = [];
@@ -39,6 +67,10 @@ export async function snapshotWindowsStableShellTree(root, { fsImpl = fs } = {})
       const relative = current.relative ? `${current.relative}/${entry.name}` : entry.name;
       const stat = await fsImpl.lstat(absolute);
       if (stat.isSymbolicLink()) throw new Error("Windows stable shell may not contain symbolic links or junctions.");
+      if (ignoreLegacyCache && current.relative === "" && stat.isDirectory() && LEGACY_WINDOWS_SHELL_RUNTIME_CACHE.has(entry.name)) {
+        await assertLegacyShellCacheTree(absolute, { fsImpl });
+        continue;
+      }
       if (stat.isDirectory()) {
         stack.push({ absolute, relative });
         continue;
@@ -148,7 +180,7 @@ export async function restoreWindowsStableShellRollbackSnapshot({
 export async function assertWindowsStableShellOwnedByRelease({ releaseDir, programRoot, fsImpl = fs } = {}) {
   if (typeof releaseDir !== "string" || typeof programRoot !== "string") throw new Error("Windows stable shell paths are required.");
   const desired = await verifiedReleaseShell(releaseDir, { fsImpl });
-  const installed = await snapshotWindowsStableShellTree(programRoot, { fsImpl });
+  const installed = await snapshotWindowsStableShellTree(programRoot, { fsImpl, ignoreLegacyCache: true });
   if (!sameWindowsStableShellTree(desired.sourceSnapshot, installed)) {
     throw new Error("Existing Windows stable shell does not match the active managed release.");
   }
@@ -161,7 +193,7 @@ export async function synchronizeFreshWindowsShell({ releaseDir, programRoot, fs
   try {
     const existing = await fsImpl.lstat(programRoot);
     if (!existing.isDirectory() || existing.isSymbolicLink()) throw new Error("Existing Windows stable shell root is unsafe.");
-    const existingSnapshot = await snapshotWindowsStableShellTree(programRoot, { fsImpl });
+    const existingSnapshot = await snapshotWindowsStableShellTree(programRoot, { fsImpl, ignoreLegacyCache: true });
     if (!sameWindowsStableShellTree(sourceSnapshot, existingSnapshot)) throw new Error("Existing Windows stable shell does not match the verified release.");
     return Object.freeze({ synchronized: false, reused: true, shellExecutable: path.join(programRoot, "EquinoxLocal.exe") });
   } catch (error) {
@@ -207,7 +239,7 @@ export async function replaceWindowsStableShellForRelease({
 } = {}) {
   if (typeof previousReleaseDir !== "string") throw new Error("Previous Windows release path is required for stable-shell replacement.");
   const desired = await verifiedReleaseShell(releaseDir, { fsImpl });
-  const currentSnapshot = await snapshotWindowsStableShellTree(programRoot, { fsImpl });
+  const currentSnapshot = await snapshotWindowsStableShellTree(programRoot, { fsImpl, ignoreLegacyCache: true });
   if (sameWindowsStableShellTree(desired.sourceSnapshot, currentSnapshot)) {
     return Object.freeze({ synchronized: false, reused: true, shellExecutable: path.join(programRoot, "EquinoxLocal.exe") });
   }
@@ -224,7 +256,7 @@ export async function replaceWindowsStableShellForRelease({
     await renameWindowsPathWhenUnlocked(programRoot, backupRoot, { fsImpl, sleepImpl });
     movedPrevious = true;
     await fsImpl.rename(staged.stagedRoot, programRoot);
-    const installed = await snapshotWindowsStableShellTree(programRoot, { fsImpl });
+    const installed = await snapshotWindowsStableShellTree(programRoot, { fsImpl, ignoreLegacyCache: true });
     if (!sameWindowsStableShellTree(desired.sourceSnapshot, installed)) throw new Error("Installed Windows stable shell failed integrity verification.");
     await fsImpl.rm(backupRoot, { recursive: true, force: false });
     return Object.freeze({ synchronized: true, reused: false, shellExecutable: path.join(programRoot, "EquinoxLocal.exe") });
