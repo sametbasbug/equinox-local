@@ -54,3 +54,7 @@ These instructions apply to the entire Equinox Local canonical product repositor
 - `docs/architecture.md` is the public architecture reference.
 - `SECURITY.md` defines vulnerability-reporting expectations.
 - Historical implementation ideas or private development infrastructure must not be reintroduced merely because similar code or terminology appears in old discussions or commits.
+
+## Single Main update stream
+
+Read [`docs/plans/unified-main-update-channel.md`](docs/plans/unified-main-update-channel.md) before editing bootstrap/update enrollment or Stable releases. Existing Stable users require a signed migration bridge.

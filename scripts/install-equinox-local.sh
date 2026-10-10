@@ -30,12 +30,12 @@ require_private_directory() {
   /bin/chmod 700 "$directory" 2>/dev/null || true
 }
 
-MAIN_ARGS=()
+MAIN_ARGS=(--enroll-existing-main)
 for argument in "$@"; do
   case "$argument" in
     --enroll-existing-main) MAIN_ARGS=(--enroll-existing-main) ;;
     --help|-h)
-      printf '%s\n' 'Usage: install-equinox-local.sh [--enroll-existing-main]' 'Stable (default): latest numbered release.' 'Main (explicit opt-in): enroll after Stable health; fresh or same-version matching installed provenance.'
+      printf '%s\n' 'Usage: install-equinox-local.sh [--enroll-existing-main]' 'The signed Stable release installs first; Main enrollment follows its healthy activation by default.' 'Existing same-version Stable installs are enrolled without removing settings; older Stable versions must update first.'
       exit 0 ;;
     *) fail "unknown argument: $argument (use --help)" ;;
   esac

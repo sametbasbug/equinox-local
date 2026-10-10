@@ -1,0 +1,21 @@
+# One update stream: signed Stable bootstrap → admitted Main
+
+Status: **IN PROGRESS; not shipped to installed Stable clients**. Product owner decided on 2026-10-11 to remove the long-lived Stable/Main channel choice and avoid repeated numbered Stable releases. The only regular update channel will be admitted, exact-SHA `main-snapshot`; Stable becomes the signed installation and rollback baseline.
+
+## Product contract
+
+- Every new public installer downloads the most recent signed Stable baseline, performs native install, verifies runtime health, then automatically enrolls the installed source in admitted Main using the existing product-owned, pinned toolchain and rollback-capable managed-source enrollment. No channel-choice UI or terminal flag is required.
+- Once enrolled, the ordinary Control Center `Check for updates` / `Update & restart` uses only the immutable, four-target-validated `main-snapshot` pointer. Docs-only commits do not create updates. The Chrome Web Store Browser extension has its own channel.
+- An existing signed Stable installation (including 6.0.3) **must receive one final signed transition bridge** via its existing old Stable updater; pushing code to public Main cannot modify an installed Stable user's running update engine. The bridge activates the signed baseline first, health-checks it, enrolls its exact source SHA in managed Main, restarts the owned runtime, and verifies `managed-source` plus exact SHA; no user reinstall, tunnel-key prompt or loss of configuration. The bridge must work on macOS ARM64/x64 and Windows x64/ARM64.
+- Source enrollment failure must not remove credentials, native Browser host, user workspace, tunnel profile or stable rollback artifacts. The bridge either automatically restores the healthy signed Stable baseline and reports a redacted retryable error, or retries only with bounded safe policy after recoverable conditions are met; never mark Main enrolled without the durable `install.json`/`current-source.conf` pair and healthy process.
+- A healthy existing managed Main install stays Main on repeated installer invocations and restarts. Do not move the Mac mini's factory Developer role onto public Stable.
+
+## Checkpoints
+
+1. **Bootstrap defaults and communication (this PR):** public macOS and Windows installer forward enrollment by default after Stable health, existing internal explicit flag remains accepted for compatibility; docs/Control Center replace the dead-end toggle guidance with automatic Main explanation; contract tests verify forwarding. This alone does **not** upgrade older installed Stable machines.
+2. **Existing Stable bridge:** implement one-time migration as a post-Stable-activation transaction in the *new signed helper* (Windows shell launches new version's helper). Reuse guarded `enrollEquinoxLocalManagedSource`, rollback, owned restart and `waitForEquinoxLocalManagedSource` with exact release metadata provenance. Reuse or extract first-install enrollment routine rather than maintaining subtly different enrollment policies. Build injection-based success, failure, rollback, and repeated-idempotent tests.
+3. **Four-platform acceptance:** add real Windows ARM64/x64 native shell upgrade/bridge + main snapshot acceptance, macOS arm64/x64 managed launch+rollback acceptance, and verify current WPF ownership/Chrome/WinApp/tunnel state. No installer ZIP or native artifact is trusted without exact source/size/signature/ownership gate.
+4. **One final signed migration Stable:** combine PRs #193 and #194 plus this channel migration into the next signed Stable; only publish after CI and factory signing gates. Upgrade the Mac mini Developer factory locally and verify version/Doctor, then verify real Windows 6.0.3→bridge→Main update and sustained MCP/Agent Browser/WinApp. The installation process stays Stable *as a recovery baseline*, not a secondary active update channel.
+5. **Close legacy surfaces:** remove or repurpose old Stable-vs-Main user controls and notices after verified migration, then close issues #184/#186 and relevant channel debt. Existing user state is never silently deleted.
+
+Do not claim rollout complete before checkpoint 4 and installed-host verification. No fresh release number is approved by this plan alone.

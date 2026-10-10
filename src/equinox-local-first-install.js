@@ -566,7 +566,7 @@ function parseCli(argv) {
 const invokedPath = process.argv[1] ? path.resolve(process.argv[1]) : null;
 if (invokedPath && path.basename(invokedPath) === path.basename(fileURLToPath(import.meta.url))) {
   if (process.argv.length === 3 && process.argv[2] === "--help") {
-    process.stdout.write("Usage: equinox-local-first-install.js --staged-release /absolute/path/to/release [--enroll-existing-main]\nStable (default): latest numbered release.\nMain (explicit opt-in): --enroll-existing-main enrolls fresh or same-version existing Stable after health; exact source provenance is required.\n");
+    process.stdout.write("Usage: equinox-local-first-install.js --staged-release /absolute/path/to/release [--enroll-existing-main]\nBundled internal helper: --enroll-existing-main enrolls Main after signed Stable health.\nPublic installers supply this flag by default; exact source provenance is required.\n");
   } else {
     installManagedEquinoxRelease(parseCli(process.argv.slice(2)))
       .then((result) => process.stdout.write(`${JSON.stringify(result, null, 2)}\n`))

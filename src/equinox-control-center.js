@@ -958,8 +958,8 @@ function renderUpdate() {
   mainNotice.hidden = mainChannel || !update.mainNotice?.targetSha;
   if (!mainNotice.hidden) {
     setText("update-stable-main-copy", state.language === "tr"
-      ? `Main ${shortUpdateSha(update.mainNotice.targetSha)} hazır. Stable'den Main'e geçmek için aşağıdaki resmî kurulum seçeneğini kullanabilirsin; mevcut yapılandırma korunur.`
-      : `Main ${shortUpdateSha(update.mainNotice.targetSha)} is ready. Use the official installer enrollment option below to switch from Stable; your configuration is preserved.`);
+      ? `Main ${shortUpdateSha(update.mainNotice.targetSha)} hazır. İlk kurulumda Main otomatik seçilir; eski Stable kurulumları imzalı geçiş güncellemesini bekler.`
+      : `Main ${shortUpdateSha(update.mainNotice.targetSha)} is ready. New installs enroll automatically; existing Stable installations await the signed migration update.`);
   }
   mainMeta.hidden = !mainChannel;
   if (mainChannel) {
