@@ -64,6 +64,7 @@ export async function bridgeActivatedStableToMain({
       stableReleaseDir: identity.releaseDir,
     } : {}),
   };
+  const healthBudget = Object.freeze({ attempts: installation.platform === "win32" ? 180 : 120, delayMs: 500 });
   let enrolled = false;
   try {
     const result = await enrollImpl(enrollmentOptions);
@@ -72,7 +73,7 @@ export async function bridgeActivatedStableToMain({
     }
     enrolled = true;
     await restartImpl();
-    await waitForMainImpl(version, identity.sourceSha);
+    await waitForMainImpl(version, identity.sourceSha, healthBudget);
     return Object.freeze({ status: "main-activated", sourceSha: identity.sourceSha });
   } catch (error) {
     // Fail closed. Only roll back a verified, exact-sha enrollment; never
@@ -87,7 +88,7 @@ export async function bridgeActivatedStableToMain({
       rolledBack = rollback?.rolledBack === true;
       if (rolledBack || enrolled) {
         await restartImpl();
-        await waitForStableImpl(version);
+        await waitForStableImpl(version, healthBudget);
       }
     } catch {
       throw new Error("Stable-to-Main migration failed; Stable recovery needs attention.");

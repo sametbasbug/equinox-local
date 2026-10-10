@@ -21,9 +21,9 @@ const opts = ({platform = "win32", arch = platform === "win32" ? "x64" : "arm64"
       readIdentityImpl: async (i, v) => {steps.push("identity");assert.equal(v,targetVersion);return identity(i);},
       enrollImpl: async (args) => {steps.push("enroll");assert.equal(args.bootstrapSha,SHA);assert.equal(args.target,installation.target);return {status:"enrolled",bootstrapSha:SHA};},
       restartImpl: async () => {steps.push("restart");},
-      waitForMainImpl: async (v, sha) => {steps.push("main healthy"); assert.equal(v,targetVersion);assert.equal(sha,SHA);},
+      waitForMainImpl: async (v, sha,budget) => {steps.push("main healthy"); assert.equal(v,targetVersion);assert.equal(sha,SHA);assert.deepEqual(budget,{attempts:platform==="win32"?180:120,delayMs:500});},
       rollbackImpl: async (args) => {steps.push("rollback");assert.equal(args.bootstrapSha,SHA);return {rolledBack:true};},
-      waitForStableImpl: async (v) => {steps.push("stable healthy");assert.equal(v,targetVersion);},
+      waitForStableImpl: async (v,budget) => {steps.push("stable healthy");assert.equal(v,targetVersion);assert.deepEqual(budget,{attempts:platform==="win32"?180:120,delayMs:500});},
       ...overrides,
     },
   };

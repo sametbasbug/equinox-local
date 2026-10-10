@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { constants as fsConstants } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 
@@ -10,13 +11,16 @@ const MAX_STATE_BYTES = 4 * 1024;
 const WAIT_ATTEMPTS = 90;
 
 async function readSmallJson(filePath, fsImpl = fs) {
-  let stat;
-  try { stat = await fsImpl.lstat(filePath); }
-  catch (error) { if (error?.code === "ENOENT") return null; throw error; }
-  if (!stat.isFile() || stat.isSymbolicLink() || stat.size < 2 || stat.size > MAX_STATE_BYTES) {
-    throw new Error("Stable migration state is unavailable or unsafe.");
-  }
-  return JSON.parse(await fsImpl.readFile(filePath, "utf8"));
+  let handle;
+  try {handle = await fsImpl.open(filePath, fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0));}
+  catch (error) {if (error?.code === "ENOENT") return null;throw error;}
+  try {
+    const stat = await handle.stat();
+    if (!stat.isFile() || stat.size < 2 || stat.size > MAX_STATE_BYTES) {
+      throw new Error("Stable migration state is unavailable or unsafe.");
+    }
+    return JSON.parse(await handle.readFile("utf8"));
+  } finally {await handle.close();}
 }
 
 export async function maybeScheduleMacStableMainBridge({
