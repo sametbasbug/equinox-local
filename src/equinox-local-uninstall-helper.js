@@ -46,10 +46,10 @@ const WINDOWS_SHELL_REGISTRATION_CLEANUP_SCRIPT = [
   "  $appData = $env:APPDATA",
   "  if ([string]::IsNullOrWhiteSpace($appData)) {",
   "    if ([string]::IsNullOrWhiteSpace($env:USERPROFILE)) { throw 'Windows user profile is unavailable' }",
-  "    $appData = Join-Path $env:USERPROFILE 'AppData\Roaming'",
+  "    $appData = Join-Path (Join-Path $env:USERPROFILE 'AppData') 'Roaming'",
   "  }",
   "  if (-not [IO.Path]::IsPathRooted($appData)) { throw 'Windows Start Menu path is not absolute' }",
-  "  $programs = Join-Path $appData 'Microsoft\Windows\Start Menu\Programs'",
+  "  $programs = Join-Path (Join-Path (Join-Path (Join-Path $appData 'Microsoft') 'Windows') 'Start Menu') 'Programs'",
   "}",
   "$shortcutPath = Join-Path $programs 'Equinox Local.lnk'",
   "if ([IO.File]::Exists($shortcutPath)) {",
@@ -73,7 +73,8 @@ export async function removeWindowsShellRegistration({ programRoot, execFileImpl
     throw new Error('Windows shell integration cleanup requires the validated program root.');
   }
   const spawnEnv = { ...windowsStartupRegistryReadEnvironment(env), EQUINOX_LOCAL_EXPECTED_PROGRAM_ROOT: programRoot };
-  await execFileImpl(windowsPowerShellPath(env), ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', WINDOWS_SHELL_REGISTRATION_CLEANUP_SCRIPT], {
+  const encodedScript = Buffer.from(WINDOWS_SHELL_REGISTRATION_CLEANUP_SCRIPT, "utf16le").toString("base64");
+  await execFileImpl(windowsPowerShellPath(env), ["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand", encodedScript], {
     env: spawnEnv, timeout: 20_000, maxBuffer: 4096, windowsHide: true,
   });
   return Object.freeze({ cleaned: true });

@@ -101,7 +101,7 @@ async function readOnboardingState(paths) {
 
 async function writeOnboardingState(paths, state, options = {}) {
   const normalized = normalizeOnboardingState(state);
-  await atomicWrite(paths.onboardingStatePath, `${JSON.stringify(normalized, null, 2)}\n`, 0o600);
+  await atomicWrite(paths.onboardingStatePath, `${JSON.stringify(normalized, null, 2)}\n`, 0o600, options);
   return normalized;
 }
 

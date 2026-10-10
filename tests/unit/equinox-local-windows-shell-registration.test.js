@@ -34,9 +34,10 @@ test('uninstaller validates product-owned shell integration and never accepts no
     execFileImpl: async (command, args, options) => { call = {command,args,options}; },
   });
   assert.equal(call.command, 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe');
-  assert.match(call.args.at(-1), /EquinoxLocalManagedInstall/u);
-  assert.match(call.args.at(-1), /Foreign Windows app uninstall registration/u);
-  assert.match(call.args.at(-1), /Start Menu shortcut is foreign/u);
+  assert.ok(call.args.includes('-EncodedCommand'));
+  assert.match(Buffer.from(call.args.at(-1), 'base64').toString('utf16le'), /EquinoxLocalManagedInstall/u);
+  assert.match(Buffer.from(call.args.at(-1), 'base64').toString('utf16le'), /Foreign Windows app uninstall registration/u);
+  assert.match(Buffer.from(call.args.at(-1), 'base64').toString('utf16le'), /Start Menu shortcut is foreign/u);
   assert.equal(call.options.env.EQUINOX_LOCAL_EXPECTED_PROGRAM_ROOT, 'C:\\Users\\Example\\AppData\\Local\\Programs\\Equinox Local');
   await assert.rejects(removeWindowsShellRegistration({programRoot:'C:\\Other\\NotOurApp'}), /validated program root/u);
 });
