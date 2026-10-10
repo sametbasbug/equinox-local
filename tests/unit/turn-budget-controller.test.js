@@ -23,7 +23,7 @@ function textResult(text = "ok") {
 const TEST_SETTINGS_PATH = path.join(os.tmpdir(), `equinox-turn-budget-defaults-${process.pid}.json`);
 
 test("turn budget defaults and stages are bounded", () => {
-  assert.deepEqual(__test.normalizeSettings(), { enabled: true, cutoffMinutes: 22, fallbackResetMinutes: 5, autoContinueMaxHops: 10 });
+  assert.deepEqual(__test.normalizeSettings(), { enabled: true, cutoffMinutes: 22, fallbackResetMinutes: 2, autoContinueMaxHops: 10 });
   assert.equal(__test.stageForElapsed(17 * 60_000, 22), "running");
   assert.equal(__test.stageForElapsed(18 * 60_000, 22), "checkpoint");
   assert.equal(__test.stageForElapsed(20 * 60_000, 22), "finalize");
@@ -40,7 +40,7 @@ test("controller persists immediate runtime settings with private permissions", 
     const controller = createTurnBudgetController({ settingsPath });
     await controller.initialize();
     assert.equal(controller.snapshot().cutoffMinutes, 22);
-    assert.equal(controller.snapshot().fallbackResetMinutes, 5);
+    assert.equal(controller.snapshot().fallbackResetMinutes, 2);
     assert.equal(controller.snapshot().autoContinueMaxHops, 10);
     await controller.updateSettings({ enabled: true, cutoffMinutes: 19, fallbackResetMinutes: 3, autoContinueMaxHops: 14 });
     assert.equal(controller.snapshot().cutoffMinutes, 19);

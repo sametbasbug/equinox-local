@@ -17,12 +17,23 @@ public partial class App : System.Windows.Application
         base.OnStartup(e);
         _startedAtLogin = e.Args.Any(arg => string.Equals(arg, "--startup", StringComparison.OrdinalIgnoreCase));
 
+        // Windows Installed Apps invokes this exact native shell with --uninstall.
+        // Keep user data by default; deletion is an explicit Control Center choice.
+        var uninstallRequested = e.Args.Length == 1 && string.Equals(e.Args[0], "--uninstall", StringComparison.OrdinalIgnoreCase);
+        if (uninstallRequested)
+        {
+            var choice = MessageBox.Show("Uninstall Equinox Local? Local configuration and projects will be preserved.",
+                "Uninstall Equinox Local", MessageBoxButton.YesNo, MessageBoxImage.Question);
+            if (choice != MessageBoxResult.Yes) { Shutdown(); return; }
+        }
+
         _singleInstance = new SingleInstanceCoordinator();
         if (!_singleInstance.IsPrimary)
         {
             try
             {
-                if (!_startedAtLogin) _singleInstance.SignalPrimaryAsync().GetAwaiter().GetResult();
+                if (uninstallRequested) _singleInstance.RequestManagedUninstallAsync().GetAwaiter().GetResult();
+                else if (!_startedAtLogin) _singleInstance.SignalPrimaryAsync().GetAwaiter().GetResult();
             }
             catch
             {
@@ -36,6 +47,17 @@ public partial class App : System.Windows.Application
             return;
         }
 
+        if (uninstallRequested)
+        {
+            try { ManagedUninstallHandoff.Launch("preserve-user-data"); }
+            catch (Exception error)
+            {
+                MessageBox.Show("Uninstall could not be started. " + error.Message, "Equinox Local", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+            Shutdown();
+            return;
+        }
+
         _window = new MainWindow();
         MainWindow = _window;
         _singleInstance.ReopenRequested += (_, _) =>
@@ -45,6 +67,11 @@ public partial class App : System.Windows.Application
         _singleInstance.UpdateShutdownRequested += (_, _) =>
             Dispatcher.BeginInvoke(new Action(() => _ = ExitApplicationAsync()));
         _singleInstance.StartListening();
+
+        // Repair the per-user Start Menu and Installed Apps entries on every
+        // verified managed launch (including users upgrading from 6.0.0).
+        try { WindowsShellRegistration.EnsureForActiveManagedShell(); }
+        catch (Exception error) { WindowsShellDiagnostics.RecordRuntimeFailure("windows-shell-registration", error); }
 
         _startupRegistration = new StartupRegistration();
         var startupStatus = _startupRegistration.Read();

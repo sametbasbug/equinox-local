@@ -99,7 +99,7 @@ async function readOnboardingState(paths) {
   }
 }
 
-async function writeOnboardingState(paths, state) {
+async function writeOnboardingState(paths, state, options = {}) {
   const normalized = normalizeOnboardingState(state);
   await atomicWrite(paths.onboardingStatePath, `${JSON.stringify(normalized, null, 2)}\n`, 0o600);
   return normalized;
@@ -116,11 +116,17 @@ export async function initializeManagedOnboardingState({
   }
   const existing = await readOnboardingState(paths);
   if (existing.exists) return Object.freeze({ created: false, state: existing.state });
-  const state = await writeOnboardingState(paths, defaultOnboardingState());
+  // First-install loads the onboarding module from staging, which has been
+  // renamed into the admitted release by the time credentials are persisted.
+  // Pass the promoted native helper path instead of a now-missing staging path.
+  const windowsHelperPath = process.platform === "win32"
+    ? path.win32.join(installation.releaseDir, "equinox-local-windows-private-state.ps1")
+    : undefined;
+  const state = await writeOnboardingState(paths, defaultOnboardingState(), { windowsHelperPath });
   return Object.freeze({ created: true, state });
 }
 
-async function atomicWrite(filePath, contents, mode = 0o600) {
+async function atomicWrite(filePath, contents, mode = 0o600, { windowsHelperPath } = {}) {
   const parent = path.dirname(filePath);
   await ensurePrivateDirectory(parent);
   const temp = path.join(parent, `.equinox-onboarding-${process.pid}-${randomBytes(8).toString("hex")}.tmp`);
@@ -129,7 +135,7 @@ async function atomicWrite(filePath, contents, mode = 0o600) {
     if (process.platform === "win32") {
       // Protect temporary bytes BEFORE they become the active credential;
       // Windows chmod(0600) does not establish current-user ACL isolation.
-      await protectWindowsPrivateStatePath({ target: temp, type: "file" });
+      await protectWindowsPrivateStatePath({ target: temp, type: "file", ...(windowsHelperPath ? { helperPath: windowsHelperPath } : {}) });
     }
     await fs.rename(temp, filePath);
     if (process.platform !== "win32") await fs.chmod(filePath, mode);

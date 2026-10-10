@@ -11,7 +11,7 @@ export const TURN_BUDGET_DEFAULTS = Object.freeze({
   finalizeLeadMinutes: 2,
   maxCutoffMinutes: 120,
   minCutoffMinutes: 5,
-  fallbackResetMinutes: 5,
+  fallbackResetMinutes: 2,
   autoContinueMaxHops: 10,
   minAutoContinueMaxHops: 1,
   maxAutoContinueMaxHops: 20,

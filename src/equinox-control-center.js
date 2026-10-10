@@ -2118,7 +2118,7 @@ function renderTurnBudgetLive() {
 }
 
 function renderTurnBudget() {
-  const draft = state.turnBudgetDraft || { enabled: true, cutoffMinutes: 22, fallbackResetMinutes: 5, autoContinueMaxHops: 10 };
+  const draft = state.turnBudgetDraft || { enabled: true, cutoffMinutes: 22, fallbackResetMinutes: 2, autoContinueMaxHops: 10 };
   const enabled = $("turn-budget-enabled");
   const cutoff = $("turn-budget-cutoff");
   const fallbackReset = $("turn-budget-fallback-reset");
@@ -2130,7 +2130,7 @@ function renderTurnBudget() {
     cutoff.disabled = draft.enabled === false || state.turnBudgetBusy;
   }
   if (fallbackReset) {
-    fallbackReset.value = String(draft.fallbackResetMinutes || 5);
+    fallbackReset.value = String(draft.fallbackResetMinutes || 2);
     fallbackReset.max = String(draft.cutoffMinutes || 22);
     fallbackReset.disabled = draft.enabled === false || state.turnBudgetBusy;
   }
@@ -2544,7 +2544,7 @@ async function refreshAll() {
       state.turnBudgetDraft = {
         enabled: state.turnBudget.enabled !== false,
         cutoffMinutes: Number(state.turnBudget.cutoffMinutes) || 22,
-        fallbackResetMinutes: Number(state.turnBudget.fallbackResetMinutes) || 5,
+        fallbackResetMinutes: Number(state.turnBudget.fallbackResetMinutes) || 2,
         autoContinueMaxHops: Number(state.turnBudget.autoContinueMaxHops) || 10,
       };
     }
@@ -2628,7 +2628,7 @@ async function refreshLiveState() {
       state.turnBudgetDraft = {
         enabled: state.turnBudget.enabled !== false,
         cutoffMinutes: Number(state.turnBudget.cutoffMinutes) || 22,
-        fallbackResetMinutes: Number(state.turnBudget.fallbackResetMinutes) || 5,
+        fallbackResetMinutes: Number(state.turnBudget.fallbackResetMinutes) || 2,
         autoContinueMaxHops: Number(state.turnBudget.autoContinueMaxHops) || 10,
       };
     }
@@ -3707,12 +3707,12 @@ function bindEvents() {
   });
   $("agent-control-button").addEventListener("click", toggleAgentControl);
   $("turn-budget-enabled").addEventListener("change", (event) => {
-    state.turnBudgetDraft = { ...(state.turnBudgetDraft || { cutoffMinutes: 22, fallbackResetMinutes: 5 }), enabled: event.target.checked };
+    state.turnBudgetDraft = { ...(state.turnBudgetDraft || { cutoffMinutes: 22, fallbackResetMinutes: 2 }), enabled: event.target.checked };
     state.turnBudgetDirty = true;
     renderTurnBudget();
   });
   $("turn-budget-cutoff").addEventListener("input", (event) => {
-    state.turnBudgetDraft = { ...(state.turnBudgetDraft || { enabled: true, fallbackResetMinutes: 5 }), cutoffMinutes: Number(event.target.value) };
+    state.turnBudgetDraft = { ...(state.turnBudgetDraft || { enabled: true, fallbackResetMinutes: 2 }), cutoffMinutes: Number(event.target.value) };
     state.turnBudgetDirty = true;
     renderTurnBudget();
   });
@@ -3722,7 +3722,7 @@ function bindEvents() {
     $("save-turn-budget-button").disabled = state.turnBudgetBusy;
   });
   $("auto-continue-max-hops").addEventListener("input", (event) => {
-    state.turnBudgetDraft = { ...(state.turnBudgetDraft || { enabled: true, cutoffMinutes: 22, fallbackResetMinutes: 5 }), autoContinueMaxHops: Number(event.target.value) };
+    state.turnBudgetDraft = { ...(state.turnBudgetDraft || { enabled: true, cutoffMinutes: 22, fallbackResetMinutes: 2 }), autoContinueMaxHops: Number(event.target.value) };
     state.turnBudgetDirty = true;
     $("save-turn-budget-button").disabled = state.turnBudgetBusy;
   });
