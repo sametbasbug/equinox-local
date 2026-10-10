@@ -22,7 +22,7 @@ public partial class App : System.Windows.Application
         var uninstallRequested = e.Args.Length == 1 && string.Equals(e.Args[0], "--uninstall", StringComparison.OrdinalIgnoreCase);
         if (uninstallRequested)
         {
-            var choice = MessageBox.Show("Uninstall Equinox Local? Local configuration and projects will be preserved.",
+            var choice = System.Windows.MessageBox.Show("Uninstall Equinox Local? Local configuration and projects will be preserved.",
                 "Uninstall Equinox Local", MessageBoxButton.YesNo, MessageBoxImage.Question);
             if (choice != MessageBoxResult.Yes) { Shutdown(); return; }
         }
@@ -35,10 +35,13 @@ public partial class App : System.Windows.Application
                 if (uninstallRequested) _singleInstance.RequestManagedUninstallAsync().GetAwaiter().GetResult();
                 else if (!_startedAtLogin) _singleInstance.SignalPrimaryAsync().GetAwaiter().GetResult();
             }
-            catch
+            catch (Exception error)
             {
-                // A second process must never become a competing shell merely because
-                // the primary is still starting. The next explicit launch can retry.
+                // An uninstall failure must be visible to the user; regular
+                // single-instance reopen failures are still safely ignored.
+                if (uninstallRequested)
+                    System.Windows.MessageBox.Show("Uninstall could not be started. " + error.Message,
+                        "Equinox Local", MessageBoxButton.OK, MessageBoxImage.Error);
             }
             finally
             {
@@ -52,7 +55,7 @@ public partial class App : System.Windows.Application
             try { ManagedUninstallHandoff.Launch("preserve-user-data"); }
             catch (Exception error)
             {
-                MessageBox.Show("Uninstall could not be started. " + error.Message, "Equinox Local", MessageBoxButton.OK, MessageBoxImage.Error);
+                System.Windows.MessageBox.Show("Uninstall could not be started. " + error.Message, "Equinox Local", MessageBoxButton.OK, MessageBoxImage.Error);
             }
             Shutdown();
             return;
