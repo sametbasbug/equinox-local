@@ -592,3 +592,14 @@ test("Windows shell update handoff acknowledges before draining the runtime and 
   assert.match(app, /UpdateShutdownRequested/u);
   assert.match(app, /ExitApplicationAsync/u);
 });
+
+test("Windows desktop Control Center displays the pinned winapp state through the existing bridge slot", async () => {
+  const [server, ui] = await Promise.all([
+    fs.readFile(path.join(ROOT, "src", "server.js"), "utf8"),
+    fs.readFile(path.join(ROOT, "src", "equinox-control-center.js"), "utf8"),
+  ]);
+  assert.match(server, /engine: "winapp", available: true/u);
+  assert.match(ui, /peekaboo\.engine === "winapp"/u);
+  assert.match(ui, /Microsoft winapp desktop bridge/u);
+  assert.match(ui, /previousStatus\.peekaboo\?\.engine === "winapp"/u);
+});

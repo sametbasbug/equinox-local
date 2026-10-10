@@ -2617,10 +2617,12 @@ async function refreshLiveState() {
     state.status = {
       ...previousStatus,
       ...status.status,
-      peekaboo: {
-        ...(previousStatus.peekaboo || {}),
-        ...(status.status?.peekaboo || {}),
-      },
+      peekaboo: previousStatus.peekaboo?.engine === "winapp"
+        ? previousStatus.peekaboo // /status has only the old macOS Peekaboo snapshot.
+        : {
+            ...(previousStatus.peekaboo || {}),
+            ...(status.status?.peekaboo || {}),
+          },
     };
     state.turnBudget = status.status?.turnBudget || state.turnBudget;
     if (!state.turnBudgetDirty && state.turnBudget) {
