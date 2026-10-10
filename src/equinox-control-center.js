@@ -680,11 +680,6 @@ function renderOnboarding() {
   if (runtimeKeyInput) runtimeKeyInput.disabled = state.onboardingBusy;
   $("onboarding-reconnect").hidden = !state.onboardingBusy;
 
-  const tunnelCopy = $("setup-tunnel-copy-value");
-  if (tunnelCopy) tunnelCopy.textContent = onboarding.tunnelId || localizeUiText("Tunnel ID appears after step 2");
-  const tunnelCopyButton = $("copy-setup-tunnel-id");
-  if (tunnelCopyButton) tunnelCopyButton.disabled = !onboarding.tunnelId;
-
   if (onboarding.agentCommandReceived) {
     setBadge("setup-chatgpt-status", "Verified", "good");
   } else if (onboarding.connectedThroughTunnel) {
@@ -3380,8 +3375,9 @@ function stopOnboardingReconnect() {
   }
 }
 
-async function pollOnboardingReconnect(attempt = 0) {
+async function pollOnboardingReconnect(attempt = 0, previousServerPid = null) {
   const maxAttempts = 30;
+  let controlCenterResponded = false;
   try {
     const [onboarding, status, health, doctor] = await Promise.all([
       requestJson("/api/v1/onboarding"),
@@ -3389,6 +3385,7 @@ async function pollOnboardingReconnect(attempt = 0) {
       requestJson("/api/v1/health"),
       requestJson("/api/v1/doctor").catch(() => ({ doctor: null })),
     ]);
+    controlCenterResponded = true;
     state.onboarding = onboarding.onboarding || state.onboarding;
     state.status = status.status || state.status;
     state.health = health;
@@ -3400,20 +3397,34 @@ async function pollOnboardingReconnect(attempt = 0) {
       showToast("Equinox Local is connected to ChatGPT.");
       return;
     }
+    // The old local-only runtime can answer briefly before the shell restart.
+    // Only report a failed tunnel handoff after observing a DIFFERENT server.
+    const nextPid = state.status?.server?.pid;
+    if (state.onboarding?.needsAttention &&
+        Number.isInteger(previousServerPid) && Number.isInteger(nextPid) &&
+        previousServerPid !== nextPid) {
+      stopOnboardingReconnect();
+      state.onboardingBusy = false;
+      renderAll();
+      showError(new Error("Equinox Local restarted in local-only mode, not through the tunnel. Your saved credentials remain on this computer. Check Windows Shell runtime diagnostics before reconnecting."));
+      return;
+    }
   } catch {
-    // A short connection failure is expected while the LaunchAgent restarts.
+    // A short connection failure is expected while the runtime restarts.
   }
 
   if (attempt + 1 >= maxAttempts) {
     stopOnboardingReconnect();
     state.onboardingBusy = false;
     renderOnboarding();
-    showError(new Error("Equinox Local did not return through the tunnel yet. Your saved credentials were kept locally; refresh to inspect the current setup state."));
+    showError(new Error(controlCenterResponded
+      ? "Equinox Local restarted but is not in tunnel mode. Your saved credentials were kept locally; inspect the Windows Shell runtime diagnostics instead of re-entering the same values."
+      : "Equinox Local's local Control Center did not respond after restart. This does not prove your Tunnel ID or API key is wrong. Inspect the Windows Shell runtime diagnostics before trying again."));
     return;
   }
 
   state.onboardingReconnectTimer = setTimeout(() => {
-    void pollOnboardingReconnect(attempt + 1);
+    void pollOnboardingReconnect(attempt + 1, previousServerPid);
   }, 1_200);
 }
 
@@ -3447,7 +3458,7 @@ async function submitTunnelOnboarding(event) {
     };
     renderOnboarding();
     showToast("Tunnel settings saved. Equinox Local is restarting safely…");
-    void pollOnboardingReconnect();
+    void pollOnboardingReconnect(0, state.status?.server?.pid ?? null);
   } catch (error) {
     state.onboardingBusy = false;
     renderOnboarding();
@@ -3730,7 +3741,6 @@ function bindEvents() {
   $("restart-runtime-button").addEventListener("click", restartRuntimeFromControlCenter);
   $("refresh-button").addEventListener("click", refreshAll);
   $("onboarding-tunnel-form").addEventListener("submit", submitTunnelOnboarding);
-  $("copy-setup-tunnel-id").addEventListener("click", () => void copySetupText(state.onboarding?.tunnelId || "", "Tunnel ID copied."));
   $("copy-setup-test-prompt").addEventListener("click", () => void copySetupText($("setup-test-prompt").textContent.trim(), "Test prompt copied."));
   $("setup-telegram-token").addEventListener("input", (event) => { state.telegramBotToken = event.target.value; renderOnboarding(); });
   $("setup-telegram-start").addEventListener("click", () => void startTelegramPairingUi());
