@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import path from "node:path";
 import test from "node:test";
-import { windowsTunnelInitArguments, runWindowsShellRuntimeSupervisor } from "../../src/equinox-local-windows-runtime-supervisor.js";
+import { EventEmitter } from "node:events";
+import { windowsTunnelInitArguments, windowsTunnelReconnectDelay, runWindowsSupervisorChild, runWindowsShellRuntimeSupervisor } from "../../src/equinox-local-windows-runtime-supervisor.js";
 
 const homeDir = "C:\\Users\\Example User";
 const env = {
@@ -83,4 +84,108 @@ test("Windows native shell launches guarded supervisor rather than permanently p
  assert.match(source,/args = new\[\] \{ supervisorPath, serverPath \}/u);
  assert.doesNotMatch(source,/startInfo.Environment\["EQUINOX_LOCAL_SUPERVISOR_MODE"\] = "local-only"/u);
  assert.match(source,/ValidateReleaseFiles\(nodePath, serverPath, processGatePath, supervisorPath\)/u);
+});
+
+
+test("Windows tunnel reconnect uses bounded exponential backoff", () => {
+  assert.deepEqual([1, 2, 3, 4, 5, 10, 100].map(windowsTunnelReconnectDelay),
+    [30_000, 60_000, 120_000, 240_000, 480_000, 600_000, 600_000]);
+  assert.throws(() => windowsTunnelReconnectDelay(0), /attempt/u);
+});
+
+test("configured Windows tunnel exit preserves local-only until preflight passes then restores tunnel", async () => {
+  const events = [];
+  let tunnelRuns = 0;
+  const output = await runWindowsShellRuntimeSupervisor(mk({
+    readTransportImpl: async () => ({ tunnelId }),
+    execFileImpl: async (_exe, _args) => { events.push("init"); return { stdout: "" }; },
+    runChildImpl: async (_exe, args, options) => {
+      if (args[0] === "run") {
+        tunnelRuns++;
+        events.push("tunnel:" + tunnelRuns);
+        return tunnelRuns === 1 ? { code: 1, signal: null } : { code: 0, terminatingSignal: "SIGTERM" };
+      }
+      assert.equal(options.env.EQUINOX_LOCAL_SUPERVISOR_MODE, "local-only");
+      assert.equal(options.stdin, "pipe");
+      assert.equal(options.reconnect.delayMs, 30_000);
+      events.push("local-only");
+      await options.reconnect.preflight();
+      events.push("local-closed");
+      return { code: 0, retryRequested: true };
+    },
+  }));
+  assert.equal(output.mode, "tunnel");
+  assert.deepEqual(events, ["init", "tunnel:1", "local-only", "init", "local-closed", "init", "tunnel:2"]);
+});
+
+test("configured Windows tunnel failure keeps local-only when no recovery signal arrives", async () => {
+  let localStarted = false;
+  const result = await runWindowsShellRuntimeSupervisor(mk({
+    readTransportImpl: async () => ({ tunnelId }),
+    execFileImpl: async () => { throw Error("fixture-secret-excluded"); },
+    runChildImpl: async (_exe, args, options) => {
+      assert.deepEqual(args, [serverPath]);
+      assert.equal(options.reconnect.delayMs, 30_000);
+      localStarted = true;
+      return { code: 0, retryRequested: false };
+    },
+  }));
+  assert.equal(localStarted, true);
+  assert.equal(result.mode, "local-only");
+});
+
+test("local-only supervisor keeps an owned server alive on failed probe and gracefully closes on success", async () => {
+  const child = new EventEmitter();
+  const processLike = new EventEmitter();
+  const events = [];
+  let timer = null;
+  let checks = 0;
+  let opts;
+  const delays = [];
+  child.stdin = { end: () => { events.push("stdin-eof"); child.emit("exit", 0, null); } };
+  child.killed = false;
+  child.kill = () => { throw Error("Must not kill local-only server for probe"); };
+  const promise = runWindowsSupervisorChild("C:\\node.exe", ["C:\\server.js"], {
+    cwd: "C:\\", env: {}, stdin: "inherit", reconnect: {
+      delayMs: 5,
+      preflight: async () => { checks++; if (checks === 1) throw Error("network unavailable"); events.push("preflight-ready"); },
+    },
+  }, {
+    spawnImpl: (_executable, _args, options) => { opts = options; return child; },
+    processLike,
+    setTimeoutImpl: (fn, delay) => { delays.push(delay); timer = fn; return 1; },
+    clearTimeoutImpl: () => { timer = null; },
+  });
+  assert.deepEqual(opts.stdio, ["pipe", "inherit", "inherit"]);
+  child.emit("spawn");
+  await timer();
+  assert.deepEqual(events, []);
+  assert.equal(checks, 1);
+  await timer();
+  const result = await promise;
+  assert.deepEqual(events, ["preflight-ready", "stdin-eof"]);
+  assert.deepEqual(delays, [5, 10]);
+  assert.equal(result.retryRequested, true);
+  assert.equal(processLike.listenerCount("SIGTERM"), 0);
+  assert.equal(processLike.listenerCount("SIGINT"), 0);
+});
+
+test("tunnel preflight must not retry after intentional runtime termination", async () => {
+  const child = new EventEmitter();
+  const processLike = new EventEmitter();
+  let timer = null;
+  let probes = 0;
+  child.killed = false;
+  child.stdin = { end: () => { throw Error("Must not close after intentional termination"); } };
+  child.kill = () => { child.killed = true; child.emit("exit", 143, null); };
+  const promise = runWindowsSupervisorChild("C:\\node.exe", [], {
+    env: {}, stdin: "inherit", reconnect: { delayMs: 5, preflight: async () => { probes++; } },
+  }, { spawnImpl: () => child, processLike, setTimeoutImpl: fn => { timer = fn; return 1; }, clearTimeoutImpl: () => { timer = null; } });
+  child.emit("spawn");
+  processLike.emit("SIGTERM");
+  const result = await promise;
+  assert.equal(result.terminatingSignal, "SIGTERM");
+  assert.equal(result.retryRequested, false);
+  assert.equal(timer, null);
+  assert.equal(probes, 0);
 });

@@ -6,10 +6,11 @@ This project follows semantic versioning for public releases.
 
 ## [Unreleased]
 
-## [Unreleased]
-
 ### Fixed
 
+- Windows tunnel disconnects and failed tunnel initialization no longer leave a configured managed installation indefinitely stranded in local-only mode. An independently supervised local Control Center stays reachable during bounded retry preflight (30 seconds up to 10 minutes of backoff); after the verified tunnel preflight succeeds, only its owned local-only server is gracefully stopped before re-entering tunnel mode. Explicit shutdown does not trigger reconnect, and missing/unsafe tunnel configuration still fails closed.
+- Windows native shell now records only fixed, privacy-safe tunnel lifecycle phases in its bounded runtime diagnostic log, without recording raw tunnel-client stderr or user credentials.
+- Owned runtime stdin EOF is consumed reliably for a graceful local-only → tunnel handoff without restarting the entire WPF app.
 - Fixed Windows Agent Browser startup failing with `spawn powershell.exe ENOENT` after Windows native runtime sanitizes `PATH`. Agent Browser now uses absolute, SystemRoot-pinned Windows PowerShell and taskkill executable paths for isolated Chrome launch, process inventory, and exact-process shutdown; missing trusted roots fail closed rather than searching ambient PATH.
 - Added regression tests for scrubbed Windows environments and PATH-hijack avoidance, including a Windows-native launch acceptance.
 
