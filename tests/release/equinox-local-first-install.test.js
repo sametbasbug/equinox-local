@@ -21,11 +21,11 @@ import {
 
 const TARGET = "darwin-arm64";
 
-test("first-install CLI help explains Stable default and explicit fresh or existing Main choice", () => {
+test("first-install internal CLI help explains public automatic Main enrollment", () => {
   const help = execFileSync(process.execPath, [fileURLToPath(new URL("../../src/equinox-local-first-install.js", import.meta.url)), "--help"], { encoding: "utf8" });
-  assert.match(help, /Stable \(default\)/u);
+  assert.match(help, /Public installers supply this flag by default/u);
   assert.match(help, /--enroll-existing-main/u);
-  assert.match(help, /fresh or same-version/u);
+  assert.match(help, /exact source provenance is required/u);
 });
 
 test("Windows first-install enrollment uses durable release-local helper paths after staging promotion", async () => {

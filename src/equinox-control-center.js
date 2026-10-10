@@ -958,8 +958,8 @@ function renderUpdate() {
   mainNotice.hidden = mainChannel || !update.mainNotice?.targetSha;
   if (!mainNotice.hidden) {
     setText("update-stable-main-copy", state.language === "tr"
-      ? `Onaylanmış Main ${shortUpdateSha(update.mainNotice.targetSha)} mevcut. Stable kanalı kendiliğinden değişmez.`
-      : `Admitted Main ${shortUpdateSha(update.mainNotice.targetSha)} is available separately. Stable will not change channels automatically.`);
+      ? `Main ${shortUpdateSha(update.mainNotice.targetSha)} hazır. İlk kurulumda Main otomatik seçilir; eski Stable kurulumları imzalı geçiş güncellemesini bekler.`
+      : `Main ${shortUpdateSha(update.mainNotice.targetSha)} is ready. New installs enroll automatically; existing Stable installations await the signed migration update.`);
   }
   mainMeta.hidden = !mainChannel;
   if (mainChannel) {

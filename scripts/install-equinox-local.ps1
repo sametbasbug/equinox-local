@@ -1,8 +1,8 @@
 param([switch]$EnrollExistingMain, [switch]$Help)
 if ($Help) {
   Write-Output 'Usage: install-equinox-local.ps1 [-EnrollExistingMain] [-Help]'
-  Write-Output 'Stable (default): latest numbered release.'
-  Write-Output 'Main (explicit opt-in): enroll after Stable health; fresh or same-version matching installed provenance.'
+  Write-Output 'The signed Stable release installs first; Main enrollment follows its healthy activation by default.'
+  Write-Output 'Existing same-version Stable installs are enrolled without removing settings; older Stable versions must update first.'
   return
 }
 $ErrorActionPreference = 'Stop'
@@ -106,7 +106,7 @@ function Invoke-CleanNode([string]$Node, [string]$FirstInstall, [string]$Release
   $psi.RedirectStandardOutput = $true
   $psi.RedirectStandardError = $true
   $psi.Arguments = '"' + $FirstInstall.Replace('"','\"') + '" --staged-release "' + $ReleaseDir.Replace('"','\"') + '"'
-  if ($EnrollExistingMain) { $psi.Arguments += ' --enroll-existing-main' }
+  $psi.Arguments += ' --enroll-existing-main' # Default for all public installs; legacy switch is accepted for compatibility.
   $psi.EnvironmentVariables.Clear()
   foreach ($name in @('SystemRoot','WINDIR','ComSpec','TEMP','TMP','USERPROFILE','LOCALAPPDATA','APPDATA','USERNAME','USERDOMAIN','PATH','PATHEXT')) {
     $value = [Environment]::GetEnvironmentVariable($name)

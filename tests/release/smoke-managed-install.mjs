@@ -7,7 +7,9 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 
 import { installManagedEquinoxRelease } from "../../src/equinox-local-first-install.js";
-import { enrollEquinoxLocalManagedSource } from "../../src/equinox-local-managed-source-enrollment.js";
+import { enrollEquinoxLocalManagedSource, rollbackEquinoxLocalManagedSourceEnrollment } from "../../src/equinox-local-managed-source-enrollment.js";
+import { bridgeActivatedStableToMain } from "../../src/equinox-local-stable-main-bridge.js";
+import { resolveEquinoxLocalInstallation } from "../../src/equinox-local-installation.js";
 import { equinoxLocalToolchainContract } from "../../src/equinox-local-toolchain-contract.js";
 import { EQUINOX_LOCAL_VERSION } from "../../src/equinox-local-version.js";
 import { equinoxLocalUpdateTarget } from "../../src/equinox-local-updater.js";
@@ -181,6 +183,71 @@ async function main() {
     assert.equal(stableHealth?.status?.installation?.kind, "managed");
     assert.equal(sourceHealth?.status?.installation?.kind, "managed-source");
     assert.equal(sourceHealth?.status?.installation?.sourceSha, sourceSha);
+
+    // Hosted macOS ONLY: exercise a real running LaunchAgent around the
+    // legacy Stable-to-Main bridge rather than trusting mocked health checks.
+    // The packaged release remains unsigned in this smoke; it does NOT claim
+    // to test the production signed 6.0.3 -> bridge updater handoff.
+    if (process.env.GITHUB_ACTIONS === "true" && process.env.CI === "true") {
+      const bridgeEnv = {
+        HOME: homeDir, EQUINOX_LOCAL_INSTALL_ROOT: installRoot,
+        EQUINOX_LOCAL_RELEASE_DIR: releaseDir, PATH: "/usr/bin:/bin:/usr/sbin:/sbin",
+      };
+      const bridgeInstallation = resolveEquinoxLocalInstallation({ homeDir, env: bridgeEnv });
+      assert.equal(bridgeInstallation.kind, "managed");
+      const rollBackToStable = async () => {
+        const reverted = await rollbackEquinoxLocalManagedSourceEnrollment({
+          bootstrapSha: sourceSha, target, platform: "darwin", arch: process.arch, homeDir, env: bridgeEnv,
+        });
+        assert.equal(reverted.rolledBack, true);
+        const stable = await runRealLaunchAgentWrapperSmoke({
+          homeDir, installRoot, expectedVersion: EQUINOX_LOCAL_VERSION,
+          expectedInstallationKind: "managed", expectedSourceSha: null,
+        });
+        assert.equal(stable.status.health.state, "HEALTHY");
+      };
+      const bridgeOptions = {
+        installation: bridgeInstallation,
+        version: EQUINOX_LOCAL_VERSION,
+        homeDir, env: bridgeEnv,
+        enrollImpl: (options) => enrollEquinoxLocalManagedSource({
+          ...options, env: { ...options.env, PATH: "/ambient-tools-must-not-be-used" },
+          execFileImpl: execFile, mainRemote,
+        }),
+        // Real hosted LaunchAgent startup, ownership and Control Center
+        // health are checked by waitForMain/Stable below. The fixture's
+        // dedicated label prevents touching the developer's app identity.
+        restartImpl: async () => {},
+        waitForMainImpl: async (version, sha) => {
+          const real = await runRealLaunchAgentWrapperSmoke({
+            homeDir, installRoot, expectedVersion: version,
+            expectedInstallationKind: "managed-source", expectedSourceSha: sha,
+          });
+          assert.equal(real.status.health.state, "HEALTHY");
+        },
+        waitForStableImpl: async (version) => {
+          const real = await runRealLaunchAgentWrapperSmoke({
+            homeDir, installRoot, expectedVersion: version,
+            expectedInstallationKind: "managed", expectedSourceSha: null,
+          });
+          assert.equal(real.status.health.state, "HEALTHY");
+        },
+      };
+      await rollBackToStable();
+      assert.equal((await bridgeActivatedStableToMain(bridgeOptions)).status, "main-activated");
+      await rollBackToStable();
+      await assert.rejects(
+        bridgeActivatedStableToMain({ ...bridgeOptions,
+          waitForMainImpl: async () => { throw new Error("hosted simulated unhealthy Main"); },
+        }),
+        /signed Stable baseline was restored/u,
+      );
+      assert.equal((await bridgeActivatedStableToMain(bridgeOptions)).status, "main-activated");
+      assert.equal(await fs.readFile(path.join(installRoot, "secrets", "openai-runtime-key"), "utf8").then(() => false, (error) => error?.code === "ENOENT"), true,
+        "Bridge must not add, delete or reset onboarding secrets");
+      process.stdout.write("Hosted native macOS LaunchAgent Stable-to-Main bridge + forced Main health rollback PASSED.\n");
+    }
+
     assert.equal(await fs.readlink(current), `releases/${EQUINOX_LOCAL_VERSION}`);
     assert.equal(await fs.realpath(current), await fs.realpath(releaseDir));
 

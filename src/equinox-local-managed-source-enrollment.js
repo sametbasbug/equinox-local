@@ -256,18 +256,29 @@ export async function rollbackEquinoxLocalManagedSourceEnrollment({
   if (target !== layout.host.target) throw new Error("Managed-source enrollment rollback target does not match the host target.");
   const paths = equinoxLocalManagedSourcePaths({ platform, arch, homeDir, env });
   const stamp = await readExistingStamp(paths.installStampPath, { fsImpl });
-  if (!stamp) return Object.freeze({ rolledBack: false, reason: "not-enrolled" });
-  if (stamp.bootstrapSha !== sha) throw new Error("Managed-source enrollment rollback bootstrap identity mismatch.");
+  if (stamp && stamp.bootstrapSha !== sha) throw new Error("Managed-source enrollment rollback bootstrap identity mismatch.");
+  const pointerStat = await fsImpl.lstat(paths.sourcePointerPath).catch((error) => {
+    if (error?.code === "ENOENT") return null;
+    throw error;
+  });
+  if (!pointerStat && !stamp) return Object.freeze({ rolledBack: false, reason: "not-enrolled" });
+  if (!pointerStat?.isFile() || pointerStat.isSymbolicLink()) {
+    throw new Error("Managed-source enrollment rollback source pointer is missing or unsafe.");
+  }
   const contract = equinoxLocalToolchainContract({ runtimeRoot: layout.runtimeRoot, target });
   const pointer = await readPointerImpl(paths.sourcePointerPath, { fsImpl, execFileImpl, gitPath: contract.gitPath });
   const expectedRoot = path.join(paths.mainTransactionRoot, "sources", sha);
   if (pointer.sha !== sha || pointer.sourceRoot !== expectedRoot) throw new Error("Managed-source enrollment rollback source identity mismatch.");
-  for (const candidate of [paths.installStampPath, paths.sourcePointerPath]) {
+  // Enrollment commits its install.json LAST. If writing that final stamp
+  // failed after publishing the trusted source pointer, safely remove ONLY
+  // this exact owned pointer. Never remove reusable source files or secrets.
+  const candidates = stamp ? [paths.installStampPath, paths.sourcePointerPath] : [paths.sourcePointerPath];
+  for (const candidate of candidates) {
     const stat = await fsImpl.lstat(candidate);
     if (!stat.isFile() || stat.isSymbolicLink()) throw new Error("Managed-source enrollment rollback state file is unsafe.");
     await fsImpl.rm(candidate, { force: false });
   }
-  return Object.freeze({ rolledBack: true, bootstrapSha: sha });
+  return Object.freeze({ rolledBack: true, bootstrapSha: sha, partial: !stamp });
 }
 
 export async function enrollEquinoxLocalManagedSource({

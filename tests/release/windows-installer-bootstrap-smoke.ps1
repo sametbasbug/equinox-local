@@ -106,7 +106,7 @@ process.stdout.write(JSON.stringify({ ok: true, count: count + 1 }));
   $marker = [IO.File]::ReadAllText($markerPath, (New-Object Text.UTF8Encoding($false, $true))) | ConvertFrom-Json
   Assert-True ($marker.count -eq 2) 'Windows bootstrap retry did not reach the bundled first-install helper twice.'
   Assert-True (-not $marker.leaked) 'Windows bootstrap leaked provider credentials into bundled Node.'
-  Assert-True (-not $marker.mainOptIn) 'Default Windows bootstrap silently requested Main.'
+  Assert-True ($marker.mainOptIn) 'Default Windows bootstrap failed to enroll Main after signed Stable.'
   $EnrollExistingMain = $true
   Invoke-EquinoxLocalInstall | Out-Null
   $mainMarker = [IO.File]::ReadAllText($markerPath, (New-Object Text.UTF8Encoding($false, $true))) | ConvertFrom-Json

@@ -101,6 +101,9 @@ jobs:
       - name: Build source-provenance Stable package
         run: npm run local:release:package
 
+      - name: Native Stable-to-Main pointer and rollback acceptance
+        run: node --test tests/release/equinox-local-stable-main-native-fs-acceptance.test.js
+
       - name: Real managed-source fresh-install acceptance
         run: node tests/release/smoke-managed-install.mjs
 
@@ -129,6 +132,9 @@ jobs:
 
           - name: Static checks
             run: npm run check
+
+          - name: Native Stable-to-Main pointer and rollback acceptance
+            run: node --test tests/release/equinox-local-stable-main-native-fs-acceptance.test.js
 
           - name: Fast architecture parity suite
             run: npm run test:fast
@@ -178,6 +184,7 @@ jobs:
           node --test tests/release/equinox-local-windows-lifecycle.test.js
           node --test tests/release/equinox-local-main-native-windows-acceptance.test.js
           node --test tests/release/equinox-local-main-control-api-acceptance.test.js
+          node --test tests/release/equinox-local-stable-main-native-fs-acceptance.test.js
 
       - name: Windows PowerShell 5.1 bootstrap acceptance
         shell: pwsh
@@ -539,6 +546,9 @@ jobs:
 
       - name: Windows ARM64 Control Center exact-Main handoff and rollback acceptance
         run: node --test tests/release/equinox-local-main-control-api-acceptance.test.js
+
+      - name: Native ARM64 Stable-to-Main pointer and rollback acceptance
+        run: node --test tests/release/equinox-local-stable-main-native-fs-acceptance.test.js
 
       - name: Native ARM64 node-pty / ConPTY smoke
         timeout-minutes: 1

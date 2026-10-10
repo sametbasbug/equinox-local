@@ -27,3 +27,13 @@ test("Main and Stable current-version display differ and background checks do no
   assert.doesNotMatch(automatic, /\.apply\(/u);
   assert.match(automatic, /Promise\.allSettled/u);
 });
+
+test("legacy Stable dialog explains automatic Main update enrollment without an inert channel selector", async () => {
+  const markup = html;
+  const controller = js;
+  assert.match(markup, /id="update-stable-main-notice"/u);
+  assert.match(markup, /enroll into the admitted Main update stream automatically/u);
+  assert.match(markup, /signed migration release/u);
+  assert.match(markup, /docs\/updates\.md#single-main-update-stream/u);
+  assert.match(controller, /New installs enroll automatically/u);
+});

@@ -59,6 +59,7 @@ test("managed release source graph follows local imports and excludes developmen
     "src/equinox-local-bootstrap.js",
     "src/equinox-local-updater.js",
     "src/equinox-local-update-helper.js",
+    "src/equinox-local-stable-main-bridge.js",
     "src/equinox-local-restart-helper.js",
     "src/equinox-local-uninstall.js",
     "src/equinox-local-uninstall-helper.js",

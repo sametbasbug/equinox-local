@@ -58,7 +58,7 @@ See health, review activity, adjust agent access, manage tasks and check updates
 
 **🛡️ Verified updates**
 
-Signed Stable releases, opt-in admitted Main snapshots, health checks and rollback. Browser extension updates stay with Chrome Web Store.
+Signed Stable bootstrap, automatically enrolled Main snapshots, health checks and rollback. Browser extension updates stay with Chrome Web Store.
 
 </td></tr>
 </table>
@@ -108,7 +108,7 @@ flowchart LR
 - **Human-controlled:** Control Center stays on loopback and exposes status, settings, agent access and Emergency Stop.
 - **Browser-aware:** Your personal Chrome profile and the isolated Agent Browser keep separate state; the system never silently switches between them.
 - **Resumable, not reckless:** guarded browser delivery avoids automatically repeating a message when its send outcome is uncertain.
-- **Two release channels:** Stable is the default; Main is opt-in and advances only after the four-platform snapshot passes CI. Updating Local never sideloads the Chrome extension.
+- **One update stream:** the installer starts from a signed Stable baseline and automatically enrolls Main. Admitted exact-SHA snapshots advance only after four-platform CI; existing Stable users will be moved with one signed migration bridge. Updating Local never sideloads the Chrome extension.
 
 Read the [architecture](docs/architecture.md), [Browser](docs/browser.md), [updates](docs/updates.md) and [security](docs/security-model.md) guides for the implementation details.
 

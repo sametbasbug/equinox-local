@@ -9,6 +9,7 @@ import { execFile as execFileCallback } from "node:child_process";
 import { promisify } from "node:util";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { pathToFileURL } from "node:url";
+import { maybeScheduleMacStableMainBridge } from "./equinox-local-mac-main-bridge.js";
 import { createMcpToolReplayGuard } from "./mcp-tool-replay-guard.js";
 import { createEquinoxLocalToolRegistrar } from "./equinox-local-tool-registration.js";
 import { createEquinoxLocalWorkspaceRuntime } from "./equinox-local-workspace-runtime.js";
@@ -3405,6 +3406,18 @@ async function start({ transport = new StdioServerTransport() } = {}) {
       );
     });
   }, 500).unref?.();
+
+  if (platform === "darwin" && equinoxLocalInstallation.kind === "managed") {
+    setTimeout(() => {
+      void maybeScheduleMacStableMainBridge({
+        installation: equinoxLocalInstallation,platform,env:runtimeEnv,
+      }).catch(() => {
+        // Never let a migration launch failure interrupt the signed Stable
+        // Control Center; no secrets or raw child diagnostics are logged.
+        console.error("[Equinox Local] Signed Stable Main migration bridge could not be scheduled.");
+      });
+    }, 1_500).unref?.();
+  }
 
   return startRuntimeLifecycle({
     connect: () => server.connect(transport),
