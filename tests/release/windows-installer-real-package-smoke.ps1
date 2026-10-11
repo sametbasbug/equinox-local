@@ -254,10 +254,18 @@ try {
   if ((Test-Path -LiteralPath $NativeStoreProbe) -or (Test-Path -LiteralPath $NativePointerProbe)) {
     throw 'Disposable Guardian Main identity test requires clean native state.'
   }
+  $NativeMessagingOriginalBytes = $null
+  $NativeMessagingOriginalOwner = $null
   try {
     $NativeRuntimeProbe = Join-Path $NativeReleaseProbe 'runtime'
     [IO.Directory]::CreateDirectory($NativeRuntimeProbe) | Out-Null
     Copy-Item -LiteralPath (Join-Path $ReleaseDir 'runtime\shell') -Destination (Join-Path $NativeRuntimeProbe 'shell') -Recurse -ErrorAction Stop
+    # Main Native Messaging must be SHA-selected, not silently borrowed from
+    # the previous Stable release. The hosted test temporarily binds its
+    # disposable registry-owned manifest to the exact native slot.
+    $NativeBrowserRuntime = Join-Path $ReleaseDir 'runtime\browser'
+    Assert-True ([IO.File]::Exists((Join-Path $NativeBrowserRuntime 'equinox-browser-native-host.exe'))) 'Native Main identity test requires the signed release browser launcher.'
+    Copy-Item -LiteralPath $NativeBrowserRuntime -Destination (Join-Path $NativeRuntimeProbe 'browser') -Recurse -ErrorAction Stop
     Copy-Item -LiteralPath (Join-Path $ReleaseDir 'release.json') -Destination (Join-Path $NativeReleaseProbe 'release.json') -ErrorAction Stop
     $NativeContract = 'b' * 64
     $OwnedFingerprintNode = Join-Path $InstallRoot ("runtime\toolchain\node\26.11.1\$FixtureTarget\node.exe")
@@ -274,7 +282,37 @@ try {
     [IO.File]::WriteAllText((Join-Path $NativeStoreProbe 'native-store.json'), ($NativeManifestProbe | ConvertTo-Json -Depth 5))
     $NativePointerProbeValue = [ordered]@{schemaVersion=1;channel='main';sourceSha=$FixtureSourceSha;target=$FixtureTarget;runtimeContractSha256=$NativeContract}
     [IO.File]::WriteAllText($NativePointerProbe, ($NativePointerProbeValue | ConvertTo-Json -Depth 3))
-    Assert-True ((Invoke-GuardianCheck '--audit-native-identity') -eq 0) 'Guardian did not recompute the exact JS native-release fingerprint and installed shell identity.'
+    $NativeMessagingOriginalBytes = [IO.File]::ReadAllBytes($ExpectedManifestPath)
+    $NativeMessagingOriginalOwner = [string](Get-Item -LiteralPath $NativeRegistryKey -ErrorAction Stop).GetValue('')
+    $NativeMessagingProbe = [ordered]@{
+      name='dev.equinox.browser'; description='Equinox Browser native messaging bridge';
+      path=(Join-Path $NativeRuntimeProbe 'browser\equinox-browser-native-host.exe'); type='stdio';
+      allowed_origins=@('chrome-extension://npdneefcobilfkjlihghjgjnknenhfoj/')
+    }
+    [IO.File]::WriteAllText($ExpectedManifestPath, ($NativeMessagingProbe | ConvertTo-Json -Depth 5))
+    Assert-True ((Invoke-GuardianCheck '--audit-native-identity') -eq 0) 'Guardian did not authenticate exact Main native release, Git and Native Messaging identities.'
+    $NativeMessagingProbe.allowed_origins = @('chrome-extension://kdjmfldngbfaillaamoinegmogfkhdfn/')
+    [IO.File]::WriteAllText($ExpectedManifestPath, ($NativeMessagingProbe | ConvertTo-Json -Depth 5))
+    Assert-True ((Invoke-GuardianCheck '--audit-native-identity') -eq 70) 'Guardian accepted a foreign or legacy extension ID.'
+    $NativeMessagingProbe.allowed_origins = @('chrome-extension://npdneefcobilfkjlihghjgjnknenhfoj/')
+    $NativeMessagingProbe.path = (Join-Path $ReleaseDir 'runtime\browser\equinox-browser-native-host.exe')
+    [IO.File]::WriteAllText($ExpectedManifestPath, ($NativeMessagingProbe | ConvertTo-Json -Depth 5))
+    Assert-True ((Invoke-GuardianCheck '--audit-native-identity') -eq 70) 'Guardian accepted the old Stable Native Messaging launcher instead of the selected Main native slot.'
+    $NativeMessagingProbe.path = (Join-Path $NativeRuntimeProbe 'browser\equinox-browser-native-host.exe')
+    [IO.File]::WriteAllText($ExpectedManifestPath, ($NativeMessagingProbe | ConvertTo-Json -Depth 5))
+    $NativeMessagingRegistry = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Software\Google\Chrome\NativeMessagingHosts\dev.equinox.browser', $true)
+    if ($null -eq $NativeMessagingRegistry) { throw 'Hosted Native Messaging registry ownership fixture cannot open its exact key.' }
+    try {
+      $NativeMessagingRegistry.SetValue('', (Join-Path $Work 'foreign-native-host.json'), [Microsoft.Win32.RegistryValueKind]::String)
+      Assert-True ((Invoke-GuardianCheck '--audit-native-identity') -eq 70) 'Guardian accepted a foreign Chrome Native Messaging registry owner.'
+    } finally {
+      $NativeMessagingRegistry.SetValue('', $NativeMessagingOriginalOwner, [Microsoft.Win32.RegistryValueKind]::String)
+      $NativeMessagingRegistry.Dispose()
+    }
+    Assert-True ((Invoke-GuardianCheck '--audit-native-identity') -eq 0) 'Guardian refused the restored exact Native Messaging registration.'
+    # Remaining native fingerprint/Git tests must run with the exact Main
+    # Native Messaging registration. Restore the signed Stable registration
+    # only after the whole synthetic native pointer fixture is removed.
     # A source SHA claim is not enough: the pinned product-owned Git must
     # independently find a clean checkout of exactly that commit and branch.
     $DirtyGitProbe = Join-Path $ManagedSourceRoot 'equinox-guardian-untracked-audit-probe.txt'
@@ -311,6 +349,17 @@ try {
       Assert-True ((Invoke-GuardianCheck '--audit-native-identity') -eq 70) 'Guardian audited an unresolved native Main transaction.'
     } finally { Remove-Item -LiteralPath $NativeActiveProbe -Force -ErrorAction SilentlyContinue }
   } finally {
+    # Restore independently registered Stable Native Messaging bytes before
+    # the fixture is removed, even if any native identity test fails.
+    if ($null -ne $NativeMessagingOriginalBytes) {
+      [IO.File]::WriteAllBytes($ExpectedManifestPath, $NativeMessagingOriginalBytes)
+    }
+    if (-not [string]::IsNullOrWhiteSpace($NativeMessagingOriginalOwner)) {
+      $RestoreNativeMessagingRegistry = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Software\Google\Chrome\NativeMessagingHosts\dev.equinox.browser', $true)
+      if ($null -eq $RestoreNativeMessagingRegistry) { throw 'Hosted Native Messaging registry restore could not open its exact owned key.' }
+      try { $RestoreNativeMessagingRegistry.SetValue('', $NativeMessagingOriginalOwner, [Microsoft.Win32.RegistryValueKind]::String) }
+      finally { $RestoreNativeMessagingRegistry.Dispose() }
+    }
     Remove-Item -LiteralPath $NativePointerProbe -Force -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath $NativeStoreProbe -Recurse -Force -ErrorAction SilentlyContinue
   }

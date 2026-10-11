@@ -141,8 +141,9 @@ internal static partial class Program
         RequireNormalDirectory(immutableShell);
         RequireNormalDirectory(activeProgram);
         CompareNativeTrees(immutableShell, activeProgram);
-        // Do NOT launch or claim successful admission: Native Messaging,
-        // authenticated journal and rollback still need independent proof.
+        InspectOwnedMainNativeMessaging(install, release);
+        // Do NOT launch or claim successful admission: the authenticated
+        // journal, native transition worker and rollback still need proof.
         InspectionPhase = "native-structural-audit-complete";
     }
 }
