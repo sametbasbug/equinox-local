@@ -344,6 +344,11 @@ test("independent Guardian worker process provenance never invokes a launcher or
   assert.match(auditor, /Process\.GetProcessById\(pid\)/u);
   assert.match(auditor, /StartTime\.ToUniversalTime\(\)\.Ticks/u);
   assert.match(auditor, /MainModule\?\.FileName/u);
+  assert.match(auditor, /OpenProcessToken\(running\.Handle, TokenQuery/u);
+  assert.match(auditor, /WindowsIdentity\(workerToken\.DangerousGetHandle\(\)\)/u);
+  assert.match(auditor, /WindowsIdentity\.GetCurrent\(\)/u);
+  assert.match(auditor, /workerSid\.Equals\(guardianSid\)/u);
+  assert.match(auditor, /native-worker-user-identity/u);
   assert.match(auditor, /runtime", "node"/u);
   assert.match(auditor, /WorkerTokenPattern/u);
   assert.doesNotMatch(auditor, /Process\.Start|Registry\.SetValue|File\.WriteAllText|File\.Delete/u);
