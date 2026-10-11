@@ -100,21 +100,27 @@ async function syncDirectory(dir, fsImpl) {
   try { await handle.sync(); } finally { await handle.close(); }
 }
 async function readRecord(file, { fsImpl, platform, verifyAcl }) {
-  const stat = await fsImpl.lstat(file);
-  if (!stat.isFile() || stat.isSymbolicLink() || stat.size < 2 || stat.size > MAX_BYTES) {
-    throw new Error("Windows transition journal is not a bounded normal file.");
-  }
-  if (platform === "win32") {
-    const checked = await verifyAcl({ target: file, type: "file" });
-    if (checked !== true && checked?.safe !== true) throw new Error("Windows transition journal file ACL ownership cannot be verified.");
-  }
+  // Open first, then validate the already-open handle. Checking a pathname
+  // before opening it introduces a TOCTOU race across native update restarts.
   const handle = await fsImpl.open(file, fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0));
   let raw;
   try {
     const opened = await handle.stat();
-    if (!opened.isFile() || opened.size < 2 || opened.size > MAX_BYTES ||
-        opened.ino !== stat.ino || opened.dev !== stat.dev) {
-      throw new Error("Windows transition journal changed during guarded read.");
+    if (!opened.isFile() || opened.size < 2 || opened.size > MAX_BYTES) {
+      throw new Error("Windows transition journal is not a bounded normal file.");
+    }
+    const assertOpenIdentity = async () => {
+      const linked = await fsImpl.lstat(file);
+      if (!linked.isFile() || linked.isSymbolicLink() ||
+          linked.ino !== opened.ino || linked.dev !== opened.dev) {
+        throw new Error("Windows transition journal path no longer identifies the opened file.");
+      }
+    };
+    await assertOpenIdentity();
+    if (platform === "win32") {
+      const checked = await verifyAcl({ target: file, type: "file" });
+      if (checked !== true && checked?.safe !== true) throw new Error("Windows transition journal file ACL ownership cannot be verified.");
+      await assertOpenIdentity();
     }
     raw = await handle.readFile("utf8");
   } finally { await handle.close(); }
@@ -123,6 +129,7 @@ async function readRecord(file, { fsImpl, platform, verifyAcl }) {
   try { value = JSON.parse(raw); } catch { throw new Error("Windows transition journal JSON is invalid."); }
   return validateEquinoxLocalWindowsNativeTransitionJournal(value);
 }
+
 async function writeRecord(file, data, { fsImpl, createOnly, platform, protectAcl, verifyAcl }) {
   const body = `${JSON.stringify(data, null, 2)}\n`;
   if (Buffer.byteLength(body) > MAX_BYTES) throw new Error("Windows transition journal exceeds its bound.");
