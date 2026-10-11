@@ -284,6 +284,8 @@ test("independent Windows Guardian audits exact Main SHA/native-store identity w
   assert.match(gitAudit, /PinnedWindowsGit = "2\.53\.0-4"/u);
   assert.match(gitAudit, /ProcessStartInfo\(executable\)/u);
   assert.match(gitAudit, /UseShellExecute = false/u);
+  assert.match(gitAudit, /core\.autocrlf=true/u);
+  assert.match(gitAudit, /core\.fsmonitor=false/u);
   assert.match(gitAudit, /ArgumentList\.Add/u);
   assert.match(gitAudit, /rev-parse", "HEAD"/u);
   assert.match(gitAudit, /symbolic-ref", "--quiet", "--short", "HEAD"/u);

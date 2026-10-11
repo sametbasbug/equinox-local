@@ -230,7 +230,7 @@ try {
   try {
     $env:GIT_OPTIONAL_LOCKS = '0'; $env:GIT_TERMINAL_PROMPT = '0'; $env:GIT_CONFIG_NOSYSTEM = '1'
     $GitStatusStopwatch = [Diagnostics.Stopwatch]::StartNew()
-    $OwnedGitStatus = @(& $OwnedGitStatusExe -C $ManagedSourceRoot status --porcelain=v1 --untracked-files=normal)
+    $OwnedGitStatus = @(& $OwnedGitStatusExe -c core.autocrlf=true -c core.fsmonitor=false -C $ManagedSourceRoot status --porcelain=v1 --untracked-files=normal)
     $OwnedGitStatusCode = $LASTEXITCODE
     $GitStatusStopwatch.Stop()
     $GitStatusLength = ([string]::Join([Environment]::NewLine, [string[]]$OwnedGitStatus)).Length

@@ -62,6 +62,17 @@ internal static partial class Program
         start.Environment["GIT_OPTIONAL_LOCKS"] = "0";
         start.Environment["GIT_TERMINAL_PROMPT"] = "0";
         start.Environment["GIT_CONFIG_NOSYSTEM"] = "1";
+        // Windows Git for Windows clones with CRLF conversion enabled by its
+        // system config. We deliberately disable system config to avoid
+        // untrusted machine hooks, so recreate the expected normalization
+        // explicitly. Otherwise a legitimate hosted checkout looks like
+        // hundreds of tracked edits when Git rereads CRLF working-tree files.
+        // Command-line -c has higher precedence than repository configuration.
+        foreach (var config in new[] { "core.autocrlf=true", "core.fsmonitor=false" })
+        {
+            start.ArgumentList.Add("-c");
+            start.ArgumentList.Add(config);
+        }
         start.ArgumentList.Add("-C");
         start.ArgumentList.Add(sourceRoot);
         foreach (var arg in fixedArgs) start.ArgumentList.Add(arg);
