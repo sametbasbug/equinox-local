@@ -401,6 +401,56 @@ try {
     [IO.File]::WriteAllText($JournalReceipt, ($JournalReceiptValue | ConvertTo-Json -Depth 5))
     [IO.File]::WriteAllText($JournalData, ($JournalValue | ConvertTo-Json -Depth 5))
     Assert-True ((Invoke-GuardianCheck '--audit-native-journal') -eq 0) 'Guardian refused an exact structurally owned in-progress journal.'
+    # The owning process must be a REAL product-owned Node with matching PID,
+    # full UTC creation ticks and native executable. A reused PID or forged
+    # executable must never authorize any resume. The disposable Node runs no
+    # updater or user payload and is killed/removed even if assertions fail.
+    Assert-True ((Invoke-GuardianCheck '--audit-native-worker') -eq 70) 'Guardian accepted absent native worker ownership.'
+    $WorkerNode = Join-Path $ReleaseDir 'runtime\node\bin\node.exe'
+    Assert-True ([IO.File]::Exists($WorkerNode)) 'Native worker OS identity test requires release-owned Node.'
+    $WorkerHandoff = Join-Path $NativeTxRoot 'handoff'
+    [IO.Directory]::CreateDirectory($WorkerHandoff) | Out-Null
+    $WorkerRecordPath = Join-Path $WorkerHandoff ("$JournalId.windows-worker.json")
+    if (Test-Path -LiteralPath $WorkerRecordPath) { throw 'Hosted worker identity test requires unoccupied ownership.' }
+    $WorkerProcess = $null
+    try {
+      $WorkerStartInfo = [Diagnostics.ProcessStartInfo]::new($WorkerNode)
+      $WorkerStartInfo.UseShellExecute = $false
+      $WorkerStartInfo.CreateNoWindow = $true
+      $WorkerStartInfo.ArgumentList.Add('-e')
+      $WorkerStartInfo.ArgumentList.Add('setInterval(() => {}, 10000)')
+      $WorkerProcess = [Diagnostics.Process]::Start($WorkerStartInfo)
+      if ($null -eq $WorkerProcess) { throw 'Unable to start ephemeral owned Node process for Guardian audit.' }
+      $WorkerRecord = [ordered]@{
+        schemaVersion=1;transactionId=$JournalId;pid=$WorkerProcess.Id;
+        startTimeUtcTicks=$WorkerProcess.StartTime.ToUniversalTime().Ticks.ToString([Globalization.CultureInfo]::InvariantCulture);
+        token=('e' * 64);nodePath=$WorkerNode
+      }
+      [IO.File]::WriteAllText($WorkerRecordPath,($WorkerRecord | ConvertTo-Json -Depth 4))
+      Assert-True ((Invoke-GuardianCheck '--audit-native-worker') -eq 0) 'Guardian refused exact live product-owned Node PID/start time/executable proof.'
+      $WorkerRecord.startTimeUtcTicks = ([long]::Parse($WorkerRecord.startTimeUtcTicks) - 1).ToString([Globalization.CultureInfo]::InvariantCulture)
+      [IO.File]::WriteAllText($WorkerRecordPath,($WorkerRecord | ConvertTo-Json -Depth 4))
+      Assert-True ((Invoke-GuardianCheck '--audit-native-worker') -eq 70) 'Guardian accepted a replayed or reused native worker PID with wrong creation time.'
+      $WorkerRecord.startTimeUtcTicks = $WorkerProcess.StartTime.ToUniversalTime().Ticks.ToString([Globalization.CultureInfo]::InvariantCulture)
+      $WorkerRecord.nodePath = Join-Path $Work 'foreign-node.exe'
+      [IO.File]::WriteAllText($WorkerRecordPath,($WorkerRecord | ConvertTo-Json -Depth 4))
+      Assert-True ((Invoke-GuardianCheck '--audit-native-worker') -eq 70) 'Guardian accepted a foreign native worker Node executable.'
+      $WorkerRecord.nodePath = $WorkerNode
+      $WorkerRecord.token = 'invalid'
+      [IO.File]::WriteAllText($WorkerRecordPath,($WorkerRecord | ConvertTo-Json -Depth 4))
+      Assert-True ((Invoke-GuardianCheck '--audit-native-worker') -eq 70) 'Guardian accepted an invalid worker owner token.'
+      $WorkerRecord.token = ('e' * 64)
+      [IO.File]::WriteAllText($WorkerRecordPath,($WorkerRecord | ConvertTo-Json -Depth 4))
+      Assert-True ((Invoke-GuardianCheck '--audit-native-worker') -eq 0) 'Guardian refused restored live OS process identity.'
+    } finally {
+      if ($null -ne $WorkerProcess) {
+        try { if (-not $WorkerProcess.HasExited) { $WorkerProcess.Kill($true) } } catch {}
+        try { $WorkerProcess.WaitForExit(5000) | Out-Null } catch {}
+        $WorkerProcess.Dispose()
+      }
+      Remove-Item -LiteralPath $WorkerRecordPath -Force -ErrorAction SilentlyContinue
+    }
+    Assert-True ((Invoke-GuardianCheck '--audit-native-worker') -eq 70) 'Guardian accepted an exited/unowned native worker after cleanup.'
     Assert-True ((Invoke-GuardianCheck '--inspect') -eq 70) 'Stable Guardian must not start while the journal owns an active Main lock.'
     $JournalReceiptValue.targetSha = $(if ($JournalTarget -ceq ('c' * 40)) { 'd' * 40 } else { 'c' * 40 })
     [IO.File]::WriteAllText($JournalReceipt, ($JournalReceiptValue | ConvertTo-Json -Depth 5))
