@@ -36,8 +36,17 @@ internal static partial class Program
         }
         catch (Exception ex)
         {
-            // Avoid echoing filesystem paths, user data, keys or process arguments.
-            Debug.WriteLine("Equinox Local Guardian refused launch: " + ex.GetType().Name);
+            // Only the explicit inspection mode exposes bounded, static
+            // validation errors to the disposable installed-host acceptance.
+            // Never echo paths from OS exceptions or launch arguments.
+            if (args.Length == 1 && args[0] == "--inspect")
+            {
+                var reason = ex is InvalidDataException or InvalidOperationException or PlatformNotSupportedException
+                    ? ex.Message : ex.GetType().Name;
+                if (reason.Length > 120) reason = reason[..120];
+                Console.Error.WriteLine("Guardian inspection refused: " + reason);
+            }
+            else Debug.WriteLine("Equinox Local Guardian refused launch: " + ex.GetType().Name);
             return 70;
         }
     }

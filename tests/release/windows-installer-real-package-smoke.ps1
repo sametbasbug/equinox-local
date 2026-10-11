@@ -169,12 +169,17 @@ try {
     $start.FileName = $GuardianExe
     $start.Arguments = $Argument
     $start.UseShellExecute = $false
+    $start.RedirectStandardError = $true
     $process = [System.Diagnostics.Process]::Start($start)
     if ($null -eq $process) { throw 'Independent Windows Guardian process could not launch.' }
     try {
       if (-not $process.WaitForExit(30000)) {
         $process.Kill()
         throw 'Independent Windows Guardian exceeded its 30-second inspection limit.'
+      }
+      $diagnostic = $process.StandardError.ReadToEnd().Trim()
+      if ($Argument -ceq '--inspect' -and $process.ExitCode -ne 0) {
+        Write-Output ('Windows Guardian inspection diagnosis: ' + $diagnostic)
       }
       return $process.ExitCode
     } finally { $process.Dispose() }
