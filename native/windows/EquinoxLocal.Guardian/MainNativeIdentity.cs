@@ -127,8 +127,12 @@ internal static partial class Program
         var claimEntries = fingerprint.GetProperty("entries").GetInt64();
         var claimBytes = fingerprint.GetProperty("bytes").GetInt64();
         var measured = FingerprintNativeMainRelease(release);
-        if (measured.Sha256 != claimSha || measured.Entries != claimEntries || measured.Bytes != claimBytes)
-            throw new InvalidDataException("Native Main complete release fingerprint differs from stored manifest.");
+        if (measured.Entries != claimEntries)
+            throw new InvalidDataException("Native Main fingerprint entry count differs from stored manifest.");
+        if (measured.Bytes != claimBytes)
+            throw new InvalidDataException("Native Main fingerprint byte count differs from stored manifest.");
+        if (measured.Sha256 != claimSha)
+            throw new InvalidDataException("Native Main fingerprint digest differs from stored manifest.");
         InspectionPhase = "native-shell-hash";
         var immutableShell = Path.Combine(release, "runtime", "shell");
         var activeProgram = Path.Combine(local, "Programs", "Equinox Local");

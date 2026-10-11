@@ -178,7 +178,7 @@ try {
         throw 'Independent Windows Guardian exceeded its 30-second inspection limit.'
       }
       $diagnostic = $process.StandardError.ReadToEnd().Trim()
-      if ($Argument -ceq '--inspect' -and $process.ExitCode -ne 0) {
+      if (($Argument -ceq '--inspect' -or $Argument -ceq '--audit-native-identity') -and $process.ExitCode -ne 0) {
         Write-Host ('Windows Guardian inspection diagnosis: ' + $diagnostic)
       }
       return [int]$process.ExitCode
