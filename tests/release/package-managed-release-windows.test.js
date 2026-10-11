@@ -292,6 +292,15 @@ test("independent Windows Guardian audits exact Main SHA/native-store identity w
   assert.match(gitAudit, /status", "--porcelain=v1", "--untracked-files=normal"/u);
   assert.match(gitAudit, /git@github\.com:sametbasbug\/equinox-local\.git/u);
   assert.doesNotMatch(gitAudit, /cmd\.exe|powershell\.exe|UseShellExecute = true/u);
+  assert.match(inspector, /InspectOwnedMainNativeMessaging\(install, release\)/u);
+  const nativeMessaging = await fs.readFile(new URL("../../native/windows/EquinoxLocal.Guardian/MainNativeMessagingIdentity.cs", import.meta.url), "utf8");
+  assert.match(nativeMessaging, /Registry\.CurrentUser\.OpenSubKey/u);
+  assert.match(nativeMessaging, /RegistryValueKind\.String/u);
+  assert.match(nativeMessaging, /dev\.equinox\.browser/u);
+  assert.match(nativeMessaging, /chrome-extension:\/\/npdneefcobilfkjlihghjgjnknenhfoj\//u);
+  assert.match(nativeMessaging, /GetArrayLength\(\) != 1/u);
+  assert.match(nativeMessaging, /Path\.Combine\(selectedRelease, "runtime", "browser"/u);
+  assert.doesNotMatch(nativeMessaging, /Registry\.SetValue|WriteAllText|CreateSubKey/u);
   assert.match(inspector, /FingerprintNativeMainRelease\(release\)/u);
   assert.match(inspector, /measured\.Sha256 != claimSha/u);
   const fingerprintCode = await fs.readFile(new URL("../../native/windows/EquinoxLocal.Guardian/MainNativeFingerprint.cs", import.meta.url), "utf8");
