@@ -2,6 +2,10 @@ using System.Diagnostics;
 using System.Globalization;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using System.ComponentModel;
+using System.Runtime.InteropServices;
+using System.Security.Principal;
+using Microsoft.Win32.SafeHandles;
 
 namespace EquinoxLocal.Guardian;
 
@@ -10,7 +14,14 @@ internal static partial class Program
     private static readonly Regex WorkerTokenPattern = new("^[a-f0-9]{64}$", RegexOptions.CultureInvariant);
     private static readonly Regex WorkerTicksPattern = new("^[0-9]{1,19}$", RegexOptions.CultureInvariant);
 
-    // Independently prove the OS PID/start-time/executable triple. A signed
+    private const uint TokenQuery = 0x0008;
+
+    [DllImport("advapi32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool OpenProcessToken(IntPtr processHandle, uint desiredAccess,
+        out SafeAccessTokenHandle tokenHandle);
+
+    // Independently prove the OS PID/start-time/executable/user-SID tuple. A signed
     // ownership record by itself is not proof of a live owner, and PID reuse
     // must never authorize a WPF shutdown or a journal replay. This remains a
     // read-only provenance test, NOT an authenticated worker command line or
@@ -83,6 +94,27 @@ internal static partial class Program
         if (!Path.IsPathFullyQualified(actualExecutable) ||
             !Compare.Equals(Path.GetFullPath(actualExecutable), Path.GetFullPath(expectedNode)))
             throw new InvalidDataException("Native worker PID belongs to a different OS executable.");
+
+        InspectionPhase = "native-worker-user-identity";
+        // Compare Windows kernel access-token owner SIDs for the live process
+        // and the running per-user Guardian, never process name, environment
+        // USERNAME or user-writable JSON. This is not impersonation and does
+        // not elevate or grant any filesystem permissions.
+        if (!OpenProcessToken(running.Handle, TokenQuery, out var workerToken))
+            throw new Win32Exception(Marshal.GetLastWin32Error(), "Cannot query owned native worker token.");
+        using (workerToken)
+        using (var workerIdentity = new WindowsIdentity(workerToken.DangerousGetHandle()))
+        using (var guardianIdentity = WindowsIdentity.GetCurrent())
+        {
+            var workerSid = workerIdentity.User;
+            var guardianSid = guardianIdentity.User;
+            if (workerSid is null || guardianSid is null || !workerSid.Equals(guardianSid))
+                throw new InvalidDataException("Detached worker user SID differs from current Guardian owner.");
+        }
+        // Pin the same process handle to its original birth timestamp again;
+        // changing the ownership JSON cannot turn a recycled PID into proof.
+        if (running.HasExited || running.StartTime.ToUniversalTime().Ticks.ToString(CultureInfo.InvariantCulture) != ticks)
+            throw new InvalidDataException("Native worker exited or identity changed during user token inspection.");
         InspectionPhase = "native-worker-process-provenance-complete";
         // Trust is deliberately incomplete: the worker command line, token in
         // process environment, exact receipt writer, system ACL and full
