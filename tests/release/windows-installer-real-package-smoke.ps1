@@ -250,6 +250,15 @@ try {
     $NativePointerProbeValue = [ordered]@{schemaVersion=1;channel='main';sourceSha=$FixtureSourceSha;target=$FixtureTarget;runtimeContractSha256=$NativeContract}
     [IO.File]::WriteAllText($NativePointerProbe, ($NativePointerProbeValue | ConvertTo-Json -Depth 3))
     Assert-True ((Invoke-GuardianCheck '--audit-native-identity') -eq 0) 'Guardian did not recompute the exact JS native-release fingerprint and installed shell identity.'
+    # A source SHA claim is not enough: the pinned product-owned Git must
+    # independently find a clean checkout of exactly that commit and branch.
+    $DirtyGitProbe = Join-Path $ManagedSourceRoot 'equinox-guardian-untracked-audit-probe.txt'
+    if (Test-Path -LiteralPath $DirtyGitProbe) { throw 'Hosted Main Git identity probe path was already occupied.' }
+    try {
+      [IO.File]::WriteAllText($DirtyGitProbe, 'disposable Guardian read-only Git check')
+      Assert-True ((Invoke-GuardianCheck '--audit-native-identity') -eq 70) 'Guardian accepted a dirty Main Git checkout.'
+    } finally { Remove-Item -LiteralPath $DirtyGitProbe -Force -ErrorAction SilentlyContinue }
+    Assert-True ((Invoke-GuardianCheck '--audit-native-identity') -eq 0) 'Guardian refused the restored clean Main Git checkout.'
     # A syntactically plausible forged manifest must not override measured bytes.
     $NativeManifestProbe.releaseFingerprint.sha256 = 'e' * 64
     [IO.File]::WriteAllText((Join-Path $NativeStoreProbe 'native-store.json'), ($NativeManifestProbe | ConvertTo-Json -Depth 5))

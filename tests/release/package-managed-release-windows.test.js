@@ -279,6 +279,17 @@ test("independent Windows Guardian audits exact Main SHA/native-store identity w
   assert.match(inspector, /runtimeContractSha256/u);
   assert.match(inspector, /artifactSha256/u);
   assert.match(inspector, /CompareNativeTrees\(immutableShell, activeProgram\)/u);
+  assert.match(inspector, /InspectOwnedMainGit\(install, target, expectedSource, sourceSha\)/u);
+  const gitAudit = await fs.readFile(new URL("../../native/windows/EquinoxLocal.Guardian/MainGitIdentity.cs", import.meta.url), "utf8");
+  assert.match(gitAudit, /PinnedWindowsGit = "2\.53\.0-4"/u);
+  assert.match(gitAudit, /ProcessStartInfo\(executable\)/u);
+  assert.match(gitAudit, /UseShellExecute = false/u);
+  assert.match(gitAudit, /ArgumentList\.Add/u);
+  assert.match(gitAudit, /rev-parse", "HEAD"/u);
+  assert.match(gitAudit, /symbolic-ref", "--quiet", "--short", "HEAD"/u);
+  assert.match(gitAudit, /status", "--porcelain=v1", "--untracked-files=normal"/u);
+  assert.match(gitAudit, /git@github\.com:sametbasbug\/equinox-local\.git/u);
+  assert.doesNotMatch(gitAudit, /cmd\.exe|powershell\.exe|UseShellExecute = true/u);
   assert.match(inspector, /FingerprintNativeMainRelease\(release\)/u);
   assert.match(inspector, /measured\.Sha256 != claimSha/u);
   const fingerprintCode = await fs.readFile(new URL("../../native/windows/EquinoxLocal.Guardian/MainNativeFingerprint.cs", import.meta.url), "utf8");
