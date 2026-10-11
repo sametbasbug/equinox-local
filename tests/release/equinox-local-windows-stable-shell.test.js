@@ -129,6 +129,85 @@ test("Windows stable-shell replacement restores the exact previous tree when can
 });
 
 
+test("Windows native swap rollback preserves verified backup when restore rename fails", async (t) => {
+  const fixture = await shellFixture();
+  t.after(() => fs.rm(fixture.root, { recursive: true, force: true }));
+  let renameCount = 0;
+  const fsImpl = {
+    ...fs,
+    rename: async (source, destination) => {
+      renameCount += 1;
+      if (renameCount === 2) throw Object.assign(new Error("candidate rename injected"), { code: "EIO" });
+      if (renameCount === 3) throw Object.assign(new Error("rollback rename injected"), { code: "EACCES" });
+      return fs.rename(source, destination);
+    },
+  };
+  await assert.rejects(
+    replaceWindowsStableShellForRelease({
+      releaseDir: path.join(fixture.releases, "5.3.0"), previousReleaseDir: path.join(fixture.releases, "5.2.0"),
+      programRoot: fixture.programRoot, requestShutdownImpl: async () => {}, fsImpl,
+    }),
+    (error) => error instanceof AggregateError && /rollback failed/u.test(error.message) && error.errors.length === 2,
+  );
+  const parent = path.dirname(fixture.programRoot);
+  const backups = (await fs.readdir(parent)).filter((name) => name.startsWith(".equinox-shell-backup-"));
+  assert.equal(backups.length, 1);
+  assert.equal(await fs.readFile(path.join(parent, backups[0], "EquinoxLocal.exe"), "utf8"), "old-exe\n");
+});
+
+test("Windows native swap fails closed when backup contents change during failed promotion", async (t) => {
+  const fixture = await shellFixture();
+  t.after(() => fs.rm(fixture.root, { recursive: true, force: true }));
+  let renameCount = 0;
+  const fsImpl = {
+    ...fs,
+    rename: async (source, destination) => {
+      renameCount += 1;
+      if (renameCount === 1) {
+        await fs.rename(source, destination);
+        await fs.writeFile(path.join(destination, "coreclr.dll"), "tampered\n");
+        return;
+      }
+      if (renameCount === 2) throw Object.assign(new Error("candidate rename injected"), { code: "EIO" });
+      return fs.rename(source, destination);
+    },
+  };
+  await assert.rejects(
+    replaceWindowsStableShellForRelease({
+      releaseDir: path.join(fixture.releases, "5.3.0"), previousReleaseDir: path.join(fixture.releases, "5.2.0"),
+      programRoot: fixture.programRoot, requestShutdownImpl: async () => {}, fsImpl,
+    }),
+    (error) => error instanceof AggregateError && /rollback failed/u.test(error.message),
+  );
+  const backups = (await fs.readdir(path.dirname(fixture.programRoot))).filter((name) => name.startsWith(".equinox-shell-backup-"));
+  assert.equal(backups.length, 1);
+  assert.equal(await fs.readFile(path.join(path.dirname(fixture.programRoot), backups[0], "coreclr.dll"), "utf8"), "tampered\n");
+});
+
+test("Windows native swap keeps the exact previous shell on a post-promotion integrity error", async (t) => {
+  const fixture = await shellFixture();
+  t.after(() => fs.rm(fixture.root, { recursive: true, force: true }));
+  let renamed = false;
+  const fsImpl = {
+    ...fs,
+    rename: async (source, destination) => {
+      await fs.rename(source, destination);
+      if (!renamed && destination === fixture.programRoot) {
+        renamed = true;
+        await fs.writeFile(path.join(fixture.programRoot, "coreclr.dll"), "post-promotion-tampered\n");
+      }
+    },
+  };
+  await assert.rejects(
+    replaceWindowsStableShellForRelease({
+      releaseDir: path.join(fixture.releases, "5.3.0"), previousReleaseDir: path.join(fixture.releases, "5.2.0"),
+      programRoot: fixture.programRoot, requestShutdownImpl: async () => {}, fsImpl,
+    }), /integrity verification/u,
+  );
+  assert.equal(await fs.readFile(path.join(fixture.programRoot, "EquinoxLocal.exe"), "utf8"), "old-exe\n");
+  assert.equal(await fs.readFile(path.join(fixture.programRoot, "coreclr.dll"), "utf8"), "old-core\n");
+});
+
 test("Windows running stable shell is stopped before real NTFS replacement", { skip: process.platform !== "win32" }, async (t) => {
   const fixture = await shellFixture();
   const previousShell = path.join(fixture.releases, "5.2.0", "runtime", "shell");
