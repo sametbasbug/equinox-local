@@ -161,16 +161,31 @@ try {
   $GuardianExe = Join-Path $GuardianInstallDir 'EquinoxLocalGuardian.exe'
   Copy-Item -LiteralPath $GuardianFromRelease -Destination $GuardianExe -ErrorAction Stop
   Assert-True ((Get-FileHash -LiteralPath $GuardianExe -Algorithm SHA256).Hash -ceq (Get-FileHash -LiteralPath $GuardianFromRelease -Algorithm SHA256).Hash) 'Installed Guardian changed after copying verified release bytes.'
-  & $GuardianExe --inspect
-  Assert-True ($LASTEXITCODE -eq 0) 'Independent Windows Guardian rejected an intact, installed signed Stable WPF baseline.'
-  & $GuardianExe --unsupported-argument
-  Assert-True ($LASTEXITCODE -eq 70) 'Independent Windows Guardian accepted an unsupported argument.'
+  # A native WinExe is a GUI-subsystem executable. Windows PowerShell's `&`
+  # operator may return immediately without waiting or updating LASTEXITCODE.
+  # Explicitly wait for the process handle rather than making a false pass/fail.
+  function Invoke-GuardianCheck([string]$Argument) {
+    $start = New-Object System.Diagnostics.ProcessStartInfo
+    $start.FileName = $GuardianExe
+    $start.Arguments = $Argument
+    $start.UseShellExecute = $false
+    $process = [System.Diagnostics.Process]::Start($start)
+    if ($null -eq $process) { throw 'Independent Windows Guardian process could not launch.' }
+    try {
+      if (-not $process.WaitForExit(30000)) {
+        $process.Kill()
+        throw 'Independent Windows Guardian exceeded its 30-second inspection limit.'
+      }
+      return $process.ExitCode
+    } finally { $process.Dispose() }
+  }
+  Assert-True ((Invoke-GuardianCheck '--inspect') -eq 0) 'Independent Windows Guardian rejected an intact, installed signed Stable WPF baseline.'
+  Assert-True ((Invoke-GuardianCheck '--unsupported-argument') -eq 70) 'Independent Windows Guardian accepted an unsupported argument.'
   $FakeMainLock = Join-Path $OwnedInstallRoot 'state\main-update\active.json'
   if ([IO.File]::Exists($FakeMainLock)) { throw 'Unexpected live Main update lock in disposable Guardian acceptance.' }
   try {
     [IO.File]::WriteAllText($FakeMainLock, 'unowned-test-lock')
-    & $GuardianExe --inspect
-    Assert-True ($LASTEXITCODE -eq 70) 'Independent Windows Guardian did not fail closed on an unresolved Main update lock.'
+    Assert-True ((Invoke-GuardianCheck '--inspect') -eq 70) 'Independent Windows Guardian did not fail closed on an unresolved Main update lock.'
   } finally { Remove-Item -LiteralPath $FakeMainLock -Force -ErrorAction SilentlyContinue }
   Write-Output "Windows $FixtureTarget independent native Guardian installed-host positive/negative admission PASSED."
 
