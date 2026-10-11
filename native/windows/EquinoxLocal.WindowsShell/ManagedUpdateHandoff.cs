@@ -27,6 +27,7 @@ internal static class ManagedUpdateHandoff
         var systemRoot = Environment.GetEnvironmentVariable("SystemRoot");
         if (string.IsNullOrWhiteSpace(systemRoot)) throw new InvalidOperationException("SystemRoot is unavailable for the managed update handoff.");
         startInfo.Environment["PATH"] = $"{Path.Combine(systemRoot, "System32")};{systemRoot}";
+        startInfo.Environment["ComSpec"] = Path.Combine(systemRoot, "System32", "cmd.exe");
         CopyEnvironment(startInfo, "TEMP");
         CopyEnvironment(startInfo, "TMP");
         if (release.InstallRoot is not null) startInfo.Environment["EQUINOX_LOCAL_INSTALL_ROOT"] = release.InstallRoot;
