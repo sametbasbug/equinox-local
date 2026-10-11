@@ -279,6 +279,13 @@ test("independent Windows Guardian audits exact Main SHA/native-store identity w
   assert.match(inspector, /runtimeContractSha256/u);
   assert.match(inspector, /artifactSha256/u);
   assert.match(inspector, /CompareNativeTrees\(immutableShell, activeProgram\)/u);
+  assert.match(inspector, /FingerprintNativeMainRelease\(release\)/u);
+  assert.match(inspector, /measured\.Sha256 != claimSha/u);
+  const fingerprintCode = await fs.readFile(new URL("../../native/windows/EquinoxLocal.Guardian/MainNativeFingerprint.cs", import.meta.url), "utf8");
+  assert.match(fingerprintCode, /equinox-local-native-state-v1/u);
+  assert.match(fingerprintCode, /MaxNativeFingerprintEntries/u);
+  assert.match(fingerprintCode, /CompareWindowsEnglish/u);
+  assert.match(fingerprintCode, /IncrementalHash\.CreateHash/u);
   assert.match(inspector, /File\.Exists\(Path\.Combine\(tx, "active\.json"\)\)/u);
   assert.doesNotMatch(inspector, /Process\.Start|UseShellExecute|cmd\.exe|powershell\.exe/u);
 });
