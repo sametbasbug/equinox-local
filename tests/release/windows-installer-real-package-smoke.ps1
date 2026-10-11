@@ -446,7 +446,9 @@ try {
       Assert-True ((Invoke-GuardianCheck '--audit-native-worker') -eq 0) 'Guardian refused restored live OS process identity.'
     } finally {
       if ($null -ne $WorkerProcess) {
-        try { if (-not $WorkerProcess.HasExited) { $WorkerProcess.Kill($true) } } catch {}
+        # .NET Framework under Windows PowerShell 5.1 has Kill() but not
+        # Kill(entireProcessTree); this fixture starts no child processes.
+        try { if (-not $WorkerProcess.HasExited) { $WorkerProcess.Kill() } } catch {}
         try { $WorkerProcess.WaitForExit(5000) | Out-Null } catch {}
         $WorkerProcess.Dispose()
       }
