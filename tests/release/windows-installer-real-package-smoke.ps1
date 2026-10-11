@@ -178,7 +178,7 @@ try {
         throw 'Independent Windows Guardian exceeded its 30-second inspection limit.'
       }
       $diagnostic = $process.StandardError.ReadToEnd().Trim()
-      if ($Argument -ceq '--inspect' -and $process.ExitCode -ne 0) {
+      if (($Argument -ceq '--inspect' -or $Argument -ceq '--audit-native-identity') -and $process.ExitCode -ne 0) {
         Write-Host ('Windows Guardian inspection diagnosis: ' + $diagnostic)
       }
       return [int]$process.ExitCode
@@ -235,15 +235,36 @@ try {
     Copy-Item -LiteralPath (Join-Path $ReleaseDir 'runtime\shell') -Destination (Join-Path $NativeRuntimeProbe 'shell') -Recurse -ErrorAction Stop
     Copy-Item -LiteralPath (Join-Path $ReleaseDir 'release.json') -Destination (Join-Path $NativeReleaseProbe 'release.json') -ErrorAction Stop
     $NativeContract = 'b' * 64
+    $OwnedFingerprintNode = Join-Path $InstallRoot ("runtime\toolchain\node\26.11.1\$FixtureTarget\node.exe")
+    Assert-True ([IO.File]::Exists($OwnedFingerprintNode)) 'Native Main fingerprint fixture requires the owned Node executable.'
+    $NativeFingerprintJson = & $OwnedFingerprintNode (Join-Path $Root 'tests/release/guardian-native-fingerprint-fixture.mjs') $NativeReleaseProbe
+    if ($LASTEXITCODE -ne 0) { throw 'Canonical JS native release fingerprint fixture refused the disposable Main slot.' }
+    $NativeFingerprint = $NativeFingerprintJson | ConvertFrom-Json
+    Assert-True ([string]$NativeFingerprint.sha256 -cmatch '^[a-f0-9]{64}$') 'Canonical native Main fingerprint fixture is invalid.'
     $NativeManifestProbe = [ordered]@{
       schemaVersion=1; channel='main'; sourceSha=$FixtureSourceSha; target=$FixtureTarget;
       runtimeContractSha256=$NativeContract; artifactSha256=('d' * 64); artifactBytes=1024;
-      payloadVersion=$FixtureVersion; releaseFingerprint=[ordered]@{schemaVersion=1;sha256=('f' * 64);entries=1;bytes=1}
+      payloadVersion=$FixtureVersion; releaseFingerprint=$NativeFingerprint
     }
     [IO.File]::WriteAllText((Join-Path $NativeStoreProbe 'native-store.json'), ($NativeManifestProbe | ConvertTo-Json -Depth 5))
     $NativePointerProbeValue = [ordered]@{schemaVersion=1;channel='main';sourceSha=$FixtureSourceSha;target=$FixtureTarget;runtimeContractSha256=$NativeContract}
     [IO.File]::WriteAllText($NativePointerProbe, ($NativePointerProbeValue | ConvertTo-Json -Depth 3))
-    Assert-True ((Invoke-GuardianCheck '--audit-native-identity') -eq 0) 'Guardian did not bind valid structural Main source/native identities and installed shell hashes.'
+    Assert-True ((Invoke-GuardianCheck '--audit-native-identity') -eq 0) 'Guardian did not recompute the exact JS native-release fingerprint and installed shell identity.'
+    # A syntactically plausible forged manifest must not override measured bytes.
+    $NativeManifestProbe.releaseFingerprint.sha256 = 'e' * 64
+    [IO.File]::WriteAllText((Join-Path $NativeStoreProbe 'native-store.json'), ($NativeManifestProbe | ConvertTo-Json -Depth 5))
+    Assert-True ((Invoke-GuardianCheck '--audit-native-identity') -eq 70) 'Guardian trusted a forged complete native-store fingerprint.'
+    $NativeManifestProbe.releaseFingerprint.sha256 = $NativeFingerprint.sha256
+    [IO.File]::WriteAllText((Join-Path $NativeStoreProbe 'native-store.json'), ($NativeManifestProbe | ConvertTo-Json -Depth 5))
+    # Even preserving the original manifest is insufficient after release drift.
+    $NativeReleaseJson = Join-Path $NativeReleaseProbe 'release.json'
+    $OriginalNativeRelease = [IO.File]::ReadAllBytes($NativeReleaseJson)
+    try {
+      $MutatedNativeRelease = [byte[]]$OriginalNativeRelease.Clone()
+      $MutatedNativeRelease[0] = [byte]($MutatedNativeRelease[0] -bxor 1)
+      [IO.File]::WriteAllBytes($NativeReleaseJson, $MutatedNativeRelease)
+      Assert-True ((Invoke-GuardianCheck '--audit-native-identity') -eq 70) 'Guardian trusted a mutated immutable native payload.'
+    } finally { [IO.File]::WriteAllBytes($NativeReleaseJson, $OriginalNativeRelease) }
     Assert-True ((Invoke-GuardianCheck '--inspect') -eq 70) 'Stable-only Guardian must never launch a native Main pointer by accident.'
     $NativePointerProbeValue.sourceSha = 'a' * 40
     [IO.File]::WriteAllText($NativePointerProbe, ($NativePointerProbeValue | ConvertTo-Json -Depth 3))

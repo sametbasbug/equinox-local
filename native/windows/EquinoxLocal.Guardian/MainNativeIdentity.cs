@@ -122,6 +122,17 @@ internal static partial class Program
             metadata.GetProperty("version").GetString() != payloadVersion ||
             metadata.GetProperty("serverEntry").GetString() != "server.js")
             throw new InvalidDataException("Immutable native Main release identity mismatch.");
+        InspectionPhase = "native-full-fingerprint";
+        var claimSha = fingerprint.GetProperty("sha256").GetString() ?? "";
+        var claimEntries = fingerprint.GetProperty("entries").GetInt64();
+        var claimBytes = fingerprint.GetProperty("bytes").GetInt64();
+        var measured = FingerprintNativeMainRelease(release);
+        if (measured.Entries != claimEntries)
+            throw new InvalidDataException("Native Main fingerprint entry count differs from stored manifest.");
+        if (measured.Bytes != claimBytes)
+            throw new InvalidDataException("Native Main fingerprint byte count differs from stored manifest.");
+        if (measured.Sha256 != claimSha)
+            throw new InvalidDataException("Native Main complete fingerprint digest differs from stored manifest.");
         InspectionPhase = "native-shell-hash";
         var immutableShell = Path.Combine(release, "runtime", "shell");
         var activeProgram = Path.Combine(local, "Programs", "Equinox Local");
@@ -129,8 +140,8 @@ internal static partial class Program
         RequireNormalDirectory(immutableShell);
         RequireNormalDirectory(activeProgram);
         CompareNativeTrees(immutableShell, activeProgram);
-        // Do NOT launch or claim successful admission: Git HEAD, complete
-        // releaseFingerprint and Native Messaging still need independent proof.
+        // Do NOT launch or claim successful admission: product Git HEAD,
+        // Native Messaging and journal still need independent proof.
         InspectionPhase = "native-structural-audit-complete";
     }
 }
