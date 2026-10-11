@@ -1,7 +1,7 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { equinoxLocalReleaseTarget } from "./equinox-local-platform.js";
+import { equinoxLocalReleaseTarget, equinoxLocalWindowsPowerShellPath } from "./equinox-local-platform.js";
 import { createWindowsJobObjectLease } from "./equinox-local-windows-job-object.js";
 
 const WINDOWS_GATE_PATH = path.join(path.dirname(fileURLToPath(import.meta.url)), "equinox-local-windows-process-gate.ps1");
@@ -50,7 +50,7 @@ export function createBackgroundProcessOwnershipAdapter({
     },
     spawnSpec(command, args, env) {
       return Object.freeze({
-        command: "powershell.exe",
+        command: equinoxLocalWindowsPowerShellPath(env),
         args: Object.freeze([
           "-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", WINDOWS_GATE_PATH,
         ]),
@@ -111,7 +111,7 @@ export function createTerminalProcessOwnershipAdapter({
     },
     spawnSpec(command, args, env) {
       return Object.freeze({
-        command: "powershell.exe",
+        command: equinoxLocalWindowsPowerShellPath(env),
         args: Object.freeze([
           "-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", WINDOWS_PTY_GATE_PATH,
         ]),

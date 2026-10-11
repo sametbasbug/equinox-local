@@ -3,6 +3,7 @@ import { spawn as nodeSpawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { equinoxLocalWindowsPowerShellPath } from "./equinox-local-platform.js";
 
 const DEFAULT_TIMEOUT_MS = 5_000;
 const MAX_STDERR_CHARS = 16_384;
@@ -15,7 +16,7 @@ function defaultHelperLaunchSpec() {
   const developerFallback = path.join(moduleRoot, "equinox-local-windows-job-object.ps1");
   if (existsSync(developerFallback)) {
     return Object.freeze({
-      command: "powershell.exe",
+      command: equinoxLocalWindowsPowerShellPath(),
       args: Object.freeze(["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", developerFallback]),
     });
   }

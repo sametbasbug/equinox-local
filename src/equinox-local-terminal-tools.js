@@ -51,8 +51,8 @@ export function registerTerminalTools({
   textResult,
   errorResult,
 } = {}) {
-  const finiteShell = equinoxLocalFiniteShell({ platform, arch });
-  const interactiveShells = equinoxLocalInteractiveShells({ platform, arch });
+  const finiteShell = equinoxLocalFiniteShell({ platform, arch, env: runtimeEnv });
+  const interactiveShells = equinoxLocalInteractiveShells({ platform, arch, env: runtimeEnv });
   const interactiveShellNames = Object.keys(interactiveShells.shells);
   if (interactiveShellNames.length === 0) throw new Error("No interactive shell is configured for this platform.");
   const terminalJsonResult = (value) => textResult(JSON.stringify(value, null, 2));

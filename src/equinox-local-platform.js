@@ -134,7 +134,18 @@ export function equinoxLocalManagedLifecycle({ platform = process.platform, arch
   });
 }
 
-export function equinoxLocalFiniteShell({ platform = process.platform, arch = process.arch } = {}) {
+// The Windows managed runtime deliberately runs with a restricted PATH.
+// ConPTY's relative executable resolver can return an EMPTY path despite a
+// perfectly healthy OS; resolve the fixed Microsoft shell under SystemRoot.
+export function equinoxLocalWindowsPowerShellPath(env = process.env) {
+  const systemRoot = env?.SystemRoot || env?.SYSTEMROOT || env?.WINDIR || "C:\\Windows";
+  if (typeof systemRoot !== "string" || !path.win32.isAbsolute(systemRoot)) {
+    throw new Error("Windows PowerShell requires an absolute SystemRoot.");
+  }
+  return path.win32.join(path.win32.normalize(systemRoot), "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
+}
+
+export function equinoxLocalFiniteShell({ platform = process.platform, arch = process.arch, env = process.env } = {}) {
   equinoxLocalReleaseTarget({ platform, arch });
   if (platform === "darwin") {
     return Object.freeze({
@@ -145,7 +156,7 @@ export function equinoxLocalFiniteShell({ platform = process.platform, arch = pr
     });
   }
   return Object.freeze({
-    command: "powershell.exe",
+    command: equinoxLocalWindowsPowerShellPath(env),
     argsFor(command) {
       return ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", command];
     },
@@ -154,7 +165,7 @@ export function equinoxLocalFiniteShell({ platform = process.platform, arch = pr
   });
 }
 
-export function equinoxLocalInteractiveShells({ platform = process.platform, arch = process.arch } = {}) {
+export function equinoxLocalInteractiveShells({ platform = process.platform, arch = process.arch, env = process.env } = {}) {
   equinoxLocalReleaseTarget({ platform, arch });
   if (platform === "darwin") {
     return Object.freeze({
@@ -168,7 +179,7 @@ export function equinoxLocalInteractiveShells({ platform = process.platform, arc
   return Object.freeze({
     defaultShell: "powershell",
     shells: Object.freeze({
-      powershell: Object.freeze({ command: "powershell.exe", args: Object.freeze(["-NoLogo", "-NoProfile"]) }),
+      powershell: Object.freeze({ command: equinoxLocalWindowsPowerShellPath(env), args: Object.freeze(["-NoLogo", "-NoProfile"]) }),
     }),
   });
 }
