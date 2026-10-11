@@ -67,19 +67,27 @@ internal static partial class Program
         foreach (var arg in fixedArgs) start.ArgumentList.Add(arg);
         using var git = Process.Start(start) ?? throw new IOException("Pinned Git executable could not start.");
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
-        async Task<string> ReadBounded(StreamReader reader)
+        // Never stop consuming a redirected pipe when its output exceeds the
+        // trust bound: Git can block forever on a full pipe before exiting.
+        // Continue draining into a fixed buffer, record overflow and refuse
+        // the response AFTER the process exits. No unbounded allocations.
+        async Task<(string Text, bool Overflow)> ReadBounded(StreamReader reader)
         {
             var output = new StringBuilder();
             var buffer = new char[512];
+            var overflow = false;
             while (true)
             {
                 var count = await reader.ReadAsync(buffer.AsMemory(), timeout.Token);
                 if (count == 0) break;
                 if (output.Length + count > MaxGitOutput)
-                    throw new InvalidDataException("Pinned Git response exceeded its strict size bound.");
-                output.Append(buffer, 0, count);
+                {
+                    overflow = true;
+                    count = Math.Max(0, MaxGitOutput - output.Length);
+                }
+                if (count != 0) output.Append(buffer, 0, count);
             }
-            return output.ToString().Trim();
+            return (output.ToString().Trim(), overflow);
         }
         var stdout = ReadBounded(git.StandardOutput);
         var stderr = ReadBounded(git.StandardError);
@@ -87,9 +95,11 @@ internal static partial class Program
         {
             git.WaitForExitAsync(timeout.Token).GetAwaiter().GetResult();
             var result = stdout.GetAwaiter().GetResult();
-            _ = stderr.GetAwaiter().GetResult();
+            var error = stderr.GetAwaiter().GetResult();
+            if (result.Overflow || error.Overflow)
+                throw new InvalidDataException("Pinned Git source status exceeded its strict output bound.");
             if (git.ExitCode != 0) throw new InvalidDataException("Pinned Git rejected Main source inspection.");
-            return result;
+            return result.Text;
         }
         catch
         {
