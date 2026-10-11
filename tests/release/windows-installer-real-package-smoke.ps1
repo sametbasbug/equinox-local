@@ -300,12 +300,14 @@ try {
     Assert-True ((Invoke-GuardianCheck '--audit-native-identity') -eq 70) 'Guardian accepted the old Stable Native Messaging launcher instead of the selected Main native slot.'
     $NativeMessagingProbe.path = (Join-Path $NativeRuntimeProbe 'browser\equinox-browser-native-host.exe')
     [IO.File]::WriteAllText($ExpectedManifestPath, ($NativeMessagingProbe | ConvertTo-Json -Depth 5))
-    $NativeMessagingRegistry = Get-Item -LiteralPath $NativeRegistryKey -ErrorAction Stop
+    $NativeMessagingRegistry = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Software\Google\Chrome\NativeMessagingHosts\dev.equinox.browser', $true)
+    if ($null -eq $NativeMessagingRegistry) { throw 'Hosted Native Messaging registry ownership fixture cannot open its exact key.' }
     try {
       $NativeMessagingRegistry.SetValue('', (Join-Path $Work 'foreign-native-host.json'), [Microsoft.Win32.RegistryValueKind]::String)
       Assert-True ((Invoke-GuardianCheck '--audit-native-identity') -eq 70) 'Guardian accepted a foreign Chrome Native Messaging registry owner.'
     } finally {
       $NativeMessagingRegistry.SetValue('', $NativeMessagingOriginalOwner, [Microsoft.Win32.RegistryValueKind]::String)
+      $NativeMessagingRegistry.Dispose()
     }
     Assert-True ((Invoke-GuardianCheck '--audit-native-identity') -eq 0) 'Guardian refused the restored exact Native Messaging registration.'
     # Remaining native fingerprint/Git tests must run with the exact Main
@@ -353,8 +355,10 @@ try {
       [IO.File]::WriteAllBytes($ExpectedManifestPath, $NativeMessagingOriginalBytes)
     }
     if (-not [string]::IsNullOrWhiteSpace($NativeMessagingOriginalOwner)) {
-      $RestoreNativeMessagingRegistry = Get-Item -LiteralPath $NativeRegistryKey -ErrorAction Stop
-      $RestoreNativeMessagingRegistry.SetValue('', $NativeMessagingOriginalOwner, [Microsoft.Win32.RegistryValueKind]::String)
+      $RestoreNativeMessagingRegistry = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Software\Google\Chrome\NativeMessagingHosts\dev.equinox.browser', $true)
+      if ($null -eq $RestoreNativeMessagingRegistry) { throw 'Hosted Native Messaging registry restore could not open its exact owned key.' }
+      try { $RestoreNativeMessagingRegistry.SetValue('', $NativeMessagingOriginalOwner, [Microsoft.Win32.RegistryValueKind]::String) }
+      finally { $RestoreNativeMessagingRegistry.Dispose() }
     }
     Remove-Item -LiteralPath $NativePointerProbe -Force -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath $NativeStoreProbe -Recurse -Force -ErrorAction SilentlyContinue
