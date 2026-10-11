@@ -90,6 +90,7 @@ internal static partial class MainUpdateHandoff
         CopyEnvironment(startInfo, "TEMP");
         CopyEnvironment(startInfo, "TMP");
         startInfo.Environment["PATH"] = string.Join(Path.PathSeparator, [powershellDirectory, system32, systemRoot]);
+        startInfo.Environment["ComSpec"] = Path.Combine(systemRoot, "System32", "cmd.exe");
         var handoffRoot = Path.GetFullPath(Path.Combine(transactionRoot, "handoff"));
         Directory.CreateDirectory(handoffRoot);
         RequireNormalDirectory(handoffRoot, "Main update handoff directory");

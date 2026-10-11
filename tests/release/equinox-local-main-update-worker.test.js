@@ -40,6 +40,63 @@ test("Main worker runtime restart uses the Windows shell handoff without POSIX e
   assert.deepEqual(result, { requested: true, platform: "win32" });
 });
 
+test("Windows native Main replacement relaunches only the verified new WPF shell when the old pipe is gone", async () => {
+  const programRoot = "C:\\Users\\Example\\AppData\\Local\\Programs\\Equinox Local";
+  const releaseDir = "C:\\Users\\Example\\AppData\\Local\\Equinox Local\\state\\main-update\\native-store\\target\\release";
+  const shellExecutable = `${programRoot}\\EquinoxLocal.exe`;
+  const calls = [];
+  const result = await restartEquinoxLocalMainSourceRuntime({
+    platform: "win32", windowsNativeShell: { programRoot, releaseDir },
+    requestWindowsRestartImpl: async () => assert.fail("dead old WPF pipe must not be contacted"),
+    verifyWindowsShellImpl: async (v) => { calls.push(["verify", v.programRoot, v.releaseDir]); return { owned: true, shellExecutable }; },
+    launchWindowsShellImpl: async (file) => { calls.push(["launch", file]); return { launched: true }; },
+  });
+  assert.deepEqual(result, { requested: true, platform: "win32", directNativeLaunch: true });
+  assert.deepEqual(calls, [["verify", programRoot, releaseDir], ["launch", shellExecutable]]);
+});
+
+test("Windows native Main rollback relaunch fails closed when restored shell cannot be verified", async () => {
+  const programRoot = "C:\\Users\\Example\\AppData\\Local\\Programs\\Equinox Local";
+  let launched = false;
+  await assert.rejects(restartEquinoxLocalMainSourceRuntime({
+    platform: "win32", windowsNativeShell: { programRoot, releaseDir: "C:\\Untrusted" },
+    requestWindowsRestartImpl: async () => assert.fail("missing shell pipe must not be contacted"),
+    verifyWindowsShellImpl: async () => ({ owned: false }),
+    launchWindowsShellImpl: async () => { launched = true; },
+  }), /integrity could not be verified/u);
+  assert.equal(launched, false);
+  await assert.rejects(restartEquinoxLocalMainSourceRuntime({
+    platform: "win32", windowsNativeShell: { programRoot, releaseDir: "relative\\release" },
+    verifyWindowsShellImpl: async () => assert.fail("unsafe path must be rejected before reading filesystem"),
+  }), /trusted absolute/u);
+});
+
+test("Windows native worker handoff supplies exact candidate and rollback release identities to shell restart", async () => {
+  const events = [];
+  const rollbackPath = "C:\\native-rollback\\release";
+  const targetRelease = "C:\\native-store\\release";
+  const programRoot = "C:\\Programs\\Equinox Local";
+  const transition = { mode: "artifact_required", target: "win32-x64", currentSha: A, targetSha: B, currentRuntimeContractSha256: DIGEST_A, targetRuntimeContractSha256: DIGEST_B };
+  const receipt = preparedReceipt({ stage: "native_switched" });
+  const nativeLifecycle = { target: "win32-x64", stored: { releaseDir: targetRelease }, rollbackPath, windowsProgramRoot: programRoot, activate: async () => {}, rollback: async () => {}, commit: async () => {} };
+  const engine = { paths: { sourcePointerPath: "C:\\transaction\\current-source.conf" }, readActive: async () => receipt };
+  await runEquinoxLocalMainUpdateWorker({
+    argv: argv(), engineFactory: () => engine, resolveHostTarget: () => "win32-x64",
+    planNativeTransition: async () => transition,
+    resolveNativeInstallation: async () => ({ managed: true, selfUpdateSupported: true, target: "win32-x64" }),
+    recoverNativeLifecycle: async () => nativeLifecycle,
+    restartRuntimeImpl: async (v) => events.push(v),
+    handoffImpl: async ({ restartRuntime }) => {
+      await restartRuntime({ rollback: false, transactionId: TX });
+      await restartRuntime({ rollback: true, transactionId: TX });
+      return { status: "succeeded" };
+    },
+    cleanupImpl: async () => {},
+  });
+  assert.deepEqual(events[0].windowsNativeShell, { programRoot, releaseDir: targetRelease });
+  assert.deepEqual(events[1].windowsNativeShell, { programRoot, releaseDir: rollbackPath });
+});
+
 test("Main worker runtime restart uses the managed Darwin LaunchAgent instead of developer source scripts", async () => {
   const calls = [];
   const result = await restartEquinoxLocalMainSourceRuntime({

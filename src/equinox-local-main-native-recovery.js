@@ -225,6 +225,7 @@ export async function recoverEquinoxLocalMainNativeLifecycle({
     target: transition.target,
     stored,
     descriptor,
+    windowsProgramRoot: programRoot,
     rollbackPath: snapshotReleaseDir,
     activate: async () => {
       await assertWindowsNativeHostImpl({ manifestRoot, acceptedLauncherPaths: [targetLauncher, previousLauncher], execFileAsync: execFileImpl, fsImpl, env });

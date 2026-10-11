@@ -70,7 +70,9 @@ test("Windows shell single-instance and runtime-restart channel is local-user-on
   assert.match(handoff, /System32/u);
   assert.match(handoff, /EQUINOX_LOCAL_INSTALL_ROOT/u);
   assert.match(handoff, /EQUINOX_LOCAL_RELEASE_DIR/u);
-  assert.doesNotMatch(handoff, /cmd\.exe|powershell(?:\.exe)?/iu);
+  // ComSpec records the trusted cmd path, but the handoff must not run cmd.
+  assert.match(handoff, /startInfo\.Environment\["ComSpec"\] = Path\.Combine\(systemRoot, "System32", "cmd\.exe"\)/u);
+  assert.doesNotMatch(handoff, /ProcessStartInfo\s*\(\s*"(?:cmd|powershell)(?:\.exe)?"|FileName\s*=\s*"(?:cmd|powershell)(?:\.exe)?"/iu);
   assert.match(locator, /ResolveRelease\(string version\)/u);
   assert.match(coordinator, /uninstall:/u);
   assert.match(coordinator, /ManagedUninstallHandoff\.Launch/u);
@@ -80,7 +82,8 @@ test("Windows shell single-instance and runtime-restart channel is local-user-on
   assert.match(uninstallHandoff, /Environment\.Clear\(\)/u);
   assert.match(uninstallHandoff, /EQUINOX_LOCAL_EXPECTED_STARTUP_COMMAND/u);
   assert.match(uninstallHandoff, /EQUINOX_LOCAL_UNINSTALL_SHELL_PID/u);
-  assert.doesNotMatch(uninstallHandoff, /cmd\.exe|powershell(?:\.exe)?/iu);
+  assert.match(uninstallHandoff, /startInfo\.Environment\["ComSpec"\] = Path\.Combine\(systemRoot, "System32", "cmd\.exe"\)/u);
+  assert.doesNotMatch(uninstallHandoff, /ProcessStartInfo\s*\(\s*"(?:cmd|powershell)(?:\.exe)?"|FileName\s*=\s*"(?:cmd|powershell)(?:\.exe)?"/iu);
 });
 
 
@@ -569,7 +572,8 @@ test("Windows Main update handoff derives all worker paths from product-owned st
   assert.match(handoff, /FileStream\(temporaryPath, FileMode\.CreateNew/u);
   assert.match(handoff, /File\.Move\(temporaryPath, ownershipPath, overwrite: false\)/u);
   assert.match(handoff, /process\.Kill\(entireProcessTree: true\)/u);
-  assert.doesNotMatch(handoff, /cmd\.exe/iu);
+  assert.match(handoff, /startInfo\.Environment\["ComSpec"\] = Path\.Combine\(systemRoot, "System32", "cmd\.exe"\)/u);
+  assert.doesNotMatch(handoff, /ProcessStartInfo\s*\(\s*"cmd(?:\.exe)?"|FileName\s*=\s*"cmd(?:\.exe)?"/iu);
 });
 
 test("Windows shell update handoff acknowledges before draining the runtime and exposes rollback shutdown", async () => {

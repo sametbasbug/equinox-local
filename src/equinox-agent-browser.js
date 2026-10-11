@@ -18,8 +18,19 @@ export function windowsAgentBrowserSystemTool(command, env = process.env) {
   const root = path.win32.normalize(systemRoot);
   if (command === "powershell") return path.win32.join(root, "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
   if (command === "taskkill") return path.win32.join(root, "System32", "taskkill.exe");
+  if (command === "cmd") return path.win32.join(root, "System32", "cmd.exe");
   throw new Error("Unsupported Agent Browser Windows system tool.");
 }
+// Windows Chrome native messaging invokes its registered host through the OS
+// command processor. The signed managed-update handoff intentionally scrubs
+// ambient env; after that handoff ComSpec can be absent although Chrome runs.
+// Restore ONLY the OS-owned absolute interpreter, never a PATH or user value.
+export function windowsAgentBrowserChromeEnvironment(env = process.env) {
+  const comSpec = windowsAgentBrowserSystemTool("cmd", env);
+  const safe = Object.fromEntries(Object.entries(env).filter(([key]) => key.toLowerCase() !== "comspec"));
+  return Object.freeze({ ...safe, ComSpec: comSpec });
+}
+
 const DEFAULT_SHUTDOWN_TIMEOUT_MS = 5_000;
 const CHROME_APP_NAME = "Google Chrome";
 const NATIVE_HOST_NAME = "dev.equinox.browser";
@@ -324,7 +335,7 @@ export function createEquinoxAgentBrowser({
         await execFileAsync(powershellPath, ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", WINDOWS_CHROME_LAUNCH_SCRIPT], {
           timeout: 10_000, maxBuffer: 64 * 1024, windowsHide: true,
           env: {
-            ...env,
+            ...windowsAgentBrowserChromeEnvironment(env),
             EQUINOX_AGENT_CHROME: chromePath,
             EQUINOX_AGENT_PROFILE: resolvedProfileRoot,
             EQUINOX_AGENT_URL: chromeArgs.at(-1),

@@ -28,6 +28,7 @@ internal static class ManagedUninstallHandoff
         var systemRoot = Environment.GetEnvironmentVariable("SystemRoot");
         if (string.IsNullOrWhiteSpace(systemRoot)) throw new InvalidOperationException("SystemRoot is unavailable for the managed uninstall handoff.");
         startInfo.Environment["PATH"] = $"{Path.Combine(systemRoot, "System32")};{systemRoot}";
+        startInfo.Environment["ComSpec"] = Path.Combine(systemRoot, "System32", "cmd.exe");
         if (release.InstallRoot is null) throw new InvalidDataException("Managed uninstall install root is unavailable.");
         startInfo.Environment["EQUINOX_LOCAL_INSTALL_ROOT"] = release.InstallRoot;
         startInfo.Environment["EQUINOX_LOCAL_RELEASE_DIR"] = release.ReleaseDir;

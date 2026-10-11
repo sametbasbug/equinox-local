@@ -16,6 +16,7 @@ import {
   queryWindowsChromeProcessInventory,
   windowsChromeInstallCandidates,
   windowsAgentBrowserSystemTool,
+  windowsAgentBrowserChromeEnvironment,
   EQUINOX_BROWSER_STORE_URL,
 } from "../../src/equinox-agent-browser.js";
 
@@ -477,7 +478,18 @@ test("Windows Agent Browser OS tool lookup ignores PATH and refuses a missing Sy
   assert.equal(windowsAgentBrowserSystemTool("taskkill", env), "C:\\Windows\\System32\\taskkill.exe");
   assert.throws(() => windowsAgentBrowserSystemTool("powershell", { PATH: "C:\\untrusted" }), /SystemRoot/u);
   assert.throws(() => windowsAgentBrowserSystemTool("taskkill", { SystemRoot: "relative\\Windows" }), /SystemRoot/u);
-  assert.throws(() => windowsAgentBrowserSystemTool("cmd", env), /Unsupported/u);
+  assert.equal(windowsAgentBrowserSystemTool("cmd", env), "C:\\Windows\\System32\\cmd.exe");
+  assert.throws(() => windowsAgentBrowserSystemTool("regedit", env), /Unsupported/u);
+});
+
+test("Windows Agent Chrome repairs missing ComSpec only with OS-owned cmd, not PATH or foreign ComSpec", () => {
+  const env = { SystemRoot: "D:\\Windows", LOCALAPPDATA: "D:\\Users\\Example\\AppData\\Local", PATH: "X:\\Untrusted", COMSPEC: "X:\\Untrusted\\cmd.exe" };
+  const repaired = windowsAgentBrowserChromeEnvironment(env);
+  assert.equal(repaired.ComSpec, "D:\\Windows\\System32\\cmd.exe");
+  assert.equal(Object.keys(repaired).filter((key) => key.toLowerCase() === "comspec").length, 1);
+  assert.equal(repaired.PATH, "X:\\Untrusted");
+  assert.equal(windowsAgentBrowserChromeEnvironment({SystemRoot:'C:\\Windows'}).ComSpec, 'C:\\Windows\\System32\\cmd.exe');
+  assert.throws(() => windowsAgentBrowserChromeEnvironment({PATH:'X:\\Untrusted'}), /SystemRoot/u);
 });
 
 test("Windows Agent Browser inventory refuses PATH search if SystemRoot is missing", async () => {
@@ -506,4 +518,5 @@ test("Windows Agent Browser launch uses absolute system PowerShell under scrubbe
   assert.match(calls[0].args.at(-1), /Start-Process/u);
   assert.equal(calls[0].options.env.EQUINOX_AGENT_CHROME, "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe");
   assert.equal(calls[0].options.env.PATH, "C:\\malicious\\bin");
+  assert.equal(calls[0].options.env.ComSpec, "C:\\Windows\\System32\\cmd.exe");
 });

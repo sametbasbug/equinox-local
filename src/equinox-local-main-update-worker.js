@@ -18,6 +18,7 @@ import { readEquinoxLocalMainSourcePointer } from "./equinox-local-main-source-p
 import { inspectCanonicalMainCheckout } from "./equinox-local-main-update.js";
 import { EQUINOX_LOCAL_CONTROL_CENTER_STATUS_URL } from "./equinox-local-update-activation.js";
 import { requestWindowsShellRuntimeRestart } from "./equinox-local-windows-shell-control.js";
+import { assertWindowsStableShellOwnedByRelease, launchWindowsStableShell } from "./equinox-local-windows-stable-shell.js";
 import { cleanupEquinoxLocalMainUpdateWorkerOwnership } from "./equinox-local-main-update-scheduler.js";
 
 const execFile = promisify(execFileCallback);
@@ -49,10 +50,31 @@ export async function restartEquinoxLocalMainSourceRuntime({
   env = process.env,
   fsImpl = fs,
   requestWindowsRestartImpl = requestWindowsShellRuntimeRestart,
+  windowsNativeShell = null,
+  verifyWindowsShellImpl = assertWindowsStableShellOwnedByRelease,
+  launchWindowsShellImpl = launchWindowsStableShell,
   restartDarwinImpl = kickstartEquinoxLocalLaunchAgent,
   uid = typeof process.getuid === "function" ? process.getuid() : null,
 } = {}) {
   if (platform === "win32") {
+    if (windowsNativeShell) {
+      // An artifact-required native Main update first shuts down the owning
+      // WPF process to replace its executable. Its named pipe no longer exists.
+      // Verify the exact staged/rollback shell before relaunching it DIRECTLY;
+      // an ENOENT retry to the dead pipe causes rollback_failed and strands the
+      // user without Control Center.
+      const { programRoot, releaseDir } = windowsNativeShell;
+      if (typeof programRoot !== "string" || !path.win32.isAbsolute(programRoot) ||
+          typeof releaseDir !== "string" || !path.win32.isAbsolute(releaseDir)) {
+        throw new Error("Windows Main native restart requires trusted absolute shell and release paths.");
+      }
+      const owned = await verifyWindowsShellImpl({ programRoot, releaseDir, fsImpl });
+      if (owned?.owned !== true || owned.shellExecutable !== path.win32.join(programRoot, "EquinoxLocal.exe")) {
+        throw new Error("Windows Main native restart shell integrity could not be verified.");
+      }
+      await launchWindowsShellImpl(owned.shellExecutable);
+      return Object.freeze({ requested: true, platform: "win32", directNativeLaunch: true });
+    }
     await requestWindowsRestartImpl({ platform: "win32" });
     return Object.freeze({ requested: true, platform: "win32" });
   }
@@ -248,13 +270,25 @@ export async function runEquinoxLocalMainUpdateWorker({
     const verify = typeof verifyRuntimeImpl === "function"
       ? verifyRuntimeImpl
       : (value) => waitForExactSourceHealth({ ...value, pointerPath: engine.paths.sourcePointerPath, gitPath: toolchain.gitPath, fetchImpl, sleepImpl });
+    const restartWithNativeOwnership = (value) => {
+      if (hostTarget.startsWith("win32-") && nativeLifecycle) {
+        // Native Windows lifecycle supplies both trusted release identities;
+        // preserve exact rollback ownership instead of guessing a shell path.
+        const windowsNativeShell = {
+          programRoot: nativeLifecycle.windowsProgramRoot,
+          releaseDir: value.rollback ? nativeLifecycle.rollbackPath : nativeLifecycle.stored?.releaseDir,
+        };
+        return restartRuntimeImpl({ ...value, windowsNativeShell });
+      }
+      return restartRuntimeImpl(value);
+    };
     return await handoffImpl({
       engine,
       transactionId: args.transactionId,
       nativeTransition,
       nativeLifecycle,
       initialReceipt: active,
-      restartRuntime: restartRuntimeImpl,
+      restartRuntime: restartWithNativeOwnership,
       verifyRuntime: verify,
     });
   } finally {
