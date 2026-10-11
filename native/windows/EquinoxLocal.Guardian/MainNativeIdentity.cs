@@ -132,7 +132,7 @@ internal static partial class Program
         if (measured.Bytes != claimBytes)
             throw new InvalidDataException("Native Main fingerprint byte count differs from stored manifest.");
         if (measured.Sha256 != claimSha)
-            throw new InvalidDataException("Native Main fingerprint digest differs from stored manifest.");
+            throw new InvalidDataException($"Native Main fingerprint digest mismatch; string-sort-match={measured.WindowsStringSortSha256 == claimSha}; ordinal-match={measured.OrdinalSortSha256 == claimSha}.");
         InspectionPhase = "native-shell-hash";
         var immutableShell = Path.Combine(release, "runtime", "shell");
         var activeProgram = Path.Combine(local, "Programs", "Equinox Local");

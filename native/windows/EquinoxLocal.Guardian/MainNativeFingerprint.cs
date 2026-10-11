@@ -23,15 +23,15 @@ internal static partial class Program
     // Windows NLS en-US comparison is the platform-native equivalent of
     // Node's en locale collation for release path names. A discrepancy with
     // the JS producer fails the final release fingerprint check closed.
-    private static int CompareFingerprintNames(string first, string second)
+    private static int CompareFingerprintNames(string first, string second, uint options = 0)
     {
-        var result = CompareWindowsEnglish("en-US", 0, first, first.Length, second, second.Length, 0, 0, 0);
+        var result = CompareWindowsEnglish("en-US", options, first, first.Length, second, second.Length, 0, 0, 0);
         if (result is < 1 or > 3) throw new InvalidDataException("Native release path collation is unavailable.");
         return result - 2;
     }
 
     private sealed record NativeFingerprintRow(string Type, string Relative, int Mode, long Bytes, string? Sha256);
-    private sealed record NativeFingerprintResult(string Sha256, int Entries, long Bytes);
+    private sealed record NativeFingerprintResult(string Sha256, int Entries, long Bytes, string WindowsStringSortSha256, string OrdinalSortSha256);
 
     // Recompute the entire exact native-store release fingerprint. No
     // directory junction, reparse path, partial tree or caller-supplied file
@@ -80,15 +80,24 @@ internal static partial class Program
                 }
             }
         }
-        rows.Sort((a, b) => CompareFingerprintNames(a.Relative, b.Relative));
-        using var digest = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
-        void Add(string value) => digest.AppendData(Encoding.UTF8.GetBytes(value));
-        Add(NativeFingerprintDomain);
-        foreach (var row in rows)
+        string DigestRows(Comparison<NativeFingerprintRow> compare)
         {
-            Add($"{row.Type}\0{row.Relative}\0{row.Mode}\0");
-            if (row.Type == "file") Add($"{row.Bytes}\0{row.Sha256}\0");
+            var sorted = rows.ToArray();
+            Array.Sort(sorted, compare);
+            using var digest = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+            void Add(string value) => digest.AppendData(Encoding.UTF8.GetBytes(value));
+            Add(NativeFingerprintDomain);
+            foreach (var row in sorted)
+            {
+                Add($"{row.Type}\0{row.Relative}\0{row.Mode}\0");
+                if (row.Type == "file") Add($"{row.Bytes}\0{row.Sha256}\0");
+            }
+            return Convert.ToHexStringLower(digest.GetHashAndReset());
         }
-        return new NativeFingerprintResult(Convert.ToHexStringLower(digest.GetHashAndReset()), entries, totalBytes);
+        var defaultDigest = DigestRows((a, b) => CompareFingerprintNames(a.Relative, b.Relative));
+        const uint stringSort = 0x00001000;
+        var windowsStringDigest = DigestRows((a, b) => CompareFingerprintNames(a.Relative, b.Relative, stringSort));
+        var ordinalDigest = DigestRows((a, b) => StringComparer.Ordinal.Compare(a.Relative, b.Relative));
+        return new NativeFingerprintResult(defaultDigest, entries, totalBytes, windowsStringDigest, ordinalDigest);
     }
 }
