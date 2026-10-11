@@ -1,4 +1,4 @@
-using System.Runtime.InteropServices;
+using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
 
@@ -15,23 +15,18 @@ internal static partial class Program
     private static int WindowsNodeMode(FileAttributes attributes) =>
         (attributes & FileAttributes.ReadOnly) != 0 ? 292 : 438;
 
-    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, EntryPoint = "CompareStringEx")]
-    private static extern int CompareWindowsEnglish(
-        string localeName, uint flags, string first, int firstLength,
-        string second, int secondLength, nint version, nint reserved, nint param);
+    // Node's native-state-v1 producer sorts by `localeCompare(..., "en")`
+    // using ICU. Windows CompareStringEx uses NLS and differs on punctuation
+    // (103 reversed pairs in a real 5,637-entry installed release). Modern
+    // .NET on Windows uses ICU when invariant globalization is disabled.
+    // Fail closed if the host forces legacy collation or has no ICU locale.
+    private static readonly CompareInfo FingerprintCollation = CultureInfo.GetCultureInfo("en").CompareInfo;
 
-    // Windows NLS en-US comparison is the platform-native equivalent of
-    // Node's en locale collation for release path names. A discrepancy with
-    // the JS producer fails the final release fingerprint check closed.
-    private static int CompareFingerprintNames(string first, string second, uint options = 0)
-    {
-        var result = CompareWindowsEnglish("en-US", options, first, first.Length, second, second.Length, 0, 0, 0);
-        if (result is < 1 or > 3) throw new InvalidDataException("Native release path collation is unavailable.");
-        return result - 2;
-    }
+    private static int CompareFingerprintNames(string first, string second) =>
+        FingerprintCollation.Compare(first, second, CompareOptions.None);
 
     private sealed record NativeFingerprintRow(string Type, string Relative, int Mode, long Bytes, string? Sha256);
-    private sealed record NativeFingerprintResult(string Sha256, int Entries, long Bytes, string WindowsStringSortSha256, string OrdinalSortSha256);
+    private sealed record NativeFingerprintResult(string Sha256, int Entries, long Bytes);
 
     // Recompute the entire exact native-store release fingerprint. No
     // directory junction, reparse path, partial tree or caller-supplied file
@@ -80,24 +75,15 @@ internal static partial class Program
                 }
             }
         }
-        string DigestRows(Comparison<NativeFingerprintRow> compare)
+        rows.Sort((a, b) => CompareFingerprintNames(a.Relative, b.Relative));
+        using var digest = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+        void Add(string value) => digest.AppendData(Encoding.UTF8.GetBytes(value));
+        Add(NativeFingerprintDomain);
+        foreach (var row in rows)
         {
-            var sorted = rows.ToArray();
-            Array.Sort(sorted, compare);
-            using var digest = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
-            void Add(string value) => digest.AppendData(Encoding.UTF8.GetBytes(value));
-            Add(NativeFingerprintDomain);
-            foreach (var row in sorted)
-            {
-                Add($"{row.Type}\0{row.Relative}\0{row.Mode}\0");
-                if (row.Type == "file") Add($"{row.Bytes}\0{row.Sha256}\0");
-            }
-            return Convert.ToHexStringLower(digest.GetHashAndReset());
+            Add($"{row.Type}\0{row.Relative}\0{row.Mode}\0");
+            if (row.Type == "file") Add($"{row.Bytes}\0{row.Sha256}\0");
         }
-        var defaultDigest = DigestRows((a, b) => CompareFingerprintNames(a.Relative, b.Relative));
-        const uint stringSort = 0x00001000;
-        var windowsStringDigest = DigestRows((a, b) => CompareFingerprintNames(a.Relative, b.Relative, stringSort));
-        var ordinalDigest = DigestRows((a, b) => StringComparer.Ordinal.Compare(a.Relative, b.Relative));
-        return new NativeFingerprintResult(defaultDigest, entries, totalBytes, windowsStringDigest, ordinalDigest);
+        return new NativeFingerprintResult(Convert.ToHexStringLower(digest.GetHashAndReset()), entries, totalBytes);
     }
 }
