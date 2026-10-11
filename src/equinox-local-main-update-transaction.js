@@ -194,8 +194,13 @@ export function createEquinoxLocalMainUpdateTransactionEngine({
     let marker;
     try { marker = validateLockMarker(await readBoundedJsonFile(lockPath, { fsImpl })); }
     catch (error) { if (error?.code === "ENOENT") return null; throw error; }
-    try { return await readReceipt(marker.transactionId); }
-    catch (error) {
+    try {
+      const receipt = await readReceipt(marker.transactionId);
+      if (receipt.currentSha !== marker.currentSha || receipt.targetSha !== marker.targetSha || receipt.startedAt !== marker.startedAt) {
+        throw new Error("Main update lock and receipt identities disagree.");
+      }
+      return receipt;
+    } catch (error) {
       if (error?.code !== "ENOENT") throw error;
       return Object.freeze({ ...marker, status: "active", stage: "admitted", rollbackSha: marker.currentSha, rollbackSourceRoot: resolvedSourceRoot, targetSourceRoot: null, updatedAt: marker.startedAt, lastError: null });
     }
@@ -447,6 +452,36 @@ export function createEquinoxLocalMainUpdateTransactionEngine({
     return await writeReceipt(Object.freeze({ ...receipt, status: "rollback_failed", stage: "rollback_failed", updatedAt: now().toISOString(), lastError: boundedMessage(failure) || "Rollback verification failed." }));
   };
 
+  // Used only by the offline, read-only-by-default Windows recovery audit.
+  // Archive the exact owned lock instead of erasing the forensic rollback_failed receipt.
+  const archiveVerifiedFailedRollbackLock = async (transactionId, { currentSha, targetSha } = {}) => {
+    assertTransactionId(transactionId);
+    assertSha(currentSha, "Recovery current SHA");
+    assertSha(targetSha, "Recovery target SHA");
+    const active = await readActive();
+    if (!active || active.transactionId !== transactionId || active.status !== "rollback_failed" ||
+        active.currentSha !== currentSha || active.targetSha !== targetSha || active.rollbackSha !== currentSha) {
+      throw new Error("Main rollback recovery identity no longer matches its failed transaction.");
+    }
+    const pointer = await readEquinoxLocalMainSourcePointer(resolvedPointerPath, { fsImpl, execFileImpl, gitPath });
+    if (pointer.sha !== currentSha || pointer.sourceRoot !== active.rollbackSourceRoot) {
+      throw new Error("Main rollback recovery source pointer is not the original healthy source.");
+    }
+    const archivedRoot = path.join(resolvedTransactionRoot, "archived-failed-locks");
+    await assertCanonicalDirectory(archivedRoot, { fsImpl, create: true });
+    const archivePath = path.join(archivedRoot, `${transactionId}.json`);
+    try { await fsImpl.lstat(archivePath); throw new Error("Main rollback recovery lock was already archived."); }
+    catch (error) { if (error?.code !== "ENOENT") throw error; }
+    const marker = validateLockMarker(await readBoundedJsonFile(lockPath, { fsImpl }));
+    if (marker.transactionId !== transactionId || marker.currentSha !== currentSha || marker.targetSha !== targetSha || marker.startedAt !== active.startedAt) {
+      throw new Error("Main rollback recovery lock changed during verification.");
+    }
+    await fsImpl.rename(lockPath, archivePath);
+    await syncDirectory(resolvedTransactionRoot, { fsImpl });
+    await syncDirectory(archivedRoot, { fsImpl });
+    return Object.freeze({ archived: true, transactionId });
+  };
+
   const releaseStagedLock = async (transactionId) => {
     assertTransactionId(transactionId);
     const active = await readActive();
@@ -457,5 +492,5 @@ export function createEquinoxLocalMainUpdateTransactionEngine({
     return true;
   };
 
-  return Object.freeze({ readActive, readReceipt, begin, stage, initializeSourcePointer, preparePromotion, markNativeRollbackReady, markNativeSwitched, activatePromotion, rollbackPromotion, abortStagedPreparation, abortPreparedPromotion, markPromotionSucceeded, markNativeRollbackRestored, markRollbackSucceeded, markRollbackFailed, releaseStagedLock, paths: Object.freeze({ transactionRoot: resolvedTransactionRoot, lockPath, receiptsRoot, stagingRoot, sourcePointerPath: resolvedPointerPath, sourceStoreRoot: resolvedSourceStoreRoot }) });
+  return Object.freeze({ readActive, readReceipt, begin, stage, initializeSourcePointer, preparePromotion, markNativeRollbackReady, markNativeSwitched, activatePromotion, rollbackPromotion, abortStagedPreparation, abortPreparedPromotion, markPromotionSucceeded, markNativeRollbackRestored, markRollbackSucceeded, markRollbackFailed, archiveVerifiedFailedRollbackLock, releaseStagedLock, paths: Object.freeze({ transactionRoot: resolvedTransactionRoot, lockPath, receiptsRoot, stagingRoot, sourcePointerPath: resolvedPointerPath, sourceStoreRoot: resolvedSourceStoreRoot }) });
 }

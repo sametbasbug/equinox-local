@@ -57,4 +57,4 @@ These instructions apply to the entire Equinox Local canonical product repositor
 
 ## Single Main update stream
 
-Read [`docs/plans/unified-main-update-channel.md`](docs/plans/unified-main-update-channel.md) before editing bootstrap/update enrollment or Stable releases. Existing Stable users require a signed migration bridge.
+Read [`docs/plans/unified-main-update-channel.md`](docs/plans/unified-main-update-channel.md) before editing bootstrap/update enrollment or Stable releases. Read [`docs/plans/immutable-main-updates.md`](docs/plans/immutable-main-updates.md) before modifying Windows native Main update/recovery or external launcher design. Existing Stable users require a signed migration bridge.

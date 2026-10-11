@@ -364,3 +364,44 @@ test("invalid SHA and no-op target are rejected before transaction ownership", a
   await assert.rejects(engine.begin({ currentSha: CURRENT, targetSha: CURRENT }), /already matches/u);
   assert.equal(await engine.readActive(), null);
 });
+
+
+test("verified failed rollback archives only its owned lock and preserves original forensic receipt", async (t) => {
+  const { engine } = await fixture(t);
+  await engine.initializeSourcePointer();
+  const initial = await engine.begin({ currentSha: CURRENT, targetSha: TARGET });
+  await engine.markRollbackFailed(initial.transactionId, "original failed WPF restart");
+  const original = await engine.readReceipt(initial.transactionId);
+  await assert.rejects(engine.releaseStagedLock(initial.transactionId), /still active/u);
+  await assert.rejects(engine.archiveVerifiedFailedRollbackLock(initial.transactionId, { currentSha: TARGET, targetSha: CURRENT }), /identity/u);
+  assert.equal((await engine.readActive()).status, "rollback_failed");
+  const archived = await engine.archiveVerifiedFailedRollbackLock(initial.transactionId, { currentSha: CURRENT, targetSha: TARGET });
+  assert.equal(archived.archived, true);
+  assert.equal(await engine.readActive(), null);
+  assert.deepEqual(await engine.readReceipt(initial.transactionId), original);
+  const archive = JSON.parse(await fs.readFile(path.join(engine.paths.transactionRoot, "archived-failed-locks", `${initial.transactionId}.json`), "utf8"));
+  assert.equal(archive.transactionId, initial.transactionId);
+  assert.equal(archive.currentSha, CURRENT);
+  assert.equal(archive.targetSha, TARGET);
+  await assert.rejects(engine.archiveVerifiedFailedRollbackLock(initial.transactionId, { currentSha: CURRENT, targetSha: TARGET }), /identity/u);
+});
+
+test("failed rollback recovery refuses altered or missing pointer without moving original lock", async (t) => {
+  const { engine } = await fixture(t);
+  await engine.initializeSourcePointer();
+  const initial = await engine.begin({ currentSha: CURRENT, targetSha: TARGET });
+  await engine.markRollbackFailed(initial.transactionId, "native failed");
+  await fs.rm(engine.paths.sourcePointerPath);
+  await assert.rejects(engine.archiveVerifiedFailedRollbackLock(initial.transactionId, { currentSha: CURRENT, targetSha: TARGET }));
+  assert.equal((await engine.readActive()).status, "rollback_failed");
+});
+
+test("Main transaction fails closed on receipt/lock SHA mismatch", async (t) => {
+  const { engine } = await fixture(t);
+  const initial = await engine.begin({ currentSha: CURRENT, targetSha: TARGET });
+  const receiptPath = path.join(engine.paths.receiptsRoot, `${initial.transactionId}.json`);
+  const modified = { ...initial, targetSha: "3".repeat(40) };
+  await fs.writeFile(receiptPath, JSON.stringify(modified));
+  await assert.rejects(engine.readActive(), /identities disagree/u);
+  assert.equal(JSON.parse(await fs.readFile(engine.paths.lockPath, "utf8")).transactionId, initial.transactionId);
+});
