@@ -10,6 +10,7 @@ import {
   equinoxLocalFiniteShell,
   equinoxLocalHostDescriptor,
   equinoxLocalInteractiveShells,
+  equinoxLocalWindowsPowerShellPath,
   equinoxLocalManagedLifecycle,
   equinoxLocalPlatformPaths,
   equinoxLocalReleaseTarget,
@@ -131,11 +132,11 @@ test("platform lifecycle and shell contracts enable both native Windows architec
   assert.equal(macFinite.pathDelimiter, ":");
 
   const windowsFinite = equinoxLocalFiniteShell({ platform: "win32", arch: "x64" });
-  assert.equal(windowsFinite.command, "powershell.exe");
+  assert.equal(windowsFinite.command, equinoxLocalWindowsPowerShellPath());
   assert.deepEqual(windowsFinite.argsFor("Write-Output ok"), ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", "Write-Output ok"]);
   assert.equal(windowsFinite.pathDelimiter, ";");
 
   const windowsInteractive = equinoxLocalInteractiveShells({ platform: "win32", arch: "arm64" });
   assert.equal(windowsInteractive.defaultShell, "powershell");
-  assert.equal(windowsInteractive.shells.powershell.command, "powershell.exe");
+  assert.equal(windowsInteractive.shells.powershell.command, equinoxLocalWindowsPowerShellPath());
 });

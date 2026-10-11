@@ -3,6 +3,7 @@ import test from "node:test";
 import * as z from "zod/v4";
 
 import { registerTerminalTools } from "../../src/equinox-local-terminal-tools.js";
+import { equinoxLocalWindowsPowerShellPath } from "../../src/equinox-local-platform.js";
 
 function createHarness(overrides = {}) {
   const registrations = new Map();
@@ -232,7 +233,7 @@ test("terminal tools route Windows finite and interactive shells through the sha
   }));
   assert.equal(execResult.ok, true);
   const processStart = harness.calls.find(([name]) => name === "processStart");
-  assert.equal(processStart[1].command, "powershell.exe");
+  assert.equal(processStart[1].command, equinoxLocalWindowsPowerShellPath({SystemRoot: "C:\\Windows"}));
   assert.deepEqual(processStart[1].args, ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", "Write-Output ok"]);
   assert.equal(processStart[1].env.PATH, "C:\\Windows\\System32");
 
@@ -243,7 +244,7 @@ test("terminal tools route Windows finite and interactive shells through the sha
   const result = parseText(await start.handler({ cwd: ".", shell: "powershell", cols: 120, rows: 30 }));
   assert.equal(result.ok, true);
   const terminalStart = harness.calls.find(([name]) => name === "start");
-  assert.equal(terminalStart[1].shell, "powershell.exe");
+  assert.equal(terminalStart[1].shell, equinoxLocalWindowsPowerShellPath({SystemRoot: "C:\\Windows"}));
   assert.deepEqual(terminalStart[1].shellArgs, ["-NoLogo", "-NoProfile"]);
   assert.equal(terminalStart[1].env.PATH, "C:\\Windows\\System32");
 });
