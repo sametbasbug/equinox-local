@@ -216,6 +216,31 @@ try {
   }
   $ManagedSourceRoot = Join-Path $InstallRoot ("state\main-update\sources\$FixtureSourceSha")
   Assert-True ([IO.File]::Exists((Join-Path $ManagedSourceRoot 'src\server.js'))) 'Windows managed-source checkout is missing the exact source server.'
+  # A disposable hosted Windows checkout must be clean under the same pinned
+  # Git and sanitized environment as the independent Guardian. Emit counts
+  # only, never filenames or private paths, to distinguish genuine mutations
+  # from inherited Git configuration drift.
+  $OwnedGitStatusExe = Join-Path $InstallRoot ("runtime\toolchain\git\2.53.0-4\$FixtureTarget\cmd\git.exe")
+  Assert-True ([IO.File]::Exists($OwnedGitStatusExe)) 'Main Git status diagnostic is missing the product-owned Git.'
+  $SavedGitEnvironment = @{}
+  foreach ($entry in @(Get-ChildItem Env: | Where-Object { $_.Name -like 'GIT_*' })) {
+    $SavedGitEnvironment[$entry.Name] = $entry.Value
+    [Environment]::SetEnvironmentVariable($entry.Name, $null, 'Process')
+  }
+  try {
+    $env:GIT_OPTIONAL_LOCKS = '0'; $env:GIT_TERMINAL_PROMPT = '0'; $env:GIT_CONFIG_NOSYSTEM = '1'
+    $GitStatusStopwatch = [Diagnostics.Stopwatch]::StartNew()
+    $OwnedGitStatus = @(& $OwnedGitStatusExe -C $ManagedSourceRoot status --porcelain=v1 --untracked-files=normal)
+    $OwnedGitStatusCode = $LASTEXITCODE
+    $GitStatusStopwatch.Stop()
+    $GitStatusLength = ([string]::Join([Environment]::NewLine, [string[]]$OwnedGitStatus)).Length
+    $GitUntrackedCount = @($OwnedGitStatus | Where-Object { $_ -like '??*' }).Count
+    Write-Output ("Hosted Main Git status preflight: code={0}; lines={1}; chars={2}; untracked={3}; trackedChanges={4}; elapsedMs={5}" -f $OwnedGitStatusCode, $OwnedGitStatus.Count, $GitStatusLength, $GitUntrackedCount, ($OwnedGitStatus.Count - $GitUntrackedCount), $GitStatusStopwatch.ElapsedMilliseconds)
+  } finally {
+    foreach ($key in @('GIT_OPTIONAL_LOCKS','GIT_TERMINAL_PROMPT','GIT_CONFIG_NOSYSTEM')) { [Environment]::SetEnvironmentVariable($key,$null,'Process') }
+    foreach ($entry in $SavedGitEnvironment.GetEnumerator()) { [Environment]::SetEnvironmentVariable($entry.Key,$entry.Value,'Process') }
+  }
+  Assert-True ($OwnedGitStatusCode -eq 0) 'Hosted product Git status preflight failed.'
 
   # The optional native Main audit is deliberately NOT a launcher or a release
   # authority: it binds pointer/store claims and hashes the installed shell,
