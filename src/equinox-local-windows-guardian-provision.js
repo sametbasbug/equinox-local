@@ -65,6 +65,7 @@ export async function provisionWindowsGuardianFromRelease({
   const reference = await digestFile(source, fsImpl);
   const runtimeDir = path.join(installation.installRoot, "runtime");
   await normalDir(installation.installRoot, fsImpl);
+  await fsImpl.mkdir(runtimeDir, { recursive: true, mode: 0o700 });
   await normalDir(runtimeDir, fsImpl);
   const targetDir = path.join(runtimeDir, "guardian");
   try { await fsImpl.mkdir(targetDir, { mode: 0o700 }); }

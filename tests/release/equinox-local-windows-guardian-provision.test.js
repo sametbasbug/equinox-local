@@ -14,7 +14,8 @@ async function fixture(t, { guardian = true } = {}) {
   const source = path.join(releaseDir, "runtime", "guardian", "EquinoxLocalGuardian.exe");
   const target = path.join(installRoot, "runtime", "guardian", "EquinoxLocalGuardian.exe");
   await fs.mkdir(path.dirname(source), { recursive: true });
-  await fs.mkdir(path.join(installRoot, "runtime"), { recursive: true });
+  // A fresh Windows installation has not yet created the independent
+  // runtime ownership directory. The provisioner must create it itself.
   if (guardian) await fs.writeFile(source, Buffer.alloc(2048, 0x5d));
   else await fs.rm(path.dirname(source), { recursive: true });
   return {
