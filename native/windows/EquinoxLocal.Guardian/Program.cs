@@ -19,6 +19,7 @@ internal static partial class Program
     private const int MaxShellEntries = 4000;
     private const long MaxShellBytes = 450L * 1024 * 1024;
     private static readonly StringComparer Compare = StringComparer.OrdinalIgnoreCase;
+    private static string InspectionPhase = "entry";
 
     [GeneratedRegex(@"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$", RegexOptions.CultureInvariant)]
     private static partial Regex VersionRegex();
@@ -44,7 +45,7 @@ internal static partial class Program
                 var reason = ex is InvalidDataException or InvalidOperationException or PlatformNotSupportedException
                     ? ex.Message : ex.GetType().Name;
                 if (reason.Length > 120) reason = reason[..120];
-                Console.Error.WriteLine("Guardian inspection refused: " + reason);
+                Console.Error.WriteLine($"Guardian inspection refused: phase={InspectionPhase}; kind={ex.GetType().Name}; code=0x{ex.HResult:x8}; reason={reason}");
             }
             else Debug.WriteLine("Equinox Local Guardian refused launch: " + ex.GetType().Name);
             return 70;
@@ -55,6 +56,7 @@ internal static partial class Program
 
     private static VerifiedBaseline InspectBaseline()
     {
+        InspectionPhase = "resolve-user-root";
         var local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
         if (string.IsNullOrWhiteSpace(local) || !Path.IsPathFullyQualified(local))
             throw new InvalidDataException("Current-user LocalAppData is unavailable.");
@@ -65,11 +67,13 @@ internal static partial class Program
         var actual = Environment.ProcessPath ?? throw new InvalidDataException("Guardian executable path unavailable.");
         if (!Compare.Equals(Path.GetFullPath(actual), guardianPath))
             throw new InvalidDataException("Guardian is outside its per-user immutable executable location.");
+        InspectionPhase = "verify-guardian-ownership";
         RequireNormalDirectory(installRoot);
         RequireNormalDirectory(Path.Combine(installRoot, "runtime"));
         RequireNormalDirectory(guardianDir);
         RequireNormalFile(guardianPath);
 
+        InspectionPhase = "check-existing-update-ownership";
         var transactionRoot = Path.Combine(installRoot, "state", "main-update");
         var updateLock = Path.Combine(transactionRoot, "active.json");
         if (File.Exists(updateLock) || Directory.Exists(updateLock))
@@ -92,6 +96,7 @@ internal static partial class Program
             Architecture.Arm64 => "win32-arm64",
             _ => throw new PlatformNotSupportedException("Unsupported Windows Guardian CPU target."),
         };
+        InspectionPhase = "read-stable-pointer";
         var pointerPath = Path.Combine(installRoot, "current-version.json");
         using var pointerDoc = ReadJson(pointerPath, MaxPointerBytes);
         var pointer = pointerDoc.RootElement;
@@ -105,6 +110,7 @@ internal static partial class Program
         var release = Path.Combine(releasesRoot, version);
         RequireNormalDirectory(releasesRoot);
         RequireNormalDirectory(release);
+        InspectionPhase = "read-release-identity";
         using var metadataDoc = ReadJson(Path.Combine(release, "release.json"), MaxReleaseBytes);
         var metadata = metadataDoc.RootElement;
         if (metadata.ValueKind != JsonValueKind.Object ||
@@ -116,8 +122,10 @@ internal static partial class Program
         var sourceShell = Path.Combine(release, "runtime", "shell");
         RequireNormalDirectory(sourceShell);
         RequireNormalDirectory(programRoot);
+        InspectionPhase = "compare-native-tree";
         CompareNativeTrees(sourceShell, programRoot);
         var executable = Path.Combine(programRoot, "EquinoxLocal.exe");
+        InspectionPhase = "verify-active-shell";
         RequireNormalFile(executable);
         return new VerifiedBaseline(executable);
     }
@@ -156,8 +164,11 @@ internal static partial class Program
 
     private static void CompareNativeTrees(string releaseShell, string installedShell)
     {
+        InspectionPhase = "hash-reference-shell";
         var expected = Snapshot(releaseShell, false);
+        InspectionPhase = "hash-installed-shell";
         var actual = Snapshot(installedShell, true);
+        InspectionPhase = "compare-native-digests";
         if (expected.Count != actual.Count) throw new InvalidDataException("Installed WPF tree differs from signed Stable baseline.");
         foreach (var (key, digest) in expected)
         {
