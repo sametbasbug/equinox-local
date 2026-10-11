@@ -67,6 +67,7 @@ test("symlinked release source or destination directory never admits executable"
   await assert.rejects(provision({ installation: f.installation }), /normal executable|unsafe/u);
   await fs.rm(f.source);
   await fs.writeFile(f.source, Buffer.alloc(2048, 1));
+  await fs.mkdir(path.join(f.installRoot, "runtime"), { recursive: true });
   await fs.symlink(path.join(f.temp, "foreign"), path.dirname(f.target), "dir");
   await assert.rejects(provision({ installation: f.installation }), /normal owned directory/u);
 });
