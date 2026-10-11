@@ -240,3 +240,23 @@ test("Windows VC and C++ compile script paths reject CMD metacharacters before s
     assert.throws(() => assertWindowsBatchQuotedPath(value), /unsafe CMD characters/u);
   }
 });
+
+
+test("Windows package builds independent native Guardian for both CPU targets outside replaceable WPF", async () => {
+  const packager = await fs.readFile(new URL("../../scripts/release/package-managed-release-windows.mjs", import.meta.url), "utf8");
+  const csproj = await fs.readFile(new URL("../../native/windows/EquinoxLocal.Guardian/EquinoxLocal.Guardian.csproj", import.meta.url), "utf8");
+  const source = await fs.readFile(new URL("../../native/windows/EquinoxLocal.Guardian/Program.cs", import.meta.url), "utf8");
+  assert.match(packager, /compileWindowsGuardian\(rootDir, releaseDir, transaction, contract\)/u);
+  assert.match(packager, /"runtime", "guardian"/u);
+  assert.match(packager, /portableExecutableMachine\(executable\)/u);
+  assert.match(csproj, /<PublishSingleFile>true<\/PublishSingleFile>/u);
+  assert.match(csproj, /<SelfContained>true<\/SelfContained>/u);
+  assert.match(csproj, /win-x64/u);
+  assert.match(csproj, /win-arm64/u);
+  assert.match(source, /Main native switching is not activated/u);
+  assert.match(source, /CompareNativeTrees\(sourceShell, programRoot\)/u);
+  assert.match(source, /CryptographicOperations\.FixedTimeEquals/u);
+  assert.match(source, /RuntimeInformation\.ProcessArchitecture/u);
+  assert.match(source, /Unsupported Guardian argument/u);
+  assert.doesNotMatch(source, /UseShellExecute = true|cmd\.exe|powershell\.exe/u);
+});

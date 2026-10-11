@@ -150,6 +150,31 @@ try {
   Assert-True ([IO.File]::Exists($StableExe)) 'Windows stable EquinoxLocal.exe is missing after fresh install.'
   Assert-True ((Read-PeMachine $StableExe) -eq $FixtureExpectedMachine) 'Windows stable EquinoxLocal.exe has the wrong PE architecture.'
 
+  # Exercise the real independent Guardian binary on a disposable hosted runner
+  # without changing Start Menu, Installed Apps, autostart or the running WPF.
+  $GuardianFromRelease = Join-Path $ReleaseDir 'runtime\guardian\EquinoxLocalGuardian.exe'
+  Assert-True ([IO.File]::Exists($GuardianFromRelease)) 'Windows package is missing the independent Guardian executable.'
+  Assert-True ((Read-PeMachine $GuardianFromRelease) -eq $FixtureExpectedMachine) 'Independent Guardian CPU target is wrong.'
+  $GuardianInstallDir = Join-Path $OwnedInstallRoot 'runtime\guardian'
+  if ([IO.Directory]::Exists($GuardianInstallDir)) { throw 'Disposable Windows Guardian test requires an unused install directory.' }
+  [IO.Directory]::CreateDirectory($GuardianInstallDir) | Out-Null
+  $GuardianExe = Join-Path $GuardianInstallDir 'EquinoxLocalGuardian.exe'
+  Copy-Item -LiteralPath $GuardianFromRelease -Destination $GuardianExe -ErrorAction Stop
+  Assert-True ((Get-FileHash -LiteralPath $GuardianExe -Algorithm SHA256).Hash -ceq (Get-FileHash -LiteralPath $GuardianFromRelease -Algorithm SHA256).Hash) 'Installed Guardian changed after copying verified release bytes.'
+  & $GuardianExe --inspect
+  Assert-True ($LASTEXITCODE -eq 0) 'Independent Windows Guardian rejected an intact, installed signed Stable WPF baseline.'
+  & $GuardianExe --unsupported-argument
+  Assert-True ($LASTEXITCODE -eq 70) 'Independent Windows Guardian accepted an unsupported argument.'
+  $FakeMainLock = Join-Path $OwnedInstallRoot 'state\main-update\active.json'
+  if ([IO.File]::Exists($FakeMainLock)) { throw 'Unexpected live Main update lock in disposable Guardian acceptance.' }
+  try {
+    [IO.File]::WriteAllText($FakeMainLock, 'unowned-test-lock')
+    & $GuardianExe --inspect
+    Assert-True ($LASTEXITCODE -eq 70) 'Independent Windows Guardian did not fail closed on an unresolved Main update lock.'
+  } finally { Remove-Item -LiteralPath $FakeMainLock -Force -ErrorAction SilentlyContinue }
+  Write-Output "Windows $FixtureTarget independent native Guardian installed-host positive/negative admission PASSED."
+
+
   $ExpectedManifestPath = Join-Path $InstallRoot 'browser\native-messaging\dev.equinox.browser.json'
   Assert-True ([IO.File]::Exists($ExpectedManifestPath)) 'Windows Native Messaging manifest is missing after fresh install.'
   $registeredManifest = [string](Get-Item -LiteralPath $NativeRegistryKey -ErrorAction Stop).GetValue('')
