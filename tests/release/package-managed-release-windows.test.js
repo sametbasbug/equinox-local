@@ -259,6 +259,8 @@ test("Windows package builds independent native Guardian for both CPU targets ou
   assert.match(source, /FileAccess\.Read, share/u);
   assert.match(source, /FileShare\.ReadWrite \| FileShare\.Delete/u);
   assert.match(source, /Native file changed during Guardian admission/u);
+  assert.match(source, /EquinoxLocal\.exe\.WebView2/u);
+  assert.match(source, /%SystemDrive%/u);
   assert.match(source, /RuntimeInformation\.ProcessArchitecture/u);
   assert.match(source, /Unsupported Guardian argument/u);
   assert.doesNotMatch(source, /UseShellExecute = true|cmd\.exe|powershell\.exe/u);

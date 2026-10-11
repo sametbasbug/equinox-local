@@ -169,7 +169,8 @@ internal static partial class Program
         InspectionPhase = "hash-installed-shell";
         var actual = Snapshot(installedShell, true);
         InspectionPhase = "compare-native-digests";
-        if (expected.Count != actual.Count) throw new InvalidDataException("Installed WPF tree differs from signed Stable baseline.");
+        if (expected.Count != actual.Count)
+            throw new InvalidDataException($"Installed WPF inventory differs: reference={expected.Count}; installed={actual.Count}.");
         foreach (var (key, digest) in expected)
         {
             if (!actual.TryGetValue(key, out var installedDigest) || !CryptographicOperations.FixedTimeEquals(digest, installedDigest))
@@ -199,7 +200,11 @@ internal static partial class Program
                     throw new InvalidDataException("A managed WPF tree contains a reparse point.");
                 if ((attributes & FileAttributes.Directory) != 0)
                 {
-                    if (ignoreWebViewCache && name.Equals("EquinoxLocal.exe.WebView2", StringComparison.OrdinalIgnoreCase) && directory == root)
+                    // Match the existing product's exact known legacy cache
+                    // exceptions; never ignore arbitrary folders or files.
+                    if (ignoreWebViewCache && directory == root &&
+                        (name.Equals("EquinoxLocal.exe.WebView2", StringComparison.OrdinalIgnoreCase) ||
+                         name.Equals("%SystemDrive%", StringComparison.OrdinalIgnoreCase)))
                         continue;
                     pending.Push(entry);
                 }
