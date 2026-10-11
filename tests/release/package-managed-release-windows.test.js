@@ -265,3 +265,20 @@ test("Windows package builds independent native Guardian for both CPU targets ou
   assert.match(source, /Unsupported Guardian argument/u);
   assert.doesNotMatch(source, /UseShellExecute = true|cmd\.exe|powershell\.exe/u);
 });
+
+
+test("independent Windows Guardian audits exact Main SHA/native-store identity without enabling Main launch", async () => {
+  const program = await fs.readFile(new URL("../../native/windows/EquinoxLocal.Guardian/Program.cs", import.meta.url), "utf8");
+  const inspector = await fs.readFile(new URL("../../native/windows/EquinoxLocal.Guardian/MainNativeIdentity.cs", import.meta.url), "utf8");
+  assert.match(program, /args\[0\] == "--audit-native-identity"/u);
+  assert.match(program, /Structural audit only; never a Main launch signal/u);
+  assert.match(program, /Main native switching is not activated for the Stable-only Guardian/u);
+  assert.match(inspector, /current-source\.conf/u);
+  assert.match(inspector, /current-native\.json/u);
+  assert.match(inspector, /native-store/u);
+  assert.match(inspector, /runtimeContractSha256/u);
+  assert.match(inspector, /artifactSha256/u);
+  assert.match(inspector, /CompareNativeTrees\(immutableShell, activeProgram\)/u);
+  assert.match(inspector, /File\.Exists\(Path\.Combine\(tx, "active\.json"\)\)/u);
+  assert.doesNotMatch(inspector, /Process\.Start|UseShellExecute|cmd\.exe|powershell\.exe/u);
+});

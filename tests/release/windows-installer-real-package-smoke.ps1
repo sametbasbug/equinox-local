@@ -216,6 +216,50 @@ try {
   }
   $ManagedSourceRoot = Join-Path $InstallRoot ("state\main-update\sources\$FixtureSourceSha")
   Assert-True ([IO.File]::Exists((Join-Path $ManagedSourceRoot 'src\server.js'))) 'Windows managed-source checkout is missing the exact source server.'
+
+  # The optional native Main audit is deliberately NOT a launcher or a release
+  # authority: it binds pointer/store claims and hashes the installed shell,
+  # but Git HEAD, full payload fingerprint and Native Messaging still need
+  # independent attestation before activation. All fixtures stay on CI hosts.
+  Assert-True ((Invoke-GuardianCheck '--audit-native-identity') -eq 70) 'Guardian native audit accepted a missing native pointer.'
+  $NativeTxRoot = Join-Path $OwnedInstallRoot 'state\main-update'
+  $NativeStoreProbe = Join-Path $NativeTxRoot ("native-store\$FixtureTarget\$FixtureSourceSha")
+  $NativeReleaseProbe = Join-Path $NativeStoreProbe 'release'
+  $NativePointerProbe = Join-Path $NativeTxRoot 'current-native.json'
+  if ((Test-Path -LiteralPath $NativeStoreProbe) -or (Test-Path -LiteralPath $NativePointerProbe)) {
+    throw 'Disposable Guardian Main identity test requires clean native state.'
+  }
+  try {
+    $NativeRuntimeProbe = Join-Path $NativeReleaseProbe 'runtime'
+    [IO.Directory]::CreateDirectory($NativeRuntimeProbe) | Out-Null
+    Copy-Item -LiteralPath (Join-Path $ReleaseDir 'runtime\shell') -Destination (Join-Path $NativeRuntimeProbe 'shell') -Recurse -ErrorAction Stop
+    Copy-Item -LiteralPath (Join-Path $ReleaseDir 'release.json') -Destination (Join-Path $NativeReleaseProbe 'release.json') -ErrorAction Stop
+    $NativeContract = 'b' * 64
+    $NativeManifestProbe = [ordered]@{
+      schemaVersion=1; channel='main'; sourceSha=$FixtureSourceSha; target=$FixtureTarget;
+      runtimeContractSha256=$NativeContract; artifactSha256=('d' * 64); artifactBytes=1024;
+      payloadVersion=$FixtureVersion; releaseFingerprint=[ordered]@{schemaVersion=1;sha256=('f' * 64);entries=1;bytes=1}
+    }
+    [IO.File]::WriteAllText((Join-Path $NativeStoreProbe 'native-store.json'), ($NativeManifestProbe | ConvertTo-Json -Depth 5))
+    $NativePointerProbeValue = [ordered]@{schemaVersion=1;channel='main';sourceSha=$FixtureSourceSha;target=$FixtureTarget;runtimeContractSha256=$NativeContract}
+    [IO.File]::WriteAllText($NativePointerProbe, ($NativePointerProbeValue | ConvertTo-Json -Depth 3))
+    Assert-True ((Invoke-GuardianCheck '--audit-native-identity') -eq 0) 'Guardian did not bind valid structural Main source/native identities and installed shell hashes.'
+    Assert-True ((Invoke-GuardianCheck '--inspect') -eq 70) 'Stable-only Guardian must never launch a native Main pointer by accident.'
+    $NativePointerProbeValue.sourceSha = 'a' * 40
+    [IO.File]::WriteAllText($NativePointerProbe, ($NativePointerProbeValue | ConvertTo-Json -Depth 3))
+    Assert-True ((Invoke-GuardianCheck '--audit-native-identity') -eq 70) 'Guardian trusted the wrong native Main source SHA.'
+    $NativePointerProbeValue.sourceSha = $FixtureSourceSha
+    [IO.File]::WriteAllText($NativePointerProbe, ($NativePointerProbeValue | ConvertTo-Json -Depth 3))
+    $NativeActiveProbe = Join-Path $NativeTxRoot 'active.json'
+    try {
+      [IO.File]::WriteAllText($NativeActiveProbe, 'fail-closed-test-lock')
+      Assert-True ((Invoke-GuardianCheck '--audit-native-identity') -eq 70) 'Guardian audited an unresolved native Main transaction.'
+    } finally { Remove-Item -LiteralPath $NativeActiveProbe -Force -ErrorAction SilentlyContinue }
+  } finally {
+    Remove-Item -LiteralPath $NativePointerProbe -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $NativeStoreProbe -Recurse -Force -ErrorAction SilentlyContinue
+  }
+  Write-Output "Windows $FixtureTarget Guardian native Main identity audit positive/negative hosted acceptance PASSED."
   $OwnedGit = Join-Path $InstallRoot ("runtime\toolchain\git\2.53.0-4\$FixtureTarget\cmd\git.exe")
   $OwnedNode = Join-Path $InstallRoot ("runtime\toolchain\node\26.11.1\$FixtureTarget\node.exe")
   $OwnedNpm = Join-Path $InstallRoot ("runtime\toolchain\node\26.11.1\$FixtureTarget\node_modules\npm\bin\npm-cli.js")
