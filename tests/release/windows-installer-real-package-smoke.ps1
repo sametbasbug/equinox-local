@@ -150,6 +150,51 @@ try {
   Assert-True ([IO.File]::Exists($StableExe)) 'Windows stable EquinoxLocal.exe is missing after fresh install.'
   Assert-True ((Read-PeMachine $StableExe) -eq $FixtureExpectedMachine) 'Windows stable EquinoxLocal.exe has the wrong PE architecture.'
 
+  # Exercise the real independent Guardian binary on a disposable hosted runner
+  # without changing Start Menu, Installed Apps, autostart or the running WPF.
+  $GuardianFromRelease = Join-Path $ReleaseDir 'runtime\guardian\EquinoxLocalGuardian.exe'
+  Assert-True ([IO.File]::Exists($GuardianFromRelease)) 'Windows package is missing the independent Guardian executable.'
+  Assert-True ((Read-PeMachine $GuardianFromRelease) -eq $FixtureExpectedMachine) 'Independent Guardian CPU target is wrong.'
+  $GuardianInstallDir = Join-Path $OwnedInstallRoot 'runtime\guardian'
+  if ([IO.Directory]::Exists($GuardianInstallDir)) { throw 'Disposable Windows Guardian test requires an unused install directory.' }
+  [IO.Directory]::CreateDirectory($GuardianInstallDir) | Out-Null
+  $GuardianExe = Join-Path $GuardianInstallDir 'EquinoxLocalGuardian.exe'
+  Copy-Item -LiteralPath $GuardianFromRelease -Destination $GuardianExe -ErrorAction Stop
+  Assert-True ((Get-FileHash -LiteralPath $GuardianExe -Algorithm SHA256).Hash -ceq (Get-FileHash -LiteralPath $GuardianFromRelease -Algorithm SHA256).Hash) 'Installed Guardian changed after copying verified release bytes.'
+  # A native WinExe is a GUI-subsystem executable. Windows PowerShell's `&`
+  # operator may return immediately without waiting or updating LASTEXITCODE.
+  # Explicitly wait for the process handle rather than making a false pass/fail.
+  function Invoke-GuardianCheck([string]$Argument) {
+    $start = New-Object System.Diagnostics.ProcessStartInfo
+    $start.FileName = $GuardianExe
+    $start.Arguments = $Argument
+    $start.UseShellExecute = $false
+    $start.RedirectStandardError = $true
+    $process = [System.Diagnostics.Process]::Start($start)
+    if ($null -eq $process) { throw 'Independent Windows Guardian process could not launch.' }
+    try {
+      if (-not $process.WaitForExit(30000)) {
+        $process.Kill()
+        throw 'Independent Windows Guardian exceeded its 30-second inspection limit.'
+      }
+      $diagnostic = $process.StandardError.ReadToEnd().Trim()
+      if ($Argument -ceq '--inspect' -and $process.ExitCode -ne 0) {
+        Write-Host ('Windows Guardian inspection diagnosis: ' + $diagnostic)
+      }
+      return [int]$process.ExitCode
+    } finally { $process.Dispose() }
+  }
+  Assert-True ((Invoke-GuardianCheck '--inspect') -eq 0) 'Independent Windows Guardian rejected an intact, installed signed Stable WPF baseline.'
+  Assert-True ((Invoke-GuardianCheck '--unsupported-argument') -eq 70) 'Independent Windows Guardian accepted an unsupported argument.'
+  $FakeMainLock = Join-Path $OwnedInstallRoot 'state\main-update\active.json'
+  if ([IO.File]::Exists($FakeMainLock)) { throw 'Unexpected live Main update lock in disposable Guardian acceptance.' }
+  try {
+    [IO.File]::WriteAllText($FakeMainLock, 'unowned-test-lock')
+    Assert-True ((Invoke-GuardianCheck '--inspect') -eq 70) 'Independent Windows Guardian did not fail closed on an unresolved Main update lock.'
+  } finally { Remove-Item -LiteralPath $FakeMainLock -Force -ErrorAction SilentlyContinue }
+  Write-Output "Windows $FixtureTarget independent native Guardian installed-host positive/negative admission PASSED."
+
+
   $ExpectedManifestPath = Join-Path $InstallRoot 'browser\native-messaging\dev.equinox.browser.json'
   Assert-True ([IO.File]::Exists($ExpectedManifestPath)) 'Windows Native Messaging manifest is missing after fresh install.'
   $registeredManifest = [string](Get-Item -LiteralPath $NativeRegistryKey -ErrorAction Stop).GetValue('')

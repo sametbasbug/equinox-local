@@ -406,6 +406,27 @@ async function copyPrecompiledBrowserLauncher(browserLauncherPath, releaseDir, c
   await fs.copyFile(source, path.join(browserDir, "equinox-browser-native-host.exe"));
 }
 
+async function compileWindowsGuardian(rootDir, releaseDir, transaction, contract) {
+  // Independent native launcher lives outside the replaceable WPF directory
+  // after installation. Packaging on a Windows CI/build host is allowed to use
+  // dotnet; the installed runtime never compiles any of its own components.
+  const guardianDir = path.join(releaseDir, "runtime", "guardian");
+  const project = path.join(rootDir, "native", "windows", "EquinoxLocal.Guardian", "EquinoxLocal.Guardian.csproj");
+  const bin = path.join(transaction, "guardian-bin", contract.shellRid);
+  const obj = path.join(transaction, "guardian-obj", contract.shellRid);
+  await fs.mkdir(guardianDir, { recursive: true });
+  await execFile("dotnet", ["publish", project, "--configuration", "Release", "--runtime", contract.shellRid,
+    "--self-contained", "true", `-p:Platform=${contract.shellPlatform}`, `-p:BaseOutputPath=${bin}${path.sep}`,
+    `-p:BaseIntermediateOutputPath=${obj}${path.sep}`, "--output", guardianDir], {
+    cwd: rootDir, windowsHide: true, timeout: 180_000, maxBuffer: 2 * 1024 * 1024,
+  });
+  const executable = path.join(guardianDir, "EquinoxLocalGuardian.exe");
+  const info = await fs.lstat(executable);
+  if (!info.isFile() || info.isSymbolicLink() || (await portableExecutableMachine(executable)) !== contract.peMachine) {
+    throw new Error("Built Windows Guardian is not an exact architecture-matched normal executable.");
+  }
+}
+
 async function createManagedZip(rootDir, releaseDir, artifactPath) {
   const helper = path.join(path.dirname(fileURLToPath(import.meta.url)), "windows-managed-zip.ps1");
   await fs.rm(artifactPath, { force: true });
@@ -454,6 +475,7 @@ export async function packageManagedEquinoxWindowsRelease({
       installPinnedWindowsTunnel(transaction, releaseDir, fetchImpl, target, { canExecuteTarget }),
       installPinnedWindowsWinapp(transaction, rootDir, releaseDir, fetchImpl, target, { canExecuteTarget }),
       copyPublishedShell(rootDir, releaseDir, resolvedShellPublishDir),
+      compileWindowsGuardian(rootDir, releaseDir, transaction, contract),
       compileWindowsJobObjectHelper({ rootDir, outputDir: path.join(releaseDir, "runtime", "job"), target }),
       browserLauncherPath
         ? copyPrecompiledBrowserLauncher(browserLauncherPath, releaseDir, contract)
