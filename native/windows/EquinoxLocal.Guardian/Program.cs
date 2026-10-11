@@ -209,8 +209,20 @@ internal static partial class Program
                     bytes = checked(bytes + info.Length);
                     if (bytes > MaxShellBytes || result.Count >= MaxShellEntries)
                         throw new InvalidDataException("Managed WPF native tree exceeds its supported bound.");
-                    using var stream = File.OpenRead(entry);
-                    result.Add(relative, SHA256.HashData(stream));
+                    // Loaded WPF/WebView2 modules may have read/write handles
+                    // open while another Guardian invocation checks the shell.
+                    // Open READ-ONLY but allow those existing holders to keep
+                    // their sharing rights. Never grant write access ourselves.
+                    var share = ignoreWebViewCache
+                        ? FileShare.ReadWrite | FileShare.Delete
+                        : FileShare.Read;
+                    using var stream = new FileStream(entry, FileMode.Open, FileAccess.Read, share, 64 * 1024, FileOptions.SequentialScan);
+                    if (stream.Length != info.Length)
+                        throw new InvalidDataException("Native file size changed during Guardian admission.");
+                    var digest = SHA256.HashData(stream);
+                    if (new FileInfo(entry).Length != info.Length)
+                        throw new InvalidDataException("Native file changed during Guardian admission.");
+                    result.Add(relative, digest);
                 }
             }
         }

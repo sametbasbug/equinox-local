@@ -256,6 +256,9 @@ test("Windows package builds independent native Guardian for both CPU targets ou
   assert.match(source, /Main native switching is not activated/u);
   assert.match(source, /CompareNativeTrees\(sourceShell, programRoot\)/u);
   assert.match(source, /CryptographicOperations\.FixedTimeEquals/u);
+  assert.match(source, /FileAccess\.Read, share/u);
+  assert.match(source, /FileShare\.ReadWrite \| FileShare\.Delete/u);
+  assert.match(source, /Native file changed during Guardian admission/u);
   assert.match(source, /RuntimeInformation\.ProcessArchitecture/u);
   assert.match(source, /Unsupported Guardian argument/u);
   assert.doesNotMatch(source, /UseShellExecute = true|cmd\.exe|powershell\.exe/u);
