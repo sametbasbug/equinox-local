@@ -315,3 +315,21 @@ test("independent Windows Guardian audits exact Main SHA/native-store identity w
   assert.match(inspector, /File\.Exists\(Path\.Combine\(tx, "active\.json"\)\)/u);
   assert.doesNotMatch(inspector, /Process\.Start|UseShellExecute|cmd\.exe|powershell\.exe/u);
 });
+
+
+test("independent Windows Guardian journal audit is read-only and binds active marker receipt and durable journal", async () => {
+  const program = await fs.readFile(new URL("../../native/windows/EquinoxLocal.Guardian/Program.cs", import.meta.url), "utf8");
+  const journal = await fs.readFile(new URL("../../native/windows/EquinoxLocal.Guardian/MainNativeJournalIdentity.cs", import.meta.url), "utf8");
+  assert.match(program, /args\[0\] == "--audit-native-journal"/u);
+  assert.match(program, /Receipt ownership audit ONLY; no resume or launch/u);
+  assert.match(program, /Main native switching is not activated for the Stable-only Guardian/u);
+  for (const name of ["active.json", "receipts", "guardian-journal", "writer-lock", "previousNative", "targetRuntimeContractSha256", "receiptStartedAt"]) {
+    assert.ok(journal.includes(name), `Missing native journal binding: ${name}`);
+  }
+  assert.match(journal, /status is not \("promoting" or "verifying"\)/u);
+  assert.match(journal, /"committed"/u);
+  assert.match(journal, /"rollback_started"/u);
+  assert.match(journal, /oldSha == newSha/u);
+  assert.match(journal, /previous Main native identity changed|Previous Main native identity changed/u);
+  assert.doesNotMatch(journal, /Registry\.SetValue|Process\.Start|File\.WriteAllText|File\.Delete|Directory\.Delete/u);
+});
