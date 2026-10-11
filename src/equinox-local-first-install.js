@@ -25,6 +25,7 @@ import {
 import { managedSupervisorPaths } from "./equinox-local-supervisor.js";
 import { enrollEquinoxLocalManagedSource, rollbackEquinoxLocalManagedSourceEnrollment } from "./equinox-local-managed-source-enrollment.js";
 import { requestWindowsShellRuntimeRestart } from "./equinox-local-windows-shell-control.js";
+import { provisionWindowsGuardianFromRelease } from "./equinox-local-windows-guardian-provision.js";
 import { writeEquinoxLocalCurrentVersionPointer } from "./equinox-local-current-release.js";
 import { initializeManagedOnboardingState } from "./equinox-local-onboarding.js";
 import { equinoxLocalReleaseRuntimeContract } from "./equinox-local-release-runtime-contract.js";
@@ -387,6 +388,7 @@ export async function installManagedEquinoxRelease({
       return;
     }
     const shell = await syncWindowsShellImpl({ releaseDir: installation.releaseDir, programRoot: installation.programRoot, fsImpl });
+    await provisionWindowsGuardianFromRelease({ installation, fsImpl });
     await launchWindowsShellImpl(shell.shellExecutable);
   };
 

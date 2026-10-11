@@ -155,12 +155,12 @@ try {
   $GuardianFromRelease = Join-Path $ReleaseDir 'runtime\guardian\EquinoxLocalGuardian.exe'
   Assert-True ([IO.File]::Exists($GuardianFromRelease)) 'Windows package is missing the independent Guardian executable.'
   Assert-True ((Read-PeMachine $GuardianFromRelease) -eq $FixtureExpectedMachine) 'Independent Guardian CPU target is wrong.'
+  # The product installer, not the test, now provisions this independent
+  # executable. Registration still intentionally points to the existing WPF.
   $GuardianInstallDir = Join-Path $OwnedInstallRoot 'runtime\guardian'
-  if ([IO.Directory]::Exists($GuardianInstallDir)) { throw 'Disposable Windows Guardian test requires an unused install directory.' }
-  [IO.Directory]::CreateDirectory($GuardianInstallDir) | Out-Null
   $GuardianExe = Join-Path $GuardianInstallDir 'EquinoxLocalGuardian.exe'
-  Copy-Item -LiteralPath $GuardianFromRelease -Destination $GuardianExe -ErrorAction Stop
-  Assert-True ((Get-FileHash -LiteralPath $GuardianExe -Algorithm SHA256).Hash -ceq (Get-FileHash -LiteralPath $GuardianFromRelease -Algorithm SHA256).Hash) 'Installed Guardian changed after copying verified release bytes.'
+  Assert-True ([IO.File]::Exists($GuardianExe)) 'Windows installer did not provision the independent Guardian.'
+  Assert-True ((Get-FileHash -LiteralPath $GuardianExe -Algorithm SHA256).Hash -ceq (Get-FileHash -LiteralPath $GuardianFromRelease -Algorithm SHA256).Hash) 'Installed Guardian differs from the verified release bytes.'
   # A native WinExe is a GUI-subsystem executable. Windows PowerShell's `&`
   # operator may return immediately without waiting or updating LASTEXITCODE.
   # Explicitly wait for the process handle rather than making a false pass/fail.
