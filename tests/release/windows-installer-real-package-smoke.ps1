@@ -417,8 +417,10 @@ try {
       $WorkerStartInfo = [Diagnostics.ProcessStartInfo]::new($WorkerNode)
       $WorkerStartInfo.UseShellExecute = $false
       $WorkerStartInfo.CreateNoWindow = $true
-      $WorkerStartInfo.ArgumentList.Add('-e')
-      $WorkerStartInfo.ArgumentList.Add('setInterval(() => {}, 10000)')
+      # Hosted real installer smoke uses Windows PowerShell 5.1 / .NET Framework,
+      # whose ProcessStartInfo does not expose ArgumentList. Fixed test-only
+      # script content contains no external/user-controlled command arguments.
+      $WorkerStartInfo.Arguments = '-e "setInterval(function(){},10000)"'
       $WorkerProcess = [Diagnostics.Process]::Start($WorkerStartInfo)
       if ($null -eq $WorkerProcess) { throw 'Unable to start ephemeral owned Node process for Guardian audit.' }
       $WorkerRecord = [ordered]@{
