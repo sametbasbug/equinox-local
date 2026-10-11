@@ -234,7 +234,7 @@ try {
     $OwnedGitStatusCode = $LASTEXITCODE
     $GitStatusStopwatch.Stop()
     $GitStatusLength = ([string]::Join([Environment]::NewLine, [string[]]$OwnedGitStatus)).Length
-    $GitUntrackedCount = @($OwnedGitStatus | Where-Object { $_ -like '??*' }).Count
+    $GitUntrackedCount = @($OwnedGitStatus | Where-Object { $_ -match '^\?\?' }).Count
     Write-Output ("Hosted Main Git status preflight: code={0}; lines={1}; chars={2}; untracked={3}; trackedChanges={4}; elapsedMs={5}" -f $OwnedGitStatusCode, $OwnedGitStatus.Count, $GitStatusLength, $GitUntrackedCount, ($OwnedGitStatus.Count - $GitUntrackedCount), $GitStatusStopwatch.ElapsedMilliseconds)
   } finally {
     foreach ($key in @('GIT_OPTIONAL_LOCKS','GIT_TERMINAL_PROMPT','GIT_CONFIG_NOSYSTEM')) { [Environment]::SetEnvironmentVariable($key,$null,'Process') }
