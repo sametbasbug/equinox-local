@@ -28,7 +28,7 @@ internal static partial class Program
     {
         try
         {
-            if (args.Length > 1 || (args.Length == 1 && args[0] is not ("--inspect" or "--audit-native-identity" or "--audit-native-journal" or "--startup" or "--uninstall")))
+            if (args.Length > 1 || (args.Length == 1 && args[0] is not ("--inspect" or "--audit-native-identity" or "--audit-native-journal" or "--audit-native-worker" or "--startup" or "--uninstall")))
                 throw new InvalidOperationException("Unsupported Guardian argument.");
             if (args.Length == 1 && args[0] == "--audit-native-identity")
             {
@@ -40,8 +40,13 @@ internal static partial class Program
                 InspectOwnedNativeTransitionJournal();
                 return 0; // Receipt ownership audit ONLY; no resume or launch.
             }
+            if (args.Length == 1 && args[0] == "--audit-native-worker")
+            {
+                InspectOwnedNativeWorkerProcess();
+                return 0; // Process provenance only; NO Main launch or replay.
+            }
             var inspection = InspectBaseline();
-            if (args.Length == 1 && args[0] is "--inspect" or "--audit-native-identity" or "--audit-native-journal") return 0;
+            if (args.Length == 1 && args[0] is "--inspect" or "--audit-native-identity" or "--audit-native-journal" or "--audit-native-worker") return 0;
             using var process = Launch(inspection.Executable, args.Length == 0 ? null : args[0]);
             return process.Id > 0 ? 0 : 70;
         }
@@ -50,7 +55,7 @@ internal static partial class Program
             // Only the explicit inspection mode exposes bounded, static
             // validation errors to the disposable installed-host acceptance.
             // Never echo paths from OS exceptions or launch arguments.
-            if (args.Length == 1 && args[0] is "--inspect" or "--audit-native-identity" or "--audit-native-journal")
+            if (args.Length == 1 && args[0] is "--inspect" or "--audit-native-identity" or "--audit-native-journal" or "--audit-native-worker")
             {
                 var reason = ex is InvalidDataException or InvalidOperationException or PlatformNotSupportedException
                     ? ex.Message : ex.GetType().Name;

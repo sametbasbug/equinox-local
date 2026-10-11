@@ -333,3 +333,18 @@ test("independent Windows Guardian journal audit is read-only and binds active m
   assert.match(journal, /previous Main native identity changed|Previous Main native identity changed/u);
   assert.doesNotMatch(journal, /Registry\.SetValue|Process\.Start|File\.WriteAllText|File\.Delete|Directory\.Delete/u);
 });
+
+
+test("independent Guardian worker process provenance never invokes a launcher or accepts unbound PID ownership", async () => {
+  const program = await fs.readFile(new URL("../../native/windows/EquinoxLocal.Guardian/Program.cs", import.meta.url), "utf8");
+  const auditor = await fs.readFile(new URL("../../native/windows/EquinoxLocal.Guardian/MainNativeWorkerIdentity.cs", import.meta.url), "utf8");
+  assert.match(program, /--audit-native-worker/u);
+  assert.match(auditor, /InspectOwnedNativeTransitionJournal\(\)/u);
+  assert.match(auditor, /windows-worker\.json/u);
+  assert.match(auditor, /Process\.GetProcessById\(pid\)/u);
+  assert.match(auditor, /StartTime\.ToUniversalTime\(\)\.Ticks/u);
+  assert.match(auditor, /MainModule\?\.FileName/u);
+  assert.match(auditor, /runtime", "node"/u);
+  assert.match(auditor, /WorkerTokenPattern/u);
+  assert.doesNotMatch(auditor, /Process\.Start|Registry\.SetValue|File\.WriteAllText|File\.Delete/u);
+});
