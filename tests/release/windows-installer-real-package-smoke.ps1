@@ -216,6 +216,31 @@ try {
   }
   $ManagedSourceRoot = Join-Path $InstallRoot ("state\main-update\sources\$FixtureSourceSha")
   Assert-True ([IO.File]::Exists((Join-Path $ManagedSourceRoot 'src\server.js'))) 'Windows managed-source checkout is missing the exact source server.'
+  # A disposable hosted Windows checkout must be clean under the same pinned
+  # Git and sanitized environment as the independent Guardian. Emit counts
+  # only, never filenames or private paths, to distinguish genuine mutations
+  # from inherited Git configuration drift.
+  $OwnedGitStatusExe = Join-Path $InstallRoot ("runtime\toolchain\git\2.53.0-4\$FixtureTarget\cmd\git.exe")
+  Assert-True ([IO.File]::Exists($OwnedGitStatusExe)) 'Main Git status diagnostic is missing the product-owned Git.'
+  $SavedGitEnvironment = @{}
+  foreach ($entry in @(Get-ChildItem Env: | Where-Object { $_.Name -like 'GIT_*' })) {
+    $SavedGitEnvironment[$entry.Name] = $entry.Value
+    [Environment]::SetEnvironmentVariable($entry.Name, $null, 'Process')
+  }
+  try {
+    $env:GIT_OPTIONAL_LOCKS = '0'; $env:GIT_TERMINAL_PROMPT = '0'; $env:GIT_CONFIG_NOSYSTEM = '1'
+    $GitStatusStopwatch = [Diagnostics.Stopwatch]::StartNew()
+    $OwnedGitStatus = @(& $OwnedGitStatusExe -c core.autocrlf=true -c core.fsmonitor=false -C $ManagedSourceRoot status --porcelain=v1 --untracked-files=normal)
+    $OwnedGitStatusCode = $LASTEXITCODE
+    $GitStatusStopwatch.Stop()
+    $GitStatusLength = ([string]::Join([Environment]::NewLine, [string[]]$OwnedGitStatus)).Length
+    $GitUntrackedCount = @($OwnedGitStatus | Where-Object { $_ -match '^\?\?' }).Count
+    Write-Output ("Hosted Main Git status preflight: code={0}; lines={1}; chars={2}; untracked={3}; trackedChanges={4}; elapsedMs={5}" -f $OwnedGitStatusCode, $OwnedGitStatus.Count, $GitStatusLength, $GitUntrackedCount, ($OwnedGitStatus.Count - $GitUntrackedCount), $GitStatusStopwatch.ElapsedMilliseconds)
+  } finally {
+    foreach ($key in @('GIT_OPTIONAL_LOCKS','GIT_TERMINAL_PROMPT','GIT_CONFIG_NOSYSTEM')) { [Environment]::SetEnvironmentVariable($key,$null,'Process') }
+    foreach ($entry in $SavedGitEnvironment.GetEnumerator()) { [Environment]::SetEnvironmentVariable($entry.Key,$entry.Value,'Process') }
+  }
+  Assert-True ($OwnedGitStatusCode -eq 0) 'Hosted product Git status preflight failed.'
 
   # The optional native Main audit is deliberately NOT a launcher or a release
   # authority: it binds pointer/store claims and hashes the installed shell,
@@ -250,6 +275,15 @@ try {
     $NativePointerProbeValue = [ordered]@{schemaVersion=1;channel='main';sourceSha=$FixtureSourceSha;target=$FixtureTarget;runtimeContractSha256=$NativeContract}
     [IO.File]::WriteAllText($NativePointerProbe, ($NativePointerProbeValue | ConvertTo-Json -Depth 3))
     Assert-True ((Invoke-GuardianCheck '--audit-native-identity') -eq 0) 'Guardian did not recompute the exact JS native-release fingerprint and installed shell identity.'
+    # A source SHA claim is not enough: the pinned product-owned Git must
+    # independently find a clean checkout of exactly that commit and branch.
+    $DirtyGitProbe = Join-Path $ManagedSourceRoot 'equinox-guardian-untracked-audit-probe.txt'
+    if (Test-Path -LiteralPath $DirtyGitProbe) { throw 'Hosted Main Git identity probe path was already occupied.' }
+    try {
+      [IO.File]::WriteAllText($DirtyGitProbe, 'disposable Guardian read-only Git check')
+      Assert-True ((Invoke-GuardianCheck '--audit-native-identity') -eq 70) 'Guardian accepted a dirty Main Git checkout.'
+    } finally { Remove-Item -LiteralPath $DirtyGitProbe -Force -ErrorAction SilentlyContinue }
+    Assert-True ((Invoke-GuardianCheck '--audit-native-identity') -eq 0) 'Guardian refused the restored clean Main Git checkout.'
     # A syntactically plausible forged manifest must not override measured bytes.
     $NativeManifestProbe.releaseFingerprint.sha256 = 'e' * 64
     [IO.File]::WriteAllText((Join-Path $NativeStoreProbe 'native-store.json'), ($NativeManifestProbe | ConvertTo-Json -Depth 5))

@@ -66,8 +66,9 @@ internal static partial class Program
             throw new InvalidDataException("Main source pointer escaped its immutable checkout slot.");
         RequireNormalDirectory(Path.Combine(tx, "sources"));
         RequireNormalDirectory(expectedSource);
-        // Exact source SHA in the Git checkout must still be verified by the
-        // separately pinned product-owned Git inspector before authorization.
+        // Verify the exact checkout with product-owned Git; no ambient Git or
+        // source-supplied executable may influence this native audit.
+        InspectOwnedMainGit(install, target, expectedSource, sourceSha);
 
         InspectionPhase = "native-pointer-identity";
         using var pointerDoc = ReadJson(Path.Combine(tx, "current-native.json"), 8192);
@@ -140,8 +141,8 @@ internal static partial class Program
         RequireNormalDirectory(immutableShell);
         RequireNormalDirectory(activeProgram);
         CompareNativeTrees(immutableShell, activeProgram);
-        // Do NOT launch or claim successful admission: product Git HEAD,
-        // Native Messaging and journal still need independent proof.
+        // Do NOT launch or claim successful admission: Native Messaging,
+        // authenticated journal and rollback still need independent proof.
         InspectionPhase = "native-structural-audit-complete";
     }
 }
