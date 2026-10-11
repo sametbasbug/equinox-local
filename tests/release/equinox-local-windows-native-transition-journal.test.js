@@ -37,6 +37,12 @@ async function fixture(t, options = {}) {
       return receipt;
     },
     verifyMilestone: async () => true,
+    // This is a Windows product contract even when the tests execute on macOS.
+    // Fake the OS ACL verifier for filesystem/state-machine unit scenarios;
+    // the explicit ACL refusal tests below override these grants.
+    platform: "win32",
+    protectWindowsAcl: async () => ({ safe: true }),
+    verifyWindowsAcl: async () => ({ safe: true }),
     ...options,
   });
   return { root, transactionRoot, journal, calls, changeReceipt: (change) => { receipt = { ...receipt, ...change }; } };
@@ -96,6 +102,9 @@ test("restart after interruption reuses durable journal and never repeats an alr
     now: () => ROOT_TIME,
     inspectOwningReceipt: async () => ({ ...input, startedAt: STARTED, status: "promoting" }),
     verifyMilestone: async () => true,
+    platform: "win32",
+    protectWindowsAcl: async () => ({ safe: true }),
+    verifyWindowsAcl: async () => ({ safe: true }),
   });
   assert.equal((await recovered.read(TX)).stage, "native_staged");
   await assert.rejects(recovered.advance(TX, { from: "prepared", to: "native_staged", sequence: 0 }), /stale or unsafe/u);
@@ -149,12 +158,12 @@ test("Windows x64 and ARM64 are the only admitted native journal targets", async
 
 test("journal rejects missing or symlinked transaction root and traversal transaction IDs", async (t) => {
   const f = await fixture(t);
-  const foreign = createEquinoxLocalWindowsNativeTransitionJournal({ transactionRoot: path.join(f.root, "missing"), inspectOwningReceipt: async () => ({}), verifyMilestone: async () => true });
+  const foreign = createEquinoxLocalWindowsNativeTransitionJournal({ transactionRoot: path.join(f.root, "missing"), inspectOwningReceipt: async () => ({}), verifyMilestone: async () => true, platform: "win32", protectWindowsAcl: async () => ({ safe: true }), verifyWindowsAcl: async () => ({ safe: true }) });
   await assert.rejects(foreign.create(input), { code: "ENOENT" });
   await assert.rejects(f.journal.read("../foreign"), /invalid/u);
   const fakeRoot = path.join(f.root, "symlinked");
   await fs.symlink(f.transactionRoot, fakeRoot, "dir");
-  const throughLink = createEquinoxLocalWindowsNativeTransitionJournal({ transactionRoot: fakeRoot, inspectOwningReceipt: async () => ({}), verifyMilestone: async () => true });
+  const throughLink = createEquinoxLocalWindowsNativeTransitionJournal({ transactionRoot: fakeRoot, inspectOwningReceipt: async () => ({}), verifyMilestone: async () => true, platform: "win32", protectWindowsAcl: async () => ({ safe: true }), verifyWindowsAcl: async () => ({ safe: true }) });
   await assert.rejects(throughLink.create(input), /normal owned directory/u);
 });
 
