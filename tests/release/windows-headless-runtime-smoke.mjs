@@ -265,10 +265,21 @@ async function verifyWindowsManagedProcessLifecycle(root) {
     env: process.env,
     label: "windows-job-descendant",
   });
-  const logs = await manager.readLogs({ processId: started.processId, cursor: 0, waitMs: 3_000 });
-  const match = logs.output.match(/DESCENDANT=(\d+)/u);
-  assert.ok(match, `managed Windows process did not report descendant PID: ${logs.output}`);
-  const descendantPid = Number.parseInt(match[1], 10);
+  // ARM64 hosted runners may take longer to launch the nested PowerShell child
+  // under concurrent native-package CI work. Poll the same managed log rather
+  // than treating one empty 3-second read as a process-lifecycle failure.
+  let latestOutput = "";
+  let descendantPid;
+  try {
+    descendantPid = await waitFor(async () => {
+      const logs = await manager.readLogs({ processId: started.processId, cursor: 0, waitMs: 2_000 });
+      latestOutput = logs.output;
+      const match = latestOutput.match(/DESCENDANT=(\d+)/u);
+      return match ? Number.parseInt(match[1], 10) : null;
+    }, "Windows managed process did not report descendant PID", 15_000);
+  } catch (error) {
+    throw new Error(`managed Windows process did not report descendant PID: ${latestOutput}`, { cause: error });
+  }
   await waitFor(() => !pidExists(started.pid), "Windows managed gate leader did not exit after user command completed");
   const retained = await manager.waitForExit({ processId: started.processId, waitMs: 250 });
   assert.equal(retained.running, true, "process manager finalized while a Job Object descendant was still alive");
