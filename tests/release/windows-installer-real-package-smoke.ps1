@@ -179,9 +179,9 @@ try {
       }
       $diagnostic = $process.StandardError.ReadToEnd().Trim()
       if ($Argument -ceq '--inspect' -and $process.ExitCode -ne 0) {
-        Write-Output ('Windows Guardian inspection diagnosis: ' + $diagnostic)
+        Write-Host ('Windows Guardian inspection diagnosis: ' + $diagnostic)
       }
-      return $process.ExitCode
+      return [int]$process.ExitCode
     } finally { $process.Dispose() }
   }
   Assert-True ((Invoke-GuardianCheck '--inspect') -eq 0) 'Independent Windows Guardian rejected an intact, installed signed Stable WPF baseline.'
