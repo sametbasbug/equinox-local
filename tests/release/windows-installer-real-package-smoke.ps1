@@ -178,7 +178,7 @@ try {
         throw 'Independent Windows Guardian exceeded its 30-second inspection limit.'
       }
       $diagnostic = $process.StandardError.ReadToEnd().Trim()
-      if (($Argument -ceq '--inspect' -or $Argument -ceq '--audit-native-identity') -and $process.ExitCode -ne 0) {
+      if (($Argument -ceq '--inspect' -or $Argument -ceq '--audit-native-identity' -or $Argument -ceq '--audit-native-journal') -and $process.ExitCode -ne 0) {
         Write-Host ('Windows Guardian inspection diagnosis: ' + $diagnostic)
       }
       return [int]$process.ExitCode
@@ -364,6 +364,68 @@ try {
     Remove-Item -LiteralPath $NativeStoreProbe -Recurse -Force -ErrorAction SilentlyContinue
   }
   Write-Output "Windows $FixtureTarget Guardian native Main identity audit positive/negative hosted acceptance PASSED."
+  # Independently inspect the exact 3-part durable Main transaction
+  # ownership without activating Main, recovering a lock or changing WPF.
+  Assert-True ((Invoke-GuardianCheck '--audit-native-journal') -eq 70) 'Guardian accepted a journal with no owning active receipt.'
+  $JournalId = 'main-' + ('3' * 32)
+  $JournalCurrent = $FixtureSourceSha
+  $JournalTarget = $(if ($JournalCurrent -ceq ('b' * 40)) { 'c' * 40 } else { 'b' * 40 })
+  $JournalStart = '2026-10-11T18:00:00.000Z'
+  $JournalLock = Join-Path $NativeTxRoot 'active.json'
+  $JournalReceiptDir = Join-Path $NativeTxRoot 'receipts'
+  $JournalDataDir = Join-Path $NativeTxRoot 'guardian-journal'
+  $JournalReceipt = Join-Path $JournalReceiptDir ("$JournalId.json")
+  $JournalData = Join-Path $JournalDataDir ("$JournalId.json")
+  $JournalGuard = Join-Path $JournalDataDir (".$JournalId.writer-lock")
+  if ((Test-Path -LiteralPath $JournalLock) -or (Test-Path -LiteralPath $JournalReceipt) -or (Test-Path -LiteralPath $JournalData)) {
+    throw 'Hosted native journal test requires an unoccupied transaction identity.'
+  }
+  [IO.Directory]::CreateDirectory($JournalReceiptDir) | Out-Null
+  [IO.Directory]::CreateDirectory($JournalDataDir) | Out-Null
+  $JournalMarker = [ordered]@{schemaVersion=1;transactionId=$JournalId;channel='main';currentSha=$JournalCurrent;targetSha=$JournalTarget;startedAt=$JournalStart}
+  $JournalReceiptValue = [ordered]@{
+    schemaVersion=1;transactionId=$JournalId;channel='main';status='promoting';stage='ready_to_switch';
+    currentSha=$JournalCurrent;targetSha=$JournalTarget;rollbackSha=$JournalCurrent;
+    rollbackSourceRoot=$ManagedSourceRoot;targetSourceRoot=$null;startedAt=$JournalStart;
+    updatedAt=$JournalStart;lastError=$null
+  }
+  $JournalValue = [ordered]@{
+    schemaVersion=1;channel='main';transactionId=$JournalId;target=$FixtureTarget;
+    currentSha=$JournalCurrent;targetSha=$JournalTarget;receiptStartedAt=$JournalStart;
+    previousNative=[ordered]@{kind='stable';version=$FixtureVersion};
+    targetRuntimeContractSha256=('f' * 64);stage='prepared';sequence=0;
+    createdAt=$JournalStart;updatedAt=$JournalStart
+  }
+  try {
+    [IO.File]::WriteAllText($JournalLock, ($JournalMarker | ConvertTo-Json -Depth 5))
+    [IO.File]::WriteAllText($JournalReceipt, ($JournalReceiptValue | ConvertTo-Json -Depth 5))
+    [IO.File]::WriteAllText($JournalData, ($JournalValue | ConvertTo-Json -Depth 5))
+    Assert-True ((Invoke-GuardianCheck '--audit-native-journal') -eq 0) 'Guardian refused an exact structurally owned in-progress journal.'
+    Assert-True ((Invoke-GuardianCheck '--inspect') -eq 70) 'Stable Guardian must not start while the journal owns an active Main lock.'
+    $JournalReceiptValue.targetSha = $(if ($JournalTarget -ceq ('c' * 40)) { 'd' * 40 } else { 'c' * 40 })
+    [IO.File]::WriteAllText($JournalReceipt, ($JournalReceiptValue | ConvertTo-Json -Depth 5))
+    Assert-True ((Invoke-GuardianCheck '--audit-native-journal') -eq 70) 'Guardian admitted a receipt with foreign target source SHA.'
+    $JournalReceiptValue.targetSha = $JournalTarget
+    [IO.File]::WriteAllText($JournalReceipt, ($JournalReceiptValue | ConvertTo-Json -Depth 5))
+    $JournalValue.sequence = 4
+    [IO.File]::WriteAllText($JournalData, ($JournalValue | ConvertTo-Json -Depth 5))
+    Assert-True ((Invoke-GuardianCheck '--audit-native-journal') -eq 70) 'Guardian trusted an impossible journal stage generation.'
+    $JournalValue.sequence = 0
+    [IO.File]::WriteAllText($JournalData, ($JournalValue | ConvertTo-Json -Depth 5))
+    [IO.File]::WriteAllText($JournalGuard, 'foreign persistent writer')
+    try { Assert-True ((Invoke-GuardianCheck '--audit-native-journal') -eq 70) 'Guardian reclaimed a persistent journal writer lock.' }
+    finally { Remove-Item -LiteralPath $JournalGuard -Force -ErrorAction SilentlyContinue }
+    $JournalValue.stage = 'committed'; $JournalValue.sequence = 6
+    [IO.File]::WriteAllText($JournalData, ($JournalValue | ConvertTo-Json -Depth 5))
+    Assert-True ((Invoke-GuardianCheck '--audit-native-journal') -eq 70) 'Guardian accepted claimed terminal success with an active lock.'
+    $JournalValue.stage = 'prepared'; $JournalValue.sequence = 0
+    [IO.File]::WriteAllText($JournalData, ($JournalValue | ConvertTo-Json -Depth 5))
+    Assert-True ((Invoke-GuardianCheck '--audit-native-journal') -eq 0) 'Guardian refused restored structurally owned in-progress journal.'
+  } finally {
+    Remove-Item -LiteralPath $JournalGuard,$JournalData,$JournalReceipt,$JournalLock -Force -ErrorAction SilentlyContinue
+  }
+  Assert-True ((Invoke-GuardianCheck '--audit-native-journal') -eq 70) 'Guardian accepted an orphan journal after its owning active receipt disappeared.'
+  Write-Output "Windows $FixtureTarget Guardian native journal ownership audit positive/negative hosted acceptance PASSED."
   $OwnedGit = Join-Path $InstallRoot ("runtime\toolchain\git\2.53.0-4\$FixtureTarget\cmd\git.exe")
   $OwnedNode = Join-Path $InstallRoot ("runtime\toolchain\node\26.11.1\$FixtureTarget\node.exe")
   $OwnedNpm = Join-Path $InstallRoot ("runtime\toolchain\node\26.11.1\$FixtureTarget\node_modules\npm\bin\npm-cli.js")
