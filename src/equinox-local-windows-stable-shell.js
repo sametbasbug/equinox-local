@@ -263,8 +263,41 @@ export async function replaceWindowsStableShellForRelease({
   } catch (error) {
     await fsImpl.rm(staged.stagedRoot, { recursive: true, force: true }).catch(() => {});
     if (movedPrevious) {
-      await fsImpl.rm(programRoot, { recursive: true, force: true }).catch(() => {});
-      await fsImpl.rename(backupRoot, programRoot).catch(() => {});
+      // The previous executable tree is the last runnable native shell. Never
+      // erase a candidate or swallow a failed restore and pretend it rolled
+      // back. Verify the backup before moving any live program directory.
+      let quarantineRoot = null;
+      try {
+        const backupSnapshot = await snapshotWindowsStableShellTree(backupRoot, { fsImpl, ignoreLegacyCache: true });
+        if (!sameWindowsStableShellTree(previous.sourceSnapshot, backupSnapshot)) {
+          throw new Error("Windows shell backup identity changed after the native swap.");
+        }
+        let currentExists = false;
+        try {
+          const stat = await fsImpl.lstat(programRoot);
+          if (!stat.isDirectory() || stat.isSymbolicLink()) {
+            throw new Error("Windows shell candidate root is unsafe during native rollback.");
+          }
+          currentExists = true;
+        } catch (inner) {
+          if (inner?.code !== "ENOENT") throw inner;
+        }
+        if (currentExists) {
+          quarantineRoot = path.join(path.dirname(programRoot), `.equinox-shell-failed-${process.pid}-${randomBytes(8).toString("hex")}`);
+          await fsImpl.rename(programRoot, quarantineRoot);
+        }
+        await fsImpl.rename(backupRoot, programRoot);
+        const restored = await snapshotWindowsStableShellTree(programRoot, { fsImpl, ignoreLegacyCache: true });
+        if (!sameWindowsStableShellTree(previous.sourceSnapshot, restored)) {
+          throw new Error("Restored Windows native shell failed rollback integrity verification.");
+        }
+      } catch (rollbackError) {
+        // The old backup and (if renamed) quarantined candidate are deliberately
+        // retained for an independently owned supervisor/operator to inspect.
+        // This must not be reported as an ordinary candidate promotion error.
+        throw new AggregateError([error, rollbackError], "Windows shell native rollback failed; verified backup must be recovered before another update.");
+      }
+      if (quarantineRoot) await fsImpl.rm(quarantineRoot, { recursive: true, force: true }).catch(() => {});
     }
     throw error;
   }
