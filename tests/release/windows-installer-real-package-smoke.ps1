@@ -433,6 +433,8 @@ try {
   $JournalShellTrigger = Join-Path $Work 'start-wpf-quiesce-client.trigger'
   $JournalIntegratedTrigger = Join-Path $Work 'start-integrated-native-ab-client.trigger'
   $JournalIntegratedDiagnostic = Join-Path $Work 'integrated-ab-worker-diagnostic.log'
+  $JournalGuardianSpawnTrigger = Join-Path $Work 'start-fixed-guardian-from-original-worker.trigger'
+  $JournalGuardianPidReceipt = Join-Path $Work 'worker-owned-guardian-os-pid.receipt'
   $JournalNativeStagedCommit = Join-Path $JournalDataDir ("$JournalId.native_staged.commit.json")
   $JournalShellStoppedCommit = Join-Path $JournalDataDir ("$JournalId.shell_stopped.commit.json")
   $JournalSwitchedCommit = Join-Path $JournalDataDir ("$JournalId.switched.commit.json")
@@ -501,6 +503,12 @@ try {
       $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_JOURNAL_ABORT_TRIGGER'] = $JournalAbortTrigger
       $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_WPF_QUIESCE_TRIGGER'] = $JournalShellTrigger
       $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_INTEGRATED_AB_TRIGGER'] = $JournalIntegratedTrigger
+      $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_GUARDIAN_SPAWN_TRIGGER'] = $JournalGuardianSpawnTrigger
+      $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_GUARDIAN_PID_RECEIPT'] = $JournalGuardianPidReceipt
+      $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_GUARDIAN_LAUNCH_MODULE'] = Join-Path $Root 'src\equinox-local-windows-native-guardian-launch.js'
+      $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_GUARDIAN_STABLE_VERSION'] = $FixtureVersion
+      $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_GUARDIAN_TARGET'] = $FixtureTarget
+      $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_AB_CURRENT_SHA'] = $JournalCurrent
       $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_AB_CLIENT_MODULE'] = Join-Path $Root 'src\equinox-local-windows-native-ab-owner-client.js'
       $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_AB_DIAGNOSTIC_FILE'] = $JournalIntegratedDiagnostic
       $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_AB_RESTART_TRIGGER'] = $JournalBRestartTrigger
@@ -717,10 +725,23 @@ try {
       try {
         $StagedBRelease = Join-Path $JournalIntegratedB 'release'
         $StagedBRuntime = Join-Path $StagedBRelease 'runtime'
-        [IO.Directory]::CreateDirectory($StagedBRuntime) | Out-Null
-        Copy-Item -LiteralPath (Join-Path $ReleaseDir 'runtime\shell') -Destination (Join-Path $StagedBRuntime 'shell') -Recurse -ErrorAction Stop
-        Copy-Item -LiteralPath (Join-Path $ReleaseDir 'runtime\browser') -Destination (Join-Path $StagedBRuntime 'browser') -Recurse -ErrorAction Stop
-        Copy-Item -LiteralPath (Join-Path $ReleaseDir 'release.json') -Destination (Join-Path $StagedBRelease 'release.json') -ErrorAction Stop
+        # A real native B release contains the product Node runtime, gate,
+        # supervisor JS, server entry and every native WPF/Browser component.
+        # Earlier disposable fixtures copied ONLY shell+browser, therefore
+        # the genuine B WPF launched but its backend raised
+        # FileNotFoundException for B runtime/node/bin/node.exe.
+        # Copy the complete already-installed signed Stable release ONLY in
+        # this hosted test profile, then add a distinct test-only native B PE
+        # marker before the immutable full-tree fingerprint is generated.
+        & robocopy.exe $ReleaseDir $StagedBRelease /E /COPY:DAT /DCOPY:DAT /R:1 /W:1 /NFL /NDL /NJH /NJS /NP | Out-Null
+        $BReleaseCopyResult = $LASTEXITCODE
+        Assert-True ($BReleaseCopyResult -ge 0 -and $BReleaseCopyResult -le 7) 'Disposable native B full release copy failed.'
+        Assert-True ([IO.File]::Exists((Join-Path $StagedBRuntime 'node\bin\node.exe'))) 'Native B release is missing real owned Node runtime.'
+        Assert-True ([IO.File]::Exists((Join-Path $StagedBRelease 'equinox-local-windows-runtime-gate.mjs'))) 'Native B release is missing runtime gate.'
+        Assert-True ([IO.File]::Exists((Join-Path $StagedBRelease 'equinox-local-windows-runtime-supervisor.js'))) 'Native B release is missing Node runtime supervisor.'
+        Assert-True ([IO.File]::Exists((Join-Path $StagedBRelease 'server.js'))) 'Native B release is missing managed server bootstrap.'
+        Assert-True ([IO.File]::Exists((Join-Path $StagedBRuntime 'shell\EquinoxLocal.exe'))) 'Native B release is missing Windows WPF shell.'
+        Assert-True ([IO.File]::Exists((Join-Path $StagedBRuntime 'browser\equinox-browser-native-host.exe'))) 'Native B release is missing Chrome Native Messaging launcher.'
         # Distinct test-only PE tree marker makes B physically observable;
         # the full native fingerprint includes this marker before admission.
         [IO.File]::WriteAllText((Join-Path $StagedBRuntime 'shell\native-b-ci-only.marker'), 'native-b-test-fixture')
@@ -733,13 +754,26 @@ try {
           payloadVersion=$FixtureVersion;releaseFingerprint=$IntegratedFingerprint
         }
         [IO.File]::WriteAllText((Join-Path $JournalIntegratedB 'native-store.json'), ($StagedBManifest | ConvertTo-Json -Depth 5))
-        $IntegratedStart = [Diagnostics.ProcessStartInfo]::new($GuardianExe)
-        $IntegratedStart.Arguments = '--hold-native-integrated-ab'
-        $IntegratedStart.UseShellExecute = $false
-        $IntegratedStart.CreateNoWindow = $true
-        $IntegratedStart.RedirectStandardError = $true
-        $IntegratedGuardian = [Diagnostics.Process]::Start($IntegratedStart)
-        Assert-True ($null -ne $IntegratedGuardian) 'Integrated native Guardian process refused launch.'
+        # Real product-owned detached Node now launches the independently
+        # provisioned native Guardian, NOT hosted PowerShell. Native OS PID,
+        # argv, logon LUID, pipe peer proof and lock admission remain in the
+        # immutable guardian; worker-side spawn is NOT mutation permission.
+        [IO.File]::WriteAllText($JournalGuardianSpawnTrigger, 'disposable-worker-fixed-native-guardian')
+        $GuardianPidConfirmed = $false
+        for ($GuardianSpawnAttempt=0; $GuardianSpawnAttempt -lt 175; $GuardianSpawnAttempt++) {
+          if ([IO.File]::Exists($JournalGuardianPidReceipt)) { $GuardianPidConfirmed = $true; break }
+          if ($WorkerProcess.HasExited) { break }
+          Start-Sleep -Milliseconds 80
+        }
+        if (-not $GuardianPidConfirmed -and [IO.File]::Exists($JournalIntegratedDiagnostic)) {
+          Write-Output ('Worker-owned native Guardian launch diagnostic: ' + [IO.File]::ReadAllText($JournalIntegratedDiagnostic))
+        }
+        Assert-True $GuardianPidConfirmed 'Product-owned detached Main worker did not start the fixed native Guardian.'
+        $OwnedGuardianPidText = [IO.File]::ReadAllText($JournalGuardianPidReceipt).Trim()
+        Assert-True ($OwnedGuardianPidText -cmatch '^[1-9][0-9]{0,9}$') 'Worker Guardian OS PID receipt is malformed.'
+        $IntegratedGuardian = [Diagnostics.Process]::GetProcessById([int]$OwnedGuardianPidText)
+        Assert-True (-not $IntegratedGuardian.HasExited) 'Worker-spawned fixed native Guardian exited before its OS owner was admitted.'
+        Assert-True ((Same-Path $IntegratedGuardian.MainModule.FileName $GuardianExe)) 'Worker-spawned Guardian OS process executable is outside the exact provisioned path.'
         [IO.File]::WriteAllText($JournalIntegratedTrigger, 'disposable-ephemeral-worker')
         $IntegratedCommitted = $false
         $IntegratedBackup = Join-Path (Split-Path -Parent $StableExe | Split-Path -Parent) ('.equinox-shell-backup-' + $JournalId)
@@ -752,7 +786,7 @@ try {
           Start-Sleep -Milliseconds 120
         }
         if (-not $IntegratedCommitted -and $IntegratedGuardian.HasExited) {
-          Write-Output ('Integrated native supervisor failure phase: ' + $IntegratedGuardian.StandardError.ReadToEnd())
+          Write-Output 'Worker-launched independent Guardian exited before switched/3, OS PID retained for forensic check.'
           if (Test-Path -LiteralPath $JournalIntegratedDiagnostic) { Write-Output ('Integrated native worker: ' + [IO.File]::ReadAllText($JournalIntegratedDiagnostic)) }
         }
         Assert-True $IntegratedCommitted 'Independent Guardian could not verify B native slot and Native Messaging owner with durable switched journal.'
@@ -929,7 +963,7 @@ try {
         # Hosted test-only registry and manifest rollback happens before
         # restarting Stable A. Production always requires independent health.
         [IO.File]::WriteAllBytes($ExpectedManifestPath, $OriginalIntegratedNativeManifest)
-        Remove-Item -LiteralPath $JournalGuard,$JournalAuthority,$JournalShellQuiesced,$JournalIntegratedTrigger,$JournalBRestartTrigger,$JournalRestartedReceipt,$JournalNativeStagedCommit,$JournalShellStoppedCommit,$JournalSwitchedCommit,$JournalRestartedCommit -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $JournalGuard,$JournalAuthority,$JournalShellQuiesced,$JournalIntegratedTrigger,$JournalGuardianSpawnTrigger,$JournalGuardianPidReceipt,$JournalBRestartTrigger,$JournalRestartedReceipt,$JournalNativeStagedCommit,$JournalShellStoppedCommit,$JournalSwitchedCommit,$JournalRestartedCommit -Force -ErrorAction SilentlyContinue
         Remove-Item -LiteralPath $JournalIntegratedB -Recurse -Force -ErrorAction SilentlyContinue
         [IO.File]::WriteAllText($JournalData, ($JournalValue | ConvertTo-Json -Depth 5))
         $IntegratedWpfRestart = [Diagnostics.ProcessStartInfo]::new($StableExe)

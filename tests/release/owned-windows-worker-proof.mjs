@@ -17,6 +17,47 @@ const trigger = process.env.EQUINOX_LOCAL_TEST_JOURNAL_TRIGGER;
 const abortTrigger = process.env.EQUINOX_LOCAL_TEST_JOURNAL_ABORT_TRIGGER;
 const shellTrigger = process.env.EQUINOX_LOCAL_TEST_WPF_QUIESCE_TRIGGER;
 const integratedTrigger = process.env.EQUINOX_LOCAL_TEST_INTEGRATED_AB_TRIGGER;
+// Unlike earlier PowerShell-owned hosted fixtures, launch the actual native
+// Guardian from the SAME OS-owned product Node worker. The fixed product
+// launcher checks the trusted installed binary against the Stable release;
+// Guardian STILL independently admits PID/birthtime/argv/SID/LUID/HMAC/lease.
+// This is hosted-only; it is NOT a production Main supervisor capability.
+const guardianSpawnTrigger = process.env.EQUINOX_LOCAL_TEST_GUARDIAN_SPAWN_TRIGGER;
+if (guardianSpawnTrigger) {
+  const pidReceipt = process.env.EQUINOX_LOCAL_TEST_GUARDIAN_PID_RECEIPT;
+  const launcherModule = process.env.EQUINOX_LOCAL_TEST_GUARDIAN_LAUNCH_MODULE;
+  if (!pidReceipt || !launcherModule || process.env.GITHUB_ACTIONS !== 'true') {
+    throw new Error('Hosted native Guardian launch lacks its fixed isolated fixture inputs.');
+  }
+  const bootTimer = setInterval(() => {
+    if (!fs.existsSync(guardianSpawnTrigger)) return;
+    clearInterval(bootTimer);
+    void (async () => {
+      const path = await import('node:path');
+      const txRoot = process.env.EQUINOX_LOCAL_TEST_JOURNAL_TX_ROOT;
+      const installRoot = path.win32.join(process.env.LOCALAPPDATA, 'Equinox Local');
+      const releaseDir = path.win32.join(installRoot, 'releases', process.env.EQUINOX_LOCAL_TEST_GUARDIAN_STABLE_VERSION);
+      const { launchEquinoxLocalWindowsNativeMainGuardian } = await import(pathToFileURL(launcherModule).href);
+      const launched = await launchEquinoxLocalWindowsNativeMainGuardian({
+        transactionId: process.env.EQUINOX_LOCAL_TEST_WORKER_TX,
+        transactionRoot: txRoot,
+        currentSha: process.env.EQUINOX_LOCAL_TEST_AB_CURRENT_SHA,
+        targetSha: process.env.EQUINOX_LOCAL_TEST_AB_TARGET_SHA,
+        workerToken: process.env.EQUINOX_LOCAL_MAIN_WORKER_TOKEN,
+        installation: { managed: true, selfUpdateSupported: true, target: process.env.EQUINOX_LOCAL_TEST_GUARDIAN_TARGET,
+          installRoot, releaseDir },
+      });
+      fs.writeFileSync(pidReceipt, `${launched.guardianPid}\n`, { flag: 'wx' });
+    })().catch((error) => {
+      const diagnostic = process.env.EQUINOX_LOCAL_TEST_AB_DIAGNOSTIC_FILE;
+      const kind = String(error?.name ?? 'error').slice(0, 45);
+      if (diagnostic) try { fs.appendFileSync(diagnostic, `guardian-launch:${kind}\n`); } catch { }
+      console.error('Hosted fixed native Guardian launch refused:', kind);
+      process.exitCode = 1;
+    });
+  }, 90);
+  bootTimer.unref();
+}
 for (const source of [trigger, abortTrigger, shellTrigger, integratedTrigger].filter(Boolean)) {
   const clientModule = process.env.EQUINOX_LOCAL_TEST_JOURNAL_CLIENT_MODULE;
   if (!clientModule) throw new Error('Test worker journal client module is missing.');
