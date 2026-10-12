@@ -18,6 +18,7 @@ import {
 } from "./equinox-local-native-app-host.js";
 import { readBoundedNormalFile, writeBoundedUtf8File } from "./equinox-local-safe-file.js";
 import { parseEquinoxVersion } from "./equinox-local-updater.js";
+import { createSupervisorBoundWindowsNativeABLifecycle, requireWindowsNativeABSupervisor } from "./equinox-local-windows-native-ab-supervisor-bound.js";
 import {
   inspectWindowsStableShellRollbackSnapshot,
   replaceWindowsStableShellForRelease,
@@ -110,6 +111,9 @@ export async function writeEquinoxLocalMainNativeRecoveryDescriptor({
   transactionId,
   fsImpl = fs,
 } = {}) {
+  if (transition.target.startsWith("win32-") && windowsAdmission) {
+    requireWindowsNativeABSupervisor({ windowsAdmission, transition, transactionId });
+  }
   const paths = recoveryPath(transactionRoot, transactionId);
   const descriptor = equinoxLocalMainNativeRecoveryDescriptor({ transition, previousPointer, installation });
   await fsImpl.mkdir(paths.rollbackRoot, { recursive: true, mode: 0o700 });
@@ -170,6 +174,8 @@ export async function recoverEquinoxLocalMainNativeLifecycle({
   fsImpl = fs,
   execFileImpl,
   env = process.env,
+  windowsAdmission = null,
+  createBoundWindowsABImpl = createSupervisorBoundWindowsNativeABLifecycle,
   readDescriptorImpl = readEquinoxLocalMainNativeRecoveryDescriptor,
   inspectStoredReleaseImpl = inspectEquinoxLocalMainNativeStoredRelease,
   writePointerImpl = writeEquinoxLocalMainNativePointer,
@@ -221,6 +227,13 @@ export async function recoverEquinoxLocalMainNativeLifecycle({
   await inspectWindowsSnapshotImpl({ snapshotReleaseDir, fsImpl });
   const previousLauncher = windowsLauncherPathImpl(previousRelease);
   const targetLauncher = windowsLauncherPathImpl(targetRelease);
+  if (windowsAdmission) {
+    return createBoundWindowsABImpl({ windowsAdmission, transition, transactionId, stored,
+      previousPointer: descriptor.previous, previousReleaseDir: previousRelease,
+      programRoot, manifestRoot, transactionRoot: paths.root, pointerPath: paths.pointerPath,
+      fsImpl, execFileImpl, env, writePointerImpl, assertNativeHostImpl: assertWindowsNativeHostImpl,
+      registerNativeHostImpl: registerWindowsNativeHostImpl, launcherPathImpl: windowsLauncherPathImpl });
+  }
   return Object.freeze({
     target: transition.target,
     stored,
