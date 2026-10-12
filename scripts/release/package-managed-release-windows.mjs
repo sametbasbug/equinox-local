@@ -443,11 +443,22 @@ async function compileWindowsGuardian(rootDir, releaseDir, transaction, contract
   const bin = path.join(transaction, "guardian-bin", contract.shellRid);
   const obj = path.join(transaction, "guardian-obj", contract.shellRid);
   await fs.mkdir(guardianDir, { recursive: true });
-  await execFile("dotnet", ["publish", project, "--configuration", "Release", "--runtime", contract.shellRid,
-    "--self-contained", "true", `-p:Platform=${contract.shellPlatform}`, `-p:BaseOutputPath=${bin}${path.sep}`,
-    `-p:BaseIntermediateOutputPath=${obj}${path.sep}`, "--output", guardianDir], {
-    cwd: rootDir, windowsHide: true, timeout: 180_000, maxBuffer: 2 * 1024 * 1024,
-  });
+  try {
+    await execFile("dotnet", ["publish", project, "--configuration", "Release", "--runtime", contract.shellRid,
+      "--self-contained", "true", `-p:Platform=${contract.shellPlatform}`, `-p:BaseOutputPath=${bin}${path.sep}`,
+      `-p:BaseIntermediateOutputPath=${obj}${path.sep}`, "--output", guardianDir], {
+      cwd: rootDir, windowsHide: true, timeout: 180_000, maxBuffer: 2 * 1024 * 1024,
+    });
+  } catch (error) {
+    // execFile rejects with stdout/stderr but its message alone only prints
+    // the command. Surface bounded compiler diagnostics so native x64/ARM64
+    // package failures are actionable without re-running the entire CI gate.
+    const output = `${error?.stdout ?? ""}\n${error?.stderr ?? ""}`;
+    const diagnostics = output.split(/\r?\n/u)
+      .filter((line) => /\berror (?:CS[0-9]+|MSB[0-9]+|NETSDK[0-9]+)\b|\bBuild FAILED\b/u.test(line))
+      .slice(0, 8).map((line) => line.slice(0, 450));
+    throw new Error(`Windows Guardian native publish failed (${contract.target}): ${diagnostics.join(" | ") || "no compiler diagnostics returned"}`);
+  }
   const executable = path.join(guardianDir, "EquinoxLocalGuardian.exe");
   const info = await fs.lstat(executable);
   if (!info.isFile() || info.isSymbolicLink() || (await portableExecutableMachine(executable)) !== contract.peMachine) {
