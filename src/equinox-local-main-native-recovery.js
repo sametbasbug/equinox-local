@@ -111,9 +111,6 @@ export async function writeEquinoxLocalMainNativeRecoveryDescriptor({
   transactionId,
   fsImpl = fs,
 } = {}) {
-  if (transition.target.startsWith("win32-") && windowsAdmission) {
-    requireWindowsNativeABSupervisor({ windowsAdmission, transition, transactionId });
-  }
   const paths = recoveryPath(transactionRoot, transactionId);
   const descriptor = equinoxLocalMainNativeRecoveryDescriptor({ transition, previousPointer, installation });
   await fsImpl.mkdir(paths.rollbackRoot, { recursive: true, mode: 0o700 });
@@ -191,6 +188,9 @@ export async function recoverEquinoxLocalMainNativeLifecycle({
 } = {}) {
   if (transition?.mode !== "artifact_required") throw new Error("Main native recovery requires an artifact transition.");
   if (!installation?.managed || !installation?.selfUpdateSupported || installation.target !== transition.target) throw new Error("Main native recovery requires the matching managed installation.");
+  if (transition.target.startsWith("win32-") && windowsAdmission) {
+    requireWindowsNativeABSupervisor({ windowsAdmission, transition, transactionId });
+  }
   const paths = recoveryPath(transactionRoot, transactionId);
   const descriptor = await readDescriptorImpl({
     transactionRoot: paths.root,
