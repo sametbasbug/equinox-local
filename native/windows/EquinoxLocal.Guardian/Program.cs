@@ -82,6 +82,12 @@ internal static partial class Program
                 if (reason.Length > 120) reason = reason[..120];
                 Console.Error.WriteLine($"Guardian inspection refused: phase={InspectionPhase}; kind={ex.GetType().Name}; code=0x{ex.HResult:x8}; reason={reason}");
             }
+            else if (args.Length == 1 && args[0] == "--hold-native-journal-authority")
+            {
+                // Bounded phase/type only: no worker token, paths, journal
+                // contents or dynamic exception reason enter CI diagnostics.
+                Console.Error.WriteLine($"Guardian authority refused: phase={InspectionPhase}; kind={ex.GetType().Name}; code=0x{ex.HResult:x8}");
+            }
             else Debug.WriteLine("Equinox Local Guardian refused launch: " + ex.GetType().Name);
             return 70;
         }

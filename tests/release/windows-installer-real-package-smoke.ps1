@@ -541,6 +541,7 @@ try {
         $AuthorityStart.Arguments = '--hold-native-journal-authority'
         $AuthorityStart.UseShellExecute = $false
         $AuthorityStart.CreateNoWindow = $true
+        $AuthorityStart.RedirectStandardError = $true
         $AuthorityProcess = [Diagnostics.Process]::Start($AuthorityStart)
         Assert-True ($null -ne $AuthorityProcess) 'Independent native journal authority failed to launch.'
         [IO.File]::WriteAllText($JournalAuthorityTrigger, 'fixed-test-only-trigger')
@@ -549,6 +550,9 @@ try {
           if ([IO.File]::Exists($JournalAuthority) -and -not $AuthorityProcess.HasExited) { $AuthorityDurable = $true; break }
           if ($AuthorityProcess.HasExited) { break }
           Start-Sleep -Milliseconds 110
+        }
+        if (-not $AuthorityDurable -and $AuthorityProcess.HasExited) {
+          Write-Output ('Hosted native authority diagnostic: ' + $AuthorityProcess.StandardError.ReadToEnd())
         }
         Assert-True $AuthorityDurable 'Native Guardian refused the real worker kernel PID-bound nonce/HMAC journal authority proof.'
         $AuthorityRecord = ConvertFrom-Json ([IO.File]::ReadAllText($JournalAuthority))
