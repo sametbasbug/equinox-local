@@ -393,6 +393,8 @@ try {
   $JournalAuthorityTrigger = Join-Path $Work 'start-journal-authority-client.trigger'
   $JournalAbortTrigger = Join-Path $Work 'start-journal-abort-client.trigger'
   $JournalAbortCommit = Join-Path $JournalDataDir ("$JournalId.abort-commit.json")
+  $JournalQuarantinedLock = Join-Path $JournalDataDir (".$JournalId.quarantined.writer-lock")
+  $JournalQuarantineReceipt = Join-Path $JournalDataDir ("$JournalId.orphan-quarantine.json")
   if ((Test-Path -LiteralPath $JournalLock) -or (Test-Path -LiteralPath $JournalReceipt) -or (Test-Path -LiteralPath $JournalData)) {
     throw 'Hosted native journal test requires an unoccupied transaction identity.'
   }
@@ -621,6 +623,30 @@ try {
           $AbortData.targetSha -ceq $JournalTarget) 'Independent native journal writer failed exact prepared-to-abort stage transition.'
         Assert-True ((Invoke-GuardianCheck '--audit-native-journal') -eq 70) 'Native journal stage writer orphan lock was auto-replayed.'
         Assert-True ((Invoke-GuardianCheck '--hold-native-prepared-abort') -eq 70) 'Native writer accepted duplicate prepared abort after owner crash.'
+        Assert-True ((Invoke-GuardianCheck '--reconcile-native-prepared-abort') -eq 70) 'Orphan recovery admitted a still-live detached worker.'
+        $WorkerProcess.Kill()
+        Assert-True ($WorkerProcess.WaitForExit(5000)) 'Detached worker did not terminate before offline orphan recovery.'
+        # Both OS PIDs are genuinely gone, previous Stable A shell bytes have
+        # not changed, and the independent native commit SHA is still exact.
+        $CommitBackup = [IO.File]::ReadAllBytes($JournalAbortCommit)
+        try {
+          $WrongCommit = ConvertFrom-Json ([Text.Encoding]::UTF8.GetString($CommitBackup))
+          $WrongCommit.journalSha256 = ('b' * 64)
+          [IO.File]::WriteAllText($JournalAbortCommit, ($WrongCommit | ConvertTo-Json -Depth 4))
+          Assert-True ((Invoke-GuardianCheck '--reconcile-native-prepared-abort') -eq 70) 'Orphan recovery accepted forged native abort commit SHA.'
+        } finally { [IO.File]::WriteAllBytes($JournalAbortCommit, $CommitBackup) }
+        Assert-True ((Invoke-GuardianCheck '--reconcile-native-prepared-abort') -eq 0) 'Native Guardian refused exact offline prepared abort orphan quarantine.'
+        Assert-True ((Test-Path -LiteralPath $JournalQuarantinedLock) -and
+          (Test-Path -LiteralPath $JournalQuarantineReceipt) -and
+          -not (Test-Path -LiteralPath $JournalGuard)) 'Offline native orphan proof did not preserve a quarantine writer lock.'
+        $QuarantineValue = ConvertFrom-Json ([IO.File]::ReadAllText($JournalQuarantineReceipt))
+        Assert-True ($QuarantineValue.transactionId -ceq $JournalId -and
+          $QuarantineValue.disposition -ceq 'quarantined-no-resume' -and
+          $QuarantineValue.workerPid -eq $WorkerProcess.Id -and
+          $QuarantineValue.guardianPid -eq $AbortOwner.Id -and
+          $QuarantineValue.journalSha256 -ceq $ActualAbortDigest) 'Native orphan recovery receipt identity or journal digest is foreign.'
+        Assert-True ((Invoke-GuardianCheck '--audit-native-journal') -eq 70) 'Quarantined native writer lock incorrectly allowed Main replay.'
+        Assert-True ((Invoke-GuardianCheck '--reconcile-native-prepared-abort') -eq 70) 'Orphan quarantine could be re-executed or replayed.'
       } finally {
         if ($null -ne $AbortOwner) {
           try { if (-not $AbortOwner.HasExited) { $AbortOwner.Kill() } } catch {}
@@ -628,7 +654,7 @@ try {
           $AbortOwner.Dispose()
         }
         # Only disposable CI fixture permits forced journal restoration.
-        Remove-Item -LiteralPath $JournalGuard,$JournalAuthority,$JournalAbortCommit,$JournalAbortTrigger -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $JournalGuard,$JournalAuthority,$JournalAbortCommit,$JournalAbortTrigger,$JournalQuarantinedLock,$JournalQuarantineReceipt -Force -ErrorAction SilentlyContinue
         [IO.File]::WriteAllText($JournalData, ($JournalValue | ConvertTo-Json -Depth 5))
       }
       Assert-True ((Invoke-GuardianCheck '--audit-native-journal') -eq 0) 'Disposable native abort test could not restore prepared journal for subsequent negative cases.'

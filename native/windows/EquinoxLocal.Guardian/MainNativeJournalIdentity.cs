@@ -26,7 +26,7 @@ internal static partial class Program
         return JsonDocument.Parse(File.ReadAllBytes(file));
     }
 
-    private static void InspectOwnedNativeTransitionJournal()
+    private static void InspectOwnedNativeTransitionJournal(bool allowExactPreparedAbortOrphanLock = false)
     {
         InspectionPhase = "native-journal-owner";
         var local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
@@ -98,7 +98,8 @@ internal static partial class Program
         foreach (var entry in Directory.EnumerateFileSystemEntries(journalDir))
         {
             var name = Path.GetFileName(entry);
-            if (name.EndsWith(".writer-lock", StringComparison.OrdinalIgnoreCase) ||
+            if ((name.EndsWith(".writer-lock", StringComparison.OrdinalIgnoreCase) &&
+                 !(allowExactPreparedAbortOrphanLock && name == "." + id + ".writer-lock")) ||
                 name.StartsWith("." + id + ".json.", StringComparison.OrdinalIgnoreCase))
                 throw new InvalidDataException("Unreconciled native journal writer or staging file blocks audit.");
         }

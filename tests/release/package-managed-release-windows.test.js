@@ -375,6 +375,25 @@ test("Windows native Guardian only commits prepared/0 to rollback_started/1 thro
   assert.doesNotMatch(code, /Process\.Start|Registry\.SetValue|native_staged"\)|shell_stopped"\)|switched"\)|healthy"\)|committed"\)/u);
 });
 
+test("Windows native Guardian quarantines only a dead exact prepared abort without unlocking Main", async () => {
+  const source = await fs.readFile(new URL('../../native/windows/EquinoxLocal.Guardian/MainNativePreparedAbortRecovery.cs', import.meta.url), 'utf8');
+  const program = await fs.readFile(new URL('../../native/windows/EquinoxLocal.Guardian/Program.cs', import.meta.url), 'utf8');
+  const audit = await fs.readFile(new URL('../../native/windows/EquinoxLocal.Guardian/MainNativeJournalIdentity.cs', import.meta.url), 'utf8');
+  assert.match(program, /--reconcile-native-prepared-abort/u);
+  assert.match(source, /InspectBaseline\(allowActiveOrphanForReconciliation: true\)/u);
+  assert.match(source, /InspectOwnedNativeTransitionJournal\(allowExactPreparedAbortOrphanLock: true\)/u);
+  assert.match(source, /GetProperty\("stage"\)\.GetString\(\) != "rollback_started"/u);
+  assert.match(source, /GetProperty\("sequence"\)\.GetInt32\(\) != 1/u);
+  assert.match(source, /GetProperty\("kind"\)\.GetString\(\) != "stable"/u);
+  assert.match(source, /OsProcessExists\(workerPid\) \|\| OsProcessExists\(guardianPid\)/u);
+  assert.match(source, /CryptographicOperations\.FixedTimeEquals/u);
+  assert.match(source, /"quarantined-no-resume"/u);
+  assert.match(source, /FileMode\.CreateNew, FileAccess\.Write/u);
+  assert.match(source, /File\.Move\(lockPath, quarantinedLock\)/u);
+  assert.match(audit, /name\.EndsWith\("\.writer-lock"/u);
+  assert.doesNotMatch(source, /File\.Delete|Directory\.Delete|Process\.Start|Registry\.SetValue|native_staged"\)|switched"\)|healthy"\)|committed"\)/u);
+});
+
 test("independent native Guardian obtains an OS-exclusive durable journal lease with no automatic reclaim or WPF mutation", async () => {
   const program = await fs.readFile(new URL('../../native/windows/EquinoxLocal.Guardian/Program.cs', import.meta.url), 'utf8');
   const code = await fs.readFile(new URL('../../native/windows/EquinoxLocal.Guardian/MainNativeJournalLease.cs', import.meta.url), 'utf8');
