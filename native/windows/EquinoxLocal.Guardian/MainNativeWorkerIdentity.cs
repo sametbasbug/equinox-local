@@ -1,3 +1,4 @@
+using System.Buffers.Binary;
 using System.Diagnostics;
 using System.Globalization;
 using System.Text.Json;
@@ -15,11 +16,37 @@ internal static partial class Program
     private static readonly Regex WorkerTicksPattern = new("^[0-9]{1,19}$", RegexOptions.CultureInvariant);
 
     private const uint TokenQuery = 0x0008;
+    private const int TokenStatisticsClass = 10;
+    private const int Win32InsufficientBuffer = 122;
+    // TOKEN_STATISTICS has two consecutive Windows LUIDs: TokenId at 0,
+    // AuthenticationId at 8. Both Windows x64 and ARM64 are little-endian.
+    private const int AuthenticationIdOffset = 8;
+    private const int MinimumTokenStatisticsBytes = 16;
+    private const int MaximumTokenStatisticsBytes = 512;
 
     [DllImport("advapi32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool OpenProcessToken(IntPtr processHandle, uint desiredAccess,
         out SafeAccessTokenHandle tokenHandle);
+
+    [DllImport("advapi32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetTokenInformation(SafeAccessTokenHandle tokenHandle,
+        int tokenInformationClass, [Out] byte[]? tokenInformation,
+        int tokenInformationLength, out int returnLength);
+
+    private static long ReadWindowsLogonAuthenticationId(SafeAccessTokenHandle token)
+    {
+        if (GetTokenInformation(token, TokenStatisticsClass, null, 0, out var requiredBytes) ||
+            Marshal.GetLastWin32Error() != Win32InsufficientBuffer ||
+            requiredBytes is < MinimumTokenStatisticsBytes or > MaximumTokenStatisticsBytes)
+            throw new InvalidDataException("Windows token statistics length or ownership is invalid.");
+        var bytes = new byte[requiredBytes];
+        if (!GetTokenInformation(token, TokenStatisticsClass, bytes, bytes.Length, out var writtenBytes) ||
+            writtenBytes < MinimumTokenStatisticsBytes || writtenBytes > bytes.Length)
+            throw new InvalidDataException("Cannot independently read Windows worker logon identity.");
+        return BinaryPrimitives.ReadInt64LittleEndian(bytes.AsSpan(AuthenticationIdOffset, sizeof(long)));
+    }
 
     // Independently prove the OS PID/start-time/executable/user-SID tuple. A signed
     // ownership record by itself is not proof of a live owner, and PID reuse
@@ -110,6 +137,14 @@ internal static partial class Program
             var guardianSid = guardianIdentity.User;
             if (workerSid is null || guardianSid is null || !workerSid.Equals(guardianSid))
                 throw new InvalidDataException("Detached worker user SID differs from current Guardian owner.");
+            InspectionPhase = "native-worker-logon-authentication";
+            // SID and Terminal Services SessionId equality do not establish a
+            // shared logon. Compare the OS-assigned TOKEN_STATISTICS AuthenticationId
+            // LUID (not usernames, environment data or a worker-owned receipt).
+            var workerLogon = ReadWindowsLogonAuthenticationId(workerToken);
+            var guardianLogon = ReadWindowsLogonAuthenticationId(guardianIdentity.AccessToken);
+            if (workerLogon == 0 || guardianLogon == 0 || workerLogon != guardianLogon)
+                throw new InvalidDataException("Detached worker Windows logon authentication identity differs from Guardian.");
         }
         InspectionPhase = "native-worker-os-session";
         // A Windows user SID identifies the account, not the interactive/logon
