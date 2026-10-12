@@ -356,6 +356,23 @@ test("native journal authority accepts only kernel-PID+HMAC live prepared worker
   assert.doesNotMatch(source, /Process\.Start|Registry\.SetValue|\.writer-lock"\s*,\s*FileMode\.OpenOrCreate|"shell_stopped"|"switched"/u);
 });
 
+test("integrated Guardian authorizes the existing shared JS native A/B slot instead of duplicate filesystem replacement", async () => {
+  const code = await fs.readFile(new URL('../../native/windows/EquinoxLocal.Guardian/MainNativeIntegratedABSlot.cs', import.meta.url), 'utf8');
+  const client = await fs.readFile(new URL('../../src/equinox-local-windows-native-ab-owner-client.js', import.meta.url), 'utf8');
+  assert.match(code, /GetNamedPipeClientProcessId\(endpoint\.SafePipeHandle/u);
+  assert.match(code, /clientPid != owner\.Pid/u);
+  assert.match(code, /CryptographicOperations\.FixedTimeEquals\(response, expected\)/u);
+  assert.match(code, /journal\.RootElement\.GetProperty\("stage"\)\.GetString\(\) != "shell_stopped"/u);
+  assert.match(code, /endpoint\.WriteByte\(\(byte\)'S'\)/u);
+  assert.match(code, /CompareNativeTrees\(newShell, program\)/u);
+  assert.match(code, /CompareNativeTrees\(previousShell, backup\)/u);
+  assert.doesNotMatch(code, /Directory\.Move|File\.Move|Registry\.SetValue|Process\.Start|File\.Delete/u);
+  assert.match(client, /switchWindowsNativeABSlot/u);
+  assert.match(client, /createHmac\('sha256', key\)/u);
+  assert.match(client, /journal\.stage !== 'shell_stopped'/u);
+  assert.match(client, /programRoot: path\.win32\.join\(env\.LOCALAPPDATA, 'Programs', 'Equinox Local'\)/u);
+});
+
 test("integrated Windows Guardian stages exact native B and journals two real milestones under one exclusive owner", async () => {
   const source = await fs.readFile(new URL('../../native/windows/EquinoxLocal.Guardian/MainNativeIntegratedABSupervisor.cs', import.meta.url), 'utf8');
   const program = await fs.readFile(new URL('../../native/windows/EquinoxLocal.Guardian/Program.cs', import.meta.url), 'utf8');

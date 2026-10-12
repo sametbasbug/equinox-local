@@ -33,6 +33,27 @@ for (const source of [trigger, abortTrigger, shellTrigger, integratedTrigger].fi
       for (let attempt = 0; attempt < 30; attempt += 1) {
         try {
           await proveEquinoxWindowsNativeJournalAuthority({transactionId: tx, transactionRoot: root, workerToken: token});
+          if (source === integratedTrigger) {
+            const modulePath = process.env.EQUINOX_LOCAL_TEST_AB_CLIENT_MODULE;
+            if (!modulePath) throw new Error('Product native A/B slot client module is missing.');
+            const { runEquinoxLocalWindowsGuardianOwnedSlot } = await import(pathToFileURL(modulePath).href);
+            // The owner Guardian now independently advances the two durable
+            // milestones, then grants the existing shared JS A/B swap. This
+            // is explicitly a hosted disposable native installation only.
+            for (let slotAttempt = 0; slotAttempt < 120; slotAttempt += 1) {
+              try {
+                await runEquinoxLocalWindowsGuardianOwnedSlot({transactionId: tx, transactionRoot: root, workerToken: token});
+                return;
+              } catch (error) {
+                // Retry only before the fixed grant; a failed/ambiguous
+                // physical swap must NEVER be attempted automatically twice.
+                const notStarted = error?.code === 'ENOENT' || error?.code === 'ECONNREFUSED' ||
+                  /refuses a foreign journal stage or Stable A/u.test(error?.message ?? '');
+                if (!notStarted || slotAttempt === 119) throw error;
+                await new Promise(resolve => setTimeout(resolve, 250));
+              }
+            }
+          }
           return;
         } catch (error) {
           if (attempt === 29) throw error;

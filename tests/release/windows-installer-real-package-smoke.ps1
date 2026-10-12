@@ -458,6 +458,7 @@ try {
       $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_JOURNAL_ABORT_TRIGGER'] = $JournalAbortTrigger
       $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_WPF_QUIESCE_TRIGGER'] = $JournalShellTrigger
       $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_INTEGRATED_AB_TRIGGER'] = $JournalIntegratedTrigger
+      $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_AB_CLIENT_MODULE'] = Join-Path $Root 'src\equinox-local-windows-native-ab-owner-client.js'
       $WorkerProcess = [Diagnostics.Process]::Start($WorkerStartInfo)
       if ($null -eq $WorkerProcess) { throw 'Unable to start ephemeral owned Node process for Guardian audit.' }
       $WorkerRecord = [ordered]@{
@@ -668,6 +669,9 @@ try {
         Copy-Item -LiteralPath (Join-Path $ReleaseDir 'runtime\shell') -Destination (Join-Path $StagedBRuntime 'shell') -Recurse -ErrorAction Stop
         Copy-Item -LiteralPath (Join-Path $ReleaseDir 'runtime\browser') -Destination (Join-Path $StagedBRuntime 'browser') -Recurse -ErrorAction Stop
         Copy-Item -LiteralPath (Join-Path $ReleaseDir 'release.json') -Destination (Join-Path $StagedBRelease 'release.json') -ErrorAction Stop
+        # Distinct test-only PE tree marker makes B physically observable;
+        # the full native fingerprint includes this marker before admission.
+        [IO.File]::WriteAllText((Join-Path $StagedBRuntime 'shell\native-b-ci-only.marker'), 'native-b-test-fixture')
         $IntegratedFingerprintJson = & $OwnedFingerprintNode (Join-Path $Root 'tests/release/guardian-native-fingerprint-fixture.mjs') $StagedBRelease
         Assert-True ($LASTEXITCODE -eq 0) 'Integrated native B fingerprint fixture failed to inspect exact PE bytes.'
         $IntegratedFingerprint = $IntegratedFingerprintJson | ConvertFrom-Json
@@ -686,15 +690,19 @@ try {
         Assert-True ($null -ne $IntegratedGuardian) 'Integrated native Guardian process refused launch.'
         [IO.File]::WriteAllText($JournalIntegratedTrigger, 'disposable-ephemeral-worker')
         $IntegratedCommitted = $false
-        for ($IntegratedAttempt=0; $IntegratedAttempt -lt 140; $IntegratedAttempt++) {
-          if ([IO.File]::Exists($JournalShellStoppedCommit) -and -not $IntegratedGuardian.HasExited) { $IntegratedCommitted = $true; break }
+        $IntegratedBackup = Join-Path (Split-Path -Parent $StableExe | Split-Path -Parent) ('.equinox-shell-backup-' + $JournalId)
+        $IntegratedBMarker = Join-Path (Split-Path -Parent $StableExe) 'native-b-ci-only.marker'
+        for ($IntegratedAttempt=0; $IntegratedAttempt -lt 600; $IntegratedAttempt++) {
+          if ([IO.File]::Exists($JournalShellStoppedCommit) -and
+              [IO.Directory]::Exists($IntegratedBackup) -and [IO.File]::Exists($IntegratedBMarker) -and
+              -not $IntegratedGuardian.HasExited) { $IntegratedCommitted = $true; break }
           if ($IntegratedGuardian.HasExited) { break }
           Start-Sleep -Milliseconds 120
         }
         if (-not $IntegratedCommitted -and $IntegratedGuardian.HasExited) {
           Write-Output ('Integrated native supervisor failure phase: ' + $IntegratedGuardian.StandardError.ReadToEnd())
         }
-        Assert-True $IntegratedCommitted 'Independent Guardian could not commit both native-staged and shell-stopped journal milestones.'
+        Assert-True $IntegratedCommitted 'Independent Guardian could not verify native_staged, shell_stopped and physical B installed with A retained.'
         Assert-True ((Invoke-GuardianCheck '--hold-native-integrated-ab') -eq 70) 'Second native integrated supervisor stole OS-held journal lease.'
         $IntegratedGuardian.Kill()
         Assert-True ($IntegratedGuardian.WaitForExit(5000)) 'Native supervisor force-kill did not stop its Windows process.'
@@ -709,12 +717,26 @@ try {
         $StoppedWpf = @(Get-CimInstance Win32_Process -Filter "Name='EquinoxLocal.exe'" -ErrorAction SilentlyContinue |
           Where-Object { -not [string]::IsNullOrWhiteSpace($_.ExecutablePath) -and (Same-Path $_.ExecutablePath $StableExe) })
         Assert-True ($StoppedWpf.Count -eq 0) 'Native integrated supervisor journal claimed WPF shutdown while A remained running.'
+        Assert-True ((Test-Path -LiteralPath $IntegratedBackup) -and (Test-Path -LiteralPath $IntegratedBMarker)) 'Real Windows A/B slot did not retain old A and install distinct B.'
         Assert-True ((Invoke-GuardianCheck '--audit-native-journal') -eq 70) 'Native integrated supervisor allowed orphan writer-lock replay.'
       } finally {
         if ($null -ne $IntegratedGuardian) {
           try { if (-not $IntegratedGuardian.HasExited) { $IntegratedGuardian.Kill() } } catch {}
           try { $IntegratedGuardian.WaitForExit(5000) | Out-Null } catch {}
           $IntegratedGuardian.Dispose()
+        }
+        # THIS IS DISPOSABLE HOSTED CI ONLY: regardless of partial B swap or
+        # Guardian crash, restore and independently preserve the real A shell
+        # before any later installer tests. Never do this in user production.
+        $ExpectedABBackup = Join-Path (Split-Path -Parent $OwnedProgramRoot) ('.equinox-shell-backup-' + $JournalId)
+        $FailedABQuarantine = Join-Path (Split-Path -Parent $OwnedProgramRoot) ('.equinox-shell-failed-' + $JournalId)
+        if (Test-Path -LiteralPath $ExpectedABBackup) {
+          if (Test-Path -LiteralPath $OwnedProgramRoot) {
+            Move-Item -LiteralPath $OwnedProgramRoot -Destination $FailedABQuarantine -ErrorAction Stop
+          }
+          Move-Item -LiteralPath $ExpectedABBackup -Destination $OwnedProgramRoot -ErrorAction Stop
+          Assert-True ([IO.File]::Exists($StableExe)) 'Old Stable A executable was not restored after integrated native A/B swap.'
+          if (Test-Path -LiteralPath $FailedABQuarantine) { Remove-Item -LiteralPath $FailedABQuarantine -Recurse -Force -ErrorAction Stop }
         }
         Remove-Item -LiteralPath $JournalGuard,$JournalAuthority,$JournalShellQuiesced,$JournalIntegratedTrigger,$JournalNativeStagedCommit,$JournalShellStoppedCommit -Force -ErrorAction SilentlyContinue
         Remove-Item -LiteralPath $JournalIntegratedB -Recurse -Force -ErrorAction SilentlyContinue

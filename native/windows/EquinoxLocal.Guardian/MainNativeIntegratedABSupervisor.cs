@@ -100,6 +100,10 @@ internal static partial class Program
             throw new InvalidDataException("Native worker died before independently authorized stage writes.");
         WriteIntegratedOwnedNativeStage(owner, journalPath, "prepared", 0, "native_staged", 1);
         WriteIntegratedOwnedNativeStage(owner, journalPath, "native_staged", 1, "shell_stopped", 2);
+        // The existing shared JS slot primitive is the only swap engine.
+        // Guardian supplies a narrow OS-authenticated action grant and audits
+        // the actual installed B plus deterministic intact A rollback tree.
+        RequestOwnedIntegratedABSlotSwap(owner, journalRoot, worker, release);
         InspectionPhase = "native-integrated-ab-a-stopped-journaled-b-not-switched";
         // A remains on disk with its exact Stable bytes; the persistent
         // Guardian writer lease blocks any automatic or unverified replay.
