@@ -563,6 +563,10 @@ test('real installed x64/ARM64 acceptance commits clean disposable source B and 
   assert.match(fixture, /robocopy\.exe \$JournalCandidateRoot \$JournalTargetRoot \/E \/COPY:DAT \/DCOPY:DAT/u);
   assert.match(fixture, /\$BFixtureCopyResult -ge 0 -and \$BFixtureCopyResult -le 7/u);
   assert.match(fixture, /\$CopiedSourceSha -ceq \$JournalTarget/u);
+  assert.match(fixture, /seedPrebuiltDependenciesFromStableRelease/u);
+  assert.match(fixture, /\$SeedProductNode = Join-Path \$ReleaseDir/u);
+  assert.match(fixture, /\$JournalTargetRoot 'node_modules'/u);
+  assert.match(fixture, /Disposable B dependency seed changed its tracked Git identity/u);
   assert.match(fixture, /\$SelectedBSourcePointer/u);
   assert.match(fixture, /\$SelectedBNativePointer/u);
   assert.match(fixture, /\$JournalBRestartTrigger/u);

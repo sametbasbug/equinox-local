@@ -408,6 +408,18 @@ try {
   Assert-True ($LASTEXITCODE -eq 0 -and $CopiedSourceSha -ceq $JournalTarget) 'Copied native B Git checkout HEAD differs from admitted exact SHA.'
   $JournalBSourceStatus = @(& $OwnedGitStatusExe -c core.autocrlf=true -c core.fsmonitor=false -C $JournalTargetRoot status --porcelain=v1 --untracked-files=normal)
   Assert-True ($LASTEXITCODE -eq 0 -and $JournalBSourceStatus.Count -eq 0) 'Disposable Main B checkout is not clean under pinned product Git.'
+  # Real managed-source B must satisfy the SAME native WPF runtime locator
+  # as installed users: it requires a normal, prebuilt node_modules tree.
+  # B differs from A only by its committed fixture worker witness; require
+  # exact package.json + lockfile identity before seeding product dependencies.
+  $SeedManagedModules = Join-Path $Root 'src/equinox-local-managed-source-enrollment.js'
+  Assert-True ([IO.File]::Exists($SeedManagedModules)) 'Product managed-source dependency seeder is unavailable.'
+  $SeedProductNode = Join-Path $ReleaseDir 'runtime\node\bin\node.exe'
+  Assert-True ([IO.File]::Exists($SeedProductNode)) 'Product Stable-owned Node executable is unavailable for exact B dependency seed.'
+  & $SeedProductNode --input-type=module -e 'import {pathToFileURL} from "node:url"; const {seedPrebuiltDependenciesFromStableRelease}=await import(pathToFileURL(process.argv[1]).href); await seedPrebuiltDependenciesFromStableRelease(process.argv[2],process.argv[3]);' $SeedManagedModules $JournalTargetRoot $ManagedSourceRoot
+  Assert-True ($LASTEXITCODE -eq 0 -and [IO.Directory]::Exists((Join-Path $JournalTargetRoot 'node_modules'))) 'Disposable B dependency seed differs from exact prebuilt A package identity.'
+  $JournalBSourceStatus = @(& $OwnedGitStatusExe -c core.autocrlf=true -c core.fsmonitor=false -C $JournalTargetRoot status --porcelain=v1 --untracked-files=normal)
+  Assert-True ($LASTEXITCODE -eq 0 -and $JournalBSourceStatus.Count -eq 0) 'Disposable B dependency seed changed its tracked Git identity.'
   Write-Output 'Hosted immutable Main source B checkout independently committed and validated.'
   $JournalLock = Join-Path $NativeTxRoot 'active.json'
   $JournalReceiptDir = Join-Path $NativeTxRoot 'receipts'
