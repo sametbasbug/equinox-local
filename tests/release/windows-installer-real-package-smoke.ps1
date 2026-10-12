@@ -429,7 +429,11 @@ try {
         token=('e' * 64);nodePath=$WorkerNode
       }
       [IO.File]::WriteAllText($WorkerRecordPath,($WorkerRecord | ConvertTo-Json -Depth 4))
-      Assert-True ((Invoke-GuardianCheck '--audit-native-worker') -eq 0) 'Guardian refused exact live product-owned Node PID/start time/executable proof.'
+      # The hosted x64/ARM64 OS process acceptance also exercises independent
+      # per-process Windows SessionId equality; this fixture does not pretend
+      # that a second foreign Windows session was created.
+      Assert-True ($WorkerProcess.SessionId -eq ([Diagnostics.Process]::GetCurrentProcess()).SessionId) 'Disposable worker did not start in the runner Guardian OS session.'
+      Assert-True ((Invoke-GuardianCheck '--audit-native-worker') -eq 0) 'Guardian refused exact live product-owned Node PID/start time/executable/SID/session proof.'
       $WorkerRecord.startTimeUtcTicks = ([long]::Parse($WorkerRecord.startTimeUtcTicks) - 1).ToString([Globalization.CultureInfo]::InvariantCulture)
       [IO.File]::WriteAllText($WorkerRecordPath,($WorkerRecord | ConvertTo-Json -Depth 4))
       Assert-True ((Invoke-GuardianCheck '--audit-native-worker') -eq 70) 'Guardian accepted a replayed or reused native worker PID with wrong creation time.'
