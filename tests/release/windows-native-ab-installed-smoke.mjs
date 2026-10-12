@@ -104,6 +104,10 @@ try {
   const engine = {
     markNativeSwitched: async () => base,
     activatePromotion: async () => { source = 'B'; return base; },
+    rollbackPromotion: async () => { source = 'A'; receipt = { ...receipt, status: 'verifying' }; return { ...base, stage: 'rollback_source_restored' }; },
+    markNativeRollbackRestored: async () => ({ ...base, stage: 'rollback_native_restored' }),
+    markRollbackSucceeded: async () => { receipt = { ...receipt, status: 'rolled_back' }; return { ...base, status: 'rolled_back' }; },
+    markRollbackFailed: async () => {},
     markPromotionSucceeded: async () => { receipt = { ...receipt, status: 'succeeded' }; return { ...base, status: 'succeeded' }; },
     releaseStagedLock: async () => {},
   };
