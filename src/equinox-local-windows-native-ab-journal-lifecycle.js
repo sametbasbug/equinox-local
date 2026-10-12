@@ -59,6 +59,7 @@ export function createWindowsJournaledNativeABLifecycle({
   }
   return Object.freeze({
     journaledAB: true,
+    journal,
     commit: async () => {
       if ((await owned()).stage !== 'healthy') throw new Error('Native pointer may not commit before verified B health.');
       await commitNativePointer({ transactionId, sourceSha: targetSha, runtimeContractSha256: targetRuntimeContractSha256 });

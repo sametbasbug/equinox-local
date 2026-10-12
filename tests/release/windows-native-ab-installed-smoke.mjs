@@ -10,8 +10,12 @@ import {
   commitWindowsNativeABSlot,
 } from '../../src/equinox-local-windows-native-ab-switch.js';
 import { snapshotWindowsStableShellTree, sameWindowsStableShellTree } from '../../src/equinox-local-windows-stable-shell.js';
-import { createEquinoxLocalWindowsNativeTransitionJournal } from '../../src/equinox-local-windows-native-transition-journal.js';
+
 import { createWindowsJournaledNativeABLifecycle } from '../../src/equinox-local-windows-native-ab-journal-lifecycle.js';
+import { admitWindowsMainNativeWorkerJournal } from '../../src/equinox-local-windows-main-worker-admission.js';
+import { createEquinoxLocalWindowsNativeTransitionJournal } from '../../src/equinox-local-windows-native-transition-journal.js';
+import { execFile as execFileCallback } from 'node:child_process';
+import { promisify } from 'node:util';
 import { runEquinoxLocalMainUpdateHandoff } from '../../src/equinox-local-main-update-handoff.js';
 
 const [releaseDir, target] = process.argv.slice(2);
@@ -121,6 +125,45 @@ try {
   assert.equal((await journal.read(jid)).stage, 'committed');
   assert.ok(sameWindowsStableShellTree(await readInstalled(), bRef));
   await assert.rejects(fs.lstat(path.join(root, 'Programs', `.equinox-shell-backup-${jid}`)), { code: 'ENOENT' });
+  // Worker admission must prove a REAL running product-owned Node PID, its
+  // Windows UTC birth ticks and exact executable, not only a unit mock.
+  // This is a disposable ownership receipt and does NOT unlock production WPF.
+  const execFile = promisify(execFileCallback);
+  const workRoot = path.join(root, 'worker-admission');
+  await fs.mkdir(path.join(workRoot, 'handoff'), { recursive: true });
+  const aid = `main-${'f'.repeat(32)}`;
+  const token = 'e'.repeat(64);
+  const birth = await execFile('powershell.exe', [
+    '-NoLogo', '-NoProfile', '-NonInteractive', '-Command',
+    `(Get-Process -Id ${process.pid} -ErrorAction Stop).StartTime.ToUniversalTime().Ticks.ToString([Globalization.CultureInfo]::InvariantCulture)`,
+  ], { timeout: 5_000, windowsHide: true });
+  const ticks = String(birth.stdout).trim();
+  assert.match(ticks, /^[0-9]{1,19}$/u);
+  const owner = { schemaVersion: 1, transactionId: aid, pid: process.pid,
+    startTimeUtcTicks: ticks, token, nodePath: process.execPath };
+  await fs.writeFile(path.join(workRoot, 'handoff', `${aid}.windows-worker.json`), JSON.stringify(owner));
+  const currentSha = 'a'.repeat(40), targetSha = 'b'.repeat(40);
+  const admissionReceipt = { transactionId: aid, status: 'promoting', stage: 'ready_to_switch',
+    currentSha, targetSha, startedAt: started };
+  const nativeTransition = { mode: 'artifact_required', target, currentSha, targetSha,
+    currentRuntimeContractSha256: 'a'.repeat(64), targetRuntimeContractSha256: contract };
+  const realAdmission = {
+    receipt: admissionReceipt, transition: nativeTransition, transactionRoot: workRoot,
+    installation: { managed: true, selfUpdateSupported: true, target, releaseDir },
+    engine: { readActive: async () => admissionReceipt },
+    workerToken: token,
+    readPointerImpl: async () => { throw Object.assign(new Error('Stable A has no main pointer'), { code: 'ENOENT' }); },
+    journalFactory: (o) => createEquinoxLocalWindowsNativeTransitionJournal({
+      ...o, protectWindowsAcl: async () => ({ safe: true }), verifyWindowsAcl: async () => ({ safe: true }),
+    }),
+  };
+  const admitted = await admitWindowsMainNativeWorkerJournal(realAdmission);
+  assert.equal(admitted.record.stage, 'prepared');
+  assert.equal(admitted.ownedNode.toLowerCase(), process.execPath.toLowerCase());
+  await assert.rejects(admitWindowsMainNativeWorkerJournal({ ...realAdmission, workerToken: '0'.repeat(64) }), /token\/PID/u);
+  await assert.rejects(admitWindowsMainNativeWorkerJournal({ ...realAdmission,
+    inspectWorkerImpl: async () => ({ running: false, stale: true }) }), /not independently verified/u);
+  console.log(`Windows ${target} exact LIVE product Node PID/birthtime/executable/token → native journal admission VERIFIED`);
   console.log(`Windows ${target} shared handoff + persisted native journal + actual WPF PE A→B/health-gated commit VERIFIED`);
   console.log(`Windows ${target} real-native-PE immutable A→B / failed B→A / healthy B commit VERIFIED`);
 } finally {
