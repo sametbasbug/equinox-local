@@ -389,6 +389,8 @@ try {
   $JournalReceipt = Join-Path $JournalReceiptDir ("$JournalId.json")
   $JournalData = Join-Path $JournalDataDir ("$JournalId.json")
   $JournalGuard = Join-Path $JournalDataDir (".$JournalId.writer-lock")
+  $JournalAuthority = Join-Path $JournalDataDir ("$JournalId.native-authority.json")
+  $JournalAuthorityTrigger = Join-Path $Work 'start-journal-authority-client.trigger'
   if ((Test-Path -LiteralPath $JournalLock) -or (Test-Path -LiteralPath $JournalReceipt) -or (Test-Path -LiteralPath $JournalData)) {
     throw 'Hosted native journal test requires an unoccupied transaction identity.'
   }
@@ -440,6 +442,9 @@ try {
       $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_PROOF_MODULE'] = Join-Path $Root 'src\equinox-local-windows-main-worker-proof.js'
       $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_WORKER_TX'] = $JournalId
       $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_MAIN_WORKER_TOKEN'] = ('e' * 64)
+      $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_JOURNAL_CLIENT_MODULE'] = Join-Path $Root 'src\equinox-local-windows-native-journal-authority-client.js'
+      $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_JOURNAL_TX_ROOT'] = $NativeTxRoot
+      $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_JOURNAL_TRIGGER'] = $JournalAuthorityTrigger
       $WorkerProcess = [Diagnostics.Process]::Start($WorkerStartInfo)
       if ($null -eq $WorkerProcess) { throw 'Unable to start ephemeral owned Node process for Guardian audit.' }
       $WorkerRecord = [ordered]@{
@@ -527,6 +532,49 @@ try {
         Remove-Item -LiteralPath $JournalGuard -Force -ErrorAction SilentlyContinue
       }
       Assert-True ((Invoke-GuardianCheck '--audit-native-journal') -eq 0) 'Native journal did not recover after explicit disposable fixture reconciliation.'
+      # New Guardian authority mode is a real separate native process, not
+      # a JS journal writer. The exact Node PID answers its 256-bit challenge,
+      # and ONLY the native owner persists the prepared journal digest proof.
+      $AuthorityProcess = $null
+      try {
+        $AuthorityStart = [Diagnostics.ProcessStartInfo]::new($GuardianExe)
+        $AuthorityStart.Arguments = '--hold-native-journal-authority'
+        $AuthorityStart.UseShellExecute = $false
+        $AuthorityStart.CreateNoWindow = $true
+        $AuthorityProcess = [Diagnostics.Process]::Start($AuthorityStart)
+        Assert-True ($null -ne $AuthorityProcess) 'Independent native journal authority failed to launch.'
+        [IO.File]::WriteAllText($JournalAuthorityTrigger, 'fixed-test-only-trigger')
+        $AuthorityDurable = $false
+        for ($AuthorityAttempt=0; $AuthorityAttempt -lt 80; $AuthorityAttempt++) {
+          if ([IO.File]::Exists($JournalAuthority) -and -not $AuthorityProcess.HasExited) { $AuthorityDurable = $true; break }
+          if ($AuthorityProcess.HasExited) { break }
+          Start-Sleep -Milliseconds 110
+        }
+        Assert-True $AuthorityDurable 'Native Guardian refused the real worker kernel PID-bound nonce/HMAC journal authority proof.'
+        $AuthorityRecord = ConvertFrom-Json ([IO.File]::ReadAllText($JournalAuthority))
+        Assert-True ($AuthorityRecord.transactionId -ceq $JournalId -and
+          $AuthorityRecord.stage -ceq 'prepared' -and $AuthorityRecord.sequence -eq 0 -and
+          $AuthorityRecord.workerPid -eq $WorkerProcess.Id -and
+          $AuthorityRecord.guardianPid -eq $AuthorityProcess.Id) 'Native authority durable record has foreign process or journal identity.'
+        $ExpectedDigest = (Get-FileHash -LiteralPath $JournalData -Algorithm SHA256).Hash.ToLowerInvariant()
+        Assert-True ($AuthorityRecord.journalSha256 -ceq $ExpectedDigest) 'Native authority durable record does not bind the exact journal bytes.'
+        Assert-True ($JournalValue.stage -ceq 'prepared' -and $JournalValue.sequence -eq 0) 'Native authority proof incorrectly advanced the Main update stage.'
+        Assert-True ((Invoke-GuardianCheck '--hold-native-journal-authority') -eq 70) 'Duplicate native authority owner silently replaced a live owner.'
+        $AuthorityProcess.Kill()
+        Assert-True ($AuthorityProcess.WaitForExit(5000)) 'Guardian authority process did not terminate under powercut fixture.'
+        Assert-True ([IO.File]::Exists($JournalGuard) -and [IO.File]::Exists($JournalAuthority)) 'Guardian authority powercut lost durable native evidence.'
+        Assert-True ((Invoke-GuardianCheck '--hold-native-journal-authority') -eq 70) 'Guardian silently replayed an orphan authority proof.'
+      } finally {
+        if ($null -ne $AuthorityProcess) {
+          try { if (-not $AuthorityProcess.HasExited) { $AuthorityProcess.Kill() } } catch {}
+          try { $AuthorityProcess.WaitForExit(5000) | Out-Null } catch {}
+          $AuthorityProcess.Dispose()
+        }
+        Remove-Item -LiteralPath $JournalGuard -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $JournalAuthority -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $JournalAuthorityTrigger -Force -ErrorAction SilentlyContinue
+      }
+      Assert-True ((Invoke-GuardianCheck '--audit-native-journal') -eq 0) 'Native journal authority disposable fixture reconciliation failed.'
     } finally {
       if ($null -ne $WorkerProcess) {
         # .NET Framework under Windows PowerShell 5.1 has Kill() but not
