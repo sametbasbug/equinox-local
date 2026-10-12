@@ -214,7 +214,10 @@ internal static partial class Program
                 if (!WorkerTokenPattern.IsMatch(hex)) throw new InvalidDataException("Windows worker pipe proof is malformed.");
                 var actual = Convert.FromHexString(hex);
                 var key = Convert.FromHexString(owner.Token);
-                var expected = HMACSHA256.HashData(key, [.. Encoding.ASCII.GetBytes(ProofDomain), .. nonce]);
+                var message = new byte[Encoding.ASCII.GetByteCount(ProofDomain) + nonce.Length];
+                Encoding.ASCII.GetBytes(ProofDomain, message);
+                nonce.CopyTo(message.AsSpan(Encoding.ASCII.GetByteCount(ProofDomain)));
+                var expected = HMACSHA256.HashData(key.AsSpan(), message.AsSpan());
                 if (!CryptographicOperations.FixedTimeEquals(actual, expected))
                     throw new InvalidDataException("Windows worker did not prove its live launch token.");
                 CryptographicOperations.ZeroMemory(key);
