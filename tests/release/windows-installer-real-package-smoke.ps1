@@ -815,32 +815,71 @@ try {
         $BBackendConsecutive = 0
         $BBackendSamples = 0
         $BBackendLastState = 'no-response'
+        $BBackendLastPhase = 'not-started'
+        $BBackendLastException = 'none'
+        $BBackendHttpOk = $false
+        $BBackendSourceMatch = $false
+        $BBackendNativeMatch = $false
+        $BBackendManifestMatch = $false
+        $BBackendRegistryMatch = $false
         for ($BBackendAttempt=0; $BBackendAttempt -lt 75; $BBackendAttempt++) {
           if ($IntegratedGuardian.HasExited) { break }
           $BRunningNow = @(Get-CimInstance Win32_Process -Filter "Name='EquinoxLocal.exe'" -ErrorAction SilentlyContinue |
             Where-Object { $_.ProcessId -eq $BRestartWitness.shellPid -and (Same-Path $_.ExecutablePath $StableExe) })
           if ($BRunningNow.Count -ne 1) { $BBackendLastState = 'wpf-exited'; break }
           try {
+            $BBackendLastPhase = 'http-status'
             $BBackendStatus = (Invoke-WebRequest -UseBasicParsing -Uri 'http://127.0.0.1:24891/api/v1/status' -TimeoutSec 3).Content | ConvertFrom-Json
+            $BBackendHttpOk = ($BBackendStatus.ok -eq $true)
             $BBackendLastState = [string]$BBackendStatus.status.installation.kind
-            $BManifestCurrent = [IO.File]::ReadAllText($ExpectedManifestPath) | ConvertFrom-Json
+            $BBackendSourceMatch = ($BBackendLastState -ceq 'managed-source' -and
+              $BBackendStatus.status.installation.sourceSha -ceq $JournalTarget)
+            $BBackendLastPhase = 'native-pointer'
             $BNativeCurrent = [IO.File]::ReadAllText($IntegratedNativePointerPath) | ConvertFrom-Json
+            $BBackendNativeMatch = ($BNativeCurrent.sourceSha -ceq $JournalTarget)
+            $BBackendLastPhase = 'native-messaging'
+            $BManifestCurrent = [IO.File]::ReadAllText($ExpectedManifestPath) | ConvertFrom-Json
             $BExpectedLauncher = Join-Path $StagedBRelease 'runtime\browser\equinox-browser-native-host.exe'
+            $BBackendManifestMatch = (Same-Path $BManifestCurrent.path $BExpectedLauncher)
             $BManifestRegistry = [string](Get-Item -LiteralPath $NativeRegistryKey -ErrorAction Stop).GetValue('')
-            if ($BBackendStatus.ok -eq $true -and
-                $BBackendStatus.status.installation.kind -ceq 'managed-source' -and
-                $BBackendStatus.status.installation.sourceSha -ceq $JournalTarget -and
-                $BNativeCurrent.sourceSha -ceq $JournalTarget -and
-                (Same-Path $BManifestCurrent.path $BExpectedLauncher) -and
-                (Same-Path $BManifestRegistry $ExpectedManifestPath)) {
+            $BBackendRegistryMatch = (Same-Path $BManifestRegistry $ExpectedManifestPath)
+            if ($BBackendHttpOk -and $BBackendSourceMatch -and $BBackendNativeMatch -and
+                $BBackendManifestMatch -and $BBackendRegistryMatch) {
               $BBackendConsecutive++
               $BBackendSamples++
             } else { $BBackendConsecutive = 0 }
-          } catch { $BBackendConsecutive = 0; $BBackendLastState = 'status-or-owner-unavailable' }
+          } catch {
+            $BBackendConsecutive = 0
+            # Only bounded error CLASS and prior phase: never log exception
+            # messages, URLs, private paths, tokens or registry values.
+            $BBackendLastException = $_.Exception.GetType().Name
+            $BBackendLastState = 'probe-exception'
+          }
           if ($BBackendConsecutive -ge 4) { break }
           Start-Sleep -Milliseconds 500
         }
-        Write-Output ("Hosted B Control Center identity: consecutive={0}; samples={1}; lastKind={2}" -f $BBackendConsecutive,$BBackendSamples,$BBackendLastState)
+        Write-Output ("Hosted B Control Center identity: consecutive={0}; samples={1}; lastKind={2}; phase={3}; exceptionClass={4}; httpOk={5}; sourceMatch={6}; nativeMatch={7}; manifestMatch={8}; registryMatch={9}" -f
+          $BBackendConsecutive,$BBackendSamples,$BBackendLastState,$BBackendLastPhase,$BBackendLastException,
+          $BBackendHttpOk,$BBackendSourceMatch,$BBackendNativeMatch,$BBackendManifestMatch,$BBackendRegistryMatch)
+        if ($BBackendConsecutive -lt 4) {
+          # Product WPF already emits diagnostics to its OWN per-user log.
+          # Expose only the most recent bounded operation/error CLASS on
+          # disposable CI, never the full exception message or owned paths.
+          $BHostedWpfLog = Join-Path $OwnedInstallRoot 'logs\windows-shell-runtime.log'
+          if ([IO.File]::Exists($BHostedWpfLog)) {
+            $BHostedErrors = @([IO.File]::ReadAllLines($BHostedWpfLog) | Select-Object -Last 12 | ForEach-Object {
+              $fields = $_ -split ' ', 3
+              if ($fields.Count -ge 2 -and $fields[1] -cmatch '^[a-zA-Z0-9_-]{1,80}$') {
+                $errorClass = 'none'
+                if ($fields.Count -eq 3 -and $fields[2] -match '^([a-zA-Z][a-zA-Z0-9]{0,99}(?:Exception|Error)):') {
+                  $errorClass = $Matches[1]
+                }
+                '{0}:{1}' -f $fields[1],$errorClass
+              }
+            })
+            Write-Output ('Hosted B native WPF diagnostic operation/classes: ' + ($BHostedErrors -join ','))
+          }
+        }
         Assert-True ($BBackendConsecutive -ge 4) 'Guardian B WPF is running but real Control Center/Native Messaging does not report sustained exact B source identity.'
         Write-Output "Windows $FixtureTarget real Guardian-owned B WPF process, restarted/4 AND four consecutive B backend identity samples PASSED (Browser/tunnel sustained health NOT YET certified)."
         $IntegratedGuardian.Kill()
