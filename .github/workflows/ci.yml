@@ -630,7 +630,7 @@ jobs:
                 nuget-${{ runner.os }}-${{ runner.arch }}-dotnet10-
 
           - name: Download exact ARM64 managed ZIP
-            uses: actions/download-artifact@v7
+            uses: actions/download-artifact@v8
             with:
               name: windows-arm64-managed-package-${{ github.sha }}
               path: ${{ runner.temp }}/arm64-package
@@ -701,7 +701,7 @@ jobs:
             uses: actions/checkout@v7
 
           - name: Download exact ARM64 managed ZIP
-            uses: actions/download-artifact@v7
+            uses: actions/download-artifact@v8
             with:
               name: windows-arm64-managed-package-${{ github.sha }}
               path: ${{ runner.temp }}/arm64-package
@@ -964,7 +964,7 @@ jobs:
 
       - name: Download exact-SHA snapshot candidates
         if: ${{ steps.latest.outputs.publish == 'true' }}
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           pattern: main-native-${{ needs.main-native-plan.outputs.target-sha }}-*
           path: ${{ runner.temp }}/main-snapshot
