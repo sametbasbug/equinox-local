@@ -79,13 +79,23 @@ internal static partial class Program
         // durable sidecar, both of which require explicit native reconciliation.
         using var fd = new FileStream(dest, FileMode.CreateNew, FileAccess.Write,
             FileShare.None, 4096, FileOptions.WriteThrough);
-        var record = JsonSerializer.Serialize(new {
-            schemaVersion = 1, transactionId = owner.TransactionId, stage = "prepared", sequence = 0,
-            workerPid = owner.Pid, guardianPid = Environment.ProcessId,
-            journalSha256 = Convert.ToHexStringLower(digest)
-        });
-        if (Encoding.UTF8.GetByteCount(record) > 512) throw new InvalidDataException("Native authority receipt exceeded size bound.");
-        fd.Write(Encoding.UTF8.GetBytes(record + "\n"));
+        // Guardian is published trimmed/single-file. Write the six fixed
+        // fields directly; anonymous-object reflection serialization is not
+        // reliable after IL trimming. A partial create-only record still
+        // fails closed until the durable owner lock is reconciled.
+        using (var writer = new Utf8JsonWriter(fd))
+        {
+            writer.WriteStartObject();
+            writer.WriteNumber("schemaVersion", 1);
+            writer.WriteString("transactionId", owner.TransactionId);
+            writer.WriteString("stage", "prepared");
+            writer.WriteNumber("sequence", 0);
+            writer.WriteNumber("workerPid", owner.Pid);
+            writer.WriteNumber("guardianPid", Environment.ProcessId);
+            writer.WriteString("journalSha256", Convert.ToHexStringLower(digest));
+            writer.WriteEndObject();
+            writer.Flush();
+        }
         fd.Flush(flushToDisk: true);
         InspectionPhase = "native-journal-authority-proof-durable";
     }

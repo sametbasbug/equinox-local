@@ -350,6 +350,8 @@ test("native journal authority accepts only kernel-PID+HMAC live prepared worker
   assert.match(source, /FileMode\.CreateNew, FileAccess\.Write/u);
   assert.match(source, /FileOptions\.WriteThrough/u);
   assert.match(source, /fd\.Flush\(flushToDisk: true\)/u);
+  assert.match(source, /new Utf8JsonWriter\(fd\)/u);
+  assert.doesNotMatch(source, /JsonSerializer\.Serialize\(/u);
   assert.doesNotMatch(source, /Process\.Start|Registry\.SetValue|\.writer-lock"\s*,\s*FileMode\.OpenOrCreate|"shell_stopped"|"switched"/u);
 });
 
