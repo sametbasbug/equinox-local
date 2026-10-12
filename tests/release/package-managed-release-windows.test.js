@@ -560,7 +560,9 @@ test('real installed x64/ARM64 acceptance commits clean disposable source B and 
   assert.match(fixture, /commit --quiet -m 'test: ephemeral Windows native Main B restart witness'/u);
   assert.match(fixture, /\$JournalTarget -cne \$JournalCurrent/u);
   assert.match(fixture, /\$JournalBSourceStatus\.Count -eq 0/u);
-  assert.match(fixture, /\[IO\.Directory\]::Move\(\$JournalCandidateRoot,\$JournalTargetRoot\)/u);
+  assert.match(fixture, /robocopy\.exe \$JournalCandidateRoot \$JournalTargetRoot \/E \/COPY:DAT \/DCOPY:DAT/u);
+  assert.match(fixture, /\$BFixtureCopyResult -ge 0 -and \$BFixtureCopyResult -le 7/u);
+  assert.match(fixture, /\$CopiedSourceSha -ceq \$JournalTarget/u);
   assert.match(fixture, /\$SelectedBSourcePointer/u);
   assert.match(fixture, /\$SelectedBNativePointer/u);
   assert.match(fixture, /\$JournalBRestartTrigger/u);

@@ -392,13 +392,20 @@ try {
   $JournalTarget = [string](& $OwnedGitStatusExe -C $JournalCandidateRoot rev-parse HEAD)
   Assert-True ($LASTEXITCODE -eq 0 -and $JournalTarget -cmatch '^[a-f0-9]{40}$' -and $JournalTarget -cne $JournalCurrent) 'Disposable B source Git SHA is not distinct and canonical.'
   $JournalTargetRoot = Join-Path $JournalSources $JournalTarget
-  # Both paths are on the same user-profile volume. Use a single native
-  # directory rename: PowerShell Move-Item tries recursive copy+delete and
-  # cannot remove the read-only .git directory on hosted Windows runners.
-  [IO.Directory]::Move($JournalCandidateRoot,$JournalTargetRoot)
+  # Hosted Git for Windows marks the ephemeral .git checkout as unmovable;
+  # even Directory.Move can be denied by the runner filesystem. Copy ONLY
+  # into our own fresh fixture source slot and never delete/rewrite the
+  # verified .git source. Robocopy is native to supported Windows runners,
+  # runs only here in CI (not on a user's managed source/update path), and
+  # uses COPY:DAT to avoid inheriting foreign source ACLs.
+  & robocopy.exe $JournalCandidateRoot $JournalTargetRoot /E /COPY:DAT /DCOPY:DAT /R:1 /W:1 /NFL /NDL /NJH /NJS /NP | Out-Null
+  $BFixtureCopyResult = $LASTEXITCODE
+  Assert-True ($BFixtureCopyResult -ge 0 -and $BFixtureCopyResult -le 7) 'Hosted disposable Git B clone could not be copied without mutation.'
   $WorkerTestSourceDir = Join-Path $JournalTargetRoot 'src'
   $WorkerTestScript = Join-Path $WorkerTestSourceDir 'equinox-local-main-update-worker.js'
   Assert-True ([IO.File]::Exists($WorkerTestScript)) 'Exact immutable B worker witness source is missing.'
+  $CopiedSourceSha = [string](& $OwnedGitStatusExe -C $JournalTargetRoot rev-parse HEAD)
+  Assert-True ($LASTEXITCODE -eq 0 -and $CopiedSourceSha -ceq $JournalTarget) 'Copied native B Git checkout HEAD differs from admitted exact SHA.'
   $JournalBSourceStatus = @(& $OwnedGitStatusExe -c core.autocrlf=true -c core.fsmonitor=false -C $JournalTargetRoot status --porcelain=v1 --untracked-files=normal)
   Assert-True ($LASTEXITCODE -eq 0 -and $JournalBSourceStatus.Count -eq 0) 'Disposable Main B checkout is not clean under pinned product Git.'
   Write-Output 'Hosted immutable Main source B checkout independently committed and validated.'
