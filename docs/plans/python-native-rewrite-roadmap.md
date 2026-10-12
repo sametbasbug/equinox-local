@@ -14,22 +14,32 @@
 - Python dahil gereken runtime ve kütüphaneler ürüne paketlenir; son kullanıcıya Python, pip, compiler, Git vb. kurma şartı getirilmez. Qt/PySide6'nın **AGPLv3 ile birlikte dağıtım ve LGPLv3 yükümlülükleri**, ticari lisans ihtiyacı doğurmadan, ürünün seçilen modülleri/paketleme yöntemi üzerinden kontrol edilir. Windows ARM64 dahil gerçek bağımsız paketleme ve native köprü uyumluluğu *kanıtlanmış değil*; destek varsayımıyla yayın yapılmaz.
 - **Güvenlikten ödün verme veya gereksiz güvenlik altyapısı icat etme yok:** loopback-only mutasyon API, explicit tarayıcı bağlamı, erişim yetkileri, sistem izinleri, özel durum dosyaları/kimlik bilgileri, OS süreç sahipliği, imzalı güncellemeler, rollback ve kullanıcı verisi korunur. Mevcut karmaşık uygulama parçaları aynen taşınmaz.
 
-## 2. Kapsamın sınırları
+## 2. Hızlı güncelleme, her cihazdan geliştirme ve factory'siz ürün
+
+Bu üç özellik önceki Equinox Local'den **korunacak kullanıcı beklentileridir**. Aşağıdaki teknik uygulama sadece **öneridir**; bu dosya yine kanun değildir. Daha basit veya güvenli çözüm bulunursa değiştir:
+
+- **Hızlı geliştirme ve yerinde güncelleme:** Geliştirici Python checkout'undaki değişikliği hızlı yeniden yükleme/restart ile görür; her küçük kod değişikliği için macOS/Windows tam native uygulama paketleri üretilmez. Son kullanıcı yeni sürümü yeniden kurulum/ayar kaybı olmadan, **tek ortak Python güncelleme motoru** aracılığıyla alır. Kaynak kod/görsel gibi saf Python değişiklikleri ile Python interpreter/Qt/native kütüphane değişiklikleri ayrıştırılabilir. Öneri: seyrek güncellenen, platforma göre paketlenen uygulama host'u + kurulumdan ayrı, doğrulanmış ve versiyonlanmış saf-Python kaynak yükleri. Kaynak güncellemesi sağlam SHA/imza doğrulamasını, gerçek sağlık kontrolünü ve rollback'i atlayamaz. Her değişikliğin CI kontrolü bitmeden 'anında' yayınlanacağı iddia edilmez; doküman değişikliği kullanıcı güncellemesi olmaz.
+- **Her cihazdan geliştirme:** **Tek kanonik public Git reposu** Windows x64/ARM64 ve macOS x64/ARM64 üzerinde kaynak geliştirme için yeterli olmalı. Ortak Python CLI ve bağımlılık tanımı ile kod düzenleme/çalıştırma/debug/test imkânı; geliştirici checkout'u kurulu kullanıcı programından ve özel durum dosyalarından izole. Git commit/PR, aynı kabul edilmiş SHA ve ortak ürün davranışı cihazdan bağımsız. Kullanıcının cihazına üretim imzalama sırları veya fabrika altyapısı kurma zorunluluğu yok.
+- **Ayrı factory kod deposuna bağımlılığı bitirme:** Factory **ikinci kaynak deposu/ayrı uygulama değil**, aynı Equinox Local'in **geliştirici kurulumu ve profil rolü**. Genel ürün geliştirme, paketleme, build/release araçlarının **kaynak kodu ve CI tanımları aynı repoda** olacak; bütün cihazlar aynı kaynak üzerinden çalışacak. Bugünkü private factory deposu özellikleri davranışları korunarak aşamalı biçimde tek repodaki genel araçlara devredilecek; ihtiyacı kalmadığında kaldırılabilecek. **Gizli anahtar, kişisel ayar, kullanıcı token'ı, imza anahtarı ve dağıtım yetkisi public Git'e ASLA taşınmaz**; cihazın güvenli yerel saklamasında ve yetkili CI secrets içinde kalır. Ayrı gizli yapılandırmanın varlığı ayrı *kod reposunu* gerektirmez.
+
+**Önemli teknik sınır:** macOS'ta imzalı `.app`, Windows'ta kurulu host ve çalışan Python/native kütüphaneleri her zaman yerinde değiştirilemez. Ortak güncelleme motorunun küçük OS adaptörleri bu zorunlu farkları yönetir. Platformlara ayrı ikinci güncelleme motoru yazılmaz. İlk tercih olan kaynak/host ayrımı fazla karmaşıklık çıkarırsa **yöntem değişir**, amaçlar korunur.
+
+## 3. Kapsamın sınırları
 
 - Eski çalışan Equinox Local, yeni sürüm gerçekten eşdeğer ve güvenilir olana dek kullanıcılar için **mevcut çalışır ürün** olarak kalır. Eski kodu veya kullanıcı verisini silme, mevcut Windows kurulumuna güncelleme uygulatma, Mac mini'nin **özel factory Developer** profilini public Stable'a çevirme.
 - Açık **Windows native Main updater PR #230**, yeni mimari planıyla **karıştırılmaz**: eksik üretim/rollback ve gerçek native sağlık kanıtı olmayan bu işi tamamlanmış sayma; bu plan kendi başına onun merge/release izni değildir. Eski güncelleme sorunları #184/#186 açık kalabilir. Hangi eski işleri kapatacağımız, yeni sürümün gerçek çalışan karşılığı kanıtlanınca kararlaştırılır.
 - Factory ve public ürün kaynaklarının sınırları, AGPL lisansı, mevcut profil/anahtarlar, Telegram eşleme ve Task Capsule geçmişi, Equinox Browser'ın Agent/Your Browser izolasyonu, izin politikaları korunacak. Geçiş sonunda yerinde veri migrasyonu + geri dönüş açıkça ele alınacak.
 - Kodun her satırının Python olması hedefi **Chrome/sistem dış araçları/derlenmiş üçüncü taraf kütüphaneler** için geçerli değildir. Yeni kendi ürünü için mümkün olduğunca tek kaynak dili kullanırız.
 
-## 3. Esnek çalışma sırası ve ilerleme tablosu
+## 4. Esnek çalışma sırası ve ilerleme tablosu
 
 Liste **önerilen sıra**dır; sabit aşama kapıları değildir. Her büyük adımdan sonra kalan işleri yeniden değerlendir; gereksiz alt görevlerle tur harcama. Testler bir teslimatı doğrular, teslimatın yerine geçmez.
 
 | Alan | Durum | Görülebilir tamamlanma işareti |
 |---|---|---|
-| A. Mevcut özellik/veri sözleşmesini çıkar | Bekliyor | Kullanıcı açısından korunacak özellikler, ayarlar, izinler, dosya biçimleri ve Browser protokolü kısa envanter |
+| A. Mevcut özellik/veri sözleşmesini çıkar | Bekliyor | Kullanıcı açısından korunacak özellikler, ayarlar, izinler, Browser protokolü ve **hızlı güncelleme/her cihazdan geliştirme/factory bağımsızlığı** envanteri |
 | B. Sade Python uygulama iskeleti | Bekliyor | WebView'sız gerçek Qt masaüstü penceresi + ortak local runtime; gerçek macOS/Windows üzerinde açılıp kapanır |
-| C. Ortak kurulum ve güncelleme çekirdeği | Bekliyor | Dört hedefte aynı akışla A→B, B'nin gerçek sağlığı ve başarısız B→sağlıklı A; tek kullanıcı eylemi, kullanıcı verisi korunur |
+| C. Ortak kurulum ve güncelleme çekirdeği | Bekliyor | Dört hedefte aynı A→B ve rollback; kod değişiklikleri mümkün olduğunca native yeniden paketleme gerektirmez; tek kullanıcı eylemi, kullanıcı verisi korunur |
 | D. Browser/MCP dikey entegrasyonu | Bekliyor | Chrome uzantısı ↔ Python Native Messaging ↔ MCP ↔ masaüstü arayüzü; Agent/Your Browser bağlam sınırları korunur |
 | E. Temel yetenekleri aktar | Bekliyor | Terminal/dosyalar/projeler, Tool API, izinler, Control Center, tanılama; aynı yetenekler iki OS ailesinde |
 | F. Görev/entegrasyon/otomasyon | Bekliyor | Telegram, Task Capsule, Auto Continue, Peekaboo/winapp işlev eşdeğerliği; geçerli oturum/izin politikaları korunur |
@@ -38,16 +48,18 @@ Liste **önerilen sıra**dır; sabit aşama kapıları değildir. Her büyük ad
 
 **Not:** Önce küçük **uçtan uca çalışan ürün akışı** ortaya çıkar; ayrı ayrı yüzlerce sözde hazır modül üretip en son bağlamaya çalışma. Gerekirse C ile D'nin sırası/birlikte geliştirilmesi değişir. Kullanıcıya çalışan davranışı göstermeyen sahte fixture başarıları 'tamamlandı' sayılmaz. Projenin bütün özelliklerini tamamlamadan üretimde eski kurulumlar değiştirilmez.
 
-## 4. Başlamadan / ilerlerken karar verilecek konular
+## 5. Başlamadan / ilerlerken karar verilecek konular
 
 Bunlar ayrı bir araştırma projesi açma gerekçesi değil; ilgili gerçek iş yapılırken kısa ve somut biçimde sonuçlandırılacak **açık sorulardır**.
 
 - Python ve PySide6'nın **dört mimari** için seçilecek bağımsız paketleme aracı, imzalama/işletim sistemi izinleri ve modül/lisans uyumu; özellikle Windows ARM64 native bağımlılıklar.
 - macOS Accessibility/Screen Recording için kullanıcıya kalıcı ve doğru uygulama kimliğiyle OS izni; Windows UI Automation için mevcut winapp/ilgili araçların korunması. Kullanıcı aynı yetenekleri görmeli; OS'de olmayan kabiliyet uydurulamaz.
 - Tek güncelleyicinin çalışan uygulama dosyalarını değiştiremeyeceği durumlarda en az hangi *bağımsız* updater/launcher süreci gerekir; süreç sahipliği, kilit, disk kesintisi ve geri alma nasıl **en az karmaşıklıkla** sağlanır?
+- Hızlı saf-Python kaynak güncellemeleri ile nadir native/Qt host güncellemelerini **tek ortak imzalı güncelleyici** üzerinden yürütme; platforma özgü paketleme ve os izinleri ihmal edilmeyecek.
+- Bugünkü private factory deposuna bağımlı genel paketleme/CI/ops kaynaklarının tek public repoya güvenli taşınması; gizli imza ve servis anahtarları kod deposu dışında kalacak.
 - Devam eden önceki işleri bırakma / yeni sisteme taşıma: özellikle Windows Stable6.0.4 kullanıcısının eski `rollback_failed` durumu, açık PR #230 ve public Main snapshot. Gerçek cihazlar, fabrika private profil ve imzalı eski sürümler korunur.
 
-## 5. Takip ve değişiklik günlüğü
+## 6. Takip ve değişiklik günlüğü
 
 Bu bölüm **unutmama defteri**. Bir tur bittiğinde uzun teknik destan değil, aşağıdaki dört bilgi güncellenecek:
 
@@ -59,5 +71,7 @@ Bu bölüm **unutmama defteri**. Bir tur bittiğinde uzun teknik destan değil, 
 | Tarih | Biten / karar | Sıradaki adım |
 |---|---|---|
 | 2026-10-13 | Python 3 + PySide6 / Qt Widgets ilk teknoloji tercihi; **yalnız yol haritası kaydedildi, yeniden yazıma başlanmadı**. Plan bağlayıcı değil; eski ürün ve PR #230 korunuyor. | Önce özellik/veri sınırlarının kısa envanteri, ardından mümkün olan en küçük *gerçek çalışan* yeni ürün dikey akışı. |
+
+| 2026-10-13 | Eksik bırakılan üç önemli ürün beklentisi plana eklendi: hızlı yerinde kod güncellemesi, herhangi bir macOS/Windows cihazından geliştirme ve ayrı factory **kod** deposunun gereksiz hâle gelmesi. Ortak Python çekirdeği/güncelleme motoru korunacak; kaynak yükü + sabit native host sadece değiştirilebilir başlangıç yaklaşımı. Henüz uygulanmadı. | İlk dikey ürün kesitinde bu üç kullanıcı senaryosunu da görünür kıl; gereksiz katman ekleme. |
 
 **Son ilke:** Kullanıcı planı değil, çalışan Equinox Local'i istiyor. Bu dosya gerekirse tamamen değişebilir; çalışan eski ürünü riske atarak plana sadakat gösterilemez.
