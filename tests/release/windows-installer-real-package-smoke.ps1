@@ -391,6 +391,8 @@ try {
   $JournalGuard = Join-Path $JournalDataDir (".$JournalId.writer-lock")
   $JournalAuthority = Join-Path $JournalDataDir ("$JournalId.native-authority.json")
   $JournalAuthorityTrigger = Join-Path $Work 'start-journal-authority-client.trigger'
+  $JournalAbortTrigger = Join-Path $Work 'start-journal-abort-client.trigger'
+  $JournalAbortCommit = Join-Path $JournalDataDir ("$JournalId.abort-commit.json")
   if ((Test-Path -LiteralPath $JournalLock) -or (Test-Path -LiteralPath $JournalReceipt) -or (Test-Path -LiteralPath $JournalData)) {
     throw 'Hosted native journal test requires an unoccupied transaction identity.'
   }
@@ -445,6 +447,7 @@ try {
       $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_JOURNAL_CLIENT_MODULE'] = Join-Path $Root 'src\equinox-local-windows-native-journal-authority-client.js'
       $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_JOURNAL_TX_ROOT'] = $NativeTxRoot
       $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_JOURNAL_TRIGGER'] = $JournalAuthorityTrigger
+      $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_JOURNAL_ABORT_TRIGGER'] = $JournalAbortTrigger
       $WorkerProcess = [Diagnostics.Process]::Start($WorkerStartInfo)
       if ($null -eq $WorkerProcess) { throw 'Unable to start ephemeral owned Node process for Guardian audit.' }
       $WorkerRecord = [ordered]@{
@@ -579,6 +582,56 @@ try {
         Remove-Item -LiteralPath $JournalAuthorityTrigger -Force -ErrorAction SilentlyContinue
       }
       Assert-True ((Invoke-GuardianCheck '--audit-native-journal') -eq 0) 'Native journal authority disposable fixture reconciliation failed.'
+      # First permitted REAL native journal stage mutation: prepared/0 to
+      # rollback_started/1 only. The installed Guardian itself persists the
+      # exact journal bytes under its own OS-exclusive writer lease; WPF and
+      # Native Messaging must remain untouched. This is a disposable fixture.
+      $AbortOwner = $null
+      try {
+        $AbortStart = [Diagnostics.ProcessStartInfo]::new($GuardianExe)
+        $AbortStart.Arguments = '--hold-native-prepared-abort'
+        $AbortStart.UseShellExecute = $false
+        $AbortStart.CreateNoWindow = $true
+        $AbortStart.RedirectStandardError = $true
+        $AbortOwner = [Diagnostics.Process]::Start($AbortStart)
+        Assert-True ($null -ne $AbortOwner) 'Independent native journal abort writer did not start.'
+        [IO.File]::WriteAllText($JournalAbortTrigger, 'disposable-test-only')
+        $AbortCommitted = $false
+        for ($AbortAttempt=0; $AbortAttempt -lt 80; $AbortAttempt++) {
+          if ([IO.File]::Exists($JournalAbortCommit) -and -not $AbortOwner.HasExited) { $AbortCommitted = $true; break }
+          if ($AbortOwner.HasExited) { break }
+          Start-Sleep -Milliseconds 110
+        }
+        if (-not $AbortCommitted -and $AbortOwner.HasExited) {
+          Write-Output ('Native abort writer diagnostic: ' + $AbortOwner.StandardError.ReadToEnd())
+        }
+        Assert-True $AbortCommitted 'Native prepared abort writer did not flush its independent commit receipt.'
+        $AbortOwner.Kill()
+        Assert-True ($AbortOwner.WaitForExit(5000)) 'Native journal abort owner did not stop under crash fixture.'
+        Assert-True ([IO.File]::Exists($JournalGuard) -and [IO.File]::Exists($JournalAuthority) -and
+          [IO.File]::Exists($JournalAbortCommit)) 'Native abort writer crash lost durable ownership or commit evidence.'
+        $AbortReceipt = ConvertFrom-Json ([IO.File]::ReadAllText($JournalAbortCommit))
+        $ActualAbortDigest = (Get-FileHash -LiteralPath $JournalData -Algorithm SHA256).Hash.ToLowerInvariant()
+        Assert-True ($AbortReceipt.transactionId -ceq $JournalId -and $AbortReceipt.stage -ceq 'rollback_started' -and
+          $AbortReceipt.sequence -eq 1 -and $AbortReceipt.guardianPid -eq $AbortOwner.Id -and
+          $AbortReceipt.journalSha256 -ceq $ActualAbortDigest) 'Durable native abort commit receipt does not bind exact updated bytes.'
+        $AbortData = ConvertFrom-Json ([IO.File]::ReadAllText($JournalData))
+        Assert-True ($AbortData.stage -ceq 'rollback_started' -and $AbortData.sequence -eq 1 -and
+          $AbortData.transactionId -ceq $JournalId -and $AbortData.currentSha -ceq $JournalCurrent -and
+          $AbortData.targetSha -ceq $JournalTarget) 'Independent native journal writer failed exact prepared-to-abort stage transition.'
+        Assert-True ((Invoke-GuardianCheck '--audit-native-journal') -eq 70) 'Native journal stage writer orphan lock was auto-replayed.'
+        Assert-True ((Invoke-GuardianCheck '--hold-native-prepared-abort') -eq 70) 'Native writer accepted duplicate prepared abort after owner crash.'
+      } finally {
+        if ($null -ne $AbortOwner) {
+          try { if (-not $AbortOwner.HasExited) { $AbortOwner.Kill() } } catch {}
+          try { $AbortOwner.WaitForExit(5000) | Out-Null } catch {}
+          $AbortOwner.Dispose()
+        }
+        # Only disposable CI fixture permits forced journal restoration.
+        Remove-Item -LiteralPath $JournalGuard,$JournalAuthority,$JournalAbortCommit,$JournalAbortTrigger -Force -ErrorAction SilentlyContinue
+        [IO.File]::WriteAllText($JournalData, ($JournalValue | ConvertTo-Json -Depth 5))
+      }
+      Assert-True ((Invoke-GuardianCheck '--audit-native-journal') -eq 0) 'Disposable native abort test could not restore prepared journal for subsequent negative cases.'
     } finally {
       if ($null -ne $WorkerProcess) {
         # .NET Framework under Windows PowerShell 5.1 has Kill() but not

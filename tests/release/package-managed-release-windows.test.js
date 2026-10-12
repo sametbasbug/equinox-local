@@ -340,7 +340,7 @@ test("native journal authority accepts only kernel-PID+HMAC live prepared worker
   const source = await fs.readFile(new URL('../../native/windows/EquinoxLocal.Guardian/MainNativeJournalAuthority.cs', import.meta.url), 'utf8');
   const lease = await fs.readFile(new URL('../../native/windows/EquinoxLocal.Guardian/MainNativeJournalLease.cs', import.meta.url), 'utf8');
   assert.match(program, /--hold-native-journal-authority/u);
-  assert.match(lease, /RecordNativeJournalWorkerAuthority\(owner, root, worker\)/u);
+  assert.match(lease, /RecordNativeJournalWorkerAuthority\(owner, root, worker, recordPreparedAbort\)/u);
   assert.match(source, /GetNamedPipeClientProcessId\(listener\.SafePipeHandle/u);
   assert.match(source, /clientPid != owner\.Pid/u);
   assert.match(source, /stage"\)\.GetString\(\) != "prepared"/u);
@@ -354,6 +354,25 @@ test("native journal authority accepts only kernel-PID+HMAC live prepared worker
   assert.match(source, /new Utf8JsonWriter\(fd\)/u);
   assert.doesNotMatch(source, /JsonSerializer\.Serialize\(/u);
   assert.doesNotMatch(source, /Process\.Start|Registry\.SetValue|\.writer-lock"\s*,\s*FileMode\.OpenOrCreate|"shell_stopped"|"switched"/u);
+});
+
+test("Windows native Guardian only commits prepared/0 to rollback_started/1 through exclusive journal lease", async () => {
+  const code = await fs.readFile(new URL('../../native/windows/EquinoxLocal.Guardian/MainNativePreparedAbort.cs', import.meta.url), 'utf8');
+  const program = await fs.readFile(new URL('../../native/windows/EquinoxLocal.Guardian/Program.cs', import.meta.url), 'utf8');
+  assert.match(program, /--hold-native-prepared-abort/u);
+  assert.match(code, /WriteNativeJournalPreparedAbort\(/u);
+  assert.match(code, /GetProperty\("stage"\)\.GetString\(\) != "prepared"/u);
+  assert.match(code, /GetProperty\("sequence"\)\.GetInt32\(\) != 0/u);
+  assert.match(code, /writer\.WriteString\("stage", "rollback_started"\)/u);
+  assert.match(code, /writer\.WriteNumber\("sequence", 1\)/u);
+  assert.match(code, /CryptographicOperations\.FixedTimeEquals\(expectedDigest/u);
+  assert.match(code, /FileMode\.CreateNew, FileAccess\.Write, FileShare\.None/u);
+  assert.match(code, /FileOptions\.WriteThrough/u);
+  assert.match(code, /File\.Move\(temp, journalPath, overwrite: true\)/u);
+  assert.match(code, /\.abort-commit\.json/u);
+  assert.match(code, /FileMode\.CreateNew, FileAccess\.Write/u);
+  assert.match(code, /committed\.RootElement\.GetProperty\("sequence"\)\.GetInt32\(\) != 1/u);
+  assert.doesNotMatch(code, /Process\.Start|Registry\.SetValue|native_staged"\)|shell_stopped"\)|switched"\)|healthy"\)|committed"\)/u);
 });
 
 test("independent native Guardian obtains an OS-exclusive durable journal lease with no automatic reclaim or WPF mutation", async () => {
