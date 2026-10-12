@@ -22,6 +22,7 @@ import { assertWindowsStableShellOwnedByRelease, launchWindowsStableShell } from
 import { cleanupEquinoxLocalMainUpdateWorkerOwnership } from "./equinox-local-main-update-scheduler.js";
 import { admitWindowsMainNativeWorkerJournal } from "./equinox-local-windows-main-worker-admission.js";
 import { startEquinoxWindowsMainWorkerProof } from "./equinox-local-windows-main-worker-proof.js";
+import { requestEquinoxLocalGuardianOwnedBWpfRestart } from "./equinox-local-windows-native-ab-restart-client.js";
 
 const execFile = promisify(execFileCallback);
 const HEALTH_ATTEMPTS = 40;
@@ -168,6 +169,7 @@ export async function runEquinoxLocalMainUpdateWorker({
   recoverNativeLifecycle = recoverEquinoxLocalMainNativeLifecycle,
   admitWindowsNativeWorker = admitWindowsMainNativeWorkerJournal,
   handoffImpl = runEquinoxLocalMainUpdateHandoff,
+  guardianOwnedBWpfRestartImpl = requestEquinoxLocalGuardianOwnedBWpfRestart,
   restartRuntimeImpl = (value) => restartEquinoxLocalMainSourceRuntime({ ...value, execFileImpl, env, fsImpl }),
   verifyRuntimeImpl,
   resolveNativeInstallation = resolveEquinoxLocalMainWorkerNativeInstallation,
@@ -303,6 +305,22 @@ export async function runEquinoxLocalMainUpdateWorker({
       ? verifyRuntimeImpl
       : (value) => waitForExactSourceHealth({ ...value, pointerPath: engine.paths.sourcePointerPath, gitPath: toolchain.gitPath, fetchImpl, sleepImpl });
     const restartWithNativeOwnership = (value) => {
+      if (hostTarget.startsWith("win32-") && nativeLifecycle?.journaledAB === true) {
+        if (value.rollback) {
+          // Rollback must also use exact native Guardian OS ownership; do
+          // not silently fall back to the old JS direct Windows shell launch.
+          throw new Error("Windows native A rollback WPF restart requires independently verified Guardian recovery.");
+        }
+        if (typeof env.EQUINOX_LOCAL_MAIN_WORKER_TOKEN !== "string") {
+          throw new Error("Guardian-owned native B WPF restart is missing its live worker proof.");
+        }
+        return guardianOwnedBWpfRestartImpl({
+          transactionId: args.transactionId,
+          transactionRoot: args.transactionRoot,
+          workerToken: env.EQUINOX_LOCAL_MAIN_WORKER_TOKEN,
+          sourceSha: value.sha,
+        });
+      }
       if (hostTarget.startsWith("win32-") && nativeLifecycle) {
         // Native Windows lifecycle supplies both trusted release identities;
         // preserve exact rollback ownership instead of guessing a shell path.

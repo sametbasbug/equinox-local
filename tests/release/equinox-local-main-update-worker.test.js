@@ -71,7 +71,7 @@ test("Windows native Main rollback relaunch fails closed when restored shell can
   }), /trusted absolute/u);
 });
 
-test("Windows native worker handoff supplies exact candidate and rollback release identities to shell restart", async () => {
+test("Windows journaled Main worker launches B only through native Guardian and refuses direct A fallback", async () => {
   const events = [];
   const rollbackPath = "C:\\native-rollback\\release";
   const targetRelease = "C:\\native-store\\release";
@@ -87,16 +87,18 @@ test("Windows native worker handoff supplies exact candidate and rollback releas
     resolveNativeInstallation: async () => ({ managed: true, selfUpdateSupported: true, target: "win32-x64" }),
     admitWindowsNativeWorker: async () => ({ admitted: true, journal }),
     recoverNativeLifecycle: async () => nativeLifecycle,
-    restartRuntimeImpl: async (v) => events.push(v),
+    env: { EQUINOX_LOCAL_MAIN_WORKER_TOKEN: 'f'.repeat(64) },
+    restartRuntimeImpl: async () => assert.fail('journaled native WPF must never restart through unowned JS'),
+    guardianOwnedBWpfRestartImpl: async (value) => { events.push(value); },
     handoffImpl: async ({ restartRuntime }) => {
-      await restartRuntime({ rollback: false, transactionId: TX });
-      await restartRuntime({ rollback: true, transactionId: TX });
+      await restartRuntime({ rollback: false, transactionId: TX, sha: B });
+      assert.throws(() => restartRuntime({ rollback: true, transactionId: TX, sha: A }), /independently verified Guardian recovery/u);
       return { status: "succeeded" };
     },
     cleanupImpl: async () => {},
   });
-  assert.deepEqual(events[0].windowsNativeShell, { programRoot, releaseDir: targetRelease });
-  assert.deepEqual(events[1].windowsNativeShell, { programRoot, releaseDir: rollbackPath });
+  assert.equal(events.length, 1);
+  assert.deepEqual(events[0], { transactionId: TX, transactionRoot: STATE, workerToken: 'f'.repeat(64), sourceSha: B });
 });
 
 test("Windows worker blocks legacy random native replacement after journal admission and before handoff", async () => {

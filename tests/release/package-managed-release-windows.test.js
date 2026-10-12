@@ -514,3 +514,24 @@ test("independent Guardian worker process provenance never invokes a launcher or
   assert.match(auditor, /WorkerTokenPattern/u);
   assert.doesNotMatch(auditor, /Process\.Start|Registry\.SetValue|File\.WriteAllText|File\.Delete/u);
 });
+
+test('integrated Guardian B WPF restart requires native owner OS PID+HMAC, exact B pointer, shell PID+token+pipe and durable restarted/4', async () => {
+  const source = await fs.readFile(new URL('../../native/windows/EquinoxLocal.Guardian/MainNativeIntegratedABRestart.cs', import.meta.url), 'utf8');
+  const supervisor = await fs.readFile(new URL('../../native/windows/EquinoxLocal.Guardian/MainNativeIntegratedABSupervisor.cs', import.meta.url), 'utf8');
+  const worker = await fs.readFile(new URL('../../src/equinox-local-main-update-worker.js', import.meta.url), 'utf8');
+  assert.match(supervisor, /RestartOwnedIntegratedBWpf\(owner, journalRoot, worker\)/u);
+  assert.match(source, /GetNamedPipeClientProcessId\(endpoint\.SafePipeHandle/u);
+  assert.match(source, /clientPid != owner\.Pid/u);
+  assert.match(source, /CryptographicOperations\.FixedTimeEquals\(response, expected\)/u);
+  assert.match(source, /"switched" \|\| j\.GetProperty\("sequence"\)\.GetInt32\(\) != 3/u);
+  assert.match(source, /InspectMainNativeIdentity\(\)/u);
+  assert.match(source, /using var shell = Launch\(executable, null\)/u);
+  assert.match(source, /ReadWindowsLogonAuthenticationId\(shellToken\)/u);
+  assert.match(source, /GetNamedPipeServerProcessId\(pipe\.SafePipeHandle/u);
+  assert.match(source, /serverPid != shell\.Id/u);
+  assert.match(source, /FileMode\.CreateNew, FileAccess\.Write, FileShare\.None/u);
+  assert.match(source, /WriteIntegratedOwnedNativeStage\(owner, journalPath, "switched", 3, "restarted", 4\)/u);
+  assert.match(worker, /guardianOwnedBWpfRestartImpl\(/u);
+  assert.match(worker, /Windows native A rollback WPF restart requires independently verified Guardian recovery/u);
+  assert.doesNotMatch(source, /File\.Move|Directory\.Move|Registry\.SetValue|Directory\.Delete|Process\.Kill/u);
+});

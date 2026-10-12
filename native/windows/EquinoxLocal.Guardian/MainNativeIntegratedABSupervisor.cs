@@ -104,6 +104,7 @@ internal static partial class Program
         // Guardian supplies a narrow OS-authenticated action grant and audits
         // the actual installed B plus deterministic intact A rollback tree.
         RequestOwnedIntegratedABSlotSwap(owner, journalRoot, worker, release);
+        RestartOwnedIntegratedBWpf(owner, journalRoot, worker);
         InspectionPhase = "native-integrated-ab-a-stopped-journaled-b-not-switched";
         // A remains on disk with its exact Stable bytes; the persistent
         // Guardian writer lease blocks any automatic or unverified replay.
@@ -114,7 +115,8 @@ internal static partial class Program
     {
         if (!((from == "prepared" && originalSequence == 0 && to == "native_staged" && nextSequence == 1) ||
               (from == "native_staged" && originalSequence == 1 && to == "shell_stopped" && nextSequence == 2) ||
-              (from == "shell_stopped" && originalSequence == 2 && to == "switched" && nextSequence == 3)))
+              (from == "shell_stopped" && originalSequence == 2 && to == "switched" && nextSequence == 3) ||
+              (from == "switched" && originalSequence == 3 && to == "restarted" && nextSequence == 4)))
             throw new InvalidDataException("Native integrated stage transition is not independently authorized.");
         RequireNormalFile(path);
         var original = File.ReadAllBytes(path);
