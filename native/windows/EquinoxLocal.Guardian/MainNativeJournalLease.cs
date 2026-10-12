@@ -10,7 +10,7 @@ internal static partial class Program
     // writer and NOT permission to stop WPF, swap A/B or relaunch anything.
     // The persistent marker is intentionally never deleted automatically:
     // a dead native owner needs independent receipt + filesystem reconciliation.
-    private static void HoldOwnedNativeJournalLease()
+    private static void HoldOwnedNativeJournalLease(bool acceptAuthorityProof = false)
     {
         InspectionPhase = "native-journal-lease-preflight";
         InspectOwnedNativeWorkerOsArguments();
@@ -36,6 +36,8 @@ internal static partial class Program
         lease.Write(body);
         lease.Flush(flushToDisk: true);
         InspectionPhase = "native-journal-lease-exclusive-held";
+        if (acceptAuthorityProof)
+            RecordNativeJournalWorkerAuthority(owner, root, worker);
         // Deliberately no journal/receipt modifications and no automatic
         // cleanup. Worker exit or bounded lease expiry means a trusted
         // supervisor must reconcile before any further native mutation.

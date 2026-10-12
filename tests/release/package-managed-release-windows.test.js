@@ -335,6 +335,27 @@ test("independent Windows Guardian journal audit is read-only and binds active m
 });
 
 
+test("native journal authority accepts only kernel-PID+HMAC live prepared worker and writes durable native-owned sidecar", async () => {
+  const program = await fs.readFile(new URL('../../native/windows/EquinoxLocal.Guardian/Program.cs', import.meta.url), 'utf8');
+  const source = await fs.readFile(new URL('../../native/windows/EquinoxLocal.Guardian/MainNativeJournalAuthority.cs', import.meta.url), 'utf8');
+  const lease = await fs.readFile(new URL('../../native/windows/EquinoxLocal.Guardian/MainNativeJournalLease.cs', import.meta.url), 'utf8');
+  assert.match(program, /--hold-native-journal-authority/u);
+  assert.match(lease, /RecordNativeJournalWorkerAuthority\(owner, root, worker\)/u);
+  assert.match(source, /GetNamedPipeClientProcessId\(listener\.SafePipeHandle/u);
+  assert.match(source, /clientPid != owner\.Pid/u);
+  assert.match(source, /stage"\)\.GetString\(\) != "prepared"/u);
+  assert.match(source, /sequence"\)\.GetInt32\(\) != 0/u);
+  assert.match(source, /HMACSHA256\.HashData/u);
+  assert.match(source, /CryptographicOperations\.FixedTimeEquals/u);
+  assert.match(source, /FileMode\.CreateNew, FileAccess\.Write/u);
+  assert.match(source, /FileShare\.None, 4096, FileOptions\.WriteThrough/u);
+  assert.match(source, /FileOptions\.WriteThrough/u);
+  assert.match(source, /fd\.Flush\(flushToDisk: true\)/u);
+  assert.match(source, /new Utf8JsonWriter\(fd\)/u);
+  assert.doesNotMatch(source, /JsonSerializer\.Serialize\(/u);
+  assert.doesNotMatch(source, /Process\.Start|Registry\.SetValue|\.writer-lock"\s*,\s*FileMode\.OpenOrCreate|"shell_stopped"|"switched"/u);
+});
+
 test("independent native Guardian obtains an OS-exclusive durable journal lease with no automatic reclaim or WPF mutation", async () => {
   const program = await fs.readFile(new URL('../../native/windows/EquinoxLocal.Guardian/Program.cs', import.meta.url), 'utf8');
   const code = await fs.readFile(new URL('../../native/windows/EquinoxLocal.Guardian/MainNativeJournalLease.cs', import.meta.url), 'utf8');
