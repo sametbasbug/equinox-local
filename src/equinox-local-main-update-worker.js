@@ -21,6 +21,7 @@ import { requestWindowsShellRuntimeRestart } from "./equinox-local-windows-shell
 import { assertWindowsStableShellOwnedByRelease, launchWindowsStableShell } from "./equinox-local-windows-stable-shell.js";
 import { cleanupEquinoxLocalMainUpdateWorkerOwnership } from "./equinox-local-main-update-scheduler.js";
 import { admitWindowsMainNativeWorkerJournal } from "./equinox-local-windows-main-worker-admission.js";
+import { startEquinoxWindowsMainWorkerProof } from "./equinox-local-windows-main-worker-proof.js";
 
 const execFile = promisify(execFileCallback);
 const HEALTH_ATTEMPTS = 40;
@@ -179,6 +180,7 @@ export async function runEquinoxLocalMainUpdateWorker({
     ? pathApi.join(pathApi.dirname(pathApi.dirname(args.transactionRoot)), "runtime")
     : pathApi.join(pathApi.dirname(args.transactionRoot), "runtime");
   const toolchain = equinoxLocalToolchainContract({ runtimeRoot, target: hostTarget });
+  let workerProof = null;
   try {
     const engine = engineFactory({
       sourceRoot: args.sourceRoot,
@@ -233,6 +235,15 @@ export async function runEquinoxLocalMainUpdateWorker({
             fsImpl, execFileImpl, workerToken: env.EQUINOX_LOCAL_MAIN_WORKER_TOKEN,
           })
           : null;
+        if (windowsAdmission && process.platform === "win32") {
+          // Read-only challenge endpoint tied to the real detached Node PID.
+          // Guardian's separate OS peer-PID proof is still required; neither
+          // admission nor a successful challenge authorizes WPF mutation.
+          workerProof = await startEquinoxWindowsMainWorkerProof({
+            transactionId: active.transactionId,
+            workerToken: env.EQUINOX_LOCAL_MAIN_WORKER_TOKEN,
+          });
+        }
         if (initialStage === "ready_to_switch") {
           const candidate = await prepareNativeCandidate({
             sourceSha: active.targetSha,
@@ -313,7 +324,8 @@ export async function runEquinoxLocalMainUpdateWorker({
       verifyRuntime: verify,
     });
   } finally {
-    await cleanupImpl({ transactionId: args.transactionId, transactionRoot: args.transactionRoot });
+    try { await workerProof?.close(); }
+    finally { await cleanupImpl({ transactionId: args.transactionId, transactionRoot: args.transactionRoot }); }
   }
 }
 

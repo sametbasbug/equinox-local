@@ -339,6 +339,12 @@ test("independent Guardian worker process provenance never invokes a launcher or
   const program = await fs.readFile(new URL("../../native/windows/EquinoxLocal.Guardian/Program.cs", import.meta.url), "utf8");
   const auditor = await fs.readFile(new URL("../../native/windows/EquinoxLocal.Guardian/MainNativeWorkerIdentity.cs", import.meta.url), "utf8");
   assert.match(program, /--audit-native-worker/u);
+  assert.match(program, /--audit-native-worker-ipc/u);
+  assert.match(auditor, /GetNamedPipeServerProcessId\(pipe\.SafePipeHandle/u);
+  assert.match(auditor, /serverPid != owner\.Pid/u);
+  assert.match(auditor, /HMACSHA256\.HashData/u);
+  assert.match(auditor, /CryptographicOperations\.FixedTimeEquals/u);
+  assert.match(auditor, /CancellationTokenSource\(TimeSpan\.FromSeconds\(2\)\)/u);
   assert.match(auditor, /InspectOwnedNativeTransitionJournal\(\)/u);
   assert.match(auditor, /windows-worker\.json/u);
   assert.match(auditor, /Process\.GetProcessById\(pid\)/u);

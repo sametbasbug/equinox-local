@@ -406,6 +406,7 @@ try {
     # executable must never authorize any resume. The disposable Node runs no
     # updater or user payload and is killed/removed even if assertions fail.
     Assert-True ((Invoke-GuardianCheck '--audit-native-worker') -eq 70) 'Guardian accepted absent native worker ownership.'
+    Assert-True ((Invoke-GuardianCheck '--audit-native-worker-ipc') -eq 70) 'Guardian accepted absent native worker IPC owner.'
     $WorkerNode = Join-Path $ReleaseDir 'runtime\node\bin\node.exe'
     Assert-True ([IO.File]::Exists($WorkerNode)) 'Native worker OS identity test requires release-owned Node.'
     $WorkerHandoff = Join-Path $NativeTxRoot 'handoff'
@@ -420,7 +421,11 @@ try {
       # Hosted real installer smoke uses Windows PowerShell 5.1 / .NET Framework,
       # whose ProcessStartInfo does not expose ArgumentList. Fixed test-only
       # script content contains no external/user-controlled command arguments.
-      $WorkerStartInfo.Arguments = '-e "setInterval(function(){},10000)"'
+      $WitnessScript = Join-Path $Root 'tests\release\owned-windows-worker-proof.mjs'
+      Assert-True ([IO.File]::Exists($WitnessScript)) 'Exact product worker witness fixture is missing.'
+      $WorkerStartInfo.Arguments = '"' + $WitnessScript + '"'
+      $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_WORKER_TX'] = $JournalId
+      $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_MAIN_WORKER_TOKEN'] = ('e' * 64)
       $WorkerProcess = [Diagnostics.Process]::Start($WorkerStartInfo)
       if ($null -eq $WorkerProcess) { throw 'Unable to start ephemeral owned Node process for Guardian audit.' }
       $WorkerRecord = [ordered]@{
@@ -434,6 +439,20 @@ try {
       # that a second foreign Windows session was created.
       Assert-True ($WorkerProcess.SessionId -eq ([Diagnostics.Process]::GetCurrentProcess()).SessionId) 'Disposable worker did not start in the runner Guardian OS session.'
       Assert-True ((Invoke-GuardianCheck '--audit-native-worker') -eq 0) 'Guardian refused live product-owned Node PID/start time/executable/SID/logon-LUID/session proof.'
+      # IPC endpoint starts asynchronously inside the real installed Node.
+      # Retry only the positive fixture handshake; deny on all other failures.
+      $WitnessReady = $false
+      for ($WitnessAttempt=0; $WitnessAttempt -lt 10; $WitnessAttempt++) {
+        if ((Invoke-GuardianCheck '--audit-native-worker-ipc') -eq 0) { $WitnessReady = $true; break }
+        Start-Sleep -Milliseconds 150
+      }
+      Assert-True $WitnessReady 'Guardian refused OS PID-bound nonce/HMAC proof from live owned Node.'
+      $WorkerRecord.token = ('d' * 64)
+      [IO.File]::WriteAllText($WorkerRecordPath,($WorkerRecord | ConvertTo-Json -Depth 4))
+      Assert-True ((Invoke-GuardianCheck '--audit-native-worker-ipc') -eq 70) 'Guardian accepted another token for a live OS pipe peer.'
+      $WorkerRecord.token = ('e' * 64)
+      [IO.File]::WriteAllText($WorkerRecordPath,($WorkerRecord | ConvertTo-Json -Depth 4))
+      Assert-True ((Invoke-GuardianCheck '--audit-native-worker-ipc') -eq 0) 'Guardian refused restored live native owner IPC token.'
       $WorkerRecord.startTimeUtcTicks = ([long]::Parse($WorkerRecord.startTimeUtcTicks) - 1).ToString([Globalization.CultureInfo]::InvariantCulture)
       [IO.File]::WriteAllText($WorkerRecordPath,($WorkerRecord | ConvertTo-Json -Depth 4))
       Assert-True ((Invoke-GuardianCheck '--audit-native-worker') -eq 70) 'Guardian accepted a replayed or reused native worker PID with wrong creation time.'
@@ -459,6 +478,7 @@ try {
       Remove-Item -LiteralPath $WorkerRecordPath -Force -ErrorAction SilentlyContinue
     }
     Assert-True ((Invoke-GuardianCheck '--audit-native-worker') -eq 70) 'Guardian accepted an exited/unowned native worker after cleanup.'
+    Assert-True ((Invoke-GuardianCheck '--audit-native-worker-ipc') -eq 70) 'Guardian accepted an exited native owner proof endpoint.'
     Assert-True ((Invoke-GuardianCheck '--inspect') -eq 70) 'Stable Guardian must not start while the journal owns an active Main lock.'
     $JournalReceiptValue.targetSha = $(if ($JournalTarget -ceq ('c' * 40)) { 'd' * 40 } else { 'c' * 40 })
     [IO.File]::WriteAllText($JournalReceipt, ($JournalReceiptValue | ConvertTo-Json -Depth 5))
