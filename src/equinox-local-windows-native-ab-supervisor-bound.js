@@ -5,7 +5,7 @@ import {
   registerWindowsNativeMessagingHost,
   windowsNativeMessagingLauncherPath,
 } from './equinox-browser-windows-native-messaging.js';
-import { writeEquinoxLocalMainNativePointer } from './equinox-local-main-native-state.js';
+import { readEquinoxLocalMainNativePointer, writeEquinoxLocalMainNativePointer } from './equinox-local-main-native-state.js';
 import { createWindowsJournaledNativeABLifecycle } from './equinox-local-windows-native-ab-journal-lifecycle.js';
 
 const SHA = /^[a-f0-9]{40}$/u;
@@ -42,6 +42,8 @@ export function createSupervisorBoundWindowsNativeABLifecycle({
   previousReleaseDir, programRoot, manifestRoot, transactionRoot, pointerPath,
   fsImpl = fs, execFileImpl, env = process.env,
   writePointerImpl = writeEquinoxLocalMainNativePointer,
+  readPointerImpl = readEquinoxLocalMainNativePointer,
+  removePointerImpl = (file) => fs.unlink(file),
   assertNativeHostImpl = assertWindowsNativeMessagingHostOwnership,
   registerNativeHostImpl = registerWindowsNativeMessagingHost,
   launcherPathImpl = windowsNativeMessagingLauncherPath,
@@ -60,6 +62,29 @@ export function createSupervisorBoundWindowsNativeABLifecycle({
   const targetLauncher = launcherPathImpl(stored.releaseDir);
   const ownerArgs = Object.freeze({ transactionId, currentSha: transition.currentSha, targetSha: transition.targetSha, target: transition.target });
   const pointer = Object.freeze({ schemaVersion: 1, channel: 'main', sourceSha: transition.targetSha, target: transition.target, runtimeContractSha256: transition.targetRuntimeContractSha256 });
+  const oldPointer = previousPointer ? Object.freeze({ schemaVersion: 1, channel: 'main',
+    sourceSha: previousPointer.sourceSha, target: previousPointer.target, runtimeContractSha256: previousPointer.runtimeContractSha256 }) : null;
+  if (oldPointer && (oldPointer.sourceSha !== transition.currentSha || oldPointer.target !== transition.target ||
+      oldPointer.runtimeContractSha256 !== transition.currentRuntimeContractSha256)) {
+    throw new Error('Windows native runtime rollback pointer does not match admitted source A.');
+  }
+  async function exactPointer() {
+    try { return await readPointerImpl(pointerPath, { transactionRoot, fsImpl }); }
+    catch (error) { if (error?.code === 'ENOENT') return null; throw error; }
+  }
+  const matches = (a, b) => a?.sourceSha === b?.sourceSha && a?.target === b?.target &&
+    a?.runtimeContractSha256 === b?.runtimeContractSha256 && (a !== null) === (b !== null);
+  async function selectNativeRuntime({ release }) {
+    const current = await exactPointer();
+    const expected = release === 'B' ? pointer : oldPointer;
+    const other = release === 'B' ? oldPointer : pointer;
+    if (release !== 'A' && release !== 'B') throw new Error('Foreign native runtime selection.');
+    if (matches(current, expected)) return;
+    if (!matches(current, other)) throw new Error('Native runtime pointer is neither the expected old nor target identity.');
+    if (expected) await writePointerImpl(pointerPath, expected, { transactionRoot, fsImpl });
+    else await removePointerImpl(pointerPath);
+    if (!matches(await exactPointer(), expected)) throw new Error('Native runtime pointer did not durably select the exact owned release.');
+  }
   const proveNativeMessaging = async (release) => {
     const launcher = release === 'B' ? targetLauncher : previousLauncher;
     await assertNativeHostImpl({ manifestRoot, acceptedLauncherPaths: [launcher], execFileAsync: execFileImpl, fsImpl, env });
@@ -87,7 +112,9 @@ export function createSupervisorBoundWindowsNativeABLifecycle({
     verifyNativeMessaging: ({ release }) => proveNativeMessaging(release),
     registerNativeMessaging: ({ release }) => registerNativeMessaging(release),
     verifySustainedHealth: ({ release, sourceSha }) => supervisor.verifySustainedHealth({ ...ownerArgs, release, sourceSha, programRoot }),
-    commitNativePointer: () => writePointerImpl(pointerPath, pointer, { transactionRoot, fsImpl }),
+    selectNativeRuntime,
+    verifyNativeRuntime: async ({ release }) => (release === 'A' || release === 'B') &&
+      matches(await exactPointer(), release === 'B' ? pointer : oldPointer),
   });
   return Object.freeze({ ...adapter,
     target: transition.target, stored, previousPointer,

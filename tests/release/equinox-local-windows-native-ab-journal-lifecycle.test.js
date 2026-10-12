@@ -11,7 +11,7 @@ import { runEquinoxLocalMainUpdateHandoff } from '../../src/equinox-local-main-u
 const A = 'a'.repeat(40), B = 'b'.repeat(40), CONTRACT = 'f'.repeat(64);
 const ID = `main-${'6'.repeat(32)}`, STARTED = '2026-10-12T09:00:00.000Z';
 
-async function fixture(t, { healthyB = true, blockOwnership = false, failMessagingBOnce = false, failFinalBHealth = false, failFinalAHealth = false } = {}) {
+async function fixture(t, { healthyB = true, blockOwnership = false, failMessagingBOnce = false, failFinalBHealth = false, failFinalAHealth = false, failSelectBOnce = false } = {}) {
   const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'equinox-journal-ab-')));
   t.after(() => fs.rm(root, { recursive: true, force: true }));
   const transactionRoot = path.join(root, 'main-update');
@@ -68,7 +68,17 @@ async function fixture(t, { healthyB = true, blockOwnership = false, failMessagi
       return restart === release && switchedSource === release &&
         (release === 'A' || healthyB) && sourceSha === (release === 'A' ? A : B);
     },
-    commitNativePointer: async ({ sourceSha }) => { assert.equal(sourceSha, B); nativePointer = 'B'; calls.push('native-pointer-B'); },
+    selectNativeRuntime: async ({ release, sourceSha }) => {
+      assert.equal(sourceSha, release === 'B' ? B : A);
+      if (release === 'B' && failSelectBOnce) {
+        failSelectBOnce = false;
+        throw new Error('simulated power loss while selecting B native runtime');
+      }
+      nativePointer = release;
+      calls.push(`native-pointer-${release}`);
+    },
+    verifyNativeRuntime: async ({ release, sourceSha }) =>
+      nativePointer === release && sourceSha === (release === 'B' ? B : A),
   });
   const base = {
     transactionId: ID, currentSha: A, targetSha: B, rollbackSha: A,
@@ -87,7 +97,12 @@ async function fixture(t, { healthyB = true, blockOwnership = false, failMessagi
   const options = {
     transactionId: ID, engine, nativeLifecycle: lifecycle,
     initialReceipt: { ...base, stage: 'native_rollback_ready' },
-    restartRuntime: async ({ rollback }) => { restart = rollback ? 'A' : 'B'; calls.push(`restart:${restart}`); },
+    restartRuntime: async ({ rollback }) => {
+      restart = rollback ? 'A' : 'B';
+      assert.equal(nativePointer, restart, 'WPF must never start with the wrong native runtime pointer');
+      assert.equal(switchedSource, restart, 'WPF must never start with the wrong managed-source pointer');
+      calls.push(`restart:${restart}`);
+    },
     verifyRuntime: async ({ rollback }) => rollback || healthyB,
   };
   return { root, programRoot, journal, lifecycle, calls, options, readExe,
@@ -102,6 +117,7 @@ test('shared handoff physically switches WPF A→B and commits journal only afte
   assert.equal(result.status, 'succeeded');
   assert.equal(await f.readExe(), 'trusted WPF-B');
   assert.equal(f.getPointer(), 'B');
+  assert.ok(f.calls.indexOf('native-pointer-B') < f.calls.indexOf('restart:B'));
   assert.equal((await f.journal.read(ID)).stage, 'committed');
   assert.ok(f.calls.indexOf('durable-receipt-succeeded') < f.calls.indexOf('milestone:committed'));
   await assert.rejects(fs.lstat(f.backupRoot), { code: 'ENOENT' });
@@ -114,10 +130,23 @@ test('shared handoff physically rolls back unhealthy B→A and finalizes only af
   assert.equal(result.status, 'rolled_back');
   assert.equal(await f.readExe(), 'trusted WPF-A');
   assert.equal(f.getPointer(), 'A');
+  assert.ok(f.calls.indexOf('native-pointer-A') < f.calls.indexOf('restart:A'));
   assert.equal((await f.journal.read(ID)).stage, 'rolled_back');
   assert.ok(f.calls.indexOf('durable-receipt-rolled-back') < f.calls.indexOf('milestone:rolled_back'));
   await assert.rejects(fs.lstat(f.quarantineRoot), { code: 'ENOENT' });
   assert.equal(f.calls.at(-1), 'release-lock');
+});
+
+test('B native pointer selection failure rolls back both WPF slot and A source before A relaunch', async (t) => {
+  const f = await fixture(t, { failSelectBOnce: true });
+  const result = await runEquinoxLocalMainUpdateHandoff(f.options);
+  assert.equal(result.status, 'rolled_back');
+  assert.match(result.targetError.message, /simulated power loss/u);
+  assert.equal(await f.readExe(), 'trusted WPF-A');
+  assert.equal(f.getPointer(), 'A');
+  assert.ok(f.calls.indexOf('native-pointer-A') < f.calls.indexOf('restart:A'));
+  assert.equal(f.calls.includes('restart:B'), false, 'unselected native B must never start WPF');
+  assert.equal((await f.journal.read(ID)).stage, 'rolled_back');
 });
 
 test('foreign worker refuses journal and physical A→B without touching the shell', async (t) => {

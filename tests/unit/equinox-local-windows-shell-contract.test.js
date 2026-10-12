@@ -615,3 +615,15 @@ test("native Windows runtime records only whitelisted tunnel phases", async () =
   assert.match(supervisor, /"tunnel-exited", "tunnel-retry-ready"/u);
   assert.doesNotMatch(supervisor, /RecordRuntimeState\("tunnel-transport", (?:line|eventArgs\.Data)\)/u);
 });
+
+
+test("Windows WPF blocks mixed Main source and native runtime during unfinished native A/B transaction", async () => {
+  const shell = await source("WindowsManagedSourceRuntimeLocator.cs");
+  assert.match(shell, /ValidateActiveNativeRuntimePair\(transactionRoot, sourcePointer\.Sha, nativePointerPath\)/u);
+  assert.match(shell, /"switched" or "restarted" or "healthy" or "committed"/u);
+  assert.match(shell, /sourceSha != newSha \|\| nativePointer is not \{ \} selected/u);
+  assert.match(shell, /selected\.GetProperty\("runtimeContractSha256"\)\.GetString\(\) != targetContract/u);
+  assert.match(shell, /"rollback_native_restored" or "rollback_healthy" or "rolled_back"/u);
+  assert.match(shell, /MatchesOriginalNativeA\(previousA, nativePointer, oldSha\)/u);
+  assert.match(shell, /Unfinished native Main transition blocks WPF runtime launch/u);
+});

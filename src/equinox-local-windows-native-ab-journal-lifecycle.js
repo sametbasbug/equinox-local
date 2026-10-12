@@ -23,14 +23,14 @@ export function createWindowsJournaledNativeABLifecycle({
   slotRestore = restoreWindowsNativeABSlot,
   slotCommit = commitWindowsNativeABSlot,
   slotFinalizeRollback = finalizeWindowsNativeABRollback,
-  commitNativePointer,
+  selectNativeRuntime, verifyNativeRuntime,
 } = {}) {
   if (!TX.test(transactionId ?? '') || !['win32-x64', 'win32-arm64'].includes(target) ||
       !SHA.test(currentSha ?? '') || !SHA.test(targetSha ?? '') || currentSha === targetSha ||
       !DIGEST.test(targetRuntimeContractSha256 ?? '') ||
       typeof receiptStartedAt !== 'string' || Number.isNaN(Date.parse(receiptStartedAt)) ||
       !programRoot || !previousReleaseDir || !targetReleaseDir ||
-      typeof commitNativePointer !== 'function' ||
+      typeof selectNativeRuntime !== 'function' || typeof verifyNativeRuntime !== 'function' ||
       typeof journal?.read !== 'function' || typeof journal?.advance !== 'function' ||
       ![assertWorkerOwnership, shutdownOwnedWpf, verifyNativeMessaging, registerNativeMessaging, verifySustainedHealth].every((v) => typeof v === 'function')) {
     throw new Error('Windows A/B lifecycle requires authenticated worker, journal and native ownership callbacks.');
@@ -60,9 +60,25 @@ export function createWindowsJournaledNativeABLifecycle({
   return Object.freeze({
     journaledAB: true,
     journal,
-    commit: async () => {
+    async selectRuntime({ rollback } = {}) {
+      const record = await owned();
+      const release = rollback === true ? 'A' : rollback === false ? 'B' : null;
+      if (!release || (release === 'B' && !['switched', 'restarted', 'healthy'].includes(record.stage)) ||
+          (release === 'A' && !['rollback_native_restored', 'rollback_healthy'].includes(record.stage))) {
+        throw new Error('Native runtime selection requires exact authenticated journal stage.');
+      }
+      await messaging(release);
+      await selectNativeRuntime({ transactionId, release, sourceSha: release === 'B' ? targetSha : currentSha,
+        runtimeContractSha256: release === 'B' ? targetRuntimeContractSha256 : null });
+      if (await verifyNativeRuntime({ transactionId, release, sourceSha: release === 'B' ? targetSha : currentSha }) !== true) {
+        throw new Error('Native WPF runtime pointer does not match the source being restarted.');
+      }
+    },
+    async commit() {
       if ((await owned()).stage !== 'healthy') throw new Error('Native pointer may not commit before verified B health.');
-      await commitNativePointer({ transactionId, sourceSha: targetSha, runtimeContractSha256: targetRuntimeContractSha256 });
+      if (await verifyNativeRuntime({ transactionId, release: 'B', sourceSha: targetSha }) !== true) {
+        throw new Error('Native B pointer drifted after independently verified health.');
+      }
     },
     async activate() {
       let record = await owned();
