@@ -10,6 +10,9 @@ import {
   commitWindowsNativeABSlot,
 } from '../../src/equinox-local-windows-native-ab-switch.js';
 import { snapshotWindowsStableShellTree, sameWindowsStableShellTree } from '../../src/equinox-local-windows-stable-shell.js';
+import { createEquinoxLocalWindowsNativeTransitionJournal } from '../../src/equinox-local-windows-native-transition-journal.js';
+import { createWindowsJournaledNativeABLifecycle } from '../../src/equinox-local-windows-native-ab-journal-lifecycle.js';
+import { runEquinoxLocalMainUpdateHandoff } from '../../src/equinox-local-main-update-handoff.js';
 
 const [releaseDir, target] = process.argv.slice(2);
 if (process.platform !== 'win32' || !['win32-x64', 'win32-arm64'].includes(target) || !path.isAbsolute(releaseDir)) {
@@ -54,6 +57,71 @@ try {
   assert.equal(second.stage, 'switched');
   await commitWindowsNativeABSlot(options, { verifyBHealth: async () => true });
   assert.ok(sameWindowsStableShellTree(await readInstalled(), bRef));
+  // One shared handoff + durable journal transaction against the SAME real
+  // architecture-specific WPF payload used above, not a synthetic exe.
+  // Still a disposable installation: OS worker credentials, NM registry and
+  // real WPF process health require separate native supervisor admission.
+  await fs.rm(programRoot, { recursive: true, force: true });
+  await fs.cp(path.join(previousReleaseDir, 'runtime', 'shell'), programRoot, { recursive: true });
+  const jid = `main-${'d'.repeat(32)}`;
+  const started = '2026-10-12T09:00:00.000Z';
+  const shaA = 'a'.repeat(40), shaB = 'b'.repeat(40), contract = 'f'.repeat(64);
+  const txroot = path.join(root, 'main-update');
+  await fs.mkdir(txroot, { recursive: true });
+  let receipt = { transactionId: jid, currentSha: shaA, targetSha: shaB, startedAt: started, status: 'promoting' };
+  let nm = 'A', stopped = false, restarted = false, source = 'A';
+  const journal = createEquinoxLocalWindowsNativeTransitionJournal({
+    transactionRoot: txroot, platform: 'win32',
+    // The disposable temp-root fixture does not possess installer-managed
+    // private ACLs; production code must use the real ACL verifier.
+    protectWindowsAcl: async () => ({ safe: true }), verifyWindowsAcl: async () => ({ safe: true }),
+    inspectOwningReceipt: async () => receipt,
+    verifyMilestone: async (_, stage) => {
+      const active = await readInstalled();
+      if (stage === 'shell_stopped') return stopped;
+      if (['switched', 'restarted', 'healthy', 'committed'].includes(stage)) {
+        return sameWindowsStableShellTree(active, bRef) && nm === 'B';
+      }
+      return true;
+    },
+  });
+  await journal.create({ transactionId: jid, target, currentSha: shaA, targetSha: shaB,
+    receiptStartedAt: started, previousNative: { kind: 'stable', version: '6.0.4' },
+    targetRuntimeContractSha256: contract });
+  const lifecycle = createWindowsJournaledNativeABLifecycle({
+    transactionId: jid, target, currentSha: shaA, targetSha: shaB,
+    receiptStartedAt: started, targetRuntimeContractSha256: contract,
+    programRoot, previousReleaseDir, targetReleaseDir, journal,
+    assertWorkerOwnership: async () => true, // disposable trusted fixture only
+    shutdownOwnedWpf: async () => { stopped = true; },
+    verifyNativeMessaging: async ({ release }) => nm === release,
+    registerNativeMessaging: async ({ release }) => { nm = release; },
+    verifySustainedHealth: async ({ release, sourceSha }) => release === 'B' && sourceSha === shaB && source === 'B' && restarted,
+    commitNativePointer: async () => {},
+  });
+  const base = { currentSha: shaA, targetSha: shaB, rollbackSha: shaA,
+    rollbackSourceRoot: path.join(root, 'sourceA'), targetSourceRoot: path.join(root, 'sourceB') };
+  const engine = {
+    markNativeSwitched: async () => base,
+    activatePromotion: async () => { source = 'B'; return base; },
+    rollbackPromotion: async () => { source = 'A'; receipt = { ...receipt, status: 'verifying' }; return { ...base, stage: 'rollback_source_restored' }; },
+    markNativeRollbackRestored: async () => ({ ...base, stage: 'rollback_native_restored' }),
+    markRollbackSucceeded: async () => { receipt = { ...receipt, status: 'rolled_back' }; return { ...base, status: 'rolled_back' }; },
+    markRollbackFailed: async () => {},
+    markPromotionSucceeded: async () => { receipt = { ...receipt, status: 'succeeded' }; return { ...base, status: 'succeeded' }; },
+    releaseStagedLock: async () => {},
+  };
+  const journaled = await runEquinoxLocalMainUpdateHandoff({
+    engine, transactionId: jid, nativeLifecycle: lifecycle,
+    initialReceipt: { ...base, stage: 'native_rollback_ready' },
+    restartRuntime: async () => { restarted = true; },
+    verifyRuntime: async () => true,
+  });
+  assert.equal(journaled.status, 'succeeded');
+  assert.equal((await journal.read(jid)).stage, 'committed');
+  assert.ok(sameWindowsStableShellTree(await readInstalled(), bRef));
+  await assert.rejects(fs.lstat(path.join(root, 'Programs', `.equinox-shell-backup-${jid}`)), { code: 'ENOENT' });
+  console.log(`Windows ${target} shared handoff + persisted native journal + actual WPF PE A→B/health-gated commit VERIFIED`);
   console.log(`Windows ${target} real-native-PE immutable A→B / failed B→A / healthy B commit VERIFIED`);
 } finally {
   await fs.rm(root, { recursive: true, force: true });
