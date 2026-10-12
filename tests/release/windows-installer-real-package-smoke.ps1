@@ -392,6 +392,8 @@ try {
   $JournalAuthority = Join-Path $JournalDataDir ("$JournalId.native-authority.json")
   $JournalAuthorityTrigger = Join-Path $Work 'start-journal-authority-client.trigger'
   $JournalAbortTrigger = Join-Path $Work 'start-journal-abort-client.trigger'
+  $JournalShellTrigger = Join-Path $Work 'start-wpf-quiesce-client.trigger'
+  $JournalShellQuiesced = Join-Path $JournalDataDir ("$JournalId.stable-shell-quiesce.json")
   $JournalAbortCommit = Join-Path $JournalDataDir ("$JournalId.abort-commit.json")
   $JournalQuarantinedLock = Join-Path $JournalDataDir (".$JournalId.quarantined.writer-lock")
   $JournalQuarantineReceipt = Join-Path $JournalDataDir ("$JournalId.orphan-quarantine.json")
@@ -450,6 +452,7 @@ try {
       $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_JOURNAL_TX_ROOT'] = $NativeTxRoot
       $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_JOURNAL_TRIGGER'] = $JournalAuthorityTrigger
       $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_JOURNAL_ABORT_TRIGGER'] = $JournalAbortTrigger
+      $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_WPF_QUIESCE_TRIGGER'] = $JournalShellTrigger
       $WorkerProcess = [Diagnostics.Process]::Start($WorkerStartInfo)
       if ($null -eq $WorkerProcess) { throw 'Unable to start ephemeral owned Node process for Guardian audit.' }
       $WorkerRecord = [ordered]@{
@@ -584,6 +587,69 @@ try {
         Remove-Item -LiteralPath $JournalAuthorityTrigger -Force -ErrorAction SilentlyContinue
       }
       Assert-True ((Invoke-GuardianCheck '--audit-native-journal') -eq 0) 'Native journal authority disposable fixture reconciliation failed.'
+      # Real installed WPF native pilot: independently authenticated Guardian
+      # locates the exact Stable GUI OS PID, verifies owner SID/logon/session,
+      # verifies the live named-pipe server PID, requests graceful exit via
+      # the EXISTING shell IPC, and persists a non-activating OS exit proof.
+      # Restore the disposable hosted runner WPF before later Main assertions.
+      $ShellGuardian = $null
+      try {
+        $StableOwners = @(Get-CimInstance Win32_Process -Filter "Name='EquinoxLocal.exe'" -ErrorAction SilentlyContinue |
+          Where-Object { -not [string]::IsNullOrWhiteSpace($_.ExecutablePath) -and (Same-Path $_.ExecutablePath $StableExe) })
+        Assert-True ($StableOwners.Count -eq 1) 'Native WPF quiesce requires exactly one genuine installed Stable shell.'
+        $OriginalShellPid = [int]$StableOwners[0].ProcessId
+        $ShellStart = [Diagnostics.ProcessStartInfo]::new($GuardianExe)
+        $ShellStart.Arguments = '--hold-native-stable-shell-quiesce'
+        $ShellStart.UseShellExecute = $false
+        $ShellStart.CreateNoWindow = $true
+        $ShellStart.RedirectStandardError = $true
+        $ShellGuardian = [Diagnostics.Process]::Start($ShellStart)
+        Assert-True ($null -ne $ShellGuardian) 'Native WPF quiesce Guardian could not start.'
+        [IO.File]::WriteAllText($JournalShellTrigger, 'disposable-test-only')
+        $ShellQuiesced = $false
+        for ($ShellTry=0; $ShellTry -lt 140; $ShellTry++) {
+          if ([IO.File]::Exists($JournalShellQuiesced) -and -not $ShellGuardian.HasExited) { $ShellQuiesced = $true; break }
+          if ($ShellGuardian.HasExited) { break }
+          Start-Sleep -Milliseconds 120
+        }
+        if (-not $ShellQuiesced -and $ShellGuardian.HasExited) {
+          Write-Output ('Native WPF quiesce diagnostic: ' + $ShellGuardian.StandardError.ReadToEnd())
+        }
+        Assert-True $ShellQuiesced 'Native Guardian did not prove actual owned WPF graceful shutdown.'
+        Assert-True ((Invoke-GuardianCheck '--hold-native-stable-shell-quiesce') -eq 70) 'Second Guardian admitted concurrent WPF shutdown.'
+        $ShellGuardian.Kill()
+        Assert-True ($ShellGuardian.WaitForExit(5000)) 'WPF quiesce owner did not exit under forced-death fixture.'
+        $ShellRecord = ConvertFrom-Json ([IO.File]::ReadAllText($JournalShellQuiesced))
+        Assert-True ($ShellRecord.transactionId -ceq $JournalId -and
+          $ShellRecord.disposition -ceq 'stable-shell-quiesced-only' -and
+          $ShellRecord.shellPid -eq $OriginalShellPid -and
+          $ShellRecord.guardianPid -eq $ShellGuardian.Id -and
+          $ShellRecord.preparedJournalSha256 -ceq ((Get-FileHash -LiteralPath $JournalData -Algorithm SHA256).Hash.ToLowerInvariant())) 'Native WPF graceful-exit proof is not exact process/journal evidence.'
+        $StillOwned = @(Get-CimInstance Win32_Process -Filter "Name='EquinoxLocal.exe'" -ErrorAction SilentlyContinue |
+          Where-Object { -not [string]::IsNullOrWhiteSpace($_.ExecutablePath) -and (Same-Path $_.ExecutablePath $StableExe) })
+        Assert-True ($StillOwned.Count -eq 0) 'Native quiesce did not actually stop the installed WPF shell.'
+        Assert-True ((Invoke-GuardianCheck '--audit-native-journal') -eq 70) 'Native shell exit proof silently resumed Main despite stale owner lease.'
+      } finally {
+        if ($null -ne $ShellGuardian) {
+          try { if (-not $ShellGuardian.HasExited) { $ShellGuardian.Kill() } } catch {}
+          try { $ShellGuardian.WaitForExit(5000) | Out-Null } catch {}
+          $ShellGuardian.Dispose()
+        }
+        Remove-Item -LiteralPath $JournalGuard,$JournalAuthority,$JournalShellQuiesced,$JournalShellTrigger -Force -ErrorAction SilentlyContinue
+        $ShellRestart = [Diagnostics.ProcessStartInfo]::new($StableExe)
+        $ShellRestart.UseShellExecute = $false
+        $ShellRestart.CreateNoWindow = $true
+        [Diagnostics.Process]::Start($ShellRestart) | Out-Null
+        $ShellReturned = $false
+        for ($ShellRestartTry=0; $ShellRestartTry -lt 120; $ShellRestartTry++) {
+          $RunningOwned = @(Get-CimInstance Win32_Process -Filter "Name='EquinoxLocal.exe'" -ErrorAction SilentlyContinue |
+            Where-Object { -not [string]::IsNullOrWhiteSpace($_.ExecutablePath) -and (Same-Path $_.ExecutablePath $StableExe) })
+          if ($RunningOwned.Count -eq 1) { $ShellReturned = $true; break }
+          Start-Sleep -Milliseconds 200
+        }
+        Assert-True $ShellReturned 'Hosted real stable WPF shell did not restart after native Guardian quiesce.'
+      }
+      Assert-True ((Invoke-GuardianCheck '--audit-native-journal') -eq 0) 'WPF quiesce fixture did not restore exact journal ownership.'
       # First permitted REAL native journal stage mutation: prepared/0 to
       # rollback_started/1 only. The installed Guardian itself persists the
       # exact journal bytes under its own OS-exclusive writer lease; WPF and

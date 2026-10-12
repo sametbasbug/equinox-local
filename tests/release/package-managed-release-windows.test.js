@@ -356,6 +356,23 @@ test("native journal authority accepts only kernel-PID+HMAC live prepared worker
   assert.doesNotMatch(source, /Process\.Start|Registry\.SetValue|\.writer-lock"\s*,\s*FileMode\.OpenOrCreate|"shell_stopped"|"switched"/u);
 });
 
+test("native Guardian WPF graceful quiesce requires exact OS shell PID and live worker authority without Main activation", async () => {
+  const code = await fs.readFile(new URL('../../native/windows/EquinoxLocal.Guardian/MainNativeStableShellQuiesce.cs', import.meta.url), 'utf8');
+  const lease = await fs.readFile(new URL('../../native/windows/EquinoxLocal.Guardian/MainNativeJournalLease.cs', import.meta.url), 'utf8');
+  const program = await fs.readFile(new URL('../../native/windows/EquinoxLocal.Guardian/Program.cs', import.meta.url), 'utf8');
+  assert.match(program, /--hold-native-stable-shell-quiesce/u);
+  assert.match(lease, /QuiesceOwnedStableShell\(owner, root, worker\)/u);
+  assert.match(code, /InspectBaseline\(allowActiveOrphanForReconciliation: true\)/u);
+  assert.match(code, /GetNamedPipeServerProcessId\(pipe\.SafePipeHandle/u);
+  assert.match(code, /serverPid != pid/u);
+  assert.match(code, /ReadWindowsLogonAuthenticationId\(shellToken\)/u);
+  assert.match(code, /"shutdown-for-update\\n"/u);
+  assert.match(code, /shell\.WaitForExit\(12000\)/u);
+  assert.match(code, /FileMode\.CreateNew, FileAccess\.Write/u);
+  assert.match(code, /"stable-shell-quiesced-only"/u);
+  assert.doesNotMatch(code, /Process\.Start|Process\.Kill|Registry\.SetValue|File\.Move|File\.Delete|native_staged"\)|switched"\)|committed"\)/u);
+});
+
 test("Windows native Guardian only commits prepared/0 to rollback_started/1 through exclusive journal lease", async () => {
   const code = await fs.readFile(new URL('../../native/windows/EquinoxLocal.Guardian/MainNativePreparedAbort.cs', import.meta.url), 'utf8');
   const program = await fs.readFile(new URL('../../native/windows/EquinoxLocal.Guardian/Program.cs', import.meta.url), 'utf8');
