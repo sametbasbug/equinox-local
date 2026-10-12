@@ -111,6 +111,18 @@ internal static partial class Program
             if (workerSid is null || guardianSid is null || !workerSid.Equals(guardianSid))
                 throw new InvalidDataException("Detached worker user SID differs from current Guardian owner.");
         }
+        InspectionPhase = "native-worker-os-session";
+        // A Windows user SID identifies the account, not the interactive/logon
+        // session. Query both session IDs from the live OS process handles,
+        // never from a self-declared ownership JSON or environment variable.
+        // Session equality is necessary but not sufficient for update authority:
+        // full argv, environment-token and journal-writer attestation remain
+        // independently required before any native mutation can be enabled.
+        using (var guardian = Process.GetCurrentProcess())
+        {
+            if (running.SessionId != guardian.SessionId)
+                throw new InvalidDataException("Detached worker belongs to a different Windows OS session.");
+        }
         // Pin the same process handle to its original birth timestamp again;
         // changing the ownership JSON cannot turn a recycled PID into proof.
         if (running.HasExited || running.StartTime.ToUniversalTime().Ticks.ToString(CultureInfo.InvariantCulture) != ticks)
