@@ -120,6 +120,100 @@ test("verified artifact download requires exact signed bytes and SHA-256", async
   await assert.rejects(fs.lstat(`${destination}.bad`), /ENOENT/u);
 });
 
+test("artifact download retries only transient HTTP 502/503/504 with the same signed request", async (t) => {
+  const fixture = await makeFixture();
+  t.after(() => fs.rm(fixture.root, { recursive: true, force: true }));
+  const destination = path.join(fixture.root, "download", "retried.tar.gz");
+  const artifact = {
+    url: "https://local.sametbasbug.dev/downloads/updates/release.tar.gz",
+    sha256: fixture.sha256,
+    bytes: fixture.bytes.length,
+  };
+  const requests = [];
+  const delays = [];
+  const result = await downloadVerifiedUpdateArtifact(artifact, destination, {
+    fetchImpl: async (url, options) => {
+      requests.push({ url, method: options.method, redirect: options.redirect, signal: options.signal });
+      if (requests.length < 4) return new Response("temporary upstream failure", { status: [502, 503, 504][requests.length - 1] });
+      return responseFor(fixture.bytes);
+    },
+    retryDelayImpl: async (ms, signal) => {
+      assert.equal(signal.aborted, false);
+      delays.push(ms);
+    },
+  });
+  assert.equal(result.sha256, artifact.sha256);
+  assert.deepEqual(await fs.readFile(destination), fixture.bytes);
+  assert.deepEqual(delays, [500, 1_000, 2_000]);
+  assert.equal(requests.length, 4);
+  assert.equal(new Set(requests.map((request) => request.signal)).size, 1);
+  assert.ok(requests.every((request) => request.url === artifact.url && request.method === "GET" && request.redirect === "error"));
+  assert.deepEqual(await fs.readdir(path.dirname(destination)), ["retried.tar.gz"]);
+});
+
+test("artifact download exhausts bounded HTTP 504 retries without leaving a partial file", async (t) => {
+  const fixture = await makeFixture();
+  t.after(() => fs.rm(fixture.root, { recursive: true, force: true }));
+  const destination = path.join(fixture.root, "download", "failed.tar.gz");
+  let requests = 0;
+  const delays = [];
+  await assert.rejects(downloadVerifiedUpdateArtifact({
+    url: "https://local.sametbasbug.dev/downloads/updates/release.tar.gz",
+    sha256: fixture.sha256,
+    bytes: fixture.bytes.length,
+  }, destination, {
+    fetchImpl: async () => { requests += 1; return new Response("gateway failure", { status: 504 }); },
+    retryDelayImpl: async (ms) => { delays.push(ms); },
+  }), /HTTP 504/u);
+  assert.equal(requests, 4);
+  assert.deepEqual(delays, [500, 1_000, 2_000]);
+  assert.deepEqual(await fs.readdir(path.dirname(destination)), []);
+});
+
+test("artifact download does not retry authentication, signed-size or SHA-256 failures", async (t) => {
+  const fixture = await makeFixture();
+  t.after(() => fs.rm(fixture.root, { recursive: true, force: true }));
+  const artifact = {
+    url: "https://local.sametbasbug.dev/downloads/updates/release.tar.gz",
+    sha256: fixture.sha256,
+    bytes: fixture.bytes.length,
+  };
+  const cases = [
+    { name: "forbidden", fetchResponse: () => new Response("forbidden", { status: 403 }), error: /HTTP 403/u },
+    { name: "length", fetchResponse: () => new Response(fixture.bytes, { status: 200, headers: { "content-length": String(fixture.bytes.length + 1) } }), error: /Content-Length does not match/u },
+    { name: "hash", fetchResponse: () => responseFor(Buffer.alloc(fixture.bytes.length, 0x61)), error: /SHA-256 verification failed/u },
+    { name: "sha", fetchResponse: () => responseFor(fixture.bytes), error: /SHA-256 verification failed/u, override: { sha256: "b".repeat(64) } },
+  ];
+  for (const item of cases) {
+    const destination = path.join(fixture.root, "download", `${item.name}.tar.gz`);
+    let requests = 0;
+    await assert.rejects(downloadVerifiedUpdateArtifact({ ...artifact, ...item.override }, destination, {
+      fetchImpl: async () => { requests += 1; return item.fetchResponse(); },
+      retryDelayImpl: async () => { assert.fail("nontransient response was retried"); },
+    }), item.error);
+    assert.equal(requests, 1, item.name);
+    await assert.rejects(fs.lstat(destination), /ENOENT/u);
+  }
+  assert.deepEqual(await fs.readdir(path.join(fixture.root, "download")), []);
+});
+
+test("artifact download preserves its original timeout across HTTP retry delays", async (t) => {
+  const fixture = await makeFixture();
+  t.after(() => fs.rm(fixture.root, { recursive: true, force: true }));
+  const destination = path.join(fixture.root, "download", "deadline.tar.gz");
+  let requests = 0;
+  await assert.rejects(downloadVerifiedUpdateArtifact({
+    url: "https://local.sametbasbug.dev/downloads/updates/release.tar.gz",
+    sha256: fixture.sha256,
+    bytes: fixture.bytes.length,
+  }, destination, {
+    timeoutMs: 15,
+    fetchImpl: async () => { requests += 1; return new Response("unavailable", { status: 503 }); },
+  }), /AbortError|aborted/u);
+  assert.equal(requests, 1);
+  assert.deepEqual(await fs.readdir(path.dirname(destination)), []);
+});
+
 test("verified artifact download aborts when the full transfer exceeds its deadline", async (t) => {
   const fixture = await makeFixture();
   t.after(() => fs.rm(fixture.root, { recursive: true, force: true }));

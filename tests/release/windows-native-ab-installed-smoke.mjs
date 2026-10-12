@@ -11,7 +11,7 @@ import {
 } from '../../src/equinox-local-windows-native-ab-switch.js';
 import { snapshotWindowsStableShellTree, sameWindowsStableShellTree } from '../../src/equinox-local-windows-stable-shell.js';
 
-import { createWindowsJournaledNativeABLifecycle } from '../../src/equinox-local-windows-native-ab-journal-lifecycle.js';
+import { createSupervisorBoundWindowsNativeABLifecycle } from '../../src/equinox-local-windows-native-ab-supervisor-bound.js';
 import { admitWindowsMainNativeWorkerJournal } from '../../src/equinox-local-windows-main-worker-admission.js';
 import { createEquinoxLocalWindowsNativeTransitionJournal } from '../../src/equinox-local-windows-native-transition-journal.js';
 import { execFile as execFileCallback } from 'node:child_process';
@@ -22,7 +22,10 @@ const [releaseDir, target] = process.argv.slice(2);
 if (process.platform !== 'win32' || !['win32-x64', 'win32-arm64'].includes(target) || !path.isAbsolute(releaseDir)) {
   throw new Error('Windows native A/B real installed-host smoke requires exact native release and target.');
 }
-const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'equinox-ab-real-')));
+// Use the test account's private home rather than the globally shared OS temp
+// directory: hashing and verifying native files must never follow another
+// user's opportunistically created temp paths.
+const root = await fs.realpath(await fs.mkdtemp(path.join(os.homedir(), '.equinox-ab-real-')));
 const previousReleaseDir = path.join(root, 'releases', 'A');
 const targetReleaseDir = path.join(root, 'releases', 'B');
 const programRoot = path.join(root, 'Programs', 'Equinox Local');
@@ -92,16 +95,33 @@ try {
   await journal.create({ transactionId: jid, target, currentSha: shaA, targetSha: shaB,
     receiptStartedAt: started, previousNative: { kind: 'stable', version: '6.0.4' },
     targetRuntimeContractSha256: contract });
-  const lifecycle = createWindowsJournaledNativeABLifecycle({
-    transactionId: jid, target, currentSha: shaA, targetSha: shaB,
-    receiptStartedAt: started, targetRuntimeContractSha256: contract,
-    programRoot, previousReleaseDir, targetReleaseDir, journal,
-    assertWorkerOwnership: async () => true, // disposable trusted fixture only
-    shutdownOwnedWpf: async () => { stopped = true; },
-    verifyNativeMessaging: async ({ release }) => nm === release,
-    registerNativeMessaging: async ({ release }) => { nm = release; },
-    verifySustainedHealth: async ({ release, sourceSha }) => release === 'B' && sourceSha === shaB && source === 'B' && restarted,
-    commitNativePointer: async () => {},
+  const lifecycle = createSupervisorBoundWindowsNativeABLifecycle({
+    transactionId: jid, transition: { mode: 'artifact_required', target, currentSha: shaA, targetSha: shaB,
+      targetRuntimeContractSha256: contract },
+    stored: { sourceSha: shaB, target, runtimeContractSha256: contract, releaseDir: targetReleaseDir },
+    previousReleaseDir, programRoot, manifestRoot: path.join(root, 'disposable-manifest'),
+    transactionRoot: txroot, pointerPath: path.join(txroot, 'current-native.json'),
+    windowsAdmission: { admitted: true, journal,
+      record: { transactionId: jid, target, currentSha: shaA, targetSha: shaB,
+        targetRuntimeContractSha256: contract, receiptStartedAt: started },
+      supervisor: { independentNativeOwner: true,
+        assertWorkerOwnership: async () => true, // disposable fixture only
+        shutdownOwnedWpf: async () => { stopped = true; },
+        verifyNativeMessaging: async ({ release }) => nm === release,
+        verifySustainedHealth: async ({ release, sourceSha }) => release === 'B' && sourceSha === shaB && source === 'B' && restarted,
+      },
+    },
+    launcherPathImpl: (release) => path.join(release, 'runtime', 'browser', 'host.exe'),
+    assertNativeHostImpl: async ({ acceptedLauncherPaths }) => {
+      const selected = path.join(nm === 'A' ? previousReleaseDir : targetReleaseDir, 'runtime', 'browser', 'host.exe');
+      if (!acceptedLauncherPaths.includes(selected)) throw Error('Disposable fixture has another Native Messaging owner.');
+    },
+    registerNativeHostImpl: async ({ launcherPath, expectedPreviousLauncherPath }) => {
+      const prior = path.join(nm === 'A' ? previousReleaseDir : targetReleaseDir, 'runtime', 'browser', 'host.exe');
+      assert.equal(expectedPreviousLauncherPath, prior);
+      nm = launcherPath.startsWith(targetReleaseDir) ? 'B' : 'A';
+    },
+    writePointerImpl: async (_pointer, value) => { assert.equal(value.sourceSha, shaB); },
   });
   const base = { currentSha: shaA, targetSha: shaB, rollbackSha: shaA,
     rollbackSourceRoot: path.join(root, 'sourceA'), targetSourceRoot: path.join(root, 'sourceB') };

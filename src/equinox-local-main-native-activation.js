@@ -21,6 +21,7 @@ import {
   synchronizeEquinoxLocalAppHostForRelease,
 } from "./equinox-local-native-app-host.js";
 import { writeEquinoxLocalMainNativeRecoveryDescriptor } from "./equinox-local-main-native-recovery.js";
+import { createSupervisorBoundWindowsNativeABLifecycle, requireWindowsNativeABSupervisor } from "./equinox-local-windows-native-ab-supervisor-bound.js";
 import {
   inspectWindowsStableShellRollbackSnapshot,
   replaceWindowsStableShellForRelease,
@@ -53,6 +54,8 @@ export async function prepareEquinoxLocalMainNativeLifecycle({
   fsImpl = fs,
   execFileImpl = execFile,
   env = process.env,
+  windowsAdmission = null,
+  createBoundWindowsABImpl = createSupervisorBoundWindowsNativeABLifecycle,
   promoteCandidateImpl = promoteEquinoxLocalMainNativeCandidate,
   readPointerImpl = readEquinoxLocalMainNativePointer,
   writePointerImpl = writeEquinoxLocalMainNativePointer,
@@ -75,6 +78,12 @@ export async function prepareEquinoxLocalMainNativeLifecycle({
   }
   if (!installation?.managed || !installation?.selfUpdateSupported || installation.target !== transition.target) {
     throw new Error("Main native lifecycle requires the matching managed Equinox Local installation.");
+  }
+  // A native-impact Windows detached worker always has a journal admission.
+  // Refuse absence of a separate OS supervisor before promoting even the
+  // inactive payload; never fall back to the legacy ephemeral A backup.
+  if (transition.target.startsWith("win32-") && windowsAdmission) {
+    requireWindowsNativeABSupervisor({ windowsAdmission, transition, transactionId });
   }
   const root = requireAbsolute(transactionRoot, "Main native transaction root");
   const stored = await promoteCandidateImpl({ candidate, transactionRoot: root, transactionId, fsImpl });
@@ -138,6 +147,12 @@ export async function prepareEquinoxLocalMainNativeLifecycle({
   const previousLauncher = windowsLauncherPathImpl(previousRelease);
   const targetLauncher = windowsLauncherPathImpl(targetRelease);
   await writeRecoveryDescriptorImpl({ transition, previousPointer, installation, transactionRoot: root, transactionId, fsImpl });
+  if (windowsAdmission) {
+    return createBoundWindowsABImpl({ windowsAdmission, transition, transactionId, stored, previousPointer,
+      previousReleaseDir: previousRelease, programRoot, manifestRoot, transactionRoot: root, pointerPath,
+      fsImpl, execFileImpl, env, writePointerImpl, assertNativeHostImpl: assertWindowsNativeHostImpl,
+      registerNativeHostImpl: registerWindowsNativeHostImpl, launcherPathImpl: windowsLauncherPathImpl });
+  }
   return Object.freeze({
     target: transition.target,
     stored,

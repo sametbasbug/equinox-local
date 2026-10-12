@@ -2,6 +2,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { execFile as execFileCallback } from "node:child_process";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
@@ -18,6 +19,8 @@ const MAX_ARCHIVE_ENTRIES = 20_000;
 const MAX_EXTRACTED_BYTES = 2 * 1024 * 1024 * 1024;
 const MAX_ENTRY_NAME = 500;
 const DEFAULT_ARTIFACT_DOWNLOAD_TIMEOUT_MS = 5 * 60 * 1000;
+const TRANSIENT_ARTIFACT_HTTP_STATUSES = new Set([502, 503, 504]);
+const ARTIFACT_HTTP_RETRY_DELAYS_MS = Object.freeze([500, 1_000, 2_000]);
 
 function inside(parent, child) {
   const relative = path.relative(parent, child);
@@ -148,6 +151,7 @@ async function removeIfPresent(target) {
 export async function downloadVerifiedUpdateArtifact(artifact, destinationPath, {
   fetchImpl = globalThis.fetch,
   timeoutMs = DEFAULT_ARTIFACT_DOWNLOAD_TIMEOUT_MS,
+  retryDelayImpl = (durationMs, signal) => sleep(durationMs, undefined, { signal }),
 } = {}) {
   if (!artifact || typeof artifact.url !== "string" || !/^[a-f0-9]{64}$/u.test(artifact.sha256)) {
     throw new Error("Verified update artifact metadata is required.");
@@ -156,6 +160,7 @@ export async function downloadVerifiedUpdateArtifact(artifact, destinationPath, 
     throw new Error("Verified update artifact size is invalid.");
   }
   if (typeof fetchImpl !== "function") throw new Error("Update network client is unavailable.");
+  if (typeof retryDelayImpl !== "function") throw new Error("Update artifact retry timer is unavailable.");
   if (!Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 30 * 60 * 1000) {
     throw new Error("Update artifact download timeout is invalid.");
   }
@@ -167,17 +172,29 @@ export async function downloadVerifiedUpdateArtifact(artifact, destinationPath, 
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   timer.unref?.();
   try {
-    const response = await fetchImpl(artifact.url, {
-      method: "GET",
-      redirect: "error",
-      cache: "no-store",
-      credentials: "omit",
-      headers: { accept: "application/gzip, application/zip, application/octet-stream" },
-      signal: controller.signal,
-    });
-    if (!response?.ok || !response.body) {
-      throw new Error(`Update artifact server returned HTTP ${response?.status ?? "unknown"}.`);
+    let response;
+    for (let attempt = 0; attempt <= ARTIFACT_HTTP_RETRY_DELAYS_MS.length; attempt += 1) {
+      if (controller.signal.aborted) throw new Error("Update artifact download deadline expired.");
+      response = await fetchImpl(artifact.url, {
+        method: "GET",
+        redirect: "error",
+        cache: "no-store",
+        credentials: "omit",
+        headers: { accept: "application/gzip, application/zip, application/octet-stream" },
+        signal: controller.signal,
+      });
+      if (response?.ok) break;
+
+      // Only transient gateway/availability responses are safe to retry. A
+      // partial transfer, invalid signed size/hash, or client/auth failure is
+      // never replayed; every attempt shares the original absolute deadline.
+      const retryable = TRANSIENT_ARTIFACT_HTTP_STATUSES.has(response?.status)
+        && attempt < ARTIFACT_HTTP_RETRY_DELAYS_MS.length;
+      await response?.body?.cancel?.().catch(() => {});
+      if (!retryable) throw new Error(`Update artifact server returned HTTP ${response?.status ?? "unknown"}.`);
+      await retryDelayImpl(ARTIFACT_HTTP_RETRY_DELAYS_MS[attempt], controller.signal);
     }
+    if (!response?.body) throw new Error(`Update artifact server returned HTTP ${response?.status ?? "unknown"}.`);
     const declaredLength = response.headers?.get?.("content-length");
     if (declaredLength !== null && declaredLength !== undefined && declaredLength !== "") {
       const parsed = Number(declaredLength);
