@@ -113,7 +113,8 @@ internal static partial class Program
         string from, int originalSequence, string to, int nextSequence)
     {
         if (!((from == "prepared" && originalSequence == 0 && to == "native_staged" && nextSequence == 1) ||
-              (from == "native_staged" && originalSequence == 1 && to == "shell_stopped" && nextSequence == 2)))
+              (from == "native_staged" && originalSequence == 1 && to == "shell_stopped" && nextSequence == 2) ||
+              (from == "shell_stopped" && originalSequence == 2 && to == "switched" && nextSequence == 3)))
             throw new InvalidDataException("Native integrated stage transition is not independently authorized.");
         RequireNormalFile(path);
         var original = File.ReadAllBytes(path);

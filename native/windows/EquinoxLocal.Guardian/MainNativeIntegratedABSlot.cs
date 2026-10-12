@@ -89,9 +89,22 @@ internal static partial class Program
             throw new InvalidDataException("Worker or journal changed during native A/B physical swap.");
         CompareNativeTrees(newShell, program);
         CompareNativeTrees(previousShell, backup);
-        InspectionPhase = "native-integrated-ab-slot-exact-b-installed-a-retained";
-        // No 'switched' journal advancement yet: the independent Guardian
-        // must also attest Chrome Native Messaging B registration and later
-        // sustained B health. Crash leaves physical A in a known backup slot.
+        InspectionPhase = "native-integrated-ab-owned-native-messaging-b";
+        // The worker reuses the exact existing JS Chrome registration routine;
+        // Guardian audits the real HKCU registry and immutable B launcher.
+        endpoint.WriteByte((byte)'M');
+        endpoint.FlushAsync(cutoff.Token).GetAwaiter().GetResult();
+        var registered = new byte[1];
+        if (endpoint.ReadAsync(registered.AsMemory(), cutoff.Token).AsTask().GetAwaiter().GetResult() != 1 ||
+            registered[0] != (byte)'m')
+            throw new InvalidDataException("Product worker did not acknowledge the fixed native messaging owner transition.");
+        InspectOwnedMainNativeMessaging(install, stagedRelease);
+        if (!CryptographicOperations.FixedTimeEquals(originalSha, SHA256.HashData(File.ReadAllBytes(journalPath))))
+            throw new InvalidDataException("Native Messaging B changed the transaction journal before native verification.");
+        WriteIntegratedOwnedNativeStage(owner, journalPath, "shell_stopped", 2, "switched", 3);
+        InspectionPhase = "native-integrated-ab-slot-b-installed-messaging-b-a-retained";
+        // Still no B launch / health / commit: exact A must be retained until
+        // new native WPF and Native Messaging B are sustained and the Main
+        // receipt independently validates success. Crash stays fail-closed.
     }
 }

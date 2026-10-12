@@ -366,8 +366,12 @@ test("integrated Guardian authorizes the existing shared JS native A/B slot inst
   assert.match(code, /endpoint\.WriteByte\(\(byte\)'S'\)/u);
   assert.match(code, /CompareNativeTrees\(newShell, program\)/u);
   assert.match(code, /CompareNativeTrees\(previousShell, backup\)/u);
+  assert.match(code, /InspectOwnedMainNativeMessaging\(install, stagedRelease\)/u);
+  assert.match(code, /WriteIntegratedOwnedNativeStage\(owner, journalPath, "shell_stopped", 2, "switched", 3\)/u);
   assert.doesNotMatch(code, /Directory\.Move|File\.Move|Registry\.SetValue|Process\.Start|File\.Delete/u);
   assert.match(client, /switchWindowsNativeABSlot/u);
+  assert.match(client, /registerWindowsNativeMessagingHost/u);
+  assert.match(client, /assertWindowsNativeMessagingHostOwnership/u);
   assert.match(client, /createHmac\('sha256', key\)/u);
   assert.match(client, /journal\.stage !== 'shell_stopped'/u);
   assert.match(client, /programRoot: path\.win32\.join\(env\.LOCALAPPDATA, 'Programs', 'Equinox Local'\)/u);

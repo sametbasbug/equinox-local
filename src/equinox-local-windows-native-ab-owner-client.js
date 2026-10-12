@@ -4,6 +4,7 @@ import net from 'node:net';
 import path from 'node:path';
 
 import { switchWindowsNativeABSlot } from './equinox-local-windows-native-ab-switch.js';
+import { registerWindowsNativeMessagingHost, assertWindowsNativeMessagingHostOwnership, windowsNativeMessagingLauncherPath } from './equinox-browser-windows-native-messaging.js';
 
 const TX = /^main-[a-f0-9]{32}$/u;
 const SHA = /^[a-f0-9]{40}$/u;
@@ -56,6 +57,7 @@ export async function runEquinoxLocalWindowsGuardianOwnedSlot({
       let waiting = Buffer.alloc(0);
       let phase = 'nonce';
       let completed = false;
+      let switched = false;
       const fail = (error) => socket.destroy(error);
       socket.setTimeout(120000, () => fail(new Error('Guardian native A/B slot permission timed out.')));
       socket.on('data', (chunk) => {
@@ -83,9 +85,27 @@ export async function runEquinoxLocalWindowsGuardianOwnedSlot({
                 }
               },
             });
+            switched = true;
+            phase = 'await-messaging';
             socket.write(Buffer.from('s', 'ascii'));
-            completed = true;
+          })().catch(fail);
+        }
+        if (phase === 'await-messaging' && waiting.length === 1) {
+          if (waiting[0] !== 0x4d || !switched) { fail(new Error('Guardian native slot refused the fixed messaging operation.')); return; }
+          waiting = Buffer.alloc(0);
+          phase = 'registering';
+          void (async () => {
+            const manifestRoot = path.win32.join(appRoot, 'browser', 'native-messaging');
+            const oldLauncher = windowsNativeMessagingLauncherPath(roots.previousReleaseDir);
+            const bLauncher = windowsNativeMessagingLauncherPath(roots.targetReleaseDir);
+            await registerWindowsNativeMessagingHost({
+              manifestRoot, launcherPath: bLauncher,
+              expectedPreviousLauncherPath: oldLauncher,
+            });
+            await assertWindowsNativeMessagingHostOwnership({manifestRoot, acceptedLauncherPaths: [bLauncher]});
             phase = 'acknowledged';
+            socket.write(Buffer.from('m', 'ascii'));
+            completed = true;
           })().catch(fail);
         }
         if (phase === 'acknowledged' && waiting.length) fail(new Error('Guardian native slot returned unsolicited data.'));

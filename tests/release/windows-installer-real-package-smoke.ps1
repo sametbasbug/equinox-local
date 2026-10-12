@@ -396,6 +396,7 @@ try {
   $JournalIntegratedTrigger = Join-Path $Work 'start-integrated-native-ab-client.trigger'
   $JournalNativeStagedCommit = Join-Path $JournalDataDir ("$JournalId.native_staged.commit.json")
   $JournalShellStoppedCommit = Join-Path $JournalDataDir ("$JournalId.shell_stopped.commit.json")
+  $JournalSwitchedCommit = Join-Path $JournalDataDir ("$JournalId.switched.commit.json")
   $JournalIntegratedB = Join-Path $NativeTxRoot ("native-store\$FixtureTarget\$JournalTarget")
   $JournalShellQuiesced = Join-Path $JournalDataDir ("$JournalId.stable-shell-quiesce.json")
   $JournalAbortCommit = Join-Path $JournalDataDir ("$JournalId.abort-commit.json")
@@ -662,6 +663,7 @@ try {
       # durable journal generations while retaining the exclusive OS lease.
       # No production B launch/swap is enabled by this admission fixture.
       $IntegratedGuardian = $null
+      $OriginalIntegratedNativeManifest = [IO.File]::ReadAllBytes($ExpectedManifestPath)
       try {
         $StagedBRelease = Join-Path $JournalIntegratedB 'release'
         $StagedBRuntime = Join-Path $StagedBRelease 'runtime'
@@ -693,7 +695,7 @@ try {
         $IntegratedBackup = Join-Path (Split-Path -Parent $StableExe | Split-Path -Parent) ('.equinox-shell-backup-' + $JournalId)
         $IntegratedBMarker = Join-Path (Split-Path -Parent $StableExe) 'native-b-ci-only.marker'
         for ($IntegratedAttempt=0; $IntegratedAttempt -lt 600; $IntegratedAttempt++) {
-          if ([IO.File]::Exists($JournalShellStoppedCommit) -and
+          if ([IO.File]::Exists($JournalSwitchedCommit) -and
               [IO.Directory]::Exists($IntegratedBackup) -and [IO.File]::Exists($IntegratedBMarker) -and
               -not $IntegratedGuardian.HasExited) { $IntegratedCommitted = $true; break }
           if ($IntegratedGuardian.HasExited) { break }
@@ -702,18 +704,21 @@ try {
         if (-not $IntegratedCommitted -and $IntegratedGuardian.HasExited) {
           Write-Output ('Integrated native supervisor failure phase: ' + $IntegratedGuardian.StandardError.ReadToEnd())
         }
-        Assert-True $IntegratedCommitted 'Independent Guardian could not verify native_staged, shell_stopped and physical B installed with A retained.'
+        Assert-True $IntegratedCommitted 'Independent Guardian could not verify B native slot and Native Messaging owner with durable switched journal.'
         Assert-True ((Invoke-GuardianCheck '--hold-native-integrated-ab') -eq 70) 'Second native integrated supervisor stole OS-held journal lease.'
         $IntegratedGuardian.Kill()
         Assert-True ($IntegratedGuardian.WaitForExit(5000)) 'Native supervisor force-kill did not stop its Windows process.'
         $IntegratedRecord = ConvertFrom-Json ([IO.File]::ReadAllText($JournalData))
         $NativeStagedReceipt = ConvertFrom-Json ([IO.File]::ReadAllText($JournalNativeStagedCommit))
         $ShellStoppedReceipt = ConvertFrom-Json ([IO.File]::ReadAllText($JournalShellStoppedCommit))
-        Assert-True ($IntegratedRecord.stage -ceq 'shell_stopped' -and $IntegratedRecord.sequence -eq 2 -and
+        $SwitchedReceipt = ConvertFrom-Json ([IO.File]::ReadAllText($JournalSwitchedCommit))
+        Assert-True ($IntegratedRecord.stage -ceq 'switched' -and $IntegratedRecord.sequence -eq 3 -and
           $NativeStagedReceipt.stage -ceq 'native_staged' -and $NativeStagedReceipt.sequence -eq 1 -and
           $ShellStoppedReceipt.stage -ceq 'shell_stopped' -and $ShellStoppedReceipt.sequence -eq 2 -and
           $ShellStoppedReceipt.guardianPid -eq $IntegratedGuardian.Id -and
-          $ShellStoppedReceipt.journalSha256 -ceq ((Get-FileHash -LiteralPath $JournalData -Algorithm SHA256).Hash.ToLowerInvariant())) 'Native Guardian journal stage sequence/receipts differ from physically observed milestones.'
+          $SwitchedReceipt.stage -ceq 'switched' -and $SwitchedReceipt.sequence -eq 3 -and
+          $SwitchedReceipt.guardianPid -eq $IntegratedGuardian.Id -and
+          $SwitchedReceipt.journalSha256 -ceq ((Get-FileHash -LiteralPath $JournalData -Algorithm SHA256).Hash.ToLowerInvariant())) 'Native Guardian journal stage sequence/receipts differ from physically observed milestones.'
         $StoppedWpf = @(Get-CimInstance Win32_Process -Filter "Name='EquinoxLocal.exe'" -ErrorAction SilentlyContinue |
           Where-Object { -not [string]::IsNullOrWhiteSpace($_.ExecutablePath) -and (Same-Path $_.ExecutablePath $StableExe) })
         Assert-True ($StoppedWpf.Count -eq 0) 'Native integrated supervisor journal claimed WPF shutdown while A remained running.'
@@ -738,7 +743,10 @@ try {
           Assert-True ([IO.File]::Exists($StableExe)) 'Old Stable A executable was not restored after integrated native A/B swap.'
           if (Test-Path -LiteralPath $FailedABQuarantine) { Remove-Item -LiteralPath $FailedABQuarantine -Recurse -Force -ErrorAction Stop }
         }
-        Remove-Item -LiteralPath $JournalGuard,$JournalAuthority,$JournalShellQuiesced,$JournalIntegratedTrigger,$JournalNativeStagedCommit,$JournalShellStoppedCommit -Force -ErrorAction SilentlyContinue
+        # Hosted test-only registry and manifest rollback happens before
+        # restarting Stable A. Production always requires independent health.
+        [IO.File]::WriteAllBytes($ExpectedManifestPath, $OriginalIntegratedNativeManifest)
+        Remove-Item -LiteralPath $JournalGuard,$JournalAuthority,$JournalShellQuiesced,$JournalIntegratedTrigger,$JournalNativeStagedCommit,$JournalShellStoppedCommit,$JournalSwitchedCommit -Force -ErrorAction SilentlyContinue
         Remove-Item -LiteralPath $JournalIntegratedB -Recurse -Force -ErrorAction SilentlyContinue
         [IO.File]::WriteAllText($JournalData, ($JournalValue | ConvertTo-Json -Depth 5))
         $IntegratedWpfRestart = [Diagnostics.ProcessStartInfo]::new($StableExe)
