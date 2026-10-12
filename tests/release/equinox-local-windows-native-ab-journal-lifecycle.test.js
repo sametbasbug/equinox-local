@@ -190,3 +190,43 @@ test('durable rollback receipt plus failed cleanup keeps restored A and B quaran
   assert.equal(f.calls.includes('rollback-failed'), false);
   assert.equal(f.calls.includes('release-lock'), false);
 });
+
+test('native-owned Guardian journal mode observes switched/3 and restarted/4 without a second JS journal or slot writer', async () => {
+  let current = 'prepared';
+  let sequence = 0;
+  let owned = true;
+  const witnessed = [];
+  const calls = [];
+  const observer = async ({ transactionId, stage, sourceSha, target }) => {
+    witnessed.push(stage);
+    return owned ? { transactionId, stage, sourceSha, target, sequence: stage === 'switched' ? 3 : 4, guardianPid: 5678, journalSha256: 'b'.repeat(64) } : null;
+  };
+  const lc = createWindowsJournaledNativeABLifecycle({
+    transactionId: ID, target: 'win32-x64', currentSha: A, targetSha: B,
+    receiptStartedAt: '2026-10-12T12:00:00.000Z', targetRuntimeContractSha256: 'd'.repeat(64),
+    programRoot: 'C:\\fixture\\Programs\\Equinox Local', previousReleaseDir: 'C:\\fixture\\A',
+    targetReleaseDir: 'C:\\fixture\\B',
+    nativeOwnsMilestones: true, observeNativeMilestone: observer,
+    journal: { read: async () => ({ transactionId: ID, targetRuntimeContractSha256: 'd'.repeat(64), stage: current, sequence }) },
+    assertWorkerOwnership: async () => true,
+    shutdownOwnedWpf: async () => { throw new Error('JS must never shut down WPF in native-owned mode'); },
+    verifyNativeMessaging: async ({ release }) => { calls.push(`verify:${release}`); return release === 'B'; },
+    registerNativeMessaging: async () => { throw new Error('JS must never register NM in native-owned mode'); },
+    verifySustainedHealth: async () => true,
+    selectNativeRuntime: async () => {}, verifyNativeRuntime: async () => true,
+    slotSwitch: async () => { throw new Error('JS must never physically switch A/B in native-owned mode'); },
+  });
+  await assert.rejects(lc.activate(), /independent journal generation/u);
+  assert.deepEqual(witnessed, ['switched']);
+  current = 'switched'; sequence = 3;
+  assert.equal((await lc.activate()).stage, 'switched');
+  await assert.rejects(lc.recordRestarted(), /independent journal generation/u);
+  current = 'restarted'; sequence = 4;
+  assert.equal((await lc.recordRestarted()).stage, 'restarted');
+  assert.deepEqual(witnessed, ['switched', 'switched', 'restarted', 'restarted']);
+  assert.deepEqual(calls, ['verify:B']);
+  await assert.rejects(lc.recordHealthy(), /separate OS-authorized commit phase/u);
+  await assert.rejects(lc.rollback(), /independently authorized OS recovery/u);
+  owned = false;
+  await assert.rejects(lc.recordRestarted(), /independent journal generation/u);
+});

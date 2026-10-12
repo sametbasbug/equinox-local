@@ -24,6 +24,7 @@ export function createWindowsJournaledNativeABLifecycle({
   slotCommit = commitWindowsNativeABSlot,
   slotFinalizeRollback = finalizeWindowsNativeABRollback,
   selectNativeRuntime, verifyNativeRuntime,
+  nativeOwnsMilestones = false, observeNativeMilestone = null,
 } = {}) {
   if (!TX.test(transactionId ?? '') || !['win32-x64', 'win32-arm64'].includes(target) ||
       !SHA.test(currentSha ?? '') || !SHA.test(targetSha ?? '') || currentSha === targetSha ||
@@ -31,7 +32,8 @@ export function createWindowsJournaledNativeABLifecycle({
       typeof receiptStartedAt !== 'string' || Number.isNaN(Date.parse(receiptStartedAt)) ||
       !programRoot || !previousReleaseDir || !targetReleaseDir ||
       typeof selectNativeRuntime !== 'function' || typeof verifyNativeRuntime !== 'function' ||
-      typeof journal?.read !== 'function' || typeof journal?.advance !== 'function' ||
+      typeof journal?.read !== 'function' ||
+      (nativeOwnsMilestones === true ? typeof observeNativeMilestone !== 'function' : typeof journal?.advance !== 'function') ||
       ![assertWorkerOwnership, shutdownOwnedWpf, verifyNativeMessaging, registerNativeMessaging, verifySustainedHealth].every((v) => typeof v === 'function')) {
     throw new Error('Windows A/B lifecycle requires authenticated worker, journal and native ownership callbacks.');
   }
@@ -51,6 +53,26 @@ export function createWindowsJournaledNativeABLifecycle({
     // The journal itself checks the durable receipt and the OS milestone.
     await journal.advance(transactionId, { from: record.stage, to, sequence: record.sequence });
     return owned();
+  }
+  async function observeNative(to) {
+    // This path never calls journal.advance, the slot writer or WPF shutdown.
+    // The independent native Guardian owns CREATE_NEW/FileShare.None and
+    // already wrote the stage; supplied observer must bind its OS PID and
+    // durable SHA receipt, not a Node self-asserted transaction marker.
+    if (nativeOwnsMilestones !== true || !['switched', 'restarted'].includes(to)) {
+      throw new Error('Native Guardian has not authorized this journal milestone.');
+    }
+    const proof = await observeNativeMilestone({ transactionId, stage: to, sourceSha: targetSha, target });
+    const record = await owned();
+    const sequence = to === 'switched' ? 3 : 4;
+    if (proof?.transactionId !== transactionId || proof?.stage !== to || proof?.sourceSha !== targetSha ||
+        proof?.target !== target || proof?.sequence !== sequence ||
+        !Number.isSafeInteger(proof?.guardianPid) || proof.guardianPid < 1 ||
+        !DIGEST.test(proof?.journalSha256 ?? '') ||
+        record.stage !== to || record.sequence !== sequence) {
+      throw new Error('Native Guardian milestone proof is not the independent journal generation.');
+    }
+    return record;
   }
   async function messaging(release) {
     if (await verifyNativeMessaging({ transactionId, release, previousReleaseDir, targetReleaseDir }) !== true) {
@@ -81,6 +103,11 @@ export function createWindowsJournaledNativeABLifecycle({
       }
     },
     async activate() {
+      if (nativeOwnsMilestones === true) {
+        const record = await observeNative('switched');
+        await messaging('B');
+        return Object.freeze({ stage: record.stage });
+      }
       let record = await owned();
       if (record.stage === 'prepared') record = await advance(record, 'native_staged');
       if (record.stage === 'native_staged') {
@@ -102,12 +129,16 @@ export function createWindowsJournaledNativeABLifecycle({
       return Object.freeze({ stage: record.stage });
     },
     async recordRestarted() {
+      if (nativeOwnsMilestones === true) return observeNative('restarted');
       const record = await owned();
       if (['restarted', 'healthy'].includes(record.stage)) return record;
       if (record.stage !== 'switched') throw new Error('Native B restart cannot precede verified B switch.');
       return advance(record, 'restarted');
     },
     async recordHealthy() {
+      if (nativeOwnsMilestones === true) {
+        throw new Error('Guardian-owned native B health milestone requires a separate OS-authorized commit phase.');
+      }
       const record = await owned();
       if (record.stage === 'healthy') return record;
       if (record.stage !== 'restarted') throw new Error('Native B health cannot precede verified restart.');
@@ -118,6 +149,9 @@ export function createWindowsJournaledNativeABLifecycle({
       return advance(record, 'healthy');
     },
     async rollback() {
+      if (nativeOwnsMilestones === true) {
+        throw new Error('Guardian-owned native A rollback requires independently authorized OS recovery.');
+      }
       let record = await owned();
       if (!['rollback_started', 'rollback_native_restored', 'rollback_healthy'].includes(record.stage)) {
         record = await advance(record, 'rollback_started');

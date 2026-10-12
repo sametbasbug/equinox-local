@@ -29,7 +29,9 @@ export function requireWindowsNativeABSupervisor({ windowsAdmission, transition,
       !SHA.test(record?.currentSha ?? '') || !SHA.test(record?.targetSha ?? '') ||
       typeof record?.receiptStartedAt !== 'string' ||
       typeof windowsAdmission?.journal?.read !== 'function' ||
-      typeof windowsAdmission?.journal?.advance !== 'function' ||
+      (owner?.nativeOwnsMilestones === true
+        ? typeof owner?.observeNativeMilestone !== 'function'
+        : typeof windowsAdmission?.journal?.advance !== 'function') ||
       owner?.independentNativeOwner !== true ||
       !['assertWorkerOwnership', 'shutdownOwnedWpf', 'verifyNativeMessaging', 'verifySustainedHealth'].every((name) => typeof owner[name] === 'function')) {
     throw new Error('Windows native A/B refuses to replace WPF without independent supervisor ownership and exact journal identity.');
@@ -112,6 +114,10 @@ export function createSupervisorBoundWindowsNativeABLifecycle({
     verifyNativeMessaging: ({ release }) => proveNativeMessaging(release),
     registerNativeMessaging: ({ release }) => registerNativeMessaging(release),
     verifySustainedHealth: ({ release, sourceSha }) => supervisor.verifySustainedHealth({ ...ownerArgs, release, sourceSha, programRoot }),
+    nativeOwnsMilestones: supervisor.nativeOwnsMilestones === true,
+    observeNativeMilestone: supervisor.nativeOwnsMilestones === true
+      ? ({ stage }) => supervisor.observeNativeMilestone({ ...ownerArgs, stage })
+      : null,
     selectNativeRuntime,
     verifyNativeRuntime: async ({ release }) => (release === 'A' || release === 'B') &&
       matches(await exactPointer(), release === 'B' ? pointer : oldPointer),
