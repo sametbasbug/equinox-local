@@ -777,9 +777,27 @@ try {
           if ([IO.File]::Exists($JournalIntegratedDiagnostic)) { Write-Output ('OS-owned B worker diagnostic: ' + [IO.File]::ReadAllText($JournalIntegratedDiagnostic)) }
         }
         Assert-True $RealBWpfRestarted 'Actual Guardian-owned B WPF process did not reach independently attested restarted/4.'
-        $BRestartWitness = ConvertFrom-Json ([IO.File]::ReadAllText($JournalRestartedReceipt))
-        $BRestartJournal = ConvertFrom-Json ([IO.File]::ReadAllText($JournalData))
-        $BRestartCommit = ConvertFrom-Json ([IO.File]::ReadAllText($JournalRestartedCommit))
+        # Existence is not publication: the independent native Guardian
+        # creates its milestone with FileShare.None and flushes it BEFORE
+        # releasing the handle. Never race that in-progress write. The
+        # bounded retry only waits for the SAME exact evidence, not weaker
+        # proof or a rewritten/borrowed journal generation.
+        $RestartEvidenceReadable = $false
+        $RestartEvidenceLastError = 'native-file-still-owned'
+        for ($EvidenceAttempt=0; $EvidenceAttempt -lt 75; $EvidenceAttempt++) {
+          try {
+            $BRestartWitness = ConvertFrom-Json -ErrorAction Stop -InputObject ([IO.File]::ReadAllText($JournalRestartedReceipt))
+            $BRestartJournal = ConvertFrom-Json -ErrorAction Stop -InputObject ([IO.File]::ReadAllText($JournalData))
+            $BRestartCommit = ConvertFrom-Json -ErrorAction Stop -InputObject ([IO.File]::ReadAllText($JournalRestartedCommit))
+            $RestartEvidenceReadable = $true
+            break
+          } catch {
+            $RestartEvidenceLastError = $_.Exception.GetType().Name
+            if ($IntegratedGuardian.HasExited) { break }
+            Start-Sleep -Milliseconds 80
+          }
+        }
+        Assert-True $RestartEvidenceReadable ("Guardian B restarted/4 commit was not durably readable after bounded publish wait: " + $RestartEvidenceLastError)
         $BRunningProcesses = @(Get-CimInstance Win32_Process -Filter "Name='EquinoxLocal.exe'" -ErrorAction SilentlyContinue |
           Where-Object { -not [string]::IsNullOrWhiteSpace($_.ExecutablePath) -and (Same-Path $_.ExecutablePath $StableExe) })
         Assert-True ($BRestartWitness.transactionId -ceq $JournalId -and $BRestartWitness.sourceSha -ceq $JournalTarget -and

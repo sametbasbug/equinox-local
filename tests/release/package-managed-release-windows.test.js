@@ -575,6 +575,8 @@ test('real installed x64/ARM64 acceptance commits clean disposable source B and 
   assert.match(fixture, /\$JournalBRestartTrigger/u);
   assert.match(fixture, /\$JournalRestartedCommit/u);
   assert.match(fixture, /\$BRestartWitness\.shellPid/u);
+  assert.match(fixture, /\$RestartEvidenceReadable/u);
+  assert.match(fixture, /\$EvidenceAttempt -lt 75/u);
   assert.match(fixture, /\$BRestartJournal\.stage -ceq 'restarted'/u);
   assert.match(fixture, /\$BBackendConsecutive -ge 4/u);
   assert.match(fixture, /\$BBackendStatus\.status\.installation\.sourceSha -ceq \$JournalTarget/u);
