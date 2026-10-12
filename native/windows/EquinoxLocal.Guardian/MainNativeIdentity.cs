@@ -12,7 +12,7 @@ internal static partial class Program
     private static readonly Regex SourceShaPattern = new("^[a-f0-9]{40}$", RegexOptions.CultureInvariant);
     private static readonly Regex DigestPattern = new("^[a-f0-9]{64}$", RegexOptions.CultureInvariant);
 
-    private static void InspectMainNativeIdentity()
+    private static void InspectMainNativeIdentity(string? exactOwnedTransactionId = null)
     {
         InspectionPhase = "native-owner";
         var local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
@@ -31,14 +31,51 @@ internal static partial class Program
         RequireNormalDirectory(Path.Combine(install, "state"));
         RequireNormalDirectory(tx);
         InspectionPhase = "native-transaction-boundary";
-        if (File.Exists(Path.Combine(tx, "active.json")) || Directory.Exists(Path.Combine(tx, "active.json")))
-            throw new InvalidDataException("Unreconciled native Main transaction blocks audit.");
+        var activePath = Path.Combine(tx, "active.json");
+        var active = File.Exists(activePath) || Directory.Exists(activePath);
         var handoff = Path.Combine(tx, "handoff");
-        if (Directory.Exists(handoff))
+        if (exactOwnedTransactionId is null)
         {
+            // Public/standalone audit never accepts an active Main owner.
+            if (active) throw new InvalidDataException("Unreconciled native Main transaction blocks audit.");
+            if (Directory.Exists(handoff))
+            {
+                RequireNormalDirectory(handoff);
+                if (Directory.EnumerateFileSystemEntries(handoff, "*.windows-worker.json").Any())
+                    throw new InvalidDataException("Detached Main worker ownership blocks audit.");
+            }
+        }
+        else
+        {
+            // Only the original live OS-attested worker in the SAME Guardian
+            // that already owns its exclusive writer lease can opt into an
+            // active-transaction B audit. Never expose this through argv.
+            if (!exactOwnedTransactionId.StartsWith("main-", StringComparison.Ordinal) ||
+                exactOwnedTransactionId.Length != 37 ||
+                !Regex.IsMatch(exactOwnedTransactionId[5..], "^[a-f0-9]{32}$", RegexOptions.CultureInvariant) || !active)
+                throw new InvalidDataException("Native B audit lacks an exact active transaction identity.");
+            using var markerDoc = ReadOwnedTransitionRecord(activePath, 8192);
+            using var receiptDoc = ReadOwnedTransitionRecord(
+                Path.Combine(tx, "receipts", exactOwnedTransactionId + ".json"), 65536);
+            using var journalDoc = ReadOwnedTransitionRecord(
+                Path.Combine(tx, "guardian-journal", exactOwnedTransactionId + ".json"), 8192);
+            var marker = markerDoc.RootElement;
+            var receipt = receiptDoc.RootElement;
+            var journal = journalDoc.RootElement;
+            if (marker.GetProperty("transactionId").GetString() != exactOwnedTransactionId ||
+                receipt.GetProperty("transactionId").GetString() != exactOwnedTransactionId ||
+                journal.GetProperty("transactionId").GetString() != exactOwnedTransactionId ||
+                journal.GetProperty("stage").GetString() != "switched" ||
+                journal.GetProperty("sequence").GetInt32() != 3 ||
+                marker.GetProperty("targetSha").GetString() != journal.GetProperty("targetSha").GetString() ||
+                receipt.GetProperty("targetSha").GetString() != journal.GetProperty("targetSha").GetString())
+                throw new InvalidDataException("Native B audit active receipt/journal ownership is not exact.");
+            var live = InspectOwnedNativeWorkerProcess();
+            if (live.TransactionId != exactOwnedTransactionId)
+                throw new InvalidDataException("Native B audit worker PID is not the original transaction owner.");
             RequireNormalDirectory(handoff);
-            if (Directory.EnumerateFileSystemEntries(handoff, "*.windows-worker.json").Any())
-                throw new InvalidDataException("Detached Main worker ownership blocks audit.");
+            if (Directory.EnumerateFileSystemEntries(handoff, "*.windows-worker.json").Count() != 1)
+                throw new InvalidDataException("Native B audit has a foreign detached worker alongside its OS owner.");
         }
         var target = RuntimeInformation.ProcessArchitecture switch
         {

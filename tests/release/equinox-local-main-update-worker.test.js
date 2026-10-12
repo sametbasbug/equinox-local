@@ -370,6 +370,49 @@ test("native health fails closed when old A remains HEALTHY after requested rest
   assert.equal(requests, 2);
 });
 
+test("native Main B sustained health needs multiple consecutive exact B responses and independent native proof", async () => {
+  const states = [B, B, A, B, B, B, B];
+  let requests = 0;
+  let nativeSamples = 0;
+  const result = await waitForExactSourceHealth({
+    sha: B, sourceRoot: SOURCE, pointerPath: `${STATE}/current-source.conf`,
+    consecutiveHealthySamples: 4, attempts: states.length,
+    readPointerImpl: async () => ({ sha: B, sourceRoot: SOURCE }),
+    inspectCheckoutImpl: async () => ({ eligible: true, currentSha: B }),
+    sleepImpl: async () => {},
+    verifyNativeHealthSample: async ({ sha, observed }) => {
+      assert.equal(sha, B);
+      assert.equal(observed.installation.kind, 'managed-source');
+      nativeSamples++;
+      return true;
+    },
+    fetchImpl: async () => ({ ok: true, json: async () => ({ status: {
+      health: { state: 'HEALTHY' }, installation: { kind: 'managed-source', sourceSha: states[requests++] },
+    } }) }),
+  });
+  assert.equal(result, true);
+  assert.equal(requests, 7, 'intermittent old A success must reset the 4 consecutive B samples');
+  assert.equal(nativeSamples, 6);
+});
+
+test("native Main sustained health fails closed on independent Native Messaging/Guardian sample drift", async () => {
+  let requests = 0;
+  await assert.rejects(waitForExactSourceHealth({
+    sha: B, sourceRoot: SOURCE, pointerPath: `${STATE}/current-source.conf`,
+    consecutiveHealthySamples: 3, attempts: 5,
+    readPointerImpl: async () => ({ sha: B, sourceRoot: SOURCE }),
+    inspectCheckoutImpl: async () => ({ eligible: true, currentSha: B }),
+    sleepImpl: async () => {},
+    verifyNativeHealthSample: async () => { requests++; return requests % 2 === 0; },
+    fetchImpl: async () => ({ ok: true, json: async () => ({ status: {
+      health: { state: 'HEALTHY' }, installation: { kind: 'managed-source', sourceSha: B },
+    } }) }),
+  }), /not independently verified/u);
+  assert.equal(requests, 5);
+  await assert.rejects(waitForExactSourceHealth({ sha: B, sourceRoot: SOURCE,
+    consecutiveHealthySamples: 0, attempts: 3 }), /sampling bounds/u);
+});
+
 test("Main worker passes pinned Windows Git shell into recovery engine", async () => {
   let options;
   await runEquinoxLocalMainUpdateWorker({

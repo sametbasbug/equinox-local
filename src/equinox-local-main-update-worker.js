@@ -97,12 +97,19 @@ export async function waitForExactSourceHealth({
   sleepImpl = (ms) => new Promise((resolve) => setTimeout(resolve, ms)), attempts = HEALTH_ATTEMPTS,
   readPointerImpl = readEquinoxLocalMainSourcePointer,
   inspectCheckoutImpl = inspectCanonicalMainCheckout,
+  consecutiveHealthySamples = 1,
+  verifyNativeHealthSample = null,
 }) {
+  if (!Number.isSafeInteger(consecutiveHealthySamples) || consecutiveHealthySamples < 1 || consecutiveHealthySamples > 8 ||
+      (verifyNativeHealthSample !== null && typeof verifyNativeHealthSample !== "function") || attempts < consecutiveHealthySamples) {
+    throw new Error("Main update sustained health sampling bounds are invalid.");
+  }
   const pointer = await readPointerImpl(pointerPath, { gitPath });
   if (pointer.sha !== sha || pointer.sourceRoot !== sourceRoot) throw new Error("Main update source pointer does not match the expected runtime identity.");
   const checkout = await inspectCheckoutImpl(sourceRoot, { gitPath });
   if (!checkout.eligible || checkout.currentSha !== sha) throw new Error("Main update runtime checkout does not match the expected canonical SHA.");
   let lastError = null;
+  let consecutive = 0;
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     try {
       const response = await fetchImpl(EQUINOX_LOCAL_CONTROL_CENTER_STATUS_URL, { method: "GET", redirect: "error", cache: "no-store", credentials: "omit", headers: { accept: "application/json" } });
@@ -111,11 +118,20 @@ export async function waitForExactSourceHealth({
       const observed = body?.status;
       if (observed?.health?.state === "HEALTHY"
         && observed?.installation?.kind === "managed-source"
-        && observed?.installation?.sourceSha === sha) return true;
+        && observed?.installation?.sourceSha === sha) {
+        if (verifyNativeHealthSample && await verifyNativeHealthSample({ sha, sourceRoot, observed }) !== true) {
+          throw new Error("Native Main OS ownership or Browser health sample is not independently verified.");
+        }
+        consecutive += 1;
+        if (consecutive >= consecutiveHealthySamples) return true;
+        if (attempt + 1 < attempts) await sleepImpl(HEALTH_DELAY_MS);
+        continue;
+      }
       // A native relaunch can race the old A server staying HEALTHY on the
       // loopback port. Never call source B admitted until B itself responds.
       throw new Error("Main update runtime health or installed source SHA has not converged.");
     } catch (error) {
+      consecutive = 0;
       lastError = error;
       if (attempt + 1 < attempts) await sleepImpl(HEALTH_DELAY_MS);
     }
@@ -303,7 +319,9 @@ export async function runEquinoxLocalMainUpdateWorker({
     }
     const verify = typeof verifyRuntimeImpl === "function"
       ? verifyRuntimeImpl
-      : (value) => waitForExactSourceHealth({ ...value, pointerPath: engine.paths.sourcePointerPath, gitPath: toolchain.gitPath, fetchImpl, sleepImpl });
+      : (value) => waitForExactSourceHealth({ ...value, pointerPath: engine.paths.sourcePointerPath,
+          gitPath: toolchain.gitPath, fetchImpl, sleepImpl,
+          consecutiveHealthySamples: nativeLifecycle?.journaledAB === true ? 4 : 1 });
     const restartWithNativeOwnership = (value) => {
       if (hostTarget.startsWith("win32-") && nativeLifecycle?.journaledAB === true) {
         if (value.rollback) {

@@ -312,7 +312,7 @@ test("independent Windows Guardian audits exact Main SHA/native-store identity w
   assert.match(guardianProject, /<InvariantGlobalization>false<\/InvariantGlobalization>/u);
   assert.doesNotMatch(fingerprintCode, /DllImport|WindowsStringSortSha256/u);
   assert.match(fingerprintCode, /IncrementalHash\.CreateHash/u);
-  assert.match(inspector, /File\.Exists\(Path\.Combine\(tx, "active\.json"\)\)/u);
+  assert.match(inspector, /if \(active\) throw new InvalidDataException\("Unreconciled native Main transaction blocks audit/u);
   assert.doesNotMatch(inspector, /Process\.Start|UseShellExecute|cmd\.exe|powershell\.exe/u);
 });
 
@@ -515,6 +515,19 @@ test("independent Guardian worker process provenance never invokes a launcher or
   assert.doesNotMatch(auditor, /Process\.Start|Registry\.SetValue|File\.WriteAllText|File\.Delete/u);
 });
 
+test('Guardian read-only native identity audit remains unavailable during active Main; only exact live owner may call it internally', async () => {
+  const identity = await fs.readFile(new URL('../../native/windows/EquinoxLocal.Guardian/MainNativeIdentity.cs', import.meta.url), 'utf8');
+  const program = await fs.readFile(new URL('../../native/windows/EquinoxLocal.Guardian/Program.cs', import.meta.url), 'utf8');
+  const restart = await fs.readFile(new URL('../../native/windows/EquinoxLocal.Guardian/MainNativeIntegratedABRestart.cs', import.meta.url), 'utf8');
+  assert.match(program, /InspectMainNativeIdentity\(\)/u);
+  assert.match(identity, /private static void InspectMainNativeIdentity\(string\? exactOwnedTransactionId = null\)/u);
+  assert.match(identity, /if \(active\) throw new InvalidDataException\("Unreconciled native Main transaction blocks audit/u);
+  assert.match(identity, /journal\.GetProperty\("stage"\)\.GetString\(\) != "switched"/u);
+  assert.match(identity, /live\.TransactionId != exactOwnedTransactionId/u);
+  assert.match(identity, /Directory\.EnumerateFileSystemEntries\(handoff, "\*\.windows-worker\.json"\)\.Count\(\) != 1/u);
+  assert.match(restart, /InspectMainNativeIdentity\(owner\.TransactionId\)/u);
+});
+
 test('integrated Guardian B WPF restart requires native owner OS PID+HMAC, exact B pointer, shell PID+token+pipe and durable restarted/4', async () => {
   const source = await fs.readFile(new URL('../../native/windows/EquinoxLocal.Guardian/MainNativeIntegratedABRestart.cs', import.meta.url), 'utf8');
   const supervisor = await fs.readFile(new URL('../../native/windows/EquinoxLocal.Guardian/MainNativeIntegratedABSupervisor.cs', import.meta.url), 'utf8');
@@ -524,7 +537,7 @@ test('integrated Guardian B WPF restart requires native owner OS PID+HMAC, exact
   assert.match(source, /clientPid != owner\.Pid/u);
   assert.match(source, /CryptographicOperations\.FixedTimeEquals\(response, expected\)/u);
   assert.match(source, /"switched" \|\| j\.GetProperty\("sequence"\)\.GetInt32\(\) != 3/u);
-  assert.match(source, /InspectMainNativeIdentity\(\)/u);
+  assert.match(source, /InspectMainNativeIdentity\(owner\.TransactionId\)/u);
   assert.match(source, /using var shell = Launch\(executable, null\)/u);
   assert.match(source, /ReadWindowsLogonAuthenticationId\(shellToken\)/u);
   assert.match(source, /GetNamedPipeServerProcessId\(pipe\.SafePipeHandle/u);

@@ -59,7 +59,7 @@ internal static partial class Program
         if (!CryptographicOperations.FixedTimeEquals(before, SHA256.HashData(File.ReadAllBytes(journalPath))))
             throw new InvalidDataException("B WPF journal changed before independent restart identity audit.");
         InspectionPhase = "native-integrated-b-restart-independent-identity";
-        InspectMainNativeIdentity(); // Full immutable source Git + native B + NM + installed shell hashes.
+        InspectMainNativeIdentity(owner.TransactionId); // Exact active owner + full Git/native B/NM/installed hashes.
         using var checkedJournal = ReadOwnedTransitionRecord(journalPath, 8192);
         if (checkedJournal.RootElement.GetProperty("stage").GetString() != "switched" ||
             checkedJournal.RootElement.GetProperty("sequence").GetInt32() != 3 ||
