@@ -20,7 +20,7 @@ internal static partial class Program
     // Only a read-only prepared-stage sidecar. A real native milestone writer
     // will separately verify WPF/NativeMessaging/slot evidence in later work.
     // Failure keeps the exclusive lease marker for supervised reconciliation.
-    private static void RecordNativeJournalWorkerAuthority(OwnedWorkerClaim owner, string root, Process worker)
+    private static void RecordNativeJournalWorkerAuthority(OwnedWorkerClaim owner, string root, Process worker, bool recordPreparedAbort = false)
     {
         InspectionPhase = "native-journal-authority-prepared-only";
         var journalPath = Path.Combine(root, owner.TransactionId + ".json");
@@ -101,5 +101,7 @@ internal static partial class Program
         }
         fd.Flush(flushToDisk: true);
         InspectionPhase = "native-journal-authority-proof-durable";
+        if (recordPreparedAbort)
+            WriteNativeJournalPreparedAbort(owner, journalPath, journalBytes, digest);
     }
 }

@@ -14,12 +14,13 @@ await startEquinoxWindowsMainWorkerProof({
 // worker PID to answer the separate Guardian authority challenge. No journal
 // state advancement or WPF mutation is performed by the witness.
 const trigger = process.env.EQUINOX_LOCAL_TEST_JOURNAL_TRIGGER;
-if (trigger) {
+const abortTrigger = process.env.EQUINOX_LOCAL_TEST_JOURNAL_ABORT_TRIGGER;
+for (const source of [trigger, abortTrigger].filter(Boolean)) {
   const clientModule = process.env.EQUINOX_LOCAL_TEST_JOURNAL_CLIENT_MODULE;
   if (!clientModule) throw new Error('Test worker journal client module is missing.');
   const { proveEquinoxWindowsNativeJournalAuthority } = await import(pathToFileURL(clientModule).href);
   const timer = setInterval(() => {
-    if (!fs.existsSync(trigger)) return;
+    if (!fs.existsSync(source)) return;
     clearInterval(timer);
     const root = process.env.EQUINOX_LOCAL_TEST_JOURNAL_TX_ROOT;
     const tx = process.env.EQUINOX_LOCAL_TEST_WORKER_TX;
