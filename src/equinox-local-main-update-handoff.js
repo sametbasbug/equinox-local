@@ -6,6 +6,9 @@ function assertNativeLifecycle(nativeLifecycle) {
   if (!nativeLifecycle || typeof nativeLifecycle.activate !== "function" || typeof nativeLifecycle.rollback !== "function" || typeof nativeLifecycle.commit !== "function") {
     throw new Error("Main update native lifecycle callbacks are incomplete.");
   }
+  if (nativeLifecycle.journaledAB === true && !["recordRestarted", "recordHealthy", "recordRollbackHealthy", "finalizeCommitted", "finalizeRolledBack"].every((key) => typeof nativeLifecycle[key] === "function")) {
+    throw new Error("Windows journaled native A/B lifecycle requires every verified milestone and terminal finalizer.");
+  }
 }
 
 async function finishNativeRollback({ engine, transactionId, receipt, nativeLifecycle, restartRuntime, verifyRuntime }) {
@@ -21,10 +24,18 @@ async function finishNativeRollback({ engine, transactionId, receipt, nativeLife
     await restartRuntime({ transactionId, sha: rolledBack.rollbackSha, sourceRoot: rolledBack.rollbackSourceRoot, previousSourceRoot: rolledBack.targetSourceRoot, rollback: true });
     const rollbackHealth = await verifyRuntime({ transactionId, sha: rolledBack.rollbackSha, sourceRoot: rolledBack.rollbackSourceRoot, rollback: true });
     if (rollbackHealth !== true) throw new Error("Rollback Equinox Local runtime did not pass health verification.");
+    if (nativeLifecycle.journaledAB === true) await nativeLifecycle.recordRollbackHealthy();
     rolledBack = await engine.markRollbackSucceeded(transactionId);
+    // After a durable terminal receipt, failure to finalize is NOT a reason
+    // to run the destructive rollback path a second time.
+    if (nativeLifecycle.journaledAB === true) {
+      try { await nativeLifecycle.finalizeRolledBack(); }
+      catch (failure) { throw Object.assign(new Error(`Native rollback committed but cleanup remains pending: ${failure.message}`), { terminalReceipt: true, cause: failure }); }
+    }
     await engine.releaseStagedLock(transactionId);
     return Object.freeze({ status: "rolled_back", receipt: rolledBack, targetError: rolledBack.lastError ? new Error(rolledBack.lastError) : null });
   } catch (rollbackFailure) {
+    if (rollbackFailure?.terminalReceipt === true) throw rollbackFailure;
     const rollbackError = asError(rollbackFailure, "Rollback failed.");
     await engine.markRollbackFailed(transactionId, rollbackError.message).catch(() => {});
     const error = new Error(`Main update interrupted rollback did not recover: ${rollbackError.message}`);
@@ -44,6 +55,9 @@ export async function runEquinoxLocalMainUpdateHandoff({
   if (!engine || typeof engine.activatePromotion !== "function" || typeof engine.rollbackPromotion !== "function") throw new Error("Main update transaction engine is required.");
   if (typeof restartRuntime !== "function") throw new Error("Main update restart callback is required.");
   if (typeof verifyRuntime !== "function") throw new Error("Main update health callback is required.");
+  // Validate before entering any promotion/rollback catch path. An incomplete
+  // journaled adapter cannot be mistaken for a failed target to recover.
+  if (nativeLifecycle) assertNativeLifecycle(nativeLifecycle);
 
   const initialStage = initialReceipt?.stage ?? "ready_to_switch";
   if (["rollback_source_restored", "rollback_native_restored"].includes(initialStage)) {
@@ -76,13 +90,22 @@ export async function runEquinoxLocalMainUpdateHandoff({
       switched = await engine.activatePromotion(transactionId);
     }
     await restartRuntime({ transactionId, sha: switched.targetSha, sourceRoot: switched.targetSourceRoot, previousSourceRoot: switched.rollbackSourceRoot, rollback: false });
+    if (nativeLifecycle?.journaledAB === true) await nativeLifecycle.recordRestarted();
     const health = await verifyRuntime({ transactionId, sha: switched.targetSha, sourceRoot: switched.targetSourceRoot, rollback: false });
     if (health !== true) throw new Error("Updated Equinox Local runtime did not pass health verification.");
+    if (nativeLifecycle?.journaledAB === true) await nativeLifecycle.recordHealthy();
     if (nativeLifecycle) await nativeLifecycle.commit();
     const succeeded = await engine.markPromotionSucceeded(transactionId);
+    if (nativeLifecycle?.journaledAB === true) {
+      try { await nativeLifecycle.finalizeCommitted(); }
+      catch (failure) { throw Object.assign(new Error(`Native B receipt committed but A backup cleanup remains pending: ${failure.message}`), { terminalReceipt: true, cause: failure }); }
+    }
     await engine.releaseStagedLock(transactionId);
     return Object.freeze({ status: "succeeded", receipt: succeeded });
   } catch (targetFailure) {
+    // Successful terminal receipt is irreversible; keep A on disk for a
+    // trusted follow-up reconciler instead of trying to rollback committed B.
+    if (targetFailure?.terminalReceipt === true) throw targetFailure;
     const targetError = asError(targetFailure, "Target runtime failed.");
     let rolledBack;
     try {
@@ -94,10 +117,16 @@ export async function runEquinoxLocalMainUpdateHandoff({
       await restartRuntime({ transactionId, sha: rolledBack.rollbackSha, sourceRoot: rolledBack.rollbackSourceRoot, previousSourceRoot: rolledBack.targetSourceRoot, rollback: true });
       const rollbackHealth = await verifyRuntime({ transactionId, sha: rolledBack.rollbackSha, sourceRoot: rolledBack.rollbackSourceRoot, rollback: true });
       if (rollbackHealth !== true) throw new Error("Rollback Equinox Local runtime did not pass health verification.");
+      if (nativeLifecycle?.journaledAB === true) await nativeLifecycle.recordRollbackHealthy();
       if (nativeLifecycle) rolledBack = await engine.markRollbackSucceeded(transactionId);
+      if (nativeLifecycle?.journaledAB === true) {
+        try { await nativeLifecycle.finalizeRolledBack(); }
+        catch (failure) { throw Object.assign(new Error(`Native rollback committed but cleanup remains pending: ${failure.message}`), { terminalReceipt: true, cause: failure }); }
+      }
       await engine.releaseStagedLock(transactionId);
       return Object.freeze({ status: "rolled_back", receipt: rolledBack, targetError });
     } catch (rollbackFailure) {
+      if (rollbackFailure?.terminalReceipt === true) throw rollbackFailure;
       const rollbackError = asError(rollbackFailure, "Rollback failed.");
       await engine.markRollbackFailed(transactionId, rollbackError.message).catch(() => {});
       const error = new Error(`Main update target failed and rollback did not recover: ${targetError.message}; rollback: ${rollbackError.message}`);

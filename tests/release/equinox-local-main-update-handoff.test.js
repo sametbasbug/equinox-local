@@ -189,3 +189,14 @@ test("handoff resumes rollback_native_restored with exact native revalidation", 
   assert.equal(restores, 1);
   assert.deepEqual(f.calls.map(([name]) => name), ["rollback_success", "release"]);
 });
+
+
+test("journaled A/B handoff refuses partial milestone callbacks before native mutation", async () => {
+  const f = engineFixture();
+  await assert.rejects(runEquinoxLocalMainUpdateHandoff({
+    engine: f.engine, transactionId: f.receipt.transactionId,
+    nativeLifecycle: { journaledAB: true, activate: async () => assert.fail("must not start"), rollback: async () => {}, commit: async () => {} },
+    restartRuntime: async () => {}, verifyRuntime: async () => true,
+  }), /requires every verified milestone/u);
+  assert.deepEqual(f.calls.map(([event]) => event), []);
+});
