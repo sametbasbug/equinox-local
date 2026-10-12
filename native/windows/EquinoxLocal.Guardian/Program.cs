@@ -28,7 +28,7 @@ internal static partial class Program
     {
         try
         {
-            if (args.Length > 1 || (args.Length == 1 && args[0] is not ("--inspect" or "--audit-native-identity" or "--audit-native-journal" or "--audit-native-worker" or "--audit-native-worker-ipc" or "--startup" or "--uninstall")))
+            if (args.Length > 1 || (args.Length == 1 && args[0] is not ("--inspect" or "--audit-native-identity" or "--audit-native-journal" or "--audit-native-worker" or "--audit-native-worker-ipc" or "--audit-native-worker-argv" or "--startup" or "--uninstall")))
                 throw new InvalidOperationException("Unsupported Guardian argument.");
             if (args.Length == 1 && args[0] == "--audit-native-identity")
             {
@@ -50,8 +50,13 @@ internal static partial class Program
                 InspectOwnedNativeWorkerPipeProof();
                 return 0; // Live PID + token proof ONLY, never native update authority.
             }
+            if (args.Length == 1 && args[0] == "--audit-native-worker-argv")
+            {
+                InspectOwnedNativeWorkerOsArguments();
+                return 0; // Exact kernel argv proof ONLY; never Main mutation authority.
+            }
             var inspection = InspectBaseline();
-            if (args.Length == 1 && args[0] is "--inspect" or "--audit-native-identity" or "--audit-native-journal" or "--audit-native-worker" or "--audit-native-worker-ipc") return 0;
+            if (args.Length == 1 && args[0] is "--inspect" or "--audit-native-identity" or "--audit-native-journal" or "--audit-native-worker" or "--audit-native-worker-ipc" or "--audit-native-worker-argv") return 0;
             using var process = Launch(inspection.Executable, args.Length == 0 ? null : args[0]);
             return process.Id > 0 ? 0 : 70;
         }
@@ -60,7 +65,7 @@ internal static partial class Program
             // Only the explicit inspection mode exposes bounded, static
             // validation errors to the disposable installed-host acceptance.
             // Never echo paths from OS exceptions or launch arguments.
-            if (args.Length == 1 && args[0] is "--inspect" or "--audit-native-identity" or "--audit-native-journal" or "--audit-native-worker" or "--audit-native-worker-ipc")
+            if (args.Length == 1 && args[0] is "--inspect" or "--audit-native-identity" or "--audit-native-journal" or "--audit-native-worker" or "--audit-native-worker-ipc" or "--audit-native-worker-argv")
             {
                 var reason = ex is InvalidDataException or InvalidOperationException or PlatformNotSupportedException
                     ? ex.Message : ex.GetType().Name;
