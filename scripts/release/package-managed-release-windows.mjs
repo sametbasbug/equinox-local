@@ -2,6 +2,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { execFile as execFileCallback } from "node:child_process";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 
@@ -39,6 +40,9 @@ const WINDOWS_TARGETS = Object.freeze({
   }),
 });
 const MAX_DEPENDENCY_ARCHIVE_BYTES = 128 * 1024 * 1024;
+const DEPENDENCY_DOWNLOAD_TIMEOUT_MS = 180_000;
+const RETRYABLE_DEPENDENCY_HTTP = new Set([500, 502, 503, 504]);
+const DEPENDENCY_RETRY_DELAYS_MS = Object.freeze([300, 900]);
 const WINDOWS_ZIP_TIMEOUT_MS = 180_000;
 const WINDOWS_EXTRA_RELEASE_FILES = Object.freeze([
   "src/equinox-local-windows-clipboard.ps1",
@@ -82,15 +86,39 @@ async function sha256File(filePath) {
   return Object.freeze({ sha256: result.sha256, bytes: result.bytes });
 }
 
-async function downloadVerified(url, destination, expectedSha256, { fetchImpl = globalThis.fetch } = {}) {
-  const response = await fetchImpl(url, {
-    method: "GET",
-    redirect: "follow",
-    cache: "no-store",
-    credentials: "omit",
-    signal: AbortSignal.timeout(60_000),
-  });
-  if (!response?.ok || !response.body) throw new Error(`Pinned dependency server returned HTTP ${response?.status ?? "unknown"}.`);
+export async function downloadVerifiedPinnedWindowsDependency(url, destination, expectedSha256, {
+  fetchImpl = globalThis.fetch,
+  timeoutMs = DEPENDENCY_DOWNLOAD_TIMEOUT_MS,
+  retryDelayImpl = (ms, signal) => sleep(ms, undefined, { signal }),
+} = {}) {
+  if (typeof url !== "string" || !url.startsWith("https://") ||
+      typeof destination !== "string" || !path.isAbsolute(destination) ||
+      !/^[a-f0-9]{64}$/u.test(expectedSha256 ?? "") ||
+      typeof fetchImpl !== "function" || typeof retryDelayImpl !== "function" ||
+      !Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 180_000) {
+    throw new Error("Pinned Windows dependency download contract is invalid.");
+  }
+  const signal = AbortSignal.timeout(timeoutMs);
+  let response;
+  for (let attempt = 0; attempt <= DEPENDENCY_RETRY_DELAYS_MS.length; attempt += 1) {
+    if (signal.aborted) throw new Error("Pinned dependency download deadline expired.");
+    response = await fetchImpl(url, {
+      method: "GET",
+      redirect: "follow",
+      cache: "no-store",
+      credentials: "omit",
+      signal,
+    });
+    if (response?.ok) break;
+    const retryable = RETRYABLE_DEPENDENCY_HTTP.has(response?.status)
+      && attempt < DEPENDENCY_RETRY_DELAYS_MS.length;
+    try { await response?.body?.cancel?.(); } catch { /* Failed error body cleanup is not an authorization. */ }
+    if (!retryable) throw new Error(`Pinned dependency server returned HTTP ${response?.status ?? "unknown"}.`);
+    // Retry ONLY transient pre-transfer server errors; never replay a partial
+    // archive, foreign redirect policy failure, or hash/size validation error.
+    await retryDelayImpl(DEPENDENCY_RETRY_DELAYS_MS[attempt], signal);
+  }
+  if (!response?.body) throw new Error(`Pinned dependency server returned HTTP ${response?.status ?? "unknown"}.`);
   const temporary = `${destination}.part-${randomBytes(8).toString("hex")}`;
   const handle = await fs.open(temporary, "wx");
   const digest = createHash("sha256");
@@ -190,7 +218,7 @@ async function installPinnedWindowsNode(transaction, releaseDir, fetchImpl, targ
   const distribution = NODE_DISTRIBUTIONS[target];
   const archive = path.join(transaction, distribution.filename);
   const extracted = path.join(transaction, "node-extracted");
-  await downloadVerified(`https://nodejs.org/dist/v${EQUINOX_LOCAL_NODE_VERSION}/${distribution.filename}`, archive, distribution.sha256, { fetchImpl });
+  await downloadVerifiedPinnedWindowsDependency(`https://nodejs.org/dist/v${EQUINOX_LOCAL_NODE_VERSION}/${distribution.filename}`, archive, distribution.sha256, { fetchImpl });
   await expandTrustedPinnedZip(archive, extracted);
   await assertNormalTree(extracted);
   const sourceRoot = path.join(extracted, distribution.filename.replace(/\.zip$/u, ""));
@@ -211,7 +239,7 @@ async function installPinnedWindowsTunnel(transaction, releaseDir, fetchImpl, ta
   const distribution = TUNNEL_CLIENT_DISTRIBUTIONS[target];
   const archive = path.join(transaction, distribution.filename);
   const extracted = path.join(transaction, "tunnel-extracted");
-  await downloadVerified(`https://github.com/openai/tunnel-client/releases/download/v${EQUINOX_LOCAL_TUNNEL_CLIENT_VERSION}/${distribution.filename}`, archive, distribution.sha256, { fetchImpl });
+  await downloadVerifiedPinnedWindowsDependency(`https://github.com/openai/tunnel-client/releases/download/v${EQUINOX_LOCAL_TUNNEL_CLIENT_VERSION}/${distribution.filename}`, archive, distribution.sha256, { fetchImpl });
   await expandTrustedPinnedZip(archive, extracted);
   await assertNormalTree(extracted);
   const expected = [
@@ -239,7 +267,7 @@ async function installPinnedWindowsWinapp(transaction, rootDir, releaseDir, fetc
   if (!distribution) throw new Error(`Pinned Microsoft winapp distribution is unavailable for ${target}.`);
   const archive = path.join(transaction, distribution.filename);
   const extracted = path.join(transaction, "winapp-extracted");
-  await downloadVerified(`https://github.com/microsoft/winappCli/releases/download/v${EQUINOX_LOCAL_WINAPP_VERSION}/${distribution.filename}`, archive, distribution.sha256, { fetchImpl });
+  await downloadVerifiedPinnedWindowsDependency(`https://github.com/microsoft/winappCli/releases/download/v${EQUINOX_LOCAL_WINAPP_VERSION}/${distribution.filename}`, archive, distribution.sha256, { fetchImpl });
   await expandTrustedPinnedZip(archive, extracted);
   await assertNormalTree(extracted);
   const expected = ["libHarfBuzzSharp.dll", "libHarfBuzzSharp.pdb", "libSkiaSharp.dll", "libSkiaSharp.pdb", "winapp.exe", "winapp.pdb"].sort();
