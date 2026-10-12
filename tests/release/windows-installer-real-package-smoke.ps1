@@ -371,6 +371,18 @@ try {
   $JournalCurrent = $FixtureSourceSha
   $JournalTarget = $(if ($JournalCurrent -ceq ('b' * 40)) { 'c' * 40 } else { 'b' * 40 })
   $JournalStart = '2026-10-11T18:00:00.000Z'
+  # Test-only canonical A/B checkout shapes; the disposable B script
+  # starts a witness rather than performing a real update.
+  $JournalSources = Join-Path $NativeTxRoot 'sources'
+  $JournalRollbackRoot = Join-Path $JournalSources $JournalCurrent
+  $JournalTargetRoot = Join-Path $JournalSources $JournalTarget
+  $WorkerTestSourceDir = Join-Path $JournalTargetRoot 'src'
+  [IO.Directory]::CreateDirectory($JournalRollbackRoot) | Out-Null
+  [IO.Directory]::CreateDirectory($WorkerTestSourceDir) | Out-Null
+  $WorkerTestScript = Join-Path $WorkerTestSourceDir 'equinox-local-main-update-worker.js'
+  $WitnessScript = Join-Path $Root 'tests\release\owned-windows-worker-proof.mjs'
+  [IO.File]::Copy($WitnessScript, $WorkerTestScript)
+  [IO.File]::WriteAllText((Join-Path $JournalTargetRoot 'package.json'), '{"type":"module"}')
   $JournalLock = Join-Path $NativeTxRoot 'active.json'
   $JournalReceiptDir = Join-Path $NativeTxRoot 'receipts'
   $JournalDataDir = Join-Path $NativeTxRoot 'guardian-journal'
@@ -386,7 +398,7 @@ try {
   $JournalReceiptValue = [ordered]@{
     schemaVersion=1;transactionId=$JournalId;channel='main';status='promoting';stage='ready_to_switch';
     currentSha=$JournalCurrent;targetSha=$JournalTarget;rollbackSha=$JournalCurrent;
-    rollbackSourceRoot=$ManagedSourceRoot;targetSourceRoot=$null;startedAt=$JournalStart;
+    rollbackSourceRoot=$JournalRollbackRoot;targetSourceRoot=$JournalTargetRoot;startedAt=$JournalStart;
     updatedAt=$JournalStart;lastError=$null
   }
   $JournalValue = [ordered]@{
@@ -407,6 +419,7 @@ try {
     # updater or user payload and is killed/removed even if assertions fail.
     Assert-True ((Invoke-GuardianCheck '--audit-native-worker') -eq 70) 'Guardian accepted absent native worker ownership.'
     Assert-True ((Invoke-GuardianCheck '--audit-native-worker-ipc') -eq 70) 'Guardian accepted absent native worker IPC owner.'
+    Assert-True ((Invoke-GuardianCheck '--audit-native-worker-argv') -eq 70) 'Guardian accepted absent native worker OS argv ownership.'
     $WorkerNode = Join-Path $ReleaseDir 'runtime\node\bin\node.exe'
     Assert-True ([IO.File]::Exists($WorkerNode)) 'Native worker OS identity test requires release-owned Node.'
     $WorkerHandoff = Join-Path $NativeTxRoot 'handoff'
@@ -421,9 +434,10 @@ try {
       # Hosted real installer smoke uses Windows PowerShell 5.1 / .NET Framework,
       # whose ProcessStartInfo does not expose ArgumentList. Fixed test-only
       # script content contains no external/user-controlled command arguments.
-      $WitnessScript = Join-Path $Root 'tests\release\owned-windows-worker-proof.mjs'
-      Assert-True ([IO.File]::Exists($WitnessScript)) 'Exact product worker witness fixture is missing.'
-      $WorkerStartInfo.Arguments = '"' + $WitnessScript + '"'
+      Assert-True ([IO.File]::Exists($WorkerTestScript)) 'Exact disposable Main worker argv witness is missing.'
+      $WorkerStartInfo.Arguments = '"' + $WorkerTestScript + '" --transaction-id ' + $JournalId +
+        ' --source-root "' + $JournalRollbackRoot + '" --transaction-root "' + $NativeTxRoot + '"'
+      $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_PROOF_MODULE'] = Join-Path $Root 'src\equinox-local-windows-main-worker-proof.js'
       $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_WORKER_TX'] = $JournalId
       $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_MAIN_WORKER_TOKEN'] = ('e' * 64)
       $WorkerProcess = [Diagnostics.Process]::Start($WorkerStartInfo)
@@ -439,6 +453,13 @@ try {
       # that a second foreign Windows session was created.
       Assert-True ($WorkerProcess.SessionId -eq ([Diagnostics.Process]::GetCurrentProcess()).SessionId) 'Disposable worker did not start in the runner Guardian OS session.'
       Assert-True ((Invoke-GuardianCheck '--audit-native-worker') -eq 0) 'Guardian refused live product-owned Node PID/start time/executable/SID/logon-LUID/session proof.'
+      Assert-True ((Invoke-GuardianCheck '--audit-native-worker-argv') -eq 0) 'Guardian refused exact OS-retrieved product worker command line.'
+      $JournalReceiptValue.targetSourceRoot = Join-Path $Work 'foreign-source'
+      [IO.File]::WriteAllText($JournalReceipt,($JournalReceiptValue | ConvertTo-Json -Depth 5))
+      Assert-True ((Invoke-GuardianCheck '--audit-native-worker-argv') -eq 70) 'Guardian accepted a foreign target source directory claim.'
+      $JournalReceiptValue.targetSourceRoot = $JournalTargetRoot
+      [IO.File]::WriteAllText($JournalReceipt,($JournalReceiptValue | ConvertTo-Json -Depth 5))
+      Assert-True ((Invoke-GuardianCheck '--audit-native-worker-argv') -eq 0) 'Guardian refused restored exact worker argument owner.'
       # IPC endpoint starts asynchronously inside the real installed Node.
       # Retry only the positive fixture handshake; deny on all other failures.
       $WitnessReady = $false
@@ -479,6 +500,7 @@ try {
     }
     Assert-True ((Invoke-GuardianCheck '--audit-native-worker') -eq 70) 'Guardian accepted an exited/unowned native worker after cleanup.'
     Assert-True ((Invoke-GuardianCheck '--audit-native-worker-ipc') -eq 70) 'Guardian accepted an exited native owner proof endpoint.'
+    Assert-True ((Invoke-GuardianCheck '--audit-native-worker-argv') -eq 70) 'Guardian accepted argv for an exited/unowned native worker.'
     Assert-True ((Invoke-GuardianCheck '--inspect') -eq 70) 'Stable Guardian must not start while the journal owns an active Main lock.'
     $JournalReceiptValue.targetSha = $(if ($JournalTarget -ceq ('c' * 40)) { 'd' * 40 } else { 'c' * 40 })
     [IO.File]::WriteAllText($JournalReceipt, ($JournalReceiptValue | ConvertTo-Json -Depth 5))

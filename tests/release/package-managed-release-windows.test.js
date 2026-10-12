@@ -340,6 +340,17 @@ test("independent Guardian worker process provenance never invokes a launcher or
   const auditor = await fs.readFile(new URL("../../native/windows/EquinoxLocal.Guardian/MainNativeWorkerIdentity.cs", import.meta.url), "utf8");
   assert.match(program, /--audit-native-worker/u);
   assert.match(program, /--audit-native-worker-ipc/u);
+  const argv = await fs.readFile(new URL('../../native/windows/EquinoxLocal.Guardian/MainNativeWorkerArguments.cs', import.meta.url), 'utf8');
+  assert.match(program, /--audit-native-worker-argv/u);
+  assert.match(argv, /NtQueryInformationProcess\(process\.Handle, ProcessCommandLineInformation/u);
+  assert.match(argv, /ProcessCommandLineInformation = 60/u);
+  assert.match(argv, /CommandLineToArgvW/u);
+  assert.match(argv, /rollbackSourceRoot/u);
+  assert.match(argv, /targetSourceRoot/u);
+  assert.match(argv, /"--transaction-id", worker\.TransactionId/u);
+  assert.match(argv, /"--transaction-root", tx/u);
+  assert.match(argv, /InspectOwnedNativeWorkerProcess\(\)/u);
+  assert.doesNotMatch(argv, /Process\.Start|File\.WriteAllText|File\.Delete|Registry\.SetValue/u);
   assert.match(auditor, /GetNamedPipeServerProcessId\(pipe\.SafePipeHandle/u);
   assert.match(auditor, /serverPid != owner\.Pid/u);
   assert.match(auditor, /HMACSHA256\.HashData/u);
