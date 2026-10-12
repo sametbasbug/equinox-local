@@ -16,12 +16,12 @@ const WINDOWS_START_TICKS_PATTERN = /^[0-9]{1,19}$/u;
 const MAX_WINDOWS_OWNERSHIP_BYTES = 8 * 1024;
 const WINDOWS_PROCESS_IDENTITY_SCRIPT = [
   "$ErrorActionPreference='Stop'",
-  "$p=Get-Process -Id ([int]$args[0]) -ErrorAction SilentlyContinue",
+  "$p=Get-Process -Id ([int]$env:EQUINOX_LOCAL_CHECK_WORKER_PID) -ErrorAction SilentlyContinue",
   "if($null -eq $p){[Console]::Out.Write('missing');exit 0}",
   "$ticks=$p.StartTime.ToUniversalTime().Ticks.ToString([Globalization.CultureInfo]::InvariantCulture)",
-  "if($ticks -ne $args[1]){[Console]::Out.Write('mismatch');exit 0}",
+  "if($ticks -ne $env:EQUINOX_LOCAL_CHECK_WORKER_TICKS){[Console]::Out.Write('mismatch');exit 0}",
   "try{$exe=$p.Path}catch{[Console]::Out.Write('unknown');exit 0}",
-  "if($exe -ine $args[2]){[Console]::Out.Write('mismatch');exit 0}",
+  "if($exe -ine $env:EQUINOX_LOCAL_CHECK_WORKER_NODE){[Console]::Out.Write('mismatch');exit 0}",
   "[Console]::Out.Write('running')",
 ].join(";");
 
@@ -85,10 +85,19 @@ export async function inspectWindowsMainUpdateWorkerProcess(ownership, { execFil
     "-NonInteractive",
     "-Command",
     WINDOWS_PROCESS_IDENTITY_SCRIPT,
-    String(parsed.pid),
-    parsed.startTimeUtcTicks,
-    parsed.nodePath,
-  ], { timeout: 5_000, maxBuffer: 4 * 1024, windowsHide: true });
+  ], {
+    timeout: 5_000, maxBuffer: 4 * 1024, windowsHide: true,
+    // Windows PowerShell 5.1 appends arguments after -Command to the script
+    // itself, causing a parser error. Bind strictly validated identity via
+    // per-process environment fields instead of interpolating executable
+    // paths or untrusted values into any command source.
+    env: {
+      ...process.env,
+      EQUINOX_LOCAL_CHECK_WORKER_PID: String(parsed.pid),
+      EQUINOX_LOCAL_CHECK_WORKER_TICKS: parsed.startTimeUtcTicks,
+      EQUINOX_LOCAL_CHECK_WORKER_NODE: parsed.nodePath,
+    },
+  });
   const state = String(result?.stdout ?? "").trim();
   if (state === "running") return Object.freeze({ running: true, stale: false, uncertain: false });
   if (state === "missing" || state === "mismatch") return Object.freeze({ running: false, stale: true, uncertain: false });

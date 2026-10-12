@@ -20,6 +20,7 @@ import { EQUINOX_LOCAL_CONTROL_CENTER_STATUS_URL } from "./equinox-local-update-
 import { requestWindowsShellRuntimeRestart } from "./equinox-local-windows-shell-control.js";
 import { assertWindowsStableShellOwnedByRelease, launchWindowsStableShell } from "./equinox-local-windows-stable-shell.js";
 import { cleanupEquinoxLocalMainUpdateWorkerOwnership } from "./equinox-local-main-update-scheduler.js";
+import { admitWindowsMainNativeWorkerJournal } from "./equinox-local-windows-main-worker-admission.js";
 
 const execFile = promisify(execFileCallback);
 const HEALTH_ATTEMPTS = 40;
@@ -164,6 +165,7 @@ export async function runEquinoxLocalMainUpdateWorker({
   prepareNativeCandidate = prepareEquinoxLocalMainNativeCandidate,
   prepareNativeLifecycle = prepareEquinoxLocalMainNativeLifecycle,
   recoverNativeLifecycle = recoverEquinoxLocalMainNativeLifecycle,
+  admitWindowsNativeWorker = admitWindowsMainNativeWorkerJournal,
   handoffImpl = runEquinoxLocalMainUpdateHandoff,
   restartRuntimeImpl = (value) => restartEquinoxLocalMainSourceRuntime({ ...value, execFileImpl, env, fsImpl }),
   verifyRuntimeImpl,
@@ -220,6 +222,17 @@ export async function runEquinoxLocalMainUpdateWorker({
         if (!installation?.managed || !installation?.selfUpdateSupported || installation.target !== nativeTransition.target) {
           throw new Error("Detached Main worker native installation does not match the exact target.");
         }
+        // The Windows detached worker must prove its exact OS process/secret
+        // ownership and bind the Main receipt to a durable native journal
+        // BEFORE it prepares or switches the installed WPF program tree.
+        // A legacy Windows lifecycle is rejected: it discards A too early.
+        const windowsAdmission = hostTarget.startsWith("win32-")
+          ? await admitWindowsNativeWorker({
+            receipt: active, transition: nativeTransition, installation,
+            transactionRoot: args.transactionRoot, engine,
+            fsImpl, execFileImpl, workerToken: env.EQUINOX_LOCAL_MAIN_WORKER_TOKEN,
+          })
+          : null;
         if (initialStage === "ready_to_switch") {
           const candidate = await prepareNativeCandidate({
             sourceSha: active.targetSha,
@@ -239,7 +252,11 @@ export async function runEquinoxLocalMainUpdateWorker({
             fsImpl,
             execFileImpl,
             env,
+            windowsAdmission,
           });
+          if (windowsAdmission && (nativeLifecycle?.journaledAB !== true || nativeLifecycle?.journal !== windowsAdmission.journal)) {
+            throw new Error("Windows Main native worker refuses legacy non-journaled WPF replacement.");
+          }
           active = await engine.markNativeRollbackReady(args.transactionId);
         } else {
           nativeLifecycle = await recoverNativeLifecycle({
@@ -250,7 +267,11 @@ export async function runEquinoxLocalMainUpdateWorker({
             fsImpl,
             execFileImpl,
             env,
+            windowsAdmission,
           });
+          if (windowsAdmission && (nativeLifecycle?.journaledAB !== true || nativeLifecycle?.journal !== windowsAdmission.journal)) {
+            throw new Error("Windows Main native recovery refuses legacy non-journaled WPF replacement.");
+          }
         }
       } else if (nativeTransition?.mode === "reuse_native") {
         if (["native_rollback_ready", "native_switched", "rollback_source_restored", "rollback_native_restored"].includes(initialStage)) {
