@@ -45,7 +45,7 @@ internal static partial class Program
                 InspectOwnedNativeWorkerProcess();
                 return 0; // Process provenance only; NO Main launch or replay.
             }
-            if (args.Length == 1 && args[0] == "--audit-native-worker-ipc" or "--audit-native-worker-argv")
+            if (args.Length == 1 && args[0] == "--audit-native-worker-ipc")
             {
                 InspectOwnedNativeWorkerPipeProof();
                 return 0; // Live PID + token proof ONLY, never native update authority.
