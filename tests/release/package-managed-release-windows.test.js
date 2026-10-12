@@ -594,3 +594,15 @@ test('real installed x64/ARM64 acceptance commits clean disposable source B and 
   assert.match(witness, /requestEquinoxLocalGuardianOwnedBWpfRestart/u);
   assert.doesNotMatch(fixture, /Native B sustained backend health PASSED/u);
 });
+
+test('managed Windows WPF selects exact installed source/native pointers before inherited old Stable release environment', async () => {
+  const supervisor = await fs.readFile(new URL('../../native/windows/EquinoxLocal.WindowsShell/RuntimeSupervisor.cs', import.meta.url), 'utf8');
+  const harness = await fs.readFile(new URL('../../tests/windows/EquinoxLocal.WindowsShell.ManagedSourceHarness/Program.cs', import.meta.url), 'utf8');
+  const resolver = supervisor.slice(supervisor.indexOf('internal static RuntimeSupervisor? TryCreateFromEnvironmentOrManagedInstall()'));
+  const pointerFirst = resolver.indexOf('if (WindowsManagedReleaseLocator.HasCurrentPointer())');
+  const envFallback = resolver.indexOf('Environment.GetEnvironmentVariable("EQUINOX_LOCAL_RELEASE_DIR")');
+  assert.ok(pointerFirst >= 0 && pointerFirst < envFallback, 'managed source/native pointer must override inherited Stable release environment');
+  assert.match(resolver, /return new RuntimeSupervisor\(WindowsManagedSourceRuntimeLocator\.Resolve\)/u);
+  assert.match(harness, /Environment\.SetEnvironmentVariable\("EQUINOX_LOCAL_RELEASE_DIR", stableRelease\)/u);
+  assert.match(harness, /await WaitForIdentityAsync\(port, "B"/u);
+});

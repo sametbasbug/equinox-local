@@ -45,10 +45,17 @@ internal sealed class RuntimeSupervisor : IAsyncDisposable
 
     internal static RuntimeSupervisor? TryCreateFromEnvironmentOrManagedInstall()
     {
+        // A managed installation MUST use its verified, durable source/native
+        // pointers. Launch/update handoffs can leave an older Stable A
+        // EQUINOX_LOCAL_RELEASE_DIR in the inherited process environment;
+        // choosing it first silently boots A while the Guardian has selected
+        // exact B on disk. Treat the environment release only as the legacy
+        // non-managed fallback, NEVER as an override of an installed pointer.
+        if (WindowsManagedReleaseLocator.HasCurrentPointer())
+            return new RuntimeSupervisor(WindowsManagedSourceRuntimeLocator.Resolve);
         var releaseDir = Environment.GetEnvironmentVariable("EQUINOX_LOCAL_RELEASE_DIR");
         if (!string.IsNullOrWhiteSpace(releaseDir)) return new RuntimeSupervisor(releaseDir);
-        if (!WindowsManagedReleaseLocator.HasCurrentPointer()) return null;
-        return new RuntimeSupervisor(WindowsManagedSourceRuntimeLocator.Resolve);
+        return null;
     }
 
     internal int? RuntimeProcessId
