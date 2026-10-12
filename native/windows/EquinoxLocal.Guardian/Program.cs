@@ -28,7 +28,7 @@ internal static partial class Program
     {
         try
         {
-            if (args.Length > 1 || (args.Length == 1 && args[0] is not ("--inspect" or "--audit-native-identity" or "--audit-native-journal" or "--audit-native-worker" or "--audit-native-worker-ipc" or "--audit-native-worker-argv" or "--startup" or "--uninstall")))
+            if (args.Length > 1 || (args.Length == 1 && args[0] is not ("--inspect" or "--audit-native-identity" or "--audit-native-journal" or "--audit-native-worker" or "--audit-native-worker-ipc" or "--audit-native-worker-argv" or "--hold-native-journal-lease" or "--startup" or "--uninstall")))
                 throw new InvalidOperationException("Unsupported Guardian argument.");
             if (args.Length == 1 && args[0] == "--audit-native-identity")
             {
@@ -54,6 +54,11 @@ internal static partial class Program
             {
                 InspectOwnedNativeWorkerOsArguments();
                 return 0; // Exact kernel argv proof ONLY; never Main mutation authority.
+            }
+            if (args.Length == 1 && args[0] == "--hold-native-journal-lease")
+            {
+                HoldOwnedNativeJournalLease();
+                return 70; // No automatic reclaim or native mutation capability.
             }
             var inspection = InspectBaseline();
             if (args.Length == 1 && args[0] is "--inspect" or "--audit-native-identity" or "--audit-native-journal" or "--audit-native-worker" or "--audit-native-worker-ipc" or "--audit-native-worker-argv") return 0;

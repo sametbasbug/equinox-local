@@ -488,6 +488,45 @@ try {
       $WorkerRecord.token = ('e' * 64)
       [IO.File]::WriteAllText($WorkerRecordPath,($WorkerRecord | ConvertTo-Json -Depth 4))
       Assert-True ((Invoke-GuardianCheck '--audit-native-worker') -eq 0) 'Guardian refused restored live OS process identity.'
+      $LeaseProcess = $null
+      try {
+        $LeaseStart = [Diagnostics.ProcessStartInfo]::new($GuardianExe)
+        $LeaseStart.Arguments = '--hold-native-journal-lease'
+        $LeaseStart.UseShellExecute = $false
+        $LeaseStart.CreateNoWindow = $true
+        $LeaseProcess = [Diagnostics.Process]::Start($LeaseStart)
+        Assert-True ($null -ne $LeaseProcess) 'Independent Windows Guardian journal lease owner could not launch.'
+        $LeaseEstablished = $false
+        for ($LeaseAttempt=0; $LeaseAttempt -lt 35; $LeaseAttempt++) {
+          if ([IO.File]::Exists($JournalGuard) -and -not $LeaseProcess.HasExited) { $LeaseEstablished = $true; break }
+          Start-Sleep -Milliseconds 120
+        }
+        Assert-True $LeaseEstablished 'Independent native Guardian failed to persist an exclusive journal lease.'
+        $OutsideWriterAdmitted = $false
+        try {
+          $ForeignWriter = [IO.File]::Open($JournalGuard, [IO.FileMode]::Open, [IO.FileAccess]::ReadWrite, [IO.FileShare]::ReadWrite)
+          $ForeignWriter.Dispose()
+          $OutsideWriterAdmitted = $true
+        } catch [IO.IOException] { }
+        Assert-True (-not $OutsideWriterAdmitted) 'Native OS journal lease allowed a concurrent foreign writer.'
+        Assert-True ((Invoke-GuardianCheck '--audit-native-journal') -eq 70) 'Native journal audit ignored the independently owned live writer lease.'
+        Assert-True ((Invoke-GuardianCheck '--hold-native-journal-lease') -eq 70) 'Independent Guardian silently reclaimed another live native journal lease.'
+        $LeaseProcess.Kill()
+        Assert-True ($LeaseProcess.WaitForExit(5000)) 'Native lease owner did not exit after forced powercut fixture.'
+        Assert-True ([IO.File]::Exists($JournalGuard)) 'Native guardian crash erased the durable writer lease marker.'
+        Assert-True ((Invoke-GuardianCheck '--audit-native-journal') -eq 70) 'Journal admitted a stale lease after independent owner crash.'
+        Assert-True ((Invoke-GuardianCheck '--hold-native-journal-lease') -eq 70) 'Guardian automatically reclaimed an orphan native lease.'
+      } finally {
+        if ($null -ne $LeaseProcess) {
+          try { if (-not $LeaseProcess.HasExited) { $LeaseProcess.Kill() } } catch {}
+          try { $LeaseProcess.WaitForExit(5000) | Out-Null } catch {}
+          $LeaseProcess.Dispose()
+        }
+        # Explicit disposal is only for this disposable test fixture; real
+        # installations MUST reconcile the journal and owning Main receipt.
+        Remove-Item -LiteralPath $JournalGuard -Force -ErrorAction SilentlyContinue
+      }
+      Assert-True ((Invoke-GuardianCheck '--audit-native-journal') -eq 0) 'Native journal did not recover after explicit disposable fixture reconciliation.'
     } finally {
       if ($null -ne $WorkerProcess) {
         # .NET Framework under Windows PowerShell 5.1 has Kill() but not

@@ -335,6 +335,21 @@ test("independent Windows Guardian journal audit is read-only and binds active m
 });
 
 
+test("independent native Guardian obtains an OS-exclusive durable journal lease with no automatic reclaim or WPF mutation", async () => {
+  const program = await fs.readFile(new URL('../../native/windows/EquinoxLocal.Guardian/Program.cs', import.meta.url), 'utf8');
+  const code = await fs.readFile(new URL('../../native/windows/EquinoxLocal.Guardian/MainNativeJournalLease.cs', import.meta.url), 'utf8');
+  assert.match(program, /--hold-native-journal-lease/u);
+  assert.match(code, /InspectOwnedNativeWorkerOsArguments\(\)/u);
+  assert.match(code, /InspectOwnedNativeWorkerPipeProof\(\)/u);
+  assert.match(code, /FileMode\.CreateNew, FileAccess\.ReadWrite/u);
+  assert.match(code, /FileShare\.None/u);
+  assert.match(code, /FileOptions\.WriteThrough/u);
+  assert.match(code, /lease\.Flush\(flushToDisk: true\)/u);
+  assert.match(code, /\.writer-lock/u);
+  assert.match(code, /explicit owner reconciliation/u);
+  assert.doesNotMatch(code, /File\.Delete|File\.Move|Directory\.Delete|Process\.Start|Registry\.SetValue|NativeMessaging|shell_stopped|switched/u);
+});
+
 test("independent Guardian worker process provenance never invokes a launcher or accepts unbound PID ownership", async () => {
   const program = await fs.readFile(new URL("../../native/windows/EquinoxLocal.Guardian/Program.cs", import.meta.url), "utf8");
   const auditor = await fs.readFile(new URL("../../native/windows/EquinoxLocal.Guardian/MainNativeWorkerIdentity.cs", import.meta.url), "utf8");
