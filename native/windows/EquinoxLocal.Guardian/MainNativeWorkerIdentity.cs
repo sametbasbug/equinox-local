@@ -1,6 +1,9 @@
 using System.Buffers.Binary;
 using System.Diagnostics;
 using System.Globalization;
+using System.IO.Pipes;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.ComponentModel;
@@ -14,6 +17,13 @@ internal static partial class Program
 {
     private static readonly Regex WorkerTokenPattern = new("^[a-f0-9]{64}$", RegexOptions.CultureInvariant);
     private static readonly Regex WorkerTicksPattern = new("^[0-9]{1,19}$", RegexOptions.CultureInvariant);
+
+    private sealed record OwnedWorkerClaim(int Pid, string Ticks, string TransactionId, string Token);
+    private const string ProofDomain = "equinox-local-native-main-proof-v1:";
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetNamedPipeServerProcessId(SafePipeHandle pipe, out uint serverProcessId);
 
     private const uint TokenQuery = 0x0008;
     private const int TokenStatisticsClass = 10;
@@ -53,7 +63,7 @@ internal static partial class Program
     // must never authorize a WPF shutdown or a journal replay. This remains a
     // read-only provenance test, NOT an authenticated worker command line or
     // an update/rollback authorization.
-    private static void InspectOwnedNativeWorkerProcess()
+    private static OwnedWorkerClaim InspectOwnedNativeWorkerProcess()
     {
         InspectOwnedNativeTransitionJournal();
         InspectionPhase = "native-worker-owned-release";
@@ -166,5 +176,56 @@ internal static partial class Program
         // Trust is deliberately incomplete: the worker command line, token in
         // process environment, exact receipt writer, system ACL and full
         // transaction recovery still need independent supervisor attestation.
+        return new OwnedWorkerClaim(pid, ticks, id, token);
+    }
+
+    // Read-only interactive proof: the Windows kernel attests the server PID
+    // for THIS pipe handle; the live Node worker must additionally possess
+    // its launch-time token to MAC a fresh nonce. Never mutate journal/WPF here.
+    private static void InspectOwnedNativeWorkerPipeProof()
+    {
+        var owner = InspectOwnedNativeWorkerProcess();
+        InspectionPhase = "native-worker-os-pipe-peer";
+        using var pipe = new NamedPipeClientStream(".", "EquinoxLocalMainOwner-" + owner.TransactionId,
+            PipeDirection.InOut, PipeOptions.Asynchronous);
+        pipe.Connect(1500);
+        if (!GetNamedPipeServerProcessId(pipe.SafePipeHandle, out var serverPid) ||
+            serverPid != owner.Pid)
+            throw new InvalidDataException("Windows named pipe server PID is not the audited detached worker.");
+        using var observed = Process.GetProcessById(owner.Pid);
+        if (observed.HasExited || observed.StartTime.ToUniversalTime().Ticks.ToString(CultureInfo.InvariantCulture) != owner.Ticks)
+            throw new InvalidDataException("Windows native worker identity changed before live proof.");
+        InspectionPhase = "native-worker-live-token-proof";
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        var nonce = RandomNumberGenerator.GetBytes(32);
+        var request = Encoding.ASCII.GetBytes(Convert.ToHexStringLower(nonce) + "\n");
+        pipe.WriteAsync(request.AsMemory(), deadline.Token).AsTask().GetAwaiter().GetResult();
+        pipe.FlushAsync(deadline.Token).GetAwaiter().GetResult();
+        var response = new byte[65];
+        for (var offset = 0; offset < response.Length;)
+        {
+            var read = pipe.ReadAsync(response.AsMemory(offset, response.Length - offset), deadline.Token).AsTask().GetAwaiter().GetResult();
+            if (read < 1) throw new InvalidDataException("Windows worker pipe proof response ended early.");
+            offset += read;
+            if (response[offset - 1] == (byte)'\n')
+            {
+                if (offset != response.Length) throw new InvalidDataException("Windows worker pipe response has invalid length.");
+                var hex = Encoding.ASCII.GetString(response, 0, 64);
+                if (!WorkerTokenPattern.IsMatch(hex)) throw new InvalidDataException("Windows worker pipe proof is malformed.");
+                var actual = Convert.FromHexString(hex);
+                var key = Convert.FromHexString(owner.Token);
+                var message = new byte[Encoding.ASCII.GetByteCount(ProofDomain) + nonce.Length];
+                Encoding.ASCII.GetBytes(ProofDomain, message);
+                nonce.CopyTo(message.AsSpan(Encoding.ASCII.GetByteCount(ProofDomain)));
+                var expected = HMACSHA256.HashData(key.AsSpan(), message.AsSpan());
+                if (!CryptographicOperations.FixedTimeEquals(actual, expected))
+                    throw new InvalidDataException("Windows worker did not prove its live launch token.");
+                CryptographicOperations.ZeroMemory(key);
+                if (observed.HasExited || observed.StartTime.ToUniversalTime().Ticks.ToString(CultureInfo.InvariantCulture) != owner.Ticks)
+                    throw new InvalidDataException("Windows worker identity changed after IPC proof.");
+                return;
+            }
+        }
+        throw new InvalidDataException("Windows worker pipe response exceeded its fixed bound.");
     }
 }
