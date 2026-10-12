@@ -489,7 +489,11 @@ try {
   # End-to-end actual NTFS A/B switch and failed-B rollback against exact
   # architecture-specific installed WPF PE bytes in an isolated temp root.
   # NEVER mutate the host's real installed program root or Native Messaging.
-  & $OwnedNode (Join-Path $Root 'tests/release/windows-native-ab-installed-smoke.mjs') $ReleaseDir $FixtureTarget
+  # Match the REAL WPF detached-worker ABI: its owned Node lives in the
+  # current signed Stable release, not the independent build toolchain.
+  $StableWorkerNode = Join-Path $ReleaseDir 'runtime\node\bin\node.exe'
+  Assert-True ([IO.File]::Exists($StableWorkerNode)) 'Stable-owned detached worker Node is missing.'
+  & $StableWorkerNode (Join-Path $Root 'tests/release/windows-native-ab-installed-smoke.mjs') $ReleaseDir $FixtureTarget
   if ($LASTEXITCODE -ne 0) { throw 'Windows actual native shell A/B switch/rollback smoke failed.' }
   Assert-True ((& $OwnedNode $OwnedNpm --version) -match '^\d+\.\d+\.\d+$') 'Product-owned npm CLI did not execute.'
   # Exercise the actual packaged CLI with a throwaway offline profile.
