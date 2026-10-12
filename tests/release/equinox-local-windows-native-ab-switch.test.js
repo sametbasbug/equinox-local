@@ -60,6 +60,7 @@ test('Windows rejected B→A rollback preserves B quarantine until A health veri
   assert.equal(rollback.stage, 'restored');
   assert.equal(await liveExe(f), 'verified-A-wpf-binary\n');
   assert.equal(await fs.readFile(path.join(f.quarantineRoot, 'EquinoxLocal.exe'), 'utf8'), 'verified-B-wpf-binary\n');
+  assert.equal((await restoreWindowsNativeABSlot(f)).recovered, true, 'A plus quarantined B must be idempotent after a crash.');
   await assert.rejects(finalizeWindowsNativeABRollback(f, { verifyAHealth: async () => false }), /health/u);
   assert.equal(await fs.readFile(path.join(f.quarantineRoot, 'EquinoxLocal.exe'), 'utf8'), 'verified-B-wpf-binary\n');
   const final = await finalizeWindowsNativeABRollback(f, { verifyAHealth: async () => true });

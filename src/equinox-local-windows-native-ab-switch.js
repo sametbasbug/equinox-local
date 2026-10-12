@@ -82,13 +82,18 @@ export async function restoreWindowsNativeABSlot(options, { fsImpl = fs } = {}) 
     referenceTree(p.previousReleaseDir, fsImpl), referenceTree(p.targetReleaseDir, fsImpl),
     knownTree(p.backupRoot, fsImpl), knownTree(p.programRoot, fsImpl), knownTree(p.quarantineRoot, fsImpl),
   ]);
-  if (quarantine && (active || !backup || !sameWindowsStableShellTree(quarantine, b))) {
-    throw new Error('Native A/B rollback has a foreign or ambiguous candidate quarantine.');
+  if (quarantine && !sameWindowsStableShellTree(quarantine, b)) {
+    throw new Error('Native A/B rollback has a foreign candidate quarantine.');
   }
   if (!backup) {
-    if (active && sameWindowsStableShellTree(active, a)) return Object.freeze({ stage: 'restored', recovered: true });
+    // Crash after A was successfully restored but before the receipt advanced:
+    // A plus a verified B quarantine is a legitimate idempotent replay state.
+    if (active && sameWindowsStableShellTree(active, a)) {
+      return Object.freeze({ stage: 'restored', recovered: true, quarantineRoot: quarantine ? p.quarantineRoot : null });
+    }
     throw new Error('Native A/B rollback lacks the exact old A backup.');
   }
+  if (quarantine && active) throw new Error('Native A/B rollback has ambiguous active and quarantined candidates.');
   if (!sameWindowsStableShellTree(backup, a) || (active && !sameWindowsStableShellTree(active, b))) {
     throw new Error('Native A/B rollback old A or active B hash mismatch.');
   }
@@ -104,11 +109,11 @@ export async function restoreWindowsNativeABSlot(options, { fsImpl = fs } = {}) 
 export async function commitWindowsNativeABSlot(options, { fsImpl = fs, verifyBHealth } = {}) {
   const p = ownedPaths(options);
   if (typeof verifyBHealth !== 'function') throw new Error('Native B commit requires an independent health verifier.');
-  const [a, b, backup, active] = await Promise.all([
+  const [a, b, backup, active, quarantine] = await Promise.all([
     referenceTree(p.previousReleaseDir, fsImpl), referenceTree(p.targetReleaseDir, fsImpl),
-    knownTree(p.backupRoot, fsImpl), knownTree(p.programRoot, fsImpl),
+    knownTree(p.backupRoot, fsImpl), knownTree(p.programRoot, fsImpl), knownTree(p.quarantineRoot, fsImpl),
   ]);
-  if (!backup || !sameWindowsStableShellTree(backup, a) || !active || !sameWindowsStableShellTree(active, b)) {
+  if (quarantine || !backup || !sameWindowsStableShellTree(backup, a) || !active || !sameWindowsStableShellTree(active, b)) {
     throw new Error('Native B commit requires intact B and recoverable old A.');
   }
   if (await verifyBHealth() !== true) throw new Error('Native B sustained health was not independently verified.');
