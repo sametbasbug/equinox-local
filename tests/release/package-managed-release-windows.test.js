@@ -348,6 +348,7 @@ test("native journal authority accepts only kernel-PID+HMAC live prepared worker
   assert.match(source, /HMACSHA256\.HashData/u);
   assert.match(source, /CryptographicOperations\.FixedTimeEquals/u);
   assert.match(source, /FileMode\.CreateNew, FileAccess\.Write/u);
+  assert.match(source, /FileShare\.Read, 4096, FileOptions\.WriteThrough/u);
   assert.match(source, /FileOptions\.WriteThrough/u);
   assert.match(source, /fd\.Flush\(flushToDisk: true\)/u);
   assert.match(source, /new Utf8JsonWriter\(fd\)/u);

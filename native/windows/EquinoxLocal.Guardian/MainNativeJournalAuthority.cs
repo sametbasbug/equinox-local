@@ -77,8 +77,11 @@ internal static partial class Program
         // CREATE_NEW + write-through: a duplicate proof cannot silently replace
         // an earlier one. Crash leaves either an orphan writer lease or this
         // durable sidecar, both of which require explicit native reconciliation.
+        // The immutable authority receipt is public proof, not a lock. Allow
+        // read-only inspection of its fixed fields while Guardian is alive;
+        // unlike the separate OS writer-lock, no second writer is shared.
         using var fd = new FileStream(dest, FileMode.CreateNew, FileAccess.Write,
-            FileShare.None, 4096, FileOptions.WriteThrough);
+            FileShare.Read, 4096, FileOptions.WriteThrough);
         // Guardian is published trimmed/single-file. Write the six fixed
         // fields directly; anonymous-object reflection serialization is not
         // reliable after IL trimming. A partial create-only record still
