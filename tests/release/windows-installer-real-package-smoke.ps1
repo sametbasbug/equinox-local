@@ -392,7 +392,10 @@ try {
   $JournalTarget = [string](& $OwnedGitStatusExe -C $JournalCandidateRoot rev-parse HEAD)
   Assert-True ($LASTEXITCODE -eq 0 -and $JournalTarget -cmatch '^[a-f0-9]{40}$' -and $JournalTarget -cne $JournalCurrent) 'Disposable B source Git SHA is not distinct and canonical.'
   $JournalTargetRoot = Join-Path $JournalSources $JournalTarget
-  Move-Item -LiteralPath $JournalCandidateRoot -Destination $JournalTargetRoot -ErrorAction Stop
+  # Both paths are on the same user-profile volume. Use a single native
+  # directory rename: PowerShell Move-Item tries recursive copy+delete and
+  # cannot remove the read-only .git directory on hosted Windows runners.
+  [IO.Directory]::Move($JournalCandidateRoot,$JournalTargetRoot)
   $WorkerTestSourceDir = Join-Path $JournalTargetRoot 'src'
   $WorkerTestScript = Join-Path $WorkerTestSourceDir 'equinox-local-main-update-worker.js'
   Assert-True ([IO.File]::Exists($WorkerTestScript)) 'Exact immutable B worker witness source is missing.'
