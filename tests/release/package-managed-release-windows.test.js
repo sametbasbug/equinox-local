@@ -569,6 +569,10 @@ test('real installed x64/ARM64 acceptance commits clean disposable source B and 
   assert.match(fixture, /\$JournalRestartedCommit/u);
   assert.match(fixture, /\$BRestartWitness\.shellPid/u);
   assert.match(fixture, /\$BRestartJournal\.stage -ceq 'restarted'/u);
+  assert.match(fixture, /\$BBackendConsecutive -ge 4/u);
+  assert.match(fixture, /\$BBackendStatus\.status\.installation\.sourceSha -ceq \$JournalTarget/u);
+  assert.match(fixture, /\$BManifestCurrent\.path \$BExpectedLauncher/u);
+  assert.match(fixture, /\$BNativeCurrent\.sourceSha -ceq \$JournalTarget/u);
   assert.match(fixture, /Stop-OwnedShell \$StableExe/u);
   assert.match(fixture, /\$OriginalIntegratedSourcePointer/u);
   assert.match(fixture, /\$OriginalIntegratedNativePointer/u);

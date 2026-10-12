@@ -776,7 +776,43 @@ try {
           $BRestartJournal.stage -ceq 'restarted' -and $BRestartJournal.sequence -eq 4 -and
           $BRestartCommit.journalSha256 -ceq ((Get-FileHash -LiteralPath $JournalData -Algorithm SHA256).Hash.ToLowerInvariant()) -and
           $BRunningProcesses.Count -eq 1 -and $BRunningProcesses[0].ProcessId -eq $BRestartWitness.shellPid) 'Real Windows B WPF OS PID + exact native restarted/4 journal proof failed.'
-        Write-Output "Windows $FixtureTarget real Guardian-owned B WPF process and exact restarted/4 evidence PASSED (NOT sustained backend health)."
+        # A WPF PID is not proof its Node backend booted from source B.
+        # Require FOUR consecutive independently fetched loopback responses
+        # with the exact immutable B managed-source SHA while the same WPF B
+        # PID, the native B pointer and native messaging owner remain stable.
+        # Hosted CI cannot require a connected real Chrome profile/tunnel,
+        # so this proves backend SOURCE B identity, not full Browser health.
+        $BBackendConsecutive = 0
+        $BBackendSamples = 0
+        $BBackendLastState = 'no-response'
+        for ($BBackendAttempt=0; $BBackendAttempt -lt 75; $BBackendAttempt++) {
+          if ($IntegratedGuardian.HasExited) { break }
+          $BRunningNow = @(Get-CimInstance Win32_Process -Filter "Name='EquinoxLocal.exe'" -ErrorAction SilentlyContinue |
+            Where-Object { $_.ProcessId -eq $BRestartWitness.shellPid -and (Same-Path $_.ExecutablePath $StableExe) })
+          if ($BRunningNow.Count -ne 1) { $BBackendLastState = 'wpf-exited'; break }
+          try {
+            $BBackendStatus = (Invoke-WebRequest -UseBasicParsing -Uri 'http://127.0.0.1:24891/api/v1/status' -TimeoutSec 3).Content | ConvertFrom-Json
+            $BBackendLastState = [string]$BBackendStatus.status.installation.kind
+            $BManifestCurrent = [IO.File]::ReadAllText($ExpectedManifestPath) | ConvertFrom-Json
+            $BNativeCurrent = [IO.File]::ReadAllText($IntegratedNativePointerPath) | ConvertFrom-Json
+            $BExpectedLauncher = Join-Path $StagedBRelease 'runtime\browser\equinox-browser-native-host.exe'
+            $BManifestRegistry = [string](Get-Item -LiteralPath $NativeRegistryKey -ErrorAction Stop).GetValue('')
+            if ($BBackendStatus.ok -eq $true -and
+                $BBackendStatus.status.installation.kind -ceq 'managed-source' -and
+                $BBackendStatus.status.installation.sourceSha -ceq $JournalTarget -and
+                $BNativeCurrent.sourceSha -ceq $JournalTarget -and
+                (Same-Path $BManifestCurrent.path $BExpectedLauncher) -and
+                (Same-Path $BManifestRegistry $ExpectedManifestPath)) {
+              $BBackendConsecutive++
+              $BBackendSamples++
+            } else { $BBackendConsecutive = 0 }
+          } catch { $BBackendConsecutive = 0; $BBackendLastState = 'status-or-owner-unavailable' }
+          if ($BBackendConsecutive -ge 4) { break }
+          Start-Sleep -Milliseconds 500
+        }
+        Write-Output ("Hosted B Control Center identity: consecutive={0}; samples={1}; lastKind={2}" -f $BBackendConsecutive,$BBackendSamples,$BBackendLastState)
+        Assert-True ($BBackendConsecutive -ge 4) 'Guardian B WPF is running but real Control Center/Native Messaging does not report sustained exact B source identity.'
+        Write-Output "Windows $FixtureTarget real Guardian-owned B WPF process, restarted/4 AND four consecutive B backend identity samples PASSED (Browser/tunnel sustained health NOT YET certified)."
         $IntegratedGuardian.Kill()
         Assert-True ($IntegratedGuardian.WaitForExit(5000)) 'Native supervisor force-kill did not stop its Windows process.'
         $IntegratedRecord = ConvertFrom-Json ([IO.File]::ReadAllText($JournalData))
