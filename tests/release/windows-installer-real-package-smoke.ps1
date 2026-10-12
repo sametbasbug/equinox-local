@@ -369,20 +369,36 @@ try {
   Assert-True ((Invoke-GuardianCheck '--audit-native-journal') -eq 70) 'Guardian accepted a journal with no owning active receipt.'
   $JournalId = 'main-' + ('3' * 32)
   $JournalCurrent = $FixtureSourceSha
-  $JournalTarget = $(if ($JournalCurrent -ceq ('b' * 40)) { 'c' * 40 } else { 'b' * 40 })
   $JournalStart = '2026-10-11T18:00:00.000Z'
-  # Test-only canonical A/B checkout shapes; the disposable B script
-  # starts a witness rather than performing a real update.
   $JournalSources = Join-Path $NativeTxRoot 'sources'
   $JournalRollbackRoot = Join-Path $JournalSources $JournalCurrent
-  $JournalTargetRoot = Join-Path $JournalSources $JournalTarget
-  $WorkerTestSourceDir = Join-Path $JournalTargetRoot 'src'
   [IO.Directory]::CreateDirectory($JournalRollbackRoot) | Out-Null
-  [IO.Directory]::CreateDirectory($WorkerTestSourceDir) | Out-Null
-  $WorkerTestScript = Join-Path $WorkerTestSourceDir 'equinox-local-main-update-worker.js'
+  # Create a REAL clean pinned-Git source B, unlike a dummy all-b SHA. The
+  # hosted-only fixture commits its disposable witness script to B; product
+  # server.js remains intact for positive WPF and Control Center start tests.
+  if ($env:GITHUB_ACTIONS -cne 'true') { throw 'Integrated native B startup requires disposable hosted GitHub Actions.' }
   $WitnessScript = Join-Path $Root 'tests\release\owned-windows-worker-proof.mjs'
-  [IO.File]::Copy($WitnessScript, $WorkerTestScript)
-  [IO.File]::WriteAllText((Join-Path $JournalTargetRoot 'package.json'), '{"type":"module"}')
+  $JournalCandidateRoot = Join-Path $Work 'ephemeral-clean-main-B'
+  & $OwnedGitStatusExe -c core.autocrlf=true -c core.fsmonitor=false clone --quiet --branch main $ManagedSourceRoot $JournalCandidateRoot
+  Assert-True ($LASTEXITCODE -eq 0) 'Product-owned Git could not clone clean disposable Main B source.'
+  & $OwnedGitStatusExe -C $JournalCandidateRoot remote set-url origin 'https://github.com/sametbasbug/equinox-local.git'
+  Assert-True ($LASTEXITCODE -eq 0) 'Disposable B origin cannot bind canonical product repository.'
+  $WorkerCandidateScript = Join-Path $JournalCandidateRoot 'src\equinox-local-main-update-worker.js'
+  [IO.File]::Copy($WitnessScript, $WorkerCandidateScript, $true)
+  & $OwnedGitStatusExe -C $JournalCandidateRoot add -- 'src/equinox-local-main-update-worker.js'
+  Assert-True ($LASTEXITCODE -eq 0) 'Test witness was not staged inside the exact B Git tree.'
+  & $OwnedGitStatusExe -c user.name='Equinox CI Fixture' -c user.email='fixture@example.invalid' -c core.autocrlf=true -C $JournalCandidateRoot commit --quiet -m 'test: ephemeral Windows native Main B restart witness'
+  Assert-True ($LASTEXITCODE -eq 0) 'Disposable B Git source witness was not committed.'
+  $JournalTarget = [string](& $OwnedGitStatusExe -C $JournalCandidateRoot rev-parse HEAD)
+  Assert-True ($LASTEXITCODE -eq 0 -and $JournalTarget -cmatch '^[a-f0-9]{40}$' -and $JournalTarget -cne $JournalCurrent) 'Disposable B source Git SHA is not distinct and canonical.'
+  $JournalTargetRoot = Join-Path $JournalSources $JournalTarget
+  Move-Item -LiteralPath $JournalCandidateRoot -Destination $JournalTargetRoot -ErrorAction Stop
+  $WorkerTestSourceDir = Join-Path $JournalTargetRoot 'src'
+  $WorkerTestScript = Join-Path $WorkerTestSourceDir 'equinox-local-main-update-worker.js'
+  Assert-True ([IO.File]::Exists($WorkerTestScript)) 'Exact immutable B worker witness source is missing.'
+  $JournalBSourceStatus = @(& $OwnedGitStatusExe -c core.autocrlf=true -c core.fsmonitor=false -C $JournalTargetRoot status --porcelain=v1 --untracked-files=normal)
+  Assert-True ($LASTEXITCODE -eq 0 -and $JournalBSourceStatus.Count -eq 0) 'Disposable Main B checkout is not clean under pinned product Git.'
+  Write-Output 'Hosted immutable Main source B checkout independently committed and validated.'
   $JournalLock = Join-Path $NativeTxRoot 'active.json'
   $JournalReceiptDir = Join-Path $NativeTxRoot 'receipts'
   $JournalDataDir = Join-Path $NativeTxRoot 'guardian-journal'
@@ -398,6 +414,9 @@ try {
   $JournalNativeStagedCommit = Join-Path $JournalDataDir ("$JournalId.native_staged.commit.json")
   $JournalShellStoppedCommit = Join-Path $JournalDataDir ("$JournalId.shell_stopped.commit.json")
   $JournalSwitchedCommit = Join-Path $JournalDataDir ("$JournalId.switched.commit.json")
+  $JournalRestartedCommit = Join-Path $JournalDataDir ("$JournalId.restarted.commit.json")
+  $JournalRestartedReceipt = Join-Path $JournalDataDir ("$JournalId.wpf-b-restarted.json")
+  $JournalBRestartTrigger = Join-Path $Work 'start-integrated-native-b-restart.trigger'
   $JournalIntegratedB = Join-Path $NativeTxRoot ("native-store\$FixtureTarget\$JournalTarget")
   $JournalShellQuiesced = Join-Path $JournalDataDir ("$JournalId.stable-shell-quiesce.json")
   $JournalAbortCommit = Join-Path $JournalDataDir ("$JournalId.abort-commit.json")
@@ -462,6 +481,9 @@ try {
       $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_INTEGRATED_AB_TRIGGER'] = $JournalIntegratedTrigger
       $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_AB_CLIENT_MODULE'] = Join-Path $Root 'src\equinox-local-windows-native-ab-owner-client.js'
       $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_AB_DIAGNOSTIC_FILE'] = $JournalIntegratedDiagnostic
+      $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_AB_RESTART_TRIGGER'] = $JournalBRestartTrigger
+      $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_AB_RESTART_MODULE'] = Join-Path $Root 'src\equinox-local-windows-native-ab-restart-client.js'
+      $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_AB_TARGET_SHA'] = $JournalTarget
       $WorkerProcess = [Diagnostics.Process]::Start($WorkerStartInfo)
       if ($null -eq $WorkerProcess) { throw 'Unable to start ephemeral owned Node process for Guardian audit.' }
       $WorkerRecord = [ordered]@{
@@ -666,6 +688,10 @@ try {
       # No production B launch/swap is enabled by this admission fixture.
       $IntegratedGuardian = $null
       $OriginalIntegratedNativeManifest = [IO.File]::ReadAllBytes($ExpectedManifestPath)
+      $IntegratedSourcePointerPath = Join-Path $NativeTxRoot 'current-source.conf'
+      $IntegratedNativePointerPath = Join-Path $NativeTxRoot 'current-native.json'
+      $OriginalIntegratedSourcePointer = [IO.File]::ReadAllBytes($IntegratedSourcePointerPath)
+      $OriginalIntegratedNativePointer = if ([IO.File]::Exists($IntegratedNativePointerPath)) { [IO.File]::ReadAllBytes($IntegratedNativePointerPath) } else { $null }
       try {
         $StagedBRelease = Join-Path $JournalIntegratedB 'release'
         $StagedBRuntime = Join-Path $StagedBRelease 'runtime'
@@ -709,22 +735,55 @@ try {
         }
         Assert-True $IntegratedCommitted 'Independent Guardian could not verify B native slot and Native Messaging owner with durable switched journal.'
         Assert-True ((Invoke-GuardianCheck '--hold-native-integrated-ab') -eq 70) 'Second native integrated supervisor stole OS-held journal lease.'
+        # Exercise the TRUE source/native selection crash window, using the
+        # clean independent committed B Git checkout and exact B PE fingerprint.
+        # Only this disposable runner modifies its private pointers; nothing
+        # here invokes the physical user's Windows updater.
+        $SelectedBSourcePointer = @('schemaVersion=1',"sourceRoot=$JournalTargetRoot","sha=$JournalTarget",'') -join "`n"
+        [IO.File]::WriteAllText($IntegratedSourcePointerPath,$SelectedBSourcePointer, (New-Object Text.UTF8Encoding($false)))
+        $SelectedBNativePointer = [ordered]@{schemaVersion=1;channel='main';sourceSha=$JournalTarget;target=$FixtureTarget;runtimeContractSha256=('f'*64)}
+        [IO.File]::WriteAllText($IntegratedNativePointerPath,($SelectedBNativePointer | ConvertTo-Json -Depth 3), (New-Object Text.UTF8Encoding($false)))
+        [IO.File]::WriteAllText($JournalBRestartTrigger,'authorize-disposable-exact-b-wpf')
+        $RealBWpfRestarted = $false
+        for ($RestartAttempt=0; $RestartAttempt -lt 450; $RestartAttempt++) {
+          if ([IO.File]::Exists($JournalRestartedCommit) -and [IO.File]::Exists($JournalRestartedReceipt) -and -not $IntegratedGuardian.HasExited) { $RealBWpfRestarted = $true; break }
+          if ($IntegratedGuardian.HasExited) { break }
+          Start-Sleep -Milliseconds 120
+        }
+        if (-not $RealBWpfRestarted -and $IntegratedGuardian.HasExited) {
+          Write-Output ('Independent Guardian B restart failed phase: ' + $IntegratedGuardian.StandardError.ReadToEnd())
+          if ([IO.File]::Exists($JournalIntegratedDiagnostic)) { Write-Output ('OS-owned B worker diagnostic: ' + [IO.File]::ReadAllText($JournalIntegratedDiagnostic)) }
+        }
+        Assert-True $RealBWpfRestarted 'Actual Guardian-owned B WPF process did not reach independently attested restarted/4.'
+        $BRestartWitness = ConvertFrom-Json ([IO.File]::ReadAllText($JournalRestartedReceipt))
+        $BRestartJournal = ConvertFrom-Json ([IO.File]::ReadAllText($JournalData))
+        $BRestartCommit = ConvertFrom-Json ([IO.File]::ReadAllText($JournalRestartedCommit))
+        $BRunningProcesses = @(Get-CimInstance Win32_Process -Filter "Name='EquinoxLocal.exe'" -ErrorAction SilentlyContinue |
+          Where-Object { -not [string]::IsNullOrWhiteSpace($_.ExecutablePath) -and (Same-Path $_.ExecutablePath $StableExe) })
+        Assert-True ($BRestartWitness.transactionId -ceq $JournalId -and $BRestartWitness.sourceSha -ceq $JournalTarget -and
+          $BRestartWitness.guardianPid -eq $IntegratedGuardian.Id -and $BRestartWitness.runtimeContractSha256 -ceq ('f'*64) -and
+          $BRestartCommit.stage -ceq 'restarted' -and $BRestartCommit.sequence -eq 4 -and
+          $BRestartJournal.stage -ceq 'restarted' -and $BRestartJournal.sequence -eq 4 -and
+          $BRestartCommit.journalSha256 -ceq ((Get-FileHash -LiteralPath $JournalData -Algorithm SHA256).Hash.ToLowerInvariant()) -and
+          $BRunningProcesses.Count -eq 1 -and $BRunningProcesses[0].ProcessId -eq $BRestartWitness.shellPid) 'Real Windows B WPF OS PID + exact native restarted/4 journal proof failed.'
+        Write-Output "Windows $FixtureTarget real Guardian-owned B WPF process and exact restarted/4 evidence PASSED (NOT sustained backend health)."
         $IntegratedGuardian.Kill()
         Assert-True ($IntegratedGuardian.WaitForExit(5000)) 'Native supervisor force-kill did not stop its Windows process.'
         $IntegratedRecord = ConvertFrom-Json ([IO.File]::ReadAllText($JournalData))
         $NativeStagedReceipt = ConvertFrom-Json ([IO.File]::ReadAllText($JournalNativeStagedCommit))
         $ShellStoppedReceipt = ConvertFrom-Json ([IO.File]::ReadAllText($JournalShellStoppedCommit))
         $SwitchedReceipt = ConvertFrom-Json ([IO.File]::ReadAllText($JournalSwitchedCommit))
-        Assert-True ($IntegratedRecord.stage -ceq 'switched' -and $IntegratedRecord.sequence -eq 3 -and
+        Assert-True ($IntegratedRecord.stage -ceq 'restarted' -and $IntegratedRecord.sequence -eq 4 -and
           $NativeStagedReceipt.stage -ceq 'native_staged' -and $NativeStagedReceipt.sequence -eq 1 -and
           $ShellStoppedReceipt.stage -ceq 'shell_stopped' -and $ShellStoppedReceipt.sequence -eq 2 -and
           $ShellStoppedReceipt.guardianPid -eq $IntegratedGuardian.Id -and
           $SwitchedReceipt.stage -ceq 'switched' -and $SwitchedReceipt.sequence -eq 3 -and
           $SwitchedReceipt.guardianPid -eq $IntegratedGuardian.Id -and
-          $SwitchedReceipt.journalSha256 -ceq ((Get-FileHash -LiteralPath $JournalData -Algorithm SHA256).Hash.ToLowerInvariant())) 'Native Guardian journal stage sequence/receipts differ from physically observed milestones.'
+          $SwitchedReceipt.stage -ceq 'switched' -and
+          $BRestartCommit.journalSha256 -ceq ((Get-FileHash -LiteralPath $JournalData -Algorithm SHA256).Hash.ToLowerInvariant())) 'Native Guardian journal stage sequence/receipts differ from physically observed milestones.'
         $StoppedWpf = @(Get-CimInstance Win32_Process -Filter "Name='EquinoxLocal.exe'" -ErrorAction SilentlyContinue |
           Where-Object { -not [string]::IsNullOrWhiteSpace($_.ExecutablePath) -and (Same-Path $_.ExecutablePath $StableExe) })
-        Assert-True ($StoppedWpf.Count -eq 0) 'Native integrated supervisor journal claimed WPF shutdown while A remained running.'
+        Assert-True ($StoppedWpf.Count -eq 1 -and $StoppedWpf[0].ProcessId -eq $BRestartWitness.shellPid) 'Native integrated supervisor did not retain the exact new B WPF process.'
         Assert-True ((Test-Path -LiteralPath $IntegratedBackup) -and (Test-Path -LiteralPath $IntegratedBMarker)) 'Real Windows A/B slot did not retain old A and install distinct B.'
         Assert-True ((Invoke-GuardianCheck '--audit-native-journal') -eq 70) 'Native integrated supervisor allowed orphan writer-lock replay.'
       } finally {
@@ -733,6 +792,12 @@ try {
           try { $IntegratedGuardian.WaitForExit(5000) | Out-Null } catch {}
           $IntegratedGuardian.Dispose()
         }
+        # Stop the exact hosted WPF B before any physical A restoration.
+        if ($null -ne $StableExe) { Stop-OwnedShell $StableExe }
+        # Restore real A source/native pointers even if the Guardian fails.
+        [IO.File]::WriteAllBytes($IntegratedSourcePointerPath,$OriginalIntegratedSourcePointer)
+        if ($null -ne $OriginalIntegratedNativePointer) { [IO.File]::WriteAllBytes($IntegratedNativePointerPath,$OriginalIntegratedNativePointer) }
+        elseif ([IO.File]::Exists($IntegratedNativePointerPath)) { Remove-Item -LiteralPath $IntegratedNativePointerPath -Force -ErrorAction Stop }
         # THIS IS DISPOSABLE HOSTED CI ONLY: regardless of partial B swap or
         # Guardian crash, restore and independently preserve the real A shell
         # before any later installer tests. Never do this in user production.
@@ -749,7 +814,7 @@ try {
         # Hosted test-only registry and manifest rollback happens before
         # restarting Stable A. Production always requires independent health.
         [IO.File]::WriteAllBytes($ExpectedManifestPath, $OriginalIntegratedNativeManifest)
-        Remove-Item -LiteralPath $JournalGuard,$JournalAuthority,$JournalShellQuiesced,$JournalIntegratedTrigger,$JournalNativeStagedCommit,$JournalShellStoppedCommit,$JournalSwitchedCommit -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $JournalGuard,$JournalAuthority,$JournalShellQuiesced,$JournalIntegratedTrigger,$JournalBRestartTrigger,$JournalRestartedReceipt,$JournalNativeStagedCommit,$JournalShellStoppedCommit,$JournalSwitchedCommit,$JournalRestartedCommit -Force -ErrorAction SilentlyContinue
         Remove-Item -LiteralPath $JournalIntegratedB -Recurse -Force -ErrorAction SilentlyContinue
         [IO.File]::WriteAllText($JournalData, ($JournalValue | ConvertTo-Json -Depth 5))
         $IntegratedWpfRestart = [Diagnostics.ProcessStartInfo]::new($StableExe)

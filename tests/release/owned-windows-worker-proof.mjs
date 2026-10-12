@@ -45,6 +45,20 @@ for (const source of [trigger, abortTrigger, shellTrigger, integratedTrigger].fi
             for (let slotAttempt = 0; slotAttempt < 120; slotAttempt += 1) {
               try {
                 await runEquinoxLocalWindowsGuardianOwnedSlot({transactionId: tx, transactionRoot: root, workerToken: token});
+                const restartTrigger = process.env.EQUINOX_LOCAL_TEST_AB_RESTART_TRIGGER;
+                const restartClientModule = process.env.EQUINOX_LOCAL_TEST_AB_RESTART_MODULE;
+                if (!restartTrigger || !restartClientModule) throw new Error('Native B startup witness requires its bounded exact restart trigger and product client.');
+                let signaled = false;
+                for (let attempt = 0; attempt < 300; attempt += 1) {
+                  if (fs.existsSync(restartTrigger)) { signaled = true; break; }
+                  await new Promise(resolve => setTimeout(resolve, 100));
+                }
+                if (!signaled) throw new Error('Hosted native B restart was never authorized after the real slot swap.');
+                const { requestEquinoxLocalGuardianOwnedBWpfRestart } = await import(pathToFileURL(restartClientModule).href);
+                await requestEquinoxLocalGuardianOwnedBWpfRestart({
+                  transactionId: tx, transactionRoot: root, workerToken: token,
+                  sourceSha: process.env.EQUINOX_LOCAL_TEST_AB_TARGET_SHA,
+                });
                 return;
               } catch (error) {
                 // Retry only before the fixed grant; a failed/ambiguous

@@ -520,12 +520,15 @@ test('Guardian read-only native identity audit remains unavailable during active
   const program = await fs.readFile(new URL('../../native/windows/EquinoxLocal.Guardian/Program.cs', import.meta.url), 'utf8');
   const restart = await fs.readFile(new URL('../../native/windows/EquinoxLocal.Guardian/MainNativeIntegratedABRestart.cs', import.meta.url), 'utf8');
   assert.match(program, /InspectMainNativeIdentity\(\)/u);
-  assert.match(identity, /private static void InspectMainNativeIdentity\(string\? exactOwnedTransactionId = null\)/u);
+  assert.match(identity, /private static void InspectMainNativeIdentity\(OwnedWorkerClaim\? exactOwnedWorker = null\)/u);
   assert.match(identity, /if \(active\) throw new InvalidDataException\("Unreconciled native Main transaction blocks audit/u);
   assert.match(identity, /journal\.GetProperty\("stage"\)\.GetString\(\) != "switched"/u);
+  assert.match(identity, /InspectOwnedNativeWorkerProcess\(guardianHoldsJournalLease: true\)/u);
   assert.match(identity, /live\.TransactionId != exactOwnedTransactionId/u);
+  assert.match(identity, /live\.Pid != exactOwnedWorker\.Pid/u);
+  assert.match(identity, /live\.Ticks != exactOwnedWorker\.Ticks/u);
   assert.match(identity, /Directory\.EnumerateFileSystemEntries\(handoff, "\*\.windows-worker\.json"\)\.Count\(\) != 1/u);
-  assert.match(restart, /InspectMainNativeIdentity\(owner\.TransactionId\)/u);
+  assert.match(restart, /InspectMainNativeIdentity\(owner\)/u);
 });
 
 test('integrated Guardian B WPF restart requires native owner OS PID+HMAC, exact B pointer, shell PID+token+pipe and durable restarted/4', async () => {
@@ -537,7 +540,7 @@ test('integrated Guardian B WPF restart requires native owner OS PID+HMAC, exact
   assert.match(source, /clientPid != owner\.Pid/u);
   assert.match(source, /CryptographicOperations\.FixedTimeEquals\(response, expected\)/u);
   assert.match(source, /"switched" \|\| j\.GetProperty\("sequence"\)\.GetInt32\(\) != 3/u);
-  assert.match(source, /InspectMainNativeIdentity\(owner\.TransactionId\)/u);
+  assert.match(source, /InspectMainNativeIdentity\(owner\)/u);
   assert.match(source, /using var shell = Launch\(executable, null\)/u);
   assert.match(source, /ReadWindowsLogonAuthenticationId\(shellToken\)/u);
   assert.match(source, /GetNamedPipeServerProcessId\(pipe\.SafePipeHandle/u);
@@ -547,4 +550,25 @@ test('integrated Guardian B WPF restart requires native owner OS PID+HMAC, exact
   assert.match(worker, /guardianOwnedBWpfRestartImpl\(/u);
   assert.match(worker, /Windows native A rollback WPF restart requires independently verified Guardian recovery/u);
   assert.doesNotMatch(source, /File\.Move|Directory\.Move|Registry\.SetValue|Directory\.Delete|Process\.Kill/u);
+});
+
+
+test('real installed x64/ARM64 acceptance commits clean disposable source B and proves OS Guardian WPF restarted/4', async () => {
+  const fixture = await fs.readFile(new URL('../../tests/release/windows-installer-real-package-smoke.ps1', import.meta.url), 'utf8');
+  const witness = await fs.readFile(new URL('../../tests/release/owned-windows-worker-proof.mjs', import.meta.url), 'utf8');
+  assert.match(fixture, /clone --quiet --branch main \$ManagedSourceRoot \$JournalCandidateRoot/u);
+  assert.match(fixture, /commit --quiet -m 'test: ephemeral Windows native Main B restart witness'/u);
+  assert.match(fixture, /\$JournalTarget -cne \$JournalCurrent/u);
+  assert.match(fixture, /\$JournalBSourceStatus\.Count -eq 0/u);
+  assert.match(fixture, /\$SelectedBSourcePointer/u);
+  assert.match(fixture, /\$SelectedBNativePointer/u);
+  assert.match(fixture, /\$JournalBRestartTrigger/u);
+  assert.match(fixture, /\$JournalRestartedCommit/u);
+  assert.match(fixture, /\$BRestartWitness\.shellPid/u);
+  assert.match(fixture, /\$BRestartJournal\.stage -ceq 'restarted'/u);
+  assert.match(fixture, /Stop-OwnedShell \$StableExe/u);
+  assert.match(fixture, /\$OriginalIntegratedSourcePointer/u);
+  assert.match(fixture, /\$OriginalIntegratedNativePointer/u);
+  assert.match(witness, /requestEquinoxLocalGuardianOwnedBWpfRestart/u);
+  assert.doesNotMatch(fixture, /Native B sustained backend health PASSED/u);
 });
