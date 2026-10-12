@@ -356,6 +356,28 @@ test("native journal authority accepts only kernel-PID+HMAC live prepared worker
   assert.doesNotMatch(source, /Process\.Start|Registry\.SetValue|\.writer-lock"\s*,\s*FileMode\.OpenOrCreate|"shell_stopped"|"switched"/u);
 });
 
+test("integrated Windows Guardian stages exact native B and journals two real milestones under one exclusive owner", async () => {
+  const source = await fs.readFile(new URL('../../native/windows/EquinoxLocal.Guardian/MainNativeIntegratedABSupervisor.cs', import.meta.url), 'utf8');
+  const program = await fs.readFile(new URL('../../native/windows/EquinoxLocal.Guardian/Program.cs', import.meta.url), 'utf8');
+  const lease = await fs.readFile(new URL('../../native/windows/EquinoxLocal.Guardian/MainNativeJournalLease.cs', import.meta.url), 'utf8');
+  assert.match(program, /--hold-native-integrated-ab/u);
+  assert.match(lease, /RecordNativeJournalWorkerAuthority\(owner, root, worker, recordPreparedAbort\)/u);
+  assert.match(lease, /RunOwnedIntegratedMainABSupervisor\(owner, root, worker\)/u);
+  assert.match(source, /InspectBaseline\(allowActiveOrphanForReconciliation: true\)/u);
+  assert.match(source, /FingerprintNativeMainRelease\(release\)/u);
+  assert.match(source, /measured\.Sha256 != expected\.GetProperty\("sha256"\)/u);
+  assert.match(source, /QuiesceOwnedStableShell\(owner, journalRoot, worker\)/u);
+  assert.match(source, /WriteIntegratedOwnedNativeStage\(owner, journalPath, "prepared", 0, "native_staged", 1\)/u);
+  assert.match(source, /WriteIntegratedOwnedNativeStage\(owner, journalPath, "native_staged", 1, "shell_stopped", 2\)/u);
+  assert.match(source, /CryptographicOperations\.FixedTimeEquals\(before, SHA256\.HashData\(File\.ReadAllBytes\(path\)\)\)/u);
+  assert.match(source, /File\.Move\(temp, path, overwrite: true\)/u);
+  assert.match(source, /FileMode\.CreateNew, FileAccess\.Write, FileShare\.None/u);
+  assert.match(source, /FileOptions\.WriteThrough/u);
+  assert.match(source, /fd\.Flush\(flushToDisk: true\)/u);
+  assert.match(source, /\.commit\.json/u);
+  assert.doesNotMatch(source, /Process\.Start|Process\.Kill|Registry\.SetValue|Directory\.Delete|File\.Delete/u);
+});
+
 test("native Guardian WPF graceful quiesce requires exact OS shell PID and live worker authority without Main activation", async () => {
   const code = await fs.readFile(new URL('../../native/windows/EquinoxLocal.Guardian/MainNativeStableShellQuiesce.cs', import.meta.url), 'utf8');
   const lease = await fs.readFile(new URL('../../native/windows/EquinoxLocal.Guardian/MainNativeJournalLease.cs', import.meta.url), 'utf8');

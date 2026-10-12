@@ -16,7 +16,8 @@ await startEquinoxWindowsMainWorkerProof({
 const trigger = process.env.EQUINOX_LOCAL_TEST_JOURNAL_TRIGGER;
 const abortTrigger = process.env.EQUINOX_LOCAL_TEST_JOURNAL_ABORT_TRIGGER;
 const shellTrigger = process.env.EQUINOX_LOCAL_TEST_WPF_QUIESCE_TRIGGER;
-for (const source of [trigger, abortTrigger, shellTrigger].filter(Boolean)) {
+const integratedTrigger = process.env.EQUINOX_LOCAL_TEST_INTEGRATED_AB_TRIGGER;
+for (const source of [trigger, abortTrigger, shellTrigger, integratedTrigger].filter(Boolean)) {
   const clientModule = process.env.EQUINOX_LOCAL_TEST_JOURNAL_CLIENT_MODULE;
   if (!clientModule) throw new Error('Test worker journal client module is missing.');
   const { proveEquinoxWindowsNativeJournalAuthority } = await import(pathToFileURL(clientModule).href);

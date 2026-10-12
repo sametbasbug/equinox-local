@@ -393,6 +393,10 @@ try {
   $JournalAuthorityTrigger = Join-Path $Work 'start-journal-authority-client.trigger'
   $JournalAbortTrigger = Join-Path $Work 'start-journal-abort-client.trigger'
   $JournalShellTrigger = Join-Path $Work 'start-wpf-quiesce-client.trigger'
+  $JournalIntegratedTrigger = Join-Path $Work 'start-integrated-native-ab-client.trigger'
+  $JournalNativeStagedCommit = Join-Path $JournalDataDir ("$JournalId.native_staged.commit.json")
+  $JournalShellStoppedCommit = Join-Path $JournalDataDir ("$JournalId.shell_stopped.commit.json")
+  $JournalIntegratedB = Join-Path $NativeTxRoot ("native-store\$FixtureTarget\$JournalTarget")
   $JournalShellQuiesced = Join-Path $JournalDataDir ("$JournalId.stable-shell-quiesce.json")
   $JournalAbortCommit = Join-Path $JournalDataDir ("$JournalId.abort-commit.json")
   $JournalQuarantinedLock = Join-Path $JournalDataDir (".$JournalId.quarantined.writer-lock")
@@ -453,6 +457,7 @@ try {
       $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_JOURNAL_TRIGGER'] = $JournalAuthorityTrigger
       $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_JOURNAL_ABORT_TRIGGER'] = $JournalAbortTrigger
       $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_WPF_QUIESCE_TRIGGER'] = $JournalShellTrigger
+      $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_INTEGRATED_AB_TRIGGER'] = $JournalIntegratedTrigger
       $WorkerProcess = [Diagnostics.Process]::Start($WorkerStartInfo)
       if ($null -eq $WorkerProcess) { throw 'Unable to start ephemeral owned Node process for Guardian audit.' }
       $WorkerRecord = [ordered]@{
@@ -650,6 +655,84 @@ try {
         Assert-True $ShellReturned 'Hosted real stable WPF shell did not restart after native Guardian quiesce.'
       }
       Assert-True ((Invoke-GuardianCheck '--audit-native-journal') -eq 0) 'WPF quiesce fixture did not restore exact journal ownership.'
+      # Integrated native-owner path. Unlike isolated WPF proof tests, this
+      # single Guardian process independently fingerprints the *exact B* PE
+      # payload, gracefully stops the real installed WPF, and advances two
+      # durable journal generations while retaining the exclusive OS lease.
+      # No production B launch/swap is enabled by this admission fixture.
+      $IntegratedGuardian = $null
+      try {
+        $StagedBRelease = Join-Path $JournalIntegratedB 'release'
+        $StagedBRuntime = Join-Path $StagedBRelease 'runtime'
+        [IO.Directory]::CreateDirectory($StagedBRuntime) | Out-Null
+        Copy-Item -LiteralPath (Join-Path $ReleaseDir 'runtime\shell') -Destination (Join-Path $StagedBRuntime 'shell') -Recurse -ErrorAction Stop
+        Copy-Item -LiteralPath (Join-Path $ReleaseDir 'runtime\browser') -Destination (Join-Path $StagedBRuntime 'browser') -Recurse -ErrorAction Stop
+        Copy-Item -LiteralPath (Join-Path $ReleaseDir 'release.json') -Destination (Join-Path $StagedBRelease 'release.json') -ErrorAction Stop
+        $IntegratedFingerprintJson = & $OwnedFingerprintNode (Join-Path $Root 'tests/release/guardian-native-fingerprint-fixture.mjs') $StagedBRelease
+        Assert-True ($LASTEXITCODE -eq 0) 'Integrated native B fingerprint fixture failed to inspect exact PE bytes.'
+        $IntegratedFingerprint = $IntegratedFingerprintJson | ConvertFrom-Json
+        $StagedBManifest = [ordered]@{
+          schemaVersion=1;channel='main';sourceSha=$JournalTarget;target=$FixtureTarget;
+          runtimeContractSha256=('f' * 64);artifactSha256=('d' * 64);artifactBytes=1024;
+          payloadVersion=$FixtureVersion;releaseFingerprint=$IntegratedFingerprint
+        }
+        [IO.File]::WriteAllText((Join-Path $JournalIntegratedB 'native-store.json'), ($StagedBManifest | ConvertTo-Json -Depth 5))
+        $IntegratedStart = [Diagnostics.ProcessStartInfo]::new($GuardianExe)
+        $IntegratedStart.Arguments = '--hold-native-integrated-ab'
+        $IntegratedStart.UseShellExecute = $false
+        $IntegratedStart.CreateNoWindow = $true
+        $IntegratedStart.RedirectStandardError = $true
+        $IntegratedGuardian = [Diagnostics.Process]::Start($IntegratedStart)
+        Assert-True ($null -ne $IntegratedGuardian) 'Integrated native Guardian process refused launch.'
+        [IO.File]::WriteAllText($JournalIntegratedTrigger, 'disposable-ephemeral-worker')
+        $IntegratedCommitted = $false
+        for ($IntegratedAttempt=0; $IntegratedAttempt -lt 140; $IntegratedAttempt++) {
+          if ([IO.File]::Exists($JournalShellStoppedCommit) -and -not $IntegratedGuardian.HasExited) { $IntegratedCommitted = $true; break }
+          if ($IntegratedGuardian.HasExited) { break }
+          Start-Sleep -Milliseconds 120
+        }
+        if (-not $IntegratedCommitted -and $IntegratedGuardian.HasExited) {
+          Write-Output ('Integrated native supervisor failure phase: ' + $IntegratedGuardian.StandardError.ReadToEnd())
+        }
+        Assert-True $IntegratedCommitted 'Independent Guardian could not commit both native-staged and shell-stopped journal milestones.'
+        Assert-True ((Invoke-GuardianCheck '--hold-native-integrated-ab') -eq 70) 'Second native integrated supervisor stole OS-held journal lease.'
+        $IntegratedGuardian.Kill()
+        Assert-True ($IntegratedGuardian.WaitForExit(5000)) 'Native supervisor force-kill did not stop its Windows process.'
+        $IntegratedRecord = ConvertFrom-Json ([IO.File]::ReadAllText($JournalData))
+        $NativeStagedReceipt = ConvertFrom-Json ([IO.File]::ReadAllText($JournalNativeStagedCommit))
+        $ShellStoppedReceipt = ConvertFrom-Json ([IO.File]::ReadAllText($JournalShellStoppedCommit))
+        Assert-True ($IntegratedRecord.stage -ceq 'shell_stopped' -and $IntegratedRecord.sequence -eq 2 -and
+          $NativeStagedReceipt.stage -ceq 'native_staged' -and $NativeStagedReceipt.sequence -eq 1 -and
+          $ShellStoppedReceipt.stage -ceq 'shell_stopped' -and $ShellStoppedReceipt.sequence -eq 2 -and
+          $ShellStoppedReceipt.guardianPid -eq $IntegratedGuardian.Id -and
+          $ShellStoppedReceipt.journalSha256 -ceq ((Get-FileHash -LiteralPath $JournalData -Algorithm SHA256).Hash.ToLowerInvariant())) 'Native Guardian journal stage sequence/receipts differ from physically observed milestones.'
+        $StoppedWpf = @(Get-CimInstance Win32_Process -Filter "Name='EquinoxLocal.exe'" -ErrorAction SilentlyContinue |
+          Where-Object { -not [string]::IsNullOrWhiteSpace($_.ExecutablePath) -and (Same-Path $_.ExecutablePath $StableExe) })
+        Assert-True ($StoppedWpf.Count -eq 0) 'Native integrated supervisor journal claimed WPF shutdown while A remained running.'
+        Assert-True ((Invoke-GuardianCheck '--audit-native-journal') -eq 70) 'Native integrated supervisor allowed orphan writer-lock replay.'
+      } finally {
+        if ($null -ne $IntegratedGuardian) {
+          try { if (-not $IntegratedGuardian.HasExited) { $IntegratedGuardian.Kill() } } catch {}
+          try { $IntegratedGuardian.WaitForExit(5000) | Out-Null } catch {}
+          $IntegratedGuardian.Dispose()
+        }
+        Remove-Item -LiteralPath $JournalGuard,$JournalAuthority,$JournalShellQuiesced,$JournalIntegratedTrigger,$JournalNativeStagedCommit,$JournalShellStoppedCommit -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $JournalIntegratedB -Recurse -Force -ErrorAction SilentlyContinue
+        [IO.File]::WriteAllText($JournalData, ($JournalValue | ConvertTo-Json -Depth 5))
+        $IntegratedWpfRestart = [Diagnostics.ProcessStartInfo]::new($StableExe)
+        $IntegratedWpfRestart.UseShellExecute = $false
+        $IntegratedWpfRestart.CreateNoWindow = $true
+        [Diagnostics.Process]::Start($IntegratedWpfRestart) | Out-Null
+        $IntegratedAReady = $false
+        for ($IntegratedRetry=0; $IntegratedRetry -lt 120; $IntegratedRetry++) {
+          $WpfOwners = @(Get-CimInstance Win32_Process -Filter "Name='EquinoxLocal.exe'" -ErrorAction SilentlyContinue |
+            Where-Object { -not [string]::IsNullOrWhiteSpace($_.ExecutablePath) -and (Same-Path $_.ExecutablePath $StableExe) })
+          if ($WpfOwners.Count -eq 1) { $IntegratedAReady = $true; break }
+          Start-Sleep -Milliseconds 200
+        }
+        Assert-True $IntegratedAReady 'Hosted Stable A WPF did not recover after forced integrated supervisor kill.'
+      }
+      Assert-True ((Invoke-GuardianCheck '--audit-native-journal') -eq 0) 'Hosted integrated native supervisor fixture did not restore prepared journal.'
       # First permitted REAL native journal stage mutation: prepared/0 to
       # rollback_started/1 only. The installed Guardian itself persists the
       # exact journal bytes under its own OS-exclusive writer lease; WPF and

@@ -28,7 +28,7 @@ internal static partial class Program
     {
         try
         {
-            if (args.Length > 1 || (args.Length == 1 && args[0] is not ("--inspect" or "--audit-native-identity" or "--audit-native-journal" or "--audit-native-worker" or "--audit-native-worker-ipc" or "--audit-native-worker-argv" or "--hold-native-journal-lease" or "--hold-native-journal-authority" or "--hold-native-prepared-abort" or "--hold-native-stable-shell-quiesce" or "--reconcile-native-prepared-abort" or "--startup" or "--uninstall")))
+            if (args.Length > 1 || (args.Length == 1 && args[0] is not ("--inspect" or "--audit-native-identity" or "--audit-native-journal" or "--audit-native-worker" or "--audit-native-worker-ipc" or "--audit-native-worker-argv" or "--hold-native-journal-lease" or "--hold-native-journal-authority" or "--hold-native-prepared-abort" or "--hold-native-stable-shell-quiesce" or "--hold-native-integrated-ab" or "--reconcile-native-prepared-abort" or "--startup" or "--uninstall")))
                 throw new InvalidOperationException("Unsupported Guardian argument.");
             if (args.Length == 1 && args[0] == "--audit-native-identity")
             {
@@ -75,6 +75,11 @@ internal static partial class Program
                 HoldOwnedNativeJournalLease(quiesceStableShell: true);
                 return 70; // Pilot: exact owned WPF quiesce only, no native A/B swap.
             }
+            if (args.Length == 1 && args[0] == "--hold-native-integrated-ab")
+            {
+                HoldOwnedNativeJournalLease(integratedAB: true);
+                return 70; // Fail closed until full B swap/health and recovery are complete.
+            }
             if (args.Length == 1 && args[0] == "--reconcile-native-prepared-abort")
             {
                 ReconcileNativePreparedAbortOrphan();
@@ -97,7 +102,7 @@ internal static partial class Program
                 if (reason.Length > 120) reason = reason[..120];
                 Console.Error.WriteLine($"Guardian inspection refused: phase={InspectionPhase}; kind={ex.GetType().Name}; code=0x{ex.HResult:x8}; reason={reason}");
             }
-            else if (args.Length == 1 && args[0] is "--hold-native-journal-authority" or "--hold-native-prepared-abort" or "--hold-native-stable-shell-quiesce" or "--reconcile-native-prepared-abort")
+            else if (args.Length == 1 && args[0] is "--hold-native-journal-authority" or "--hold-native-prepared-abort" or "--hold-native-stable-shell-quiesce" or "--hold-native-integrated-ab" or "--reconcile-native-prepared-abort")
             {
                 // Bounded phase/type only: no worker token, paths, journal
                 // contents or dynamic exception reason enter CI diagnostics.
