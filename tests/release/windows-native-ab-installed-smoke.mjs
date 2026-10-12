@@ -22,7 +22,10 @@ const [releaseDir, target] = process.argv.slice(2);
 if (process.platform !== 'win32' || !['win32-x64', 'win32-arm64'].includes(target) || !path.isAbsolute(releaseDir)) {
   throw new Error('Windows native A/B real installed-host smoke requires exact native release and target.');
 }
-const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'equinox-ab-real-')));
+// Use the test account's private home rather than the globally shared OS temp
+// directory: hashing and verifying native files must never follow another
+// user's opportunistically created temp paths.
+const root = await fs.realpath(await fs.mkdtemp(path.join(os.homedir(), '.equinox-ab-real-')));
 const previousReleaseDir = path.join(root, 'releases', 'A');
 const targetReleaseDir = path.join(root, 'releases', 'B');
 const programRoot = path.join(root, 'Programs', 'Equinox Local');

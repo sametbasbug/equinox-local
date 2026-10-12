@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import os from 'node:os';
+import path from 'node:path';
 
 import { prepareEquinoxLocalMainNativeLifecycle } from '../../src/equinox-local-main-native-activation.js';
 import { recoverEquinoxLocalMainNativeLifecycle } from '../../src/equinox-local-main-native-recovery.js';
@@ -12,6 +14,7 @@ const A = 'a'.repeat(40), B = 'b'.repeat(40);
 const CA = 'c'.repeat(64), CB = 'd'.repeat(64);
 const ID = `main-${'7'.repeat(32)}`;
 const target = 'win32-x64';
+const TEST_TX_ROOT = path.join(os.homedir(), '.equinox-unit-native-ab-state');
 const transition = { mode: 'artifact_required', target, currentSha: A, targetSha: B, currentRuntimeContractSha256: CA, targetRuntimeContractSha256: CB };
 const oldRelease = 'C:\\Equinox\\releases\\6.0.4';
 const newRelease = `C:\\Equinox\\state\\native-store\\${target}\\${B}\\release`;
@@ -33,7 +36,7 @@ test('Windows native lifecycle admission without independent supervisor cannot p
   const bad = admitted({ supervisor: undefined });
   assert.throws(() => requireWindowsNativeABSupervisor({ windowsAdmission: bad, transition, transactionId: ID }), /independent supervisor/u);
   await assert.rejects(prepareEquinoxLocalMainNativeLifecycle({
-    transition, transactionId: ID, transactionRoot: '/tmp/main-state',
+    transition, transactionId: ID, transactionRoot: TEST_TX_ROOT,
     candidate: { sourceSha: B, target, runtimeContractSha256: CB }, installation: install,
     windowsAdmission: bad,
     promoteCandidateImpl: async () => { prepared = true; throw Error('unexpected promotion'); },
@@ -49,7 +52,7 @@ test('real prepare lifecycle binds stored A/B source/native identities, journal 
   const events = [], admission = admitted();
   const candidate = { sourceSha: B, target, runtimeContractSha256: CB };
   const lc = await prepareEquinoxLocalMainNativeLifecycle({
-    transition, candidate, transactionId: ID, transactionRoot: '/tmp/main-state', installation: install,
+    transition, candidate, transactionId: ID, transactionRoot: TEST_TX_ROOT, installation: install,
     windowsAdmission: admission,
     promoteCandidateImpl: async () => ({ sourceSha: B, target, runtimeContractSha256: CB, releaseDir: newRelease }),
     readPointerImpl: async () => { throw Object.assign(Error('absent Stable native pointer'), { code: 'ENOENT' }); },
@@ -73,7 +76,7 @@ test('real prepare lifecycle binds stored A/B source/native identities, journal 
 test('recovered Windows native lifecycle binds exactly prior Stable release from immutable descriptor to the SAME journal', async () => {
   const admission = admitted();
   const lc = await recoverEquinoxLocalMainNativeLifecycle({
-    transition, transactionId: ID, transactionRoot: '/tmp/main-state', installation: install, windowsAdmission: admission,
+    transition, transactionId: ID, transactionRoot: TEST_TX_ROOT, installation: install, windowsAdmission: admission,
     readDescriptorImpl: async () => ({ previous: { kind: 'stable', version: '6.0.4' } }),
     inspectStoredReleaseImpl: async () => ({ sourceSha: B, target, runtimeContractSha256: CB, releaseDir: newRelease }),
     inspectWindowsSnapshotImpl: async () => {},
@@ -101,7 +104,7 @@ test('supervisor-bound native host registers exact launcher and makes pointer co
     transition, transactionId: ID, stored: { sourceSha: B, target, runtimeContractSha256: CB, releaseDir: newRelease },
     windowsAdmission: admission, previousReleaseDir: oldRelease,
     programRoot: install.programRoot, manifestRoot: install.nativeMessagingManifestRoot,
-    transactionRoot: '/tmp/main-state', pointerPath: '/tmp/main-state/current-native.json',
+    transactionRoot: TEST_TX_ROOT, pointerPath: path.join(TEST_TX_ROOT, 'current-native.json'),
     launcherPathImpl: launcher,
     assertNativeHostImpl: async ({ acceptedLauncherPaths }) => {
       if (acceptedLauncherPaths[0] !== launcher(registered)) throw Error('host not installed at exact allowed launcher');
