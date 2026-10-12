@@ -30,9 +30,11 @@ for (const source of [trigger, abortTrigger, shellTrigger, integratedTrigger].fi
     // The Guardian might not yet have called CreateNamedPipe. A tightly
     // bounded retry is test orchestration only; never retry a journal write.
     void (async () => {
+      let proved = false;
       for (let attempt = 0; attempt < 30; attempt += 1) {
         try {
           await proveEquinoxWindowsNativeJournalAuthority({transactionId: tx, transactionRoot: root, workerToken: token});
+          proved = true;
           if (source === integratedTrigger) {
             const modulePath = process.env.EQUINOX_LOCAL_TEST_AB_CLIENT_MODULE;
             if (!modulePath) throw new Error('Product native A/B slot client module is missing.');
@@ -56,11 +58,22 @@ for (const source of [trigger, abortTrigger, shellTrigger, integratedTrigger].fi
           }
           return;
         } catch (error) {
-          if (attempt === 29) throw error;
+          // NEVER replay a potentially mutated A/B slot after the native
+          // worker has already satisfied Guardian's journal admission.
+          if (proved || attempt === 29) throw error;
           await new Promise(resolve => setTimeout(resolve, 130));
         }
       }
-    })().catch(error => { console.error(error.message); process.exitCode = 1; });
+    })().catch(error => {
+      const category = String(error?.code ?? error?.name ?? 'error').slice(0,40);
+      const description = String(error?.message ?? 'unspecified').slice(0,240).replace(/[\r\n]/gu, ' ');
+      const diagnostics = process.env.EQUINOX_LOCAL_TEST_AB_DIAGNOSTIC_FILE;
+      if (diagnostics && source === integratedTrigger) {
+        try { fs.appendFileSync(diagnostics, `${category}: ${description}\n`, { flag: 'a' }); } catch { }
+      }
+      console.error(category, description);
+      process.exitCode = 1;
+    });
   }, 120);
   timer.unref();
 }

@@ -394,6 +394,7 @@ try {
   $JournalAbortTrigger = Join-Path $Work 'start-journal-abort-client.trigger'
   $JournalShellTrigger = Join-Path $Work 'start-wpf-quiesce-client.trigger'
   $JournalIntegratedTrigger = Join-Path $Work 'start-integrated-native-ab-client.trigger'
+  $JournalIntegratedDiagnostic = Join-Path $Work 'integrated-ab-worker-diagnostic.log'
   $JournalNativeStagedCommit = Join-Path $JournalDataDir ("$JournalId.native_staged.commit.json")
   $JournalShellStoppedCommit = Join-Path $JournalDataDir ("$JournalId.shell_stopped.commit.json")
   $JournalSwitchedCommit = Join-Path $JournalDataDir ("$JournalId.switched.commit.json")
@@ -460,6 +461,7 @@ try {
       $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_WPF_QUIESCE_TRIGGER'] = $JournalShellTrigger
       $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_INTEGRATED_AB_TRIGGER'] = $JournalIntegratedTrigger
       $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_AB_CLIENT_MODULE'] = Join-Path $Root 'src\equinox-local-windows-native-ab-owner-client.js'
+      $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_AB_DIAGNOSTIC_FILE'] = $JournalIntegratedDiagnostic
       $WorkerProcess = [Diagnostics.Process]::Start($WorkerStartInfo)
       if ($null -eq $WorkerProcess) { throw 'Unable to start ephemeral owned Node process for Guardian audit.' }
       $WorkerRecord = [ordered]@{
@@ -703,6 +705,7 @@ try {
         }
         if (-not $IntegratedCommitted -and $IntegratedGuardian.HasExited) {
           Write-Output ('Integrated native supervisor failure phase: ' + $IntegratedGuardian.StandardError.ReadToEnd())
+          if (Test-Path -LiteralPath $JournalIntegratedDiagnostic) { Write-Output ('Integrated native worker: ' + [IO.File]::ReadAllText($JournalIntegratedDiagnostic)) }
         }
         Assert-True $IntegratedCommitted 'Independent Guardian could not verify B native slot and Native Messaging owner with durable switched journal.'
         Assert-True ((Invoke-GuardianCheck '--hold-native-integrated-ab') -eq 70) 'Second native integrated supervisor stole OS-held journal lease.'

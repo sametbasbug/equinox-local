@@ -53,6 +53,37 @@ test('Windows A→B physical directory rename retains exact A until verified hea
   assert.equal(await liveExe(f), 'verified-B-wpf-binary\n');
 });
 
+test('real WPF legacy WebView caches survive A→B and rollback without weakening binary attestation', async (t) => {
+  const f = await fixture(t);
+  const webviewCache = path.join(f.programRoot, 'EquinoxLocal.exe.WebView2', 'EBWebView');
+  const winrtCache = path.join(f.programRoot, '%SystemDrive%', 'ProgramData', 'Microsoft');
+  await fs.mkdir(webviewCache, { recursive: true });
+  await fs.mkdir(winrtCache, { recursive: true });
+  await fs.writeFile(path.join(webviewCache, 'Local State'), 'real-runtime-cache');
+  await fs.writeFile(path.join(winrtCache, 'generated.db'), 'real-winrt-cache');
+  const result = await switchWindowsNativeABSlot(f, { requestShutdown: async () => {} });
+  assert.equal(result.stage, 'switched');
+  assert.equal(await liveExe(f), 'verified-B-wpf-binary\n');
+  assert.equal(await fs.readFile(path.join(f.backupRoot, 'EquinoxLocal.exe.WebView2', 'EBWebView', 'Local State'), 'utf8'), 'real-runtime-cache');
+  const restarted = await switchWindowsNativeABSlot(f, { requestShutdown: async () => { throw Error('must not repeat graceful shutdown'); } });
+  assert.equal(restarted.recovered, true);
+  await fs.mkdir(path.join(f.programRoot, 'EquinoxLocal.exe.WebView2', 'EBWebView'), { recursive: true });
+  await fs.writeFile(path.join(f.programRoot, 'EquinoxLocal.exe.WebView2', 'EBWebView', 'Local State'), 'B-generated-cache');
+  assert.equal((await restoreWindowsNativeABSlot(f)).stage, 'restored');
+  assert.equal(await liveExe(f), 'verified-A-wpf-binary\n');
+  assert.equal((await restoreWindowsNativeABSlot(f)).recovered, true);
+  await fs.writeFile(path.join(f.programRoot, 'unexpected.dll'), 'foreign-binary');
+  await assert.rejects(switchWindowsNativeABSlot(f, { requestShutdown: async () => {} }), /foreign backup|previous release/u);
+});
+
+test('reparse links inside ignored WPF cache remain disallowed', async (t) => {
+  const f = await fixture(t);
+  const cache = path.join(f.programRoot, 'EquinoxLocal.exe.WebView2');
+  await fs.mkdir(cache);
+  await fs.symlink(f.previousReleaseDir, path.join(cache, 'foreign-link'), 'dir');
+  await assert.rejects(switchWindowsNativeABSlot(f, { requestShutdown: async () => {} }), /symbolic link/u);
+});
+
 test('Windows rejected B→A rollback preserves B quarantine until A health verified', async (t) => {
   const f = await fixture(t);
   await switchWindowsNativeABSlot(f, { requestShutdown: async () => {} });

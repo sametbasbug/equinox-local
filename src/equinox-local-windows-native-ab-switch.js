@@ -29,7 +29,11 @@ async function knownTree(root, fsImpl) {
   try {
     const stat = await fsImpl.lstat(root);
     if (stat.isSymbolicLink() || !stat.isDirectory()) throw new Error('Windows native slot is a foreign filesystem entry.');
-    return await snapshotWindowsStableShellTree(root, { fsImpl });
+    // The running WPF creates two bounded, known WebView/WinRT caches inside
+    // its installed tree. Native ownership ignores ONLY those exact cache
+    // names (and verifies they contain no reparse links); all executable
+    // and unknown file bytes still participate in exact SHA comparison.
+    return await snapshotWindowsStableShellTree(root, { fsImpl, ignoreLegacyCache: true });
   } catch (error) {
     if (error?.code === 'ENOENT') return null;
     throw error;
