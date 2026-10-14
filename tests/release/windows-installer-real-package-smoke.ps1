@@ -933,6 +933,9 @@ if (process.env.GITHUB_ACTIONS === 'true' &&
                     $classification = $Matches[1]
                   } elseif ($operation -ceq 'runtime-gate-exit' -and $detail -match '^exit=(-?[0-9]{1,5})') {
                     $classification = 'exit-' + $Matches[1]
+                    if ($detail -match 'state=runtime-start-failed; reason=(runtime-location|platform-contract|os-ENOENT|os-ENOTDIR|os-EACCES|os-EPERM|os-EISDIR|os-EINVAL|os-EMFILE|js-TypeError|js-SyntaxError|js-RangeError|js-ReferenceError|js-AggregateError|unspecified)') {
+                      $classification += '-supervisor-' + $Matches[1]
+                    }
                     foreach ($indicator in @('ERR_MODULE_NOT_FOUND','MODULE_NOT_FOUND','EADDRINUSE','ENOENT','EACCES','EPERM','SyntaxError','TypeError')) {
                       if ($detail.Contains($indicator)) { $classification += '-' + $indicator; break }
                     }

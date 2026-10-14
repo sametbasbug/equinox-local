@@ -12,6 +12,18 @@ const PROFILE = "equinox-local";
 const RECONNECT_BASE_DELAY_MS = 30_000;
 const RECONNECT_MAX_DELAY_MS = 10 * 60_000;
 
+// Only fixed codes/classes may leave the owned Windows process supervisor.
+// Never serialize raw Error.message, stack, paths or tunnel credentials.
+export function windowsSupervisorFailureClass(error) {
+  if (error?.message === "Windows runtime source or release path is invalid.") return "runtime-location";
+  if (error?.message === "Windows shell supervisor requires Windows.") return "platform-contract";
+  const codes = new Set(["ENOENT", "ENOTDIR", "EACCES", "EPERM", "EISDIR", "EINVAL", "EMFILE"]);
+  if (typeof error?.code === "string" && codes.has(error.code)) return `os-${error.code}`;
+  const kinds = new Set(["TypeError", "SyntaxError", "RangeError", "ReferenceError", "AggregateError"]);
+  if (typeof error?.name === "string" && kinds.has(error.name)) return `js-${error.name}`;
+  return "unspecified";
+}
+
 export function windowsTunnelReconnectDelay(attempt) {
   if (!Number.isSafeInteger(attempt) || attempt < 1) throw new Error("Windows tunnel reconnect attempt is invalid.");
   return Math.min(RECONNECT_MAX_DELAY_MS, RECONNECT_BASE_DELAY_MS * 2 ** Math.min(attempt - 1, 8));
@@ -173,8 +185,8 @@ export async function runWindowsShellRuntimeSupervisor({
 
 const invoked = process.argv[1] ? pathToFileURL(path.resolve(process.argv[1])).href : null;
 if (invoked === import.meta.url) {
-  runWindowsShellRuntimeSupervisor().catch(() => {
-    process.stderr.write("[Equinox Windows supervisor] Failed to start runtime; check Control Center.\n");
+  runWindowsShellRuntimeSupervisor().catch((error) => {
+    process.stderr.write(`[Equinox Windows supervisor] state=runtime-start-failed; reason=${windowsSupervisorFailureClass(error)}.\n`);
     process.exitCode = 1;
   });
 }

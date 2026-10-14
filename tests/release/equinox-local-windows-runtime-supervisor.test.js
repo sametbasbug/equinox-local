@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import path from "node:path";
 import test from "node:test";
 import { EventEmitter } from "node:events";
-import { windowsTunnelInitArguments, windowsTunnelReconnectDelay, runWindowsSupervisorChild, runWindowsShellRuntimeSupervisor } from "../../src/equinox-local-windows-runtime-supervisor.js";
+import { windowsTunnelInitArguments, windowsTunnelReconnectDelay, runWindowsSupervisorChild, runWindowsShellRuntimeSupervisor, windowsSupervisorFailureClass } from "../../src/equinox-local-windows-runtime-supervisor.js";
 
 const homeDir = "C:\\Users\\Example User";
 const env = {
@@ -188,4 +188,15 @@ test("tunnel preflight must not retry after intentional runtime termination", as
   assert.equal(result.retryRequested, false);
   assert.equal(timer, null);
   assert.equal(probes, 0);
+});
+
+test("Windows supervisor reports only bounded failure classes without disclosing paths or secrets", () => {
+  const privatePath = "C:\\Users\\Private\\secret-source";
+  assert.equal(windowsSupervisorFailureClass(new Error("Windows runtime source or release path is invalid.")), "runtime-location");
+  assert.equal(windowsSupervisorFailureClass(Object.assign(new Error(privatePath), { code: "ENOENT" })), "os-ENOENT");
+  assert.equal(windowsSupervisorFailureClass(new TypeError(privatePath)), "js-TypeError");
+  assert.equal(windowsSupervisorFailureClass(new Error(privatePath)), "unspecified");
+  for (const sample of [new Error(privatePath), new TypeError(privatePath), Object.assign(new Error(privatePath), { code: "ENOENT" })]) {
+    assert.ok(!windowsSupervisorFailureClass(sample).includes(privatePath));
+  }
 });
