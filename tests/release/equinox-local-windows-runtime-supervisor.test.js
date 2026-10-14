@@ -200,3 +200,21 @@ test("Windows supervisor reports only bounded failure classes without disclosing
     assert.ok(!windowsSupervisorFailureClass(sample).includes(privatePath));
   }
 });
+
+test("Windows startup failure identifies the last fixed phase but never the sensitive error text", async () => {
+  const seen = [];
+  const privateDetail = "token-secret-must-not-appear";
+  await assert.rejects(runWindowsShellRuntimeSupervisor(mk({
+    onPhase: (phase) => { seen.push(phase); },
+    readTransportImpl: async () => null,
+    runChildImpl: async () => { throw new Error(privateDetail); },
+  })), new RegExp(privateDetail));
+  assert.deepEqual(seen, ["platform", "paths", "identity", "transport-read", "local-child"]);
+  assert.ok(!seen.join(" ").includes(privateDetail));
+  const early = [];
+  await assert.rejects(runWindowsShellRuntimeSupervisor(mk({
+    onPhase: (phase) => { early.push(phase); },
+    env: { ...env, EQUINOX_LOCAL_INSTALL_ROOT: "C:\\Untrusted" },
+  })), /invalid/u);
+  assert.deepEqual(early, ["platform", "paths", "identity"]);
+});
