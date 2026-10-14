@@ -958,6 +958,25 @@ if (process.env.GITHUB_ACTIONS === 'true' &&
           }
         }
         Assert-True ($BBackendConsecutive -ge 4) 'Guardian B WPF is running but real Control Center/Native Messaging does not report sustained exact B source identity.'
+        # Native Guardian itself must rehash the retained A WPF tree AFTER B
+        # really starts and emit create-only proof bound to restarted/4.
+        # This is only A recovery readiness, never rollback/commit authority.
+        $RetainedAProofPath = Join-Path $JournalDataDir ("$JournalId.retained-a.json")
+        $RetainedADeadline = [DateTime]::UtcNow.AddSeconds(8)
+        while (-not (Test-Path -LiteralPath $RetainedAProofPath) -and [DateTime]::UtcNow -lt $RetainedADeadline) {
+          Start-Sleep -Milliseconds 100
+        }
+        Assert-True (Test-Path -LiteralPath $RetainedAProofPath) 'Native Guardian did not independently prove intact retained Stable A after B WPF restart.'
+        $RetainedAProof = ConvertFrom-Json ([IO.File]::ReadAllText($RetainedAProofPath))
+        Assert-True ($RetainedAProof.schemaVersion -eq 1 -and
+          $RetainedAProof.transactionId -ceq $JournalId -and
+          $RetainedAProof.disposition -ceq 'retained-a-verified-no-restore-authority' -and
+          $RetainedAProof.stableVersion -ceq $FixtureVersion -and
+          $RetainedAProof.journalSequence -eq 4 -and
+          $RetainedAProof.workerPid -eq $WorkerProcess.Id -and
+          $RetainedAProof.guardianPid -eq $IntegratedGuardian.Id -and
+          $RetainedAProof.journalSha256 -ceq ((Get-FileHash -LiteralPath $JournalData -Algorithm SHA256).Hash.ToLowerInvariant())) 'Native Guardian retained A proof did not bind exact Stable version, live owners and restarted B journal SHA.'
+        Write-Output "Windows $FixtureTarget Guardian independently verified retained Stable A WPF backup after real B restart (no restore authority)."
         Write-Output "Windows $FixtureTarget real Guardian-owned B WPF process, restarted/4 AND four consecutive B backend identity samples PASSED (Browser/tunnel sustained health NOT YET certified)."
         $IntegratedGuardian.Kill()
         Assert-True ($IntegratedGuardian.WaitForExit(5000)) 'Native supervisor force-kill did not stop its Windows process.'

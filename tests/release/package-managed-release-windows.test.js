@@ -390,6 +390,13 @@ test("integrated Windows Guardian stages exact native B and journals two real mi
   assert.match(source, /QuiesceOwnedStableShell\(owner, journalRoot, worker\)/u);
   assert.match(source, /WriteIntegratedOwnedNativeStage\(owner, journalPath, "prepared", 0, "native_staged", 1\)/u);
   assert.match(source, /WriteIntegratedOwnedNativeStage\(owner, journalPath, "native_staged", 1, "shell_stopped", 2\)/u);
+  assert.match(source, /RecordOwnedIntegratedRetainedAProof\(owner, journalRoot, worker\)/u);
+  assert.match(source, /GetProperty\("stage"\)\.GetString\(\) != "restarted"/u);
+  assert.match(source, /GetProperty\("sequence"\)\.GetInt32\(\) != 4/u);
+  assert.match(source, /CompareNativeTrees\(reference, backup\)/u);
+  assert.match(source, /CryptographicOperations\.FixedTimeEquals\(before, SHA256\.HashData\(File\.ReadAllBytes\(journalPath\)\)\)/u);
+  assert.match(source, /"retained-a-verified-no-restore-authority"/u);
+  assert.match(source, /FileMode\.CreateNew, FileAccess\.Write/u);
   assert.match(source, /CryptographicOperations\.FixedTimeEquals\(before, SHA256\.HashData\(File\.ReadAllBytes\(path\)\)\)/u);
   assert.match(source, /File\.Move\(temp, path, overwrite: true\)/u);
   assert.match(source, /FileMode\.CreateNew, FileAccess\.Write, FileShare\.None/u);
@@ -609,6 +616,8 @@ test('real installed x64/ARM64 acceptance commits clean disposable source B and 
   assert.match(fixture, /\$BBackendManifestMatch/u);
   assert.match(fixture, /\$BBackendRegistryMatch/u);
   assert.match(fixture, /Hosted B native WPF bounded lifecycle classifications/u);
+  assert.match(fixture, /Guardian independently verified retained Stable A WPF backup after real B restart/u);
+  assert.match(fixture, /RetainedAProof\.journalSha256/u);
   assert.match(fixture, /\$BBackendStatus\.status\.installation\.sourceSha -ceq \$JournalTarget/u);
   assert.match(fixture, /\$BManifestCurrent\.path \$BExpectedLauncher/u);
   assert.match(fixture, /\$BNativeCurrent\.sourceSha -ceq \$JournalTarget/u);

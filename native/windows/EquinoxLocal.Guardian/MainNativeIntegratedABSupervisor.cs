@@ -11,11 +11,11 @@ internal static partial class Program
 {
     // This is a SINGLE native-owner transaction, not an externally callable
     // journal advance. No caller-supplied paths, stage names, or executables.
-    // It authenticates A, independently fingerprints the pre-staged B payload,
-    // shuts down the exact A WPF process, and durably records the first TWO
-    // true journal milestones under one continuous OS writer lease.
-    // No B swap or activation until the remainder of this same supervisor is
-    // implemented and independently tested. Installed updater stays disabled.
+    // It authenticates A, fingerprints B, quiesces exact A, authorizes the
+    // single existing slot engine, and independently restarts B under one OS
+    // writer lease. Retained A remains intact and is rehashed after restart.
+    // This does NOT authorize B healthy/commit or native A rollback;
+    // the installed native-impact updater remains fail-closed.
     private static void RunOwnedIntegratedMainABSupervisor(OwnedWorkerClaim owner, string journalRoot, Process worker)
     {
         InspectionPhase = "native-integrated-ab-verify-staged-b";
@@ -105,9 +105,76 @@ internal static partial class Program
         // the actual installed B plus deterministic intact A rollback tree.
         RequestOwnedIntegratedABSlotSwap(owner, journalRoot, worker, release);
         RestartOwnedIntegratedBWpf(owner, journalRoot, worker);
-        InspectionPhase = "native-integrated-ab-a-stopped-journaled-b-not-switched";
+        RecordOwnedIntegratedRetainedAProof(owner, journalRoot, worker);
+        InspectionPhase = "native-integrated-ab-a-retained-b-uncommitted";
         // A remains on disk with its exact Stable bytes; the persistent
         // Guardian writer lease blocks any automatic or unverified replay.
+    }
+
+    // Read-only, OS-owned prerequisite for a future A rollback. This creates
+    // evidence that retained Stable A still matches the immutable A release
+    // AFTER B WPF starts; it does NOT authorize a restore, terminal stage,
+    // native pointer change or an automatic orphan lease reclamation.
+    private static void RecordOwnedIntegratedRetainedAProof(
+        OwnedWorkerClaim owner, string journalRoot, Process worker)
+    {
+        InspectionPhase = "native-integrated-ab-retained-a-journal";
+        var journalPath = Path.Combine(journalRoot, owner.TransactionId + ".json");
+        RequireNormalFile(journalPath);
+        var before = SHA256.HashData(File.ReadAllBytes(journalPath));
+        using var journal = ReadOwnedTransitionRecord(journalPath, 8192);
+        var state = journal.RootElement;
+        var previous = state.GetProperty("previousNative");
+        if (state.GetProperty("transactionId").GetString() != owner.TransactionId ||
+            state.GetProperty("stage").GetString() != "restarted" ||
+            state.GetProperty("sequence").GetInt32() != 4 ||
+            previous.GetProperty("kind").GetString() != "stable" ||
+            !VersionRegex().IsMatch(previous.GetProperty("version").GetString() ?? ""))
+            throw new InvalidDataException("Retained A proof needs the exact restarted native B journal and Stable A version.");
+        if (worker.HasExited || worker.StartTime.ToUniversalTime().Ticks.ToString(CultureInfo.InvariantCulture) != owner.Ticks)
+            throw new InvalidDataException("Retained A proof lost its originally admitted live worker.");
+        var local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+        if (string.IsNullOrWhiteSpace(local) || !Path.IsPathFullyQualified(local))
+            throw new InvalidDataException("Retained A proof has no canonical Windows user root.");
+        var install = Path.Combine(local, "Equinox Local");
+        var reference = Path.Combine(install, "releases", previous.GetProperty("version").GetString()!, "runtime", "shell");
+        var program = Path.Combine(local, "Programs", "Equinox Local");
+        var backup = Path.Combine(Path.GetDirectoryName(program)!, ".equinox-shell-backup-" + owner.TransactionId);
+        InspectionPhase = "native-integrated-ab-retained-a-hash";
+        CompareNativeTrees(reference, backup);
+        if (worker.HasExited || worker.StartTime.ToUniversalTime().Ticks.ToString(CultureInfo.InvariantCulture) != owner.Ticks ||
+            !CryptographicOperations.FixedTimeEquals(before, SHA256.HashData(File.ReadAllBytes(journalPath))))
+            throw new InvalidDataException("Retained A proof owner or journal changed during the full native backup audit.");
+
+        // The marker is a historical observation, never a future rollback
+        // permission by itself. Every later restore must rehash retained A.
+        var proofPath = Path.Combine(journalRoot, owner.TransactionId + ".retained-a.json");
+        InspectionPhase = "native-integrated-ab-retained-a-durable-proof";
+        using (var proof = new FileStream(proofPath, FileMode.CreateNew, FileAccess.Write,
+            FileShare.None, 4096, FileOptions.WriteThrough))
+        {
+            using (var writer = new Utf8JsonWriter(proof))
+            {
+                writer.WriteStartObject();
+                writer.WriteNumber("schemaVersion", 1);
+                writer.WriteString("transactionId", owner.TransactionId);
+                writer.WriteString("disposition", "retained-a-verified-no-restore-authority");
+                writer.WriteString("stableVersion", previous.GetProperty("version").GetString());
+                writer.WriteNumber("workerPid", owner.Pid);
+                writer.WriteNumber("guardianPid", Environment.ProcessId);
+                writer.WriteNumber("journalSequence", 4);
+                writer.WriteString("journalSha256", Convert.ToHexStringLower(before));
+                writer.WriteEndObject();
+                writer.Flush();
+            }
+            proof.Flush(flushToDisk: true);
+        }
+        using var durable = ReadOwnedTransitionRecord(proofPath, 8192);
+        if (durable.RootElement.GetProperty("transactionId").GetString() != owner.TransactionId ||
+            durable.RootElement.GetProperty("disposition").GetString() != "retained-a-verified-no-restore-authority" ||
+            durable.RootElement.GetProperty("journalSha256").GetString() != Convert.ToHexStringLower(before))
+            throw new InvalidDataException("Retained A backup inspection proof was not durably recorded.");
+        InspectionPhase = "native-integrated-ab-retained-a-verified-only";
     }
 
     private static void WriteIntegratedOwnedNativeStage(OwnedWorkerClaim owner, string path,
