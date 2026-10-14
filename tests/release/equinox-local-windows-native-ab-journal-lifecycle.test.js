@@ -227,6 +227,17 @@ test('native-owned Guardian journal mode observes switched/3 and restarted/4 wit
   assert.deepEqual(calls, ['verify:B']);
   await assert.rejects(lc.recordHealthy(), /separate OS-authorized commit phase/u);
   await assert.rejects(lc.rollback(), /independently authorized OS recovery/u);
+  await assert.rejects(lc.recordRollbackHealthy(), /OS-authorized recovery milestone/u);
+  await assert.rejects(lc.finalizeCommitted(), /OS-authorized commit/u);
+  await assert.rejects(lc.finalizeRolledBack(), /OS-authorized rollback commit/u);
+  assert.deepEqual(calls, ['verify:B'], 'Native-owned terminal operations must not invoke JS health or cleanup');
+  // Forged terminal labels must not authorize deletion of A or B either.
+  current = 'healthy'; sequence = 5;
+  await assert.rejects(lc.finalizeCommitted(), /OS-authorized commit/u);
+  current = 'rollback_healthy'; sequence = 8;
+  await assert.rejects(lc.finalizeRolledBack(), /OS-authorized rollback commit/u);
+  await assert.rejects(lc.recordRollbackHealthy(), /OS-authorized recovery milestone/u);
+  assert.deepEqual(calls, ['verify:B']);
   owned = false;
   await assert.rejects(lc.recordRestarted(), /independent journal generation/u);
 });

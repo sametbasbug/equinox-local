@@ -169,6 +169,9 @@ export function createWindowsJournaledNativeABLifecycle({
       return Object.freeze({ stage: record.stage });
     },
     async recordRollbackHealthy() {
+      if (nativeOwnsMilestones === true) {
+        throw new Error('Guardian-owned native A rollback health requires a separate OS-authorized recovery milestone.');
+      }
       const record = await owned();
       if (record.stage === 'rollback_healthy') return record;
       if (record.stage !== 'rollback_native_restored') throw new Error('Native A health cannot precede restoration.');
@@ -181,6 +184,11 @@ export function createWindowsJournaledNativeABLifecycle({
     // Only after the separate Main receipt records succeeded/rolled_back;
     // the ACL-bound journal independently validates that receipt status.
     async finalizeCommitted() {
+      if (nativeOwnsMilestones === true) {
+        // The native Guardian has not approved healthy/5 or committed/6;
+        // never discard retained A based on a JS-only or forged receipt.
+        throw new Error('Guardian-owned native B terminal cleanup requires a separate OS-authorized commit.');
+      }
       let record = await owned();
       if (record.stage === 'healthy') record = await advance(record, 'committed');
       if (record.stage !== 'committed') throw new Error('Native B cannot discard A before durable committed receipt.');
@@ -190,6 +198,11 @@ export function createWindowsJournaledNativeABLifecycle({
       } });
     },
     async finalizeRolledBack() {
+      if (nativeOwnsMilestones === true) {
+        // A rollback must originate from the original native Guardian,
+        // including durable A health and OS-owned B quarantine evidence.
+        throw new Error('Guardian-owned native A terminal cleanup requires a separate OS-authorized rollback commit.');
+      }
       let record = await owned();
       if (record.stage === 'rollback_healthy') record = await advance(record, 'rolled_back');
       if (record.stage !== 'rolled_back') throw new Error('Native A cannot be finalized before durable rolled-back receipt.');
