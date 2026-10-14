@@ -55,10 +55,6 @@ These instructions apply to the entire Equinox Local canonical product repositor
 - `SECURITY.md` defines vulnerability-reporting expectations.
 - Historical implementation ideas or private development infrastructure must not be reintroduced merely because similar code or terminology appears in old discussions or commits.
 
-## Future native desktop rewrite — non-binding roadmap
-
-For the proposed Python 3 + PySide6 / Qt Widgets Equinox Local rewrite, consult [`docs/plans/python-native-rewrite-roadmap.md`](docs/plans/python-native-rewrite-roadmap.md) to recall intended scope, decisions and completed/next work. **This roadmap is NOT policy, a binding architecture specification or a mandatory sequence**: revise it whenever evidence or a simpler solution warrants. It is only a navigational and progress-tracking aid; do not create unnecessary complexity to satisfy it. **For the REWRITE target there is one public repository, one normal Equinox Local app and ONLY Main updates: no factory repository, factory profile/build, Developer version/channel or separate contributor app.** Developers and users run the same product; fork/branch/PR are ordinary contribution mechanisms, not product channels. References to private factory/profile earlier in this file describe the LEGACY running installation only, which must not be disrupted before safe migration. No secrets go into the public repository.
-
 ## Single Main update stream
 
 Read [`docs/plans/unified-main-update-channel.md`](docs/plans/unified-main-update-channel.md) before editing bootstrap/update enrollment or Stable releases. Read [`docs/plans/immutable-main-updates.md`](docs/plans/immutable-main-updates.md) before modifying Windows native Main update/recovery or external launcher design. Existing Stable users require a signed migration bridge.
