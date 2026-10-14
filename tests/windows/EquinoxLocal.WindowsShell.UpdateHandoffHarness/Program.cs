@@ -55,7 +55,8 @@ internal static class Program
 const fs = require('node:fs');
 const path = require('node:path');
 const marker = path.join(process.cwd(), 'handoff-marker.json');
-fs.writeFileSync(marker, JSON.stringify({
+const unpublished = marker + '.writing-' + process.pid;
+fs.writeFileSync(unpublished, JSON.stringify({
   pid: process.pid,
   cwd: process.cwd(),
   secretPresent: Object.prototype.hasOwnProperty.call(process.env, 'OPENAI_API_KEY'),
@@ -63,6 +64,9 @@ fs.writeFileSync(marker, JSON.stringify({
   installRoot: process.env.EQUINOX_LOCAL_INSTALL_ROOT || null,
   pathValue: process.env.PATH || null,
 }));
+// The C# parent must never observe an existing but still exclusively opened
+// JSON marker. Write and close first, then publish atomically on this volume.
+fs.renameSync(unpublished, marker);
 setTimeout(() => {}, 30000);
 """);
 

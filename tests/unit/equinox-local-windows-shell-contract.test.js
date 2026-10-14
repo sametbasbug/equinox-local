@@ -533,6 +533,19 @@ test("public Windows CI restores and builds the native x64 shell", async () => {
 });
 
 
+test("Windows handoff fixture publishes only complete markers after their writer closes", async () => {
+  for (const kind of ["UpdateHandoffHarness", "UninstallHandoffHarness"]) {
+    const source = await fs.readFile(path.join(ROOT, "tests", "windows", `EquinoxLocal.WindowsShell.${kind}`, "Program.cs"), "utf8");
+    assert.match(source, /const unpublished = marker \+ '\.writing-' \+ process\.pid;/u);
+    assert.match(source, /fs\.writeFileSync\(unpublished, JSON\.stringify\(\{/u);
+    assert.match(source, /fs\.renameSync\(unpublished, marker\);/u);
+    assert.doesNotMatch(source, /fs\.writeFileSync\(marker, JSON\.stringify\(\{/u);
+    assert.ok(source.indexOf('fs.writeFileSync(unpublished, JSON.stringify({') < source.indexOf('fs.renameSync(unpublished, marker);'));
+    assert.match(source, /File\.Exists\(markerPath\)/u);
+    assert.match(source, /JsonDocument\.Parse\(File\.ReadAllBytes\(markerPath\)\)/u);
+  }
+});
+
 test("Windows Main update handoff derives all worker paths from product-owned state and does not preemptively stop the shell", async () => {
   const [coordinator, handoff] = await Promise.all([
     source("SingleInstanceCoordinator.cs"),
