@@ -373,9 +373,11 @@ try {
   $JournalSources = Join-Path $NativeTxRoot 'sources'
   $JournalRollbackRoot = Join-Path $JournalSources $JournalCurrent
   [IO.Directory]::CreateDirectory($JournalRollbackRoot) | Out-Null
-  # Create a REAL clean pinned-Git source B, unlike a dummy all-b SHA. The
-  # hosted-only fixture commits its disposable witness script to B; product
-  # server.js remains intact for positive WPF and Control Center start tests.
+  # Create a REAL clean pinned-Git source B, unlike a dummy all-b SHA.
+  # Guardian must still attest the EXACT product Main worker argv path. A
+  # hosted-only wrapper at that path re-exports the ORIGINAL product worker,
+  # preserving server.js imports, and runs a distinct witness ONLY when the
+  # hosted worker process itself invokes this file with its test-only env.
   if ($env:GITHUB_ACTIONS -cne 'true') { throw 'Integrated native B startup requires disposable hosted GitHub Actions.' }
   $WitnessScript = Join-Path $Root 'tests\release\owned-windows-worker-proof.mjs'
   $JournalCandidateRoot = Join-Path $Work 'ephemeral-clean-main-B'
@@ -383,10 +385,25 @@ try {
   Assert-True ($LASTEXITCODE -eq 0) 'Product-owned Git could not clone clean disposable Main B source.'
   & $OwnedGitStatusExe -C $JournalCandidateRoot remote set-url origin 'https://github.com/sametbasbug/equinox-local.git'
   Assert-True ($LASTEXITCODE -eq 0) 'Disposable B origin cannot bind canonical product repository.'
-  $WorkerCandidateScript = Join-Path $JournalCandidateRoot 'src\equinox-local-main-update-worker.js'
-  [IO.File]::Copy($WitnessScript, $WorkerCandidateScript, $true)
-  & $OwnedGitStatusExe -C $JournalCandidateRoot add -- 'src/equinox-local-main-update-worker.js'
-  Assert-True ($LASTEXITCODE -eq 0) 'Test witness was not staged inside the exact B Git tree.'
+  $WorkerProduction = Join-Path $JournalCandidateRoot 'src\equinox-local-main-update-worker.js'
+  $WorkerProductionCopy = Join-Path $JournalCandidateRoot 'src\equinox-native-ab-ci-original-worker.js'
+  $WorkerCandidateScript = Join-Path $JournalCandidateRoot 'src\equinox-native-ab-ci-worker-witness.mjs'
+  Assert-True ([IO.File]::Exists($WorkerProduction)) 'The original Main worker module must exist before wrapping.'
+  [IO.File]::Copy($WorkerProduction, $WorkerProductionCopy, $false)
+  [IO.File]::Copy($WitnessScript, $WorkerCandidateScript, $false)
+  $WorkerFacade = @'
+import { fileURLToPath } from 'node:url';
+import path from 'node:path';
+export * from './equinox-native-ab-ci-original-worker.js';
+if (process.env.GITHUB_ACTIONS === 'true' &&
+    process.env.EQUINOX_LOCAL_TEST_WORKER_TX?.startsWith('main-') &&
+    process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  await import('./equinox-native-ab-ci-worker-witness.mjs');
+}
+'@
+  [IO.File]::WriteAllText($WorkerProduction, $WorkerFacade, (New-Object Text.UTF8Encoding($false)))
+  & $OwnedGitStatusExe -C $JournalCandidateRoot add -- 'src/equinox-local-main-update-worker.js' 'src/equinox-native-ab-ci-original-worker.js' 'src/equinox-native-ab-ci-worker-witness.mjs'
+  Assert-True ($LASTEXITCODE -eq 0) 'Hosted-only B source wrapper and witness were not staged.'
   & $OwnedGitStatusExe -c user.name='Equinox CI Fixture' -c user.email='fixture@example.invalid' -c core.autocrlf=true -C $JournalCandidateRoot commit --quiet -m 'test: ephemeral Windows native Main B restart witness'
   Assert-True ($LASTEXITCODE -eq 0) 'Disposable B Git source witness was not committed.'
   $JournalTarget = [string](& $OwnedGitStatusExe -C $JournalCandidateRoot rev-parse HEAD)

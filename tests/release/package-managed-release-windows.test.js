@@ -557,6 +557,16 @@ test('real installed x64/ARM64 acceptance commits clean disposable source B and 
   const fixture = await fs.readFile(new URL('../../tests/release/windows-installer-real-package-smoke.ps1', import.meta.url), 'utf8');
   const witness = await fs.readFile(new URL('../../tests/release/owned-windows-worker-proof.mjs', import.meta.url), 'utf8');
   assert.match(fixture, /clone --quiet --branch main \$ManagedSourceRoot \$JournalCandidateRoot/u);
+  // The Guardian only accepts the canonical worker argv. The hosted B
+  // fixture must re-export the original worker so normal server imports boot,
+  // and isolate witness execution behind direct CLI + CI-only environment.
+  assert.match(fixture, /\$WorkerProductionCopy = Join-Path \$JournalCandidateRoot 'src\\equinox-native-ab-ci-original-worker\.js'/u);
+  assert.match(fixture, /\[IO\.File\]::Copy\(\$WorkerProduction, \$WorkerProductionCopy, \$false\)/u);
+  assert.match(fixture, /export \* from '\.\/equinox-native-ab-ci-original-worker\.js';/u);
+  assert.match(fixture, /process\.env\.EQUINOX_LOCAL_TEST_WORKER_TX\?\.startsWith\('main-'\)/u);
+  assert.match(fixture, /path\.resolve\(process\.argv\[1\]\) === fileURLToPath\(import\.meta\.url\)/u);
+  assert.match(fixture, /\$WorkerTestScript = Join-Path \$WorkerTestSourceDir 'equinox-local-main-update-worker\.js'/u);
+  assert.match(fixture, /equinox-native-ab-ci-worker-witness\.mjs/u);
   assert.match(fixture, /commit --quiet -m 'test: ephemeral Windows native Main B restart witness'/u);
   assert.match(fixture, /\$JournalTarget -cne \$JournalCurrent/u);
   assert.match(fixture, /\$JournalBSourceStatus\.Count -eq 0/u);
