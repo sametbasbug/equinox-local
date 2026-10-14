@@ -81,6 +81,7 @@ test('rollback-start binds exact worker token to fresh nonce/journal SHA and wai
 test('independent Guardian rollback-start admission is OS-owned, transaction-specific, and does not restore A yet', async () => {
   const native = await readFile(new URL('../../native/windows/EquinoxLocal.Guardian/MainNativeIntegratedABRollbackAdmission.cs', import.meta.url), 'utf8');
   const journal = await readFile(new URL('../../native/windows/EquinoxLocal.Guardian/MainNativeIntegratedABSupervisor.cs', import.meta.url), 'utf8');
+  const rejection = await readFile(new URL('../../native/windows/EquinoxLocal.Guardian/MainNativeIntegratedABHealthRejection.cs', import.meta.url), 'utf8');
   const client = await readFile(new URL('../../src/equinox-local-windows-native-ab-rollback-client.js', import.meta.url), 'utf8');
   assert.match(native, /private static void AuthorizeOwnedIntegratedARollbackStart\(/u);
   assert.match(native, /InspectOwnedNativeWorkerProcess\(guardianHoldsJournalLease: true\)/u);
@@ -91,6 +92,21 @@ test('independent Guardian rollback-start admission is OS-owned, transaction-spe
   assert.match(native, /CompareNativeTrees\(aShell, backup\)/u);
   assert.match(native, /CompareNativeTrees\(Path\.Combine\(bRelease, "runtime", "shell"\), program\)/u);
   assert.match(native, /InspectOwnedMainNativeMessaging\(install, bRelease\)/u);
+  assert.match(native, /RequireOwnedIntegratedBExitedAndUnhealthy\(owner, journalRoot, worker, targetSha\)/u);
+  assert.match(rejection, /private static void RequireOwnedIntegratedBExitedAndUnhealthy\(/u);
+  assert.match(rejection, /owner\.TransactionId \+ "\.wpf-b-restarted\.json"/u);
+  assert.match(rejection, /shellPid = prior\.GetProperty\("shellPid"\)\.GetInt32\(\)/u);
+  assert.match(rejection, /candidate\.StartTime\.ToUniversalTime\(\)\.Ticks != shellStartTicks/u);
+  assert.match(rejection, /FindExactRunningWpfOrNull\(executable\)/u);
+  assert.match(rejection, /UseProxy = false, AllowAutoRedirect = false/u);
+  assert.match(rejection, /127\.0\.0\.1:24891\/api\/v1\/status/u);
+  assert.match(rejection, /for \(var sample = 0; sample < 4; sample\+\+\)/u);
+  assert.match(rejection, /new CancellationTokenSource\(TimeSpan\.FromMilliseconds\(1500\)\)/u);
+  assert.match(rejection, /var bytes = new byte\[8193\]/u);
+  assert.match(rejection, /health\.TryGetProperty\("state", out var state\) && state\.GetString\(\) == "HEALTHY"/u);
+  assert.match(rejection, /Native rollback refuses an independently healthy B backend/u);
+  assert.match(rejection, /originalJournalSha, SHA256\.HashData\(File\.ReadAllBytes\(journalPath\)\)/u);
+  assert.doesNotMatch(rejection, /File\.Move|Directory\.Move|File\.Delete|Directory\.Delete|Process\.Kill/u);
   assert.match(native, /"sourceRoot=" \+ Path\.Combine\(txRoot, "sources", targetSha\)/u);
   assert.match(native, /selected\.GetProperty\("sourceSha"\)\.GetString\(\) != targetSha/u);
   assert.match(native, /selected\.GetProperty\("runtimeContractSha256"\)\.GetString\(\) !=/u);

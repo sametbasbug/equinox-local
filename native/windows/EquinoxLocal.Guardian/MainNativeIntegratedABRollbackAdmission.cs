@@ -92,6 +92,10 @@ internal static partial class Program
         if (worker.HasExited || worker.StartTime.ToUniversalTime().Ticks.ToString(CultureInfo.InvariantCulture) != owner.Ticks ||
             !CryptographicOperations.FixedTimeEquals(original, SHA256.HashData(File.ReadAllBytes(journalPath))))
             throw new InvalidDataException("Native A rollback slot or owning journal changed during read-only admission.");
+        // The worker's own health failure report is NOT OS authorization.
+        // The original Guardian must independently establish exact B WPF
+        // death and four negative backend checks before granting rollback.
+        RequireOwnedIntegratedBExitedAndUnhealthy(owner, journalRoot, worker, targetSha);
 
         using var endpoint = new NamedPipeServerStream("EquinoxLocalMainAB-Rollback-" + owner.TransactionId,
             PipeDirection.InOut, 1, PipeTransmissionMode.Byte, PipeOptions.Asynchronous);
