@@ -183,7 +183,8 @@ internal static partial class Program
         if (!((from == "prepared" && originalSequence == 0 && to == "native_staged" && nextSequence == 1) ||
               (from == "native_staged" && originalSequence == 1 && to == "shell_stopped" && nextSequence == 2) ||
               (from == "shell_stopped" && originalSequence == 2 && to == "switched" && nextSequence == 3) ||
-              (from == "switched" && originalSequence == 3 && to == "restarted" && nextSequence == 4)))
+              (from == "switched" && originalSequence == 3 && to == "restarted" && nextSequence == 4) ||
+              (from == "restarted" && originalSequence == 4 && to == "rollback_started" && nextSequence == 5)))
             throw new InvalidDataException("Native integrated stage transition is not independently authorized.");
         RequireNormalFile(path);
         var original = File.ReadAllBytes(path);
