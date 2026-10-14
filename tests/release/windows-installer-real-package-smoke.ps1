@@ -901,17 +901,37 @@ try {
           # disposable CI, never the full exception message or owned paths.
           $BHostedWpfLog = Join-Path $OwnedInstallRoot 'logs\windows-shell-runtime.log'
           if ([IO.File]::Exists($BHostedWpfLog)) {
-            $BHostedErrors = @([IO.File]::ReadAllLines($BHostedWpfLog) | Select-Object -Last 12 | ForEach-Object {
+            # The OS-owned Windows shell writes bounded lifecycle events.
+          # Reveal ONLY stable operation names, error CLASS, numeric exit
+          # codes and fixed known runtime phases. Never emit raw diagnostic
+          # contents, which may include credentials or local machine paths.
+          $BHostedErrors = @([IO.File]::ReadAllLines($BHostedWpfLog) | Select-Object -Last 40 | ForEach-Object {
               $fields = $_ -split ' ', 3
               if ($fields.Count -ge 2 -and $fields[1] -cmatch '^[a-zA-Z0-9_-]{1,80}$') {
-                $errorClass = 'none'
-                if ($fields.Count -eq 3 -and $fields[2] -match '^([a-zA-Z][a-zA-Z0-9]{0,99}(?:Exception|Error)):') {
-                  $errorClass = $Matches[1]
+                $operation = $fields[1]
+                $classification = 'none'
+                if ($fields.Count -eq 3) {
+                  $detail = $fields[2]
+                  if ($detail -match '^([a-zA-Z][a-zA-Z0-9]{0,99}(?:Exception|Error)):') {
+                    $classification = $Matches[1]
+                  } elseif ($operation -ceq 'runtime-gate-exit' -and $detail -match '^exit=(-?[0-9]{1,5})') {
+                    $classification = 'exit-' + $Matches[1]
+                    foreach ($indicator in @('ERR_MODULE_NOT_FOUND','MODULE_NOT_FOUND','EADDRINUSE','ENOENT','EACCES','EPERM','SyntaxError','TypeError')) {
+                      if ($detail.Contains($indicator)) { $classification += '-' + $indicator; break }
+                    }
+                  } elseif ($operation -ceq 'runtime-start-phase') {
+                    foreach ($phase in @('job-created','gate-started','assign-started','assigned','gate-released','child-started')) {
+                      if ($detail -ceq $phase) { $classification = $phase; break }
+                    }
+                  } elseif ($operation -ceq 'runtime-discovery') {
+                    if ($detail -match 'supervisor=True') { $classification = 'supervisor-present' }
+                    elseif ($detail -match 'supervisor=False') { $classification = 'supervisor-missing' }
+                  }
                 }
-                '{0}:{1}' -f $fields[1],$errorClass
+                '{0}:{1}' -f $operation,$classification
               }
             })
-            Write-Output ('Hosted B native WPF diagnostic operation/classes: ' + ($BHostedErrors -join ','))
+            Write-Output ('Hosted B native WPF bounded lifecycle classifications: ' + ($BHostedErrors -join ','))
           }
         }
         Assert-True ($BBackendConsecutive -ge 4) 'Guardian B WPF is running but real Control Center/Native Messaging does not report sustained exact B source identity.'

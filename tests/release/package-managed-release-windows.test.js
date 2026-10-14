@@ -598,7 +598,7 @@ test('real installed x64/ARM64 acceptance commits clean disposable source B and 
   assert.match(fixture, /\$BBackendNativeMatch/u);
   assert.match(fixture, /\$BBackendManifestMatch/u);
   assert.match(fixture, /\$BBackendRegistryMatch/u);
-  assert.match(fixture, /Hosted B native WPF diagnostic operation\/classes/u);
+  assert.match(fixture, /Hosted B native WPF bounded lifecycle classifications/u);
   assert.match(fixture, /\$BBackendStatus\.status\.installation\.sourceSha -ceq \$JournalTarget/u);
   assert.match(fixture, /\$BManifestCurrent\.path \$BExpectedLauncher/u);
   assert.match(fixture, /\$BNativeCurrent\.sourceSha -ceq \$JournalTarget/u);
