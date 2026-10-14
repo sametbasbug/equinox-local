@@ -135,7 +135,7 @@ internal sealed class RuntimeSupervisor : IAsyncDisposable
         // environment (no USERPROFILE or LOCALAPPDATA). Rehydrate ONLY these
         // trusted Windows Known Folders for the owned Node tree; never copy
         // untrusted environment overrides or weaken the pinned install root.
-        SetVerifiedWindowsProfileEnvironment(startInfo, location.InstallRoot);
+        SetVerifiedWindowsProfileEnvironment(startInfo, location.InstallRoot, location.ManagedSource);
         startInfo.WorkingDirectory = sourceRoot;
         startInfo.Environment["EQUINOX_LOCAL_OWNED_PROCESS_SPEC"] = payload;
         startInfo.Environment["EQUINOX_LOCAL_RELEASE_DIR"] = location.BootstrapReleaseDir;
@@ -302,7 +302,7 @@ internal sealed class RuntimeSupervisor : IAsyncDisposable
         finally { gate.Dispose(); }
     }
 
-    private static void SetVerifiedWindowsProfileEnvironment(ProcessStartInfo startInfo, string installRoot)
+    private static void SetVerifiedWindowsProfileEnvironment(ProcessStartInfo startInfo, string installRoot, bool managedSource)
     {
         var localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
         var userProfile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
@@ -310,9 +310,12 @@ internal sealed class RuntimeSupervisor : IAsyncDisposable
             || !Path.IsPathFullyQualified(installRoot))
             throw new InvalidDataException("Windows managed runtime profile folders are unavailable.");
         var expectedInstallRoot = Path.GetFullPath(Path.Combine(localAppData, "Equinox Local"));
-        if (!string.Equals(Path.TrimEndingDirectorySeparator(Path.GetFullPath(installRoot)),
-                           Path.TrimEndingDirectorySeparator(expectedInstallRoot),
-                           StringComparison.OrdinalIgnoreCase))
+        // Only managed Main A/B is required to live below LocalApplicationData.
+        // The older standalone native-shell development contract also boots
+        // fixed releases from explicit disposable roots; preserve that mode.
+        if (managedSource && !string.Equals(Path.TrimEndingDirectorySeparator(Path.GetFullPath(installRoot)),
+                                             Path.TrimEndingDirectorySeparator(expectedInstallRoot),
+                                             StringComparison.OrdinalIgnoreCase))
             throw new InvalidDataException("Windows managed runtime profile folder disagrees with the pinned install root.");
         startInfo.Environment["LOCALAPPDATA"] = localAppData;
         startInfo.Environment["USERPROFILE"] = userProfile;

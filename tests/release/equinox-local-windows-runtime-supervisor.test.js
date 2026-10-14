@@ -93,10 +93,11 @@ test("independent Guardian's minimal environment is rehydrated only from OS Know
   const guardian = readFileSync(new URL("../../src/equinox-local-windows-native-guardian-launch.js", import.meta.url), "utf8");
   const source = readFileSync(new URL("../../src/equinox-local-supervisor.js", import.meta.url), "utf8");
   assert.match(guardian, /for \(const key of \[('SystemRoot', 'WINDIR', 'TEMP', 'TMP')/u);
-  assert.match(native, /SetVerifiedWindowsProfileEnvironment\(startInfo, location\.InstallRoot\)/u);
+  assert.match(native, /SetVerifiedWindowsProfileEnvironment\(startInfo, location\.InstallRoot, location\.ManagedSource\)/u);
   assert.match(native, /Environment\.GetFolderPath\(Environment\.SpecialFolder\.LocalApplicationData\)/u);
   assert.match(native, /Environment\.GetFolderPath\(Environment\.SpecialFolder\.UserProfile\)/u);
   assert.match(native, /Path\.IsPathFullyQualified\(localAppData\)/u);
+  assert.match(native, /managedSource && !string\.Equals\(Path\.TrimEndingDirectorySeparator/u);
   assert.match(native, /Path\.TrimEndingDirectorySeparator\(Path\.GetFullPath\(installRoot\)\)/u);
   assert.match(native, /startInfo\.Environment\["LOCALAPPDATA"\] = localAppData/u);
   assert.match(native, /startInfo\.Environment\["USERPROFILE"\] = userProfile/u);
