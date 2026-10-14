@@ -131,6 +131,11 @@ internal sealed class RuntimeSupervisor : IAsyncDisposable
 
         var payload = Convert.ToBase64String(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new { command = nodePath, args = new[] { supervisorPath, serverPath } })));
         var startInfo = NodeGateStartInfo(nodePath, processGatePath);
+        // The independent native Guardian intentionally has a minimal process
+        // environment (no USERPROFILE or LOCALAPPDATA). Rehydrate ONLY these
+        // trusted Windows Known Folders for the owned Node tree; never copy
+        // untrusted environment overrides or weaken the pinned install root.
+        SetVerifiedWindowsProfileEnvironment(startInfo, location.InstallRoot);
         startInfo.WorkingDirectory = sourceRoot;
         startInfo.Environment["EQUINOX_LOCAL_OWNED_PROCESS_SPEC"] = payload;
         startInfo.Environment["EQUINOX_LOCAL_RELEASE_DIR"] = location.BootstrapReleaseDir;
@@ -295,6 +300,22 @@ internal sealed class RuntimeSupervisor : IAsyncDisposable
         }
         catch { }
         finally { gate.Dispose(); }
+    }
+
+    private static void SetVerifiedWindowsProfileEnvironment(ProcessStartInfo startInfo, string installRoot)
+    {
+        var localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+        var userProfile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        if (!Path.IsPathFullyQualified(localAppData) || !Path.IsPathFullyQualified(userProfile)
+            || !Path.IsPathFullyQualified(installRoot))
+            throw new InvalidDataException("Windows managed runtime profile folders are unavailable.");
+        var expectedInstallRoot = Path.GetFullPath(Path.Combine(localAppData, "Equinox Local"));
+        if (!string.Equals(Path.TrimEndingDirectorySeparator(Path.GetFullPath(installRoot)),
+                           Path.TrimEndingDirectorySeparator(expectedInstallRoot),
+                           StringComparison.OrdinalIgnoreCase))
+            throw new InvalidDataException("Windows managed runtime profile folder disagrees with the pinned install root.");
+        startInfo.Environment["LOCALAPPDATA"] = localAppData;
+        startInfo.Environment["USERPROFILE"] = userProfile;
     }
 
     private static ProcessStartInfo NodeGateStartInfo(string nodePath, string scriptPath)
