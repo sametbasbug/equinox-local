@@ -172,8 +172,34 @@ export async function runEquinoxLocalWindowsGuardianOwnedStableASelection({
       socket.once('end', () => {
         if (settled) return;
         settled = true;
-        if (phase !== 'done') reject(new Error('Original Guardian A selection disconnected without authoritative ACK.'));
-        else resolve(Object.freeze({transactionId, stage: 'a_identity_selected_stage6_pending'}));
+        if (phase !== 'done') {
+          reject(new Error('Original Guardian A selection disconnected without authoritative ACK.'));
+          return;
+        }
+        // A fixed native `a` acknowledgement alone is insufficient. The
+        // exact ORIGINAL Guardian must have fsynced both stage6 and its
+        // transaction-scoped SHA commit marker under the first OS lease.
+        void (async () => {
+          const root = path.win32.join(transactionRoot, 'guardian-journal');
+          const promotedBytes = await fsImpl.readFile(journalPath);
+          const promoted = JSON.parse(promotedBytes.toString('utf8'));
+          const startProof = JSON.parse((await fsImpl.readFile(path.win32.join(root,
+            `${transactionId}.rollback_started.commit.json`))).toString('utf8'));
+          const stageProof = JSON.parse((await fsImpl.readFile(path.win32.join(root,
+            `${transactionId}.rollback_native_restored.commit.json`))).toString('utf8'));
+          if (promoted.transactionId !== transactionId ||
+              promoted.stage !== 'rollback_native_restored' || promoted.sequence !== 6 ||
+              startProof.transactionId !== transactionId || startProof.stage !== 'rollback_started' ||
+              startProof.sequence !== 5 || !Number.isSafeInteger(startProof.guardianPid) || startProof.guardianPid < 1 ||
+              startProof.journalSha256 !== digest.toString('hex') ||
+              stageProof.schemaVersion !== 1 || stageProof.transactionId !== transactionId ||
+              stageProof.stage !== 'rollback_native_restored' || stageProof.sequence !== 6 ||
+              stageProof.guardianPid !== startProof.guardianPid ||
+              stageProof.journalSha256 !== createHash('sha256').update(promotedBytes).digest('hex')) {
+            throw new Error('Original Guardian durable rollback_native_restored/6 and SHA/PID receipt are missing or mismatched.');
+          }
+          return Object.freeze({transactionId, stage: 'rollback_native_restored', sequence: 6});
+        })().then(resolve, reject);
       });
     });
   } finally {secret.fill(0);}

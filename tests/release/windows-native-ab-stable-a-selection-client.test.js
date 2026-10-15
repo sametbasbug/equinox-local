@@ -43,7 +43,16 @@ class OriginalPipe extends EventEmitter {
 function fixture(opts={}){
   const f={mutations:0,pipes:[],writes:[]};
   const pipe=new OriginalPipe(opts);
-  const fsImpl={readFile:async()=>Buffer.from(opts.journalBytes??bytes)};
+  const promotedBytes=Buffer.from(JSON.stringify({...journal,stage:'rollback_native_restored',sequence:6}));
+  const stageStart={schemaVersion:1,transactionId,stage:'rollback_started',sequence:5,
+    guardianPid:222,journalSha256:digest.toString('hex')};
+  const stage6={schemaVersion:1,transactionId,stage:'rollback_native_restored',sequence:6,
+    guardianPid:222,journalSha256:createHash('sha256').update(promotedBytes).digest('hex')};
+  const fsImpl={readFile:async file=>{
+    if(file.endsWith('.rollback_started.commit.json'))return Buffer.from(JSON.stringify(stageStart));
+    if(file.endsWith('.rollback_native_restored.commit.json'))return Buffer.from(JSON.stringify(opts.staleStage6?{...stage6,guardianPid:333}:stage6));
+    return Buffer.from(f.mutations>0?promotedBytes:(opts.journalBytes??bytes));
+  }};
   const connect=name=>{f.pipes.push(name);queueMicrotask(()=>pipe.emit('data',pipe.nonce));return pipe;};
   const applySelection=async()=>{f.mutations++;return {status:'selected_a_identity_stage6_pending'};};
   const run=(overrides={})=>runEquinoxLocalWindowsGuardianOwnedStableASelection({
@@ -53,9 +62,10 @@ function fixture(opts={}){
   return {f,run};
 }
 
-test('only matching original Guardian mutual-HMAC S grant permits one A identity selection, not stage6',async()=>{
+test('only original Guardian HMAC S grant and durable matching stage6 SHA/PID can confirm native restored',async()=>{
   const {f,run}=fixture();const r=await run();
-  assert.equal(r.stage,'a_identity_selected_stage6_pending');
+  assert.equal(r.stage,'rollback_native_restored');
+  assert.equal(r.sequence,6);
   assert.equal(f.mutations,1);
   assert.deepEqual(f.pipes,[`\\\\.\\pipe\\EquinoxLocalMainAB-SelectStableA-${transactionId}`]);
 });
@@ -92,6 +102,12 @@ test('replayed S grant can never repeat partially applied identity selection',as
   assert.equal(f.mutations,1);
 });
 
+test('forged stage6 Guardian PID cannot promote a physically selected A into rollback success',async()=>{
+  const {f,run}=fixture({staleStage6:true});
+  await assert.rejects(run(),/durable rollback_native_restored\/6 and SHA\/PID receipt/u);
+  assert.equal(f.mutations,1);
+});
+
 test('real Stable A action delegates all mutations to pinned product source and Native Messaging helpers', async()=>{
   const {readFile}=await import('node:fs/promises');
   const file=await readFile(new URL('../../src/equinox-local-windows-native-ab-stable-a-selection-client.js',import.meta.url),'utf8');
@@ -107,5 +123,7 @@ test('real Stable A action delegates all mutations to pinned product source and 
   assert.match(file,/expectedPreviousLauncherPath: bLauncher/u);
   assert.match(file,/selected\.sha !== journal\.currentSha/u);
   assert.match(file,/selected_a_identity_stage6_pending/u);
-  assert.doesNotMatch(file,/WriteIntegratedOwnedNativeStage|Process\.Kill|Process\.Start|rollback_native_restored/u);
+  assert.match(file,/rollback_native_restored\.commit\.json/u);
+  assert.match(file,/stageProof\.guardianPid !== startProof\.guardianPid/u);
+  assert.doesNotMatch(file,/WriteIntegratedOwnedNativeStage|Process\.Kill|Process\.Start/u);
 });

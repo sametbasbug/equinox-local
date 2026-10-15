@@ -131,7 +131,7 @@ test('single original Guardian handles owner OS audit and fixed mutual-HMAC phys
   assert.match(witness, /"native-integrated-a-physical-restored-original-lease-held"/u);
   assert.match(witness, /ServeOwnedStableAIdentitySelection\(owner, journalRoot, worker, lease, leaseAge, identityPipe\)/u);
   assert.match(witness, /while \(!worker.HasExited && leaseAge.Elapsed < TimeSpan.FromMinutes\(20\)\)/u);
-  assert.match(witness, /A identity selection and durable stage6 remain pending/u);
+  assert.match(witness, /native A restored at stage6; WPF A health and terminal rollback remain pending/u);
   assert.match(witness, /HoldOwnedRollbackOwnerWitness\(/u);
   assert.match(server, /GetNamedPipeClientProcessId\(endpoint\.SafePipeHandle, out var clientPid\)/u);
   assert.match(server, /clientPid != owner\.Pid/u);
@@ -214,5 +214,9 @@ test('only original Guardian can open one fixed Stable-A selection action after 
   assert.match(server, /ack\[0\] != \(byte\)'s'/u);
   assert.match(server, /RequireOwnedRestoredAIdentityWitness\(owner, journalRoot, worker, lease, leaseAge\)/u);
   assert.ok(server.indexOf('RequireOwnedRestoredAIdentityWitness(owner, journalRoot, worker, lease, leaseAge)') < server.indexOf("pipe.WriteByte((byte)'a')"));
-  assert.doesNotMatch(server, /WriteIntegratedOwnedNativeStage|Registry\.SetValue|Directory\.Move|File\.Move|Process\.Start|File\.Delete/u);
+  assert.match(server, /WriteIntegratedOwnedNativeStage\(owner, journalPath,/u);
+  assert.match(server, /"rollback_started", 5, "rollback_native_restored", 6/u);
+  assert.match(server, /commit\.RootElement\.GetProperty\("guardianPid"\)\.GetInt32\(\) != Environment\.ProcessId/u);
+  assert.match(server, /native-integrated-a-restored-stage6-no-health/u);
+  assert.doesNotMatch(server, /Registry\.SetValue|Directory\.Move|File\.Move|Process\.Start|File\.Delete/u);
 });

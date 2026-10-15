@@ -69,9 +69,10 @@ internal static partial class Program
                     identityDeadline.Cancel();
                     ServeOwnedStableAIdentitySelection(owner, journalRoot, worker, lease, leaseAge, identityPipe);
                     identityPipe.Dispose();
-                    // The next ORIGINAL Guardian-only durable stage6 step is
-                    // not yet implemented. Continue holding THIS SAME writer.
-                    InspectionPhase = "native-integrated-a-selected-stage6-pending";
+                    // Durable stage6 is complete only with the original
+                    // Guardian SHA/PID commit marker; keep THIS SAME writer
+                    // for later WPF A restart and sustained health ownership.
+                    InspectionPhase = "native-integrated-a-stage6-held-health-pending";
                 }
                 while (!worker.HasExited && leaseAge.Elapsed < TimeSpan.FromMinutes(20))
                 {
@@ -80,7 +81,7 @@ internal static partial class Program
                         throw new InvalidDataException("Original Guardian OS lease or worker changed after A identity selection.");
                     Thread.Sleep(150);
                 }
-                throw new InvalidOperationException("Original Guardian A identity selection and durable stage6 remain pending.");
+                throw new InvalidOperationException("Original Guardian native A restored at stage6; WPF A health and terminal rollback remain pending.");
             }
             if (completed != arrival) { deadline.Cancel(); break; }
             try { arrival.GetAwaiter().GetResult(); }

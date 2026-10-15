@@ -236,7 +236,7 @@ if (selectStableTrigger) {
           await new Promise(resolve => setTimeout(resolve, 125));
         }
       }
-      if (result.stage !== 'a_identity_selected_stage6_pending')
+      if (result.stage !== 'rollback_native_restored' || result.sequence !== 6)
         throw new Error('Original Guardian did not attest all A identities.');
       const commit = JSON.parse(fs.readFileSync(path.win32.join(request.transactionRoot,
         'guardian-journal', `${tx}.rollback_started.commit.json`), 'utf8'));

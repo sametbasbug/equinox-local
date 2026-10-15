@@ -465,6 +465,7 @@ if (process.env.GITHUB_ACTIONS === 'true' &&
   $JournalStableSelectionTrigger = Join-Path $Work 'start-original-guardian-select-stable-a.trigger'
   $JournalStableSelectionReceipt = Join-Path $Work 'original-guardian-a-identity-selected.json'
   $JournalRollbackStartCommit = Join-Path $JournalDataDir ("$JournalId.rollback_started.commit.json")
+  $JournalNativeRestoredCommit = Join-Path $JournalDataDir ("$JournalId.rollback_native_restored.commit.json")
   $JournalIntegratedB = Join-Path $NativeTxRoot ("native-store\$FixtureTarget\$JournalTarget")
   $JournalShellQuiesced = Join-Path $JournalDataDir ("$JournalId.stable-shell-quiesce.json")
   $JournalAbortCommit = Join-Path $JournalDataDir ("$JournalId.abort-commit.json")
@@ -1105,8 +1106,10 @@ if (process.env.GITHUB_ACTIONS === 'true' &&
         $SelectedARegistryOwner = [string](Get-Item -LiteralPath $NativeRegistryKey -ErrorAction Stop).GetValue('')
         $SelectedAManifest = [IO.File]::ReadAllText($ExpectedManifestPath) | ConvertFrom-Json
         $AfterStableSelection = ConvertFrom-Json ([IO.File]::ReadAllText($JournalData))
+        Assert-True ([IO.File]::Exists($JournalNativeRestoredCommit)) 'Original Guardian did not persist durable stage6 marker.'
+        $NativeRestoredCommit = ConvertFrom-Json ([IO.File]::ReadAllText($JournalNativeRestoredCommit))
         Assert-True ($StableSelectionReceipt.transactionId -ceq $JournalId -and
-          $StableSelectionReceipt.stage -ceq 'a_identity_selected_stage6_pending' -and
+          $StableSelectionReceipt.stage -ceq 'rollback_native_restored' -and
           $StableSelectionReceipt.guardianPid -eq $IntegratedGuardian.Id -and
           [IO.File]::ReadAllText($IntegratedSourcePointerPath) -ceq $ExactStableSourcePointer -and
           -not [IO.File]::Exists($IntegratedNativePointerPath) -and
@@ -1115,10 +1118,14 @@ if (process.env.GITHUB_ACTIONS === 'true' &&
           [IO.File]::Exists($StableExe) -and
           ((Get-FileHash -LiteralPath $StableExe -Algorithm SHA256).Hash -ceq (Get-FileHash -LiteralPath $OriginalAExe -Algorithm SHA256).Hash) -and
           [IO.File]::Exists((Join-Path $FailedBQuarantine 'native-b-ci-only.marker')) -and
-          $AfterStableSelection.stage -ceq 'rollback_started' -and $AfterStableSelection.sequence -eq 5 -and
-          $RollbackCommit.journalSha256 -ceq ((Get-FileHash -LiteralPath $JournalData -Algorithm SHA256).Hash.ToLowerInvariant())) 'Stable A identity selection did not preserve exact A+B/source/native/NM owner and still-pending stage5.'
-        # A stable pointer/messaging identity is NOT WPF/backend health.
-        Write-Output "Windows $FixtureTarget original Guardian OS-authorized Stable A source/native/NM selection PASSED; stage5 retained, rollback_native_restored/6 and A health NOT YET committed."
+          $AfterStableSelection.stage -ceq 'rollback_native_restored' -and $AfterStableSelection.sequence -eq 6 -and
+          $NativeRestoredCommit.schemaVersion -eq 1 -and
+          $NativeRestoredCommit.transactionId -ceq $JournalId -and
+          $NativeRestoredCommit.stage -ceq 'rollback_native_restored' -and $NativeRestoredCommit.sequence -eq 6 -and
+          $NativeRestoredCommit.guardianPid -eq $IntegratedGuardian.Id -and
+          $NativeRestoredCommit.journalSha256 -ceq ((Get-FileHash -LiteralPath $JournalData -Algorithm SHA256).Hash.ToLowerInvariant())) 'Original Guardian failed exact A identities or durable restored-A stage6 SHA/PID receipt.'
+        # Physically recovered Stable A is NOT WPF/backend A health.
+        Write-Output "Windows $FixtureTarget original Guardian OS-authorized Stable A source/native/NM selection and durable rollback_native_restored/6 PASSED; A WPF health NOT YET committed."
         $IntegratedGuardian.Kill()
         Assert-True ($IntegratedGuardian.WaitForExit(5000)) 'Native supervisor force-kill did not stop its Windows process.'
         # A durable stage5 receipt is NOT authority after the original
@@ -1130,7 +1137,7 @@ if (process.env.GITHUB_ACTIONS === 'true' &&
         $NativeStagedReceipt = ConvertFrom-Json ([IO.File]::ReadAllText($JournalNativeStagedCommit))
         $ShellStoppedReceipt = ConvertFrom-Json ([IO.File]::ReadAllText($JournalShellStoppedCommit))
         $SwitchedReceipt = ConvertFrom-Json ([IO.File]::ReadAllText($JournalSwitchedCommit))
-        Assert-True ($IntegratedRecord.stage -ceq 'rollback_started' -and $IntegratedRecord.sequence -eq 5 -and
+        Assert-True ($IntegratedRecord.stage -ceq 'rollback_native_restored' -and $IntegratedRecord.sequence -eq 6 -and
           $NativeStagedReceipt.stage -ceq 'native_staged' -and $NativeStagedReceipt.sequence -eq 1 -and
           $ShellStoppedReceipt.stage -ceq 'shell_stopped' -and $ShellStoppedReceipt.sequence -eq 2 -and
           $ShellStoppedReceipt.guardianPid -eq $IntegratedGuardian.Id -and

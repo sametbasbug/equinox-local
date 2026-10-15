@@ -85,9 +85,35 @@ internal static partial class Program
         // The worker acknowledgment proves NOTHING by itself. The original
         // Guardian independently reads every identity and both physical slots.
         RequireOwnedRestoredAIdentityWitness(owner, journalRoot, worker, lease, leaseAge);
-        InspectionPhase = "native-integrated-a-selected-no-stage6";
+        // Independent OS-owned exact physical A + quarantined B SHA, Stable
+        // source SHA, absent B native pointer and Stable NM identity are now
+        // confirmed. Only THIS ORIGINAL Guardian holding its first kernel
+        // writer lease can persist rollback_native_restored/6. A crash between
+        // journal replacement and its write-through commit marker leaves a
+        // permanent orphan requiring offline reconciliation, NEVER success.
+        InspectionPhase = "native-integrated-a-restore-durable-stage6";
+        WriteIntegratedOwnedNativeStage(owner, journalPath,
+            "rollback_started", 5, "rollback_native_restored", 6);
+        var commitPath = Path.Combine(journalRoot, owner.TransactionId + ".rollback_native_restored.commit.json");
+        using var commit = ReadOwnedTransitionRecord(commitPath, 4096);
+        using var promoted = ReadOwnedTransitionRecord(journalPath, 8192);
+        if (commit.RootElement.GetProperty("schemaVersion").GetInt32() != 1 ||
+            commit.RootElement.GetProperty("transactionId").GetString() != owner.TransactionId ||
+            commit.RootElement.GetProperty("stage").GetString() != "rollback_native_restored" ||
+            commit.RootElement.GetProperty("sequence").GetInt32() != 6 ||
+            commit.RootElement.GetProperty("guardianPid").GetInt32() != Environment.ProcessId ||
+            promoted.RootElement.GetProperty("transactionId").GetString() != owner.TransactionId ||
+            promoted.RootElement.GetProperty("stage").GetString() != "rollback_native_restored" ||
+            promoted.RootElement.GetProperty("sequence").GetInt32() != 6 ||
+            commit.RootElement.GetProperty("journalSha256").GetString() !=
+                Convert.ToHexStringLower(SHA256.HashData(File.ReadAllBytes(journalPath))) ||
+            lease.SafeFileHandle.IsClosed || lease.SafeFileHandle.IsInvalid || worker.HasExited ||
+            worker.StartTime.ToUniversalTime().Ticks.ToString(CultureInfo.InvariantCulture) != owner.Ticks ||
+            leaseAge.Elapsed >= TimeSpan.FromMinutes(20))
+            throw new InvalidDataException("Original Guardian durable rollback_native_restored/6 is unproven.");
+        InspectionPhase = "native-integrated-a-restored-stage6-no-health";
         pipe.WriteByte((byte)'a');
         pipe.FlushAsync(deadline.Token).GetAwaiter().GetResult();
-        // No journal stage6, new OS owner, WPF restart or rollback success.
+        // No new OS owner, WPF relaunch, A backend health or terminal success.
     }
 }
