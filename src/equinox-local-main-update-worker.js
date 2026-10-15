@@ -199,6 +199,7 @@ export async function runEquinoxLocalMainUpdateWorker({
     : pathApi.join(pathApi.dirname(args.transactionRoot), "runtime");
   const toolchain = equinoxLocalToolchainContract({ runtimeRoot, target: hostTarget });
   let workerProof = null;
+  let preserveNativeOwnerForRecovery = false;
   try {
     const engine = engineFactory({
       sourceRoot: args.sourceRoot,
@@ -350,18 +351,33 @@ export async function runEquinoxLocalMainUpdateWorker({
       }
       return restartRuntimeImpl(value);
     };
-    return await handoffImpl({
-      engine,
+    try {
+      return await handoffImpl({
+        engine,
       transactionId: args.transactionId,
       nativeTransition,
       nativeLifecycle,
       initialReceipt: active,
       restartRuntime: restartWithNativeOwnership,
-      verifyRuntime: verify,
-    });
+        verifyRuntime: verify,
+      });
+    } catch (failure) {
+      if (failure?.code === "EQUINOX_NATIVE_OS_RECOVERY_REQUIRED" &&
+          hostTarget.startsWith("win32-") && nativeLifecycle?.nativeOwnsMilestones === true) {
+        // The original worker exits, but its exact admitted ownership
+        // record must remain as OS-auditable evidence with the quarantined
+        // Guardian writer lock. Never auto-reclaim a stranded native A/B.
+        preserveNativeOwnerForRecovery = true;
+      }
+      throw failure;
+    }
   } finally {
     try { await workerProof?.close(); }
-    finally { await cleanupImpl({ transactionId: args.transactionId, transactionRoot: args.transactionRoot }); }
+    finally {
+      if (!preserveNativeOwnerForRecovery) {
+        await cleanupImpl({ transactionId: args.transactionId, transactionRoot: args.transactionRoot });
+      }
+    }
   }
 }
 

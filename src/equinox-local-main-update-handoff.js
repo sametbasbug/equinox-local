@@ -2,6 +2,13 @@ function asError(value, fallback) {
   return value instanceof Error ? value : new Error(String(value || fallback));
 }
 
+function nativeGuardianRecoveryRequired(cause) {
+  const pending = new Error("Guardian-owned Main native recovery awaits OS-authorized physical A restore; B pointers and A backup are preserved.");
+  pending.code = "EQUINOX_NATIVE_OS_RECOVERY_REQUIRED";
+  if (cause) pending.cause = cause;
+  return pending;
+}
+
 function assertNativeLifecycle(nativeLifecycle) {
   if (!nativeLifecycle || typeof nativeLifecycle.activate !== "function" || typeof nativeLifecycle.rollback !== "function" || typeof nativeLifecycle.commit !== "function") {
     throw new Error("Main update native lifecycle callbacks are incomplete.");
@@ -62,6 +69,11 @@ export async function runEquinoxLocalMainUpdateHandoff({
 
   const initialStage = initialReceipt?.stage ?? "ready_to_switch";
   if (["rollback_source_restored", "rollback_native_restored"].includes(initialStage)) {
+    if (nativeLifecycle?.journaledAB === true && nativeLifecycle?.nativeOwnsMilestones === true) {
+      // An old/stale JS source-only rollback receipt cannot grant WPF A
+      // restoration after a native Guardian was installed as sole writer.
+      throw nativeGuardianRecoveryRequired();
+    }
     return await finishNativeRollback({ engine, transactionId, receipt: initialReceipt, nativeLifecycle, restartRuntime, verifyRuntime });
   }
   if (!["ready_to_switch", "native_rollback_ready", "native_switched", "source_switched"].includes(initialStage)) {
@@ -111,6 +123,17 @@ export async function runEquinoxLocalMainUpdateHandoff({
     // trusted follow-up reconciler instead of trying to rollback committed B.
     if (targetFailure?.terminalReceipt === true) throw targetFailure;
     const targetError = asError(targetFailure, "Target runtime failed.");
+    if (nativeLifecycle?.journaledAB === true && nativeLifecycle?.nativeOwnsMilestones === true) {
+      // An original Guardian may have B restarted/4 and retained physical A,
+      // but independent OS-owned physical A restoration is NOT implemented.
+      // engine.rollbackPromotion() mutates the managed source pointer to A;
+      // doing so BEFORE the OS Guardian restores A's WPF/native/NM identity
+      // creates a cross-version runtime. Preserve both exact B pointers,
+      // retained A, native journal and the staged lock for manual, trusted
+      // reconciliation. Do not claim terminal rollback_failed: no rollback
+      // was ever independently authorized or attempted.
+      throw nativeGuardianRecoveryRequired(targetError);
+    }
     let rolledBack;
     try {
       rolledBack = await engine.rollbackPromotion(transactionId, targetError.message, { nativeRollbackPending: Boolean(nativeLifecycle) });

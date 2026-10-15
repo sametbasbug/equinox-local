@@ -81,6 +81,10 @@ export function createWindowsJournaledNativeABLifecycle({
   }
   return Object.freeze({
     journaledAB: true,
+    // Distinguish OS-owned immutable milestones from the fixture/native JS
+    // adapter. The shared handoff must never change A/B source pointers
+    // before independently authorized Guardian physical recovery.
+    nativeOwnsMilestones: nativeOwnsMilestones === true,
     journal,
     async selectRuntime({ rollback } = {}) {
       const record = await owned();

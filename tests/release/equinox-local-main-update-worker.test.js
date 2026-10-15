@@ -101,6 +101,37 @@ test("Windows journaled Main worker launches B only through native Guardian and 
   assert.deepEqual(events[0], { transactionId: TX, transactionRoot: STATE, workerToken: 'f'.repeat(64), sourceSha: B });
 });
 
+test("Windows OS-owned native recovery preserves exact worker ownership marker for independent reconciliation", async () => {
+  const events = [];
+  const transition = { mode: "artifact_required", target: "win32-x64", currentSha: A, targetSha: B,
+    currentRuntimeContractSha256: DIGEST_A, targetRuntimeContractSha256: DIGEST_B };
+  const receipt = preparedReceipt({ stage: "native_switched" });
+  const journal = { source: "exact-native-os-owned-journal" };
+  const engine = {
+    paths: { sourcePointerPath: "C:\\transaction\\current-source.conf" },
+    readActive: async () => receipt,
+    markRollbackFailed: async () => assert.fail("no terminal receipt before authorized OS A restore"),
+  };
+  async function invoke({ owned = true, code = "EQUINOX_NATIVE_OS_RECOVERY_REQUIRED" } = {}) {
+    return runEquinoxLocalMainUpdateWorker({
+      argv: argv(), engineFactory: () => engine, resolveHostTarget: () => "win32-x64",
+      planNativeTransition: async () => transition,
+      resolveNativeInstallation: async () => ({ managed: true, selfUpdateSupported: true, target: "win32-x64" }),
+      admitWindowsNativeWorker: async () => ({ admitted: true, journal }),
+      recoverNativeLifecycle: async () => ({ journaledAB: true, journal, nativeOwnsMilestones: owned }),
+      env: { EQUINOX_LOCAL_MAIN_WORKER_TOKEN: "f".repeat(64) },
+      handoffImpl: async () => { const error = new Error("native recovery pending"); error.code = code; throw error; },
+      cleanupImpl: async () => events.push("cleanup"),
+    });
+  }
+  await assert.rejects(invoke(), { code: "EQUINOX_NATIVE_OS_RECOVERY_REQUIRED" });
+  assert.deepEqual(events, [], "native failure must preserve original OS owner receipt for independent offline recovery");
+  await assert.rejects(invoke({ owned: false }), { code: "EQUINOX_NATIVE_OS_RECOVERY_REQUIRED" });
+  assert.deepEqual(events, ["cleanup"], "non-OS native implementations keep normal cleanup contract");
+  await assert.rejects(invoke({ code: "UNRELATED_FAILURE" }), { code: "UNRELATED_FAILURE" });
+  assert.deepEqual(events, ["cleanup", "cleanup"], "unrelated OS errors must not leak worker ownership markers");
+});
+
 test("Windows worker blocks legacy random native replacement after journal admission and before handoff", async () => {
   const journal = { source: "exact-admitted-journal" };
   const calls = [];
