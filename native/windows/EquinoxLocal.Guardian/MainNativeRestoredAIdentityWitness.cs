@@ -12,9 +12,11 @@ internal static partial class Program
     // Do not call the pre-selection gate once any pointer has begun to move.
     private static void RequireOwnedRestoredAIdentityWitness(
         OwnedWorkerClaim owner, string journalRoot, Process worker,
-        FileStream lease, Stopwatch leaseAge)
+        FileStream lease, Stopwatch leaseAge, bool requireDurableStage6 = false)
     {
-        InspectionPhase = "native-integrated-a-selected-owner-lease";
+        InspectionPhase = requireDurableStage6
+            ? "native-integrated-a-stage6-restart-readiness"
+            : "native-integrated-a-selected-owner-lease";
         if (lease.SafeFileHandle.IsClosed || lease.SafeFileHandle.IsInvalid ||
             leaseAge.Elapsed >= TimeSpan.FromMinutes(20) || worker.HasExited ||
             worker.StartTime.ToUniversalTime().Ticks.ToString(CultureInfo.InvariantCulture) != owner.Ticks)
@@ -31,21 +33,24 @@ internal static partial class Program
         }
         finally { CryptographicOperations.ZeroMemory(one); CryptographicOperations.ZeroMemory(two); }
         var journalPath = Path.Combine(journalRoot, owner.TransactionId + ".json");
-        var commitPath = Path.Combine(journalRoot, owner.TransactionId + ".rollback_started.commit.json");
+        var commitPath = Path.Combine(journalRoot, owner.TransactionId +
+            (requireDurableStage6 ? ".rollback_native_restored.commit.json" : ".rollback_started.commit.json"));
         var journalSha = SHA256.HashData(File.ReadAllBytes(journalPath));
         using var record = ReadOwnedTransitionRecord(journalPath, 8192);
         using var marker = ReadOwnedTransitionRecord(commitPath, 4096);
+        var expectedStage = requireDurableStage6 ? "rollback_native_restored" : "rollback_started";
+        var expectedSequence = requireDurableStage6 ? 6 : 5;
         var state = record.RootElement;
         if (state.GetProperty("transactionId").GetString() != owner.TransactionId ||
-            state.GetProperty("stage").GetString() != "rollback_started" ||
-            state.GetProperty("sequence").GetInt32() != 5 ||
+            state.GetProperty("stage").GetString() != expectedStage ||
+            state.GetProperty("sequence").GetInt32() != expectedSequence ||
             state.GetProperty("previousNative").GetProperty("kind").GetString() != "stable" ||
             marker.RootElement.GetProperty("transactionId").GetString() != owner.TransactionId ||
-            marker.RootElement.GetProperty("stage").GetString() != "rollback_started" ||
-            marker.RootElement.GetProperty("sequence").GetInt32() != 5 ||
+            marker.RootElement.GetProperty("stage").GetString() != expectedStage ||
+            marker.RootElement.GetProperty("sequence").GetInt32() != expectedSequence ||
             marker.RootElement.GetProperty("guardianPid").GetInt32() != Environment.ProcessId ||
             marker.RootElement.GetProperty("journalSha256").GetString() != Convert.ToHexStringLower(journalSha))
-            throw new InvalidDataException("Selected A identities require the original stage5 SHA receipt.");
+            throw new InvalidDataException("Selected A identities require the original exact OS-owned stage5/stage6 SHA receipt.");
         var stableVersion = state.GetProperty("previousNative").GetProperty("version").GetString() ?? "";
         var aSha = state.GetProperty("currentSha").GetString() ?? "";
         var bSha = state.GetProperty("targetSha").GetString() ?? "";
@@ -107,6 +112,8 @@ internal static partial class Program
             leaseAge.Elapsed >= TimeSpan.FromMinutes(20) ||
             !CryptographicOperations.FixedTimeEquals(journalSha, SHA256.HashData(File.ReadAllBytes(journalPath))))
             throw new InvalidDataException("Original Guardian OS lease or stage5 changed during A identity witness.");
-        InspectionPhase = "native-integrated-a-selected-witness-only-no-stage6";
+        InspectionPhase = requireDurableStage6
+            ? "native-integrated-a-stage6-source-native-nm-read-only"
+            : "native-integrated-a-selected-witness-only-no-stage6";
     }
 }

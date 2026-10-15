@@ -73,6 +73,22 @@ internal static partial class Program
                     // Guardian SHA/PID commit marker; keep THIS SAME writer
                     // for later WPF A restart and sustained health ownership.
                     InspectionPhase = "native-integrated-a-stage6-held-health-pending";
+                    var relaunchRemaining = TimeSpan.FromMinutes(20) - leaseAge.Elapsed;
+                    if (relaunchRemaining <= TimeSpan.Zero)
+                        throw new InvalidOperationException("Original Guardian expired before Stable A WPF relaunch.");
+                    using var relaunchPipe = new NamedPipeServerStream("EquinoxLocalMainAB-RelaunchStableA-" + owner.TransactionId,
+                        PipeDirection.InOut, 1, PipeTransmissionMode.Byte, PipeOptions.Asynchronous);
+                    using var relaunchCutoff = new CancellationTokenSource(relaunchRemaining);
+                    var relaunchArrival = relaunchPipe.WaitForConnectionAsync(relaunchCutoff.Token);
+                    var ownerGone = worker.WaitForExitAsync(relaunchCutoff.Token);
+                    if (Task.WhenAny(relaunchArrival, ownerGone).GetAwaiter().GetResult() == relaunchArrival)
+                    {
+                        relaunchArrival.GetAwaiter().GetResult();
+                        relaunchCutoff.Cancel();
+                        RestartOwnedRestoredAWpf(owner, journalRoot, worker, lease, leaseAge, relaunchPipe);
+                        relaunchPipe.Dispose();
+                        InspectionPhase = "native-integrated-a-relaunched-stage6-health-pending";
+                    }
                 }
                 while (!worker.HasExited && leaseAge.Elapsed < TimeSpan.FromMinutes(20))
                 {

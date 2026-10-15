@@ -198,7 +198,7 @@ export async function runEquinoxLocalWindowsGuardianOwnedStableASelection({
               stageProof.journalSha256 !== createHash('sha256').update(promotedBytes).digest('hex')) {
             throw new Error('Original Guardian durable rollback_native_restored/6 and SHA/PID receipt are missing or mismatched.');
           }
-          return Object.freeze({transactionId, stage: 'rollback_native_restored', sequence: 6});
+          return Object.freeze({transactionId, stage: 'rollback_native_restored', sequence: 6, guardianPid: stageProof.guardianPid});
         })().then(resolve, reject);
       });
     });

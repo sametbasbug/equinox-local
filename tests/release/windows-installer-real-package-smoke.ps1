@@ -464,6 +464,9 @@ if (process.env.GITHUB_ACTIONS === 'true' &&
   $JournalPhysicalRestoreReceipt = Join-Path $Work 'original-guardian-physical-a-restored.json'
   $JournalStableSelectionTrigger = Join-Path $Work 'start-original-guardian-select-stable-a.trigger'
   $JournalStableSelectionReceipt = Join-Path $Work 'original-guardian-a-identity-selected.json'
+  $JournalRelaunchATrigger = Join-Path $Work 'start-original-guardian-relaunch-stable-a.trigger'
+  $JournalRelaunchAReceipt = Join-Path $Work 'original-guardian-wpf-a-relaunched.json'
+  $JournalRelaunchACommit = Join-Path $JournalDataDir ("$JournalId.wpf-a-restarted.json")
   $JournalRollbackStartCommit = Join-Path $JournalDataDir ("$JournalId.rollback_started.commit.json")
   $JournalNativeRestoredCommit = Join-Path $JournalDataDir ("$JournalId.rollback_native_restored.commit.json")
   $JournalIntegratedB = Join-Path $NativeTxRoot ("native-store\$FixtureTarget\$JournalTarget")
@@ -546,6 +549,9 @@ if (process.env.GITHUB_ACTIONS === 'true' &&
       $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_AB_SELECT_STABLE_TRIGGER'] = $JournalStableSelectionTrigger
       $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_AB_SELECT_STABLE_RECEIPT'] = $JournalStableSelectionReceipt
       $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_AB_SELECT_STABLE_MODULE'] = Join-Path $Root 'src\equinox-local-windows-native-ab-stable-a-selection-client.js'
+      $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_AB_RELAUNCH_STABLE_TRIGGER'] = $JournalRelaunchATrigger
+      $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_AB_RELAUNCH_STABLE_RECEIPT'] = $JournalRelaunchAReceipt
+      $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_AB_RELAUNCH_STABLE_MODULE'] = Join-Path $Root 'src\equinox-local-windows-native-ab-stable-a-relaunch-client.js'
       $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_AB_ROLLBACK_MODULE'] = Join-Path $Root 'src\equinox-local-windows-native-ab-rollback-client.js'
       $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_AB_EVIDENCE_MODULE'] = Join-Path $Root 'src\equinox-local-windows-native-guardian-evidence.js'
       $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_AB_OWNER_VERIFIER_MODULE'] = Join-Path $Root 'src\equinox-local-windows-native-rollback-owner-verifier.js'
@@ -1126,6 +1132,46 @@ if (process.env.GITHUB_ACTIONS === 'true' &&
           $NativeRestoredCommit.journalSha256 -ceq ((Get-FileHash -LiteralPath $JournalData -Algorithm SHA256).Hash.ToLowerInvariant())) 'Original Guardian failed exact A identities or durable restored-A stage6 SHA/PID receipt.'
         # Physically recovered Stable A is NOT WPF/backend A health.
         Write-Output "Windows $FixtureTarget original Guardian OS-authorized Stable A source/native/NM selection and durable rollback_native_restored/6 PASSED; A WPF health NOT YET committed."
+        # Fixed hosted-only original worker L grant: real native Guardian
+        # launches exactly Stable A WPF, attests OS SID/logon/PID/birth and
+        # existing signed WPF Reopen pipe. NO backend health is claimed.
+        [IO.File]::WriteAllText($JournalRelaunchATrigger,'ci-only-original-guardian-relaunch-after-stage6')
+        $AReopened = $false
+        for ($ReopenTry=0; $ReopenTry -lt 500; $ReopenTry++) {
+          if ([IO.File]::Exists($JournalRelaunchAReceipt) -and
+              -not $IntegratedGuardian.HasExited -and -not $WorkerProcess.HasExited) {
+            $AReopened = $true
+            break
+          }
+          if ($IntegratedGuardian.HasExited -or $WorkerProcess.HasExited) { break }
+          Start-Sleep -Milliseconds 125
+        }
+        if (-not $AReopened -and [IO.File]::Exists($JournalIntegratedDiagnostic)) {
+          Write-Output ('Original Guardian native A WPF relaunch diagnostic: ' + [IO.File]::ReadAllText($JournalIntegratedDiagnostic))
+        }
+        Assert-True $AReopened 'Original Guardian never confirmed original Stable A native WPF PID.'
+        $RelaunchAReceipt = ConvertFrom-Json ([IO.File]::ReadAllText($JournalRelaunchAReceipt))
+        Assert-True ([IO.File]::Exists($JournalRelaunchACommit)) 'Original Guardian missing write-through WPF A restart receipt.'
+        $WpfAProof = ConvertFrom-Json ([IO.File]::ReadAllText($JournalRelaunchACommit))
+        $AProcess = Get-CimInstance Win32_Process -Filter ("ProcessId=" + $WpfAProof.shellPid) -ErrorAction SilentlyContinue
+        $AfterWpfRestart = ConvertFrom-Json ([IO.File]::ReadAllText($JournalData))
+        Assert-True ($RelaunchAReceipt.transactionId -ceq $JournalId -and
+          $RelaunchAReceipt.stage -ceq 'wpf_a_restarted_health_pending' -and
+          $RelaunchAReceipt.guardianPid -eq $IntegratedGuardian.Id -and
+          $RelaunchAReceipt.shellPid -eq $WpfAProof.shellPid -and
+          $WpfAProof.schemaVersion -eq 1 -and
+          $WpfAProof.transactionId -ceq $JournalId -and
+          $WpfAProof.sourceSha -ceq $JournalCurrent -and
+          $WpfAProof.stableVersion -ceq $FixtureVersion -and
+          $WpfAProof.guardianPid -eq $IntegratedGuardian.Id -and
+          $WpfAProof.stage6JournalSha256 -ceq $NativeRestoredCommit.journalSha256 -and
+          $WpfAProof.shellPid -gt 0 -and
+          $null -ne $AProcess -and (Same-Path $AProcess.ExecutablePath $StableExe) -and
+          $AfterWpfRestart.stage -ceq 'rollback_native_restored' -and $AfterWpfRestart.sequence -eq 6) 'Original Guardian WPF A relaunch lost exact PID/Stable identity or prematurely marked A healthy.'
+        Write-Output "Windows $FixtureTarget original Guardian authenticated Stable A native WPF relaunch OS PID/reopen pipe PASSED; stage6 preserved, A backend four-health NOT YET committed."
+        # Disposable fixture teardown only. Subsequent orphan journal audit
+        # must see no remaining A WPF, even after original Guardian death.
+        Stop-OwnedShell $StableExe
         $IntegratedGuardian.Kill()
         Assert-True ($IntegratedGuardian.WaitForExit(5000)) 'Native supervisor force-kill did not stop its Windows process.'
         # A durable stage5 receipt is NOT authority after the original
@@ -1182,7 +1228,7 @@ if (process.env.GITHUB_ACTIONS === 'true' &&
         # Hosted test-only registry and manifest rollback happens before
         # restarting Stable A. Production always requires independent health.
         [IO.File]::WriteAllBytes($ExpectedManifestPath, $OriginalIntegratedNativeManifest)
-        Remove-Item -LiteralPath $JournalGuard,$JournalAuthority,$JournalShellQuiesced,$JournalIntegratedTrigger,$JournalGuardianSpawnTrigger,$JournalGuardianPidReceipt,$JournalBRestartTrigger,$JournalRestartedReceipt,$JournalNativeStagedCommit,$JournalShellStoppedCommit,$JournalSwitchedCommit,$JournalRestartedCommit,$JournalRollbackStartCommit,$JournalNegativeBTrigger,$JournalNegativeBReceipt,$JournalPhysicalRestoreTrigger,$JournalPhysicalRestoreReceipt,$JournalStableSelectionTrigger,$JournalStableSelectionReceipt -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $JournalGuard,$JournalAuthority,$JournalShellQuiesced,$JournalIntegratedTrigger,$JournalGuardianSpawnTrigger,$JournalGuardianPidReceipt,$JournalBRestartTrigger,$JournalRestartedReceipt,$JournalNativeStagedCommit,$JournalShellStoppedCommit,$JournalSwitchedCommit,$JournalRestartedCommit,$JournalRollbackStartCommit,$JournalNegativeBTrigger,$JournalNegativeBReceipt,$JournalPhysicalRestoreTrigger,$JournalPhysicalRestoreReceipt,$JournalStableSelectionTrigger,$JournalStableSelectionReceipt,$JournalRelaunchATrigger,$JournalRelaunchAReceipt -Force -ErrorAction SilentlyContinue
         Remove-Item -LiteralPath $JournalIntegratedB -Recurse -Force -ErrorAction SilentlyContinue
         [IO.File]::WriteAllText($JournalData, ($JournalValue | ConvertTo-Json -Depth 5))
         $IntegratedWpfRestart = [Diagnostics.ProcessStartInfo]::new($StableExe)

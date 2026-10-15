@@ -185,7 +185,9 @@ test('independent original Guardian A identity witness requires all exact A poin
   assert.match(native, /leaseAge\.Elapsed >= TimeSpan\.FromMinutes\(20\)/u);
   assert.match(native, /InspectOwnedNativeWorkerProcess\(guardianHoldsJournalLease: true\)/u);
   assert.match(native, /"rollback_started"/u);
-  assert.match(native, /GetProperty\("sequence"\)\.GetInt32\(\) != 5/u);
+  assert.match(native, /requireDurableStage6 \? "rollback_native_restored" : "rollback_started"/u);
+  assert.match(native, /requireDurableStage6 \? 6 : 5/u);
+  assert.match(native, /GetProperty\("sequence"\)\.GetInt32\(\) != expectedSequence/u);
   assert.match(native, /marker\.RootElement\.GetProperty\("guardianPid"\)\.GetInt32\(\) != Environment\.ProcessId/u);
   assert.match(native, /CompareNativeTrees\(Path\.Combine\(stable, "runtime", "shell"\), program\)/u);
   assert.match(native, /CompareNativeTrees\(Path\.Combine\(bRelease, "runtime", "shell"\), failedB\)/u);
@@ -219,4 +221,33 @@ test('only original Guardian can open one fixed Stable-A selection action after 
   assert.match(server, /commit\.RootElement\.GetProperty\("guardianPid"\)\.GetInt32\(\) != Environment\.ProcessId/u);
   assert.match(server, /native-integrated-a-restored-stage6-no-health/u);
   assert.doesNotMatch(server, /Registry\.SetValue|Directory\.Move|File\.Move|Process\.Start|File\.Delete/u);
+});
+
+test('original Guardian A relaunch requires stage6 SHA OS lease and one fixed mutual-HMAC L before WPF PID/birth attestation', async () => {
+  const native = await readFile(new URL('../../native/windows/EquinoxLocal.Guardian/MainNativeRestoredAWpfRestart.cs', import.meta.url), 'utf8');
+  const witness = await readFile(new URL('../../native/windows/EquinoxLocal.Guardian/MainNativeRollbackOwnerWitness.cs', import.meta.url), 'utf8');
+  const selected = await readFile(new URL('../../native/windows/EquinoxLocal.Guardian/MainNativeRestoredAIdentityWitness.cs', import.meta.url), 'utf8');
+  assert.match(witness,/new NamedPipeServerStream\("EquinoxLocalMainAB-RelaunchStableA-" \+ owner\.TransactionId/u);
+  assert.ok(witness.indexOf('ServeOwnedStableAIdentitySelection(owner, journalRoot, worker, lease, leaseAge, identityPipe);') < witness.indexOf('RestartOwnedRestoredAWpf(owner, journalRoot, worker, lease, leaseAge, relaunchPipe);'));
+  assert.match(native,/GetNamedPipeClientProcessId\(pipe\.SafePipeHandle, out var peerPid\)/u);
+  assert.match(native,/peerPid != owner\.Pid/u);
+  assert.match(native,/InspectOwnedNativeWorkerOsArguments\(guardianHoldsJournalLease: true\)/u);
+  assert.match(native,/RequireOwnedRestoredAIdentityWitness\(owner, journalRoot, worker, lease, leaseAge, requireDurableStage6: true\)/u);
+  assert.match(native,/RestoredARestartWorkerDomain = "equinox-local-guardian-ab-relaunch-a-worker-v1:"/u);
+  assert.match(native,/RestoredARestartOwnerDomain = "equinox-local-guardian-ab-relaunch-a-owner-v1:"/u);
+  assert.match(native,/FixedTimeEquals\(expected, response\)/u);
+  assert.match(native,/fixedGrant\[32\] = \(byte\)'L'/u);
+  assert.match(native,/grantAcknowledgement\[0\] != \(byte\)'l'/u);
+  assert.match(native,/using var shell = Launch\(executable, null\)/u);
+  assert.match(native,/GetNamedPipeServerProcessId\(wpfPipe\.SafePipeHandle, out var serverPid\)/u);
+  assert.match(native,/serverPid != shell\.Id/u);
+  assert.match(native,/ReadWindowsLogonAuthenticationId\(shellToken\)/u);
+  assert.match(native,/ReadWindowsLogonAuthenticationId\(originalIdentity\.AccessToken\)/u);
+  assert.match(native,/\.wpf-a-restarted\.json/u);
+  assert.match(native,/writer\.WriteString\("stage6JournalSha256", Convert\.ToHexStringLower\(before\)\)/u);
+  assert.match(native,/fd\.Flush\(flushToDisk: true\)/u);
+  assert.match(native,/native-integrated-a-relaunched-stage6-await-four-health/u);
+  assert.doesNotMatch(native,/WriteIntegratedOwnedNativeStage|Registry\.SetValue|Directory\.Move|File\.Move|Process\.Kill/u);
+  assert.match(selected,/requireDurableStage6 \? "rollback_native_restored" : "rollback_started"/u);
+  assert.match(selected,/requireDurableStage6 \? 6 : 5/u);
 });
