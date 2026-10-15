@@ -102,6 +102,11 @@ internal static partial class Program
                             healthDeadline.Cancel();
                             ServeOwnedRestoredAHealthAdmission(owner, journalRoot, worker, lease, leaseAge, healthPipe);
                             healthPipe.Dispose();
+                            // Exact stage7 SHA/Guardian PID alone must NEVER
+                            // grant terminal rollback. Recheck signed A WPF,
+                            // retained failed B and original stage6 ancestry
+                            // under the SAME first live OS writer lease.
+                            RequireOwnedRestoredATerminalReadiness(owner, journalRoot, worker, lease, leaseAge);
                             InspectionPhase = "native-integrated-a-durable-stage7-terminal-pending";
                         }
                     }

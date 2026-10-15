@@ -279,3 +279,28 @@ test('only the original OS Guardian promotes four independently SHA-bound A back
   assert.match(health,/ReadWindowsLogonAuthenticationId\(token\)/u);
   assert.doesNotMatch(health,/WriteIntegratedOwnedNativeStage|Process\.Kill|Registry\.SetValue/u);
 });
+
+
+test('terminal old-A readiness is read-only and binds live original OS lease, both stage6 and stage7 Guardian SHA/PID and retained B quarantine',async()=>{
+  const proof=await readFile(new URL('../../native/windows/EquinoxLocal.Guardian/MainNativeRestoredATerminalReadiness.cs',import.meta.url),'utf8');
+  assert.match(proof,/RequireOwnedRestoredATerminalReadiness\(/u);
+  const original=await readFile(new URL('../../native/windows/EquinoxLocal.Guardian/MainNativeRollbackOwnerWitness.cs',import.meta.url),'utf8');
+  assert.ok(original.indexOf('ServeOwnedRestoredAHealthAdmission(owner, journalRoot, worker, lease, leaseAge, healthPipe)') < original.indexOf('RequireOwnedRestoredATerminalReadiness(owner, journalRoot, worker, lease, leaseAge)'));
+  assert.match(original,/RequireOwnedRestoredATerminalReadiness\(owner, journalRoot, worker, lease, leaseAge\)/u);
+  assert.match(proof,/InspectOwnedNativeWorkerProcess\(guardianHoldsJournalLease: true\)/u);
+  assert.match(proof,/InspectOwnedNativeWorkerOsArguments\(guardianHoldsJournalLease: true\)/u);
+  assert.match(proof,/lease\.SafeFileHandle\.IsClosed \|\| lease\.SafeFileHandle\.IsInvalid/u);
+  assert.match(proof,/worker\.StartTime\.ToUniversalTime\(\)\.Ticks/u);
+  assert.match(proof,/rollback_healthy\.commit\.json/u);
+  assert.match(proof,/rollback_native_restored\.commit\.json/u);
+  assert.match(proof,/marker7\.RootElement\.GetProperty\("guardianPid"\)\.GetInt32\(\) != Environment\.ProcessId/u);
+  assert.match(proof,/marker6\.RootElement\.GetProperty\("guardianPid"\)\.GetInt32\(\) != Environment\.ProcessId/u);
+  assert.match(proof,/GetProperty\("sequence"\)\.GetInt32\(\) != 7/u);
+  assert.match(proof,/CompareNativeTrees\(Path\.Combine\(stable, "runtime", "shell"\), active\)/u);
+  assert.match(proof,/CompareNativeTrees\(Path\.Combine\(candidateB, "runtime", "shell"\), quarantine\)/u);
+  assert.match(proof,/InspectOwnedMainNativeMessaging\(install, stable\)/u);
+  assert.match(proof,/Directory\.EnumerateFileSystemEntries\(transactionRoot, "current-native\.json", SearchOption\.TopDirectoryOnly\)\.Any\(\)/u);
+  assert.match(proof,/RequireOriginalGuardianRestoredAWpfReceipt\(owner, journalRoot, worker, lease, leaseAge, active, oldStageSha\)/u);
+  assert.match(proof,/Original stage7 or kernel worker changed during terminal-readiness witness/u);
+  assert.doesNotMatch(proof,/WriteIntegratedOwnedNativeStage|Directory\.Move|File\.Move|File\.Delete|Registry\.SetValue|Process\.Start|Process\.Kill/u);
+});
