@@ -88,19 +88,31 @@ async function runNativeConptySmoke() {
   trace(`spawn:ok pid=${terminal.pid ?? "unknown"}`);
   let output = "";
   let sawData = false;
+  let sentCommand = false;
   const completed = new Promise((resolve, reject) => {
     terminal.onData((data) => {
       if (!sawData) { sawData = true; trace("data:first"); }
       output += data;
+      // ConPTY may expose the first output while Windows PowerShell is
+      // still bootstrapping. Sending the command before the ACTUAL prompt
+      // can lose stdin on a busy native ARM64 hosted runner. Wait for a
+      // complete shell-ready prompt instead of blindly racing startup.
+      if (!sentCommand) {
+        const visible = output.replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/gu, "").replace(/\r/gu, "");
+        if (/(?:^|\n)PS [^\n]{1,512}>\s*$/u.test(visible)) {
+          sentCommand = true;
+          trace("prompt:ready");
+          trace("write:start");
+          terminal.write('Write-Output "__EQUINOX_CONPTY_OK__"; exit\r');
+          trace("write:return");
+        }
+      }
     });
     terminal.onExit(({ exitCode }) => {
       trace(`exit:${exitCode}`);
       exitCode === 0 ? resolve() : reject(new Error(`Windows node-pty host exited ${exitCode}.`));
     });
   });
-  trace("write:start");
-  terminal.write('Write-Output "__EQUINOX_CONPTY_OK__"; exit\r');
-  trace("write:return");
   await completed;
   trace("completed");
   trace("transport-dispose:start");
