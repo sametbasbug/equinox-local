@@ -35,6 +35,10 @@ internal static partial class Program
         if (body.Length > 512) throw new InvalidDataException("Windows journal lease record exceeds its bound.");
         lease.Write(body);
         lease.Flush(flushToDisk: true);
+        // One monotonic deadline covers request admission, HMAC, negative
+        // health verification AND the read-only stage5 wait. A successful
+        // grant never starts a fresh 20-minute ownership window.
+        var leaseAge = Stopwatch.StartNew();
         InspectionPhase = "native-journal-lease-exclusive-held";
         if (acceptAuthorityProof || recordPreparedAbort || quiesceStableShell || integratedAB)
             RecordNativeJournalWorkerAuthority(owner, root, worker, recordPreparedAbort);
@@ -47,9 +51,23 @@ internal static partial class Program
             // lease. This listener is request-driven; it cannot act during a
             // healthy B startup without a real original-worker request AND
             // the Guardian's independent negative B health witness.
-            AuthorizeOwnedIntegratedARollbackStart(owner, root, worker);
-            // Never fall into another 20-minute lease wait or silently reclaim
-            // an unfinished native rollback journal after owner exit.
+            var rollbackStarted = AuthorizeOwnedIntegratedARollbackStart(owner, root, worker, leaseAge);
+            if (rollbackStarted)
+            {
+                // Keep the SAME OS-held exclusive lease and original Guardian
+                // process alive after durable rollback_started/5. A separate
+                // read-only OS attestation still needs this live owner, and
+                // neither orphan deletion nor physical A restore is allowed.
+                InspectionPhase = "native-integrated-a-rollback-started-owner-held";
+                while (!worker.HasExited && leaseAge.Elapsed < TimeSpan.FromMinutes(20))
+                {
+                    if (worker.StartTime.ToUniversalTime().Ticks.ToString(CultureInfo.InvariantCulture) != owner.Ticks)
+                        break;
+                    Thread.Sleep(150);
+                }
+            }
+            // Never grant a second lease or silently reclaim an unfinished
+            // native rollback journal after owner exit or shared deadline.
             throw new InvalidOperationException("Integrated native Guardian rollback needs a trusted physical restore coordinator.");
         }
         // Deliberately no journal/receipt modifications and no automatic

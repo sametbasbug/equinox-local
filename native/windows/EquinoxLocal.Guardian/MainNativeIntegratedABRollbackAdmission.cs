@@ -17,8 +17,8 @@ internal static partial class Program
     // The original Guardian now listens after B restart and retained-A proof.
     // The original worker does NOT invoke this on its healthy B path; the
     // OS-owned physical A restore handoff remains deliberately disabled.
-    private static void AuthorizeOwnedIntegratedARollbackStart(
-        OwnedWorkerClaim owner, string journalRoot, Process worker)
+    private static bool AuthorizeOwnedIntegratedARollbackStart(
+        OwnedWorkerClaim owner, string journalRoot, Process worker, Stopwatch leaseAge)
     {
         using var endpoint = new NamedPipeServerStream("EquinoxLocalMainAB-Rollback-" + owner.TransactionId,
             PipeDirection.InOut, 1, PipeTransmissionMode.Byte, PipeOptions.Asynchronous);
@@ -28,23 +28,28 @@ internal static partial class Program
         // The same 20-minute bound replaces (rather than extends) the
         // preexisting Guardian lease wait for integrated A/B.
         InspectionPhase = "native-integrated-a-rollback-wait-original-worker-request";
-        using (var requestCutoff = new CancellationTokenSource(TimeSpan.FromMinutes(20)))
+        var remaining = TimeSpan.FromMinutes(20) - leaseAge.Elapsed;
+        if (remaining <= TimeSpan.Zero) return false;
+        using (var requestCutoff = new CancellationTokenSource(remaining))
         {
             var incoming = endpoint.WaitForConnectionAsync(requestCutoff.Token);
             var ownerExited = worker.WaitForExitAsync(requestCutoff.Token);
             Task completed;
             try { completed = Task.WhenAny(incoming, ownerExited).GetAwaiter().GetResult(); }
-            catch (OperationCanceledException) { return; }
+            catch (OperationCanceledException) { return false; }
             if (completed != incoming)
             {
                 requestCutoff.Cancel();
                 InspectionPhase = "native-integrated-a-rollback-original-worker-exited-no-request";
-                return;
+                return false;
             }
             incoming.GetAwaiter().GetResult();
             requestCutoff.Cancel();
         }
-        using var cutoff = new CancellationTokenSource(TimeSpan.FromSeconds(45));
+        remaining = TimeSpan.FromMinutes(20) - leaseAge.Elapsed;
+        if (remaining <= TimeSpan.Zero) return false;
+        using var cutoff = new CancellationTokenSource(
+            remaining < TimeSpan.FromSeconds(45) ? remaining : TimeSpan.FromSeconds(45));
         if (!GetNamedPipeClientProcessId(endpoint.SafePipeHandle, out var pid) || pid != owner.Pid ||
             worker.HasExited || worker.StartTime.ToUniversalTime().Ticks.ToString(CultureInfo.InvariantCulture) != owner.Ticks)
             throw new InvalidDataException("Native A rollback pipe belongs to a foreign or expired Windows worker.");
@@ -152,10 +157,13 @@ internal static partial class Program
         if (worker.HasExited || worker.StartTime.ToUniversalTime().Ticks.ToString(CultureInfo.InvariantCulture) != owner.Ticks ||
             !CryptographicOperations.FixedTimeEquals(original, SHA256.HashData(File.ReadAllBytes(journalPath))))
             throw new InvalidDataException("Original rollback worker or journal changed after OS B health decision.");
+        if (leaseAge.Elapsed >= TimeSpan.FromMinutes(20))
+            throw new InvalidDataException("Native rollback admission exceeded its original OS writer lease deadline.");
         InspectionPhase = "native-integrated-a-rollback-durable-start-only";
         WriteIntegratedOwnedNativeStage(owner, journalPath, "restarted", 4, "rollback_started", 5);
         endpoint.WriteByte((byte)'r');
         endpoint.FlushAsync(cutoff.Token).GetAwaiter().GetResult();
         InspectionPhase = "native-integrated-a-rollback-authorized-not-restored";
+        return true;
     }
 }
