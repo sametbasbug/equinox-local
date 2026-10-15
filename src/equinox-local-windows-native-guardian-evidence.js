@@ -7,7 +7,9 @@ import { validateEquinoxLocalWindowsNativeTransitionJournal } from './equinox-lo
 
 const TX = /^main-[a-f0-9]{32}$/u;
 const DIGEST = /^[a-f0-9]{64}$/u;
-const NATIVE_STAGES = Object.freeze({ native_staged: 1, shell_stopped: 2, switched: 3, restarted: 4 });
+// rollback_started/5 is read-only OS evidence, NOT an A-restore grant.
+// Prepared-abort rollback_started/1 must never be confused with this stage.
+const NATIVE_STAGES = Object.freeze({ native_staged: 1, shell_stopped: 2, switched: 3, restarted: 4, rollback_started: 5 });
 const MARKER_KEYS = ['schemaVersion', 'transactionId', 'stage', 'sequence', 'guardianPid', 'journalSha256'].sort().join('\0');
 
 async function readExactNormalFile(file, maxBytes, fsImpl) {
@@ -88,8 +90,52 @@ export async function readEquinoxWindowsNativeGuardianMilestone({
   if (!timingSafeEqual(digest, Buffer.from(marker.journalSha256, 'hex'))) {
     throw new Error('Native Guardian durable milestone SHA does not match the journal.');
   }
+  // The restarted/4 observation must belong to this same OS Guardian and
+  // immutable retained Stable A. A forged rollback_started/5 JSON and its
+  // matching SHA are NOT sufficient on their own to prove original ancestry.
+  let rollbackProof = null;
+  if (stage === 'rollback_started') {
+    if (journal.previousNative.kind !== 'stable') {
+      throw new Error('Native Guardian rollback-start requires original Stable A.');
+    }
+    const restartedPath = p.join(root, `${transactionId}.restarted.commit.json`);
+    const retainedPath = p.join(root, `${transactionId}.retained-a.json`);
+    const [restartedBytes, retainedBytes] = await Promise.all([
+      readExactNormalFile(restartedPath, 4096, fsImpl),
+      readExactNormalFile(retainedPath, 8192, fsImpl),
+    ]);
+    let restarted, retained;
+    try {
+      restarted = JSON.parse(restartedBytes.toString('utf8'));
+      retained = JSON.parse(retainedBytes.toString('utf8'));
+    } catch { throw new Error('Native Guardian rollback-start ancestry is invalid.'); }
+    const restartedKeys = ['schemaVersion', 'transactionId', 'stage', 'sequence', 'guardianPid', 'journalSha256'];
+    const retainedKeys = ['schemaVersion', 'transactionId', 'disposition', 'stableVersion',
+      'workerPid', 'guardianPid', 'journalSequence', 'journalSha256'];
+    if (!restarted || Array.isArray(restarted) || typeof restarted !== 'object' ||
+        Object.keys(restarted).sort().join('\0') !== restartedKeys.sort().join('\0') ||
+        restarted.schemaVersion !== 1 || restarted.transactionId !== transactionId ||
+        restarted.stage !== 'restarted' || restarted.sequence !== 4 ||
+        restarted.guardianPid !== marker.guardianPid || !DIGEST.test(restarted.journalSha256 ?? '') ||
+        !retained || Array.isArray(retained) || typeof retained !== 'object' ||
+        Object.keys(retained).sort().join('\0') !== retainedKeys.sort().join('\0') ||
+        retained.schemaVersion !== 1 || retained.transactionId !== transactionId ||
+        retained.disposition !== 'retained-a-verified-no-restore-authority' ||
+        retained.stableVersion !== journal.previousNative.version ||
+        !Number.isSafeInteger(retained.workerPid) || retained.workerPid < 1 ||
+        retained.guardianPid !== marker.guardianPid || retained.journalSequence !== 4 ||
+        retained.journalSha256 !== restarted.journalSha256) {
+      throw new Error('Native Guardian rollback-start is not bound to the original restarted B and retained A.');
+    }
+    rollbackProof = Object.freeze({ restartedPath, retainedPath,
+      restartedDigest: createHash('sha256').update(restartedBytes).digest(),
+      retainedDigest: createHash('sha256').update(retainedBytes).digest(),
+      workerPid: retained.workerPid, restartedJournalSha256: restarted.journalSha256 });
+  }
   if (await verifyGuardianOsOwner(Object.freeze({ transactionId, guardianPid: marker.guardianPid,
-    journalSha256: marker.journalSha256, stage })) !== true) {
+    journalSha256: marker.journalSha256, stage,
+    ...(rollbackProof ? { workerPid: rollbackProof.workerPid,
+      restartedJournalSha256: rollbackProof.restartedJournalSha256, requiresWriterLease: true } : {}) })) !== true) {
     throw new Error('Native Guardian live OS owner is not independently verified.');
   }
   // The source journal must still match the hash just admitted. No writes.
@@ -101,6 +147,16 @@ export async function readEquinoxWindowsNativeGuardianMilestone({
       !timingSafeEqual(createHash('sha256').update(latest).digest(), digest) ||
       !timingSafeEqual(createHash('sha256').update(latestMarker).digest(), createHash('sha256').update(markerBytes).digest())) {
     throw new Error('Native Guardian journal or milestone changed after OS ownership attestation.');
+  }
+  if (rollbackProof) {
+    const [restartNow, retainedNow] = await Promise.all([
+      readExactNormalFile(rollbackProof.restartedPath, 4096, fsImpl),
+      readExactNormalFile(rollbackProof.retainedPath, 8192, fsImpl),
+    ]);
+    if (!timingSafeEqual(createHash('sha256').update(restartNow).digest(), rollbackProof.restartedDigest) ||
+        !timingSafeEqual(createHash('sha256').update(retainedNow).digest(), rollbackProof.retainedDigest)) {
+      throw new Error('Native Guardian rollback ancestry changed after OS ownership attestation.');
+    }
   }
   return Object.freeze({ transactionId, target: journal.target, stage, sequence: journal.sequence,
     sourceSha: journal.targetSha, guardianPid: marker.guardianPid, journalSha256: marker.journalSha256 });

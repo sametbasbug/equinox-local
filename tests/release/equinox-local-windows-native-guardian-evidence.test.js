@@ -107,3 +107,109 @@ test('observer detects a milestone receipt replaced during independent OS owner 
       return true;
     } }), /changed after OS ownership/u);
 });
+
+async function rollbackStartedFixture(t) {
+  const f = await fixture(t);
+  const dir = path.dirname(f.journalPath);
+  const restartedPath = path.join(dir, `${ID}.restarted.commit.json`);
+  const retainedPath = path.join(dir, `${ID}.retained-a.json`);
+  const rollbackPath = path.join(dir, `${ID}.rollback_started.commit.json`);
+  const restarted = { ...f.journal, stage: 'restarted', sequence: 4 };
+  const restartedSha = createHash('sha256').update(Buffer.from(JSON.stringify(restarted))).digest('hex');
+  const previousMarker = { schemaVersion: 1, transactionId: ID, stage: 'restarted', sequence: 4,
+    guardianPid: 4567, journalSha256: restartedSha };
+  const retained = { schemaVersion: 1, transactionId: ID,
+    disposition: 'retained-a-verified-no-restore-authority', stableVersion: '6.0.4',
+    workerPid: 3281, guardianPid: 4567, journalSequence: 4, journalSha256: restartedSha };
+  const current = { ...f.journal, stage: 'rollback_started', sequence: 5,
+    updatedAt: '2026-10-12T16:00:03.000Z' };
+  async function persist(record = current, marker = {}) {
+    const bytes = Buffer.from(JSON.stringify(record));
+    await fs.writeFile(f.journalPath, bytes);
+    await fs.writeFile(rollbackPath, JSON.stringify({ schemaVersion: 1, transactionId: ID,
+      stage: 'rollback_started', sequence: 5, guardianPid: 4567,
+      journalSha256: createHash('sha256').update(bytes).digest('hex'), ...marker }));
+  }
+  await fs.writeFile(restartedPath, JSON.stringify(previousMarker));
+  await fs.writeFile(retainedPath, JSON.stringify(retained));
+  await persist();
+  return { ...f, options: { ...f.options, stage: 'rollback_started' }, current,
+    persist, restartedPath, retainedPath, rollbackPath, restartedSha, previousMarker, retained };
+}
+
+test('read-only rollback_started/5 observes OS-owned exact B journal, original worker and retained Stable A ancestry', async (t) => {
+  const f = await rollbackStartedFixture(t);
+  let verification = null;
+  const first = await Promise.all([f.journalPath, f.rollbackPath, f.restartedPath, f.retainedPath].map(p => fs.readFile(p)));
+  const result = await readEquinoxWindowsNativeGuardianMilestone({ ...f.options,
+    verifyGuardianOsOwner: async (owner) => { verification = owner; return owner.guardianPid === 4567 &&
+      owner.workerPid === 3281 && owner.requiresWriterLease === true &&
+      owner.restartedJournalSha256 === f.restartedSha && owner.stage === 'rollback_started'; } });
+  assert.deepEqual(result, { transactionId: ID, target: 'win32-x64', stage: 'rollback_started', sequence: 5,
+    sourceSha: B, guardianPid: 4567,
+    journalSha256: createHash('sha256').update(first[0]).digest('hex') });
+  assert.ok(Object.isFrozen(result));
+  assert.ok(Object.isFrozen(verification));
+  assert.deepEqual(verification, { transactionId: ID, guardianPid: 4567,
+    journalSha256: result.journalSha256, stage: 'rollback_started', workerPid: 3281,
+    restartedJournalSha256: f.restartedSha, requiresWriterLease: true });
+  const last = await Promise.all([f.journalPath, f.rollbackPath, f.restartedPath, f.retainedPath].map(p => fs.readFile(p)));
+  assert.deepEqual(last, first, 'OS rollback observation is strictly read-only');
+});
+
+test('rollback_started/5 never accepts prepared-abort rollback_started/1 or a forged terminal sequence', async (t) => {
+  const f = await rollbackStartedFixture(t);
+  await f.persist({ ...f.current, sequence: 1 }, { sequence: 1 });
+  await assert.rejects(readEquinoxWindowsNativeGuardianMilestone(f.options), /stale or foreign/u);
+  await f.persist({ ...f.current, sequence: 6 }, { sequence: 6 });
+  await assert.rejects(readEquinoxWindowsNativeGuardianMilestone(f.options), /stale or foreign/u);
+});
+
+test('rollback_started/5 denies spoofed B journal, original Guardian, worker and retained A proof', async (t) => {
+  const f = await rollbackStartedFixture(t);
+  await assert.rejects(readEquinoxWindowsNativeGuardianMilestone({ ...f.options,
+    verifyGuardianOsOwner: async () => false }), /OS owner/u);
+  await f.persist(f.current, { guardianPid: 7 });
+  await assert.rejects(readEquinoxWindowsNativeGuardianMilestone(f.options), /original restarted B and retained A/u);
+  await f.persist();
+  await fs.writeFile(f.retainedPath, JSON.stringify({ ...f.retained, workerPid: 0 }));
+  await assert.rejects(readEquinoxWindowsNativeGuardianMilestone(f.options), /original restarted B and retained A/u);
+  await fs.writeFile(f.retainedPath, JSON.stringify({ ...f.retained, stableVersion: '6.0.5' }));
+  await assert.rejects(readEquinoxWindowsNativeGuardianMilestone(f.options), /original restarted B and retained A/u);
+  await fs.writeFile(f.retainedPath, JSON.stringify({ ...f.retained, journalSha256: 'f'.repeat(64) }));
+  await assert.rejects(readEquinoxWindowsNativeGuardianMilestone(f.options), /original restarted B and retained A/u);
+  await fs.writeFile(f.retainedPath, JSON.stringify(f.retained));
+  await fs.writeFile(f.restartedPath, JSON.stringify({ ...f.previousMarker, guardianPid: 70 }));
+  await assert.rejects(readEquinoxWindowsNativeGuardianMilestone(f.options), /original restarted B and retained A/u);
+});
+
+test('rollback_started/5 denies missing or symlinked ancestry, and any ancestry mutation during OS attestation', async (t) => {
+  const f = await rollbackStartedFixture(t);
+  const original = await fs.readFile(f.retainedPath);
+  await fs.unlink(f.retainedPath);
+  await assert.rejects(readEquinoxWindowsNativeGuardianMilestone(f.options));
+  await fs.symlink(f.restartedPath, f.retainedPath);
+  await assert.rejects(readEquinoxWindowsNativeGuardianMilestone(f.options), /normal|opened OS file|ELOOP|symlink/iu);
+  await fs.unlink(f.retainedPath);
+  await fs.writeFile(f.retainedPath, original);
+  await assert.rejects(readEquinoxWindowsNativeGuardianMilestone({ ...f.options,
+    verifyGuardianOsOwner: async () => {
+      await fs.writeFile(f.retainedPath, JSON.stringify({ ...f.retained, guardianPid: 5001 }));
+      return true;
+    } }), /rollback ancestry changed after OS ownership/u);
+  await fs.writeFile(f.retainedPath, original);
+  await assert.rejects(readEquinoxWindowsNativeGuardianMilestone({ ...f.options,
+    verifyGuardianOsOwner: async () => {
+      await fs.writeFile(f.restartedPath, JSON.stringify({ ...f.previousMarker, guardianPid: 6001 }));
+      return true;
+    } }), /rollback ancestry changed after OS ownership/u);
+});
+
+test('rollback_started/5 denies foreign transaction source identity before even contacting OS verifier', async (t) => {
+  const f = await rollbackStartedFixture(t);
+  let calls = 0;
+  await assert.rejects(readEquinoxWindowsNativeGuardianMilestone({ ...f.options,
+    expected: { ...expected, targetSha: '1'.repeat(40) },
+    verifyGuardianOsOwner: async () => { calls++; return true; } }), /exact validated Main transaction/u);
+  assert.equal(calls, 0);
+});
