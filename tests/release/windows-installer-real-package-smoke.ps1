@@ -150,6 +150,11 @@ try {
   Assert-True ([IO.File]::Exists($StableExe)) 'Windows stable EquinoxLocal.exe is missing after fresh install.'
   Assert-True ((Read-PeMachine $StableExe) -eq $FixtureExpectedMachine) 'Windows stable EquinoxLocal.exe has the wrong PE architecture.'
 
+  # Vintage A packages have no independent Guardian. The real installed
+  # old-Main -> new-Main acceptance must test the actual updater instead of
+  # requiring test-only future Guardian components in an already shipped A.
+  $SkipLegacyGuardianFixture = ($env:GITHUB_ACTIONS -ceq 'true' -and -not [string]::IsNullOrWhiteSpace($env:EQUINOX_WINDOWS_MAIN_ACCEPT_TARGET_SHA))
+  if (-not $SkipLegacyGuardianFixture) {
   # Exercise the real independent Guardian binary on a disposable hosted runner
   # without changing Start Menu, Installed Apps, autostart or the running WPF.
   $GuardianFromRelease = Join-Path $ReleaseDir 'runtime\guardian\EquinoxLocalGuardian.exe'
@@ -194,6 +199,8 @@ try {
   } finally { Remove-Item -LiteralPath $FakeMainLock -Force -ErrorAction SilentlyContinue }
   Write-Output "Windows $FixtureTarget independent native Guardian installed-host positive/negative admission PASSED."
 
+
+  } # Guardian-only fixture is irrelevant to a previously signed installed A.
 
   $ExpectedManifestPath = Join-Path $InstallRoot 'browser\native-messaging\dev.equinox.browser.json'
   Assert-True ([IO.File]::Exists($ExpectedManifestPath)) 'Windows Native Messaging manifest is missing after fresh install.'
@@ -242,6 +249,7 @@ try {
   }
   Assert-True ($OwnedGitStatusCode -eq 0) 'Hosted product Git status preflight failed.'
 
+  if (-not $SkipLegacyGuardianFixture) {
   # The optional native Main audit is deliberately NOT a launcher or a release
   # authority: it binds pointer/store claims and hashes the installed shell,
   # but Git HEAD, full payload fingerprint and Native Messaging still need
@@ -762,6 +770,7 @@ try {
   }
   Assert-True ((Invoke-GuardianCheck '--audit-native-journal') -eq 70) 'Guardian accepted an orphan journal after its owning active receipt disappeared.'
   Write-Output "Windows $FixtureTarget Guardian native journal ownership audit positive/negative hosted acceptance PASSED."
+  } # End old Guardian fixture: no mock Guardian in real old-installed upgrade.
   $OwnedGit = Join-Path $InstallRoot ("runtime\toolchain\git\2.53.0-4\$FixtureTarget\cmd\git.exe")
   $OwnedNode = Join-Path $InstallRoot ("runtime\toolchain\node\26.11.1\$FixtureTarget\node.exe")
   $OwnedNpm = Join-Path $InstallRoot ("runtime\toolchain\node\26.11.1\$FixtureTarget\node_modules\npm\bin\npm-cli.js")
@@ -801,16 +810,34 @@ try {
   if ($env:EQUINOX_WINDOWS_MAIN_ACCEPT_TARGET_SHA) {
     if ($env:GITHUB_ACTIONS -cne 'true' -or [string]$env:EQUINOX_WINDOWS_MAIN_ACCEPT_TARGET_SHA -cnotmatch '^[a-f0-9]{40}$') { throw 'Real installed Windows Main acceptance requires an isolated hosted runner and an exact target SHA.' }
     if ($env:EQUINOX_WINDOWS_MAIN_ACCEPT_TARGET_SHA -ceq $FixtureSourceSha) { throw 'Installed Main acceptance target must differ from A.' }
+    # Preserve the ACTUAL settings config as well as independent user-owned
+    # state/browser records across full executable/runtime replacement.
+    $UserSettingsPath = Join-Path $InstallRoot 'state\config.json'
+    Assert-True ([IO.File]::Exists($UserSettingsPath)) 'Old installed A user config is missing.'
+    $UserConfigShaBefore = (Get-FileHash -LiteralPath $UserSettingsPath -Algorithm SHA256).Hash
+    $UserProofPath = Join-Path $InstallRoot 'state\ci-user-persistent-proof.txt'
+    $BrowserProofPath = Join-Path $InstallRoot 'browser\ci-user-browser-proof.txt'
+    [IO.File]::WriteAllText($UserProofPath,'old-version-private-setting')
+    [IO.File]::WriteAllText($BrowserProofPath,'old-version-browser-preference')
     & node (Join-Path $Root 'tests/release/smoke-main-upgrade-windows.mjs') $InstallRoot $FixtureSourceSha $env:EQUINOX_WINDOWS_MAIN_ACCEPT_TARGET_SHA
+    Assert-True ((Get-FileHash -LiteralPath $UserSettingsPath -Algorithm SHA256).Hash -ceq $UserConfigShaBefore) 'Real installed Main upgrade changed user config.'
+    Assert-True ([IO.File]::ReadAllText($UserProofPath) -ceq 'old-version-private-setting') 'Real Main upgrade lost user settings.'
+    Assert-True ([IO.File]::ReadAllText($BrowserProofPath) -ceq 'old-version-browser-preference') 'Real Main upgrade lost user browser data.'
     if ($LASTEXITCODE -ne 0) { throw "Real installed Windows Main update smoke exited with code $LASTEXITCODE" }
-    # This shell and Native Messaging are real native OS state, not mocked
-    # transaction callbacks. reuse_native MUST preserve their ownership.
+    # The source and WPF are real installed native OS state, not mocked.
+    # A successful Main update must select B's newly installed native host.
     $afterShell = @(Get-CimInstance Win32_Process -Filter "Name='EquinoxLocal.exe'" -ErrorAction SilentlyContinue | Where-Object { -not [string]::IsNullOrWhiteSpace($_.ExecutablePath) -and (Same-Path $_.ExecutablePath $StableExe) })
     Assert-True ($afterShell.Count -eq 1) 'Real Main update did not preserve exactly one healthy native stable shell process.'
     $afterRegistry = [string](Get-Item -LiteralPath $NativeRegistryKey -ErrorAction Stop).GetValue('')
     Assert-True (Same-Path $afterRegistry $ExpectedManifestPath) 'Native Messaging registry identity changed during source-only Main update.'
     $afterManifest = [IO.File]::ReadAllText($ExpectedManifestPath, (New-Object Text.UTF8Encoding($false, $true))) | ConvertFrom-Json
-    Assert-True (Same-Path ([string]$afterManifest.path) $ExpectedLauncher) 'Native Messaging executable identity changed during source-only Main update.'
+    $AfterExpectedLauncher = if ($env:EQUINOX_WINDOWS_MAIN_ACCEPT_SCENARIO -ceq 'target-crash') {
+      $ExpectedLauncher # Failed B must restore old A Native Messaging.
+    } else {
+      Join-Path $InstallRoot ("state\main-update\native-store\$FixtureTarget\$env:EQUINOX_WINDOWS_MAIN_ACCEPT_TARGET_SHA\release\runtime\browser\equinox-browser-native-host.exe")
+    }
+    Assert-True (Same-Path ([string]$afterManifest.path) $AfterExpectedLauncher) 'Updated Native Messaging manifest did not select exact B or restore A on failure.'
+    Assert-True ([IO.File]::Exists($AfterExpectedLauncher)) 'Updated Native Messaging executable was not installed.'
     Write-Output "Real Windows $FixtureTarget installed Main A-to-B native shell and Native Messaging acceptance PASSED."
   }
   # Execute the real shipped registry+shortcut cleanup after verifying
