@@ -77,8 +77,8 @@ test("ARM64 package is built once on fast x64 Windows and exact-byte native cons
   assert.doesNotMatch(job("windows-arm64-runtime"), /^    (?:needs|if):/mu);
 });
 
-test("ARM64 installer has a tighter bound after duplicate package construction is removed", () => {
-  assert.match(job("windows-arm64-installer"), /timeout-minutes: 7/u);
+test("ARM64 real installer has enough time for full original Guardian Q and offline recovery acceptance", () => {
+  assert.match(job("windows-arm64-installer"), /timeout-minutes: 10/u);
 });
 
 test("architecture-neutral Windows contract lanes stay off scarce ARM64 runners", () => {
