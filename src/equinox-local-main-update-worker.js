@@ -6,6 +6,7 @@ import { promisify } from "node:util";
 
 import { planEquinoxLocalMainNativeTransition } from "./equinox-local-main-native-admission.js";
 import { prepareEquinoxLocalMainNativeCandidate } from "./equinox-local-main-native-candidate.js";
+import { stageEquinoxLocalMainSnapshotArtifact } from "./equinox-local-main-snapshot.js";
 import { prepareEquinoxLocalMainNativeLifecycle } from "./equinox-local-main-native-activation.js";
 import { recoverEquinoxLocalMainNativeLifecycle } from "./equinox-local-main-native-recovery.js";
 import { equinoxLocalReleaseTarget } from "./equinox-local-platform.js";
@@ -151,6 +152,26 @@ export async function resolveEquinoxLocalMainWorkerNativeInstallation({
   return installation;
 }
 
+// The previous installed A version may have selected reuse_native and
+// therefore never downloaded B's native archive. The B-owned detached worker
+// makes this upgrade safe without requiring patches to already shipped A.
+async function ensureFreshTargetNativeArtifact({ transactionRoot, transactionId, targetSha, target,
+  expectedRuntimeContractSha256, fsImpl = fs, stageImpl = stageEquinoxLocalMainSnapshotArtifact }) {
+  const nativeDir = path.join(transactionRoot, "staging", transactionId, "native");
+  let exists = false;
+  try {
+    const stat = await fsImpl.lstat(nativeDir);
+    if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error("Main native artifact stage is not a safe directory.");
+    exists = true;
+  } catch (error) {
+    if (error?.code !== "ENOENT") throw error;
+  }
+  if (exists) return false; // The candidate validator still verifies every exact hash.
+  await stageImpl({ sourceSha: targetSha, target,
+    expectedRuntimeContractSha256, transactionRoot, transactionId, fsImpl });
+  return true;
+}
+
 export async function runEquinoxLocalMainUpdateWorker({
   argv = process.argv.slice(2),
   execFileImpl = execFile,
@@ -162,6 +183,7 @@ export async function runEquinoxLocalMainUpdateWorker({
   engineFactory = (options) => createEquinoxLocalMainUpdateTransactionEngine(options),
   resolveHostTarget = () => equinoxLocalReleaseTarget(),
   planNativeTransition = planEquinoxLocalMainNativeTransition,
+  ensureNativeArtifact = ensureFreshTargetNativeArtifact,
   prepareNativeCandidate = prepareEquinoxLocalMainNativeCandidate,
   prepareNativeLifecycle = prepareEquinoxLocalMainNativeLifecycle,
   recoverNativeLifecycle = recoverEquinoxLocalMainNativeLifecycle,
@@ -239,6 +261,9 @@ export async function runEquinoxLocalMainUpdateWorker({
           throw new Error("Windows update has no verified detached WPF owner.");
         }
         if (initialStage === "ready_to_switch") {
+          await ensureNativeArtifact({ transactionRoot: args.transactionRoot,
+            transactionId: args.transactionId, targetSha: active.targetSha, target,
+            expectedRuntimeContractSha256: nativeTransition.targetRuntimeContractSha256, fsImpl });
           const candidate = await prepareNativeCandidate({
             sourceSha: active.targetSha,
             target,

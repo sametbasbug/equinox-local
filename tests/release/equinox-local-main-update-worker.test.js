@@ -118,6 +118,7 @@ test("Windows detached owner installs a fresh native release without a second Gu
       events.push(["owner", options.ownerOnly]);
       return { admitted: true, ownerOnly: true };
     },
+    ensureNativeArtifact: async () => { events.push(["native-download", B]); },
     prepareNativeCandidate: async () => ({ sourceSha: B, target: "win32-x64" }),
     prepareNativeLifecycle: async (options) => {
       assert.equal(options.windowsAdmission, null);
@@ -132,7 +133,27 @@ test("Windows detached owner installs a fresh native release without a second Gu
     cleanupImpl: async () => events.push(["cleanup"]),
   });
   assert.equal(result.status, "succeeded");
-  assert.deepEqual(events, [["owner", true], ["fresh-native", B], ["handoff"], ["cleanup"]]);
+  assert.deepEqual(events, [["owner", true], ["native-download", B], ["fresh-native", B], ["handoff"], ["cleanup"]]);
+});
+
+test("target-owned detached worker stages a full native package when older A omitted it", async () => {
+  const events = [];
+  const receipt = preparedReceipt();
+  const transition = { mode: "artifact_required", target: "darwin-arm64", currentSha: A, targetSha: B,
+    currentRuntimeContractSha256: DIGEST_A, targetRuntimeContractSha256: DIGEST_A };
+  await runEquinoxLocalMainUpdateWorker({
+    argv: argv(), resolveHostTarget: () => "darwin-arm64",
+    engineFactory: () => ({ readActive: async () => receipt,
+      markNativeRollbackReady: async () => ({ ...receipt, stage: "native_rollback_ready" }) }),
+    planNativeTransition: async () => transition,
+    resolveNativeInstallation: async () => ({ managed: true, selfUpdateSupported: true, target: "darwin-arm64" }),
+    ensureNativeArtifact: async (args) => { events.push(["stage", args.targetSha, args.expectedRuntimeContractSha256]); },
+    prepareNativeCandidate: async () => { events.push(["candidate"]); return { sourceSha: B }; },
+    prepareNativeLifecycle: async () => ({ activate: async () => {}, rollback: async () => {}, commit: async () => {} }),
+    handoffImpl: async () => { events.push(["handoff"]); return { status: "succeeded" }; },
+    cleanupImpl: async () => {},
+  });
+  assert.deepEqual(events, [["stage", B, DIGEST_A], ["candidate"], ["handoff"]]);
 });
 
 test("Windows clean replacement refuses missing detached worker ownership before filesystem mutation", async () => {
@@ -263,6 +284,7 @@ test("worker prepares exact native candidate and durable rollback lifecycle befo
     resolveHostTarget: () => "darwin-arm64",
     planNativeTransition: async (value) => { events.push(["plan", value]); return transition; },
     resolveNativeInstallation: async () => ({ managed: true, selfUpdateSupported: true, target: "darwin-arm64" }),
+    ensureNativeArtifact: async () => {},
     prepareNativeCandidate: async (value) => { events.push(["candidate", value]); return candidate; },
     prepareNativeLifecycle: async (value) => { events.push(["native-lifecycle", value]); return lifecycle; },
     handoffImpl: async (value) => { events.push(["handoff", value]); return { status: "succeeded" }; },
@@ -290,6 +312,7 @@ test("worker aborts its own prepared transaction when native admission revalidat
     resolveHostTarget: () => "darwin-arm64",
     planNativeTransition: async () => transition,
     resolveNativeInstallation: async () => ({ managed: true, selfUpdateSupported: true, target: "darwin-arm64" }),
+    ensureNativeArtifact: async () => {},
     prepareNativeCandidate: async () => { throw new Error("local artifact digest drift"); },
     handoffImpl: async () => assert.fail("admission failure must happen before handoff"),
     cleanupImpl: async () => events.push(["cleanup"]),
