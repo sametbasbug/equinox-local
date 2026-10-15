@@ -123,7 +123,7 @@ async function run() {
   const scenario = process.env.M8_ACCEPTANCE_SCENARIO || "positive";
   if (!["positive", "target-health-failure"].includes(scenario)) throw new Error("Unsupported native M8 acceptance scenario.");
   const negative = scenario === "target-health-failure";
-  const expectedNativeMode = process.env.M8_EXPECTED_NATIVE_MODE || "reuse_native";
+  const expectedNativeMode = process.env.M8_EXPECTED_NATIVE_MODE || "artifact_required";
   if (!["reuse_native", "artifact_required"].includes(expectedNativeMode)) throw new Error("Unsupported required M8 native transition mode.");
   // Ensure tests never bootout or replace an existing user's instance. An
   // occupied port or managed LaunchAgent means this machine isn't isolated.

@@ -168,7 +168,11 @@ export async function planEquinoxLocalMainNativeTransition({
   if (!DIGEST_PATTERN.test(currentContract?.sha256 ?? "") || !DIGEST_PATTERN.test(targetContract?.sha256 ?? "")) {
     throw new Error("Main native transition contract digest is invalid.");
   }
-  const mode = currentContract.sha256 === targetContract.sha256 ? "reuse_native" : "artifact_required";
+  // Full replacement on EVERY Main update. A matching contract is not
+  // permission to reuse native executables left by any older installation.
+  // CI already publishes the four exact-SHA native artifacts for each
+  // product-bearing Main snapshot; use the fresh target archive every time.
+  const mode = "artifact_required";
   return Object.freeze({
     mode,
     target,

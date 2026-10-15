@@ -26,7 +26,7 @@ on:
       expected_native_mode:
         description: Require genuine native transition mode (default preserves previous smoke)
         required: true
-        default: reuse_native
+        default: artifact_required
         type: choice
         options:
           - reuse_native
