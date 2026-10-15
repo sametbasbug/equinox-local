@@ -63,13 +63,9 @@ internal static partial class Program
     // must never authorize a WPF shutdown or a journal replay. This remains a
     // read-only provenance test, NOT an authenticated worker command line or
     // an update/rollback authorization.
-    // The active native Guardian already holds CREATE_NEW/FileShare.None
-    // writer lease; public read-only worker audit must reject that lock, but
-    // this SAME owner can recheck its live OS peer while it holds the lease.
-    // Never expose this bypass through the standalone --audit commands.
-    private static OwnedWorkerClaim InspectOwnedNativeWorkerProcess(bool guardianHoldsJournalLease = false)
+    private static OwnedWorkerClaim InspectOwnedNativeWorkerProcess()
     {
-        if (!guardianHoldsJournalLease) InspectOwnedNativeTransitionJournal();
+        InspectOwnedNativeTransitionJournal();
         InspectionPhase = "native-worker-owned-release";
         var local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
         var install = Path.Combine(local, "Equinox Local");

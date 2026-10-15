@@ -64,8 +64,7 @@ internal static class Program
 const fs = require('node:fs');
 const path = require('node:path');
 const marker = path.join(process.cwd(), 'uninstall-handoff-marker.json');
-const unpublished = marker + '.writing-' + process.pid;
-fs.writeFileSync(unpublished, JSON.stringify({
+fs.writeFileSync(marker, JSON.stringify({
   pid: process.pid,
   cwd: process.cwd(),
   argv: process.argv.slice(2),
@@ -76,9 +75,6 @@ fs.writeFileSync(unpublished, JSON.stringify({
   startupCommand: process.env.EQUINOX_LOCAL_EXPECTED_STARTUP_COMMAND || null,
   pathValue: process.env.PATH || null,
 }));
-// The C# parent must never observe an existing but still exclusively opened
-// JSON marker. Write and close first, then publish atomically on this volume.
-fs.renameSync(unpublished, marker);
 setTimeout(() => {}, 30000);
 """);
 

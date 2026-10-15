@@ -29,11 +29,7 @@ async function knownTree(root, fsImpl) {
   try {
     const stat = await fsImpl.lstat(root);
     if (stat.isSymbolicLink() || !stat.isDirectory()) throw new Error('Windows native slot is a foreign filesystem entry.');
-    // The running WPF creates two bounded, known WebView/WinRT caches inside
-    // its installed tree. Native ownership ignores ONLY those exact cache
-    // names (and verifies they contain no reparse links); all executable
-    // and unknown file bytes still participate in exact SHA comparison.
-    return await snapshotWindowsStableShellTree(root, { fsImpl, ignoreLegacyCache: true });
+    return await snapshotWindowsStableShellTree(root, { fsImpl });
   } catch (error) {
     if (error?.code === 'ENOENT') return null;
     throw error;
@@ -90,14 +86,12 @@ export async function restoreWindowsNativeABSlot(options, { fsImpl = fs } = {}) 
     throw new Error('Native A/B rollback has a foreign candidate quarantine.');
   }
   if (!backup) {
-    // A alone is not recovery evidence: a clean pre-update Stable install,
-    // or a prematurely discarded failed-B quarantine, must NOT be treated
-    // as a successfully replayed native rollback. The earlier physical B
-    // must still be present under this transaction's exact quarantine path.
-    if (active && sameWindowsStableShellTree(active, a) && quarantine) {
-      return Object.freeze({ stage: 'restored', recovered: true, quarantineRoot: p.quarantineRoot });
+    // Crash after A was successfully restored but before the receipt advanced:
+    // A plus a verified B quarantine is a legitimate idempotent replay state.
+    if (active && sameWindowsStableShellTree(active, a)) {
+      return Object.freeze({ stage: 'restored', recovered: true, quarantineRoot: quarantine ? p.quarantineRoot : null });
     }
-    throw new Error('Native A/B rollback lacks exact old A backup and verified B quarantine.');
+    throw new Error('Native A/B rollback lacks the exact old A backup.');
   }
   if (quarantine && active) throw new Error('Native A/B rollback has ambiguous active and quarantined candidates.');
   if (!sameWindowsStableShellTree(backup, a) || (active && !sameWindowsStableShellTree(active, b))) {

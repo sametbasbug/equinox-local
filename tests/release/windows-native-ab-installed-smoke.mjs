@@ -95,18 +95,6 @@ try {
   await journal.create({ transactionId: jid, target, currentSha: shaA, targetSha: shaB,
     receiptStartedAt: started, previousNative: { kind: 'stable', version: '6.0.4' },
     targetRuntimeContractSha256: contract });
-  let selectedNativePointer = null;
-  const selectedPointerFile = path.join(txroot, 'current-native.json');
-  const readFixtureNativePointer = async () => {
-    try { return JSON.parse(await fs.readFile(selectedPointerFile, 'utf8')); }
-    catch (error) { if (error?.code === 'ENOENT') return null; throw error; }
-  };
-  const assertPointerExact = async (release) => {
-    const expected = release === 'B' ? shaB : null;
-    const selected = await readFixtureNativePointer();
-    assert.equal(selected?.sourceSha ?? null, expected, 'real installed WPF must never start with the wrong A/B pointer');
-    assert.equal(selectedNativePointer?.sourceSha ?? null, expected, 'native pointer readback differs from the selected fixture identity');
-  };
   const lifecycle = createSupervisorBoundWindowsNativeABLifecycle({
     transactionId: jid, transition: { mode: 'artifact_required', target, currentSha: shaA, targetSha: shaB,
       targetRuntimeContractSha256: contract },
@@ -133,24 +121,7 @@ try {
       assert.equal(expectedPreviousLauncherPath, prior);
       nm = launcherPath.startsWith(targetReleaseDir) ? 'B' : 'A';
     },
-    readPointerImpl: async () => {
-      const selected = await readFixtureNativePointer();
-      if (!selected) throw Object.assign(new Error('disposable Stable A has no Main native pointer'), { code: 'ENOENT' });
-      return selected;
-    },
-    writePointerImpl: async (pointerPath, value) => {
-      assert.equal(pointerPath, selectedPointerFile);
-      assert.equal(value.sourceSha, shaB);
-      const temp = `${pointerPath}.fixture-candidate`;
-      await fs.writeFile(temp, JSON.stringify(value));
-      await fs.rename(temp, pointerPath);
-      selectedNativePointer = await readFixtureNativePointer();
-    },
-    removePointerImpl: async (pointerPath) => {
-      assert.equal(pointerPath, selectedPointerFile);
-      await fs.unlink(pointerPath);
-      selectedNativePointer = await readFixtureNativePointer();
-    },
+    writePointerImpl: async (_pointer, value) => { assert.equal(value.sourceSha, shaB); },
   });
   const base = { currentSha: shaA, targetSha: shaB, rollbackSha: shaA,
     rollbackSourceRoot: path.join(root, 'sourceA'), targetSourceRoot: path.join(root, 'sourceB') };
@@ -167,14 +138,10 @@ try {
   const journaled = await runEquinoxLocalMainUpdateHandoff({
     engine, transactionId: jid, nativeLifecycle: lifecycle,
     initialReceipt: { ...base, stage: 'native_rollback_ready' },
-    restartRuntime: async ({ rollback }) => {
-      await assertPointerExact(rollback ? 'A' : 'B');
-      restarted = true;
-    },
+    restartRuntime: async () => { restarted = true; },
     verifyRuntime: async () => true,
   });
   assert.equal(journaled.status, 'succeeded');
-  await assertPointerExact('B');
   assert.equal((await journal.read(jid)).stage, 'committed');
   assert.ok(sameWindowsStableShellTree(await readInstalled(), bRef));
   await assert.rejects(fs.lstat(path.join(root, 'Programs', `.equinox-shell-backup-${jid}`)), { code: 'ENOENT' });

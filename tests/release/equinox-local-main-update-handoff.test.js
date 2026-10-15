@@ -85,63 +85,6 @@ test("rollback pointer failure is loud and records rollback_failed without relea
 });
 
 
-test("Guardian-owned B failure keeps B source, A backup and receipt untouched until OS physical restore", async () => {
-  for (const failureStage of ["health", "healthy-milestone", "activation"]) {
-    const f = engineFixture();
-    const nativeEvents = [];
-    const nativeLifecycle = {
-      journaledAB: true, nativeOwnsMilestones: true,
-      activate: async () => { nativeEvents.push("activate"); if (failureStage === "activation") throw new Error("OS B activation failed"); },
-      selectRuntime: async () => nativeEvents.push("select:B"),
-      recordRestarted: async () => nativeEvents.push("restarted/4"),
-      recordHealthy: async () => { throw new Error("separate OS-owned B commit is pending"); },
-      rollback: async () => assert.fail("JS must not touch owned WPF or Native Messaging A"),
-      recordRollbackHealthy: async () => assert.fail("JS must not commit native rollback health"),
-      finalizeCommitted: async () => assert.fail("JS must not delete retained A"),
-      finalizeRolledBack: async () => assert.fail("JS must not discard quarantined B"),
-      commit: async () => assert.fail("OS-owned commit is not ready"),
-    };
-    const restarts = [];
-    await assert.rejects(runEquinoxLocalMainUpdateHandoff({
-      engine: f.engine, transactionId: f.receipt.transactionId,
-      nativeLifecycle,
-      restartRuntime: async (args) => restarts.push(args),
-      verifyRuntime: async () => failureStage !== "health",
-    }), (error) => {
-      assert.equal(error.code, "EQUINOX_NATIVE_OS_RECOVERY_REQUIRED");
-      assert.match(error.message, /OS-authorized physical A restore/u);
-      return true;
-    });
-    assert.deepEqual(f.calls.map(([name]) => name),
-      failureStage === "activation" ? [] : ["native_switched", "activate"],
-      "no source rollback, failed terminal receipt or staged lock release may occur");
-    assert.equal(restarts.some((args) => args.rollback), false);
-    assert.equal(nativeEvents.includes("select:A"), false);
-  }
-});
-
-test("Guardian-owned recovery refuses replayed JS-only A pointer receipts", async () => {
-  for (const stage of ["rollback_source_restored", "rollback_native_restored"]) {
-    const f = engineFixture();
-    await assert.rejects(runEquinoxLocalMainUpdateHandoff({
-      engine: f.engine, transactionId: f.receipt.transactionId,
-      initialReceipt: { ...f.receipt, status: "verifying", stage },
-      nativeLifecycle: {
-        journaledAB: true, nativeOwnsMilestones: true,
-        activate: async () => assert.fail("no WPF mutation"),
-        rollback: async () => assert.fail("cannot trust JS-reported native restore"),
-        commit: async () => {},
-        selectRuntime: async () => assert.fail("cannot select native A"),
-        recordRestarted: async () => {}, recordHealthy: async () => {},
-        recordRollbackHealthy: async () => {}, finalizeCommitted: async () => {}, finalizeRolledBack: async () => {},
-      },
-      restartRuntime: async () => assert.fail("cannot launch A"),
-      verifyRuntime: async () => assert.fail("cannot assert A health"),
-    }), { code: "EQUINOX_NATIVE_OS_RECOVERY_REQUIRED" });
-    assert.deepEqual(f.calls, []);
-  }
-});
-
 test("native-impact handoff switches native before source and commits native identity only after target health", async () => {
   const f = engineFixture();
   const events = [];

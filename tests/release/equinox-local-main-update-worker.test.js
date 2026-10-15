@@ -71,7 +71,7 @@ test("Windows native Main rollback relaunch fails closed when restored shell can
   }), /trusted absolute/u);
 });
 
-test("Windows journaled Main worker launches B only through native Guardian and refuses direct A fallback", async () => {
+test("Windows native worker handoff supplies exact candidate and rollback release identities to shell restart", async () => {
   const events = [];
   const rollbackPath = "C:\\native-rollback\\release";
   const targetRelease = "C:\\native-store\\release";
@@ -87,49 +87,16 @@ test("Windows journaled Main worker launches B only through native Guardian and 
     resolveNativeInstallation: async () => ({ managed: true, selfUpdateSupported: true, target: "win32-x64" }),
     admitWindowsNativeWorker: async () => ({ admitted: true, journal }),
     recoverNativeLifecycle: async () => nativeLifecycle,
-    env: { EQUINOX_LOCAL_MAIN_WORKER_TOKEN: 'f'.repeat(64) },
-    restartRuntimeImpl: async () => assert.fail('journaled native WPF must never restart through unowned JS'),
-    guardianOwnedBWpfRestartImpl: async (value) => { events.push(value); },
+    restartRuntimeImpl: async (v) => events.push(v),
     handoffImpl: async ({ restartRuntime }) => {
-      await restartRuntime({ rollback: false, transactionId: TX, sha: B });
-      assert.throws(() => restartRuntime({ rollback: true, transactionId: TX, sha: A }), /independently verified Guardian recovery/u);
+      await restartRuntime({ rollback: false, transactionId: TX });
+      await restartRuntime({ rollback: true, transactionId: TX });
       return { status: "succeeded" };
     },
     cleanupImpl: async () => {},
   });
-  assert.equal(events.length, 1);
-  assert.deepEqual(events[0], { transactionId: TX, transactionRoot: STATE, workerToken: 'f'.repeat(64), sourceSha: B });
-});
-
-test("Windows OS-owned native recovery preserves exact worker ownership marker for independent reconciliation", async () => {
-  const events = [];
-  const transition = { mode: "artifact_required", target: "win32-x64", currentSha: A, targetSha: B,
-    currentRuntimeContractSha256: DIGEST_A, targetRuntimeContractSha256: DIGEST_B };
-  const receipt = preparedReceipt({ stage: "native_switched" });
-  const journal = { source: "exact-native-os-owned-journal" };
-  const engine = {
-    paths: { sourcePointerPath: "C:\\transaction\\current-source.conf" },
-    readActive: async () => receipt,
-    markRollbackFailed: async () => assert.fail("no terminal receipt before authorized OS A restore"),
-  };
-  async function invoke({ owned = true, code = "EQUINOX_NATIVE_OS_RECOVERY_REQUIRED" } = {}) {
-    return runEquinoxLocalMainUpdateWorker({
-      argv: argv(), engineFactory: () => engine, resolveHostTarget: () => "win32-x64",
-      planNativeTransition: async () => transition,
-      resolveNativeInstallation: async () => ({ managed: true, selfUpdateSupported: true, target: "win32-x64" }),
-      admitWindowsNativeWorker: async () => ({ admitted: true, journal }),
-      recoverNativeLifecycle: async () => ({ journaledAB: true, journal, nativeOwnsMilestones: owned }),
-      env: { EQUINOX_LOCAL_MAIN_WORKER_TOKEN: "f".repeat(64) },
-      handoffImpl: async () => { const error = new Error("native recovery pending"); error.code = code; throw error; },
-      cleanupImpl: async () => events.push("cleanup"),
-    });
-  }
-  await assert.rejects(invoke(), { code: "EQUINOX_NATIVE_OS_RECOVERY_REQUIRED" });
-  assert.deepEqual(events, [], "native failure must preserve original OS owner receipt for independent offline recovery");
-  await assert.rejects(invoke({ owned: false }), { code: "EQUINOX_NATIVE_OS_RECOVERY_REQUIRED" });
-  assert.deepEqual(events, ["cleanup"], "non-OS native implementations keep normal cleanup contract");
-  await assert.rejects(invoke({ code: "UNRELATED_FAILURE" }), { code: "UNRELATED_FAILURE" });
-  assert.deepEqual(events, ["cleanup", "cleanup"], "unrelated OS errors must not leak worker ownership markers");
+  assert.deepEqual(events[0].windowsNativeShell, { programRoot, releaseDir: targetRelease });
+  assert.deepEqual(events[1].windowsNativeShell, { programRoot, releaseDir: rollbackPath });
 });
 
 test("Windows worker blocks legacy random native replacement after journal admission and before handoff", async () => {
@@ -399,49 +366,6 @@ test("native health fails closed when old A remains HEALTHY after requested rest
     fetchImpl: async () => { requests++; return { ok: true, json: async () => ({ status: { health: { state: "HEALTHY" }, installation: { kind: "managed-source", sourceSha: A } } }) }; },
   }), /has not converged/u);
   assert.equal(requests, 2);
-});
-
-test("native Main B sustained health needs multiple consecutive exact B responses and independent native proof", async () => {
-  const states = [B, B, A, B, B, B, B];
-  let requests = 0;
-  let nativeSamples = 0;
-  const result = await waitForExactSourceHealth({
-    sha: B, sourceRoot: SOURCE, pointerPath: `${STATE}/current-source.conf`,
-    consecutiveHealthySamples: 4, attempts: states.length,
-    readPointerImpl: async () => ({ sha: B, sourceRoot: SOURCE }),
-    inspectCheckoutImpl: async () => ({ eligible: true, currentSha: B }),
-    sleepImpl: async () => {},
-    verifyNativeHealthSample: async ({ sha, observed }) => {
-      assert.equal(sha, B);
-      assert.equal(observed.installation.kind, 'managed-source');
-      nativeSamples++;
-      return true;
-    },
-    fetchImpl: async () => ({ ok: true, json: async () => ({ status: {
-      health: { state: 'HEALTHY' }, installation: { kind: 'managed-source', sourceSha: states[requests++] },
-    } }) }),
-  });
-  assert.equal(result, true);
-  assert.equal(requests, 7, 'intermittent old A success must reset the 4 consecutive B samples');
-  assert.equal(nativeSamples, 6);
-});
-
-test("native Main sustained health fails closed on independent Native Messaging/Guardian sample drift", async () => {
-  let requests = 0;
-  await assert.rejects(waitForExactSourceHealth({
-    sha: B, sourceRoot: SOURCE, pointerPath: `${STATE}/current-source.conf`,
-    consecutiveHealthySamples: 3, attempts: 5,
-    readPointerImpl: async () => ({ sha: B, sourceRoot: SOURCE }),
-    inspectCheckoutImpl: async () => ({ eligible: true, currentSha: B }),
-    sleepImpl: async () => {},
-    verifyNativeHealthSample: async () => { requests++; return requests % 2 === 0; },
-    fetchImpl: async () => ({ ok: true, json: async () => ({ status: {
-      health: { state: 'HEALTHY' }, installation: { kind: 'managed-source', sourceSha: B },
-    } }) }),
-  }), /not independently verified/u);
-  assert.equal(requests, 5);
-  await assert.rejects(waitForExactSourceHealth({ sha: B, sourceRoot: SOURCE,
-    consecutiveHealthySamples: 0, attempts: 3 }), /sampling bounds/u);
 });
 
 test("Main worker passes pinned Windows Git shell into recovery engine", async () => {

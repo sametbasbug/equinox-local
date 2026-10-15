@@ -22,7 +22,6 @@ import { assertWindowsStableShellOwnedByRelease, launchWindowsStableShell } from
 import { cleanupEquinoxLocalMainUpdateWorkerOwnership } from "./equinox-local-main-update-scheduler.js";
 import { admitWindowsMainNativeWorkerJournal } from "./equinox-local-windows-main-worker-admission.js";
 import { startEquinoxWindowsMainWorkerProof } from "./equinox-local-windows-main-worker-proof.js";
-import { requestEquinoxLocalGuardianOwnedBWpfRestart } from "./equinox-local-windows-native-ab-restart-client.js";
 
 const execFile = promisify(execFileCallback);
 const HEALTH_ATTEMPTS = 40;
@@ -97,19 +96,12 @@ export async function waitForExactSourceHealth({
   sleepImpl = (ms) => new Promise((resolve) => setTimeout(resolve, ms)), attempts = HEALTH_ATTEMPTS,
   readPointerImpl = readEquinoxLocalMainSourcePointer,
   inspectCheckoutImpl = inspectCanonicalMainCheckout,
-  consecutiveHealthySamples = 1,
-  verifyNativeHealthSample = null,
 }) {
-  if (!Number.isSafeInteger(consecutiveHealthySamples) || consecutiveHealthySamples < 1 || consecutiveHealthySamples > 8 ||
-      (verifyNativeHealthSample !== null && typeof verifyNativeHealthSample !== "function") || attempts < consecutiveHealthySamples) {
-    throw new Error("Main update sustained health sampling bounds are invalid.");
-  }
   const pointer = await readPointerImpl(pointerPath, { gitPath });
   if (pointer.sha !== sha || pointer.sourceRoot !== sourceRoot) throw new Error("Main update source pointer does not match the expected runtime identity.");
   const checkout = await inspectCheckoutImpl(sourceRoot, { gitPath });
   if (!checkout.eligible || checkout.currentSha !== sha) throw new Error("Main update runtime checkout does not match the expected canonical SHA.");
   let lastError = null;
-  let consecutive = 0;
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     try {
       const response = await fetchImpl(EQUINOX_LOCAL_CONTROL_CENTER_STATUS_URL, { method: "GET", redirect: "error", cache: "no-store", credentials: "omit", headers: { accept: "application/json" } });
@@ -118,20 +110,11 @@ export async function waitForExactSourceHealth({
       const observed = body?.status;
       if (observed?.health?.state === "HEALTHY"
         && observed?.installation?.kind === "managed-source"
-        && observed?.installation?.sourceSha === sha) {
-        if (verifyNativeHealthSample && await verifyNativeHealthSample({ sha, sourceRoot, observed }) !== true) {
-          throw new Error("Native Main OS ownership or Browser health sample is not independently verified.");
-        }
-        consecutive += 1;
-        if (consecutive >= consecutiveHealthySamples) return true;
-        if (attempt + 1 < attempts) await sleepImpl(HEALTH_DELAY_MS);
-        continue;
-      }
+        && observed?.installation?.sourceSha === sha) return true;
       // A native relaunch can race the old A server staying HEALTHY on the
       // loopback port. Never call source B admitted until B itself responds.
       throw new Error("Main update runtime health or installed source SHA has not converged.");
     } catch (error) {
-      consecutive = 0;
       lastError = error;
       if (attempt + 1 < attempts) await sleepImpl(HEALTH_DELAY_MS);
     }
@@ -185,7 +168,6 @@ export async function runEquinoxLocalMainUpdateWorker({
   recoverNativeLifecycle = recoverEquinoxLocalMainNativeLifecycle,
   admitWindowsNativeWorker = admitWindowsMainNativeWorkerJournal,
   handoffImpl = runEquinoxLocalMainUpdateHandoff,
-  guardianOwnedBWpfRestartImpl = requestEquinoxLocalGuardianOwnedBWpfRestart,
   restartRuntimeImpl = (value) => restartEquinoxLocalMainSourceRuntime({ ...value, execFileImpl, env, fsImpl }),
   verifyRuntimeImpl,
   resolveNativeInstallation = resolveEquinoxLocalMainWorkerNativeInstallation,
@@ -199,7 +181,6 @@ export async function runEquinoxLocalMainUpdateWorker({
     : pathApi.join(pathApi.dirname(args.transactionRoot), "runtime");
   const toolchain = equinoxLocalToolchainContract({ runtimeRoot, target: hostTarget });
   let workerProof = null;
-  let preserveNativeOwnerForRecovery = false;
   try {
     const engine = engineFactory({
       sourceRoot: args.sourceRoot,
@@ -320,26 +301,8 @@ export async function runEquinoxLocalMainUpdateWorker({
     }
     const verify = typeof verifyRuntimeImpl === "function"
       ? verifyRuntimeImpl
-      : (value) => waitForExactSourceHealth({ ...value, pointerPath: engine.paths.sourcePointerPath,
-          gitPath: toolchain.gitPath, fetchImpl, sleepImpl,
-          consecutiveHealthySamples: nativeLifecycle?.journaledAB === true ? 4 : 1 });
+      : (value) => waitForExactSourceHealth({ ...value, pointerPath: engine.paths.sourcePointerPath, gitPath: toolchain.gitPath, fetchImpl, sleepImpl });
     const restartWithNativeOwnership = (value) => {
-      if (hostTarget.startsWith("win32-") && nativeLifecycle?.journaledAB === true) {
-        if (value.rollback) {
-          // Rollback must also use exact native Guardian OS ownership; do
-          // not silently fall back to the old JS direct Windows shell launch.
-          throw new Error("Windows native A rollback WPF restart requires independently verified Guardian recovery.");
-        }
-        if (typeof env.EQUINOX_LOCAL_MAIN_WORKER_TOKEN !== "string") {
-          throw new Error("Guardian-owned native B WPF restart is missing its live worker proof.");
-        }
-        return guardianOwnedBWpfRestartImpl({
-          transactionId: args.transactionId,
-          transactionRoot: args.transactionRoot,
-          workerToken: env.EQUINOX_LOCAL_MAIN_WORKER_TOKEN,
-          sourceSha: value.sha,
-        });
-      }
       if (hostTarget.startsWith("win32-") && nativeLifecycle) {
         // Native Windows lifecycle supplies both trusted release identities;
         // preserve exact rollback ownership instead of guessing a shell path.
@@ -351,33 +314,18 @@ export async function runEquinoxLocalMainUpdateWorker({
       }
       return restartRuntimeImpl(value);
     };
-    try {
-      return await handoffImpl({
-        engine,
+    return await handoffImpl({
+      engine,
       transactionId: args.transactionId,
       nativeTransition,
       nativeLifecycle,
       initialReceipt: active,
       restartRuntime: restartWithNativeOwnership,
-        verifyRuntime: verify,
-      });
-    } catch (failure) {
-      if (failure?.code === "EQUINOX_NATIVE_OS_RECOVERY_REQUIRED" &&
-          hostTarget.startsWith("win32-") && nativeLifecycle?.nativeOwnsMilestones === true) {
-        // The original worker exits, but its exact admitted ownership
-        // record must remain as OS-auditable evidence with the quarantined
-        // Guardian writer lock. Never auto-reclaim a stranded native A/B.
-        preserveNativeOwnerForRecovery = true;
-      }
-      throw failure;
-    }
+      verifyRuntime: verify,
+    });
   } finally {
     try { await workerProof?.close(); }
-    finally {
-      if (!preserveNativeOwnerForRecovery) {
-        await cleanupImpl({ transactionId: args.transactionId, transactionRoot: args.transactionRoot });
-      }
-    }
+    finally { await cleanupImpl({ transactionId: args.transactionId, transactionRoot: args.transactionRoot }); }
   }
 }
 

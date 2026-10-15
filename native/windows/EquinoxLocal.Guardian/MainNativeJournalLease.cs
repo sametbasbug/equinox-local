@@ -10,7 +10,7 @@ internal static partial class Program
     // writer and NOT permission to stop WPF, swap A/B or relaunch anything.
     // The persistent marker is intentionally never deleted automatically:
     // a dead native owner needs independent receipt + filesystem reconciliation.
-    private static void HoldOwnedNativeJournalLease(bool acceptAuthorityProof = false, bool recordPreparedAbort = false, bool quiesceStableShell = false, bool integratedAB = false)
+    private static void HoldOwnedNativeJournalLease(bool acceptAuthorityProof = false, bool recordPreparedAbort = false, bool quiesceStableShell = false)
     {
         InspectionPhase = "native-journal-lease-preflight";
         InspectOwnedNativeWorkerOsArguments();
@@ -35,37 +35,11 @@ internal static partial class Program
         if (body.Length > 512) throw new InvalidDataException("Windows journal lease record exceeds its bound.");
         lease.Write(body);
         lease.Flush(flushToDisk: true);
-        // One monotonic deadline covers request admission, HMAC, negative
-        // health verification AND the read-only stage5 wait. A successful
-        // grant never starts a fresh 20-minute ownership window.
-        var leaseAge = Stopwatch.StartNew();
         InspectionPhase = "native-journal-lease-exclusive-held";
-        if (acceptAuthorityProof || recordPreparedAbort || quiesceStableShell || integratedAB)
+        if (acceptAuthorityProof || recordPreparedAbort || quiesceStableShell)
             RecordNativeJournalWorkerAuthority(owner, root, worker, recordPreparedAbort);
         if (quiesceStableShell)
             QuiesceOwnedStableShell(owner, root, worker);
-        if (integratedAB)
-        {
-            RunOwnedIntegratedMainABSupervisor(owner, root, worker);
-            // Same process, same live worker and SAME OS-held exclusive writer
-            // lease. This listener is request-driven; it cannot act during a
-            // healthy B startup without a real original-worker request AND
-            // the Guardian's independent negative B health witness.
-            var rollbackStarted = AuthorizeOwnedIntegratedARollbackStart(owner, root, worker, leaseAge);
-            if (rollbackStarted)
-            {
-                // Keep the SAME OS-held exclusive lease and original Guardian
-                // process alive after durable rollback_started/5. A separate
-                // read-only OS attestation still needs this live owner, and
-                // neither orphan deletion nor physical A restore is allowed.
-                InspectionPhase = "native-integrated-a-rollback-started-owner-held";
-                RequireOwnedPhysicalARestoreReadiness(owner, root, worker, lease, leaseAge);
-                HoldOwnedRollbackOwnerWitness(owner, root, worker, lease, leaseAge);
-            }
-            // Never grant a second lease or silently reclaim an unfinished
-            // native rollback journal after owner exit or shared deadline.
-            throw new InvalidOperationException("Integrated native Guardian rollback needs a trusted physical restore coordinator.");
-        }
         // Deliberately no journal/receipt modifications and no automatic
         // cleanup. Worker exit or bounded lease expiry means a trusted
         // supervisor must reconcile before any further native mutation.

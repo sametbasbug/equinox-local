@@ -12,18 +12,6 @@ const PROFILE = "equinox-local";
 const RECONNECT_BASE_DELAY_MS = 30_000;
 const RECONNECT_MAX_DELAY_MS = 10 * 60_000;
 
-// Only fixed codes/classes may leave the owned Windows process supervisor.
-// Never serialize raw Error.message, stack, paths or tunnel credentials.
-export function windowsSupervisorFailureClass(error) {
-  if (error?.message === "Windows runtime source or release path is invalid.") return "runtime-location";
-  if (error?.message === "Windows shell supervisor requires Windows.") return "platform-contract";
-  const codes = new Set(["ENOENT", "ENOTDIR", "EACCES", "EPERM", "EISDIR", "EINVAL", "EMFILE"]);
-  if (typeof error?.code === "string" && codes.has(error.code)) return `os-${error.code}`;
-  const kinds = new Set(["TypeError", "SyntaxError", "RangeError", "ReferenceError", "AggregateError"]);
-  if (typeof error?.name === "string" && kinds.has(error.name)) return `js-${error.name}`;
-  return "unspecified";
-}
-
 export function windowsTunnelReconnectDelay(attempt) {
   if (!Number.isSafeInteger(attempt) || attempt < 1) throw new Error("Windows tunnel reconnect attempt is invalid.");
   return Math.min(RECONNECT_MAX_DELAY_MS, RECONNECT_BASE_DELAY_MS * 2 ** Math.min(attempt - 1, 8));
@@ -120,13 +108,9 @@ export async function runWindowsShellRuntimeSupervisor({
   mkdirImpl = fs.mkdir,
   execFileImpl = execFile,
   runChildImpl = runWindowsSupervisorChild,
-  onPhase = () => {},
 } = {}) {
-  onPhase("platform");
   if (platform !== "win32") throw new Error("Windows shell supervisor requires Windows.");
-  onPhase("paths");
   const paths = managedSupervisorPaths(homeDir, { platform, env });
-  onPhase("identity");
   const releaseDir = env.EQUINOX_LOCAL_RELEASE_DIR;
   if (typeof releaseDir !== "string" || !path.win32.isAbsolute(releaseDir) ||
       typeof serverPath !== "string" || !path.win32.isAbsolute(serverPath) ||
@@ -136,14 +120,10 @@ export async function runWindowsShellRuntimeSupervisor({
   const cwd = path.win32.dirname(serverPath);
   const node = path.win32.join(releaseDir, "runtime", "node", "bin", "node.exe");
   const tunnel = path.win32.join(releaseDir, "runtime", "tunnel", "tunnel-client.exe");
-  const localOnly = (reconnect = null) => {
-    onPhase("local-child");
-    return runChildImpl(node, [serverPath], {
-      cwd, env: childEnv(env, "local-only"), stdin: reconnect ? "pipe" : "inherit", ...(reconnect ? { reconnect } : {}),
-    });
-  };
+  const localOnly = (reconnect = null) => runChildImpl(node, [serverPath], {
+    cwd, env: childEnv(env, "local-only"), stdin: reconnect ? "pipe" : "inherit", ...(reconnect ? { reconnect } : {}),
+  });
   let transport;
-  onPhase("transport-read");
   try {
     transport = await readTransportImpl(paths, { platform });
   } catch {
@@ -156,7 +136,6 @@ export async function runWindowsShellRuntimeSupervisor({
   }
 
   const initializeTunnel = async () => {
-    onPhase("tunnel-prepare");
     await mkdirImpl(paths.profileDir, { recursive: true, mode: 0o700 });
     await protectProfileImpl({ target: paths.profileDir, type: "directory" });
     await execFileImpl(tunnel, windowsTunnelInitArguments({ paths, nodePath: node, serverPath, tunnelId: transport.tunnelId }), {
@@ -169,7 +148,6 @@ export async function runWindowsShellRuntimeSupervisor({
       await initializeTunnel();
       process.stderr.write("[Equinox Windows supervisor] state=tunnel-starting.\n");
       const tunnelStart = Date.now();
-      onPhase("tunnel-child");
       const result = await runChildImpl(tunnel, ["run", "--profile", PROFILE, "--profile-dir", paths.profileDir], {
         cwd, env: childEnv(env, "tunnel"), stdin: "ignore",
       });
@@ -195,9 +173,8 @@ export async function runWindowsShellRuntimeSupervisor({
 
 const invoked = process.argv[1] ? pathToFileURL(path.resolve(process.argv[1])).href : null;
 if (invoked === import.meta.url) {
-  let phase = "entry";
-  runWindowsShellRuntimeSupervisor({ onPhase: (value) => { phase = value; } }).catch((error) => {
-    process.stderr.write(`[Equinox Windows supervisor] state=runtime-start-failed; reason=${windowsSupervisorFailureClass(error)}; phase=${phase}.\n`);
+  runWindowsShellRuntimeSupervisor().catch(() => {
+    process.stderr.write("[Equinox Windows supervisor] Failed to start runtime; check Control Center.\n");
     process.exitCode = 1;
   });
 }

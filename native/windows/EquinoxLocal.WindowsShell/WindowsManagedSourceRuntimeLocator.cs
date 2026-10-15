@@ -67,11 +67,6 @@ internal static partial class WindowsManagedSourceRuntimeLocator
         var nativePointerPath = Path.Combine(transactionRoot, "current-native.json");
         if (File.Exists(nativePointerPath))
             nativeReleaseDir = ResolveNativeRelease(transactionRoot, nativePointerPath);
-        // A native-impact Main transaction can leave source B and native A
-        // separately durable between their two writes. Never boot a mixed
-        // runtime from that crash window: the owning Guardian must first
-        // prove the exact journal generation and both selected pointers.
-        ValidateActiveNativeRuntimePair(transactionRoot, sourcePointer.Sha, nativePointerPath);
 
         return new WindowsRuntimeLocation(
             nativeReleaseDir,
@@ -80,68 +75,6 @@ internal static partial class WindowsManagedSourceRuntimeLocator
             stable.ReleaseDir,
             installRoot,
             ManagedSource: true);
-    }
-
-    private static void ValidateActiveNativeRuntimePair(string transactionRoot, string sourceSha, string nativePointerPath)
-    {
-        var activePath = Path.Combine(transactionRoot, "active.json");
-        if (!File.Exists(activePath)) return;
-        var active = ReadJson(activePath, "active native Main owner");
-        if (!active.TryGetProperty("transactionId", out var idValue) ||
-            idValue.ValueKind != JsonValueKind.String)
-            throw new InvalidDataException("Active Main update identity is malformed.");
-        var id = idValue.GetString() ?? "";
-        if (!Regex.IsMatch(id, "^main-[a-f0-9]{32}$", RegexOptions.CultureInvariant))
-            throw new InvalidDataException("Active Main transaction is foreign.");
-        var journalPath = Path.Combine(transactionRoot, "guardian-journal", id + ".json");
-        if (!File.Exists(journalPath)) return; // Ordinary source-only Main updates have no native journal.
-        var journal = ReadJson(journalPath, "active native Guardian journal");
-        RequireExactProperties(journal, ["schemaVersion", "channel", "transactionId", "target", "currentSha", "targetSha",
-            "receiptStartedAt", "previousNative", "targetRuntimeContractSha256", "stage", "sequence", "createdAt", "updatedAt"],
-            "active native Guardian journal");
-        RequireInt(journal, "schemaVersion", 1, "active native Guardian journal");
-        RequireString(journal, "channel", "main", "active native Guardian journal");
-        RequireString(journal, "transactionId", id, "active native Guardian journal");
-        RequireString(journal, "target", Target, "active native Guardian journal");
-        var oldSha = RequireSha(journal, "currentSha", "active native Guardian journal");
-        var newSha = RequireSha(journal, "targetSha", "active native Guardian journal");
-        if (oldSha == newSha)
-            throw new InvalidDataException("Active native Main update has identical A/B source identities.");
-        var stage = journal.GetProperty("stage").GetString();
-        var sequence = journal.GetProperty("sequence").GetInt32();
-        var targetContract = RequireDigest(journal, "targetRuntimeContractSha256", "active native Guardian journal");
-        var nativePointer = File.Exists(nativePointerPath) ? ReadJson(nativePointerPath, "selected native Main pointer") : (JsonElement?)null;
-        if (stage is "switched" or "restarted" or "healthy" or "committed")
-        {
-            if (sequence is < 3 or > 6 || sourceSha != newSha || nativePointer is not { } selected ||
-                selected.GetProperty("sourceSha").GetString() != newSha ||
-                selected.GetProperty("target").GetString() != Target ||
-                selected.GetProperty("runtimeContractSha256").GetString() != targetContract)
-                throw new InvalidDataException("Windows WPF refuses a mixed A/B Main source or native runtime before B launch.");
-            return;
-        }
-        var previousA = journal.GetProperty("previousNative");
-        if (stage is "rollback_native_restored" or "rollback_healthy" or "rolled_back")
-        {
-            if (sourceSha != oldSha) throw new InvalidDataException("Rollback WPF source A is not restored.");
-            if (!MatchesOriginalNativeA(previousA, nativePointer, oldSha))
-                throw new InvalidDataException("Rollback WPF native runtime A is not restored.");
-            return;
-        }
-        if (stage == "prepared" && sequence == 0 && sourceSha == oldSha &&
-            MatchesOriginalNativeA(previousA, nativePointer, oldSha)) return;
-        throw new InvalidDataException("Unfinished native Main transition blocks WPF runtime launch until owned pointers agree.");
-    }
-
-    private static bool MatchesOriginalNativeA(JsonElement previous, JsonElement? pointer, string expectedSourceSha)
-    {
-        var kind = previous.GetProperty("kind").GetString();
-        if (kind == "stable") return pointer is null;
-        if (kind != "main" || pointer is not { } selected) return false;
-        return selected.GetProperty("sourceSha").GetString() == expectedSourceSha &&
-            selected.GetProperty("target").GetString() == Target &&
-            selected.GetProperty("runtimeContractSha256").GetString() ==
-                previous.GetProperty("runtimeContractSha256").GetString();
     }
 
     private static string ResolveNativeRelease(string transactionRoot, string pointerPath)

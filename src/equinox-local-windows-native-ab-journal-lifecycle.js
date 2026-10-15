@@ -23,17 +23,15 @@ export function createWindowsJournaledNativeABLifecycle({
   slotRestore = restoreWindowsNativeABSlot,
   slotCommit = commitWindowsNativeABSlot,
   slotFinalizeRollback = finalizeWindowsNativeABRollback,
-  selectNativeRuntime, verifyNativeRuntime,
-  nativeOwnsMilestones = false, observeNativeMilestone = null,
+  commitNativePointer,
 } = {}) {
   if (!TX.test(transactionId ?? '') || !['win32-x64', 'win32-arm64'].includes(target) ||
       !SHA.test(currentSha ?? '') || !SHA.test(targetSha ?? '') || currentSha === targetSha ||
       !DIGEST.test(targetRuntimeContractSha256 ?? '') ||
       typeof receiptStartedAt !== 'string' || Number.isNaN(Date.parse(receiptStartedAt)) ||
       !programRoot || !previousReleaseDir || !targetReleaseDir ||
-      typeof selectNativeRuntime !== 'function' || typeof verifyNativeRuntime !== 'function' ||
-      typeof journal?.read !== 'function' ||
-      (nativeOwnsMilestones === true ? typeof observeNativeMilestone !== 'function' : typeof journal?.advance !== 'function') ||
+      typeof commitNativePointer !== 'function' ||
+      typeof journal?.read !== 'function' || typeof journal?.advance !== 'function' ||
       ![assertWorkerOwnership, shutdownOwnedWpf, verifyNativeMessaging, registerNativeMessaging, verifySustainedHealth].every((v) => typeof v === 'function')) {
     throw new Error('Windows A/B lifecycle requires authenticated worker, journal and native ownership callbacks.');
   }
@@ -54,26 +52,6 @@ export function createWindowsJournaledNativeABLifecycle({
     await journal.advance(transactionId, { from: record.stage, to, sequence: record.sequence });
     return owned();
   }
-  async function observeNative(to) {
-    // This path never calls journal.advance, the slot writer or WPF shutdown.
-    // The independent native Guardian owns CREATE_NEW/FileShare.None and
-    // already wrote the stage; supplied observer must bind its OS PID and
-    // durable SHA receipt, not a Node self-asserted transaction marker.
-    if (nativeOwnsMilestones !== true || !['switched', 'restarted'].includes(to)) {
-      throw new Error('Native Guardian has not authorized this journal milestone.');
-    }
-    const proof = await observeNativeMilestone({ transactionId, stage: to, sourceSha: targetSha, target });
-    const record = await owned();
-    const sequence = to === 'switched' ? 3 : 4;
-    if (proof?.transactionId !== transactionId || proof?.stage !== to || proof?.sourceSha !== targetSha ||
-        proof?.target !== target || proof?.sequence !== sequence ||
-        !Number.isSafeInteger(proof?.guardianPid) || proof.guardianPid < 1 ||
-        !DIGEST.test(proof?.journalSha256 ?? '') ||
-        record.stage !== to || record.sequence !== sequence) {
-      throw new Error('Native Guardian milestone proof is not the independent journal generation.');
-    }
-    return record;
-  }
   async function messaging(release) {
     if (await verifyNativeMessaging({ transactionId, release, previousReleaseDir, targetReleaseDir }) !== true) {
       throw new Error(`Native Messaging ${release} ownership has not been independently verified.`);
@@ -81,37 +59,12 @@ export function createWindowsJournaledNativeABLifecycle({
   }
   return Object.freeze({
     journaledAB: true,
-    // Distinguish OS-owned immutable milestones from the fixture/native JS
-    // adapter. The shared handoff must never change A/B source pointers
-    // before independently authorized Guardian physical recovery.
-    nativeOwnsMilestones: nativeOwnsMilestones === true,
     journal,
-    async selectRuntime({ rollback } = {}) {
-      const record = await owned();
-      const release = rollback === true ? 'A' : rollback === false ? 'B' : null;
-      if (!release || (release === 'B' && !['switched', 'restarted', 'healthy'].includes(record.stage)) ||
-          (release === 'A' && !['rollback_native_restored', 'rollback_healthy'].includes(record.stage))) {
-        throw new Error('Native runtime selection requires exact authenticated journal stage.');
-      }
-      await messaging(release);
-      await selectNativeRuntime({ transactionId, release, sourceSha: release === 'B' ? targetSha : currentSha,
-        runtimeContractSha256: release === 'B' ? targetRuntimeContractSha256 : null });
-      if (await verifyNativeRuntime({ transactionId, release, sourceSha: release === 'B' ? targetSha : currentSha }) !== true) {
-        throw new Error('Native WPF runtime pointer does not match the source being restarted.');
-      }
-    },
-    async commit() {
+    commit: async () => {
       if ((await owned()).stage !== 'healthy') throw new Error('Native pointer may not commit before verified B health.');
-      if (await verifyNativeRuntime({ transactionId, release: 'B', sourceSha: targetSha }) !== true) {
-        throw new Error('Native B pointer drifted after independently verified health.');
-      }
+      await commitNativePointer({ transactionId, sourceSha: targetSha, runtimeContractSha256: targetRuntimeContractSha256 });
     },
     async activate() {
-      if (nativeOwnsMilestones === true) {
-        const record = await observeNative('switched');
-        await messaging('B');
-        return Object.freeze({ stage: record.stage });
-      }
       let record = await owned();
       if (record.stage === 'prepared') record = await advance(record, 'native_staged');
       if (record.stage === 'native_staged') {
@@ -133,16 +86,12 @@ export function createWindowsJournaledNativeABLifecycle({
       return Object.freeze({ stage: record.stage });
     },
     async recordRestarted() {
-      if (nativeOwnsMilestones === true) return observeNative('restarted');
       const record = await owned();
       if (['restarted', 'healthy'].includes(record.stage)) return record;
       if (record.stage !== 'switched') throw new Error('Native B restart cannot precede verified B switch.');
       return advance(record, 'restarted');
     },
     async recordHealthy() {
-      if (nativeOwnsMilestones === true) {
-        throw new Error('Guardian-owned native B health milestone requires a separate OS-authorized commit phase.');
-      }
       const record = await owned();
       if (record.stage === 'healthy') return record;
       if (record.stage !== 'restarted') throw new Error('Native B health cannot precede verified restart.');
@@ -153,9 +102,6 @@ export function createWindowsJournaledNativeABLifecycle({
       return advance(record, 'healthy');
     },
     async rollback() {
-      if (nativeOwnsMilestones === true) {
-        throw new Error('Guardian-owned native A rollback requires independently authorized OS recovery.');
-      }
       let record = await owned();
       if (!['rollback_started', 'rollback_native_restored', 'rollback_healthy'].includes(record.stage)) {
         record = await advance(record, 'rollback_started');
@@ -173,9 +119,6 @@ export function createWindowsJournaledNativeABLifecycle({
       return Object.freeze({ stage: record.stage });
     },
     async recordRollbackHealthy() {
-      if (nativeOwnsMilestones === true) {
-        throw new Error('Guardian-owned native A rollback health requires a separate OS-authorized recovery milestone.');
-      }
       const record = await owned();
       if (record.stage === 'rollback_healthy') return record;
       if (record.stage !== 'rollback_native_restored') throw new Error('Native A health cannot precede restoration.');
@@ -188,11 +131,6 @@ export function createWindowsJournaledNativeABLifecycle({
     // Only after the separate Main receipt records succeeded/rolled_back;
     // the ACL-bound journal independently validates that receipt status.
     async finalizeCommitted() {
-      if (nativeOwnsMilestones === true) {
-        // The native Guardian has not approved healthy/5 or committed/6;
-        // never discard retained A based on a JS-only or forged receipt.
-        throw new Error('Guardian-owned native B terminal cleanup requires a separate OS-authorized commit.');
-      }
       let record = await owned();
       if (record.stage === 'healthy') record = await advance(record, 'committed');
       if (record.stage !== 'committed') throw new Error('Native B cannot discard A before durable committed receipt.');
@@ -202,11 +140,6 @@ export function createWindowsJournaledNativeABLifecycle({
       } });
     },
     async finalizeRolledBack() {
-      if (nativeOwnsMilestones === true) {
-        // A rollback must originate from the original native Guardian,
-        // including durable A health and OS-owned B quarantine evidence.
-        throw new Error('Guardian-owned native A terminal cleanup requires a separate OS-authorized rollback commit.');
-      }
       let record = await owned();
       if (record.stage === 'rollback_healthy') record = await advance(record, 'rolled_back');
       if (record.stage !== 'rolled_back') throw new Error('Native A cannot be finalized before durable rolled-back receipt.');

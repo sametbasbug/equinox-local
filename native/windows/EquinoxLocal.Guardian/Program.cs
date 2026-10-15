@@ -28,7 +28,7 @@ internal static partial class Program
     {
         try
         {
-            if (args.Length > 1 || (args.Length == 1 && args[0] is not ("--inspect" or "--audit-native-identity" or "--audit-native-journal" or "--audit-native-worker" or "--audit-native-worker-ipc" or "--audit-native-worker-argv" or "--audit-native-rollback-owner" or "--audit-native-b-retirement" or "--quarantine-native-b-retirement-orphan" or "--hold-native-journal-lease" or "--hold-native-journal-authority" or "--hold-native-prepared-abort" or "--hold-native-stable-shell-quiesce" or "--hold-native-integrated-ab" or "--reconcile-native-prepared-abort" or "--startup" or "--uninstall")))
+            if (args.Length > 1 || (args.Length == 1 && args[0] is not ("--inspect" or "--audit-native-identity" or "--audit-native-journal" or "--audit-native-worker" or "--audit-native-worker-ipc" or "--audit-native-worker-argv" or "--hold-native-journal-lease" or "--hold-native-journal-authority" or "--hold-native-prepared-abort" or "--hold-native-stable-shell-quiesce" or "--reconcile-native-prepared-abort" or "--startup" or "--uninstall")))
                 throw new InvalidOperationException("Unsupported Guardian argument.");
             if (args.Length == 1 && args[0] == "--audit-native-identity")
             {
@@ -55,21 +55,6 @@ internal static partial class Program
                 InspectOwnedNativeWorkerOsArguments();
                 return 0; // Exact kernel argv proof ONLY; never Main mutation authority.
             }
-            if (args.Length == 1 && args[0] == "--quarantine-native-b-retirement-orphan")
-            {
-                QuarantineOwnedFailedBRetirementOrphanWithoutReplay();
-                return 0; // Quarantined DEATH evidence only; Main remains blocked.
-            }
-            if (args.Length == 1 && args[0] == "--audit-native-b-retirement")
-            {
-                AuditOwnedFailedBRetirementOrphanReadOnly();
-                return 70; // ALWAYS fail closed: diagnostic, not original OS ownership.
-            }
-            if (args.Length == 1 && args[0] == "--audit-native-rollback-owner")
-            {
-                AuditOwnedRollbackGuardianOsWitness();
-                return 0; // OS kernel PID + live exclusive writer proof only.
-            }
             if (args.Length == 1 && args[0] == "--hold-native-journal-lease")
             {
                 HoldOwnedNativeJournalLease();
@@ -90,18 +75,13 @@ internal static partial class Program
                 HoldOwnedNativeJournalLease(quiesceStableShell: true);
                 return 70; // Pilot: exact owned WPF quiesce only, no native A/B swap.
             }
-            if (args.Length == 1 && args[0] == "--hold-native-integrated-ab")
-            {
-                HoldOwnedNativeJournalLease(integratedAB: true);
-                return 70; // Fail closed until full B swap/health and recovery are complete.
-            }
             if (args.Length == 1 && args[0] == "--reconcile-native-prepared-abort")
             {
                 ReconcileNativePreparedAbortOrphan();
                 return 0; // Retire only a fully verified dead prepared abort lock; no launch.
             }
             var inspection = InspectBaseline();
-            if (args.Length == 1 && args[0] is "--inspect" or "--audit-native-identity" or "--audit-native-journal" or "--audit-native-worker" or "--audit-native-worker-ipc" or "--audit-native-worker-argv" or "--audit-native-rollback-owner" or "--audit-native-b-retirement") return 0;
+            if (args.Length == 1 && args[0] is "--inspect" or "--audit-native-identity" or "--audit-native-journal" or "--audit-native-worker" or "--audit-native-worker-ipc" or "--audit-native-worker-argv") return 0;
             using var process = Launch(inspection.Executable, args.Length == 0 ? null : args[0]);
             return process.Id > 0 ? 0 : 70;
         }
@@ -110,14 +90,14 @@ internal static partial class Program
             // Only the explicit inspection mode exposes bounded, static
             // validation errors to the disposable installed-host acceptance.
             // Never echo paths from OS exceptions or launch arguments.
-            if (args.Length == 1 && args[0] is "--inspect" or "--audit-native-identity" or "--audit-native-journal" or "--audit-native-worker" or "--audit-native-worker-ipc" or "--audit-native-worker-argv" or "--audit-native-rollback-owner" or "--audit-native-b-retirement" or "--quarantine-native-b-retirement-orphan")
+            if (args.Length == 1 && args[0] is "--inspect" or "--audit-native-identity" or "--audit-native-journal" or "--audit-native-worker" or "--audit-native-worker-ipc" or "--audit-native-worker-argv")
             {
                 var reason = ex is InvalidDataException or InvalidOperationException or PlatformNotSupportedException
                     ? ex.Message : ex.GetType().Name;
                 if (reason.Length > 120) reason = reason[..120];
                 Console.Error.WriteLine($"Guardian inspection refused: phase={InspectionPhase}; kind={ex.GetType().Name}; code=0x{ex.HResult:x8}; reason={reason}");
             }
-            else if (args.Length == 1 && args[0] is "--hold-native-journal-authority" or "--hold-native-prepared-abort" or "--hold-native-stable-shell-quiesce" or "--hold-native-integrated-ab" or "--reconcile-native-prepared-abort")
+            else if (args.Length == 1 && args[0] is "--hold-native-journal-authority" or "--hold-native-prepared-abort" or "--hold-native-stable-shell-quiesce" or "--reconcile-native-prepared-abort")
             {
                 // Bounded phase/type only: no worker token, paths, journal
                 // contents or dynamic exception reason enter CI diagnostics.

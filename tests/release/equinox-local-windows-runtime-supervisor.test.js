@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import path from "node:path";
 import test from "node:test";
 import { EventEmitter } from "node:events";
-import { windowsTunnelInitArguments, windowsTunnelReconnectDelay, runWindowsSupervisorChild, runWindowsShellRuntimeSupervisor, windowsSupervisorFailureClass } from "../../src/equinox-local-windows-runtime-supervisor.js";
+import { windowsTunnelInitArguments, windowsTunnelReconnectDelay, runWindowsSupervisorChild, runWindowsShellRuntimeSupervisor } from "../../src/equinox-local-windows-runtime-supervisor.js";
 
 const homeDir = "C:\\Users\\Example User";
 const env = {
@@ -86,35 +86,6 @@ test("Windows native shell launches guarded supervisor rather than permanently p
  assert.match(source,/ValidateReleaseFiles\(nodePath, serverPath, processGatePath, supervisorPath\)/u);
 });
 
-
-test("independent Guardian's minimal environment is rehydrated only from OS Known Folders by WPF before Node starts", async () => {
-  const { readFileSync } = await import("node:fs");
-  const native = readFileSync(new URL("../../native/windows/EquinoxLocal.WindowsShell/RuntimeSupervisor.cs", import.meta.url), "utf8");
-  const guardian = readFileSync(new URL("../../src/equinox-local-windows-native-guardian-launch.js", import.meta.url), "utf8");
-  const source = readFileSync(new URL("../../src/equinox-local-supervisor.js", import.meta.url), "utf8");
-  assert.match(guardian, /for \(const key of \[('SystemRoot', 'WINDIR', 'TEMP', 'TMP')/u);
-  assert.match(native, /SetVerifiedWindowsProfileEnvironment\(startInfo, location\.InstallRoot, location\.ManagedSource\)/u);
-  assert.match(native, /Environment\.GetFolderPath\(Environment\.SpecialFolder\.LocalApplicationData\)/u);
-  assert.match(native, /Environment\.GetFolderPath\(Environment\.SpecialFolder\.UserProfile\)/u);
-  assert.match(native, /Path\.IsPathFullyQualified\(localAppData\)/u);
-  assert.match(native, /managedSource && !string\.Equals\(Path\.TrimEndingDirectorySeparator/u);
-  assert.match(native, /Path\.TrimEndingDirectorySeparator\(Path\.GetFullPath\(installRoot\)\)/u);
-  assert.match(native, /startInfo\.Environment\["LOCALAPPDATA"\] = localAppData/u);
-  assert.match(native, /startInfo\.Environment\["USERPROFILE"\] = userProfile/u);
-  assert.match(source, /equinoxLocalPlatformPaths\(\{ platform, arch, homeDir, env \}\)/u);
-  const minimal = { SystemRoot: "C:\\Windows", TEMP: "C:\\Temp", TMP: "C:\\Temp" };
-  await assert.rejects(runWindowsShellRuntimeSupervisor(mk({ env: minimal })), /LOCALAPPDATA must be an absolute path/u);
-  const calls = [];
-  const result = await runWindowsShellRuntimeSupervisor(mk({
-    env: { ...minimal, LOCALAPPDATA: env.LOCALAPPDATA, USERPROFILE: homeDir,
-      EQUINOX_LOCAL_INSTALL_ROOT: env.EQUINOX_LOCAL_INSTALL_ROOT,
-      EQUINOX_LOCAL_RELEASE_DIR: env.EQUINOX_LOCAL_RELEASE_DIR },
-    runChildImpl: async (_exe, _args, opts) => { calls.push(opts.env); return { code: 0, signal: null }; },
-  }));
-  assert.equal(result.mode, "local-only");
-  assert.equal(calls[0].LOCALAPPDATA, env.LOCALAPPDATA);
-  assert.equal(calls[0].USERPROFILE, homeDir);
-});
 
 test("Windows tunnel reconnect uses bounded exponential backoff", () => {
   assert.deepEqual([1, 2, 3, 4, 5, 10, 100].map(windowsTunnelReconnectDelay),
@@ -217,33 +188,4 @@ test("tunnel preflight must not retry after intentional runtime termination", as
   assert.equal(result.retryRequested, false);
   assert.equal(timer, null);
   assert.equal(probes, 0);
-});
-
-test("Windows supervisor reports only bounded failure classes without disclosing paths or secrets", () => {
-  const privatePath = "C:\\Users\\Private\\secret-source";
-  assert.equal(windowsSupervisorFailureClass(new Error("Windows runtime source or release path is invalid.")), "runtime-location");
-  assert.equal(windowsSupervisorFailureClass(Object.assign(new Error(privatePath), { code: "ENOENT" })), "os-ENOENT");
-  assert.equal(windowsSupervisorFailureClass(new TypeError(privatePath)), "js-TypeError");
-  assert.equal(windowsSupervisorFailureClass(new Error(privatePath)), "unspecified");
-  for (const sample of [new Error(privatePath), new TypeError(privatePath), Object.assign(new Error(privatePath), { code: "ENOENT" })]) {
-    assert.ok(!windowsSupervisorFailureClass(sample).includes(privatePath));
-  }
-});
-
-test("Windows startup failure identifies the last fixed phase but never the sensitive error text", async () => {
-  const seen = [];
-  const privateDetail = "token-secret-must-not-appear";
-  await assert.rejects(runWindowsShellRuntimeSupervisor(mk({
-    onPhase: (phase) => { seen.push(phase); },
-    readTransportImpl: async () => null,
-    runChildImpl: async () => { throw new Error(privateDetail); },
-  })), new RegExp(privateDetail));
-  assert.deepEqual(seen, ["platform", "paths", "identity", "transport-read", "local-child"]);
-  assert.ok(!seen.join(" ").includes(privateDetail));
-  const early = [];
-  await assert.rejects(runWindowsShellRuntimeSupervisor(mk({
-    onPhase: (phase) => { early.push(phase); },
-    env: { ...env, EQUINOX_LOCAL_INSTALL_ROOT: "C:\\Untrusted" },
-  })), /invalid/u);
-  assert.deepEqual(early, ["platform", "paths", "identity"]);
 });

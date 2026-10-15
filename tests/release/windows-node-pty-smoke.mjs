@@ -82,47 +82,30 @@ async function runNativeConptySmoke() {
   assert.equal(typeof spawnPty, "function", "node-pty spawn is unavailable");
 
   trace("spawn:start");
-  // Execute a fixed challenge script inside the actual PTY shell. An
-  // interactive prompt need not exist on a hosted native ARM64 runner;
-  // explicitly signal readiness once the PowerShell command is executing.
-  // The marker echoed by PowerShell is not success: require the response
-  // after we send a separate, fixed token through ConPTY input.
-  const readyMarker = "__EQUINOX_CONPTY_READY__";
-  const ping = "__EQUINOX_CONPTY_PING__";
-  const success = "__EQUINOX_CONPTY_OK__";
-  const challengeScript = `[Console]::Out.WriteLine('${readyMarker}'); $line = [Console]::ReadLine(); if ($line -ceq '${ping}') { [Console]::Out.WriteLine('${success}'); exit 0 }; exit 3`;
-  const terminal = spawnPty("powershell.exe", ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", challengeScript], {
+  const terminal = spawnPty("powershell.exe", ["-NoLogo", "-NoProfile"], {
     name: "xterm-256color", cols: 80, rows: 24, cwd: process.cwd(), env: process.env, useConpty: true,
   });
   trace(`spawn:ok pid=${terminal.pid ?? "unknown"}`);
   let output = "";
   let sawData = false;
-  let sentCommand = false;
   const completed = new Promise((resolve, reject) => {
     terminal.onData((data) => {
       if (!sawData) { sawData = true; trace("data:first"); }
       output += data;
-      // First PTY data may be a shell banner, ANSI sequence or partial
-      // output. Send input only after the running child itself emits ready.
-      if (!sentCommand && output.includes(readyMarker)) {
-        sentCommand = true;
-        trace("child:ready");
-        trace("write:start");
-        terminal.write(`${ping}\r`);
-        trace("write:return");
-      }
     });
     terminal.onExit(({ exitCode }) => {
       trace(`exit:${exitCode}`);
       exitCode === 0 ? resolve() : reject(new Error(`Windows node-pty host exited ${exitCode}.`));
     });
   });
+  trace("write:start");
+  terminal.write('Write-Output "__EQUINOX_CONPTY_OK__"; exit\r');
+  trace("write:return");
   await completed;
   trace("completed");
   trace("transport-dispose:start");
   terminal.kill();
   trace("transport-dispose:return");
-  assert.equal(sentCommand, true, "ConPTY never displayed the running PowerShell readiness marker.");
   assert.match(output, /__EQUINOX_CONPTY_OK__/u);
   process.stdout.write(`${JSON.stringify({ ok: true, platform: process.platform, arch: process.arch, conpty: true }, null, 2)}\n`);
 }

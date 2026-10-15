@@ -46,10 +46,7 @@ listener.Stop();
 var previousPort = Environment.GetEnvironmentVariable("EQUINOX_TEST_MANAGED_SOURCE_PORT");
 var previousRelease = Environment.GetEnvironmentVariable("EQUINOX_LOCAL_RELEASE_DIR");
 Environment.SetEnvironmentVariable("EQUINOX_TEST_MANAGED_SOURCE_PORT", port.ToString());
-// Deliberately preserve a stale Stable A environment hint throughout the
-// source A -> source B -> native B harness. Managed pointers MUST win even
-// when Guardian/installer process environments carry this old release path.
-Environment.SetEnvironmentVariable("EQUINOX_LOCAL_RELEASE_DIR", stableRelease);
+Environment.SetEnvironmentVariable("EQUINOX_LOCAL_RELEASE_DIR", null);
 
 RuntimeSupervisor? supervisor = null;
 try

@@ -71,11 +71,9 @@ internal static partial class Program
         finally { _ = LocalFree(pointer); }
     }
 
-    private static void InspectOwnedNativeWorkerOsArguments(bool guardianHoldsJournalLease = false)
+    private static void InspectOwnedNativeWorkerOsArguments()
     {
-        var worker = guardianHoldsJournalLease
-            ? InspectOwnedNativeWorkerProcess(guardianHoldsJournalLease: true)
-            : InspectOwnedNativeWorkerProcess();
+        var worker = InspectOwnedNativeWorkerProcess();
         InspectionPhase = "native-worker-os-command-line";
         var install = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Equinox Local");
         var tx = Path.Combine(install, "state", "main-update");

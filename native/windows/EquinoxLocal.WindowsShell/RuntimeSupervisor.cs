@@ -45,17 +45,10 @@ internal sealed class RuntimeSupervisor : IAsyncDisposable
 
     internal static RuntimeSupervisor? TryCreateFromEnvironmentOrManagedInstall()
     {
-        // A managed installation MUST use its verified, durable source/native
-        // pointers. Launch/update handoffs can leave an older Stable A
-        // EQUINOX_LOCAL_RELEASE_DIR in the inherited process environment;
-        // choosing it first silently boots A while the Guardian has selected
-        // exact B on disk. Treat the environment release only as the legacy
-        // non-managed fallback, NEVER as an override of an installed pointer.
-        if (WindowsManagedReleaseLocator.HasCurrentPointer())
-            return new RuntimeSupervisor(WindowsManagedSourceRuntimeLocator.Resolve);
         var releaseDir = Environment.GetEnvironmentVariable("EQUINOX_LOCAL_RELEASE_DIR");
         if (!string.IsNullOrWhiteSpace(releaseDir)) return new RuntimeSupervisor(releaseDir);
-        return null;
+        if (!WindowsManagedReleaseLocator.HasCurrentPointer()) return null;
+        return new RuntimeSupervisor(WindowsManagedSourceRuntimeLocator.Resolve);
     }
 
     internal int? RuntimeProcessId
@@ -131,11 +124,6 @@ internal sealed class RuntimeSupervisor : IAsyncDisposable
 
         var payload = Convert.ToBase64String(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new { command = nodePath, args = new[] { supervisorPath, serverPath } })));
         var startInfo = NodeGateStartInfo(nodePath, processGatePath);
-        // The independent native Guardian intentionally has a minimal process
-        // environment (no USERPROFILE or LOCALAPPDATA). Rehydrate ONLY these
-        // trusted Windows Known Folders for the owned Node tree; never copy
-        // untrusted environment overrides or weaken the pinned install root.
-        SetVerifiedWindowsProfileEnvironment(startInfo, location.InstallRoot, location.ManagedSource);
         startInfo.WorkingDirectory = sourceRoot;
         startInfo.Environment["EQUINOX_LOCAL_OWNED_PROCESS_SPEC"] = payload;
         startInfo.Environment["EQUINOX_LOCAL_RELEASE_DIR"] = location.BootstrapReleaseDir;
@@ -300,25 +288,6 @@ internal sealed class RuntimeSupervisor : IAsyncDisposable
         }
         catch { }
         finally { gate.Dispose(); }
-    }
-
-    private static void SetVerifiedWindowsProfileEnvironment(ProcessStartInfo startInfo, string installRoot, bool managedSource)
-    {
-        var localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-        var userProfile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-        if (!Path.IsPathFullyQualified(localAppData) || !Path.IsPathFullyQualified(userProfile)
-            || !Path.IsPathFullyQualified(installRoot))
-            throw new InvalidDataException("Windows managed runtime profile folders are unavailable.");
-        var expectedInstallRoot = Path.GetFullPath(Path.Combine(localAppData, "Equinox Local"));
-        // Only managed Main A/B is required to live below LocalApplicationData.
-        // The older standalone native-shell development contract also boots
-        // fixed releases from explicit disposable roots; preserve that mode.
-        if (managedSource && !string.Equals(Path.TrimEndingDirectorySeparator(Path.GetFullPath(installRoot)),
-                                             Path.TrimEndingDirectorySeparator(expectedInstallRoot),
-                                             StringComparison.OrdinalIgnoreCase))
-            throw new InvalidDataException("Windows managed runtime profile folder disagrees with the pinned install root.");
-        startInfo.Environment["LOCALAPPDATA"] = localAppData;
-        startInfo.Environment["USERPROFILE"] = userProfile;
     }
 
     private static ProcessStartInfo NodeGateStartInfo(string nodePath, string scriptPath)
