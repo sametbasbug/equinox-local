@@ -382,3 +382,23 @@ test('only same original OS Guardian may retire exact SHA-quarantined failed B u
   assert.match(readiness,/if \(Directory\.Exists\(quarantine\) \|\| File\.Exists\(quarantine\)\)/u);
   assert.doesNotMatch(server+mutation,/Directory\.Delete|File\.Delete|Remove-Item|Process\.Kill|Registry\.SetValue/u);
 });
+
+test('offline Q crash inventory requires exact stage8 SHA/PID, B SHA and intent commit and NEVER reclaims ownership or deletes files',async()=>{
+  const native=await readFile(new URL('../../native/windows/EquinoxLocal.Guardian/MainNativeFailedBRetirementOrphanAudit.cs',import.meta.url),'utf8');
+  const entry=await readFile(new URL('../../native/windows/EquinoxLocal.Guardian/Program.cs',import.meta.url),'utf8');
+  assert.match(entry,/args\[0\] == "--audit-native-b-retirement"/u);
+  assert.match(entry,/AuditOwnedFailedBRetirementOrphanReadOnly\(\)/u);
+  assert.match(entry,/return 70; \/\/ ALWAYS fail closed/u);
+  assert.match(native,/ReadOwnedTransitionRecord\(Path\.Combine\(tx, "active\.json"\), 8192\)/u);
+  assert.match(native,/state\.GetProperty\("stage"\)\.GetString\(\) != "rolled_back"/u);
+  assert.match(native,/stage8\.RootElement\.GetProperty\("journalSha256"\)\.GetString\(\) != stage8Sha/u);
+  assert.match(native,/stage6\.RootElement\.GetProperty\("guardianPid"\)\.GetInt32\(\) != guardianPid/u);
+  assert.match(native,/stage7\.RootElement\.GetProperty\("guardianPid"\)\.GetInt32\(\) != guardianPid/u);
+  assert.match(native,/CompareNativeTrees\(candidate, qPresent \? quarantine : retired\)/u);
+  assert.match(native,/native-retire-b-orphan-intent-before-rename-no-replay/u);
+  assert.match(native,/native-retire-b-orphan-after-rename-before-commit-no-replay/u);
+  assert.match(native,/native-retire-b-offline-complete-but-no-writer-or-gc/u);
+  assert.match(native,/RequireExactKeys\(i,/u);
+  assert.match(native,/RequireExactKeys\(c,/u);
+  assert.doesNotMatch(native,/Directory\.Move|File\.Move|Directory\.Delete|File\.Delete|File\.WriteAll|FileStream\(/u);
+});

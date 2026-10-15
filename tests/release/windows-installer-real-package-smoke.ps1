@@ -1311,6 +1311,41 @@ if (process.env.GITHUB_ACTIONS === 'true' &&
         # the now-dead named-pipe SERVER PID / released exclusive lease.
         Assert-True ((Invoke-GuardianCheck '--audit-native-rollback-owner') -eq 70) 'Dead Guardian replayed a stale stage5 owner receipt as live OS restore authority.'
         Write-Output "Windows $FixtureTarget original Guardian post-death stage5 OS owner replay REFUSED."
+        # The installed NATIVE auditor is never a replacement writer. Simulate
+        # two genuine post-power-loss Q filesystems only inside disposable CI:
+        # 1) B moved but no durable completion receipt;
+        # 2) intent persisted but B still in its original quarantine.
+        function Get-RetiredBOrphanAuditPhase {
+          $AuditStart = [Diagnostics.ProcessStartInfo]::new($GuardianExe)
+          $AuditStart.Arguments = '--audit-native-b-retirement'
+          $AuditStart.UseShellExecute = $false
+          $AuditStart.RedirectStandardError = $true
+          $AuditProcess = [Diagnostics.Process]::Start($AuditStart)
+          Assert-True ($null -ne $AuditProcess) 'Cannot start product-owned native read-only B crash auditor.'
+          try {
+            if (-not $AuditProcess.WaitForExit(30000)) { $AuditProcess.Kill(); throw 'B retirement read-only audit exceeded 30 seconds.' }
+            $AuditDiagnosis = $AuditProcess.StandardError.ReadToEnd()
+            Assert-True ($AuditProcess.ExitCode -eq 70) 'Read-only offline B inventory illegally returned writer/cleanup success.'
+            return $AuditDiagnosis
+          } finally { $AuditProcess.Dispose() }
+        }
+        $QNormalDiagnosis = Get-RetiredBOrphanAuditPhase
+        Assert-True ($QNormalDiagnosis.Contains('phase=native-retire-b-offline-complete-but-no-writer-or-gc')) 'Native Q auditor failed to recognize signed retired B but still refused cleanup.'
+        $QSavedCommit = Join-Path $Work 'ci-only-retired-b-commit-save.json'
+        Move-Item -LiteralPath $JournalRetireBCommit -Destination $QSavedCommit -ErrorAction Stop
+        try {
+          $QPostRenameDiagnosis = Get-RetiredBOrphanAuditPhase
+          Assert-True ($QPostRenameDiagnosis.Contains('phase=native-retire-b-orphan-after-rename-before-commit-no-replay')) 'Native Q auditor did not fail closed after simulated power loss between rename and commit.'
+        } finally { Move-Item -LiteralPath $QSavedCommit -Destination $JournalRetireBCommit -ErrorAction Stop }
+        Move-Item -LiteralPath $RetiredBQuarantine -Destination $FailedBQuarantine -ErrorAction Stop
+        try {
+          $QPreRenameDiagnosis = Get-RetiredBOrphanAuditPhase
+          Assert-True ($QPreRenameDiagnosis.Contains('phase=native-retire-b-orphan-intent-before-rename-no-replay')) 'Native Q auditor did not fail closed after simulated power loss between intent and rename.'
+        } finally { Move-Item -LiteralPath $FailedBQuarantine -Destination $RetiredBQuarantine -ErrorAction Stop }
+        Assert-True ([IO.File]::Exists((Join-Path $RetiredBQuarantine 'native-b-ci-only.marker')) -and
+          [IO.File]::Exists($JournalRetireBCommit) -and
+          [IO.File]::Exists($StableExe)) 'Disposable B orphan injection corrupted signed A or physically lost failed B.'
+        Write-Output "Windows $FixtureTarget installed native Q offline powercut orphan BEFORE/AFTER rename both FAIL CLOSED; no owner replay or deletion."
         $IntegratedRecord = ConvertFrom-Json ([IO.File]::ReadAllText($JournalData))
         $NativeStagedReceipt = ConvertFrom-Json ([IO.File]::ReadAllText($JournalNativeStagedCommit))
         $ShellStoppedReceipt = ConvertFrom-Json ([IO.File]::ReadAllText($JournalShellStoppedCommit))

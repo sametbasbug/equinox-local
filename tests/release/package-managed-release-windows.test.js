@@ -749,6 +749,17 @@ test('real installed x64/ARM64 one-shot Guardian Q retires exact B only after st
   assert.doesNotMatch(client,/fsImpl\.rm|fsImpl\.rename|Remove-Item|Directory\.Delete/u);
 });
 
+test('real installed x64/ARM64 native offline Q auditor fails closed on power loss after intent or rename and never deletes B',async()=>{
+  const ps=await fs.readFile(new URL('./windows-installer-real-package-smoke.ps1',import.meta.url),'utf8');
+  assert.match(ps,/--audit-native-b-retirement/u);
+  assert.match(ps,/native-retire-b-offline-complete-but-no-writer-or-gc/u);
+  assert.match(ps,/native-retire-b-orphan-after-rename-before-commit-no-replay/u);
+  assert.match(ps,/native-retire-b-orphan-intent-before-rename-no-replay/u);
+  assert.match(ps,/Move-Item -LiteralPath \$JournalRetireBCommit -Destination \$QSavedCommit/u);
+  assert.match(ps,/Move-Item -LiteralPath \$RetiredBQuarantine -Destination \$FailedBQuarantine/u);
+  assert.match(ps,/native Q offline powercut orphan BEFORE\/AFTER rename both FAIL CLOSED/u);
+});
+
 test('hosted x64/ARM64 CI proves original Guardian rollback_started/5 live OS owner only after exact disposable B exit', async () => {
   const fixture = await fs.readFile(new URL('./windows-installer-real-package-smoke.ps1', import.meta.url), 'utf8');
   const worker = await fs.readFile(new URL('./owned-windows-worker-proof.mjs', import.meta.url), 'utf8');
