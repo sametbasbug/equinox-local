@@ -864,7 +864,7 @@ if (process.env.GITHUB_ACTIONS === 'true' &&
           $BRestartWitness.guardianPid -eq $IntegratedGuardian.Id -and $BRestartWitness.runtimeContractSha256 -ceq ('f'*64) -and
           $BRestartCommit.stage -ceq 'restarted' -and $BRestartCommit.sequence -eq 4 -and
           $BRestartJournal.stage -ceq 'restarted' -and $BRestartJournal.sequence -eq 4 -and
-          $BRestartCommit.journalSha256 -ceq $RetainedAProof.journalSha256 -and
+          $BRestartCommit.journalSha256 -ceq ((Get-FileHash -LiteralPath $JournalData -Algorithm SHA256).Hash.ToLowerInvariant()) -and
           $BRunningProcesses.Count -eq 1 -and $BRunningProcesses[0].ProcessId -eq $BRestartWitness.shellPid) 'Real Windows B WPF OS PID + exact native restarted/4 journal proof failed.'
         # A WPF PID is not proof its Node backend booted from source B.
         # Require FOUR consecutive independently fetched loopback responses
@@ -1047,7 +1047,7 @@ if (process.env.GITHUB_ACTIONS === 'true' &&
           $SwitchedReceipt.stage -ceq 'switched' -and $SwitchedReceipt.sequence -eq 3 -and
           $SwitchedReceipt.guardianPid -eq $IntegratedGuardian.Id -and
           $SwitchedReceipt.stage -ceq 'switched' -and
-          $BRestartCommit.journalSha256 -ceq ((Get-FileHash -LiteralPath $JournalData -Algorithm SHA256).Hash.ToLowerInvariant())) 'Native Guardian journal stage sequence/receipts differ from physically observed milestones.'
+          $BRestartCommit.journalSha256 -ceq $RetainedAProof.journalSha256) 'Native Guardian journal stage sequence/receipts differ from physically observed milestones.'
         $StoppedWpf = @(Get-CimInstance Win32_Process -Filter "Name='EquinoxLocal.exe'" -ErrorAction SilentlyContinue |
           Where-Object { -not [string]::IsNullOrWhiteSpace($_.ExecutablePath) -and (Same-Path $_.ExecutablePath $StableExe) })
         Assert-True ($StoppedWpf.Count -eq 0) 'Hosted negative-B crash left a WPF process running after OS health-rejection proof.'

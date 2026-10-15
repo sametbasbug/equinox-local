@@ -659,6 +659,14 @@ test('hosted x64/ARM64 CI proves original Guardian rollback_started/5 live OS ow
   assert.match(fixture, /RollbackRecord\.stage -ceq 'rollback_started'/u);
   assert.match(fixture, /RollbackRecord\.sequence -eq 5/u);
   assert.match(fixture, /RollbackCommit\.journalSha256 -ceq \(\(Get-FileHash/u);
+  // Stage 4 must compare its own active B journal SHA BEFORE retained-A is
+  // observed; after stage 5 it must compare against the saved Stage 4 proof.
+  const stage4 = fixture.indexOf("Assert-True ($BRestartWitness.transactionId");
+  const retainedA = fixture.indexOf("$RetainedAProof = ConvertFrom-Json");
+  const stage5 = fixture.indexOf("$RollbackRecord = ConvertFrom-Json");
+  assert.ok(stage4 >= 0 && stage4 < retainedA && retainedA < stage5);
+  assert.match(fixture.slice(stage4, retainedA), /\$BRestartCommit\.journalSha256 -ceq \(\(Get-FileHash -LiteralPath \$JournalData/u);
+  assert.match(fixture.slice(stage5), /\$BRestartCommit\.journalSha256 -ceq \$RetainedAProof\.journalSha256/u);
   assert.ok(fixture.indexOf('Assert-True ($BBackendConsecutive -ge 4)') < fixture.indexOf('[IO.File]::WriteAllText($JournalNegativeBTrigger'));
   assert.ok(fixture.indexOf('[IO.File]::WriteAllText($JournalNegativeBTrigger') < fixture.indexOf('$IntegratedGuardian.Kill()'));
 });
