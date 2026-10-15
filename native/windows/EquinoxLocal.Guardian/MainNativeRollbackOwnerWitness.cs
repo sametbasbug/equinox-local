@@ -46,9 +46,21 @@ internal static partial class Program
                 physicalArrival.GetAwaiter().GetResult();
                 deadline.Cancel();
                 ServeOwnedPhysicalARestore(owner, journalRoot, worker, lease, leaseAge, physical);
-                // A is physically restored but all pointers still select B:
-                // never resume the read-only stage5 loop or mark rollback done.
-                return;
+                // A is physically restored but all pointers still select B.
+                // Preserve THIS ORIGINAL live writer handle for the future
+                // exact A-source/native/NM coordination phase; immediately
+                // returning here would close the only authorized OS lease.
+                InspectionPhase = "native-integrated-a-physical-restored-original-lease-held";
+                while (!worker.HasExited && leaseAge.Elapsed < TimeSpan.FromMinutes(20))
+                {
+                    if (lease.SafeFileHandle.IsClosed || lease.SafeFileHandle.IsInvalid ||
+                        worker.StartTime.ToUniversalTime().Ticks.ToString(CultureInfo.InvariantCulture) != owner.Ticks)
+                        throw new InvalidDataException("Original Guardian OS lease or worker changed after A physical restore.");
+                    Thread.Sleep(150);
+                }
+                // Never open an unaudited replacement owner/lease or grant
+                // a false terminal rollback when the coordinator is absent.
+                throw new InvalidOperationException("Original Guardian physical A restored; A identity coordination remains pending.");
             }
             if (completed != arrival) { deadline.Cancel(); break; }
             try { arrival.GetAwaiter().GetResult(); }
