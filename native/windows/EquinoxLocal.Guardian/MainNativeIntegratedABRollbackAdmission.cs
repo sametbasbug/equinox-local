@@ -14,10 +14,40 @@ internal static partial class Program
     // Guardian's exclusive writer lease, with the ORIGINAL admitted worker.
     // This narrow grant records rollback_started/5; it never restores files,
     // changes source/native pointers, launches WPF or discards either slot.
-    // Deliberately NOT connected to the normal successful B startup yet.
+    // The original Guardian now listens after B restart and retained-A proof.
+    // The original worker does NOT invoke this on its healthy B path; the
+    // OS-owned physical A restore handoff remains deliberately disabled.
     private static void AuthorizeOwnedIntegratedARollbackStart(
         OwnedWorkerClaim owner, string journalRoot, Process worker)
     {
+        using var endpoint = new NamedPipeServerStream("EquinoxLocalMainAB-Rollback-" + owner.TransactionId,
+            PipeDirection.InOut, 1, PipeTransmissionMode.Byte, PipeOptions.Asynchronous);
+        // Await a request while the ORIGINAL Guardian retains CREATE_NEW /
+        // FileShare.None for this transaction. A healthy B does not request
+        // rollback, and an expired worker cannot trigger an orphan restart.
+        // The same 20-minute bound replaces (rather than extends) the
+        // preexisting Guardian lease wait for integrated A/B.
+        InspectionPhase = "native-integrated-a-rollback-wait-original-worker-request";
+        using (var requestCutoff = new CancellationTokenSource(TimeSpan.FromMinutes(20)))
+        {
+            var incoming = endpoint.WaitForConnectionAsync(requestCutoff.Token);
+            var ownerExited = worker.WaitForExitAsync(requestCutoff.Token);
+            Task completed;
+            try { completed = Task.WhenAny(incoming, ownerExited).GetAwaiter().GetResult(); }
+            catch (OperationCanceledException) { return; }
+            if (completed != incoming)
+            {
+                requestCutoff.Cancel();
+                InspectionPhase = "native-integrated-a-rollback-original-worker-exited-no-request";
+                return;
+            }
+            incoming.GetAwaiter().GetResult();
+            requestCutoff.Cancel();
+        }
+        using var cutoff = new CancellationTokenSource(TimeSpan.FromSeconds(45));
+        if (!GetNamedPipeClientProcessId(endpoint.SafePipeHandle, out var pid) || pid != owner.Pid ||
+            worker.HasExited || worker.StartTime.ToUniversalTime().Ticks.ToString(CultureInfo.InvariantCulture) != owner.Ticks)
+            throw new InvalidDataException("Native A rollback pipe belongs to a foreign or expired Windows worker.");
         InspectionPhase = "native-integrated-a-rollback-original-journal";
         var journalPath = Path.Combine(journalRoot, owner.TransactionId + ".json");
         using var journal = ReadOwnedTransitionRecord(journalPath, 8192);
@@ -92,19 +122,6 @@ internal static partial class Program
         if (worker.HasExited || worker.StartTime.ToUniversalTime().Ticks.ToString(CultureInfo.InvariantCulture) != owner.Ticks ||
             !CryptographicOperations.FixedTimeEquals(original, SHA256.HashData(File.ReadAllBytes(journalPath))))
             throw new InvalidDataException("Native A rollback slot or owning journal changed during read-only admission.");
-        // The worker's own health failure report is NOT OS authorization.
-        // The original Guardian must independently establish exact B WPF
-        // death and four negative backend checks before granting rollback.
-        RequireOwnedIntegratedBExitedAndUnhealthy(owner, journalRoot, worker, targetSha);
-
-        using var endpoint = new NamedPipeServerStream("EquinoxLocalMainAB-Rollback-" + owner.TransactionId,
-            PipeDirection.InOut, 1, PipeTransmissionMode.Byte, PipeOptions.Asynchronous);
-        using var cutoff = new CancellationTokenSource(TimeSpan.FromSeconds(45));
-        InspectionPhase = "native-integrated-a-rollback-wait-original-worker";
-        endpoint.WaitForConnectionAsync(cutoff.Token).GetAwaiter().GetResult();
-        if (!GetNamedPipeClientProcessId(endpoint.SafePipeHandle, out var pid) || pid != owner.Pid ||
-            worker.HasExited || worker.StartTime.ToUniversalTime().Ticks.ToString(CultureInfo.InvariantCulture) != owner.Ticks)
-            throw new InvalidDataException("Native A rollback pipe belongs to a foreign or expired Windows worker.");
         var nonce = RandomNumberGenerator.GetBytes(32);
         endpoint.WriteAsync(nonce.AsMemory(), cutoff.Token).AsTask().GetAwaiter().GetResult();
         endpoint.FlushAsync(cutoff.Token).GetAwaiter().GetResult();
@@ -128,6 +145,13 @@ internal static partial class Program
         if (worker.HasExited || worker.StartTime.ToUniversalTime().Ticks.ToString(CultureInfo.InvariantCulture) != owner.Ticks ||
             !CryptographicOperations.FixedTimeEquals(original, SHA256.HashData(File.ReadAllBytes(journalPath))))
             throw new InvalidDataException("Native rollback owner or journal changed during authenticated grant.");
+        // The original worker's authenticated failure report is NOT proof.
+        // AFTER HMAC, the original Guardian itself rejects any live WPF or
+        // observed healthy exact-B backend. No transition on healthy B.
+        RequireOwnedIntegratedBExitedAndUnhealthy(owner, journalRoot, worker, targetSha);
+        if (worker.HasExited || worker.StartTime.ToUniversalTime().Ticks.ToString(CultureInfo.InvariantCulture) != owner.Ticks ||
+            !CryptographicOperations.FixedTimeEquals(original, SHA256.HashData(File.ReadAllBytes(journalPath))))
+            throw new InvalidDataException("Original rollback worker or journal changed after OS B health decision.");
         InspectionPhase = "native-integrated-a-rollback-durable-start-only";
         WriteIntegratedOwnedNativeStage(owner, journalPath, "restarted", 4, "rollback_started", 5);
         endpoint.WriteByte((byte)'r');

@@ -78,6 +78,33 @@ test('rollback-start binds exact worker token to fresh nonce/journal SHA and wai
     /did not durably authorize exact rollback_started/u);
 });
 
+test('only original integrated Guardian accepts a rollback request after B proof under its original writer lease', async () => {
+  const lease = await readFile(new URL('../../native/windows/EquinoxLocal.Guardian/MainNativeJournalLease.cs', import.meta.url), 'utf8');
+  const admission = await readFile(new URL('../../native/windows/EquinoxLocal.Guardian/MainNativeIntegratedABRollbackAdmission.cs', import.meta.url), 'utf8');
+  const supervisor = await readFile(new URL('../../native/windows/EquinoxLocal.Guardian/MainNativeIntegratedABSupervisor.cs', import.meta.url), 'utf8');
+  const worker = await readFile(new URL('../../src/equinox-local-main-update-worker.js', import.meta.url), 'utf8');
+  const shared = await readFile(new URL('../../src/equinox-local-main-update-handoff.js', import.meta.url), 'utf8');
+  assert.match(lease, /using var lease = new FileStream\(leasePath, FileMode\.CreateNew, FileAccess\.ReadWrite,\s*FileShare\.None/u);
+  assert.match(lease, /RunOwnedIntegratedMainABSupervisor\(owner, root, worker\);\s*\/\/[\s\S]*?AuthorizeOwnedIntegratedARollbackStart\(owner, root, worker\);/u);
+  assert.ok(lease.indexOf('using var lease = new FileStream(leasePath,') < lease.indexOf('AuthorizeOwnedIntegratedARollbackStart(owner, root, worker);'));
+  assert.match(lease, /throw new InvalidOperationException\("Integrated native Guardian rollback needs a trusted physical restore coordinator\."\)/u);
+  assert.match(admission, /new NamedPipeServerStream\("EquinoxLocalMainAB-Rollback-" \+ owner\.TransactionId/u);
+  assert.match(admission, /endpoint\.WaitForConnectionAsync\(requestCutoff\.Token\)/u);
+  assert.match(admission, /worker\.WaitForExitAsync\(requestCutoff\.Token\)/u);
+  assert.match(admission, /Task\.WhenAny\(incoming, ownerExited\)/u);
+  assert.match(admission, /TimeSpan\.FromMinutes\(20\)/u);
+  assert.match(admission, /TimeSpan\.FromSeconds\(45\)/u);
+  assert.match(admission, /pid != owner\.Pid/u);
+  assert.ok(admission.indexOf('incoming.GetAwaiter().GetResult();') < admission.indexOf('InspectionPhase = "native-integrated-a-rollback-original-journal";'));
+  assert.ok(admission.indexOf('CryptographicOperations.FixedTimeEquals(expected, response)') < admission.indexOf('RequireOwnedIntegratedBExitedAndUnhealthy(owner, journalRoot, worker, targetSha);'));
+  assert.ok(admission.indexOf('RequireOwnedIntegratedBExitedAndUnhealthy(owner, journalRoot, worker, targetSha);') < admission.indexOf('WriteIntegratedOwnedNativeStage(owner, journalPath, "restarted", 4, "rollback_started", 5);'));
+  // Native B positive startup itself must never request rollback, nor may
+  // shared JS bypass its still-unimplemented OS-owned physical A recovery.
+  assert.doesNotMatch(supervisor, /AuthorizeOwnedIntegratedARollbackStart\(owner, journalRoot, worker\)/u);
+  assert.doesNotMatch(worker, /requestEquinoxLocalGuardianOwnedARollbackStart\(/u);
+  assert.match(shared, /await nativeLifecycle\.rollback\(\{ nativeActivated \}\)/u);
+});
+
 test('independent Guardian rollback-start admission is OS-owned, transaction-specific, and does not restore A yet', async () => {
   const native = await readFile(new URL('../../native/windows/EquinoxLocal.Guardian/MainNativeIntegratedABRollbackAdmission.cs', import.meta.url), 'utf8');
   const journal = await readFile(new URL('../../native/windows/EquinoxLocal.Guardian/MainNativeIntegratedABSupervisor.cs', import.meta.url), 'utf8');

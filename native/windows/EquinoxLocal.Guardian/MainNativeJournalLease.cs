@@ -41,7 +41,17 @@ internal static partial class Program
         if (quiesceStableShell)
             QuiesceOwnedStableShell(owner, root, worker);
         if (integratedAB)
+        {
             RunOwnedIntegratedMainABSupervisor(owner, root, worker);
+            // Same process, same live worker and SAME OS-held exclusive writer
+            // lease. This listener is request-driven; it cannot act during a
+            // healthy B startup without a real original-worker request AND
+            // the Guardian's independent negative B health witness.
+            AuthorizeOwnedIntegratedARollbackStart(owner, root, worker);
+            // Never fall into another 20-minute lease wait or silently reclaim
+            // an unfinished native rollback journal after owner exit.
+            throw new InvalidOperationException("Integrated native Guardian rollback needs a trusted physical restore coordinator.");
+        }
         // Deliberately no journal/receipt modifications and no automatic
         // cleanup. Worker exit or bounded lease expiry means a trusted
         // supervisor must reconcile before any further native mutation.
