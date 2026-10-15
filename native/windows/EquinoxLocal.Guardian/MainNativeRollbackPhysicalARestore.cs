@@ -123,6 +123,10 @@ internal static partial class Program
             lease.SafeFileHandle.IsClosed || lease.SafeFileHandle.IsInvalid ||
             leaseAge.Elapsed >= TimeSpan.FromMinutes(20))
             throw new InvalidDataException("Original OS lease or worker ended during physical A restoration.");
+        // Separate post-rename gate: A must now occupy the live WPF slot,
+        // B must be quarantined and ALL source/native/NM pointers still B.
+        // Even a successful fixed physical rename is not A identity recovery.
+        RequireOwnedRestoredASelectionReadiness(owner, journalRoot, worker, lease, leaseAge);
         InspectionPhase = "native-integrated-a-physical-restored-no-stage6";
         endpoint.WriteByte((byte)'a');
         endpoint.FlushAsync(timeout.Token).GetAwaiter().GetResult();

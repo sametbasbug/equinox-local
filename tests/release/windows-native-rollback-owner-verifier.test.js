@@ -149,3 +149,31 @@ test('single original Guardian handles owner OS audit and fixed mutual-HMAC phys
   assert.match(server, /endpoint\.WriteByte\(\(byte\)'a'\)/u);
   assert.doesNotMatch(server, /Directory\.Move|File\.Move|Directory\.Delete|File\.Delete|WriteIntegratedOwnedNativeStage|Registry\.SetValue|Process\.Start|Process\.Kill/u);
 });
+
+test('original Guardian post-physical A selection readiness binds OS lease, restored A, B quarantine and still-selected B pointers without mutation', async () => {
+  const readiness = await readFile(new URL('../../native/windows/EquinoxLocal.Guardian/MainNativeRestoredASelectionReadiness.cs', import.meta.url), 'utf8');
+  const physical = await readFile(new URL('../../native/windows/EquinoxLocal.Guardian/MainNativeRollbackPhysicalARestore.cs', import.meta.url), 'utf8');
+  const afterPhysical = physical.indexOf('CompareNativeTrees(bShell, failedB)');
+  const ready = physical.indexOf('RequireOwnedRestoredASelectionReadiness(owner, journalRoot, worker, lease, leaseAge)');
+  const acknowledge = physical.indexOf("endpoint.WriteByte((byte)'a')");
+  assert.ok(afterPhysical >= 0 && afterPhysical < ready && ready < acknowledge,
+    'original Guardian must reject identity drift after physical rename and before ACK');
+  assert.match(readiness, /lease\.SafeFileHandle\.IsClosed \|\| lease\.SafeFileHandle\.IsInvalid/u);
+  assert.match(readiness, /leaseAge\.Elapsed >= TimeSpan\.FromMinutes\(20\)/u);
+  assert.match(readiness, /InspectOwnedNativeWorkerProcess\(guardianHoldsJournalLease: true\)/u);
+  assert.match(readiness, /CryptographicOperations\.ZeroMemory\(left\)/u);
+  assert.match(readiness, /"rollback_started"/u);
+  assert.match(readiness, /GetProperty\("sequence"\)\.GetInt32\(\) != 5/u);
+  assert.match(readiness, /marker\.RootElement\.GetProperty\("guardianPid"\)\.GetInt32\(\) != Environment\.ProcessId/u);
+  assert.match(readiness, /CompareNativeTrees\(Path\.Combine\(stable, "runtime", "shell"\), active\)/u);
+  assert.match(readiness, /CompareNativeTrees\(Path\.Combine\(bRelease, "runtime", "shell"\), quarantine\)/u);
+  assert.match(readiness, /Directory\.Exists\(backup\) \|\| File\.Exists\(backup\)/u);
+  assert.match(readiness, /FindExactRunningWpfOrNull\(Path\.Combine\(active, "EquinoxLocal\.exe"\)\)/u);
+  assert.match(readiness, /RequireNormalDirectory\(Path\.Combine\(txRoot, "sources", sourceA\)\)/u);
+  assert.match(readiness, /stablePointer\.RootElement\.GetProperty\("version"\)\.GetString\(\) != version/u);
+  assert.match(readiness, /InspectOwnedMainNativeMessaging\(install, bRelease\)/u);
+  assert.match(readiness, /"sourceRoot=" \+ Path\.Combine\(txRoot, "sources", sourceB\)/u);
+  assert.match(readiness, /selected\.GetProperty\("sourceSha"\)\.GetString\(\) != sourceB/u);
+  assert.match(readiness, /FixedTimeEquals\(before, SHA256\.HashData\(File\.ReadAllBytes\(journalPath\)\)\)/u);
+  assert.doesNotMatch(readiness, /Directory\.Move|File\.Move|Directory\.Delete|File\.Delete|WriteIntegratedOwnedNativeStage|Registry\.SetValue|Process\.Start|Process\.Kill/u);
+});
