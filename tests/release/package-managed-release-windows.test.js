@@ -659,6 +659,26 @@ test('hosted real Windows x64/ARM64 fixture tests only original Guardian mutual-
   assert.doesNotMatch(worker, /rollback_native_restored.*journal\.advance|Process\.Kill/u);
 });
 
+test('hosted original Guardian Stable A identity selection is fixed-HMAC, one-shot, and leaves durable stage6 pending', async () => {
+  const fixture = await fs.readFile(new URL('./windows-installer-real-package-smoke.ps1', import.meta.url), 'utf8');
+  const worker = await fs.readFile(new URL('./owned-windows-worker-proof.mjs', import.meta.url), 'utf8');
+  const native = await fs.readFile(new URL('../../native/windows/EquinoxLocal.Guardian/MainNativeStableAIdentitySelection.cs', import.meta.url), 'utf8');
+  assert.match(worker, /process\.env\.GITHUB_ACTIONS !== 'true'/u);
+  assert.match(worker, /EQUINOX_LOCAL_TEST_AB_SELECT_STABLE_TRIGGER/u);
+  assert.match(worker, /runEquinoxLocalWindowsGuardianOwnedStableASelection\(request\)/u);
+  assert.match(worker, /\['ENOENT', 'ECONNREFUSED'\]/u);
+  assert.match(fixture, /start-original-guardian-select-stable-a\.trigger/u);
+  assert.match(fixture, /original Guardian OS-authorized physical A restore PASSED/u);
+  assert.match(fixture, /original Guardian OS-authorized Stable A source\/native\/NM selection PASSED/u);
+  assert.match(fixture, /\$StableSelectionReceipt\.stage -ceq 'a_identity_selected_stage6_pending'/u);
+  assert.match(fixture, /\$AfterStableSelection\.stage -ceq 'rollback_started'/u);
+  assert.match(fixture, /-not \[IO\.File\]::Exists\(\$IntegratedNativePointerPath\)/u);
+  assert.match(fixture, /Same-Path \$SelectedAManifest\.path \$ExpectedStableBrowserLauncher/u);
+  assert.match(fixture, /\$JournalStableSelectionTrigger,\$JournalStableSelectionReceipt/u);
+  assert.match(native, /RequireOwnedRestoredAIdentityWitness\(owner, journalRoot, worker, lease, leaseAge\)/u);
+  assert.doesNotMatch(worker, /rollback_native_restored.*journal\.advance|Process\.Kill/u);
+});
+
 test('hosted x64/ARM64 CI proves original Guardian rollback_started/5 live OS owner only after exact disposable B exit', async () => {
   const fixture = await fs.readFile(new URL('./windows-installer-real-package-smoke.ps1', import.meta.url), 'utf8');
   const worker = await fs.readFile(new URL('./owned-windows-worker-proof.mjs', import.meta.url), 'utf8');

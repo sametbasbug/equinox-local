@@ -462,6 +462,8 @@ if (process.env.GITHUB_ACTIONS === 'true' &&
   $JournalNegativeBReceipt = Join-Path $Work 'native-negative-b-owner-attested.json'
   $JournalPhysicalRestoreTrigger = Join-Path $Work 'start-original-guardian-physical-a-restore.trigger'
   $JournalPhysicalRestoreReceipt = Join-Path $Work 'original-guardian-physical-a-restored.json'
+  $JournalStableSelectionTrigger = Join-Path $Work 'start-original-guardian-select-stable-a.trigger'
+  $JournalStableSelectionReceipt = Join-Path $Work 'original-guardian-a-identity-selected.json'
   $JournalRollbackStartCommit = Join-Path $JournalDataDir ("$JournalId.rollback_started.commit.json")
   $JournalIntegratedB = Join-Path $NativeTxRoot ("native-store\$FixtureTarget\$JournalTarget")
   $JournalShellQuiesced = Join-Path $JournalDataDir ("$JournalId.stable-shell-quiesce.json")
@@ -540,6 +542,9 @@ if (process.env.GITHUB_ACTIONS === 'true' &&
       $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_AB_PHYSICAL_RESTORE_TRIGGER'] = $JournalPhysicalRestoreTrigger
       $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_AB_PHYSICAL_RESTORE_RECEIPT'] = $JournalPhysicalRestoreReceipt
       $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_AB_PHYSICAL_RESTORE_MODULE'] = Join-Path $Root 'src\equinox-local-windows-native-ab-physical-restore-client.js'
+      $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_AB_SELECT_STABLE_TRIGGER'] = $JournalStableSelectionTrigger
+      $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_AB_SELECT_STABLE_RECEIPT'] = $JournalStableSelectionReceipt
+      $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_AB_SELECT_STABLE_MODULE'] = Join-Path $Root 'src\equinox-local-windows-native-ab-stable-a-selection-client.js'
       $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_AB_ROLLBACK_MODULE'] = Join-Path $Root 'src\equinox-local-windows-native-ab-rollback-client.js'
       $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_AB_EVIDENCE_MODULE'] = Join-Path $Root 'src\equinox-local-windows-native-guardian-evidence.js'
       $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_AB_OWNER_VERIFIER_MODULE'] = Join-Path $Root 'src\equinox-local-windows-native-rollback-owner-verifier.js'
@@ -1075,6 +1080,45 @@ if (process.env.GITHUB_ACTIONS === 'true' &&
           $RollbackCommit.journalSha256 -ceq ((Get-FileHash -LiteralPath $JournalData -Algorithm SHA256).Hash.ToLowerInvariant()) -and
           [IO.File]::ReadAllText($IntegratedSourcePointerPath) -ceq $SelectedBSourcePointer) 'Physical A must not fabricate stage6 or prematurely claim A source selection.'
         Write-Output "Windows $FixtureTarget original Guardian OS-authorized physical A restore PASSED; quarantined B retained, stage5 unchanged, A pointer/health NOT YET committed."
+        # Start ONLY the original Windows worker's second fixed S request,
+        # under SAME still-held Guardian writer lease. No production updater
+        # imports this hosted fixture or promotes rollback stage6.
+        [IO.File]::WriteAllText($JournalStableSelectionTrigger, 'hosted-original-guardian-select-a-after-physical-restore')
+        $StableSelectionConfirmed = $false
+        for ($SelectTry=0; $SelectTry -lt 330; $SelectTry++) {
+          if ([IO.File]::Exists($JournalStableSelectionReceipt) -and
+              -not $IntegratedGuardian.HasExited -and -not $WorkerProcess.HasExited) {
+            $StableSelectionConfirmed = $true
+            break
+          }
+          if ($IntegratedGuardian.HasExited -or $WorkerProcess.HasExited) { break }
+          Start-Sleep -Milliseconds 125
+        }
+        if (-not $StableSelectionConfirmed -and [IO.File]::Exists($JournalIntegratedDiagnostic)) {
+          Write-Output ('Hosted OS-owned A source/native/NM selection diagnostic: ' + [IO.File]::ReadAllText($JournalIntegratedDiagnostic))
+        }
+        Assert-True $StableSelectionConfirmed 'Original Guardian failed to confirm OS-HMAC authorized A source/native/NM selection.'
+        $StableSelectionReceipt = ConvertFrom-Json ([IO.File]::ReadAllText($JournalStableSelectionReceipt))
+        $ExactStableSourceRoot = Join-Path $NativeTxRoot ("sources\$JournalCurrent")
+        $ExactStableSourcePointer = @('schemaVersion=1',"sourceRoot=$ExactStableSourceRoot","sha=$JournalCurrent",'') -join "`n"
+        $ExpectedStableBrowserLauncher = Join-Path $ReleaseDir 'runtime\browser\equinox-browser-native-host.exe'
+        $SelectedARegistryOwner = [string](Get-Item -LiteralPath $NativeRegistryKey -ErrorAction Stop).GetValue('')
+        $SelectedAManifest = [IO.File]::ReadAllText($ExpectedManifestPath) | ConvertFrom-Json
+        $AfterStableSelection = ConvertFrom-Json ([IO.File]::ReadAllText($JournalData))
+        Assert-True ($StableSelectionReceipt.transactionId -ceq $JournalId -and
+          $StableSelectionReceipt.stage -ceq 'a_identity_selected_stage6_pending' -and
+          $StableSelectionReceipt.guardianPid -eq $IntegratedGuardian.Id -and
+          [IO.File]::ReadAllText($IntegratedSourcePointerPath) -ceq $ExactStableSourcePointer -and
+          -not [IO.File]::Exists($IntegratedNativePointerPath) -and
+          (Same-Path $SelectedARegistryOwner $ExpectedManifestPath) -and
+          (Same-Path $SelectedAManifest.path $ExpectedStableBrowserLauncher) -and
+          [IO.File]::Exists($StableExe) -and
+          ((Get-FileHash -LiteralPath $StableExe -Algorithm SHA256).Hash -ceq (Get-FileHash -LiteralPath $OriginalAExe -Algorithm SHA256).Hash) -and
+          [IO.File]::Exists((Join-Path $FailedBQuarantine 'native-b-ci-only.marker')) -and
+          $AfterStableSelection.stage -ceq 'rollback_started' -and $AfterStableSelection.sequence -eq 5 -and
+          $RollbackCommit.journalSha256 -ceq ((Get-FileHash -LiteralPath $JournalData -Algorithm SHA256).Hash.ToLowerInvariant())) 'Stable A identity selection did not preserve exact A+B/source/native/NM owner and still-pending stage5.'
+        # A stable pointer/messaging identity is NOT WPF/backend health.
+        Write-Output "Windows $FixtureTarget original Guardian OS-authorized Stable A source/native/NM selection PASSED; stage5 retained, rollback_native_restored/6 and A health NOT YET committed."
         $IntegratedGuardian.Kill()
         Assert-True ($IntegratedGuardian.WaitForExit(5000)) 'Native supervisor force-kill did not stop its Windows process.'
         # A durable stage5 receipt is NOT authority after the original
@@ -1131,7 +1175,7 @@ if (process.env.GITHUB_ACTIONS === 'true' &&
         # Hosted test-only registry and manifest rollback happens before
         # restarting Stable A. Production always requires independent health.
         [IO.File]::WriteAllBytes($ExpectedManifestPath, $OriginalIntegratedNativeManifest)
-        Remove-Item -LiteralPath $JournalGuard,$JournalAuthority,$JournalShellQuiesced,$JournalIntegratedTrigger,$JournalGuardianSpawnTrigger,$JournalGuardianPidReceipt,$JournalBRestartTrigger,$JournalRestartedReceipt,$JournalNativeStagedCommit,$JournalShellStoppedCommit,$JournalSwitchedCommit,$JournalRestartedCommit,$JournalRollbackStartCommit,$JournalNegativeBTrigger,$JournalNegativeBReceipt,$JournalPhysicalRestoreTrigger,$JournalPhysicalRestoreReceipt -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $JournalGuard,$JournalAuthority,$JournalShellQuiesced,$JournalIntegratedTrigger,$JournalGuardianSpawnTrigger,$JournalGuardianPidReceipt,$JournalBRestartTrigger,$JournalRestartedReceipt,$JournalNativeStagedCommit,$JournalShellStoppedCommit,$JournalSwitchedCommit,$JournalRestartedCommit,$JournalRollbackStartCommit,$JournalNegativeBTrigger,$JournalNegativeBReceipt,$JournalPhysicalRestoreTrigger,$JournalPhysicalRestoreReceipt,$JournalStableSelectionTrigger,$JournalStableSelectionReceipt -Force -ErrorAction SilentlyContinue
         Remove-Item -LiteralPath $JournalIntegratedB -Recurse -Force -ErrorAction SilentlyContinue
         [IO.File]::WriteAllText($JournalData, ($JournalValue | ConvertTo-Json -Depth 5))
         $IntegratedWpfRestart = [Diagnostics.ProcessStartInfo]::new($StableExe)

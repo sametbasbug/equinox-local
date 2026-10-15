@@ -193,6 +193,66 @@ if (physicalTrigger) {
   physicalTimer.unref();
 }
 
+// Hosted ONLY: second fixed S action is requested after the SAME original
+// worker's physical A receipt, never by a new process or public updater.
+// In particular: only retry a non-connected Windows named pipe, not HMAC,
+// partial pointer mutation, timeout or missing original Guardian ACK.
+const selectStableTrigger = process.env.EQUINOX_LOCAL_TEST_AB_SELECT_STABLE_TRIGGER;
+if (selectStableTrigger) {
+  const selectionReceipt = process.env.EQUINOX_LOCAL_TEST_AB_SELECT_STABLE_RECEIPT;
+  const selectionModule = process.env.EQUINOX_LOCAL_TEST_AB_SELECT_STABLE_MODULE;
+  const physicalReceiptPath = process.env.EQUINOX_LOCAL_TEST_AB_PHYSICAL_RESTORE_RECEIPT;
+  if (process.env.GITHUB_ACTIONS !== 'true' || !selectionReceipt || !selectionModule ||
+      !physicalReceiptPath || !process.env.EQUINOX_LOCAL_TEST_AB_PHYSICAL_RESTORE_TRIGGER ||
+      !process.env.EQUINOX_LOCAL_TEST_AB_NEGATIVE_B_TRIGGER) {
+    throw new Error('Hosted A identity selection requires original disposable CI negative-B and physical A proof.');
+  }
+  const stableTimer = setInterval(() => {
+    if (!fs.existsSync(selectStableTrigger)) return;
+    clearInterval(stableTimer);
+    void (async () => {
+      const path = await import('node:path');
+      const tx = process.env.EQUINOX_LOCAL_TEST_WORKER_TX;
+      const root = path.win32.join(process.env.LOCALAPPDATA, 'Equinox Local');
+      const physicalReceipt = JSON.parse(fs.readFileSync(physicalReceiptPath, 'utf8'));
+      const {runEquinoxLocalWindowsGuardianOwnedStableASelection} = await import(pathToFileURL(selectionModule).href);
+      const request = Object.freeze({
+        transactionId: tx,
+        transactionRoot: process.env.EQUINOX_LOCAL_TEST_JOURNAL_TX_ROOT,
+        workerToken: process.env.EQUINOX_LOCAL_MAIN_WORKER_TOKEN,
+        physicalReceipt,
+        installation: Object.freeze({managed: true, selfUpdateSupported: true,
+          target: process.env.EQUINOX_LOCAL_TEST_GUARDIAN_TARGET,
+          installRoot: root,
+          releaseDir: path.win32.join(root, 'releases', process.env.EQUINOX_LOCAL_TEST_GUARDIAN_STABLE_VERSION)}),
+      });
+      let result;
+      for (let attempt = 0; attempt < 20; attempt++) {
+        try {
+          result = await runEquinoxLocalWindowsGuardianOwnedStableASelection(request);
+          break;
+        } catch (error) {
+          if (!['ENOENT', 'ECONNREFUSED'].includes(error?.code) || attempt === 19) throw error;
+          await new Promise(resolve => setTimeout(resolve, 125));
+        }
+      }
+      if (result.stage !== 'a_identity_selected_stage6_pending')
+        throw new Error('Original Guardian did not attest all A identities.');
+      const commit = JSON.parse(fs.readFileSync(path.win32.join(request.transactionRoot,
+        'guardian-journal', `${tx}.rollback_started.commit.json`), 'utf8'));
+      fs.writeFileSync(selectionReceipt, JSON.stringify({
+        transactionId: tx, stage: result.stage, guardianPid: commit.guardianPid,
+      }), {flag:'wx'});
+    })().catch(error => {
+      const kind = String(error?.code ?? error?.name ?? 'error').slice(0, 40);
+      const diagnostic = process.env.EQUINOX_LOCAL_TEST_AB_DIAGNOSTIC_FILE;
+      if (diagnostic) try {fs.appendFileSync(diagnostic, `select-A:${kind}\n`);} catch {}
+      process.exitCode = 1;
+    });
+  }, 110);
+  stableTimer.unref();
+}
+
 // Hosted-only negative-B acceptance. The SAME original product worker asks
 // the SAME live Guardian to persist rollback_started/5 after CI deliberately
 // terminates ONLY its independently identified disposable B WPF tree.
