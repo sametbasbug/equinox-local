@@ -93,3 +93,27 @@ test('native read-only verifier probes OS kernel pipe server, live SID/logon/ses
   assert.match(entry, /"--audit-native-rollback-owner"/u);
   assert.match(entry, /AuditOwnedRollbackGuardianOsWitness\(\)/u);
 });
+
+test('original Guardian demands fresh post-stage5 physical A readiness before any future restore action', async () => {
+  const readiness = await readFile(new URL('../../native/windows/EquinoxLocal.Guardian/MainNativeRollbackPhysicalAReadiness.cs', import.meta.url), 'utf8');
+  const lease = await readFile(new URL('../../native/windows/EquinoxLocal.Guardian/MainNativeJournalLease.cs', import.meta.url), 'utf8');
+  const stage5 = lease.indexOf('AuthorizeOwnedIntegratedARollbackStart(owner, root, worker, leaseAge)');
+  const ready = lease.indexOf('RequireOwnedPhysicalARestoreReadiness(owner, root, worker, lease, leaseAge)');
+  const witness = lease.indexOf('HoldOwnedRollbackOwnerWitness(owner, root, worker, lease, leaseAge)');
+  assert.ok(stage5 >= 0 && stage5 < ready && ready < witness,
+    'fresh readiness must run after the original OS owner committed stage5 and before the read-only witness');
+  assert.match(readiness, /lease\.SafeFileHandle\.IsClosed \|\| lease\.SafeFileHandle\.IsInvalid/u);
+  assert.match(readiness, /leaseAge\.Elapsed >= TimeSpan\.FromMinutes\(20\)/u);
+  assert.match(readiness, /InspectOwnedNativeWorkerProcess\(guardianHoldsJournalLease: true\)/u);
+  assert.match(readiness, /"rollback_started"/u);
+  assert.match(readiness, /stage\.GetProperty\("sequence"\)\.GetInt32\(\) != 5/u);
+  assert.match(readiness, /marker\.GetProperty\("guardianPid"\)\.GetInt32\(\) != Environment\.ProcessId/u);
+  assert.match(readiness, /CompareNativeTrees\(priorShell, backup\)/u);
+  assert.match(readiness, /CompareNativeTrees\(Path\.Combine\(bRelease, "runtime", "shell"\), program\)/u);
+  assert.match(readiness, /FindExactRunningWpfOrNull\(Path\.Combine\(program, "EquinoxLocal\.exe"\)\)/u);
+  assert.match(readiness, /InspectOwnedMainNativeMessaging\(install, bRelease\)/u);
+  assert.match(readiness, /"sourceRoot=" \+ Path\.Combine\(txRoot, "sources", sourceSha\)/u);
+  assert.match(readiness, /selected\.GetProperty\("sourceSha"\)\.GetString\(\) != sourceSha/u);
+  assert.match(readiness, /FixedTimeEquals\(before, SHA256\.HashData\(File\.ReadAllBytes\(journalPath\)\)\)/u);
+  assert.doesNotMatch(readiness, /Directory\.Move|File\.Move|Directory\.Delete|File\.Delete|Process\.Start|Process\.Kill|Registry\.SetValue|WriteIntegratedOwnedNativeStage/u);
+});

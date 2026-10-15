@@ -59,6 +59,7 @@ internal static partial class Program
                 // read-only OS attestation still needs this live owner, and
                 // neither orphan deletion nor physical A restore is allowed.
                 InspectionPhase = "native-integrated-a-rollback-started-owner-held";
+                RequireOwnedPhysicalARestoreReadiness(owner, root, worker, lease, leaseAge);
                 HoldOwnedRollbackOwnerWitness(owner, root, worker, lease, leaseAge);
             }
             // Never grant a second lease or silently reclaim an unfinished
