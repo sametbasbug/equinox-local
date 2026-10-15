@@ -123,6 +123,22 @@ internal static partial class Program
                                 ServeOwnedRestoredATerminalCommit(owner, journalRoot, worker, lease, leaseAge, terminalPipe);
                                 terminalPipe.Dispose();
                                 InspectionPhase = "native-integrated-a-rolled-back-stage8-failed-b-retained";
+                                var retirementRemaining = TimeSpan.FromMinutes(20) - leaseAge.Elapsed;
+                                if (retirementRemaining <= TimeSpan.Zero)
+                                    throw new InvalidOperationException("Original Guardian expired before B quarantine retirement.");
+                                using var retirementPipe = new NamedPipeServerStream("EquinoxLocalMainAB-RetireFailedB-" + owner.TransactionId,
+                                    PipeDirection.InOut, 1, PipeTransmissionMode.Byte, PipeOptions.Asynchronous);
+                                using var retirementCutoff = new CancellationTokenSource(retirementRemaining);
+                                var retirementArrival = retirementPipe.WaitForConnectionAsync(retirementCutoff.Token);
+                                var retirementWorkerExit = worker.WaitForExitAsync(retirementCutoff.Token);
+                                if (Task.WhenAny(retirementArrival, retirementWorkerExit).GetAwaiter().GetResult() == retirementArrival)
+                                {
+                                    retirementArrival.GetAwaiter().GetResult();
+                                    retirementCutoff.Cancel();
+                                    ServeOwnedFailedBQuarantineRetirement(owner, journalRoot, worker, lease, leaseAge, retirementPipe);
+                                    retirementPipe.Dispose();
+                                    InspectionPhase = "native-integrated-a-rolled-back-stage8-failed-b-retired-no-delete";
+                                }
                             }
                         }
                     }

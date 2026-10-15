@@ -350,3 +350,35 @@ test('same original OS Guardian revalidates durable terminal8 and B quarantine b
   assert.doesNotMatch(readiness,/File\.Delete|Directory\.Delete|Directory\.Move|File\.Move|WriteIntegratedOwnedNativeStage|Registry\.SetValue/u);
   assert.doesNotMatch(server,/File\.Delete|Directory\.Delete|Directory\.Move|File\.Move/u);
 });
+
+
+test('only same original OS Guardian may retire exact SHA-quarantined failed B under fixed Q without deleting a single file',async()=>{
+  const server=await readFile(new URL('../../native/windows/EquinoxLocal.Guardian/MainNativeFailedBQuarantineRetirement.cs',import.meta.url),'utf8');
+  const mutation=await readFile(new URL('../../native/windows/EquinoxLocal.Guardian/MainNativeFailedBQuarantineRetirementProof.cs',import.meta.url),'utf8');
+  const lease=await readFile(new URL('../../native/windows/EquinoxLocal.Guardian/MainNativeRollbackOwnerWitness.cs',import.meta.url),'utf8');
+  const readiness=await readFile(new URL('../../native/windows/EquinoxLocal.Guardian/MainNativeRestoredATerminalReadiness.cs',import.meta.url),'utf8');
+  assert.match(lease,/new NamedPipeServerStream\("EquinoxLocalMainAB-RetireFailedB-" \+ owner\.TransactionId/u);
+  assert.ok(lease.indexOf('ServeOwnedRestoredATerminalCommit(owner, journalRoot, worker, lease, leaseAge, terminalPipe);') < lease.indexOf('ServeOwnedFailedBQuarantineRetirement(owner, journalRoot, worker, lease, leaseAge, retirementPipe);'));
+  assert.match(server,/GetNamedPipeClientProcessId\(pipe\.SafePipeHandle, out var pid\)/u);
+  assert.match(server,/pid != owner\.Pid/u);
+  assert.match(server,/InspectOwnedNativeWorkerOsArguments\(guardianHoldsJournalLease: true\)/u);
+  assert.match(server,/"equinox-local-guardian-ab-retire-b-worker-v1:"/u);
+  assert.match(server,/"equinox-local-guardian-ab-retire-b-owner-v1:"/u);
+  assert.match(server,/grant\[32\] = \(byte\)'Q'/u);
+  assert.match(server,/ack\[0\] != \(byte\)'q'/u);
+  assert.match(server,/FixedTimeEquals\(expected, response\)/u);
+  assert.match(server,/RetireOwnedFailedBQuarantineWithoutDeletion\(owner, journalRoot, worker, lease, leaseAge, digest\)/u);
+  assert.match(mutation,/FileMode\.CreateNew, FileAccess\.Write/u);
+  assert.match(mutation,/FileOptions\.WriteThrough/u);
+  assert.match(mutation,/fd\.Flush\(flushToDisk: true\)/u);
+  assert.match(mutation,/failed-b-retire\.intent\.json/u);
+  assert.match(mutation,/failed-b-retired\.commit\.json/u);
+  assert.match(mutation,/Directory\.Move\(quarantine, retired\)/u);
+  assert.match(mutation,/CompareNativeTrees\(candidate, quarantine\)/u);
+  assert.match(mutation,/requireTerminalStage8: true, requireRetiredFailedB: true/u);
+  assert.match(mutation,/intentSha256/u);
+  assert.match(readiness,/requireRetiredFailedB && !requireTerminalStage8/u);
+  assert.match(readiness,/CompareNativeTrees\(Path\.Combine\(candidateB, "runtime", "shell"\), retired\)/u);
+  assert.match(readiness,/if \(Directory\.Exists\(quarantine\) \|\| File\.Exists\(quarantine\)\)/u);
+  assert.doesNotMatch(server+mutation,/Directory\.Delete|File\.Delete|Remove-Item|Process\.Kill|Registry\.SetValue/u);
+});

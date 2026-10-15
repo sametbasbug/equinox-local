@@ -731,6 +731,24 @@ test('real installed Windows x64/ARM64 requires original fixed T and durable sta
   assert.doesNotMatch(client,/Directory\.Delete|File\.Delete|Process\.Kill|rolled_back.*journal\.advance/u);
 });
 
+test('real installed x64/ARM64 one-shot Guardian Q retires exact B only after stage8 with durable no-delete receipts',async()=>{
+  const ps=await fs.readFile(new URL('./windows-installer-real-package-smoke.ps1',import.meta.url),'utf8');
+  const worker=await fs.readFile(new URL('./owned-windows-worker-proof.mjs',import.meta.url),'utf8');
+  const client=await fs.readFile(new URL('../../src/equinox-local-windows-native-ab-failed-b-retirement-client.js',import.meta.url),'utf8');
+  assert.match(worker,/process\.env\.GITHUB_ACTIONS !== 'true'/u);
+  assert.match(worker,/EQUINOX_LOCAL_TEST_AB_RETIRE_B_TRIGGER/u);
+  assert.match(worker,/requestEquinoxLocalGuardianOwnedFailedBRetirement\(request\)/u);
+  assert.match(ps,/original Guardian fixed Q failed-B same-volume retirement OS\/HMAC SHA\/intent\/commit PASSED/u);
+  assert.match(ps,/\$RetireResult\.deleted -eq \$false/u);
+  assert.match(ps,/\$RetireCommit\.intentSha256 -ceq/u);
+  assert.match(ps,/\$AfterRetirement\.stage -ceq 'rolled_back'/u);
+  assert.match(ps,/\$RetiredBQuarantine 'native-b-ci-only\.marker'/u);
+  assert.match(ps,/-not \(Test-Path -LiteralPath \$FailedBQuarantine\)/u);
+  assert.match(client,/\.failed-b-retired\.commit\.json/u);
+  assert.match(client,/intent\.workerPid !== process\.pid/u);
+  assert.doesNotMatch(client,/fsImpl\.rm|fsImpl\.rename|Remove-Item|Directory\.Delete/u);
+});
+
 test('hosted x64/ARM64 CI proves original Guardian rollback_started/5 live OS owner only after exact disposable B exit', async () => {
   const fixture = await fs.readFile(new URL('./windows-installer-real-package-smoke.ps1', import.meta.url), 'utf8');
   const worker = await fs.readFile(new URL('./owned-windows-worker-proof.mjs', import.meta.url), 'utf8');

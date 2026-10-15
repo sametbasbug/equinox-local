@@ -473,6 +473,11 @@ if (process.env.GITHUB_ACTIONS === 'true' &&
   $JournalTerminalATrigger = Join-Path $Work 'start-original-guardian-terminal-stable-a.trigger'
   $JournalTerminalAReceipt = Join-Path $Work 'original-guardian-terminal-a.json'
   $JournalTerminalACommit = Join-Path $JournalDataDir ("$JournalId.rolled_back.commit.json")
+  $JournalRetireBTrigger = Join-Path $Work 'start-original-guardian-retire-failed-b.trigger'
+  $JournalRetireBReceipt = Join-Path $Work 'original-guardian-retired-failed-b.json'
+  $JournalRetireBIntent = Join-Path $JournalDataDir ("$JournalId.failed-b-retire.intent.json")
+  $JournalRetireBCommit = Join-Path $JournalDataDir ("$JournalId.failed-b-retired.commit.json")
+  $RetiredBQuarantine = $null
   $JournalRollbackStartCommit = Join-Path $JournalDataDir ("$JournalId.rollback_started.commit.json")
   $JournalNativeRestoredCommit = Join-Path $JournalDataDir ("$JournalId.rollback_native_restored.commit.json")
   $JournalIntegratedB = Join-Path $NativeTxRoot ("native-store\$FixtureTarget\$JournalTarget")
@@ -564,6 +569,9 @@ if (process.env.GITHUB_ACTIONS === 'true' &&
       $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_AB_TERMINAL_STABLE_TRIGGER'] = $JournalTerminalATrigger
       $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_AB_TERMINAL_STABLE_RECEIPT'] = $JournalTerminalAReceipt
       $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_AB_TERMINAL_STABLE_MODULE'] = Join-Path $Root 'src\equinox-local-windows-native-ab-stable-a-terminal-client.js'
+      $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_AB_RETIRE_B_TRIGGER'] = $JournalRetireBTrigger
+      $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_AB_RETIRE_B_RECEIPT'] = $JournalRetireBReceipt
+      $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_AB_RETIRE_B_MODULE'] = Join-Path $Root 'src\equinox-local-windows-native-ab-failed-b-retirement-client.js'
       $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_AB_ROLLBACK_MODULE'] = Join-Path $Root 'src\equinox-local-windows-native-ab-rollback-client.js'
       $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_AB_EVIDENCE_MODULE'] = Join-Path $Root 'src\equinox-local-windows-native-guardian-evidence.js'
       $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_AB_OWNER_VERIFIER_MODULE'] = Join-Path $Root 'src\equinox-local-windows-native-rollback-owner-verifier.js'
@@ -1085,6 +1093,7 @@ if (process.env.GITHUB_ACTIONS === 'true' &&
         Assert-True $PhysicalARestoreProof 'Live original Guardian did not attest installed physical A after hosted negative B.'
         $PhysicalReceipt = ConvertFrom-Json ([IO.File]::ReadAllText($JournalPhysicalRestoreReceipt))
         $FailedBQuarantine = Join-Path (Split-Path -Parent $OwnedProgramRoot) ('.equinox-shell-failed-' + $JournalId)
+        $RetiredBQuarantine = Join-Path (Split-Path -Parent $OwnedProgramRoot) ('.equinox-shell-retired-' + $JournalId)
         $BackupAfterRestore = Join-Path (Split-Path -Parent $OwnedProgramRoot) ('.equinox-shell-backup-' + $JournalId)
         $OriginalAExe = Join-Path $ReleaseDir 'runtime\shell\EquinoxLocal.exe'
         Assert-True ($PhysicalReceipt.transactionId -ceq $JournalId -and
@@ -1256,6 +1265,42 @@ if (process.env.GITHUB_ACTIONS === 'true' &&
           -not [IO.File]::Exists($IntegratedNativePointerPath) -and
           [IO.File]::Exists((Join-Path $FailedBQuarantine 'native-b-ci-only.marker'))) 'Terminal stage8 allowed stale Guardian or changed A/B identity, failed quarantine or forged SHA/PID.'
         Write-Output "Windows $FixtureTarget original Guardian OS/HMAC durable terminal rolled_back/8 SHA/PID PASSED; failed B SHA quarantine RETAINED, cleanup NOT YET authorized."
+        [IO.File]::WriteAllText($JournalRetireBTrigger,'hosted-only-original-guardian-retire-no-delete')
+        $BRetired = $false
+        for ($RetireTry=0; $RetireTry -lt 460; $RetireTry++) {
+          if ([IO.File]::Exists($JournalRetireBReceipt) -and
+              -not $IntegratedGuardian.HasExited -and -not $WorkerProcess.HasExited) { $BRetired = $true; break }
+          if ($IntegratedGuardian.HasExited -or $WorkerProcess.HasExited) { break }
+          Start-Sleep -Milliseconds 125
+        }
+        if (-not $BRetired -and [IO.File]::Exists($JournalIntegratedDiagnostic)) {
+          Write-Output ('Original Guardian failed-B retirement diagnostic: ' + [IO.File]::ReadAllText($JournalIntegratedDiagnostic))
+        }
+        Assert-True $BRetired 'Original Guardian did not retire failed B with exact Q OS proof.'
+        Assert-True ([IO.File]::Exists($JournalRetireBIntent) -and [IO.File]::Exists($JournalRetireBCommit)) 'Original Guardian B retirement requires both durable intent and commit.'
+        $RetireResult = ConvertFrom-Json ([IO.File]::ReadAllText($JournalRetireBReceipt))
+        $RetireIntent = ConvertFrom-Json ([IO.File]::ReadAllText($JournalRetireBIntent))
+        $RetireCommit = ConvertFrom-Json ([IO.File]::ReadAllText($JournalRetireBCommit))
+        $AfterRetirement = ConvertFrom-Json ([IO.File]::ReadAllText($JournalData))
+        Assert-True ($RetireResult.transactionId -ceq $JournalId -and
+          $RetireResult.stage -ceq 'failed_b_retired_on_disk' -and
+          $RetireResult.deleted -eq $false -and
+          $RetireResult.guardianPid -eq $IntegratedGuardian.Id -and
+          $RetireIntent.transactionId -ceq $JournalId -and
+          $RetireIntent.disposition -ceq 'failed-b-retire-intent-no-delete' -and
+          $RetireIntent.guardianPid -eq $IntegratedGuardian.Id -and
+          $RetireCommit.transactionId -ceq $JournalId -and
+          $RetireCommit.disposition -ceq 'failed-b-retired-still-on-disk-no-delete' -and
+          $RetireCommit.guardianPid -eq $IntegratedGuardian.Id -and
+          $RetireCommit.stage8JournalSha256 -ceq $ATerminalCommit.journalSha256 -and
+          $RetireCommit.intentSha256 -ceq ((Get-FileHash -LiteralPath $JournalRetireBIntent -Algorithm SHA256).Hash.ToLowerInvariant()) -and
+          $AfterRetirement.stage -ceq 'rolled_back' -and $AfterRetirement.sequence -eq 8 -and
+          -not (Test-Path -LiteralPath $FailedBQuarantine) -and
+          [IO.File]::Exists((Join-Path $RetiredBQuarantine 'native-b-ci-only.marker')) -and
+          [IO.File]::Exists($StableExe) -and
+          (Same-Path $SelectedAManifest.path $ExpectedStableBrowserLauncher) -and
+          -not [IO.File]::Exists($IntegratedNativePointerPath)) 'Original Guardian B retirement changed stable A, deleted failed B or forged stage8/intent/receipt.'
+        Write-Output "Windows $FixtureTarget original Guardian fixed Q failed-B same-volume retirement OS/HMAC SHA/intent/commit PASSED; B ON DISK, no deletion."
         # Disposable fixture teardown only. Subsequent orphan journal audit
         # must see no remaining A WPF, even after original Guardian death.
         Stop-OwnedShell $StableExe
@@ -1281,7 +1326,7 @@ if (process.env.GITHUB_ACTIONS === 'true' &&
         $StoppedWpf = @(Get-CimInstance Win32_Process -Filter "Name='EquinoxLocal.exe'" -ErrorAction SilentlyContinue |
           Where-Object { -not [string]::IsNullOrWhiteSpace($_.ExecutablePath) -and (Same-Path $_.ExecutablePath $StableExe) })
         Assert-True ($StoppedWpf.Count -eq 0) 'Hosted negative-B crash left a WPF process running after OS health-rejection proof.'
-        Assert-True ((Test-Path -LiteralPath $FailedBQuarantine) -and -not (Test-Path -LiteralPath $IntegratedBackup) -and (Test-Path -LiteralPath $StableExe)) 'Real Windows physical A restore did not quarantine B and reinstall old Stable A.'
+        Assert-True ((Test-Path -LiteralPath $RetiredBQuarantine) -and -not (Test-Path -LiteralPath $FailedBQuarantine) -and -not (Test-Path -LiteralPath $IntegratedBackup) -and (Test-Path -LiteralPath $StableExe)) 'Real Windows physical A restore did not quarantine B and reinstall old Stable A.'
         Assert-True ((Invoke-GuardianCheck '--audit-native-journal') -eq 70) 'Native integrated supervisor allowed orphan writer-lock replay.'
       } finally {
         if ($null -ne $IntegratedGuardian) {
@@ -1312,10 +1357,11 @@ if (process.env.GITHUB_ACTIONS === 'true' &&
         # ALWAYS remove disposable failed B before restarting Stable A; this
         # deletion is test fixture teardown, NEVER automatic production GC.
         if (Test-Path -LiteralPath $FailedABQuarantine) { Remove-Item -LiteralPath $FailedABQuarantine -Recurse -Force -ErrorAction Stop }
+        if (Test-Path -LiteralPath $RetiredBQuarantine) { Remove-Item -LiteralPath $RetiredBQuarantine -Recurse -Force -ErrorAction Stop } # CI disposable fixture cleanup ONLY
         # Hosted test-only registry and manifest rollback happens before
         # restarting Stable A. Production always requires independent health.
         [IO.File]::WriteAllBytes($ExpectedManifestPath, $OriginalIntegratedNativeManifest)
-        Remove-Item -LiteralPath $JournalGuard,$JournalAuthority,$JournalShellQuiesced,$JournalIntegratedTrigger,$JournalGuardianSpawnTrigger,$JournalGuardianPidReceipt,$JournalBRestartTrigger,$JournalRestartedReceipt,$JournalNativeStagedCommit,$JournalShellStoppedCommit,$JournalSwitchedCommit,$JournalRestartedCommit,$JournalRollbackStartCommit,$JournalNegativeBTrigger,$JournalNegativeBReceipt,$JournalPhysicalRestoreTrigger,$JournalPhysicalRestoreReceipt,$JournalStableSelectionTrigger,$JournalStableSelectionReceipt,$JournalRelaunchATrigger,$JournalRelaunchAReceipt,$JournalHealthATrigger,$JournalHealthAReceipt,$JournalTerminalATrigger,$JournalTerminalAReceipt -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $JournalGuard,$JournalAuthority,$JournalShellQuiesced,$JournalIntegratedTrigger,$JournalGuardianSpawnTrigger,$JournalGuardianPidReceipt,$JournalBRestartTrigger,$JournalRestartedReceipt,$JournalNativeStagedCommit,$JournalShellStoppedCommit,$JournalSwitchedCommit,$JournalRestartedCommit,$JournalRollbackStartCommit,$JournalNegativeBTrigger,$JournalNegativeBReceipt,$JournalPhysicalRestoreTrigger,$JournalPhysicalRestoreReceipt,$JournalStableSelectionTrigger,$JournalStableSelectionReceipt,$JournalRelaunchATrigger,$JournalRelaunchAReceipt,$JournalHealthATrigger,$JournalHealthAReceipt,$JournalTerminalATrigger,$JournalTerminalAReceipt,$JournalRetireBTrigger,$JournalRetireBReceipt -Force -ErrorAction SilentlyContinue
         Remove-Item -LiteralPath $JournalIntegratedB -Recurse -Force -ErrorAction SilentlyContinue
         [IO.File]::WriteAllText($JournalData, ($JournalValue | ConvertTo-Json -Depth 5))
         $IntegratedWpfRestart = [Diagnostics.ProcessStartInfo]::new($StableExe)

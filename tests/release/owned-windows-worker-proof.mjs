@@ -410,6 +410,56 @@ if (terminalStableTrigger) {
   terminalTimer.unref();
 }
 
+// HOSTED ONLY: the exact same original worker retires failed B after
+// the durable OS Guardian terminal stage8 proof. NO physical file deletion.
+const retireFailedBTrigger=process.env.EQUINOX_LOCAL_TEST_AB_RETIRE_B_TRIGGER;
+if(retireFailedBTrigger){
+  const receipt=process.env.EQUINOX_LOCAL_TEST_AB_RETIRE_B_RECEIPT;
+  const moduleFile=process.env.EQUINOX_LOCAL_TEST_AB_RETIRE_B_MODULE;
+  const terminalFile=process.env.EQUINOX_LOCAL_TEST_AB_TERMINAL_STABLE_RECEIPT;
+  const healthFile=process.env.EQUINOX_LOCAL_TEST_AB_HEALTH_STABLE_RECEIPT;
+  const selectFile=process.env.EQUINOX_LOCAL_TEST_AB_SELECT_STABLE_RECEIPT;
+  const relaunchFile=process.env.EQUINOX_LOCAL_TEST_AB_RELAUNCH_STABLE_RECEIPT;
+  if(process.env.GITHUB_ACTIONS!=='true'||!receipt||!moduleFile||!terminalFile||
+      !healthFile||!selectFile||!relaunchFile||!process.env.EQUINOX_LOCAL_TEST_AB_TERMINAL_STABLE_TRIGGER)
+    throw new Error('B retirement requires original hosted stage8/7/6/WPF proof.');
+  const timer=setInterval(()=>{
+    if(!fs.existsSync(retireFailedBTrigger))return;
+    clearInterval(timer);
+    void(async()=>{
+      const path=await import('node:path');
+      const tx=process.env.EQUINOX_LOCAL_TEST_WORKER_TX;
+      const install=path.win32.join(process.env.LOCALAPPDATA,'Equinox Local');
+      const {requestEquinoxLocalGuardianOwnedFailedBRetirement}=await import(pathToFileURL(moduleFile).href);
+      const request=Object.freeze({transactionId:tx,
+        transactionRoot:process.env.EQUINOX_LOCAL_TEST_JOURNAL_TX_ROOT,
+        workerToken:process.env.EQUINOX_LOCAL_MAIN_WORKER_TOKEN,
+        stage6Receipt:JSON.parse(fs.readFileSync(selectFile,'utf8')),
+        relaunchReceipt:JSON.parse(fs.readFileSync(relaunchFile,'utf8')),
+        stage7Receipt:JSON.parse(fs.readFileSync(healthFile,'utf8')),
+        stage8Receipt:JSON.parse(fs.readFileSync(terminalFile,'utf8')),
+        installation:Object.freeze({managed:true,selfUpdateSupported:true,installRoot:install,
+          target:process.env.EQUINOX_LOCAL_TEST_GUARDIAN_TARGET}),
+      });
+      let result;
+      for(let attempt=0;attempt<20;attempt++){
+        try{result=await requestEquinoxLocalGuardianOwnedFailedBRetirement(request);break;}
+        catch(error){
+          if(!['ENOENT','ECONNREFUSED'].includes(error?.code)||attempt===19)throw error;
+          await new Promise(resolve=>setTimeout(resolve,125));
+        }
+      }
+      if(result.stage!=='failed_b_retired_on_disk'||result.deleted!==false)
+        throw new Error('Original Guardian cannot attest B retirement without deletion.');
+      fs.writeFileSync(receipt,JSON.stringify(result),{flag:'wx'});
+    })().catch(error=>{
+      const diagnostic=process.env.EQUINOX_LOCAL_TEST_AB_DIAGNOSTIC_FILE;
+      if(diagnostic)try{fs.appendFileSync(diagnostic,`retire-B:${String(error?.code??error?.name??'error').slice(0,40)}\n`);}catch{}
+      process.exitCode=1;
+    });
+  },110);timer.unref();
+}
+
 // Hosted-only negative-B acceptance. The SAME original product worker asks
 // the SAME live Guardian to persist rollback_started/5 after CI deliberately
 // terminates ONLY its independently identified disposable B WPF tree.

@@ -13,9 +13,14 @@ internal static partial class Program
     // agree; a stage7 label alone never grants terminal writer authority.
     private static void RequireOwnedRestoredATerminalReadiness(
         OwnedWorkerClaim owner, string journalRoot, Process worker,
-        FileStream lease, Stopwatch leaseAge, bool requireTerminalStage8 = false)
+        FileStream lease, Stopwatch leaseAge, bool requireTerminalStage8 = false,
+        bool requireRetiredFailedB = false)
     {
-        InspectionPhase = requireTerminalStage8
+        if (requireRetiredFailedB && !requireTerminalStage8)
+            throw new InvalidDataException("Retired failed-B audit requires terminal stage8 and its original Guardian marker.");
+        InspectionPhase = requireRetiredFailedB
+            ? "native-integrated-a-retired-b-readiness-original-os-writer"
+            : requireTerminalStage8
             ? "native-integrated-a-post-terminal-cleanup-readiness-original-os-writer"
             : "native-integrated-a-terminal-readiness-original-os-writer";
         if (lease.SafeFileHandle.IsClosed || lease.SafeFileHandle.IsInvalid ||
@@ -96,9 +101,23 @@ internal static partial class Program
         var active = Path.Combine(local, "Programs", "Equinox Local");
         var quarantine = Path.Combine(Path.GetDirectoryName(active)!, ".equinox-shell-failed-" + owner.TransactionId);
         var backup = Path.Combine(Path.GetDirectoryName(active)!, ".equinox-shell-backup-" + owner.TransactionId);
-        InspectionPhase = "native-integrated-a-terminal-readiness-retained-b-and-stable-a";
+        var retired = Path.Combine(Path.GetDirectoryName(active)!, ".equinox-shell-retired-" + owner.TransactionId);
+        InspectionPhase = requireRetiredFailedB
+            ? "native-integrated-a-terminal-readiness-retired-b-and-stable-a"
+            : "native-integrated-a-terminal-readiness-retained-b-and-stable-a";
         CompareNativeTrees(Path.Combine(stable, "runtime", "shell"), active);
-        CompareNativeTrees(Path.Combine(candidateB, "runtime", "shell"), quarantine);
+        if (requireRetiredFailedB)
+        {
+            if (Directory.Exists(quarantine) || File.Exists(quarantine))
+                throw new InvalidDataException("Failed B quarantine still exists after original Guardian retirement.");
+            CompareNativeTrees(Path.Combine(candidateB, "runtime", "shell"), retired);
+        }
+        else
+        {
+            if (Directory.Exists(retired) || File.Exists(retired))
+                throw new InvalidDataException("Foreign or prior B retirement exists before original Guardian grant.");
+            CompareNativeTrees(Path.Combine(candidateB, "runtime", "shell"), quarantine);
+        }
         if (Directory.Exists(backup) || File.Exists(backup))
             throw new InvalidDataException("Original A backup remains after physical terminal recovery.");
         RequireNormalDirectory(Path.Combine(transactionRoot, "sources", oldSha));
@@ -135,7 +154,9 @@ internal static partial class Program
             leaseAge.Elapsed >= TimeSpan.FromMinutes(20) ||
             worker.StartTime.ToUniversalTime().Ticks.ToString(CultureInfo.InvariantCulture) != owner.Ticks)
             throw new InvalidDataException("Original stage7 or kernel worker changed during terminal-readiness witness.");
-        InspectionPhase = requireTerminalStage8
+        InspectionPhase = requireRetiredFailedB
+            ? "native-integrated-a-retired-b-proven-read-only-no-delete"
+            : requireTerminalStage8
             ? "native-integrated-a-post-terminal-cleanup-readiness-read-only-no-delete"
             : "native-integrated-a-terminal-readiness-read-only-no-stage8";
     }
