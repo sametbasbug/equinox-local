@@ -760,6 +760,13 @@ test('real installed x64/ARM64 native offline Q auditor fails closed on power lo
   assert.match(ps,/native Q offline powercut orphan BEFORE\/AFTER rename both FAIL CLOSED/u);
 });
 
+test('real Windows x64/ARM64 refuses B offline lock quarantine while original OS worker remains live',async()=>{
+  const fixture=await fs.readFile(new URL('./windows-installer-real-package-smoke.ps1',import.meta.url),'utf8');
+  assert.match(fixture,/--quarantine-native-b-retirement-orphan/u);
+  assert.match(fixture,/Offline quarantine admitted a still-live first kernel worker/u);
+  assert.match(fixture,/Refused worker-live quarantine still mutated native writer lock/u);
+});
+
 test('hosted x64/ARM64 CI proves original Guardian rollback_started/5 live OS owner only after exact disposable B exit', async () => {
   const fixture = await fs.readFile(new URL('./windows-installer-real-package-smoke.ps1', import.meta.url), 'utf8');
   const worker = await fs.readFile(new URL('./owned-windows-worker-proof.mjs', import.meta.url), 'utf8');

@@ -402,3 +402,25 @@ test('offline Q crash inventory requires exact stage8 SHA/PID, B SHA and intent 
   assert.match(native,/RequireExactKeys\(c,/u);
   assert.doesNotMatch(native,/Directory\.Move|File\.Move|Directory\.Delete|File\.Delete|File\.WriteAll|FileStream\(/u);
 });
+
+test('explicit offline Q lock quarantine requires both original OS PIDs dead and preserves blocking writer-lock without B deletion',async()=>{
+  const code=await readFile(new URL('../../native/windows/EquinoxLocal.Guardian/MainNativeFailedBOrphanQuarantine.cs',import.meta.url),'utf8');
+  const cli=await readFile(new URL('../../native/windows/EquinoxLocal.Guardian/Program.cs',import.meta.url),'utf8');
+  assert.match(cli,/args\[0\] == "--quarantine-native-b-retirement-orphan"/u);
+  assert.match(cli,/QuarantineOwnedFailedBRetirementOrphanWithoutReplay\(\)/u);
+  assert.match(code,/InspectOwnedFailedBRetirementOrphanReadOnly\(\)/u);
+  assert.match(code,/proof.Phase is not/u);
+  assert.match(code,/FileStream\(lockPath, FileMode.Open, FileAccess.Read,\s*FileShare.None/u);
+  assert.match(code,/lockFile\.ReadExactly\(lockBytes\)/u);
+  assert.match(code,/OsProcessExists\(proof.WorkerPid\) \|\| OsProcessExists\(proof.GuardianPid\)/u);
+  assert.match(code,/\.quarantined\.writer-lock/u);
+  assert.match(code,/\.failed-b-orphan-quarantine\.json/u);
+  assert.match(code,/FileMode.CreateNew, FileAccess.Write/u);
+  assert.match(code,/FileOptions.WriteThrough/u);
+  assert.match(code,/fd.Flush\(flushToDisk: true\)/u);
+  assert.match(code,/File.Move\(lockPath, quarantineLock\)/u);
+  assert.match(code,/sourceRoot=/u);
+  assert.match(code,/NEVER accept the quarantined marker as a new OS writer/u);
+  assert.match(code,/InspectOwnedFailedBRetirementOrphanReadOnly\(\) != proof/u);
+  assert.doesNotMatch(code,/Directory.Delete|File.Delete|Directory.Move|Process.Start|Process.Kill|Registry.SetValue/u);
+});

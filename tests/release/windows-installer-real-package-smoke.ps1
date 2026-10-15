@@ -1329,6 +1329,11 @@ if (process.env.GITHUB_ACTIONS === 'true' &&
             return $AuditDiagnosis
           } finally { $AuditProcess.Dispose() }
         }
+        # A live original worker is NEVER permission to quarantine a writer,
+        # even after the first Guardian kernel owner is already dead.
+        Assert-True ((Invoke-GuardianCheck '--quarantine-native-b-retirement-orphan') -eq 70) 'Offline quarantine admitted a still-live first kernel worker.'
+        Assert-True ([IO.File]::Exists($JournalGuard) -and
+          -not [IO.File]::Exists((Join-Path $JournalDataDir ("$JournalId.failed-b-orphan-quarantine.json")))) 'Refused worker-live quarantine still mutated native writer lock.'
         $QNormalDiagnosis = Get-RetiredBOrphanAuditPhase
         Assert-True ($QNormalDiagnosis.Contains('phase=native-retire-b-offline-complete-but-no-writer-or-gc')) 'Native Q auditor failed to recognize signed retired B but still refused cleanup.'
         $QSavedCommit = Join-Path $Work 'ci-only-retired-b-commit-save.json'
@@ -1337,11 +1342,17 @@ if (process.env.GITHUB_ACTIONS === 'true' &&
           $QPostRenameDiagnosis = Get-RetiredBOrphanAuditPhase
           Assert-True ($QPostRenameDiagnosis.Contains('phase=native-retire-b-orphan-after-rename-before-commit-no-replay')) 'Native Q auditor did not fail closed after simulated power loss between rename and commit.'
         } finally { Move-Item -LiteralPath $QSavedCommit -Destination $JournalRetireBCommit -ErrorAction Stop }
-        Move-Item -LiteralPath $RetiredBQuarantine -Destination $FailedBQuarantine -ErrorAction Stop
+        # A real post-intent, pre-rename powercut has NO completed receipt.
+        # The previous simulation had mistakenly retained the post-rename
+        # commit, creating a contradictory state instead of that powercut.
+        Move-Item -LiteralPath $JournalRetireBCommit -Destination $QSavedCommit -ErrorAction Stop
         try {
-          $QPreRenameDiagnosis = Get-RetiredBOrphanAuditPhase
-          Assert-True ($QPreRenameDiagnosis.Contains('phase=native-retire-b-orphan-intent-before-rename-no-replay')) 'Native Q auditor did not fail closed after simulated power loss between intent and rename.'
-        } finally { Move-Item -LiteralPath $FailedBQuarantine -Destination $RetiredBQuarantine -ErrorAction Stop }
+          Move-Item -LiteralPath $RetiredBQuarantine -Destination $FailedBQuarantine -ErrorAction Stop
+          try {
+            $QPreRenameDiagnosis = Get-RetiredBOrphanAuditPhase
+            Assert-True ($QPreRenameDiagnosis.Contains('phase=native-retire-b-orphan-intent-before-rename-no-replay')) 'Native Q auditor did not fail closed after simulated power loss between intent and rename.'
+          } finally { Move-Item -LiteralPath $FailedBQuarantine -Destination $RetiredBQuarantine -ErrorAction Stop }
+        } finally { Move-Item -LiteralPath $QSavedCommit -Destination $JournalRetireBCommit -ErrorAction Stop }
         Assert-True ([IO.File]::Exists((Join-Path $RetiredBQuarantine 'native-b-ci-only.marker')) -and
           [IO.File]::Exists($JournalRetireBCommit) -and
           [IO.File]::Exists($StableExe)) 'Disposable B orphan injection corrupted signed A or physically lost failed B.'

@@ -9,7 +9,20 @@ internal static partial class Program
     // the final Q commit AFTER killing the original kernel Guardian. Every
     // branch refuses writer reclamation / action replay (exit 70). A complete
     // receipt is an observation, NEVER permission to GC or restart anything.
+    private sealed record FailedBOrphanEvidence(
+        string TransactionId, int WorkerPid, int GuardianPid,
+        string Stage8Sha256, string FailedBSourceSha, string Phase);
+
     private static void AuditOwnedFailedBRetirementOrphanReadOnly()
+    {
+        var observation = InspectOwnedFailedBRetirementOrphanReadOnly();
+        InspectionPhase = observation.Phase;
+        throw new InvalidDataException("Original Guardian B crash inventory never grants update, replay or deletion.");
+    }
+
+    // Returns independently observed evidence ONLY to the explicit offline
+    // quarantine command. Every ordinary CLI audit still refuses (exit 70).
+    private static FailedBOrphanEvidence InspectOwnedFailedBRetirementOrphanReadOnly()
     {
         InspectionPhase = "native-retire-b-offline-original-guardian-no-writer";
         var local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
@@ -118,7 +131,8 @@ internal static partial class Program
             InspectionPhase = qPresent
                 ? "native-retire-b-orphan-intent-before-rename-no-replay"
                 : "native-retire-b-orphan-after-rename-before-commit-no-replay";
-            throw new InvalidDataException("Q interruption requires explicit offline recovery; no automatic replay.");
+            return new FailedBOrphanEvidence(activeId, i.GetProperty("workerPid").GetInt32(), guardianPid,
+                stage8Sha, failedSha, InspectionPhase);
         }
         using var commit = ReadOwnedTransitionRecord(commitPath, 4096);
         var c = commit.RootElement;
@@ -134,6 +148,7 @@ internal static partial class Program
                 Convert.ToHexStringLower(SHA256.HashData(File.ReadAllBytes(intentPath))))
             throw new InvalidDataException("Offline failed B commit is missing exact original Guardian evidence.");
         InspectionPhase = "native-retire-b-offline-complete-but-no-writer-or-gc";
-        throw new InvalidDataException("Verified on-disk retirement is NOT ownership or delete/replay authority.");
+        return new FailedBOrphanEvidence(activeId, i.GetProperty("workerPid").GetInt32(), guardianPid,
+            stage8Sha, failedSha, InspectionPhase);
     }
 }
