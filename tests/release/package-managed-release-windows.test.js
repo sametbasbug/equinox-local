@@ -639,3 +639,26 @@ test('managed Windows WPF selects exact installed source/native pointers before 
   assert.match(harness, /Environment\.SetEnvironmentVariable\("EQUINOX_LOCAL_RELEASE_DIR", stableRelease\)/u);
   assert.match(harness, /await WaitForIdentityAsync\(port, "B"/u);
 });
+
+test('hosted x64/ARM64 CI proves original Guardian rollback_started/5 live OS owner only after exact disposable B exit', async () => {
+  const fixture = await fs.readFile(new URL('./windows-installer-real-package-smoke.ps1', import.meta.url), 'utf8');
+  const worker = await fs.readFile(new URL('./owned-windows-worker-proof.mjs', import.meta.url), 'utf8');
+  assert.match(worker, /process\.env\.GITHUB_ACTIONS !== 'true'/u);
+  assert.match(worker, /EQUINOX_LOCAL_TEST_AB_NEGATIVE_B_TRIGGER/u);
+  assert.match(worker, /requestEquinoxLocalGuardianOwnedARollbackStart\(/u);
+  assert.match(worker, /readEquinoxWindowsNativeGuardianMilestone\(/u);
+  assert.match(worker, /createEquinoxWindowsNativeRollbackOwnerVerifier\(/u);
+  assert.match(worker, /stage: 'rollback_started'/u);
+  assert.match(worker, /physicalARestored: false/u);
+  assert.match(fixture, /ActualBProcess\.StartTime\.ToUniversalTime\(\)\.Ticks/u);
+  assert.match(fixture, /Same-Path \$ActualBProcess\.MainModule\.FileName \$StableExe/u);
+  assert.match(fixture, /& \$TaskKill \/PID/u);
+  assert.match(fixture, /JournalNegativeBTrigger/u);
+  assert.match(fixture, /NegativeBReceipt\.osLeaseAttested -eq \$true/u);
+  assert.match(fixture, /NegativeBReceipt\.physicalARestored -eq \$false/u);
+  assert.match(fixture, /RollbackRecord\.stage -ceq 'rollback_started'/u);
+  assert.match(fixture, /RollbackRecord\.sequence -eq 5/u);
+  assert.match(fixture, /RollbackCommit\.journalSha256 -ceq \(\(Get-FileHash/u);
+  assert.ok(fixture.indexOf('Assert-True ($BBackendConsecutive -ge 4)') < fixture.indexOf('[IO.File]::WriteAllText($JournalNegativeBTrigger'));
+  assert.ok(fixture.indexOf('[IO.File]::WriteAllText($JournalNegativeBTrigger') < fixture.indexOf('$IntegratedGuardian.Kill()'));
+});

@@ -132,3 +132,77 @@ for (const source of [trigger, abortTrigger, shellTrigger, integratedTrigger].fi
   }, 120);
   timer.unref();
 }
+
+// Hosted-only negative-B acceptance. The SAME original product worker asks
+// the SAME live Guardian to persist rollback_started/5 after CI deliberately
+// terminates ONLY its independently identified disposable B WPF tree.
+// The pinned product auditor then proves the original OS-held Guardian lease
+// and nonce/HMAC. No A filesystem restore or production fallback is enabled.
+const negativeBTrigger = process.env.EQUINOX_LOCAL_TEST_AB_NEGATIVE_B_TRIGGER;
+if (negativeBTrigger) {
+  if (process.env.GITHUB_ACTIONS !== 'true') throw new Error('Negative-B witness must run only on disposable hosted CI.');
+  const proofReceipt = process.env.EQUINOX_LOCAL_TEST_AB_NEGATIVE_B_RECEIPT;
+  const clientModule = process.env.EQUINOX_LOCAL_TEST_AB_ROLLBACK_MODULE;
+  const journalModule = process.env.EQUINOX_LOCAL_TEST_AB_EVIDENCE_MODULE;
+  const verifierModule = process.env.EQUINOX_LOCAL_TEST_AB_OWNER_VERIFIER_MODULE;
+  if (!proofReceipt || !clientModule || !journalModule || !verifierModule) {
+    throw new Error('Negative-B witness requires exact product rollback client, observer and verifier.');
+  }
+  const negativeTimer = setInterval(() => {
+    if (!fs.existsSync(negativeBTrigger)) return;
+    clearInterval(negativeTimer);
+    void (async () => {
+      const path = await import('node:path');
+      const transactionId = process.env.EQUINOX_LOCAL_TEST_WORKER_TX;
+      const transactionRoot = process.env.EQUINOX_LOCAL_TEST_JOURNAL_TX_ROOT;
+      const workerToken = process.env.EQUINOX_LOCAL_MAIN_WORKER_TOKEN;
+      const sourceSha = process.env.EQUINOX_LOCAL_TEST_AB_TARGET_SHA;
+      const root = path.win32.join(process.env.LOCALAPPDATA, 'Equinox Local');
+      const stableVersion = process.env.EQUINOX_LOCAL_TEST_GUARDIAN_STABLE_VERSION;
+      const installation = Object.freeze({
+        managed: true, selfUpdateSupported: true,
+        target: process.env.EQUINOX_LOCAL_TEST_GUARDIAN_TARGET,
+        installRoot: root, releaseDir: path.win32.join(root, 'releases', stableVersion),
+      });
+      const { requestEquinoxLocalGuardianOwnedARollbackStart } = await import(pathToFileURL(clientModule).href);
+      // Retry only a connection that has never reached the Guardian pipe.
+      // Never replay an ambiguous HMAC or a possibly-committed journal write.
+      let started = false;
+      for (let attempt = 0; attempt < 45; attempt += 1) {
+        try {
+          await requestEquinoxLocalGuardianOwnedARollbackStart({
+            transactionId, transactionRoot, workerToken, sourceSha,
+          });
+          started = true;
+          break;
+        } catch (error) {
+          if (!['ENOENT', 'ECONNREFUSED'].includes(error?.code) || attempt === 44) throw error;
+          await new Promise(resolve => setTimeout(resolve, 130));
+        }
+      }
+      if (!started) throw new Error('Original Guardian never admitted exact rejected B.');
+      const { readEquinoxWindowsNativeGuardianMilestone } = await import(pathToFileURL(journalModule).href);
+      const { createEquinoxWindowsNativeRollbackOwnerVerifier } = await import(pathToFileURL(verifierModule).href);
+      const expected = Object.freeze({ transactionId, target: installation.target,
+        currentSha: process.env.EQUINOX_LOCAL_TEST_AB_CURRENT_SHA,
+        targetSha: sourceSha, receiptStartedAt: process.env.EQUINOX_LOCAL_TEST_AB_STARTED_AT });
+      const result = await readEquinoxWindowsNativeGuardianMilestone({
+        transactionRoot, transactionId, expected, stage: 'rollback_started',
+        verifyGuardianOsOwner: createEquinoxWindowsNativeRollbackOwnerVerifier({ transactionId, installation }),
+      });
+      if (result.stage !== 'rollback_started' || result.sequence !== 5 || result.sourceSha !== sourceSha) {
+        throw new Error('Independent live Guardian OS auditor did not prove durable rollback_started/5.');
+      }
+      fs.writeFileSync(proofReceipt, JSON.stringify({
+        transactionId, sourceSha, stage: result.stage, sequence: result.sequence,
+        guardianPid: result.guardianPid, osLeaseAttested: true, physicalARestored: false,
+      }), { flag: 'wx' });
+    })().catch((error) => {
+      const diagnostic = process.env.EQUINOX_LOCAL_TEST_AB_DIAGNOSTIC_FILE;
+      const kind = String(error?.code ?? error?.name ?? 'error').slice(0, 40);
+      if (diagnostic) try { fs.appendFileSync(diagnostic, `negative-b:${kind}\n`); } catch { }
+      process.exitCode = 1;
+    });
+  }, 110);
+  negativeTimer.unref();
+}

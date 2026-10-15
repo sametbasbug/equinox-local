@@ -458,6 +458,9 @@ if (process.env.GITHUB_ACTIONS === 'true' &&
   $JournalRestartedCommit = Join-Path $JournalDataDir ("$JournalId.restarted.commit.json")
   $JournalRestartedReceipt = Join-Path $JournalDataDir ("$JournalId.wpf-b-restarted.json")
   $JournalBRestartTrigger = Join-Path $Work 'start-integrated-native-b-restart.trigger'
+  $JournalNegativeBTrigger = Join-Path $Work 'start-native-negative-b-rollback.trigger'
+  $JournalNegativeBReceipt = Join-Path $Work 'native-negative-b-owner-attested.json'
+  $JournalRollbackStartCommit = Join-Path $JournalDataDir ("$JournalId.rollback_started.commit.json")
   $JournalIntegratedB = Join-Path $NativeTxRoot ("native-store\$FixtureTarget\$JournalTarget")
   $JournalShellQuiesced = Join-Path $JournalDataDir ("$JournalId.stable-shell-quiesce.json")
   $JournalAbortCommit = Join-Path $JournalDataDir ("$JournalId.abort-commit.json")
@@ -530,6 +533,12 @@ if (process.env.GITHUB_ACTIONS === 'true' &&
       $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_AB_DIAGNOSTIC_FILE'] = $JournalIntegratedDiagnostic
       $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_AB_RESTART_TRIGGER'] = $JournalBRestartTrigger
       $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_AB_RESTART_MODULE'] = Join-Path $Root 'src\equinox-local-windows-native-ab-restart-client.js'
+      $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_AB_NEGATIVE_B_TRIGGER'] = $JournalNegativeBTrigger
+      $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_AB_NEGATIVE_B_RECEIPT'] = $JournalNegativeBReceipt
+      $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_AB_ROLLBACK_MODULE'] = Join-Path $Root 'src\equinox-local-windows-native-ab-rollback-client.js'
+      $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_AB_EVIDENCE_MODULE'] = Join-Path $Root 'src\equinox-local-windows-native-guardian-evidence.js'
+      $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_AB_OWNER_VERIFIER_MODULE'] = Join-Path $Root 'src\equinox-local-windows-native-rollback-owner-verifier.js'
+      $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_AB_STARTED_AT'] = $JournalStart
       $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_AB_TARGET_SHA'] = $JournalTarget
       $WorkerProcess = [Diagnostics.Process]::Start($WorkerStartInfo)
       if ($null -eq $WorkerProcess) { throw 'Unable to start ephemeral owned Node process for Guardian audit.' }
@@ -855,7 +864,7 @@ if (process.env.GITHUB_ACTIONS === 'true' &&
           $BRestartWitness.guardianPid -eq $IntegratedGuardian.Id -and $BRestartWitness.runtimeContractSha256 -ceq ('f'*64) -and
           $BRestartCommit.stage -ceq 'restarted' -and $BRestartCommit.sequence -eq 4 -and
           $BRestartJournal.stage -ceq 'restarted' -and $BRestartJournal.sequence -eq 4 -and
-          $BRestartCommit.journalSha256 -ceq ((Get-FileHash -LiteralPath $JournalData -Algorithm SHA256).Hash.ToLowerInvariant()) -and
+          $BRestartCommit.journalSha256 -ceq $RetainedAProof.journalSha256 -and
           $BRunningProcesses.Count -eq 1 -and $BRunningProcesses[0].ProcessId -eq $BRestartWitness.shellPid) 'Real Windows B WPF OS PID + exact native restarted/4 journal proof failed.'
         # A WPF PID is not proof its Node backend booted from source B.
         # Require FOUR consecutive independently fetched loopback responses
@@ -978,13 +987,60 @@ if (process.env.GITHUB_ACTIONS === 'true' &&
           $RetainedAProof.journalSha256 -ceq ((Get-FileHash -LiteralPath $JournalData -Algorithm SHA256).Hash.ToLowerInvariant())) 'Native Guardian retained A proof did not bind exact Stable version, live owners and restarted B journal SHA.'
         Write-Output "Windows $FixtureTarget Guardian independently verified retained Stable A WPF backup after real B restart (no restore authority)."
         Write-Output "Windows $FixtureTarget real Guardian-owned B WPF process, restarted/4 AND four consecutive B backend identity samples PASSED (Browser/tunnel sustained health NOT YET certified)."
+        # Second hosted-only negative-B checkpoint: terminate only the exact
+        # Guardian-receipted disposable B WPF PID and its owned child tree.
+        # Never do this in production or against arbitrary user processes.
+        $ActualBProcess = [Diagnostics.Process]::GetProcessById([int]$BRestartWitness.shellPid)
+        Assert-True (-not $ActualBProcess.HasExited -and
+          $ActualBProcess.StartTime.ToUniversalTime().Ticks.ToString([Globalization.CultureInfo]::InvariantCulture) -ceq $BRestartWitness.shellStartTimeUtcTicks -and
+          (Same-Path $ActualBProcess.MainModule.FileName $StableExe)) 'Hosted negative B crash refused unverified WPF PID/creation time/path.'
+        $TaskKill = Join-Path $env:SystemRoot 'System32\taskkill.exe'
+        Assert-True ([IO.File]::Exists($TaskKill)) 'Hosted Windows lacks its OS-owned bounded process-tree terminator.'
+        & $TaskKill /PID ([string]$BRestartWitness.shellPid) /T /F | Out-Null
+        Assert-True ($LASTEXITCODE -eq 0) 'Hosted negative B could not stop exact disposable WPF process tree.'
+        Assert-True ($ActualBProcess.WaitForExit(8000)) 'Original B WPF did not exit after hosted-only crash.'
+        $ActualBProcess.Dispose()
+        # Original worker remains live, original Guardian retains the SAME
+        # exclusive OS writer lease. Only it may advance rollback_started/5;
+        # independent read-only pinned Auditor proves original kernel PID,
+        # logon, OS sharing lock and nonce/HMAC afterwards.
+        [IO.File]::WriteAllText($JournalNegativeBTrigger, 'hosted-exact-b-exited')
+        $RollbackProofReady = $false
+        for ($RBAttempt = 0; $RBAttempt -lt 340; $RBAttempt++) {
+          if ([IO.File]::Exists($JournalNegativeBReceipt) -and
+              [IO.File]::Exists($JournalRollbackStartCommit) -and
+              -not $IntegratedGuardian.HasExited -and -not $WorkerProcess.HasExited) {
+            $RollbackProofReady = $true
+            break
+          }
+          if ($IntegratedGuardian.HasExited -or $WorkerProcess.HasExited) { break }
+          Start-Sleep -Milliseconds 125
+        }
+        if (-not $RollbackProofReady -and [IO.File]::Exists($JournalIntegratedDiagnostic)) {
+          Write-Output ('Hosted OS-owned negative-B diagnostic: ' + [IO.File]::ReadAllText($JournalIntegratedDiagnostic))
+        }
+        Assert-True $RollbackProofReady 'Original Guardian failed to authorize and independently attest read-only rollback_started/5 after real B WPF death.'
+        $NegativeBReceipt = ConvertFrom-Json ([IO.File]::ReadAllText($JournalNegativeBReceipt))
+        $RollbackRecord = ConvertFrom-Json ([IO.File]::ReadAllText($JournalData))
+        $RollbackCommit = ConvertFrom-Json ([IO.File]::ReadAllText($JournalRollbackStartCommit))
+        Assert-True ($NegativeBReceipt.osLeaseAttested -eq $true -and
+          $NegativeBReceipt.physicalARestored -eq $false -and
+          $NegativeBReceipt.transactionId -ceq $JournalId -and
+          $NegativeBReceipt.sourceSha -ceq $JournalTarget -and
+          $NegativeBReceipt.stage -ceq 'rollback_started' -and $NegativeBReceipt.sequence -eq 5 -and
+          $NegativeBReceipt.guardianPid -eq $IntegratedGuardian.Id -and
+          $RollbackRecord.stage -ceq 'rollback_started' -and $RollbackRecord.sequence -eq 5 -and
+          $RollbackCommit.guardianPid -eq $IntegratedGuardian.Id -and
+          $RollbackCommit.journalSha256 -ceq ((Get-FileHash -LiteralPath $JournalData -Algorithm SHA256).Hash.ToLowerInvariant())) 'Host stage5 original Guardian OS-held lease/nonce/HMAC proof is not exact.'
+        Assert-True ((Test-Path -LiteralPath $IntegratedBackup) -and (Test-Path -LiteralPath $IntegratedBMarker)) 'Read-only stage5 OS proof silently mutated retained A or B slot.'
+        Write-Output "Windows $FixtureTarget original Guardian negative-B rollback_started/5 and live OS lease/HMAC READ-ONLY audit PASSED; A still retained, no restore."
         $IntegratedGuardian.Kill()
         Assert-True ($IntegratedGuardian.WaitForExit(5000)) 'Native supervisor force-kill did not stop its Windows process.'
         $IntegratedRecord = ConvertFrom-Json ([IO.File]::ReadAllText($JournalData))
         $NativeStagedReceipt = ConvertFrom-Json ([IO.File]::ReadAllText($JournalNativeStagedCommit))
         $ShellStoppedReceipt = ConvertFrom-Json ([IO.File]::ReadAllText($JournalShellStoppedCommit))
         $SwitchedReceipt = ConvertFrom-Json ([IO.File]::ReadAllText($JournalSwitchedCommit))
-        Assert-True ($IntegratedRecord.stage -ceq 'restarted' -and $IntegratedRecord.sequence -eq 4 -and
+        Assert-True ($IntegratedRecord.stage -ceq 'rollback_started' -and $IntegratedRecord.sequence -eq 5 -and
           $NativeStagedReceipt.stage -ceq 'native_staged' -and $NativeStagedReceipt.sequence -eq 1 -and
           $ShellStoppedReceipt.stage -ceq 'shell_stopped' -and $ShellStoppedReceipt.sequence -eq 2 -and
           $ShellStoppedReceipt.guardianPid -eq $IntegratedGuardian.Id -and
@@ -994,7 +1050,7 @@ if (process.env.GITHUB_ACTIONS === 'true' &&
           $BRestartCommit.journalSha256 -ceq ((Get-FileHash -LiteralPath $JournalData -Algorithm SHA256).Hash.ToLowerInvariant())) 'Native Guardian journal stage sequence/receipts differ from physically observed milestones.'
         $StoppedWpf = @(Get-CimInstance Win32_Process -Filter "Name='EquinoxLocal.exe'" -ErrorAction SilentlyContinue |
           Where-Object { -not [string]::IsNullOrWhiteSpace($_.ExecutablePath) -and (Same-Path $_.ExecutablePath $StableExe) })
-        Assert-True ($StoppedWpf.Count -eq 1 -and $StoppedWpf[0].ProcessId -eq $BRestartWitness.shellPid) 'Native integrated supervisor did not retain the exact new B WPF process.'
+        Assert-True ($StoppedWpf.Count -eq 0) 'Hosted negative-B crash left a WPF process running after OS health-rejection proof.'
         Assert-True ((Test-Path -LiteralPath $IntegratedBackup) -and (Test-Path -LiteralPath $IntegratedBMarker)) 'Real Windows A/B slot did not retain old A and install distinct B.'
         Assert-True ((Invoke-GuardianCheck '--audit-native-journal') -eq 70) 'Native integrated supervisor allowed orphan writer-lock replay.'
       } finally {
@@ -1025,7 +1081,7 @@ if (process.env.GITHUB_ACTIONS === 'true' &&
         # Hosted test-only registry and manifest rollback happens before
         # restarting Stable A. Production always requires independent health.
         [IO.File]::WriteAllBytes($ExpectedManifestPath, $OriginalIntegratedNativeManifest)
-        Remove-Item -LiteralPath $JournalGuard,$JournalAuthority,$JournalShellQuiesced,$JournalIntegratedTrigger,$JournalGuardianSpawnTrigger,$JournalGuardianPidReceipt,$JournalBRestartTrigger,$JournalRestartedReceipt,$JournalNativeStagedCommit,$JournalShellStoppedCommit,$JournalSwitchedCommit,$JournalRestartedCommit -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $JournalGuard,$JournalAuthority,$JournalShellQuiesced,$JournalIntegratedTrigger,$JournalGuardianSpawnTrigger,$JournalGuardianPidReceipt,$JournalBRestartTrigger,$JournalRestartedReceipt,$JournalNativeStagedCommit,$JournalShellStoppedCommit,$JournalSwitchedCommit,$JournalRestartedCommit,$JournalRollbackStartCommit,$JournalNegativeBTrigger,$JournalNegativeBReceipt -Force -ErrorAction SilentlyContinue
         Remove-Item -LiteralPath $JournalIntegratedB -Recurse -Force -ErrorAction SilentlyContinue
         [IO.File]::WriteAllText($JournalData, ($JournalValue | ConvertTo-Json -Depth 5))
         $IntegratedWpfRestart = [Diagnostics.ProcessStartInfo]::new($StableExe)
