@@ -4,6 +4,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 
 import { readBoundedNormalFile } from "./equinox-local-safe-file.js";
+import { equinoxLocalWindowsPowerShellPath } from "./equinox-local-platform.js";
 
 import { requestWindowsShellMainUpdateHandoff } from "./equinox-local-windows-shell-control.js";
 
@@ -79,7 +80,9 @@ export async function readWindowsMainUpdateWorkerOwnership({ transactionId, tran
 }
 export async function inspectWindowsMainUpdateWorkerProcess(ownership, { execFileImpl = execFile } = {}) {
   const parsed = parseWindowsMainUpdateWorkerOwnership(ownership);
-  const result = await execFileImpl("powershell.exe", [
+  // The managed updater runs with a deliberately restricted PATH. The OS
+  // worker birth/PID check must use the fixed Windows SystemRoot path.
+  const result = await execFileImpl(equinoxLocalWindowsPowerShellPath(), [
     "-NoLogo",
     "-NoProfile",
     "-NonInteractive",
