@@ -18,7 +18,7 @@ function canonicalWin(input) {
 function sameWin(a, b) {
   return canonicalWin(a) && canonicalWin(b) && a.toLowerCase() === b.toLowerCase();
 }
-async function exactOwnedGuardianDigest(file, fsImpl) {
+export async function exactOwnedGuardianDigest(file, fsImpl) {
   const handle = await fsImpl.open(file, fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0));
   try {
     const stat = await handle.stat();

@@ -96,7 +96,9 @@ test('only original integrated Guardian accepts a rollback request after B proof
   assert.match(admission, /if \(remaining <= TimeSpan\.Zero\) return false;/u);
   assert.match(lease, /var leaseAge = Stopwatch\.StartNew\(\);/u);
   assert.match(lease, /if \(rollbackStarted\)/u);
-  assert.match(lease, /while \(!worker\.HasExited && leaseAge\.Elapsed < TimeSpan\.FromMinutes\(20\)\)/u);
+  const ownerWitness = await readFile(new URL('../../native/windows/EquinoxLocal.Guardian/MainNativeRollbackOwnerWitness.cs', import.meta.url), 'utf8');
+  assert.match(lease, /HoldOwnedRollbackOwnerWitness\(owner, root, worker, lease, leaseAge\)/u);
+  assert.match(ownerWitness, /while \(!worker\.HasExited && leaseAge\.Elapsed < TimeSpan\.FromMinutes\(20\)\)/u);
   assert.match(admission, /if \(leaseAge\.Elapsed >= TimeSpan\.FromMinutes\(20\)\)/u);
   assert.match(admission, /InspectionPhase = "native-integrated-a-rollback-authorized-not-restored";\s*return true;/u);
   assert.match(admission, /TimeSpan\.FromSeconds\(45\)/u);

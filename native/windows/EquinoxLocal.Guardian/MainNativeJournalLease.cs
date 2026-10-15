@@ -59,12 +59,7 @@ internal static partial class Program
                 // read-only OS attestation still needs this live owner, and
                 // neither orphan deletion nor physical A restore is allowed.
                 InspectionPhase = "native-integrated-a-rollback-started-owner-held";
-                while (!worker.HasExited && leaseAge.Elapsed < TimeSpan.FromMinutes(20))
-                {
-                    if (worker.StartTime.ToUniversalTime().Ticks.ToString(CultureInfo.InvariantCulture) != owner.Ticks)
-                        break;
-                    Thread.Sleep(150);
-                }
+                HoldOwnedRollbackOwnerWitness(owner, root, worker, lease, leaseAge);
             }
             // Never grant a second lease or silently reclaim an unfinished
             // native rollback journal after owner exit or shared deadline.
