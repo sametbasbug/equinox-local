@@ -125,6 +125,9 @@ test('single original Guardian handles owner OS audit and fixed mutual-HMAC phys
   assert.match(witness, /new NamedPipeServerStream\("EquinoxLocalMainAB-PhysicalRestore-" \+ owner\.TransactionId/u);
   assert.match(witness, /Task\.WhenAny\(arrival, physicalArrival, exit\)/u);
   assert.match(witness, /ServeOwnedPhysicalARestore\(owner, journalRoot, worker, lease, leaseAge, physical\)/u);
+  assert.match(witness, /physical\.Dispose\(\)/u);
+  assert.ok(witness.indexOf('physical.Dispose();') > witness.indexOf('ServeOwnedPhysicalARestore(owner, journalRoot, worker, lease, leaseAge, physical);'));
+  assert.ok(witness.indexOf('physical.Dispose();') < witness.indexOf('native-integrated-a-physical-restored-original-lease-held'));
   assert.match(witness, /"native-integrated-a-physical-restored-original-lease-held"/u);
   assert.match(witness, /while \(!worker.HasExited && leaseAge.Elapsed < TimeSpan.FromMinutes\(20\)\)/u);
   assert.match(witness, /A identity coordination remains pending/u);

@@ -460,6 +460,8 @@ if (process.env.GITHUB_ACTIONS === 'true' &&
   $JournalBRestartTrigger = Join-Path $Work 'start-integrated-native-b-restart.trigger'
   $JournalNegativeBTrigger = Join-Path $Work 'start-native-negative-b-rollback.trigger'
   $JournalNegativeBReceipt = Join-Path $Work 'native-negative-b-owner-attested.json'
+  $JournalPhysicalRestoreTrigger = Join-Path $Work 'start-original-guardian-physical-a-restore.trigger'
+  $JournalPhysicalRestoreReceipt = Join-Path $Work 'original-guardian-physical-a-restored.json'
   $JournalRollbackStartCommit = Join-Path $JournalDataDir ("$JournalId.rollback_started.commit.json")
   $JournalIntegratedB = Join-Path $NativeTxRoot ("native-store\$FixtureTarget\$JournalTarget")
   $JournalShellQuiesced = Join-Path $JournalDataDir ("$JournalId.stable-shell-quiesce.json")
@@ -535,6 +537,9 @@ if (process.env.GITHUB_ACTIONS === 'true' &&
       $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_AB_RESTART_MODULE'] = Join-Path $Root 'src\equinox-local-windows-native-ab-restart-client.js'
       $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_AB_NEGATIVE_B_TRIGGER'] = $JournalNegativeBTrigger
       $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_AB_NEGATIVE_B_RECEIPT'] = $JournalNegativeBReceipt
+      $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_AB_PHYSICAL_RESTORE_TRIGGER'] = $JournalPhysicalRestoreTrigger
+      $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_AB_PHYSICAL_RESTORE_RECEIPT'] = $JournalPhysicalRestoreReceipt
+      $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_AB_PHYSICAL_RESTORE_MODULE'] = Join-Path $Root 'src\equinox-local-windows-native-ab-physical-restore-client.js'
       $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_AB_ROLLBACK_MODULE'] = Join-Path $Root 'src\equinox-local-windows-native-ab-rollback-client.js'
       $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_AB_EVIDENCE_MODULE'] = Join-Path $Root 'src\equinox-local-windows-native-guardian-evidence.js'
       $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_AB_OWNER_VERIFIER_MODULE'] = Join-Path $Root 'src\equinox-local-windows-native-rollback-owner-verifier.js'
@@ -1034,6 +1039,42 @@ if (process.env.GITHUB_ACTIONS === 'true' &&
           $RollbackCommit.journalSha256 -ceq ((Get-FileHash -LiteralPath $JournalData -Algorithm SHA256).Hash.ToLowerInvariant())) 'Host stage5 original Guardian OS-held lease/nonce/HMAC proof is not exact.'
         Assert-True ((Test-Path -LiteralPath $IntegratedBackup) -and (Test-Path -LiteralPath $IntegratedBMarker)) 'Read-only stage5 OS proof silently mutated retained A or B slot.'
         Write-Output "Windows $FixtureTarget original Guardian negative-B rollback_started/5 and live OS lease/HMAC READ-ONLY audit PASSED; A still retained, no restore."
+        # HOSTED-ONLY independent physical A confirmation; the worker uses
+        # its exact original Guardian OS witness and the fixed mutual HMAC
+        # action under the SAME original kernel-held writer lease. This MUST
+        # never be used for unattended user Main rollback until A pointers,
+        # Native Messaging, WPF A and four health checks are also complete.
+        [IO.File]::WriteAllText($JournalPhysicalRestoreTrigger, 'hosted-only-negative-B-approved')
+        $PhysicalARestoreProof = $false
+        for ($PhysicalTry = 0; $PhysicalTry -lt 330; $PhysicalTry++) {
+          if ([IO.File]::Exists($JournalPhysicalRestoreReceipt) -and
+              -not $IntegratedGuardian.HasExited -and -not $WorkerProcess.HasExited) {
+            $PhysicalARestoreProof = $true
+            break
+          }
+          if ($IntegratedGuardian.HasExited -or $WorkerProcess.HasExited) { break }
+          Start-Sleep -Milliseconds 125
+        }
+        if (-not $PhysicalARestoreProof -and [IO.File]::Exists($JournalIntegratedDiagnostic)) {
+          Write-Output ('Hosted original Guardian physical A diagnostic: ' + [IO.File]::ReadAllText($JournalIntegratedDiagnostic))
+        }
+        Assert-True $PhysicalARestoreProof 'Live original Guardian did not attest installed physical A after hosted negative B.'
+        $PhysicalReceipt = ConvertFrom-Json ([IO.File]::ReadAllText($JournalPhysicalRestoreReceipt))
+        $FailedBQuarantine = Join-Path (Split-Path -Parent $OwnedProgramRoot) ('.equinox-shell-failed-' + $JournalId)
+        $BackupAfterRestore = Join-Path (Split-Path -Parent $OwnedProgramRoot) ('.equinox-shell-backup-' + $JournalId)
+        $OriginalAExe = Join-Path $ReleaseDir 'runtime\shell\EquinoxLocal.exe'
+        Assert-True ($PhysicalReceipt.transactionId -ceq $JournalId -and
+          $PhysicalReceipt.stage -ceq 'physical_a_restored_pending_native_and_source_commit' -and
+          $PhysicalReceipt.guardianPid -eq $IntegratedGuardian.Id -and
+          [IO.File]::Exists($StableExe) -and [IO.File]::Exists($OriginalAExe) -and
+          ((Get-FileHash -LiteralPath $StableExe -Algorithm SHA256).Hash -ceq (Get-FileHash -LiteralPath $OriginalAExe -Algorithm SHA256).Hash) -and
+          [IO.File]::Exists((Join-Path $FailedBQuarantine 'native-b-ci-only.marker')) -and
+          -not [IO.Directory]::Exists($BackupAfterRestore)) 'Physical A restore lacks exact A/B files or original owner proof.'
+        $StillStage5 = ConvertFrom-Json ([IO.File]::ReadAllText($JournalData))
+        Assert-True ($StillStage5.stage -ceq 'rollback_started' -and $StillStage5.sequence -eq 5 -and
+          $RollbackCommit.journalSha256 -ceq ((Get-FileHash -LiteralPath $JournalData -Algorithm SHA256).Hash.ToLowerInvariant()) -and
+          [IO.File]::ReadAllText($IntegratedSourcePointerPath) -ceq $SelectedBSourcePointer) 'Physical A must not fabricate stage6 or prematurely claim A source selection.'
+        Write-Output "Windows $FixtureTarget original Guardian OS-authorized physical A restore PASSED; quarantined B retained, stage5 unchanged, A pointer/health NOT YET committed."
         $IntegratedGuardian.Kill()
         Assert-True ($IntegratedGuardian.WaitForExit(5000)) 'Native supervisor force-kill did not stop its Windows process.'
         # A durable stage5 receipt is NOT authority after the original
@@ -1056,7 +1097,7 @@ if (process.env.GITHUB_ACTIONS === 'true' &&
         $StoppedWpf = @(Get-CimInstance Win32_Process -Filter "Name='EquinoxLocal.exe'" -ErrorAction SilentlyContinue |
           Where-Object { -not [string]::IsNullOrWhiteSpace($_.ExecutablePath) -and (Same-Path $_.ExecutablePath $StableExe) })
         Assert-True ($StoppedWpf.Count -eq 0) 'Hosted negative-B crash left a WPF process running after OS health-rejection proof.'
-        Assert-True ((Test-Path -LiteralPath $IntegratedBackup) -and (Test-Path -LiteralPath $IntegratedBMarker)) 'Real Windows A/B slot did not retain old A and install distinct B.'
+        Assert-True ((Test-Path -LiteralPath $FailedBQuarantine) -and -not (Test-Path -LiteralPath $IntegratedBackup) -and (Test-Path -LiteralPath $StableExe)) 'Real Windows physical A restore did not quarantine B and reinstall old Stable A.'
         Assert-True ((Invoke-GuardianCheck '--audit-native-journal') -eq 70) 'Native integrated supervisor allowed orphan writer-lock replay.'
       } finally {
         if ($null -ne $IntegratedGuardian) {
@@ -1081,12 +1122,16 @@ if (process.env.GITHUB_ACTIONS === 'true' &&
           }
           Move-Item -LiteralPath $ExpectedABBackup -Destination $OwnedProgramRoot -ErrorAction Stop
           Assert-True ([IO.File]::Exists($StableExe)) 'Old Stable A executable was not restored after integrated native A/B swap.'
-          if (Test-Path -LiteralPath $FailedABQuarantine) { Remove-Item -LiteralPath $FailedABQuarantine -Recurse -Force -ErrorAction Stop }
         }
+        # Physical A already present is allowed only after the original
+        # guardian produced its exact installed A/quarantined B evidence.
+        # ALWAYS remove disposable failed B before restarting Stable A; this
+        # deletion is test fixture teardown, NEVER automatic production GC.
+        if (Test-Path -LiteralPath $FailedABQuarantine) { Remove-Item -LiteralPath $FailedABQuarantine -Recurse -Force -ErrorAction Stop }
         # Hosted test-only registry and manifest rollback happens before
         # restarting Stable A. Production always requires independent health.
         [IO.File]::WriteAllBytes($ExpectedManifestPath, $OriginalIntegratedNativeManifest)
-        Remove-Item -LiteralPath $JournalGuard,$JournalAuthority,$JournalShellQuiesced,$JournalIntegratedTrigger,$JournalGuardianSpawnTrigger,$JournalGuardianPidReceipt,$JournalBRestartTrigger,$JournalRestartedReceipt,$JournalNativeStagedCommit,$JournalShellStoppedCommit,$JournalSwitchedCommit,$JournalRestartedCommit,$JournalRollbackStartCommit,$JournalNegativeBTrigger,$JournalNegativeBReceipt -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $JournalGuard,$JournalAuthority,$JournalShellQuiesced,$JournalIntegratedTrigger,$JournalGuardianSpawnTrigger,$JournalGuardianPidReceipt,$JournalBRestartTrigger,$JournalRestartedReceipt,$JournalNativeStagedCommit,$JournalShellStoppedCommit,$JournalSwitchedCommit,$JournalRestartedCommit,$JournalRollbackStartCommit,$JournalNegativeBTrigger,$JournalNegativeBReceipt,$JournalPhysicalRestoreTrigger,$JournalPhysicalRestoreReceipt -Force -ErrorAction SilentlyContinue
         Remove-Item -LiteralPath $JournalIntegratedB -Recurse -Force -ErrorAction SilentlyContinue
         [IO.File]::WriteAllText($JournalData, ($JournalValue | ConvertTo-Json -Depth 5))
         $IntegratedWpfRestart = [Diagnostics.ProcessStartInfo]::new($StableExe)

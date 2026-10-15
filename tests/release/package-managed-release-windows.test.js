@@ -640,6 +640,25 @@ test('managed Windows WPF selects exact installed source/native pointers before 
   assert.match(harness, /await WaitForIdentityAsync\(port, "B"/u);
 });
 
+test('hosted real Windows x64/ARM64 fixture tests only original Guardian mutual-HMAC physical A restoration under exact negative-B OS witness', async () => {
+  const fixture = await fs.readFile(new URL('./windows-installer-real-package-smoke.ps1', import.meta.url), 'utf8');
+  const worker = await fs.readFile(new URL('./owned-windows-worker-proof.mjs', import.meta.url), 'utf8');
+  const server = await fs.readFile(new URL('../../native/windows/EquinoxLocal.Guardian/MainNativeRollbackOwnerWitness.cs', import.meta.url), 'utf8');
+  assert.match(worker, /process\.env\.GITHUB_ACTIONS !== 'true'/u);
+  assert.match(worker, /EQUINOX_LOCAL_TEST_AB_PHYSICAL_RESTORE_TRIGGER/u);
+  assert.match(worker, /runEquinoxLocalWindowsGuardianOwnedPhysicalARestore\(request\)/u);
+  assert.match(worker, /\['ENOENT', 'ECONNREFUSED'\]/u);
+  assert.match(fixture, /original Guardian negative-B rollback_started\/5 and live OS lease\/HMAC READ-ONLY audit PASSED/u);
+  assert.match(fixture, /start-original-guardian-physical-a-restore\.trigger/u);
+  assert.match(fixture, /original Guardian OS-authorized physical A restore PASSED/u);
+  assert.match(fixture, /\$PhysicalReceipt\.stage -ceq 'physical_a_restored_pending_native_and_source_commit'/u);
+  assert.match(fixture, /\$StillStage5\.stage -ceq 'rollback_started'/u);
+  assert.match(fixture, /\$FailedBQuarantine/u);
+  assert.match(fixture, /Original Guardian post-death stage5 OS owner replay REFUSED|original Guardian post-death stage5 OS owner replay REFUSED/u);
+  assert.match(server, /physical\.Dispose\(\)/u);
+  assert.doesNotMatch(worker, /rollback_native_restored.*journal\.advance|Process\.Kill/u);
+});
+
 test('hosted x64/ARM64 CI proves original Guardian rollback_started/5 live OS owner only after exact disposable B exit', async () => {
   const fixture = await fs.readFile(new URL('./windows-installer-real-package-smoke.ps1', import.meta.url), 'utf8');
   const worker = await fs.readFile(new URL('./owned-windows-worker-proof.mjs', import.meta.url), 'utf8');

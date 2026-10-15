@@ -46,6 +46,10 @@ internal static partial class Program
                 physicalArrival.GetAwaiter().GetResult();
                 deadline.Cancel();
                 ServeOwnedPhysicalARestore(owner, journalRoot, worker, lease, leaseAge, physical);
+                // The product JS client requires the original OS server to
+                // CLOSE this exact mutual-HMAC action pipe after `a`; keep
+                // only the original FileShare.None writer lease alive.
+                physical.Dispose();
                 // A is physically restored but all pointers still select B.
                 // Preserve THIS ORIGINAL live writer handle for the future
                 // exact A-source/native/NM coordination phase; immediately

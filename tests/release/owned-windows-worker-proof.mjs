@@ -133,6 +133,66 @@ for (const source of [trigger, abortTrigger, shellTrigger, integratedTrigger].fi
   timer.unref();
 }
 
+// One-shot hosted-only physical A: the exact original worker is the ONLY
+// caller; production Main never imports or triggers this internal bridge.
+const physicalTrigger = process.env.EQUINOX_LOCAL_TEST_AB_PHYSICAL_RESTORE_TRIGGER;
+if (physicalTrigger) {
+  const physicalReceipt = process.env.EQUINOX_LOCAL_TEST_AB_PHYSICAL_RESTORE_RECEIPT;
+  const physicalModule = process.env.EQUINOX_LOCAL_TEST_AB_PHYSICAL_RESTORE_MODULE;
+  if (process.env.GITHUB_ACTIONS !== 'true' || !physicalReceipt || !physicalModule ||
+      !process.env.EQUINOX_LOCAL_TEST_AB_NEGATIVE_B_TRIGGER) {
+    throw new Error('Hosted physical A request requires disposable CI and owned negative-B witness.');
+  }
+  const physicalTimer = setInterval(() => {
+    if (!fs.existsSync(physicalTrigger)) return;
+    clearInterval(physicalTimer);
+    void (async () => {
+      const path = await import('node:path');
+      const tx = process.env.EQUINOX_LOCAL_TEST_WORKER_TX;
+      const root = path.win32.join(process.env.LOCALAPPDATA, 'Equinox Local');
+      const { runEquinoxLocalWindowsGuardianOwnedPhysicalARestore } = await import(pathToFileURL(physicalModule).href);
+      // The product client independently re-runs the live original-Guardian
+      // OS kernel lease/SID/LUID/nonce/HMAC audit before the one-shot grant.
+      const request = Object.freeze({
+        transactionId: tx,
+        transactionRoot: process.env.EQUINOX_LOCAL_TEST_JOURNAL_TX_ROOT,
+        workerToken: process.env.EQUINOX_LOCAL_MAIN_WORKER_TOKEN,
+        installation: Object.freeze({managed: true, selfUpdateSupported: true,
+          target: process.env.EQUINOX_LOCAL_TEST_GUARDIAN_TARGET,
+          installRoot: root,
+          releaseDir: path.win32.join(root, 'releases', process.env.EQUINOX_LOCAL_TEST_GUARDIAN_STABLE_VERSION)}),
+      });
+      // The auditor may return just before the SAME Guardian finishes
+      // disposing its read-only pipe and creates the fixed physical action
+      // listener. Retry ONLY OS-level pre-connect refusal/absence. Never
+      // retry a nonce/HMAC grant or an ambiguous physical rename.
+      let result;
+      for (let attempt = 0; attempt < 20; attempt++) {
+        try {
+          result = await runEquinoxLocalWindowsGuardianOwnedPhysicalARestore(request);
+          break;
+        } catch (error) {
+          if (!['ENOENT', 'ECONNREFUSED'].includes(error?.code) || attempt === 19) throw error;
+          await new Promise(resolve => setTimeout(resolve, 125));
+        }
+      }
+      if (result.stage !== 'physical_a_restored_pending_native_and_source_commit')
+        throw new Error('Hosted exact physical A proof is not yet durably completed.');
+      const commit = JSON.parse(fs.readFileSync(path.win32.join(process.env.EQUINOX_LOCAL_TEST_JOURNAL_TX_ROOT,
+        'guardian-journal', `${tx}.rollback_started.commit.json`), 'utf8'));
+      fs.writeFileSync(physicalReceipt, JSON.stringify({
+        transactionId: tx, stage: result.stage, guardianPid: commit.guardianPid,
+      }), {flag: 'wx'});
+    })().catch(error => {
+      const kind = String(error?.code ?? error?.name ?? 'error').slice(0, 40);
+      const diagnostic = process.env.EQUINOX_LOCAL_TEST_AB_DIAGNOSTIC_FILE;
+      if (diagnostic) try { fs.appendFileSync(diagnostic, `physical-A:${kind}\n`); } catch { }
+      process.exitCode = 1;
+    });
+  }, 110);
+  physicalTimer.unref();
+}
+
 // Hosted-only negative-B acceptance. The SAME original product worker asks
 // the SAME live Guardian to persist rollback_started/5 after CI deliberately
 // terminates ONLY its independently identified disposable B WPF tree.
