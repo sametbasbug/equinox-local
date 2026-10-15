@@ -55,16 +55,32 @@ internal static partial class Program
                 // exact A-source/native/NM coordination phase; immediately
                 // returning here would close the only authorized OS lease.
                 InspectionPhase = "native-integrated-a-physical-restored-original-lease-held";
+                var identityTimeLeft = TimeSpan.FromMinutes(20) - leaseAge.Elapsed;
+                if (identityTimeLeft <= TimeSpan.Zero)
+                    throw new InvalidOperationException("Original Guardian expired before A identity selection.");
+                using var identityPipe = new NamedPipeServerStream("EquinoxLocalMainAB-SelectStableA-" + owner.TransactionId,
+                    PipeDirection.InOut, 1, PipeTransmissionMode.Byte, PipeOptions.Asynchronous);
+                using var identityDeadline = new CancellationTokenSource(identityTimeLeft);
+                var requested = identityPipe.WaitForConnectionAsync(identityDeadline.Token);
+                var ownerExit = worker.WaitForExitAsync(identityDeadline.Token);
+                if (Task.WhenAny(requested, ownerExit).GetAwaiter().GetResult() == requested)
+                {
+                    requested.GetAwaiter().GetResult();
+                    identityDeadline.Cancel();
+                    ServeOwnedStableAIdentitySelection(owner, journalRoot, worker, lease, leaseAge, identityPipe);
+                    identityPipe.Dispose();
+                    // The next ORIGINAL Guardian-only durable stage6 step is
+                    // not yet implemented. Continue holding THIS SAME writer.
+                    InspectionPhase = "native-integrated-a-selected-stage6-pending";
+                }
                 while (!worker.HasExited && leaseAge.Elapsed < TimeSpan.FromMinutes(20))
                 {
                     if (lease.SafeFileHandle.IsClosed || lease.SafeFileHandle.IsInvalid ||
                         worker.StartTime.ToUniversalTime().Ticks.ToString(CultureInfo.InvariantCulture) != owner.Ticks)
-                        throw new InvalidDataException("Original Guardian OS lease or worker changed after A physical restore.");
+                        throw new InvalidDataException("Original Guardian OS lease or worker changed after A identity selection.");
                     Thread.Sleep(150);
                 }
-                // Never open an unaudited replacement owner/lease or grant
-                // a false terminal rollback when the coordinator is absent.
-                throw new InvalidOperationException("Original Guardian physical A restored; A identity coordination remains pending.");
+                throw new InvalidOperationException("Original Guardian A identity selection and durable stage6 remain pending.");
             }
             if (completed != arrival) { deadline.Cancel(); break; }
             try { arrival.GetAwaiter().GetResult(); }

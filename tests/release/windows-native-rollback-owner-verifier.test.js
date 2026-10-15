@@ -129,8 +129,9 @@ test('single original Guardian handles owner OS audit and fixed mutual-HMAC phys
   assert.ok(witness.indexOf('physical.Dispose();') > witness.indexOf('ServeOwnedPhysicalARestore(owner, journalRoot, worker, lease, leaseAge, physical);'));
   assert.ok(witness.indexOf('physical.Dispose();') < witness.indexOf('native-integrated-a-physical-restored-original-lease-held'));
   assert.match(witness, /"native-integrated-a-physical-restored-original-lease-held"/u);
+  assert.match(witness, /ServeOwnedStableAIdentitySelection\(owner, journalRoot, worker, lease, leaseAge, identityPipe\)/u);
   assert.match(witness, /while \(!worker.HasExited && leaseAge.Elapsed < TimeSpan.FromMinutes\(20\)\)/u);
-  assert.match(witness, /A identity coordination remains pending/u);
+  assert.match(witness, /A identity selection and durable stage6 remain pending/u);
   assert.match(witness, /HoldOwnedRollbackOwnerWitness\(/u);
   assert.match(server, /GetNamedPipeClientProcessId\(endpoint\.SafePipeHandle, out var clientPid\)/u);
   assert.match(server, /clientPid != owner\.Pid/u);
@@ -176,4 +177,42 @@ test('original Guardian post-physical A selection readiness binds OS lease, rest
   assert.match(readiness, /selected\.GetProperty\("sourceSha"\)\.GetString\(\) != sourceB/u);
   assert.match(readiness, /FixedTimeEquals\(before, SHA256\.HashData\(File\.ReadAllBytes\(journalPath\)\)\)/u);
   assert.doesNotMatch(readiness, /Directory\.Move|File\.Move|Directory\.Delete|File\.Delete|WriteIntegratedOwnedNativeStage|Registry\.SetValue|Process\.Start|Process\.Kill/u);
+});
+
+test('independent original Guardian A identity witness requires all exact A pointers and quarantined B before future stage6', async () => {
+  const native = await readFile(new URL('../../native/windows/EquinoxLocal.Guardian/MainNativeRestoredAIdentityWitness.cs', import.meta.url), 'utf8');
+  assert.match(native, /lease\.SafeFileHandle\.IsClosed \|\| lease\.SafeFileHandle\.IsInvalid/u);
+  assert.match(native, /leaseAge\.Elapsed >= TimeSpan\.FromMinutes\(20\)/u);
+  assert.match(native, /InspectOwnedNativeWorkerProcess\(guardianHoldsJournalLease: true\)/u);
+  assert.match(native, /"rollback_started"/u);
+  assert.match(native, /GetProperty\("sequence"\)\.GetInt32\(\) != 5/u);
+  assert.match(native, /marker\.RootElement\.GetProperty\("guardianPid"\)\.GetInt32\(\) != Environment\.ProcessId/u);
+  assert.match(native, /CompareNativeTrees\(Path\.Combine\(stable, "runtime", "shell"\), program\)/u);
+  assert.match(native, /CompareNativeTrees\(Path\.Combine\(bRelease, "runtime", "shell"\), failedB\)/u);
+  assert.match(native, /stablePointer\.RootElement\.GetProperty\("version"\)\.GetString\(\) != stableVersion/u);
+  assert.match(native, /InspectOwnedMainNativeMessaging\(install, stable\)/u);
+  assert.match(native, /"sourceRoot=" \+ Path\.Combine\(txRoot, "sources", aSha\)/u);
+  assert.match(native, /Directory\.EnumerateFileSystemEntries\(txRoot, "current-native\.json", SearchOption\.TopDirectoryOnly\)\.Any\(\)/u);
+  assert.match(native, /FixedTimeEquals\(journalSha, SHA256\.HashData\(File\.ReadAllBytes\(journalPath\)\)\)/u);
+  assert.doesNotMatch(native, /Directory\.Move|File\.Move|Directory\.Delete|File\.Delete|Registry\.SetValue|WriteIntegratedOwnedNativeStage|Process\.Start|Process\.Kill/u);
+});
+
+
+test('only original Guardian can open one fixed Stable-A selection action after physical restoration and rehash A before acknowledgement', async () => {
+  const server = await readFile(new URL('../../native/windows/EquinoxLocal.Guardian/MainNativeStableAIdentitySelection.cs', import.meta.url), 'utf8');
+  const loop = await readFile(new URL('../../native/windows/EquinoxLocal.Guardian/MainNativeRollbackOwnerWitness.cs', import.meta.url), 'utf8');
+  assert.match(loop, /new NamedPipeServerStream\("EquinoxLocalMainAB-SelectStableA-" \+ owner\.TransactionId/u);
+  assert.ok(loop.indexOf('ServeOwnedPhysicalARestore(owner, journalRoot, worker, lease, leaseAge, physical);') < loop.indexOf('ServeOwnedStableAIdentitySelection(owner, journalRoot, worker, lease, leaseAge, identityPipe);'));
+  assert.match(server, /GetNamedPipeClientProcessId\(pipe\.SafePipeHandle, out var peerPid\)/u);
+  assert.match(server, /peerPid != owner\.Pid/u);
+  assert.match(server, /InspectOwnedNativeWorkerOsArguments\(guardianHoldsJournalLease: true\)/u);
+  assert.match(server, /RequireOwnedRestoredASelectionReadiness\(owner, journalRoot, worker, lease, leaseAge\)/u);
+  assert.match(server, /FixedTimeEquals\(workerMac, reply\)/u);
+  assert.match(server, /"equinox-local-guardian-ab-select-stable-a-worker-v1:"/u);
+  assert.match(server, /"equinox-local-guardian-ab-select-stable-a-owner-v1:"/u);
+  assert.match(server, /fixedGrant\[32\] = \(byte\)'S'/u);
+  assert.match(server, /ack\[0\] != \(byte\)'s'/u);
+  assert.match(server, /RequireOwnedRestoredAIdentityWitness\(owner, journalRoot, worker, lease, leaseAge\)/u);
+  assert.ok(server.indexOf('RequireOwnedRestoredAIdentityWitness(owner, journalRoot, worker, lease, leaseAge)') < server.indexOf("pipe.WriteByte((byte)'a')"));
+  assert.doesNotMatch(server, /WriteIntegratedOwnedNativeStage|Registry\.SetValue|Directory\.Move|File\.Move|Process\.Start|File\.Delete/u);
 });
