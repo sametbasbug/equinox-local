@@ -32,6 +32,7 @@ export async function admitWindowsMainNativeWorkerJournal({
   readPointerImpl = readEquinoxLocalMainNativePointer,
   journalFactory = createEquinoxLocalWindowsNativeTransitionJournal,
   verifyMilestone = async () => false,
+  ownerOnly = false,
   sleepImpl = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
   ownershipAttempts = 25,
 } = {}) {
@@ -77,6 +78,18 @@ export async function admitWindowsMainNativeWorkerJournal({
   const processIdentity = await inspectWorkerImpl(ownership, { execFileImpl });
   if (processIdentity?.running !== true || processIdentity?.stale || processIdentity?.uncertain) {
     throw new Error('Windows Main worker PID, OS creation timestamp or executable was not independently verified.');
+  }
+  // For a full clean replacement, the existing detached WPF handoff and
+  // durable promotion receipt are the only owners we need. Do not create a
+  // second Guardian journal/IPC state machine just to replace installed code.
+  if (ownerOnly) {
+    const active = await engine.readActive();
+    if (!active || active.transactionId !== receipt.transactionId ||
+        active.currentSha !== receipt.currentSha || active.targetSha !== receipt.targetSha ||
+        active.startedAt !== receipt.startedAt || active.stage !== receipt.stage) {
+      throw new Error('Windows clean-replacement worker lost its exact active transaction.');
+    }
+    return Object.freeze({ admitted: true, ownerOnly: true, ownedNode });
   }
   const previousPointer = await readPointerImpl(path.win32.join(transactionRoot, 'current-native.json'), { transactionRoot, fsImpl }).catch((error) => {
     if (error?.code === 'ENOENT') return null;

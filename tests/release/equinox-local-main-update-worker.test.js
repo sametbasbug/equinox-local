@@ -99,29 +99,58 @@ test("Windows native worker handoff supplies exact candidate and rollback releas
   assert.deepEqual(events[1].windowsNativeShell, { programRoot, releaseDir: rollbackPath });
 });
 
-test("Windows worker blocks legacy random native replacement after journal admission and before handoff", async () => {
-  const journal = { source: "exact-admitted-journal" };
-  const calls = [];
+test("Windows detached owner installs a fresh native release without a second Guardian journal", async () => {
+  const events = [];
   const receipt = preparedReceipt();
   const transition = { mode: "artifact_required", target: "win32-x64", currentSha: A, targetSha: B,
     currentRuntimeContractSha256: DIGEST_A, targetRuntimeContractSha256: DIGEST_B };
+  const lifecycle = { activate: async () => {}, rollback: async () => {}, commit: async () => {} };
   const engine = {
     paths: { sourcePointerPath: "C:\\state\\current-source.conf" },
     readActive: async () => receipt,
-    abortPreparedPromotion: async (...args) => calls.push(["abort", ...args]),
+    markNativeRollbackReady: async () => ({ ...receipt, stage: "native_rollback_ready" }),
   };
-  await assert.rejects(runEquinoxLocalMainUpdateWorker({
+  const result = await runEquinoxLocalMainUpdateWorker({
     argv: argv(), engineFactory: () => engine, resolveHostTarget: () => "win32-x64",
     planNativeTransition: async () => transition,
     resolveNativeInstallation: async () => ({ managed: true, selfUpdateSupported: true, target: "win32-x64" }),
-    admitWindowsNativeWorker: async () => ({ admitted: true, journal }),
+    admitWindowsNativeWorker: async (options) => {
+      events.push(["owner", options.ownerOnly]);
+      return { admitted: true, ownerOnly: true };
+    },
     prepareNativeCandidate: async () => ({ sourceSha: B, target: "win32-x64" }),
-    prepareNativeLifecycle: async () => ({ journaledAB: false, activate: async () => assert.fail("legacy WPF mutation attempted") }),
-    handoffImpl: async () => assert.fail("untrusted native lifecycle must not reach handoff"),
-    cleanupImpl: async () => calls.push(["cleanup"]),
-  }), /refuses legacy non-journaled/u);
-  assert.equal(calls[0][0], "abort");
-  assert.equal(calls.at(-1)[0], "cleanup");
+    prepareNativeLifecycle: async (options) => {
+      assert.equal(options.windowsAdmission, null);
+      events.push(["fresh-native", options.candidate.sourceSha]);
+      return lifecycle;
+    },
+    handoffImpl: async ({ nativeLifecycle }) => {
+      assert.equal(nativeLifecycle, lifecycle);
+      events.push(["handoff"]);
+      return { status: "succeeded" };
+    },
+    cleanupImpl: async () => events.push(["cleanup"]),
+  });
+  assert.equal(result.status, "succeeded");
+  assert.deepEqual(events, [["owner", true], ["fresh-native", B], ["handoff"], ["cleanup"]]);
+});
+
+test("Windows clean replacement refuses missing detached worker ownership before filesystem mutation", async () => {
+  const receipt = preparedReceipt();
+  const calls = [];
+  const transition = { mode: "artifact_required", target: "win32-x64", currentSha: A, targetSha: B,
+    currentRuntimeContractSha256: DIGEST_A, targetRuntimeContractSha256: DIGEST_B };
+  await assert.rejects(runEquinoxLocalMainUpdateWorker({
+    argv: argv(), resolveHostTarget: () => "win32-x64",
+    engineFactory: () => ({ readActive: async () => receipt,
+      abortPreparedPromotion: async () => calls.push("abort") }),
+    planNativeTransition: async () => transition,
+    resolveNativeInstallation: async () => ({ managed: true, selfUpdateSupported: true, target: "win32-x64" }),
+    admitWindowsNativeWorker: async () => ({ admitted: false }),
+    prepareNativeCandidate: async () => assert.fail("owner rejected before native staging"),
+    cleanupImpl: async () => calls.push("cleanup"),
+  }), /no verified detached WPF owner/u);
+  assert.deepEqual(calls, ["abort", "cleanup"]);
 });
 
 test("Main worker runtime restart uses the managed Darwin LaunchAgent instead of developer source scripts", async () => {

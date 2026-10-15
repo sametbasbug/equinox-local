@@ -244,3 +244,29 @@ test("Windows running stable shell is stopped before real NTFS replacement", { s
   assert.equal(child.exitCode !== null || child.signalCode !== null, true);
   assert.equal(await fs.readFile(path.join(fixture.programRoot, "coreclr.dll"), "utf8"), "new-core\n");
 });
+
+test("clean Windows release replacement preserves user settings, credentials and browser data", async (t) => {
+  const fixture = await shellFixture();
+  t.after(() => fs.rm(fixture.root, { recursive: true, force: true }));
+  const privateFiles = [
+    ["state/config.json", '{"theme":"dark"}\n'],
+    ["state/tunnel/profile.json", '{"tunnel":"private"}\n'],
+    ["state/runtime-key", "user-secret\n"],
+    ["browser/user-profile/Preferences", "browser-preferences\n"],
+  ];
+  for (const [name, contents] of privateFiles) {
+    const file = path.join(fixture.root, name);
+    await fs.mkdir(path.dirname(file), { recursive: true });
+    await fs.writeFile(file, contents);
+  }
+  await replaceWindowsStableShellForRelease({
+    releaseDir: path.join(fixture.releases, "5.3.0"),
+    previousReleaseDir: path.join(fixture.releases, "5.2.0"),
+    programRoot: fixture.programRoot,
+    requestShutdownImpl: async () => {},
+  });
+  for (const [name, contents] of privateFiles) {
+    assert.equal(await fs.readFile(path.join(fixture.root, name), "utf8"), contents);
+  }
+  assert.equal(await fs.readFile(path.join(fixture.programRoot, "EquinoxLocal.exe"), "utf8"), "new-exe\n");
+});
