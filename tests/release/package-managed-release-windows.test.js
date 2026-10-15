@@ -656,6 +656,7 @@ test('hosted x64/ARM64 CI proves original Guardian rollback_started/5 live OS ow
   assert.match(fixture, /JournalNegativeBTrigger/u);
   assert.match(fixture, /NegativeBReceipt\.osLeaseAttested -eq \$true/u);
   assert.match(fixture, /NegativeBReceipt\.physicalARestored -eq \$false/u);
+  assert.match(fixture, /Invoke-GuardianCheck '--audit-native-rollback-owner'\) -eq 70/u);
   assert.match(fixture, /RollbackRecord\.stage -ceq 'rollback_started'/u);
   assert.match(fixture, /RollbackRecord\.sequence -eq 5/u);
   assert.match(fixture, /RollbackCommit\.journalSha256 -ceq \(\(Get-FileHash/u);

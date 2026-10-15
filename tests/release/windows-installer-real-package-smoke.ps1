@@ -1036,6 +1036,11 @@ if (process.env.GITHUB_ACTIONS === 'true' &&
         Write-Output "Windows $FixtureTarget original Guardian negative-B rollback_started/5 and live OS lease/HMAC READ-ONLY audit PASSED; A still retained, no restore."
         $IntegratedGuardian.Kill()
         Assert-True ($IntegratedGuardian.WaitForExit(5000)) 'Native supervisor force-kill did not stop its Windows process.'
+        # A durable stage5 receipt is NOT authority after the original
+        # OS owner dies. The exact installed read-only auditor must refuse
+        # the now-dead named-pipe SERVER PID / released exclusive lease.
+        Assert-True ((Invoke-GuardianCheck '--audit-native-rollback-owner') -eq 70) 'Dead Guardian replayed a stale stage5 owner receipt as live OS restore authority.'
+        Write-Output "Windows $FixtureTarget original Guardian post-death stage5 OS owner replay REFUSED."
         $IntegratedRecord = ConvertFrom-Json ([IO.File]::ReadAllText($JournalData))
         $NativeStagedReceipt = ConvertFrom-Json ([IO.File]::ReadAllText($JournalNativeStagedCommit))
         $ShellStoppedReceipt = ConvertFrom-Json ([IO.File]::ReadAllText($JournalShellStoppedCommit))
