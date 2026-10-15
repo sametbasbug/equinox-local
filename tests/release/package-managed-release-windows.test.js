@@ -700,6 +700,19 @@ test('hosted real installed x64/ARM64 relaunches only Stable A WPF via same orig
   assert.doesNotMatch(client, /rollback_healthy|rolled_back|WriteIntegratedOwnedNativeStage|Process\.Kill/u);
 });
 
+test('hosted installed x64/ARM64 requires original Guardian four independent A health samples and stage7 SHA/PID',async()=>{
+  const ps=await fs.readFile(new URL('./windows-installer-real-package-smoke.ps1',import.meta.url),'utf8');
+  const worker=await fs.readFile(new URL('./owned-windows-worker-proof.mjs',import.meta.url),'utf8');
+  assert.match(worker,/process\.env\.GITHUB_ACTIONS !== 'true'/u);
+  assert.match(worker,/EQUINOX_LOCAL_TEST_AB_HEALTH_STABLE_TRIGGER/u);
+  assert.match(worker,/requestEquinoxLocalGuardianOwnedStableAFourHealth\(request\)/u);
+  assert.match(ps,/original Guardian FOUR consecutive Stable A backend\/source\/native\/NM health and durable rollback_healthy\/7 PASSED/u);
+  assert.match(ps,/\$AStage7\.sequence -eq 7/u);
+  assert.match(ps,/\$AStage7Commit\.guardianPid -eq \$IntegratedGuardian\.Id/u);
+  assert.match(ps,/\$FailedBQuarantine 'native-b-ci-only\.marker'/u);
+  assert.doesNotMatch(worker,/Process\.Kill|rollback_healthy.*journal\.advance/u);
+});
+
 test('hosted x64/ARM64 CI proves original Guardian rollback_started/5 live OS owner only after exact disposable B exit', async () => {
   const fixture = await fs.readFile(new URL('./windows-installer-real-package-smoke.ps1', import.meta.url), 'utf8');
   const worker = await fs.readFile(new URL('./owned-windows-worker-proof.mjs', import.meta.url), 'utf8');

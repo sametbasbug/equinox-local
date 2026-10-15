@@ -88,6 +88,22 @@ internal static partial class Program
                         RestartOwnedRestoredAWpf(owner, journalRoot, worker, lease, leaseAge, relaunchPipe);
                         relaunchPipe.Dispose();
                         InspectionPhase = "native-integrated-a-relaunched-stage6-health-pending";
+                        var healthRemaining = TimeSpan.FromMinutes(20) - leaseAge.Elapsed;
+                        if (healthRemaining <= TimeSpan.Zero)
+                            throw new InvalidOperationException("Original Guardian expired before A backend health admission.");
+                        using var healthPipe = new NamedPipeServerStream("EquinoxLocalMainAB-HealthyStableA-" + owner.TransactionId,
+                            PipeDirection.InOut, 1, PipeTransmissionMode.Byte, PipeOptions.Asynchronous);
+                        using var healthDeadline = new CancellationTokenSource(healthRemaining);
+                        var healthArrival = healthPipe.WaitForConnectionAsync(healthDeadline.Token);
+                        var healthWorkerExit = worker.WaitForExitAsync(healthDeadline.Token);
+                        if (Task.WhenAny(healthArrival, healthWorkerExit).GetAwaiter().GetResult() == healthArrival)
+                        {
+                            healthArrival.GetAwaiter().GetResult();
+                            healthDeadline.Cancel();
+                            ServeOwnedRestoredAHealthAdmission(owner, journalRoot, worker, lease, leaseAge, healthPipe);
+                            healthPipe.Dispose();
+                            InspectionPhase = "native-integrated-a-durable-stage7-terminal-pending";
+                        }
                     }
                 }
                 while (!worker.HasExited && leaseAge.Elapsed < TimeSpan.FromMinutes(20))

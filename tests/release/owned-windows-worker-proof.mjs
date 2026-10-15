@@ -305,6 +305,57 @@ if (relaunchStableTrigger) {
   relaunchTimer.unref();
 }
 
+// HOSTED ONLY: after the original Guardian has relaunched Stable A,
+// request its fourth independent backend/SHA + WPF OS identity H milestone.
+const healthStableTrigger = process.env.EQUINOX_LOCAL_TEST_AB_HEALTH_STABLE_TRIGGER;
+if (healthStableTrigger) {
+  const healthReceipt = process.env.EQUINOX_LOCAL_TEST_AB_HEALTH_STABLE_RECEIPT;
+  const healthModule = process.env.EQUINOX_LOCAL_TEST_AB_HEALTH_STABLE_MODULE;
+  const relaunchPath = process.env.EQUINOX_LOCAL_TEST_AB_RELAUNCH_STABLE_RECEIPT;
+  const stage6Path = process.env.EQUINOX_LOCAL_TEST_AB_SELECT_STABLE_RECEIPT;
+  if (process.env.GITHUB_ACTIONS !== 'true' || !healthReceipt || !healthModule ||
+      !relaunchPath || !stage6Path || !process.env.EQUINOX_LOCAL_TEST_AB_RELAUNCH_STABLE_TRIGGER ||
+      !process.env.EQUINOX_LOCAL_TEST_AB_SELECT_STABLE_TRIGGER ||
+      !process.env.EQUINOX_LOCAL_TEST_AB_NEGATIVE_B_TRIGGER) {
+    throw new Error('Hosted A four-health requires original disposable worker and signed relaunch/stage6.');
+  }
+  const timer = setInterval(() => {
+    if (!fs.existsSync(healthStableTrigger)) return;
+    clearInterval(timer);
+    void (async () => {
+      const path = await import('node:path');
+      const tx = process.env.EQUINOX_LOCAL_TEST_WORKER_TX;
+      const install = path.win32.join(process.env.LOCALAPPDATA, 'Equinox Local');
+      const stage6Receipt = JSON.parse(fs.readFileSync(stage6Path,'utf8'));
+      const relaunchReceipt = JSON.parse(fs.readFileSync(relaunchPath,'utf8'));
+      const {requestEquinoxLocalGuardianOwnedStableAFourHealth} = await import(pathToFileURL(healthModule).href);
+      const request = Object.freeze({transactionId:tx,
+        transactionRoot:process.env.EQUINOX_LOCAL_TEST_JOURNAL_TX_ROOT,
+        workerToken:process.env.EQUINOX_LOCAL_MAIN_WORKER_TOKEN,
+        stage6Receipt,relaunchReceipt,
+        installation:Object.freeze({managed:true,selfUpdateSupported:true,installRoot:install,
+          target:process.env.EQUINOX_LOCAL_TEST_GUARDIAN_TARGET}),
+      });
+      let result;
+      for (let attempt=0;attempt<20;attempt++) {
+        try {result=await requestEquinoxLocalGuardianOwnedStableAFourHealth(request);break;}
+        catch(error) {
+          if(!['ENOENT','ECONNREFUSED'].includes(error?.code)||attempt===19)throw error;
+          await new Promise(resolve=>setTimeout(resolve,125));
+        }
+      }
+      if(result.stage!=='rollback_healthy'||result.sequence!==7)
+        throw new Error('Original Guardian did not durably prove four independent A backend health samples.');
+      fs.writeFileSync(healthReceipt,JSON.stringify(result),{flag:'wx'});
+    })().catch(error=>{
+      const diagnostic=process.env.EQUINOX_LOCAL_TEST_AB_DIAGNOSTIC_FILE;
+      if(diagnostic)try {fs.appendFileSync(diagnostic,`health-A:${String(error?.code??error?.name??'error').slice(0,40)}\n`);}catch{}
+      process.exitCode=1;
+    });
+  },110);
+  timer.unref();
+}
+
 // Hosted-only negative-B acceptance. The SAME original product worker asks
 // the SAME live Guardian to persist rollback_started/5 after CI deliberately
 // terminates ONLY its independently identified disposable B WPF tree.

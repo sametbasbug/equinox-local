@@ -467,6 +467,9 @@ if (process.env.GITHUB_ACTIONS === 'true' &&
   $JournalRelaunchATrigger = Join-Path $Work 'start-original-guardian-relaunch-stable-a.trigger'
   $JournalRelaunchAReceipt = Join-Path $Work 'original-guardian-wpf-a-relaunched.json'
   $JournalRelaunchACommit = Join-Path $JournalDataDir ("$JournalId.wpf-a-restarted.json")
+  $JournalHealthATrigger = Join-Path $Work 'start-original-guardian-health-stable-a.trigger'
+  $JournalHealthAReceipt = Join-Path $Work 'original-guardian-four-a-health.json'
+  $JournalHealthyACommit = Join-Path $JournalDataDir ("$JournalId.rollback_healthy.commit.json")
   $JournalRollbackStartCommit = Join-Path $JournalDataDir ("$JournalId.rollback_started.commit.json")
   $JournalNativeRestoredCommit = Join-Path $JournalDataDir ("$JournalId.rollback_native_restored.commit.json")
   $JournalIntegratedB = Join-Path $NativeTxRoot ("native-store\$FixtureTarget\$JournalTarget")
@@ -552,6 +555,9 @@ if (process.env.GITHUB_ACTIONS === 'true' &&
       $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_AB_RELAUNCH_STABLE_TRIGGER'] = $JournalRelaunchATrigger
       $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_AB_RELAUNCH_STABLE_RECEIPT'] = $JournalRelaunchAReceipt
       $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_AB_RELAUNCH_STABLE_MODULE'] = Join-Path $Root 'src\equinox-local-windows-native-ab-stable-a-relaunch-client.js'
+      $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_AB_HEALTH_STABLE_TRIGGER'] = $JournalHealthATrigger
+      $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_AB_HEALTH_STABLE_RECEIPT'] = $JournalHealthAReceipt
+      $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_AB_HEALTH_STABLE_MODULE'] = Join-Path $Root 'src\equinox-local-windows-native-ab-stable-a-health-client.js'
       $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_AB_ROLLBACK_MODULE'] = Join-Path $Root 'src\equinox-local-windows-native-ab-rollback-client.js'
       $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_AB_EVIDENCE_MODULE'] = Join-Path $Root 'src\equinox-local-windows-native-guardian-evidence.js'
       $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_AB_OWNER_VERIFIER_MODULE'] = Join-Path $Root 'src\equinox-local-windows-native-rollback-owner-verifier.js'
@@ -1169,6 +1175,41 @@ if (process.env.GITHUB_ACTIONS === 'true' &&
           $null -ne $AProcess -and (Same-Path $AProcess.ExecutablePath $StableExe) -and
           $AfterWpfRestart.stage -ceq 'rollback_native_restored' -and $AfterWpfRestart.sequence -eq 6) 'Original Guardian WPF A relaunch lost exact PID/Stable identity or prematurely marked A healthy.'
         Write-Output "Windows $FixtureTarget original Guardian authenticated Stable A native WPF relaunch OS PID/reopen pipe PASSED; stage6 preserved, A backend four-health NOT YET committed."
+        [IO.File]::WriteAllText($JournalHealthATrigger,'hosted-original-guardian-four-independent-a-samples')
+        $FourHealthyA = $false
+        for ($HealthyTry=0; $HealthyTry -lt 900; $HealthyTry++) {
+          if ([IO.File]::Exists($JournalHealthAReceipt) -and
+              -not $IntegratedGuardian.HasExited -and -not $WorkerProcess.HasExited) {
+            $FourHealthyA = $true
+            break
+          }
+          if ($IntegratedGuardian.HasExited -or $WorkerProcess.HasExited) { break }
+          Start-Sleep -Milliseconds 125
+        }
+        if (-not $FourHealthyA -and [IO.File]::Exists($JournalIntegratedDiagnostic)) {
+          Write-Output ('Hosted original A four-health diagnostic: ' + [IO.File]::ReadAllText($JournalIntegratedDiagnostic))
+        }
+        Assert-True $FourHealthyA 'Original Guardian did not prove four independently healthy A backend/source/NM samples.'
+        Assert-True ([IO.File]::Exists($JournalHealthyACommit)) 'Original Guardian stage7 SHA/PID health marker missing.'
+        $AHealthReceipt = ConvertFrom-Json ([IO.File]::ReadAllText($JournalHealthAReceipt))
+        $AStage7 = ConvertFrom-Json ([IO.File]::ReadAllText($JournalData))
+        $AStage7Commit = ConvertFrom-Json ([IO.File]::ReadAllText($JournalHealthyACommit))
+        $AStillWpf = Get-CimInstance Win32_Process -Filter ("ProcessId=" + $WpfAProof.shellPid) -ErrorAction SilentlyContinue
+        Assert-True ($AHealthReceipt.transactionId -ceq $JournalId -and
+          $AHealthReceipt.stage -ceq 'rollback_healthy' -and $AHealthReceipt.sequence -eq 7 -and
+          $AHealthReceipt.guardianPid -eq $IntegratedGuardian.Id -and
+          $AHealthReceipt.shellPid -eq $WpfAProof.shellPid -and
+          $AStage7.stage -ceq 'rollback_healthy' -and $AStage7.sequence -eq 7 -and
+          $AStage7Commit.transactionId -ceq $JournalId -and
+          $AStage7Commit.stage -ceq 'rollback_healthy' -and $AStage7Commit.sequence -eq 7 -and
+          $AStage7Commit.guardianPid -eq $IntegratedGuardian.Id -and
+          $AStage7Commit.journalSha256 -ceq ((Get-FileHash -LiteralPath $JournalData -Algorithm SHA256).Hash.ToLowerInvariant()) -and
+          $null -ne $AStillWpf -and (Same-Path $AStillWpf.ExecutablePath $StableExe) -and
+          [IO.File]::ReadAllText($IntegratedSourcePointerPath) -ceq $ExactStableSourcePointer -and
+          -not [IO.File]::Exists($IntegratedNativePointerPath) -and
+          (Same-Path $SelectedAManifest.path $ExpectedStableBrowserLauncher) -and
+          [IO.File]::Exists((Join-Path $FailedBQuarantine 'native-b-ci-only.marker'))) 'Original Guardian stage7 lacks four A-health OS identity, SHA marker or retained B quarantine.'
+        Write-Output "Windows $FixtureTarget original Guardian FOUR consecutive Stable A backend/source/native/NM health and durable rollback_healthy/7 PASSED; terminal rolled_back/8 NOT YET committed."
         # Disposable fixture teardown only. Subsequent orphan journal audit
         # must see no remaining A WPF, even after original Guardian death.
         Stop-OwnedShell $StableExe
@@ -1183,7 +1224,7 @@ if (process.env.GITHUB_ACTIONS === 'true' &&
         $NativeStagedReceipt = ConvertFrom-Json ([IO.File]::ReadAllText($JournalNativeStagedCommit))
         $ShellStoppedReceipt = ConvertFrom-Json ([IO.File]::ReadAllText($JournalShellStoppedCommit))
         $SwitchedReceipt = ConvertFrom-Json ([IO.File]::ReadAllText($JournalSwitchedCommit))
-        Assert-True ($IntegratedRecord.stage -ceq 'rollback_native_restored' -and $IntegratedRecord.sequence -eq 6 -and
+        Assert-True ($IntegratedRecord.stage -ceq 'rollback_healthy' -and $IntegratedRecord.sequence -eq 7 -and
           $NativeStagedReceipt.stage -ceq 'native_staged' -and $NativeStagedReceipt.sequence -eq 1 -and
           $ShellStoppedReceipt.stage -ceq 'shell_stopped' -and $ShellStoppedReceipt.sequence -eq 2 -and
           $ShellStoppedReceipt.guardianPid -eq $IntegratedGuardian.Id -and
@@ -1228,7 +1269,7 @@ if (process.env.GITHUB_ACTIONS === 'true' &&
         # Hosted test-only registry and manifest rollback happens before
         # restarting Stable A. Production always requires independent health.
         [IO.File]::WriteAllBytes($ExpectedManifestPath, $OriginalIntegratedNativeManifest)
-        Remove-Item -LiteralPath $JournalGuard,$JournalAuthority,$JournalShellQuiesced,$JournalIntegratedTrigger,$JournalGuardianSpawnTrigger,$JournalGuardianPidReceipt,$JournalBRestartTrigger,$JournalRestartedReceipt,$JournalNativeStagedCommit,$JournalShellStoppedCommit,$JournalSwitchedCommit,$JournalRestartedCommit,$JournalRollbackStartCommit,$JournalNegativeBTrigger,$JournalNegativeBReceipt,$JournalPhysicalRestoreTrigger,$JournalPhysicalRestoreReceipt,$JournalStableSelectionTrigger,$JournalStableSelectionReceipt,$JournalRelaunchATrigger,$JournalRelaunchAReceipt -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $JournalGuard,$JournalAuthority,$JournalShellQuiesced,$JournalIntegratedTrigger,$JournalGuardianSpawnTrigger,$JournalGuardianPidReceipt,$JournalBRestartTrigger,$JournalRestartedReceipt,$JournalNativeStagedCommit,$JournalShellStoppedCommit,$JournalSwitchedCommit,$JournalRestartedCommit,$JournalRollbackStartCommit,$JournalNegativeBTrigger,$JournalNegativeBReceipt,$JournalPhysicalRestoreTrigger,$JournalPhysicalRestoreReceipt,$JournalStableSelectionTrigger,$JournalStableSelectionReceipt,$JournalRelaunchATrigger,$JournalRelaunchAReceipt,$JournalHealthATrigger,$JournalHealthAReceipt -Force -ErrorAction SilentlyContinue
         Remove-Item -LiteralPath $JournalIntegratedB -Recurse -Force -ErrorAction SilentlyContinue
         [IO.File]::WriteAllText($JournalData, ($JournalValue | ConvertTo-Json -Depth 5))
         $IntegratedWpfRestart = [Diagnostics.ProcessStartInfo]::new($StableExe)

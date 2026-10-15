@@ -12,7 +12,7 @@ internal static partial class Program
     // Do not call the pre-selection gate once any pointer has begun to move.
     private static void RequireOwnedRestoredAIdentityWitness(
         OwnedWorkerClaim owner, string journalRoot, Process worker,
-        FileStream lease, Stopwatch leaseAge, bool requireDurableStage6 = false)
+        FileStream lease, Stopwatch leaseAge, bool requireDurableStage6 = false, bool allowRestoredAWpf = false)
     {
         InspectionPhase = requireDurableStage6
             ? "native-integrated-a-stage6-restart-readiness"
@@ -79,9 +79,18 @@ internal static partial class Program
         CompareNativeTrees(Path.Combine(bRelease, "runtime", "shell"), failedB);
         if (Directory.Exists(backup) || File.Exists(backup))
             throw new InvalidDataException("A selection still has a stranded A backup.");
-        using (var running = FindExactRunningWpfOrNull(Path.Combine(program, "EquinoxLocal.exe")))
+        if (allowRestoredAWpf)
+        {
+            if (!requireDurableStage6)
+                throw new InvalidDataException("Native A WPF health cannot precede durable stage6.");
+            RequireOriginalGuardianRestoredAWpfReceipt(owner, journalRoot, worker, lease, leaseAge, program, journalSha);
+        }
+        else
+        {
+            using var running = FindExactRunningWpfOrNull(Path.Combine(program, "EquinoxLocal.exe"));
             if (running is not null)
                 throw new InvalidDataException("A selection must finish before WPF relaunch.");
+        }
         RequireNormalDirectory(Path.Combine(txRoot, "sources", aSha));
         using (var stablePointer = ReadJson(Path.Combine(install, "current-version.json"), MaxPointerBytes))
         {

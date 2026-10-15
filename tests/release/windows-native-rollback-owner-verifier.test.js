@@ -251,3 +251,31 @@ test('original Guardian A relaunch requires stage6 SHA OS lease and one fixed mu
   assert.match(selected,/requireDurableStage6 \? "rollback_native_restored" : "rollback_started"/u);
   assert.match(selected,/requireDurableStage6 \? 6 : 5/u);
 });
+
+
+test('only the original OS Guardian promotes four independently SHA-bound A backend identities to durable stage7',async()=>{
+  const health=await readFile(new URL('../../native/windows/EquinoxLocal.Guardian/MainNativeRestoredAHealth.cs',import.meta.url),'utf8');
+  const server=await readFile(new URL('../../native/windows/EquinoxLocal.Guardian/MainNativeRestoredAHealthAdmission.cs',import.meta.url),'utf8');
+  const loop=await readFile(new URL('../../native/windows/EquinoxLocal.Guardian/MainNativeRollbackOwnerWitness.cs',import.meta.url),'utf8');
+  assert.match(loop,/new NamedPipeServerStream\("EquinoxLocalMainAB-HealthyStableA-" \+ owner\.TransactionId/u);
+  assert.match(server,/GetNamedPipeClientProcessId\(pipe\.SafePipeHandle, out var pid\)/u);
+  assert.match(server,/RequireOwnedRestoredAFourBackendHealthSamples\(owner, journalRoot, worker, lease, leaseAge\)/u);
+  assert.match(server,/"rollback_native_restored", 6, "rollback_healthy", 7/u);
+  assert.match(server,/rollback_healthy\.commit\.json/u);
+  assert.match(server,/marker\.RootElement\.GetProperty\("guardianPid"\)\.GetInt32\(\) != Environment\.ProcessId/u);
+  assert.match(server,/grant\[32\] = \(byte\)'H'/u);
+  assert.match(server,/ack\[0\] != \(byte\)'h'/u);
+  assert.match(health,/var consecutive = 0/u);
+  assert.match(health,/consecutive = healthy \? consecutive \+ 1 : 0/u);
+  assert.match(health,/healthClock\.Elapsed < TimeSpan\.FromSeconds\(75\)/u);
+  assert.match(health,/TimeSpan\.FromSeconds\(3\)/u);
+  assert.match(health,/new byte\[8193\]/u);
+  assert.match(health,/Thread\.Sleep\(500\)/u);
+  assert.match(health,/health\.TryGetProperty\("state", out var state\) && state\.GetString\(\) == "HEALTHY"/u);
+  assert.match(health,/sha\.GetString\(\) == oldSha/u);
+  assert.match(health,/release\.GetString\(\) == version/u);
+  assert.match(health,/allowRestoredAWpf: true/u);
+  assert.match(health,/FindExactRunningWpfOrNull\(executable\)/u);
+  assert.match(health,/ReadWindowsLogonAuthenticationId\(token\)/u);
+  assert.doesNotMatch(health,/WriteIntegratedOwnedNativeStage|Process\.Kill|Registry\.SetValue/u);
+});
