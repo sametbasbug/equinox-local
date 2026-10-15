@@ -13,9 +13,11 @@ internal static partial class Program
     // agree; a stage7 label alone never grants terminal writer authority.
     private static void RequireOwnedRestoredATerminalReadiness(
         OwnedWorkerClaim owner, string journalRoot, Process worker,
-        FileStream lease, Stopwatch leaseAge)
+        FileStream lease, Stopwatch leaseAge, bool requireTerminalStage8 = false)
     {
-        InspectionPhase = "native-integrated-a-terminal-readiness-original-os-writer";
+        InspectionPhase = requireTerminalStage8
+            ? "native-integrated-a-post-terminal-cleanup-readiness-original-os-writer"
+            : "native-integrated-a-terminal-readiness-original-os-writer";
         if (lease.SafeFileHandle.IsClosed || lease.SafeFileHandle.IsInvalid ||
             leaseAge.Elapsed >= TimeSpan.FromMinutes(20) || worker.HasExited ||
             worker.StartTime.ToUniversalTime().Ticks.ToString(CultureInfo.InvariantCulture) != owner.Ticks)
@@ -39,23 +41,38 @@ internal static partial class Program
         using var stage7 = ReadOwnedTransitionRecord(journalPath, 8192);
         using var marker7 = ReadOwnedTransitionRecord(stage7Path, 4096);
         using var marker6 = ReadOwnedTransitionRecord(stage6Path, 4096);
+        using var marker8 = requireTerminalStage8
+            ? ReadOwnedTransitionRecord(Path.Combine(journalRoot, owner.TransactionId + ".rolled_back.commit.json"), 4096)
+            : null;
         var stage = stage7.RootElement;
+        var expectedStage = requireTerminalStage8 ? "rolled_back" : "rollback_healthy";
+        var expectedSequence = requireTerminalStage8 ? 8 : 7;
         if (stage.GetProperty("transactionId").GetString() != owner.TransactionId ||
-            stage.GetProperty("stage").GetString() != "rollback_healthy" ||
-            stage.GetProperty("sequence").GetInt32() != 7 ||
+            stage.GetProperty("stage").GetString() != expectedStage ||
+            stage.GetProperty("sequence").GetInt32() != expectedSequence ||
             stage.GetProperty("previousNative").GetProperty("kind").GetString() != "stable" ||
             marker7.RootElement.GetProperty("schemaVersion").GetInt32() != 1 ||
             marker7.RootElement.GetProperty("transactionId").GetString() != owner.TransactionId ||
             marker7.RootElement.GetProperty("stage").GetString() != "rollback_healthy" ||
             marker7.RootElement.GetProperty("sequence").GetInt32() != 7 ||
             marker7.RootElement.GetProperty("guardianPid").GetInt32() != Environment.ProcessId ||
-            marker7.RootElement.GetProperty("journalSha256").GetString() != Convert.ToHexStringLower(stage7Sha) ||
+            (!requireTerminalStage8 &&
+                marker7.RootElement.GetProperty("journalSha256").GetString() != Convert.ToHexStringLower(stage7Sha)) ||
+            (requireTerminalStage8 &&
+                !System.Text.RegularExpressions.Regex.IsMatch(marker7.RootElement.GetProperty("journalSha256").GetString() ?? "", "^[a-f0-9]{64}$")) ||
             marker6.RootElement.GetProperty("schemaVersion").GetInt32() != 1 ||
             marker6.RootElement.GetProperty("transactionId").GetString() != owner.TransactionId ||
             marker6.RootElement.GetProperty("stage").GetString() != "rollback_native_restored" ||
             marker6.RootElement.GetProperty("sequence").GetInt32() != 6 ||
-            marker6.RootElement.GetProperty("guardianPid").GetInt32() != Environment.ProcessId)
-            throw new InvalidDataException("Terminal A readiness requires both original Guardian stage6 and stage7 SHA receipts.");
+            marker6.RootElement.GetProperty("guardianPid").GetInt32() != Environment.ProcessId ||
+            (requireTerminalStage8 && (marker8 is null ||
+                marker8.RootElement.GetProperty("schemaVersion").GetInt32() != 1 ||
+                marker8.RootElement.GetProperty("transactionId").GetString() != owner.TransactionId ||
+                marker8.RootElement.GetProperty("stage").GetString() != "rolled_back" ||
+                marker8.RootElement.GetProperty("sequence").GetInt32() != 8 ||
+                marker8.RootElement.GetProperty("guardianPid").GetInt32() != Environment.ProcessId ||
+                marker8.RootElement.GetProperty("journalSha256").GetString() != Convert.ToHexStringLower(stage7Sha))))
+            throw new InvalidDataException("Original Guardian terminal/cleanup stage6+7+8 SHA/PID ancestry is incomplete.");
         var version = stage.GetProperty("previousNative").GetProperty("version").GetString() ?? "";
         var oldSha = stage.GetProperty("currentSha").GetString() ?? "";
         var failedSha = stage.GetProperty("targetSha").GetString() ?? "";
@@ -118,6 +135,8 @@ internal static partial class Program
             leaseAge.Elapsed >= TimeSpan.FromMinutes(20) ||
             worker.StartTime.ToUniversalTime().Ticks.ToString(CultureInfo.InvariantCulture) != owner.Ticks)
             throw new InvalidDataException("Original stage7 or kernel worker changed during terminal-readiness witness.");
-        InspectionPhase = "native-integrated-a-terminal-readiness-read-only-no-stage8";
+        InspectionPhase = requireTerminalStage8
+            ? "native-integrated-a-post-terminal-cleanup-readiness-read-only-no-delete"
+            : "native-integrated-a-terminal-readiness-read-only-no-stage8";
     }
 }

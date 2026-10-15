@@ -98,6 +98,13 @@ internal static partial class Program
             leaseAge.Elapsed >= TimeSpan.FromMinutes(20) ||
             worker.StartTime.ToUniversalTime().Ticks.ToString(CultureInfo.InvariantCulture) != owner.Ticks)
             throw new InvalidDataException("Original OS Guardian terminal stage8 SHA/PID proof is incomplete.");
+        // Before the original worker can believe the terminal ACK, verify
+        // there remains exactly one SHA-matched failed-B quarantine and the
+        // signed A/WPF/current source/NM under the SAME ORIGINAL OS writer.
+        // This is deliberately READ ONLY. A future fixed cleanup action is
+        // a separate capability and cannot consume a bare stage8 label.
+        RequireOwnedRestoredATerminalReadiness(owner, journalRoot, worker, lease, leaseAge,
+            requireTerminalStage8: true);
         InspectionPhase = "native-integrated-a-rolled-back-stage8-retained-b-cleanup-pending";
         pipe.WriteByte((byte)'a');
         pipe.FlushAsync(cutoff.Token).GetAwaiter().GetResult();

@@ -328,3 +328,25 @@ test('terminal original Guardian fixed T only after full stage7 readiness commit
   assert.match(milestones,/from == "rollback_healthy" && originalSequence == 7 && to == "rolled_back" && nextSequence == 8/u);
   assert.doesNotMatch(native,/Directory\.Delete|File\.Delete|Registry\.SetValue|Process\.Kill|Process\.Start/u);
 });
+
+test('same original OS Guardian revalidates durable terminal8 and B quarantine before terminal ACK, without delete authority', async()=>{
+  const readiness=await readFile(new URL('../../native/windows/EquinoxLocal.Guardian/MainNativeRestoredATerminalReadiness.cs',import.meta.url),'utf8');
+  const server=await readFile(new URL('../../native/windows/EquinoxLocal.Guardian/MainNativeRestoredATerminalCommit.cs',import.meta.url),'utf8');
+  assert.match(readiness,/bool requireTerminalStage8 = false/u);
+  assert.match(readiness,/expectedStage = requireTerminalStage8 \? "rolled_back" : "rollback_healthy"/u);
+  assert.match(readiness,/expectedSequence = requireTerminalStage8 \? 8 : 7/u);
+  assert.match(readiness,/\.rolled_back\.commit\.json/u);
+  assert.match(readiness,/marker8\.RootElement\.GetProperty\("guardianPid"\)\.GetInt32\(\) != Environment\.ProcessId/u);
+  assert.match(readiness,/marker8\.RootElement\.GetProperty\("journalSha256"\)\.GetString\(\) != Convert\.ToHexStringLower\(stage7Sha\)/u);
+  assert.match(readiness,/marker7\.RootElement\.GetProperty\("guardianPid"\)\.GetInt32\(\) != Environment\.ProcessId/u);
+  assert.match(readiness,/marker6\.RootElement\.GetProperty\("guardianPid"\)\.GetInt32\(\) != Environment\.ProcessId/u);
+  assert.match(readiness,/CompareNativeTrees\(Path\.Combine\(stable, "runtime", "shell"\), active\)/u);
+  assert.match(readiness,/CompareNativeTrees\(Path\.Combine\(candidateB, "runtime", "shell"\), quarantine\)/u);
+  assert.match(readiness,/RequireOriginalGuardianRestoredAWpfReceipt\(owner, journalRoot, worker, lease, leaseAge, active, oldStageSha\)/u);
+  assert.match(readiness,/native-integrated-a-post-terminal-cleanup-readiness-read-only-no-delete/u);
+  const finalAudit=server.indexOf('requireTerminalStage8: true');
+  const finalAck=server.indexOf("pipe.WriteByte((byte)'a')");
+  assert.ok(finalAudit>=0 && finalAck>finalAudit);
+  assert.doesNotMatch(readiness,/File\.Delete|Directory\.Delete|Directory\.Move|File\.Move|WriteIntegratedOwnedNativeStage|Registry\.SetValue/u);
+  assert.doesNotMatch(server,/File\.Delete|Directory\.Delete|Directory\.Move|File\.Move/u);
+});
