@@ -31,10 +31,25 @@ internal static partial class Program
             InspectionPhase = "native-integrated-a-rollback-owner-proof-wait";
             using var endpoint = new NamedPipeServerStream("EquinoxLocalMainAB-Owner-" + owner.TransactionId,
                 PipeDirection.InOut, 1, PipeTransmissionMode.Byte, PipeOptions.Asynchronous);
+            // The same OS Guardian process multiplexes the read-only owner
+            // witness and ONE fixed physical restore action under this SAME
+            // exclusive lease. Neither endpoint is hosted by another owner.
+            using var physical = new NamedPipeServerStream("EquinoxLocalMainAB-PhysicalRestore-" + owner.TransactionId,
+                PipeDirection.InOut, 1, PipeTransmissionMode.Byte, PipeOptions.Asynchronous);
             using var deadline = new CancellationTokenSource(remaining);
             var arrival = endpoint.WaitForConnectionAsync(deadline.Token);
+            var physicalArrival = physical.WaitForConnectionAsync(deadline.Token);
             var exit = worker.WaitForExitAsync(deadline.Token);
-            var completed = Task.WhenAny(arrival, exit).GetAwaiter().GetResult();
+            var completed = Task.WhenAny(arrival, physicalArrival, exit).GetAwaiter().GetResult();
+            if (completed == physicalArrival)
+            {
+                physicalArrival.GetAwaiter().GetResult();
+                deadline.Cancel();
+                ServeOwnedPhysicalARestore(owner, journalRoot, worker, lease, leaseAge, physical);
+                // A is physically restored but all pointers still select B:
+                // never resume the read-only stage5 loop or mark rollback done.
+                return;
+            }
             if (completed != arrival) { deadline.Cancel(); break; }
             try { arrival.GetAwaiter().GetResult(); }
             catch (OperationCanceledException) { break; }

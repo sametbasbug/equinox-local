@@ -117,3 +117,29 @@ test('original Guardian demands fresh post-stage5 physical A readiness before an
   assert.match(readiness, /FixedTimeEquals\(before, SHA256\.HashData\(File\.ReadAllBytes\(journalPath\)\)\)/u);
   assert.doesNotMatch(readiness, /Directory\.Move|File\.Move|Directory\.Delete|File\.Delete|Process\.Start|Process\.Kill|Registry\.SetValue|WriteIntegratedOwnedNativeStage/u);
 });
+
+test('single original Guardian handles owner OS audit and fixed mutual-HMAC physical A action under one live writer lease', async () => {
+  const server = await readFile(new URL('../../native/windows/EquinoxLocal.Guardian/MainNativeRollbackPhysicalARestore.cs', import.meta.url), 'utf8');
+  const witness = await readFile(new URL('../../native/windows/EquinoxLocal.Guardian/MainNativeRollbackOwnerWitness.cs', import.meta.url), 'utf8');
+  const argumentsSource = await readFile(new URL('../../native/windows/EquinoxLocal.Guardian/MainNativeWorkerArguments.cs', import.meta.url), 'utf8');
+  assert.match(witness, /new NamedPipeServerStream\("EquinoxLocalMainAB-PhysicalRestore-" \+ owner\.TransactionId/u);
+  assert.match(witness, /Task\.WhenAny\(arrival, physicalArrival, exit\)/u);
+  assert.match(witness, /ServeOwnedPhysicalARestore\(owner, journalRoot, worker, lease, leaseAge, physical\)/u);
+  assert.match(witness, /HoldOwnedRollbackOwnerWitness\(/u);
+  assert.match(server, /GetNamedPipeClientProcessId\(endpoint\.SafePipeHandle, out var clientPid\)/u);
+  assert.match(server, /clientPid != owner\.Pid/u);
+  assert.match(server, /InspectOwnedNativeWorkerProcess\(guardianHoldsJournalLease: true\)/u);
+  assert.match(server, /InspectOwnedNativeWorkerOsArguments\(guardianHoldsJournalLease: true\)/u);
+  assert.match(argumentsSource, /InspectOwnedNativeWorkerOsArguments\(bool guardianHoldsJournalLease = false\)/u);
+  assert.match(server, /RequireOwnedPhysicalARestoreReadiness\(owner, journalRoot, worker, lease, leaseAge\)/u);
+  assert.match(server, /lease\.SafeFileHandle\.IsClosed \|\| lease\.SafeFileHandle\.IsInvalid/u);
+  assert.match(server, /"equinox-local-guardian-ab-physical-restore-worker-v1:"/u);
+  assert.match(server, /"equinox-local-guardian-ab-physical-restore-owner-v1:"/u);
+  assert.match(server, /FixedTimeEquals\(expected, response\)/u);
+  assert.match(server, /grant\[32\] = \(byte\)'R'/u);
+  assert.match(server, /acknowledgment\[0\] != \(byte\)'r'/u);
+  assert.match(server, /CompareNativeTrees\(originalA, program\)/u);
+  assert.match(server, /CompareNativeTrees\(bShell, failedB\)/u);
+  assert.match(server, /endpoint\.WriteByte\(\(byte\)'a'\)/u);
+  assert.doesNotMatch(server, /Directory\.Move|File\.Move|Directory\.Delete|File\.Delete|WriteIntegratedOwnedNativeStage|Registry\.SetValue|Process\.Start|Process\.Kill/u);
+});
