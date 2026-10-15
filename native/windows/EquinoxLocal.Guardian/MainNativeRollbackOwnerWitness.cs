@@ -108,6 +108,22 @@ internal static partial class Program
                             // under the SAME first live OS writer lease.
                             RequireOwnedRestoredATerminalReadiness(owner, journalRoot, worker, lease, leaseAge);
                             InspectionPhase = "native-integrated-a-durable-stage7-terminal-pending";
+                            var terminalRemaining = TimeSpan.FromMinutes(20) - leaseAge.Elapsed;
+                            if (terminalRemaining <= TimeSpan.Zero)
+                                throw new InvalidOperationException("Original Guardian expired before fixed terminal A grant.");
+                            using var terminalPipe = new NamedPipeServerStream("EquinoxLocalMainAB-TerminalStableA-" + owner.TransactionId,
+                                PipeDirection.InOut, 1, PipeTransmissionMode.Byte, PipeOptions.Asynchronous);
+                            using var terminalCutoff = new CancellationTokenSource(terminalRemaining);
+                            var terminalArrival = terminalPipe.WaitForConnectionAsync(terminalCutoff.Token);
+                            var terminalWorkerExit = worker.WaitForExitAsync(terminalCutoff.Token);
+                            if (Task.WhenAny(terminalArrival, terminalWorkerExit).GetAwaiter().GetResult() == terminalArrival)
+                            {
+                                terminalArrival.GetAwaiter().GetResult();
+                                terminalCutoff.Cancel();
+                                ServeOwnedRestoredATerminalCommit(owner, journalRoot, worker, lease, leaseAge, terminalPipe);
+                                terminalPipe.Dispose();
+                                InspectionPhase = "native-integrated-a-rolled-back-stage8-failed-b-retained";
+                            }
                         }
                     }
                 }

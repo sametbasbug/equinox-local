@@ -713,6 +713,24 @@ test('hosted installed x64/ARM64 requires original Guardian four independent A h
   assert.doesNotMatch(worker,/Process\.Kill|rollback_healthy.*journal\.advance/u);
 });
 
+test('real installed Windows x64/ARM64 requires original fixed T and durable stage8 with retained failed B quarantine',async()=>{
+  const fixture=await fs.readFile(new URL('./windows-installer-real-package-smoke.ps1',import.meta.url),'utf8');
+  const worker=await fs.readFile(new URL('./owned-windows-worker-proof.mjs',import.meta.url),'utf8');
+  const client=await fs.readFile(new URL('../../src/equinox-local-windows-native-ab-stable-a-terminal-client.js',import.meta.url),'utf8');
+  assert.match(worker,/process\.env\.GITHUB_ACTIONS !== 'true'/u);
+  assert.match(worker,/EQUINOX_LOCAL_TEST_AB_TERMINAL_STABLE_TRIGGER/u);
+  assert.match(worker,/requestEquinoxLocalGuardianOwnedStableATerminalCommit\(request\)/u);
+  assert.match(fixture,/original Guardian OS\/HMAC durable terminal rolled_back\/8 SHA\/PID PASSED/u);
+  assert.match(fixture,/\$ATerminalCommit\.guardianPid -eq \$IntegratedGuardian\.Id/u);
+  assert.match(fixture,/\$ATerminalRecord\.stage -ceq 'rolled_back'/u);
+  assert.match(fixture,/\$ATerminalReceipt\.failedBQuarantineRetained -eq \$true/u);
+  assert.match(fixture,/\$NativeRestoredCommit\.guardianPid -eq \$ATerminalCommit\.guardianPid/u);
+  assert.match(fixture,/\$JournalTerminalATrigger,\$JournalTerminalAReceipt/u);
+  assert.match(client,/\.rolled_back\.commit\.json/u);
+  assert.match(client,/stage6\.guardianPid !== stage8\.guardianPid/u);
+  assert.doesNotMatch(client,/Directory\.Delete|File\.Delete|Process\.Kill|rolled_back.*journal\.advance/u);
+});
+
 test('hosted x64/ARM64 CI proves original Guardian rollback_started/5 live OS owner only after exact disposable B exit', async () => {
   const fixture = await fs.readFile(new URL('./windows-installer-real-package-smoke.ps1', import.meta.url), 'utf8');
   const worker = await fs.readFile(new URL('./owned-windows-worker-proof.mjs', import.meta.url), 'utf8');

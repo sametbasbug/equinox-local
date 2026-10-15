@@ -304,3 +304,27 @@ test('terminal old-A readiness is read-only and binds live original OS lease, bo
   assert.match(proof,/Original stage7 or kernel worker changed during terminal-readiness witness/u);
   assert.doesNotMatch(proof,/WriteIntegratedOwnedNativeStage|Directory\.Move|File\.Move|File\.Delete|Registry\.SetValue|Process\.Start|Process\.Kill/u);
 });
+
+
+test('terminal original Guardian fixed T only after full stage7 readiness commits durable stage8 and retains failed B',async()=>{
+  const native=await readFile(new URL('../../native/windows/EquinoxLocal.Guardian/MainNativeRestoredATerminalCommit.cs',import.meta.url),'utf8');
+  const loop=await readFile(new URL('../../native/windows/EquinoxLocal.Guardian/MainNativeRollbackOwnerWitness.cs',import.meta.url),'utf8');
+  const milestones=await readFile(new URL('../../native/windows/EquinoxLocal.Guardian/MainNativeIntegratedABSupervisor.cs',import.meta.url),'utf8');
+  assert.match(loop,/new NamedPipeServerStream\("EquinoxLocalMainAB-TerminalStableA-" \+ owner\.TransactionId/u);
+  assert.ok(loop.indexOf('RequireOwnedRestoredATerminalReadiness(owner, journalRoot, worker, lease, leaseAge);') < loop.indexOf('ServeOwnedRestoredATerminalCommit(owner, journalRoot, worker, lease, leaseAge, terminalPipe);'));
+  assert.match(native,/GetNamedPipeClientProcessId\(pipe\.SafePipeHandle, out var pid\)/u);
+  assert.match(native,/pid != owner\.Pid/u);
+  assert.match(native,/InspectOwnedNativeWorkerOsArguments\(guardianHoldsJournalLease: true\)/u);
+  assert.match(native,/RequireOwnedRestoredATerminalReadiness\(owner, journalRoot, worker, lease, leaseAge\)/u);
+  assert.match(native,/"equinox-local-guardian-ab-terminal-a-worker-v1:"/u);
+  assert.match(native,/"equinox-local-guardian-ab-terminal-a-owner-v1:"/u);
+  assert.match(native,/FixedTimeEquals\(expected, response\)/u);
+  assert.match(native,/grant\[32\] = \(byte\)'T'/u);
+  assert.match(native,/ack\[0\] != \(byte\)'t'/u);
+  assert.match(native,/"rollback_healthy", 7, "rolled_back", 8/u);
+  assert.match(native,/rolled_back\.commit\.json/u);
+  assert.match(native,/marker\.RootElement\.GetProperty\("guardianPid"\)\.GetInt32\(\) != Environment\.ProcessId/u);
+  assert.match(native,/No B deletion or cleanup grant exists in this action/u);
+  assert.match(milestones,/from == "rollback_healthy" && originalSequence == 7 && to == "rolled_back" && nextSequence == 8/u);
+  assert.doesNotMatch(native,/Directory\.Delete|File\.Delete|Registry\.SetValue|Process\.Kill|Process\.Start/u);
+});

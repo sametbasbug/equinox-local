@@ -356,6 +356,60 @@ if (healthStableTrigger) {
   timer.unref();
 }
 
+// HOSTED ONLY: a separate fixed T terminal action after original H
+// certified four A samples, exact stage7 SHA/PID and retained B quarantine.
+const terminalStableTrigger = process.env.EQUINOX_LOCAL_TEST_AB_TERMINAL_STABLE_TRIGGER;
+if (terminalStableTrigger) {
+  const terminalReceipt = process.env.EQUINOX_LOCAL_TEST_AB_TERMINAL_STABLE_RECEIPT;
+  const terminalModule = process.env.EQUINOX_LOCAL_TEST_AB_TERMINAL_STABLE_MODULE;
+  const healthPath = process.env.EQUINOX_LOCAL_TEST_AB_HEALTH_STABLE_RECEIPT;
+  const stage6Path = process.env.EQUINOX_LOCAL_TEST_AB_SELECT_STABLE_RECEIPT;
+  const relaunchPath = process.env.EQUINOX_LOCAL_TEST_AB_RELAUNCH_STABLE_RECEIPT;
+  if (process.env.GITHUB_ACTIONS !== 'true' || !terminalReceipt || !terminalModule ||
+      !healthPath || !stage6Path || !relaunchPath ||
+      !process.env.EQUINOX_LOCAL_TEST_AB_HEALTH_STABLE_TRIGGER ||
+      !process.env.EQUINOX_LOCAL_TEST_AB_NEGATIVE_B_TRIGGER) {
+    throw new Error('Hosted terminal requires same original CI worker and signed stage6/stage7/WPF lineage.');
+  }
+  const terminalTimer = setInterval(() => {
+    if (!fs.existsSync(terminalStableTrigger)) return;
+    clearInterval(terminalTimer);
+    void (async () => {
+      const path = await import('node:path');
+      const tx = process.env.EQUINOX_LOCAL_TEST_WORKER_TX;
+      const install = path.win32.join(process.env.LOCALAPPDATA, 'Equinox Local');
+      const stage6Receipt = JSON.parse(fs.readFileSync(stage6Path,'utf8'));
+      const relaunchReceipt = JSON.parse(fs.readFileSync(relaunchPath,'utf8'));
+      const stage7Receipt = JSON.parse(fs.readFileSync(healthPath,'utf8'));
+      const {requestEquinoxLocalGuardianOwnedStableATerminalCommit} =
+        await import(pathToFileURL(terminalModule).href);
+      const request = Object.freeze({transactionId:tx,
+        transactionRoot:process.env.EQUINOX_LOCAL_TEST_JOURNAL_TX_ROOT,
+        workerToken:process.env.EQUINOX_LOCAL_MAIN_WORKER_TOKEN,
+        stage6Receipt,relaunchReceipt,stage7Receipt,
+        installation:Object.freeze({managed:true,selfUpdateSupported:true,installRoot:install,
+          target:process.env.EQUINOX_LOCAL_TEST_GUARDIAN_TARGET}),
+      });
+      let result;
+      for (let attempt=0;attempt<20;attempt++) {
+        try {result=await requestEquinoxLocalGuardianOwnedStableATerminalCommit(request);break;}
+        catch(error) {
+          if(!['ENOENT','ECONNREFUSED'].includes(error?.code)||attempt===19)throw error;
+          await new Promise(resolve=>setTimeout(resolve,125));
+        }
+      }
+      if(result.stage!=='rolled_back'||result.sequence!==8||result.failedBQuarantineRetained!==true)
+        throw new Error('Original Guardian did not durably prove terminal rolled_back/8 with retained B.');
+      fs.writeFileSync(terminalReceipt,JSON.stringify(result),{flag:'wx'});
+    })().catch(error=>{
+      const diagnostic=process.env.EQUINOX_LOCAL_TEST_AB_DIAGNOSTIC_FILE;
+      if(diagnostic)try{fs.appendFileSync(diagnostic,`terminal-A:${String(error?.code??error?.name??'error').slice(0,40)}\n`);}catch{}
+      process.exitCode=1;
+    });
+  },110);
+  terminalTimer.unref();
+}
+
 // Hosted-only negative-B acceptance. The SAME original product worker asks
 // the SAME live Guardian to persist rollback_started/5 after CI deliberately
 // terminates ONLY its independently identified disposable B WPF tree.

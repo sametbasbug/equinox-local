@@ -470,6 +470,9 @@ if (process.env.GITHUB_ACTIONS === 'true' &&
   $JournalHealthATrigger = Join-Path $Work 'start-original-guardian-health-stable-a.trigger'
   $JournalHealthAReceipt = Join-Path $Work 'original-guardian-four-a-health.json'
   $JournalHealthyACommit = Join-Path $JournalDataDir ("$JournalId.rollback_healthy.commit.json")
+  $JournalTerminalATrigger = Join-Path $Work 'start-original-guardian-terminal-stable-a.trigger'
+  $JournalTerminalAReceipt = Join-Path $Work 'original-guardian-terminal-a.json'
+  $JournalTerminalACommit = Join-Path $JournalDataDir ("$JournalId.rolled_back.commit.json")
   $JournalRollbackStartCommit = Join-Path $JournalDataDir ("$JournalId.rollback_started.commit.json")
   $JournalNativeRestoredCommit = Join-Path $JournalDataDir ("$JournalId.rollback_native_restored.commit.json")
   $JournalIntegratedB = Join-Path $NativeTxRoot ("native-store\$FixtureTarget\$JournalTarget")
@@ -558,6 +561,9 @@ if (process.env.GITHUB_ACTIONS === 'true' &&
       $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_AB_HEALTH_STABLE_TRIGGER'] = $JournalHealthATrigger
       $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_AB_HEALTH_STABLE_RECEIPT'] = $JournalHealthAReceipt
       $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_AB_HEALTH_STABLE_MODULE'] = Join-Path $Root 'src\equinox-local-windows-native-ab-stable-a-health-client.js'
+      $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_AB_TERMINAL_STABLE_TRIGGER'] = $JournalTerminalATrigger
+      $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_AB_TERMINAL_STABLE_RECEIPT'] = $JournalTerminalAReceipt
+      $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_AB_TERMINAL_STABLE_MODULE'] = Join-Path $Root 'src\equinox-local-windows-native-ab-stable-a-terminal-client.js'
       $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_AB_ROLLBACK_MODULE'] = Join-Path $Root 'src\equinox-local-windows-native-ab-rollback-client.js'
       $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_AB_EVIDENCE_MODULE'] = Join-Path $Root 'src\equinox-local-windows-native-guardian-evidence.js'
       $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_AB_OWNER_VERIFIER_MODULE'] = Join-Path $Root 'src\equinox-local-windows-native-rollback-owner-verifier.js'
@@ -1210,6 +1216,46 @@ if (process.env.GITHUB_ACTIONS === 'true' &&
           (Same-Path $SelectedAManifest.path $ExpectedStableBrowserLauncher) -and
           [IO.File]::Exists((Join-Path $FailedBQuarantine 'native-b-ci-only.marker'))) 'Original Guardian stage7 lacks four A-health OS identity, SHA marker or retained B quarantine.'
         Write-Output "Windows $FixtureTarget original Guardian FOUR consecutive Stable A backend/source/native/NM health and durable rollback_healthy/7 PASSED; terminal rolled_back/8 NOT YET committed."
+        # The original worker alone may ask original Guardian to durably
+        # finalize stage8 after stage7 SHA/PID, stage6 WPF birth and intact B.
+        [IO.File]::WriteAllText($JournalTerminalATrigger, 'hosted-original-guardian-terminal-after-stage7')
+        $TerminalAConfirmed = $false
+        for ($TerminalTry=0; $TerminalTry -lt 460; $TerminalTry++) {
+          if ([IO.File]::Exists($JournalTerminalAReceipt) -and
+              -not $IntegratedGuardian.HasExited -and -not $WorkerProcess.HasExited) {
+            $TerminalAConfirmed = $true
+            break
+          }
+          if ($IntegratedGuardian.HasExited -or $WorkerProcess.HasExited) { break }
+          Start-Sleep -Milliseconds 125
+        }
+        if (-not $TerminalAConfirmed -and [IO.File]::Exists($JournalIntegratedDiagnostic)) {
+          Write-Output ('Original Guardian terminal stage8 diagnostic: ' + [IO.File]::ReadAllText($JournalIntegratedDiagnostic))
+        }
+        Assert-True $TerminalAConfirmed 'Original OS Guardian did not certify terminal rolled_back/8.'
+        Assert-True ([IO.File]::Exists($JournalTerminalACommit)) 'Original Guardian missing terminal stage8 SHA/PID commit marker.'
+        $ATerminalReceipt = ConvertFrom-Json ([IO.File]::ReadAllText($JournalTerminalAReceipt))
+        $ATerminalRecord = ConvertFrom-Json ([IO.File]::ReadAllText($JournalData))
+        $ATerminalCommit = ConvertFrom-Json ([IO.File]::ReadAllText($JournalTerminalACommit))
+        $ATerminalWpf = Get-CimInstance Win32_Process -Filter ("ProcessId=" + $WpfAProof.shellPid) -ErrorAction SilentlyContinue
+        Assert-True ($ATerminalReceipt.transactionId -ceq $JournalId -and
+          $ATerminalReceipt.stage -ceq 'rolled_back' -and $ATerminalReceipt.sequence -eq 8 -and
+          $ATerminalReceipt.failedBQuarantineRetained -eq $true -and
+          $ATerminalReceipt.guardianPid -eq $IntegratedGuardian.Id -and
+          $ATerminalRecord.stage -ceq 'rolled_back' -and $ATerminalRecord.sequence -eq 8 -and
+          $ATerminalCommit.schemaVersion -eq 1 -and $ATerminalCommit.transactionId -ceq $JournalId -and
+          $ATerminalCommit.stage -ceq 'rolled_back' -and $ATerminalCommit.sequence -eq 8 -and
+          $ATerminalCommit.guardianPid -eq $IntegratedGuardian.Id -and
+          $ATerminalCommit.journalSha256 -ceq ((Get-FileHash -LiteralPath $JournalData -Algorithm SHA256).Hash.ToLowerInvariant()) -and
+          $AStage7Commit.guardianPid -eq $ATerminalCommit.guardianPid -and
+          $NativeRestoredCommit.guardianPid -eq $ATerminalCommit.guardianPid -and
+          $WpfAProof.guardianPid -eq $ATerminalCommit.guardianPid -and
+          $null -ne $ATerminalWpf -and (Same-Path $ATerminalWpf.ExecutablePath $StableExe) -and
+          (Same-Path $SelectedAManifest.path $ExpectedStableBrowserLauncher) -and
+          [IO.File]::ReadAllText($IntegratedSourcePointerPath) -ceq $ExactStableSourcePointer -and
+          -not [IO.File]::Exists($IntegratedNativePointerPath) -and
+          [IO.File]::Exists((Join-Path $FailedBQuarantine 'native-b-ci-only.marker'))) 'Terminal stage8 allowed stale Guardian or changed A/B identity, failed quarantine or forged SHA/PID.'
+        Write-Output "Windows $FixtureTarget original Guardian OS/HMAC durable terminal rolled_back/8 SHA/PID PASSED; failed B SHA quarantine RETAINED, cleanup NOT YET authorized."
         # Disposable fixture teardown only. Subsequent orphan journal audit
         # must see no remaining A WPF, even after original Guardian death.
         Stop-OwnedShell $StableExe
@@ -1224,7 +1270,7 @@ if (process.env.GITHUB_ACTIONS === 'true' &&
         $NativeStagedReceipt = ConvertFrom-Json ([IO.File]::ReadAllText($JournalNativeStagedCommit))
         $ShellStoppedReceipt = ConvertFrom-Json ([IO.File]::ReadAllText($JournalShellStoppedCommit))
         $SwitchedReceipt = ConvertFrom-Json ([IO.File]::ReadAllText($JournalSwitchedCommit))
-        Assert-True ($IntegratedRecord.stage -ceq 'rollback_healthy' -and $IntegratedRecord.sequence -eq 7 -and
+        Assert-True ($IntegratedRecord.stage -ceq 'rolled_back' -and $IntegratedRecord.sequence -eq 8 -and
           $NativeStagedReceipt.stage -ceq 'native_staged' -and $NativeStagedReceipt.sequence -eq 1 -and
           $ShellStoppedReceipt.stage -ceq 'shell_stopped' -and $ShellStoppedReceipt.sequence -eq 2 -and
           $ShellStoppedReceipt.guardianPid -eq $IntegratedGuardian.Id -and
@@ -1269,7 +1315,7 @@ if (process.env.GITHUB_ACTIONS === 'true' &&
         # Hosted test-only registry and manifest rollback happens before
         # restarting Stable A. Production always requires independent health.
         [IO.File]::WriteAllBytes($ExpectedManifestPath, $OriginalIntegratedNativeManifest)
-        Remove-Item -LiteralPath $JournalGuard,$JournalAuthority,$JournalShellQuiesced,$JournalIntegratedTrigger,$JournalGuardianSpawnTrigger,$JournalGuardianPidReceipt,$JournalBRestartTrigger,$JournalRestartedReceipt,$JournalNativeStagedCommit,$JournalShellStoppedCommit,$JournalSwitchedCommit,$JournalRestartedCommit,$JournalRollbackStartCommit,$JournalNegativeBTrigger,$JournalNegativeBReceipt,$JournalPhysicalRestoreTrigger,$JournalPhysicalRestoreReceipt,$JournalStableSelectionTrigger,$JournalStableSelectionReceipt,$JournalRelaunchATrigger,$JournalRelaunchAReceipt,$JournalHealthATrigger,$JournalHealthAReceipt -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $JournalGuard,$JournalAuthority,$JournalShellQuiesced,$JournalIntegratedTrigger,$JournalGuardianSpawnTrigger,$JournalGuardianPidReceipt,$JournalBRestartTrigger,$JournalRestartedReceipt,$JournalNativeStagedCommit,$JournalShellStoppedCommit,$JournalSwitchedCommit,$JournalRestartedCommit,$JournalRollbackStartCommit,$JournalNegativeBTrigger,$JournalNegativeBReceipt,$JournalPhysicalRestoreTrigger,$JournalPhysicalRestoreReceipt,$JournalStableSelectionTrigger,$JournalStableSelectionReceipt,$JournalRelaunchATrigger,$JournalRelaunchAReceipt,$JournalHealthATrigger,$JournalHealthAReceipt,$JournalTerminalATrigger,$JournalTerminalAReceipt -Force -ErrorAction SilentlyContinue
         Remove-Item -LiteralPath $JournalIntegratedB -Recurse -Force -ErrorAction SilentlyContinue
         [IO.File]::WriteAllText($JournalData, ($JournalValue | ConvertTo-Json -Depth 5))
         $IntegratedWpfRestart = [Diagnostics.ProcessStartInfo]::new($StableExe)
