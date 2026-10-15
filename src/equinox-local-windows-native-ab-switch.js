@@ -90,12 +90,14 @@ export async function restoreWindowsNativeABSlot(options, { fsImpl = fs } = {}) 
     throw new Error('Native A/B rollback has a foreign candidate quarantine.');
   }
   if (!backup) {
-    // Crash after A was successfully restored but before the receipt advanced:
-    // A plus a verified B quarantine is a legitimate idempotent replay state.
-    if (active && sameWindowsStableShellTree(active, a)) {
-      return Object.freeze({ stage: 'restored', recovered: true, quarantineRoot: quarantine ? p.quarantineRoot : null });
+    // A alone is not recovery evidence: a clean pre-update Stable install,
+    // or a prematurely discarded failed-B quarantine, must NOT be treated
+    // as a successfully replayed native rollback. The earlier physical B
+    // must still be present under this transaction's exact quarantine path.
+    if (active && sameWindowsStableShellTree(active, a) && quarantine) {
+      return Object.freeze({ stage: 'restored', recovered: true, quarantineRoot: p.quarantineRoot });
     }
-    throw new Error('Native A/B rollback lacks the exact old A backup.');
+    throw new Error('Native A/B rollback lacks exact old A backup and verified B quarantine.');
   }
   if (quarantine && active) throw new Error('Native A/B rollback has ambiguous active and quarantined candidates.');
   if (!sameWindowsStableShellTree(backup, a) || (active && !sameWindowsStableShellTree(active, b))) {

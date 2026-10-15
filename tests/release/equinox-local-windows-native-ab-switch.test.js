@@ -99,6 +99,22 @@ test('Windows rejected B→A rollback preserves B quarantine until A health veri
   await assert.rejects(fs.stat(f.quarantineRoot), { code: 'ENOENT' });
 });
 
+test('native rollback replay refuses bare Stable A without the exact quarantined B', async (t) => {
+  const f = await fixture(t);
+  // Initial healthy A is not a recovery receipt, even though its bytes are
+  // identical to the previous immutable Stable release.
+  await assert.rejects(restoreWindowsNativeABSlot(f), /backup and verified B quarantine/u);
+  assert.equal(await liveExe(f), 'verified-A-wpf-binary\n');
+
+  await switchWindowsNativeABSlot(f, { requestShutdown: async () => {} });
+  await restoreWindowsNativeABSlot(f);
+  assert.equal((await restoreWindowsNativeABSlot(f)).quarantineRoot, f.quarantineRoot);
+  await fs.rm(f.quarantineRoot, { recursive: true });
+  await assert.rejects(restoreWindowsNativeABSlot(f), /backup and verified B quarantine/u);
+  // Refusal must preserve the actual known-good Stable A bytes.
+  assert.equal(await liveExe(f), 'verified-A-wpf-binary\n');
+});
+
 test('interruption after old A renamed is recovered using deterministic backup, not a random orphan', async (t) => {
   const f = await fixture(t);
   let renameCount = 0;
