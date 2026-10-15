@@ -767,6 +767,24 @@ test('real Windows x64/ARM64 refuses B offline lock quarantine while original OS
   assert.match(fixture,/Refused worker-live quarantine still mutated native writer lock/u);
 });
 
+test('installed original x64/ARM64 Q positive offline quarantine uses same moved first OS writer lock after both native owners die and keeps Main blocked',async()=>{
+  const fixture=await fs.readFile(new URL('./windows-installer-real-package-smoke.ps1',import.meta.url),'utf8');
+  assert.match(fixture,/\$QOriginalGuardianPid = \$IntegratedGuardian\.Id/u);
+  assert.match(fixture,/Move-Item -LiteralPath \$JournalGuard -Destination \$QStagedOriginalWriterLock/u);
+  assert.match(fixture,/Move-Item -LiteralPath \$JournalNativeRestoredCommit -Destination \$QStagedOriginalStage6/u);
+  assert.match(fixture,/Move-Item -LiteralPath \$RetiredBQuarantine -Destination \$QStagedRetiredB/u);
+  assert.match(fixture,/Move-Item -LiteralPath \$JournalIntegratedB -Destination \$QStagedCandidateB/u);
+  assert.match(fixture,/Move-Item -LiteralPath \$QStagedOriginalWriterLock -Destination \$JournalGuard/u);
+  assert.match(fixture,/\$WorkerProcess\.HasExited -and \$null -eq \$QUnexpectedLiveGuardian/u);
+  assert.match(fixture,/Offline original Q quarantine admitted forged stage8 intent SHA/u);
+  assert.match(fixture,/Offline original Q quarantine replayed pre-existing foreign recovery evidence/u);
+  assert.match(fixture,/Original native offline Q lock quarantine refused two genuinely dead OS owners with exact signed A\/B/u);
+  assert.match(fixture,/Offline original Q quarantine was replayed after exact first successful disposition/u);
+  assert.match(fixture,/Offline quarantined original Q writer lock illegally reopened Main/u);
+  assert.match(fixture,/REAL original Guardian Q offline BOTH OS owners DEAD writer-lock quarantined NO REPLAY/u);
+  assert.match(fixture,/Disposable native abort test could not restore prepared journal/u);
+});
+
 test('hosted x64/ARM64 CI proves original Guardian rollback_started/5 live OS owner only after exact disposable B exit', async () => {
   const fixture = await fs.readFile(new URL('./windows-installer-real-package-smoke.ps1', import.meta.url), 'utf8');
   const worker = await fs.readFile(new URL('./owned-windows-worker-proof.mjs', import.meta.url), 'utf8');

@@ -1357,6 +1357,17 @@ if (process.env.GITHUB_ACTIONS === 'true' &&
           [IO.File]::Exists($JournalRetireBCommit) -and
           [IO.File]::Exists($StableExe)) 'Disposable B orphan injection corrupted signed A or physically lost failed B.'
         Write-Output "Windows $FixtureTarget installed native Q offline powercut orphan BEFORE/AFTER rename both FAIL CLOSED; no owner replay or deletion."
+        # Preserve ORIGINAL signed Q and first-Guardian evidence for the
+        # post-abort worker-DEATH acceptance. Use test-only exact same-volume
+        # directory/file moves, never fabricate another OS writer lock or
+        # copy a forged PID/token. The source/active journal is snapshot-only.
+        $QOriginalTerminalBytes = [IO.File]::ReadAllBytes($JournalData)
+        $QOriginalActiveBytes = [IO.File]::ReadAllBytes($JournalLock)
+        $QOriginalGuardianPid = $IntegratedGuardian.Id
+        $QStagedOriginalWriterLock = Join-Path $Work 'ci-exact-original-q-writer-lock'
+        $QStagedOriginalStage6 = Join-Path $Work 'ci-exact-original-q-stage6-receipt'
+        $QStagedRetiredB = Join-Path $Work 'ci-original-q-retired-b-on-disk'
+        $QStagedCandidateB = Join-Path $Work 'ci-original-q-native-b-candidate'
         $IntegratedRecord = ConvertFrom-Json ([IO.File]::ReadAllText($JournalData))
         $NativeStagedReceipt = ConvertFrom-Json ([IO.File]::ReadAllText($JournalNativeStagedCommit))
         $ShellStoppedReceipt = ConvertFrom-Json ([IO.File]::ReadAllText($JournalShellStoppedCommit))
@@ -1403,7 +1414,19 @@ if (process.env.GITHUB_ACTIONS === 'true' &&
         # ALWAYS remove disposable failed B before restarting Stable A; this
         # deletion is test fixture teardown, NEVER automatic production GC.
         if (Test-Path -LiteralPath $FailedABQuarantine) { Remove-Item -LiteralPath $FailedABQuarantine -Recurse -Force -ErrorAction Stop }
-        if (Test-Path -LiteralPath $RetiredBQuarantine) { Remove-Item -LiteralPath $RetiredBQuarantine -Recurse -Force -ErrorAction Stop } # CI disposable fixture cleanup ONLY
+        if ($null -ne $QOriginalTerminalBytes -and [IO.File]::Exists($JournalGuard) -and
+            [IO.File]::Exists($JournalNativeRestoredCommit) -and
+            [IO.Directory]::Exists($RetiredBQuarantine) -and
+            [IO.Directory]::Exists($JournalIntegratedB)) {
+          # The exact ORIGINAL Q bytes/NTFS objects, never a counterfeit
+          # writer marker, stay in disposable CI custody until worker death.
+          Move-Item -LiteralPath $JournalGuard -Destination $QStagedOriginalWriterLock -ErrorAction Stop
+          Move-Item -LiteralPath $JournalNativeRestoredCommit -Destination $QStagedOriginalStage6 -ErrorAction Stop
+          Move-Item -LiteralPath $RetiredBQuarantine -Destination $QStagedRetiredB -ErrorAction Stop
+          Move-Item -LiteralPath $JournalIntegratedB -Destination $QStagedCandidateB -ErrorAction Stop
+        } elseif (Test-Path -LiteralPath $RetiredBQuarantine) {
+          Remove-Item -LiteralPath $RetiredBQuarantine -Recurse -Force -ErrorAction Stop # CI fixture failure cleanup ONLY
+        }
         # Hosted test-only registry and manifest rollback happens before
         # restarting Stable A. Production always requires independent health.
         [IO.File]::WriteAllBytes($ExpectedManifestPath, $OriginalIntegratedNativeManifest)
@@ -1498,6 +1521,71 @@ if (process.env.GITHUB_ACTIONS === 'true' &&
         [IO.File]::WriteAllText($JournalData, ($JournalValue | ConvertTo-Json -Depth 5))
       }
       Assert-True ((Invoke-GuardianCheck '--audit-native-journal') -eq 0) 'Disposable native abort test could not restore prepared journal for subsequent negative cases.'
+      # The exact original integrated Q worker AND first original Guardian
+      # are now both genuinely dead. Restore their ORIGINAL NTFS evidence
+      # temporarily, not a forged/new writer, for the distinct explicit
+      # offline operator quarantine acceptance in this disposable fixture.
+      $QUnexpectedLiveGuardian = Get-Process -Id $QOriginalGuardianPid -ErrorAction SilentlyContinue
+      Assert-True ($WorkerProcess.HasExited -and $null -eq $QUnexpectedLiveGuardian -and
+        $null -ne $QOriginalTerminalBytes -and $null -ne $QOriginalActiveBytes -and
+        [IO.File]::Exists($QStagedOriginalWriterLock) -and
+        [IO.File]::Exists($QStagedOriginalStage6) -and
+        [IO.Directory]::Exists($QStagedRetiredB) -and
+        [IO.Directory]::Exists($QStagedCandidateB)) 'Original Q evidence was not preserved while the separate prepared-abort worker test ran.'
+      $PreparedJournalBytes = [IO.File]::ReadAllBytes($JournalData)
+      $PreparedActiveBytes = [IO.File]::ReadAllBytes($JournalLock)
+      $QOrphanQuarantineReceipt = Join-Path $JournalDataDir ("$JournalId.failed-b-orphan-quarantine.json")
+      try {
+        Move-Item -LiteralPath $QStagedOriginalWriterLock -Destination $JournalGuard -ErrorAction Stop
+        Move-Item -LiteralPath $QStagedOriginalStage6 -Destination $JournalNativeRestoredCommit -ErrorAction Stop
+        Move-Item -LiteralPath $QStagedRetiredB -Destination $RetiredBQuarantine -ErrorAction Stop
+        Move-Item -LiteralPath $QStagedCandidateB -Destination $JournalIntegratedB -ErrorAction Stop
+        [IO.File]::WriteAllBytes($JournalData,$QOriginalTerminalBytes)
+        [IO.File]::WriteAllBytes($JournalLock,$QOriginalActiveBytes)
+        Assert-True ((Invoke-GuardianCheck '--audit-native-journal') -eq 70) 'Original Q writer lock failed to block Main journal after both owners died.'
+        $ExactQIntentBytes = [IO.File]::ReadAllBytes($JournalRetireBIntent)
+        try {
+          $ForeignQIntent = ConvertFrom-Json ([Text.Encoding]::UTF8.GetString($ExactQIntentBytes))
+          $ForeignQIntent.stage8JournalSha256 = ('f' * 64)
+          [IO.File]::WriteAllText($JournalRetireBIntent,($ForeignQIntent | ConvertTo-Json -Depth 4))
+          Assert-True ((Invoke-GuardianCheck '--quarantine-native-b-retirement-orphan') -eq 70) 'Offline original Q quarantine admitted forged stage8 intent SHA.'
+          Assert-True (-not (Test-Path -LiteralPath $QOrphanQuarantineReceipt)) 'Forged Q intent caused orphan quarantine mutation.'
+        } finally { [IO.File]::WriteAllBytes($JournalRetireBIntent,$ExactQIntentBytes) }
+        [IO.File]::WriteAllText($QOrphanQuarantineReceipt,'ci-foreign-preexisting-no-replay')
+        try {
+          Assert-True ((Invoke-GuardianCheck '--quarantine-native-b-retirement-orphan') -eq 70) 'Offline original Q quarantine replayed pre-existing foreign recovery evidence.'
+        } finally { Remove-Item -LiteralPath $QOrphanQuarantineReceipt -Force -ErrorAction Stop }
+        Assert-True ((Invoke-GuardianCheck '--quarantine-native-b-retirement-orphan') -eq 0) 'Original native offline Q lock quarantine refused two genuinely dead OS owners with exact signed A/B.'
+        Assert-True ((Test-Path -LiteralPath $JournalQuarantinedLock) -and
+          (Test-Path -LiteralPath $QOrphanQuarantineReceipt) -and
+          -not (Test-Path -LiteralPath $JournalGuard) -and
+          [IO.File]::Exists((Join-Path $RetiredBQuarantine 'native-b-ci-only.marker')) -and
+          [IO.File]::Exists($StableExe)) 'Original Q offline proof lost signed A, failed B or blocking lock.'
+        $OfflineQProof = ConvertFrom-Json ([IO.File]::ReadAllText($QOrphanQuarantineReceipt))
+        Assert-True ($OfflineQProof.transactionId -ceq $JournalId -and
+          $OfflineQProof.disposition -ceq 'dead-first-guardian-writer-quarantined-no-replay-no-delete' -and
+          $OfflineQProof.workerPid -eq $WorkerRecord.pid -and
+          $OfflineQProof.guardianPid -eq $QOriginalGuardianPid -and
+          $OfflineQProof.stage8JournalSha256 -ceq $ATerminalCommit.journalSha256 -and
+          $OfflineQProof.failedBSourceSha -ceq $JournalTarget -and
+          $OfflineQProof.originalWriterLockSha256 -cmatch '^[a-f0-9]{64}$') 'Original Q offline quarantine evidence has foreign OS PID or stage8 source SHA.'
+        Assert-True ((Invoke-GuardianCheck '--audit-native-journal') -eq 70) 'Offline quarantined original Q writer lock illegally reopened Main.'
+        Assert-True ((Invoke-GuardianCheck '--quarantine-native-b-retirement-orphan') -eq 70) 'Offline original Q quarantine was replayed after exact first successful disposition.'
+        Assert-True ((Invoke-GuardianCheck '--audit-native-b-retirement') -eq 70) 'Offline original Q quarantine inferred delete or resume from successful owner disposition.'
+        Write-Output "Windows $FixtureTarget REAL original Guardian Q offline BOTH OS owners DEAD writer-lock quarantined NO REPLAY; Stable A and B ON DISK."
+      } finally {
+        # Host's disposable CI fixture ONLY. Restore the independent abort
+        # scenario and drop Q test artifacts; NEVER production recovery.
+        if (Test-Path -LiteralPath $JournalGuard) { Remove-Item -LiteralPath $JournalGuard -Force -ErrorAction Stop }
+        if (Test-Path -LiteralPath $JournalQuarantinedLock) { Remove-Item -LiteralPath $JournalQuarantinedLock -Force -ErrorAction Stop }
+        if (Test-Path -LiteralPath $QOrphanQuarantineReceipt) { Remove-Item -LiteralPath $QOrphanQuarantineReceipt -Force -ErrorAction Stop }
+        if (Test-Path -LiteralPath $JournalNativeRestoredCommit) { Remove-Item -LiteralPath $JournalNativeRestoredCommit -Force -ErrorAction Stop }
+        if (Test-Path -LiteralPath $RetiredBQuarantine) { Remove-Item -LiteralPath $RetiredBQuarantine -Recurse -Force -ErrorAction Stop }
+        if (Test-Path -LiteralPath $JournalIntegratedB) { Remove-Item -LiteralPath $JournalIntegratedB -Recurse -Force -ErrorAction Stop }
+        [IO.File]::WriteAllBytes($JournalData,$PreparedJournalBytes)
+        [IO.File]::WriteAllBytes($JournalLock,$PreparedActiveBytes)
+      }
+      Assert-True ((Invoke-GuardianCheck '--audit-native-journal') -eq 0) 'Offline Q fixture failed to restore prepared journal after dead-owner acceptance.'
     } finally {
       if ($null -ne $WorkerProcess) {
         # .NET Framework under Windows PowerShell 5.1 has Kill() but not
