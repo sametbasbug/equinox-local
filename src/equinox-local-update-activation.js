@@ -466,6 +466,7 @@ export async function activatePreparedEquinoxRelease({
       fetchImpl,
       sleepImpl,
       attempts: healthAttempts,
+      ...(previousMainNativeReleaseDir ? { expectedInstallationKind: "managed" } : {}),
     });
     await writeActivationState(installation, {
       schemaVersion: 1,
