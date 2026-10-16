@@ -392,9 +392,9 @@ test("worker releases a stale terminal success lock without replaying mutation",
 
 test("native health rejects healthy A until restarted Control Center actually serves exact source B", async () => {
   const states = [
-    { health: { state: "HEALTHY" }, installation: { kind: "managed-source", sourceSha: A } },
-    { health: { state: "HEALTHY" }, installation: { kind: "managed", sourceSha: B } },
-    { health: { state: "HEALTHY" }, installation: { kind: "managed-source", sourceSha: B } },
+    { server: { version: "6.1.0" }, health: { state: "HEALTHY" }, installation: { kind: "managed-source", sourceSha: A } },
+    { server: { version: "6.1.1" }, health: { state: "HEALTHY" }, installation: { kind: "managed", sourceSha: B } },
+    { server: { version: "6.1.1" }, health: { state: "HEALTHY" }, installation: { kind: "managed-source", sourceSha: B } },
   ];
   let requests = 0;
   const result = await waitForExactSourceHealth({
@@ -402,6 +402,7 @@ test("native health rejects healthy A until restarted Control Center actually se
     attempts: states.length, sleepImpl: async () => {},
     readPointerImpl: async () => ({ sha: B, sourceRoot: SOURCE }),
     inspectCheckoutImpl: async () => ({ eligible: true, currentSha: B }),
+    readVersionImpl: async () => "6.1.1",
     fetchImpl: async () => ({ ok: true, json: async () => ({ status: states[requests++] }) }),
   });
   assert.equal(result, true);
@@ -414,8 +415,28 @@ test("native health fails closed when old A remains HEALTHY after requested rest
     sha: B, sourceRoot: SOURCE, pointerPath: `${STATE}/current-source.conf`, attempts: 2,
     readPointerImpl: async () => ({ sha: B, sourceRoot: SOURCE }),
     inspectCheckoutImpl: async () => ({ eligible: true, currentSha: B }),
+    readVersionImpl: async () => "6.1.1",
     sleepImpl: async () => {},
     fetchImpl: async () => { requests++; return { ok: true, json: async () => ({ status: { health: { state: "HEALTHY" }, installation: { kind: "managed-source", sourceSha: A } } }) }; },
+  }), /has not converged/u);
+  assert.equal(requests, 2);
+});
+
+test("Main health rejects old runtime version even when the source pointer and reported source SHA already say B", async () => {
+  let requests = 0;
+  await assert.rejects(waitForExactSourceHealth({
+    sha: B, sourceRoot: SOURCE, pointerPath: `${STATE}/current-source.conf`, attempts: 2,
+    readPointerImpl: async () => ({ sha: B, sourceRoot: SOURCE }),
+    inspectCheckoutImpl: async () => ({ eligible: true, currentSha: B }),
+    readVersionImpl: async () => "6.1.1",
+    sleepImpl: async () => {},
+    fetchImpl: async () => {
+      requests++;
+      return { ok: true, json: async () => ({ status: {
+        server: { version: "6.1.0" }, health: { state: "HEALTHY" },
+        installation: { kind: "managed-source", sourceSha: B },
+      } }) };
+    },
   }), /has not converged/u);
   assert.equal(requests, 2);
 });

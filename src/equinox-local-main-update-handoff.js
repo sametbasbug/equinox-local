@@ -94,6 +94,16 @@ export async function runEquinoxLocalMainUpdateHandoff({
     const health = await verifyRuntime({ transactionId, sha: switched.targetSha, sourceRoot: switched.targetSourceRoot, rollback: false });
     if (health !== true) throw new Error("Updated Equinox Local runtime did not pass health verification.");
     if (nativeLifecycle?.journaledAB === true) await nativeLifecycle.recordHealthy();
+    if (typeof nativeLifecycle?.verifyIntegration === "function") {
+      if (await nativeLifecycle.verifyIntegration({ transactionId, sha: switched.targetSha }) !== true) {
+        throw new Error("Updated native shell and browser host ownership did not converge.");
+      }
+      // Do not accept an old A runtime taking back the status port while
+      // checking native shell/extension registration.
+      if (await verifyRuntime({ transactionId, sha: switched.targetSha, sourceRoot: switched.targetSourceRoot, rollback: false }) !== true) {
+        throw new Error("Updated runtime lost exact-source health after native integration verification.");
+      }
+    }
     if (nativeLifecycle) await nativeLifecycle.commit();
     const succeeded = await engine.markPromotionSucceeded(transactionId);
     if (nativeLifecycle?.journaledAB === true) {

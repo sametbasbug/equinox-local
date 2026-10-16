@@ -65,18 +65,20 @@ test("Windows Main native lifecycle keeps shell and Native Messaging on the same
     writeRecoveryDescriptorImpl: async (value) => events.push(["recovery-descriptor", value]),
     activateWindowsImpl: async (value) => { events.push(["shell-target", value]); return {}; },
     restoreWindowsImpl: async (value) => { events.push(["shell-rollback", value]); return {}; },
+    verifyWindowsShellImpl: async (value) => events.push(["verified-shell-target", value]),
     assertWindowsNativeHostImpl: async (value) => events.push(["ownership", value]),
     registerWindowsNativeHostImpl: async (value) => events.push(["register", value]),
     windowsLauncherPathImpl: launcher,
     writePointerImpl: async (_path, value) => { events.push(["commit", value]); return value; },
   });
   await lifecycle.activate();
+  assert.equal(await lifecycle.verifyIntegration(), true);
   await lifecycle.commit();
   await lifecycle.rollback();
-  assert.deepEqual(events.map(([name]) => name), ["snapshot", "recovery-descriptor", "ownership", "shell-target", "register", "commit", "shell-rollback", "register"]);
+  assert.deepEqual(events.map(([name]) => name), ["snapshot", "recovery-descriptor", "ownership", "shell-target", "register", "verified-shell-target", "ownership", "commit", "shell-rollback", "register"]);
   assert.equal(events[3][1].previousReleaseDir, previous);
   assert.equal(events[4][1].launcherPath, launcher(durable));
-  assert.equal(events[7][1].launcherPath, launcher(previous));
+  assert.equal(events[9][1].launcherPath, launcher(previous));
 });
 
 test("Main native lifecycle rejects a stale native pointer before platform mutation", async () => {

@@ -96,11 +96,26 @@ export async function waitForExactSourceHealth({
   sleepImpl = (ms) => new Promise((resolve) => setTimeout(resolve, ms)), attempts = HEALTH_ATTEMPTS,
   readPointerImpl = readEquinoxLocalMainSourcePointer,
   inspectCheckoutImpl = inspectCanonicalMainCheckout,
+  readVersionImpl = async (root) => {
+    const file = path.join(root, "src", "equinox-local-version.js");
+    const stat = await fs.lstat(file);
+    if (!stat.isFile() || stat.isSymbolicLink() || stat.size < 1 || stat.size > 1024) {
+      throw new Error("Main update release version declaration is missing or unsafe.");
+    }
+    const text = await fs.readFile(file, "utf8");
+    const match = /^export const EQUINOX_LOCAL_VERSION = "(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)";$/mu.exec(text);
+    if (!match) throw new Error("Main update release version declaration is invalid.");
+    return `${match[1]}.${match[2]}.${match[3]}`;
+  },
 }) {
   const pointer = await readPointerImpl(pointerPath, { gitPath });
   if (pointer.sha !== sha || pointer.sourceRoot !== sourceRoot) throw new Error("Main update source pointer does not match the expected runtime identity.");
   const checkout = await inspectCheckoutImpl(sourceRoot, { gitPath });
   if (!checkout.eligible || checkout.currentSha !== sha) throw new Error("Main update runtime checkout does not match the expected canonical SHA.");
+  const expectedVersion = await readVersionImpl(sourceRoot);
+  if (!/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/u.test(expectedVersion ?? "")) {
+    throw new Error("Main update expected runtime version is invalid.");
+  }
   let lastError = null;
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     try {
@@ -110,7 +125,8 @@ export async function waitForExactSourceHealth({
       const observed = body?.status;
       if (observed?.health?.state === "HEALTHY"
         && observed?.installation?.kind === "managed-source"
-        && observed?.installation?.sourceSha === sha) return true;
+        && observed?.installation?.sourceSha === sha
+        && observed?.server?.version === expectedVersion) return true;
       // A native relaunch can race the old A server staying HEALTHY on the
       // loopback port. Never call source B admitted until B itself responds.
       throw new Error("Main update runtime health or installed source SHA has not converged.");

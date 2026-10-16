@@ -997,6 +997,7 @@ registerProjectDiscoveryTools({
   execFileImpl: execFile,
   fsImpl: fs,
   gitEnv: process.env,
+  gitPath: platform === "win32" ? equinoxLocalInstallation.gitPath ?? "git" : "/usr/bin/git",
   textResult,
 });
 

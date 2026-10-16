@@ -24,6 +24,7 @@ import { writeEquinoxLocalMainNativeRecoveryDescriptor } from "./equinox-local-m
 import { createSupervisorBoundWindowsNativeABLifecycle, requireWindowsNativeABSupervisor } from "./equinox-local-windows-native-ab-supervisor-bound.js";
 import {
   inspectWindowsStableShellRollbackSnapshot,
+  assertWindowsStableShellOwnedByRelease,
   replaceWindowsStableShellForRelease,
   restoreWindowsStableShellRollbackSnapshot,
   snapshotWindowsStableShellForRollback,
@@ -64,6 +65,7 @@ export async function prepareEquinoxLocalMainNativeLifecycle({
   activateDarwinImpl = synchronizeEquinoxLocalAppHostForRelease,
   restoreDarwinImpl = restoreEquinoxLocalNativeAppHostSnapshot,
   snapshotWindowsImpl = snapshotWindowsStableShellForRollback,
+  verifyWindowsShellImpl = assertWindowsStableShellOwnedByRelease,
   inspectWindowsSnapshotImpl = inspectWindowsStableShellRollbackSnapshot,
   activateWindowsImpl = replaceWindowsStableShellForRelease,
   restoreWindowsImpl = restoreWindowsStableShellRollbackSnapshot,
@@ -169,6 +171,15 @@ export async function prepareEquinoxLocalMainNativeLifecycle({
       const shell = await restoreWindowsImpl({ snapshotReleaseDir, currentReleaseDir: targetRelease, programRoot, fsImpl });
       await registerWindowsNativeHostImpl({ manifestRoot, launcherPath: previousLauncher, expectedPreviousLauncherPath: targetLauncher, execFileAsync: execFileImpl, fsImpl, env });
       return shell;
+    },
+    // Last gate before the Main transaction can say succeeded. The live WPF
+    // executable and Chrome Native Messaging registration must BOTH identify B,
+    // not merely the source SHA reported by a transient HTTP server.
+    verifyIntegration: async () => {
+      await verifyWindowsShellImpl({ releaseDir: targetRelease, programRoot, fsImpl });
+      await assertWindowsNativeHostImpl({ manifestRoot,
+        acceptedLauncherPaths: [targetLauncher], execFileAsync: execFileImpl, fsImpl, env });
+      return true;
     },
     commit: async () => writePointerImpl(pointerPath, pointerValue, { transactionRoot: root, fsImpl }),
   });

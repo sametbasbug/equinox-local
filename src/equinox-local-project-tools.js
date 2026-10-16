@@ -11,6 +11,7 @@ export function registerProjectDiscoveryTools({
   execFileImpl,
   fsImpl,
   gitEnv,
+  gitPath = gitPath,
   textResult,
 } = {}) {
   registerTextTool(
@@ -36,7 +37,7 @@ export function registerProjectDiscoveryTools({
         try {
           const context = await resolveProjectContext(projectId);
           const gitResult = await execFileImpl(
-            "/usr/bin/git",
+            gitPath,
             ["rev-parse", "--show-toplevel"],
             {
               cwd: context.rootRealPath,
@@ -58,7 +59,7 @@ export function registerProjectDiscoveryTools({
 
           const [branchResult, statusResult, originResult] = await Promise.all([
             execFileImpl(
-              "/usr/bin/git",
+              gitPath,
               ["symbolic-ref", "--quiet", "--short", "HEAD"],
               {
                 cwd: context.rootRealPath,
@@ -73,7 +74,7 @@ export function registerProjectDiscoveryTools({
               },
             ).catch(() => ({ stdout: "DETACHED" })),
             execFileImpl(
-              "/usr/bin/git",
+              gitPath,
               ["status", "--porcelain=v1", "--untracked-files=all"],
               {
                 cwd: context.rootRealPath,
@@ -88,7 +89,7 @@ export function registerProjectDiscoveryTools({
               },
             ),
             execFileImpl(
-              "/usr/bin/git",
+              gitPath,
               ["remote", "get-url", "origin"],
               {
                 cwd: context.rootRealPath,
