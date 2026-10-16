@@ -5,6 +5,11 @@ name: Main Installed Upgrade Acceptance
 on:
   workflow_dispatch:
     inputs:
+      diagnose_unreleased_harness:
+        description: Hosted-only diagnostic on the exact PR230 branch; B remains the admitted public Main snapshot, never promotes candidate code
+        required: false
+        default: false
+        type: boolean
       stable_bridge_acceptance:
         description: Run hosted Stable-to-Main unsigned candidate bridge acceptance, not Main-to-Main
         required: false
@@ -86,6 +91,12 @@ jobs:
           # must still be the separately admitted immutable snapshot. Refuse
           # arbitrary unadmitted source changes between the tag and checkout.
           git merge-base --is-ancestor "$tag" "$current"
+          if [[ '${{ inputs.diagnose_unreleased_harness }}' == 'true' ]]; then
+            # Only for isolated QA of old A launch. Still installs signed old A
+            # and targets the already-published B SHA, NEVER moves the tag.
+            test "$GITHUB_REF" = 'refs/heads/equinox/windows-native-integrated-ab-supervisor'
+            echo 'QA DIAGNOSTIC ONLY: unadmitted PR source is a harness, not the target Main snapshot.' >> "$GITHUB_STEP_SUMMARY"
+          else
           while IFS= read -r changed; do
             case "$changed" in
               '.github/workflows/main-installed-acceptance.yml'|'tests/release/smoke-main-upgrade-macos.mjs'|'tests/release/equinox-local-main-native-activation.test.js'|\
@@ -94,6 +105,7 @@ jobs:
               *) echo "Unadmitted production change in harness checkout: $changed" >&2; exit 1 ;;
             esac
           done < <(git diff --name-only "$tag" "$current")
+          fi
           test "$OLD_SHA" != "$tag"
           git merge-base --is-ancestor "$OLD_SHA" "$tag"
           echo "target_sha=$tag" >> "$GITHUB_OUTPUT"
