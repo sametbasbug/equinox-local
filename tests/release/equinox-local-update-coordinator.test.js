@@ -205,7 +205,12 @@ test("update helper validates managed environment and delegates activation after
     },
     bridgeImpl: async ({version}) => {
       assert.equal(version, "4.3.0");
+      assert.equal(activations.length, 1);
       return { status: "main-activated" };
+    },
+    pruneStableImpl: async () => {
+      assert.equal(activations.length, 1);
+      return { active: "4.3.0", deleted: ["4.2.0"] };
     },
   });
   assert.deepEqual(delays, [1500]);
@@ -214,6 +219,7 @@ test("update helper validates managed environment and delegates activation after
   assert.equal(activations[0].installation.selfUpdateSupported, true);
   assert.equal(result.status, "activated");
   assert.equal(result.mainBridge, "main-activated");
+  assert.deepEqual(result.releaseCleanup, { active: "4.3.0", deleted: ["4.2.0"] });
 });
 
 test("macOS new helper can run the bridge independently after legacy Stable updater activation", async () => {
@@ -235,6 +241,7 @@ test("update helper never migrates when signed Stable activation has rolled back
     sleepImpl: async () => {},
     activateImpl: async () => ({status:"rolled-back",version:"4.2.0"}),
     bridgeImpl: async () => { throw Error("bridge must not run"); },
+    pruneStableImpl: async () => { throw Error("release cleanup must not run during rollback"); },
   });
   assert.equal(result.status, "rolled-back");
 });

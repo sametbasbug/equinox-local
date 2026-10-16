@@ -1,7 +1,8 @@
 import { pathToFileURL } from "node:url";
 
 import { resolveEquinoxLocalInstallation } from "./equinox-local-installation.js";
-import { activatePreparedEquinoxRelease } from "./equinox-local-update-activation.js";
+import { activatePreparedEquinoxRelease, readManagedCurrentRelease } from "./equinox-local-update-activation.js";
+import { pruneInactiveManagedStableReleases } from "./equinox-local-release-retention.js";
 import { parseEquinoxVersion } from "./equinox-local-updater.js";
 import { bridgeActivatedStableToMain } from "./equinox-local-stable-main-bridge.js";
 import { runMacStableMainBridgeWorker } from "./equinox-local-mac-main-bridge.js";
@@ -16,6 +17,7 @@ export async function runEquinoxLocalUpdateHelper({
   activateImpl = activatePreparedEquinoxRelease,
   bridgeImpl = bridgeActivatedStableToMain,
   macBridgeWorkerImpl = runMacStableMainBridgeWorker,
+  pruneStableImpl = (value) => pruneInactiveManagedStableReleases(value, { readCurrent: readManagedCurrentRelease }),
 } = {}) {
   if (argv.length !== 2 || !["--activate", "--bridge-after-upgrade"].includes(argv[0])) {
     throw new Error("Usage: equinox-local-update-helper.js --activate|--bridge-after-upgrade <version>");
@@ -36,7 +38,18 @@ export async function runEquinoxLocalUpdateHelper({
     // The *new*, signed Stable release helper is the bridge for previously
     // installed Stable clients. The old updater has no dependency on this code.
     const bridge = await bridgeImpl({ installation, version: targetVersion, homeDir, env });
-    return Object.freeze({ ...activation, mainBridge: bridge.status });
+    // The old numbered Stable versions are no longer needed after the new
+    // Stable runtime AND Main bridge have both been confirmed. Deleting them
+    // before either health gate succeeds would remove rollback protection.
+    let releaseCleanup;
+    try { releaseCleanup = await pruneStableImpl(installation); }
+    catch (error) {
+      // An already healthy installation must never be rolled back because an
+      // obsolete Windows directory remains locked. Surface the cleanup error
+      // so the next guarded maintenance pass can retry it.
+      releaseCleanup = { pending: true, reason: String(error?.message ?? error).slice(0, 240) };
+    }
+    return Object.freeze({ ...activation, mainBridge: bridge.status, releaseCleanup });
   }
   return activation;
 }
