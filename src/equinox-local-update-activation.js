@@ -295,6 +295,7 @@ export async function waitForEquinoxLocalVersion(expectedVersion, {
   sleepImpl = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
   attempts = HEALTH_ATTEMPTS,
   delayMs = HEALTH_DELAY_MS,
+  expectedInstallationKind = null,
 } = {}) {
   parseEquinoxVersion(expectedVersion);
   let lastError = null;
@@ -311,7 +312,7 @@ export async function waitForEquinoxLocalVersion(expectedVersion, {
       const body = await response.json();
       const reportedVersion = body?.status?.server?.version ?? null;
       const healthState = body?.status?.health?.state ?? null;
-      if (reportedVersion === expectedVersion && healthState === "HEALTHY") return true;
+      if (reportedVersion === expectedVersion && healthState === "HEALTHY" && (expectedInstallationKind === null || body?.status?.installation?.kind === expectedInstallationKind)) return true;
       throw new Error(`Health endpoint reported Equinox Local ${reportedVersion ?? "unknown"} with health ${healthState ?? "unknown"}.`);
     } catch (error) {
       lastError = error;
@@ -363,7 +364,7 @@ async function writeActivationState(installation, state) {
   await syncDirectory(installation.installRoot, installation.platform);
 }
 
-async function synchronizeManagedShellForRelease(installation, release) {
+export async function synchronizeManagedShellForRelease(installation, release) {
   if (installation?.platform !== "win32") {
     return synchronizeEquinoxLocalAppHostForRelease({ installation, releaseDir: release.releaseDir });
   }

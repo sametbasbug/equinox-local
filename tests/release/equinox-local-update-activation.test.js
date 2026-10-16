@@ -10,6 +10,7 @@ import {
   kickstartEquinoxLocalLaunchAgent,
   readManagedCurrentRelease,
   waitForEquinoxLocalManagedSource,
+  waitForEquinoxLocalVersion,
 } from "../../src/equinox-local-update-activation.js";
 import { writeEquinoxLocalCurrentVersionPointer } from "../../src/equinox-local-current-release.js";
 import { equinoxLocalUpdateTarget } from "../../src/equinox-local-updater.js";
@@ -481,4 +482,19 @@ test("Windows Main native-store origin survives Stable activation rollback", { s
   assert.equal(syncCalls.length, 2);
   assert.equal(syncCalls[0].previousReleaseDir, original);
   assert.equal(syncCalls[1].releaseDir, original);
+});
+
+test("same-version Stable health must reject an old healthy Main process", async () => {
+  let probes = 0;
+  assert.equal(await waitForEquinoxLocalVersion("6.0.4", {
+    attempts: 2, delayMs: 0, sleepImpl: async () => {}, expectedInstallationKind: "managed",
+    fetchImpl: async () => {
+      probes += 1;
+      return new Response(JSON.stringify({ status: {
+        server: { version: "6.0.4" }, health: { state: "HEALTHY" },
+        installation: { kind: probes === 1 ? "managed-source" : "managed" },
+      } }), { status: 200 });
+    },
+  }), true);
+  assert.equal(probes, 2);
 });
