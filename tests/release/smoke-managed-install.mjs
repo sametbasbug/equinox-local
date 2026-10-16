@@ -137,7 +137,12 @@ async function runHostedMacSameVersionRepair({ homeDir, installRoot, releaseDir,
   for (const [index, proof] of proofs.entries()) {
     if (index !== 0) {
       await fs.mkdir(path.dirname(proof), { recursive: true, mode: 0o700 });
-      await fs.writeFile(proof, `existing-owner-state-${index}\n`, { mode: 0o600, flag: "wx" });
+      const existing = await fs.lstat(proof).catch((error) => {
+        if (error?.code === "ENOENT") return null;
+        throw error;
+      });
+      if (existing) assert.ok(existing.isFile() && !existing.isSymbolicLink());
+      else await fs.writeFile(proof, "existing-owner-state-" + index + "\n", { mode: 0o600, flag: "wx" });
     }
   }
   const digest = async (file) => createHash("sha256").update(await fs.readFile(file)).digest("hex");
