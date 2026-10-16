@@ -109,7 +109,7 @@ jobs:
 
   macos-x64:
     name: macOS x64 / Node 26
-    runs-on: macos-15-intel
+    runs-on: macos-26-intel
     timeout-minutes: 20
 
     steps:

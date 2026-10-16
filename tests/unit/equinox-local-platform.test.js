@@ -40,7 +40,7 @@ test("release matrix is the canonical four-target native provenance contract", (
   assert.deepEqual(EQUINOX_LOCAL_RELEASE_TARGET_MATRIX.map((entry) => entry.target), EQUINOX_LOCAL_SUPPORTED_RELEASE_TARGETS);
   assert.deepEqual(EQUINOX_LOCAL_RELEASE_TARGET_MATRIX.map((entry) => entry.artifactExtension), [".tar.gz", ".tar.gz", ".zip", ".zip"]);
   assert.equal(equinoxLocalReleaseTargetContract("darwin-arm64").buildAuthority, "factory-native");
-  assert.equal(equinoxLocalReleaseTargetContract("darwin-x64").nativeRunner, "macos-15-intel");
+  assert.equal(equinoxLocalReleaseTargetContract("darwin-x64").nativeRunner, "macos-26-intel");
   assert.equal(equinoxLocalReleaseTargetContract("win32-arm64").nativeRunner, "windows-11-vs2026-arm");
   assert.equal(equinoxLocalReleaseTargetContract("win32-x64").nativeRunner, "windows-latest");
   assert.equal(equinoxLocalReleaseArtifactName("5.2.1", "darwin-arm64"), "equinox-local-5.2.1-darwin-arm64.tar.gz");

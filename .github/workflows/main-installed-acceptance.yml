@@ -61,7 +61,7 @@ jobs:
   macos-native:
     if: ${{ !inputs.stable_bridge_acceptance }}
     name: macOS ${{ inputs.architecture }} real installed A-to-Main upgrade
-    runs-on: ${{ inputs.architecture == 'x64' && 'macos-15-intel' || 'macos-latest' }}
+    runs-on: ${{ inputs.architecture == 'x64' && 'macos-26-intel' || 'macos-latest' }}
     timeout-minutes: 25
     env:
       OLD_SHA: ${{ inputs.previous_main_sha }}
@@ -170,7 +170,7 @@ jobs:
       matrix:
         include:
           - { arch: arm64, runner: macos-latest }
-          - { arch: x64, runner: macos-15-intel }
+          - { arch: x64, runner: macos-26-intel }
     steps:
       - uses: actions/checkout@v7
         with:

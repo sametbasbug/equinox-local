@@ -49,7 +49,7 @@ test("CI retains full product validation while skipping only the explicit docs-o
   assert.match(managedSource, /node tests\/release\/smoke-managed-install\.mjs/u);
   assert.doesNotMatch(managedSource, /^    (?:needs|if):/mu);
   assert.match(job("macos-x64"), /name: macOS x64 \/ Node 26/u);
-  assert.match(job("macos-x64"), /runs-on: macos-15-intel/u);
+  assert.match(job("macos-x64"), /runs-on: macos-26-intel/u);
   assert.match(job("macos-x64"), /architecture: x64/u);
   assert.match(job("macos-x64"), /darwin-x64/u);
   assert.match(job("macos-x64"), /parallel:[\s\S]*run: npm run test:fast\n/u);
