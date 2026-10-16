@@ -13,6 +13,7 @@ import {
   validateFirstInstallRelease,
 } from "../../src/equinox-local-first-install.js";
 import { equinoxLocalReleaseRuntimeContract } from "../../src/equinox-local-release-runtime-contract.js";
+import { writeWindowsClassicRepairJournal, readWindowsClassicRepairJournal } from "../../src/equinox-local-windows-classic-repair-journal.js";
 import { EQUINOX_LOCAL_MAIN_BRANCH, EQUINOX_LOCAL_MAIN_REPOSITORY, EQUINOX_LOCAL_MAIN_UPDATE_CHANNEL, EQUINOX_LOCAL_MAIN_UPDATE_SCHEMA_VERSION } from "../../src/equinox-local-main-update.js";
 import {
   readWindowsNativeMessagingRegistryValue,
@@ -669,7 +670,7 @@ test("fresh Windows stable-shell synchronization is atomic, idempotent and refus
   assert.equal(await fs.readFile(path.join(programRoot, "coreclr.dll"), "utf8"), "foreign-drift\n");
 });
 
-async function createRealWindowsFirstInstallFixture(version = "5.2.1") {
+async function createRealWindowsFirstInstallFixture(version = "5.2.1", target = "win32-x64") {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "equinox-win-first-install-"));
   const homeDir = path.join(root, "Türk User Home");
   const localAppData = path.join(root, "Local App Data");
@@ -680,12 +681,12 @@ async function createRealWindowsFirstInstallFixture(version = "5.2.1") {
   await fs.writeFile(path.join(releaseDir, "release.json"), `${JSON.stringify({
     schemaVersion: 1,
     version,
-    target: "win32-x64",
+    target,
     nodeVersion: "26.12.0",
     tunnelClientVersion: "0.0.16",
     serverEntry: "server.js",
   })}\n`);
-  const contract = equinoxLocalReleaseRuntimeContract({ target: "win32-x64", version });
+  const contract = equinoxLocalReleaseRuntimeContract({ target, version });
   const fixtureFiles = new Set([
     ...contract.runtimeExecutables,
     ...contract.runtimeDocuments,
@@ -741,6 +742,101 @@ test("Windows installed Main yields channel to signed Stable, retaining keys and
     assert.equal(await exists(`${stampPath}.stable-install-backup`), false);
     assert.equal(await fs.readFile(secretPath, "utf8"), "never-delete-user-key");
     assert.equal(events.length, failNewHealth ? 2 : 1);
+  }
+});
+
+test("Windows classic install resumes an interrupted native Main->Stable handoff without losing keys", { skip: process.platform !== "win32" }, async (t) => {
+  for (const phase of ["parked-main-before-stable-health", "journal-only-before-start", "healthy-committed-B"]) {
+    await t.test(phase, async (sub) => {
+      const fixture = await createRealWindowsFirstInstallFixture("6.1.2", "win32-" + process.arch);
+      sub.after(() => fs.rm(fixture.root, { recursive: true, force: true }));
+      const api = path.win32;
+      const root = fixture.installRoot;
+      const tx = api.join(root, "state", "main-update");
+      const stampPath = api.join(tx, "install.json");
+      const journalPath = api.join(tx, "classic-repair.json");
+      const currentPath = api.join(root, "current-version.json");
+      const sourceSha = "a".repeat(40);
+      const nativeSha = "b".repeat(40);
+      const sourceRoot = api.join(tx, "sources", sourceSha);
+      const nativeRelease = api.join(tx, "native-store", "win32-" + process.arch, nativeSha, "release");
+      const userSecret = api.join(root, "state", "private", "saved.json");
+      await fs.mkdir(api.join(sourceRoot, "src"), { recursive: true });
+      await fs.mkdir(nativeRelease, { recursive: true });
+      await fs.mkdir(api.dirname(userSecret), { recursive: true });
+      await fs.writeFile(api.join(sourceRoot, "src", "equinox-local-version.js"),
+        'export const EQUINOX_LOCAL_VERSION = "6.1.1";\n');
+      await fs.writeFile(userSecret, '{"persist":true}');
+      const stamp = JSON.stringify({ schemaVersion: EQUINOX_LOCAL_MAIN_UPDATE_SCHEMA_VERSION,
+        channel: EQUINOX_LOCAL_MAIN_UPDATE_CHANNEL, repository: EQUINOX_LOCAL_MAIN_REPOSITORY,
+        branch: EQUINOX_LOCAL_MAIN_BRANCH, bootstrapSha: sourceSha });
+      const parked = phase === "parked-main-before-stable-health";
+      const stableCommitted = phase === "healthy-committed-B";
+      if (!stableCommitted) {
+        await fs.writeFile(stampPath + (parked ? ".stable-install-backup" : ""), stamp);
+      }
+      await fs.writeFile(currentPath, JSON.stringify({
+        schemaVersion: 1, target: "win32-" + process.arch,
+        version: parked || stableCommitted ? "6.1.2" : "6.1.0",
+      }));
+      await writeWindowsClassicRepairJournal(journalPath, {
+        schemaVersion: 1, target: "win32-" + process.arch,
+        oldMainVersion: "6.1.1", oldSourceSha: sourceSha, oldNativeSha: nativeSha,
+        oldStablePointerVersion: "6.1.0", targetVersion: "6.1.2", mainStamp: stamp,
+      });
+      const calls = [];
+      const result = await installManagedEquinoxRelease({
+        stagedReleaseDir: fixture.releaseDir, homeDir: fixture.homeDir,
+        platform: "win32", arch: process.arch, target: "win32-" + process.arch,
+        env: { ...process.env, LOCALAPPDATA: fixture.localAppData },
+        readCurrentImpl: async () => ({ version: "6.1.2",
+          releaseDir: api.join(root, "releases", "6.1.2") }),
+        readMainSourcePointerImpl: async () => ({ sha: sourceSha, sourceRoot }),
+        readMainNativePointerImpl: async () => ({
+          sourceSha: nativeSha, target: "win32-" + process.arch,
+          releaseDir: nativeRelease, runtimeContractSha256: "f".repeat(64),
+        }),
+        verifyWindowsShellOwnedImpl: async ({ releaseDir }) => {
+          calls.push("shell:" + releaseDir);
+          return { owned: true };
+        },
+        verifyWindowsNativeHostOwnedImpl: async ({ acceptedLauncherPaths }) => {
+          calls.push("browser:" + acceptedLauncherPaths[0]); return {};
+        },
+        waitForManagedSourceImpl: async (version, sha) => {
+          assert.equal(version, "6.1.1"); assert.equal(sha, sourceSha);
+          calls.push("main-healthy");
+        },
+        waitForVersionImpl: async (version, options) => {
+          assert.equal(version, "6.1.2");
+          assert.equal(options.expectedInstallationKind, "managed");
+          calls.push("stable-healthy");
+        },
+        waitWindowsPipeReleaseImpl: async () => calls.push("pipe"),
+        stopWindowsShellImpl: async () => calls.push("stop"),
+        syncManagedShellImpl: async (_installation, release) => {
+          assert.equal(release.releaseDir, nativeRelease);
+          calls.push("sync-native-A");
+        },
+        launchWindowsShellImpl: async () => calls.push("launch-native-A"),
+      });
+      assert.equal(result.status, stableCommitted ? "activated" : "restored-main");
+      assert.equal(await fs.readFile(userSecret, "utf8"), '{"persist":true}');
+      assert.equal(await readWindowsClassicRepairJournal(journalPath), null);
+      if (!stableCommitted) {
+        assert.equal(await fs.readFile(stampPath, "utf8"), stamp);
+        assert.equal(JSON.parse(await fs.readFile(currentPath, "utf8")).version, "6.1.0");
+        if (parked) assert.deepEqual(calls.slice(-5), [
+          "stop", "sync-native-A", "pipe", "launch-native-A", "main-healthy",
+        ]);
+        else assert.deepEqual(calls, ["shell:" + nativeRelease,
+          "browser:" + api.join(nativeRelease, "runtime", "browser", "equinox-browser-native-host.exe"),
+          "main-healthy"]);
+      } else {
+        assert.equal(await fs.access(stampPath).then(() => true, () => false), false);
+        assert.ok(calls.includes("stable-healthy"));
+      }
+    });
   }
 });
 

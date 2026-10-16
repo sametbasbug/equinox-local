@@ -115,18 +115,21 @@ export async function reconcileWindowsClassicRepairJournal({
       state.parked && state.parked !== record.mainStamp) {
     throw new Error("Windows classic repair Main ownership stamp changed.");
   }
-  await verifyPrevious(record);
   const version = await readCurrentVersion();
   if (![record.oldStablePointerVersion, record.targetVersion].includes(version)) {
     throw new Error("Windows classic repair current pointer left the authenticated A/B range.");
   }
   if (!state.live && !state.parked) {
+    // After a fully healthy, committed Stable B, its guarded GC may already
+    // have retired Main A's large source/native data. Validate the NEW owner
+    // by exact version, WPF and Browser signatures; do not require obsolete A.
     if (version !== record.targetVersion || !await isCommittedStableHealthy(record)) {
       throw new Error("Windows classic repair lost its Main owner before Stable B was verified.");
     }
     await fsImpl.unlink(journalPath);
     return Object.freeze({ status: "activated", version: record.targetVersion });
   }
+  await verifyPrevious(record);
   if (state.parked || version === record.targetVersion || !await isPreviousMainHealthy(record)) {
     await rollbackPreviousMain(record, { parked: Boolean(state.parked) });
   }

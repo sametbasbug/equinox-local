@@ -605,6 +605,9 @@ export async function installManagedEquinoxRelease({
   syncManagedShellImpl = synchronizeManagedShellForRelease,
   stopWindowsShellImpl = requestWindowsShellUpdateShutdown,
   launchWindowsShellImpl = launchWindowsStableShell,
+  verifyWindowsShellOwnedImpl = assertWindowsStableShellOwnedByRelease,
+  verifyWindowsNativeHostOwnedImpl = assertWindowsNativeMessagingHostOwnership,
+  waitWindowsPipeReleaseImpl = waitForWindowsShellPipeRelease,
   windowsRenameSleepImpl = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
   inspectLegacyMainHostImpl = inspectLegacyWindowsMainHost,
 } = {}) {
@@ -699,10 +702,10 @@ export async function installManagedEquinoxRelease({
       isPreviousMainHealthy: async (record) => {
         try {
           const native = await verifiedPrevious(record);
-          await assertWindowsStableShellOwnedByRelease({
+          await verifyWindowsShellOwnedImpl({
             releaseDir: native.releaseDir, programRoot: paths.programRoot, fsImpl,
           });
-          await assertWindowsNativeMessagingHostOwnership({
+          await verifyWindowsNativeHostOwnedImpl({
             manifestRoot: paths.nativeMessagingManifestRoot,
             acceptedLauncherPaths: [windowsNativeMessagingLauncherPath(native.releaseDir)],
             fsImpl,
@@ -717,10 +720,10 @@ export async function installManagedEquinoxRelease({
         try {
           const signed = await readCurrentImpl(baseInstallation);
           if (signed.version !== record.targetVersion) return false;
-          await assertWindowsStableShellOwnedByRelease({
+          await verifyWindowsShellOwnedImpl({
             releaseDir: signed.releaseDir, programRoot: paths.programRoot, fsImpl,
           });
-          await assertWindowsNativeMessagingHostOwnership({
+          await verifyWindowsNativeHostOwnedImpl({
             manifestRoot: paths.nativeMessagingManifestRoot,
             acceptedLauncherPaths: [windowsNativeMessagingLauncherPath(signed.releaseDir)],
             fsImpl,
@@ -744,15 +747,18 @@ export async function installManagedEquinoxRelease({
           version: record.oldMainVersion, releaseDir: oldNative.releaseDir,
           previousReleaseDir: signedB,
         });
-        await waitForWindowsShellPipeRelease({ platform: "win32" });
+        await waitWindowsPipeReleaseImpl({ platform: "win32" });
         await launchWindowsShellImpl(path.win32.join(paths.programRoot, "EquinoxLocal.exe"));
         await waitForManagedSourceImpl(record.oldMainVersion, record.oldSourceSha,
           equinoxLocalFirstInstallHealthBudget({ platform, arch }));
       },
     });
-    if (recover?.status === "activated") {
+    if (recover) {
+      // Stop after safe recovery; a second explicit installer invocation may
+      // install B. Never silently resume a partially interrupted replacement
+      // with an unverified/stale staged candidate.
       return Object.freeze({
-        status: "activated", version: recover.version, configCreated: false,
+        status: recover.status, version: recover.version, configCreated: false,
         controlCenterUrl: "http://127.0.0.1:24891/",
       });
     }

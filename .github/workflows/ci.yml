@@ -175,7 +175,7 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $PSNativeCommandUseErrorActionPreference = $true
-          node --test --test-name-pattern "Windows classic repair after Main GC uses verified native B as rollback without requiring obsolete releases" tests/release/equinox-local-first-install.test.js
+          node --test --test-name-pattern "Windows classic repair after Main GC uses verified native B as rollback without requiring obsolete releases|Windows classic install resumes an interrupted native Main->Stable handoff" tests/release/equinox-local-first-install.test.js
           node --test tests/release/equinox-local-release-runtime-contract.test.js
           node --test --test-name-pattern "Windows x64 first-install release validation accepts native runtime names without Peekaboo|Windows x64 fresh first install promotes current-version and stable shell without admin" tests/release/equinox-local-first-install.test.js
           node --test --test-name-pattern "Windows x64 managed user bootstrap uses state config and Windows Native Messaging without Darwin lifecycle" tests/release/equinox-local-bootstrap.test.js
@@ -548,6 +548,8 @@ jobs:
 
       - name: Windows ARM64 Main native recovery acceptance
         run: node --test tests/release/equinox-local-main-native-windows-acceptance.test.js
+      - name: Windows ARM64 interrupted classic Main handoff journal acceptance
+        run: node --test --test-name-pattern "Windows classic install resumes an interrupted native Main->Stable handoff" tests/release/equinox-local-first-install.test.js
 
       - name: Windows ARM64 post-success versioned payload reclamation acceptance
         run: node --test tests/release/equinox-local-main-storage-retention-windows.test.js

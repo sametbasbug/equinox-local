@@ -75,6 +75,7 @@ test("terminal healthy Stable B is the only safe completion without a Main stamp
   await assert.rejects(reconcileWindowsClassicRepairJournal(f.options), /lost its Main owner/u);
   assert.deepEqual(await readWindowsClassicRepairJournal(f.journalPath), record);
   f.setHealth(false, true);
+  f.options.verifyPrevious = async () => assert.fail("Committed Stable B must not need now-reclaimed Main A");
   const result = await reconcileWindowsClassicRepairJournal(f.options);
   assert.deepEqual(result, { status: "activated", version: record.targetVersion });
   assert.equal(await readWindowsClassicRepairJournal(f.journalPath), null);
