@@ -164,11 +164,11 @@ internal static partial class Program
             var nodeBin = Path.GetDirectoryName(node)
                 ?? throw new InvalidDataException("Main native Node path has no directory.");
             var nativeRelease = Path.GetFullPath(Path.Combine(nodeBin, "..", "..", ".."));
-            var sourceShell = Path.Combine(nativeRelease, "runtime", "shell");
-            RequireNormalDirectory(sourceShell);
+            var mainSourceShell = Path.Combine(nativeRelease, "runtime", "shell");
+            RequireNormalDirectory(mainSourceShell);
             RequireNormalDirectory(programRoot);
             InspectionPhase = "compare-main-native-tree";
-            CompareNativeTrees(sourceShell, programRoot);
+            CompareNativeTrees(mainSourceShell, programRoot);
             var mainShell = Path.Combine(programRoot, "EquinoxLocal.exe");
             RequireNormalFile(mainShell);
             return new VerifiedBaseline(mainShell);
