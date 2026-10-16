@@ -29,6 +29,7 @@ import { enrollEquinoxLocalManagedSource, rollbackEquinoxLocalManagedSourceEnrol
 import { equinoxLocalManagedSourcePaths } from "./equinox-local-managed-source-installation.js";
 import { validateManagedSourceInstallStamp } from "./equinox-local-main-update.js";
 import { readEquinoxLocalMainNativePointer } from "./equinox-local-main-native-state.js";
+import { readEquinoxLocalMainSourcePointer } from "./equinox-local-main-source-pointer.js";
 import { pruneInactiveManagedStableReleases } from "./equinox-local-release-retention.js";
 import { readBoundedNormalFile } from "./equinox-local-safe-file.js";
 import { assertWindowsNativeMessagingHostOwnership, windowsNativeMessagingLauncherPath } from "./equinox-browser-windows-native-messaging.js";
@@ -39,6 +40,7 @@ import { readEquinoxLocalCurrentVersionPointer, writeEquinoxLocalCurrentVersionP
 import { fingerprintEquinoxLocalNativeState } from "./equinox-local-native-state-fingerprint.js";
 import { initializeManagedOnboardingState } from "./equinox-local-onboarding.js";
 import { equinoxLocalReleaseRuntimeContract } from "./equinox-local-release-runtime-contract.js";
+import { equinoxLocalToolchainContract } from "./equinox-local-toolchain-contract.js";
 import {
   launchWindowsStableShell,
   renameWindowsPathWhenUnlocked,
@@ -585,6 +587,8 @@ export async function installManagedEquinoxRelease({
   execFileImpl = execFile,
   bootstrapImpl = bootstrapManagedEquinoxUser,
   readCurrentImpl = readManagedCurrentRelease,
+  readMainSourcePointerImpl = readEquinoxLocalMainSourcePointer,
+  readMainNativePointerImpl = readEquinoxLocalMainNativePointer,
   pruneStableImpl = (installation) => pruneInactiveManagedStableReleases(installation, { readCurrent: readManagedCurrentRelease }),
   activateImpl = activatePreparedEquinoxRelease,
   waitForVersionImpl = waitForEquinoxLocalVersion,
@@ -740,27 +744,69 @@ export async function installManagedEquinoxRelease({
   }
 
   let previousMainNativeReleaseDir = null;
-  if (current && currentMainStamp && platform === "win32") {
+  let previousManagedMain = null;
+  if (currentMainStamp && platform === "win32") {
     const pointerPath = path.win32.join(mainPaths.mainTransactionRoot, "current-native.json");
-    const nativePointer = await readEquinoxLocalMainNativePointer(pointerPath, {
+    const nativePointer = await readMainNativePointerImpl(pointerPath, {
       transactionRoot: mainPaths.mainTransactionRoot, fsImpl,
     }).catch((error) => {
       if (error?.code === "ENOENT") return null;
       throw error;
     });
     if (nativePointer) {
-      // Bootstrap SHA is the FIRST enrolled commit, not necessarily the
-      // current native snapshot SHA after later Main updates.
-      if (nativePointer.target !== expectedTarget ||
-          nativePointer.payloadVersion !== current.version) {
+      if (nativePointer.target !== expectedTarget) throw new Error("Existing Main native architecture differs from signed installer.");
+      previousMainNativeReleaseDir = nativePointer.releaseDir;
+      if (current && nativePointer.payloadVersion !== current.version) {
         throw new Error("Installed Main native release does not match the authenticated old Main identity.");
       }
-      previousMainNativeReleaseDir = nativePointer.releaseDir;
+    }
+    if (!current && !allowExistingStableToMainMigration && nativePointer) {
+      // The successful Main B janitor intentionally removed every old
+      // numbered Stable release. Only an independently authenticated source
+      // SHA + immutable native B, with NO active handoff, can act as rollback.
+      const lock = await fsImpl.lstat(path.win32.join(mainPaths.mainTransactionRoot, "active.json")).catch((error) => {
+        if (error?.code === "ENOENT") return null;
+        throw error;
+      });
+      if (lock) throw new Error("Classic reinstall is blocked until the active Main transaction has been reconciled.");
+      const legacyPointer = await readEquinoxLocalCurrentVersionPointer(paths.currentPointer, {
+        platform, target: expectedTarget, fsImpl,
+      });
+      const legacyRoot = path.win32.join(paths.releasesRoot, legacyPointer.version);
+      const legacyStat = await fsImpl.lstat(legacyRoot).catch((error) => {
+        if (error?.code === "ENOENT") return null;
+        throw error;
+      });
+      if (legacyStat) throw new Error("Existing Main Stable baseline is unreadable, not safely reclaimed.");
+      const productGit = equinoxLocalToolchainContract({
+        runtimeRoot: path.win32.join(paths.installRoot, "runtime"), target: expectedTarget,
+      }).gitPath;
+      const source = await readMainSourcePointerImpl(mainPaths.sourcePointerPath, {
+        fsImpl, execFileImpl, gitPath: productGit,
+      });
+      if (!/^[a-f0-9]{40}$/u.test(source?.sha ?? "") ||
+          !path.win32.isAbsolute(source.sourceRoot) ||
+          path.win32.normalize(source.sourceRoot).toLowerCase() !==
+            path.win32.normalize(path.win32.join(mainPaths.mainTransactionRoot, "sources", source.sha)).toLowerCase()) {
+        throw new Error("Installed Main source does not match the authenticated product-owned checkout.");
+      }
+      const versionFile = path.win32.join(source.sourceRoot, "src", "equinox-local-version.js");
+      const info = await fsImpl.lstat(versionFile);
+      if (!info.isFile() || info.isSymbolicLink() || info.size < 25 || info.size > 1024) throw new Error("Installed Main version declaration is unsafe.");
+      const declaration = await fsImpl.readFile(versionFile, "utf8");
+      const match = /^export const EQUINOX_LOCAL_VERSION = "(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)";$/mu.exec(declaration);
+      if (!match) throw new Error("Installed Main version declaration is invalid.");
+      const mainVersion = `${match[1]}.${match[2]}.${match[3]}`;
+      previousManagedMain = Object.freeze({
+        version: mainVersion, sourceSha: source.sha, releaseDir: nativePointer.releaseDir,
+        stablePointerVersion: legacyPointer.version,
+      });
+      current = Object.freeze({ version: mainVersion, releaseDir: nativePointer.releaseDir });
     }
   }
 
   if (!current && currentMainStamp) {
-    throw new Error("Existing Main identity has no verified current release; a clean Stable install cannot overwrite it without recovery.");
+    throw new Error("Existing Main identity has no verified rollback runtime; refusing destructive Stable repair.");
   }
   if (current) {
     const comparison = compareEquinoxVersions(current.version, candidate.version);
@@ -775,12 +821,12 @@ export async function installManagedEquinoxRelease({
         controlCenterUrl: "http://127.0.0.1:24891/",
       });
     }
-    if (comparison === 0 && currentMainStamp && !allowExistingStableToMainMigration) {
+    if (comparison === 0 && currentMainStamp && !allowExistingStableToMainMigration && !previousManagedMain) {
       const result = await repairSameVersionMain({ ...repairOptions, candidate, mainStamp: currentMainStamp.data,
         installation: installationFor(paths, current.releaseDir, { platform, arch, target: expectedTarget }) });
       return Object.freeze({ ...result, controlCenterUrl: "http://127.0.0.1:24891/" });
     }
-    if (comparison === 0) {
+    if (comparison === 0 && !previousManagedMain) {
       // Re-running the website installer is not consent to move an existing
       // numbered Stable installation onto Main. Explicit migration requires
       // matching installed provenance, not just the staged download's stamp.
@@ -846,6 +892,7 @@ export async function installManagedEquinoxRelease({
         targetVersion: candidate.version,
         healthAttempts: equinoxLocalFirstInstallHealthBudget({ platform, arch }).attempts,
         ...(previousMainNativeReleaseDir ? { previousMainNativeReleaseDir } : {}),
+        ...(previousManagedMain ? { previousManagedMain } : {}),
       ...(currentMainStamp ? { kickstartImpl: async (version) => {
         if (version === candidate.version && !parkedMain) {
           await fsImpl.rename(mainPaths.installStampPath, savedMainStamp);

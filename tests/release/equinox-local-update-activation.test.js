@@ -465,6 +465,52 @@ test("Windows managed activation forced health failure restores pointer stable s
   await assertWindowsActivationState(fixture, "5.2.0", fixture.previousLauncher);
 });
 
+test("Windows classic installer can switch from verified Main native B after all old Stable folders were reclaimed", { skip: process.platform !== "win32" || process.arch !== "x64" }, async (t) => {
+  for (const unhealthyTarget of [false, true]) {
+    const fixture = await makeWindowsActivationFixture(t);
+    const original = path.win32.join(fixture.installation.installRoot, "state", "main-update", "native-store", "win32-x64", "a".repeat(40), "release");
+    // Simulate Main's post-HEALTHY cleanup: old numbered Stable release is GONE,
+    // its signed 5.2.0 current-version pointer is an intentionally historical
+    // fallback but the real rollback runtime is still a verified Main native.
+    await fs.rm(path.win32.join(fixture.installation.releasesRoot, "5.2.0"), { recursive: true });
+    const callbacks = [];
+    const previousManagedMain = {
+      version: "5.2.0", sourceSha: "a".repeat(40),
+      releaseDir: original, stablePointerVersion: "5.2.0",
+    };
+    const request = {
+      installation: fixture.installation, targetVersion: "5.3.0",
+      previousManagedMain, previousMainNativeReleaseDir: original,
+      syncAppHostImpl: async (release) => callbacks.push(["sync", release]),
+      kickstartImpl: async (version) => callbacks.push(["restart", version]),
+      fetchImpl: async () => {
+        const marker = JSON.parse(await fs.readFile(fixture.installation.currentPointer, "utf8"));
+        if (marker.version === "5.3.0" && unhealthyTarget) throw new Error("candidate B crashed");
+        return new Response(JSON.stringify({ status: {
+          server: { version: marker.version }, health: { state: "HEALTHY" },
+          installation: marker.version === "5.2.0"
+            ? { kind: "managed-source", sourceSha: previousManagedMain.sourceSha }
+            : { kind: "managed" },
+        } }), { status: 200 });
+      },
+      sleepImpl: async () => {}, healthAttempts: 1,
+    };
+    if (unhealthyTarget) {
+      await assert.rejects(activatePreparedEquinoxRelease(request), /rolled back to 5\.2\.0/u);
+      assert.equal(JSON.parse(await fs.readFile(fixture.installation.currentPointer, "utf8")).version, "5.2.0");
+      assert.deepEqual(callbacks.map(([type]) => type), ["sync", "restart", "sync", "restart"]);
+      assert.equal(callbacks[2][1].releaseDir, original);
+    } else {
+      const result = await activatePreparedEquinoxRelease(request);
+      assert.equal(result.status, "activated");
+      assert.equal(JSON.parse(await fs.readFile(fixture.installation.currentPointer, "utf8")).version, "5.3.0");
+      assert.deepEqual(callbacks.map(([type]) => type), ["sync", "restart"]);
+      assert.equal(callbacks[0][1].previousReleaseDir, original);
+    }
+    await assert.rejects(fs.lstat(path.win32.join(fixture.installation.releasesRoot, "5.2.0")), { code: "ENOENT" });
+  }
+});
+
 test("Windows Main native-store origin survives Stable activation rollback", { skip: process.platform !== "win32" }, async (t) => {
   const fixture = await makeWindowsActivationFixture(t);
   const original = path.win32.join(fixture.installation.installRoot, "state", "main-update", "native-store", "verified", "release");

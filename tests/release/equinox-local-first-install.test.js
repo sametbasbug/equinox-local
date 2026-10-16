@@ -744,6 +744,65 @@ test("Windows installed Main yields channel to signed Stable, retaining keys and
   }
 });
 
+test("Windows classic repair after Main GC uses verified native B as rollback without requiring obsolete releases", { skip: process.platform !== "win32" || process.arch !== "x64" }, async (t) => {
+  for (const failNewHealth of [false, true]) {
+    const fixture = await createRealWindowsFirstInstallFixture("6.1.1");
+    t.after(() => fs.rm(fixture.root, { recursive: true, force: true }));
+    const root = fixture.installRoot;
+    const tx = path.win32.join(root, "state", "main-update");
+    const stampPath = path.win32.join(tx, "install.json");
+    const pointerFile = path.win32.join(root, "current-version.json");
+    const sourceRoot = path.win32.join(tx, "sources", "a".repeat(40));
+    const nativeRelease = path.win32.join(tx, "native-store", "win32-x64", "b".repeat(40), "release");
+    const secret = path.win32.join(root, "secrets", "user-config-key");
+    await fs.mkdir(path.win32.join(sourceRoot, "src"), { recursive: true });
+    await fs.mkdir(path.dirname(secret), { recursive: true });
+    await fs.mkdir(path.dirname(nativeRelease), { recursive: true });
+    await fs.mkdir(nativeRelease, { recursive: true });
+    await fs.writeFile(path.win32.join(sourceRoot, "src", "equinox-local-version.js"), 'export const EQUINOX_LOCAL_VERSION = "6.1.0";\n');
+    const stamp = JSON.stringify({ schemaVersion: EQUINOX_LOCAL_MAIN_UPDATE_SCHEMA_VERSION,
+      channel: EQUINOX_LOCAL_MAIN_UPDATE_CHANNEL, repository: EQUINOX_LOCAL_MAIN_REPOSITORY,
+      branch: EQUINOX_LOCAL_MAIN_BRANCH, bootstrapSha: "a".repeat(40) });
+    await fs.writeFile(stampPath, stamp);
+    await fs.writeFile(pointerFile, JSON.stringify({ schemaVersion: 1, target: "win32-x64", version: "6.0.5" }));
+    await fs.writeFile(secret, "never-delete-user-key");
+    const events = [];
+    const install = () => installManagedEquinoxRelease({
+      stagedReleaseDir: fixture.releaseDir, homeDir: fixture.homeDir, platform: "win32",
+      arch: "x64", target: "win32-x64", env: { ...process.env, LOCALAPPDATA: fixture.localAppData },
+      readCurrentImpl: async () => null,
+      readMainSourcePointerImpl: async () => ({ sha: "a".repeat(40), sourceRoot }),
+      readMainNativePointerImpl: async () => ({ sourceSha: "b".repeat(40), target: "win32-x64",
+        payloadVersion: "6.0.5", releaseDir: nativeRelease }),
+      bootstrapImpl: async () => ({ configCreated: false }),
+      launchWindowsShellImpl: async () => events.push("launch"),
+      activateImpl: async ({ previousManagedMain, previousMainNativeReleaseDir, kickstartImpl }) => {
+        assert.deepEqual(previousManagedMain, {
+          version: "6.1.0", sourceSha: "a".repeat(40), releaseDir: nativeRelease,
+          stablePointerVersion: "6.0.5",
+        });
+        assert.equal(previousMainNativeReleaseDir, nativeRelease);
+        await kickstartImpl("6.1.1");
+        assert.equal(await exists(stampPath), false);
+        if (failNewHealth) {
+          await kickstartImpl("6.1.0");
+          assert.equal(await fs.readFile(stampPath, "utf8"), stamp);
+          throw new Error("signed B failed and original Main was restored");
+        }
+        return { status: "activated", previousVersion: "6.1.0" };
+      },
+      pruneStableImpl: async () => {
+        if (failNewHealth) assert.fail("No old directories may be pruned on failed activation");
+      },
+    });
+    if (failNewHealth) await assert.rejects(install(), /original Main was restored/u);
+    else assert.equal((await install()).status, "activated");
+    assert.equal(await exists(stampPath), failNewHealth);
+    assert.equal(await fs.readFile(secret, "utf8"), "never-delete-user-key");
+    assert.deepEqual(events, failNewHealth ? ["launch", "launch"] : ["launch"]);
+  }
+});
+
 test("Windows x64 fresh first install promotes current-version and stable shell without admin", { skip: process.platform !== "win32" }, async (t) => {
   const fixture = await createRealWindowsFirstInstallFixture();
   const promoted = path.join(fixture.installRoot, "releases", fixture.version);
