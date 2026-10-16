@@ -20,6 +20,11 @@ on:
         required: false
         default: false
         type: boolean
+      signed_610_reinstall_acceptance:
+        description: Hosted-only exact old 6.1.0 package to PR native candidate via classic PowerShell reinstall (keeps user settings, reclaims old versions)
+        required: false
+        default: false
+        type: boolean
       previous_main_sha:
         description: Separately admitted immutable Main A SHA
         required: true
@@ -49,7 +54,7 @@ concurrency:
 
 jobs:
   installed-update:
-    if: ${{ !inputs.stable_bridge_acceptance }}
+    if: ${{ !inputs.stable_bridge_acceptance && !inputs.signed_610_reinstall_acceptance }}
     name: Windows ${{ matrix.target }} real installed A-to-B Main upgrade
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 24
@@ -197,7 +202,7 @@ jobs:
 
   # Optional genuine native hosted-OS bridge smoke. No production signing.
   stable-bridge-windows:
-    if: ${{ inputs.stable_bridge_acceptance }}
+    if: ${{ inputs.stable_bridge_acceptance && !inputs.signed_610_reinstall_acceptance }}
     name: Windows ${{ matrix.arch }} owned WPF Stable-to-Main bridge and recovery
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 22
@@ -255,5 +260,87 @@ jobs:
           $artifact = Get-ChildItem backups/local-packages -Filter 'equinox-local-*-win32-${{ matrix.arch }}.zip' | Select-Object -First 1
           if ($null -eq $artifact) { throw 'Managed native bridge acceptance ZIP missing' }
           $env:EQUINOX_WINDOWS_INSTALL_ARTIFACT = $artifact.FullName
+          & powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File tests/release/windows-installer-real-package-smoke.ps1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+  # Disposable hosted acceptance: install the EXACT archived public 6.1.0
+  # build as A, invoke the REAL standard PowerShell installer with this branch's
+  # unsigned native B artifact, verify rollback+upgrade+config SHA and removal
+  # of every old numbered release. Does not touch main-snapshot, main or CDN.
+  signed-610-to-candidate-reinstall:
+    if: ${{ inputs.signed_610_reinstall_acceptance }}
+    name: Windows ${{ matrix.arch }} installed 6.1.0 to native candidate repair
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: x64, runner: windows-latest, rid: win-x64, platform: x64 }
+          - { arch: arm64, runner: windows-11-vs2026-arm, rid: win-arm64, platform: ARM64 }
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Enforce exact, isolated public A and candidate B
+        shell: pwsh
+        env:
+          OLD_SHA: e85790a99e8e05ccf9997279d174b452793d6097
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:GITHUB_REPOSITORY -cne 'sametbasbug/equinox-local' -or $env:GITHUB_ACTIONS -cne 'true' -or
+              (node -p 'process.platform + "-" + process.arch') -cne 'win32-${{ matrix.arch }}' -or
+              $env:GITHUB_REF -notlike 'refs/heads/equinox/*') {
+            throw 'Candidate reinstall acceptance requires a disposable native Windows runner and explicit development branch'
+          }
+          & git merge-base --is-ancestor $env:OLD_SHA HEAD
+          if ($LASTEXITCODE -ne 0) { throw 'Candidate B does not descend from the exact signed 6.1.0 A source' }
+          $root = Join-Path ([Environment]::GetFolderPath([Environment+SpecialFolder]::LocalApplicationData)) 'Equinox Local'
+          if (Test-Path -LiteralPath $root) { throw 'Unexpected real user Equinox Local data on disposable acceptance runner' }
+          if (Test-Path 'Registry::HKEY_CURRENT_USER\Software\Google\Chrome\NativeMessagingHosts\dev.equinox.browser') {
+            throw 'Native Messaging registry key is already owned by a different installation'
+          }
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 26.12.0
+          architecture: ${{ matrix.arch }}
+          cache: npm
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: 10.0.x
+      - name: Retrieve immutable exact-6.1.0 A native ZIP from successful release validation
+        uses: actions/download-artifact@v8
+        with:
+          name: equinox-local-6.1.0-win32-${{ matrix.arch }}-unsigned
+          run-id: '38943722251'
+          github-token: ${{ github.token }}
+          repository: sametbasbug/equinox-local
+          path: ${{ runner.temp }}/signed-610-base
+      - run: npm ci --prefer-offline --no-audit --no-fund
+      - name: Publish candidate B genuine WPF native executable
+        shell: pwsh
+        env:
+          EQUINOX_WINDOWS_SHELL_PUBLISH_DIR: ${{ runner.temp }}/candidate-shell/${{ matrix.rid }}
+          EQUINOX_WINDOWS_SHELL_BIN_DIR: ${{ runner.temp }}/candidate-bin/${{ matrix.rid }}/
+          EQUINOX_WINDOWS_SHELL_OBJ_DIR: ${{ runner.temp }}/candidate-obj/${{ matrix.rid }}/
+        run: |
+          dotnet publish native/windows/EquinoxLocal.WindowsShell/EquinoxLocal.WindowsShell.csproj --configuration Release --runtime '${{ matrix.rid }}' --self-contained true -p:Platform='${{ matrix.platform }}' -p:BaseOutputPath="$env:EQUINOX_WINDOWS_SHELL_BIN_DIR" -p:BaseIntermediateOutputPath="$env:EQUINOX_WINDOWS_SHELL_OBJ_DIR" --output "$env:EQUINOX_WINDOWS_SHELL_PUBLISH_DIR"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Package exact checked-out candidate B native artifact (unsigned, never production)
+        env:
+          EQUINOX_WINDOWS_SHELL_PUBLISH_DIR: ${{ runner.temp }}/candidate-shell/${{ matrix.rid }}
+        run: npm run local:release:package:windows
+      - name: Real PowerShell 6.1.0 to candidate reinstall, native rollback, user data and disk GC
+        shell: pwsh
+        env:
+          EQUINOX_WINDOWS_LEGACY_REINSTALL_ACCEPTANCE: 'true'
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $old = @(Get-ChildItem -LiteralPath '${{ runner.temp }}/signed-610-base' -Recurse -File -Filter '*.zip')
+          $new = @(Get-ChildItem -LiteralPath 'backups/local-packages' -File -Filter 'equinox-local-*-win32-${{ matrix.arch }}.zip')
+          if ($old.Count -ne 1 -or $new.Count -ne 1) { throw 'Expected exactly one immutable A archive and one matching native candidate B ZIP' }
+          $env:EQUINOX_WINDOWS_INSTALL_ARTIFACT = $old[0].FullName
+          $env:EQUINOX_WINDOWS_LEGACY_STABLE_ARTIFACT = $new[0].FullName
           & powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File tests/release/windows-installer-real-package-smoke.ps1
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
