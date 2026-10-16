@@ -188,7 +188,7 @@ async function runHostedMacSameVersionRepair({ homeDir, installRoot, releaseDir,
         .then((value) => value.slice(-900)
           .replace(/(?:sk-[^\s]+|(?:token|secret|password|api[-_]?key)\s*[:=]\s*[^\s]+)/giu, "[redacted]")
           .replace(/[\r\n\t]+/gu, " ")).catch(() => "missing");
-      const appExecutable = path.join(homeDir, "Applications", "Equinox Local.app", "Contents", "MacOS", "Equinox Local");
+      const appExecutable = path.join(homeDir, "Applications", "Equinox Local.app", "Contents", "MacOS", "applet");
       const appExists = await fs.access(appExecutable).then(() => true, () => false);
       throw new Error("Real macOS LaunchAgent failed to start healthy " + kind +
         "; lastStatus=" + lastStatus + "; launch=" + launchState +
@@ -197,10 +197,22 @@ async function runHostedMacSameVersionRepair({ homeDir, installRoot, releaseDir,
     const { stdout } = await launchctl("print", service);
     assert.match(stdout, /state = running/u);
   };
-  // Reload the enrolled Main using the exact product service, not the
-  // independent short-lived wrapper smoke's synthetic launchd label.
-  await launchctl("bootout", service).catch(() => {});
+  // The shipped AppleScript applet deliberately uses the *login account's*
+  // home folder, not launchd's injected HOME. A disposable CI runner has no
+  // private test account, so bridge only that one applet entrypoint back into
+  // this isolated installation. Never replace an existing login-home entry.
+  const loginHome = await fs.realpath(os.homedir());
+  assert.notEqual(loginHome, homeDir);
+  const bridgeRoot = path.join(loginHome, "Library", "Application Support", "Equinox Local");
+  const bridgeEntry = path.join(bridgeRoot, "equinox-local-app-runtime");
+  let bridgeCreated = false;
   try {
+    await fs.mkdir(bridgeRoot, { mode: 0o700 });
+    bridgeCreated = true;
+    await fs.symlink(path.join(installRoot, "equinox-local-app-runtime"), bridgeEntry);
+    // Reload the actual product applet and launchd service; the fixture
+    // bridge affects only the disposable CI login home.
+    await launchctl("bootout", service).catch(() => {});
     await launchctl("bootstrap", `gui/${uid}`, launchAgent);
     await launchctl("kickstart", service);
     await checkedHealth("managed-source");
@@ -244,6 +256,12 @@ async function runHostedMacSameVersionRepair({ homeDir, installRoot, releaseDir,
     process.stdout.write(`Real macOS ${target} same-version Main-to-Stable LaunchAgent reinstall, forced rollback and user-data preservation PASSED.\n`);
   } finally {
     await launchctl("bootout", service).catch(() => {});
+    if (bridgeCreated) {
+      await fs.unlink(bridgeEntry).catch((error) => {
+        if (error?.code !== "ENOENT") throw error;
+      });
+      await fs.rmdir(bridgeRoot);
+    }
   }
 }
 
