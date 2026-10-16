@@ -9,6 +9,7 @@ import { promisify } from "node:util";
 
 import { installManagedEquinoxRelease } from "../../src/equinox-local-first-install.js";
 import { enrollEquinoxLocalManagedSource, rollbackEquinoxLocalManagedSourceEnrollment } from "../../src/equinox-local-managed-source-enrollment.js";
+import { equinoxLocalManagedSourcePaths } from "../../src/equinox-local-managed-source-installation.js";
 import { bridgeActivatedStableToMain } from "../../src/equinox-local-stable-main-bridge.js";
 import { resolveEquinoxLocalInstallation } from "../../src/equinox-local-installation.js";
 import { equinoxLocalToolchainContract } from "../../src/equinox-local-toolchain-contract.js";
@@ -124,7 +125,7 @@ async function runHostedMacSameVersionRepair({ homeDir, installRoot, releaseDir,
   const service = `gui/${uid}/dev.equinox.local`;
   const launchAgent = path.join(homeDir, "Library", "LaunchAgents", "dev.equinox.local.plist");
   const current = path.join(installRoot, "current");
-  const stamp = path.join(installRoot, "state", "main-update", "install.json");
+  const stamp = equinoxLocalManagedSourcePaths({ platform: "darwin", arch: process.arch, homeDir }).installStampPath;
   const agentStatusUrl = `http://127.0.0.1:${CONTROL_CENTER_PORT}/api/v1/status`;
   const launchctl = (...args) => execFile("/bin/launchctl", args, { timeout: 15_000, maxBuffer: 1024 * 1024 });
   const proofs = [
