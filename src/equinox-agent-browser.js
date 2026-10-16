@@ -1,5 +1,4 @@
 import { randomBytes } from "node:crypto";
-import { constants as fsConstants } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 
@@ -181,9 +180,10 @@ async function hasInstalledAgentExtension(profileRoot) {
       // then open the path again: Chrome can update an extension concurrently.
       let handle;
       try {
-        handle = await fs.open(manifestPath, fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0));
-        const stat = await handle.stat();
-        if (!stat.isFile() || stat.size > 64 * 1024) continue;
+        handle = await fs.open(manifestPath, "r");
+        const [opened, entryStat] = await Promise.all([handle.stat(), fs.lstat(manifestPath)]);
+        if (!opened.isFile() || opened.size > 64 * 1024 || !entryStat.isFile()
+            || entryStat.isSymbolicLink() || opened.dev !== entryStat.dev || opened.ino !== entryStat.ino) continue;
         const manifest = JSON.parse(await handle.readFile("utf8"));
         if ([2, 3].includes(manifest?.manifest_version) && manifest.version === match[1]) return true;
       } catch (error) {
