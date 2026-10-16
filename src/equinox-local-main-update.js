@@ -19,7 +19,10 @@ export const EQUINOX_LOCAL_MAIN_SNAPSHOT_TAG = "main-snapshot";
 const SHA_PATTERN = /^[a-f0-9]{40}$/u;
 const CHECK_TIMEOUT_MS = 5_000;
 const DEFAULT_CACHE_TTL_MS = 60_000;
-const MAX_RESPONSE_BYTES = 256 * 1024;
+// Real older-v6 -> current Main comparisons can exceed 256 KiB because
+// GitHub includes changed file metadata even with per_page=5. Keep a fixed
+// maximum, but allow full legitimate version-spanning comparisons.
+const MAX_RESPONSE_BYTES = 4 * 1024 * 1024;
 const MAX_SUMMARIES = 5;
 
 function boundedMessage(value, maximum = 300) {

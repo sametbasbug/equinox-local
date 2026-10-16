@@ -161,6 +161,19 @@ test("passive main check reports behind distance and bounded summaries", async (
   assert.equal(status.summaries[0].message, "Improve updater");
 });
 
+test("genuine version-spanning GitHub compare above the old 256 KiB limit still offers Main", async () => {
+  const large = comparePayload({ status: "ahead", aheadBy: 370 });
+  large.files = [{ filename: "docs/history.md", patch: "x".repeat(300_000) }];
+  const { value } = discovery({ fetchImpl: fetchSequence([
+    jsonResponse({ ref: `refs/tags/${EQUINOX_LOCAL_MAIN_SNAPSHOT_TAG}`, object: { type: "commit", sha: TARGET } }),
+    jsonResponse(large),
+  ]) });
+  const found = await value.check({ force: true });
+  assert.equal(found.state, "behind");
+  assert.equal(found.targetSha, TARGET);
+  assert.equal(found.behindBy, 370);
+});
+
 test("dirty, detached, non-main and fork checkouts fail closed before network", async () => {
   for (const [expected, git] of [
     ["dirty", gitMock({ dirty: " M src/server.js\n" })],
