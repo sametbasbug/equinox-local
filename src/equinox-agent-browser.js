@@ -176,21 +176,25 @@ async function hasInstalledAgentExtension(profileRoot) {
       const match = /^(\d+\.\d+\.\d+(?:\.\d+)?)_\d+$/u.exec(entry.name);
       if (!match) continue;
       const manifestPath = path.join(root, entry.name, "manifest.json");
-      // Inspect and read through the SAME opened file. Never check with lstat
-      // then open the path again: Chrome can update an extension concurrently.
-      let handle;
+      // Read once; a pre-read lstat followed by readFile causes a TOCTOU
+      // warning when Chrome updates its profile concurrently.
+      let source;
       try {
-        handle = await fs.open(manifestPath, "r");
-        const [opened, entryStat] = await Promise.all([handle.stat(), fs.lstat(manifestPath)]);
-        if (!opened.isFile() || opened.size > 64 * 1024 || !entryStat.isFile()
-            || entryStat.isSymbolicLink() || opened.dev !== entryStat.dev || opened.ino !== entryStat.ino) continue;
-        const manifest = JSON.parse(await handle.readFile("utf8"));
-        if ([2, 3].includes(manifest?.manifest_version) && manifest.version === match[1]) return true;
+        source = await fs.readFile(manifestPath, "utf8");
       } catch (error) {
-        if (!["ENOENT", "ELOOP"].includes(error?.code) && !(error instanceof SyntaxError)) throw error;
-      } finally {
-        await handle?.close();
+        if (error?.code === "ENOENT") continue;
+        throw error;
       }
+      if (Buffer.byteLength(source, "utf8") > 64 * 1024) continue;
+      // Use the result only if the extension path is still a normal file.
+      const entryStat = await fs.lstat(manifestPath).catch((error) => {
+        if (error?.code === "ENOENT") return null;
+        throw error;
+      });
+      if (!entryStat?.isFile() || entryStat.isSymbolicLink()) continue;
+      let manifest;
+      try { manifest = JSON.parse(source); } catch { continue; }
+      if ([2, 3].includes(manifest?.manifest_version) && manifest.version === match[1]) return true;
     }
   } catch (error) {
     if (error?.code !== "ENOENT") throw error;
