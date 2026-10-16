@@ -82,10 +82,16 @@ const probeCandidate = async () => {
 };
 const logFile = path.win32.join(installedRoot, "logs", "windows-shell-runtime.log");
 let candidateLogStart = 0;
+let candidateStartMs = 0;
+let candidateLogRotated = false;
 const inspectB = async () => {
   const log = await fs.readFile(logFile, "utf8").catch(() => "");
-  const candidate = log.slice(candidateLogStart);
-  return candidate.split("\n").slice(-85).flatMap((line) => {
+  candidateLogRotated = log.length < candidateLogStart;
+  // WPF rotates its own bounded log at 64 KiB. Byte offsets become invalid
+  // after rotation; timestamp-filter recent fixed-format native events instead.
+  return log.split("\n").slice(-110).flatMap((line) => {
+    const epochMs = Date.parse(line.slice(0, 23) + "Z");
+    if (!Number.isFinite(epochMs) || epochMs < candidateStartMs - 2000) return [];
     const match = /^\S+ (shell-startup|runtime-discovery|runtime-start-phase|runtime-start|runtime-gate-exit|tunnel-transport|windows-shell-registration) ([^\r\n]*)$/u.exec(line);
     if (!match) return [];
     const details = match[2];
@@ -113,6 +119,7 @@ await assert.rejects(installManagedEquinoxRelease({
       nativeStarts++;
       if (nativeStarts === 1) {
         candidateLogStart = (await fs.readFile(logFile, "utf8").catch(() => "")).length;
+        candidateStartMs = Date.now();
       }
       const started = await options.kickstartImpl(...args);
       if (nativeStarts === 1) candidatePid = Number.isInteger(started?.pid) ? started.pid : null;
@@ -154,7 +161,7 @@ await assert.rejects(installManagedEquinoxRelease({
     },
   }),
 }), /rolled back/u);
-assert.ok(observations > 0, "New native Stable must reach HEALTHY before forced rollback; " + JSON.stringify({ polls, firstBStatus, lastBStatus, lastStatus, nativeStarts, candidatePidObserved: candidatePid !== null, candidateAlive, candidateIdentity, candidateNativePhases }));
+assert.ok(observations > 0, "New native Stable must reach HEALTHY before forced rollback; " + JSON.stringify({ polls, firstBStatus, lastBStatus, lastStatus, nativeStarts, candidatePidObserved: candidatePid !== null, candidateAlive, candidateIdentity, candidateLogRotated, candidateNativePhases }));
 assert.deepEqual(await fs.readFile(mainStamp), originalStamp);
 assert.deepEqual(JSON.parse(await fs.readFile(currentPath, "utf8")), previousCurrent);
 assert.deepEqual(await fs.readFile(manifestPath), originalManifest);
