@@ -698,6 +698,15 @@ export async function installManagedEquinoxRelease({
       verifyPrevious: verifiedPrevious,
       isPreviousMainHealthy: async (record) => {
         try {
+          const native = await verifiedPrevious(record);
+          await assertWindowsStableShellOwnedByRelease({
+            releaseDir: native.releaseDir, programRoot: paths.programRoot, fsImpl,
+          });
+          await assertWindowsNativeMessagingHostOwnership({
+            manifestRoot: paths.nativeMessagingManifestRoot,
+            acceptedLauncherPaths: [windowsNativeMessagingLauncherPath(native.releaseDir)],
+            fsImpl,
+          });
           await waitForManagedSourceImpl(record.oldMainVersion, record.oldSourceSha, {
             ...equinoxLocalFirstInstallHealthBudget({ platform, arch }), attempts: 4,
           });
@@ -706,7 +715,16 @@ export async function installManagedEquinoxRelease({
       },
       isCommittedStableHealthy: async (record) => {
         try {
-          await readCurrentImpl(baseInstallation);
+          const signed = await readCurrentImpl(baseInstallation);
+          if (signed.version !== record.targetVersion) return false;
+          await assertWindowsStableShellOwnedByRelease({
+            releaseDir: signed.releaseDir, programRoot: paths.programRoot, fsImpl,
+          });
+          await assertWindowsNativeMessagingHostOwnership({
+            manifestRoot: paths.nativeMessagingManifestRoot,
+            acceptedLauncherPaths: [windowsNativeMessagingLauncherPath(signed.releaseDir)],
+            fsImpl,
+          });
           await waitForVersionImpl(record.targetVersion, {
             ...equinoxLocalFirstInstallHealthBudget({ platform, arch }),
             attempts: 4, expectedInstallationKind: "managed",

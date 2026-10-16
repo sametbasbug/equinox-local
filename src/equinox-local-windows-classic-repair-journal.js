@@ -38,8 +38,17 @@ export async function writeWindowsClassicRepairJournal(filePath, record, { fsImp
   if (Buffer.byteLength(body) > MAX_BYTES) throw new Error("Windows classic repair journal is too large.");
   const parent = path.dirname(filePath);
   const parentStat = await fsImpl.lstat(parent);
+  // Windows can canonicalize an ancestor to its long/short DOS spelling
+  // even when the directory itself is an owned, normal folder. Resolve the
+  // parent and its owner through the same filesystem view instead of
+  // comparing an input spelling with realpath().
+  const owner = path.dirname(parent);
+  const ownerStat = await fsImpl.lstat(owner);
+  const parentReal = await fsImpl.realpath(parent);
+  const expectedReal = path.join(await fsImpl.realpath(owner), path.basename(parent));
   if (!parentStat.isDirectory() || parentStat.isSymbolicLink() ||
-      (await fsImpl.realpath(parent)).toLowerCase() !== parent.toLowerCase()) {
+      !ownerStat.isDirectory() || ownerStat.isSymbolicLink() ||
+      path.normalize(parentReal).toLowerCase() !== path.normalize(expectedReal).toLowerCase()) {
     throw new Error("Windows classic repair journal parent is unsafe.");
   }
   try {
