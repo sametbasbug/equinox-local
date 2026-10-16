@@ -1,8 +1,8 @@
-export const EQUINOX_LOCAL_NODE_VERSION = "26.11.1";
+export const EQUINOX_LOCAL_NODE_VERSION = "26.12.0";
 export const EQUINOX_LOCAL_DUGITE_VERSION = "2.53.0-4";
 export const EQUINOX_LOCAL_DUGITE_BUILD = "4098283";
 export const EQUINOX_LOCAL_TUNNEL_CLIENT_VERSION = "0.0.16";
-export const EQUINOX_LOCAL_PEEKABOO_VERSION = "4.9.0";
+export const EQUINOX_LOCAL_PEEKABOO_VERSION = "4.9.4";
 export const EQUINOX_LOCAL_WINAPP_VERSION = "0.7.1";
 export const EQUINOX_LOCAL_BUNDLED_WINAPP_SINCE_VERSION = "5.2.1";
 export const EQUINOX_LOCAL_NATIVE_JOB_OBJECT_HELPER_SINCE_VERSION = "5.2.1";
@@ -12,7 +12,7 @@ export const EQUINOX_LOCAL_PEEKABOO_TEAM_ID = "FWJYW4S8P8";
 
 export const PEEKABOO_DISTRIBUTION = Object.freeze({
   filename: "peekaboo-macos-universal.tar.gz",
-  sha256: "64884da09af4f707267ee5ee7364f31c34bfeb8a6f1404478e1babc9ff412230",
+  sha256: "cf385eb18b94c4261c28b62e1e8033d993c6fe272a4254fbaa5dcb8ddf3c26bb",
   archiveRoot: "peekaboo-macos-universal",
   architectures: Object.freeze(["arm64", "x86_64"]),
 });
@@ -56,26 +56,26 @@ export const DUGITE_DISTRIBUTIONS = Object.freeze({
 export const NODE_DISTRIBUTIONS = Object.freeze({
   "darwin-arm64": Object.freeze({
     filename: `node-v${EQUINOX_LOCAL_NODE_VERSION}-darwin-arm64.tar.gz`,
-    bytes: 58_283_153,
-    sha256: "d916511b55965e91be7a88e17f88d895b6793ceaba3e6c9b194aefe51c2c65ac",
+    bytes: 58_327_892,
+    sha256: "2a154d4a5458930e0a2d6a1ecf64eddf5a2b3e1c13636b609c2ecb042e8c4553",
     fileArchitecture: "arm64",
   }),
   "darwin-x64": Object.freeze({
     filename: `node-v${EQUINOX_LOCAL_NODE_VERSION}-darwin-x64.tar.gz`,
-    bytes: 59_713_543,
-    sha256: "9a8129bd9ab08039793dd1143a7aedee6b5d60ac06592ad938d8bddf36142f3a",
+    bytes: 59_797_494,
+    sha256: "878ecede191c7abc1bff01d3fb81f7ed81aa1161040dba18776b8ff8593614b1",
     fileArchitecture: "x86_64",
   }),
   "win32-arm64": Object.freeze({
     filename: `node-v${EQUINOX_LOCAL_NODE_VERSION}-win-arm64.zip`,
-    bytes: 37_238_969,
-    sha256: "8dd03add3ed431eb436306f9abe946434bce928d2bf967b04117dc3755051208",
+    bytes: 37_267_737,
+    sha256: "cc773b9829623e3d4fd13aef394f05010e0459273f27fb3255150f38a2577abf",
     fileArchitecture: "arm64",
   }),
   "win32-x64": Object.freeze({
     filename: `node-v${EQUINOX_LOCAL_NODE_VERSION}-win-x64.zip`,
-    bytes: 41_809_787,
-    sha256: "97f36a8a9684ff0d3e35758b4610fef5b628a5880e96f2ccc11240e5daf9934e",
+    bytes: 41_895_610,
+    sha256: "50efaf01a08c520b4bbe499c09a8c5a5c370002c419c0d9da2c6815d3066a453",
     fileArchitecture: "x86_64",
   }),
 });

@@ -217,6 +217,22 @@ test("previously installed isolated extension skips Web Store after a manual fir
   assert.equal(launches[0].includes(EQUINOX_BROWSER_STORE_URL), false);
 });
 
+test("symlinked isolated extension manifest cannot impersonate an installed extension", { skip: process.platform === "win32" }, async (t) => {
+  const homeDir = await fs.mkdtemp(path.join(os.tmpdir(), "equinox-agent-false-extension-"));
+  t.after(() => fs.rm(homeDir, { recursive: true, force: true }));
+  const { profileRoot } = await prepareNativeHost(homeDir);
+  const extensionDir = path.join(profileRoot, "Default", "Extensions", "npdneefcobilfkjlihghjgjnknenhfoj", "1.0.0_0");
+  await fs.mkdir(extensionDir, { recursive: true });
+  const outside = path.join(homeDir, "outside-manifest.json");
+  await fs.writeFile(outside, JSON.stringify({ manifest_version: 3, version: "1.0.0" }));
+  await fs.symlink(outside, path.join(extensionDir, "manifest.json"));
+  const manager = createEquinoxAgentBrowser({
+    bridge: createBridgeStub(), homeDir, platform: "darwin",
+    execFileAsync: async () => ({ stdout: "", stderr: "" }),
+  });
+  assert.equal((await manager.status()).setupComplete, false);
+});
+
 test("connected manual Agent Browser pairing persists setup for future cold starts", async (t) => {
   const homeDir = await fs.mkdtemp(path.join(os.tmpdir(), "equinox-agent-manual-pair-"));
   t.after(() => fs.rm(homeDir, { recursive: true, force: true }));

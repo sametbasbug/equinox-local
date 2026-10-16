@@ -78,7 +78,7 @@ jobs:
       - name: Install native Node 26
         uses: actions/setup-node@v7
         with:
-          node-version: 26.11.1
+          node-version: 26.12.0
           architecture: ${{ matrix.arch }}
 
       - name: Verify disposable machine, source A ancestry and admitted B
@@ -213,7 +213,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@v7
         with:
-          node-version: 26.11.1
+          node-version: 26.12.0
           architecture: ${{ matrix.arch }}
           cache: npm
       - uses: actions/setup-dotnet@v6

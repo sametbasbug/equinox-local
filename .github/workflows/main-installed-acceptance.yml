@@ -76,7 +76,7 @@ jobs:
       - name: Install Node 26
         uses: actions/setup-node@v7
         with:
-          node-version: 26.11.1
+          node-version: 26.12.0
           cache: npm
 
       - name: Check isolated runner and admitted snapshot SHA
@@ -178,7 +178,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@v7
         with:
-          node-version: 26.11.1
+          node-version: 26.12.0
           architecture: ${{ matrix.arch }}
           cache: npm
       - name: Verify disposable native host

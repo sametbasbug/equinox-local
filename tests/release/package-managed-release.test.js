@@ -123,17 +123,17 @@ test("local module parser finds static relative imports without treating package
 });
 
 test("pinned Node runtime metadata covers all four production release targets", () => {
-  assert.equal(EQUINOX_LOCAL_NODE_VERSION, "26.11.1");
+  assert.equal(EQUINOX_LOCAL_NODE_VERSION, "26.12.0");
   assert.deepEqual(Object.keys(NODE_DISTRIBUTIONS).sort(), ["darwin-arm64", "darwin-x64", "win32-arm64", "win32-x64"]);
   assert.match(NODE_DISTRIBUTIONS["darwin-arm64"].sha256, /^[a-f0-9]{64}$/u);
   assert.match(NODE_DISTRIBUTIONS["darwin-x64"].sha256, /^[a-f0-9]{64}$/u);
   assert.equal(NODE_DISTRIBUTIONS["darwin-arm64"].fileArchitecture, "arm64");
   assert.equal(NODE_DISTRIBUTIONS["darwin-x64"].fileArchitecture, "x86_64");
-  assert.equal(NODE_DISTRIBUTIONS["win32-arm64"].filename, "node-v26.11.1-win-arm64.zip");
-  assert.equal(NODE_DISTRIBUTIONS["win32-arm64"].sha256, "8dd03add3ed431eb436306f9abe946434bce928d2bf967b04117dc3755051208");
+  assert.equal(NODE_DISTRIBUTIONS["win32-arm64"].filename, "node-v26.12.0-win-arm64.zip");
+  assert.equal(NODE_DISTRIBUTIONS["win32-arm64"].sha256, "cc773b9829623e3d4fd13aef394f05010e0459273f27fb3255150f38a2577abf");
   assert.equal(NODE_DISTRIBUTIONS["win32-arm64"].fileArchitecture, "arm64");
-  assert.equal(NODE_DISTRIBUTIONS["win32-x64"].filename, "node-v26.11.1-win-x64.zip");
-  assert.equal(NODE_DISTRIBUTIONS["win32-x64"].sha256, "97f36a8a9684ff0d3e35758b4610fef5b628a5880e96f2ccc11240e5daf9934e");
+  assert.equal(NODE_DISTRIBUTIONS["win32-x64"].filename, "node-v26.12.0-win-x64.zip");
+  assert.equal(NODE_DISTRIBUTIONS["win32-x64"].sha256, "50efaf01a08c520b4bbe499c09a8c5a5c370002c419c0d9da2c6815d3066a453");
   assert.equal(NODE_DISTRIBUTIONS["win32-x64"].fileArchitecture, "x86_64");
 });
 
@@ -156,10 +156,10 @@ test("pinned tunnel runtime metadata covers all four production release targets"
 });
 
 test("pinned Peekaboo runtime metadata is universal and fixed to the verified OpenClaw release", () => {
-  assert.equal(EQUINOX_LOCAL_PEEKABOO_VERSION, "4.9.0");
+  assert.equal(EQUINOX_LOCAL_PEEKABOO_VERSION, "4.9.4");
   assert.equal(EQUINOX_LOCAL_PEEKABOO_TEAM_ID, "FWJYW4S8P8");
   assert.equal(PEEKABOO_DISTRIBUTION.filename, "peekaboo-macos-universal.tar.gz");
-  assert.equal(PEEKABOO_DISTRIBUTION.sha256, "64884da09af4f707267ee5ee7364f31c34bfeb8a6f1404478e1babc9ff412230");
+  assert.equal(PEEKABOO_DISTRIBUTION.sha256, "cf385eb18b94c4261c28b62e1e8033d993c6fe272a4254fbaa5dcb8ddf3c26bb");
   assert.deepEqual(PEEKABOO_DISTRIBUTION.architectures, ["arm64", "x86_64"]);
 });
 
