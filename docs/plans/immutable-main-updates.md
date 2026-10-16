@@ -27,3 +27,10 @@
 
 ## Public installer rule (confirmed by product owner 2026-10-16)
 The classic Terminal/PowerShell installer installs **Stable**, including when an earlier Equinox Local is already installed. It does **not** move to Main automatically. **Only a user-initiated Update & restart** enrolls Main. Installer reinvocation is the fallback path for an older broken Main updater, preserving user settings and credentials, then exposing the ordinary explicit update action. The Windows native handoff and real old-Main source state require hosted end-to-end verification before claiming this fallback is shipped.
+
+
+## Classic Stable installer over an already-installed Main
+
+A signed Stable installer may replace a **different** numbered installed Main release by using the existing full native A/B activation and health rollback. During the new Stable launch, the authenticated old Main install stamp is atomically parked; if new Stable fails, the stamp is restored **before** relaunching old Main. The user's config, tunnel credentials, profile and browser data are not touched. A newer signed Main may be replaced by an older numbered Stable on explicit classic installer invocation; a newer installed **Stable** is still protected against implicit downgrade.
+
+**Not complete yet:** same-version Main→Stable reinstall cannot replace the active `releases/<version>` tree with the current version-keyed pointer safely; the installer now refuses this case instead of falsely reporting success. It needs a safe same-version staged binary swap and REAL installed Windows/macOS acceptance before this alternative is recommended universally. Do not advise old released preserve-mode uninstall—it may delete user tunnel secrets.

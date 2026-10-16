@@ -13,6 +13,7 @@ import {
 } from "./equinox-local-bootstrap.js";
 import {
   activatePreparedEquinoxRelease,
+  kickstartEquinoxLocalLaunchAgent,
   readManagedCurrentRelease,
   waitForEquinoxLocalManagedSource,
   waitForEquinoxLocalVersion,
@@ -24,6 +25,8 @@ import {
 } from "./equinox-local-updater.js";
 import { managedSupervisorPaths } from "./equinox-local-supervisor.js";
 import { enrollEquinoxLocalManagedSource, rollbackEquinoxLocalManagedSourceEnrollment } from "./equinox-local-managed-source-enrollment.js";
+import { equinoxLocalManagedSourcePaths } from "./equinox-local-managed-source-installation.js";
+import { validateManagedSourceInstallStamp } from "./equinox-local-main-update.js";
 import { requestWindowsShellRuntimeRestart } from "./equinox-local-windows-shell-control.js";
 import { provisionWindowsGuardianFromRelease } from "./equinox-local-windows-guardian-provision.js";
 import { writeEquinoxLocalCurrentVersionPointer } from "./equinox-local-current-release.js";
@@ -439,18 +442,44 @@ export async function installManagedEquinoxRelease({
     }
   };
 
+  const mainPaths = equinoxLocalManagedSourcePaths({ platform, arch, homeDir, env });
+  const savedMainStamp = `${mainPaths.installStampPath}.stable-install-backup`;
+  let parkedMain = false;
+  const currentMainStamp = await fsImpl.lstat(mainPaths.installStampPath).catch((error) => {
+    if (error?.code === "ENOENT") return null;
+    throw error;
+  });
+  if (currentMainStamp) {
+    if (!currentMainStamp.isFile() || currentMainStamp.isSymbolicLink() || currentMainStamp.size > 8 * 1024) {
+      throw new Error("Existing Main install identity is unsafe for Stable replacement.");
+    }
+    validateManagedSourceInstallStamp(JSON.parse(await fsImpl.readFile(mainPaths.installStampPath, "utf8")));
+    try {
+      await fsImpl.lstat(savedMainStamp);
+      throw new Error("Prior Stable replacement needs reconciliation before another attempt.");
+    } catch (error) {
+      if (error?.code !== "ENOENT") throw error;
+    }
+  }
+
+  if (!current && currentMainStamp) {
+    throw new Error("Existing Main identity has no verified current release; a clean Stable install cannot overwrite it without recovery.");
+  }
   if (current) {
     const comparison = compareEquinoxVersions(current.version, candidate.version);
     if (allowExistingStableToMainMigration && comparison !== 0) {
       throw new Error("Upgrade the existing Stable release with the Stable updater before explicitly enrolling Main; installer migration cannot replace a different active Stable version.");
     }
-    if (comparison > 0) {
+    if (comparison > 0 && !currentMainStamp) {
       return Object.freeze({
         status: "newer-installed",
         version: current.version,
         requestedVersion: candidate.version,
         controlCenterUrl: "http://127.0.0.1:24891/",
       });
+    }
+    if (comparison === 0 && currentMainStamp && !allowExistingStableToMainMigration) {
+      throw new Error("Same-version Main-to-Stable replacement requires a safe full-tree swap; it cannot reuse the installed Main executable.");
     }
     if (comparison === 0) {
       // Re-running the website installer is not consent to move an existing
@@ -503,10 +532,43 @@ export async function installManagedEquinoxRelease({
   if (current) {
     const currentInstallation = installationFor(paths, current.releaseDir, { platform, arch, target: expectedTarget });
     await bootstrapImpl({ homeDir, platform, arch, env, fsImpl });
-    const activation = await activateImpl({
+    // Existing Main sources must not override the freshly installed Stable
+    // runtime. Park ONLY the authenticated Main channel selector while B is
+    // started; restore it before the old A is relaunched on failed B health.
+    const restoreMainIdentity = async () => {
+      if (!parkedMain) return;
+      await fsImpl.rename(savedMainStamp, mainPaths.installStampPath);
+      parkedMain = false;
+    };
+    let activation;
+    try {
+      activation = await activateImpl({
       installation: currentInstallation,
       targetVersion: candidate.version,
-    });
+      ...(currentMainStamp ? { kickstartImpl: async (version) => {
+        if (version === candidate.version && !parkedMain) {
+          await fsImpl.rename(mainPaths.installStampPath, savedMainStamp);
+          parkedMain = true;
+        } else if (version === current.version) {
+          await restoreMainIdentity();
+        }
+        if (platform === "darwin") {
+          await kickstartEquinoxLocalLaunchAgent(currentInstallation, { uid, execFileImpl });
+        } else {
+          await launchWindowsShellImpl(path.win32.join(paths.programRoot, "EquinoxLocal.exe"));
+        }
+      } } : {}),
+      });
+    } catch (error) {
+      // Even if OS-native rollback failed before it could relaunch A,
+      // do not strand A's original authenticated Main channel identity.
+      await restoreMainIdentity();
+      throw error;
+    }
+    if (parkedMain) {
+      await fsImpl.rm(savedMainStamp);
+      parkedMain = false;
+    }
     const bootstrap = await bootstrapImpl({ homeDir, platform, arch, env, fsImpl });
     return Object.freeze({
       status: activation.status,
