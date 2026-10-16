@@ -6,6 +6,20 @@ This project follows semantic versioning for public releases.
 
 ## [Unreleased]
 
+## [6.1.1] - 2026-10-16
+
+### Fixed
+
+- Fixed Windows managed terminal output and exit-status propagation, including PowerShell and CMD commands that previously returned empty output and false success; nested Windows PowerShell commands now use encoded UTF-16LE command strings.
+- Fixed terminal-independent background commands (process_start, process_logs, process_wait, process_stop) passing malformed native arguments, losing double quotes and returning wrong exit codes. The Windows owned-process gate now quotes native arguments, streams stdout/stderr concurrently and preserves actual process exit status; npm .cmd and .bat entrypoints remain supported.
+- Detect unexpected Windows Job Object helper loss as an explicit nonzero failure instead of silently reporting exit 0.
+- Suppress unwanted visible PowerShell console windows from Windows finite command and PTY launcher gates.
+- Make explicit Windows system_doctor check actual managed terminal output and nonzero exit status, reporting ATTENTION if it fails without launching extra probes on routine Control Center polling.
+- Extend real Windows x64 and ARM64 acceptance for terminal and ConPTY interactive lifecycle, Node.js/PowerShell/CMD/batch processes, background process logs, wait, stop, exits and output. User desktop window visibility and manual installed-host acceptance remain subject to post-release verification.
+
+This repair release preserves existing user configuration and keeps Equinox Browser at Chrome Web Store version 1.0.0. Existing Windows installations update only when the user requests an update.
+
+
 ## [6.1.0] - 2026-10-16
 
 ### Fixed

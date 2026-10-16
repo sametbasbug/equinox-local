@@ -82,6 +82,27 @@ test("source checkout doctor stays healthy without requiring managed-only files"
   }
 });
 
+test("Windows Doctor marks failed terminal output or exit status as attention only when explicitly probed", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "equinox-doctor-terminal-"));
+  try {
+    const args = {
+      installation: { kind: "source", managed: false, selfUpdateSupported: false },
+      config: { version: 1, runtime: { workspaceProject: "workspace" }, projects: { workspace: { root } } },
+      runtimeHealthState: "HEALTHY", runtimeVersion: "6.1.0", browser: {},
+      host: { platform: "win32", arch: "x64", target: "win32-x64", displayName: "Windows" },
+    };
+    const routine = await getEquinoxLocalDoctorStatus(args);
+    assert.equal(routine.checks.some((item) => item.id === "windows-terminal-execution"), false);
+    const failed = await getEquinoxLocalDoctorStatus({ ...args, terminalExecution: { healthy: false } });
+    assert.equal(failed.state, "ATTENTION");
+    assert.equal(failed.checks.find((item) => item.id === "windows-terminal-execution")?.status, "attention");
+    const healthy = await getEquinoxLocalDoctorStatus({ ...args, terminalExecution: { healthy: true } });
+    assert.equal(healthy.checks.find((item) => item.id === "windows-terminal-execution")?.status, "pass");
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
 test("doctor data model accepts an explicit supported Windows host descriptor without claiming runtime parity", async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "equinox-doctor-windows-model-"));
   try {

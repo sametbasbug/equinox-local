@@ -133,7 +133,9 @@ test("platform lifecycle and shell contracts enable both native Windows architec
 
   const windowsFinite = equinoxLocalFiniteShell({ platform: "win32", arch: "x64" });
   assert.equal(windowsFinite.command, equinoxLocalWindowsPowerShellPath());
-  assert.deepEqual(windowsFinite.argsFor("Write-Output ok"), ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", "Write-Output ok"]);
+  const finiteArgs = windowsFinite.argsFor("Write-Output ok; exit 17");
+  assert.deepEqual(finiteArgs.slice(0, 6), ["-NoLogo", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-EncodedCommand"]);
+  assert.equal(Buffer.from(finiteArgs[6], "base64").toString("utf16le"), "Write-Output ok; exit 17");
   assert.equal(windowsFinite.pathDelimiter, ";");
 
   const windowsInteractive = equinoxLocalInteractiveShells({ platform: "win32", arch: "arm64" });

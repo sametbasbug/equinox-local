@@ -220,6 +220,7 @@ import { registerTaskCapsuleTools } from "./task-capsule-tools.js";
 import { startRuntimeLifecycle } from "./equinox-local-runtime-lifecycle.js";
 import { createTurnBudgetController } from "./turn-budget-controller.js";
 import { equinoxLocalPlatformPaths } from "./equinox-local-platform.js";
+import { probeWindowsTerminalExecution } from "./equinox-local-windows-terminal-health.js";
 
 export async function createEquinoxLocalRuntime({
   platform = process.platform,
@@ -2785,7 +2786,7 @@ async function getControlCenterPeekabooStatus() {
   }
 }
 
-async function getControlCenterDoctorStatus() {
+async function getControlCenterDoctorStatus({ probeTerminal = false } = {}) {
   const browser = equinoxBrowserBridge.snapshot();
   const browserSettingsByContext = { agent: null, user: null };
   for (const context of ["agent", "user"]) {
@@ -2816,6 +2817,11 @@ async function getControlCenterDoctorStatus() {
     config: EQUINOX_LOCAL_CONFIG,
     runtimeHealthState: observabilityHealth.state,
     runtimeVersion: SERVER_VERSION,
+    terminalExecution: probeTerminal && platform === "win32"
+      ? await probeWindowsTerminalExecution({
+        processManager, cwd: process.cwd(), env: runtimeEnv, arch,
+      })
+      : null,
     sourceCheckoutVersion: sourceCheckout?.version ?? null,
     browser: {
       contexts: {
@@ -3300,7 +3306,7 @@ registerAuthenticatedHttpTools({
 
 registerSystemDoctorTool({
   registerTextTool,
-  getDoctorStatus: getControlCenterDoctorStatus,
+  getDoctorStatus: () => getControlCenterDoctorStatus({ probeTerminal: true }),
   textResult,
   errorResult,
 });
