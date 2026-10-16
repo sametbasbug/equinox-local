@@ -121,7 +121,11 @@ export async function runWindowsShellRuntimeSupervisor({
   const node = path.win32.join(releaseDir, "runtime", "node", "bin", "node.exe");
   const tunnel = path.win32.join(releaseDir, "runtime", "tunnel", "tunnel-client.exe");
   const localOnly = (reconnect = null) => runChildImpl(node, [serverPath], {
-    cwd, env: childEnv(env, "local-only"), stdin: reconnect ? "pipe" : "inherit", ...(reconnect ? { reconnect } : {}),
+    // The gate stdin is an update-handshake pipe and can reach EOF after the
+    // gate releases the child. The local-only server treats stdin EOF as a
+    // deliberate shutdown. Give it a distinct supervisor-owned pipe that
+    // stays open until intentional WPF Job Object shutdown or tunnel handoff.
+    cwd, env: childEnv(env, "local-only"), stdin: "pipe", ...(reconnect ? { reconnect } : {}),
   });
   let transport;
   try {

@@ -31,6 +31,7 @@ test("Windows runtime with no saved tunnel stays accessible in local-only onboar
   assert.equal(result.mode,"local-only");assert.equal(calls.length,1);
   assert.equal(calls[0].args[0],serverPath);
   assert.equal(calls[0].opts.env.EQUINOX_LOCAL_SUPERVISOR_MODE,"local-only");
+  assert.equal(calls[0].opts.stdin,"pipe", "Onboarding must not inherit the gate EOF and exit cleanly");
   assert.equal(calls[0].opts.env.OPENAI_API_KEY,undefined);
 });
 
@@ -61,6 +62,7 @@ test("Windows tunnel initialization failure leaves local-only Control Center rea
   }));
   assert.equal(result.mode,"local-only");assert.equal(events.length,1);
   assert.deepEqual(events[0].args,[serverPath]);
+  assert.equal(events[0].opts.stdin,"pipe", "Tunnel failure must keep the Control Center stdin open");
 });
 
 test("Windows tunnel command bounds command paths and never embeds the Runtime API key",()=>{
