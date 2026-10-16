@@ -116,7 +116,7 @@ async function setControlCenterPort(configPath) {
 // An opt-in real hosted-OS gate: the product's own launchd service handles the
 // same-numbered Main -> Stable full-tree repair, health failure and rollback.
 // The runner is disposable; NEVER load the real developer's service here.
-async function runHostedMacSameVersionRepair({ homeDir, installRoot, releaseDir, target, sourceSha }) {
+async function runHostedMacSameVersionRepair({ homeDir, installRoot, releaseDir, target, sourceSha, artifact }) {
   assert.equal(process.env.GITHUB_ACTIONS, "true");
   assert.equal(process.env.CI, "true");
   assert.equal(process.platform, "darwin");
@@ -143,6 +143,10 @@ async function runHostedMacSameVersionRepair({ homeDir, installRoot, releaseDir,
   const digest = async (file) => createHash("sha256").update(await fs.readFile(file)).digest("hex");
   const before = await Promise.all(proofs.map(digest));
   const stampBefore = await fs.readFile(stamp, "utf8");
+  // A real Main may contain product-owned executable/state files not shipped
+  // with the signed Stable. Prove a full tree is installed, not an overlay.
+  const oldOnlyFile = path.join(releaseDir, "main-only-version-marker.txt");
+  await fs.writeFile(oldOnlyFile, "not part of signed Stable\n", { flag: "wx", mode: 0o600 });
   const checkedHealth = async (kind) => {
     let actual;
     for (let i = 0; i < 120; i++) {
@@ -172,9 +176,15 @@ async function runHostedMacSameVersionRepair({ homeDir, installRoot, releaseDir,
     await launchctl("kickstart", service);
     await checkedHealth("managed-source");
     const reinstall = async (label, forceFailure) => {
-      const staging = path.join(installRoot, "staging", `native-${label}`, "release");
-      await fs.mkdir(path.dirname(staging), { recursive: true, mode: 0o700 });
-      await fs.cp(releaseDir, staging, { recursive: true, force: false, errorOnExist: true });
+      const stagingRoot = path.join(installRoot, "staging", "native-" + label);
+      const staging = path.join(stagingRoot, "release");
+      await fs.mkdir(stagingRoot, { recursive: true, mode: 0o700 });
+      // Re-extract original packaged candidate as the classic bootstrap
+      // does; cloning A would hide mixed-tree or overlay bugs.
+      await execFile(TAR, ["-xzf", artifact, "-C", stagingRoot], {
+        timeout: 120_000, maxBuffer: 8 * 1024 * 1024,
+      });
+      assert.equal(await fs.readFile(oldOnlyFile, "utf8"), "not part of signed Stable\n");
       return installManagedEquinoxRelease({
         stagedReleaseDir: staging, homeDir, uid, platform: "darwin", target,
         execFileImpl: execFile,
@@ -189,6 +199,7 @@ async function runHostedMacSameVersionRepair({ homeDir, installRoot, releaseDir,
     };
     await assert.rejects(reinstall("forced-failure", true), /rolled back to Main/u);
     await checkedHealth("managed-source");
+    assert.equal(await fs.readFile(oldOnlyFile, "utf8"), "not part of signed Stable\n");
     assert.equal(await fs.readFile(stamp, "utf8"), stampBefore);
     assert.equal(await fs.realpath(current), await fs.realpath(releaseDir));
     assert.deepEqual(await Promise.all(proofs.map(digest)), before);
@@ -196,6 +207,8 @@ async function runHostedMacSameVersionRepair({ homeDir, installRoot, releaseDir,
     const result = await reinstall("success", false);
     assert.equal(result.status, "activated");
     await checkedHealth("managed");
+    assert.equal(await fs.access(oldOnlyFile).then(() => true, () => false), false,
+      "Full signed Stable replacement retained old product-owned Main files.");
     assert.equal(await fs.readFile(stamp, "utf8").then(() => true, () => false), false);
     assert.equal(await fs.realpath(current), await fs.realpath(releaseDir));
     assert.deepEqual(await Promise.all(proofs.map(digest)), before);
@@ -447,7 +460,7 @@ async function main() {
         });
         if (child.exitCode === null) child.kill("SIGKILL");
       }
-      await runHostedMacSameVersionRepair({ homeDir, installRoot, releaseDir, target, sourceSha });
+      await runHostedMacSameVersionRepair({ homeDir, installRoot, releaseDir, target, sourceSha, artifact });
     }
   } finally {
     if (child && child.exitCode === null) {
