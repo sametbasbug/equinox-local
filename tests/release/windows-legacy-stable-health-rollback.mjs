@@ -136,6 +136,12 @@ const inspectB = async () => {
       const clue = errorText.split(/[^\p{L}\p{N}]+/u).slice(0, 11)
         .map((word) => safeWords.has(word.toLowerCase()) ? word.toLowerCase() : "x")
         .join("-").slice(0, 90) || "none";
+      // The first public source stack frame/line localizes the throw without
+      // emitting any user's home path, config contents, or raw stderr.
+      const frames = [...details.matchAll(/\b(equinox-[a-z0-9-]+\.js|server\.js):([1-9]\d{0,3}):[1-9]\d{0,3}\b/gu)]
+        .filter((frame) => Number(frame[2]) <= 4000)
+        .slice(0, 3)
+        .map((frame) => frame[1] + ":" + frame[2]);
       const site = ["equinox-local-config.js", "equinox-local-private-state.js",
         "equinox-local-platform.js", "equinox-local-main-install-state.js",
         "equinox-local-windows-runtime-supervisor.js", "equinox-local-control-api.js",
@@ -143,7 +149,7 @@ const inspectB = async () => {
         .find((file) => details.includes(file)) ?? "unknown";
       return [match[1] + ":" + (/exit=(-?\d+)/u.exec(details)?.[1] ?? "unknown"),
         "runtime-gate-error:" + errorClass, "runtime-gate-hint:" + clue,
-        "runtime-gate-site:" + site];
+        "runtime-gate-site:" + site, "runtime-gate-frames:" + (frames.join(",") || "none")];
     }
     if (match[1] === "tunnel-transport" && /^(?:tunnel-[a-z-]+|local-only-(?:stdin-eof|child-exit-zero|child-spawned|child-sigterm|child-sigint|child-sigbreak|child-signal-other|child-exit-nonzero|control-ready|control-disabled))$/u.test(details)) return [match[1] + ":" + details];
     if (match[1] === "runtime-start" || match[1] === "windows-shell-registration") {
