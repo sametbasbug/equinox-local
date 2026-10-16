@@ -25,6 +25,10 @@ Status: **SIGNED STABLE v6.0.4 PUBLISHED on 2026-10-11 as the final one-time mig
 - Source enrollment failure must not remove credentials, native Browser host, user workspace, tunnel profile or stable rollback artifacts. The bridge either automatically restores the healthy signed Stable baseline and reports a redacted retryable error, or retries only with bounded safe policy after recoverable conditions are met; never mark Main enrolled without the durable `install.json`/`current-source.conf` pair and healthy process.
 - A healthy existing managed Main install stays Main on repeated installer invocations and restarts. Do not move the Mac mini's factory Developer role onto public Stable.
 
+## Historic 5.2.1 Main reinstall fallback evidence — 2026-10-16
+
+The classic installer must keep Stable as the active channel; only a **user action** on Update & restart can enroll Main. The PR candidate for repairing real old 5.2.1 Main (whose shipped 256 KiB GitHub compare limit blocks its updater) passed native unsigned A-to-B failure rollback and healthy reinstall on Windows x64/ARM64 [#38873284563](https://github.com/sametbasbug/equinox-local/actions/runs/38873284563) and macOS arm64 [#38850900910](https://github.com/sametbasbug/equinox-local/actions/runs/38850900910)/Intel [#38853892499](https://github.com/sametbasbug/equinox-local/actions/runs/38853892499). Default Stable and explicit-only Main selection have local test coverage. A separate production-signed immutable Stable repair package and signed end-to-end acceptance are still required: the published 6.0.4 bootstrap is immutable. Fresh user-initiated Main enrollment after repair remains to be verified on native hosts. Never present the unsigned rehearsal as a deployed signed fix.
+
 ## Checkpoints
 
 1. **Bootstrap defaults and communication (this PR):** public macOS/Windows installers install Stable by default. The old internal explicit enrollment flag is retained only for compatibility. The user later selects Update & restart to move to Main; tests verify absence of automatic enrollment. This alone does **not** upgrade older installed Stable machines.
