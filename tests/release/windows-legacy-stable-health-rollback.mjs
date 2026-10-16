@@ -38,6 +38,15 @@ let polls = 0;
 let nativeStarts = 0;
 let firstBStatus = null;
 let lastBStatus = "no B status";
+let candidateNativePhases = [];
+const inspectB = async () => {
+  const logFile = path.win32.join(installedRoot, "logs", "windows-shell-runtime.log");
+  const log = await fs.readFile(logFile, "utf8").catch(() => "");
+  return log.split("\n").slice(-110)
+    .filter(line => line.includes("runtime-start") || line.includes("runtime-discovery") || line.includes("runtime-gate-exit"))
+    .map(line => { const a = line.trim().split(" "); return [a[1] || "unknown", (a[2] || "").slice(0, 55)].join(":"); })
+    .slice(-28);
+};
 let lastStatus = "no status";
 await assert.rejects(installManagedEquinoxRelease({
   stagedReleaseDir, platform: "win32", arch: process.arch,
@@ -49,7 +58,10 @@ await assert.rejects(installManagedEquinoxRelease({
       let response;
       try { response = await fetch(...args); }
       catch (error) {
-        if (nativeStarts === 1) lastBStatus = "fetch-error:" + String(error?.cause?.code ?? error?.name ?? "unknown");
+        if (nativeStarts === 1) {
+          lastBStatus = "fetch-error:" + String(error?.cause?.code ?? error?.name ?? "unknown");
+          if (polls >= 25) candidateNativePhases = await inspectB();
+        }
         throw error;
       }
       if (!response.ok) lastStatus = "HTTP " + response.status;
@@ -70,7 +82,7 @@ await assert.rejects(installManagedEquinoxRelease({
     },
   }),
 }), /rolled back/u);
-assert.ok(observations > 0, "New native Stable must reach HEALTHY before forced rollback; " + JSON.stringify({ polls, firstBStatus, lastBStatus, lastStatus, nativeStarts }));
+assert.ok(observations > 0, "New native Stable must reach HEALTHY before forced rollback; " + JSON.stringify({ polls, firstBStatus, lastBStatus, lastStatus, nativeStarts, candidateNativePhases }));
 assert.deepEqual(await fs.readFile(mainStamp), originalStamp);
 assert.deepEqual(JSON.parse(await fs.readFile(currentPath, "utf8")), previousCurrent);
 assert.deepEqual(await fs.readFile(manifestPath), originalManifest);
