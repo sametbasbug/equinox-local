@@ -806,6 +806,7 @@ try {
   }
   # A real installed Windows app must be discoverable and uninstallable by OS UI.
   $AppsKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Equinox Local'
+  if (-not $SkipLegacyGuardianFixture) {
   $AppsRegistration = Get-ItemProperty -LiteralPath $AppsKey -ErrorAction Stop
   Assert-True ($AppsRegistration.EquinoxLocalManagedInstall -eq 1) 'Windows Installed Apps ownership marker is missing.'
   Assert-True ([string]$AppsRegistration.DisplayName -ceq 'Equinox Local') 'Windows Installed Apps display name is incorrect.'
@@ -819,6 +820,7 @@ try {
   $ShellCom = New-Object -ComObject WScript.Shell
   try { $ShortcutCom = $ShellCom.CreateShortcut($StartMenuShortcut); Assert-True (Same-Path ([string]$ShortcutCom.TargetPath) $StableExe) 'Start Menu shortcut points at the wrong binary.' }
   finally { [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($ShellCom) }
+  } # Windows Installed Apps / Start Menu registration arrived after vintage A.
   $ownedShell = @(Get-CimInstance Win32_Process -Filter "Name='EquinoxLocal.exe'" -ErrorAction SilentlyContinue | Where-Object { -not [string]::IsNullOrWhiteSpace($_.ExecutablePath) -and (Same-Path $_.ExecutablePath $StableExe) })
   Assert-True ($ownedShell.Count -eq 1) 'Windows installer did not leave exactly one owned stable shell running.'
   if ($env:EQUINOX_WINDOWS_MAIN_ACCEPT_TARGET_SHA) {
