@@ -481,9 +481,8 @@ export async function installManagedEquinoxRelease({
         controlCenterUrl: bootstrap.controlCenterUrl || "http://127.0.0.1:24891/",
       });
     }
-    if (platform === "win32") {
-      throw new Error("Windows bootstrap update/reinstall is not enabled yet; use the installed updater once the stable-shell replacement checkpoint is complete.");
-    }
+    // Both Windows and macOS use the existing signed native activation,
+    // health check and automatic rollback below for a different version.
   }
 
   const existing = await fsImpl.lstat(targetRelease).catch((error) => {
@@ -568,7 +567,7 @@ function parseCli(argv) {
 const invokedPath = process.argv[1] ? path.resolve(process.argv[1]) : null;
 if (invokedPath && path.basename(invokedPath) === path.basename(fileURLToPath(import.meta.url))) {
   if (process.argv.length === 3 && process.argv[2] === "--help") {
-    process.stdout.write("Usage: equinox-local-first-install.js --staged-release /absolute/path/to/release [--enroll-existing-main]\nBundled internal helper: --enroll-existing-main enrolls Main after signed Stable health.\nPublic installers supply this flag by default; exact source provenance is required.\n");
+    process.stdout.write("Usage: equinox-local-first-install.js --staged-release /absolute/path/to/release [--enroll-existing-main]\nBundled internal helper: --enroll-existing-main enrolls Main after signed Stable health.\nPublic installer defaults to Stable; Main enrollment is explicit via Update & restart.\n");
   } else {
     installManagedEquinoxRelease(parseCli(process.argv.slice(2)))
       .then((result) => process.stdout.write(`${JSON.stringify(result, null, 2)}\n`))

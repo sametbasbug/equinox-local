@@ -120,10 +120,11 @@ try {
   }
 
   try {
-    # Exercise the public installer DEFAULT. Main enrollment must no longer
-    # require a legacy explicit switch or a second installation command.
-    Assert-True (-not $EnrollExistingMain) 'Windows public installer acceptance requires an unselected legacy Main switch.'
+    # This specialized acceptance exercises the optional legacy Main bridge.
+    # The PUBLIC installer default remains Stable; no automatic enrollment.
+    $EnrollExistingMain = $true
     Invoke-EquinoxLocalInstall | Out-Host
+    $EnrollExistingMain = $false
   } catch {
     $diagnosticLog = Join-Path $OwnedInstallRoot 'logs\windows-shell-runtime.log'
     $stableCandidate = Join-Path $OwnedProgramRoot 'EquinoxLocal.exe'
