@@ -308,7 +308,7 @@ async function verifyWindowsManagedProcessLifecycle(root) {
       stdout: /EQUINOX_STDOUT/u, stderr: /EQUINOX_STDERR/u },
     { command: "Write-Output 'EQUINOX_EXIT17'; exit 17", expectedExit: 17,
       stdout: /EQUINOX_EXIT17/u },
-    { command: "cmd.exe /d /s /c \"echo EQUINOX_CMD & exit /b 23\"", expectedExit: 23,
+    { command: "& $env:ComSpec /d /c 'echo EQUINOX_CMD & exit /b 23'; exit $LASTEXITCODE", expectedExit: 23,
       stdout: /EQUINOX_CMD/u },
   ];
   const shell = equinoxLocalFiniteShell({ platform: "win32", arch: WINDOWS_ARCH, env: process.env });

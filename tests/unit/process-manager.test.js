@@ -65,6 +65,36 @@ test("Windows process manager prepares a Job Object gate before spawning user wo
   ]);
 });
 
+test("Windows Job Object helper loss never reports a false successful terminal exit", async () => {
+  const child = makeFakeProcess(4112);
+  child.stdin = new PassThrough();
+  const manager = createProcessManager({
+    platform: "win32", arch: "x64", spawnImpl: () => child,
+    ownershipAdapter: {
+      kind: "job-object", implemented: true, detached: false,
+      async createOwnedSet() { return {}; },
+      spawnSpec(command, args, env) { return { command, args, env, stdin: "pipe" }; },
+      async attachAndRelease() {},
+      async ownedSetExists() { throw new Error("Windows Job Object helper exited unexpectedly (0/null)."); },
+      async closeOwnedSet() {},
+    },
+  });
+  const session = await manager.start({
+    projectId: "local", projectName: "Equinox Local", cwd: "C:\\Work",
+    command: "powershell.exe", args: ["-NoProfile"], purpose: "terminal_exec",
+  });
+  child.emit("exit", 0, null);
+  child.stdout.end();
+  child.stderr.end();
+  child.emit("close", 0, null);
+  const stopped = await manager.waitForExit({ processId: session.processId, waitMs: 500 });
+  assert.equal(stopped.running, false);
+  assert.equal(stopped.exitCode, 125);
+  const logs = await manager.readLogs({ processId: session.processId });
+  assert.match(logs.output, /Windows Job Object helper became unavailable/u);
+  await manager.shutdown();
+});
+
 test("process manager starts, captures logs and stops a process group", async () => {
   const child = makeFakeProcess(4200);
   const killCalls = [];

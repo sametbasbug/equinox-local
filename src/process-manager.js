@@ -231,6 +231,10 @@ export function createProcessManager({
       try {
         return Boolean(await processOwnership.ownedSetExists(session.ownedSet));
       } catch (error) {
+        // A lost Job Object helper makes ownership and child completion
+        // untrustworthy. Never report the gate's exit(0) as command success.
+        session.spawnError ??= "Windows Job Object helper became unavailable before process completion.";
+        appendOutput(session, "stderr", session.spawnError + "\n");
         if (!session.groupProbeErrorNotified) {
           session.groupProbeErrorNotified = true;
           emitEvent({
@@ -279,7 +283,8 @@ export function createProcessManager({
     }
 
     session.running = false;
-    session.exitCode = Number.isInteger(code) ? code : null;
+    session.exitCode = session.spawnError && (!Number.isInteger(code) || code === 0)
+      ? 125 : Number.isInteger(code) ? code : null;
     session.signal = signal === null || signal === undefined
       ? null
       : String(signal);
