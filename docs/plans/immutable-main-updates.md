@@ -19,6 +19,11 @@
 **Status (2026-10-16):** Draft PR #230 implements clean full-native replacement and B-worker prefetch compatibility; exact-head CI/CodeQL and all four installed Stable-to-Main bridge jobs passed. Real A-to-B Main acceptance on the current public snapshot exposed an **obsolete Guardian-only test prerequisite** in the vintage Windows A fixture (signed old A never shipped Guardian); hosted test-only paths now bypass those extra checks for old-A acceptance, exercise actual updater, and assert private settings, browser data, correct B Native Messaging and A rollback. Older macOS A fixture could not reach initial HEALTHY before applying the update, and a newer admitted A is being checked. **Do not claim a successful genuine old-Main-to-PR candidate update or publish before this is resolved.**
 
 
+### Real same-version native-host acceptance
+
+- **Windows x64/ARM64 (2026-10-16):** exact-head CI [#38845819696](https://github.com/sametbasbug/equinox-local/actions/runs/38845819696) passed the real WPF and HKCU Native Messaging Main→Stable same-version repair while preserving user-owned settings, browser, tunnel and credentials. This did **not** cover historical installed 5.2.1 or a newly production-signed repair archive.
+- **macOS arm64/x64 (opt-in, pending):** the disposable hosted stable_bridge_acceptance workflow now exercises the real dev.equinox.local LaunchAgent: enrolled same-numbered Main A, forced Stable B health failure and automatic rollback to A, successful full-tree B repair, plus byte-identical settings/credentials/browser/tunnel/workspace checks. This test is separate from the ordinary PR CI and the signed production release acceptance. Report results only after actual hosted runner logs verify success.
+
 ## Legacy 5.2.1 compatibility discovered by actual installed-host QA
 
 - Real installed signed 5.2.1 on Windows x64/ARM64 and macOS arm64 starts successfully when its **own pinned Node 26.10.0** toolchain is used. Its original Main updater then rejects the larger GitHub compare body (`GitHub response exceeds the size limit.` at 256 KiB), before any B download. The new source's bounded 4 MiB limit fixes **future** Main, **not the already installed 5.2.1 binary**. Never claim that moving the public `main-snapshot` tag repairs the old installed checker.

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { execFile as execFileCallback, spawn } from "node:child_process";
 import fs from "node:fs/promises";
 import os from "node:os";
@@ -110,6 +111,98 @@ async function setControlCenterPort(configPath) {
   config.controlCenter = { ...(config.controlCenter || {}), enabled: true, port: CONTROL_CENTER_PORT };
   await fs.writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
   await fs.chmod(configPath, 0o600);
+}
+
+// An opt-in real hosted-OS gate: the product's own launchd service handles the
+// same-numbered Main -> Stable full-tree repair, health failure and rollback.
+// The runner is disposable; NEVER load the real developer's service here.
+async function runHostedMacSameVersionRepair({ homeDir, installRoot, releaseDir, target, sourceSha }) {
+  assert.equal(process.env.GITHUB_ACTIONS, "true");
+  assert.equal(process.env.CI, "true");
+  assert.equal(process.platform, "darwin");
+  const uid = process.getuid();
+  const service = `gui/${uid}/dev.equinox.local`;
+  const launchAgent = path.join(homeDir, "Library", "LaunchAgents", "dev.equinox.local.plist");
+  const current = path.join(installRoot, "current");
+  const stamp = path.join(installRoot, "state", "main-update", "install.json");
+  const agentStatusUrl = `http://127.0.0.1:${CONTROL_CENTER_PORT}/api/v1/status`;
+  const launchctl = (...args) => execFile("/bin/launchctl", args, { timeout: 15_000, maxBuffer: 1024 * 1024 });
+  const proofs = [
+    path.join(installRoot, "config.json"),
+    path.join(installRoot, "secrets", "openai-runtime-key"),
+    path.join(installRoot, "browser", "profile", "Preferences"),
+    path.join(installRoot, "tunnel", "profile", "equinox-local.yaml"),
+    path.join(installRoot, "workspace", "owned-workspace.txt"),
+  ];
+  for (const [index, proof] of proofs.entries()) {
+    if (index !== 0) {
+      await fs.mkdir(path.dirname(proof), { recursive: true, mode: 0o700 });
+      await fs.writeFile(proof, `existing-owner-state-${index}\n`, { mode: 0o600, flag: "wx" });
+    }
+  }
+  const digest = async (file) => createHash("sha256").update(await fs.readFile(file)).digest("hex");
+  const before = await Promise.all(proofs.map(digest));
+  const stampBefore = await fs.readFile(stamp, "utf8");
+  const checkedHealth = async (kind) => {
+    let actual;
+    for (let i = 0; i < 120; i++) {
+      try {
+        const response = await fetch(agentStatusUrl, { signal: AbortSignal.timeout(2000), cache: "no-store" });
+        if (response.ok) {
+          const status = (await response.json())?.status;
+          if (status?.server?.version === EQUINOX_LOCAL_VERSION &&
+              status?.health?.state === "HEALTHY" && status?.installation?.kind === kind &&
+              (kind !== "managed-source" || status?.installation?.sourceSha === sourceSha)) {
+            actual = status;
+            break;
+          }
+        }
+      } catch {}
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+    assert.ok(actual, `Real macOS LaunchAgent failed to start healthy ${kind}`);
+    const { stdout } = await launchctl("print", service);
+    assert.match(stdout, /state = running/u);
+  };
+  // Reload the enrolled Main using the exact product service, not the
+  // independent short-lived wrapper smoke's synthetic launchd label.
+  await launchctl("bootout", service).catch(() => {});
+  try {
+    await launchctl("bootstrap", `gui/${uid}`, launchAgent);
+    await launchctl("kickstart", service);
+    await checkedHealth("managed-source");
+    const reinstall = async (label, forceFailure) => {
+      const staging = path.join(installRoot, "staging", `native-${label}`, "release");
+      await fs.mkdir(path.dirname(staging), { recursive: true, mode: 0o700 });
+      await fs.cp(releaseDir, staging, { recursive: true, force: false, errorOnExist: true });
+      return installManagedEquinoxRelease({
+        stagedReleaseDir: staging, homeDir, uid, platform: "darwin", target,
+        execFileImpl: execFile,
+        waitForVersionImpl: async (version, { expectedInstallationKind }) => {
+          assert.equal(version, EQUINOX_LOCAL_VERSION);
+          await checkedHealth(expectedInstallationKind);
+          if (forceFailure && expectedInstallationKind === "managed") {
+            throw new Error("hosted injected unhealthy same-numbered Stable");
+          }
+        },
+      });
+    };
+    await assert.rejects(reinstall("forced-failure", true), /rolled back to Main/u);
+    await checkedHealth("managed-source");
+    assert.equal(await fs.readFile(stamp, "utf8"), stampBefore);
+    assert.equal(await fs.realpath(current), await fs.realpath(releaseDir));
+    assert.deepEqual(await Promise.all(proofs.map(digest)), before);
+
+    const result = await reinstall("success", false);
+    assert.equal(result.status, "activated");
+    await checkedHealth("managed");
+    assert.equal(await fs.readFile(stamp, "utf8").then(() => true, () => false), false);
+    assert.equal(await fs.realpath(current), await fs.realpath(releaseDir));
+    assert.deepEqual(await Promise.all(proofs.map(digest)), before);
+    process.stdout.write(`Real macOS ${target} same-version Main-to-Stable LaunchAgent reinstall, forced rollback and user-data preservation PASSED.\n`);
+  } finally {
+    await launchctl("bootout", service).catch(() => {});
+  }
 }
 
 async function main() {
@@ -344,6 +437,18 @@ async function main() {
       installationKind: status.status.installation?.kind ?? null,
       artifact,
     }, null, 2)}\n`);
+    if (process.env.EQUINOX_MACOS_SAME_VERSION_REPAIR === "true") {
+      if (child && child.exitCode === null) {
+        child.kill("SIGTERM");
+        await new Promise((resolve) => {
+          if (child.exitCode !== null) return resolve();
+          const timer = setTimeout(resolve, 3_000);
+          child.once("exit", () => { clearTimeout(timer); resolve(); });
+        });
+        if (child.exitCode === null) child.kill("SIGKILL");
+      }
+      await runHostedMacSameVersionRepair({ homeDir, installRoot, releaseDir, target, sourceSha });
+    }
   } finally {
     if (child && child.exitCode === null) {
       child.kill("SIGTERM");

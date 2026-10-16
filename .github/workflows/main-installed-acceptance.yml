@@ -166,5 +166,7 @@ jobs:
       - run: npm ci --prefer-offline --no-audit --no-fund
       - name: Package exact checkout in disposable hosted runner
         run: npm run local:release:package
-      - name: Run REAL isolated LaunchAgent Stable to Main bridge, forced rollback, Main recovery
+      - name: Run REAL isolated LaunchAgent Stable to Main bridge and same-version repair/rollback
+        env:
+          EQUINOX_MACOS_SAME_VERSION_REPAIR: 'true'
         run: node tests/release/smoke-managed-install.mjs
