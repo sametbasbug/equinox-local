@@ -30,6 +30,10 @@ import { equinoxLocalManagedSourcePaths } from "./equinox-local-managed-source-i
 import { validateManagedSourceInstallStamp } from "./equinox-local-main-update.js";
 import { readEquinoxLocalMainNativePointer } from "./equinox-local-main-native-state.js";
 import { readEquinoxLocalMainSourcePointer } from "./equinox-local-main-source-pointer.js";
+import {
+  reconcileWindowsClassicRepairJournal,
+  writeWindowsClassicRepairJournal,
+} from "./equinox-local-windows-classic-repair-journal.js";
 import { pruneInactiveManagedStableReleases } from "./equinox-local-release-retention.js";
 import { readBoundedNormalFile } from "./equinox-local-safe-file.js";
 import { assertWindowsNativeMessagingHostOwnership, windowsNativeMessagingLauncherPath } from "./equinox-browser-windows-native-messaging.js";
@@ -634,6 +638,108 @@ export async function installManagedEquinoxRelease({
   const repairOptions = { paths, mainPaths, installation: baseInstallation, uid, platform, arch, target: expectedTarget,
     fsImpl, execFileImpl, syncManagedShellImpl, stopWindowsShellImpl, launchWindowsShellImpl, waitForVersionImpl,
     windowsRenameSleepImpl, inspectLegacyMainHostImpl };
+  const classicJournalPath = pathApi.join(mainPaths.mainTransactionRoot, "classic-repair.json");
+  if (platform === "win32" && !allowExistingStableToMainMigration) {
+    const readStoredStamp = async (filePath) => {
+      const file = await readBoundedNormalFile(filePath, {
+        fsImpl, platform, minBytes: 2, maxBytes: 8 * 1024,
+        encoding: "utf8", label: "Windows classic Main recovery stamp",
+      }).catch((error) => {
+        if (error?.code === "ENOENT") return null;
+        throw error;
+      });
+      if (file) validateManagedSourceInstallStamp(JSON.parse(file.data));
+      return file?.data ?? null;
+    };
+    const verifiedPrevious = async (record) => {
+      const active = await fsImpl.lstat(pathApi.join(mainPaths.mainTransactionRoot, "active.json")).catch((error) => {
+        if (error?.code === "ENOENT") return null;
+        throw error;
+      });
+      if (active) throw new Error("An active Main transaction must finish before recovering classic Stable repair.");
+      const contract = equinoxLocalToolchainContract({
+        runtimeRoot: path.win32.join(paths.installRoot, "runtime"), target: expectedTarget,
+      });
+      const source = await readMainSourcePointerImpl(mainPaths.sourcePointerPath, {
+        fsImpl, execFileImpl, gitPath: contract.gitPath,
+      });
+      if (source.sha !== record.oldSourceSha ||
+          path.win32.normalize(source.sourceRoot).toLowerCase() !==
+            path.win32.join(mainPaths.mainTransactionRoot, "sources", record.oldSourceSha).toLowerCase()) {
+        throw new Error("Classic repair rollback Main checkout SHA differs from its durable record.");
+      }
+      const pointer = await readMainNativePointerImpl(path.win32.join(mainPaths.mainTransactionRoot, "current-native.json"), {
+        transactionRoot: mainPaths.mainTransactionRoot, fsImpl,
+      });
+      if (pointer.target !== expectedTarget || pointer.sourceSha !== record.oldNativeSha) {
+        throw new Error("Classic repair native rollback SHA changed during interrupted handoff.");
+      }
+      const declarationPath = path.win32.join(source.sourceRoot, "src", "equinox-local-version.js");
+      const file = await readBoundedNormalFile(declarationPath, {
+        fsImpl, platform, minBytes: 25, maxBytes: 1024, encoding: "utf8",
+        label: "Classic repair native Main source version",
+      });
+      const versionLine = /^export const EQUINOX_LOCAL_VERSION = "(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)";$/mu.exec(file.data);
+      if (!versionLine || `${versionLine[1]}.${versionLine[2]}.${versionLine[3]}` !== record.oldMainVersion) {
+        throw new Error("Classic repair source version differs from its recorded Main rollback.");
+      }
+      return pointer;
+    };
+    const recover = await reconcileWindowsClassicRepairJournal({
+      journalPath: classicJournalPath, expectedTarget,
+      fsImpl,
+      readStamp: async () => ({
+        live: await readStoredStamp(mainPaths.installStampPath),
+        parked: await readStoredStamp(`${mainPaths.installStampPath}.stable-install-backup`),
+      }),
+      readCurrentVersion: async () => (await readEquinoxLocalCurrentVersionPointer(paths.currentPointer, {
+        fsImpl, platform, target: expectedTarget,
+      })).version,
+      verifyPrevious: verifiedPrevious,
+      isPreviousMainHealthy: async (record) => {
+        try {
+          await waitForManagedSourceImpl(record.oldMainVersion, record.oldSourceSha, {
+            ...equinoxLocalFirstInstallHealthBudget({ platform, arch }), attempts: 4,
+          });
+          return true;
+        } catch { return false; }
+      },
+      isCommittedStableHealthy: async (record) => {
+        try {
+          await readCurrentImpl(baseInstallation);
+          await waitForVersionImpl(record.targetVersion, {
+            ...equinoxLocalFirstInstallHealthBudget({ platform, arch }),
+            attempts: 4, expectedInstallationKind: "managed",
+          });
+          return true;
+        } catch { return false; }
+      },
+      rollbackPreviousMain: async (record, { parked }) => {
+        const oldNative = await verifiedPrevious(record);
+        const signedB = path.win32.join(paths.releasesRoot, record.targetVersion);
+        await stopWindowsShellImpl({ platform: "win32" }).catch(() => null);
+        await writeEquinoxLocalCurrentVersionPointer(paths.currentPointer, {
+          fsImpl, platform, target: expectedTarget, version: record.oldStablePointerVersion,
+        });
+        if (parked) await fsImpl.rename(`${mainPaths.installStampPath}.stable-install-backup`, mainPaths.installStampPath);
+        await syncManagedShellImpl(baseInstallation, {
+          version: record.oldMainVersion, releaseDir: oldNative.releaseDir,
+          previousReleaseDir: signedB,
+        });
+        await waitForWindowsShellPipeRelease({ platform: "win32" });
+        await launchWindowsShellImpl(path.win32.join(paths.programRoot, "EquinoxLocal.exe"));
+        await waitForManagedSourceImpl(record.oldMainVersion, record.oldSourceSha,
+          equinoxLocalFirstInstallHealthBudget({ platform, arch }));
+      },
+    });
+    if (recover?.status === "activated") {
+      return Object.freeze({
+        status: "activated", version: recover.version, configCreated: false,
+        controlCenterUrl: "http://127.0.0.1:24891/",
+      });
+    }
+  }
+
   // Recovery must precede even current-release resolution: the unchanged
   // pointer can temporarily name the missing directory between two renames.
   if (!allowExistingStableToMainMigration) {
@@ -886,6 +992,21 @@ export async function installManagedEquinoxRelease({
       parkedMain = false;
     };
     let activation;
+    if (previousManagedMain) {
+      const priorNative = await readMainNativePointerImpl(
+        path.win32.join(mainPaths.mainTransactionRoot, "current-native.json"),
+        { transactionRoot: mainPaths.mainTransactionRoot, fsImpl },
+      );
+      await writeWindowsClassicRepairJournal(classicJournalPath, {
+        schemaVersion: 1, target: expectedTarget,
+        oldMainVersion: previousManagedMain.version,
+        oldSourceSha: previousManagedMain.sourceSha,
+        oldNativeSha: priorNative.sourceSha,
+        oldStablePointerVersion: previousManagedMain.stablePointerVersion,
+        targetVersion: candidate.version,
+        mainStamp: currentMainStamp.data,
+      }, { fsImpl });
+    }
     try {
       activation = await activateImpl({
         installation: currentInstallation,
@@ -921,6 +1042,7 @@ export async function installManagedEquinoxRelease({
       await fsImpl.rm(savedMainStamp);
       parkedMain = false;
     }
+    if (previousManagedMain) await fsImpl.rm(classicJournalPath);
     const bootstrap = await bootstrapImpl({ homeDir, platform, arch, env, fsImpl });
     if (activation.status === "activated") {
       // Classic PowerShell reinstall is also a public update path. A signed
