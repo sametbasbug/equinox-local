@@ -63,7 +63,11 @@ export async function pruneVerifiedMainLargeStorage({
   }
   async function identities() {
     await ensureUnowned();
-    const source = await readSource(api.join(transaction, "current-source.conf"));
+    // Main source pointers must be authenticated by the product-owned Git,
+    // not by whatever ambient 'git' happens to be on Windows PATH.
+    const source = await readSource(api.join(transaction, "current-source.conf"), {
+      ...(installation.gitPath ? { gitPath: installation.gitPath } : {}),
+    });
     const native = await readNative(api.join(transaction, "current-native.json"), { transactionRoot: transaction });
     if (!SHA.test(source.sha) || !SHA.test(native.sourceSha) ||
         native.target !== installation.target ||
