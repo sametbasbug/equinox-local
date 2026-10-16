@@ -14,8 +14,13 @@ test('Windows trusted PowerShell resolution never depends on ambient PATH',()=>{
 test('Windows background Job Object gate and PTY gate use the exact OS-owned executable',()=>{
  const background=createBackgroundProcessOwnershipAdapter({platform:'win32',arch:'arm64'});
  const terminal=createTerminalProcessOwnershipAdapter({platform:'win32',arch:'x64'});
- assert.equal(background.spawnSpec('node.exe',[],env).command,expected);
- assert.equal(terminal.spawnSpec(expected,[],env).command,expected);
+ const bg=background.spawnSpec('node.exe',[],env);
+ const pty=terminal.spawnSpec(expected,[],env);
+ assert.equal(bg.command,expected);
+ assert.equal(pty.command,expected);
+ for (const spec of [bg,pty]) {
+  assert.deepEqual(spec.args.slice(0,5),['-NoLogo','-NoProfile','-NonInteractive','-WindowStyle','Hidden']);
+ }
 });
 test('Windows system root must be absolute and must not be resolved through untrusted PATH',()=>{
  for(const value of ['Windows','../Windows','powershell.exe']){
