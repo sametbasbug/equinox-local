@@ -16,6 +16,7 @@ import { compileWindowsJobObjectHelper } from "../../scripts/release/package-man
 import { createAgentControlController } from "../../src/equinox-local-agent-control.js";
 import { createProcessManager } from "../../src/process-manager.js";
 import { equinoxLocalFiniteShell } from "../../src/equinox-local-platform.js";
+import { probeWindowsTerminalExecution } from "../../src/equinox-local-windows-terminal-health.js";
 import { createTerminalManager } from "../../src/terminal-manager.js";
 import { createEquinoxLocalRuntime } from "../../src/server.js";
 import { createEquinoxBrowserNativeHostRuntime } from "../../src/equinox-browser-native-host-runtime.js";
@@ -325,8 +326,10 @@ async function verifyWindowsManagedProcessLifecycle(root) {
     assert.match(logs.output, item.stdout);
     if (item.stderr) assert.match(logs.output, item.stderr);
   }
+  const terminalDoctor = await probeWindowsTerminalExecution({ processManager: manager, cwd: root, env: process.env, arch: WINDOWS_ARCH });
+  assert.equal(terminalDoctor.healthy, true, 'On-demand Windows Doctor terminal probe must detect true stdout and exit 17.');
   await manager.shutdown();
-  return Object.freeze({ waitTimeoutPreservedOwnedTree: true, descendantRetainedAfterLeaderExit: true, stopDrainedDescendant: true, naturalExit: true });
+  return Object.freeze({ waitTimeoutPreservedOwnedTree: true, descendantRetainedAfterLeaderExit: true, stopDrainedDescendant: true, naturalExit: true, terminalDoctor: true });
 }
 
 async function withWindowsConPtyStage(label, operation, timeoutMs = 12_000) {

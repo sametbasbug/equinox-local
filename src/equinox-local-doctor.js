@@ -96,6 +96,7 @@ export async function getEquinoxLocalDoctorStatus({
   assertWindowsNativeHostImpl = assertWindowsNativeMessagingHostOwnership,
   readWindowsStartupImpl = readWindowsStartupRegistrationOwnership,
   runtimeEnv = process.env,
+  terminalExecution = null,
   now = () => new Date(),
 } = {}) {
   const checks = [];
@@ -115,6 +116,17 @@ export async function getEquinoxLocalDoctorStatus({
       ? `Equinox Local ${runtimeVersion || "is running"} and reports healthy.`
       : "The local runtime is not reporting a healthy state.",
   ));
+
+  if (terminalExecution && hostDescriptor.platform === "win32") {
+    checks.push(check(
+      "windows-terminal-execution",
+      "Windows terminal execution",
+      terminalExecution.healthy === true ? "pass" : "attention",
+      terminalExecution.healthy === true
+        ? "PowerShell output and nonzero exit status passed the managed Job Object test."
+        : "Managed Windows terminal output or exit status failed. Check terminal diagnostics.",
+    ));
+  }
 
   const workspaceId = config?.runtime?.workspaceProject;
   const workspace = workspaceId ? config?.projects?.[workspaceId] : null;
