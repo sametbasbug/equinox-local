@@ -183,6 +183,7 @@ jobs:
           node --test --test-name-pattern "Windows activation rollback restores current-version.json and the previous exact release|Windows managed activation rotates pointer stable shell and Native Messaging together|Windows managed activation forced health failure restores pointer stable shell and Native Messaging|Windows Main native-store origin survives Stable activation rollback" tests/release/equinox-local-update-activation.test.js
           node --test tests/release/equinox-local-windows-lifecycle.test.js
           node --test tests/release/equinox-local-main-native-windows-acceptance.test.js
+          node --test tests/release/equinox-local-main-storage-retention-windows.test.js
           node --test --test-name-pattern "win32 same-version Main repair|win32 same-version Stable failure|win32 legacy Main without native pointer" tests/release/equinox-local-same-version-repair.test.js
           node --test tests/release/equinox-local-main-control-api-acceptance.test.js
           node --test tests/release/equinox-local-stable-main-native-fs-acceptance.test.js
@@ -546,6 +547,9 @@ jobs:
 
       - name: Windows ARM64 Main native recovery acceptance
         run: node --test tests/release/equinox-local-main-native-windows-acceptance.test.js
+
+      - name: Windows ARM64 post-success versioned payload reclamation acceptance
+        run: node --test tests/release/equinox-local-main-storage-retention-windows.test.js
 
       - name: Windows ARM64 same-version Main repair and rollback regression
         run: node --test --test-name-pattern "win32 same-version Main repair|win32 same-version Stable failure|win32 legacy Main without native pointer" tests/release/equinox-local-same-version-repair.test.js
