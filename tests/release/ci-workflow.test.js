@@ -69,12 +69,19 @@ test("ARM64 package is built once on fast x64 Windows and exact-byte native cons
     const block = job(name);
     assert.match(block, /runs-on: windows-11-vs2026-arm/u);
     assert.match(block, /^    needs: \[windows-arm64-package-build\]/mu);
-    assert.match(block, /actions\/download-artifact@v7/u);
+    assert.match(block, /actions\/download-artifact@v8/u);
     assert.match(block, /path: \$\{\{ runner\.temp \}\}\/arm64-package/u);
     assert.match(block, /Join-Path \$env:RUNNER_TEMP 'arm64-package'/u);
     assert.doesNotMatch(block, /uses: \.\/\.github\/actions\/prepare-arm64-package/u);
   }
   assert.doesNotMatch(job("windows-arm64-runtime"), /^    (?:needs|if):/mu);
+});
+
+test("download-artifact consumers use current v8 with integrity errors enabled", async () => {
+  const archived = await fs.readFile(new URL("../../.github/workflows/main-installed-windows-acceptance.yml", import.meta.url), "utf8");
+  assert.match(job("main-snapshot-publish"), /actions\/download-artifact@v8/u);
+  assert.match(archived, /actions\/download-artifact@v8/u);
+  assert.doesNotMatch(ci + archived, /actions\/download-artifact@v7/u);
 });
 
 test("ARM64 installer has a tighter bound after duplicate package construction is removed", () => {

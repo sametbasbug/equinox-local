@@ -122,7 +122,7 @@ jobs:
           "target_sha=$sha" >> $env:GITHUB_OUTPUT
 
       - name: Download archived, already-admitted native Windows A artifact
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: main-native-${{ inputs.previous_main_sha }}-${{ matrix.target }}
           run-id: ${{ inputs.previous_main_run }}

@@ -69,7 +69,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v7
         with:
-          node-version: 26.8.2
+          node-version: 26.12.0
           cache: npm
 
       - name: Verify native runner
