@@ -111,19 +111,9 @@ export async function pruneVerifiedMainLargeStorage({
   await prune(api.join(install, "releases"), "releases", (name) => VERSION.test(name));
   await prune(api.join(transaction, "sources"), "sources", (name) => SHA.test(name), admitted.source.sha);
   await prune(api.join(transaction, "native-store", installation.target), "native", (name) => SHA.test(name), admitted.native.sourceSha);
-  await prune(api.join(transaction, "staging"), "staging", async (name) => {
-    if (!TX.test(name)) return false;
-    const receiptPath = api.join(transaction, "receipts", name + ".json");
-    let info;
-    try { info = await fsImpl.lstat(receiptPath); }
-    catch (error) { if (error?.code === "ENOENT") return false; throw error; }
-    if (!info.isFile() || info.isSymbolicLink() || info.size < 2 || info.size > 16 * 1024) return false;
-    let receipt;
-    try { receipt = JSON.parse(await fsImpl.readFile(receiptPath, "utf8")); }
-    catch { return false; }
-    return receipt.transactionId === name &&
-      (receipt.status === "succeeded" && receipt.stage === "healthy" ||
-       receipt.status === "rolled_back" && receipt.stage === "rollback_healthy");
-  });
+  // A genuinely healthy, running B with no active Main transaction has no
+  // pending rollback to A. Old succeeded, failed, rolled_back or abandoned
+  // staging trees are all superseded; keep only the small immutable receipts.
+  await prune(api.join(transaction, "staging"), "staging", (name) => TX.test(name));
   return Object.freeze(clean);
 }

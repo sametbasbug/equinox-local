@@ -54,12 +54,12 @@ test("verified active Main B removes only obsolete large versions and terminal s
   assert.deepEqual(result.releases, ["6.0.5", "6.1.0"]);
   assert.deepEqual(result.sources, [A]);
   assert.deepEqual(result.native, [A]);
-  assert.deepEqual(result.staging, [OK]);
+  assert.deepEqual(result.staging, [OK, FAILED]);
   assert.deepEqual(result.pending, []);
   assert.deepEqual(await fs.readdir(path.join(f.installRoot, "releases")), []);
   assert.deepEqual(await fs.readdir(path.join(f.tx, "sources")), [B]);
   assert.deepEqual(await fs.readdir(path.join(f.tx, "native-store", "darwin-arm64")), [B]);
-  assert.deepEqual(await fs.readdir(path.join(f.tx, "staging")), [FAILED]);
+  assert.deepEqual(await fs.readdir(path.join(f.tx, "staging")), []);
   assert.equal(await fs.readFile(f.credentials, "utf8"), "SECRET");
   assert.equal((await fs.readdir(path.join(f.tx, "receipts"))).length, 2);
 });
