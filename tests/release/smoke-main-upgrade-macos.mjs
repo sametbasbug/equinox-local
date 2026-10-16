@@ -193,7 +193,11 @@ async function acceptHistoricMainToStable({
   assert.equal(result.status,"activated");
   assert.equal(result.previousVersion,oldVersion);
   await awaitHealthy(null,{kind:"managed"});
-  assert.equal(await fs.access(oldOnly).then(()=>true,()=>false),false,
+  // Previous numbered A intentionally remains available as a verified
+  // rollback baseline. The new B tree must be clean, not an overlay of A.
+  assert.equal(await fs.readFile(oldOnly,"utf8"),"old-version-product-owned-file\n");
+  const carried = path.join(installRoot, "releases", candidateMeta.version, path.basename(oldOnly));
+  assert.equal(await fs.access(carried).then(()=>true,()=>false),false,
     "New Stable contains leftover executable tree content from old Main");
   assert.equal(await fs.access(path.join(installRoot,"main-update","install.json")).then(()=>true,()=>false),false);
   assert.deepEqual(await Promise.all(proofFiles.map(checksum)),hashes);
@@ -201,7 +205,7 @@ async function acceptHistoricMainToStable({
     ok:true,host:target,scenario:"historic-main-to-stable",fromVersion:oldVersion,
     toVersion:candidateMeta.version,oldMainSha:previousSha,candidateSha:candidateMeta.sourceSha,
     nativeHealth:"HEALTHY",rollbackHealthyMain:true,stableHealthy:true,
-    credentialHashesPreserved:true,realAppleScriptLaunchAgent:true,originalTreeRemoved:true,
+    credentialHashesPreserved:true,realAppleScriptLaunchAgent:true,cleanTargetTree:true,verifiedOldRollbackRetained:true,
     provenance:"unsigned-hosted-candidate",
   })+"\n");
 }
