@@ -6,7 +6,7 @@ This project follows semantic versioning for public releases.
 
 ## [Unreleased]
 
-## [6.0.5] - Pending signed, separately versioned legacy-Main repair
+## [6.0.5] - 2026-10-16
 
 ### Fixed
 
@@ -16,7 +16,7 @@ This project follows semantic versioning for public releases.
 
 ### Changed
 
-- The classic installer leaves Stable selected. Only the user's subsequent Update & restart explicitly enrolls Main. Published 6.0.4 archives remain immutable; this is a separately signed fallback candidate, not a silent update.
+- The classic installer leaves Stable selected. Only the user's subsequent Update & restart explicitly enrolls Main. Published 6.0.4 archives remain immutable; this separately signed repair was published on 2026-10-16, not silently applied.
 
 
 ## [6.0.4] - 2026-10-11
