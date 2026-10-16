@@ -599,7 +599,8 @@ test("classic Stable installer disarms existing Main only before B restart and r
           if (args[0] === "print") throw Object.assign(new Error("not loaded"), { code: "ENOENT" });
           return { stdout: "", stderr: "" };
         },
-        activateImpl: async ({ targetVersion, kickstartImpl }) => {
+        activateImpl: async ({ targetVersion, kickstartImpl, healthAttempts }) => {
+          assert.equal(healthAttempts, 120);
           assert.equal(targetVersion, "4.2.0");
           assert.equal(typeof kickstartImpl, "function");
           await kickstartImpl("4.2.0");
@@ -709,7 +710,8 @@ test("Windows installed Main yields channel to signed Stable, retaining keys and
       readCurrentImpl: async () => ({ version: "5.2.0", releaseDir: oldRelease }),
       bootstrapImpl: async () => ({ configCreated: false }),
       launchWindowsShellImpl: async () => events.push("launch"),
-      activateImpl: async ({ kickstartImpl }) => {
+      activateImpl: async ({ kickstartImpl, healthAttempts }) => {
+        assert.equal(healthAttempts, 180);
         await kickstartImpl("5.2.1");
         assert.equal(await exists(stampPath), false);
         assert.equal(await fs.readFile(`${stampPath}.stable-install-backup`, "utf8"), stamp);

@@ -543,8 +543,9 @@ export async function installManagedEquinoxRelease({
     let activation;
     try {
       activation = await activateImpl({
-      installation: currentInstallation,
-      targetVersion: candidate.version,
+        installation: currentInstallation,
+        targetVersion: candidate.version,
+        healthAttempts: equinoxLocalFirstInstallHealthBudget({ platform, arch }).attempts,
       ...(currentMainStamp ? { kickstartImpl: async (version) => {
         if (version === candidate.version && !parkedMain) {
           await fsImpl.rename(mainPaths.installStampPath, savedMainStamp);
