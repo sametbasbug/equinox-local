@@ -5,6 +5,11 @@ name: Main Windows Installed Upgrade Acceptance
 on:
   workflow_dispatch:
     inputs:
+      diagnose_unreleased_harness:
+        description: Isolated PR230-branch QA only; target B remains separately admitted Main tag, no product publication
+        required: false
+        default: false
+        type: boolean
       stable_bridge_acceptance:
         description: Run hosted Stable-to-Main unsigned candidate bridge acceptance, not Main-to-Main
         required: false
@@ -94,9 +99,14 @@ jobs:
             'tests/release/smoke-main-upgrade-windows.mjs',
             'tests/release/smoke-main-upgrade-windows-fault.ps1'
           )
+          if ('${{ inputs.diagnose_unreleased_harness }}' -eq 'true') {
+            if ($env:GITHUB_REF -cne 'refs/heads/equinox/windows-native-integrated-ab-supervisor') { throw 'PR-only QA diagnostic forbidden outside exact development branch.' }
+            'QA DIAGNOSTIC ONLY: unadmitted branch is a disposable test harness, B is admitted public snapshot.' >> $env:GITHUB_STEP_SUMMARY
+          } else {
           $changed = @(& git diff --name-only $sha HEAD)
           foreach ($file in $changed) {
             if ($file -cnotin $allowed) { throw "Unadmitted production code or unrelated change after snapshot: $file" }
+          }
           }
           "target_sha=$sha" >> $env:GITHUB_OUTPUT
 
