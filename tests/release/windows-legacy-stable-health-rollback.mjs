@@ -2,6 +2,8 @@
 // and assert that the old Main, native WPF and Native Messaging are restored.
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { installManagedEquinoxRelease } from "../../src/equinox-local-first-install.js";
@@ -41,6 +43,43 @@ let lastBStatus = "no B status";
 let candidateNativePhases = [];
 let candidatePid = null;
 let candidateAlive = null;
+let candidateIdentity = "not-observed";
+const execFileAsync = promisify(execFile);
+const probeCandidate = async () => {
+  if (candidatePid === null) return "pid-not-available";
+  // The disposable runner reports only booleans/counts, never executable paths,
+  // process command lines, environment, or user-owned credentials.
+  const script = [
+    "$ErrorActionPreference = 'Stop'",
+    "$p = Get-CimInstance Win32_Process -Filter 'ProcessId = " + candidatePid + "'",
+    "if ($null -eq $p) { Write-Output gone; exit 0 }",
+    "$a = Get-Process -Id " + candidatePid + " -ErrorAction Stop",
+    "$pathMatches = [string]::Equals($p.ExecutablePath, $env:EQUINOX_WPF_EXPECTED_EXE, [StringComparison]::OrdinalIgnoreCase)",
+    "$parentMatches = ($p.ParentProcessId -eq " + process.pid + ")",
+    "$modulesLoaded = @($a.Modules | Where-Object { $_.ModuleName -eq 'PresentationFramework.dll' }).Count -gt 0",
+    "@{exists=$true; pathMatches=$pathMatches; parentMatches=$parentMatches; threads=[Math]::Min($a.Threads.Count,250); mainWindow=($a.MainWindowHandle -ne 0); wpfModule=$modulesLoaded} | ConvertTo-Json -Compress",
+  ].join("; ");
+  try {
+    const { stdout } = await execFileAsync("powershell.exe", [
+      "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script,
+    ], {
+      env: { ...process.env, EQUINOX_WPF_EXPECTED_EXE: shellPath },
+      timeout: 12_000, maxBuffer: 4096, windowsHide: true,
+    });
+    if (stdout.trim() === "gone") return JSON.stringify({ exists: false });
+    const info = JSON.parse(stdout.trim());
+    return JSON.stringify({
+      exists: info.exists === true,
+      pathMatches: info.pathMatches === true,
+      parentMatches: info.parentMatches === true,
+      threads: Number.isInteger(info.threads) ? info.threads : null,
+      mainWindow: info.mainWindow === true,
+      wpfModule: info.wpfModule === true,
+    });
+  } catch (error) {
+    return "OS-probe-" + (error?.code === "ETIMEDOUT" ? "timeout" : "unavailable");
+  }
+};
 const logFile = path.win32.join(installedRoot, "logs", "windows-shell-runtime.log");
 let candidateLogStart = 0;
 const inspectB = async () => {
@@ -91,6 +130,7 @@ await assert.rejects(installManagedEquinoxRelease({
             if (candidatePid !== null) {
               try { process.kill(candidatePid, 0); candidateAlive = true; }
               catch (check) { candidateAlive = check?.code === "EPERM"; }
+              candidateIdentity = await probeCandidate();
             }
           }
         }
@@ -114,7 +154,7 @@ await assert.rejects(installManagedEquinoxRelease({
     },
   }),
 }), /rolled back/u);
-assert.ok(observations > 0, "New native Stable must reach HEALTHY before forced rollback; " + JSON.stringify({ polls, firstBStatus, lastBStatus, lastStatus, nativeStarts, candidatePidObserved: candidatePid !== null, candidateAlive, candidateNativePhases }));
+assert.ok(observations > 0, "New native Stable must reach HEALTHY before forced rollback; " + JSON.stringify({ polls, firstBStatus, lastBStatus, lastStatus, nativeStarts, candidatePidObserved: candidatePid !== null, candidateAlive, candidateIdentity, candidateNativePhases }));
 assert.deepEqual(await fs.readFile(mainStamp), originalStamp);
 assert.deepEqual(JSON.parse(await fs.readFile(currentPath, "utf8")), previousCurrent);
 assert.deepEqual(await fs.readFile(manifestPath), originalManifest);
