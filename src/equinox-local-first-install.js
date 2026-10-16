@@ -30,6 +30,8 @@ import { equinoxLocalManagedSourcePaths } from "./equinox-local-managed-source-i
 import { validateManagedSourceInstallStamp } from "./equinox-local-main-update.js";
 import { readEquinoxLocalMainNativePointer } from "./equinox-local-main-native-state.js";
 import { readBoundedNormalFile } from "./equinox-local-safe-file.js";
+import { assertWindowsNativeMessagingHostOwnership, windowsNativeMessagingLauncherPath } from "./equinox-browser-windows-native-messaging.js";
+import { assertWindowsStableShellOwnedByRelease } from "./equinox-local-windows-stable-shell.js";
 import { requestWindowsShellRuntimeRestart, requestWindowsShellUpdateShutdown } from "./equinox-local-windows-shell-control.js";
 import { provisionWindowsGuardianFromRelease } from "./equinox-local-windows-guardian-provision.js";
 import { readEquinoxLocalCurrentVersionPointer, writeEquinoxLocalCurrentVersionPointer } from "./equinox-local-current-release.js";
@@ -320,6 +322,21 @@ async function reloadLaunchAgent(installation, {
   });
 }
 
+// Older Main enrollment retains the signed Stable WPF/Native Messaging at the
+// numbered release path and has no current-native.json until a native update.
+// Accept that exact installation only after proving both existing native owners.
+async function inspectLegacyWindowsMainHost(installation, { version, releaseDir, verifyShell = false, fsImpl = fs }) {
+  const original = path.win32.join(installation.releasesRoot, version);
+  await assertWindowsNativeMessagingHostOwnership({
+    manifestRoot: installation.nativeMessagingManifestRoot,
+    acceptedLauncherPaths: [windowsNativeMessagingLauncherPath(original)],
+    fsImpl,
+  });
+  if (verifyShell) {
+    await assertWindowsStableShellOwnedByRelease({ releaseDir, programRoot: installation.programRoot, fsImpl });
+  }
+}
+
 // The unchanged version pointer cannot distinguish Main A from signed Stable B.
 // Keep A and a small identity record outside the numbered release until B is
 // HEALTHY/managed. Presence of the parked stamp means rollback is still owed;
@@ -328,6 +345,7 @@ async function repairSameVersionMain({
   paths, mainPaths, installation, candidate = null, mainStamp = null,
   uid, platform, arch, target, fsImpl, execFileImpl, syncManagedShellImpl,
   stopWindowsShellImpl, launchWindowsShellImpl, waitForVersionImpl, windowsRenameSleepImpl,
+  inspectLegacyMainHostImpl,
 }) {
   const pathApi = platform === "win32" ? path.win32 : path.posix;
   const backupRoot = pathApi.join(paths.installRoot, ".stable-repair-backup");
@@ -365,9 +383,15 @@ async function repairSameVersionMain({
     if (pointer && (pointer.target !== target || pointer.payloadVersion !== version)) {
       throw new Error("Stable repair old Main native identity does not match the numbered release.");
     }
-    // Windows ownership/rollback must use the exact verified native-store,
-    // never infer the running WPF/Native Messaging payload from the version.
-    if (platform === "win32" && !pointer) throw new Error("Same-version Stable repair requires the verified old Main native-store.");
+    if (platform === "win32" && !pointer) {
+      // Only the first prepared swap requires the original WPF bytes. On
+      // interrupted recovery the shell may legitimately be A or B, while the
+      // HKCU manifest must still name this exact owned numbered launcher.
+      await inspectLegacyMainHostImpl(installation, {
+        version, releaseDir: pathApi.join(paths.releasesRoot, version),
+        verifyShell: Boolean(candidate && !record), fsImpl,
+      });
+    }
     return pointer;
   };
   const assertPointer = async (version) => {
@@ -501,14 +525,20 @@ async function repairSameVersionMain({
     // native host was never changed. On Windows the numbered A tree can
     // legitimately differ from the active Main native-store shell, so do not
     // treat that numbered tree as evidence of WPF or Native Messaging ownership.
-    if (activeRelease) {
+    if (native && activeRelease) {
       await syncManagedShellImpl(installation, { version: record.version,
-        releaseDir: native?.releaseDir ?? (backedUp ? oldRelease : targetRelease),
-        previousReleaseDir: targetRelease });
+        releaseDir: native.releaseDir, previousReleaseDir: targetRelease });
     }
     if (backedUp) {
-      if (await statOrNull(targetRelease)) await rename(targetRelease, failedRelease);
+      if (activeRelease) await rename(targetRelease, failedRelease);
       await rename(oldRelease, targetRelease);
+    }
+    if (!native && platform === "win32" && await statOrNull(failedRelease)) {
+      // A classic Main enrollment uses releases/<version> as its ONLY
+      // native-host launcher. Restore A at that same address *before* the
+      // native sync, so the manifest never points at a removed backup tree.
+      await syncManagedShellImpl(installation, { version: record.version,
+        releaseDir: targetRelease, previousReleaseDir: failedRelease });
     }
     if (await readStamp(savedStamp)) await fsImpl.rename(savedStamp, mainPaths.installStampPath);
     await restart();
@@ -566,6 +596,7 @@ export async function installManagedEquinoxRelease({
   stopWindowsShellImpl = requestWindowsShellUpdateShutdown,
   launchWindowsShellImpl = launchWindowsStableShell,
   windowsRenameSleepImpl = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+  inspectLegacyMainHostImpl = inspectLegacyWindowsMainHost,
 } = {}) {
   if (platform !== "darwin" && !(platform === "win32" && ["arm64", "x64"].includes(arch))) {
     throw new Error(`Equinox Local first install is not implemented for ${platform}-${arch}.`);
@@ -595,7 +626,8 @@ export async function installManagedEquinoxRelease({
   const baseInstallation = installationFor(paths, null, { platform, arch, target: expectedTarget });
   const mainPaths = equinoxLocalManagedSourcePaths({ platform, arch, homeDir, env });
   const repairOptions = { paths, mainPaths, installation: baseInstallation, uid, platform, arch, target: expectedTarget,
-    fsImpl, execFileImpl, syncManagedShellImpl, stopWindowsShellImpl, launchWindowsShellImpl, waitForVersionImpl, windowsRenameSleepImpl };
+    fsImpl, execFileImpl, syncManagedShellImpl, stopWindowsShellImpl, launchWindowsShellImpl, waitForVersionImpl,
+    windowsRenameSleepImpl, inspectLegacyMainHostImpl };
   // Recovery must precede even current-release resolution: the unchanged
   // pointer can temporarily name the missing directory between two renames.
   if (!allowExistingStableToMainMigration) {

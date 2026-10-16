@@ -20,7 +20,7 @@ const exists = async (name) => fs.lstat(name).then(() => true, (error) => {
   throw error;
 });
 
-async function fixture(t, platform = "darwin") {
+async function fixture(t, platform = "darwin", { withNativePointer = true } = {}) {
   const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "same-version-repair-")));
   t.after(() => fs.rm(root, { recursive: true, force: true }));
   const homeDir = path.join(root, "User Home");
@@ -66,13 +66,15 @@ async function fixture(t, platform = "darwin") {
     runtimeContractSha256: "d".repeat(64), artifactSha256: "e".repeat(64), artifactBytes: 123,
     payloadVersion: VERSION, releaseFingerprint,
   }), { mode: 0o600 });
-  await fs.writeFile(path.join(mainPaths.mainTransactionRoot, "current-native.json"), JSON.stringify({
-    schemaVersion: 1, channel: "main", sourceSha: SOURCE, target, runtimeContractSha256: "d".repeat(64),
-  }), { mode: 0o600 });
+  if (withNativePointer) {
+    await fs.writeFile(path.join(mainPaths.mainTransactionRoot, "current-native.json"), JSON.stringify({
+      schemaVersion: 1, channel: "main", sourceSha: SOURCE, target, runtimeContractSha256: "d".repeat(64),
+    }), { mode: 0o600 });
+  }
   // The old installed native host already exists before any repair moves.
   // A rename-gap recovery must leave this exact native-store launcher alone.
   await fs.writeFile(path.join(root, "shell"), "Main");
-  await fs.writeFile(path.join(root, "native-messaging"), nativeRelease);
+  await fs.writeFile(path.join(root, "native-messaging"), withNativePointer ? nativeRelease : targetRelease);
   const preserved = new Map();
   for (const name of ["config.json", "secrets/openai-runtime-key", "tunnel/profile.json", "browser/profile/Preferences", "workspace/user.txt", "main-update/current-source.conf"]) {
     const file = path.join(paths.installRoot, name);
@@ -84,7 +86,7 @@ async function fixture(t, platform = "darwin") {
   const stableFingerprint = await fingerprintEquinoxLocalNativeState(stagedReleaseDir);
   const oldFingerprint = await fingerprintEquinoxLocalNativeState(targetRelease);
   return { root, homeDir, platform, arch, target, env, paths, mainPaths, stagedReleaseDir, targetRelease,
-    backupRoot, nativeRelease, stamp, preserved, stableFingerprint, oldFingerprint };
+    backupRoot, nativeRelease, stamp, preserved, stableFingerprint, oldFingerprint, withNativePointer };
 }
 
 function options(f, overrides = {}) {
@@ -97,11 +99,27 @@ function options(f, overrides = {}) {
     execFileImpl: async () => ({ stdout: "", stderr: "" }),
     stopWindowsShellImpl: async () => {},
     launchWindowsShellImpl: async () => {},
+    inspectLegacyMainHostImpl: async (_installation, { version, verifyShell }) => {
+      assert.equal(version, VERSION);
+      assert.equal(f.withNativePointer, false);
+      assert.equal(await fs.readFile(path.join(f.root, "native-messaging"), "utf8"), f.targetRelease);
+      if (verifyShell) assert.equal(await fs.readFile(path.join(f.root, "shell"), "utf8"), "Main");
+    },
     syncManagedShellImpl: async (_installation, release) => {
-      const stable = release.releaseDir === f.targetRelease;
-      assert.equal(stable ? release.previousReleaseDir : release.releaseDir, f.nativeRelease);
+      let stable;
+      if (f.withNativePointer) {
+        stable = release.releaseDir === f.targetRelease;
+        assert.equal(stable ? release.previousReleaseDir : release.releaseDir, f.nativeRelease);
+      } else {
+        assert.equal(release.releaseDir, f.targetRelease);
+        const old = path.join(f.backupRoot, "release");
+        const failed = path.join(f.backupRoot, "failed-release");
+        assert.ok([old, failed].includes(release.previousReleaseDir));
+        stable = release.previousReleaseDir === old;
+      }
       await fs.writeFile(path.join(f.root, "shell"), stable ? "Stable" : "Main");
-      await fs.writeFile(path.join(f.root, "native-messaging"), release.releaseDir);
+      await fs.writeFile(path.join(f.root, "native-messaging"),
+        f.withNativePointer ? release.releaseDir : f.targetRelease);
     },
     waitForVersionImpl: async (version, budget) => {
       assert.equal(version, VERSION);
@@ -156,6 +174,48 @@ for (const platform of ["darwin", "win32"]) {
     assert.equal(await fs.readFile(f.mainPaths.installStampPath, "utf8"), f.stamp);
     assert.equal(await fs.readFile(path.join(f.root, "native-messaging"), "utf8"), f.nativeRelease);
     assert.equal(await exists(f.backupRoot), false);
+    await assertPreserved(f);
+  });
+}
+
+for (const mode of ["success", "forced-failed-Stable", "foreign-manifest", "foreign-shell"]) {
+  test(`win32 legacy Main without native pointer: ${mode}`, { skip: process.platform !== "win32" }, async (t) => {
+    const f = await fixture(t, "win32", { withNativePointer: false });
+    const original = options(f);
+    assert.equal(await exists(path.join(f.mainPaths.mainTransactionRoot, "current-native.json")), false);
+    if (mode === "foreign-manifest") {
+      await fs.writeFile(path.join(f.root, "native-messaging"), "C:\\foreign\\host.exe");
+    }
+    if (mode === "foreign-shell") {
+      await fs.writeFile(path.join(f.root, "shell"), "foreign-shell");
+    }
+    if (mode.startsWith("foreign")) {
+      await assert.rejects(installManagedEquinoxRelease(original), /Main|target|foreign/u);
+      assert.equal(await exists(f.backupRoot), false);
+      assert.equal(await fs.readFile(f.mainPaths.installStampPath, "utf8"), f.stamp);
+      await assertPreserved(f);
+      return;
+    }
+    const healthKinds = [];
+    const result = installManagedEquinoxRelease({
+      ...original,
+      waitForVersionImpl: async (version, budget) => {
+        await original.waitForVersionImpl(version, budget);
+        healthKinds.push(budget.expectedInstallationKind);
+        if (mode === "forced-failed-Stable" && budget.expectedInstallationKind === "managed") {
+          throw new Error("injected Stable failure");
+        }
+      },
+    });
+    if (mode === "forced-failed-Stable") await assert.rejects(result, /rolled back to Main/u);
+    else assert.equal((await result).status, "activated");
+    assert.deepEqual(healthKinds, mode === "success" ? ["managed"] : ["managed", "managed-source"]);
+    assert.equal(await fs.readFile(path.join(f.root, "native-messaging"), "utf8"), f.targetRelease);
+    assert.equal(await fs.readFile(path.join(f.root, "shell"), "utf8"), mode === "success" ? "Stable" : "Main");
+    assert.deepEqual(await fingerprintEquinoxLocalNativeState(f.targetRelease),
+      mode === "success" ? f.stableFingerprint : f.oldFingerprint);
+    assert.equal(await exists(f.backupRoot), false);
+    assert.equal(await exists(f.mainPaths.installStampPath), mode !== "success");
     await assertPreserved(f);
   });
 }

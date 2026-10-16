@@ -870,14 +870,18 @@ try {
   if ($env:EQUINOX_WINDOWS_SAME_VERSION_REPAIR -ceq 'true') {
     if ($env:GITHUB_ACTIONS -cne 'true' -or $SkipLegacyGuardianFixture) { throw 'Same-version native repair acceptance requires a disposable current-product Windows runner.' }
     $oldPointer = Join-Path $InstallRoot 'state\main-update\current-native.json'
-    Assert-True ([IO.File]::Exists($oldPointer)) 'Installed Main has no native-store pointer before repair.'
+    Assert-True (-not [IO.File]::Exists($oldPointer)) 'Fresh source-only Main enrollment unexpectedly created a native-store pointer.'
     $beforeManifest = [IO.File]::ReadAllText($ExpectedManifestPath) | ConvertFrom-Json
-    Assert-True (([string]$beforeManifest.path -match 'native-store')) 'Installed Main Native Messaging does not point at the actual native-store.'
-    $userFiles = @((Join-Path $InstallRoot 'state\config.json'), (Join-Path $InstallRoot 'secrets\openai-runtime-key'))
-    $proof = Join-Path $InstallRoot 'workspace\ci-same-version-repair-proof.txt'
-    [IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($proof)) | Out-Null
-    [IO.File]::WriteAllText($proof, 'preserve-existing-user-state')
-    $userFiles += $proof
+    Assert-True (Same-Path ([string]$beforeManifest.path) $ExpectedLauncher) 'Initially enrolled Main is not using its numbered native launcher.'
+    $config = Join-Path $InstallRoot 'state\config.json'
+    Assert-True ([IO.File]::Exists($config)) 'Installed Main user settings are missing before repair.'
+    $userFiles = @($config)
+    foreach ($entry in @('secrets\openai-runtime-key', 'workspace\ci-same-version-repair-proof.txt', 'browser\ci-same-version-browser-proof.txt', 'tunnel\ci-same-version-tunnel-proof.txt')) {
+      $proof = Join-Path $InstallRoot $entry
+      [IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($proof)) | Out-Null
+      if (-not [IO.File]::Exists($proof)) { [IO.File]::WriteAllText($proof, 'fixture-user-state-preserve') }
+      $userFiles += $proof
+    }
     $beforeHashes = @{}
     foreach ($file in $userFiles) {
       Assert-True ([IO.File]::Exists($file)) "Same-version repair user proof is missing: $file"
