@@ -377,6 +377,22 @@ async function verifyWindowsIndependentProcessCommands(root) {
     assert.match(cmdLogs.output, /DIRECT_CMD_OK/u);
     await manager.stop({ processId: nativeCmd.processId, force: true, remove: true });
 
+    // Windows workflow commands often resolve to npm.cmd / batch wrappers;
+    // native ProcessStartInfo cannot directly launch a .cmd file.
+    const batchPath = path.join(root, "native command with spaces.cmd");
+    await fs.writeFile(batchPath, "@echo off\r\necho DIRECT_BATCH_OK\r\nexit /b 37\r\n");
+    const batch = await manager.start({
+      projectId: "windows-smoke", projectName: "Windows Smoke", cwd: root,
+      command: batchPath, args: [], purpose: "background",
+      env: process.env, label: "independent-direct-batch",
+    });
+    const batchEnd = await manager.waitForExit({ processId: batch.processId, waitMs: 10_000 });
+    const batchLogs = await manager.readLogs({ processId: batch.processId, cursor: 0 });
+    assert.equal(batchEnd.running, false, "native batch command did not finish");
+    assert.equal(batchEnd.exitCode, 37, `batch wrapper exit status must be 37: ${batchLogs.output}`);
+    assert.match(batchLogs.output, /DIRECT_BATCH_OK/u);
+    await manager.stop({ processId: batch.processId, force: true, remove: true });
+
     // The background tool also manages indefinite processes. Ensure process_stop
     // drains the entire owned Windows Job Object without killing the caller.
     const live = await manager.start({
@@ -395,7 +411,7 @@ async function verifyWindowsIndependentProcessCommands(root) {
     const stopped = await manager.stop({ processId: live.processId, timeoutMs: 3_000, remove: true });
     assert.equal(stopped.running, false, "background process_stop failed to drain owned Job Object");
     await waitFor(() => !pidExists(live.pid), "direct background process still running after process_stop", 4_000);
-    return Object.freeze({ directExit0: true, directExit31: true, directCmd29: true, separateLogs: true, cursor: true, stopDrained: true });
+    return Object.freeze({ directExit0: true, directExit31: true, directCmd29: true, directBatch37: true, separateLogs: true, cursor: true, stopDrained: true });
   } finally {
     await manager.shutdown();
   }

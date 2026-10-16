@@ -18,6 +18,20 @@ try {
     $command = [string]$spec.command
     $arguments = @($spec.args | ForEach-Object { [string]$_ })
     if ([string]::IsNullOrWhiteSpace($command)) { throw 'Owned process command is empty.' }
+    # Legacy .cmd/.bat entrypoints (including npm.cmd) are interpreted by
+    # PowerShell's native command dispatcher. ProcessStartInfo with
+    # UseShellExecute=false cannot launch a batch file directly.
+    $resolvedCommand = Get-Command -Name $command -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($null -ne $resolvedCommand -and -not [string]::IsNullOrWhiteSpace($resolvedCommand.Source)) {
+        $command = [string]$resolvedCommand.Source
+    }
+    $extension = [IO.Path]::GetExtension($command).ToLowerInvariant()
+    if ($extension -eq '.cmd' -or $extension -eq '.bat') {
+        & $command @arguments
+        if ($null -eq $LASTEXITCODE) { exit 0 }
+        exit [int]$LASTEXITCODE
+    }
+
     # Windows PowerShell 5.1's native '& command @args' can discard embedded
     # double quotes from arguments (e.g. node -e JavaScript source). Launch
     # the exact argv through ProcessStartInfo instead of native PS quoting.
