@@ -32,7 +32,7 @@ import { readEquinoxLocalMainNativePointer } from "./equinox-local-main-native-s
 import { readBoundedNormalFile } from "./equinox-local-safe-file.js";
 import { assertWindowsNativeMessagingHostOwnership, windowsNativeMessagingLauncherPath } from "./equinox-browser-windows-native-messaging.js";
 import { assertWindowsStableShellOwnedByRelease } from "./equinox-local-windows-stable-shell.js";
-import { requestWindowsShellRuntimeRestart, requestWindowsShellUpdateShutdown } from "./equinox-local-windows-shell-control.js";
+import { requestWindowsShellRuntimeRestart, requestWindowsShellUpdateShutdown, waitForWindowsShellPipeRelease } from "./equinox-local-windows-shell-control.js";
 import { provisionWindowsGuardianFromRelease } from "./equinox-local-windows-guardian-provision.js";
 import { readEquinoxLocalCurrentVersionPointer, writeEquinoxLocalCurrentVersionPointer } from "./equinox-local-current-release.js";
 import { fingerprintEquinoxLocalNativeState } from "./equinox-local-native-state-fingerprint.js";
@@ -854,6 +854,10 @@ export async function installManagedEquinoxRelease({
         if (platform === "darwin") {
           await kickstartEquinoxLocalLaunchAgent(currentInstallation, { uid, execFileImpl });
         } else {
+          // Old shipped WPF acknowledges the update shutdown request before
+          // releasing its single-instance coordinator. Await actual pipe
+          // release; otherwise a new WPF can exit as a duplicate.
+          await waitForWindowsShellPipeRelease({ platform });
           await launchWindowsShellImpl(path.win32.join(paths.programRoot, "EquinoxLocal.exe"));
         }
       } } : {}),

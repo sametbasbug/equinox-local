@@ -4,12 +4,14 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { EventEmitter } from "node:events";
 
 import {
   renameWindowsPathWhenUnlocked,
   replaceWindowsStableShellForRelease,
   snapshotWindowsStableShellTree,
 } from "../../src/equinox-local-windows-stable-shell.js";
+import { waitForWindowsShellPipeRelease } from "../../src/equinox-local-windows-shell-control.js";
 
 async function shellFixture() {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "equinox-stable-shell-"));
@@ -269,4 +271,37 @@ test("clean Windows release replacement preserves user settings, credentials and
     assert.equal(await fs.readFile(path.join(fixture.root, name), "utf8"), contents);
   }
   assert.equal(await fs.readFile(path.join(fixture.programRoot, "EquinoxLocal.exe"), "utf8"), "new-exe\n");
+});
+
+test("old WPF shutdown wait observes two pipe closures before allowing new launch", async () => {
+  const occupied = [true, true, false, false];
+  let sleeps = 0;
+  await waitForWindowsShellPipeRelease({
+    platform: "win32",
+    connectImpl: () => {
+      const socket = new EventEmitter();
+      socket.destroy = () => {};
+      queueMicrotask(() => occupied.shift()
+        ? socket.emit("connect")
+        : socket.emit("error", new Error("old WPF exited")));
+      return socket;
+    },
+    sleepImpl: async () => { sleeps++; },
+    attempts: 5,
+  });
+  assert.equal(occupied.length, 0);
+  assert.equal(sleeps, 3);
+});
+
+test("old WPF shutdown wait fails closed if its single-instance pipe stays bound", async () => {
+  await assert.rejects(waitForWindowsShellPipeRelease({
+    platform: "win32", attempts: 3,
+    connectImpl: () => {
+      const socket = new EventEmitter();
+      socket.destroy = () => {};
+      queueMicrotask(() => socket.emit("connect"));
+      return socket;
+    },
+    sleepImpl: async () => {},
+  }), /did not release its single-instance pipe/u);
 });
