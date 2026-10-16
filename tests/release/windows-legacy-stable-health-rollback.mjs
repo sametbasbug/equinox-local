@@ -39,20 +39,39 @@ let nativeStarts = 0;
 let firstBStatus = null;
 let lastBStatus = "no B status";
 let candidateNativePhases = [];
+const logFile = path.win32.join(installedRoot, "logs", "windows-shell-runtime.log");
+let candidateLogStart = 0;
 const inspectB = async () => {
-  const logFile = path.win32.join(installedRoot, "logs", "windows-shell-runtime.log");
   const log = await fs.readFile(logFile, "utf8").catch(() => "");
-  return log.split("\n").slice(-110)
-    .filter(line => line.includes("runtime-start") || line.includes("runtime-discovery") || line.includes("runtime-gate-exit"))
-    .map(line => { const a = line.trim().split(" "); return [a[1] || "unknown", (a[2] || "").slice(0, 55)].join(":"); })
-    .slice(-28);
+  const candidate = log.slice(candidateLogStart);
+  return candidate.split("\n").slice(-85).flatMap((line) => {
+    const match = /^\S+ (runtime-discovery|runtime-start-phase|runtime-start|runtime-gate-exit|tunnel-transport|windows-shell-registration) ([^\r\n]*)$/u.exec(line);
+    if (!match) return [];
+    const details = match[2];
+    if (match[1] === "runtime-discovery") {
+      return [match[1] + ":" + (details.includes("supervisor=True") ? "supervisor-present" : "supervisor-missing")];
+    }
+    if (match[1] === "runtime-start-phase" && /^[a-z-]+$/u.test(details)) return [match[1] + ":" + details];
+    if (match[1] === "runtime-gate-exit") return [match[1] + ":" + (/exit=(-?\d+)/u.exec(details)?.[1] ?? "unknown")];
+    if (match[1] === "tunnel-transport" && /^[a-z-]+$/u.test(details)) return [match[1] + ":" + details];
+    if (match[1] === "runtime-start" || match[1] === "windows-shell-registration") {
+      return [match[1] + ":" + (/^([a-zA-Z]+Exception)/u.exec(details)?.[1] ?? "error")];
+    }
+    return [];
+  }).slice(-45);
 };
 let lastStatus = "no status";
 await assert.rejects(installManagedEquinoxRelease({
   stagedReleaseDir, platform: "win32", arch: process.arch,
   activateImpl: (options) => activatePreparedEquinoxRelease({
     ...options, healthAttempts: 30,
-    kickstartImpl: async (...args) => { nativeStarts++; return options.kickstartImpl(...args); },
+    kickstartImpl: async (...args) => {
+      nativeStarts++;
+      if (nativeStarts === 1) {
+        candidateLogStart = (await fs.readFile(logFile, "utf8").catch(() => "")).length;
+      }
+      return options.kickstartImpl(...args);
+    },
     fetchImpl: async (...args) => {
       polls++;
       let response;
