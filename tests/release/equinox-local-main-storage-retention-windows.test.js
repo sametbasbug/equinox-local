@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { pruneVerifiedMainLargeStorage } from "../../src/equinox-local-main-storage-retention.js";
+import { pruneVerifiedMainLargeStorage, pruneDisenrolledWindowsMainLargeStorage } from "../../src/equinox-local-main-storage-retention.js";
 import { equinoxLocalToolchainContract } from "../../src/equinox-local-toolchain-contract.js";
 
 const windowsTest = process.platform === "win32" ? test : test.skip;
@@ -77,4 +77,77 @@ windowsTest("real Windows x64/ARM64 filesystem: verified Main B reclaims all A p
   assert.equal((await fs.readdir(api.join(tx, "receipts"))).length, 1);
   assert.equal((await fs.stat(contract.git.root)).isDirectory(), true);
   assert.equal((await fs.stat(contract.node.root)).isDirectory(), true);
+});
+
+windowsTest("disenrolled signed Stable 6.1.1 safely retires ALL abandoned Main payloads only from healthy B", async (t) => {
+  const target = `win32-${process.arch}`;
+  const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "equinox-win-stable-retire-")));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const api = path.win32;
+  const tx = api.join(root, "state", "main-update");
+  const releaseDir = api.join(root, "releases", "6.1.1");
+  const executable = api.join(releaseDir, "runtime", "node", "bin", "node.exe");
+  const contract = equinoxLocalToolchainContract({ runtimeRoot: api.join(root, "runtime"), target });
+  const privateState = api.join(root, "state", "user-secrets", "key.json");
+  const receipt = api.join(tx, "receipts", "historical.json");
+  const fixtureDirs = [
+    api.dirname(executable),
+    api.join(releaseDir, "runtime", "tunnel"),
+    api.join(releaseDir, "runtime", "winapp"),
+    api.join(tx, "sources", A), api.join(tx, "sources", B),
+    api.join(tx, "native-store", target, A), api.join(tx, "native-store", target, B),
+    api.join(tx, "staging", "main-" + "5".repeat(32)),
+    api.dirname(receipt), api.dirname(privateState),
+    api.join(contract.toolchainRoot, "git", contract.git.version),
+    api.join(contract.toolchainRoot, "node", contract.node.version),
+  ];
+  for (const item of fixtureDirs) await fs.mkdir(item, { recursive: true });
+  const documents = [
+    executable, api.join(releaseDir, "runtime", "tunnel", "tunnel-client.exe"),
+    api.join(releaseDir, "runtime", "tunnel", "cloudflared.exe"),
+    ...["winapp.exe", "libHarfBuzzSharp.dll", "libSkiaSharp.dll"].map((x) =>
+      api.join(releaseDir, "runtime", "winapp", x)),
+  ];
+  for (const item of documents) await fs.writeFile(item, "PRODUCT");
+  await fs.writeFile(api.join(releaseDir, "release.json"), JSON.stringify({
+    schemaVersion: 1, version: "6.1.1", target,
+    nodeVersion: "26.12.0", tunnelClientVersion: "0.0.16", serverEntry: "server.js",
+  }));
+  await fs.writeFile(privateState, '{"secret":"keep"}');
+  await fs.writeFile(receipt, '{"audit":"keep"}');
+  const pointer = api.join(root, "current-version.json");
+  await fs.writeFile(pointer, JSON.stringify({ schemaVersion: 1, version: "6.1.1", target }));
+  const installation = {
+    kind: "managed", managed: true, selfUpdateSupported: true,
+    platform: "win32", arch: process.arch, target, installRoot: root,
+    releasesRoot: api.join(root, "releases"), releaseDir, currentPointer: pointer,
+    programRoot: api.join(root, "Programs", "Equinox Local"),
+    nativeMessagingManifestRoot: api.join(root, "browser", "native-messaging"),
+  };
+  const expectedLauncher = api.join(releaseDir, "runtime", "browser", "equinox-browser-native-host.exe");
+  const base = {
+    installation, runtimeVersion: "6.1.1", processExecutable: executable,
+    verifyShell: async () => ({
+      owned: true, shellExecutable: api.join(installation.programRoot, "EquinoxLocal.exe"),
+    }),
+    verifyNativeHost: async () => ({ launcherPath: expectedLauncher }),
+  };
+  const active = api.join(tx, "active.json");
+  await fs.writeFile(active, "{}");
+  await assert.rejects(pruneDisenrolledWindowsMainLargeStorage(base), /Main install or repair remains active/u);
+  await fs.rm(active);
+  await assert.rejects(pruneDisenrolledWindowsMainLargeStorage({
+    ...base, processExecutable: api.join(tx, "native-store", target, A, "release", "node.exe"),
+  }), /older Main worker/u);
+  const result = await pruneDisenrolledWindowsMainLargeStorage(base);
+  assert.deepEqual(result.sources.sort(), [A, B]);
+  assert.deepEqual(result.native.sort(), [A, B]);
+  assert.deepEqual(result.staging, ["main-" + "5".repeat(32)]);
+  assert.deepEqual(result.toolchains.sort(), [contract.git.version, contract.node.version].sort());
+  assert.deepEqual(result.pending, []);
+  assert.deepEqual(await fs.readdir(api.join(tx, "sources")), []);
+  assert.deepEqual(await fs.readdir(api.join(tx, "native-store", target)), []);
+  assert.equal(await fs.readFile(privateState, "utf8"), '{"secret":"keep"}');
+  assert.equal(await fs.readFile(receipt, "utf8"), '{"audit":"keep"}');
+  assert.equal(await fs.readFile(executable, "utf8"), "PRODUCT");
 });

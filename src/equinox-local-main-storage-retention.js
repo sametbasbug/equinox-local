@@ -4,6 +4,9 @@ import path from "node:path";
 import { readEquinoxLocalMainSourcePointer } from "./equinox-local-main-source-pointer.js";
 import { readEquinoxLocalMainNativePointer } from "./equinox-local-main-native-state.js";
 import { equinoxLocalToolchainContract } from "./equinox-local-toolchain-contract.js";
+import { readManagedCurrentRelease } from "./equinox-local-update-activation.js";
+import { assertWindowsStableShellOwnedByRelease } from "./equinox-local-windows-stable-shell.js";
+import { assertWindowsNativeMessagingHostOwnership } from "./equinox-browser-windows-native-messaging.js";
 
 const SHA = /^[a-f0-9]{40}$/u;
 const VERSION = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/u;
@@ -133,4 +136,101 @@ export async function pruneVerifiedMainLargeStorage({
     }
   }
   return Object.freeze(clean);
+}
+
+// A classic signed reinstall may replace Main entirely after exact B health.
+// At that point old Main source/native payloads and pinned toolchains are no
+// longer required; reclaim them from the running Stable B process, never from
+// the A handoff worker. Keep small receipts and all private user state intact.
+export async function pruneDisenrolledWindowsMainLargeStorage({
+  installation,
+  runtimeVersion,
+  processExecutable = process.execPath,
+  fsImpl = fs,
+  readStable = readManagedCurrentRelease,
+  verifyShell = assertWindowsStableShellOwnedByRelease,
+  verifyNativeHost = assertWindowsNativeMessagingHostOwnership,
+} = {}) {
+  if (installation?.kind !== "managed" || installation.managed !== true ||
+      installation.platform !== "win32" || installation.selfUpdateSupported !== true) {
+    throw new Error("Only a running managed Windows Stable runtime can retire old Main payloads.");
+  }
+  const api = path.win32;
+  const install = api.resolve(installation.installRoot ?? "");
+  const releases = api.join(install, "releases");
+  const tx = api.join(install, "state", "main-update");
+  if (!api.isAbsolute(installation.installRoot ?? "") ||
+      !normal(api, installation.releasesRoot, releases, "win32") ||
+      !normal(api, installation.releaseDir, api.join(releases, runtimeVersion), "win32") ||
+      !VERSION.test(runtimeVersion ?? "") ||
+      installation.target !== `win32-${installation.arch}`) {
+    throw new Error("Stable Main-retirement location does not belong to the installed product.");
+  }
+  const expectedNode = api.join(installation.releaseDir, "runtime", "node", "bin", "node.exe");
+  if (!normal(api, processExecutable, expectedNode, "win32")) {
+    throw new Error("An older Main worker is still executing; refusing to reclaim native payloads.");
+  }
+  if (!await safeDirectory(tx, { fsImpl, platform: "win32", optional: true })) {
+    return Object.freeze({ sources: [], native: [], staging: [], toolchains: [], pending: [] });
+  }
+  const markerNames = [
+    "install.json", "install.json.stable-install-backup", "active.json", "classic-repair.json",
+  ];
+  const ensureStable = async () => {
+    for (const marker of markerNames) {
+      try { await fsImpl.lstat(api.join(tx, marker)); }
+      catch (error) { if (error?.code === "ENOENT") continue; throw error; }
+      throw new Error("Main install or repair remains active; native retirement is not safe.");
+    }
+    try { await fsImpl.lstat(api.join(install, ".stable-repair-backup")); }
+    catch (error) { if (error?.code !== "ENOENT") throw error; }
+    // An explicit source of truth on every delete prevents pruning after a
+    // concurrent updater switches the current stable release.
+    const current = await readStable(installation);
+    if (current.version !== runtimeVersion || !normal(api, current.releaseDir, installation.releaseDir, "win32")) {
+      throw new Error("Stable release identity drifted during Main retirement.");
+    }
+    return current;
+  };
+  await ensureStable();
+  const shell = await verifyShell({ releaseDir: installation.releaseDir, programRoot: installation.programRoot });
+  if (shell?.owned !== true ||
+      !normal(api, shell.shellExecutable, api.join(installation.programRoot, "EquinoxLocal.exe"), "win32")) {
+    throw new Error("Active Stable WPF ownership is unverified.");
+  }
+  const expectedLauncher = api.join(installation.releaseDir, "runtime", "browser", "equinox-browser-native-host.exe");
+  const host = await verifyNativeHost({
+    manifestRoot: installation.nativeMessagingManifestRoot, acceptedLauncherPaths: [expectedLauncher],
+  });
+  if (!normal(api, host?.launcherPath, expectedLauncher, "win32")) {
+    throw new Error("Active Stable Native Messaging ownership is unverified.");
+  }
+  const result = { sources: [], native: [], staging: [], toolchains: [], pending: [] };
+  async function prune(root, bucket, accepts) {
+    if (!await safeDirectory(root, { fsImpl, platform: "win32", optional: true })) return;
+    for (const entry of await fsImpl.readdir(root, { withFileTypes: true })) {
+      if (!accepts(entry.name) || !entry.isDirectory() || entry.isSymbolicLink()) continue;
+      await ensureStable();
+      const candidate = api.join(root, entry.name);
+      if (!await safeDirectory(candidate, { fsImpl, platform: "win32" })) continue;
+      try {
+        await fsImpl.rm(candidate, { recursive: true, force: false });
+        result[bucket].push(entry.name);
+      } catch (error) {
+        if (!RETRYABLE.has(error?.code)) throw error;
+        result.pending.push(`${bucket}/${entry.name}`);
+      }
+    }
+  }
+  await prune(api.join(tx, "sources"), "sources", (name) => SHA.test(name));
+  await prune(api.join(tx, "native-store", installation.target), "native", (name) => SHA.test(name));
+  await prune(api.join(tx, "staging"), "staging", (name) => TX.test(name));
+  const contract = equinoxLocalToolchainContract({
+    runtimeRoot: api.join(install, "runtime"), target: installation.target,
+  });
+  for (const component of [contract.git, contract.node]) {
+    await prune(api.join(contract.toolchainRoot, component.component), "toolchains",
+      (name) => /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?$/u.test(name));
+  }
+  return Object.freeze(result);
 }

@@ -10,7 +10,7 @@ import { promisify } from "node:util";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { pathToFileURL } from "node:url";
 import { maybeScheduleMacStableMainBridge } from "./equinox-local-mac-main-bridge.js";
-import { pruneVerifiedMainLargeStorage } from "./equinox-local-main-storage-retention.js";
+import { pruneVerifiedMainLargeStorage, pruneDisenrolledWindowsMainLargeStorage } from "./equinox-local-main-storage-retention.js";
 import { createMcpToolReplayGuard } from "./mcp-tool-replay-guard.js";
 import { createEquinoxLocalToolRegistrar } from "./equinox-local-tool-registration.js";
 import { createEquinoxLocalWorkspaceRuntime } from "./equinox-local-workspace-runtime.js";
@@ -3408,7 +3408,7 @@ async function start({ transport = new StdioServerTransport() } = {}) {
   // active marker. Do not let the old A worker, first-install Stable or a
   // failed/rolling-back transaction erase recovery state. A Windows file lock
   // is retried later instead of aborting the healthy installation.
-  if (platform === "win32" && equinoxLocalInstallation.kind === "managed-source") {
+  if (platform === "win32" && ["managed-source", "managed"].includes(equinoxLocalInstallation.kind)) {
     let attempts = 0;
     const tryCleanup = async () => {
       attempts += 1;
@@ -3416,10 +3416,15 @@ async function start({ transport = new StdioServerTransport() } = {}) {
       try {
         const doctor = await getControlCenterDoctorStatus();
         if (doctor.state === "HEALTHY" && doctor.summary.attention === 0) {
-          const result = await pruneVerifiedMainLargeStorage({
-            installation: equinoxLocalInstallation, platform,
-            processExecutable: process.execPath, runtimeVersion: SERVER_VERSION,
-          });
+          const result = equinoxLocalInstallation.kind === "managed-source"
+            ? await pruneVerifiedMainLargeStorage({
+                installation: equinoxLocalInstallation, platform,
+                processExecutable: process.execPath, runtimeVersion: SERVER_VERSION,
+              })
+            : await pruneDisenrolledWindowsMainLargeStorage({
+                installation: equinoxLocalInstallation,
+                processExecutable: process.execPath, runtimeVersion: SERVER_VERSION,
+              });
           complete = result.pending.length === 0;
         }
       } catch (error) {
