@@ -36,6 +36,8 @@ const originalShell = await shellHash();
 let observations = 0;
 let polls = 0;
 let nativeStarts = 0;
+let firstBStatus = null;
+let lastBStatus = "no B status";
 let lastStatus = "no status";
 await assert.rejects(installManagedEquinoxRelease({
   stagedReleaseDir, platform: "win32", arch: process.arch,
@@ -44,11 +46,20 @@ await assert.rejects(installManagedEquinoxRelease({
     kickstartImpl: async (...args) => { nativeStarts++; return options.kickstartImpl(...args); },
     fetchImpl: async (...args) => {
       polls++;
-      const response = await fetch(...args);
+      let response;
+      try { response = await fetch(...args); }
+      catch (error) {
+        if (nativeStarts === 1) lastBStatus = "fetch-error:" + String(error?.cause?.code ?? error?.name ?? "unknown");
+        throw error;
+      }
       if (!response.ok) lastStatus = "HTTP " + response.status;
       if (!response.ok) return response;
       const body = await response.clone().json().catch(() => null);
       lastStatus = JSON.stringify({ version: body?.status?.server?.version, kind: body?.status?.installation?.kind, health: body?.status?.health?.state });
+      if (nativeStarts === 1) {
+        if (firstBStatus === null) firstBStatus = lastStatus;
+        lastBStatus = lastStatus;
+      }
       if (body?.status?.server?.version !== versionB ||
           body?.status?.installation?.kind !== "managed" ||
           body?.status?.health?.state !== "HEALTHY") return response;
@@ -59,7 +70,7 @@ await assert.rejects(installManagedEquinoxRelease({
     },
   }),
 }), /rolled back/u);
-assert.ok(observations > 0, "New native Stable must reach HEALTHY before forced rollback; " + JSON.stringify({ polls, lastStatus, nativeStarts }));
+assert.ok(observations > 0, "New native Stable must reach HEALTHY before forced rollback; " + JSON.stringify({ polls, firstBStatus, lastBStatus, lastStatus, nativeStarts }));
 assert.deepEqual(await fs.readFile(mainStamp), originalStamp);
 assert.deepEqual(JSON.parse(await fs.readFile(currentPath, "utf8")), previousCurrent);
 assert.deepEqual(await fs.readFile(manifestPath), originalManifest);
