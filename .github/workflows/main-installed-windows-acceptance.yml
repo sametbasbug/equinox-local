@@ -5,6 +5,11 @@ name: Main Windows Installed Upgrade Acceptance
 on:
   workflow_dispatch:
     inputs:
+      legacy_reinstall_acceptance:
+        description: Host-only pinned 5.2.1 Main to new unsigned Stable reinstall/rollback acceptance
+        required: false
+        default: false
+        type: boolean
       diagnose_unreleased_harness:
         description: Isolated PR230-branch QA only; target B remains separately admitted Main tag, no product publication
         required: false
@@ -83,6 +88,12 @@ jobs:
           $ErrorActionPreference = 'Stop'
           if ($env:GITHUB_REPOSITORY -cne $env:EXPECTED_REPOSITORY -or (node -p 'process.platform + "-" + process.arch') -cne $env:TARGET) { throw 'Host platform or expected repository drift.' }
           if ($env:OLD_SHA -cnotmatch '^[a-f0-9]{40}$') { throw 'Invalid A SHA.' }
+          if ('${{ inputs.legacy_reinstall_acceptance }}' -eq 'true' -and
+              ('${{ inputs.diagnose_unreleased_harness }}' -ne 'true' -or
+               $env:GITHUB_REF -cne 'refs/heads/equinox/windows-native-integrated-ab-supervisor' -or
+               $env:OLD_SHA -cne '8dbe965d28e76026123ce8de34d8f1aa27c10465')) {
+            throw 'Historical native repair requires pinned A on disposable PR230 runner.'
+          }
           if (Test-Path 'Registry::HKEY_CURRENT_USER\Software\Google\Chrome\NativeMessagingHosts\dev.equinox.browser') { throw 'Runner has pre-existing Equinox Local Native Messaging ownership.' }
           $line = (& git ls-remote origin refs/tags/main-snapshot | Select-Object -First 1)
           $sha = ([string]$line -split '\s+')[0]
@@ -119,6 +130,35 @@ jobs:
           repository: sametbasbug/equinox-local
           path: ${{ runner.temp }}/old-main
 
+      - uses: actions/setup-dotnet@v6
+        if: ${{ inputs.legacy_reinstall_acceptance }}
+        with:
+          dotnet-version: 10.0.x
+      - name: Publish exact new native WPF for isolated historic Stable reinstall
+        if: ${{ inputs.legacy_reinstall_acceptance }}
+        shell: pwsh
+        env:
+          EQUINOX_WINDOWS_SHELL_PUBLISH_DIR: ${{ runner.temp }}/stable-repair-shell/win-${{ matrix.arch }}
+          EQUINOX_WINDOWS_SHELL_BIN_DIR: ${{ runner.temp }}/stable-repair-bin/win-${{ matrix.arch }}/
+          EQUINOX_WINDOWS_SHELL_OBJ_DIR: ${{ runner.temp }}/stable-repair-obj/win-${{ matrix.arch }}/
+        run: |
+          dotnet publish native/windows/EquinoxLocal.WindowsShell/EquinoxLocal.WindowsShell.csproj --configuration Release --runtime 'win-${{ matrix.arch }}' --self-contained true -p:Platform='${{ matrix.arch == 'arm64' && 'ARM64' || 'x64' }}' -p:BaseOutputPath="$env:EQUINOX_WINDOWS_SHELL_BIN_DIR" -p:BaseIntermediateOutputPath="$env:EQUINOX_WINDOWS_SHELL_OBJ_DIR" --output "$env:EQUINOX_WINDOWS_SHELL_PUBLISH_DIR"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Package exact new Stable rehearsal ZIP with native WPF
+        if: ${{ inputs.legacy_reinstall_acceptance }}
+        shell: pwsh
+        env:
+          EQUINOX_WINDOWS_SHELL_PUBLISH_DIR: ${{ runner.temp }}/stable-repair-shell/win-${{ matrix.arch }}
+        run: |
+          npm ci --prefer-offline --no-audit --no-fund
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          npm run local:release:package:windows
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $candidate = Get-ChildItem backups/local-packages -Filter 'equinox-local-*-${{ matrix.target }}.zip' | Select-Object -First 1
+          if ($null -eq $candidate) { throw 'Exact native Stable candidate ZIP missing.' }
+          "EQUINOX_WINDOWS_LEGACY_STABLE_ARTIFACT=$($candidate.FullName)" >> $env:GITHUB_ENV
+          'UNSIGNED source-provenance rehearsal only, never a production signed release.' >> $env:GITHUB_STEP_SUMMARY
+
       - name: Verify native package manifest and run REAL Windows public installer plus Control Center A-to-B
         shell: pwsh
         env:
@@ -151,6 +191,7 @@ jobs:
           $env:EQUINOX_WINDOWS_INSTALL_VERSION = [string]$release.version
           $env:EQUINOX_WINDOWS_MAIN_ACCEPT_TARGET_SHA = $env:TARGET_SHA
           $env:EQUINOX_WINDOWS_MAIN_ACCEPT_SCENARIO = '${{ inputs.scenario }}'
+          $env:EQUINOX_WINDOWS_LEGACY_REINSTALL_ACCEPTANCE = '${{ inputs.legacy_reinstall_acceptance }}'
           & powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File tests/release/windows-installer-real-package-smoke.ps1
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 

@@ -145,9 +145,13 @@ async function acceptHistoricMainToStable({
   for (const [index,file] of proofFiles.entries()) {
     if (index === 0) continue;
     await fs.mkdir(path.dirname(file), {recursive:true,mode:0o700});
-    const stat = await fs.lstat(file).catch((e)=>e?.code==="ENOENT"?null:Promise.reject(e));
-    if (stat) assert.ok(stat.isFile()&&!stat.isSymbolicLink());
-    else await fs.writeFile(file,"historical-user-owned-state-"+index+"\n",{mode:0o600,flag:"wx"});
+    try {
+      await fs.writeFile(file,"historical-user-owned-state-"+index+"\n",{mode:0o600,flag:"wx"});
+    } catch (error) {
+      if (error?.code !== "EEXIST") throw error;
+      const stat = await fs.lstat(file);
+      assert.ok(stat.isFile() && !stat.isSymbolicLink());
+    }
   }
   const checksum = async(file)=>createHash("sha256").update(await fs.readFile(file)).digest("hex");
   const hashes = await Promise.all(proofFiles.map(checksum));
@@ -507,7 +511,7 @@ globalThis.fetch = (resource, init = {}) => {
       }
       await fs.unlink(nativeHostWrapperAlias);
     }
-    await fs.rm(scratch, { recursive: true, force: true });
+    await fs.rm(scratch, { recursive: true, force: true, maxRetries: 8, retryDelay: 250 });
   }
 }
 
