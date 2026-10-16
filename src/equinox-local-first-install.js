@@ -890,7 +890,11 @@ export async function installManagedEquinoxRelease({
       // checkout, while source-only updates can retain an even older native
       // payload. Neither is the version of the RUNNING Main server.
     }
-    if (!allowExistingStableToMainMigration && nativePointer) {
+    if (!allowExistingStableToMainMigration && nativePointer &&
+        !(current && compareEquinoxVersions(current.version, candidate.version) === 0)) {
+      // Legacy same-version Main repair has its own full-tree backup journal
+      // and can legitimately predate source-pointer enrollment. Do not
+      // require a nonexistent Main source checkout before that recovery path.
       // Use the exact authenticated Main source + native A as the rollback
       // identity whether the obsolete numbered Stable tree has already been
       // reclaimed OR still exists pending post-health cleanup.
