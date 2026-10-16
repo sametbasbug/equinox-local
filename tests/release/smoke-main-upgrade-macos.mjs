@@ -10,6 +10,7 @@ import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 
 import { installManagedEquinoxRelease } from "../../src/equinox-local-first-install.js";
+import { enrollEquinoxLocalManagedSource } from "../../src/equinox-local-managed-source-enrollment.js";
 import { readEquinoxLocalMainSourcePointer } from "../../src/equinox-local-main-source-pointer.js";
 import { equinoxLocalToolchainContract } from "../../src/equinox-local-toolchain-contract.js";
 import { equinoxLocalUpdateTarget } from "../../src/equinox-local-updater.js";
@@ -239,6 +240,24 @@ globalThis.fetch = (resource, init = {}) => {
         allowExistingStableToMainMigration: true,
         stagedReleaseDir: release, homeDir, env, uid,
         execFileImpl: trackedExecFile,
+        // The current harness installer provisions its NEW pinned Node, but
+        // the real historical 5.2.1 A supervisor checks the OLD pinned Node.
+        // Install A's exact signed toolchain too on this disposable runner.
+        // Do not modify old A's source or accept an ambient node/git binary.
+        enrollManagedSourceImpl: async (options) => {
+          const enrollment = await enrollEquinoxLocalManagedSource(options);
+          const oldModule = path.join(enrollment.sourceRoot, "src", "equinox-local-toolchain-provisioner.js");
+          const oldStat = await fs.lstat(oldModule);
+          assert.ok(oldStat.isFile() && !oldStat.isSymbolicLink());
+          const { provisionEquinoxLocalToolchain: provisionOld } = await import(pathToFileURL(oldModule).href);
+          const verified = await provisionOld({
+            runtimeRoot: path.join(installRoot, "runtime"),
+            target: equinoxLocalUpdateTarget(), platform: "darwin", env,
+          });
+          assert.equal(verified.contract.target, equinoxLocalUpdateTarget());
+          console.log("Hosted vintage A pinned toolchain verified using exact signed A source.");
+          return enrollment;
+        },
         waitForVersionImpl: async () => { ownedService.started = true; await awaitHealthy(null, { kind: "managed" }); return true; },
         waitForManagedSourceImpl: async (_version, sha) => { await awaitHealthy(sha); return true; },
       });
