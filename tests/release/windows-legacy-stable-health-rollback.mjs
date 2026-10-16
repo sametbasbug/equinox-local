@@ -103,7 +103,7 @@ const inspectB = async () => {
     }
     if (match[1] === "runtime-start-phase" && /^[a-z-]+$/u.test(details)) return [match[1] + ":" + details];
     if (match[1] === "runtime-gate-exit") return [match[1] + ":" + (/exit=(-?\d+)/u.exec(details)?.[1] ?? "unknown")];
-    if (match[1] === "tunnel-transport" && /^[a-z-]+$/u.test(details)) return [match[1] + ":" + details];
+    if (match[1] === "tunnel-transport" && /^(?:tunnel-[a-z-]+|local-only-(?:stdin-eof|child-exit-zero|control-ready|control-disabled))$/u.test(details)) return [match[1] + ":" + details];
     if (match[1] === "runtime-start" || match[1] === "windows-shell-registration") {
       return [match[1] + ":" + (/^([a-zA-Z]+Exception)/u.exec(details)?.[1] ?? "error")];
     }

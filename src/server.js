@@ -3398,6 +3398,10 @@ async function start({ transport = new StdioServerTransport() } = {}) {
   if (EQUINOX_LOCAL_CONFIG.controlCenter.enabled) {
     await equinoxLocalControlApi.start();
   }
+  if (process.platform === "win32" && process.env.EQUINOX_LOCAL_SUPERVISOR_MODE === "local-only") {
+    process.stderr.write("[Equinox Windows supervisor] state=local-only-control-" +
+      (EQUINOX_LOCAL_CONFIG.controlCenter.enabled ? "ready" : "disabled") + ".\n");
+  }
 
   setTimeout(() => {
     void recoveryPolicyController?.reconcile().catch((error) => {

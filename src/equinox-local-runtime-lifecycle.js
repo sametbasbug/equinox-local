@@ -53,6 +53,9 @@ export async function startRuntimeLifecycle({
   };
 
   const onStdinEnd = () => {
+    if (consumeOwnedStdin && process.platform === "win32") {
+      process.stderr.write("[Equinox Windows supervisor] state=local-only-stdin-eof.\n");
+    }
     void beginShutdown("stdin_end").finally(detach);
   };
 

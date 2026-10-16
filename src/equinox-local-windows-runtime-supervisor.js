@@ -94,7 +94,14 @@ export async function runWindowsSupervisorChild(command, args, options, {
     };
     child.once("spawn", scheduleProbe);
     child.once("error", (error) => { cleanup(); reject(error); });
-    child.once("exit", (code, signal) => { cleanup(); resolve({ code, signal, terminatingSignal, retryRequested }); });
+    child.once("exit", (code, signal) => {
+      if (options.env?.EQUINOX_LOCAL_SUPERVISOR_MODE === "local-only" &&
+          code === 0 && !retryRequested && !terminatingSignal) {
+        process.stderr.write("[Equinox Windows supervisor] state=local-only-child-exit-zero.\n");
+      }
+      cleanup();
+      resolve({ code, signal, terminatingSignal, retryRequested });
+    });
   });
 }
 
