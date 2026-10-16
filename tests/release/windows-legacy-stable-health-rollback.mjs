@@ -122,8 +122,28 @@ const inspectB = async () => {
       ];
       const errorClass = classes.find(([pattern]) => details.includes(pattern))?.[1] ??
         (details.includes("stderr=") ? "unrecognized-stderr" : "no-stderr");
+      // Emit only vocabulary-fixed diagnostic clues from the generic Error
+      // heading, never user paths, arguments, credentials or raw stderr.
+      const safeWords = new Set(("equinox local windows main stable native runtime server config configuration " +
+        "control center private state source manifest identity current release install installation " +
+        "missing invalid unsupported expected failed failure denied permission access path root " +
+        "package module node process token bridge key signature version target source sha " +
+        "file not found cannot read open create initialize initialized directory owned " +
+        "must required absent unavailable already existing verified healthy connection " +
+        "transport tunnel name endpoint port listening address duplicate conflict " +
+        "unsupported unrecognized error failed to with is no has the a an at from").split(" "));
+      const errorText = /\bError:\s*([^|\r\n]{1,180})/u.exec(details)?.[1] ?? "";
+      const clue = errorText.split(/[^\p{L}\p{N}]+/u).slice(0, 11)
+        .map((word) => safeWords.has(word.toLowerCase()) ? word.toLowerCase() : "x")
+        .join("-").slice(0, 90) || "none";
+      const site = ["equinox-local-config.js", "equinox-local-private-state.js",
+        "equinox-local-platform.js", "equinox-local-main-install-state.js",
+        "equinox-local-windows-runtime-supervisor.js", "equinox-local-control-api.js",
+        "equinox-local-release-manager.js", "server.js", "node:internal"]
+        .find((file) => details.includes(file)) ?? "unknown";
       return [match[1] + ":" + (/exit=(-?\d+)/u.exec(details)?.[1] ?? "unknown"),
-        "runtime-gate-error:" + errorClass];
+        "runtime-gate-error:" + errorClass, "runtime-gate-hint:" + clue,
+        "runtime-gate-site:" + site];
     }
     if (match[1] === "tunnel-transport" && /^(?:tunnel-[a-z-]+|local-only-(?:stdin-eof|child-exit-zero|child-spawned|child-sigterm|child-sigint|child-sigbreak|child-signal-other|child-exit-nonzero|control-ready|control-disabled))$/u.test(details)) return [match[1] + ":" + details];
     if (match[1] === "runtime-start" || match[1] === "windows-shell-registration") {
