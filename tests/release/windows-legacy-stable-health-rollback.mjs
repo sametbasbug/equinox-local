@@ -89,7 +89,7 @@ const inspectB = async () => {
   candidateLogRotated = log.length < candidateLogStart;
   // WPF rotates its own bounded log at 64 KiB. Byte offsets become invalid
   // after rotation; timestamp-filter recent fixed-format native events instead.
-  return log.split("\n").slice(-110).flatMap((line) => {
+  return log.split(/\r?\n/u).slice(-110).flatMap((line) => {
     const epochMs = Date.parse(line.slice(0, 23) + "Z");
     if (!Number.isFinite(epochMs) || epochMs < candidateStartMs - 2000) return [];
     const match = /^\S+ (shell-startup|runtime-discovery|runtime-start-phase|runtime-start|runtime-gate-exit|tunnel-transport|windows-shell-registration) ([^\r\n]*)$/u.exec(line);
