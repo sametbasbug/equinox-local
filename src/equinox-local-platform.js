@@ -158,7 +158,11 @@ export function equinoxLocalFiniteShell({ platform = process.platform, arch = pr
   return Object.freeze({
     command: equinoxLocalWindowsPowerShellPath(env),
     argsFor(command) {
-      return ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", command];
+      // A nested PowerShell process is launched through an owned-process gate.
+      // UTF-16LE encoding avoids Windows PowerShell 5.1 command-line quoting
+      // ambiguity and keeps an unrequested console window off the desktop.
+      const encoded = Buffer.from(command, "utf16le").toString("base64");
+      return ["-NoLogo", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-EncodedCommand", encoded];
     },
     pathPrefix: "",
     pathDelimiter: ";",

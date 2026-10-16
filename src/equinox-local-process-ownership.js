@@ -52,7 +52,7 @@ export function createBackgroundProcessOwnershipAdapter({
       return Object.freeze({
         command: equinoxLocalWindowsPowerShellPath(env),
         args: Object.freeze([
-          "-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", WINDOWS_GATE_PATH,
+          "-NoLogo", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-File", WINDOWS_GATE_PATH,
         ]),
         env: Object.freeze({
           ...env,
@@ -113,7 +113,7 @@ export function createTerminalProcessOwnershipAdapter({
       return Object.freeze({
         command: equinoxLocalWindowsPowerShellPath(env),
         args: Object.freeze([
-          "-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", WINDOWS_PTY_GATE_PATH,
+          "-NoLogo", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-File", WINDOWS_PTY_GATE_PATH,
         ]),
         env: Object.freeze({
           ...env,

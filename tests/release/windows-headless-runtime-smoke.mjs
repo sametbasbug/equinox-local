@@ -15,6 +15,7 @@ import { createWindowsJobObjectLease } from "../../src/equinox-local-windows-job
 import { compileWindowsJobObjectHelper } from "../../scripts/release/package-managed-release-windows.mjs";
 import { createAgentControlController } from "../../src/equinox-local-agent-control.js";
 import { createProcessManager } from "../../src/process-manager.js";
+import { equinoxLocalFiniteShell } from "../../src/equinox-local-platform.js";
 import { createTerminalManager } from "../../src/terminal-manager.js";
 import { createEquinoxLocalRuntime } from "../../src/server.js";
 import { createEquinoxBrowserNativeHostRuntime } from "../../src/equinox-browser-native-host-runtime.js";
@@ -302,6 +303,28 @@ async function verifyWindowsManagedProcessLifecycle(root) {
   assert.equal(naturalExit.running, false, "Windows managed natural exit did not finalize");
   const naturalLogs = await manager.readLogs({ processId: natural.processId, cursor: 0 });
   assert.match(naturalLogs.output, /NATURAL_OK/u);
+  const cases = [
+    { command: "Write-Output 'EQUINOX_STDOUT'; [Console]::Error.WriteLine('EQUINOX_STDERR')", expectedExit: 0,
+      stdout: /EQUINOX_STDOUT/u, stderr: /EQUINOX_STDERR/u },
+    { command: "Write-Output 'EQUINOX_EXIT17'; exit 17", expectedExit: 17,
+      stdout: /EQUINOX_EXIT17/u },
+    { command: "cmd.exe /d /s /c \"echo EQUINOX_CMD & exit /b 23\"", expectedExit: 23,
+      stdout: /EQUINOX_CMD/u },
+  ];
+  const shell = equinoxLocalFiniteShell({ platform: "win32", arch: WINDOWS_ARCH, env: process.env });
+  for (const [index, item] of cases.entries()) {
+    const command = await manager.start({
+      projectId: "windows-smoke", projectName: "Windows Smoke", cwd: root,
+      command: shell.command, args: shell.argsFor(item.command),
+      purpose: "terminal_exec", env: process.env, label: `windows-finite-${index}`,
+    });
+    const result = await manager.waitForExit({ processId: command.processId, waitMs: 8_000 });
+    const logs = await manager.readLogs({ processId: command.processId, cursor: 0 });
+    assert.equal(result.running, false, `Windows shell command ${index} did not finish`);
+    assert.equal(result.exitCode, item.expectedExit, `Windows shell command ${index} returned ${result.exitCode}; output ${logs.output}`);
+    assert.match(logs.output, item.stdout);
+    if (item.stderr) assert.match(logs.output, item.stderr);
+  }
   await manager.shutdown();
   return Object.freeze({ waitTimeoutPreservedOwnedTree: true, descendantRetainedAfterLeaderExit: true, stopDrainedDescendant: true, naturalExit: true });
 }
