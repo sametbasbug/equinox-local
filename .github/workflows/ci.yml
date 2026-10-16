@@ -421,8 +421,10 @@ jobs:
           EQUINOX_WINDOWS_SHELL_PUBLISH_DIR: ${{ runner.temp }}/windows-shell/win-x64
         run: npm run local:release:package:windows
 
-      - name: Windows x64 real public-installer fresh-install managed-source acceptance
+      - name: Windows x64 real public-installer fresh-install and same-version repair acceptance
         shell: pwsh
+        env:
+          EQUINOX_WINDOWS_SAME_VERSION_REPAIR: 'true'
         run: |
           $artifact = Get-ChildItem backups/local-packages -Filter 'equinox-local-*-win32-x64.zip' | Select-Object -First 1
           if ($null -eq $artifact) { throw 'Windows x64 managed ZIP artifact was not found for fresh-install acceptance' }
@@ -710,9 +712,10 @@ jobs:
               name: windows-arm64-managed-package-${{ github.sha }}
               path: ${{ runner.temp }}/arm64-package
 
-      - name: Verify and run ARM64 real public-installer fresh-install acceptance
+      - name: Verify and run ARM64 real public-installer fresh-install and same-version repair acceptance
         shell: pwsh
         env:
+          EQUINOX_WINDOWS_SAME_VERSION_REPAIR: 'true'
           EQUINOX_WINDOWS_INSTALL_SHA256: ${{ needs.windows-arm64-package-build.outputs.sha256 }}
           EQUINOX_WINDOWS_INSTALL_BYTES: ${{ needs.windows-arm64-package-build.outputs.bytes }}
           EQUINOX_WINDOWS_INSTALL_VERSION: ${{ needs.windows-arm64-package-build.outputs.version }}

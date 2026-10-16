@@ -867,6 +867,37 @@ try {
     Assert-True (-not (Test-Path -LiteralPath $AppsKey)) 'Uninstall integration did not remove the owned Installed Apps entry.'
     Assert-True (-not [IO.File]::Exists($StartMenuShortcut)) 'Uninstall integration did not remove the owned Start Menu shortcut.'
   }
+  if ($env:EQUINOX_WINDOWS_SAME_VERSION_REPAIR -ceq 'true') {
+    if ($env:GITHUB_ACTIONS -cne 'true' -or $SkipLegacyGuardianFixture) { throw 'Same-version native repair acceptance requires a disposable current-product Windows runner.' }
+    $oldPointer = Join-Path $InstallRoot 'state\main-update\current-native.json'
+    Assert-True ([IO.File]::Exists($oldPointer)) 'Installed Main has no native-store pointer before repair.'
+    $beforeManifest = [IO.File]::ReadAllText($ExpectedManifestPath) | ConvertFrom-Json
+    Assert-True (([string]$beforeManifest.path -match 'native-store')) 'Installed Main Native Messaging does not point at the actual native-store.'
+    $userFiles = @((Join-Path $InstallRoot 'state\config.json'), (Join-Path $InstallRoot 'secrets\openai-runtime-key'))
+    $proof = Join-Path $InstallRoot 'workspace\ci-same-version-repair-proof.txt'
+    [IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($proof)) | Out-Null
+    [IO.File]::WriteAllText($proof, 'preserve-existing-user-state')
+    $userFiles += $proof
+    $beforeHashes = @{}
+    foreach ($file in $userFiles) {
+      Assert-True ([IO.File]::Exists($file)) "Same-version repair user proof is missing: $file"
+      $beforeHashes[$file] = (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash
+    }
+    $EnrollExistingMain = $false
+    Invoke-EquinoxLocalInstall | Out-Host
+    $afterStatus = (Invoke-WebRequest -UseBasicParsing -Uri 'http://127.0.0.1:24891/api/v1/status' -TimeoutSec 8).Content | ConvertFrom-Json
+    Assert-True ($afterStatus.ok -eq $true -and $afterStatus.status.health.state -ceq 'HEALTHY') 'Same-version signed Stable repair did not launch a healthy runtime.'
+    Assert-True ([string]$afterStatus.status.server.version -ceq $FixtureVersion) 'Same-version signed Stable repair reported another version.'
+    Assert-True ([string]$afterStatus.status.installation.kind -ceq 'managed') 'Same-version repair falsely left old Main active.'
+    Assert-True (-not [IO.File]::Exists((Join-Path $InstallRoot 'state\main-update\install.json'))) 'Same-version repair kept the Main enrollment stamp.'
+    $stableManifest = [IO.File]::ReadAllText($ExpectedManifestPath) | ConvertFrom-Json
+    Assert-True (Same-Path ([string]$stableManifest.path) $ExpectedLauncher) 'Same-version Stable Native Messaging was not switched to signed Stable launcher.'
+    Assert-True (Same-Path ([string](Get-Item -LiteralPath $NativeRegistryKey).GetValue('')) $ExpectedManifestPath) 'Native Messaging HKCU registration changed during repair.'
+    foreach ($file in $userFiles) { Assert-True ((Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash -ceq $beforeHashes[$file]) "Same-version Stable repair changed user data: $file" }
+    $running = @(Get-CimInstance Win32_Process -Filter "Name='EquinoxLocal.exe'" -ErrorAction SilentlyContinue | Where-Object { $_.ExecutablePath -and (Same-Path $_.ExecutablePath $StableExe) })
+    Assert-True ($running.Count -eq 1) 'Same-version Stable repair did not leave exactly one running native WPF shell.'
+    Write-Output "Windows $FixtureTarget real same-version Main-to-Stable reinstall: WPF/Native Messaging/credentials preservation PASSED."
+  }
   Write-Output "Windows $FixtureTarget real fresh-install managed-source acceptance passed: public installer promoted $FixtureVersion at $FixtureSourceSha and served the exact managed source runtime."
 } finally {
   if (-not [string]::IsNullOrWhiteSpace($StableExe) -and [IO.File]::Exists($StableExe)) { Stop-OwnedShell $StableExe }
