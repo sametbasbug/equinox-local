@@ -496,11 +496,16 @@ async function repairSameVersionMain({
       if (await statOrNull(failedRelease)) throw new Error("Stable repair has duplicate candidate trees.");
     }
     await stop();
-    // Before moving B away, the shared helper can prove ownership of either
-    // complete native shell and either exact Native Messaging launcher.
-    await syncManagedShellImpl(installation, { version: record.version,
-      releaseDir: native?.releaseDir ?? (backedUp ? oldRelease : targetRelease),
-      previousReleaseDir: (await statOrNull(targetRelease)) ? targetRelease : oldRelease });
+    const activeRelease = await statOrNull(targetRelease);
+    // If interruption occurred between moving A out and promoting B, the
+    // native host was never changed. On Windows the numbered A tree can
+    // legitimately differ from the active Main native-store shell, so do not
+    // treat that numbered tree as evidence of WPF or Native Messaging ownership.
+    if (activeRelease) {
+      await syncManagedShellImpl(installation, { version: record.version,
+        releaseDir: native?.releaseDir ?? (backedUp ? oldRelease : targetRelease),
+        previousReleaseDir: targetRelease });
+    }
     if (backedUp) {
       if (await statOrNull(targetRelease)) await rename(targetRelease, failedRelease);
       await rename(oldRelease, targetRelease);

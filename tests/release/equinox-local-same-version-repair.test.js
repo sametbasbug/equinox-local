@@ -69,6 +69,10 @@ async function fixture(t, platform = "darwin") {
   await fs.writeFile(path.join(mainPaths.mainTransactionRoot, "current-native.json"), JSON.stringify({
     schemaVersion: 1, channel: "main", sourceSha: SOURCE, target, runtimeContractSha256: "d".repeat(64),
   }), { mode: 0o600 });
+  // The old installed native host already exists before any repair moves.
+  // A rename-gap recovery must leave this exact native-store launcher alone.
+  await fs.writeFile(path.join(root, "shell"), "Main");
+  await fs.writeFile(path.join(root, "native-messaging"), nativeRelease);
   const preserved = new Map();
   for (const name of ["config.json", "secrets/openai-runtime-key", "tunnel/profile.json", "browser/profile/Preferences", "workspace/user.txt", "main-update/current-source.conf"]) {
     const file = path.join(paths.installRoot, name);
