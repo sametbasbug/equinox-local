@@ -263,6 +263,18 @@ globalThis.fetch = (resource, init = {}) => {
           nativeCrash: /SIGSEGV|EXC_BAD_ACCESS|Trace\/BPT trap/u.test(data),
           configError: /configuration|config.json|invalid config/iu.test(data),
           launchError: /could not|failed|error|fatal/iu.test(data),
+          supervisorLog: /\[Equinox Local supervisor\]/u.test(data),
+          wrongHome: /install root does not match|home directory|HOME|per-user Equinox Local location/iu.test(data),
+          invalidCurrent: /current pointer|releases root|release metadata|release directory/iu.test(data),
+          failedServer: /EADDRINUSE|listen EACCES|server failed|server exited|control center/iu.test(data),
+          badNodeOptions: /NODE_OPTIONS|--import|bad option|not allowed in NODE_OPTIONS/iu.test(data),
+          sourceUnsafe: /source runtime root is unsafe|server is unsafe|source root|managed-source/iu.test(data),
+          swiftNativeFailure: /AppKit|Swift|NSException|NSInvalidArgumentException|unhandled exception/iu.test(data),
+          // Limit to bounded product-generated supervisor diagnostics, not the
+          // raw log. The existing shared scrubber redacts URLs/paths/tokens.
+          supervisorMessages: data.split(/\r?\n/u)
+            .filter((line) => line.startsWith("[Equinox Local supervisor]"))
+            .slice(-3).map((line) => boundedDiagnostic(line).slice(0, 180)),
         };
       }
       console.error(JSON.stringify({ hostedOldMainLaunchAgent: { state, exitCode, hasPid, logs: logFlags } }));

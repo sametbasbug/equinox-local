@@ -79,6 +79,15 @@ async function main() {
   assert.ok(typeof csrfToken === "string" && csrfToken.length > 20, "real Control Center must provide valid CSRF token");
   await api("/api/v1/update/check", { csrfToken });
   const checked = await api("/api/v1/update");
+  if (checked.update?.main?.targetSha !== b) {
+    const update = checked.update?.main ?? {};
+    const safe = (value) => String(value ?? "").replace(/https?:\/\/[^\s]+/gu, "[URL]")
+      .replace(/(?:token|secret|password|credential|key)\s*[:=]\s*[^\s,;]+/giu, "[REDACTED]").slice(0, 180);
+    console.error(JSON.stringify({ hostedOldMainDiscovery: {
+      state: safe(update.state), reason: safe(update.reason), lastError: safe(update.lastError),
+      applyAvailable: Boolean(update.applyAvailable), currentSha: update.currentSha === a,
+    }}));
+  }
   assert.equal(checked.update?.main?.targetSha, b, "exact separately admitted snapshot B must be offered");
   assert.equal(checked.update?.main?.applyAvailable, true);
   let applied;
