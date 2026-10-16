@@ -60,11 +60,16 @@ export async function inspectEquinoxLocalWindowsGuardianAdmission({
   const expectedSource = path.win32.join(expectedTransaction, "sources", installation.sourceSha);
   const expectedManifest = path.win32.join(installRoot, "browser", "native-messaging");
   const expectedStableRelease = path.win32.join(installRoot, "releases", path.win32.basename(releaseDir));
+  // A source-only Main update advances its checkout SHA while the last
+  // authenticated native snapshot legitimately remains at an older SHA.
+  // Validate the immutable native slot independently of the source pointer;
+  // the exact selected current-native pointer must still own this path.
+  const nativeSlotSha = path.win32.basename(path.win32.dirname(releaseDir));
   const expectedMainRelease = path.win32.join(transactionRoot, "native-store", installation.target,
-    installation.sourceSha, "release");
+    nativeSlotSha, "release");
   const validStablePath = same(releaseDir, expectedStableRelease) &&
     /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/u.test(path.win32.basename(releaseDir));
-  const validMainPath = same(releaseDir, expectedMainRelease);
+  const validMainPath = SHA.test(nativeSlotSha) && same(releaseDir, expectedMainRelease);
   if (!same(installRoot, path.win32.join(ownedLocal, "Equinox Local")) ||
       !same(gitPath, expectedGit) ||
       !same(transactionRoot, expectedTransaction) || !same(programRoot, expectedProgram) ||
@@ -112,12 +117,12 @@ export async function inspectEquinoxLocalWindowsGuardianAdmission({
   } else if (!validMainPath || !same(nativePointer.releaseDir, releaseDir)) {
     throw new Error("Windows guardian selected Main native-store identity differs from the current process runtime.");
   }
-  if (nativePointer && (nativePointer.sourceSha !== pointer.sha || nativePointer.target !== installation.target ||
+  if (nativePointer && (nativePointer.sourceSha !== nativeSlotSha || nativePointer.target !== installation.target ||
       typeof nativePointer.runtimeContractSha256 !== "string" || !/^[a-f0-9]{64}$/u.test(nativePointer.runtimeContractSha256))) {
-    throw new Error("Windows guardian Main native identity differs from the active source SHA and host architecture.");
+    throw new Error("Windows guardian native snapshot identity differs from the selected immutable native slot.");
   }
   if (nativePointer && !same(nativePointer.releaseDir,
-      path.win32.join(transactionRoot, "native-store", installation.target, pointer.sha, "release"))) {
+      path.win32.join(transactionRoot, "native-store", installation.target, nativePointer.sourceSha, "release"))) {
     throw new Error("Windows guardian Main native release is outside its exact immutable source slot.");
   }
   const effectiveRelease = nativePointer?.releaseDir ?? releaseDir;

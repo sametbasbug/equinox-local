@@ -80,6 +80,27 @@ test("exact admitted Main native release is independently checked against its SH
   assert.equal(f.calls.find(([action]) => action === "shell")[1].releaseDir, mainRelease);
 });
 
+test("source-only Main B is admitted with older independently verified native A, never a foreign slot", async () => {
+  const selectedNative = { sourceSha: A, target: "win32-x64", runtimeContractSha256: shaDigest, releaseDir: mainRelease };
+  const newerSource = { ...installation, sourceSha: B,
+    sourceRoot: path.win32.join(transactionRoot, "sources", B),
+    releaseDir: mainRelease };
+  const f = fixture({ nativePointer: selectedNative,
+    installation: newerSource,
+    readPointer: async () => ({ sourceRoot: newerSource.sourceRoot, sha: B }),
+    readCurrentRelease: async () => assert.fail("Source-only B must not need an obsolete Stable baseline"),
+  });
+  const result = await inspectEquinoxLocalWindowsGuardianAdmission(f.deps);
+  assert.deepEqual({ state: result.state, sourceSha: result.sourceSha, native: result.native, releaseDir: result.releaseDir },
+    { state: "admitted", sourceSha: B, native: "main", releaseDir: mainRelease });
+  assert.equal(f.calls.some(([name]) => name === "stable"), false);
+  const drifted = fixture({ nativePointer: selectedNative,
+    installation: { ...newerSource, releaseDir: mainRelease.replace(A, "c".repeat(40)) },
+    readPointer: async () => ({ sourceRoot: newerSource.sourceRoot, sha: B }),
+  });
+  await assert.rejects(inspectEquinoxLocalWindowsGuardianAdmission(drifted.deps), /selected Main native-store identity/u);
+});
+
 test("guardian refuses active rollback_failed or even terminal active receipts before touching live shell", async () => {
   for (const state of ["rollback_failed", "promoting", "rolled_back", "succeeded"]) {
     const f = fixture({ active: { status: state, transactionId: `main-${"c".repeat(32)}` } });
