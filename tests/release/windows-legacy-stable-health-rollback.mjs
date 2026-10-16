@@ -39,6 +39,8 @@ let nativeStarts = 0;
 let firstBStatus = null;
 let lastBStatus = "no B status";
 let candidateNativePhases = [];
+let candidatePid = null;
+let candidateAlive = null;
 const logFile = path.win32.join(installedRoot, "logs", "windows-shell-runtime.log");
 let candidateLogStart = 0;
 const inspectB = async () => {
@@ -70,7 +72,9 @@ await assert.rejects(installManagedEquinoxRelease({
       if (nativeStarts === 1) {
         candidateLogStart = (await fs.readFile(logFile, "utf8").catch(() => "")).length;
       }
-      return options.kickstartImpl(...args);
+      const started = await options.kickstartImpl(...args);
+      if (nativeStarts === 1) candidatePid = Number.isInteger(started?.pid) ? started.pid : null;
+      return started;
     },
     fetchImpl: async (...args) => {
       polls++;
@@ -79,7 +83,13 @@ await assert.rejects(installManagedEquinoxRelease({
       catch (error) {
         if (nativeStarts === 1) {
           lastBStatus = "fetch-error:" + String(error?.cause?.code ?? error?.name ?? "unknown");
-          if (polls >= 25) candidateNativePhases = await inspectB();
+          if (polls >= 25) {
+            candidateNativePhases = await inspectB();
+            if (candidatePid !== null) {
+              try { process.kill(candidatePid, 0); candidateAlive = true; }
+              catch (check) { candidateAlive = check?.code === "EPERM"; }
+            }
+          }
         }
         throw error;
       }
@@ -101,7 +111,7 @@ await assert.rejects(installManagedEquinoxRelease({
     },
   }),
 }), /rolled back/u);
-assert.ok(observations > 0, "New native Stable must reach HEALTHY before forced rollback; " + JSON.stringify({ polls, firstBStatus, lastBStatus, lastStatus, nativeStarts, candidateNativePhases }));
+assert.ok(observations > 0, "New native Stable must reach HEALTHY before forced rollback; " + JSON.stringify({ polls, firstBStatus, lastBStatus, lastStatus, nativeStarts, candidatePidObserved: candidatePid !== null, candidateAlive, candidateNativePhases }));
 assert.deepEqual(await fs.readFile(mainStamp), originalStamp);
 assert.deepEqual(JSON.parse(await fs.readFile(currentPath, "utf8")), previousCurrent);
 assert.deepEqual(await fs.readFile(manifestPath), originalManifest);

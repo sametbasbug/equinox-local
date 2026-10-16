@@ -858,7 +858,7 @@ export async function installManagedEquinoxRelease({
           // releasing its single-instance coordinator. Await actual pipe
           // release; otherwise a new WPF can exit as a duplicate.
           await waitForWindowsShellPipeRelease({ platform });
-          await launchWindowsShellImpl(path.win32.join(paths.programRoot, "EquinoxLocal.exe"));
+          return launchWindowsShellImpl(path.win32.join(paths.programRoot, "EquinoxLocal.exe"));
         }
       } } : {}),
       });
