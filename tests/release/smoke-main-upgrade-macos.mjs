@@ -252,7 +252,7 @@ globalThis.fetch = (resource, init = {}) => {
       const hasPid = /(?:^|\n)\s*pid\s*=\s*\d+\s*(?:\n|$)/u.test(servicePrint);
       const logFlags = {};
       for (const name of ["Equinox Local.error.log", "Equinox Local.log"]) {
-        const data = await fs.readFile(path.join(installRoot, "logs", name), "utf8").catch(() => null);
+        const data = await fs.readFile(path.join(homeDir, "Library", "Logs", name), "utf8").catch(() => null);
         logFlags[name] = data === null ? { present: false } : {
           present: true, bytes: data.length,
           nodeModuleMissing: /ERR_MODULE_NOT_FOUND|MODULE_NOT_FOUND/u.test(data),

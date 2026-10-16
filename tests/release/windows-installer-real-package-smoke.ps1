@@ -798,8 +798,12 @@ try {
   if ($LASTEXITCODE -ne 0) { throw 'Windows actual native shell A/B switch/rollback smoke failed.' }
   Assert-True ((& $OwnedNode $OwnedNpm --version) -match '^\d+\.\d+\.\d+$') 'Product-owned npm CLI did not execute.'
   # Exercise the actual packaged CLI with a throwaway offline profile.
-  & $OwnedNode (Join-Path $Root 'tests/release/windows-tunnel-offline-init-smoke.mjs') $ManagedSourceRoot $ReleaseDir
-  if ($LASTEXITCODE -ne 0) { throw 'Windows real bundled tunnel-client offline init acceptance failed.' }
+  if (-not $SkipLegacyGuardianFixture) {
+    # This modern runtime-module fixture cannot be imported from old signed
+    # A sources that predate its module. Test the actual A->B update instead.
+    & $OwnedNode (Join-Path $Root 'tests/release/windows-tunnel-offline-init-smoke.mjs') $ManagedSourceRoot $ReleaseDir
+    if ($LASTEXITCODE -ne 0) { throw 'Windows real bundled tunnel-client offline init acceptance failed.' }
+  }
   # A real installed Windows app must be discoverable and uninstallable by OS UI.
   $AppsKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Equinox Local'
   $AppsRegistration = Get-ItemProperty -LiteralPath $AppsKey -ErrorAction Stop
@@ -852,10 +856,14 @@ try {
   }
   # Execute the real shipped registry+shortcut cleanup after verifying
   # their ownership, without deleting the healthy runtime or user data.
-  & $OwnedNode (Join-Path $Root 'tests/release/windows-installed-app-registration-cleanup.mjs') $ManagedSourceRoot $OwnedProgramRoot
-  if ($LASTEXITCODE -ne 0) { throw 'Managed Windows shell registration cleanup failed.' }
-  Assert-True (-not (Test-Path -LiteralPath $AppsKey)) 'Uninstall integration did not remove the owned Installed Apps entry.'
-  Assert-True (-not [IO.File]::Exists($StartMenuShortcut)) 'Uninstall integration did not remove the owned Start Menu shortcut.'
+  if (-not $SkipLegacyGuardianFixture) {
+    # Uninstall integration is separately admitted for old native A packages.
+    # This modern helper is not in the vintage A source checkout.
+    & $OwnedNode (Join-Path $Root 'tests/release/windows-installed-app-registration-cleanup.mjs') $ManagedSourceRoot $OwnedProgramRoot
+    if ($LASTEXITCODE -ne 0) { throw 'Managed Windows shell registration cleanup failed.' }
+    Assert-True (-not (Test-Path -LiteralPath $AppsKey)) 'Uninstall integration did not remove the owned Installed Apps entry.'
+    Assert-True (-not [IO.File]::Exists($StartMenuShortcut)) 'Uninstall integration did not remove the owned Start Menu shortcut.'
+  }
   Write-Output "Windows $FixtureTarget real fresh-install managed-source acceptance passed: public installer promoted $FixtureVersion at $FixtureSourceSha and served the exact managed source runtime."
 } finally {
   if (-not [string]::IsNullOrWhiteSpace($StableExe) -and [IO.File]::Exists($StableExe)) { Stop-OwnedShell $StableExe }
