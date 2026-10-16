@@ -332,6 +332,75 @@ async function verifyWindowsManagedProcessLifecycle(root) {
   return Object.freeze({ waitTimeoutPreservedOwnedTree: true, descendantRetainedAfterLeaderExit: true, stopDrainedDescendant: true, naturalExit: true, terminalDoctor: true });
 }
 
+async function verifyWindowsIndependentProcessCommands(root) {
+  // process_start/process_logs/process_wait/process_stop must not rely on
+  // the finite PowerShell shell or its EncodedCommand escape path.
+  const manager = createProcessManager({ platform: "win32", arch: WINDOWS_ARCH, groupPollMs: 50 });
+  const cases = [
+    { marker: "DIRECT_NODE_OK", code: 0 },
+    { marker: "DIRECT_NODE_EXIT31", code: 31 },
+  ];
+  try {
+    for (const { marker, code } of cases) {
+      const started = await manager.start({
+        projectId: "windows-smoke", projectName: "Windows Smoke", cwd: root,
+        command: process.execPath,
+        args: ["-e", `console.log(${JSON.stringify(marker)});console.error("DIRECT_STDERR");process.exit(${code});`],
+        purpose: "background", env: process.env, label: "independent-direct-node",
+      });
+      const finished = await manager.waitForExit({ processId: started.processId, waitMs: 10_000 });
+      const logs = await manager.readLogs({ processId: started.processId, cursor: 0, stripAnsiCodes: true });
+      assert.equal(finished.running, false, `direct background process never exited: ${marker}`);
+      assert.equal(finished.exitCode, code, `direct background process returned ${finished.exitCode}: ${logs.output}`);
+      const snapshot = manager.snapshotOutput({ processId: started.processId });
+      assert.match(snapshot.stdout, new RegExp(marker, "u"));
+      assert.match(snapshot.stderr, /DIRECT_STDERR/u);
+      const tail = await manager.readLogs({ processId: started.processId, cursor: logs.nextCursor });
+      assert.equal(tail.output, "", "direct command log cursor repeated output");
+      const waited = manager.snapshotOutput({ processId: started.processId });
+      assert.equal(waited.process.exitCode, code, "process_wait/snapshot disagrees about direct command exit");
+      await manager.stop({ processId: started.processId, force: true, remove: true });
+    }
+
+    // Executing a native Windows command directly through process_start must
+    // not depend on terminal_exec's PowerShell -EncodedCommand path either.
+    const nativeCmd = await manager.start({
+      projectId: "windows-smoke", projectName: "Windows Smoke", cwd: root,
+      command: process.env.ComSpec || "C:\\Windows\\System32\\cmd.exe",
+      args: ["/d", "/c", "echo DIRECT_CMD_OK & exit /b 29"],
+      purpose: "background", env: process.env, label: "independent-direct-cmd",
+    });
+    const cmdFinished = await manager.waitForExit({ processId: nativeCmd.processId, waitMs: 10_000 });
+    const cmdLogs = await manager.readLogs({ processId: nativeCmd.processId, cursor: 0 });
+    assert.equal(cmdFinished.running, false, "independent direct CMD did not finish");
+    assert.equal(cmdFinished.exitCode, 29, `independent CMD exit status must be 29: ${cmdLogs.output}`);
+    assert.match(cmdLogs.output, /DIRECT_CMD_OK/u);
+    await manager.stop({ processId: nativeCmd.processId, force: true, remove: true });
+
+    // The background tool also manages indefinite processes. Ensure process_stop
+    // drains the entire owned Windows Job Object without killing the caller.
+    const live = await manager.start({
+      projectId: "windows-smoke", projectName: "Windows Smoke", cwd: root,
+      command: process.execPath,
+      args: ["-e", 'console.log("DIRECT_READY");setInterval(()=>{},1000);'],
+      purpose: "background", env: process.env, label: "independent-long-running-node",
+    });
+    const ready = await waitFor(async () => {
+      const logs = await manager.readLogs({ processId: live.processId, cursor: 0, waitMs: 400 });
+      return logs.output.includes("DIRECT_READY");
+    }, "direct long-running process did not report readiness", 10_000);
+    assert.equal(ready, true);
+    const before = await manager.waitForExit({ processId: live.processId, waitMs: 100 });
+    assert.equal(before.running, true, "background process terminated before process_stop");
+    const stopped = await manager.stop({ processId: live.processId, timeoutMs: 3_000, remove: true });
+    assert.equal(stopped.running, false, "background process_stop failed to drain owned Job Object");
+    await waitFor(() => !pidExists(live.pid), "direct background process still running after process_stop", 4_000);
+    return Object.freeze({ directExit0: true, directExit31: true, directCmd29: true, separateLogs: true, cursor: true, stopDrained: true });
+  } finally {
+    await manager.shutdown();
+  }
+}
+
 async function withWindowsConPtyStage(label, operation, timeoutMs = 12_000) {
   const startedAt = Date.now();
   process.stdout.write(`[windows-conpty] START ${label}\n`);
@@ -732,6 +801,7 @@ try {
   const jobObject = await verifyWindowsJobObjectContainment(root);
   const helperLoss = await verifyWindowsJobObjectHelperLoss(root);
   const managedProcess = await verifyWindowsManagedProcessLifecycle(root);
+  const independentProcessCommands = await verifyWindowsIndependentProcessCommands(root);
   const conpty = await verifyWindowsConPtyLifecycle(root);
   const emergencyStop = await verifyWindowsEmergencyStop(root);
   const agentBrowser = await verifyWindowsAgentBrowserLifecycle(root);
@@ -752,6 +822,7 @@ try {
     jobObject,
     helperLoss,
     managedProcess,
+    independentProcessCommands,
     conpty,
     emergencyStop,
     agentBrowser,
