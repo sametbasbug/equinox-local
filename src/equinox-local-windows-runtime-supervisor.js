@@ -92,12 +92,22 @@ export async function runWindowsSupervisorChild(command, args, options, {
       processLike.off("SIGTERM", term);
       processLike.off("SIGINT", intr);
     };
-    child.once("spawn", scheduleProbe);
+    child.once("spawn", () => {
+      if (options.env?.EQUINOX_LOCAL_SUPERVISOR_MODE === "local-only") {
+        process.stderr.write("[Equinox Windows supervisor] state=local-only-child-spawned.\n");
+      }
+      scheduleProbe();
+    });
     child.once("error", (error) => { cleanup(); reject(error); });
     child.once("exit", (code, signal) => {
-      if (options.env?.EQUINOX_LOCAL_SUPERVISOR_MODE === "local-only" &&
-          code === 0 && !retryRequested && !terminatingSignal) {
-        process.stderr.write("[Equinox Windows supervisor] state=local-only-child-exit-zero.\n");
+      if (options.env?.EQUINOX_LOCAL_SUPERVISOR_MODE === "local-only") {
+        const phase = code === 0 ? "local-only-child-exit-zero"
+          : code === null && signal === "SIGTERM" ? "local-only-child-sigterm"
+          : code === null && signal === "SIGINT" ? "local-only-child-sigint"
+          : code === null && signal === "SIGBREAK" ? "local-only-child-sigbreak"
+          : code === null ? "local-only-child-signal-other"
+          : "local-only-child-exit-nonzero";
+        process.stderr.write("[Equinox Windows supervisor] state=" + phase + ".\n");
       }
       cleanup();
       resolve({ code, signal, terminatingSignal, retryRequested });
