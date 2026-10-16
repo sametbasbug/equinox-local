@@ -27,6 +27,7 @@ import { managedSupervisorPaths } from "./equinox-local-supervisor.js";
 import { enrollEquinoxLocalManagedSource, rollbackEquinoxLocalManagedSourceEnrollment } from "./equinox-local-managed-source-enrollment.js";
 import { equinoxLocalManagedSourcePaths } from "./equinox-local-managed-source-installation.js";
 import { validateManagedSourceInstallStamp } from "./equinox-local-main-update.js";
+import { readEquinoxLocalMainNativePointer } from "./equinox-local-main-native-state.js";
 import { readBoundedNormalFile } from "./equinox-local-safe-file.js";
 import { requestWindowsShellRuntimeRestart } from "./equinox-local-windows-shell-control.js";
 import { provisionWindowsGuardianFromRelease } from "./equinox-local-windows-guardian-provision.js";
@@ -197,6 +198,7 @@ function installationFor(paths, releaseDir, {
     currentLink: platform === "darwin" ? paths.currentLink : null,
     currentPointer: paths.currentPointer,
     programRoot: paths.programRoot,
+    nativeMessagingManifestRoot: paths.nativeMessagingManifestRoot,
     stagingRoot: pathApi.join(paths.installRoot, "staging"),
     launchAgentPath: platform === "darwin"
       ? path.posix.join(paths.homeDir, "Library", "LaunchAgents", `${EQUINOX_LOCAL_LAUNCH_AGENT_LABEL}.plist`)
@@ -465,6 +467,26 @@ export async function installManagedEquinoxRelease({
     }
   }
 
+  let previousMainNativeReleaseDir = null;
+  if (current && currentMainStamp && platform === "win32") {
+    const pointerPath = path.win32.join(mainPaths.mainTransactionRoot, "current-native.json");
+    const nativePointer = await readEquinoxLocalMainNativePointer(pointerPath, {
+      transactionRoot: mainPaths.mainTransactionRoot, fsImpl,
+    }).catch((error) => {
+      if (error?.code === "ENOENT") return null;
+      throw error;
+    });
+    if (nativePointer) {
+      // Bootstrap SHA is the FIRST enrolled commit, not necessarily the
+      // current native snapshot SHA after later Main updates.
+      if (nativePointer.target !== expectedTarget ||
+          nativePointer.payloadVersion !== current.version) {
+        throw new Error("Installed Main native release does not match the authenticated old Main identity.");
+      }
+      previousMainNativeReleaseDir = nativePointer.releaseDir;
+    }
+  }
+
   if (!current && currentMainStamp) {
     throw new Error("Existing Main identity has no verified current release; a clean Stable install cannot overwrite it without recovery.");
   }
@@ -549,6 +571,7 @@ export async function installManagedEquinoxRelease({
         installation: currentInstallation,
         targetVersion: candidate.version,
         healthAttempts: equinoxLocalFirstInstallHealthBudget({ platform, arch }).attempts,
+        ...(previousMainNativeReleaseDir ? { previousMainNativeReleaseDir } : {}),
       ...(currentMainStamp ? { kickstartImpl: async (version) => {
         if (version === candidate.version && !parkedMain) {
           await fsImpl.rename(mainPaths.installStampPath, savedMainStamp);

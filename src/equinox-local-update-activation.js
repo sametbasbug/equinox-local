@@ -403,6 +403,7 @@ export async function activatePreparedEquinoxRelease({
   targetVersion,
   kickstartImpl = () => restartManagedInstallation(installation),
   syncAppHostImpl = (release) => synchronizeManagedShellForRelease(installation, release),
+  previousMainNativeReleaseDir = null,
   fetchImpl = globalThis.fetch,
   sleepImpl,
   healthAttempts = HEALTH_ATTEMPTS,
@@ -410,13 +411,28 @@ export async function activatePreparedEquinoxRelease({
 } = {}) {
   if (!installation?.selfUpdateSupported) throw new Error("A managed Equinox Local installation is required for activation.");
   parseEquinoxVersion(targetVersion);
+  if (previousMainNativeReleaseDir !== null &&
+      (installation.platform !== "win32" || typeof previousMainNativeReleaseDir !== "string" ||
+       !path.win32.isAbsolute(previousMainNativeReleaseDir))) {
+    throw new Error("Previous Main native release must be a verified absolute Windows path.");
+  }
+  // A Main source install can own a fully verified native-store release that
+  // differs from the numbered Stable rollback tree. Restore that exact native
+  // shell and Native Messaging launcher if the signed Stable candidate fails.
+  const syncReleaseHost = (release, isRollback) => syncAppHostImpl(
+    previousMainNativeReleaseDir === null
+      ? release
+      : isRollback
+        ? { ...release, releaseDir: previousMainNativeReleaseDir }
+        : { ...release, previousReleaseDir: previousMainNativeReleaseDir },
+  );
   const switchResult = await atomicSwitchCurrentRelease(installation, targetVersion);
   if (!switchResult.changed) {
     return Object.freeze({ status: "already-active", version: targetVersion, previousVersion: targetVersion });
   }
 
   try {
-    await syncAppHostImpl({ version: targetVersion, releaseDir: switchResult.current.releaseDir, previousVersion: switchResult.previous.version, previousReleaseDir: switchResult.previous.releaseDir });
+    await syncReleaseHost({ version: targetVersion, releaseDir: switchResult.current.releaseDir, previousVersion: switchResult.previous.version, previousReleaseDir: switchResult.previous.releaseDir }, false);
     await kickstartImpl(targetVersion);
     await waitForEquinoxLocalVersion(targetVersion, {
       fetchImpl,
@@ -438,7 +454,7 @@ export async function activatePreparedEquinoxRelease({
   } catch (activationError) {
     try {
       await atomicSwitchCurrentRelease(installation, switchResult.previous.version);
-      await syncAppHostImpl({ version: switchResult.previous.version, releaseDir: switchResult.previous.releaseDir, previousVersion: targetVersion, previousReleaseDir: switchResult.current.releaseDir });
+      await syncReleaseHost({ version: switchResult.previous.version, releaseDir: switchResult.previous.releaseDir, previousVersion: targetVersion, previousReleaseDir: switchResult.current.releaseDir }, true);
       await kickstartImpl(switchResult.previous.version);
       await waitForEquinoxLocalVersion(switchResult.previous.version, {
         fetchImpl,

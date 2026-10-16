@@ -463,3 +463,22 @@ test("Windows managed activation forced health failure restores pointer stable s
   assert.deepEqual(restarts, ["5.3.0", "5.2.0"]);
   await assertWindowsActivationState(fixture, "5.2.0", fixture.previousLauncher);
 });
+
+test("Windows Main native-store origin survives Stable activation rollback", { skip: process.platform !== "win32" }, async (t) => {
+  const fixture = await makeWindowsActivationFixture(t);
+  const original = path.win32.join(fixture.installation.installRoot, "state", "main-update", "native-store", "verified", "release");
+  const syncCalls = [];
+  let rebooted = false;
+  await assert.rejects(activatePreparedEquinoxRelease({
+    installation: fixture.installation, targetVersion: "5.3.0",
+    previousMainNativeReleaseDir: original,
+    syncAppHostImpl: async (release) => { syncCalls.push(release); },
+    kickstartImpl: async () => { rebooted = true; },
+    fetchImpl: async () => { throw new Error("forced unhealthy"); },
+    sleepImpl: async () => {}, healthAttempts: 1,
+  }), /automatic rollback also failed/u);
+  assert.equal(rebooted, true);
+  assert.equal(syncCalls.length, 2);
+  assert.equal(syncCalls[0].previousReleaseDir, original);
+  assert.equal(syncCalls[1].releaseDir, original);
+});
