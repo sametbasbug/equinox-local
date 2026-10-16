@@ -102,7 +102,29 @@ const inspectB = async () => {
       return [match[1] + ":" + (details.includes("supervisor=True") ? "supervisor-present" : "supervisor-missing")];
     }
     if (match[1] === "runtime-start-phase" && /^[a-z-]+$/u.test(details)) return [match[1] + ":" + details];
-    if (match[1] === "runtime-gate-exit") return [match[1] + ":" + (/exit=(-?\d+)/u.exec(details)?.[1] ?? "unknown")];
+    if (match[1] === "runtime-gate-exit") {
+      const classes = [
+        ["ERR_MODULE_NOT_FOUND", "module-not-found"],
+        ["Cannot find module", "module-not-found"],
+        ["ERR_PACKAGE_PATH_NOT_EXPORTED", "package-exports"],
+        ["ERR_REQUIRE_ESM", "require-esm"],
+        ["ERR_INVALID_ARG_TYPE", "invalid-argument"],
+        ["SyntaxError", "syntax"],
+        ["ReferenceError", "reference"],
+        ["TypeError", "type"],
+        ["RangeError", "range"],
+        ["SecurityError", "security"],
+        ["ENOENT", "missing-path"],
+        ["EACCES", "access-denied"],
+        ["EPERM", "operation-denied"],
+        ["Cannot find package", "package-not-found"],
+        ["Error:", "other-error"],
+      ];
+      const errorClass = classes.find(([pattern]) => details.includes(pattern))?.[1] ??
+        (details.includes("stderr=") ? "unrecognized-stderr" : "no-stderr");
+      return [match[1] + ":" + (/exit=(-?\d+)/u.exec(details)?.[1] ?? "unknown"),
+        "runtime-gate-error:" + errorClass];
+    }
     if (match[1] === "tunnel-transport" && /^(?:tunnel-[a-z-]+|local-only-(?:stdin-eof|child-exit-zero|child-spawned|child-sigterm|child-sigint|child-sigbreak|child-signal-other|child-exit-nonzero|control-ready|control-disabled))$/u.test(details)) return [match[1] + ":" + details];
     if (match[1] === "runtime-start" || match[1] === "windows-shell-registration") {
       return [match[1] + ":" + (/^([a-zA-Z]+Exception)/u.exec(details)?.[1] ?? "error")];
