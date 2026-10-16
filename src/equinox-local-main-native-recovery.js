@@ -9,6 +9,7 @@ import {
 import { resolveEquinoxLocalInstallation } from "./equinox-local-installation.js";
 import {
   inspectEquinoxLocalMainNativeStoredRelease,
+  readEquinoxLocalMainNativePointer,
   writeEquinoxLocalMainNativePointer,
 } from "./equinox-local-main-native-state.js";
 import {
@@ -18,6 +19,7 @@ import {
 } from "./equinox-local-native-app-host.js";
 import { readBoundedNormalFile, writeBoundedUtf8File } from "./equinox-local-safe-file.js";
 import { parseEquinoxVersion } from "./equinox-local-updater.js";
+import { createEquinoxLocalMainNativePointerTransition } from "./equinox-local-main-native-pointer-transition.js";
 import { createSupervisorBoundWindowsNativeABLifecycle, requireWindowsNativeABSupervisor } from "./equinox-local-windows-native-ab-supervisor-bound.js";
 import {
   inspectWindowsStableShellRollbackSnapshot,
@@ -176,6 +178,7 @@ export async function recoverEquinoxLocalMainNativeLifecycle({
   readDescriptorImpl = readEquinoxLocalMainNativeRecoveryDescriptor,
   inspectStoredReleaseImpl = inspectEquinoxLocalMainNativeStoredRelease,
   writePointerImpl = writeEquinoxLocalMainNativePointer,
+  readPointerImpl = readEquinoxLocalMainNativePointer,
   inspectDarwinSnapshotImpl = inspectEquinoxLocalNativeAppHostSnapshot,
   activateDarwinImpl = synchronizeEquinoxLocalAppHostForRelease,
   restoreDarwinImpl = restoreEquinoxLocalNativeAppHostSnapshot,
@@ -227,6 +230,15 @@ export async function recoverEquinoxLocalMainNativeLifecycle({
   await inspectWindowsSnapshotImpl({ snapshotReleaseDir, fsImpl });
   const previousLauncher = windowsLauncherPathImpl(previousRelease);
   const targetLauncher = windowsLauncherPathImpl(targetRelease);
+  const previousPointerValue = descriptor.previous.kind === "main"
+    ? { sourceSha: descriptor.previous.sourceSha, target: descriptor.previous.target,
+        runtimeContractSha256: descriptor.previous.runtimeContractSha256 }
+    : null;
+  const nativeSelection = createEquinoxLocalMainNativePointerTransition({
+    pointerPath: paths.pointerPath, transactionRoot: paths.root,
+    target: pointerValue, previous: previousPointerValue,
+    fsImpl, readPointer: readPointerImpl, writePointer: writePointerImpl,
+  });
   if (windowsAdmission) {
     return createBoundWindowsABImpl({ windowsAdmission, transition, transactionId, stored,
       previousPointer: descriptor.previous, previousReleaseDir: previousRelease,
@@ -244,13 +256,15 @@ export async function recoverEquinoxLocalMainNativeLifecycle({
       await assertWindowsNativeHostImpl({ manifestRoot, acceptedLauncherPaths: [targetLauncher, previousLauncher], execFileAsync: execFileImpl, fsImpl, env });
       const shell = await activateWindowsImpl({ releaseDir: targetRelease, previousReleaseDir: previousRelease, programRoot, fsImpl });
       await registerWindowsNativeHostImpl({ manifestRoot, launcherPath: targetLauncher, expectedPreviousLauncherPath: previousLauncher, execFileAsync: execFileImpl, fsImpl, env });
+      await nativeSelection.selectTarget();
       return shell;
     },
     rollback: async () => {
       const shell = await restoreWindowsImpl({ snapshotReleaseDir, currentReleaseDir: targetRelease, programRoot, fsImpl });
       await registerWindowsNativeHostImpl({ manifestRoot, launcherPath: previousLauncher, expectedPreviousLauncherPath: targetLauncher, execFileAsync: execFileImpl, fsImpl, env });
+      await nativeSelection.restorePrevious();
       return shell;
     },
-    commit: async () => writePointerImpl(paths.pointerPath, pointerValue, { transactionRoot: paths.root, fsImpl }),
+    commit: async () => nativeSelection.requireTarget(),
   });
 }

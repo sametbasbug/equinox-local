@@ -13,5 +13,6 @@
     <Compile Include="../../../native/windows/EquinoxLocal.WindowsShell/ManagedUninstallHandoff.cs" Link="ManagedUninstallHandoff.cs" />
     <Compile Include="../../../native/windows/EquinoxLocal.WindowsShell/StartupRegistration.cs" Link="StartupRegistration.cs" />
     <Compile Include="../../../native/windows/EquinoxLocal.WindowsShell/WindowsManagedReleaseLocator.cs" Link="WindowsManagedReleaseLocator.cs" />
+    <Compile Include="../../../native/windows/EquinoxLocal.WindowsShell/WindowsManagedSourceRuntimeLocator.cs" Link="WindowsManagedSourceRuntimeLocator.cs" />
   </ItemGroup>
 </Project>

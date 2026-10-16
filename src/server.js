@@ -10,6 +10,7 @@ import { promisify } from "node:util";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { pathToFileURL } from "node:url";
 import { maybeScheduleMacStableMainBridge } from "./equinox-local-mac-main-bridge.js";
+import { pruneVerifiedMainLargeStorage } from "./equinox-local-main-storage-retention.js";
 import { createMcpToolReplayGuard } from "./mcp-tool-replay-guard.js";
 import { createEquinoxLocalToolRegistrar } from "./equinox-local-tool-registration.js";
 import { createEquinoxLocalWorkspaceRuntime } from "./equinox-local-workspace-runtime.js";
@@ -3402,6 +3403,36 @@ async function start({ transport = new StdioServerTransport() } = {}) {
   await recoveryPolicyController.initialize();
   await runtimeJanitor.initialize();
   await runtimeJanitor.startMaintenance();
+  // Reclaim all superseded big Main/Stable payloads only from the installed,
+  // genuinely healthy B runtime after the detached handoff has RELEASED its
+  // active marker. Do not let the old A worker, first-install Stable or a
+  // failed/rolling-back transaction erase recovery state. A Windows file lock
+  // is retried later instead of aborting the healthy installation.
+  if (platform === "win32" && equinoxLocalInstallation.kind === "managed-source") {
+    let attempts = 0;
+    const tryCleanup = async () => {
+      attempts += 1;
+      let complete = false;
+      try {
+        const doctor = await getControlCenterDoctorStatus();
+        if (doctor.state === "HEALTHY" && doctor.summary.attention === 0) {
+          const result = await pruneVerifiedMainLargeStorage({
+            installation: equinoxLocalInstallation, platform,
+            processExecutable: process.execPath, runtimeVersion: SERVER_VERSION,
+          });
+          complete = result.pending.length === 0;
+        }
+      } catch (error) {
+        // Actual target/runtime admission is inside the pruner: unsafe state
+        // never deletes anything. Keep the product healthy for a later retry.
+        if (attempts === 8) {
+          console.error("[Equinox Local] Safe obsolete Main storage cleanup remains pending.");
+        }
+      }
+      if (!complete && attempts < 8) setTimeout(() => { void tryCleanup(); }, 45_000).unref?.();
+    };
+    setTimeout(() => { void tryCleanup(); }, 12_000).unref?.();
+  }
   if (EQUINOX_LOCAL_CONFIG.controlCenter.enabled) {
     await equinoxLocalControlApi.start();
   }

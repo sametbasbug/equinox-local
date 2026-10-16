@@ -76,6 +76,7 @@ test("Windows recovery derives previous Main release only from exact durable ide
   const targetRelease = `C:\\State\\native-store\\${target}\\${B}\\release`;
   const previousRelease = `C:\\State\\native-store\\${target}\\${A}\\release`;
   const launcher = (release) => `${release}\\runtime\\browser\\host.exe`;
+  let pointer = { sourceSha: A, target, runtimeContractSha256: DA };
   const lifecycle = await recoverEquinoxLocalMainNativeLifecycle({
     transition: transition(target), transactionRoot: root, transactionId: TX,
     installation: { managed: true, selfUpdateSupported: true, target, platform: "win32", releasesRoot: "C:\\Stable", programRoot: "C:\\Program\\Equinox Local", nativeMessagingManifestRoot: "C:\\State\\manifest" },
@@ -87,9 +88,14 @@ test("Windows recovery derives previous Main release only from exact durable ide
     assertWindowsNativeHostImpl: async (value) => events.push(["ownership", value]),
     registerWindowsNativeHostImpl: async (value) => events.push(["register", value]),
     windowsLauncherPathImpl: launcher,
-    writePointerImpl: async (_file, value) => { events.push(["commit", value]); return value; },
+    readPointerImpl: async () => pointer,
+    writePointerImpl: async (_file, value) => { events.push(["pointer", value]); pointer = value; return value; },
   });
-  await lifecycle.activate(); await lifecycle.rollback(); await lifecycle.commit();
+  await lifecycle.activate();
+  assert.equal(pointer.sourceSha, B);
+  await lifecycle.commit();
+  await lifecycle.rollback();
+  assert.equal(pointer.sourceSha, A);
   assert.deepEqual(events.slice(0, 3).map(([name]) => name), ["stored", "stored", "snapshot"]);
   assert.deepEqual(events.slice(0, 2).map(([, sha]) => sha), [B, A]);
   assert.equal(events.find(([name]) => name === "activate")[1].previousReleaseDir, previousRelease);
