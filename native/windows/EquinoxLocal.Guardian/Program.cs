@@ -152,6 +152,28 @@ internal static partial class Program
             Architecture.Arm64 => "win32-arm64",
             _ => throw new PlatformNotSupportedException("Unsupported Windows Guardian CPU target."),
         };
+        // A verified committed Main native-store is the sole runtime identity
+        // after successful B. Do not depend on the obsolete Stable release
+        // after it is reclaimed; keep the signed Stable fallback only before
+        // initial Main native selection.
+        var mainPointerPath = Path.Combine(installRoot, "state", "main-update", "current-native.json");
+        if (File.Exists(mainPointerPath))
+        {
+            InspectionPhase = "verify-main-native-baseline";
+            var node = ResolveOwnedMainWorkerNodePath(installRoot, target);
+            var nodeBin = Path.GetDirectoryName(node)
+                ?? throw new InvalidDataException("Main native Node path has no directory.");
+            var nativeRelease = Path.GetFullPath(Path.Combine(nodeBin, "..", "..", ".."));
+            var sourceShell = Path.Combine(nativeRelease, "runtime", "shell");
+            RequireNormalDirectory(sourceShell);
+            RequireNormalDirectory(programRoot);
+            InspectionPhase = "compare-main-native-tree";
+            CompareNativeTrees(sourceShell, programRoot);
+            var mainShell = Path.Combine(programRoot, "EquinoxLocal.exe");
+            RequireNormalFile(mainShell);
+            return new VerifiedBaseline(mainShell);
+        }
+
         InspectionPhase = "read-stable-pointer";
         var pointerPath = Path.Combine(installRoot, "current-version.json");
         using var pointerDoc = ReadJson(pointerPath, MaxPointerBytes);

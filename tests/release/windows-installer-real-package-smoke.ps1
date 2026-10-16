@@ -156,9 +156,12 @@ try {
   # requiring test-only future Guardian components in an already shipped A.
   $SkipLegacyGuardianFixture = ($env:GITHUB_ACTIONS -ceq 'true' -and -not [string]::IsNullOrWhiteSpace($env:EQUINOX_WINDOWS_MAIN_ACCEPT_TARGET_SHA))
   $HistoricRepair = ($env:EQUINOX_WINDOWS_LEGACY_REINSTALL_ACCEPTANCE -ceq 'true')
+  $AcceptedOldHistoricMain = ($FixtureSourceSha -ceq '8dbe965d28e76026123ce8de34d8f1aa27c10465' -and $SkipLegacyGuardianFixture)
+  $AcceptedOldSigned610 = ($FixtureSourceSha -ceq 'e85790a99e8e05ccf9997279d174b452793d6097' -and -not $SkipLegacyGuardianFixture)
   if ($HistoricRepair -and ($env:GITHUB_ACTIONS -cne 'true' -or
-      $FixtureSourceSha -cne '8dbe965d28e76026123ce8de34d8f1aa27c10465' -or
-      -not $SkipLegacyGuardianFixture)) { throw 'Historic repair requires real pinned old A on isolated hosted Windows.' }
+      (-not $AcceptedOldHistoricMain -and -not $AcceptedOldSigned610))) {
+    throw 'Historical or 6.1.0 native repair requires a pinned real A archive on disposable hosted Windows.'
+  }
   if (-not $SkipLegacyGuardianFixture) {
   # Exercise the real independent Guardian binary on a disposable hosted runner
   # without changing Start Menu, Installed Apps, autostart or the running WPF.
