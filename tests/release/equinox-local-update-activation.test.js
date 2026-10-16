@@ -467,7 +467,8 @@ test("Windows managed activation forced health failure restores pointer stable s
 
 test("Windows classic installer can switch from verified Main native B after all old Stable folders were reclaimed", { skip: process.platform !== "win32" || process.arch !== "x64" }, async (t) => {
   for (const unhealthyTarget of [false, true]) {
-    const fixture = await makeWindowsActivationFixture(t);
+    await t.test(unhealthyTarget ? "failed candidate rolls back to Main" : "healthy Stable candidate commits", async (scenario) => {
+      const fixture = await makeWindowsActivationFixture(scenario);
     const original = path.win32.join(fixture.installation.installRoot, "state", "main-update", "native-store", "win32-x64", "a".repeat(40), "release");
     // Simulate Main's post-HEALTHY cleanup: old numbered Stable release is GONE,
     // its signed 5.2.0 current-version pointer is an intentionally historical
@@ -508,6 +509,7 @@ test("Windows classic installer can switch from verified Main native B after all
       assert.equal(callbacks[0][1].previousReleaseDir, original);
     }
     await assert.rejects(fs.lstat(path.win32.join(fixture.installation.releasesRoot, "5.2.0")), { code: "ENOENT" });
+    });
   }
 });
 
