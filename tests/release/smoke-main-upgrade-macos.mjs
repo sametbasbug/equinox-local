@@ -250,7 +250,22 @@ globalThis.fetch = (resource, init = {}) => {
       const state = /(?:^|\n)\s*state\s*=\s*([a-z-]+)\s*(?:\n|$)/u.exec(servicePrint)?.[1] ?? "not-loaded";
       const exitCode = /(?:^|\n)\s*last exit code\s*=\s*(\d+)\s*(?:\n|$)/u.exec(servicePrint)?.[1] ?? "unknown";
       const hasPid = /(?:^|\n)\s*pid\s*=\s*\d+\s*(?:\n|$)/u.test(servicePrint);
-      console.error(JSON.stringify({ hostedOldMainLaunchAgent: { state, exitCode, hasPid } }));
+      const logFlags = {};
+      for (const name of ["Equinox Local.error.log", "Equinox Local.log"]) {
+        const data = await fs.readFile(path.join(installRoot, "logs", name), "utf8").catch(() => null);
+        logFlags[name] = data === null ? { present: false } : {
+          present: true, bytes: data.length,
+          nodeModuleMissing: /ERR_MODULE_NOT_FOUND|MODULE_NOT_FOUND/u.test(data),
+          missingFile: /ENOENT|No such file or directory/u.test(data),
+          denied: /EACCES|EPERM|Operation not permitted/u.test(data),
+          invalidArgument: /EINVAL|Invalid argument/u.test(data),
+          syntaxError: /SyntaxError|Unexpected token/u.test(data),
+          nativeCrash: /SIGSEGV|EXC_BAD_ACCESS|Trace\/BPT trap/u.test(data),
+          configError: /configuration|config.json|invalid config/iu.test(data),
+          launchError: /could not|failed|error|fatal/iu.test(data),
+        };
+      }
+      console.error(JSON.stringify({ hostedOldMainLaunchAgent: { state, exitCode, hasPid, logs: logFlags } }));
       throw error;
     }
     ownedService.started = true;

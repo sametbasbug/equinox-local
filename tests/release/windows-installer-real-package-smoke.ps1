@@ -771,12 +771,22 @@ try {
   Assert-True ((Invoke-GuardianCheck '--audit-native-journal') -eq 70) 'Guardian accepted an orphan journal after its owning active receipt disappeared.'
   Write-Output "Windows $FixtureTarget Guardian native journal ownership audit positive/negative hosted acceptance PASSED."
   } # End old Guardian fixture: no mock Guardian in real old-installed upgrade.
+  # An old, signed A installed the toolchain PINNED BY A (e.g. Node 26.10.0),
+  # not the Node pinned by the latest hosted test harness. Read only the
+  # exact already-verified A source file; never use ambient PATH fallback.
+  $NodeVersion = '26.11.1'
+  if ($SkipLegacyGuardianFixture) {
+    $VersionSource = [IO.File]::ReadAllText((Join-Path $ManagedSourceRoot 'src\equinox-local-runtime-versions.js'))
+    $PinnedNode = [regex]::Match($VersionSource, 'export const EQUINOX_LOCAL_NODE_VERSION = "(\d+\.\d+\.\d+)";')
+    Assert-True ($PinnedNode.Success) 'Vintage A signed source has no pinned native Node version.'
+    $NodeVersion = $PinnedNode.Groups[1].Value
+  }
   $OwnedGit = Join-Path $InstallRoot ("runtime\toolchain\git\2.53.0-4\$FixtureTarget\cmd\git.exe")
-  $OwnedNode = Join-Path $InstallRoot ("runtime\toolchain\node\26.11.1\$FixtureTarget\node.exe")
-  $OwnedNpm = Join-Path $InstallRoot ("runtime\toolchain\node\26.11.1\$FixtureTarget\node_modules\npm\bin\npm-cli.js")
+  $OwnedNode = Join-Path $InstallRoot ("runtime\toolchain\node\$NodeVersion\$FixtureTarget\node.exe")
+  $OwnedNpm = Join-Path $InstallRoot ("runtime\toolchain\node\$NodeVersion\$FixtureTarget\node_modules\npm\bin\npm-cli.js")
   foreach ($owned in @($OwnedGit,$OwnedNode,$OwnedNpm)) { Assert-True ([IO.File]::Exists($owned)) ("Product-owned toolchain file is missing: $owned") }
   Assert-True ((& $OwnedGit --version) -match '^git version 2\.53\.0\b') 'Product-owned Git version mismatch.'
-  Assert-True ((& $OwnedNode --version) -ceq 'v26.11.1') 'Product-owned Node version mismatch.'
+  Assert-True ((& $OwnedNode --version) -ceq ('v' + $NodeVersion)) 'Product-owned Node version mismatch.'
   # End-to-end actual NTFS A/B switch and failed-B rollback against exact
   # architecture-specific installed WPF PE bytes in an isolated temp root.
   # NEVER mutate the host's real installed program root or Native Messaging.
