@@ -5,6 +5,7 @@ import path from "node:path";
 import test from "node:test";
 
 import { pruneVerifiedMainLargeStorage } from "../../src/equinox-local-main-storage-retention.js";
+import { equinoxLocalToolchainContract } from "../../src/equinox-local-toolchain-contract.js";
 
 const A = "a".repeat(40);
 const B = "b".repeat(40);
@@ -90,4 +91,33 @@ test("foreign symlink and changed source pointer never authorize sweeping user d
   assert.deepEqual(result.releases, ["6.0.5", "6.1.0"]);
   assert.equal(await fs.readFile(path.join(foreign, "keep"), "utf8"), "SAFE");
   assert.equal((await fs.lstat(path.join(f.installRoot, "releases", "6.0.1"))).isSymbolicLink(), true);
+});
+
+
+test("only old product-owned Git and Node distributions are reclaimed; pinned B tools survive", async (t) => {
+  const f = await fixture(t);
+  const contract = equinoxLocalToolchainContract({
+    runtimeRoot: path.join(f.installRoot, "runtime"), target: "darwin-arm64",
+  });
+  for (const item of [contract.git, contract.node]) {
+    const base = path.join(contract.toolchainRoot, item.component);
+    const oldVersion = path.join(base, "1.2.3");
+    await fs.mkdir(path.join(oldVersion, "darwin-arm64"), { recursive: true });
+    await fs.mkdir(item.root, { recursive: true });
+    await fs.writeFile(path.join(oldVersion, "darwin-arm64", "old-data"), "large old tool");
+    await fs.writeFile(path.join(item.root, "active-data"), "keep");
+    await fs.mkdir(path.join(base, "user-data"), { recursive: true });
+    await fs.writeFile(path.join(base, "user-data", "owned?"), "protect unrecognized tree");
+  }
+  Object.assign(f.installation, {
+    gitPath: contract.gitPath, nodePath: contract.nodePath, npmPath: contract.npmPath,
+  });
+  const result = await pruneVerifiedMainLargeStorage({ ...f, platform: "darwin" });
+  assert.deepEqual(result.toolchains, ["1.2.3", "1.2.3"]);
+  for (const component of [contract.git, contract.node]) {
+    await assert.rejects(fs.stat(path.join(contract.toolchainRoot, component.component, "1.2.3")), { code: "ENOENT" });
+    assert.equal(await fs.readFile(path.join(component.root, "active-data"), "utf8"), "keep");
+    assert.equal(await fs.readFile(path.join(contract.toolchainRoot, component.component, "user-data", "owned?"), "utf8"),
+      "protect unrecognized tree");
+  }
 });

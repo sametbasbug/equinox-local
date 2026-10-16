@@ -3,6 +3,7 @@ import path from "node:path";
 
 import { readEquinoxLocalMainSourcePointer } from "./equinox-local-main-source-pointer.js";
 import { readEquinoxLocalMainNativePointer } from "./equinox-local-main-native-state.js";
+import { equinoxLocalToolchainContract } from "./equinox-local-toolchain-contract.js";
 
 const SHA = /^[a-f0-9]{40}$/u;
 const VERSION = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/u;
@@ -85,7 +86,7 @@ export async function pruneVerifiedMainLargeStorage({
   if (!match || runtimeVersion !== `${match[1]}.${match[2]}.${match[3]}`) {
     throw new Error("Active runtime version is not the committed Main source version.");
   }
-  const clean = { releases: [], sources: [], native: [], staging: [], pending: [] };
+  const clean = { releases: [], sources: [], native: [], staging: [], toolchains: [], pending: [] };
   async function prune(root, bucket, accept, protectedName = null) {
     if (!await safeDirectory(root, { fsImpl, platform, optional: true })) return;
     for (const entry of await fsImpl.readdir(root, { withFileTypes: true })) {
@@ -115,5 +116,21 @@ export async function pruneVerifiedMainLargeStorage({
   // pending rollback to A. Old succeeded, failed, rolled_back or abandoned
   // staging trees are all superseded; keep only the small immutable receipts.
   await prune(api.join(transaction, "staging"), "staging", (name) => TX.test(name));
+  const contract = equinoxLocalToolchainContract({
+    runtimeRoot: api.join(install, "runtime"), target: installation.target,
+  });
+  // Only prune old product-owned Git/Node toolchains if the B server is
+  // actually using BOTH exact current versioned distributions. Never touch
+  // arbitrary ambient runtimes, the active pinned versions or other apps.
+  if (installation.gitPath &&
+      normal(api, installation.gitPath, contract.gitPath, platform) &&
+      normal(api, installation.nodePath, contract.nodePath, platform) &&
+      normal(api, installation.npmPath, contract.npmPath, platform)) {
+    for (const component of [contract.git, contract.node]) {
+      await prune(api.join(contract.toolchainRoot, component.component), "toolchains",
+        (name) => /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?$/u.test(name),
+        component.version);
+    }
+  }
   return Object.freeze(clean);
 }
