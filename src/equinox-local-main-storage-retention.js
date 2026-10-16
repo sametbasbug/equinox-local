@@ -4,6 +4,7 @@ import path from "node:path";
 import { readEquinoxLocalMainSourcePointer } from "./equinox-local-main-source-pointer.js";
 import { readEquinoxLocalMainNativePointer } from "./equinox-local-main-native-state.js";
 import { equinoxLocalToolchainContract } from "./equinox-local-toolchain-contract.js";
+import { readBoundedNormalFile } from "./equinox-local-safe-file.js";
 import { readManagedCurrentRelease } from "./equinox-local-update-activation.js";
 import { assertWindowsStableShellOwnedByRelease } from "./equinox-local-windows-stable-shell.js";
 import { assertWindowsNativeMessagingHostOwnership } from "./equinox-browser-windows-native-messaging.js";
@@ -175,7 +176,7 @@ export async function pruneDisenrolledWindowsMainLargeStorage({
     throw new Error("An older Main worker is still executing; refusing to reclaim native payloads.");
   }
   if (!await safeDirectory(tx, { fsImpl, platform: "win32", optional: true })) {
-    return Object.freeze({ sources: [], native: [], staging: [], toolchains: [], pending: [] });
+    return Object.freeze({ sources: [], native: [], staging: [], toolchains: [], pointers: [], pending: [] });
   }
   const markerNames = [
     "install.json", "install.json.stable-install-backup", "active.json", "classic-repair.json",
@@ -209,11 +210,11 @@ export async function pruneDisenrolledWindowsMainLargeStorage({
   if (!normal(api, host?.launcherPath, expectedLauncher, "win32")) {
     throw new Error("Active Stable Native Messaging ownership is unverified.");
   }
-  const result = { sources: [], native: [], staging: [], toolchains: [], pending: [] };
-  async function prune(root, bucket, accepts) {
+  const result = { sources: [], native: [], staging: [], toolchains: [], pointers: [], pending: [] };
+  async function prune(root, bucket, accepts, protectedName = null) {
     if (!await safeDirectory(root, { fsImpl, platform: "win32", optional: true })) return;
     for (const entry of await fsImpl.readdir(root, { withFileTypes: true })) {
-      if (!accepts(entry.name) || !entry.isDirectory() || entry.isSymbolicLink()) continue;
+      if (!accepts(entry.name) || entry.name === protectedName || !entry.isDirectory() || entry.isSymbolicLink()) continue;
       await ensureStable();
       const candidate = api.join(root, entry.name);
       if (!await safeDirectory(candidate, { fsImpl, platform: "win32" })) continue;
@@ -234,7 +235,41 @@ export async function pruneDisenrolledWindowsMainLargeStorage({
   });
   for (const component of [contract.git, contract.node]) {
     await prune(api.join(contract.toolchainRoot, component.component), "toolchains",
-      (name) => /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?$/u.test(name));
+      (name) => /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?$/u.test(name),
+      component.version);
   }
+  // Former Main pointers are metadata, not credentials. Leaving them aimed at
+  // reclaimed SHAs would cause a later explicit Main enrollment to bootstrap
+  // the wrong native A. Retire only exact previously owned metadata records.
+  async function retirePointer(name, validate) {
+    const filePath = api.join(tx, name);
+    let file;
+    try {
+      file = await readBoundedNormalFile(filePath, {
+        fsImpl, platform: "win32", minBytes: 2, maxBytes: 8192,
+        encoding: "utf8", label: "Retired Main identity pointer",
+      });
+    } catch (error) {
+      if (error?.code === "ENOENT") return;
+      throw error;
+    }
+    if (!validate(file.data)) throw new Error("Retired Main pointer was not an exact product-owned record.");
+    await ensureStable();
+    await fsImpl.unlink(filePath);
+    result.pointers.push(name);
+  }
+  await retirePointer("current-source.conf", (data) => {
+    const match = /^schemaVersion=1\r?\nsourceRoot=(.+)\r?\nsha=([a-f0-9]{40})\r?\n?$/u.exec(data);
+    return Boolean(match && normal(api, match[1], api.join(tx, "sources", match[2]), "win32"));
+  });
+  await retirePointer("current-native.json", (data) => {
+    let value;
+    try { value = JSON.parse(data); } catch { return false; }
+    return value?.schemaVersion === 1 && value.channel === "main" &&
+      value.target === installation.target && SHA.test(value.sourceSha ?? "") &&
+      /^[a-f0-9]{64}$/u.test(value.runtimeContractSha256 ?? "") &&
+      Object.keys(value).sort().join(",") ===
+        ["schemaVersion", "channel", "sourceSha", "target", "runtimeContractSha256"].sort().join(",");
+  });
   return Object.freeze(result);
 }

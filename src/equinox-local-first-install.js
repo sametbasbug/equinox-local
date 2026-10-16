@@ -886,14 +886,15 @@ export async function installManagedEquinoxRelease({
     if (nativePointer) {
       if (nativePointer.target !== expectedTarget) throw new Error("Existing Main native architecture differs from signed installer.");
       previousMainNativeReleaseDir = nativePointer.releaseDir;
-      if (current && nativePointer.payloadVersion !== current.version) {
-        throw new Error("Installed Main native release does not match the authenticated old Main identity.");
-      }
+      // The legacy numbered Stable current-version can lag a healthy Main B
+      // checkout, while source-only updates can retain an even older native
+      // payload. Neither is the version of the RUNNING Main server.
     }
-    if (!current && !allowExistingStableToMainMigration && nativePointer) {
-      // The successful Main B janitor intentionally removed every old
-      // numbered Stable release. Only an independently authenticated source
-      // SHA + immutable native B, with NO active handoff, can act as rollback.
+    if (!allowExistingStableToMainMigration && nativePointer) {
+      // Use the exact authenticated Main source + native A as the rollback
+      // identity whether the obsolete numbered Stable tree has already been
+      // reclaimed OR still exists pending post-health cleanup.
+      // The legacy Stable pointer is only the fallback pointer to restore.
       const lock = await fsImpl.lstat(path.win32.join(mainPaths.mainTransactionRoot, "active.json")).catch((error) => {
         if (error?.code === "ENOENT") return null;
         throw error;
@@ -907,7 +908,11 @@ export async function installManagedEquinoxRelease({
         if (error?.code === "ENOENT") return null;
         throw error;
       });
-      if (legacyStat) throw new Error("Existing Main Stable baseline is unreadable, not safely reclaimed.");
+      if (legacyStat && (!legacyStat.isDirectory() || legacyStat.isSymbolicLink() ||
+          !current || path.win32.normalize(current.releaseDir).toLowerCase() !==
+            path.win32.normalize(legacyRoot).toLowerCase())) {
+        throw new Error("Existing Main Stable baseline is inconsistent, foreign or unsafe.");
+      }
       const productGit = equinoxLocalToolchainContract({
         runtimeRoot: path.win32.join(paths.installRoot, "runtime"), target: expectedTarget,
       }).gitPath;

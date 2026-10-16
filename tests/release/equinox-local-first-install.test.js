@@ -842,6 +842,7 @@ test("Windows classic install resumes an interrupted native Main->Stable handoff
 
 test("Windows classic repair after Main GC uses verified native B as rollback without requiring obsolete releases", { skip: process.platform !== "win32" || process.arch !== "x64" }, async (t) => {
   for (const failNewHealth of [false, true]) {
+    for (const legacyStableExists of [false, true]) {
     const fixture = await createRealWindowsFirstInstallFixture("6.1.1");
     t.after(() => fs.rm(fixture.root, { recursive: true, force: true }));
     const root = fixture.installRoot;
@@ -861,12 +862,15 @@ test("Windows classic repair after Main GC uses verified native B as rollback wi
       branch: EQUINOX_LOCAL_MAIN_BRANCH, bootstrapSha: "a".repeat(40) });
     await fs.writeFile(stampPath, stamp);
     await fs.writeFile(pointerFile, JSON.stringify({ schemaVersion: 1, target: "win32-x64", version: "6.0.5" }));
+    const legacyRelease = path.win32.join(root, "releases", "6.0.5");
+    if (legacyStableExists) await fs.mkdir(legacyRelease, { recursive: true });
     await fs.writeFile(secret, "never-delete-user-key");
     const events = [];
     const install = () => installManagedEquinoxRelease({
       stagedReleaseDir: fixture.releaseDir, homeDir: fixture.homeDir, platform: "win32",
       arch: "x64", target: "win32-x64", env: { ...process.env, LOCALAPPDATA: fixture.localAppData },
-      readCurrentImpl: async () => null,
+      readCurrentImpl: async () => legacyStableExists
+        ? { version: "6.0.5", releaseDir: legacyRelease } : null,
       readMainSourcePointerImpl: async () => ({ sha: "a".repeat(40), sourceRoot }),
       readMainNativePointerImpl: async () => ({ sourceSha: "b".repeat(40), target: "win32-x64",
         payloadVersion: "6.0.5", releaseDir: nativeRelease }),
@@ -896,6 +900,8 @@ test("Windows classic repair after Main GC uses verified native B as rollback wi
     assert.equal(await exists(stampPath), failNewHealth);
     assert.equal(await fs.readFile(secret, "utf8"), "never-delete-user-key");
     assert.deepEqual(events, failNewHealth ? ["launch", "launch"] : ["launch"]);
+    assert.equal(await exists(legacyRelease), legacyStableExists, "Unrelated Stable files must not be pruned on rollback");
+    }
   }
 });
 

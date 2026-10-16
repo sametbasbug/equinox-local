@@ -100,6 +100,8 @@ windowsTest("disenrolled signed Stable 6.1.1 safely retires ALL abandoned Main p
     api.dirname(receipt), api.dirname(privateState),
     api.join(contract.toolchainRoot, "git", contract.git.version),
     api.join(contract.toolchainRoot, "node", contract.node.version),
+    api.join(contract.toolchainRoot, "git", "1.2.3"),
+    api.join(contract.toolchainRoot, "node", "1.2.3"),
   ];
   for (const item of fixtureDirs) await fs.mkdir(item, { recursive: true });
   const documents = [
@@ -115,6 +117,12 @@ windowsTest("disenrolled signed Stable 6.1.1 safely retires ALL abandoned Main p
   }));
   await fs.writeFile(privateState, '{"secret":"keep"}');
   await fs.writeFile(receipt, '{"audit":"keep"}');
+  await fs.writeFile(api.join(tx, "current-source.conf"),
+    `schemaVersion=1\nsourceRoot=${api.join(tx, "sources", B)}\nsha=${B}\n`);
+  await fs.writeFile(api.join(tx, "current-native.json"), JSON.stringify({
+    schemaVersion: 1, channel: "main", target, sourceSha: A,
+    runtimeContractSha256: "f".repeat(64),
+  }));
   const pointer = api.join(root, "current-version.json");
   await fs.writeFile(pointer, JSON.stringify({ schemaVersion: 1, version: "6.1.1", target }));
   const installation = {
@@ -143,7 +151,13 @@ windowsTest("disenrolled signed Stable 6.1.1 safely retires ALL abandoned Main p
   assert.deepEqual(result.sources.sort(), [A, B]);
   assert.deepEqual(result.native.sort(), [A, B]);
   assert.deepEqual(result.staging, ["main-" + "5".repeat(32)]);
-  assert.deepEqual(result.toolchains.sort(), [contract.git.version, contract.node.version].sort());
+  assert.deepEqual(result.toolchains.sort(), ["1.2.3", "1.2.3"]);
+  assert.deepEqual(result.pointers.sort(), ["current-native.json", "current-source.conf"]);
+  for (const component of [contract.git, contract.node]) {
+    assert.equal((await fs.stat(api.join(contract.toolchainRoot, component.component, component.version))).isDirectory(), true);
+  }
+  await assert.rejects(fs.stat(api.join(tx, "current-source.conf")), { code: "ENOENT" });
+  await assert.rejects(fs.stat(api.join(tx, "current-native.json")), { code: "ENOENT" });
   assert.deepEqual(result.pending, []);
   assert.deepEqual(await fs.readdir(api.join(tx, "sources")), []);
   assert.deepEqual(await fs.readdir(api.join(tx, "native-store", target)), []);
