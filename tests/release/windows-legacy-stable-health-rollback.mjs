@@ -34,14 +34,21 @@ const shellPath = path.win32.join(process.env.LOCALAPPDATA, "Programs", "Equinox
 const shellHash = async () => createHash("sha256").update(await fs.readFile(shellPath)).digest("hex");
 const originalShell = await shellHash();
 let observations = 0;
+let polls = 0;
+let nativeStarts = 0;
+let lastStatus = "no status";
 await assert.rejects(installManagedEquinoxRelease({
   stagedReleaseDir, platform: "win32", arch: process.arch,
   activateImpl: (options) => activatePreparedEquinoxRelease({
-    ...options, healthAttempts: 90,
+    ...options, healthAttempts: 30,
+    kickstartImpl: async (...args) => { nativeStarts++; return options.kickstartImpl(...args); },
     fetchImpl: async (...args) => {
+      polls++;
       const response = await fetch(...args);
+      if (!response.ok) lastStatus = "HTTP " + response.status;
       if (!response.ok) return response;
       const body = await response.clone().json().catch(() => null);
+      lastStatus = JSON.stringify({ version: body?.status?.server?.version, kind: body?.status?.installation?.kind, health: body?.status?.health?.state });
       if (body?.status?.server?.version !== versionB ||
           body?.status?.installation?.kind !== "managed" ||
           body?.status?.health?.state !== "HEALTHY") return response;
@@ -52,7 +59,7 @@ await assert.rejects(installManagedEquinoxRelease({
     },
   }),
 }), /rolled back/u);
-assert.ok(observations > 0, "New native Stable must reach HEALTHY before forced rollback.");
+assert.ok(observations > 0, "New native Stable must reach HEALTHY before forced rollback; " + JSON.stringify({ polls, lastStatus, nativeStarts }));
 assert.deepEqual(await fs.readFile(mainStamp), originalStamp);
 assert.deepEqual(JSON.parse(await fs.readFile(currentPath, "utf8")), previousCurrent);
 assert.deepEqual(await fs.readFile(manifestPath), originalManifest);
