@@ -15,6 +15,7 @@ public partial class App : System.Windows.Application
     protected override void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
+        WindowsShellDiagnostics.RecordRuntimeState("shell-startup", "entered");
         _startedAtLogin = e.Args.Any(arg => string.Equals(arg, "--startup", StringComparison.OrdinalIgnoreCase));
 
         // Windows Installed Apps invokes this exact native shell with --uninstall.
@@ -50,6 +51,7 @@ public partial class App : System.Windows.Application
             return;
         }
 
+        WindowsShellDiagnostics.RecordRuntimeState("shell-startup", "primary-acquired");
         if (uninstallRequested)
         {
             try { ManagedUninstallHandoff.Launch("preserve-user-data"); }
@@ -62,6 +64,7 @@ public partial class App : System.Windows.Application
         }
 
         _window = new MainWindow();
+        WindowsShellDiagnostics.RecordRuntimeState("shell-startup", "main-window-created");
         MainWindow = _window;
         _singleInstance.ReopenRequested += (_, _) =>
             Dispatcher.BeginInvoke(new Action(_window.ActivateFromReopen));

@@ -47,9 +47,12 @@ const inspectB = async () => {
   const log = await fs.readFile(logFile, "utf8").catch(() => "");
   const candidate = log.slice(candidateLogStart);
   return candidate.split("\n").slice(-85).flatMap((line) => {
-    const match = /^\S+ (runtime-discovery|runtime-start-phase|runtime-start|runtime-gate-exit|tunnel-transport|windows-shell-registration) ([^\r\n]*)$/u.exec(line);
+    const match = /^\S+ (shell-startup|runtime-discovery|runtime-start-phase|runtime-start|runtime-gate-exit|tunnel-transport|windows-shell-registration) ([^\r\n]*)$/u.exec(line);
     if (!match) return [];
     const details = match[2];
+    if (match[1] === "shell-startup" && /^(entered|primary-acquired|main-window-created)$/u.test(details)) {
+      return [match[1] + ":" + details];
+    }
     if (match[1] === "runtime-discovery") {
       return [match[1] + ":" + (details.includes("supervisor=True") ? "supervisor-present" : "supervisor-missing")];
     }
