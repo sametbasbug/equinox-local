@@ -10,6 +10,7 @@ import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 
 import { installManagedEquinoxRelease } from "../../src/equinox-local-first-install.js";
+import { activatePreparedEquinoxRelease } from "../../src/equinox-local-update-activation.js";
 import { enrollEquinoxLocalManagedSource } from "../../src/equinox-local-managed-source-enrollment.js";
 import { readEquinoxLocalMainSourcePointer } from "../../src/equinox-local-main-source-pointer.js";
 import { equinoxLocalToolchainContract } from "../../src/equinox-local-toolchain-contract.js";
@@ -111,6 +112,98 @@ async function awaitHealthy(expectedSha, { kind = "managed-source", timeoutMs = 
     return status.health?.state === "HEALTHY" && status.installation?.kind === kind &&
       (status.installation?.sourceSha ?? null) === expectedSha ? status : null;
   }, `HEALTHY ${kind} ${expectedSha ?? "Stable"}`, timeoutMs);
+}
+
+// Real hosted native A is already installed/running. Re-extract a separately
+// packaged B each time; never simulate the product activation or launchctl.
+// Source-provenance acceptance, NOT a production-signed release assertion.
+async function acceptHistoricMainToStable({
+  candidateArtifact, previousSha, oldVersion, homeDir, installRoot,
+  scratch, uid, trackedExecFile, beforeNativeSha256,
+}) {
+  assert.equal(process.env.GITHUB_ACTIONS, "true");
+  assert.equal(process.env.CI, "true");
+  assert.ok(path.isAbsolute(candidateArtifact));
+  const oldRelease = path.join(installRoot, "releases", oldVersion);
+  const current = path.join(installRoot, "current");
+  const target = equinoxLocalUpdateTarget();
+  const candidateMeta = await execFile("/usr/bin/tar", ["-xOzf", candidateArtifact, "release/release.json"], {
+    timeout: 15_000, maxBuffer: 20_000,
+  }).then(({stdout}) => JSON.parse(stdout));
+  assert.equal(candidateMeta.target, target);
+  assert.match(candidateMeta.sourceSha, SHA);
+  assert.notEqual(candidateMeta.sourceSha, previousSha);
+  assert.notEqual(candidateMeta.version, oldVersion);
+  const originalStamp = await fs.readFile(path.join(installRoot, "main-update", "install.json"), "utf8");
+  const proofFiles = [
+    path.join(installRoot, "config.json"),
+    path.join(installRoot, "secrets", "openai-runtime-key"),
+    path.join(installRoot, "Agent Browser", "ci-owned-profile.txt"),
+    path.join(installRoot, "tunnel", "ci-owned-profile.txt"),
+    path.join(installRoot, "workspace", "ci-owned-workspace.txt"),
+  ];
+  for (const [index,file] of proofFiles.entries()) {
+    if (index === 0) continue;
+    await fs.mkdir(path.dirname(file), {recursive:true,mode:0o700});
+    const stat = await fs.lstat(file).catch((e)=>e?.code==="ENOENT"?null:Promise.reject(e));
+    if (stat) assert.ok(stat.isFile()&&!stat.isSymbolicLink());
+    else await fs.writeFile(file,"historical-user-owned-state-"+index+"\n",{mode:0o600,flag:"wx"});
+  }
+  const checksum = async(file)=>createHash("sha256").update(await fs.readFile(file)).digest("hex");
+  const hashes = await Promise.all(proofFiles.map(checksum));
+  const oldOnly = path.join(oldRelease, "historic-main-only-file.txt");
+  await fs.writeFile(oldOnly, "old-version-product-owned-file\n", {flag:"wx",mode:0o600});
+  let observedHealthyB=0;
+  const install = async(label,failB) => {
+    const staging = path.join(installRoot,"staging","historic-stable-"+label);
+    await fs.mkdir(staging,{recursive:true,mode:0o700});
+    await execFile("/usr/bin/tar",["-xzf",candidateArtifact,"-C",staging],{
+      timeout:120_000,maxBuffer:8*1024*1024,
+    });
+    return installManagedEquinoxRelease({
+      stagedReleaseDir:path.join(staging,"release"), homeDir,uid,
+      platform:"darwin",target,execFileImpl:trackedExecFile,
+      activateImpl:(options)=>activatePreparedEquinoxRelease({
+        ...options,healthAttempts:failB?20:60,
+        fetchImpl:async(...args)=>{
+          const response=await fetch(...args);
+          if(!failB||!response.ok)return response;
+          const body=await response.clone().json().catch(()=>null);
+          if(body?.status?.server?.version!==candidateMeta.version||
+              body?.status?.health?.state!=="HEALTHY"||
+              body?.status?.installation?.kind!=="managed")return response;
+          observedHealthyB++;
+          return new Response(JSON.stringify({...body,status:{...body.status,
+            health:{...body.status.health,state:"UNHEALTHY"}}}),{
+            status:response.status,headers:{"content-type":"application/json"},
+          });
+        },
+      }),
+    });
+  };
+  await assert.rejects(install("forced-health-failure",true),/rolled back to/u);
+  assert.ok(observedHealthyB>0, "Real B must become HEALTHY before injected failure");
+  await awaitHealthy(previousSha);
+  assert.equal(await fs.readFile(path.join(installRoot,"main-update","install.json"),"utf8"),originalStamp);
+  assert.equal(await fs.realpath(current),await fs.realpath(oldRelease));
+  assert.equal(await fs.readFile(oldOnly,"utf8"),"old-version-product-owned-file\n");
+  assert.equal(await checksum(path.join(homeDir,"Applications","Equinox Local.app","Contents","MacOS","applet")),beforeNativeSha256);
+  assert.deepEqual(await Promise.all(proofFiles.map(checksum)),hashes);
+  const result=await install("healthy",false);
+  assert.equal(result.status,"activated");
+  assert.equal(result.previousVersion,oldVersion);
+  await awaitHealthy(null,{kind:"managed"});
+  assert.equal(await fs.access(oldOnly).then(()=>true,()=>false),false,
+    "New Stable contains leftover executable tree content from old Main");
+  assert.equal(await fs.access(path.join(installRoot,"main-update","install.json")).then(()=>true,()=>false),false);
+  assert.deepEqual(await Promise.all(proofFiles.map(checksum)),hashes);
+  process.stdout.write(JSON.stringify({
+    ok:true,host:target,scenario:"historic-main-to-stable",fromVersion:oldVersion,
+    toVersion:candidateMeta.version,oldMainSha:previousSha,candidateSha:candidateMeta.sourceSha,
+    nativeHealth:"HEALTHY",rollbackHealthyMain:true,stableHealthy:true,
+    credentialHashesPreserved:true,realAppleScriptLaunchAgent:true,originalTreeRemoved:true,
+    provenance:"unsigned-hosted-candidate",
+  })+"\n");
 }
 
 async function run() {
@@ -313,6 +406,16 @@ globalThis.fetch = (resource, init = {}) => {
     const toolchain = equinoxLocalToolchainContract({ runtimeRoot: path.join(installRoot, "runtime"), target: equinoxLocalUpdateTarget() });
     const getPointer = () => readEquinoxLocalMainSourcePointer(path.join(transactionRoot, "current-source.conf"), { gitPath: toolchain.gitPath });
     assert.equal((await getPointer()).sha, previousSha);
+    if (process.env.M8_LEGACY_REINSTALL_ACCEPTANCE === "true") {
+      const candidateArtifact = process.env.M8_LEGACY_STABLE_ARTIFACT;
+      const currentMeta = JSON.parse(await fs.readFile(path.join(installRoot,"current","release.json"),"utf8"));
+      assert.equal(currentMeta.sourceSha,previousSha);
+      await acceptHistoricMainToStable({
+        candidateArtifact,previousSha,oldVersion:currentMeta.version,homeDir,installRoot,
+        scratch,uid,trackedExecFile,beforeNativeSha256,
+      });
+      return;
+    }
     const { csrfToken } = await jsonApi("/api/v1/session");
     await jsonApi("/api/v1/update/check", { mutate: true, token: csrfToken });
     const discovery = await jsonApi("/api/v1/update");

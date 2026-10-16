@@ -5,6 +5,11 @@ name: Main Installed Upgrade Acceptance
 on:
   workflow_dispatch:
     inputs:
+      legacy_reinstall_acceptance:
+        description: Install real historical 5.2.1 Main A, then rehearse source-provenance Stable reinstall and rollback without publishing
+        required: false
+        default: false
+        type: boolean
       diagnose_unreleased_harness:
         description: Hosted-only diagnostic on the exact PR230 branch; B remains the admitted public Main snapshot, never promotes candidate code
         required: false
@@ -122,12 +127,24 @@ jobs:
           test -s "$artifact"
           echo "OLD_RELEASE_ARTIFACT=$PWD/$artifact" >> "$GITHUB_ENV"
 
+      - name: Package exact unadmitted Stable candidate for disposable historical repair
+        if: ${{ inputs.legacy_reinstall_acceptance }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci --prefer-offline --no-audit --no-fund
+          npm run local:release:package
+          stable="backups/local-packages/equinox-local-6.0.4-darwin-${{ inputs.architecture }}.tar.gz"
+          test -s "$stable"
+          echo "M8_LEGACY_STABLE_ARTIFACT=$PWD/$stable" >> "$GITHUB_ENV"
+
       - name: Install old Main A and run actual LaunchAgent Control Center upgrade to admitted B
         shell: bash
         env:
           TARGET_SHA: ${{ steps.identity.outputs.target_sha }}
           M8_ACCEPTANCE_SCENARIO: ${{ inputs.scenario }}
           M8_EXPECTED_NATIVE_MODE: ${{ inputs.expected_native_mode }}
+          M8_LEGACY_REINSTALL_ACCEPTANCE: ${{ inputs.legacy_reinstall_acceptance }}
           # Scoped, ephemeral Actions read credential; consumed only by the
           # disposable runner's pinned github.com discovery preload, not a
           # default product runtime config or any release artifact.
