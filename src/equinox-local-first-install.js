@@ -29,6 +29,7 @@ import { enrollEquinoxLocalManagedSource, rollbackEquinoxLocalManagedSourceEnrol
 import { equinoxLocalManagedSourcePaths } from "./equinox-local-managed-source-installation.js";
 import { validateManagedSourceInstallStamp } from "./equinox-local-main-update.js";
 import { readEquinoxLocalMainNativePointer } from "./equinox-local-main-native-state.js";
+import { pruneInactiveManagedStableReleases } from "./equinox-local-release-retention.js";
 import { readBoundedNormalFile } from "./equinox-local-safe-file.js";
 import { assertWindowsNativeMessagingHostOwnership, windowsNativeMessagingLauncherPath } from "./equinox-browser-windows-native-messaging.js";
 import { assertWindowsStableShellOwnedByRelease } from "./equinox-local-windows-stable-shell.js";
@@ -584,6 +585,7 @@ export async function installManagedEquinoxRelease({
   execFileImpl = execFile,
   bootstrapImpl = bootstrapManagedEquinoxUser,
   readCurrentImpl = readManagedCurrentRelease,
+  pruneStableImpl = (installation) => pruneInactiveManagedStableReleases(installation, { readCurrent: readManagedCurrentRelease }),
   activateImpl = activatePreparedEquinoxRelease,
   waitForVersionImpl = waitForEquinoxLocalVersion,
   waitForManagedSourceImpl = waitForEquinoxLocalManagedSource,
@@ -873,6 +875,19 @@ export async function installManagedEquinoxRelease({
       parkedMain = false;
     }
     const bootstrap = await bootstrapImpl({ homeDir, platform, arch, env, fsImpl });
+    if (activation.status === "activated") {
+      // Classic PowerShell reinstall is also a public update path. A signed
+      // B which already passed WPF/Native Messaging and exact-version health
+      // may reclaim old A bundles, exactly like the Control Center updater.
+      // A failed or rolling-back update must NEVER remove A.
+      try {
+        await pruneStableImpl(installationFor(paths, targetRelease, {
+          platform, arch, target: expectedTarget,
+        }));
+      } catch (error) {
+        process.stderr.write(`[Equinox Local] Prior Stable release cleanup pending: ${String(error?.message ?? error).slice(0, 220)}\n`);
+      }
+    }
     return Object.freeze({
       status: activation.status,
       version: candidate.version,

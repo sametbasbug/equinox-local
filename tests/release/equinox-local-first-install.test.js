@@ -557,6 +557,12 @@ test("installing over an older managed release delegates activation to the rollb
         activations.push({ installation, targetVersion });
         return { status: "activated", version: targetVersion, previousVersion: "4.1.0" };
       },
+      pruneStableImpl: async (installed) => {
+        assert.equal(installed.releaseDir, path.join(fixture.installRoot, "releases", "4.2.0"));
+        assert.equal(activations.length, 1, "cleanup must run AFTER healthy activation");
+        await fs.rm(oldRelease, { recursive: true });
+        return { active: "4.2.0", deleted: ["4.1.0"] };
+      },
     });
     assert.equal(result.status, "activated");
     assert.equal(result.previousVersion, "4.1.0");
@@ -564,6 +570,8 @@ test("installing over an older managed release delegates activation to the rollb
     assert.equal(activations.length, 1);
     assert.equal(activations[0].targetVersion, "4.2.0");
     assert.equal(await exists(path.join(fixture.installRoot, "releases", "4.2.0")), true);
+    assert.equal(await exists(oldRelease), false, "classic reinstall must reclaim obsolete Stable A");
+
   } finally {
     await fs.rm(fixture.homeDir, { recursive: true, force: true });
   }
@@ -594,6 +602,10 @@ test("classic Stable installer disarms existing Main only before B restart and r
         stagedReleaseDir: fixture.releaseDir, homeDir: fixture.homeDir, uid,
         platform: "darwin", target: TARGET,
         readCurrentImpl: async () => ({ version: "4.1.0", releaseDir: oldRelease }),
+        pruneStableImpl: async () => {
+          if (rollback) assert.fail("rollback must not remove old Stable A");
+          events.push("healthy-pruned");
+        },
         bootstrapImpl: async () => ({ configCreated: false }),
         execFileImpl: async (_command, args) => {
           if (args[0] === "print") throw Object.assign(new Error("not loaded"), { code: "ENOENT" });
@@ -623,7 +635,7 @@ test("classic Stable installer disarms existing Main only before B restart and r
       assert.equal(await exists(mainPath), rollback);
       assert.equal(await fs.readFile(userConfig, "utf8"), "keep-configuration");
       assert.equal(await fs.readFile(key, "utf8"), "keep-tunnel-secret");
-      assert.deepEqual(events, rollback === "rollback-failed" ? ["new-stable"] : rollback ? ["new-stable", "old-main-restored"] : ["new-stable"]);
+      assert.deepEqual(events, rollback === "rollback-failed" ? ["new-stable"] : rollback ? ["new-stable", "old-main-restored"] : ["new-stable", "healthy-pruned"]);
     } finally { await fs.rm(fixture.homeDir, { recursive: true, force: true }); }
   }
 });
