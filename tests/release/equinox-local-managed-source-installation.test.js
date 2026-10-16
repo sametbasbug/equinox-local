@@ -5,6 +5,8 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
+import { resolveEquinoxLocalInstallation } from "../../src/equinox-local-installation.js";
+
 import {
   equinoxLocalManagedSourcePaths,
   resolveEquinoxLocalManagedSourceInstallation,
@@ -42,6 +44,29 @@ test("server routes managed-source Main check/apply without changing Stable rout
   assert.match(server, /equinoxLocalMainApplyController\.resetError\(\)/u);
   assert.match(server, /kind === "managed-source"[\s\S]*equinoxLocalMainApplyController\.apply\(\)[\s\S]*equinoxLocalUpdateCoordinator\.apply\(\)/u);
   assert.match(server, /\.\.\.equinoxLocalMainApplyController\.snapshot\(\)/u);
+});
+
+test("Windows Main native-store bootstrap is owned, but foreign and malformed releases cannot claim it", () => {
+  const home = String.raw`C:\Users\Example`;
+  const local = String.raw`C:\Users\Example\AppData\Local`;
+  const install = String.raw`C:\Users\Example\AppData\Local\Equinox Local`;
+  const sha = "b".repeat(40);
+  const native = String.raw`C:\Users\Example\AppData\Local\Equinox Local\state\main-update\native-store\win32-x64`
+    + `\\${sha}\\release`;
+  const identity = (release) => resolveEquinoxLocalInstallation({
+    platform: "win32", arch: "x64", homeDir: home,
+    env: { LOCALAPPDATA: local, EQUINOX_LOCAL_INSTALL_ROOT: install, EQUINOX_LOCAL_RELEASE_DIR: release },
+  });
+  const main = identity(native);
+  assert.equal(main.kind, "managed");
+  assert.equal(main.releaseDir, native);
+  assert.equal(main.mainNativeSha, sha);
+  for (const release of [
+    native + String.raw`\evil`,
+    native.replace("win32-x64", "win32-arm64"),
+    native.replace(sha, "non-sha"),
+    String.raw`C:\Windows\System32`,
+  ]) assert.equal(identity(release).kind, "unsupported", release);
 });
 
 test("managed-source paths stay product-owned on macOS and Windows", () => {

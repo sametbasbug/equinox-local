@@ -76,10 +76,23 @@ export function resolveEquinoxLocalInstallation({
     });
   }
 
-  if (!isInside(releasesRoot, releaseDir, pathApi) || releaseDir === releasesRoot) {
+  // Once Main has a committed native pointer its immutable native-store is
+  // the actual product-owned runtime. Do not keep a redundant numbered Stable
+  // bundle just to satisfy the bootstrap path contract. The async
+  // managed-source resolver MUST authenticate this native SHA/pointer before
+  // admitting a running server.
+  const mainNativeTargetRoot = pathApi.join(installRoot, "state", "main-update", "native-store", lifecycle.host.target);
+  const mainRelative = platform === "win32"
+    ? pathApi.relative(mainNativeTargetRoot, releaseDir)
+    : "";
+  const mainSegments = mainRelative.split(pathApi.sep);
+  const mainNativeSha = platform === "win32" && mainSegments.length === 2 &&
+    /^[a-f0-9]{40}$/u.test(mainSegments[0]) && mainSegments[1] === "release"
+    ? mainSegments[0] : null;
+  if ((!isInside(releasesRoot, releaseDir, pathApi) || releaseDir === releasesRoot) && !mainNativeSha) {
     return baseResult({
       platform, arch, lifecycle, kind: "unsupported",
-      reason: "The active release is outside the managed releases directory.",
+      reason: "The active release is outside the trusted Stable or Main native stores.",
     });
   }
 
@@ -109,6 +122,7 @@ export function resolveEquinoxLocalInstallation({
     installRoot,
     releasesRoot,
     releaseDir,
+    ...(mainNativeSha ? { mainNativeSha } : {}),
     currentLink: platform === "darwin" ? layout.currentPointer : null,
     currentPointer: layout.currentPointer,
     stagingRoot: pathApi.join(installRoot, "staging"),

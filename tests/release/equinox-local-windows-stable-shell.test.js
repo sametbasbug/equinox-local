@@ -8,6 +8,7 @@ import { EventEmitter } from "node:events";
 
 import {
   renameWindowsPathWhenUnlocked,
+  launchWindowsStableShell,
   replaceWindowsStableShellForRelease,
   snapshotWindowsStableShellTree,
 } from "../../src/equinox-local-windows-stable-shell.js";
@@ -28,6 +29,40 @@ async function shellFixture() {
   return { root, releases, programRoot };
 }
 
+
+test("detached Windows WPF restart does not inherit stale A-version updater identity", async () => {
+  const previous = new Map();
+  for (const [key, value] of [
+    ["EQUINOX_LOCAL_RELEASE_DIR", "C:\\old-A"],
+    ["EQUINOX_LOCAL_INSTALL_ROOT", "C:\\installed"],
+    ["EQUINOX_LOCAL_MAIN_WORKER_TOKEN", "secret-update-worker-token"],
+  ]) {
+    previous.set(key, process.env[key]);
+    process.env[key] = value;
+  }
+  let spawned;
+  try {
+    const result = await launchWindowsStableShell("/tmp/Programs/Equinox Local/EquinoxLocal.exe", {
+      spawnImpl: (exe, args, options) => {
+        spawned = { exe, args, options };
+        const child = new EventEmitter();
+        child.pid = 123;
+        child.unref = () => {};
+        queueMicrotask(() => child.emit("spawn"));
+        return child;
+      },
+    });
+    assert.equal(result.launched, true);
+    assert.equal(result.pid, 123);
+    for (const key of previous.keys()) assert.equal(Object.hasOwn(spawned.options.env, key), false);
+    assert.equal(spawned.options.detached, true);
+  } finally {
+    for (const [key, old] of previous) {
+      if (old === undefined) delete process.env[key];
+      else process.env[key] = old;
+    }
+  }
+});
 
 test("Windows path rename retries only bounded transient lock errors", async () => {
   const transientCodes = ["EPERM", "EBUSY", "EACCES"];

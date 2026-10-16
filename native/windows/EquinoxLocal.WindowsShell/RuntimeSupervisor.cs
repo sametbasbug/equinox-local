@@ -45,6 +45,14 @@ internal sealed class RuntimeSupervisor : IAsyncDisposable
 
     internal static RuntimeSupervisor? TryCreateFromEnvironmentOrManagedInstall()
     {
+        // A detached update worker inherits the old A Stable release path.
+        // That environment is NOT the identity of the relaunched GUI. Always
+        // resolve the enrolled Main source/native pointer instead, otherwise
+        // B's shell silently boots A and reports a false successful upgrade.
+        var local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+        if (!string.IsNullOrWhiteSpace(local) &&
+            File.Exists(Path.Combine(local, "Equinox Local", "state", "main-update", "install.json")))
+            return new RuntimeSupervisor(WindowsManagedSourceRuntimeLocator.Resolve);
         var releaseDir = Environment.GetEnvironmentVariable("EQUINOX_LOCAL_RELEASE_DIR");
         if (!string.IsNullOrWhiteSpace(releaseDir)) return new RuntimeSupervisor(releaseDir);
         if (!WindowsManagedReleaseLocator.HasCurrentPointer()) return null;
