@@ -36,6 +36,7 @@ const CHROME_APP_NAME = "Google Chrome";
 const NATIVE_HOST_NAME = "dev.equinox.browser";
 const PRODUCTION_EXTENSION_ORIGIN = "chrome-extension://npdneefcobilfkjlihghjgjnknenhfoj/";
 const READY_MARKER = ".equinox-agent-browser-ready";
+const AGENT_EXTENSION_ID = "npdneefcobilfkjlihghjgjnknenhfoj";
 const DEFAULT_READY_TIMEOUT_MS = 8_000;
 const WINDOWS_CHROME_PROCESS_QUERY = "[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false); Get-CimInstance Win32_Process -Filter \"Name='chrome.exe'\" | Select-Object ProcessId,ExecutablePath,CommandLine | ConvertTo-Json -Compress";
 const WINDOWS_CHROME_PROCESS_QUERY_ATTEMPTS = 3;
@@ -156,6 +157,39 @@ async function hasReadyMarker(profileRoot) {
   if (!stat) return false;
   if (!stat.isFile() || stat.isSymbolicLink()) throw new Error("Agent Browser hazır işareti güvenli bir normal dosya değil.");
   return true;
+}
+
+// Chrome keeps installed Web Store extensions inside the isolated profile.
+// The marker may be absent if a user pairs the extension manually in Control
+// Center, rather than through the first browser tool call.
+async function hasInstalledAgentExtension(profileRoot) {
+  const root = path.join(profileRoot, "Default", "Extensions", AGENT_EXTENSION_ID);
+  try {
+    for (const directoryPath of [profileRoot, path.join(profileRoot, "Default"),
+      path.join(profileRoot, "Default", "Extensions"), root]) {
+      const directory = await fs.lstat(directoryPath);
+      if (!directory.isDirectory() || directory.isSymbolicLink()) return false;
+    }
+    const versions = await fs.readdir(root, { withFileTypes: true });
+    for (const entry of versions.slice(0, 32)) {
+      if (!entry.isDirectory() || entry.isSymbolicLink()) continue;
+      const match = /^(\d+\.\d+\.\d+(?:\.\d+)?)_\d+$/u.exec(entry.name);
+      if (!match) continue;
+      const manifestPath = path.join(root, entry.name, "manifest.json");
+      const stat = await fs.lstat(manifestPath).catch((error) => {
+        if (error?.code === "ENOENT") return null;
+        throw error;
+      });
+      if (!stat?.isFile() || stat.isSymbolicLink() || stat.size > 64 * 1024) continue;
+      let manifest;
+      try { manifest = JSON.parse(await fs.readFile(manifestPath, "utf8")); }
+      catch { continue; }
+      if ([2, 3].includes(manifest?.manifest_version) && manifest.version === match[1]) return true;
+    }
+  } catch (error) {
+    if (error?.code !== "ENOENT") throw error;
+  }
+  return false;
 }
 
 async function writeReadyMarker(profileRoot, { platform = process.platform } = {}) {
@@ -319,8 +353,8 @@ export function createEquinoxAgentBrowser({
     if (!supportedPlatform(platform)) throw new Error("Agent Browser bu platformda desteklenmiyor.");
     await ensurePrivateDirectory(resolvedProfileRoot, { platform });
     if (platform === "darwin") await ensureAgentBrowserNativeMessagingManifest({ homeDir, profileRoot: resolvedProfileRoot });
-    bridge.expectContext(EQUINOX_AGENT_BROWSER_CONTEXT);
-    setupComplete = await hasReadyMarker(resolvedProfileRoot);
+    if (!bridge.readyFor(EQUINOX_AGENT_BROWSER_CONTEXT)) bridge.expectContext(EQUINOX_AGENT_BROWSER_CONTEXT);
+    setupComplete = await hasReadyMarker(resolvedProfileRoot) || await hasInstalledAgentExtension(resolvedProfileRoot);
     const shouldSetup = Boolean(setup || !setupComplete);
     try {
       if (platform === "darwin") {
@@ -465,7 +499,27 @@ export function createEquinoxAgentBrowser({
   }
 
   async function status() {
-    setupComplete = supportedPlatform(platform) ? await hasReadyMarker(resolvedProfileRoot) : false;
+    if (!supportedPlatform(platform)) return snapshot();
+    const marker = await hasReadyMarker(resolvedProfileRoot);
+    if (bridge.readyFor(EQUINOX_AGENT_BROWSER_CONTEXT) && !marker) {
+      await ensurePrivateDirectory(resolvedProfileRoot, { platform });
+      await writeReadyMarker(resolvedProfileRoot, { platform });
+    }
+    setupComplete = marker || bridge.readyFor(EQUINOX_AGENT_BROWSER_CONTEXT)
+      || await hasInstalledAgentExtension(resolvedProfileRoot);
+    // A stale pairing expectation must not show "Waiting for extension" when
+    // the isolated Chrome process has already been closed by the user.
+    const pairing = bridge.snapshot().pairing;
+    const launchAge = lastLaunchAt ? Date.now() - Date.parse(lastLaunchAt) : Infinity;
+    if (pairing?.context === EQUINOX_AGENT_BROWSER_CONTEXT
+        && !bridge.readyFor(EQUINOX_AGENT_BROWSER_CONTEXT)
+        && launchAge > 2_500) {
+      try {
+        if ((await listMainProcessPids()).length === 0) bridge.cancelExpectedContext();
+      } catch {
+        // Process inventory is best-effort; leave live pairing unchanged.
+      }
+    }
     return snapshot();
   }
 

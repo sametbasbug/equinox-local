@@ -193,6 +193,59 @@ test("ensureReady marks a paired Agent Browser and later cold starts do not reop
   assert.equal(launches[1].args.includes(EQUINOX_BROWSER_STORE_URL), false);
 });
 
+test("previously installed isolated extension skips Web Store after a manual first session", async (t) => {
+  const homeDir = await fs.mkdtemp(path.join(os.tmpdir(), "equinox-agent-existing-extension-"));
+  t.after(() => fs.rm(homeDir, { recursive: true, force: true }));
+  const { profileRoot } = await prepareNativeHost(homeDir);
+  const extensionDir = path.join(profileRoot, "Default", "Extensions", "npdneefcobilfkjlihghjgjnknenhfoj", "1.0.0_0");
+  await fs.mkdir(extensionDir, { recursive: true });
+  await fs.writeFile(path.join(extensionDir, "manifest.json"), JSON.stringify({
+    name: "Equinox Browser", manifest_version: 3, version: "1.0.0",
+  }));
+  const launches = [];
+  const manager = createEquinoxAgentBrowser({
+    bridge: createBridgeStub(), homeDir, platform: "darwin",
+    execFileAsync: async (_command, args) => { launches.push(args); return { stdout: "", stderr: "" }; },
+  });
+  const before = await manager.status();
+  assert.equal(before.ready, false);
+  assert.equal(before.setupComplete, true);
+  assert.equal(await fs.access(path.join(profileRoot, ".equinox-agent-browser-ready")).then(() => true, () => false), false);
+  const opened = await manager.launch();
+  assert.equal(opened.lastLaunchSetup, false);
+  assert.ok(launches[0].includes("about:blank"));
+  assert.equal(launches[0].includes(EQUINOX_BROWSER_STORE_URL), false);
+});
+
+test("connected manual Agent Browser pairing persists setup for future cold starts", async (t) => {
+  const homeDir = await fs.mkdtemp(path.join(os.tmpdir(), "equinox-agent-manual-pair-"));
+  t.after(() => fs.rm(homeDir, { recursive: true, force: true }));
+  const { profileRoot } = await prepareNativeHost(homeDir);
+  const bridge = createBridgeStub({ ready: true });
+  const manager = createEquinoxAgentBrowser({
+    bridge, homeDir, platform: "darwin",
+    execFileAsync: async () => { throw new Error("Status must not launch Chrome"); },
+  });
+  assert.equal((await manager.status()).setupComplete, true);
+  assert.equal(await fs.readFile(path.join(profileRoot, ".equinox-agent-browser-ready"), "utf8"), "ready\n");
+  bridge.setAgentReady(false);
+  assert.equal((await manager.status()).setupComplete, true);
+});
+
+test("closed Agent Browser cancels a stale pairing expectation instead of waiting forever", async (t) => {
+  const homeDir = await fs.mkdtemp(path.join(os.tmpdir(), "equinox-agent-closed-pair-"));
+  t.after(() => fs.rm(homeDir, { recursive: true, force: true }));
+  await prepareNativeHost(homeDir);
+  const bridge = createBridgeStub();
+  bridge.expectContext("agent");
+  const manager = createEquinoxAgentBrowser({
+    bridge, homeDir, platform: "darwin",
+    execFileAsync: async () => ({ stdout: "", stderr: "" }),
+  });
+  assert.equal(bridge.snapshot().pairing?.context, "agent");
+  assert.equal((await manager.status()).pairing, false);
+});
+
 test("Agent Browser status preserves completed setup while the isolated browser is closed", async (t) => {
   const homeDir = await fs.mkdtemp(path.join(os.tmpdir(), "equinox-agent-browser-status-"));
   t.after(() => fs.rm(homeDir, { recursive: true, force: true }));
