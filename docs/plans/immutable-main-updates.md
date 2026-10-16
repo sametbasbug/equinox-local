@@ -1,6 +1,10 @@
 # Equinox Local: clean replacement updates (v6)
 
-**Current objective:** Any supported installed v6 version must update to the next admitted Main build without carrying forward executable/runtime files from the previous version. User-owned settings and credentials must survive unchanged. This supersedes the abandoned Guardian eight-stage A/B design from draft PR #230. Production signed Stable 6.0.5 was published on 2026-10-16; the separate factory Developer source installation has since been restarted and verified HEALTHY on 6.0.5.
+**Current objective:** Any supported installed v6 version must update to the next admitted Main build without carrying forward executable/runtime files from the previous version. User-owned settings and credentials must survive unchanged. This supersedes the abandoned Guardian eight-stage A/B design from draft PR #230. Production signed Stable 6.1.0 was published on 2026-10-16; the separate factory Developer source installation has since been restarted and verified HEALTHY 10/10 on 6.1.0. The user's Windows 6.0.5 device was deliberately left untouched for their own Update button test.
+
+## Published signed 6.1.0 — 2026-10-16
+
+Production [v6.1.0](https://github.com/sametbasbug/equinox-local/releases/tag/v6.1.0) is final from exact canonical source `e85790a99e8e05ccf9997279d174b452793d6097`. Source [Release Validation #38943722251](https://github.com/sametbasbug/equinox-local/actions/runs/38943722251) and production-key signing of four platform artifacts, live Ed25519 CDN signatures/bootstraps, and site [PR #39](https://github.com/sametbasbug/equinox-local-site/pull/39) all passed. Factory Mac mini **Developer** runtime separately runs **6.1.0 HEALTHY 10/10** with Node 26.12.0, Peekaboo 4.9.4, development tunnel and Your Browser; source/runtime rollback retained. The real user's Windows 6.0.5→6.1.0 self-update **has not been run or verified**: they will use the update control themselves. This release does not relax fresh-full-native replacement, signed provenance, health or rollback requirements. The v6.0.5 record below remains historical.
 
 ## Published signed 6.0.5 repair (2026-10-16)
 
