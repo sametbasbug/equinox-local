@@ -194,7 +194,11 @@ export async function runWindowsShellRuntimeSupervisor({
 
 const invoked = process.argv[1] ? pathToFileURL(path.resolve(process.argv[1])).href : null;
 if (invoked === import.meta.url) {
-  runWindowsShellRuntimeSupervisor().catch(() => {
+  runWindowsShellRuntimeSupervisor().then(({ code, signal }) => {
+    // The WPF gate must see the actual child failure, not a clean 0 from
+    // the supervisor's fulfilled Promise.
+    process.exitCode = Number.isInteger(code) ? code : (signal ? 128 : 1);
+  }).catch(() => {
     process.stderr.write("[Equinox Windows supervisor] Failed to start runtime; check Control Center.\n");
     process.exitCode = 1;
   });
