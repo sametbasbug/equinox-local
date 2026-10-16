@@ -141,9 +141,6 @@ body.setup-mode .navigation-shortcuts-hint { display: none; }
 .update-dialog-caption { margin: 14px 0 7px; font-weight: 650; font-size: 12px; }
 .update-dialog-changes { margin: 0; padding-left: 18px; display: grid; gap: 6px; color: var(--text-2); font-size: 12px; }
 .update-dialog-changes li::marker { color: var(--accent); }
-.update-dialog-main-notice { margin-top: 17px; padding: 11px 13px; border-radius: 9px; background: var(--surface-2); border: 1px solid var(--line); }
-.update-dialog-main-notice strong { color: var(--text); font-size: 12px; }
-.update-dialog-main-notice p { margin: 4px 0 0; color: var(--text-2); font-size: 12px; line-height: 1.5; }
 .update-dialog-actions { display: flex; flex-wrap: wrap; gap: 9px; padding: 15px 24px 20px; border-top: 1px solid var(--line); }
 .update-dialog-actions .button { flex: 1; }
 

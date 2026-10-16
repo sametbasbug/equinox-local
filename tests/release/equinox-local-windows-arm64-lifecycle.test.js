@@ -19,7 +19,7 @@ async function makeArm64Release(releaseDir) {
     schemaVersion: 1,
     version: VERSION,
     target: TARGET,
-    nodeVersion: "26.11.1",
+    nodeVersion: "26.12.0",
     tunnelClientVersion: "0.0.16",
     serverEntry: "server.js",
   })}\n`);

@@ -49,7 +49,7 @@ test("CI retains full product validation while skipping only the explicit docs-o
   assert.match(managedSource, /node tests\/release\/smoke-managed-install\.mjs/u);
   assert.doesNotMatch(managedSource, /^    (?:needs|if):/mu);
   assert.match(job("macos-x64"), /name: macOS x64 \/ Node 26/u);
-  assert.match(job("macos-x64"), /runs-on: macos-15-intel/u);
+  assert.match(job("macos-x64"), /runs-on: macos-26-intel/u);
   assert.match(job("macos-x64"), /architecture: x64/u);
   assert.match(job("macos-x64"), /darwin-x64/u);
   assert.match(job("macos-x64"), /parallel:[\s\S]*run: npm run test:fast\n/u);
@@ -69,12 +69,19 @@ test("ARM64 package is built once on fast x64 Windows and exact-byte native cons
     const block = job(name);
     assert.match(block, /runs-on: windows-11-vs2026-arm/u);
     assert.match(block, /^    needs: \[windows-arm64-package-build\]/mu);
-    assert.match(block, /actions\/download-artifact@v7/u);
+    assert.match(block, /actions\/download-artifact@v8/u);
     assert.match(block, /path: \$\{\{ runner\.temp \}\}\/arm64-package/u);
     assert.match(block, /Join-Path \$env:RUNNER_TEMP 'arm64-package'/u);
     assert.doesNotMatch(block, /uses: \.\/\.github\/actions\/prepare-arm64-package/u);
   }
   assert.doesNotMatch(job("windows-arm64-runtime"), /^    (?:needs|if):/mu);
+});
+
+test("download-artifact consumers use current v8 with integrity errors enabled", async () => {
+  const archived = await fs.readFile(new URL("../../.github/workflows/main-installed-windows-acceptance.yml", import.meta.url), "utf8");
+  assert.match(job("main-snapshot-publish"), /actions\/download-artifact@v8/u);
+  assert.match(archived, /actions\/download-artifact@v8/u);
+  assert.doesNotMatch(ci + archived, /actions\/download-artifact@v7/u);
 });
 
 test("ARM64 installer has a tighter bound after duplicate package construction is removed", () => {
@@ -131,7 +138,7 @@ test("real public installer enters managed-source on native Windows x64 and ARM6
   assert.match(smoke, /EQUINOX_WINDOWS_INSTALL_SHA256/u);
   assert.match(smoke, /New-Item -ItemType HardLink/u);
   assert.match(smoke, /runtime\\toolchain\\git\\2\.53\.0-4/u);
-  assert.match(smoke, /runtime\\toolchain\\node\\26\.11\.1/u);
+  assert.match(smoke, /runtime\\toolchain\\node\\26\.12\.0/u);
 });
 
 test("managed-source runtime acceptance runs on real Windows x64 and ARM64 hosts", () => {
@@ -160,7 +167,7 @@ test("one maintained ARM64 package producer exposes exact artifact identity", ()
   assert.match(prepare, /\/Fo:/u);
   assert.match(prepare, /process\.platform/u);
   assert.match(prepare, /process\.arch/u);
-  assert.match(prepare, /v26\.11\.1/u);
+  assert.match(prepare, /v26\.12\.0/u);
   assert.match(inputs, /ci --prefer-offline --no-audit --no-fund/u);
   assert.match(prepare, /npm run local:release:package:windows/u);
   assert.match(prepare, /0xAA64/u);

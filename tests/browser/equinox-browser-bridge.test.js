@@ -768,6 +768,45 @@ test("bridge pairs the next unassigned profile to the expected Agent Browser con
   assert.equal(bridge.snapshot().pairing, null);
 });
 
+test("previously assigned Agent Browser clears pairing on reconnect", async (t) => {
+  const { dir, socketPath } = await makeSocketPath("paired-agent");
+  const bridge = createEquinoxBrowserBridge({ socketPath, callTimeoutMs: 500 });
+  await bridge.start();
+  t.after(async () => {
+    await bridge.close();
+    await fs.rm(dir, { recursive: true, force: true });
+  });
+  bridge.expectContext("agent", { timeoutMs: 2_000 });
+  const client = net.createConnection(socketPath);
+  await new Promise((resolve, reject) => {
+    client.once("connect", resolve);
+    client.once("error", reject);
+  });
+  t.after(() => client.destroy());
+  writeLine(client, {
+    type: "host.hello",
+    origin: `chrome-extension://${EQUINOX_BROWSER_EXTENSION_ID}/`,
+    pid: 3010, version: 1,
+  });
+  writeLine(client, {
+    type: "extension.message",
+    message: {
+      type: "extension.hello",
+      extensionId: EQUINOX_BROWSER_EXTENSION_ID,
+      extensionVersion: "1.0.0",
+      protocolVersion: 1,
+      instanceId: "44444444-4444-4444-8444-444444444444",
+      browserContext: "agent",
+    },
+  });
+  assert.equal((await bridge.waitUntilReady(1_000, { context: "agent" })).ready, true);
+  assert.equal(bridge.snapshot().pairing, null);
+  client.destroy();
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(bridge.snapshot().contexts.agent.ready, false);
+  assert.equal(bridge.snapshot().pairing, null);
+});
+
 test("Equinox Browser bridge closes a host that exceeds the inbound line budget", async (t) => {
   const { dir, socketPath } = await makeSocketPath("line-budget");
   const bridge = createEquinoxBrowserBridge({

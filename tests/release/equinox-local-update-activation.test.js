@@ -282,7 +282,7 @@ test("Windows activation rollback restores current-version.json and the previous
       schemaVersion: 1,
       version,
       target: "win32-x64",
-      nodeVersion: "26.11.1",
+      nodeVersion: "26.12.0",
       tunnelClientVersion: "0.0.16",
       serverEntry: "server.js",
     }));
@@ -360,7 +360,7 @@ async function makeWindowsActivationFixture(t) {
       schemaVersion: 1,
       version,
       target: "win32-x64",
-      nodeVersion: "26.11.1",
+      nodeVersion: "26.12.0",
       tunnelClientVersion: "0.0.16",
       serverEntry: "server.js",
     }));

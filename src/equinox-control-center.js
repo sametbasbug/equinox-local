@@ -218,7 +218,7 @@ const DYNAMIC_TEXT_IDS = new Set([
   "default-project", "health-summary-title", "health-summary-badge", "health-summary-copy", "health-event-count",
   "health-evaluated-at", "doctor-title", "doctor-badge", "doctor-copy", "doctor-list", "doctor-summary",
   "doctor-checked-at", "doctor-fix-title", "doctor-fix-summary", "doctor-fix-copy", "doctor-repair-list", "doctor-repair-result", "update-title", "update-badge", "update-copy", "update-version", "update-checked-at",
-  "update-main-current", "update-main-target", "update-main-distance", "update-main-summaries", "update-stable-main-copy",
+  "update-main-current", "update-main-target", "update-main-distance", "update-main-summaries",
   "check-update-button", "install-update-button", "root-count-label", "dirty-state", "project-list",
   "default-project-select", "workspace-project-select", "downloads-root-select", "control-center-address",
   "save-config-button", "agent-browser-page-status", "agent-browser-page-badge", "agent-browser-page-version", "agent-browser-connected-at",
@@ -930,10 +930,6 @@ function renderSidebarUpdateNotice(update, main, mainChannel) {
     label = "Check unavailable";
     badge.classList.add("is-warning");
   } else if (!mainChannel && update.updateAvailable === true) label = "Update available";
-  else if (!mainChannel && update.mainNotice?.targetSha) {
-    label = "Main snapshot available";
-    badge.classList.add("is-main");
-  }
   if (label) {
     badge.hidden = false;
     setText("sidebar-update-indicator", label);
@@ -954,13 +950,6 @@ function renderUpdate() {
   const runningVersion = state.status?.server?.version;
   const runningSha = shortUpdateSha(main.currentSha || state.status?.installation?.sourceSha);
   if (runningVersion) setText("sidebar-version", `${runningVersion}${mainChannel && runningSha ? ` - ${runningSha}` : ""}`);
-  const mainNotice = $("update-stable-main-notice");
-  mainNotice.hidden = mainChannel || !update.mainNotice?.targetSha;
-  if (!mainNotice.hidden) {
-    setText("update-stable-main-copy", state.language === "tr"
-      ? `Main ${shortUpdateSha(update.mainNotice.targetSha)} hazır. İlk kurulumda Main otomatik seçilir; eski Stable kurulumları imzalı geçiş güncellemesini bekler.`
-      : `Main ${shortUpdateSha(update.mainNotice.targetSha)} is ready. New installs enroll automatically; existing Stable installations await the signed migration update.`);
-  }
   mainMeta.hidden = !mainChannel;
   if (mainChannel) {
     const currentSha = shortUpdateSha(main.currentSha);
@@ -3303,7 +3292,6 @@ async function checkForUpdates() {
       else showToast("Main source identity check finished.");
     } else {
       if (state.update?.updateAvailable) showToast(`Equinox Local ${state.update.latestVersion} is available.`);
-      else if (state.update?.mainNotice?.targetSha) showToast("Main snapshot available separately from Stable.");
       else if (state.update?.lastError) showToast("Stable update check unavailable.");
       else showToast("Equinox Local is up to date.");
     }

@@ -10,7 +10,7 @@ test("Control Center has exactly one accessible sidebar update dialog, without O
   assert.doesNotMatch(html, /Private on this computer · 127\.0\.0\.1/u);
   assert.match(html, /id="sidebar-update-button"[^>]*aria-haspopup="dialog"[^>]*aria-controls="update-dialog"/u);
   assert.match(html, /<dialog id="update-dialog"[^>]*aria-labelledby="update-dialog-heading"/u);
-  for (const id of ["update-title", "update-copy", "update-badge", "update-main-summaries", "check-update-button", "install-update-button", "update-stable-main-notice"]) {
+  for (const id of ["update-title", "update-copy", "update-badge", "update-main-summaries", "check-update-button", "install-update-button"]) {
     assert.equal(html.match(new RegExp(`id="${id}"`, "gu"))?.length, 1, `${id} must be a single dialog control`);
   }
   assert.match(js, /\$\("update-dialog"\)\.showModal\(\)/u);
@@ -20,7 +20,7 @@ test("Control Center has exactly one accessible sidebar update dialog, without O
 test("Main and Stable current-version display differ and background checks do not activate updates", () => {
   assert.match(js, /onMain && currentSha/u);
   assert.match(js, /mainChannel && runningSha/u);
-  assert.match(js, /else if \(!mainChannel && update\.mainNotice\?\.targetSha\)/u);
+  assert.doesNotMatch(js, /Main snapshot available separately from Stable\./u);
   assert.match(server, /setTimeout\(automaticUpdateCheck, 5_000\)/u);
   assert.match(server, /setInterval\(automaticUpdateCheck, 6 \* 60 \* 60_000\)/u);
   const automatic = server.slice(server.indexOf("const checkInstalledChannelForUpdates ="), server.indexOf("const getCombinedUpdateStatus ="));
@@ -28,12 +28,8 @@ test("Main and Stable current-version display differ and background checks do no
   assert.match(automatic, /Promise\.allSettled/u);
 });
 
-test("legacy Stable dialog explains automatic Main update enrollment without an inert channel selector", async () => {
-  const markup = html;
-  const controller = js;
-  assert.match(markup, /id="update-stable-main-notice"/u);
-  assert.match(markup, /enroll into the admitted Main update stream automatically/u);
-  assert.match(markup, /signed migration release/u);
-  assert.match(markup, /docs\/updates\.md#single-main-update-stream/u);
-  assert.match(controller, /New installs enroll automatically/u);
+test("Stable update dialog shows only actionable version details, without migration notices", () => {
+  assert.doesNotMatch(html, /update-stable-main-notice|docs\/updates\.md#single-main-update-stream/u);
+  assert.doesNotMatch(js, /update-stable-main-notice|update-stable-main-copy/u);
+  assert.doesNotMatch(html, /<strong>Main channel<\/strong>/u);
 });

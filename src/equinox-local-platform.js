@@ -5,7 +5,7 @@ export const EQUINOX_LOCAL_SUPPORTED_HOST_PLATFORMS = Object.freeze(["darwin", "
 export const EQUINOX_LOCAL_SUPPORTED_ARCHITECTURES = Object.freeze(["arm64", "x64"]);
 export const EQUINOX_LOCAL_RELEASE_TARGET_MATRIX = Object.freeze([
   Object.freeze({ target: "darwin-arm64", platform: "darwin", arch: "arm64", artifactExtension: ".tar.gz", buildAuthority: "factory-native", nativeRunner: null }),
-  Object.freeze({ target: "darwin-x64", platform: "darwin", arch: "x64", artifactExtension: ".tar.gz", buildAuthority: "github-native", nativeRunner: "macos-15-intel" }),
+  Object.freeze({ target: "darwin-x64", platform: "darwin", arch: "x64", artifactExtension: ".tar.gz", buildAuthority: "github-native", nativeRunner: "macos-26-intel" }),
   Object.freeze({ target: "win32-arm64", platform: "win32", arch: "arm64", artifactExtension: ".zip", buildAuthority: "github-native", nativeRunner: "windows-11-vs2026-arm" }),
   Object.freeze({ target: "win32-x64", platform: "win32", arch: "x64", artifactExtension: ".zip", buildAuthority: "github-native", nativeRunner: "windows-latest" }),
 ]);

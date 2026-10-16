@@ -281,7 +281,7 @@ try {
     Copy-Item -LiteralPath $NativeBrowserRuntime -Destination (Join-Path $NativeRuntimeProbe 'browser') -Recurse -ErrorAction Stop
     Copy-Item -LiteralPath (Join-Path $ReleaseDir 'release.json') -Destination (Join-Path $NativeReleaseProbe 'release.json') -ErrorAction Stop
     $NativeContract = 'b' * 64
-    $OwnedFingerprintNode = Join-Path $InstallRoot ("runtime\toolchain\node\26.11.1\$FixtureTarget\node.exe")
+    $OwnedFingerprintNode = Join-Path $InstallRoot ("runtime\toolchain\node\26.12.0\$FixtureTarget\node.exe")
     Assert-True ([IO.File]::Exists($OwnedFingerprintNode)) 'Native Main fingerprint fixture requires the owned Node executable.'
     $NativeFingerprintJson = & $OwnedFingerprintNode (Join-Path $Root 'tests/release/guardian-native-fingerprint-fixture.mjs') $NativeReleaseProbe
     if ($LASTEXITCODE -ne 0) { throw 'Canonical JS native release fingerprint fixture refused the disposable Main slot.' }
@@ -779,7 +779,7 @@ try {
   # An old, signed A installed the toolchain PINNED BY A (e.g. Node 26.10.0),
   # not the Node pinned by the latest hosted test harness. Read only the
   # exact already-verified A source file; never use ambient PATH fallback.
-  $NodeVersion = '26.11.1'
+  $NodeVersion = '26.12.0'
   if ($SkipLegacyGuardianFixture) {
     $VersionSource = [IO.File]::ReadAllText((Join-Path $ManagedSourceRoot 'src\equinox-local-runtime-versions.js'))
     $PinnedNode = [regex]::Match($VersionSource, 'export const EQUINOX_LOCAL_NODE_VERSION = "(\d+\.\d+\.\d+)";')

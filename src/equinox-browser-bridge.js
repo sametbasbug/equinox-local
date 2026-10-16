@@ -472,6 +472,9 @@ export function createEquinoxBrowserBridge({
       }
     }
 
+    // A previously paired profile reports its persisted Agent context directly.
+    // Consume the pending launch expectation just as for an unassigned profile.
+    if (pairingSnapshot()?.context === context) consumePairingExpectation();
     state.context = context;
     contexts.set(context, state);
     if (shouldPersist) persistAssignedContext(state, context);

@@ -6,6 +6,22 @@ This project follows semantic versioning for public releases.
 
 ## [Unreleased]
 
+## [6.1.0] - 2026-10-16
+
+### Fixed
+
+- Remember an already installed Equinox Browser extension in the isolated Agent Browser profile after a manual pairing or a browser restart. Opening Agent Browser no longer sends users back to the Chrome Web Store when the verified extension is present; stale pairing expectations are cleared after the isolated browser closes.
+- Remove the redundant gray Main channel information card and non-actionable Main snapshot notice from the Stable update dialog.
+- Harden the Agent Browser installed-extension manifest read against filesystem races and reject symbolic-link and malformed profile entries (CodeQL High remediation).
+
+### Updated
+
+- Bundled Node.js 26.12.0 on macOS and Windows ARM64/x64; verified macOS universal Peekaboo 4.9.4, with exact pinned upstream archive checksums and sizes.
+- `fast-uri` 4.2.2 and Zod 4.6.7, retaining the newer pinned node-pty beta; Tunnel Client 0.0.16, Microsoft winapp 0.7.1, Dugite 2.53.0-4, .NET 10 and stable WebView2 remain at verified compatible versions.
+- CI and signed package validation: Node 26.12.0 throughout GitHub workflows, GitHub Actions download-artifact v8 with enforced digest verification, and macOS 26 Intel native runner; other Actions major versions remain current.
+
+Equinox Browser remains at Chrome Web Store version 1.0.0. This release does not automatically install on existing Windows devices; updates are user initiated.
+
 ## [6.0.5] - 2026-10-16
 
 ### Fixed

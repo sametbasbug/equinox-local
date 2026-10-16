@@ -59,7 +59,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v7
         with:
-          node-version: 26.11.1
+          node-version: 26.12.0
           cache: npm
 
       - name: Install dependencies
@@ -89,7 +89,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v7
         with:
-          node-version: 26.11.1
+          node-version: 26.12.0
           cache: npm
 
       - name: Install dependencies
@@ -109,7 +109,7 @@ jobs:
 
   macos-x64:
     name: macOS x64 / Node 26
-    runs-on: macos-15-intel
+    runs-on: macos-26-intel
     timeout-minutes: 20
 
     steps:
@@ -119,7 +119,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v7
         with:
-          node-version: 26.11.1
+          node-version: 26.12.0
           architecture: x64
           cache: npm
 
@@ -151,7 +151,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v7
         with:
-          node-version: 26.11.1
+          node-version: 26.12.0
           architecture: x64
           cache: npm
 
@@ -211,7 +211,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v7
         with:
-          node-version: 26.11.1
+          node-version: 26.12.0
           architecture: x64
 
       - name: Set up .NET SDK
@@ -305,7 +305,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v7
         with:
-          node-version: 26.11.1
+          node-version: 26.12.0
           architecture: x64
           cache: npm
 
@@ -382,7 +382,7 @@ jobs:
           - name: Set up Node.js
             uses: actions/setup-node@v7
             with:
-              node-version: 26.11.1
+              node-version: 26.12.0
               architecture: x64
               cache: npm
 
@@ -444,7 +444,7 @@ jobs:
       - name: Set up Windows x64 Node.js
         uses: actions/setup-node@v7
         with:
-          node-version: 26.11.1
+          node-version: 26.12.0
           architecture: x64
           cache: npm
 
@@ -481,7 +481,7 @@ jobs:
       - name: Set up Windows x64 Node.js
         uses: actions/setup-node@v7
         with:
-          node-version: 26.11.1
+          node-version: 26.12.0
           architecture: x64
 
       - name: Verify Windows x64 bootstrap-contract host
@@ -511,7 +511,7 @@ jobs:
           - name: Set up native ARM64 Node.js
             uses: actions/setup-node@v7
             with:
-              node-version: 26.11.1
+              node-version: 26.12.0
               architecture: arm64
               cache: npm
 
@@ -526,7 +526,7 @@ jobs:
         run: |
           if ((node -p "process.platform") -ne 'win32') { throw 'ARM64 lane is not running on Windows' }
           if ((node -p "process.arch") -ne 'arm64') { throw 'ARM64 lane is not running native ARM64 Node' }
-          if ((node --version) -ne 'v26.11.1') { throw 'ARM64 lane Node version drifted' }
+          if ((node --version) -ne 'v26.12.0') { throw 'ARM64 lane Node version drifted' }
 
       - name: Install dependencies
         run: npm ci --prefer-offline --no-audit --no-fund
@@ -619,7 +619,7 @@ jobs:
           - name: Set up native ARM64 Node.js
             uses: actions/setup-node@v7
             with:
-              node-version: 26.11.1
+              node-version: 26.12.0
               architecture: arm64
 
           - name: Set up .NET SDK
@@ -636,7 +636,7 @@ jobs:
                 nuget-${{ runner.os }}-${{ runner.arch }}-dotnet10-
 
           - name: Download exact ARM64 managed ZIP
-            uses: actions/download-artifact@v7
+            uses: actions/download-artifact@v8
             with:
               name: windows-arm64-managed-package-${{ github.sha }}
               path: ${{ runner.temp }}/arm64-package
@@ -707,7 +707,7 @@ jobs:
             uses: actions/checkout@v7
 
           - name: Download exact ARM64 managed ZIP
-            uses: actions/download-artifact@v7
+            uses: actions/download-artifact@v8
             with:
               name: windows-arm64-managed-package-${{ github.sha }}
               path: ${{ runner.temp }}/arm64-package
@@ -801,7 +801,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v7
         with:
-          node-version: 26.11.1
+          node-version: 26.12.0
 
       - name: Plan exact-SHA native artifacts
         id: plan
@@ -864,7 +864,7 @@ jobs:
       - name: Set up native Node.js
         uses: actions/setup-node@v7
         with:
-          node-version: 26.11.1
+          node-version: 26.12.0
           architecture: ${{ matrix.arch }}
           cache: npm
 
@@ -971,7 +971,7 @@ jobs:
 
       - name: Download exact-SHA snapshot candidates
         if: ${{ steps.latest.outputs.publish == 'true' }}
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           pattern: main-native-${{ needs.main-native-plan.outputs.target-sha }}-*
           path: ${{ runner.temp }}/main-snapshot
