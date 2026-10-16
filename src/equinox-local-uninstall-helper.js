@@ -367,9 +367,10 @@ export async function runWindowsEquinoxLocalUninstall({
   if (removeUserData) {
     await removePathImpl(installation.installRoot, { recursive: true, fsImpl });
   } else {
-    const directoryTargets = [installation.releasesRoot, installation.stagingRoot, layout.runtimeRoot, layout.logsRoot,
-      path.win32.join(installation.installRoot, "secrets"), path.win32.join(installation.installRoot, "tunnel-profile")];
-    const fileTargets = [installation.currentPointer, path.win32.join(installation.installRoot, "transport.json"), path.win32.join(installation.installRoot, "update-state.json")];
+    // Repair/reinstall keeps user-owned tunnel credentials and profile too,
+    // not only workspace/config. Remove product binaries and transaction data.
+    const directoryTargets = [installation.releasesRoot, installation.stagingRoot, layout.runtimeRoot, layout.logsRoot];
+    const fileTargets = [installation.currentPointer, path.win32.join(installation.installRoot, "update-state.json")];
     if (mainRoot) directoryTargets.push(mainRoot);
     for (const target of directoryTargets) await removePathImpl(target, { recursive: true, fsImpl });
     for (const target of fileTargets) await removePathImpl(target, { fsImpl });
@@ -425,15 +426,14 @@ export async function runEquinoxLocalUninstallHelper({
       installation.stagingRoot,
       layout.runtimeRoot,
       ...(mainRoot ? [mainRoot] : []),
-      path.join(installation.installRoot, "secrets"),
-      path.join(installation.installRoot, "transport.json"),
-      path.join(installation.installRoot, "tunnel-profile"),
+      // User-owned credentials, transport and tunnel-profile are preserved;
+      // only installed executables, toolchains and owned update state go.
       path.join(installation.installRoot, "equinox-browser-native-host"),
       equinoxLocalAppRuntimeWrapperPath(homeDir),
       path.join(installation.installRoot, "update-state.json"),
     ]) {
       await removeIfExists(target, {
-        recursive: target === installation.releasesRoot || target === installation.stagingRoot || target === layout.runtimeRoot || target === mainRoot || target.endsWith("/secrets") || target.endsWith("/tunnel-profile"),
+        recursive: target === installation.releasesRoot || target === installation.stagingRoot || target === layout.runtimeRoot || target === mainRoot,
         fsImpl,
       });
     }

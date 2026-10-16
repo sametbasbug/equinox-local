@@ -92,9 +92,26 @@ export async function runWindowsSupervisorChild(command, args, options, {
       processLike.off("SIGTERM", term);
       processLike.off("SIGINT", intr);
     };
-    child.once("spawn", scheduleProbe);
+    child.once("spawn", () => {
+      if (options.env?.EQUINOX_LOCAL_SUPERVISOR_MODE === "local-only") {
+        process.stderr.write("[Equinox Windows supervisor] state=local-only-child-spawned.\n");
+      }
+      scheduleProbe();
+    });
     child.once("error", (error) => { cleanup(); reject(error); });
-    child.once("exit", (code, signal) => { cleanup(); resolve({ code, signal, terminatingSignal, retryRequested }); });
+    child.once("exit", (code, signal) => {
+      if (options.env?.EQUINOX_LOCAL_SUPERVISOR_MODE === "local-only") {
+        const phase = code === 0 ? "local-only-child-exit-zero"
+          : code === null && signal === "SIGTERM" ? "local-only-child-sigterm"
+          : code === null && signal === "SIGINT" ? "local-only-child-sigint"
+          : code === null && signal === "SIGBREAK" ? "local-only-child-sigbreak"
+          : code === null ? "local-only-child-signal-other"
+          : "local-only-child-exit-nonzero";
+        process.stderr.write("[Equinox Windows supervisor] state=" + phase + ".\n");
+      }
+      cleanup();
+      resolve({ code, signal, terminatingSignal, retryRequested });
+    });
   });
 }
 
@@ -121,7 +138,11 @@ export async function runWindowsShellRuntimeSupervisor({
   const node = path.win32.join(releaseDir, "runtime", "node", "bin", "node.exe");
   const tunnel = path.win32.join(releaseDir, "runtime", "tunnel", "tunnel-client.exe");
   const localOnly = (reconnect = null) => runChildImpl(node, [serverPath], {
-    cwd, env: childEnv(env, "local-only"), stdin: reconnect ? "pipe" : "inherit", ...(reconnect ? { reconnect } : {}),
+    // The gate stdin is an update-handshake pipe and can reach EOF after the
+    // gate releases the child. The local-only server treats stdin EOF as a
+    // deliberate shutdown. Give it a distinct supervisor-owned pipe that
+    // stays open until intentional WPF Job Object shutdown or tunnel handoff.
+    cwd, env: childEnv(env, "local-only"), stdin: "pipe", ...(reconnect ? { reconnect } : {}),
   });
   let transport;
   try {
@@ -173,7 +194,11 @@ export async function runWindowsShellRuntimeSupervisor({
 
 const invoked = process.argv[1] ? pathToFileURL(path.resolve(process.argv[1])).href : null;
 if (invoked === import.meta.url) {
-  runWindowsShellRuntimeSupervisor().catch(() => {
+  runWindowsShellRuntimeSupervisor().then(({ code, signal }) => {
+    // The WPF gate must see the actual child failure, not a clean 0 from
+    // the supervisor's fulfilled Promise.
+    process.exitCode = Number.isInteger(code) ? code : (signal ? 128 : 1);
+  }).catch(() => {
     process.stderr.write("[Equinox Windows supervisor] Failed to start runtime; check Control Center.\n");
     process.exitCode = 1;
   });

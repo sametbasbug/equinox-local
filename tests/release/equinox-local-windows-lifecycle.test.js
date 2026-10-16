@@ -144,6 +144,14 @@ test("Windows clean-machine lifecycle preserves user state across uninstall/rein
   const workspaceMarker = path.join(layout.appDataRoot, "workspace", "preserve-marker.txt");
   await fs.writeFile(workspaceMarker, "keep-me\n");
   const configBefore = await fs.readFile(configPath, "utf8");
+  const tunnelKey = path.join(layout.appDataRoot, "secrets", "openai-runtime-key");
+  const tunnelProfile = path.join(layout.appDataRoot, "tunnel-profile", "config.yml");
+  const transportConfig = path.join(layout.appDataRoot, "transport.json");
+  await fs.mkdir(path.dirname(tunnelKey), { recursive: true });
+  await fs.mkdir(path.dirname(tunnelProfile), { recursive: true });
+  await fs.writeFile(tunnelKey, "private-key-never-erase\n");
+  await fs.writeFile(tunnelProfile, "tunnel-profile-never-erase\n");
+  await fs.writeFile(transportConfig, "{\"mode\":\"private\"}\n");
 
   const retryStage = await createStagedRelease({ installRoot: layout.appDataRoot, version: versions[0] });
   const retryMetadataPath = path.join(retryStage, "release.json");
@@ -220,6 +228,9 @@ test("Windows clean-machine lifecycle preserves user state across uninstall/rein
   assert.equal(await exists(configPath), true);
   assert.equal(await fs.readFile(configPath, "utf8"), configBefore);
   assert.equal(await fs.readFile(workspaceMarker, "utf8"), "keep-me\n");
+  assert.equal(await fs.readFile(tunnelKey, "utf8"), "private-key-never-erase\n");
+  assert.equal(await fs.readFile(tunnelProfile, "utf8"), "tunnel-profile-never-erase\n");
+  assert.equal(await fs.readFile(transportConfig, "utf8"), "{\"mode\":\"private\"}\n");
   assert.equal(await exists(layout.currentPointer), false);
   assert.equal(await exists(layout.releasesRoot), false);
   assert.equal(await exists(layout.programRoot), false);
@@ -230,6 +241,9 @@ test("Windows clean-machine lifecycle preserves user state across uninstall/rein
   assert.equal(reinstalled.status, "installed");
   assert.equal(await fs.readFile(configPath, "utf8"), configBefore);
   assert.equal(await fs.readFile(workspaceMarker, "utf8"), "keep-me\n");
+  assert.equal(await fs.readFile(tunnelKey, "utf8"), "private-key-never-erase\n");
+  assert.equal(await fs.readFile(tunnelProfile, "utf8"), "tunnel-profile-never-erase\n");
+  assert.equal(await fs.readFile(transportConfig, "utf8"), "{\"mode\":\"private\"}\n");
 
   await setStartup(expectedStartup);
   installation = installationFor({ homeDir, env, version: versions[1] });

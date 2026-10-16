@@ -118,7 +118,7 @@ test("Windows worker process inspection distinguishes exact identity, PID reuse 
     },
   });
   assert.deepEqual(exact, { running: true, stale: false, uncertain: false });
-  assert.equal(calls[0].command, "powershell.exe");
+  assert.match(calls[0].command, /^[A-Z]:\\Windows\\System32\\WindowsPowerShell\\v1\.0\\powershell\.exe$/iu);
   assert.deepEqual(calls[0].args.slice(0, 4), ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command"]);
   assert.equal(calls[0].args.length, 5, "No unescaped values may follow -Command on PowerShell 5.1");
   assert.match(calls[0].args[4], /\$env:EQUINOX_LOCAL_CHECK_WORKER_PID/u);

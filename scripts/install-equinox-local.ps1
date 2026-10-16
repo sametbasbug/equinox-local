@@ -1,8 +1,8 @@
 param([switch]$EnrollExistingMain, [switch]$Help)
 if ($Help) {
   Write-Output 'Usage: install-equinox-local.ps1 [-EnrollExistingMain] [-Help]'
-  Write-Output 'The signed Stable release installs first; Main enrollment follows its healthy activation by default.'
-  Write-Output 'Existing same-version Stable installs are enrolled without removing settings; older Stable versions must update first.'
+  Write-Output 'The installer installs Stable. Select Update & restart in Control Center to move to Main.'
+  Write-Output 'Rerunning the installer repairs Stable while preserving your settings.'
   return
 }
 $ErrorActionPreference = 'Stop'
@@ -106,7 +106,7 @@ function Invoke-CleanNode([string]$Node, [string]$FirstInstall, [string]$Release
   $psi.RedirectStandardOutput = $true
   $psi.RedirectStandardError = $true
   $psi.Arguments = '"' + $FirstInstall.Replace('"','\"') + '" --staged-release "' + $ReleaseDir.Replace('"','\"') + '"'
-  $psi.Arguments += ' --enroll-existing-main' # Default for all public installs; legacy switch is accepted for compatibility.
+  if ($EnrollExistingMain) { $psi.Arguments += ' --enroll-existing-main' } # Explicit legacy compatibility only.
   $psi.EnvironmentVariables.Clear()
   foreach ($name in @('SystemRoot','WINDIR','ComSpec','TEMP','TMP','USERPROFILE','LOCALAPPDATA','APPDATA','USERNAME','USERDOMAIN','PATH','PATHEXT')) {
     $value = [Environment]::GetEnvironmentVariable($name)
@@ -133,9 +133,9 @@ function Assert-ExistingStableUpgradeRoute([string]$InstallRoot, [string]$Reques
       $current.version -notmatch '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$') {
     Fail 'existing Windows Stable version pointer has invalid ownership; open Equinox Local Control Center for diagnosis'
   }
-  if ($current.version -cne $RequestedVersion) {
-    Fail "Windows Stable $($current.version) is already installed. To upgrade to $RequestedVersion, open Equinox Local Control Center > Check for updates > Update & restart. The website installer is only for first install or same-version repair; it does not switch versions on Windows."
-  }
+  # A valid existing pointer is NOT a reason to reject a fresh signed Stable
+  # installation. The bundled managed installer handles the native switch.
+  # The user separately selects Update & restart to enroll Main.
 }
 function Invoke-EquinoxLocalInstall {
   if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) { Fail 'Windows is required' }

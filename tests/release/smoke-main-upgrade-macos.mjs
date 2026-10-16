@@ -10,6 +10,8 @@ import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 
 import { installManagedEquinoxRelease } from "../../src/equinox-local-first-install.js";
+import { activatePreparedEquinoxRelease } from "../../src/equinox-local-update-activation.js";
+import { enrollEquinoxLocalManagedSource } from "../../src/equinox-local-managed-source-enrollment.js";
 import { readEquinoxLocalMainSourcePointer } from "../../src/equinox-local-main-source-pointer.js";
 import { equinoxLocalToolchainContract } from "../../src/equinox-local-toolchain-contract.js";
 import { equinoxLocalUpdateTarget } from "../../src/equinox-local-updater.js";
@@ -112,6 +114,106 @@ async function awaitHealthy(expectedSha, { kind = "managed-source", timeoutMs = 
   }, `HEALTHY ${kind} ${expectedSha ?? "Stable"}`, timeoutMs);
 }
 
+// Real hosted native A is already installed/running. Re-extract a separately
+// packaged B each time; never simulate the product activation or launchctl.
+// Source-provenance acceptance, NOT a production-signed release assertion.
+async function acceptHistoricMainToStable({
+  candidateArtifact, previousSha, oldVersion, homeDir, installRoot,
+  scratch, uid, trackedExecFile, beforeNativeSha256,
+}) {
+  assert.equal(process.env.GITHUB_ACTIONS, "true");
+  assert.equal(process.env.CI, "true");
+  assert.ok(path.isAbsolute(candidateArtifact));
+  const oldRelease = path.join(installRoot, "releases", oldVersion);
+  const current = path.join(installRoot, "current");
+  const target = equinoxLocalUpdateTarget();
+  const candidateMeta = await execFile("/usr/bin/tar", ["-xOzf", candidateArtifact, "release/release.json"], {
+    timeout: 15_000, maxBuffer: 20_000,
+  }).then(({stdout}) => JSON.parse(stdout));
+  assert.equal(candidateMeta.target, target);
+  assert.match(candidateMeta.sourceSha, SHA);
+  assert.notEqual(candidateMeta.sourceSha, previousSha);
+  assert.notEqual(candidateMeta.version, oldVersion);
+  const originalStamp = await fs.readFile(path.join(installRoot, "main-update", "install.json"), "utf8");
+  const proofFiles = [
+    path.join(installRoot, "config.json"),
+    path.join(installRoot, "secrets", "openai-runtime-key"),
+    path.join(installRoot, "Agent Browser", "ci-owned-profile.txt"),
+    path.join(installRoot, "tunnel", "ci-owned-profile.txt"),
+    path.join(installRoot, "workspace", "ci-owned-workspace.txt"),
+  ];
+  for (const [index,file] of proofFiles.entries()) {
+    if (index === 0) continue;
+    await fs.mkdir(path.dirname(file), {recursive:true,mode:0o700});
+    try {
+      await fs.writeFile(file,"historical-user-owned-state-"+index+"\n",{mode:0o600,flag:"wx"});
+    } catch (error) {
+      if (error?.code !== "EEXIST") throw error;
+      const stat = await fs.lstat(file);
+      assert.ok(stat.isFile() && !stat.isSymbolicLink());
+    }
+  }
+  const checksum = async(file)=>createHash("sha256").update(await fs.readFile(file)).digest("hex");
+  const hashes = await Promise.all(proofFiles.map(checksum));
+  const oldOnly = path.join(oldRelease, "historic-main-only-file.txt");
+  await fs.writeFile(oldOnly, "old-version-product-owned-file\n", {flag:"wx",mode:0o600});
+  let observedHealthyB=0;
+  const install = async(label,failB) => {
+    const staging = path.join(installRoot,"staging","historic-stable-"+label);
+    await fs.mkdir(staging,{recursive:true,mode:0o700});
+    await execFile("/usr/bin/tar",["-xzf",candidateArtifact,"-C",staging],{
+      timeout:120_000,maxBuffer:8*1024*1024,
+    });
+    return installManagedEquinoxRelease({
+      stagedReleaseDir:path.join(staging,"release"), homeDir,uid,
+      platform:"darwin",target,execFileImpl:trackedExecFile,
+      activateImpl:(options)=>activatePreparedEquinoxRelease({
+        ...options,healthAttempts:failB?20:60,
+        fetchImpl:async(...args)=>{
+          const response=await fetch(...args);
+          if(!failB||!response.ok)return response;
+          const body=await response.clone().json().catch(()=>null);
+          if(body?.status?.server?.version!==candidateMeta.version||
+              body?.status?.health?.state!=="HEALTHY"||
+              body?.status?.installation?.kind!=="managed")return response;
+          observedHealthyB++;
+          return new Response(JSON.stringify({...body,status:{...body.status,
+            health:{...body.status.health,state:"UNHEALTHY"}}}),{
+            status:response.status,headers:{"content-type":"application/json"},
+          });
+        },
+      }),
+    });
+  };
+  await assert.rejects(install("forced-health-failure",true),/rolled back to/u);
+  assert.ok(observedHealthyB>0, "Real B must become HEALTHY before injected failure");
+  await awaitHealthy(previousSha);
+  assert.equal(await fs.readFile(path.join(installRoot,"main-update","install.json"),"utf8"),originalStamp);
+  assert.equal(await fs.realpath(current),await fs.realpath(oldRelease));
+  assert.equal(await fs.readFile(oldOnly,"utf8"),"old-version-product-owned-file\n");
+  assert.equal(await checksum(path.join(homeDir,"Applications","Equinox Local.app","Contents","MacOS","applet")),beforeNativeSha256);
+  assert.deepEqual(await Promise.all(proofFiles.map(checksum)),hashes);
+  const result=await install("healthy",false);
+  assert.equal(result.status,"activated");
+  assert.equal(result.previousVersion,oldVersion);
+  await awaitHealthy(null,{kind:"managed"});
+  // Previous numbered A intentionally remains available as a verified
+  // rollback baseline. The new B tree must be clean, not an overlay of A.
+  assert.equal(await fs.readFile(oldOnly,"utf8"),"old-version-product-owned-file\n");
+  const carried = path.join(installRoot, "releases", candidateMeta.version, path.basename(oldOnly));
+  assert.equal(await fs.access(carried).then(()=>true,()=>false),false,
+    "New Stable contains leftover executable tree content from old Main");
+  assert.equal(await fs.access(path.join(installRoot,"main-update","install.json")).then(()=>true,()=>false),false);
+  assert.deepEqual(await Promise.all(proofFiles.map(checksum)),hashes);
+  process.stdout.write(JSON.stringify({
+    ok:true,host:target,scenario:"historic-main-to-stable",fromVersion:oldVersion,
+    toVersion:candidateMeta.version,oldMainSha:previousSha,candidateSha:candidateMeta.sourceSha,
+    nativeHealth:"HEALTHY",rollbackHealthyMain:true,stableHealthy:true,
+    credentialHashesPreserved:true,realAppleScriptLaunchAgent:true,cleanTargetTree:true,verifiedOldRollbackRetained:true,
+    provenance:"unsigned-hosted-candidate",
+  })+"\n");
+}
+
 async function run() {
   if (process.platform !== "darwin" || process.env.GITHUB_ACTIONS !== "true" || process.env.CI !== "true" ||
       !process.env.RUNNER_TEMP) throw new Error("This destructive native-host smoke may run only in an isolated hosted macOS Actions runner.");
@@ -123,7 +225,7 @@ async function run() {
   const scenario = process.env.M8_ACCEPTANCE_SCENARIO || "positive";
   if (!["positive", "target-health-failure"].includes(scenario)) throw new Error("Unsupported native M8 acceptance scenario.");
   const negative = scenario === "target-health-failure";
-  const expectedNativeMode = process.env.M8_EXPECTED_NATIVE_MODE || "reuse_native";
+  const expectedNativeMode = process.env.M8_EXPECTED_NATIVE_MODE || "artifact_required";
   if (!["reuse_native", "artifact_required"].includes(expectedNativeMode)) throw new Error("Unsupported required M8 native transition mode.");
   // Ensure tests never bootout or replace an existing user's instance. An
   // occupied port or managed LaunchAgent means this machine isn't isolated.
@@ -233,13 +335,71 @@ globalThis.fetch = (resource, init = {}) => {
     const metadata = JSON.parse(await fs.readFile(path.join(release, "release.json"), "utf8"));
     assert.equal(metadata.sourceSha, previousSha);
     assert.equal(metadata.target, equinoxLocalUpdateTarget());
-    const result = await installManagedEquinoxRelease({
-      allowExistingStableToMainMigration: true,
-      stagedReleaseDir: release, homeDir, env, uid,
-      execFileImpl: trackedExecFile,
-      waitForVersionImpl: async () => { ownedService.started = true; await awaitHealthy(null, { kind: "managed" }); return true; },
-      waitForManagedSourceImpl: async (_version, sha) => { await awaitHealthy(sha); return true; },
-    });
+    let result;
+    try {
+      result = await installManagedEquinoxRelease({
+        allowExistingStableToMainMigration: true,
+        stagedReleaseDir: release, homeDir, env, uid,
+        execFileImpl: trackedExecFile,
+        // The current harness installer provisions its NEW pinned Node, but
+        // the real historical 5.2.1 A supervisor checks the OLD pinned Node.
+        // Install A's exact signed toolchain too on this disposable runner.
+        // Do not modify old A's source or accept an ambient node/git binary.
+        enrollManagedSourceImpl: async (options) => {
+          const enrollment = await enrollEquinoxLocalManagedSource(options);
+          const oldModule = path.join(enrollment.sourceRoot, "src", "equinox-local-toolchain-provisioner.js");
+          const oldStat = await fs.lstat(oldModule);
+          assert.ok(oldStat.isFile() && !oldStat.isSymbolicLink());
+          const { provisionEquinoxLocalToolchain: provisionOld } = await import(pathToFileURL(oldModule).href);
+          const verified = await provisionOld({
+            runtimeRoot: path.join(installRoot, "runtime"),
+            target: equinoxLocalUpdateTarget(), platform: "darwin", env,
+          });
+          assert.equal(verified.contract.target, equinoxLocalUpdateTarget());
+          console.log("Hosted vintage A pinned toolchain verified using exact signed A source.");
+          return enrollment;
+        },
+        waitForVersionImpl: async () => { ownedService.started = true; await awaitHealthy(null, { kind: "managed" }); return true; },
+        waitForManagedSourceImpl: async (_version, sha) => { await awaitHealthy(sha); return true; },
+      });
+    } catch (error) {
+      // Emit ONLY bounded launchctl state/exit-code booleans: never log the
+      // complete print output, environment or runner credentials.
+      const servicePrint = await execFile("/bin/launchctl", ["print", service], { timeout: 5_000, maxBuffer: 64 * 1024 })
+        .then(({ stdout }) => String(stdout), () => "");
+      const state = /(?:^|\n)\s*state\s*=\s*([a-z-]+)\s*(?:\n|$)/u.exec(servicePrint)?.[1] ?? "not-loaded";
+      const exitCode = /(?:^|\n)\s*last exit code\s*=\s*(\d+)\s*(?:\n|$)/u.exec(servicePrint)?.[1] ?? "unknown";
+      const hasPid = /(?:^|\n)\s*pid\s*=\s*\d+\s*(?:\n|$)/u.test(servicePrint);
+      const logFlags = {};
+      for (const name of ["Equinox Local.error.log", "Equinox Local.log"]) {
+        const data = await fs.readFile(path.join(homeDir, "Library", "Logs", name), "utf8").catch(() => null);
+        logFlags[name] = data === null ? { present: false } : {
+          present: true, bytes: data.length,
+          nodeModuleMissing: /ERR_MODULE_NOT_FOUND|MODULE_NOT_FOUND/u.test(data),
+          missingFile: /ENOENT|No such file or directory/u.test(data),
+          denied: /EACCES|EPERM|Operation not permitted/u.test(data),
+          invalidArgument: /EINVAL|Invalid argument/u.test(data),
+          syntaxError: /SyntaxError|Unexpected token/u.test(data),
+          nativeCrash: /SIGSEGV|EXC_BAD_ACCESS|Trace\/BPT trap/u.test(data),
+          configError: /configuration|config.json|invalid config/iu.test(data),
+          launchError: /could not|failed|error|fatal/iu.test(data),
+          supervisorLog: /\[Equinox Local supervisor\]/u.test(data),
+          wrongHome: /install root does not match|home directory|HOME|per-user Equinox Local location/iu.test(data),
+          invalidCurrent: /current pointer|releases root|release metadata|release directory/iu.test(data),
+          failedServer: /EADDRINUSE|listen EACCES|server failed|server exited|control center/iu.test(data),
+          badNodeOptions: /NODE_OPTIONS|--import|bad option|not allowed in NODE_OPTIONS/iu.test(data),
+          sourceUnsafe: /source runtime root is unsafe|server is unsafe|source root|managed-source/iu.test(data),
+          swiftNativeFailure: /AppKit|Swift|NSException|NSInvalidArgumentException|unhandled exception/iu.test(data),
+          // Limit to bounded product-generated supervisor diagnostics, not the
+          // raw log. The existing shared scrubber redacts URLs/paths/tokens.
+          supervisorMessages: data.split(/\r?\n/u)
+            .filter((line) => line.startsWith("[Equinox Local supervisor]"))
+            .slice(-3).map((line) => boundedDiagnostic(line).slice(0, 180)),
+        };
+      }
+      console.error(JSON.stringify({ hostedOldMainLaunchAgent: { state, exitCode, hasPid, logs: logFlags } }));
+      throw error;
+    }
     ownedService.started = true;
     assert.equal(result.managedSourceSha, previousSha);
     const before = await awaitHealthy(previousSha);
@@ -254,6 +414,16 @@ globalThis.fetch = (resource, init = {}) => {
     const toolchain = equinoxLocalToolchainContract({ runtimeRoot: path.join(installRoot, "runtime"), target: equinoxLocalUpdateTarget() });
     const getPointer = () => readEquinoxLocalMainSourcePointer(path.join(transactionRoot, "current-source.conf"), { gitPath: toolchain.gitPath });
     assert.equal((await getPointer()).sha, previousSha);
+    if (process.env.M8_LEGACY_REINSTALL_ACCEPTANCE === "true") {
+      const candidateArtifact = process.env.M8_LEGACY_STABLE_ARTIFACT;
+      const currentMeta = JSON.parse(await fs.readFile(path.join(installRoot,"current","release.json"),"utf8"));
+      assert.equal(currentMeta.sourceSha,previousSha);
+      await acceptHistoricMainToStable({
+        candidateArtifact,previousSha,oldVersion:currentMeta.version,homeDir,installRoot,
+        scratch,uid,trackedExecFile,beforeNativeSha256,
+      });
+      return;
+    }
     const { csrfToken } = await jsonApi("/api/v1/session");
     await jsonApi("/api/v1/update/check", { mutate: true, token: csrfToken });
     const discovery = await jsonApi("/api/v1/update");
@@ -341,7 +511,7 @@ globalThis.fetch = (resource, init = {}) => {
       }
       await fs.unlink(nativeHostWrapperAlias);
     }
-    await fs.rm(scratch, { recursive: true, force: true });
+    await fs.rm(scratch, { recursive: true, force: true, maxRetries: 8, retryDelay: 250 });
   }
 }
 

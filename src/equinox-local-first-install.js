@@ -13,7 +13,9 @@ import {
 } from "./equinox-local-bootstrap.js";
 import {
   activatePreparedEquinoxRelease,
+  kickstartEquinoxLocalLaunchAgent,
   readManagedCurrentRelease,
+  synchronizeManagedShellForRelease,
   waitForEquinoxLocalManagedSource,
   waitForEquinoxLocalVersion,
 } from "./equinox-local-update-activation.js";
@@ -24,9 +26,16 @@ import {
 } from "./equinox-local-updater.js";
 import { managedSupervisorPaths } from "./equinox-local-supervisor.js";
 import { enrollEquinoxLocalManagedSource, rollbackEquinoxLocalManagedSourceEnrollment } from "./equinox-local-managed-source-enrollment.js";
-import { requestWindowsShellRuntimeRestart } from "./equinox-local-windows-shell-control.js";
+import { equinoxLocalManagedSourcePaths } from "./equinox-local-managed-source-installation.js";
+import { validateManagedSourceInstallStamp } from "./equinox-local-main-update.js";
+import { readEquinoxLocalMainNativePointer } from "./equinox-local-main-native-state.js";
+import { readBoundedNormalFile } from "./equinox-local-safe-file.js";
+import { assertWindowsNativeMessagingHostOwnership, windowsNativeMessagingLauncherPath } from "./equinox-browser-windows-native-messaging.js";
+import { assertWindowsStableShellOwnedByRelease } from "./equinox-local-windows-stable-shell.js";
+import { requestWindowsShellRuntimeRestart, requestWindowsShellUpdateShutdown, waitForWindowsShellPipeRelease } from "./equinox-local-windows-shell-control.js";
 import { provisionWindowsGuardianFromRelease } from "./equinox-local-windows-guardian-provision.js";
-import { writeEquinoxLocalCurrentVersionPointer } from "./equinox-local-current-release.js";
+import { readEquinoxLocalCurrentVersionPointer, writeEquinoxLocalCurrentVersionPointer } from "./equinox-local-current-release.js";
+import { fingerprintEquinoxLocalNativeState } from "./equinox-local-native-state-fingerprint.js";
 import { initializeManagedOnboardingState } from "./equinox-local-onboarding.js";
 import { equinoxLocalReleaseRuntimeContract } from "./equinox-local-release-runtime-contract.js";
 import {
@@ -193,6 +202,7 @@ function installationFor(paths, releaseDir, {
     currentLink: platform === "darwin" ? paths.currentLink : null,
     currentPointer: paths.currentPointer,
     programRoot: paths.programRoot,
+    nativeMessagingManifestRoot: paths.nativeMessagingManifestRoot,
     stagingRoot: pathApi.join(paths.installRoot, "staging"),
     launchAgentPath: platform === "darwin"
       ? path.posix.join(paths.homeDir, "Library", "LaunchAgents", `${EQUINOX_LOCAL_LAUNCH_AGENT_LABEL}.plist`)
@@ -312,6 +322,253 @@ async function reloadLaunchAgent(installation, {
   });
 }
 
+// Older Main enrollment retains the signed Stable WPF/Native Messaging at the
+// numbered release path and has no current-native.json until a native update.
+// Accept that exact installation only after proving both existing native owners.
+async function inspectLegacyWindowsMainHost(installation, { version, releaseDir, verifyShell = false, fsImpl = fs }) {
+  const original = path.win32.join(installation.releasesRoot, version);
+  await assertWindowsNativeMessagingHostOwnership({
+    manifestRoot: installation.nativeMessagingManifestRoot,
+    acceptedLauncherPaths: [windowsNativeMessagingLauncherPath(original)],
+    fsImpl,
+  });
+  if (verifyShell) {
+    await assertWindowsStableShellOwnedByRelease({ releaseDir, programRoot: installation.programRoot, fsImpl });
+  }
+}
+
+// The unchanged version pointer cannot distinguish Main A from signed Stable B.
+// Keep A and a small identity record outside the numbered release until B is
+// HEALTHY/managed. Presence of the parked stamp means rollback is still owed;
+// deleting it is the commit point. No user-owned state is moved or removed.
+async function repairSameVersionMain({
+  paths, mainPaths, installation, candidate = null, mainStamp = null,
+  uid, platform, arch, target, fsImpl, execFileImpl, syncManagedShellImpl,
+  stopWindowsShellImpl, launchWindowsShellImpl, waitForVersionImpl, windowsRenameSleepImpl,
+  inspectLegacyMainHostImpl,
+}) {
+  const pathApi = platform === "win32" ? path.win32 : path.posix;
+  const backupRoot = pathApi.join(paths.installRoot, ".stable-repair-backup");
+  const recordPath = pathApi.join(backupRoot, "repair.json");
+  const temporaryRecord = pathApi.join(backupRoot, ".repair-next.json");
+  const oldRelease = pathApi.join(backupRoot, "release");
+  const failedRelease = pathApi.join(backupRoot, "failed-release");
+  const savedStamp = `${mainPaths.installStampPath}.stable-install-backup`;
+  const statOrNull = (name) => fsImpl.lstat(name).catch((error) => {
+    if (error?.code === "ENOENT") return null;
+    throw error;
+  });
+  const readStamp = async (name) => {
+    const file = await readBoundedNormalFile(name, {
+      fsImpl, platform, minBytes: 1, maxBytes: 8 * 1024, encoding: "utf8", label: "Stable repair Main identity",
+    }).catch((error) => {
+      if (error?.code === "ENOENT") return null;
+      throw error;
+    });
+    if (file) validateManagedSourceInstallStamp(JSON.parse(file.data));
+    return file?.data ?? null;
+  };
+  const rename = (from, to) => platform === "win32"
+    ? renameWindowsPathWhenUnlocked(from, to, { fsImpl, sleepImpl: windowsRenameSleepImpl })
+    : fsImpl.rename(from, to);
+  const fingerprint = async (root) => (await fingerprintEquinoxLocalNativeState(root, { fsImpl })).sha256;
+  const assertFingerprint = async (root, expected) => {
+    if (await fingerprint(root) !== expected) throw new Error("Stable repair release identity changed; refusing unexpected state.");
+  };
+  const nativePointer = async (version) => {
+    const pointerPath = pathApi.join(mainPaths.mainTransactionRoot, "current-native.json");
+    const pointer = await statOrNull(pointerPath) ? await readEquinoxLocalMainNativePointer(pointerPath, {
+      transactionRoot: mainPaths.mainTransactionRoot, fsImpl,
+    }) : null;
+    if (pointer && (pointer.target !== target || pointer.payloadVersion !== version)) {
+      throw new Error("Stable repair old Main native identity does not match the numbered release.");
+    }
+    if (platform === "win32" && !pointer) {
+      // Only the first prepared swap requires the original WPF bytes. On
+      // interrupted recovery the shell may legitimately be A or B, while the
+      // HKCU manifest must still name this exact owned numbered launcher.
+      await inspectLegacyMainHostImpl(installation, {
+        version, releaseDir: pathApi.join(paths.releasesRoot, version),
+        verifyShell: Boolean(candidate && !record), fsImpl,
+      });
+    }
+    return pointer;
+  };
+  const assertPointer = async (version) => {
+    const expected = pathApi.join(paths.releasesRoot, version);
+    if (platform === "win32") {
+      const pointer = await readEquinoxLocalCurrentVersionPointer(paths.currentPointer, { platform, target, fsImpl });
+      if (pointer.version !== version) throw new Error("Stable repair current pointer changed.");
+    } else {
+      const stat = await fsImpl.lstat(paths.currentLink);
+      if (!stat.isSymbolicLink() || pathApi.resolve(paths.installRoot, await fsImpl.readlink(paths.currentLink)) !== expected) {
+        throw new Error("Stable repair current pointer changed.");
+      }
+    }
+    return expected;
+  };
+  const stop = async () => {
+    if (platform === "win32") {
+      // Already stopped is normal on interruption recovery. Locked release
+      // renames still fail boundedly rather than deleting a running payload.
+      await stopWindowsShellImpl({ platform }).catch(() => null);
+    } else {
+      let loaded = false;
+      try {
+        await execFileImpl("/bin/launchctl", ["print", `gui/${uid}/${EQUINOX_LOCAL_LAUNCH_AGENT_LABEL}`], { timeout: 5_000, maxBuffer: 64 * 1024 });
+        loaded = true;
+      } catch (error) {
+        if (![3, 113].includes(error?.code) && error?.code !== "ENOENT") throw error;
+      }
+      if (loaded) await execFileImpl("/bin/launchctl", ["bootout", `gui/${uid}/${EQUINOX_LOCAL_LAUNCH_AGENT_LABEL}`], { timeout: 15_000, maxBuffer: 64 * 1024 });
+    }
+  };
+  const restart = async () => {
+    if (platform === "win32") await launchWindowsShellImpl(pathApi.join(paths.programRoot, "EquinoxLocal.exe"));
+    else await reloadLaunchAgent(installation, { uid, execFileImpl });
+  };
+  const health = (version, kind) => waitForVersionImpl(version, {
+    ...equinoxLocalFirstInstallHealthBudget({ platform, arch }), expectedInstallationKind: kind,
+  });
+  const cleanup = async () => {
+    // Keep the record until both trees are gone: an interrupted recursive rm
+    // can be retried without demanding an intact, already-retired A payload.
+    for (const root of [oldRelease, failedRelease]) {
+      const stat = await statOrNull(root);
+      if (stat) {
+        if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error("Stable repair cleanup path is unsafe.");
+        await validateReleaseTree(root, { fsImpl });
+        await fsImpl.rm(root, { recursive: true });
+      }
+    }
+    await fsImpl.rm(recordPath);
+    await fsImpl.rmdir(backupRoot);
+  };
+
+  let record;
+  if (await statOrNull(backupRoot)) {
+    await assertOwnedNormalDirectory(backupRoot, { uid, platform, fsImpl });
+    if (await fsImpl.realpath(backupRoot) !== backupRoot) throw new Error("Stable repair backup path is not canonical.");
+    const names = await fsImpl.readdir(backupRoot);
+    if (names.some((name) => !["repair.json", ".repair-next.json", "release", "failed-release"].includes(name))) {
+      throw new Error("Stable repair backup contains unexpected files.");
+    }
+    if (!names.includes("repair.json")) {
+      // Preparation was interrupted before any live files could be moved.
+      if (names.some((name) => name !== ".repair-next.json")) throw new Error("Stable repair backup has no identity record.");
+      if (names.length) {
+        await assertNormalFile(temporaryRecord, "Stable repair temporary record", { fsImpl });
+        await fsImpl.rm(temporaryRecord);
+      }
+      await fsImpl.rmdir(backupRoot);
+      return null;
+    }
+    if (names.includes(".repair-next.json")) throw new Error("Stable repair contains conflicting identity records.");
+    const file = await readBoundedNormalFile(recordPath, { fsImpl, platform, minBytes: 1, maxBytes: 16 * 1024, encoding: "utf8", label: "Stable repair record" });
+    record = JSON.parse(file.data);
+    exactKeys(record, ["schemaVersion", "version", "target", "mainStamp", "oldSha256", "stableSha256", "nativeSourceSha"], "Stable repair record");
+    parseEquinoxVersion(record.version);
+    validateManagedSourceInstallStamp(JSON.parse(record.mainStamp));
+    if (record.schemaVersion !== 1 || record.target !== target ||
+        !/^[a-f0-9]{64}$/u.test(record.oldSha256) || !/^[a-f0-9]{64}$/u.test(record.stableSha256) ||
+        (record.nativeSourceSha !== null && !/^[a-f0-9]{40}$/u.test(record.nativeSourceSha))) {
+      throw new Error("Stable repair record identity is invalid.");
+    }
+  } else if (!candidate) {
+    // A parked selector without our full-tree backup belongs to another
+    // operation. Never silently treat that state as a fresh Stable install.
+    if (await statOrNull(savedStamp)) throw new Error("Prior Stable replacement needs reconciliation before another attempt.");
+    return null;
+  } else {
+    const targetRelease = await assertPointer(candidate.version);
+    if (installation.releaseDir !== targetRelease) throw new Error("Same-version Main release path is inconsistent.");
+    const old = await validateFirstInstallRelease(targetRelease, { target, fsImpl });
+    if (old.version !== candidate.version) throw new Error("Same-version Main release identity is inconsistent.");
+    if (await readStamp(mainPaths.installStampPath) !== mainStamp || await statOrNull(savedStamp)) throw new Error("Stable repair Main identity changed.");
+    const native = await nativePointer(candidate.version);
+    record = { schemaVersion: 1, version: candidate.version, target, mainStamp,
+      oldSha256: await fingerprint(targetRelease), stableSha256: await fingerprint(candidate.releaseDir), nativeSourceSha: native?.sourceSha ?? null };
+    await fsImpl.mkdir(backupRoot, { mode: 0o700 });
+    if (await fsImpl.realpath(backupRoot) !== backupRoot) throw new Error("Stable repair backup path is not canonical.");
+    const handle = await fsImpl.open(temporaryRecord, "wx", 0o600);
+    try { await handle.writeFile(`${JSON.stringify(record)}\n`); await handle.sync(); } finally { await handle.close(); }
+    await fsImpl.rename(temporaryRecord, recordPath);
+  }
+
+  const targetRelease = await assertPointer(record.version);
+  const liveStamp = await readStamp(mainPaths.installStampPath);
+  const parkedStamp = await readStamp(savedStamp);
+  if ((liveStamp && parkedStamp) || (liveStamp && liveStamp !== record.mainStamp) || (parkedStamp && parkedStamp !== record.mainStamp)) {
+    throw new Error("Stable repair Main selector contains unexpected state.");
+  }
+  if (!liveStamp && !parkedStamp) {
+    // B was committed; A may already be partially deleted. Never resurrect
+    // Main just because post-HEALTHY housekeeping was interrupted.
+    await assertFingerprint(targetRelease, record.stableSha256);
+    await restart();
+    await health(record.version, "managed");
+    await cleanup();
+    return { status: "activated", version: record.version, previousVersion: record.version, configCreated: false };
+  }
+  const native = await nativePointer(record.version);
+  if ((native?.sourceSha ?? null) !== record.nativeSourceSha) throw new Error("Stable repair old native pointer changed.");
+  const rollback = async () => {
+    const backedUp = await statOrNull(oldRelease);
+    await assertFingerprint(backedUp ? oldRelease : targetRelease, record.oldSha256);
+    if (backedUp && await statOrNull(targetRelease)) {
+      await assertFingerprint(targetRelease, record.stableSha256);
+      if (await statOrNull(failedRelease)) throw new Error("Stable repair has duplicate candidate trees.");
+    }
+    await stop();
+    const activeRelease = await statOrNull(targetRelease);
+    // If interruption occurred between moving A out and promoting B, the
+    // native host was never changed. On Windows the numbered A tree can
+    // legitimately differ from the active Main native-store shell, so do not
+    // treat that numbered tree as evidence of WPF or Native Messaging ownership.
+    if (native && activeRelease) {
+      await syncManagedShellImpl(installation, { version: record.version,
+        releaseDir: native.releaseDir, previousReleaseDir: targetRelease });
+    }
+    if (backedUp) {
+      if (activeRelease) await rename(targetRelease, failedRelease);
+      await rename(oldRelease, targetRelease);
+    }
+    if (!native && platform === "win32" && await statOrNull(failedRelease)) {
+      // A classic Main enrollment uses releases/<version> as its ONLY
+      // native-host launcher. Restore A at that same address *before* the
+      // native sync, so the manifest never points at a removed backup tree.
+      await syncManagedShellImpl(installation, { version: record.version,
+        releaseDir: targetRelease, previousReleaseDir: failedRelease });
+    }
+    if (await readStamp(savedStamp)) await fsImpl.rename(savedStamp, mainPaths.installStampPath);
+    await restart();
+    await health(record.version, "managed-source");
+    await cleanup();
+  };
+  if (!candidate) {
+    await rollback();
+    return null;
+  }
+  try {
+    await stop();
+    await rename(targetRelease, oldRelease);
+    await rename(candidate.releaseDir, targetRelease);
+    await fsImpl.rename(mainPaths.installStampPath, savedStamp);
+    await syncManagedShellImpl(installation, { version: record.version, releaseDir: targetRelease,
+      previousReleaseDir: native?.releaseDir ?? oldRelease });
+    await restart();
+    await health(record.version, "managed");
+  } catch (error) {
+    try { await rollback(); } catch (recoveryError) {
+      throw new AggregateError([error, recoveryError], "Same-version Stable repair failed; Main rollback needs recovery on the next installer invocation.");
+    }
+    throw new Error("Same-version Stable repair failed and was rolled back to Main.", { cause: error });
+  }
+  await fsImpl.rm(savedStamp);
+  await cleanup();
+  return { status: "activated", version: record.version, previousVersion: record.version, configCreated: false };
+}
+
 export async function installManagedEquinoxRelease({
   stagedReleaseDir,
   homeDir = os.homedir(),
@@ -335,8 +592,11 @@ export async function installManagedEquinoxRelease({
   requestWindowsRestartImpl = requestWindowsShellRuntimeRestart,
   initializeOnboardingImpl = initializeManagedOnboardingState,
   syncWindowsShellImpl = synchronizeFreshWindowsShell,
+  syncManagedShellImpl = synchronizeManagedShellForRelease,
+  stopWindowsShellImpl = requestWindowsShellUpdateShutdown,
   launchWindowsShellImpl = launchWindowsStableShell,
   windowsRenameSleepImpl = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+  inspectLegacyMainHostImpl = inspectLegacyWindowsMainHost,
 } = {}) {
   if (platform !== "darwin" && !(platform === "win32" && ["arm64", "x64"].includes(arch))) {
     throw new Error(`Equinox Local first install is not implemented for ${platform}-${arch}.`);
@@ -363,6 +623,24 @@ export async function installManagedEquinoxRelease({
   await assertOwnedNormalDirectory(paths.releasesRoot, { uid, platform, fsImpl, create: true });
   await assertOwnedNormalDirectory(stagingRoot, { uid, platform, fsImpl, create: true });
 
+  const baseInstallation = installationFor(paths, null, { platform, arch, target: expectedTarget });
+  const mainPaths = equinoxLocalManagedSourcePaths({ platform, arch, homeDir, env });
+  const repairOptions = { paths, mainPaths, installation: baseInstallation, uid, platform, arch, target: expectedTarget,
+    fsImpl, execFileImpl, syncManagedShellImpl, stopWindowsShellImpl, launchWindowsShellImpl, waitForVersionImpl,
+    windowsRenameSleepImpl, inspectLegacyMainHostImpl };
+  // Recovery must precede even current-release resolution: the unchanged
+  // pointer can temporarily name the missing directory between two renames.
+  if (!allowExistingStableToMainMigration) {
+    const recovered = await repairSameVersionMain(repairOptions);
+    if (recovered) return Object.freeze({ ...recovered, controlCenterUrl: "http://127.0.0.1:24891/" });
+  } else {
+    const backup = await fsImpl.lstat(pathApi.join(paths.installRoot, ".stable-repair-backup")).catch((error) => {
+      if (error?.code === "ENOENT") return null;
+      throw error;
+    });
+    if (backup) throw new Error("Classic Stable installer recovery must complete before Main enrollment.");
+  }
+
   const stagedReal = await fsImpl.realpath(stagedReleaseDir);
   const stagingReal = await fsImpl.realpath(stagingRoot);
   if (!inside(stagingReal, stagedReal, pathApi)) throw new Error("Staged Equinox Local release escaped the managed staging directory.");
@@ -370,7 +648,6 @@ export async function installManagedEquinoxRelease({
   const targetRelease = pathApi.join(paths.releasesRoot, candidate.version);
   if (pathApi.dirname(targetRelease) !== paths.releasesRoot) throw new Error("Candidate release path escaped the managed releases root.");
 
-  const baseInstallation = installationFor(paths, null, { platform, arch, target: expectedTarget });
   let current = null;
   try {
     current = await readCurrentImpl(baseInstallation);
@@ -439,18 +716,67 @@ export async function installManagedEquinoxRelease({
     }
   };
 
+  const savedMainStamp = `${mainPaths.installStampPath}.stable-install-backup`;
+  let parkedMain = false;
+  // Read identity through one checked file descriptor; lstat+readFile
+  // permitted symlink/path replacement between the check and the read.
+  const currentMainStamp = await readBoundedNormalFile(mainPaths.installStampPath, {
+    fsImpl, platform, minBytes: 1, maxBytes: 8 * 1024,
+    encoding: "utf8", label: "Existing Main install identity",
+  }).catch((error) => {
+    if (error?.code === "ENOENT") return null;
+    throw error;
+  });
+  if (currentMainStamp) {
+    validateManagedSourceInstallStamp(JSON.parse(currentMainStamp.data));
+    try {
+      await fsImpl.lstat(savedMainStamp);
+      throw new Error("Prior Stable replacement needs reconciliation before another attempt.");
+    } catch (error) {
+      if (error?.code !== "ENOENT") throw error;
+    }
+  }
+
+  let previousMainNativeReleaseDir = null;
+  if (current && currentMainStamp && platform === "win32") {
+    const pointerPath = path.win32.join(mainPaths.mainTransactionRoot, "current-native.json");
+    const nativePointer = await readEquinoxLocalMainNativePointer(pointerPath, {
+      transactionRoot: mainPaths.mainTransactionRoot, fsImpl,
+    }).catch((error) => {
+      if (error?.code === "ENOENT") return null;
+      throw error;
+    });
+    if (nativePointer) {
+      // Bootstrap SHA is the FIRST enrolled commit, not necessarily the
+      // current native snapshot SHA after later Main updates.
+      if (nativePointer.target !== expectedTarget ||
+          nativePointer.payloadVersion !== current.version) {
+        throw new Error("Installed Main native release does not match the authenticated old Main identity.");
+      }
+      previousMainNativeReleaseDir = nativePointer.releaseDir;
+    }
+  }
+
+  if (!current && currentMainStamp) {
+    throw new Error("Existing Main identity has no verified current release; a clean Stable install cannot overwrite it without recovery.");
+  }
   if (current) {
     const comparison = compareEquinoxVersions(current.version, candidate.version);
     if (allowExistingStableToMainMigration && comparison !== 0) {
       throw new Error("Upgrade the existing Stable release with the Stable updater before explicitly enrolling Main; installer migration cannot replace a different active Stable version.");
     }
-    if (comparison > 0) {
+    if (comparison > 0 && !currentMainStamp) {
       return Object.freeze({
         status: "newer-installed",
         version: current.version,
         requestedVersion: candidate.version,
         controlCenterUrl: "http://127.0.0.1:24891/",
       });
+    }
+    if (comparison === 0 && currentMainStamp && !allowExistingStableToMainMigration) {
+      const result = await repairSameVersionMain({ ...repairOptions, candidate, mainStamp: currentMainStamp.data,
+        installation: installationFor(paths, current.releaseDir, { platform, arch, target: expectedTarget }) });
+      return Object.freeze({ ...result, controlCenterUrl: "http://127.0.0.1:24891/" });
     }
     if (comparison === 0) {
       // Re-running the website installer is not consent to move an existing
@@ -481,9 +807,8 @@ export async function installManagedEquinoxRelease({
         controlCenterUrl: bootstrap.controlCenterUrl || "http://127.0.0.1:24891/",
       });
     }
-    if (platform === "win32") {
-      throw new Error("Windows bootstrap update/reinstall is not enabled yet; use the installed updater once the stable-shell replacement checkpoint is complete.");
-    }
+    // Both Windows and macOS use the existing signed native activation,
+    // health check and automatic rollback below for a different version.
   }
 
   const existing = await fsImpl.lstat(targetRelease).catch((error) => {
@@ -504,10 +829,49 @@ export async function installManagedEquinoxRelease({
   if (current) {
     const currentInstallation = installationFor(paths, current.releaseDir, { platform, arch, target: expectedTarget });
     await bootstrapImpl({ homeDir, platform, arch, env, fsImpl });
-    const activation = await activateImpl({
-      installation: currentInstallation,
-      targetVersion: candidate.version,
-    });
+    // Existing Main sources must not override the freshly installed Stable
+    // runtime. Park ONLY the authenticated Main channel selector while B is
+    // started; restore it before the old A is relaunched on failed B health.
+    const restoreMainIdentity = async () => {
+      if (!parkedMain) return;
+      await fsImpl.rename(savedMainStamp, mainPaths.installStampPath);
+      parkedMain = false;
+    };
+    let activation;
+    try {
+      activation = await activateImpl({
+        installation: currentInstallation,
+        targetVersion: candidate.version,
+        healthAttempts: equinoxLocalFirstInstallHealthBudget({ platform, arch }).attempts,
+        ...(previousMainNativeReleaseDir ? { previousMainNativeReleaseDir } : {}),
+      ...(currentMainStamp ? { kickstartImpl: async (version) => {
+        if (version === candidate.version && !parkedMain) {
+          await fsImpl.rename(mainPaths.installStampPath, savedMainStamp);
+          parkedMain = true;
+        } else if (version === current.version) {
+          await restoreMainIdentity();
+        }
+        if (platform === "darwin") {
+          await kickstartEquinoxLocalLaunchAgent(currentInstallation, { uid, execFileImpl });
+        } else {
+          // Old shipped WPF acknowledges the update shutdown request before
+          // releasing its single-instance coordinator. Await actual pipe
+          // release; otherwise a new WPF can exit as a duplicate.
+          await waitForWindowsShellPipeRelease({ platform });
+          return launchWindowsShellImpl(path.win32.join(paths.programRoot, "EquinoxLocal.exe"));
+        }
+      } } : {}),
+      });
+    } catch (error) {
+      // Even if OS-native rollback failed before it could relaunch A,
+      // do not strand A's original authenticated Main channel identity.
+      await restoreMainIdentity();
+      throw error;
+    }
+    if (parkedMain) {
+      await fsImpl.rm(savedMainStamp);
+      parkedMain = false;
+    }
     const bootstrap = await bootstrapImpl({ homeDir, platform, arch, env, fsImpl });
     return Object.freeze({
       status: activation.status,
@@ -568,7 +932,7 @@ function parseCli(argv) {
 const invokedPath = process.argv[1] ? path.resolve(process.argv[1]) : null;
 if (invokedPath && path.basename(invokedPath) === path.basename(fileURLToPath(import.meta.url))) {
   if (process.argv.length === 3 && process.argv[2] === "--help") {
-    process.stdout.write("Usage: equinox-local-first-install.js --staged-release /absolute/path/to/release [--enroll-existing-main]\nBundled internal helper: --enroll-existing-main enrolls Main after signed Stable health.\nPublic installers supply this flag by default; exact source provenance is required.\n");
+    process.stdout.write("Usage: equinox-local-first-install.js --staged-release /absolute/path/to/release [--enroll-existing-main]\nBundled internal helper: --enroll-existing-main enrolls Main after signed Stable health.\nPublic installer defaults to Stable; Main enrollment is explicit via Update & restart.\n");
   } else {
     installManagedEquinoxRelease(parseCli(process.argv.slice(2)))
       .then((result) => process.stdout.write(`${JSON.stringify(result, null, 2)}\n`))

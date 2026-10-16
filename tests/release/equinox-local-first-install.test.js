@@ -13,6 +13,7 @@ import {
   validateFirstInstallRelease,
 } from "../../src/equinox-local-first-install.js";
 import { equinoxLocalReleaseRuntimeContract } from "../../src/equinox-local-release-runtime-contract.js";
+import { EQUINOX_LOCAL_MAIN_BRANCH, EQUINOX_LOCAL_MAIN_REPOSITORY, EQUINOX_LOCAL_MAIN_UPDATE_CHANNEL, EQUINOX_LOCAL_MAIN_UPDATE_SCHEMA_VERSION } from "../../src/equinox-local-main-update.js";
 import {
   readWindowsNativeMessagingRegistryValue,
   unregisterWindowsNativeMessagingHost,
@@ -21,11 +22,11 @@ import {
 
 const TARGET = "darwin-arm64";
 
-test("first-install internal CLI help explains public automatic Main enrollment", () => {
+test("first-install internal CLI help states Stable by default and user-triggered Main update", () => {
   const help = execFileSync(process.execPath, [fileURLToPath(new URL("../../src/equinox-local-first-install.js", import.meta.url)), "--help"], { encoding: "utf8" });
-  assert.match(help, /Public installers supply this flag by default/u);
+  assert.match(help, /Public installer defaults to Stable/u);
   assert.match(help, /--enroll-existing-main/u);
-  assert.match(help, /exact source provenance is required/u);
+  assert.match(help, /Main enrollment is explicit via Update & restart/u);
 });
 
 test("Windows first-install enrollment uses durable release-local helper paths after staging promotion", async () => {
@@ -569,6 +570,64 @@ test("installing over an older managed release delegates activation to the rollb
 });
 
 
+test("classic Stable installer disarms existing Main only before B restart and restores it before A rollback", async () => {
+  for (const rollback of [false, true]) {
+    const fixture = await createFixture("4.2.0");
+    const uid = process.getuid?.() ?? 501;
+    const oldRelease = path.join(fixture.installRoot, "releases", "4.1.0");
+    const mainPath = path.join(fixture.installRoot, "main-update", "install.json");
+    const backup = `${mainPath}.stable-install-backup`;
+    const userConfig = path.join(fixture.installRoot, "config.json");
+    const key = path.join(fixture.installRoot, "secrets", "openai-runtime-key");
+    const stamp = JSON.stringify({ schemaVersion: EQUINOX_LOCAL_MAIN_UPDATE_SCHEMA_VERSION,
+      channel: EQUINOX_LOCAL_MAIN_UPDATE_CHANNEL, repository: EQUINOX_LOCAL_MAIN_REPOSITORY,
+      branch: EQUINOX_LOCAL_MAIN_BRANCH, bootstrapSha: "a".repeat(40) });
+    const events = [];
+    try {
+      await fs.mkdir(oldRelease, { recursive: true });
+      await fs.mkdir(path.dirname(mainPath), { recursive: true });
+      await fs.mkdir(path.dirname(key), { recursive: true });
+      await fs.writeFile(mainPath, stamp);
+      await fs.writeFile(userConfig, "keep-configuration");
+      await fs.writeFile(key, "keep-tunnel-secret");
+      const install = () => installManagedEquinoxRelease({
+        stagedReleaseDir: fixture.releaseDir, homeDir: fixture.homeDir, uid,
+        platform: "darwin", target: TARGET,
+        readCurrentImpl: async () => ({ version: "4.1.0", releaseDir: oldRelease }),
+        bootstrapImpl: async () => ({ configCreated: false }),
+        execFileImpl: async (_command, args) => {
+          if (args[0] === "print") throw Object.assign(new Error("not loaded"), { code: "ENOENT" });
+          return { stdout: "", stderr: "" };
+        },
+        activateImpl: async ({ targetVersion, kickstartImpl, healthAttempts }) => {
+          assert.equal(healthAttempts, 120);
+          assert.equal(targetVersion, "4.2.0");
+          assert.equal(typeof kickstartImpl, "function");
+          await kickstartImpl("4.2.0");
+          events.push("new-stable");
+          assert.equal(await exists(mainPath), false);
+          assert.equal(await fs.readFile(backup, "utf8"), stamp);
+          if (rollback) {
+            await kickstartImpl("4.1.0");
+            events.push("old-main-restored");
+            assert.equal(await fs.readFile(mainPath, "utf8"), stamp);
+            assert.equal(await exists(backup), false);
+            throw new Error("target unhealthy, old A restored");
+          }
+          return { status: "activated", version: "4.2.0", previousVersion: "4.1.0" };
+        },
+      });
+      if (rollback) await assert.rejects(install(), rollback === "rollback-failed" ? /OS rollback failed/u : /old A restored/u);
+      else assert.equal((await install()).status, "activated");
+      assert.equal(await exists(backup), false);
+      assert.equal(await exists(mainPath), rollback);
+      assert.equal(await fs.readFile(userConfig, "utf8"), "keep-configuration");
+      assert.equal(await fs.readFile(key, "utf8"), "keep-tunnel-secret");
+      assert.deepEqual(events, rollback === "rollback-failed" ? ["new-stable"] : rollback ? ["new-stable", "old-main-restored"] : ["new-stable"]);
+    } finally { await fs.rm(fixture.homeDir, { recursive: true, force: true }); }
+  }
+});
+
 test("fresh Windows stable-shell synchronization is atomic, idempotent and refuses drift", async (t) => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "equinox-windows-shell-sync-"));
   t.after(() => fs.rm(root, { recursive: true, force: true }));
@@ -628,6 +687,50 @@ async function createRealWindowsFirstInstallFixture(version = "5.2.1") {
   }
   return { root, homeDir, localAppData, installRoot, releaseDir, version };
 }
+
+test("Windows installed Main yields channel to signed Stable, retaining keys and exact rollback stamp", { skip: process.platform !== "win32" }, async (t) => {
+  for (const failNewHealth of [false, true]) {
+    const fixture = await createRealWindowsFirstInstallFixture("5.2.1");
+    t.after(() => fs.rm(fixture.root, { recursive: true, force: true }));
+    const oldRelease = path.join(fixture.installRoot, "releases", "5.2.0");
+    const stampPath = path.join(fixture.installRoot, "state", "main-update", "install.json");
+    const secretPath = path.join(fixture.installRoot, "secrets", "openai-runtime-key");
+    await fs.mkdir(oldRelease, { recursive: true });
+    await fs.mkdir(path.dirname(stampPath), { recursive: true });
+    await fs.mkdir(path.dirname(secretPath), { recursive: true });
+    const stamp = JSON.stringify({ schemaVersion: EQUINOX_LOCAL_MAIN_UPDATE_SCHEMA_VERSION,
+      channel: EQUINOX_LOCAL_MAIN_UPDATE_CHANNEL, repository: EQUINOX_LOCAL_MAIN_REPOSITORY,
+      branch: EQUINOX_LOCAL_MAIN_BRANCH, bootstrapSha: "a".repeat(40) });
+    await fs.writeFile(stampPath, stamp);
+    await fs.writeFile(secretPath, "never-delete-user-key");
+    const events = [];
+    const install = () => installManagedEquinoxRelease({
+      stagedReleaseDir: fixture.releaseDir, homeDir: fixture.homeDir, platform: "win32", arch: "x64",
+      target: "win32-x64", env: { ...process.env, LOCALAPPDATA: fixture.localAppData },
+      readCurrentImpl: async () => ({ version: "5.2.0", releaseDir: oldRelease }),
+      bootstrapImpl: async () => ({ configCreated: false }),
+      launchWindowsShellImpl: async () => events.push("launch"),
+      activateImpl: async ({ kickstartImpl, healthAttempts }) => {
+        assert.equal(healthAttempts, 180);
+        await kickstartImpl("5.2.1");
+        assert.equal(await exists(stampPath), false);
+        assert.equal(await fs.readFile(`${stampPath}.stable-install-backup`, "utf8"), stamp);
+        if (failNewHealth) {
+          await kickstartImpl("5.2.0");
+          assert.equal(await fs.readFile(stampPath, "utf8"), stamp);
+          throw new Error("failed B was rolled back");
+        }
+        return { status: "activated", previousVersion: "5.2.0" };
+      },
+    });
+    if (failNewHealth) await assert.rejects(install(), /rolled back/u);
+    else assert.equal((await install()).status, "activated");
+    assert.equal(await exists(stampPath), failNewHealth);
+    assert.equal(await exists(`${stampPath}.stable-install-backup`), false);
+    assert.equal(await fs.readFile(secretPath, "utf8"), "never-delete-user-key");
+    assert.equal(events.length, failNewHealth ? 2 : 1);
+  }
+});
 
 test("Windows x64 fresh first install promotes current-version and stable shell without admin", { skip: process.platform !== "win32" }, async (t) => {
   const fixture = await createRealWindowsFirstInstallFixture();

@@ -10,6 +10,7 @@ import {
   kickstartEquinoxLocalLaunchAgent,
   readManagedCurrentRelease,
   waitForEquinoxLocalManagedSource,
+  waitForEquinoxLocalVersion,
 } from "../../src/equinox-local-update-activation.js";
 import { writeEquinoxLocalCurrentVersionPointer } from "../../src/equinox-local-current-release.js";
 import { equinoxLocalUpdateTarget } from "../../src/equinox-local-updater.js";
@@ -462,4 +463,38 @@ test("Windows managed activation forced health failure restores pointer stable s
   assert.equal(targetAttempts, 2);
   assert.deepEqual(restarts, ["5.3.0", "5.2.0"]);
   await assertWindowsActivationState(fixture, "5.2.0", fixture.previousLauncher);
+});
+
+test("Windows Main native-store origin survives Stable activation rollback", { skip: process.platform !== "win32" }, async (t) => {
+  const fixture = await makeWindowsActivationFixture(t);
+  const original = path.win32.join(fixture.installation.installRoot, "state", "main-update", "native-store", "verified", "release");
+  const syncCalls = [];
+  let rebooted = false;
+  await assert.rejects(activatePreparedEquinoxRelease({
+    installation: fixture.installation, targetVersion: "5.3.0",
+    previousMainNativeReleaseDir: original,
+    syncAppHostImpl: async (release) => { syncCalls.push(release); },
+    kickstartImpl: async () => { rebooted = true; },
+    fetchImpl: async () => { throw new Error("forced unhealthy"); },
+    sleepImpl: async () => {}, healthAttempts: 1,
+  }), /automatic rollback also failed/u);
+  assert.equal(rebooted, true);
+  assert.equal(syncCalls.length, 2);
+  assert.equal(syncCalls[0].previousReleaseDir, original);
+  assert.equal(syncCalls[1].releaseDir, original);
+});
+
+test("same-version Stable health must reject an old healthy Main process", async () => {
+  let probes = 0;
+  assert.equal(await waitForEquinoxLocalVersion("6.0.4", {
+    attempts: 2, delayMs: 0, sleepImpl: async () => {}, expectedInstallationKind: "managed",
+    fetchImpl: async () => {
+      probes += 1;
+      return new Response(JSON.stringify({ status: {
+        server: { version: "6.0.4" }, health: { state: "HEALTHY" },
+        installation: { kind: probes === 1 ? "managed-source" : "managed" },
+      } }), { status: 200 });
+    },
+  }), true);
+  assert.equal(probes, 2);
 });

@@ -41,27 +41,6 @@ export async function resolveEquinoxLocalManagedSourceInstallation({
   }
 
   const paths = equinoxLocalManagedSourcePaths({ platform, arch, homeDir, env });
-  const layout = equinoxLocalPlatformPaths({ platform, arch, homeDir, env });
-  const toolchain = equinoxLocalToolchainContract({ runtimeRoot: layout.runtimeRoot, target: `${platform}-${arch}` });
-  let managedGitPath = null;
-  try {
-    const [gitStat, nodeStat, npmStat] = await Promise.all([
-      fsImpl.lstat(toolchain.gitPath),
-      fsImpl.lstat(toolchain.nodePath),
-      fsImpl.lstat(toolchain.npmPath),
-    ]);
-    if (!gitStat.isFile() || gitStat.isSymbolicLink()) throw new Error("Managed Git executable is unsafe.");
-    if (!nodeStat.isFile() || nodeStat.isSymbolicLink()) throw new Error("Managed Node executable is unsafe.");
-    if (!npmStat.isFile() || npmStat.isSymbolicLink()) throw new Error("Managed npm CLI is unsafe.");
-    if (platform !== "win32" && ((gitStat.mode & 0o111) === 0 || (nodeStat.mode & 0o111) === 0)) throw new Error("Managed toolchain executable is not executable.");
-    managedGitPath = toolchain.gitPath;
-  } catch (error) {
-    if (error?.code !== "ENOENT") throw error;
-    const anyToolchainState = await Promise.all([toolchain.gitPath, toolchain.nodePath, toolchain.npmPath].map(async (candidate) => {
-      try { await fsImpl.lstat(candidate); return true; } catch (inner) { if (inner?.code === "ENOENT") return false; throw inner; }
-    }));
-    if (anyToolchainState.some(Boolean)) throw new Error("Managed product-owned toolchain is incomplete.");
-  }
   const directorySecurity = await inspectPrivateStatePath(paths.mainTransactionRoot, {
     platform, type: "directory", mode: "700", fsImpl, verifyWindowsAcl,
   });
@@ -86,6 +65,31 @@ export async function resolveEquinoxLocalManagedSourceInstallation({
   try { parsed = JSON.parse(data); }
   catch { throw new Error("Managed-source install stamp is not valid JSON."); }
   const stamp = validateManagedSourceInstallStamp(parsed);
+
+  // Only an enrolled Main installation owns the complete toolchain contract.
+  // A signed Stable repair may retain a partial old Main toolchain while its
+  // install stamp is parked; it must boot without inspecting or deleting it.
+  const layout = equinoxLocalPlatformPaths({ platform, arch, homeDir, env });
+  const toolchain = equinoxLocalToolchainContract({ runtimeRoot: layout.runtimeRoot, target: `${platform}-${arch}` });
+  let managedGitPath = null;
+  try {
+    const [gitStat, nodeStat, npmStat] = await Promise.all([
+      fsImpl.lstat(toolchain.gitPath),
+      fsImpl.lstat(toolchain.nodePath),
+      fsImpl.lstat(toolchain.npmPath),
+    ]);
+    if (!gitStat.isFile() || gitStat.isSymbolicLink()) throw new Error("Managed Git executable is unsafe.");
+    if (!nodeStat.isFile() || nodeStat.isSymbolicLink()) throw new Error("Managed Node executable is unsafe.");
+    if (!npmStat.isFile() || npmStat.isSymbolicLink()) throw new Error("Managed npm CLI is unsafe.");
+    if (platform !== "win32" && ((gitStat.mode & 0o111) === 0 || (nodeStat.mode & 0o111) === 0)) throw new Error("Managed toolchain executable is not executable.");
+    managedGitPath = toolchain.gitPath;
+  } catch (error) {
+    if (error?.code !== "ENOENT") throw error;
+    const anyToolchainState = await Promise.all([toolchain.gitPath, toolchain.nodePath, toolchain.npmPath].map(async (candidate) => {
+      try { await fsImpl.lstat(candidate); return true; } catch (inner) { if (inner?.code === "ENOENT") return false; throw inner; }
+    }));
+    if (anyToolchainState.some(Boolean)) throw new Error("Managed product-owned toolchain is incomplete.");
+  }
 
   const pointer = await readPointerImpl(paths.sourcePointerPath, {
     fsImpl,

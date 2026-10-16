@@ -47,6 +47,8 @@ async function createFixture() {
   await fs.mkdir(path.join(installRoot, "workspace"), { recursive: true, mode: 0o700 });
   await fs.writeFile(path.join(installRoot, "config.json"), "{}\n", { mode: 0o600 });
   await fs.writeFile(path.join(installRoot, "transport.json"), "{}\n", { mode: 0o600 });
+  await fs.writeFile(path.join(installRoot, "secrets", "openai-runtime-key"), "keep-private-key\n", { mode: 0o600 });
+  await fs.writeFile(path.join(installRoot, "tunnel-profile", "config.yml"), "keep-tunnel-profile\n", { mode: 0o600 });
   await fs.writeFile(path.join(installRoot, "update-state.json"), "{}\n", { mode: 0o600 });
   await fs.writeFile(path.join(installRoot, "equinox-browser-native-host"), "#!/bin/bash\n", { mode: 0o700 });
   await fs.writeFile(appRuntimeWrapperPath, "#!/bin/bash\n", { mode: 0o700 });
@@ -231,6 +233,7 @@ test("Windows uninstall validates ownership before deleting exact managed paths"
   assert.ok(removed.some(([target]) => target === installation.currentPointer));
   assert.ok(!removed.some(([target]) => target.toLowerCase().endsWith("\\state")));
   assert.ok(!removed.some(([target]) => target.toLowerCase().endsWith("\\workspace")));
+  assert.ok(!removed.some(([target]) => /\\(secrets|tunnel-profile|transport\.json)$/iu.test(target)));
 });
 
 test("Windows uninstall fails closed before deleting files when Native Messaging ownership is foreign", async () => {
@@ -279,7 +282,7 @@ test("uninstall scheduler rejects an asynchronous helper spawn failure", async (
   );
 });
 
-test("managed uninstall preserves workspace and config by default while removing runtime, credentials and native host", async () => {
+test("managed uninstall preserves config, tunnel secrets, profile and workspace while removing runtime and native host", async () => {
   const fixture = await createFixture();
   const execCalls = [];
   try {
@@ -297,8 +300,9 @@ test("managed uninstall preserves workspace and config by default while removing
     assert.equal(await exists(fixture.currentLink), false);
     assert.equal(await exists(fixture.releasesRoot), false);
     assert.equal(await exists(fixture.stagingRoot), false);
-    assert.equal(await exists(path.join(fixture.installRoot, "secrets")), false);
-    assert.equal(await exists(path.join(fixture.installRoot, "transport.json")), false);
+    assert.equal(await fs.readFile(path.join(fixture.installRoot, "secrets", "openai-runtime-key"), "utf8"), "keep-private-key\n");
+    assert.equal(await fs.readFile(path.join(fixture.installRoot, "tunnel-profile", "config.yml"), "utf8"), "keep-tunnel-profile\n");
+    assert.equal(await fs.readFile(path.join(fixture.installRoot, "transport.json"), "utf8"), "{}\n");
     assert.equal(await exists(fixture.launchAgentPath), false);
     assert.equal(await exists(fixture.stdoutLogPath), false);
     assert.equal(await exists(fixture.stderrLogPath), false);

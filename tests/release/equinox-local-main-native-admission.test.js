@@ -288,14 +288,14 @@ test("native manifest rejects SHA target name digest size and schema drift", () 
 });
 
 
-test("Main native transition reuses the installed shell when exact runtime contracts match", async () => {
+test("Main native transition reinstalls fresh native release even when runtime contracts match", async () => {
   const calls = [];
   const digest = "1".repeat(64);
   const result = await planEquinoxLocalMainNativeTransition({
     currentRoot: "/current", currentSha: TRANSITION_CURRENT, targetRoot: "/target", targetSha: TRANSITION_TARGET, target: "darwin-arm64",
     computeRuntimeContractImpl: async (options) => { calls.push(options); return { target: options.target, sha256: digest }; },
   });
-  assert.equal(result.mode, "reuse_native");
+  assert.equal(result.mode, "artifact_required");
   assert.equal(result.currentRuntimeContractSha256, digest);
   assert.equal(result.targetRuntimeContractSha256, digest);
   assert.deepEqual(calls.map(({ rootDir, sourceSha }) => [rootDir, sourceSha]), [["/current", TRANSITION_CURRENT], ["/target", TRANSITION_TARGET]]);

@@ -93,3 +93,22 @@ test('WPF-owned worker waits only for the bounded handoff record publication rac
   }), /token\/PID/u);
   assert.deepEqual(unclaimed.calls, []);
 });
+
+
+test('clean-reinstall ownership admission checks OS PID/token/active transaction but creates no Guardian journal', async () => {
+  const f = fixture();
+  const admitted = await admitWindowsMainNativeWorkerJournal({ ...f.options, ownerOnly: true });
+  assert.equal(admitted.admitted, true);
+  assert.equal(admitted.ownerOnly, true);
+  assert.equal(admitted.ownedNode, NODE);
+  assert.equal(admitted.journal, undefined);
+  assert.deepEqual(f.calls, []);
+  const changed = fixture();
+  await assert.rejects(admitWindowsMainNativeWorkerJournal({ ...changed.options, ownerOnly: true,
+    engine: { readActive: async () => ({ ...changed.options.receipt, targetSha: A }) },
+  }), /lost its exact active transaction/u);
+  assert.deepEqual(changed.calls, []);
+  const forged = fixture({ token: 'e'.repeat(64) });
+  await assert.rejects(admitWindowsMainNativeWorkerJournal({ ...forged.options, ownerOnly: true }), /token\/PID/u);
+  assert.deepEqual(forged.calls, []);
+});

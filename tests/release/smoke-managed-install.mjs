@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { execFile as execFileCallback, spawn } from "node:child_process";
 import fs from "node:fs/promises";
 import os from "node:os";
@@ -8,6 +9,7 @@ import { promisify } from "node:util";
 
 import { installManagedEquinoxRelease } from "../../src/equinox-local-first-install.js";
 import { enrollEquinoxLocalManagedSource, rollbackEquinoxLocalManagedSourceEnrollment } from "../../src/equinox-local-managed-source-enrollment.js";
+import { equinoxLocalManagedSourcePaths } from "../../src/equinox-local-managed-source-installation.js";
 import { bridgeActivatedStableToMain } from "../../src/equinox-local-stable-main-bridge.js";
 import { resolveEquinoxLocalInstallation } from "../../src/equinox-local-installation.js";
 import { equinoxLocalToolchainContract } from "../../src/equinox-local-toolchain-contract.js";
@@ -110,6 +112,158 @@ async function setControlCenterPort(configPath) {
   config.controlCenter = { ...(config.controlCenter || {}), enabled: true, port: CONTROL_CENTER_PORT };
   await fs.writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
   await fs.chmod(configPath, 0o600);
+}
+
+// An opt-in real hosted-OS gate: the product's own launchd service handles the
+// same-numbered Main -> Stable full-tree repair, health failure and rollback.
+// The runner is disposable; NEVER load the real developer's service here.
+async function runHostedMacSameVersionRepair({ homeDir, installRoot, releaseDir, target, sourceSha, artifact }) {
+  assert.equal(process.env.GITHUB_ACTIONS, "true");
+  assert.equal(process.env.CI, "true");
+  assert.equal(process.platform, "darwin");
+  const uid = process.getuid();
+  const service = `gui/${uid}/dev.equinox.local`;
+  const launchAgent = path.join(homeDir, "Library", "LaunchAgents", "dev.equinox.local.plist");
+  const current = path.join(installRoot, "current");
+  const stamp = equinoxLocalManagedSourcePaths({ platform: "darwin", arch: process.arch, homeDir }).installStampPath;
+  const agentStatusUrl = `http://127.0.0.1:${CONTROL_CENTER_PORT}/api/v1/status`;
+  const launchctl = (...args) => execFile("/bin/launchctl", args, { timeout: 15_000, maxBuffer: 1024 * 1024 });
+  const proofs = [
+    path.join(installRoot, "config.json"),
+    path.join(installRoot, "secrets", "openai-runtime-key"),
+    path.join(installRoot, "browser", "profile", "Preferences"),
+    path.join(installRoot, "tunnel", "profile", "equinox-local.yaml"),
+    path.join(installRoot, "workspace", "owned-workspace.txt"),
+  ];
+  for (const [index, proof] of proofs.entries()) {
+    if (index !== 0) {
+      await fs.mkdir(path.dirname(proof), { recursive: true, mode: 0o700 });
+      try {
+        await fs.writeFile(proof, "existing-owner-state-" + index + "\n", { mode: 0o600, flag: "wx" });
+      } catch (error) {
+        if (error?.code !== "EEXIST") throw error;
+        const stat = await fs.lstat(proof);
+        assert.ok(stat.isFile() && !stat.isSymbolicLink());
+      }
+    }
+  }
+  const digest = async (file) => createHash("sha256").update(await fs.readFile(file)).digest("hex");
+  const before = await Promise.all(proofs.map(digest));
+  const stampBefore = await fs.readFile(stamp, "utf8");
+  // A real Main may contain product-owned executable/state files not shipped
+  // with the signed Stable. Prove a full tree is installed, not an overlay.
+  const oldOnlyFile = path.join(releaseDir, "main-only-version-marker.txt");
+  await fs.writeFile(oldOnlyFile, "not part of signed Stable\n", { flag: "wx", mode: 0o600 });
+  const checkedHealth = async (kind) => {
+    let actual;
+    let lastStatus = "no HTTP response";
+    for (let i = 0; i < 120; i++) {
+      try {
+        const response = await fetch(agentStatusUrl, { signal: AbortSignal.timeout(2000), cache: "no-store" });
+        if (response.ok) {
+          const status = (await response.json())?.status;
+          lastStatus = JSON.stringify({
+            version: status?.server?.version ?? null,
+            health: status?.health?.state ?? null,
+            kind: status?.installation?.kind ?? null,
+            sourceMatches: status?.installation?.sourceSha === sourceSha,
+          });
+          if (status?.server?.version === EQUINOX_LOCAL_VERSION &&
+              status?.health?.state === "HEALTHY" && status?.installation?.kind === kind &&
+              (kind !== "managed-source" || status?.installation?.sourceSha === sourceSha)) {
+            actual = status;
+            break;
+          }
+        }
+      } catch {}
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+    if (!actual) {
+      // Diagnostic output from this *disposable CI installation* is bounded.
+      // Do not print launchctl's complete environment or any credential.
+      const launchState = await launchctl("print", service).then(({ stdout }) =>
+        stdout.split("\n").filter((line) =>
+          /^\s*(?:state|pid|last exit code|runs) =/u.test(line)).join("; ").slice(0, 350),
+      ).catch((error) => "launchctl " + String(error?.code ?? "failed"));
+      const logTail = await fs.readFile(path.join(homeDir, "Library", "Logs", "Equinox Local.error.log"), "utf8")
+        .then((value) => value.slice(-900)
+          .replace(/(?:sk-[^\s]+|(?:token|secret|password|api[-_]?key)\s*[:=]\s*[^\s]+)/giu, "[redacted]")
+          .replace(/[\r\n\t]+/gu, " ")).catch(() => "missing");
+      const appExecutable = path.join(homeDir, "Applications", "Equinox Local.app", "Contents", "MacOS", "applet");
+      const appExists = await fs.access(appExecutable).then(() => true, () => false);
+      throw new Error("Real macOS LaunchAgent failed to start healthy " + kind +
+        "; lastStatus=" + lastStatus + "; launch=" + launchState +
+        "; appExists=" + appExists + "; stderrTail=" + logTail);
+    }
+    const { stdout } = await launchctl("print", service);
+    assert.match(stdout, /state = running/u);
+  };
+  // The shipped AppleScript applet deliberately uses the *login account's*
+  // home folder, not launchd's injected HOME. A disposable CI runner has no
+  // private test account, so bridge only that one applet entrypoint back into
+  // this isolated installation. Never replace an existing login-home entry.
+  const loginHome = await fs.realpath(os.homedir());
+  assert.notEqual(loginHome, homeDir);
+  const bridgeRoot = path.join(loginHome, "Library", "Application Support", "Equinox Local");
+  const bridgeEntry = path.join(bridgeRoot, "equinox-local-app-runtime");
+  let bridgeCreated = false;
+  try {
+    await fs.mkdir(bridgeRoot, { mode: 0o700 });
+    bridgeCreated = true;
+    await fs.symlink(path.join(installRoot, "equinox-local-app-runtime"), bridgeEntry);
+    // Reload the actual product applet and launchd service; the fixture
+    // bridge affects only the disposable CI login home.
+    await launchctl("bootout", service).catch(() => {});
+    await launchctl("bootstrap", `gui/${uid}`, launchAgent);
+    await launchctl("kickstart", service);
+    await checkedHealth("managed-source");
+    const reinstall = async (label, forceFailure) => {
+      const stagingRoot = path.join(installRoot, "staging", "native-" + label);
+      const staging = path.join(stagingRoot, "release");
+      await fs.mkdir(stagingRoot, { recursive: true, mode: 0o700 });
+      // Re-extract original packaged candidate as the classic bootstrap
+      // does; cloning A would hide mixed-tree or overlay bugs.
+      await execFile(TAR, ["-xzf", artifact, "-C", stagingRoot], {
+        timeout: 120_000, maxBuffer: 8 * 1024 * 1024,
+      });
+      assert.equal(await fs.readFile(oldOnlyFile, "utf8"), "not part of signed Stable\n");
+      return installManagedEquinoxRelease({
+        stagedReleaseDir: staging, homeDir, uid, platform: "darwin", target,
+        execFileImpl: execFile,
+        waitForVersionImpl: async (version, { expectedInstallationKind }) => {
+          assert.equal(version, EQUINOX_LOCAL_VERSION);
+          await checkedHealth(expectedInstallationKind);
+          if (forceFailure && expectedInstallationKind === "managed") {
+            throw new Error("hosted injected unhealthy same-numbered Stable");
+          }
+        },
+      });
+    };
+    await assert.rejects(reinstall("forced-failure", true), /rolled back to Main/u);
+    await checkedHealth("managed-source");
+    assert.equal(await fs.readFile(oldOnlyFile, "utf8"), "not part of signed Stable\n");
+    assert.equal(await fs.readFile(stamp, "utf8"), stampBefore);
+    assert.equal(await fs.realpath(current), await fs.realpath(releaseDir));
+    assert.deepEqual(await Promise.all(proofs.map(digest)), before);
+
+    const result = await reinstall("success", false);
+    assert.equal(result.status, "activated");
+    await checkedHealth("managed");
+    assert.equal(await fs.access(oldOnlyFile).then(() => true, () => false), false,
+      "Full signed Stable replacement retained old product-owned Main files.");
+    assert.equal(await fs.readFile(stamp, "utf8").then(() => true, () => false), false);
+    assert.equal(await fs.realpath(current), await fs.realpath(releaseDir));
+    assert.deepEqual(await Promise.all(proofs.map(digest)), before);
+    process.stdout.write(`Real macOS ${target} same-version Main-to-Stable LaunchAgent reinstall, forced rollback and user-data preservation PASSED.\n`);
+  } finally {
+    await launchctl("bootout", service).catch(() => {});
+    if (bridgeCreated) {
+      await fs.unlink(bridgeEntry).catch((error) => {
+        if (error?.code !== "ENOENT") throw error;
+      });
+      await fs.rmdir(bridgeRoot);
+    }
+  }
 }
 
 async function main() {
@@ -344,6 +498,18 @@ async function main() {
       installationKind: status.status.installation?.kind ?? null,
       artifact,
     }, null, 2)}\n`);
+    if (process.env.EQUINOX_MACOS_SAME_VERSION_REPAIR === "true") {
+      if (child && child.exitCode === null) {
+        child.kill("SIGTERM");
+        await new Promise((resolve) => {
+          if (child.exitCode !== null) return resolve();
+          const timer = setTimeout(resolve, 3_000);
+          child.once("exit", () => { clearTimeout(timer); resolve(); });
+        });
+        if (child.exitCode === null) child.kill("SIGKILL");
+      }
+      await runHostedMacSameVersionRepair({ homeDir, installRoot, releaseDir, target, sourceSha, artifact });
+    }
   } finally {
     if (child && child.exitCode === null) {
       child.kill("SIGTERM");

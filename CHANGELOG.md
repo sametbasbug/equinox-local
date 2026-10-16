@@ -6,11 +6,24 @@ This project follows semantic versioning for public releases.
 
 ## [Unreleased]
 
-## [6.0.4] - Pending signed migration bridge
+## [6.0.5] - Pending signed, separately versioned legacy-Main repair
+
+### Fixed
+
+- Running the classic installer over a genuinely installed Main 5.2.1 can reinstall a clean signed Stable baseline, including when the old source updater cannot read a large GitHub compare response. A full native replacement and health-verified rollback preserve user settings, credentials, tunnel and browser files.
+- Windows Main-to-Stable repair avoids falsely rejecting residual, incomplete old Main toolchain files when Main is no longer enrolled. The toolchain integrity check remains mandatory for a genuinely enrolled Main.
+- The Windows native supervisor reports a backend child failure using the actual exit status rather than masking it as a successful exit.
 
 ### Changed
 
-- Public installers automatically enroll the trusted Main update stream after verified signed Stable first activation. Existing Stable users will receive a one-time signed bridge that performs exact-SHA Main enrollment and health verification, reverting to the healthy signed Stable baseline if enrollment fails.
+- The classic installer leaves Stable selected. Only the user's subsequent Update & restart explicitly enrolls Main. Published 6.0.4 archives remain immutable; this is a separately signed fallback candidate, not a silent update.
+
+
+## [6.0.4] - 2026-10-11
+
+### Changed
+
+- Public installers activate the signed Stable baseline and keep it active by default. Main enrollment only occurs after the user explicitly selects Update & restart; the exact-SHA migration verifies Main health and can restore the signed Stable baseline on failure. Published 6.0.4 artifacts are immutable; repairing older Main 5.2.1 installs requires a separately signed future package.
 
 ### Fixed
 

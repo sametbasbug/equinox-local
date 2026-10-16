@@ -193,3 +193,39 @@ export async function requestWindowsShellManagedUninstall(removeUserData, {
     result: () => Object.freeze({ requested: true, removeUserData }),
   });
 }
+
+// The old WPF's shutdown-for-update command acknowledges the PIPE WRITE, not
+// exit. A new WPF started before the old instance releases its single-instance
+// coordinator exits as a duplicate and never starts its backend.
+export async function waitForWindowsShellPipeRelease({
+  platform = process.platform,
+  connectImpl = net.createConnection,
+  sleepImpl = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+  attempts = 120,
+} = {}) {
+  if (platform !== "win32") throw new Error("Windows shell exit wait requires Windows.");
+  if (!Number.isInteger(attempts) || attempts < 1 || attempts > 120) {
+    throw new Error("Windows shell exit wait attempts are out of bounds.");
+  }
+  let absent = 0;
+  for (let i = 0; i < attempts; i += 1) {
+    const stillListening = await new Promise((resolve) => {
+      const socket = connectImpl({ path: EQUINOX_LOCAL_WINDOWS_SHELL_PIPE });
+      let settled = false;
+      const finish = (value) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        socket.destroy();
+        resolve(value);
+      };
+      const timer = setTimeout(() => finish(true), 300);
+      socket.once("connect", () => finish(true));
+      socket.once("error", () => finish(false));
+    });
+    absent = stillListening ? 0 : absent + 1;
+    if (absent >= 2) return;
+    if (i + 1 < attempts) await sleepImpl(125);
+  }
+  throw new Error("Previous Windows WPF did not release its single-instance pipe before Stable activation.");
+}

@@ -199,6 +199,11 @@ internal sealed class RuntimeSupervisor : IAsyncDisposable
     private static readonly string[] TunnelPhases = [
         "tunnel-not-configured", "tunnel-config-invalid", "tunnel-starting",
         "tunnel-init-failed", "tunnel-exited", "tunnel-retry-ready",
+        "local-only-stdin-eof", "local-only-child-exit-zero",
+        "local-only-control-ready", "local-only-control-disabled",
+        "local-only-child-spawned", "local-only-child-sigterm",
+        "local-only-child-sigint", "local-only-child-sigbreak",
+        "local-only-child-signal-other", "local-only-child-exit-nonzero",
     ];
 
     private static void RecordBoundedTunnelPhase(string? line)

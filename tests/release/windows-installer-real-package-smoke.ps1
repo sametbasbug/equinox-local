@@ -120,10 +120,11 @@ try {
   }
 
   try {
-    # Exercise the public installer DEFAULT. Main enrollment must no longer
-    # require a legacy explicit switch or a second installation command.
-    Assert-True (-not $EnrollExistingMain) 'Windows public installer acceptance requires an unselected legacy Main switch.'
+    # This specialized acceptance exercises the optional legacy Main bridge.
+    # The PUBLIC installer default remains Stable; no automatic enrollment.
+    $EnrollExistingMain = $true
     Invoke-EquinoxLocalInstall | Out-Host
+    $EnrollExistingMain = $false
   } catch {
     $diagnosticLog = Join-Path $OwnedInstallRoot 'logs\windows-shell-runtime.log'
     $stableCandidate = Join-Path $OwnedProgramRoot 'EquinoxLocal.exe'
@@ -150,6 +151,15 @@ try {
   Assert-True ([IO.File]::Exists($StableExe)) 'Windows stable EquinoxLocal.exe is missing after fresh install.'
   Assert-True ((Read-PeMachine $StableExe) -eq $FixtureExpectedMachine) 'Windows stable EquinoxLocal.exe has the wrong PE architecture.'
 
+  # Vintage A packages have no independent Guardian. The real installed
+  # old-Main -> new-Main acceptance must test the actual updater instead of
+  # requiring test-only future Guardian components in an already shipped A.
+  $SkipLegacyGuardianFixture = ($env:GITHUB_ACTIONS -ceq 'true' -and -not [string]::IsNullOrWhiteSpace($env:EQUINOX_WINDOWS_MAIN_ACCEPT_TARGET_SHA))
+  $HistoricRepair = ($env:EQUINOX_WINDOWS_LEGACY_REINSTALL_ACCEPTANCE -ceq 'true')
+  if ($HistoricRepair -and ($env:GITHUB_ACTIONS -cne 'true' -or
+      $FixtureSourceSha -cne '8dbe965d28e76026123ce8de34d8f1aa27c10465' -or
+      -not $SkipLegacyGuardianFixture)) { throw 'Historic repair requires real pinned old A on isolated hosted Windows.' }
+  if (-not $SkipLegacyGuardianFixture) {
   # Exercise the real independent Guardian binary on a disposable hosted runner
   # without changing Start Menu, Installed Apps, autostart or the running WPF.
   $GuardianFromRelease = Join-Path $ReleaseDir 'runtime\guardian\EquinoxLocalGuardian.exe'
@@ -194,6 +204,8 @@ try {
   } finally { Remove-Item -LiteralPath $FakeMainLock -Force -ErrorAction SilentlyContinue }
   Write-Output "Windows $FixtureTarget independent native Guardian installed-host positive/negative admission PASSED."
 
+
+  } # Guardian-only fixture is irrelevant to a previously signed installed A.
 
   $ExpectedManifestPath = Join-Path $InstallRoot 'browser\native-messaging\dev.equinox.browser.json'
   Assert-True ([IO.File]::Exists($ExpectedManifestPath)) 'Windows Native Messaging manifest is missing after fresh install.'
@@ -242,6 +254,7 @@ try {
   }
   Assert-True ($OwnedGitStatusCode -eq 0) 'Hosted product Git status preflight failed.'
 
+  if (-not $SkipLegacyGuardianFixture) {
   # The optional native Main audit is deliberately NOT a launcher or a release
   # authority: it binds pointer/store claims and hashes the installed shell,
   # but Git HEAD, full payload fingerprint and Native Messaging still need
@@ -762,12 +775,23 @@ try {
   }
   Assert-True ((Invoke-GuardianCheck '--audit-native-journal') -eq 70) 'Guardian accepted an orphan journal after its owning active receipt disappeared.'
   Write-Output "Windows $FixtureTarget Guardian native journal ownership audit positive/negative hosted acceptance PASSED."
+  } # End old Guardian fixture: no mock Guardian in real old-installed upgrade.
+  # An old, signed A installed the toolchain PINNED BY A (e.g. Node 26.10.0),
+  # not the Node pinned by the latest hosted test harness. Read only the
+  # exact already-verified A source file; never use ambient PATH fallback.
+  $NodeVersion = '26.11.1'
+  if ($SkipLegacyGuardianFixture) {
+    $VersionSource = [IO.File]::ReadAllText((Join-Path $ManagedSourceRoot 'src\equinox-local-runtime-versions.js'))
+    $PinnedNode = [regex]::Match($VersionSource, 'export const EQUINOX_LOCAL_NODE_VERSION = "(\d+\.\d+\.\d+)";')
+    Assert-True ($PinnedNode.Success) 'Vintage A signed source has no pinned native Node version.'
+    $NodeVersion = $PinnedNode.Groups[1].Value
+  }
   $OwnedGit = Join-Path $InstallRoot ("runtime\toolchain\git\2.53.0-4\$FixtureTarget\cmd\git.exe")
-  $OwnedNode = Join-Path $InstallRoot ("runtime\toolchain\node\26.11.1\$FixtureTarget\node.exe")
-  $OwnedNpm = Join-Path $InstallRoot ("runtime\toolchain\node\26.11.1\$FixtureTarget\node_modules\npm\bin\npm-cli.js")
+  $OwnedNode = Join-Path $InstallRoot ("runtime\toolchain\node\$NodeVersion\$FixtureTarget\node.exe")
+  $OwnedNpm = Join-Path $InstallRoot ("runtime\toolchain\node\$NodeVersion\$FixtureTarget\node_modules\npm\bin\npm-cli.js")
   foreach ($owned in @($OwnedGit,$OwnedNode,$OwnedNpm)) { Assert-True ([IO.File]::Exists($owned)) ("Product-owned toolchain file is missing: $owned") }
   Assert-True ((& $OwnedGit --version) -match '^git version 2\.53\.0\b') 'Product-owned Git version mismatch.'
-  Assert-True ((& $OwnedNode --version) -ceq 'v26.11.1') 'Product-owned Node version mismatch.'
+  Assert-True ((& $OwnedNode --version) -ceq ('v' + $NodeVersion)) 'Product-owned Node version mismatch.'
   # End-to-end actual NTFS A/B switch and failed-B rollback against exact
   # architecture-specific installed WPF PE bytes in an isolated temp root.
   # NEVER mutate the host's real installed program root or Native Messaging.
@@ -779,10 +803,15 @@ try {
   if ($LASTEXITCODE -ne 0) { throw 'Windows actual native shell A/B switch/rollback smoke failed.' }
   Assert-True ((& $OwnedNode $OwnedNpm --version) -match '^\d+\.\d+\.\d+$') 'Product-owned npm CLI did not execute.'
   # Exercise the actual packaged CLI with a throwaway offline profile.
-  & $OwnedNode (Join-Path $Root 'tests/release/windows-tunnel-offline-init-smoke.mjs') $ManagedSourceRoot $ReleaseDir
-  if ($LASTEXITCODE -ne 0) { throw 'Windows real bundled tunnel-client offline init acceptance failed.' }
+  if (-not $SkipLegacyGuardianFixture) {
+    # This modern runtime-module fixture cannot be imported from old signed
+    # A sources that predate its module. Test the actual A->B update instead.
+    & $OwnedNode (Join-Path $Root 'tests/release/windows-tunnel-offline-init-smoke.mjs') $ManagedSourceRoot $ReleaseDir
+    if ($LASTEXITCODE -ne 0) { throw 'Windows real bundled tunnel-client offline init acceptance failed.' }
+  }
   # A real installed Windows app must be discoverable and uninstallable by OS UI.
   $AppsKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Equinox Local'
+  if (-not $SkipLegacyGuardianFixture) {
   $AppsRegistration = Get-ItemProperty -LiteralPath $AppsKey -ErrorAction Stop
   Assert-True ($AppsRegistration.EquinoxLocalManagedInstall -eq 1) 'Windows Installed Apps ownership marker is missing.'
   Assert-True ([string]$AppsRegistration.DisplayName -ceq 'Equinox Local') 'Windows Installed Apps display name is incorrect.'
@@ -796,29 +825,164 @@ try {
   $ShellCom = New-Object -ComObject WScript.Shell
   try { $ShortcutCom = $ShellCom.CreateShortcut($StartMenuShortcut); Assert-True (Same-Path ([string]$ShortcutCom.TargetPath) $StableExe) 'Start Menu shortcut points at the wrong binary.' }
   finally { [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($ShellCom) }
+  } # Windows Installed Apps / Start Menu registration arrived after vintage A.
   $ownedShell = @(Get-CimInstance Win32_Process -Filter "Name='EquinoxLocal.exe'" -ErrorAction SilentlyContinue | Where-Object { -not [string]::IsNullOrWhiteSpace($_.ExecutablePath) -and (Same-Path $_.ExecutablePath $StableExe) })
   Assert-True ($ownedShell.Count -eq 1) 'Windows installer did not leave exactly one owned stable shell running.'
-  if ($env:EQUINOX_WINDOWS_MAIN_ACCEPT_TARGET_SHA) {
+  if ($env:EQUINOX_WINDOWS_MAIN_ACCEPT_TARGET_SHA -and -not $HistoricRepair) {
     if ($env:GITHUB_ACTIONS -cne 'true' -or [string]$env:EQUINOX_WINDOWS_MAIN_ACCEPT_TARGET_SHA -cnotmatch '^[a-f0-9]{40}$') { throw 'Real installed Windows Main acceptance requires an isolated hosted runner and an exact target SHA.' }
     if ($env:EQUINOX_WINDOWS_MAIN_ACCEPT_TARGET_SHA -ceq $FixtureSourceSha) { throw 'Installed Main acceptance target must differ from A.' }
+    # Preserve the ACTUAL settings config as well as independent user-owned
+    # state/browser records across full executable/runtime replacement.
+    $UserSettingsPath = Join-Path $InstallRoot 'state\config.json'
+    Assert-True ([IO.File]::Exists($UserSettingsPath)) 'Old installed A user config is missing.'
+    $UserConfigShaBefore = (Get-FileHash -LiteralPath $UserSettingsPath -Algorithm SHA256).Hash
+    $UserProofPath = Join-Path $InstallRoot 'state\ci-user-persistent-proof.txt'
+    $BrowserProofPath = Join-Path $InstallRoot 'browser\ci-user-browser-proof.txt'
+    [IO.File]::WriteAllText($UserProofPath,'old-version-private-setting')
+    [IO.File]::WriteAllText($BrowserProofPath,'old-version-browser-preference')
     & node (Join-Path $Root 'tests/release/smoke-main-upgrade-windows.mjs') $InstallRoot $FixtureSourceSha $env:EQUINOX_WINDOWS_MAIN_ACCEPT_TARGET_SHA
+    Assert-True ((Get-FileHash -LiteralPath $UserSettingsPath -Algorithm SHA256).Hash -ceq $UserConfigShaBefore) 'Real installed Main upgrade changed user config.'
+    Assert-True ([IO.File]::ReadAllText($UserProofPath) -ceq 'old-version-private-setting') 'Real Main upgrade lost user settings.'
+    Assert-True ([IO.File]::ReadAllText($BrowserProofPath) -ceq 'old-version-browser-preference') 'Real Main upgrade lost user browser data.'
     if ($LASTEXITCODE -ne 0) { throw "Real installed Windows Main update smoke exited with code $LASTEXITCODE" }
-    # This shell and Native Messaging are real native OS state, not mocked
-    # transaction callbacks. reuse_native MUST preserve their ownership.
+    # The source and WPF are real installed native OS state, not mocked.
+    # A successful Main update must select B's newly installed native host.
     $afterShell = @(Get-CimInstance Win32_Process -Filter "Name='EquinoxLocal.exe'" -ErrorAction SilentlyContinue | Where-Object { -not [string]::IsNullOrWhiteSpace($_.ExecutablePath) -and (Same-Path $_.ExecutablePath $StableExe) })
     Assert-True ($afterShell.Count -eq 1) 'Real Main update did not preserve exactly one healthy native stable shell process.'
     $afterRegistry = [string](Get-Item -LiteralPath $NativeRegistryKey -ErrorAction Stop).GetValue('')
     Assert-True (Same-Path $afterRegistry $ExpectedManifestPath) 'Native Messaging registry identity changed during source-only Main update.'
     $afterManifest = [IO.File]::ReadAllText($ExpectedManifestPath, (New-Object Text.UTF8Encoding($false, $true))) | ConvertFrom-Json
-    Assert-True (Same-Path ([string]$afterManifest.path) $ExpectedLauncher) 'Native Messaging executable identity changed during source-only Main update.'
+    $AfterExpectedLauncher = if ($env:EQUINOX_WINDOWS_MAIN_ACCEPT_SCENARIO -ceq 'target-crash') {
+      $ExpectedLauncher # Failed B must restore old A Native Messaging.
+    } else {
+      Join-Path $InstallRoot ("state\main-update\native-store\$FixtureTarget\$env:EQUINOX_WINDOWS_MAIN_ACCEPT_TARGET_SHA\release\runtime\browser\equinox-browser-native-host.exe")
+    }
+    Assert-True (Same-Path ([string]$afterManifest.path) $AfterExpectedLauncher) 'Updated Native Messaging manifest did not select exact B or restore A on failure.'
+    Assert-True ([IO.File]::Exists($AfterExpectedLauncher)) 'Updated Native Messaging executable was not installed.'
     Write-Output "Real Windows $FixtureTarget installed Main A-to-B native shell and Native Messaging acceptance PASSED."
   }
   # Execute the real shipped registry+shortcut cleanup after verifying
   # their ownership, without deleting the healthy runtime or user data.
-  & $OwnedNode (Join-Path $Root 'tests/release/windows-installed-app-registration-cleanup.mjs') $ManagedSourceRoot $OwnedProgramRoot
-  if ($LASTEXITCODE -ne 0) { throw 'Managed Windows shell registration cleanup failed.' }
-  Assert-True (-not (Test-Path -LiteralPath $AppsKey)) 'Uninstall integration did not remove the owned Installed Apps entry.'
-  Assert-True (-not [IO.File]::Exists($StartMenuShortcut)) 'Uninstall integration did not remove the owned Start Menu shortcut.'
+  if (-not $SkipLegacyGuardianFixture) {
+    # Uninstall integration is separately admitted for old native A packages.
+    # This modern helper is not in the vintage A source checkout.
+    & $OwnedNode (Join-Path $Root 'tests/release/windows-installed-app-registration-cleanup.mjs') $ManagedSourceRoot $OwnedProgramRoot
+    if ($LASTEXITCODE -ne 0) { throw 'Managed Windows shell registration cleanup failed.' }
+    Assert-True (-not (Test-Path -LiteralPath $AppsKey)) 'Uninstall integration did not remove the owned Installed Apps entry.'
+    Assert-True (-not [IO.File]::Exists($StartMenuShortcut)) 'Uninstall integration did not remove the owned Start Menu shortcut.'
+  }
+  if ($env:EQUINOX_WINDOWS_SAME_VERSION_REPAIR -ceq 'true') {
+    if ($env:GITHUB_ACTIONS -cne 'true' -or $SkipLegacyGuardianFixture) { throw 'Same-version native repair acceptance requires a disposable current-product Windows runner.' }
+    $oldPointer = Join-Path $InstallRoot 'state\main-update\current-native.json'
+    Assert-True (-not [IO.File]::Exists($oldPointer)) 'Fresh source-only Main enrollment unexpectedly created a native-store pointer.'
+    $beforeManifest = [IO.File]::ReadAllText($ExpectedManifestPath) | ConvertFrom-Json
+    Assert-True (Same-Path ([string]$beforeManifest.path) $ExpectedLauncher) 'Initially enrolled Main is not using its numbered native launcher.'
+    $config = Join-Path $InstallRoot 'state\config.json'
+    Assert-True ([IO.File]::Exists($config)) 'Installed Main user settings are missing before repair.'
+    $userFiles = @($config)
+    foreach ($entry in @('secrets\openai-runtime-key', 'workspace\ci-same-version-repair-proof.txt', 'browser\ci-same-version-browser-proof.txt', 'tunnel\ci-same-version-tunnel-proof.txt')) {
+      $proof = Join-Path $InstallRoot $entry
+      [IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($proof)) | Out-Null
+      if (-not [IO.File]::Exists($proof)) { [IO.File]::WriteAllText($proof, 'fixture-user-state-preserve') }
+      $userFiles += $proof
+    }
+    $beforeHashes = @{}
+    foreach ($file in $userFiles) {
+      Assert-True ([IO.File]::Exists($file)) "Same-version repair user proof is missing: $file"
+      $beforeHashes[$file] = (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash
+    }
+    $EnrollExistingMain = $false
+    Invoke-EquinoxLocalInstall | Out-Host
+    $afterStatus = (Invoke-WebRequest -UseBasicParsing -Uri 'http://127.0.0.1:24891/api/v1/status' -TimeoutSec 8).Content | ConvertFrom-Json
+    Assert-True ($afterStatus.ok -eq $true -and $afterStatus.status.health.state -ceq 'HEALTHY') 'Same-version signed Stable repair did not launch a healthy runtime.'
+    Assert-True ([string]$afterStatus.status.server.version -ceq $FixtureVersion) 'Same-version signed Stable repair reported another version.'
+    Assert-True ([string]$afterStatus.status.installation.kind -ceq 'managed') 'Same-version repair falsely left old Main active.'
+    Assert-True (-not [IO.File]::Exists((Join-Path $InstallRoot 'state\main-update\install.json'))) 'Same-version repair kept the Main enrollment stamp.'
+    $stableManifest = [IO.File]::ReadAllText($ExpectedManifestPath) | ConvertFrom-Json
+    Assert-True (Same-Path ([string]$stableManifest.path) $ExpectedLauncher) 'Same-version Stable Native Messaging was not switched to signed Stable launcher.'
+    Assert-True (Same-Path ([string](Get-Item -LiteralPath $NativeRegistryKey).GetValue('')) $ExpectedManifestPath) 'Native Messaging HKCU registration changed during repair.'
+    foreach ($file in $userFiles) { Assert-True ((Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash -ceq $beforeHashes[$file]) "Same-version Stable repair changed user data: $file" }
+    $running = @(Get-CimInstance Win32_Process -Filter "Name='EquinoxLocal.exe'" -ErrorAction SilentlyContinue | Where-Object { $_.ExecutablePath -and (Same-Path $_.ExecutablePath $StableExe) })
+    Assert-True ($running.Count -eq 1) 'Same-version Stable repair did not leave exactly one running native WPF shell.'
+    Write-Output "Windows $FixtureTarget real same-version Main-to-Stable reinstall: WPF/Native Messaging/credentials preservation PASSED."
+  }
+  if ($HistoricRepair) {
+    $CandidateZip = [string]$env:EQUINOX_WINDOWS_LEGACY_STABLE_ARTIFACT
+    Assert-True ([IO.File]::Exists($CandidateZip)) 'Historical repair candidate ZIP missing.'
+    Add-Type -AssemblyName System.IO.Compression
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $CandidateArchive = [IO.Compression.ZipFile]::OpenRead($CandidateZip)
+    try {
+      $CandidateEntry = $CandidateArchive.GetEntry('release/release.json')
+      Assert-True ($null -ne $CandidateEntry -and $CandidateEntry.Length -lt 16384) 'New candidate metadata missing.'
+      $reader = New-Object IO.StreamReader($CandidateEntry.Open(), (New-Object Text.UTF8Encoding($false,$true)))
+      try { $CandidateMetadata = $reader.ReadToEnd() | ConvertFrom-Json }
+      finally { $reader.Dispose() }
+    } finally { $CandidateArchive.Dispose() }
+    $BVersion = [string]$CandidateMetadata.version
+    Assert-True ($CandidateMetadata.target -ceq $FixtureTarget -and
+      $CandidateMetadata.sourceSha -cmatch '^[a-f0-9]{40}$' -and
+      $CandidateMetadata.sourceSha -cne $FixtureSourceSha -and
+      $BVersion -cmatch '^6\.0\.[0-9]+$' -and
+      $BVersion -cne $FixtureVersion) 'Historical B candidate must be a different current source release.'
+    $UserFiles = @((Join-Path $InstallRoot 'state\config.json'))
+    foreach ($entry in @('secrets\openai-runtime-key','browser\historic-user-profile.txt','tunnel\historic-user-profile.txt','workspace\historic-owned-project.txt')) {
+      $item = Join-Path $InstallRoot $entry
+      [IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($item)) | Out-Null
+      if (-not [IO.File]::Exists($item)) { [IO.File]::WriteAllText($item, 'historic-5.2.1-user-data-fixture') }
+      $UserFiles += $item
+    }
+    $UserHashes = @{}
+    foreach ($item in $UserFiles) {
+      Assert-True ([IO.File]::Exists($item)) "Historical old Main user proof missing: $item"
+      $UserHashes[$item] = (Get-FileHash -LiteralPath $item -Algorithm SHA256).Hash
+    }
+    $OldMainStampPath = Join-Path $InstallRoot 'state\main-update\install.json'
+    Assert-True ([IO.File]::Exists($OldMainStampPath)) 'Old Main enrollment stamp missing.'
+    $OldManifestText = [IO.File]::ReadAllText($ExpectedManifestPath)
+    $OldLauncher = ([IO.File]::ReadAllText($ExpectedManifestPath) | ConvertFrom-Json).path
+    Assert-True (Same-Path $OldLauncher $ExpectedLauncher) 'Old Main Native Messaging launcher was not exactly owned.'
+    $StagingB = Join-Path $InstallRoot 'staging\historic-repair-negative'
+    [IO.Directory]::CreateDirectory($StagingB) | Out-Null
+    Expand-Archive -LiteralPath $CandidateZip -DestinationPath $StagingB -Force
+    $BRelease = Join-Path $StagingB 'release'
+    Assert-True ([IO.File]::Exists((Join-Path $BRelease 'release.json'))) 'Historical B staged release missing.'
+    & $OwnedNode (Join-Path $Root 'tests/release/windows-legacy-stable-health-rollback.mjs') $BRelease $InstallRoot $FixtureSourceSha $BVersion
+    if ($LASTEXITCODE -ne 0) { throw "Historic $FixtureTarget real B-to-A health-failure rollback failed with $LASTEXITCODE." }
+    foreach ($item in $UserFiles) {
+      Assert-True ((Get-FileHash -LiteralPath $item -Algorithm SHA256).Hash -ceq $UserHashes[$item]) "Historic forced rollback changed private user state: $item"
+    }
+    # Real classic public PowerShell entrypoint, with only its HTTPS fixture
+    # switched to the separate exact B ZIP/metadata. Never mutate live URLs.
+    $script:Artifact = $CandidateZip
+    $script:FixtureVersion = $BVersion
+    $BArtifactSha = (Get-FileHash -LiteralPath $CandidateZip -Algorithm SHA256).Hash.ToLowerInvariant()
+    $BArtifactBytes = (Get-Item -LiteralPath $CandidateZip).Length
+    $BManifestText = @('schemaVersion=1', 'channel=stable', "target=$FixtureTarget", "version=$BVersion",
+      "artifactUrl=https://local.sametbasbug.dev/downloads/updates/equinox-local-$BVersion-$FixtureTarget.zip",
+      "artifactSha256=$BArtifactSha", "artifactBytes=$BArtifactBytes", '') -join "`n"
+    [IO.File]::WriteAllText($Manifest, $BManifestText, (New-Object Text.UTF8Encoding($false)))
+    $EnrollExistingMain = $false
+    Invoke-EquinoxLocalInstall | Out-Host
+    $status = (Invoke-WebRequest -UseBasicParsing -Uri 'http://127.0.0.1:24891/api/v1/status' -TimeoutSec 10).Content | ConvertFrom-Json
+    Assert-True ($status.ok -eq $true -and $status.status.health.state -ceq 'HEALTHY' -and
+      $status.status.server.version -ceq $BVersion -and
+      $status.status.installation.kind -ceq 'managed') 'Actual PowerShell historical Stable reinstall did not run a HEALTHY Stable.'
+    Assert-True (-not [IO.File]::Exists($OldMainStampPath)) 'Classic Stable reinstall silently kept old Main enrollment.'
+    $BCurrent = [IO.File]::ReadAllText((Join-Path $InstallRoot 'current-version.json')) | ConvertFrom-Json
+    Assert-True ($BCurrent.version -ceq $BVersion) 'Windows current pointer did not select new Stable B.'
+    $AfterLauncher = ([IO.File]::ReadAllText($ExpectedManifestPath) | ConvertFrom-Json).path
+    $ExpectedBLauncher = Join-Path $InstallRoot ("releases\$BVersion\runtime\browser\equinox-browser-native-host.exe")
+    Assert-True (Same-Path ([string]$AfterLauncher) $ExpectedBLauncher) 'Native Messaging host was not switched to new Stable B.'
+    Assert-True (Same-Path ([string](Get-Item -LiteralPath $NativeRegistryKey).GetValue('')) $ExpectedManifestPath) 'Chrome HKCU registration lost its exact ownership.'
+    foreach ($item in $UserFiles) {
+      Assert-True ((Get-FileHash -LiteralPath $item -Algorithm SHA256).Hash -ceq $UserHashes[$item]) "Historic Stable reinstall changed private user state: $item"
+    }
+    $shells = @(Get-CimInstance Win32_Process -Filter "Name='EquinoxLocal.exe'" -ErrorAction SilentlyContinue |
+      Where-Object { $_.ExecutablePath -and (Same-Path $_.ExecutablePath $StableExe) })
+    Assert-True ($shells.Count -eq 1) 'New Stable did not leave exactly one real running native WPF shell.'
+    Write-Output "Real Windows $FixtureTarget historical Main 5.2.1 to unsigned new Stable PowerShell reinstall, forced native rollback, Native Messaging, WPF and user-data preservation PASSED."
+  }
   Write-Output "Windows $FixtureTarget real fresh-install managed-source acceptance passed: public installer promoted $FixtureVersion at $FixtureSourceSha and served the exact managed source runtime."
 } finally {
   if (-not [string]::IsNullOrWhiteSpace($StableExe) -and [IO.File]::Exists($StableExe)) { Stop-OwnedShell $StableExe }

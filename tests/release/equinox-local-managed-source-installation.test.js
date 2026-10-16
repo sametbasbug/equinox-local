@@ -150,3 +150,30 @@ test("managed-source resolver preserves Stable identity when no stamp exists and
     baseInstallation: original, platform: "darwin", arch: "arm64", homeDir: home, env: {},
   }), /install stamp is not private/u);
 });
+
+test("signed Stable ignores leftover incomplete Main toolchain but enrolled Main rejects it", async (t) => {
+  const home = await fs.mkdtemp(path.join(os.tmpdir(), "equinox-main-stable-toolchain-"));
+  t.after(() => fs.rm(home, { recursive: true, force: true }));
+  const installRoot = path.join(home, "Library", "Application Support", "Equinox Local");
+  const original = base(installRoot);
+  const paths = equinoxLocalManagedSourcePaths({ platform: "darwin", arch: "arm64", homeDir: home, env: {} });
+  const leftoverGit = path.join(installRoot, "runtime", "toolchain", "git", "2.53.0-4", "darwin-arm64", "bin", "git");
+  await fs.mkdir(path.dirname(leftoverGit), { recursive: true });
+  await fs.writeFile(leftoverGit, "old product-owned leftover\n", { mode: 0o700 });
+  await fs.mkdir(paths.mainTransactionRoot, { recursive: true, mode: 0o700 });
+  await fs.chmod(paths.mainTransactionRoot, 0o700);
+
+  // A repaired Stable must start without touching the residual old Main bits.
+  assert.equal(await resolveEquinoxLocalManagedSourceInstallation({
+    baseInstallation: original, platform: "darwin", arch: "arm64", homeDir: home, env: {},
+  }), original);
+  assert.equal(await fs.readFile(leftoverGit, "utf8"), "old product-owned leftover\n");
+
+  // An actual enrolled Main still rejects an incomplete product-owned toolchain.
+  await fs.writeFile(paths.installStampPath, JSON.stringify({
+    schemaVersion: 1, channel: "main", repository: "sametbasbug/equinox-local", branch: "main", bootstrapSha: SHA,
+  }) + "\n", { mode: 0o600 });
+  await assert.rejects(resolveEquinoxLocalManagedSourceInstallation({
+    baseInstallation: original, platform: "darwin", arch: "arm64", homeDir: home, env: {},
+  }), /Managed product-owned toolchain is incomplete/u);
+});
