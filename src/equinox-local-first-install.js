@@ -27,6 +27,7 @@ import { managedSupervisorPaths } from "./equinox-local-supervisor.js";
 import { enrollEquinoxLocalManagedSource, rollbackEquinoxLocalManagedSourceEnrollment } from "./equinox-local-managed-source-enrollment.js";
 import { equinoxLocalManagedSourcePaths } from "./equinox-local-managed-source-installation.js";
 import { validateManagedSourceInstallStamp } from "./equinox-local-main-update.js";
+import { readBoundedNormalFile } from "./equinox-local-safe-file.js";
 import { requestWindowsShellRuntimeRestart } from "./equinox-local-windows-shell-control.js";
 import { provisionWindowsGuardianFromRelease } from "./equinox-local-windows-guardian-provision.js";
 import { writeEquinoxLocalCurrentVersionPointer } from "./equinox-local-current-release.js";
@@ -445,15 +446,17 @@ export async function installManagedEquinoxRelease({
   const mainPaths = equinoxLocalManagedSourcePaths({ platform, arch, homeDir, env });
   const savedMainStamp = `${mainPaths.installStampPath}.stable-install-backup`;
   let parkedMain = false;
-  const currentMainStamp = await fsImpl.lstat(mainPaths.installStampPath).catch((error) => {
+  // Read identity through one checked file descriptor; lstat+readFile
+  // permitted symlink/path replacement between the check and the read.
+  const currentMainStamp = await readBoundedNormalFile(mainPaths.installStampPath, {
+    fsImpl, platform, minBytes: 1, maxBytes: 8 * 1024,
+    encoding: "utf8", label: "Existing Main install identity",
+  }).catch((error) => {
     if (error?.code === "ENOENT") return null;
     throw error;
   });
   if (currentMainStamp) {
-    if (!currentMainStamp.isFile() || currentMainStamp.isSymbolicLink() || currentMainStamp.size > 8 * 1024) {
-      throw new Error("Existing Main install identity is unsafe for Stable replacement.");
-    }
-    validateManagedSourceInstallStamp(JSON.parse(await fsImpl.readFile(mainPaths.installStampPath, "utf8")));
+    validateManagedSourceInstallStamp(JSON.parse(currentMainStamp.data));
     try {
       await fsImpl.lstat(savedMainStamp);
       throw new Error("Prior Stable replacement needs reconciliation before another attempt.");
