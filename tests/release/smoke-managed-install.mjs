@@ -155,11 +155,18 @@ async function runHostedMacSameVersionRepair({ homeDir, installRoot, releaseDir,
   await fs.writeFile(oldOnlyFile, "not part of signed Stable\n", { flag: "wx", mode: 0o600 });
   const checkedHealth = async (kind) => {
     let actual;
+    let lastStatus = "no HTTP response";
     for (let i = 0; i < 120; i++) {
       try {
         const response = await fetch(agentStatusUrl, { signal: AbortSignal.timeout(2000), cache: "no-store" });
         if (response.ok) {
           const status = (await response.json())?.status;
+          lastStatus = JSON.stringify({
+            version: status?.server?.version ?? null,
+            health: status?.health?.state ?? null,
+            kind: status?.installation?.kind ?? null,
+            sourceMatches: status?.installation?.sourceSha === sourceSha,
+          });
           if (status?.server?.version === EQUINOX_LOCAL_VERSION &&
               status?.health?.state === "HEALTHY" && status?.installation?.kind === kind &&
               (kind !== "managed-source" || status?.installation?.sourceSha === sourceSha)) {
@@ -170,7 +177,23 @@ async function runHostedMacSameVersionRepair({ homeDir, installRoot, releaseDir,
       } catch {}
       await new Promise((resolve) => setTimeout(resolve, 500));
     }
-    assert.ok(actual, `Real macOS LaunchAgent failed to start healthy ${kind}`);
+    if (!actual) {
+      // Diagnostic output from this *disposable CI installation* is bounded.
+      // Do not print launchctl's complete environment or any credential.
+      const launchState = await launchctl("print", service).then(({ stdout }) =>
+        stdout.split("\n").filter((line) =>
+          /^\s*(?:state|pid|last exit code|runs) =/u.test(line)).join("; ").slice(0, 350),
+      ).catch((error) => "launchctl " + String(error?.code ?? "failed"));
+      const logTail = await fs.readFile(path.join(homeDir, "Library", "Logs", "Equinox Local.error.log"), "utf8")
+        .then((value) => value.slice(-900)
+          .replace(/(?:sk-[^\s]+|(?:token|secret|password|api[-_]?key)\s*[:=]\s*[^\s]+)/giu, "[redacted]")
+          .replace(/[\r\n\t]+/gu, " ")).catch(() => "missing");
+      const appExecutable = path.join(homeDir, "Applications", "Equinox Local.app", "Contents", "MacOS", "Equinox Local");
+      const appExists = await fs.access(appExecutable).then(() => true, () => false);
+      throw new Error("Real macOS LaunchAgent failed to start healthy " + kind +
+        "; lastStatus=" + lastStatus + "; launch=" + launchState +
+        "; appExists=" + appExists + "; stderrTail=" + logTail);
+    }
     const { stdout } = await launchctl("print", service);
     assert.match(stdout, /state = running/u);
   };
