@@ -233,13 +233,26 @@ globalThis.fetch = (resource, init = {}) => {
     const metadata = JSON.parse(await fs.readFile(path.join(release, "release.json"), "utf8"));
     assert.equal(metadata.sourceSha, previousSha);
     assert.equal(metadata.target, equinoxLocalUpdateTarget());
-    const result = await installManagedEquinoxRelease({
-      allowExistingStableToMainMigration: true,
-      stagedReleaseDir: release, homeDir, env, uid,
-      execFileImpl: trackedExecFile,
-      waitForVersionImpl: async () => { ownedService.started = true; await awaitHealthy(null, { kind: "managed" }); return true; },
-      waitForManagedSourceImpl: async (_version, sha) => { await awaitHealthy(sha); return true; },
-    });
+    let result;
+    try {
+      result = await installManagedEquinoxRelease({
+        allowExistingStableToMainMigration: true,
+        stagedReleaseDir: release, homeDir, env, uid,
+        execFileImpl: trackedExecFile,
+        waitForVersionImpl: async () => { ownedService.started = true; await awaitHealthy(null, { kind: "managed" }); return true; },
+        waitForManagedSourceImpl: async (_version, sha) => { await awaitHealthy(sha); return true; },
+      });
+    } catch (error) {
+      // Emit ONLY bounded launchctl state/exit-code booleans: never log the
+      // complete print output, environment or runner credentials.
+      const servicePrint = await execFile("/bin/launchctl", ["print", service], { timeout: 5_000, maxBuffer: 64 * 1024 })
+        .then(({ stdout }) => String(stdout), () => "");
+      const state = /(?:^|\n)\s*state\s*=\s*([a-z-]+)\s*(?:\n|$)/u.exec(servicePrint)?.[1] ?? "not-loaded";
+      const exitCode = /(?:^|\n)\s*last exit code\s*=\s*(\d+)\s*(?:\n|$)/u.exec(servicePrint)?.[1] ?? "unknown";
+      const hasPid = /(?:^|\n)\s*pid\s*=\s*\d+\s*(?:\n|$)/u.test(servicePrint);
+      console.error(JSON.stringify({ hostedOldMainLaunchAgent: { state, exitCode, hasPid } }));
+      throw error;
+    }
     ownedService.started = true;
     assert.equal(result.managedSourceSha, previousSha);
     const before = await awaitHealthy(previousSha);
