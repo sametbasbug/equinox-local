@@ -6,6 +6,11 @@ This project follows semantic versioning for public releases.
 
 ## [Unreleased]
 
+### Fixed (pending native/desktop validation)
+
+- Removed Windows interactive-terminal startup of a second PowerShell process: the Job Object-owned ConPTY gate remains as the interactive host after readiness, avoiding secondary console windows and unreliable nested native launch.
+- Extended the explicit Windows Doctor terminal probe to detect silent failures of native CMD invocations. Pure PowerShell output and exit status are no longer sufficient.
+
 ## [6.1.1] - 2026-10-16
 
 ### Fixed

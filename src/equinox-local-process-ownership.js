@@ -113,7 +113,9 @@ export function createTerminalProcessOwnershipAdapter({
       return Object.freeze({
         command: equinoxLocalWindowsPowerShellPath(env),
         args: Object.freeze([
-          "-NoLogo", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-File", WINDOWS_PTY_GATE_PATH,
+          // Keep the verified gate itself as the interactive ConPTY shell:
+          // no second PowerShell process or desktop console window.
+          "-NoLogo", "-NoProfile", "-NoExit", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-File", WINDOWS_PTY_GATE_PATH,
         ]),
         env: Object.freeze({
           ...env,

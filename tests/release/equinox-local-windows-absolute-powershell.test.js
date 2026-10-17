@@ -18,9 +18,9 @@ test('Windows background Job Object gate and PTY gate use the exact OS-owned exe
  const pty=terminal.spawnSpec(expected,[],env);
  assert.equal(bg.command,expected);
  assert.equal(pty.command,expected);
- for (const spec of [bg,pty]) {
-  assert.deepEqual(spec.args.slice(0,5),['-NoLogo','-NoProfile','-NonInteractive','-WindowStyle','Hidden']);
- }
+ assert.deepEqual(bg.args.slice(0,5), ['-NoLogo','-NoProfile','-NonInteractive','-WindowStyle','Hidden']);
+ assert.deepEqual(pty.args.slice(0,5), ['-NoLogo','-NoProfile','-NoExit','-WindowStyle','Hidden']);
+ assert.ok(!pty.args.includes('-NonInteractive'), 'PTY gate must remain interactive after the release handshake');
 });
 test('Windows system root must be absolute and must not be resolved through untrusted PATH',()=>{
  for(const value of ['Windows','../Windows','powershell.exe']){

@@ -40,6 +40,11 @@ test("Windows background and PTY ownership use Job Object adapters", () => {
   assert.equal(typeof terminal.createOwnedSet, "function");
   assert.equal(typeof terminal.spawnSpec, "function");
   assert.equal(typeof terminal.attachAndRelease, "function");
+  const ptySpec = terminal.spawnSpec("C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe", ["-NoLogo", "-NoProfile"], { SystemRoot: "C:\\Windows" });
+  assert.ok(ptySpec.args.includes("-NoExit"), "PTY gate must stay in the same interactive PowerShell");
+  assert.ok(ptySpec.args.includes("-WindowStyle"), "PTY gate must not spawn visible windows");
+  assert.ok(ptySpec.args.includes("Hidden"));
+  assert.ok(!ptySpec.args.includes("-NonInteractive"));
   assert.doesNotThrow(() => assertProcessOwnershipImplemented(terminal, "PTY terminal execution"));
 });
 

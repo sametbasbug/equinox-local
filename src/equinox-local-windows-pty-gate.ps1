@@ -1,4 +1,5 @@
 $ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'
 
 [Console]::Out.Write(([char]27).ToString() + '[0m')
 [Console]::Out.Flush()
@@ -25,11 +26,14 @@ try {
     if ($leaf -ne 'powershell.exe' -and $leaf -ne 'pwsh.exe') { throw 'Unsupported Windows interactive shell.' }
     $readyMarker = [Environment]::GetEnvironmentVariable('EQUINOX_LOCAL_PTY_READY_MARKER')
     if ([string]::IsNullOrWhiteSpace($readyMarker)) { throw 'PTY readiness marker is missing.' }
-    $readyCommand = "[Console]::Out.WriteLine('$readyMarker')"
-    $arguments += @('-NoExit', '-Command', $readyCommand)
-    & $command @arguments
-    if ($null -eq $LASTEXITCODE) { exit 0 }
-    exit [int]$LASTEXITCODE
+    # The outer -NoExit -File invocation stays interactive after this
+    # script returns. Native invocation of a second PowerShell can silently
+    # fail in installed Windows and flash a console window on the desktop.
+    if ($arguments.Count -ne 2 -or $arguments[0] -ne '-NoLogo' -or $arguments[1] -ne '-NoProfile') {
+        throw 'Unsupported Windows PTY shell flags.'
+    }
+    [Console]::Out.WriteLine($readyMarker)
+    [Console]::Out.Flush()
 } catch {
     [Console]::Error.WriteLine($_.Exception.Message)
     exit 127
