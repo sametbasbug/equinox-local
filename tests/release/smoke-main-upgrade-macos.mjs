@@ -13,6 +13,7 @@ import { installManagedEquinoxRelease } from "../../src/equinox-local-first-inst
 import { activatePreparedEquinoxRelease } from "../../src/equinox-local-update-activation.js";
 import { enrollEquinoxLocalManagedSource } from "../../src/equinox-local-managed-source-enrollment.js";
 import { readEquinoxLocalMainSourcePointer } from "../../src/equinox-local-main-source-pointer.js";
+import { readEquinoxLocalMainNativePointer } from "../../src/equinox-local-main-native-state.js";
 import { equinoxLocalToolchainContract } from "../../src/equinox-local-toolchain-contract.js";
 import { equinoxLocalUpdateTarget } from "../../src/equinox-local-updater.js";
 
@@ -482,9 +483,20 @@ globalThis.fetch = (resource, init = {}) => {
       const after = await awaitHealthy(targetSha, { timeoutMs: 60_000 });
       assert.equal(after.installation?.kind, "managed-source");
       const afterNativeSha256 = await nativeHash();
-      const afterNativePointer = await readNativePointer();
+      const afterNativePointer = expectedNativeMode === "artifact_required"
+        ? await readEquinoxLocalMainNativePointer(nativePointerPath, { transactionRoot })
+        : await readNativePointer();
       if (expectedNativeMode === "artifact_required") {
-        assert.notEqual(afterNativeSha256, beforeNativeSha256, "real native app binary must change on artifact_required");
+        // A verified B artifact is mandatory, not a different executable hash:
+        // unchanged native shell/permission identity intentionally reuses the
+        // existing signed app even when the managed source version changes.
+        const nativeBMetadata = JSON.parse(await fs.readFile(path.join(afterNativePointer.releaseDir, "runtime", "app", "native-app.json"), "utf8"));
+        const { stdout: installedNativeIdentity } = await execFile("/usr/libexec/PlistBuddy", [
+          "-c", "Print :EquinoxLocalNativeExecutableSha256",
+          path.join(homeDir, "Applications", "Equinox Local.app", "Contents", "Info.plist"),
+        ], { timeout: 5_000, maxBuffer: 4 * 1024 });
+        assert.equal(installedNativeIdentity.trim(), nativeBMetadata.executableSha256,
+          "installed native app identity must match the verified B payload");
         assert.equal(afterNativePointer?.channel, "main");
         assert.equal(afterNativePointer?.sourceSha, targetSha, "native artifact pointer must be exact admitted B");
         assert.equal(afterNativePointer?.target, equinoxLocalUpdateTarget());
