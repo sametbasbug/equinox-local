@@ -86,14 +86,16 @@ export async function inspectWindowsMainUpdateWorkerProcess(ownership, { execFil
     "-NoLogo",
     "-NoProfile",
     "-NonInteractive",
-    "-Command",
-    WINDOWS_PROCESS_IDENTITY_SCRIPT,
+    "-WindowStyle", "Hidden",
+    // Windows PowerShell 5.1 does not faithfully preserve the semicolons,
+    // quotes and script blocks of raw -Command when started via execFile.
+    // Use the same UTF-16LE -EncodedCommand contract as finite terminal_exec.
+    "-EncodedCommand",
+    Buffer.from(WINDOWS_PROCESS_IDENTITY_SCRIPT, "utf16le").toString("base64"),
   ], {
     timeout: 5_000, maxBuffer: 4 * 1024, windowsHide: true,
-    // Windows PowerShell 5.1 appends arguments after -Command to the script
-    // itself, causing a parser error. Bind strictly validated identity via
-    // per-process environment fields instead of interpolating executable
-    // paths or untrusted values into any command source.
+    // All untrusted identity values stay in validated environment fields;
+    // never interpolate a PID, tick count or executable path into script.
     env: {
       ...process.env,
       EQUINOX_LOCAL_CHECK_WORKER_PID: String(parsed.pid),

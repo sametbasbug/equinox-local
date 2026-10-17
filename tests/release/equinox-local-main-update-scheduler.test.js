@@ -1,3 +1,6 @@
+import { execFile as execFileCallback } from "node:child_process";
+import { promisify } from "node:util";
+import { equinoxLocalWindowsPowerShellPath } from "../../src/equinox-local-platform.js";
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import os from "node:os";
@@ -119,11 +122,14 @@ test("Windows worker process inspection distinguishes exact identity, PID reuse 
   });
   assert.deepEqual(exact, { running: true, stale: false, uncertain: false });
   assert.match(calls[0].command, /^[A-Z]:\\Windows\\System32\\WindowsPowerShell\\v1\.0\\powershell\.exe$/iu);
-  assert.deepEqual(calls[0].args.slice(0, 4), ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command"]);
-  assert.equal(calls[0].args.length, 5, "No unescaped values may follow -Command on PowerShell 5.1");
-  assert.match(calls[0].args[4], /\$env:EQUINOX_LOCAL_CHECK_WORKER_PID/u);
-  assert.match(calls[0].args[4], /\$env:EQUINOX_LOCAL_CHECK_WORKER_TICKS/u);
-  assert.match(calls[0].args[4], /\$env:EQUINOX_LOCAL_CHECK_WORKER_NODE/u);
+  assert.deepEqual(calls[0].args.slice(0, 6),
+    ["-NoLogo", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-EncodedCommand"]);
+  assert.equal(calls[0].args.length, 7, "EncodedCommand must be the final PowerShell 5.1 argument");
+  const source = Buffer.from(calls[0].args[6], "base64").toString("utf16le");
+  assert.match(source, /\$env:EQUINOX_LOCAL_CHECK_WORKER_PID/u);
+  assert.match(source, /\$env:EQUINOX_LOCAL_CHECK_WORKER_TICKS/u);
+  assert.match(source, /\$env:EQUINOX_LOCAL_CHECK_WORKER_NODE/u);
+  assert.doesNotMatch(source, /4242|638953728000000000/u, "No identity may be interpolated into script source");
   assert.equal(calls[0].options.env.EQUINOX_LOCAL_CHECK_WORKER_PID, "4242");
   assert.equal(calls[0].options.env.EQUINOX_LOCAL_CHECK_WORKER_TICKS, ownership.startTimeUtcTicks);
   assert.equal(calls[0].options.env.EQUINOX_LOCAL_CHECK_WORKER_NODE, ownership.nodePath);
@@ -137,6 +143,50 @@ test("Windows worker process inspection distinguishes exact identity, PID reuse 
     execFileImpl: async () => ({ stdout: "unknown" }),
   });
   assert.deepEqual(unknown, { running: false, stale: false, uncertain: true });
+});
+
+test("native Windows Main worker PID birthtime executable identity survives PowerShell 5.1 encoding", {
+  skip: process.platform !== "win32",
+}, async () => {
+  const execFileNative = promisify(execFileCallback);
+  const pid = process.pid;
+  const powershell = equinoxLocalWindowsPowerShellPath();
+  // Obtain the real OS/.NET StartTime ticks for THIS Node process, without
+  // guessing timezones or mocking the very process-inspection API under test.
+  const source = [
+    "$ErrorActionPreference='Stop'",
+    "$p=Get-Process -Id ([int]$env:EQUINOX_LOCAL_CHECK_WORKER_PID) -ErrorAction Stop",
+    "[Console]::Out.Write($p.StartTime.ToUniversalTime().Ticks.ToString([Globalization.CultureInfo]::InvariantCulture))",
+  ].join(";");
+  const { stdout: ticks } = await execFileNative(powershell, [
+    "-NoLogo", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden",
+    "-EncodedCommand", Buffer.from(source, "utf16le").toString("base64"),
+  ], {
+    timeout: 10_000, windowsHide: true,
+    env: { ...process.env, EQUINOX_LOCAL_CHECK_WORKER_PID: String(pid) },
+  });
+  assert.match(ticks.trim(), /^[0-9]{1,19}$/u);
+  const identity = {
+    schemaVersion: 1, transactionId: TX, pid,
+    startTimeUtcTicks: ticks.trim(), token: "b".repeat(64),
+    nodePath: process.execPath,
+  };
+  const exact = await inspectWindowsMainUpdateWorkerProcess(identity);
+  assert.deepEqual(exact, { running: true, stale: false, uncertain: false },
+    "Actual running Node PID/start ticks/executable must be admitted on native Windows PowerShell 5.1");
+  const wrongBirth = await inspectWindowsMainUpdateWorkerProcess({
+    ...identity, startTimeUtcTicks: (BigInt(identity.startTimeUtcTicks) + 1n).toString(),
+  });
+  assert.deepEqual(wrongBirth, { running: false, stale: true, uncertain: false },
+    "Reused PID with a different birth time must never be admitted");
+  const wrongExe = await inspectWindowsMainUpdateWorkerProcess({
+    ...identity, nodePath: "C:\\Windows\\System32\\not-product-node.exe",
+  });
+  assert.deepEqual(wrongExe, { running: false, stale: true, uncertain: false },
+    "A foreign executable path must never be admitted");
+  const absent = await inspectWindowsMainUpdateWorkerProcess({ ...identity, pid: 2147483647 });
+  assert.deepEqual(absent, { running: false, stale: true, uncertain: false },
+    "An exited or never-existing PID must never be admitted");
 });
 
 test("Windows ownership inspection fails closed when durable ownership cannot be validated", async () => {

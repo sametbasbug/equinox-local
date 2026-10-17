@@ -195,6 +195,9 @@ jobs:
           & powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File tests/release/windows-installer-bootstrap-smoke.ps1
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+      - name: Real Windows x64 Main worker PowerShell 5.1 PID ownership
+        run: node --test --test-name-pattern "native Windows Main worker PID" tests/release/equinox-local-main-update-scheduler.test.js
+
       - name: Windows headless runtime smoke
         run: npm run smoke:windows-headless
 
@@ -539,6 +542,9 @@ jobs:
 
       - name: Windows ARM64 managed lifecycle plumbing smoke
         run: node --test tests/unit/equinox-local-platform.test.js tests/release/equinox-local-windows-arm64-lifecycle.test.js
+
+      - name: Real Windows ARM64 Main worker PowerShell 5.1 PID ownership
+        run: node --test --test-name-pattern "native Windows Main worker PID" tests/release/equinox-local-main-update-scheduler.test.js
 
       - name: Windows ARM64 headless runtime parity smoke
         run: npm run smoke:windows-headless
