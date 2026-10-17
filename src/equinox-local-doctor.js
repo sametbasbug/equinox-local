@@ -559,10 +559,10 @@ export async function getEquinoxLocalDoctorStatus({
     checks.push(check(
       "desktop",
       "Windows desktop · winapp",
-      winappReady ? "pass" : "optional",
+      winappReady ? "pass" : "attention",
       winappReady
         ? `Microsoft winapp ${desktop.version ?? "desktop bridge"} is available.`
-        : "Windows desktop automation is optional and is not currently available.",
+        : "Required Windows desktop automation is unavailable; check the pinned Microsoft winapp runtime.",
     ));
   } else {
   const peekabooReady = peekaboo?.ready === true || (peekaboo?.ready === undefined && peekaboo?.active === true);

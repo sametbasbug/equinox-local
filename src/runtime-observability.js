@@ -410,6 +410,9 @@ export function createRuntimeObservability({
     });
     const latestByHealthKey = new Map();
     for (const event of events) {
+      // Failed commands launched by the user are diagnostics/workload outcomes,
+      // not failures of the Equinox Local runtime itself.
+      if (event.component === "process" && event.type === "process.crashed") continue;
       latestByHealthKey.set(healthKeyForEvent(event), event);
     }
 

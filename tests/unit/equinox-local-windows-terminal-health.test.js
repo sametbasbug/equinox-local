@@ -21,7 +21,7 @@ test('on-demand Windows Doctor tests the same finite PowerShell and preserves ow
   assert.equal(shell.purpose, 'terminal_exec');
   assert.equal(shell.command, 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe');
   assert.equal(shell.args.at(-2), '-EncodedCommand');
-  assert.equal(Buffer.from(shell.args.at(-1), 'base64').toString('utf16le'), "Write-Output 'EQUINOX_TERMINAL_PROBE_OK'; exit 17");
+  assert.equal(Buffer.from(shell.args.at(-1), 'base64').toString('utf16le'), "$ProgressPreference = 'SilentlyContinue'; Write-Output 'EQUINOX_TERMINAL_PROBE_OK'; exit 17");
   assert.equal(calls[1][1].waitMs, 6_000);
   assert.deepEqual(calls.at(-1), ['stop', { processId: 'proc-probe', force: true, timeoutMs: 700, remove: true }]);
 });

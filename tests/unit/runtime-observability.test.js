@@ -385,3 +385,21 @@ test("invalid event names and excessive query limits are rejected", async () => 
     );
   });
 });
+
+test("a failed user managed command remains in diagnostics but does not downgrade the runtime", async () => {
+  await withTempDir(async (root) => {
+    let nowValue = 9_000_000;
+    const store = createRuntimeObservability({ rootDir: root, now: () => nowValue });
+    await store.record({ component: "process", type: "process.crashed", severity: "error",
+      status: "failed", correlationId: "proc-test", details: { exitCode: 25 },
+      message: "Managed background process ended unexpectedly." });
+    const events = await store.query({ limit: 5 });
+    assert.equal(events.some((event) => event.type === "process.crashed"), true);
+    const health = await store.health({ windowMs: 10_000 });
+    assert.equal(health.state, "HEALTHY");
+    assert.equal(health.reasons.length, 0);
+    nowValue += 100;
+    await store.record({ component: "runtime", type: "runtime.fault", severity: "error", status: "failed" });
+    assert.equal((await store.health({ windowMs: 10_000 })).state, "DEGRADED");
+  });
+});

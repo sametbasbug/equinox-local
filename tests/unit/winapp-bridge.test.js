@@ -5,6 +5,7 @@ import { PNG } from "pngjs";
 import {
   buildSafeWinappEnvironment,
   createWinappBridge,
+  resolveWinappBinary,
   WINAPP_ALLOWED_TOOLS,
   __test,
 } from "../../src/winapp-bridge.js";
@@ -268,4 +269,33 @@ test("winapp child environment keeps Windows runtime paths but strips provider s
   assert.equal(env.ANTHROPIC_API_KEY, undefined);
   assert.equal(env.PATH, "C:\\Windows\\System32;C:\\Windows");
   assert.equal(env.WINAPP_UI_WORKFLOW_ID, "wf-123");
+});
+
+test("winapp binary follows authenticated active Main native release, not the separate source checkout", async () => {
+  const expected = "C:\\Users\\Test\\AppData\\Local\\Equinox Local\\state\\main-update\\native-store\\win32-x64\\a".replace(/a$/u, "a".repeat(40)) + "\\release\\runtime\\winapp\\winapp.exe";
+  const lookedUp = [];
+  const fsImpl = {
+    lstat: async (filePath) => {
+      lookedUp.push(filePath);
+      if (filePath !== expected) { const error = new Error("Not found"); error.code = "ENOENT"; throw error; }
+      return { isFile: () => true, isSymbolicLink: () => false };
+    },
+  };
+  const nativeRelease = expected.slice(0, -"\\runtime\\winapp\\winapp.exe".length);
+  assert.equal(await resolveWinappBinary({ EQUINOX_LOCAL_RELEASE_DIR: nativeRelease }, { fsImpl }), expected);
+  assert.deepEqual(lookedUp, [expected]);
+});
+
+test("winapp binary will not accept a symlink from the active native release", async () => {
+  const nativeRelease = "C:\\App\\release";
+  const expected = nativeRelease + "\\runtime\\winapp\\winapp.exe";
+  await assert.rejects(
+    resolveWinappBinary({ EQUINOX_LOCAL_RELEASE_DIR: nativeRelease }, {
+      fsImpl: { lstat: async (candidate) => {
+        if (candidate === expected) return { isFile: () => true, isSymbolicLink: () => true };
+        throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
+      } },
+    }),
+    /pinned Microsoft winapp runtime is unavailable/u,
+  );
 });

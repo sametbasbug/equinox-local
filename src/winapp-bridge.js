@@ -192,7 +192,16 @@ export function buildSafeWinappEnvironment(baseEnvironment = process.env, workfl
 
 export async function resolveWinappBinary(baseEnvironment = process.env, { fsImpl = fs } = {}) {
   const configured = typeof baseEnvironment.EQUINOX_WINAPP_PATH === "string" ? baseEnvironment.EQUINOX_WINAPP_PATH : "";
-  const candidates = [configured && path.win32.isAbsolute(configured) ? configured : null, path.join(RUNTIME_ROOT, "runtime", "winapp", "winapp.exe")].filter(Boolean);
+  // In Main installations the JavaScript source lives in a separate immutable
+  // source store. The authenticated active native release owns winapp.exe.
+  const releaseDir = typeof baseEnvironment.EQUINOX_LOCAL_RELEASE_DIR === "string"
+    && path.win32.isAbsolute(baseEnvironment.EQUINOX_LOCAL_RELEASE_DIR)
+    ? baseEnvironment.EQUINOX_LOCAL_RELEASE_DIR : null;
+  const candidates = [
+    configured && path.win32.isAbsolute(configured) ? configured : null,
+    releaseDir ? path.win32.join(releaseDir, "runtime", "winapp", "winapp.exe") : null,
+    path.join(RUNTIME_ROOT, "runtime", "winapp", "winapp.exe"),
+  ].filter(Boolean);
   for (const candidate of candidates) {
     try {
       const stat = await fsImpl.lstat(candidate);

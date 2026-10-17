@@ -92,6 +92,10 @@ test("Windows Doctor marks failed terminal output or exit status as attention on
       host: { platform: "win32", arch: "x64", target: "win32-x64", displayName: "Windows" },
     };
     const routine = await getEquinoxLocalDoctorStatus(args);
+    assert.equal(routine.checks.find((item) => item.id === "desktop")?.status, "attention");
+    assert.equal(routine.state, "ATTENTION");
+    const winappReady = await getEquinoxLocalDoctorStatus({ ...args, desktop: { engine: "winapp", active: true, compatibility: { ok: true }, version: "0.7.1" } });
+    assert.equal(winappReady.checks.find((item) => item.id === "desktop")?.status, "pass");
     assert.equal(routine.checks.some((item) => item.id === "windows-terminal-execution"), false);
     const failed = await getEquinoxLocalDoctorStatus({ ...args, terminalExecution: { healthy: false } });
     assert.equal(failed.state, "ATTENTION");
@@ -115,6 +119,7 @@ test("doctor data model accepts an explicit supported Windows host descriptor wi
       runtimeVersion: "5.2.1",
       browser: { ready: false },
       peekaboo: {},
+      desktop: { engine: "winapp", active: true, compatibility: { ok: true }, version: "0.7.1" },
       host: { platform: "win32", arch: "x64", target: "win32-x64", displayName: "Windows", supported: true },
       now: () => new Date("2026-09-27T00:00:00.000Z"),
     });

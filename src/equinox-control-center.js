@@ -1868,7 +1868,7 @@ function renderIntegrations() {
     createIntegrationCard(
       peekaboo.engine === "winapp" ? "Microsoft winapp desktop bridge" : "Peekaboo desktop bridge",
       peekaboo.engine === "winapp"
-        ? (peekaboo.version ? `Optional Windows UI automation · Microsoft winapp ${peekaboo.version}.` : "Optional Windows desktop capability. Browser, Terminal and Git do not depend on it.")
+        ? (peekaboo.version ? `Required Windows UI automation · Microsoft winapp ${peekaboo.version}.` : "Required Windows desktop bridge is unavailable. Repair or update Equinox Local.")
         : peekaboo.version
           ? `Optional macOS desktop capability · Peekaboo ${peekaboo.version}.`
           : "Optional macOS desktop capability. It is not required for Terminal, GitHub or Browser operations.",
