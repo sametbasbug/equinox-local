@@ -148,6 +148,7 @@ const state = {
   status: null,
   health: null,
   doctor: null,
+  doctorBusy: false,
   doctorRepairs: null,
   doctorRepairBusy: false,
   doctorRepairResult: null,
@@ -198,12 +199,10 @@ const state = {
   autoRefreshMediumBusy: false,
   autoRefreshSlowBusy: false,
   lastAutoRefreshAt: 0,
-  lastDoctorAutoRefreshAt: 0,
 };
 
 const AUTO_REFRESH_LIVE_MS = 3_000;
 const AUTO_REFRESH_MEDIUM_MS = 60_000;
-const AUTO_REFRESH_DOCTOR_MS = 5 * 60_000;
 const AUTO_REFRESH_SLOW_MS = 60_000;
 const AUTO_REFRESH_FOCUS_DEBOUNCE_MS = 750;
 
@@ -817,7 +816,24 @@ async function runDoctorRepair(incident, fix) {
 }
 
 function renderDoctor() {
-  const doctor = state.doctor || {};
+  const action = $("run-doctor-button");
+  if (action) {
+    action.disabled = state.doctorBusy || state.refreshAllBusy;
+    action.textContent = localizeUiText(state.doctorBusy ? "Checking…" : "Run full checks");
+  }
+  if (!state.doctor) {
+    setBadge("doctor-badge", "Not checked", "neutral");
+    setText("doctor-title", "Full system check is available");
+    setText("doctor-copy", "Runtime health is displayed above. Full release integrity checks read the entire native package and may briefly use CPU; run them when needed.");
+    setText("doctor-summary", "Select Run full checks to verify setup and release integrity.");
+    setText("doctor-checked-at", "Not checked yet");
+    $("doctor-list")?.replaceChildren();
+    setBadge("doctor-fix-summary", "Not checked", "neutral");
+    setText("doctor-fix-copy", "Run full checks to review any needed fixes.");
+    $("doctor-repair-list")?.replaceChildren();
+    return;
+  }
+  const doctor = state.doctor;
   const checks = Array.isArray(doctor.checks) ? doctor.checks : [];
   const attention = doctor.summary?.attention ?? 0;
   const optional = doctor.summary?.optional ?? 0;
@@ -1267,7 +1283,8 @@ function renderPermissions() {
 function renderUninstall() {
   const card = $("uninstall-card");
   if (!card) return;
-  const managed = state.doctor?.managed === true;
+  const managed = state.doctor?.managed === true ||
+    ["managed-source", "managed"].includes(state.status?.installation?.kind);
   card.hidden = !managed;
   if (!managed) return;
 
@@ -2518,7 +2535,28 @@ function updateRestartState() {
   renderRuntimeRestartControl();
 }
 
-async function refreshAll() {
+async function runFullDoctorChecks() {
+  if (state.doctorBusy || state.refreshAllBusy) return;
+  state.doctorBusy = true;
+  renderDoctor();
+  clearError();
+  try {
+    const [doctor, repairs] = await Promise.all([
+      requestJson("/api/v1/doctor"),
+      requestJson("/api/v1/doctor/repairs").catch(() => ({ repairs: null })),
+    ]);
+    state.doctor = doctor.doctor || null;
+    state.doctorRepairs = repairs.repairs || null;
+  } catch (error) {
+    showError(error);
+  } finally {
+    state.doctorBusy = false;
+    renderDoctor();
+    renderUninstall();
+  }
+}
+
+async function refreshAll({ initial = false } = {}) {
   if (state.restartRequired || state.refreshAllBusy) return;
   state.refreshAllBusy = true;
   clearError();
@@ -2532,8 +2570,8 @@ async function refreshAll() {
       requestJson("/api/v1/tasks").catch(() => ({ tasks: [] })),
       requestJson("/api/v1/update"),
       requestJson("/api/v1/onboarding"),
-      requestJson("/api/v1/doctor").catch(() => ({ doctor: null })),
-      requestJson("/api/v1/doctor/repairs").catch(() => ({ repairs: null })),
+      initial ? Promise.resolve({ doctor: null }) : requestJson("/api/v1/doctor").catch(() => ({ doctor: null })),
+      initial ? Promise.resolve({ repairs: null }) : requestJson("/api/v1/doctor/repairs").catch(() => ({ repairs: null })),
       requestJson("/api/v1/integrations/peekaboo").catch(() => ({ peekaboo: null })),
       requestJson("/api/v1/integrations/telegram").catch(() => ({ telegram: null })),
       requestJson("/api/v1/files/import-settings").catch(() => ({ webFileTransfer: null })),
@@ -2565,7 +2603,6 @@ async function refreshAll() {
     state.onboarding = onboarding.onboarding || null;
     state.doctor = doctor.doctor || null;
     state.doctorRepairs = doctorRepairs.repairs || null;
-    if (doctor.doctor) state.lastDoctorAutoRefreshAt = Date.now();
     if (peekaboo.peekaboo) {
       state.status = {
         ...(state.status || {}),
@@ -2587,6 +2624,7 @@ async function refreshAll() {
   } finally {
     state.refreshAllBusy = false;
     $("refresh-button").disabled = state.restartRequired || state.restartBusy;
+    renderDoctor(); // Re-enable the explicit check after startup/manual Refresh.
   }
 }
 
@@ -2660,29 +2698,20 @@ async function refreshMediumState() {
   if (!autoRefreshAllowed() || state.autoRefreshMediumBusy) return;
   state.autoRefreshMediumBusy = true;
   try {
-    // Doctor fingerprints signed release contents and can consume seconds of
-    // CPU on Windows. An initial/manual Refresh is always immediate; automatic
-    // background checks run at most every five minutes while Overview is open.
-    const doctorDue = state.activeSection === "dashboard"
-      && Date.now() - state.lastDoctorAutoRefreshAt >= AUTO_REFRESH_DOCTOR_MS;
-    if (doctorDue) state.lastDoctorAutoRefreshAt = Date.now();
-    const [doctor, doctorRepairs, peekaboo, telegram, webFileTransfer, httpProfiles] = await Promise.all([
-      doctorDue ? requestJson("/api/v1/doctor", { backgroundRefresh: true }).catch(() => null) : Promise.resolve(null),
-      doctorDue ? requestJson("/api/v1/doctor/repairs", { backgroundRefresh: true }).catch(() => null) : Promise.resolve(null),
+    // Full native fingerprinting costs >10 CPU-seconds on Windows.
+    // Passive dashboard refreshes must never launch that scan.
+    const [peekaboo, telegram, webFileTransfer, httpProfiles] = await Promise.all([
       requestJson("/api/v1/integrations/peekaboo", { backgroundRefresh: true }).catch(() => null),
       requestJson("/api/v1/integrations/telegram", { backgroundRefresh: true }).catch(() => null),
       requestJson("/api/v1/files/import-settings", { backgroundRefresh: true }).catch(() => null),
       state.httpProfileDraft ? Promise.resolve(null) : requestJson("/api/v1/integrations/http-profiles", { backgroundRefresh: true }).catch(() => null),
     ]);
-    if (doctor?.doctor) state.doctor = doctor.doctor;
-    if (doctorRepairs?.repairs) state.doctorRepairs = doctorRepairs.repairs;
     if (peekaboo?.peekaboo) {
       state.status = { ...(state.status || {}), peekaboo: peekaboo.peekaboo };
     }
     if (telegram?.telegram) state.telegram = telegram.telegram;
     if (webFileTransfer?.webFileTransfer) state.webFileTransfer = webFileTransfer.webFileTransfer;
     if (httpProfiles?.httpProfiles && !state.httpProfileDraft) state.httpProfiles = httpProfiles.httpProfiles;
-    if (doctorDue) renderDoctor();
     if (state.activeSection === "integrations" && !state.httpProfileDraft) renderIntegrations();
     if (state.activeSection === "browser") renderBrowserPage();
     if (state.activeSection === "dashboard") renderDashboard();
@@ -3482,7 +3511,8 @@ async function submitTunnelOnboarding(event) {
 
 async function submitUninstall(event) {
   event.preventDefault();
-  if (state.uninstallBusy || state.uninstallScheduled || state.doctor?.managed !== true) return;
+  if (state.uninstallBusy || state.uninstallScheduled ||
+    !(state.doctor?.managed === true || ["managed-source", "managed"].includes(state.status?.installation?.kind))) return;
 
   const confirmation = $("uninstall-confirmation");
   const removeData = $("uninstall-remove-data");
@@ -3753,7 +3783,8 @@ function bindEvents() {
   });
   $("save-turn-budget-button").addEventListener("click", saveTurnBudgetSettings);
   $("restart-runtime-button").addEventListener("click", restartRuntimeFromControlCenter);
-  $("refresh-button").addEventListener("click", refreshAll);
+  $("refresh-button").addEventListener("click", () => { void refreshAll(); });
+  $("run-doctor-button").addEventListener("click", () => { void runFullDoctorChecks(); });
   $("onboarding-tunnel-form").addEventListener("submit", submitTunnelOnboarding);
   $("copy-setup-test-prompt").addEventListener("click", () => void copySetupText($("setup-test-prompt").textContent.trim(), "Test prompt copied."));
   $("setup-telegram-token").addEventListener("input", (event) => { state.telegramBotToken = event.target.value; renderOnboarding(); });
@@ -3878,4 +3909,4 @@ setInterval(() => { void refreshLiveState(); }, AUTO_REFRESH_LIVE_MS);
 setInterval(() => { void refreshMediumState(); }, AUTO_REFRESH_MEDIUM_MS);
 setInterval(() => { void refreshTelegramPairing(); }, 2_500);
 setInterval(() => { void refreshSlowState(); }, AUTO_REFRESH_SLOW_MS);
-void refreshAll();
+void refreshAll({ initial: true });

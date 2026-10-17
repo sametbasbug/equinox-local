@@ -40,3 +40,17 @@ test("navigation shortcuts skip editor input, open dialogs and restricted setup"
   assert.match(js, /event\.preventDefault\(\);\s+switchSection\(section, \{ remember: true \}\)/u);
   assert.match(css, /body\.setup-mode \.navigation-shortcuts-hint \{ display: none; \}/u);
 });
+
+test("startup and passive refresh avoid expensive Doctor hashing, while explicit checks remain full", () => {
+  assert.match(html, /id="run-doctor-button"/u);
+  assert.match(js, /void refreshAll\(\{ initial: true \}\)/u);
+  assert.match(js, /initial \? Promise\.resolve\(\{ doctor: null \}\) : requestJson\("\/api\/v1\/doctor"\)/u);
+  assert.match(js, /async function runFullDoctorChecks\(\)/u);
+  assert.match(js, /"run-doctor-button"\)\.addEventListener\("click"/u);
+  assert.match(js, /"refresh-button"\)\.addEventListener\("click", \(\) => \{ void refreshAll\(\); \}\)/u);
+  const slow = js.slice(js.indexOf("async function refreshMediumState()"), js.indexOf("async function refreshSlowState()"));
+  assert.doesNotMatch(slow, /requestJson\("\/api\/v1\/doctor"\)/u);
+  assert.match(js, /setBadge\("doctor-badge", "Not checked", "neutral"\)/u);
+  assert.match(js, /state\.refreshAllBusy = false;\s+\$\("refresh-button"\)\.disabled = state\.restartRequired \|\| state\.restartBusy;\s+renderDoctor\(\);/u);
+  assert.match(js, /\["managed-source", "managed"\]\.includes\(state\.status\?\.installation\?\.kind\)/u);
+});

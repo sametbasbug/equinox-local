@@ -44,10 +44,11 @@ test("Main update dialog shows only admitted snapshot identity, not docs-only Gi
 });
 
 test("Control Center avoids expensive Doctor fingerprints and hidden-page redraws on hot polls", () => {
-  assert.match(js, /AUTO_REFRESH_DOCTOR_MS = 5 \* 60_000/u);
-  assert.match(js, /state\.activeSection === "dashboard"\s*&& Date\.now\(\) - state\.lastDoctorAutoRefreshAt >= AUTO_REFRESH_DOCTOR_MS/u);
-  assert.match(js, /doctorDue \? requestJson\("\/api\/v1\/doctor"/u);
-  assert.match(js, /doctorDue \? requestJson\("\/api\/v1\/doctor\/repairs"/u);
+  assert.match(js, /void refreshAll\(\{ initial: true \}\)/u);
+  assert.match(js, /initial \? Promise\.resolve\(\{ doctor: null \}\) : requestJson\("\/api\/v1\/doctor"\)/u);
+  assert.match(js, /async function runFullDoctorChecks\(\)/u);
+  const medium = js.slice(js.indexOf("async function refreshMediumState()"), js.indexOf("async function refreshSlowState()"));
+  assert.doesNotMatch(medium, /requestJson\("\/api\/v1\/doctor"/u);
   assert.match(js, /if \(state\.activeSection === "tasks"\) renderTasks\(\)/u);
   assert.match(js, /if \(state\.activeSection === "activity"\) renderActivity\(\)/u);
   assert.match(js, /if \(state\.activeSection === "browser"\) renderBrowserPage\(\)/u);
