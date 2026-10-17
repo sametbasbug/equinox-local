@@ -63,6 +63,9 @@ public partial class App : System.Windows.Application
             return;
         }
 
+        // The WPF shell is only a tray/window host for the dashboard.
+        // Avoid engaging a discrete gaming GPU for its tiny native chrome.
+        System.Windows.Media.RenderOptions.ProcessRenderMode = System.Windows.Interop.RenderMode.SoftwareOnly;
         _window = new MainWindow();
         WindowsShellDiagnostics.RecordRuntimeState("shell-startup", "main-window-created");
         MainWindow = _window;

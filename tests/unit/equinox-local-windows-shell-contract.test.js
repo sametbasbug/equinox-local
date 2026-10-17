@@ -33,7 +33,9 @@ test("Windows shell is a thin x64/ARM64 WPF/WebView2 host for the shared Control
   assert.match(project, /Microsoft\.Web\.WebView2/u);
   assert.match(window, /http:\/\/127\.0\.0\.1:24891\//u);
   assert.match(window, /EnsureCoreWebView2Async/u);
-  assert.match(window, /CoreWebView2Environment\.CreateAsync\(userDataFolder: userData\)/u);
+  assert.match(window, /CoreWebView2EnvironmentOptions/u);
+  assert.match(window, /AdditionalBrowserArguments\s*=\s*"--disable-gpu"/u);
+  assert.match(window, /CoreWebView2Environment\.CreateAsync\(\s*userDataFolder: userData, options: webOptions\)/u);
   assert.match(window, /"Equinox Local", "state", "webview2"/u);
   assert.match(window, /GetAvailableBrowserVersionString/u);
   assert.match(window, /UseShellExecute\s*=\s*true/u);
@@ -123,6 +125,7 @@ test("Windows shell tray lifecycle keeps close-to-tray distinct from explicit ex
   assert.match(window, /e\.Cancel\s*=\s*true/u);
   assert.match(window, /Hide\(\)/u);
   assert.match(window, /PrepareForExit/u);
+  assert.match(app, /RenderOptions\.ProcessRenderMode\s*=\s*System\.Windows\.Interop\.RenderMode\.SoftwareOnly/u);
   assert.match(app, /new TrayIconController/u);
   assert.match(app, /PrepareForExit\(\)/u);
   assert.match(app, /Shutdown\(\)/u);

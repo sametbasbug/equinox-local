@@ -52,6 +52,25 @@ http.createServer((request, response) => {
   if (-not $initiallyLoading) { throw 'Native loading screen was absent before local server startup.' }
   Write-Output 'EQUINOX_CC_COLD_START_LOADING_PASS'
 
+  # Only this private WebView2 environment should disable GPU acceleration.
+  # Verify the actual Edge subprocess inherited the flag, not merely C# source.
+  $webViewUserData = Join-Path $env:LOCALAPPDATA 'Equinox Local\state\webview2'
+  $webViewArgumentsVerified = $false
+  for ($i = 0; $i -lt 30; $i++) {
+    $webViewProcesses = Get-CimInstance Win32_Process -Filter "Name = 'msedgewebview2.exe'" -ErrorAction SilentlyContinue
+    foreach ($webView in $webViewProcesses) {
+      if ($webView.CommandLine -match [regex]::Escape($webViewUserData) -and
+          $webView.CommandLine -match '(?:^|\s)--disable-gpu(?:\s|$)') {
+        $webViewArgumentsVerified = $true
+        break
+      }
+    }
+    if ($webViewArgumentsVerified) { break }
+    Start-Sleep -Milliseconds 250
+  }
+  if (-not $webViewArgumentsVerified) { throw 'The isolated native WebView2 process did not receive --disable-gpu.' }
+  Write-Output 'EQUINOX_CC_WEBVIEW2_LOW_POWER_PASS'
+
   # Start the test HTTP server *after* WPF is already waiting for it.
   $server = Start-Process -FilePath $NodePath -ArgumentList ('"' + $serverFile + '"') -PassThru -WindowStyle Hidden
   $ready = $false
