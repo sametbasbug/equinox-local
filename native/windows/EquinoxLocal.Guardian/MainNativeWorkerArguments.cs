@@ -98,10 +98,14 @@ internal static partial class Program
         RequireNormalDirectory(scriptDir);
         var script = Path.Combine(scriptDir, "equinox-local-main-update-worker.js");
         RequireNormalFile(script);
-        using var stablePointer = ReadJson(Path.Combine(install, "current-version.json"), MaxPointerBytes);
-        var release = Path.Combine(install, "releases", stablePointer.RootElement.GetProperty("version").GetString() ?? "");
-        var node = Path.Combine(release, "runtime", "node", "bin", "node.exe");
-        RequireNormalFile(node);
+        var targetHost = RuntimeInformation.ProcessArchitecture switch
+        {
+            Architecture.X64 => "win32-x64",
+            Architecture.Arm64 => "win32-arm64",
+            _ => throw new PlatformNotSupportedException("Unsupported Main worker CPU architecture."),
+        };
+        var node = ResolveOwnedMainWorkerNodePath(install, targetHost);
+
 
         using var process = Process.GetProcessById(worker.Pid);
         if (process.HasExited || process.StartTime.ToUniversalTime().Ticks.ToString(CultureInfo.InvariantCulture) != worker.Ticks)

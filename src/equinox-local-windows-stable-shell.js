@@ -305,7 +305,14 @@ export async function replaceWindowsStableShellForRelease({
 
 export async function launchWindowsStableShell(shellExecutable, { spawnImpl = spawnChild } = {}) {
   if (typeof shellExecutable !== "string" || !path.isAbsolute(shellExecutable)) throw new Error("Windows stable shell executable path must be absolute.");
-  const child = spawnImpl(shellExecutable, [], { cwd: path.dirname(shellExecutable), detached: true, stdio: "ignore", windowsHide: false });
+  // Main's detached updater owns a temporary A-version Node bootstrap,
+  // which must never leak into the new WPF shell. Otherwise WPF treats the
+  // inherited release directory as a Stable override and boots the old app.
+  const childEnv = { ...process.env };
+  for (const key of Object.keys(childEnv)) {
+    if (/^EQUINOX_LOCAL_(?:RELEASE_DIR|INSTALL_ROOT|MAIN_WORKER_TOKEN)$/iu.test(key)) delete childEnv[key];
+  }
+  const child = spawnImpl(shellExecutable, [], { cwd: path.dirname(shellExecutable), detached: true, stdio: "ignore", windowsHide: false, env: childEnv });
   await new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error("Windows stable shell launch did not start within 5 seconds.")), 5_000);
     timer.unref?.();

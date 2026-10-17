@@ -85,6 +85,11 @@ windowsTest("Windows Main native lifecycle switches and recovers shell plus Nati
   const initialRegistration = await registerWindowsNativeMessagingHost({ manifestRoot, launcherPath: previousLauncher });
   assert.equal(initialRegistration.launcherPath, previousLauncher);
 
+  // Mirror the persisted product-owned current-native.json across the initial
+  // update and a detached worker recovery; native shell/registry ops remain real.
+  let nativePointer = { sourceSha: A, target, runtimeContractSha256: DA, releaseDir: previousRelease };
+  const readPointerImpl = async () => nativePointer;
+  const writePointerImpl = async (_file, value) => { nativePointer = value; return value; };
   const nativeTransition = transition(target);
   const lifecycle = await prepareEquinoxLocalMainNativeLifecycle({
     transition: nativeTransition,
@@ -102,11 +107,12 @@ windowsTest("Windows Main native lifecycle switches and recovers shell plus Nati
     transactionId: TX,
     installation,
     promoteCandidateImpl: async () => ({ sourceSha: B, target, runtimeContractSha256: DB, releaseDir: targetRelease }),
-    readPointerImpl: async () => ({ sourceSha: A, target, runtimeContractSha256: DA, releaseDir: previousRelease }),
-    writePointerImpl: async (_file, value) => value,
+    readPointerImpl,
+    writePointerImpl,
   });
 
   await lifecycle.activate();
+  assert.equal(nativePointer.sourceSha, B, "native B must be selected BEFORE restart");
   await assertWindowsStableShellOwnedByRelease({ releaseDir: targetRelease, programRoot });
   const targetOwnership = await assertWindowsNativeMessagingHostOwnership({ manifestRoot, acceptedLauncherPaths: [targetLauncher] });
   assert.equal(targetOwnership.launcherPath, targetLauncher);
@@ -117,11 +123,13 @@ windowsTest("Windows Main native lifecycle switches and recovers shell plus Nati
     transactionId: TX,
     installation,
     inspectStoredReleaseImpl: async ({ sourceSha }) => ({ releaseDir: sourceSha === B ? targetRelease : previousRelease }),
-    writePointerImpl: async (_file, value) => value,
+    readPointerImpl,
+    writePointerImpl,
   });
   await recovered.activate();
   await assertWindowsStableShellOwnedByRelease({ releaseDir: targetRelease, programRoot });
   await recovered.rollback();
+  assert.equal(nativePointer.sourceSha, A, "native A must be restored before rollback restart");
 
   await assertWindowsStableShellOwnedByRelease({ releaseDir: previousRelease, programRoot });
   const restoredOwnership = await assertWindowsNativeMessagingHostOwnership({ manifestRoot, acceptedLauncherPaths: [previousLauncher] });

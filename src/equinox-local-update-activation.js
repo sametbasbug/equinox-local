@@ -405,6 +405,7 @@ export async function activatePreparedEquinoxRelease({
   kickstartImpl = () => restartManagedInstallation(installation),
   syncAppHostImpl = (release) => synchronizeManagedShellForRelease(installation, release),
   previousMainNativeReleaseDir = null,
+  previousManagedMain = null,
   fetchImpl = globalThis.fetch,
   sleepImpl,
   healthAttempts = HEALTH_ATTEMPTS,
@@ -427,7 +428,33 @@ export async function activatePreparedEquinoxRelease({
         ? { ...release, releaseDir: previousMainNativeReleaseDir }
         : { ...release, previousReleaseDir: previousMainNativeReleaseDir },
   );
-  const switchResult = await atomicSwitchCurrentRelease(installation, targetVersion);
+  // A healthy Main-native B can outlive its old numbered Stable bootstrap.
+  // When all obsolete Stable payloads have been reclaimed, the signed
+  // PowerShell installer still needs a rollback-capable route to that exact
+  // native-store B, not a phantom releases/<old> directory.
+  if (previousManagedMain && (installation.platform !== "win32" ||
+      !previousMainNativeReleaseDir ||
+      previousManagedMain.releaseDir !== previousMainNativeReleaseDir ||
+      !/^[a-f0-9]{40}$/u.test(previousManagedMain.sourceSha ?? "") ||
+      !parseEquinoxVersion(previousManagedMain.version) ||
+      !parseEquinoxVersion(previousManagedMain.stablePointerVersion))) {
+    throw new Error("Main-native fallback requires authenticated exact prior version, native and source identities.");
+  }
+  const switchResult = previousManagedMain
+    ? Object.freeze({
+        previous: Object.freeze({
+          version: previousManagedMain.version, releaseDir: previousManagedMain.releaseDir,
+        }),
+        current: Object.freeze({
+          version: targetVersion, releaseDir: await assertReleaseDirectory(installation, targetVersion),
+        }), changed: true,
+      })
+    : await atomicSwitchCurrentRelease(installation, targetVersion);
+  if (previousManagedMain) {
+    await writeEquinoxLocalCurrentVersionPointer(installation.currentPointer, {
+      version: targetVersion, platform: "win32", target: installationTarget(installation),
+    });
+  }
   if (!switchResult.changed) {
     return Object.freeze({ status: "already-active", version: targetVersion, previousVersion: targetVersion });
   }
@@ -439,6 +466,7 @@ export async function activatePreparedEquinoxRelease({
       fetchImpl,
       sleepImpl,
       attempts: healthAttempts,
+      ...(previousMainNativeReleaseDir ? { expectedInstallationKind: "managed" } : {}),
     });
     await writeActivationState(installation, {
       schemaVersion: 1,
@@ -454,14 +482,25 @@ export async function activatePreparedEquinoxRelease({
     });
   } catch (activationError) {
     try {
-      await atomicSwitchCurrentRelease(installation, switchResult.previous.version);
+      if (previousManagedMain) {
+        await writeEquinoxLocalCurrentVersionPointer(installation.currentPointer, {
+          version: previousManagedMain.stablePointerVersion,
+          platform: "win32", target: installationTarget(installation),
+        });
+      } else {
+        await atomicSwitchCurrentRelease(installation, switchResult.previous.version);
+      }
       await syncReleaseHost({ version: switchResult.previous.version, releaseDir: switchResult.previous.releaseDir, previousVersion: targetVersion, previousReleaseDir: switchResult.current.releaseDir }, true);
       await kickstartImpl(switchResult.previous.version);
-      await waitForEquinoxLocalVersion(switchResult.previous.version, {
-        fetchImpl,
-        sleepImpl,
-        attempts: healthAttempts,
-      });
+      if (previousManagedMain) {
+        await waitForEquinoxLocalManagedSource(switchResult.previous.version, previousManagedMain.sourceSha, {
+          fetchImpl, sleepImpl, attempts: healthAttempts,
+        });
+      } else {
+        await waitForEquinoxLocalVersion(switchResult.previous.version, {
+          fetchImpl, sleepImpl, attempts: healthAttempts,
+        });
+      }
       await writeActivationState(installation, {
         schemaVersion: 1,
         status: "rolled-back",

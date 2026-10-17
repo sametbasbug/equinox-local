@@ -84,7 +84,7 @@ The installer validates its signed release payload and sets up the native app an
 <details open>
 <summary><strong>Windows · ARM64 & x64</strong></summary>
 
-Download the [official PowerShell installer](https://local.sametbasbug.dev/downloads/updates/install-equinox-local.ps1) and review/run it in PowerShell, or follow the [Windows installation guide](https://local.sametbasbug.dev/install/). The installer provisions the verified release and required tools; a separate Node or Git installation is not needed.
+Download the [official PowerShell installer](https://local.sametbasbug.dev/downloads/updates/install-equinox-local.ps1) and review/run it in PowerShell, or follow the [Windows installation guide](https://local.sametbasbug.dev/install/). The installer provisions the verified release and required tools; a separate Node or Git installation is not needed. The same official installer can be run again over an existing installation to repair or reinstall without discarding your settings. Older large release/component bundles are removed after the new runtime is verified healthy; interrupted replacements retain a guarded recovery path.
 
 </details>
 

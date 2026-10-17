@@ -81,26 +81,7 @@ internal static partial class Program
             System.Runtime.InteropServices.Architecture.Arm64 => "win32-arm64",
             _ => throw new PlatformNotSupportedException("Unsupported native worker architecture."),
         };
-        using var stablePointer = ReadJson(Path.Combine(install, "current-version.json"), MaxPointerBytes);
-        var stable = stablePointer.RootElement;
-        RequireExactKeys(stable, ["schemaVersion", "version", "target"]);
-        if (stable.GetProperty("schemaVersion").GetInt32() != 1 ||
-            stable.GetProperty("target").GetString() != target)
-            throw new InvalidDataException("Native worker baseline pointer target has drifted.");
-        var version = stable.GetProperty("version").GetString() ?? "";
-        if (!VersionRegex().IsMatch(version))
-            throw new InvalidDataException("Native worker baseline version is not canonical.");
-        var releases = Path.Combine(install, "releases");
-        var release = Path.Combine(releases, version);
-        RequireNormalDirectory(releases);
-        RequireNormalDirectory(release);
-        var nodeRoot = Path.Combine(release, "runtime", "node");
-        var nodeBin = Path.Combine(nodeRoot, "bin");
-        RequireNormalDirectory(Path.Combine(release, "runtime"));
-        RequireNormalDirectory(nodeRoot);
-        RequireNormalDirectory(nodeBin);
-        var expectedNode = Path.Combine(nodeBin, "node.exe");
-        RequireNormalFile(expectedNode);
+        var expectedNode = ResolveOwnedMainWorkerNodePath(install, target);
 
         InspectionPhase = "native-worker-ownership-record";
         var handoff = Path.Combine(tx, "handoff");

@@ -31,13 +31,17 @@ internal static partial class WindowsManagedSourceRuntimeLocator
 
     internal static WindowsRuntimeLocation Resolve()
     {
-        var stable = WindowsManagedReleaseLocator.ResolveCurrentRelease();
-        var installRoot = stable.InstallRoot
-            ?? throw new InvalidDataException("Managed installation root is unavailable.");
+        var local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+        if (string.IsNullOrWhiteSpace(local) || !Path.IsPathFullyQualified(local))
+            throw new InvalidDataException("Per-user managed installation location is unavailable.");
+        var installRoot = Path.GetFullPath(Path.Combine(local, "Equinox Local"));
         var transactionRoot = Path.GetFullPath(Path.Combine(installRoot, "state", "main-update"));
         var installStampPath = Path.Combine(transactionRoot, "install.json");
         if (!File.Exists(installStampPath))
         {
+            // Stable is a separate first-install bootstrap, not a permanent
+            // dependency of a successfully committed Main native runtime.
+            var stable = WindowsManagedReleaseLocator.ResolveCurrentRelease();
             return new WindowsRuntimeLocation(
                 stable.ReleaseDir,
                 stable.ReleaseDir,
@@ -63,16 +67,16 @@ internal static partial class WindowsManagedSourceRuntimeLocator
         _ = RequireNormalFile(Path.Combine(sourceRoot, "package.json"), "Main source package metadata");
         RequireNormalDirectory(Path.Combine(sourceRoot, "node_modules"), "Main source node_modules");
 
-        var nativeReleaseDir = stable.ReleaseDir;
         var nativePointerPath = Path.Combine(transactionRoot, "current-native.json");
-        if (File.Exists(nativePointerPath))
-            nativeReleaseDir = ResolveNativeRelease(transactionRoot, nativePointerPath);
+        var nativeReleaseDir = File.Exists(nativePointerPath)
+            ? ResolveNativeRelease(transactionRoot, nativePointerPath)
+            : WindowsManagedReleaseLocator.ResolveCurrentRelease().ReleaseDir;
 
         return new WindowsRuntimeLocation(
             nativeReleaseDir,
             sourceRoot,
             serverPath,
-            stable.ReleaseDir,
+            nativeReleaseDir,
             installRoot,
             ManagedSource: true);
     }

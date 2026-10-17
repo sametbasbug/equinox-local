@@ -11,15 +11,15 @@ internal static class ManagedUninstallHandoff
             && !string.Equals(mode, "remove-user-data", StringComparison.Ordinal))
             throw new InvalidDataException("Managed uninstall mode is invalid.");
 
-        var release = WindowsManagedReleaseLocator.ResolveCurrentRelease();
-        var nodePath = RequireNormalFile(Path.Combine(release.ReleaseDir, "runtime", "node", "bin", "node.exe"), "managed Node runtime");
-        var helperPath = RequireNormalFile(Path.Combine(release.ReleaseDir, "equinox-local-uninstall-helper.js"), "managed uninstall helper");
+        var release = WindowsManagedSourceRuntimeLocator.Resolve();
+        var nodePath = RequireNormalFile(Path.Combine(release.NativeReleaseDir, "runtime", "node", "bin", "node.exe"), "managed Node runtime");
+        var helperPath = RequireNormalFile(Path.Combine(release.NativeReleaseDir, "equinox-local-uninstall-helper.js"), "managed uninstall helper");
         var startup = new StartupRegistration();
         var startupBefore = startup.Read();
         if (startupBefore.State == StartupRegistrationState.Foreign)
             throw new InvalidDataException("Windows startup registration is foreign; refusing managed uninstall.");
 
-        var startInfo = new ProcessStartInfo(nodePath) { UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = release.ReleaseDir };
+        var startInfo = new ProcessStartInfo(nodePath) { UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = release.NativeReleaseDir };
         startInfo.ArgumentList.Add(helperPath);
         startInfo.ArgumentList.Add("--uninstall");
         startInfo.ArgumentList.Add($"--{mode}");
@@ -29,9 +29,8 @@ internal static class ManagedUninstallHandoff
         if (string.IsNullOrWhiteSpace(systemRoot)) throw new InvalidOperationException("SystemRoot is unavailable for the managed uninstall handoff.");
         startInfo.Environment["PATH"] = $"{Path.Combine(systemRoot, "System32")};{systemRoot}";
         startInfo.Environment["ComSpec"] = Path.Combine(systemRoot, "System32", "cmd.exe");
-        if (release.InstallRoot is null) throw new InvalidDataException("Managed uninstall install root is unavailable.");
         startInfo.Environment["EQUINOX_LOCAL_INSTALL_ROOT"] = release.InstallRoot;
-        startInfo.Environment["EQUINOX_LOCAL_RELEASE_DIR"] = release.ReleaseDir;
+        startInfo.Environment["EQUINOX_LOCAL_RELEASE_DIR"] = release.NativeReleaseDir;
         startInfo.Environment["EQUINOX_LOCAL_UNINSTALL_SHELL_PID"] = Environment.ProcessId.ToString(System.Globalization.CultureInfo.InvariantCulture);
 
         startInfo.Environment["EQUINOX_LOCAL_EXPECTED_STARTUP_COMMAND"] = startup.ExpectedCommand;

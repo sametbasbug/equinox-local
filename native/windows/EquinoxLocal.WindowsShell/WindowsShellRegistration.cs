@@ -11,9 +11,33 @@ internal static class WindowsShellRegistration
     private const string OwnershipMarker = "EquinoxLocalManagedInstall";
     private const string ShortcutFileName = "Equinox Local.lnk";
 
+    internal static string ActiveDisplayVersion(WindowsRuntimeLocation active)
+    {
+        if (!active.ManagedSource)
+        {
+            var stable = Path.GetFileName(active.NativeReleaseDir);
+            if (!System.Text.RegularExpressions.Regex.IsMatch(stable, @"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$"))
+                throw new InvalidDataException("Stable display version is invalid.");
+            return stable;
+        }
+        // Installed Apps must describe the running Git-verified Main source,
+        // not its historical numbered Stable bootstrap or a reused native A.
+        var versionFile = Path.Combine(active.SourceRoot, "src", "equinox-local-version.js");
+        var info = new FileInfo(versionFile);
+        if (!info.Exists || (info.Attributes & FileAttributes.ReparsePoint) != 0 ||
+            info.Length is < 25 or > 1024)
+            throw new InvalidDataException("Main source version declaration is unavailable or unsafe.");
+        var declaration = File.ReadAllText(versionFile);
+        var match = System.Text.RegularExpressions.Regex.Match(declaration,
+            @"(?m)^export const EQUINOX_LOCAL_VERSION = ""((?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*))"";$");
+        if (!match.Success || System.Text.RegularExpressions.Regex.Matches(declaration, "EQUINOX_LOCAL_VERSION").Count != 1)
+            throw new InvalidDataException("Main source version declaration is ambiguous.");
+        return match.Groups[1].Value;
+    }
+
     internal static void EnsureForActiveManagedShell()
     {
-        var release = WindowsManagedReleaseLocator.ResolveCurrentRelease();
+        var active = WindowsManagedSourceRuntimeLocator.Resolve();
         var local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
         var expectedExe = Path.GetFullPath(Path.Combine(local, "Programs", "Equinox Local", "EquinoxLocal.exe"));
         var actualExe = Environment.ProcessPath ?? throw new InvalidDataException("Native shell executable path is unavailable.");
@@ -23,9 +47,7 @@ internal static class WindowsShellRegistration
         if (!executable.Exists || (executable.Attributes & FileAttributes.ReparsePoint) != 0)
             throw new InvalidDataException("Managed Windows shell must be a normal installed executable.");
 
-        var version = Path.GetFileName(release.ReleaseDir);
-        if (!System.Text.RegularExpressions.Regex.IsMatch(version, @"^\d+\.\d+\.\d+$"))
-            throw new InvalidDataException("Managed release version is invalid.");
+        var version = ActiveDisplayVersion(active);
 
         // The ARP record can be repaired on subsequent launches, but never
         // replace another product's registration under the same subkey.

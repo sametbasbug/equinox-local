@@ -79,8 +79,12 @@ try
         installRoot,
         "initial");
 
+    // WPF is relaunched by the old detached A-version update worker and can
+    // inherit EQUINOX_LOCAL_RELEASE_DIR=A. It MUST prefer trusted Main install.
+    Environment.SetEnvironmentVariable("EQUINOX_LOCAL_RELEASE_DIR", stableRelease);
     supervisor = RuntimeSupervisor.TryCreateFromEnvironmentOrManagedInstall()
         ?? throw new InvalidOperationException("Managed-source RuntimeSupervisor was not created.");
+    Environment.SetEnvironmentVariable("EQUINOX_LOCAL_RELEASE_DIR", null);
     await supervisor.StartAsync();
     await WaitForIdentityAsync(port, "A", Path.Combine(stableRelease, "runtime", "node", "bin", "node.exe"), sourceRootA, "initial");
 
@@ -133,11 +137,28 @@ try
         WindowsManagedSourceRuntimeLocator.Resolve(),
         nativeRelease,
         sourceRootB,
-        stableRelease,
+        nativeRelease,
         installRoot,
         "artifact_required");
     await supervisor.RestartAsync();
     await WaitForIdentityAsync(port, "B", Path.Combine(nativeRelease, "runtime", "node", "bin", "node.exe"), sourceRootB, "artifact_required");
+
+    // A successful Main B install must start again even after every older
+    // numbered Stable payload (including its bundled Node) was deleted.
+    await supervisor.StopAsync();
+    Directory.Delete(stableRelease, recursive: true);
+    File.Delete(Path.Combine(installRoot, "current-version.json"));
+    AssertLocation(WindowsManagedSourceRuntimeLocator.Resolve(),
+        nativeRelease, sourceRootB, nativeRelease, installRoot, "after-stable-gc");
+    await supervisor.StartAsync();
+    await WaitForIdentityAsync(port, "B", Path.Combine(nativeRelease, "runtime", "node", "bin", "node.exe"), sourceRootB, "after-stable-gc");
+    // Reconstruct the fixture's legitimate A rollback slot for the failure-path test.
+    await supervisor.StopAsync();
+    await WriteRuntimeReleaseAsync(stableRelease, stableVersion, target, nodeSource, repo);
+    await File.WriteAllTextAsync(Path.Combine(installRoot, "current-version.json"),
+        JsonSerializer.Serialize(new { schemaVersion = 1, target, version = stableVersion }) + "\n");
+    await supervisor.StartAsync();
+    await WaitForIdentityAsync(port, "B", Path.Combine(nativeRelease, "runtime", "node", "bin", "node.exe"), sourceRootB, "after-rollback-slot-rebuild");
 
     // Rollback restores both source and native identity to the Stable baseline.
     File.Delete(nativePointerPath);
@@ -210,6 +231,9 @@ static async Task WriteSourceAsync(string sourceRoot, string marker)
     await File.WriteAllTextAsync(
         Path.Combine(sourceRoot, "package.json"),
         JsonSerializer.Serialize(new { name = "equinox-managed-source-acceptance", type = "module" }) + "\n");
+    var appVersion = marker == "A" ? "5.2.0" : "5.2.1";
+    await File.WriteAllTextAsync(Path.Combine(srcRoot, "equinox-local-version.js"),
+        $"export const EQUINOX_LOCAL_VERSION = \"{appVersion}\";\n");
     var markerJson = JsonSerializer.Serialize(marker);
     var server =
         "import http from 'node:http';\n" +
@@ -242,6 +266,9 @@ static void AssertLocation(
     AssertPath(location.ServerPath, Path.Combine(expectedSourceRoot, "src", "server.js"), $"{stage}: server path");
     AssertPath(location.BootstrapReleaseDir, expectedBootstrapRelease, $"{stage}: bootstrap release");
     AssertPath(location.InstallRoot, expectedInstallRoot, $"{stage}: install root");
+    var expectedVersion = stage is "initial" or "rollback" ? "5.2.0" : "5.2.1";
+    if (WindowsShellRegistration.ActiveDisplayVersion(location) != expectedVersion)
+        throw new InvalidOperationException($"{stage}: registered display version differs from active Main source.");
 }
 
 static async Task WaitForIdentityAsync(int port, string marker, string nodePath, string sourceRoot, string stage)

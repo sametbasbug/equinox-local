@@ -156,9 +156,12 @@ try {
   # requiring test-only future Guardian components in an already shipped A.
   $SkipLegacyGuardianFixture = ($env:GITHUB_ACTIONS -ceq 'true' -and -not [string]::IsNullOrWhiteSpace($env:EQUINOX_WINDOWS_MAIN_ACCEPT_TARGET_SHA))
   $HistoricRepair = ($env:EQUINOX_WINDOWS_LEGACY_REINSTALL_ACCEPTANCE -ceq 'true')
+  $AcceptedOldHistoricMain = ($FixtureSourceSha -ceq '8dbe965d28e76026123ce8de34d8f1aa27c10465' -and $SkipLegacyGuardianFixture)
+  $AcceptedOldSigned610 = ($FixtureSourceSha -ceq 'e85790a99e8e05ccf9997279d174b452793d6097' -and -not $SkipLegacyGuardianFixture)
   if ($HistoricRepair -and ($env:GITHUB_ACTIONS -cne 'true' -or
-      $FixtureSourceSha -cne '8dbe965d28e76026123ce8de34d8f1aa27c10465' -or
-      -not $SkipLegacyGuardianFixture)) { throw 'Historic repair requires real pinned old A on isolated hosted Windows.' }
+      (-not $AcceptedOldHistoricMain -and -not $AcceptedOldSigned610))) {
+    throw 'Historical or 6.1.0 native repair requires a pinned real A archive on disposable hosted Windows.'
+  }
   if (-not $SkipLegacyGuardianFixture) {
   # Exercise the real independent Guardian binary on a disposable hosted runner
   # without changing Start Menu, Installed Apps, autostart or the running WPF.
@@ -923,13 +926,13 @@ try {
     Assert-True ($CandidateMetadata.target -ceq $FixtureTarget -and
       $CandidateMetadata.sourceSha -cmatch '^[a-f0-9]{40}$' -and
       $CandidateMetadata.sourceSha -cne $FixtureSourceSha -and
-      $BVersion -cmatch '^6\.0\.[0-9]+$' -and
-      $BVersion -cne $FixtureVersion) 'Historical B candidate must be a different current source release.'
+      $BVersion -cmatch '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$' -and
+      ([version]$BVersion -gt [version]$FixtureVersion)) 'Historical B candidate must be a different current source release.'
     $UserFiles = @((Join-Path $InstallRoot 'state\config.json'))
     foreach ($entry in @('secrets\openai-runtime-key','browser\historic-user-profile.txt','tunnel\historic-user-profile.txt','workspace\historic-owned-project.txt')) {
       $item = Join-Path $InstallRoot $entry
       [IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($item)) | Out-Null
-      if (-not [IO.File]::Exists($item)) { [IO.File]::WriteAllText($item, 'historic-5.2.1-user-data-fixture') }
+      if (-not [IO.File]::Exists($item)) { [IO.File]::WriteAllText($item, 'previous-version-private-user-data-fixture') }
       $UserFiles += $item
     }
     $UserHashes = @{}
@@ -971,6 +974,12 @@ try {
     Assert-True (-not [IO.File]::Exists($OldMainStampPath)) 'Classic Stable reinstall silently kept old Main enrollment.'
     $BCurrent = [IO.File]::ReadAllText((Join-Path $InstallRoot 'current-version.json')) | ConvertFrom-Json
     Assert-True ($BCurrent.version -ceq $BVersion) 'Windows current pointer did not select new Stable B.'
+    # A successful replacement must not leave a chain of obsolete numbered
+    # native runtimes behind. The installed B owns one version directory.
+    $versionDirectories = @([IO.Directory]::GetDirectories((Join-Path $InstallRoot 'releases')) |
+      ForEach-Object { [IO.Path]::GetFileName($_) } |
+      Where-Object { $_ -cmatch '^\d+\.\d+\.\d+$' })
+    Assert-True ($versionDirectories.Count -eq 1 -and $versionDirectories[0] -ceq $BVersion) 'Real classic Windows reinstall retained obsolete large Stable versions.'
     $AfterLauncher = ([IO.File]::ReadAllText($ExpectedManifestPath) | ConvertFrom-Json).path
     $ExpectedBLauncher = Join-Path $InstallRoot ("releases\$BVersion\runtime\browser\equinox-browser-native-host.exe")
     Assert-True (Same-Path ([string]$AfterLauncher) $ExpectedBLauncher) 'Native Messaging host was not switched to new Stable B.'
@@ -981,7 +990,7 @@ try {
     $shells = @(Get-CimInstance Win32_Process -Filter "Name='EquinoxLocal.exe'" -ErrorAction SilentlyContinue |
       Where-Object { $_.ExecutablePath -and (Same-Path $_.ExecutablePath $StableExe) })
     Assert-True ($shells.Count -eq 1) 'New Stable did not leave exactly one real running native WPF shell.'
-    Write-Output "Real Windows $FixtureTarget historical Main 5.2.1 to unsigned new Stable PowerShell reinstall, forced native rollback, Native Messaging, WPF and user-data preservation PASSED."
+    Write-Output "Real Windows $FixtureTarget installed old-to-new native Stable PowerShell reinstall, forced native rollback, Native Messaging, WPF, zero obsolete releases and user-data preservation PASSED."
   }
   Write-Output "Windows $FixtureTarget real fresh-install managed-source acceptance passed: public installer promoted $FixtureVersion at $FixtureSourceSha and served the exact managed source runtime."
 } finally {

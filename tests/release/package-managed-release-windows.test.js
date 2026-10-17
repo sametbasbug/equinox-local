@@ -467,7 +467,9 @@ test("independent Guardian worker process provenance never invokes a launcher or
   assert.match(auditor, /native-worker-os-session/u);
   assert.match(auditor, /running\.SessionId != guardian\.SessionId/u);
   assert.match(auditor, /different Windows OS session/u);
-  assert.match(auditor, /runtime", "node"/u);
+  const bootstrap = await fs.readFile(new URL("../../native/windows/EquinoxLocal.Guardian/MainNativeBootstrap.cs", import.meta.url), "utf8");
+  assert.match(bootstrap, /runtime", "node"/u);
+  assert.match(auditor, /ResolveOwnedMainWorkerNodePath/u);
   assert.match(auditor, /WorkerTokenPattern/u);
   assert.doesNotMatch(auditor, /Process\.Start|Registry\.SetValue|File\.WriteAllText|File\.Delete/u);
 });

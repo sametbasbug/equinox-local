@@ -13,6 +13,7 @@ import { equinoxLocalReleaseTarget } from "./equinox-local-platform.js";
 import { EQUINOX_LOCAL_INSTALL_LABEL, resolveEquinoxLocalInstallation } from "./equinox-local-installation.js";
 import { kickstartEquinoxLocalLaunchAgent } from "./equinox-local-update-activation.js";
 import { equinoxLocalToolchainContract } from "./equinox-local-toolchain-contract.js";
+import { readBoundedNormalFile } from "./equinox-local-safe-file.js";
 import { createEquinoxLocalMainUpdateTransactionEngine } from "./equinox-local-main-update-transaction.js";
 import { runEquinoxLocalMainUpdateHandoff } from "./equinox-local-main-update-handoff.js";
 import { readEquinoxLocalMainSourcePointer } from "./equinox-local-main-source-pointer.js";
@@ -96,11 +97,25 @@ export async function waitForExactSourceHealth({
   sleepImpl = (ms) => new Promise((resolve) => setTimeout(resolve, ms)), attempts = HEALTH_ATTEMPTS,
   readPointerImpl = readEquinoxLocalMainSourcePointer,
   inspectCheckoutImpl = inspectCanonicalMainCheckout,
+  readVersionImpl = async (root) => {
+    const file = path.join(root, "src", "equinox-local-version.js");
+    const { data: text } = await readBoundedNormalFile(file, {
+      minBytes: 1, maxBytes: 1024, encoding: "utf8",
+      label: "Main update release version declaration",
+    });
+    const match = /^export const EQUINOX_LOCAL_VERSION = "(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)";$/mu.exec(text);
+    if (!match) throw new Error("Main update release version declaration is invalid.");
+    return `${match[1]}.${match[2]}.${match[3]}`;
+  },
 }) {
   const pointer = await readPointerImpl(pointerPath, { gitPath });
   if (pointer.sha !== sha || pointer.sourceRoot !== sourceRoot) throw new Error("Main update source pointer does not match the expected runtime identity.");
   const checkout = await inspectCheckoutImpl(sourceRoot, { gitPath });
   if (!checkout.eligible || checkout.currentSha !== sha) throw new Error("Main update runtime checkout does not match the expected canonical SHA.");
+  const expectedVersion = await readVersionImpl(sourceRoot);
+  if (!/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/u.test(expectedVersion ?? "")) {
+    throw new Error("Main update expected runtime version is invalid.");
+  }
   let lastError = null;
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     try {
@@ -110,7 +125,8 @@ export async function waitForExactSourceHealth({
       const observed = body?.status;
       if (observed?.health?.state === "HEALTHY"
         && observed?.installation?.kind === "managed-source"
-        && observed?.installation?.sourceSha === sha) return true;
+        && observed?.installation?.sourceSha === sha
+        && observed?.server?.version === expectedVersion) return true;
       // A native relaunch can race the old A server staying HEALTHY on the
       // loopback port. Never call source B admitted until B itself responds.
       throw new Error("Main update runtime health or installed source SHA has not converged.");

@@ -104,6 +104,26 @@ test("native-impact handoff switches native before source and commits native ide
   assert.deepEqual(f.calls.map(([name]) => name), ["native_switched", "activate", "success", "release"]);
 });
 
+test("Windows Main native ownership failure cannot commit a false-success receipt", async () => {
+  const f = engineFixture();
+  const actions = [];
+  const result = await runEquinoxLocalMainUpdateHandoff({
+    engine: f.engine, transactionId: f.receipt.transactionId,
+    nativeLifecycle: {
+      activate: async () => actions.push("activate-native-B"),
+      rollback: async () => actions.push("restore-native-A"),
+      verifyIntegration: async () => { actions.push("verify-installed-native-B"); throw new Error("WPF or Native Messaging still belongs to A"); },
+      commit: async () => assert.fail("Unverified native B must not commit"),
+    },
+    restartRuntime: async ({ rollback }) => actions.push(rollback ? "restart-A" : "restart-B"),
+    verifyRuntime: async ({ rollback }) => { actions.push(rollback ? "healthy-A" : "transient-healthy-B"); return true; },
+  });
+  assert.equal(result.status, "rolled_back");
+  assert.match(result.targetError.message, /still belongs to A/u);
+  assert.deepEqual(actions, ["activate-native-B", "restart-B", "transient-healthy-B", "verify-installed-native-B", "restore-native-A", "restart-A", "healthy-A"]);
+  assert.equal(f.calls.some(([name]) => name === "success"), false);
+});
+
 test("native-impact target failure restores source and native before rollback health becomes terminal", async () => {
   const f = engineFixture();
   const events = [];

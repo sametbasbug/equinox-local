@@ -3,6 +3,7 @@ import path from "node:path";
 
 import { validateManagedSourceInstallStamp } from "./equinox-local-main-update.js";
 import { readEquinoxLocalMainSourcePointer } from "./equinox-local-main-source-pointer.js";
+import { readEquinoxLocalMainNativePointer } from "./equinox-local-main-native-state.js";
 import { equinoxLocalPlatformPaths } from "./equinox-local-platform.js";
 import { equinoxLocalToolchainContract } from "./equinox-local-toolchain-contract.js";
 import { inspectPrivateStatePath, verifyWindowsPrivateStateAcl } from "./equinox-local-private-state.js";
@@ -35,6 +36,7 @@ export async function resolveEquinoxLocalManagedSourceInstallation({
   fsImpl = fs,
   verifyWindowsAcl = verifyWindowsPrivateStateAcl,
   readPointerImpl = readEquinoxLocalMainSourcePointer,
+  readNativePointerImpl = readEquinoxLocalMainNativePointer,
 } = {}) {
   if (!baseInstallation || baseInstallation.kind !== "managed" || baseInstallation.managed !== true || baseInstallation.selfUpdateSupported !== true) {
     return baseInstallation;
@@ -50,7 +52,10 @@ export async function resolveEquinoxLocalManagedSourceInstallation({
   const stampSecurity = await inspectPrivateStatePath(paths.installStampPath, {
     platform, type: "file", mode: "600", fsImpl, verifyWindowsAcl,
   });
-  if (!stampSecurity.exists) return baseInstallation;
+  if (!stampSecurity.exists) {
+    if (baseInstallation.mainNativeSha) throw new Error("Main native runtime has no verified Main install stamp.");
+    return baseInstallation;
+  }
   if (!stampSecurity.safe) throw new Error("Managed-source install stamp is not private.");
 
   const { data } = await readBoundedNormalFile(paths.installStampPath, {
@@ -95,6 +100,17 @@ export async function resolveEquinoxLocalManagedSourceInstallation({
     fsImpl,
     ...(managedGitPath ? { gitPath: managedGitPath } : {}),
   });
+  if (baseInstallation.mainNativeSha) {
+    const native = await readNativePointerImpl((platform === "win32" ? path.win32 : path.posix).join(paths.mainTransactionRoot, "current-native.json"), {
+      transactionRoot: paths.mainTransactionRoot, fsImpl,
+    });
+    const pathApi = path.win32;
+    if (native.sourceSha !== baseInstallation.mainNativeSha ||
+        native.target !== baseInstallation.target ||
+        pathApi.normalize(native.releaseDir).toLowerCase() !== pathApi.normalize(baseInstallation.releaseDir).toLowerCase()) {
+      throw new Error("Main bootstrap native runtime does not match the authenticated native-store pointer.");
+    }
+  }
   return Object.freeze({
     ...baseInstallation,
     kind: "managed-source",

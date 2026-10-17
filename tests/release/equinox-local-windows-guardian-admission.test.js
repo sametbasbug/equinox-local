@@ -59,7 +59,7 @@ test("read-only guardian admission checks exact Stable source, WPF, and Native M
     state: "admitted", sourceSha: A, target: "win32-x64", native: "stable",
     shellExecutable: executable, releaseDir: stableRelease,
   });
-  assert.deepEqual(f.calls.map(([action]) => action), ["engine", "active", "handoff", "source", "stable", "native", "shell", "host"]);
+  assert.deepEqual(f.calls.map(([action]) => action), ["engine", "active", "handoff", "source", "native", "stable", "shell", "host"]);
   assert.deepEqual(f.calls.at(-2)[1], { releaseDir: stableRelease, programRoot });
   assert.deepEqual(f.calls.at(-1)[1], {
     manifestRoot: installation.nativeMessagingManifestRoot,
@@ -69,11 +69,36 @@ test("read-only guardian admission checks exact Stable source, WPF, and Native M
 
 test("exact admitted Main native release is independently checked against its SHA slot", async () => {
   const nativePointer = { sourceSha: A, target: "win32-x64", runtimeContractSha256: shaDigest, releaseDir: mainRelease };
-  const f = fixture({ nativePointer });
+  const f = fixture({ nativePointer,
+    installation: { ...installation, releaseDir: mainRelease },
+    readCurrentRelease: async () => assert.fail("Verified Main native B must not require deleted Stable release or current-version.json"),
+  });
   const result = await inspectEquinoxLocalWindowsGuardianAdmission(f.deps);
+  assert.equal(f.calls.some(([action]) => action === "stable"), false);
   assert.equal(result.native, "main");
   assert.equal(result.releaseDir, mainRelease);
   assert.equal(f.calls.find(([action]) => action === "shell")[1].releaseDir, mainRelease);
+});
+
+test("source-only Main B is admitted with older independently verified native A, never a foreign slot", async () => {
+  const selectedNative = { sourceSha: A, target: "win32-x64", runtimeContractSha256: shaDigest, releaseDir: mainRelease };
+  const newerSource = { ...installation, sourceSha: B,
+    sourceRoot: path.win32.join(transactionRoot, "sources", B),
+    releaseDir: mainRelease };
+  const f = fixture({ nativePointer: selectedNative,
+    installation: newerSource,
+    readPointer: async () => ({ sourceRoot: newerSource.sourceRoot, sha: B }),
+    readCurrentRelease: async () => assert.fail("Source-only B must not need an obsolete Stable baseline"),
+  });
+  const result = await inspectEquinoxLocalWindowsGuardianAdmission(f.deps);
+  assert.deepEqual({ state: result.state, sourceSha: result.sourceSha, native: result.native, releaseDir: result.releaseDir },
+    { state: "admitted", sourceSha: B, native: "main", releaseDir: mainRelease });
+  assert.equal(f.calls.some(([name]) => name === "stable"), false);
+  const drifted = fixture({ nativePointer: selectedNative,
+    installation: { ...newerSource, releaseDir: mainRelease.replace(A, "c".repeat(40)) },
+    readPointer: async () => ({ sourceRoot: newerSource.sourceRoot, sha: B }),
+  });
+  await assert.rejects(inspectEquinoxLocalWindowsGuardianAdmission(drifted.deps), /selected Main native-store identity/u);
 });
 
 test("guardian refuses active rollback_failed or even terminal active receipts before touching live shell", async () => {

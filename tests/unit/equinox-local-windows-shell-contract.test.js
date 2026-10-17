@@ -76,7 +76,7 @@ test("Windows shell single-instance and runtime-restart channel is local-user-on
   assert.match(locator, /ResolveRelease\(string version\)/u);
   assert.match(coordinator, /uninstall:/u);
   assert.match(coordinator, /ManagedUninstallHandoff\.Launch/u);
-  assert.match(uninstallHandoff, /ResolveCurrentRelease/u);
+  assert.match(uninstallHandoff, /WindowsManagedSourceRuntimeLocator\.Resolve/u);
   assert.match(uninstallHandoff, /new StartupRegistration/u);
   assert.match(uninstallHandoff, /StartupRegistrationState\.Foreign/u);
   assert.match(uninstallHandoff, /Environment\.Clear\(\)/u);

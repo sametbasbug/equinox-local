@@ -21,9 +21,11 @@ import {
   synchronizeEquinoxLocalAppHostForRelease,
 } from "./equinox-local-native-app-host.js";
 import { writeEquinoxLocalMainNativeRecoveryDescriptor } from "./equinox-local-main-native-recovery.js";
+import { createEquinoxLocalMainNativePointerTransition } from "./equinox-local-main-native-pointer-transition.js";
 import { createSupervisorBoundWindowsNativeABLifecycle, requireWindowsNativeABSupervisor } from "./equinox-local-windows-native-ab-supervisor-bound.js";
 import {
   inspectWindowsStableShellRollbackSnapshot,
+  assertWindowsStableShellOwnedByRelease,
   replaceWindowsStableShellForRelease,
   restoreWindowsStableShellRollbackSnapshot,
   snapshotWindowsStableShellForRollback,
@@ -64,6 +66,7 @@ export async function prepareEquinoxLocalMainNativeLifecycle({
   activateDarwinImpl = synchronizeEquinoxLocalAppHostForRelease,
   restoreDarwinImpl = restoreEquinoxLocalNativeAppHostSnapshot,
   snapshotWindowsImpl = snapshotWindowsStableShellForRollback,
+  verifyWindowsShellImpl = assertWindowsStableShellOwnedByRelease,
   inspectWindowsSnapshotImpl = inspectWindowsStableShellRollbackSnapshot,
   activateWindowsImpl = replaceWindowsStableShellForRelease,
   restoreWindowsImpl = restoreWindowsStableShellRollbackSnapshot,
@@ -146,6 +149,10 @@ export async function prepareEquinoxLocalMainNativeLifecycle({
   }
   const previousLauncher = windowsLauncherPathImpl(previousRelease);
   const targetLauncher = windowsLauncherPathImpl(targetRelease);
+  const nativeSelection = createEquinoxLocalMainNativePointerTransition({
+    pointerPath, transactionRoot: root, target: pointerValue, previous: previousPointer,
+    fsImpl, readPointer: readPointerImpl, writePointer: writePointerImpl,
+  });
   await writeRecoveryDescriptorImpl({ transition, previousPointer, installation, transactionRoot: root, transactionId, fsImpl });
   if (windowsAdmission) {
     return createBoundWindowsABImpl({ windowsAdmission, transition, transactionId, stored, previousPointer,
@@ -163,13 +170,26 @@ export async function prepareEquinoxLocalMainNativeLifecycle({
       await assertWindowsNativeHostImpl({ manifestRoot, acceptedLauncherPaths: [targetLauncher, previousLauncher], execFileAsync: execFileImpl, fsImpl, env });
       const shell = await activateWindowsImpl({ releaseDir: targetRelease, previousReleaseDir: previousRelease, programRoot, fsImpl });
       await registerWindowsNativeHostImpl({ manifestRoot, launcherPath: targetLauncher, expectedPreviousLauncherPath: previousLauncher, execFileAsync: execFileImpl, fsImpl, env });
+      // Select B before launching the new WPF. Otherwise it starts from
+      // current-native=A even though the installed shell itself belongs to B.
+      await nativeSelection.selectTarget();
       return shell;
     },
     rollback: async () => {
       const shell = await restoreWindowsImpl({ snapshotReleaseDir, currentReleaseDir: targetRelease, programRoot, fsImpl });
       await registerWindowsNativeHostImpl({ manifestRoot, launcherPath: previousLauncher, expectedPreviousLauncherPath: targetLauncher, execFileAsync: execFileImpl, fsImpl, env });
+      await nativeSelection.restorePrevious();
       return shell;
     },
-    commit: async () => writePointerImpl(pointerPath, pointerValue, { transactionRoot: root, fsImpl }),
+    // Last gate before the Main transaction can say succeeded. The live WPF
+    // executable and Chrome Native Messaging registration must BOTH identify B,
+    // not merely the source SHA reported by a transient HTTP server.
+    verifyIntegration: async () => {
+      await verifyWindowsShellImpl({ releaseDir: targetRelease, programRoot, fsImpl });
+      await assertWindowsNativeHostImpl({ manifestRoot,
+        acceptedLauncherPaths: [targetLauncher], execFileAsync: execFileImpl, fsImpl, env });
+      return true;
+    },
+    commit: async () => nativeSelection.requireTarget(),
   });
 }

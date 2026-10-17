@@ -23,9 +23,13 @@ internal static partial class MainUpdateHandoff
         if (!TransactionPattern().IsMatch(transactionId))
             throw new InvalidDataException("Main update transaction id is invalid.");
 
-        var bootstrap = WindowsManagedReleaseLocator.ResolveCurrentRelease();
-        var installRoot = bootstrap.InstallRoot
-            ?? throw new InvalidDataException("Managed installation root is unavailable.");
+        // The currently authenticated Main native-store owns the detached
+        // worker runtime. Once B is healthy, a numbered Stable A directory
+        // must no longer be needed to apply the next update.
+        var bootstrap = WindowsManagedSourceRuntimeLocator.Resolve();
+        if (!bootstrap.ManagedSource)
+            throw new InvalidDataException("Main update handoff requires an enrolled Main runtime.");
+        var installRoot = bootstrap.InstallRoot;
         var transactionRoot = Path.GetFullPath(Path.Combine(installRoot, "state", "main-update"));
         RequireNormalDirectory(transactionRoot, "Main update state directory");
         ValidateInstallStamp(Path.Combine(transactionRoot, "install.json"));
@@ -61,7 +65,7 @@ internal static partial class MainUpdateHandoff
             "Main update worker");
 
         var nodePath = RequireNormalFile(
-            Path.Combine(bootstrap.ReleaseDir, "runtime", "node", "bin", "node.exe"),
+            Path.Combine(bootstrap.BootstrapReleaseDir, "runtime", "node", "bin", "node.exe"),
             "managed Node runtime");
         var startInfo = new ProcessStartInfo(nodePath)
         {
@@ -99,7 +103,7 @@ internal static partial class MainUpdateHandoff
         var ownershipToken = Convert.ToHexString(RandomNumberGenerator.GetBytes(32)).ToLowerInvariant();
 
         startInfo.Environment["EQUINOX_LOCAL_INSTALL_ROOT"] = installRoot;
-        startInfo.Environment["EQUINOX_LOCAL_RELEASE_DIR"] = bootstrap.ReleaseDir;
+        startInfo.Environment["EQUINOX_LOCAL_RELEASE_DIR"] = bootstrap.BootstrapReleaseDir;
         startInfo.Environment["EQUINOX_LOCAL_MAIN_WORKER_TOKEN"] = ownershipToken;
 
         using var process = Process.Start(startInfo)

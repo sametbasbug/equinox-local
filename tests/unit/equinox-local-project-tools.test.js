@@ -39,7 +39,9 @@ function createHarness() {
         rootRealPath: fileRootDefinitions[rootId].root,
       };
     },
-    async execFileImpl(_binary, args) {
+    gitPath: "/pinned/managed/git",
+    async execFileImpl(binary, args) {
+      assert.equal(binary, "/pinned/managed/git");
       const command = args.join(" ");
       if (command === "rev-parse --show-toplevel") return { stdout: "/tmp/app\n" };
       if (command === "symbolic-ref --quiet --short HEAD") return { stdout: "main\n" };

@@ -56,27 +56,32 @@ test("Windows Main native lifecycle keeps shell and Native Messaging on the same
   const durable = `C:\\State\\native-store\\${target}\\${B}\\release`;
   const previous = `C:\\State\\native-store\\${target}\\${A}\\release`;
   const launcher = (releaseDir) => `${releaseDir}\\runtime\\browser\\host.exe`;
+  let pointer = { sourceSha: A, target, runtimeContractSha256: DA, releaseDir: previous };
   const lifecycle = await prepareEquinoxLocalMainNativeLifecycle({
     transition: transition(target), candidate: candidate(target, `C:\\State\\staging\\${TX}\\native-candidate\\release`), transactionRoot: ROOT, transactionId: TX,
     installation: { managed: true, selfUpdateSupported: true, target, releaseDir: "C:\\Stable\\5.2.0", programRoot: "C:\\Program\\Equinox Local", nativeMessagingManifestRoot: "C:\\State\\manifest" },
     promoteCandidateImpl: async () => ({ sourceSha: B, target, runtimeContractSha256: DB, releaseDir: durable }),
-    readPointerImpl: async () => ({ sourceSha: A, target, runtimeContractSha256: DA, releaseDir: previous }),
+    readPointerImpl: async () => pointer,
     snapshotWindowsImpl: async (value) => events.push(["snapshot", value]),
     writeRecoveryDescriptorImpl: async (value) => events.push(["recovery-descriptor", value]),
     activateWindowsImpl: async (value) => { events.push(["shell-target", value]); return {}; },
     restoreWindowsImpl: async (value) => { events.push(["shell-rollback", value]); return {}; },
+    verifyWindowsShellImpl: async (value) => events.push(["verified-shell-target", value]),
     assertWindowsNativeHostImpl: async (value) => events.push(["ownership", value]),
     registerWindowsNativeHostImpl: async (value) => events.push(["register", value]),
     windowsLauncherPathImpl: launcher,
-    writePointerImpl: async (_path, value) => { events.push(["commit", value]); return value; },
+    writePointerImpl: async (_path, value) => { events.push(["pointer", value]); pointer = value; return value; },
   });
   await lifecycle.activate();
+  assert.equal(await lifecycle.verifyIntegration(), true);
+  assert.equal(pointer.sourceSha, B);
   await lifecycle.commit();
   await lifecycle.rollback();
-  assert.deepEqual(events.map(([name]) => name), ["snapshot", "recovery-descriptor", "ownership", "shell-target", "register", "commit", "shell-rollback", "register"]);
+  assert.equal(pointer.sourceSha, A);
+  assert.deepEqual(events.map(([name]) => name), ["snapshot", "recovery-descriptor", "ownership", "shell-target", "register", "pointer", "verified-shell-target", "ownership", "shell-rollback", "register", "pointer"]);
   assert.equal(events[3][1].previousReleaseDir, previous);
   assert.equal(events[4][1].launcherPath, launcher(durable));
-  assert.equal(events[7][1].launcherPath, launcher(previous));
+  assert.equal(events[9][1].launcherPath, launcher(previous));
 });
 
 test("Main native lifecycle rejects a stale native pointer before platform mutation", async () => {
