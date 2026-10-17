@@ -342,7 +342,7 @@ globalThis.fetch = (resource, init = {}) => {
         stagedReleaseDir: release, homeDir, env, uid,
         execFileImpl: trackedExecFile,
         // The current harness installer provisions its NEW pinned Node, but
-        // the real historical 5.2.1 A supervisor checks the OLD pinned Node.
+        // the real historical A supervisor may check a different pinned Node.
         // Install A's exact signed toolchain too on this disposable runner.
         // Do not modify old A's source or accept an ambient node/git binary.
         enrollManagedSourceImpl: async (options) => {
