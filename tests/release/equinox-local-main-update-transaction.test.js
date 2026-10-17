@@ -10,7 +10,7 @@ import { EQUINOX_LOCAL_MAIN_REMOTE } from "../../src/equinox-local-main-update.j
 const CURRENT = "1".repeat(40);
 const TARGET = "2".repeat(40);
 
-async function fixture(t, { failValidation = false, stagedHead = TARGET, usePinnedDefaults = false } = {}) {
+async function fixture(t, { failValidation = false, stagedHead = TARGET, usePinnedDefaults = false, gitPath = "git" } = {}) {
   const parent = await fs.mkdtemp(path.join(await fs.realpath(os.tmpdir()), "equinox-m6-"));
   const sourceRoot = path.join(parent, "active");
   const transactionRoot = path.join(parent, "state");
@@ -32,24 +32,24 @@ async function fixture(t, { failValidation = false, stagedHead = TARGET, usePinn
       }
       return { stdout: "", stderr: "" };
     }
-    if (command === "git" && joined === `-C ${sourceRoot} rev-parse --show-toplevel`) return { stdout: `${sourceRoot}\n`, stderr: "" };
-    if (command === "git" && joined === `-C ${sourceRoot} rev-parse HEAD`) return { stdout: `${CURRENT}\n`, stderr: "" };
-    if (command === "git" && joined === `-C ${sourceRoot} symbolic-ref --quiet --short HEAD`) return { stdout: "main\n", stderr: "" };
-    if (command === "git" && joined === `-C ${sourceRoot} remote get-url origin`) return { stdout: `${EQUINOX_LOCAL_MAIN_REMOTE}\n`, stderr: "" };
-    if (command === "git" && joined === `-C ${sourceRoot} status --porcelain=v1 --untracked-files=normal`) return { stdout: "", stderr: "" };
-    if (command === "git" && args[0] === "clone") { await fs.mkdir(args.at(-1), { recursive: true }); return { stdout: "", stderr: "" }; }
-    if (command === "git" && args.includes("checkout")) return { stdout: "", stderr: "" };
-    if (command === "git" && args[0] === "-C" && args[2] === "rev-parse" && args[3] === "--show-toplevel") return { stdout: `${args[1]}\n`, stderr: "" };
-    if (command === "git" && args[0] === "-C" && args[2] === "rev-parse" && args[3] === "HEAD") return { stdout: `${stagedHead}\n`, stderr: "" };
-    if (command === "git" && args[0] === "-C" && args[2] === "symbolic-ref") return { stdout: "main\n", stderr: "" };
-    if (command === "git" && args[0] === "-C" && args[2] === "remote") return { stdout: `${EQUINOX_LOCAL_MAIN_REMOTE}\n`, stderr: "" };
-    if (command === "git" && args[0] === "-C" && args[2] === "status") return { stdout: "", stderr: "" };
+    if (command === gitPath && joined === `-C ${sourceRoot} rev-parse --show-toplevel`) return { stdout: `${sourceRoot}\n`, stderr: "" };
+    if (command === gitPath && joined === `-C ${sourceRoot} rev-parse HEAD`) return { stdout: `${CURRENT}\n`, stderr: "" };
+    if (command === gitPath && joined === `-C ${sourceRoot} symbolic-ref --quiet --short HEAD`) return { stdout: "main\n", stderr: "" };
+    if (command === gitPath && joined === `-C ${sourceRoot} remote get-url origin`) return { stdout: `${EQUINOX_LOCAL_MAIN_REMOTE}\n`, stderr: "" };
+    if (command === gitPath && joined === `-C ${sourceRoot} status --porcelain=v1 --untracked-files=normal`) return { stdout: "", stderr: "" };
+    if (command === gitPath && args[0] === "clone") { await fs.mkdir(args.at(-1), { recursive: true }); return { stdout: "", stderr: "" }; }
+    if (command === gitPath && args.includes("checkout")) return { stdout: "", stderr: "" };
+    if (command === gitPath && args[0] === "-C" && args[2] === "rev-parse" && args[3] === "--show-toplevel") return { stdout: `${args[1]}\n`, stderr: "" };
+    if (command === gitPath && args[0] === "-C" && args[2] === "rev-parse" && args[3] === "HEAD") return { stdout: `${stagedHead}\n`, stderr: "" };
+    if (command === gitPath && args[0] === "-C" && args[2] === "symbolic-ref") return { stdout: "main\n", stderr: "" };
+    if (command === gitPath && args[0] === "-C" && args[2] === "remote") return { stdout: `${EQUINOX_LOCAL_MAIN_REMOTE}\n`, stderr: "" };
+    if (command === gitPath && args[0] === "-C" && args[2] === "status") return { stdout: "", stderr: "" };
     throw new Error(`unexpected command: ${command} ${joined}`);
   };
   const installs = [];
   const validations = [];
   const engine = createEquinoxLocalMainUpdateTransactionEngine({
-    sourceRoot, transactionRoot, execFileImpl,
+    sourceRoot, transactionRoot, execFileImpl, gitPath,
     now: (() => { let n = 0; return () => new Date(1_800_000_000_000 + n++ * 1000); })(),
     randomBytesImpl: () => Buffer.alloc(16, 0xab),
     ...(usePinnedDefaults ? {
@@ -227,6 +227,17 @@ test("preparePromotion recovers if durable-store rename completed before receipt
   const recovered = await f.engine.preparePromotion(staged.receipt.transactionId);
   assert.equal(recovered.receipt.status, "promoting");
   assert.equal(recovered.targetSourceRoot, durableTarget);
+});
+
+test("promotion runs all Git validation through the pinned Git path without ambient PATH", async (t) => {
+  const ownedGit = path.join(os.tmpdir(), "product-owned-git");
+  const f = await fixture(t, { gitPath: ownedGit });
+  await f.engine.initializeSourcePointer();
+  const staged = await f.engine.stage({ currentSha: CURRENT, targetSha: TARGET });
+  const promoted = await f.engine.preparePromotion(staged.receipt.transactionId);
+  assert.equal(promoted.receipt.status, "promoting");
+  assert.equal(f.calls.some((call) => call.command === "git"), false);
+  assert.equal(f.calls.every((call) => call.command === ownedGit), true);
 });
 
 test("staged preparation abort records failure, removes transaction staging and preserves source pointer", async (t) => {

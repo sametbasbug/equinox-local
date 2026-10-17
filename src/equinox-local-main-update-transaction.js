@@ -312,7 +312,7 @@ export function createEquinoxLocalMainUpdateTransactionEngine({
     if (durableTargetExists) {
       await fsImpl.rm(stagedSourceRoot, { recursive: true, force: true });
     } else {
-      await assertStagedCheckout(stagedSourceRoot, receipt.targetSha, { fsImpl, execFileImpl });
+      await assertStagedCheckout(stagedSourceRoot, receipt.targetSha, { fsImpl, execFileImpl, gitPath });
       await fsImpl.rename(stagedSourceRoot, targetSourceRoot);
       await syncDirectory(resolvedSourceStoreRoot, { fsImpl });
     }

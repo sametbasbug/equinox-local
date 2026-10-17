@@ -163,6 +163,21 @@ test("unsupported native transition mode fails closed while staged", async () =>
   assert.deepEqual(aborts, [[TX, "Main native transition mode is unsupported."]]);
 });
 
+test("failed prepromotion Git verification releases the staged lock rather than stranding Main", async () => {
+  const events = [];
+  const engine = engineFixture(events);
+  engine.preparePromotion = async () => { throw new Error("spawn git ENOENT"); };
+  engine.abortStagedPreparation = async (id, message) => events.push(["abort-staged", id, message]);
+  await assert.rejects(prepareAndScheduleEquinoxLocalMainUpdate({
+    sourceRoot: "/active", transactionRoot: "/state", currentSha: A, targetSha: B,
+    engineFactory: () => engine,
+    resolveHostTarget: () => "win32-x64",
+    planNativeTransition: async () => reuseTransition("win32-x64"),
+    scheduleWorker: async () => assert.fail("handoff must not be scheduled after failed promotion"),
+  }), /spawn git ENOENT/u);
+  assert.deepEqual(events.at(-1), ["abort-staged", TX, "spawn git ENOENT"]);
+});
+
 test("scheduler failure aborts only the still-unactivated prepared transaction", async () => {
   const events = [];
   const engine = engineFixture(events);
