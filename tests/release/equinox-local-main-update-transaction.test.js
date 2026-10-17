@@ -6,11 +6,12 @@ import test from "node:test";
 
 import { createEquinoxLocalMainUpdateTransactionEngine } from "../../src/equinox-local-main-update-transaction.js";
 import { EQUINOX_LOCAL_MAIN_REMOTE } from "../../src/equinox-local-main-update.js";
+import { protectWindowsPrivateStatePath } from "../../src/equinox-local-private-state.js";
 
 const CURRENT = "1".repeat(40);
 const TARGET = "2".repeat(40);
 
-async function fixture(t, { failValidation = false, stagedHead = TARGET, usePinnedDefaults = false, gitPath = "git" } = {}) {
+async function fixture(t, { failValidation = false, rejectPromotedValidation = false, stagedHead = TARGET, usePinnedDefaults = false, gitPath = "git", fsImpl = fs, platform = process.platform } = {}) {
   const parent = await fs.mkdtemp(path.join(await fs.realpath(os.tmpdir()), "equinox-m6-"));
   const sourceRoot = path.join(parent, "active");
   const transactionRoot = path.join(parent, "state");
@@ -49,7 +50,7 @@ async function fixture(t, { failValidation = false, stagedHead = TARGET, usePinn
   const installs = [];
   const validations = [];
   const engine = createEquinoxLocalMainUpdateTransactionEngine({
-    sourceRoot, transactionRoot, execFileImpl, gitPath,
+    sourceRoot, transactionRoot, execFileImpl, gitPath, fsImpl, platform,
     now: (() => { let n = 0; return () => new Date(1_800_000_000_000 + n++ * 1000); })(),
     randomBytesImpl: () => Buffer.alloc(16, 0xab),
     ...(usePinnedDefaults ? {
@@ -58,7 +59,7 @@ async function fixture(t, { failValidation = false, stagedHead = TARGET, usePinn
       shellPath: process.platform === "win32" ? "C:\\owned\\git\\usr\\bin\\sh.exe" : null,
     } : {
       installDependencies: async (value) => installs.push(value),
-      validateStagedSource: async (value) => { validations.push(value); if (failValidation) throw new Error("synthetic staged validation failure\nsecond line"); },
+      validateStagedSource: async (value) => { validations.push(value); if (failValidation) throw new Error("synthetic staged validation failure\nsecond line"); if (rejectPromotedValidation && value.stagedSourceRoot.includes(`${path.sep}sources${path.sep}`)) throw new Error("invalid copied dependency payload"); },
     }),
   });
   return { sourceRoot, calls, installs, validations, engine };
@@ -227,6 +228,83 @@ test("preparePromotion recovers if durable-store rename completed before receipt
   const recovered = await f.engine.preparePromotion(staged.receipt.transactionId);
   assert.equal(recovered.receipt.status, "promoting");
   assert.equal(recovered.targetSourceRoot, durableTarget);
+});
+
+async function protectWindowsFixture(f) {
+  if (process.platform !== "win32") return;
+  await fs.mkdir(f.engine.paths.transactionRoot, { recursive: true });
+  await protectWindowsPrivateStatePath({ target: f.engine.paths.transactionRoot, type: "directory" });
+}
+
+test("Windows source promotion copies and fully revalidates when a locked staged directory cannot be renamed", async (t) => {
+  let copyCount = 0;
+  const guardedFs = {
+    ...fs,
+    rename: async (from, to) => {
+      if (from.endsWith(path.join("source")) && to.includes(`${path.sep}sources${path.sep}${TARGET}`)) {
+        throw Object.assign(new Error("locked descendant"), { code: "EPERM" });
+      }
+      return fs.rename(from, to);
+    },
+    cp: async (...args) => { copyCount++; return fs.cp(...args); },
+  };
+  const f = await fixture(t, { fsImpl: guardedFs, platform: "win32" });
+  await protectWindowsFixture(f);
+  await f.engine.initializeSourcePointer();
+  const before = await fs.readFile(f.engine.paths.sourcePointerPath, "utf8");
+  const staged = await f.engine.stage({ currentSha: CURRENT, targetSha: TARGET });
+  await fs.writeFile(path.join(staged.stagedSourceRoot, "ignored-native-file.node"), "native payload");
+  const result = await f.engine.preparePromotion(staged.receipt.transactionId);
+  assert.equal(result.receipt.stage, "ready_to_switch");
+  assert.equal(copyCount, 1);
+  assert.equal(await fs.readFile(path.join(result.targetSourceRoot, "ignored-native-file.node"), "utf8"), "native payload");
+  assert.equal(await fs.readFile(f.engine.paths.sourcePointerPath, "utf8"), before);
+  assert.equal((await f.engine.readActive()).status, "promoting");
+});
+
+test("Windows source copy fallback refuses invalid data without switching Main pointer", async (t) => {
+  const guardedFs = {
+    ...fs,
+    rename: async (from, to) => {
+      if (from.endsWith(path.join("source")) && to.includes(`${path.sep}sources${path.sep}${TARGET}`)) {
+        throw Object.assign(new Error("locked directory"), { code: "EPERM" });
+      }
+      return fs.rename(from, to);
+    },
+    cp: async () => { throw Object.assign(new Error("file copy denied"), { code: "EACCES" }); },
+  };
+  const f = await fixture(t, { fsImpl: guardedFs, platform: "win32" });
+  await protectWindowsFixture(f);
+  await f.engine.initializeSourcePointer();
+  const before = await fs.readFile(f.engine.paths.sourcePointerPath, "utf8");
+  const staged = await f.engine.stage({ currentSha: CURRENT, targetSha: TARGET });
+  await fs.writeFile(path.join(staged.stagedSourceRoot, "ignored-native-file.node"), "native payload");
+  await assert.rejects(f.engine.preparePromotion(staged.receipt.transactionId), /file copy denied/u);
+  await assert.rejects(fs.lstat(path.join(f.engine.paths.sourceStoreRoot, TARGET)), { code: "ENOENT" });
+  assert.equal((await f.engine.readActive()).stage, "staged");
+  assert.equal(await fs.readFile(f.engine.paths.sourcePointerPath, "utf8"), before);
+});
+
+test("Windows copied Main source requires a second dependency validation before promotion", async (t) => {
+  const guardedFs = {
+    ...fs,
+    rename: async (from, to) => {
+      if (from.endsWith(path.join("source")) && to.includes(`${path.sep}sources${path.sep}${TARGET}`)) {
+        throw Object.assign(new Error("source file still held"), { code: "EPERM" });
+      }
+      return fs.rename(from, to);
+    },
+  };
+  const f = await fixture(t, { fsImpl: guardedFs, platform: "win32", rejectPromotedValidation: true });
+  await protectWindowsFixture(f);
+  await f.engine.initializeSourcePointer();
+  const oldPointer = await fs.readFile(f.engine.paths.sourcePointerPath, "utf8");
+  const staged = await f.engine.stage({ currentSha: CURRENT, targetSha: TARGET });
+  await fs.writeFile(path.join(staged.stagedSourceRoot, "ignored-native-file.node"), "native payload");
+  await assert.rejects(f.engine.preparePromotion(staged.receipt.transactionId), /invalid copied dependency payload/u);
+  await assert.rejects(fs.lstat(path.join(f.engine.paths.sourceStoreRoot, TARGET)), { code: "ENOENT" });
+  assert.equal(await fs.readFile(f.engine.paths.sourcePointerPath, "utf8"), oldPointer);
+  assert.equal((await f.engine.readActive()).status, "staged");
 });
 
 test("promotion runs all Git validation through the pinned Git path without ambient PATH", async (t) => {

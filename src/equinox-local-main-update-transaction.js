@@ -146,6 +146,7 @@ export function createEquinoxLocalMainUpdateTransactionEngine({
   transactionRoot,
   sourcePointerPath = path.join(transactionRoot ?? "", "current-source.conf"),
   sourceStoreRoot = path.join(transactionRoot ?? "", "sources"),
+  platform = process.platform,
   fsImpl = fs,
   execFileImpl = execFile,
   now = () => new Date(),
@@ -313,7 +314,35 @@ export function createEquinoxLocalMainUpdateTransactionEngine({
       await fsImpl.rm(stagedSourceRoot, { recursive: true, force: true });
     } else {
       await assertStagedCheckout(stagedSourceRoot, receipt.targetSha, { fsImpl, execFileImpl, gitPath });
-      await fsImpl.rename(stagedSourceRoot, targetSourceRoot);
+      try {
+        await fsImpl.rename(stagedSourceRoot, targetSourceRoot);
+      } catch (error) {
+        if (platform !== "win32" || !["EPERM", "EACCES"].includes(error?.code)) throw error;
+        // Windows can deny a directory move while a transient scanner/process
+        // holds a descendant file open. Claim the previously absent target
+        // exclusively; copy without following links, then revalidate BOTH Git
+        // identity and pinned dependencies before any source pointer changes.
+        // This is not an update success until native activation and health pass.
+        await fsImpl.mkdir(targetSourceRoot, { mode: 0o700 });
+        try {
+          for (const entry of await fsImpl.readdir(stagedSourceRoot)) {
+            await fsImpl.cp(path.join(stagedSourceRoot, entry), path.join(targetSourceRoot, entry), {
+              recursive: true, force: false, errorOnExist: true, dereference: false,
+            });
+          }
+          await assertStagedCheckout(targetSourceRoot, receipt.targetSha, { fsImpl, execFileImpl, gitPath });
+          await validateStagedSource({ stagedSourceRoot: targetSourceRoot, currentSha: receipt.currentSha,
+            targetSha: receipt.targetSha, transactionId: receipt.transactionId });
+        } catch (copyFailure) {
+          // This invocation exclusively created the destination. Never
+          // preserve a partially copied checkout as an eligible Main source.
+          await fsImpl.rm(targetSourceRoot, { recursive: true, force: true });
+          throw copyFailure;
+        }
+        // Leave the old staging tree to normal transaction cleanup if Windows
+        // still holds its files; only the verified store can become active.
+        await fsImpl.rm(stagedSourceRoot, { recursive: true, force: true }).catch(() => {});
+      }
       await syncDirectory(resolvedSourceStoreRoot, { fsImpl });
     }
     await assertStagedCheckout(targetSourceRoot, receipt.targetSha, { fsImpl, execFileImpl, gitPath });
