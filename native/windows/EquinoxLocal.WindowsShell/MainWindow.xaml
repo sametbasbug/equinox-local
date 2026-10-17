@@ -14,6 +14,19 @@
   <Grid>
     <wv2:WebView2 x:Name="ControlCenterView" />
 
+    <Border x:Name="StartingPanel"
+            Background="{DynamicResource {x:Static SystemColors.WindowBrushKey}}"
+            Padding="36">
+      <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" MaxWidth="560">
+        <TextBlock Text="Equinox Local" FontSize="28" FontWeight="SemiBold"
+                   HorizontalAlignment="Center" Margin="0,0,0,12" />
+        <ProgressBar IsIndeterminate="True" Height="4" Width="220"
+                     HorizontalAlignment="Center" Margin="0,0,0,20" />
+        <TextBlock x:Name="StartingMessage" Text="Starting Control Center…"
+                   TextWrapping="Wrap" TextAlignment="Center" />
+      </StackPanel>
+    </Border>
+
     <Border x:Name="FallbackPanel"
             Visibility="Collapsed"
             Background="{DynamicResource {x:Static SystemColors.WindowBrushKey}}"

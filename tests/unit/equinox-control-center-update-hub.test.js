@@ -33,3 +33,23 @@ test("Stable update dialog shows only actionable version details, without migrat
   assert.doesNotMatch(js, /update-stable-main-notice|update-stable-main-copy/u);
   assert.doesNotMatch(html, /<strong>Main channel<\/strong>/u);
 });
+
+test("Main update dialog shows only admitted snapshot identity, not docs-only Git ancestry commits as updates", () => {
+  assert.match(js, /snapshotAvailable = main\.state === "behind" && Boolean\(targetSha\)/u);
+  assert.ok(js.includes('Verified Main snapshot ${targetSha}'));
+  assert.match(js, /One admitted Main update/u);
+  assert.doesNotMatch(js, /main\.summaries\.slice\(0, 5\)/u);
+  assert.equal(js.includes('${entry.message || "Commit"}'), false);
+  assert.match(html, /Admitted Main update/u);
+});
+
+test("Control Center avoids expensive Doctor fingerprints and hidden-page redraws on hot polls", () => {
+  assert.match(js, /AUTO_REFRESH_DOCTOR_MS = 5 \* 60_000/u);
+  assert.match(js, /state\.activeSection === "dashboard"\s*&& Date\.now\(\) - state\.lastDoctorAutoRefreshAt >= AUTO_REFRESH_DOCTOR_MS/u);
+  assert.match(js, /doctorDue \? requestJson\("\/api\/v1\/doctor"/u);
+  assert.match(js, /doctorDue \? requestJson\("\/api\/v1\/doctor\/repairs"/u);
+  assert.match(js, /if \(state\.activeSection === "tasks"\) renderTasks\(\)/u);
+  assert.match(js, /if \(state\.activeSection === "activity"\) renderActivity\(\)/u);
+  assert.match(js, /if \(state\.activeSection === "browser"\) renderBrowserPage\(\)/u);
+  assert.match(js, /if \(section === "tasks"\) renderTasks\(\)/u);
+});

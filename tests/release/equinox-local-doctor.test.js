@@ -125,7 +125,7 @@ test("doctor data model accepts an explicit supported Windows host descriptor wi
   }
 });
 
-test("doctor keeps Your Browser required state separate from healthy Agent Browser state", async () => {
+test("doctor treats a disconnected personal Chrome as optional without masking actual Agent Browser failures", async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "equinox-doctor-browser-contexts-"));
   try {
     const workspace = path.join(root, "workspace");
@@ -146,6 +146,7 @@ test("doctor keeps Your Browser required state separate from healthy Agent Brows
       host: { platform: "win32", arch: "x64", target: "win32-x64", displayName: "Windows", supported: true },
     });
     assert.equal(result.checks.find((item) => item.id === "browser")?.status, "optional");
+    assert.match(result.checks.find((item) => item.id === "browser")?.detail || "", /normal when personal Chrome is closed/u);
     assert.match(result.checks.find((item) => item.id === "browser")?.label || "", /Your Browser/u);
     assert.equal(result.checks.find((item) => item.id === "agent-browser")?.status, "pass");
     assert.match(result.checks.find((item) => item.id === "agent-browser")?.detail || "", /isolated default/u);
@@ -327,6 +328,53 @@ test("managed Windows Doctor validates the accepted per-user lifecycle without L
   }
 });
 
+test("Windows Doctor verifies active Main native store rather than stale Stable A (and refuses corrupt pointers)", async () => {
+  const temp = await fs.mkdtemp(path.join(os.tmpdir(), "equinox-doctor-main-native-"));
+  try {
+    const installRoot = "C:\\Users\\Example\\AppData\\Local\\Equinox Local";
+    const legacyRelease = path.win32.join(installRoot, "releases", "6.1.0");
+    const activeRelease = path.win32.join(installRoot, "state", "main-update", "native-store", "win32-x64", "a".repeat(40), "release");
+    const transactionRoot = path.win32.join(installRoot, "state", "main-update");
+    const pointerPath = path.win32.join(transactionRoot, "current-native.json");
+    const programRoot = "C:\\Users\\Example\\AppData\\Local\\Programs\\Equinox Local";
+    const manifestRoot = path.win32.join(installRoot, "browser", "native-messaging");
+    const seen = [];
+    const fixtureFs = { ...fs, lstat: (p) => p === pointerPath ? Promise.resolve({ isFile: () => true }) : fs.lstat(p) };
+    const options = {
+      installation: { managed: true, selfUpdateSupported: true, lifecycleKind: "windows-user", installRoot,
+        releaseDir: legacyRelease, programRoot, nativeMessagingManifestRoot: manifestRoot },
+      config: { version: 1, runtime: { workspaceProject: "workspace" }, projects: { workspace: { root: temp } } },
+      runtimeHealthState: "HEALTHY", runtimeVersion: "6.1.1",
+      browser: { contexts: { user: { ready: false }, agent: { ready: true, consentAccepted: true, controlEnabled: true } }, agentBrowser: { setupComplete: true } },
+      update: { selfUpdateSupported: true, configured: true }, onboarding: { connectedThroughTunnel: true },
+      host: { platform: "win32", arch: "x64", target: "win32-x64", displayName: "Windows" },
+      runtimeEnv: { SystemRoot: "C:\\Windows" },
+      fsImpl: fixtureFs,
+      readCurrentReleaseImpl: async () => ({ version: "6.1.0", releaseDir: legacyRelease }),
+      readMainNativePointerImpl: async (file, args) => {
+        assert.equal(file, pointerPath);
+        assert.equal(args.transactionRoot, transactionRoot);
+        return { target: "win32-x64", releaseDir: activeRelease };
+      },
+      assertWindowsStableShellImpl: async ({ releaseDir }) => { seen.push(releaseDir); assert.equal(releaseDir, activeRelease); },
+      assertWindowsNativeHostImpl: async ({ acceptedLauncherPaths }) => {
+        assert.deepEqual(acceptedLauncherPaths, [path.win32.join(activeRelease, "runtime", "browser", "equinox-browser-native-host.exe")]);
+      },
+      readWindowsStartupImpl: async () => ({ enabled: false }),
+    };
+    const good = await getEquinoxLocalDoctorStatus(options);
+    assert.equal(seen.length, 1);
+    assert.equal(good.checks.find((item) => item.id === "windows-shell")?.status, "pass");
+    assert.equal(good.checks.find((item) => item.id === "native-host")?.status, "pass");
+    assert.equal(good.checks.find((item) => item.id === "browser")?.status, "optional");
+    const corrupt = await getEquinoxLocalDoctorStatus({ ...options,
+      readMainNativePointerImpl: async () => { throw new Error("Main native fingerprint is corrupt"); },
+    });
+    assert.equal(corrupt.checks.find((item) => item.id === "windows-shell")?.status, "attention");
+    assert.equal(corrupt.checks.find((item) => item.id === "native-host")?.status, "attention");
+  } finally { await fs.rm(temp, { recursive: true, force: true }); }
+});
+
 test("managed Windows Doctor fails closed on foreign lifecycle ownership without exposing local paths", async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "equinox-doctor-windows-foreign-"));
   try {
@@ -417,7 +465,7 @@ test("managed doctor fails closed when stable updates or first-run tunnel setup 
     assert.equal(result.state, "ATTENTION");
     assert.equal(result.checks.find((item) => item.id === "updates")?.status, "attention");
     assert.equal(result.checks.find((item) => item.id === "chatgpt-connection")?.status, "attention");
-    assert.equal(result.checks.find((item) => item.id === "browser")?.status, "attention");
+    assert.equal(result.checks.find((item) => item.id === "browser")?.status, "optional");
   } finally {
     await fs.rm(fixture.homeDir, { recursive: true, force: true });
   }

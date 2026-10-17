@@ -9,6 +9,7 @@ import {
 import { equinoxLocalHostDescriptor } from "./equinox-local-platform.js";
 import { inspectPrivateStatePath } from "./equinox-local-private-state.js";
 import { readManagedCurrentRelease } from "./equinox-local-update-activation.js";
+import { readEquinoxLocalMainNativePointer } from "./equinox-local-main-native-state.js";
 import { readWindowsStartupRegistrationOwnership } from "./equinox-local-uninstall-helper.js";
 import { assertWindowsStableShellOwnedByRelease } from "./equinox-local-windows-stable-shell.js";
 
@@ -92,6 +93,7 @@ export async function getEquinoxLocalDoctorStatus({
   fsImpl = fs,
   verifyWindowsAcl = null,
   readCurrentReleaseImpl = readManagedCurrentRelease,
+  readMainNativePointerImpl = readEquinoxLocalMainNativePointer,
   assertWindowsStableShellImpl = assertWindowsStableShellOwnedByRelease,
   assertWindowsNativeHostImpl = assertWindowsNativeMessagingHostOwnership,
   readWindowsStartupImpl = readWindowsStartupRegistrationOwnership,
@@ -219,10 +221,38 @@ export async function getEquinoxLocalDoctorStatus({
         ? path.win32.join(programRoot, "EquinoxLocal.exe")
         : null;
 
-      let shellOwned = false;
-      if (typeof releaseDir === "string" && typeof programRoot === "string") {
+      // Once Main activates a native release, the numbered Stable bootstrap A
+      // remains for recovery. Doctor must verify the active B shell and browser
+      // host, not report those intact files as foreign to the old A package.
+      // Never trust a pathname from an unvalidated pointer: readMainNativePointer
+      // verifies the canonical store manifest, source SHA, runtime contract and
+      // exact file fingerprint. A present but corrupt pointer fails closed.
+      let ownedReleaseDir = releaseDir;
+      if (typeof installation.installRoot === "string" && path.win32.isAbsolute(installation.installRoot)) {
+        const transactionRoot = path.win32.join(installation.installRoot, "state", "main-update");
+        const pointerPath = path.win32.join(transactionRoot, "current-native.json");
+        let pointerPresent = false;
         try {
-          await assertWindowsStableShellImpl({ releaseDir, programRoot, fsImpl });
+          await fsImpl.lstat(pointerPath);
+          pointerPresent = true;
+        } catch (error) {
+          if (error?.code !== "ENOENT") pointerPresent = true;
+        }
+        if (pointerPresent) {
+          ownedReleaseDir = null;
+          try {
+            const current = await readMainNativePointerImpl(pointerPath, { transactionRoot, fsImpl });
+            if (current.target === hostDescriptor.target && path.win32.isAbsolute(current.releaseDir)) {
+              ownedReleaseDir = current.releaseDir;
+            }
+          } catch { /* Unsafe native pointers must never fall back to the old Stable release. */ }
+        }
+      }
+
+      let shellOwned = false;
+      if (typeof ownedReleaseDir === "string" && typeof programRoot === "string") {
+        try {
+          await assertWindowsStableShellImpl({ releaseDir: ownedReleaseDir, programRoot, fsImpl });
           shellOwned = true;
         } catch {
           shellOwned = false;
@@ -263,11 +293,11 @@ export async function getEquinoxLocalDoctorStatus({
       ));
 
       let nativeHostOwned = false;
-      if (typeof releaseDir === "string" && typeof manifestRoot === "string") {
+      if (typeof ownedReleaseDir === "string" && typeof manifestRoot === "string") {
         try {
           await assertWindowsNativeHostImpl({
             manifestRoot,
-            acceptedLauncherPaths: [windowsNativeMessagingLauncherPath(releaseDir)],
+            acceptedLauncherPaths: [windowsNativeMessagingLauncherPath(ownedReleaseDir)],
             fsImpl,
             env: windowsDoctorProbeEnvironment(runtimeEnv),
           });
@@ -406,10 +436,8 @@ export async function getEquinoxLocalDoctorStatus({
     checks.push(check(
       "browser",
       "Equinox Browser · Your Browser",
-      browserRequired ? "attention" : "optional",
-      browserRequired
-        ? "Equinox Browser is required but is not connected to Your Browser."
-        : "Equinox Browser is not connected in Your Browser for this development runtime.",
+      "optional",
+      "Your Browser is currently disconnected (normal when personal Chrome is closed). Open Chrome and Equinox Browser when you want to use that browser context.",
     ));
   } else if (browserRequired && browserUser.consentAccepted !== true) {
     checks.push(check(
