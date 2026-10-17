@@ -70,3 +70,21 @@ On a real Windows x64 managed Main update, a fully staged and validated source c
 ## Control Center Doctor scan and Windows CPU use (2026-10-17)
 
 The full Doctor audit deliberately validates the signed Main native store using a complete SHA-256 tree fingerprint. On an installed Windows x64 host this takes about 11.4 seconds wall time and 13.6 seconds of Node CPU, and was triggered automatically when the Control Center window opened. This may wake laptop fans despite the GPU being disabled. The lightweight runtime health/status panel remains automatic, but full Doctor verification is user-initiated via the Control Center's Run full checks control or explicit Refresh, and remains available via system_doctor tooling. Passive polling never launches the costly scan. An unchecked Doctor is clearly shown as Not checked, never silently presented as passing. If the user requests checks, all original native SHA, shell ownership, and Browser host validation remain unchanged; no integrity thresholds or gates are relaxed. CI tests enforce this UI behavior.
+
+
+## Bounded post-update Windows native cleanup (2026-10-18)
+
+After Windows activates healthy Main B, the background storage pruner still removes
+only product-owned obsolete releases, sources, native bundles, staging and toolchains.
+It must continue to verify signed native content, exact current Main source and
+native pointers, active transaction exclusion and the running B executable before
+each allowed deletion. Initial full Doctor approval remains mandatory.
+A persistent Windows lock on an obsolete native directory previously scheduled
+eight repeated full Doctor SHA-256 reads, each capable of consuming more than
+10 seconds of Node CPU, every 45 seconds, even with Control Center hidden.
+Startup cleanup now performs no more than two passes and reuses the initial
+Doctor approval **only within that startup**; every pruner invocation still
+authenticates source/native pointers and performs all deletion guards. After two
+unsuccessful passes, leftover files remain safely retained for another runtime
+startup rather than continually waking the laptop CPU/fan. No user settings,
+credentials, or active Main B files are eligible for this cleanup.

@@ -3410,12 +3410,23 @@ async function start({ transport = new StdioServerTransport() } = {}) {
   // is retried later instead of aborting the healthy installation.
   if (platform === "win32" && ["managed-source", "managed"].includes(equinoxLocalInstallation.kind)) {
     let attempts = 0;
+    let doctorApproved = false;
+    // Native-state hashing in Doctor is intentionally thorough but expensive:
+    // a full Windows payload can take >10 CPU-seconds per audit. A locked old
+    // native directory used to force eight audits, every 45 seconds, even
+    // though no additional safety was gained. Keep the Doctor health gate on
+    // the first attempt and rely on the pruner's own exact-SHA/pointer/active
+    // lock verification on any retry. Defer persistent locks to next startup.
+    const maxCleanupAttempts = 2;
     const tryCleanup = async () => {
       attempts += 1;
       let complete = false;
       try {
-        const doctor = await getControlCenterDoctorStatus();
-        if (doctor.state === "HEALTHY" && doctor.summary.attention === 0) {
+        if (!doctorApproved) {
+          const doctor = await getControlCenterDoctorStatus();
+          doctorApproved = doctor.state === "HEALTHY" && doctor.summary.attention === 0;
+        }
+        if (doctorApproved) {
           const result = equinoxLocalInstallation.kind === "managed-source"
             ? await pruneVerifiedMainLargeStorage({
                 installation: equinoxLocalInstallation, platform,
@@ -3427,14 +3438,15 @@ async function start({ transport = new StdioServerTransport() } = {}) {
               });
           complete = result.pending.length === 0;
         }
-      } catch (error) {
-        // Actual target/runtime admission is inside the pruner: unsafe state
-        // never deletes anything. Keep the product healthy for a later retry.
-        if (attempts === 8) {
-          console.error("[Equinox Local] Safe obsolete Main storage cleanup remains pending.");
-        }
+      } catch {
+        // Pruners fail closed on active handoffs, changed native/source
+        // identity, unauthorized paths and locked files. Never force-delete.
       }
-      if (!complete && attempts < 8) setTimeout(() => { void tryCleanup(); }, 45_000).unref?.();
+      if (!complete && attempts < maxCleanupAttempts) {
+        setTimeout(() => { void tryCleanup(); }, 45_000).unref?.();
+      } else if (!complete) {
+        console.error("[Equinox Local] Safe obsolete Main storage cleanup remains pending until next runtime startup.");
+      }
     };
     setTimeout(() => { void tryCleanup(); }, 12_000).unref?.();
   }
