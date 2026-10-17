@@ -71,6 +71,10 @@ async function main() {
   assert.match(ownedRelease.version, /^\d+\.\d+\.\d+$/u);
   const nativeNode = path.join(installRoot, "releases", ownedRelease.version, "runtime", "node", "bin", "node.exe");
   assert.equal((await fs.stat(nativeNode)).isFile(), true, "owned native release Node is missing");
+  // The old A runtime uses its numbered release, but after promotion B runs
+  // the freshly installed native-store Node. The crash fixture must select
+  // only that B executable; targeting A cannot exercise rollback at all.
+  const targetNativeNode = path.join(transactionRoot, "native-store", target, b, "release", "runtime", "node", "bin", "node.exe");
   let watchdog = null;
   let fault = null;
   assert.equal((await pointer()).sha, a, "installed pinned A pointer must match actual admitted A");
@@ -101,7 +105,7 @@ async function main() {
       };
       const watchdogScript = path.join(import.meta.dirname, "smoke-main-upgrade-windows-fault.ps1");
       watchdog = spawn("powershell.exe", ["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", watchdogScript,
-        "-PointerPath", pointerPath, "-TargetSha", b, "-OwnedNodePath", nativeNode,
+        "-PointerPath", pointerPath, "-TargetSha", b, "-OwnedNodePath", targetNativeNode,
         "-MarkerPath", args.marker, "-ReadyPath", args.ready, "-StopPath", args.stop],
       { cwd: directory, windowsHide: true, stdio: "ignore" });
       fault = { directory, ...args };
