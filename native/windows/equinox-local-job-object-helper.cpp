@@ -40,7 +40,7 @@ int InspectWorkerProcess() {
     std::cout << "unknown";
     return 0;
   }
-  if (parsedPid == 0 || parsedPid > std::numeric_limits<DWORD>::max()) {
+  if (parsedPid == 0 || parsedPid > (std::numeric_limits<DWORD>::max)()) {
     std::cout << "unknown";
     return 0;
   }
@@ -61,7 +61,7 @@ int InspectWorkerProcess() {
   }
   executable.resize(pathChars);
   const uint64_t fileTicks = (static_cast<uint64_t>(creation.dwHighDateTime) << 32) | creation.dwLowDateTime;
-  if (fileTicks > std::numeric_limits<uint64_t>::max() - kWindowsFileTimeToDotNetTicks ||
+  if (fileTicks > (std::numeric_limits<uint64_t>::max)() - kWindowsFileTimeToDotNetTicks ||
       std::to_wstring(fileTicks + kWindowsFileTimeToDotNetTicks) != ticks ||
       CompareStringOrdinal(executable.data(), static_cast<int>(executable.size()),
                            expectedNode.data(), static_cast<int>(expectedNode.size()), TRUE) != CSTR_EQUAL) {
