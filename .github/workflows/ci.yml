@@ -247,11 +247,6 @@ jobs:
           $loader = Get-ChildItem $publish -Filter WebView2Loader.dll -Recurse | Select-Object -First 1
           if ($null -eq $loader) { throw 'Published shell is missing WebView2Loader.dll' }
 
-      - name: Windows native Control Center delayed-loopback startup smoke
-        shell: pwsh
-        run: |
-          ./tests/release/windows-control-center-first-open-smoke.ps1 -ShellPath (Join-Path $PWD 'artifacts/windows-shell/win-x64/EquinoxLocal.exe') -NodePath (Get-Command node).Source
-
       - name: Windows native shell branding smoke
         shell: pwsh
         run: |
@@ -302,6 +297,13 @@ jobs:
 
       - name: Windows native shell presentation smoke
         run: dotnet run --project tests/windows/EquinoxLocal.WindowsShell.PresentationHarness/EquinoxLocal.WindowsShell.PresentationHarness.csproj --configuration Release
+
+      # Run the real WPF WebView2 first-open check AFTER all fresh-install
+      # harnesses: WebView2 correctly creates its user-local browser cache.
+      - name: Windows native Control Center delayed-loopback startup smoke
+        shell: pwsh
+        run: |
+          ./tests/release/windows-control-center-first-open-smoke.ps1 -ShellPath (Join-Path $PWD 'artifacts/windows-shell/win-x64/EquinoxLocal.exe') -NodePath (Get-Command node).Source
 
   windows-package:
     name: Windows x64 managed package
