@@ -124,6 +124,41 @@ test("Windows Main rollback snapshot is a verified local previous-release shell 
   assert.deepEqual(await snapshotWindowsStableShellTree(programRoot), before);
 });
 
+test("Windows native rollback restores exact executable bytes when A WPF created legacy runtime cache", async (t) => {
+  const raw = await fs.mkdtemp(path.join(os.tmpdir(), "equinox-main-win-cache-rollback-"));
+  const temp = await fs.realpath(raw);
+  t.after(() => fs.rm(temp, { recursive: true, force: true }));
+  const programRoot = path.join(temp, "program");
+  const newRelease = path.join(temp, "new-release");
+  const snapshotReleaseDir = path.join(temp, "staging", "native-rollback", "release");
+  const oldRelease = path.join(temp, "old-release");
+  await writeShellRelease(oldRelease, "old");
+  await writeShellRelease(newRelease, "new");
+  await fs.cp(path.join(oldRelease, "runtime", "shell"), programRoot, { recursive: true });
+  // These runtime caches belong to the running WPF process, not the signed
+  // source release. They may appear at any time after A starts.
+  const webview = path.join(programRoot, "EquinoxLocal.exe.WebView2", "EBWebView");
+  const winrt = path.join(programRoot, "%SystemDrive%", "ProgramData");
+  await fs.mkdir(webview, { recursive: true });
+  await fs.mkdir(winrt, { recursive: true });
+  await fs.writeFile(path.join(webview, "Local State"), "ephemeral-cache");
+  await fs.writeFile(path.join(winrt, "cache.bin"), "ephemeral-cache");
+  const expected = await snapshotWindowsStableShellTree(path.join(oldRelease, "runtime", "shell"));
+  await snapshotWindowsStableShellForRollback({ programRoot, snapshotReleaseDir });
+  await replaceWindowsStableShellForRelease({
+    releaseDir: newRelease, previousReleaseDir: oldRelease, programRoot,
+    requestShutdownImpl: async () => {}, sleepImpl: async () => {},
+  });
+  await restoreWindowsStableShellRollbackSnapshot({
+    snapshotReleaseDir, currentReleaseDir: newRelease, programRoot,
+    requestShutdownImpl: async () => {}, sleepImpl: async () => {},
+  });
+  assert.deepEqual(await snapshotWindowsStableShellTree(programRoot, { ignoreLegacyCache: true }), expected);
+  // Preserve application binaries, not disposable per-process runtime cache.
+  await assert.rejects(fs.access(path.join(programRoot, "EquinoxLocal.exe.WebView2")), { code: "ENOENT" });
+  await assert.rejects(fs.access(path.join(programRoot, "%SystemDrive%")), { code: "ENOENT" });
+});
+
 test("Windows Main rollback refuses a rollback snapshot modified after capture", async (t) => {
   const raw = await fs.mkdtemp(path.join(os.tmpdir(), "equinox-main-win-tamper-"));
   const temp = await fs.realpath(raw);

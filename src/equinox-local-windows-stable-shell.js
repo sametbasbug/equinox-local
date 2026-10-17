@@ -120,7 +120,12 @@ export async function stageWindowsStableShellForRelease({ releaseDir, programRoo
 
 export async function snapshotWindowsStableShellForRollback({ programRoot, snapshotReleaseDir, fsImpl = fs } = {}) {
   if (typeof programRoot !== "string" || typeof snapshotReleaseDir !== "string") throw new Error("Windows stable shell snapshot paths are required.");
-  const sourceSnapshot = await snapshotWindowsStableShellTree(programRoot, { fsImpl });
+  // A running WPF can generate its two known legacy cache trees inside the
+  // program directory. These are not release bytes and must never be sealed
+  // into a rollback release: later live-shell verification intentionally
+  // excludes them. Validate their structure, but snapshot only the actual
+  // executable tree so every byte of the rollback remains fingerprinted.
+  const sourceSnapshot = await snapshotWindowsStableShellTree(programRoot, { fsImpl, ignoreLegacyCache: true });
   const snapshotRoot = path.join(snapshotReleaseDir, "runtime", "shell");
   try {
     await fsImpl.lstat(snapshotReleaseDir);
@@ -130,7 +135,10 @@ export async function snapshotWindowsStableShellForRollback({ programRoot, snaps
   }
   await fsImpl.mkdir(path.dirname(snapshotRoot), { recursive: true });
   try {
-    await fsImpl.cp(programRoot, snapshotRoot, { recursive: true, force: false, errorOnExist: true, dereference: false });
+    await fsImpl.cp(programRoot, snapshotRoot, {
+      recursive: true, force: false, errorOnExist: true, dereference: false,
+      filter: (source) => !LEGACY_WINDOWS_SHELL_RUNTIME_CACHE.has(path.relative(programRoot, source)),
+    });
     const copiedSnapshot = await snapshotWindowsStableShellTree(snapshotRoot, { fsImpl });
     if (!sameWindowsStableShellTree(sourceSnapshot, copiedSnapshot)) throw new Error("Windows stable shell rollback snapshot failed integrity verification.");
     const fingerprint = await fingerprintEquinoxLocalNativeState(snapshotRoot, { fsImpl });
