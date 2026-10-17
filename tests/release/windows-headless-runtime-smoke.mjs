@@ -811,7 +811,10 @@ try {
   assert.equal(doctor.doctor?.host?.target, WINDOWS_TARGET);
   assert.equal(doctor.doctor?.host?.platform, "win32");
   assert.equal(doctor.doctor?.managed, false);
-  assert.equal(doctor.doctor?.state, "HEALTHY");
+  // Headless source smoke has no packaged winapp native binary. Windows
+  // desktop is required, so Doctor must expose the absence as Attention.
+  assert.equal(doctor.doctor?.state, "ATTENTION");
+  assert.equal(doctor.doctor?.checks?.find((item) => item.id === "desktop")?.status, "attention");
 
   const tunnel = await verifyPinnedWindowsTunnelClient(root);
   const jobObject = await verifyWindowsJobObjectContainment(root);

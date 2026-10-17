@@ -1,4 +1,5 @@
 $ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'
 
 $gate = [Console]::In.ReadLine()
 if ($gate -ne 'EQUINOX_GO') {
@@ -79,8 +80,8 @@ try {
         $stdoutTask = $child.StandardOutput.BaseStream.CopyToAsync([Console]::OpenStandardOutput())
         $stderrTask = $child.StandardError.BaseStream.CopyToAsync([Console]::OpenStandardError())
         $child.WaitForExit()
-        $stdoutTask.GetAwaiter().GetResult()
-        $stderrTask.GetAwaiter().GetResult()
+        [void]$stdoutTask.GetAwaiter().GetResult()
+        [void]$stderrTask.GetAwaiter().GetResult()
         exit [int]$child.ExitCode
     } finally {
         $child.Dispose()

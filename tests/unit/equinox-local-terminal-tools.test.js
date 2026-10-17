@@ -235,7 +235,7 @@ test("terminal tools route Windows finite and interactive shells through the sha
   const processStart = harness.calls.find(([name]) => name === "processStart");
   assert.equal(processStart[1].command, equinoxLocalWindowsPowerShellPath({SystemRoot: "C:\\Windows"}));
   assert.deepEqual(processStart[1].args.slice(0, 6), ["-NoLogo", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-EncodedCommand"]);
-  assert.equal(Buffer.from(processStart[1].args[6], "base64").toString("utf16le"), "Write-Output ok");
+  assert.equal(Buffer.from(processStart[1].args[6], "base64").toString("utf16le"), "$ProgressPreference = 'SilentlyContinue'; Write-Output ok");
   assert.equal(processStart[1].env.PATH, "C:\\Windows\\System32");
 
   const start = harness.registrations.get("terminal_start");

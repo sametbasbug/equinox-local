@@ -54,7 +54,7 @@ export function equinoxLocalHostDescriptor({ platform = process.platform, arch =
     executableSuffix: windows ? ".exe" : "",
     features: Object.freeze({
       nativeShell: true,
-      nativeDesktopAutomation: platform === "darwin",
+      nativeDesktopAutomation: true,
       launchAgent: platform === "darwin",
       windowsUserLifecycle: windows,
       unixDomainSocket: platform === "darwin",
@@ -161,7 +161,9 @@ export function equinoxLocalFiniteShell({ platform = process.platform, arch = pr
       // A nested PowerShell process is launched through an owned-process gate.
       // UTF-16LE encoding avoids Windows PowerShell 5.1 command-line quoting
       // ambiguity and keeps an unrequested console window off the desktop.
-      const encoded = Buffer.from(command, "utf16le").toString("base64");
+      // WinPS writes serialized CLIXML progress to stderr when commands
+      // auto-load modules, even for successful noninteractive execution.
+      const encoded = Buffer.from(`$ProgressPreference = 'SilentlyContinue'; ${command}`, "utf16le").toString("base64");
       return ["-NoLogo", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-EncodedCommand", encoded];
     },
     pathPrefix: "",

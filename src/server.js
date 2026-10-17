@@ -2762,7 +2762,7 @@ async function getControlCenterPeekabooStatus() {
         needsAttention: false, version: status.version, reconnectCount: 0 });
     } catch {
       return Object.freeze({ engine: "winapp", available: false, active: false, ready: false,
-        needsAttention: false, version: null, reconnectCount: 0 });
+        needsAttention: true, version: null, reconnectCount: 0 });
     }
   }
   try {

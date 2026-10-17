@@ -48,7 +48,7 @@ test("release matrix is the canonical four-target native provenance contract", (
   assert.throws(() => equinoxLocalReleaseArtifactName("next", "darwin-arm64"), /version is invalid/u);
 });
 
-test("host descriptor exposes platform semantics without claiming Windows desktop automation", () => {
+test("host descriptor exposes native desktop support for both Windows and macOS", () => {
   const mac = equinoxLocalHostDescriptor({ platform: "darwin", arch: "arm64" });
   assert.equal(mac.target, "darwin-arm64");
   assert.equal(mac.pathFlavor, "posix");
@@ -61,7 +61,7 @@ test("host descriptor exposes platform semantics without claiming Windows deskto
   assert.equal(windows.target, "win32-x64");
   assert.equal(windows.pathFlavor, "win32");
   assert.equal(windows.executableSuffix, ".exe");
-  assert.equal(windows.features.nativeDesktopAutomation, false);
+  assert.equal(windows.features.nativeDesktopAutomation, true);
   assert.equal(windows.features.unixDomainSocket, false);
   assert.equal(windows.features.namedPipe, true);
   assert.equal(windows.features.nativeMessagingRegistry, true);
@@ -135,7 +135,7 @@ test("platform lifecycle and shell contracts enable both native Windows architec
   assert.equal(windowsFinite.command, equinoxLocalWindowsPowerShellPath());
   const finiteArgs = windowsFinite.argsFor("Write-Output ok; exit 17");
   assert.deepEqual(finiteArgs.slice(0, 6), ["-NoLogo", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-EncodedCommand"]);
-  assert.equal(Buffer.from(finiteArgs[6], "base64").toString("utf16le"), "Write-Output ok; exit 17");
+  assert.equal(Buffer.from(finiteArgs[6], "base64").toString("utf16le"), "$ProgressPreference = 'SilentlyContinue'; Write-Output ok; exit 17");
   assert.equal(windowsFinite.pathDelimiter, ";");
 
   const windowsInteractive = equinoxLocalInteractiveShells({ platform: "win32", arch: "arm64" });
