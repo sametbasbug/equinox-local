@@ -375,6 +375,70 @@ test("Windows Doctor verifies active Main native store rather than stale Stable 
   } finally { await fs.rm(temp, { recursive: true, force: true }); }
 });
 
+test("managed Main Doctor authenticates current source and native store even after Stable A was reclaimed", async () => {
+  const temp = await fs.mkdtemp(path.join(os.tmpdir(), "equinox-doctor-main-release-"));
+  try {
+    const installRoot = "C:\\Users\\Example\\AppData\\Local\\Equinox Local";
+    const transactionRoot = path.win32.join(installRoot, "state", "main-update");
+    const legacyDir = path.win32.join(installRoot, "releases", "6.1.0");
+    const sha = "b".repeat(40);
+    const sourceRoot = path.win32.join(transactionRoot, "sources", sha);
+    const nativeRelease = path.win32.join(transactionRoot, "native-store", "win32-x64", sha, "release");
+    const shellRoot = "C:\\Users\\Example\\AppData\\Local\\Programs\\Equinox Local";
+    const pointer = path.win32.join(transactionRoot, "current-native.json");
+    let nativeReads = 0;
+    const options = {
+      installation: {
+        kind: "managed-source", managed: true, selfUpdateSupported: true,
+        lifecycleKind: "windows-user", installRoot, releaseDir: nativeRelease,
+        releasesRoot: path.win32.join(installRoot, "releases"),
+        programRoot: shellRoot, nativeMessagingManifestRoot: path.win32.join(installRoot, "browser", "native-messaging"),
+        sourceRoot, sourceSha: sha, mainNativeSha: sha, mainTransactionRoot: transactionRoot,
+        gitPath: path.win32.join(installRoot, "runtime", "git.exe"),
+      },
+      config: { version: 1, runtime: { workspaceProject: "workspace" }, projects: { workspace: { root: temp } } },
+      runtimeHealthState: "HEALTHY", runtimeVersion: "6.1.2",
+      host: { platform: "win32", arch: "x64", target: "win32-x64", displayName: "Windows" },
+      browser: { contexts: { user: { ready: false }, agent: { ready: true, consentAccepted: true, controlEnabled: true } }, agentBrowser: { setupComplete: true } },
+      update: { selfUpdateSupported: true, configured: true }, onboarding: { connectedThroughTunnel: true },
+      runtimeEnv: { SystemRoot: "C:\\Windows" },
+      fsImpl: { ...fs, lstat: async (candidate) => candidate === pointer ? { isFile: () => true } : fs.lstat(candidate) },
+      readCurrentReleaseImpl: async () => { throw new Error("Stable 6.1.0 was already reclaimed"); },
+      readMainSourcePointerImpl: async (file, options) => {
+        assert.equal(file, path.win32.join(transactionRoot, "current-source.conf"));
+        assert.equal(options.gitPath, path.win32.join(installRoot, "runtime", "git.exe"));
+        return { sha, sourceRoot };
+      },
+      readMainNativePointerImpl: async (file, opts) => {
+        nativeReads++;
+        assert.equal(file, pointer);
+        assert.equal(opts.transactionRoot, transactionRoot);
+        return { sourceSha: sha, target: "win32-x64", releaseDir: nativeRelease, payloadVersion: "6.1.2" };
+      },
+      assertWindowsStableShellImpl: async ({ releaseDir }) => assert.equal(releaseDir, nativeRelease),
+      assertWindowsNativeHostImpl: async ({ acceptedLauncherPaths }) =>
+        assert.deepEqual(acceptedLauncherPaths, [path.win32.join(nativeRelease, "runtime", "browser", "equinox-browser-native-host.exe")]),
+      readWindowsStartupImpl: async () => ({ enabled: false }),
+    };
+    const good = await getEquinoxLocalDoctorStatus(options);
+    assert.equal(good.checks.find((item) => item.id === "release")?.status, "pass");
+    assert.match(good.checks.find((item) => item.id === "release")?.detail ?? "", /Main b{12} and native 6\.1\.2/u);
+    assert.equal(good.checks.find((item) => item.id === "windows-shell")?.status, "pass");
+    assert.equal(good.checks.find((item) => item.id === "native-host")?.status, "pass");
+    assert.equal(nativeReads, 1, "The expensive native fingerprint must be reused for Doctor ownership.");
+    const badSource = await getEquinoxLocalDoctorStatus({ ...options,
+      readMainSourcePointerImpl: async () => ({ sha: "a".repeat(40), sourceRoot }),
+    });
+    assert.equal(badSource.checks.find((item) => item.id === "release")?.status, "attention");
+    const badNative = await getEquinoxLocalDoctorStatus({ ...options,
+      readMainNativePointerImpl: async () => { throw new Error("fingerprint mismatch"); },
+    });
+    assert.equal(badNative.checks.find((item) => item.id === "release")?.status, "attention");
+    assert.equal(badNative.checks.find((item) => item.id === "windows-shell")?.status, "attention");
+    assert.equal(badNative.checks.find((item) => item.id === "native-host")?.status, "attention");
+  } finally { await fs.rm(temp, { recursive: true, force: true }); }
+});
+
 test("managed Windows Doctor fails closed on foreign lifecycle ownership without exposing local paths", async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "equinox-doctor-windows-foreign-"));
   try {
