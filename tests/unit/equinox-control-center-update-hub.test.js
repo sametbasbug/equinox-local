@@ -42,3 +42,14 @@ test("Main update dialog shows only admitted snapshot identity, not docs-only Gi
   assert.equal(js.includes('${entry.message || "Commit"}'), false);
   assert.match(html, /Admitted Main update/u);
 });
+
+test("Control Center avoids expensive Doctor fingerprints and hidden-page redraws on hot polls", () => {
+  assert.match(js, /AUTO_REFRESH_DOCTOR_MS = 5 \* 60_000/u);
+  assert.match(js, /state\.activeSection === "dashboard"\s*&& Date\.now\(\) - state\.lastDoctorAutoRefreshAt >= AUTO_REFRESH_DOCTOR_MS/u);
+  assert.match(js, /doctorDue \? requestJson\("\/api\/v1\/doctor"/u);
+  assert.match(js, /doctorDue \? requestJson\("\/api\/v1\/doctor\/repairs"/u);
+  assert.match(js, /if \(state\.activeSection === "tasks"\) renderTasks\(\)/u);
+  assert.match(js, /if \(state\.activeSection === "activity"\) renderActivity\(\)/u);
+  assert.match(js, /if \(state\.activeSection === "browser"\) renderBrowserPage\(\)/u);
+  assert.match(js, /if \(section === "tasks"\) renderTasks\(\)/u);
+});

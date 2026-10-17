@@ -165,7 +165,7 @@ switch ($Mode) {
     Start-Sleep -Milliseconds 150
     Write-Json ([pscustomobject]@{ ok = $true; action = 'close'; window = (Format-Hwnd $handle); closed = (-not [EquinoxDesktopWin32]::IsWindow($handle)) })
   }
-  'WindowMinimize' { $handle = Resolve-WindowHandle; [void][EquinoxDesktopWin32]::ShowWindowAsync($handle, 6); Start-Sleep -Milliseconds 100; Write-Json ([pscustomobject]@{ ok = $true; action = 'minimize'; window = (Format-Hwnd $handle); minimized = [EquinoxDesktopWin32]::IsIconic($handle) }) }
+  'WindowMinimize' { $handle = Resolve-WindowHandle; [void][EquinoxDesktopWin32]::ShowWindowAsync($handle, 6); for ($i = 0; $i -lt 10 -and -not [EquinoxDesktopWin32]::IsIconic($handle); $i++) { Start-Sleep -Milliseconds 100 }; Write-Json ([pscustomobject]@{ ok = $true; action = 'minimize'; window = (Format-Hwnd $handle); minimized = [EquinoxDesktopWin32]::IsIconic($handle) }) }
   'WindowRestore' { $handle = Resolve-WindowHandle; [void][EquinoxDesktopWin32]::ShowWindowAsync($handle, 9); Start-Sleep -Milliseconds 100; Write-Json ([pscustomobject]@{ ok = $true; action = 'restore'; window = (Format-Hwnd $handle); minimized = [EquinoxDesktopWin32]::IsIconic($handle); maximized = [EquinoxDesktopWin32]::IsZoomed($handle) }) }
   'WindowMaximize' { $handle = Resolve-WindowHandle; [void][EquinoxDesktopWin32]::ShowWindowAsync($handle, 3); Start-Sleep -Milliseconds 100; Write-Json ([pscustomobject]@{ ok = $true; action = 'maximize'; window = (Format-Hwnd $handle); maximized = [EquinoxDesktopWin32]::IsZoomed($handle) }) }
   'WindowMove' {

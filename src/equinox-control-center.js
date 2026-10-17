@@ -198,10 +198,12 @@ const state = {
   autoRefreshMediumBusy: false,
   autoRefreshSlowBusy: false,
   lastAutoRefreshAt: 0,
+  lastDoctorAutoRefreshAt: 0,
 };
 
 const AUTO_REFRESH_LIVE_MS = 3_000;
 const AUTO_REFRESH_MEDIUM_MS = 60_000;
+const AUTO_REFRESH_DOCTOR_MS = 5 * 60_000;
 const AUTO_REFRESH_SLOW_MS = 60_000;
 const AUTO_REFRESH_FOCUS_DEBOUNCE_MS = 750;
 
@@ -504,6 +506,16 @@ function switchSection(section, { remember = false } = {}) {
   setText("section-title", title);
   if (changed) {
     $("main-content").scrollIntoView({ block: "start", behavior: "instant" });
+    if (state.config) {
+      // Hidden sections hold cached data. Render them when the user returns,
+      // rather than continuously recreating their DOM during live polling.
+      if (section === "tasks") renderTasks();
+      else if (section === "activity") renderActivity();
+      else if (section === "browser") renderBrowserPage();
+      else if (section === "integrations") renderIntegrations();
+      else if (section === "dashboard") renderDoctor();
+      else if (section === "permissions") renderAgentControl();
+    }
   }
 }
 
@@ -2553,6 +2565,7 @@ async function refreshAll() {
     state.onboarding = onboarding.onboarding || null;
     state.doctor = doctor.doctor || null;
     state.doctorRepairs = doctorRepairs.repairs || null;
+    if (doctor.doctor) state.lastDoctorAutoRefreshAt = Date.now();
     if (peekaboo.peekaboo) {
       state.status = {
         ...(state.status || {}),
@@ -2628,13 +2641,12 @@ async function refreshLiveState() {
     if (tasks?.tasks) reconcileLiveTasks(tasks.tasks);
     if (onboarding?.onboarding) state.onboarding = onboarding.onboarding;
     renderDashboard();
-    renderOnboarding();
-    renderTasks();
-    renderActivity();
-    renderBrowserPage();
-    renderAgentControl();
+    if (state.activeSection === "setup" || state.activeSection === "dashboard") renderOnboarding();
+    if (state.activeSection === "tasks") renderTasks();
+    if (state.activeSection === "activity") renderActivity();
+    if (state.activeSection === "browser") renderBrowserPage();
+    renderAgentControl(); // Global emergency stop must never become stale.
     renderRuntimeRestartControl();
-    renderTurnBudget();
     state.lastRefreshedAt = new Date();
     renderLastRefreshed();
   } catch {
@@ -2648,9 +2660,15 @@ async function refreshMediumState() {
   if (!autoRefreshAllowed() || state.autoRefreshMediumBusy) return;
   state.autoRefreshMediumBusy = true;
   try {
+    // Doctor fingerprints signed release contents and can consume seconds of
+    // CPU on Windows. An initial/manual Refresh is always immediate; automatic
+    // background checks run at most every five minutes while Overview is open.
+    const doctorDue = state.activeSection === "dashboard"
+      && Date.now() - state.lastDoctorAutoRefreshAt >= AUTO_REFRESH_DOCTOR_MS;
+    if (doctorDue) state.lastDoctorAutoRefreshAt = Date.now();
     const [doctor, doctorRepairs, peekaboo, telegram, webFileTransfer, httpProfiles] = await Promise.all([
-      requestJson("/api/v1/doctor", { backgroundRefresh: true }).catch(() => null),
-      requestJson("/api/v1/doctor/repairs", { backgroundRefresh: true }).catch(() => null),
+      doctorDue ? requestJson("/api/v1/doctor", { backgroundRefresh: true }).catch(() => null) : Promise.resolve(null),
+      doctorDue ? requestJson("/api/v1/doctor/repairs", { backgroundRefresh: true }).catch(() => null) : Promise.resolve(null),
       requestJson("/api/v1/integrations/peekaboo", { backgroundRefresh: true }).catch(() => null),
       requestJson("/api/v1/integrations/telegram", { backgroundRefresh: true }).catch(() => null),
       requestJson("/api/v1/files/import-settings", { backgroundRefresh: true }).catch(() => null),
@@ -2664,10 +2682,10 @@ async function refreshMediumState() {
     if (telegram?.telegram) state.telegram = telegram.telegram;
     if (webFileTransfer?.webFileTransfer) state.webFileTransfer = webFileTransfer.webFileTransfer;
     if (httpProfiles?.httpProfiles && !state.httpProfileDraft) state.httpProfiles = httpProfiles.httpProfiles;
-    renderDoctor();
-    if (!state.httpProfileDraft) renderIntegrations();
-    renderBrowserPage();
-    renderDashboard();
+    if (doctorDue) renderDoctor();
+    if (state.activeSection === "integrations" && !state.httpProfileDraft) renderIntegrations();
+    if (state.activeSection === "browser") renderBrowserPage();
+    if (state.activeSection === "dashboard") renderDashboard();
   } catch {
     // Best-effort background refresh; do not interrupt the user for transient failures.
   } finally {
