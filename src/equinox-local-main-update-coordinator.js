@@ -55,7 +55,16 @@ export async function prepareAndScheduleEquinoxLocalMainUpdate({
     throw error;
   }
 
-  const prepared = await engine.preparePromotion(transactionId);
+  // A failure before promotion must release the staged single-flight lock.
+  // Otherwise a missing tool or interrupted Git check leaves Windows stuck in
+  // staged forever and blocks every subsequent Update & restart attempt.
+  let prepared;
+  try {
+    prepared = await engine.preparePromotion(transactionId);
+  } catch (error) {
+    await engine.abortStagedPreparation(transactionId, errorMessage(error)).catch(() => {});
+    throw error;
+  }
   const workerPath = path.join(prepared.targetSourceRoot, "src", "equinox-local-main-update-worker.js");
   try {
     const handoff = await scheduleWorker({
