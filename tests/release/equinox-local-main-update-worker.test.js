@@ -85,7 +85,11 @@ test("Windows native worker handoff supplies exact candidate and rollback releas
     argv: argv(), engineFactory: () => engine, resolveHostTarget: () => "win32-x64",
     planNativeTransition: async () => transition,
     resolveNativeInstallation: async () => ({ managed: true, selfUpdateSupported: true, target: "win32-x64" }),
-    admitWindowsNativeWorker: async () => ({ admitted: true, journal }),
+    admitWindowsNativeWorker: async ({ nativeHelperPath }) => {
+      assert.equal(nativeHelperPath, path.win32.join(targetRelease, 'runtime', 'job', 'equinox-local-job-object-helper.exe'));
+      return { admitted: true, journal };
+    },
+    inspectStoredNativeRelease: async () => ({ releaseDir: targetRelease }),
     recoverNativeLifecycle: async () => nativeLifecycle,
     restartRuntimeImpl: async (v) => events.push(v),
     handoffImpl: async ({ restartRuntime }) => {
@@ -116,10 +120,11 @@ test("Windows detached owner installs a fresh native release without a second Gu
     resolveNativeInstallation: async () => ({ managed: true, selfUpdateSupported: true, target: "win32-x64" }),
     admitWindowsNativeWorker: async (options) => {
       events.push(["owner", options.ownerOnly]);
+      assert.equal(options.nativeHelperPath, path.win32.join('C:\\native-candidate', 'release', 'runtime', 'job', 'equinox-local-job-object-helper.exe'));
       return { admitted: true, ownerOnly: true };
     },
     ensureNativeArtifact: async () => { events.push(["native-download", B]); },
-    prepareNativeCandidate: async () => ({ sourceSha: B, target: "win32-x64" }),
+    prepareNativeCandidate: async () => ({ sourceSha: B, target: "win32-x64", releaseDir: String.raw`C:\native-candidate\release` }),
     prepareNativeLifecycle: async (options) => {
       assert.equal(options.windowsAdmission, null);
       events.push(["fresh-native", options.candidate.sourceSha]);
@@ -133,7 +138,7 @@ test("Windows detached owner installs a fresh native release without a second Gu
     cleanupImpl: async () => events.push(["cleanup"]),
   });
   assert.equal(result.status, "succeeded");
-  assert.deepEqual(events, [["owner", true], ["native-download", B], ["fresh-native", B], ["handoff"], ["cleanup"]]);
+  assert.deepEqual(events, [["native-download", B], ["owner", true], ["fresh-native", B], ["handoff"], ["cleanup"]]);
 });
 
 test("target-owned detached worker stages a full native package when older A omitted it", async () => {
@@ -156,7 +161,7 @@ test("target-owned detached worker stages a full native package when older A omi
   assert.deepEqual(events, [["stage", B, DIGEST_A], ["candidate"], ["handoff"]]);
 });
 
-test("Windows clean replacement refuses missing detached worker ownership before filesystem mutation", async () => {
+test("Windows clean replacement refuses missing detached worker ownership before native activation", async () => {
   const receipt = preparedReceipt();
   const calls = [];
   const transition = { mode: "artifact_required", target: "win32-x64", currentSha: A, targetSha: B,
@@ -168,7 +173,9 @@ test("Windows clean replacement refuses missing detached worker ownership before
     planNativeTransition: async () => transition,
     resolveNativeInstallation: async () => ({ managed: true, selfUpdateSupported: true, target: "win32-x64" }),
     admitWindowsNativeWorker: async () => ({ admitted: false }),
-    prepareNativeCandidate: async () => assert.fail("owner rejected before native staging"),
+    ensureNativeArtifact: async () => {},
+    prepareNativeCandidate: async () => ({ sourceSha: B, releaseDir: String.raw`C:\native-candidate\release` }),
+    prepareNativeLifecycle: async () => assert.fail("unverified owner must not replace a native release"),
     cleanupImpl: async () => calls.push("cleanup"),
   }), /no verified detached WPF owner/u);
   assert.deepEqual(calls, ["abort", "cleanup"]);

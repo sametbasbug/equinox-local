@@ -17,6 +17,7 @@ import { readBoundedNormalFile } from "./equinox-local-safe-file.js";
 import { createEquinoxLocalMainUpdateTransactionEngine } from "./equinox-local-main-update-transaction.js";
 import { runEquinoxLocalMainUpdateHandoff } from "./equinox-local-main-update-handoff.js";
 import { readEquinoxLocalMainSourcePointer } from "./equinox-local-main-source-pointer.js";
+import { inspectEquinoxLocalMainNativeStoredRelease } from "./equinox-local-main-native-state.js";
 import { inspectCanonicalMainCheckout } from "./equinox-local-main-update.js";
 import { EQUINOX_LOCAL_CONTROL_CENTER_STATUS_URL } from "./equinox-local-update-activation.js";
 import { requestWindowsShellRuntimeRestart } from "./equinox-local-windows-shell-control.js";
@@ -201,6 +202,7 @@ export async function runEquinoxLocalMainUpdateWorker({
   planNativeTransition = planEquinoxLocalMainNativeTransition,
   ensureNativeArtifact = ensureFreshTargetNativeArtifact,
   prepareNativeCandidate = prepareEquinoxLocalMainNativeCandidate,
+  inspectStoredNativeRelease = inspectEquinoxLocalMainNativeStoredRelease,
   prepareNativeLifecycle = prepareEquinoxLocalMainNativeLifecycle,
   recoverNativeLifecycle = recoverEquinoxLocalMainNativeLifecycle,
   admitWindowsNativeWorker = admitWindowsMainNativeWorkerJournal,
@@ -265,22 +267,16 @@ export async function runEquinoxLocalMainUpdateWorker({
         // Install every native candidate from a fresh immutable payload and
         // use the existing one-shot snapshot/rollback: no second Guardian.
 
-        const windowsAdmission = hostTarget.startsWith("win32-")
-          ? await admitWindowsNativeWorker({
-            receipt: active, transition: nativeTransition, installation,
-            transactionRoot: args.transactionRoot, engine,
-            fsImpl, execFileImpl, workerToken: env.EQUINOX_LOCAL_MAIN_WORKER_TOKEN,
-            ownerOnly: true,
-          })
-          : null;
-        if (windowsAdmission && windowsAdmission.admitted !== true) {
-          throw new Error("Windows update has no verified detached WPF owner.");
-        }
+        // Authenticate the B payload before running its product-owned Win32
+        // identity helper. Candidate extraction only touches private staging;
+        // no native activation, old-version deletion or rollback mutation is
+        // allowed until the real detached worker passes OS identity admission.
+        let candidate = null;
         if (initialStage === "ready_to_switch") {
           await ensureNativeArtifact({ transactionRoot: args.transactionRoot,
             transactionId: args.transactionId, targetSha: active.targetSha, target,
             expectedRuntimeContractSha256: nativeTransition.targetRuntimeContractSha256, fsImpl });
-          const candidate = await prepareNativeCandidate({
+          candidate = await prepareNativeCandidate({
             sourceSha: active.targetSha,
             target,
             expectedRuntimeContractSha256: nativeTransition.targetRuntimeContractSha256,
@@ -289,6 +285,28 @@ export async function runEquinoxLocalMainUpdateWorker({
             fsImpl,
             execFileImpl,
           });
+        }
+        const trustedNativeRelease = hostTarget.startsWith("win32-")
+          ? (candidate ?? await inspectStoredNativeRelease({
+            transactionRoot: args.transactionRoot, sourceSha: active.targetSha,
+            target, expectedRuntimeContractSha256: nativeTransition.targetRuntimeContractSha256, fsImpl,
+          }))
+          : null;
+        const nativeHelperPath = trustedNativeRelease
+          ? path.win32.join(trustedNativeRelease.releaseDir, "runtime", "job", "equinox-local-job-object-helper.exe")
+          : null;
+        const windowsAdmission = hostTarget.startsWith("win32-")
+          ? await admitWindowsNativeWorker({
+            receipt: active, transition: nativeTransition, installation,
+            transactionRoot: args.transactionRoot, engine,
+            fsImpl, execFileImpl, workerToken: env.EQUINOX_LOCAL_MAIN_WORKER_TOKEN,
+            nativeHelperPath, ownerOnly: true,
+          })
+          : null;
+        if (windowsAdmission && windowsAdmission.admitted !== true) {
+          throw new Error("Windows update has no verified detached WPF owner.");
+        }
+        if (initialStage === "ready_to_switch") {
           nativeLifecycle = await prepareNativeLifecycle({
             transition: nativeTransition,
             candidate,

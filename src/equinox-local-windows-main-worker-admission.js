@@ -25,6 +25,7 @@ export async function admitWindowsMainNativeWorkerJournal({
   receipt, transition, installation, transactionRoot, engine,
   workerToken = process.env.EQUINOX_LOCAL_MAIN_WORKER_TOKEN,
   workerPid = process.pid, workerNodePath = process.execPath,
+  nativeHelperPath = null,
   fsImpl = fs,
   execFileImpl,
   readWorkerImpl = readWindowsMainUpdateWorkerOwnership,
@@ -75,7 +76,10 @@ export async function admitWindowsMainNativeWorkerJournal({
       !timingSafeEqual(Buffer.from(ownership.token, 'hex'), Buffer.from(workerToken, 'hex'))) {
     throw new Error('Windows Main worker launch token/PID and owned handoff record do not agree.');
   }
-  const processIdentity = await inspectWorkerImpl(ownership, { execFileImpl });
+  if (typeof nativeHelperPath !== 'string' || !path.win32.isAbsolute(nativeHelperPath)) {
+    throw new Error('Windows native worker has no validated native identity helper.');
+  }
+  const processIdentity = await inspectWorkerImpl(ownership, { execFileImpl, nativeHelperPath });
   if (processIdentity?.running !== true || processIdentity?.stale || processIdentity?.uncertain) {
     throw new Error('Windows Main worker PID, OS creation timestamp or executable was not independently verified.');
   }

@@ -78,7 +78,7 @@ export async function readWindowsMainUpdateWorkerOwnership({ transactionId, tran
     throw error;
   }
 }
-export async function inspectWindowsMainUpdateWorkerProcess(ownership, { execFileImpl = execFile } = {}) {
+export async function inspectWindowsMainUpdateWorkerProcess(ownership, { execFileImpl = execFile, nativeHelperPath = null } = {}) {
   const parsed = parseWindowsMainUpdateWorkerOwnership(ownership);
   // The managed updater runs with a deliberately restricted PATH. The OS
   // worker birth/PID check must use the fixed Windows SystemRoot path.
@@ -93,8 +93,13 @@ export async function inspectWindowsMainUpdateWorkerProcess(ownership, { execFil
     "-EncodedCommand",
     Buffer.from(WINDOWS_PROCESS_IDENTITY_SCRIPT, "utf16le").toString("base64"),
   ];
+  // Only a validated B release may supply this native helper path. Worker
+  // admission uses direct Win32 process identity APIs, not a cold PowerShell
+  // child that can stall under the detached WPF handoff environment.
+  const useNative = nativeHelperPath !== null;
+  if (useNative) assertAbsolute(nativeHelperPath, "Windows native identity helper", "win32");
   const options = {
-    timeout: 15_000, maxBuffer: 4 * 1024, windowsHide: true,
+    timeout: useNative ? 5_000 : 15_000, maxBuffer: 4 * 1024, windowsHide: true,
     // All untrusted identity values stay in validated environment fields;
     // never interpolate a PID, tick count or executable path into script.
     env: {
@@ -107,7 +112,9 @@ export async function inspectWindowsMainUpdateWorkerProcess(ownership, { execFil
   let result;
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
-      result = await execFileImpl(equinoxLocalWindowsPowerShellPath(), args, options);
+      result = await execFileImpl(
+        useNative ? nativeHelperPath : equinoxLocalWindowsPowerShellPath(),
+        useNative ? ["--inspect-process"] : args, options);
       break;
     } catch (error) {
       // The native acceptance runners start a cold Windows PowerShell 5.1
@@ -116,7 +123,7 @@ export async function inspectWindowsMainUpdateWorkerProcess(ownership, { execFil
       // or uncertain process as an authenticated worker. Strip raw command
       // text (which includes EncodedCommand and executable paths) from the
       // durable failure receipt.
-      if (attempt === 0 && (error?.code === "ETIMEDOUT" || error?.killed === true)) continue;
+      if (!useNative && attempt === 0 && (error?.code === "ETIMEDOUT" || error?.killed === true)) continue;
       const status = Number.isInteger(error?.code) ? String(error.code) :
         (error?.code === "ETIMEDOUT" ? "timeout" : "spawn");
       const signal = typeof error?.signal === "string" && /^[A-Z0-9]+$/u.test(error.signal)

@@ -134,6 +134,29 @@ test("Windows worker process inspection distinguishes exact identity, PID reuse 
   assert.equal(calls[0].options.env.EQUINOX_LOCAL_CHECK_WORKER_TICKS, ownership.startTimeUtcTicks);
   assert.equal(calls[0].options.env.EQUINOX_LOCAL_CHECK_WORKER_NODE, ownership.nodePath);
 
+  const native = await inspectWindowsMainUpdateWorkerProcess(ownership, {
+    nativeHelperPath: String.raw`C:\native-candidate\release\runtime\job\equinox-local-job-object-helper.exe`,
+    execFileImpl: async (command, args, options) => {
+      assert.match(command, /equinox-local-job-object-helper\.exe$/u);
+      assert.deepEqual(args, ["--inspect-process"]);
+      assert.equal(options.timeout, 5000);
+      assert.equal(options.windowsHide, true);
+      assert.equal(options.env.EQUINOX_LOCAL_CHECK_WORKER_NODE, ownership.nodePath);
+      assert.equal(options.env.EQUINOX_LOCAL_CHECK_WORKER_TICKS, ownership.startTimeUtcTicks);
+      return { stdout: "running" };
+    },
+  });
+  assert.deepEqual(native, { running: true, stale: false, uncertain: false });
+  let nativeCalls = 0;
+  await assert.rejects(inspectWindowsMainUpdateWorkerProcess(ownership, {
+    nativeHelperPath: String.raw`C:\native-candidate\release\runtime\job\equinox-local-job-object-helper.exe`,
+    execFileImpl: async () => {
+      nativeCalls++;
+      throw Object.assign(new Error("native timeout"), { code: "ETIMEDOUT", killed: true });
+    },
+  }), /inspection failed/u);
+  assert.equal(nativeCalls, 1, "native helper timeout must fail closed without a retry");
+
   const reused = await inspectWindowsMainUpdateWorkerProcess(ownership, {
     execFileImpl: async () => ({ stdout: "mismatch" }),
   });

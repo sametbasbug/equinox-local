@@ -13,6 +13,8 @@ import { snapshotWindowsStableShellTree, sameWindowsStableShellTree } from '../.
 
 import { createSupervisorBoundWindowsNativeABLifecycle } from '../../src/equinox-local-windows-native-ab-supervisor-bound.js';
 import { admitWindowsMainNativeWorkerJournal } from '../../src/equinox-local-windows-main-worker-admission.js';
+import { inspectWindowsMainUpdateWorkerProcess } from '../../src/equinox-local-main-update-scheduler.js';
+import { compareEquinoxVersions } from '../../src/equinox-local-updater.js';
 import { createEquinoxLocalWindowsNativeTransitionJournal } from '../../src/equinox-local-windows-native-transition-journal.js';
 import { execFile as execFileCallback } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -167,11 +169,30 @@ try {
     currentSha, targetSha, startedAt: started };
   const nativeTransition = { mode: 'artifact_required', target, currentSha, targetSha,
     currentRuntimeContractSha256: 'a'.repeat(64), targetRuntimeContractSha256: contract };
+  const installedRelease = JSON.parse(await fs.readFile(path.join(releaseDir, 'release.json'), 'utf8'));
+  const hasNativeInspector = compareEquinoxVersions(installedRelease.version, '6.1.2') >= 0;
+  const nativeHelperPath = path.join(releaseDir, 'runtime', 'job', 'equinox-local-job-object-helper.exe');
+  // Historic signed A cannot have a future native inspector. Its isolated
+  // fixture retains the old PowerShell probe; the new B candidate must use
+  // the compiled native verifier through the real admission path.
+  const oldInspector = hasNativeInspector ? {} : {
+    inspectWorkerImpl: (ownership) => inspectWindowsMainUpdateWorkerProcess(ownership),
+  };
+  if (hasNativeInspector) {
+    assert.equal((await inspectWindowsMainUpdateWorkerProcess(owner, { nativeHelperPath })).running, true);
+    assert.equal((await inspectWindowsMainUpdateWorkerProcess({ ...owner,
+      startTimeUtcTicks: (BigInt(ticks) + 1n).toString() }, { nativeHelperPath })).stale, true);
+    assert.equal((await inspectWindowsMainUpdateWorkerProcess({ ...owner,
+      nodePath: path.join(releaseDir, 'foreign-node.exe') }, { nativeHelperPath })).stale, true);
+    assert.equal((await inspectWindowsMainUpdateWorkerProcess({ ...owner,
+      pid: 2147483647 }, { nativeHelperPath })).stale, true);
+    console.log(`Windows ${target} direct native API PID/birth/executable/reuse checks VERIFIED`);
+  }
   const realAdmission = {
     receipt: admissionReceipt, transition: nativeTransition, transactionRoot: workRoot,
     installation: { managed: true, selfUpdateSupported: true, target, releaseDir },
     engine: { readActive: async () => admissionReceipt },
-    workerToken: token,
+    workerToken: token, nativeHelperPath, ...oldInspector,
     readPointerImpl: async () => { throw Object.assign(new Error('Stable A has no main pointer'), { code: 'ENOENT' }); },
     journalFactory: (o) => createEquinoxLocalWindowsNativeTransitionJournal({
       ...o, protectWindowsAcl: async () => ({ safe: true }), verifyWindowsAcl: async () => ({ safe: true }),
