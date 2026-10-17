@@ -201,7 +201,7 @@ const state = {
 };
 
 const AUTO_REFRESH_LIVE_MS = 3_000;
-const AUTO_REFRESH_MEDIUM_MS = 15_000;
+const AUTO_REFRESH_MEDIUM_MS = 60_000;
 const AUTO_REFRESH_SLOW_MS = 60_000;
 const AUTO_REFRESH_FOCUS_DEBOUNCE_MS = 750;
 
@@ -958,19 +958,21 @@ function renderUpdate() {
     setText("update-checked-at", main.checkedAt ? `Checked ${formatDate(main.checkedAt)}` : "Not checked yet");
     setText("update-main-current", currentSha ? `Current SHA ${currentSha}` : "Current SHA —");
     setText("update-main-target", targetSha ? `Target SHA ${targetSha}` : "Target SHA —");
-    const distance = Number.isInteger(main.behindBy) && Number.isInteger(main.aheadBy)
-      ? `Distance ↓${main.behindBy} ↑${main.aheadBy}`
-      : "Commit distance —";
-    setText("update-main-distance", distance);
-    const summaries = Array.isArray(main.summaries) ? main.summaries.slice(0, 5) : [];
+    // GitHub compares enumerate *every* ancestor commit, including docs-only
+    // commits that never produced an admitted snapshot. They are not separate
+    // available updates. Present only the exact tested/published snapshot SHA.
+    const snapshotAvailable = main.state === "behind" && Boolean(targetSha);
+    setText("update-main-distance", snapshotAvailable
+      ? "One admitted Main update"
+      : Number.isInteger(main.behindBy) && Number.isInteger(main.aheadBy)
+        ? `Git history distance ↓${main.behindBy} ↑${main.aheadBy}`
+        : "Git history distance —");
     const summaryNode = $("update-main-summaries");
-    summaryNode.hidden = summaries.length === 0;
-    $("update-main-caption").hidden = summaries.length === 0;
-    summaryNode.replaceChildren(...summaries.map((entry) => {
-      const item = document.createElement("li");
-      item.textContent = `${entry.shortSha || "???????"} · ${entry.message || "Commit"}`;
-      return item;
-    }));
+    summaryNode.hidden = !snapshotAvailable;
+    $("update-main-caption").hidden = !snapshotAvailable;
+    const snapshotEntry = document.createElement("li");
+    snapshotEntry.textContent = `Verified Main snapshot ${targetSha}`;
+    summaryNode.replaceChildren(...(snapshotAvailable ? [snapshotEntry] : []));
 
     if (main.restartScheduledFor) {
       setText("update-title", `Restarting into Main ${shortUpdateSha(main.restartScheduledFor) || "snapshot"}`);
@@ -985,7 +987,7 @@ function renderUpdate() {
       setText("update-copy", "Reading local Git identity and checking the admitted Main snapshot without changing the checkout.");
       setBadge("update-badge", "Checking", "neutral");
     } else if (main.state === "behind") {
-      setText("update-title", `${main.behindBy} ${main.behindBy === 1 ? "commit" : "commits"} available in Main snapshot`);
+      setText("update-title", `Verified Main ${targetSha || "snapshot"} available`);
       setText("update-copy", managedMain
         ? "A newer admitted Main snapshot is available. Update & restart uses the transactional source/native handoff with health verification and automatic rollback."
         : "A newer admitted Main snapshot is available. This developer source checkout remains check-only.");
@@ -1826,7 +1828,7 @@ function renderIntegrations() {
   list.append(
     createIntegrationCard(
       "Equinox Browser",
-      `Agent Browser ${agentBrowser.ready ? "ready" : browser.agentBrowser?.setupComplete ? "closed" : "not ready"} · Your Browser ${userBrowser.ready ? "connected" : "not connected"}. Both contexts use the same Chrome Web Store extension and Native Messaging bridge.`,
+      `Agent Browser ${agentBrowser.ready ? "ready" : browser.agentBrowser?.setupComplete ? "closed" : "not ready"} · Your Browser ${userBrowser.ready ? "connected" : "closed or not connected"}. Personal Chrome need not stay open for Agent Browser.`,
       browserStatus,
       browserTone,
       [
@@ -1909,7 +1911,7 @@ function renderBrowserPage() {
     unavailableLabel: manager.pairing ? "Waiting for extension" : manager.setupComplete ? "Closed" : "Setup needed",
   });
   const userView = browserContextLabel(user, {
-    unavailableLabel: browser.active ? "Extension not connected" : "Unavailable",
+    unavailableLabel: "Chrome closed or not connected",
   });
 
   setText("agent-browser-page-status", agentView.label);
@@ -3286,7 +3288,7 @@ async function checkForUpdates() {
     renderUpdate();
     if (mainChannel) {
       const main = state.update?.main || {};
-      if (main.state === "behind") showToast(`${main.behindBy} ${main.behindBy === 1 ? "commit" : "commits"} available in admitted Main snapshot.`);
+      if (main.state === "behind") showToast("A verified Main snapshot update is available.");
       else if (main.state === "up_to_date") showToast("Main snapshot is up to date.");
       else if (main.state === "unavailable") showToast("Main update check is unavailable; no up-to-date result was assumed.");
       else showToast("Main source identity check finished.");

@@ -374,7 +374,7 @@ test("control API serves the visual Control Center shell and fixed same-origin a
     assert.match(scriptText, /previousStatus\.peekaboo/u);
     assert.match(scriptText, /status\.status\?\.peekaboo/u);
     assert.match(scriptText, /AUTO_REFRESH_LIVE_MS = 3_000/u);
-    assert.match(scriptText, /AUTO_REFRESH_MEDIUM_MS = 15_000/u);
+    assert.match(scriptText, /AUTO_REFRESH_MEDIUM_MS = 60_000/u);
     assert.match(scriptText, /AUTO_REFRESH_SLOW_MS = 60_000/u);
     assert.match(scriptText, /document\.hidden/u);
     assert.match(scriptText, /window\.addEventListener\("focus", refreshVisibleControlCenter\)/u);
