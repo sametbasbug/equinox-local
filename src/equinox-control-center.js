@@ -198,10 +198,12 @@ const state = {
   autoRefreshMediumBusy: false,
   autoRefreshSlowBusy: false,
   lastAutoRefreshAt: 0,
+  lastDoctorAutoRefreshAt: 0,
 };
 
 const AUTO_REFRESH_LIVE_MS = 3_000;
-const AUTO_REFRESH_MEDIUM_MS = 15_000;
+const AUTO_REFRESH_MEDIUM_MS = 60_000;
+const AUTO_REFRESH_DOCTOR_MS = 5 * 60_000;
 const AUTO_REFRESH_SLOW_MS = 60_000;
 const AUTO_REFRESH_FOCUS_DEBOUNCE_MS = 750;
 
@@ -504,6 +506,16 @@ function switchSection(section, { remember = false } = {}) {
   setText("section-title", title);
   if (changed) {
     $("main-content").scrollIntoView({ block: "start", behavior: "instant" });
+    if (state.config) {
+      // Hidden sections hold cached data. Render them when the user returns,
+      // rather than continuously recreating their DOM during live polling.
+      if (section === "tasks") renderTasks();
+      else if (section === "activity") renderActivity();
+      else if (section === "browser") renderBrowserPage();
+      else if (section === "integrations") renderIntegrations();
+      else if (section === "dashboard") renderDoctor();
+      else if (section === "permissions") renderAgentControl();
+    }
   }
 }
 
@@ -958,19 +970,21 @@ function renderUpdate() {
     setText("update-checked-at", main.checkedAt ? `Checked ${formatDate(main.checkedAt)}` : "Not checked yet");
     setText("update-main-current", currentSha ? `Current SHA ${currentSha}` : "Current SHA —");
     setText("update-main-target", targetSha ? `Target SHA ${targetSha}` : "Target SHA —");
-    const distance = Number.isInteger(main.behindBy) && Number.isInteger(main.aheadBy)
-      ? `Distance ↓${main.behindBy} ↑${main.aheadBy}`
-      : "Commit distance —";
-    setText("update-main-distance", distance);
-    const summaries = Array.isArray(main.summaries) ? main.summaries.slice(0, 5) : [];
+    // GitHub compares enumerate *every* ancestor commit, including docs-only
+    // commits that never produced an admitted snapshot. They are not separate
+    // available updates. Present only the exact tested/published snapshot SHA.
+    const snapshotAvailable = main.state === "behind" && Boolean(targetSha);
+    setText("update-main-distance", snapshotAvailable
+      ? "One admitted Main update"
+      : Number.isInteger(main.behindBy) && Number.isInteger(main.aheadBy)
+        ? `Git history distance ↓${main.behindBy} ↑${main.aheadBy}`
+        : "Git history distance —");
     const summaryNode = $("update-main-summaries");
-    summaryNode.hidden = summaries.length === 0;
-    $("update-main-caption").hidden = summaries.length === 0;
-    summaryNode.replaceChildren(...summaries.map((entry) => {
-      const item = document.createElement("li");
-      item.textContent = `${entry.shortSha || "???????"} · ${entry.message || "Commit"}`;
-      return item;
-    }));
+    summaryNode.hidden = !snapshotAvailable;
+    $("update-main-caption").hidden = !snapshotAvailable;
+    const snapshotEntry = document.createElement("li");
+    snapshotEntry.textContent = `Verified Main snapshot ${targetSha}`;
+    summaryNode.replaceChildren(...(snapshotAvailable ? [snapshotEntry] : []));
 
     if (main.restartScheduledFor) {
       setText("update-title", `Restarting into Main ${shortUpdateSha(main.restartScheduledFor) || "snapshot"}`);
@@ -985,7 +999,7 @@ function renderUpdate() {
       setText("update-copy", "Reading local Git identity and checking the admitted Main snapshot without changing the checkout.");
       setBadge("update-badge", "Checking", "neutral");
     } else if (main.state === "behind") {
-      setText("update-title", `${main.behindBy} ${main.behindBy === 1 ? "commit" : "commits"} available in Main snapshot`);
+      setText("update-title", `Verified Main ${targetSha || "snapshot"} available`);
       setText("update-copy", managedMain
         ? "A newer admitted Main snapshot is available. Update & restart uses the transactional source/native handoff with health verification and automatic rollback."
         : "A newer admitted Main snapshot is available. This developer source checkout remains check-only.");
@@ -1826,7 +1840,7 @@ function renderIntegrations() {
   list.append(
     createIntegrationCard(
       "Equinox Browser",
-      `Agent Browser ${agentBrowser.ready ? "ready" : browser.agentBrowser?.setupComplete ? "closed" : "not ready"} · Your Browser ${userBrowser.ready ? "connected" : "not connected"}. Both contexts use the same Chrome Web Store extension and Native Messaging bridge.`,
+      `Agent Browser ${agentBrowser.ready ? "ready" : browser.agentBrowser?.setupComplete ? "closed" : "not ready"} · Your Browser ${userBrowser.ready ? "connected" : "closed or not connected"}. Personal Chrome need not stay open for Agent Browser.`,
       browserStatus,
       browserTone,
       [
@@ -1909,7 +1923,7 @@ function renderBrowserPage() {
     unavailableLabel: manager.pairing ? "Waiting for extension" : manager.setupComplete ? "Closed" : "Setup needed",
   });
   const userView = browserContextLabel(user, {
-    unavailableLabel: browser.active ? "Extension not connected" : "Unavailable",
+    unavailableLabel: "Chrome closed or not connected",
   });
 
   setText("agent-browser-page-status", agentView.label);
@@ -2551,6 +2565,7 @@ async function refreshAll() {
     state.onboarding = onboarding.onboarding || null;
     state.doctor = doctor.doctor || null;
     state.doctorRepairs = doctorRepairs.repairs || null;
+    if (doctor.doctor) state.lastDoctorAutoRefreshAt = Date.now();
     if (peekaboo.peekaboo) {
       state.status = {
         ...(state.status || {}),
@@ -2626,13 +2641,12 @@ async function refreshLiveState() {
     if (tasks?.tasks) reconcileLiveTasks(tasks.tasks);
     if (onboarding?.onboarding) state.onboarding = onboarding.onboarding;
     renderDashboard();
-    renderOnboarding();
-    renderTasks();
-    renderActivity();
-    renderBrowserPage();
-    renderAgentControl();
+    if (state.activeSection === "setup" || state.activeSection === "dashboard") renderOnboarding();
+    if (state.activeSection === "tasks") renderTasks();
+    if (state.activeSection === "activity") renderActivity();
+    if (state.activeSection === "browser") renderBrowserPage();
+    renderAgentControl(); // Global emergency stop must never become stale.
     renderRuntimeRestartControl();
-    renderTurnBudget();
     state.lastRefreshedAt = new Date();
     renderLastRefreshed();
   } catch {
@@ -2646,9 +2660,15 @@ async function refreshMediumState() {
   if (!autoRefreshAllowed() || state.autoRefreshMediumBusy) return;
   state.autoRefreshMediumBusy = true;
   try {
+    // Doctor fingerprints signed release contents and can consume seconds of
+    // CPU on Windows. An initial/manual Refresh is always immediate; automatic
+    // background checks run at most every five minutes while Overview is open.
+    const doctorDue = state.activeSection === "dashboard"
+      && Date.now() - state.lastDoctorAutoRefreshAt >= AUTO_REFRESH_DOCTOR_MS;
+    if (doctorDue) state.lastDoctorAutoRefreshAt = Date.now();
     const [doctor, doctorRepairs, peekaboo, telegram, webFileTransfer, httpProfiles] = await Promise.all([
-      requestJson("/api/v1/doctor", { backgroundRefresh: true }).catch(() => null),
-      requestJson("/api/v1/doctor/repairs", { backgroundRefresh: true }).catch(() => null),
+      doctorDue ? requestJson("/api/v1/doctor", { backgroundRefresh: true }).catch(() => null) : Promise.resolve(null),
+      doctorDue ? requestJson("/api/v1/doctor/repairs", { backgroundRefresh: true }).catch(() => null) : Promise.resolve(null),
       requestJson("/api/v1/integrations/peekaboo", { backgroundRefresh: true }).catch(() => null),
       requestJson("/api/v1/integrations/telegram", { backgroundRefresh: true }).catch(() => null),
       requestJson("/api/v1/files/import-settings", { backgroundRefresh: true }).catch(() => null),
@@ -2662,10 +2682,10 @@ async function refreshMediumState() {
     if (telegram?.telegram) state.telegram = telegram.telegram;
     if (webFileTransfer?.webFileTransfer) state.webFileTransfer = webFileTransfer.webFileTransfer;
     if (httpProfiles?.httpProfiles && !state.httpProfileDraft) state.httpProfiles = httpProfiles.httpProfiles;
-    renderDoctor();
-    if (!state.httpProfileDraft) renderIntegrations();
-    renderBrowserPage();
-    renderDashboard();
+    if (doctorDue) renderDoctor();
+    if (state.activeSection === "integrations" && !state.httpProfileDraft) renderIntegrations();
+    if (state.activeSection === "browser") renderBrowserPage();
+    if (state.activeSection === "dashboard") renderDashboard();
   } catch {
     // Best-effort background refresh; do not interrupt the user for transient failures.
   } finally {
@@ -3286,7 +3306,7 @@ async function checkForUpdates() {
     renderUpdate();
     if (mainChannel) {
       const main = state.update?.main || {};
-      if (main.state === "behind") showToast(`${main.behindBy} ${main.behindBy === 1 ? "commit" : "commits"} available in admitted Main snapshot.`);
+      if (main.state === "behind") showToast("A verified Main snapshot update is available.");
       else if (main.state === "up_to_date") showToast("Main snapshot is up to date.");
       else if (main.state === "unavailable") showToast("Main update check is unavailable; no up-to-date result was assumed.");
       else showToast("Main source identity check finished.");

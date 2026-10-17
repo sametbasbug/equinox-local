@@ -40,6 +40,26 @@ test("Windows shell is a thin x64/ARM64 WPF/WebView2 host for the shared Control
   assert.doesNotMatch(window, /cmd\.exe|powershell(?:\.exe)?|ProcessStartInfo\s*\([^)]*\/c/iu);
 });
 
+test("Windows Control Center waits for loopback readiness and retries WebView2 navigation without manual Refresh", async () => {
+  const [app, window, xaml] = await Promise.all([
+    source("App.xaml.cs"),
+    source("MainWindow.xaml.cs"),
+    source("MainWindow.xaml"),
+  ]);
+  assert.match(app, /_ = StartRuntimeAsync\(\)/u);
+  assert.match(window, /await NavigateWhenReadyAsync\(\)/u);
+  assert.match(window, /GetAsync\(ControlCenterUrl,/u);
+  assert.match(window, /response\.IsSuccessStatusCode/u);
+  assert.match(window, /NavigationCompleted \+= OnControlCenterNavigationCompleted/u);
+  assert.match(window, /if \(e\.IsSuccess\)/u);
+  assert.match(window, /await NavigateWhenReadyAsync\(\)/u);
+  assert.match(window, /_windowLifetime\.Cancel\(\)/u);
+  assert.doesNotMatch(window, /WebMessageReceived \+= OnNativeWebMessageReceived;\s*ControlCenterView\.Source/u);
+  assert.match(xaml, /x:Name="StartingPanel"/u);
+  assert.match(xaml, /x:Name="StartingMessage"/u);
+  assert.match(xaml, /IsIndeterminate="True"/u);
+});
+
 test("Windows shell single-instance and runtime-restart channel is local-user-only", async () => {
   const [app, coordinator, handoff, locator, uninstallHandoff] = await Promise.all([
     source("App.xaml.cs"),

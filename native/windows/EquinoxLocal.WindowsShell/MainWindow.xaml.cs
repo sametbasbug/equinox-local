@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
+using System.Net.Http;
 using System.Text.Json;
 using System.Windows;
 using Microsoft.Web.WebView2.Core;
@@ -12,6 +13,9 @@ public partial class MainWindow : Window
     internal const string ControlCenterUrl = "http://127.0.0.1:24891/";
     private static readonly JsonSerializerOptions NativeBridgeJson = new(JsonSerializerDefaults.Web);
     private readonly NativeFolderPicker _folderPicker = new();
+    private readonly HttpClient _localHttp = new() { Timeout = TimeSpan.FromSeconds(2) };
+    private readonly CancellationTokenSource _windowLifetime = new();
+    private bool _navigationPending;
     private bool _fallbackOpened;
     private bool _exitRequested;
 
@@ -34,7 +38,8 @@ public partial class MainWindow : Window
             var webEnvironment = await CoreWebView2Environment.CreateAsync(userDataFolder: userData);
             await ControlCenterView.EnsureCoreWebView2Async(webEnvironment);
             ControlCenterView.CoreWebView2.WebMessageReceived += OnNativeWebMessageReceived;
-            ControlCenterView.Source = new Uri(ControlCenterUrl, UriKind.Absolute);
+            ControlCenterView.CoreWebView2.NavigationCompleted += OnControlCenterNavigationCompleted;
+            await NavigateWhenReadyAsync();
         }
         catch (WebView2RuntimeNotFoundException)
         {
@@ -44,6 +49,56 @@ public partial class MainWindow : Window
         {
             ShowBrowserFallback("The native Control Center could not start. The Control Center was opened in your default browser.");
         }
+    }
+
+    private async Task NavigateWhenReadyAsync()
+    {
+        // App startup starts the runtime asynchronously. Never navigate WebView2
+        // to a closed loopback port: Edge caches an ERR_CONNECTION_REFUSED page
+        // and forces users to press Refresh even after the server comes up.
+        if (_navigationPending || _exitRequested) return;
+        _navigationPending = true;
+        try
+        {
+            var attempts = 0;
+            while (!_windowLifetime.IsCancellationRequested)
+            {
+                try
+                {
+                    using var response = await _localHttp.GetAsync(ControlCenterUrl,
+                        HttpCompletionOption.ResponseHeadersRead, _windowLifetime.Token);
+                    if (response.IsSuccessStatusCode)
+                    {
+                        ControlCenterView.Source = new Uri(ControlCenterUrl, UriKind.Absolute);
+                        return;
+                    }
+                }
+                catch (HttpRequestException) { }
+                catch (TaskCanceledException) when (!_windowLifetime.IsCancellationRequested) { }
+
+                if (++attempts == 15)
+                    StartingMessage.Text = "The local service is taking longer to start. Waiting for it to become available…";
+                await Task.Delay(800, _windowLifetime.Token);
+            }
+        }
+        catch (OperationCanceledException) when (_windowLifetime.IsCancellationRequested) { }
+        finally { _navigationPending = false; }
+    }
+
+    private async void OnControlCenterNavigationCompleted(object? sender, CoreWebView2NavigationCompletedEventArgs e)
+    {
+        if (_exitRequested) return;
+        if (e.IsSuccess)
+        {
+            StartingPanel.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        // The loopback service may have restarted between the readiness probe
+        // and navigation. Keep the native waiting screen, then retry automatically.
+        StartingPanel.Visibility = Visibility.Visible;
+        StartingMessage.Text = "Reconnecting to the local service…";
+        await NavigateWhenReadyAsync();
     }
 
     private void OnNativeWebMessageReceived(object? sender, CoreWebView2WebMessageReceivedEventArgs e)
@@ -142,6 +197,7 @@ public partial class MainWindow : Window
     internal void PrepareForExit()
     {
         _exitRequested = true;
+        _windowLifetime.Cancel();
     }
 
     private void OnClosing(object? sender, CancelEventArgs e)
