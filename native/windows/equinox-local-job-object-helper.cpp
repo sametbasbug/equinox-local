@@ -1,12 +1,76 @@
 #include <windows.h>
 
 #include <cstdint>
+#include <cwchar>
+#include <limits>
 #include <iostream>
 #include <sstream>
 #include <string>
 
 namespace {
 constexpr DWORD kKillOnJobClose = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+constexpr uint64_t kWindowsFileTimeToDotNetTicks = 504911232000000000ULL;
+
+std::wstring ReadEnvironment(const wchar_t* name) {
+  const DWORD size = GetEnvironmentVariableW(name, nullptr, 0);
+  if (size < 2 || size > 32767) return {};
+  std::wstring value(size, L'\0');
+  const DWORD copied = GetEnvironmentVariableW(name, value.data(), size);
+  if (copied == 0 || copied >= size) return {};
+  value.resize(copied);
+  return value;
+}
+
+// One-shot OS identity query for the already-validated native Main update
+// candidate. This mode must not start a Job Object or require PowerShell.
+int InspectWorkerProcess() {
+  const auto pidText = ReadEnvironment(L"EQUINOX_LOCAL_CHECK_WORKER_PID");
+  const auto ticks = ReadEnvironment(L"EQUINOX_LOCAL_CHECK_WORKER_TICKS");
+  const auto expectedNode = ReadEnvironment(L"EQUINOX_LOCAL_CHECK_WORKER_NODE");
+  uint64_t parsedPid = 0;
+  try {
+    if (pidText.empty() || pidText.find_first_not_of(L"0123456789") != std::wstring::npos ||
+        ticks.empty() || ticks.find_first_not_of(L"0123456789") != std::wstring::npos ||
+        expectedNode.empty()) {
+      std::cout << "unknown";
+      return 0;
+    }
+    parsedPid = std::stoull(pidText);
+  } catch (...) {
+    std::cout << "unknown";
+    return 0;
+  }
+  if (parsedPid == 0 || parsedPid > std::numeric_limits<DWORD>::max()) {
+    std::cout << "unknown";
+    return 0;
+  }
+  HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, static_cast<DWORD>(parsedPid));
+  if (!process) {
+    std::cout << (GetLastError() == ERROR_INVALID_PARAMETER ? "missing" : "unknown");
+    return 0;
+  }
+  FILETIME creation{}, exit{}, kernel{}, user{};
+  DWORD pathChars = 32768;
+  std::wstring executable(pathChars, L'\0');
+  const BOOL gotTime = GetProcessTimes(process, &creation, &exit, &kernel, &user);
+  const BOOL gotPath = gotTime ? QueryFullProcessImageNameW(process, 0, executable.data(), &pathChars) : FALSE;
+  CloseHandle(process);
+  if (!gotTime || !gotPath) {
+    std::cout << "unknown";
+    return 0;
+  }
+  executable.resize(pathChars);
+  const uint64_t fileTicks = (static_cast<uint64_t>(creation.dwHighDateTime) << 32) | creation.dwLowDateTime;
+  if (fileTicks > std::numeric_limits<uint64_t>::max() - kWindowsFileTimeToDotNetTicks ||
+      std::to_wstring(fileTicks + kWindowsFileTimeToDotNetTicks) != ticks ||
+      CompareStringOrdinal(executable.data(), static_cast<int>(executable.size()),
+                           expectedNode.data(), static_cast<int>(expectedNode.size()), TRUE) != CSTR_EQUAL) {
+    std::cout << "mismatch";
+    return 0;
+  }
+  std::cout << "running";
+  return 0;
+}
 
 std::string EscapeJson(const std::string& value) {
   std::ostringstream out;
@@ -103,7 +167,9 @@ void SuccessReply(const std::string& id, DWORD active) {
 }
 }  // namespace
 
-int main() {
+int main(int argc, char* argv[]) {
+  if (argc == 2 && std::string(argv[1]) == "--inspect-process") return InspectWorkerProcess();
+  if (argc != 1) return 12;
   HANDLE job = CreateJobObjectW(nullptr, nullptr);
   if (!job) {
     std::cerr << ErrorText("CreateJobObject", GetLastError()) << std::endl;

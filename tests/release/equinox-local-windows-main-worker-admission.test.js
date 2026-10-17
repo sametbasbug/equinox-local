@@ -10,6 +10,7 @@ const TOKEN = 'd'.repeat(64), STARTED = '2026-10-12T11:00:00.000Z';
 const RELEASE = String.raw`C:\Users\Test\AppData\Local\Equinox Local\releases\6.0.4`;
 const ROOT = String.raw`C:\Users\Test\AppData\Local\Equinox Local\state\main-update`;
 const NODE = path.win32.join(RELEASE, 'runtime', 'node', 'bin', 'node.exe');
+const NATIVE_HELPER = path.win32.join(ROOT, 'native-store', 'win32-x64', B, 'release', 'runtime', 'job', 'equinox-local-job-object-helper.exe');
 
 function fixture({ stage = 'ready_to_switch', token = TOKEN, pid = 1234, processOk = true, previous = null, journalRecord = null } = {}) {
   const receipt = { transactionId: ID, status: stage === 'source_switched' ? 'verifying' : 'promoting', stage,
@@ -27,9 +28,9 @@ function fixture({ stage = 'ready_to_switch', token = TOKEN, pid = 1234, process
   const options = {
     receipt, transition, installation: { releaseDir: RELEASE, target: 'win32-x64', managed: true, selfUpdateSupported: true },
     transactionRoot: ROOT, engine: { readActive: async () => receipt },
-    workerToken: TOKEN, workerPid: 1234, workerNodePath: NODE,
+    workerToken: TOKEN, workerPid: 1234, workerNodePath: NODE, nativeHelperPath: NATIVE_HELPER,
     readWorkerImpl: async () => ({ ownership: { transactionId: ID, token, pid, nodePath: NODE, startTimeUtcTicks: '638958000000000000' } }),
-    inspectWorkerImpl: async () => processOk ? { running: true, stale: false, uncertain: false } : { running: false, stale: true, uncertain: false },
+    inspectWorkerImpl: async (_ownership, options) => { assert.equal(options.nativeHelperPath, NATIVE_HELPER); return processOk ? { running: true, stale: false, uncertain: false } : { running: false, stale: true, uncertain: false }; },
     readPointerImpl: async () => previous ? { sourceSha: A, target: 'win32-x64', runtimeContractSha256: 'a'.repeat(64) } : Promise.reject(Object.assign(Error('none'), { code: 'ENOENT' })),
     journalFactory: () => journal,
   };
@@ -111,4 +112,11 @@ test('clean-reinstall ownership admission checks OS PID/token/active transaction
   const forged = fixture({ token: 'e'.repeat(64) });
   await assert.rejects(admitWindowsMainNativeWorkerJournal({ ...forged.options, ownerOnly: true }), /token\/PID/u);
   assert.deepEqual(forged.calls, []);
+});
+
+
+test('Windows native worker refuses missing validated native helper even with a matching token', async () => {
+  const f = fixture();
+  await assert.rejects(admitWindowsMainNativeWorkerJournal({ ...f.options, nativeHelperPath: null }), /no validated native identity helper/u);
+  assert.deepEqual(f.calls, []);
 });

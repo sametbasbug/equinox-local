@@ -203,6 +203,9 @@ test("Windows native Job Object helper uses target-specific MSVC and direct Win3
   assert.match(helper, /JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE/u);
   assert.match(helper, /AssignProcessToJobObject/u);
   assert.match(helper, /QueryInformationJobObject/u);
+  assert.match(helper, /GetProcessTimes/u);
+  assert.match(helper, /QueryFullProcessImageNameW/u);
+  assert.match(helper, /--inspect-process/u);
   assert.match(helper, /TerminateJobObject/u);
 });
 
