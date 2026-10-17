@@ -10,6 +10,7 @@ import { equinoxLocalHostDescriptor } from "./equinox-local-platform.js";
 import { inspectPrivateStatePath } from "./equinox-local-private-state.js";
 import { readManagedCurrentRelease } from "./equinox-local-update-activation.js";
 import { readEquinoxLocalMainNativePointer } from "./equinox-local-main-native-state.js";
+import { readEquinoxLocalMainSourcePointer } from "./equinox-local-main-source-pointer.js";
 import { readWindowsStartupRegistrationOwnership } from "./equinox-local-uninstall-helper.js";
 import { assertWindowsStableShellOwnedByRelease } from "./equinox-local-windows-stable-shell.js";
 
@@ -94,6 +95,7 @@ export async function getEquinoxLocalDoctorStatus({
   verifyWindowsAcl = null,
   readCurrentReleaseImpl = readManagedCurrentRelease,
   readMainNativePointerImpl = readEquinoxLocalMainNativePointer,
+  readMainSourcePointerImpl = readEquinoxLocalMainSourcePointer,
   assertWindowsStableShellImpl = assertWindowsStableShellOwnedByRelease,
   assertWindowsNativeHostImpl = assertWindowsNativeMessagingHostOwnership,
   readWindowsStartupImpl = readWindowsStartupRegistrationOwnership,
@@ -109,6 +111,21 @@ export async function getEquinoxLocalDoctorStatus({
       return Object.freeze({ platform: process.platform, arch: process.arch, target: null, displayName: process.platform, supported: false });
     }
   })();
+  // Main native state is fingerprinted and content-addressed. A managed Main
+  // update may reclaim its old Stable A release directory, so the legacy
+  // numbered current-version pointer cannot attest the active Main runtime.
+  // Cache this expensive integrity check within one Doctor invocation: Windows
+  // shell/Browser ownership must use exactly the same verified native identity.
+  let mainNativePromise;
+  const readActiveMainNative = () => {
+    if (!mainNativePromise) {
+      const transactionRoot = installation?.mainTransactionRoot;
+      const pointerPath = (hostDescriptor.platform === "win32" ? path.win32 : path.posix)
+        .join(transactionRoot, "current-native.json");
+      mainNativePromise = readMainNativePointerImpl(pointerPath, { transactionRoot, fsImpl });
+    }
+    return mainNativePromise;
+  };
   const healthyRuntime = runtimeHealthState === "HEALTHY";
   checks.push(check(
     "runtime",
@@ -163,13 +180,39 @@ export async function getEquinoxLocalDoctorStatus({
     ));
 
     try {
-      const current = await readCurrentReleaseImpl(installation);
-      checks.push(check(
-        "release",
-        "Active release",
-        "pass",
-        `Managed release ${current.version} passed layout and runtime validation.`,
-      ));
+      if (installation.kind === "managed-source") {
+        const transactionRoot = installation.mainTransactionRoot;
+        const pathApi = hostDescriptor.platform === "win32" ? path.win32 : path.posix;
+        if (typeof transactionRoot !== "string" || !pathApi.isAbsolute(transactionRoot) ||
+            typeof installation.sourceRoot !== "string" || !pathApi.isAbsolute(installation.sourceRoot) ||
+            !/^[a-f0-9]{40}$/u.test(installation.sourceSha ?? "")) {
+          throw new Error("Verified Main installation identity is unavailable.");
+        }
+        const source = await readMainSourcePointerImpl(pathApi.join(transactionRoot, "current-source.conf"), {
+          fsImpl, ...(installation.gitPath ? { gitPath: installation.gitPath } : {}),
+        });
+        const equivalent = (a, b) => hostDescriptor.platform === "win32"
+          ? pathApi.normalize(a).toLowerCase() === pathApi.normalize(b).toLowerCase()
+          : pathApi.normalize(a) === pathApi.normalize(b);
+        if (source.sha !== installation.sourceSha || !equivalent(source.sourceRoot, installation.sourceRoot)) {
+          throw new Error("Active Main source pointer changed after verified boot.");
+        }
+        let payload = "";
+        if (installation.mainNativeSha) {
+          const native = await readActiveMainNative();
+          if (native.sourceSha !== installation.sourceSha || native.sourceSha !== installation.mainNativeSha ||
+              native.target !== hostDescriptor.target || !equivalent(native.releaseDir, installation.releaseDir)) {
+            throw new Error("Active Main native release does not match the verified source.");
+          }
+          payload = ` and native ${native.payloadVersion}`;
+        }
+        checks.push(check("release", "Active release", "pass",
+          `Main ${installation.sourceSha.slice(0, 12)}${payload} passed source and runtime identity validation.`));
+      } else {
+        const current = await readCurrentReleaseImpl(installation);
+        checks.push(check("release", "Active release", "pass",
+          `Managed release ${current.version} passed layout and runtime validation.`));
+      }
     } catch {
       checks.push(check(
         "release",
@@ -241,7 +284,9 @@ export async function getEquinoxLocalDoctorStatus({
         if (pointerPresent) {
           ownedReleaseDir = null;
           try {
-            const current = await readMainNativePointerImpl(pointerPath, { transactionRoot, fsImpl });
+            const current = installation.kind === "managed-source" && installation.mainNativeSha
+              ? await readActiveMainNative()
+              : await readMainNativePointerImpl(pointerPath, { transactionRoot, fsImpl });
             if (current.target === hostDescriptor.target && path.win32.isAbsolute(current.releaseDir)) {
               ownedReleaseDir = current.releaseDir;
             }
