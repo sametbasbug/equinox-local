@@ -82,7 +82,7 @@ export async function inspectWindowsMainUpdateWorkerProcess(ownership, { execFil
   const parsed = parseWindowsMainUpdateWorkerOwnership(ownership);
   // The managed updater runs with a deliberately restricted PATH. The OS
   // worker birth/PID check must use the fixed Windows SystemRoot path.
-  const result = await execFileImpl(equinoxLocalWindowsPowerShellPath(), [
+  const args = [
     "-NoLogo",
     "-NoProfile",
     "-NonInteractive",
@@ -92,8 +92,9 @@ export async function inspectWindowsMainUpdateWorkerProcess(ownership, { execFil
     // Use the same UTF-16LE -EncodedCommand contract as finite terminal_exec.
     "-EncodedCommand",
     Buffer.from(WINDOWS_PROCESS_IDENTITY_SCRIPT, "utf16le").toString("base64"),
-  ], {
-    timeout: 5_000, maxBuffer: 4 * 1024, windowsHide: true,
+  ];
+  const options = {
+    timeout: 15_000, maxBuffer: 4 * 1024, windowsHide: true,
     // All untrusted identity values stay in validated environment fields;
     // never interpolate a PID, tick count or executable path into script.
     env: {
@@ -102,7 +103,28 @@ export async function inspectWindowsMainUpdateWorkerProcess(ownership, { execFil
       EQUINOX_LOCAL_CHECK_WORKER_TICKS: parsed.startTimeUtcTicks,
       EQUINOX_LOCAL_CHECK_WORKER_NODE: parsed.nodePath,
     },
-  });
+  };
+  let result;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      result = await execFileImpl(equinoxLocalWindowsPowerShellPath(), args, options);
+      break;
+    } catch (error) {
+      // The native acceptance runners start a cold Windows PowerShell 5.1
+      // under a busy freshly-installed WPF/Node process tree. Only an OS
+      // launch TIMEOUT may be retried, once; never treat an inspection error
+      // or uncertain process as an authenticated worker. Strip raw command
+      // text (which includes EncodedCommand and executable paths) from the
+      // durable failure receipt.
+      if (attempt === 0 && (error?.code === "ETIMEDOUT" || error?.killed === true)) continue;
+      const status = Number.isInteger(error?.code) ? String(error.code) :
+        (error?.code === "ETIMEDOUT" ? "timeout" : "spawn");
+      const signal = typeof error?.signal === "string" && /^[A-Z0-9]+$/u.test(error.signal)
+        ? error.signal : "none";
+      const stderrBytes = Buffer.byteLength(String(error?.stderr ?? ""));
+      throw new Error(`Windows native worker OS process inspection failed (status=${status};signal=${signal};stderrBytes=${stderrBytes};timeout=${error?.killed === true || error?.code === "ETIMEDOUT"}).`, { cause: error });
+    }
+  }
   const state = String(result?.stdout ?? "").trim();
   if (state === "running") return Object.freeze({ running: true, stale: false, uncertain: false });
   if (state === "missing" || state === "mismatch") return Object.freeze({ running: false, stale: true, uncertain: false });

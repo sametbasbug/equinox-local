@@ -143,6 +143,35 @@ test("Windows worker process inspection distinguishes exact identity, PID reuse 
     execFileImpl: async () => ({ stdout: "unknown" }),
   });
   assert.deepEqual(unknown, { running: false, stale: false, uncertain: true });
+
+  let timeoutAttempts = 0;
+  const cold = await inspectWindowsMainUpdateWorkerProcess(ownership, {
+    execFileImpl: async (_exe, _argv, options) => {
+      assert.equal(options.timeout, 15_000);
+      assert.equal(options.windowsHide, true);
+      timeoutAttempts++;
+      if (timeoutAttempts === 1) throw Object.assign(new Error("temporary cold-start"), {
+        code: "ETIMEDOUT", killed: true, signal: "SIGTERM",
+      });
+      return { stdout: "running" };
+    },
+  });
+  assert.deepEqual(cold, { running: true, stale: false, uncertain: false });
+  assert.equal(timeoutAttempts, 2, "only transient OS launch timeout gets one bounded retry");
+  let rejectionAttempts = 0;
+  await assert.rejects(inspectWindowsMainUpdateWorkerProcess(ownership, {
+    execFileImpl: async () => {
+      rejectionAttempts++;
+      throw Object.assign(new Error("Command failed: -EncodedCommand SECRET"), {
+        code: 1, killed: false, stderr: "sensitive command stderr",
+      });
+    },
+  }), (error) => {
+    assert.match(error.message, /status=1;signal=none;stderrBytes=/u);
+    assert.doesNotMatch(error.message, /SECRET|sensitive/u);
+    return true;
+  });
+  assert.equal(rejectionAttempts, 1, "a real PowerShell exit failure must fail closed without retry");
 });
 
 test("native Windows Main worker PID birthtime executable identity survives PowerShell 5.1 encoding", {
