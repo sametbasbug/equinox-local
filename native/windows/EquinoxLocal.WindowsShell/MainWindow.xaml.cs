@@ -35,7 +35,16 @@ public partial class MainWindow : Window
             var userData = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
                 "Equinox Local", "state", "webview2");
             Directory.CreateDirectory(userData);
-            var webEnvironment = await CoreWebView2Environment.CreateAsync(userDataFolder: userData);
+            // Control Center is a lightweight local dashboard, not a game.
+            // Keep Edge's GPU subprocess from waking a discrete NVIDIA adapter
+            // simply because the user opens the window. This applies only to
+            // this dedicated WebView2 user-data folder, not the user's browser.
+            var webOptions = new CoreWebView2EnvironmentOptions
+            {
+                AdditionalBrowserArguments = "--disable-gpu"
+            };
+            var webEnvironment = await CoreWebView2Environment.CreateAsync(
+                userDataFolder: userData, options: webOptions);
             await ControlCenterView.EnsureCoreWebView2Async(webEnvironment);
             ControlCenterView.CoreWebView2.WebMessageReceived += OnNativeWebMessageReceived;
             ControlCenterView.CoreWebView2.NavigationCompleted += OnControlCenterNavigationCompleted;
