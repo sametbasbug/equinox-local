@@ -930,9 +930,10 @@ export async function installManagedEquinoxRelease({
         throw new Error("Installed Main source does not match the authenticated product-owned checkout.");
       }
       const versionFile = path.win32.join(source.sourceRoot, "src", "equinox-local-version.js");
-      const info = await fsImpl.lstat(versionFile);
-      if (!info.isFile() || info.isSymbolicLink() || info.size < 25 || info.size > 1024) throw new Error("Installed Main version declaration is unsafe.");
-      const declaration = await fsImpl.readFile(versionFile, "utf8");
+      const { data: declaration } = await readBoundedNormalFile(versionFile, {
+        fsImpl, platform, minBytes: 25, maxBytes: 1024,
+        encoding: "utf8", label: "Installed Main version declaration",
+      });
       const match = /^export const EQUINOX_LOCAL_VERSION = "(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)";$/mu.exec(declaration);
       if (!match) throw new Error("Installed Main version declaration is invalid.");
       const mainVersion = `${match[1]}.${match[2]}.${match[3]}`;

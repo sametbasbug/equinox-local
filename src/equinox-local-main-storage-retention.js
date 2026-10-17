@@ -85,11 +85,10 @@ export async function pruneVerifiedMainLargeStorage({
   }
   const admitted = await identities();
   const versionPath = api.join(admitted.source.sourceRoot, "src", "equinox-local-version.js");
-  const versionStat = await fsImpl.lstat(versionPath);
-  if (!versionStat.isFile() || versionStat.isSymbolicLink() || versionStat.size < 25 || versionStat.size > 1024) {
-    throw new Error("Active Main version declaration is unsafe.");
-  }
-  const declaration = await fsImpl.readFile(versionPath, "utf8");
+  const { data: declaration } = await readBoundedNormalFile(versionPath, {
+    fsImpl, platform, minBytes: 25, maxBytes: 1024, encoding: "utf8",
+    label: "Active Main version declaration",
+  });
   const match = /^export const EQUINOX_LOCAL_VERSION = "(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)";$/mu.exec(declaration);
   if (!match || runtimeVersion !== `${match[1]}.${match[2]}.${match[3]}`) {
     throw new Error("Active runtime version is not the committed Main source version.");

@@ -13,6 +13,7 @@ import { equinoxLocalReleaseTarget } from "./equinox-local-platform.js";
 import { EQUINOX_LOCAL_INSTALL_LABEL, resolveEquinoxLocalInstallation } from "./equinox-local-installation.js";
 import { kickstartEquinoxLocalLaunchAgent } from "./equinox-local-update-activation.js";
 import { equinoxLocalToolchainContract } from "./equinox-local-toolchain-contract.js";
+import { readBoundedNormalFile } from "./equinox-local-safe-file.js";
 import { createEquinoxLocalMainUpdateTransactionEngine } from "./equinox-local-main-update-transaction.js";
 import { runEquinoxLocalMainUpdateHandoff } from "./equinox-local-main-update-handoff.js";
 import { readEquinoxLocalMainSourcePointer } from "./equinox-local-main-source-pointer.js";
@@ -98,11 +99,10 @@ export async function waitForExactSourceHealth({
   inspectCheckoutImpl = inspectCanonicalMainCheckout,
   readVersionImpl = async (root) => {
     const file = path.join(root, "src", "equinox-local-version.js");
-    const stat = await fs.lstat(file);
-    if (!stat.isFile() || stat.isSymbolicLink() || stat.size < 1 || stat.size > 1024) {
-      throw new Error("Main update release version declaration is missing or unsafe.");
-    }
-    const text = await fs.readFile(file, "utf8");
+    const { data: text } = await readBoundedNormalFile(file, {
+      minBytes: 1, maxBytes: 1024, encoding: "utf8",
+      label: "Main update release version declaration",
+    });
     const match = /^export const EQUINOX_LOCAL_VERSION = "(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)";$/mu.exec(text);
     if (!match) throw new Error("Main update release version declaration is invalid.");
     return `${match[1]}.${match[2]}.${match[3]}`;
