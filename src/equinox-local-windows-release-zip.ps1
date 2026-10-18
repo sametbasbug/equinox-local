@@ -96,7 +96,11 @@ $stream = [IO.File]::Open($archive, [IO.FileMode]::Open, [IO.FileAccess]::Read, 
 try {
   $zip = [IO.Compression.ZipArchive]::new($stream, [IO.Compression.ZipArchiveMode]::Read, $false)
   try {
+    $preflightStarted = $HostedZipClock.Elapsed.TotalSeconds
     $checked = Get-CheckedEntries $zip $ExpectedRoot
+    if ($HostedZipTiming) {
+      Write-Output ("Hosted ZIP phase: validate-entries; durationSeconds={0:F1}" -f ($HostedZipClock.Elapsed.TotalSeconds - $preflightStarted))
+    }
     if ($Mode -eq 'Extract') {
       if ([string]::IsNullOrWhiteSpace($DestinationPath)) { throw 'DestinationPath is required for extraction.' }
       $destination = [IO.Path]::GetFullPath($DestinationPath)
@@ -110,9 +114,17 @@ try {
         # destination plus post-extract reparse/size audit remain required.
         # Use the SAME preflight-validated, open ZipArchive handle for bulk
         # extraction; never reopen a potentially swapped archive on disk.
+        $writeStarted = $HostedZipClock.Elapsed.TotalSeconds
         [IO.Compression.ZipFileExtensions]::ExtractToDirectory($zip, $destination)
+        if ($HostedZipTiming) {
+          Write-Output ("Hosted ZIP phase: write-files; durationSeconds={0:F1}" -f ($HostedZipClock.Elapsed.TotalSeconds - $writeStarted))
+        }
+        $treeStarted = $HostedZipClock.Elapsed.TotalSeconds
         $counters = @{ Count=0; Bytes=[long]0 }
         Assert-ExtractedTree $destination $counters
+        if ($HostedZipTiming) {
+          Write-Output ("Hosted ZIP phase: validate-tree; durationSeconds={0:F1}" -f ($HostedZipClock.Elapsed.TotalSeconds - $treeStarted))
+        }
         if ($counters.Bytes -ne $checked.Bytes) { throw 'Extracted ZIP byte count drifted from central-directory metadata.' }
       } catch {
         try { [IO.Directory]::Delete($destination, $true) } catch {}
