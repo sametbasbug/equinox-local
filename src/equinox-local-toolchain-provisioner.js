@@ -403,6 +403,15 @@ async function installComponent(component, contract, {
   extractComponentImpl,
   windowsZipHelperPath,
 }) {
+  // The Windows installer passes this fixed opt-in only on disposable
+  // GitHub Actions runners. Print timing metadata, never a path or URL.
+  const phaseTiming = platform === "win32" && env?.EQUINOX_HOSTED_PHASE_TIMING === "1";
+  const timed = (phase, started) => {
+    if (!phaseTiming) return;
+    if (component.component !== "git" && component.component !== "node") return;
+    const elapsed = Math.min(600, Math.max(0, (Date.now() - started) / 1000));
+    process.stdout.write(`Hosted toolchain phase: ${component.component}/${phase}; durationSeconds=${elapsed.toFixed(1)}\n`);
+  };
   const existing = await fsImpl.lstat(component.root).catch((error) => error?.code === "ENOENT" ? null : Promise.reject(error));
   if (existing) {
     if (!existing.isDirectory() || existing.isSymbolicLink()) throw new Error(`Existing ${component.component} toolchain path is unsafe.`);
@@ -421,15 +430,25 @@ async function installComponent(component, contract, {
   const extractionRoot = pathApi.join(transaction, "extracted");
   await fsImpl.mkdir(transaction, { recursive: false, mode: 0o700 });
   try {
+    const downloadStarted = Date.now();
     await downloadImpl(component.distribution, archivePath);
+    timed("download", downloadStarted);
+    const extractStarted = Date.now();
     await extractComponentImpl({ archivePath, extractionRoot, component, contract, platform, env, execFileImpl, windowsZipHelperPath });
+    timed("extract", extractStarted);
     const sourceRoot = component.archiveRoot === "." ? extractionRoot : pathApi.join(extractionRoot, component.archiveRoot);
     const sourceStat = await fsImpl.lstat(sourceRoot);
     if (!sourceStat.isDirectory() || sourceStat.isSymbolicLink()) throw new Error(`${component.component} toolchain archive root is unsafe.`);
+    const prevalidateStarted = Date.now();
     await validateComponentIdentity(sourceRoot, component, contract, { platform, fsImpl, execFileImpl });
+    timed("prepublish-validation", prevalidateStarted);
+    const publishStarted = Date.now();
     await writeComponentStamp(sourceRoot, component, { fsImpl });
     await fsImpl.rename(sourceRoot, component.root);
+    timed("publish", publishStarted);
+    const postvalidateStarted = Date.now();
     await validateComponentIdentity(component.root, component, contract, { platform, fsImpl, execFileImpl });
+    timed("postpublish-validation", postvalidateStarted);
     return Object.freeze({ component: component.component, status: "installed", root: component.root });
   } finally {
     await fsImpl.rm(transaction, { recursive: true, force: true }).catch(() => {});
