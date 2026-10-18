@@ -97,6 +97,9 @@ test("ARM64 native Guardian and Job cache is exact-source keyed and fails closed
   assert.match(producer, /EQUINOX_WINDOWS_NATIVE_HELPER_CACHE_DIR/u);
   assert.match(producer, /EQUINOX_WINDOWS_NATIVE_HELPER_CACHE_HIT/u);
   assert.match(action, /native-helpers-v1-/u);
+  assert.match(action, /scripts\/release\/package-managed-release-windows\.mjs/u);
+  assert.match(producer, /scripts\/release\/package-managed-release-windows\.mjs/u);
+
   assert.match(action, /hashFiles\('native\/windows\/EquinoxLocal\.Guardian\/\*\*', 'native\/windows\/equinox-local-job-object-helper\.cpp'/u);
   assert.match(action, /EQUINOX_WINDOWS_NATIVE_HELPER_CACHE_HIT/u);
   assert.match(builder, /process\.env\.GITHUB_ACTIONS === "true" && process\.env\.EQUINOX_WINDOWS_NATIVE_HELPER_CACHE_HIT === "true"/u);

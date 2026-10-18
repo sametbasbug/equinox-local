@@ -150,7 +150,7 @@ runs:
       uses: actions/cache@v6
       with:
         path: ${{ runner.temp }}/windows-native-helpers/win-arm64
-        key: native-helpers-v1-${{ runner.os }}-win-arm64-dotnet10-msvc-${{ hashFiles('native/windows/EquinoxLocal.Guardian/**', 'native/windows/equinox-local-job-object-helper.cpp', 'native/windows/**/Directory.Build.*', 'global.json') }}
+        key: native-helpers-v1-${{ runner.os }}-win-arm64-dotnet10-msvc-${{ hashFiles('native/windows/EquinoxLocal.Guardian/**', 'native/windows/equinox-local-job-object-helper.cpp', 'scripts/release/package-managed-release-windows.mjs', 'native/windows/**/Directory.Build.*', 'global.json') }}
 
     - name: Windows ARM64 managed package assembly smoke
       id: package
