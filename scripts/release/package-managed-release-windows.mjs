@@ -527,18 +527,23 @@ export async function packageManagedEquinoxWindowsRelease({
         Math.min(600, Math.max(0, (Date.now() - started) / 1000)).toFixed(1) + "\n");
     };
     const canExecuteTarget = target === hostTarget;
+    const component = async (label, invoke) => {
+      const started = Date.now();
+      try { return await invoke(); }
+      finally { timed("component-" + label, started); }
+    };
     const preparationStarted = Date.now();
     const preparationResults = await Promise.allSettled([
-      copyReleaseSources(rootDir, releaseDir),
-      installPinnedWindowsNode(transaction, releaseDir, fetchImpl, target, { canExecuteTarget }),
-      installPinnedWindowsTunnel(transaction, releaseDir, fetchImpl, target, { canExecuteTarget }),
-      installPinnedWindowsWinapp(transaction, rootDir, releaseDir, fetchImpl, target, { canExecuteTarget }),
-      copyPublishedShell(rootDir, releaseDir, resolvedShellPublishDir),
-      compileWindowsGuardian(rootDir, releaseDir, transaction, contract),
-      compileWindowsJobObjectHelper({ rootDir, outputDir: path.join(releaseDir, "runtime", "job"), target }),
-      browserLauncherPath
+      component("sources", () => copyReleaseSources(rootDir, releaseDir)),
+      component("node", () => installPinnedWindowsNode(transaction, releaseDir, fetchImpl, target, { canExecuteTarget })),
+      component("tunnel", () => installPinnedWindowsTunnel(transaction, releaseDir, fetchImpl, target, { canExecuteTarget })),
+      component("winapp", () => installPinnedWindowsWinapp(transaction, rootDir, releaseDir, fetchImpl, target, { canExecuteTarget })),
+      component("shell", () => copyPublishedShell(rootDir, releaseDir, resolvedShellPublishDir)),
+      component("guardian", () => compileWindowsGuardian(rootDir, releaseDir, transaction, contract)),
+      component("job", () => compileWindowsJobObjectHelper({ rootDir, outputDir: path.join(releaseDir, "runtime", "job"), target })),
+      component("browser-launcher", () => browserLauncherPath
         ? copyPrecompiledBrowserLauncher(browserLauncherPath, releaseDir, contract)
-        : compileBrowserLauncher(rootDir, releaseDir, contract),
+        : compileBrowserLauncher(rootDir, releaseDir, contract)),
     ]);
     const preparationFailure = preparationResults.find((result) => result.status === "rejected");
     if (preparationFailure) throw preparationFailure.reason;
