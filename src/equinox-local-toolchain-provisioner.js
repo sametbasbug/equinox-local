@@ -191,7 +191,7 @@ async function runWindowsZipHelper(mode, archivePath, destinationPath, expectedR
     // Parse only these fixed phase labels and bounded decimal timings.
     // Never echo helper stdout, archive metadata, or filesystem paths.
     for (const line of String(result?.stdout ?? "").split(/\r?\n/u)) {
-      const match = /^Hosted ZIP phase: (extract|validate-entries|write-files|validate-tree); durationSeconds=(\d{1,3}\.\d)$/u.exec(line);
+      const match = /^Hosted ZIP phase: (extract|load-assemblies|open-archive|validate-entries|write-files|validate-tree); durationSeconds=(\d{1,3}\.\d)$/u.exec(line);
       if (!match || Number(match[2]) > 600) continue;
       process.stdout.write(`Hosted ZIP phase: ${match[1]}; durationSeconds=${match[2]}\n`);
     }

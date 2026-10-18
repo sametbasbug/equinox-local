@@ -7,8 +7,12 @@ param(
 $ErrorActionPreference = 'Stop'
 $HostedZipTiming = ($env:EQUINOX_HOSTED_PHASE_TIMING -ceq '1')
 $HostedZipClock = [Diagnostics.Stopwatch]::StartNew()
+$assemblyStarted = $HostedZipClock.Elapsed.TotalSeconds
 Add-Type -AssemblyName System.IO.Compression
 Add-Type -AssemblyName System.IO.Compression.FileSystem
+if ($HostedZipTiming) {
+  Write-Output ("Hosted ZIP phase: load-assemblies; durationSeconds={0:F1}" -f ($HostedZipClock.Elapsed.TotalSeconds - $assemblyStarted))
+}
 $MaxEntries = 20000
 [long]$MaxBytes = 2147483648
 $MaxName = 500
@@ -90,11 +94,15 @@ function Assert-ExtractedTree([string]$Directory, [hashtable]$Counters) {
   }
 }
 
+$openStarted = $HostedZipClock.Elapsed.TotalSeconds
 $archive = [IO.Path]::GetFullPath($ArchivePath)
 if (-not [IO.File]::Exists($archive)) { throw 'Windows release ZIP is missing.' }
 $stream = [IO.File]::Open($archive, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
 try {
   $zip = [IO.Compression.ZipArchive]::new($stream, [IO.Compression.ZipArchiveMode]::Read, $false)
+  if ($HostedZipTiming) {
+    Write-Output ("Hosted ZIP phase: open-archive; durationSeconds={0:F1}" -f ($HostedZipClock.Elapsed.TotalSeconds - $openStarted))
+  }
   try {
     $preflightStarted = $HostedZipClock.Elapsed.TotalSeconds
     $checked = Get-CheckedEntries $zip $ExpectedRoot
