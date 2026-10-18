@@ -118,8 +118,10 @@ async function checkJavascriptConcurrent(files, { command, cwd, concurrency, spa
             resolve(1);
             return;
           }
-          child.once("error", () => resolve(1));
-          child.once("close", (code, signal) => resolve(signal ? 1 : (code ?? 1)));
+          let spawnError = false;
+          child.once("error", () => { spawnError = true; });
+          // Node guarantees close after error or exit. Wait for every handle.
+          child.once("close", (code, signal) => resolve(spawnError || signal ? 1 : (code ?? 1)));
         });
       } catch {
         status = 1;

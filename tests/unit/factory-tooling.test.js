@@ -292,7 +292,7 @@ test("parallel syntax checks fail closed on nonzero exits or spawn errors after 
           active -= 1;
           completed += 1;
           if (args[1] === "src/a.js" && failStyle === "error") child.emit("error", new Error("mock ENOENT"));
-          else child.emit("close", args[1] === "src/a.js" && failStyle === "exit" ? 9 : 0, null);
+          child.emit("close", args[1] === "src/a.js" && failStyle === "exit" ? 9 : 0, null);
         });
         return child;
       };
