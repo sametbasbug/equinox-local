@@ -12,6 +12,8 @@ This project follows semantic versioning for public releases.
 
 ### Fixed (pending native/desktop validation)
 
+- Build the pipe-only Windows Job Object helper as a Windows-subsystem executable, retaining C++ main/stdio initialization. This removes its OS request for a desktop console even when Windows Terminal is the default; native Windows smoke asserts the actual PE subsystem and exercises the redirected helper lifecycle.
+
 - Removed Windows interactive-terminal startup of a second PowerShell process: the Job Object-owned ConPTY gate remains as the interactive host after readiness, avoiding secondary console windows and unreliable nested native launch.
 - Extended the explicit Windows Doctor terminal probe to detect silent failures of native CMD invocations. Pure PowerShell output and exit status are no longer sufficient.
 - Windows Job Object helper `close` now waits for the native helper final stdout acknowledgment even if Windows signals process exit first, while unacknowledged and unexpected exits still fail closed. This prevents spurious PTY cleanup failures from the helper shutdown race.

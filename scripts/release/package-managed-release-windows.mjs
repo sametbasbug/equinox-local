@@ -372,7 +372,9 @@ export async function compileWindowsJobObjectHelper({
     "@echo off",
     `call "${vcvars}" >nul`,
     "if errorlevel 1 exit /b %errorlevel%",
-    `cl.exe /nologo /std:c++17 /O2 /EHsc /MT /DUNICODE /D_UNICODE "${source}" /Fe:equinox-local-job-object-helper.exe`,
+    // Helper uses redirected pipes and must not allocate a desktop console.
+    // GUI subsystem keeps Windows Terminal out; mainCRTStartup initializes C++ stdio.
+    `cl.exe /nologo /std:c++17 /O2 /EHsc /MT /DUNICODE /D_UNICODE "${source}" /Fe:equinox-local-job-object-helper.exe /link /SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup`,
     "exit /b %errorlevel%",
     "",
   ].join("\r\n");

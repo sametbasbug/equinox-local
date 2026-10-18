@@ -35,6 +35,12 @@ const jobHelperPath = await compileWindowsJobObjectHelper({
   outputDir: jobHelperRoot,
   target: `win32-${process.arch}`,
 });
+const jobHelperImage = await fs.readFile(jobHelperPath);
+const jobPeOffset = jobHelperImage.readUInt32LE(0x3c);
+const jobSubsystemOffset = jobPeOffset + 24 + 68;
+assert.equal(jobHelperImage.readUInt16LE(jobSubsystemOffset), 2,
+  "Windows Job Object helper must be a GUI-subsystem PE to avoid console windows");
+
 process.env.EQUINOX_WINDOWS_JOB_OBJECT_HELPER_PATH = jobHelperPath;
 
 const WINDOWS_ARCH = process.arch === "x64" || process.arch === "arm64" ? process.arch : null;
