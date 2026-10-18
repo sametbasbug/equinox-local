@@ -12,8 +12,6 @@
   [![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-3f9e88)](LICENSE)
   ![Platforms](https://img.shields.io/badge/macOS%20%2B%20Windows-ARM64%20%2F%20x64-38465d)
 
-  **Equinox Local v6.1.2** · **Equinox Browser v1.0.1** (Chrome Web Store submission sent; release follows approval)
-
   **[Get started](https://local.sametbasbug.dev/install/)** · **[Features](#what-you-can-do)** · **[How it works](#how-it-works)** · **[Documentation](#documentation)** · **[Contribute](CONTRIBUTING.md)**
 </div>
 
