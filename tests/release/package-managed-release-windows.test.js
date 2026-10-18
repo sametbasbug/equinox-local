@@ -484,6 +484,15 @@ test("independent Guardian worker process provenance never invokes a launcher or
   assert.doesNotMatch(auditor, /Process\.Start|Registry\.SetValue|File\.WriteAllText|File\.Delete/u);
 });
 
+test('vintage Windows A/B real PE smoke accepts pre-6.1.2 marker absence but always verifies modern native gates', async () => {
+  const smoke = await fs.readFile(new URL('./windows-native-ab-installed-smoke.mjs', import.meta.url), 'utf8');
+  assert.match(smoke, /compareEquinoxVersions\(installedRelease\.version, "6\.1\.2"\) >= 0/u);
+  assert.match(smoke, /assert\.equal\(\(await fs\.stat\(nativeHelper\)\)\.isFile\(\), true/u);
+  assert.match(smoke, /if \(hasNativeInspector\) \{[\s\S]*?await fs\.readFile\(nativeGateMarker, "utf8"\)/u);
+  assert.match(smoke, /inspectWindowsMainUpdateWorkerProcess\(ownership\)/u);
+  assert.match(smoke, /exact LIVE product Node PID\/birthtime\/executable\/token/u);
+});
+
 test('vintage installed Main upgrade does not require a Guardian absent from old signed packages', async () => {
   const fixture = await fs.readFile(new URL('./windows-installer-real-package-smoke.ps1', import.meta.url), 'utf8');
   assert.match(fixture, /\$SkipLegacyGuardianFixture = \(\$env:GITHUB_ACTIONS -ceq 'true' -and -not \[string\]::IsNullOrWhiteSpace\(\$env:EQUINOX_WINDOWS_MAIN_ACCEPT_TARGET_SHA\)\)/u);
