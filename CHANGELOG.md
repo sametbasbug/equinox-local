@@ -16,6 +16,7 @@ This project follows semantic versioning for public releases.
 - Extended the explicit Windows Doctor terminal probe to detect silent failures of native CMD invocations. Pure PowerShell output and exit status are no longer sufficient.
 - Windows Job Object helper `close` now waits for the native helper final stdout acknowledgment even if Windows signals process exit first, while unacknowledged and unexpected exits still fail closed. This prevents spurious PTY cleanup failures from the helper shutdown race.
 - Guide agents to use directly managed process_start/process_wait/process_logs for standalone Windows native executables if PowerShell 5.1 native invocation fails, instead of spawning the same failing shell repeatedly. This does not eliminate the Windows Terminal popup risk.
+- Windows background batch jobs now run through OS-owned cmd.exe and hidden .NET ProcessStartInfo instead of PowerShell 5.1 native call operator. Dangerous CMD variable expansion and quoting fail closed; stdout and exit code are retained.
 
 ## [6.1.1] - 2026-10-16
 

@@ -421,10 +421,10 @@ async function verifyWindowsIndependentProcessCommands(root) {
     // Windows workflow commands often resolve to npm.cmd / batch wrappers;
     // native ProcessStartInfo cannot directly launch a .cmd file.
     const batchPath = path.join(root, "native command with spaces.cmd");
-    await fs.writeFile(batchPath, "@echo off\r\necho DIRECT_BATCH_OK\r\nexit /b 37\r\n");
+    await fs.writeFile(batchPath, "@echo off\r\necho DIRECT_BATCH_OK\r\necho FIRST=[%~1]\r\necho SECOND=[%~2]\r\nexit /b 37\r\n");
     const batch = await manager.start({
       projectId: "windows-smoke", projectName: "Windows Smoke", cwd: root,
-      command: batchPath, args: [], purpose: "background",
+      command: batchPath, args: ["alpha beta", "--port=3777"], purpose: "background",
       env: process.env, label: "independent-direct-batch",
     });
     const batchEnd = await manager.waitForExit({ processId: batch.processId, waitMs: 10_000 });
@@ -432,7 +432,22 @@ async function verifyWindowsIndependentProcessCommands(root) {
     assert.equal(batchEnd.running, false, "native batch command did not finish");
     assert.equal(batchEnd.exitCode, 37, `batch wrapper exit status must be 37: ${batchLogs.output}`);
     assert.match(batchLogs.output, /DIRECT_BATCH_OK/u);
+    assert.match(batchLogs.output, /FIRST=\[alpha beta\]/u, "quoted Windows batch arguments must preserve spaces");
+    assert.match(batchLogs.output, /SECOND=\[--port=3777\]/u, "Windows batch flags must preserve values");
     await manager.stop({ processId: batch.processId, force: true, remove: true });
+
+    const injectionRejected = await manager.start({
+      projectId: "windows-smoke", projectName: "Windows Smoke", cwd: root,
+      command: batchPath, args: ["%COMSPEC%"], purpose: "background",
+      env: process.env, label: "independent-batch-expansion-rejection",
+    });
+    const rejectedEnd = await manager.waitForExit({ processId: injectionRejected.processId, waitMs: 10_000 });
+    const rejectedLogs = await manager.readLogs({ processId: injectionRejected.processId, cursor: 0 });
+    assert.equal(rejectedEnd.running, false, "rejected batch argument never finished");
+    assert.equal(rejectedEnd.exitCode, 127, "Windows batch expansion must fail closed");
+    assert.match(rejectedLogs.output, /unsupported CMD expansion or quoting characters/u);
+    assert.doesNotMatch(rejectedLogs.output, /DIRECT_BATCH_OK/u);
+    await manager.stop({ processId: injectionRejected.processId, force: true, remove: true);
 
     // The background tool also manages indefinite processes. Ensure process_stop
     // drains the entire owned Windows Job Object without killing the caller.
