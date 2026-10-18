@@ -36,11 +36,18 @@ const options = { transactionId, previousReleaseDir, targetReleaseDir, programRo
 const sourceShell = path.join(releaseDir, 'runtime', 'shell');
 const readInstalled = () => snapshotWindowsStableShellTree(programRoot);
 try {
+  const installedRelease = JSON.parse(await fs.readFile(path.join(releaseDir, "release.json"), "utf8"));
+  const hasNativeInspector = compareEquinoxVersions(installedRelease.version, "6.1.2") >= 0;
   const nativeHelper = path.join(releaseDir, "runtime", "job", "equinox-local-job-object-helper.exe");
   const nativeGateMarker = path.join(releaseDir, "runtime", "job", "owned-process-gate-v1.marker");
   assert.equal((await fs.stat(nativeHelper)).isFile(), true, "installed native helper must exist");
-  assert.equal((await fs.readFile(nativeGateMarker, "utf8")).trim(), "equinox-owned-process-gate-v1",
-    "extracted Windows managed installer ZIP must retain the matching no-console native gate marker");
+  // Immutable older A (e.g. 6.1.0) predates the compiled process gate marker.
+  // Modern releases MUST retain it. The A/B native PE fixture and old-A worker
+  // PID/birthtime/executable proof below still execute for vintage packages.
+  if (hasNativeInspector) {
+    assert.equal((await fs.readFile(nativeGateMarker, "utf8")).trim(), "equinox-owned-process-gate-v1",
+      "extracted Windows managed installer ZIP must retain the matching no-console native gate marker");
+  }
   for (const rootRelease of [previousReleaseDir, targetReleaseDir]) {
     await fs.mkdir(path.dirname(path.join(rootRelease, 'runtime', 'shell')), { recursive: true });
     await fs.cp(sourceShell, path.join(rootRelease, 'runtime', 'shell'), { recursive: true, force: false, errorOnExist: true, dereference: false });
@@ -174,8 +181,6 @@ try {
     currentSha, targetSha, startedAt: started };
   const nativeTransition = { mode: 'artifact_required', target, currentSha, targetSha,
     currentRuntimeContractSha256: 'a'.repeat(64), targetRuntimeContractSha256: contract };
-  const installedRelease = JSON.parse(await fs.readFile(path.join(releaseDir, 'release.json'), 'utf8'));
-  const hasNativeInspector = compareEquinoxVersions(installedRelease.version, '6.1.2') >= 0;
   const nativeHelperPath = path.join(releaseDir, 'runtime', 'job', 'equinox-local-job-object-helper.exe');
   // Historic signed A cannot have a future native inspector. Its isolated
   // fixture retains the old PowerShell probe; the new B candidate must use
