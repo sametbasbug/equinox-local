@@ -49,6 +49,7 @@ export async function createWindowsJobObjectLease({
   let stderr = "";
   let stdoutBuffer = "";
   let closed = false;
+  let closing = false;
   const pending = new Map();
 
   child.stderr?.on("data", (chunk) => { stderr = boundedTail(stderr, chunk); });
@@ -76,7 +77,17 @@ export async function createWindowsJobObjectLease({
   });
   child.once("exit", (code, signal) => {
     closed = true;
-    failAll(new Error(`Windows Job Object helper exited unexpectedly (${code ?? "null"}/${signal ?? "null"}). ${stderr}`.trim()));
+    // The native helper replies to close and exits 0 immediately. Wait for
+    // its stdout pipe to drain before treating the expected exit as a loss.
+    if (!closing || code !== 0 || signal != null) {
+      failAll(new Error(`Windows Job Object helper exited unexpectedly (${code ?? "null"}/${signal ?? "null"}). ${stderr}`.trim()));
+    }
+  });
+  child.once("close", (code, signal) => {
+    closed = true;
+    if (pending.size > 0) {
+      failAll(new Error("Windows Job Object helper closed before acknowledging its request."));
+    }
   });
 
   const waitReady = new Promise((resolve, reject) => {
@@ -138,6 +149,7 @@ export async function createWindowsJobObjectLease({
     },
     async close() {
       if (closed) return;
+      closing = true;
       await request("close");
       closed = true;
       child.stdin?.end();

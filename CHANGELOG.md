@@ -14,6 +14,7 @@ This project follows semantic versioning for public releases.
 
 - Removed Windows interactive-terminal startup of a second PowerShell process: the Job Object-owned ConPTY gate remains as the interactive host after readiness, avoiding secondary console windows and unreliable nested native launch.
 - Extended the explicit Windows Doctor terminal probe to detect silent failures of native CMD invocations. Pure PowerShell output and exit status are no longer sufficient.
+- Windows Job Object helper `close` now waits for the native helper final stdout acknowledgment even if Windows signals process exit first, while unacknowledged and unexpected exits still fail closed. This prevents spurious PTY cleanup failures from the helper shutdown race.
 
 ## [6.1.1] - 2026-10-16
 
