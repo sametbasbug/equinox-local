@@ -31,6 +31,12 @@ try {
       [string]$metadata.version -cnotmatch '^[0-9]+\.[0-9]+\.[0-9]+$') {
     throw 'Native A/B smoke cannot admit a package from another target, version or commit.'
   }
+  # The native journal verifier derives Stable A's identity from its
+  # version-named release directory, just as the real installer does. Keep
+  # this identity check strict while staging the unpacked package accordingly.
+  $versionedReleaseDir = Join-Path $fixture ([string]$metadata.version)
+  Move-Item -LiteralPath $releaseDir -Destination $versionedReleaseDir
+  $releaseDir = $versionedReleaseDir
   foreach ($expected in @('runtime/shell/EquinoxLocal.exe','runtime/job/equinox-local-job-object-helper.exe','runtime/job/owned-process-gate-v1.marker')) {
     if (-not [IO.File]::Exists((Join-Path $releaseDir $expected))) { throw "Native A/B candidate is missing $expected" }
   }

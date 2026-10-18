@@ -109,6 +109,7 @@ test("exact native WPF A/B acceptance is shifted to mandatory parallel package l
   assert.match(smoke, /windows-native-ab-installed-smoke\.mjs/u);
   assert.match(smoke, /Native A\/B package SHA256 differs from its producer/u);
   assert.match(smoke, /runtime\/node\/bin\/node\.exe/u);
+  assert.match(smoke, /Move-Item -LiteralPath \$releaseDir -Destination \$versionedReleaseDir/u);
   assert.match(smoke, /& \$ownedNode /u);
 });
 
