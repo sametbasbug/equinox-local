@@ -487,7 +487,11 @@ test("independent Guardian worker process provenance never invokes a launcher or
 test('vintage installed Main upgrade does not require a Guardian absent from old signed packages', async () => {
   const fixture = await fs.readFile(new URL('./windows-installer-real-package-smoke.ps1', import.meta.url), 'utf8');
   assert.match(fixture, /\$SkipLegacyGuardianFixture = \(\$env:GITHUB_ACTIONS -ceq 'true' -and -not \[string\]::IsNullOrWhiteSpace\(\$env:EQUINOX_WINDOWS_MAIN_ACCEPT_TARGET_SHA\)\)/u);
-  assert.ok((fixture.match(/if \(-not \$SkipLegacyGuardianFixture\) \{/gu) ?? []).length >= 5);
+  assert.ok((fixture.match(/if \(-not \$SkipLegacyGuardianFixture\) \{/gu) ?? []).length >= 4);
+  assert.match(fixture, /if \(-not \$SkipLegacyGuardianFixture -and -not \$RepairOnly\) \{/u,
+    "The real full installer must retain Guardian negative cases, while CI-only repair stays isolated.");
+  assert.match(fixture, /if \(\$RepairOnly -and \(\$env:GITHUB_ACTIONS -cne 'true'/u,
+    "Repair-only smoke must remain restricted to disposable hosted CI.");
   assert.match(fixture, /Old installed A user config is missing/u);
   assert.match(fixture, /Real Main upgrade lost user settings/u);
   assert.match(fixture, /Real Main upgrade lost user browser data/u);
