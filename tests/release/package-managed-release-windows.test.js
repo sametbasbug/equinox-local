@@ -110,16 +110,23 @@ test("Windows pinned dependency ZIP extraction uses bounded native tar instead o
 });
 
 
-test("Windows release ZIP helper explicitly references compression assemblies for PowerShell 5.1", async () => {
+test("Windows release ZIP helper uses PowerShell 5.1 .NET ZIP APIs without dynamic compilation, preserving safety checks", async () => {
   const helper = await fs.readFile(new URL("../../src/equinox-local-windows-release-zip.ps1", import.meta.url), "utf8");
   assert.match(helper, /\$ExpectedRoot = 'release'/u);
-  assert.match(helper, /ValidateArchive\(zip, expectedRoot/u);
+  assert.match(helper, /Get-CheckedEntries/u);
   assert.match(helper, /escaped the expected archive root/u);
-  assert.match(helper, /ZipArchive\]\.Assembly\.Location/u);
-  assert.match(helper, /ZipFile\]\.Assembly\.Location/u);
-  assert.match(helper, /-ReferencedAssemblies @\(\$CompressionAssembly, \$CompressionFileSystemAssembly\)/u);
-  assert.match(helper, /\$PSVersionTable\.PSEdition -eq 'Core'/u);
-  assert.match(helper, /Add-Type -TypeDefinition \$TypeDefinition/u);
+  assert.match(helper, /Add-Type -AssemblyName System\.IO\.Compression/u);
+  assert.doesNotMatch(helper, /Add-Type -TypeDefinition|-ReferencedAssemblies/u);
+  assert.match(helper, /case-insensitive duplicate path/u);
+  assert.match(helper, /reserved Windows device path/u);
+  assert.match(helper, /unsafe path segment/u);
+  assert.match(helper, /symlink or reparse-point entry/u);
+  assert.match(helper, /MaxEntries = 20000/u);
+  assert.match(helper, /MaxBytes = 2147483648/u);
+  assert.match(helper, /MaxName = 500/u);
+  assert.match(helper, /Assert-ExtractedTree/u);
+  assert.match(helper, /FileMode\]::CreateNew/u);
+  assert.match(helper, /byte count drifted from central-directory metadata/u);
 });
 
 test("Windows managed package builder allows only native targets plus x64-to-ARM64 cross-packaging", async () => {
