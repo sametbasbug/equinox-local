@@ -542,9 +542,17 @@ export async function packageManagedEquinoxRelease({
   try {
     await copyFileTree(rootDir, releaseDir, sourceFiles);
     await copyProductionNodeModules(rootDir, releaseDir);
-    await installPinnedNodeBinary(target, releaseDir, { fetchImpl });
-    await installPinnedTunnelRuntime(target, releaseDir, { fetchImpl });
-    await installPinnedPeekabooRuntime(releaseDir, { fetchImpl });
+    // Each pinned component uses its own disposable transaction and separate
+    // runtime/node, runtime/tunnel or runtime/peekaboo destination. Wait for
+    // ALL of them, including on failure, before the outer transaction cleanup.
+    // Every digest, native architecture and code-signature check is unchanged.
+    const pinnedInstalls = await Promise.allSettled([
+      installPinnedNodeBinary(target, releaseDir, { fetchImpl }),
+      installPinnedTunnelRuntime(target, releaseDir, { fetchImpl }),
+      installPinnedPeekabooRuntime(releaseDir, { fetchImpl }),
+    ]);
+    const failedInstall = pinnedInstalls.find((result) => result.status === "rejected");
+    if (failedInstall) throw failedInstall.reason;
     const nativeApp = await buildEquinoxLocalNativeAppArtifacts({ rootDir, releaseDir, target });
     await fs.writeFile(path.join(releaseDir, "release.json"), `${JSON.stringify({
       schemaVersion: 1,

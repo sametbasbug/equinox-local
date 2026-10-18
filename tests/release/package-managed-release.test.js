@@ -200,3 +200,20 @@ test("third-party runtimes are pinned downloads, not vendored source trees", asy
   await fs.access(new URL("../../THIRD_PARTY_NOTICES.md", import.meta.url));
   await assert.rejects(fs.lstat(new URL("../../third_party", import.meta.url)), { code: "ENOENT" });
 });
+
+
+test("macOS signed managed package installs disjoint pinned runtimes concurrently with fail-closed completion", async () => {
+  const source = await fs.readFile(new URL("../../scripts/release/package-managed-release.mjs", import.meta.url), "utf8");
+  assert.match(source, /const pinnedInstalls = await Promise\.allSettled\(\[/u);
+  assert.match(source, /installPinnedNodeBinary\(target, releaseDir, \{ fetchImpl \}\)/u);
+  assert.match(source, /installPinnedTunnelRuntime\(target, releaseDir, \{ fetchImpl \}\)/u);
+  assert.match(source, /installPinnedPeekabooRuntime\(releaseDir, \{ fetchImpl \}\)/u);
+  assert.match(source, /pinnedInstalls\.find\(\(result\) => result\.status === "rejected"\)/u);
+  assert.match(source, /if \(failedInstall\) throw failedInstall\.reason/u);
+  assert.match(source, /await buildEquinoxLocalNativeAppArtifacts\(/u);
+  assert.match(source, /await assertNoSymlinks\(releaseDir\)/u);
+  assert.match(source, /await createDeterministicManagedReleaseArchive\(/u);
+  for (const component of ["runtime\", \"node", "runtime\", \"tunnel", "runtime\", \"peekaboo"]) {
+    assert.ok(source.includes(component), "pinned installation output paths must be present");
+  }
+});
