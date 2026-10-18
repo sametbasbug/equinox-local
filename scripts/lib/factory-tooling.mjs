@@ -97,6 +97,40 @@ export function runNodeTests({
   });
 }
 
+// Keep the private factory's injected synchronous checker behavior untouched.
+// The public installed-source checker opts into a bounded number of real
+// Node --check children. An error stops new scheduling, but all already
+// launched children are awaited before the caller can use the result.
+async function checkJavascriptConcurrent(files, { command, cwd, concurrency, spawnImpl }) {
+  let next = 0;
+  let failed = false;
+  const count = Math.min(concurrency, files.length);
+  async function worker() {
+    while (!failed && next < files.length) {
+      const file = files[next++];
+      let status;
+      try {
+        status = await new Promise((resolve) => {
+          let child;
+          try {
+            child = spawnImpl(command, ["--check", file], { cwd, stdio: "inherit" });
+          } catch {
+            resolve(1);
+            return;
+          }
+          child.once("error", () => resolve(1));
+          child.once("close", (code, signal) => resolve(signal ? 1 : (code ?? 1)));
+        });
+      } catch {
+        status = 1;
+      }
+      if (status !== 0) failed = true;
+    }
+  }
+  await Promise.all(Array.from({ length: count }, () => worker()));
+  return failed ? 1 : 0;
+}
+
 export async function checkProject({
   rootDir,
   recursiveDirectories = [],
@@ -107,6 +141,8 @@ export async function checkProject({
   deduplicate = false,
   jsonFiles = [],
   spawnSyncImpl = spawnSync,
+  spawnImpl = spawn,
+  parallelJavascriptChecks = 1,
   javascriptCommand = process.execPath,
   shellCommand = "/bin/bash",
 } = {}) {
@@ -125,16 +161,30 @@ export async function checkProject({
   javascript.sort();
   shell.sort();
 
-  for (const file of javascript) {
-    const result = spawnSyncImpl(javascriptCommand, ["--check", file], { cwd: rootDir, stdio: "inherit" });
-    if (result.status !== 0) {
-      return Object.freeze({
-        exitCode: result.status ?? 1,
-        javascriptFiles: javascript,
-        shellFiles: shell,
-        jsonFiles: [],
-      });
+  if (!Number.isInteger(parallelJavascriptChecks) || parallelJavascriptChecks < 1 || parallelJavascriptChecks > 16) {
+    throw new Error("Parallel JavaScript syntax check concurrency must be an integer from 1 to 16.");
+  }
+  let javascriptExitCode = 0;
+  if (parallelJavascriptChecks > 1) {
+    javascriptExitCode = await checkJavascriptConcurrent(javascript, {
+      command: javascriptCommand, cwd: rootDir, concurrency: parallelJavascriptChecks, spawnImpl,
+    });
+  } else {
+    for (const file of javascript) {
+      const result = spawnSyncImpl(javascriptCommand, ["--check", file], { cwd: rootDir, stdio: "inherit" });
+      if (result.status !== 0) {
+        javascriptExitCode = result.status ?? 1;
+        break;
+      }
     }
+  }
+  if (javascriptExitCode !== 0) {
+    return Object.freeze({
+      exitCode: javascriptExitCode,
+      javascriptFiles: javascript,
+      shellFiles: shell,
+      jsonFiles: [],
+    });
   }
   for (const file of shell) {
     const result = spawnSyncImpl(shellCommand, ["-n", file], { cwd: rootDir, stdio: "inherit" });

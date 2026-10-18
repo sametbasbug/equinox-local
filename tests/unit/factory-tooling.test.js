@@ -232,6 +232,97 @@ test("test execution forwards child signals without converting them to exit code
   assert.equal(await signalReceived, "SIGTERM");
 });
 
+test("public syntax checking schedules every JavaScript file with a bounded parallel worker pool", async () => {
+  await withTempRoot(async (root) => {
+    for (let i = 0; i < 11; i += 1) await writeFile(root, `src/check-${i}.js`);
+    await writeFile(root, "package.json", "{}");
+    await writeFile(root, "extension/manifest.json", "{}");
+    await writeFile(root, "examples/equinox-local-config.example.json", "{}");
+    let active = 0;
+    let peak = 0;
+    const visited = [];
+    const spawnImpl = (command, args, options) => {
+      assert.equal(command, process.execPath);
+      assert.equal(args[0], "--check");
+      assert.equal(options.cwd, root);
+      const child = new EventEmitter();
+      visited.push(args[1]);
+      active += 1;
+      peak = Math.max(peak, active);
+      queueMicrotask(() => {
+        active -= 1;
+        child.emit("close", 0, null);
+      });
+      return child;
+    };
+    const result = await checkProject({
+      rootDir: root,
+      recursiveDirectories: ["src"],
+      spawnImpl,
+      parallelJavascriptChecks: 4,
+      spawnSyncImpl: () => { throw new Error("parallel check must not run sync process"); },
+      jsonFiles: ["package.json", "extension/manifest.json", "examples/equinox-local-config.example.json"],
+    });
+    assert.equal(result.exitCode, 0);
+    assert.equal(peak, 4);
+    assert.equal(active, 0);
+    assert.equal(visited.length, 11);
+    assert.deepEqual(visited.sort(), result.javascriptFiles);
+    assert.equal(result.jsonFiles.length, 3);
+  });
+});
+
+test("parallel syntax checks fail closed on nonzero exits or spawn errors after draining active workers", async () => {
+  await withTempRoot(async (root) => {
+    await Promise.all([
+      writeFile(root, "src/a.js"),
+      writeFile(root, "src/b.js"),
+      writeFile(root, "src/c.js"),
+      writeFile(root, "scripts/should-not-run.sh"),
+      writeFile(root, "package.json", "{invalid-json"),
+    ]);
+    for (const failStyle of ["exit", "error", "throw"]) {
+      let completed = 0;
+      let active = 0;
+      const spawnImpl = (_command, args) => {
+        if (args[1] === "src/a.js" && failStyle === "throw") throw new Error("mock spawn failed");
+        const child = new EventEmitter();
+        active += 1;
+        queueMicrotask(() => {
+          active -= 1;
+          completed += 1;
+          if (args[1] === "src/a.js" && failStyle === "error") child.emit("error", new Error("mock ENOENT"));
+          else child.emit("close", args[1] === "src/a.js" && failStyle === "exit" ? 9 : 0, null);
+        });
+        return child;
+      };
+      const report = await checkProject({
+        rootDir: root,
+        recursiveDirectories: ["src", "scripts"],
+        jsonFiles: ["package.json"],
+        spawnImpl,
+        parallelJavascriptChecks: 3,
+        spawnSyncImpl: () => { throw new Error("shell and synchronous fallback must not run after syntax error"); },
+      });
+      assert.notEqual(report.exitCode, 0);
+      assert.equal(report.jsonFiles.length, 0);
+      assert.equal(active, 0);
+      assert.ok(completed >= 1, "already launched children must be drained");
+    }
+  });
+});
+
+test("syntax checker concurrency is bounded and rejects malformed limits", async () => {
+  await withTempRoot(async (root) => {
+    await writeFile(root, "src/a.js");
+    for (const parallelJavascriptChecks of [0, -1, 2.5, 17, Infinity, NaN]) {
+      await assert.rejects(checkProject({
+        rootDir: root, recursiveDirectories: ["src"], parallelJavascriptChecks,
+      }), /concurrency must be an integer from 1 to 16/u);
+    }
+  });
+});
+
 test("static checking preserves ordered source roots, root-file policy, exclusions, and JSON checks", async () => {
   await withTempRoot(async (root) => {
     const fixtureFiles = [
