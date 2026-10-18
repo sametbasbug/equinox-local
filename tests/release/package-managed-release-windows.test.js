@@ -89,6 +89,13 @@ test("ARM64 native Guardian and Job cache is exact-source keyed and fails closed
   const action = await fs.readFile(new URL("../../.github/actions/prepare-arm64-package/action.yml", import.meta.url), "utf8");
   const builder = await fs.readFile(new URL("../../scripts/release/package-managed-release-windows.mjs", import.meta.url), "utf8");
   assert.match(action, /Cache source-keyed ARM64 Guardian and Job Object binaries/u);
+  const workflow = await fs.readFile(new URL("../../.github/workflows/ci.yml", import.meta.url), "utf8");
+  const producer = workflow.split("  windows-x64-package-build:")[1]?.split("\n  windows-package:")[0];
+  assert.ok(producer, "x64 producer job must exist");
+  assert.match(producer, /Cache source-keyed x64 Guardian and Job Object binaries/u);
+  assert.match(producer, /native-helpers-v1-/u);
+  assert.match(producer, /EQUINOX_WINDOWS_NATIVE_HELPER_CACHE_DIR/u);
+  assert.match(producer, /EQUINOX_WINDOWS_NATIVE_HELPER_CACHE_HIT/u);
   assert.match(action, /native-helpers-v1-/u);
   assert.match(action, /hashFiles\('native\/windows\/EquinoxLocal\.Guardian\/\*\*', 'native\/windows\/equinox-local-job-object-helper\.cpp'/u);
   assert.match(action, /EQUINOX_WINDOWS_NATIVE_HELPER_CACHE_HIT/u);

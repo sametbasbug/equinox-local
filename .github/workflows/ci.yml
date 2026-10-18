@@ -356,9 +356,20 @@ jobs:
               EQUINOX_WINDOWS_SHELL_OBJ_DIR: ${{ runner.temp }}/windows-shell-obj/win-x64/
             run: dotnet publish native/windows/EquinoxLocal.WindowsShell/EquinoxLocal.WindowsShell.csproj --configuration Release --runtime win-x64 --self-contained true -p:Platform=x64 -p:BaseOutputPath="$env:EQUINOX_WINDOWS_SHELL_BIN_DIR" -p:BaseIntermediateOutputPath="$env:EQUINOX_WINDOWS_SHELL_OBJ_DIR" --output "$env:EQUINOX_WINDOWS_SHELL_PUBLISH_DIR"
 
+      # CI-only source/target exact-key native binaries; never a release
+      # artifact. Cache misses compile the original Guardian and Job helpers.
+      - name: Cache source-keyed x64 Guardian and Job Object binaries
+        id: native-helpers-cache
+        uses: actions/cache@v6
+        with:
+          path: ${{ runner.temp }}/windows-native-helpers/win-x64
+          key: native-helpers-v1-${{ runner.os }}-win-x64-dotnet10-msvc-${{ hashFiles('native/windows/EquinoxLocal.Guardian/**', 'native/windows/equinox-local-job-object-helper.cpp', 'native/windows/**/Directory.Build.*', 'global.json') }}
+
       - name: Windows managed package assembly smoke
         shell: pwsh
         env:
+          EQUINOX_WINDOWS_NATIVE_HELPER_CACHE_DIR: ${{ runner.temp }}/windows-native-helpers/win-x64
+          EQUINOX_WINDOWS_NATIVE_HELPER_CACHE_HIT: ${{ steps.native-helpers-cache.outputs.cache-hit }}
           EQUINOX_WINDOWS_SHELL_PUBLISH_DIR: ${{ runner.temp }}/windows-shell/win-x64
         run: |
           npm run local:release:package:windows
