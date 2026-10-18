@@ -491,6 +491,9 @@ test('vintage Windows A/B real PE smoke accepts pre-6.1.2 marker absence but alw
   assert.match(smoke, /if \(hasNativeInspector\) \{[\s\S]*?await fs\.readFile\(nativeGateMarker, "utf8"\)/u);
   assert.match(smoke, /inspectWindowsMainUpdateWorkerProcess\(ownership\)/u);
   assert.match(smoke, /exact LIVE product Node PID\/birthtime\/executable\/token/u);
+  assert.match(smoke, /Get-Process -Id/u);
+  assert.match(smoke, /StartTime\.ToUniversalTime\(\)\.Ticks/u);
+  assert.match(smoke, /timeout: 20_000, windowsHide: true/u);
 });
 
 test('vintage installed Main upgrade does not require a Guardian absent from old signed packages', async () => {
