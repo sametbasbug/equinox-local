@@ -115,7 +115,7 @@ test("Windows release ZIP helper uses PowerShell 5.1 .NET ZIP APIs without dynam
   assert.match(helper, /\$ExpectedRoot = 'release'/u);
   assert.match(helper, /Get-CheckedEntries/u);
   assert.match(helper, /escaped the expected archive root/u);
-  assert.match(helper, /Add-Type -AssemblyName System\.IO\.Compression/u);
+  assert.match(helper, /Reflection\.Assembly\]::Load\('System\.IO\.Compression, Version=4\.0\.0\.0/u);
   assert.doesNotMatch(helper, /Add-Type -TypeDefinition|-ReferencedAssemblies/u);
   assert.match(helper, /case-insensitive duplicate path/u);
   assert.match(helper, /reserved Windows device path/u);

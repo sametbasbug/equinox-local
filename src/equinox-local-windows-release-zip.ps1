@@ -8,8 +8,8 @@ $ErrorActionPreference = 'Stop'
 $HostedZipTiming = ($env:EQUINOX_HOSTED_PHASE_TIMING -ceq '1')
 $HostedZipClock = [Diagnostics.Stopwatch]::StartNew()
 $assemblyStarted = $HostedZipClock.Elapsed.TotalSeconds
-Add-Type -AssemblyName System.IO.Compression
-Add-Type -AssemblyName System.IO.Compression.FileSystem
+[Reflection.Assembly]::Load('System.IO.Compression, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089') | Out-Null
+[Reflection.Assembly]::Load('System.IO.Compression.FileSystem, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089') | Out-Null
 if ($HostedZipTiming) {
   Write-Output ("Hosted ZIP phase: load-assemblies; durationSeconds={0:F1}" -f ($HostedZipClock.Elapsed.TotalSeconds - $assemblyStarted))
 }
