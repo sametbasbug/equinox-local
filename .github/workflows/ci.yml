@@ -323,32 +323,38 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v7
-        with:
-          node-version: 26.12.0
-          architecture: x64
-          cache: npm
+      # Node setup, .NET SDK setup and ZIP security smoke have independent
+      # inputs. All three must pass before the signed package is assembled.
+      - parallel:
+          - name: Set up Node.js
+            uses: actions/setup-node@v7
+            with:
+              node-version: 26.12.0
+              architecture: x64
+              cache: npm
 
-      - name: Install dependencies
-        run: npm ci
+          - name: Set up .NET SDK
+            uses: actions/setup-dotnet@v6
+            with:
+              dotnet-version: 10.0.x
 
-      - name: Set up .NET SDK
-        uses: actions/setup-dotnet@v6
-        with:
-          dotnet-version: 10.0.x
+          - name: Windows release ZIP security acceptance
+            shell: pwsh
+            run: powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File tests/release/windows-release-zip-smoke.ps1
 
-      - name: Publish package shell payload
-        shell: pwsh
-        env:
-          EQUINOX_WINDOWS_SHELL_PUBLISH_DIR: ${{ runner.temp }}/windows-shell/win-x64
-          EQUINOX_WINDOWS_SHELL_BIN_DIR: ${{ runner.temp }}/windows-shell-bin/win-x64/
-          EQUINOX_WINDOWS_SHELL_OBJ_DIR: ${{ runner.temp }}/windows-shell-obj/win-x64/
-        run: dotnet publish native/windows/EquinoxLocal.WindowsShell/EquinoxLocal.WindowsShell.csproj --configuration Release --runtime win-x64 --self-contained true -p:Platform=x64 -p:BaseOutputPath="$env:EQUINOX_WINDOWS_SHELL_BIN_DIR" -p:BaseIntermediateOutputPath="$env:EQUINOX_WINDOWS_SHELL_OBJ_DIR" --output "$env:EQUINOX_WINDOWS_SHELL_PUBLISH_DIR"
+      # npm writes node_modules; native WPF reads only .NET sources and app
+      # artwork; its output and obj/bin paths are in runner.temp.
+      - parallel:
+          - name: Install dependencies
+            run: npm ci
 
-      - name: Windows release ZIP security acceptance
-        shell: pwsh
-        run: powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File tests/release/windows-release-zip-smoke.ps1
+          - name: Publish package shell payload
+            shell: pwsh
+            env:
+              EQUINOX_WINDOWS_SHELL_PUBLISH_DIR: ${{ runner.temp }}/windows-shell/win-x64
+              EQUINOX_WINDOWS_SHELL_BIN_DIR: ${{ runner.temp }}/windows-shell-bin/win-x64/
+              EQUINOX_WINDOWS_SHELL_OBJ_DIR: ${{ runner.temp }}/windows-shell-obj/win-x64/
+            run: dotnet publish native/windows/EquinoxLocal.WindowsShell/EquinoxLocal.WindowsShell.csproj --configuration Release --runtime win-x64 --self-contained true -p:Platform=x64 -p:BaseOutputPath="$env:EQUINOX_WINDOWS_SHELL_BIN_DIR" -p:BaseIntermediateOutputPath="$env:EQUINOX_WINDOWS_SHELL_OBJ_DIR" --output "$env:EQUINOX_WINDOWS_SHELL_PUBLISH_DIR"
 
       - name: Windows managed package assembly smoke
         shell: pwsh

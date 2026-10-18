@@ -314,6 +314,22 @@ test("CI parallelizes independent macOS gates and shares one verified x64 packag
   assert.match(producer, /Set up Node\.js[\s\S]*Install dependencies/u);
   assert.match(producer, /Set up \.NET SDK[\s\S]*Publish package shell payload/u);
   assert.match(producer, /Windows release ZIP security acceptance/u);
+  // Two all-or-nothing parallel groups keep all existing setup, security,
+  // locked npm install and native .NET publish gates. Package assembly starts
+  // only after both producers have passed.
+  assert.equal((producer.match(/^      - parallel:/gmu) ?? []).length, 2);
+  const firstOverlap = producer.indexOf("      - parallel:");
+  const secondOverlap = producer.indexOf("      - parallel:", firstOverlap + 1);
+  const archiveAssembly = producer.indexOf("      - name: Windows managed package assembly smoke");
+  assert.ok(firstOverlap < secondOverlap && secondOverlap < archiveAssembly);
+  for (const title of ["Set up Node.js", "Set up .NET SDK", "Windows release ZIP security acceptance"]) {
+    assert.ok(producer.indexOf(title) > firstOverlap && producer.indexOf(title) < secondOverlap, title);
+  }
+  for (const title of ["Install dependencies", "Publish package shell payload"]) {
+    assert.ok(producer.indexOf(title) > secondOverlap && producer.indexOf(title) < archiveAssembly, title);
+  }
+  assert.match(producer, /run: npm ci/u);
+  assert.match(producer, /--runtime win-x64 --self-contained true/u);
   assert.match(producer, /Windows managed package assembly smoke[\s\S]*EQUINOX_WINDOWS_SHELL_PUBLISH_DIR:/u);
   assert.match(producer, /Upload exact x64 managed ZIP for installed-host acceptance/u);
   assert.match(producer, /windows-x64-managed-package-/u);
