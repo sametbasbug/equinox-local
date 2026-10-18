@@ -17,6 +17,7 @@ function node(attrs = {}, textContent = "", selectors = {}, selectorLists = {}) 
 
 async function harness({ enabled = true, consentVersion = 2, modern = false } = {}) {
   const messages = [];
+  let fakeNow = 1_800_000_000_000;
   let runtimeListener = null;
   let observerCallback = null;
   let timerCallback = null;
@@ -90,6 +91,7 @@ async function harness({ enabled = true, consentVersion = 2, modern = false } = 
   const context = {
     chrome,
     document,
+    Date: class extends Date { static now() { return fakeNow; } },
     MutationObserver,
     setTimeout(callback) { timerCallback = callback; return 1; },
     clearTimeout() { timerCallback = null; },
@@ -102,6 +104,7 @@ async function harness({ enabled = true, consentVersion = 2, modern = false } = 
   return {
     messages,
     state,
+    tick(ms) { fakeNow += ms; },
     mutate() { observerCallback?.([]); timerCallback?.(); timerCallback = null; },
     get() {
       let response = null;
@@ -133,6 +136,7 @@ test("ChatGPT continuation observer publishes bounded turn state and suppresses 
       assistantTurnKey: "conversation-turn-2",
       composerReady: true,
       composerEmpty: true,
+      generationStartedAtMs: 1_800_000_000_000,
     },
   });
 
@@ -191,4 +195,20 @@ test("ChatGPT continuation observer supports the current data-turn-key DOM witho
   assert.equal(finished.generationActive, false);
   assert.equal(finished.userEpoch, "modern-user-1");
   assert.equal(finished.assistantTurnKey, "modern-user-1", "the continuity key must not drift when a late assistant message id appears");
+});
+
+test("Browser captures actual generation start before any Local tool and keeps it stable through late GET", async () => {
+  const h = await harness({ modern: true });
+  const startedAt = h.get().state.generationStartedAtMs;
+  assert.equal(startedAt, 1_800_000_000_000);
+  h.tick(18_000);
+  assert.equal(h.get().state.generationStartedAtMs, startedAt,
+    "reading the state 18s later must not reset Browser start to a Local invocation");
+  h.state.modernTurns.push(node({ "data-turn-key": "modern-user-2" }));
+  h.mutate();
+  assert.equal(h.get().state.generationStartedAtMs, startedAt + 18_000,
+    "new user turn begins a new Browser budget even if generation is uninterrupted");
+  h.state.modernPrimaryActions = [];
+  h.mutate();
+  assert.equal(h.get().state.generationStartedAtMs, null);
 });

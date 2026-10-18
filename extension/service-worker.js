@@ -1081,6 +1081,10 @@ function normalizeChatGptContinuationState(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   return Object.freeze({
     generationActive: value.generationActive === true,
+    generationStartedAtMs: value.generationActive === true
+      && Number.isSafeInteger(value.generationStartedAtMs)
+      && value.generationStartedAtMs > 0 && value.generationStartedAtMs <= Date.now() + 5_000
+      ? value.generationStartedAtMs : null,
     userEpoch: typeof value.userEpoch === "string" ? value.userEpoch.slice(0, 200) : null,
     assistantTurnKey: typeof value.assistantTurnKey === "string" ? value.assistantTurnKey.slice(0, 200) : null,
     composerReady: value.composerReady === true,
