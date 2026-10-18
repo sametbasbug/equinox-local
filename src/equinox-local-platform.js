@@ -151,6 +151,8 @@ export function equinoxLocalWindowsPowerShell7Path(env = process.env, { statFile
   const systemRoot = equinoxLocalWindowsPowerShellPath(env);
   const defaultProgramFiles = path.win32.join(path.win32.parse(systemRoot).root, "Program Files");
   const roots = [env?.ProgramW6432, env?.ProgramFiles, env?.PROGRAMFILES, defaultProgramFiles];
+  const storeRoot = env?.LOCALAPPDATA && path.win32.isAbsolute(env.LOCALAPPDATA)
+    ? path.win32.join(env.LOCALAPPDATA, "Microsoft", "WindowsApps") : null;
   const seen = new Set();
   for (const root of roots) {
     if (typeof root !== "string" || !path.win32.isAbsolute(root)) continue;
@@ -161,6 +163,15 @@ export function equinoxLocalWindowsPowerShell7Path(env = process.env, { statFile
     try {
       if (statFile(candidate).isFile()) return candidate;
     } catch { /* Not installed here. */ }
+  }
+  if (storeRoot) {
+    // Microsoft Store/MSIX uses a zero-length App Execution Alias reparse
+    // point at this known per-user location, not necessarily a regular file.
+    const alias = path.win32.join(storeRoot, "pwsh.exe");
+    try {
+      const info = statFile(alias);
+      if (info.isFile() || info.isSymbolicLink()) return alias;
+    } catch { /* Optional PowerShell 7 Store install not present. */ }
   }
   return null;
 }

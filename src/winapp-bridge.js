@@ -64,7 +64,7 @@ export const WINAPP_TOOL_DEFINITIONS = Object.freeze({
   get_value: Object.freeze({ name: "get_value", description: "Read the current value/text of a selected Windows control.", readOnly: true, inputSchema: withTarget({ selector, root: selector, type: string("Optional UIA control type filter.", 80), class_name: string("Optional exact UIA ClassName filter.", 200) }, ["selector"]) }),
   get_focused: Object.freeze({ name: "get_focused", description: "Report the focused UI Automation element for the selected Windows app/window.", readOnly: true, inputSchema: withTarget() }),
   wait_for: Object.freeze({ name: "wait_for", description: "Wait boundedly for a Windows UI element to appear/disappear or reach a property/value.", readOnly: true, inputSchema: withTarget({ selector, value: Object.freeze({ type: "string", maxLength: MAX_TEXT_INPUT }), property: string("Optional case-sensitive UI Automation property to compare.", 120), gone: bool("Wait for the selector to disappear."), contains: bool("Use substring matching for value."), timeout_ms: integer("Maximum wait in milliseconds.", 100, MAX_WAIT_MS), root: selector, type: string("Optional UIA control type filter.", 80), class_name: string("Optional exact UIA ClassName filter.", 200) }, ["selector"]) }),
-  screenshot: Object.freeze({ name: "screenshot", description: "Capture a Windows app/window/control as PNG through winapp. When output is omitted, Equinox uses a managed temp file and returns the validated PNG as native MCP image content so the model can see it directly; an explicit output path keeps file-only behavior.", readOnly: true, inputSchema: withTarget({ selector, output: string("Optional output PNG path. Omit for direct model-visible image handoff through Equinox-managed temporary output.", MAX_PATH_LENGTH), capture_screen: bool("Capture the live foreground screen region so visible overlays/popups are included."), focus: bool("Foreground the target before ordinary capture.") }) }),
+  screenshot: Object.freeze({ name: "screenshot", description: "Capture a Windows app/window/control as PNG through winapp and return native MCP image content directly. An optional output path additionally saves the PNG at the requested location.", readOnly: true, inputSchema: withTarget({ selector, output: string("Optional saved output PNG path. The same capture also returns model-visible image content.", MAX_PATH_LENGTH), capture_screen: bool("Capture the live foreground screen region so visible overlays/popups are included."), focus: bool("Foreground the target before ordinary capture.") }) }),
   app: Object.freeze({ name: "app", description: "Manage practical Windows app lifecycle through an Equinox-owned Windows helper: list, launch, open, quit, relaunch, or focus. Launch/relaunch accept an executable name or path; open uses Windows shell association for a file, folder, URL, protocol target, or executable; quit/focus accept a process name/window-title fragment or exact PID.", readOnly: false, inputSchema: objectSchema({ action: enumeration("App lifecycle action.", ["list", "launch", "open", "quit", "relaunch", "focus"]), name: string("Executable name/path for launch/relaunch, shell-associated target for open, or process/window-title target for quit/focus.", MAX_PATH_LENGTH), pid: targetProperties.pid, force: bool("Force termination for quit/relaunch instead of requesting a graceful main-window close.") }, ["action"]) }),
   window: Object.freeze({ name: "window", description: "Manage Windows top-level windows through stable HWND/Win32 semantics: list, focus, close, minimize, restore, maximize, move, resize, or set bounds. Use list/list_windows to obtain an exact HWND when a process has multiple windows.", readOnly: false, inputSchema: objectSchema({ action: enumeration("Window lifecycle action.", ["list", "focus", "close", "minimize", "restore", "maximize", "move", "resize", "set-bounds"]), ...lifecycleTargetProperties, show_hidden: bool("For list only, include invisible zero-size windows."), x: coordinate, y: coordinate, width: dimension, height: dimension }, ["action"]) }),
   clipboard: Object.freeze({ name: "clipboard", description: "Get, set or clear bounded Unicode text on the interactive Windows clipboard through an Equinox-owned fixed helper.", readOnly: false, inputSchema: objectSchema({ action: enumeration("Clipboard action.", ["get", "set", "clear"]), text: Object.freeze({ type: "string", maxLength: MAX_TEXT_INPUT, description: "Text for set. Omit for get/clear." }) }, ["action"]) }),
@@ -403,7 +403,23 @@ export function createWinappBridge({ baseEnvironment = process.env, execFileImpl
       const raw = String(result.stdout ?? "").trim();
       let parsed;
       try { parsed = raw ? JSON.parse(raw) : {}; } catch { throw new Error("Microsoft winapp returned invalid JSON."); }
-      if (toolName === "screenshot" && screenshotOutput) return managedScreenshotResult(screenshotOutput, parsed, fsImpl);
+      if (toolName === "screenshot") {
+        // The screenshot just produced by winapp is the only file allowed to
+        // become image content. Explicit saves keep their path AND return the
+        // same bounded PNG preview instead of requiring a second image_view.
+        const imagePath = screenshotOutput ?? args.output;
+        try {
+          const metadata = await fsImpl.lstat(imagePath);
+          if (!metadata.isFile() || metadata.isSymbolicLink()) {
+            throw new Error("Microsoft winapp screenshot output must be a regular PNG file.");
+          }
+          return await managedScreenshotResult(imagePath, parsed, fsImpl);
+        } finally {
+          // Auto-generated captures only transport image content; explicitly
+          // requested saved files remain available at their chosen path.
+          if (screenshotOutput) await fsImpl.unlink(screenshotOutput).catch(() => {});
+        }
+      }
       return { content: [{ type: "text", text: JSON.stringify(parsed, null, 2) }] };
     },
     get readOnlyTools() { return new Set(WINAPP_READ_ONLY_TOOLS); },

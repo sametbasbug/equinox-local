@@ -631,6 +631,13 @@ test("Windows desktop Control Center displays the pinned winapp state through th
   assert.match(ui, /previousStatus\.peekaboo\?\.engine === "winapp"/u);
 });
 
+test("Windows GUI launcher merges user and machine PATH for Store app aliases", async () => {
+  const source = await fs.readFile(path.join(ROOT, "native/windows/EquinoxLocal.WindowsShell/RuntimeSupervisor.cs"), "utf8");
+  assert.match(source, /EnvironmentVariableTarget\.Machine/u);
+  assert.match(source, /EnvironmentVariableTarget\.User/u);
+  assert.match(source, /startInfo\.Environment\["PATH"\] = string\.Join/u);
+});
+
 test("native Windows GUI launcher repairs truncated PATHEXT at the first process boundary", async () => {
   const supervisor = await fs.readFile(path.join(ROOT, "native", "windows", "EquinoxLocal.WindowsShell", "RuntimeSupervisor.cs"), "utf8");
   assert.match(supervisor, /startInfo.Environment\["PATHEXT"\] = HasExeExtension\(machine\)/u);

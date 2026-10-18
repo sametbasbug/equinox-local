@@ -1,3 +1,4 @@
+import path from "node:path";
 import { equinoxLocalFiniteShell } from "./equinox-local-platform.js";
 
 const DEFAULT_EXEC_TIMEOUT_MS = 30_000;
@@ -60,7 +61,21 @@ export function buildGenericExecutionEnvironment({
       ? runtimeEnv.PATH
       : "";
   const shell = equinoxLocalFiniteShell({ platform, arch });
-  if (shell.pathPrefix && inheritedPath) env.PATH = `${shell.pathPrefix}${shell.pathDelimiter}${inheritedPath}`;
+  if (platform === "win32") {
+    const keys = Object.keys(env).filter((key) => key.toUpperCase() === "PATH");
+    for (const key of keys) delete env[key];
+    // Preserve runtime PATH (including Store aliases) alongside project PATH.
+    const candidates = [inheritedPath, runtimeEnv?.PATH,
+      typeof runtimeEnv?.LOCALAPPDATA === "string" && path.win32.isAbsolute(runtimeEnv.LOCALAPPDATA)
+        ? path.win32.join(runtimeEnv.LOCALAPPDATA, "Microsoft", "WindowsApps") : ""];
+    const seen = new Set();
+    env.PATH = candidates.flatMap((part) => typeof part === "string" ? part.split(";") : [])
+      .map((part) => part.trim()).filter((part) => {
+        if (!part || seen.has(part.toLowerCase())) return false;
+        seen.add(part.toLowerCase());
+        return true;
+      }).join(";");
+  } else if (shell.pathPrefix && inheritedPath) env.PATH = shell.pathPrefix + shell.pathDelimiter + inheritedPath;
   else if (shell.pathPrefix) env.PATH = shell.pathPrefix;
   else if (inheritedPath) env.PATH = inheritedPath;
   else env.PATH = "";

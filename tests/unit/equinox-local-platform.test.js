@@ -153,6 +153,23 @@ test("platform lifecycle and shell contracts enable both native Windows architec
   assert.equal(windowsInteractive.shells.powershell.command, equinoxLocalWindowsPowerShellPath());
 });
 
+test("PowerShell 7 detects Store/MSIX App Execution Alias in WindowsApps", () => {
+  const env = { SystemRoot: "C:\\Windows", LOCALAPPDATA: "C:\\Users\\Test\\AppData\\Local", PATH: "C:\\Unsafe" };
+  const alias = "C:\\Users\\Test\\AppData\\Local\\Microsoft\\WindowsApps\\pwsh.exe";
+  const statFile = (candidate) => {
+    if (candidate === alias) return { isFile: () => false, isSymbolicLink: () => true };
+    throw new Error("not present");
+  };
+  assert.equal(equinoxLocalWindowsPowerShell7Path(env, { statFile }), alias);
+  assert.equal(equinoxLocalFiniteShell({ platform: "win32", arch: "x64", env, shell: "pwsh", statFile }).command, alias);
+  assert.equal(equinoxLocalInteractiveShells({ platform: "win32", arch: "arm64", env, statFile }).shells.pwsh.command, alias);
+  assert.equal(equinoxLocalWindowsPowerShell7Path({ ...env, LOCALAPPDATA: "relative" }, { statFile }), null);
+  assert.equal(equinoxLocalWindowsPowerShell7Path(env, { statFile: (candidate) => {
+    if (candidate === alias) return { isFile: () => false, isSymbolicLink: () => false };
+    throw new Error("missing");
+  } }), null, "a directory or unsupported object is never a valid Store alias");
+});
+
 test("PowerShell 7 uses only a regular file in fixed Program Files and stays optional", () => {
   const env = { SystemRoot: "C:\\Windows", ProgramFiles: "C:\\Program Files", PATH: "C:\\Evil" };
   const installedPath = path.win32.join(env.ProgramFiles, "PowerShell", "7", "pwsh.exe");

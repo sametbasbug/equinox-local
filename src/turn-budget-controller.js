@@ -196,15 +196,18 @@ export function createTurnBudgetController({ settingsPath = defaultTurnBudgetSet
     if (!settings.enabled) return snapshot();
     const timestamp = now();
     expireStaleFallback(timestamp);
-    if (!active) return snapshot();
     const probe = await resolveIdentitySafe();
-    if (active?.source === "browser") {
-      if (probe.status === "idle" && probe.idleContexts.includes(active.browserContext)) {
-        active = null;
-      } else if (probe.status === "active" && probe.identity.key !== active.key) {
-        // A different assistant turn is generating, but Turn Budget starts only on that turn's first Local call.
-        active = null;
+    if (probe.status === "active") {
+      const identity = probe.identity;
+      // Browser mode starts with an observed ChatGPT generation, independently
+      // of agent tool calls. Fallback alone starts from first Local use.
+      if (!active || active.source !== "browser" || active.key !== identity.key) {
+        active = { key: identity.key, source: "browser", browserContext: identity.browserContext,
+          title: identity.title, startedAtMs: timestamp, lastInvocationAtMs: timestamp, notices: new Set() };
       }
+    } else if (active?.source === "browser" && probe.status === "idle" &&
+        probe.idleContexts.includes(active.browserContext)) {
+      active = null;
     }
     return snapshot();
   }

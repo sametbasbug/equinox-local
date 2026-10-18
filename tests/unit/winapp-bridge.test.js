@@ -20,6 +20,7 @@ function createHarness() {
   const calls = [];
   const mkdirs = [];
   const opened = [];
+  const deleted = [];
   const files = new Map();
   let clipboardText = "initial clipboard";
   const png = tinyPng();
@@ -45,7 +46,7 @@ function createHarness() {
         };
       },
       writeFile: async (filePath, data) => { files.set(filePath, Buffer.from(data).toString("utf8")); },
-      unlink: async (filePath) => { files.delete(filePath); },
+      unlink: async (filePath) => { deleted.push(filePath); files.delete(filePath); },
     },
     resolveBinaryImpl: async () => "C:\\Equinox\\runtime\\winapp\\winapp.exe",
     execFileImpl: async (binary, args, options) => {
@@ -60,7 +61,7 @@ function createHarness() {
       return { stdout: JSON.stringify({ ok: true, args }), stderr: "" };
     },
   });
-  return { bridge, calls, mkdirs, opened, png, files, clipboard: () => clipboardText };
+  return { bridge, calls, mkdirs, opened, deleted, png, files, clipboard: () => clipboardText };
 }
 
 test("winapp bridge exposes a practical Windows UI surface instead of a crippled semantic subset", async () => {
@@ -111,7 +112,7 @@ test("winapp managed scratch files stay under per-user LocalAppData instead of t
 });
 
 test("winapp managed screenshot returns native MCP image content through the shared image validator", async () => {
-  const { bridge, calls, mkdirs, opened, png } = createHarness();
+  const { bridge, calls, mkdirs, opened, deleted, png } = createHarness();
   const result = await bridge.callTool("screenshot", { app: "Notepad", focus: true });
   const invocation = calls.at(-1);
   const outputIndex = invocation.args.indexOf("--output");
@@ -124,13 +125,18 @@ test("winapp managed screenshot returns native MCP image content through the sha
   assert.equal(opened[0].flags, "r");
   assert.equal(result.content[0].type, "text");
   assert.deepEqual(result.content[1], { type: "image", data: png.toString("base64"), mimeType: "image/png" });
+  assert.deepEqual(deleted, [opened[0].filePath], "auto-managed screenshots must not accumulate on disk");
 });
 
-test("winapp screenshot with explicit output remains file-only instead of becoming an arbitrary-path image reader", async () => {
-  const { bridge } = createHarness();
-  const result = await bridge.callTool("screenshot", { app: "Notepad", output: "C:\\Users\\Test\\Desktop\\capture.png" });
-  assert.equal(result.content.length, 1);
+test("winapp screenshot with explicit output preserves its saved path and returns the same PNG as native image content", async () => {
+  const { bridge, calls, png, opened, deleted } = createHarness();
+  const output = "C:\\Users\\Test\\Desktop\\capture.png";
+  const result = await bridge.callTool("screenshot", { app: "Notepad", output });
+  assert.equal(calls.at(-1).args[calls.at(-1).args.indexOf("--output") + 1], output);
+  assert.equal(opened.at(-1).filePath, output);
+  assert.deepEqual(deleted, [], "explicitly requested saved screenshots must remain on disk");
   assert.equal(result.content[0].type, "text");
+  assert.deepEqual(result.content[1], { type: "image", data: png.toString("base64"), mimeType: "image/png" });
 });
 
 test("winapp clipboard get/set/clear uses only the fixed Windows helper boundary", async () => {

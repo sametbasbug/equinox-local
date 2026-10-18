@@ -2114,7 +2114,7 @@ function renderTurnBudgetLive() {
     setText("turn-budget-elapsed", "—");
     setText("turn-budget-remaining", "—");
     setText("turn-budget-stage", "Idle");
-    setText("turn-budget-copy", "Waiting for the first Equinox Local call in an assistant turn.");
+    setText("turn-budget-copy", "Waiting for a ChatGPT browser turn, or the first Equinox Local call when Browser is unavailable.");
     return;
   }
   const startedAtMs = Date.parse(active.startedAt);

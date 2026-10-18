@@ -75,7 +75,7 @@ test("generic execution preserves Windows PATH semantics without injecting macOS
     runtimeEnv: { PATH: "C:\\Windows\\System32;C:\\Tools", USERPROFILE: "C:\\Users\\Test" },
     extraEnv: { PATH: "C:\\Project\\bin;C:\\Windows\\System32" },
   });
-  assert.equal(env.PATH, "C:\\Project\\bin;C:\\Windows\\System32");
+  assert.equal(env.PATH, "C:\\Project\\bin;C:\\Windows\\System32;C:\\Tools");
   assert.equal(env.USERPROFILE, "C:\\Users\\Test");
   assert.equal(env.PATH.includes("/opt/homebrew"), false);
 });
@@ -96,4 +96,13 @@ test("Windows repairs inherited PATHEXT truncated to .CPL and preserves explicit
   });
   assert.equal(withOverride.PATHEXT, ".COM;.EXE;.BAT;.CMD;.CPL");
   assert.equal("PaThExT" in withOverride, false);
+});
+
+test("Windows managed PATH preserves WindowsApps with explicit project override", () => {
+  const env = buildGenericExecutionEnvironment({
+    platform: "win32", arch: "x64",
+    runtimeEnv: { PATH: "C:\\Windows\\System32", LOCALAPPDATA: "C:\\Users\\Test\\AppData\\Local" },
+    extraEnv: { PATH: "C:\\Project\\bin" },
+  });
+  assert.equal(env.PATH, "C:\\Project\\bin;C:\\Windows\\System32;C:\\Users\\Test\\AppData\\Local\\Microsoft\\WindowsApps");
 });
