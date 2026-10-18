@@ -28,8 +28,14 @@ try {
     }
     $extension = [IO.Path]::GetExtension($command).ToLowerInvariant()
     if ($extension -eq '.cmd' -or $extension -eq '.bat') {
+        # Windows PowerShell 5.1 can silently skip native dispatch on some
+        # installed headless hosts. Never report exit 0 when the command did
+        # not produce a native exit status.
+        $LASTEXITCODE = $null
         & $command @arguments
-        if ($null -eq $LASTEXITCODE) { exit 0 }
+        if ($null -eq $LASTEXITCODE) {
+            throw 'Windows batch command did not return a native exit status.'
+        }
         exit [int]$LASTEXITCODE
     }
 

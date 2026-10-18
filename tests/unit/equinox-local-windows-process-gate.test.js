@@ -5,6 +5,8 @@ import test from "node:test";
 test("Windows owned-process gate never echoes .NET async completion objects or PowerShell progress", async () => {
   const source = await fs.readFile(new URL("../../src/equinox-local-windows-process-gate.ps1", import.meta.url), "utf8");
   assert.match(source, /\$ProgressPreference = 'SilentlyContinue'/u);
+  assert.match(source, /Windows batch command did not return a native exit status/u);
+  assert.doesNotMatch(source, /if \(\$null -eq \$LASTEXITCODE\) \{ exit 0 \}/u);
   assert.match(source, /\$startInfo.CreateNoWindow = \$true/u);
   assert.match(source, /\$startInfo.WindowStyle = \[System.Diagnostics.ProcessWindowStyle\]::Hidden/u);
   assert.match(source, /\[void\]\$stdoutTask\.GetAwaiter\(\)\.GetResult\(\)/u);
