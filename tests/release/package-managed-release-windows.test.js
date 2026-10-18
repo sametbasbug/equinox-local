@@ -85,6 +85,32 @@ test("Windows managed ZIP helper uses bounded fast compression", async () => {
   assert.match(source, /Windows managed ZIP creation exceeded/u);
 });
 
+test("ARM64 native Guardian and Job cache is exact-source keyed and fails closed on unsafe binaries", async () => {
+  const action = await fs.readFile(new URL("../../.github/actions/prepare-arm64-package/action.yml", import.meta.url), "utf8");
+  const builder = await fs.readFile(new URL("../../scripts/release/package-managed-release-windows.mjs", import.meta.url), "utf8");
+  assert.match(action, /Cache source-keyed ARM64 Guardian and Job Object binaries/u);
+  const workflow = await fs.readFile(new URL("../../.github/workflows/ci.yml", import.meta.url), "utf8");
+  const producer = workflow.split("  windows-x64-package-build:")[1]?.split("\n  windows-package:")[0];
+  assert.ok(producer, "x64 producer job must exist");
+  assert.match(producer, /Cache source-keyed x64 Guardian and Job Object binaries/u);
+  assert.match(producer, /native-helpers-v1-/u);
+  assert.match(producer, /EQUINOX_WINDOWS_NATIVE_HELPER_CACHE_DIR/u);
+  assert.match(producer, /EQUINOX_WINDOWS_NATIVE_HELPER_CACHE_HIT/u);
+  assert.match(action, /native-helpers-v1-/u);
+  assert.match(action, /scripts\/release\/package-managed-release-windows\.mjs/u);
+  assert.match(producer, /scripts\/release\/package-managed-release-windows\.mjs/u);
+
+  assert.match(action, /hashFiles\('native\/windows\/EquinoxLocal\.Guardian\/\*\*', 'native\/windows\/equinox-local-job-object-helper\.cpp'/u);
+  assert.match(action, /EQUINOX_WINDOWS_NATIVE_HELPER_CACHE_HIT/u);
+  assert.match(builder, /process\.env\.GITHUB_ACTIONS === "true" && process\.env\.EQUINOX_WINDOWS_NATIVE_HELPER_CACHE_HIT === "true"/u);
+  assert.match(builder, /await assertNormalTree\(source\)/u);
+  assert.match(builder, /portableExecutableMachine\(executable\) !== contract\.peMachine/u);
+  assert.match(builder, /owned-process-gate-v1\.marker/u);
+  assert.match(builder, /Cache only after the whole source-bound package has passed validation/u);
+  assert.match(builder, /: compileWindowsGuardian\(rootDir, releaseDir, transaction, contract\)/u);
+  assert.match(builder, /: compileWindowsJobObjectHelper\(/u);
+});
+
 test("Windows package stages node_modules through normal-file hardlinks", async () => {
   const source = await fs.readFile(new URL("../../scripts/release/package-managed-release-windows.mjs", import.meta.url), "utf8");
   assert.match(source, /async function hardlinkNormalTree/u);

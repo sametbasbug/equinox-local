@@ -3,8 +3,13 @@ param(
   [Parameter(Mandatory=$true)][string]$DestinationZip
 )
 $ErrorActionPreference = 'Stop'
+$HostedWriterTiming = ($env:GITHUB_ACTIONS -ceq 'true')
+$HostedWriterWatch = [Diagnostics.Stopwatch]::StartNew()
 Add-Type -AssemblyName System.IO.Compression
 Add-Type -AssemblyName System.IO.Compression.FileSystem
+if ($HostedWriterTiming) {
+  Write-Output ("Hosted Windows ZIP writer phase: assembly-load; durationSeconds={0:F1}" -f $HostedWriterWatch.Elapsed.TotalSeconds)
+}
 $source = [System.IO.Path]::GetFullPath($SourceDirectory)
 if (-not [System.IO.Directory]::Exists($source)) { throw 'Managed ZIP source directory is missing.' }
 $root = [System.IO.DirectoryInfo]::new($source)
@@ -85,5 +90,13 @@ public static class EquinoxManagedZip
     }
 }
 '@
+$compileStarted = $HostedWriterWatch.Elapsed.TotalSeconds
 Add-Type -TypeDefinition $zipSource -ReferencedAssemblies @('System.IO.Compression.dll','System.IO.Compression.FileSystem.dll','System.Core.dll')
+if ($HostedWriterTiming) {
+  Write-Output ("Hosted Windows ZIP writer phase: compile; durationSeconds={0:F1}" -f ($HostedWriterWatch.Elapsed.TotalSeconds - $compileStarted))
+}
+$writeStarted = $HostedWriterWatch.Elapsed.TotalSeconds
 [EquinoxManagedZip]::Create($source, $destination)
+if ($HostedWriterTiming) {
+  Write-Output ("Hosted Windows ZIP writer phase: write; durationSeconds={0:F1}" -f ($HostedWriterWatch.Elapsed.TotalSeconds - $writeStarted))
+}

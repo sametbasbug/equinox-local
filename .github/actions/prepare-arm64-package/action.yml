@@ -144,10 +144,20 @@ runs:
         if ($machine -ne 0xAA64) { throw ("ARM64 browser launcher is not ARM64 (machine=0x{0:X4})" -f $machine) }
         "EQUINOX_WINDOWS_BROWSER_LAUNCHER_PATH=$output" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
+    # Exact-key-only cache: native source + target + toolchain.
+    - name: Cache source-keyed ARM64 Guardian and Job Object binaries
+      id: native-helpers-cache
+      uses: actions/cache@v6
+      with:
+        path: ${{ runner.temp }}/windows-native-helpers/win-arm64
+        key: native-helpers-v1-${{ runner.os }}-win-arm64-dotnet10-msvc-${{ hashFiles('native/windows/EquinoxLocal.Guardian/**', 'native/windows/equinox-local-job-object-helper.cpp', 'scripts/release/package-managed-release-windows.mjs', 'native/windows/**/Directory.Build.*', 'global.json') }}
+
     - name: Windows ARM64 managed package assembly smoke
       id: package
       shell: pwsh
       env:
+        EQUINOX_WINDOWS_NATIVE_HELPER_CACHE_DIR: ${{ runner.temp }}/windows-native-helpers/win-arm64
+        EQUINOX_WINDOWS_NATIVE_HELPER_CACHE_HIT: ${{ steps.native-helpers-cache.outputs.cache-hit }}
         EQUINOX_WINDOWS_SHELL_PUBLISH_DIR: ${{ runner.temp }}/windows-shell/win-arm64
         EQUINOX_WINDOWS_PACKAGE_TARGET: win32-arm64
       run: |

@@ -471,14 +471,42 @@ async function compileWindowsGuardian(rootDir, releaseDir, transaction, contract
   }
 }
 
+// Only CI's source-keyed native helper cache is eligible for reuse. Every
+// restored executable must be a normal file with the exact target PE machine;
+// an invalid hit aborts packaging rather than silently shipping stale bytes.
+async function restoreCachedWindowsNativeHelper(cacheDir, folder, releaseDir, contract) {
+  const source = path.join(cacheDir, folder);
+  const root = await fs.lstat(source);
+  if (!root.isDirectory() || root.isSymbolicLink()) throw new Error("Cached Windows native helper root is unsafe.");
+  await assertNormalTree(source);
+  const executable = path.join(source, folder === "guardian" ? "EquinoxLocalGuardian.exe" : "equinox-local-job-object-helper.exe");
+  const info = await fs.lstat(executable);
+  if (!info.isFile() || info.isSymbolicLink() || await portableExecutableMachine(executable) !== contract.peMachine) {
+    throw new Error("Cached Windows native helper executable has the wrong architecture or filesystem type.");
+  }
+  if (folder === "job") {
+    const marker = await fs.readFile(path.join(source, "owned-process-gate-v1.marker"), "utf8");
+    if (marker !== "equinox-owned-process-gate-v1\n") throw new Error("Cached Windows Job helper lacks its native process gate marker.");
+  }
+  await fs.cp(source, path.join(releaseDir, "runtime", folder), { recursive: true, dereference: false, force: false, errorOnExist: true });
+}
+
 async function createManagedZip(rootDir, releaseDir, artifactPath) {
   const helper = path.join(path.dirname(fileURLToPath(import.meta.url)), "windows-managed-zip.ps1");
   await fs.rm(artifactPath, { force: true });
   try {
-    await execFile("powershell.exe", [
+    const result = await execFile("powershell.exe", [
       "-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", helper,
       "-SourceDirectory", releaseDir, "-DestinationZip", artifactPath,
     ], { timeout: WINDOWS_ZIP_TIMEOUT_MS, maxBuffer: 4 * 1024 * 1024, windowsHide: true });
+    if (process.env.GITHUB_ACTIONS === "true") {
+      for (const line of String(result?.stdout ?? "").split(/\r?\n/u)) {
+        const match = /^Hosted Windows ZIP writer phase: (assembly-load|compile|write); durationSeconds=(\d{1,3}\.\d)$/u.exec(line);
+        if (match && Number(match[2]) <= 600) {
+          process.stdout.write("Hosted Windows ZIP writer phase: " + match[1] + "; durationSeconds=" + match[2] + "\n");
+        }
+      }
+    }
   } catch (error) {
     if (error && typeof error === "object" && (error.killed === true || error.signal)) {
       throw new Error(`Windows managed ZIP creation exceeded ${WINDOWS_ZIP_TIMEOUT_MS} ms.`);
@@ -495,6 +523,8 @@ export async function packageManagedEquinoxWindowsRelease({
   target = process.env.EQUINOX_WINDOWS_PACKAGE_TARGET || `${process.platform}-${process.arch}`,
   shellPublishDir = process.env.EQUINOX_WINDOWS_SHELL_PUBLISH_DIR || null,
   browserLauncherPath = process.env.EQUINOX_WINDOWS_BROWSER_LAUNCHER_PATH || null,
+  nativeHelperCacheDir = process.env.GITHUB_ACTIONS === "true" ? process.env.EQUINOX_WINDOWS_NATIVE_HELPER_CACHE_DIR || null : null,
+  nativeHelperCacheHit = process.env.GITHUB_ACTIONS === "true" && process.env.EQUINOX_WINDOWS_NATIVE_HELPER_CACHE_HIT === "true",
   fetchImpl = globalThis.fetch,
 } = {}) {
   const hostTarget = `${process.platform}-${process.arch}`;
@@ -506,27 +536,48 @@ export async function packageManagedEquinoxWindowsRelease({
   }
   const sourceSha = await resolveManagedReleaseSourceSha(rootDir);
   const resolvedShellPublishDir = shellPublishDir || path.join("artifacts", "windows-shell", contract.shellRid);
+  if (nativeHelperCacheHit && (!nativeHelperCacheDir || !path.isAbsolute(nativeHelperCacheDir))) {
+    throw new Error("Windows native helper cache hit requires an absolute cache directory.");
+  }
+  if (nativeHelperCacheDir && !path.isAbsolute(nativeHelperCacheDir)) throw new Error("Windows native helper cache path must be absolute.");
   await fs.mkdir(outputDir, { recursive: true });
   const transaction = await fs.mkdtemp(path.join(outputDir, `.build-${EQUINOX_LOCAL_VERSION}-${target}-`));
   const releaseDir = path.join(transaction, "release");
   const artifactPath = path.join(outputDir, `equinox-local-${EQUINOX_LOCAL_VERSION}-${target}.zip`);
   await fs.mkdir(releaseDir, { recursive: true });
   try {
+    const hostedTiming = process.env.GITHUB_ACTIONS === "true";
+    const timed = (phase, started) => {
+      if (!hostedTiming) return;
+      process.stdout.write("Hosted Windows package phase: " + phase + "; durationSeconds=" +
+        Math.min(600, Math.max(0, (Date.now() - started) / 1000)).toFixed(1) + "\n");
+    };
     const canExecuteTarget = target === hostTarget;
+    const component = async (label, invoke) => {
+      const started = Date.now();
+      try { return await invoke(); }
+      finally { timed("component-" + label, started); }
+    };
+    const preparationStarted = Date.now();
     const preparationResults = await Promise.allSettled([
-      copyReleaseSources(rootDir, releaseDir),
-      installPinnedWindowsNode(transaction, releaseDir, fetchImpl, target, { canExecuteTarget }),
-      installPinnedWindowsTunnel(transaction, releaseDir, fetchImpl, target, { canExecuteTarget }),
-      installPinnedWindowsWinapp(transaction, rootDir, releaseDir, fetchImpl, target, { canExecuteTarget }),
-      copyPublishedShell(rootDir, releaseDir, resolvedShellPublishDir),
-      compileWindowsGuardian(rootDir, releaseDir, transaction, contract),
-      compileWindowsJobObjectHelper({ rootDir, outputDir: path.join(releaseDir, "runtime", "job"), target }),
-      browserLauncherPath
+      component("sources", () => copyReleaseSources(rootDir, releaseDir)),
+      component("node", () => installPinnedWindowsNode(transaction, releaseDir, fetchImpl, target, { canExecuteTarget })),
+      component("tunnel", () => installPinnedWindowsTunnel(transaction, releaseDir, fetchImpl, target, { canExecuteTarget })),
+      component("winapp", () => installPinnedWindowsWinapp(transaction, rootDir, releaseDir, fetchImpl, target, { canExecuteTarget })),
+      component("shell", () => copyPublishedShell(rootDir, releaseDir, resolvedShellPublishDir)),
+      component("guardian", () => nativeHelperCacheHit
+        ? restoreCachedWindowsNativeHelper(nativeHelperCacheDir, "guardian", releaseDir, contract)
+        : compileWindowsGuardian(rootDir, releaseDir, transaction, contract)),
+      component("job", () => nativeHelperCacheHit
+        ? restoreCachedWindowsNativeHelper(nativeHelperCacheDir, "job", releaseDir, contract)
+        : compileWindowsJobObjectHelper({ rootDir, outputDir: path.join(releaseDir, "runtime", "job"), target })),
+      component("browser-launcher", () => browserLauncherPath
         ? copyPrecompiledBrowserLauncher(browserLauncherPath, releaseDir, contract)
-        : compileBrowserLauncher(rootDir, releaseDir, contract),
+        : compileBrowserLauncher(rootDir, releaseDir, contract)),
     ]);
     const preparationFailure = preparationResults.find((result) => result.status === "rejected");
     if (preparationFailure) throw preparationFailure.reason;
+    timed("prepare-components", preparationStarted);
     const sourceFileCount = preparationResults[0].value;
     await fs.writeFile(path.join(releaseDir, "release.json"), `${JSON.stringify({
       schemaVersion: 1,
@@ -537,10 +588,25 @@ export async function packageManagedEquinoxWindowsRelease({
       tunnelClientVersion: EQUINOX_LOCAL_TUNNEL_CLIENT_VERSION,
       serverEntry: "server.js",
     }, null, 2)}\n`);
+    const validationStarted = Date.now();
     await assertNormalTree(releaseDir);
     await validateFirstInstallRelease(releaseDir, { target });
+    timed("validate-inputs", validationStarted);
+    const zipStarted = Date.now();
     await createManagedZip(rootDir, releaseDir, artifactPath);
+    timed("write-zip", zipStarted);
+    const hashStarted = Date.now();
     const digest = await sha256File(artifactPath);
+    timed("hash-zip", hashStarted);
+    // Cache only after the whole source-bound package has passed validation.
+    if (nativeHelperCacheDir && !nativeHelperCacheHit) {
+      await fs.mkdir(nativeHelperCacheDir, { recursive: true });
+      for (const folder of ["guardian", "job"]) {
+        await fs.cp(path.join(releaseDir, "runtime", folder), path.join(nativeHelperCacheDir, folder), {
+          recursive: true, dereference: false, force: false, errorOnExist: true,
+        });
+      }
+    }
     return Object.freeze({ version: EQUINOX_LOCAL_VERSION, target, sourceSha, artifactPath, ...digest, sourceFileCount });
   } finally {
     await fs.rm(transaction, { recursive: true, force: true });
