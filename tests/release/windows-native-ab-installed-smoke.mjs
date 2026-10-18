@@ -167,10 +167,12 @@ try {
   await fs.mkdir(path.join(workRoot, 'handoff'), { recursive: true });
   const aid = `main-${'f'.repeat(32)}`;
   const token = 'e'.repeat(64);
+  // Windows PowerShell 5.1 cold startup may exceed five seconds on a busy
+  // hosted runner; its PID and kernel birth ticks must still be verified.
   const birth = await execFile('powershell.exe', [
     '-NoLogo', '-NoProfile', '-NonInteractive', '-Command',
     `(Get-Process -Id ${process.pid} -ErrorAction Stop).StartTime.ToUniversalTime().Ticks.ToString([Globalization.CultureInfo]::InvariantCulture)`,
-  ], { timeout: 5_000, windowsHide: true });
+  ], { timeout: 20_000, windowsHide: true });
   const ticks = String(birth.stdout).trim();
   assert.match(ticks, /^[0-9]{1,19}$/u);
   const owner = { schemaVersion: 1, transactionId: aid, pid: process.pid,
