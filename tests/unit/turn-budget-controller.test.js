@@ -245,6 +245,23 @@ test("passive refresh retires an old turn when a different browser turn is alrea
   assert.equal(controller.snapshot().active.elapsedMs, 0);
 });
 
+test("Turn Budget guidance distinguishes passive Browser start from tool-driven fallback", async () => {
+  let now = 1_000;
+  let resolved = { browserContext: "user", conversationId: "conversation-1", userEpoch: "user-1" };
+  const controller = createTurnBudgetController({
+    settingsPath: TEST_SETTINGS_PATH, now: () => now, resolveTurnIdentity: async () => resolved,
+  });
+  await controller.initialize();
+  await controller.refreshSnapshot();
+  now += 7_000;
+  const invocation = await controller.prepareInvocation("runtime_call", { operation: "status", arguments: {} });
+  assert.match(JSON.stringify(controller.decorateResult(textResult(), invocation)), /independent of the first Local tool call/u);
+  resolved = { status: "idle", idleContexts: ["user"] };
+  await controller.refreshSnapshot();
+  const fallback = await controller.prepareInvocation("runtime_call", { operation: "status", arguments: {} });
+  assert.match(JSON.stringify(controller.decorateResult(textResult(), fallback)), /fallback mode/u);
+});
+
 test("Browser timer starts from passive generation observation; fallback starts only from first Local use", async () => {
   let now = 0;
   let probe = null;
