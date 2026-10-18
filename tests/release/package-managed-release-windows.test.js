@@ -197,6 +197,11 @@ test("Windows native Job Object helper uses target-specific MSVC and direct Win3
   const helper = await fs.readFile(new URL("../../native/windows/equinox-local-job-object-helper.cpp", import.meta.url), "utf8");
   assert.match(source, /compileWindowsJobObjectHelper/u);
   assert.match(source, /\/SUBSYSTEM:WINDOWS \/ENTRY:wmainCRTStartup/u, "pipe-only native helper must not request a console window");
+  const helperSource = await fs.readFile(new URL("../../native/windows/equinox-local-job-object-helper.cpp", import.meta.url), "utf8");
+  assert.match(helperSource, /AllocConsoleWithOptions/u, "Windows 11 native gate must support windowless inherited consoles");
+  assert.match(helperSource, /ALLOC_CONSOLE_MODE_NO_WINDOW/u);
+  assert.match(helperSource, /EnsureInheritedWindowlessConsole\(\) \? 0 : CREATE_NO_WINDOW/u,
+    "never detach PowerShell children from the inherited headless console");
   assert.match(source, /owned-process-gate-v1\.marker/u, "source-only Main upgrades need the native gate capability marker");
   assert.match(source, /equinox-local-job-object-helper\.cpp/u);
   assert.match(source, /\/MT \/DUNICODE/u);
