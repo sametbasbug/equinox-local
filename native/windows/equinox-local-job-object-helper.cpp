@@ -199,6 +199,41 @@ std::wstring ResolveGateCommand(const std::wstring& input) {
   return {};
 }
 
+// On Windows 11 24H2+ the OS can allocate a real inheritable console with
+// NO WINDOW. This avoids Windows Terminal's visible delegation for descendants
+// of GUI services, while allowing Windows PowerShell 5.1's native dispatcher
+// to inherit a console. Keep the existing redirected stdio handles intact.
+bool EnsureInheritedWindowlessConsole() {
+  if (GetConsoleWindow() != nullptr) return true;
+  const HMODULE kernel = GetModuleHandleW(L"kernel32.dll");
+  if (!kernel) return false;
+  struct Options {
+    DWORD mode;
+    BOOL useShowWindow;
+    WORD showWindow;
+  };
+  using Allocate = HRESULT (WINAPI*)(const Options*, DWORD*);
+  const auto allocate = reinterpret_cast<Allocate>(
+      GetProcAddress(kernel, "AllocConsoleWithOptions"));
+  if (!allocate) return false;  // Old Windows: use previous CREATE_NO_WINDOW path.
+  const HANDLE saved[3] = {
+    GetStdHandle(STD_INPUT_HANDLE),
+    GetStdHandle(STD_OUTPUT_HANDLE),
+    GetStdHandle(STD_ERROR_HANDLE)
+  };
+  const Options options{2, FALSE, 0};  // ALLOC_CONSOLE_MODE_NO_WINDOW
+  DWORD result = 0;
+  const HRESULT hr = allocate(&options, &result);
+  for (DWORD i = 0; i < 3; ++i) {
+    const DWORD kind = i == 0 ? STD_INPUT_HANDLE
+                     : i == 1 ? STD_OUTPUT_HANDLE : STD_ERROR_HANDLE;
+    if (saved[i] && saved[i] != INVALID_HANDLE_VALUE) {
+      SetStdHandle(kind, saved[i]);
+    }
+  }
+  return SUCCEEDED(hr) && (result == 1 || result == 2);
+}
+
 // The GUI-subsystem helper is assigned to the Job Object before it receives GO.
 // A child created here cannot escape the owned job and needs no console window.
 int RunOwnedProcessGate(int argc, wchar_t* argv[]) {
@@ -257,9 +292,13 @@ int RunOwnedProcessGate(int argc, wchar_t* argv[]) {
   startup.hStdInput = input;
   startup.hStdOutput = streams[0];
   startup.hStdError = streams[1];
+  // A child of the new windowless console inherits its console session.
+  // CREATE_NO_WINDOW would explicitly detach it and break native PS5 calls.
+  // Unsupported Windows builds retain the previous no-window fallback.
+  const DWORD creationFlags = EnsureInheritedWindowlessConsole() ? 0 : CREATE_NO_WINDOW;
   PROCESS_INFORMATION child{};
   const BOOL created = CreateProcessW(nullptr, line.data(), nullptr, nullptr, TRUE,
-                                      CREATE_NO_WINDOW, nullptr, nullptr, &startup, &child);
+                                      creationFlags, nullptr, nullptr, &startup, &child);
   DWORD createError = created ? ERROR_SUCCESS : GetLastError();
   CloseHandle(input);
   for (HANDLE handle : streams) CloseHandle(handle);
