@@ -120,6 +120,19 @@ test("download-artifact consumers use current v8 with integrity errors enabled",
   assert.doesNotMatch(ci + archived, /actions\/download-artifact@v7/u);
 });
 
+test("hosted native installer exposes only bounded WPF cold-start phase timings, never raw runtime details", async () => {
+  const smoke = await fs.readFile(new URL("./windows-installer-real-package-smoke.ps1", import.meta.url), "utf8");
+  assert.match(smoke, /\$env:GITHUB_ACTIONS -ceq 'true'/u);
+  assert.match(smoke, /\$InstallCallStarted = \[DateTimeOffset\]::UtcNow/u);
+  assert.match(smoke, /\$InstallCallCompleted = \[DateTimeOffset\]::UtcNow/u);
+  assert.match(smoke, /\$AllowedPhase = @\(/u);
+  assert.match(smoke, /'runtime-start-phase:child-started'/u);
+  assert.match(smoke, /\$PhaseName -cnotin \$AllowedPhase/u);
+  assert.match(smoke, /\$ShellLogFile\.Length -gt 65536/u);
+  assert.match(smoke, /\$Seconds -ge 0 -and \$Seconds -le 600/u);
+  assert.doesNotMatch(smoke, /Write-Output \$ShellLine/u);
+});
+
 test("manual Windows installed A-to-B acceptance admits post-snapshot CI/docs but rejects unadmitted product code", async () => {
   const archived = await fs.readFile(new URL("../../.github/workflows/main-installed-windows-acceptance.yml", import.meta.url), "utf8");
   assert.match(archived, /main-snapshot/u);

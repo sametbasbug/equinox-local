@@ -141,8 +141,48 @@ try {
     # This specialized acceptance exercises the optional legacy Main bridge.
     # The PUBLIC installer default remains Stable; no automatic enrollment.
     $EnrollExistingMain = $true
+    $InstallCallStarted = [DateTimeOffset]::UtcNow
     Invoke-EquinoxLocalInstall | Out-Host
+    $InstallCallCompleted = [DateTimeOffset]::UtcNow
     $EnrollExistingMain = $false
+    if ($env:GITHUB_ACTIONS -ceq 'true') {
+      # Never print native diagnostic details, filesystem paths or arbitrary
+      # runtime log content. Report only this fixed set of WPF startup phase
+      # names and bounded relative elapsed times from the actual installer.
+      $AllowedPhase = @(
+        'shell-startup:primary-acquired',
+        'shell-startup:main-window-created',
+        'runtime-start-phase:job-created',
+        'runtime-start-phase:gate-started',
+        'runtime-start-phase:assign-started',
+        'runtime-start-phase:assigned',
+        'runtime-start-phase:gate-released',
+        'runtime-start-phase:child-started'
+      )
+      Write-Output ("Hosted first-install timing: target={0}; totalSeconds={1:F1}" -f $FixtureTarget, ($InstallCallCompleted - $InstallCallStarted).TotalSeconds)
+      $ShellLogPath = Join-Path $OwnedInstallRoot 'logs\windows-shell-runtime.log'
+      if ([IO.File]::Exists($ShellLogPath)) {
+        # Fixed max diagnostic bytes; only exact phase values from the fixed
+        # allowlist can reach public Actions logs. Never print source lines.
+        $ShellLogFile = Get-Item -LiteralPath $ShellLogPath -Force
+        if ($ShellLogFile.Length -gt 65536 -or ($ShellLogFile.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+          Write-Output 'Hosted first-install WPF timing log unavailable (bounded integrity check).'
+        } else {
+        foreach ($ShellLine in [IO.File]::ReadAllLines($ShellLogPath)) {
+          if ($ShellLine -cmatch '^(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?\+\d\d:\d\d) (shell-startup|runtime-start-phase) ([a-z-]+)$') {
+            $PhaseName = "$($Matches[2]):$($Matches[3])"
+            if ($PhaseName -cnotin $AllowedPhase) { continue }
+            $PhaseInstant = [DateTimeOffset]::MinValue
+            if (-not [DateTimeOffset]::TryParse($Matches[1], [ref]$PhaseInstant)) { continue }
+            $Seconds = ($PhaseInstant - $InstallCallStarted).TotalSeconds
+            if ($Seconds -ge 0 -and $Seconds -le 600) {
+              Write-Output ("Hosted first-install WPF phase: {0}; elapsedSeconds={1:F1}" -f $PhaseName, $Seconds)
+            }
+          }
+        }
+        }
+      }
+    }
   } catch {
     $diagnosticLog = Join-Path $OwnedInstallRoot 'logs\windows-shell-runtime.log'
     $stableCandidate = Join-Path $OwnedProgramRoot 'EquinoxLocal.exe'
