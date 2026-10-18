@@ -112,6 +112,7 @@ function Invoke-CleanNode([string]$Node, [string]$FirstInstall, [string]$Release
     $value = [Environment]::GetEnvironmentVariable($name)
     if (-not [string]::IsNullOrWhiteSpace($value)) { $psi.EnvironmentVariables[$name] = $value }
   }
+  if ($env:GITHUB_ACTIONS -ceq 'true') { $psi.EnvironmentVariables['EQUINOX_HOSTED_PHASE_TIMING'] = '1' }
   $process = New-Object Diagnostics.Process
   $process.StartInfo = $psi
   if (-not $process.Start()) { Fail 'bundled Node first-install helper did not start' }

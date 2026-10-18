@@ -305,6 +305,12 @@ export async function enrollEquinoxLocalManagedSource({
   verifyWindowsAcl = verifyWindowsPrivateStateAcl,
 } = {}) {
   const sha = assertSha(bootstrapSha);
+  const timingEnabled = platform === "win32" && env?.EQUINOX_HOSTED_PHASE_TIMING === "1";
+  const hostedPhase = (name, started) => {
+    if (!timingEnabled) return;
+    const seconds = Math.min(600, Math.max(0, (Date.now() - started) / 1000));
+    process.stdout.write(`Hosted Main enrollment phase: ${name}; durationSeconds=${seconds.toFixed(1)}\n`);
+  };
   const layout = equinoxLocalPlatformPaths({ platform, arch, homeDir, env });
   if (target !== layout.host.target) throw new Error("Managed-source enrollment target does not match the host target.");
   const paths = equinoxLocalManagedSourcePaths({ platform, arch, homeDir, env });
@@ -319,7 +325,9 @@ export async function enrollEquinoxLocalManagedSource({
     platform, fsImpl, env, protectWindowsAcl: enrollmentProtectWindowsAcl, verifyWindowsAcl: enrollmentVerifyWindowsAcl,
   });
 
+  const toolchainStarted = Date.now();
   const provisioned = await provisionToolchainImpl({ runtimeRoot: layout.runtimeRoot, target, platform, env, fsImpl, execFileImpl, windowsZipHelperPath });
+  hostedPhase("toolchain", toolchainStarted);
   const contract = provisioned?.contract;
   if (!contract || contract.target !== target || contract.runtimeRoot !== layout.runtimeRoot || contract.ambientPathDiscovery !== false) {
     throw new Error("Managed-source enrollment toolchain identity is invalid.");
@@ -353,17 +361,25 @@ export async function enrollEquinoxLocalManagedSource({
     if (!durable?.eligible || durable.currentSha !== sha) {
       if (durable) throw new Error("Existing managed-source bootstrap checkout is invalid.");
       if (typeof mainRemote !== "string" || mainRemote.length < 1) throw new Error("Managed-source canonical remote is unavailable.");
+      const cloneStarted = Date.now();
       await run(contract.gitPath, ["clone", "--no-checkout", "--filter=blob:none", "--single-branch", "--branch", EQUINOX_LOCAL_MAIN_BRANCH, mainRemote, stagedSourceRoot], { execFileImpl, env, platform });
+      hostedPhase("git-clone", cloneStarted);
+      const checkoutStarted = Date.now();
       await run(contract.gitPath, ["-C", stagedSourceRoot, "checkout", "--force", "-B", EQUINOX_LOCAL_MAIN_BRANCH, sha], { execFileImpl, env, platform });
       await run(contract.gitPath, ["-C", stagedSourceRoot, "remote", "set-url", "origin", EQUINOX_LOCAL_MAIN_REMOTE], { execFileImpl, env, platform });
+      hostedPhase("checkout", checkoutStarted);
       const staged = await inspectCheckoutImpl(stagedSourceRoot, { fsImpl, execFileImpl, gitPath: contract.gitPath });
       if (!staged?.eligible || staged.currentSha !== sha) throw new Error("Managed-source bootstrap checkout does not match the Stable source SHA.");
+      const seedStarted = Date.now();
       if (platform === "win32" && stableReleaseDir) {
         await seedPrebuiltDependenciesFromStableRelease(stagedSourceRoot, stableReleaseDir, { fsImpl });
       } else {
         await installDependenciesImpl(stagedSourceRoot, contract, { execFileImpl, fsImpl, env, platform });
       }
+      hostedPhase("dependency-seed", seedStarted);
+      const validateStarted = Date.now();
       await validateSourceImpl(stagedSourceRoot, contract, { execFileImpl, fsImpl, env, platform });
+      hostedPhase("source-validation", validateStarted);
       const validated = await inspectCheckoutImpl(stagedSourceRoot, { fsImpl, execFileImpl, gitPath: contract.gitPath });
       if (!validated?.eligible || validated.currentSha !== sha) throw new Error("Managed-source bootstrap checkout changed during validation.");
       await fsImpl.rename(stagedSourceRoot, durableSourceRoot);
@@ -371,6 +387,7 @@ export async function enrollEquinoxLocalManagedSource({
 
     const durableFinal = await inspectCheckoutImpl(durableSourceRoot, { fsImpl, execFileImpl, gitPath: contract.gitPath });
     if (!durableFinal?.eligible || durableFinal.currentSha !== sha) throw new Error("Durable managed-source bootstrap checkout identity is invalid.");
+    const publishStarted = Date.now();
     const pointer = await writePointerImpl(paths.sourcePointerPath, { sourceRoot: durableSourceRoot, sha }, {
       fsImpl, execFileImpl, gitPath: contract.gitPath, randomBytesImpl,
       platform, env, protectWindowsAcl: enrollmentProtectWindowsAcl, verifyWindowsAcl: enrollmentVerifyWindowsAcl,
@@ -379,6 +396,7 @@ export async function enrollEquinoxLocalManagedSource({
       fsImpl, randomBytesImpl, platform, env,
       protectWindowsAcl: enrollmentProtectWindowsAcl, verifyWindowsAcl: enrollmentVerifyWindowsAcl,
     });
+    hostedPhase("pointer-publish", publishStarted);
     return Object.freeze({ status: "enrolled", bootstrapSha: sha, sourceRoot: pointer.sourceRoot, contract });
   } finally {
     await fsImpl.rm(transactionRoot, { recursive: true, force: true }).catch(() => {});
