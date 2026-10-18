@@ -447,7 +447,7 @@ async function verifyWindowsIndependentProcessCommands(root) {
     assert.equal(rejectedEnd.exitCode, 127, "Windows batch expansion must fail closed");
     assert.match(rejectedLogs.output, /unsupported CMD expansion or quoting characters/u);
     assert.doesNotMatch(rejectedLogs.output, /DIRECT_BATCH_OK/u);
-    await manager.stop({ processId: injectionRejected.processId, force: true, remove: true);
+    await manager.stop({ processId: injectionRejected.processId, force: true, remove: true });
 
     // The background tool also manages indefinite processes. Ensure process_stop
     // drains the entire owned Windows Job Object without killing the caller.
