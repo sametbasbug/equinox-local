@@ -40,6 +40,14 @@ $StableExe = $null
 
 try {
   if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) { throw 'Real Windows installer smoke requires Windows.' }
+  # This CI-only lane still performs a real fresh install followed by repair;
+  # the separate full installer lane retains all Guardian security-negative
+  # and native A/B rollback acceptance on another disposable hosted runner.
+  $RepairOnly = ($env:EQUINOX_WINDOWS_INSTALLER_REPAIR_ONLY -ceq 'true')
+  if ($RepairOnly -and ($env:GITHUB_ACTIONS -cne 'true' -or $env:EQUINOX_WINDOWS_SAME_VERSION_REPAIR -cne 'true')) {
+    throw 'Repair-only acceptance requires a disposable GitHub-hosted Windows runner and genuine same-version repair.'
+  }
+
   if (-not [Environment]::Is64BitProcess -or -not [string]::IsNullOrWhiteSpace($env:PROCESSOR_ARCHITEW6432)) { throw 'Real Windows installer smoke requires native 64-bit Windows PowerShell.' }
   if ([string]::IsNullOrWhiteSpace($Artifact) -or -not [IO.Path]::IsPathRooted($Artifact) -or -not [IO.File]::Exists($Artifact)) { throw 'EQUINOX_WINDOWS_INSTALL_ARTIFACT must point to the real native managed ZIP.' }
   if (Test-Path -LiteralPath $NativeRegistryKey) { throw 'Fresh-install smoke requires an unowned Native Messaging registry key.' }
@@ -257,7 +265,7 @@ try {
   }
   Assert-True ($OwnedGitStatusCode -eq 0) 'Hosted product Git status preflight failed.'
 
-  if (-not $SkipLegacyGuardianFixture) {
+  if (-not $SkipLegacyGuardianFixture -and -not $RepairOnly) {
   # The optional native Main audit is deliberately NOT a launcher or a release
   # authority: it binds pointer/store claims and hashes the installed shell,
   # but Git HEAD, full payload fingerprint and Native Messaging still need
@@ -802,8 +810,10 @@ try {
   # current signed Stable release, not the independent build toolchain.
   $StableWorkerNode = Join-Path $ReleaseDir 'runtime\node\bin\node.exe'
   Assert-True ([IO.File]::Exists($StableWorkerNode)) 'Stable-owned detached worker Node is missing.'
+  if (-not $RepairOnly) {
   & $StableWorkerNode (Join-Path $Root 'tests/release/windows-native-ab-installed-smoke.mjs') $ReleaseDir $FixtureTarget
   if ($LASTEXITCODE -ne 0) { throw 'Windows actual native shell A/B switch/rollback smoke failed.' }
+  } else { Write-Output 'Native A/B and Guardian negative cases are covered by the separate full installer lane.' }
   Assert-True ((& $OwnedNode $OwnedNpm --version) -match '^\d+\.\d+\.\d+$') 'Product-owned npm CLI did not execute.'
   # Exercise the actual packaged CLI with a throwaway offline profile.
   if (-not $SkipLegacyGuardianFixture) {
