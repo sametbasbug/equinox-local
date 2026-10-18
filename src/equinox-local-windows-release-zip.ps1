@@ -5,6 +5,8 @@ param(
   [string]$ExpectedRoot = 'release'
 )
 $ErrorActionPreference = 'Stop'
+$HostedZipTiming = ($env:EQUINOX_HOSTED_PHASE_TIMING -ceq '1')
+$HostedZipClock = [Diagnostics.Stopwatch]::StartNew()
 Add-Type -AssemblyName System.IO.Compression
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 $CompressionAssembly = [System.IO.Compression.ZipArchive].Assembly.Location
@@ -168,11 +170,18 @@ if ($PSVersionTable.PSEdition -eq 'Core') {
 } else {
   Add-Type -TypeDefinition $TypeDefinition -ReferencedAssemblies @($CompressionAssembly, $CompressionFileSystemAssembly)
 }
+if ($HostedZipTiming) {
+  Write-Output ("Hosted ZIP phase: compile; durationSeconds={0:F1}" -f $HostedZipClock.Elapsed.TotalSeconds)
+}
 $archive = [System.IO.Path]::GetFullPath($ArchivePath)
 if (-not [System.IO.File]::Exists($archive)) { throw 'Windows release ZIP is missing.' }
 if ($Mode -eq 'Inspect') {
   [EquinoxWindowsReleaseZip]::Inspect($archive, $ExpectedRoot)
 } else {
   if ([string]::IsNullOrWhiteSpace($DestinationPath)) { throw 'DestinationPath is required for extraction.' }
+  $extractStarted = $HostedZipClock.Elapsed.TotalSeconds
   [EquinoxWindowsReleaseZip]::Extract($archive, [System.IO.Path]::GetFullPath($DestinationPath), $ExpectedRoot)
+  if ($HostedZipTiming) {
+    Write-Output ("Hosted ZIP phase: extract; durationSeconds={0:F1}" -f ($HostedZipClock.Elapsed.TotalSeconds - $extractStarted))
+  }
 }
