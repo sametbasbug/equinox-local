@@ -196,7 +196,8 @@ test("Windows native Job Object helper uses target-specific MSVC and direct Win3
   const source = await fs.readFile(new URL("../../scripts/release/package-managed-release-windows.mjs", import.meta.url), "utf8");
   const helper = await fs.readFile(new URL("../../native/windows/equinox-local-job-object-helper.cpp", import.meta.url), "utf8");
   assert.match(source, /compileWindowsJobObjectHelper/u);
-  assert.match(source, /\/SUBSYSTEM:WINDOWS \/ENTRY:mainCRTStartup/u, "pipe-only native helper must not request a console window");
+  assert.match(source, /\/SUBSYSTEM:WINDOWS \/ENTRY:wmainCRTStartup/u, "pipe-only native helper must not request a console window");
+  assert.match(source, /owned-process-gate-v1\.marker/u, "source-only Main upgrades need the native gate capability marker");
   assert.match(source, /equinox-local-job-object-helper\.cpp/u);
   assert.match(source, /\/MT \/DUNICODE/u);
   assert.match(source, /Windows Job Object helper architecture mismatch/u);

@@ -374,7 +374,7 @@ export async function compileWindowsJobObjectHelper({
     "if errorlevel 1 exit /b %errorlevel%",
     // Helper uses redirected pipes and must not allocate a desktop console.
     // GUI subsystem keeps Windows Terminal out; mainCRTStartup initializes C++ stdio.
-    `cl.exe /nologo /std:c++17 /O2 /EHsc /MT /DUNICODE /D_UNICODE "${source}" /Fe:equinox-local-job-object-helper.exe /link /SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup`,
+    `cl.exe /nologo /std:c++17 /O2 /EHsc /MT /DUNICODE /D_UNICODE "${source}" /Fe:equinox-local-job-object-helper.exe /link /SUBSYSTEM:WINDOWS /ENTRY:wmainCRTStartup`,
     "exit /b %errorlevel%",
     "",
   ].join("\r\n");
@@ -388,6 +388,9 @@ export async function compileWindowsJobObjectHelper({
   const helperPath = path.join(destination, "equinox-local-job-object-helper.exe");
   const machine = await portableExecutableMachine(helperPath);
   if (machine !== contract.peMachine) throw new Error(`Windows Job Object helper architecture mismatch for ${target}: 0x${machine.toString(16)}.`);
+  // Marker signals that this compiled native payload supports owned-process
+  // gating. Older authenticated Main native releases lack this exact marker.
+  await fs.writeFile(path.join(destination, "owned-process-gate-v1.marker"), "equinox-owned-process-gate-v1\n", { flag: "wx" });
   return helperPath;
 }
 

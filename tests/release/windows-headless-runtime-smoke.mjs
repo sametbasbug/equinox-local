@@ -12,6 +12,7 @@ import {
   TUNNEL_CLIENT_DISTRIBUTIONS,
 } from "../../src/equinox-local-runtime-versions.js";
 import { createWindowsJobObjectLease } from "../../src/equinox-local-windows-job-object.js";
+import { createBackgroundProcessOwnershipAdapter } from "../../src/equinox-local-process-ownership.js";
 import { compileWindowsJobObjectHelper } from "../../scripts/release/package-managed-release-windows.mjs";
 import { createAgentControlController } from "../../src/equinox-local-agent-control.js";
 import { createProcessManager } from "../../src/process-manager.js";
@@ -41,7 +42,14 @@ const jobSubsystemOffset = jobPeOffset + 24 + 68;
 assert.equal(jobHelperImage.readUInt16LE(jobSubsystemOffset), 2,
   "Windows Job Object helper must be a GUI-subsystem PE to avoid console windows");
 
+const gateMarker = path.join(jobHelperRoot, "owned-process-gate-v1.marker");
+assert.equal((await fs.readFile(gateMarker, "utf8")).trim(), "equinox-owned-process-gate-v1");
 process.env.EQUINOX_WINDOWS_JOB_OBJECT_HELPER_PATH = jobHelperPath;
+const probeNativeGate = createBackgroundProcessOwnershipAdapter({ platform: "win32", arch: process.arch });
+const nativeGateSpec = probeNativeGate.spawnSpec("powershell.exe", ["-NoProfile"], process.env);
+assert.equal(nativeGateSpec.command, jobHelperPath, "managed finite commands must bypass the PowerShell process gate");
+assert.deepEqual(nativeGateSpec.args, ["--owned-process-gate", "powershell.exe", "-NoProfile"]);
+
 
 const WINDOWS_ARCH = process.arch === "x64" || process.arch === "arm64" ? process.arch : null;
 const WINDOWS_TARGET = WINDOWS_ARCH ? `win32-${WINDOWS_ARCH}` : null;

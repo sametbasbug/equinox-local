@@ -23,6 +23,15 @@ function defaultHelperLaunchSpec() {
   return Object.freeze({ command: nativeHelper, args: Object.freeze([]) });
 }
 
+// The new native gate must be paired with its exact native ABI marker;
+// source-only Main upgrades over an older native helper retain the legacy gate.
+export function resolveWindowsNativeOwnedProcessGatePath({ fileExists = existsSync } = {}) {
+  const launch = defaultHelperLaunchSpec();
+  if (!/equinox-local-job-object-helper\.exe$/iu.test(launch.command)) return null;
+  const marker = path.join(path.dirname(launch.command), "owned-process-gate-v1.marker");
+  return fileExists(marker) ? launch.command : null;
+}
+
 function boundedTail(current, addition) {
   const combined = current + String(addition ?? "");
   return combined.length <= MAX_STDERR_CHARS ? combined : combined.slice(-MAX_STDERR_CHARS);

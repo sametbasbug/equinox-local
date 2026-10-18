@@ -13,6 +13,7 @@ This project follows semantic versioning for public releases.
 ### Fixed (pending native/desktop validation)
 
 - Build the pipe-only Windows Job Object helper as a Windows-subsystem executable, retaining C++ main/stdio initialization. This removes its OS request for a desktop console even when Windows Terminal is the default; native Windows smoke asserts the actual PE subsystem and exercises the redirected helper lifecycle.
+- When the authenticated Windows native payload includes the owned-process-gate-v1 marker, reuse its no-console GUI helper to start managed finite and background processes directly with Win32 CreateProcessW (CREATE_NO_WINDOW, explicit inherited stdout/stderr pipes, null stdin) *after* verified Job Object assignment, avoiding the extra PowerShell parent and its native dispatch. Source-only upgrades over older native packages retain the previous gate until a new native payload is installed.
 
 - Removed Windows interactive-terminal startup of a second PowerShell process: the Job Object-owned ConPTY gate remains as the interactive host after readiness, avoiding secondary console windows and unreliable nested native launch.
 - Extended the explicit Windows Doctor terminal probe to detect silent failures of native CMD invocations. Pure PowerShell output and exit status are no longer sufficient.
