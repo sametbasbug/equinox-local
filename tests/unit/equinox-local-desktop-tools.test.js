@@ -157,7 +157,10 @@ test("desktop_call preserves native MCP image content from a desktop provider", 
   const harness = createHarness({ desktopBridge: bridge });
   const result = await harness.rawRegistrations.get("desktop_call").handler({ operation: "screenshot", arguments: {} });
   assert.deepEqual(result.content[1], image);
-  assert.deepEqual(result.structuredContent, { text: "captured\n" });
+  assert.equal(result.structuredContent, undefined,
+    "MCP clients must see native image parts, not a competing text-only structured output");
+  assert.equal(harness.rawRegistrations.get("desktop_call").config.outputSchema, undefined,
+    "a text-only output schema must not suppress image content");
 });
 
 test("desktop_call preserves the desktop mutation lock and structured text output", async () => {
