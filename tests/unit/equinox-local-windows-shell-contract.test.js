@@ -631,6 +631,13 @@ test("Windows desktop Control Center displays the pinned winapp state through th
   assert.match(ui, /previousStatus\.peekaboo\?\.engine === "winapp"/u);
 });
 
+test("native Windows GUI launcher repairs truncated PATHEXT at the first process boundary", async () => {
+  const supervisor = await fs.readFile(path.join(ROOT, "native", "windows", "EquinoxLocal.WindowsShell", "RuntimeSupervisor.cs"), "utf8");
+  assert.match(supervisor, /startInfo.Environment\["PATHEXT"\] = HasExeExtension\(machine\)/u);
+  assert.match(supervisor, /EnvironmentVariableTarget.Machine/u);
+  assert.match(supervisor, /".COM;.EXE;.BAT;.CMD"/u);
+});
+
 test("native Windows runtime records only whitelisted tunnel phases", async () => {
   const supervisor = await fs.readFile(path.join(ROOT, "native", "windows", "EquinoxLocal.WindowsShell", "RuntimeSupervisor.cs"), "utf8");
   assert.match(supervisor, /RecordBoundedTunnelPhase\(eventArgs\.Data\)/u);

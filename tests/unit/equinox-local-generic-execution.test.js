@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   buildGenericExecutionEnvironment,
   isSensitiveGenericExecutionEnvName,
+  repairWindowsPathext,
 } from "../../src/equinox-local-generic-execution.js";
 
 
@@ -77,4 +78,22 @@ test("generic execution preserves Windows PATH semantics without injecting macOS
   assert.equal(env.PATH, "C:\\Project\\bin;C:\\Windows\\System32");
   assert.equal(env.USERPROFILE, "C:\\Users\\Test");
   assert.equal(env.PATH.includes("/opt/homebrew"), false);
+});
+
+test("Windows repairs inherited PATHEXT truncated to .CPL and preserves explicit extensions", () => {
+  assert.equal(repairWindowsPathext(".CPL"), ".COM;.EXE;.BAT;.CMD;.CPL");
+  assert.equal(repairWindowsPathext(undefined), ".COM;.EXE;.BAT;.CMD");
+  assert.equal(repairWindowsPathext(".com;.EXE;.Bat;.cMd;.CPL"), ".com;.EXE;.Bat;.cMd;.CPL");
+  const env = buildGenericExecutionEnvironment({
+    platform: "win32", arch: "x64",
+    runtimeEnv: { SystemRoot: "C:\\Windows", PATH: "C:\\Windows\\System32", PATHEXT: ".CPL" },
+  });
+  assert.equal(env.PATHEXT, ".COM;.EXE;.BAT;.CMD;.CPL");
+  const withOverride = buildGenericExecutionEnvironment({
+    platform: "win32", arch: "arm64",
+    runtimeEnv: { PATHEXT: ".COM;.EXE;.BAT;.CMD;.CPL" },
+    extraEnv: { PaThExT: ".CPL" },
+  });
+  assert.equal(withOverride.PATHEXT, ".COM;.EXE;.BAT;.CMD;.CPL");
+  assert.equal("PaThExT" in withOverride, false);
 });

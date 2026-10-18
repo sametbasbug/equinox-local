@@ -5,6 +5,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { protectWindowsPrivateStatePath } from "./equinox-local-private-state.js";
+import { repairWindowsPathext } from "./equinox-local-generic-execution.js";
 import { managedSupervisorPaths, readSupervisorTransport } from "./equinox-local-supervisor.js";
 
 const execFile = promisify(execFileCallback);
@@ -42,6 +43,7 @@ export function windowsTunnelInitArguments({ paths, nodePath, serverPath, tunnel
 function childEnv(parent, mode) {
   const keys = ["SystemRoot", "WINDIR", "USERPROFILE", "LOCALAPPDATA", "APPDATA", "TEMP", "TMP", "PATH", "PATHEXT", "COMSPEC", "USERNAME", "USERDOMAIN", "EQUINOX_LOCAL_RELEASE_DIR", "EQUINOX_LOCAL_INSTALL_ROOT", "EQUINOX_LOCAL_BROWSER_SOCKET_NAMESPACE"];
   const env = Object.fromEntries(keys.filter((key) => typeof parent[key] === "string" && parent[key]).map((key) => [key, parent[key]]));
+  env.PATHEXT = repairWindowsPathext(env.PATHEXT);
   env.EQUINOX_LOCAL_SUPERVISOR_MODE = mode;
   return env;
 }

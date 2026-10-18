@@ -13,6 +13,7 @@ import {
 } from "../../src/equinox-local-runtime-versions.js";
 import { createWindowsJobObjectLease } from "../../src/equinox-local-windows-job-object.js";
 import { createBackgroundProcessOwnershipAdapter } from "../../src/equinox-local-process-ownership.js";
+import { buildGenericExecutionEnvironment } from "../../src/equinox-local-generic-execution.js";
 import { compileWindowsJobObjectHelper } from "../../scripts/release/package-managed-release-windows.mjs";
 import { createAgentControlController } from "../../src/equinox-local-agent-control.js";
 import { createProcessManager } from "../../src/process-manager.js";
@@ -358,6 +359,14 @@ async function verifyWindowsManagedProcessLifecycle(root) {
 
   const terminalDoctor = await probeWindowsTerminalExecution({ processManager: manager, cwd: root, env: process.env, arch: WINDOWS_ARCH });
   assert.equal(terminalDoctor.healthy, true, 'On-demand Windows Doctor terminal probe must detect true stdout and exit 17.');
+  // Real installed Windows inherited PATHEXT=.CPL, so PS5 treated .EXE
+  // as a document. The native owned-gate must still dispatch cmd.exe.
+  const brokenPathextDoctor = await probeWindowsTerminalExecution({
+    processManager: manager, cwd: root,
+    env: { ...process.env, PATHEXT: ".CPL" }, arch: WINDOWS_ARCH,
+  });
+  assert.equal(brokenPathextDoctor.healthy, true,
+    "native CMD dispatch must work despite inherited PATHEXT=.CPL");
   await manager.shutdown();
   return Object.freeze({ waitTimeoutPreservedOwnedTree: true, descendantRetainedAfterLeaderExit: true, stopDrainedDescendant: true, naturalExit: true, terminalDoctor: true });
 }
@@ -555,7 +564,11 @@ async function verifyWindowsConPtyLifecycle(root) {
       cwd: root,
       shell: "powershell.exe",
       shellArgs: ["-NoLogo", "-NoProfile"],
-      env: { ...process.env, EQUINOX_PTY_CHILD_PID: stopPidPath },
+      env: buildGenericExecutionEnvironment({
+        platform: "win32", arch: WINDOWS_ARCH,
+        runtimeEnv: { ...process.env, PATHEXT: ".CPL" },
+        extraEnv: { EQUINOX_PTY_CHILD_PID: stopPidPath },
+      }),
       cols: 100,
       rows: 28,
       label: "windows-conpty-stop",
@@ -570,6 +583,12 @@ async function verifyWindowsConPtyLifecycle(root) {
 
     manager.write({ sessionId: started.sessionId, data: "Write-Output ([string]::Concat('__EQUINOX_','CONPTY_OK__'))", key: "enter" });
     await withWindowsConPtyStage("explicit:interactive-io", () => readTerminalUntil(manager, started.sessionId, /__EQUINOX_CONPTY_OK__/u), 10_000);
+    manager.write({ sessionId: started.sessionId,
+      data: "& $env:ComSpec /d /c 'echo __EQUINOX_NATIVE_CONPTY_OK__ & exit /b 23'; Write-Output ('__EQUINOX_NATIVE_EXIT__=' + $LASTEXITCODE)",
+      key: "enter" });
+    const nativeConptyOutput = await withWindowsConPtyStage("explicit:repaired-pathext-native-io",
+      () => readTerminalUntil(manager, started.sessionId, /__EQUINOX_NATIVE_EXIT__=23/u), 10_000);
+    assert.match(nativeConptyOutput, /__EQUINOX_NATIVE_CONPTY_OK__/u);
 
     await withWindowsConPtyStage("explicit:resize", async () => {
       const resized = manager.resize({ sessionId: started.sessionId, cols: 137, rows: 41 });

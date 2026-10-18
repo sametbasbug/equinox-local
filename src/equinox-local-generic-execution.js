@@ -14,6 +14,17 @@ export function isSensitiveGenericExecutionEnvName(name) {
   return SENSITIVE_PROVIDER_PREFIX.test(name) || SENSITIVE_NAME_FRAGMENT.test(name);
 }
 
+// Repair launcher-truncated PATHEXT (observed ".CPL" on physical Windows).
+// Without .EXE PowerShell 5.1 treats native programs as documents.
+export function repairWindowsPathext(value) {
+  const extensions = typeof value === "string"
+    ? value.split(";").map((part) => part.trim()).filter(Boolean)
+    : [];
+  const present = new Set(extensions.map((part) => part.toUpperCase()));
+  const required = [".COM", ".EXE", ".BAT", ".CMD"];
+  return [...required.filter((part) => !present.has(part)), ...extensions].join(";");
+}
+
 export function buildGenericExecutionEnvironment({
   runtimeEnv = {},
   extraEnv = {},
@@ -35,6 +46,13 @@ export function buildGenericExecutionEnvironment({
 
   mergeSafe(runtimeEnv);
   mergeSafe(extraEnv);
+
+  if (platform === "win32") {
+    const keys = Object.keys(env).filter((key) => key.toUpperCase() === "PATHEXT");
+    const source = keys.length ? env[keys[keys.length - 1]] : undefined;
+    for (const key of keys) delete env[key];
+    env.PATHEXT = repairWindowsPathext(source);
+  }
 
   const inheritedPath = typeof extraEnv?.PATH === "string"
     ? extraEnv.PATH

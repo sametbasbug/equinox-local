@@ -53,6 +53,16 @@ test("Windows runtime with validated transport initializes and runs tunnel under
   assert.equal(events[3][3].env.EQUINOX_LOCAL_SUPERVISOR_MODE,"tunnel");
 });
 
+test("Windows runtime supervisor repairs truncated PATHEXT before launching owned server",async()=>{
+  let received;
+  await runWindowsShellRuntimeSupervisor(mk({
+    env: {...env, PATHEXT: ".CPL"},
+    readTransportImpl:async()=>null,
+    runChildImpl:async(_cmd,_args,options)=>{received=options.env;return {code:0};},
+  }));
+  assert.equal(received.PATHEXT, ".COM;.EXE;.BAT;.CMD;.CPL");
+});
+
 test("Windows tunnel initialization failure leaves local-only Control Center reachable",async()=>{
   const events=[];
   const result=await runWindowsShellRuntimeSupervisor(mk({
