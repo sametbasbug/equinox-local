@@ -6,6 +6,10 @@ This project follows semantic versioning for public releases.
 
 ## [Unreleased]
 
+_No unreleased changes currently._
+
+## [6.1.2] - 2026-10-18
+
 ### Changed (pending Windows acceptance)
 
 - Added an explicit finite-only Windows terminal_exec shell cmd option. This routes CMD/native command text through the existing GUI-owned direct cmd.exe process path, preserving output and exit codes without invoking PowerShell 5.1's broken native call operator. Default powershell and optional pwsh are unchanged, and interactive PTY still supports only PowerShell shells. This is a supported workaround, not a claim that native & calls inside PowerShell 5.1 are repaired.
