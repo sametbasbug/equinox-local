@@ -4,6 +4,7 @@ import fs from "node:fs/promises";
 import { TERMINAL_KEYS } from "./terminal-manager.js";
 import { buildGenericExecutionEnvironment } from "./equinox-local-generic-execution.js";
 import { equinoxLocalFiniteShell, equinoxLocalInteractiveShells } from "./equinox-local-platform.js";
+import { lstatSync } from "node:fs";
 
 const TERMINAL_EXEC_REPLAY_WINDOW_MS = 5 * 60 * 1000;
 const TERMINAL_EXEC_REPLAY_MAX_LEASES = 64;
@@ -45,6 +46,7 @@ export function registerTerminalTools({
   getActiveProjectName,
   getActiveProjectRoot,
   runtimeEnv = process.env,
+  powerShell7StatFile = lstatSync,
   buildGenericExecutionEnvironmentImpl = buildGenericExecutionEnvironment,
   now = () => Date.now(),
   recordEvent = null,
@@ -52,7 +54,9 @@ export function registerTerminalTools({
   errorResult,
 } = {}) {
   const finiteShell = equinoxLocalFiniteShell({ platform, arch, env: runtimeEnv });
-  const interactiveShells = equinoxLocalInteractiveShells({ platform, arch, env: runtimeEnv });
+  const finiteShellNames = platform === "win32" ? ["powershell", "pwsh"] : ["zsh"];
+  const finiteDefaultShell = platform === "win32" ? "powershell" : "zsh";
+  const interactiveShells = equinoxLocalInteractiveShells({ platform, arch, env: runtimeEnv, statFile: powerShell7StatFile });
   const interactiveShellNames = Object.keys(interactiveShells.shells);
   if (interactiveShellNames.length === 0) throw new Error("No interactive shell is configured for this platform.");
   const terminalJsonResult = (value) => textResult(JSON.stringify(value, null, 2));
@@ -109,9 +113,10 @@ export function registerTerminalTools({
     "terminal_exec",
     {
       description:
-        `Seçilen proje içinde platformun sonlu komut kabuğunu (${finiteShell.command}) managed process olarak başlatır. Kısa işler tek çağrıda tamamlanır; wait_ms içinde bitmeyen iş öldürülmeden aynı process_id ile process_logs üzerinden devam eder. Etkileşimli TTY için terminal_start kullanılır.`,
+        `Seçilen proje içinde sonlu komutu managed process olarak çalıştırır. Varsayılan: ${finiteShell.command}. Kabuklar: ${finiteShellNames.join(", ")}. Windows pwsh = isteğe bağlı PowerShell 7 (ayrı kurulu olmalı); powershell = varsayılan 5.1. Komutlar masaüstünde konsol penceresi açmamalıdır. Etkileşimli TTY için terminal_start kullan.`,
       inputSchema: {
         command: z.string().min(1).max(20_000),
+        shell: z.enum(finiteShellNames).default(finiteDefaultShell).describe("Windows: powershell (5.1, default) or pwsh (PowerShell 7 if installed)."),
         cwd: z.string().default(".").describe("Proje köküne göre göreli başlangıç klasörü"),
         wait_ms: z.number().int().min(0).max(120_000).default(30_000)
           .describe("Bu çağrıda tamamlanma için beklenecek süre. Süre dolarsa komut öldürülmez; managed process olarak devam eder."),
@@ -125,7 +130,7 @@ export function registerTerminalTools({
         openWorldHint: true,
       },
     },
-    async ({ command, cwd, wait_ms, max_output_chars }) => {
+    async ({ command, shell = finiteDefaultShell, cwd, wait_ms, max_output_chars }) => {
       try {
         if (!agentAccess.terminal) {
           throw new Error("Terminal erişimi Control Center'da kapalı.");
@@ -139,11 +144,12 @@ export function registerTerminalTools({
 
         const projectId = getActiveProjectId();
         const projectName = getActiveProjectName();
-        const processArgs = finiteShell.argsFor(command);
+        const selectedFiniteShell = equinoxLocalFiniteShell({ platform, arch, env: runtimeEnv, shell, statFile: powerShell7StatFile });
+        const processArgs = selectedFiniteShell.argsFor(command);
         const execSpec = {
           projectId,
           cwd: resolvedCwd,
-          command: finiteShell.command,
+          command: selectedFiniteShell.command,
           args: processArgs,
         };
         const execFingerprint = terminalExecFingerprint(execSpec);
@@ -200,7 +206,7 @@ export function registerTerminalTools({
           projectId,
           projectName,
           cwd: resolvedCwd,
-          command: finiteShell.command,
+          command: selectedFiniteShell.command,
           args: processArgs,
           purpose: "terminal_exec",
           env: executionEnv,
@@ -320,8 +326,9 @@ export function registerTerminalTools({
         }
 
         const projectId = getActiveProjectId();
-        const shellConfig = interactiveShells.shells[shell];
+        const shellConfig = equinoxLocalInteractiveShells({ platform, arch, env: runtimeEnv, statFile: powerShell7StatFile }).shells[shell];
         if (!shellConfig) throw new Error(`Desteklenmeyen terminal kabuğu: ${shell}`);
+        if (!shellConfig.command) throw new Error("PowerShell 7 (pwsh) is not installed; install it separately or choose powershell (5.1).");
         const session = await terminalManager.start({
           projectId,
           projectName: getActiveProjectName(),

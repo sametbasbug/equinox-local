@@ -241,6 +241,8 @@ test("terminal tools route Windows finite and interactive shells through the sha
   const start = harness.registrations.get("terminal_start");
   const parsed = start.config.inputSchema.shell.safeParse("powershell");
   assert.equal(parsed.success, true);
+  assert.equal(start.config.inputSchema.shell.safeParse("pwsh").success, true);
+  assert.equal(exec.config.inputSchema.shell.safeParse("pwsh").success, true);
   assert.equal(start.config.inputSchema.shell.safeParse("zsh").success, false);
   const result = parseText(await start.handler({ cwd: ".", shell: "powershell", cols: 120, rows: 30 }));
   assert.equal(result.ok, true);
@@ -409,4 +411,46 @@ test("terminal mutation adapters fail closed when terminal access is disabled", 
   assert.equal(write.isError, true);
   assert.match(start.content[0].text, /Terminal erişimi Control Center'da kapalı/u);
   assert.equal(harness.calls.length, 0);
+});
+
+test("Windows PowerShell 7 is explicit, dynamically discovered, and never auto-installed or silently downgraded", async () => {
+  const env = { SystemRoot: "C:\\Windows", ProgramFiles: "C:\\Program Files", PATH: "C:\\Windows\\System32" };
+  const pwsh = "C:\\Program Files\\PowerShell\\7\\pwsh.exe";
+  let installed = false;
+  const harness = createHarness({
+    platform: "win32",
+    arch: "x64",
+    runtimeEnv: env,
+    powerShell7StatFile: (candidate) => {
+      if (installed && candidate === pwsh) return { isFile: () => true };
+      throw new Error("not found");
+    },
+  });
+  const exec = harness.registrations.get("terminal_exec");
+  const start = harness.registrations.get("terminal_start");
+  const defaultParsed = exec.config.inputSchema.shell.safeParse(undefined);
+  assert.equal(defaultParsed.success, true);
+  assert.equal(defaultParsed.data, "powershell");
+  assert.equal(start.config.inputSchema.shell.safeParse(undefined).data, "powershell");
+  const missingExec = await exec.handler({
+    shell: "pwsh", command: "Write-Output 7", cwd: ".", wait_ms: 50, max_output_chars: 1000,
+  });
+  assert.equal(missingExec.isError, true);
+  assert.match(missingExec.content[0].text, /PowerShell 7.*not installed/u);
+  const missingPty = await start.handler({ shell: "pwsh", cwd: ".", cols: 80, rows: 25 });
+  assert.equal(missingPty.isError, true);
+  assert.match(missingPty.content[0].text, /PowerShell 7.*not installed/u);
+  assert.equal(harness.calls.some(([op]) => op === "processStart" || op === "start"), false);
+  installed = true; // Installed after Local initialized; no restart or PATH search required.
+  const result = parseText(await exec.handler({
+    shell: "pwsh", command: "Write-Output 7", cwd: ".", wait_ms: 30, max_output_chars: 1000,
+  }));
+  assert.equal(result.ok, true);
+  const finiteCall = harness.calls.find(([op]) => op === "processStart");
+  assert.equal(finiteCall[1].command, pwsh);
+  const pty = parseText(await start.handler({ shell: "pwsh", cwd: ".", cols: 80, rows: 25 }));
+  assert.equal(pty.ok, true);
+  const ptyCall = harness.calls.find(([op]) => op === "start");
+  assert.equal(ptyCall[1].shell, pwsh);
+  assert.deepEqual(ptyCall[1].shellArgs, ["-NoLogo", "-NoProfile"]);
 });

@@ -15,7 +15,7 @@ import { createWindowsJobObjectLease } from "../../src/equinox-local-windows-job
 import { compileWindowsJobObjectHelper } from "../../scripts/release/package-managed-release-windows.mjs";
 import { createAgentControlController } from "../../src/equinox-local-agent-control.js";
 import { createProcessManager } from "../../src/process-manager.js";
-import { equinoxLocalFiniteShell } from "../../src/equinox-local-platform.js";
+import { equinoxLocalFiniteShell, equinoxLocalWindowsPowerShell7Path } from "../../src/equinox-local-platform.js";
 import { probeWindowsTerminalExecution } from "../../src/equinox-local-windows-terminal-health.js";
 import { createTerminalManager } from "../../src/terminal-manager.js";
 import { createEquinoxLocalRuntime } from "../../src/server.js";
@@ -330,6 +330,47 @@ async function verifyWindowsManagedProcessLifecycle(root) {
   assert.equal(terminalDoctor.healthy, true, 'On-demand Windows Doctor terminal probe must detect true stdout and exit 17.');
   await manager.shutdown();
   return Object.freeze({ waitTimeoutPreservedOwnedTree: true, descendantRetainedAfterLeaderExit: true, stopDrainedDescendant: true, naturalExit: true, terminalDoctor: true });
+}
+
+async function verifyOptionalWindowsPowerShell7(root) {
+  const pwsh = equinoxLocalWindowsPowerShell7Path(process.env);
+  if (!pwsh) return { installed: false, skipped: true };
+  const manager = createProcessManager({ platform: "win32", arch: WINDOWS_ARCH });
+  let processId = null;
+  try {
+    const selected = equinoxLocalFiniteShell({ platform: "win32", arch: WINDOWS_ARCH, env: process.env, shell: "pwsh" });
+    assert.equal(selected.command, pwsh);
+    const started = await manager.start({
+      projectId: "windows-smoke", projectName: "Windows Smoke", cwd: root,
+      command: selected.command, args: selected.argsFor("Write-Output 'PWSH7_FINITE_OK'; exit 17"),
+      purpose: "terminal_exec", env: process.env, label: "optional-pwsh7-finite",
+    });
+    processId = started.processId;
+    const ended = await manager.waitForExit({ processId, waitMs: 12_000 });
+    const output = await manager.readLogs({ processId, cursor: 0 });
+    assert.equal(ended.running, false);
+    assert.equal(ended.exitCode, 17, "PowerShell 7 finite exit status was lost");
+    assert.match(output.output, /PWSH7_FINITE_OK/u);
+  } finally {
+    if (processId) await manager.stop({ processId, force: true, remove: true }).catch(() => {});
+    await manager.shutdown();
+  }
+  const terminalManager = createTerminalManager({ platform: "win32", arch: WINDOWS_ARCH });
+  let sessionId = null;
+  try {
+    const started = await terminalManager.start({
+      projectId: "windows-smoke", projectName: "Windows Smoke", cwd: root,
+      shell: pwsh, shellArgs: ["-NoLogo", "-NoProfile"], env: process.env,
+      cols: 80, rows: 24, label: "optional-pwsh7-conpty",
+    });
+    sessionId = started.sessionId;
+    assert.equal(started.running, true);
+    terminalManager.write({ sessionId, data: "Write-Output 'PWSH7_CONPTY_OK'", key: "enter" });
+    await readTerminalUntil(terminalManager, sessionId, /PWSH7_CONPTY_OK/u, 10_000);
+  } finally {
+    if (sessionId) await terminalManager.stop({ sessionId, force: true }).catch(() => {});
+  }
+  return { installed: true, finite: true, conpty: true };
 }
 
 async function verifyWindowsIndependentProcessCommands(root) {
@@ -821,6 +862,7 @@ try {
   const helperLoss = await verifyWindowsJobObjectHelperLoss(root);
   const managedProcess = await verifyWindowsManagedProcessLifecycle(root);
   const independentProcessCommands = await verifyWindowsIndependentProcessCommands(root);
+  const optionalPowerShell7 = await verifyOptionalWindowsPowerShell7(root);
   const conpty = await verifyWindowsConPtyLifecycle(root);
   const emergencyStop = await verifyWindowsEmergencyStop(root);
   const agentBrowser = await verifyWindowsAgentBrowserLifecycle(root);
@@ -842,6 +884,7 @@ try {
     helperLoss,
     managedProcess,
     independentProcessCommands,
+    optionalPowerShell7,
     conpty,
     emergencyStop,
     agentBrowser,

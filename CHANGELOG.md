@@ -6,6 +6,10 @@ This project follows semantic versioning for public releases.
 
 ## [Unreleased]
 
+### Changed (pending Windows acceptance)
+
+- Windows terminal tools keep Windows PowerShell 5.1 as default; support explicit PowerShell 7 with `shell: "pwsh"` in both `terminal_exec` and `terminal_start` when installed under OS Program Files. No runtime bundled or installed, no PATH fallback, no Control Center option. Missing PS7 produces an actionable error instead of silently changing the requested shell. Windows CI exercises optional PS7 finite and ConPTY paths where installed.
+
 ### Fixed (pending native/desktop validation)
 
 - Removed Windows interactive-terminal startup of a second PowerShell process: the Job Object-owned ConPTY gate remains as the interactive host after readiness, avoiding secondary console windows and unreliable nested native launch.
