@@ -288,3 +288,40 @@ test("Browser timer starts from passive generation observation; fallback starts 
   assert.equal(controller.snapshot().active.source, "fallback");
   assert.equal(controller.snapshot().active.elapsedMs, 0);
 });
+
+test("Browser generation timestamp predates first Local tool even when the first identity query is late", async () => {
+  let now = 1_800_000_030_000;
+  const generationStart = now - 21_000;
+  const controller = createTurnBudgetController({
+    settingsPath: TEST_SETTINGS_PATH, now: () => now,
+    resolveTurnIdentity: async () => ({
+      browserContext: "user", conversationId: "chat-1", userEpoch: "epoch-1",
+      generationStartedAtMs: generationStart,
+    }),
+  });
+  await controller.initialize();
+  const firstTool = await controller.prepareInvocation("runtime_call", { operation: "status", arguments: {} });
+  assert.equal(firstTool.firstNotice, true);
+  assert.equal(controller.snapshot().active.source, "browser");
+  assert.equal(controller.snapshot().active.elapsedMs, 21_000);
+  now += 4_000;
+  assert.equal((await controller.refreshSnapshot()).active.elapsedMs, 25_000);
+});
+
+test("invalid future or stale Browser timestamps cannot skip or reset the safety clock", async () => {
+  let now = 1_800_000_030_000;
+  let generationStartedAtMs = now + 60_000;
+  const controller = createTurnBudgetController({
+    settingsPath: TEST_SETTINGS_PATH, now: () => now,
+    resolveTurnIdentity: async () => ({
+      browserContext: "user", conversationId: "chat-2", userEpoch: "epoch-2",
+      generationStartedAtMs,
+    }),
+  });
+  await controller.initialize();
+  await controller.refreshSnapshot();
+  assert.equal(controller.snapshot().active.elapsedMs, 0);
+  now += 6_000;
+  generationStartedAtMs = now - 3 * 60 * 60_000;
+  assert.equal((await controller.refreshSnapshot()).active.elapsedMs, 6_000);
+});

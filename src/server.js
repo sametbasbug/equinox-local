@@ -2078,6 +2078,7 @@ async function resolveTurnBudgetIdentity() {
     conversationId: selected.target.conversationId ?? null,
     userEpoch: selected.target.userEpoch ?? null,
     assistantTurnKey: selected.target.assistantTurnKey,
+    generationStartedAtMs: selected.target.generationStartedAtMs ?? null,
     title: selected.target.title ?? "ChatGPT",
   };
 }

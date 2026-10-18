@@ -137,6 +137,11 @@ export function createTurnBudgetController({ settingsPath = defaultTurnBudgetSet
       const userEpoch = typeof result.userEpoch === "string" && result.userEpoch ? result.userEpoch : null;
       const assistantTurnKey = typeof result.assistantTurnKey === "string" && result.assistantTurnKey ? result.assistantTurnKey : null;
       if (!userEpoch && !assistantTurnKey) return Object.freeze({ status: "unknown" });
+      const time = now();
+      const startedAt = result.generationStartedAtMs;
+      const generationStartedAtMs = Number.isSafeInteger(startedAt)
+        && startedAt > 0 && startedAt <= time && time - startedAt <= 2 * 60 * 60_000
+        ? startedAt : null;
       const context = result.browserContext || "unknown";
       const conversationId = result.conversationId || "unknown";
       const turnKey = userEpoch ? `user:${userEpoch}` : `assistant:${assistantTurnKey}`;
@@ -145,6 +150,7 @@ export function createTurnBudgetController({ settingsPath = defaultTurnBudgetSet
         identity: Object.freeze({
           key: `${context}:${conversationId}:${turnKey}`,
           browserContext: context,
+          generationStartedAtMs,
           title: typeof result.title === "string" ? result.title.slice(0, 160) : "ChatGPT",
         }),
       });
@@ -152,6 +158,10 @@ export function createTurnBudgetController({ settingsPath = defaultTurnBudgetSet
       return Object.freeze({ status: "unknown" });
     }
   }
+  function generationStart(identity, timestamp) {
+    return identity?.generationStartedAtMs ?? timestamp;
+  }
+
   async function prepareInvocation(toolName, input) {
     const timestamp = now();
     if (!settings.enabled) { active = null; return Object.freeze({ input, firstNotice: false, waitClamped: false }); }
@@ -159,7 +169,8 @@ export function createTurnBudgetController({ settingsPath = defaultTurnBudgetSet
     const probe = await resolveIdentitySafe();
     const identity = probe.status === "active" ? probe.identity : null;
     if (identity) {
-      if (!active || active.key !== identity.key) active = { key: identity.key, source: "browser", browserContext: identity.browserContext, title: identity.title, startedAtMs: timestamp, lastInvocationAtMs: timestamp, notices: new Set() };
+      if (!active || active.key !== identity.key) active = { key: identity.key, source: "browser", browserContext: identity.browserContext, title: identity.title, startedAtMs: generationStart(identity, timestamp), lastInvocationAtMs: timestamp, notices: new Set() };
+      else if (identity.generationStartedAtMs && identity.generationStartedAtMs < active.startedAtMs) active.startedAtMs = identity.generationStartedAtMs;
     } else if (!active) {
       active = { key: `fallback:${timestamp}`, source: "fallback", browserContext: null, title: null, startedAtMs: timestamp, lastInvocationAtMs: timestamp, notices: new Set() };
     }
@@ -203,7 +214,9 @@ export function createTurnBudgetController({ settingsPath = defaultTurnBudgetSet
       // of agent tool calls. Fallback alone starts from first Local use.
       if (!active || active.source !== "browser" || active.key !== identity.key) {
         active = { key: identity.key, source: "browser", browserContext: identity.browserContext,
-          title: identity.title, startedAtMs: timestamp, lastInvocationAtMs: timestamp, notices: new Set() };
+          title: identity.title, startedAtMs: generationStart(identity, timestamp), lastInvocationAtMs: timestamp, notices: new Set() };
+      } else if (identity.generationStartedAtMs && identity.generationStartedAtMs < active.startedAtMs) {
+        active.startedAtMs = identity.generationStartedAtMs;
       }
     } else if (active?.source === "browser" && probe.status === "idle" &&
         probe.idleContexts.includes(active.browserContext)) {

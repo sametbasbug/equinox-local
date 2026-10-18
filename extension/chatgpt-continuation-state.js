@@ -30,6 +30,10 @@
     }
   }
 
+  // Timestamp belongs to the Browser's actual generation transition,
+  // not to the first later Equinox Local RPC (which can be minutes later).
+  let activeGeneration = null;
+
   function readState() {
     const userMessages = [...document.querySelectorAll('[data-message-author-role="user"][data-message-id]')];
     const assistantMessages = [...document.querySelectorAll('[data-message-author-role="assistant"][data-message-id]')];
@@ -49,7 +53,7 @@
       ? [...modernTurn.querySelectorAll('[data-chatgpt-search-unit-key$=":assistant"][data-chatgpt-search-message-ids]')]
       : [];
     const modernAssistantTurnKey = firstMessageId(last(modernAssistantUnits)?.getAttribute('data-chatgpt-search-message-ids'));
-    return {
+    const result = {
       generationActive: Boolean(document.querySelector('button[data-testid="stop-button"]')) || modernGenerationActive,
       userEpoch: modernTurnKey
         || last(userMessages)?.getAttribute('data-message-id')
@@ -64,6 +68,12 @@
       composerReady: Boolean(composer),
       composerEmpty: Boolean(composer) && !String(composer.textContent || '').trim(),
     };
+    const key = result.userEpoch || result.assistantTurnKey;
+    if (!result.generationActive || !key) activeGeneration = null;
+    else if (!activeGeneration || activeGeneration.key !== key) {
+      activeGeneration = { key, startedAtMs: Date.now() };
+    }
+    return { ...result, generationStartedAtMs: activeGeneration?.startedAtMs ?? null };
   }
 
   let observer = null;
