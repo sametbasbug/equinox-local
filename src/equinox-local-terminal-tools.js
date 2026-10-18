@@ -56,6 +56,9 @@ export function registerTerminalTools({
   const finiteShell = equinoxLocalFiniteShell({ platform, arch, env: runtimeEnv });
   const finiteShellNames = platform === "win32" ? ["powershell", "pwsh"] : ["zsh"];
   const finiteDefaultShell = platform === "win32" ? "powershell" : "zsh";
+  const windowsShellGuide = platform === "win32"
+    ? " Windows pwsh = isteğe bağlı PowerShell 7 (ayrı kurulu olmalı); powershell = varsayılan 5.1. Native EXE komutu PowerShell altında çalışmaz veya native çıkış kodu oluşmazsa aynı komutu tekrar tekrar deneme: bağımsız EXE için process_start + process_wait + process_logs araçlarını kullan, kuruluysa açıkça pwsh seçimini değerlendir. Kullanıcı masaüstünde görünür konsol penceresi açılmamalıdır."
+    : "";
   const interactiveShells = equinoxLocalInteractiveShells({ platform, arch, env: runtimeEnv, statFile: powerShell7StatFile });
   const interactiveShellNames = Object.keys(interactiveShells.shells);
   if (interactiveShellNames.length === 0) throw new Error("No interactive shell is configured for this platform.");
@@ -113,10 +116,10 @@ export function registerTerminalTools({
     "terminal_exec",
     {
       description:
-        `Seçilen proje içinde sonlu komutu managed process olarak çalıştırır. Varsayılan: ${finiteShell.command}. Kabuklar: ${finiteShellNames.join(", ")}. Windows pwsh = isteğe bağlı PowerShell 7 (ayrı kurulu olmalı); powershell = varsayılan 5.1. Komutlar masaüstünde konsol penceresi açmamalıdır. Etkileşimli TTY için terminal_start kullan.`,
+        `Seçilen proje içinde sonlu komutu managed process olarak çalıştırır. Varsayılan: ${finiteShell.command}. Kabuklar: ${finiteShellNames.join(", ")}. ${windowsShellGuide} Etkileşimli TTY için terminal_start kullan.`,
       inputSchema: {
         command: z.string().min(1).max(20_000),
-        shell: z.enum(finiteShellNames).default(finiteDefaultShell).describe("Windows: powershell (5.1, default) or pwsh (PowerShell 7 if installed)."),
+        shell: z.enum(finiteShellNames).default(finiteDefaultShell).describe(platform === "win32" ? "Windows: powershell (5.1, default) or pwsh (PowerShell 7 if installed)." : "macOS: zsh (default)."),
         cwd: z.string().default(".").describe("Proje köküne göre göreli başlangıç klasörü"),
         wait_ms: z.number().int().min(0).max(120_000).default(30_000)
           .describe("Bu çağrıda tamamlanma için beklenecek süre. Süre dolarsa komut öldürülmez; managed process olarak devam eder."),

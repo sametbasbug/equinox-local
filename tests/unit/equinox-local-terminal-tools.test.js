@@ -155,6 +155,7 @@ test("terminal tools preserve registration metadata and start routing", async ()
   ]);
 
   const exec = harness.registrations.get("terminal_exec");
+  assert.doesNotMatch(exec.config.description, /PowerShell/u, "macOS agents must not see Windows-only guidance");
   assert.equal(exec.config.annotations.openWorldHint, true);
   assert.equal(exec.config.annotations.destructiveHint, true);
   assert.deepEqual(exec.options, { mutationScopes: ["global"] });
@@ -228,6 +229,8 @@ test("terminal tools route Windows finite and interactive shells through the sha
   });
 
   const exec = harness.registrations.get("terminal_exec");
+  assert.match(exec.config.description, /process_start/u);
+  assert.match(exec.config.description, /görünür konsol penceresi açılmamalıdır/u);
   const execResult = parseText(await exec.handler({
     command: "Write-Output ok", cwd: ".", wait_ms: 30_000, max_output_chars: 40_000,
   }));
