@@ -234,7 +234,7 @@ test("stable ARM64 and Windows aggregate checks reject every non-success depende
   assert.match(foundation, /name: Windows ARM64 foundation \/ Node 26/u);
   assertSuccessGate(foundation, "ARM64 foundation", arm64Lanes);
   assertSuccessGate(job("windows-headless"), "Windows aggregate", [
-    "windows-runtime", "windows-shell", "windows-x64-package-build", "windows-package", "windows-x64-installer", "windows-x64-repair",
+    "windows-runtime", "windows-shell", "windows-x64-package-build", "windows-package", "windows-x64-installer", "windows-x64-guardian", "windows-x64-repair",
     "windows-arm64-shared-core", "windows-arm64-bootstrap", "windows-arm64-runtime", "windows-arm64-package",
     "windows-arm64-installer", "windows-arm64-repair",
   ]);
@@ -302,6 +302,25 @@ test("CI parallelizes independent macOS gates and shares one verified x64 packag
   assert.match(job("windows-x64-repair"), /EQUINOX_WINDOWS_INSTALLER_REPAIR_ONLY: 'true'/u);
 });
 
+
+test("independent real x64 Guardian negative audit is required alongside full installation and repair", async () => {
+  const guardian = job("windows-x64-guardian");
+  const installer = job("windows-x64-installer");
+  const repair = job("windows-x64-repair");
+  const smoke = await fs.readFile(new URL("./windows-installer-real-package-smoke.ps1", import.meta.url), "utf8");
+  assert.match(guardian, /needs: \[windows-x64-package-build\]/u);
+  assert.match(guardian, /EQUINOX_WINDOWS_GUARDIAN_AUDIT_ONLY: 'true'/u);
+  assert.match(guardian, /EQUINOX_WINDOWS_INSTALL_SHA256/u);
+  assert.match(guardian, /windows-installer-real-package-smoke\.ps1/u);
+  assert.match(installer, /EQUINOX_WINDOWS_GUARDIAN_AUDIT_IN_PARALLEL: 'true'/u);
+  assert.doesNotMatch(repair, /EQUINOX_WINDOWS_GUARDIAN_AUDIT_ONLY|EQUINOX_WINDOWS_GUARDIAN_AUDIT_IN_PARALLEL/u);
+  assert.match(smoke, /Guardian native journal ownership audit positive\/negative hosted acceptance PASSED/u);
+  assert.match(smoke, /if \(-not \$SkipLegacyGuardianFixture -and -not \$RepairOnly -and -not \$GuardianAuditElsewhere\)/u);
+  assert.match(smoke, /if \(\$GuardianAuditOnly\) \{/u);
+  assert.match(smoke, /GITHUB_ACTIONS -cne 'true'/u);
+  assert.match(job("windows-headless"), /X64_GUARDIAN_RESULT: \$\{\{ needs\.windows-x64-guardian\.result \}\}/u);
+  assert.match(job("windows-headless"), /test "\$X64_GUARDIAN_RESULT" = success/u);
+});
 
 test("ARM64 winapp smoke can use a native PowerShell helper host without weakening x64 PS5.1 coverage", async () => {
   const smoke = await fs.readFile(new URL("./windows-winapp-smoke.ps1", import.meta.url), "utf8");

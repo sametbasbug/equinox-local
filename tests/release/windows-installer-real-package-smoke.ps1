@@ -48,6 +48,16 @@ try {
     throw 'Repair-only acceptance requires a disposable GitHub-hosted Windows runner and genuine same-version repair.'
   }
 
+  $GuardianAuditOnly = ($env:EQUINOX_WINDOWS_GUARDIAN_AUDIT_ONLY -ceq 'true')
+  $GuardianAuditElsewhere = ($env:EQUINOX_WINDOWS_GUARDIAN_AUDIT_IN_PARALLEL -ceq 'true')
+  if (($GuardianAuditOnly -or $GuardianAuditElsewhere) -and
+      ($env:GITHUB_ACTIONS -cne 'true' -or $RepairOnly -or
+       $env:EQUINOX_WINDOWS_SAME_VERSION_REPAIR -ceq 'true' -or
+       ($GuardianAuditOnly -and $GuardianAuditElsewhere) -or
+       [string]::IsNullOrWhiteSpace($env:EQUINOX_WINDOWS_INSTALL_SHA256))) {
+    throw 'Separate real installed Guardian journal audit requires a current-product, exact-package disposable GitHub Windows runner.'
+  }
+
   if (-not [Environment]::Is64BitProcess -or -not [string]::IsNullOrWhiteSpace($env:PROCESSOR_ARCHITEW6432)) { throw 'Real Windows installer smoke requires native 64-bit Windows PowerShell.' }
   if ([string]::IsNullOrWhiteSpace($Artifact) -or -not [IO.Path]::IsPathRooted($Artifact) -or -not [IO.File]::Exists($Artifact)) { throw 'EQUINOX_WINDOWS_INSTALL_ARTIFACT must point to the real native managed ZIP.' }
   if (Test-Path -LiteralPath $NativeRegistryKey) { throw 'Fresh-install smoke requires an unowned Native Messaging registry key.' }
@@ -269,7 +279,7 @@ try {
   }
   Assert-True ($OwnedGitStatusCode -eq 0) 'Hosted product Git status preflight failed.'
 
-  if (-not $SkipLegacyGuardianFixture -and -not $RepairOnly) {
+  if (-not $SkipLegacyGuardianFixture -and -not $RepairOnly -and -not $GuardianAuditElsewhere) {
   # The optional native Main audit is deliberately NOT a launcher or a release
   # authority: it binds pointer/store claims and hashes the installed shell,
   # but Git HEAD, full payload fingerprint and Native Messaging still need
@@ -790,6 +800,13 @@ try {
   }
   Assert-True ((Invoke-GuardianCheck '--audit-native-journal') -eq 70) 'Guardian accepted an orphan journal after its owning active receipt disappeared.'
   Write-Output "Windows $FixtureTarget Guardian native journal ownership audit positive/negative hosted acceptance PASSED."
+  if ($GuardianAuditOnly) {
+    # The full real installer lane independently checks WPF, Node, native
+    # messaging and user state. On this isolated runner the complete Guardian
+    # negative audit has passed; always run the enclosing finally cleanup.
+    Write-Output "Windows $FixtureTarget separately installed Guardian-only security acceptance PASSED."
+    return
+  }
   } # End old Guardian fixture: no mock Guardian in real old-installed upgrade.
   # An old, signed A installed the toolchain PINNED BY A (e.g. Node 26.10.0),
   # not the Node pinned by the latest hosted test harness. Read only the

@@ -387,9 +387,11 @@ test("public Windows CI restores and builds the native x64 shell", async () => {
   assert.match(ci, /windows-shell:/u);
   assert.match(ci, /windows-x64-package-build:/u);
   assert.match(ci, /windows-package:/u);
-  assert.match(ci, /needs: \[windows-runtime, windows-shell, windows-x64-package-build, windows-package, windows-x64-installer, windows-x64-repair, windows-arm64-shared-core, windows-arm64-bootstrap, windows-arm64-runtime, windows-arm64-package, windows-arm64-installer, windows-arm64-repair\]/u);
+  assert.match(ci, /needs: \[windows-runtime, windows-shell, windows-x64-package-build, windows-package, windows-x64-installer, windows-x64-guardian, windows-x64-repair, windows-arm64-shared-core, windows-arm64-bootstrap, windows-arm64-runtime, windows-arm64-package, windows-arm64-installer, windows-arm64-repair\]/u);
   assert.match(ci, /X64_INSTALLER_RESULT: \$\{\{ needs\.windows-x64-installer\.result \}\}/u);
   assert.ok(ci.includes('test "$X64_INSTALLER_RESULT" = success'));
+  assert.match(ci, /X64_GUARDIAN_RESULT: \$\{\{ needs\.windows-x64-guardian\.result \}\}/u);
+  assert.ok(ci.includes('test "$X64_GUARDIAN_RESULT" = success'));
   assert.match(ci, /X64_REPAIR_RESULT: \$\{\{ needs\.windows-x64-repair\.result \}\}/u);
   assert.ok(ci.includes('test "$X64_REPAIR_RESULT" = success'));
   assert.match(ci, /ARM64_SHARED_RESULT: \$\{\{ needs\.windows-arm64-shared-core\.result \}\}/u);
