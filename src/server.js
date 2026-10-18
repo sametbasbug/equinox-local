@@ -2086,6 +2086,16 @@ const turnBudgetController = createTurnBudgetController({
   resolveTurnIdentity: resolveTurnBudgetIdentity,
 });
 await turnBudgetController.initialize();
+// Poll the lightweight Browser turn-state observer even when Control Center
+// is closed and no Equinox tool has been called. Fallback stays tool-driven.
+let turnBudgetObservationBusy = false;
+setInterval(() => {
+  if (turnBudgetObservationBusy) return;
+  turnBudgetObservationBusy = true;
+  void turnBudgetController.refreshSnapshot().catch(() => {}).finally(() => {
+    turnBudgetObservationBusy = false;
+  });
+}, 3_000).unref?.();
 
 registerPrivateVisualTools({
   registerTextTool,

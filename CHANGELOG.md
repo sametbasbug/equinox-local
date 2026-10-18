@@ -13,6 +13,8 @@ This project follows semantic versioning for public releases.
 - Windows terminal tools keep Windows PowerShell 5.1 as default; support explicit PowerShell 7 with `shell: "pwsh"` in both `terminal_exec` and `terminal_start` when installed under OS Program Files. No runtime bundled or installed, no PATH fallback, no Control Center option. Missing PS7 produces an actionable error instead of silently changing the requested shell. Windows CI exercises optional PS7 finite and ConPTY paths where installed.
 
 ### Fixed (pending native/desktop validation)
+- WinApp screenshot always delivers a bounded PNG as native MCP image content in the same desktop_call, even when an explicit saved output path was requested; managed automatic temporary captures are deleted after the image is safely read.
+- Browser Turn Budget now begins on the observed ChatGPT generation via a lightweight independent periodic Browser probe, including turns before the first Equinox Local tool call. First-tool timing and inactivity reset remain exclusively the fallback when Browser identity is unavailable.
 
 - Repair inherited Windows PATHEXT containing only .CPL: physical installed Windows PowerShell 5.1 treated executables as documents, did not launch them and spawned Windows Terminal windows. Restoring PATHEXT from the OS machine environment in an isolated physical shell immediately fixed native output and exit23. The GUI runtime launcher, supervisor and managed command environments now restore executable extensions without changing user-wide settings, with native x64/ARM64 regression smoke.
 

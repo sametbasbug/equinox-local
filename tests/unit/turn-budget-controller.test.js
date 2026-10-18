@@ -211,9 +211,12 @@ test("passive refresh clears a finished browser turn without starting the next t
   assert.equal((await controller.refreshSnapshot()).active, null, "finished assistant turn becomes idle instead of counting forever");
 
   probe = { browserContext: "user", conversationId: "chat-1", userEpoch: "user-b", assistantTurnKey: "turn-b", title: "Task" };
-  assert.equal((await controller.refreshSnapshot()).active, null, "passive status polling must not start a new budget before first Local use");
+  assert.equal((await controller.refreshSnapshot()).active.source, "browser",
+    "a new Browser generation must start the timer before any Local call");
+  now += 11_000;
   await controller.prepareInvocation("runtime_call", { operation: "status", arguments: {} });
-  assert.equal(controller.snapshot().active.elapsedMs, 0);
+  assert.equal(controller.snapshot().active.elapsedMs, 11_000,
+    "first Local call must NOT restart an already observed Browser turn");
 });
 
 test("passive refresh preserves browser timer when identity probing is temporarily unavailable", async () => {
@@ -237,5 +240,34 @@ test("passive refresh retires an old turn when a different browser turn is alrea
   await controller.prepareInvocation("runtime_call", { operation: "status", arguments: {} });
   now = 20_000;
   probe = { browserContext: "user", conversationId: "chat-1", userEpoch: "user-b", assistantTurnKey: "turn-b" };
+  assert.equal((await controller.refreshSnapshot()).active.startedAt, new Date(now).toISOString());
+  assert.equal(controller.snapshot().active.source, "browser");
+  assert.equal(controller.snapshot().active.elapsedMs, 0);
+});
+
+test("Browser timer starts from passive generation observation; fallback starts only from first Local use", async () => {
+  let now = 0;
+  let probe = null;
+  const controller = createTurnBudgetController({
+    settingsPath: TEST_SETTINGS_PATH, now: () => now,
+    resolveTurnIdentity: async () => probe,
+  });
+  await controller.initialize();
   assert.equal((await controller.refreshSnapshot()).active, null);
+  now = 8_000;
+  probe = { browserContext: "user", conversationId: "chat-1", userEpoch: "epoch-one", title: "Active" };
+  assert.equal((await controller.refreshSnapshot()).active.startedAt, new Date(8_000).toISOString());
+  now += 52_000;
+  assert.equal(controller.snapshot().active.elapsedMs, 52_000);
+  const firstTool = await controller.prepareInvocation("runtime_call", { operation: "status", arguments: {} });
+  assert.equal(firstTool.firstNotice, true);
+  assert.equal(controller.snapshot().active.elapsedMs, 52_000);
+  controller.decorateResult(textResult(), firstTool);
+  probe = { status: "idle", idleContexts: ["user"] };
+  assert.equal((await controller.refreshSnapshot()).active, null);
+  now += 6_000;
+  const fallback = await controller.prepareInvocation("runtime_call", { operation: "status", arguments: {} });
+  assert.equal(fallback.firstNotice, true);
+  assert.equal(controller.snapshot().active.source, "fallback");
+  assert.equal(controller.snapshot().active.elapsedMs, 0);
 });
