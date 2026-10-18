@@ -315,8 +315,20 @@ internal sealed class RuntimeSupervisor : IAsyncDisposable
             RedirectStandardError = true,
         };
         startInfo.ArgumentList.Add(scriptPath);
+        // A truncated inherited PATHEXT makes PS5 treat .EXE as a document.
+        var inherited = startInfo.Environment.TryGetValue("PATHEXT", out var pathExt) ? pathExt : null;
+        if (!HasExeExtension(inherited))
+        {
+            var machine = Environment.GetEnvironmentVariable("PATHEXT", EnvironmentVariableTarget.Machine);
+            startInfo.Environment["PATHEXT"] = HasExeExtension(machine)
+                ? machine! : ".COM;.EXE;.BAT;.CMD";
+        }
         return startInfo;
     }
+
+    private static bool HasExeExtension(string? pathExt) =>
+        !string.IsNullOrWhiteSpace(pathExt) &&
+        Array.Exists(pathExt.Split(';'), part => string.Equals(part.Trim(), ".EXE", StringComparison.OrdinalIgnoreCase));
 
     private static void ValidateReleaseFiles(params string[] files)
     {

@@ -258,6 +258,19 @@ test("terminal tools route Windows finite and interactive shells through the sha
   assert.equal(terminalStart[1].env.PATH, "C:\\Windows\\System32");
 });
 
+test("Windows finite and interactive tools repair malformed inherited PATHEXT before PS5", async () => {
+  const harness = createHarness({
+    platform: "win32", arch: "x64",
+    runtimeEnv: { SystemRoot: "C:\\Windows", PATH: "C:\\Windows\\System32", PATHEXT: ".CPL" },
+  });
+  const exec = harness.registrations.get("terminal_exec");
+  const start = harness.registrations.get("terminal_start");
+  await exec.handler({ command: "Write-Output 'ok'", cwd: ".", wait_ms: 30, max_output_chars: 500 });
+  await start.handler({ shell: "powershell", cwd: ".", cols: 80, rows: 25 });
+  assert.equal(harness.calls.find(([op]) => op === "processStart")[1].env.PATHEXT, ".COM;.EXE;.BAT;.CMD;.CPL");
+  assert.equal(harness.calls.find(([op]) => op === "start")[1].env.PATHEXT, ".COM;.EXE;.BAT;.CMD;.CPL");
+});
+
 test("Windows finite cmd selection uses managed native process without PowerShell", async () => {
   const harness = createHarness({
     platform: "win32", arch: "x64",

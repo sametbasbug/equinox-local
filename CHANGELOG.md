@@ -14,6 +14,8 @@ This project follows semantic versioning for public releases.
 
 ### Fixed (pending native/desktop validation)
 
+- Repair inherited Windows PATHEXT containing only .CPL: physical installed Windows PowerShell 5.1 treated executables as documents, did not launch them and spawned Windows Terminal windows. Restoring PATHEXT from the OS machine environment in an isolated physical shell immediately fixed native output and exit23. The GUI runtime launcher, supervisor and managed command environments now restore executable extensions without changing user-wide settings, with native x64/ARM64 regression smoke.
+
 - Build the pipe-only Windows Job Object helper as a Windows-subsystem executable, retaining C++ main/stdio initialization. This removes its OS request for a desktop console even when Windows Terminal is the default; native Windows smoke asserts the actual PE subsystem and exercises the redirected helper lifecycle.
 - When the authenticated Windows native payload includes the owned-process-gate-v1 marker, reuse its no-console GUI helper to start managed finite and background processes directly with Win32 CreateProcessW (CREATE_NO_WINDOW, explicit inherited stdout/stderr pipes, null stdin) *after* verified Job Object assignment, avoiding the extra PowerShell parent and its native dispatch. Source-only upgrades over older native packages retain the previous gate until a new native payload is installed.
 - On Windows 11 24H2 and later, the native GUI process gate requests a windowless inherited console through AllocConsoleWithOptions before CreateProcessW; older Windows retains the previous hidden-process fallback. Physical Windows testing confirmed this alone does not fix PowerShell 5.1 native child dispatch or transient Windows Terminal windows.
