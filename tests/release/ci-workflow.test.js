@@ -164,7 +164,7 @@ test("real public installer enters managed-source on native Windows x64 and ARM6
   const arm64 = job("windows-arm64-installer");
   assert.match(x64, /name: Windows x64 public installer acceptance/u);
   assert.match(x64, /runs-on: windows-latest/u);
-  assert.match(x64, /win-x64/u);
+  assert.match(x64, /win32-x64/u);
   assert.match(x64, /windows-installer-real-package-smoke\.ps1/u);
   assert.match(arm64, /& \.\/tests\/release\/windows-installer-real-package-smoke\.ps1/u);
   assert.doesNotMatch(arm64, /powershell\.exe[^\n]*windows-installer-real-package-smoke/u);
@@ -234,7 +234,7 @@ test("stable ARM64 and Windows aggregate checks reject every non-success depende
   assert.match(foundation, /name: Windows ARM64 foundation \/ Node 26/u);
   assertSuccessGate(foundation, "ARM64 foundation", arm64Lanes);
   assertSuccessGate(job("windows-headless"), "Windows aggregate", [
-    "windows-runtime", "windows-shell", "windows-package", "windows-x64-installer", "windows-x64-repair",
+    "windows-runtime", "windows-shell", "windows-x64-package-build", "windows-package", "windows-x64-installer", "windows-x64-repair",
     "windows-arm64-shared-core", "windows-arm64-bootstrap", "windows-arm64-runtime", "windows-arm64-package",
     "windows-arm64-installer", "windows-arm64-repair",
   ]);
@@ -277,17 +277,29 @@ test("parallel input preparation requires both native commands and cleans up its
 });
 
 
-test("CI parallelizes independent macOS gates and x64 installer preparation", () => {
+test("CI parallelizes independent macOS gates and shares one verified x64 package", () => {
   const arm = job("test");
   const intel = job("macos-x64");
-  const installer = job("windows-x64-installer");
+  const producer = job("windows-x64-package-build");
   assert.match(arm, /- parallel:[\s\S]*Static checks[\s\S]*Verify ARM64 host[\s\S]*Full test suite/u);
   assert.match(intel, /- parallel:[\s\S]*Verify x64 host[\s\S]*Static checks[\s\S]*Fast architecture parity suite/u);
-  assert.match(installer, /Cache x64 shell publish[\s\S]*actions\/cache@v6[\s\S]*windows-shell-\$\{\{ runner\.os \}\}-x64-dotnet10-/u);
-  assert.match(installer, /- parallel:[\s\S]*Set up Node\.js[\s\S]*Set up \.NET SDK[\s\S]*steps\.x64-shell-cache\.outputs\.cache-hit != 'true'[\s\S]*Cache x64 NuGet packages/u);
-  assert.match(installer, /Cache x64 NuGet packages[\s\S]*nuget-\$\{\{ runner\.os \}\}-target-x64-dotnet10-/u);
-  assert.match(installer, /- parallel:[\s\S]*Install dependencies[\s\S]*Publish native x64 shell[\s\S]*steps\.x64-shell-cache\.outputs\.cache-hit != 'true'/u);
-  assert.match(installer, /Build native x64 managed package[\s\S]*EQUINOX_WINDOWS_SHELL_PUBLISH_DIR: \$\{\{ runner\.temp \}\}\/windows-shell\/win-x64/u);
+  assert.match(producer, /Set up Node\.js[\s\S]*Install dependencies/u);
+  assert.match(producer, /Set up \.NET SDK[\s\S]*Publish package shell payload/u);
+  assert.match(producer, /Windows release ZIP security acceptance/u);
+  assert.match(producer, /Windows managed package assembly smoke[\s\S]*EQUINOX_WINDOWS_SHELL_PUBLISH_DIR:/u);
+  assert.match(producer, /Upload exact x64 managed ZIP for installed-host acceptance/u);
+  assert.match(producer, /windows-x64-managed-package-/u);
+  for (const name of ["windows-package", "windows-x64-installer", "windows-x64-repair"]) {
+    const consumer = job(name);
+    assert.match(consumer, /needs: \[windows-x64-package-build\]/u);
+    assert.match(consumer, /actions\/download-artifact@v8/u);
+    assert.match(consumer, /windows-x64-managed-package-/u);
+    assert.doesNotMatch(consumer, /Build native x64 managed package/u);
+  }
+  const full = job("windows-x64-installer");
+  assert.match(full, /EQUINOX_WINDOWS_INSTALL_SHA256/u);
+  assert.match(full, /EQUINOX_WINDOWS_NATIVE_AB_IN_PACKAGE: 'true'/u);
+  assert.match(job("windows-x64-repair"), /EQUINOX_WINDOWS_INSTALLER_REPAIR_ONLY: 'true'/u);
 });
 
 

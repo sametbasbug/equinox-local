@@ -183,7 +183,7 @@ test("Windows release ZIP security acceptance is wired to the package CI lane", 
     }
   }
   assert.equal(typeof workflow, "string");
-  const packageStart = workflow.indexOf("  windows-package:");
+  const packageStart = workflow.indexOf("  windows-x64-package-build:");
   const aggregateStart = workflow.indexOf("  windows-headless:");
   assert.ok(packageStart >= 0 && aggregateStart > packageStart);
   const packageLane = workflow.slice(packageStart, aggregateStart);
