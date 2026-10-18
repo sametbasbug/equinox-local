@@ -362,6 +362,13 @@ jobs:
             if ($names | Where-Object { $_ -like 'release/runtime/peekaboo/*' }) { throw 'Windows managed ZIP unexpectedly contains Peekaboo' }
           } finally { $zip.Dispose() }
 
+      - name: Windows x64 immutable native A/B rollback acceptance
+        shell: pwsh
+        run: |
+          $artifact = @(Get-ChildItem backups/local-packages -Filter 'equinox-local-*-win32-x64.zip')
+          if ($artifact.Count -ne 1) { throw 'Expected exactly one native x64 package for A/B acceptance' }
+          & ./tests/release/windows-native-ab-package-smoke.ps1 -ArtifactPath $artifact[0].FullName -Target win32-x64
+
       - name: Windows x64 packaged winapp UIA smoke
         shell: pwsh
         run: |
@@ -440,6 +447,7 @@ jobs:
         shell: pwsh
         env:
           EQUINOX_WINDOWS_SAME_VERSION_REPAIR: 'false'
+          EQUINOX_WINDOWS_NATIVE_AB_IN_PACKAGE: 'true'
         run: |
           $artifact = Get-ChildItem backups/local-packages -Filter 'equinox-local-*-win32-x64.zip' | Select-Object -First 1
           if ($null -eq $artifact) { throw 'Windows x64 managed ZIP artifact was not found for fresh-install acceptance' }
@@ -757,6 +765,15 @@ jobs:
               dotnet run --project tests/windows/EquinoxLocal.WindowsShell.ManagedSourceHarness/EquinoxLocal.WindowsShell.ManagedSourceHarness.csproj --configuration Release -p:Platform=ARM64
               if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+          - name: Windows ARM64 immutable native A/B rollback acceptance
+            shell: pwsh
+            env:
+              EXPECTED_PACKAGE_SHA256: ${{ needs.windows-arm64-package-build.outputs.sha256 }}
+            run: |
+              $artifact = @(Get-ChildItem (Join-Path $env:RUNNER_TEMP 'arm64-package') -Filter 'equinox-local-*-win32-arm64.zip')
+              if ($artifact.Count -ne 1) { throw 'Expected one exact ARM64 package for A/B acceptance' }
+              & ./tests/release/windows-native-ab-package-smoke.ps1 -ArtifactPath $artifact[0].FullName -Target win32-arm64 -ExpectedSha256 $env:EXPECTED_PACKAGE_SHA256
+
           - name: Windows ARM64 packaged node-pty / ConPTY smoke
             shell: pwsh
             run: |
@@ -810,6 +827,7 @@ jobs:
         shell: pwsh
         env:
           EQUINOX_WINDOWS_SAME_VERSION_REPAIR: 'false'
+          EQUINOX_WINDOWS_NATIVE_AB_IN_PACKAGE: 'true'
           EQUINOX_WINDOWS_INSTALL_SHA256: ${{ needs.windows-arm64-package-build.outputs.sha256 }}
           EQUINOX_WINDOWS_INSTALL_BYTES: ${{ needs.windows-arm64-package-build.outputs.bytes }}
           EQUINOX_WINDOWS_INSTALL_VERSION: ${{ needs.windows-arm64-package-build.outputs.version }}

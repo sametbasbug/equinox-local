@@ -91,6 +91,25 @@ test("parallel public installer and repair lanes require full real hosted accept
   }
 });
 
+test("exact native WPF A/B acceptance is shifted to mandatory parallel package lanes without dropping Guardian checks", async () => {
+  const x64 = job("windows-package");
+  const arm64 = job("windows-arm64-package");
+  for (const [arch, block] of [["x64", x64], ["arm64", arm64]]) {
+    assert.match(block, /Windows (?:x64|ARM64) immutable native A\/B rollback acceptance/u);
+    assert.match(block, /windows-native-ab-package-smoke\.ps1/u);
+    const full = job(`windows-${arch}-installer`);
+    assert.match(full, /EQUINOX_WINDOWS_NATIVE_AB_IN_PACKAGE: 'true'/u);
+    assert.match(full, /EQUINOX_WINDOWS_SAME_VERSION_REPAIR: 'false'/u);
+  }
+  assert.match(arm64, /EXPECTED_PACKAGE_SHA256: \$\{\{ needs\.windows-arm64-package-build\.outputs\.sha256 \}\}/u);
+  assert.doesNotMatch(job("windows-x64-repair") + job("windows-arm64-repair"), /EQUINOX_WINDOWS_NATIVE_AB_IN_PACKAGE/u);
+  const smoke = await fs.readFile(new URL("./windows-native-ab-package-smoke.ps1", import.meta.url), "utf8");
+  assert.match(smoke, /GITHUB_ACTIONS -cne 'true'/u);
+  assert.match(smoke, /release\/runtime\/job' 'release\/runtime\/shell'/u);
+  assert.match(smoke, /windows-native-ab-installed-smoke\.mjs/u);
+  assert.match(smoke, /Native A\/B package SHA256 differs from its producer/u);
+});
+
 test("download-artifact consumers use current v8 with integrity errors enabled", async () => {
   const archived = await fs.readFile(new URL("../../.github/workflows/main-installed-windows-acceptance.yml", import.meta.url), "utf8");
   assert.match(job("main-snapshot-publish"), /actions\/download-artifact@v8/u);

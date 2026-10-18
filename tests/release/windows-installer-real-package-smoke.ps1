@@ -163,6 +163,10 @@ try {
   # old-Main -> new-Main acceptance must test the actual updater instead of
   # requiring test-only future Guardian components in an already shipped A.
   $SkipLegacyGuardianFixture = ($env:GITHUB_ACTIONS -ceq 'true' -and -not [string]::IsNullOrWhiteSpace($env:EQUINOX_WINDOWS_MAIN_ACCEPT_TARGET_SHA))
+  $NativeABInPackage = ($env:EQUINOX_WINDOWS_NATIVE_AB_IN_PACKAGE -ceq 'true')
+  if ($NativeABInPackage -and ($env:GITHUB_ACTIONS -cne 'true' -or $SkipLegacyGuardianFixture -or $RepairOnly)) {
+    throw 'Native A/B package-lane ownership requires a current-product full installer running in GitHub CI.'
+  }
   $HistoricRepair = ($env:EQUINOX_WINDOWS_LEGACY_REINSTALL_ACCEPTANCE -ceq 'true')
   $AcceptedOldHistoricMain = ($FixtureSourceSha -ceq '8dbe965d28e76026123ce8de34d8f1aa27c10465' -and $SkipLegacyGuardianFixture)
   $AcceptedOldSigned610 = ($FixtureSourceSha -ceq 'e85790a99e8e05ccf9997279d174b452793d6097' -and -not $SkipLegacyGuardianFixture)
@@ -810,10 +814,14 @@ try {
   # current signed Stable release, not the independent build toolchain.
   $StableWorkerNode = Join-Path $ReleaseDir 'runtime\node\bin\node.exe'
   Assert-True ([IO.File]::Exists($StableWorkerNode)) 'Stable-owned detached worker Node is missing.'
-  if (-not $RepairOnly) {
-  & $StableWorkerNode (Join-Path $Root 'tests/release/windows-native-ab-installed-smoke.mjs') $ReleaseDir $FixtureTarget
-  if ($LASTEXITCODE -ne 0) { throw 'Windows actual native shell A/B switch/rollback smoke failed.' }
-  } else { Write-Output 'Native A/B and Guardian negative cases are covered by the separate full installer lane.' }
+  if (-not $RepairOnly -and -not $NativeABInPackage) {
+    & $StableWorkerNode (Join-Path $Root 'tests/release/windows-native-ab-installed-smoke.mjs') $ReleaseDir $FixtureTarget
+    if ($LASTEXITCODE -ne 0) { throw 'Windows actual native shell A/B switch/rollback smoke failed.' }
+  } elseif ($NativeABInPackage) {
+    Write-Output 'Exact native WPF A/B acceptance is required in the independent package lane; Guardian and real installed-host checks remain here.'
+  } else {
+    Write-Output 'Native A/B and Guardian negative cases are covered by the separate full installer lane.'
+  }
   Assert-True ((& $OwnedNode $OwnedNpm --version) -match '^\d+\.\d+\.\d+$') 'Product-owned npm CLI did not execute.'
   # Exercise the actual packaged CLI with a throwaway offline profile.
   if (-not $SkipLegacyGuardianFixture) {
