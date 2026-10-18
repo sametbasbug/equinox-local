@@ -596,10 +596,15 @@ async function verifyWindowsConPtyLifecycle(root) {
       assert.equal(resized.rows, 41);
     }, 4_000);
 
+    // The child fixture must not depend on relative PowerShell PATH lookup
+    // (which can include Store App Execution Aliases).
+    const ownedPowerShellPath = equinoxLocalFiniteShell({
+      platform: "win32", arch: WINDOWS_ARCH, env: process.env, shell: "powershell",
+    }).command.replaceAll("'", "''");
     const childCommand = [
-      "$child = Start-Process -FilePath powershell.exe -ArgumentList @('-NoLogo','-NoProfile','-NonInteractive','-Command','Start-Sleep -Seconds 60') -PassThru -WindowStyle Hidden",
+      "$child = Start-Process -FilePath '" + ownedPowerShellPath + "' -ArgumentList @('-NoLogo','-NoProfile','-NonInteractive','-Command','Start-Sleep -Seconds 60') -PassThru -WindowStyle Hidden",
       "[IO.File]::WriteAllText($env:EQUINOX_PTY_CHILD_PID, [string]$child.Id)",
-      "Write-Output '__EQUINOX_PTY_CHILD_READY__'",
+      "Write-Output ([string]::Concat('__EQUINOX_','PTY_CHILD_READY__'))",
     ].join("; ");
     manager.write({ sessionId: started.sessionId, data: childCommand, key: "enter" });
     await withWindowsConPtyStage("explicit:child-command-output", () => readTerminalUntil(manager, started.sessionId, /__EQUINOX_PTY_CHILD_READY__/u), 10_000);
@@ -627,9 +632,9 @@ async function verifyWindowsConPtyLifecycle(root) {
       label: "windows-conpty-natural",
     }));
     const naturalCommand = [
-      "$child = Start-Process -FilePath powershell.exe -ArgumentList @('-NoLogo','-NoProfile','-NonInteractive','-Command','Start-Sleep -Seconds 60') -PassThru -WindowStyle Hidden",
+      "$child = Start-Process -FilePath '" + ownedPowerShellPath + "' -ArgumentList @('-NoLogo','-NoProfile','-NonInteractive','-Command','Start-Sleep -Seconds 60') -PassThru -WindowStyle Hidden",
       "[IO.File]::WriteAllText($env:EQUINOX_PTY_CHILD_PID, [string]$child.Id)",
-      "Write-Output '__EQUINOX_PTY_NATURAL__'",
+      "Write-Output ([string]::Concat('__EQUINOX_','PTY_NATURAL__'))",
       "exit",
     ].join("; ");
     manager.write({ sessionId: natural.sessionId, data: naturalCommand, key: "enter" });
