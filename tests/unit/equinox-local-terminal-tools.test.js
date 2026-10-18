@@ -246,6 +246,9 @@ test("terminal tools route Windows finite and interactive shells through the sha
   assert.equal(parsed.success, true);
   assert.equal(start.config.inputSchema.shell.safeParse("pwsh").success, true);
   assert.equal(exec.config.inputSchema.shell.safeParse("pwsh").success, true);
+  assert.equal(exec.config.inputSchema.shell.safeParse("cmd").success, true);
+  assert.equal(start.config.inputSchema.shell.safeParse("cmd").success, false,
+    "cmd must be finite-only; interactive ConPTY remains a PowerShell session");
   assert.equal(start.config.inputSchema.shell.safeParse("zsh").success, false);
   const result = parseText(await start.handler({ cwd: ".", shell: "powershell", cols: 120, rows: 30 }));
   assert.equal(result.ok, true);
@@ -253,6 +256,23 @@ test("terminal tools route Windows finite and interactive shells through the sha
   assert.equal(terminalStart[1].shell, equinoxLocalWindowsPowerShellPath({SystemRoot: "C:\\Windows"}));
   assert.deepEqual(terminalStart[1].shellArgs, ["-NoLogo", "-NoProfile"]);
   assert.equal(terminalStart[1].env.PATH, "C:\\Windows\\System32");
+});
+
+test("Windows finite cmd selection uses managed native process without PowerShell", async () => {
+  const harness = createHarness({
+    platform: "win32", arch: "x64",
+    runtimeEnv: { SystemRoot: "C:\\Windows", PATH: "C:\\Windows\\System32" },
+  });
+  const exec = harness.registrations.get("terminal_exec");
+  const result = parseText(await exec.handler({
+    shell: "cmd", command: "echo NATIVE_OK & exit /b 27", cwd: ".",
+    wait_ms: 2000, max_output_chars: 2000,
+  }));
+  assert.equal(result.ok, true);
+  const started = harness.calls.find(([type]) => type === "processStart")[1];
+  assert.equal(started.command, "C:\\Windows\\System32\\cmd.exe");
+  assert.deepEqual(started.args, ["/d", "/v:off", "/s", "/c", "echo NATIVE_OK & exit /b 27"]);
+  assert.equal(started.purpose, "terminal_exec");
 });
 
 test("terminal_exec promotes an unfinished command without killing or restarting it", async () => {

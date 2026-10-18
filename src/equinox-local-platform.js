@@ -176,7 +176,16 @@ export function equinoxLocalFiniteShell({ platform = process.platform, arch = pr
       pathDelimiter: ":",
     });
   }
-  if (shell !== "powershell" && shell !== "pwsh") throw new Error("Unsupported Windows finite shell: " + shell);
+  if (shell !== "powershell" && shell !== "pwsh" && shell !== "cmd") throw new Error("Unsupported Windows finite shell: " + shell);
+  if (shell === "cmd") {
+    const system32 = path.win32.dirname(path.win32.dirname(path.win32.dirname(equinoxLocalWindowsPowerShellPath(env))));
+    return Object.freeze({
+      command: path.win32.join(system32, "cmd.exe"),
+      argsFor(commandText) { return ["/d", "/v:off", "/s", "/c", commandText]; },
+      pathPrefix: "",
+      pathDelimiter: ";",
+    });
+  }
   const selectedCommand = shell === "pwsh"
     ? equinoxLocalWindowsPowerShell7Path(env, { statFile })
     : equinoxLocalWindowsPowerShellPath(env);

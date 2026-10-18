@@ -340,6 +340,22 @@ async function verifyWindowsManagedProcessLifecycle(root) {
     assert.match(logs.output, item.stdout);
     if (item.stderr) assert.match(logs.output, item.stderr);
   }
+  // CMD is explicit and finite-only, and must not dispatch via the PS5
+  // NativeCommandProcessor that flashes Terminal on physical Windows.
+  const cmdShell = equinoxLocalFiniteShell({
+    platform: "win32", arch: WINDOWS_ARCH, env: process.env, shell: "cmd",
+  });
+  const cmdFinite = await manager.start({
+    projectId: "windows-smoke", projectName: "Windows Smoke", cwd: root,
+    command: cmdShell.command, args: cmdShell.argsFor("echo EQUINOX_FINITE_CMD_OK & exit /b 27"),
+    purpose: "terminal_exec", env: process.env, label: "windows-finite-explicit-cmd",
+  });
+  const cmdFinished = await manager.waitForExit({ processId: cmdFinite.processId, waitMs: 8_000 });
+  const cmdFiniteLogs = await manager.readLogs({ processId: cmdFinite.processId, cursor: 0 });
+  assert.equal(cmdFinished.running, false, "finite explicit CMD did not finish");
+  assert.equal(cmdFinished.exitCode, 27, "finite CMD exit status was lost: " + cmdFiniteLogs.output);
+  assert.match(cmdFiniteLogs.output, /EQUINOX_FINITE_CMD_OK/u);
+
   const terminalDoctor = await probeWindowsTerminalExecution({ processManager: manager, cwd: root, env: process.env, arch: WINDOWS_ARCH });
   assert.equal(terminalDoctor.healthy, true, 'On-demand Windows Doctor terminal probe must detect true stdout and exit 17.');
   await manager.shutdown();
