@@ -36,6 +36,11 @@ const options = { transactionId, previousReleaseDir, targetReleaseDir, programRo
 const sourceShell = path.join(releaseDir, 'runtime', 'shell');
 const readInstalled = () => snapshotWindowsStableShellTree(programRoot);
 try {
+  const nativeHelper = path.join(releaseDir, "runtime", "job", "equinox-local-job-object-helper.exe");
+  const nativeGateMarker = path.join(releaseDir, "runtime", "job", "owned-process-gate-v1.marker");
+  assert.equal((await fs.stat(nativeHelper)).isFile(), true, "installed native helper must exist");
+  assert.equal((await fs.readFile(nativeGateMarker, "utf8")).trim(), "equinox-owned-process-gate-v1",
+    "extracted Windows managed installer ZIP must retain the matching no-console native gate marker");
   for (const rootRelease of [previousReleaseDir, targetReleaseDir]) {
     await fs.mkdir(path.dirname(path.join(rootRelease, 'runtime', 'shell')), { recursive: true });
     await fs.cp(sourceShell, path.join(rootRelease, 'runtime', 'shell'), { recursive: true, force: false, errorOnExist: true, dereference: false });

@@ -2,8 +2,12 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 
-import { createWindowsJobObjectLease } from "../../src/equinox-local-windows-job-object.js";
+import { createWindowsJobObjectLease, resolveWindowsNativeOwnedProcessGatePath } from "../../src/equinox-local-windows-job-object.js";
+import { createBackgroundProcessOwnershipAdapter } from "../../src/equinox-local-process-ownership.js";
 
 test("Windows Job Object lease launches the product-owned native helper directly", async () => {
   const expected = "C:\\Equinox\\runtime\\job\\equinox-local-job-object-helper.exe";
@@ -113,4 +117,37 @@ test("Windows Job Object unexpected helper exit rejects outstanding status reque
     fixture.child.emit("exit", 9, null);
   });
   await assert.rejects(lease.status(), /exited unexpectedly/u);
+});
+
+
+test("Windows native owned-process gate activates only alongside the matching package marker", async (t) => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "equinox-owned-native-gate-"));
+  t.after(() => fs.rm(directory, { recursive: true, force: true }));
+  const helper = path.join(directory, "equinox-local-job-object-helper.exe");
+  const marker = path.join(directory, "owned-process-gate-v1.marker");
+  await fs.writeFile(helper, "test fixture -- no executable is launched");
+  const before = process.env.EQUINOX_WINDOWS_JOB_OBJECT_HELPER_PATH;
+  process.env.EQUINOX_WINDOWS_JOB_OBJECT_HELPER_PATH = helper;
+  try {
+    const adapter = createBackgroundProcessOwnershipAdapter({ platform: "win32", arch: "x64" });
+    assert.equal(resolveWindowsNativeOwnedProcessGatePath(), null,
+      "existing native helpers without ABI markers must use the legacy gate");
+    const legacy = adapter.spawnSpec("C:\\Windows\\System32\\whoami.exe", [], { SystemRoot: "C:\\Windows" });
+    assert.match(legacy.command, /powershell\.exe$/iu, "old package must still select Windows PowerShell gate");
+    await fs.writeFile(marker, "equinox-owned-process-gate-v1\n");
+    assert.equal(resolveWindowsNativeOwnedProcessGatePath(), helper);
+    const current = adapter.spawnSpec("C:\\Windows\\System32\\whoami.exe", ["--help"], { SystemRoot: "C:\\Windows" });
+    assert.equal(current.command, helper);
+    assert.deepEqual([...current.args], [
+      "--owned-process-gate", "C:\\Windows\\System32\\whoami.exe", "--help",
+    ]);
+    assert.equal(current.stdin, "pipe");
+    assert.equal(current.env.SystemRoot, "C:\\Windows");
+    await fs.rm(marker);
+    assert.match(adapter.spawnSpec("whoami.exe", [], { SystemRoot: "C:\\Windows" }).command,
+      /powershell\.exe$/iu, "marker removal must restore safe legacy fallback");
+  } finally {
+    if (before === undefined) delete process.env.EQUINOX_WINDOWS_JOB_OBJECT_HELPER_PATH;
+    else process.env.EQUINOX_WINDOWS_JOB_OBJECT_HELPER_PATH = before;
+  }
 });
