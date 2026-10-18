@@ -138,6 +138,15 @@ test("platform lifecycle and shell contracts enable both native Windows architec
   assert.deepEqual(finiteArgs.slice(0, 6), ["-NoLogo", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-EncodedCommand"]);
   assert.equal(Buffer.from(finiteArgs[6], "base64").toString("utf16le"), "$ProgressPreference = 'SilentlyContinue'; Write-Output ok; exit 17");
   assert.equal(windowsFinite.pathDelimiter, ";");
+  for (const windowsArch of ["x64", "arm64"]) {
+    const nativeCmd = equinoxLocalFiniteShell({
+      platform: "win32", arch: windowsArch, env: { SystemRoot: "C:\\Windows" }, shell: "cmd",
+    });
+    assert.equal(nativeCmd.command, "C:\\Windows\\System32\\cmd.exe");
+    assert.deepEqual(nativeCmd.argsFor("echo NATIVE_OK & exit /b 27"), [
+      "/d", "/v:off", "/s", "/c", "echo NATIVE_OK & exit /b 27",
+    ]);
+  }
 
   const windowsInteractive = equinoxLocalInteractiveShells({ platform: "win32", arch: "arm64" });
   assert.equal(windowsInteractive.defaultShell, "powershell");

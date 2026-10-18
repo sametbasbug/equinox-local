@@ -54,10 +54,10 @@ export function registerTerminalTools({
   errorResult,
 } = {}) {
   const finiteShell = equinoxLocalFiniteShell({ platform, arch, env: runtimeEnv });
-  const finiteShellNames = platform === "win32" ? ["powershell", "pwsh"] : ["zsh"];
+  const finiteShellNames = platform === "win32" ? ["powershell", "pwsh", "cmd"] : ["zsh"];
   const finiteDefaultShell = platform === "win32" ? "powershell" : "zsh";
   const windowsShellGuide = platform === "win32"
-    ? " Windows pwsh = isteğe bağlı PowerShell 7 (ayrı kurulu olmalı); powershell = varsayılan 5.1. Native EXE komutu PowerShell altında çalışmaz veya native çıkış kodu oluşmazsa aynı komutu tekrar tekrar deneme: bağımsız EXE için process_start + process_wait + process_logs araçlarını kullan, kuruluysa açıkça pwsh seçimini değerlendir. Kullanıcı masaüstünde görünür konsol penceresi açılmamalıdır."
+    ? " Windows powershell = varsayılan 5.1, pwsh = isteğe bağlı kurulu PowerShell 7, cmd = sonlu native/CMD komutları için doğrudan CMD yolu (PowerShell sözdizimi kabul etmez). Windows PowerShell 5.1 altında native EXE komutu çalışmazsa aynı hatalı çağrıyı tekrar etme; native CMD sözdiziminde shell: cmd seç veya bağımsız EXE için process_start + process_wait + process_logs kullan. PS5 içindeki '&' çağrısı henüz düzeltilmedi; kullanıcı masaüstünde görünür konsol penceresi açılmamalıdır."
     : "";
   const interactiveShells = equinoxLocalInteractiveShells({ platform, arch, env: runtimeEnv, statFile: powerShell7StatFile });
   const interactiveShellNames = Object.keys(interactiveShells.shells);
@@ -119,7 +119,7 @@ export function registerTerminalTools({
         `Seçilen proje içinde sonlu komutu managed process olarak çalıştırır. Varsayılan: ${finiteShell.command}. Kabuklar: ${finiteShellNames.join(", ")}. ${windowsShellGuide} Etkileşimli TTY için terminal_start kullan.`,
       inputSchema: {
         command: z.string().min(1).max(20_000),
-        shell: z.enum(finiteShellNames).default(finiteDefaultShell).describe(platform === "win32" ? "Windows: powershell (5.1, default) or pwsh (PowerShell 7 if installed)." : "macOS: zsh (default)."),
+        shell: z.enum(finiteShellNames).default(finiteDefaultShell).describe(platform === "win32" ? "Windows: powershell (5.1, default), optional pwsh (PowerShell 7), or cmd (native CMD syntax; finite only)." : "macOS: zsh (default)."),
         cwd: z.string().default(".").describe("Proje köküne göre göreli başlangıç klasörü"),
         wait_ms: z.number().int().min(0).max(120_000).default(30_000)
           .describe("Bu çağrıda tamamlanma için beklenecek süre. Süre dolarsa komut öldürülmez; managed process olarak devam eder."),
