@@ -32,6 +32,8 @@ These instructions apply to the entire Equinox Local canonical product repositor
 - Work on `equinox/` branches; do not commit directly to `main`.
 - Prefer focused changes and existing modules/APIs over parallel implementations.
 - Keep shared command guidance platform-aware: finite `terminal_exec` uses `/bin/zsh -lc` on macOS and noninteractive `powershell.exe` on Windows, while interactive Terminal exposes only the shells supported by that host. Do not hardcode POSIX/zsh syntax or macOS TTY ownership assumptions into shared Windows-capable workflows; branch explicitly when shell syntax or lifecycle ownership is platform-specific.
+- Windows terminal shell choice defaults to OS-provided PowerShell 5.1. The agent may explicitly select separately installed PowerShell 7 with `shell: "pwsh"` in `terminal_exec` and `terminal_start`; do not bundle or install PS7, search untrusted PATH aliases, or silently downgrade an explicit PS7 request.
+- Windows terminal/process tools must not flash user-visible PowerShell/CMD windows during agent operations. Keep Job Object-managed finite/background commands hidden and keep interactive terminals inside their owned ConPTY; verify in a real desktop session, not only headless CI.
 - Treat MCP delivery replay as a lifecycle invariant: transport/orchestration redelivery of one exposed tool invocation must reuse the original invocation/result and must not repeat side effects. A genuinely new identical invocation must remain possible.
 - When modifying an already-dirty file, inspect its current diff first and preserve unfinished work.
 - Do not merge to `main`, create a public release, publish Equinox Browser, or submit Chrome Web Store changes without explicit maintainer authorization.

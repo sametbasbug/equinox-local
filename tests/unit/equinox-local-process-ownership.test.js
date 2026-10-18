@@ -40,6 +40,19 @@ test("Windows background and PTY ownership use Job Object adapters", () => {
   assert.equal(typeof terminal.createOwnedSet, "function");
   assert.equal(typeof terminal.spawnSpec, "function");
   assert.equal(typeof terminal.attachAndRelease, "function");
+  const ptySpec = terminal.spawnSpec("C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe", ["-NoLogo", "-NoProfile"], { SystemRoot: "C:\\Windows" });
+  assert.ok(ptySpec.args.includes("-NoExit"), "PTY gate must stay in the same interactive PowerShell");
+  assert.ok(ptySpec.args.includes("-WindowStyle"), "PTY gate must not spawn visible windows");
+  assert.ok(ptySpec.args.includes("Hidden"));
+  assert.ok(!ptySpec.args.includes("-NonInteractive"));
+  assert.equal(ptySpec.command, "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe");
+  const requestedPwsh = "C:\\Program Files\\PowerShell\\7\\pwsh.exe";
+  const pwshSpec = terminal.spawnSpec(requestedPwsh, ["-NoLogo", "-NoProfile"], { SystemRoot: "C:\\Windows" });
+  assert.equal(pwshSpec.command, requestedPwsh, "interactive PowerShell 7 selection must not silently launch PowerShell 5.1");
+  assert.deepEqual(pwshSpec.args, ptySpec.args, "selected shell version preserves the hidden owned ConPTY gate");
+  assert.equal(terminal.spawnSpec("powershell.exe", ["-NoLogo"], { SystemRoot: "C:\\Windows" }).command, ptySpec.command);
+  assert.throws(() => terminal.spawnSpec("cmd.exe", [], { SystemRoot: "C:\\Windows" }), /absolute PowerShell/u);
+  assert.throws(() => terminal.spawnSpec("C:\\Windows\\System32\\cmd.exe", [], { SystemRoot: "C:\\Windows" }), /absolute PowerShell/u);
   assert.doesNotThrow(() => assertProcessOwnershipImplemented(terminal, "PTY terminal execution"));
 });
 

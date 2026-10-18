@@ -12,10 +12,11 @@ import {
   TUNNEL_CLIENT_DISTRIBUTIONS,
 } from "../../src/equinox-local-runtime-versions.js";
 import { createWindowsJobObjectLease } from "../../src/equinox-local-windows-job-object.js";
+import { createBackgroundProcessOwnershipAdapter } from "../../src/equinox-local-process-ownership.js";
 import { compileWindowsJobObjectHelper } from "../../scripts/release/package-managed-release-windows.mjs";
 import { createAgentControlController } from "../../src/equinox-local-agent-control.js";
 import { createProcessManager } from "../../src/process-manager.js";
-import { equinoxLocalFiniteShell } from "../../src/equinox-local-platform.js";
+import { equinoxLocalFiniteShell, equinoxLocalWindowsPowerShell7Path } from "../../src/equinox-local-platform.js";
 import { probeWindowsTerminalExecution } from "../../src/equinox-local-windows-terminal-health.js";
 import { createTerminalManager } from "../../src/terminal-manager.js";
 import { createEquinoxLocalRuntime } from "../../src/server.js";
@@ -35,7 +36,20 @@ const jobHelperPath = await compileWindowsJobObjectHelper({
   outputDir: jobHelperRoot,
   target: `win32-${process.arch}`,
 });
+const jobHelperImage = await fs.readFile(jobHelperPath);
+const jobPeOffset = jobHelperImage.readUInt32LE(0x3c);
+const jobSubsystemOffset = jobPeOffset + 24 + 68;
+assert.equal(jobHelperImage.readUInt16LE(jobSubsystemOffset), 2,
+  "Windows Job Object helper must be a GUI-subsystem PE to avoid console windows");
+
+const gateMarker = path.join(jobHelperRoot, "owned-process-gate-v1.marker");
+assert.equal((await fs.readFile(gateMarker, "utf8")).trim(), "equinox-owned-process-gate-v1");
 process.env.EQUINOX_WINDOWS_JOB_OBJECT_HELPER_PATH = jobHelperPath;
+const probeNativeGate = createBackgroundProcessOwnershipAdapter({ platform: "win32", arch: process.arch });
+const nativeGateSpec = probeNativeGate.spawnSpec("powershell.exe", ["-NoProfile"], process.env);
+assert.equal(nativeGateSpec.command, jobHelperPath, "managed finite commands must bypass the PowerShell process gate");
+assert.deepEqual(nativeGateSpec.args, ["--owned-process-gate", "powershell.exe", "-NoProfile"]);
+
 
 const WINDOWS_ARCH = process.arch === "x64" || process.arch === "arm64" ? process.arch : null;
 const WINDOWS_TARGET = WINDOWS_ARCH ? `win32-${WINDOWS_ARCH}` : null;
@@ -332,6 +346,47 @@ async function verifyWindowsManagedProcessLifecycle(root) {
   return Object.freeze({ waitTimeoutPreservedOwnedTree: true, descendantRetainedAfterLeaderExit: true, stopDrainedDescendant: true, naturalExit: true, terminalDoctor: true });
 }
 
+async function verifyOptionalWindowsPowerShell7(root) {
+  const pwsh = equinoxLocalWindowsPowerShell7Path(process.env);
+  if (!pwsh) return { installed: false, skipped: true };
+  const manager = createProcessManager({ platform: "win32", arch: WINDOWS_ARCH });
+  let processId = null;
+  try {
+    const selected = equinoxLocalFiniteShell({ platform: "win32", arch: WINDOWS_ARCH, env: process.env, shell: "pwsh" });
+    assert.equal(selected.command, pwsh);
+    const started = await manager.start({
+      projectId: "windows-smoke", projectName: "Windows Smoke", cwd: root,
+      command: selected.command, args: selected.argsFor("Write-Output ('PWSH' + $PSVersionTable.PSVersion.Major + '_FINITE_MAJOR'); exit 17"),
+      purpose: "terminal_exec", env: process.env, label: "optional-pwsh7-finite",
+    });
+    processId = started.processId;
+    const ended = await manager.waitForExit({ processId, waitMs: 12_000 });
+    const output = await manager.readLogs({ processId, cursor: 0 });
+    assert.equal(ended.running, false);
+    assert.equal(ended.exitCode, 17, "PowerShell 7 finite exit status was lost");
+    assert.match(output.output, /PWSH7_FINITE_MAJOR/u, "finite command must actually run in PowerShell 7");
+  } finally {
+    if (processId) await manager.stop({ processId, force: true, remove: true }).catch(() => {});
+    await manager.shutdown();
+  }
+  const terminalManager = createTerminalManager({ platform: "win32", arch: WINDOWS_ARCH });
+  let sessionId = null;
+  try {
+    const started = await terminalManager.start({
+      projectId: "windows-smoke", projectName: "Windows Smoke", cwd: root,
+      shell: pwsh, shellArgs: ["-NoLogo", "-NoProfile"], env: process.env,
+      cols: 80, rows: 24, label: "optional-pwsh7-conpty",
+    });
+    sessionId = started.sessionId;
+    assert.equal(started.running, true);
+    terminalManager.write({ sessionId, data: "Write-Output ('PWSH' + $PSVersionTable.PSVersion.Major + '_CONPTY_MAJOR')", key: "enter" });
+    await readTerminalUntil(terminalManager, sessionId, /PWSH7_CONPTY_MAJOR/u, 10_000);
+  } finally {
+    if (sessionId) await terminalManager.stop({ sessionId, force: true }).catch(() => {});
+  }
+  return { installed: true, finite: true, conpty: true };
+}
+
 async function verifyWindowsIndependentProcessCommands(root) {
   // process_start/process_logs/process_wait/process_stop must not rely on
   // the finite PowerShell shell or its EncodedCommand escape path.
@@ -380,10 +435,10 @@ async function verifyWindowsIndependentProcessCommands(root) {
     // Windows workflow commands often resolve to npm.cmd / batch wrappers;
     // native ProcessStartInfo cannot directly launch a .cmd file.
     const batchPath = path.join(root, "native command with spaces.cmd");
-    await fs.writeFile(batchPath, "@echo off\r\necho DIRECT_BATCH_OK\r\nexit /b 37\r\n");
+    await fs.writeFile(batchPath, "@echo off\r\necho DIRECT_BATCH_OK\r\necho FIRST=[%~1]\r\necho SECOND=[%~2]\r\nexit /b 37\r\n");
     const batch = await manager.start({
       projectId: "windows-smoke", projectName: "Windows Smoke", cwd: root,
-      command: batchPath, args: [], purpose: "background",
+      command: batchPath, args: ["alpha beta", "--port=3777"], purpose: "background",
       env: process.env, label: "independent-direct-batch",
     });
     const batchEnd = await manager.waitForExit({ processId: batch.processId, waitMs: 10_000 });
@@ -391,7 +446,22 @@ async function verifyWindowsIndependentProcessCommands(root) {
     assert.equal(batchEnd.running, false, "native batch command did not finish");
     assert.equal(batchEnd.exitCode, 37, `batch wrapper exit status must be 37: ${batchLogs.output}`);
     assert.match(batchLogs.output, /DIRECT_BATCH_OK/u);
+    assert.match(batchLogs.output, /FIRST=\[alpha beta\]/u, "quoted Windows batch arguments must preserve spaces");
+    assert.match(batchLogs.output, /SECOND=\[--port=3777\]/u, "Windows batch flags must preserve values");
     await manager.stop({ processId: batch.processId, force: true, remove: true });
+
+    const injectionRejected = await manager.start({
+      projectId: "windows-smoke", projectName: "Windows Smoke", cwd: root,
+      command: batchPath, args: ["%COMSPEC%"], purpose: "background",
+      env: process.env, label: "independent-batch-expansion-rejection",
+    });
+    const rejectedEnd = await manager.waitForExit({ processId: injectionRejected.processId, waitMs: 10_000 });
+    const rejectedLogs = await manager.readLogs({ processId: injectionRejected.processId, cursor: 0 });
+    assert.equal(rejectedEnd.running, false, "rejected batch argument never finished");
+    assert.equal(rejectedEnd.exitCode, 127, "Windows batch expansion must fail closed");
+    assert.match(rejectedLogs.output, /unsupported CMD expansion or quoting characters/u);
+    assert.doesNotMatch(rejectedLogs.output, /DIRECT_BATCH_OK/u);
+    await manager.stop({ processId: injectionRejected.processId, force: true, remove: true });
 
     // The background tool also manages indefinite processes. Ensure process_stop
     // drains the entire owned Windows Job Object without killing the caller.
@@ -821,6 +891,7 @@ try {
   const helperLoss = await verifyWindowsJobObjectHelperLoss(root);
   const managedProcess = await verifyWindowsManagedProcessLifecycle(root);
   const independentProcessCommands = await verifyWindowsIndependentProcessCommands(root);
+  const optionalPowerShell7 = await verifyOptionalWindowsPowerShell7(root);
   const conpty = await verifyWindowsConPtyLifecycle(root);
   const emergencyStop = await verifyWindowsEmergencyStop(root);
   const agentBrowser = await verifyWindowsAgentBrowserLifecycle(root);
@@ -842,6 +913,7 @@ try {
     helperLoss,
     managedProcess,
     independentProcessCommands,
+    optionalPowerShell7,
     conpty,
     emergencyStop,
     agentBrowser,

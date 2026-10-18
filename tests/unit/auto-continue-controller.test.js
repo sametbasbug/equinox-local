@@ -235,6 +235,7 @@ test("bound Auto Continue reacquires one exact task conversation after tab id dr
   await waitFor(async () => (await store.read(task.taskId)).continuation.status === "delivered");
   assert.equal(delivered, 1);
   assert.equal(calls.some((call) => call[0] === "continuation.target.resolve"), false);
+  await controller.shutdown();
 });
 
 

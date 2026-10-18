@@ -2,6 +2,8 @@
 
 #include <cstdint>
 #include <cwchar>
+#include <cwctype>
+#include <vector>
 #include <limits>
 #include <iostream>
 #include <sstream>
@@ -165,10 +167,122 @@ void ErrorReply(const std::string& id, const std::string& error) {
 void SuccessReply(const std::string& id, DWORD active) {
   Reply("{\"ok\":true,\"id\":\"" + EscapeJson(id) + "\",\"activeProcesses\":" + std::to_string(active) + "}");
 }
+
+std::wstring QuoteWindowsArg(const std::wstring& value) {
+  if (!value.empty() && value.find_first_of(L" \t\n\v\"") == std::wstring::npos) return value;
+  std::wstring result = L"\"";
+  size_t slashes = 0;
+  for (wchar_t ch : value) {
+    if (ch == L'\\') { ++slashes; continue; }
+    if (ch == L'"') { result.append(slashes * 2 + 1, L'\\'); result.push_back(ch); slashes = 0; continue; }
+    result.append(slashes, L'\\');
+    slashes = 0;
+    result.push_back(ch);
+  }
+  result.append(slashes * 2, L'\\');
+  result.push_back(L'"');
+  return result;
+}
+
+std::wstring ResolveGateCommand(const std::wstring& input) {
+  if (input.empty() || input.find_first_of(L"\r\n\"") != std::wstring::npos) return {};
+  for (const wchar_t* ext : { L"", L".exe", L".cmd", L".bat", L".com" }) {
+    std::wstring result(32768, L'\0');
+    DWORD length = SearchPathW(nullptr, input.c_str(), *ext ? ext : nullptr,
+                               static_cast<DWORD>(result.size()), result.data(), nullptr);
+    if (length && length < result.size()) {
+      result.resize(length);
+      DWORD attributes = GetFileAttributesW(result.c_str());
+      if (attributes != INVALID_FILE_ATTRIBUTES && !(attributes & FILE_ATTRIBUTE_DIRECTORY)) return result;
+    }
+  }
+  return {};
+}
+
+// The GUI-subsystem helper is assigned to the Job Object before it receives GO.
+// A child created here cannot escape the owned job and needs no console window.
+int RunOwnedProcessGate(int argc, wchar_t* argv[]) {
+  if (argc < 3) return 127;
+  std::string signal;
+  if (!std::getline(std::cin, signal) || signal != "EQUINOX_GO") return 125;
+  std::wstring command = ResolveGateCommand(argv[2]);
+  if (command.empty()) { std::cerr << "Native gate executable not found.\n"; return 127; }
+  auto dot = command.find_last_of(L'.');
+  std::wstring extension = dot == std::wstring::npos ? L"" : command.substr(dot);
+  for (auto& ch : extension) ch = static_cast<wchar_t>(towlower(ch));
+  const bool batch = extension == L".cmd" || extension == L".bat";
+  std::wstring line;
+  if (batch) {
+    for (int i = 2; i < argc; ++i) {
+      if (std::wstring(argv[i]).find_first_of(L"\r\n\"%!^") != std::wstring::npos) {
+        std::cerr << "Windows batch argument contains unsupported CMD expansion or quoting characters.\n";
+        return 127;
+      }
+    }
+    wchar_t systemDir[MAX_PATH]{};
+    const UINT length = GetSystemDirectoryW(systemDir, MAX_PATH);
+    if (!length || length >= MAX_PATH) return 127;
+    const std::wstring shell = std::wstring(systemDir) + L"\\cmd.exe";
+    line = QuoteWindowsArg(shell) + L" /d /v:off /s /c \"\"" + command + L"\"";
+    for (int i = 3; i < argc; ++i) line += L" \"" + std::wstring(argv[i]) + L"\"";
+    line += L"\"";
+  } else {
+    line = QuoteWindowsArg(command);
+    for (int i = 3; i < argc; ++i) line += L" " + QuoteWindowsArg(argv[i]);
+  }
+
+  HANDLE current = GetCurrentProcess();
+  HANDLE streams[2]{};
+  HANDLE inherited[2] = { GetStdHandle(STD_OUTPUT_HANDLE), GetStdHandle(STD_ERROR_HANDLE) };
+  for (int i = 0; i < 2; ++i) {
+    if (!inherited[i] || inherited[i] == INVALID_HANDLE_VALUE ||
+        !DuplicateHandle(current, inherited[i], current, &streams[i], 0, TRUE, DUPLICATE_SAME_ACCESS)) {
+      std::cerr << "Native gate pipe inheritance failed.\n";
+      for (HANDLE handle : streams) if (handle) CloseHandle(handle);
+      return 127;
+    }
+  }
+  SECURITY_ATTRIBUTES security{sizeof(SECURITY_ATTRIBUTES), nullptr, TRUE};
+  HANDLE input = CreateFileW(L"NUL", GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE,
+                             &security, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+  if (input == INVALID_HANDLE_VALUE) {
+    std::cerr << "Native gate cannot open stdin.\n";
+    for (HANDLE handle : streams) if (handle) CloseHandle(handle);
+    return 127;
+  }
+  STARTUPINFOW startup{};
+  startup.cb = sizeof(startup);
+  startup.dwFlags = STARTF_USESTDHANDLES | STARTF_USESHOWWINDOW;
+  startup.wShowWindow = SW_HIDE;
+  startup.hStdInput = input;
+  startup.hStdOutput = streams[0];
+  startup.hStdError = streams[1];
+  PROCESS_INFORMATION child{};
+  const BOOL created = CreateProcessW(nullptr, line.data(), nullptr, nullptr, TRUE,
+                                      CREATE_NO_WINDOW, nullptr, nullptr, &startup, &child);
+  DWORD createError = created ? ERROR_SUCCESS : GetLastError();
+  CloseHandle(input);
+  for (HANDLE handle : streams) CloseHandle(handle);
+  if (!created) {
+    std::cerr << ErrorText("CreateProcessW", createError) << "\n";
+    return 127;
+  }
+  CloseHandle(child.hThread);
+  DWORD exitCode = 127;
+  const DWORD waited = WaitForSingleObject(child.hProcess, INFINITE);
+  if (waited != WAIT_OBJECT_0 || !GetExitCodeProcess(child.hProcess, &exitCode)) {
+    std::cerr << "Native gate wait failed.\n";
+    exitCode = 127;
+  }
+  CloseHandle(child.hProcess);
+  return static_cast<int>(exitCode);
+}
+
 }  // namespace
 
-int main(int argc, char* argv[]) {
-  if (argc == 2 && std::string(argv[1]) == "--inspect-process") return InspectWorkerProcess();
+int wmain(int argc, wchar_t* argv[]) {
+  if (argc == 2 && std::wstring(argv[1]) == L"--inspect-process") return InspectWorkerProcess();
+  if (argc >= 2 && std::wstring(argv[1]) == L"--owned-process-gate") return RunOwnedProcessGate(argc, argv);
   if (argc != 1) return 12;
   HANDLE job = CreateJobObjectW(nullptr, nullptr);
   if (!job) {

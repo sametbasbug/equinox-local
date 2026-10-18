@@ -2,7 +2,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { equinoxLocalReleaseTarget, equinoxLocalWindowsPowerShellPath } from "./equinox-local-platform.js";
-import { createWindowsJobObjectLease } from "./equinox-local-windows-job-object.js";
+import { createWindowsJobObjectLease, resolveWindowsNativeOwnedProcessGatePath } from "./equinox-local-windows-job-object.js";
 
 const WINDOWS_GATE_PATH = path.join(path.dirname(fileURLToPath(import.meta.url)), "equinox-local-windows-process-gate.ps1");
 const WINDOWS_PTY_GATE_PATH = path.join(path.dirname(fileURLToPath(import.meta.url)), "equinox-local-windows-pty-gate.ps1");
@@ -49,6 +49,15 @@ export function createBackgroundProcessOwnershipAdapter({
       return createWindowsJobObjectLease({ platform });
     },
     spawnSpec(command, args, env) {
+      const nativeGate = resolveWindowsNativeOwnedProcessGatePath();
+      if (nativeGate) {
+        return Object.freeze({
+          command: nativeGate,
+          args: Object.freeze(["--owned-process-gate", command, ...args]),
+          env: Object.freeze({ ...env }),
+          stdin: "pipe",
+        });
+      }
       return Object.freeze({
         command: equinoxLocalWindowsPowerShellPath(env),
         args: Object.freeze([
@@ -110,10 +119,21 @@ export function createTerminalProcessOwnershipAdapter({
       return createWindowsJobObjectLease({ platform });
     },
     spawnSpec(command, args, env) {
+      // The gate is the interactive session (-NoExit -File), not a launcher
+      // for a second child. Preserve the explicitly selected pwsh executable.
+      // Direct terminal-manager callers may still use the PS5.1 short name.
+      const shell = String(command).toLowerCase() === "powershell.exe"
+        ? equinoxLocalWindowsPowerShellPath(env) : command;
+      const leaf = path.win32.basename(shell).toLowerCase();
+      if (!path.win32.isAbsolute(shell) || (leaf !== "powershell.exe" && leaf !== "pwsh.exe")) {
+        throw new Error("Windows interactive shell requires an absolute PowerShell executable.");
+      }
       return Object.freeze({
-        command: equinoxLocalWindowsPowerShellPath(env),
+        command: shell,
         args: Object.freeze([
-          "-NoLogo", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-File", WINDOWS_PTY_GATE_PATH,
+          // Keep the verified gate itself as the interactive ConPTY shell:
+          // no second PowerShell process or desktop console window.
+          "-NoLogo", "-NoProfile", "-NoExit", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-File", WINDOWS_PTY_GATE_PATH,
         ]),
         env: Object.freeze({
           ...env,

@@ -11,6 +11,7 @@ import {
   equinoxLocalHostDescriptor,
   equinoxLocalInteractiveShells,
   equinoxLocalWindowsPowerShellPath,
+  equinoxLocalWindowsPowerShell7Path,
   equinoxLocalManagedLifecycle,
   equinoxLocalPlatformPaths,
   equinoxLocalReleaseTarget,
@@ -141,4 +142,35 @@ test("platform lifecycle and shell contracts enable both native Windows architec
   const windowsInteractive = equinoxLocalInteractiveShells({ platform: "win32", arch: "arm64" });
   assert.equal(windowsInteractive.defaultShell, "powershell");
   assert.equal(windowsInteractive.shells.powershell.command, equinoxLocalWindowsPowerShellPath());
+});
+
+test("PowerShell 7 uses only a regular file in fixed Program Files and stays optional", () => {
+  const env = { SystemRoot: "C:\\Windows", ProgramFiles: "C:\\Program Files", PATH: "C:\\Evil" };
+  const installedPath = path.win32.join(env.ProgramFiles, "PowerShell", "7", "pwsh.exe");
+  const inspected = [];
+  const statFile = (candidate) => {
+    inspected.push(candidate);
+    if (candidate === installedPath) return { isFile: () => true };
+    throw new Error("missing");
+  };
+  assert.equal(equinoxLocalWindowsPowerShell7Path(env, { statFile }), installedPath);
+  const finite = equinoxLocalFiniteShell({ platform: "win32", arch: "x64", env, shell: "pwsh", statFile });
+  assert.equal(finite.command, installedPath);
+  assert.deepEqual(finite.argsFor("Write-Output ok").slice(0, 6), ["-NoLogo", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-EncodedCommand"]);
+  assert.equal(Buffer.from(finite.argsFor("Write-Output ok")[6], "base64").toString("utf16le"), "$ProgressPreference = 'SilentlyContinue'; Write-Output ok");
+  const interactive = equinoxLocalInteractiveShells({ platform: "win32", arch: "x64", env, statFile });
+  assert.equal(interactive.defaultShell, "powershell");
+  assert.deepEqual(Object.keys(interactive.shells), ["powershell", "pwsh"]);
+  assert.equal(interactive.shells.pwsh.command, installedPath);
+  assert.deepEqual(interactive.shells.pwsh.args, ["-NoLogo", "-NoProfile"]);
+  assert.equal(inspected.some((candidate) => candidate.toLowerCase().includes("evil")), false, "untrusted PATH must not be searched");
+  assert.equal(equinoxLocalWindowsPowerShell7Path(env, { statFile: () => ({ isFile: () => false }) }), null, "symlink or non-file is rejected");
+  assert.equal(equinoxLocalWindowsPowerShell7Path(env, { statFile: () => { throw new Error("ENOENT"); } }), null);
+  assert.throws(
+    () => equinoxLocalFiniteShell({ platform: "win32", arch: "x64", env, shell: "pwsh", statFile: () => { throw new Error("ENOENT"); } }),
+    /PowerShell 7.*not installed/u,
+  );
+  assert.equal(equinoxLocalFiniteShell({ platform: "win32", arch: "x64", env }).command, equinoxLocalWindowsPowerShellPath(env));
+  assert.throws(() => equinoxLocalFiniteShell({ platform: "darwin", arch: "x64", shell: "pwsh" }), /Unsupported macOS/u);
+  assert.throws(() => equinoxLocalFiniteShell({ platform: "win32", arch: "x64", env, shell: "zsh" }), /Unsupported Windows/u);
 });

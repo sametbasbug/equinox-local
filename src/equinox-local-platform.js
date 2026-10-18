@@ -1,4 +1,5 @@
 import os from "node:os";
+import { lstatSync } from "node:fs";
 import path from "node:path";
 
 export const EQUINOX_LOCAL_SUPPORTED_HOST_PLATFORMS = Object.freeze(["darwin", "win32"]);
@@ -145,9 +146,29 @@ export function equinoxLocalWindowsPowerShellPath(env = process.env) {
   return path.win32.join(path.win32.normalize(systemRoot), "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
 }
 
-export function equinoxLocalFiniteShell({ platform = process.platform, arch = process.arch, env = process.env } = {}) {
+// PowerShell 7 is optional. Probe OS-known directories, not executable PATH.
+export function equinoxLocalWindowsPowerShell7Path(env = process.env, { statFile = lstatSync } = {}) {
+  const systemRoot = equinoxLocalWindowsPowerShellPath(env);
+  const defaultProgramFiles = path.win32.join(path.win32.parse(systemRoot).root, "Program Files");
+  const roots = [env?.ProgramW6432, env?.ProgramFiles, env?.PROGRAMFILES, defaultProgramFiles];
+  const seen = new Set();
+  for (const root of roots) {
+    if (typeof root !== "string" || !path.win32.isAbsolute(root)) continue;
+    const candidate = path.win32.join(root, "PowerShell", "7", "pwsh.exe");
+    const key = candidate.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    try {
+      if (statFile(candidate).isFile()) return candidate;
+    } catch { /* Not installed here. */ }
+  }
+  return null;
+}
+
+export function equinoxLocalFiniteShell({ platform = process.platform, arch = process.arch, env = process.env, shell = platform === "win32" ? "powershell" : "zsh", statFile = lstatSync } = {}) {
   equinoxLocalReleaseTarget({ platform, arch });
   if (platform === "darwin") {
+    if (shell !== "zsh") throw new Error("Unsupported macOS finite shell: " + shell);
     return Object.freeze({
       command: "/bin/zsh",
       argsFor(command) { return ["-lc", command]; },
@@ -155,15 +176,20 @@ export function equinoxLocalFiniteShell({ platform = process.platform, arch = pr
       pathDelimiter: ":",
     });
   }
+  if (shell !== "powershell" && shell !== "pwsh") throw new Error("Unsupported Windows finite shell: " + shell);
+  const selectedCommand = shell === "pwsh"
+    ? equinoxLocalWindowsPowerShell7Path(env, { statFile })
+    : equinoxLocalWindowsPowerShellPath(env);
+  if (!selectedCommand) throw new Error("PowerShell 7 (pwsh) is not installed; install it separately or use powershell (5.1).");
   return Object.freeze({
-    command: equinoxLocalWindowsPowerShellPath(env),
-    argsFor(command) {
+    command: selectedCommand,
+    argsFor(commandText) {
       // A nested PowerShell process is launched through an owned-process gate.
       // UTF-16LE encoding avoids Windows PowerShell 5.1 command-line quoting
       // ambiguity and keeps an unrequested console window off the desktop.
       // WinPS writes serialized CLIXML progress to stderr when commands
       // auto-load modules, even for successful noninteractive execution.
-      const encoded = Buffer.from(`$ProgressPreference = 'SilentlyContinue'; ${command}`, "utf16le").toString("base64");
+      const encoded = Buffer.from(`$ProgressPreference = 'SilentlyContinue'; ${commandText}`, "utf16le").toString("base64");
       return ["-NoLogo", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-EncodedCommand", encoded];
     },
     pathPrefix: "",
@@ -171,7 +197,7 @@ export function equinoxLocalFiniteShell({ platform = process.platform, arch = pr
   });
 }
 
-export function equinoxLocalInteractiveShells({ platform = process.platform, arch = process.arch, env = process.env } = {}) {
+export function equinoxLocalInteractiveShells({ platform = process.platform, arch = process.arch, env = process.env, statFile = lstatSync } = {}) {
   equinoxLocalReleaseTarget({ platform, arch });
   if (platform === "darwin") {
     return Object.freeze({
@@ -186,6 +212,7 @@ export function equinoxLocalInteractiveShells({ platform = process.platform, arc
     defaultShell: "powershell",
     shells: Object.freeze({
       powershell: Object.freeze({ command: equinoxLocalWindowsPowerShellPath(env), args: Object.freeze(["-NoLogo", "-NoProfile"]) }),
+      pwsh: Object.freeze({ command: equinoxLocalWindowsPowerShell7Path(env, { statFile }), args: Object.freeze(["-NoLogo", "-NoProfile"]) }),
     }),
   });
 }

@@ -27,11 +27,7 @@ try {
         $command = [string]$resolvedCommand.Source
     }
     $extension = [IO.Path]::GetExtension($command).ToLowerInvariant()
-    if ($extension -eq '.cmd' -or $extension -eq '.bat') {
-        & $command @arguments
-        if ($null -eq $LASTEXITCODE) { exit 0 }
-        exit [int]$LASTEXITCODE
-    }
+    $isBatch = $extension -eq '.cmd' -or $extension -eq '.bat'
 
     # Windows PowerShell 5.1's native '& command @args' can discard embedded
     # double quotes from arguments (e.g. node -e JavaScript source). Launch
@@ -63,8 +59,27 @@ try {
     }
 
     $startInfo = New-Object System.Diagnostics.ProcessStartInfo
-    $startInfo.FileName = $command
-    $startInfo.Arguments = ($arguments | ForEach-Object { ConvertTo-WindowsArgument $_ }) -join ' '
+    if ($isBatch) {
+        # ProcessStartInfo/UseShellExecute=false cannot launch a batch script
+        # directly. Resolve to the OS-owned cmd.exe, NOT PowerShell's unreliable
+        # native call operator. A quoted /s /c command line preserves spaces
+        # and metacharacters in ordinary npm.cmd / workflow arguments.
+        # Reject CMD variable expansion and quote/caret escape characters
+        # rather than reinterpret attacker-controlled argv as shell syntax.
+        $batchArgs = @($command) + $arguments
+        foreach ($value in $batchArgs) {
+            if ($value -match '[\x00\x0a\x0d"%!^]') {
+                throw 'Windows batch argument contains unsupported CMD expansion or quoting characters.'
+            }
+        }
+        $startInfo.FileName = [IO.Path]::Combine([Environment]::SystemDirectory, 'cmd.exe')
+        $quotedArgs = @($arguments | ForEach-Object { '"' + $_ + '"' })
+        $batchTail = if ($quotedArgs.Count -gt 0) { ' ' + ($quotedArgs -join ' ') } else { '' }
+        $startInfo.Arguments = '/d /v:off /s /c ""' + $command + '"' + $batchTail + '"'
+    } else {
+        $startInfo.FileName = $command
+        $startInfo.Arguments = ($arguments | ForEach-Object { ConvertTo-WindowsArgument $_ }) -join ' '
+    }
     $startInfo.UseShellExecute = $false
     $startInfo.CreateNoWindow = $true
     $startInfo.WindowStyle = [System.Diagnostics.ProcessWindowStyle]::Hidden
