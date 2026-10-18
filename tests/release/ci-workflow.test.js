@@ -12,7 +12,7 @@ const inputs = await fs.readFile(new URL("../../.github/actions/prepare-arm64-pa
   return "";
 });
 const jobs = new Map([...ci.matchAll(/^  ([\w-]+):\n([\s\S]*?)(?=^  [\w-]+:\n|$(?![\s\S]))/gmu)].map((match) => [match[1], match[2]]));
-const arm64Lanes = ["windows-arm64-runtime", "windows-arm64-package", "windows-arm64-installer"];
+const arm64Lanes = ["windows-arm64-runtime", "windows-arm64-package", "windows-arm64-installer", "windows-arm64-repair"];
 
 function job(name) {
   assert.ok(jobs.has(name), `Missing CI job: ${name}`);
@@ -65,7 +65,7 @@ test("ARM64 package is built once on fast x64 Windows and exact-byte native cons
   assert.match(producer, /compression-level: 0/u);
   assert.match(producer, /Get-ChildItem backups\/local-packages -Filter 'equinox-local-\*-win32-arm64\.zip'/u);
   assert.doesNotMatch(producer, /Get-ChildItem \(Join-Path \$env:RUNNER_TEMP 'arm64-package'\)/u);
-  for (const name of ["windows-arm64-package", "windows-arm64-installer"]) {
+  for (const name of ["windows-arm64-package", "windows-arm64-installer", "windows-arm64-repair"]) {
     const block = job(name);
     assert.match(block, /runs-on: windows-11-vs2026-arm/u);
     assert.match(block, /^    needs: \[windows-arm64-package-build\]/mu);
@@ -75,6 +75,20 @@ test("ARM64 package is built once on fast x64 Windows and exact-byte native cons
     assert.doesNotMatch(block, /uses: \.\/\.github\/actions\/prepare-arm64-package/u);
   }
   assert.doesNotMatch(job("windows-arm64-runtime"), /^    (?:needs|if):/mu);
+});
+
+test("parallel public installer and repair lanes require full real hosted acceptance", () => {
+  for (const arch of ["x64", "arm64"]) {
+    const full = job(`windows-${arch}-installer`);
+    const repair = job(`windows-${arch}-repair`);
+    assert.match(full, /EQUINOX_WINDOWS_SAME_VERSION_REPAIR: 'false'/u);
+    assert.doesNotMatch(full, /EQUINOX_WINDOWS_INSTALLER_REPAIR_ONLY/u);
+    assert.match(repair, /EQUINOX_WINDOWS_SAME_VERSION_REPAIR: 'true'/u);
+    assert.match(repair, /EQUINOX_WINDOWS_INSTALLER_REPAIR_ONLY: 'true'/u);
+    assert.match(full, /windows-installer-real-package-smoke\.ps1/u);
+    assert.match(repair, /windows-installer-real-package-smoke\.ps1/u);
+    assert.doesNotMatch(full + repair, /continue-on-error:/u);
+  }
 });
 
 test("download-artifact consumers use current v8 with integrity errors enabled", async () => {
@@ -198,8 +212,9 @@ test("stable ARM64 and Windows aggregate checks reject every non-success depende
   assert.match(foundation, /name: Windows ARM64 foundation \/ Node 26/u);
   assertSuccessGate(foundation, "ARM64 foundation", arm64Lanes);
   assertSuccessGate(job("windows-headless"), "Windows aggregate", [
-    "windows-runtime", "windows-shell", "windows-package", "windows-x64-installer", "windows-arm64-shared-core", "windows-arm64-bootstrap",
-    "windows-arm64-runtime", "windows-arm64-package", "windows-arm64-installer",
+    "windows-runtime", "windows-shell", "windows-package", "windows-x64-installer", "windows-x64-repair",
+    "windows-arm64-shared-core", "windows-arm64-bootstrap", "windows-arm64-runtime", "windows-arm64-package",
+    "windows-arm64-installer", "windows-arm64-repair",
   ]);
   assert.doesNotMatch(job("windows-headless"), /needs\.windows-arm64-foundation/u);
 });
