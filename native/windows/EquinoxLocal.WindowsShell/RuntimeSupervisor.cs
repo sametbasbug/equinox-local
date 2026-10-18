@@ -315,6 +315,23 @@ internal sealed class RuntimeSupervisor : IAsyncDisposable
             RedirectStandardError = true,
         };
         startInfo.ArgumentList.Add(scriptPath);
+        // Restore system and user PATH before launching the owned runtime.
+        // Microsoft Store app execution aliases live under user WindowsApps.
+        var pathParts = new List<string>();
+        var pathSeen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        void AddPathParts(string? input)
+        {
+            if (string.IsNullOrWhiteSpace(input)) return;
+            foreach (var part in input.Split(';'))
+            {
+                var candidate = part.Trim();
+                if (candidate.Length > 0 && pathSeen.Add(candidate)) pathParts.Add(candidate);
+            }
+        }
+        AddPathParts(startInfo.Environment.TryGetValue("PATH", out var inheritedPath) ? inheritedPath : null);
+        AddPathParts(Environment.GetEnvironmentVariable("PATH", EnvironmentVariableTarget.Machine));
+        AddPathParts(Environment.GetEnvironmentVariable("PATH", EnvironmentVariableTarget.User));
+        startInfo.Environment["PATH"] = string.Join(";", pathParts);
         // A truncated inherited PATHEXT makes PS5 treat .EXE as a document.
         var inherited = startInfo.Environment.TryGetValue("PATHEXT", out var pathExt) ? pathExt : null;
         if (!HasExeExtension(inherited))
