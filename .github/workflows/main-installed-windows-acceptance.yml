@@ -74,30 +74,17 @@ jobs:
       TARGET: ${{ matrix.target }}
 
     steps:
-      # Independent, read-only/isolated preparation: all three must succeed
-      # before admission or any installer is invoked. Immutable A is downloaded
-      # but MUST NOT be executed until A ancestry, B identity, SHA/size checks.
-      - parallel:
-          - name: Checkout harness with immutable native product evidence
-            uses: actions/checkout@v7
-            with:
-              fetch-depth: 0
-              persist-credentials: false
+      - name: Checkout harness with immutable native product evidence
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
 
-          - name: Install native Node 26
-            uses: actions/setup-node@v7
-            with:
-              node-version: 26.12.0
-              architecture: ${{ matrix.arch }}
-
-          - name: Download archived, already-admitted native Windows A artifact
-            uses: actions/download-artifact@v8
-            with:
-              name: main-native-${{ inputs.previous_main_sha }}-${{ matrix.target }}
-              run-id: ${{ inputs.previous_main_run }}
-              github-token: ${{ github.token }}
-              repository: sametbasbug/equinox-local
-              path: ${{ runner.temp }}/old-main
+      - name: Install native Node 26
+        uses: actions/setup-node@v7
+        with:
+          node-version: 26.12.0
+          architecture: ${{ matrix.arch }}
 
       - name: Verify disposable machine, source A ancestry and admitted B
         id: identity
@@ -138,6 +125,15 @@ jobs:
             "Installed Windows acceptance uses exact admitted B; $($plan.changedPathCount) later non-product CI/docs/test paths were classified safe." >> $env:GITHUB_STEP_SUMMARY
           }
           "target_sha=$sha" >> $env:GITHUB_OUTPUT
+
+      - name: Download archived, already-admitted native Windows A artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: main-native-${{ inputs.previous_main_sha }}-${{ matrix.target }}
+          run-id: ${{ inputs.previous_main_run }}
+          github-token: ${{ github.token }}
+          repository: sametbasbug/equinox-local
+          path: ${{ runner.temp }}/old-main
 
       - uses: actions/setup-dotnet@v6
         if: ${{ inputs.legacy_reinstall_acceptance }}
