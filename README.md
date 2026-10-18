@@ -7,10 +7,12 @@
 
   A local-first bridge that lets ChatGPT work with your files, terminal, browser and desktop — with a native Control Center and explicit user permissions.
 
-  [![Stable release](https://img.shields.io/github/v/release/sametbasbug/equinox-local?label=stable&color=7358e8)](https://github.com/sametbasbug/equinox-local/releases/latest)
+  [![Stable v6.1.2](https://img.shields.io/badge/stable-v6.1.2-7358e8)](https://github.com/sametbasbug/equinox-local/releases/tag/v6.1.2)
   [![CI](https://github.com/sametbasbug/equinox-local/actions/workflows/ci.yml/badge.svg)](https://github.com/sametbasbug/equinox-local/actions/workflows/ci.yml)
   [![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-3f9e88)](LICENSE)
   ![Platforms](https://img.shields.io/badge/macOS%20%2B%20Windows-ARM64%20%2F%20x64-38465d)
+
+  **Equinox Local v6.1.2** · **Equinox Browser v1.0.1** (Chrome Web Store submission sent; release follows approval)
 
   **[Get started](https://local.sametbasbug.dev/install/)** · **[Features](#what-you-can-do)** · **[How it works](#how-it-works)** · **[Documentation](#documentation)** · **[Contribute](CONTRIBUTING.md)**
 </div>
@@ -58,7 +60,7 @@ See health, review activity, adjust agent access, manage tasks and check updates
 
 **🛡️ Verified updates**
 
-Signed Stable bootstrap, automatically enrolled Main snapshots, health checks and rollback. Browser extension updates stay with Chrome Web Store.
+Signed Stable bootstrap, explicit Main enrollment, exact-SHA health checks and rollback. Browser extension updates stay with Chrome Web Store.
 
 </td></tr>
 </table>
@@ -108,7 +110,7 @@ flowchart LR
 - **Human-controlled:** Control Center stays on loopback and exposes status, settings, agent access and Emergency Stop.
 - **Browser-aware:** Your personal Chrome profile and the isolated Agent Browser keep separate state; the system never silently switches between them.
 - **Resumable, not reckless:** guarded browser delivery avoids automatically repeating a message when its send outcome is uncertain.
-- **One update stream:** the installer starts from a signed Stable baseline and automatically enrolls Main. Admitted exact-SHA snapshots advance only after four-platform CI; existing Stable users will be moved with one signed migration bridge. Updating Local never sideloads the Chrome extension.
+- **One update stream:** the installer starts from a signed Stable baseline. Use **Update & restart** in Control Center to explicitly join Main; admitted exact-SHA snapshots advance only after platform validation. Documentation-only commits do not trigger runtime updates, and older installed releases follow their own updater behavior. Updating Local never sideloads the Chrome extension.
 
 Read the [architecture](docs/architecture.md), [Browser](docs/browser.md), [updates](docs/updates.md) and [security](docs/security-model.md) guides for the implementation details.
 
@@ -141,6 +143,6 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for the supported Node version, full test
 
 ## Releases & license
 
-**Equinox Local 6.0.3** is the current Stable release, paired with **Equinox Browser 1.0.0** on Chrome Web Store. Stable packages cover macOS and Windows on ARM64 and x64. [Latest release](https://github.com/sametbasbug/equinox-local/releases/latest) · [Product website](https://local.sametbasbug.dev/) · [Release notes](CHANGELOG.md).
+**Equinox Local v6.1.2** is the current signed Stable release, with macOS and Windows packages for ARM64 and x64. **Equinox Browser v1.0.1** is the extension version in this repository and has been submitted to Chrome Web Store; its Store rollout is controlled by Chrome's review process. The browser updates separately from Local. [Download Stable v6.1.2](https://github.com/sametbasbug/equinox-local/releases/tag/v6.1.2) · [Equinox Browser](https://chromewebstore.google.com/detail/equinox-browser/npdneefcobilfkjlihghjgjnknenhfoj) · [Product website](https://local.sametbasbug.dev/) · [Release notes](CHANGELOG.md).
 
 Licensed under **[AGPL-3.0-only](LICENSE)**. Contributions are welcome; see [CONTRIBUTING.md](CONTRIBUTING.md) and [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md).

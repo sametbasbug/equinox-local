@@ -10,29 +10,41 @@ _No unreleased changes currently._
 
 ## [6.1.2] - 2026-10-18
 
-### Changed (pending Windows acceptance)
+**A reliability-focused release for Main updates, Windows desktop and terminal integration, and browser-aware task timing.** Includes signed macOS and Windows builds for ARM64 and x64.
 
-- Added an explicit finite-only Windows terminal_exec shell cmd option. This routes CMD/native command text through the existing GUI-owned direct cmd.exe process path, preserving output and exit codes without invoking PowerShell 5.1's broken native call operator. Default powershell and optional pwsh are unchanged, and interactive PTY still supports only PowerShell shells. This is a supported workaround, not a claim that native & calls inside PowerShell 5.1 are repaired.
+### Updates and rollback
 
-- Windows terminal tools keep Windows PowerShell 5.1 as default; support explicit PowerShell 7 with `shell: "pwsh"` in both `terminal_exec` and `terminal_start` when installed under OS Program Files. No runtime bundled or installed, no PATH fallback, no Control Center option. Missing PS7 produces an actionable error instead of silently changing the requested shell. Windows CI exercises optional PS7 finite and ConPTY paths where installed.
+- **Verify the version that is actually running.** Main update and Doctor checks now verify worker ownership, source/native identity, and the active runtime instead of relying on a source pointer, version label, or stale worker PID alone.
+- **Recover interrupted Main updates more safely.** Tightened staging, atomic promotion, and rollback when Windows file locks or a failed worker handoff interrupt source/native replacement. Native rollback restores the previous app/shell ownership consistently.
+- **Avoid stale installations after a successful update.** Main activation reconciles the selected native package with the promoted source. Superseded Stable release trees and versioned managed toolchains are cleaned up only after healthy activation, retaining recovery state when a transition fails.
+- **Improve install and recovery tests.** Added Windows x64/ARM64 installed-upgrade and rollback coverage, native worker process-identity checks, and macOS historical installed-Main acceptance improvements. Existing user settings remain outside the replaced runtime.
 
-### Fixed (pending native/desktop validation)
-- Turn Budget Browser mode now carries the browser-observed ChatGPT generation start timestamp through the extension and Local bridge. A first tool call or delayed poll cannot incorrectly reset the Browser clock to its own invocation time; invalid/future/stale times fail closed to the previous bounded behavior.
-- Windows GUI runtime restores inherited, machine and user PATH entries, including Microsoft Store/MSIX App Execution Aliases in WindowsApps. PowerShell 7 selection resolves a trusted per-user pwsh.exe alias even if the reparse point is not a regular file, while managed terminal environment retains WindowsApps across project PATH overrides.
-- WinApp screenshot now returns its validated PNG as the primary native MCP image content even when a saved output path was requested, with managed temporary captures cleaned up. Removed the desktop gateway's conflicting text-only output schema and screenshot structured response, which caused connected apps to display only filePath despite the bridge producing image blocks.
-- Browser Turn Budget now begins on the observed ChatGPT generation via a lightweight independent periodic Browser probe, including turns before the first Equinox Local tool call. First-tool timing and inactivity reset remain exclusively the fallback when Browser identity is unavailable.
+### Windows Control Center and performance
 
-- Repair inherited Windows PATHEXT containing only .CPL: physical installed Windows PowerShell 5.1 treated executables as documents, did not launch them and spawned Windows Terminal windows. Restoring PATHEXT from the OS machine environment in an isolated physical shell immediately fixed native output and exit23. The GUI runtime launcher, supervisor and managed command environments now restore executable extensions without changing user-wide settings, with native x64/ARM64 regression smoke.
+- **More reliable first launch.** Improved Windows native Control Center/WebView2 startup while the backend becomes ready, plus update-status refresh and actionable diagnostics instead of misleading Main status.
+- **Lower background overhead.** Reduced expensive Doctor fingerprint checks and unnecessary page activity; adjusted native host graphics preferences to reduce unwanted activation of the discrete GPU. GPU behavior still depends on Windows and graphics drivers.
+- **Restore desktop automation.** Fixed the required WinApp integration and the screenshot result format: validated captures now arrive as native MCP image content, including when the tool was also asked to save a file, with temporary files cleaned up.
+- **Make terminal health meaningful.** Doctor's explicit terminal check detects missing native command output and false successful exit codes.
 
-- Build the pipe-only Windows Job Object helper as a Windows-subsystem executable, retaining C++ main/stdio initialization. This removes its OS request for a desktop console even when Windows Terminal is the default; native Windows smoke asserts the actual PE subsystem and exercises the redirected helper lifecycle.
-- When the authenticated Windows native payload includes the owned-process-gate-v1 marker, reuse its no-console GUI helper to start managed finite and background processes directly with Win32 CreateProcessW (CREATE_NO_WINDOW, explicit inherited stdout/stderr pipes, null stdin) *after* verified Job Object assignment, avoiding the extra PowerShell parent and its native dispatch. Source-only upgrades over older native packages retain the previous gate until a new native payload is installed.
-- On Windows 11 24H2 and later, the native GUI process gate requests a windowless inherited console through AllocConsoleWithOptions before CreateProcessW; older Windows retains the previous hidden-process fallback. Physical Windows testing confirmed this alone does not fix PowerShell 5.1 native child dispatch or transient Windows Terminal windows.
+### Windows terminals and processes
 
-- Removed Windows interactive-terminal startup of a second PowerShell process: the Job Object-owned ConPTY gate remains as the interactive host after readiness, avoiding secondary console windows and unreliable nested native launch.
-- Extended the explicit Windows Doctor terminal probe to detect silent failures of native CMD invocations. Pure PowerShell output and exit status are no longer sufficient.
-- Windows Job Object helper `close` now waits for the native helper final stdout acknowledgment even if Windows signals process exit first, while unacknowledged and unexpected exits still fail closed. This prevents spurious PTY cleanup failures from the helper shutdown race.
-- Guide agents to use directly managed process_start/process_wait/process_logs for standalone Windows native executables if PowerShell 5.1 native invocation fails, instead of spawning the same failing shell repeatedly. This does not eliminate the Windows Terminal popup risk.
-- Windows background batch jobs now run through OS-owned cmd.exe and hidden .NET ProcessStartInfo instead of PowerShell 5.1 native call operator. Dangerous CMD variable expansion and quoting fail closed; stdout and exit code are retained.
+- **New finite CMD shell.** `terminal_exec` supports `shell: "cmd"` for managed native/CMD commands, without routing them through PowerShell 5.1's unreliable native call operator. Interactive terminals remain PowerShell-based.
+- **Optional PowerShell 7.** `shell: "pwsh"` is supported in finite and interactive terminal tools when PowerShell 7 is installed; Windows PowerShell 5.1 remains the default. No PowerShell installation is bundled or performed, and unavailable `pwsh` fails with an actionable error.
+- **Repair executable discovery.** Restored trusted machine/user PATH and PATHEXT entries in managed Windows process environments, including Microsoft Store / MSIX WindowsApps execution aliases. This fixes cases where executables were treated as documents or silently failed to start.
+- **Make managed processes less visible and more predictable.** Improved the no-console Job Object helper, `CreateProcessW` native launch, Windows 11 24H2+ console handling, and single-owner ConPTY startup to prevent unnecessary terminal windows. Fixed stdout/stderr, exit-code, background CMD/batch execution, and process-shutdown acknowledgment.
+- **Retain a known PowerShell limitation.** These changes do not modify PowerShell 5.1's native `&` operator. For affected native commands, use explicit CMD, an installed PowerShell 7, or the directly managed process tools.
+
+### Browser and Turn Budget
+
+- **Start the clock when ChatGPT actually starts generating.** The browser observer passes the generation-start timestamp through Equinox Browser and the Local bridge, so a late first tool call does not restart the Browser Turn Budget.
+- **Observe turns before tool calls.** Lightweight browser polling and bounded timestamp validation keep Browser-based timing independent of when Equinox Local is first invoked; the existing fallback is retained when no reliable browser turn identity is available.
+- **Equinox Browser v1.0.1 has been submitted to Chrome Web Store separately.** Its rollout follows Store review; installing Equinox Local 6.1.2 does not install or sideload the extension.
+
+### Validation and distribution
+
+- Four-platform Release Validation passed for **macOS ARM64/x64** and **Windows ARM64/x64**, followed by factory tests, signed artifact verification, and live download/manifest checks.
+- The real **6.1.1 → 6.1.2 managed upgrade smoke test** passed. The Mac Developer factory was independently restarted and verified against the actual running source/native identity; the Windows managed Main installation was checked on the user's device.
+- **Release identity:** signed Stable v6.1.2 targets canonical source `66786207350cc809b44fc5c376eba8912b35fa47`. The admitted Main snapshot remains `a70b6219e41036d39b1850c39c16a92b5d4dbcd5` because the later release commit changed only release documentation; both contain the same product code.
 
 ## [6.1.1] - 2026-10-16
 
