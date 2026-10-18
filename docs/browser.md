@@ -2,6 +2,8 @@
 
 **Current Chrome Web Store release:** [`1.0.0`](https://chromewebstore.google.com/detail/equinox-browser/npdneefcobilfkjlihghjgjnknenhfoj) on the permanent Unlisted listing. Extension updates are delivered by Chrome Web Store, independently of Equinox Local Stable releases.
 
+**Next Browser update (not published yet):** 1.0.1 includes Browser-observed generation start timestamps for accurate Turn Budget timing. The package can be prepared with npm run browser:package, but the live Store item remains 1.0.0 until separately reviewed. Equinox Local does not replace installed Chrome Store extensions.
+
 Equinox Browser is the only browser-automation transport exposed by Equinox Local.
 
 It is a first-party Chrome extension paired with a per-user Native Messaging host and the local Equinox Browser bridge. The transport serves two explicit product contexts: **Agent Browser** (`target=agent`) is the default isolated Equinox Local Chrome profile, while **Your Browser** (`target=user`) is the user's personal Chrome profile and must be requested explicitly. The contexts never silently fall back to each other. Equinox Local does not use a generic user-Chrome CDP fallback, does not require Chrome remote-debugging flags, and the retired loopback/CDP QA browser is not a second product capability.
