@@ -12,7 +12,7 @@ const inputs = await fs.readFile(new URL("../../.github/actions/prepare-arm64-pa
   return "";
 });
 const jobs = new Map([...ci.matchAll(/^  ([\w-]+):\n([\s\S]*?)(?=^  [\w-]+:\n|$(?![\s\S]))/gmu)].map((match) => [match[1], match[2]]));
-const arm64Lanes = ["windows-arm64-runtime", "windows-arm64-package", "windows-arm64-installer"];
+const arm64Lanes = ["windows-arm64-runtime", "windows-arm64-package", "windows-arm64-installer", "windows-arm64-repair"];
 
 function job(name) {
   assert.ok(jobs.has(name), `Missing CI job: ${name}`);
@@ -65,7 +65,7 @@ test("ARM64 package is built once on fast x64 Windows and exact-byte native cons
   assert.match(producer, /compression-level: 0/u);
   assert.match(producer, /Get-ChildItem backups\/local-packages -Filter 'equinox-local-\*-win32-arm64\.zip'/u);
   assert.doesNotMatch(producer, /Get-ChildItem \(Join-Path \$env:RUNNER_TEMP 'arm64-package'\)/u);
-  for (const name of ["windows-arm64-package", "windows-arm64-installer"]) {
+  for (const name of ["windows-arm64-package", "windows-arm64-installer", "windows-arm64-repair"]) {
     const block = job(name);
     assert.match(block, /runs-on: windows-11-vs2026-arm/u);
     assert.match(block, /^    needs: \[windows-arm64-package-build\]/mu);
@@ -75,6 +75,42 @@ test("ARM64 package is built once on fast x64 Windows and exact-byte native cons
     assert.doesNotMatch(block, /uses: \.\/\.github\/actions\/prepare-arm64-package/u);
   }
   assert.doesNotMatch(job("windows-arm64-runtime"), /^    (?:needs|if):/mu);
+});
+
+test("parallel public installer and repair lanes require full real hosted acceptance", () => {
+  for (const arch of ["x64", "arm64"]) {
+    const full = job(`windows-${arch}-installer`);
+    const repair = job(`windows-${arch}-repair`);
+    assert.match(full, /EQUINOX_WINDOWS_SAME_VERSION_REPAIR: 'false'/u);
+    assert.doesNotMatch(full, /EQUINOX_WINDOWS_INSTALLER_REPAIR_ONLY/u);
+    assert.match(repair, /EQUINOX_WINDOWS_SAME_VERSION_REPAIR: 'true'/u);
+    assert.match(repair, /EQUINOX_WINDOWS_INSTALLER_REPAIR_ONLY: 'true'/u);
+    assert.match(full, /windows-installer-real-package-smoke\.ps1/u);
+    assert.match(repair, /windows-installer-real-package-smoke\.ps1/u);
+    assert.doesNotMatch(full + repair, /continue-on-error:/u);
+  }
+});
+
+test("exact native WPF A/B acceptance is shifted to mandatory parallel package lanes without dropping Guardian checks", async () => {
+  const x64 = job("windows-package");
+  const arm64 = job("windows-arm64-package");
+  for (const [arch, block] of [["x64", x64], ["arm64", arm64]]) {
+    assert.match(block, /Windows (?:x64|ARM64) immutable native A\/B rollback acceptance/u);
+    assert.match(block, /windows-native-ab-package-smoke\.ps1/u);
+    const full = job(`windows-${arch}-installer`);
+    assert.match(full, /EQUINOX_WINDOWS_NATIVE_AB_IN_PACKAGE: 'true'/u);
+    assert.match(full, /EQUINOX_WINDOWS_SAME_VERSION_REPAIR: 'false'/u);
+  }
+  assert.match(arm64, /EXPECTED_PACKAGE_SHA256: \$\{\{ needs\.windows-arm64-package-build\.outputs\.sha256 \}\}/u);
+  assert.doesNotMatch(job("windows-x64-repair") + job("windows-arm64-repair"), /EQUINOX_WINDOWS_NATIVE_AB_IN_PACKAGE/u);
+  const smoke = await fs.readFile(new URL("./windows-native-ab-package-smoke.ps1", import.meta.url), "utf8");
+  assert.match(smoke, /GITHUB_ACTIONS -cne 'true'/u);
+  assert.match(smoke, /release\/runtime\/job' 'release\/runtime\/shell'/u);
+  assert.match(smoke, /windows-native-ab-installed-smoke\.mjs/u);
+  assert.match(smoke, /Native A\/B package SHA256 differs from its producer/u);
+  assert.match(smoke, /runtime\/node\/bin\/node\.exe/u);
+  assert.match(smoke, /Move-Item -LiteralPath \$releaseDir -Destination \$versionedReleaseDir/u);
+  assert.match(smoke, /& \$ownedNode /u);
 });
 
 test("download-artifact consumers use current v8 with integrity errors enabled", async () => {
@@ -128,7 +164,7 @@ test("real public installer enters managed-source on native Windows x64 and ARM6
   const arm64 = job("windows-arm64-installer");
   assert.match(x64, /name: Windows x64 public installer acceptance/u);
   assert.match(x64, /runs-on: windows-latest/u);
-  assert.match(x64, /win-x64/u);
+  assert.match(x64, /win32-x64/u);
   assert.match(x64, /windows-installer-real-package-smoke\.ps1/u);
   assert.match(arm64, /& \.\/tests\/release\/windows-installer-real-package-smoke\.ps1/u);
   assert.doesNotMatch(arm64, /powershell\.exe[^\n]*windows-installer-real-package-smoke/u);
@@ -198,8 +234,9 @@ test("stable ARM64 and Windows aggregate checks reject every non-success depende
   assert.match(foundation, /name: Windows ARM64 foundation \/ Node 26/u);
   assertSuccessGate(foundation, "ARM64 foundation", arm64Lanes);
   assertSuccessGate(job("windows-headless"), "Windows aggregate", [
-    "windows-runtime", "windows-shell", "windows-package", "windows-x64-installer", "windows-arm64-shared-core", "windows-arm64-bootstrap",
-    "windows-arm64-runtime", "windows-arm64-package", "windows-arm64-installer",
+    "windows-runtime", "windows-shell", "windows-x64-package-build", "windows-package", "windows-x64-installer", "windows-x64-guardian", "windows-x64-repair",
+    "windows-arm64-shared-core", "windows-arm64-bootstrap", "windows-arm64-runtime", "windows-arm64-package",
+    "windows-arm64-installer", "windows-arm64-repair",
   ]);
   assert.doesNotMatch(job("windows-headless"), /needs\.windows-arm64-foundation/u);
 });
@@ -240,19 +277,50 @@ test("parallel input preparation requires both native commands and cleans up its
 });
 
 
-test("CI parallelizes independent macOS gates and x64 installer preparation", () => {
+test("CI parallelizes independent macOS gates and shares one verified x64 package", () => {
   const arm = job("test");
   const intel = job("macos-x64");
-  const installer = job("windows-x64-installer");
+  const producer = job("windows-x64-package-build");
   assert.match(arm, /- parallel:[\s\S]*Static checks[\s\S]*Verify ARM64 host[\s\S]*Full test suite/u);
   assert.match(intel, /- parallel:[\s\S]*Verify x64 host[\s\S]*Static checks[\s\S]*Fast architecture parity suite/u);
-  assert.match(installer, /Cache x64 shell publish[\s\S]*actions\/cache@v6[\s\S]*windows-shell-\$\{\{ runner\.os \}\}-x64-dotnet10-/u);
-  assert.match(installer, /- parallel:[\s\S]*Set up Node\.js[\s\S]*Set up \.NET SDK[\s\S]*steps\.x64-shell-cache\.outputs\.cache-hit != 'true'[\s\S]*Cache x64 NuGet packages/u);
-  assert.match(installer, /Cache x64 NuGet packages[\s\S]*nuget-\$\{\{ runner\.os \}\}-target-x64-dotnet10-/u);
-  assert.match(installer, /- parallel:[\s\S]*Install dependencies[\s\S]*Publish native x64 shell[\s\S]*steps\.x64-shell-cache\.outputs\.cache-hit != 'true'/u);
-  assert.match(installer, /Build native x64 managed package[\s\S]*EQUINOX_WINDOWS_SHELL_PUBLISH_DIR: \$\{\{ runner\.temp \}\}\/windows-shell\/win-x64/u);
+  assert.match(producer, /Set up Node\.js[\s\S]*Install dependencies/u);
+  assert.match(producer, /Set up \.NET SDK[\s\S]*Publish package shell payload/u);
+  assert.match(producer, /Windows release ZIP security acceptance/u);
+  assert.match(producer, /Windows managed package assembly smoke[\s\S]*EQUINOX_WINDOWS_SHELL_PUBLISH_DIR:/u);
+  assert.match(producer, /Upload exact x64 managed ZIP for installed-host acceptance/u);
+  assert.match(producer, /windows-x64-managed-package-/u);
+  for (const name of ["windows-package", "windows-x64-installer", "windows-x64-repair"]) {
+    const consumer = job(name);
+    assert.match(consumer, /needs: \[windows-x64-package-build\]/u);
+    assert.match(consumer, /actions\/download-artifact@v8/u);
+    assert.match(consumer, /windows-x64-managed-package-/u);
+    assert.doesNotMatch(consumer, /Build native x64 managed package/u);
+  }
+  const full = job("windows-x64-installer");
+  assert.match(full, /EQUINOX_WINDOWS_INSTALL_SHA256/u);
+  assert.match(full, /EQUINOX_WINDOWS_NATIVE_AB_IN_PACKAGE: 'true'/u);
+  assert.match(job("windows-x64-repair"), /EQUINOX_WINDOWS_INSTALLER_REPAIR_ONLY: 'true'/u);
 });
 
+
+test("independent real x64 Guardian negative audit is required alongside full installation and repair", async () => {
+  const guardian = job("windows-x64-guardian");
+  const installer = job("windows-x64-installer");
+  const repair = job("windows-x64-repair");
+  const smoke = await fs.readFile(new URL("./windows-installer-real-package-smoke.ps1", import.meta.url), "utf8");
+  assert.match(guardian, /needs: \[windows-x64-package-build\]/u);
+  assert.match(guardian, /EQUINOX_WINDOWS_GUARDIAN_AUDIT_ONLY: 'true'/u);
+  assert.match(guardian, /EQUINOX_WINDOWS_INSTALL_SHA256/u);
+  assert.match(guardian, /windows-installer-real-package-smoke\.ps1/u);
+  assert.match(installer, /EQUINOX_WINDOWS_GUARDIAN_AUDIT_IN_PARALLEL: 'true'/u);
+  assert.doesNotMatch(repair, /EQUINOX_WINDOWS_GUARDIAN_AUDIT_ONLY|EQUINOX_WINDOWS_GUARDIAN_AUDIT_IN_PARALLEL/u);
+  assert.match(smoke, /Guardian native journal ownership audit positive\/negative hosted acceptance PASSED/u);
+  assert.match(smoke, /if \(-not \$SkipLegacyGuardianFixture -and -not \$RepairOnly -and -not \$GuardianAuditElsewhere\)/u);
+  assert.match(smoke, /if \(\$GuardianAuditOnly\) \{/u);
+  assert.match(smoke, /GITHUB_ACTIONS -cne 'true'/u);
+  assert.match(job("windows-headless"), /X64_GUARDIAN_RESULT: \$\{\{ needs\.windows-x64-guardian\.result \}\}/u);
+  assert.match(job("windows-headless"), /test "\$X64_GUARDIAN_RESULT" = success/u);
+});
 
 test("ARM64 winapp smoke can use a native PowerShell helper host without weakening x64 PS5.1 coverage", async () => {
   const smoke = await fs.readFile(new URL("./windows-winapp-smoke.ps1", import.meta.url), "utf8");

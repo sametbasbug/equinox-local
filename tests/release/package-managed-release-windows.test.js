@@ -183,7 +183,7 @@ test("Windows release ZIP security acceptance is wired to the package CI lane", 
     }
   }
   assert.equal(typeof workflow, "string");
-  const packageStart = workflow.indexOf("  windows-package:");
+  const packageStart = workflow.indexOf("  windows-x64-package-build:");
   const aggregateStart = workflow.indexOf("  windows-headless:");
   assert.ok(packageStart >= 0 && aggregateStart > packageStart);
   const packageLane = workflow.slice(packageStart, aggregateStart);
@@ -487,7 +487,15 @@ test("independent Guardian worker process provenance never invokes a launcher or
 test('vintage installed Main upgrade does not require a Guardian absent from old signed packages', async () => {
   const fixture = await fs.readFile(new URL('./windows-installer-real-package-smoke.ps1', import.meta.url), 'utf8');
   assert.match(fixture, /\$SkipLegacyGuardianFixture = \(\$env:GITHUB_ACTIONS -ceq 'true' -and -not \[string\]::IsNullOrWhiteSpace\(\$env:EQUINOX_WINDOWS_MAIN_ACCEPT_TARGET_SHA\)\)/u);
-  assert.ok((fixture.match(/if \(-not \$SkipLegacyGuardianFixture\) \{/gu) ?? []).length >= 5);
+  assert.ok((fixture.match(/if \(-not \$SkipLegacyGuardianFixture\) \{/gu) ?? []).length >= 4);
+  assert.match(fixture, /if \(-not \$SkipLegacyGuardianFixture -and -not \$RepairOnly -and -not \$GuardianAuditElsewhere\) \{/u,
+    "The real full installer must retain Guardian negative cases, while CI-only repair stays isolated.");
+  assert.match(fixture, /if \(\$RepairOnly -and \(\$env:GITHUB_ACTIONS -cne 'true'/u,
+    "Repair-only smoke must remain restricted to disposable hosted CI.");
+  assert.match(fixture, /EQUINOX_WINDOWS_NATIVE_AB_IN_PACKAGE/u);
+  assert.match(fixture, /Native A\/B package-lane ownership requires a current-product full installer running in GitHub CI/u);
+  assert.match(fixture, /if \(-not \$RepairOnly -and -not \$NativeABInPackage\)/u);
+  assert.match(fixture, /windows-native-ab-installed-smoke\.mjs/u);
   assert.match(fixture, /Old installed A user config is missing/u);
   assert.match(fixture, /Real Main upgrade lost user settings/u);
   assert.match(fixture, /Real Main upgrade lost user browser data/u);

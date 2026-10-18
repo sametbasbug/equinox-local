@@ -40,6 +40,24 @@ $StableExe = $null
 
 try {
   if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) { throw 'Real Windows installer smoke requires Windows.' }
+  # This CI-only lane still performs a real fresh install followed by repair;
+  # the separate full installer lane retains all Guardian security-negative
+  # and native A/B rollback acceptance on another disposable hosted runner.
+  $RepairOnly = ($env:EQUINOX_WINDOWS_INSTALLER_REPAIR_ONLY -ceq 'true')
+  if ($RepairOnly -and ($env:GITHUB_ACTIONS -cne 'true' -or $env:EQUINOX_WINDOWS_SAME_VERSION_REPAIR -cne 'true')) {
+    throw 'Repair-only acceptance requires a disposable GitHub-hosted Windows runner and genuine same-version repair.'
+  }
+
+  $GuardianAuditOnly = ($env:EQUINOX_WINDOWS_GUARDIAN_AUDIT_ONLY -ceq 'true')
+  $GuardianAuditElsewhere = ($env:EQUINOX_WINDOWS_GUARDIAN_AUDIT_IN_PARALLEL -ceq 'true')
+  if (($GuardianAuditOnly -or $GuardianAuditElsewhere) -and
+      ($env:GITHUB_ACTIONS -cne 'true' -or $RepairOnly -or
+       $env:EQUINOX_WINDOWS_SAME_VERSION_REPAIR -ceq 'true' -or
+       ($GuardianAuditOnly -and $GuardianAuditElsewhere) -or
+       [string]::IsNullOrWhiteSpace($env:EQUINOX_WINDOWS_INSTALL_SHA256))) {
+    throw 'Separate real installed Guardian journal audit requires a current-product, exact-package disposable GitHub Windows runner.'
+  }
+
   if (-not [Environment]::Is64BitProcess -or -not [string]::IsNullOrWhiteSpace($env:PROCESSOR_ARCHITEW6432)) { throw 'Real Windows installer smoke requires native 64-bit Windows PowerShell.' }
   if ([string]::IsNullOrWhiteSpace($Artifact) -or -not [IO.Path]::IsPathRooted($Artifact) -or -not [IO.File]::Exists($Artifact)) { throw 'EQUINOX_WINDOWS_INSTALL_ARTIFACT must point to the real native managed ZIP.' }
   if (Test-Path -LiteralPath $NativeRegistryKey) { throw 'Fresh-install smoke requires an unowned Native Messaging registry key.' }
@@ -155,6 +173,10 @@ try {
   # old-Main -> new-Main acceptance must test the actual updater instead of
   # requiring test-only future Guardian components in an already shipped A.
   $SkipLegacyGuardianFixture = ($env:GITHUB_ACTIONS -ceq 'true' -and -not [string]::IsNullOrWhiteSpace($env:EQUINOX_WINDOWS_MAIN_ACCEPT_TARGET_SHA))
+  $NativeABInPackage = ($env:EQUINOX_WINDOWS_NATIVE_AB_IN_PACKAGE -ceq 'true')
+  if ($NativeABInPackage -and ($env:GITHUB_ACTIONS -cne 'true' -or $SkipLegacyGuardianFixture -or $RepairOnly)) {
+    throw 'Native A/B package-lane ownership requires a current-product full installer running in GitHub CI.'
+  }
   $HistoricRepair = ($env:EQUINOX_WINDOWS_LEGACY_REINSTALL_ACCEPTANCE -ceq 'true')
   $AcceptedOldHistoricMain = ($FixtureSourceSha -ceq '8dbe965d28e76026123ce8de34d8f1aa27c10465' -and $SkipLegacyGuardianFixture)
   $AcceptedOldSigned610 = ($FixtureSourceSha -ceq 'e85790a99e8e05ccf9997279d174b452793d6097' -and -not $SkipLegacyGuardianFixture)
@@ -257,7 +279,7 @@ try {
   }
   Assert-True ($OwnedGitStatusCode -eq 0) 'Hosted product Git status preflight failed.'
 
-  if (-not $SkipLegacyGuardianFixture) {
+  if (-not $SkipLegacyGuardianFixture -and -not $RepairOnly -and -not $GuardianAuditElsewhere) {
   # The optional native Main audit is deliberately NOT a launcher or a release
   # authority: it binds pointer/store claims and hashes the installed shell,
   # but Git HEAD, full payload fingerprint and Native Messaging still need
@@ -778,6 +800,13 @@ try {
   }
   Assert-True ((Invoke-GuardianCheck '--audit-native-journal') -eq 70) 'Guardian accepted an orphan journal after its owning active receipt disappeared.'
   Write-Output "Windows $FixtureTarget Guardian native journal ownership audit positive/negative hosted acceptance PASSED."
+  if ($GuardianAuditOnly) {
+    # The full real installer lane independently checks WPF, Node, native
+    # messaging and user state. On this isolated runner the complete Guardian
+    # negative audit has passed; always run the enclosing finally cleanup.
+    Write-Output "Windows $FixtureTarget separately installed Guardian-only security acceptance PASSED."
+    return
+  }
   } # End old Guardian fixture: no mock Guardian in real old-installed upgrade.
   # An old, signed A installed the toolchain PINNED BY A (e.g. Node 26.10.0),
   # not the Node pinned by the latest hosted test harness. Read only the
@@ -802,8 +831,14 @@ try {
   # current signed Stable release, not the independent build toolchain.
   $StableWorkerNode = Join-Path $ReleaseDir 'runtime\node\bin\node.exe'
   Assert-True ([IO.File]::Exists($StableWorkerNode)) 'Stable-owned detached worker Node is missing.'
-  & $StableWorkerNode (Join-Path $Root 'tests/release/windows-native-ab-installed-smoke.mjs') $ReleaseDir $FixtureTarget
-  if ($LASTEXITCODE -ne 0) { throw 'Windows actual native shell A/B switch/rollback smoke failed.' }
+  if (-not $RepairOnly -and -not $NativeABInPackage) {
+    & $StableWorkerNode (Join-Path $Root 'tests/release/windows-native-ab-installed-smoke.mjs') $ReleaseDir $FixtureTarget
+    if ($LASTEXITCODE -ne 0) { throw 'Windows actual native shell A/B switch/rollback smoke failed.' }
+  } elseif ($NativeABInPackage) {
+    Write-Output 'Exact native WPF A/B acceptance is required in the independent package lane; Guardian and real installed-host checks remain here.'
+  } else {
+    Write-Output 'Native A/B and Guardian negative cases are covered by the separate full installer lane.'
+  }
   Assert-True ((& $OwnedNode $OwnedNpm --version) -match '^\d+\.\d+\.\d+$') 'Product-owned npm CLI did not execute.'
   # Exercise the actual packaged CLI with a throwaway offline profile.
   if (-not $SkipLegacyGuardianFixture) {
