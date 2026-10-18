@@ -475,10 +475,18 @@ async function createManagedZip(rootDir, releaseDir, artifactPath) {
   const helper = path.join(path.dirname(fileURLToPath(import.meta.url)), "windows-managed-zip.ps1");
   await fs.rm(artifactPath, { force: true });
   try {
-    await execFile("powershell.exe", [
+    const result = await execFile("powershell.exe", [
       "-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", helper,
       "-SourceDirectory", releaseDir, "-DestinationZip", artifactPath,
     ], { timeout: WINDOWS_ZIP_TIMEOUT_MS, maxBuffer: 4 * 1024 * 1024, windowsHide: true });
+    if (process.env.GITHUB_ACTIONS === "true") {
+      for (const line of String(result?.stdout ?? "").split(/\r?\n/u)) {
+        const match = /^Hosted Windows ZIP writer phase: (assembly-load|compile|write); durationSeconds=(\d{1,3}\.\d)$/u.exec(line);
+        if (match && Number(match[2]) <= 600) {
+          process.stdout.write("Hosted Windows ZIP writer phase: " + match[1] + "; durationSeconds=" + match[2] + "\n");
+        }
+      }
+    }
   } catch (error) {
     if (error && typeof error === "object" && (error.killed === true || error.signal)) {
       throw new Error(`Windows managed ZIP creation exceeded ${WINDOWS_ZIP_TIMEOUT_MS} ms.`);
@@ -512,7 +520,14 @@ export async function packageManagedEquinoxWindowsRelease({
   const artifactPath = path.join(outputDir, `equinox-local-${EQUINOX_LOCAL_VERSION}-${target}.zip`);
   await fs.mkdir(releaseDir, { recursive: true });
   try {
+    const hostedTiming = process.env.GITHUB_ACTIONS === "true";
+    const timed = (phase, started) => {
+      if (!hostedTiming) return;
+      process.stdout.write("Hosted Windows package phase: " + phase + "; durationSeconds=" +
+        Math.min(600, Math.max(0, (Date.now() - started) / 1000)).toFixed(1) + "\n");
+    };
     const canExecuteTarget = target === hostTarget;
+    const preparationStarted = Date.now();
     const preparationResults = await Promise.allSettled([
       copyReleaseSources(rootDir, releaseDir),
       installPinnedWindowsNode(transaction, releaseDir, fetchImpl, target, { canExecuteTarget }),
@@ -527,6 +542,7 @@ export async function packageManagedEquinoxWindowsRelease({
     ]);
     const preparationFailure = preparationResults.find((result) => result.status === "rejected");
     if (preparationFailure) throw preparationFailure.reason;
+    timed("prepare-components", preparationStarted);
     const sourceFileCount = preparationResults[0].value;
     await fs.writeFile(path.join(releaseDir, "release.json"), `${JSON.stringify({
       schemaVersion: 1,
@@ -537,10 +553,16 @@ export async function packageManagedEquinoxWindowsRelease({
       tunnelClientVersion: EQUINOX_LOCAL_TUNNEL_CLIENT_VERSION,
       serverEntry: "server.js",
     }, null, 2)}\n`);
+    const validationStarted = Date.now();
     await assertNormalTree(releaseDir);
     await validateFirstInstallRelease(releaseDir, { target });
+    timed("validate-inputs", validationStarted);
+    const zipStarted = Date.now();
     await createManagedZip(rootDir, releaseDir, artifactPath);
+    timed("write-zip", zipStarted);
+    const hashStarted = Date.now();
     const digest = await sha256File(artifactPath);
+    timed("hash-zip", hashStarted);
     return Object.freeze({ version: EQUINOX_LOCAL_VERSION, target, sourceSha, artifactPath, ...digest, sourceFileCount });
   } finally {
     await fs.rm(transaction, { recursive: true, force: true });
