@@ -139,7 +139,8 @@ export function registerDesktopGatewayTools({
         operation: z.string().min(1).max(160).describe("Çağrılacak desktop operation adı"),
         arguments: z.record(z.string(), z.unknown()).default({}).describe("Seçilen operation'ın güncel giriş şemasına uyan argümanlar"),
       },
-      outputSchema: { text: z.string() },
+      // Native desktop captures can return MCP image blocks. A text-only
+      // outputSchema makes clients favor structuredContent and omit media.
       annotations: {
         title: "Desktop operation çağır",
         readOnlyHint: false,
@@ -178,6 +179,10 @@ export function registerDesktopGatewayTools({
           result = await withMutationLocks(["desktop"], async () => {
             const toolResult = await bridge.callTool(operation, operationArguments);
             const normalized = normalizeChromeToolResult(toolResult);
+            // Preserve native image blocks as the canonical MCP response.
+            // A parallel text-only structuredContent caused the actual
+            // connected app to surface only the screenshot's filePath.
+            if (normalized.content?.some((part) => part.type === "image")) return normalized;
             return {
               ...normalized,
               structuredContent: { text: extractTextContent(normalized) },
