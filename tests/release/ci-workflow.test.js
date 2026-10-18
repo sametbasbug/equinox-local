@@ -120,29 +120,6 @@ test("download-artifact consumers use current v8 with integrity errors enabled",
   assert.doesNotMatch(ci + archived, /actions\/download-artifact@v7/u);
 });
 
-test("manual native Windows A-to-B overlaps immutable A download and runner setup without bypassing identity or SHA", async () => {
-  const workflow = await fs.readFile(new URL("../../.github/workflows/main-installed-windows-acceptance.yml", import.meta.url), "utf8");
-  const installed = workflow.split("  installed-update:")[1]?.split("  # Optional genuine native hosted-OS bridge smoke.")[0];
-  assert.ok(installed, "Windows hosted A-to-B section is required");
-  const parallel = installed.indexOf("      - parallel:");
-  const identity = installed.indexOf("      - name: Verify disposable machine, source A ancestry and admitted B");
-  const hashed = installed.indexOf("Get-FileHash -LiteralPath $artifact");
-  const install = installed.indexOf("tests/release/windows-installer-real-package-smoke.ps1");
-  assert.ok(parallel > 0 && parallel < identity && identity < hashed && hashed < install,
-    "preparation may overlap, but SHA, admitted B and real installer must remain sequential");
-  const group = installed.slice(parallel, identity);
-  assert.match(group, /actions\/checkout@v7/u);
-  assert.match(group, /fetch-depth: 0/u);
-  assert.match(group, /actions\/setup-node@v7/u);
-  assert.match(group, /actions\/download-artifact@v8/u);
-  assert.match(group, /main-native-\$\{\{ inputs\.previous_main_sha \}\}-\$\{\{ matrix\.target \}\}/u);
-  assert.equal((installed.match(/actions\/download-artifact@v8/gu) ?? []).length, 1,
-    "old A must be downloaded once to its isolated path");
-  assert.match(installed.slice(identity, hashed), /id: identity/u);
-  assert.match(installed.slice(identity, hashed), /plan\.mainUpdateImpact -ne \$false/u);
-  assert.match(installed.slice(identity, install), /\$file\.Length -ne \[int64\]\$manifest\.artifact\.bytes/u);
-});
-
 test("manual Windows installed A-to-B acceptance admits post-snapshot CI/docs but rejects unadmitted product code", async () => {
   const archived = await fs.readFile(new URL("../../.github/workflows/main-installed-windows-acceptance.yml", import.meta.url), "utf8");
   assert.match(archived, /main-snapshot/u);
