@@ -120,6 +120,21 @@ test("download-artifact consumers use current v8 with integrity errors enabled",
   assert.doesNotMatch(ci + archived, /actions\/download-artifact@v7/u);
 });
 
+test("manual Windows installed A-to-B acceptance admits post-snapshot CI/docs but rejects unadmitted product code", async () => {
+  const archived = await fs.readFile(new URL("../../.github/workflows/main-installed-windows-acceptance.yml", import.meta.url), "utf8");
+  assert.match(archived, /main-snapshot/u);
+  assert.match(archived, /git merge-base --is-ancestor \$env:OLD_SHA \$sha/u);
+  assert.match(archived, /git merge-base --is-ancestor \$sha HEAD/u);
+  assert.match(archived, /node scripts\/release\/plan-main-native-artifacts\.mjs --current-sha \$sha --target-sha \$headSha/u);
+  assert.match(archived, /\$LASTEXITCODE -ne 0/u);
+  assert.match(archived, /\$plan\.schemaVersion -ne 1/u);
+  assert.match(archived, /\$plan\.currentSha -cne \$sha/u);
+  assert.match(archived, /\$plan\.targetSha -cne \$headSha/u);
+  assert.match(archived, /\$plan\.mainUpdateImpact -ne \$false/u);
+  assert.match(archived, /Unadmitted product code after Main snapshot/u);
+  assert.doesNotMatch(archived, /\$allowed = @\(/u);
+});
+
 test("ARM64 installer has a tighter bound after duplicate package construction is removed", () => {
   assert.match(job("windows-arm64-installer"), /timeout-minutes: 7/u);
 });
