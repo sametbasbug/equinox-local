@@ -125,7 +125,7 @@ test("Windows release ZIP helper uses PowerShell 5.1 .NET ZIP APIs without dynam
   assert.match(helper, /MaxBytes = 2147483648/u);
   assert.match(helper, /MaxName = 500/u);
   assert.match(helper, /Assert-ExtractedTree/u);
-  assert.match(helper, /FileMode\]::CreateNew/u);
+  assert.match(helper, /ZipFileExtensions\]::ExtractToDirectory\(\$zip, \$destination\)/u);
   assert.match(helper, /byte count drifted from central-directory metadata/u);
 });
 

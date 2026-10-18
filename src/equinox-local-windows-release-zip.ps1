@@ -104,26 +104,13 @@ try {
       [IO.Directory]::CreateDirectory($destination) | Out-Null
       Assert-NormalDirectory $destination
       try {
-        $prefix = $destination.TrimEnd([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
-        foreach ($item in $checked.Items) {
-          [string]$target = $destination
-          foreach ($segment in $item.Name.Split([char]'/')) { $target = [IO.Path]::Combine($target, $segment) }
-          $target = [IO.Path]::GetFullPath($target)
-          if (-not $target.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase)) { throw 'ZIP extraction escaped its destination.' }
-          if ($item.Directory) {
-            [IO.Directory]::CreateDirectory($target) | Out-Null
-            Assert-NormalDirectory $target
-          } else {
-            $parent = [IO.Path]::GetDirectoryName($target)
-            [IO.Directory]::CreateDirectory($parent) | Out-Null
-            Assert-NormalDirectory $parent
-            $inputStream = $item.Entry.Open()
-            try {
-              $outputStream = [IO.FileStream]::new($target, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
-              try { $inputStream.CopyTo($outputStream) } finally { $outputStream.Dispose() }
-            } finally { $inputStream.Dispose() }
-          }
-        }
+        # The full central-directory allowlist above runs before any file
+        # writes. ExtractToDirectory is .NET's native bulk extractor, avoiding
+        # the PowerShell per-entry invocation overhead. A newly created owned
+        # destination plus post-extract reparse/size audit remain required.
+        # Use the SAME preflight-validated, open ZipArchive handle for bulk
+        # extraction; never reopen a potentially swapped archive on disk.
+        [IO.Compression.ZipFileExtensions]::ExtractToDirectory($zip, $destination)
         $counters = @{ Count=0; Bytes=[long]0 }
         Assert-ExtractedTree $destination $counters
         if ($counters.Bytes -ne $checked.Bytes) { throw 'Extracted ZIP byte count drifted from central-directory metadata.' }
