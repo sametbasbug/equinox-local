@@ -16,7 +16,7 @@ export async function checkPublicProject({ rootDir = root, spawnSyncImpl, shellC
     recursiveDirectories: ["src", "scripts", "extension"],
     jsonFiles: JSON_FILES,
     spawnSyncImpl,
-    parallelJavascriptChecks: spawnSyncImpl ? 1 : 8,
+    parallelJavascriptChecks: spawnSyncImpl ? 1 : 4,
     shellCommand,
   });
 }
