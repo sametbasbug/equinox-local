@@ -110,8 +110,17 @@ export function createTerminalProcessOwnershipAdapter({
       return createWindowsJobObjectLease({ platform });
     },
     spawnSpec(command, args, env) {
+      // The gate is the interactive session (-NoExit -File), not a launcher
+      // for a second child. Preserve the explicitly selected pwsh executable.
+      // Direct terminal-manager callers may still use the PS5.1 short name.
+      const shell = String(command).toLowerCase() === "powershell.exe"
+        ? equinoxLocalWindowsPowerShellPath(env) : command;
+      const leaf = path.win32.basename(shell).toLowerCase();
+      if (!path.win32.isAbsolute(shell) || (leaf !== "powershell.exe" && leaf !== "pwsh.exe")) {
+        throw new Error("Windows interactive shell requires an absolute PowerShell executable.");
+      }
       return Object.freeze({
-        command: equinoxLocalWindowsPowerShellPath(env),
+        command: shell,
         args: Object.freeze([
           // Keep the verified gate itself as the interactive ConPTY shell:
           // no second PowerShell process or desktop console window.

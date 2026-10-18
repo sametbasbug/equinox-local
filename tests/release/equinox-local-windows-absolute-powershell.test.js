@@ -21,6 +21,10 @@ test('Windows background Job Object gate and PTY gate use the exact OS-owned exe
  assert.deepEqual(bg.args.slice(0,5), ['-NoLogo','-NoProfile','-NonInteractive','-WindowStyle','Hidden']);
  assert.deepEqual(pty.args.slice(0,5), ['-NoLogo','-NoProfile','-NoExit','-WindowStyle','Hidden']);
  assert.ok(!pty.args.includes('-NonInteractive'), 'PTY gate must remain interactive after the release handshake');
+ const pwshPath=path.win32.join('D:\\Program Files','PowerShell','7','pwsh.exe');
+ const pwsh=terminal.spawnSpec(pwshPath,['-NoLogo','-NoProfile'],{...env,ProgramFiles:'D:\\Program Files'});
+ assert.equal(pwsh.command,pwshPath,'interactive PS7 must launch its selected executable, not fixed PS5.1');
+ assert.deepEqual(pwsh.args,pty.args);
 });
 test('Windows system root must be absolute and must not be resolved through untrusted PATH',()=>{
  for(const value of ['Windows','../Windows','powershell.exe']){

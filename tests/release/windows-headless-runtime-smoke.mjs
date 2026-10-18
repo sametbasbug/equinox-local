@@ -342,7 +342,7 @@ async function verifyOptionalWindowsPowerShell7(root) {
     assert.equal(selected.command, pwsh);
     const started = await manager.start({
       projectId: "windows-smoke", projectName: "Windows Smoke", cwd: root,
-      command: selected.command, args: selected.argsFor("Write-Output 'PWSH7_FINITE_OK'; exit 17"),
+      command: selected.command, args: selected.argsFor("Write-Output ('PWSH' + $PSVersionTable.PSVersion.Major + '_FINITE_MAJOR'); exit 17"),
       purpose: "terminal_exec", env: process.env, label: "optional-pwsh7-finite",
     });
     processId = started.processId;
@@ -350,7 +350,7 @@ async function verifyOptionalWindowsPowerShell7(root) {
     const output = await manager.readLogs({ processId, cursor: 0 });
     assert.equal(ended.running, false);
     assert.equal(ended.exitCode, 17, "PowerShell 7 finite exit status was lost");
-    assert.match(output.output, /PWSH7_FINITE_OK/u);
+    assert.match(output.output, /PWSH7_FINITE_MAJOR/u, "finite command must actually run in PowerShell 7");
   } finally {
     if (processId) await manager.stop({ processId, force: true, remove: true }).catch(() => {});
     await manager.shutdown();
@@ -365,8 +365,8 @@ async function verifyOptionalWindowsPowerShell7(root) {
     });
     sessionId = started.sessionId;
     assert.equal(started.running, true);
-    terminalManager.write({ sessionId, data: "Write-Output 'PWSH7_CONPTY_OK'", key: "enter" });
-    await readTerminalUntil(terminalManager, sessionId, /PWSH7_CONPTY_OK/u, 10_000);
+    terminalManager.write({ sessionId, data: "Write-Output ('PWSH' + $PSVersionTable.PSVersion.Major + '_CONPTY_MAJOR')", key: "enter" });
+    await readTerminalUntil(terminalManager, sessionId, /PWSH7_CONPTY_MAJOR/u, 10_000);
   } finally {
     if (sessionId) await terminalManager.stop({ sessionId, force: true }).catch(() => {});
   }

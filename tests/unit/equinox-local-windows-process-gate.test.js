@@ -14,6 +14,8 @@ test("Windows owned-process gate never echoes .NET async completion objects or P
 test("Windows PTY gate reuses its hidden ConPTY shell with no nested native invocation", async () => {
   const source = await fs.readFile(new URL("../../src/equinox-local-windows-pty-gate.ps1", import.meta.url), "utf8");
   assert.match(source, /Unsupported Windows PTY shell flags/u);
+  assert.match(source, /PowerShell 7 was requested but the interactive host is Windows PowerShell 5\.1/u);
+  assert.match(source, /\$PSVersionTable\.PSVersion\.Major -lt 7/u);
   assert.match(source, /\[Console\]::Out.WriteLine\(\$readyMarker\)/u);
   assert.doesNotMatch(source, /& \$command @arguments/u);
   assert.doesNotMatch(source, /\$null -eq \$LASTEXITCODE/u);
