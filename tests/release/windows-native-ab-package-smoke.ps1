@@ -23,7 +23,7 @@ if ($ExpectedSha256 -ne '') {
 $fixture = Join-Path $env:RUNNER_TEMP ('equinox-native-ab-' + [Guid]::NewGuid().ToString('N'))
 [IO.Directory]::CreateDirectory($fixture) | Out-Null
 try {
-  & tar.exe -xf $ArtifactPath -C $fixture 'release/release.json' 'release/runtime/job' 'release/runtime/shell'
+  & tar.exe -xf $ArtifactPath -C $fixture 'release/release.json' 'release/runtime/job' 'release/runtime/shell' 'release/runtime/node/bin/node.exe'
   if ($LASTEXITCODE -ne 0) { throw 'Failed to extract the exact signed candidate WPF/job payload from the managed ZIP.' }
   $releaseDir = Join-Path $fixture 'release'
   $metadata = Get-Content -LiteralPath (Join-Path $releaseDir 'release.json') -Raw | ConvertFrom-Json
@@ -34,7 +34,11 @@ try {
   foreach ($expected in @('runtime/shell/EquinoxLocal.exe','runtime/job/equinox-local-job-object-helper.exe','runtime/job/owned-process-gate-v1.marker')) {
     if (-not [IO.File]::Exists((Join-Path $releaseDir $expected))) { throw "Native A/B candidate is missing $expected" }
   }
-  & node (Join-Path $PSScriptRoot 'windows-native-ab-installed-smoke.mjs') $releaseDir $Target
+  # Worker journal admission intentionally requires the verified release's
+  # PRODUCT-OWNED Node, not the GitHub runner Node on ambient PATH.
+  $ownedNode = Join-Path $releaseDir 'runtime/node/bin/node.exe'
+  if (-not [IO.File]::Exists($ownedNode)) { throw 'Native A/B acceptance is missing product-owned Node.' }
+  & $ownedNode (Join-Path $PSScriptRoot 'windows-native-ab-installed-smoke.mjs') $releaseDir $Target
   if ($LASTEXITCODE -ne 0) { throw 'Windows exact native WPF A/B rollback acceptance failed.' }
   Write-Output "Windows $Target package-lane exact PE A/B rollback acceptance PASSED."
 } finally {

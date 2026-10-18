@@ -108,6 +108,8 @@ test("exact native WPF A/B acceptance is shifted to mandatory parallel package l
   assert.match(smoke, /release\/runtime\/job' 'release\/runtime\/shell'/u);
   assert.match(smoke, /windows-native-ab-installed-smoke\.mjs/u);
   assert.match(smoke, /Native A\/B package SHA256 differs from its producer/u);
+  assert.match(smoke, /runtime\/node\/bin\/node\.exe/u);
+  assert.match(smoke, /& \$ownedNode /u);
 });
 
 test("download-artifact consumers use current v8 with integrity errors enabled", async () => {
