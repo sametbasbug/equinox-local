@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import fs from "node:fs/promises";
 import { mkdirSync, writeFileSync } from "node:fs";
 import os from "node:os";
@@ -18,6 +19,18 @@ test("TypeScript runtime and tooling output must pin LF line endings on Windows 
   assert.equal(tooling.extends, "./tsconfig.json");
   assert.equal(shared.compilerOptions.newLine, "lf", "Generated JS must be byte-exact across Windows and macOS");
   assert.equal(classicBrowser.compilerOptions.newLine, "lf");
+});
+
+test("Git checkouts keep generated JS/MJS LF even with Windows autocrlf", async () => {
+  const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
+  const output = execFileSync("git", ["check-attr", "eol", "--",
+    "src/authenticated-http-integration.js",
+    "scripts/verify-typescript-runtime.mjs",
+    "extension/chatgpt-continuation-state.js",
+  ], { cwd: root, encoding: "utf8" });
+  for (const line of output.trim().split(/\r?\n/u)) {
+    assert.match(line, /: eol: lf$/u, `Generated JS checkout must preserve LF: ${line}`);
+  }
 });
 
 test("TypeScript runtime source emits the exact committed JS that Main and Stable launch", async () => {
