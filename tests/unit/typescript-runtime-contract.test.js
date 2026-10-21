@@ -3,9 +3,22 @@ import fs from "node:fs/promises";
 import { mkdirSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import test from "node:test";
 
 import { verifyTypeScriptRuntimeOutput } from "../../scripts/verify-typescript-runtime.mjs";
+
+test("TypeScript runtime and tooling output must pin LF line endings on Windows and macOS", async () => {
+  const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
+  const shared = JSON.parse(await fs.readFile(path.join(root, "tsconfig.json"), "utf8"));
+  const runtime = JSON.parse(await fs.readFile(path.join(root, "tsconfig.runtime.json"), "utf8"));
+  const tooling = JSON.parse(await fs.readFile(path.join(root, "tsconfig.tooling.json"), "utf8"));
+  const classicBrowser = JSON.parse(await fs.readFile(path.join(root, "tsconfig.browser-extension.json"), "utf8"));
+  assert.equal(runtime.extends, "./tsconfig.json");
+  assert.equal(tooling.extends, "./tsconfig.json");
+  assert.equal(shared.compilerOptions.newLine, "lf", "Generated JS must be byte-exact across Windows and macOS");
+  assert.equal(classicBrowser.compilerOptions.newLine, "lf");
+});
 
 test("TypeScript runtime source emits the exact committed JS that Main and Stable launch", async () => {
   const result = await verifyTypeScriptRuntimeOutput();

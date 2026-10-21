@@ -398,7 +398,11 @@ test("Task Capsule concurrent stale revision updates have exactly one winner and
   assert.deepEqual(current.next,["First independent writer"]);
   const reloaded=createTaskCapsuleStore({rootDir:root});
   assert.deepEqual((await reloaded.read(created.taskId)).next,current.next);
-  assert.equal((await fs.stat(path.join(root,created.taskId+".json"))).mode&0o777,0o600);
+  // Windows chmod bits do not represent the private-state ACL; the native
+  // Windows ACL policy has separate platform-specific acceptance tests.
+  if (process.platform !== "win32") {
+    assert.equal((await fs.stat(path.join(root,created.taskId+".json"))).mode&0o777,0o600);
+  }
 });
 
 test("Task Capsule refuses deceptive chat hosts and cross-context Fresh Resume destinations before changing binding",async t=>{

@@ -5,6 +5,7 @@
     "moduleResolution": "NodeNext",
     "strict": true,
     "noEmit": true,
+    "newLine": "lf",
     "types": [
       "node"
     ],
