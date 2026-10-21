@@ -27,6 +27,9 @@ test("Git checkouts keep generated JS/MJS LF even with Windows autocrlf", async 
     "src/authenticated-http-integration.js",
     "scripts/verify-typescript-runtime.mjs",
     "extension/chatgpt-continuation-state.js",
+    "src/equinox-local-update-keys.ts",
+    "src/telegram-chat-bridge-controller.ts",
+    "scripts/verify-typescript-runtime.mts",
   ], { cwd: root, encoding: "utf8" });
   for (const line of output.trim().split(/\r?\n/u)) {
     assert.match(line, /: eol: lf$/u, `Generated JS checkout must preserve LF: ${line}`);
