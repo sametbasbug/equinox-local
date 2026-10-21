@@ -200,3 +200,99 @@ test("body-external bindings fail closed on unsafe, missing, duplicate, array, r
   assert.throws(() => applyAuthenticatedHttpResponseBindings(base, [...make("/nested/a"), ...make("/nested/a")], ctx), /same JSON Pointer twice/u);
   assert.throws(() => applyAuthenticatedHttpResponseBindings("text", make("/code"), ctx), /require a JSON object/u);
 });
+
+test("response reference store rejects invalid bounds, random IDs and unrepresentable body without exposing data", () => {
+  for(const key of ["ttlMs","maxEntries","maxBytes"]){
+    for(const value of [-1,0,1.1,"1",null,NaN,Infinity]){
+      assert.throws(()=>createAuthenticatedHttpResponseReferenceStore({[key]:value}),/positive integer/u,String(value));
+    }
+  }
+  let attempts=0;
+  const sameId=Buffer.alloc(16,0xaa);
+  const store=createAuthenticatedHttpResponseReferenceStore({
+    randomBytesImpl:()=>{attempts++;return sameId;},
+  });
+  const first=store.capture({profileId:"p",trustIdentity:"trust",body:{code:"synthetic"}});
+  assert.match(first,/^http_resp_[a-f0-9]{32}$/u);
+  assert.throws(()=>store.capture({profileId:"p",trustIdentity:"trust",body:{code:"other"}}),/id generation failed/u);
+  assert.equal(attempts,9);
+  assert.deepEqual(store.snapshot().entries,1);
+  for(const body of [undefined,()=>{},BigInt(1),{value:BigInt(1)}]){
+    assert.throws(()=>store.capture({profileId:"p",trustIdentity:"trust",body}),/not JSON-compatible/u);
+  }
+  assert.throws(()=>store.capture({profileId:"",trustIdentity:"trust",body:{}}),/profile is invalid/u);
+  assert.throws(()=>store.capture({profileId:"p",trustIdentity:"",body:{}}),/trust identity is invalid/u);
+  assert.equal(store.snapshot().entries,1);
+});
+
+test("response IDs are profile/trust isolated, expire on exact TTL, and purge affects only its profile",()=>{
+  let clock=10_000;
+  const store=createAuthenticatedHttpResponseReferenceStore({
+    ttlMs:100,maxEntries:3,maxBytes:200,now:()=>clock,randomBytesImpl:deterministicRandom(),
+  });
+  const id1=store.capture({profileId:"p1",trustIdentity:"signed-a",body:{code:"secret-fixture-1"}});
+  const id2=store.capture({profileId:"p2",trustIdentity:"signed-b",body:{code:"secret-fixture-2"}});
+  const before=store.snapshot();
+  assert.equal(before.entries,2);
+  assert.equal(store.resolve({responseId:id1,profileId:"p1",trustIdentity:"signed-a",jsonPointer:"/code"}),"secret-fixture-1");
+  for(const input of [
+    {responseId:id1,profileId:"p1",trustIdentity:"changed",jsonPointer:"/code"},
+    {responseId:id1,profileId:"p2",trustIdentity:"signed-a",jsonPointer:"/code"},
+    {responseId:"http_resp_"+'A'.repeat(32),profileId:"p1",trustIdentity:"signed-a",jsonPointer:"/code"},
+    {responseId:"../"+id1,profileId:"p1",trustIdentity:"signed-a",jsonPointer:"/code"},
+  ]){
+    assert.throws(()=>store.resolve(input),/trust identity|id is invalid/u);
+  }
+  assert.equal(store.purgeProfile("p1"),1);
+  assert.equal(store.purgeProfile("p1"),0);
+  assert.equal(store.snapshot().entries,1);
+  assert.throws(()=>store.resolve({responseId:id1,profileId:"p1",trustIdentity:"signed-a",jsonPointer:"/code"}),/unknown or expired/u);
+  clock=10_100;
+  assert.throws(()=>store.resolve({responseId:id2,profileId:"p2",trustIdentity:"signed-b",jsonPointer:"/code"}),/expired/u);
+  assert.equal(store.snapshot().entries,0);
+  assert.doesNotMatch(JSON.stringify(store.snapshot()),/secret-fixture/u);
+});
+
+test("response binding validation rejects prototype pollution, duplicates and malicious pointers before touching resolver",()=>{
+  const trace=[];
+  const responseStore={resolve(input){trace.push(input);return "synthetic-secret"}};
+  const ctx={profileId:"p",trustIdentity:"origin/bearer",responseStore};
+  const base={safe:{},untouched:"fixture",array:[{}]};
+  const bind=(target)=>[{target_json_pointer:target,response_id:"http_resp_"+'a'.repeat(32),source_json_pointer:"/code"}];
+  const forbidden=[
+    "/__proto__/pollute","/constructor/x","/prototype/x",
+    "/safe/__proto__/pollute","/safe/constructor/value","/safe/prototype/value",
+    "", "/bad~2escape", "bad", "/".repeat(2050),
+  ];
+  for(const target of forbidden){
+    assert.throws(()=>applyAuthenticatedHttpResponseBindings(base,bind(target),ctx),Error,target);
+  }
+  assert.throws(()=>applyAuthenticatedHttpResponseBindings(base,[...bind("/safe/code"),...bind("/safe/code")],ctx),/same JSON Pointer twice/u);
+  assert.throws(()=>applyAuthenticatedHttpResponseBindings(base,Array.from({length:65},()=>bind("/safe/x")[0]),ctx),/too many response bindings/u);
+  assert.equal(trace.length,0,"invalid target validation must not access prior sensitive response values");
+  assert.equal(Object.getPrototypeOf(base),Object.prototype);
+  assert.equal(Object.hasOwn(Object.prototype,"pollute"),false);
+  assert.deepEqual(base,{safe:{},untouched:"fixture",array:[{}]});
+});
+
+test("response bindings clone existing body, preserve source, produce unique redactions and reject overwrites",()=>{
+  const store=createAuthenticatedHttpResponseReferenceStore({randomBytesImpl:deterministicRandom()});
+  const responseId=store.capture({profileId:"p",trustIdentity:"t",body:{code:"synthetic",alt:"synthetic"}});
+  const input={safe:{},another:{},unmodified:"keep"};
+  const bindings=[
+    {target_json_pointer:"/safe/code",response_id:responseId,source_json_pointer:"/code"},
+    {target_json_pointer:"/another/code",response_id:responseId,source_json_pointer:"/alt"},
+  ];
+  const ctx={profileId:"p",trustIdentity:"t",responseStore:store};
+  const result=applyAuthenticatedHttpResponseBindings(input,bindings,ctx);
+  assert.equal(result.bindingsResolved,2);
+  assert.deepEqual(result.redactions,["synthetic"]);
+  assert.deepEqual(result.value,{safe:{code:"synthetic"},another:{code:"synthetic"},unmodified:"keep"});
+  assert.deepEqual(input,{safe:{},another:{},unmodified:"keep"});
+  assert.equal(Object.isFrozen(result),true);
+  assert.throws(()=>applyAuthenticatedHttpResponseBindings(result.value,bindings,ctx),/cannot be overwritten/u);
+  const pointerErrors=["/array/01","/array/-1","/array/999","/bad~4","array/0",'/'+ 'x'.repeat(2050)];
+  for(const jsonPointer of pointerErrors)assert.throws(()=>store.resolve({
+    responseId,profileId:"p",trustIdentity:"t",jsonPointer,
+  }),Error,jsonPointer);
+});

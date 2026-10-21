@@ -353,3 +353,114 @@ test("Emergency Stop cancels prepared Fresh Chat Resume and makes reserved brows
   assert.equal((await store.read(creatingTask.taskId)).freshResume.status, "ambiguous");
   assert.match((await store.read(creatingTask.taskId)).freshResume.reason, /emergency_stop_during_creating/u);
 });
+
+test("Task Capsule startup rejects a symlinked store root without adopting external task files",async t=>{
+  const parent=await fs.mkdtemp(path.join(os.tmpdir(),"equinox-task-root-guard-"));
+  t.after(()=>fs.rm(parent,{recursive:true,force:true}));
+  const outside=path.join(parent,"foreign"),link=path.join(parent,"store-link");
+  await fs.mkdir(outside);
+  const sentinel=path.join(outside,"private-sentinel");
+  await fs.writeFile(sentinel,"foreign-secret");
+  await fs.symlink(outside,link);
+  const store=createTaskCapsuleStore({rootDir:link});
+  await assert.rejects(store.initialize(),/normal directory/u);
+  assert.equal(await fs.readFile(sentinel,"utf8"),"foreign-secret");
+  assert.equal((await fs.lstat(link)).isSymbolicLink(),true);
+});
+
+test("Task Capsule loader quarantines a symlinked task entry and retains a valid task",async t=>{
+  const {root,store}=await fixture(t);
+  const task=await store.checkpoint(base);
+  const outside=path.join(root,"private-foreign-file");
+  await fs.writeFile(outside,JSON.stringify({secret:"foreign"}));
+  await fs.symlink(outside,path.join(root,"task-synthetic-foreign.json"));
+  const reloaded=createTaskCapsuleStore({rootDir:root});
+  const status=await reloaded.initialize();
+  assert.equal(status.loaded,1);
+  assert.equal(status.errors.length,1);
+  assert.equal(status.errors[0].file,"task-synthetic-foreign.json");
+  assert.equal((await reloaded.read(task.taskId)).taskId,task.taskId);
+  assert.equal(JSON.stringify(await reloaded.snapshot()).includes("foreign-secret"),false);
+  assert.equal(await fs.readFile(outside,"utf8"),JSON.stringify({secret:"foreign"}));
+});
+
+test("Task Capsule concurrent stale revision updates have exactly one winner and persist the winning snapshot",async t=>{
+  const {root,store}=await fixture(t);
+  const created=await store.checkpoint(base);
+  const revisions=await Promise.allSettled([
+    store.checkpoint({...base,taskId:created.taskId,expectedRevision:1,next:["First independent writer"]}),
+    store.checkpoint({...base,taskId:created.taskId,expectedRevision:1,next:["Second independent writer"]}),
+  ]);
+  assert.equal(revisions.filter(x=>x.status==="fulfilled").length,1);
+  assert.equal(revisions.filter(x=>x.status==="rejected"&&x.reason?.code==="TASK_CAPSULE_REVISION_CONFLICT").length,1);
+  const current=await store.read(created.taskId);
+  assert.equal(current.checkpointRevision,2);
+  assert.deepEqual(current.next,["First independent writer"]);
+  const reloaded=createTaskCapsuleStore({rootDir:root});
+  assert.deepEqual((await reloaded.read(created.taskId)).next,current.next);
+  assert.equal((await fs.stat(path.join(root,created.taskId+".json"))).mode&0o777,0o600);
+});
+
+test("Task Capsule refuses deceptive chat hosts and cross-context Fresh Resume destinations before changing binding",async t=>{
+  const {root,store}=await fixture(t);
+  const created=await store.checkpoint(base);
+  const source={browserContext:"user",browserInstanceId:"browser-instance-fixture",mode:"task-tab",
+    tabId:789,conversationId:"fixture-conversation-123",canonicalUrl:"https://chatgpt.com/c/fixture-conversation-123",
+    title:"Fixture",userEpoch:"epoch-fixture",assistantTurnKey:"turn-fixture",freshChatResumeVersion:1};
+  const impostor={browserContext:"user",browserInstanceId:"browser-instance-fixture",tabId:888,
+    conversationId:"another-conversation-123",canonicalUrl:"https://chatgpt.com.attacker.invalid/c/another-conversation-123"};
+  await assert.rejects(store.bindChat({taskId:created.taskId,binding:impostor}),/chatgpt.com HTTPS URL/u);
+  assert.equal((await store.read(created.taskId)).chatBinding,null);
+  const prepared=await store.prepareFreshResume({taskId:created.taskId,source});
+  const reserved=await store.reserveFreshResumeMutation(created.taskId,prepared.freshResume.resumeId);
+  assert.equal(reserved.freshResume.status,"creating");
+  const wrongContext={...impostor,canonicalUrl:"https://chatgpt.com/c/another-conversation-123",browserContext:"agent"};
+  await assert.rejects(store.settleFreshResume(created.taskId,prepared.freshResume.resumeId,"confirmed",{destination:wrongContext}),/source browser context and instance/u);
+  const live=await store.readInternal(created.taskId);
+  assert.equal(live.chatBinding,null);
+  assert.equal(live.freshResume.status,"creating");
+  assert.equal((await fs.readdir(root)).filter(x=>x.endsWith(".json")).length,1);
+});
+
+
+test("Task Capsule binds only the exact HTTPS ChatGPT conversation, including Project routes", async (t) => {
+  const { store } = await fixture(t);
+  const task = await store.checkpoint(base);
+  const binding = {
+    browserContext: "user", browserInstanceId: "browser-instance-fixture", tabId: 77,
+    conversationId: "fixture-conversation-123",
+    canonicalUrl: "https://chatgpt.com/g/g-p-1234567890abcdef/c/fixture-conversation-123",
+  };
+  for (const canonicalUrl of [
+    "https://chatgpt.com/c/different-conversation-123",
+    "https://chatgpt.com/g/g-p-1234567890abcdef/c/different-conversation-123",
+    "https://chatgpt.com/c/fixture-conversation-123/more",
+    "https://chatgpt.com/other/c/fixture-conversation-123",
+    "https://attacker@chatgpt.com/c/fixture-conversation-123",
+    "https://chatgpt.com:444/c/fixture-conversation-123",
+    "https://chatgpt.com/c/fixture-conversation-123?redirect=other",
+    "https://chatgpt.com/c/fixture-conversation-123#wrong",
+    "https://chatgpt.com.attacker.invalid/c/fixture-conversation-123",
+  ]) {
+    await assert.rejects(() => store.bindChat({ taskId: task.taskId, binding: { ...binding, canonicalUrl } }), /Chat binding URL/u);
+    assert.equal((await store.readInternal(task.taskId)).chatBinding, null);
+  }
+  await store.bindChat({ taskId: task.taskId, binding });
+  assert.equal((await store.readInternal(task.taskId)).chatBinding.canonicalUrl, binding.canonicalUrl);
+});
+
+test("Task Capsule rejects mismatched Auto Continue and Fresh Resume URLs before scheduling a mutation", async (t) => {
+  const { store } = await fixture(t);
+  const task = await store.checkpoint(base);
+  for (const canonicalUrl of [
+    "https://chatgpt.com/c/different-conversation-123",
+    "https://chatgpt.com:444/c/11111111-aaaa-bbbb-cccc-222222222222",
+    "https://chatgpt.com/g/g-p-0123456789abcdef0123456789abcdef/c/another-conversation-123",
+  ]) {
+    await assert.rejects(() => store.armContinuation({taskId: task.taskId, target: {...continuationTarget, canonicalUrl}}), /Auto Continue canonical URL/u);
+    await assert.rejects(() => store.prepareFreshResume({taskId: task.taskId, source: {...freshResumeSource, canonicalUrl}}), /Fresh Chat Resume source URL/u);
+    const live = await store.readInternal(task.taskId);
+    assert.equal(live.continuation, null);
+    assert.equal(live.freshResume, null);
+  }
+});

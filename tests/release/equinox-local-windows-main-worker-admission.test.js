@@ -120,3 +120,30 @@ test('Windows native worker refuses missing validated native helper even with a 
   await assert.rejects(admitWindowsMainNativeWorkerJournal({ ...f.options, nativeHelperPath: null }), /no validated native identity helper/u);
   assert.deepEqual(f.calls, []);
 });
+
+test('existing foreign Windows owner is rejected immediately without retries or journal mutation', async () => {
+  const f = fixture({ token: 'f'.repeat(64) });
+  let reads = 0, sleeps = 0;
+  await assert.rejects(admitWindowsMainNativeWorkerJournal({
+    ...f.options, ownershipAttempts: 25,
+    readWorkerImpl: async (...args) => { reads++; return f.options.readWorkerImpl(...args); },
+    sleepImpl: async () => { sleeps++; },
+  }), /token\/PID/u);
+  assert.equal(reads, 1, 'a present mismatched owner must not be retried as a publication race');
+  assert.equal(sleeps, 0);
+  assert.deepEqual(f.calls, [], 'no native journal may be written for a foreign owner');
+});
+
+test('uncertain Windows process identity rejects both journal and ownerOnly before native action', async () => {
+  for (const ownerOnly of [false, true]) {
+    const f = fixture();
+    let receiptReads = 0;
+    await assert.rejects(admitWindowsMainNativeWorkerJournal({
+      ...f.options, ownerOnly,
+      engine: { readActive: async () => { receiptReads++; return f.options.receipt; } },
+      inspectWorkerImpl: async () => ({ running: true, stale: false, uncertain: true }),
+    }), /PID, OS creation timestamp or executable was not independently verified/u);
+    assert.equal(receiptReads, 0);
+    assert.deepEqual(f.calls, [], 'uncertain birth timestamp cannot get an owned journal');
+  }
+});

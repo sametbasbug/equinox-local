@@ -147,3 +147,90 @@ test("old task completion returns idle without stale notification", () => {
   assert.equal(presentation.notification, null);
   assert.equal(presentation.task, null);
 });
+
+test("presentation never exposes unbounded task titles in notifications or task summaries", () => {
+  const longTitle = "private-task-prefix:" + "x".repeat(500) + ":private-tail";
+  const item = task({ title: longTitle, freshResume: { status: "ambiguous", resumeId: "resume-1" } });
+  const output = deriveEquinoxLocalPresentationState({
+    status: baseStatus(), tasks: [item], now: NOW,
+  });
+  assert.equal(output.state, "needs_attention");
+  assert.equal(output.task.title.length, 120);
+  assert.ok(output.task.title.endsWith("…"));
+  assert.equal(output.notification.kind, "fresh_resume_attention");
+  assert.equal(output.notification.body.length, 120 + " needs Fresh Chat Resume recovery.".length);
+  assert.doesNotMatch(JSON.stringify(output), /private-tail/u);
+  assert.equal(Object.isFrozen(output), true);
+  assert.equal(Object.isFrozen(output.runtime), true);
+  assert.equal(Object.isFrozen(output.task), true);
+  assert.equal(Object.isFrozen(output.notification), true);
+});
+
+test("presentation preserves emergency-stop priority over all other attention, setup and work signals", () => {
+  const output = deriveEquinoxLocalPresentationState({
+    status: baseStatus({
+      health: { state: "CRITICAL" },
+      agentControl: { state: "PAUSED", paused: true, activeWork: { terminals: 8, processes: 3, total: 11 } },
+      browser: { contexts: { agent: { ready: false } } },
+    }),
+    tasks: [task({ freshResume: { status: "ambiguous", resumeId: "resume-attention" } })],
+    onboarding: { available: true, setupComplete: false, needsAttention: true, issue: "Needs maintenance" },
+    now: NOW,
+  });
+  assert.equal(output.state, "emergency_stopped");
+  assert.equal(output.runtime.paused, true);
+  assert.equal(output.runtime.healthState, "CRITICAL");
+  assert.equal(output.runtime.activeWorkCount, 11);
+  assert.equal(output.browser.agentReady, false);
+  assert.equal(output.notification.kind, "fresh_resume_attention");
+  assert.equal(output.setup.needsAttention, true);
+});
+
+test("presentation treats invalid collections, stale completion and missing health as attention without inventing task data", () => {
+  for (const tasks of [null, "malformed", 42, {}, [null, undefined, 2, "text"]]) {
+    const output = deriveEquinoxLocalPresentationState({
+      status: { health: { state: "HEALTHY" } }, tasks, now: NOW,
+    });
+    assert.equal(output.task, null);
+    assert.equal(output.notification, null);
+    assert.equal(output.state, "idle");
+  }
+  const unknown = deriveEquinoxLocalPresentationState({ tasks: null, now: NOW });
+  assert.equal(unknown.runtime.healthState, "UNKNOWN");
+  assert.equal(unknown.state, "needs_attention");
+  assert.equal(unknown.notification, null);
+});
+
+test("presentation transient success and notifications honor inclusive time windows and never recur after expiry", () => {
+  const done = task({
+    status: "completed", completedAt: new Date(NOW - 60_000).toISOString(),
+    updatedAt: new Date(NOW - 60_000).toISOString(),
+  });
+  const boundary = deriveEquinoxLocalPresentationState({status: baseStatus(), tasks:[done], now:NOW});
+  assert.equal(boundary.state, "success");
+  assert.equal(boundary.notification.kind, "task_completed");
+  const expired = deriveEquinoxLocalPresentationState({status: baseStatus(), tasks:[done], now:NOW+1});
+  assert.equal(expired.state, "idle");
+  assert.equal(expired.task, null);
+  assert.equal(expired.notification.kind, "task_completed", "completion notification lasts longer than transient success state");
+  const fullyExpired = deriveEquinoxLocalPresentationState({status: baseStatus(), tasks:[done], now:NOW+5*60_000});
+  assert.equal(fullyExpired.notification, null);
+});
+
+test("presentation does not let negative or malformed active work counts fabricate negative operation totals", () => {
+  const variants = [
+    [{ total: -10, terminals: 4, processes: 2 }, 0],
+    [{ terminals: -3, processes: -8 }, 0],
+    [{ total: "7", terminals: 2, processes: 1 }, 3],
+    [{ total: 2.5, terminals: 1, processes: 2 }, 3],
+    [{ total: 4, terminals: 90, processes: 90 }, 4],
+  ];
+  for (const [activeWork, expectedCount] of variants) {
+    const output = deriveEquinoxLocalPresentationState({
+      status: baseStatus({ agentControl: { state: "ACTIVE", paused: false, activeWork } }),
+      now: NOW,
+    });
+    assert.equal(output.runtime.activeWorkCount, expectedCount);
+    assert.equal(output.state, expectedCount === 0 ? "idle" : "working");
+  }
+});

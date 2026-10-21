@@ -537,3 +537,43 @@ export async function registerPrivateReleaseGateTools() { return null; }
     ],
   });
 });
+
+test("server composition preserves exact selected-root and protected path admission before file tools",async()=>{
+ const source=await readServer();
+ assert.match(source,/if \(!configuredDefinition && normalizedRoot === path\.parse\(normalizedRoot\)\.root\) \{\s*throw new Error\(/u);
+ assert.match(source,/const realCandidate = await fs\.realpath\(candidate\);[\s\S]*if \(!isInsideProject\(realCandidate\)\)/u);
+ assert.match(source,/if \(FULL_FILE_ACCESS && !getActiveProjectContext\(\)\.configured\) \{\s*assertNotProtectedAgentPath\(realCandidate\)/u);
+ assert.match(source,/projectContextStorage\s*=\s*new AsyncLocalStorage/u);
+});
+
+test("server composition never exposes fallback personal Chrome automation when Browser access is disabled",async()=>{
+ await exerciseRuntime({assertions:[
+  "const snapshot=runtime.snapshot();",
+  "if (snapshot.browser?.contexts?.user?.ready === true) throw Error('Your Browser accidentally connected');",
+  "if (snapshot.browser?.contexts?.agent?.ready === true) throw Error('Agent Browser unexpectedly started');",
+  "if (!Array.isArray(Object.keys(runtime.server._registeredTools??{}))) throw Error('tool registration unavailable');",
+ ]});
+});
+
+test("server compositor retains native update cleanup doctor HEALTHY gate and private restart quiescence",async()=>{
+ const source=await readServer();
+ const restart=source.indexOf("async function restartLocalRuntime()");
+ const quiesce=source.indexOf("await quiesceContinuityForRestart()",restart);
+ const mutation=source.indexOf("const mutationPathLocks = createMutationPathLockManager(");
+ const ownerGuard=source.indexOf("const mcpToolReplayGuard = createMcpToolReplayGuard(");
+ const storage=source.indexOf("pruneVerifiedMainLargeStorage({",source.indexOf("async function start("));
+ assert.ok(restart>=0&&quiesce>restart);
+ assert.ok(ownerGuard>=0&&mutation>ownerGuard);
+ assert.ok(storage>0);
+ assert.match(source.slice(source.indexOf("async function start(")),/doctor\.state === "HEALTHY" && doctor\.summary\.attention === 0/u);
+ assert.match(source.slice(source.indexOf("async function start(")),/if \(doctorApproved\) \{\s*const result = equinoxLocalInstallation\.kind/u);
+});
+
+test("server fixture preserves MCP registry API and avoids generic remote recipient or shell gateway",async()=>{
+ await exerciseRuntime({assertions:[
+  "const registered=Object.keys(runtime.server._registeredTools??{});",
+  "if (typeof runtime.server.registerTool !== 'function') throw Error('MCP registerTool entrypoint unavailable');",
+  "for (const banned of ['unrestricted_shell','telegram_read_all_messages','personal_chrome_cdp','send_to_any_telegram_recipient']) if (registered.includes(banned)) throw Error('unexpected generic authority: '+banned);",
+  "if (runtime.snapshot().controlCenter?.active === true) throw Error('Control Center unexpectedly opened on test profile');",
+ ]});
+});

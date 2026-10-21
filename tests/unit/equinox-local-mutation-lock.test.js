@@ -121,3 +121,55 @@ test("sibling mutation roots can proceed concurrently", async () => {
   releaseFirst.resolve();
   await Promise.all([first, second]);
 });
+
+test("timed-out mutation lock never starts the waiting task and leaves no stale owner", async () => {
+  const manager = createMutationPathLockManager({waitMs:20});
+  const entered=deferred(),release=deferred();
+  const calls=[];
+  const first=manager.withLock("/tmp/owned-repo",async()=>{
+    calls.push("owner:enter");
+    entered.resolve();
+    await release.promise;
+    calls.push("owner:exit");
+  });
+  await entered.promise;
+  await assert.rejects(manager.withLock("/tmp/owned-repo/src",async()=>{
+    calls.push("expired:must-not-enter");
+  }),/Yazma kilidi bekleme süresi aşıldı/u);
+  assert.deepEqual(calls,["owner:enter"]);
+  release.resolve();
+  await first;
+  await manager.withLock("/tmp/owned-repo",async()=>calls.push("later:entered"));
+  assert.deepEqual(calls,["owner:enter","owner:exit","later:entered"]);
+});
+
+test("failed locked task releases overlap serialization without cross-root blockage", async () => {
+  const manager=createMutationPathLockManager({waitMs:1000});
+  const entered=deferred(),allowFail=deferred(),trace=[];
+  const failing=manager.withLock("/tmp/owner",async()=>{
+    trace.push("first-enter");
+    entered.resolve();
+    await allowFail.promise;
+    throw Error("fixture failure does not poison lock");
+  });
+  await entered.promise;
+  const subsequent=manager.withLock("/tmp/owner/nested",async()=>trace.push("second-enter"));
+  await manager.withLock("/tmp/independent",async()=>trace.push("sibling-enter"));
+  assert.deepEqual(trace,["first-enter","sibling-enter"]);
+  allowFail.resolve();
+  await assert.rejects(failing,/fixture failure/u);
+  await subsequent;
+  assert.deepEqual(trace,["first-enter","sibling-enter","second-enter"]);
+});
+
+test("Git worktree metadata refuses oversized and malformed gitdir before path traversal",async(t)=>{
+  const root=await fs.mkdtemp(path.join(os.tmpdir(),"equinox-mutlock-invalid-gitdir-"));
+  t.after(()=>fs.rm(root,{recursive:true,force:true}));
+  const project=path.join(root,"project");
+  await fs.mkdir(project);
+  const dotgit=path.join(project,".git");
+  await fs.writeFile(dotgit,"x".repeat(4097));
+  await assert.rejects(resolveGitCommonDirectory(project),/outside the allowed bounds/u);
+  await fs.writeFile(dotgit,"gitdir: \u0000bad-path\n");
+  await assert.rejects(resolveGitCommonDirectory(project),/Git worktree metadata file is invalid/u);
+});

@@ -1,0 +1,171 @@
+import os from "node:os";
+import path from "node:path";
+
+import { equinoxLocalManagedLifecycle, equinoxLocalPlatformPaths } from "./equinox-local-platform.js";
+
+export type MainNativeInstallation = Readonly<{
+  kind: "source" | "unsupported" | "managed";
+  managed: boolean;
+  selfUpdateSupported: boolean;
+  platform: string;
+  arch: string;
+  target: string | null;
+  lifecycleKind: string | null;
+  reason?: string;
+  launchAgentLabel: string | null;
+  installRoot?: string;
+  releasesRoot?: string;
+  programRoot?: string;
+  nativeMessagingManifestRoot?: string;
+  releaseDir?: string;
+  stagingRoot?: string;
+  currentLink?: string | null;
+  currentPointer?: string;
+  mainNativeSha?: string;
+  launchAgentPath?: string | null;
+}>;
+type InstallationOptions = {
+  platform?:string;
+  arch?:string;
+  homeDir?:string;
+  env?:NodeJS.ProcessEnv;
+};
+type Lifecycle = ReturnType<typeof equinoxLocalManagedLifecycle>;
+type BaseResultOptions = {
+  platform:string;
+  arch:string;
+  lifecycle:Lifecycle;
+  kind:"source" | "unsupported";
+  reason:string;
+};
+export const EQUINOX_LOCAL_INSTALL_LABEL = "dev.equinox.local";
+
+function isInside(parent:string, child:string, pathApi:typeof path.posix):boolean {
+  const relative = pathApi.relative(parent, child);
+  return relative === "" || (!relative.startsWith("..") && !pathApi.isAbsolute(relative));
+}
+
+function baseResult({ platform, arch, lifecycle, kind, reason }: BaseResultOptions):MainNativeInstallation {
+  return Object.freeze({
+    kind,
+    managed: false,
+    selfUpdateSupported: false,
+    platform,
+    arch,
+    target: lifecycle.host.target,
+    lifecycleKind: lifecycle.kind,
+    reason,
+    launchAgentLabel: platform === "darwin" ? EQUINOX_LOCAL_INSTALL_LABEL : null,
+  });
+}
+
+export function resolveEquinoxLocalInstallation({
+  platform = process.platform,
+  arch = process.arch,
+  homeDir = os.homedir(),
+  env = process.env,
+}:InstallationOptions = {}):MainNativeInstallation {
+  let layout:ReturnType<typeof equinoxLocalPlatformPaths>;
+  let lifecycle:Lifecycle;
+  try {
+    layout = equinoxLocalPlatformPaths({ platform, arch, homeDir, env });
+    lifecycle = equinoxLocalManagedLifecycle({ platform, arch });
+  } catch (error) {
+    return Object.freeze({
+      kind: "source",
+      managed: false,
+      selfUpdateSupported: false,
+      platform,
+      arch,
+      target: null,
+      lifecycleKind: null,
+      reason: error instanceof Error ? error.message : "A trusted user home directory is unavailable.",
+      launchAgentLabel: platform === "darwin" ? EQUINOX_LOCAL_INSTALL_LABEL : null,
+    });
+  }
+
+  const pathApi = platform === "win32" ? path.win32 : path.posix;
+  const expectedRoot = layout.appDataRoot;
+  const configuredRoot = typeof env.EQUINOX_LOCAL_INSTALL_ROOT === "string"
+    ? env.EQUINOX_LOCAL_INSTALL_ROOT.trim()
+    : "";
+  const configuredRelease = typeof env.EQUINOX_LOCAL_RELEASE_DIR === "string"
+    ? env.EQUINOX_LOCAL_RELEASE_DIR.trim()
+    : "";
+
+  if (!configuredRoot || !configuredRelease) {
+    return baseResult({
+      platform, arch, lifecycle, kind: "source",
+      reason: "This runtime is running from a source checkout, not a managed Equinox Local installation.",
+    });
+  }
+
+  const installRoot = pathApi.resolve(configuredRoot);
+  const releaseDir = pathApi.resolve(configuredRelease);
+  const releasesRoot = pathApi.join(installRoot, "releases");
+
+  if (installRoot !== expectedRoot) {
+    return baseResult({
+      platform, arch, lifecycle, kind: "unsupported",
+      reason: "The managed installation root does not match the per-user Equinox Local location.",
+    });
+  }
+
+  // Once Main has a committed native pointer its immutable native-store is
+  // the actual product-owned runtime. Do not keep a redundant numbered Stable
+  // bundle just to satisfy the bootstrap path contract. The async
+  // managed-source resolver MUST authenticate this native SHA/pointer before
+  // admitting a running server.
+  const mainNativeTargetRoot = pathApi.join(installRoot, "state", "main-update", "native-store", lifecycle.host.target);
+  const mainRelative = platform === "win32"
+    ? pathApi.relative(mainNativeTargetRoot, releaseDir)
+    : "";
+  const mainSegments = mainRelative.split(pathApi.sep);
+  const mainNativeSha = platform === "win32" && mainSegments.length === 2 &&
+    /^[a-f0-9]{40}$/u.test(mainSegments[0] ?? "") && mainSegments[1] === "release"
+    ? mainSegments[0]! : null;
+  if ((!isInside(releasesRoot, releaseDir, pathApi) || releaseDir === releasesRoot) && !mainNativeSha) {
+    return baseResult({
+      platform, arch, lifecycle, kind: "unsupported",
+      reason: "The active release is outside the trusted Stable or Main native stores.",
+    });
+  }
+
+  if (!lifecycle.implemented) {
+    return Object.freeze({
+      ...baseResult({
+        platform, arch, lifecycle, kind: "unsupported",
+        reason: `The managed lifecycle is not implemented for ${lifecycle.host.target}.`,
+      }),
+      installRoot,
+      releasesRoot,
+      releaseDir,
+      stagingRoot: pathApi.join(installRoot, "staging"),
+      currentLink: platform === "darwin" ? layout.currentPointer : null,
+      currentPointer: layout.currentPointer,
+    });
+  }
+
+  return Object.freeze({
+    kind: "managed",
+    managed: true,
+    selfUpdateSupported: true,
+    platform,
+    arch,
+    target: lifecycle.host.target,
+    lifecycleKind: lifecycle.kind,
+    installRoot,
+    releasesRoot,
+    releaseDir,
+    ...(mainNativeSha ? { mainNativeSha } : {}),
+    currentLink: platform === "darwin" ? layout.currentPointer : null,
+    currentPointer: layout.currentPointer,
+    stagingRoot: pathApi.join(installRoot, "staging"),
+    programRoot: layout.programRoot,
+    nativeMessagingManifestRoot: layout.nativeMessagingManifestRoot,
+    launchAgentPath: platform === "darwin"
+      ? pathApi.join(homeDir, "Library", "LaunchAgents", `${EQUINOX_LOCAL_INSTALL_LABEL}.plist`)
+      : null,
+    launchAgentLabel: platform === "darwin" ? EQUINOX_LOCAL_INSTALL_LABEL : null,
+  });
+}

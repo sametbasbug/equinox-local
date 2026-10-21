@@ -280,3 +280,38 @@ test("Control Center keeps developer source check-only and enables managed-sourc
   assert.match(macApp, /main\["targetSha"\] as\? String/u);
   assert.match(macApp, /"Main " \+ String\(targetSha\.prefix\(7\)\)/u);
 });
+
+test("Main discovery refuses oversized declared or streamed GitHub responses without marking Main current",async()=>{
+  let requests=0;
+  for(const response of [
+    new Response(JSON.stringify({ref:"refs/tags/main-snapshot",object:{type:"commit",sha:CURRENT}}),{
+      status:200,headers:{"content-length":String(4*1024*1024+1)}}),
+    new Response("x".repeat(4*1024*1024+1),{status:200}),
+    new Response("{bad JSON",{status:200}),
+  ]){
+    const {value}=discovery({fetchImpl:async()=>{requests++;return response}});
+    const result=await value.check({force:true});
+    assert.equal(result.state,"unavailable");
+    assert.equal(result.targetSha,null);
+    assert.match(result.reason,/not an up-to-date result/u);
+    assert.ok(result.lastError);
+  }
+  assert.equal(requests,3);
+});
+
+test("source admission rejects a symlink checkout before invoking Git, and bad stamp shapes fail closed",async()=>{
+  let commands=0;
+  const result=await (await import("../../src/equinox-local-main-update.js")).inspectCanonicalMainCheckout(ROOT,{
+    fsImpl:{lstat:async()=>({isDirectory:()=>true,isSymbolicLink:()=>true}),realpath:async()=>ROOT},
+    execFileImpl:async()=>{commands++;throw Error("git must not run")},
+  });
+  assert.equal(result.eligible,false);
+  assert.equal(result.state,"unsupported");
+  assert.equal(commands,0);
+  for(const payload of [
+    null,[],false,
+    {schemaVersion:1,channel:"main",repository:"sametbasbug/equinox-local",branch:"main",bootstrapSha:CURRENT,unknown:true},
+    {schemaVersion:1,channel:"main",repository:"sametbasbug/equinox-local",branch:"main",bootstrapSha:"a".repeat(39)+"G"},
+    {schemaVersion:1,channel:"main",repository:"sametbasbug/equinox-local",branch:"main",bootstrapSha:5},
+  ])assert.throws(()=>validateManagedSourceInstallStamp(payload),/stamp|SHA|fields|object/ui);
+});

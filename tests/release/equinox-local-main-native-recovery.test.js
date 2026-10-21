@@ -18,6 +18,18 @@ const DB = "b".repeat(64);
 const TX = `main-${"c".repeat(32)}`;
 function transition(target) { return { mode: "artifact_required", target, currentSha: A, targetSha: B, currentRuntimeContractSha256: DA, targetRuntimeContractSha256: DB }; }
 
+function admittedWindowsSupervisor(target = "win32-x64") {
+  return {
+    admitted: true,
+    journal: { read: async () => null, advance: async () => null },
+    record: { transactionId: TX, target, currentSha: A, targetSha: B,
+      targetRuntimeContractSha256: DB, receiptStartedAt: "2026-10-21T00:00:00.000Z" },
+    supervisor: { independentNativeOwner: true, assertWorkerOwnership: async () => true,
+      shutdownOwnedWpf: async () => true, quiesceOwnedB: async () => true, verifyNativeMessaging: async () => true,
+      verifySustainedHealth: async () => true },
+  };
+}
+
 async function scratch(t) {
   const raw = await fs.mkdtemp(path.join(await fs.realpath(os.tmpdir()), "equinox-main-native-recovery-"));
   t.after(() => fs.rm(raw, { recursive: true, force: true }));
@@ -69,36 +81,105 @@ test("Darwin recovery reconstructs Stable baseline and exact target without curr
   assert.equal(events[4][1].sourceSha, B);
 });
 
-test("Windows recovery derives previous Main release only from exact durable identity", async () => {
-  const events = [];
+test("Windows native crash recovery rejects absent supervisor before reading descriptor or payload", async () => {
   const target = "win32-x64";
-  const root = "/private/tmp/equinox-win-recovery-state";
-  const targetRelease = `C:\\State\\native-store\\${target}\\${B}\\release`;
-  const previousRelease = `C:\\State\\native-store\\${target}\\${A}\\release`;
-  const launcher = (release) => `${release}\\runtime\\browser\\host.exe`;
-  let pointer = { sourceSha: A, target, runtimeContractSha256: DA };
-  const lifecycle = await recoverEquinoxLocalMainNativeLifecycle({
-    transition: transition(target), transactionRoot: root, transactionId: TX,
-    installation: { managed: true, selfUpdateSupported: true, target, platform: "win32", releasesRoot: "C:\\Stable", programRoot: "C:\\Program\\Equinox Local", nativeMessagingManifestRoot: "C:\\State\\manifest" },
-    readDescriptorImpl: async () => ({ schemaVersion: 1, channel: "main", targetSha: B, target, targetRuntimeContractSha256: DB, previous: { kind: "main", sourceSha: A, target, runtimeContractSha256: DA } }),
-    inspectStoredReleaseImpl: async (value) => { events.push(["stored", value.sourceSha]); return { releaseDir: value.sourceSha === B ? targetRelease : previousRelease }; },
-    inspectWindowsSnapshotImpl: async () => events.push(["snapshot"]),
-    activateWindowsImpl: async (value) => { events.push(["activate", value]); return {}; },
-    restoreWindowsImpl: async (value) => { events.push(["rollback", value]); return {}; },
-    assertWindowsNativeHostImpl: async (value) => events.push(["ownership", value]),
-    registerWindowsNativeHostImpl: async (value) => events.push(["register", value]),
-    windowsLauncherPathImpl: launcher,
-    readPointerImpl: async () => pointer,
-    writePointerImpl: async (_file, value) => { events.push(["pointer", value]); pointer = value; return value; },
+  for (const windowsAdmission of [null, { admitted: true, ownerOnly: true },
+    { ...admittedWindowsSupervisor(), record: { ...admittedWindowsSupervisor().record, currentSha: B } }]) {
+    const reads = [];
+    await assert.rejects(recoverEquinoxLocalMainNativeLifecycle({
+      transition: transition(target), transactionRoot: "/private/tmp/equinox-win-recovery-state", transactionId: TX,
+      installation: { managed: true, selfUpdateSupported: true, target }, windowsAdmission,
+      readDescriptorImpl: async () => { reads.push("descriptor"); throw Error("must not read descriptor"); },
+      inspectStoredReleaseImpl: async () => { reads.push("release"); throw Error("must not inspect payload"); },
+      inspectWindowsSnapshotImpl: async () => { reads.push("snapshot"); throw Error("must not inspect WPF"); },
+    }), /independent supervisor ownership and exact journal identity/u);
+    assert.deepEqual(reads, []);
+  }
+});
+
+test("Windows native crash recovery delegates exact A/B identities to independent supervisor lifecycle", async () => {
+  const target = "win32-x64";
+  const admitted = admittedWindowsSupervisor(target);
+  const reads = [];
+  const expected = { activate: async () => {}, rollback: async () => {}, commit: async () => {} };
+  const result = await recoverEquinoxLocalMainNativeLifecycle({
+    transition: transition(target), transactionRoot: "/private/tmp/equinox-win-recovery-state", transactionId: TX,
+    installation: { managed: true, selfUpdateSupported: true, target, releasesRoot: "C:\\Stable",
+      programRoot: "C:\\Program\\Equinox Local", nativeMessagingManifestRoot: "C:\\State\\manifest" },
+    windowsAdmission: admitted,
+    readDescriptorImpl: async () => ({ targetSha: B, target, targetRuntimeContractSha256: DB,
+      previous: { kind: "main", sourceSha: A, target, runtimeContractSha256: DA } }),
+    inspectStoredReleaseImpl: async ({sourceSha}) => {
+      reads.push(sourceSha);
+      return { releaseDir: `C:\\Native\\${sourceSha}`, sourceSha, target, runtimeContractSha256: sourceSha === A ? DA : DB };
+    },
+    readPointerImpl: async () => null,
+    inspectWindowsSnapshotImpl: async () => { reads.push("legacy-snapshot"); },
+    createBoundWindowsABImpl: (args) => {
+      assert.equal(args.windowsAdmission, admitted);
+      assert.equal(args.transactionId, TX);
+      assert.equal(args.previousReleaseDir, `C:\\Native\\${A}`);
+      assert.equal(args.stored.sourceSha, B);
+      return expected;
+    },
   });
-  await lifecycle.activate();
-  assert.equal(pointer.sourceSha, B);
-  await lifecycle.commit();
-  await lifecycle.rollback();
-  assert.equal(pointer.sourceSha, A);
-  assert.deepEqual(events.slice(0, 3).map(([name]) => name), ["stored", "stored", "snapshot"]);
-  assert.deepEqual(events.slice(0, 2).map(([, sha]) => sha), [B, A]);
-  assert.equal(events.find(([name]) => name === "activate")[1].previousReleaseDir, previousRelease);
-  const registrations = events.filter(([name]) => name === "register").map(([, value]) => value.launcherPath);
-  assert.deepEqual(registrations, [launcher(targetRelease), launcher(previousRelease)]);
+  assert.equal(result, expected);
+  assert.deepEqual(reads, [B, A]);
+});
+
+test("native recovery descriptor rejects malformed JSON, extra identity keys and changed payload without mutating it", async (t) => {
+  const root = await scratch(t);
+  const args = {
+    transition: transition("darwin-arm64"), previousPointer: null,
+    installation: { releaseDir: "/stable/5.2.0" }, transactionRoot: root, transactionId: TX,
+  };
+  await writeEquinoxLocalMainNativeRecoveryDescriptor(args);
+  const file = path.join(root, "staging", TX, "native-rollback", "native-recovery.json");
+  const original = JSON.parse(await fs.readFile(file, "utf8"));
+  for (const invalid of [
+    "{ definitely not valid JSON",
+    JSON.stringify({ ...original, unauthorized: true }),
+    JSON.stringify({ ...original, previous: { ...original.previous, arbitraryPath: "/elsewhere" } }),
+    JSON.stringify({ ...original, targetRuntimeContractSha256: "e".repeat(64) }),
+  ]) {
+    await fs.writeFile(file, invalid, { mode: 0o600 });
+    const before = await fs.readFile(file);
+    await assert.rejects(readEquinoxLocalMainNativeRecoveryDescriptor({
+      transactionRoot: root, transactionId: TX,
+      expected: { targetSha: B, target: "darwin-arm64", targetRuntimeContractSha256: DB },
+    }), /valid JSON|missing or unsupported fields|runtime contract mismatch/u);
+    await assert.rejects(writeEquinoxLocalMainNativeRecoveryDescriptor(args));
+    assert.deepEqual(await fs.readFile(file), before, "invalid existing descriptor must remain forensic evidence");
+  }
+});
+
+test("native recovery descriptor refuses symlinked state file and preserves foreign contents", async (t) => {
+  const root = await scratch(t);
+  const file = path.join(root, "staging", TX, "native-rollback", "native-recovery.json");
+  const foreign = path.join(root, "external.json");
+  await fs.writeFile(foreign, '{"canary":"unchanged"}', { mode: 0o600 });
+  await fs.symlink(foreign, file);
+  const args = {
+    transition: transition("darwin-arm64"), previousPointer: null,
+    installation: { releaseDir: "/stable/5.2.0" }, transactionRoot: root, transactionId: TX,
+  };
+  await assert.rejects(readEquinoxLocalMainNativeRecoveryDescriptor({transactionRoot: root,transactionId: TX}));
+  await assert.rejects(writeEquinoxLocalMainNativeRecoveryDescriptor(args));
+  assert.equal(await fs.readFile(foreign, "utf8"), '{"canary":"unchanged"}');
+  assert.equal((await fs.lstat(file)).isSymbolicLink(), true);
+});
+
+test("Main native recovery refuses descriptor SHA drift before inspecting stored payload or snapshot", async () => {
+  const target = "win32-x64";
+  const actions = [];
+  await assert.rejects(recoverEquinoxLocalMainNativeLifecycle({
+    transition: transition(target), transactionRoot: "/private/tmp/eq-guard", transactionId: TX,
+    windowsAdmission: admittedWindowsSupervisor(target),
+    installation: { managed: true, selfUpdateSupported: true, target, platform: "win32", releasesRoot: "C:\\Stable", programRoot: "C:\\Program\\Equinox Local", nativeMessagingManifestRoot: "C:\\State\\manifest" },
+    readDescriptorImpl: async () => { actions.push("read descriptor"); throw new Error("Main native recovery target SHA mismatch."); },
+    inspectStoredReleaseImpl: async () => { actions.push("inspect payload"); throw new Error("must never inspect before descriptor"); },
+    inspectWindowsSnapshotImpl: async () => { actions.push("inspect snapshot"); throw new Error("must never activate"); },
+    activateWindowsImpl: async () => { actions.push("activate"); throw new Error("must never activate"); },
+  }), /target SHA mismatch/u);
+  assert.deepEqual(actions, ["read descriptor"]);
 });

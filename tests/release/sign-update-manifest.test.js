@@ -224,3 +224,49 @@ test("private signing key descriptor reader validates mode, ownership, bound and
     await fs.rm(root, { recursive: true, force: true });
   }
 });
+
+test("signing CLI refuses duplicate key-file parameters before accessing any key", async () => {
+  const { execFile } = await import("node:child_process");
+  const { promisify } = await import("node:util");
+  const { fileURLToPath } = await import("node:url");
+  const script = fileURLToPath(new URL("../../scripts/release/sign-update-manifest.mjs", import.meta.url));
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "equinox-sign-duplicate-flags-"));
+  try {
+    await assert.rejects(promisify(execFile)(process.execPath, [
+      script, "--version", "6.0.4", "--target", "darwin-arm64",
+      "--artifact", path.join(root, "missing-artifact.tar.gz"),
+      "--key-id", "fixture", "--key-file", path.join(root, "missing-key-one.pem"),
+      "--key-file", path.join(root, "missing-key-two.pem"), "--output", root,
+    ], { cwd: root, timeout: 5000, maxBuffer: 8192 }), (error) => {
+      assert.equal(error.code, 1);
+      assert.equal(error.stdout, "");
+      assert.match(error.stderr, /Duplicate signing argument: --key-file/u);
+      return true;
+    });
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test("signing CLI denies special prototype flag names before reading a key", async () => {
+  const { execFile } = await import("node:child_process");
+  const { promisify } = await import("node:util");
+  const { fileURLToPath } = await import("node:url");
+  const script = fileURLToPath(new URL("../../scripts/release/sign-update-manifest.mjs", import.meta.url));
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "equinox-sign-prototype-flag-"));
+  try {
+    await assert.rejects(promisify(execFile)(process.execPath, [
+      script, "--version", "6.0.4", "--target", "darwin-arm64",
+      "--artifact", path.join(root, "missing.tar.gz"), "--key-id", "fixture",
+      "--key-file", path.join(root, "missing.pem"), "--output", root,
+      "--__proto__", "ignored",
+    ], { cwd: root, timeout: 5000, maxBuffer: 8192 }), (error) => {
+      assert.equal(error.code, 1);
+      assert.equal(error.stdout, "");
+      assert.match(error.stderr, /Unsupported signing argument: --__proto__/u);
+      return true;
+    });
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});

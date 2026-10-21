@@ -57,12 +57,20 @@ internal static partial class Program
         using (var authority = ReadOwnedTransitionRecord(proofPath, 8192))
         {
             var proof = authority.RootElement;
-            if (proof.GetProperty("transactionId").GetString() != owner.TransactionId ||
+            RequireExactKeys(proof, ["schemaVersion", "transactionId", "stage", "sequence", "workerPid",
+                "workerStartTimeUtcTicks", "guardianPid", "journalSha256", "handoffSha256"]);
+            if (proof.GetProperty("schemaVersion").GetInt32() != 1 ||
+                proof.GetProperty("transactionId").GetString() != owner.TransactionId ||
                 proof.GetProperty("stage").GetString() != "prepared" || proof.GetProperty("sequence").GetInt32() != 0 ||
                 proof.GetProperty("workerPid").GetInt32() != owner.Pid ||
+                proof.GetProperty("workerStartTimeUtcTicks").GetString() != owner.Ticks ||
+                proof.GetProperty("guardianPid").GetInt32() != Environment.ProcessId ||
                 !CryptographicOperations.FixedTimeEquals(
                     Encoding.ASCII.GetBytes(proof.GetProperty("journalSha256").GetString() ?? ""),
-                    Encoding.ASCII.GetBytes(Convert.ToHexStringLower(originalJournalDigest))))
+                    Encoding.ASCII.GetBytes(Convert.ToHexStringLower(originalJournalDigest))) ||
+                !CryptographicOperations.FixedTimeEquals(
+                    Encoding.ASCII.GetBytes(proof.GetProperty("handoffSha256").GetString() ?? ""),
+                    Encoding.ASCII.GetBytes(Convert.ToHexStringLower(HashOwnedWorkerHandoff(journalRoot, owner.TransactionId)))))
                 throw new InvalidDataException("Stable WPF shutdown lacks the exact native authenticated prepared generation.");
         }
         var receipt = Path.Combine(journalRoot, owner.TransactionId + ".stable-shell-quiesce.json");
@@ -101,6 +109,8 @@ internal static partial class Program
                 json.WriteString("disposition", "stable-shell-quiesced-only");
                 json.WriteNumber("shellPid", pid);
                 json.WriteString("shellStartTimeUtcTicks", ticks);
+                json.WriteNumber("workerPid", owner.Pid);
+                json.WriteString("workerStartTimeUtcTicks", owner.Ticks);
                 json.WriteNumber("guardianPid", Environment.ProcessId);
                 json.WriteString("preparedJournalSha256", Convert.ToHexStringLower(SHA256.HashData(
                     File.ReadAllBytes(journalPath))));

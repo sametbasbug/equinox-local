@@ -201,3 +201,115 @@ test("tunnel preflight must not retry after intentional runtime termination", as
   assert.equal(timer, null);
   assert.equal(probes, 0);
 });
+
+test("Windows supervisor does not expose credential-bearing parent environment to tunnel or local server", async () => {
+  const secretFields = {
+    OPENAI_API_KEY: "fake-secret-must-not-leak",
+    AWS_SECRET_ACCESS_KEY: "fake-cloud-credential",
+    EQUINOX_LOCAL_RUNTIME_TOKEN: "fake-runtime-token",
+    EQUINOX_LOCAL_UPDATE_SIGNING_KEY: "fake-signing-key",
+    NODE_OPTIONS: "--import=untrusted.js",
+  };
+  const leakedEnv = { ...env, ...secretFields, PATH: "C:\\Windows\\System32", PATHEXT: ".CPL" };
+  const calls = [];
+  await runWindowsShellRuntimeSupervisor(mk({
+    env: leakedEnv,
+    readTransportImpl: async () => ({ tunnelId }),
+    execFileImpl: async (_cmd, _args, options) => { calls.push(["init", options.env]); },
+    runChildImpl: async (_cmd, _args, options) => {
+      calls.push(["child", options.env]);
+      return { code: 0, terminatingSignal: "SIGTERM" };
+    },
+  }));
+  assert.deepEqual(calls.map(([kind]) => kind), ["init", "child"]);
+  for (const [, childEnv] of calls) {
+    for (const field of Object.keys(secretFields)) {
+      assert.equal(childEnv[field], undefined, `credential key ${field} must not be forwarded`);
+    }
+    assert.equal(childEnv.PATHEXT, ".COM;.EXE;.BAT;.CMD;.CPL");
+    assert.equal(childEnv.SystemRoot, "C:\\Windows");
+  }
+});
+
+test("Windows supervisor rejects unowned install/release identities before touching tunnel or private state", async () => {
+  const counters = { transport: 0, protect: 0, mkdir: 0, exec: 0, child: 0 };
+  const sideEffects = {
+    readTransportImpl: async () => { counters.transport++; return null; },
+    protectProfileImpl: async () => { counters.protect++; },
+    mkdirImpl: async () => { counters.mkdir++; },
+    execFileImpl: async () => { counters.exec++; },
+    runChildImpl: async () => { counters.child++; return { code: 0 }; },
+  };
+  const invalidInputs = [
+    { platform: "darwin" },
+    { serverPath: ".\\server.js" },
+    { serverPath: "C:\\temp\\..\\server.js", env: { ...env, EQUINOX_LOCAL_RELEASE_DIR: "relative\\release" } },
+    { env: { ...env, EQUINOX_LOCAL_INSTALL_ROOT: "C:\\Foreign" } },
+    { env: { ...env, EQUINOX_LOCAL_RELEASE_DIR: "relative\\release" } },
+  ];
+  for (const bad of invalidInputs) {
+    await assert.rejects(
+      runWindowsShellRuntimeSupervisor(mk({ ...sideEffects, ...bad })),
+      /requires Windows|invalid/u,
+    );
+  }
+  assert.deepEqual(counters, { transport: 0, protect: 0, mkdir: 0, exec: 0, child: 0 });
+});
+
+test("failed reconnection preflight keeps local-only child alive and ignores late callbacks after exit", async () => {
+  const child = new EventEmitter();
+  const processLike = new EventEmitter();
+  const scheduled = new Map();
+  const cleared = [];
+  const events = [];
+  let nextTimerId = 0;
+  const fakeTimers = {
+    setTimeoutImpl: (callback, delay) => {
+      const id = ++nextTimerId;
+      scheduled.set(id, { callback, delay });
+      return id;
+    },
+    clearTimeoutImpl: (id) => { cleared.push(id); scheduled.delete(id); },
+  };
+  child.stdin = { end: () => events.push("unexpected-eof") };
+  child.killed = false;
+  child.kill = () => { throw Error("Failed probes must never kill local-only Control Center"); };
+  const result = runWindowsSupervisorChild("C:\\node.exe", ["C:\\server.js"], {
+    env: {}, stdin: "pipe", reconnect: {
+      delayMs: 10,
+      preflight: async () => { events.push("probe-failed"); throw Error("offline"); },
+    },
+  }, { spawnImpl: () => child, processLike, ...fakeTimers });
+  child.emit("spawn");
+  const timer = scheduled.get(1);
+  assert.equal(timer.delay, 10);
+  scheduled.delete(1); // A real timer is consumed before its callback runs.
+  await timer.callback();
+  assert.deepEqual(events, ["probe-failed"]);
+  assert.equal(scheduled.get(2).delay, 20);
+  child.emit("exit", 0, null);
+  const outcome = await result;
+  assert.equal(outcome.retryRequested, false);
+  assert.equal(processLike.listenerCount("SIGTERM"), 0);
+  assert.equal(processLike.listenerCount("SIGINT"), 0);
+  assert.ok(cleared.includes(2));
+  assert.equal(scheduled.size, 0);
+  assert.doesNotMatch(events.join(" "), /unexpected-eof/u);
+});
+
+test("Windows tunnel refuses MCP command argument injection via unsupported executable characters", () => {
+  const paths = { profileDir: "C:\\Profiles\\safe", runtimeKeyPath: "C:\\Secrets\\runtime-key" };
+  for (const invalid of [
+    "relative\\node.exe",
+    "C:\\Program Files\\bad%expand\\node.exe",
+    "C:\\Program Files\\bad!delayed\\node.exe",
+    "C:\\Program Files\\bad\"quote\\node.exe",
+    "C:\\Program Files\\bad" + "\n" + "newline.exe",
+    "C:\\Program Files\\bad\rreturn.exe",
+    "C:\\Program Files\\bad\0nul.exe",
+  ]) {
+    assert.throws(() => windowsTunnelInitArguments({
+      paths, nodePath: invalid, serverPath: "C:\\Release\\server.js", tunnelId,
+    }), /unsupported characters/u);
+  }
+});

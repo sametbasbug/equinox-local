@@ -201,3 +201,39 @@ test("Windows ACL rejection refuses even an otherwise healthy owned Main receipt
   await assert.rejects(f.journal.create(input), /ACL ownership cannot be verified/u);
   await assert.rejects(f.journal.read(TX), /ACL ownership cannot be verified/u);
 });
+
+test("Windows native journal rejects swapped file identity before trusting an otherwise valid record", async (t) => {
+  let forgeInode = false;
+  const wrappedFs = Object.create(fs);
+  wrappedFs.lstat = async (filePath) => {
+    const stat = await fs.lstat(filePath);
+    if (!forgeInode || !String(filePath).endsWith(`${TX}.json`)) return stat;
+    return new Proxy(stat, {get(target, key, receiver) {
+      if (key === "ino") return target.ino + 1;
+      return Reflect.get(target, key, receiver);
+    }});
+  };
+  const f = await fixture(t, {fsImpl: wrappedFs});
+  await f.journal.create(input);
+  const journalPath = path.join(f.journal.root, `${TX}.json`);
+  const bytes = await fs.readFile(journalPath);
+  forgeInode = true;
+  await assert.rejects(f.journal.read(TX), /path no longer identifies the opened file/u);
+  assert.deepEqual(await fs.readFile(journalPath), bytes, "forensic journal bytes must remain unchanged");
+});
+
+test("Windows native journal rejects a symlink to an existing foreign record and preserves both files", async (t) => {
+  const f = await fixture(t);
+  await f.journal.create(input);
+  const journalPath = path.join(f.journal.root, `${TX}.json`);
+  const outside = path.join(f.root, "foreign-journal.json");
+  const original = await fs.readFile(journalPath);
+  await fs.writeFile(outside, original);
+  await fs.unlink(journalPath);
+  await fs.symlink(outside, journalPath);
+  await assert.rejects(f.journal.read(TX));
+  assert.equal((await fs.lstat(journalPath)).isSymbolicLink(), true);
+  assert.deepEqual(await fs.readFile(outside), original);
+  await assert.rejects(f.journal.create(input), {code:"EEXIST"});
+  assert.deepEqual(await fs.readFile(outside), original);
+});

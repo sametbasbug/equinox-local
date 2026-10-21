@@ -9,6 +9,7 @@ import {
   requestWindowsShellManagedUninstall,
   requestWindowsShellRuntimeRestart,
   requestWindowsShellUpdateShutdown,
+  waitForWindowsShellPipeRelease,
 } from "../../src/equinox-local-windows-shell-control.js";
 
 async function captureTimeouts(run) {
@@ -369,4 +370,48 @@ test("Windows managed uninstall handoff is acknowledged with an exact data polic
   assert.equal(written, "uninstall:remove-user-data\n");
   await assert.rejects(requestWindowsShellManagedUninstall(true, { platform: "darwin" }), /only on Windows/u);
   await assert.rejects(requestWindowsShellManagedUninstall("yes", { platform: "win32" }), /explicit data policy/u);
+});
+
+test("Windows shell security preflight refuses malformed transaction/version/uninstall policy without opening a pipe", async () => {
+  let connected = 0;
+  const connectImpl = () => { connected += 1; throw Error("pipe connection must not be attempted"); };
+  for (const invoke of [
+    () => requestWindowsShellMainUpdateHandoff("main-" + "f".repeat(31) + "\n", { platform:"win32", connectImpl }),
+    () => requestWindowsShellMainUpdateHandoff("main-" + "F".repeat(32), { platform:"win32", connectImpl }),
+    () => requestWindowsShellManagedActivation("5.3.0\nuninstall:remove-user-data", { platform:"win32", connectImpl }),
+    () => requestWindowsShellManagedActivation("05.3.0", { platform:"win32", connectImpl }),
+    () => requestWindowsShellManagedUninstall("false", { platform:"win32", connectImpl }),
+    () => requestWindowsShellManagedUninstall(undefined, { platform:"win32", connectImpl }),
+    () => requestWindowsShellManagedActivation("5.3.0", { platform:"win32", connectImpl, timeoutMs: 15_001 }),
+    () => requestWindowsShellUpdateShutdown({ platform:"win32", connectImpl, timeoutMs: 249 }),
+  ]) {
+    await assert.rejects(invoke(), /exact transaction id|exact semantic version|explicit data policy|out of bounds/u);
+  }
+  assert.equal(connected, 0, "invalid or injected commands must not contact WPF");
+});
+
+test("Windows WPF exit wait requires two consecutive missing named-pipe probes and never executes a shell", async () => {
+  let count = 0;
+  const sleeps = [];
+  const connectImpl = () => {
+    count += 1;
+    const socket = new EventEmitter();
+    socket.destroy = () => {};
+    queueMicrotask(() => socket.emit(count === 2 ? "connect" : "error", new Error("pipe missing")));
+    return socket;
+  };
+  await waitForWindowsShellPipeRelease({
+    platform:"win32", attempts:4, connectImpl,
+    sleepImpl:async ms => { sleeps.push(ms); },
+  });
+  assert.equal(count,4);
+  assert.deepEqual(sleeps,[125,125,125]);
+  let unexpectedConnects = 0;
+  await assert.rejects(waitForWindowsShellPipeRelease({
+    platform:"darwin", connectImpl:()=>{ unexpectedConnects++; throw Error("should not connect"); },
+  }), /requires Windows/u);
+  await assert.rejects(waitForWindowsShellPipeRelease({
+    platform:"win32",attempts:121,connectImpl:()=>{ unexpectedConnects++; throw Error("should not connect"); },
+  }), /out of bounds/u);
+  assert.equal(unexpectedConnects,0);
 });

@@ -494,3 +494,60 @@ test("Main transaction fails closed on receipt/lock SHA mismatch", async (t) => 
   await assert.rejects(engine.readActive(), /identities disagree/u);
   assert.equal(JSON.parse(await fs.readFile(engine.paths.lockPath, "utf8")).transactionId, initial.transactionId);
 });
+
+test("Main update lock and receipt reject symlinks without reading or replacing foreign state", async (t) => {
+  const { engine, sourceRoot } = await fixture(t);
+  const receipt = await engine.begin({ currentSha: CURRENT, targetSha: TARGET });
+  const receiptPath = path.join(engine.paths.receiptsRoot, receipt.transactionId + ".json");
+  const foreign = path.join(engine.paths.transactionRoot,"foreign-state.json");
+  await fs.writeFile(foreign, JSON.stringify(receipt));
+  const originalBytes = await fs.readFile(foreign);
+  for (const protectedPath of [engine.paths.lockPath,receiptPath]) {
+    const realContents = await fs.readFile(protectedPath);
+    await fs.unlink(protectedPath);
+    await fs.symlink(foreign, protectedPath);
+    let opened = false;
+    const mockFs = Object.create(fs);
+    mockFs.open = async (candidate,...args) => {
+      if (candidate === protectedPath) opened = true;
+      return fs.open(candidate,...args);
+    };
+    const alternate = createEquinoxLocalMainUpdateTransactionEngine({
+      sourceRoot,
+      transactionRoot:engine.paths.transactionRoot,
+      fsImpl:mockFs,
+    });
+    await assert.rejects(alternate.readActive(), /normal, non-symlink file/u);
+    assert.equal(opened,false,"symlink must be rejected before opening");
+    assert.equal((await fs.lstat(protectedPath)).isSymbolicLink(),true);
+    assert.deepEqual(await fs.readFile(foreign),originalBytes);
+    await fs.unlink(protectedPath);
+    await fs.writeFile(protectedPath,realContents,{mode:0o600});
+  }
+  assert.equal((await engine.readActive()).transactionId,receipt.transactionId);
+});
+
+test("Main update forensic lock refuses changed inode between lstat and opened descriptor", async(t)=>{
+  const { engine, sourceRoot } = await fixture(t);
+  const receipt = await engine.begin({currentSha:CURRENT,targetSha:TARGET});
+  const beforeBytes = await fs.readFile(engine.paths.lockPath);
+  const mockFs = Object.create(fs);
+  mockFs.lstat = async (candidate) => {
+    const stat = await fs.lstat(candidate);
+    if(candidate !== engine.paths.lockPath)return stat;
+    return new Proxy(stat,{
+      get(target,prop,receiver){
+        if(prop === "ino")return target.ino+1;
+        return Reflect.get(target,prop,receiver);
+      },
+    });
+  };
+  const alternate = createEquinoxLocalMainUpdateTransactionEngine({
+    sourceRoot,
+    transactionRoot:engine.paths.transactionRoot,
+    fsImpl:mockFs,
+  });
+  await assert.rejects(alternate.readActive(),/changed while opening/u);
+  assert.deepEqual(await fs.readFile(engine.paths.lockPath),beforeBytes);
+  assert.equal((await engine.readActive()).transactionId,receipt.transactionId);
+});

@@ -115,7 +115,7 @@ test("Windows package stages node_modules through normal-file hardlinks", async 
   const source = await fs.readFile(new URL("../../scripts/release/package-managed-release-windows.mjs", import.meta.url), "utf8");
   assert.match(source, /async function hardlinkNormalTree/u);
   assert.match(source, /await fs\.link\(source, destination\)/u);
-  assert.match(source, /if \(entry\.name === "\.bin" && sourceDir === sourceRoot\) continue/u);
+  assert.match(source, /if\s*\(entry\.name === "\.bin" && sourceDir === sourceRoot\)\s*continue/u);
   assert.doesNotMatch(source, /await fs\.cp\(modulesSource, path\.join\(releaseDir, "node_modules"\)/u);
 });
 
@@ -538,4 +538,327 @@ test('vintage installed Main upgrade does not require a Guardian absent from old
   assert.match(fixture, /Real Main upgrade lost user settings/u);
   assert.match(fixture, /Real Main upgrade lost user browser data/u);
   assert.match(fixture, /Updated Native Messaging manifest did not select exact B or restore A on failure/u);
+});
+
+test("signed Windows native WPF witness acceptance demands real owner and rejects impersonation", async () => {
+  const script = await fs.readFile(new URL("./windows-installer-real-package-smoke.ps1", import.meta.url), "utf8");
+  assert.match(script, /function Invoke-NativeWpfWitness/u);
+  assert.match(script, /runtime\\job\\equinox-local-job-object-helper\.exe/u);
+  assert.match(script, /Read-PeMachine \$NativeWpfWitness/u);
+  assert.match(script, /\$start\.Arguments = '--inspect-owned-wpf'/u);
+  assert.match(script, /\$start\.EnvironmentVariables\.Clear\(\)/u);
+  assert.match(script, /\$start\.EnvironmentVariables\['EQUINOX_LOCAL_CHECK_WPF_PID'\]/u);
+  assert.match(script, /\$start\.EnvironmentVariables\['EQUINOX_LOCAL_CHECK_WPF_TICKS'\]/u);
+  // CI launches this fixture explicitly with Windows PowerShell 5.1.
+  // Prevent accidental .NET Core-only ProcessStartInfo API regressions.
+  assert.doesNotMatch(script, /\$start\.ArgumentList\b|\$start\.Environment\s*\[/u);
+  assert.match(script, /\$start\.RedirectStandardOutput = \$true/u);
+  assert.match(script, /\$process\.WaitForExit\(5000\)/u);
+  assert.match(script, /OS native helper refused the genuine installed WPF owner/u);
+  assert.match(script, /OS native helper accepted a forged WPF birth time/u);
+  assert.match(script, /OS native helper accepted the native worker Node as WPF/u);
+  assert.match(script, /OS native helper accepted a terminated WPF owner/u);
+  assert.doesNotMatch(script, /EQUINOX_LOCAL_CHECK_WPF_EXE/u);
+});
+
+
+test("native Guardian durable owner identity binds exact OS worker birth across lease, authority, WPF and orphan recovery", async () => {
+  const base = new URL('../../native/windows/EquinoxLocal.Guardian/', import.meta.url);
+  const read = async (name) => fs.readFile(new URL(name,base),'utf8');
+  const [lease,authority,wpf,recovery,host]=await Promise.all([
+    read('MainNativeJournalLease.cs'), read('MainNativeJournalAuthority.cs'),
+    read('MainNativeStableShellQuiesce.cs'), read('MainNativePreparedAbortRecovery.cs'),
+    fs.readFile(new URL('./windows-installer-real-package-smoke.ps1', import.meta.url),'utf8'),
+  ]);
+  assert.match(lease, /workerStartTimeUtcTicks=\{owner\.Ticks\}/u);
+  assert.match(authority, /WriteString\("workerStartTimeUtcTicks", owner\.Ticks\)/u);
+  assert.match(wpf, /proof\.GetProperty\("workerStartTimeUtcTicks"\)\.GetString\(\) != owner\.Ticks/u);
+  assert.match(wpf, /proof\.GetProperty\("guardianPid"\)\.GetInt32\(\) != Environment\.ProcessId/u);
+  assert.match(wpf, /WriteString\("workerStartTimeUtcTicks", owner\.Ticks\)/u);
+  assert.match(recovery, /workerTicks\.ToString\(CultureInfo\.InvariantCulture\)/u);
+  assert.match(recovery, /GetProperty\("startTimeUtcTicks"\)\.GetString\(\) != workerTicks/u);
+  assert.match(recovery, /GetProperty\("workerStartTimeUtcTicks"\)\.GetString\(\) != workerTicks/u);
+  assert.match(host, /Orphan recovery accepted forged worker creation time in the native writer lease/u);
+  assert.match(host, /Orphan recovery accepted forged worker creation time in the native authority receipt/u);
+});
+
+
+test("native Guardian binds immutable worker handoff bytes through live authorization, WPF shutdown, and orphan recovery", async () => {
+  const base = new URL("../../native/windows/EquinoxLocal.Guardian/", import.meta.url);
+  const read = async (name) => fs.readFile(new URL(name, base), "utf8");
+  const [authority, quiesce, recovery, hosted] = await Promise.all([
+    read("MainNativeJournalAuthority.cs"), read("MainNativeStableShellQuiesce.cs"),
+    read("MainNativePreparedAbortRecovery.cs"),
+    fs.readFile(new URL("./windows-installer-real-package-smoke.ps1", import.meta.url), "utf8"),
+  ]);
+  assert.match(authority, /RequireNormalDirectory\(handoffRoot\)/u);
+  assert.match(authority, /RequireNormalFile\(path\)/u);
+  assert.match(authority, /handle.Length is < 2 or > 8192/u);
+  assert.match(authority, /CryptographicOperations\.FixedTimeEquals\(handoffDigest, HashOwnedWorkerHandoff/u);
+  assert.match(authority, /WriteString\("handoffSha256", Convert\.ToHexStringLower\(handoffDigest\)\)/u);
+  assert.match(quiesce, /GetProperty\("handoffSha256"\)/u);
+  assert.match(quiesce, /HashOwnedWorkerHandoff\(journalRoot, owner\.TransactionId\)/u);
+  assert.match(recovery, /GetProperty\("handoffSha256"\)/u);
+  assert.match(recovery, /HashOwnedWorkerHandoff\(root, id\)/u);
+  assert.match(hosted, /AuthorityRecord\.handoffSha256/u);
+  assert.match(hosted, /Orphan recovery accepted a changed authenticated worker handoff token/u);
+});
+
+
+test("native prepared abort commit retains exact prepared-to-aborted journal digest lineage", async () => {
+  const root = new URL("../../native/windows/EquinoxLocal.Guardian/", import.meta.url);
+  const [writer,recovery,host] = await Promise.all([
+    fs.readFile(new URL("MainNativePreparedAbort.cs",root),"utf8"),
+    fs.readFile(new URL("MainNativePreparedAbortRecovery.cs",root),"utf8"),
+    fs.readFile(new URL("./windows-installer-real-package-smoke.ps1",import.meta.url),"utf8"),
+  ]);
+  assert.match(writer,/WriteString\("preparedJournalSha256", Convert\.ToHexStringLower\(expectedDigest\)\)/u);
+  assert.match(writer,/WriteString\("journalSha256", Convert\.ToHexStringLower\(SHA256\.HashData\(File\.ReadAllBytes\(journalPath\)\)\)\)/u);
+  assert.match(recovery,/GetProperty\("preparedJournalSha256"\)/u);
+  assert.match(recovery,/auth\.GetProperty\("journalSha256"\)/u);
+  assert.match(host,/AbortReceipt\.preparedJournalSha256 -ceq \$AuthorityRecord\.journalSha256/u);
+  assert.match(host,/Orphan recovery accepted an abort commit forged to an unrelated prepared journal/u);
+});
+
+test('Windows native B rollback preflight pins OS-installed B shell to SHA release and exact rollback journal without granting shutdown', async () => {
+  const root = new URL('../../native/windows/EquinoxLocal.Guardian/', import.meta.url);
+  const native = await fs.readFile(new URL('MainNativeBRollbackPreflight.cs', root), 'utf8');
+  const dispatcher = await fs.readFile(new URL('Program.cs', root), 'utf8');
+  assert.match(native, /private static void InspectOwnedMainBRollbackPreflight\(string transactionId, string sourceSha\)/u);
+  assert.match(native, /NativeTransactionPattern\.IsMatch\(transactionId\)/u);
+  assert.match(native, /SourceShaPattern\.IsMatch\(sourceSha\)/u);
+  assert.match(native, /Environment\.SpecialFolder\.LocalApplicationData/u);
+  assert.match(native, /Path\.Combine\(tx, "native-store"\)/u);
+  assert.match(native, /Path\.Combine\(targetStore, sourceSha\)/u);
+  assert.match(native, /foreach \(var directory in new\[\] \{/u);
+  assert.match(native, /RequireNormalDirectory\(directory\)/u);
+  assert.match(native, /ReadOwnedTransitionRecord\(Path\.Combine\(tx, "active\.json"\), 8192\)/u);
+  assert.match(native, /ReadOwnedTransitionRecord\(Path\.Combine\(journalRoot, transactionId \+ "\.json"\), 8192\)/u);
+  assert.match(native, /journal\.GetProperty\("stage"\)\.GetString\(\) != "rollback_started"/u);
+  assert.match(native, /journal\.GetProperty\("sequence"\)\.GetInt32\(\) is < 1 or > 6/u);
+  assert.match(native, /CompareNativeTrees\(sourceShell, programRoot\)/u);
+  assert.match(native, /FindSingleOwnedStableShell\(installedExe\)/u);
+  assert.match(native, /OpenProcessToken\(shell\.Handle, TokenQuery/u);
+  assert.match(native, /ReadWindowsLogonAuthenticationId\(shellToken\) != ReadWindowsLogonAuthenticationId\(guardianIdentity\.AccessToken\)/u);
+  assert.match(native, /shell\.StartTime\.ToUniversalTime\(\)\.Ticks\.ToString\(CultureInfo\.InvariantCulture\) != ticks/u);
+  assert.match(native, /native-b-rollback-preflight-only-no-shutdown/u);
+  assert.doesNotMatch(native, /shutdown-for-update|CloseMainWindow|\.Kill\(|\.Rename\(|File\.Move\(|NamedPipeClientStream|SetValue\(/u);
+  assert.doesNotMatch(dispatcher, /InspectOwnedMainBRollbackPreflight\(/u);
+});
+
+test('Guardian B rollback stage challenge uses separate live worker PID/HMAC, nonreclaimed lock and create-only read-only receipt', async () => {
+  const root=new URL('../../native/windows/EquinoxLocal.Guardian/',import.meta.url);
+  const native=await fs.readFile(new URL('MainNativeBRollbackAuthority.cs',root),'utf8');
+  const dispatcher=await fs.readFile(new URL('Program.cs',root),'utf8');
+  const inspector=await fs.readFile(new URL('MainNativeJournalIdentity.cs',root),'utf8');
+  const worker=await fs.readFile(new URL('../../src/equinox-local-windows-native-journal-authority-client.ts',import.meta.url),'utf8');
+  assert.match(native,/BRollbackProofDomain = "equinox-local-guardian-b-rollback-authority-v1:"/u);
+  assert.match(worker,/ROLLBACK_DOMAIN = Buffer.from\("equinox-local-guardian-b-rollback-authority-v1:"/u);
+  assert.match(native,/GetProperty\("stage"\)\.GetString\(\) != "rollback_started"/u);
+  assert.match(native,/GetProperty\("sequence"\)\.GetInt32\(\) is < 1 or > 6/u);
+  assert.match(native,/InspectOwnedNativeWorkerOsArguments\(\)/u);
+  assert.match(native,/InspectOwnedNativeWorkerPipeProof\(\)/u);
+  assert.match(native,/InspectOwnedMainBRollbackPreflight\(owner.TransactionId, sourceSha\)/u);
+  assert.match(native,/\.rollback\.writer-lock/u);
+  assert.match(inspector,/name.EndsWith\("\.writer-lock"/u);
+  assert.match(native,/FileMode.CreateNew, FileAccess.ReadWrite/u);
+  assert.match(native,/FileShare.None, 4096, FileOptions.WriteThrough/u);
+  assert.match(native,/GetNamedPipeClientProcessId\(listener.SafePipeHandle, out var clientPid\) \|\| clientPid != owner.Pid/u);
+  assert.match(native,/worker.StartTime.ToUniversalTime\(\).Ticks.ToString\(CultureInfo.InvariantCulture\) != owner.Ticks/u);
+  assert.match(native,/CryptographicOperations.FixedTimeEquals\(HMACSHA256.HashData\(key.AsSpan\(\), message.AsSpan\(\)\), response\)/u);
+  assert.match(native,/CryptographicOperations.ZeroMemory\(key\)/u);
+  assert.match(native,/CryptographicOperations.FixedTimeEquals\(digest, SHA256.HashData\(File.ReadAllBytes\(journalPath\)\)\)/u);
+  assert.match(native,/CryptographicOperations.FixedTimeEquals\(handoffDigest, HashOwnedWorkerHandoff\(journalRoot, owner.TransactionId\)\)/u);
+  assert.match(native,/FileMode.CreateNew, FileAccess.Write/u);
+  assert.match(native,/receipt.Flush\(flushToDisk: true\)/u);
+  assert.match(native,/native-b-rollback-authority-recorded-no-wpf-mutation/u);
+  assert.doesNotMatch(native,/shutdown-for-update|CloseMainWindow|\.Kill\(|File.Move\(|RegisterNative|NamedPipeClientStream/u);
+  assert.doesNotMatch(dispatcher,/InspectOwnedNativeBRollbackWorkerAuthority\(/u);
+});
+
+test('B rollback pilot requires native rollback owner receipt and exact WPF pipe/exit before durable B quiesce proof', async () => {
+  const root = new URL('../../native/windows/EquinoxLocal.Guardian/', import.meta.url);
+  const [pilot, authority, dispatcher] = await Promise.all([
+    fs.readFile(new URL('MainNativeBRollbackShellQuiesce.cs', root), 'utf8'),
+    fs.readFile(new URL('MainNativeBRollbackAuthority.cs', root), 'utf8'),
+    fs.readFile(new URL('Program.cs', root), 'utf8'),
+  ]);
+  assert.match(pilot, /private static void QuiesceOwnedMainBRollbackShell\(OwnedWorkerClaim owner, string journalRoot/u);
+  assert.match(pilot, /InspectOwnedMainBRollbackPreflight\(owner.TransactionId, sourceSha\)/u);
+  assert.match(pilot, /\.rollback-authority\.json/u);
+  assert.match(pilot, /RequireExactKeys\(receipt, \["schemaVersion", "transactionId", "stage", "sequence", "workerPid"/u);
+  assert.match(pilot, /GetProperty\("stage"\)\.GetString\(\) != "rollback_started"/u);
+  assert.match(pilot, /GetProperty\("guardianPid"\)\.GetInt32\(\) != Environment\.ProcessId/u);
+  assert.match(pilot, /GetProperty\("workerStartTimeUtcTicks"\)\.GetString\(\) != owner.Ticks/u);
+  assert.match(pilot, /CryptographicOperations.FixedTimeEquals/u);
+  assert.match(pilot, /FindSingleOwnedStableShell\(installedExe\)/u);
+  assert.match(pilot, /OpenProcessToken\(shell.Handle, TokenQuery/u);
+  assert.match(pilot, /ReadWindowsLogonAuthenticationId\(shellToken\)/u);
+  assert.match(pilot, /shell.SessionId != Process.GetCurrentProcess\(\).SessionId/u);
+  assert.match(pilot, /EquinoxLocal.WindowsShell.Reopen/u);
+  assert.match(pilot, /GetNamedPipeServerProcessId\(pipe.SafePipeHandle, out var serverPid\) \|\| serverPid != pid/u);
+  assert.match(pilot, /shell.StartTime.ToUniversalTime\(\).Ticks.ToString\(CultureInfo.InvariantCulture\) != ticks/u);
+  assert.match(pilot, /GetBytes\("shutdown-for-update\\n"\)/u);
+  assert.match(pilot, /shell.WaitForExit\(12000\)/u);
+  assert.match(pilot, /FileMode.CreateNew, FileAccess.Write/u);
+  assert.match(pilot, /FileShare.None, 4096, FileOptions.WriteThrough/u);
+  assert.match(pilot, /output.Flush\(flushToDisk: true\)/u);
+  assert.match(pilot, /"b-shell-quiesced-only"/u);
+  assert.doesNotMatch(pilot, /\.Kill\(|TerminateProcess|File.Move\(|registerNative|SetValue\(/u);
+  assert.doesNotMatch(authority, /QuiesceOwnedMainBRollbackShell\(/u);
+  assert.doesNotMatch(dispatcher, /QuiesceOwnedMainBRollbackShell\(/u);
+});
+
+test('native B WPF quiesce receipt preserves exact rollback stage and sequence lineage', async () => {
+  const root=new URL('../../native/windows/EquinoxLocal.Guardian/', import.meta.url);
+  const pilot=await fs.readFile(new URL('MainNativeBRollbackShellQuiesce.cs',root),'utf8');
+  assert.match(pilot,/using var rollbackJournal = JsonDocument.Parse\(journalHandle\)/u);
+  assert.match(pilot,/journal\.GetProperty\("sequence"\)\.GetInt32\(\) != receipt\.GetProperty\("sequence"\)\.GetInt32\(\)/u);
+  assert.match(pilot,/journal\.GetProperty\("stage"\)\.GetString\(\) != "rollback_started"/u);
+  assert.match(pilot,/json\.WriteString\("stage", "rollback_started"\)/u);
+  assert.match(pilot,/json\.WriteNumber\("sequence", journal\.GetProperty\("sequence"\)\.GetInt32\(\)\)/u);
+});
+
+test('native B quiesce pins rollback authority receipt via a read-only non-replaceable Windows handle for entire exit', async () => {
+  const root = new URL('../../native/windows/EquinoxLocal.Guardian/', import.meta.url);
+  const native = await fs.readFile(new URL('MainNativeBRollbackShellQuiesce.cs', root), 'utf8');
+  assert.match(native, /RequireNormalFile\(nativeAuthorityPath\)/u);
+  assert.match(native, /using var nativeAuthorityHandle = new FileStream\(nativeAuthorityPath, FileMode\.Open,/u);
+  assert.match(native, /FileAccess\.Read, FileShare\.Read\)/u);
+  assert.match(native, /nativeAuthorityHandle\.Length is < 2 or > 8192/u);
+  assert.match(native, /using var nativeAuthority = JsonDocument\.Parse\(nativeAuthorityHandle\)/u);
+  assert.match(native, /using var pipe = new NamedPipeClientStream/u);
+  assert.match(native, /shell\.WaitForExit\(12000\)/u);
+  assert.doesNotMatch(native, /FileShare\.(?:ReadWrite|Delete)|nativeAuthorityHandle\.Dispose\(\)/u);
+});
+
+test('B rollback graceful shutdown pins the original HMAC journal on one Windows read-only OS handle throughout exit', async () => {
+  const root = new URL('../../native/windows/EquinoxLocal.Guardian/', import.meta.url);
+  const source = await fs.readFile(new URL('MainNativeBRollbackShellQuiesce.cs', root), 'utf8');
+  assert.match(source, /RequireNormalFile\(journalPath\)/u);
+  assert.match(source, /using var journalHandle = new FileStream\(journalPath, FileMode.Open,/u);
+  assert.match(source, /FileAccess.Read, FileShare.Read\)/u);
+  assert.match(source, /journalHandle.Length is < 2 or > 8192/u);
+  assert.match(source, /using var rollbackJournal = JsonDocument.Parse\(journalHandle\)/u);
+  assert.match(source, /CryptographicOperations.FixedTimeEquals\(originalJournalDigest, SHA256.HashData\(journalHandle\)\)/u);
+  assert.match(source, /HashPinnedBRollbackJournal\(journalHandle\)/u);
+  assert.match(source, /journalHandle.Position = 0/u);
+  assert.match(source, /shell.WaitForExit\(12000\)/u);
+  assert.doesNotMatch(source, /SHA256.HashData\(File.ReadAllBytes\(journalPath\)\)|journalHandle.Dispose\(\)|FileShare.Delete/u);
+});
+
+test('all Guardian native transition record reads validate size and parse on one bounded nonreplaceable OS handle', async () => {
+  const root = new URL('../../native/windows/EquinoxLocal.Guardian/', import.meta.url);
+  const native = await fs.readFile(new URL('MainNativeJournalIdentity.cs', root), 'utf8');
+  const start = native.indexOf('private static JsonDocument ReadOwnedTransitionRecord(string file, int limit)');
+  const end = native.indexOf('private static void InspectOwnedNativeTransitionJournal', start);
+  assert.ok(start !== -1 && end > start);
+  const body = native.slice(start, end);
+  assert.match(body, /RequireNormalFile\(file\)/u);
+  assert.match(body, /using var handle = new FileStream\(file, FileMode\.Open, FileAccess\.Read, FileShare\.Read\)/u);
+  assert.match(body, /handle\.Length is < 2 or > 65536 \|\| handle\.Length > limit/u);
+  assert.match(body, /return JsonDocument\.Parse\(handle\)/u);
+  assert.doesNotMatch(body, /FileInfo\(|File\.ReadAllBytes\(|FileShare\.(?:Delete|ReadWrite)|FileMode\.OpenOrCreate/u);
+});
+
+test('Guardian shared native worker handoff digest hashes the same bounded Windows OS file handle', async () => {
+  const root=new URL('../../native/windows/EquinoxLocal.Guardian/',import.meta.url);
+  const source=await fs.readFile(new URL('MainNativeJournalAuthority.cs',root),'utf8');
+  const start=source.indexOf('private static byte[] HashOwnedWorkerHandoff(string journalRoot, string transactionId)');
+  const end=source.indexOf('[DllImport(',start);
+  assert.ok(start!==-1 && end>start);
+  const body=source.slice(start,end);
+  assert.match(body,/RequireNormalDirectory\(handoffRoot\)/u);
+  assert.match(body,/RequireNormalFile\(path\)/u);
+  assert.match(body,/using var handle = new FileStream\(path, FileMode.Open, FileAccess.Read, FileShare.Read\)/u);
+  assert.match(body,/handle.Length is < 2 or > 8192/u);
+  assert.match(body,/return SHA256.HashData\(handle\)/u);
+  assert.doesNotMatch(body,/FileInfo\(|File.ReadAllBytes\(|FileShare.(?:Delete|ReadWrite)/u);
+});
+
+test('prepared orphan recovery pins original A pointer and rollback journal through native quarantine', async () => {
+  const root = new URL('../../native/windows/EquinoxLocal.Guardian/', import.meta.url);
+  const source = await fs.readFile(new URL('MainNativePreparedAbortRecovery.cs',root),'utf8');
+  assert.match(source,/RequireNormalFile\(pointerPath\)/u);
+  assert.match(source,/using var pointerHandle = new FileStream\(pointerPath, FileMode.Open,/u);
+  assert.match(source,/FileAccess.Read, FileShare.Read\)/u);
+  assert.match(source,/pointerHandle.Length is < 15 or > 8192/u);
+  assert.match(source,/using var pointerReader = new StreamReader\(pointerHandle,/u);
+  assert.match(source,/pointerReader.ReadToEnd\(\)/u);
+  assert.match(source,/RequireNormalFile\(journalPath\)/u);
+  assert.match(source,/using var journalHandle = new FileStream\(journalPath, FileMode.Open,/u);
+  assert.match(source,/journalHandle.Length is < 2 or > 8192/u);
+  assert.match(source,/using var journal = JsonDocument.Parse\(journalHandle\)/u);
+  assert.match(source,/journalHandle.Position = 0/u);
+  assert.match(source,/var updatedDigest = SHA256.HashData\(journalHandle\)/u);
+  assert.match(source,/File.Move\(lockPath, quarantinedLock\)/u);
+  assert.doesNotMatch(source,/new FileInfo\(pointerPath\)|File.ReadAllText\(pointerPath\)|File.ReadAllBytes\(journalPath\)|pointerHandle.Dispose\(\)|journalHandle.Dispose\(\)/u);
+});
+
+test('native orphan writer lock is read exactly within 8..512 bytes on its original Windows handle until durable quarantine receipt', async () => {
+  const root = new URL('../../native/windows/EquinoxLocal.Guardian/', import.meta.url);
+  const source = await fs.readFile(new URL('MainNativePreparedAbortRecovery.cs',root),'utf8');
+  assert.match(source, /RequireNormalFile\(lockPath\)/u);
+  assert.match(source, /using var lockHandle = new FileStream\(lockPath, FileMode.Open,/u);
+  assert.match(source, /FileAccess.Read, FileShare.Read\)/u);
+  assert.match(source, /lockHandle.Length is < 8 or > 512/u);
+  assert.match(source, /var lockBytes = new byte\[\(int\)lockHandle.Length\]/u);
+  assert.match(source, /lockHandle.ReadExactly\(lockBytes\)/u);
+  assert.doesNotMatch(source, /File.ReadAllBytes\(lockPath\)|FileShare.Delete/u);
+  const receipt = source.indexOf('fd.Flush(flushToDisk: true);');
+  const close = source.indexOf('lockHandle.Dispose();');
+  const move = source.indexOf('File.Move(lockPath, quarantinedLock);');
+  assert.ok(receipt !== -1 && receipt < close && close < move,'Lock remains pinned through evidence; original handle is released before Windows rename');
+  assert.match(source, /same-user rename between close/u);
+});
+
+test('Guardian unexposed pilot renames orphan lock by original DELETE-capable OS handle with no replace or reparse traversal', async () => {
+  const root = new URL('../../native/windows/EquinoxLocal.Guardian/', import.meta.url);
+  const source = await fs.readFile(new URL('MainNativeOrphanHandleRename.cs', root),'utf8');
+  const recovery = await fs.readFile(new URL('MainNativePreparedAbortRecovery.cs', root),'utf8');
+  const dispatcher = await fs.readFile(new URL('Program.cs', root),'utf8');
+  assert.match(source,/NativeTransactionPattern.IsMatch\(transactionId\)/u);
+  assert.match(source,/Path.Combine\(journalRoot, "\." \+ transactionId \+ "\.writer-lock"\)/u);
+  assert.match(source,/Path.Combine\(original.JournalRoot, "\." \+ original.TransactionId \+ "\.quarantined.writer-lock"\)/u);
+  assert.match(source,/NativeOrphanGenericRead \| NativeOrphanDelete/u);
+  assert.match(source,/NativeOrphanShareRead, 0, NativeOrphanOpenExisting, NativeOrphanOpenReparsePoint/u);
+  assert.match(source,/GetFileInformationByHandle/u);
+  assert.match(source,/NativeOrphanReparseAttribute \| NativeOrphanDirectoryAttribute/u);
+  assert.match(source,/opened.LinkCount != 1/u);
+  assert.match(source,/opened.SizeHigh != 0/u);
+  assert.match(source,/opened.SizeLow is < 8 or > 512/u);
+  assert.match(source,/var stream = new FileStream\(native, FileAccess.Read, 512, isAsync: false\)/u);
+  assert.match(source,/stream.Length != opened.SizeLow/u);
+  assert.match(source,/SetFileInformationByHandle/u);
+  assert.match(source,/NativeOrphanFileRenameInfo = 3/u);
+  assert.match(source,/Marshal.WriteInt32\(buffer, 0, 0\)/u);
+  assert.match(source,/Marshal.WriteIntPtr\(buffer, 8, IntPtr.Zero\)/u);
+  assert.match(source,/Marshal.WriteInt32\(buffer, 16, name.Length\)/u);
+  assert.match(source,/private sealed class NativeOrphanPinnedWriterLock : IDisposable/u);
+  assert.match(source,/internal FileStream Handle \{ get; \}/u);
+  assert.match(source,/internal string JournalRoot \{ get; \}/u);
+  assert.match(source,/internal string TransactionId \{ get; \}/u);
+  assert.match(source,/return new NativeOrphanPinnedWriterLock\(stream, journalRoot, transactionId\)/u);
+  assert.match(source,/RenameNativeOrphanWriterLockPilot\(NativeOrphanPinnedWriterLock original\)/u);
+  assert.match(source,/original.Handle.SafeFileHandle.IsClosed/u);
+  assert.match(source,/original.Handle.SafeFileHandle.IsInvalid/u);
+  assert.match(source,/Path.Combine\(original.JournalRoot, "\." \+ original.TransactionId \+ "\.quarantined.writer-lock"\)/u);
+  assert.match(source,/RenameNativeOrphanByHandle\(original.Handle.SafeFileHandle/u);
+  assert.doesNotMatch(source,/RenameNativeOrphanWriterLockPilot\(FileStream original/u);
+  assert.match(source,/Marshal.FreeHGlobal\(buffer\)/u);
+  assert.doesNotMatch(source,/File.Move\(|FileShare.Delete|FileShare.Write|ReplaceIfExists=TRUE/u);
+  assert.doesNotMatch(recovery,/OpenNativeOrphanWriterLockPilot\(|RenameNativeOrphanWriterLockPilot\(/u);
+  assert.doesNotMatch(dispatcher,/OpenNativeOrphanWriterLockPilot\(|RenameNativeOrphanWriterLockPilot\(/u);
+});
+
+test("Windows managed release source mapping refuses drive-qualified paths and NTFS alternate streams", () => {
+  for (const unsafe of [
+    "C:\\Windows\\system.ini",
+    "C:relative.dll",
+    "src\\server.js:alternate",
+    "src/./server.js",
+  ]) {
+    assert.throws(() => windowsManagedReleaseDestinationRelative(unsafe), /unsafe/u,
+      `A release source path cannot contain a drive, alternate stream or dot segment: ${unsafe}`);
+  }
 });

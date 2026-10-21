@@ -49,8 +49,8 @@ test("Control Center avoids expensive Doctor fingerprints and hidden-page redraw
   assert.match(js, /async function runFullDoctorChecks\(\)/u);
   const medium = js.slice(js.indexOf("async function refreshMediumState()"), js.indexOf("async function refreshSlowState()"));
   assert.doesNotMatch(medium, /requestJson\("\/api\/v1\/doctor"/u);
-  assert.match(js, /if \(state\.activeSection === "tasks"\) renderTasks\(\)/u);
-  assert.match(js, /if \(state\.activeSection === "activity"\) renderActivity\(\)/u);
-  assert.match(js, /if \(state\.activeSection === "browser"\) renderBrowserPage\(\)/u);
-  assert.match(js, /if \(section === "tasks"\) renderTasks\(\)/u);
+  assert.match(js, /if \(state\.activeSection === "tasks"\)\s+renderTasks\(\)/u);
+  assert.match(js, /if \(state\.activeSection === "activity"\)\s+renderActivity\(\)/u);
+  assert.match(js, /if \(state\.activeSection === "browser"\)\s+renderBrowserPage\(\)/u);
+  assert.match(js, /if \(section === "tasks"\)\s+renderTasks\(\)/u);
 });

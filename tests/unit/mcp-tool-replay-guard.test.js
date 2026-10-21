@@ -247,3 +247,68 @@ test("same semantic call with a new request id reuses an aborted transport invoc
   assert.equal(calls, 1);
   assert.equal(replays.at(-1).mode, "aborted_semantic");
 });
+
+test("replay telemetry throwing synchronously does not repeat a side effect or break the original result",async()=>{
+  let calls=0;
+  const guard=createMcpToolReplayGuard({
+    onReplay:()=>{throw Error("observability unavailable: private diagnostics")},
+  });
+  const firstExtra=extra("once",{sessionId:"session-owned"});
+  const invocation={toolName:"runtime_call",
+    input:{operation:"terminal_exec",arguments:{command:"mutating command"}},
+    extra:firstExtra};
+  const first=guard.run({...invocation,invoke:async()=>{calls++;return{operationId:"owned"}}});
+  const replay=guard.run({...invocation,invoke:async()=>{calls++;return{operationId:"duplicate"}}});
+  assert.equal(first,replay);
+  assert.deepEqual(await replay,{operationId:"owned"});
+  assert.equal(calls,1);
+});
+
+test("canonical equivalent arguments replay while different argument values and sessions remain intentional calls after settlement",async()=>{
+  const observed=[];
+  const guard=createMcpToolReplayGuard({onReplay:event=>observed.push(event)});
+  let calls=0;
+  let resolve;
+  const barrier=new Promise(r=>{resolve=r});
+  const first=guard.run({toolName:"integrations_call",
+    input:{arguments:{mode:"replace",details:{z:1,a:2},extra:undefined},operation:"save"},
+    extra:extra("delivery-1",{sessionId:"one"}),
+    invoke:async()=>{calls++;await barrier;return"first"}});
+  const replay=guard.run({toolName:"integrations_call",
+    input:{operation:"save",arguments:{details:{a:2,z:1},mode:"replace"}},
+    extra:extra("delivery-2",{sessionId:"two"}),
+    invoke:async()=>{calls++;return"should not repeat"}});
+  resolve();
+  assert.equal(await first,"first");
+  assert.equal(await replay,"first");
+  assert.equal(calls,1);
+  assert.equal(observed.at(-1).mode,"inflight_semantic");
+  const intentional=await guard.run({toolName:"integrations_call",
+    input:{operation:"save",arguments:{details:{a:2,z:1},mode:"replace"}},
+    extra:extra("new-intent",{sessionId:"three"}),
+    invoke:async()=>{calls++;return"new"}});
+  assert.equal(intentional,"new");
+  assert.equal(calls,2);
+});
+
+test("settled replay records expire and aborted semantic replay window does not suppress a later new invocation",async()=>{
+  let now=1_000,calls=0;
+  const controller=new AbortController();
+  const guard=createMcpToolReplayGuard({
+    now:()=>now,settledTtlMs:100,abortReplayWindowMs:60,maxRecords:2,
+  });
+  const op={toolName:"runtime_call",input:{operation:"terminal_exec",arguments:{command:"verify"}}};
+  const first=await guard.run({...op,extra:extra("original",{signal:controller.signal}),
+    invoke:async()=>++calls});
+  assert.equal(first,1);
+  controller.abort();
+  now+=61;
+  const newCall=await guard.run({...op,extra:extra("fresh"),
+    invoke:async()=>++calls});
+  assert.equal(newCall,2);
+  now+=101;
+  assert.equal(await guard.run({...op,extra:extra("after-expiry"),
+    invoke:async()=>++calls}),3);
+  assert.equal(calls,3);
+  assert.ok(guard.snapshot().records<=2);
+});

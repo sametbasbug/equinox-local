@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 
 import {
   captureEquinoxLocalForegroundGui,
+  refreshEquinoxLocalForegroundGui,
   runEquinoxLocalRestartHelper,
 } from "../../src/equinox-local-restart-helper.js";
 import { resolveSourceRestartTarget } from "../../scripts/release/resolve-source-restart-target.mjs";
@@ -505,4 +506,158 @@ test("restart_runtime restores continuity controllers when scheduling fails", as
   assert.equal(quiesced, 1);
   assert.equal(recovered, 1);
   assert.match(result.error, /fixture restart scheduling failed/u);
+});
+
+test("managed Windows restart rejects every missing or malformed WPF acknowledgement before claiming scheduled",async()=>{
+  for(const acknowledgement of [undefined,null,false,true,{}, {requested:false},{requested:1},{requested:"true"}]){
+    let handoffs=0;
+    await assert.rejects(scheduleEquinoxLocalRestart({
+      installation:installation(),
+      platform:"win32",
+      requestWindowsRestartImpl:async({platform})=>{
+        assert.equal(platform,"win32");
+        handoffs++;
+        return acknowledgement;
+      },
+      spawnImpl:()=>assert.fail("Windows restart must never spawn a macOS helper"),
+    }),/Windows shell did not accept the runtime restart request/u);
+    assert.equal(handoffs,1);
+  }
+});
+
+test("source checkout restart rejects a symlinked or directory restart script before launching a helper",async(t)=>{
+  const os=await import("node:os");
+  const root=await fs.mkdtemp(path.join(os.tmpdir(),"eq-restart-src-boundary-"));
+  t.after(()=>fs.rm(root,{recursive:true,force:true}));
+  const project=path.join(root,"project");
+  const script=path.join(project,"scripts","restart-runtime.sh");
+  const unrelated=path.join(root,"user-owned.txt");
+  await fs.mkdir(path.dirname(script),{recursive:true});
+  await fs.writeFile(unrelated,"private-file-must-remain");
+  let spawned=0;
+  const opts={
+    moduleUrl:new URL("file://"+path.join(project,"src","equinox-local-restart.js")).href,
+    processImpl:{env:{HOME:"/home/fixture",EQUINOX_LOCAL_DEV_RUNTIME_CONFIG:"/owned/config"}},
+    spawnImpl:()=>{spawned++;throw Error("helper must not launch")},
+  };
+  await fs.symlink(unrelated,script);
+  await assert.rejects(scheduleSourceCheckoutRestart(opts),/Source runtime yeniden başlatma scripti normal bir dosya değil/u);
+  assert.equal(await fs.readFile(unrelated,"utf8"),"private-file-must-remain");
+  await fs.unlink(script);
+  await fs.mkdir(script);
+  await assert.rejects(scheduleSourceCheckoutRestart(opts),/Source runtime yeniden başlatma scripti normal bir dosya değil/u);
+  assert.equal(spawned,0);
+});
+
+test("restart_runtime refuses to claim pending restart and reports continuity rollback failures",async()=>{
+  let handler;
+  let quiesce=0,rollback=0,pending=0;
+  registerRestartRuntimeTool({
+    registerTextTool:(_name,_definition,cb)=>{handler=cb},
+    installation:{managed:false,selfUpdateSupported:false},
+    scheduleSourceRestart:async()=>{throw Error("source scheduler denied")},
+    beforeRestart:async()=>{quiesce++},
+    restartFailed:async()=>{rollback++;throw Error("continuity restoration denied")},
+    markRestartPending:()=>{pending++},
+    textResult:message=>({text:message}),
+    errorResult:err=>({error:err.message}),
+  });
+  const result=await handler();
+  assert.equal(quiesce,1);
+  assert.equal(rollback,1);
+  assert.equal(pending,0);
+  assert.match(result.error,/source scheduler denied; restart continuity recovery failed: continuity restoration denied/u);
+});
+
+test("managed restart GUI capture excludes wrong user and similar-but-foreign executable path",async()=>{
+  const executable="/Users/example/Applications/Equinox Local.app/Contents/MacOS/applet";
+  const commands=[];
+  const result=await captureEquinoxLocalForegroundGui({
+    installation:{launchAgentLabel:"dev.equinox.local"},
+    homeDir:"/Users/example",uid:501,
+    execFileImpl:async(command,args)=>{
+      commands.push([command,...args]);
+      if(command==="/bin/launchctl")return{stdout:"pid = 234\n"};
+      if(command==="/usr/bin/pgrep")return{stdout:"234\n235\n236\n237\n238\n"};
+      if(command==="/bin/ps"){
+        const pid=Number(args[1]);
+        return {stdout:pid===235?"502 "+executable+"\n":
+          pid===236?"501 "+executable+".foreign --restart-shell\n":
+          pid===237?"501 "+executable+" --restart-shell\n":
+          "501 /foreign/"+pid+"\n"};
+      }
+      throw Error("unexpected subprocess "+command);
+    },
+  });
+  assert.deepEqual(result.pids,[237]);
+  assert.equal(commands.filter(x=>x[0]==="/bin/ps").length,4);
+  assert.equal(commands.filter(x=>x[0]==="/bin/kill").length,0);
+});
+
+test("managed restart GUI refuses foreign app bundle identity before SIGTERM or open",async(t)=>{
+  const os=await import("node:os");
+  const home=await fs.mkdtemp(path.join(os.tmpdir(),"eq-ts7-foreign-gui-"));
+  t.after(()=>fs.rm(home,{recursive:true,force:true}));
+  const app=path.join(home,"Applications","Equinox Local.app");
+  const bin=path.join(app,"Contents","MacOS","applet");
+  await fs.mkdir(path.dirname(bin),{recursive:true});
+  await fs.writeFile(bin,"owned-fake-executable");
+  await fs.writeFile(path.join(app,"Contents","Info.plist"),"foreign plist");
+  const subprocesses=[];
+  await assert.rejects(refreshEquinoxLocalForegroundGui({
+    installation:{launchAgentLabel:"dev.equinox.local"},
+    homeDir:home,uid:501,foreground:{pids:[991]},
+    execFileImpl:async(command,args)=>{
+      subprocesses.push([command,...args]);
+      if(command==="/usr/libexec/PlistBuddy")return{stdout:"org.foreign.application\n"};
+      throw Error("foreign process must not run");
+    },
+    sleepImpl:async()=>assert.fail("must not poll untrusted GUI"),
+  }),/unexpected bundle identifier/u);
+  assert.deepEqual(subprocesses.map(x=>x[0]),["/usr/libexec/PlistBuddy"]);
+  assert.equal(await fs.readFile(bin,"utf8"),"owned-fake-executable");
+});
+
+test("managed restart GUI refuses to launch replacement while previously verified GUI remains alive",async(t)=>{
+  const os=await import("node:os");
+  const home=await fs.mkdtemp(path.join(os.tmpdir(),"eq-ts7-gui-unresponsive-"));
+  t.after(()=>fs.rm(home,{recursive:true,force:true}));
+  const app=path.join(home,"Applications","Equinox Local.app");
+  const executable=path.join(app,"Contents","MacOS","applet");
+  await fs.mkdir(path.dirname(executable),{recursive:true});
+  await fs.writeFile(executable,"owned-fake-executable");
+  await fs.writeFile(path.join(app,"Contents","Info.plist"),"owned-app-plist");
+  const calls=[];
+  let waits=0;
+  await assert.rejects(refreshEquinoxLocalForegroundGui({
+    installation:{launchAgentLabel:"dev.equinox.local"},homeDir:home,uid:501,
+    foreground:{pids:[991]},
+    sleepImpl:async(ms)=>{assert.equal(ms,100);waits++},
+    execFileImpl:async(command,args)=>{
+      calls.push([command,...args]);
+      if(command==="/usr/libexec/PlistBuddy")return{stdout:"dev.equinox.local\n"};
+      if(command==="/bin/ps")return{stdout:"501 "+executable+" --restart-shell\n"};
+      if(command==="/bin/kill")return{stdout:""};
+      throw Error("should never relaunch foreground GUI");
+    },
+  }),/Previous Equinox Local foreground GUI did not stop cleanly/u);
+  assert.equal(waits,40);
+  assert.equal(calls.filter(x=>x[0]==="/bin/kill"&&x[1]==="-TERM").length,1);
+  assert.equal(calls.filter(x=>x[0]==="/bin/kill"&&x[1]==="-0").length,40);
+  assert.equal(calls.filter(x=>x[0]==="/usr/bin/open").length,0);
+});
+
+test("managed restart helper rejects forged argv shapes before any sleep or owned-process handoff",async()=>{
+  let calls=0;
+  for(const argv of [null,{},{"0":"--restart",length:1},"--restart",
+    [],["--restart","--restart"],["--unexpected"],[null]]){
+    await assert.rejects(runEquinoxLocalRestartHelper({
+      argv,env:{HOME:"/Users/example"},
+      sleepImpl:async()=>{calls++;},
+      captureForegroundGuiImpl:async()=>{calls++;return{pids:[]};},
+      kickstartImpl:async()=>{calls++;},
+      refreshForegroundGuiImpl:async()=>{calls++;return{refreshed:true};},
+    }),/Usage: equinox-local-restart-helper.js --restart/u);
+  }
+  assert.equal(calls,0);
 });

@@ -5,7 +5,7 @@ import vm from "node:vm";
 import { fileURLToPath } from "node:url";
 import { createExtensionVmContext } from "../helpers/extension-vm-import-scripts.mjs";
 
-const SERVICE_WORKER_PATH = fileURLToPath(new URL("../../extension/service-worker.js", import.meta.url));
+const SERVICE_WORKER_PATH = process.env.EQUINOX_STAGED_BROWSER_WORKER || fileURLToPath(new URL("../../extension/service-worker.js", import.meta.url));
 const EXTENSION_ROOT = fileURLToPath(new URL("../../extension/", import.meta.url));
 
 function createEvent() {
@@ -133,7 +133,7 @@ async function createHarness({
     ignored: false,
     role: { value: "button" },
     name: { value: "Open OAuth popup" },
-    backendDOMNodeId: 101,
+    nodeId: "101", backendDOMNodeId: 101,
     properties: [],
   }];
   const storageData = {
@@ -476,7 +476,7 @@ async function createHarness({
     allowedScripts: ["bookmarks.js"],
   });
   vm.runInContext(
-    `${source}\n;globalThis.__tabTest = { ensureBrowserEnabledLoaded, setBrowserContext, browserSnapshot, browserClick, browserTap, browserSwipe, browserEmulate, browserClearEmulation, browserDialog, browserTabsList, browserActivate, browserCreateTab, browserHistoryNavigate, browserOpen, browserWait, browserObserveStart, browserConsoleRead, browserNetworkRead, browserBookmarksList, browserBookmarksSearch, browserBookmarkAdd, browserBookmarkFolderCreate, browserBookmarkUpdateMove, browserBookmarkRemove, browserClose, browserDownloadWait, discoverNewTabs, newDownloadsSince, classifyBrowserPage, validateOpenUrl, pageKindFromFrames, normalizeDebuggerAttachError, getTabCreationSequence: () => tabCreationSequence, getDownloadCreationSequence: () => downloadCreationSequence };`,
+    `${source}\n;globalThis.__tabTest = { ensureBrowserEnabledLoaded, setBrowserContext, browserSnapshot, browserClick, browserTap, browserSwipe, browserEmulate, browserClearEmulation, browserDialog, browserTabsList, browserActivate, browserCreateTab, browserHistoryNavigate, browserOpen, browserWait, browserObserveStart, browserObserveStop, browserConsoleRead, browserNetworkRead, browserBookmarksList, browserBookmarksSearch, browserBookmarkAdd, browserBookmarkFolderCreate, browserBookmarkUpdateMove, browserBookmarkRemove, browserClose, browserDownloadWait, discoverNewTabs, newDownloadsSince, classifyBrowserPage, validateOpenUrl, pageKindFromFrames, normalizeDebuggerAttachError, getTabCreationSequence: () => tabCreationSequence, getDownloadCreationSequence: () => downloadCreationSequence };`,
     context,
     { filename: SERVICE_WORKER_PATH },
   );
@@ -634,7 +634,7 @@ test("smart wait supports DOM stability and bounded network idle", async () => {
 test("semantic_ready waits for AX projection to match and remain stable", async () => {
   const { api, setSemanticAxNodes } = await createHarness();
   setSemanticAxNodes([{
-    ignored: false, role: { value: "button" }, name: { value: "Loading" }, backendDOMNodeId: 101, properties: [],
+    ignored: false, role: { value: "button" }, name: { value: "Loading" }, nodeId: "101", backendDOMNodeId: 101, properties: [],
   }]);
   const startedAt = Date.now();
   const waiting = api.browserWait({
@@ -645,7 +645,7 @@ test("semantic_ready waits for AX projection to match and remain stable", async 
   });
   setTimeout(() => {
     setSemanticAxNodes([{
-      ignored: false, role: { value: "button" }, name: { value: "Results ready" }, backendDOMNodeId: 101, properties: [],
+      ignored: false, role: { value: "button" }, name: { value: "Results ready" }, nodeId: "101", backendDOMNodeId: 101, properties: [],
     }]);
   }, 80);
 
@@ -1094,6 +1094,36 @@ test("restricted page classifier distinguishes Chrome UI, Web Store, file URLs a
   });
   assert.equal(interstitial.kind, "browser-owned-interstitial");
   assert.equal(interstitial.debuggerSupported, false);
+});
+
+test("pendingUrl alone cannot authorize debugger until an HTTP page actually commits", async () => {
+  const { api, tabs, getDebuggerAttachCount, getDebuggerDetachCount } = await createHarness();
+  const tab = tabs.get(51);
+  const target = "http://127.0.0.1:47850/pending";
+  tab.url = "";
+  tab.pendingUrl = target;
+  tab.status = "loading";
+
+  const pending = api.classifyBrowserPage(tab);
+  assert.equal(pending.kind, "unknown");
+  assert.equal(pending.debuggerSupported, false);
+  await assert.rejects(api.browserObserveStart({ tabId: 51 }), /unsupported by Equinox Browser/i);
+  assert.equal(getDebuggerAttachCount(), 0);
+  assert.equal(getDebuggerDetachCount(), 0);
+
+  tab.url = target;
+  delete tab.pendingUrl;
+  tab.status = "complete";
+  const committed = api.classifyBrowserPage(tab);
+  assert.equal(committed.kind, "web");
+  assert.equal(committed.debuggerSupported, true);
+  const started = await api.browserObserveStart({ tabId: 51 });
+  assert.equal(started.observing, true);
+  assert.equal(getDebuggerAttachCount(), 1);
+  const stopped = await api.browserObserveStop({ tabId: 51 });
+  assert.equal(stopped.wasObserving, true);
+  assert.equal(stopped.observing, false);
+  assert.equal(getDebuggerDetachCount(), 1);
 });
 
 test("open preserves an existing debugger lease across HTTP navigation and releases it for New Tab", async () => {

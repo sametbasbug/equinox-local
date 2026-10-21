@@ -252,3 +252,110 @@ test("malformed tunnel configuration fails closed to local-only mode", async (t)
   assert.equal(result.mode, "local-only");
   assert.equal(tunnelInitCalls, 0);
 });
+
+test("supervisor child environment is a strict allowlist even with injected provider secrets and shell configuration", () => {
+  const paths = managedSupervisorPaths("/fixture/safe-home");
+  const sourceEnv = {
+    USER:"fixture",LOGNAME:"fixture",LANG:"tr_TR.UTF-8",LC_ALL:"C",
+    TMPDIR:"/fixture/tmp",SSH_AUTH_SOCK:"/fixture/ssh.socket",
+    EQUINOX_LOCAL_BROWSER_SOCKET_NAMESPACE:"fixture-agent-lane",
+    OPENAI_API_KEY:"secret-fixture-key",GITHUB_TOKEN:"secret-fixture-token",
+    AWS_SECRET_ACCESS_KEY:"secret-fixture-aws",NODE_OPTIONS:"--require /fixture/unsafe.js",
+    NODE_PATH:"/fixture/unsafe-module",LD_PRELOAD:"/fixture/unsafe.so",
+    DYLD_INSERT_LIBRARIES:"/fixture/unsafe.dylib",EQUINOX_LOCAL_SUPERVISOR_MODE:"tunnel",
+    PATH:"/fixture/untrusted",
+  };
+  const env=supervisorChildEnvironment({paths,releaseDir:"/fixture/release",sourceEnv});
+  assert.deepEqual(Object.keys(env).sort(),[
+    "EQUINOX_LOCAL_BROWSER_SOCKET_NAMESPACE","EQUINOX_LOCAL_INSTALL_ROOT",
+    "EQUINOX_LOCAL_RELEASE_DIR","EQUINOX_PEEKABOO_PATH","HOME","LANG",
+    "LC_ALL","LOGNAME","PATH","SSH_AUTH_SOCK","TMPDIR","USER",
+  ].sort());
+  assert.equal(env.PATH,"/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin:/usr/local/bin");
+  assert.equal(env.EQUINOX_LOCAL_BROWSER_SOCKET_NAMESPACE,"fixture-agent-lane");
+  assert.equal(Object.isFrozen(env),true);
+  assert.doesNotMatch(JSON.stringify(env),/secret-fixture|unsafe/u);
+});
+
+test("supervisor transport refuses untrusted schema keys and invalid tunnel identifiers before using the runtime key", async (t) => {
+  const fixture=await makeFixture({transport:true});
+  t.after(()=>fs.rm(fixture.root,{recursive:true,force:true}));
+  const invalid=[
+    {version:1,mode:"openai-tunnel",tunnelId:"tunnel_"+'A'.repeat(32)},
+    {version:2,mode:"openai-tunnel",tunnelId:"tunnel_"+'a'.repeat(32)},
+    {version:1,mode:"other",tunnelId:"tunnel_"+'a'.repeat(32)},
+    {version:1,mode:"openai-tunnel",tunnelId:"../../foreign"},
+    {version:1,mode:"openai-tunnel",tunnelId:"tunnel_"+'a'.repeat(32),runtimeKey:"fixture-secret"},
+    [],
+    null,
+  ];
+  for(const data of invalid){
+    await fs.writeFile(fixture.paths.transportConfigPath,JSON.stringify(data),{mode:0o600});
+    let aclChecks=0;
+    await assert.rejects(readSupervisorTransport(fixture.paths,{
+      platform:"win32",verifyWindowsAcl:async()=>{aclChecks++;return {safe:true}},
+    }),/configuration/u);
+    assert.equal(aclChecks,0,"malformed transport must never inspect or grant key authority");
+  }
+  await fs.writeFile(fixture.paths.transportConfigPath,"x".repeat(16*1024+1),{mode:0o600});
+  await assert.rejects(readSupervisorTransport(fixture.paths),/bounded normal file/u);
+});
+
+test("supervisor release pointer fails closed on foreign release directory, malformed metadata and unsafe binaries",async(t)=>{
+  const fixture=await makeFixture();
+  t.after(()=>fs.rm(fixture.root,{recursive:true,force:true}));
+  const foreign=path.join(fixture.root,"unowned");
+  await fs.mkdir(foreign);
+  await fs.rm(fixture.paths.currentLink);
+  await fs.symlink(foreign,fixture.paths.currentLink);
+  await assert.rejects(resolveSupervisorRelease(fixture.paths),/escaped the releases root/u);
+  await fs.rm(fixture.paths.currentLink);
+  await fs.symlink("releases/4.2.0",fixture.paths.currentLink);
+  const manifest=path.join(fixture.releaseDir,"release.json");
+  for(const mutation of [
+    {schemaVersion:1,version:"4.2.0",target:"darwin-unknown",serverEntry:"server.js"},
+    {schemaVersion:1,version:"4.2.1",target:equinoxLocalUpdateTarget(),serverEntry:"server.js"},
+    {schemaVersion:1,version:"4.2.0",target:equinoxLocalUpdateTarget(),serverEntry:"unauthorized.js"},
+  ]){
+    await fs.writeFile(manifest,JSON.stringify(mutation));
+    await assert.rejects(resolveSupervisorRelease(fixture.paths),/metadata is invalid/u);
+  }
+  await fs.writeFile(manifest,JSON.stringify({
+    schemaVersion:1,version:"4.2.0",target:equinoxLocalUpdateTarget(),serverEntry:"server.js",
+  }));
+  await fs.chmod(fixture.nodeBinary,0o600);
+  await assert.rejects(resolveSupervisorRelease(fixture.paths),/must be executable/u);
+  await fs.rm(fixture.nodeBinary);
+  await fs.symlink("/bin/sh",fixture.nodeBinary);
+  await assert.rejects(resolveSupervisorRelease(fixture.paths),/normal file/u);
+});
+
+test("supervisor rejects mismatched configured root and falls back to local-only after tunnel init error without retry",async(t)=>{
+  const fixture=await makeFixture({transport:true});
+  t.after(()=>fs.rm(fixture.root,{recursive:true,force:true}));
+  let tunnelInit=0,localOnly=0,mutations=0;
+  const opts={
+    homeDir:fixture.homeDir,
+    sourceEnv:{EQUINOX_LOCAL_INSTALL_ROOT:fixture.paths.installRoot,OPENAI_API_KEY:"fixture-credential"},
+    resolveManagedSourceImpl:async({baseInstallation})=>baseInstallation,
+    execFileImpl:async()=>{tunnelInit++;throw Error("controlled tunnel initialization failure")},
+    runChildImpl:async(command,args,options)=>{
+      mutations++;
+      localOnly++;
+      const realReleaseDir=await fs.realpath(fixture.releaseDir);
+      assert.equal(command,path.join(realReleaseDir,"runtime","node","bin","node"));
+      assert.deepEqual(args,[path.join(realReleaseDir,"server.js")]);
+      assert.equal(options.env.EQUINOX_LOCAL_SUPERVISOR_MODE,"local-only");
+      assert.equal(options.env.OPENAI_API_KEY,undefined);
+      return {code:0,signal:null,terminatingSignal:null};
+    },
+  };
+  await assert.rejects(runManagedSupervisor({...opts,sourceEnv:{
+    EQUINOX_LOCAL_INSTALL_ROOT:path.join(fixture.root,"foreign"),
+  }}),/does not match/u);
+  assert.equal(mutations,0);
+  const result=await runManagedSupervisor(opts);
+  assert.equal(result.mode,"local-only");
+  assert.equal(localOnly,1);
+  assert.equal(tunnelInit,1,"failed tunnel initialization must not be replayed");
+});

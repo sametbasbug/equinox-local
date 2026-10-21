@@ -259,6 +259,45 @@ try {
       return [int]$process.ExitCode
     } finally { $process.Dispose() }
   }
+  # Run the EXACT packaged architecture-specific Win32 witness, not a
+  # synthetic JS mock or a helper from ambient PATH.
+  $NativeWpfWitness = Join-Path $ReleaseDir 'runtime\job\equinox-local-job-object-helper.exe'
+  Assert-True ([IO.File]::Exists($NativeWpfWitness)) 'Native WPF witness executable is absent from signed release.'
+  Assert-True ((Read-PeMachine $NativeWpfWitness) -eq $FixtureExpectedMachine) 'Native WPF witness PE architecture differs from WPF.'
+  function Invoke-NativeWpfWitness([string]$ExpectedPid, [string]$ExpectedBirthTicks) {
+    # Windows GUI subsystem executables may return early from PowerShell `&`.
+    $start = [Diagnostics.ProcessStartInfo]::new($NativeWpfWitness)
+    # powershell.exe runs on Windows PowerShell 5.1 / .NET Framework. Its
+    # ProcessStartInfo has Arguments, not the newer ArgumentList collection.
+    $start.Arguments = '--inspect-owned-wpf'
+    $start.UseShellExecute = $false
+    $start.CreateNoWindow = $true
+    $start.RedirectStandardOutput = $true
+    $start.RedirectStandardError = $true
+    # The legacy .NET Framework API is EnvironmentVariables; Environment
+    # is a .NET Core-only member on these hosted powershell.exe lanes.
+    $start.EnvironmentVariables.Clear()
+    foreach ($key in @('SystemRoot','WINDIR','USERPROFILE')) {
+      $value = [Environment]::GetEnvironmentVariable($key)
+      if (-not [string]::IsNullOrWhiteSpace($value)) { $start.EnvironmentVariables[$key] = $value }
+    }
+    $start.EnvironmentVariables['EQUINOX_LOCAL_CHECK_WPF_PID'] = $ExpectedPid
+    $start.EnvironmentVariables['EQUINOX_LOCAL_CHECK_WPF_TICKS'] = $ExpectedBirthTicks
+    $process = [Diagnostics.Process]::Start($start)
+    if ($null -eq $process) { throw 'Native WPF witness could not start.' }
+    try {
+      if (-not $process.WaitForExit(5000)) {
+        $process.Kill()
+        throw 'Native WPF witness exceeded the bounded five-second deadline.'
+      }
+      if ($process.ExitCode -ne 0) { throw 'Native WPF witness rejected its inspection mode.' }
+      $result = $process.StandardOutput.ReadToEnd().Trim()
+      if ($result -cnotin @('running','missing','mismatch','unknown')) {
+        throw 'Native WPF witness returned an unsupported bounded status.'
+      }
+      return $result
+    } finally { $process.Dispose() }
+  }
   Assert-True ((Invoke-GuardianCheck '--inspect') -eq 0) 'Independent Windows Guardian rejected an intact, installed signed Stable WPF baseline.'
   Assert-True ((Invoke-GuardianCheck '--unsupported-argument') -eq 70) 'Independent Windows Guardian accepted an unsupported argument.'
   $FakeMainLock = Join-Path $OwnedInstallRoot 'state\main-update\active.json'
@@ -649,7 +688,9 @@ try {
         Assert-True ($AuthorityRecord.transactionId -ceq $JournalId -and
           $AuthorityRecord.stage -ceq 'prepared' -and $AuthorityRecord.sequence -eq 0 -and
           $AuthorityRecord.workerPid -eq $WorkerProcess.Id -and
-          $AuthorityRecord.guardianPid -eq $AuthorityProcess.Id) 'Native authority durable record has foreign process or journal identity.'
+          $AuthorityRecord.workerStartTimeUtcTicks -ceq $WorkerRecord.startTimeUtcTicks -and
+          $AuthorityRecord.guardianPid -eq $AuthorityProcess.Id -and
+          $AuthorityRecord.handoffSha256 -ceq (Get-FileHash -LiteralPath $WorkerRecordPath -Algorithm SHA256).Hash.ToLowerInvariant()) 'Native authority durable record has foreign process or journal identity.'
         $ExpectedDigest = (Get-FileHash -LiteralPath $JournalData -Algorithm SHA256).Hash.ToLowerInvariant()
         Assert-True ($AuthorityRecord.journalSha256 -ceq $ExpectedDigest) 'Native authority durable record does not bind the exact journal bytes.'
         Assert-True ($JournalValue.stage -ceq 'prepared' -and $JournalValue.sequence -eq 0) 'Native authority proof incorrectly advanced the Main update stage.'
@@ -676,6 +717,15 @@ try {
           Where-Object { -not [string]::IsNullOrWhiteSpace($_.ExecutablePath) -and (Same-Path $_.ExecutablePath $StableExe) })
         Assert-True ($StableOwners.Count -eq 1) 'Native WPF quiesce requires exactly one genuine installed Stable shell.'
         $OriginalShellPid = [int]$StableOwners[0].ProcessId
+        $RealWpf = [Diagnostics.Process]::GetProcessById($OriginalShellPid)
+        try {
+          $RealWpfTicks = $RealWpf.StartTime.ToUniversalTime().Ticks.ToString([Globalization.CultureInfo]::InvariantCulture)
+        } finally { $RealWpf.Dispose() }
+        Assert-True ((Invoke-NativeWpfWitness ([string]$OriginalShellPid) $RealWpfTicks) -ceq 'running') 'OS native helper refused the genuine installed WPF owner.'
+        $WrongWpfTicks = ([long]::Parse($RealWpfTicks) - 1).ToString([Globalization.CultureInfo]::InvariantCulture)
+        Assert-True ((Invoke-NativeWpfWitness ([string]$OriginalShellPid) $WrongWpfTicks) -ceq 'mismatch') 'OS native helper accepted a forged WPF birth time.'
+        Assert-True ((Invoke-NativeWpfWitness ([string]$WorkerProcess.Id) $WorkerRecord.startTimeUtcTicks) -ceq 'mismatch') 'OS native helper accepted the native worker Node as WPF.'
+        Assert-True ((Invoke-NativeWpfWitness '' $RealWpfTicks) -ceq 'unknown') 'OS native helper accepted an empty WPF PID.'
         $ShellStart = [Diagnostics.ProcessStartInfo]::new($GuardianExe)
         $ShellStart.Arguments = '--hold-native-stable-shell-quiesce'
         $ShellStart.UseShellExecute = $false
@@ -701,11 +751,15 @@ try {
         Assert-True ($ShellRecord.transactionId -ceq $JournalId -and
           $ShellRecord.disposition -ceq 'stable-shell-quiesced-only' -and
           $ShellRecord.shellPid -eq $OriginalShellPid -and
+          $ShellRecord.shellStartTimeUtcTicks -ceq $RealWpfTicks -and
+          $ShellRecord.workerPid -eq $WorkerProcess.Id -and
+          $ShellRecord.workerStartTimeUtcTicks -ceq $WorkerRecord.startTimeUtcTicks -and
           $ShellRecord.guardianPid -eq $ShellGuardian.Id -and
           $ShellRecord.preparedJournalSha256 -ceq ((Get-FileHash -LiteralPath $JournalData -Algorithm SHA256).Hash.ToLowerInvariant())) 'Native WPF graceful-exit proof is not exact process/journal evidence.'
         $StillOwned = @(Get-CimInstance Win32_Process -Filter "Name='EquinoxLocal.exe'" -ErrorAction SilentlyContinue |
           Where-Object { -not [string]::IsNullOrWhiteSpace($_.ExecutablePath) -and (Same-Path $_.ExecutablePath $StableExe) })
         Assert-True ($StillOwned.Count -eq 0) 'Native quiesce did not actually stop the installed WPF shell.'
+        Assert-True ((Invoke-NativeWpfWitness ([string]$OriginalShellPid) $RealWpfTicks) -cne 'running') 'OS native helper accepted a terminated WPF owner.'
         Assert-True ((Invoke-GuardianCheck '--audit-native-journal') -eq 70) 'Native shell exit proof silently resumed Main despite stale owner lease.'
       } finally {
         if ($null -ne $ShellGuardian) {
@@ -760,6 +814,7 @@ try {
         $ActualAbortDigest = (Get-FileHash -LiteralPath $JournalData -Algorithm SHA256).Hash.ToLowerInvariant()
         Assert-True ($AbortReceipt.transactionId -ceq $JournalId -and $AbortReceipt.stage -ceq 'rollback_started' -and
           $AbortReceipt.sequence -eq 1 -and $AbortReceipt.guardianPid -eq $AbortOwner.Id -and
+          $AbortReceipt.preparedJournalSha256 -ceq $AuthorityRecord.journalSha256 -and
           $AbortReceipt.journalSha256 -ceq $ActualAbortDigest) 'Durable native abort commit receipt does not bind exact updated bytes.'
         $AbortData = ConvertFrom-Json ([IO.File]::ReadAllText($JournalData))
         Assert-True ($AbortData.stage -ceq 'rollback_started' -and $AbortData.sequence -eq 1 -and
@@ -772,7 +827,38 @@ try {
         Assert-True ($WorkerProcess.WaitForExit(5000)) 'Detached worker did not terminate before offline orphan recovery.'
         # Both OS PIDs are genuinely gone, previous Stable A shell bytes have
         # not changed, and the independent native commit SHA is still exact.
+        # The same PID may be reused after an OS process exits. A stale or
+        # deliberately forged worker creation time in ANY persistent native
+        # authority layer must fail before quarantine or journal advancement.
+        $OriginalLock = [IO.File]::ReadAllText($JournalGuard)
+        try {
+          $ForgedLock = $OriginalLock.Replace('workerStartTimeUtcTicks=' + $WorkerRecord.startTimeUtcTicks,
+            'workerStartTimeUtcTicks=' + ([long]::Parse($WorkerRecord.startTimeUtcTicks) - 1))
+          Assert-True ($ForgedLock -cne $OriginalLock) 'Orphan writer lease did not contain the OS worker birth identity.'
+          [IO.File]::WriteAllText($JournalGuard, $ForgedLock)
+          Assert-True ((Invoke-GuardianCheck '--reconcile-native-prepared-abort') -eq 70) 'Orphan recovery accepted forged worker creation time in the native writer lease.'
+        } finally { [IO.File]::WriteAllText($JournalGuard, $OriginalLock) }
+        $OriginalHandoff = [IO.File]::ReadAllBytes($WorkerRecordPath)
+        try {
+          $ForgedWorker = ConvertFrom-Json ([Text.Encoding]::UTF8.GetString($OriginalHandoff))
+          $ForgedWorker.token = ('a' * 64)
+          [IO.File]::WriteAllText($WorkerRecordPath, ($ForgedWorker | ConvertTo-Json -Depth 4))
+          Assert-True ((Invoke-GuardianCheck '--reconcile-native-prepared-abort') -eq 70) 'Orphan recovery accepted a changed authenticated worker handoff token.'
+        } finally { [IO.File]::WriteAllBytes($WorkerRecordPath, $OriginalHandoff) }
+        $OriginalAuthority = [IO.File]::ReadAllBytes($JournalAuthority)
+        try {
+          $ForgedAuthority = ConvertFrom-Json ([Text.Encoding]::UTF8.GetString($OriginalAuthority))
+          $ForgedAuthority.workerStartTimeUtcTicks = ([long]::Parse($WorkerRecord.startTimeUtcTicks) - 1).ToString([Globalization.CultureInfo]::InvariantCulture)
+          [IO.File]::WriteAllText($JournalAuthority, ($ForgedAuthority | ConvertTo-Json -Depth 4))
+          Assert-True ((Invoke-GuardianCheck '--reconcile-native-prepared-abort') -eq 70) 'Orphan recovery accepted forged worker creation time in the native authority receipt.'
+        } finally { [IO.File]::WriteAllBytes($JournalAuthority, $OriginalAuthority) }
         $CommitBackup = [IO.File]::ReadAllBytes($JournalAbortCommit)
+        try {
+          $WrongPreparedLink = ConvertFrom-Json ([Text.Encoding]::UTF8.GetString($CommitBackup))
+          $WrongPreparedLink.preparedJournalSha256 = ('c' * 64)
+          [IO.File]::WriteAllText($JournalAbortCommit, ($WrongPreparedLink | ConvertTo-Json -Depth 4))
+          Assert-True ((Invoke-GuardianCheck '--reconcile-native-prepared-abort') -eq 70) 'Orphan recovery accepted an abort commit forged to an unrelated prepared journal.'
+        } finally { [IO.File]::WriteAllBytes($JournalAbortCommit, $CommitBackup) }
         try {
           $WrongCommit = ConvertFrom-Json ([Text.Encoding]::UTF8.GetString($CommitBackup))
           $WrongCommit.journalSha256 = ('b' * 64)

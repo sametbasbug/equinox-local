@@ -295,3 +295,46 @@ test("a failed re-check clears the previously verified install candidate", async
   assert.equal(updater.snapshot().updateAvailable, null);
   assert.match(updater.snapshot().lastError, /invalid JSON/u);
 });
+
+test("Windows native Main path admits exact SHA and release leaf, rejects path escapes", () => {
+  const home="C:\\Users\\Example",local="C:\\Users\\Example\\AppData\\Local";
+  const root=local+"\\Equinox Local",sha="a".repeat(40);
+  const prefix=root+"\\state\\main-update\\native-store\\win32-arm64\\";
+  const native=prefix+sha+"\\release";
+  const options={platform:"win32",arch:"arm64",homeDir:home,
+    env:{LOCALAPPDATA:local,EQUINOX_LOCAL_INSTALL_ROOT:root,EQUINOX_LOCAL_RELEASE_DIR:native}};
+  const valid=resolveEquinoxLocalInstallation(options);
+  assert.equal(valid.kind,"managed");
+  assert.equal(valid.mainNativeSha,sha);
+  assert.equal(valid.releaseDir,native);
+  for(const releaseDir of [
+    native+"\\foreign",
+    root+"\\state\\main-update\\native-store\\win32-x64\\"+sha+"\\release",
+    prefix+sha.toUpperCase()+"\\release",
+    prefix+sha+"\\other",
+    root+"\\releases",
+    root+"\\releases\\..\\..\\foreign",
+  ]) {
+    const rejected=resolveEquinoxLocalInstallation({...options,
+      env:{...options.env,EQUINOX_LOCAL_RELEASE_DIR:releaseDir}});
+    assert.equal(rejected.kind,"unsupported",releaseDir);
+    assert.equal(rejected.managed,false);
+    assert.equal(rejected.selfUpdateSupported,false);
+    assert.equal(rejected.mainNativeSha,undefined);
+  }
+});
+
+test("untrusted home and unsupported host never enable updates or invent installed target", () => {
+  for(const input of [
+    {platform:"darwin",arch:"arm64",homeDir:"relative-home",env:{}},
+    {platform:"linux",arch:"x64",homeDir:"/Users/safe",env:{}},
+    {platform:"win32",arch:"x64",homeDir:"C:\\Users\\Owner",env:{LOCALAPPDATA:"relative-appdata"}},
+  ]) {
+    const outcome=resolveEquinoxLocalInstallation(input);
+    assert.equal(outcome.kind,"source");
+    assert.equal(outcome.managed,false);
+    assert.equal(outcome.selfUpdateSupported,false);
+    assert.equal(outcome.target,null);
+    assert.equal(outcome.lifecycleKind,null);
+  }
+});

@@ -551,3 +551,120 @@ test("desktop capability metadata follows the actual Windows engine without rewr
   assert.match(externalCapabilityDomainDefinition("desktop", "win32").usageHint, /winapp/u);
   assert.equal(externalCapabilityDomainDefinition("desktop", "darwin").label, "macOS desktop");
 });
+
+test("capability registration refuses malformed names and unowned domains without granting a call path",async()=>{
+  const registry=createCapabilityRegistry();
+  let executions=0;
+  for(const name of ["", "CapitalCase", " leading", "a/b", "a".repeat(161),"__proto__"]){
+    assert.throws(()=>registry.register({
+      name,invoke:async()=>{executions++;return "wrong";},
+      config:{inputSchema:{}},
+    }),/operation adı geçersiz/u);
+  }
+  for(const domain of ["desktop","other","git","__proto__"]){
+    assert.throws(()=>registry.register({
+      name:"runtime_private_probe",domain,
+      config:{inputSchema:{}},invoke:async()=>{executions++;return "wrong";},
+    }),/Bilinmeyen capability domain/u);
+  }
+  for(const name of ["capabilities","files_call","browser_call","desktop_call","npm_install_package","workflow_start"]){
+    assert.deepEqual(registry.register({
+      name,config:{inputSchema:{}},invoke:async()=>{executions++;return "wrong";},
+    }),{registered:false,name,domain:null});
+  }
+  assert.equal(registry.summary().operationCount,0);
+  assert.equal(executions,0);
+});
+
+test("capability dispatch never reaches the handler before strict async schema and domain admission",async()=>{
+  const registry=createCapabilityRegistry();
+  const trace=[];
+  registry.register({
+    name:"equinox_browser_safe_probe",
+    config:{inputSchema:{
+      value:z.string().trim().min(2),
+      nested:z.object({count:z.number().int().min(1)}).strict(),
+    }},
+    invoke:async input=>{trace.push(input);return textResult("allowed");},
+  });
+  const invalid=[
+    {value:"a",nested:{count:1}},
+    {value:"ok",nested:{count:0}},
+    {value:"ok",nested:{count:1,other:true}},
+    {value:"ok",nested:{count:1},surprise:"mutation"},
+    {value:12,nested:{count:1}},
+    null,
+  ];
+  for(const args of invalid){
+    await assert.rejects(registry.invoke("browser","safe_probe",args),Error);
+    assert.equal(trace.length,0);
+  }
+  await assert.rejects(registry.invoke("runtime","safe_probe",{value:"ok",nested:{count:1}}),/operation bulunamadı/u);
+  assert.equal(trace.length,0);
+  const result=await registry.invoke("browser","safe_probe",{value:"  yes  ",nested:{count:1}});
+  assert.equal(extractText(result),"allowed");
+  assert.deepEqual(trace,[{value:"yes",nested:{count:1}}]);
+});
+
+test("native files gateway uses explicitly supplied attachment rather than conflicting operation argument, without exposing file on other gateways",async()=>{
+  const registry=createCapabilityRegistry();
+  const argsSeen=[];
+  registry.register({
+    name:"file_import",domain:"files",
+    config:{inputSchema:{
+      file:z.object({download_url:z.string().url(),file_id:z.string()}).strict(),
+      marker:z.string(),
+    }},
+    invoke:async args=>{argsSeen.push(args);return textResult("file-ok");},
+  });
+  registry.register({
+    name:"runtime_probe",domain:"runtime",
+    config:{inputSchema:{marker:z.string()}},
+    invoke:async args=>{argsSeen.push(args);return textResult("runtime-ok");},
+  });
+  const registrations=new Map();
+  registerStableCapabilityGateways({
+    registerTextTool:(name,config,handler,options)=>registrations.set(name,{config,handler,options}),
+    registerRawTool:(name,config,handler,options)=>registrations.set(name,{config,handler,options}),
+    registry,textResult,
+  });
+  const file={download_url:"https://fixture.invalid/owned",file_id:"fixture-owned"};
+  const wrongFile={download_url:"https://fixture.invalid/attacker",file_id:"fixture-attacker"};
+  const imported=await registrations.get("files_call").handler({
+    operation:"file_import",arguments:{file:wrongFile,marker:"fixture"},file,
+  });
+  assert.equal(extractText(imported),"file-ok");
+  assert.deepEqual(argsSeen,[{file,marker:"fixture"}]);
+  await assert.rejects(registry.invoke("runtime","runtime_probe",{marker:"fixture",file}),Error);
+  assert.equal(argsSeen.length,1);
+  assert.equal(registrations.get("runtime_call").config.inputSchema.file,undefined);
+  assert.deepEqual(registrations.get("files_call").config._meta,{"openai/fileParams":["file"]});
+  assert.equal(registrations.get("files_call").config.inputSchema.file.safeParse({...file,extra:"untrusted"}).success,false);
+});
+
+test("capability discovery caps each catalog to 80 operations and truncates descriptions without invoking them",async()=>{
+  const registry=createCapabilityRegistry();
+  let invoked=0;
+  for(let i=0;i<96;i++){
+    registry.register({
+      name:"runtime_case_"+String(i).padStart(3,"0"),
+      config:{description:"fixed-"+i+" "+"x".repeat(400),inputSchema:{}},
+      invoke:async()=>{invoked++;return textResult("never called");},
+    });
+  }
+  const registrations=new Map();
+  registerStableCapabilityGateways({
+    registerTextTool:(name,config,handler,options)=>registrations.set(name,{config,handler,options}),
+    registry,textResult,
+  });
+  const result=JSON.parse(extractText(await registrations.get("capabilities").handler({domain:"runtime"})));
+  assert.equal(result.totalCount,96);
+  assert.equal(result.count,80);
+  assert.equal(result.operations.length,80);
+  assert.ok(result.operations.every(x=>x.description.length<=240));
+  assert.equal(result.operations[0].name,"runtime_case_000");
+  assert.equal(result.operations.at(-1).name,"runtime_case_079");
+  const filtered=JSON.parse(extractText(await registrations.get("capabilities").handler({domain:"runtime",query:"case_095"})));
+  assert.deepEqual(filtered.operations.map(x=>x.name),["runtime_case_095"]);
+  assert.equal(invoked,0);
+});

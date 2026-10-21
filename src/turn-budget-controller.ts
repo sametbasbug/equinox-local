@@ -1,0 +1,311 @@
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+
+import { equinoxLocalPlatformPaths } from "./equinox-local-platform.js";
+
+type TurnBudgetSettings = Readonly<{
+  enabled: boolean;
+  cutoffMinutes: number;
+  fallbackResetMinutes: number;
+  autoContinueMaxHops: number;
+}>;
+type TurnStage = "running" | "checkpoint" | "finalize" | "overdue";
+type BudgetSource = "browser" | "fallback";
+type ActiveBudget = {
+  key: string;
+  source: BudgetSource;
+  browserContext: string | null;
+  title: string | null;
+  startedAtMs: number;
+  lastInvocationAtMs: number;
+  notices: Set<string>;
+};
+type TurnIdentityInput = {
+  status?: unknown;
+  idleContexts?: unknown;
+  userEpoch?: unknown;
+  assistantTurnKey?: unknown;
+  generationStartedAtMs?: unknown;
+  browserContext?: unknown;
+  conversationId?: unknown;
+  title?: unknown;
+};
+type ActiveIdentity = {
+  key: string;
+  browserContext: string;
+  generationStartedAtMs: number | null;
+  title: string;
+};
+type IdentityProbe =
+  | Readonly<{status: "unknown"}>
+  | Readonly<{status: "idle"; idleContexts: readonly string[]}>
+  | Readonly<{status: "active"; identity: Readonly<ActiveIdentity>}>;
+type BudgetNoticeOptions = {
+  stage: TurnStage;
+  cutoffMinutes: number;
+  elapsedMs: number;
+  remainingMs: number;
+  source: BudgetSource;
+  firstNotice: boolean;
+};
+type BudgetContext = {firstNotice?: boolean; waitClamped?: boolean};
+type BudgetInvocation = {
+  arguments?: Record<string, unknown>;
+  [key: string]: unknown;
+};
+type BudgetResult = {
+  content?: Array<{type?: string; text?: string; [key: string]: unknown}>;
+  structuredContent?: {text?: unknown; [key: string]: unknown};
+  [key: string]: unknown;
+};
+type FileSystem = Pick<typeof fs, "readFile" | "mkdir" | "chmod" | "writeFile">;
+type TurnBudgetControllerOptions = {
+  settingsPath?: string;
+  fsImpl?: FileSystem;
+  now?: () => number;
+  resolveTurnIdentity?: () => Promise<unknown>;
+};
+type BudgetSettingsPathOptions = {
+  platform?: string;
+  arch?: string;
+  env?: NodeJS.ProcessEnv;
+};
+
+export const TURN_BUDGET_DEFAULTS = Object.freeze({
+  enabled: true,
+  cutoffMinutes: 22,
+  checkpointLeadMinutes: 4,
+  finalizeLeadMinutes: 2,
+  maxCutoffMinutes: 120,
+  minCutoffMinutes: 5,
+  fallbackResetMinutes: 2,
+  autoContinueMaxHops: 10,
+  minAutoContinueMaxHops: 1,
+  maxAutoContinueMaxHops: 20,
+  minFallbackResetMinutes: 1,
+  maxFallbackResetMinutes: 120,
+  finalizationReserveMs: 60_000,
+});
+
+function normalizeSettings(value: unknown = {}): TurnBudgetSettings {
+  const settingsInput = value as Record<string, unknown>;
+  if (value === null || typeof value !== "object" || Array.isArray(value)) throw new Error("Turn Budget settings must be an object.");
+  const enabled = settingsInput.enabled === undefined ? true : settingsInput.enabled;
+  if (typeof enabled !== "boolean") throw new Error("Turn Budget enabled must be true or false.");
+  const cutoffMinutes = settingsInput.cutoffMinutes === undefined ? TURN_BUDGET_DEFAULTS.cutoffMinutes : settingsInput.cutoffMinutes;
+  if (typeof cutoffMinutes !== "number" || !Number.isInteger(cutoffMinutes) || cutoffMinutes < TURN_BUDGET_DEFAULTS.minCutoffMinutes || cutoffMinutes > TURN_BUDGET_DEFAULTS.maxCutoffMinutes) {
+    throw new Error(`Turn Budget cutoffMinutes must be between ${TURN_BUDGET_DEFAULTS.minCutoffMinutes} and ${TURN_BUDGET_DEFAULTS.maxCutoffMinutes}.`);
+  }
+  const fallbackResetMinutes = settingsInput.fallbackResetMinutes === undefined
+    ? TURN_BUDGET_DEFAULTS.fallbackResetMinutes
+    : settingsInput.fallbackResetMinutes;
+  if (
+    typeof fallbackResetMinutes !== "number" || !Number.isInteger(fallbackResetMinutes) ||
+    fallbackResetMinutes < TURN_BUDGET_DEFAULTS.minFallbackResetMinutes ||
+    fallbackResetMinutes > TURN_BUDGET_DEFAULTS.maxFallbackResetMinutes ||
+    fallbackResetMinutes > cutoffMinutes
+  ) {
+    throw new Error(`Turn Budget fallbackResetMinutes must be between ${TURN_BUDGET_DEFAULTS.minFallbackResetMinutes} and cutoffMinutes (${cutoffMinutes}).`);
+  }
+  const autoContinueMaxHops = settingsInput.autoContinueMaxHops === undefined
+    ? TURN_BUDGET_DEFAULTS.autoContinueMaxHops
+    : settingsInput.autoContinueMaxHops;
+  if (typeof autoContinueMaxHops !== "number" || !Number.isInteger(autoContinueMaxHops) || autoContinueMaxHops < TURN_BUDGET_DEFAULTS.minAutoContinueMaxHops || autoContinueMaxHops > TURN_BUDGET_DEFAULTS.maxAutoContinueMaxHops) {
+    throw new Error(`Auto Continue max hops must be between ${TURN_BUDGET_DEFAULTS.minAutoContinueMaxHops} and ${TURN_BUDGET_DEFAULTS.maxAutoContinueMaxHops}.`);
+  }
+  return Object.freeze({ enabled, cutoffMinutes, fallbackResetMinutes, autoContinueMaxHops });
+}
+
+export function defaultTurnBudgetSettingsPath(homeDir = os.homedir(), { platform = process.platform, arch = process.arch, env = process.env }: BudgetSettingsPathOptions = {}): string {
+  return equinoxLocalPlatformPaths({ platform, arch, homeDir, env }).turnBudgetPath;
+}
+
+async function readSettingsFile(settingsPath: string, fsImpl: FileSystem): Promise<TurnBudgetSettings> {
+  try { return normalizeSettings(JSON.parse(await fsImpl.readFile(settingsPath, "utf8"))); }
+  catch (error) { if ((error as NodeJS.ErrnoException | null | undefined)?.code === "ENOENT") return normalizeSettings(); throw error; }
+}
+
+function stageForElapsed(elapsedMs: number, cutoffMinutes: number): TurnStage {
+  const cutoffMs = cutoffMinutes * 60_000;
+  const checkpointAt = Math.max(0, cutoffMs - TURN_BUDGET_DEFAULTS.checkpointLeadMinutes * 60_000);
+  const finalizeAt = Math.max(checkpointAt, cutoffMs - TURN_BUDGET_DEFAULTS.finalizeLeadMinutes * 60_000);
+  if (elapsedMs >= cutoffMs) return "overdue";
+  if (elapsedMs >= finalizeAt) return "finalize";
+  if (elapsedMs >= checkpointAt) return "checkpoint";
+  return "running";
+}
+
+function clampWaitMs(waitMs: unknown, remainingMs: number) {
+  if (!Number.isInteger(waitMs) || (waitMs as number) < 0) return waitMs;
+  if (remainingMs > TURN_BUDGET_DEFAULTS.finalizeLeadMinutes * 60_000) return waitMs;
+  const cap = Math.max(5_000, remainingMs - TURN_BUDGET_DEFAULTS.finalizationReserveMs);
+  return Math.max(0, Math.min(waitMs as number, cap));
+}
+
+function noticeFor({ stage, cutoffMinutes, elapsedMs, remainingMs, source, firstNotice }: BudgetNoticeOptions): string | null {
+  const elapsedMin = Math.max(0, elapsedMs / 60_000);
+  const remainingMin = Math.max(0, remainingMs / 60_000);
+  if (firstNotice) return `[Equinox Local · Turn Budget] This assistant turn has a ${cutoffMinutes}-minute safety cutoff starting ${source === "browser" ? "when Equinox Browser first observed ChatGPT generation (independent of the first Local tool call)" : "from the first Equinox Local use (fallback mode)"}. Plan long work so you can checkpoint and send a normal final response before the platform hard stop.`;
+  if (stage === "checkpoint") return `[Equinox Local · Turn Budget] About ${remainingMin.toFixed(1)} minutes remain before the ${cutoffMinutes}-minute safety cutoff. Do not start a new major subtask. Finish the current safe checkpoint and prepare Task Capsule/continuation state if more work will remain.`;
+  if (stage === "finalize") return `[Equinox Local · Turn Budget] FINALIZATION WINDOW: about ${remainingMin.toFixed(1)} minutes remain before the ${cutoffMinutes}-minute safety cutoff (${elapsedMin.toFixed(1)}m elapsed). Finish the current safe checkpoint now. If work remains, update the Task Capsule and arm Auto Continue, then send the user a normal final response. Avoid long tool waits.`;
+  if (stage === "overdue") return `[Equinox Local · Turn Budget] SAFETY CUTOFF REACHED (${cutoffMinutes}m). Do not start or continue substantial work. Persist the current checkpoint, arm Auto Continue if needed, and send the user a normal final response immediately.`;
+  return null;
+}
+
+function appendNotice(result: unknown, notice: string) {
+  if (!notice || !result || typeof result !== "object") return result;
+  const typedResult = result as BudgetResult;
+  const content = Array.isArray(typedResult.content) ? typedResult.content.map((item) => ({ ...item })) : [];
+  const textIndex = content.findIndex((item) => item?.type === "text" && typeof item.text === "string");
+  if (textIndex >= 0) content[textIndex]!.text = `${content[textIndex]!.text}\n\n${notice}`;
+  else content.push({ type: "text", text: notice });
+  const next = { ...typedResult, content };
+  if (typedResult.structuredContent && typeof typedResult.structuredContent === "object" && typeof typedResult.structuredContent.text === "string") {
+    next.structuredContent = { ...typedResult.structuredContent, text: `${typedResult.structuredContent.text}\n\n${notice}` };
+  }
+  return next;
+}
+
+export function createTurnBudgetController({ settingsPath = defaultTurnBudgetSettingsPath(), fsImpl = fs, now = () => Date.now(), resolveTurnIdentity = async () => null }: TurnBudgetControllerOptions = {}) {
+  let settings = normalizeSettings();
+  let active: ActiveBudget | null = null;
+
+  async function initialize() { settings = await readSettingsFile(settingsPath, fsImpl); return snapshot(); }
+  async function updateSettings(next: unknown) {
+    const normalized = normalizeSettings(next);
+    const parent = path.dirname(settingsPath);
+    await fsImpl.mkdir(parent, { recursive: true, mode: 0o700 });
+    await fsImpl.chmod(parent, 0o700).catch(() => {});
+    await fsImpl.writeFile(settingsPath, `${JSON.stringify(normalized, null, 2)}\n`, { mode: 0o600 });
+    await fsImpl.chmod(settingsPath, 0o600).catch(() => {});
+    settings = normalized;
+    if (!settings.enabled) active = null;
+    return snapshot();
+  }
+  function expireStaleFallback(timestamp = now()) {
+    if (
+      active?.source === "fallback" &&
+      timestamp - active.lastInvocationAtMs >= settings.fallbackResetMinutes * 60_000
+    ) {
+      active = null;
+      return true;
+    }
+    return false;
+  }
+
+  async function resolveIdentitySafe(): Promise<IdentityProbe> {
+    try {
+      const result = await resolveTurnIdentity() as TurnIdentityInput | null;
+      if (!result || typeof result !== "object") return Object.freeze({ status: "unknown" });
+      if (result.status === "idle") {
+        const idleContexts = Array.isArray(result.idleContexts)
+          ? result.idleContexts.filter((value) => value === "agent" || value === "user")
+          : [];
+        return Object.freeze({ status: "idle", idleContexts: Object.freeze([...new Set(idleContexts)]) });
+      }
+      const userEpoch = typeof result.userEpoch === "string" && result.userEpoch ? result.userEpoch : null;
+      const assistantTurnKey = typeof result.assistantTurnKey === "string" && result.assistantTurnKey ? result.assistantTurnKey : null;
+      if (!userEpoch && !assistantTurnKey) return Object.freeze({ status: "unknown" });
+      const time = now();
+      const startedAt = result.generationStartedAtMs;
+      const generationStartedAtMs = typeof startedAt === "number" && Number.isSafeInteger(startedAt)
+        && startedAt > 0 && startedAt <= time && time - startedAt <= 2 * 60 * 60_000
+        ? startedAt : null;
+      const context = (result.browserContext || "unknown") as string;
+      const conversationId = (result.conversationId || "unknown") as string;
+      const turnKey = userEpoch ? `user:${userEpoch}` : `assistant:${assistantTurnKey}`;
+      return Object.freeze({
+        status: "active",
+        identity: Object.freeze({
+          key: `${context}:${conversationId}:${turnKey}`,
+          browserContext: context,
+          generationStartedAtMs,
+          title: typeof result.title === "string" ? result.title.slice(0, 160) : "ChatGPT",
+        }),
+      });
+    } catch {
+      return Object.freeze({ status: "unknown" });
+    }
+  }
+  function generationStart(identity: ActiveIdentity | null, timestamp: number) {
+    return identity?.generationStartedAtMs ?? timestamp;
+  }
+
+  async function prepareInvocation(toolName: string, input: unknown) {
+    const timestamp = now();
+    if (!settings.enabled) { active = null; return Object.freeze({ input, firstNotice: false, waitClamped: false }); }
+    expireStaleFallback(timestamp);
+    const probe = await resolveIdentitySafe();
+    const identity = probe.status === "active" ? probe.identity : null;
+    if (identity) {
+      if (!active || active.key !== identity.key) active = { key: identity.key, source: "browser", browserContext: identity.browserContext, title: identity.title, startedAtMs: generationStart(identity, timestamp), lastInvocationAtMs: timestamp, notices: new Set() };
+      else if (identity.generationStartedAtMs && identity.generationStartedAtMs < active.startedAtMs) active.startedAtMs = identity.generationStartedAtMs;
+    } else if (!active) {
+      active = { key: `fallback:${timestamp}`, source: "fallback", browserContext: null, title: null, startedAtMs: timestamp, lastInvocationAtMs: timestamp, notices: new Set() };
+    }
+    active.lastInvocationAtMs = timestamp;
+    const elapsedMs = Math.max(0, timestamp - active.startedAtMs);
+    const remainingMs = Math.max(0, settings.cutoffMinutes * 60_000 - elapsedMs);
+    let adjustedInput = input;
+    let waitClamped = false;
+    if (toolName === "runtime_call" && input && typeof input === "object" && (input as BudgetInvocation).arguments && typeof (input as BudgetInvocation).arguments === "object") {
+      const originalWait = (input as BudgetInvocation).arguments!.wait_ms;
+      const adjustedWait = clampWaitMs(originalWait, remainingMs);
+      if (Number.isInteger(originalWait) && Number.isInteger(adjustedWait) && (adjustedWait as number) < (originalWait as number)) {
+        adjustedInput = { ...input, arguments: { ...(input as BudgetInvocation).arguments, wait_ms: adjustedWait } };
+        waitClamped = true;
+      }
+    }
+    return Object.freeze({ input: adjustedInput, firstNotice: !active.notices.has("start"), waitClamped });
+  }
+  function decorateResult(result: unknown, context: BudgetContext = {}) {
+    if (!settings.enabled || !active) return result;
+    const timestamp = now();
+    active.lastInvocationAtMs = timestamp;
+    const elapsedMs = Math.max(0, timestamp - active.startedAtMs);
+    const cutoffMs = settings.cutoffMinutes * 60_000;
+    const remainingMs = Math.max(0, cutoffMs - elapsedMs);
+    const stage = stageForElapsed(elapsedMs, settings.cutoffMinutes);
+    const notices = [];
+    if (context.firstNotice && !active.notices.has("start")) { active.notices.add("start"); notices.push(noticeFor({ stage, cutoffMinutes: settings.cutoffMinutes, elapsedMs, remainingMs, source: active.source, firstNotice: true })); }
+    if (stage !== "running" && !active.notices.has(stage)) { active.notices.add(stage); notices.push(noticeFor({ stage, cutoffMinutes: settings.cutoffMinutes, elapsedMs, remainingMs, source: active.source, firstNotice: false })); }
+    if (context.waitClamped) notices.push("[Equinox Local · Turn Budget] A requested blocking wait was shortened so control returns before the safety cutoff.");
+    return appendNotice(result, notices.filter(Boolean).join("\n"));
+  }
+  async function refreshSnapshot() {
+    if (!settings.enabled) return snapshot();
+    const timestamp = now();
+    expireStaleFallback(timestamp);
+    const probe = await resolveIdentitySafe();
+    if (probe.status === "active") {
+      const identity = probe.identity;
+      // Browser mode starts with an observed ChatGPT generation, independently
+      // of agent tool calls. Fallback alone starts from first Local use.
+      if (!active || active.source !== "browser" || active.key !== identity.key) {
+        active = { key: identity.key, source: "browser", browserContext: identity.browserContext,
+          title: identity.title, startedAtMs: generationStart(identity, timestamp), lastInvocationAtMs: timestamp, notices: new Set() };
+      } else if (identity.generationStartedAtMs && identity.generationStartedAtMs < active.startedAtMs) {
+        active.startedAtMs = identity.generationStartedAtMs;
+      }
+    } else if (active?.source === "browser" && probe.status === "idle" &&
+        probe.idleContexts.includes(active.browserContext as string)) {
+      active = null;
+    }
+    return snapshot();
+  }
+
+  function snapshot() {
+    const timestamp = now();
+    if (settings.enabled) expireStaleFallback(timestamp);
+    const base = { enabled: settings.enabled, cutoffMinutes: settings.cutoffMinutes, fallbackResetMinutes: settings.fallbackResetMinutes, autoContinueMaxHops: settings.autoContinueMaxHops };
+    if (!settings.enabled) return Object.freeze({ ...base, active: null });
+    if (!active) return Object.freeze({ ...base, active: null });
+    const elapsedMs = Math.max(0, timestamp - active.startedAtMs);
+    const cutoffMs = settings.cutoffMinutes * 60_000;
+    return Object.freeze({ ...base, active: Object.freeze({ source: active.source, browserContext: active.browserContext, title: active.title, startedAt: new Date(active.startedAtMs).toISOString(), elapsedMs, remainingMs: Math.max(0, cutoffMs - elapsedMs), stage: stageForElapsed(elapsedMs, settings.cutoffMinutes) }) });
+  }
+  return Object.freeze({ initialize, updateSettings, prepareInvocation, decorateResult, refreshSnapshot, snapshot });
+}
+
+export const __test = Object.freeze({ normalizeSettings, stageForElapsed, clampWaitMs, appendNotice });

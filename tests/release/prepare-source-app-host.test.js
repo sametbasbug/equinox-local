@@ -164,3 +164,33 @@ macTest("source app host fails closed when Main native pointer validation fails"
   }), /stored Main native fingerprint mismatch/u);
   assert.equal(built, false);
 });
+
+macTest("source app host removes the temporary wrapper after a failed atomic write", async (t) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "equinox-source-write-failure-"));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const homeDir = path.join(root, "home");
+  const launcher = path.join(root, "start-source.sh");
+  const tunnel = path.join(root, "tunnel-client");
+  const configPath = path.join(root, "runtime.conf");
+  await fs.mkdir(homeDir, { recursive: true });
+  await fs.writeFile(launcher, "#!/bin/sh\nexit 0\n", { mode: 0o700 });
+  await fs.writeFile(tunnel, "#!/bin/sh\nexit 0\n", { mode: 0o700 });
+  await fs.writeFile(configPath, `launchAgentLabel=dev.equinox.local.dev\ntunnelRuntime=equinox-local-dev\ntunnelClient=${tunnel}\nsourceLauncher=${launcher}\n`, { mode: 0o600 });
+  const fsImpl = { ...fs, open: async (filename, ...args) => {
+    const handle = await fs.open(filename, ...args);
+    if (path.basename(filename).startsWith(".equinox-source-app-")) {
+      return {
+        writeFile: async () => { throw new Error("injected atomic wrapper write failure"); },
+        close: () => handle.close(),
+      };
+    }
+    return handle;
+  } };
+  await assert.rejects(prepareSourceAppHost({
+    homeDir, configPath, fsImpl,
+    ensureAppHostImpl: async () => {},
+  }), /injected atomic wrapper write failure/u);
+  const appRoot = path.join(homeDir, "Library", "Application Support", "Equinox Local");
+  assert.deepEqual(await fs.readdir(appRoot), [],
+    "failed writing must not leave product-owned temporary wrapper files");
+});

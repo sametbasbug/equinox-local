@@ -298,3 +298,97 @@ test("Agent Browser launch failures are diagnosed and resolved by a later succes
   const recovered = await engine.diagnose({ windowMs: 10000 });
   assert.equal(recovered.incidents.find((item) => item.code === "AGENT_BROWSER_LAUNCH_FAILURE")?.state, "RESOLVED");
 });
+
+test("diagnosis caps an untrusted observability scan at the last 10,000 events and never starts repair",async()=>{
+  const nowMs=1_800_000_700_000;
+  const events=Array.from({length:10_080},(_,i)=>event({
+    id:"bulk-"+i,ms:nowMs-20_000+i,component:"runtime",type:"runtime.heartbeat",
+  }));
+  const calls=[];
+  const engine=createDiagnosisEngine({
+    observability:{
+      query:async()=>{throw Error("scan exists; query should not run")},
+      scan:async args=>{calls.push(["scan",args]);return events},
+      health:async options=>{calls.push(["health",options]);return {state:"HEALTHY"}},
+    },
+    workflowManager:{status:()=>{throw Error("unrelated workflow must not run")}},
+    processManager:{list:()=>{throw Error("no incidents: no process inventory")}},
+    inspectPort:async()=>{throw Error("no port collision")},
+    now:()=>nowMs,
+  });
+  const result=await engine.diagnose({windowMs:40_000,limit:20});
+  assert.equal(result.eventCount,10_000);
+  assert.equal(result.incidentCount,0);
+  assert.equal(result.health.state,"HEALTHY");
+  assert.deepEqual(calls,[
+    ["scan",{sinceMs:nowMs-40_000,untilMs:nowMs}],
+    ["health",{windowMs:40_000}],
+  ]);
+});
+
+test("diagnosis refuses to probe invalid or attacker-supplied preview ports",async()=>{
+  const nowMs=1_800_000_800_000;
+  const invalidPorts=[-1,0,65536,"text",null];
+  const events=invalidPorts.map((port,i)=>event({
+    id:"port-invalid-"+i,ms:nowMs-2_000+i,
+    component:"release-gate",type:"release-gate.port_collision",
+    projectId:"project-"+i,details:{requestedPort:port},
+  }));
+  let probes=0;
+  const engine=createDiagnosisEngine({
+    observability:fakeObservability(events,nowMs),
+    inspectPort:async()=>{probes++;throw Error("not allowed")},
+    now:()=>nowMs,
+  });
+  const result=await engine.diagnose({windowMs:10_000});
+  assert.equal(result.incidentCount,5);
+  assert.equal(probes,0);
+  assert.ok(result.incidents.every(item=>item.code==="PREVIEW_PORT_OCCUPIED"));
+  assert.ok(result.incidents.every(item=>item.state==="RESOLVED"));
+});
+
+test("diagnosis filters by exact project, optional bridge component and resolved state",async()=>{
+  const nowMs=1_800_000_900_000;
+  const events=[
+    event({id:"own-failure",ms:nowMs-3000,component:"agent-browser",type:"launch_failed",projectId:"owned",severity:"error"}),
+    event({id:"own-recovered",ms:nowMs-2000,component:"agent-browser",type:"launch_requested",projectId:"owned"}),
+    event({id:"foreign-failure",ms:nowMs-1000,component:"agent-browser",type:"launch_failed",projectId:"foreign"}),
+    event({id:"desktop-failure",ms:nowMs-500,component:"peekaboo",type:"peekaboo.permission_loss",projectId:"owned"}),
+  ];
+  const engine=createDiagnosisEngine({observability:fakeObservability(events,nowMs),now:()=>nowMs});
+  const result=await engine.diagnose({projectId:"owned",component:"agent-browser",includeResolved:false,windowMs:10_000});
+  assert.equal(result.eventCount,3);
+  assert.equal(result.incidentCount,0);
+  const recovered=await engine.diagnose({projectId:"owned",component:"agent-browser",includeResolved:true,windowMs:10_000});
+  assert.equal(recovered.incidentCount,1);
+  assert.equal(recovered.incidents[0].state,"RESOLVED");
+  assert.equal(recovered.incidents[0].code,"AGENT_BROWSER_LAUNCH_FAILURE");
+  const other=await engine.diagnose({projectId:"owned",component:"peekaboo",includeResolved:false,windowMs:10_000});
+  assert.equal(other.incidentCount,1);
+  assert.equal(other.incidents[0].code,"PEEKABOO_PERMISSION_LOSS");
+});
+
+test("incident report bounds workflow log reads and remains read-only when evidence cannot be fetched",async()=>{
+  const nowMs=1_800_001_000_000,workflowId="wf-evidence-fixture";
+  const events=[event({id:"wf-failure",ms:nowMs-500,component:"workflow",type:"workflow.failed",
+    correlationId:workflowId,severity:"error",status:"failed",message:"synthetic workflow failure"})];
+  const logCalls=[];
+  const engine=createDiagnosisEngine({
+    observability:fakeObservability(events,nowMs),now:()=>nowMs,
+    workflowManager:{
+      status:()=>({status:"failed",steps:[{id:"step",status:"failed",label:"fixture"}]}),
+      readLogs:async args=>{logCalls.push(args);throw Error("synthetic unreadable logs")},
+    },
+    processManager:{
+      list:()=>[],
+      readLogs:async()=>{throw Error("no process ID evidence")},
+    },
+  });
+  const diagnosed=await engine.diagnose({windowMs:10_000});
+  const report=await engine.incidentReport({incidentId:diagnosed.incidents[0].incidentId,windowMs:10_000});
+  assert.equal(report.incident.code,"WORKFLOW_FAILURE");
+  assert.equal(report.timeline.length,1);
+  assert.equal(report.currentEvidence.workflowLogTail,null);
+  assert.deepEqual(logCalls,[{workflowId,cursor:Number.MAX_SAFE_INTEGER,maxBytes:1}]);
+  await assert.rejects(engine.incidentReport({incidentId:"inc-nonexistent",windowMs:10_000}),/Incident seçilen retention/u);
+});

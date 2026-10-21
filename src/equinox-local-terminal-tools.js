@@ -1,515 +1,433 @@
 import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
-
 import { TERMINAL_KEYS } from "./terminal-manager.js";
 import { buildGenericExecutionEnvironment } from "./equinox-local-generic-execution.js";
 import { equinoxLocalFiniteShell, equinoxLocalInteractiveShells } from "./equinox-local-platform.js";
 import { lstatSync } from "node:fs";
-
 const TERMINAL_EXEC_REPLAY_WINDOW_MS = 5 * 60 * 1000;
 const TERMINAL_EXEC_REPLAY_MAX_LEASES = 64;
-
 function terminalExecFingerprint({ projectId, cwd, command, args }) {
-  return createHash("sha256")
-    .update(JSON.stringify([projectId, cwd, command, args]))
-    .digest("hex");
+    return createHash("sha256")
+        .update(JSON.stringify([projectId, cwd, command, args]))
+        .digest("hex");
 }
-
 function sameStringArray(left, right) {
-  return Array.isArray(left) && Array.isArray(right) &&
-    left.length === right.length && left.every((value, index) => value === right[index]);
+    return Array.isArray(left) && Array.isArray(right) &&
+        left.length === right.length && left.every((value, index) => value === right[index]);
 }
-
 function processMatchesTerminalExec(process, spec) {
-  return Boolean(
-    process &&
-    process.running === true &&
-    process.purpose === "terminal_exec" &&
-    process.projectId === spec.projectId &&
-    process.cwd === spec.cwd &&
-    process.command === spec.command &&
-    sameStringArray(process.args, spec.args)
-  );
+    return Boolean(process &&
+        process.running === true &&
+        process.purpose === "terminal_exec" &&
+        process.projectId === spec.projectId &&
+        process.cwd === spec.cwd &&
+        process.command === spec.command &&
+        sameStringArray(process.args, spec.args));
 }
-
-export function registerTerminalTools({
-  platform = process.platform,
-  arch = process.arch,
-  registerTextTool,
-  z,
-  terminalManager,
-  processManager,
-  agentAccess,
-  safeResolve,
-  fsImpl = fs,
-  getActiveProjectId,
-  getActiveProjectName,
-  getActiveProjectRoot,
-  runtimeEnv = process.env,
-  powerShell7StatFile = lstatSync,
-  buildGenericExecutionEnvironmentImpl = buildGenericExecutionEnvironment,
-  now = () => Date.now(),
-  recordEvent = null,
-  textResult,
-  errorResult,
-} = {}) {
-  const finiteShell = equinoxLocalFiniteShell({ platform, arch, env: runtimeEnv });
-  const finiteShellNames = platform === "win32" ? ["powershell", "pwsh", "cmd"] : ["zsh"];
-  const finiteDefaultShell = platform === "win32" ? "powershell" : "zsh";
-  const windowsShellGuide = platform === "win32"
-    ? " Windows powershell = varsayılan 5.1, pwsh = isteğe bağlı kurulu PowerShell 7, cmd = sonlu native/CMD komutları için doğrudan CMD yolu (PowerShell sözdizimi kabul etmez). Windows PowerShell 5.1 altında native EXE komutu çalışmazsa aynı hatalı çağrıyı tekrar etme; native CMD sözdiziminde shell: cmd seç veya bağımsız EXE için process_start + process_wait + process_logs kullan. PS5 içindeki '&' çağrısı henüz düzeltilmedi; kullanıcı masaüstünde görünür konsol penceresi açılmamalıdır."
-    : "";
-  const interactiveShells = equinoxLocalInteractiveShells({ platform, arch, env: runtimeEnv, statFile: powerShell7StatFile });
-  const interactiveShellNames = Object.keys(interactiveShells.shells);
-  if (interactiveShellNames.length === 0) throw new Error("No interactive shell is configured for this platform.");
-  const terminalJsonResult = (value) => textResult(JSON.stringify(value, null, 2));
-  const promotedExecReplayLeases = new Map();
-
-  const rememberPromotedExec = (fingerprint, processId) => {
-    promotedExecReplayLeases.delete(fingerprint);
-    promotedExecReplayLeases.set(fingerprint, { processId, promotedAt: now() });
-    while (promotedExecReplayLeases.size > TERMINAL_EXEC_REPLAY_MAX_LEASES) {
-      promotedExecReplayLeases.delete(promotedExecReplayLeases.keys().next().value);
-    }
-  };
-
-  const findPromotedExecReplay = (fingerprint, spec) => {
-    const lease = promotedExecReplayLeases.get(fingerprint);
-    if (!lease) return null;
-    if (Math.max(0, now() - lease.promotedAt) > TERMINAL_EXEC_REPLAY_WINDOW_MS) {
-      promotedExecReplayLeases.delete(fingerprint);
-      return null;
-    }
-    const process = processManager.list().find((candidate) => candidate.processId === lease.processId);
-    if (!processMatchesTerminalExec(process, spec)) {
-      promotedExecReplayLeases.delete(fingerprint);
-      return null;
-    }
-    return process;
-  };
-  const recordTerminalExecEvent = async (projectId, state, snapshot, durationMs) => {
-    if (typeof recordEvent !== "function") return;
-    await Promise.resolve(recordEvent({
-      component: "terminal",
-      type: state === "running"
-        ? "terminal.exec_promoted"
-        : "terminal.exec_completed",
-      severity: "info",
-      status: state === "running" ? "running" : "completed",
-      projectId,
-      message: state === "running"
-        ? "Terminal command continues as a managed process."
-        : "Terminal command completed.",
-      details: {
-        durationMs,
-        exitCode: snapshot.process.exitCode,
-        signal: snapshot.process.signal,
-        promoted: state === "running",
-        stdoutTruncated: snapshot.stdoutTruncated,
-        stderrTruncated: snapshot.stderrTruncated,
-        combinedOutputTruncated: snapshot.combinedOutputTruncated,
-      },
-    })).catch(() => {});
-  };
-
-  registerTextTool(
-    "terminal_exec",
-    {
-      description:
-        `Seçilen proje içinde sonlu komutu managed process olarak çalıştırır. Varsayılan: ${finiteShell.command}. Kabuklar: ${finiteShellNames.join(", ")}. ${windowsShellGuide} Etkileşimli TTY için terminal_start kullan.`,
-      inputSchema: {
-        command: z.string().min(1).max(20_000),
-        shell: z.enum(finiteShellNames).default(finiteDefaultShell).describe(platform === "win32" ? "Windows: powershell (5.1, default), optional pwsh (PowerShell 7), or cmd (native CMD syntax; finite only)." : "macOS: zsh (default)."),
-        cwd: z.string().default(".").describe("Proje köküne göre göreli başlangıç klasörü"),
-        wait_ms: z.number().int().min(0).max(120_000).default(30_000)
-          .describe("Bu çağrıda tamamlanma için beklenecek süre. Süre dolarsa komut öldürülmez; managed process olarak devam eder."),
-        max_output_chars: z.number().int().min(1_000).max(200_000).default(40_000),
-      },
-      annotations: {
-        title: "Terminal komutu çalıştır",
-        readOnlyHint: false,
-        destructiveHint: true,
-        idempotentHint: false,
-        openWorldHint: true,
-      },
-    },
-    async ({ command, shell = finiteDefaultShell, cwd, wait_ms, max_output_chars }) => {
-      try {
-        if (!agentAccess.terminal) {
-          throw new Error("Terminal erişimi Control Center'da kapalı.");
+export function registerTerminalTools({ platform = process.platform, arch = process.arch, registerTextTool, z, terminalManager, processManager, agentAccess, safeResolve, fsImpl = fs, getActiveProjectId, getActiveProjectName, getActiveProjectRoot, runtimeEnv = process.env, powerShell7StatFile = lstatSync, buildGenericExecutionEnvironmentImpl = buildGenericExecutionEnvironment, now = () => Date.now(), recordEvent = null, textResult, errorResult, } = {}) {
+    const finiteShell = equinoxLocalFiniteShell({ platform, arch, env: runtimeEnv });
+    const finiteShellNames = platform === "win32" ? ["powershell", "pwsh", "cmd"] : ["zsh"];
+    const finiteDefaultShell = platform === "win32" ? "powershell" : "zsh";
+    const windowsShellGuide = platform === "win32"
+        ? " Windows powershell = varsayılan 5.1, pwsh = isteğe bağlı kurulu PowerShell 7, cmd = sonlu native/CMD komutları için doğrudan CMD yolu (PowerShell sözdizimi kabul etmez). Windows PowerShell 5.1 altında native EXE komutu çalışmazsa aynı hatalı çağrıyı tekrar etme; native CMD sözdiziminde shell: cmd seç veya bağımsız EXE için process_start + process_wait + process_logs kullan. PS5 içindeki '&' çağrısı henüz düzeltilmedi; kullanıcı masaüstünde görünür konsol penceresi açılmamalıdır."
+        : "";
+    const interactiveShells = equinoxLocalInteractiveShells({ platform, arch, env: runtimeEnv, statFile: powerShell7StatFile });
+    const interactiveShellNames = Object.keys(interactiveShells.shells);
+    if (interactiveShellNames.length === 0)
+        throw new Error("No interactive shell is configured for this platform.");
+    const terminalJsonResult = (value) => textResult(JSON.stringify(value, null, 2));
+    const promotedExecReplayLeases = new Map();
+    const rememberPromotedExec = (fingerprint, processId) => {
+        promotedExecReplayLeases.delete(fingerprint);
+        promotedExecReplayLeases.set(fingerprint, { processId, promotedAt: now() });
+        while (promotedExecReplayLeases.size > TERMINAL_EXEC_REPLAY_MAX_LEASES) {
+            promotedExecReplayLeases.delete(promotedExecReplayLeases.keys().next().value);
         }
-
-        const resolvedCwd = await safeResolve(cwd);
-        const stats = await fsImpl.stat(resolvedCwd);
-        if (!stats.isDirectory()) {
-          throw new Error("Terminal başlangıç yolu bir klasör değil.");
+    };
+    const findPromotedExecReplay = (fingerprint, spec) => {
+        const lease = promotedExecReplayLeases.get(fingerprint);
+        if (!lease)
+            return null;
+        if (Math.max(0, now() - lease.promotedAt) > TERMINAL_EXEC_REPLAY_WINDOW_MS) {
+            promotedExecReplayLeases.delete(fingerprint);
+            return null;
         }
-
-        const projectId = getActiveProjectId();
-        const projectName = getActiveProjectName();
-        const selectedFiniteShell = equinoxLocalFiniteShell({ platform, arch, env: runtimeEnv, shell, statFile: powerShell7StatFile });
-        const processArgs = selectedFiniteShell.argsFor(command);
-        const execSpec = {
-          projectId,
-          cwd: resolvedCwd,
-          command: selectedFiniteShell.command,
-          args: processArgs,
-        };
-        const execFingerprint = terminalExecFingerprint(execSpec);
-        const replayProcess = findPromotedExecReplay(execFingerprint, execSpec);
-        if (replayProcess) {
-          const replaySnapshot = processManager.snapshotOutput({
-            processId: replayProcess.processId,
-            maxChars: max_output_chars,
-            stripAnsiCodes: true,
-          });
-          if (replaySnapshot.process.running) {
-            return terminalJsonResult({
-              ok: true,
-              completed: false,
-              promoted: true,
-              replayRecovered: true,
-              message: "Önceki terminal_exec teslimi yeniden geldi; yeni süreç başlatılmadan aynı managed process kullanılmaya devam ediyor.",
-              projectId,
-              projectName,
-              initialCwd: resolvedCwd,
-              processId: replaySnapshot.process.processId,
-              process: replaySnapshot.process,
-              nextCursor: replaySnapshot.nextCursor,
-              stdout: replaySnapshot.stdout,
-              stderr: replaySnapshot.stderr,
-              combinedOutput: replaySnapshot.combinedOutput,
-              stdoutTruncated: replaySnapshot.stdoutTruncated,
-              stderrTruncated: replaySnapshot.stderrTruncated,
-              combinedOutputTruncated: replaySnapshot.combinedOutputTruncated,
-              stdoutDroppedChars: replaySnapshot.stdoutDroppedChars,
-              stderrDroppedChars: replaySnapshot.stderrDroppedChars,
-              combinedOutputDroppedChars: replaySnapshot.combinedOutputDroppedChars,
-              next: "Sonlu iş için process_wait ile tamamlanmayı bekle; akış çıktısı için process_logs kullan, gerekirse process_stop ile durdur.",
+        const process = processManager.list().find((candidate) => candidate.processId === lease.processId);
+        if (!processMatchesTerminalExec(process, spec)) {
+            promotedExecReplayLeases.delete(fingerprint);
+            return null;
+        }
+        return process;
+    };
+    const recordTerminalExecEvent = async (projectId, state, snapshot, durationMs) => {
+        if (typeof recordEvent !== "function")
+            return;
+        await Promise.resolve(recordEvent({
+            component: "terminal",
+            type: state === "running"
+                ? "terminal.exec_promoted"
+                : "terminal.exec_completed",
+            severity: "info",
+            status: state === "running" ? "running" : "completed",
+            projectId,
+            message: state === "running"
+                ? "Terminal command continues as a managed process."
+                : "Terminal command completed.",
+            details: {
+                durationMs,
+                exitCode: snapshot.process.exitCode,
+                signal: snapshot.process.signal,
+                promoted: state === "running",
+                stdoutTruncated: snapshot.stdoutTruncated,
+                stderrTruncated: snapshot.stderrTruncated,
+                combinedOutputTruncated: snapshot.combinedOutputTruncated,
+            },
+        })).catch(() => { });
+    };
+    registerTextTool("terminal_exec", {
+        description: `Seçilen proje içinde sonlu komutu managed process olarak çalıştırır. Varsayılan: ${finiteShell.command}. Kabuklar: ${finiteShellNames.join(", ")}. ${windowsShellGuide} Etkileşimli TTY için terminal_start kullan.`,
+        inputSchema: {
+            command: z.string().min(1).max(20_000),
+            shell: z.enum(finiteShellNames).default(finiteDefaultShell).describe(platform === "win32" ? "Windows: powershell (5.1, default), optional pwsh (PowerShell 7), or cmd (native CMD syntax; finite only)." : "macOS: zsh (default)."),
+            cwd: z.string().default(".").describe("Proje köküne göre göreli başlangıç klasörü"),
+            wait_ms: z.number().int().min(0).max(120_000).default(30_000)
+                .describe("Bu çağrıda tamamlanma için beklenecek süre. Süre dolarsa komut öldürülmez; managed process olarak devam eder."),
+            max_output_chars: z.number().int().min(1_000).max(200_000).default(40_000),
+        },
+        annotations: {
+            title: "Terminal komutu çalıştır",
+            readOnlyHint: false,
+            destructiveHint: true,
+            idempotentHint: false,
+            openWorldHint: true,
+        },
+    }, async ({ command, shell = finiteDefaultShell, cwd, wait_ms, max_output_chars }) => {
+        try {
+            if (!agentAccess.terminal) {
+                throw new Error("Terminal erişimi Control Center'da kapalı.");
+            }
+            const resolvedCwd = await safeResolve(cwd);
+            const stats = await fsImpl.stat(resolvedCwd);
+            if (!stats.isDirectory()) {
+                throw new Error("Terminal başlangıç yolu bir klasör değil.");
+            }
+            const projectId = getActiveProjectId();
+            const projectName = getActiveProjectName();
+            const selectedFiniteShell = equinoxLocalFiniteShell({ platform, arch, env: runtimeEnv, shell, statFile: powerShell7StatFile });
+            const processArgs = selectedFiniteShell.argsFor(command);
+            const execSpec = {
+                projectId,
+                cwd: resolvedCwd,
+                command: selectedFiniteShell.command,
+                args: processArgs,
+            };
+            const execFingerprint = terminalExecFingerprint(execSpec);
+            const replayProcess = findPromotedExecReplay(execFingerprint, execSpec);
+            if (replayProcess) {
+                const replaySnapshot = processManager.snapshotOutput({
+                    processId: replayProcess.processId,
+                    maxChars: max_output_chars,
+                    stripAnsiCodes: true,
+                });
+                if (replaySnapshot.process.running) {
+                    return terminalJsonResult({
+                        ok: true,
+                        completed: false,
+                        promoted: true,
+                        replayRecovered: true,
+                        message: "Önceki terminal_exec teslimi yeniden geldi; yeni süreç başlatılmadan aynı managed process kullanılmaya devam ediyor.",
+                        projectId,
+                        projectName,
+                        initialCwd: resolvedCwd,
+                        processId: replaySnapshot.process.processId,
+                        process: replaySnapshot.process,
+                        nextCursor: replaySnapshot.nextCursor,
+                        stdout: replaySnapshot.stdout,
+                        stderr: replaySnapshot.stderr,
+                        combinedOutput: replaySnapshot.combinedOutput,
+                        stdoutTruncated: replaySnapshot.stdoutTruncated,
+                        stderrTruncated: replaySnapshot.stderrTruncated,
+                        combinedOutputTruncated: replaySnapshot.combinedOutputTruncated,
+                        stdoutDroppedChars: replaySnapshot.stdoutDroppedChars,
+                        stderrDroppedChars: replaySnapshot.stderrDroppedChars,
+                        combinedOutputDroppedChars: replaySnapshot.combinedOutputDroppedChars,
+                        next: "Sonlu iş için process_wait ile tamamlanmayı bekle; akış çıktısı için process_logs kullan, gerekirse process_stop ile durdur.",
+                    });
+                }
+                promotedExecReplayLeases.delete(execFingerprint);
+            }
+            const executionEnv = {
+                ...buildGenericExecutionEnvironmentImpl({
+                    runtimeEnv,
+                    projectId,
+                    projectRoot: getActiveProjectRoot(),
+                    platform,
+                    arch,
+                }),
+                PAGER: "cat",
+                GIT_PAGER: "cat",
+                GIT_TERMINAL_PROMPT: "0",
+                NO_COLOR: "1",
+            };
+            const startedAt = now();
+            const processInfo = await processManager.start({
+                projectId,
+                projectName,
+                cwd: resolvedCwd,
+                command: selectedFiniteShell.command,
+                args: processArgs,
+                purpose: "terminal_exec",
+                env: executionEnv,
+                label: `${projectId}:terminal-exec`,
+                expectedPorts: [],
             });
-          }
-          promotedExecReplayLeases.delete(execFingerprint);
+            await processManager.waitForExit({
+                processId: processInfo.processId,
+                waitMs: wait_ms,
+            });
+            const snapshot = processManager.snapshotOutput({
+                processId: processInfo.processId,
+                maxChars: max_output_chars,
+                stripAnsiCodes: true,
+            });
+            const running = snapshot.process.running;
+            const durationMs = Math.max(0, now() - startedAt);
+            await recordTerminalExecEvent(projectId, running ? "running" : "completed", snapshot, durationMs);
+            if (running) {
+                rememberPromotedExec(execFingerprint, snapshot.process.processId);
+                return terminalJsonResult({
+                    ok: true,
+                    completed: false,
+                    promoted: true,
+                    message: "Terminal komutu hâlâ çalışıyor; aynı managed process öldürülmeden devam ediyor.",
+                    projectId,
+                    projectName,
+                    initialCwd: resolvedCwd,
+                    processId: snapshot.process.processId,
+                    process: snapshot.process,
+                    nextCursor: snapshot.nextCursor,
+                    stdout: snapshot.stdout,
+                    stderr: snapshot.stderr,
+                    combinedOutput: snapshot.combinedOutput,
+                    stdoutTruncated: snapshot.stdoutTruncated,
+                    stderrTruncated: snapshot.stderrTruncated,
+                    combinedOutputTruncated: snapshot.combinedOutputTruncated,
+                    stdoutDroppedChars: snapshot.stdoutDroppedChars,
+                    stderrDroppedChars: snapshot.stderrDroppedChars,
+                    combinedOutputDroppedChars: snapshot.combinedOutputDroppedChars,
+                    next: "Sonlu iş için process_wait ile tamamlanmayı bekle; akış çıktısı için process_logs kullan, gerekirse process_stop ile durdur.",
+                });
+            }
+            await processManager.stop({
+                processId: snapshot.process.processId,
+                remove: true,
+            });
+            return terminalJsonResult({
+                ok: !snapshot.process.spawnError && snapshot.process.exitCode === 0,
+                completed: true,
+                promoted: false,
+                message: snapshot.process.exitCode === 0
+                    ? "Terminal komutu tamamlandı."
+                    : "Terminal komutu " + (snapshot.process.exitCode ?? "bilinmeyen") + " çıkış koduyla tamamlandı.",
+                projectId,
+                projectName,
+                initialCwd: resolvedCwd,
+                durationMs,
+                exitCode: snapshot.process.exitCode,
+                signal: snapshot.process.signal,
+                spawnError: snapshot.process.spawnError,
+                stdout: snapshot.stdout,
+                stderr: snapshot.stderr,
+                combinedOutput: snapshot.combinedOutput,
+                stdoutTruncated: snapshot.stdoutTruncated,
+                stderrTruncated: snapshot.stderrTruncated,
+                combinedOutputTruncated: snapshot.combinedOutputTruncated,
+                stdoutDroppedChars: snapshot.stdoutDroppedChars,
+                stderrDroppedChars: snapshot.stderrDroppedChars,
+                combinedOutputDroppedChars: snapshot.combinedOutputDroppedChars,
+            });
         }
-
-        const executionEnv = {
-          ...buildGenericExecutionEnvironmentImpl({
-            runtimeEnv,
-            projectId,
-            projectRoot: getActiveProjectRoot(),
-            platform,
-            arch,
-          }),
-          PAGER: "cat",
-          GIT_PAGER: "cat",
-          GIT_TERMINAL_PROMPT: "0",
-          NO_COLOR: "1",
-        };
-        const startedAt = now();
-        const processInfo = await processManager.start({
-          projectId,
-          projectName,
-          cwd: resolvedCwd,
-          command: selectedFiniteShell.command,
-          args: processArgs,
-          purpose: "terminal_exec",
-          env: executionEnv,
-          label: `${projectId}:terminal-exec`,
-          expectedPorts: [],
-        });
-
-        await processManager.waitForExit({
-          processId: processInfo.processId,
-          waitMs: wait_ms,
-        });
-        const snapshot = processManager.snapshotOutput({
-          processId: processInfo.processId,
-          maxChars: max_output_chars,
-          stripAnsiCodes: true,
-        });
-        const running = snapshot.process.running;
-        const durationMs = Math.max(0, now() - startedAt);
-        await recordTerminalExecEvent(
-          projectId,
-          running ? "running" : "completed",
-          snapshot,
-          durationMs,
-        );
-
-        if (running) {
-          rememberPromotedExec(execFingerprint, snapshot.process.processId);
-          return terminalJsonResult({
-            ok: true,
-            completed: false,
-            promoted: true,
-            message: "Terminal komutu hâlâ çalışıyor; aynı managed process öldürülmeden devam ediyor.",
-            projectId,
-            projectName,
-            initialCwd: resolvedCwd,
-            processId: snapshot.process.processId,
-            process: snapshot.process,
-            nextCursor: snapshot.nextCursor,
-            stdout: snapshot.stdout,
-            stderr: snapshot.stderr,
-            combinedOutput: snapshot.combinedOutput,
-            stdoutTruncated: snapshot.stdoutTruncated,
-            stderrTruncated: snapshot.stderrTruncated,
-            combinedOutputTruncated: snapshot.combinedOutputTruncated,
-            stdoutDroppedChars: snapshot.stdoutDroppedChars,
-            stderrDroppedChars: snapshot.stderrDroppedChars,
-            combinedOutputDroppedChars: snapshot.combinedOutputDroppedChars,
-            next: "Sonlu iş için process_wait ile tamamlanmayı bekle; akış çıktısı için process_logs kullan, gerekirse process_stop ile durdur.",
-          });
+        catch (error) {
+            return errorResult(error);
         }
-
-        await processManager.stop({
-          processId: snapshot.process.processId,
-          remove: true,
-        });
-        return terminalJsonResult({
-          ok: !snapshot.process.spawnError && snapshot.process.exitCode === 0,
-          completed: true,
-          promoted: false,
-          message: snapshot.process.exitCode === 0
-            ? "Terminal komutu tamamlandı."
-            : "Terminal komutu " + (snapshot.process.exitCode ?? "bilinmeyen") + " çıkış koduyla tamamlandı.",
-          projectId,
-          projectName,
-          initialCwd: resolvedCwd,
-          durationMs,
-          exitCode: snapshot.process.exitCode,
-          signal: snapshot.process.signal,
-          spawnError: snapshot.process.spawnError,
-          stdout: snapshot.stdout,
-          stderr: snapshot.stderr,
-          combinedOutput: snapshot.combinedOutput,
-          stdoutTruncated: snapshot.stdoutTruncated,
-          stderrTruncated: snapshot.stderrTruncated,
-          combinedOutputTruncated: snapshot.combinedOutputTruncated,
-          stdoutDroppedChars: snapshot.stdoutDroppedChars,
-          stderrDroppedChars: snapshot.stderrDroppedChars,
-          combinedOutputDroppedChars: snapshot.combinedOutputDroppedChars,
-        });
-      } catch (error) {
-        return errorResult(error);
-      }
-    },
-    { mutationScopes: ["global"] },
-  );
-
-  registerTextTool(
-    "terminal_start",
-    {
-      description:
-        `Seçilen proje içinde kalıcı bir gerçek PTY terminal oturumu başlatır. Etkileşimli/ön-plan TTY işleri içindir; uzun yaşayan arka plan servisleri process_start kullanır. Bu platformda kullanılabilir kabuklar: ${interactiveShellNames.join(", ")}. Sonraki çağrılar terminal_write, terminal_read, terminal_resize ve terminal_stop ile yapılır.`,
-      inputSchema: {
-        cwd: z.string().default(".").describe("Proje köküne göre göreli başlangıç klasörü"),
-        shell: z.enum(interactiveShellNames).default(interactiveShells.defaultShell),
-        cols: z.number().int().min(20).max(400).default(120),
-        rows: z.number().int().min(5).max(200).default(30),
-        label: z.string().min(1).max(80).optional(),
-      },
-      annotations: {
-        title: "PTY terminali başlat",
-        readOnlyHint: false,
-        destructiveHint: false,
-        idempotentHint: false,
-        openWorldHint: true,
-      },
-    },
-    async ({ cwd, shell, cols, rows, label }) => {
-      try {
-        if (!agentAccess.terminal) {
-          throw new Error("Terminal erişimi Control Center'da kapalı.");
+    }, { mutationScopes: ["global"] });
+    registerTextTool("terminal_start", {
+        description: `Seçilen proje içinde kalıcı bir gerçek PTY terminal oturumu başlatır. Etkileşimli/ön-plan TTY işleri içindir; uzun yaşayan arka plan servisleri process_start kullanır. Bu platformda kullanılabilir kabuklar: ${interactiveShellNames.join(", ")}. Sonraki çağrılar terminal_write, terminal_read, terminal_resize ve terminal_stop ile yapılır.`,
+        inputSchema: {
+            cwd: z.string().default(".").describe("Proje köküne göre göreli başlangıç klasörü"),
+            shell: z.enum(interactiveShellNames).default(interactiveShells.defaultShell),
+            cols: z.number().int().min(20).max(400).default(120),
+            rows: z.number().int().min(5).max(200).default(30),
+            label: z.string().min(1).max(80).optional(),
+        },
+        annotations: {
+            title: "PTY terminali başlat",
+            readOnlyHint: false,
+            destructiveHint: false,
+            idempotentHint: false,
+            openWorldHint: true,
+        },
+    }, async ({ cwd, shell, cols, rows, label }) => {
+        try {
+            if (!agentAccess.terminal) {
+                throw new Error("Terminal erişimi Control Center'da kapalı.");
+            }
+            const resolvedCwd = await safeResolve(cwd);
+            const stats = await fsImpl.stat(resolvedCwd);
+            if (!stats.isDirectory()) {
+                throw new Error("Terminal başlangıç yolu bir klasör değil.");
+            }
+            const projectId = getActiveProjectId();
+            const shellConfig = equinoxLocalInteractiveShells({ platform, arch, env: runtimeEnv, statFile: powerShell7StatFile }).shells[shell];
+            if (!shellConfig)
+                throw new Error(`Desteklenmeyen terminal kabuğu: ${shell}`);
+            if (!shellConfig.command)
+                throw new Error("PowerShell 7 (pwsh) is not installed; install it separately or choose powershell (5.1).");
+            const session = await terminalManager.start({
+                projectId,
+                projectName: getActiveProjectName(),
+                cwd: resolvedCwd,
+                shell: shellConfig.command,
+                shellArgs: [...shellConfig.args],
+                env: buildGenericExecutionEnvironmentImpl({
+                    runtimeEnv,
+                    projectId,
+                    projectRoot: getActiveProjectRoot(),
+                    platform,
+                    arch,
+                }),
+                cols,
+                rows,
+                label,
+            });
+            return terminalJsonResult({
+                ok: true,
+                message: "PTY terminal oturumu başlatıldı.",
+                session,
+                next: "Çıktıyı terminal_read ile oku; komut göndermek için terminal_write kullan.",
+            });
         }
-
-        const resolvedCwd = await safeResolve(cwd);
-        const stats = await fsImpl.stat(resolvedCwd);
-        if (!stats.isDirectory()) {
-          throw new Error("Terminal başlangıç yolu bir klasör değil.");
+        catch (error) {
+            return errorResult(error);
         }
-
-        const projectId = getActiveProjectId();
-        const shellConfig = equinoxLocalInteractiveShells({ platform, arch, env: runtimeEnv, statFile: powerShell7StatFile }).shells[shell];
-        if (!shellConfig) throw new Error(`Desteklenmeyen terminal kabuğu: ${shell}`);
-        if (!shellConfig.command) throw new Error("PowerShell 7 (pwsh) is not installed; install it separately or choose powershell (5.1).");
-        const session = await terminalManager.start({
-          projectId,
-          projectName: getActiveProjectName(),
-          cwd: resolvedCwd,
-          shell: shellConfig.command,
-          shellArgs: [...shellConfig.args],
-          env: buildGenericExecutionEnvironmentImpl({
-            runtimeEnv,
-            projectId,
-            projectRoot: getActiveProjectRoot(),
-            platform,
-            arch,
-          }),
-          cols,
-          rows,
-          label,
-        });
-
-        return terminalJsonResult({
-          ok: true,
-          message: "PTY terminal oturumu başlatıldı.",
-          session,
-          next: "Çıktıyı terminal_read ile oku; komut göndermek için terminal_write kullan.",
-        });
-      } catch (error) {
-        return errorResult(error);
-      }
-    },
-  );
-
-  registerTextTool(
-    "terminal_list",
-    {
-      description:
-        "Equinox Local içindeki çalışan ve yakın zamanda kapanmış PTY terminal oturumlarını listeler.",
-      inputSchema: {},
-      annotations: {
-        title: "PTY terminallerini listele",
-        readOnlyHint: true,
-        destructiveHint: false,
-        idempotentHint: true,
-        openWorldHint: false,
-      },
-    },
-    async () => terminalJsonResult({ sessions: terminalManager.list() }),
-    { projectAware: false },
-  );
-
-  registerTextTool(
-    "terminal_read",
-    {
-      description:
-        "Bir PTY terminal oturumunun yeni çıktısını kararlı cursor değeriyle okur. İsteğe bağlı olarak kısa süre yeni çıktı bekler ve ANSI kontrol kodlarını temizler.",
-      inputSchema: {
-        session_id: z.string().min(1).max(80),
-        cursor: z.number().int().min(0).optional(),
-        max_chars: z.number().int().min(1).max(120_000).default(30_000),
-        strip_ansi: z.boolean().default(true),
-        wait_ms: z.number().int().min(0).max(5_000).default(0),
-      },
-      annotations: {
-        title: "PTY terminal çıktısını oku",
-        readOnlyHint: true,
-        destructiveHint: false,
-        idempotentHint: true,
-        openWorldHint: false,
-      },
-    },
-    async ({ session_id, cursor, max_chars, strip_ansi, wait_ms }) => {
-      try {
-        return terminalJsonResult(
-          await terminalManager.read({
-            sessionId: session_id,
-            cursor,
-            maxChars: max_chars,
-            stripAnsiCodes: strip_ansi,
-            waitMs: wait_ms,
-          }),
-        );
-      } catch (error) {
-        return errorResult(error);
-      }
-    },
-    { projectAware: false },
-  );
-
-  registerTextTool(
-    "terminal_write",
-    {
-      description:
-        "Çalışan PTY terminaline metin ve isteğe bağlı özel tuş gönderir. Enter, Ctrl+C, Ctrl+D, Tab, Escape ve ok tuşlarını destekler.",
-      inputSchema: {
-        session_id: z.string().min(1).max(80),
-        data: z.string().max(100_000).default(""),
-        key: z.enum(TERMINAL_KEYS).optional(),
-      },
-      annotations: {
-        title: "PTY terminaline yaz",
-        readOnlyHint: false,
-        destructiveHint: true,
-        idempotentHint: false,
-        openWorldHint: true,
-      },
-    },
-    async ({ session_id, data, key }) => {
-      try {
-        if (!agentAccess.terminal) {
-          throw new Error("Terminal erişimi Control Center'da kapalı.");
+    });
+    registerTextTool("terminal_list", {
+        description: "Equinox Local içindeki çalışan ve yakın zamanda kapanmış PTY terminal oturumlarını listeler.",
+        inputSchema: {},
+        annotations: {
+            title: "PTY terminallerini listele",
+            readOnlyHint: true,
+            destructiveHint: false,
+            idempotentHint: true,
+            openWorldHint: false,
+        },
+    }, async () => terminalJsonResult({ sessions: terminalManager.list() }), { projectAware: false });
+    registerTextTool("terminal_read", {
+        description: "Bir PTY terminal oturumunun yeni çıktısını kararlı cursor değeriyle okur. İsteğe bağlı olarak kısa süre yeni çıktı bekler ve ANSI kontrol kodlarını temizler.",
+        inputSchema: {
+            session_id: z.string().min(1).max(80),
+            cursor: z.number().int().min(0).optional(),
+            max_chars: z.number().int().min(1).max(120_000).default(30_000),
+            strip_ansi: z.boolean().default(true),
+            wait_ms: z.number().int().min(0).max(5_000).default(0),
+        },
+        annotations: {
+            title: "PTY terminal çıktısını oku",
+            readOnlyHint: true,
+            destructiveHint: false,
+            idempotentHint: true,
+            openWorldHint: false,
+        },
+    }, async ({ session_id, cursor, max_chars, strip_ansi, wait_ms }) => {
+        try {
+            return terminalJsonResult(await terminalManager.read({
+                sessionId: session_id,
+                cursor,
+                maxChars: max_chars,
+                stripAnsiCodes: strip_ansi,
+                waitMs: wait_ms,
+            }));
         }
-        return terminalJsonResult({
-          ok: true,
-          session: terminalManager.write({ sessionId: session_id, data, key }),
-        });
-      } catch (error) {
-        return errorResult(error);
-      }
-    },
-    { projectAware: false, mutationScopes: ["global"] },
-  );
-
-  registerTextTool(
-    "terminal_resize",
-    {
-      description: "Çalışan PTY terminalinin sütun ve satır ölçüsünü değiştirir.",
-      inputSchema: {
-        session_id: z.string().min(1).max(80),
-        cols: z.number().int().min(20).max(400),
-        rows: z.number().int().min(5).max(200),
-      },
-      annotations: {
-        title: "PTY terminalini yeniden boyutlandır",
-        readOnlyHint: false,
-        destructiveHint: false,
-        idempotentHint: true,
-        openWorldHint: false,
-      },
-    },
-    async ({ session_id, cols, rows }) => {
-      try {
-        return terminalJsonResult({
-          ok: true,
-          session: terminalManager.resize({ sessionId: session_id, cols, rows }),
-        });
-      } catch (error) {
-        return errorResult(error);
-      }
-    },
-    { projectAware: false, mutationScopes: ["global"] },
-  );
-
-  registerTextTool(
-    "terminal_stop",
-    {
-      description:
-        "Bir PTY terminal oturumunu ve izlenen controlling-TTY joblarını durdurur. Normalde SIGHUP, gerekirse SIGKILL kullanır ve macOS'ta owned-job drain doğrulanır; kapanan kayıt isteğe bağlı silinebilir.",
-      inputSchema: {
-        session_id: z.string().min(1).max(80),
-        force: z.boolean().default(false),
-        remove: z.boolean().default(false),
-      },
-      annotations: {
-        title: "PTY terminalini durdur",
-        readOnlyHint: false,
-        destructiveHint: true,
-        idempotentHint: true,
-        openWorldHint: false,
-      },
-    },
-    async ({ session_id, force, remove }) => {
-      try {
-        return terminalJsonResult({
-          ok: true,
-          session: await terminalManager.stop({ sessionId: session_id, force, remove }),
-        });
-      } catch (error) {
-        return errorResult(error);
-      }
-    },
-    { projectAware: false, mutationScopes: ["global"] },
-  );
+        catch (error) {
+            return errorResult(error);
+        }
+    }, { projectAware: false });
+    registerTextTool("terminal_write", {
+        description: "Çalışan PTY terminaline metin ve isteğe bağlı özel tuş gönderir. Enter, Ctrl+C, Ctrl+D, Tab, Escape ve ok tuşlarını destekler.",
+        inputSchema: {
+            session_id: z.string().min(1).max(80),
+            data: z.string().max(100_000).default(""),
+            key: z.enum(TERMINAL_KEYS).optional(),
+        },
+        annotations: {
+            title: "PTY terminaline yaz",
+            readOnlyHint: false,
+            destructiveHint: true,
+            idempotentHint: false,
+            openWorldHint: true,
+        },
+    }, async ({ session_id, data, key }) => {
+        try {
+            if (!agentAccess.terminal) {
+                throw new Error("Terminal erişimi Control Center'da kapalı.");
+            }
+            return terminalJsonResult({
+                ok: true,
+                session: terminalManager.write({ sessionId: session_id, data, key }),
+            });
+        }
+        catch (error) {
+            return errorResult(error);
+        }
+    }, { projectAware: false, mutationScopes: ["global"] });
+    registerTextTool("terminal_resize", {
+        description: "Çalışan PTY terminalinin sütun ve satır ölçüsünü değiştirir.",
+        inputSchema: {
+            session_id: z.string().min(1).max(80),
+            cols: z.number().int().min(20).max(400),
+            rows: z.number().int().min(5).max(200),
+        },
+        annotations: {
+            title: "PTY terminalini yeniden boyutlandır",
+            readOnlyHint: false,
+            destructiveHint: false,
+            idempotentHint: true,
+            openWorldHint: false,
+        },
+    }, async ({ session_id, cols, rows }) => {
+        try {
+            return terminalJsonResult({
+                ok: true,
+                session: terminalManager.resize({ sessionId: session_id, cols, rows }),
+            });
+        }
+        catch (error) {
+            return errorResult(error);
+        }
+    }, { projectAware: false, mutationScopes: ["global"] });
+    registerTextTool("terminal_stop", {
+        description: "Bir PTY terminal oturumunu ve izlenen controlling-TTY joblarını durdurur. Normalde SIGHUP, gerekirse SIGKILL kullanır ve macOS'ta owned-job drain doğrulanır; kapanan kayıt isteğe bağlı silinebilir.",
+        inputSchema: {
+            session_id: z.string().min(1).max(80),
+            force: z.boolean().default(false),
+            remove: z.boolean().default(false),
+        },
+        annotations: {
+            title: "PTY terminalini durdur",
+            readOnlyHint: false,
+            destructiveHint: true,
+            idempotentHint: true,
+            openWorldHint: false,
+        },
+    }, async ({ session_id, force, remove }) => {
+        try {
+            return terminalJsonResult({
+                ok: true,
+                session: await terminalManager.stop({ sessionId: session_id, force, remove }),
+            });
+        }
+        catch (error) {
+            return errorResult(error);
+        }
+    }, { projectAware: false, mutationScopes: ["global"] });
 }

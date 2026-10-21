@@ -317,3 +317,96 @@ test("file_import rejects non-HTTPS downloads and enforces streaming byte bound"
     fetchImpl: async () => new Response("12345"),
   }), /up to/u);
 });
+
+test("file_export fails closed when Selected root cannot resolve, including symlink and credential attempts", async (t) => {
+  const homeDir = await fs.mkdtemp(path.join(os.tmpdir(), "equinox-export-deny-"));
+  t.after(() => fs.rm(homeDir, { recursive: true, force: true }));
+  const selected = path.join(homeDir, "Selected");
+  const foreign = path.join(homeDir, "Foreign");
+  await fs.mkdir(selected);
+  await fs.mkdir(foreign);
+  const inside = path.join(selected, "document.txt");
+  const outside = path.join(foreign, "private.txt");
+  await fs.writeFile(inside, "allowed bytes");
+  await fs.writeFile(outside, "foreign bytes");
+  await fs.symlink(outside, path.join(selected, "alias.txt"));
+  const resolver = async () => { throw new Error("unavailable selected root"); };
+  await assert.rejects(createFileExportResult({
+    filePath: inside, fullFileAccess: false, fileRootIds: ["offline"],
+    resolveFileRootContext: resolver, homeDir,
+  }), /Selected Agent Access roots/u);
+  await assert.rejects(createFileExportResult({
+    filePath: path.join(selected, "alias.txt"), fullFileAccess: false, fileRootIds: ["offline"],
+    resolveFileRootContext: resolver, homeDir,
+  }), /non-symlink/u);
+  await assert.rejects(createFileExportResult({
+    filePath: path.join(homeDir, ".ssh", "id_ed25519"), fullFileAccess: true, homeDir,
+  }), /protected sensitive name/u);
+  assert.equal(await fs.readFile(outside, "utf8"), "foreign bytes");
+});
+
+test("file_import refuses a preexisting symlink even for collision=replace and cleans staging", async (t) => {
+  const homeDir = await fs.mkdtemp(path.join(os.tmpdir(), "equinox-import-replace-"));
+  t.after(() => fs.rm(homeDir, { recursive: true, force: true }));
+  const directory = path.join(homeDir, "Downloads");
+  const foreign = path.join(homeDir, "foreign.txt");
+  await fs.mkdir(directory);
+  await fs.writeFile(foreign, "private payload");
+  const link = path.join(directory, "target.txt");
+  await fs.symlink(foreign, link);
+  await assert.rejects(importChatGptFile({
+    file: fileRef({ file_name: "target.txt" }),
+    destination: link, collision: "replace", fullFileAccess: true,
+    homeDir, fetchImpl: async () => new Response("new payload"),
+  }), /destination cannot be a symlink/u);
+  assert.equal((await fs.lstat(link)).isSymbolicLink(), true);
+  assert.equal(await fs.readFile(foreign, "utf8"), "private payload");
+  assert.deepEqual(await fs.readdir(directory), ["target.txt"]);
+});
+
+test("file_import refuses protected attachment names and escaped Selected destinations before fetch", async (t) => {
+  const homeDir = await fs.mkdtemp(path.join(os.tmpdir(), "equinox-import-selected-deny-"));
+  t.after(() => fs.rm(homeDir, { recursive: true, force: true }));
+  const selected = path.join(homeDir, "selected");
+  const outside = path.join(homeDir, "selected-private");
+  await fs.mkdir(selected);
+  await fs.mkdir(outside);
+  let fetched = 0;
+  const options = {
+    fullFileAccess: false,
+    projectIds: ["selected"],
+    resolveProjectContext: async () => ({ rootRealPath: selected }),
+    homeDir,
+    fetchImpl: async () => { fetched += 1; return new Response("secret"); },
+  };
+  await assert.rejects(importChatGptFile({
+    ...options, file: fileRef({ file_name: ".env" }), destination: selected,
+  }), /protected by the credential policy/u);
+  await assert.rejects(importChatGptFile({
+    ...options, file: fileRef({ file_name: "ordinary.txt" }), destination: outside,
+  }), /Selected Agent Access roots/u);
+  assert.equal(fetched, 0);
+  assert.deepEqual(await fs.readdir(outside), []);
+  assert.deepEqual(await fs.readdir(selected), []);
+});
+
+test("file_import streaming oversize and collision=error leave existing data and no temporary file", async (t) => {
+  const homeDir = await fs.mkdtemp(path.join(os.tmpdir(), "equinox-import-stream-deny-"));
+  t.after(() => fs.rm(homeDir, { recursive: true, force: true }));
+  const downloads = path.join(homeDir, "Downloads");
+  await fs.mkdir(downloads);
+  await assert.rejects(transferTest.downloadAttachmentToTemp({
+    file: fileRef(), parentReal: downloads, maxBytes: 4,
+    fetchImpl: async () => new Response(new Uint8Array([0, 1, 2, 3, 4])),
+  }), /up to/u);
+  assert.deepEqual(await fs.readdir(downloads), []);
+  const original = path.join(downloads, "keep.txt");
+  await fs.writeFile(original, "original");
+  await assert.rejects(importChatGptFile({
+    file: fileRef({ file_name: "keep.txt" }), destination: original,
+    collision: "error", fullFileAccess: true, homeDir,
+    fetchImpl: async () => new Response("new"),
+  }), /already exists/u);
+  assert.equal(await fs.readFile(original, "utf8"), "original");
+  assert.deepEqual(await fs.readdir(downloads), ["keep.txt"]);
+});

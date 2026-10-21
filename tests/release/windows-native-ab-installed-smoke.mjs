@@ -48,6 +48,24 @@ try {
     assert.equal((await fs.readFile(nativeGateMarker, "utf8")).trim(), "equinox-owned-process-gate-v1",
       "extracted Windows managed installer ZIP must retain the matching no-console native gate marker");
   }
+  // Exercise the REAL architecture-specific native helper, not a simulated
+  // JS inspector: a Node process cannot impersonate the installed WPF shell
+  // even if a caller supplies a fake expected image path. The positive live
+  // WPF owner proof requires an installed-host GUI session in a separate gate.
+  const runWpfWitness = async (pid, ticks, extras = {}) => {
+    const result = await promisify(execFileCallback)(nativeHelper, ["--inspect-owned-wpf"], {
+      timeout: 5_000, maxBuffer: 1024, windowsHide: true,
+      env: {SystemRoot: process.env.SystemRoot, WINDIR: process.env.WINDIR,
+        USERPROFILE: process.env.USERPROFILE, EQUINOX_LOCAL_CHECK_WPF_PID: pid,
+        EQUINOX_LOCAL_CHECK_WPF_TICKS: ticks, ...extras},
+    });
+    return result.stdout.trim();
+  };
+  assert.equal(await runWpfWitness("", "638953728000000000"), "unknown",
+    "WPF witness must fail closed without exact PID");
+  assert.equal(await runWpfWitness(String(process.pid), "638953728000000000",
+    {EQUINOX_LOCAL_CHECK_WPF_EXE: process.execPath}), "mismatch",
+    "a real running owned Node must never be accepted as the installed WPF shell");
   for (const rootRelease of [previousReleaseDir, targetReleaseDir]) {
     await fs.mkdir(path.dirname(path.join(rootRelease, 'runtime', 'shell')), { recursive: true });
     await fs.cp(sourceShell, path.join(rootRelease, 'runtime', 'shell'), { recursive: true, force: false, errorOnExist: true, dereference: false });
@@ -121,6 +139,7 @@ try {
       supervisor: { independentNativeOwner: true,
         assertWorkerOwnership: async () => true, // disposable fixture only
         shutdownOwnedWpf: async () => { stopped = true; },
+        quiesceOwnedB: async () => true, // fixture-only simulated native B quiesce
         verifyNativeMessaging: async ({ release }) => nm === release,
         verifySustainedHealth: async ({ release, sourceSha }) => release === 'B' && sourceSha === shaB && source === 'B' && restarted,
       },

@@ -5,7 +5,7 @@ import vm from "node:vm";
 import { fileURLToPath } from "node:url";
 import { createExtensionVmContext } from "../helpers/extension-vm-import-scripts.mjs";
 
-const SERVICE_WORKER_PATH = fileURLToPath(new URL("../../extension/service-worker.js", import.meta.url));
+const SERVICE_WORKER_PATH = process.env.EQUINOX_STAGED_BROWSER_WORKER || fileURLToPath(new URL("../../extension/service-worker.js", import.meta.url));
 const EXTENSION_ROOT = fileURLToPath(new URL("../../extension/", import.meta.url));
 
 function event() {
@@ -13,7 +13,7 @@ function event() {
   return { addListener(fn) { listeners.push(fn); }, emit(...args) { for (const fn of listeners) fn(...args); } };
 }
 
-async function harness({ freshCreateMode = "normal", freshSubmitReadyAfter = 0, chatComposerChangedProbes = 0, chatSubmitFocusMode = "normal" } = {}) {
+async function harness({ freshCreateMode = "normal", freshSubmitReadyAfter = 0, chatComposerChangedProbes = 0, chatSubmitFocusMode = "normal", onAutoContinueMutationBoundary = null } = {}) {
   const runtimeStartup = event();
   const runtimeInstalled = event();
   const runtimeMessage = event();
@@ -139,6 +139,7 @@ async function harness({ freshCreateMode = "normal", freshSubmitReadyAfter = 0, 
             return { result: { value: { ready: true, x: 101, y: 202 } } };
           }
           if (expression.includes("ChatGPT composer is unavailable")) {
+            if (onAutoContinueMutationBoundary) await onAutoContinueMutationBoundary("focused", tabs.get(debuggee.tabId));
             return { result: { value: { focused: true } } };
           }
           if (expression.includes("Chat Bridge attachment submit readiness.")) {
@@ -171,6 +172,7 @@ async function harness({ freshCreateMode = "normal", freshSubmitReadyAfter = 0, 
             return { result: { value: { ...(states.get(debuggee.tabId) || {}) } } };
           }
           if (expression.includes("return composer ? String(composer.textContent")) {
+            if (onAutoContinueMutationBoundary) await onAutoContinueMutationBoundary("filled", tabs.get(debuggee.tabId));
             return { result: { value: composerValues.get(debuggee.tabId) ?? "" } };
           }
           return { result: { value: null } };
@@ -267,9 +269,9 @@ async function harness({ freshCreateMode = "normal", freshSubmitReadyAfter = 0, 
     extensionRoot: EXTENSION_ROOT,
     allowedScripts: ["bookmarks.js"],
   });
-  vm.runInContext(`${source}\n;globalThis.__auto = { resolveAutoContinueTarget, resolveTurnBudgetTarget, setAutoContinueTarget, autoContinueTargetStatus, chatGptContinuationState, chatGptResumeRoute, chatGptFreshHomeRoute, createFreshChatResume, deliverAutoContinuation, inspectChatBridgeState, deliverChatBridgeMessage, readChatBridgeFinalResponse, browserCapabilityVersions, attachTab, detachTab };`, context, { filename: SERVICE_WORKER_PATH });
+  vm.runInContext(`${source}\n;globalThis.__auto = { resolveAutoContinueTarget, resolveTurnBudgetTarget, setAutoContinueTarget, autoContinueTargetStatus, chatGptContinuationState, chatGptResumeRoute, chatGptFreshHomeRoute, createFreshChatResume, deliverAutoContinuation, inspectChatBridgeState, deliverChatBridgeMessage, readChatBridgeFinalResponse, browserCapabilityVersions, attachTab, detachTab${process.env.EQUINOX_STAGED_BROWSER_WORKER ? ", cachedChatGptContinuationState" : ""} };`, context, { filename: SERVICE_WORKER_PATH });
   await Promise.resolve();
-  return { api: context.__auto, storageData, tabs, states, keyEvents, pointerEvents, broughtToFront, filledPrompts, uploadedFiles, createdTabs, freshSubmitProbeCount: () => freshSubmitProbeCount, chatSubmitProbeCount: () => chatSubmitProbeCount, debuggerAttachCount: () => debuggerAttachCount, debuggerDetachCount: () => debuggerDetachCount };
+  return { api: context.__auto, runtimeMessage, tabsUpdated, tabsRemoved, storageData, tabs, states, keyEvents, pointerEvents, broughtToFront, filledPrompts, uploadedFiles, createdTabs, freshSubmitProbeCount: () => freshSubmitProbeCount, chatSubmitProbeCount: () => chatSubmitProbeCount, debuggerAttachCount: () => debuggerAttachCount, debuggerDetachCount: () => debuggerDetachCount };
 }
 
 test("Fresh Chat Resume route preserves stable project identity and root scope", async () => {
@@ -563,6 +565,40 @@ test("Auto Continue delivery claims receipt before one submit and blocks duplica
 });
 
 
+if (process.env.EQUINOX_STAGED_BROWSER_WORKER) {
+  test("staged Auto Continue refuses pending navigation and conversation drift between CDP mutation steps", async () => {
+    for (const { driftAt, redirect } of [
+      { driftAt: "focused", redirect: "pending" },
+      { driftAt: "filled", redirect: "pending" },
+      { driftAt: "focused", redirect: "committed" },
+    ]) {
+      const h = await harness({
+        onAutoContinueMutationBoundary: (stage, tab) => {
+          if (stage !== driftAt) return;
+          if (redirect === "pending") {
+            tab.pendingUrl = "https://example.test/other-destination";
+            tab.status = "loading";
+          } else {
+            tab.url = "https://chatgpt.com/c/bbbbbbbb-cccc-dddd-eeee-ffffffffffff";
+            tab.status = "complete";
+          }
+        },
+      });
+      h.states.set(41, { generationActive: false, userEpoch: "user-a", assistantTurnKey: "conversation-turn-8", composerReady: true, composerEmpty: true });
+      await assert.rejects(() => h.api.deliverAutoContinuation({
+        continuationId: `cont-drift-${driftAt}-12`, tabId: 41,
+        conversationId: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+        userEpoch: "user-a", assistantTurnKey: "conversation-turn-8",
+        prompt: "Continue task task-abcdef from checkpoint 2.",
+      }), /pending navigation|conversation changed/u);
+      assert.equal(h.keyEvents.filter((event) => event.key === "Enter" && event.type === "keyUp").length, 0,
+        `Navigation after ${driftAt} must prevent the submit key`);
+      if (driftAt === "focused") assert.equal(h.filledPrompts.length, 0,
+        "Navigation after focus must prevent even inserting a prompt");
+    }
+  });
+}
+
 test("Auto Continue preserves an already-active normal browser debugger lease", async () => {
   const h = await harness();
   h.states.set(41, { generationActive: false, userEpoch: "user-a", assistantTurnKey: "conversation-turn-8", composerReady: true, composerEmpty: true });
@@ -600,3 +636,183 @@ test("pinned Auto Continue target fails closed when the tab navigates away from 
   assert.equal(navigated.status, "invalid");
   assert.equal(navigated.reason, "pinned_conversation_changed");
 });
+
+if (process.env.EQUINOX_STAGED_BROWSER_WORKER) {
+  test('staged ChatGPT continuation push only caches state from matching extension-owned tab and sender URL', async () => {
+    const h = await harness();
+    const tab = h.tabs.get(41);
+    const source = { id: 'fixture-extension', tab, url: tab.url };
+    const push = (sender, state = h.states.get(41)) => {
+      let answer;
+      h.runtimeMessage.emit({ type: 'equinox.chatgpt.continuationState.push', state }, sender,
+        (value) => { answer = value; });
+      return answer;
+    };
+    const bad = [
+      { ...source, id: 'another-extension' },
+      { ...source, url: 'https://chatgpt.com/c/11111111-2222-3333-4444-555555555555' },
+      { ...source, url: 'https://evil.example/c/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee' },
+      { ...source, tab: { ...tab, id: 0 } },
+      { ...source, tab: { ...tab, url: 'https://example.test/' } },
+      { ...source, tab: { ...tab, pendingUrl: 'https://example.test/navigating-away' } },
+      { ...source, tab: undefined },
+    ];
+    for (const sender of bad) {
+      push(sender);
+      assert.equal(h.api.cachedChatGptContinuationState(tab), null,
+        `Untrusted ChatGPT continuation push must not populate the tab cache: ${JSON.stringify(sender)}`);
+    }
+    push(source);
+    const accepted = h.api.cachedChatGptContinuationState(tab);
+    assert.equal(accepted.userEpoch, h.states.get(41).userEpoch);
+    assert.equal(accepted.generationActive, true);
+  });
+}
+
+if (process.env.EQUINOX_STAGED_BROWSER_WORKER) {
+  test('staged observer cache is purged across same-tab conversation navigation and reload', async () => {
+    const h = await harness();
+    const tab = h.tabs.get(41);
+    const originalUrl = tab.url;
+    const otherUrl = 'https://chatgpt.com/c/11111111-2222-3333-4444-555555555555';
+    const push = () => h.runtimeMessage.emit({
+      type: 'equinox.chatgpt.continuationState.push', state: h.states.get(41),
+    }, { id: 'fixture-extension', tab: { ...tab }, url: tab.url }, () => {});
+    push();
+    assert.equal(h.api.cachedChatGptContinuationState(tab)?.generationActive, true);
+    tab.url = otherUrl;
+    h.tabsUpdated.emit(tab.id, { url: otherUrl });
+    assert.equal(h.api.cachedChatGptContinuationState(tab), null);
+    tab.url = originalUrl;
+    h.tabsUpdated.emit(tab.id, { url: originalUrl });
+    assert.equal(h.api.cachedChatGptContinuationState(tab), null,
+      'Returning to a previous conversation must not restore old generating state');
+    push();
+    assert.equal(h.api.cachedChatGptContinuationState(tab)?.generationActive, true);
+    h.tabsUpdated.emit(tab.id, { status: 'loading' });
+    assert.equal(h.api.cachedChatGptContinuationState(tab), null,
+      'Reloading the same conversation invalidates stale page observation');
+    push();
+    h.tabsRemoved.emit(tab.id);
+    assert.equal(h.api.cachedChatGptContinuationState(tab), null,
+      'Closing a tab permanently drops its observer cache');
+  });
+}
+
+if (process.env.EQUINOX_STAGED_BROWSER_WORKER) {
+  test('staged Auto Continue refuses an uncommitted navigation away from the last ChatGPT URL', async () => {
+    const h = await harness();
+    const source = h.tabs.get(41);
+    source.pendingUrl = 'https://example.test/other-site';
+    source.status = 'loading';
+    const automatic = await h.api.resolveAutoContinueTarget();
+    assert.equal(automatic.status, 'idle', 'pending navigation must not preserve the old generating turn as eligible');
+    assert.equal(automatic.reason, 'no_generating_chatgpt_tab');
+    await assert.rejects(h.api.chatGptContinuationState(41), /pending navigation/u);
+    await assert.rejects(h.api.deliverAutoContinuation({
+      continuationId: 'cont-pending-navigate-1', tabId: 41,
+      conversationId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+      userEpoch: 'user-a', assistantTurnKey: 'conversation-turn-8',
+      prompt: 'Continue task after navigation.',
+    }), /pending navigation/u);
+    assert.equal(h.keyEvents.length, 0, 'blocked continuation must not type into a navigating tab');
+    assert.equal(h.debuggerAttachCount(), 0, 'blocked continuation must not attach debugger');
+
+    const selected = h.tabs.get(42);
+    await h.api.setAutoContinueTarget({ mode: 'pinned', tabId: 42 });
+    selected.pendingUrl = 'https://example.test/unrelated';
+    selected.status = 'loading';
+    const popup = await h.api.autoContinueTargetStatus();
+    assert.equal(popup.pinnedValid, false, 'pending navigation must make popup pinned status invalid');
+    assert.equal(popup.tabs.some((entry) => entry.tabId === 42), false,
+      'navigating tabs must not be offered as stable conversation choices');
+    await assert.rejects(h.api.setAutoContinueTarget({ mode: 'pinned', tabId: 42 }),
+      /committed|conversation|navigation/u, 'a departing conversation must not be newly pinned');
+    const pinned = await h.api.resolveAutoContinueTarget();
+    assert.equal(pinned.status, 'invalid');
+    assert.equal(pinned.reason, 'pinned_conversation_changed');
+  });
+}
+
+if (process.env.EQUINOX_STAGED_BROWSER_WORKER) {
+  test('staged pinned delivery stops if popup target changes during composer mutation', async () => {
+    for (const { phase, newMode } of [
+      { phase: 'focused', newMode: 'pinned' },
+      { phase: 'filled', newMode: 'task-tab' },
+    ]) {
+      let h;
+      h = await harness({
+        onAutoContinueMutationBoundary: async (stage) => {
+          if (stage !== phase) return;
+          await h.api.setAutoContinueTarget(newMode === 'pinned'
+            ? { mode: 'pinned', tabId: 44 } : { mode: 'task-tab' });
+        },
+      });
+      await h.api.setAutoContinueTarget({ mode: 'pinned', tabId: 42 });
+      await assert.rejects(() => h.api.deliverAutoContinuation({
+        continuationId: `cont-repin-${phase}-258`,
+        tabId: 42, conversationId: '11111111-2222-3333-4444-555555555555',
+        userEpoch: 'user-b', assistantTurnKey: 'conversation-turn-4',
+        prompt: 'Continue task from checkpoint.',
+      }), /pinned.*(target|changed)/iu);
+      const status = await h.api.autoContinueTargetStatus();
+      assert.equal(status.target.mode, newMode);
+      if (newMode === 'pinned') assert.equal(status.target.tabId, 44);
+      assert.equal(h.keyEvents.filter((event) => event.key === 'Enter' && event.type === 'keyUp').length, 0,
+        `Changing the popup target after ${phase} must prevent submission`);
+      if (phase === 'focused') assert.equal(h.filledPrompts.length, 0,
+        'Repinning immediately after focus must prevent even inserting text');
+    }
+  });
+
+  test('staged pinned delivery refuses project-to-root scope drift before receipt or debugger', async () => {
+    const h = await harness();
+    const pinnedTab = h.tabs.get(42);
+    const originalUrl = pinnedTab.url;
+    const input = {
+      continuationId: 'cont-pin-scope-257',
+      tabId: 42,
+      conversationId: '11111111-2222-3333-4444-555555555555',
+      userEpoch: 'user-b',
+      assistantTurnKey: 'conversation-turn-4',
+      prompt: 'Continue task from checkpoint.',
+    };
+    await h.api.setAutoContinueTarget({ mode: 'pinned', tabId: 42 });
+    pinnedTab.url = 'https://chatgpt.com/c/11111111-2222-3333-4444-555555555555';
+    pinnedTab.status = 'complete';
+    assert.equal((await h.api.resolveAutoContinueTarget()).status, 'invalid');
+    await assert.rejects(() => h.api.deliverAutoContinuation(input), /pinned.*(route|scope|changed)/iu);
+    assert.equal(h.filledPrompts.length, 0, 'Route drift must not insert the continuation prompt');
+    assert.equal(h.debuggerAttachCount(), 0, 'Route drift must not attach debugger');
+    assert.equal(h.storageData.autoContinueDeliveryReceipts, undefined,
+      'Route drift must not claim a delivery receipt');
+    pinnedTab.url = originalUrl;
+    assert.equal((await h.api.resolveAutoContinueTarget()).status, 'idle');
+    const delivered = await h.api.deliverAutoContinuation(input);
+    assert.equal(delivered.confirmed, true, 'Restoring the exact pinned route permits delivery');
+    assert.equal(h.filledPrompts.length, 1);
+  });
+
+  test('staged pinned Auto Continue rejects same conversation id moved across root/project scope', async () => {
+    const h = await harness();
+    const tab = h.tabs.get(42);
+    const original = tab.url;
+    const saved = await h.api.setAutoContinueTarget({ mode: 'pinned', tabId: 42 });
+    assert.equal(saved.pinnedValid, true);
+    assert.match(saved.target.canonicalUrl, /\/g\/g-project\/c\//u);
+
+    tab.url = 'https://chatgpt.com/c/11111111-2222-3333-4444-555555555555';
+    tab.status = 'complete';
+    const popup = await h.api.autoContinueTargetStatus();
+    assert.equal(popup.pinnedValid, false,
+      'pinned route must not remain valid when root/project scope changes but conversation id stays the same');
+    const resolved = await h.api.resolveAutoContinueTarget();
+    assert.equal(resolved.status, 'invalid');
+    assert.equal(resolved.reason, 'pinned_conversation_changed');
+    assert.equal(h.debuggerAttachCount(), 0);
+
+    tab.url = original;
+    const restored = await h.api.autoContinueTargetStatus();
+    assert.equal(restored.pinnedValid, true, 'returning to exactly the pinned route should restore validity');
+  });
+}

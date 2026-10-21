@@ -589,3 +589,82 @@ test("Windows Agent Browser launch uses absolute system PowerShell under scrubbe
   assert.equal(calls[0].options.env.PATH, "C:\\malicious\\bin");
   assert.equal(calls[0].options.env.ComSpec, "C:\\Windows\\System32\\cmd.exe");
 });
+
+test("Agent Browser refuses ambiguous Windows main PIDs before sending any taskkill",async()=>{
+  const profileRoot="C:\\Users\\Fixture\\AppData\\Local\\Equinox Local\\browser";
+  const chromePath="C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe";
+  const inventory=JSON.stringify([8011,8012].map(ProcessId=>({
+    ProcessId,ExecutablePath:chromePath,CommandLine:chromePath+' --user-data-dir="'+profileRoot+'" --no-first-run',
+  })));
+  const calls=[];
+  const bridge=createBridgeStub();
+  const manager=createEquinoxAgentBrowser({
+    bridge,platform:"win32",profileRoot,homeDir:"C:\\Users\\Fixture",
+    env:{SystemRoot:"C:\\Windows",PATH:"X:\\hostile"},
+    discoverWindowsChromeImpl:async()=>chromePath,
+    execFileAsync:async(binary,args,options)=>{
+      calls.push([binary,args,options]);
+      if(binary.endsWith("powershell.exe"))return {stdout:inventory,stderr:""};
+      throw Error("unexpected taskkill");
+    },
+    signalProcess:()=>{throw Error("unexpected process signal")},
+  });
+  await assert.rejects(manager.shutdown(),/eşleşmesi belirsiz/u);
+  assert.equal(calls.length,1);
+  assert.match(calls[0][0],/WindowsPowerShell\\v1\.0\\powershell\.exe$/u);
+  assert.equal(calls[0][2].windowsHide,true);
+  assert.equal(calls.some(([name])=>name.endsWith("taskkill.exe")),false);
+});
+
+test("Agent Browser refuses a connected bridge without matching Chrome process before any signal",async()=>{
+  const profileRoot="C:\\Users\\Fixture\\AppData\\Local\\Equinox Local\\browser";
+  const chromePath="C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe";
+  const calls=[];
+  const manager=createEquinoxAgentBrowser({
+    bridge:createBridgeStub({ready:true}),
+    platform:"win32",profileRoot,homeDir:"C:\\Users\\Fixture",env:{SystemRoot:"C:\\Windows"},
+    discoverWindowsChromeImpl:async()=>chromePath,
+    execFileAsync:async(binary,args,opts)=>{
+      calls.push([binary,args,opts]);
+      return {stdout:JSON.stringify([{
+        ProcessId:7721,ExecutablePath:chromePath,
+        CommandLine:chromePath+' --user-data-dir="C:\\Users\\Fixture\\Personal"',
+      }]),stderr:""};
+    },
+    signalProcess:()=>{throw Error("should not send signal")},
+  });
+  await assert.rejects(manager.shutdown(),/exact Agent Browser ana process'i bulunamadı/u);
+  assert.equal(calls.length,1);
+  assert.equal(calls[0][2].windowsHide,true);
+});
+
+test("Agent Browser Native Messaging refuses executable owned by others or unsafe executable permissions",async t=>{
+  const homeDir=await fs.mkdtemp(path.join(os.tmpdir(),"equinox-agent-host-permission-"));
+  t.after(()=>fs.rm(homeDir,{recursive:true,force:true}));
+  const native=await prepareNativeHost(homeDir);
+  for(const mode of [0o666,0o777]){
+    await fs.chmod(native.hostWrapperPath,mode);
+    await assert.rejects(
+      ensureAgentBrowserNativeMessagingManifest({homeDir,profileRoot:native.profileRoot}),
+      /izinleri güvenli değil/u,
+    );
+    const manifest=path.join(native.profileRoot,"NativeMessagingHosts","dev.equinox.browser.json");
+    assert.equal(await fs.access(manifest).then(()=>true,()=>false),false);
+  }
+});
+
+test("Windows Agent Browser rejects forged inventory paths, helper rows and invalid PID before sending signal",()=>{
+  const profile="C:\\Users\\Fixture\\AppData\\Local\\Equinox Local\\browser";
+  const executable="C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe";
+  const rows=[
+    {ProcessId:22,ExecutablePath:executable,CommandLine:'"'+executable+'" --user-data-dir="'+profile+'" --no-first-run'},
+    {ProcessId:23,ExecutablePath:executable,CommandLine:'"'+executable+'" --type=gpu-process --user-data-dir="'+profile+'"'},
+    {ProcessId:24,ExecutablePath:"C:\\Users\\Fixture\\Downloads\\chrome.exe",CommandLine:executable+' --user-data-dir="'+profile+'"'},
+    {ProcessId:0,ExecutablePath:executable,CommandLine:executable+' --user-data-dir="'+profile+'"'},
+    {ProcessId:25,ExecutablePath:executable,CommandLine:executable+' --user-data-dir="C:\\Users\\Fixture\\Private"'},
+  ];
+  assert.deepEqual(parseWindowsAgentBrowserMainPids(JSON.stringify(rows),profile,executable),[22]);
+  assert.throws(()=>parseWindowsAgentBrowserMainPids("{invalid JSON",profile,executable),/inventory JSON is invalid/u);
+  assert.throws(()=>buildWindowsAgentBrowserLaunchArgs("relative\\profile"),/profil kökü geçersiz/u);
+  assert.throws(()=>windowsAgentBrowserSystemTool("taskkill",{SystemRoot:"Windows",PATH:"C:\\hostile"}),/SystemRoot/u);
+});

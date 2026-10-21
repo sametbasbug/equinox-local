@@ -325,3 +325,139 @@ test("invalid future or stale Browser timestamps cannot skip or reset the safety
   generationStartedAtMs = now - 3 * 60 * 60_000;
   assert.equal((await controller.refreshSnapshot()).active.elapsedMs, 6_000);
 });
+
+test("turn budget rejects malformed settings and prevents disk mutation for invalid updates", async () => {
+  const invalid = [
+    null, [], "string", 13, {enabled:1}, {cutoffMinutes:4},
+    {cutoffMinutes:121}, {cutoffMinutes:5.5}, {cutoffMinutes:"22"},
+    {fallbackResetMinutes:0}, {fallbackResetMinutes:121},
+    {cutoffMinutes:10,fallbackResetMinutes:11},
+    {autoContinueMaxHops:0}, {autoContinueMaxHops:21},
+    {autoContinueMaxHops:1.5}, {autoContinueMaxHops:"10"},
+  ];
+  const writes=[];
+  const disk={
+    readFile:async()=>{throw Object.assign(Error("missing settings"),{code:"ENOENT"})},
+    mkdir:async(...args)=>{writes.push(["mkdir",...args])},
+    chmod:async(...args)=>{writes.push(["chmod",...args])},
+    writeFile:async(...args)=>{writes.push(["writeFile",...args])},
+  };
+  const controller=createTurnBudgetController({
+    settingsPath:"/fixture/private/turn-budget.json",
+    fsImpl:disk,
+    now:()=>10_000,
+  });
+  await controller.initialize();
+  assert.deepEqual(controller.snapshot().active,null);
+  for(const settings of invalid){
+    assert.throws(()=>__test.normalizeSettings(settings),Error,JSON.stringify(settings));
+    await assert.rejects(()=>controller.updateSettings(settings),Error,JSON.stringify(settings));
+  }
+  assert.deepEqual(writes,[],"invalid settings must never attempt mkdir/chmod/write");
+  assert.equal(controller.snapshot().autoContinueMaxHops,10);
+  assert.deepEqual(__test.normalizeSettings({cutoffMinutes:5,fallbackResetMinutes:5,autoContinueMaxHops:20}),{
+    enabled:true,cutoffMinutes:5,fallbackResetMinutes:5,autoContinueMaxHops:20,
+  });
+});
+
+test("turn budget rejects corrupt stored settings except for missing-file ENOENT and preserves private writes", async () => {
+  const refusals=[
+    {data:"{",error:/Unexpected end|Expected/u},
+    {data:JSON.stringify({autoContinueMaxHops:22}),error:/between 1 and 20/u},
+    {data:null,error:/file access unavailable/u},
+  ];
+  for(const example of refusals){
+    const controller=createTurnBudgetController({
+      settingsPath:"/fixture/turn-budget.json",
+      fsImpl:{
+        readFile:async()=>{
+          if(example.data===null)throw Object.assign(Error("file access unavailable"),{code:"EACCES"});
+          return example.data;
+        },
+        mkdir:async()=>{throw Error("must not write during initialization");},
+        chmod:async()=>{throw Error("must not chmod during initialization");},
+        writeFile:async()=>{throw Error("must not write during initialization");},
+      },
+    });
+    await assert.rejects(()=>controller.initialize(),example.error);
+  }
+
+  const trace=[];
+  const controller=createTurnBudgetController({
+    settingsPath:"/fixture/turn-budget.json",
+    fsImpl:{
+      readFile:async()=>{throw Object.assign(Error("missing"),{code:"ENOENT"})},
+      mkdir:async(path,options)=>{trace.push(["mkdir",path,options])},
+      chmod:async(path,mode)=>{trace.push(["chmod",path,mode]);throw Object.assign(Error("OS refused chmod"),{code:"EPERM"})},
+      writeFile:async(path,data,options)=>{trace.push(["write",path,data,options])},
+    },
+  });
+  await controller.initialize();
+  await controller.updateSettings({enabled:false,cutoffMinutes:22,fallbackResetMinutes:2,autoContinueMaxHops:20});
+  assert.deepEqual(trace,[
+    ["mkdir","/fixture",{recursive:true,mode:0o700}],
+    ["chmod","/fixture",0o700],
+    ["write","/fixture/turn-budget.json",
+      JSON.stringify({enabled:false,cutoffMinutes:22,fallbackResetMinutes:2,autoContinueMaxHops:20},null,2)+"\n",
+      {mode:0o600}],
+    ["chmod","/fixture/turn-budget.json",0o600],
+  ]);
+  assert.equal(controller.snapshot().enabled,false);
+  assert.equal(controller.snapshot().autoContinueMaxHops,20);
+});
+
+test("turn budget clamps only integer bounded runtime blocking waits and preserves originals", async () => {
+  let now=100_000;
+  const controller=createTurnBudgetController({
+    settingsPath:TEST_SETTINGS_PATH,now:()=>now,
+    resolveTurnIdentity:async()=>({browserContext:"user",conversationId:"fixture",userEpoch:"one"}),
+  });
+  await controller.initialize();
+  const first={operation:"process_wait",arguments:{wait_ms:120_000,marker:"fixture"}};
+  await controller.prepareInvocation("runtime_call",first);
+  now+=21*60_000;
+  const invalid=[-1,"120000",1.5,null,undefined,{}];
+  for(const value of invalid){
+    const input={operation:"process_wait",arguments:{wait_ms:value,marker:"fixture"}};
+    const prepared=await controller.prepareInvocation("runtime_call",input);
+    assert.equal(prepared.input,input);
+    assert.equal(prepared.waitClamped,false);
+  }
+  const allowed=await controller.prepareInvocation("runtime_call",first);
+  assert.equal(allowed.waitClamped,true);
+  assert.equal(allowed.input.arguments.wait_ms,5_000);
+  assert.equal(first.arguments.wait_ms,120_000,"never mutate caller input");
+  const notRuntime=await controller.prepareInvocation("desktop_call",first);
+  assert.equal(notRuntime.input,first);
+  assert.equal(notRuntime.waitClamped,false);
+  const short=await controller.prepareInvocation("runtime_call",{
+    operation:"process_wait",arguments:{wait_ms:1000},
+  });
+  assert.equal(short.waitClamped,false);
+});
+
+test("turn budget falls back on a broken browser probe while preserving image content and at-most-once notices", async () => {
+  let now=1_000;
+  let attempts=0;
+  const controller=createTurnBudgetController({
+    settingsPath:TEST_SETTINGS_PATH,now:()=>now,
+    resolveTurnIdentity:async()=>{attempts++;throw Error("browser probe unavailable");},
+  });
+  await controller.initialize();
+  const prepared=await controller.prepareInvocation("runtime_call",{operation:"status",arguments:{}});
+  assert.equal(controller.snapshot().active.source,"fallback");
+  const image={type:"image",mimeType:"image/png",data:"fixture-only"};
+  const result={content:[image,{type:"text",text:"original"}],structuredContent:{text:"original"},metadata:{tag:"keep"}};
+  const decorated=controller.decorateResult(result,prepared);
+  assert.deepEqual(result.content,[image,{type:"text",text:"original"}],"must not modify original payload");
+  assert.equal(result.structuredContent.text,"original");
+  assert.deepEqual(decorated.content[0],image,"image should never be dropped");
+  assert.match(decorated.content[1].text,/This assistant turn has/u);
+  assert.match(decorated.structuredContent.text,/This assistant turn has/u);
+  assert.deepEqual(decorated.metadata,{tag:"keep"});
+  const twice=controller.decorateResult(result,prepared);
+  assert.doesNotMatch(twice.content[1].text,/This assistant turn has/u);
+  assert.equal(attempts,1);
+  now=3*60_000;
+  assert.equal((await controller.refreshSnapshot()).active,null);
+});

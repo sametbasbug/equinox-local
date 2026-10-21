@@ -322,3 +322,58 @@ test("Main native transition fails closed on target or digest drift", async () =
     computeRuntimeContractImpl: async ({ target }) => ({ target, sha256: "not-a-digest" }),
   }), /digest is invalid/u);
 });
+
+test("Main native admission rejects unexpected manifest field types", () => {
+  const baseline = manifest("darwin-arm64");
+  for (const invalid of [
+    { ...baseline, sourceSha: 123 },
+    { ...baseline, runtimeContractSha256: {} },
+    { ...baseline, target: ["darwin-arm64"] },
+    { ...baseline, artifact: { ...baseline.artifact, sha256: 456 } },
+    { ...baseline, artifact: { ...baseline.artifact, bytes: "12345" } },
+    { ...baseline, artifact: { ...baseline.artifact, bytes: 1024 * 1024 * 1024 + 1 } },
+    { ...baseline, artifact: { ...baseline.artifact, unexpected: true } },
+  ]) {
+    assert.throws(() => validateEquinoxLocalMainNativeArtifactManifest(invalid),
+      /invalid|unsupported|not bound|byte size/u);
+  }
+});
+
+test("Main native admission rejects duplicate, traversal, and unexpected Git tree blobs", async () => {
+  const required = [
+    ".github/workflows/release-validation.yml",
+    "scripts/release/package-managed-release.mjs",
+    "src/equinox-local-platform.js",
+    "src/equinox-local-release-runtime-contract.js",
+    "src/equinox-local-runtime-versions.js",
+    "app/EquinoxLocalApp.swift",
+    "src/equinox-local-native-app.js",
+    "src/equinox-local-native-app-host.js",
+    "scripts/release/prepare-source-app-host.mjs",
+  ];
+  const blob = (name) => "100644 blob " + "1".repeat(40) + "\t" + name;
+  const mock = (records) => async (_command, args) => args.includes("rev-parse")
+    ? { stdout: SHA + "\n", stderr: "" }
+    : { stdout: records.map(blob).join("\0") + "\0", stderr: "" };
+  for (const [extra, expected] of [
+    [required[0], /Duplicate/u],
+    ["app/../bad.swift", /unsafe/u],
+    ["app/foreign/./bad.swift", /unsafe/u],
+    ["src/server.js", /Unexpected/u],
+  ]) {
+    await assert.rejects(
+      computeEquinoxLocalMainNativeRuntimeContract({
+        rootDir: "/tmp/canonical", sourceSha: SHA, target: "darwin-arm64",
+        execFileImpl: mock([...required, extra]),
+      }), expected,
+    );
+  }
+});
+
+test("Main native admission rejects control characters and traversal in Git diff paths", () => {
+  for (const unsafe of ["app/../outside.swift", "app//file.swift", "app/file\nname.swift",
+    "app/file\0name.swift", "/absolute/file.swift", "native\\windows\\shell.cs"]) {
+    assert.throws(() => classifyEquinoxLocalMainNativeImpact([unsafe]), /unsafe|invalid/u, unsafe);
+    assert.throws(() => classifyEquinoxLocalMainUpdateImpact([unsafe]), /unsafe|invalid/u, unsafe);
+  }
+});

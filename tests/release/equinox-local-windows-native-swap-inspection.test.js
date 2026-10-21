@@ -93,3 +93,49 @@ test("read-only audit rejects missing old release, symlinked active tree and uns
   await assert.rejects(inspectEquinoxLocalWindowsNativeSwap({ ...f.opts, programRoot: "." }), /canonical absolute/u);
   await assert.rejects(inspectEquinoxLocalWindowsNativeSwap({ ...f.opts, programRoot: path.join(f.opts.previousReleaseDir, "other") }), /fixed Equinox Local/u);
 });
+
+test("read-only swap audit refuses foreign staged names and symlinked staged candidates before reading their content", async(t)=>{
+  const f=await fixture(t);
+  const parent=path.dirname(f.opts.programRoot);
+  const foreign=path.join(parent,".equinox-shell-next-2468-0123456789abcdef");
+  const userOwned=path.join(parent,"private-user-data.txt");
+  await fs.writeFile(userOwned,"never-read-or-delete");
+  await fs.symlink(userOwned,foreign);
+  await assert.rejects(inspect(f),/unsafe staged\/failed candidate entry/u);
+  assert.equal(await fs.readFile(userOwned,"utf8"),"never-read-or-delete");
+  assert.equal((await fs.lstat(foreign)).isSymbolicLink(),true);
+  await fs.rm(foreign);
+  await fs.mkdir(path.join(parent,".equinox-shell-next-02468-0123456789abcdef"));
+  await assert.rejects(inspect(f),/unsafe staged\/failed candidate entry/u);
+  await assert.rejects(fs.lstat(f.backupRoot),{code:"ENOENT"});
+});
+
+test("read-only swap audit leaves multiple managed-looking next and failed candidates blocked without choosing a rollback",async(t)=>{
+  const f=await fixture(t);
+  const parent=path.dirname(f.opts.programRoot);
+  await fs.cp(f.targetShell,f.nextRoot,{recursive:true});
+  const failed=path.join(parent,".equinox-shell-failed-2468-0123456789abcdef");
+  await fs.cp(f.targetShell,failed,{recursive:true});
+  await assert.rejects(inspect(f),/ambiguous/u);
+  assert.equal(await fs.readFile(path.join(f.nextRoot,"EquinoxLocal.exe"),"utf8"),"after");
+  assert.equal(await fs.readFile(path.join(failed,"EquinoxLocal.exe"),"utf8"),"after");
+  assert.equal(await fs.readFile(path.join(f.opts.programRoot,"EquinoxLocal.exe"),"utf8"),"before");
+});
+
+test("read-only swap audit never issues filesystem writes, even for a crash-recovery-looking state",async(t)=>{
+  const f=await fixture(t);
+  await fs.rename(f.opts.programRoot,f.backupRoot);
+  const forbidden=["rename","cp","rm","unlink","mkdir","writeFile","rmdir","symlink"];
+  const guarded=Object.create(fs);
+  for(const name of forbidden)guarded[name]=async()=>assert.fail("read-only auditor attempted "+name);
+  guarded.open=async(filePath,flags,...args)=>{
+    assert.equal(flags,"r","swap audit file open must be read-only");
+    return fs.open(filePath,flags,...args);
+  };
+  const result=await inspectEquinoxLocalWindowsNativeSwap({...f.opts,fsImpl:guarded});
+  assert.equal(result.status,"previous-backup-ready");
+  assert.equal(result.installedIdentity,"missing");
+  assert.equal(result.backupRoot,f.backupRoot);
+  await assert.rejects(fs.lstat(f.opts.programRoot),{code:"ENOENT"});
+  assert.equal(await fs.readFile(path.join(f.backupRoot,"EquinoxLocal.exe"),"utf8"),"before");
+});

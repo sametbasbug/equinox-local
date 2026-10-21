@@ -61,3 +61,23 @@ test("source Peekaboo sync is a no-op once the pinned runtime is healthy", async
   assert.deepEqual(result, { changed: false, version: "4.9.4" });
   assert.equal(installCalls, 0);
 });
+
+test("source Peekaboo sync rejects a symlinked Developer runtime root without installing", async (t) => {
+  const item = await makeFixture(t);
+  const appSupport = path.join(item.root, "Library", "Application Support");
+  const elsewhere = path.join(item.root, "elsewhere");
+  await fs.mkdir(appSupport, { recursive: true, mode: 0o700 });
+  await fs.mkdir(elsewhere, { mode: 0o700 });
+  await fs.symlink(elsewhere, path.join(appSupport, "Equinox Local Developer"));
+  let installCalls = 0;
+  await assert.rejects(() => syncSourcePeekabooRuntime({
+    configPath: item.configPath,
+    homeDir: item.root,
+    installPinnedPeekabooRuntimeImpl: async (...args) => {
+      installCalls += 1;
+      return fakeInstall(...args);
+    },
+  }), /unsafe/u);
+  assert.equal(installCalls, 0);
+  assert.equal((await fs.readFile(item.configPath, "utf8")).includes("peekabooPath="), false);
+});

@@ -139,3 +139,101 @@ test("workspace runtime propagates non-missing Git-exclude read errors", async (
 
   await assert.rejects(runtime.ensureWorkspaceRuntimeDirectories(), /permission denied/u);
 });
+
+test("workspace runtime passes the opaque project ID only to its injected resolver and never touches files if resolution fails", async () => {
+  const opaqueProjectId = "project-id-not-a-filesystem-path/../private";
+  const events = [];
+  const fsImpl = {
+    readFile: async () => { events.push("read"); throw Error("unexpected read"); },
+    mkdir: async () => { events.push("mkdir"); throw Error("unexpected mkdir"); },
+    appendFile: async () => { events.push("append"); throw Error("unexpected append"); },
+    chmod: async () => { events.push("chmod"); throw Error("unexpected chmod"); },
+  };
+  const denied = Error("workspace access rejected by project context resolver");
+  const runtime = createEquinoxLocalWorkspaceRuntime({
+    workspaceProjectId: opaqueProjectId,
+    resolveProjectContext: async (id) => {
+      events.push(["resolve", id]);
+      throw denied;
+    },
+    fsImpl,
+  });
+  await assert.rejects(runtime.resolveWorkspaceRuntimePaths(), (e) => e === denied);
+  await assert.rejects(runtime.ensureWorkspaceRuntimeDirectories(), (e) => e === denied);
+  assert.deepEqual(events, [["resolve", opaqueProjectId], ["resolve", opaqueProjectId]]);
+});
+
+test("workspace runtime creates missing Git exclude only with fixed entries, preserves existing records, and never inserts browser-screenshot exclusion", async () => {
+  await withTempWorkspace(async (root) => {
+    const file = path.join(root, ".git", "info", "exclude");
+    const runtime = createEquinoxLocalWorkspaceRuntime({
+      workspaceProjectId: "local-workspace",
+      resolveProjectContext: async () => ({ rootRealPath: root }),
+    });
+    const paths = await runtime.ensureWorkspaceRuntimeDirectories();
+    assert.equal(paths.workspace.rootRealPath, root);
+    assert.equal(await fs.readFile(file, "utf8"), `${EXCLUDED_RUNTIME_ENTRIES.join("\n")}\n`);
+    assert.equal((await fs.stat(paths.browserScreenshotRoot)).isDirectory(), true);
+    assert.equal((await fs.readFile(file, "utf8")).includes("/browser-screenshots/"), false);
+    // Preserve pre-existing user-managed entries and avoid adding fixed entries twice.
+    await fs.appendFile(file, "# user-managed setting\n");
+    await runtime.ensureWorkspaceRuntimeDirectories();
+    const finalExclude = await fs.readFile(file, "utf8");
+    assert.equal(finalExclude, `${EXCLUDED_RUNTIME_ENTRIES.join("\n")}\n# user-managed setting\n`);
+    for (const entry of EXCLUDED_RUNTIME_ENTRIES) assert.equal(finalExclude.split(entry).length - 1, 1);
+  });
+});
+
+test("workspace runtime aborts on failed Git exclude append before creating runtime roots", async () => {
+  const events = [];
+  const refusal = Error("exclude path is not writable");
+  const root = "/mock/workspace";
+  const runtime = createEquinoxLocalWorkspaceRuntime({
+    workspaceProjectId: "local-workspace",
+    resolveProjectContext: async () => ({ rootRealPath: root }),
+    fsImpl: {
+      readFile: async () => "/worktrees/\n",
+      mkdir: async (directory, options) => { events.push(["mkdir",directory,options]); },
+      appendFile: async (file, contents, options) => {
+        events.push(["append",file,contents,options]);
+        throw refusal;
+      },
+      chmod: async () => { events.push(["chmod"]); },
+    },
+  });
+  await assert.rejects(runtime.ensureWorkspaceRuntimeDirectories(), (error) => error === refusal);
+  assert.deepEqual(events.map((item) => item[0]), ["mkdir", "append"]);
+  assert.equal(events[0][1], path.join(root, ".git", "info"));
+  assert.equal(events[1][1], path.join(root, ".git", "info", "exclude"));
+  assert.equal(events[1][3].mode, 0o644);
+  assert.doesNotMatch(events[1][2], /\/worktrees\//u, "existing exclusion must not be duplicated");
+});
+
+test("workspace runtime attempts private chmod but preserves successful directory provisioning if the platform refuses chmod", async () => {
+  const calls = [];
+  const root = "/mock/workspace";
+  const runtime = createEquinoxLocalWorkspaceRuntime({
+    workspaceProjectId: "local-workspace",
+    resolveProjectContext: async () => ({ rootRealPath: root }),
+    fsImpl: {
+      readFile: async () => EXCLUDED_RUNTIME_ENTRIES.join("\n")+"\n",
+      mkdir: async (directory, options) => { calls.push(["mkdir",directory,options.mode]); },
+      appendFile: async () => { throw Error("already excluded entries must never be appended"); },
+      chmod: async (directory, mode) => {
+        calls.push(["chmod",directory,mode]);
+        throw Object.assign(Error("permission denied for chmod"), {code:"EPERM"});
+      },
+    },
+  });
+  const paths = await runtime.ensureWorkspaceRuntimeDirectories();
+  assert.equal(paths.workspace.rootRealPath,root);
+  assert.equal(calls.filter(([kind]) => kind === "mkdir").length, 10);
+  const chmods = calls.filter(([kind]) => kind === "chmod");
+  assert.equal(chmods.length, 8);
+  assert.ok(chmods.every(([,directory,mode]) =>
+    mode === 0o700 && directory !== paths.worktreeRoot && directory !== paths.visualRoot));
+  assert.deepEqual(Object.keys(paths).slice(1), [
+    "worktreeRoot", "visualRoot", "browserScreenshotRoot", "workflowRoot", "taskRoot",
+    "releaseGateRoot", "observabilityRoot", "repairRoot", "recoveryPolicyRoot", "janitorRoot",
+  ]);
+});

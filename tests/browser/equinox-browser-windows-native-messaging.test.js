@@ -300,3 +300,36 @@ test("Windows Native Messaging update ownership check is read-only and accepts o
   );
   assert.equal(registry.calls.filter((call) => call.command === "reg.exe").length, 0);
 });
+
+test("Windows Native Messaging rejects symlinked manifest root before registry changes or foreign user-data reads",async(t)=>{
+  const root=await fs.mkdtemp(path.join(os.tmpdir(),"equinox-native-host-foreign-root-"));
+  t.after(()=>fs.rm(root,{recursive:true,force:true}));
+  const foreign=path.join(root,"foreign-user");
+  await fs.mkdir(foreign);
+  await fs.writeFile(path.join(foreign,"credentials"),"private-user-data");
+  const manifestRoot=path.join(root,"native-messaging");
+  await fs.symlink(foreign,manifestRoot);
+  const registry=registryMock();
+  await assert.rejects(registerWindowsNativeMessagingHost({
+    manifestRoot,launcherPath:LAUNCHER,execFileAsync:registry.execFileAsync,verifyLauncher:false,
+  }),/manifest root is unsafe/u);
+  assert.equal(registry.calls.length,0);
+  assert.deepEqual(await fs.readdir(foreign),["credentials"]);
+  assert.equal(await fs.readFile(path.join(foreign,"credentials"),"utf8"),"private-user-data");
+});
+
+test("Windows Native Messaging rejects JSON-equivalent but byte-foreign manifest and keeps existing HKCU owner",async(t)=>{
+  const root=await fs.mkdtemp(path.join(os.tmpdir(),"equinox-native-host-json-foreign-"));
+  t.after(()=>fs.rm(root,{recursive:true,force:true}));
+  const manifestPath=path.join(root,"dev.equinox.browser.json");
+  const equivalent=JSON.stringify(JSON.parse(windowsNativeMessagingManifest(LAUNCHER)))+"\n";
+  assert.notEqual(equivalent,windowsNativeMessagingManifest(LAUNCHER));
+  await fs.writeFile(manifestPath,equivalent);
+  const registry=registryMock(manifestPath);
+  await assert.rejects(registerWindowsNativeMessagingHost({
+    manifestRoot:root,launcherPath:LAUNCHER,execFileAsync:registry.execFileAsync,verifyLauncher:false,
+  }),/foreign or malformed/u);
+  assert.equal(await fs.readFile(manifestPath,"utf8"),equivalent);
+  assert.equal(registry.value,manifestPath);
+  assert.equal(registry.calls.filter(x=>x.command==="reg.exe").length,0);
+});

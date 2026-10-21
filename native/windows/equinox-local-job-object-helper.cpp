@@ -1,4 +1,9 @@
 #include <windows.h>
+#include <shlobj.h>
+
+#pragma comment(lib, "Advapi32.lib")
+#pragma comment(lib, "Shell32.lib")
+#pragma comment(lib, "Ole32.lib")
 
 #include <cstdint>
 #include <cwchar>
@@ -72,6 +77,96 @@ int InspectWorkerProcess() {
   }
   std::cout << "running";
   return 0;
+}
+
+// This read-only OS witness is a building block for a separately owned
+// native A/B supervisor. It cannot stop WPF, authorize a journal transition,
+// return a bearer token, or make an in-process Node callback a native owner.
+// The expected executable comes from the OS per-user known folder, NOT a
+// worker-supplied path/environment variable.
+bool SameWindowsLogon(HANDLE process) {
+  HANDLE shellToken = nullptr;
+  HANDLE witnessToken = nullptr;
+  if (!OpenProcessToken(process, TOKEN_QUERY, &shellToken)) return false;
+  const BOOL ownToken = OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &witnessToken);
+  if (!ownToken) { CloseHandle(shellToken); return false; }
+  auto close = [&]() { CloseHandle(shellToken); CloseHandle(witnessToken); };
+  TOKEN_STATISTICS shellStats{}, witnessStats{};
+  DWORD bytes = 0;
+  if (!GetTokenInformation(shellToken, TokenStatistics, &shellStats, sizeof(shellStats), &bytes) ||
+      !GetTokenInformation(witnessToken, TokenStatistics, &witnessStats, sizeof(witnessStats), &bytes)) {
+    close(); return false;
+  }
+  if (shellStats.AuthenticationId.LowPart != witnessStats.AuthenticationId.LowPart ||
+      shellStats.AuthenticationId.HighPart != witnessStats.AuthenticationId.HighPart) {
+    close(); return false;
+  }
+  DWORD shellBytes = 0, witnessBytes = 0;
+  GetTokenInformation(shellToken, TokenUser, nullptr, 0, &shellBytes);
+  GetTokenInformation(witnessToken, TokenUser, nullptr, 0, &witnessBytes);
+  if (shellBytes < sizeof(TOKEN_USER) || witnessBytes < sizeof(TOKEN_USER) ||
+      shellBytes > 16 * 1024 || witnessBytes > 16 * 1024) {
+    close(); return false;
+  }
+  std::vector<BYTE> shellUser(shellBytes), witnessUser(witnessBytes);
+  const bool valid = GetTokenInformation(shellToken, TokenUser, shellUser.data(), shellBytes, &shellBytes) &&
+    GetTokenInformation(witnessToken, TokenUser, witnessUser.data(), witnessBytes, &witnessBytes) &&
+    EqualSid(reinterpret_cast<TOKEN_USER*>(shellUser.data())->User.Sid,
+             reinterpret_cast<TOKEN_USER*>(witnessUser.data())->User.Sid);
+  close();
+  return valid;
+}
+
+int InspectOwnedWpfProcess() {
+  const auto pidText = ReadEnvironment(L"EQUINOX_LOCAL_CHECK_WPF_PID");
+  const auto ticks = ReadEnvironment(L"EQUINOX_LOCAL_CHECK_WPF_TICKS");
+  uint64_t parsedPid = 0;
+  try {
+    if (pidText.empty() || pidText.find_first_not_of(L"0123456789") != std::wstring::npos ||
+        ticks.size() < 15 || ticks.size() > 19 ||
+        ticks.find_first_not_of(L"0123456789") != std::wstring::npos) {
+      std::cout << "unknown"; return 0;
+    }
+    parsedPid = std::stoull(pidText);
+  } catch (...) { std::cout << "unknown"; return 0; }
+  if (parsedPid == 0 || parsedPid > (std::numeric_limits<DWORD>::max)()) {
+    std::cout << "unknown"; return 0;
+  }
+  PWSTR userLocal = nullptr;
+  if (FAILED(SHGetKnownFolderPath(FOLDERID_LocalAppData, KF_FLAG_DEFAULT, nullptr, &userLocal)) || !userLocal) {
+    if (userLocal) CoTaskMemFree(userLocal);
+    std::cout << "unknown"; return 0;
+  }
+  const std::wstring expectedExe = std::wstring(userLocal) + L"\\Programs\\Equinox Local\\EquinoxLocal.exe";
+  CoTaskMemFree(userLocal);
+  // WaitForSingleObject requires SYNCHRONIZE on the process handle.
+  // Do not request PROCESS_TERMINATE, PROCESS_VM_READ or broader access.
+  HANDLE shell = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE, FALSE, static_cast<DWORD>(parsedPid));
+  if (!shell) {
+    std::cout << (GetLastError() == ERROR_INVALID_PARAMETER ? "missing" : "unknown"); return 0;
+  }
+  const auto finish = [&](const char* status) { CloseHandle(shell); std::cout << status; return 0; };
+  const DWORD firstWait = WaitForSingleObject(shell, 0);
+  if (firstWait == WAIT_OBJECT_0) return finish("missing");
+  if (firstWait != WAIT_TIMEOUT) return finish("unknown");
+  FILETIME creation{}, exit{}, kernel{}, user{};
+  DWORD size = 32768;
+  std::wstring executable(size, L'\0');
+  if (!GetProcessTimes(shell, &creation, &exit, &kernel, &user) ||
+      !QueryFullProcessImageNameW(shell, 0, executable.data(), &size)) return finish("unknown");
+  executable.resize(size);
+  const uint64_t fileTicks = (static_cast<uint64_t>(creation.dwHighDateTime) << 32) | creation.dwLowDateTime;
+  DWORD shellSession = 0, ownSession = 0;
+  if (!ProcessIdToSessionId(static_cast<DWORD>(parsedPid), &shellSession) ||
+      !ProcessIdToSessionId(GetCurrentProcessId(), &ownSession)) return finish("unknown");
+  if (fileTicks > (std::numeric_limits<uint64_t>::max)() - kWindowsFileTimeToDotNetTicks ||
+      std::to_wstring(fileTicks + kWindowsFileTimeToDotNetTicks) != ticks ||
+      shellSession != ownSession ||
+      CompareStringOrdinal(executable.data(), static_cast<int>(executable.size()),
+                           expectedExe.data(), static_cast<int>(expectedExe.size()), TRUE) != CSTR_EQUAL ||
+      !SameWindowsLogon(shell)) return finish("mismatch");
+  const DWORD finalWait = WaitForSingleObject(shell, 0);
+  return finish(finalWait == WAIT_TIMEOUT ? "running" : finalWait == WAIT_OBJECT_0 ? "missing" : "unknown");
 }
 
 std::string EscapeJson(const std::string& value) {
@@ -321,6 +416,7 @@ int RunOwnedProcessGate(int argc, wchar_t* argv[]) {
 
 int wmain(int argc, wchar_t* argv[]) {
   if (argc == 2 && std::wstring(argv[1]) == L"--inspect-process") return InspectWorkerProcess();
+  if (argc == 2 && std::wstring(argv[1]) == L"--inspect-owned-wpf") return InspectOwnedWpfProcess();
   if (argc >= 2 && std::wstring(argv[1]) == L"--owned-process-gate") return RunOwnedProcessGate(argc, argv);
   if (argc != 1) return 12;
   HANDLE job = CreateJobObjectW(nullptr, nullptr);

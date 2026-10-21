@@ -120,3 +120,58 @@ test("reconciler cannot schedule a second worker when ownership cleanup refuses"
   assert.equal(result.reason, "worker_active");
   assert.equal(calls.some(([name]) => name === "schedule"), false);
 });
+
+test("reconciler leaves rollback_failed forensic lock intact despite stale worker cleanup offers", async () => {
+  const actions = [];
+  const result = await reconcileEquinoxLocalMainUpdate({
+    sourceRoot: OLD, transactionRoot: STATE,
+    engineFactory: () => engineWith(receipt({ status: "rollback_failed", stage: "rollback_failed" }), actions),
+    inspectWorker: async () => ({ running: false, stale: true, uncertain: false }),
+    cleanupWorker: async () => { actions.push("cleanup"); return { cleaned: true }; },
+    scheduleWorker: async () => { actions.push("schedule"); return { scheduled: true }; },
+    inspectCheckout: async () => { actions.push("inspect"); return exactInspect(OLD); },
+  });
+  assert.equal(result.status, "blocked");
+  assert.equal(result.reason, "rollback_failed");
+  assert.deepEqual(actions, [], "forensic rollback_failed receipt must not be released or replayed");
+});
+
+test("reconciler refuses transient cleanup uncertainty without scheduling a duplicate worker", async () => {
+  const calls = [];
+  const result = await reconcileEquinoxLocalMainUpdate({
+    sourceRoot: OLD, transactionRoot: STATE,
+    engineFactory: () => engineWith(receipt({ status: "verifying", stage: "source_switched" }), calls),
+    inspectWorker: async () => ({ running: false, stale: true, uncertain: false }),
+    inspectCheckout: async (root) => { calls.push(["inspect", root]); return exactInspect(root); },
+    cleanupWorker: async () => { calls.push(["cleanup"]); return { cleaned: false, uncertain: true }; },
+    scheduleWorker: async () => { calls.push(["schedule"]); return { scheduled: true }; },
+  });
+  assert.equal(result.status, "blocked");
+  assert.equal(result.reason, "worker_cleanup_refused");
+  assert.equal(calls.filter(([name]) => name === "inspect").length, 2);
+  assert.equal(calls.some(([name]) => name === "schedule"), false);
+});
+
+test("reconciler validates both pinned checkouts before touching a stale worker", async () => {
+  for (const [label, change] of [
+    ["missing rollback root", { rollbackSourceRoot: null }],
+    ["relative target root", { targetSourceRoot: "not-an-absolute-git-checkout" }],
+    ["wrong rollback SHA", { rollbackSha: "f".repeat(40) }],
+    ["wrong target SHA", { targetSha: "e".repeat(40) }],
+  ]) {
+    const actions = [];
+    const value = receipt({ status: "verifying", stage: "source_switched", ...change });
+    await assert.rejects(
+      reconcileEquinoxLocalMainUpdate({
+        sourceRoot: OLD, transactionRoot: STATE,
+        engineFactory: () => engineWith(value, actions),
+        inspectWorker: async () => ({ running: false }),
+        inspectCheckout: async (root) => { actions.push(["inspect", root]); return exactInspect(root); },
+        cleanupWorker: async () => { actions.push(["cleanup"]); return { cleaned: true }; },
+        scheduleWorker: async () => { actions.push(["schedule"]); return { scheduled: true }; },
+      }),
+      /source root is unavailable|source identity does not match/i, label,
+    );
+    assert.equal(actions.some(([name]) => name === "cleanup" || name === "schedule"), false, label);
+  }
+});

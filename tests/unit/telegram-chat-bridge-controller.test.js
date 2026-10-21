@@ -395,3 +395,117 @@ test("Telegram Chat Bridge v9 reads the first assistant response when there is n
   const call = f.calls.find((item) => item.method === "chat_bridge.read_final");
   assert.equal(call.args.previousAssistantTurnKey, null);
 });
+
+test("Telegram Chat Bridge rejects malformed bindings and unsafe message identities without browser delivery",async()=>{
+  for(const bad of [
+    null,{}, {...binding,browserContext:"other"}, {...binding,browserInstanceId:"short"},
+    {...binding,tabId:0}, {...binding,conversationId:"other"}, {...binding,canonicalUrl:""},
+  ]){
+    const f=fixture();
+    await assert.rejects(f.controller.deliverText({binding:bad,deliveryId:"tgb-synthetic1",text:"test"}),Error);
+    assert.equal(f.calls.some(x=>x.method==="chat_bridge.deliver"),false);
+  }
+  for(const deliveryId of ["other-id","tgb-AABBCC","tgb-xx","tgb-"+'a'.repeat(90)]){
+    const f=fixture();
+    await assert.rejects(f.controller.deliverText({binding,deliveryId,text:"synthetic"}),/delivery id is invalid/u);
+    assert.equal(f.calls.length,0);
+  }
+  for(const text of [" ","test\0secret","a".repeat(4001)]){
+    const f=fixture();
+    await assert.rejects(f.controller.deliverText({binding,deliveryId:"tgb-synthetic1",text}),/1–4000 safe characters/u);
+    assert.equal(f.calls.length,0);
+  }
+});
+
+test("Telegram Chat Bridge treats missing turn confirmation and transport failures as ambiguous once",async()=>{
+  for(const result of [
+    {confirmed:true,userEpoch:"epoch-only"},
+    {confirmed:true,previousAssistantTurnKey:"turn-only"},
+    {confirmed:false,stage:"submitted"},
+    new Error("synthetic lost acknowledgement"),
+  ]){
+    const f=fixture({deliverResult:result});
+    await assert.rejects(
+      f.controller.deliverText({binding,deliveryId:"tgb-synthetic2",text:"synthetic"}),
+      error=>error?.code==="CHAT_BRIDGE_AMBIGUOUS",
+    );
+    assert.equal(f.calls.filter(x=>x.method==="chat_bridge.deliver").length,1);
+    assert.equal(f.calls.filter(x=>x.method==="chat_bridge.inspect").length,1);
+  }
+});
+
+test("Telegram Chat Bridge does not read a drifting or malformed final response",async()=>{
+  for(const result of [
+    {status:"drifted",reason:"user_epoch_changed"},
+    {status:"ready",text:"",assistantTurnKey:"turn"},
+    {status:"ready",text:"good",assistantTurnKey:null},
+    {status:"ready",text:42,assistantTurnKey:"turn"},
+  ]){
+    const f=fixture({readResult:result});
+    await assert.rejects(
+      f.controller.readFinal({binding,userEpoch:"epoch1",previousAssistantTurnKey:"turn1"}),
+      error=>["CHAT_BRIDGE_DRIFTED","CHAT_BRIDGE_READ_FAILED"].includes(error?.code),
+    );
+    assert.equal(f.calls.filter(x=>x.method==="chat_bridge.read_final").length,1);
+    assert.equal(f.calls.some(x=>x.method==="chat_bridge.deliver"),false);
+  }
+  const f=fixture();
+  for(const userEpoch of ["", "x".repeat(201)]){
+    await assert.rejects(f.controller.readFinal({binding,userEpoch,previousAssistantTurnKey:"turn1"}),/pending user epoch is invalid/u);
+  }
+  assert.equal(f.calls.filter(x=>x.method==="chat_bridge.read_final").length,0);
+});
+
+test("Telegram new Task creation requires user capability and prevents tab mutation on invalid Task checkpoint",async()=>{
+  for(const input of [
+    {taskId:"bad",checkpointRevision:1},
+    {taskId:"task-valid12",checkpointRevision:0},
+    {taskId:"task-valid12",checkpointRevision:1.25},
+  ]){
+    const calls=[];
+    const controller=createTelegramChatBridgeController({
+      browserBridge:{
+        snapshot:()=>({contexts:{user:{ready:true,extension:{instanceId:"instance-user-123",capabilityVersions:{chatBridge:9}}}}}),
+        call:async method=>{calls.push(method);throw Error("unexpected real browser method")},
+      },
+      agentControl:{assertMutationAllowed:operation=>calls.push(operation)},
+    });
+    await assert.rejects(controller.startTaskChat(input),Error);
+    assert.equal(calls.length,0);
+  }
+  for(const {ready,version} of [{ready:false,version:9},{ready:true,version:8}]){
+    const calls=[];
+    const controller=createTelegramChatBridgeController({
+      browserBridge:{
+        snapshot:()=>({contexts:{user:{ready,extension:{instanceId:"instance-user-123",capabilityVersions:{chatBridge:version}}}}}),
+        call:async method=>{calls.push(method);throw Error("must not create tab")},
+      },
+      agentControl:{assertMutationAllowed:()=>{}},
+    });
+    await assert.rejects(controller.startTaskChat({taskId:"task-valid12",checkpointRevision:1}),Error);
+    assert.equal(calls.length,0);
+  }
+});
+
+
+test("Telegram Chat Bridge rejects deceptive links and preserves Project conversation identity", async () => {
+  for (const canonicalUrl of [
+    "https://evil.invalid/c/abcdef12-3456-7890-abcd-ef1234567890",
+    "http://chatgpt.com/c/abcdef12-3456-7890-abcd-ef1234567890",
+    "https://chatgpt.com/c/ffffffff-3456-7890-abcd-ef1234567890",
+    "https://chatgpt.com/else/c/abcdef12-3456-7890-abcd-ef1234567890",
+    "https://user@chatgpt.com/c/abcdef12-3456-7890-abcd-ef1234567890",
+    "https://chatgpt.com:999/c/abcdef12-3456-7890-abcd-ef1234567890",
+    "https://chatgpt.com/c/abcdef12-3456-7890-abcd-ef1234567890?redirect=x",
+    "https://chatgpt.com/c/abcdef12-3456-7890-abcd-ef1234567890#spoof",
+  ]) {
+    const f = fixture();
+    await assert.rejects(f.controller.deliverText({binding:{...binding,canonicalUrl},deliveryId:"tgb-abcdef12",text:"not sent"}), /canonical URL/u);
+    assert.equal(f.calls.some((call) => call.method === "chat_bridge.deliver" || call.method === "tabs.list"),false);
+  }
+  const project = "https://chatgpt.com/g/g-p-1234567890abcdef/c/abcdef12-3456-7890-abcd-ef1234567890";
+  const f = fixture({tabs:[{id:88,url:project}],inspectByTab:{77:new Error("No tab with id: 77"),88:{}}});
+  const confirmed = await f.controller.deliverText({binding:{...binding,canonicalUrl:project},deliveryId:"tgb-abcdef12",text:"project message"});
+  assert.equal(confirmed.tabId,88);
+  assert.equal(f.calls.some((call)=>call.method==="chat_bridge.deliver"),true);
+});

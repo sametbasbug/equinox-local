@@ -395,3 +395,46 @@ test("historical release preparation may omit bundled Peekaboo while 4.4.0 and n
     /peekaboo/u,
   );
 });
+
+test("Windows ZIP helper rejects extra response fields and fractional extracted byte counts", async () => {
+  for (const summary of [
+    {entryCount:3,extractedBytes:20,unexpected:true},
+    {entryCount:3,extractedBytes:2.5},
+    {entryCount:0,extractedBytes:20},
+  ]) {
+    const calls=[];
+    await assert.rejects(inspectEquinoxReleaseArchive("C:\\owned\\release.zip",{
+      target:"win32-x64",
+      execFileImpl:async(command,args)=>{
+        calls.push([command,...args]);
+        return{stdout:JSON.stringify(summary),stderr:""};
+      },
+    }),/Windows release ZIP (helper returned invalid fields|extracted size|entry count)/u);
+    assert.equal(calls.length,1);
+    assert.equal(calls[0][0],"powershell.exe");
+  }
+});
+
+test("signed download rejects wrong declared length before replacing an existing archive", async (t) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "equinox-length-guard-"));
+  t.after(() => fs.rm(root, {recursive:true,force:true}));
+  const destination = path.join(root,"artifact.tar.gz");
+  await fs.writeFile(destination,"existing archive bytes");
+  const payload=Buffer.from("signed content");
+  const artifact={
+    url:"https://local.sametbasbug.dev/downloads/updates/artifact.tar.gz",
+    sha256:createHash("sha256").update(payload).digest("hex"),
+    bytes:payload.length,
+  };
+  let attempts=0;
+  await assert.rejects(downloadVerifiedUpdateArtifact(artifact,destination,{
+    fetchImpl:async()=>{
+      attempts++;
+      return new Response(payload,{status:200,headers:{"content-length":String(payload.length+1)}});
+    },
+    retryDelayImpl:async()=>assert.fail("No retry is allowed"),
+  }),/Content-Length does not match the signed manifest/u);
+  assert.equal(attempts,1);
+  assert.equal(await fs.readFile(destination,"utf8"),"existing archive bytes");
+  assert.deepEqual(await fs.readdir(root),["artifact.tar.gz"]);
+});

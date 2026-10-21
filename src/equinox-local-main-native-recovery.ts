@@ -1,0 +1,266 @@
+import type { NativeHostExec } from "./equinox-local-native-app-host.js";
+import fs from "node:fs/promises";
+import path from "node:path";
+
+import {
+  assertWindowsNativeMessagingHostOwnership,
+  registerWindowsNativeMessagingHost,
+  windowsNativeMessagingLauncherPath,
+} from "./equinox-browser-windows-native-messaging.js";
+import { resolveEquinoxLocalInstallation } from "./equinox-local-installation.js";
+import {
+  inspectEquinoxLocalMainNativeStoredRelease,
+  writeEquinoxLocalMainNativePointer,
+} from "./equinox-local-main-native-state.js";
+import {
+  inspectEquinoxLocalNativeAppHostSnapshot,
+  restoreEquinoxLocalNativeAppHostSnapshot,
+  synchronizeEquinoxLocalAppHostForRelease,
+} from "./equinox-local-native-app-host.js";
+import { readBoundedNormalFile, writeBoundedUtf8File } from "./equinox-local-safe-file.js";
+import { parseEquinoxVersion } from "./equinox-local-updater.js";
+import { createSupervisorBoundWindowsNativeABLifecycle, requireWindowsNativeABSupervisor } from "./equinox-local-windows-native-ab-supervisor-bound.js";
+
+type NativeFs = typeof fs;
+type NativeTransition = Readonly<{mode: string; target: string; targetSha: string; targetRuntimeContractSha256: string}>;
+type PreviousMain = Readonly<{kind: "main"; sourceSha: string; target: string; runtimeContractSha256: string}>;
+type PreviousStable = Readonly<{kind: "stable"; version: string}>;
+type PreviousIdentity = PreviousMain | PreviousStable;
+type NativeDescriptor = Readonly<{
+  schemaVersion: 1; channel: "main"; targetSha: string; target: string;
+  targetRuntimeContractSha256: string; previous: PreviousIdentity;
+}>;
+type Installation = ReturnType<typeof resolveEquinoxLocalInstallation>;
+type NativePointer = {sourceSha: string; target: string; runtimeContractSha256: string; releaseDir?: string};
+type StoredRelease = {releaseDir: string; sourceSha?: string; target?: string; runtimeContractSha256?: string};
+type InspectStoredRelease = (input: {transactionRoot: string; sourceSha: string; target: string; expectedRuntimeContractSha256: string; fsImpl: NativeFs}) => Promise<StoredRelease>;
+type DescriptorExpected = {targetSha?: string; target?: string; targetRuntimeContractSha256?: string};
+type DescriptorReaderInput = {transactionRoot: string; transactionId: string; expected?: DescriptorExpected; fsImpl?: NativeFs};
+type DescriptorWriterInput = {transition: NativeTransition; previousPointer?: NativePointer | null | undefined; installation: Installation; transactionRoot: string; transactionId: string; fsImpl?: NativeFs};
+type RecoveryOptions = {
+  transition?: NativeTransition; transactionRoot?: string; transactionId?: string;
+  installation?: Installation; fsImpl?: NativeFs; execFileImpl?: NativeHostExec; env?: NodeJS.ProcessEnv;
+  windowsAdmission?: unknown; createBoundWindowsABImpl?: (options: Record<string, unknown>) => unknown;
+  readDescriptorImpl?: (options: DescriptorReaderInput) => Promise<NativeDescriptor>;
+  inspectStoredReleaseImpl?: InspectStoredRelease;
+  writePointerImpl?: typeof writeEquinoxLocalMainNativePointer;
+  inspectDarwinSnapshotImpl?: typeof inspectEquinoxLocalNativeAppHostSnapshot;
+  activateDarwinImpl?: typeof synchronizeEquinoxLocalAppHostForRelease;
+  restoreDarwinImpl?: typeof restoreEquinoxLocalNativeAppHostSnapshot;
+  assertWindowsNativeHostImpl?: typeof assertWindowsNativeMessagingHostOwnership;
+  registerWindowsNativeHostImpl?: typeof registerWindowsNativeMessagingHost;
+  windowsLauncherPathImpl?: typeof windowsNativeMessagingLauncherPath;
+};
+function hasErrorCode(error: unknown, code: string): boolean {
+  return error !== null && typeof error === "object" && "code" in error && error.code === code;
+}
+
+const MAX_DESCRIPTOR_BYTES = 8 * 1024;
+const SHA_PATTERN = /^[a-f0-9]{40}$/u;
+const DIGEST_PATTERN = /^[a-f0-9]{64}$/u;
+const TX_PATTERN = /^main-[a-f0-9]{32}$/u;
+
+function exactKeys(value: unknown, expected: readonly string[], label: string): asserts value is Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`${label} is invalid.`);
+  const actual = Object.keys(value).sort();
+  const wanted = [...expected].sort();
+  if (actual.length !== wanted.length || actual.some((key, index) => key !== wanted[index])) throw new Error(`${label} contains missing or unsupported fields.`);
+}
+function assertSha(value: unknown, label: string): string {
+  if (typeof value !== "string" || !SHA_PATTERN.test(value)) throw new Error(`${label} is invalid.`);
+  return value;
+}
+function assertDigest(value: unknown, label: string): string {
+  if (typeof value !== "string" || !DIGEST_PATTERN.test(value)) throw new Error(`${label} is invalid.`);
+  return value;
+}
+function assertTransactionId(value: unknown): string {
+  if (typeof value !== "string" || !TX_PATTERN.test(value)) throw new Error("Main native recovery transaction id is invalid.");
+  return value;
+}
+function requireAbsolute(value: unknown, label: string, pathApi: typeof path = path): string {
+  if (typeof value !== "string" || !pathApi.isAbsolute(value) || /[\r\n\0]/u.test(value)) throw new Error(`${label} must be absolute.`);
+  return pathApi.resolve(value);
+}
+function recoveryPath(transactionRoot: unknown, transactionId: unknown) {
+  const root = requireAbsolute(transactionRoot, "Main native recovery transaction root");
+  const id = assertTransactionId(transactionId);
+  return Object.freeze({
+    root,
+    rollbackRoot: path.join(root, "staging", id, "native-rollback"),
+    descriptorPath: path.join(root, "staging", id, "native-rollback", "native-recovery.json"),
+    pointerPath: path.join(root, "current-native.json"),
+  });
+}
+function validatePrevious(value: unknown): PreviousIdentity {
+  if (value !== null && typeof value === "object" && "kind" in value && value.kind === "main") {
+    exactKeys(value, ["kind", "sourceSha", "target", "runtimeContractSha256"], "Main native previous identity");
+    const parsed = value as Record<string, unknown>;
+    assertSha(parsed.sourceSha, "Main native previous source SHA");
+    assertDigest(parsed.runtimeContractSha256, "Main native previous runtime contract");
+    if (typeof parsed.target !== "string" || !parsed.target) throw new Error("Main native previous target is invalid.");
+    return Object.freeze({ ...value }) as PreviousMain;
+  }
+  if (value !== null && typeof value === "object" && "kind" in value && value.kind === "stable") {
+    exactKeys(value, ["kind", "version"], "Main native previous stable identity");
+    const parsed = value as Record<string, unknown>;
+    return Object.freeze({ kind: "stable", version: parseEquinoxVersion(parsed.version).text });
+  }
+  throw new Error("Main native previous identity is invalid.");
+}
+function validateDescriptor(value: unknown, expected: DescriptorExpected = {}): NativeDescriptor {
+  exactKeys(value, ["schemaVersion", "channel", "targetSha", "target", "targetRuntimeContractSha256", "previous"], "Main native recovery descriptor");
+  if (value.schemaVersion !== 1 || value.channel !== "main") throw new Error("Main native recovery descriptor identity is invalid.");
+  assertSha(value.targetSha, "Main native recovery target SHA");
+  assertDigest(value.targetRuntimeContractSha256, "Main native recovery target runtime contract");
+  if (typeof value.target !== "string" || !value.target) throw new Error("Main native recovery target is invalid.");
+  const previous = validatePrevious(value.previous);
+  if (expected.targetSha && value.targetSha !== expected.targetSha) throw new Error("Main native recovery target SHA mismatch.");
+  if (expected.target && value.target !== expected.target) throw new Error("Main native recovery target mismatch.");
+  if (expected.targetRuntimeContractSha256 && value.targetRuntimeContractSha256 !== expected.targetRuntimeContractSha256) throw new Error("Main native recovery runtime contract mismatch.");
+  return Object.freeze({ ...value, previous }) as NativeDescriptor;
+}
+
+export function equinoxLocalMainNativeRecoveryDescriptor({ transition, previousPointer, installation }: {transition: NativeTransition; previousPointer?: NativePointer | null | undefined; installation: Installation}): NativeDescriptor {
+  if (transition?.mode !== "artifact_required") throw new Error("Main native recovery descriptor requires an artifact transition.");
+  const previous = previousPointer
+    ? Object.freeze({ kind: "main", sourceSha: previousPointer.sourceSha, target: previousPointer.target, runtimeContractSha256: previousPointer.runtimeContractSha256 })
+    : Object.freeze({ kind: "stable", version: parseEquinoxVersion(path.basename(installation?.releaseDir ?? "")).text });
+  return validateDescriptor({
+    schemaVersion: 1,
+    channel: "main",
+    targetSha: transition.targetSha,
+    target: transition.target,
+    targetRuntimeContractSha256: transition.targetRuntimeContractSha256,
+    previous,
+  });
+}
+
+export async function writeEquinoxLocalMainNativeRecoveryDescriptor({
+  transition,
+  previousPointer,
+  installation,
+  transactionRoot,
+  transactionId,
+  fsImpl = fs,
+}: DescriptorWriterInput) {
+  const paths = recoveryPath(transactionRoot, transactionId);
+  const descriptor = equinoxLocalMainNativeRecoveryDescriptor({ transition, previousPointer, installation });
+  await fsImpl.mkdir(paths.rollbackRoot, { recursive: true, mode: 0o700 });
+  try {
+    const existing = await readEquinoxLocalMainNativeRecoveryDescriptor({
+      transactionRoot,
+      transactionId,
+      expected: { targetSha: descriptor.targetSha, target: descriptor.target, targetRuntimeContractSha256: descriptor.targetRuntimeContractSha256 },
+      fsImpl,
+    });
+    if (JSON.stringify(existing) !== JSON.stringify(descriptor)) throw new Error("Main native recovery descriptor immutable identity mismatch.");
+    return existing;
+  } catch (error) {
+    if (!hasErrorCode(error, "ENOENT")) throw error;
+  }
+  const content = `${JSON.stringify(descriptor, null, 2)}\n`;
+  await writeBoundedUtf8File(paths.descriptorPath, { content, fsImpl, maxBytes: MAX_DESCRIPTOR_BYTES, label: "Main native recovery descriptor" });
+  return await readEquinoxLocalMainNativeRecoveryDescriptor({
+    transactionRoot,
+    transactionId,
+    expected: { targetSha: descriptor.targetSha, target: descriptor.target, targetRuntimeContractSha256: descriptor.targetRuntimeContractSha256 },
+    fsImpl,
+  });
+}
+
+export async function readEquinoxLocalMainNativeRecoveryDescriptor({ transactionRoot, transactionId, expected = {}, fsImpl = fs }: DescriptorReaderInput): Promise<NativeDescriptor> {
+  const paths = recoveryPath(transactionRoot, transactionId);
+  const file = await readBoundedNormalFile(paths.descriptorPath, { fsImpl, minBytes: 1, maxBytes: MAX_DESCRIPTOR_BYTES, encoding: "utf8", label: "Main native recovery descriptor" });
+  let raw;
+  try { raw = JSON.parse(file.data); } catch { throw new Error("Main native recovery descriptor is not valid JSON."); }
+  return validateDescriptor(raw, expected);
+}
+
+async function previousReleaseFromDescriptor({ descriptor, transactionRoot, installation, fsImpl, inspectStoredReleaseImpl }: {descriptor: NativeDescriptor; transactionRoot: string; installation: Installation; fsImpl: NativeFs; inspectStoredReleaseImpl: InspectStoredRelease}): Promise<string> {
+  if (descriptor.previous.kind === "main") {
+    if (descriptor.previous.target !== descriptor.target) throw new Error("Main native previous target does not match recovery target.");
+    const stored = await inspectStoredReleaseImpl({
+      transactionRoot,
+      sourceSha: descriptor.previous.sourceSha,
+      target: descriptor.previous.target,
+      expectedRuntimeContractSha256: descriptor.previous.runtimeContractSha256,
+      fsImpl,
+    });
+    return stored.releaseDir;
+  }
+  const releasesRoot = requireAbsolute(installation?.releasesRoot, "Managed stable releases root", installation?.platform === "win32" ? path.win32 : path);
+  const pathApi = installation?.platform === "win32" ? path.win32 : path;
+  const releaseDir = pathApi.join(releasesRoot, descriptor.previous.version);
+  if (pathApi.dirname(releaseDir) !== releasesRoot) throw new Error("Stable native recovery release escaped the managed releases root.");
+  return releaseDir;
+}
+
+export async function recoverEquinoxLocalMainNativeLifecycle({
+  transition,
+  transactionRoot,
+  transactionId,
+  installation = resolveEquinoxLocalInstallation(),
+  fsImpl = fs,
+  execFileImpl,
+  env = process.env,
+  windowsAdmission = null,
+  createBoundWindowsABImpl = createSupervisorBoundWindowsNativeABLifecycle,
+  readDescriptorImpl = readEquinoxLocalMainNativeRecoveryDescriptor,
+  inspectStoredReleaseImpl = inspectEquinoxLocalMainNativeStoredRelease,
+  writePointerImpl = writeEquinoxLocalMainNativePointer,
+  inspectDarwinSnapshotImpl = inspectEquinoxLocalNativeAppHostSnapshot,
+  activateDarwinImpl = synchronizeEquinoxLocalAppHostForRelease,
+  restoreDarwinImpl = restoreEquinoxLocalNativeAppHostSnapshot,
+  assertWindowsNativeHostImpl = assertWindowsNativeMessagingHostOwnership,
+  registerWindowsNativeHostImpl = registerWindowsNativeMessagingHost,
+  windowsLauncherPathImpl = windowsNativeMessagingLauncherPath,
+}: RecoveryOptions = {}) {
+  if (transition?.mode !== "artifact_required") throw new Error("Main native recovery requires an artifact transition.");
+  if (!installation?.managed || !installation?.selfUpdateSupported || installation.target !== transition.target) throw new Error("Main native recovery requires the matching managed installation.");
+  if (transition.target.startsWith("win32-")) {
+    // Crash recovery must not inspect or touch native A/B slots without the
+    // exact admitted, independent Windows owner even when the journal exists.
+    requireWindowsNativeABSupervisor({ windowsAdmission, transition, transactionId: transactionId as string });
+  }
+  const paths = recoveryPath(transactionRoot, transactionId);
+  const id = assertTransactionId(transactionId);
+  const descriptor = await readDescriptorImpl({
+    transactionRoot: paths.root,
+    transactionId: id,
+    expected: { targetSha: transition.targetSha, target: transition.target, targetRuntimeContractSha256: transition.targetRuntimeContractSha256 },
+    fsImpl,
+  });
+  const stored = await inspectStoredReleaseImpl({ transactionRoot: paths.root, sourceSha: transition.targetSha, target: transition.target, expectedRuntimeContractSha256: transition.targetRuntimeContractSha256, fsImpl });
+  const previousReleaseDir = await previousReleaseFromDescriptor({ descriptor, transactionRoot: paths.root, installation, fsImpl, inspectStoredReleaseImpl });
+  const pointerValue = Object.freeze({ schemaVersion: 1, channel: "main", sourceSha: transition.targetSha, target: transition.target, runtimeContractSha256: transition.targetRuntimeContractSha256 });
+
+  if (transition.target.startsWith("darwin-")) {
+    const homeDir = requireAbsolute(installation.installRoot, "Managed installation root").replace(/\/Library\/Application Support\/Equinox Local$/u, "");
+    if (!homeDir || path.join(homeDir, "Library", "Application Support", "Equinox Local") !== path.resolve(requireAbsolute(installation.installRoot, "Managed installation root"))) throw new Error("Managed macOS installation root cannot be mapped to the user home directory.");
+    const snapshotPath = path.join(paths.rollbackRoot, "Equinox Local.app");
+    await inspectDarwinSnapshotImpl({ snapshotPath, fsImpl, execFileImpl });
+    return Object.freeze({
+      target: transition.target,
+      stored,
+      descriptor,
+      rollbackPath: snapshotPath,
+      activate: async () => activateDarwinImpl({ installation, releaseDir: stored.releaseDir, fsImpl, execFileImpl, requirePayloadIdentity: true }),
+      rollback: async () => restoreDarwinImpl({ homeDir, snapshotPath, fsImpl, execFileImpl }),
+      commit: async () => writePointerImpl(paths.pointerPath, pointerValue, { transactionRoot: paths.root, fsImpl }),
+    });
+  }
+
+  if (!transition.target.startsWith("win32-")) throw new Error("Main native recovery target is unsupported.");
+  const programRoot = requireAbsolute(installation.programRoot, "Managed Windows program root", path.win32);
+  const manifestRoot = requireAbsolute(installation.nativeMessagingManifestRoot, "Managed Windows Native Messaging root", path.win32);
+  const previousRelease = requireAbsolute(previousReleaseDir, "Previous Windows native release", path.win32);
+  const targetRelease = requireAbsolute(stored.releaseDir, "Target Windows native release", path.win32);
+  // Native A/B journal owns rollback. Do not require the legacy WPF snapshot
+  // for healthy B or an interrupted native A restoration.
+  return createBoundWindowsABImpl({ windowsAdmission, transition, transactionId: id, stored,
+    previousPointer: descriptor.previous, previousReleaseDir: previousRelease,
+    programRoot, manifestRoot, transactionRoot: paths.root, pointerPath: paths.pointerPath,
+    fsImpl, execFileImpl, env, writePointerImpl, assertNativeHostImpl: assertWindowsNativeHostImpl,
+    registerNativeHostImpl: registerWindowsNativeHostImpl, launcherPathImpl: windowsLauncherPathImpl });
+}

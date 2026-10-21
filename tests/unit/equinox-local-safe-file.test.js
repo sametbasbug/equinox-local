@@ -289,3 +289,42 @@ test("safe file writer rejects symlink targets, unexpected guards and oversized 
     await fs.rm(root, { recursive: true, force: true });
   }
 });
+
+test("safe file writer rejects a replacement raced after the initial SHA guard and removes temp files", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "equinox-safe-file-cas-race-"));
+  try {
+    const target = path.join(root, "state.txt");
+    await fs.writeFile(target, "before", { mode: 0o600, flag: "wx" });
+    const expectedSha256 = createHash("sha256").update("before").digest("hex");
+    let openedTargetCount = 0;
+    const racingFs = {
+      stat: (...args) => fs.stat(...args),
+      lstat: (...args) => fs.lstat(...args),
+      link: (...args) => fs.link(...args),
+      unlink: (...args) => fs.unlink(...args),
+      rename: (...args) => fs.rename(...args),
+      rm: (...args) => fs.rm(...args),
+      open: async (...args) => {
+        if (args[0] === target && ++openedTargetCount === 2) {
+          await fs.writeFile(target, "rival", { flag: "w" });
+        }
+        return fs.open(...args);
+      },
+    };
+    await assert.rejects(
+      writeBoundedUtf8File(target, {
+        content: "ours",
+        expectedSha256,
+        fsImpl: racingFs,
+        maxBytes: 64,
+        label: "Fixture",
+      }),
+      /SHA-256 guard changed before replacement/u,
+    );
+    assert.equal(openedTargetCount, 2);
+    assert.equal(await fs.readFile(target, "utf8"), "rival");
+    assert.deepEqual(await fs.readdir(root), ["state.txt"], "rejected replacement must not leave a temporary file");
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});

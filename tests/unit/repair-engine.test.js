@@ -441,3 +441,91 @@ test("Peekaboo recipe verifies health after fixed restart callback", async () =>
     .every((event) => event.details?.incidentId === "inc-peekaboo-transport-test"), true);
 
 });
+
+test("repair refuses an unknown recipe without running diagnosis or any repair owner",async t=>{
+  const rootDir=await makeTempRoot();
+  t.after(()=>fs.rm(rootDir,{recursive:true,force:true}));
+  const h=makeHarness();
+  let reports=0;
+  h.dependencies.diagnosisEngine.incidentReport=async()=>{reports++;throw Error("unexpected diagnosis")};
+  const engine=createRepairEngine({rootDir,...h.dependencies});
+  await assert.rejects(engine.repairIssue({
+    incidentId:"inc-synthetic",recipeId:"arbitrary_shell_command",
+  }),/Bilinmeyen repair recipe/u);
+  assert.equal(reports,0);
+  assert.deepEqual(h.stopCalls,[]);
+  assert.equal(engine.activeRepairCount,0);
+});
+
+test("concurrent same-incident repair is rejected before a second diagnostic or process action",async t=>{
+  const rootDir=await makeTempRoot();
+  t.after(()=>fs.rm(rootDir,{recursive:true,force:true}));
+  const incident=makeIncident({incidentId:"inc-concurrent-fixture",state:"RESOLVED",details:{requestedPort:43220}});
+  const h=makeHarness({incident});
+  let release;
+  const pending=new Promise(resolve=>{release=resolve});
+  let signal;
+  const started=new Promise(resolve=>{signal=resolve});
+  let reports=0;
+  h.dependencies.diagnosisEngine.incidentReport=async()=>{
+    reports++;signal();
+    await pending;
+    return {incident,currentEvidence:{bridgeSnapshot:{}}};
+  };
+  const engine=createRepairEngine({rootDir,...h.dependencies});
+  const first=engine.repairIssue({incidentId:incident.incidentId,recipeId:"stale_preview_cleanup"});
+  await started;
+  assert.equal(engine.activeRepairCount,1);
+  await assert.rejects(engine.repairIssue({
+    incidentId:incident.incidentId,recipeId:"stale_preview_cleanup",
+  }),/zaten aktif repair/u);
+  assert.equal(reports,1);
+  assert.deepEqual(h.stopCalls,[]);
+  release();
+  const result=await first;
+  assert.equal(result.actionStatus,"SKIPPED_ALREADY_RESOLVED");
+  assert.equal(engine.activeRepairCount,0);
+  assert.equal((await engine.history({limit:10})).length,1);
+});
+
+test("preview repair does not stop a managed PID if port ownership has multiple listeners",async t=>{
+  const rootDir=await makeTempRoot();
+  t.after(()=>fs.rm(rootDir,{recursive:true,force:true}));
+  const proc={processId:"proc-synthetic",label:"workflow:wf-preview123:preview",
+    projectId:"status",pid:5151,running:true,expectedPorts:[43220]};
+  const h=makeHarness({
+    processRecords:[proc],
+    workflowRecords:{"wf-preview123":{workflowId:"wf-preview123",status:"failed",projectId:"status"}},
+    inspectPort:async()=>({probe:{listening:true},listeners:[{pid:5151},{pid:5152}],
+      managedProcesses:[proc],lsofError:null}),
+  });
+  const engine=createRepairEngine({rootDir,...h.dependencies});
+  const result=await engine.repairIssue({
+    incidentId:"inc-preview-port-occupied-test",recipeId:"stale_preview_cleanup",
+  });
+  assert.equal(result.outcome,"NEEDS_INTERVENTION");
+  assert.equal(result.actionStatus,"OWNERSHIP_UNPROVEN");
+  assert.deepEqual(h.stopCalls,[]);
+  assert.equal(h.processes[0].running,true);
+});
+
+test("repair blocks mismatched incident codes and never calls unrelated mutating backends",async t=>{
+  const rootDir=await makeTempRoot();
+  t.after(()=>fs.rm(rootDir,{recursive:true,force:true}));
+  let restarts=0,resumes=0;
+  const h=makeHarness({
+    incident:makeIncident({incidentId:"inc-unrelated-fixture",code:"PEEKABOO_TRANSPORT_FAILURE"}),
+    restartPeekabooBridge:async()=>{restarts++},
+    resumeWorkflowSafely:async()=>{resumes++},
+  });
+  const engine=createRepairEngine({rootDir,...h.dependencies});
+  const result=await engine.repairIssue({
+    incidentId:"inc-unrelated-fixture",recipeId:"stale_workflow_recover",
+  });
+  assert.equal(result.outcome,"NEEDS_INTERVENTION");
+  assert.equal(result.actionStatus,"RECIPE_INCIDENT_MISMATCH");
+  assert.deepEqual(h.stopCalls,[]);
+  assert.equal(restarts,0);
+  assert.equal(resumes,0);
+  assert.equal((await engine.history({limit:10})).length,1);
+});

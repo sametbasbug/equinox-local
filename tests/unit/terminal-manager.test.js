@@ -589,3 +589,81 @@ test("Windows PTY default readiness window remains bounded but tolerates slow ho
   const source = await fs.readFile(new URL("../../src/terminal-manager.js", import.meta.url), "utf8");
   assert.match(source, /DEFAULT_WINDOWS_PTY_READY_TIMEOUT_MS = 10_000/u);
 });
+
+test("Windows PTY attach failure disposes only the synthetic unadmitted transport and its Job lease", async () => {
+  const terminal=new FakeTerminal(6400);
+  const effects=[],lease={id:"test-windows-lease"};
+  const manager=createTerminalManager({
+    platform:"win32",arch:"x64",randomId:()=>"attachfail",
+    ptyModuleLoader:async()=>({spawn:()=>{effects.push("spawn");return terminal}}),
+    ownershipAdapter:{
+      kind:"job-object",implemented:true,requiresVerifiedOwnership:true,
+      gracefulSignal:"SIGTERM",forceSignal:"SIGKILL",
+      async createOwnedSet(){effects.push("lease");return lease},
+      spawnSpec:(shell,args,env)=>({command:shell,args,env,readyMarker:"__TEST_READY__"}),
+      async attachAndRelease(set){assert.equal(set,lease);effects.push("attach");throw Error("synthetic attach rejected")},
+      async ownedSetExists(){throw Error("ownership should not be probed")},
+      async signalOwnedSet(){throw Error("must not signal unadmitted session")},
+      async closeOwnedSet(set){assert.equal(set,lease);effects.push("close")},
+    },
+  });
+  await assert.rejects(manager.start({projectId:"p",projectName:"P",cwd:"C:\\Fixture",
+    shell:"powershell.exe",shellArgs:[],env:{},cols:90,rows:30}),/synthetic attach rejected/u);
+  assert.deepEqual(effects,["lease","spawn","attach","close"]);
+  assert.deepEqual(terminal.kills,[undefined]);
+  assert.deepEqual(manager.list(),[]);
+});
+
+test("Darwin PTY without verified TTY fails closed before exposure and does not signal unrelated process",async()=>{
+  const terminal=new FakeTerminal(6500),signals=[];
+  const manager=createTerminalManager({
+    platform:"darwin",arch:"arm64",randomId:()=>"notty",
+    ptyModuleLoader:async()=>({spawn:()=>terminal}),
+    resolveProcessTtyImpl:async()=>null,
+    listTtyProcessPidsImpl:async()=>null,
+    pidExistsImpl:()=>false,
+    nativeProcessSessionHelperPath:null,
+    killImpl:(pid,signal)=>{signals.push([pid,signal])},
+  });
+  await assert.rejects(manager.start({projectId:"p",projectName:"P",cwd:"/synthetic",
+    shell:"/bin/zsh",shellArgs:[],env:{}}),/PTY controlling TTY could not be resolved/u);
+  assert.deepEqual(terminal.kills,["SIGKILL"]);
+  assert.deepEqual(signals,[]);
+  assert.deepEqual(manager.list(),[]);
+});
+
+test("PTY write rejects unrecognized key without emitting data, and read cursors never disclose dropped prefix",async()=>{
+  const {manager,terminals}=makeManager({maxBufferChars:6});
+  const session=await startFake(manager);
+  assert.throws(()=>manager.write({sessionId:session.sessionId,key:"unexpected-key"}),/Desteklenmeyen terminal tuşu/u);
+  assert.deepEqual(terminals[0].writes,[]);
+  terminals[0].emitData("sensitive-synthetic");
+  const value=await manager.read({sessionId:session.sessionId,cursor:0,maxChars:20,stripAnsiCodes:false});
+  assert.equal(value.cursorWasDropped,true);
+  assert.equal(value.output,"thetic");
+  assert.equal(value.effectiveCursor,13);
+  assert.equal(value.nextCursor,19);
+  await manager.stop({sessionId:session.sessionId});
+});
+
+test("PTY ownership refuses incomplete inventory without emitting signals to unknown descendants",async()=>{
+  const terminal=new FakeTerminal(6600),signals=[];
+  let inventory=[6600,6601];
+  const manager=createTerminalManager({
+    platform:"darwin",arch:"arm64",randomId:()=>"badowner",
+    ptyModuleLoader:async()=>({spawn:()=>terminal}),
+    resolveProcessTtyImpl:async()=>"/dev/ttys001",
+    listTtyProcessPidsImpl:async()=>inventory,
+    pidExistsImpl:pid=>pid===6600||pid===6601,
+    nativeProcessSessionHelperPath:null,
+    killImpl:(pid,signal)=>{signals.push([pid,signal])},
+  });
+  const started=await manager.start({projectId:"p",projectName:"P",cwd:"/synthetic",
+    shell:"/bin/zsh",shellArgs:[],env:{}});
+  inventory=[6601];
+  await assert.rejects(manager.stop({sessionId:started.sessionId,timeoutMs:0}),/PTY shell disappeared from its controlling TTY inventory/u);
+  assert.deepEqual(signals,[]);
+  assert.deepEqual(terminal.kills,[]);
+  assert.equal(manager.list()[0].cleanupVerified,false);
+  assert.equal(manager.list()[0].running,true);
+});

@@ -18,12 +18,14 @@ internal static partial class Program
     {
         InspectionPhase = "native-journal-bounded-read";
         RequireNormalFile(file);
-        var info = new FileInfo(file);
-        if (info.Length is < 2 or > 65536 || info.Length > limit)
+        // Verify the byte bound and parse using the SAME read-only Windows
+        // handle. A separate FileInfo.Length + File.ReadAllBytes pathname read
+        // could observe a replaced or expanded record after the size check.
+        // Read sharing excludes competing write/delete opens while parsing.
+        using var handle = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.Read);
+        if (handle.Length is < 2 or > 65536 || handle.Length > limit)
             throw new InvalidDataException("Owned transition record exceeds its strict size bound.");
-        // Reader never creates or modifies state and does not follow reparse
-        // records. The exact path is verified independently before reading.
-        return JsonDocument.Parse(File.ReadAllBytes(file));
+        return JsonDocument.Parse(handle);
     }
 
     private static void InspectOwnedNativeTransitionJournal(bool allowExactPreparedAbortOrphanLock = false)

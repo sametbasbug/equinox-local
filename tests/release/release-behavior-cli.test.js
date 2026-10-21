@@ -248,3 +248,13 @@ test("sign-release uses the inherited key object, canonical keyring and one shar
   assert.equal(JSON.stringify(result).includes("PRIVATE KEY"), false);
   assert.equal(JSON.stringify(result).includes("publicKeyPem"), false);
 });
+
+test("release behavior CLI rejects special object-prototype flag names instead of silently ignoring them", () => {
+  for (const suspicious of ["__proto__", "constructor", "prototype", "toString"]) {
+    assert.throws(
+      () => parseReleaseBehaviorCli(["describe", "--expected-sha", SHA, `--${suspicious}`, "unexpected"]),
+      /Unsupported release behavior argument/u,
+      `Unexpected --${suspicious} must never be ignored`,
+    );
+  }
+});

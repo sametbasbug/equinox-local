@@ -673,3 +673,81 @@ test("Telegram tools preserve fixed-recipient routing and expose bounded send-fi
 
   assert.deepEqual([...rawRegistrations.keys()].sort(), ["telegram_attachment_open"]);
 });
+
+test("Telegram ignores spoofed private chat identity and never queues foreign callbacks after restart",async()=>{
+  await withTempCredential(async({credentialPath,inboxPath})=>{
+    await fs.mkdir(path.dirname(credentialPath),{recursive:true,mode:0o700});
+    await fs.writeFile(credentialPath,JSON.stringify({version:2,botToken:TOKEN,telegramUserId:"333"}),{mode:0o600});
+    const events=[
+      {update_id:101,message:{message_id:1,chat:{type:"private",id:333},from:{id:444},text:"spoofed"}},
+      {update_id:102,message:{message_id:2,chat:{type:"private",id:444},from:{id:333},text:"spoofed"}},
+      {update_id:103,callback_query:{id:"wrong",from:{id:444},message:{message_id:10,chat:{id:333,type:"private"}},data:"eqx:c:r-route123"}},
+      {update_id:104,callback_query:{id:"wrongchat",from:{id:333},message:{message_id:10,chat:{id:444,type:"private"}},data:"eqx:c:r-route123"}},
+      {update_id:105,message:{message_id:11,chat:{type:"private",id:333},from:{id:333},text:"authorized"}},
+    ];
+    const calls=[];
+    const first=await pollTelegramInboundOnce({credentialPath,inboxPath,fetchImpl:telegramJsonFetch([{result:events}],calls),now:()=>10000});
+    assert.deepEqual(first,{configured:true,received:1,pendingCount:1,nextUpdateId:106});
+    const pending=JSON.parse(await fs.readFile(inboxPath,"utf8"));
+    assert.deepEqual(pending.pending.map(item=>item.text),["authorized"]);
+    const second=await pollTelegramInboundOnce({credentialPath,inboxPath,fetchImpl:telegramJsonFetch([{result:events}],calls),now:()=>11000});
+    assert.deepEqual(second,{configured:true,received:0,pendingCount:1,nextUpdateId:106});
+    assert.equal(calls[1].body.offset,106);
+  });
+});
+
+test("Telegram task card rejects foreign URL, malformed callback and excessive controls before request dispatch",async()=>{
+  await withTempCredential(async({credentialPath})=>{
+    await fs.mkdir(path.dirname(credentialPath),{recursive:true,mode:0o700});
+    await fs.writeFile(credentialPath,JSON.stringify({version:2,botToken:TOKEN,telegramUserId:"333"}),{mode:0o600});
+    const outbound=[],fetchImpl=async(url,options)=>{outbound.push([url,options]);throw Error("backend must not be reached")};
+    for(const keyboard of [
+      [[{text:"Hijack",url:"https://evil.invalid/c/task123"}]],
+      [[{text:"Hijack",url:"http://chatgpt.com/c/task123"}]],
+      [[{text:"Hijack",callbackData:"eqx:c:../../other"}]],
+      Array.from({length:4},()=>[{text:"x",callbackData:"eqx:c:r-route123"}]),
+    ])await assert.rejects(sendTelegramTaskCard({text:"synthetic",keyboard,credentialPath,fetchImpl}),/task link|callback data|at most 3 rows/u);
+    assert.deepEqual(outbound,[]);
+  });
+});
+
+test("Telegram file export requires explicit access resolver before loading credentials or making a network call",async()=>{
+  await withTempCredential(async({root,credentialPath})=>{
+    const output=path.join(root,"forbidden.txt");
+    await fs.writeFile(output,"fixture");
+    const outbound=[],fetchImpl=async(...args)=>{outbound.push(args);throw Error("unexpected network")};
+    for(const input of [
+      {filePath:output},
+      {filePath:output,resolveFile:async()=>({absolutePath:output,bytes:"wrong"})},
+      {filePath:output,resolveFile:async()=>null},
+    ]){
+      await assert.rejects(sendTelegramFile({...input,credentialPath,fetchImpl}),/file path policy|invalid result/u);
+    }
+    assert.deepEqual(outbound,[]);
+    await assert.rejects(fs.access(credentialPath),{code:"ENOENT"});
+  });
+});
+
+test("Telegram invalid pairing candidate and inbound attachment path cannot expose any private file",async()=>{
+  await withTempCredential(async({root,credentialPath,pairingPath})=>{
+    const fakeCalls=[];
+    await startTelegramPairing({
+      botToken:TOKEN,pairingPath,now:()=>1000,
+      fetchImpl:telegramJsonFetch([
+        {result:{is_bot:true,username:"FixtureBot"}},{result:[]},
+      ],fakeCalls),
+    });
+    const candidate=await pollTelegramPairing({
+      pairingPath,now:()=>2000,
+      fetchImpl:telegramJsonFetch([{result:[
+        {update_id:5,message:{chat:{id:222,type:"private"},from:{id:333},text:"/start"}},
+        {update_id:6,message:{chat:{id:-100,type:"supergroup"},from:{id:333},text:"/start"}},
+        {update_id:7,message:{chat:{id:333,type:"private"},from:{id:333},text:"please pair"}},
+      ]}],fakeCalls),
+    });
+    assert.equal(candidate.candidateFound,false);
+    await assert.rejects(confirmTelegramPairing({pairingPath,credentialPath,now:()=>3000}),/No Telegram pairing candidate/u);
+    assert.deepEqual(fakeCalls.filter(call=>call.url.endsWith("/sendMessage")),[]);
+    await assert.rejects(fs.access(credentialPath),{code:"ENOENT"});
+  });
+});

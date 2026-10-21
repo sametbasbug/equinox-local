@@ -106,3 +106,46 @@ test("requires Windows managed-source provenance and pinned Git", async () => {
     assert.deepEqual(f.calls, []);
   }
 });
+
+test("operator recovery never archives forensic lock when worker ownership cleanup refuses", async () => {
+  for (const state of [{ cleaned: false, uncertain: true }, { cleaned: false, running: true }, null]) {
+    const f = fixture({
+      cleanupWorker: async () => { f.calls.push(["cleanup"]); return state; },
+    });
+    await assert.rejects(
+      recoverVerifiedWindowsMainFailedRollback({ ...f.deps, apply: true }),
+      /refused to clean detached worker ownership/u,
+    );
+    assert.deepEqual(f.calls, [["cleanup"]], "an unverifiable worker must not trigger forensic archive");
+  }
+});
+
+test("operator recovery refuses a newly active worker during second audit after cleanup", async () => {
+  const f = fixture();
+  let reads = 0;
+  f.deps.inspectWorker = async () => {
+    reads += 1;
+    return reads === 1
+      ? { running: false, stale: true, loaded: true, uncertain: false }
+      : { running: true, stale: false, loaded: true, uncertain: false };
+  };
+  await assert.rejects(
+    recoverVerifiedWindowsMainFailedRollback({ ...f.deps, apply: true }),
+    /cannot prove the detached update worker has stopped/u,
+  );
+  assert.equal(reads, 2);
+  assert.deepEqual(f.calls, [["cleanup"]], "a new worker must leave the durable failed lock intact");
+});
+
+test("operator recovery rejects healthy runtime without exact current native executable identity", async () => {
+  const mutations = [
+    { verifyShell: async () => ({ owned: true, shellExecutable: "C:\\Foreign\\EquinoxLocal.exe" }) },
+    { verifyNativeHost: async () => ({ launcherPath: "C:\\Foreign\\host.exe" }) },
+    { readRelease: async () => ({ version: "6.0.4", releaseDir: "relative\\release" }) },
+  ];
+  for (const change of mutations) {
+    const f = fixture(change);
+    await assert.rejects(recoverVerifiedWindowsMainFailedRollback({ ...f.deps, apply: true }));
+    assert.deepEqual(f.calls, [], "invalid native identity must not mutate worker or failed-rollback lock");
+  }
+});

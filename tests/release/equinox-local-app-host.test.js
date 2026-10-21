@@ -73,3 +73,62 @@ macTest("Equinox Local app host refuses a symlinked app identity", async (t) => 
   await fs.symlink("/tmp", path.join(applications, "Equinox Local.app"));
   await assert.rejects(ensureEquinoxLocalAppHost({ homeDir }), /safe app bundle/u);
 });
+
+test("LaunchAgent log maintenance rejects shell metacharacters, path escapes and invalid names", () => {
+  const hostileNames = [
+    "../outside.log", "ok\ninject", "ok$(touch /tmp/foreign)", "ok;rm -rf", "a/b.log",
+    "ok\\evil.log", " bad?.log", "", "x".repeat(81), 25, null,
+  ];
+  for (const bad of hostileNames) {
+    assert.throws(
+      () => launchAgentLogMaintenanceShell({stdoutName:bad,stderrName:"Equinox Local.error.log"}),
+      /LaunchAgent log filename is invalid/u,
+      String(bad),
+    );
+    assert.throws(
+      () => launchAgentLogMaintenanceShell({stdoutName:"Equinox Local.log",stderrName:bad}),
+      /LaunchAgent log filename is invalid/u,
+      String(bad),
+    );
+  }
+});
+
+macTest("existing app bundle with foreign identity is refused without replacing or re-signing it",async(t)=>{
+  const homeDir=await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(),"equinox-app-host-foreign-id-")));
+  t.after(()=>fs.rm(homeDir,{recursive:true,force:true}));
+  const bundle=path.join(homeDir,"Applications","Equinox Local.app");
+  const executable=path.join(bundle,"Contents","MacOS","applet");
+  await fs.mkdir(path.dirname(executable),{recursive:true});
+  await fs.writeFile(executable,"foreign-owned-binary");
+  await fs.writeFile(path.join(bundle,"Contents","Info.plist"),"foreign-plist");
+  const commands=[];
+  const execFileImpl=async(command,args)=>{
+    commands.push([command,...args]);
+    if(command!=="/usr/libexec/PlistBuddy")throw Error("unexpected native command "+command);
+    return{stdout:"com.foreign.application\n",stderr:""};
+  };
+  await assert.rejects(ensureEquinoxLocalAppHost({homeDir,execFileImpl}),
+    /unexpected bundle identifier/u);
+  assert.deepEqual(commands.map(c=>c[0]),["/usr/libexec/PlistBuddy"]);
+  assert.equal(await fs.readFile(executable,"utf8"),"foreign-owned-binary");
+  assert.equal(await fs.readFile(path.join(bundle,"Contents","Info.plist"),"utf8"),"foreign-plist");
+  assert.deepEqual(await fs.readdir(path.join(homeDir,"Applications")),["Equinox Local.app"]);
+});
+
+macTest("symlinked Applications root is refused before accessing foreign contents or native compiler",async(t)=>{
+  const root=await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(),"equinox-app-host-symlink-parent-")));
+  t.after(()=>fs.rm(root,{recursive:true,force:true}));
+  const homeDir=path.join(root,"home"),foreign=path.join(root,"foreign-apps");
+  await fs.mkdir(homeDir);
+  await fs.mkdir(foreign);
+  await fs.writeFile(path.join(foreign,"sentinel"),"foreign user data");
+  await fs.symlink(foreign,path.join(homeDir,"Applications"));
+  let commandCount=0;
+  await assert.rejects(ensureEquinoxLocalAppHost({
+    homeDir,execFileImpl:async()=>{commandCount++;throw Error("native tool should not run");},
+  }),/app host directory is unsafe/u);
+  assert.equal(commandCount,0);
+  assert.equal((await fs.lstat(path.join(homeDir,"Applications"))).isSymbolicLink(),true);
+  assert.deepEqual(await fs.readdir(foreign),["sentinel"]);
+  assert.equal(await fs.readFile(path.join(foreign,"sentinel"),"utf8"),"foreign user data");
+});

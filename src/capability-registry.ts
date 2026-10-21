@@ -1,0 +1,675 @@
+import * as z from "zod/v4";
+
+type StableDomainName = "files" | "browser" | "release" | "integrations" | "runtime";
+type CapabilityDomainDefinition = {
+  label: string;
+  callTool: string;
+  usageHint?: string;
+  openWorldHint?: boolean;
+};
+type CapabilityAnnotations = {
+  title?: unknown;
+  readOnlyHint?: unknown;
+  destructiveHint?: unknown;
+  idempotentHint?: unknown;
+  openWorldHint?: unknown;
+};
+type NormalizedAnnotations = {
+  title: string | null;
+  readOnly: boolean;
+  destructive: boolean;
+  idempotent: boolean;
+  openWorld: boolean;
+};
+type SchemaShape = Record<string, z.ZodType>;
+type CapabilityConfig = {
+  description?: unknown;
+  annotations?: CapabilityAnnotations;
+  inputSchema?: SchemaShape;
+};
+type RegistryInput = {
+  name?: string;
+  config?: CapabilityConfig;
+  inputSchema?: SchemaShape;
+  invoke?: (args: Record<string, unknown>) => unknown | Promise<unknown>;
+  domain?: string | null;
+};
+type CapabilityRecord = {
+  name: string;
+  domain: string;
+  description: string;
+  annotations: NormalizedAnnotations;
+  inputObjectSchema: z.ZodObject<SchemaShape>;
+  invoke: (args: Record<string, unknown>) => unknown | Promise<unknown>;
+};
+type PublicOperation = {
+  name: string;
+  title: string;
+  description: string;
+  readOnly: boolean;
+  destructive: boolean;
+  idempotent: boolean;
+  openWorld: boolean;
+};
+type PublicCatalog = {
+  domain: string;
+  label: string;
+  usageHint: string | null;
+  count: number;
+  operations: PublicOperation[];
+};
+type Registry = {
+  register: (input?: RegistryInput) => {registered: boolean;name: string;domain: string | null};
+  catalog: (domain: string) => PublicCatalog;
+  describe: (domain: string, name: string) => Record<string, unknown>;
+  invoke: (domain: string,name: string,rawArguments?: unknown) => Promise<unknown>;
+  summary: () => {operationCount: number;domains: Array<{
+    domain:string;label:string;count:number;callTool:string;usageHint:string|null
+  }>};
+};
+type GatewayResult = {
+  isError?: boolean;
+  content?: Array<{type?: string;text?: string;[key: string]: unknown}>;
+  structuredContent?: unknown;
+  [key: string]: unknown;
+};
+type GatewayInput = {
+  domain?: string;
+  query?: string;
+  operation?: string;
+  arguments?: Record<string, unknown>;
+  file?: unknown;
+};
+type GatewayConfig = {
+  description: string;
+  inputSchema: SchemaShape;
+  annotations: CapabilityAnnotations;
+  _meta?: Record<string, unknown>;
+};
+type GatewayRegistration = (
+  name: string,
+  config: GatewayConfig,
+  handler: (input: GatewayInput) => Promise<unknown>,
+  options?: {projectAware: boolean;mutationScopes: string[];mcpExposed: boolean;capability: boolean;pauseGuard?: boolean},
+) => unknown;
+type ExternalProvider = {
+  summary?: () => Promise<{count?: number}>;
+  catalog: () => Promise<PublicCatalog>;
+  describe: (operation: string) => Promise<unknown>;
+};
+type BudgetController = {
+  prepareInvocation?: (toolName: string, input: GatewayInput) => Promise<{input: GatewayInput;firstNotice?: boolean;waitClamped?: boolean}>;
+  decorateResult?: (result: unknown,prepared: {input: GatewayInput;firstNotice?: boolean;waitClamped?: boolean}) => unknown;
+};
+type StableGatewayOptions = {
+  registerTextTool: GatewayRegistration;
+  registerRawTool?: GatewayRegistration | null;
+  registry: Registry;
+  textResult: (text: string) => unknown;
+  externalDomains?: Record<string, ExternalProvider>;
+  turnBudgetController?: BudgetController | null;
+};
+
+
+export const STABLE_CAPABILITY_DOMAINS = Object.freeze({
+  files: Object.freeze({
+    label: "Projects & assets",
+    callTool: "files_call",
+    openWorldHint: false,
+    usageHint: "For a PNG, JPEG or WebP that already exists on this computer, prefer image_view when the task is visual inspection. Do not use file_export or copy the image into ChatGPT/container merely to inspect it; file_export is for intentional file transfer. If you already have a local path, use it directly. For opaque Task Capsule attachment references, use the exact task-scoped attachment reader only when the task actually needs file contents.",
+  }),
+  browser: Object.freeze({
+    label: "Equinox Browser",
+    callTool: "browser_call",
+    openWorldHint: true,
+    usageHint: "Browser operations default to the agent's isolated Agent Browser. Use target=user only when the user's personal Chrome profile is explicitly required. The two contexts never silently fall back to each other.",
+  }),
+  release: Object.freeze({
+    label: "Release & deployment",
+    callTool: "release_call",
+    openWorldHint: true,
+  }),
+  integrations: Object.freeze({
+    label: "Integrations",
+    callTool: "integrations_call",
+    openWorldHint: true,
+  }),
+  runtime: Object.freeze({
+    label: "Runtime & diagnostics",
+    callTool: "runtime_call",
+    openWorldHint: false,
+  }),
+});
+
+export const EXTERNAL_CAPABILITY_DOMAINS = Object.freeze({
+  desktop: Object.freeze({
+    label: "macOS desktop",
+    callTool: "desktop_call",
+    usageHint: "Background-safe macOS automation through Peekaboo. Use browser_call for web content instead of desktop automation.",
+  }),
+});
+
+export function externalCapabilityDomainDefinition(domain: string, platform = process.platform): CapabilityDomainDefinition | null {
+  const definition = externalDomainDefinitions[domain];
+  if (!definition) return null;
+  if (domain === "desktop" && platform === "win32") {
+    return Object.freeze({ ...definition, label: "Windows desktop",
+      usageHint: "Windows UI automation through pinned Microsoft winapp. Use browser_call for web content instead of desktop automation." });
+  }
+  return definition;
+}
+
+const stableDomainDefinitions: Record<string, CapabilityDomainDefinition> = STABLE_CAPABILITY_DOMAINS;
+const externalDomainDefinitions: Record<string, CapabilityDomainDefinition> = EXTERNAL_CAPABILITY_DOMAINS;
+
+export const CAPABILITY_DOMAIN_NAMES = Object.freeze([
+  ...Object.keys(STABLE_CAPABILITY_DOMAINS),
+  ...Object.keys(EXTERNAL_CAPABILITY_DOMAINS),
+]);
+
+const RETIRED_TERMINAL_FIRST_OPERATION_NAMES = new Set([
+  "apply_patch",
+  "copy_between_projects",
+  "create_directory",
+  "create_file",
+  "delete_file",
+  "file_hash",
+  "list_files",
+  "move_file",
+  "project_info",
+  "read_file",
+  "remove_empty_directory",
+  "replace_text",
+  "search_text",
+  "write_file",
+  "checkout_main",
+  "checkout_work_branch",
+  "cleanup_work_branch",
+  "commit_changes",
+  "create_branch",
+  "git_diff",
+  "git_head",
+  "git_log",
+  "git_show",
+  "git_status",
+  "list_work_branches",
+  "push_branch",
+  "revert_commit",
+  "sync_main",
+  "worktree_create",
+  "worktree_list",
+  "worktree_remove",
+  "list_package_scripts",
+  "npm_audit",
+  "npm_ci",
+  "npm_install_package",
+  "npm_outdated",
+  "npm_project_info",
+  "npm_remove_package",
+  "npm_view_package",
+  "dns_status",
+  "port_status",
+  "run_build",
+  "run_project_script",
+  "workflow_cancel",
+  "workflow_list",
+  "workflow_logs",
+  "workflow_recipes",
+  "workflow_resume",
+  "workflow_start",
+  "workflow_status",
+  "authenticated_command",
+  "close_pull_request",
+  "create_pull_request",
+  "get_pull_request",
+  "get_pull_request_checks",
+  "merge_pull_request",
+  "set_pull_request_draft",
+  "update_pull_request",
+  "cancel_workflow_run",
+  "get_workflow_run",
+  "list_workflow_runs",
+  "rerun_failed_workflow",
+  "delete_inbox_asset",
+  "export_asset",
+  "import_asset",
+  "inspect_inbox_asset",
+  "list_asset_inbox",
+  "rollback_snapshot",
+  "recovery_history",
+  "recovery_policies",
+  "repair_recipes",
+]);
+
+const FILE_OPERATION_NAMES = new Set([
+  "file_export",
+  "file_import",
+  "image_view",
+  "telegram_attachment_open",
+  "list_projects",
+]);
+
+
+const RELEASE_OPERATION_NAMES = new Set([
+  "baseline_promote",
+]);
+
+const INTEGRATION_OPERATION_NAMES = new Set([
+  "authenticated_http_request",
+  "credential_status",
+  "http_profile_delete",
+  "http_profile_upsert",
+  "http_profiles",
+  "telegram_send_message",
+  "telegram_send_file",
+]);
+
+const EXCLUDED_PREFIXES = Object.freeze([
+  "desktop_",
+  "visual_",
+]);
+
+const RETIRED_TERMINAL_FIRST_PREFIXES = Object.freeze([
+  "git_",
+  "worktree_",
+  "npm_",
+  "workflow_",
+]);
+
+const RETIRED_TOP_LEVEL_GATEWAY_NAMES = new Set([
+  "desktop_status", "desktop_tools",
+  "files_tools", "git_tools", "git_call",
+  "browser_tools", "automation_tools", "automation_call",
+  "services_tools", "services_call", "runtime_tools",
+]);
+
+function isStableGatewayName(name: string): boolean {
+  return name === "capabilities" ||
+    Object.values(STABLE_CAPABILITY_DOMAINS).some((domain) => domain.callTool === name) ||
+    Object.values(EXTERNAL_CAPABILITY_DOMAINS).some((domain) => domain.callTool === name) ||
+    RETIRED_TOP_LEVEL_GATEWAY_NAMES.has(name);
+}
+
+export function inferCapabilityDomain(name: unknown): StableDomainName | null {
+  if (typeof name !== "string" || !name) return null;
+  if (isStableGatewayName(name)) return null;
+  if (EXCLUDED_PREFIXES.some((prefix) => name.startsWith(prefix))) return null;
+  if (RETIRED_TERMINAL_FIRST_PREFIXES.some((prefix) => name.startsWith(prefix))) return null;
+  if (RETIRED_TERMINAL_FIRST_OPERATION_NAMES.has(name)) return null;
+
+  if (name.startsWith("equinox_browser_")) return "browser";
+  if (FILE_OPERATION_NAMES.has(name)) return "files";
+  if (
+    name.startsWith("release_") ||
+    name.startsWith("deployment_") ||
+    RELEASE_OPERATION_NAMES.has(name)
+  ) {
+    return "release";
+  }
+  if (INTEGRATION_OPERATION_NAMES.has(name)) {
+    return "integrations";
+  }
+
+  return "runtime";
+}
+
+function cloneJson(value: unknown): unknown {
+  return JSON.parse(JSON.stringify(value));
+}
+
+function serializeInputSchema(schema: z.ZodType): unknown {
+  try {
+    return cloneJson(z.toJSONSchema(schema));
+  } catch (error) {
+    return {
+      type: "object",
+      additionalProperties: false,
+      schemaSerializationError:
+        error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+function normalizeAnnotations(annotations: CapabilityAnnotations = {}): NormalizedAnnotations {
+  return {
+    title: typeof annotations.title === "string" && annotations.title.trim()
+      ? annotations.title.trim()
+      : null,
+    readOnly: annotations.readOnlyHint === true,
+    destructive: annotations.destructiveHint === true,
+    idempotent: annotations.idempotentHint === true,
+    openWorld: annotations.openWorldHint === true,
+  };
+}
+
+function publicOperationName(record: CapabilityRecord): string {
+  if (record.domain === "browser" && record.name.startsWith("equinox_browser_")) {
+    return record.name.slice("equinox_browser_".length);
+  }
+  return record.name;
+}
+
+function publicSummary(record: CapabilityRecord): PublicOperation {
+  const name = publicOperationName(record);
+  return {
+    name,
+    title: record.annotations.title ?? name,
+    description: record.description,
+    readOnly: record.annotations.readOnly,
+    destructive: record.annotations.destructive,
+    idempotent: record.annotations.idempotent,
+    openWorld: record.annotations.openWorld,
+  };
+}
+
+function publicDescriptor(record: CapabilityRecord): Record<string, unknown> {
+  return {
+    ...publicSummary(record),
+    domain: record.domain,
+    inputSchema: serializeInputSchema(record.inputObjectSchema),
+  };
+}
+
+export function createCapabilityRegistry({ inferDomain = inferCapabilityDomain }: {inferDomain?: (name: string) => StableDomainName | null} = {}): Registry {
+  const records = new Map<string, CapabilityRecord>();
+
+  function register({ name, config = {}, inputSchema, invoke, domain }: RegistryInput = {}) {
+    if (typeof name !== "string" || !/^[a-z][a-z0-9_.-]{0,159}$/.test(name)) {
+      throw new Error(`Capability operation adı geçersiz: ${String(name)}`);
+    }
+    if (typeof invoke !== "function") {
+      throw new Error(`Capability invoke handler eksik: ${name}`);
+    }
+    if (records.has(name)) {
+      throw new Error(`Capability operation zaten kayıtlı: ${name}`);
+    }
+
+    const resolvedDomain = domain ?? inferDomain(name);
+    if (resolvedDomain === null) {
+      return { registered: false, name, domain: null };
+    }
+    if (!Object.hasOwn(STABLE_CAPABILITY_DOMAINS, resolvedDomain)) {
+      throw new Error(`Bilinmeyen capability domain: ${resolvedDomain}`);
+    }
+
+    const rawShape: SchemaShape = inputSchema ?? config.inputSchema ?? {};
+    const inputObjectSchema = z.strictObject(rawShape);
+    const record: CapabilityRecord = Object.freeze({
+      name,
+      domain: resolvedDomain,
+      description:
+        typeof config.description === "string" && config.description.trim()
+          ? config.description.trim()
+          : "",
+      annotations: Object.freeze(normalizeAnnotations(config.annotations)),
+      inputObjectSchema,
+      invoke,
+    });
+
+    records.set(name, record);
+    return { registered: true, name, domain: resolvedDomain };
+  }
+
+  function getRecord(domain: string, name: string): CapabilityRecord {
+    if (!Object.hasOwn(STABLE_CAPABILITY_DOMAINS, domain)) {
+      throw new Error(`Bilinmeyen capability domain: ${domain}`);
+    }
+    const direct = records.get(name);
+    if (direct?.domain === domain) return direct;
+    const aliased = [...records.values()].find(
+      (record) => record.domain === domain && publicOperationName(record) === name,
+    );
+    if (!aliased) {
+      throw new Error(`${domain} capability kataloğunda operation bulunamadı: ${name}`);
+    }
+    return aliased;
+  }
+
+  function catalog(domain: string): PublicCatalog {
+    if (!Object.hasOwn(STABLE_CAPABILITY_DOMAINS, domain)) {
+      throw new Error(`Bilinmeyen capability domain: ${domain}`);
+    }
+    const operations = [...records.values()]
+      .filter((record) => record.domain === domain)
+      .sort((a, b) => publicOperationName(a).localeCompare(publicOperationName(b)))
+      .map(publicSummary);
+    return {
+      domain,
+      label: stableDomainDefinitions[domain]!.label,
+      usageHint: stableDomainDefinitions[domain]!.usageHint ?? null,
+      count: operations.length,
+      operations,
+    };
+  }
+
+  function describe(domain: string, name: string): Record<string, unknown> {
+    return publicDescriptor(getRecord(domain, name));
+  }
+
+  async function invoke(domain: string, name: string, rawArguments: unknown = {}): Promise<unknown> {
+    const record = getRecord(domain, name);
+    const parsedArguments = await record.inputObjectSchema.parseAsync(rawArguments ?? {});
+    return record.invoke(parsedArguments);
+  }
+
+  function summary() {
+    const domains = Object.keys(STABLE_CAPABILITY_DOMAINS).map((domain) => {
+      const count = [...records.values()].filter((record) => record.domain === domain).length;
+      return {
+        domain,
+        label: stableDomainDefinitions[domain]!.label,
+        count,
+        callTool: stableDomainDefinitions[domain]!.callTool,
+        usageHint: stableDomainDefinitions[domain]!.usageHint ?? null,
+      };
+    });
+    return {
+      operationCount: domains.reduce((total, domain) => total + domain.count, 0),
+      domains,
+    };
+  }
+
+  return Object.freeze({
+    register,
+    catalog,
+    describe,
+    invoke,
+    summary,
+  });
+}
+
+function normalizeGatewayInvocationResult(result: GatewayResult | null | undefined, textResult: (text: string) => unknown): unknown {
+  if (!result || result.isError) return result;
+
+  const content = Array.isArray(result.content) ? result.content : [];
+  const text = content
+    .filter((item) => item && item.type === "text" && typeof item.text === "string")
+    .map((item) => item.text)
+    .join("\n");
+  const hasNonTextContent = content.some((item) => item && item.type !== "text");
+
+  if (hasNonTextContent) {
+    return {
+      ...result,
+      content,
+      structuredContent: { text },
+    };
+  }
+
+  if (text) return textResult(text);
+
+  if (result.structuredContent !== undefined) {
+    return textResult(JSON.stringify(result.structuredContent, null, 2));
+  }
+
+  return textResult(JSON.stringify(result, null, 2));
+}
+
+export function registerStableCapabilityGateways({
+  registerTextTool,
+  registerRawTool = null,
+  registry,
+  textResult,
+  externalDomains = {},
+  turnBudgetController = null,
+}: StableGatewayOptions = {} as StableGatewayOptions): void {
+  if (typeof registerTextTool !== "function" || !registry || typeof textResult !== "function") {
+    throw new Error("Stable capability gateway registration bağımlılıkları eksik.");
+  }
+  const rawGatewayRegister = typeof registerRawTool === "function" ? registerRawTool : registerTextTool;
+
+  const runBudgeted = async (toolName: string, input: GatewayInput, invoke: (prepared: GatewayInput) => Promise<unknown>): Promise<unknown> => {
+    const prepared = turnBudgetController?.prepareInvocation
+      ? await turnBudgetController.prepareInvocation(toolName, input)
+      : { input, firstNotice: false, waitClamped: false };
+    const result = await invoke(prepared.input);
+    return turnBudgetController?.decorateResult
+      ? turnBudgetController.decorateResult(result, prepared)
+      : result;
+  };
+
+  const compactCatalog = (catalog: PublicCatalog, query: string | undefined) => {
+    const normalizedQuery = typeof query === "string" ? query.trim().toLocaleLowerCase("en-US") : "";
+    const operations = (catalog.operations ?? [])
+      .filter((operation) => {
+        if (!normalizedQuery) return true;
+        return [operation.name, operation.title, operation.description]
+          .filter((value) => typeof value === "string")
+          .some((value) => value.toLocaleLowerCase("en-US").includes(normalizedQuery));
+      })
+      .slice(0, 80)
+      .map((operation) => ({
+        name: operation.name,
+        title: operation.title,
+        description: typeof operation.description === "string" && operation.description.length > 240
+          ? `${operation.description.slice(0, 237)}...`
+          : operation.description,
+        readOnly: operation.readOnly,
+        destructive: operation.destructive,
+      }));
+    return {
+      domain: catalog.domain,
+      label: catalog.label,
+      usageHint: catalog.usageHint ?? null,
+      count: operations.length,
+      totalCount: catalog.count ?? operations.length,
+      operations,
+    };
+  };
+
+  registerTextTool(
+    "capabilities",
+    {
+      description:
+        "Equinox Local'in agent-facing capability yüzeyini keşfeder. Parametresiz çağrı domain özetlerini; domain çağrısı kompakt operation listesini; query filtreli aramayı; operation ise güncel tam JSON giriş şemasını döndürür. Yeni dinamik operation'lar top-level connector şeması değişmeden görünür.",
+      inputSchema: {
+        domain: z.enum(CAPABILITY_DOMAIN_NAMES).optional().describe("İsteğe bağlı capability domain"),
+        query: z.string().min(1).max(160).optional().describe("Domain kataloğunda ad, başlık veya açıklama araması"),
+        operation: z.string().min(1).max(160).optional().describe("Tam descriptor ve JSON şeması istenen operation adı"),
+      },
+      annotations: {
+        title: "Equinox Local capabilities",
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async (input) => runBudgeted("capabilities", input, async ({ domain, query, operation }) => {
+      if ((query || operation) && !domain) {
+        throw new Error("capabilities query/operation kullanırken domain zorunludur.");
+      }
+      if (query && operation) {
+        throw new Error("capabilities query ve operation aynı anda kullanılamaz.");
+      }
+      if (!domain) {
+        const staticSummary = registry.summary();
+        const externalSummaries: Array<{domain: string;label: string;count: number;callTool: string;usageHint: string | null}> = [];
+        for (const [externalDomain, definition] of Object.entries(EXTERNAL_CAPABILITY_DOMAINS)) {
+          const provider = externalDomains[externalDomain];
+          const summary = provider?.summary ? await provider.summary() : { count: 0 };
+          externalSummaries.push({
+            domain: externalDomain,
+            label: externalCapabilityDomainDefinition(externalDomain)!.label,
+            count: summary.count ?? 0,
+            callTool: definition.callTool,
+            usageHint: externalCapabilityDomainDefinition(externalDomain)!.usageHint ?? null,
+          });
+        }
+        const domains = [...staticSummary.domains, ...externalSummaries];
+        return textResult(JSON.stringify({
+          operationCount: domains.reduce((total, item) => total + item.count, 0),
+          domains,
+        }, null, 2));
+      }
+
+      if (Object.hasOwn(EXTERNAL_CAPABILITY_DOMAINS, domain)) {
+        const provider = externalDomains[domain];
+        if (!provider) throw new Error(`Capability provider unavailable: ${domain}`);
+        if (operation) return textResult(JSON.stringify(await provider.describe(operation), null, 2));
+        return textResult(JSON.stringify(compactCatalog(await provider.catalog(), query), null, 2));
+      }
+
+      if (operation) return textResult(JSON.stringify(registry.describe(domain, operation), null, 2));
+      return textResult(JSON.stringify(compactCatalog(registry.catalog(domain), query), null, 2));
+    }),
+    {
+      projectAware: false,
+      mutationScopes: [],
+      mcpExposed: true,
+      capability: false,
+    },
+  );
+
+  for (const [domain, definition] of Object.entries(STABLE_CAPABILITY_DOMAINS)) {
+    const callInputSchema: SchemaShape = {
+      operation: z.string().min(1).max(160).describe("Çağrılacak dinamik Equinox Local operation adı"),
+      arguments: z.record(z.string(), z.unknown()).default({}).describe("Seçilen operation'ın güncel JSON giriş şemasına uyan argümanlar"),
+    };
+    const callMeta: Record<string, unknown> = {};
+    if (domain === "files") {
+      callInputSchema.file = z.object({
+        download_url: z.string().url(),
+        file_id: z.string().min(1).max(256),
+        mime_type: z.string().min(1).max(200).optional(),
+        file_name: z.string().min(1).max(255).optional(),
+      }).strict().optional().describe("ChatGPT tarafından native attachment bridge üzerinden sağlanan isteğe bağlı tek dosya");
+      callMeta["openai/fileParams"] = ["file"];
+    }
+
+    const registerGateway = domain === "files" ? rawGatewayRegister : registerTextTool;
+    registerGateway(
+      definition.callTool,
+      {
+        description:
+          `${definition.label} domain'indeki tek bir operation'ı çağırır. ` +
+          `Önce capabilities({domain: "${domain}"}) ile operation'ları, ardından capabilities({domain: "${domain}", operation: "..."}) ile güncel şemayı keşfet. ` +
+          "Operation adları serbest string'dir; yeni operation'lar connector refresh gerektirmez." +
+          (stableDomainDefinitions[domain]!.usageHint ? ` ${stableDomainDefinitions[domain]!.usageHint}` : ""),
+        inputSchema: callInputSchema,
+        annotations: {
+          title: `${definition.label} capability çağrısı`,
+          readOnlyHint: false,
+          destructiveHint: true,
+          idempotentHint: false,
+          openWorldHint: definition.openWorldHint,
+        },
+        ...(domain === "files" ? { _meta: callMeta } : {}),
+      },
+      async (input) => runBudgeted(definition.callTool, input, async ({ operation, arguments: operationArguments, file }) => {
+        const invocationArguments = domain === "files" && file !== undefined
+          ? { ...operationArguments, file }
+          : operationArguments;
+        const result = await registry.invoke(domain, operation!, invocationArguments);
+        return normalizeGatewayInvocationResult(result as GatewayResult | null | undefined, textResult);
+      }),
+      {
+        projectAware: false,
+        mutationScopes: [],
+        mcpExposed: true,
+        capability: false,
+        pauseGuard: false,
+      },
+    );
+  }
+}

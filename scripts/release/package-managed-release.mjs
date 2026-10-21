@@ -4,23 +4,15 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
-
 import { hashFile } from "../lib/package-io.mjs";
+import { productionNodeModulesFilter } from "./production-node-modules.mjs";
 import { readBoundedNormalFile } from "../../src/equinox-local-safe-file.js";
-import {
-  EQUINOX_LOCAL_NODE_VERSION,
-  EQUINOX_LOCAL_PEEKABOO_TEAM_ID,
-  EQUINOX_LOCAL_PEEKABOO_VERSION,
-  EQUINOX_LOCAL_TUNNEL_CLIENT_VERSION,
-  NODE_DISTRIBUTIONS,
-  PEEKABOO_DISTRIBUTION,
-  TUNNEL_CLIENT_DISTRIBUTIONS,
-} from "../../src/equinox-local-runtime-versions.js";
+import { EQUINOX_LOCAL_NODE_VERSION, EQUINOX_LOCAL_PEEKABOO_TEAM_ID, EQUINOX_LOCAL_PEEKABOO_VERSION, EQUINOX_LOCAL_TUNNEL_CLIENT_VERSION, NODE_DISTRIBUTIONS, PEEKABOO_DISTRIBUTION, TUNNEL_CLIENT_DISTRIBUTIONS, } from "../../src/equinox-local-runtime-versions.js";
 import { EQUINOX_LOCAL_VERSION } from "../../src/equinox-local-version.js";
 import { buildEquinoxLocalNativeAppArtifacts } from "../../src/equinox-local-native-app.js";
 import { equinoxLocalUpdateTarget } from "../../src/equinox-local-updater.js";
-
 const execFile = promisify(execFileCallback);
+const hasErrorCode = (error, code) => error instanceof Error && "code" in error && error.code === code;
 const TAR_PATH = "/usr/bin/tar";
 const FILE_PATH = "/usr/bin/file";
 const CODESIGN_PATH = "/usr/bin/codesign";
@@ -32,558 +24,556 @@ const MAX_RELEASE_SOURCE_BYTES = 2 * 1024 * 1024;
 const LOCAL_MODULE_PATTERN = /(?:from\s+|import\s*\(\s*)["'](\.\.?\/[^"']+)["']/gu;
 const SOURCE_SHA_PATTERN = /^[a-f0-9]{40}$/u;
 const STATIC_RELEASE_FILES = Object.freeze([
-  "src/equinox-control-center.html",
-  "src/equinox-control-center.css",
-  "src/equinox-control-center.js",
-  "app/EquinoxLocal.png",
-  "app/EquinoxLocalMenuBar.png",
-  "app/EquinoxCompanionNyx.webp",
-  "package.json",
-  "package-lock.json",
+    "src/equinox-control-center.html",
+    "src/equinox-control-center.css",
+    "src/equinox-control-center.js",
+    "app/EquinoxLocal.png",
+    "app/EquinoxLocalMenuBar.png",
+    "app/EquinoxCompanionNyx.webp",
+    "package.json",
+    "package-lock.json",
 ]);
 const RELEASE_ENTRYPOINTS = Object.freeze([
-  "src/equinox-control-center.js",
-  "src/server.js",
-  "src/equinox-local-bootstrap.js",
-  "src/equinox-local-first-install.js",
-  "src/equinox-browser-native-host.js",
-  "src/equinox-local-update-helper.js",
-  "src/equinox-local-restart-helper.js",
-  "src/equinox-local-uninstall-helper.js",
-  "src/equinox-local-supervisor.js",
+    "src/equinox-control-center.js",
+    "src/server.js",
+    "src/equinox-local-bootstrap.js",
+    "src/equinox-local-first-install.js",
+    "src/equinox-browser-native-host.js",
+    "src/equinox-local-update-helper.js",
+    "src/equinox-local-restart-helper.js",
+    "src/equinox-local-uninstall-helper.js",
+    "src/equinox-local-supervisor.js",
 ]);
-
 export async function resolveManagedReleaseSourceSha(rootDir, { execFileImpl = execFile } = {}) {
-  const root = path.resolve(rootDir);
-  const options = { timeout: 10_000, maxBuffer: 1024 * 1024 };
-  const { stdout } = await execFileImpl("git", ["-C", root, "rev-parse", "HEAD"], options);
-  const sourceSha = String(stdout ?? "").trim();
-  if (!SOURCE_SHA_PATTERN.test(sourceSha)) throw new Error("Managed release source SHA is invalid.");
-  const status = await execFileImpl("git", ["-C", root, "status", "--porcelain=v1", "--untracked-files=normal"], options);
-  if (String(status?.stdout ?? "").trim()) throw new Error("Managed release source checkout must be clean.");
-  return sourceSha;
+    const root = path.resolve(rootDir);
+    const options = { timeout: 10_000, maxBuffer: 1024 * 1024 };
+    const { stdout } = await execFileImpl("git", ["-C", root, "rev-parse", "HEAD"], options);
+    const sourceSha = String(stdout ?? "").trim();
+    if (!SOURCE_SHA_PATTERN.test(sourceSha))
+        throw new Error("Managed release source SHA is invalid.");
+    const status = await execFileImpl("git", ["-C", root, "status", "--porcelain=v1", "--untracked-files=normal"], options);
+    if (String(status?.stdout ?? "").trim())
+        throw new Error("Managed release source checkout must be clean.");
+    return sourceSha;
 }
-
-export {
-  EQUINOX_LOCAL_NODE_VERSION,
-  EQUINOX_LOCAL_PEEKABOO_TEAM_ID,
-  EQUINOX_LOCAL_PEEKABOO_VERSION,
-  EQUINOX_LOCAL_TUNNEL_CLIENT_VERSION,
-  NODE_DISTRIBUTIONS,
-  PEEKABOO_DISTRIBUTION,
-  TUNNEL_CLIENT_DISTRIBUTIONS,
-};
+export { EQUINOX_LOCAL_NODE_VERSION, EQUINOX_LOCAL_PEEKABOO_TEAM_ID, EQUINOX_LOCAL_PEEKABOO_VERSION, EQUINOX_LOCAL_TUNNEL_CLIENT_VERSION, NODE_DISTRIBUTIONS, PEEKABOO_DISTRIBUTION, TUNNEL_CLIENT_DISTRIBUTIONS, };
 const TUNNEL_ARCHIVE_FILES = Object.freeze([
-  "tunnel-client",
-  "cloudflared",
-  "cloudflared-manifest.json",
-  "LICENSE",
-  "NOTICE",
+    "tunnel-client",
+    "cloudflared",
+    "cloudflared-manifest.json",
+    "LICENSE",
+    "NOTICE",
 ]);
 const PEEKABOO_ARCHIVE_FILES = Object.freeze([
-  "peekaboo",
-  "LICENSE",
-  "libswiftCompatibilitySpan.dylib",
-  "README.md",
-  "VERSION",
+    "peekaboo",
+    "LICENSE",
+    "libswiftCompatibilitySpan.dylib",
+    "README.md",
+    "VERSION",
 ]);
-
 function inside(parent, child) {
-  const relative = path.relative(parent, child);
-  return relative !== "" && !relative.startsWith("..") && !path.isAbsolute(relative);
+    const relative = path.relative(parent, child);
+    return relative !== "" && !relative.startsWith("..") && !path.isAbsolute(relative);
 }
-
 export function extractLocalModuleSpecifiers(source) {
-  const values = new Set();
-  for (const match of source.matchAll(LOCAL_MODULE_PATTERN)) values.add(match[1]);
-  return [...values].sort();
+    const values = new Set();
+    for (const match of source.matchAll(LOCAL_MODULE_PATTERN))
+        if (match[1] !== undefined)
+            values.add(match[1]);
+    return [...values].sort();
 }
-
 async function resolveLocalModule(rootDir, importer, specifier) {
-  const base = path.resolve(path.dirname(importer), specifier);
-  if (!inside(rootDir, base) && base !== rootDir) throw new Error(`Release import escaped repository root: ${specifier}`);
-  for (const candidate of [base, `${base}.js`, `${base}.mjs`]) {
-    try {
-      const stat = await fs.lstat(candidate);
-      if (stat.isFile() && !stat.isSymbolicLink()) return candidate;
-    } catch (error) {
-      if (error?.code !== "ENOENT") throw error;
+    const base = path.resolve(path.dirname(importer), specifier);
+    if (!inside(rootDir, base) && base !== rootDir)
+        throw new Error(`Release import escaped repository root: ${specifier}`);
+    for (const candidate of [base, `${base}.js`, `${base}.mjs`]) {
+        try {
+            const stat = await fs.lstat(candidate);
+            if (stat.isFile() && !stat.isSymbolicLink())
+                return candidate;
+        }
+        catch (error) {
+            if (!hasErrorCode(error, "ENOENT"))
+                throw error;
+        }
     }
-  }
-  throw new Error(`Release local import could not be resolved: ${specifier}`);
+    throw new Error(`Release local import could not be resolved: ${specifier}`);
 }
-
 export async function collectManagedReleaseSourceFiles(rootDir) {
-  const root = path.resolve(rootDir);
-  const queue = [];
-  const included = new Set();
-  for (const entry of RELEASE_ENTRYPOINTS) queue.push(path.join(root, entry));
-
-  while (queue.length > 0) {
-    const absolute = queue.shift();
-    const relative = path.relative(root, absolute);
-    if (!relative || relative.startsWith("..") || path.isAbsolute(relative)) {
-      throw new Error("Release source traversal escaped repository root.");
+    const root = path.resolve(rootDir);
+    const queue = [];
+    const included = new Set();
+    for (const entry of RELEASE_ENTRYPOINTS)
+        queue.push(path.join(root, entry));
+    while (queue.length > 0) {
+        const absolute = queue.shift();
+        if (!absolute)
+            throw new Error("Release source traversal found an empty queue entry.");
+        const relative = path.relative(root, absolute);
+        if (!relative || relative.startsWith("..") || path.isAbsolute(relative)) {
+            throw new Error("Release source traversal escaped repository root.");
+        }
+        if (included.has(relative))
+            continue;
+        const stat = await fs.lstat(absolute);
+        if (!stat.isFile() || stat.isSymbolicLink())
+            throw new Error(`Release source is not a normal file: ${relative}`);
+        included.add(relative);
+        if (!/\.(?:js|mjs)$/u.test(relative))
+            continue;
+        const { data: source } = await readBoundedNormalFile(absolute, {
+            maxBytes: MAX_RELEASE_SOURCE_BYTES,
+            encoding: "utf8",
+            label: `Release source ${relative}`,
+        });
+        for (const specifier of extractLocalModuleSpecifiers(source)) {
+            const resolved = await resolveLocalModule(root, absolute, specifier);
+            queue.push(resolved);
+        }
     }
-    if (included.has(relative)) continue;
-    const stat = await fs.lstat(absolute);
-    if (!stat.isFile() || stat.isSymbolicLink()) throw new Error(`Release source is not a normal file: ${relative}`);
-    included.add(relative);
-    if (!/\.(?:js|mjs)$/u.test(relative)) continue;
-    const { data: source } = await readBoundedNormalFile(absolute, {
-      maxBytes: MAX_RELEASE_SOURCE_BYTES,
-      encoding: "utf8",
-      label: `Release source ${relative}`,
-    });
-    for (const specifier of extractLocalModuleSpecifiers(source)) {
-      const resolved = await resolveLocalModule(root, absolute, specifier);
-      queue.push(resolved);
+    for (const relative of STATIC_RELEASE_FILES) {
+        const absolute = path.join(root, relative);
+        const stat = await fs.lstat(absolute);
+        if (!stat.isFile() || stat.isSymbolicLink())
+            throw new Error(`Static release file is unavailable: ${relative}`);
+        included.add(relative);
     }
-  }
-
-  for (const relative of STATIC_RELEASE_FILES) {
-    const absolute = path.join(root, relative);
-    const stat = await fs.lstat(absolute);
-    if (!stat.isFile() || stat.isSymbolicLink()) throw new Error(`Static release file is unavailable: ${relative}`);
-    included.add(relative);
-  }
-
-  const files = [...included].sort();
-  if (files.some((relative) => relative.includes(".test.") || relative.includes("reviewer") || relative.includes("backup"))) {
-    throw new Error("Release source graph unexpectedly contains test, reviewer or backup files.");
-  }
-  return Object.freeze(files);
+    const files = [...included].sort();
+    if (files.some((relative) => relative.includes(".test.") || relative.includes("reviewer") || relative.includes("backup"))) {
+        throw new Error("Release source graph unexpectedly contains test, reviewer or backup files.");
+    }
+    return Object.freeze(files);
 }
-
 async function copyFileTree(rootDir, releaseDir, files) {
-  for (const relative of files) {
-    const source = path.join(rootDir, relative);
-    const releaseRelative = relative.startsWith("src/") ? relative.slice(4) : relative;
-    const destination = path.join(releaseDir, releaseRelative);
-    await fs.mkdir(path.dirname(destination), { recursive: true, mode: 0o700 });
-    await fs.copyFile(source, destination);
-  }
+    for (const relative of files) {
+        const source = path.join(rootDir, relative);
+        const releaseRelative = relative.startsWith("src/") ? relative.slice(4) : relative;
+        const destination = path.join(releaseDir, releaseRelative);
+        await fs.mkdir(path.dirname(destination), { recursive: true, mode: 0o700 });
+        await fs.copyFile(source, destination);
+    }
 }
-
-async function copyProductionNodeModules(rootDir, releaseDir) {
-  const source = path.join(rootDir, "node_modules");
-  const destination = path.join(releaseDir, "node_modules");
-  const sourceStat = await fs.lstat(source);
-  if (!sourceStat.isDirectory() || sourceStat.isSymbolicLink()) throw new Error("Production node_modules is unavailable.");
-  await fs.cp(source, destination, {
-    recursive: true,
-    dereference: false,
-    filter: (candidate) => {
-      const relative = path.relative(source, candidate);
-      return relative !== ".bin" && !relative.startsWith(`.bin${path.sep}`);
-    },
-  });
+export async function copyProductionNodeModules(rootDir, releaseDir) {
+    const source = path.join(rootDir, "node_modules");
+    const destination = path.join(releaseDir, "node_modules");
+    const sourceStat = await fs.lstat(source);
+    if (!sourceStat.isDirectory() || sourceStat.isSymbolicLink())
+        throw new Error("Production node_modules is unavailable.");
+    const includeProduction = await productionNodeModulesFilter(rootDir);
+    await fs.cp(source, destination, {
+        recursive: true,
+        dereference: false,
+        filter: (candidate) => {
+            const relative = path.relative(source, candidate);
+            return includeProduction(relative);
+        },
+    });
 }
-
 async function assertNoSymlinks(root) {
-  const stack = [root];
-  while (stack.length > 0) {
-    const directory = stack.pop();
-    const entries = await fs.readdir(directory, { withFileTypes: true });
-    for (const entry of entries) {
-      const absolute = path.join(directory, entry.name);
-      const stat = await fs.lstat(absolute);
-      if (stat.isSymbolicLink()) throw new Error(`Managed release contains a symbolic link: ${path.relative(root, absolute)}`);
-      if (stat.isDirectory()) stack.push(absolute);
-      else if (!stat.isFile()) throw new Error(`Managed release contains an unsupported entry: ${path.relative(root, absolute)}`);
+    const stack = [root];
+    while (stack.length > 0) {
+        const directory = stack.pop();
+        if (!directory)
+            throw new Error("Release traversal found an empty directory entry.");
+        const entries = await fs.readdir(directory, { withFileTypes: true });
+        for (const entry of entries) {
+            const absolute = path.join(directory, entry.name);
+            const stat = await fs.lstat(absolute);
+            if (stat.isSymbolicLink())
+                throw new Error(`Managed release contains a symbolic link: ${path.relative(root, absolute)}`);
+            if (stat.isDirectory())
+                stack.push(absolute);
+            else if (!stat.isFile())
+                throw new Error(`Managed release contains an unsupported entry: ${path.relative(root, absolute)}`);
+        }
     }
-  }
 }
-
 export const EQUINOX_LOCAL_RELEASE_EPOCH_MS = Date.UTC(2000, 0, 1, 0, 0, 0);
-
-export async function normalizeManagedReleaseTree(releaseDir, {
-  epochMs = EQUINOX_LOCAL_RELEASE_EPOCH_MS,
-} = {}) {
-  if (!Number.isFinite(epochMs) || epochMs < 0) throw new Error("Managed release epoch is invalid.");
-  const releaseRoot = path.resolve(releaseDir);
-  const entries = [];
-
-  async function walk(absolute, relative) {
-    const stat = await fs.lstat(absolute);
-    if (stat.isSymbolicLink()) throw new Error(`Managed release contains a symbolic link: ${relative || "."}`);
-    if (!stat.isDirectory() && !stat.isFile()) throw new Error(`Managed release contains an unsupported entry: ${relative || "."}`);
-    entries.push(Object.freeze({ absolute, relative, directory: stat.isDirectory() }));
-    if (!stat.isDirectory()) return;
-    const children = (await fs.readdir(absolute)).sort();
-    for (const child of children) {
-      const childRelative = relative ? `${relative}/${child}` : child;
-      await walk(path.join(absolute, child), childRelative);
+export async function normalizeManagedReleaseTree(releaseDir, { epochMs = EQUINOX_LOCAL_RELEASE_EPOCH_MS, } = {}) {
+    if (!Number.isFinite(epochMs) || epochMs < 0)
+        throw new Error("Managed release epoch is invalid.");
+    const releaseRoot = path.resolve(releaseDir);
+    const entries = [];
+    async function walk(absolute, relative) {
+        const stat = await fs.lstat(absolute);
+        if (stat.isSymbolicLink())
+            throw new Error(`Managed release contains a symbolic link: ${relative || "."}`);
+        if (!stat.isDirectory() && !stat.isFile())
+            throw new Error(`Managed release contains an unsupported entry: ${relative || "."}`);
+        entries.push(Object.freeze({ absolute, relative, directory: stat.isDirectory() }));
+        if (!stat.isDirectory())
+            return;
+        const children = (await fs.readdir(absolute)).sort();
+        for (const child of children) {
+            const childRelative = relative ? `${relative}/${child}` : child;
+            await walk(path.join(absolute, child), childRelative);
+        }
     }
-  }
-
-  await walk(releaseRoot, "release");
-  const fixed = new Date(epochMs);
-  for (const entry of [...entries].reverse()) {
-    await fs.utimes(entry.absolute, fixed, fixed);
-  }
-  return Object.freeze(entries.map((entry) => entry.relative));
+    await walk(releaseRoot, "release");
+    const fixed = new Date(epochMs);
+    for (const entry of [...entries].reverse()) {
+        await fs.utimes(entry.absolute, fixed, fixed);
+    }
+    return Object.freeze(entries.map((entry) => entry.relative));
 }
-
-export async function createDeterministicManagedReleaseArchive({
-  transaction,
-  releaseDir,
-  artifactPath,
-  execFileImpl = execFile,
-} = {}) {
-  const transactionRoot = path.resolve(transaction);
-  const releaseRoot = path.resolve(releaseDir);
-  if (!inside(transactionRoot, releaseRoot) || path.dirname(releaseRoot) !== transactionRoot) {
-    throw new Error("Managed release archive root must be the direct release child of its transaction.");
-  }
-  const entries = await normalizeManagedReleaseTree(releaseRoot);
-  const manifestPath = path.join(transactionRoot, ".release-files.list");
-  await fs.writeFile(manifestPath, `${entries.join("\0")}\0`, { mode: 0o600 });
-  await fs.rm(artifactPath, { force: true });
-  await execFileImpl(TAR_PATH, [
-    "-czf", artifactPath,
-    "--format", "ustar",
-    "--options", "gzip:!timestamp",
-    "--uid", "0",
-    "--gid", "0",
-    "--uname", "root",
-    "--gname", "wheel",
-    "--no-acls",
-    "--no-fflags",
-    "--no-mac-metadata",
-    "--no-xattrs",
-    "--no-recursion",
-    "--null",
-    "-C", transactionRoot,
-    "-T", manifestPath,
-  ], { timeout: 120_000, maxBuffer: 8 * 1024 * 1024 });
-  return Object.freeze({ entryCount: entries.length });
+export async function createDeterministicManagedReleaseArchive({ transaction, releaseDir, artifactPath, execFileImpl = execFile, } = {}) {
+    const transactionRoot = path.resolve(transaction);
+    const releaseRoot = path.resolve(releaseDir);
+    if (!inside(transactionRoot, releaseRoot) || path.dirname(releaseRoot) !== transactionRoot) {
+        throw new Error("Managed release archive root must be the direct release child of its transaction.");
+    }
+    const entries = await normalizeManagedReleaseTree(releaseRoot);
+    const manifestPath = path.join(transactionRoot, ".release-files.list");
+    await fs.writeFile(manifestPath, `${entries.join("\0")}\0`, { mode: 0o600 });
+    await fs.rm(artifactPath, { force: true });
+    await execFileImpl(TAR_PATH, [
+        "-czf", artifactPath,
+        "--format", "ustar",
+        "--options", "gzip:!timestamp",
+        "--uid", "0",
+        "--gid", "0",
+        "--uname", "root",
+        "--gname", "wheel",
+        "--no-acls",
+        "--no-fflags",
+        "--no-mac-metadata",
+        "--no-xattrs",
+        "--no-recursion",
+        "--null",
+        "-C", transactionRoot,
+        "-T", manifestPath,
+    ], { timeout: 120_000, maxBuffer: 8 * 1024 * 1024 });
+    return Object.freeze({ entryCount: entries.length });
 }
-
 async function downloadPinnedNodeArchive(target, destination, { fetchImpl = globalThis.fetch } = {}) {
-  const distribution = NODE_DISTRIBUTIONS[target];
-  if (!distribution) throw new Error(`No pinned Node distribution exists for ${target}.`);
-  const url = `https://nodejs.org/dist/v${EQUINOX_LOCAL_NODE_VERSION}/${distribution.filename}`;
-  const response = await fetchImpl(url, {
-    method: "GET",
-    redirect: "error",
-    cache: "no-store",
-    credentials: "omit",
-    headers: { accept: "application/gzip, application/octet-stream" },
-  });
-  if (!response?.ok || !response.body) throw new Error(`Node distribution server returned HTTP ${response?.status ?? "unknown"}.`);
-
-  const temporary = `${destination}.part-${randomBytes(8).toString("hex")}`;
-  const handle = await fs.open(temporary, "wx", 0o600);
-  const digest = createHash("sha256");
-  let bytes = 0;
-  try {
-    for await (const value of response.body) {
-      const chunk = Buffer.from(value);
-      bytes += chunk.length;
-      if (bytes > MAX_NODE_ARCHIVE_BYTES) throw new Error("Pinned Node distribution exceeded the download size limit.");
-      digest.update(chunk);
-      await handle.write(chunk);
-    }
-    await handle.sync();
-  } finally {
-    await handle.close();
-  }
-  if (digest.digest("hex") !== distribution.sha256) {
-    await fs.rm(temporary, { force: true });
-    throw new Error("Pinned Node distribution SHA-256 verification failed.");
-  }
-  await fs.rename(temporary, destination);
-  return Object.freeze({ url, bytes, sha256: distribution.sha256 });
-}
-
-async function installPinnedNodeBinary(target, releaseDir, options = {}) {
-  const transaction = path.join(path.dirname(releaseDir), `node-${randomBytes(8).toString("hex")}`);
-  const archive = path.join(transaction, "node.tar.gz");
-  const extracted = path.join(transaction, "extracted");
-  await fs.mkdir(extracted, { recursive: true, mode: 0o700 });
-  try {
-    await downloadPinnedNodeArchive(target, archive, options);
-    await execFile(TAR_PATH, ["-xzf", archive, "-C", extracted], { timeout: 60_000, maxBuffer: 4 * 1024 * 1024 });
     const distribution = NODE_DISTRIBUTIONS[target];
-    const rootName = distribution.filename.replace(/\.tar\.gz$/u, "");
-    const nodeSource = path.join(extracted, rootName, "bin", "node");
-    const licenseSource = path.join(extracted, rootName, "LICENSE");
-    const nodeDestination = path.join(releaseDir, "runtime", "node", "bin", "node");
-    const licenseDestination = path.join(releaseDir, "runtime", "node", "LICENSE");
-    await fs.mkdir(path.dirname(nodeDestination), { recursive: true, mode: 0o700 });
-    await fs.copyFile(nodeSource, nodeDestination);
-    await fs.chmod(nodeDestination, 0o755);
-    await fs.copyFile(licenseSource, licenseDestination);
-    const { stdout } = await execFile(FILE_PATH, [nodeDestination], { timeout: 5_000, maxBuffer: 1024 * 1024 });
-    if (!stdout.includes(distribution.fileArchitecture)) throw new Error(`Pinned Node binary architecture does not match ${target}.`);
-  } finally {
-    await fs.rm(transaction, { recursive: true, force: true });
-  }
+    if (!distribution)
+        throw new Error(`No pinned Node distribution exists for ${target}.`);
+    const url = `https://nodejs.org/dist/v${EQUINOX_LOCAL_NODE_VERSION}/${distribution.filename}`;
+    const response = await fetchImpl(url, {
+        method: "GET",
+        redirect: "error",
+        cache: "no-store",
+        credentials: "omit",
+        headers: { accept: "application/gzip, application/octet-stream" },
+    });
+    if (!response?.ok || !response.body)
+        throw new Error(`Node distribution server returned HTTP ${response?.status ?? "unknown"}.`);
+    const temporary = `${destination}.part-${randomBytes(8).toString("hex")}`;
+    const handle = await fs.open(temporary, "wx", 0o600);
+    const digest = createHash("sha256");
+    let bytes = 0;
+    try {
+        for await (const value of response.body) {
+            const chunk = Buffer.from(value);
+            bytes += chunk.length;
+            if (bytes > MAX_NODE_ARCHIVE_BYTES)
+                throw new Error("Pinned Node distribution exceeded the download size limit.");
+            digest.update(chunk);
+            await handle.write(chunk);
+        }
+        await handle.sync();
+    }
+    finally {
+        await handle.close();
+    }
+    if (digest.digest("hex") !== distribution.sha256) {
+        await fs.rm(temporary, { force: true });
+        throw new Error("Pinned Node distribution SHA-256 verification failed.");
+    }
+    await fs.rename(temporary, destination);
+    return Object.freeze({ url, bytes, sha256: distribution.sha256 });
 }
-
+async function installPinnedNodeBinary(target, releaseDir, options = {}) {
+    const transaction = path.join(path.dirname(releaseDir), `node-${randomBytes(8).toString("hex")}`);
+    const archive = path.join(transaction, "node.tar.gz");
+    const extracted = path.join(transaction, "extracted");
+    await fs.mkdir(extracted, { recursive: true, mode: 0o700 });
+    try {
+        await downloadPinnedNodeArchive(target, archive, options);
+        await execFile(TAR_PATH, ["-xzf", archive, "-C", extracted], { timeout: 60_000, maxBuffer: 4 * 1024 * 1024 });
+        const distribution = NODE_DISTRIBUTIONS[target];
+        const rootName = distribution.filename.replace(/\.tar\.gz$/u, "");
+        const nodeSource = path.join(extracted, rootName, "bin", "node");
+        const licenseSource = path.join(extracted, rootName, "LICENSE");
+        const nodeDestination = path.join(releaseDir, "runtime", "node", "bin", "node");
+        const licenseDestination = path.join(releaseDir, "runtime", "node", "LICENSE");
+        await fs.mkdir(path.dirname(nodeDestination), { recursive: true, mode: 0o700 });
+        await fs.copyFile(nodeSource, nodeDestination);
+        await fs.chmod(nodeDestination, 0o755);
+        await fs.copyFile(licenseSource, licenseDestination);
+        const { stdout } = await execFile(FILE_PATH, [nodeDestination], { timeout: 5_000, maxBuffer: 1024 * 1024 });
+        if (!stdout.includes(distribution.fileArchitecture))
+            throw new Error(`Pinned Node binary architecture does not match ${target}.`);
+    }
+    finally {
+        await fs.rm(transaction, { recursive: true, force: true });
+    }
+}
 async function downloadPinnedTunnelArchive(target, destination, { fetchImpl = globalThis.fetch } = {}) {
-  const distribution = TUNNEL_CLIENT_DISTRIBUTIONS[target];
-  if (!distribution) throw new Error(`No pinned tunnel-client distribution exists for ${target}.`);
-  const url = `https://github.com/openai/tunnel-client/releases/download/v${EQUINOX_LOCAL_TUNNEL_CLIENT_VERSION}/${distribution.filename}`;
-  const response = await fetchImpl(url, {
-    method: "GET",
-    redirect: "follow",
-    cache: "no-store",
-    credentials: "omit",
-    headers: { accept: "application/zip, application/octet-stream" },
-  });
-  if (!response?.ok || !response.body) throw new Error(`tunnel-client release server returned HTTP ${response?.status ?? "unknown"}.`);
-
-  const temporary = `${destination}.part-${randomBytes(8).toString("hex")}`;
-  const handle = await fs.open(temporary, "wx", 0o600);
-  const digest = createHash("sha256");
-  let bytes = 0;
-  try {
-    for await (const value of response.body) {
-      const chunk = Buffer.from(value);
-      bytes += chunk.length;
-      if (bytes > MAX_TUNNEL_ARCHIVE_BYTES) throw new Error("Pinned tunnel-client distribution exceeded the download size limit.");
-      digest.update(chunk);
-      await handle.write(chunk);
+    const distribution = TUNNEL_CLIENT_DISTRIBUTIONS[target];
+    if (!distribution)
+        throw new Error(`No pinned tunnel-client distribution exists for ${target}.`);
+    const url = `https://github.com/openai/tunnel-client/releases/download/v${EQUINOX_LOCAL_TUNNEL_CLIENT_VERSION}/${distribution.filename}`;
+    const response = await fetchImpl(url, {
+        method: "GET",
+        redirect: "follow",
+        cache: "no-store",
+        credentials: "omit",
+        headers: { accept: "application/zip, application/octet-stream" },
+    });
+    if (!response?.ok || !response.body)
+        throw new Error(`tunnel-client release server returned HTTP ${response?.status ?? "unknown"}.`);
+    const temporary = `${destination}.part-${randomBytes(8).toString("hex")}`;
+    const handle = await fs.open(temporary, "wx", 0o600);
+    const digest = createHash("sha256");
+    let bytes = 0;
+    try {
+        for await (const value of response.body) {
+            const chunk = Buffer.from(value);
+            bytes += chunk.length;
+            if (bytes > MAX_TUNNEL_ARCHIVE_BYTES)
+                throw new Error("Pinned tunnel-client distribution exceeded the download size limit.");
+            digest.update(chunk);
+            await handle.write(chunk);
+        }
+        await handle.sync();
     }
-    await handle.sync();
-  } finally {
-    await handle.close();
-  }
-  if (digest.digest("hex") !== distribution.sha256) {
-    await fs.rm(temporary, { force: true });
-    throw new Error("Pinned tunnel-client distribution SHA-256 verification failed.");
-  }
-  await fs.rename(temporary, destination);
-  return Object.freeze({ url, bytes, sha256: distribution.sha256 });
+    finally {
+        await handle.close();
+    }
+    if (digest.digest("hex") !== distribution.sha256) {
+        await fs.rm(temporary, { force: true });
+        throw new Error("Pinned tunnel-client distribution SHA-256 verification failed.");
+    }
+    await fs.rename(temporary, destination);
+    return Object.freeze({ url, bytes, sha256: distribution.sha256 });
 }
-
 export async function installPinnedTunnelRuntime(target, releaseDir, options = {}) {
-  const distribution = TUNNEL_CLIENT_DISTRIBUTIONS[target];
-  if (!distribution) throw new Error(`No pinned tunnel-client distribution exists for ${target}.`);
-  const transaction = path.join(path.dirname(releaseDir), `tunnel-${randomBytes(8).toString("hex")}`);
-  const archive = path.join(transaction, "tunnel.zip");
-  const extracted = path.join(transaction, "extracted");
-  await fs.mkdir(extracted, { recursive: true, mode: 0o700 });
-  try {
-    await downloadPinnedTunnelArchive(target, archive, options);
-    const { stdout: listing } = await execFile(UNZIP_PATH, ["-Z1", archive], { timeout: 10_000, maxBuffer: 2 * 1024 * 1024 });
-    const licenseStem = `tunnel-client-v${EQUINOX_LOCAL_TUNNEL_CLIENT_VERSION}-${distribution.assetTag}`;
-    const expected = [
-      ...TUNNEL_ARCHIVE_FILES,
-      `${licenseStem}-licenses.txt`,
-      `${licenseStem}.spdx.json`,
-    ].sort();
-    const actual = listing.split(/\r?\n/u).filter(Boolean).sort();
-    if (actual.length !== expected.length || actual.some((value, index) => value !== expected[index])) {
-      throw new Error("Pinned tunnel-client archive contains missing or unexpected files.");
+    const distribution = TUNNEL_CLIENT_DISTRIBUTIONS[target];
+    if (!distribution)
+        throw new Error(`No pinned tunnel-client distribution exists for ${target}.`);
+    const transaction = path.join(path.dirname(releaseDir), `tunnel-${randomBytes(8).toString("hex")}`);
+    const archive = path.join(transaction, "tunnel.zip");
+    const extracted = path.join(transaction, "extracted");
+    await fs.mkdir(extracted, { recursive: true, mode: 0o700 });
+    try {
+        await downloadPinnedTunnelArchive(target, archive, options);
+        const { stdout: listing } = await execFile(UNZIP_PATH, ["-Z1", archive], { timeout: 10_000, maxBuffer: 2 * 1024 * 1024 });
+        const licenseStem = `tunnel-client-v${EQUINOX_LOCAL_TUNNEL_CLIENT_VERSION}-${distribution.assetTag}`;
+        const expected = [
+            ...TUNNEL_ARCHIVE_FILES,
+            `${licenseStem}-licenses.txt`,
+            `${licenseStem}.spdx.json`,
+        ].sort();
+        const actual = listing.split(/\r?\n/u).filter(Boolean).sort();
+        if (actual.length !== expected.length || actual.some((value, index) => value !== expected[index])) {
+            throw new Error("Pinned tunnel-client archive contains missing or unexpected files.");
+        }
+        await execFile(UNZIP_PATH, ["-q", archive, "-d", extracted], { timeout: 30_000, maxBuffer: 4 * 1024 * 1024 });
+        const destination = path.join(releaseDir, "runtime", "tunnel");
+        await fs.mkdir(destination, { recursive: true, mode: 0o700 });
+        for (const relative of expected) {
+            const source = path.join(extracted, relative);
+            const stat = await fs.lstat(source);
+            if (!stat.isFile() || stat.isSymbolicLink())
+                throw new Error(`Pinned tunnel-client file is unsafe: ${relative}`);
+            await fs.copyFile(source, path.join(destination, relative));
+        }
+        const tunnelBinary = path.join(destination, "tunnel-client");
+        const cloudflaredBinary = path.join(destination, "cloudflared");
+        await fs.chmod(tunnelBinary, 0o755);
+        await fs.chmod(cloudflaredBinary, 0o755);
+        const { stdout: tunnelFile } = await execFile(FILE_PATH, [tunnelBinary], { timeout: 5_000, maxBuffer: 1024 * 1024 });
+        const { stdout: cloudflaredFile } = await execFile(FILE_PATH, [cloudflaredBinary], { timeout: 5_000, maxBuffer: 1024 * 1024 });
+        if (!tunnelFile.includes(distribution.fileArchitecture) || !cloudflaredFile.includes(distribution.fileArchitecture)) {
+            throw new Error(`Pinned tunnel runtime architecture does not match ${target}.`);
+        }
+        const { stdout: versionText } = await execFile(tunnelBinary, ["--version"], { timeout: 5_000, maxBuffer: 1024 * 1024 });
+        if (!versionText.trim().startsWith(`${EQUINOX_LOCAL_TUNNEL_CLIENT_VERSION}+`)) {
+            throw new Error(`Pinned tunnel-client version mismatch: ${versionText.trim()}`);
+        }
     }
-    await execFile(UNZIP_PATH, ["-q", archive, "-d", extracted], { timeout: 30_000, maxBuffer: 4 * 1024 * 1024 });
-    const destination = path.join(releaseDir, "runtime", "tunnel");
-    await fs.mkdir(destination, { recursive: true, mode: 0o700 });
-    for (const relative of expected) {
-      const source = path.join(extracted, relative);
-      const stat = await fs.lstat(source);
-      if (!stat.isFile() || stat.isSymbolicLink()) throw new Error(`Pinned tunnel-client file is unsafe: ${relative}`);
-      await fs.copyFile(source, path.join(destination, relative));
+    finally {
+        await fs.rm(transaction, { recursive: true, force: true });
     }
-    const tunnelBinary = path.join(destination, "tunnel-client");
-    const cloudflaredBinary = path.join(destination, "cloudflared");
-    await fs.chmod(tunnelBinary, 0o755);
-    await fs.chmod(cloudflaredBinary, 0o755);
-    const { stdout: tunnelFile } = await execFile(FILE_PATH, [tunnelBinary], { timeout: 5_000, maxBuffer: 1024 * 1024 });
-    const { stdout: cloudflaredFile } = await execFile(FILE_PATH, [cloudflaredBinary], { timeout: 5_000, maxBuffer: 1024 * 1024 });
-    if (!tunnelFile.includes(distribution.fileArchitecture) || !cloudflaredFile.includes(distribution.fileArchitecture)) {
-      throw new Error(`Pinned tunnel runtime architecture does not match ${target}.`);
-    }
-    const { stdout: versionText } = await execFile(tunnelBinary, ["--version"], { timeout: 5_000, maxBuffer: 1024 * 1024 });
-    if (!versionText.trim().startsWith(`${EQUINOX_LOCAL_TUNNEL_CLIENT_VERSION}+`)) {
-      throw new Error(`Pinned tunnel-client version mismatch: ${versionText.trim()}`);
-    }
-  } finally {
-    await fs.rm(transaction, { recursive: true, force: true });
-  }
 }
-
 async function downloadPinnedPeekabooArchive(destination, { fetchImpl = globalThis.fetch } = {}) {
-  const url = `https://github.com/openclaw/Peekaboo/releases/download/v${EQUINOX_LOCAL_PEEKABOO_VERSION}/${PEEKABOO_DISTRIBUTION.filename}`;
-  const response = await fetchImpl(url, {
-    method: "GET",
-    redirect: "follow",
-    cache: "no-store",
-    credentials: "omit",
-    headers: { accept: "application/gzip, application/octet-stream" },
-  });
-  if (!response?.ok || !response.body) throw new Error(`Peekaboo release server returned HTTP ${response?.status ?? "unknown"}.`);
-
-  const temporary = `${destination}.part-${randomBytes(8).toString("hex")}`;
-  const handle = await fs.open(temporary, "wx", 0o600);
-  const digest = createHash("sha256");
-  let bytes = 0;
-  try {
-    for await (const value of response.body) {
-      const chunk = Buffer.from(value);
-      bytes += chunk.length;
-      if (bytes > MAX_PEEKABOO_ARCHIVE_BYTES) throw new Error("Pinned Peekaboo distribution exceeded the download size limit.");
-      digest.update(chunk);
-      await handle.write(chunk);
+    const url = `https://github.com/openclaw/Peekaboo/releases/download/v${EQUINOX_LOCAL_PEEKABOO_VERSION}/${PEEKABOO_DISTRIBUTION.filename}`;
+    const response = await fetchImpl(url, {
+        method: "GET",
+        redirect: "follow",
+        cache: "no-store",
+        credentials: "omit",
+        headers: { accept: "application/gzip, application/octet-stream" },
+    });
+    if (!response?.ok || !response.body)
+        throw new Error(`Peekaboo release server returned HTTP ${response?.status ?? "unknown"}.`);
+    const temporary = `${destination}.part-${randomBytes(8).toString("hex")}`;
+    const handle = await fs.open(temporary, "wx", 0o600);
+    const digest = createHash("sha256");
+    let bytes = 0;
+    try {
+        for await (const value of response.body) {
+            const chunk = Buffer.from(value);
+            bytes += chunk.length;
+            if (bytes > MAX_PEEKABOO_ARCHIVE_BYTES)
+                throw new Error("Pinned Peekaboo distribution exceeded the download size limit.");
+            digest.update(chunk);
+            await handle.write(chunk);
+        }
+        await handle.sync();
     }
-    await handle.sync();
-  } finally {
-    await handle.close();
-  }
-  if (digest.digest("hex") !== PEEKABOO_DISTRIBUTION.sha256) {
-    await fs.rm(temporary, { force: true });
-    throw new Error("Pinned Peekaboo distribution SHA-256 verification failed.");
-  }
-  await fs.rename(temporary, destination);
-  return Object.freeze({ url, bytes, sha256: PEEKABOO_DISTRIBUTION.sha256 });
+    finally {
+        await handle.close();
+    }
+    if (digest.digest("hex") !== PEEKABOO_DISTRIBUTION.sha256) {
+        await fs.rm(temporary, { force: true });
+        throw new Error("Pinned Peekaboo distribution SHA-256 verification failed.");
+    }
+    await fs.rename(temporary, destination);
+    return Object.freeze({ url, bytes, sha256: PEEKABOO_DISTRIBUTION.sha256 });
 }
-
 function tarEntryTypes(output) {
-  return String(output).split("\n").map((line) => line.trimStart()).filter(Boolean).map((line) => line[0]);
+    return String(output).split("\n").map((line) => line.trimStart()).filter(Boolean).map((line) => line[0]).filter((entry) => entry !== undefined);
 }
-
 async function verifyOpenClawCodeSignature(target, { execFileImpl = execFile } = {}) {
-  await execFileImpl(CODESIGN_PATH, ["--verify", "--strict", target], { timeout: 10_000, maxBuffer: 1024 * 1024 });
-  const { stderr = "" } = await execFileImpl(CODESIGN_PATH, ["-dv", "--verbose=4", target], {
-    timeout: 10_000,
-    maxBuffer: 1024 * 1024,
-  });
-  if (!stderr.includes(`TeamIdentifier=${EQUINOX_LOCAL_PEEKABOO_TEAM_ID}`)) {
-    throw new Error("Pinned Peekaboo code signature Team ID does not match OpenClaw Foundation.");
-  }
-  if (!stderr.includes(`Authority=Developer ID Application: OpenClaw Foundation (${EQUINOX_LOCAL_PEEKABOO_TEAM_ID})`)) {
-    throw new Error("Pinned Peekaboo code signature authority does not match OpenClaw Foundation.");
-  }
+    await execFileImpl(CODESIGN_PATH, ["--verify", "--strict", target], { timeout: 10_000, maxBuffer: 1024 * 1024 });
+    const { stderr = "" } = await execFileImpl(CODESIGN_PATH, ["-dv", "--verbose=4", target], {
+        timeout: 10_000,
+        maxBuffer: 1024 * 1024,
+    });
+    if (!stderr.includes(`TeamIdentifier=${EQUINOX_LOCAL_PEEKABOO_TEAM_ID}`)) {
+        throw new Error("Pinned Peekaboo code signature Team ID does not match OpenClaw Foundation.");
+    }
+    if (!stderr.includes(`Authority=Developer ID Application: OpenClaw Foundation (${EQUINOX_LOCAL_PEEKABOO_TEAM_ID})`)) {
+        throw new Error("Pinned Peekaboo code signature authority does not match OpenClaw Foundation.");
+    }
 }
-
 export async function installPinnedPeekabooRuntime(releaseDir, options = {}) {
-  const transaction = path.join(path.dirname(releaseDir), `peekaboo-${randomBytes(8).toString("hex")}`);
-  const archive = path.join(transaction, "peekaboo.tar.gz");
-  const extracted = path.join(transaction, "extracted");
-  await fs.mkdir(extracted, { recursive: true, mode: 0o700 });
-  try {
-    await downloadPinnedPeekabooArchive(archive, options);
-    const [{ stdout: namesText }, { stdout: verboseText }] = await Promise.all([
-      execFile(TAR_PATH, ["-tzf", archive], { timeout: 20_000, maxBuffer: 2 * 1024 * 1024 }),
-      execFile(TAR_PATH, ["-tvzf", archive], { timeout: 20_000, maxBuffer: 4 * 1024 * 1024 }),
-    ]);
-    const root = PEEKABOO_DISTRIBUTION.archiveRoot;
-    const expected = [`${root}/`, ...PEEKABOO_ARCHIVE_FILES.map((relative) => `${root}/${relative}`)];
-    const actual = namesText.split(/\r?\n/u).filter(Boolean);
-    if (actual.length !== expected.length || actual.some((value, index) => value !== expected[index])) {
-      throw new Error("Pinned Peekaboo archive contains missing or unexpected files.");
+    const transaction = path.join(path.dirname(releaseDir), `peekaboo-${randomBytes(8).toString("hex")}`);
+    const archive = path.join(transaction, "peekaboo.tar.gz");
+    const extracted = path.join(transaction, "extracted");
+    await fs.mkdir(extracted, { recursive: true, mode: 0o700 });
+    try {
+        await downloadPinnedPeekabooArchive(archive, options);
+        const [{ stdout: namesText }, { stdout: verboseText }] = await Promise.all([
+            execFile(TAR_PATH, ["-tzf", archive], { timeout: 20_000, maxBuffer: 2 * 1024 * 1024 }),
+            execFile(TAR_PATH, ["-tvzf", archive], { timeout: 20_000, maxBuffer: 4 * 1024 * 1024 }),
+        ]);
+        const root = PEEKABOO_DISTRIBUTION.archiveRoot;
+        const expected = [`${root}/`, ...PEEKABOO_ARCHIVE_FILES.map((relative) => `${root}/${relative}`)];
+        const actual = namesText.split(/\r?\n/u).filter(Boolean);
+        if (actual.length !== expected.length || actual.some((value, index) => value !== expected[index])) {
+            throw new Error("Pinned Peekaboo archive contains missing or unexpected files.");
+        }
+        const types = tarEntryTypes(verboseText);
+        if (types.length !== expected.length || types[0] !== "d" || types.slice(1).some((type) => type !== "-")) {
+            throw new Error("Pinned Peekaboo archive contains unsupported filesystem entries.");
+        }
+        await execFile(TAR_PATH, ["-xzf", archive, "-C", extracted], { timeout: 30_000, maxBuffer: 4 * 1024 * 1024 });
+        const sourceRoot = path.join(extracted, root);
+        const destination = path.join(releaseDir, "runtime", "peekaboo");
+        await fs.mkdir(destination, { recursive: true, mode: 0o700 });
+        for (const relative of PEEKABOO_ARCHIVE_FILES) {
+            const source = path.join(sourceRoot, relative);
+            const stat = await fs.lstat(source);
+            if (!stat.isFile() || stat.isSymbolicLink())
+                throw new Error(`Pinned Peekaboo file is unsafe: ${relative}`);
+            await fs.copyFile(source, path.join(destination, relative));
+        }
+        const peekabooBinary = path.join(destination, "peekaboo");
+        const compatibilityLibrary = path.join(destination, "libswiftCompatibilitySpan.dylib");
+        await fs.chmod(peekabooBinary, 0o755);
+        await fs.chmod(compatibilityLibrary, 0o755);
+        const { stdout: fileText } = await execFile(FILE_PATH, [peekabooBinary], { timeout: 5_000, maxBuffer: 1024 * 1024 });
+        for (const architecture of PEEKABOO_DISTRIBUTION.architectures) {
+            if (!fileText.includes(architecture))
+                throw new Error(`Pinned Peekaboo binary is missing ${architecture}.`);
+        }
+        await verifyOpenClawCodeSignature(peekabooBinary, options);
+        await verifyOpenClawCodeSignature(compatibilityLibrary, options);
+        const versionFile = (await fs.readFile(path.join(destination, "VERSION"), "utf8")).trim();
+        if (versionFile !== EQUINOX_LOCAL_PEEKABOO_VERSION)
+            throw new Error("Pinned Peekaboo VERSION file does not match the configured version.");
+        const { stdout: versionText } = await execFile(peekabooBinary, ["--version"], { timeout: 10_000, maxBuffer: 1024 * 1024 });
+        if (!versionText.trim().startsWith(`Peekaboo ${EQUINOX_LOCAL_PEEKABOO_VERSION} `)) {
+            throw new Error(`Pinned Peekaboo version mismatch: ${versionText.trim()}`);
+        }
+        const licenseText = await fs.readFile(path.join(destination, "LICENSE"), "utf8");
+        if (!licenseText.startsWith("MIT License\n"))
+            throw new Error("Pinned Peekaboo MIT license is missing or invalid.");
     }
-    const types = tarEntryTypes(verboseText);
-    if (types.length !== expected.length || types[0] !== "d" || types.slice(1).some((type) => type !== "-")) {
-      throw new Error("Pinned Peekaboo archive contains unsupported filesystem entries.");
+    finally {
+        await fs.rm(transaction, { recursive: true, force: true });
     }
-    await execFile(TAR_PATH, ["-xzf", archive, "-C", extracted], { timeout: 30_000, maxBuffer: 4 * 1024 * 1024 });
-    const sourceRoot = path.join(extracted, root);
-    const destination = path.join(releaseDir, "runtime", "peekaboo");
-    await fs.mkdir(destination, { recursive: true, mode: 0o700 });
-    for (const relative of PEEKABOO_ARCHIVE_FILES) {
-      const source = path.join(sourceRoot, relative);
-      const stat = await fs.lstat(source);
-      if (!stat.isFile() || stat.isSymbolicLink()) throw new Error(`Pinned Peekaboo file is unsafe: ${relative}`);
-      await fs.copyFile(source, path.join(destination, relative));
-    }
-    const peekabooBinary = path.join(destination, "peekaboo");
-    const compatibilityLibrary = path.join(destination, "libswiftCompatibilitySpan.dylib");
-    await fs.chmod(peekabooBinary, 0o755);
-    await fs.chmod(compatibilityLibrary, 0o755);
-    const { stdout: fileText } = await execFile(FILE_PATH, [peekabooBinary], { timeout: 5_000, maxBuffer: 1024 * 1024 });
-    for (const architecture of PEEKABOO_DISTRIBUTION.architectures) {
-      if (!fileText.includes(architecture)) throw new Error(`Pinned Peekaboo binary is missing ${architecture}.`);
-    }
-    await verifyOpenClawCodeSignature(peekabooBinary, options);
-    await verifyOpenClawCodeSignature(compatibilityLibrary, options);
-    const versionFile = (await fs.readFile(path.join(destination, "VERSION"), "utf8")).trim();
-    if (versionFile !== EQUINOX_LOCAL_PEEKABOO_VERSION) throw new Error("Pinned Peekaboo VERSION file does not match the configured version.");
-    const { stdout: versionText } = await execFile(peekabooBinary, ["--version"], { timeout: 10_000, maxBuffer: 1024 * 1024 });
-    if (!versionText.trim().startsWith(`Peekaboo ${EQUINOX_LOCAL_PEEKABOO_VERSION} `)) {
-      throw new Error(`Pinned Peekaboo version mismatch: ${versionText.trim()}`);
-    }
-    const licenseText = await fs.readFile(path.join(destination, "LICENSE"), "utf8");
-    if (!licenseText.startsWith("MIT License\n")) throw new Error("Pinned Peekaboo MIT license is missing or invalid.");
-  } finally {
-    await fs.rm(transaction, { recursive: true, force: true });
-  }
 }
-
 async function sha256File(target) {
-  const result = await hashFile(target, { suppressCloseErrors: true });
-  return Object.freeze({ sha256: result.sha256, bytes: result.bytes });
+    const result = await hashFile(target, { suppressCloseErrors: true });
+    return Object.freeze({ sha256: result.sha256, bytes: result.bytes });
 }
-
-export async function packageManagedEquinoxRelease({
-  rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../.."),
-  target = equinoxLocalUpdateTarget(),
-  outputDir = path.join(rootDir, "backups", "local-packages"),
-  fetchImpl = globalThis.fetch,
-} = {}) {
-  const hostTarget = equinoxLocalUpdateTarget();
-  if (target !== hostTarget) {
-    throw new Error(`Cross-target release builds are disabled because node_modules is target-native (${hostTarget}).`);
-  }
-  const sourceSha = await resolveManagedReleaseSourceSha(rootDir);
-  const sourceFiles = await collectManagedReleaseSourceFiles(rootDir);
-  const transaction = await fs.mkdtemp(path.join(outputDir, `.build-${EQUINOX_LOCAL_VERSION}-${target}-`)).catch(async (error) => {
-    if (error?.code !== "ENOENT") throw error;
-    await fs.mkdir(outputDir, { recursive: true, mode: 0o700 });
-    return fs.mkdtemp(path.join(outputDir, `.build-${EQUINOX_LOCAL_VERSION}-${target}-`));
-  });
-  const releaseDir = path.join(transaction, "release");
-  const artifactPath = path.join(outputDir, `equinox-local-${EQUINOX_LOCAL_VERSION}-${target}.tar.gz`);
-  await fs.mkdir(releaseDir, { recursive: true, mode: 0o700 });
-
-  try {
-    await copyFileTree(rootDir, releaseDir, sourceFiles);
-    await copyProductionNodeModules(rootDir, releaseDir);
-    await installPinnedNodeBinary(target, releaseDir, { fetchImpl });
-    await installPinnedTunnelRuntime(target, releaseDir, { fetchImpl });
-    await installPinnedPeekabooRuntime(releaseDir, { fetchImpl });
-    const nativeApp = await buildEquinoxLocalNativeAppArtifacts({ rootDir, releaseDir, target });
-    await fs.writeFile(path.join(releaseDir, "release.json"), `${JSON.stringify({
-      schemaVersion: 1,
-      version: EQUINOX_LOCAL_VERSION,
-      target,
-      sourceSha,
-      nodeVersion: EQUINOX_LOCAL_NODE_VERSION,
-      tunnelClientVersion: EQUINOX_LOCAL_TUNNEL_CLIENT_VERSION,
-      nativeAppShellVersion: nativeApp.shellVersion,
-      serverEntry: "server.js",
-    }, null, 2)}\n`, { mode: 0o644 });
-    await assertNoSymlinks(releaseDir);
-    await createDeterministicManagedReleaseArchive({
-      transaction,
-      releaseDir,
-      artifactPath,
+export async function packageManagedEquinoxRelease({ rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../.."), target = equinoxLocalUpdateTarget(), outputDir = path.join(rootDir, "backups", "local-packages"), fetchImpl = globalThis.fetch, } = {}) {
+    const hostTarget = equinoxLocalUpdateTarget();
+    if (target !== hostTarget) {
+        throw new Error(`Cross-target release builds are disabled because node_modules is target-native (${hostTarget}).`);
+    }
+    const admittedTarget = target;
+    const sourceSha = await resolveManagedReleaseSourceSha(rootDir);
+    const sourceFiles = await collectManagedReleaseSourceFiles(rootDir);
+    const transaction = await fs.mkdtemp(path.join(outputDir, `.build-${EQUINOX_LOCAL_VERSION}-${target}-`)).catch(async (error) => {
+        if (!hasErrorCode(error, "ENOENT"))
+            throw error;
+        await fs.mkdir(outputDir, { recursive: true, mode: 0o700 });
+        return fs.mkdtemp(path.join(outputDir, `.build-${EQUINOX_LOCAL_VERSION}-${target}-`));
     });
-    const digest = await sha256File(artifactPath);
-    return Object.freeze({
-      version: EQUINOX_LOCAL_VERSION,
-      target,
-      sourceSha,
-      nodeVersion: EQUINOX_LOCAL_NODE_VERSION,
-      tunnelClientVersion: EQUINOX_LOCAL_TUNNEL_CLIENT_VERSION,
-      artifactPath,
-      ...digest,
-      sourceFileCount: sourceFiles.length,
-    });
-  } finally {
-    await fs.rm(transaction, { recursive: true, force: true });
-  }
+    const releaseDir = path.join(transaction, "release");
+    const artifactPath = path.join(outputDir, `equinox-local-${EQUINOX_LOCAL_VERSION}-${target}.tar.gz`);
+    await fs.mkdir(releaseDir, { recursive: true, mode: 0o700 });
+    try {
+        await copyFileTree(rootDir, releaseDir, sourceFiles);
+        await copyProductionNodeModules(rootDir, releaseDir);
+        await installPinnedNodeBinary(admittedTarget, releaseDir, { fetchImpl });
+        await installPinnedTunnelRuntime(admittedTarget, releaseDir, { fetchImpl });
+        await installPinnedPeekabooRuntime(releaseDir, { fetchImpl });
+        const nativeApp = await buildEquinoxLocalNativeAppArtifacts({ rootDir, releaseDir, target: admittedTarget });
+        await fs.writeFile(path.join(releaseDir, "release.json"), `${JSON.stringify({
+            schemaVersion: 1,
+            version: EQUINOX_LOCAL_VERSION,
+            target,
+            sourceSha,
+            nodeVersion: EQUINOX_LOCAL_NODE_VERSION,
+            tunnelClientVersion: EQUINOX_LOCAL_TUNNEL_CLIENT_VERSION,
+            nativeAppShellVersion: nativeApp.shellVersion,
+            serverEntry: "server.js",
+        }, null, 2)}\n`, { mode: 0o644 });
+        await assertNoSymlinks(releaseDir);
+        await createDeterministicManagedReleaseArchive({
+            transaction,
+            releaseDir,
+            artifactPath,
+        });
+        const digest = await sha256File(artifactPath);
+        return Object.freeze({
+            version: EQUINOX_LOCAL_VERSION,
+            target,
+            sourceSha,
+            nodeVersion: EQUINOX_LOCAL_NODE_VERSION,
+            tunnelClientVersion: EQUINOX_LOCAL_TUNNEL_CLIENT_VERSION,
+            artifactPath,
+            ...digest,
+            sourceFileCount: sourceFiles.length,
+        });
+    }
+    finally {
+        await fs.rm(transaction, { recursive: true, force: true });
+    }
 }
-
 const invokedPath = process.argv[1] ? pathToFileURL(path.resolve(process.argv[1])).href : null;
 if (invokedPath && import.meta.url === invokedPath) {
-  packageManagedEquinoxRelease()
-    .then((result) => process.stdout.write(`${JSON.stringify(result, null, 2)}\n`))
-    .catch((error) => {
-      process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
-      process.exitCode = 1;
+    packageManagedEquinoxRelease()
+        .then((result) => process.stdout.write(`${JSON.stringify(result, null, 2)}\n`))
+        .catch((error) => {
+        process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+        process.exitCode = 1;
     });
 }

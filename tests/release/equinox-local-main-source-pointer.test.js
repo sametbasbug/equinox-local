@@ -83,3 +83,49 @@ test("Windows main source pointer receives explicit ACL before atomic publish", 
   assert.equal(protectedTargets[0][1], "file");
   assert.match(path.basename(protectedTargets[0][0]), /^\.main-source-.*\.tmp$/u);
 });
+
+test("Main pointer refuses a symlinked state parent without writing to a foreign location", async (t) => {
+  const f = await fixture(t);
+  const outside = path.join(f.root, "unowned-state");
+  await fs.mkdir(outside);
+  await fs.symlink(outside, path.dirname(f.pointerPath), "dir");
+  await assert.rejects(
+    writeEquinoxLocalMainSourcePointer(f.pointerPath, { sourceRoot: f.sourceRoot, sha: SHA }, { execFileImpl: f.execFileImpl }),
+    /parent is unsafe/u,
+  );
+  assert.deepEqual(await fs.readdir(outside), [], "no pointer or temporary file should appear beyond symlink parent");
+});
+
+test("Main pointer retains old pointer and removes staging when Windows ACL protection fails", async (t) => {
+  const f = await fixture(t);
+  await writeEquinoxLocalMainSourcePointer(f.pointerPath, { sourceRoot: f.sourceRoot, sha: SHA }, { execFileImpl: f.execFileImpl });
+  const before = await fs.readFile(f.pointerPath, "utf8");
+  await assert.rejects(
+    writeEquinoxLocalMainSourcePointer(f.pointerPath, { sourceRoot: f.sourceRoot, sha: SHA }, {
+      execFileImpl: f.execFileImpl,
+      platform: "win32",
+      env: { SystemRoot: String.raw`C:\Windows` },
+      protectWindowsAcl: async () => { throw new Error("Injected Windows ACL protection failure"); },
+      verifyWindowsAcl: async () => ({ safe: true }),
+    }),
+    /Injected Windows ACL protection failure/u,
+  );
+  assert.equal(await fs.readFile(f.pointerPath, "utf8"), before);
+  assert.deepEqual(await fs.readdir(path.dirname(f.pointerPath)), ["current-source.conf"], "failure cleans temp");
+});
+
+test("Main pointer rejects duplicate fields and incorrect SHA from authenticated file", async (t) => {
+  const f = await fixture(t);
+  await fs.mkdir(path.dirname(f.pointerPath), { recursive: true });
+  const body = "schemaVersion=1\nsourceRoot=" + f.sourceRoot + "\nsha=" + SHA + "\n";
+  await fs.writeFile(f.pointerPath, body + "sha=" + SHA + "\n", { mode: 0o600 });
+  await assert.rejects(
+    readEquinoxLocalMainSourcePointer(f.pointerPath, { execFileImpl: f.execFileImpl }),
+    /unsupported or duplicate fields/u,
+  );
+  await fs.writeFile(f.pointerPath, body.replace(SHA, "b".repeat(40)), { mode: 0o600 });
+  await assert.rejects(
+    readEquinoxLocalMainSourcePointer(f.pointerPath, { execFileImpl: f.execFileImpl }),
+    /SHA does not match its checkout/u,
+  );
+});

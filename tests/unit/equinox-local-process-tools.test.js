@@ -293,3 +293,128 @@ test("process start fails closed when process access is disabled", async () => {
   assert.match(result.content[0].text, /Terminal ve süreç erişimi Control Center'da kapalı/u);
   assert.equal(harness.calls.length, 0);
 });
+
+test("process tools retain exact readonly/global mutation contract and strict bounded Zod admission", () => {
+  const {registrations}=createHarness();
+  const expected=[
+    ["process_start",false,undefined],
+    ["process_list",true,undefined],
+    ["process_logs",true,undefined],
+    ["process_wait",true,undefined],
+    ["process_stop",false,["global"]],
+    ["port_status",true,undefined],
+  ];
+  for(const [name,readOnlyHint,mutationScopes] of expected){
+    const {config,options}=registrations.get(name);
+    assert.equal(config.annotations.readOnlyHint,readOnlyHint,name);
+    assert.equal(config.annotations.openWorldHint,name==="process_start",name);
+    assert.deepEqual(options.mutationScopes,mutationScopes,name);
+    assert.equal(options.projectAware,name==="process_start"?undefined:false,name);
+  }
+  const start=z.object(registrations.get("process_start").config.inputSchema);
+  const valid=start.parse({command:"npm",cwd:".",env:{SAFE_FLAG:"yes"},expected_ports:[3000]});
+  assert.deepEqual(valid.args,[]);
+  assert.equal(valid.startup_wait_ms,500);
+  assert.deepEqual(valid.expected_ports,[3000]);
+  for(const input of [
+    {command:""},{command:"x".repeat(501)},{command:"npm",args:Array(101).fill("x")},
+    {command:"npm",args:["x".repeat(2001)]},
+    {command:"npm",env:{"BAD-ENV":"bad"}},
+    {command:"npm",env:{BAD:"x".repeat(10001)}},
+    {command:"npm",expected_ports:[0]},
+    {command:"npm",expected_ports:[65536]},
+    {command:"npm",expected_ports:Array(17).fill(3000)},
+    {command:"npm",startup_wait_ms:5001},
+    {command:"npm",startup_wait_ms:-1},
+  ]) assert.equal(start.safeParse(input).success,false,JSON.stringify(input).slice(0,130));
+
+  const wait=z.object(registrations.get("process_wait").config.inputSchema);
+  assert.equal(wait.parse({process_id:"proc-a"}).wait_ms,30000);
+  assert.equal(wait.safeParse({process_id:"proc-a",wait_ms:120001}).success,false);
+  const logs=z.object(registrations.get("process_logs").config.inputSchema);
+  assert.equal(logs.safeParse({process_id:"proc-a",max_chars:160001}).success,false);
+  assert.equal(logs.safeParse({process_id:"proc-a",cursor:-1}).success,false);
+  const port=z.object(registrations.get("port_status").config.inputSchema);
+  assert.equal(port.parse({port:3000}).host,"127.0.0.1");
+  for(const invalid of [{port:80,host:"0.0.0.0"},{port:0},{port:65536},{port:80,timeout_ms:5001}]){
+    assert.equal(port.safeParse(invalid).success,false);
+  }
+});
+
+test("process start refuses unsafe access, refused project roots and non-directory paths before managed process creation", async()=>{
+  const seen=[];
+  const rejection=createHarness({
+    safeResolve:async cwd=>{seen.push(["resolve",cwd]);throw Error("selected Agent Access denies root")},
+    fsImpl:{stat:async()=>{throw Error("fs.stat must not run")}},
+  });
+  const input={command:"npm",args:["run","dev"],cwd:"../outside",expected_ports:[],startup_wait_ms:0};
+  const denied=await rejection.registrations.get("process_start").handler(input);
+  assert.equal(denied.isError,true);
+  assert.match(denied.content[0].text,/Agent Access denies root/u);
+  assert.deepEqual(seen,[["resolve","../outside"]]);
+  assert.equal(rejection.calls.length,0);
+
+  const nondirectory=createHarness({
+    safeResolve:async cwd=>{seen.push(["resolve",cwd]);return "/fixture/safe-file"},
+    fsImpl:{stat:async file=>{seen.push(["stat",file]);return {isDirectory:()=>false}}},
+  });
+  const file=await nondirectory.registrations.get("process_start").handler(input);
+  assert.equal(file.isError,true);
+  assert.match(file.content[0].text,/klasör değil/u);
+  assert.equal(nondirectory.calls.length,0);
+  assert.deepEqual(seen.slice(-2),[["resolve","../outside"],["stat","/fixture/safe-file"]]);
+});
+
+test("process wait and stop forward errors once and never perform an implicit stop or retry", async()=>{
+  const events=[];
+  const base={
+    async waitForExit(input){events.push(["wait",input]);throw Error("fixture wait rejected")},
+    snapshotOutput(){events.push(["snapshot"]);throw Error("snapshot must not run")},
+    async stop(input){events.push(["stop",input]);throw Error("fixture stop rejected")},
+    list(){return []},
+    findByPort(){return []},
+  };
+  const {registrations}=createHarness({processManager:base});
+  const wait=await registrations.get("process_wait").handler({
+    process_id:"proc-1",wait_ms:10,max_chars:100,strip_ansi:true,
+  });
+  assert.equal(wait.isError,true);
+  assert.match(wait.content[0].text,/fixture wait rejected/u);
+  assert.deepEqual(events,[["wait",{processId:"proc-1",waitMs:10}]]);
+  const stop=await registrations.get("process_stop").handler({process_id:"proc-1",force:true,remove:true});
+  assert.equal(stop.isError,true);
+  assert.match(stop.content[0].text,/fixture stop rejected/u);
+  assert.deepEqual(events.at(-1),["stop",{processId:"proc-1",force:true,remove:true}]);
+  assert.equal(events.filter(([event])=>event==="stop").length,1);
+});
+
+test("loopback port inspector uses pinned Unix lsof environment, treats no-listener exit as empty and never spawns on Windows",async()=>{
+  const calls=[];
+  const probeTcpPortImpl=async params=>{calls.push(["probe",params]);return {listening:false}};
+  const processManager={findByPort:port=>{calls.push(["managed",port]);return []}};
+  const execFileImpl=async(file,args,options)=>{
+    calls.push(["lsof",file,args,options]);
+    throw Object.assign(Error("fixture no listener"),{code:1});
+  };
+  const unix=createLocalPortInspector({platform:"darwin",probeTcpPortImpl,processManager,execFileImpl});
+  const noListener=await unix({host:"::1",port:4500,timeoutMs:250});
+  assert.equal(noListener.lsofError,null);
+  assert.deepEqual(noListener.listeners,[]);
+  assert.equal(noListener.suggestedUrl,"http://[::1]:4500/");
+  assert.deepEqual(calls[1],[
+    "lsof","/usr/sbin/lsof",["-nP","-iTCP:4500","-sTCP:LISTEN","-Fpcn"],
+    {timeout:5000,maxBuffer:1024*1024,env:{PATH:"/usr/sbin:/usr/bin:/bin",LC_ALL:"C"}},
+  ]);
+  calls.length=0;
+  const windows=createLocalPortInspector({
+    platform:"win32",probeTcpPortImpl,processManager,
+    execFileImpl:async()=>{throw Error("Windows must not spawn lsof")},
+  });
+  const observed=await windows({host:"127.0.0.1",port:4567,timeoutMs:300});
+  assert.equal(observed.lsofError,null);
+  assert.equal(observed.suggestedUrl,"http://127.0.0.1:4567/");
+  assert.equal(calls.some(([kind])=>kind==="lsof"),false);
+  const missing=createLocalPortInspector({platform:"darwin",probeTcpPortImpl,processManager});
+  const output=await missing({host:"localhost",port:4000,timeoutMs:1000});
+  assert.match(output.lsofError,/requires execFileImpl/u);
+});

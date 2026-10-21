@@ -56,6 +56,12 @@ test("CI retains full product validation while skipping only the explicit docs-o
   assert.doesNotMatch(job("macos-x64"), /run: npm test\n/u);
 });
 
+test("macOS ARM64 CI rejects production advisories and invalid npm package signatures", () => {
+  const arm = job("test");
+  assert.match(arm, /- name: Static checks\n\s+run: npm run check && npm audit --omit=dev --audit-level=moderate && npm audit signatures/u);
+  assert.doesNotMatch(arm, /continue-on-error:/u);
+});
+
 test("ARM64 package is built once on fast x64 Windows and exact-byte native consumers fan out in parallel", () => {
   const producer = job("windows-arm64-package-build");
   assert.match(producer, /runs-on: windows-latest/u);

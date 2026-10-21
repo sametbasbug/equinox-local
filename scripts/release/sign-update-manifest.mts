@@ -1,0 +1,401 @@
+import {
+  createHash,
+  createPrivateKey,
+  createPublicKey,
+  sign as signPayload,
+  type KeyObject,
+} from "node:crypto";
+import { fstatSync, readSync } from "node:fs";
+import fs from "node:fs/promises";
+import path from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
+
+import { hashFile } from "../lib/package-io.mjs";
+import { readBoundedNormalFile } from "../../src/equinox-local-safe-file.js";
+import {
+  canonicalUpdateManifestPayload,
+  EQUINOX_LOCAL_UPDATE_CHANNEL,
+  EQUINOX_LOCAL_UPDATE_SCHEMA_VERSION,
+  EQUINOX_LOCAL_SUPPORTED_UPDATE_TARGETS,
+  parseEquinoxVersion,
+  validateSignedUpdateManifest,
+} from "../../src/equinox-local-updater.js";
+
+const UPDATE_ORIGIN = "https://local.sametbasbug.dev";
+const UPDATE_PATH_PREFIX = "/downloads/updates/";
+const KEY_ID_PATTERN = /^[a-z0-9][a-z0-9._-]{0,63}$/u;
+const MAX_PRIVATE_KEY_BYTES = 16 * 1024;
+const WINDOWS_INSTALLER_TEMPLATE_SHA = "__EQUINOX_ZIP_HELPER_SHA256__";
+const WINDOWS_INSTALLER_TEMPLATE_BYTES = "__EQUINOX_ZIP_HELPER_BYTES__";
+
+type SigningKey = KeyObject | string | Buffer;
+type ManifestSignOptions = {
+  version: string; target: string; artifactPath: string; keyId: string;
+  privateKey: SigningKey; publishedAt?: string | undefined;
+};
+type KeyReadOptions = { repositoryRoot?: string; fsImpl?: typeof fs; uid?: number | null | undefined };
+type KeyDescriptorReadOptions = { uid?: number | null | undefined; fstatImpl?: typeof fstatSync; readImpl?: typeof readSync };
+type SignedBundleOptions = {
+  repositoryRoot: string; version: string; target: string; artifactPath: string;
+  privateKeyPath?: string | undefined; privateKey?: SigningKey | null; keyId: string;
+  outputDir: string; publishedAt?: string | undefined;
+};
+type BootstrapProjection = {
+  schemaVersion?: number; channel?: string; target?: string; version?: string;
+  artifact?: { url?: string; sha256?: string; bytes?: number };
+} | null;
+type SigningCliOptions = { version: string; target: string; artifact: string;
+  "key-id": string; "key-file": string; output: string };
+
+function inside(parent: string, child: string): boolean {
+  const relative = path.relative(parent, child);
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
+async function sha256File(filePath: string) {
+  const result = await hashFile(filePath, { suppressCloseErrors: true });
+  return Object.freeze({ bytes: result.bytes, sha256: result.sha256 });
+}
+
+async function writeOrVerifySharedPublicFile(filePath: string, data: string | Uint8Array, { label, maxBytes }: {label: string; maxBytes: number}) {
+  const payload = Buffer.isBuffer(data) ? data : Buffer.from(data);
+  if (payload.byteLength < 1 || payload.byteLength > maxBytes) {
+    throw new Error(`${label} size is outside the allowed range.`);
+  }
+  try {
+    await fs.writeFile(filePath, payload, { flag: "wx", mode: 0o644 });
+    return;
+  } catch (error) {
+    if (!(error instanceof Error && "code" in error && error.code === "EEXIST")) throw error;
+  }
+  const existing = await readBoundedNormalFile(filePath, {
+    minBytes: 1,
+    maxBytes,
+    label: `Existing ${label}`,
+  });
+  if (!Buffer.from(existing.data).equals(payload)) {
+    throw new Error(`${label} already exists with different contents.`);
+  }
+}
+
+export function updateArtifactUrl({ version, target }: {version: string; target: string}) {
+  parseEquinoxVersion(version);
+  if (!EQUINOX_LOCAL_SUPPORTED_UPDATE_TARGETS.includes(target as (typeof EQUINOX_LOCAL_SUPPORTED_UPDATE_TARGETS)[number])) {
+    throw new Error(`Unsupported Equinox Local update target: ${target}`);
+  }
+  const extension = target.startsWith("win32-") ? "zip" : "tar.gz";
+  return `${UPDATE_ORIGIN}${UPDATE_PATH_PREFIX}equinox-local-${version}-${target}.${extension}`;
+}
+
+export function readPrivateUpdateSigningKeyFromFd(fd: number, {
+  uid = typeof process.getuid === "function" ? process.getuid() : null,
+  fstatImpl = fstatSync,
+  readImpl = readSync,
+}: KeyDescriptorReadOptions = {}) {
+  if (!Number.isInteger(fd) || fd < 3 || fd > 1024) throw new Error("Update signing key file descriptor is invalid.");
+  const stat = fstatImpl(fd);
+  if (!stat.isFile()) throw new Error("Update signing private key descriptor must reference a normal file.");
+  if (!Number.isSafeInteger(stat.size) || stat.size < 1 || stat.size > MAX_PRIVATE_KEY_BYTES) {
+    throw new Error("Update signing private key size is outside the allowed range.");
+  }
+  if ((stat.mode & 0o777) !== 0o600) throw new Error("Update signing private key permissions must be 0600.");
+  if (Number.isInteger(uid) && Number.isInteger(stat.uid) && stat.uid !== uid) {
+    throw new Error("Update signing private key must be owned by the current user.");
+  }
+  const buffer = Buffer.allocUnsafe(MAX_PRIVATE_KEY_BYTES + 1);
+  let total = 0;
+  while (total < buffer.length) {
+    const bytesRead = readImpl(fd, buffer, total, buffer.length - total, total);
+    if (bytesRead === 0) break;
+    total += bytesRead;
+  }
+  if (total < 1 || total > MAX_PRIVATE_KEY_BYTES) throw new Error("Update signing private key size changed while being read.");
+  const privateKey = createPrivateKey(buffer.subarray(0, total));
+  if (privateKey.asymmetricKeyType !== "ed25519") throw new Error("Update signing key must be an Ed25519 private key.");
+  return privateKey;
+}
+
+export async function readPrivateUpdateSigningKey(privateKeyPath: string, {
+  repositoryRoot,
+  fsImpl = fs,
+  uid = typeof process.getuid === "function" ? process.getuid() : null,
+}: KeyReadOptions = {}) {
+  if (typeof privateKeyPath !== "string" || !path.isAbsolute(privateKeyPath)) {
+    throw new Error("Update signing key path must be absolute.");
+  }
+  const resolved = path.resolve(privateKeyPath);
+  if (repositoryRoot && inside(path.resolve(repositoryRoot), resolved)) {
+    throw new Error("Update signing private key must live outside the repository.");
+  }
+  const { data: pem, stat } = await readBoundedNormalFile(resolved, {
+    fsImpl,
+    minBytes: 1,
+    maxBytes: MAX_PRIVATE_KEY_BYTES,
+    encoding: "utf8",
+    label: "Update signing private key",
+  });
+  if ((stat.mode & 0o777) !== 0o600) {
+    throw new Error("Update signing private key permissions must be 0600.");
+  }
+  if (Number.isInteger(uid) && Number.isInteger(stat.uid) && stat.uid !== uid) {
+    throw new Error("Update signing private key must be owned by the current user.");
+  }
+  const privateKey = createPrivateKey(pem);
+  if (privateKey.asymmetricKeyType !== "ed25519") {
+    throw new Error("Update signing key must be an Ed25519 private key.");
+  }
+  return privateKey;
+}
+
+export async function createSignedUpdateManifest({
+  version,
+  target,
+  artifactPath,
+  keyId,
+  privateKey,
+  publishedAt = new Date().toISOString(),
+}: ManifestSignOptions = {} as ManifestSignOptions) {
+  parseEquinoxVersion(version);
+  if (!EQUINOX_LOCAL_SUPPORTED_UPDATE_TARGETS.includes(target as (typeof EQUINOX_LOCAL_SUPPORTED_UPDATE_TARGETS)[number])) {
+    throw new Error(`Unsupported Equinox Local update target: ${target}`);
+  }
+  if (typeof keyId !== "string" || !KEY_ID_PATTERN.test(keyId)) {
+    throw new Error("Update signing key id is invalid.");
+  }
+  const normalizedPublishedAt = new Date(publishedAt).toISOString();
+  if (normalizedPublishedAt === "Invalid Date") throw new Error("Update publishedAt is invalid.");
+  if (typeof artifactPath !== "string" || !path.isAbsolute(artifactPath)) {
+    throw new Error("Update artifact path must be absolute.");
+  }
+  const artifactStat = await fs.lstat(artifactPath);
+  if (!artifactStat.isFile() || artifactStat.isSymbolicLink()) {
+    throw new Error("Update artifact must be a normal file.");
+  }
+  const keyObject = typeof privateKey === "string" || Buffer.isBuffer(privateKey)
+    ? createPrivateKey(privateKey)
+    : privateKey;
+  if (!keyObject || keyObject.asymmetricKeyType !== "ed25519") {
+    throw new Error("An Ed25519 update signing private key is required.");
+  }
+
+  const digest = await sha256File(artifactPath);
+  const unsigned = Object.freeze({
+    schemaVersion: EQUINOX_LOCAL_UPDATE_SCHEMA_VERSION,
+    channel: EQUINOX_LOCAL_UPDATE_CHANNEL,
+    target,
+    version,
+    publishedAt: normalizedPublishedAt,
+    artifact: Object.freeze({
+      url: updateArtifactUrl({ version, target }),
+      sha256: digest.sha256,
+      bytes: digest.bytes,
+    }),
+  });
+  const signature = signPayload(
+    null,
+    Buffer.from(canonicalUpdateManifestPayload(unsigned), "utf8"),
+    keyObject,
+  ).toString("base64");
+  const manifest = Object.freeze({
+    ...unsigned,
+    signature: Object.freeze({
+      algorithm: "ed25519",
+      keyId,
+      value: signature,
+    }),
+  });
+  const publicKeyPem = createPublicKey(keyObject).export({ type: "spki", format: "pem" }).toString();
+
+  // Fail closed before anything is written: the exact runtime verifier must accept the output.
+  validateSignedUpdateManifest(manifest, {
+    publicKeys: { [keyId]: publicKeyPem },
+    target,
+  });
+
+  return Object.freeze({ manifest, publicKeyPem, ...digest });
+}
+
+export function renderBootstrapInstallManifest(manifest: BootstrapProjection) {
+  const artifact = manifest?.artifact;
+  if (
+    manifest?.schemaVersion !== EQUINOX_LOCAL_UPDATE_SCHEMA_VERSION ||
+    manifest?.channel !== EQUINOX_LOCAL_UPDATE_CHANNEL ||
+    !EQUINOX_LOCAL_SUPPORTED_UPDATE_TARGETS.includes(manifest?.target as (typeof EQUINOX_LOCAL_SUPPORTED_UPDATE_TARGETS)[number]) ||
+    typeof manifest?.version !== "string" ||
+    typeof artifact?.url !== "string" ||
+    typeof artifact?.sha256 !== "string" ||
+    !Number.isSafeInteger(artifact?.bytes)
+  ) {
+    throw new Error("A validated Equinox Local update manifest is required for bootstrap metadata.");
+  }
+  parseEquinoxVersion(manifest.version);
+  return [
+    `schemaVersion=${manifest.schemaVersion}`,
+    `channel=${manifest.channel}`,
+    `target=${manifest.target}`,
+    `version=${manifest.version}`,
+    `artifactUrl=${artifact.url}`,
+    `artifactSha256=${artifact.sha256}`,
+    `artifactBytes=${artifact.bytes}`,
+    "",
+  ].join("\n");
+}
+
+export async function writeSignedUpdateBundle({
+  repositoryRoot,
+  version,
+  target,
+  artifactPath,
+  privateKeyPath,
+  privateKey: suppliedPrivateKey = null,
+  keyId,
+  outputDir,
+  publishedAt,
+}: SignedBundleOptions = {} as SignedBundleOptions) {
+  const privateKey = suppliedPrivateKey ?? await readPrivateUpdateSigningKey(privateKeyPath as string, { repositoryRoot });
+  const result = await createSignedUpdateManifest({
+    version,
+    target,
+    artifactPath,
+    keyId,
+    privateKey,
+    publishedAt,
+  });
+  const resolvedOutput = path.resolve(outputDir);
+  await fs.mkdir(resolvedOutput, { recursive: true, mode: 0o700 });
+  const windows = target.startsWith("win32-");
+  const artifactName = `equinox-local-${version}-${target}.${windows ? "zip" : "tar.gz"}`;
+  const destinationArtifact = path.join(resolvedOutput, artifactName);
+  const manifestPath = path.join(resolvedOutput, `stable-${target}.json`);
+  const bootstrapManifestPath = path.join(resolvedOutput, `bootstrap-${target}.txt`);
+  const installerName = windows ? "install-equinox-local.ps1" : "install-equinox-local.sh";
+  const installerSourcePath = path.join(path.resolve(repositoryRoot), "scripts", installerName);
+  const installerPath = path.join(resolvedOutput, installerName);
+  const zipHelperSourcePath = windows ? path.join(path.resolve(repositoryRoot), "src", "equinox-local-windows-release-zip.ps1") : null;
+  const zipHelperPath = windows ? path.join(resolvedOutput, "equinox-local-windows-release-zip.ps1") : null;
+  const tempManifest = `${manifestPath}.part-${process.pid}`;
+  const tempBootstrapManifest = `${bootstrapManifestPath}.part-${process.pid}`;
+
+  const sourceStat = await fs.lstat(artifactPath);
+  if (!sourceStat.isFile() || sourceStat.isSymbolicLink()) throw new Error("Update artifact changed before bundle write.");
+  const installerSource = await readBoundedNormalFile(installerSourcePath, {
+    minBytes: 1,
+    maxBytes: 64 * 1024,
+    encoding: "utf8",
+    label: "Tracked Equinox Local public installer",
+  });
+  await fs.copyFile(artifactPath, destinationArtifact);
+  const copied = await sha256File(destinationArtifact);
+  if (copied.bytes !== result.bytes || copied.sha256 !== result.sha256) {
+    await fs.rm(destinationArtifact, { force: true });
+    throw new Error("Copied update artifact failed final SHA-256 verification.");
+  }
+  if (windows && zipHelperSourcePath !== null && zipHelperPath !== null) {
+    const zipHelperSource = await readBoundedNormalFile(zipHelperSourcePath, {
+      minBytes: 1,
+      maxBytes: 1024 * 1024,
+      label: "Tracked Windows ZIP helper",
+    });
+    await writeOrVerifySharedPublicFile(zipHelperPath, zipHelperSource.data, {
+      label: "Windows ZIP helper",
+      maxBytes: 1024 * 1024,
+    });
+    const helperDigest = Object.freeze({
+      bytes: zipHelperSource.data.byteLength,
+      sha256: createHash("sha256").update(zipHelperSource.data).digest("hex"),
+    });
+    let installerTemplate = installerSource.data;
+    if (!installerTemplate.includes(WINDOWS_INSTALLER_TEMPLATE_SHA) || !installerTemplate.includes(WINDOWS_INSTALLER_TEMPLATE_BYTES)) {
+      throw new Error("Windows installer template is missing ZIP helper pin placeholders.");
+    }
+    installerTemplate = installerTemplate
+      .replaceAll(WINDOWS_INSTALLER_TEMPLATE_SHA, helperDigest.sha256)
+      .replaceAll(WINDOWS_INSTALLER_TEMPLATE_BYTES, String(helperDigest.bytes));
+    await writeOrVerifySharedPublicFile(installerPath, installerTemplate, {
+      label: "Windows installer",
+      maxBytes: 64 * 1024,
+    });
+  } else {
+    await writeOrVerifySharedPublicFile(installerPath, installerSource.data, {
+      label: "Darwin installer",
+      maxBytes: 64 * 1024,
+    });
+  }
+  const installerDigest = await sha256File(installerPath);
+  try {
+    await fs.writeFile(tempBootstrapManifest, renderBootstrapInstallManifest(result.manifest), { flag: "wx", mode: 0o600 });
+    await fs.rename(tempBootstrapManifest, bootstrapManifestPath);
+    await fs.writeFile(tempManifest, `${JSON.stringify(result.manifest, null, 2)}\n`, { flag: "wx", mode: 0o600 });
+    await fs.rename(tempManifest, manifestPath);
+  } catch (error) {
+    await fs.rm(tempBootstrapManifest, { force: true }).catch(() => {});
+    await fs.rm(tempManifest, { force: true }).catch(() => {});
+    throw error;
+  }
+  return Object.freeze({
+    artifactPath: destinationArtifact,
+    manifestPath,
+    bootstrapManifestPath,
+    installerPath,
+    installerBytes: installerDigest.bytes,
+    installerSha256: installerDigest.sha256,
+    zipHelperPath,
+    publicKeyPem: result.publicKeyPem,
+    bytes: result.bytes,
+    sha256: result.sha256,
+  });
+}
+
+function parseCli(argv: string[]): SigningCliOptions {
+  // Prototypeless flag dictionary: --__proto__ remains visible to allowlist validation.
+  const values: Record<string, string> = Object.create(null) as Record<string, string>;
+  for (let index = 0; index < argv.length; index += 2) {
+    const flag = argv[index];
+    const value = argv[index + 1];
+    if (!flag?.startsWith("--") || value === undefined) throw new Error("Signing CLI expects --flag value pairs.");
+    const name = flag.slice(2);
+    if (Object.hasOwn(values, name)) throw new Error(`Duplicate signing argument: --${name}`);
+    values[name] = value;
+  }
+  const allowed = new Set(["version", "target", "artifact", "key-id", "key-file", "output"]);
+  for (const key of Object.keys(values)) {
+    if (!allowed.has(key)) throw new Error(`Unsupported signing argument: --${key}`);
+  }
+  for (const required of ["version", "target", "artifact", "key-id", "key-file", "output"]) {
+    if (!values[required]) throw new Error(`Missing required signing argument: --${required}`);
+  }
+  return values as SigningCliOptions;
+}
+
+const invokedPath = process.argv[1] ? pathToFileURL(path.resolve(process.argv[1])).href : null;
+if (invokedPath && import.meta.url === invokedPath) {
+  const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
+  Promise.resolve()
+    .then(async () => {
+      const args = parseCli(process.argv.slice(2));
+      const result = await writeSignedUpdateBundle({
+        repositoryRoot,
+        version: args.version,
+        target: args.target,
+        artifactPath: path.resolve(args.artifact),
+        privateKeyPath: path.resolve(args["key-file"]),
+        keyId: args["key-id"],
+        outputDir: path.resolve(args.output),
+      });
+      process.stdout.write(`${JSON.stringify({
+        artifactPath: result.artifactPath,
+        manifestPath: result.manifestPath,
+        bootstrapManifestPath: result.bootstrapManifestPath,
+        installerPath: result.installerPath,
+        installerBytes: result.installerBytes,
+        installerSha256: result.installerSha256,
+        bytes: result.bytes,
+        sha256: result.sha256,
+        publicKeyPem: result.publicKeyPem,
+      }, null, 2)}\n`);
+    })
+    .catch((error) => {
+      process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+      process.exitCode = 1;
+    });
+}

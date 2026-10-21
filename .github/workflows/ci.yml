@@ -67,7 +67,13 @@ jobs:
 
       - parallel:
           - name: Static checks
-            run: npm run check
+            run: npm run check && npm audit --omit=dev --audit-level=moderate && npm audit signatures
+
+          - name: Strict TypeScript and committed runtime parity
+            run: npm run typecheck && npm run verify:typed-runtime && npm run verify:typed-browser && npm run verify:typed-tooling
+
+          - name: Staged TypeScript Browser MV3 and VM acceptance
+            run: npm run verify:staged-browser
 
           - name: Verify ARM64 host
             run: test "$(node -p process.platform)-$(node -p process.arch)" = "darwin-arm64"
@@ -133,6 +139,12 @@ jobs:
           - name: Static checks
             run: npm run check
 
+          - name: Strict TypeScript and committed runtime parity
+            run: npm run typecheck && npm run verify:typed-runtime && npm run verify:typed-browser && npm run verify:typed-tooling
+
+          - name: Staged TypeScript Browser MV3 and VM acceptance
+            run: npm run verify:staged-browser
+
           - name: Native Stable-to-Main pointer and rollback acceptance
             run: node --test tests/release/equinox-local-stable-main-native-fs-acceptance.test.js
 
@@ -157,6 +169,9 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Strict TypeScript and committed runtime parity
+        run: npm run typecheck && npm run verify:typed-runtime && npm run verify:typed-browser && npm run verify:typed-tooling
 
       - name: Windows browser PDF text extraction smoke
         run: node --test tests/browser/browser-pdf-text.test.js
@@ -687,6 +702,9 @@ jobs:
 
       - name: Install dependencies
         run: npm ci --prefer-offline --no-audit --no-fund
+
+      - name: ARM64 strict TypeScript and runtime parity
+        run: npm run typecheck && npm run verify:typed-runtime && npm run verify:typed-browser && npm run verify:typed-tooling
 
       - name: Native CI input success and failure propagation smoke
         shell: pwsh

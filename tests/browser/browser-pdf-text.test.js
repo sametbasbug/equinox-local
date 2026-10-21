@@ -104,3 +104,165 @@ test("page text normalization is bounded without executing PDF content", () => {
     { str: "def", hasEOL: false },
   ], 7), { text: "ab\nc\nde", truncated: true });
 });
+
+test("browser PDF admission rejects non-Buffer, short, bad-signature and oversized content before pdfjs initialization", async () => {
+  let initialization = 0;
+  const getDocumentImpl = () => { initialization++; throw Error("parser should not initialize"); };
+  for (const buffer of [null,undefined,"not a Buffer",new Uint8Array(Buffer.from("%PDF-1.4")),Buffer.alloc(0),Buffer.from("PDF-")]) {
+    await assert.rejects(extractBrowserPdfText(buffer,{getDocumentImpl}),/requires a Buffer|parsing limit/u);
+  }
+  for (const buffer of [Buffer.from("wrong header"),Buffer.concat([Buffer.alloc(1025,32),Buffer.from("%PDF-")])]) {
+    await assert.rejects(extractBrowserPdfText(buffer,{getDocumentImpl}),/valid PDF header/u);
+  }
+  await assert.rejects(
+    extractBrowserPdfText(Buffer.from("%PDF-1.4\nfixture"),{maxBytes:5,getDocumentImpl}),
+    /parsing limit/u,
+  );
+  await assert.rejects(
+    extractBrowserPdfText(Buffer.concat([Buffer.from("%PDF-"),Buffer.alloc(MAX_BROWSER_PDF_BYTES)]),{maxBytes:Infinity,getDocumentImpl}),
+    /parsing limit/u,
+  );
+  assert.equal(initialization,0);
+});
+
+test("browser PDF parser uses only bounded local/no-worker pdfjs flags, applies total and per-page caps, and cleans processed pages", async () => {
+  const calls=[];
+  const buffer=Buffer.from("%PDF-1.4\nfixture-only");
+  const getDocumentImpl=options=>{
+    calls.push(["open",{...options,data:Array.from(options.data)}]);
+    return {
+      promise:Promise.resolve({
+        numPages:4,
+        getPage:async number=>{
+          calls.push(["getPage",number]);
+          return {
+            getTextContent:async opts=>{
+              calls.push(["getTextContent",number,opts]);
+              return {items:[{str:"abcdef\r\nghijk",hasEOL:true}]};
+            },
+            cleanup:()=>calls.push(["cleanup",number]),
+          };
+        },
+      }),
+      destroy:async()=>{calls.push(["destroy"]);},
+    };
+  };
+  const result=await extractBrowserPdfText(buffer,{
+    maxBytes:64,maxPages:2,maxChars:10,maxPageChars:7,getDocumentImpl,
+  });
+  assert.deepEqual(result,{
+    parser:"pdfjs-dist",
+    pageCount:4,
+    pages:[{pageNumber:1,text:"abcdef\n"},{pageNumber:2,text:"abc"}],
+    truncated:true,
+    textChars:10,
+  });
+  const flags=calls[0][1];
+  assert.deepEqual(flags,{
+    data:Array.from(new Uint8Array(buffer)),
+    disableWorker:true,disableFontFace:true,isEvalSupported:false,
+    useSystemFonts:false,verbosity:0,
+  });
+  assert.deepEqual(calls.slice(1),[
+    ["getPage",1],
+    ["getTextContent",1,{disableNormalization:false}],
+    ["cleanup",1],
+    ["getPage",2],
+    ["getTextContent",2,{disableNormalization:false}],
+    ["cleanup",2],
+    ["destroy"],
+  ]);
+});
+
+test("browser PDF failures for missing pages, corrupt content or cleanup propagate after task destruction", async () => {
+  const buffer=Buffer.from("%PDF-1.4\nfixture");
+  for (const kind of ["no-document","no-pages","missing-getPage","missing-page","missing-getTextContent","text-failure","page-cleanup-failure"]) {
+    const events=[];
+    const textFailure=Error("mock damaged text");
+    const cleanupFailure=Error("mock page cleanup failed");
+    const getDocumentImpl=()=>({
+      promise:Promise.resolve(kind==="no-document"?null:
+        kind==="no-pages"?{numPages:0,getPage:async()=>null}:
+        kind==="missing-getPage"?{numPages:1}:
+        {
+          numPages:1,
+          getPage:async number=>{
+            events.push(["getPage",number]);
+            return kind==="missing-page"?null:
+              kind==="missing-getTextContent"?{}:{
+                getTextContent:async()=>{
+                  events.push(["text"]);
+                  if(kind==="text-failure")throw textFailure;
+                  return {items:[{str:"safe"}]};
+                },
+                cleanup:()=>{
+                  events.push(["cleanup"]);
+                  if(kind==="page-cleanup-failure")throw cleanupFailure;
+                },
+              };
+          },
+        }),
+      destroy:async()=>{events.push(["destroy"]);},
+    });
+    await assert.rejects(
+      extractBrowserPdfText(buffer,{getDocumentImpl}),
+      e=> kind==="text-failure"?e===textFailure:
+        kind==="page-cleanup-failure"?e===cleanupFailure:
+        /could not read any pages|could not read page 1/u.test(e.message),
+      kind,
+    );
+    assert.equal(events.filter(([event])=>event==="destroy").length,1,kind);
+    if(kind==="text-failure")assert.deepEqual(events,[["getPage",1],["text"],["destroy"]]);
+    if(kind==="page-cleanup-failure")assert.deepEqual(events,[["getPage",1],["text"],["cleanup"],["destroy"]]);
+  }
+});
+
+test("browser PDF skips malformed text items, strips null characters and caps malicious long page text without running it", async () => {
+  const textItems=[
+    null,{},5,"untrusted",{str:"a\u0000b\r\nc",hasEOL:true},
+    {str:"x".repeat(40),hasEOL:true},
+    {str:"tail"},
+  ];
+  assert.deepEqual(__test.boundedPageText(textItems,8),{text:"ab\nc\nxxx",truncated:true});
+  assert.deepEqual(__test.boundedPageText(textItems,0),{text:"",truncated:true});
+  const events=[];
+  const result=await extractBrowserPdfText(Buffer.from("%PDF-1.4\nmock"),{
+    maxPages:10,maxChars:8,maxPageChars:8,
+    getDocumentImpl:()=>({
+      promise:Promise.resolve({
+        numPages:2,
+        getPage:async number=>{
+          events.push(["page",number]);
+          return {getTextContent:async()=>({items:textItems}),cleanup:()=>events.push(["cleanup",number])};
+        },
+      }),
+      destroy:async()=>events.push(["destroy"]),
+    }),
+  });
+  assert.deepEqual(result.pages,[{pageNumber:1,text:"ab\nc\nxxx"}]);
+  assert.equal(result.truncated,true);
+  assert.equal(result.textChars,8);
+  assert.deepEqual(events,[["page",1],["cleanup",1],["destroy"]]);
+});
+
+test("browser PDF suppresses loading-task destroy failure without hiding the original parse result or error", async () => {
+  const buffer=Buffer.from("%PDF-1.4\nfixture");
+  for (const outcome of ["success","failed-document"]) {
+    let destroyCalls=0;
+    const getDocumentImpl=()=>({
+      promise:outcome==="success"?Promise.resolve({
+        numPages:1,
+        getPage:async()=>({getTextContent:async()=>({items:[{str:"retained"}]})}),
+      }):Promise.reject(Error("original parse failure")),
+      destroy:async()=>{destroyCalls++;throw Error("destroy error must be suppressed");},
+    });
+    if(outcome==="success"){
+      const result=await extractBrowserPdfText(buffer,{getDocumentImpl});
+      assert.deepEqual(result.pages,[{pageNumber:1,text:"retained"}]);
+      assert.equal(result.truncated,false);
+    }else{
+      await assert.rejects(extractBrowserPdfText(buffer,{getDocumentImpl}),/original parse failure/u);
+    }
+    assert.equal(destroyCalls,1);
+  }
+});

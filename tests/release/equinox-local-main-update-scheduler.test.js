@@ -11,6 +11,7 @@ import {
   cleanupEquinoxLocalMainUpdateWorkerOwnership,
   inspectEquinoxLocalMainUpdateWorkerOwnership,
   inspectWindowsMainUpdateWorkerProcess,
+  inspectWindowsOwnedWpfProcess,
   mainUpdateWorkerEnvironment,
   parseWindowsMainUpdateWorkerOwnership,
   scheduleEquinoxLocalMainUpdateWorker,
@@ -363,4 +364,136 @@ test("worker ownership inspection distinguishes a loaded running job from stale 
   assert.equal(stale.loaded, true); assert.equal(stale.running, false);
   const missing = await inspectEquinoxLocalMainUpdateWorkerOwnership({ transactionId: TX, uid: 501, execFileImpl: async () => { throw new Error("not found"); } });
   assert.equal(missing.loaded, false); assert.equal(missing.running, false);
+});
+
+test("Windows handoff rejects a symlink worker before contacting the native shell", async () => {
+  let handoffCalled = false;
+  await assert.rejects(
+    scheduleEquinoxLocalMainUpdateWorker({
+      transactionId: TX,
+      sourceRoot: "C:\\Equinox\\sources\\old",
+      transactionRoot: "C:\\Equinox\\state",
+      workerPath: "C:\\Equinox\\sources\\new\\src\\equinox-local-main-update-worker.js",
+      platform: "win32",
+      fsImpl: { lstat: async () => ({ isFile: () => true, isSymbolicLink: () => true }) },
+      requestWindowsHandoffImpl: async () => { handoffCalled = true; return { requested: true }; },
+    }), /worker executable\/source is unsafe/u,
+  );
+  assert.equal(handoffCalled, false);
+});
+
+test("Windows native worker helper never treats an unknown process or failed inspection as authenticated", async () => {
+  const ownership = {
+    schemaVersion: 1, transactionId: TX, pid: 4242,
+    startTimeUtcTicks: "638953728000000000",
+    token: "b".repeat(64), nodePath: "C:\\Equinox\\runtime\\node.exe",
+  };
+  const helper = "C:\\Equinox\\runtime\\trusted-helper.exe";
+  let calls = 0;
+  const unknown = await inspectWindowsMainUpdateWorkerProcess(ownership, {
+    nativeHelperPath: helper,
+    execFileImpl: async (command, args) => {
+      assert.equal(command, helper);
+      assert.deepEqual(args, ["--inspect-process"]);
+      calls += 1;
+      return { stdout: "unknown" };
+    },
+  });
+  assert.deepEqual(unknown, { running: false, stale: false, uncertain: true });
+  assert.equal(calls, 1);
+
+  await assert.rejects(inspectWindowsMainUpdateWorkerProcess(ownership, {
+    nativeHelperPath: helper,
+    execFileImpl: async () => {
+      calls += 1;
+      throw Object.assign(new Error("native identity helper failed"), { code: "ETIMEDOUT" });
+    },
+  }), /inspection failed.*timeout=true/u);
+  assert.equal(calls, 2, "native helper errors must never silently retry or authenticate a worker");
+});
+
+test("macOS scheduler refuses a symlinked handoff directory before launching a job", async (t) => {
+  const root = await fs.mkdtemp(path.join(await fs.realpath(os.tmpdir()), "equinox-scheduler-link-"));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const sourceRoot = path.join(root, "source");
+  const stateRoot = path.join(root, "state");
+  const foreign = path.join(root, "foreign");
+  const nodePath = path.join(root, "node");
+  const workerPath = path.join(sourceRoot, "worker.js");
+  await fs.mkdir(sourceRoot);
+  await fs.mkdir(stateRoot);
+  await fs.mkdir(foreign);
+  await fs.writeFile(nodePath, "node");
+  await fs.writeFile(workerPath, "worker");
+  await fs.symlink(foreign, path.join(stateRoot, "handoff"), "dir");
+  await assert.rejects(
+    scheduleEquinoxLocalMainUpdateWorker({
+      transactionId: TX, sourceRoot, transactionRoot: stateRoot, nodePath, workerPath, uid: 501,
+      execFileImpl: async () => assert.fail("foreign symlink handoff must not reach launchctl"),
+    }), /handoff directory is unsafe/u,
+  );
+  assert.deepEqual(await fs.readdir(foreign), []);
+});
+
+
+test("signed native WPF witness verifies exact process identity without granting native update authority", async () => {
+  const nativeHelperPath = String.raw`C:\owned\release\runtime\job\equinox-local-job-object-helper.exe`;
+  const identity = { pid: 1425, startTimeUtcTicks: "638953728000000000" };
+  const values = [];
+  const env = { SystemRoot: String.raw`C:\Windows`, WINDIR: String.raw`C:\Windows`, USERPROFILE: String.raw`C:\Users\Test`,
+    OPENAI_API_KEY: "private", GITHUB_TOKEN: "private", NODE_OPTIONS: "--import bad" };
+  const inspect = (output) => inspectWindowsOwnedWpfProcess(identity, { nativeHelperPath, sourceEnv: env,
+    execFileImpl: async (command, args, options) => {
+      values.push([command, args, options]);
+      return {stdout: output};
+    } });
+  assert.deepEqual(await inspect("running"), { running:true, stale:false, uncertain:false });
+  assert.deepEqual(await inspect("missing"), { running:false, stale:true, uncertain:false });
+  assert.deepEqual(await inspect("mismatch"), { running:false, stale:true, uncertain:false });
+  for (const forged of ["unknown", "running-almost", "TRUE", "{\"running\":true}", ""]) {
+    assert.deepEqual(await inspect(forged), { running:false, stale:false, uncertain:true });
+  }
+  assert.equal(values[0][0],nativeHelperPath);
+  assert.deepEqual(values[0][1],["--inspect-owned-wpf"]);
+  assert.equal(values[0][2].timeout,5000);
+  assert.equal(values[0][2].windowsHide,true);
+  assert.equal(values[0][2].env.EQUINOX_LOCAL_CHECK_WPF_PID,"1425");
+  assert.equal(values[0][2].env.EQUINOX_LOCAL_CHECK_WPF_TICKS,identity.startTimeUtcTicks);
+  for (const forbidden of ["OPENAI_API_KEY","GITHUB_TOKEN","NODE_OPTIONS","EQUINOX_LOCAL_CHECK_WPF_EXE"]) {
+    assert.equal(values[0][2].env[forbidden],undefined);
+  }
+  assert.deepEqual(Object.keys(values[0][2].env).sort(),
+    ["SystemRoot","WINDIR","USERPROFILE","EQUINOX_LOCAL_CHECK_WPF_PID","EQUINOX_LOCAL_CHECK_WPF_TICKS"].sort());
+  for (const wrong of [null, {}, {pid: 0,startTimeUtcTicks:identity.startTimeUtcTicks},
+    {pid: 1425,startTimeUtcTicks:"bad"},{...identity, executable:"C:\\malicious.exe"},
+    {pid: 0xffffffff+1,startTimeUtcTicks:identity.startTimeUtcTicks}]) {
+    await assert.rejects(inspectWindowsOwnedWpfProcess(wrong, {nativeHelperPath,
+      execFileImpl: async () => assert.fail("invalid identity reached OS witness")}), /exact PID and process creation time/u);
+  }
+  await assert.rejects(inspectWindowsOwnedWpfProcess(identity, {nativeHelperPath:String.raw`C:\attacker\helper.exe`,
+    execFileImpl:async()=>assert.fail("invalid native helper reached OS")}), /validated native release helper/u);
+  await assert.rejects(inspectWindowsOwnedWpfProcess(identity, {nativeHelperPath,
+    execFileImpl: async () => { throw new Error("GITHUB_TOKEN=secret; C:\\private\\user"); }}),
+    (error) => !error.message.includes("secret") && !error.message.includes("private") && /unverified/u.test(error.message));
+});
+
+test("native WPF witness source binds OS current-logon SID/LUID and physical process creation identity", async () => {
+  const text = await fs.readFile(new URL("../../native/windows/equinox-local-job-object-helper.cpp",import.meta.url),"utf8");
+  assert.match(text,/--inspect-owned-wpf/u);
+  assert.match(text,/SHGetKnownFolderPath\(FOLDERID_LocalAppData/u);
+  assert.match(text,/GetTokenInformation\(shellToken, TokenStatistics/u);
+  assert.match(text,/EqualSid\(/u);
+  assert.match(text,/shellSession != ownSession/u);
+  assert.match(text,/GetProcessTimes\(shell/u);
+  // The opened WPF handle must grant SYNCHRONIZE or the real OS wait returns
+  // WAIT_FAILED even for a living shell, hiding a valid owner as unknown.
+  assert.match(text,/OpenProcess\(PROCESS_QUERY_LIMITED_INFORMATION \| SYNCHRONIZE, FALSE/u);
+  // Other Job Object modes intentionally use terminate rights; the read-only
+  // WPF witness must not acquire them.
+  const witness = text.slice(text.indexOf("int InspectOwnedWpfProcess()"), text.indexOf("std::string EscapeJson"));
+  assert.doesNotMatch(witness,/OpenProcess\(PROCESS_ALL_ACCESS|OpenProcess\(PROCESS_TERMINATE/u);
+  assert.match(text,/firstWait != WAIT_TIMEOUT\) return finish\("unknown"\)/u);
+  assert.match(text,/finalWait == WAIT_TIMEOUT \? "running"/u);
+  assert.match(text,/WaitForSingleObject\(shell, 0\)/u);
+  assert.doesNotMatch(text,/EQUINOX_LOCAL_CHECK_WPF_EXE/u);
 });

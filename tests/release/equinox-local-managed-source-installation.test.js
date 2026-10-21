@@ -202,3 +202,63 @@ test("signed Stable ignores leftover incomplete Main toolchain but enrolled Main
     baseInstallation: original, platform: "darwin", arch: "arm64", homeDir: home, env: {},
   }), /Managed product-owned toolchain is incomplete/u);
 });
+
+test("Main native-backed resolver rejects missing or mismatched owned release path before Main enrollment", async (t) => {
+  const home = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "equinox-native-bootstrap-identity-")));
+  t.after(() => fs.rm(home, { recursive: true, force: true }));
+  const installRoot = path.join(home, "Library", "Application Support", "Equinox Local");
+  const paths = equinoxLocalManagedSourcePaths({platform:"darwin",arch:"arm64",homeDir:home,env:{}});
+  await fs.mkdir(paths.mainTransactionRoot,{recursive:true,mode:0o700});
+  await fs.writeFile(paths.installStampPath,JSON.stringify({
+    schemaVersion:1,channel:"main",repository:"sametbasbug/equinox-local",branch:"main",bootstrapSha:SHA,
+  })+"\n",{mode:0o600});
+  const stampBefore=await fs.readFile(paths.installStampPath);
+  const releaseDir=path.join(installRoot,"releases","5.2.0");
+  let pointerReads=0,nativeReads=0;
+  const options={
+    platform:"darwin",arch:"arm64",homeDir:home,env:{},
+    readPointerImpl:async()=>{pointerReads++;return{sourceRoot:path.join(paths.mainTransactionRoot,"sources",SHA),sha:SHA}},
+    readNativePointerImpl:async()=>{nativeReads++;return{sourceSha:SHA,target:"darwin-arm64",releaseDir}},
+  };
+  for(const baseInstallation of [
+    {...base(installRoot),mainNativeSha:SHA,releaseDir:undefined},
+    {...base(installRoot),mainNativeSha:SHA,releaseDir:"/foreign/release"},
+  ]) {
+    await assert.rejects(resolveEquinoxLocalManagedSourceInstallation({
+      ...options,baseInstallation,
+    }),/native runtime does not match the authenticated native-store pointer/u);
+  }
+  assert.equal(pointerReads,2);
+  assert.equal(nativeReads,2);
+  assert.deepEqual(await fs.readFile(paths.installStampPath),stampBefore);
+  assert.equal((await fs.lstat(paths.mainTransactionRoot)).isDirectory(),true);
+});
+
+test("enrolled Main rejects symlinked product Git while preserving the signed Stable state", async(t)=>{
+  const home=await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(),"equinox-source-toolchain-symlink-")));
+  t.after(()=>fs.rm(home,{recursive:true,force:true}));
+  const installRoot=path.join(home,"Library","Application Support","Equinox Local");
+  const paths=equinoxLocalManagedSourcePaths({platform:"darwin",arch:"arm64",homeDir:home,env:{}});
+  const managedGit=path.join(installRoot,"runtime","toolchain","git","2.53.0-4","darwin-arm64","bin","git");
+  const managedNode=path.join(installRoot,"runtime","toolchain","node","26.12.0","darwin-arm64","bin","node");
+  const managedNpm=path.join(installRoot,"runtime","toolchain","node","26.12.0","darwin-arm64","lib","node_modules","npm","bin","npm-cli.js");
+  for(const executable of [managedGit,managedNode,managedNpm]) await fs.mkdir(path.dirname(executable),{recursive:true});
+  const foreign=path.join(home,"foreign-git");
+  await fs.writeFile(foreign,"foreign executable",{mode:0o700});
+  await fs.symlink(foreign,managedGit);
+  await fs.writeFile(managedNode,"owned node",{mode:0o700});
+  await fs.writeFile(managedNpm,"owned npm",{mode:0o600});
+  await fs.mkdir(paths.mainTransactionRoot,{recursive:true,mode:0o700});
+  await fs.writeFile(paths.installStampPath,JSON.stringify({
+    schemaVersion:1,channel:"main",repository:"sametbasbug/equinox-local",branch:"main",bootstrapSha:SHA,
+  })+"\n",{mode:0o600});
+  let attemptedPointer=false;
+  await assert.rejects(resolveEquinoxLocalManagedSourceInstallation({
+    baseInstallation:base(installRoot),platform:"darwin",arch:"arm64",homeDir:home,env:{},
+    readPointerImpl:async()=>{attemptedPointer=true;return {sourceRoot:"/foreign",sha:SHA}},
+  }),/Managed Git executable is unsafe/u);
+  assert.equal(attemptedPointer,false);
+  assert.equal((await fs.lstat(managedGit)).isSymbolicLink(),true);
+  assert.equal(await fs.readFile(foreign,"utf8"),"foreign executable");
+  assert.equal(JSON.parse(await fs.readFile(paths.installStampPath,"utf8")).bootstrapSha,SHA);
+});

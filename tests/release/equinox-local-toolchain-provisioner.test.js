@@ -353,3 +353,52 @@ test("M8 provisioner rejects an incomplete pinned macOS Git before falsely accep
     execFileImpl: fakeExec,
   }), /absolute symbolic link|unsafe/u);
 });
+
+test("M8 reused macOS Git refuses a foreign HTTPS helper symlink without redownloading or changing the installed component",async(t)=>{
+  const f=await createFixture(t);
+  const install=await provisionEquinoxLocalToolchain({
+    runtimeRoot:f.runtimeRoot,target:"darwin-arm64",platform:"darwin",
+    downloadImpl:async(_artifact,destination)=>fs.writeFile(destination,"archive"),
+    extractComponentImpl:fakeExtract,execFileImpl:fakeExec,
+  });
+  const helper=path.join(install.contract.git.root,"libexec","git-core","git-remote-https");
+  const foreign=path.join(f.base,"foreign-https");
+  await fs.writeFile(foreign,"do not execute or read foreign helper\n",{mode:0o700});
+  await fs.unlink(helper);
+  await fs.symlink(foreign,helper);
+  const stamp=path.join(install.contract.git.root,".equinox-toolchain-component.json");
+  const originalStamp=await fs.readFile(stamp);
+  let downloaded=false;
+  await assert.rejects(provisionEquinoxLocalToolchain({
+    runtimeRoot:f.runtimeRoot,target:"darwin-arm64",platform:"darwin",
+    downloadImpl:async()=>{downloaded=true;throw Error("not expected");},
+    execFileImpl:fakeExec,
+  }),/absolute symbolic link|HTTPS helper escaped its pinned distribution/u);
+  assert.equal(downloaded,false);
+  assert.equal((await fs.lstat(helper)).isSymbolicLink(),true);
+  assert.deepEqual(await fs.readFile(foreign),Buffer.from("do not execute or read foreign helper\n"));
+  assert.deepEqual(await fs.readFile(stamp),originalStamp);
+});
+
+test("M8 Windows provisioner refuses a symlinked owned ZIP helper before touching runtime root",async()=>{
+  const runtimeRoot="C:\\Users\\fixture\\Equinox Local\\runtime";
+  const helper="C:\\Users\\fixture\\equinox-local-windows-release-zip.ps1";
+  const attempted=[];
+  const fsImpl=Object.create(fs);
+  fsImpl.lstat=async candidate=>{
+    attempted.push(["lstat",candidate]);
+    if(candidate===helper)return {
+      isFile:()=>false,isSymbolicLink:()=>true,size:32,
+    };
+    throw Error("Must not inspect or create another path before rejecting helper: "+candidate);
+  };
+  fsImpl.mkdir=async candidate=>{
+    attempted.push(["mkdir",candidate]);
+    throw Error("No runtime directory may be created before helper validation");
+  };
+  await assert.rejects(provisionEquinoxLocalToolchain({
+    runtimeRoot,target:"win32-x64",platform:"win32",fsImpl,
+    windowsZipHelperPath:helper,
+  }),/must be a normal file/u);
+  assert.deepEqual(attempted,[["lstat",helper]]);
+});

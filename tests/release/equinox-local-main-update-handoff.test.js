@@ -220,3 +220,84 @@ test("journaled A/B handoff refuses partial milestone callbacks before native mu
   }), /requires every verified milestone/u);
   assert.deepEqual(f.calls.map(([event]) => event), []);
 });
+
+test("native integration must re-check HEALTHY B; a reclaimed status port rolls back instead of committing", async () => {
+  const fixture = engineFixture();
+  const events = [];
+  let checks = 0;
+  const outcome = await runEquinoxLocalMainUpdateHandoff({
+    engine: fixture.engine, transactionId: fixture.receipt.transactionId,
+    nativeLifecycle: {
+      activate: async () => events.push("activate B"),
+      rollback: async () => events.push("restore A"),
+      commit: async () => assert.fail("unhealthy B must not commit native pointer"),
+      verifyIntegration: async () => { events.push("verify B shell and host"); return true; },
+    },
+    restartRuntime: async ({rollback}) => events.push(rollback ? "restart A" : "restart B"),
+    verifyRuntime: async ({rollback}) => {
+      if (rollback) { events.push("healthy A"); return true; }
+      checks++;
+      events.push(checks === 1 ? "initial healthy B" : "B lost HEALTHY");
+      return checks === 1;
+    },
+  });
+  assert.equal(outcome.status, "rolled_back");
+  assert.match(outcome.targetError.message, /lost exact-source health/u);
+  assert.deepEqual(events, [
+    "activate B", "restart B", "initial healthy B", "verify B shell and host",
+    "B lost HEALTHY", "restore A", "restart A", "healthy A",
+  ]);
+  assert.equal(fixture.calls.some(([name]) => name === "success"), false);
+  assert.deepEqual(fixture.calls.map(([name]) => name),
+    ["native_switched", "activate", "rollback", "native_restored", "rollback_success", "release"]);
+});
+
+test("terminal B receipt plus native cleanup failure never triggers destructive rollback", async () => {
+  const fixture = engineFixture();
+  const events = [];
+  const journal = {
+    journaledAB: true,
+    activate: async () => events.push("native B"),
+    rollback: async () => assert.fail("terminal B must never rollback"),
+    commit: async () => events.push("native B commit"),
+    recordRestarted: async () => events.push("restarted B"),
+    recordHealthy: async () => events.push("healthy B"),
+    recordRollbackHealthy: async () => assert.fail("no rollback"),
+    finalizeCommitted: async () => { throw new Error("cannot remove A backup"); },
+    finalizeRolledBack: async () => assert.fail("no rollback"),
+  };
+  await assert.rejects(runEquinoxLocalMainUpdateHandoff({
+    engine: fixture.engine, transactionId: fixture.receipt.transactionId,
+    nativeLifecycle: journal,
+    restartRuntime: async () => events.push("restart B"),
+    verifyRuntime: async () => true,
+  }), (error) => {
+    assert.equal(error.terminalReceipt, true);
+    assert.match(error.message, /cleanup remains pending/u);
+    return true;
+  });
+  assert.deepEqual(events, ["native B", "restart B", "restarted B", "healthy B", "native B commit"]);
+  assert.deepEqual(fixture.calls.map(([name]) => name),
+    ["native_switched", "activate", "success"]);
+  assert.equal(fixture.calls.some(([name]) => name === "rollback" || name === "rollback_failed"), false);
+});
+
+test("missing admitted source root rejects B success and keeps owned A rollback explicit", async () => {
+  const fixture = engineFixture();
+  const engine = {...fixture.engine,
+    activatePromotion: async (id) => {
+      fixture.calls.push(["activate", id]);
+      return {...fixture.receipt, targetSourceRoot: null};
+    },
+  };
+  const seen = [];
+  const result = await runEquinoxLocalMainUpdateHandoff({
+    engine, transactionId: fixture.receipt.transactionId,
+    restartRuntime: async ({sha,rollback}) => seen.push({sha,rollback}),
+    verifyRuntime: async () => true,
+  });
+  assert.equal(result.status, "rolled_back");
+  assert.match(result.targetError.message, /target source root is missing/u);
+  assert.deepEqual(seen, [{sha:fixture.receipt.rollbackSha,rollback:true}]);
+  assert.equal(fixture.calls.some(([name]) => name === "success"),false);
+});

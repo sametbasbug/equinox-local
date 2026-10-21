@@ -1,0 +1,128 @@
+import { execFile as execFileCallback } from "node:child_process";
+import { randomBytes } from "node:crypto";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { promisify } from "node:util";
+
+const execFile = promisify(execFileCallback);
+type HostFs = typeof fs;
+type HostExec = typeof execFile;
+type HostOptions = {homeDir?:string;fsImpl?:HostFs;execFileImpl?:HostExec};
+type HostValidationOptions = {fsImpl?:HostFs;execFileImpl?:HostExec};
+type LaunchLogOptions = {stdoutName?:unknown;stderrName?:unknown};
+function hasErrorCode(error:unknown,code:string):boolean {
+  return error!==null&&typeof error==="object"&&"code" in error&&error.code===code;
+}
+
+
+export const EQUINOX_LOCAL_APP_NAME = "Equinox Local";
+export const EQUINOX_LOCAL_APP_BUNDLE_ID = "dev.equinox.local";
+
+export function equinoxLocalAppPath(homeDir:string = os.homedir()):string {
+  return path.join(homeDir, "Applications", `${EQUINOX_LOCAL_APP_NAME}.app`);
+}
+
+export function equinoxLocalAppExecutablePath(homeDir:string = os.homedir()):string {
+  return path.join(equinoxLocalAppPath(homeDir), "Contents", "MacOS", "applet");
+}
+
+export function equinoxLocalAppRuntimeWrapperPath(homeDir:string = os.homedir()):string {
+  return path.join(homeDir, "Library", "Application Support", "Equinox Local", "equinox-local-app-runtime");
+}
+
+export const EQUINOX_LOCAL_LAUNCH_LOG_MAX_BYTES = 2 * 1024 * 1024;
+export const EQUINOX_LOCAL_LAUNCH_LOG_KEEP_BYTES = 1024 * 1024;
+
+export function launchAgentLogMaintenanceShell({ stdoutName, stderrName }:LaunchLogOptions = {}):string {
+  for (const name of [stdoutName, stderrName]) {
+    if (typeof name !== "string" || !/^[A-Za-z0-9 ._-]{1,80}$/u.test(name) || name.includes("..")) {
+      throw new Error("LaunchAgent log filename is invalid.");
+    }
+  }
+  const paths = [stdoutName, stderrName]
+    .map((name) => `  cap_launch_log \"$HOME/Library/Logs/${name}\"`)
+    .join("\\n");
+  return `LAUNCH_LOG_MAX_BYTES=${EQUINOX_LOCAL_LAUNCH_LOG_MAX_BYTES}\nLAUNCH_LOG_KEEP_BYTES=${EQUINOX_LOCAL_LAUNCH_LOG_KEEP_BYTES}\nLAUNCH_LOG_CHECK_INTERVAL_SECONDS=300\ncap_launch_log() {\n  local target=\"$1\"\n  [ -f \"$target\" ] || return 0\n  local size\n  size=\"$(/usr/bin/stat -f '%z' \"$target\" 2>/dev/null || printf '0')\"\n  case \"$size\" in\n    \"\"|*[!0-9]*) return 0 ;;\n  esac\n  [ \"$size\" -gt \"$LAUNCH_LOG_MAX_BYTES\" ] || return 0\n  local temporary=\"$target.equinox-trim.$$\"\n  if /usr/bin/tail -c \"$LAUNCH_LOG_KEEP_BYTES\" \"$target\" > \"$temporary\" 2>/dev/null; then\n    /bin/cat \"$temporary\" > \"$target\" 2>/dev/null || true\n  fi\n  /bin/rm -f \"$temporary\" >/dev/null 2>&1 || true\n}\nmaintain_launch_logs() {\n${paths}\n}\nmaintain_launch_logs\n`;
+}
+
+export function equinoxLocalAppAppleScript() {
+  return `on run\n  set homePath to POSIX path of (path to home folder)\n  set runnerPath to homePath & "Library/Application Support/Equinox Local/equinox-local-app-runtime"\n  do shell script quoted form of runnerPath\nend run\n`;
+}
+
+async function ensureDirectory(directory:string,mode:number = 0o700,fsImpl:HostFs = fs):Promise<void> {
+  await fsImpl.mkdir(directory, { recursive: true, mode });
+  const stat = await fsImpl.lstat(directory);
+  if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error("Equinox Local app host directory is unsafe.");
+}
+
+async function readBundleId(infoPlist:string,execFileImpl:HostExec):Promise<string> {
+  const { stdout } = await execFileImpl("/usr/libexec/PlistBuddy", ["-c", "Print :CFBundleIdentifier", infoPlist], {
+    encoding: "utf8",
+    timeout: 10_000,
+    maxBuffer: 16 * 1024,
+  });
+  return String(stdout).trim();
+}
+
+export async function validateEquinoxLocalAppHost(appPath:string,{fsImpl=fs,execFileImpl=execFile}:HostValidationOptions = {}) {
+  const stat = await fsImpl.lstat(appPath);
+  if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error("Existing Equinox Local.app is not a safe app bundle.");
+  const uid = typeof process.getuid === "function" ? process.getuid() : null;
+  if (Number.isInteger(uid) && Number.isInteger(stat.uid) && stat.uid !== uid) {
+    throw new Error("Existing Equinox Local.app is not owned by the current user.");
+  }
+  const executable = path.join(appPath, "Contents", "MacOS", "applet");
+  const executableStat = await fsImpl.lstat(executable);
+  if (!executableStat.isFile() || executableStat.isSymbolicLink()) throw new Error("Existing Equinox Local.app executable is unsafe.");
+  const infoPlist = path.join(appPath, "Contents", "Info.plist");
+  const bundleId = await readBundleId(infoPlist, execFileImpl);
+  if (bundleId !== EQUINOX_LOCAL_APP_BUNDLE_ID) throw new Error("Existing Equinox Local.app has an unexpected bundle identifier.");
+  return Object.freeze({ appPath, executablePath: executable, created: false });
+}
+
+async function plutilReplaceOrInsert(infoPlist:string,key:string,type:string,value:string,execFileImpl:HostExec):Promise<void> {
+  try {
+    await execFileImpl("/usr/bin/plutil", ["-replace", key, `-${type}`, String(value), infoPlist], { timeout: 10_000 });
+  } catch {
+    await execFileImpl("/usr/bin/plutil", ["-insert", key, `-${type}`, String(value), infoPlist], { timeout: 10_000 });
+  }
+}
+
+export async function ensureEquinoxLocalAppHost({
+  homeDir = os.homedir(),
+  fsImpl = fs,
+  execFileImpl = execFile,
+}:HostOptions = {}) {
+  if (process.platform !== "darwin") throw new Error("Equinox Local.app host is supported only on macOS.");
+  const applicationsRoot = path.join(homeDir, "Applications");
+  await ensureDirectory(applicationsRoot, 0o700, fsImpl);
+  const appPath = equinoxLocalAppPath(homeDir);
+  try {
+    return await validateEquinoxLocalAppHost(appPath, { fsImpl, execFileImpl });
+  } catch (error) {
+    if (!hasErrorCode(error,"ENOENT")) throw error;
+  }
+
+  const temporary = path.join(applicationsRoot, `.Equinox-Local-${process.pid}-${randomBytes(8).toString("hex")}.app`);
+  try {
+    await execFileImpl("/usr/bin/osacompile", ["-o", temporary, "-e", equinoxLocalAppAppleScript()], {
+      timeout: 30_000,
+      maxBuffer: 128 * 1024,
+    });
+    const infoPlist = path.join(temporary, "Contents", "Info.plist");
+    await plutilReplaceOrInsert(infoPlist, "CFBundleIdentifier", "string", EQUINOX_LOCAL_APP_BUNDLE_ID, execFileImpl);
+    await plutilReplaceOrInsert(infoPlist, "CFBundleName", "string", EQUINOX_LOCAL_APP_NAME, execFileImpl);
+    await plutilReplaceOrInsert(infoPlist, "CFBundleDisplayName", "string", EQUINOX_LOCAL_APP_NAME, execFileImpl);
+    await plutilReplaceOrInsert(infoPlist, "LSUIElement", "bool", "true", execFileImpl);
+    await execFileImpl("/usr/bin/codesign", ["--force", "--sign", "-", temporary], {
+      timeout: 30_000,
+      maxBuffer: 128 * 1024,
+    });
+    await fsImpl.rename(temporary, appPath);
+  } catch (error) {
+    await fsImpl.rm(temporary, { recursive: true, force: true }).catch(() => {});
+    throw error;
+  }
+  return validateEquinoxLocalAppHost(appPath, { fsImpl, execFileImpl }).then((result) => Object.freeze({ ...result, created: true }));
+}
