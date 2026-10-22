@@ -46,7 +46,7 @@ async function writeRelease(releaseDir, marker) {
   await fs.writeFile(path.join(browserRoot, "equinox-browser-native-host.exe"), `host-${marker}\n`);
 }
 
-windowsTest("Windows Main native lifecycle switches and recovers shell plus Native Messaging on the real host", async (t) => {
+windowsTest("Windows real host rejects unadmitted native A/B without changing WPF or Native Messaging", async (t) => {
   assert.match(process.arch, /^(?:x64|arm64)$/u);
   const target = `win32-${process.arch}`;
   const temp = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "equinox-main-win-acceptance-")));
@@ -66,10 +66,10 @@ windowsTest("Windows Main native lifecycle switches and recovers shell plus Nati
     nativeMessagingManifestRoot: manifestRoot,
   });
   const previousLauncher = windowsNativeMessagingLauncherPath(previousRelease);
-  const targetLauncher = windowsNativeMessagingLauncherPath(targetRelease);
 
+  let registeredByFixture = false;
   t.after(async () => {
-    await execFile("reg.exe", ["DELETE", EQUINOX_BROWSER_WINDOWS_REGISTRY_KEY, "/f"], {
+    if (registeredByFixture) await execFile("reg.exe", ["DELETE", EQUINOX_BROWSER_WINDOWS_REGISTRY_KEY, "/f"], {
       timeout: 5_000,
       maxBuffer: 64 * 1024,
       windowsHide: true,
@@ -84,54 +84,51 @@ windowsTest("Windows Main native lifecycle switches and recovers shell plus Nati
   await fs.cp(path.join(previousRelease, "runtime", "shell"), programRoot, { recursive: true });
   const initialRegistration = await registerWindowsNativeMessagingHost({ manifestRoot, launcherPath: previousLauncher });
   assert.equal(initialRegistration.launcherPath, previousLauncher);
+  registeredByFixture = true;
 
-  // Mirror the persisted product-owned current-native.json across the initial
-  // update and a detached worker recovery; native shell/registry ops remain real.
-  let nativePointer = { sourceSha: A, target, runtimeContractSha256: DA, releaseDir: previousRelease };
+  // Production refuses a native WPF/Native Messaging A/B handoff unless an
+  // independent supervisor owns an exact journal admission. This real-host
+  // acceptance proves there is no shell/registry/pointer mutation on refusal.
+  // Positive independently admitted native A/B including rollback is covered
+  // by windows-native-ab-installed-smoke.mjs on the real Windows CI hosts.
+  const nativePointer = { sourceSha: A, target, runtimeContractSha256: DA, releaseDir: previousRelease };
+  let promotionCalls = 0;
+  let pointerWrites = 0;
+  let inspectedReleases = 0;
   const readPointerImpl = async () => nativePointer;
-  const writePointerImpl = async (_file, value) => { nativePointer = value; return value; };
+  const writePointerImpl = async () => { pointerWrites += 1; throw new Error("Unadmitted native pointer write"); };
   const nativeTransition = transition(target);
-  const lifecycle = await prepareEquinoxLocalMainNativeLifecycle({
+  const assertOwnedA = async () => {
+    await assertWindowsStableShellOwnedByRelease({ releaseDir: previousRelease, programRoot });
+    const host = await assertWindowsNativeMessagingHostOwnership({
+      manifestRoot, acceptedLauncherPaths: [previousLauncher],
+    });
+    assert.equal(host.launcherPath, previousLauncher);
+    assert.deepEqual(nativePointer, { sourceSha: A, target, runtimeContractSha256: DA, releaseDir: previousRelease });
+    assert.equal(pointerWrites, 0);
+  };
+  await assertOwnedA();
+
+  await assert.rejects(prepareEquinoxLocalMainNativeLifecycle({
     transition: nativeTransition,
     candidate: {
-      sourceSha: B,
-      target,
-      transactionId: TX,
-      runtimeContractSha256: DB,
-      artifactSha256: "d".repeat(64),
-      artifactBytes: 42,
-      payloadVersion: "5.2.1",
+      sourceSha: B, target, transactionId: TX, runtimeContractSha256: DB,
+      artifactSha256: "d".repeat(64), artifactBytes: 42, payloadVersion: "5.2.1",
       releaseDir: path.join(transactionRoot, "staging", TX, "native-candidate", "release"),
     },
-    transactionRoot,
-    transactionId: TX,
-    installation,
-    promoteCandidateImpl: async () => ({ sourceSha: B, target, runtimeContractSha256: DB, releaseDir: targetRelease }),
-    readPointerImpl,
-    writePointerImpl,
-  });
+    transactionRoot, transactionId: TX, installation,
+    // A missing independent admission must reject even a fully prepared B.
+    promoteCandidateImpl: async () => { promotionCalls += 1; throw new Error("Unadmitted native promotion"); },
+    readPointerImpl, writePointerImpl,
+  }), /independent supervisor ownership and exact journal identity/u);
+  assert.equal(promotionCalls, 0, "No B promotion before supervisor admission");
+  await assertOwnedA();
 
-  await lifecycle.activate();
-  assert.equal(nativePointer.sourceSha, B, "native B must be selected BEFORE restart");
-  await assertWindowsStableShellOwnedByRelease({ releaseDir: targetRelease, programRoot });
-  const targetOwnership = await assertWindowsNativeMessagingHostOwnership({ manifestRoot, acceptedLauncherPaths: [targetLauncher] });
-  assert.equal(targetOwnership.launcherPath, targetLauncher);
-
-  const recovered = await recoverEquinoxLocalMainNativeLifecycle({
-    transition: nativeTransition,
-    transactionRoot,
-    transactionId: TX,
-    installation,
-    inspectStoredReleaseImpl: async ({ sourceSha }) => ({ releaseDir: sourceSha === B ? targetRelease : previousRelease }),
-    readPointerImpl,
-    writePointerImpl,
-  });
-  await recovered.activate();
-  await assertWindowsStableShellOwnedByRelease({ releaseDir: targetRelease, programRoot });
-  await recovered.rollback();
-  assert.equal(nativePointer.sourceSha, A, "native A must be restored before rollback restart");
-
-  await assertWindowsStableShellOwnedByRelease({ releaseDir: previousRelease, programRoot });
-  const restoredOwnership = await assertWindowsNativeMessagingHostOwnership({ manifestRoot, acceptedLauncherPaths: [previousLauncher] });
-  assert.equal(restoredOwnership.launcherPath, previousLauncher);
+  await assert.rejects(recoverEquinoxLocalMainNativeLifecycle({
+    transition: nativeTransition, transactionRoot, transactionId: TX,
+    installation, readPointerImpl, writePointerImpl,
+    inspectStoredReleaseImpl: async () => { inspectedReleases += 1; throw new Error("Unadmitted release read"); },
+  }), /independent supervisor ownership and exact journal identity/u);
+  assert.equal(inspectedReleases, 0, "No release inspection before supervisor admission");
+  await assertOwnedA();
 });
