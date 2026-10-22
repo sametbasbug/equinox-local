@@ -217,7 +217,7 @@ async function atomicWriteCredential(filePath, contents, { fsImpl = fs } = {}) {
             // Do not chmod the destination path after rename: that name could have
             // been swapped for a symlink to a foreign file in the meantime.
             const stat = await fsImpl.lstat(temp);
-            if (!stat.isFile() || stat.isSymbolicLink() || (stat.mode & 0o777) !== 0o600) {
+            if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1 || (stat.mode & 0o777) !== 0o600) {
                 throw credentialError("Telegram temporary private-state file is unsafe.");
             }
             posixTempIdentity = stat;
@@ -229,7 +229,7 @@ async function atomicWriteCredential(filePath, contents, { fsImpl = fs } = {}) {
         }
         else {
             const after = await fsImpl.lstat(filePath);
-            if (!after.isFile() || after.isSymbolicLink() ||
+            if (!after.isFile() || after.isSymbolicLink() || after.nlink !== 1 ||
                 after.dev !== posixTempIdentity.dev || after.ino !== posixTempIdentity.ino ||
                 (after.mode & 0o777) !== 0o600) {
                 throw credentialError("Telegram private-state file changed while saving.");

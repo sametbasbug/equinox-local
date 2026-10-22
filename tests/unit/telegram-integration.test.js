@@ -163,6 +163,37 @@ test("Telegram credential rename race never chmods a foreign symlink target", as
   });
 });
 
+test("Telegram rejects foreign hard-linked private temporary file before rename", async (t) => {
+  if (process.platform === "win32") { t.skip("POSIX inode linkage assertion only"); return; }
+  await withTempCredential(async ({ root, credentialPath }) => {
+    const foreign = path.join(root, "foreign-private-data.txt");
+    const foreignContents = "outside-owned-private-file";
+    await fs.writeFile(foreign, foreignContents, { mode: 0o600 });
+    const originalMode = (await fs.stat(foreign)).mode & 0o777;
+    assert.equal(originalMode, 0o600);
+    let swapped = false;
+    const mockFs = Object.create(fs);
+    mockFs.lstat = async (candidate, ...args) => {
+      if (!swapped && path.dirname(candidate) === path.dirname(credentialPath) &&
+          path.basename(candidate).startsWith(".equinox-telegram-") && candidate.endsWith(".tmp")) {
+        swapped = true;
+        await fs.unlink(candidate);
+        await fs.link(foreign, candidate);
+      }
+      return fs.lstat(candidate, ...args);
+    };
+    await assert.rejects(configureTelegramIntegration({
+      botToken: TOKEN, telegramUserId: "333", credentialPath,
+      fsImpl: mockFs, fetchImpl: async () => ({ ok: true, status: 200 }),
+    }), /unsafe|hard.link|linked|identity|temporary/u);
+    assert.equal(swapped, true, "Hard-link swap must be exercised");
+    assert.equal(await fs.readFile(foreign, "utf8"), foreignContents);
+    assert.equal((await fs.stat(foreign)).mode & 0o777, originalMode);
+    assert.equal((await fs.stat(foreign)).nlink, 1, "Failed save removed only temporary hard link");
+    await assert.rejects(fs.access(credentialPath), { code: "ENOENT" });
+  });
+});
+
 test("default Telegram credentials stay private while visible downloads default under Downloads", () => {
   assert.equal(
     defaultTelegramCredentialPath("/Users/example"),
