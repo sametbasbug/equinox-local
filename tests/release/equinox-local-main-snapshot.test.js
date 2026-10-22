@@ -266,6 +266,51 @@ test("staged Main snapshot refuses symlinked manifest and artifact before openin
   }
 });
 
+test("staged Main snapshot rejects hard-linked manifest and artifact before opening foreign bytes", async (t) => {
+  const root = await fs.realpath(await fs.mkdtemp(path.join(path.dirname(fileURLToPath(import.meta.url)), ".equinox-main-snapshot-hardlinks-")));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const id = "main-" + "7".repeat(32);
+  const nativeDir = path.join(root, "staging", id, "native");
+  await fs.mkdir(nativeDir, { recursive: true });
+  const artifactBytes = Buffer.from("valid signed native archive bytes");
+  const manifest = manifestWithArtifact({
+    name: `equinox-local-main-${SHA}-${TARGET}.tar.gz`,
+    sha256: createHash("sha256").update(artifactBytes).digest("hex"),
+    bytes: artifactBytes.length,
+  });
+  const manifestPath = path.join(nativeDir, `equinox-local-main-${SHA}-${TARGET}.json`);
+  const artifactPath = path.join(nativeDir, manifest.artifact.name);
+  const foreignDir = path.join(root, "outside");
+  await fs.mkdir(foreignDir);
+  const args = { sourceSha: SHA, target: TARGET, expectedRuntimeContractSha256: DIGEST, transactionRoot: root, transactionId: id };
+  for (const name of ["manifest", "artifact"]) {
+    await fs.writeFile(manifestPath, JSON.stringify(manifest));
+    await fs.writeFile(artifactPath, artifactBytes);
+    const protectedPath = name === "manifest" ? manifestPath : artifactPath;
+    const foreign = path.join(foreignDir, `${name}.bin`);
+    const bytes = await fs.readFile(protectedPath);
+    await fs.writeFile(foreign, bytes);
+    await fs.unlink(protectedPath);
+    try { await fs.link(foreign, protectedPath); }
+    catch (error) {
+      if (["EPERM", "ENOTSUP", "EOPNOTSUPP"].includes(error.code)) { t.skip("Hard links unsupported"); return; }
+      throw error;
+    }
+    assert.equal((await fs.stat(foreign)).nlink, 2);
+    let opened = false;
+    const mockFs = Object.create(fs);
+    mockFs.open = async (candidate, ...options) => {
+      if (candidate === protectedPath) opened = true;
+      return fs.open(candidate, ...options);
+    };
+    await assert.rejects(inspectStagedEquinoxLocalMainSnapshotArtifact({ ...args, fsImpl: mockFs }), /normal, non-symlink file|hard.link/u);
+    assert.equal(opened, false, "Hard-linked foreign snapshots cannot be opened");
+    assert.deepEqual(await fs.readFile(foreign), bytes);
+    await fs.unlink(protectedPath);
+    await fs.unlink(foreign);
+  }
+});
+
 test("staged Main snapshot rejects a swapped manifest inode before trusting JSON",async(t)=>{
   const root=await fs.realpath(await fs.mkdtemp(path.join(path.dirname(fileURLToPath(import.meta.url)), ".equinox-main-snapshot-inode-")));
   t.after(()=>fs.rm(root,{recursive:true,force:true}));

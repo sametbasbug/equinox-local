@@ -117,13 +117,13 @@ async function readBoundedJsonFile(filePath: string, { fsImpl = fs }: FsOptions 
     // Windows does not guarantee POSIX O_NOFOLLOW semantics. Pin the
     // pre-open file identity to the opened descriptor before parsing state.
     const before = await fsImpl.lstat(filePath);
-    if (!before.isFile() || before.isSymbolicLink() ||
+    if (!before.isFile() || before.isSymbolicLink() || before.nlink !== 1 ||
         (process.platform === "win32" && before.dev === 0 && before.ino === 0)) {
       throw new Error("Main update state file must be a normal, non-symlink file.");
     }
     handle = await fsImpl.open(filePath, fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0));
     const stat = await handle.stat();
-    if (stat.dev !== before.dev || stat.ino !== before.ino) {
+    if (stat.nlink !== 1 || stat.dev !== before.dev || stat.ino !== before.ino) {
       throw new Error("Main update state file changed while opening.");
     }
     if (!stat.isFile() || stat.size > MAX_RECEIPT_BYTES) throw new Error("Main update state file is not an admissible regular file.");

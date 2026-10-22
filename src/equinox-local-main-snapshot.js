@@ -119,14 +119,14 @@ async function syncDirectory(directory, fsImpl) {
 // identity to the opened descriptor against symlinks and file replacement.
 async function openPinnedSnapshotFile(filePath, fsImpl) {
     const before = await fsImpl.lstat(filePath);
-    if (!before.isFile() || before.isSymbolicLink() ||
+    if (!before.isFile() || before.isSymbolicLink() || before.nlink !== 1 ||
         (process.platform === "win32" && before.dev === 0 && before.ino === 0)) {
         throw new Error("Main snapshot staged file must be a normal, non-symlink file.");
     }
     const handle = await fsImpl.open(filePath, fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0));
     try {
         const after = await handle.stat();
-        if (!after.isFile() || after.dev !== before.dev || after.ino !== before.ino) {
+        if (!after.isFile() || after.nlink !== 1 || after.dev !== before.dev || after.ino !== before.ino) {
             throw new Error("Main snapshot staged file changed while opening.");
         }
         return handle;

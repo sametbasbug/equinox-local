@@ -527,6 +527,44 @@ test("Main update lock and receipt reject symlinks without reading or replacing 
   assert.equal((await engine.readActive()).transactionId,receipt.transactionId);
 });
 
+test("Main update lock and receipt reject hard links to foreign state before opening", async (t) => {
+  const { engine, sourceRoot } = await fixture(t);
+  const receipt = await engine.begin({ currentSha: CURRENT, targetSha: TARGET });
+  const receiptPath = path.join(engine.paths.receiptsRoot, `${receipt.transactionId}.json`);
+  for (const protectedPath of [engine.paths.lockPath, receiptPath]) {
+    const original = await fs.readFile(protectedPath);
+    const foreign = path.join(engine.paths.transactionRoot, `outside-${path.basename(protectedPath)}`);
+    await fs.writeFile(foreign, original);
+    await fs.unlink(protectedPath);
+    try {
+      await fs.link(foreign, protectedPath);
+    } catch (error) {
+      if (["EPERM", "ENOTSUP", "EOPNOTSUPP"].includes(error.code)) {
+        t.skip("The filesystem does not support regular file hard links.");
+        return;
+      }
+      throw error;
+    }
+    assert.equal((await fs.stat(protectedPath)).nlink, 2);
+    let opened = false;
+    const mockFs = Object.create(fs);
+    mockFs.open = async (candidate, ...args) => {
+      if (candidate === protectedPath) opened = true;
+      return fs.open(candidate, ...args);
+    };
+    const isolated = createEquinoxLocalMainUpdateTransactionEngine({
+      sourceRoot, transactionRoot: engine.paths.transactionRoot, fsImpl: mockFs,
+    });
+    await assert.rejects(isolated.readActive(), /normal, non-symlink file|hard.link/u);
+    assert.equal(opened, false, "Foreign-inode hard links must fail before open");
+    assert.deepEqual(await fs.readFile(foreign), original, "Foreign contents stay intact");
+    await fs.unlink(protectedPath);
+    await fs.writeFile(protectedPath, original, { mode: 0o600 });
+    await fs.unlink(foreign);
+  }
+  assert.equal((await engine.readActive()).transactionId, receipt.transactionId);
+});
+
 test("Main update forensic lock refuses changed inode between lstat and opened descriptor", async(t)=>{
   const { engine, sourceRoot } = await fixture(t);
   const receipt = await engine.begin({currentSha:CURRENT,targetSha:TARGET});
