@@ -207,9 +207,20 @@ async function atomicWriteCredential(filePath, contents, { fsImpl = fs } = {}) {
         // to fixed Equinox Local-owned paths. Network-derived fields are normalized before reaching here.
         // codeql[js/http-to-file-access]
         await fsImpl.writeFile(temp, contents, { flag: "wx", mode: 0o600 });
+        let posixTempIdentity = null;
         if (process.platform === "win32") {
             await protectWindowsPrivateStatePath({ target: temp, type: "file" });
             await assertPrivateFileSecurity(temp, { fsImpl, label: "Telegram private-state temporary file" });
+        }
+        else {
+            // An exclusive 0600 temporary file already has its final permissions.
+            // Do not chmod the destination path after rename: that name could have
+            // been swapped for a symlink to a foreign file in the meantime.
+            const stat = await fsImpl.lstat(temp);
+            if (!stat.isFile() || stat.isSymbolicLink() || (stat.mode & 0o777) !== 0o600) {
+                throw credentialError("Telegram temporary private-state file is unsafe.");
+            }
+            posixTempIdentity = stat;
         }
         await fsImpl.rename(temp, filePath);
         if (process.platform === "win32") {
@@ -217,7 +228,12 @@ async function atomicWriteCredential(filePath, contents, { fsImpl = fs } = {}) {
             await assertPrivateFileSecurity(filePath, { fsImpl, label: "Telegram private-state file" });
         }
         else {
-            await fsImpl.chmod(filePath, 0o600);
+            const after = await fsImpl.lstat(filePath);
+            if (!after.isFile() || after.isSymbolicLink() ||
+                after.dev !== posixTempIdentity.dev || after.ino !== posixTempIdentity.ino ||
+                (after.mode & 0o777) !== 0o600) {
+                throw credentialError("Telegram private-state file changed while saving.");
+            }
         }
     }
     catch (error) {
