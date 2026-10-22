@@ -194,6 +194,27 @@ test("Telegram rejects foreign hard-linked private temporary file before rename"
   });
 });
 
+test("Telegram does not trust a hard-linked foreign credential as its owned private state", async (t) => {
+  if (process.platform === "win32") { t.skip("POSIX hard-link private-state ownership only"); return; }
+  await withTempCredential(async ({ root, credentialPath, pairingPath, inboxPath }) => {
+    const foreign = path.join(root, "foreign-credential.json");
+    await fs.mkdir(path.dirname(credentialPath), { mode: 0o700 });
+    const bytes = `${JSON.stringify({ version: 2, botToken: TOKEN, telegramUserId: "333" })}\n`;
+    await fs.writeFile(foreign, bytes, { mode: 0o600 });
+    try { await fs.link(foreign, credentialPath); }
+    catch (error) {
+      if (["EPERM", "ENOTSUP", "EOPNOTSUPP"].includes(error.code)) { t.skip("Hard links unsupported"); return; }
+      throw error;
+    }
+    assert.equal((await fs.stat(credentialPath)).nlink, 2);
+    const status = await getTelegramIntegrationStatus({ credentialPath, pairingPath, inboxPath });
+    assert.equal(status.configured, false, "Foreign linked credential cannot be accepted as an owned bot identity");
+    assert.equal(status.needsAttention, true);
+    assert.equal(await fs.readFile(foreign, "utf8"), bytes);
+    assert.equal((await fs.stat(foreign)).nlink, 2, "Do not remove foreign identity on rejected read");
+  });
+});
+
 test("default Telegram credentials stay private while visible downloads default under Downloads", () => {
   assert.equal(
     defaultTelegramCredentialPath("/Users/example"),

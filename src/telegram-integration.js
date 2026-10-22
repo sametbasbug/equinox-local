@@ -272,6 +272,10 @@ async function readPrivateJson(filePath, { fsImpl = fs, maxBytes, label }) {
         await assertPrivateFileSecurity(filePath, { fsImpl, label });
     }
     else {
+        // A private file must not alias some other pathname through a hard link.
+        // These stats describe the actual opened descriptor from the bounded read.
+        if (!stat.isFile() || stat.nlink !== 1)
+            throw credentialError(`${label} is not an exclusive private-state file.`);
         if ((stat.mode & 0o777) !== 0o600)
             throw credentialError(`${label} permissions need attention.`);
         const uid = typeof process.getuid === "function" ? process.getuid() : null;
@@ -332,6 +336,9 @@ async function readTelegramCredentials({ credentialPath = defaultTelegramCredent
         await assertPrivateFileSecurity(credentialPath, { fsImpl, label: "Telegram credential file" });
     }
     else {
+        // Telegram credentials are an exclusive owned inode, not a foreign file alias.
+        if (!stat.isFile() || stat.nlink !== 1)
+            throw credentialError();
         if ((stat.mode & 0o777) !== 0o600)
             throw credentialError();
         const uid = typeof process.getuid === "function" ? process.getuid() : null;
