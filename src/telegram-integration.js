@@ -1,4 +1,5 @@
 import { createHash, randomBytes } from "node:crypto";
+import { constants as fsConstants } from "node:fs";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -138,7 +139,23 @@ async function ensurePrivateDirectory(directory, { fsImpl = fs } = {}) {
         if (!stat.isDirectory() || stat.isSymbolicLink()) {
             throw credentialError("Telegram credential directory is unsafe.");
         }
-        await fsImpl.chmod(directory, 0o700);
+        // Chmod the directory inode we inspected, not a path that can be
+        // swapped for a symlink to an unrelated directory between syscalls.
+        const handle = await fsImpl.open(directory, fsConstants.O_RDONLY | (fsConstants.O_DIRECTORY ?? 0) | (fsConstants.O_NOFOLLOW ?? 0));
+        try {
+            const opened = await handle.stat();
+            if (!opened.isDirectory() || opened.dev !== stat.dev || opened.ino !== stat.ino) {
+                throw credentialError("Telegram credential directory changed while opening.");
+            }
+            await handle.chmod(0o700);
+            const after = await fsImpl.lstat(directory);
+            if (!after.isDirectory() || after.isSymbolicLink() || after.dev !== opened.dev || after.ino !== opened.ino) {
+                throw credentialError("Telegram credential directory changed while securing.");
+            }
+        }
+        finally {
+            await handle.close();
+        }
         return;
     }
     let existed = true;

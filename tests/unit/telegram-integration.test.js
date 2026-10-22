@@ -100,6 +100,38 @@ function expectedPairingIdle() {
   };
 }
 
+test("Telegram credential directory swap cannot chmod or write into a foreign directory", async (t) => {
+  if (process.platform === "win32") { t.skip("POSIX chmod path substitution only"); return; }
+  await withTempCredential(async ({ root, credentialPath }) => {
+    const secretRoot = path.dirname(credentialPath);
+    const movedRoot = path.join(root, "owned-original");
+    const foreignRoot = path.join(root, "foreign-readable");
+    await fs.mkdir(secretRoot, { recursive: true, mode: 0o700 });
+    await fs.mkdir(foreignRoot, { mode: 0o755 });
+    let substituted = false;
+    const mockFs = Object.create(fs);
+    mockFs.lstat = async (candidate, ...args) => {
+      const before = await fs.lstat(candidate, ...args);
+      if (candidate === secretRoot && !substituted) {
+        substituted = true;
+        await fs.rename(secretRoot, movedRoot);
+        await fs.symlink(foreignRoot, secretRoot);
+      }
+      return before;
+    };
+    const outsideMode = (await fs.stat(foreignRoot)).mode & 0o777;
+    assert.equal(outsideMode, 0o755);
+    await assert.rejects(configureTelegramIntegration({
+      botToken: TOKEN, telegramUserId: "333", credentialPath,
+      fsImpl: mockFs, fetchImpl: async () => ({ ok: true, status: 200 }),
+    }), /unsafe|ELOOP|symlink|changed|ENOTDIR|credential directory/u);
+    assert.equal(substituted, true);
+    assert.equal((await fs.stat(foreignRoot)).mode & 0o777, outsideMode, "Foreign directory permissions remain unchanged");
+    await assert.rejects(fs.access(path.join(foreignRoot, "telegram.json")), { code: "ENOENT" });
+    assert.equal((await fs.stat(movedRoot)).mode & 0o777, 0o700);
+  });
+});
+
 test("default Telegram credentials stay private while visible downloads default under Downloads", () => {
   assert.equal(
     defaultTelegramCredentialPath("/Users/example"),
