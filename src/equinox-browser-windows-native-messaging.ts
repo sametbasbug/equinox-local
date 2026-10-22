@@ -34,7 +34,7 @@ const READ_REGISTRY_SCRIPT = [
   "  $hex = [BitConverter]::ToString([Text.Encoding]::UTF8.GetBytes($value)).Replace('-', '')",
   "  [Console]::Out.WriteLine('value:' + $hex)",
   "} finally { $key.Dispose() }",
-].join("; ");
+].join("\n");
 const MANIFEST_MAX_BYTES = 16 * 1024;
 
 function windowsPowerShellPath(env:NodeJS.ProcessEnv = process.env) {

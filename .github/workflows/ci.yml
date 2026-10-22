@@ -173,6 +173,9 @@ jobs:
       - name: Strict TypeScript and committed runtime parity
         run: npm run typecheck && npm run verify:typed-runtime && npm run verify:typed-browser && npm run verify:typed-tooling
 
+      - name: Native Windows PowerShell 5.1 registry reader smoke
+        run: node --test --test-name-pattern "Windows Native Messaging registry reader is valid native PowerShell 5.1 syntax" tests/browser/equinox-browser-windows-native-messaging.test.js
+
       - name: Windows browser PDF text extraction smoke
         run: node --test tests/browser/browser-pdf-text.test.js
 
@@ -705,6 +708,9 @@ jobs:
 
       - name: ARM64 strict TypeScript and runtime parity
         run: npm run typecheck && npm run verify:typed-runtime && npm run verify:typed-browser && npm run verify:typed-tooling
+
+      - name: Native ARM64 Windows PowerShell 5.1 registry reader smoke
+        run: node --test --test-name-pattern "Windows Native Messaging registry reader is valid native PowerShell 5.1 syntax" tests/browser/equinox-browser-windows-native-messaging.test.js
 
       - name: Native CI input success and failure propagation smoke
         shell: pwsh
