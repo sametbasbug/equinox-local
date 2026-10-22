@@ -30,6 +30,38 @@ test("safe file reader reads bounded bytes and returns the opened file stat", as
   }
 });
 
+test("private hard-linked files are rejected before the safe reader touches bytes", async (t) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "equinox-safe-file-hardlink-before-read-"));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const outside = path.join(root, "outside.txt");
+  const alias = path.join(root, "private.txt");
+  await fs.writeFile(outside, "foreign-private-content", { mode: 0o600 });
+  try { await fs.link(outside, alias); }
+  catch (error) {
+    if (["EPERM", "ENOTSUP", "EOPNOTSUPP"].includes(error.code)) { t.skip("Hard links unsupported"); return; }
+    throw error;
+  }
+  assert.equal((await fs.stat(alias)).nlink, 2);
+  let reads = 0;
+  let closes = 0;
+  const mockFs = Object.create(fs);
+  mockFs.open = async (...args) => {
+    const handle = await fs.open(...args);
+    return {
+      stat: (...params) => handle.stat(...params),
+      read: (...params) => { reads += 1; return handle.read(...params); },
+      close: (...params) => { closes += 1; return handle.close(...params); },
+    };
+  };
+  await assert.rejects(readBoundedNormalFile(alias, {
+    fsImpl: mockFs, requireSingleLink: true, minBytes: 1, maxBytes: 128,
+    encoding: "utf8", label: "Private fixture",
+  }), (error) => error?.code === SAFE_FILE_ERROR_CODES.notNormal);
+  assert.equal(reads, 0, "Never read foreign linked bytes into application memory");
+  assert.equal(closes, 1, "Close the refused descriptor");
+  assert.equal(await fs.readFile(outside, "utf8"), "foreign-private-content");
+});
+
 test("safe file reader refuses final-component symlinks", async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "equinox-safe-file-link-"));
   try {

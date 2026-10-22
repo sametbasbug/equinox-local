@@ -22,7 +22,7 @@ function validateBounds(minBytes, maxBytes) {
         throw new Error("Safe file maximum byte bound must be a positive integer not smaller than the minimum.");
     }
 }
-export async function readBoundedNormalFile(filePath, { fsImpl = fs, platform = process.platform, minBytes = 0, maxBytes, encoding = null, label = "File", } = {}) {
+export async function readBoundedNormalFile(filePath, { fsImpl = fs, platform = process.platform, minBytes = 0, maxBytes, encoding = null, label = "File", requireSingleLink = false, } = {}) {
     if (typeof filePath !== "string" || !filePath) {
         throw new Error(`${label} path must be non-empty text.`);
     }
@@ -60,8 +60,8 @@ export async function readBoundedNormalFile(filePath, { fsImpl = fs, platform = 
     }
     try {
         const stat = await handle.stat();
-        if (!stat.isFile()) {
-            throw safeFileError(`${label} must be a normal file.`, SAFE_FILE_ERROR_CODES.notNormal);
+        if (!stat.isFile() || (requireSingleLink && stat.nlink !== 1)) {
+            throw safeFileError(`${label} must be an exclusive, normal file.`, SAFE_FILE_ERROR_CODES.notNormal);
         }
         if (expectedIdentity && (stat.dev !== expectedIdentity.dev || stat.ino !== expectedIdentity.ino)) {
             throw safeFileError(`${label} changed while it was being opened.`, SAFE_FILE_ERROR_CODES.notNormal);

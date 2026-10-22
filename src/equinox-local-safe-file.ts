@@ -14,6 +14,7 @@ type ReadOptions = {
   maxBytes?: number;
   encoding?: "utf8" | null;
   label?: string;
+  requireSingleLink?: boolean;
 };
 type WriteOptions = {
   content: unknown;
@@ -60,6 +61,7 @@ export async function readBoundedNormalFile(filePath: unknown, {
   maxBytes,
   encoding = null,
   label = "File",
+  requireSingleLink = false,
 }: ReadOptions = {}): Promise<ReadResult<string | Buffer>> {
   if (typeof filePath !== "string" || !filePath) {
     throw new Error(`${label} path must be non-empty text.`);
@@ -100,8 +102,8 @@ export async function readBoundedNormalFile(filePath: unknown, {
 
   try {
     const stat = await handle.stat();
-    if (!stat.isFile()) {
-      throw safeFileError(`${label} must be a normal file.`, SAFE_FILE_ERROR_CODES.notNormal);
+    if (!stat.isFile() || (requireSingleLink && stat.nlink !== 1)) {
+      throw safeFileError(`${label} must be an exclusive, normal file.`, SAFE_FILE_ERROR_CODES.notNormal);
     }
     if (expectedIdentity && (stat.dev !== expectedIdentity.dev || stat.ino !== expectedIdentity.ino)) {
       throw safeFileError(`${label} changed while it was being opened.`, SAFE_FILE_ERROR_CODES.notNormal);

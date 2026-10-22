@@ -261,6 +261,7 @@ async function readPrivateJson(filePath, { fsImpl = fs, maxBytes, label }) {
     try {
         ({ data: text, stat } = await readBoundedNormalFile(filePath, {
             fsImpl, minBytes: 1, maxBytes, encoding: "utf8", label,
+            requireSingleLink: process.platform !== "win32",
         }));
     }
     catch (error) {
@@ -320,6 +321,7 @@ async function readTelegramCredentials({ credentialPath = defaultTelegramCredent
             maxBytes: MAX_CREDENTIAL_BYTES,
             encoding: "utf8",
             label: "Telegram credential file",
+            requireSingleLink: process.platform !== "win32",
         }));
     }
     catch (error) {

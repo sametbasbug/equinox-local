@@ -281,6 +281,7 @@ async function readPrivateJson(filePath:string,{fsImpl=fs,maxBytes,label}:Telegr
   try {
     ({ data: text, stat } = await readBoundedNormalFile(filePath, {
       fsImpl, minBytes: 1, maxBytes, encoding: "utf8", label,
+      requireSingleLink: process.platform !== "win32",
     }));
   } catch (error) {
     if ((error as TelegramError)?.code === "ENOENT") return null;
@@ -338,6 +339,7 @@ async function readTelegramCredentials({
       maxBytes: MAX_CREDENTIAL_BYTES,
       encoding: "utf8",
       label: "Telegram credential file",
+      requireSingleLink: process.platform !== "win32",
     }));
   } catch (error) {
     if ((error as TelegramError)?.code === "ENOENT") return null;
