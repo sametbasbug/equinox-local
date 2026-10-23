@@ -184,6 +184,35 @@ test("Main snapshot does not publish a same-length substituted artifact after di
   assert.equal(substituted, true, "The actual hard-link publication must experience the substituted temp inode");
 });
 
+test("Main snapshot failed staging must preserve a foreign directory replacing its native scratch", async (t) => {
+  const root = await fs.mkdtemp(path.join(path.dirname(fileURLToPath(import.meta.url)), ".equinox-main-snapshot-foreign-directory-"));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const transactionId = `main-${"7".repeat(32)}`;
+  const transactionDir = path.join(root, "staging", transactionId);
+  const nativeDir = path.join(transactionDir, "native");
+  const displaced = path.join(transactionDir, ".original-native-displaced");
+  const foreignPath = path.join(nativeDir, "FOREIGN-OWNER-MARKER.txt");
+  const foreignBytes = "other-writer-owned-temporary-data\n";
+  await fs.mkdir(transactionDir, { recursive: true, mode: 0o700 });
+  let replaced = false;
+  const fetchImpl = async (url) => {
+    if (url.endsWith(".json")) return jsonResponse(MANIFEST);
+    replaced = true;
+    await fs.rename(nativeDir, displaced);
+    await fs.mkdir(nativeDir, { mode: 0o700 });
+    await fs.writeFile(foreignPath, foreignBytes, { mode: 0o600 });
+    throw new Error("synthetic artifact network failure after same-name foreign directory replacement");
+  };
+  await assert.rejects(stageEquinoxLocalMainSnapshotArtifact({
+    sourceSha: SHA, target: TARGET, expectedRuntimeContractSha256: DIGEST,
+    transactionRoot: root, transactionId, fetchImpl,
+  }), /synthetic artifact network failure/u);
+  assert.equal(replaced, true, "Another writer must replace the native scratch before cleanup");
+  assert.equal(await fs.readFile(foreignPath, "utf8"), foreignBytes,
+    "Failure cleanup must not recursively delete another writer's normal directory");
+  assert.equal((await fs.lstat(displaced)).isDirectory(), true);
+});
+
 test("Main snapshot artifact staging cleans partial state on byte digest and destination collisions", async (t) => {
   const fixtureBase = path.dirname(fileURLToPath(import.meta.url));
   const root = await fs.mkdtemp(path.join(fixtureBase, ".equinox-main-snapshot-fail-"));

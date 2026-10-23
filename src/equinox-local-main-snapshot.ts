@@ -255,6 +255,7 @@ export async function stageEquinoxLocalMainSnapshotArtifact({
   const snapshot = await fetchEquinoxLocalMainSnapshotManifest({ sourceSha, target, expectedRuntimeContractSha256, fetchImpl });
   const nativeDir = path.join(transactionDir, "native");
   let nativeCreated = false;
+  let originalNativeDirectory: { dev: number; ino: number } | null = null;
   let handle: OpenHandle | null = null;
   let originalArtifact: Awaited<ReturnType<OpenHandle["stat"]>> | null = null;
   let tempPath: string | null = null;
@@ -264,6 +265,12 @@ export async function stageEquinoxLocalMainSnapshotArtifact({
   try {
     await fsImpl.mkdir(nativeDir, { recursive: false, mode: 0o700 });
     nativeCreated = true;
+    const nativeStat = await fsImpl.lstat(nativeDir);
+    if (!nativeStat.isDirectory() || nativeStat.isSymbolicLink() ||
+        (process.platform === "win32" && nativeStat.dev === 0 && nativeStat.ino === 0)) {
+      throw new Error("Main snapshot native staging directory is not an owned normal directory.");
+    }
+    originalNativeDirectory = { dev: nativeStat.dev, ino: nativeStat.ino };
     const nativeReal = await fsImpl.realpath(nativeDir);
     if (nativeReal !== nativeDir) throw new Error("Main snapshot native staging directory is not canonical.");
 
@@ -350,8 +357,16 @@ export async function stageEquinoxLocalMainSnapshotArtifact({
     });
   } catch (error) {
     await handle?.close().catch(() => {});
-    if (tempPath) await fsImpl.rm(tempPath, { force: true }).catch(() => {});
-    if (nativeCreated) await fsImpl.rm(nativeDir, { recursive: true, force: true }).catch(() => {});
+    // Both the artifact temporary pathname and the recursive cleanup live
+    // under nativeDir. Never delete another writer's same-named directory
+    // (or anything inside it) after our original scratch was displaced.
+    if (nativeCreated && originalNativeDirectory) {
+      const current = await fsImpl.lstat(nativeDir).catch(() => null);
+      if (current?.isDirectory() && !current.isSymbolicLink() &&
+          current.dev === originalNativeDirectory.dev && current.ino === originalNativeDirectory.ino) {
+        await fsImpl.rm(nativeDir, { recursive: true, force: true }).catch(() => {});
+      }
+    }
     throw error;
   } finally {
     clearTimeout(timer);
