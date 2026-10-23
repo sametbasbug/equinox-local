@@ -221,6 +221,7 @@ async function atomicWriteCredential(filePath, contents, { fsImpl = fs } = {}) {
         await assertPrivateFileSecurity(filePath, { fsImpl, label: "Telegram private-state file", allowMissing: true });
     }
     const temp = path.join(parent, `.equinox-telegram-${process.pid}-${randomBytes(8).toString("hex")}.tmp`);
+    let created = null;
     try {
         // Telegram intentionally persists only bounded, validated private state (pairing/inbox/credentials)
         // to fixed Equinox Local-owned paths. Network-derived fields are normalized before reaching here.
@@ -231,7 +232,6 @@ async function atomicWriteCredential(filePath, contents, { fsImpl = fs } = {}) {
         const flags = fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_EXCL |
             (process.platform === "win32" ? 0 : (fsConstants.O_NOFOLLOW ?? 0));
         const handle = await fsImpl.open(temp, flags, 0o600);
-        let created;
         try {
             created = await handle.stat();
             if (!created.isFile() || (process.platform !== "win32" &&
@@ -275,7 +275,16 @@ async function atomicWriteCredential(filePath, contents, { fsImpl = fs } = {}) {
         }
     }
     catch (error) {
-        await fsImpl.rm(temp, { force: true }).catch(() => { });
+        // The path may no longer name the exclusive file we created. Recovery
+        // must not remove a different writer's symlink, hard link, or ordinary
+        // replacement; only our original normal single-linked inode is ours.
+        if (created && !(process.platform === "win32" && created.dev === 0 && created.ino === 0)) {
+            const current = await fsImpl.lstat(temp).catch(() => null);
+            if (current?.isFile() && !current.isSymbolicLink() && current.nlink === 1 &&
+                current.dev === created.dev && current.ino === created.ino) {
+                await fsImpl.unlink(temp).catch(() => { });
+            }
+        }
         throw error;
     }
 }

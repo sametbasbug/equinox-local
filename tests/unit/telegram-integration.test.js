@@ -171,11 +171,13 @@ test("Telegram private temp replacement cannot impersonate a created inode", asy
     await fs.writeFile(foreign, foreignBytes, { mode: 0o600 });
     const rogueBytes = "injected-private-state";
     let swapped = false;
+    let substitutedTemp;
     const fsImpl = Object.create(fs);
     fsImpl.lstat = async (candidate, ...args) => {
       if (!swapped && path.dirname(candidate) === path.dirname(credentialPath) &&
           path.basename(candidate).startsWith(".equinox-telegram-") && candidate.endsWith(".tmp")) {
         swapped = true;
+        substitutedTemp = candidate;
         await fs.unlink(candidate);
         await fs.writeFile(candidate, rogueBytes, { mode: 0o600 });
       }
@@ -186,6 +188,8 @@ test("Telegram private temp replacement cannot impersonate a created inode", asy
       fsImpl, fetchImpl: async () => ({ ok: true, status: 200 }),
     }), /changed|unsafe|identity|temporary|inode/u);
     assert.equal(swapped, true, "The replacement must happen before original temp identity admission");
+    assert.equal(await fs.readFile(substitutedTemp, "utf8"), rogueBytes,
+      "Failed Telegram persistence must preserve another writer's substituted temporary inode");
     await assert.rejects(fs.access(credentialPath), { code: "ENOENT" });
     assert.equal(await fs.readFile(foreign, "utf8"), foreignBytes);
   });
@@ -217,7 +221,8 @@ test("Telegram rejects foreign hard-linked private temporary file before rename"
     assert.equal(swapped, true, "Hard-link swap must be exercised");
     assert.equal(await fs.readFile(foreign, "utf8"), foreignContents);
     assert.equal((await fs.stat(foreign)).mode & 0o777, originalMode);
-    assert.equal((await fs.stat(foreign)).nlink, 1, "Failed save removed only temporary hard link");
+    assert.equal((await fs.stat(foreign)).nlink, 2,
+      "Failed save must preserve an unowned substituted hard link for explicit recovery");
     await assert.rejects(fs.access(credentialPath), { code: "ENOENT" });
   });
 });
