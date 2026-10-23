@@ -113,7 +113,7 @@ windowsTest("disenrolled signed Stable 6.1.1 safely retires ALL abandoned Main p
   for (const item of documents) await fs.writeFile(item, "PRODUCT");
   await fs.writeFile(api.join(releaseDir, "release.json"), JSON.stringify({
     schemaVersion: 1, version: "6.1.1", target,
-    nodeVersion: "26.12.0", tunnelClientVersion: "0.0.16", serverEntry: "server.js",
+    nodeVersion: "26.12.1", tunnelClientVersion: "0.0.17", serverEntry: "server.js",
   }));
   await fs.writeFile(privateState, '{"secret":"keep"}');
   await fs.writeFile(receipt, '{"audit":"keep"}');

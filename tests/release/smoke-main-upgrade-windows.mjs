@@ -64,7 +64,7 @@ async function main() {
   const negative = scenario === "target-crash";
   const target = `win32-${process.arch}`;
   const transactionRoot = path.join(installRoot, "state", "main-update");
-  const ownedGit = path.join(installRoot, "runtime", "toolchain", "git", "2.53.0-4", target, "cmd", "git.exe");
+  const ownedGit = path.join(installRoot, "runtime", "toolchain", "git", "2.56.0-1", target, "cmd", "git.exe");
   const pointerPath = path.join(transactionRoot, "current-source.conf");
   const pointer = () => readEquinoxLocalMainSourcePointer(pointerPath, { gitPath: ownedGit });
   const ownedRelease = JSON.parse(await fs.readFile(path.join(installRoot, "current-version.json"), "utf8"));

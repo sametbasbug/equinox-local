@@ -6,6 +6,12 @@ This project follows semantic versioning for public releases.
 
 ## [Unreleased]
 
+### Updated runtime dependencies for 6.2.0
+
+- Upgraded the four-platform bundled Node.js to **26.12.1**, owned Git/Dugite native to **2.56.0-1**, tunnel-client to **0.0.17**, and the macOS signed Peekaboo runtime to **4.9.6**. Each distribution remains SHA-256 and exact-byte pinned for its target.
+- Refreshed `node-pty` to **1.2.0-beta.18**, `fast-uri` to **4.2.3**, and the pinned Node.js CI/build lanes. Existing current-version GitHub Actions major versions are retained; the workflows do not install Python, and the .NET SDK already resolves the current 10.0 servicing patch.
+
+
 **Equinox Local 6.2.0 + Equinox Browser 1.1.0 — release candidates, not yet published.** The latest publicly signed Local release remains 6.1.2 and the installed Chrome Web Store Browser release remains 1.0.1. This draft is subject to release validation, protected signing and actual user acceptance before either candidate is published.
 
 ### Runtime and build ownership

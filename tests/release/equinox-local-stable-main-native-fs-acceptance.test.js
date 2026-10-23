@@ -27,7 +27,7 @@ async function fixture(t) {
   await fs.mkdir(managedState);
   await fs.writeFile(path.join(releaseDir,"release.json"),JSON.stringify({
     schemaVersion:1,version:VERSION,target:`${process.platform}-${process.arch}`,sourceSha:SHA,
-    nodeVersion:"26.12.0",tunnelClientVersion:"0.0.14",serverEntry:"server.js",
+    nodeVersion:"26.12.1",tunnelClientVersion:"0.0.14",serverEntry:"server.js",
   }),{mode:0o600});
   // Use regular native host filesystem entries and product-required binary
   // shape, not an injected metadata reader that could miss a real defect.

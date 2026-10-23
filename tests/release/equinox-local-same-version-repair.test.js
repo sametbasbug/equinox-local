@@ -44,7 +44,7 @@ async function fixture(t, platform = "darwin", { withNativePointer = true } = {}
   }
   await fs.writeFile(path.join(stagedReleaseDir, "release.json"), JSON.stringify({
     schemaVersion: 1, version: VERSION, target, sourceSha: "c".repeat(40),
-    nodeVersion: "26.10.0", tunnelClientVersion: "0.0.16", serverEntry: "server.js",
+    nodeVersion: "26.10.0", tunnelClientVersion: "0.0.17", serverEntry: "server.js",
     ...(platform === "darwin" ? { nativeAppShellVersion: 1 } : {}),
   }), { mode: 0o600 });
   await fs.mkdir(paths.releasesRoot, { recursive: true, mode: 0o700 });
