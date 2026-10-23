@@ -210,6 +210,32 @@ test("Main receipt temp cannot be replaced by another normal inode before atomic
     "A failed receipt must retain single-flight ownership for recovery");
 });
 
+test("Main receipt rejects temp replacement at the final rename boundary", async (t) => {
+  const injected = "synthetic-replaced-receipt-at-rename";
+  let swapped = false;
+  let resultingPath = null;
+  const fsImpl = Object.create(fs);
+  fsImpl.rename = async (from, to) => {
+    if (!swapped && from.includes(".json.tmp-") && to.endsWith(".json")) {
+      swapped = true;
+      resultingPath = to;
+      await fs.unlink(from);
+      await fs.writeFile(from, injected, { mode: 0o600 });
+    }
+    return fs.rename(from, to);
+  };
+  const { engine } = await fixture(t, { fsImpl });
+  await assert.rejects(
+    engine.begin({ currentSha: CURRENT, targetSha: TARGET }),
+    /receipt.*changed after rename|receipt.*identity|receipt.*unsafe/u,
+  );
+  assert.equal(swapped, true, "Replacement occurs after the final temp pre-rename lstat");
+  assert.equal(await fs.readFile(resultingPath, "utf8"), injected,
+    "The untrusted replacement remains for forensic recovery, never silently accepted");
+  assert.equal((await fs.lstat(engine.paths.lockPath)).isFile(), true,
+    "A refused receipt preserves exclusive Main update ownership");
+});
+
 test("begin acquires one private durable owner and refuses a concurrent updater", async (t) => {
   const { engine } = await fixture(t);
   const first = await engine.begin({ currentSha: CURRENT, targetSha: TARGET });

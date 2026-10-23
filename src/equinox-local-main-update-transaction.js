@@ -99,6 +99,15 @@ async function writeAtomicPrivateJson(filePath, value, { fsImpl = fs } = {}) {
             throw new Error("Main update receipt temporary file changed before rename.");
         }
         await fsImpl.rename(tempPath, filePath);
+        // rename() accepts a pathname, not the pinned descriptor. Reject an
+        // alternate inode switched in the final pre-rename check→rename gap.
+        // This is detection, NOT atomic protection against transient swaps.
+        const renamed = await fsImpl.lstat(filePath);
+        if (!renamed.isFile() || renamed.isSymbolicLink() || renamed.nlink !== 1 ||
+            renamed.dev !== created.dev || renamed.ino !== created.ino ||
+            (process.platform !== "win32" && (renamed.mode & 0o777) !== 0o600)) {
+            throw new Error("Main update receipt identity changed after rename.");
+        }
         await syncDirectory(parent, { fsImpl });
     }
     catch (error) {
