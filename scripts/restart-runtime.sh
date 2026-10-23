@@ -223,10 +223,6 @@ case "$DEV_NODE" in
 esac
 [ -x "$DEV_NODE" ] || fail "configured developer Node runtime is not executable"
 
-EQUINOX_LOCAL_DEV_RUNTIME_CONFIG="$CONFIG" "$DEV_NODE" "$ROOT/scripts/release/sync-source-tunnel-runtime.mjs"
-EQUINOX_LOCAL_DEV_RUNTIME_CONFIG="$CONFIG" "$DEV_NODE" "$ROOT/scripts/release/sync-source-peekaboo-runtime.mjs"
-EQUINOX_LOCAL_DEV_NODE="$DEV_NODE" EQUINOX_LOCAL_DEV_RUNTIME_CONFIG="$CONFIG" "$DEV_NODE" "$ROOT/scripts/release/prepare-source-app-host.mjs"
-
 LABEL=""
 RUNTIME=""
 TUNNEL_CLIENT=""
@@ -337,6 +333,18 @@ DOMAIN="gui/$CURRENT_UID"
   RESTART_STAGE="resolve-target"
   TARGET_SOURCE_ROOT="$("$DEV_NODE" "$ROOT/scripts/release/resolve-source-restart-target.mjs" "$ROOT")" || fail "could not validate expected source restart target"
   [ -n "$TARGET_SOURCE_ROOT" ] || fail "expected source restart target is empty"
+
+  # The restart helper may originate in the PREVIOUS source checkout. Use
+  # the admitted successor's pinned tunnel, Peekaboo and native app-host
+  # tooling, or the restart can silently restore obsolete runtime versions.
+  RESTART_STAGE="sync-successor-runtimes"
+  for helper in sync-source-tunnel-runtime.mjs sync-source-peekaboo-runtime.mjs prepare-source-app-host.mjs; do
+    helper_path="$TARGET_SOURCE_ROOT/scripts/release/$helper"
+    [ -f "$helper_path" ] && [ ! -L "$helper_path" ] || fail "admitted restart target helper is missing or unsafe: $helper"
+  done
+  EQUINOX_LOCAL_DEV_RUNTIME_CONFIG="$CONFIG" "$DEV_NODE" "$TARGET_SOURCE_ROOT/scripts/release/sync-source-tunnel-runtime.mjs"
+  EQUINOX_LOCAL_DEV_RUNTIME_CONFIG="$CONFIG" "$DEV_NODE" "$TARGET_SOURCE_ROOT/scripts/release/sync-source-peekaboo-runtime.mjs"
+  EQUINOX_LOCAL_DEV_NODE="$DEV_NODE" EQUINOX_LOCAL_DEV_RUNTIME_CONFIG="$CONFIG" "$DEV_NODE" "$TARGET_SOURCE_ROOT/scripts/release/prepare-source-app-host.mjs"
 
   # Match the server command by its stable script path, not process.execPath. The
   # tunnel runtime may launch the same Node binary through a different symlink.
