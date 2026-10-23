@@ -225,7 +225,24 @@ async function atomicWriteCredential(filePath, contents, { fsImpl = fs } = {}) {
         // Telegram intentionally persists only bounded, validated private state (pairing/inbox/credentials)
         // to fixed Equinox Local-owned paths. Network-derived fields are normalized before reaching here.
         // codeql[js/http-to-file-access]
-        await fsImpl.writeFile(temp, contents, { flag: "wx", mode: 0o600 });
+        // Pin the temporary inode at exclusive creation. A hostile same-UID
+        // writer can substitute another ordinary 0600 file before the later
+        // lstat; checking only that later path would trust the substituted bytes.
+        const flags = fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_EXCL |
+            (process.platform === "win32" ? 0 : (fsConstants.O_NOFOLLOW ?? 0));
+        const handle = await fsImpl.open(temp, flags, 0o600);
+        let created;
+        try {
+            created = await handle.stat();
+            if (!created.isFile() || (process.platform !== "win32" &&
+                (created.nlink !== 1 || (created.mode & 0o777) !== 0o600))) {
+                throw credentialError("Telegram temporary private-state file is unsafe.");
+            }
+            await handle.writeFile(contents, "utf8");
+        }
+        finally {
+            await handle.close();
+        }
         let posixTempIdentity = null;
         if (process.platform === "win32") {
             await protectWindowsPrivateStatePath({ target: temp, type: "file" });
@@ -236,10 +253,12 @@ async function atomicWriteCredential(filePath, contents, { fsImpl = fs } = {}) {
             // Do not chmod the destination path after rename: that name could have
             // been swapped for a symlink to a foreign file in the meantime.
             const stat = await fsImpl.lstat(temp);
-            if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1 || (stat.mode & 0o777) !== 0o600) {
-                throw credentialError("Telegram temporary private-state file is unsafe.");
+            if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1 ||
+                stat.dev !== created.dev || stat.ino !== created.ino ||
+                (stat.mode & 0o777) !== 0o600) {
+                throw credentialError("Telegram temporary private-state file changed after creation.");
             }
-            posixTempIdentity = stat;
+            posixTempIdentity = created;
         }
         await fsImpl.rename(temp, filePath);
         if (process.platform === "win32") {

@@ -163,6 +163,34 @@ test("Telegram credential rename race never chmods a foreign symlink target", as
   });
 });
 
+test("Telegram private temp replacement cannot impersonate a created inode", async (t) => {
+  if (process.platform === "win32") { t.skip("POSIX inode identity fixture"); return; }
+  await withTempCredential(async ({ root, credentialPath }) => {
+    const foreign = path.join(root, "unrelated-regular-private.txt");
+    const foreignBytes = "synthetic-unrelated-private-bytes";
+    await fs.writeFile(foreign, foreignBytes, { mode: 0o600 });
+    const rogueBytes = "injected-private-state";
+    let swapped = false;
+    const fsImpl = Object.create(fs);
+    fsImpl.lstat = async (candidate, ...args) => {
+      if (!swapped && path.dirname(candidate) === path.dirname(credentialPath) &&
+          path.basename(candidate).startsWith(".equinox-telegram-") && candidate.endsWith(".tmp")) {
+        swapped = true;
+        await fs.unlink(candidate);
+        await fs.writeFile(candidate, rogueBytes, { mode: 0o600 });
+      }
+      return fs.lstat(candidate, ...args);
+    };
+    await assert.rejects(configureTelegramIntegration({
+      botToken: TOKEN, telegramUserId: "333", credentialPath,
+      fsImpl, fetchImpl: async () => ({ ok: true, status: 200 }),
+    }), /changed|unsafe|identity|temporary|inode/u);
+    assert.equal(swapped, true, "The replacement must happen before original temp identity admission");
+    await assert.rejects(fs.access(credentialPath), { code: "ENOENT" });
+    assert.equal(await fs.readFile(foreign, "utf8"), foreignBytes);
+  });
+});
+
 test("Telegram rejects foreign hard-linked private temporary file before rename", async (t) => {
   if (process.platform === "win32") { t.skip("POSIX inode linkage assertion only"); return; }
   await withTempCredential(async ({ root, credentialPath }) => {
