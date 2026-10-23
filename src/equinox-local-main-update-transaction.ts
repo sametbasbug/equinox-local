@@ -97,6 +97,9 @@ async function syncDirectory(directory: string, { fsImpl = fs }: FsOptions = {})
 async function writeAtomicPrivateJson(filePath: string, value: unknown, { fsImpl = fs }: FsOptions = {}): Promise<void> {
   const parent = path.dirname(filePath);
   await fsImpl.mkdir(parent, { recursive: true, mode: 0o700 });
+  // A stable-looking filename is not private if an existing receipt parent is
+  // a symlink into someone else's directory. Never intentionally follow it.
+  await assertCanonicalDirectory(parent, { fsImpl });
   const tempPath = `${filePath}.tmp-${process.pid}-${randomBytes(8).toString("hex")}`;
   const body = `${JSON.stringify(value, null, 2)}\n`;
   if (Buffer.byteLength(body) > MAX_RECEIPT_BYTES) throw new Error("Main update receipt exceeds the size limit.");
@@ -254,7 +257,10 @@ export function createEquinoxLocalMainUpdateTransactionEngine({
   const stagingRoot = path.join(resolvedTransactionRoot, "staging");
 
   const receiptPathFor = (transactionId: string) => path.join(receiptsRoot, `${assertTransactionId(transactionId)}.json`);
-  const readReceipt = async (transactionId: string) => validateReceipt(await readBoundedJsonFile(receiptPathFor(transactionId), { fsImpl }));
+  const readReceipt = async (transactionId: string) => {
+    await assertCanonicalDirectory(receiptsRoot, { fsImpl });
+    return validateReceipt(await readBoundedJsonFile(receiptPathFor(transactionId), { fsImpl }));
+  };
   const readActive = async () => {
     let marker;
     try { marker = validateLockMarker(await readBoundedJsonFile(lockPath, { fsImpl })); }
@@ -281,6 +287,7 @@ export function createEquinoxLocalMainUpdateTransactionEngine({
     if (currentSha === targetSha) throw new Error("Main update target already matches the current source SHA.");
     await assertCanonicalDirectory(resolvedTransactionRoot, { fsImpl, create: true });
     await fsImpl.mkdir(receiptsRoot, { recursive: true, mode: 0o700 });
+    await assertCanonicalDirectory(receiptsRoot, { fsImpl });
     await fsImpl.mkdir(stagingRoot, { recursive: true, mode: 0o700 });
     const active = await readActive();
     if (active) throw new Error(`Main update transaction ${active.transactionId} already owns the update lock.`);

@@ -70,6 +70,9 @@ async function syncDirectory(directory, { fsImpl = fs } = {}) {
 async function writeAtomicPrivateJson(filePath, value, { fsImpl = fs } = {}) {
     const parent = path.dirname(filePath);
     await fsImpl.mkdir(parent, { recursive: true, mode: 0o700 });
+    // A stable-looking filename is not private if an existing receipt parent is
+    // a symlink into someone else's directory. Never intentionally follow it.
+    await assertCanonicalDirectory(parent, { fsImpl });
     const tempPath = `${filePath}.tmp-${process.pid}-${randomBytes(8).toString("hex")}`;
     const body = `${JSON.stringify(value, null, 2)}\n`;
     if (Buffer.byteLength(body) > MAX_RECEIPT_BYTES)
@@ -250,7 +253,10 @@ export function createEquinoxLocalMainUpdateTransactionEngine({ sourceRoot, tran
     const receiptsRoot = path.join(resolvedTransactionRoot, "receipts");
     const stagingRoot = path.join(resolvedTransactionRoot, "staging");
     const receiptPathFor = (transactionId) => path.join(receiptsRoot, `${assertTransactionId(transactionId)}.json`);
-    const readReceipt = async (transactionId) => validateReceipt(await readBoundedJsonFile(receiptPathFor(transactionId), { fsImpl }));
+    const readReceipt = async (transactionId) => {
+        await assertCanonicalDirectory(receiptsRoot, { fsImpl });
+        return validateReceipt(await readBoundedJsonFile(receiptPathFor(transactionId), { fsImpl }));
+    };
     const readActive = async () => {
         let marker;
         try {
@@ -286,6 +292,7 @@ export function createEquinoxLocalMainUpdateTransactionEngine({ sourceRoot, tran
             throw new Error("Main update target already matches the current source SHA.");
         await assertCanonicalDirectory(resolvedTransactionRoot, { fsImpl, create: true });
         await fsImpl.mkdir(receiptsRoot, { recursive: true, mode: 0o700 });
+        await assertCanonicalDirectory(receiptsRoot, { fsImpl });
         await fsImpl.mkdir(stagingRoot, { recursive: true, mode: 0o700 });
         const active = await readActive();
         if (active)

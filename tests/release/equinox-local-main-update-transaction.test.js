@@ -147,6 +147,34 @@ test("Main forensic read stops at exactly 64 KiB plus one byte when content grow
   assert.ok((await engine.readActive()).transactionId, "Original transaction remains usable");
 });
 
+test("Main refuses a symlinked receipt directory before persisting the transaction", async (t) => {
+  const { engine } = await fixture(t);
+  const foreign = await fs.mkdtemp(path.join(os.tmpdir(), "equinox-m6-foreign-receipts-"));
+  t.after(() => fs.rm(foreign, { recursive: true, force: true }));
+  await fs.mkdir(engine.paths.transactionRoot, { recursive: true, mode: 0o700 });
+  await fs.symlink(foreign, engine.paths.receiptsRoot, process.platform === "win32" ? "junction" : "dir");
+  await assert.rejects(engine.begin({ currentSha: CURRENT, targetSha: TARGET }), /canonical normal directory|unsafe|symlink|directory/u);
+  assert.deepEqual(await fs.readdir(foreign), [], "A foreign folder must not receive a private receipt");
+  await assert.rejects(fs.access(engine.paths.lockPath), { code: "ENOENT" });
+});
+
+test("Main refuses a receipt-directory symlink appearing after lock admission", async (t) => {
+  const { engine } = await fixture(t);
+  const original = await engine.begin({ currentSha: CURRENT, targetSha: TARGET });
+  const foreign = await fs.mkdtemp(path.join(os.tmpdir(), "equinox-m6-foreign-receipt-update-"));
+  t.after(() => fs.rm(foreign, { recursive: true, force: true }));
+  const moved = `${engine.paths.receiptsRoot}-held`;
+  const filename = `${original.transactionId}.json`;
+  const receiptBytes = await fs.readFile(path.join(engine.paths.receiptsRoot, filename));
+  await fs.rename(engine.paths.receiptsRoot, moved);
+  // A foreign existing receipt can otherwise be read and silently overwritten.
+  await fs.writeFile(path.join(foreign, filename), receiptBytes, { mode: 0o600 });
+  await fs.symlink(foreign, engine.paths.receiptsRoot, process.platform === "win32" ? "junction" : "dir");
+  await assert.rejects(engine.markRollbackFailed(original.transactionId, "intentional failure"), /canonical normal directory|unsafe|symlink|directory/u);
+  assert.deepEqual(await fs.readFile(path.join(foreign, filename)), receiptBytes, "Foreign receipt bytes must remain untouched");
+  assert.equal(JSON.parse(await fs.readFile(path.join(moved, filename), "utf8")).status, "active");
+});
+
 test("begin acquires one private durable owner and refuses a concurrent updater", async (t) => {
   const { engine } = await fixture(t);
   const first = await engine.begin({ currentSha: CURRENT, targetSha: TARGET });
