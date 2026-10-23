@@ -338,11 +338,24 @@ export async function stageEquinoxLocalMainSnapshotArtifact({
     const manifestPath = path.join(nativeDir, snapshotManifestName(sourceSha, target));
     const manifestBody = `${JSON.stringify(snapshot.manifest, null, 2)}\n`;
     handle = await fsImpl.open(manifestPath, "wx", 0o600);
+    const createdManifest = await handle.stat();
+    if (!createdManifest.isFile() || createdManifest.nlink !== 1 ||
+        (process.platform === "win32" && createdManifest.dev === 0 && createdManifest.ino === 0)) {
+      throw new Error("Main snapshot staged manifest is not an exclusive normal file.");
+    }
     await handle.writeFile(manifestBody, "utf8");
     await handle.sync();
     await handle.close();
     handle = null;
     await syncDirectory(nativeDir, fsImpl);
+    // The published manifest must be the exact descriptor we wrote, not a
+    // same-sized replacement inserted between close() and successful return.
+    const finalManifest = await fsImpl.lstat(manifestPath);
+    if (!finalManifest.isFile() || finalManifest.isSymbolicLink() || finalManifest.nlink !== 1 ||
+        finalManifest.dev !== createdManifest.dev || finalManifest.ino !== createdManifest.ino ||
+        finalManifest.size !== Buffer.byteLength(manifestBody, "utf8")) {
+      throw new Error("Main snapshot staged manifest changed from the original verified inode.");
+    }
     return Object.freeze({
       sourceSha,
       target,

@@ -184,6 +184,44 @@ test("Main snapshot does not publish a same-length substituted artifact after di
   assert.equal(substituted, true, "The actual hard-link publication must experience the substituted temp inode");
 });
 
+test("Main snapshot staging rejects a same-length foreign manifest substituted after descriptor close", async (t) => {
+  const root = await fs.mkdtemp(path.join(path.dirname(fileURLToPath(import.meta.url)), ".equinox-main-snapshot-publish-manifest-"));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const transactionId = `main-${"6".repeat(32)}`;
+  await fs.mkdir(path.join(root, "staging", transactionId), { recursive: true, mode: 0o700 });
+  const bytes = Buffer.from("verified native archive");
+  const manifest = manifestWithArtifact({
+    name: `equinox-local-main-${SHA}-${TARGET}.tar.gz`,
+    sha256: createHash("sha256").update(bytes).digest("hex"), bytes: bytes.length,
+  });
+  const manifestName = `equinox-local-main-${SHA}-${TARGET}.json`;
+  const fsImpl = Object.create(fs);
+  let substituted = false;
+  fsImpl.open = async (candidate, ...args) => {
+    const handle = await fs.open(candidate, ...args);
+    if (path.basename(String(candidate)) !== manifestName || args[0] !== "wx") return handle;
+    return new Proxy(handle, {
+      get(target, property) {
+        if (property === "close") return async () => {
+          await target.close();
+          substituted = true;
+          const original = await fs.readFile(candidate);
+          await fs.unlink(candidate);
+          await fs.writeFile(candidate, Buffer.alloc(original.length, 0x58), { mode: 0o600 });
+        };
+        const value = target[property];
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
+  };
+  await assert.rejects(stageEquinoxLocalMainSnapshotArtifact({
+    sourceSha: SHA, target: TARGET, expectedRuntimeContractSha256: DIGEST,
+    transactionRoot: root, transactionId, fsImpl,
+    fetchImpl: async (url) => url.endsWith(".json") ? jsonResponse(manifest) : bytesResponse(bytes),
+  }), /staged manifest.*changed|manifest.*original|manifest.*identity/u);
+  assert.equal(substituted, true, "The replacement happened after the original manifest descriptor closed");
+});
+
 test("Main snapshot failed staging must preserve a foreign directory replacing its native scratch", async (t) => {
   const root = await fs.mkdtemp(path.join(path.dirname(fileURLToPath(import.meta.url)), ".equinox-main-snapshot-foreign-directory-"));
   t.after(() => fs.rm(root, { recursive: true, force: true }));
