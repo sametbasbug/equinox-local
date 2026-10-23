@@ -5,3 +5,15 @@
 # TypeScript template literal line endings are copied verbatim into emitted JS.
 *.ts text eol=lf
 *.mts text eol=lf
+
+# The 165 committed JavaScript/MJS product entrypoints below are emitted by
+# TypeScript owner files (.ts/.mts). They MUST remain in the runtime/ZIP, but
+# must not count as independently authored JS in GitHub Linguist statistics.
+# Keep real JS test sources (tests/*) visible as authored JavaScript.
+/src/*.js linguist-generated=true
+/src/**/*.js linguist-generated=true
+/src/*.mjs linguist-generated=true
+/src/**/*.mjs linguist-generated=true
+/extension/*.js linguist-generated=true
+/scripts/*.mjs linguist-generated=true
+/scripts/**/*.mjs linguist-generated=true
