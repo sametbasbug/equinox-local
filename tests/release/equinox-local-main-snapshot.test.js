@@ -445,14 +445,17 @@ test("staged Main snapshot refuses symlinked manifest and artifact before openin
     const swapped=symlinkTarget==="manifest"?manifestPath:artifactPath;
     await fs.unlink(swapped);
     await fs.symlink(symlinkTarget==="manifest"?foreignManifest:foreignArchive,swapped);
-    let trustedFileOpened=false;
+    let foreignBytesRead=false;
     const mockFs=Object.create(fs);
     mockFs.open=async (filePath,...opts) => {
-      if(filePath===swapped) trustedFileOpened=true;
-      return fs.open(filePath,...opts);
+      const handle=await fs.open(filePath,...opts);
+      if(filePath===swapped){
+        handle.read=async()=>{foreignBytesRead=true;throw Error("foreign bytes read");};
+      }
+      return handle;
     };
     await assert.rejects(inspectStagedEquinoxLocalMainSnapshotArtifact({...args,fsImpl:mockFs}),/normal, non-symlink file/u);
-    assert.equal(trustedFileOpened,false,symlinkTarget+" must be denied before open");
+    assert.equal(foreignBytesRead,false,symlinkTarget+" must be denied before reading foreign bytes");
     assert.equal((await fs.lstat(swapped)).isSymbolicLink(),true);
     assert.equal(await fs.readFile(foreignManifest,"utf8"),JSON.stringify(manifest));
     assert.deepEqual(await fs.readFile(foreignArchive),content);
@@ -489,16 +492,19 @@ test("staged Main snapshot rejects hard-linked manifest and artifact before open
       if (["EPERM", "ENOTSUP", "EOPNOTSUPP"].includes(error.code)) { t.skip("Hard links unsupported"); return; }
       throw error;
     }
-    assert.equal((await fs.stat(foreign)).nlink, 2);
-    let opened = false;
+    let foreignBytesRead = false;
     const mockFs = Object.create(fs);
     mockFs.open = async (candidate, ...options) => {
-      if (candidate === protectedPath) opened = true;
-      return fs.open(candidate, ...options);
+      const handle = await fs.open(candidate, ...options);
+      if (candidate === protectedPath) {
+        handle.read = async () => { foreignBytesRead = true; throw Error("foreign bytes read"); };
+      }
+      return handle;
     };
     await assert.rejects(inspectStagedEquinoxLocalMainSnapshotArtifact({ ...args, fsImpl: mockFs }), /normal, non-symlink file|hard.link/u);
-    assert.equal(opened, false, "Hard-linked foreign snapshots cannot be opened");
+    assert.equal(foreignBytesRead, false, "Hard-linked foreign snapshots cannot be read");
     assert.deepEqual(await fs.readFile(foreign), bytes);
+    assert.equal((await fs.stat(foreign)).nlink, 2);
     await fs.unlink(protectedPath);
     await fs.unlink(foreign);
   }

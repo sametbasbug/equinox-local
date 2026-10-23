@@ -115,7 +115,7 @@ test("bridge refuses symlinked and oversized signed release metadata without rea
     readCurrentImpl:async()=>({version:targetVersion,releaseDir:dir}),
   }));
   assert.equal(await fs.readFile(foreign,"utf8"),content);
-  assert.equal((await fs.lstat(metadata)).isSymbolicLink(),true);
+  assert.equal(await fs.readlink(metadata),foreign);
 
   await fs.unlink(metadata);
   await fs.writeFile(metadata,"x".repeat(16*1024+1));

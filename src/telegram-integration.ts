@@ -165,17 +165,15 @@ export function defaultTelegramRemoteControlSettingsPath(homeDir = os.homedir(),
 async function ensurePrivateDirectory(directory:string,{fsImpl=fs}:TelegramRuntimeOptions={}) {
   if (process.platform !== "win32") {
     await fsImpl.mkdir(directory, { recursive: true, mode: 0o700 });
-    const stat = await fsImpl.lstat(directory);
-    if (!stat.isDirectory() || stat.isSymbolicLink()) {
-      throw credentialError("Telegram credential directory is unsafe.");
-    }
-    // Chmod the directory inode we inspected, not a path that can be
-    // swapped for a symlink to an unrelated directory between syscalls.
+    // Open and pin the directory inode before changing its permissions.
+    // POSIX O_NOFOLLOW refuses a symbolic-link destination at the syscall.
     const handle = await fsImpl.open(directory,
       fsConstants.O_RDONLY | (fsConstants.O_DIRECTORY ?? 0) | (fsConstants.O_NOFOLLOW ?? 0));
     try {
       const opened = await handle.stat();
-      if (!opened.isDirectory() || opened.dev !== stat.dev || opened.ino !== stat.ino) {
+      const named = await fsImpl.lstat(directory);
+      if (!opened.isDirectory() || !named.isDirectory() || named.isSymbolicLink() ||
+          opened.dev !== named.dev || opened.ino !== named.ino) {
         throw credentialError("Telegram credential directory changed while opening.");
       }
       await handle.chmod(0o700);

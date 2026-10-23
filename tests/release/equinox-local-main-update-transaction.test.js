@@ -666,11 +666,14 @@ test("Main update lock and receipt reject symlinks without reading or replacing 
     const realContents = await fs.readFile(protectedPath);
     await fs.unlink(protectedPath);
     await fs.symlink(foreign, protectedPath);
-    let opened = false;
+    let foreignBytesRead = false;
     const mockFs = Object.create(fs);
     mockFs.open = async (candidate,...args) => {
-      if (candidate === protectedPath) opened = true;
-      return fs.open(candidate,...args);
+      const handle = await fs.open(candidate,...args);
+      if (candidate === protectedPath) {
+        handle.read = async () => { foreignBytesRead = true; throw Error("foreign bytes read"); };
+      }
+      return handle;
     };
     const alternate = createEquinoxLocalMainUpdateTransactionEngine({
       sourceRoot,
@@ -678,8 +681,8 @@ test("Main update lock and receipt reject symlinks without reading or replacing 
       fsImpl:mockFs,
     });
     await assert.rejects(alternate.readActive(), /normal, non-symlink file/u);
-    assert.equal(opened,false,"symlink must be rejected before opening");
-    assert.equal((await fs.lstat(protectedPath)).isSymbolicLink(),true);
+    assert.equal(foreignBytesRead,false,"symlink must be rejected before reading foreign bytes");
+    assert.equal(await fs.readlink(protectedPath),foreign);
     assert.deepEqual(await fs.readFile(foreign),originalBytes);
     await fs.unlink(protectedPath);
     await fs.writeFile(protectedPath,realContents,{mode:0o600});
@@ -705,19 +708,29 @@ test("Main update lock and receipt reject hard links to foreign state before ope
       }
       throw error;
     }
-    assert.equal((await fs.stat(protectedPath)).nlink, 2);
-    let opened = false;
-    const mockFs = Object.create(fs);
-    mockFs.open = async (candidate, ...args) => {
-      if (candidate === protectedPath) opened = true;
-      return fs.open(candidate, ...args);
-    };
-    const isolated = createEquinoxLocalMainUpdateTransactionEngine({
-      sourceRoot, transactionRoot: engine.paths.transactionRoot, fsImpl: mockFs,
-    });
-    await assert.rejects(isolated.readActive(), /normal, non-symlink file|hard.link/u);
-    assert.equal(opened, false, "Foreign-inode hard links must fail before open");
-    assert.deepEqual(await fs.readFile(foreign), original, "Foreign contents stay intact");
+    // Keep the *same* foreign inode open for both the hard-link witness and
+    // subsequent byte-integrity assertion. No path lookup follows fstat.
+    const hardlinkWitness = await fs.open(foreign, "r");
+    try {
+      assert.equal((await hardlinkWitness.stat()).nlink, 2);
+      let foreignBytesRead = false;
+      const mockFs = Object.create(fs);
+      mockFs.open = async (candidate, ...args) => {
+        const handle = await fs.open(candidate, ...args);
+        if (candidate === protectedPath) {
+          handle.read = async () => { foreignBytesRead = true; throw Error("foreign bytes read"); };
+        }
+        return handle;
+      };
+      const isolated = createEquinoxLocalMainUpdateTransactionEngine({
+        sourceRoot, transactionRoot: engine.paths.transactionRoot, fsImpl: mockFs,
+      });
+      await assert.rejects(isolated.readActive(), /normal, non-symlink file|hard.link/u);
+      assert.equal(foreignBytesRead, false, "Foreign-inode hard links must fail before reading bytes");
+      assert.deepEqual(await hardlinkWitness.readFile(), original, "Foreign contents stay intact");
+    } finally {
+      await hardlinkWitness.close();
+    }
     await fs.unlink(protectedPath);
     await fs.writeFile(protectedPath, original, { mode: 0o600 });
     await fs.unlink(foreign);

@@ -137,16 +137,21 @@ async function syncDirectory(directory: string, fsImpl: NativeSnapshotFs): Promi
 // Windows does not provide POSIX O_NOFOLLOW semantics; pin the lstat
 // identity to the opened descriptor against symlinks and file replacement.
 async function openPinnedSnapshotFile(filePath: string, fsImpl: NativeSnapshotFs): Promise<OpenHandle> {
-  const before = await fsImpl.lstat(filePath);
-  if (!before.isFile() || before.isSymbolicLink() || before.nlink !== 1 ||
-      (process.platform === "win32" && before.dev === 0 && before.ino === 0)) {
-    throw new Error("Main snapshot staged file must be a normal, non-symlink file.");
+  // Read-only open first (POSIX kernel NOFOLLOW). Consume no file bytes
+  // before both the descriptor and final pathname have passed validation.
+  let handle: OpenHandle;
+  try { handle = await fsImpl.open(filePath, fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0)); }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException)?.code === "ELOOP") throw new Error("Main snapshot staged file must be a normal, non-symlink file.");
+    throw error;
   }
-  const handle = await fsImpl.open(filePath, fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0));
   try {
-    const after = await handle.stat();
-    if (!after.isFile() || after.nlink !== 1 || after.dev !== before.dev || after.ino !== before.ino) {
-      throw new Error("Main snapshot staged file changed while opening.");
+    const opened = await handle.stat();
+    const named = await fsImpl.lstat(filePath);
+    if (!named.isFile() || named.isSymbolicLink() || named.nlink !== 1 ||
+        (process.platform === "win32" && named.dev === 0 && named.ino === 0) ||
+        !opened.isFile() || opened.nlink !== 1 || opened.dev !== named.dev || opened.ino !== named.ino) {
+      throw new Error("Main snapshot staged file must be a normal, non-symlink file or changed while opening.");
     }
     return handle;
   } catch (error) {

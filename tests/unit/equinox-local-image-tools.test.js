@@ -206,6 +206,10 @@ test("image_view rejects files that change size after path admission and closes 
   t.after(()=>fs.rm(root,{recursive:true,force:true}));
   const imagePath=path.join(root,"image.png");
   await fs.writeFile(imagePath,tinyPng());
+  // Keep an already-open writable descriptor so the fixture mutates that
+  // inode, never an unvalidated pathname between admission and read.
+  const mutator=await fs.open(imagePath,"r+");
+  t.after(()=>mutator.close());
   let opened=0,closed=0;
   const fsImpl={
     ...fs,
@@ -214,7 +218,7 @@ test("image_view rejects files that change size after path admission and closes 
       const handle=await fs.open(p,flags);
       const originalClose=handle.close.bind(handle);
       handle.close=async()=>{closed++;return originalClose()};
-      await fs.appendFile(p,Buffer.from("changed after lstat"));
+      await mutator.write(Buffer.from("changed after lstat"),0,undefined,(await mutator.stat()).size);
       return handle;
     }
   };

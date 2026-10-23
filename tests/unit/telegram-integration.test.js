@@ -139,8 +139,7 @@ test("Telegram credential rename race never chmods a foreign symlink target", as
     const ownedRenamed = path.join(root, "owned-written-credential.json");
     const foreignText = "existing outside file must never be modified";
     await fs.writeFile(foreign, foreignText, { mode: 0o644 });
-    const foreignMode = (await fs.stat(foreign)).mode & 0o777;
-    assert.equal(foreignMode, 0o644);
+    const foreignMode = 0o644;
     let swapped = false;
     const mockFs = Object.create(fs);
     mockFs.rename = async (oldPath, newPath) => {
@@ -156,8 +155,8 @@ test("Telegram credential rename race never chmods a foreign symlink target", as
       fsImpl: mockFs, fetchImpl: async () => ({ ok: true, status: 200 }),
     }), /changed|unsafe|symlink|credentials|secure/u);
     assert.equal(swapped, true, "The rename race must have been exercised");
-    assert.equal((await fs.stat(foreign)).mode & 0o777, foreignMode, "Foreign file permissions stay intact");
     assert.equal(await fs.readFile(foreign, "utf8"), foreignText);
+    assert.equal((await fs.stat(foreign)).mode & 0o777, foreignMode, "Foreign file permissions stay intact");
     assert.equal((await fs.lstat(credentialPath)).isSymbolicLink(), true);
     assert.equal((await fs.stat(ownedRenamed)).mode & 0o777, 0o600);
   });
@@ -201,8 +200,7 @@ test("Telegram rejects foreign hard-linked private temporary file before rename"
     const foreign = path.join(root, "foreign-private-data.txt");
     const foreignContents = "outside-owned-private-file";
     await fs.writeFile(foreign, foreignContents, { mode: 0o600 });
-    const originalMode = (await fs.stat(foreign)).mode & 0o777;
-    assert.equal(originalMode, 0o600);
+    const originalMode = 0o600;
     let swapped = false;
     const mockFs = Object.create(fs);
     mockFs.lstat = async (candidate, ...args) => {

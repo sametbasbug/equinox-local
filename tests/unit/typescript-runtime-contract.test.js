@@ -193,7 +193,7 @@ test("tooling writer rejects hard-linked outputs without changing the foreign in
       }
       throw error;
     }
-    assert.ok((await fs.stat(outside)).nlink > 1, "Fixture must share an actual inode");
+    assert.ok((await fs.stat(path.join(ownedDir, "z.mjs"))).nlink > 1, "Fixture must share an actual inode");
     await assert.rejects(verifyTypeScriptRuntimeOutput({
       rootDir, projectFile: "tsconfig.tooling.json", sourceDirectory: "scripts",
       emittedPrefix: "scripts", writeOutput: true, spawnImpl: emitted,
@@ -239,7 +239,7 @@ test("tooling writer rejects a parent swap between preflight and the output inod
     await assert.rejects(verifyTypeScriptRuntimeOutput({
       rootDir, projectFile: "tsconfig.tooling.json", sourceDirectory: "scripts",
       emittedPrefix: "scripts", writeOutput: true, spawnImpl: emitted,
-    }), /changed after preflight|changed while opening|unsafe|symlink|output directory/u);
+    }), /changed after preflight|changed while opening|changed after opening|unsafe|symlink|output directory/u);
     assert.equal(swapped, true, "Parent replacement attack must actually occur between checks");
     assert.equal(await fs.readFile(foreign, "utf8"), expected, "Foreign file must never be truncated");
     assert.equal(await fs.readFile(path.join(`${targetDir}-original`, "package-io.mjs"), "utf8"), prior);

@@ -97,16 +97,19 @@ export async function verifyTypeScriptRuntimeOutput({
       const destination = path.join(rootDir, sourceDirectory, relative);
       if (writeOutput) {
         await assertToolingOutputParents(rootDir, sourceDirectory, relative);
-        const stat = await fs.lstat(destination);
-        assert.ok(stat.isFile() && !stat.isSymbolicLink() && stat.nlink === 1, `Tooling output is not an owned regular file: ${relative}`);
-        const pinned = preflightIdentities.get(relative);
-        assert.ok(pinned && stat.dev === pinned.dev && stat.ino === pinned.ino,
-          `Tooling output changed after preflight: ${relative}`);
+        // Open without truncation. No write before the descriptor proves its
+        // original preflight inode and the final pathname are still intact.
         const handle = await fs.open(destination, constants.O_WRONLY | (constants.O_NOFOLLOW ?? 0));
         try {
           const opened = await handle.stat();
-          assert.ok(opened.isFile() && opened.nlink === 1 && opened.dev === stat.dev && opened.ino === stat.ino,
+          const pinned = preflightIdentities.get(relative);
+          assert.ok(pinned && opened.isFile() && opened.nlink === 1 &&
+            opened.dev === pinned.dev && opened.ino === pinned.ino,
             `Tooling output changed while opening: ${relative}`);
+          const named = await fs.lstat(destination);
+          assert.ok(named.isFile() && !named.isSymbolicLink() && named.nlink === 1 &&
+            named.dev === opened.dev && named.ino === opened.ino,
+            `Tooling output changed after opening: ${relative}`);
           await handle.truncate(0);
           await handle.writeFile(generated);
         } finally {

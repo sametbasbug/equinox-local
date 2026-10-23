@@ -84,12 +84,12 @@ test("Browser screenshot writes use private owned paths and never overwrite an e
     const binary=Buffer.from("synthetic-png-byte-fixture");
     await writeScreenshotAtomic({absolutePath:target.absolutePath,buffer:binary});
     assert.deepEqual(await fs.readFile(target.absolutePath),binary);
-    assert.equal((await fs.stat(target.absolutePath)).mode&0o077,0);
     assert.equal((await fs.stat(path.dirname(target.absolutePath))).mode&0o077,0);
     await assert.rejects(writeScreenshotAtomic({
       absolutePath:target.absolutePath,buffer:Buffer.from("must-not-overwrite"),
     }),{code:"EEXIST"});
     assert.deepEqual(await fs.readFile(target.absolutePath),binary);
+    assert.equal((await fs.stat(target.absolutePath)).mode&0o077,0);
     assert.deepEqual(await fs.readdir(path.dirname(target.absolutePath)),["fixture.png"],
       "temporary artifacts must not remain after a failed hard-link collision");
     const resolved=resolveScreenshotPath(screenshotRoot,target.relativePath);
