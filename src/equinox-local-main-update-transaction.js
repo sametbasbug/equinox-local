@@ -108,9 +108,21 @@ async function readBoundedJsonFile(filePath, { fsImpl = fs } = {}) {
         }
         if (!stat.isFile() || stat.size > MAX_RECEIPT_BYTES)
             throw new Error("Main update state file is not an admissible regular file.");
-        const body = await handle.readFile("utf8");
-        if (Buffer.byteLength(body) > MAX_RECEIPT_BYTES)
+        // The file may grow after fstat. Never readFile() an unbounded mutable
+        // forensic lock/receipt: stop at the exact 64 KiB budget plus one byte.
+        const chunks = [];
+        let total = 0;
+        while (total <= MAX_RECEIPT_BYTES) {
+            const buffer = Buffer.allocUnsafe(Math.min(8192, MAX_RECEIPT_BYTES + 1 - total));
+            const { bytesRead } = await handle.read(buffer, 0, buffer.length, total);
+            if (bytesRead === 0)
+                break;
+            chunks.push(buffer.subarray(0, bytesRead));
+            total += bytesRead;
+        }
+        if (total > MAX_RECEIPT_BYTES)
             throw new Error("Main update state file exceeds the size limit.");
+        const body = Buffer.concat(chunks, total).toString("utf8");
         try {
             return JSON.parse(body);
         }

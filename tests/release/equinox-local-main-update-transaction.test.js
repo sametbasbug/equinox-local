@@ -80,6 +80,73 @@ test("transaction state accepts the promoted direct SHA-addressed source-store c
   assert.equal(engine.paths.sourceStoreRoot, "/Users/example/state/sources");
 });
 
+test("Main lock and receipt never use unbounded descriptor readFile after size admission", async (t) => {
+  const { engine, sourceRoot } = await fixture(t);
+  const receipt = await engine.begin({ currentSha: CURRENT, targetSha: TARGET });
+  const receiptPath = path.join(engine.paths.receiptsRoot, `${receipt.transactionId}.json`);
+  const protectedPaths = new Set([engine.paths.lockPath, receiptPath]);
+  let unboundedReads = 0;
+  let boundedReads = 0;
+  const mockFs = Object.create(fs);
+  mockFs.open = async (candidate, ...args) => {
+    const handle = await fs.open(candidate, ...args);
+    if (!protectedPaths.has(candidate)) return handle;
+    return new Proxy(handle, {
+      get(target, key) {
+        if (key === "readFile") return async (...params) => {
+          unboundedReads += 1;
+          return target.readFile(...params);
+        };
+        if (key === "read") return async (...params) => {
+          boundedReads += 1;
+          assert.ok(params[2] <= 64 * 1024 + 1, "A single read cannot escape the receipt byte budget");
+          return target.read(...params);
+        };
+        const value = target[key];
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
+  };
+  const isolated = createEquinoxLocalMainUpdateTransactionEngine({
+    sourceRoot, transactionRoot: engine.paths.transactionRoot, fsImpl: mockFs,
+  });
+  assert.equal((await isolated.readActive()).transactionId, receipt.transactionId);
+  assert.equal(unboundedReads, 0, "Main forensic state cannot be streamed into memory without a hard bound");
+  assert.ok(boundedReads >= 2, "Both forensic lock and receipt must use bounded reads");
+});
+
+test("Main forensic read stops at exactly 64 KiB plus one byte when content grows after stat", async (t) => {
+  const { engine, sourceRoot } = await fixture(t);
+  await engine.begin({ currentSha: CURRENT, targetSha: TARGET });
+  let delivered = 0;
+  let closes = 0;
+  const mockFs = Object.create(fs);
+  mockFs.open = async (candidate, ...args) => {
+    const handle = await fs.open(candidate, ...args);
+    if (candidate !== engine.paths.lockPath) return handle;
+    return new Proxy(handle, {
+      get(target, key) {
+        if (key === "read") return async (buffer, offset, length) => {
+          buffer.fill(88, offset, offset + length);
+          delivered += length;
+          assert.ok(delivered <= 64 * 1024 + 1, "Growing file reads must never escape the byte budget");
+          return { bytesRead: length, buffer };
+        };
+        if (key === "close") return async () => { closes += 1; return target.close(); };
+        const value = target[key];
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
+  };
+  const alternate = createEquinoxLocalMainUpdateTransactionEngine({
+    sourceRoot, transactionRoot: engine.paths.transactionRoot, fsImpl: mockFs,
+  });
+  await assert.rejects(alternate.readActive(), /exceeds the size limit/u);
+  assert.equal(delivered, 64 * 1024 + 1, "Stop immediately on the first over-limit byte");
+  assert.equal(closes, 1, "Close the opened forensic file on failure");
+  assert.ok((await engine.readActive()).transactionId, "Original transaction remains usable");
+});
+
 test("begin acquires one private durable owner and refuses a concurrent updater", async (t) => {
   const { engine } = await fixture(t);
   const first = await engine.begin({ currentSha: CURRENT, targetSha: TARGET });
