@@ -133,6 +133,25 @@ test("stale or concurrently owned writer lock never gets auto-reclaimed", async 
   assert.equal((await f.journal.read(TX)).stage, "prepared");
 });
 
+test("writer guard must not unlink another writer's replaced lock", async (t) => {
+  let guardPath;
+  const replacement = "synthetic-concurrent-writer-foreign-lock\n";
+  let replaced = false;
+  const f = await fixture(t, {inspectOwningReceipt: async () => {
+    if (!replaced) {
+      replaced = true;
+      await fs.unlink(guardPath);
+      await fs.writeFile(guardPath, replacement, {mode: 0o600});
+    }
+    return {...input, startedAt: STARTED, status: "promoting"};
+  }});
+  guardPath = path.join(f.journal.root, `.${TX}.writer-lock`);
+  await assert.rejects(f.journal.create(input), /writer.guard.*changed|writer.lock.*identity|lock.*owned/u);
+  assert.equal(replaced, true, "An independent lock must replace the original opened inode");
+  assert.equal(await fs.readFile(guardPath, "utf8"), replacement,
+    "Only the original writer's own lock may be unlinked");
+});
+
 test("journal fails closed on changed identity, unsupported version, malformed state, and symlinks", async (t) => {
   const f = await fixture(t);
   const created = await f.journal.create(input);

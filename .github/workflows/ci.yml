@@ -842,6 +842,25 @@ jobs:
           if ($artifacts.Count -ne 1) { throw 'Expected exactly one downloaded ARM64 managed ZIP' }
           if ($artifacts[0].Length -ne [int64]$env:EXPECTED_PACKAGE_BYTES) { throw 'Downloaded ARM64 package length mismatch' }
 
+      # Run packaged ConPTY in isolation from the three CPU-heavy native
+      # acceptance lanes; retain its exact test, retry, and failure contract.
+      - name: Windows ARM64 packaged node-pty / ConPTY smoke
+        shell: pwsh
+        run: |
+          $artifact = Get-ChildItem (Join-Path $env:RUNNER_TEMP 'arm64-package') -Filter 'equinox-local-*-win32-arm64.zip' | Select-Object -First 1
+          if ($null -eq $artifact) { throw 'Windows ARM64 managed ZIP artifact was not found for node-pty acceptance' }
+          $extract = Join-Path $env:RUNNER_TEMP 'equinox-node-pty-arm64'
+          New-Item -ItemType Directory -Path $extract -Force | Out-Null
+          & tar.exe -xf $artifact.FullName -C $extract 'release/node_modules/node-pty'
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $env:EQUINOX_WINDOWS_NODE_PTY_ROOT = Join-Path $extract 'release/node_modules/node-pty'
+          node tests/release/windows-node-pty-smoke.mjs
+          if ($LASTEXITCODE -ne 0) {
+            Write-Warning 'Packaged ARM64 ConPTY smoke timed out once; retrying once on the same verified payload.'
+            node tests/release/windows-node-pty-smoke.mjs
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+
       - parallel:
           - name: Windows ARM64 stateful shell lifecycle acceptance
             shell: pwsh
@@ -862,23 +881,6 @@ jobs:
               $artifact = @(Get-ChildItem (Join-Path $env:RUNNER_TEMP 'arm64-package') -Filter 'equinox-local-*-win32-arm64.zip')
               if ($artifact.Count -ne 1) { throw 'Expected one exact ARM64 package for A/B acceptance' }
               & ./tests/release/windows-native-ab-package-smoke.ps1 -ArtifactPath $artifact[0].FullName -Target win32-arm64 -ExpectedSha256 $env:EXPECTED_PACKAGE_SHA256
-
-          - name: Windows ARM64 packaged node-pty / ConPTY smoke
-            shell: pwsh
-            run: |
-              $artifact = Get-ChildItem (Join-Path $env:RUNNER_TEMP 'arm64-package') -Filter 'equinox-local-*-win32-arm64.zip' | Select-Object -First 1
-              if ($null -eq $artifact) { throw 'Windows ARM64 managed ZIP artifact was not found for node-pty acceptance' }
-              $extract = Join-Path $env:RUNNER_TEMP 'equinox-node-pty-arm64'
-              New-Item -ItemType Directory -Path $extract -Force | Out-Null
-              & tar.exe -xf $artifact.FullName -C $extract 'release/node_modules/node-pty'
-              if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-              $env:EQUINOX_WINDOWS_NODE_PTY_ROOT = Join-Path $extract 'release/node_modules/node-pty'
-              node tests/release/windows-node-pty-smoke.mjs
-              if ($LASTEXITCODE -ne 0) {
-                Write-Warning 'Packaged ARM64 ConPTY smoke timed out once; retrying once on the same verified payload.'
-                node tests/release/windows-node-pty-smoke.mjs
-                if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-              }
 
           - name: Windows ARM64 packaged winapp UIA smoke
             shell: pwsh

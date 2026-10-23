@@ -251,12 +251,25 @@ export function createEquinoxLocalWindowsNativeTransitionJournal({
     await directoryOwned(root, { ...aclOpts, create: true });
     const guard = path.join(root, `.${id}.writer-lock`);
     const fd = await fsImpl.open(guard, "wx", 0o600);
+    let created: Awaited<ReturnType<JournalHandle["stat"]>> | null = null;
     try {
+      created = await fd.stat();
+      if (!created.isFile() || created.nlink !== 1) {
+        throw new Error("Windows transition journal writer lock is not an exclusive normal file.");
+      }
       await fd.writeFile(`${process.pid}\n`);
       await fd.sync();
       return await action();
     } finally {
       await fd.close();
+      // Another writer must not lose its own lock if the pathname was
+      // replaced while this journal action held the original descriptor.
+      // A changed lock is left for explicit forensic owner reconciliation.
+      const current = await fsImpl.lstat(guard);
+      if (!created || !current.isFile() || current.isSymbolicLink() ||
+          current.nlink !== 1 || current.dev !== created.dev || current.ino !== created.ino) {
+        throw new Error("Windows transition journal writer guard changed ownership; lock preserved.");
+      }
       await fsImpl.unlink(guard);
     }
   };
