@@ -194,6 +194,36 @@ test("Telegram rejects foreign hard-linked private temporary file before rename"
   });
 });
 
+test("Telegram private readers refuse symlinked state parent", async (t) => {
+  if (process.platform === "win32") { t.skip("POSIX only"); return; }
+  await withTempCredential(async ({ root, credentialPath, pairingPath, inboxPath }) => {
+    const other = path.join(root, "other");
+    await fs.mkdir(other, { mode: 0o700 });
+    const payload = JSON.stringify({ version: 2, botToken: TOKEN, telegramUserId: "333" });
+    const pairing = JSON.stringify({ version: 1, botToken: TOKEN, botUsername: "mock",
+      expiresAt: new Date(Date.now() + 60_000).toISOString(), nextUpdateId: 0,
+      candidate: { telegramUserId: "333", label: "mock" } });
+    await fs.writeFile(path.join(other, "telegram.json"), payload, { mode: 0o600 });
+    await fs.writeFile(path.join(other, "telegram-pairing.json"), pairing, { mode: 0o600 });
+    await fs.symlink(other, path.dirname(credentialPath));
+    let contentOpens = 0;
+    const fsImpl = Object.create(fs);
+    fsImpl.open = async (candidate, ...args) => {
+      if (candidate === credentialPath || candidate === pairingPath) contentOpens++;
+      return fs.open(candidate, ...args);
+    };
+    const actual = await getTelegramIntegrationStatus({ credentialPath, pairingPath, inboxPath, fsImpl });
+    assert.equal(actual.configured, false);
+    assert.equal(actual.needsAttention, true);
+    const pairingStatus = await getTelegramPairingStatus({ pairingPath, fsImpl });
+    assert.equal(pairingStatus.active, false);
+    assert.equal(pairingStatus.needsAttention, true);
+    assert.equal(contentOpens, 0, "No foreign private data may be opened");
+    assert.equal(await fs.readFile(path.join(other, "telegram.json"), "utf8"), payload);
+    assert.equal(await fs.readFile(path.join(other, "telegram-pairing.json"), "utf8"), pairing);
+  });
+});
+
 test("Telegram does not trust a hard-linked foreign credential as its owned private state", async (t) => {
   if (process.platform === "win32") { t.skip("POSIX hard-link private-state ownership only"); return; }
   await withTempCredential(async ({ root, credentialPath, pairingPath, inboxPath }) => {

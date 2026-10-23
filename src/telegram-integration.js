@@ -184,6 +184,25 @@ async function ensurePrivateDirectory(directory, { fsImpl = fs } = {}) {
     await protectWindowsPrivateStatePath({ target: directory, type: "directory" });
     await inspectWindowsPrivateState(directory, "directory", { fsImpl, label: "Telegram private-state directory" });
 }
+// Reader-only guard: unlike ensurePrivateDirectory, this never creates or
+// chmods a directory. A final parent symlink can redirect a private 0600
+// credential or inbox file to an unrelated same-user file on POSIX.
+async function assertPrivateReadParent(filePath, { fsImpl = fs } = {}) {
+    if (process.platform === "win32")
+        return;
+    let stat;
+    try {
+        stat = await fsImpl.lstat(path.dirname(filePath));
+    }
+    catch (error) {
+        if (error?.code === "ENOENT")
+            return;
+        throw error;
+    }
+    if (!stat.isDirectory() || stat.isSymbolicLink()) {
+        throw privateStateSecurityError("Telegram private-state directory", "type");
+    }
+}
 async function assertPrivateFileSecurity(filePath, { fsImpl = fs, label, allowMissing = false } = {}) {
     if (process.platform !== "win32")
         return null;
@@ -259,6 +278,7 @@ async function readPrivateJson(filePath, { fsImpl = fs, maxBytes, label }) {
             return null;
     }
     try {
+        await assertPrivateReadParent(filePath, { fsImpl });
         ({ data: text, stat } = await readBoundedNormalFile(filePath, {
             fsImpl, minBytes: 1, maxBytes, encoding: "utf8", label,
             requireSingleLink: process.platform !== "win32",
@@ -269,6 +289,7 @@ async function readPrivateJson(filePath, { fsImpl = fs, maxBytes, label }) {
             return null;
         throw error;
     }
+    await assertPrivateReadParent(filePath, { fsImpl });
     if (process.platform === "win32") {
         await assertPrivateFileSecurity(filePath, { fsImpl, label });
     }
@@ -315,6 +336,7 @@ async function readTelegramCredentials({ credentialPath = defaultTelegramCredent
             return null;
     }
     try {
+        await assertPrivateReadParent(credentialPath, { fsImpl });
         ({ data: text, stat } = await readBoundedNormalFile(credentialPath, {
             fsImpl,
             minBytes: 1,
@@ -334,6 +356,7 @@ async function readTelegramCredentials({ credentialPath = defaultTelegramCredent
         }
         throw error;
     }
+    await assertPrivateReadParent(credentialPath, { fsImpl });
     if (process.platform === "win32") {
         await assertPrivateFileSecurity(credentialPath, { fsImpl, label: "Telegram credential file" });
     }
