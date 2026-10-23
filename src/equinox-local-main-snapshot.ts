@@ -356,6 +356,13 @@ export async function stageEquinoxLocalMainSnapshotArtifact({
         finalManifest.size !== Buffer.byteLength(manifestBody, "utf8")) {
       throw new Error("Main snapshot staged manifest changed from the original verified inode.");
     }
+    // Streaming SHA-256 authenticates the bytes received, not necessarily
+    // the bytes persisted to a concurrently writable inode. Before stage()
+    // promises success, hash the opened on-disk file by descriptor again.
+    const persisted = await hashExactNormalFile(artifactPath, expectedBytes, fsImpl);
+    if (persisted.sha256 !== sha256) {
+      throw new Error("Main snapshot persisted staged artifact SHA-256 differs from the verified download.");
+    }
     return Object.freeze({
       sourceSha,
       target,

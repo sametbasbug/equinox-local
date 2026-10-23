@@ -184,6 +184,52 @@ test("Main snapshot does not publish a same-length substituted artifact after di
   assert.equal(substituted, true, "The actual hard-link publication must experience the substituted temp inode");
 });
 
+test("Main snapshot stage rejects altered bytes within its originally verified artifact inode", async (t) => {
+  const root = await fs.mkdtemp(path.join(path.dirname(fileURLToPath(import.meta.url)), ".equinox-main-snapshot-inplace-tamper-"));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const transactionId = `main-${"b".repeat(32)}`;
+  const transactionDir = path.join(root, "staging", transactionId);
+  await fs.mkdir(transactionDir, { recursive: true, mode: 0o700 });
+  const trusted = Buffer.from("verified-snapshot-archive");
+  const foreign = Buffer.from("forged!!-snapshot-archive");
+  assert.equal(trusted.length, foreign.length);
+  const manifest = manifestWithArtifact({
+    name: `equinox-local-main-${SHA}-${TARGET}.tar.gz`,
+    bytes: trusted.length,
+    sha256: createHash("sha256").update(trusted).digest("hex"),
+  });
+  const fsImpl = Object.create(fs);
+  let tampered = false;
+  fsImpl.open = async (candidate, ...args) => {
+    const handle = await fs.open(candidate, ...args);
+    if (!path.basename(String(candidate)).startsWith(".artifact-part-") || args[0] !== "wx") return handle;
+    return new Proxy(handle, {
+      get(target, property) {
+        if (property === "close") return async () => {
+          await target.close();
+          // Overwrite the *same inode* and retain the same file size after
+          // the streaming SHA-256 has already accepted network bytes.
+          const before = await fs.lstat(candidate);
+          await fs.writeFile(candidate, foreign);
+          const after = await fs.lstat(candidate);
+          assert.equal(after.ino, before.ino);
+          assert.equal(after.dev, before.dev);
+          assert.equal(after.size, trusted.length);
+          tampered = true;
+        };
+        const value = target[property];
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
+  };
+  await assert.rejects(stageEquinoxLocalMainSnapshotArtifact({
+    sourceSha: SHA, target: TARGET, expectedRuntimeContractSha256: DIGEST,
+    transactionRoot: root, transactionId, fsImpl,
+    fetchImpl: async (url) => url.endsWith(".json") ? jsonResponse(manifest) : bytesResponse(trusted),
+  }), /staged artifact.*SHA-256|persisted.*SHA-256|artifact.*digest.*different/u);
+  assert.equal(tampered, true, "Tampering must overwrite the original verified inode after its descriptor closes");
+});
+
 test("Main snapshot staging rejects a same-length foreign manifest substituted after descriptor close", async (t) => {
   const root = await fs.mkdtemp(path.join(path.dirname(fileURLToPath(import.meta.url)), ".equinox-main-snapshot-publish-manifest-"));
   t.after(() => fs.rm(root, { recursive: true, force: true }));
