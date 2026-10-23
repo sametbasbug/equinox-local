@@ -1,0 +1,231 @@
+import { spawn as spawnChild } from "node:child_process";
+import fs from "node:fs/promises";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+import { launchDetachedHelper } from "./equinox-local-detached-helper.js";
+import { projectDarwinDetachedHelperEnvironment } from "./equinox-local-darwin-helper-environment.js";
+import { requestWindowsShellRuntimeRestart } from "./equinox-local-windows-shell-control.js";
+
+type RestartInstallation = Readonly<{
+  managed?:boolean;selfUpdateSupported?:boolean;
+  installRoot?:string;releaseDir?:string;
+}>;
+type RestartProcess = Readonly<{env:NodeJS.ProcessEnv;execPath?:string}>;
+type RestartFs = Pick<typeof fs,"lstat">;
+type RestartPath = Pick<typeof path,"dirname"|"basename"|"join">;
+type ManagedOptions = {
+  installation?:RestartInstallation;spawnImpl?:typeof spawnChild;
+  nodePath?:string;helperPath?:string;sourceEnv?:NodeJS.ProcessEnv;platform?:string;
+  requestWindowsRestartImpl?:typeof requestWindowsShellRuntimeRestart;
+};
+type SourceOptions = {
+  fsImpl?:RestartFs;pathImpl?:RestartPath;processImpl?:RestartProcess;
+  spawnImpl?:typeof spawnChild;moduleUrl?:string;
+};
+type RestartDefinition = Readonly<{
+  description:string;inputSchema:Record<string,never>;
+  annotations:Readonly<{
+    title:string;readOnlyHint:boolean;destructiveHint:boolean;
+    idempotentHint:boolean;openWorldHint:boolean;
+  }>;
+}>;
+type RegisterRestartTextTool = (
+  name:string,definition:RestartDefinition,handler:()=>Promise<unknown>,
+  options:{projectAware:boolean;mutationScopes:string[]},
+)=>unknown;
+type RegisterOptions = SourceOptions & {
+  registerTextTool:RegisterRestartTextTool;
+  installation:RestartInstallation;
+  scheduleManagedRestart?:(options:ManagedOptions)=>Promise<unknown>;
+  scheduleSourceRestart?:(options:SourceOptions)=>Promise<{logPath:string}>;
+  sourceModuleUrl?:string;
+  markRestartPending?:()=>void;
+  beforeRestart?:()=>Promise<unknown>;
+  restartFailed?:()=>Promise<unknown>;
+  textResult:(message:string)=>unknown;
+  errorResult:(error:unknown)=>unknown;
+};
+
+const DEFAULT_HELPER_PATH = fileURLToPath(new URL("./equinox-local-restart-helper.js", import.meta.url));
+
+export function restartHelperEnvironment(installation:RestartInstallation,sourceEnv:NodeJS.ProcessEnv = process.env):Record<string,string> {
+  return projectDarwinDetachedHelperEnvironment({ installation, sourceEnv });
+}
+
+export async function scheduleEquinoxLocalRestart({
+  installation,
+  spawnImpl = spawnChild,
+  nodePath = process.execPath,
+  helperPath = DEFAULT_HELPER_PATH,
+  sourceEnv = process.env,
+  platform = process.platform,
+  requestWindowsRestartImpl = requestWindowsShellRuntimeRestart,
+}:ManagedOptions = {}) {
+  if (!installation?.selfUpdateSupported || !installation?.managed) {
+    throw new Error("A managed Equinox Local installation is required to schedule restart.");
+  }
+  if (platform === "win32") {
+    // Windows is supervised by its native WPF shell. The detached macOS
+    // launchctl helper cannot restart it; use the existing same-user pipe.
+    const response = await requestWindowsRestartImpl({ platform });
+    if (response?.requested !== true) throw new Error("Windows shell did not accept the runtime restart request.");
+    return Object.freeze({ scheduled: true });
+  }
+  if (platform !== "darwin") throw new Error("Runtime restart is unsupported on this platform.");
+  await launchDetachedHelper({
+    spawnImpl,
+    command: nodePath,
+    args: [helperPath, "--restart"],
+    options: {
+      detached: true,
+      stdio: "ignore",
+      env: restartHelperEnvironment(installation, sourceEnv),
+    },
+    label: "Equinox Local restart helper",
+  });
+  return Object.freeze({ scheduled: true });
+}
+
+export async function scheduleSourceCheckoutRestart({
+  fsImpl = fs,
+  pathImpl = path,
+  processImpl = process,
+  spawnImpl = spawnChild,
+  moduleUrl = import.meta.url,
+}:SourceOptions = {}) {
+  const serverPath = fileURLToPath(moduleUrl);
+  const moduleDir = pathImpl.dirname(serverPath);
+  const sourceRoot = pathImpl.basename(moduleDir) === "src"
+    ? pathImpl.dirname(moduleDir)
+    : moduleDir;
+  const scriptPath = pathImpl.join(
+    sourceRoot,
+    "scripts",
+    "restart-runtime.sh",
+  );
+  const scriptStats = await fsImpl.lstat(scriptPath);
+
+  if (scriptStats.isSymbolicLink() || !scriptStats.isFile()) {
+    throw new Error(
+      "Source runtime yeniden başlatma scripti normal bir dosya değil.",
+    );
+  }
+
+  const sourceRestartEnv = projectDarwinDetachedHelperEnvironment({
+    sourceEnv: processImpl.env,
+    includeDeveloperRuntimeConfig: true,
+  });
+  await launchDetachedHelper({
+    spawnImpl,
+    command: "/bin/bash",
+    args: [scriptPath],
+    options: {
+      detached: true,
+      stdio: "ignore",
+      env: sourceRestartEnv,
+    },
+    label: "Equinox Local source restart helper",
+  });
+  return Object.freeze({
+    scheduled: true,
+    scriptPath,
+    logPath: pathImpl.join(
+      processImpl.env.TMPDIR ?? "/tmp",
+      "equinox-local-restart.log",
+    ),
+  });
+}
+
+export function registerRestartRuntimeTool({
+  registerTextTool,
+  installation,
+  scheduleManagedRestart = scheduleEquinoxLocalRestart,
+  scheduleSourceRestart = scheduleSourceCheckoutRestart,
+  sourceModuleUrl = import.meta.url,
+  fsImpl = fs,
+  pathImpl = path,
+  processImpl = process,
+  markRestartPending = () => {},
+  beforeRestart = async () => {},
+  restartFailed = async () => {},
+  textResult,
+  errorResult,
+}:RegisterOptions) {
+  registerTextTool(
+    "restart_runtime",
+    {
+      description:
+        "Equinox Local runtime'ını kurulum türüne uygun güvenli restart yoluyla yeniden başlatmayı zamanlar. " +
+        "Managed kurulumlar bundled LaunchAgent helper'ını, source checkout geliştirme ortamları ise private developer runtime config'ini kullanır. " +
+        "Bu araç başarılı döndükten sonra AYNI ASİSTAN TURUNDA başka Equinox Local aracı çağırma; kullanıcıya hemen final durum yanıtı ver.",
+      inputSchema: {},
+      annotations: {
+        title:
+          "Equinox Local runtime'ını yeniden başlat",
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: false,
+      },
+    },
+    async () => {
+      let restartBoundaryEntered = false;
+      try {
+        restartBoundaryEntered = true;
+        await beforeRestart();
+        if (
+          installation.managed &&
+          installation.selfUpdateSupported
+        ) {
+          await scheduleManagedRestart({
+            installation,
+          });
+          markRestartPending();
+
+          return textResult(
+            [
+              "Equinox Local managed yeniden başlatması zamanlandı.",
+              "Bundled LaunchAgent helper kısa bir gecikmeden sonra aktif sürümü yeniden başlatacak; açık foreground shell varsa yeni bundle ile güvenli biçimde yenilenecek.",
+              "Bu çağrıdan sonra aynı asistan turunda başka Equinox Local aracı çağrılmamalı.",
+              "MCP bağlantısı kısa süreliğine kesilip yeniden kurulabilir.",
+            ].join("\n"),
+          );
+        }
+
+        const sourceRestart = await scheduleSourceRestart({
+          fsImpl,
+          pathImpl,
+          processImpl,
+          moduleUrl: sourceModuleUrl,
+        });
+        markRestartPending();
+
+        return textResult(
+          [
+            "Equinox Local source-checkout yeniden başlatması zamanlandı.",
+            "Private developer runtime config üzerinden yaklaşık 8 saniye içinde başlayacak; açık foreground shell varsa yeni native bundle ile otomatik yenilenecek.",
+            "Bu çağrıdan sonra aynı asistan turunda başka Equinox Local aracı çağrılmamalı.",
+            "MCP bağlantısı kısa süreliğine kesilip yeniden kurulabilir.",
+            `Kayıt: ${sourceRestart.logPath}`,
+          ].join("\n"),
+        );
+      } catch (error) {
+        if (restartBoundaryEntered) {
+          try {
+            await restartFailed();
+          } catch (recoveryError) {
+            const primary = error instanceof Error ? error.message : String(error);
+            const recovery = recoveryError instanceof Error ? recoveryError.message : String(recoveryError);
+            return errorResult(new Error(`${primary}; restart continuity recovery failed: ${recovery}`));
+          }
+        }
+        return errorResult(error);
+      }
+    },
+    {
+      projectAware: false,
+      mutationScopes: ["global"],
+    },
+  );
+}

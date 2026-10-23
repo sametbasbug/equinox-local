@@ -975,3 +975,82 @@ test("Equinox Browser bridge bounds its outbound queue while the native host is 
   );
   assert.equal(bridge.snapshot().connectionCount, 0);
 });
+
+test("Browser Bridge refuses unsupported endpoint and invalid connection budgets without opening IPC", async () => {
+  const fixed = { kind: "named-pipe", endpoint: "fixture-pipe-name", implemented: false };
+  assert.throws(() => createEquinoxBrowserBridge({ bridgeEndpoint: fixed }), /not implemented/u);
+  for (const overrides of [
+    { maxConnections: 0 }, { maxConnections: 65 },
+    { maxPendingCalls: 0 }, { maxPendingCalls: 4097 },
+    { partialLineTimeoutMs: 99 }, { partialLineTimeoutMs: 60001 },
+    { expectedExtensionIds: ["invalid-extension-id"] },
+  ]) {
+    assert.throws(() => createEquinoxBrowserBridge({ socketPath: null, ...overrides }), /invalid/u);
+  }
+});
+
+test("Browser Bridge rejects invalid context and pairing deadlines without allocating a target", async () => {
+  const bridge = createEquinoxBrowserBridge({ socketPath: null });
+  for (const context of ["unassigned", "other", "", null]) {
+    assert.throws(() => bridge.expectContext(context), /Unknown Equinox Browser context/u);
+  }
+  for (const timeoutMs of [0, 999, 600001, 1.5]) {
+    assert.throws(() => bridge.expectContext("agent", { timeoutMs }), /pairing timeout is invalid/u);
+  }
+  assert.equal(bridge.snapshot().pairing, null);
+  assert.equal(bridge.readyFor("agent"), false);
+  assert.equal(bridge.readyFor("user"), false);
+  await bridge.close();
+});
+
+test("Browser Bridge refuses an invalid instance identity before binding Agent context", async (t) => {
+  const { dir, socketPath } = await makeSocketPath("invalid-instance");
+  const bridge = createEquinoxBrowserBridge({ socketPath });
+  await bridge.start();
+  t.after(async () => {
+    await bridge.close();
+    await fs.rm(dir, { recursive: true, force: true });
+  });
+  bridge.expectContext("agent", { timeoutMs: 2000 });
+  const client = net.createConnection(socketPath);
+  await new Promise((resolve, reject) => { client.once("connect", resolve); client.once("error", reject); });
+  t.after(() => client.destroy());
+  const closed = new Promise(resolve => client.once("close", resolve));
+  writeLine(client, { type: "host.hello", origin: "chrome-extension://" + EQUINOX_BROWSER_EXTENSION_ID + "/", pid: 11 });
+  writeLine(client, { type: "extension.message", message: {
+    type: "extension.hello", extensionId: EQUINOX_BROWSER_EXTENSION_ID,
+    browserContext: "unassigned", instanceId: "not-a-valid-instance",
+  } });
+  await closed;
+  assert.equal(bridge.snapshot().contexts.agent.ready, false);
+  assert.equal(bridge.snapshot().contexts.user.ready, false);
+  assert.equal(bridge.snapshot().pairing.context, "agent");
+});
+
+test("Browser Bridge refuses extension initiated action without an authorized handler", async (t) => {
+  const { dir, socketPath } = await makeSocketPath("no-extension-action");
+  const bridge = createEquinoxBrowserBridge({ socketPath });
+  await bridge.start();
+  t.after(async () => { await bridge.close(); await fs.rm(dir, { recursive: true, force: true }); });
+  const client = net.createConnection(socketPath);
+  await new Promise((resolve, reject) => { client.once("connect", resolve); client.once("error", reject); });
+  t.after(() => client.destroy());
+  let resolveReply;
+  const reply = new Promise(resolve => { resolveReply = resolve; });
+  waitForLine(client, line => {
+    if (line.type === "host.send" && line.message?.type === "extension.response") resolveReply(line.message);
+  });
+  writeLine(client, { type: "host.hello", origin: "chrome-extension://" + EQUINOX_BROWSER_EXTENSION_ID + "/", pid: 44 });
+  writeLine(client, { type: "extension.message", message: {
+    type: "extension.hello", extensionId: EQUINOX_BROWSER_EXTENSION_ID, browserContext: "user",
+    instanceId: "22222222-3333-4333-8333-222222222222",
+  } });
+  await bridge.waitUntilReady(1000, { context: "user" });
+  writeLine(client, { type: "extension.message", message: {
+    type: "extension.request", id: "synthetic-extension-request", method: "system.mutate", args: {},
+  } });
+  const response = await reply;
+  assert.equal(response.ok, false);
+  assert.match(response.error.message, /does not expose extension-initiated actions/u);
+  assert.equal(bridge.snapshot().contexts.user.ready, true);
+});

@@ -1171,3 +1171,82 @@ test("existing provenance-bearing Stable migration failure removes Main identity
     assert.equal(JSON.parse(await fs.readFile(path.join(fixture.currentRelease, "release.json"), "utf8")).sourceSha, installedSha);
   } finally { await fs.rm(fixture.homeDir, { recursive: true, force: true }); }
 });
+
+test("first-install metadata rejects unknown fields, oversized JSON and fake native app executable before mutation",async()=>{
+  const fixture=await createFixture("4.2.0");
+  try{
+    const metadataPath=path.join(fixture.releaseDir,"release.json");
+    const original=await fs.readFile(metadataPath,"utf8");
+    await fs.writeFile(metadataPath,JSON.stringify({...JSON.parse(original),extra:"unauthorized"}));
+    await assert.rejects(validateFirstInstallRelease(fixture.releaseDir,{target:TARGET}),/missing or unsupported fields/u);
+    await fs.writeFile(metadataPath,JSON.stringify({...JSON.parse(original),extra:"x".repeat(20000)}));
+    await assert.rejects(validateFirstInstallRelease(fixture.releaseDir,{target:TARGET}),/invalid size/u);
+    await fs.writeFile(metadataPath,original);
+    await fs.rm(path.join(fixture.releaseDir,"runtime","app","applet"));
+    await fs.symlink("native-app.json",path.join(fixture.releaseDir,"runtime","app","applet"));
+    await assert.rejects(validateFirstInstallRelease(fixture.releaseDir,{target:TARGET}),/symbolic links/u);
+    assert.equal(await exists(path.join(fixture.installRoot,"current")),false);
+  }finally{await fs.rm(fixture.homeDir,{recursive:true,force:true})}
+});
+
+test("first-install refuses root identity and nonboolean Main migration consent before any native boot",async()=>{
+  const fixture=await createFixture("4.2.0");
+  let nativeCalls=0;
+  try{
+    for(const opts of [
+      {uid:0,allowExistingStableToMainMigration:false},
+      {uid:501,allowExistingStableToMainMigration:"true"},
+    ]){
+      await assert.rejects(installManagedEquinoxRelease({
+        stagedReleaseDir:fixture.releaseDir,homeDir:fixture.homeDir,platform:"darwin",target:TARGET,
+        ...opts,bootstrapImpl:async()=>{nativeCalls++},execFileImpl:async()=>{nativeCalls++},
+      }),/root|explicit boolean/u);
+    }
+    assert.equal(nativeCalls,0);
+    assert.equal(await exists(path.join(fixture.installRoot,"current")),false);
+    assert.equal(await exists(path.join(fixture.installRoot,"releases")),false);
+  }finally{await fs.rm(fixture.homeDir,{recursive:true,force:true})}
+});
+
+test("first-install rejects symlinked HOME, staging escape and a candidate missing source provenance for explicit Main opt-in",async()=>{
+  const fixture=await createFixture("4.2.0");
+  const alias=fixture.homeDir+"-alias";
+  let nativeCalls=0;
+  try{
+    await fs.symlink(fixture.homeDir,alias);
+    await assert.rejects(installManagedEquinoxRelease({
+      stagedReleaseDir:fixture.releaseDir,homeDir:alias,platform:"darwin",uid:process.getuid?.()??501,target:TARGET,
+      bootstrapImpl:async()=>{nativeCalls++},
+    }),/HOME directory is unsafe/u);
+    const outside=path.join(fixture.homeDir,"foreign","release");
+    await fs.mkdir(outside,{recursive:true});
+    await assert.rejects(installManagedEquinoxRelease({
+      stagedReleaseDir:outside,homeDir:fixture.homeDir,platform:"darwin",uid:process.getuid?.()??501,target:TARGET,
+      bootstrapImpl:async()=>{nativeCalls++},
+    }),/escaped the managed staging directory/u);
+    await assert.rejects(installManagedEquinoxRelease({
+      stagedReleaseDir:fixture.releaseDir,homeDir:fixture.homeDir,platform:"darwin",uid:process.getuid?.()??501,
+      target:TARGET,allowExistingStableToMainMigration:true,bootstrapImpl:async()=>{nativeCalls++},
+    }),/requires exact source provenance/u);
+    assert.equal(nativeCalls,0);
+    assert.equal(await exists(path.join(fixture.installRoot,"current")),false);
+  }finally{
+    await fs.rm(alias,{force:true});
+    await fs.rm(fixture.homeDir,{recursive:true,force:true});
+  }
+});
+
+test("first-install refuses invalid Windows architecture and cross-target override before any filesystem touch",async()=>{
+  const forbidden="C:\\synthetic\\private\\installer";
+  let fsCalls=0;
+  const fsImpl={lstat:async()=>{fsCalls++;throw Error("unexpected native FS")}};
+  for(const [platform,arch,target] of [
+    ["win32","ia32","win32-x64"],["win32","x64","win32-arm64"],["linux","x64","win32-x64"],
+  ]){
+    await assert.rejects(installManagedEquinoxRelease({
+      stagedReleaseDir:forbidden,homeDir:"C:\\synthetic\\private",
+      platform,arch,target,fsImpl,
+    }),/not implemented|does not match native/u);
+  }
+  assert.equal(fsCalls,0);
+});

@@ -165,3 +165,67 @@ test("real Node managed runtime consumes owned stdin EOF and exits after gracefu
   assert.equal(code, 0, stderr);
   assert.match(output, /STOPPED/u);
 });
+
+test("runtime lifecycle rejects empty or malformed signal lists before attaching listeners",async()=>{
+  for(const signals of [[],[null],[""],[42],"SIGTERM"]){
+    const stdin=new EventEmitter();
+    const processLike=new EventEmitter();
+    let connects=0;
+    await assert.rejects(startRuntimeLifecycle({
+      signals,stdin,processLike,
+      connect:()=>{connects++},
+      shutdown:async()=>{},
+      exit:()=>assert.fail("invalid signal should never exit"),
+    }),/Runtime lifecycle signals must be a non-empty string array/u);
+    assert.equal(connects,0);
+    assert.equal(stdin.listenerCount("end"),0);
+    assert.equal(processLike.listenerCount("SIGINT"),0);
+    assert.equal(processLike.listenerCount("SIGTERM"),0);
+  }
+});
+
+test("multiple different signals during pending shutdown exit exactly once",async()=>{
+  const stdin=new EventEmitter();
+  const processLike=new EventEmitter();
+  const gate=deferred(),exited=deferred();
+  const reasons=[],exits=[];
+  const lifecycle=await startRuntimeLifecycle({
+    stdin,processLike,
+    connect:async()=>{},
+    shutdown:async({reason})=>{reasons.push(reason);await gate.promise},
+    exit:code=>{exits.push(code);exited.resolve()},
+  });
+  processLike.emit("SIGINT");
+  processLike.emit("SIGTERM");
+  processLike.emit("SIGHUP");
+  await waitFor(()=>reasons.length===1);
+  assert.deepEqual(reasons,["SIGINT"]);
+  assert.deepEqual(exits,[]);
+  gate.resolve();
+  await exited.promise;
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.deepEqual(exits,[0]);
+  assert.equal(processLike.listenerCount("SIGINT"),0);
+  assert.equal(processLike.listenerCount("SIGTERM"),0);
+  assert.equal(processLike.listenerCount("SIGHUP"),0);
+  await lifecycle.shutdown();
+  assert.deepEqual(reasons,["SIGINT"]);
+});
+
+test("failed startup of owned stdin detaches listeners and pauses only its acquired reader",async()=>{
+  const stdin=new EventEmitter(),processLike=new EventEmitter();
+  let resumed=0,paused=0,shutsDown=0;
+  stdin.resume=()=>{resumed++};
+  stdin.pause=()=>{paused++};
+  await assert.rejects(startRuntimeLifecycle({
+    stdin,processLike,consumeOwnedStdin:true,
+    connect:async()=>{throw Error("startup refused")},
+    shutdown:async()=>{shutsDown++},
+    exit:()=>assert.fail("startup failure must not exit"),
+  }),/startup refused/u);
+  assert.equal(resumed,1);
+  assert.equal(paused,1);
+  assert.equal(shutsDown,0);
+  assert.equal(stdin.listenerCount("end"),0);
+  for(const signal of ["SIGINT","SIGTERM","SIGHUP"])assert.equal(processLike.listenerCount(signal),0);
+});

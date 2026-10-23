@@ -153,6 +153,199 @@ test("Main snapshot artifact staging streams into transaction-owned storage and 
   assert.equal(calls[1].options.credentials, "omit");
 });
 
+test("Main snapshot does not publish a same-length substituted artifact after digest verification", async (t) => {
+  const fixtureBase = path.dirname(fileURLToPath(import.meta.url));
+  const root = await fs.mkdtemp(path.join(fixtureBase, ".equinox-main-snapshot-inode-publication-"));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const transactionId = `main-${"9".repeat(32)}`;
+  await fs.mkdir(path.join(root, "staging", transactionId), { recursive: true, mode: 0o700 });
+  const original = Buffer.from("verified-native-archive");
+  const replacement = Buffer.from("forged!!-native-archive");
+  assert.equal(original.length, replacement.length);
+  const manifest = manifestWithArtifact({
+    name: `equinox-local-main-${SHA}-darwin-arm64.tar.gz`,
+    sha256: createHash("sha256").update(original).digest("hex"), bytes: original.length,
+  });
+  const fsImpl = Object.create(fs);
+  let substituted = false;
+  fsImpl.link = async (from, to) => {
+    if (!substituted && path.basename(from).startsWith(".artifact-part-")) {
+      substituted = true;
+      await fs.unlink(from);
+      await fs.writeFile(from, replacement, { mode: 0o600 });
+    }
+    return fs.link(from, to);
+  };
+  await assert.rejects(stageEquinoxLocalMainSnapshotArtifact({
+    sourceSha: SHA, target: "darwin-arm64", expectedRuntimeContractSha256: DIGEST,
+    transactionRoot: root, transactionId, fsImpl,
+    fetchImpl: async (url) => url.endsWith(".json") ? jsonResponse(manifest) : bytesResponse(original),
+  }), /original.*inode|staged artifact.*changed|temporary artifact.*changed/u);
+  assert.equal(substituted, true, "The actual hard-link publication must experience the substituted temp inode");
+});
+
+test("Main snapshot stage rejects altered bytes within its originally verified artifact inode", async (t) => {
+  const root = await fs.mkdtemp(path.join(path.dirname(fileURLToPath(import.meta.url)), ".equinox-main-snapshot-inplace-tamper-"));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const transactionId = `main-${"b".repeat(32)}`;
+  const transactionDir = path.join(root, "staging", transactionId);
+  await fs.mkdir(transactionDir, { recursive: true, mode: 0o700 });
+  const trusted = Buffer.from("verified-snapshot-archive");
+  const foreign = Buffer.from("forged!!-snapshot-archive");
+  assert.equal(trusted.length, foreign.length);
+  const manifest = manifestWithArtifact({
+    name: `equinox-local-main-${SHA}-${TARGET}.tar.gz`,
+    bytes: trusted.length,
+    sha256: createHash("sha256").update(trusted).digest("hex"),
+  });
+  const fsImpl = Object.create(fs);
+  let tampered = false;
+  fsImpl.open = async (candidate, ...args) => {
+    const handle = await fs.open(candidate, ...args);
+    if (!path.basename(String(candidate)).startsWith(".artifact-part-") || args[0] !== "wx") return handle;
+    return new Proxy(handle, {
+      get(target, property) {
+        if (property === "close") return async () => {
+          // Mutate the actual opened file descriptor after the network
+          // stream has been hashed and synced, before the true close.
+          // This proves in-place tampering without introducing another
+          // pathname lstat -> open/write race inside the attack fixture.
+          const before = await target.stat();
+          const { bytesWritten } = await target.write(foreign, 0, foreign.length, 0);
+          assert.equal(bytesWritten, foreign.length);
+          await target.sync();
+          const after = await target.stat();
+          assert.equal(after.ino, before.ino);
+          assert.equal(after.dev, before.dev);
+          assert.equal(after.size, trusted.length);
+          tampered = true;
+          await target.close();
+        };
+        const value = target[property];
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
+  };
+  await assert.rejects(stageEquinoxLocalMainSnapshotArtifact({
+    sourceSha: SHA, target: TARGET, expectedRuntimeContractSha256: DIGEST,
+    transactionRoot: root, transactionId, fsImpl,
+    fetchImpl: async (url) => url.endsWith(".json") ? jsonResponse(manifest) : bytesResponse(trusted),
+  }), /staged artifact.*SHA-256|persisted.*SHA-256|artifact.*digest.*different/u);
+  assert.equal(tampered, true, "Tampering must overwrite the original verified inode after its descriptor closes");
+});
+
+test("Main snapshot stage rejects mutated bytes inside the original manifest inode", async (t) => {
+  const root = await fs.mkdtemp(path.join(path.dirname(fileURLToPath(import.meta.url)), ".equinox-main-snapshot-inplace-manifest-"));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const transactionId = `main-${"e".repeat(32)}`;
+  await fs.mkdir(path.join(root, "staging", transactionId), { recursive: true, mode: 0o700 });
+  const archive = Buffer.from("verified-native-snapshot-archive");
+  const manifest = manifestWithArtifact({
+    name: `equinox-local-main-${SHA}-${TARGET}.tar.gz`,
+    bytes: archive.length,
+    sha256: createHash("sha256").update(archive).digest("hex"),
+  });
+  const manifestName = `equinox-local-main-${SHA}-${TARGET}.json`;
+  const fsImpl = Object.create(fs);
+  let tampered = false;
+  fsImpl.open = async (candidate, ...args) => {
+    const handle = await fs.open(candidate, ...args);
+    if (path.basename(String(candidate)) !== manifestName || args[0] !== "wx") return handle;
+    return new Proxy(handle, {
+      get(target, property) {
+        if (property === "close") return async () => {
+          const before = await target.stat();
+          const tamper = Buffer.alloc(before.size, 0x58);
+          const { bytesWritten } = await target.write(tamper, 0, tamper.length, 0);
+          assert.equal(bytesWritten, tamper.length);
+          await target.sync();
+          const after = await target.stat();
+          assert.equal(after.dev, before.dev);
+          assert.equal(after.ino, before.ino);
+          assert.equal(after.size, before.size);
+          tampered = true;
+          await target.close();
+        };
+        const value = target[property];
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
+  };
+  await assert.rejects(stageEquinoxLocalMainSnapshotArtifact({
+    sourceSha: SHA, target: TARGET, expectedRuntimeContractSha256: DIGEST,
+    transactionRoot: root, transactionId, fsImpl,
+    fetchImpl: async (url) => url.endsWith(".json") ? jsonResponse(manifest) : bytesResponse(archive),
+  }), /persisted.*manifest.*SHA-256|staged manifest.*digest.*different/u);
+  assert.equal(tampered, true, "Original manifest descriptor must be altered in-place before close");
+});
+
+test("Main snapshot staging rejects a same-length foreign manifest substituted after descriptor close", async (t) => {
+  const root = await fs.mkdtemp(path.join(path.dirname(fileURLToPath(import.meta.url)), ".equinox-main-snapshot-publish-manifest-"));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const transactionId = `main-${"6".repeat(32)}`;
+  await fs.mkdir(path.join(root, "staging", transactionId), { recursive: true, mode: 0o700 });
+  const bytes = Buffer.from("verified native archive");
+  const manifest = manifestWithArtifact({
+    name: `equinox-local-main-${SHA}-${TARGET}.tar.gz`,
+    sha256: createHash("sha256").update(bytes).digest("hex"), bytes: bytes.length,
+  });
+  const manifestName = `equinox-local-main-${SHA}-${TARGET}.json`;
+  const fsImpl = Object.create(fs);
+  let substituted = false;
+  fsImpl.open = async (candidate, ...args) => {
+    const handle = await fs.open(candidate, ...args);
+    if (path.basename(String(candidate)) !== manifestName || args[0] !== "wx") return handle;
+    return new Proxy(handle, {
+      get(target, property) {
+        if (property === "close") return async () => {
+          await target.close();
+          substituted = true;
+          const original = await fs.readFile(candidate);
+          await fs.unlink(candidate);
+          await fs.writeFile(candidate, Buffer.alloc(original.length, 0x58), { mode: 0o600 });
+        };
+        const value = target[property];
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
+  };
+  await assert.rejects(stageEquinoxLocalMainSnapshotArtifact({
+    sourceSha: SHA, target: TARGET, expectedRuntimeContractSha256: DIGEST,
+    transactionRoot: root, transactionId, fsImpl,
+    fetchImpl: async (url) => url.endsWith(".json") ? jsonResponse(manifest) : bytesResponse(bytes),
+  }), /staged manifest.*changed|manifest.*original|manifest.*identity/u);
+  assert.equal(substituted, true, "The replacement happened after the original manifest descriptor closed");
+});
+
+test("Main snapshot failed staging must preserve a foreign directory replacing its native scratch", async (t) => {
+  const root = await fs.mkdtemp(path.join(path.dirname(fileURLToPath(import.meta.url)), ".equinox-main-snapshot-foreign-directory-"));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const transactionId = `main-${"7".repeat(32)}`;
+  const transactionDir = path.join(root, "staging", transactionId);
+  const nativeDir = path.join(transactionDir, "native");
+  const displaced = path.join(transactionDir, ".original-native-displaced");
+  const foreignPath = path.join(nativeDir, "FOREIGN-OWNER-MARKER.txt");
+  const foreignBytes = "other-writer-owned-temporary-data\n";
+  await fs.mkdir(transactionDir, { recursive: true, mode: 0o700 });
+  let replaced = false;
+  const fetchImpl = async (url) => {
+    if (url.endsWith(".json")) return jsonResponse(MANIFEST);
+    replaced = true;
+    await fs.rename(nativeDir, displaced);
+    await fs.mkdir(nativeDir, { mode: 0o700 });
+    await fs.writeFile(foreignPath, foreignBytes, { mode: 0o600 });
+    throw new Error("synthetic artifact network failure after same-name foreign directory replacement");
+  };
+  await assert.rejects(stageEquinoxLocalMainSnapshotArtifact({
+    sourceSha: SHA, target: TARGET, expectedRuntimeContractSha256: DIGEST,
+    transactionRoot: root, transactionId, fetchImpl,
+  }), /synthetic artifact network failure/u);
+  assert.equal(replaced, true, "Another writer must replace the native scratch before cleanup");
+  assert.equal(await fs.readFile(foreignPath, "utf8"), foreignBytes,
+    "Failure cleanup must not recursively delete another writer's normal directory");
+  assert.equal((await fs.lstat(displaced)).isDirectory(), true);
+});
+
 test("Main snapshot artifact staging cleans partial state on byte digest and destination collisions", async (t) => {
   const fixtureBase = path.dirname(fileURLToPath(import.meta.url));
   const root = await fs.mkdtemp(path.join(fixtureBase, ".equinox-main-snapshot-fail-"));
@@ -222,4 +415,191 @@ test("staged Main snapshot inspection revalidates local manifest identity, bytes
   await assert.rejects(inspectStagedEquinoxLocalMainSnapshotArtifact({
     sourceSha: SHA, target: "darwin-arm64", expectedRuntimeContractSha256: DIGEST, transactionRoot: root, transactionId,
   }), /unexpected entries/u);
+});
+
+test("staged Main snapshot refuses symlinked manifest and artifact before opening foreign files", async (t) => {
+  const root = await fs.realpath(await fs.mkdtemp(path.join(path.dirname(fileURLToPath(import.meta.url)), ".equinox-main-snapshot-symlinks-")));
+  t.after(() => fs.rm(root, {recursive:true,force:true}));
+  const id = "main-"+"3".repeat(32);
+  const nativeDir = path.join(root,"staging",id,"native");
+  await fs.mkdir(nativeDir,{recursive:true});
+  const content = Buffer.from("valid signed native archive bytes");
+  const manifest = manifestWithArtifact({
+    name: "equinox-local-main-"+SHA+"-"+TARGET+".tar.gz",
+    sha256: createHash("sha256").update(content).digest("hex"), bytes:content.length,
+  });
+  const manifestPath = path.join(nativeDir,"equinox-local-main-"+SHA+"-"+TARGET+".json");
+  const artifactPath = path.join(nativeDir,manifest.artifact.name);
+  const foreign = path.join(root,"outside");
+  await fs.mkdir(foreign);
+  const foreignManifest = path.join(foreign,"manifest.json");
+  const foreignArchive = path.join(foreign,"native.tar.gz");
+  await fs.writeFile(foreignManifest,JSON.stringify(manifest));
+  await fs.writeFile(foreignArchive,content);
+  const args = {sourceSha:SHA,target:TARGET,expectedRuntimeContractSha256:DIGEST,transactionRoot:root,transactionId:id};
+  for(const symlinkTarget of ["manifest","archive"]){
+    await fs.rm(manifestPath,{force:true});
+    await fs.rm(artifactPath,{force:true});
+    await fs.writeFile(manifestPath,JSON.stringify(manifest));
+    await fs.writeFile(artifactPath,content);
+    const swapped=symlinkTarget==="manifest"?manifestPath:artifactPath;
+    await fs.unlink(swapped);
+    await fs.symlink(symlinkTarget==="manifest"?foreignManifest:foreignArchive,swapped);
+    let foreignBytesRead=false;
+    const mockFs=Object.create(fs);
+    mockFs.open=async (filePath,...opts) => {
+      const handle=await fs.open(filePath,...opts);
+      if(filePath===swapped){
+        handle.read=async()=>{foreignBytesRead=true;throw Error("foreign bytes read");};
+      }
+      return handle;
+    };
+    await assert.rejects(inspectStagedEquinoxLocalMainSnapshotArtifact({...args,fsImpl:mockFs}),/normal, non-symlink file/u);
+    assert.equal(foreignBytesRead,false,symlinkTarget+" must be denied before reading foreign bytes");
+    assert.equal((await fs.lstat(swapped)).isSymbolicLink(),true);
+    assert.equal(await fs.readFile(foreignManifest,"utf8"),JSON.stringify(manifest));
+    assert.deepEqual(await fs.readFile(foreignArchive),content);
+  }
+});
+
+test("staged Main snapshot rejects hard-linked manifest and artifact before opening foreign bytes", async (t) => {
+  const root = await fs.realpath(await fs.mkdtemp(path.join(path.dirname(fileURLToPath(import.meta.url)), ".equinox-main-snapshot-hardlinks-")));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const id = "main-" + "7".repeat(32);
+  const nativeDir = path.join(root, "staging", id, "native");
+  await fs.mkdir(nativeDir, { recursive: true });
+  const artifactBytes = Buffer.from("valid signed native archive bytes");
+  const manifest = manifestWithArtifact({
+    name: `equinox-local-main-${SHA}-${TARGET}.tar.gz`,
+    sha256: createHash("sha256").update(artifactBytes).digest("hex"),
+    bytes: artifactBytes.length,
+  });
+  const manifestPath = path.join(nativeDir, `equinox-local-main-${SHA}-${TARGET}.json`);
+  const artifactPath = path.join(nativeDir, manifest.artifact.name);
+  const foreignDir = path.join(root, "outside");
+  await fs.mkdir(foreignDir);
+  const args = { sourceSha: SHA, target: TARGET, expectedRuntimeContractSha256: DIGEST, transactionRoot: root, transactionId: id };
+  for (const name of ["manifest", "artifact"]) {
+    await fs.writeFile(manifestPath, JSON.stringify(manifest));
+    await fs.writeFile(artifactPath, artifactBytes);
+    const protectedPath = name === "manifest" ? manifestPath : artifactPath;
+    const foreign = path.join(foreignDir, `${name}.bin`);
+    const bytes = await fs.readFile(protectedPath);
+    await fs.writeFile(foreign, bytes);
+    await fs.unlink(protectedPath);
+    try { await fs.link(foreign, protectedPath); }
+    catch (error) {
+      if (["EPERM", "ENOTSUP", "EOPNOTSUPP"].includes(error.code)) { t.skip("Hard links unsupported"); return; }
+      throw error;
+    }
+    let foreignBytesRead = false;
+    const mockFs = Object.create(fs);
+    mockFs.open = async (candidate, ...options) => {
+      const handle = await fs.open(candidate, ...options);
+      if (candidate === protectedPath) {
+        handle.read = async () => { foreignBytesRead = true; throw Error("foreign bytes read"); };
+      }
+      return handle;
+    };
+    await assert.rejects(inspectStagedEquinoxLocalMainSnapshotArtifact({ ...args, fsImpl: mockFs }), /normal, non-symlink file|hard.link/u);
+    assert.equal(foreignBytesRead, false, "Hard-linked foreign snapshots cannot be read");
+    assert.deepEqual(await fs.readFile(foreign), bytes);
+    assert.equal((await fs.stat(foreign)).nlink, 2);
+    await fs.unlink(protectedPath);
+    await fs.unlink(foreign);
+  }
+});
+
+test("staged Main snapshot manifest read is bounded even if the opened inode grows after fstat", async (t) => {
+  const root = await fs.realpath(await fs.mkdtemp(path.join(path.dirname(fileURLToPath(import.meta.url)), ".equinox-main-snapshot-growth-")));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const transactionId = `main-${"8".repeat(32)}`;
+  const nativeDir = path.join(root, "staging", transactionId, "native");
+  await fs.mkdir(nativeDir, { recursive: true });
+  const bytes = Buffer.from("valid disposable native snapshot");
+  const manifest = manifestWithArtifact({
+    name: `equinox-local-main-${SHA}-${TARGET}.tar.gz`,
+    sha256: createHash("sha256").update(bytes).digest("hex"),
+    bytes: bytes.length,
+  });
+  const manifestPath = path.join(nativeDir, `equinox-local-main-${SHA}-${TARGET}.json`);
+  await fs.writeFile(manifestPath, JSON.stringify(manifest));
+  await fs.writeFile(path.join(nativeDir, manifest.artifact.name), bytes);
+  let unboundedReads = 0;
+  let descriptorReads = 0;
+  let requestedBytes = 0;
+  let closed = 0;
+  const mockFs = Object.create(fs);
+  mockFs.open = async (candidate, ...options) => {
+    const original = await fs.open(candidate, ...options);
+    if (candidate !== manifestPath) return original;
+    return {
+      stat: (...args) => original.stat(...args),
+      readFile: (...args) => { unboundedReads++; return original.readFile(...args); },
+      read: async (buffer, offset, length) => {
+        // Model a concurrent writer extending the opened inode after stat().
+        // The real file is never modified; only descriptor reads are injected.
+        descriptorReads++;
+        requestedBytes += length;
+        buffer.fill(0x20, offset, offset + length);
+        return { bytesRead: length, buffer };
+      },
+      close: async () => { closed++; await original.close(); },
+    };
+  };
+  await assert.rejects(inspectStagedEquinoxLocalMainSnapshotArtifact({
+    sourceSha: SHA, target: TARGET, expectedRuntimeContractSha256: DIGEST,
+    transactionRoot: root, transactionId, fsImpl: mockFs,
+  }), /manifest exceeds the size limit/u);
+  assert.equal(unboundedReads, 0, "Never read an unbounded manifest into memory");
+  assert.ok(descriptorReads > 0, "Read using the pinned descriptor with explicit lengths");
+  assert.equal(requestedBytes, 64 * 1024 + 1, "The absolute read budget is 64 KiB plus one");
+  assert.equal(closed, 1, "Rejected manifest descriptor is closed exactly once");
+  assert.equal(await fs.readFile(manifestPath, "utf8"), JSON.stringify(manifest));
+});
+
+test("staged Main snapshot rejects a swapped manifest inode before trusting JSON",async(t)=>{
+  const root=await fs.realpath(await fs.mkdtemp(path.join(path.dirname(fileURLToPath(import.meta.url)), ".equinox-main-snapshot-inode-")));
+  t.after(()=>fs.rm(root,{recursive:true,force:true}));
+  const id="main-"+"4".repeat(32),nativeDir=path.join(root,"staging",id,"native");
+  await fs.mkdir(nativeDir,{recursive:true});
+  const manifestPath=path.join(nativeDir,"equinox-local-main-"+SHA+"-"+TARGET+".json");
+  await fs.writeFile(manifestPath,JSON.stringify(MANIFEST));
+  const mockFs=Object.create(fs);
+  mockFs.lstat=async(filePath)=>{
+    const stat=await fs.lstat(filePath);
+    if(filePath!==manifestPath)return stat;
+    return new Proxy(stat,{get(target,property,receiver){
+      if(property==="ino")return target.ino+1;
+      return Reflect.get(target,property,receiver);
+    }});
+  };
+  await assert.rejects(inspectStagedEquinoxLocalMainSnapshotArtifact({
+    sourceSha:SHA,target:TARGET,expectedRuntimeContractSha256:DIGEST,transactionRoot:root,transactionId:id,fsImpl:mockFs,
+  }),/changed while opening/u);
+  assert.deepEqual(JSON.parse(await fs.readFile(manifestPath,"utf8")),MANIFEST);
+});
+
+test("Main snapshot rejects dishonest streamed artifact lengths and retains no partial native candidate",async(t)=>{
+  const root=await fs.realpath(await fs.mkdtemp(path.join(path.dirname(fileURLToPath(import.meta.url)), ".equinox-main-snapshot-lengths-")));
+  t.after(()=>fs.rm(root,{recursive:true,force:true}));
+  const id="main-"+"5".repeat(32);
+  await fs.mkdir(path.join(root,"staging",id),{recursive:true});
+  const content=Buffer.from("verifiable artifact");
+  const manifest=manifestWithArtifact({
+    name:"equinox-local-main-"+SHA+"-"+TARGET+".tar.gz",
+    sha256:createHash("sha256").update(content).digest("hex"),bytes:content.length,
+  });
+  for(const scenario of [
+    {name:"declared length too small",body:content,declared:String(content.length-1),message:/Content-Length/u},
+    {name:"body oversized",body:Buffer.concat([content,Buffer.from("extra")]),declared:String(content.length),message:/exceeded the manifest byte size/u},
+    {name:"body truncated",body:content.subarray(0,-1),declared:String(content.length),message:/byte size does not match/u},
+  ]){
+    const fetchImpl=async(url)=>url.endsWith(".json")?jsonResponse(manifest):
+      bytesResponse(scenario.body,{contentLength:scenario.declared});
+    await assert.rejects(stageEquinoxLocalMainSnapshotArtifact({
+      sourceSha:SHA,target:TARGET,expectedRuntimeContractSha256:DIGEST,transactionRoot:root,transactionId:id,fetchImpl,
+    }),scenario.message,scenario.name);
+    await assert.rejects(fs.lstat(path.join(root,"staging",id,"native")),{code:"ENOENT"},scenario.name);
+  }
 });

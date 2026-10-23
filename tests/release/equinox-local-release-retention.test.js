@@ -61,3 +61,59 @@ test("cleanup refuses foreign root and invalid authenticated pointer", async (t)
     readCurrent: async () => ({ version: "6.0.4", releaseDir: "/tmp/other" }),
   }), /cannot verify the active pointer/u);
 });
+
+test("cleanup fails closed if authenticated active pointer disappears before a deletion", async (t) => {
+  const { installation, readCurrent } = await fixture(t);
+  let reads = 0;
+  await assert.rejects(
+    pruneInactiveManagedStableReleases(installation, {
+      readCurrent: async (value) => (++reads === 1 ? readCurrent(value) : null),
+    }),
+    /moved during cleanup/u,
+  );
+  assert.deepEqual(await fs.readdir(installation.releasesRoot), ["6.0.2", "6.0.3", "6.1.1"]);
+});
+
+test("cleanup refuses a symlinked release root without following its contents", async (t) => {
+  const { installation, readCurrent } = await fixture(t);
+  const realReleases = path.join(installation.installRoot, "releases-real");
+  await fs.rename(installation.releasesRoot, realReleases);
+  await fs.symlink(realReleases, installation.releasesRoot, "dir");
+  await assert.rejects(
+    pruneInactiveManagedStableReleases(installation, { readCurrent }),
+    /canonical normal directory/u,
+  );
+  assert.deepEqual(await fs.readdir(realReleases), ["6.0.2", "6.0.3", "6.1.1"]);
+});
+
+test("Windows retention path comparison is case-insensitive but refuses a foreign sibling root", async () => {
+  const installRoot = String.raw`C:\Program Files\Equinox Local`;
+  const releasesRoot = String.raw`c:\program files\equinox local\releases`;
+  const activeVersion = "6.1.1";
+  const deleted = [];
+  const directoryStat = { isDirectory: () => true, isSymbolicLink: () => false };
+  const fsImpl = {
+    lstat: async () => directoryStat,
+    realpath: async (value) => value,
+    readdir: async () => ["6.1.1", "6.0.2"].map((name) => ({
+      name, isDirectory: () => true, isSymbolicLink: () => false,
+    })),
+    rm: async (target) => { deleted.push(target); },
+  };
+  const readCurrent = async () => ({
+    version: activeVersion,
+    releaseDir: String.raw`C:\PROGRAM FILES\EQUINOX LOCAL\RELEASES\6.1.1`,
+  });
+  const installation = { platform: "win32", installRoot, releasesRoot };
+  const result = await pruneInactiveManagedStableReleases(installation, { fsImpl, readCurrent });
+  assert.deepEqual(result, { active: activeVersion, deleted: ["6.0.2"] });
+  assert.deepEqual(deleted, [String.raw`c:\program files\equinox local\releases\6.0.2`]);
+
+  await assert.rejects(
+    pruneInactiveManagedStableReleases({
+      ...installation, releasesRoot: String.raw`C:\Program Files\Equinox Local\releases-sibling`,
+    }, { fsImpl, readCurrent }),
+    /foreign directory/u,
+  );
+  assert.equal(deleted.length, 1, "foreign release roots must never delete anything");
+});

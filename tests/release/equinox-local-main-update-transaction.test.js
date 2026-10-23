@@ -80,6 +80,166 @@ test("transaction state accepts the promoted direct SHA-addressed source-store c
   assert.equal(engine.paths.sourceStoreRoot, "/Users/example/state/sources");
 });
 
+test("Main lock and receipt never use unbounded descriptor readFile after size admission", async (t) => {
+  const { engine, sourceRoot } = await fixture(t);
+  const receipt = await engine.begin({ currentSha: CURRENT, targetSha: TARGET });
+  const receiptPath = path.join(engine.paths.receiptsRoot, `${receipt.transactionId}.json`);
+  const protectedPaths = new Set([engine.paths.lockPath, receiptPath]);
+  let unboundedReads = 0;
+  let boundedReads = 0;
+  const mockFs = Object.create(fs);
+  mockFs.open = async (candidate, ...args) => {
+    const handle = await fs.open(candidate, ...args);
+    if (!protectedPaths.has(candidate)) return handle;
+    return new Proxy(handle, {
+      get(target, key) {
+        if (key === "readFile") return async (...params) => {
+          unboundedReads += 1;
+          return target.readFile(...params);
+        };
+        if (key === "read") return async (...params) => {
+          boundedReads += 1;
+          assert.ok(params[2] <= 64 * 1024 + 1, "A single read cannot escape the receipt byte budget");
+          return target.read(...params);
+        };
+        const value = target[key];
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
+  };
+  const isolated = createEquinoxLocalMainUpdateTransactionEngine({
+    sourceRoot, transactionRoot: engine.paths.transactionRoot, fsImpl: mockFs,
+  });
+  assert.equal((await isolated.readActive()).transactionId, receipt.transactionId);
+  assert.equal(unboundedReads, 0, "Main forensic state cannot be streamed into memory without a hard bound");
+  assert.ok(boundedReads >= 2, "Both forensic lock and receipt must use bounded reads");
+});
+
+test("Main forensic read stops at exactly 64 KiB plus one byte when content grows after stat", async (t) => {
+  const { engine, sourceRoot } = await fixture(t);
+  await engine.begin({ currentSha: CURRENT, targetSha: TARGET });
+  let delivered = 0;
+  let closes = 0;
+  const mockFs = Object.create(fs);
+  mockFs.open = async (candidate, ...args) => {
+    const handle = await fs.open(candidate, ...args);
+    if (candidate !== engine.paths.lockPath) return handle;
+    return new Proxy(handle, {
+      get(target, key) {
+        if (key === "read") return async (buffer, offset, length) => {
+          buffer.fill(88, offset, offset + length);
+          delivered += length;
+          assert.ok(delivered <= 64 * 1024 + 1, "Growing file reads must never escape the byte budget");
+          return { bytesRead: length, buffer };
+        };
+        if (key === "close") return async () => { closes += 1; return target.close(); };
+        const value = target[key];
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
+  };
+  const alternate = createEquinoxLocalMainUpdateTransactionEngine({
+    sourceRoot, transactionRoot: engine.paths.transactionRoot, fsImpl: mockFs,
+  });
+  await assert.rejects(alternate.readActive(), /exceeds the size limit/u);
+  assert.equal(delivered, 64 * 1024 + 1, "Stop immediately on the first over-limit byte");
+  assert.equal(closes, 1, "Close the opened forensic file on failure");
+  assert.ok((await engine.readActive()).transactionId, "Original transaction remains usable");
+});
+
+test("Main refuses a symlinked receipt directory before persisting the transaction", async (t) => {
+  const { engine } = await fixture(t);
+  const foreign = await fs.mkdtemp(path.join(os.tmpdir(), "equinox-m6-foreign-receipts-"));
+  t.after(() => fs.rm(foreign, { recursive: true, force: true }));
+  await fs.mkdir(engine.paths.transactionRoot, { recursive: true, mode: 0o700 });
+  await fs.symlink(foreign, engine.paths.receiptsRoot, process.platform === "win32" ? "junction" : "dir");
+  await assert.rejects(engine.begin({ currentSha: CURRENT, targetSha: TARGET }), /canonical normal directory|unsafe|symlink|directory/u);
+  assert.deepEqual(await fs.readdir(foreign), [], "A foreign folder must not receive a private receipt");
+  await assert.rejects(fs.access(engine.paths.lockPath), { code: "ENOENT" });
+});
+
+test("Main refuses a receipt-directory symlink appearing after lock admission", async (t) => {
+  const { engine } = await fixture(t);
+  const original = await engine.begin({ currentSha: CURRENT, targetSha: TARGET });
+  const foreign = await fs.mkdtemp(path.join(os.tmpdir(), "equinox-m6-foreign-receipt-update-"));
+  t.after(() => fs.rm(foreign, { recursive: true, force: true }));
+  const moved = `${engine.paths.receiptsRoot}-held`;
+  const filename = `${original.transactionId}.json`;
+  const receiptBytes = await fs.readFile(path.join(engine.paths.receiptsRoot, filename));
+  await fs.rename(engine.paths.receiptsRoot, moved);
+  // A foreign existing receipt can otherwise be read and silently overwritten.
+  await fs.writeFile(path.join(foreign, filename), receiptBytes, { mode: 0o600 });
+  await fs.symlink(foreign, engine.paths.receiptsRoot, process.platform === "win32" ? "junction" : "dir");
+  await assert.rejects(engine.markRollbackFailed(original.transactionId, "intentional failure"), /canonical normal directory|unsafe|symlink|directory/u);
+  assert.deepEqual(await fs.readFile(path.join(foreign, filename)), receiptBytes, "Foreign receipt bytes must remain untouched");
+  assert.equal(JSON.parse(await fs.readFile(path.join(moved, filename), "utf8")).status, "active");
+});
+
+test("Main receipt temp cannot be replaced by another normal inode before atomic rename", async (t) => {
+  const rogue = "synthetic-foreign-receipt-content";
+  let swapped = false;
+  let destination = null;
+  let foreignTemp = null;
+  const fsImpl = Object.create(fs);
+  fsImpl.open = async (candidate, ...args) => {
+    const handle = await fs.open(candidate, ...args);
+    if (!candidate.includes(".json.tmp-")) return handle;
+    return new Proxy(handle, {
+      get(target, key) {
+        if (key === "close") return async () => {
+          await target.close();
+          if (!swapped) {
+            swapped = true;
+            destination = candidate.split(".tmp-")[0];
+            foreignTemp = candidate;
+            await fs.unlink(candidate);
+            await fs.writeFile(candidate, rogue, { mode: 0o600 });
+          }
+        };
+        const value = target[key];
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
+  };
+  const { engine } = await fixture(t, { fsImpl });
+  await assert.rejects(
+    engine.begin({ currentSha: CURRENT, targetSha: TARGET }),
+    /temporary.*changed|identity|unsafe|inode/u,
+  );
+  assert.equal(swapped, true, "A regular 0600 replacement must be injected after descriptor close");
+  assert.equal(await fs.readFile(foreignTemp, "utf8"), rogue,
+    "Refusing the substituted receipt must not delete another writer's private temporary file");
+  await assert.rejects(fs.access(destination), { code: "ENOENT" });
+  assert.equal((await fs.lstat(engine.paths.lockPath)).isFile(), true,
+    "A failed receipt must retain single-flight ownership for recovery");
+});
+
+test("Main receipt rejects temp replacement at the final rename boundary", async (t) => {
+  const injected = "synthetic-replaced-receipt-at-rename";
+  let swapped = false;
+  let resultingPath = null;
+  const fsImpl = Object.create(fs);
+  fsImpl.rename = async (from, to) => {
+    if (!swapped && from.includes(".json.tmp-") && to.endsWith(".json")) {
+      swapped = true;
+      resultingPath = to;
+      await fs.unlink(from);
+      await fs.writeFile(from, injected, { mode: 0o600 });
+    }
+    return fs.rename(from, to);
+  };
+  const { engine } = await fixture(t, { fsImpl });
+  await assert.rejects(
+    engine.begin({ currentSha: CURRENT, targetSha: TARGET }),
+    /receipt.*changed after rename|receipt.*identity|receipt.*unsafe/u,
+  );
+  assert.equal(swapped, true, "Replacement occurs after the final temp pre-rename lstat");
+  assert.equal(await fs.readFile(resultingPath, "utf8"), injected,
+    "The untrusted replacement remains for forensic recovery, never silently accepted");
+  assert.equal((await fs.lstat(engine.paths.lockPath)).isFile(), true,
+    "A refused receipt preserves exclusive Main update ownership");
+});
+
 test("begin acquires one private durable owner and refuses a concurrent updater", async (t) => {
   const { engine } = await fixture(t);
   const first = await engine.begin({ currentSha: CURRENT, targetSha: TARGET });
@@ -493,4 +653,112 @@ test("Main transaction fails closed on receipt/lock SHA mismatch", async (t) => 
   await fs.writeFile(receiptPath, JSON.stringify(modified));
   await assert.rejects(engine.readActive(), /identities disagree/u);
   assert.equal(JSON.parse(await fs.readFile(engine.paths.lockPath, "utf8")).transactionId, initial.transactionId);
+});
+
+test("Main update lock and receipt reject symlinks without reading or replacing foreign state", async (t) => {
+  const { engine, sourceRoot } = await fixture(t);
+  const receipt = await engine.begin({ currentSha: CURRENT, targetSha: TARGET });
+  const receiptPath = path.join(engine.paths.receiptsRoot, receipt.transactionId + ".json");
+  const foreign = path.join(engine.paths.transactionRoot,"foreign-state.json");
+  await fs.writeFile(foreign, JSON.stringify(receipt));
+  const originalBytes = await fs.readFile(foreign);
+  for (const protectedPath of [engine.paths.lockPath,receiptPath]) {
+    const realContents = await fs.readFile(protectedPath);
+    await fs.unlink(protectedPath);
+    await fs.symlink(foreign, protectedPath);
+    let foreignBytesRead = false;
+    const mockFs = Object.create(fs);
+    mockFs.open = async (candidate,...args) => {
+      const handle = await fs.open(candidate,...args);
+      if (candidate === protectedPath) {
+        handle.read = async () => { foreignBytesRead = true; throw Error("foreign bytes read"); };
+      }
+      return handle;
+    };
+    const alternate = createEquinoxLocalMainUpdateTransactionEngine({
+      sourceRoot,
+      transactionRoot:engine.paths.transactionRoot,
+      fsImpl:mockFs,
+    });
+    await assert.rejects(alternate.readActive(), /normal, non-symlink file/u);
+    assert.equal(foreignBytesRead,false,"symlink must be rejected before reading foreign bytes");
+    assert.equal(await fs.readlink(protectedPath),foreign);
+    assert.deepEqual(await fs.readFile(foreign),originalBytes);
+    await fs.unlink(protectedPath);
+    await fs.writeFile(protectedPath,realContents,{mode:0o600});
+  }
+  assert.equal((await engine.readActive()).transactionId,receipt.transactionId);
+});
+
+test("Main update lock and receipt reject hard links to foreign state before opening", async (t) => {
+  const { engine, sourceRoot } = await fixture(t);
+  const receipt = await engine.begin({ currentSha: CURRENT, targetSha: TARGET });
+  const receiptPath = path.join(engine.paths.receiptsRoot, `${receipt.transactionId}.json`);
+  for (const protectedPath of [engine.paths.lockPath, receiptPath]) {
+    const original = await fs.readFile(protectedPath);
+    const foreign = path.join(engine.paths.transactionRoot, `outside-${path.basename(protectedPath)}`);
+    await fs.writeFile(foreign, original);
+    await fs.unlink(protectedPath);
+    try {
+      await fs.link(foreign, protectedPath);
+    } catch (error) {
+      if (["EPERM", "ENOTSUP", "EOPNOTSUPP"].includes(error.code)) {
+        t.skip("The filesystem does not support regular file hard links.");
+        return;
+      }
+      throw error;
+    }
+    // Keep the *same* foreign inode open for both the hard-link witness and
+    // subsequent byte-integrity assertion. No path lookup follows fstat.
+    const hardlinkWitness = await fs.open(foreign, "r");
+    try {
+      assert.equal((await hardlinkWitness.stat()).nlink, 2);
+      let foreignBytesRead = false;
+      const mockFs = Object.create(fs);
+      mockFs.open = async (candidate, ...args) => {
+        const handle = await fs.open(candidate, ...args);
+        if (candidate === protectedPath) {
+          handle.read = async () => { foreignBytesRead = true; throw Error("foreign bytes read"); };
+        }
+        return handle;
+      };
+      const isolated = createEquinoxLocalMainUpdateTransactionEngine({
+        sourceRoot, transactionRoot: engine.paths.transactionRoot, fsImpl: mockFs,
+      });
+      await assert.rejects(isolated.readActive(), /normal, non-symlink file|hard.link/u);
+      assert.equal(foreignBytesRead, false, "Foreign-inode hard links must fail before reading bytes");
+      assert.deepEqual(await hardlinkWitness.readFile(), original, "Foreign contents stay intact");
+    } finally {
+      await hardlinkWitness.close();
+    }
+    await fs.unlink(protectedPath);
+    await fs.writeFile(protectedPath, original, { mode: 0o600 });
+    await fs.unlink(foreign);
+  }
+  assert.equal((await engine.readActive()).transactionId, receipt.transactionId);
+});
+
+test("Main update forensic lock refuses changed inode between lstat and opened descriptor", async(t)=>{
+  const { engine, sourceRoot } = await fixture(t);
+  const receipt = await engine.begin({currentSha:CURRENT,targetSha:TARGET});
+  const beforeBytes = await fs.readFile(engine.paths.lockPath);
+  const mockFs = Object.create(fs);
+  mockFs.lstat = async (candidate) => {
+    const stat = await fs.lstat(candidate);
+    if(candidate !== engine.paths.lockPath)return stat;
+    return new Proxy(stat,{
+      get(target,prop,receiver){
+        if(prop === "ino")return target.ino+1;
+        return Reflect.get(target,prop,receiver);
+      },
+    });
+  };
+  const alternate = createEquinoxLocalMainUpdateTransactionEngine({
+    sourceRoot,
+    transactionRoot:engine.paths.transactionRoot,
+    fsImpl:mockFs,
+  });
+  await assert.rejects(alternate.readActive(),/changed while opening/u);
+  assert.deepEqual(await fs.readFile(engine.paths.lockPath),beforeBytes);
+  assert.equal((await engine.readActive()).transactionId,receipt.transactionId);
 });

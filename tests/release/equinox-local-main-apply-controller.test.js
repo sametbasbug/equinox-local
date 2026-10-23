@@ -127,3 +127,53 @@ test("a successful Main re-check can clear a previous apply failure for retry", 
   const retried = await controller.apply();
   assert.equal(retried.targetSha, B);
 });
+
+test("Main apply enforces single-flight scheduling and retains its admitted target during a pending handoff", async () => {
+  let release;
+  const pending = new Promise((resolve) => { release = resolve; });
+  const calls = [];
+  let selected = { checkSupported:true, state:"behind", currentSha:A, targetSha:B, dirty:false, remoteCanonical:true };
+  const controller = createEquinoxLocalMainApplyController({
+    installation: installation(),
+    discovery: {snapshot:()=>selected},
+    applyImpl:async (options)=>{
+      calls.push(options);
+      await pending;
+      return {status:"scheduled",transactionId:"main-fixture",targetSha:B};
+    },
+  });
+  const first = controller.apply();
+  assert.equal(controller.snapshot().applying,true);
+  await assert.rejects(controller.apply(),/already being prepared/u);
+  selected = {...selected,targetSha:"c".repeat(40)};
+  release();
+  const outcome=await first;
+  assert.equal(outcome.targetSha,B);
+  assert.equal(calls.length,1);
+  assert.equal(calls[0].targetSha,B);
+  assert.equal(controller.snapshot().applying,false);
+  assert.equal(controller.snapshot().restartScheduledFor,B);
+});
+
+test("Main apply never calls worker scheduling for untrusted snapshot SHA, remote, or dirty state",async()=>{
+  let launched=0;
+  const fixture=installation();
+  for(const status of [
+    {currentSha:A,targetSha:"A".repeat(40),dirty:false,remoteCanonical:true},
+    {currentSha:A,targetSha:A,dirty:false,remoteCanonical:true},
+    {currentSha:A,targetSha:B,dirty:true,remoteCanonical:true},
+    {currentSha:A,targetSha:B,dirty:false,remoteCanonical:false},
+    {currentSha:"f".repeat(39),targetSha:B,dirty:false,remoteCanonical:true},
+    {currentSha:A,targetSha:B,dirty:false,remoteCanonical:true,state:"diverged"},
+    {currentSha:A,targetSha:B,dirty:false,remoteCanonical:true,state:"unavailable"},
+  ]){
+    const controller=createEquinoxLocalMainApplyController({
+      installation:fixture,
+      discovery:discovery({checkSupported:true,state:"behind",...status}),
+      applyImpl:async()=>{launched++;throw Error("must not schedule");},
+    });
+    assert.equal(controller.snapshot().applyAvailable,false);
+    await assert.rejects(controller.apply(),/newer eligible target/u);
+  }
+  assert.equal(launched,0);
+});

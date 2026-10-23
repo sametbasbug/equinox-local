@@ -100,6 +100,182 @@ function expectedPairingIdle() {
   };
 }
 
+test("Telegram credential directory swap cannot chmod or write into a foreign directory", async (t) => {
+  if (process.platform === "win32") { t.skip("POSIX chmod path substitution only"); return; }
+  await withTempCredential(async ({ root, credentialPath }) => {
+    const secretRoot = path.dirname(credentialPath);
+    const movedRoot = path.join(root, "owned-original");
+    const foreignRoot = path.join(root, "foreign-readable");
+    await fs.mkdir(secretRoot, { recursive: true, mode: 0o700 });
+    await fs.mkdir(foreignRoot, { mode: 0o755 });
+    let substituted = false;
+    const mockFs = Object.create(fs);
+    mockFs.lstat = async (candidate, ...args) => {
+      const before = await fs.lstat(candidate, ...args);
+      if (candidate === secretRoot && !substituted) {
+        substituted = true;
+        await fs.rename(secretRoot, movedRoot);
+        await fs.symlink(foreignRoot, secretRoot);
+      }
+      return before;
+    };
+    const outsideMode = (await fs.stat(foreignRoot)).mode & 0o777;
+    assert.equal(outsideMode, 0o755);
+    await assert.rejects(configureTelegramIntegration({
+      botToken: TOKEN, telegramUserId: "333", credentialPath,
+      fsImpl: mockFs, fetchImpl: async () => ({ ok: true, status: 200 }),
+    }), /unsafe|ELOOP|symlink|changed|ENOTDIR|credential directory/u);
+    assert.equal(substituted, true);
+    assert.equal((await fs.stat(foreignRoot)).mode & 0o777, outsideMode, "Foreign directory permissions remain unchanged");
+    await assert.rejects(fs.access(path.join(foreignRoot, "telegram.json")), { code: "ENOENT" });
+    assert.equal((await fs.stat(movedRoot)).mode & 0o777, 0o700);
+  });
+});
+
+test("Telegram credential rename race never chmods a foreign symlink target", async (t) => {
+  if (process.platform === "win32") { t.skip("POSIX rename/chmod test only"); return; }
+  await withTempCredential(async ({ root, credentialPath }) => {
+    const foreign = path.join(root, "foreign-existing.txt");
+    const ownedRenamed = path.join(root, "owned-written-credential.json");
+    const foreignText = "existing outside file must never be modified";
+    await fs.writeFile(foreign, foreignText, { mode: 0o644 });
+    const foreignMode = 0o644;
+    let swapped = false;
+    const mockFs = Object.create(fs);
+    mockFs.rename = async (oldPath, newPath) => {
+      await fs.rename(oldPath, newPath);
+      if (newPath === credentialPath && !swapped) {
+        swapped = true;
+        await fs.rename(credentialPath, ownedRenamed);
+        await fs.symlink(foreign, credentialPath);
+      }
+    };
+    await assert.rejects(configureTelegramIntegration({
+      botToken: TOKEN, telegramUserId: "333", credentialPath,
+      fsImpl: mockFs, fetchImpl: async () => ({ ok: true, status: 200 }),
+    }), /changed|unsafe|symlink|credentials|secure/u);
+    assert.equal(swapped, true, "The rename race must have been exercised");
+    assert.equal(await fs.readFile(foreign, "utf8"), foreignText);
+    assert.equal((await fs.stat(foreign)).mode & 0o777, foreignMode, "Foreign file permissions stay intact");
+    assert.equal((await fs.lstat(credentialPath)).isSymbolicLink(), true);
+    assert.equal((await fs.stat(ownedRenamed)).mode & 0o777, 0o600);
+  });
+});
+
+test("Telegram private temp replacement cannot impersonate a created inode", async (t) => {
+  if (process.platform === "win32") { t.skip("POSIX inode identity fixture"); return; }
+  await withTempCredential(async ({ root, credentialPath }) => {
+    const foreign = path.join(root, "unrelated-regular-private.txt");
+    const foreignBytes = "synthetic-unrelated-private-bytes";
+    await fs.writeFile(foreign, foreignBytes, { mode: 0o600 });
+    const rogueBytes = "injected-private-state";
+    let swapped = false;
+    let substitutedTemp;
+    const fsImpl = Object.create(fs);
+    fsImpl.lstat = async (candidate, ...args) => {
+      if (!swapped && path.dirname(candidate) === path.dirname(credentialPath) &&
+          path.basename(candidate).startsWith(".equinox-telegram-") && candidate.endsWith(".tmp")) {
+        swapped = true;
+        substitutedTemp = candidate;
+        await fs.unlink(candidate);
+        await fs.writeFile(candidate, rogueBytes, { mode: 0o600 });
+      }
+      return fs.lstat(candidate, ...args);
+    };
+    await assert.rejects(configureTelegramIntegration({
+      botToken: TOKEN, telegramUserId: "333", credentialPath,
+      fsImpl, fetchImpl: async () => ({ ok: true, status: 200 }),
+    }), /changed|unsafe|identity|temporary|inode/u);
+    assert.equal(swapped, true, "The replacement must happen before original temp identity admission");
+    assert.equal(await fs.readFile(substitutedTemp, "utf8"), rogueBytes,
+      "Failed Telegram persistence must preserve another writer's substituted temporary inode");
+    await assert.rejects(fs.access(credentialPath), { code: "ENOENT" });
+    assert.equal(await fs.readFile(foreign, "utf8"), foreignBytes);
+  });
+});
+
+test("Telegram rejects foreign hard-linked private temporary file before rename", async (t) => {
+  if (process.platform === "win32") { t.skip("POSIX inode linkage assertion only"); return; }
+  await withTempCredential(async ({ root, credentialPath }) => {
+    const foreign = path.join(root, "foreign-private-data.txt");
+    const foreignContents = "outside-owned-private-file";
+    await fs.writeFile(foreign, foreignContents, { mode: 0o600 });
+    const originalMode = 0o600;
+    let swapped = false;
+    const mockFs = Object.create(fs);
+    mockFs.lstat = async (candidate, ...args) => {
+      if (!swapped && path.dirname(candidate) === path.dirname(credentialPath) &&
+          path.basename(candidate).startsWith(".equinox-telegram-") && candidate.endsWith(".tmp")) {
+        swapped = true;
+        await fs.unlink(candidate);
+        await fs.link(foreign, candidate);
+      }
+      return fs.lstat(candidate, ...args);
+    };
+    await assert.rejects(configureTelegramIntegration({
+      botToken: TOKEN, telegramUserId: "333", credentialPath,
+      fsImpl: mockFs, fetchImpl: async () => ({ ok: true, status: 200 }),
+    }), /unsafe|hard.link|linked|identity|temporary/u);
+    assert.equal(swapped, true, "Hard-link swap must be exercised");
+    assert.equal(await fs.readFile(foreign, "utf8"), foreignContents);
+    assert.equal((await fs.stat(foreign)).mode & 0o777, originalMode);
+    assert.equal((await fs.stat(foreign)).nlink, 2,
+      "Failed save must preserve an unowned substituted hard link for explicit recovery");
+    await assert.rejects(fs.access(credentialPath), { code: "ENOENT" });
+  });
+});
+
+test("Telegram private readers refuse symlinked state parent", async (t) => {
+  if (process.platform === "win32") { t.skip("POSIX only"); return; }
+  await withTempCredential(async ({ root, credentialPath, pairingPath, inboxPath }) => {
+    const other = path.join(root, "other");
+    await fs.mkdir(other, { mode: 0o700 });
+    const payload = JSON.stringify({ version: 2, botToken: TOKEN, telegramUserId: "333" });
+    const pairing = JSON.stringify({ version: 1, botToken: TOKEN, botUsername: "mock",
+      expiresAt: new Date(Date.now() + 60_000).toISOString(), nextUpdateId: 0,
+      candidate: { telegramUserId: "333", label: "mock" } });
+    await fs.writeFile(path.join(other, "telegram.json"), payload, { mode: 0o600 });
+    await fs.writeFile(path.join(other, "telegram-pairing.json"), pairing, { mode: 0o600 });
+    await fs.symlink(other, path.dirname(credentialPath));
+    let contentOpens = 0;
+    const fsImpl = Object.create(fs);
+    fsImpl.open = async (candidate, ...args) => {
+      if (candidate === credentialPath || candidate === pairingPath) contentOpens++;
+      return fs.open(candidate, ...args);
+    };
+    const actual = await getTelegramIntegrationStatus({ credentialPath, pairingPath, inboxPath, fsImpl });
+    assert.equal(actual.configured, false);
+    assert.equal(actual.needsAttention, true);
+    const pairingStatus = await getTelegramPairingStatus({ pairingPath, fsImpl });
+    assert.equal(pairingStatus.active, false);
+    assert.equal(pairingStatus.needsAttention, true);
+    assert.equal(contentOpens, 0, "No foreign private data may be opened");
+    assert.equal(await fs.readFile(path.join(other, "telegram.json"), "utf8"), payload);
+    assert.equal(await fs.readFile(path.join(other, "telegram-pairing.json"), "utf8"), pairing);
+  });
+});
+
+test("Telegram does not trust a hard-linked foreign credential as its owned private state", async (t) => {
+  if (process.platform === "win32") { t.skip("POSIX hard-link private-state ownership only"); return; }
+  await withTempCredential(async ({ root, credentialPath, pairingPath, inboxPath }) => {
+    const foreign = path.join(root, "foreign-credential.json");
+    await fs.mkdir(path.dirname(credentialPath), { mode: 0o700 });
+    const bytes = `${JSON.stringify({ version: 2, botToken: TOKEN, telegramUserId: "333" })}\n`;
+    await fs.writeFile(foreign, bytes, { mode: 0o600 });
+    try { await fs.link(foreign, credentialPath); }
+    catch (error) {
+      if (["EPERM", "ENOTSUP", "EOPNOTSUPP"].includes(error.code)) { t.skip("Hard links unsupported"); return; }
+      throw error;
+    }
+    assert.equal((await fs.stat(credentialPath)).nlink, 2);
+    const status = await getTelegramIntegrationStatus({ credentialPath, pairingPath, inboxPath });
+    assert.equal(status.configured, false, "Foreign linked credential cannot be accepted as an owned bot identity");
+    assert.equal(status.needsAttention, true);
+    assert.equal(await fs.readFile(foreign, "utf8"), bytes);
+    assert.equal((await fs.stat(foreign)).nlink, 2, "Do not remove foreign identity on rejected read");
+  });
+});
+
 test("default Telegram credentials stay private while visible downloads default under Downloads", () => {
   assert.equal(
     defaultTelegramCredentialPath("/Users/example"),
@@ -337,6 +513,22 @@ test("disconnect removes Telegram runtime state but preserves downloaded user fi
       configured: false, ready: false, needsAttention: false, userIdHint: null,
       pairing: expectedPairingIdle(), pendingInboundCount: 0, remoteControl: { enabled: true },
     });
+  });
+});
+
+test("Telegram pairing cancellation never deletes foreign state through a symlinked parent", async (t) => {
+  if (process.platform === "win32") { t.skip("POSIX symlinked-parent deletion fixture"); return; }
+  await withTempCredential(async ({ root, pairingPath }) => {
+    const privateDir = path.dirname(pairingPath);
+    const foreignDir = path.join(root, "foreign-owned-directory");
+    const foreignPath = path.join(foreignDir, path.basename(pairingPath));
+    const marker = "not-telegram-owned-state-must-survive\n";
+    await fs.mkdir(foreignDir, { mode: 0o700 });
+    await fs.writeFile(foreignPath, marker, { mode: 0o600 });
+    await fs.symlink(foreignDir, privateDir);
+    await assert.rejects(cancelTelegramPairing({ pairingPath }), /unsafe|symlink|private.state|directory/u);
+    assert.equal(await fs.readFile(foreignPath, "utf8"), marker,
+      "A symlinked private-state parent must never delete another owner's pairing file");
   });
 });
 
@@ -672,4 +864,82 @@ test("Telegram tools preserve fixed-recipient routing and expose bounded send-fi
   assert.equal(openCalls[0].store, taskStore);
 
   assert.deepEqual([...rawRegistrations.keys()].sort(), ["telegram_attachment_open"]);
+});
+
+test("Telegram ignores spoofed private chat identity and never queues foreign callbacks after restart",async()=>{
+  await withTempCredential(async({credentialPath,inboxPath})=>{
+    await fs.mkdir(path.dirname(credentialPath),{recursive:true,mode:0o700});
+    await fs.writeFile(credentialPath,JSON.stringify({version:2,botToken:TOKEN,telegramUserId:"333"}),{mode:0o600});
+    const events=[
+      {update_id:101,message:{message_id:1,chat:{type:"private",id:333},from:{id:444},text:"spoofed"}},
+      {update_id:102,message:{message_id:2,chat:{type:"private",id:444},from:{id:333},text:"spoofed"}},
+      {update_id:103,callback_query:{id:"wrong",from:{id:444},message:{message_id:10,chat:{id:333,type:"private"}},data:"eqx:c:r-route123"}},
+      {update_id:104,callback_query:{id:"wrongchat",from:{id:333},message:{message_id:10,chat:{id:444,type:"private"}},data:"eqx:c:r-route123"}},
+      {update_id:105,message:{message_id:11,chat:{type:"private",id:333},from:{id:333},text:"authorized"}},
+    ];
+    const calls=[];
+    const first=await pollTelegramInboundOnce({credentialPath,inboxPath,fetchImpl:telegramJsonFetch([{result:events}],calls),now:()=>10000});
+    assert.deepEqual(first,{configured:true,received:1,pendingCount:1,nextUpdateId:106});
+    const pending=JSON.parse(await fs.readFile(inboxPath,"utf8"));
+    assert.deepEqual(pending.pending.map(item=>item.text),["authorized"]);
+    const second=await pollTelegramInboundOnce({credentialPath,inboxPath,fetchImpl:telegramJsonFetch([{result:events}],calls),now:()=>11000});
+    assert.deepEqual(second,{configured:true,received:0,pendingCount:1,nextUpdateId:106});
+    assert.equal(calls[1].body.offset,106);
+  });
+});
+
+test("Telegram task card rejects foreign URL, malformed callback and excessive controls before request dispatch",async()=>{
+  await withTempCredential(async({credentialPath})=>{
+    await fs.mkdir(path.dirname(credentialPath),{recursive:true,mode:0o700});
+    await fs.writeFile(credentialPath,JSON.stringify({version:2,botToken:TOKEN,telegramUserId:"333"}),{mode:0o600});
+    const outbound=[],fetchImpl=async(url,options)=>{outbound.push([url,options]);throw Error("backend must not be reached")};
+    for(const keyboard of [
+      [[{text:"Hijack",url:"https://evil.invalid/c/task123"}]],
+      [[{text:"Hijack",url:"http://chatgpt.com/c/task123"}]],
+      [[{text:"Hijack",callbackData:"eqx:c:../../other"}]],
+      Array.from({length:4},()=>[{text:"x",callbackData:"eqx:c:r-route123"}]),
+    ])await assert.rejects(sendTelegramTaskCard({text:"synthetic",keyboard,credentialPath,fetchImpl}),/task link|callback data|at most 3 rows/u);
+    assert.deepEqual(outbound,[]);
+  });
+});
+
+test("Telegram file export requires explicit access resolver before loading credentials or making a network call",async()=>{
+  await withTempCredential(async({root,credentialPath})=>{
+    const output=path.join(root,"forbidden.txt");
+    await fs.writeFile(output,"fixture");
+    const outbound=[],fetchImpl=async(...args)=>{outbound.push(args);throw Error("unexpected network")};
+    for(const input of [
+      {filePath:output},
+      {filePath:output,resolveFile:async()=>({absolutePath:output,bytes:"wrong"})},
+      {filePath:output,resolveFile:async()=>null},
+    ]){
+      await assert.rejects(sendTelegramFile({...input,credentialPath,fetchImpl}),/file path policy|invalid result/u);
+    }
+    assert.deepEqual(outbound,[]);
+    await assert.rejects(fs.access(credentialPath),{code:"ENOENT"});
+  });
+});
+
+test("Telegram invalid pairing candidate and inbound attachment path cannot expose any private file",async()=>{
+  await withTempCredential(async({root,credentialPath,pairingPath})=>{
+    const fakeCalls=[];
+    await startTelegramPairing({
+      botToken:TOKEN,pairingPath,now:()=>1000,
+      fetchImpl:telegramJsonFetch([
+        {result:{is_bot:true,username:"FixtureBot"}},{result:[]},
+      ],fakeCalls),
+    });
+    const candidate=await pollTelegramPairing({
+      pairingPath,now:()=>2000,
+      fetchImpl:telegramJsonFetch([{result:[
+        {update_id:5,message:{chat:{id:222,type:"private"},from:{id:333},text:"/start"}},
+        {update_id:6,message:{chat:{id:-100,type:"supergroup"},from:{id:333},text:"/start"}},
+        {update_id:7,message:{chat:{id:333,type:"private"},from:{id:333},text:"please pair"}},
+      ]}],fakeCalls),
+    });
+    assert.equal(candidate.candidateFound,false);
+    await assert.rejects(confirmTelegramPairing({pairingPath,credentialPath,now:()=>3000}),/No Telegram pairing candidate/u);
+    assert.deepEqual(fakeCalls.filter(call=>call.url.endsWith("/sendMessage")),[]);
+    await assert.rejects(fs.access(credentialPath),{code:"ENOENT"});
+  });
 });

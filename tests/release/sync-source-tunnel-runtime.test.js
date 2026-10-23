@@ -86,3 +86,43 @@ test("source tunnel sync refuses a symlinked private runtime root", async (t) =>
     /unsafe/u,
   );
 });
+
+test("source tunnel sync rejects unsafe Developer root before attempting installation", async (t) => {
+  const item = await makeFixture(t);
+  const appSupport = path.join(item.root, "Library", "Application Support");
+  const elsewhere = path.join(item.root, "elsewhere");
+  await fs.mkdir(appSupport, { recursive: true, mode: 0o700 });
+  await fs.mkdir(elsewhere, { mode: 0o700 });
+  await fs.symlink(elsewhere, path.join(appSupport, "Equinox Local Developer"));
+  const before = await fs.readFile(item.configPath, "utf8");
+  let installCalls = 0;
+  await assert.rejects(() => syncSourceTunnelRuntime({
+    configPath: item.configPath,
+    homeDir: item.root,
+    target: "darwin-arm64",
+    installPinnedTunnelRuntimeImpl: async (...args) => {
+      installCalls += 1;
+      return fakeInstall(...args);
+    },
+  }), /unsafe/u);
+  assert.equal(installCalls, 0);
+  assert.equal(await fs.readFile(item.configPath, "utf8"), before);
+});
+
+test("source tunnel sync cleans partial transaction and preserves configuration on installer failure", async (t) => {
+  const item = await makeFixture(t);
+  const before = await fs.readFile(item.configPath, "utf8");
+  const versionRoot = path.join(item.root, "Library", "Application Support", "Equinox Local Developer", "runtime", "tunnel", "versions");
+  await assert.rejects(() => syncSourceTunnelRuntime({
+    configPath: item.configPath,
+    homeDir: item.root,
+    target: "darwin-arm64",
+    installPinnedTunnelRuntimeImpl: async (target, releaseDir) => {
+      assert.equal(target, "darwin-arm64");
+      await fakeInstall(target, releaseDir);
+      throw new Error("injected partial-install failure");
+    },
+  }), /injected partial-install failure/u);
+  assert.deepEqual(await fs.readdir(versionRoot), []);
+  assert.equal(await fs.readFile(item.configPath, "utf8"), before);
+});

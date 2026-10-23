@@ -173,3 +173,71 @@ test("Selected Agent Access contains image_view to configured roots including re
     homeDir: allowed,
   }), /outside the configured Selected/u);
 });
+
+test("image_view rejects a symlink substituted between realpath and open without exposing foreign bytes",async(t)=>{
+  const root=await fs.mkdtemp(path.join(os.tmpdir(),"equinox-image-race-"));
+  t.after(()=>fs.rm(root,{recursive:true,force:true}));
+  const imagePath=path.join(root,"image.png");
+  const foreign=path.join(root,"private-outside.png");
+  await fs.writeFile(imagePath,tinyPng());
+  await fs.writeFile(foreign,Buffer.from("private bytes must not appear in image output"));
+  let swapped=false;
+  const fsImpl={
+    ...fs,
+    realpath:async p=>{
+      const original=await fs.realpath(p);
+      if(!swapped&&p===imagePath){
+        swapped=true;
+        await fs.unlink(imagePath);
+        await fs.symlink(foreign,imagePath);
+      }
+      return original;
+    },
+  };
+  const tool=registrationHarness({homeDir:root,fsImpl});
+  await assert.rejects(tool.handler({path:imagePath}),{code:"ELOOP"});
+  assert.equal(swapped,true);
+  assert.equal((await fs.lstat(imagePath)).isSymbolicLink(),true);
+  assert.equal(await fs.readFile(foreign,"utf8"),"private bytes must not appear in image output");
+});
+
+test("image_view rejects files that change size after path admission and closes opened descriptor",async(t)=>{
+  const root=await fs.mkdtemp(path.join(os.tmpdir(),"equinox-image-fd-race-"));
+  t.after(()=>fs.rm(root,{recursive:true,force:true}));
+  const imagePath=path.join(root,"image.png");
+  await fs.writeFile(imagePath,tinyPng());
+  // Keep an already-open writable descriptor so the fixture mutates that
+  // inode, never an unvalidated pathname between admission and read.
+  const mutator=await fs.open(imagePath,"r+");
+  t.after(()=>mutator.close());
+  let opened=0,closed=0;
+  const fsImpl={
+    ...fs,
+    open:async(p,flags)=>{
+      opened++;
+      const handle=await fs.open(p,flags);
+      const originalClose=handle.close.bind(handle);
+      handle.close=async()=>{closed++;return originalClose()};
+      await mutator.write(Buffer.from("changed after lstat"),0,undefined,(await mutator.stat()).size);
+      return handle;
+    }
+  };
+  const tool=registrationHarness({homeDir:root,fsImpl});
+  await assert.rejects(tool.handler({path:imagePath}),/Image file changed while it was being read/u);
+  assert.equal(opened,1);
+  assert.equal(closed,1);
+});
+
+test("image_view rejects JPEG and WebP decompression-size claims without decoding or disclosing bytes",()=>{
+  const png=tinyPng();
+  const excessive=Buffer.from(png);
+  excessive.writeUInt32BE(20_000,16);
+  excessive.writeUInt32BE(20_000,20);
+  assert.throws(()=>inspectImageBuffer(excessive),/pixel safety budget/u);
+  const empty=Buffer.alloc(30);
+  empty.write("RIFF",0,"ascii");empty.writeUInt32LE(22,4);
+  empty.write("WEBP",8,"ascii");empty.write("VP8X",12,"ascii");empty.writeUInt32LE(10,16);
+  // 20,000 x 20,000 is within the per-axis cap but above the pixel limit.
+  for(const off of [24,27]){const n=19999;empty[off]=n&255;empty[off+1]=(n>>8)&255;empty[off+2]=(n>>16)&255}
+  assert.throws(()=>inspectImageBuffer(empty),/pixel safety budget/u);
+});

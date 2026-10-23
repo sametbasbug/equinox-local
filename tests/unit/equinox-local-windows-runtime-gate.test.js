@@ -3,7 +3,7 @@ import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 
-const GATE = fileURLToPath(new URL("../../src/equinox-local-windows-runtime-gate.mjs", import.meta.url));
+const GATE = process.env.EQUINOX_WINDOWS_RUNTIME_GATE_UNDER_TEST || fileURLToPath(new URL("../../src/equinox-local-windows-runtime-gate.mjs", import.meta.url));
 
 function encodedSpec(command, args) {
   return Buffer.from(JSON.stringify({ command, args }), "utf8").toString("base64");

@@ -1,0 +1,103 @@
+import { createHash } from "node:crypto";
+import fs from "node:fs/promises";
+
+type PointerFileSystem = Pick<typeof fs, "open" | "lstat" | "stat" | "link" | "unlink" | "rename" | "rm">;
+type PointerOptions = { target?: string };
+type PointerFilesystemOptions = PointerOptions & { platform?: string; fsImpl?: PointerFileSystem };
+
+function hasErrorCode(error: unknown, code: string): boolean {
+  return error !== null && typeof error === "object" && "code" in error && error.code === code;
+}
+
+
+import { readBoundedNormalFile, writeBoundedUtf8File } from "./equinox-local-safe-file.js";
+import { parseEquinoxVersion } from "./equinox-local-updater.js";
+
+export const EQUINOX_LOCAL_CURRENT_VERSION_SCHEMA_VERSION = 1;
+const MAX_CURRENT_POINTER_BYTES = 4 * 1024;
+
+function exactKeys(value: unknown, expected: readonly string[], label: string): asserts value is Record<string, unknown> {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error(`${label} must be a JSON object.`);
+  }
+  const actual = Object.keys(value).sort();
+  const wanted = [...expected].sort();
+  if (actual.length !== wanted.length || actual.some((key, index) => key !== wanted[index])) {
+    throw new Error(`${label} contains missing or unsupported fields.`);
+  }
+}
+
+export function parseEquinoxLocalCurrentVersionPointer(raw: unknown, { target = "win32-x64" }: PointerOptions = {}) {
+  exactKeys(raw, ["schemaVersion", "target", "version"], "Current-version pointer");
+  if (raw.schemaVersion !== EQUINOX_LOCAL_CURRENT_VERSION_SCHEMA_VERSION) {
+    throw new Error("Unsupported current-version pointer schema.");
+  }
+  if (raw.target !== target) {
+    throw new Error("Current-version pointer target does not match this Equinox Local build.");
+  }
+  const version = parseEquinoxVersion(raw.version).text;
+  return Object.freeze({ schemaVersion: raw.schemaVersion, target: raw.target, version });
+}
+
+export function serializeEquinoxLocalCurrentVersionPointer({ version, target = "win32-x64" }: PointerOptions & { version?: unknown } = {}) {
+  const normalized = parseEquinoxLocalCurrentVersionPointer({
+    schemaVersion: EQUINOX_LOCAL_CURRENT_VERSION_SCHEMA_VERSION,
+    target,
+    version,
+  }, { target });
+  return `${JSON.stringify(normalized, null, 2)}\n`;
+}
+
+export async function readEquinoxLocalCurrentVersionPointer(filePath: string, {
+  fsImpl = fs,
+  platform = process.platform,
+  target = "win32-x64",
+}: PointerFilesystemOptions = {}) {
+  const { data } = await readBoundedNormalFile(filePath, {
+    fsImpl,
+    platform,
+    minBytes: 1,
+    maxBytes: MAX_CURRENT_POINTER_BYTES,
+    encoding: "utf8",
+    label: "Equinox Local current-version pointer",
+  });
+  let raw;
+  try {
+    raw = JSON.parse(data);
+  } catch {
+    throw new Error("Equinox Local current-version pointer is not valid JSON.");
+  }
+  return parseEquinoxLocalCurrentVersionPointer(raw, { target });
+}
+
+export async function writeEquinoxLocalCurrentVersionPointer(filePath: string, {
+  version,
+  fsImpl = fs,
+  platform = process.platform,
+  target = "win32-x64",
+}: PointerFilesystemOptions & { version?: unknown } = {}) {
+  if (platform !== "win32") throw new Error("Version-file current pointers are supported only on Windows.");
+  const content = serializeEquinoxLocalCurrentVersionPointer({ version, target });
+  let expectedSha256;
+  try {
+    const current = await readBoundedNormalFile(filePath, {
+      fsImpl,
+      platform,
+      minBytes: 1,
+      maxBytes: MAX_CURRENT_POINTER_BYTES,
+      label: "Equinox Local current-version pointer",
+    });
+    expectedSha256 = createHash("sha256").update(current.data).digest("hex");
+  } catch (error) {
+    if (!hasErrorCode(error, "ENOENT")) throw error;
+  }
+  await writeBoundedUtf8File(filePath, {
+    content,
+    ...(expectedSha256 ? { expectedSha256 } : {}),
+    fsImpl,
+    maxBytes: MAX_CURRENT_POINTER_BYTES,
+    maxExistingBytes: MAX_CURRENT_POINTER_BYTES,
+    label: "Equinox Local current-version pointer",
+  });
+  return parseEquinoxLocalCurrentVersionPointer(JSON.parse(content), { target });
+}

@@ -1,0 +1,559 @@
+import { randomBytes } from "node:crypto";
+import { execFile as execFileCallback } from "node:child_process";
+import fs from "node:fs/promises";
+import path from "node:path";
+import { promisify } from "node:util";
+
+import { readEquinoxLocalCurrentVersionPointer, writeEquinoxLocalCurrentVersionPointer } from "./equinox-local-current-release.js";
+import { synchronizeEquinoxLocalAppHostForRelease } from "./equinox-local-native-app-host.js";
+import { EQUINOX_LOCAL_BUNDLED_PEEKABOO_SINCE_VERSION, EQUINOX_LOCAL_BUNDLED_WINAPP_SINCE_VERSION } from "./equinox-local-runtime-versions.js";
+import { compareEquinoxVersions, equinoxLocalUpdateTarget, parseEquinoxVersion } from "./equinox-local-updater.js";
+import {
+  assertWindowsNativeMessagingHostOwnership,
+  registerWindowsNativeMessagingHost,
+  windowsNativeMessagingLauncherPath,
+} from "./equinox-browser-windows-native-messaging.js";
+import {
+  launchWindowsStableShell,
+  replaceWindowsStableShellForRelease,
+} from "./equinox-local-windows-stable-shell.js";
+
+const execFile = promisify(execFileCallback);
+type ActivationExec = typeof execFile;
+type ManagedInstallation = {
+  selfUpdateSupported?:boolean; platform?:string; arch?:string;
+  target?:string|null; releasesRoot?:string; installRoot?:string;
+  currentPointer?:string;currentLink?:string;programRoot?:string;
+  nativeMessagingManifestRoot?:string;launchAgentLabel?:string;launchAgentPath?:string;
+};
+type CurrentRelease = Readonly<{version:string;releaseDir:string}>;
+type ShellRelease = CurrentRelease & {previousVersion?:string|undefined;previousReleaseDir?:string|undefined};
+type Sleep = (ms:number)=>Promise<unknown>;
+type ManagedMainFallback = Readonly<{version:string;sourceSha:string;releaseDir:string;stablePointerVersion:string}>;
+type LaunchOptions = {execFileImpl?:ActivationExec;uid?:number|null|undefined;sleepImpl?:Sleep};
+type HealthOptions = {fetchImpl?:typeof fetch;sleepImpl?:Sleep|undefined;attempts?:number;delayMs?:number;expectedInstallationKind?:string|null};
+type ActivateOptions = {
+ installation?:ManagedInstallation;targetVersion?:string;
+ kickstartImpl?:(version:string)=>Promise<unknown>;
+ syncAppHostImpl?:(release:ShellRelease)=>Promise<unknown>;
+ previousMainNativeReleaseDir?:string|null;previousManagedMain?:ManagedMainFallback|null;
+ fetchImpl?:typeof fetch;sleepImpl?:Sleep;healthAttempts?:number;now?:()=>Date;
+};
+function recordOrNull(value:unknown):Record<string,unknown>|null {
+ return value !== null && typeof value === "object" && !Array.isArray(value) ? value as Record<string,unknown> : null;
+}
+
+export const EQUINOX_LOCAL_CONTROL_CENTER_STATUS_URL = "http://127.0.0.1:24891/api/v1/status";
+const HEALTH_ATTEMPTS = 30;
+const HEALTH_DELAY_MS = 500;
+
+function boundedMessage(value:unknown) {
+  return String(value ?? "")
+    .replace(/[\r\n\u0000-\u001f\u007f]+/gu, " ")
+    .replace(/\s+/gu, " ")
+    .trim()
+    .slice(0, 300);
+}
+
+function installationPathApi(installation:ManagedInstallation) {
+  return installation?.platform === "win32" ? path.win32 : path.posix;
+}
+
+function installationTarget(installation:ManagedInstallation) {
+  if (typeof installation?.target === "string" && installation.target) return installation.target;
+  return equinoxLocalUpdateTarget({
+    platform: installation?.platform ?? process.platform,
+    arch: installation?.arch ?? process.arch,
+  });
+}
+
+function releasePathFor(installation:ManagedInstallation,version:string) {
+  const normalized = parseEquinoxVersion(version).text;
+  const pathApi = installationPathApi(installation);
+  const target = pathApi.join(installation.releasesRoot!, normalized);
+  if (pathApi.dirname(target) !== installation.releasesRoot) {
+    throw new Error("Managed release path escaped the releases root.");
+  }
+  return target;
+}
+
+async function assertReleaseDirectory(installation:ManagedInstallation,version:string) {
+  const target = releasePathFor(installation, version);
+  const stat = await fs.lstat(target);
+  if (!stat.isDirectory() || stat.isSymbolicLink()) {
+    throw new Error(`Managed release ${version} is not a normal directory.`);
+  }
+  const pathApi = installationPathApi(installation);
+  const metadata = recordOrNull(JSON.parse(await fs.readFile(pathApi.join(target, "release.json"), "utf8")));
+  const expectedTarget = installationTarget(installation);
+  if (
+    metadata?.schemaVersion !== 1 ||
+    metadata?.version !== version ||
+    metadata?.target !== expectedTarget ||
+    typeof metadata?.nodeVersion !== "string" ||
+    !/^\d+\.\d+\.\d+$/u.test(metadata.nodeVersion) ||
+    typeof metadata?.tunnelClientVersion !== "string" ||
+    !/^\d+\.\d+\.\d+$/u.test(metadata.tunnelClientVersion) ||
+    (metadata?.nativeAppShellVersion !== undefined && (typeof metadata.nativeAppShellVersion !== "number" || !Number.isSafeInteger(metadata.nativeAppShellVersion) || metadata.nativeAppShellVersion < 1)) ||
+    metadata?.serverEntry !== "server.js"
+  ) {
+    throw new Error(`Managed release ${version} metadata is invalid for ${expectedTarget}.`);
+  }
+  const windows = installation?.platform === "win32";
+  const requiredExecutables = windows
+    ? [
+        pathApi.join("runtime", "node", "bin", "node.exe"),
+        pathApi.join("runtime", "tunnel", "tunnel-client.exe"),
+        pathApi.join("runtime", "tunnel", "cloudflared.exe"),
+      ]
+    : [
+        pathApi.join("runtime", "node", "bin", "node"),
+        pathApi.join("runtime", "tunnel", "tunnel-client"),
+        pathApi.join("runtime", "tunnel", "cloudflared"),
+      ];
+  if (!windows && compareEquinoxVersions(version, EQUINOX_LOCAL_BUNDLED_PEEKABOO_SINCE_VERSION) >= 0) {
+    requiredExecutables.push(
+      pathApi.join("runtime", "peekaboo", "peekaboo"),
+      pathApi.join("runtime", "peekaboo", "libswiftCompatibilitySpan.dylib"),
+    );
+  }
+  if (windows && compareEquinoxVersions(version, EQUINOX_LOCAL_BUNDLED_WINAPP_SINCE_VERSION) >= 0) {
+    requiredExecutables.push(
+      pathApi.join("runtime", "winapp", "winapp.exe"),
+      pathApi.join("runtime", "winapp", "libHarfBuzzSharp.dll"),
+      pathApi.join("runtime", "winapp", "libSkiaSharp.dll"),
+    );
+  }
+  for (const relative of requiredExecutables) {
+    const executable = await fs.lstat(pathApi.join(target, relative));
+    if (!executable.isFile() || executable.isSymbolicLink() || (!windows && (executable.mode & 0o111) === 0)) {
+      throw new Error(`Managed release ${version} runtime executable is invalid: ${relative}.`);
+    }
+  }
+  return target;
+}
+
+export async function readManagedCurrentRelease(installation:ManagedInstallation) {
+  if (!installation?.selfUpdateSupported) {
+    throw new Error("A managed Equinox Local installation is required.");
+  }
+  if (installation.platform === "win32") {
+    if (typeof installation.currentPointer !== "string") throw new Error("Managed Windows current-version pointer is unavailable.");
+    const pointer = await readEquinoxLocalCurrentVersionPointer(installation.currentPointer!, {
+      platform: "win32",
+      target: installationTarget(installation),
+    });
+    const target = await assertReleaseDirectory(installation, pointer.version);
+    return Object.freeze({ version: pointer.version, releaseDir: target });
+  }
+  if (typeof installation.currentLink !== "string") throw new Error("Managed current symlink is unavailable.");
+  const linkStat = await fs.lstat(installation.currentLink!);
+  if (!linkStat.isSymbolicLink()) throw new Error("Managed current pointer must be a symbolic link.");
+  const rawTarget = await fs.readlink(installation.currentLink!);
+  const resolved = path.posix.resolve(path.posix.dirname(installation.currentLink!), rawTarget);
+  if (path.posix.dirname(resolved) !== installation.releasesRoot) {
+    throw new Error("Managed current pointer escaped the releases root.");
+  }
+  const version = path.posix.basename(resolved);
+  parseEquinoxVersion(version);
+  const target = await assertReleaseDirectory(installation, version);
+  return Object.freeze({ version, releaseDir: target });
+}
+
+async function syncDirectory(directory:string,platform:string = process.platform) {
+  if (platform === "win32") return;
+  const handle = await fs.open(directory, "r");
+  try {
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
+}
+
+export async function atomicSwitchCurrentRelease(installation:ManagedInstallation,targetVersion:string) {
+  const targetReleaseDir = await assertReleaseDirectory(installation, targetVersion!);
+  const previous = await readManagedCurrentRelease(installation);
+  if (previous.releaseDir === targetReleaseDir) {
+    return Object.freeze({ previous, current: previous, changed: false });
+  }
+
+  if (installation.platform === "win32") {
+    if (typeof installation.currentPointer !== "string") throw new Error("Managed Windows current-version pointer is unavailable.");
+    await writeEquinoxLocalCurrentVersionPointer(installation.currentPointer!, {
+      version: targetVersion!,
+      platform: "win32",
+      target: installationTarget(installation),
+    });
+    return Object.freeze({
+      previous,
+      current: Object.freeze({ version: targetVersion!, releaseDir: targetReleaseDir }),
+      changed: true,
+    });
+  }
+
+  const tempLink = path.posix.join(
+    installation.installRoot!,
+    `.current-next-${process.pid}-${randomBytes(8).toString("hex")}`,
+  );
+  const relativeTarget = path.posix.relative(installation.installRoot!, targetReleaseDir);
+  if (!relativeTarget.startsWith("releases/")) throw new Error("Managed release link target is invalid.");
+
+  try {
+    await fs.symlink(relativeTarget, tempLink, "dir");
+    await fs.rename(tempLink, installation.currentLink!);
+    await syncDirectory(installation.installRoot!, installation.platform);
+  } catch (error) {
+    await fs.rm(tempLink, { force: true }).catch(() => {});
+    throw error;
+  }
+
+  return Object.freeze({
+    previous,
+    current: Object.freeze({ version: targetVersion!, releaseDir: targetReleaseDir }),
+    changed: true,
+  });
+}
+
+export async function kickstartEquinoxLocalLaunchAgent(installation:ManagedInstallation, {
+  execFileImpl = execFile,
+  uid = process.getuid?.(),
+  sleepImpl = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+}: LaunchOptions = {}) {
+  if (uid === undefined || uid === null || !Number.isInteger(uid) || uid < 1) throw new Error("A non-root user id is required to restart Equinox Local.");
+  if (typeof installation?.launchAgentLabel !== "string" || installation.launchAgentLabel !== "dev.equinox.local") {
+    throw new Error("Unexpected Equinox Local LaunchAgent label.");
+  }
+  if (typeof installation?.launchAgentPath !== "string" || !path.isAbsolute(installation.launchAgentPath)) {
+    throw new Error("Managed Equinox Local LaunchAgent path is unavailable.");
+  }
+
+  const domain = `gui/${uid}`;
+  const service = `${domain}/${installation.launchAgentLabel}`;
+  let loaded = false;
+  let hostPid:number|null = null;
+  try {
+    const { stdout } = await execFileImpl("/bin/launchctl", ["print", service], {
+      encoding: "utf8",
+      timeout: 5_000,
+      maxBuffer: 1024 * 1024,
+    });
+    loaded = true;
+    const match = String(stdout ?? "").match(/^\s*pid = (\d+)\s*$/mu);
+    hostPid = match ? Number(match[1]) : null;
+  } catch {
+    loaded = false;
+  }
+
+  if (hostPid !== null && Number.isInteger(hostPid) && hostPid > 1) {
+    let childPids:number[] = [];
+    try {
+      const { stdout } = await execFileImpl("/usr/bin/pgrep", ["-P", String(hostPid)], {
+        encoding: "utf8",
+        timeout: 5_000,
+        maxBuffer: 64 * 1024,
+      });
+      childPids = String(stdout ?? "")
+        .split(/\r?\n/u)
+        .map((value) => Number(value.trim()))
+        .filter((value) => Number.isInteger(value) && value > 1);
+    } catch {
+      childPids = [];
+    }
+
+    for (const childPid of childPids) {
+      const { stdout } = await execFileImpl("/bin/ps", ["-p", String(childPid), "-o", "uid=,ppid="], {
+        encoding: "utf8",
+        timeout: 5_000,
+        maxBuffer: 16 * 1024,
+      });
+      const [childUid, childParent] = String(stdout ?? "").trim().split(/\s+/u).map(Number);
+      if (childUid === uid && childParent === hostPid) {
+        await execFileImpl("/bin/kill", ["-TERM", String(childPid)], { timeout: 5_000, maxBuffer: 16 * 1024 }).catch(() => {});
+      }
+    }
+
+    for (const childPid of childPids) {
+      let alive = true;
+      for (let attempt = 0; attempt < 40; attempt += 1) {
+        try {
+          await execFileImpl("/bin/kill", ["-0", String(childPid)], { timeout: 2_000, maxBuffer: 16 * 1024 });
+          await sleepImpl(100);
+        } catch {
+          alive = false;
+          break;
+        }
+      }
+      if (alive) throw new Error("Managed Equinox Local runtime child did not stop cleanly before LaunchAgent reload.");
+    }
+  }
+
+  if (loaded) {
+    await execFileImpl("/bin/launchctl", ["bootout", service], {
+      timeout: 15_000,
+      maxBuffer: 1024 * 1024,
+    });
+    for (let attempt = 0; attempt < 40; attempt += 1) {
+      try {
+        await execFileImpl("/bin/launchctl", ["print", service], { timeout: 2_000, maxBuffer: 64 * 1024 });
+        await sleepImpl(100);
+      } catch {
+        loaded = false;
+        break;
+      }
+    }
+    if (loaded) throw new Error("Managed Equinox Local LaunchAgent did not finish bootout.");
+  }
+
+  await execFileImpl("/bin/launchctl", ["bootstrap", domain, installation.launchAgentPath!], {
+    timeout: 15_000,
+    maxBuffer: 1024 * 1024,
+  });
+  await execFileImpl("/bin/launchctl", ["kickstart", service], {
+    timeout: 15_000,
+    maxBuffer: 1024 * 1024,
+  });
+}
+
+export async function waitForEquinoxLocalVersion(expectedVersion:string, {
+  fetchImpl = globalThis.fetch,
+  sleepImpl = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+  attempts = HEALTH_ATTEMPTS,
+  delayMs = HEALTH_DELAY_MS,
+  expectedInstallationKind = null,
+}: HealthOptions = {}) {
+  parseEquinoxVersion(expectedVersion);
+  let lastError:unknown = null;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try {
+      const response = await fetchImpl(EQUINOX_LOCAL_CONTROL_CENTER_STATUS_URL, {
+        method: "GET",
+        redirect: "error",
+        cache: "no-store",
+        credentials: "omit",
+        headers: { accept: "application/json" },
+      });
+      if (!response?.ok) throw new Error(`Health endpoint returned HTTP ${response?.status ?? "unknown"}.`);
+      const body = recordOrNull(await response.json());
+      const status = recordOrNull(body?.status);
+      const server = recordOrNull(status?.server);
+      const health = recordOrNull(status?.health);
+      const reportedInstallation = recordOrNull(status?.installation);
+      const reportedVersion = server?.version ?? null;
+      const healthState = health?.state ?? null;
+      if (reportedVersion === expectedVersion && healthState === "HEALTHY" && (expectedInstallationKind === null || reportedInstallation?.kind === expectedInstallationKind)) return true;
+      throw new Error(`Health endpoint reported Equinox Local ${reportedVersion ?? "unknown"} with health ${healthState ?? "unknown"}.`);
+    } catch (error) {
+      lastError = error;
+    }
+    if (attempt + 1 < attempts) await sleepImpl(delayMs);
+  }
+  throw new Error(`Equinox Local ${expectedVersion} did not become healthy: ${boundedMessage(lastError instanceof Error ? lastError.message : lastError)}`);
+}
+
+export async function waitForEquinoxLocalManagedSource(expectedVersion:string, expectedSourceSha:unknown, {
+  fetchImpl = globalThis.fetch,
+  sleepImpl = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+  attempts = HEALTH_ATTEMPTS,
+  delayMs = HEALTH_DELAY_MS,
+}: Omit<HealthOptions, 'expectedInstallationKind'> = {}) {
+  parseEquinoxVersion(expectedVersion);
+  if (typeof expectedSourceSha !== "string" || !/^[a-f0-9]{40}$/u.test(expectedSourceSha)) throw new Error("Managed-source health check requires an exact source SHA.");
+  let lastError:unknown = null;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try {
+      const response = await fetchImpl(EQUINOX_LOCAL_CONTROL_CENTER_STATUS_URL, {
+        method: "GET",
+        redirect: "error",
+        cache: "no-store",
+        credentials: "omit",
+        headers: { accept: "application/json" },
+      });
+      if (!response?.ok) throw new Error(`Health endpoint returned HTTP ${response?.status ?? "unknown"}.`);
+      const body = recordOrNull(await response.json());
+      const status = recordOrNull(body?.status);
+      const server = recordOrNull(status?.server);
+      const health = recordOrNull(status?.health);
+      const reportedInstallation = recordOrNull(status?.installation);
+      const reportedVersion = server?.version ?? null;
+      const healthState = health?.state ?? null;
+      const installationKind = reportedInstallation?.kind ?? null;
+      const sourceSha = reportedInstallation?.sourceSha ?? null;
+      if (reportedVersion === expectedVersion && healthState === "HEALTHY" && installationKind === "managed-source" && sourceSha === expectedSourceSha) return true;
+      throw new Error(`Health endpoint reported Equinox Local ${reportedVersion ?? "unknown"}, health ${healthState ?? "unknown"}, installation ${installationKind ?? "unknown"}, source ${sourceSha ?? "unknown"}.`);
+    } catch (error) {
+      lastError = error;
+    }
+    if (attempt + 1 < attempts) await sleepImpl(delayMs);
+  }
+  throw new Error(`Equinox Local managed-source ${(expectedSourceSha as string).slice(0, 7)} did not become healthy: ${boundedMessage(lastError instanceof Error ? lastError.message : lastError)}`);
+}
+
+async function writeActivationState(installation:ManagedInstallation,state:Record<string,unknown>) {
+  const target = path.join(installation.installRoot!, "update-state.json");
+  const temp = `${target}.tmp-${process.pid}-${randomBytes(8).toString("hex")}`;
+  await fs.writeFile(temp, `${JSON.stringify(state, null, 2)}\n`, { mode: 0o600, flag: "wx" });
+  await fs.rename(temp, target);
+  await syncDirectory(installation.installRoot!, installation.platform);
+}
+
+export async function synchronizeManagedShellForRelease(installation:ManagedInstallation, release:ShellRelease) {
+  if (installation?.platform !== "win32") {
+    return synchronizeEquinoxLocalAppHostForRelease({ installation, releaseDir: release.releaseDir });
+  }
+  if (typeof installation.programRoot !== "string" || typeof installation.nativeMessagingManifestRoot !== "string") {
+    throw new Error("Managed Windows shell/native-host paths are unavailable.");
+  }
+  if (typeof release.previousReleaseDir !== "string") throw new Error("Previous Windows release is required for update ownership.");
+  const launcherPath = windowsNativeMessagingLauncherPath(release.releaseDir);
+  const previousLauncherPath = windowsNativeMessagingLauncherPath(release.previousReleaseDir);
+  await assertWindowsNativeMessagingHostOwnership({
+    manifestRoot: installation.nativeMessagingManifestRoot,
+    acceptedLauncherPaths: [launcherPath, previousLauncherPath],
+  });
+  const shell = await replaceWindowsStableShellForRelease({
+    releaseDir: release.releaseDir,
+    previousReleaseDir: release.previousReleaseDir,
+    programRoot: installation.programRoot,
+  });
+  await registerWindowsNativeMessagingHost({
+    manifestRoot: installation.nativeMessagingManifestRoot,
+    launcherPath,
+    expectedPreviousLauncherPath: previousLauncherPath,
+  });
+  return shell;
+}
+
+async function restartManagedInstallation(installation:ManagedInstallation) {
+  if (installation?.platform === "win32") {
+    if (typeof installation.programRoot !== "string") throw new Error("Managed Windows program root is unavailable.");
+    return launchWindowsStableShell(path.win32.join(installation.programRoot, "EquinoxLocal.exe"));
+  }
+  return kickstartEquinoxLocalLaunchAgent(installation);
+}
+
+export async function activatePreparedEquinoxRelease({
+  installation,
+  targetVersion,
+  kickstartImpl = () => restartManagedInstallation(installation!),
+  syncAppHostImpl = (release) => synchronizeManagedShellForRelease(installation!, release),
+  previousMainNativeReleaseDir = null,
+  previousManagedMain = null,
+  fetchImpl = globalThis.fetch,
+  sleepImpl,
+  healthAttempts = HEALTH_ATTEMPTS,
+  now = () => new Date(),
+}: ActivateOptions = {}) {
+  if (!installation?.selfUpdateSupported) throw new Error("A managed Equinox Local installation is required for activation.");
+  parseEquinoxVersion(targetVersion);
+  if (previousMainNativeReleaseDir !== null &&
+      (installation.platform !== "win32" || typeof previousMainNativeReleaseDir !== "string" ||
+       !path.win32.isAbsolute(previousMainNativeReleaseDir))) {
+    throw new Error("Previous Main native release must be a verified absolute Windows path.");
+  }
+  // A Main source install can own a fully verified native-store release that
+  // differs from the numbered Stable rollback tree. Restore that exact native
+  // shell and Native Messaging launcher if the signed Stable candidate fails.
+  const syncReleaseHost = (release:ShellRelease, isRollback:boolean) => syncAppHostImpl(
+    previousMainNativeReleaseDir === null
+      ? release
+      : isRollback
+        ? { ...release, releaseDir: previousMainNativeReleaseDir }
+        : { ...release, previousReleaseDir: previousMainNativeReleaseDir },
+  );
+  // A healthy Main-native B can outlive its old numbered Stable bootstrap.
+  // When all obsolete Stable payloads have been reclaimed, the signed
+  // PowerShell installer still needs a rollback-capable route to that exact
+  // native-store B, not a phantom releases/<old> directory.
+  if (previousManagedMain && (installation.platform !== "win32" ||
+      !previousMainNativeReleaseDir ||
+      previousManagedMain.releaseDir !== previousMainNativeReleaseDir ||
+      !/^[a-f0-9]{40}$/u.test(previousManagedMain.sourceSha ?? "") ||
+      !parseEquinoxVersion(previousManagedMain.version) ||
+      !parseEquinoxVersion(previousManagedMain.stablePointerVersion))) {
+    throw new Error("Main-native fallback requires authenticated exact prior version, native and source identities.");
+  }
+  const switchResult = previousManagedMain
+    ? Object.freeze({
+        previous: Object.freeze({
+          version: previousManagedMain.version, releaseDir: previousManagedMain.releaseDir,
+        }),
+        current: Object.freeze({
+          version: targetVersion!, releaseDir: await assertReleaseDirectory(installation, targetVersion!),
+        }), changed: true,
+      })
+    : await atomicSwitchCurrentRelease(installation, targetVersion!);
+  if (previousManagedMain) {
+    await writeEquinoxLocalCurrentVersionPointer(installation.currentPointer!, {
+      version: targetVersion!, platform: "win32", target: installationTarget(installation),
+    });
+  }
+  if (!switchResult.changed) {
+    return Object.freeze({ status: "already-active", version: targetVersion!, previousVersion: targetVersion });
+  }
+
+  try {
+    await syncReleaseHost({ version: targetVersion!, releaseDir: switchResult.current.releaseDir, previousVersion: switchResult.previous.version, previousReleaseDir: switchResult.previous.releaseDir }, false);
+    await kickstartImpl(targetVersion!);
+    await waitForEquinoxLocalVersion(targetVersion!, {
+      fetchImpl,
+      sleepImpl,
+      attempts: healthAttempts,
+      ...(previousMainNativeReleaseDir ? { expectedInstallationKind: "managed" } : {}),
+    });
+    await writeActivationState(installation, {
+      schemaVersion: 1,
+      status: "activated",
+      version: targetVersion!,
+      previousVersion: switchResult.previous.version,
+      updatedAt: now().toISOString(),
+    });
+    return Object.freeze({
+      status: "activated",
+      version: targetVersion!,
+      previousVersion: switchResult.previous.version,
+    });
+  } catch (activationError) {
+    try {
+      if (previousManagedMain) {
+        await writeEquinoxLocalCurrentVersionPointer(installation.currentPointer!, {
+          version: previousManagedMain.stablePointerVersion,
+          platform: "win32", target: installationTarget(installation),
+        });
+      } else {
+        await atomicSwitchCurrentRelease(installation, switchResult.previous.version);
+      }
+      await syncReleaseHost({ version: switchResult.previous.version, releaseDir: switchResult.previous.releaseDir, previousVersion: targetVersion, previousReleaseDir: switchResult.current.releaseDir }, true);
+      await kickstartImpl(switchResult.previous.version);
+      if (previousManagedMain) {
+        await waitForEquinoxLocalManagedSource(switchResult.previous.version, previousManagedMain.sourceSha, {
+          fetchImpl, sleepImpl, attempts: healthAttempts,
+        });
+      } else {
+        await waitForEquinoxLocalVersion(switchResult.previous.version, {
+          fetchImpl, sleepImpl, attempts: healthAttempts,
+        });
+      }
+      await writeActivationState(installation, {
+        schemaVersion: 1,
+        status: "rolled-back",
+        failedVersion: targetVersion,
+        version: switchResult.previous.version,
+        failure: "activation-health-check-failed",
+        updatedAt: now().toISOString(),
+      });
+      throw new Error(`Equinox Local ${targetVersion} activation failed and was rolled back to ${switchResult.previous.version}.`);
+    } catch (rollbackError) {
+      if (rollbackError instanceof Error && rollbackError.message.includes("was rolled back to")) throw rollbackError;
+      await writeActivationState(installation, {
+        schemaVersion: 1,
+        status: "rollback-failed",
+        failedVersion: targetVersion,
+        previousVersion: switchResult.previous.version,
+        activationFailure: "activation-health-check-failed",
+        rollbackFailure: "rollback-health-check-failed",
+        updatedAt: now().toISOString(),
+      }).catch(() => {});
+      throw new Error(`Equinox Local ${targetVersion} activation failed and automatic rollback also failed.`);
+    }
+  }
+}

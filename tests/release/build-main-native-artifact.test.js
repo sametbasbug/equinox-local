@@ -38,3 +38,25 @@ test("Main native builder rejects cross-target hosts and invalid candidate metad
     packageDarwinImpl: async () => ({ target: "darwin-arm64", artifactPath: "/workspace/wrong.tar.gz" }),
   }), /invalid target metadata/u);
 });
+
+test("Main native builder denies unsupported and duplicate CLI arguments before native packaging", async () => {
+  const { execFile } = await import("node:child_process");
+  const { promisify } = await import("node:util");
+  const path = await import("node:path");
+  const { fileURLToPath } = await import("node:url");
+  const entry = fileURLToPath(new URL("../../scripts/release/build-main-native-artifact.mjs", import.meta.url));
+  for (const args of [
+    ["--unexpected", "ignored"],
+    ["--target", "darwin-arm64", "--target", "darwin-x64"],
+    ["--target", "darwin-arm64", "--source-sha"],
+  ]) {
+    await assert.rejects(promisify(execFile)(process.execPath, [entry, ...args], {
+      cwd: path.dirname(entry), timeout: 5000, maxBuffer: 8192,
+    }), (error) => {
+      assert.equal(error.code, 1);
+      assert.equal(error.stdout, "");
+      assert.match(error.stderr, /argument/u);
+      return true;
+    });
+  }
+});

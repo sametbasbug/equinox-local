@@ -570,3 +570,145 @@ test("Windows native filesystem accepts and removes exact owned Main state while
     assert.equal(await fs.readFile(path.win32.join(root, "state", "config.json"), "utf8"), "user-config\n");
   } finally { await fs.rm(homeDir, { recursive: true, force: true }); }
 });
+
+test("uninstall scheduler refuses nonboolean data policy before Windows handoff or macOS helper spawn",async()=>{
+  for(const platform of ["win32","darwin"]){
+    for(const removeUserData of [null,0,1,"false","true",[],{}]){
+      let calls=0;
+      await assert.rejects(scheduleEquinoxLocalUninstall({
+        installation:{managed:true,selfUpdateSupported:true,platform,
+          installRoot:"/owned/product",releaseDir:"/owned/product/releases/6.0.4"},
+        removeUserData,
+        requestWindowsUninstallImpl:async()=>{calls++;return{requested:true}},
+        spawnImpl:()=>{calls++;throw Error("must not spawn")},
+      }),/removeUserData must be boolean/u);
+      assert.equal(calls,0,platform+" "+String(removeUserData));
+    }
+  }
+});
+
+test("Windows managed uninstall requires explicit positive WPF ACK rather than a truthy or missing response",async()=>{
+  for(const acknowledgement of [undefined,null,{},true,{requested:false},{requested:1}]){
+    let calls=0;
+    await assert.rejects(scheduleEquinoxLocalUninstall({
+      installation:{managed:true,selfUpdateSupported:true,platform:"win32"},
+      removeUserData:false,
+      requestWindowsUninstallImpl:async(mode,options)=>{
+        calls++;
+        assert.deepEqual([mode,options],[false,{platform:"win32"}]);
+        return acknowledgement;
+      },
+      spawnImpl:()=>assert.fail("Windows runtime must not spawn detached uninstall helper")
+    }),/Windows shell did not accept the managed uninstall request/u);
+    assert.equal(calls,1);
+  }
+});
+
+test("managed macOS uninstall preserve policy strips ambient credentials and uses only exact preservation flag",async()=>{
+  const calls=[];
+  let detached=0;
+  const result=await scheduleEquinoxLocalUninstall({
+    installation:{managed:true,selfUpdateSupported:true,platform:"darwin",
+      installRoot:"/owned/product",releaseDir:"/owned/product/releases/6.0.4"},
+    removeUserData:false, nodePath:"/owned/node",helperPath:"/owned/uninstall.js",
+    sourceEnv:{HOME:"/Users/fixture",PATH:"/foreign/bin",OPENAI_API_KEY:"private",GITHUB_TOKEN:"private"},
+    spawnImpl:(cmd,args,options)=>{
+      calls.push({cmd,args,options});
+      const child=new EventEmitter();
+      child.unref=()=>{detached++};
+      queueMicrotask(()=>child.emit("spawn"));
+      return child;
+    }
+  });
+  assert.deepEqual(result,{scheduled:true,removeUserData:false});
+  assert.equal(detached,1);
+  assert.deepEqual(calls[0].args,["/owned/uninstall.js","--uninstall","--preserve-user-data"]);
+  assert.equal(calls[0].options.env.PATH,"/usr/bin:/bin:/usr/sbin:/sbin");
+  assert.equal(calls[0].options.env.GITHUB_TOKEN,undefined);
+  assert.equal(calls[0].options.env.OPENAI_API_KEY,undefined);
+});
+
+test("uninstall helper rejects invalid mode and missing managed enrollment before sleep, shell or file mutation", async () => {
+  for (const argv of [
+    [], ["--uninstall"], ["--uninstall", "--remove-user-data", "other"],
+    ["--uninstall", "--remove-private"], ["--remove-user-data", "--uninstall"],
+  ]) {
+    let sideEffects = 0;
+    await assert.rejects(runEquinoxLocalUninstallHelper({
+      argv, platform: "darwin", arch: "arm64", homeDir: "/no-actual-fixture",
+      env: { HOME: "/no-actual-fixture" }, uid: 501,
+      sleepImpl: async () => { sideEffects++; },
+      execFileImpl: async () => { sideEffects++; throw Error("must not execute shell"); },
+      fsImpl: new Proxy({}, { get: () => { sideEffects++; throw Error("must not touch filesystem"); } }),
+    }), /Usage:|Unknown Equinox Local uninstall mode/u);
+    assert.equal(sideEffects, 0);
+  }
+});
+
+test("Windows uninstall registry cleanup refuses foreign program-root shape before PowerShell invocation", async () => {
+  const { removeWindowsShellRegistration } = await import("../../src/equinox-local-uninstall-helper.js");
+  for (const programRoot of [
+    "", ".", "C:\\Users\\fixture\\Other Product", "relative\\Equinox Local",
+    "C:\\Users\\fixture\\Foreign Product",
+  ]) {
+    let calls = 0;
+    await assert.rejects(removeWindowsShellRegistration({
+      programRoot, env: { SystemRoot: "C:\\Windows" },
+      execFileImpl: async () => { calls++; return { stdout: "", stderr: "" }; },
+    }), /validated program root/u);
+    assert.equal(calls, 0);
+  }
+});
+
+test("Windows startup registry reader rejects corrupt/oversized foreign values before mutation", async () => {
+  for (const stdout of [
+    "", "invalid", "value:", "value:0", "value:0G", "value:000A",
+    "value:" + Buffer.from("foreign-command", "utf8").toString("hex").toUpperCase(),
+  ]) {
+    const calls = [];
+    await assert.rejects(readWindowsStartupRegistrationOwnership({
+      expectedCommand: "owned-command",
+      env: { SystemRoot: "C:\\Windows", OPENAI_API_KEY: "synthetic-private-key", PATH: "C:\\untrusted" },
+      execFileImpl: async (file, args, options) => {
+        calls.push({file,args,options});
+        return { stdout, stderr: "" };
+      },
+    }), /malformed|foreign/u);
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].file, "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe");
+    assert.equal(calls[0].options.windowsHide, true);
+    assert.equal(calls[0].options.env.OPENAI_API_KEY, undefined);
+    assert.equal(calls[0].options.env.PATH, undefined);
+  }
+});
+
+test("Windows native uninstall never unregisters or deletes before release pointer and shell PID admission", async () => {
+  const root = "C:\\Users\\fixture\\AppData\\Local\\Equinox Local";
+  const installation = {
+    platform: "win32", arch: "x64", target: "win32-x64",
+    installRoot: root, releaseDir: root + "\\releases\\1.2.3",
+    programRoot: "C:\\Users\\fixture\\AppData\\Local\\Programs\\Equinox Local",
+    nativeMessagingManifestRoot: root + "\\browser\\native-messaging",
+  };
+  for (const mode of ["pid-still-alive", "wrong-release"]) {
+    const trace = [];
+    const expected = mode === "wrong-release" ? root + "\\releases\\9.9.9" : installation.releaseDir;
+    await assert.rejects(runWindowsEquinoxLocalUninstall({
+      installation, removeUserData: false, shellPid: 1111,
+      processAliveImpl: () => { trace.push("alive"); return mode === "pid-still-alive"; },
+      sleepImpl: async () => {},
+      readCurrentImpl: async () => { trace.push("pointer"); return {releaseDir: expected}; },
+      assertStableShellImpl: async () => { trace.push("shell"); },
+      readStartupImpl: async () => { trace.push("registry"); },
+      assertNativeMessagingImpl: async () => { trace.push("native"); },
+      cleanupShellRegistrationImpl: async () => { trace.push("cleanup"); },
+      unregisterStartupImpl: async () => { trace.push("unregister"); },
+      removePathImpl: async () => { trace.push("delete"); return true; },
+    }), /did not exit|does not match/u);
+    assert.equal(trace.includes("cleanup"), false);
+    assert.equal(trace.includes("unregister"), false);
+    assert.equal(trace.includes("delete"), false);
+    if (mode === "wrong-release") assert.deepEqual(trace, ["alive", "pointer"]);
+    else assert.equal(trace.includes("pointer"), false);
+  }
+});

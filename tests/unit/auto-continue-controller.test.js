@@ -273,3 +273,136 @@ test("Auto Continue chain uses the configured maximum and blocks the next hop be
   await assert.rejects(() => controller.arm({ taskId: task.taskId, ttlMinutes: 1 }), /10-turn safety limit/u);
   assert.equal(targetResolves, 1, "hop above the configured maximum must fail before resolving or mutating the browser");
 });
+
+test("Auto Continue refuses ambiguous dual-profile targets and inconsistent explicit pins without binding a task", async (t) => {
+  const store = await makeStore(t);
+  const task = await store.checkpoint(base);
+  let targetCalls = 0;
+  let deliverCalls = 0;
+  const userProfile = {ready:true,extension:{instanceId:"instance-user",capabilityVersions:{autoContinue:1}}};
+  const agentProfile = {ready:true,extension:{instanceId:"instance-agent",capabilityVersions:{autoContinue:1}}};
+  let pinned = false;
+  const browserBridge = {
+    snapshot: () => ({contexts:{agent:agentProfile,user:userProfile}}),
+    call: async (method, _args, {context}) => {
+      if(method==="continuation.target.resolve"){
+        targetCalls++;
+        return pinned
+          ? {...targetResult(),mode:"pinned",status:context==="agent"?"ready":"error",reason:"not generating"}
+          : targetResult();
+      }
+      if(method==="continuation.deliver")deliverCalls++;
+      throw Error("Unexpected "+method);
+    },
+  };
+  const controller = createAutoContinueController({store,browserBridge,agentControl:activeAgentControl(),pollMs:100_000});
+  t.after(()=>controller.shutdown());
+  await assert.rejects(controller.arm({taskId:task.taskId}),/More than one Chrome profile/u);
+  assert.equal((await store.read(task.taskId)).continuation,null);
+  pinned=true;
+  await assert.rejects(controller.arm({taskId:task.taskId}),/pinned in more than one Chrome profile/u);
+  assert.equal((await store.read(task.taskId)).continuation,null);
+  assert.equal(targetCalls,4);
+  assert.equal(deliverCalls,0);
+});
+
+test("bound Auto Continue refuses changed Browser instance and duplicate conversation tabs before any mutation", async(t)=>{
+  const store=await makeStore(t);
+  const task=await store.checkpoint(base);
+  const conversationId="12345678-aaaa-bbbb-cccc-1234567890ab";
+  await store.bindChat({taskId:task.taskId,binding:{
+    browserContext:"user",browserInstanceId:"original-instance",tabId:55,
+    conversationId,canonicalUrl:"https://chatgpt.com/c/"+conversationId,
+  }});
+  let instanceId="changed-instance",delivers=0,lists=0,binds=0;
+  const originalBind=store.bindChat;
+  const monitoredStore={...store,bindChat:async args=>{binds++;return originalBind(args)}};
+  const browserBridge={
+    snapshot:()=>({contexts:{agent:{ready:false},user:{ready:true,extension:{instanceId,capabilityVersions:{autoContinue:1}}}}}),
+    call:async(method,args)=>{
+      if(method==="continuation.inspect")return {
+        conversationId:"different-conversation",userEpoch:"epoch",assistantTurnKey:"turn",
+      };
+      if(method==="tabs.list"){lists++;return [
+        {id:66,url:"https://chatgpt.com/c/"+conversationId},
+        {id:67,url:"https://chatgpt.com/c/"+conversationId},
+      ]}
+      if(method==="continuation.deliver")delivers++;
+      throw Error("Unexpected "+method);
+    },
+  };
+  const controller=createAutoContinueController({store:monitoredStore,browserBridge,agentControl:activeAgentControl()});
+  t.after(()=>controller.shutdown());
+  await assert.rejects(controller.armBound({taskId:task.taskId}),/browser instance changed/u);
+  assert.equal(lists,0);
+  instanceId="original-instance";
+  await assert.rejects(controller.armBound({taskId:task.taskId}),/More than one ChatGPT tab/u);
+  assert.equal(lists,1);
+  assert.equal(binds,0);
+  assert.equal(delivers,0);
+  assert.equal((await store.readInternal(task.taskId)).chatBinding.tabId,55);
+  assert.equal((await store.read(task.taskId)).continuation,null);
+});
+
+test("Auto Continue never delivers after pause, changed turn or human-owned nonempty composer",async(t)=>{
+  for(const scenario of ["paused","turn","composer"]){
+    const store=await makeStore(t);
+    const task=await store.checkpoint(base);
+    let paused=false,delivers=0;
+    const browserBridge={
+      snapshot:()=>({contexts:{agent:{ready:false},user:{ready:true,extension:{instanceId:"user-instance",capabilityVersions:{autoContinue:1}}}}}),
+      call:async method=>{
+        if(method==="continuation.target.resolve")return targetResult();
+        if(method==="continuation.inspect")return {
+          ...targetResult().target,generationActive:false,
+          assistantTurnKey:scenario==="turn"?"new-turn":targetResult().target.assistantTurnKey,
+          composerReady:true,composerEmpty:scenario!=="composer",
+        };
+        if(method==="continuation.deliver"){delivers++;return {confirmed:true}}
+        throw Error("Unexpected "+method);
+      },
+    };
+    const controller=createAutoContinueController({
+      store,browserBridge,agentControl:{
+        snapshot:()=>({paused}),
+        assertMutationAllowed:()=>{if(paused)throw Error("agent paused")},
+      },pollMs:5,quietMs:5,
+    });
+    t.after(()=>controller.shutdown());
+    await controller.arm({taskId:task.taskId,ttlMinutes:1});
+    if(scenario==="paused")paused=true;
+    await waitFor(async()=> (await store.read(task.taskId)).continuation.status==="cancelled");
+    const current=await store.read(task.taskId);
+    assert.equal(current.continuation.reason,{
+      paused:"agent_paused",turn:"assistant_turn_changed",composer:"composer_not_empty",
+    }[scenario]);
+    assert.equal(delivers,0,scenario);
+    await controller.shutdown();
+  }
+});
+
+test("Auto Continue startup reconciliation never replays an already reserved ambiguous delivery",async(t)=>{
+  const store=await makeStore(t);
+  const task=await store.checkpoint(base);
+  const continuation=await store.armContinuation({
+    taskId:task.taskId,ttlMinutes:1,hop:1,
+    target:{browserContext:"user",mode:"task-tab",browserInstanceId:"instance-a",tabId:42,
+      conversationId:"abcdef12-3456-7890-abcd-ef1234567890",
+      canonicalUrl:"https://chatgpt.com/c/abcdef12-3456-7890-abcd-ef1234567890",
+      userEpoch:"epoch",assistantTurnKey:"turn",autoContinueVersion:1},
+  });
+  await store.reserveContinuationDelivery(task.taskId,continuation.continuation.continuationId);
+  let calls=0;
+  const browserBridge={
+    snapshot:()=>({contexts:{agent:{ready:false},user:{ready:true}}}),
+    call:async()=>{calls++;throw Error("must not replay ambiguous delivery")},
+  };
+  const controller=createAutoContinueController({store,browserBridge,agentControl:activeAgentControl(),pollMs:5});
+  t.after(()=>controller.shutdown());
+  const result=await controller.start();
+  assert.equal(result.resumed,0);
+  assert.equal(result.retired,1);
+  await controller.shutdown();
+  assert.equal(calls,0);
+  assert.equal((await store.read(task.taskId)).continuation.status,"failed");
+});

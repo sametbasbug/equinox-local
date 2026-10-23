@@ -307,3 +307,84 @@ test("terminal workflow status is visible only after the matching disk state is 
     assert.equal(disk.steps.at(-1).status, visible.steps.at(-1).status);
   }
 });
+
+test("workflow startup quarantines symlinked state files without reading a foreign task",async t=>{
+  const root=await createTempRoot(t);
+  const outside=path.join(root,"external-workflow-fixture");
+  await fs.writeFile(outside,"private-fixture-sentinel");
+  const linked=path.join(root,"wf-synthetic123.json");
+  await fs.symlink(outside,linked);
+  let stepsRun=0;
+  const manager=createWorkflowManager({
+    rootDir:root,executeStep:async()=>{stepsRun++;throw Error("untrusted state executed")},
+  });
+  await manager.initialize();
+  const summary=manager.summary();
+  assert.equal(summary.total,0);
+  assert.equal(summary.loadErrors.length,0);
+  assert.equal(stepsRun,0);
+  assert.equal((await fs.lstat(linked)).isSymbolicLink(),true);
+  assert.equal(await fs.readFile(outside,"utf8"),"private-fixture-sentinel");
+});
+
+test("workflow rejects uninitialized, empty and oversized step admission without executing work",async t=>{
+  const root=await createTempRoot(t);
+  let calls=0;
+  const manager=createWorkflowManager({
+    rootDir:root,executeStep:async()=>{calls++;return {synthetic:true}},
+  });
+  await assert.rejects(manager.start(sampleStart()),/initialize edilmedi/u);
+  await manager.initialize();
+  await assert.rejects(manager.start(sampleStart({steps:[]})),/1 ile 64/u);
+  await assert.rejects(manager.start(sampleStart({
+    steps:Array.from({length:65},(_,i)=>({id:"step-"+i,kind:"fake",label:"fixture"})),
+  })),/1 ile 64/u);
+  assert.equal(calls,0);
+  assert.equal(manager.summary().total,0);
+  assert.equal((await fs.readdir(root)).filter(x=>x.endsWith(".json")).length,0);
+});
+
+test("workflow cursor reads reject negative cursor and oversized page without log mutation",async t=>{
+  const root=await createTempRoot(t);
+  const manager=createWorkflowManager({rootDir:root,executeStep:async()=>({fixture:true})});
+  await manager.initialize();
+  const started=await manager.start(sampleStart({steps:[{id:"one",kind:"fake",label:"One"}]}));
+  await waitForStatus(manager,started.workflowId,"completed");
+  const log=path.join(root,started.workflowId+".log");
+  const oldBytes=await fs.readFile(log);
+  await assert.rejects(manager.readLogs({workflowId:started.workflowId,cursor:-1}),/cursor değeri geçersiz/u);
+  await assert.rejects(manager.readLogs({workflowId:started.workflowId,maxBytes:320001}),/1 ile 320000/u);
+  const exhausted=await manager.readLogs({workflowId:started.workflowId,cursor:99999999,maxBytes:300});
+  assert.equal(exhausted.output,"");
+  assert.equal(exhausted.hasMore,false);
+  assert.deepEqual(await fs.readFile(log),oldBytes);
+});
+
+test("workflow shutdown pauses an active executor but refuses later starts and resumes",async t=>{
+  const root=await createTempRoot(t);
+  let invoked=0;
+  const manager=createWorkflowManager({
+    rootDir:root,
+    executeStep:async({signal})=>{
+      invoked++;
+      return new Promise((resolve,reject)=>{
+        if(signal.aborted){reject(Error("fixture aborted"));return}
+        signal.addEventListener("abort",()=>reject(Error("fixture aborted")),{once:true});
+      });
+    },
+  });
+  await manager.initialize();
+  const first=await manager.start(sampleStart({steps:[{id:"one",kind:"fake",label:"One"}]}));
+  await waitForStatus(manager,first.workflowId,"running");
+  for(let i=0;i<100&&invoked===0;i++)await new Promise(resolve=>setTimeout(resolve,2));
+  assert.equal(invoked,1);
+  await manager.shutdown();
+  const paused=manager.status(first.workflowId);
+  assert.equal(paused.status,"paused");
+  await assert.rejects(manager.start(sampleStart({projectId:"other"})),/Runtime kapanırken/u);
+  await assert.rejects(manager.resume(first.workflowId),/Runtime kapanırken/u);
+  assert.equal(invoked,1);
+  const disk=JSON.parse(await fs.readFile(path.join(root,first.workflowId+".json"),"utf8"));
+  assert.equal(disk.status,"paused");
+  assert.equal(disk.steps[0].status,"pending");
+});

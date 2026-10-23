@@ -23,6 +23,23 @@ test("one-time Stable bridge retains the exact production signing public key tru
   assert.equal(createHash("sha256").update(der).digest("hex"), OLD_603_SPKI_SHA256);
 });
 
+test("the production Ed25519 trust root is an immutable public-only keyring", () => {
+  assert.equal(Object.isFrozen(EQUINOX_LOCAL_UPDATE_KEYS), true);
+  assert.deepEqual(Object.keys(EQUINOX_LOCAL_UPDATE_KEYS), [OLD_STABLE_KEY_ID]);
+  const descriptor = Object.getOwnPropertyDescriptor(EQUINOX_LOCAL_UPDATE_KEYS, OLD_STABLE_KEY_ID);
+  assert.equal(descriptor.writable, false);
+  assert.equal(descriptor.configurable, false);
+  assert.equal(descriptor.enumerable, true);
+  const originalPem = descriptor.value;
+  assert.equal(createPublicKey(originalPem).asymmetricKeyType, "ed25519");
+  assert.doesNotMatch(originalPem, /PRIVATE KEY|BEGIN OPENSSH/u);
+  assert.equal(Reflect.set(EQUINOX_LOCAL_UPDATE_KEYS, OLD_STABLE_KEY_ID, "replacement"), false);
+  assert.equal(Reflect.set(EQUINOX_LOCAL_UPDATE_KEYS, "test-attacker-key", "untrusted"), false);
+  assert.equal(Reflect.deleteProperty(EQUINOX_LOCAL_UPDATE_KEYS, OLD_STABLE_KEY_ID), false);
+  assert.deepEqual(Object.keys(EQUINOX_LOCAL_UPDATE_KEYS), [OLD_STABLE_KEY_ID]);
+  assert.equal(EQUINOX_LOCAL_UPDATE_KEYS[OLD_STABLE_KEY_ID], originalPem);
+});
+
 test("four-target bridge preview signs and checks exact candidate through the installed Stable verifier contract", async (t) => {
   const base = await fs.mkdtemp(path.join(os.tmpdir(), "equinox-bridge-sign-preview-"));
   t.after(() => fs.rm(base, { recursive: true, force: true }));
@@ -58,6 +75,14 @@ test("four-target bridge preview signs and checks exact candidate through the in
     assert.throws(() => validateSignedUpdateManifest(manifest, {
       publicKeys: EQUINOX_LOCAL_UPDATE_KEYS, target,
     }), /signing key|signature/u, target);
+
+    // Renaming a fixture signer to the installed key ID must not impersonate
+    // the immutable published trust root on ANY of the four release targets.
+    const impersonated = structuredClone(manifest);
+    impersonated.signature.keyId = OLD_STABLE_KEY_ID;
+    assert.throws(() => validateSignedUpdateManifest(impersonated, {
+      publicKeys: EQUINOX_LOCAL_UPDATE_KEYS, target,
+    }), /signature/u, `${target} forged legacy key ID must fail`);
 
     const swapped = structuredClone(manifest);
     swapped.version = "6.0.5";

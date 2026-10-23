@@ -48,6 +48,36 @@ async function fixture(t, options = {}) {
   return { root, transactionRoot, journal, calls, changeReceipt: (change) => { receipt = { ...receipt, ...change }; } };
 }
 
+test("Guardian writer rejects a foreign ordinary temp inode before journal publication", async (t) => {
+  const foreignContents = "synthetic-foreign-native-transition-journal\n";
+  let replacedPath = null;
+  const wrappedFs = Object.create(fs);
+  wrappedFs.open = async (candidate, ...args) => {
+    const handle = await fs.open(candidate, ...args);
+    if (!/\.json\.[a-f0-9]{16}\.tmp$/u.test(String(candidate))) return handle;
+    return new Proxy(handle, {
+      get(target, property) {
+        if (property === "close") return async () => {
+          await target.close();
+          if (!replacedPath) {
+            replacedPath = candidate;
+            await fs.unlink(candidate);
+            await fs.writeFile(candidate, foreignContents, { mode: 0o600 });
+          }
+        };
+        const value = target[property];
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
+  };
+  const f = await fixture(t, { fsImpl: wrappedFs });
+  await assert.rejects(f.journal.create(input), /temporary.*changed|temporary.*identity|writer.*temp.*unsafe/u);
+  assert.ok(replacedPath, "Temp must be replaced after the original descriptor closed");
+  assert.equal(await fs.readFile(replacedPath, "utf8"), foreignContents,
+    "Another writer's substituted private temp must not be erased by cleanup");
+  await assert.rejects(fs.access(path.join(f.journal.root, `${TX}.json`)), { code: "ENOENT" });
+});
+
 test("Windows durable guardian journal is created once and safely reloaded without reset", async (t) => {
   const f = await fixture(t);
   const created = await f.journal.create(input);
@@ -133,6 +163,25 @@ test("stale or concurrently owned writer lock never gets auto-reclaimed", async 
   assert.equal((await f.journal.read(TX)).stage, "prepared");
 });
 
+test("writer guard must not unlink another writer's replaced lock", async (t) => {
+  let guardPath;
+  const replacement = "synthetic-concurrent-writer-foreign-lock\n";
+  let replaced = false;
+  const f = await fixture(t, {inspectOwningReceipt: async () => {
+    if (!replaced) {
+      replaced = true;
+      await fs.unlink(guardPath);
+      await fs.writeFile(guardPath, replacement, {mode: 0o600});
+    }
+    return {...input, startedAt: STARTED, status: "promoting"};
+  }});
+  guardPath = path.join(f.journal.root, `.${TX}.writer-lock`);
+  await assert.rejects(f.journal.create(input), /writer.guard.*changed|writer.lock.*identity|lock.*owned/u);
+  assert.equal(replaced, true, "An independent lock must replace the original opened inode");
+  assert.equal(await fs.readFile(guardPath, "utf8"), replacement,
+    "Only the original writer's own lock may be unlinked");
+});
+
 test("journal fails closed on changed identity, unsupported version, malformed state, and symlinks", async (t) => {
   const f = await fixture(t);
   const created = await f.journal.create(input);
@@ -200,4 +249,40 @@ test("Windows ACL rejection refuses even an otherwise healthy owned Main receipt
   const f = await fixture(t, { platform: "win32", protectWindowsAcl: async () => ({ safe: true }), verifyWindowsAcl: async () => ({ safe: false }) });
   await assert.rejects(f.journal.create(input), /ACL ownership cannot be verified/u);
   await assert.rejects(f.journal.read(TX), /ACL ownership cannot be verified/u);
+});
+
+test("Windows native journal rejects swapped file identity before trusting an otherwise valid record", async (t) => {
+  let forgeInode = false;
+  const wrappedFs = Object.create(fs);
+  wrappedFs.lstat = async (filePath) => {
+    const stat = await fs.lstat(filePath);
+    if (!forgeInode || !String(filePath).endsWith(`${TX}.json`)) return stat;
+    return new Proxy(stat, {get(target, key, receiver) {
+      if (key === "ino") return target.ino + 1;
+      return Reflect.get(target, key, receiver);
+    }});
+  };
+  const f = await fixture(t, {fsImpl: wrappedFs});
+  await f.journal.create(input);
+  const journalPath = path.join(f.journal.root, `${TX}.json`);
+  const bytes = await fs.readFile(journalPath);
+  forgeInode = true;
+  await assert.rejects(f.journal.read(TX), /path no longer identifies the opened file/u);
+  assert.deepEqual(await fs.readFile(journalPath), bytes, "forensic journal bytes must remain unchanged");
+});
+
+test("Windows native journal rejects a symlink to an existing foreign record and preserves both files", async (t) => {
+  const f = await fixture(t);
+  await f.journal.create(input);
+  const journalPath = path.join(f.journal.root, `${TX}.json`);
+  const outside = path.join(f.root, "foreign-journal.json");
+  const original = await fs.readFile(journalPath);
+  await fs.writeFile(outside, original);
+  await fs.unlink(journalPath);
+  await fs.symlink(outside, journalPath);
+  await assert.rejects(f.journal.read(TX));
+  assert.equal((await fs.lstat(journalPath)).isSymbolicLink(), true);
+  assert.deepEqual(await fs.readFile(outside), original);
+  await assert.rejects(f.journal.create(input), {code:"EEXIST"});
+  assert.deepEqual(await fs.readFile(outside), original);
 });

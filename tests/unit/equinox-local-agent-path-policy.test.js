@@ -97,3 +97,56 @@ test("Windows protected path checker fails closed when required LocalAppData is 
     /LOCALAPPDATA must be an absolute path/u,
   );
 });
+
+test("agent access denies normalized traversal into macOS credential and browser data without swallowing sibling workspaces", () => {
+  const isProtected = createProtectedAgentPathChecker("/Users/Example", {platform:"darwin",arch:"arm64"});
+  for (const denied of [
+    "/Users/Example/.codex/skills/../auth.json",
+    "/Users/Example/.openclaw/workspace/../credentials/provider.json",
+    "/Users/Example/Library/Application Support/Google/Chrome/Default/../Default/Cookies",
+    "/Users/Example/Library/Application Support/Equinox Local/../Equinox Local/state/secret",
+    "/users/example/library/keychains/login.keychain-db",
+  ]) assert.equal(isProtected(denied),true,"protected after normalization: "+denied);
+  for (const allowed of [
+    "/Users/Example/.codex/skills/AGENTS.md",
+    "/Users/Example/.codex/auth.json-not-an-auth-root",
+    "/Users/Example/Library/Keychains-Backup/readme.txt",
+    "/Users/Example/Library/Application Support/Google/ChromeBackup/notes.txt",
+    "/Users/Example/Documents/../Documents/notes.txt",
+    "/Users/ExampleOther/.ssh/id_ed25519",
+  ]) assert.equal(isProtected(allowed),false,"do not confuse root boundaries: "+allowed);
+  assert.equal(isProtected("Library/Keychains/login.keychain-db"),false);
+  assert.equal(isProtected(null),false);
+});
+
+test("Windows credential and Chromium roots resist mixed-case separators and dot-segment traversal", () => {
+  const home = "C:\\Users\\Example";
+  const protectedPath = createProtectedAgentPathChecker(home,{
+    platform:"win32",arch:"arm64",env:{LOCALAPPDATA:"C:\\Users\\Example\\AppData\\Local"}
+  });
+  for(const candidate of [
+    "c:/users/example/.OPENCLAW/workspace/../CREDENTIALS/provider.json",
+    "C:\\Users\\Example\\.config\\gcloud\\..\\gcloud\\application_default_credentials.json",
+    "C:/Users/Example/AppData/Local/Google/Chrome/User Data/Default/../Default/Login Data",
+    "c:\\users\\EXAMPLE\\appdata\\LOCAL\\Microsoft\\Edge\\User Data\\Default\\Cookies",
+    "C:\\Users\\Example\\.codex\\skills\\..\\auth.json",
+  ]) assert.equal(protectedPath(candidate),true,"must protect "+candidate);
+  for(const candidate of [
+    "C:\\Users\\Example\\AppData\\Local\\Google\\Chrome\\User Data Backup\\notes.txt",
+    "C:\\Users\\Example\\AppData\\Local\\BraveSoftware\\Brave-Browser-Backup\\README.md",
+    "C:\\Users\\Example\\.codex\\auth.json.backup",
+    "C:\\Users\\ExampleOther\\.ssh\\id_ed25519",
+    "D:\\Elsewhere\\Documents\\some-file.txt",
+  ]) assert.equal(protectedPath(candidate),false,"must retain legal workspace access "+candidate);
+  assert.equal(protectedPath("\\Users\\Example\\.ssh\\id_ed25519"),false);
+  assert.equal(protectedPath({path:"C:\\Users\\Example\\.ssh"}),false);
+});
+
+test("sensitive-name matcher blocks key and environment suffixes but does not block public keys or ordinary agent files", () => {
+  for(const candidate of [".ENV", ".ENV.local",".ssh-token",".private_key",".agent-credentials",
+    ".gcloud-secret","ID_RSA","ID_ED25519","CLIENT.PEM","client.PFX","client.P12","auth-profiles.json"
+  ]) assert.equal(isSensitiveAgentName(candidate),true,candidate+" must be protected");
+  for(const candidate of [".public-key",".PUBLIC_KEY",".project",".codex","workspace.md",
+    "credentials-readme.txt","public.pem.txt","agent-credentials.md"
+  ]) assert.equal(isSensitiveAgentName(candidate),false,candidate+" should remain ordinary");
+});

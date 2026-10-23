@@ -94,7 +94,7 @@ test("detached activation helper waits for spawn and receives only a minimal cre
 
 
 test("Windows activation scheduling hands ownership to the shell instead of spawning inside the runtime Job Object", async () => {
-  const installRoot = String.raw`C:\Users\Samet\AppData\Local\Equinox Local`;
+  const installRoot = String.raw`C:\Users\ExampleUser\AppData\Local\Equinox Local`;
   const installation = {
     kind: "managed",
     managed: true,
@@ -244,4 +244,118 @@ test("update helper never migrates when signed Stable activation has rolled back
     pruneStableImpl: async () => { throw Error("release cleanup must not run during rollback"); },
   });
   assert.equal(result.status, "rolled-back");
+});
+
+test("Stable coordinator rejects stale or malformed candidate before downloading or scheduling a native shell restart",async()=>{
+  let prepared=0, spawned=0, windowsHandoffs=0;
+  const base=updaterStub().candidate();
+  for(const version of ["4.2.0","4.1.9","4.3.0\n--activate","not-a-version"]){
+    const coordinator=createEquinoxLocalUpdateCoordinator({
+      installation:managedInstallation(),
+      updater:{
+        snapshot:()=>({currentVersion:"4.2.0",selfUpdateSupported:true,updateAvailable:true}),
+        candidate:()=>({...base,version}),
+      },
+      prepareRelease:async()=>{prepared++;return {fileCount:1,extractedBytes:5}},
+      spawnImpl:()=>{spawned++;throw Error("should not spawn")},
+      requestWindowsActivationImpl:async()=>{windowsHandoffs++;return {requested:true}},
+    });
+    await assert.rejects(coordinator.apply(),/not newer|version|invalid|Malformed|format/i);
+    assert.equal(coordinator.snapshot().restartScheduledFor,null);
+  }
+  assert.equal(prepared,0);
+  assert.equal(spawned,0);
+  assert.equal(windowsHandoffs,0);
+});
+
+test("Stable coordinator keeps one in-flight preparation and does not mark restart if helper handoff fails",async()=>{
+  let unblock;
+  const barrier=new Promise(resolve=>{unblock=resolve});
+  const prepared=[];
+  const updater=updaterStub();
+  const coordinator=createEquinoxLocalUpdateCoordinator({
+    installation:managedInstallation(),updater,
+    prepareRelease:async({manifest})=>{
+      prepared.push(manifest.version);
+      await barrier;
+      return {fileCount:2,extractedBytes:24};
+    },
+    spawnImpl:()=>{const child=new EventEmitter();child.unref=()=>{};queueMicrotask(()=>child.emit("error",Error("EACCES")));return child;},
+  });
+  const first=coordinator.apply();
+  assert.equal(coordinator.snapshot().applying,true);
+  await assert.rejects(coordinator.apply(),/already being prepared/u);
+  unblock();
+  await assert.rejects(first,/update helper failed to start: EACCES/u);
+  assert.deepEqual(prepared,["4.3.0"]);
+  assert.equal(coordinator.snapshot().applying,false);
+  assert.equal(coordinator.snapshot().restartScheduledFor,null);
+});
+
+test("signed Stable helper never prunes rollback protection after failed health or Main bridge",async()=>{
+  const installation=managedInstallation();
+  const env={
+    HOME:"/Users/example",
+    EQUINOX_LOCAL_INSTALL_ROOT:installation.installRoot,
+    EQUINOX_LOCAL_RELEASE_DIR:installation.releaseDir,
+  };
+  const results=["rolled-back","rollback-failed","unavailable"];
+  for(const status of results){
+    let activation=0,bridge=0,cleanup=0;
+    const outcome=await runEquinoxLocalUpdateHelper({
+      argv:["--activate","4.3.0"],env,homeDir:"/Users/example",
+      sleepImpl:async()=>{},
+      activateImpl:async()=>{activation++;return{status,version:"4.3.0"}},
+      bridgeImpl:async()=>{bridge++;throw Error("Main health not verified")},
+      pruneStableImpl:async()=>{cleanup++;throw Error("cleanup must not run")},
+    });
+    assert.equal(outcome.status,status);
+    assert.deepEqual([activation,bridge,cleanup],[1,0,0]);
+  }
+  let attemptedCleanup=0;
+  await assert.rejects(runEquinoxLocalUpdateHelper({
+    argv:["--activate","4.3.0"],env,homeDir:"/Users/example",
+    sleepImpl:async()=>{},
+    activateImpl:async()=>({status:"activated",version:"4.3.0"}),
+    bridgeImpl:async()=>{throw Error("signed Main health gate failed")},
+    pruneStableImpl:async()=>{attemptedCleanup++;},
+  }),/signed Main health gate failed/u);
+  assert.equal(attemptedCleanup,0);
+});
+
+test("signed Stable helper reports failed release pruning without rolling back verified activation",async()=>{
+  const installation=managedInstallation();
+  let bridge=0,prune=0;
+  const outcome=await runEquinoxLocalUpdateHelper({
+    argv:["--activate","4.3.0"],homeDir:"/Users/example",
+    env:{HOME:"/Users/example",EQUINOX_LOCAL_INSTALL_ROOT:installation.installRoot,
+      EQUINOX_LOCAL_RELEASE_DIR:installation.releaseDir},
+    sleepImpl:async()=>{},
+    activateImpl:async()=>({status:"already-active",version:"4.3.0"}),
+    bridgeImpl:async()=>{bridge++;return{status:"already-enrolled"}},
+    pruneStableImpl:async()=>{prune++;throw Error("EACCES "+"x".repeat(450))},
+  });
+  assert.equal(outcome.status,"already-active");
+  assert.equal(outcome.mainBridge,"already-enrolled");
+  assert.equal(outcome.releaseCleanup.pending,true);
+  assert.equal(outcome.releaseCleanup.reason.length,240);
+  assert.match(outcome.releaseCleanup.reason,/^EACCES/u);
+  assert.deepEqual([bridge,prune],[1,1]);
+});
+
+test("signed Stable helper refuses malformed action/target before invoking OS activation or Main bridge",async()=>{
+  let activation=0,bridge=0,cleanup=0;
+  for(const argv of [
+    [],["--activate"],["--activate","4.3.0","--remove-user-data"],
+    ["--disable-security","4.3.0"],["--activate","4.3.0\n--remove-user-data"],
+    ["--activate","not-semver"],null,{length:2,0:"--activate",1:"4.3.0"},
+  ]){
+    await assert.rejects(runEquinoxLocalUpdateHelper({
+      argv,homeDir:"/Users/example",sleepImpl:async()=>{},
+      activateImpl:async()=>{activation++},
+      bridgeImpl:async()=>{bridge++},
+      pruneStableImpl:async()=>{cleanup++},
+    }));
+  }
+  assert.deepEqual([activation,bridge,cleanup],[0,0,0]);
 });

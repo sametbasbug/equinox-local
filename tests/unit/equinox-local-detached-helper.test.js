@@ -50,3 +50,47 @@ test("detached helper rejects synchronous spawn failures", async () => {
     /Fixture helper failed to start: boom/u,
   );
 });
+
+test("detached helper refuses malformed command, arguments and timeout before invoking a child",async()=>{
+  let launches=0;
+  const invalid=[
+    {command:""}, {command:null}, {command:0},
+    {command:"/runtime/node",args:"--uninstall"},
+    {command:"/runtime/node",args:["ok",42]},
+    {command:"/runtime/node",args:[null]},
+    {command:"/runtime/node",spawnTimeoutMs:0},
+    {command:"/runtime/node",spawnTimeoutMs:10_001},
+    {command:"/runtime/node",spawnTimeoutMs:NaN},
+    {command:"/runtime/node",spawnTimeoutMs:1.1},
+  ];
+  for(const options of invalid){
+    await assert.rejects(launchDetachedHelper({
+      spawnImpl:()=>{launches++;return fakeChild()},label:"Verified helper",...options,
+    }),/command|required|arguments|timeout/u);
+  }
+  assert.equal(launches,0);
+});
+
+test("detached helper times out without spawn acknowledgement and late success cannot unref the child",async()=>{
+  const child=fakeChild();
+  const attempts=[];
+  await assert.rejects(launchDetachedHelper({
+    spawnImpl:()=>{attempts.push("spawn-request");return child},
+    command:"/runtime/node",
+    spawnTimeoutMs:10,
+    label:"Delayed helper",
+  }),/Delayed helper spawn acknowledgement timed out/u);
+  assert.deepEqual(attempts,["spawn-request"]);
+  assert.equal(child.unrefCount,0);
+  child.emit("spawn");
+  assert.equal(child.unrefCount,0);
+});
+
+test("detached helper treats only the first successful spawn acknowledgement as success",async()=>{
+  const child=fakeChild();
+  const attempt=launchDetachedHelper({spawnImpl:()=>child,command:"/runtime/node"});
+  child.emit("spawn");
+  child.emit("spawn");
+  assert.equal(await attempt,child);
+  assert.equal(child.unrefCount,1);
+});

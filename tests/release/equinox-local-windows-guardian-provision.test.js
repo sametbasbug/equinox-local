@@ -94,3 +94,56 @@ test("concurrent exclusive publishing cannot silently replace another installer 
   assert.deepEqual(await fs.readFile(f.target), await fs.readFile(f.source));
   assert.deepEqual((await fs.readdir(path.dirname(f.target))).sort(), ["EquinoxLocalGuardian.exe"]);
 });
+
+test("Guardian source mutation during verified copy never publishes B or leaves staging files", async (t) => {
+  const f = await fixture(t);
+  const baseline = await fs.readFile(f.source);
+  let sourceOpens = 0;
+  const fsImpl = {
+    ...fs,
+    open: async (file, ...args) => {
+      if (file === f.source) {
+        sourceOpens++;
+        if (sourceOpens === 2) await fs.writeFile(f.source, Buffer.alloc(2048, 0x3b));
+      }
+      return fs.open(file, ...args);
+    },
+  };
+  await assert.rejects(provision({ installation: f.installation, fsImpl }),
+    /Windows Guardian release or staged bytes changed during copy/u);
+  assert.equal(sourceOpens >= 3, true);
+  assert.notDeepEqual(await fs.readFile(f.source), baseline);
+  await assert.rejects(fs.lstat(f.target), { code: "ENOENT" });
+  assert.deepEqual(await fs.readdir(path.dirname(f.target)), []);
+});
+
+test("failed exclusive Guardian publication never leaves an executable or orphaned temp", async (t) => {
+  const f = await fixture(t);
+  let publications = 0;
+  const fsImpl = {
+    ...fs,
+    link: async () => {
+      publications++;
+      throw Object.assign(new Error("concurrent owned publisher"), { code: "EEXIST" });
+    },
+  };
+  await assert.rejects(provision({ installation: f.installation, fsImpl }), { code: "EEXIST" });
+  assert.equal(publications, 1);
+  assert.deepEqual(await fs.readdir(path.dirname(f.target)), []);
+  await assert.rejects(fs.lstat(f.target), { code: "ENOENT" });
+  assert.equal((await fs.readFile(f.source))[0], 0x5d);
+});
+
+test("preexisting symlinked Guardian executable cannot replace a foreign user file", async (t) => {
+  const f = await fixture(t);
+  const foreign = path.join(f.temp, "user-owned-profile.bin");
+  const foreignBytes = Buffer.alloc(2048, 0x73);
+  await fs.writeFile(foreign, foreignBytes);
+  await fs.mkdir(path.dirname(f.target), { recursive: true });
+  await fs.symlink(foreign, f.target);
+  await assert.rejects(provision({ installation: f.installation }),
+    /bounded normal executable/u);
+  assert.deepEqual(await fs.readFile(foreign), foreignBytes);
+  assert.equal((await fs.lstat(f.target)).isSymbolicLink(), true);
+  assert.deepEqual(await fs.readdir(path.dirname(f.target)), ["EquinoxLocalGuardian.exe"]);
+});

@@ -196,3 +196,40 @@ test("guardian refuses an otherwise valid foreign-user LOCALAPPDATA root", async
   await assert.rejects(inspectEquinoxLocalWindowsGuardianAdmission(f.deps), /foreign installed/u);
   assert.deepEqual(f.calls, []);
 });
+
+test("Guardian admission denies ambiguous worker journal names before touching signed source or WPF", async () => {
+  for(const name of [
+    "main-"+ "c".repeat(31)+".windows-worker.json",
+    "MAIN-"+ "c".repeat(32)+".windows-worker.json",
+    "main-"+ "c".repeat(32)+".WINDOWS-WORKER.JSON",
+    "foreign.windows-worker.json",
+  ]){
+    const f=fixture({ entries:[name] });
+    await assert.rejects(inspectEquinoxLocalWindowsGuardianAdmission(f.deps),
+      /unrecognized detached worker ownership filename/u);
+    assert.deepEqual(f.calls.map(([action])=>action),["engine","active","handoff"]);
+  }
+});
+
+test("Guardian rejects native-pointer read errors that are not ENOENT without Stable fallback or shell access", async () => {
+  for(const code of ["EACCES","ELOOP","EPERM","EIO"]){
+    const f=fixture({
+      readNativePointer:async()=>{throw Object.assign(new Error("untrusted pointer "+code),{code})},
+    });
+    await assert.rejects(inspectEquinoxLocalWindowsGuardianAdmission(f.deps),
+      new RegExp("untrusted pointer "+code,"u"));
+    assert.deepEqual(f.calls.map(([action])=>action),["engine","active","handoff","source"]);
+  }
+});
+
+test("Guardian refuses missing native pointer for Main slot even if stale Stable pointer pretends healthy",async()=>{
+  let stableCalls=0;
+  const f=fixture({
+    installation:{...installation,releaseDir:mainRelease},
+    readCurrentRelease:async()=>{stableCalls++;return{version:"6.0.4",releaseDir:mainRelease}},
+  });
+  await assert.rejects(inspectEquinoxLocalWindowsGuardianAdmission(f.deps),
+    /cannot fall back from a missing Main native pointer/u);
+  assert.equal(stableCalls,0);
+  assert.equal(f.calls.some(([action])=>action==="shell"||action==="host"),false);
+});

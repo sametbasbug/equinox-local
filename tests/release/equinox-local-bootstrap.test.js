@@ -305,3 +305,90 @@ test("Windows x64 managed user bootstrap uses state config and Windows Native Me
   assert.equal(registrations.length, 2);
   assert.equal(second.configRevision, first.configRevision);
 });
+
+test("managed bootstrap rejects unsupported platforms and architectures before creating directories or calling native hosts",async()=>{
+  for(const [platform,arch] of [
+    ["linux","x64"],["win32","ia32"],["win32","unknown"],["freebsd","arm64"],
+  ]){
+    const root=await fs.mkdtemp(path.join(os.tmpdir(),"equinox-bootstrap-blocked-platform-"));
+    try{
+      let appCalls=0,nativeCalls=0;
+      await assert.rejects(bootstrapManagedEquinoxUser({
+        homeDir:path.join(root,"user-home"),platform,arch,
+        env:{HOME:path.join(root,"user-home"),LOCALAPPDATA:path.join(root,"Windows Local")},
+        ensureAppHostImpl:async()=>{appCalls++;throw Error("must not run")},
+        registerWindowsNativeMessagingHostImpl:async()=>{nativeCalls++;throw Error("must not run")},
+      }),/managed bootstrap is not implemented/u);
+      assert.equal(appCalls,0);
+      assert.equal(nativeCalls,0);
+      assert.deepEqual(await fs.readdir(root),[]);
+    }finally{await fs.rm(root,{recursive:true,force:true})}
+  }
+});
+
+test("workspace bootstrap refuses symlinked and corrupt existing Git metadata instead of adopting or replacing it",async()=>{
+  const root=await fs.mkdtemp(path.join(os.tmpdir(),"equinox-bootstrap-hostile-git-"));
+  try{
+    const workspace=path.join(root,"workspace");
+    const outside=path.join(root,"outside");
+    await fs.mkdir(workspace);
+    await fs.mkdir(outside);
+    await fs.writeFile(path.join(outside,"SENTINEL"),"never mutate me");
+    await fs.symlink(outside,path.join(workspace,".git"));
+    await assert.rejects(ensureWorkspaceGitRepository(workspace),/unsafe|symbolic/u);
+    assert.equal(await fs.readFile(path.join(outside,"SENTINEL"),"utf8"),"never mutate me");
+    assert.equal((await fs.lstat(path.join(workspace,".git"))).isSymbolicLink(),true);
+
+    await fs.unlink(path.join(workspace,".git"));
+    const git=path.join(workspace,".git");
+    await fs.mkdir(path.join(git,"objects"),{recursive:true});
+    await fs.mkdir(path.join(git,"refs"),{recursive:true});
+    await fs.writeFile(path.join(git,"HEAD"),"ref: refs/heads/main\n");
+    await fs.writeFile(path.join(git,"config"),"[core]\n");
+    await fs.rename(path.join(git,"refs"),path.join(git,"refs-old"));
+    await fs.symlink(path.join(git,"refs-old"),path.join(git,"refs"));
+    await assert.rejects(ensureWorkspaceGitRepository(workspace),/metadata is unsafe/u);
+    assert.equal((await fs.lstat(path.join(git,"refs"))).isSymbolicLink(),true);
+    assert.equal(await fs.readFile(path.join(git,"HEAD"),"utf8"),"ref: refs/heads/main\n");
+  }finally{await fs.rm(root,{recursive:true,force:true})}
+});
+
+test("independent Git worktree validator rejects symlinked metadata, missing HEAD and embedded extra lines",async()=>{
+  const root=await fs.mkdtemp(path.join(os.tmpdir(),"equinox-bootstrap-worktree-admission-"));
+  try{
+    const project=path.join(root,"project");
+    const gitDir=path.join(root,"git-dir");
+    await fs.mkdir(project);
+    await fs.mkdir(gitDir);
+    await fs.writeFile(path.join(gitDir,"HEAD"),"ref: refs/heads/main\n");
+    await fs.writeFile(path.join(project,".git"),"gitdir: "+gitDir+"\nother: escaped\n");
+    await assert.rejects(validateIndependentGitProjectRoot(project),/Git worktree metadata is invalid/u);
+    await fs.writeFile(path.join(project,".git"),"gitdir: "+gitDir+"\n");
+    assert.equal(await validateIndependentGitProjectRoot(project),await fs.realpath(project));
+    await fs.rm(path.join(gitDir,"HEAD"));
+    await assert.rejects(validateIndependentGitProjectRoot(project),/ENOENT/u);
+    await fs.writeFile(path.join(gitDir,"HEAD"),"ref: refs/heads/main\n");
+    await fs.rm(path.join(project,".git"));
+    await fs.symlink(gitDir,path.join(project,".git"));
+    await assert.rejects(validateIndependentGitProjectRoot(project),/symbolic link/u);
+  }finally{await fs.rm(root,{recursive:true,force:true})}
+});
+
+test("managed bootstrap refuses existing user config symlink before writing native wrapper or launch agent",async t=>{
+  const fixture=await makeManagedHome();
+  t.after(()=>fs.rm(fixture.root,{recursive:true,force:true}));
+  await fs.mkdir(path.dirname(fixture.paths.configPath),{recursive:true});
+  const outside=path.join(fixture.root,"outside-config.json");
+  await fs.writeFile(outside,'{"fixture":"do-not-replace"}\n');
+  await fs.symlink(outside,fixture.paths.configPath);
+  let appHostCalled=0;
+  await assert.rejects(bootstrapManagedEquinoxUser({
+    homeDir:fixture.homeDir,
+    ensureAppHostImpl:async()=>{appHostCalled++;throw Error("native app must not be installed")},
+  }),/config is not a safe normal file/u);
+  assert.equal(appHostCalled,0);
+  assert.equal(await fs.readFile(outside,"utf8"),'{"fixture":"do-not-replace"}\n');
+  assert.equal((await fs.lstat(fixture.paths.configPath)).isSymbolicLink(),true);
+  const launcher=path.join(fixture.homeDir,"Library","LaunchAgents","dev.equinox.local.plist");
+  assert.equal(await fs.access(launcher).then(()=>true,()=>false),false);
+});

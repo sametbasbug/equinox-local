@@ -96,3 +96,51 @@ test("failed rollback never claims healthy Stable and does not disclose enrollme
   await assert.rejects(bridgeActivatedStableToMain(options),/Stable recovery needs attention/u);
   assert.deepEqual(steps,["identity","enroll","restart","main bad","rollback bad"]);
 });
+
+test("bridge refuses symlinked and oversized signed release metadata without reading foreign bytes", async (t) => {
+  const fs = await import("node:fs/promises");
+  const os = await import("node:os");
+  const path = await import("node:path");
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "equinox-bridge-trust-"));
+  t.after(() => fs.rm(dir, {recursive:true,force:true}));
+  const foreign = path.join(dir,"user-owned-config.json");
+  const content = JSON.stringify({privateTunnelKey:"never-consume"});
+  await fs.writeFile(foreign,content);
+  const installation = {
+    ...install("darwin"),releaseDir:dir,target:"darwin-arm64",
+  };
+  const metadata = path.join(dir,"release.json");
+  await fs.symlink(foreign,metadata);
+  await assert.rejects(readVerifiedBridgeSourceIdentity(installation,targetVersion,{
+    readCurrentImpl:async()=>({version:targetVersion,releaseDir:dir}),
+  }));
+  assert.equal(await fs.readFile(foreign,"utf8"),content);
+  assert.equal(await fs.readlink(metadata),foreign);
+
+  await fs.unlink(metadata);
+  await fs.writeFile(metadata,"x".repeat(16*1024+1));
+  await assert.rejects(readVerifiedBridgeSourceIdentity(installation,targetVersion,{
+    readCurrentImpl:async()=>({version:targetVersion,releaseDir:dir}),
+  }),/metadata is unavailable or unsafe/u);
+  assert.equal((await fs.stat(metadata)).size,16*1024+1);
+});
+
+test("bridge never reports Main enrolled on incorrect SHA or unverified source, and does not restart Stable", async () => {
+  for (const returned of [
+    {status:"enrolled",bootstrapSha:"a".repeat(40)},
+    {status:"already-enrolled",bootstrapSha:"a".repeat(40)},
+    {status:"in-progress",bootstrapSha:SHA},
+    null,
+  ]) {
+    const {steps,options}=opts({overrides:{
+      enrollImpl:async()=>{steps.push("unverified enroll");return returned},
+      rollbackImpl:async({bootstrapSha})=>{
+        steps.push("rollback refused");
+        assert.equal(bootstrapSha,SHA);
+        return {rolledBack:false};
+      },
+    }});
+    await assert.rejects(bridgeActivatedStableToMain(options),/signed Stable baseline remains installed/u);
+    assert.deepEqual(steps,["identity","unverified enroll","rollback refused"]);
+  }
+});

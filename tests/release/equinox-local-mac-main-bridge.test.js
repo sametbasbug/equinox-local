@@ -80,3 +80,61 @@ test("Mac bridge failure remains on signed Stable and attempt receipt blocks a r
   assert.equal(result.status,"stable-recovery-needs-attention");
   assert.equal(JSON.parse(await fs.readFile(path.join(f.installRoot,"main-bridge-6.0.4.json"),"utf8")).status,"stable-recovery-needs-attention");
 });
+
+test("Mac signed bridge rejects symlinked attempt receipt without touching foreign user data",async(t)=>{
+  const f=await fixture(t);
+  await fs.mkdir(path.join(f.releasesRoot,"6.0.3"));
+  const foreign=path.join(f.installRoot,"foreign-owned.json");
+  const privateBytes=JSON.stringify({privateToken:"never-read-or-replace"});
+  await fs.writeFile(foreign,privateBytes);
+  const receipt=path.join(f.installRoot,"main-bridge-6.0.4.json");
+  await fs.symlink(foreign,receipt);
+  await assert.rejects(maybeScheduleMacStableMainBridge({
+    installation:f.installation,platform:"darwin",
+    launchHelperImpl:async()=>assert.fail("symlink receipt must not spawn")
+  }),{code:"ELOOP"});
+  await fs.writeFile(path.join(f.installRoot,"update-state.json"),
+    JSON.stringify({status:"activated",version:"6.0.4",previousVersion:"6.0.3"}));
+  const result2=await runMacStableMainBridgeWorker({
+    installation:f.installation,version:"6.0.4",bridgeImpl:async()=>assert.fail("receipt already owned")
+  });
+  assert.equal(result2.status,"already-attempted");
+  assert.equal((await fs.lstat(receipt)).isSymbolicLink(),true);
+  assert.equal(await fs.readFile(foreign,"utf8"),privateBytes);
+});
+
+test("Mac signed bridge refuses symlinked or oversized activation state before creating attempt marker",async(t)=>{
+  const f=await fixture(t);
+  const activation=path.join(f.installRoot,"update-state.json");
+  const target=path.join(f.installRoot,"unrelated-user-data.json");
+  await fs.writeFile(target,JSON.stringify({privateToken:"not-for-bridge"}));
+  await fs.symlink(target,activation);
+  await assert.rejects(runMacStableMainBridgeWorker({
+    installation:f.installation,version:"6.0.4",
+    bridgeImpl:async()=>assert.fail("must not read symlink data"),
+    sleepImpl:async()=>{},
+  }));
+  await fs.unlink(activation);
+  await fs.writeFile(activation,"x".repeat(4097));
+  await assert.rejects(runMacStableMainBridgeWorker({
+    installation:f.installation,version:"6.0.4",
+    bridgeImpl:async()=>assert.fail("oversized update-state must not authorize bridge"),
+    sleepImpl:async()=>{},
+  }),/Stable migration state is unavailable or unsafe/u);
+  await assert.rejects(fs.lstat(path.join(f.installRoot,"main-bridge-6.0.4.json")),{code:"ENOENT"});
+  assert.equal(await fs.readFile(target,"utf8"),JSON.stringify({privateToken:"not-for-bridge"}));
+});
+
+test("Mac signed bridge allowlists outcome and never writes private error bytes into receipt",async(t)=>{
+  const f=await fixture(t);
+  await fs.writeFile(path.join(f.installRoot,"update-state.json"),
+    JSON.stringify({status:"activated",version:"6.0.4",previousVersion:"6.0.3"}));
+  const result=await runMacStableMainBridgeWorker({
+    installation:f.installation,version:"6.0.4",
+    bridgeImpl:async()=>({status:"private-password-secret"}),
+  });
+  assert.deepEqual(result,{status:"stable-recovery-needs-attention"});
+  const receipt=await fs.readFile(path.join(f.installRoot,"main-bridge-6.0.4.json"),"utf8");
+  assert.equal(receipt,JSON.stringify({schemaVersion:1,version:"6.0.4",status:"stable-recovery-needs-attention"})+"\n");
+  assert.doesNotMatch(receipt,/private-password-secret/u);
+});

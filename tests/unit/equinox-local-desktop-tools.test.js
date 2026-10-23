@@ -197,3 +197,126 @@ test("desktop_call routes results through Turn Budget without changing the deskt
   assert.deepEqual(events, [["prepare", "desktop_call"], ["decorate"]]);
   assert.equal((await harness.discovery.summary()).count, 4);
 });
+
+test("desktop gate denies mutation and private catalog when desktop Agent Access is disabled, while status stays available", async () => {
+  const events = [];
+  const harness = createHarness({
+    agentAccess: {desktop:false},
+    peekabooBridge:{
+      label:"protected",
+      async status(){events.push("status");return {
+        version:"4.3.0",binary:"owned-peekaboo",active:false,allowedToolCount:0,allowedTools:[],
+        compatibility:null,error:"mock service unavailable",
+        reconnectCount:0,lastReconnectAt:null,unexpectedCloseCount:0,lastUnexpectedCloseAt:null,
+        lastTransportError:null,permissions:null,serverStatus:null,
+      }},
+      async listTools(){events.push("list");throw Error("must not list private catalog")},
+      async restart(){events.push("restart");throw Error("must not restart")},
+      async callTool(){events.push("call");throw Error("must not click")},
+    },
+  });
+  const operations = await harness.discovery.catalog();
+  assert.deepEqual(operations.operations.map(item=>item.name),["status","refresh","restart"]);
+  assert.equal(operations.label,"protected");
+  assert.equal((await harness.discovery.summary()).count,3);
+  await assert.rejects(harness.discovery.describe("click"),/Desktop automation access is disabled/u);
+  assert.deepEqual(events,[]);
+  const registration=harness.rawRegistrations.get("desktop_call");
+  assert.deepEqual(registration.options,{mcpExposed:true,capability:false,pauseGuard:false});
+  assert.deepEqual(registration.config.annotations,{
+    title:"Desktop operation çağır",readOnlyHint:false,destructiveHint:true,
+    idempotentHint:false,openWorldHint:false,
+  });
+  for(const operation of ["refresh","restart","click","screenshot"]) {
+    const result=await registration.handler({operation,arguments:{}});
+    assert.equal(result.isError,true,operation);
+    assert.match(result.content[0].text,/Desktop automation access is disabled/u,operation);
+  }
+  const status=await registration.handler({operation:"status",arguments:{}});
+  assert.equal(status.isError,undefined);
+  assert.match(status.content[0].text,/İzin durumu alınamadı: mock service unavailable/u);
+  assert.deepEqual(events,["status"]);
+  assert.deepEqual(harness.lockCalls,[]);
+});
+
+test("desktop built-in status, refresh and restart refuse extra arguments before any bridge mutation", async () => {
+  const harness=createHarness();
+  const registration=harness.rawRegistrations.get("desktop_call");
+  for(const operation of ["status","refresh","restart"]) {
+    const response=await registration.handler({
+      operation,arguments:{unapproved:"value"},
+    });
+    assert.equal(response.isError,true,operation);
+    assert.match(response.content[0].text,new RegExp(`desktop ${operation} arguments kabul etmez`, "u"),operation);
+  }
+  assert.equal(harness.restartCount,0);
+  assert.deepEqual(harness.lockCalls,[]);
+  assert.deepEqual(harness.bridgeCalls,[]);
+  assert.deepEqual(harness.listCalls,[]);
+});
+
+test("desktop mutations preserve exact pause-check then owned bridge lock order and errors never retry", async () => {
+  const events=[];
+  const failure=Error("controlled desktop bridge failure");
+  const harness=createHarness({
+    assertMutationAllowed:operation=>events.push(["pauseCheck",operation]),
+    withMutationLocks:async(scopes,callback)=>{
+      events.push(["lock",scopes]);
+      return callback();
+    },
+    desktopBridge:{
+      label:"Windows desktop",
+      status:async()=>({engine:"winapp",version:"test",binary:"owned",active:true,
+        allowedToolCount:0,allowedTools:[],compatibility:{warnings:[]}}),
+      restart:async()=>events.push(["restart"]),
+      listTools:async refresh=>{events.push(["list",refresh]);return [];},
+      callTool:async(name,args)=>{
+        events.push(["call",name,args]);
+        throw failure;
+      },
+    },
+  });
+  const handler=harness.rawRegistrations.get("desktop_call").handler;
+  const refresh=await handler({operation:"refresh",arguments:{}});
+  assert.equal(refresh.isError,undefined);
+  const restart=await handler({operation:"restart",arguments:{}});
+  assert.equal(restart.isError,undefined);
+  const click=await handler({operation:"click",arguments:{target:"fixture"}});
+  assert.equal(click.isError,true);
+  assert.match(click.content[0].text,/controlled desktop bridge failure/u);
+  assert.deepEqual(events,[
+    ["pauseCheck","desktop.refresh"],["list",true],
+    ["pauseCheck","desktop.restart"],["lock",["desktop"]],["restart"],["list",true],
+    ["pauseCheck","desktop.click"],["lock",["desktop"]],["call","click",{target:"fixture"}],
+  ]);
+});
+
+test("desktop Windows read-only status and native screenshot image blocks retain their provider semantics", async () => {
+  const image={type:"image",data:"aW1hZ2U=",mimeType:"image/png"};
+  const harness=createHarness({
+    desktopBridge:{
+      label:"Windows desktop",
+      status:async()=>({
+        engine:"winapp",version:"0.7.1",binary:"winapp.exe",active:true,
+        allowedToolCount:1,allowedTools:["screenshot"],compatibility:{warnings:["fixture-only"]},
+      }),
+      restart:async()=>{},
+      listTools:async()=>[{name:"screenshot",description:"Capture",inputSchema:{type:"object"}}],
+      callTool:async()=>({content:[{type:"text",text:"captured"},image]}),
+    },
+  });
+  const handler=harness.rawRegistrations.get("desktop_call").handler;
+  const status=await handler({operation:"status",arguments:{}});
+  assert.match(status.content[0].text,/Microsoft winapp: 0\.7\.1/u);
+  assert.match(status.content[0].text,/Not: fixture-only/u);
+  const screenshot=await handler({operation:"screenshot",arguments:{}});
+  assert.deepEqual(screenshot.content[1],image);
+  assert.equal(screenshot.structuredContent,undefined);
+  assert.deepEqual(harness.lockCalls,[["desktop"]]);
+  const catalog=await harness.discovery.catalog();
+  assert.equal(catalog.operations.find(item=>item.name==="screenshot").inputSchema,undefined,
+    "the public discovery listing excludes schemas until a specific operation is described");
+  const described=await harness.discovery.describe("screenshot");
+  assert.deepEqual(described.inputSchema,{type:"object"});
+  assert.equal(harness.rawRegistrations.get("desktop_call").config.outputSchema,undefined);
+});

@@ -37,3 +37,36 @@ test('Windows terminal Doctor fails closed for lost stdout, wrong exit status, o
     assert.equal(calls.at(-1)[0], 'stop');
   }
 });
+
+test("Windows terminal Doctor denies a missing process identity before waiting or cleaning unrelated jobs", async () => {
+  for (const processId of [null, "", undefined, 0]) {
+    const events = [];
+    const manager = {
+      start: async () => {events.push("start");return {processId}},
+      waitForExit: async () => {events.push("wait");return {running:false,exitCode:17}},
+      snapshotOutput: () => {events.push("output");return {stdout:"EQUINOX_TERMINAL_PROBE_OK\nEQUINOX_NATIVE_PROBE_OK\n"}},
+      stop: async () => {events.push("stop")},
+    };
+    assert.deepEqual(await probeWindowsTerminalExecution({processManager:manager,cwd:"C:\\Temp",env,arch:"x64"}),{healthy:false});
+    assert.deepEqual(events,["start"]);
+  }
+});
+
+test("Windows terminal Doctor refuses false health if owned cleanup fails", async () => {
+  const {calls,manager}=fixture();
+  manager.stop=async input => {calls.push(["stop-failed",input]);throw Error("native job still running")};
+  assert.deepEqual(await probeWindowsTerminalExecution({processManager:manager,cwd:"C:\\Temp",env,arch:"arm64"}),{healthy:false});
+  assert.deepEqual(calls.at(-1),["stop-failed",{processId:"proc-probe",force:true,timeoutMs:700,remove:true}]);
+});
+
+test("Windows Doctor cleans its owned process when wait or output throws", async () => {
+  for(const phase of ["wait","output"]){
+    const {calls,manager}=fixture();
+    manager[phase==="wait"?"waitForExit":"snapshotOutput"]=input=>{
+      calls.push([phase+"-failed",input]);throw Error("broker interrupted");
+    };
+    const result=await probeWindowsTerminalExecution({processManager:manager,cwd:"C:\\Temp",env,arch:"x64"});
+    assert.deepEqual(result,{healthy:false});
+    assert.deepEqual(calls.at(-1),["stop",{processId:"proc-probe",force:true,timeoutMs:700,remove:true}]);
+  }
+});

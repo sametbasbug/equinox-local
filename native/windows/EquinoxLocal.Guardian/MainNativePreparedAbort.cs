@@ -87,6 +87,9 @@ internal static partial class Program
                 json.WriteString("stage", "rollback_started");
                 json.WriteNumber("sequence", 1);
                 json.WriteNumber("guardianPid", Environment.ProcessId);
+                // Link the original prepared authority proof to the *exact*
+                // post-abort journal generation in one durable native receipt.
+                json.WriteString("preparedJournalSha256", Convert.ToHexStringLower(expectedDigest));
                 json.WriteString("journalSha256", Convert.ToHexStringLower(SHA256.HashData(File.ReadAllBytes(journalPath))));
                 json.WriteEndObject();
                 json.Flush();

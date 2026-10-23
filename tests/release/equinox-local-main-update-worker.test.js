@@ -458,3 +458,39 @@ test("Main worker passes pinned Windows Git shell into recovery engine", async (
   assert.match(options.shellPath, /\\git\\[^\\]+\\win32-arm64\\usr\\bin\\sh\.exe$/iu);
   assert.match(options.gitPath, /\\cmd\\git\.exe$/iu);
 });
+
+test("detached worker rejects existing symlink native staging before trusting candidate or WPF owner", async () => {
+  const events = [];
+  const transition = {mode:"artifact_required",target:"win32-x64",currentSha:A,targetSha:B,
+    currentRuntimeContractSha256:DIGEST_A,targetRuntimeContractSha256:DIGEST_B};
+  const receipt = preparedReceipt();
+  const engine = {
+    readActive: async () => receipt,
+    abortPreparedPromotion: async (id, message, options) => events.push(["abort",id,message,options]),
+  };
+  await assert.rejects(runEquinoxLocalMainUpdateWorker({
+    argv:argv(), resolveHostTarget:()=> "win32-x64", engineFactory:()=>engine,
+    planNativeTransition:async()=>transition,
+    resolveNativeInstallation:async()=>({managed:true,selfUpdateSupported:true,target:"win32-x64"}),
+    fsImpl:{lstat:async()=>({isDirectory:()=>true,isSymbolicLink:()=>true})},
+    prepareNativeCandidate:async()=>assert.fail("symlinked native stage must not be admitted"),
+    admitWindowsNativeWorker:async()=>assert.fail("symlinked native stage must not reach OS owner"),
+    prepareNativeLifecycle:async()=>assert.fail("symlinked native stage must not activate native"),
+    cleanupImpl:async()=>events.push(["cleanup"]),
+  }), /artifact stage is not a safe directory/u);
+  assert.deepEqual(events.map(([event])=>event),["abort","cleanup"]);
+  assert.equal(events[0][1],TX);
+  assert.deepEqual(events[0][3],{stage:"native_admission_failed"});
+});
+
+test("worker refuses a forensic rollback_failed receipt without replaying native mutation", async () => {
+  const events=[];
+  const receipt=preparedReceipt({status:"rollback_failed",stage:"rollback_failed"});
+  await assert.rejects(runEquinoxLocalMainUpdateWorker({
+    argv:argv(),engineFactory:()=>({readActive:async()=>receipt}),
+    planNativeTransition:async()=>assert.fail("failed rollback must not be re-planned"),
+    handoffImpl:async()=>assert.fail("failed rollback must not handoff"),
+    cleanupImpl:async()=>events.push("cleanup"),
+  }),/cannot resume a transaction whose rollback already failed/u);
+  assert.deepEqual(events,["cleanup"],"forensic owner must be retained but detached job cleaned");
+});

@@ -5,7 +5,7 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import {proveEquinoxWindowsNativeJournalAuthority} from '../../src/equinox-local-windows-native-journal-authority-client.js';
+import {proveEquinoxWindowsNativeJournalAuthority,proveEquinoxWindowsNativeBRollbackAuthority} from '../../src/equinox-local-windows-native-journal-authority-client.js';
 
 const tx = `main-${'a'.repeat(32)}`;
 const token = 'e'.repeat(64);
@@ -46,4 +46,123 @@ test('journal authority client refuses non-prepared stage, bad identity, and use
   await assert.rejects(proveEquinoxWindowsNativeJournalAuthority({transactionId:tx,transactionRoot:root,workerToken:token,platform:'test',fixturePipePath:path.join(root,'unused')}),/non-prepared/u);
   await assert.rejects(proveEquinoxWindowsNativeJournalAuthority({transactionId:tx,transactionRoot:root,workerToken:'wrong',platform:'test',fixturePipePath:path.join(root,'unused')}),/invalid exact identity/u);
   await assert.rejects(proveEquinoxWindowsNativeJournalAuthority({transactionId:tx,transactionRoot:root,workerToken:token,platform:'win32',fixturePipePath:path.join(root,'unsafe')}),/invalid exact identity/u);
+});
+
+test('witness rejects symlinked journal without reading target',async t=>{
+ const root=await fs.mkdtemp(path.join(os.tmpdir(),'eq-journal-symlink-'));
+ t.after(()=>fs.rm(root,{recursive:true,force:true}));
+ const dir=path.join(root,'guardian-journal');
+ await fs.mkdir(dir);
+ const payload=JSON.stringify({transactionId:tx,stage:'prepared',sequence:0});
+ const target=path.join(root,'other.json');
+ await fs.writeFile(target,payload);
+ await fs.symlink(target,path.join(dir,tx+'.json'));
+ await assert.rejects(proveEquinoxWindowsNativeJournalAuthority({
+  transactionId:tx,transactionRoot:root,workerToken:token,platform:'test',
+  fixturePipePath:path.join(root,'absent.sock'),
+ }),{code:'ELOOP'});
+ assert.equal(await fs.readFile(target,'utf8'),payload);
+});
+
+test('witness denies oversize, directory and invalid JSON journal before socket',async t=>{
+ const root=await fs.mkdtemp(path.join(os.tmpdir(),'eq-journal-invalid-'));
+ t.after(()=>fs.rm(root,{recursive:true,force:true}));
+ const dir=path.join(root,'guardian-journal');
+ await fs.mkdir(dir);
+ const file=path.join(dir,tx+'.json');
+ const args={transactionId:tx,transactionRoot:root,workerToken:token,
+  platform:'test',fixturePipePath:path.join(root,'absent.sock')};
+ await fs.writeFile(file,' '.repeat(8193));
+ await assert.rejects(proveEquinoxWindowsNativeJournalAuthority(args),/size limit/u);
+ await fs.rm(file);
+ await fs.mkdir(file);
+ await assert.rejects(proveEquinoxWindowsNativeJournalAuthority(args),/size limit/u);
+ await fs.rm(file,{recursive:true});
+ for(const value of ['null','[]','42','{bad',
+    JSON.stringify({transactionId:tx,stage:'switched',sequence:0}),
+    JSON.stringify({transactionId:tx,stage:'prepared',sequence:1})]){
+  await fs.writeFile(file,value);
+  await assert.rejects(proveEquinoxWindowsNativeJournalAuthority(args),/non-prepared|JSON/u);
+ }
+});
+
+test('witness accepts fragmented challenge, rejects a 33-byte challenge',async t=>{
+ const root=await fs.mkdtemp(path.join(os.tmpdir(),'eq-journal-challenge-'));
+ t.after(()=>fs.rm(root,{recursive:true,force:true}));
+ const dir=path.join(root,'guardian-journal');
+ await fs.mkdir(dir);
+ const bytes=Buffer.from(JSON.stringify({transactionId:tx,stage:'prepared',sequence:0})+'\n');
+ await fs.writeFile(path.join(dir,tx+'.json'),bytes);
+ const nonce=Buffer.alloc(32,0xb3);
+ const expected=createHmac('sha256',Buffer.from(token,'hex'))
+  .update('equinox-local-guardian-journal-authority-v1:','ascii')
+  .update(nonce).update(createHash('sha256').update(bytes).digest()).digest();
+ const sock=path.join(root,'authority.sock');
+ let count=0;
+ const server=net.createServer(socket=>{
+  count++;
+  if(count===1){
+   const chunks=[];
+   socket.on('data',buf=>chunks.push(buf));
+   socket.on('end',()=>{assert.deepEqual(Buffer.concat(chunks),expected);socket.end()});
+   socket.write(nonce.subarray(0,8));
+   setImmediate(()=>socket.write(nonce.subarray(8)));
+  }else{
+   socket.on('error',()=>{});
+   socket.write(Buffer.alloc(33,5));
+  }
+ });
+ await new Promise(resolve=>server.listen(sock,resolve));
+ t.after(()=>new Promise(resolve=>server.close(resolve)));
+ const opts={transactionId:tx,transactionRoot:root,workerToken:token,platform:'test',fixturePipePath:sock};
+ await proveEquinoxWindowsNativeJournalAuthority(opts);
+ await assert.rejects(proveEquinoxWindowsNativeJournalAuthority(opts),/challenge exceeded bound/u);
+ assert.equal(count,2);
+});
+
+
+test('rollback witness uses a distinct native pipe challenge domain tied to exact rollback_started journal bytes',async t=>{
+ const root=await fs.mkdtemp(path.join(os.tmpdir(),'eq-native-b-rollback-proof-'));
+ t.after(()=>fs.rm(root,{recursive:true,force:true}));
+ const dir=path.join(root,'guardian-journal');await fs.mkdir(dir);
+ const raw=Buffer.from(JSON.stringify({transactionId:tx,stage:'rollback_started',sequence:6})+'\n');
+ await fs.writeFile(path.join(dir,tx+'.json'),raw);
+ const socketPath=path.join(root,'rollback.sock');
+ const nonce=Buffer.alloc(32,0x5e);
+ const expected=createHmac('sha256',Buffer.from(token,'hex'))
+  .update('equinox-local-guardian-b-rollback-authority-v1:','ascii')
+  .update(nonce).update(createHash('sha256').update(raw).digest()).digest();
+ const preparedMac=createHmac('sha256',Buffer.from(token,'hex'))
+  .update('equinox-local-guardian-journal-authority-v1:','ascii')
+  .update(nonce).update(createHash('sha256').update(raw).digest()).digest();
+ assert.notDeepEqual(expected,preparedMac,'prepared proof must never replay as rollback proof');
+ let received=null;
+ const server=net.createServer(socket=>{
+  const chunks=[];
+  socket.on('data',chunk=>chunks.push(chunk));
+  socket.on('end',()=>{received=Buffer.concat(chunks);socket.end();});
+  socket.write(nonce.subarray(0,9));setImmediate(()=>socket.write(nonce.subarray(9)));
+ });
+ await new Promise(resolve=>server.listen(socketPath,resolve));
+ t.after(()=>new Promise(resolve=>server.close(resolve)));
+ await proveEquinoxWindowsNativeBRollbackAuthority({transactionId:tx,transactionRoot:root,workerToken:token,platform:'test',fixturePipePath:socketPath});
+ assert.deepEqual(received,expected);
+});
+
+test('native rollback witness fails closed on prepared, forged sequence, symlinked and oversized journal',async t=>{
+ const root=await fs.mkdtemp(path.join(os.tmpdir(),'eq-native-b-rollback-deny-'));
+ t.after(()=>fs.rm(root,{recursive:true,force:true}));
+ const dir=path.join(root,'guardian-journal');await fs.mkdir(dir);
+ const file=path.join(dir,tx+'.json');
+ const args={transactionId:tx,transactionRoot:root,workerToken:token,platform:'test',fixturePipePath:path.join(root,'unused.sock')};
+ for(const [stage,sequence] of [['prepared',0],['switched',3],['rollback_started',0],['rollback_started',7],['rollback_started',1.5]]){
+  await fs.writeFile(file,JSON.stringify({transactionId:tx,stage,sequence}));
+  await assert.rejects(proveEquinoxWindowsNativeBRollbackAuthority(args),/invalid rollback_started generation/u);
+ }
+ await fs.writeFile(file,' '.repeat(8193));
+ await assert.rejects(proveEquinoxWindowsNativeBRollbackAuthority(args),/size limit/u);
+ await fs.rm(file);
+ const foreign=path.join(root,'foreign-journal.json');await fs.writeFile(foreign,JSON.stringify({transactionId:tx,stage:'rollback_started',sequence:1}));
+ await fs.symlink(foreign,file);
+ await assert.rejects(proveEquinoxWindowsNativeBRollbackAuthority(args),{code:'ELOOP'});
 });

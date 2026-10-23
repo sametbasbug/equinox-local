@@ -1,0 +1,966 @@
+import { lstatSync } from "node:fs";
+import fs from "node:fs/promises";
+import net from "node:net";
+import path from "node:path";
+
+import {
+  equinoxBrowserIpcEndpoint,
+  equinoxBrowserSocketDirectory,
+  prepareEquinoxBrowserSocketDirectory,
+} from "./equinox-browser-socket.js";
+
+type BrowserContext="agent"|"user";
+type AssignedContext=BrowserContext|"unassigned";
+type BrowserEndpoint={kind:"unix"|"named-pipe";endpoint:string;implemented:boolean};
+type SocketDirOptions={uid:number;namespace:string|null};
+type StatIdentity={dev:number;ino:number;uid:number|null};
+type SocketIdentity={dev:number;ino:number};
+type HostInfo={origin:string;extensionId:string|undefined;pid:unknown;version:unknown};
+type ExtensionInfo={
+ extensionId:string;extensionVersion:unknown;protocolVersion:unknown;capabilities:unknown[];
+ capabilityVersions:Record<string,unknown>;lastNativeDisconnectError:unknown;
+ instanceId:string|null;browserContext:BrowserContext|null;connectedAt:string;
+};
+type Pairing={context:BrowserContext;startedAt:string;expiresAtMs:number};
+type StreamState={field:string;total:number;chunks:Array<string|undefined>;receivedChars:number};
+type Connection={
+ socket:net.Socket;lineChunks:Buffer[];lineBytes:number;partialLineTimer:NodeJS.Timeout|null;
+ hostInfo:HostInfo|null;extensionInfo:ExtensionInfo|null;connectedAt:string|null;
+ instanceId:string|null;context:BrowserContext|null;writeQueue:Buffer[];
+ writeQueueBytes:number;writeBlocked:boolean;closed:boolean;
+};
+type Waiter={resolve:(value:unknown)=>void;reject:(reason:Error)=>void;
+ timer:NodeJS.Timeout;method:string;stream:StreamState|null;state:Connection};
+type JsonObject=Record<string,any>;
+type BrowserEvent=Record<string,unknown>;
+type ExtensionRequest={context:BrowserContext;instanceId:string|null;method:string;args:JsonObject};
+type BridgeOptions={
+ bridgeEndpoint?:BrowserEndpoint|null;socketPath?:string|null;
+ expectedExtensionIds?:readonly string[];callTimeoutMs?:number;
+ recordEvent?:(event:BrowserEvent)=>unknown;
+ handleExtensionRequest?:((request:ExtensionRequest)=>Promise<unknown>)|null;
+ maxTransportLineBytes?:number;maxTransportWriteQueueBytes?:number;maxTransportWriteQueueMessages?:number;
+ maxConnections?:number;maxPendingCalls?:number;partialLineTimeoutMs?:number;
+};
+type CallOpts={timeoutMs?:number;context?:BrowserContext};
+type ErrorCode={code?:string};
+
+export const EQUINOX_BROWSER_HOST_NAME = "dev.equinox.browser";
+export const EQUINOX_BROWSER_EXTENSION_ID = "npdneefcobilfkjlihghjgjnknenhfoj";
+export const EQUINOX_BROWSER_LEGACY_EXTENSION_ID = "kdjmfldngbfaillaamoinegmogfkhdfn";
+export const EQUINOX_BROWSER_EXTENSION_IDS = Object.freeze([EQUINOX_BROWSER_EXTENSION_ID]);
+export const EQUINOX_BROWSER_MIGRATION_EXTENSION_IDS = Object.freeze([
+  EQUINOX_BROWSER_EXTENSION_ID,
+  EQUINOX_BROWSER_LEGACY_EXTENSION_ID,
+]);
+const DEFAULT_EQUINOX_BROWSER_IPC_ENDPOINT = equinoxBrowserIpcEndpoint();
+export const EQUINOX_BROWSER_SOCKET_PATH = DEFAULT_EQUINOX_BROWSER_IPC_ENDPOINT.kind === "unix" && DEFAULT_EQUINOX_BROWSER_IPC_ENDPOINT.implemented
+  ? DEFAULT_EQUINOX_BROWSER_IPC_ENDPOINT.endpoint
+  : null;
+export const EQUINOX_BROWSER_CONTEXTS = Object.freeze(["agent", "user"]);
+export const DEFAULT_EQUINOX_BROWSER_CONTEXT:BrowserContext = "user";
+
+const MAX_STREAMED_RESPONSE_CHARS = 48 * 1024 * 1024;
+const MAX_STREAM_CHUNKS = 128;
+const DEFAULT_PAIRING_TIMEOUT_MS = 10 * 60 * 1000;
+const INSTANCE_ID_PATTERN = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/iu;
+const MAX_BRIDGE_LINE_BYTES = 72 * 1024 * 1024;
+const MAX_BRIDGE_WRITE_QUEUE_BYTES = 72 * 1024 * 1024;
+const MAX_BRIDGE_WRITE_QUEUE_MESSAGES = 128;
+const MAX_BRIDGE_CONNECTIONS = 8;
+const MAX_BRIDGE_PENDING_CALLS = 128;
+const DEFAULT_PARTIAL_LINE_TIMEOUT_MS = 5_000;
+
+function canonicalBrowserSocketDirectoryOptions(socketPath:string|null):SocketDirOptions|null {
+  if (typeof socketPath !== "string" || path.basename(socketPath) !== "browser.sock") return null;
+  const uid = process.getuid?.();
+  if (!Number.isInteger(uid) || uid! < 1) return null;
+
+  const directory = path.dirname(socketPath);
+  const defaultDirectory = equinoxBrowserSocketDirectory({ uid:uid! });
+  if (directory === defaultDirectory) return { uid:uid!, namespace: null };
+
+  const namespacePrefix = `${path.basename(defaultDirectory)}-`;
+  const directoryName = path.basename(directory);
+  if (!directoryName.startsWith(namespacePrefix)) return null;
+
+  const namespace = directoryName.slice(namespacePrefix.length);
+  try {
+    if (equinoxBrowserSocketDirectory({ uid:uid!, namespace }) !== directory) return null;
+  } catch {
+    return null;
+  }
+  return { uid:uid!, namespace };
+}
+
+function socketDirectoryIdentity(stat:import("node:fs").Stats):StatIdentity {
+  return {
+    dev: stat.dev,
+    ino: stat.ino,
+    uid: typeof stat.uid === "number" ? stat.uid : null,
+  };
+}
+
+function sameSocketDirectoryIdentity(stat:import("node:fs").Stats|null,identity:StatIdentity):boolean {
+  return Boolean(
+    stat && stat.isDirectory() && !stat.isSymbolicLink() &&
+    stat.dev === identity.dev && stat.ino === identity.ino &&
+    (identity.uid == null || stat.uid === identity.uid),
+  );
+}
+
+function nowIso():string {
+  return new Date().toISOString();
+}
+
+function errorMessage(error:unknown):string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function normalizeBrowserContext(value:unknown):BrowserContext;
+function normalizeBrowserContext(value:unknown,opts:{allowUnassigned:true}):AssignedContext;
+function normalizeBrowserContext(value:unknown,{allowUnassigned=false}:{allowUnassigned?:boolean}={}):AssignedContext {
+  if (typeof value === "string" && (EQUINOX_BROWSER_CONTEXTS as readonly string[]).includes(value)) return value as BrowserContext;
+  if (allowUnassigned && (value == null || value === "unassigned")) return "unassigned";
+  throw new Error(`Unknown Equinox Browser context: ${String(value)}`);
+}
+
+function normalizeInstanceId(value:unknown):string|null {
+  if (value == null || value === "") return null;
+  const normalized = String(value).trim();
+  if (!INSTANCE_ID_PATTERN.test(normalized)) {
+    throw new Error("Equinox Browser instance id is invalid");
+  }
+  return normalized.toLowerCase();
+}
+
+async function prepareBridgeSocketPath(socketPath:string,{probeTimeoutMs=500}:{probeTimeoutMs?:number}={}):Promise<void> {
+  const existing = await fs.lstat(socketPath).catch((error) => {
+    if ((error as ErrorCode)?.code === "ENOENT") return null;
+    throw error;
+  });
+  if (!existing) return;
+  if (!existing.isSocket() || existing.isSymbolicLink()) {
+    throw new Error("Equinox Browser socket path is occupied by a non-socket entry.");
+  }
+
+  const active = await new Promise((resolve, reject) => {
+    const probe = net.createConnection(socketPath);
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      probe.destroy();
+      reject(new Error("Timed out while checking the existing Equinox Browser socket."));
+    }, probeTimeoutMs);
+    timer.unref?.();
+    const finish = (callback:()=>void) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      callback();
+    };
+    probe.once("connect", () => finish(() => {
+      probe.destroy();
+      resolve(true);
+    }));
+    probe.once("error", (error) => finish(() => {
+      if ((error as ErrorCode)?.code === "ECONNREFUSED" || (error as ErrorCode)?.code === "ENOENT") {
+        resolve(false);
+        return;
+      }
+      reject(error);
+    }));
+  });
+
+  if (active) {
+    throw new Error("Equinox Browser socket is already owned by another live bridge.");
+  }
+  await fs.rm(socketPath, { force: true });
+}
+
+function sameSocketIdentity(left:import("node:fs").Stats|null,right:SocketIdentity):boolean {
+  return Boolean(
+    left && right &&
+    left.isSocket?.() && !left.isSymbolicLink?.() &&
+    left.dev === right.dev && left.ino === right.ino
+  );
+}
+
+export function createEquinoxBrowserBridge({
+  bridgeEndpoint = null,
+  socketPath = EQUINOX_BROWSER_SOCKET_PATH,
+  expectedExtensionIds = EQUINOX_BROWSER_EXTENSION_IDS,
+  callTimeoutMs = 15_000,
+  recordEvent = () => {},
+  handleExtensionRequest = null,
+  maxTransportLineBytes = MAX_BRIDGE_LINE_BYTES,
+  maxTransportWriteQueueBytes = MAX_BRIDGE_WRITE_QUEUE_BYTES,
+  maxTransportWriteQueueMessages = MAX_BRIDGE_WRITE_QUEUE_MESSAGES,
+  maxConnections = MAX_BRIDGE_CONNECTIONS,
+  maxPendingCalls = MAX_BRIDGE_PENDING_CALLS,
+  partialLineTimeoutMs = DEFAULT_PARTIAL_LINE_TIMEOUT_MS,
+}:BridgeOptions={}) {
+  const transportEndpoint = bridgeEndpoint ?? (socketPath
+    ? Object.freeze({ kind: "unix", endpoint: socketPath, implemented: true })
+    : null);
+  if (transportEndpoint && !new Set(["unix", "named-pipe"]).has(transportEndpoint.kind)) {
+    throw new Error("Equinox Browser IPC endpoint kind is unsupported.");
+  }
+  if (transportEndpoint && transportEndpoint.implemented !== true) {
+    throw new Error(`Equinox Browser IPC endpoint ${transportEndpoint.kind} is not implemented.`);
+  }
+  const transportPath = transportEndpoint?.endpoint ?? null;
+  const canonicalSocketDirectoryOptions = transportEndpoint?.kind === "unix"
+    ? canonicalBrowserSocketDirectoryOptions(transportPath)
+    : null;
+  let canonicalSocketDirectoryIdentity:StatIdentity|null = null;
+  let canonicalSocketDirectoryIdentityError:unknown = null;
+  if (canonicalSocketDirectoryOptions) {
+    try {
+      canonicalSocketDirectoryIdentity = socketDirectoryIdentity(lstatSync(path.dirname(transportPath!)));
+    } catch (error) {
+      if ((error as ErrorCode)?.code !== "ENOENT") canonicalSocketDirectoryIdentityError = error;
+    }
+  }
+
+  async function verifyCanonicalSocketDirectoryIdentity():Promise<void> {
+    if (canonicalSocketDirectoryIdentityError) throw canonicalSocketDirectoryIdentityError;
+    const directory = path.dirname(transportPath!);
+    const current = await fs.lstat(directory).catch((error) => {
+      if ((error as ErrorCode)?.code === "ENOENT") return null;
+      throw error;
+    });
+    if (!current || !current.isDirectory() || current.isSymbolicLink()) {
+      throw new Error("Equinox Browser socket directory is not a normal directory.");
+    }
+    if (canonicalSocketDirectoryIdentity) {
+      if (!sameSocketDirectoryIdentity(current, canonicalSocketDirectoryIdentity)) {
+        throw new Error("Equinox Browser socket directory identity changed before socket preparation.");
+      }
+      return;
+    }
+    canonicalSocketDirectoryIdentity = socketDirectoryIdentity(current);
+  }
+
+  let server:net.Server|null = null;
+  let startedAt:string|null = null;
+  let nextCommandId = 1;
+  let pairingExpectation:Pairing|null = null;
+  let ownedSocketIdentity:SocketIdentity|null = null;
+  const pending = new Map<string,Waiter>();
+  const connections = new Set<Connection>();
+  const contexts = new Map<BrowserContext,Connection>();
+
+  const acceptedExtensionIds = [...new Set(expectedExtensionIds)];
+  if (acceptedExtensionIds.length < 1 || acceptedExtensionIds.some((id) => !/^[a-p]{32}$/.test(id))) {
+    throw new Error("Equinox Browser expected extension ids are invalid");
+  }
+  if (handleExtensionRequest != null && typeof handleExtensionRequest !== "function") {
+    throw new Error("Equinox Browser extension request handler is invalid");
+  }
+  if (!Number.isInteger(maxConnections) || maxConnections < 1 || maxConnections > 64) {
+    throw new Error("Equinox Browser connection budget is invalid");
+  }
+  if (!Number.isInteger(maxPendingCalls) || maxPendingCalls < 1 || maxPendingCalls > 4096) {
+    throw new Error("Equinox Browser pending-call budget is invalid");
+  }
+  if (!Number.isInteger(partialLineTimeoutMs) || partialLineTimeoutMs < 100 || partialLineTimeoutMs > 60_000) {
+    throw new Error("Equinox Browser partial-line timeout is invalid");
+  }
+  const expectedExtensionIdSet = new Set(acceptedExtensionIds);
+  const expectedOrigins = acceptedExtensionIds.map((id) => `chrome-extension://${id}/`);
+  const expectedOriginSet = new Set(expectedOrigins);
+  const expectedExtensionId = acceptedExtensionIds[0];
+  const expectedOrigin = expectedOrigins[0];
+
+  function emit(type:string,data:BrowserEvent={}):void {
+    try {
+      const pendingEvent = recordEvent({
+        component: "equinox-browser",
+        type,
+        at: nowIso(),
+        ...data,
+      });
+      if (pendingEvent && typeof (pendingEvent as Promise<unknown>).catch === "function") {
+        void (pendingEvent as Promise<unknown>).catch(() => {});
+      }
+    } catch {
+      // Observability must never break browser control.
+    }
+  }
+
+  function pairingSnapshot() {
+    if (!pairingExpectation) return null;
+    if (Date.now() >= pairingExpectation.expiresAtMs) {
+      pairingExpectation = null;
+      return null;
+    }
+    return {
+      context: pairingExpectation.context,
+      startedAt: pairingExpectation.startedAt,
+      expiresAt: new Date(pairingExpectation.expiresAtMs).toISOString(),
+    };
+  }
+
+  function consumePairingExpectation():BrowserContext|null {
+    const current = pairingSnapshot();
+    if (!current) return null;
+    pairingExpectation = null;
+    return current.context;
+  }
+
+  function flushStateWrites(state:Connection|null):void {
+    if (!state || state.closed || state.writeBlocked || state.socket.destroyed) return;
+    while (state.writeQueue.length > 0) {
+      const queued = state.writeQueue.shift()!;
+      state.writeQueueBytes -= queued.length;
+      if (!state.socket.write(queued)) {
+        state.writeBlocked = true;
+        break;
+      }
+    }
+  }
+
+  function writeLine(state:Connection|null,message:JsonObject):boolean {
+    if (!state || state.closed || !state.socket || state.socket.destroyed) return false;
+    const line = Buffer.from(`${JSON.stringify(message)}\n`, "utf8");
+    if (line.length > maxTransportLineBytes) {
+      clearConnection(state, "native host outbound line exceeded transport budget");
+      return false;
+    }
+    if (state.writeBlocked || state.writeQueue.length > 0) {
+      if (
+        state.writeQueue.length >= maxTransportWriteQueueMessages ||
+        state.writeQueueBytes + line.length > maxTransportWriteQueueBytes
+      ) {
+        clearConnection(state, "native host outbound queue exceeded transport budget");
+        return false;
+      }
+      state.writeQueue.push(line);
+      state.writeQueueBytes += line.length;
+      return true;
+    }
+    if (!state.socket.write(line)) state.writeBlocked = true;
+    return true;
+  }
+
+  function rejectPendingForState(state:Connection,reason:string):void {
+    for (const [id, waiter] of pending.entries()) {
+      if (waiter.state !== state) continue;
+      clearTimeout(waiter.timer);
+      pending.delete(id);
+      waiter.reject(new Error(reason));
+    }
+  }
+
+  function clearPartialLineTimer(state:Connection|null):void {
+    if (!state?.partialLineTimer) return;
+    clearTimeout(state.partialLineTimer);
+    state.partialLineTimer = null;
+  }
+
+  function armPartialLineTimer(state:Connection|null):void {
+    if (!state || state.closed || state.partialLineTimer || state.lineBytes === 0) return;
+    state.partialLineTimer = setTimeout(() => {
+      state.partialLineTimer = null;
+      clearConnection(state, "native host partial line timed out");
+    }, partialLineTimeoutMs);
+    state.partialLineTimer.unref?.();
+  }
+
+  function clearConnection(state:Connection|null,reason="native host disconnected",{destroy=true}:{destroy?:boolean}={}):void {
+    if (!state || state.closed) return;
+    clearPartialLineTimer(state);
+    state.closed = true;
+    connections.delete(state);
+    if (state.context && contexts.get(state.context) === state) contexts.delete(state.context);
+    rejectPendingForState(state, reason);
+    if (destroy && state.socket && !state.socket.destroyed) {
+      state.socket.removeAllListeners();
+      state.socket.destroy();
+    }
+    emit("disconnected", {
+      reason,
+      context: state.context ?? null,
+      instanceId: state.instanceId ?? null,
+    });
+  }
+
+  function rejectWaiter(key:string,waiter:Waiter,reason:string):void {
+    pending.delete(key);
+    clearTimeout(waiter.timer);
+    waiter.reject(new Error(reason));
+  }
+
+  function snapshotState(state:Connection|null) {
+    if (!state || state.closed) {
+      return {
+        ready: false,
+        connectedAt: null,
+        host: null,
+        extension: null,
+      };
+    }
+    return {
+      ready: Boolean(state.hostInfo && state.extensionInfo),
+      connectedAt: state.connectedAt,
+      host: state.hostInfo,
+      extension: state.extensionInfo,
+    };
+  }
+
+  function snapshotContext(context:BrowserContext) {
+    const normalized = normalizeBrowserContext(context);
+    return {
+      context: normalized,
+      ...snapshotState(contexts.get(normalized) ?? null),
+    };
+  }
+
+  function contextIsReady(context:BrowserContext):boolean {
+    const state = contexts.get(normalizeBrowserContext(context));
+    return Boolean(state && !state.closed && state.hostInfo && state.extensionInfo);
+  }
+
+  function assertContextAvailable(context:BrowserContext):Connection {
+    const normalized = normalizeBrowserContext(context);
+    const state = contexts.get(normalized);
+    if (!state || state.closed || !state.hostInfo || !state.extensionInfo || state.socket.destroyed) {
+      throw new Error(
+        normalized === "agent"
+          ? "Equinox Agent Browser bağlı değil. Control Center'dan Agent Browser'ı açıp Equinox Browser uzantısını bu izole profile kurun."
+          : "Equinox Browser kullanıcı profili bağlı değil. Chrome uzantısının yüklü ve Native Messaging host'un kayıtlı olduğundan emin olun.",
+      );
+    }
+    return state;
+  }
+
+  async function callOnState(state:Connection,method:string,args:JsonObject={}, {timeoutMs=callTimeoutMs}:{timeoutMs?:number}={}):Promise<unknown> {
+    if (!state || state.closed || !state.socket || state.socket.destroyed) {
+      throw new Error("Equinox Browser native host bağlı değil.");
+    }
+    if (pending.size >= maxPendingCalls) {
+      throw new Error("Equinox Browser pending command budget exceeded.");
+    }
+    const id = String(nextCommandId++);
+    const command = {
+      type: "command",
+      id,
+      method,
+      args: args ?? {},
+    };
+
+    return await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        pending.delete(id);
+        reject(new Error(`Equinox Browser command timed out: ${method}`));
+      }, timeoutMs);
+      pending.set(id, { resolve, reject, timer, method, stream: null, state });
+      try {
+        if (!writeLine(state, { type: "host.send", message: command })) {
+          throw new Error("Equinox Browser native host transport is unavailable.");
+        }
+      } catch (error) {
+        pending.delete(id);
+        clearTimeout(timer);
+        reject(error);
+      }
+    });
+  }
+
+  function persistAssignedContext(state:Connection,context:BrowserContext):void {
+    if (!state.instanceId) return;
+    void callOnState(state, "context.set", { context }, { timeoutMs: 5_000 })
+      .then(() => emit("context_persisted", { context, instanceId: state.instanceId }))
+      .catch((error) => emit("context_persist_failed", {
+        context,
+        instanceId: state.instanceId,
+        message: errorMessage(error),
+      }));
+  }
+
+  function assignContext(state:Connection,reportedContext:unknown):BrowserContext|null {
+    const normalizedReported = normalizeBrowserContext(reportedContext, { allowUnassigned: true });
+    let context = normalizedReported;
+    let shouldPersist = false;
+
+    if (context === "unassigned") {
+      const expected = consumePairingExpectation();
+      if (expected) {
+        if (!state.instanceId) {
+          throw new Error("Agent Browser pairing requires an Equinox Browser build with per-profile instance identity");
+        }
+        context = expected;
+        shouldPersist = true;
+      } else if (!contexts.has("user")) {
+        context = "user";
+        shouldPersist = Boolean(state.instanceId);
+      } else {
+        return null;
+      }
+    }
+
+    const existing = contexts.get(context);
+    if (existing && existing !== state) {
+      if (state.instanceId && existing.instanceId === state.instanceId) {
+        clearConnection(existing, `Equinox Browser ${context} context reconnected`);
+      } else {
+        throw new Error(`Equinox Browser context is already connected: ${context}`);
+      }
+    }
+
+    // A previously paired profile reports its persisted Agent context directly.
+    // Consume the pending launch expectation just as for an unassigned profile.
+    if (pairingSnapshot()?.context === context) consumePairingExpectation();
+    state.context = context;
+    contexts.set(context, state);
+    if (shouldPersist) persistAssignedContext(state, context);
+    return context;
+  }
+
+  function sendExtensionResponse(state:Connection,id:string,{ok,result=null,error=null}:{ok:boolean;result?:unknown;error?:unknown}) {
+    if (!state?.socket || state.closed || state.socket.destroyed) return;
+    writeLine(state, {
+      type: "host.send",
+      message: ok
+        ? { type: "extension.response", id, ok: true, result }
+        : { type: "extension.response", id, ok: false, error: { message: String(error || "Equinox Local request failed").slice(0, 500) } },
+    });
+  }
+
+  async function dispatchExtensionRequest(state:Connection,message:JsonObject):Promise<void> {
+    const id = typeof message?.id === "string" || typeof message?.id === "number"
+      ? String(message.id)
+      : null;
+    if (!id || id.length > 128) return;
+    try {
+      if (!state.hostInfo || !state.extensionInfo || !state.context) {
+        throw new Error("Equinox Browser context is not ready for Local actions.");
+      }
+      const method = typeof message.method === "string" ? message.method : "";
+      if (!/^[a-z0-9._-]{1,80}$/u.test(method)) {
+        throw new Error("Equinox Local action name is invalid.");
+      }
+      const args = message.args ?? {};
+      if (!args || typeof args !== "object" || Array.isArray(args)) {
+        throw new Error("Equinox Local action arguments must be an object.");
+      }
+      if (typeof handleExtensionRequest !== "function") {
+        throw new Error("Equinox Local does not expose extension-initiated actions in this runtime.");
+      }
+      const result = await handleExtensionRequest({
+        context: state.context,
+        instanceId: state.instanceId,
+        method,
+        args,
+      });
+      sendExtensionResponse(state, id, { ok: true, result: result ?? null });
+      emit("extension_request", { context: state.context, method, ok: true });
+    } catch (error) {
+      const messageText = errorMessage(error);
+      sendExtensionResponse(state, id, { ok: false, error: messageText });
+      emit("extension_request", { context: state.context ?? null, method: message?.method ?? null, ok: false, message: messageText.slice(0, 500) });
+    }
+  }
+
+  function handleExtensionMessage(state:Connection,message:JsonObject):void {
+    if (message?.type === "extension.hello") {
+      if (!expectedExtensionIdSet.has(message.extensionId)) {
+        clearConnection(state, `Unexpected extension id: ${message.extensionId || "unknown"}`);
+        return;
+      }
+      if (!state.hostInfo || state.hostInfo.extensionId !== message.extensionId) {
+        clearConnection(state, `Extension id does not match native host origin: ${message.extensionId || "unknown"}`);
+        return;
+      }
+
+      try {
+        state.instanceId = normalizeInstanceId(message.instanceId);
+        const reportedContext = message.browserContext ?? "unassigned";
+        const assignedContext = assignContext(state, reportedContext);
+        state.extensionInfo = {
+          extensionId: message.extensionId,
+          extensionVersion: message.extensionVersion ?? null,
+          protocolVersion: message.protocolVersion ?? null,
+          capabilities: Array.isArray(message.capabilities) ? message.capabilities : [],
+          capabilityVersions: message.capabilityVersions && typeof message.capabilityVersions === "object" ? message.capabilityVersions : {},
+          lastNativeDisconnectError: message.lastNativeDisconnectError ?? null,
+          instanceId: state.instanceId,
+          browserContext: assignedContext,
+          connectedAt: nowIso(),
+        };
+        state.connectedAt = nowIso();
+
+        if (!assignedContext) {
+          emit("extension_unassigned", {
+            extensionVersion: state.extensionInfo.extensionVersion,
+            instanceId: state.instanceId,
+          });
+          return;
+        }
+        emit("extension_ready", {
+          context: assignedContext,
+          instanceId: state.instanceId,
+          extensionVersion: state.extensionInfo.extensionVersion,
+          lastNativeDisconnectError: state.extensionInfo.lastNativeDisconnectError,
+        });
+      } catch (error) {
+        clearConnection(state, errorMessage(error));
+      }
+      return;
+    }
+
+    if (message?.type === "extension.request") {
+      void dispatchExtensionRequest(state, message);
+      return;
+    }
+
+    if (message?.type === "response.chunk" && message.id != null) {
+      const key = String(message.id);
+      const waiter = pending.get(key);
+      if (!waiter || waiter.state !== state) return;
+      const field = message.field;
+      const index = Number(message.index);
+      const total = Number(message.total);
+      const data = message.data;
+      if (
+        field !== "data" ||
+        !Number.isInteger(index) ||
+        !Number.isInteger(total) ||
+        total < 1 ||
+        total > MAX_STREAM_CHUNKS ||
+        index < 0 ||
+        index >= total ||
+        typeof data !== "string"
+      ) {
+        rejectWaiter(key, waiter, "Equinox Browser streamed response metadata is invalid");
+        return;
+      }
+      if (!waiter.stream) {
+        waiter.stream = { field, total, chunks: new Array(total), receivedChars: 0 };
+      }
+      if (waiter.stream.field !== field || waiter.stream.total !== total) {
+        rejectWaiter(key, waiter, "Equinox Browser streamed response changed shape mid-transfer");
+        return;
+      }
+      if (waiter.stream.chunks[index] != null) {
+        rejectWaiter(key, waiter, "Equinox Browser streamed response repeated a chunk");
+        return;
+      }
+      waiter.stream.receivedChars += data.length;
+      if (waiter.stream.receivedChars > MAX_STREAMED_RESPONSE_CHARS) {
+        rejectWaiter(key, waiter, "Equinox Browser streamed response exceeded the safety limit");
+        return;
+      }
+      waiter.stream.chunks[index] = data;
+      return;
+    }
+
+    if (message?.type !== "response" || message.id == null) return;
+    const key = String(message.id);
+    const waiter = pending.get(key);
+    if (!waiter || waiter.state !== state) return;
+    pending.delete(key);
+    clearTimeout(waiter.timer);
+    if (message.ok) {
+      let result = message.result ?? null;
+      const descriptor = result?.streamed;
+      if (descriptor) {
+        const stream = waiter.stream;
+        if (
+          !stream ||
+          descriptor.field !== stream.field ||
+          descriptor.chunks !== stream.total ||
+          stream.chunks.some((chunk) => typeof chunk !== "string")
+        ) {
+          waiter.reject(new Error("Equinox Browser streamed response is incomplete"));
+          return;
+        }
+        const { streamed: _streamed, ...metadata } = result;
+        result = { ...metadata, [stream.field]: stream.chunks.join("") };
+      } else if (waiter.stream) {
+        waiter.reject(new Error("Equinox Browser streamed response ended without a descriptor"));
+        return;
+      }
+      waiter.resolve(result);
+    } else waiter.reject(new Error(message.error?.message || message.error || "Browser command failed"));
+  }
+
+  function handleHostLine(state:Connection,line:string):void {
+    if (!line.trim()) return;
+    let message;
+    try {
+      message = JSON.parse(line);
+    } catch {
+      clearConnection(state, "Native host sent invalid JSON");
+      return;
+    }
+
+    if (message?.type === "host.hello") {
+      if (!expectedOriginSet.has(message.origin)) {
+        clearConnection(state, `Unexpected native host origin: ${message.origin || "unknown"}`);
+        return;
+      }
+      const matchedExtensionId = acceptedExtensionIds.find(
+        (id) => message.origin === `chrome-extension://${id}/`,
+      );
+      state.hostInfo = {
+        origin: message.origin,
+        extensionId: matchedExtensionId,
+        pid: message.pid ?? null,
+        version: message.version ?? null,
+      };
+      state.connectedAt = nowIso();
+      emit("host_connected", { pid: state.hostInfo.pid });
+      return;
+    }
+
+    if (message?.type === "extension.message") {
+      handleExtensionMessage(state, message.message);
+    }
+  }
+
+  function attachHost(socket:net.Socket):void {
+    if (connections.size >= maxConnections) {
+      socket.destroy();
+      emit("connection_rejected", { reason: "connection budget exceeded" });
+      return;
+    }
+    const state:Connection = {
+      socket,
+      lineChunks: [],
+      lineBytes: 0,
+      partialLineTimer: null,
+      hostInfo: null,
+      extensionInfo: null,
+      connectedAt: null,
+      instanceId: null,
+      context: null,
+      writeQueue: [],
+      writeQueueBytes: 0,
+      writeBlocked: false,
+      closed: false,
+    };
+    connections.add(state);
+
+    socket.on("data", (chunk) => {
+      const buffer = Buffer.from(chunk);
+      let offset = 0;
+      while (offset < buffer.length && !state.closed) {
+        const newline = buffer.indexOf(0x0a, offset);
+        const end = newline < 0 ? buffer.length : newline;
+        const piece = buffer.subarray(offset, end);
+        if (state.lineBytes + piece.length > maxTransportLineBytes) {
+          clearConnection(state, "native host inbound line exceeded transport budget");
+          return;
+        }
+        if (piece.length > 0) {
+          state.lineChunks.push(piece);
+          state.lineBytes += piece.length;
+        }
+        if (newline < 0) {
+          armPartialLineTimer(state);
+          break;
+        }
+        clearPartialLineTimer(state);
+        const line = state.lineChunks.length === 0
+          ? ""
+          : Buffer.concat(state.lineChunks, state.lineBytes).toString("utf8");
+        state.lineChunks = [];
+        state.lineBytes = 0;
+        handleHostLine(state, line);
+        offset = newline + 1;
+      }
+    });
+    socket.on("drain", () => {
+      if (state.closed) return;
+      state.writeBlocked = false;
+      flushStateWrites(state);
+    });
+    socket.on("error", (error) => {
+      emit("host_error", {
+        context: state.context ?? null,
+        instanceId: state.instanceId ?? null,
+        message: errorMessage(error),
+      });
+    });
+    socket.on("close", () => {
+      clearConnection(state, "native host disconnected", { destroy: false });
+    });
+  }
+
+  async function start() {
+    if (server) return snapshot();
+    if (!transportPath) {
+      throw new Error("Equinox Browser local IPC transport is not implemented on this platform yet.");
+    }
+    if (transportEndpoint!.kind === "unix") {
+      if (canonicalSocketDirectoryOptions) {
+        if (canonicalSocketDirectoryIdentity || canonicalSocketDirectoryIdentityError) {
+          await verifyCanonicalSocketDirectoryIdentity();
+        }
+        await prepareEquinoxBrowserSocketDirectory(canonicalSocketDirectoryOptions);
+        await verifyCanonicalSocketDirectoryIdentity();
+      } else {
+        await fs.mkdir(path.dirname(transportPath!), { recursive: true });
+      }
+      await prepareBridgeSocketPath(transportPath);
+    }
+
+    server = net.createServer(attachHost);
+    const activeServer=server;
+    try {
+      await new Promise<void>((resolve, reject) => {
+        activeServer.once("error", reject);
+        activeServer.listen(transportPath!, resolve);
+      });
+      if (transportEndpoint!.kind === "unix") {
+        await fs.chmod(transportPath, 0o600);
+        const socketStat = await fs.lstat(transportPath!);
+        if (!socketStat.isSocket() || socketStat.isSymbolicLink()) {
+          throw new Error("Equinox Browser bridge did not create a safe Unix socket.");
+        }
+        ownedSocketIdentity = { dev: socketStat.dev, ino: socketStat.ino };
+      }
+    } catch (error) {
+      const failedServer = server;
+      server = null;
+      await new Promise<void>((resolve) => failedServer.close(() => resolve())).catch(() => {});
+      throw error;
+    }
+    startedAt = nowIso();
+    emit("started", { socketPath: transportPath, transportKind: transportEndpoint!.kind });
+    return snapshot();
+  }
+
+  async function close():Promise<void> {
+    for (const state of [...connections]) {
+      clearConnection(state, "Equinox Browser bridge closed");
+    }
+    for (const waiter of pending.values()) {
+      clearTimeout(waiter.timer);
+      waiter.reject(new Error("Equinox Browser bridge closed"));
+    }
+    pending.clear();
+    contexts.clear();
+    pairingExpectation = null;
+    if (server) {
+      const closingServer = server;
+      server = null;
+      await new Promise<void>((resolve) => closingServer.close(() => resolve()));
+    }
+    if (ownedSocketIdentity) {
+      const current = await fs.lstat(transportPath!).catch((error) => {
+        if ((error as ErrorCode)?.code === "ENOENT") return null;
+        throw error;
+      });
+      if (sameSocketIdentity(current, ownedSocketIdentity)) {
+        await fs.rm(transportPath!, { force: true });
+      }
+      ownedSocketIdentity = null;
+    }
+    emit("closed");
+  }
+
+  function snapshot() {
+    const user = snapshotContext("user");
+    const agent = snapshotContext("agent");
+    const unassigned = [...connections]
+      .filter((state) => !state.closed && !state.context)
+      .map((state) => ({
+        connectedAt: state.connectedAt,
+        host: state.hostInfo,
+        extension: state.extensionInfo,
+      }));
+    return {
+      active: Boolean(server),
+      ready: user.ready,
+      socketPath: transportPath,
+      transportKind: transportEndpoint?.kind ?? null,
+      expectedExtensionId,
+      expectedExtensionIds: acceptedExtensionIds,
+      expectedOrigin,
+      expectedOrigins,
+      startedAt,
+      connectedAt: user.connectedAt,
+      host: user.host,
+      extension: user.extension,
+      pendingCount: pending.size,
+      connectionCount: connections.size,
+      contexts: { agent, user },
+      unassigned,
+      pairing: pairingSnapshot(),
+    };
+  }
+
+  async function waitUntilReady(timeoutMs=8_000,{context=DEFAULT_EQUINOX_BROWSER_CONTEXT}:{context?:BrowserContext}={}) {
+    const normalized = normalizeBrowserContext(context);
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      if (contextIsReady(normalized)) {
+        const selected = snapshotContext(normalized);
+        return {
+          ...snapshot(),
+          context: normalized,
+          ready: selected.ready,
+          connectedAt: selected.connectedAt,
+          host: selected.host,
+          extension: selected.extension,
+        };
+      }
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    assertContextAvailable(normalized);
+  }
+
+  async function call(method:string,args:JsonObject={}, {
+    timeoutMs = callTimeoutMs,
+    context = DEFAULT_EQUINOX_BROWSER_CONTEXT,
+  }:CallOpts={}) {
+    const normalized = normalizeBrowserContext(context);
+    if (!contextIsReady(normalized)) {
+      await waitUntilReady(Math.min(timeoutMs, 8_000), { context: normalized });
+    }
+    return await callOnState(assertContextAvailable(normalized), method, args, { timeoutMs });
+  }
+
+  function expectContext(context:BrowserContext,{timeoutMs=DEFAULT_PAIRING_TIMEOUT_MS}:{timeoutMs?:number}={}) {
+    const normalized = normalizeBrowserContext(context);
+    if (!Number.isInteger(timeoutMs) || timeoutMs < 1_000 || timeoutMs > DEFAULT_PAIRING_TIMEOUT_MS) {
+      throw new Error("Equinox Browser pairing timeout is invalid");
+    }
+    pairingExpectation = {
+      context: normalized,
+      startedAt: nowIso(),
+      expiresAtMs: Date.now() + timeoutMs,
+    };
+    emit("context_pairing_started", { context: normalized, timeoutMs });
+    return pairingSnapshot();
+  }
+
+  function cancelExpectedContext() {
+    const previous = pairingSnapshot();
+    pairingExpectation = null;
+    if (previous) emit("context_pairing_cancelled", { context: previous.context });
+    return previous;
+  }
+
+  return {
+    start,
+    close,
+    call,
+    snapshot,
+    snapshotContext,
+    waitUntilReady,
+    expectContext,
+    cancelExpectedContext,
+    readyFor: contextIsReady,
+    get ready() {
+      return contextIsReady(DEFAULT_EQUINOX_BROWSER_CONTEXT);
+    },
+    get socketPath() {
+      return transportPath;
+    },
+  };
+}

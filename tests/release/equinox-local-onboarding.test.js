@@ -219,3 +219,125 @@ test("managed installs upgraded from before setup-state persistence are treated 
   assert.equal(status.legacyCompleted, true);
   assert.equal(await fs.stat(fixture.paths.onboardingStatePath).then(() => true).catch((error) => error?.code === "ENOENT" ? false : Promise.reject(error)), false);
 });
+
+test("managed onboarding rejects malformed keys and tunnel IDs before creating private state", async(t)=>{
+  const fixture=await makeManagedFixture();
+  t.after(()=>fs.rm(fixture.root,{recursive:true,force:true}));
+  const bodies=[
+    null,[],{},"text",
+    {tunnelId:TUNNEL_ID,runtimeKey:RUNTIME_KEY,extra:"secret"},
+    {tunnelId:TUNNEL_ID.toUpperCase(),runtimeKey:RUNTIME_KEY},
+    {tunnelId:TUNNEL_ID,runtimeKey:"short"},
+    {tunnelId:TUNNEL_ID,runtimeKey:" "+RUNTIME_KEY},
+    {tunnelId:TUNNEL_ID,runtimeKey:RUNTIME_KEY+"\n"},
+    {tunnelId:TUNNEL_ID,runtimeKey:"x".repeat(4097)},
+    {tunnelId:TUNNEL_ID,runtimeKey:42},
+  ];
+  for(const body of bodies)assert.throws(()=>validateTunnelOnboardingInput(body),Error);
+  for(const runtimeKey of ["short"," "+RUNTIME_KEY,RUNTIME_KEY+"\n","x".repeat(4097)]){
+    await assert.rejects(configureManagedTunnel({
+      installation:fixture.installation,homeDir:fixture.homeDir,
+      tunnelId:TUNNEL_ID,runtimeKey,
+    }),Error);
+  }
+  for(const target of [fixture.paths.runtimeKeyPath,fixture.paths.transportConfigPath]){
+    await assert.rejects(fs.lstat(target),{code:"ENOENT"});
+  }
+  assert.equal(Object.hasOwn(Object.prototype,"runtimeKey"),false);
+});
+
+test("managed onboarding rejects non-managed or foreign install roots without creating configuration",async(t)=>{
+  const fixture=await makeManagedFixture();
+  t.after(()=>fs.rm(fixture.root,{recursive:true,force:true}));
+  for(const installation of [
+    {...fixture.installation,managed:false},
+    {...fixture.installation,selfUpdateSupported:false},
+    {...fixture.installation,installRoot:path.join(fixture.root,"unowned")},
+  ]){
+    await assert.rejects(configureManagedTunnel({
+      installation,homeDir:fixture.homeDir,tunnelId:TUNNEL_ID,runtimeKey:RUNTIME_KEY,
+    }),Error);
+    await assert.rejects(initializeManagedOnboardingState({
+      installation,homeDir:fixture.homeDir,
+    }),Error);
+  }
+  await assert.rejects(fs.lstat(fixture.paths.runtimeKeyPath),{code:"ENOENT"});
+  await assert.rejects(fs.lstat(fixture.paths.transportConfigPath),{code:"ENOENT"});
+  await assert.rejects(fs.lstat(fixture.paths.onboardingStatePath),{code:"ENOENT"});
+});
+
+test("managed onboarding never treats corrupt or symlinked state as legacy complete",async(t)=>{
+  const fixture=await makeManagedFixture();
+  t.after(()=>fs.rm(fixture.root,{recursive:true,force:true}));
+  await fs.mkdir(path.dirname(fixture.paths.onboardingStatePath),{recursive:true});
+  const outsider=path.join(fixture.root,"synthetic-outside.txt");
+  await fs.writeFile(outsider,"synthetic-not-a-secret",{mode:0o600});
+  for(const payload of [
+    "{",
+    JSON.stringify({version:99,firstAgentCommandAt:null,completedAt:null}),
+    JSON.stringify({version:1,firstAgentCommandAt:"bad-date",completedAt:null}),
+    JSON.stringify({version:1,firstAgentCommandAt:null,completedAt:null,unexpected:"fixture"}),
+  ]){
+    await fs.writeFile(fixture.paths.onboardingStatePath,payload,{mode:0o600});
+    await assert.rejects(getManagedOnboardingStatus({
+      installation:fixture.installation,homeDir:fixture.homeDir,
+    }),/Existing onboarding .* is invalid/u);
+    await assert.rejects(initializeManagedOnboardingState({
+      installation:fixture.installation,homeDir:fixture.homeDir,
+    }),/Existing onboarding .* is invalid/u);
+    assert.equal(await fs.readFile(fixture.paths.onboardingStatePath,"utf8"),payload);
+  }
+  await fs.rm(fixture.paths.onboardingStatePath);
+  await fs.symlink(outsider,fixture.paths.onboardingStatePath);
+  await assert.rejects(getManagedOnboardingStatus({
+    installation:fixture.installation,homeDir:fixture.homeDir,
+  }),/Existing onboarding file is unsafe/u);
+  await assert.rejects(initializeManagedOnboardingState({
+    installation:fixture.installation,homeDir:fixture.homeDir,
+  }),/Existing onboarding file is unsafe/u);
+  assert.equal(await fs.readFile(outsider,"utf8"),"synthetic-not-a-secret");
+});
+
+test("managed onboarding requires all Browser consent milestones and never returns runtime key",async(t)=>{
+  const fixture=await makeManagedFixture();
+  t.after(()=>fs.rm(fixture.root,{recursive:true,force:true}));
+  await initializeManagedOnboardingState({installation:fixture.installation,homeDir:fixture.homeDir});
+  await configureManagedTunnel({
+    installation:fixture.installation,homeDir:fixture.homeDir,
+    tunnelId:TUNNEL_ID,runtimeKey:RUNTIME_KEY,
+  });
+  await recordManagedAgentCommand({
+    installation:fixture.installation,homeDir:fixture.homeDir,
+    supervisorMode:"tunnel",now:()=>Date.parse("2026-10-20T00:00:00.000Z"),
+  });
+  const conditions=[
+    {ready:false,consentAccepted:true,controlEnabled:true},
+    {ready:true,consentAccepted:false,controlEnabled:true},
+    {ready:true,consentAccepted:true,controlEnabled:false},
+  ];
+  for(const browserUser of conditions){
+    const status=await getManagedOnboardingStatus({
+      installation:fixture.installation,homeDir:fixture.homeDir,
+      supervisorMode:"tunnel",browserUser,reconcileCompletion:true,
+      now:()=>Date.parse("2026-10-20T00:01:00.000Z"),
+    });
+    assert.equal(status.setupComplete,false);
+    assert.equal(status.completedAt,null);
+    assert.equal(JSON.stringify(status).includes(RUNTIME_KEY),false);
+  }
+  const status=await getManagedOnboardingStatus({
+    installation:fixture.installation,homeDir:fixture.homeDir,
+    supervisorMode:"tunnel",
+    browserUser:{ready:true,consentAccepted:true,controlEnabled:true},
+    reconcileCompletion:true,
+    now:()=>Date.parse("2026-10-20T00:03:00.000Z"),
+  });
+  assert.equal(status.setupComplete,true);
+  assert.equal(status.completedAt,"2026-10-20T00:03:00.000Z");
+  assert.equal(JSON.stringify(status).includes(RUNTIME_KEY),false);
+  assert.deepEqual(JSON.parse(await fs.readFile(fixture.paths.onboardingStatePath,"utf8")),{
+    version:1,firstAgentCommandAt:"2026-10-20T00:00:00.000Z",
+    completedAt:"2026-10-20T00:03:00.000Z",
+  });
+  assert.equal((await fs.stat(fixture.paths.onboardingStatePath)).mode&0o077,0);
+});

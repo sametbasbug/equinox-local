@@ -28,8 +28,8 @@ test("navigation is remembered only on human actions; setup and explicit links t
   assert.match(js, /remember && section !== "setup"/u);
   assert.match(js, /button\.dataset\.section, \{ remember: true \}/u);
   assert.match(js, /button\.dataset\.jumpSection, \{ remember: true \}/u);
-  assert.match(js, /if \(section && sectionMeta\[section\]\) state\.activeSection = section/u);
-  assert.match(js, /else if \(taskId && .*\) state\.activeSection = "tasks"/u);
+  assert.match(js, /if \(section && sectionMeta\[section\]\)\s+state\.activeSection = section/u);
+  assert.match(js, /else if \(taskId && .*\)\s+state\.activeSection = "tasks"/u);
   assert.match(js, /remembered && remembered !== "setup" && sectionMeta\[remembered\]/u);
 });
 

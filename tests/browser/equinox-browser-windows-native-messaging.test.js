@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -228,6 +229,36 @@ test("Windows Native Messaging registry read is module-independent, credential-s
   assert.equal(value, expected);
 });
 
+test("Windows Native Messaging registry reader is valid native PowerShell 5.1 syntax", async () => {
+  let actualScript = null;
+  await readWindowsNativeMessagingRegistryValue({
+    env: { SystemRoot: "C:\\Windows" },
+    execFileAsync: async (_executable, args) => {
+      actualScript = args.at(-1);
+      return { stdout: "missing\n", stderr: "" };
+    },
+  });
+  assert.equal(typeof actualScript, "string");
+  // A statement separator immediately after a scriptblock opener is not a
+  // statement; this used to produce `try {;` on the real Windows 5.1 host.
+  assert.doesNotMatch(actualScript, /\b(?:try|finally)\s*\{\s*;/u);
+  if (process.platform !== "win32") return;
+
+  // Execute the exact command under in-box Windows PowerShell 5.1.
+  // Use a nonexistent probe key so the test never reads/modifies user hosts.
+  const systemRoot = process.env.SystemRoot || process.env.SYSTEMROOT;
+  assert.ok(systemRoot && path.win32.isAbsolute(systemRoot));
+  const output = execFileSync(path.win32.join(systemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe"),
+    ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", actualScript], {
+      windowsHide: true, timeout: 15_000, encoding: "utf8", maxBuffer: 32 * 1024,
+      env: {
+        ...process.env,
+        EQUINOX_BROWSER_NATIVE_HOST_REGISTRY_SUBKEY: `Software\\EquinoxLocal\\Tests\\AbsentHost-${process.pid}`,
+      },
+    });
+  assert.equal(output.trim(), "missing");
+});
+
 test("Windows Native Messaging registry read rejects malformed helper protocol", async () => {
   for (const stdout of ["invalid\n", "42\n", "value:GG\n", "value:\n"]) {
     await assert.rejects(
@@ -299,4 +330,37 @@ test("Windows Native Messaging update ownership check is read-only and accepts o
     /outside the accepted update ownership set/u,
   );
   assert.equal(registry.calls.filter((call) => call.command === "reg.exe").length, 0);
+});
+
+test("Windows Native Messaging rejects symlinked manifest root before registry changes or foreign user-data reads",async(t)=>{
+  const root=await fs.mkdtemp(path.join(os.tmpdir(),"equinox-native-host-foreign-root-"));
+  t.after(()=>fs.rm(root,{recursive:true,force:true}));
+  const foreign=path.join(root,"foreign-user");
+  await fs.mkdir(foreign);
+  await fs.writeFile(path.join(foreign,"credentials"),"private-user-data");
+  const manifestRoot=path.join(root,"native-messaging");
+  await fs.symlink(foreign,manifestRoot);
+  const registry=registryMock();
+  await assert.rejects(registerWindowsNativeMessagingHost({
+    manifestRoot,launcherPath:LAUNCHER,execFileAsync:registry.execFileAsync,verifyLauncher:false,
+  }),/manifest root is unsafe/u);
+  assert.equal(registry.calls.length,0);
+  assert.deepEqual(await fs.readdir(foreign),["credentials"]);
+  assert.equal(await fs.readFile(path.join(foreign,"credentials"),"utf8"),"private-user-data");
+});
+
+test("Windows Native Messaging rejects JSON-equivalent but byte-foreign manifest and keeps existing HKCU owner",async(t)=>{
+  const root=await fs.mkdtemp(path.join(os.tmpdir(),"equinox-native-host-json-foreign-"));
+  t.after(()=>fs.rm(root,{recursive:true,force:true}));
+  const manifestPath=path.join(root,"dev.equinox.browser.json");
+  const equivalent=JSON.stringify(JSON.parse(windowsNativeMessagingManifest(LAUNCHER)))+"\n";
+  assert.notEqual(equivalent,windowsNativeMessagingManifest(LAUNCHER));
+  await fs.writeFile(manifestPath,equivalent);
+  const registry=registryMock(manifestPath);
+  await assert.rejects(registerWindowsNativeMessagingHost({
+    manifestRoot:root,launcherPath:LAUNCHER,execFileAsync:registry.execFileAsync,verifyLauncher:false,
+  }),/foreign or malformed/u);
+  assert.equal(await fs.readFile(manifestPath,"utf8"),equivalent);
+  assert.equal(registry.value,manifestPath);
+  assert.equal(registry.calls.filter(x=>x.command==="reg.exe").length,0);
 });

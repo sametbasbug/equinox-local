@@ -490,3 +490,108 @@ test("Windows PowerShell 7 is explicit, dynamically discovered, and never auto-i
   assert.equal(ptyCall[1].shell, pwsh);
   assert.deepEqual(ptyCall[1].shellArgs, ["-NoLogo", "-NoProfile"]);
 });
+
+test("terminal finite and PTY admission rejects inaccessible and nondirectory CWD before managed process creation",async()=>{
+  for(const terminalTool of ["terminal_exec","terminal_start"]){
+    for(const condition of ["denied","not-directory"]){
+      let resolves=0,stats=0;
+      const harness=createHarness({
+        safeResolve:async()=>{resolves++;if(condition==="denied")throw Error("Agent Access selected root rejected");return "/safe/fixture-file"},
+        fsImpl:{stat:async()=>{stats++;return {isDirectory:()=>false}}},
+      });
+      const args=terminalTool==="terminal_exec"
+        ?{command:"echo synthetic",cwd:"../../outside",wait_ms:50,max_output_chars:1000}
+        :{cwd:"../../outside",shell:"zsh",cols:80,rows:25};
+      const response=await harness.registrations.get(terminalTool).handler(args);
+      assert.equal(response.isError,true);
+      assert.equal(resolves,1);
+      assert.equal(stats,condition==="denied"?0:1);
+      assert.equal(harness.calls.some(([op])=>op==="processStart"||op==="start"),false);
+    }
+  }
+});
+
+test("terminal promoted replay is exact-project/cwd/argv bound, never adopts a foreign managed process",async()=>{
+  let currentTime=100;
+  const harness=createHarness({now:()=>currentTime});
+  harness.processManager.waitForExit=async input=>{
+    harness.calls.push(["processWait",input]);
+    return {...harness.processState,running:true};
+  };
+  const handler=harness.registrations.get("terminal_exec").handler;
+  const input={command:"npm run fixture",cwd:".",wait_ms:10,max_output_chars:1000};
+  assert.equal(parseText(await handler(input)).processId,"proc-exec-1");
+  currentTime+=20;
+  harness.processState.purpose="other-process";
+  assert.equal(parseText(await handler(input)).processId,"proc-exec-2");
+  assert.equal(harness.calls.filter(([op])=>op==="processStart").length,2);
+  currentTime+=20;
+  const changed=await handler({...input,command:"npm run different"});
+  assert.equal(parseText(changed).processId,"proc-exec-3");
+  assert.equal(harness.calls.filter(([op])=>op==="processStart").length,3);
+  currentTime+=20;
+  const changedCwd=await handler({...input,cwd:"subfolder"});
+  assert.equal(parseText(changedCwd).processId,"proc-exec-4");
+  assert.equal(harness.calls.filter(([op])=>op==="processStart").length,4);
+});
+
+test("terminal finite command remains bounded and does not publish command, cwd, or subprocess output as observability details",async()=>{
+  const harness=createHarness({
+    recordEvent:async event=>{
+      for(const disallowed of ["command","args","cwd","stdout","stderr","combinedOutput","env"]){
+        assert.equal(Object.hasOwn(event.details,disallowed),false,disallowed);
+      }
+      assert.equal(JSON.stringify(event).includes("synthetic-private-command"),false);
+      throw Error("synthetic optional observability collector failure");
+    },
+  });
+  const result=parseText(await harness.registrations.get("terminal_exec").handler({
+    command:"echo synthetic-private-command",cwd:".",wait_ms:10,max_output_chars:1024,
+  }));
+  assert.equal(result.completed,true);
+  assert.equal(result.ok,true);
+  assert.equal(harness.calls.filter(([op])=>op==="processStart").length,1);
+  assert.equal(harness.calls.filter(([op])=>op==="processStop").length,1);
+});
+
+test("terminal finite and PTY schemas keep permission boundaries and bounded input before handler invocation",()=>{
+  const harness=createHarness();
+  const exec=harness.registrations.get("terminal_exec");
+  const start=harness.registrations.get("terminal_start");
+  const read=harness.registrations.get("terminal_read");
+  const write=harness.registrations.get("terminal_write");
+  const errors=[
+    [exec,"command","a".repeat(20_001)],
+    [exec,"wait_ms",120_001],
+    [exec,"max_output_chars",999],
+    [start,"cols",401],
+    [start,"rows",4],
+    [write,"data","x".repeat(100_001)],
+    [read,"wait_ms",5_001],
+    [read,"max_chars",120_001],
+  ];
+  for(const [tool,key,value] of errors){
+    assert.equal(tool.config.inputSchema[key].safeParse(value).success,false,key);
+  }
+  assert.equal(exec.config.inputSchema.shell.safeParse("sh").success,false);
+  assert.equal(write.config.inputSchema.key.safeParse("not-a-terminal-key").success,false);
+  assert.equal(exec.options.mutationScopes[0],"global");
+  assert.equal(write.options.mutationScopes[0],"global");
+  assert.equal(start.config.annotations.openWorldHint,true);
+  assert.equal(read.config.annotations.readOnlyHint,true);
+  assert.equal(harness.calls.length,0);
+});
+
+test("terminal mutation adapters do not bypass Agent Access when finite or interactive process launch is forbidden",async()=>{
+  const harness=createHarness({agentAccess:{terminal:false}});
+  const testCases=[
+    ["terminal_exec",{command:"echo synthetic",cwd:".",wait_ms:0,max_output_chars:1000}],
+    ["terminal_start",{cwd:".",shell:"zsh",cols:80,rows:25}],
+    ["terminal_write",{session_id:"term-1",data:"secret",key:"enter"}],
+  ];
+  for(const [name,args] of testCases){
+    const response=await harness.registrations.get(name).handler(args);
+    assert.equal(response.isError,true,name);
+  }
+  assert.deepEqual(harness.calls,[]);
+});

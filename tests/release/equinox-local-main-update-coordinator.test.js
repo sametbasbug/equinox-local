@@ -191,3 +191,56 @@ test("scheduler failure aborts only the still-unactivated prepared transaction",
   }), /launchd unavailable/u);
   assert.deepEqual(events.at(-1), ["abort-prepared", TX, "launchd unavailable"]);
 });
+
+test("coordinator never lets scheduler overrides change pinned transaction or worker identity", async () => {
+  const events = [];
+  const engine = engineFixture(events);
+  const wrong = {
+    transactionId: "main-" + "f".repeat(32),
+    sourceRoot: "/foreign-source",
+    transactionRoot: "/foreign-state",
+    workerPath: "/foreign-worker.js",
+    nodePath: "/explicit/native/node",
+  };
+  const result = await prepareAndScheduleEquinoxLocalMainUpdate({
+    sourceRoot: "/active", transactionRoot: "/state", currentSha: A, targetSha: B,
+    engineFactory: (args) => {
+      assert.equal(args.sourceRoot, "/active");
+      assert.equal(args.transactionRoot, "/state");
+      assert.equal(args.gitPath, "git");
+      return engine;
+    },
+    engineOptions: { gitPath: "git", sourceRoot: "/foreign", transactionRoot: "/foreign-state" },
+    schedulerOptions: wrong,
+    resolveHostTarget: () => "darwin-arm64",
+    planNativeTransition: async () => reuseTransition(),
+    scheduleWorker: async (args) => {
+      assert.equal(args.transactionId, TX);
+      assert.equal(args.sourceRoot, "/active");
+      assert.equal(args.transactionRoot, "/state");
+      assert.equal(args.workerPath, "/state/sources/target/src/equinox-local-main-update-worker.js");
+      assert.equal(args.nodePath, "/explicit/native/node");
+      return { scheduled: true };
+    },
+  });
+  assert.equal(result.transactionId, TX);
+  assert.equal(result.status, "scheduled");
+});
+
+test("coordinator refuses nonconfirming native worker handoff and aborts prepared ownership", async () => {
+  for (const handoff of [{ scheduled: false }, {}, null]) {
+    const events = [];
+    const engine = engineFixture(events);
+    engine.abortPreparedPromotion = async (id, reason) => events.push(["abort-prepared", id, reason]);
+    await assert.rejects(
+      prepareAndScheduleEquinoxLocalMainUpdate({
+        sourceRoot: "/active", transactionRoot: "/state", currentSha: A, targetSha: B,
+        engineFactory: () => engine,
+        resolveHostTarget: () => "win32-arm64",
+        planNativeTransition: async () => reuseTransition("win32-arm64"),
+        scheduleWorker: async () => handoff,
+      }), /handoff did not confirm scheduling/u,
+    );
+    assert.deepEqual(events.at(-1), ["abort-prepared", TX, "Main update worker handoff did not confirm scheduling."]);
+  }
+});

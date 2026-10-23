@@ -82,3 +82,89 @@ test("runtime-event translator canonicalizes legacy Turkish and localizes with e
   );
   assert.equal(translateRuntimeEventMessage("unknown event", "en"), "unknown event");
 });
+
+test("Control Center localization never conflates private Your Browser with isolated Agent Browser",()=>{
+  assert.equal(translateUiText("Agent Browser","tr"),"Agent Browser");
+  assert.equal(translateUiText("Your Browser","tr"),"Tarayıcınız");
+  assert.notEqual(translateUiText("Your Browser","tr"),translateUiText("Agent Browser","tr"));
+  assert.equal(translateUiText("No silent browser fallback","tr"),"Sessiz tarayıcı fallback'i yok");
+  assert.equal(translateUiText("Your Browser","de"),"Your Browser");
+});
+
+test("Control Center localization retains credential and single-human consent labels without interpolating private values",()=>{
+  for(const label of [
+    "The token stays only on this computer. Do not share it with the agent or paste it into chat.",
+    "Saved credentials are write-only and are never loaded back into this page.",
+    "Connect a Telegram bot to one Telegram account. Groups and channels are not supported, and agents cannot choose another recipient.",
+    "Credentials remain human-only and are never exposed to the agent.",
+  ]){
+    assert.equal(translateUiText(label,"en"),label);
+  }
+  const identifier="fixture-secret-sentinel";
+  const event="Synthetic inbound private account "+identifier+" not in dictionary";
+  for(const language of ["en","tr","de"]){
+    assert.equal(translateUiText(event,language),event);
+    assert.equal(translateRuntimeEventMessage(event,language),event);
+  }
+});
+
+test("Control Center localization rejects unsupported locale by selecting English without substituting dynamic owner identifiers",()=>{
+  for(const unsupported of ["TR-tr","de",null,undefined,47,{},[]]){
+    assert.equal(normalizeLanguage(unsupported),"en");
+    assert.equal(localeForLanguage(unsupported),"en-US");
+    assert.equal(translateUiText("Your Browser",unsupported),"Your Browser");
+  }
+  const sha="a1b2c3d";
+  const suffix="synthetic-source-SHA-abcdef";
+  assert.equal(translateUiText("Current SHA "+sha,"tr"),"Mevcut SHA "+sha);
+  assert.equal(translateUiText("Target SHA "+sha,"tr"),"Hedef SHA "+sha);
+  assert.equal(translateUiText("Current SHA "+suffix,"tr"),"Current SHA "+suffix);
+  assert.equal(translateUiText("Restarting into Equinox Local "+suffix,"tr"),
+    "Equinox Local "+suffix+" sürümüne yeniden başlatılıyor");
+});
+
+test("Control Center translations do not transform unrecognized markup or synthetic errors into executable content",()=>{
+  const untrusted='<img src=x onerror="synthetic-side-effect()">';
+  const suspicious=[
+    untrusted,
+    "Unrecognized runtime error: "+untrusted,
+    "Unexpected owner token "+untrusted,
+    "  Dashboard  ",
+  ];
+  for(const value of suspicious){
+    assert.equal(translateUiText(value,"tr"),value);
+    assert.equal(translateRuntimeEventMessage(value,"tr"),value);
+  }
+  assert.equal(translateDoctorDetail({detail:untrusted},"tr"),untrusted);
+  assert.equal(translateDoctorDetail({detail:""},"tr"),"Ek ayrıntı yok.");
+});
+
+
+test("Control Center refuses inherited Object keys as untrusted runtime translations", () => {
+  for (const text of ["__proto__", "constructor", "toString", "valueOf", "hasOwnProperty", "isPrototypeOf", "propertyIsEnumerable", "__defineGetter__", "prototype"]) {
+    for (const translate of [translateUiText, translateRuntimeEventMessage]) {
+      for (const language of ["tr", "en", "de"]) {
+        const result = translate(text, language);
+        assert.equal(typeof result, "string", `${text} must never resolve to an Object prototype property`);
+        assert.equal(result, text);
+      }
+    }
+    assert.equal(translateDoctorDetail({detail:text}, "tr"), text);
+  }
+  assert.equal(translateUiText("Dashboard", "tr"), "Gösterge Paneli");
+  assert.equal(translateRuntimeEventMessage("Workflow completed successfully.", "tr"), "Workflow başarıyla tamamlandı.");
+});
+
+test("Control Center does not mistake a poisoned Object prototype for a catalog translation", () => {
+  const sentinel = "synthetic-untrusted-event-not-in-catalog";
+  const original = Object.getOwnPropertyDescriptor(Object.prototype, sentinel);
+  try {
+    Object.defineProperty(Object.prototype, sentinel, {value:"spoofed dictionary text", configurable:true, writable:true});
+    assert.equal(translateUiText(sentinel, "tr"), sentinel);
+    assert.equal(translateRuntimeEventMessage(sentinel, "tr"), sentinel);
+    assert.equal(translateUiText("Dashboard", "tr"), "Gösterge Paneli");
+  } finally {
+    if (original) Object.defineProperty(Object.prototype,sentinel,original);
+    else delete Object.prototype[sentinel];
+  }
+});

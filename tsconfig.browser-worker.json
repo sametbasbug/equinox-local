@@ -1,0 +1,4 @@
+{
+  "extends": "./tsconfig.browser-extension.json",
+  "files": ["extension/service-worker.ts"]
+}

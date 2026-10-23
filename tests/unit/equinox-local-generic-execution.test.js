@@ -106,3 +106,48 @@ test("Windows managed PATH preserves WindowsApps with explicit project override"
   });
   assert.equal(env.PATH, "C:\\Project\\bin;C:\\Windows\\System32;C:\\Users\\Test\\AppData\\Local\\Microsoft\\WindowsApps");
 });
+
+test("Windows generic execution handles mixed-case secret names and PATHEXT/PATH without duplicate environment keys", () => {
+  const env = buildGenericExecutionEnvironment({
+    platform: "win32", arch: "arm64",
+    runtimeEnv: {
+      PATH: "C:\\Windows\\System32;C:\\TOOLS",
+      PATHEXT: ".CPL",
+      LOCALAPPDATA: "C:\\Users\\Fixture\\AppData\\Local",
+      Gh_ToKeN: "private",
+      MY_CLIENT_SECRET: "private",
+      OPENAI_API_KEY: "private",
+    },
+    extraEnv: {
+      PaTh: "C:\\Shadow",
+      PaThExT: ".EXE;.CPL",
+      NpM_ToKeN: "private",
+      INTERNAL_PASSWORD: "private",
+      PATH: "C:\\Tools;C:\\Project\\bin;C:\\Windows\\System32",
+    },
+  });
+  assert.equal(env.PATH, "C:\\Tools;C:\\Project\\bin;C:\\Windows\\System32;C:\\Users\\Fixture\\AppData\\Local\\Microsoft\\WindowsApps");
+  assert.equal(env.PATHEXT, ".COM;.BAT;.CMD;.EXE;.CPL");
+  assert.equal(Object.keys(env).filter(k => /^(path|pathext)$/iu.test(k)).length, 2);
+  assert.equal(env.Gh_ToKeN, undefined);
+  assert.equal(env.NpM_ToKeN, undefined);
+  assert.equal(env.MY_CLIENT_SECRET, undefined);
+  assert.equal(env.INTERNAL_PASSWORD, undefined);
+  assert.equal(env.OPENAI_API_KEY, undefined);
+});
+
+test("generic execution ignores non-string overrides and rejects secret-like project labels", () => {
+  const env = buildGenericExecutionEnvironment({
+    platform: "darwin", arch: "arm64",
+    runtimeEnv: {HOME: "/Users/fixture", PORT: 42, SECRET: "private", AWS_CREDENTIALS: "private"},
+    extraEnv: {PORT: false, OPENAI_API_KEY: "private", PATH: "/owned/bin"},
+    projectId: 42, projectRoot: {secret:"not-a-path"},
+  });
+  assert.equal(env.HOME, "/Users/fixture");
+  assert.equal(env.PORT, undefined);
+  assert.equal(env.AWS_CREDENTIALS, undefined);
+  assert.equal(env.OPENAI_API_KEY, undefined);
+  assert.equal(env.EQUINOX_PROJECT_ID, undefined);
+  assert.equal(env.EQUINOX_PROJECT_ROOT, undefined);
+  assert.equal(env.PATH, "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/owned/bin");
+});

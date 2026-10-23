@@ -73,9 +73,9 @@ test("history store requests the exact private directory and file modes on every
   assert.deepEqual(calls, [
     ["mkdir", rootDir, { recursive: true, mode: 0o700 }],
     ["chmod", rootDir, 0o700],
-    ["writeFile", store.historyPath, { mode: 0o600 }],
+    ["writeFile", store.historyPath, { mode: 0o600, flag: "wx" }],
     ["chmod", store.historyPath, 0o600],
-    ["writeFile", temporary, { mode: 0o600 }],
+    ["writeFile", temporary, { mode: 0o600, flag: "wx" }],
     ["rename", temporary, store.historyPath],
     ["chmod", store.historyPath, 0o600],
   ]);
@@ -146,5 +146,68 @@ test("history store propagates non-ENOENT read failures", async () => {
     });
 
     await assert.rejects(store.read(), /history denied/u);
+  });
+});
+
+test("history initialize refuses inaccessible records instead of truncating a private file", async () => {
+  await withTempDir(async (rootDir) => {
+    const historyPath = path.join(rootDir, "history.jsonl");
+    const original = `${JSON.stringify({ schemaVersion: 1, id: "private-original" })}\n`;
+    await fs.writeFile(historyPath, original);
+    let writes = 0;
+    const fsImpl = {
+      ...fs,
+      access: async () => { throw Object.assign(new Error("permission denied"), { code: "EACCES" }); },
+      writeFile: async (...args) => { writes += 1; return fs.writeFile(...args); },
+    };
+    const store = createRuntimeHistoryStore({ rootDir, fileName: "history.jsonl", schemaVersion: 1, maxRecords: 10, fsImpl });
+    await assert.rejects(store.append({ schemaVersion: 1, id: "new" }), /permission denied/u);
+    assert.equal(writes, 0);
+    assert.equal(await fs.readFile(historyPath, "utf8"), original);
+  });
+});
+
+test("history append refuses a preexisting symlink in its temporary slot", async () => {
+  await withTempDir(async (rootDir) => {
+    const foreign = path.join(rootDir, "foreign.txt");
+    await fs.writeFile(foreign, "DO NOT TOUCH");
+    const store = createRuntimeHistoryStore({
+      rootDir, fileName: "history.jsonl", schemaVersion: 1, maxRecords: 5, randomId: () => "collision",
+    });
+    const temporary = `${store.historyPath}.${process.pid}.collision.tmp`;
+    await fs.symlink(foreign, temporary);
+    await assert.rejects(store.append({ schemaVersion: 1, id: "new" }), { code: "EEXIST" });
+    assert.equal(await fs.readFile(foreign, "utf8"), "DO NOT TOUCH");
+    assert.equal((await fs.lstat(temporary)).isSymbolicLink(), true);
+    assert.equal(await fs.readFile(store.historyPath, "utf8"), "");
+  });
+});
+
+test("history rename failure removes only its temporary file and later writes continue", async () => {
+  await withTempDir(async (rootDir) => {
+    const fileName = "history.jsonl";
+    const historyPath = path.join(rootDir, fileName);
+    const original = `${JSON.stringify({ schemaVersion: 1, id: "before" })}\n`;
+    await fs.writeFile(historyPath, original);
+    let failRename = true;
+    const fsImpl = {
+      ...fs,
+      rename: async (...args) => {
+        if (failRename) {
+          failRename = false;
+          throw Object.assign(new Error("rename interrupted"), { code: "EIO" });
+        }
+        return fs.rename(...args);
+      },
+    };
+    const store = createRuntimeHistoryStore({
+      rootDir, fileName, schemaVersion: 1, maxRecords: 5, fsImpl,
+    });
+    await assert.rejects(store.append({ schemaVersion: 1, id: "failed" }), /rename interrupted/u);
+    assert.equal(await fs.readFile(historyPath, "utf8"), original);
+    assert.deepEqual(await fs.readdir(rootDir), [fileName]);
+    await store.append({ schemaVersion: 1, id: "recovered" });
+    assert.deepEqual((await store.read()).map(({ id }) => id), ["before", "recovered"]);
+    assert.deepEqual(await fs.readdir(rootDir), [fileName]);
   });
 });

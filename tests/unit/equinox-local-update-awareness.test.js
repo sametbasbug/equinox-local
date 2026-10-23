@@ -45,3 +45,67 @@ test("Parallel Main notice checks share one in-flight request", async () => {
   assert.equal(calls, 1);
   assert.equal(a.targetSha, b.targetSha);
 });
+
+test("informational Main notice rejects oversized streamed payloads and malformed JSON without exposing stale SHA",async()=>{
+  let requests=0;
+  const notice=createEquinoxLocalMainChannelNotice({
+    fetchImpl:async()=>{
+      requests++;
+      if(requests===1) return makeResponse({ref:"refs/tags/main-snapshot",object:{type:"commit",sha:SHA}});
+      return requests===2
+        ? new Response("x".repeat(8193),{status:200})
+        : new Response("{not-json",{status:200});
+    }
+  });
+  assert.equal((await notice.check()).targetSha,SHA);
+  const oversized=await notice.check({force:true});
+  assert.equal(oversized.targetSha,null);
+  assert.equal(oversized.lastError,"Main channel check unavailable.");
+  const malformed=await notice.check({force:true});
+  assert.equal(malformed.targetSha,null);
+  assert.equal(requests,3);
+});
+
+test("informational Main notice denies noncommit, malformed and noncanonical snapshot identities",async()=>{
+  const unsafe=[
+    null,[],
+    {ref:"refs/heads/main",object:{type:"commit",sha:SHA}},
+    {ref:"refs/tags/main-snapshot",object:{type:"tag",sha:SHA}},
+    {ref:"refs/tags/main-snapshot",object:{type:"commit",sha:SHA.toUpperCase().replaceAll("A","F")}},
+    {ref:"refs/tags/main-snapshot",object:{type:"commit",sha:"a".repeat(39)}},
+    {ref:"refs/tags/main-snapshot",object:{type:"commit",sha:1}},
+    {ref:"refs/tags/main-snapshot",object:null},
+  ];
+  let calls=0;
+  const notice=createEquinoxLocalMainChannelNotice({
+    fetchImpl:async()=>makeResponse(unsafe[calls++]),
+  });
+  for(const _case of unsafe){
+    const state=await notice.check({force:true});
+    assert.equal(state.targetSha,null);
+    assert.equal(state.lastError,"Main channel check unavailable.");
+  }
+  assert.equal(calls,unsafe.length);
+});
+
+test("informational Main notice refreshes a cached SHA only after expiry or explicit force, and clears it on failure",async()=>{
+  let clock=Date.parse("2026-10-19T16:00:00.000Z"),calls=0;
+  const notice=createEquinoxLocalMainChannelNotice({
+    now:()=>new Date(clock),
+    fetchImpl:async()=>{
+      calls++;
+      if(calls===1) return makeResponse({ref:"refs/tags/main-snapshot",object:{type:"commit",sha:SHA}});
+      throw Error("private network credentials must not appear in notice");
+    }
+  });
+  assert.equal((await notice.check()).targetSha,SHA);
+  clock+=6*60*60_000-1;
+  assert.equal((await notice.check()).targetSha,SHA);
+  assert.equal(calls,1);
+  clock+=2;
+  const expired=await notice.check();
+  assert.equal(expired.targetSha,null);
+  assert.equal(expired.lastError,"Main channel check unavailable.");
+  assert.doesNotMatch(JSON.stringify(expired),/private network credentials/u);
+  assert.equal(calls,2);
+});

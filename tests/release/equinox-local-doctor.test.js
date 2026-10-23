@@ -571,3 +571,104 @@ test("system_doctor registration preserves formatting and project-independent ro
   assert.match(result.text, /ATTENTION \| Update \| needs attention/u);
   assert.match(result.text, /OPTIONAL \| Browser \| not connected/u);
 });
+
+test("Doctor reports symlinked managed config and Native Messaging file as attention without revealing paths",async()=>{
+  const fixture=await createManagedFixture();
+  try{
+    const configFile=path.join(fixture.installation.installRoot,"config.json");
+    const outside=path.join(fixture.homeDir,"private-sentinel");
+    await fs.writeFile(outside,"synthetic-private-content\n");
+    await fs.rm(configFile);
+    await fs.symlink(outside,configFile);
+    const result=await getEquinoxLocalDoctorStatus({
+      installation:fixture.installation,config:fixture.config,
+      runtimeHealthState:"HEALTHY",runtimeVersion:"6.1.2",
+      browser:{ready:false},peekaboo:{ready:false},
+      update:{selfUpdateSupported:true,configured:true},
+      onboarding:{connectedThroughTunnel:true},
+      homeDir:fixture.homeDir,
+      readCurrentReleaseImpl:async()=>({version:"4.2.0",releaseDir:fixture.releaseDir}),
+    });
+    assert.equal(result.state,"ATTENTION");
+    assert.equal(result.checks.find(item=>item.id==="config-file")?.status,"attention");
+    assert.equal(JSON.stringify(result).includes(outside),false);
+    assert.equal(JSON.stringify(result).includes("synthetic-private-content"),false);
+    assert.equal(await fs.readFile(outside,"utf8"),"synthetic-private-content\n");
+  }finally{await fs.rm(fixture.homeDir,{recursive:true,force:true})}
+});
+
+test("Doctor requires consent and Browser Control for connected managed Your Browser independently from isolated Agent Browser",async()=>{
+  const fixture=await createManagedFixture();
+  try{
+    const base={
+      installation:fixture.installation,config:fixture.config,
+      runtimeHealthState:"HEALTHY",runtimeVersion:"4.2.0",
+      update:{selfUpdateSupported:true,configured:true},
+      onboarding:{connectedThroughTunnel:true},
+      homeDir:fixture.homeDir,
+      readCurrentReleaseImpl:async()=>({version:"4.2.0",releaseDir:fixture.releaseDir}),
+    };
+    for(const user of [
+      {ready:true,consentAccepted:false,controlEnabled:true},
+      {ready:true,consentAccepted:true,controlEnabled:false},
+    ]){
+      const result=await getEquinoxLocalDoctorStatus({...base,browser:{
+        contexts:{user,agent:{ready:true,consentAccepted:true,controlEnabled:true}},
+      }});
+      assert.equal(result.state,"ATTENTION");
+      assert.equal(result.checks.find(item=>item.id==="browser")?.status,"attention");
+      assert.equal(result.checks.find(item=>item.id==="agent-browser")?.status,"pass");
+    }
+    const disconnected=await getEquinoxLocalDoctorStatus({...base,browser:{
+      contexts:{user:{ready:false},agent:{ready:true,consentAccepted:false,controlEnabled:true}},
+    }});
+    assert.equal(disconnected.checks.find(item=>item.id==="browser")?.status,"optional");
+    assert.equal(disconnected.checks.find(item=>item.id==="agent-browser")?.status,"attention");
+  }finally{await fs.rm(fixture.homeDir,{recursive:true,force:true})}
+});
+
+test("Doctor fails closed for missing trusted Windows SystemRoot without invoking registry or Native Messaging inspector",async()=>{
+  const home=await fs.mkdtemp(path.join(os.tmpdir(),"equinox-doctor-os-root-"));
+  try{
+    const installRoot="C:\\Users\\Fixture\\AppData\\Local\\Equinox Local";
+    let startup=0,native=0,shell=0;
+    const result=await getEquinoxLocalDoctorStatus({
+      installation:{kind:"managed",managed:true,selfUpdateSupported:true,lifecycleKind:"windows-user",
+        installRoot,releaseDir:installRoot+"\\releases\\7.0.0",
+        programRoot:"C:\\Users\\Fixture\\Programs\\Equinox Local",
+        nativeMessagingManifestRoot:installRoot+"\\browser\\native-messaging"},
+      config:{version:1,runtime:{workspaceProject:"workspace"},projects:{workspace:{root:home}}},
+      host:{platform:"win32",arch:"x64",target:"win32-x64",displayName:"Windows"},
+      runtimeHealthState:"HEALTHY",runtimeVersion:"7.0.0",
+      runtimeEnv:{SystemRoot:"relative\\Windows",PATH:"C:\\untrusted",OPENAI_API_KEY:"fixture-secret"},
+      readCurrentReleaseImpl:async()=>({version:"7.0.0",releaseDir:installRoot+"\\releases\\7.0.0"}),
+      assertWindowsStableShellImpl:async()=>{shell++;},
+      readWindowsStartupImpl:async()=>{startup++;return {enabled:true}},
+      assertWindowsNativeHostImpl:async()=>{native++;},
+    });
+    assert.equal(shell,1);
+    assert.equal(startup,0);
+    assert.equal(native,0);
+    assert.equal(result.checks.find(x=>x.id==="windows-startup")?.status,"attention");
+    assert.equal(result.checks.find(x=>x.id==="native-host")?.status,"attention");
+    assert.equal(JSON.stringify(result).includes("fixture-secret"),false);
+  }finally{await fs.rm(home,{recursive:true,force:true})}
+});
+
+test("Doctor tool registration returns bounded errors through the injected error boundary without invoking diagnostic side effects",async()=>{
+  const registered=new Map();
+  let inspected=0;
+  registerSystemDoctorTool({
+    registerTextTool:(name,config,handler,options)=>registered.set(name,{config,handler,options}),
+    getDoctorStatus:async()=>{inspected++;throw Error("synthetic-diagnostic-failure")},
+    textResult:text=>({text}),
+    errorResult:error=>({isError:true,error:error.message}),
+  });
+  const tool=registered.get("system_doctor");
+  assert.equal(tool.config.annotations.readOnlyHint,true);
+  assert.equal(tool.config.annotations.destructiveHint,false);
+  assert.equal(tool.options.projectAware,false);
+  const response=await tool.handler();
+  assert.deepEqual(response,{isError:true,error:"synthetic-diagnostic-failure"});
+  assert.equal(inspected,1);
+});

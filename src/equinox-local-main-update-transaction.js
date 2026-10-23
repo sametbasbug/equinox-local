@@ -4,522 +4,673 @@ import { constants as fsConstants } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
-
 import { readEquinoxLocalMainSourcePointer, writeEquinoxLocalMainSourcePointer } from "./equinox-local-main-source-pointer.js";
 import { equinoxLocalGitExecutionEnvironment } from "./equinox-local-toolchain-contract.js";
 import { installPrebuiltDependencies, validateManagedSource } from "./equinox-local-managed-source-enrollment.js";
-import {
-  EQUINOX_LOCAL_MAIN_BRANCH,
-  EQUINOX_LOCAL_MAIN_REMOTE,
-  inspectCanonicalMainCheckout,
-  isCanonicalMainRemote,
-} from "./equinox-local-main-update.js";
-
+import { EQUINOX_LOCAL_MAIN_BRANCH, EQUINOX_LOCAL_MAIN_REMOTE, inspectCanonicalMainCheckout, isCanonicalMainRemote, } from "./equinox-local-main-update.js";
 const execFile = promisify(execFileCallback);
+function hasErrorCode(error, code) {
+    return error !== null && typeof error === "object" && "code" in error && error.code === code;
+}
+function errorCode(error) {
+    return error !== null && typeof error === "object" && "code" in error ? error.code : undefined;
+}
 const SHA_PATTERN = /^[a-f0-9]{40}$/u;
 const TRANSACTION_ID_PATTERN = /^main-[a-f0-9]{32}$/u;
 const COMMAND_TIMEOUT_MS = 10 * 60 * 1000;
 const MAX_RECEIPT_BYTES = 64 * 1024;
 const MAX_ERROR_LENGTH = 500;
 export const EQUINOX_LOCAL_MAIN_TRANSACTION_SCHEMA_VERSION = 1;
-
 function boundedMessage(value) {
-  return String(value ?? "").replace(/[\r\n\u0000-\u001f\u007f]+/gu, " ").replace(/\s+/gu, " ").trim().slice(0, MAX_ERROR_LENGTH);
+    return String(value ?? "").replace(/[\r\n\u0000-\u001f\u007f]+/gu, " ").replace(/\s+/gu, " ").trim().slice(0, MAX_ERROR_LENGTH);
 }
 function assertSha(value, label) {
-  if (!SHA_PATTERN.test(value ?? "")) throw new Error(`${label} must be an exact lowercase 40-character Git SHA.`);
-  return value;
+    if (typeof value !== "string" || !SHA_PATTERN.test(value))
+        throw new Error(`${label} must be an exact lowercase 40-character Git SHA.`);
+    return value;
 }
 function assertTransactionId(value) {
-  if (!TRANSACTION_ID_PATTERN.test(value ?? "")) throw new Error("Main update transaction id is invalid.");
-  return value;
+    if (typeof value !== "string" || !TRANSACTION_ID_PATTERN.test(value))
+        throw new Error("Main update transaction id is invalid.");
+    return value;
 }
 function assertOptionalAbsolutePath(value, label) {
-  if (value === null) return null;
-  if (typeof value !== "string" || !path.isAbsolute(value) || value.includes("\n") || value.includes("\r") || value.includes("\0")) throw new Error(`${label} is invalid.`);
-  return path.resolve(value);
+    if (value === null)
+        return null;
+    if (typeof value !== "string" || !path.isAbsolute(value) || value.includes("\n") || value.includes("\r") || value.includes("\0"))
+        throw new Error(`${label} is invalid.`);
+    return path.resolve(value);
 }
 function isInside(parent, child) {
-  const relative = path.relative(parent, child);
-  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+    const relative = path.relative(parent, child);
+    return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
 }
 async function assertCanonicalDirectory(directory, { fsImpl = fs, create = false } = {}) {
-  const resolved = path.resolve(directory);
-  if (!path.isAbsolute(directory)) throw new Error("Main update transaction paths must be absolute.");
-  if (create) await fsImpl.mkdir(resolved, { recursive: true, mode: 0o700 });
-  const [stat, real] = await Promise.all([fsImpl.lstat(resolved), fsImpl.realpath(resolved)]);
-  if (!stat.isDirectory() || stat.isSymbolicLink() || real !== resolved) throw new Error(`Main update directory is not a canonical normal directory: ${resolved}`);
-  return resolved;
+    const resolved = path.resolve(directory);
+    if (!path.isAbsolute(directory))
+        throw new Error("Main update transaction paths must be absolute.");
+    if (create)
+        await fsImpl.mkdir(resolved, { recursive: true, mode: 0o700 });
+    const [stat, real] = await Promise.all([fsImpl.lstat(resolved), fsImpl.realpath(resolved)]);
+    if (!stat.isDirectory() || stat.isSymbolicLink() || real !== resolved)
+        throw new Error(`Main update directory is not a canonical normal directory: ${resolved}`);
+    return resolved;
 }
 async function syncDirectory(directory, { fsImpl = fs } = {}) {
-  if (process.platform === "win32") return;
-  const handle = await fsImpl.open(directory, "r");
-  try { await handle.sync(); } finally { await handle.close(); }
+    if (process.platform === "win32")
+        return;
+    const handle = await fsImpl.open(directory, "r");
+    try {
+        await handle.sync();
+    }
+    finally {
+        await handle.close();
+    }
 }
 async function writeAtomicPrivateJson(filePath, value, { fsImpl = fs } = {}) {
-  const parent = path.dirname(filePath);
-  await fsImpl.mkdir(parent, { recursive: true, mode: 0o700 });
-  const tempPath = `${filePath}.tmp-${process.pid}-${randomBytes(8).toString("hex")}`;
-  const body = `${JSON.stringify(value, null, 2)}\n`;
-  if (Buffer.byteLength(body) > MAX_RECEIPT_BYTES) throw new Error("Main update receipt exceeds the size limit.");
-  let handle;
-  try {
-    handle = await fsImpl.open(tempPath, "wx", 0o600);
-    await handle.writeFile(body, "utf8"); await handle.sync(); await handle.close(); handle = null;
-    await fsImpl.rename(tempPath, filePath); await syncDirectory(parent, { fsImpl });
-  } catch (error) {
-    if (handle) await handle.close().catch(() => {});
-    await fsImpl.rm(tempPath, { force: true }).catch(() => {});
-    throw error;
-  }
+    const parent = path.dirname(filePath);
+    await fsImpl.mkdir(parent, { recursive: true, mode: 0o700 });
+    // A stable-looking filename is not private if an existing receipt parent is
+    // a symlink into someone else's directory. Never intentionally follow it.
+    await assertCanonicalDirectory(parent, { fsImpl });
+    const tempPath = `${filePath}.tmp-${process.pid}-${randomBytes(8).toString("hex")}`;
+    const body = `${JSON.stringify(value, null, 2)}\n`;
+    if (Buffer.byteLength(body) > MAX_RECEIPT_BYTES)
+        throw new Error("Main update receipt exceeds the size limit.");
+    let handle;
+    let created = null;
+    try {
+        handle = await fsImpl.open(tempPath, "wx", 0o600);
+        // Trust the inode created with O_EXCL, not the first later pathname stat.
+        // Another same-UID writer can substitute a different regular 0600 temp
+        // after this file is closed but before the atomic rename.
+        created = await handle.stat();
+        if (!created.isFile() || created.nlink !== 1 ||
+            (process.platform !== "win32" && (created.mode & 0o777) !== 0o600)) {
+            throw new Error("Main update receipt temporary file is unsafe.");
+        }
+        await handle.writeFile(body, "utf8");
+        await handle.sync();
+        await handle.close();
+        handle = null;
+        const current = await fsImpl.lstat(tempPath);
+        if (!current.isFile() || current.isSymbolicLink() || current.nlink !== 1 ||
+            current.dev !== created.dev || current.ino !== created.ino ||
+            (process.platform !== "win32" && (current.mode & 0o777) !== 0o600)) {
+            throw new Error("Main update receipt temporary file changed before rename.");
+        }
+        await fsImpl.rename(tempPath, filePath);
+        // rename() accepts a pathname, not the pinned descriptor. Reject an
+        // alternate inode switched in the final pre-rename check→rename gap.
+        // This is detection, NOT atomic protection against transient swaps.
+        const renamed = await fsImpl.lstat(filePath);
+        if (!renamed.isFile() || renamed.isSymbolicLink() || renamed.nlink !== 1 ||
+            renamed.dev !== created.dev || renamed.ino !== created.ino ||
+            (process.platform !== "win32" && (renamed.mode & 0o777) !== 0o600)) {
+            throw new Error("Main update receipt identity changed after rename.");
+        }
+        await syncDirectory(parent, { fsImpl });
+    }
+    catch (error) {
+        if (handle)
+            await handle.close().catch(() => { });
+        // A different writer may have replaced the temporary pathname after
+        // we created it. Never delete a foreign inode while recovering a failed
+        // receipt write; only our original exclusive descriptor is disposable.
+        if (created) {
+            const current = await fsImpl.lstat(tempPath).catch(() => null);
+            if (current?.isFile() && !current.isSymbolicLink() && current.nlink === 1 &&
+                current.dev === created.dev && current.ino === created.ino) {
+                await fsImpl.unlink(tempPath).catch(() => { });
+            }
+        }
+        throw error;
+    }
 }
 async function readBoundedJsonFile(filePath, { fsImpl = fs } = {}) {
-  let handle;
-  try {
-    handle = await fsImpl.open(filePath, fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0));
-    const stat = await handle.stat();
-    if (!stat.isFile() || stat.size > MAX_RECEIPT_BYTES) throw new Error("Main update state file is not an admissible regular file.");
-    const body = await handle.readFile("utf8");
-    if (Buffer.byteLength(body) > MAX_RECEIPT_BYTES) throw new Error("Main update state file exceeds the size limit.");
-    try { return JSON.parse(body); } catch { throw new Error("Main update state file contains invalid JSON."); }
-  } finally {
-    if (handle) await handle.close().catch(() => {});
-  }
+    let handle;
+    try {
+        // Windows does not guarantee POSIX O_NOFOLLOW semantics. Pin the
+        // pre-open file identity to the opened descriptor before parsing state.
+        // Read-only descriptor first, never read state from unvalidated inodes.
+        try {
+            handle = await fsImpl.open(filePath, fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0));
+        }
+        catch (error) {
+            if (error?.code === "ELOOP")
+                throw new Error("Main update state file must be a normal, non-symlink file.");
+            throw error;
+        }
+        const stat = await handle.stat();
+        const named = await fsImpl.lstat(filePath);
+        if (!named.isFile() || named.isSymbolicLink() || named.nlink !== 1 ||
+            (process.platform === "win32" && named.dev === 0 && named.ino === 0) ||
+            stat.nlink !== 1 || stat.dev !== named.dev || stat.ino !== named.ino) {
+            throw new Error("Main update state file must be a normal, non-symlink file or changed while opening.");
+        }
+        if (!stat.isFile() || stat.size > MAX_RECEIPT_BYTES)
+            throw new Error("Main update state file is not an admissible regular file.");
+        // The file may grow after fstat. Never readFile() an unbounded mutable
+        // forensic lock/receipt: stop at the exact 64 KiB budget plus one byte.
+        const chunks = [];
+        let total = 0;
+        while (total <= MAX_RECEIPT_BYTES) {
+            const buffer = Buffer.allocUnsafe(Math.min(8192, MAX_RECEIPT_BYTES + 1 - total));
+            const { bytesRead } = await handle.read(buffer, 0, buffer.length, total);
+            if (bytesRead === 0)
+                break;
+            chunks.push(buffer.subarray(0, bytesRead));
+            total += bytesRead;
+        }
+        if (total > MAX_RECEIPT_BYTES)
+            throw new Error("Main update state file exceeds the size limit.");
+        const body = Buffer.concat(chunks, total).toString("utf8");
+        try {
+            return JSON.parse(body);
+        }
+        catch {
+            throw new Error("Main update state file contains invalid JSON.");
+        }
+    }
+    finally {
+        if (handle)
+            await handle.close().catch(() => { });
+    }
 }
 function assertExactKeys(value, expected, label) {
-  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`${label} is invalid.`);
-  const actual = Object.keys(value).sort();
-  const wanted = [...expected].sort();
-  if (actual.length !== wanted.length || actual.some((key, index) => key !== wanted[index])) throw new Error(`${label} contains missing or unsupported fields.`);
+    if (!value || typeof value !== "object" || Array.isArray(value))
+        throw new Error(`${label} is invalid.`);
+    const actual = Object.keys(value).sort();
+    const wanted = [...expected].sort();
+    if (actual.length !== wanted.length || actual.some((key, index) => key !== wanted[index]))
+        throw new Error(`${label} contains missing or unsupported fields.`);
 }
 function validateLockMarker(value) {
-  assertExactKeys(value, ["schemaVersion", "transactionId", "channel", "currentSha", "targetSha", "startedAt"], "Main update lock marker");
-  assertTransactionId(value.transactionId); assertSha(value.currentSha, "Current SHA"); assertSha(value.targetSha, "Target SHA");
-  if (value.schemaVersion !== EQUINOX_LOCAL_MAIN_TRANSACTION_SCHEMA_VERSION || value.channel !== "main") throw new Error("Main update lock identity is invalid.");
-  if (typeof value.startedAt !== "string" || Number.isNaN(Date.parse(value.startedAt))) throw new Error("Main update lock timestamp is invalid.");
-  return Object.freeze({ ...value });
+    assertExactKeys(value, ["schemaVersion", "transactionId", "channel", "currentSha", "targetSha", "startedAt"], "Main update lock marker");
+    assertTransactionId(value.transactionId);
+    assertSha(value.currentSha, "Current SHA");
+    assertSha(value.targetSha, "Target SHA");
+    if (value.schemaVersion !== EQUINOX_LOCAL_MAIN_TRANSACTION_SCHEMA_VERSION || value.channel !== "main")
+        throw new Error("Main update lock identity is invalid.");
+    if (typeof value.startedAt !== "string" || Number.isNaN(Date.parse(value.startedAt)))
+        throw new Error("Main update lock timestamp is invalid.");
+    return Object.freeze({ ...value });
 }
 function validateReceipt(value) {
-  assertExactKeys(value, ["schemaVersion", "transactionId", "channel", "status", "stage", "currentSha", "targetSha", "rollbackSha", "rollbackSourceRoot", "targetSourceRoot", "startedAt", "updatedAt", "lastError"], "Main update receipt");
-  assertTransactionId(value.transactionId); assertSha(value.currentSha, "Current SHA"); assertSha(value.targetSha, "Target SHA"); assertSha(value.rollbackSha, "Rollback SHA");
-  if (value.rollbackSha !== value.currentSha) throw new Error("Main update receipt rollback SHA does not match the admitted source SHA.");
-  assertOptionalAbsolutePath(value.rollbackSourceRoot, "Main update rollback source root");
-  assertOptionalAbsolutePath(value.targetSourceRoot, "Main update target source root");
-  if (value.schemaVersion !== EQUINOX_LOCAL_MAIN_TRANSACTION_SCHEMA_VERSION || value.channel !== "main") throw new Error("Main update receipt identity is invalid.");
-  if (!["active", "staged", "failed", "promoting", "verifying", "succeeded", "rolled_back", "rollback_failed"].includes(value.status)) throw new Error("Main update receipt status is invalid.");
-  if (typeof value.stage !== "string" || value.stage.length < 1 || value.stage.length > 80) throw new Error("Main update receipt stage is invalid.");
-  const allowedStages = Object.freeze({
-    active: new Set(["admitted", "dependencies", "validation"]),
-    staged: new Set(["staged"]),
-    failed: new Set(["admitted", "dependencies", "validation", "preparation_failed", "handoff_schedule_failed", "native_admission_failed"]),
-    promoting: new Set(["ready_to_switch", "native_rollback_ready", "native_switched"]),
-    verifying: new Set(["source_switched", "rollback_source_restored", "rollback_native_restored"]),
-    succeeded: new Set(["healthy"]),
-    rolled_back: new Set(["rollback_source_restored", "rollback_healthy"]),
-    rollback_failed: new Set(["rollback_failed"]),
-  });
-  if (!allowedStages[value.status]?.has(value.stage)) throw new Error("Main update receipt status and stage are incompatible.");
-  for (const key of ["startedAt", "updatedAt"]) if (typeof value[key] !== "string" || Number.isNaN(Date.parse(value[key]))) throw new Error(`Main update receipt ${key} is invalid.`);
-  if (value.lastError !== null && (typeof value.lastError !== "string" || value.lastError.length > MAX_ERROR_LENGTH)) throw new Error("Main update receipt error is invalid.");
-  return Object.freeze({ ...value });
+    assertExactKeys(value, ["schemaVersion", "transactionId", "channel", "status", "stage", "currentSha", "targetSha", "rollbackSha", "rollbackSourceRoot", "targetSourceRoot", "startedAt", "updatedAt", "lastError"], "Main update receipt");
+    assertTransactionId(value.transactionId);
+    assertSha(value.currentSha, "Current SHA");
+    assertSha(value.targetSha, "Target SHA");
+    assertSha(value.rollbackSha, "Rollback SHA");
+    if (value.rollbackSha !== value.currentSha)
+        throw new Error("Main update receipt rollback SHA does not match the admitted source SHA.");
+    assertOptionalAbsolutePath(value.rollbackSourceRoot, "Main update rollback source root");
+    assertOptionalAbsolutePath(value.targetSourceRoot, "Main update target source root");
+    if (value.schemaVersion !== EQUINOX_LOCAL_MAIN_TRANSACTION_SCHEMA_VERSION || value.channel !== "main")
+        throw new Error("Main update receipt identity is invalid.");
+    if (typeof value.status !== "string" || !["active", "staged", "failed", "promoting", "verifying", "succeeded", "rolled_back", "rollback_failed"].includes(value.status))
+        throw new Error("Main update receipt status is invalid.");
+    if (typeof value.stage !== "string" || value.stage.length < 1 || value.stage.length > 80)
+        throw new Error("Main update receipt stage is invalid.");
+    const allowedStages = Object.freeze({
+        active: new Set(["admitted", "dependencies", "validation"]),
+        staged: new Set(["staged"]),
+        failed: new Set(["admitted", "dependencies", "validation", "preparation_failed", "handoff_schedule_failed", "native_admission_failed"]),
+        promoting: new Set(["ready_to_switch", "native_rollback_ready", "native_switched"]),
+        verifying: new Set(["source_switched", "rollback_source_restored", "rollback_native_restored"]),
+        succeeded: new Set(["healthy"]),
+        rolled_back: new Set(["rollback_source_restored", "rollback_healthy"]),
+        rollback_failed: new Set(["rollback_failed"]),
+    });
+    if (!allowedStages[value.status]?.has(value.stage))
+        throw new Error("Main update receipt status and stage are incompatible.");
+    for (const key of ["startedAt", "updatedAt"]) {
+        const timestamp = value[key];
+        if (typeof timestamp !== "string" || Number.isNaN(Date.parse(timestamp))) {
+            throw new Error("Main update receipt " + key + " is invalid.");
+        }
+    }
+    if (value.lastError !== null && (typeof value.lastError !== "string" || value.lastError.length > MAX_ERROR_LENGTH))
+        throw new Error("Main update receipt error is invalid.");
+    return Object.freeze({ ...value });
 }
 async function run(command, args, { cwd, execFileImpl = execFile, timeout = COMMAND_TIMEOUT_MS } = {}) {
-  return await execFileImpl(command, args, { cwd, timeout, maxBuffer: 4 * 1024 * 1024, env: equinoxLocalGitExecutionEnvironment(command, { ...process.env, GIT_TERMINAL_PROMPT: "0", npm_config_audit: "false", npm_config_fund: "false" }) });
+    return await execFileImpl(command, args, { cwd, timeout, maxBuffer: 4 * 1024 * 1024, env: equinoxLocalGitExecutionEnvironment(command, { ...process.env, GIT_TERMINAL_PROMPT: "0", npm_config_audit: "false", npm_config_fund: "false" }) });
 }
 async function assertStagedCheckout(stageRoot, targetSha, { execFileImpl = execFile, fsImpl = fs, gitPath = "git" } = {}) {
-  const root = await assertCanonicalDirectory(stageRoot, { fsImpl });
-  const top = String((await run(gitPath, ["-C", root, "rev-parse", "--show-toplevel"], { execFileImpl })).stdout ?? "").trim();
-  if (path.resolve(top) !== root) throw new Error("Staged checkout root does not match its Git top-level directory.");
-  const head = String((await run(gitPath, ["-C", root, "rev-parse", "HEAD"], { execFileImpl })).stdout ?? "").trim();
-  if (head !== targetSha) throw new Error("Staged checkout HEAD does not match the pinned target SHA.");
-  const remote = String((await run(gitPath, ["-C", root, "remote", "get-url", "origin"], { execFileImpl })).stdout ?? "").trim();
-  if (!isCanonicalMainRemote(remote)) throw new Error("Staged checkout origin is not canonical.");
-  const branch = String((await run(gitPath, ["-C", root, "symbolic-ref", "--quiet", "--short", "HEAD"], { execFileImpl })).stdout ?? "").trim();
-  if (branch !== EQUINOX_LOCAL_MAIN_BRANCH) throw new Error("Staged checkout is not on canonical main.");
-  const dirty = String((await run(gitPath, ["-C", root, "status", "--porcelain=v1", "--untracked-files=normal"], { execFileImpl })).stdout ?? "").trim();
-  if (dirty) throw new Error("Staged checkout is not clean.");
-  return Object.freeze({ sourceRoot: root, head, branch, remote });
+    const root = await assertCanonicalDirectory(stageRoot, { fsImpl });
+    const top = String((await run(gitPath, ["-C", root, "rev-parse", "--show-toplevel"], { execFileImpl })).stdout ?? "").trim();
+    if (path.resolve(top) !== root)
+        throw new Error("Staged checkout root does not match its Git top-level directory.");
+    const head = String((await run(gitPath, ["-C", root, "rev-parse", "HEAD"], { execFileImpl })).stdout ?? "").trim();
+    if (head !== targetSha)
+        throw new Error("Staged checkout HEAD does not match the pinned target SHA.");
+    const remote = String((await run(gitPath, ["-C", root, "remote", "get-url", "origin"], { execFileImpl })).stdout ?? "").trim();
+    if (!isCanonicalMainRemote(remote))
+        throw new Error("Staged checkout origin is not canonical.");
+    const branch = String((await run(gitPath, ["-C", root, "symbolic-ref", "--quiet", "--short", "HEAD"], { execFileImpl })).stdout ?? "").trim();
+    if (branch !== EQUINOX_LOCAL_MAIN_BRANCH)
+        throw new Error("Staged checkout is not on canonical main.");
+    const dirty = String((await run(gitPath, ["-C", root, "status", "--porcelain=v1", "--untracked-files=normal"], { execFileImpl })).stdout ?? "").trim();
+    if (dirty)
+        throw new Error("Staged checkout is not clean.");
+    return Object.freeze({ sourceRoot: root, head, branch, remote });
 }
-
-export function createEquinoxLocalMainUpdateTransactionEngine({
-  sourceRoot,
-  transactionRoot,
-  sourcePointerPath = path.join(transactionRoot ?? "", "current-source.conf"),
-  sourceStoreRoot = path.join(transactionRoot ?? "", "sources"),
-  platform = process.platform,
-  fsImpl = fs,
-  execFileImpl = execFile,
-  now = () => new Date(),
-  randomBytesImpl = randomBytes,
-  gitPath = "git",
-  nodePath = process.execPath,
-  npmPath = null,
-  shellPath = null,
-  installDependencies = async ({ stagedSourceRoot }) => {
+export function createEquinoxLocalMainUpdateTransactionEngine({ sourceRoot, transactionRoot, sourcePointerPath = path.join(transactionRoot ?? "", "current-source.conf"), sourceStoreRoot = path.join(transactionRoot ?? "", "sources"), platform = process.platform, fsImpl = fs, execFileImpl = execFile, now = () => new Date(), randomBytesImpl = randomBytes, gitPath = "git", nodePath = process.execPath, npmPath = null, shellPath = null, installDependencies = async ({ stagedSourceRoot }) => {
     if (npmPath) {
-      await installPrebuiltDependencies(stagedSourceRoot, { nodePath, npmPath }, { execFileImpl, fsImpl });
-      return;
+        await installPrebuiltDependencies(stagedSourceRoot, { nodePath, npmPath }, { execFileImpl, fsImpl });
+        return;
     }
     await run("npm", ["ci", "--no-audit", "--no-fund"], { cwd: stagedSourceRoot, execFileImpl });
-  },
-  validateStagedSource = async ({ stagedSourceRoot }) => {
+}, validateStagedSource = async ({ stagedSourceRoot }) => {
     if (npmPath) {
-      await validateManagedSource(stagedSourceRoot, { nodePath, npmPath, shellPath }, { execFileImpl, fsImpl });
-      return;
+        await validateManagedSource(stagedSourceRoot, { nodePath, npmPath, shellPath }, { execFileImpl, fsImpl });
+        return;
     }
     await run("npm", ["run", "check"], { cwd: stagedSourceRoot, execFileImpl });
     await run(nodePath, ["--test", "tests/release/equinox-local-main-update.test.js"], { cwd: stagedSourceRoot, execFileImpl });
-  },
-} = {}) {
-  if (typeof sourceRoot !== "string" || !path.isAbsolute(sourceRoot)) throw new Error("Main update source root must be absolute.");
-  if (typeof transactionRoot !== "string" || !path.isAbsolute(transactionRoot)) throw new Error("Main update transaction root must be absolute.");
-  const resolvedSourceRoot = path.resolve(sourceRoot);
-  const resolvedTransactionRoot = path.resolve(transactionRoot);
-  const resolvedPointerPath = path.resolve(sourcePointerPath);
-  const resolvedSourceStoreRoot = path.resolve(sourceStoreRoot);
-  if (!isInside(resolvedTransactionRoot, resolvedPointerPath) || !isInside(resolvedTransactionRoot, resolvedSourceStoreRoot)) throw new Error("Main update pointer and source store must remain inside transaction state.");
-  if (isInside(resolvedSourceRoot, resolvedTransactionRoot)) throw new Error("Main update transaction state must not live inside the active source checkout.");
-  if (isInside(resolvedTransactionRoot, resolvedSourceRoot)) {
-    const sourceBasename = path.basename(resolvedSourceRoot);
-    const isDirectManagedSource = path.dirname(resolvedSourceRoot) === resolvedSourceStoreRoot && SHA_PATTERN.test(sourceBasename);
-    if (!isDirectManagedSource) throw new Error("Main update active source inside transaction state must be a direct SHA-addressed source-store checkout.");
-  }
-
-  const lockPath = path.join(resolvedTransactionRoot, "active.json");
-  const receiptsRoot = path.join(resolvedTransactionRoot, "receipts");
-  const stagingRoot = path.join(resolvedTransactionRoot, "staging");
-
-  const receiptPathFor = (transactionId) => path.join(receiptsRoot, `${assertTransactionId(transactionId)}.json`);
-  const readReceipt = async (transactionId) => validateReceipt(await readBoundedJsonFile(receiptPathFor(transactionId), { fsImpl }));
-  const readActive = async () => {
-    let marker;
-    try { marker = validateLockMarker(await readBoundedJsonFile(lockPath, { fsImpl })); }
-    catch (error) { if (error?.code === "ENOENT") return null; throw error; }
-    try {
-      const receipt = await readReceipt(marker.transactionId);
-      if (receipt.currentSha !== marker.currentSha || receipt.targetSha !== marker.targetSha || receipt.startedAt !== marker.startedAt) {
-        throw new Error("Main update lock and receipt identities disagree.");
-      }
-      return receipt;
-    } catch (error) {
-      if (error?.code !== "ENOENT") throw error;
-      return Object.freeze({ ...marker, status: "active", stage: "admitted", rollbackSha: marker.currentSha, rollbackSourceRoot: resolvedSourceRoot, targetSourceRoot: null, updatedAt: marker.startedAt, lastError: null });
+}, } = {}) {
+    if (typeof sourceRoot !== "string" || !path.isAbsolute(sourceRoot))
+        throw new Error("Main update source root must be absolute.");
+    if (typeof transactionRoot !== "string" || !path.isAbsolute(transactionRoot))
+        throw new Error("Main update transaction root must be absolute.");
+    const resolvedSourceRoot = path.resolve(sourceRoot);
+    const resolvedTransactionRoot = path.resolve(transactionRoot);
+    const resolvedPointerPath = path.resolve(sourcePointerPath);
+    const resolvedSourceStoreRoot = path.resolve(sourceStoreRoot);
+    if (!isInside(resolvedTransactionRoot, resolvedPointerPath) || !isInside(resolvedTransactionRoot, resolvedSourceStoreRoot))
+        throw new Error("Main update pointer and source store must remain inside transaction state.");
+    if (isInside(resolvedSourceRoot, resolvedTransactionRoot))
+        throw new Error("Main update transaction state must not live inside the active source checkout.");
+    if (isInside(resolvedTransactionRoot, resolvedSourceRoot)) {
+        const sourceBasename = path.basename(resolvedSourceRoot);
+        const isDirectManagedSource = path.dirname(resolvedSourceRoot) === resolvedSourceStoreRoot && SHA_PATTERN.test(sourceBasename);
+        if (!isDirectManagedSource)
+            throw new Error("Main update active source inside transaction state must be a direct SHA-addressed source-store checkout.");
     }
-  };
-  const writeReceipt = async (receipt) => {
-    const validated = validateReceipt(receipt);
-    await writeAtomicPrivateJson(receiptPathFor(validated.transactionId), validated, { fsImpl });
-    return validated;
-  };
-
-  const begin = async ({ currentSha, targetSha }) => {
-    assertSha(currentSha, "Current SHA"); assertSha(targetSha, "Target SHA");
-    if (currentSha === targetSha) throw new Error("Main update target already matches the current source SHA.");
-    await assertCanonicalDirectory(resolvedTransactionRoot, { fsImpl, create: true });
-    await fsImpl.mkdir(receiptsRoot, { recursive: true, mode: 0o700 });
-    await fsImpl.mkdir(stagingRoot, { recursive: true, mode: 0o700 });
-    const active = await readActive();
-    if (active) throw new Error(`Main update transaction ${active.transactionId} already owns the update lock.`);
-
-    const local = await inspectCanonicalMainCheckout(resolvedSourceRoot, { fsImpl, execFileImpl, gitPath });
-    if (!local.eligible) throw new Error(`Active source checkout is not update-eligible: ${local.reason}`);
-    if (local.currentSha !== currentSha) throw new Error("Active source SHA changed after update discovery.");
-
-    const transactionId = `main-${randomBytesImpl(16).toString("hex")}`;
-    assertTransactionId(transactionId);
-    const timestamp = now().toISOString();
-    const receipt = Object.freeze({
-      schemaVersion: EQUINOX_LOCAL_MAIN_TRANSACTION_SCHEMA_VERSION,
-      transactionId, channel: "main", status: "active", stage: "admitted",
-      currentSha, targetSha, rollbackSha: currentSha,
-      rollbackSourceRoot: resolvedSourceRoot, targetSourceRoot: null,
-      startedAt: timestamp, updatedAt: timestamp, lastError: null,
-    });
-    let lockHandle;
-    try {
-      const marker = { schemaVersion: receipt.schemaVersion, transactionId, channel: "main", currentSha, targetSha, startedAt: timestamp };
-      lockHandle = await fsImpl.open(lockPath, "wx", 0o600);
-      await lockHandle.writeFile(`${JSON.stringify(marker, null, 2)}\n`, "utf8");
-      await lockHandle.sync(); await lockHandle.close(); lockHandle = null;
-      await syncDirectory(resolvedTransactionRoot, { fsImpl });
-      await writeAtomicPrivateJson(receiptPathFor(transactionId), receipt, { fsImpl });
-    } catch (error) {
-      if (lockHandle) await lockHandle.close().catch(() => {});
-      if (error?.code === "EEXIST") {
-        const owner = await readActive().catch(() => null);
-        throw new Error(owner ? `Main update transaction ${owner.transactionId} already owns the update lock.` : "Main update lock already exists.");
-      }
-      throw error;
-    }
-    return receipt;
-  };
-
-  const stage = async ({ currentSha, targetSha }) => {
-    let receipt = await begin({ currentSha, targetSha });
-    const transactionDir = path.join(stagingRoot, receipt.transactionId);
-    const stagedSourceRoot = path.join(transactionDir, "source");
-    try {
-      await fsImpl.mkdir(transactionDir, { recursive: false, mode: 0o700 });
-      await run(gitPath, ["clone", "--no-checkout", "--filter=blob:none", "--single-branch", "--branch", EQUINOX_LOCAL_MAIN_BRANCH, EQUINOX_LOCAL_MAIN_REMOTE, stagedSourceRoot], { execFileImpl });
-      await run(gitPath, ["-C", stagedSourceRoot, "checkout", "--force", "-B", EQUINOX_LOCAL_MAIN_BRANCH, targetSha], { execFileImpl });
-      await assertStagedCheckout(stagedSourceRoot, targetSha, { execFileImpl, fsImpl, gitPath });
-      receipt = await writeReceipt(Object.freeze({ ...receipt, stage: "dependencies", updatedAt: now().toISOString() }));
-      await installDependencies({ stagedSourceRoot, currentSha, targetSha, transactionId: receipt.transactionId });
-      receipt = await writeReceipt(Object.freeze({ ...receipt, stage: "validation", updatedAt: now().toISOString() }));
-      await validateStagedSource({ stagedSourceRoot, currentSha, targetSha, transactionId: receipt.transactionId });
-      await assertStagedCheckout(stagedSourceRoot, targetSha, { execFileImpl, fsImpl, gitPath });
-      receipt = await writeReceipt(Object.freeze({ ...receipt, status: "staged", stage: "staged", updatedAt: now().toISOString() }));
-      return Object.freeze({ receipt, stagedSourceRoot });
-    } catch (error) {
-      const failed = Object.freeze({ ...receipt, status: "failed", updatedAt: now().toISOString(), lastError: boundedMessage(error instanceof Error ? error.message : error) });
-      await writeReceipt(failed).catch(() => {});
-      const owner = await readActive().catch(() => null);
-      if (owner?.transactionId === receipt.transactionId) await fsImpl.rm(lockPath, { force: true });
-      throw error;
-    }
-  };
-
-  const initializeSourcePointer = async () => {
-    const local = await inspectCanonicalMainCheckout(resolvedSourceRoot, { fsImpl, execFileImpl, gitPath });
-    if (!local.eligible) throw new Error(`Active source checkout is not update-eligible: ${local.reason}`);
-    try {
-      const existing = await readEquinoxLocalMainSourcePointer(resolvedPointerPath, { fsImpl, execFileImpl, gitPath });
-      if (existing.sourceRoot !== resolvedSourceRoot || existing.sha !== local.currentSha) throw new Error("Existing main source pointer does not match the active checkout.");
-      return existing;
-    } catch (error) {
-      if (error?.code !== "ENOENT") throw error;
-    }
-    return await writeEquinoxLocalMainSourcePointer(resolvedPointerPath, { sourceRoot: resolvedSourceRoot, sha: local.currentSha }, { fsImpl, execFileImpl, gitPath, randomBytesImpl });
-  };
-
-  const preparePromotion = async (transactionId) => {
-    assertTransactionId(transactionId);
-    let receipt = await readActive();
-    if (!receipt || receipt.transactionId !== transactionId) throw new Error("Main update promotion does not own the active transaction.");
-    if (receipt.status !== "staged") throw new Error("Main update transaction is not staged for promotion.");
-    const pointer = await readEquinoxLocalMainSourcePointer(resolvedPointerPath, { fsImpl, execFileImpl, gitPath });
-    if (pointer.sha !== receipt.currentSha || pointer.sourceRoot !== receipt.rollbackSourceRoot) throw new Error("Main source pointer changed after transaction admission.");
-    const stagedSourceRoot = path.join(stagingRoot, transactionId, "source");
-    await fsImpl.mkdir(resolvedSourceStoreRoot, { recursive: true, mode: 0o700 });
-    const targetSourceRoot = path.join(resolvedSourceStoreRoot, receipt.targetSha);
-    let durableTargetExists = false;
-    try {
-      const existing = await inspectCanonicalMainCheckout(targetSourceRoot, { fsImpl, execFileImpl, gitPath });
-      if (!existing.eligible || existing.currentSha !== receipt.targetSha) throw new Error("Existing main source store target is invalid.");
-      durableTargetExists = true;
-    } catch (error) {
-      if (error?.code !== "ENOENT") throw error;
-    }
-    if (durableTargetExists) {
-      await fsImpl.rm(stagedSourceRoot, { recursive: true, force: true });
-    } else {
-      await assertStagedCheckout(stagedSourceRoot, receipt.targetSha, { fsImpl, execFileImpl, gitPath });
-      try {
-        await fsImpl.rename(stagedSourceRoot, targetSourceRoot);
-      } catch (error) {
-        if (platform !== "win32" || !["EPERM", "EACCES"].includes(error?.code)) throw error;
-        // Windows can deny a directory move while a transient scanner/process
-        // holds a descendant file open. Claim the previously absent target
-        // exclusively; copy without following links, then revalidate BOTH Git
-        // identity and pinned dependencies before any source pointer changes.
-        // This is not an update success until native activation and health pass.
-        await fsImpl.mkdir(targetSourceRoot, { mode: 0o700 });
+    const lockPath = path.join(resolvedTransactionRoot, "active.json");
+    const receiptsRoot = path.join(resolvedTransactionRoot, "receipts");
+    const stagingRoot = path.join(resolvedTransactionRoot, "staging");
+    const receiptPathFor = (transactionId) => path.join(receiptsRoot, `${assertTransactionId(transactionId)}.json`);
+    const readReceipt = async (transactionId) => {
+        await assertCanonicalDirectory(receiptsRoot, { fsImpl });
+        return validateReceipt(await readBoundedJsonFile(receiptPathFor(transactionId), { fsImpl }));
+    };
+    const readActive = async () => {
+        let marker;
         try {
-          for (const entry of await fsImpl.readdir(stagedSourceRoot)) {
-            await fsImpl.cp(path.join(stagedSourceRoot, entry), path.join(targetSourceRoot, entry), {
-              recursive: true, force: false, errorOnExist: true, dereference: false,
-            });
-          }
-          await assertStagedCheckout(targetSourceRoot, receipt.targetSha, { fsImpl, execFileImpl, gitPath });
-          await validateStagedSource({ stagedSourceRoot: targetSourceRoot, currentSha: receipt.currentSha,
-            targetSha: receipt.targetSha, transactionId: receipt.transactionId });
-        } catch (copyFailure) {
-          // This invocation exclusively created the destination. Never
-          // preserve a partially copied checkout as an eligible Main source.
-          await fsImpl.rm(targetSourceRoot, { recursive: true, force: true });
-          throw copyFailure;
+            marker = validateLockMarker(await readBoundedJsonFile(lockPath, { fsImpl }));
         }
-        // Leave the old staging tree to normal transaction cleanup if Windows
-        // still holds its files; only the verified store can become active.
-        await fsImpl.rm(stagedSourceRoot, { recursive: true, force: true }).catch(() => {});
-      }
-      await syncDirectory(resolvedSourceStoreRoot, { fsImpl });
-    }
-    await assertStagedCheckout(targetSourceRoot, receipt.targetSha, { fsImpl, execFileImpl, gitPath });
-    receipt = await writeReceipt(Object.freeze({ ...receipt, status: "promoting", stage: "ready_to_switch", targetSourceRoot, updatedAt: now().toISOString() }));
-    return Object.freeze({ receipt, targetSourceRoot, rollbackSourceRoot: receipt.rollbackSourceRoot });
-  };
-
-  const markNativeRollbackReady = async (transactionId) => {
-    assertTransactionId(transactionId);
-    let receipt = await readActive();
-    if (!receipt || receipt.transactionId !== transactionId) throw new Error("Main native rollback readiness does not own the active transaction.");
-    if (receipt.status !== "promoting" || !["ready_to_switch", "native_rollback_ready"].includes(receipt.stage) || !receipt.targetSourceRoot) {
-      throw new Error("Main update transaction is not ready to record native rollback state.");
-    }
-    if (receipt.stage === "native_rollback_ready") return receipt;
-    receipt = await writeReceipt(Object.freeze({ ...receipt, stage: "native_rollback_ready", updatedAt: now().toISOString() }));
-    return receipt;
-  };
-
-  const markNativeSwitched = async (transactionId) => {
-    assertTransactionId(transactionId);
-    let receipt = await readActive();
-    if (!receipt || receipt.transactionId !== transactionId) throw new Error("Main native activation does not own the active transaction.");
-    if (receipt.status !== "promoting" || !["native_rollback_ready", "native_switched"].includes(receipt.stage) || !receipt.targetSourceRoot) {
-      throw new Error("Main update transaction has not durably prepared native rollback state.");
-    }
-    if (receipt.stage === "native_switched") return receipt;
-    receipt = await writeReceipt(Object.freeze({ ...receipt, stage: "native_switched", updatedAt: now().toISOString() }));
-    return receipt;
-  };
-
-  const activatePromotion = async (transactionId) => {
-    assertTransactionId(transactionId);
-    let receipt = await readActive();
-    if (!receipt || receipt.transactionId !== transactionId) throw new Error("Main update activation does not own the active transaction.");
-    if (receipt.status !== "promoting" || !["ready_to_switch", "native_switched"].includes(receipt.stage) || !receipt.targetSourceRoot) throw new Error("Main update transaction is not ready to switch source.");
-    await writeEquinoxLocalMainSourcePointer(resolvedPointerPath, { sourceRoot: receipt.targetSourceRoot, sha: receipt.targetSha }, { fsImpl, execFileImpl, gitPath, randomBytesImpl });
-    receipt = await writeReceipt(Object.freeze({ ...receipt, status: "verifying", stage: "source_switched", updatedAt: now().toISOString() }));
-    return receipt;
-  };
-
-  const rollbackPromotion = async (transactionId, failure, { nativeRollbackPending = false } = {}) => {
-    assertTransactionId(transactionId);
-    let receipt = await readActive();
-    if (!receipt || receipt.transactionId !== transactionId) throw new Error("Main update rollback does not own the active transaction.");
-    if (!receipt.rollbackSourceRoot) throw new Error("Main update rollback source is unavailable.");
-    try {
-      await writeEquinoxLocalMainSourcePointer(resolvedPointerPath, { sourceRoot: receipt.rollbackSourceRoot, sha: receipt.rollbackSha }, { fsImpl, execFileImpl, gitPath, randomBytesImpl });
-      receipt = await writeReceipt(Object.freeze({ ...receipt, status: nativeRollbackPending ? "verifying" : "rolled_back", stage: "rollback_source_restored", updatedAt: now().toISOString(), lastError: boundedMessage(failure) || receipt.lastError }));
-      return receipt;
-    } catch (error) {
-      await writeReceipt(Object.freeze({ ...receipt, status: "rollback_failed", stage: "rollback_failed", updatedAt: now().toISOString(), lastError: boundedMessage(error instanceof Error ? error.message : error) })).catch(() => {});
-      throw error;
-    }
-  };
-
-  const abortStagedPreparation = async (transactionId, failure) => {
-    assertTransactionId(transactionId);
-    let receipt = await readActive();
-    if (!receipt || receipt.transactionId !== transactionId) throw new Error("Main update staged abort does not own the active transaction.");
-    if (receipt.status !== "staged" || receipt.stage !== "staged") throw new Error("Main update staged preparation can only be aborted before promotion begins.");
-    receipt = await writeReceipt(Object.freeze({
-      ...receipt,
-      status: "failed",
-      stage: "preparation_failed",
-      updatedAt: now().toISOString(),
-      lastError: boundedMessage(failure) || "Main update preparation failed.",
-    }));
-
-    const transactionDir = path.join(stagingRoot, transactionId);
-    let cleanupError = null;
-    try {
-      await fsImpl.rm(transactionDir, { recursive: true, force: true });
-      await syncDirectory(stagingRoot, { fsImpl });
-    } catch (error) {
-      cleanupError = error;
-    }
-
-    await fsImpl.rm(lockPath, { force: true });
-    await syncDirectory(resolvedTransactionRoot, { fsImpl });
-    if (cleanupError) throw cleanupError;
-    return receipt;
-  };
-
-  const abortPreparedPromotion = async (transactionId, failure, { stage = "handoff_schedule_failed" } = {}) => {
-    assertTransactionId(transactionId);
-    if (!["handoff_schedule_failed", "native_admission_failed"].includes(stage)) throw new Error("Main update prepared abort stage is invalid.");
-    let receipt = await readActive();
-    if (!receipt || receipt.transactionId !== transactionId) throw new Error("Main update abort does not own the active transaction.");
-    if (receipt.status !== "promoting" || receipt.stage !== "ready_to_switch") throw new Error("Main update transaction cannot be aborted after source activation.");
-    const fallback = stage === "native_admission_failed" ? "Main native admission failed before activation." : "Main update handoff scheduling failed.";
-    receipt = await writeReceipt(Object.freeze({ ...receipt, status: "failed", stage, updatedAt: now().toISOString(), lastError: boundedMessage(failure) || fallback }));
-    await fsImpl.rm(lockPath, { force: true });
-    await syncDirectory(resolvedTransactionRoot, { fsImpl });
-    return receipt;
-  };
-
-  const markPromotionSucceeded = async (transactionId) => {
-    assertTransactionId(transactionId);
-    let receipt = await readActive();
-    if (!receipt || receipt.transactionId !== transactionId) throw new Error("Main update success does not own the active transaction.");
-    if (receipt.status !== "verifying" || receipt.stage !== "source_switched" || !receipt.targetSourceRoot) throw new Error("Main update transaction is not awaiting target verification.");
-    const pointer = await readEquinoxLocalMainSourcePointer(resolvedPointerPath, { fsImpl, execFileImpl, gitPath });
-    if (pointer.sha !== receipt.targetSha || pointer.sourceRoot !== receipt.targetSourceRoot) throw new Error("Main source pointer does not match the verified target.");
-    receipt = await writeReceipt(Object.freeze({ ...receipt, status: "succeeded", stage: "healthy", updatedAt: now().toISOString(), lastError: null }));
-    return receipt;
-  };
-
-  const markNativeRollbackRestored = async (transactionId) => {
-    assertTransactionId(transactionId);
-    let receipt = await readActive();
-    if (!receipt || receipt.transactionId !== transactionId) throw new Error("Main native rollback restore does not own the active transaction.");
-    if (receipt.status !== "verifying" || !["rollback_source_restored", "rollback_native_restored"].includes(receipt.stage)) {
-      throw new Error("Main update transaction is not awaiting native rollback restoration.");
-    }
-    if (receipt.stage === "rollback_native_restored") return receipt;
-    receipt = await writeReceipt(Object.freeze({ ...receipt, stage: "rollback_native_restored", updatedAt: now().toISOString() }));
-    return receipt;
-  };
-
-  const markRollbackSucceeded = async (transactionId) => {
-    assertTransactionId(transactionId);
-    let receipt = await readActive();
-    if (!receipt || receipt.transactionId !== transactionId) throw new Error("Main rollback success does not own the active transaction.");
-    if (receipt.status !== "verifying" || receipt.stage !== "rollback_native_restored") {
-      throw new Error("Main update native rollback is not awaiting health verification.");
-    }
-    receipt = await writeReceipt(Object.freeze({ ...receipt, status: "rolled_back", stage: "rollback_healthy", updatedAt: now().toISOString() }));
-    return receipt;
-  };
-
-  const markRollbackFailed = async (transactionId, failure) => {
-    assertTransactionId(transactionId);
-    const receipt = await readActive();
-    if (!receipt || receipt.transactionId !== transactionId) throw new Error("Main update rollback failure does not own the active transaction.");
-    return await writeReceipt(Object.freeze({ ...receipt, status: "rollback_failed", stage: "rollback_failed", updatedAt: now().toISOString(), lastError: boundedMessage(failure) || "Rollback verification failed." }));
-  };
-
-  // Used only by the offline, read-only-by-default Windows recovery audit.
-  // Archive the exact owned lock instead of erasing the forensic rollback_failed receipt.
-  const archiveVerifiedFailedRollbackLock = async (transactionId, { currentSha, targetSha } = {}) => {
-    assertTransactionId(transactionId);
-    assertSha(currentSha, "Recovery current SHA");
-    assertSha(targetSha, "Recovery target SHA");
-    const active = await readActive();
-    if (!active || active.transactionId !== transactionId || active.status !== "rollback_failed" ||
-        active.currentSha !== currentSha || active.targetSha !== targetSha || active.rollbackSha !== currentSha) {
-      throw new Error("Main rollback recovery identity no longer matches its failed transaction.");
-    }
-    const pointer = await readEquinoxLocalMainSourcePointer(resolvedPointerPath, { fsImpl, execFileImpl, gitPath });
-    if (pointer.sha !== currentSha || pointer.sourceRoot !== active.rollbackSourceRoot) {
-      throw new Error("Main rollback recovery source pointer is not the original healthy source.");
-    }
-    const archivedRoot = path.join(resolvedTransactionRoot, "archived-failed-locks");
-    await assertCanonicalDirectory(archivedRoot, { fsImpl, create: true });
-    const archivePath = path.join(archivedRoot, `${transactionId}.json`);
-    try { await fsImpl.lstat(archivePath); throw new Error("Main rollback recovery lock was already archived."); }
-    catch (error) { if (error?.code !== "ENOENT") throw error; }
-    const marker = validateLockMarker(await readBoundedJsonFile(lockPath, { fsImpl }));
-    if (marker.transactionId !== transactionId || marker.currentSha !== currentSha || marker.targetSha !== targetSha || marker.startedAt !== active.startedAt) {
-      throw new Error("Main rollback recovery lock changed during verification.");
-    }
-    await fsImpl.rename(lockPath, archivePath);
-    await syncDirectory(resolvedTransactionRoot, { fsImpl });
-    await syncDirectory(archivedRoot, { fsImpl });
-    return Object.freeze({ archived: true, transactionId });
-  };
-
-  const releaseStagedLock = async (transactionId) => {
-    assertTransactionId(transactionId);
-    const active = await readActive();
-    if (!active) return false;
-    if (active.transactionId !== transactionId) throw new Error("Cannot release a main update lock owned by another transaction.");
-    if (!["staged", "failed", "succeeded", "rolled_back"].includes(active.status)) throw new Error("Main update lock cannot be released while the transaction is still active.");
-    await fsImpl.rm(lockPath, { force: true }); await syncDirectory(resolvedTransactionRoot, { fsImpl });
-    return true;
-  };
-
-  return Object.freeze({ readActive, readReceipt, begin, stage, initializeSourcePointer, preparePromotion, markNativeRollbackReady, markNativeSwitched, activatePromotion, rollbackPromotion, abortStagedPreparation, abortPreparedPromotion, markPromotionSucceeded, markNativeRollbackRestored, markRollbackSucceeded, markRollbackFailed, archiveVerifiedFailedRollbackLock, releaseStagedLock, paths: Object.freeze({ transactionRoot: resolvedTransactionRoot, lockPath, receiptsRoot, stagingRoot, sourcePointerPath: resolvedPointerPath, sourceStoreRoot: resolvedSourceStoreRoot }) });
+        catch (error) {
+            if (hasErrorCode(error, "ENOENT"))
+                return null;
+            throw error;
+        }
+        try {
+            const receipt = await readReceipt(marker.transactionId);
+            if (receipt.currentSha !== marker.currentSha || receipt.targetSha !== marker.targetSha || receipt.startedAt !== marker.startedAt) {
+                throw new Error("Main update lock and receipt identities disagree.");
+            }
+            return receipt;
+        }
+        catch (error) {
+            if (!hasErrorCode(error, "ENOENT"))
+                throw error;
+            return Object.freeze({ ...marker, status: "active", stage: "admitted", rollbackSha: marker.currentSha, rollbackSourceRoot: resolvedSourceRoot, targetSourceRoot: null, updatedAt: marker.startedAt, lastError: null });
+        }
+    };
+    const writeReceipt = async (receipt) => {
+        const validated = validateReceipt(receipt);
+        await writeAtomicPrivateJson(receiptPathFor(validated.transactionId), validated, { fsImpl });
+        return validated;
+    };
+    const begin = async ({ currentSha, targetSha }) => {
+        assertSha(currentSha, "Current SHA");
+        assertSha(targetSha, "Target SHA");
+        if (currentSha === targetSha)
+            throw new Error("Main update target already matches the current source SHA.");
+        await assertCanonicalDirectory(resolvedTransactionRoot, { fsImpl, create: true });
+        await fsImpl.mkdir(receiptsRoot, { recursive: true, mode: 0o700 });
+        await assertCanonicalDirectory(receiptsRoot, { fsImpl });
+        await fsImpl.mkdir(stagingRoot, { recursive: true, mode: 0o700 });
+        const active = await readActive();
+        if (active)
+            throw new Error(`Main update transaction ${active.transactionId} already owns the update lock.`);
+        const local = await inspectCanonicalMainCheckout(resolvedSourceRoot, { fsImpl, execFileImpl, gitPath });
+        if (!local.eligible)
+            throw new Error(`Active source checkout is not update-eligible: ${local.reason}`);
+        if (local.currentSha !== currentSha)
+            throw new Error("Active source SHA changed after update discovery.");
+        const transactionId = `main-${randomBytesImpl(16).toString("hex")}`;
+        assertTransactionId(transactionId);
+        const timestamp = now().toISOString();
+        const receipt = Object.freeze({
+            schemaVersion: EQUINOX_LOCAL_MAIN_TRANSACTION_SCHEMA_VERSION,
+            transactionId, channel: "main", status: "active", stage: "admitted",
+            currentSha, targetSha, rollbackSha: currentSha,
+            rollbackSourceRoot: resolvedSourceRoot, targetSourceRoot: null,
+            startedAt: timestamp, updatedAt: timestamp, lastError: null,
+        });
+        let lockHandle;
+        try {
+            const marker = { schemaVersion: receipt.schemaVersion, transactionId, channel: "main", currentSha, targetSha, startedAt: timestamp };
+            lockHandle = await fsImpl.open(lockPath, "wx", 0o600);
+            await lockHandle.writeFile(`${JSON.stringify(marker, null, 2)}\n`, "utf8");
+            await lockHandle.sync();
+            await lockHandle.close();
+            lockHandle = null;
+            await syncDirectory(resolvedTransactionRoot, { fsImpl });
+            await writeAtomicPrivateJson(receiptPathFor(transactionId), receipt, { fsImpl });
+        }
+        catch (error) {
+            if (lockHandle)
+                await lockHandle.close().catch(() => { });
+            if (hasErrorCode(error, "EEXIST")) {
+                const owner = await readActive().catch(() => null);
+                throw new Error(owner ? `Main update transaction ${owner.transactionId} already owns the update lock.` : "Main update lock already exists.");
+            }
+            throw error;
+        }
+        return receipt;
+    };
+    const stage = async ({ currentSha, targetSha }) => {
+        let receipt = await begin({ currentSha, targetSha });
+        const transactionDir = path.join(stagingRoot, receipt.transactionId);
+        const stagedSourceRoot = path.join(transactionDir, "source");
+        try {
+            await fsImpl.mkdir(transactionDir, { recursive: false, mode: 0o700 });
+            await run(gitPath, ["clone", "--no-checkout", "--filter=blob:none", "--single-branch", "--branch", EQUINOX_LOCAL_MAIN_BRANCH, EQUINOX_LOCAL_MAIN_REMOTE, stagedSourceRoot], { execFileImpl });
+            await run(gitPath, ["-C", stagedSourceRoot, "checkout", "--force", "-B", EQUINOX_LOCAL_MAIN_BRANCH, targetSha], { execFileImpl });
+            await assertStagedCheckout(stagedSourceRoot, targetSha, { execFileImpl, fsImpl, gitPath });
+            receipt = await writeReceipt(Object.freeze({ ...receipt, stage: "dependencies", updatedAt: now().toISOString() }));
+            await installDependencies({ stagedSourceRoot, currentSha, targetSha, transactionId: receipt.transactionId });
+            receipt = await writeReceipt(Object.freeze({ ...receipt, stage: "validation", updatedAt: now().toISOString() }));
+            await validateStagedSource({ stagedSourceRoot, currentSha, targetSha, transactionId: receipt.transactionId });
+            await assertStagedCheckout(stagedSourceRoot, targetSha, { execFileImpl, fsImpl, gitPath });
+            receipt = await writeReceipt(Object.freeze({ ...receipt, status: "staged", stage: "staged", updatedAt: now().toISOString() }));
+            return Object.freeze({ receipt, stagedSourceRoot });
+        }
+        catch (error) {
+            const failed = Object.freeze({ ...receipt, status: "failed", updatedAt: now().toISOString(), lastError: boundedMessage(error instanceof Error ? error.message : error) });
+            await writeReceipt(failed).catch(() => { });
+            const owner = await readActive().catch(() => null);
+            if (owner?.transactionId === receipt.transactionId)
+                await fsImpl.rm(lockPath, { force: true });
+            throw error;
+        }
+    };
+    const initializeSourcePointer = async () => {
+        const local = await inspectCanonicalMainCheckout(resolvedSourceRoot, { fsImpl, execFileImpl, gitPath });
+        if (!local.eligible)
+            throw new Error(`Active source checkout is not update-eligible: ${local.reason}`);
+        try {
+            const existing = await readEquinoxLocalMainSourcePointer(resolvedPointerPath, { fsImpl, execFileImpl, gitPath });
+            if (existing.sourceRoot !== resolvedSourceRoot || existing.sha !== local.currentSha)
+                throw new Error("Existing main source pointer does not match the active checkout.");
+            return existing;
+        }
+        catch (error) {
+            if (!hasErrorCode(error, "ENOENT"))
+                throw error;
+        }
+        return await writeEquinoxLocalMainSourcePointer(resolvedPointerPath, { sourceRoot: resolvedSourceRoot, sha: local.currentSha }, { fsImpl, execFileImpl, gitPath, randomBytesImpl });
+    };
+    const preparePromotion = async (transactionId) => {
+        assertTransactionId(transactionId);
+        let receipt = await readActive();
+        if (!receipt || receipt.transactionId !== transactionId)
+            throw new Error("Main update promotion does not own the active transaction.");
+        if (receipt.status !== "staged")
+            throw new Error("Main update transaction is not staged for promotion.");
+        const pointer = await readEquinoxLocalMainSourcePointer(resolvedPointerPath, { fsImpl, execFileImpl, gitPath });
+        if (pointer.sha !== receipt.currentSha || pointer.sourceRoot !== receipt.rollbackSourceRoot)
+            throw new Error("Main source pointer changed after transaction admission.");
+        const stagedSourceRoot = path.join(stagingRoot, transactionId, "source");
+        await fsImpl.mkdir(resolvedSourceStoreRoot, { recursive: true, mode: 0o700 });
+        const targetSourceRoot = path.join(resolvedSourceStoreRoot, receipt.targetSha);
+        let durableTargetExists = false;
+        try {
+            const existing = await inspectCanonicalMainCheckout(targetSourceRoot, { fsImpl, execFileImpl, gitPath });
+            if (!existing.eligible || existing.currentSha !== receipt.targetSha)
+                throw new Error("Existing main source store target is invalid.");
+            durableTargetExists = true;
+        }
+        catch (error) {
+            if (!hasErrorCode(error, "ENOENT"))
+                throw error;
+        }
+        if (durableTargetExists) {
+            await fsImpl.rm(stagedSourceRoot, { recursive: true, force: true });
+        }
+        else {
+            await assertStagedCheckout(stagedSourceRoot, receipt.targetSha, { fsImpl, execFileImpl, gitPath });
+            try {
+                await fsImpl.rename(stagedSourceRoot, targetSourceRoot);
+            }
+            catch (error) {
+                if (platform !== "win32" || !["EPERM", "EACCES"].includes(String(errorCode(error))))
+                    throw error;
+                // Windows can deny a directory move while a transient scanner/process
+                // holds a descendant file open. Claim the previously absent target
+                // exclusively; copy without following links, then revalidate BOTH Git
+                // identity and pinned dependencies before any source pointer changes.
+                // This is not an update success until native activation and health pass.
+                await fsImpl.mkdir(targetSourceRoot, { mode: 0o700 });
+                try {
+                    for (const entry of await fsImpl.readdir(stagedSourceRoot)) {
+                        await fsImpl.cp(path.join(stagedSourceRoot, entry), path.join(targetSourceRoot, entry), {
+                            recursive: true, force: false, errorOnExist: true, dereference: false,
+                        });
+                    }
+                    await assertStagedCheckout(targetSourceRoot, receipt.targetSha, { fsImpl, execFileImpl, gitPath });
+                    await validateStagedSource({ stagedSourceRoot: targetSourceRoot, currentSha: receipt.currentSha,
+                        targetSha: receipt.targetSha, transactionId: receipt.transactionId });
+                }
+                catch (copyFailure) {
+                    // This invocation exclusively created the destination. Never
+                    // preserve a partially copied checkout as an eligible Main source.
+                    await fsImpl.rm(targetSourceRoot, { recursive: true, force: true });
+                    throw copyFailure;
+                }
+                // Leave the old staging tree to normal transaction cleanup if Windows
+                // still holds its files; only the verified store can become active.
+                await fsImpl.rm(stagedSourceRoot, { recursive: true, force: true }).catch(() => { });
+            }
+            await syncDirectory(resolvedSourceStoreRoot, { fsImpl });
+        }
+        await assertStagedCheckout(targetSourceRoot, receipt.targetSha, { fsImpl, execFileImpl, gitPath });
+        receipt = await writeReceipt(Object.freeze({ ...receipt, status: "promoting", stage: "ready_to_switch", targetSourceRoot, updatedAt: now().toISOString() }));
+        return Object.freeze({ receipt, targetSourceRoot, rollbackSourceRoot: receipt.rollbackSourceRoot });
+    };
+    const markNativeRollbackReady = async (transactionId) => {
+        assertTransactionId(transactionId);
+        let receipt = await readActive();
+        if (!receipt || receipt.transactionId !== transactionId)
+            throw new Error("Main native rollback readiness does not own the active transaction.");
+        if (receipt.status !== "promoting" || !["ready_to_switch", "native_rollback_ready"].includes(receipt.stage) || !receipt.targetSourceRoot) {
+            throw new Error("Main update transaction is not ready to record native rollback state.");
+        }
+        if (receipt.stage === "native_rollback_ready")
+            return receipt;
+        receipt = await writeReceipt(Object.freeze({ ...receipt, stage: "native_rollback_ready", updatedAt: now().toISOString() }));
+        return receipt;
+    };
+    const markNativeSwitched = async (transactionId) => {
+        assertTransactionId(transactionId);
+        let receipt = await readActive();
+        if (!receipt || receipt.transactionId !== transactionId)
+            throw new Error("Main native activation does not own the active transaction.");
+        if (receipt.status !== "promoting" || !["native_rollback_ready", "native_switched"].includes(receipt.stage) || !receipt.targetSourceRoot) {
+            throw new Error("Main update transaction has not durably prepared native rollback state.");
+        }
+        if (receipt.stage === "native_switched")
+            return receipt;
+        receipt = await writeReceipt(Object.freeze({ ...receipt, stage: "native_switched", updatedAt: now().toISOString() }));
+        return receipt;
+    };
+    const activatePromotion = async (transactionId) => {
+        assertTransactionId(transactionId);
+        let receipt = await readActive();
+        if (!receipt || receipt.transactionId !== transactionId)
+            throw new Error("Main update activation does not own the active transaction.");
+        if (receipt.status !== "promoting" || !["ready_to_switch", "native_switched"].includes(receipt.stage) || !receipt.targetSourceRoot)
+            throw new Error("Main update transaction is not ready to switch source.");
+        await writeEquinoxLocalMainSourcePointer(resolvedPointerPath, { sourceRoot: receipt.targetSourceRoot, sha: receipt.targetSha }, { fsImpl, execFileImpl, gitPath, randomBytesImpl });
+        receipt = await writeReceipt(Object.freeze({ ...receipt, status: "verifying", stage: "source_switched", updatedAt: now().toISOString() }));
+        return receipt;
+    };
+    const rollbackPromotion = async (transactionId, failure, { nativeRollbackPending = false } = {}) => {
+        assertTransactionId(transactionId);
+        let receipt = await readActive();
+        if (!receipt || receipt.transactionId !== transactionId)
+            throw new Error("Main update rollback does not own the active transaction.");
+        if (!receipt.rollbackSourceRoot)
+            throw new Error("Main update rollback source is unavailable.");
+        try {
+            await writeEquinoxLocalMainSourcePointer(resolvedPointerPath, { sourceRoot: receipt.rollbackSourceRoot, sha: receipt.rollbackSha }, { fsImpl, execFileImpl, gitPath, randomBytesImpl });
+            receipt = await writeReceipt(Object.freeze({ ...receipt, status: nativeRollbackPending ? "verifying" : "rolled_back", stage: "rollback_source_restored", updatedAt: now().toISOString(), lastError: boundedMessage(failure) || receipt.lastError }));
+            return receipt;
+        }
+        catch (error) {
+            await writeReceipt(Object.freeze({ ...receipt, status: "rollback_failed", stage: "rollback_failed", updatedAt: now().toISOString(), lastError: boundedMessage(error instanceof Error ? error.message : error) })).catch(() => { });
+            throw error;
+        }
+    };
+    const abortStagedPreparation = async (transactionId, failure) => {
+        assertTransactionId(transactionId);
+        let receipt = await readActive();
+        if (!receipt || receipt.transactionId !== transactionId)
+            throw new Error("Main update staged abort does not own the active transaction.");
+        if (receipt.status !== "staged" || receipt.stage !== "staged")
+            throw new Error("Main update staged preparation can only be aborted before promotion begins.");
+        receipt = await writeReceipt(Object.freeze({
+            ...receipt,
+            status: "failed",
+            stage: "preparation_failed",
+            updatedAt: now().toISOString(),
+            lastError: boundedMessage(failure) || "Main update preparation failed.",
+        }));
+        const transactionDir = path.join(stagingRoot, transactionId);
+        let cleanupError = null;
+        try {
+            await fsImpl.rm(transactionDir, { recursive: true, force: true });
+            await syncDirectory(stagingRoot, { fsImpl });
+        }
+        catch (error) {
+            cleanupError = error;
+        }
+        await fsImpl.rm(lockPath, { force: true });
+        await syncDirectory(resolvedTransactionRoot, { fsImpl });
+        if (cleanupError)
+            throw cleanupError;
+        return receipt;
+    };
+    const abortPreparedPromotion = async (transactionId, failure, { stage = "handoff_schedule_failed" } = {}) => {
+        assertTransactionId(transactionId);
+        if (!["handoff_schedule_failed", "native_admission_failed"].includes(stage))
+            throw new Error("Main update prepared abort stage is invalid.");
+        let receipt = await readActive();
+        if (!receipt || receipt.transactionId !== transactionId)
+            throw new Error("Main update abort does not own the active transaction.");
+        if (receipt.status !== "promoting" || receipt.stage !== "ready_to_switch")
+            throw new Error("Main update transaction cannot be aborted after source activation.");
+        const fallback = stage === "native_admission_failed" ? "Main native admission failed before activation." : "Main update handoff scheduling failed.";
+        receipt = await writeReceipt(Object.freeze({ ...receipt, status: "failed", stage, updatedAt: now().toISOString(), lastError: boundedMessage(failure) || fallback }));
+        await fsImpl.rm(lockPath, { force: true });
+        await syncDirectory(resolvedTransactionRoot, { fsImpl });
+        return receipt;
+    };
+    const markPromotionSucceeded = async (transactionId) => {
+        assertTransactionId(transactionId);
+        let receipt = await readActive();
+        if (!receipt || receipt.transactionId !== transactionId)
+            throw new Error("Main update success does not own the active transaction.");
+        if (receipt.status !== "verifying" || receipt.stage !== "source_switched" || !receipt.targetSourceRoot)
+            throw new Error("Main update transaction is not awaiting target verification.");
+        const pointer = await readEquinoxLocalMainSourcePointer(resolvedPointerPath, { fsImpl, execFileImpl, gitPath });
+        if (pointer.sha !== receipt.targetSha || pointer.sourceRoot !== receipt.targetSourceRoot)
+            throw new Error("Main source pointer does not match the verified target.");
+        receipt = await writeReceipt(Object.freeze({ ...receipt, status: "succeeded", stage: "healthy", updatedAt: now().toISOString(), lastError: null }));
+        return receipt;
+    };
+    const markNativeRollbackRestored = async (transactionId) => {
+        assertTransactionId(transactionId);
+        let receipt = await readActive();
+        if (!receipt || receipt.transactionId !== transactionId)
+            throw new Error("Main native rollback restore does not own the active transaction.");
+        if (receipt.status !== "verifying" || !["rollback_source_restored", "rollback_native_restored"].includes(receipt.stage)) {
+            throw new Error("Main update transaction is not awaiting native rollback restoration.");
+        }
+        if (receipt.stage === "rollback_native_restored")
+            return receipt;
+        receipt = await writeReceipt(Object.freeze({ ...receipt, stage: "rollback_native_restored", updatedAt: now().toISOString() }));
+        return receipt;
+    };
+    const markRollbackSucceeded = async (transactionId) => {
+        assertTransactionId(transactionId);
+        let receipt = await readActive();
+        if (!receipt || receipt.transactionId !== transactionId)
+            throw new Error("Main rollback success does not own the active transaction.");
+        if (receipt.status !== "verifying" || receipt.stage !== "rollback_native_restored") {
+            throw new Error("Main update native rollback is not awaiting health verification.");
+        }
+        receipt = await writeReceipt(Object.freeze({ ...receipt, status: "rolled_back", stage: "rollback_healthy", updatedAt: now().toISOString() }));
+        return receipt;
+    };
+    const markRollbackFailed = async (transactionId, failure) => {
+        assertTransactionId(transactionId);
+        const receipt = await readActive();
+        if (!receipt || receipt.transactionId !== transactionId)
+            throw new Error("Main update rollback failure does not own the active transaction.");
+        return await writeReceipt(Object.freeze({ ...receipt, status: "rollback_failed", stage: "rollback_failed", updatedAt: now().toISOString(), lastError: boundedMessage(failure) || "Rollback verification failed." }));
+    };
+    // Used only by the offline, read-only-by-default Windows recovery audit.
+    // Archive the exact owned lock instead of erasing the forensic rollback_failed receipt.
+    const archiveVerifiedFailedRollbackLock = async (transactionId, { currentSha, targetSha } = {}) => {
+        assertTransactionId(transactionId);
+        assertSha(currentSha, "Recovery current SHA");
+        assertSha(targetSha, "Recovery target SHA");
+        const active = await readActive();
+        if (!active || active.transactionId !== transactionId || active.status !== "rollback_failed" ||
+            active.currentSha !== currentSha || active.targetSha !== targetSha || active.rollbackSha !== currentSha) {
+            throw new Error("Main rollback recovery identity no longer matches its failed transaction.");
+        }
+        const pointer = await readEquinoxLocalMainSourcePointer(resolvedPointerPath, { fsImpl, execFileImpl, gitPath });
+        if (pointer.sha !== currentSha || pointer.sourceRoot !== active.rollbackSourceRoot) {
+            throw new Error("Main rollback recovery source pointer is not the original healthy source.");
+        }
+        const archivedRoot = path.join(resolvedTransactionRoot, "archived-failed-locks");
+        await assertCanonicalDirectory(archivedRoot, { fsImpl, create: true });
+        const archivePath = path.join(archivedRoot, `${transactionId}.json`);
+        try {
+            await fsImpl.lstat(archivePath);
+            throw new Error("Main rollback recovery lock was already archived.");
+        }
+        catch (error) {
+            if (!hasErrorCode(error, "ENOENT"))
+                throw error;
+        }
+        const marker = validateLockMarker(await readBoundedJsonFile(lockPath, { fsImpl }));
+        if (marker.transactionId !== transactionId || marker.currentSha !== currentSha || marker.targetSha !== targetSha || marker.startedAt !== active.startedAt) {
+            throw new Error("Main rollback recovery lock changed during verification.");
+        }
+        await fsImpl.rename(lockPath, archivePath);
+        await syncDirectory(resolvedTransactionRoot, { fsImpl });
+        await syncDirectory(archivedRoot, { fsImpl });
+        return Object.freeze({ archived: true, transactionId });
+    };
+    const releaseStagedLock = async (transactionId) => {
+        assertTransactionId(transactionId);
+        const active = await readActive();
+        if (!active)
+            return false;
+        if (active.transactionId !== transactionId)
+            throw new Error("Cannot release a main update lock owned by another transaction.");
+        if (!["staged", "failed", "succeeded", "rolled_back"].includes(active.status))
+            throw new Error("Main update lock cannot be released while the transaction is still active.");
+        await fsImpl.rm(lockPath, { force: true });
+        await syncDirectory(resolvedTransactionRoot, { fsImpl });
+        return true;
+    };
+    return Object.freeze({ readActive, readReceipt, begin, stage, initializeSourcePointer, preparePromotion, markNativeRollbackReady, markNativeSwitched, activatePromotion, rollbackPromotion, abortStagedPreparation, abortPreparedPromotion, markPromotionSucceeded, markNativeRollbackRestored, markRollbackSucceeded, markRollbackFailed, archiveVerifiedFailedRollbackLock, releaseStagedLock, paths: Object.freeze({ transactionRoot: resolvedTransactionRoot, lockPath, receiptsRoot, stagingRoot, sourcePointerPath: resolvedPointerPath, sourceStoreRoot: resolvedSourceStoreRoot }) });
 }

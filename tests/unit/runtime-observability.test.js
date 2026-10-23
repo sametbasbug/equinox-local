@@ -403,3 +403,98 @@ test("a failed user managed command remains in diagnostics but does not downgrad
     assert.equal((await store.health({ windowMs: 10_000 })).state, "DEGRADED");
   });
 });
+
+test("observability limits deep and wide synthetic private details before writing event JSON", async()=>{
+  await withTempDir(async root=>{
+    let timestamp=20_000_000;
+    const store=createRuntimeObservability({rootDir:root,now:()=>timestamp,randomId:()=>"fixture"});
+    const values=Object.fromEntries(Array.from({length:120},(_,i)=>["k"+i,"safe-"+i]));
+    values.api_key="fixture-private-credential";
+    const event=await store.record({
+      component:"runtime",type:"runtime.audit",severity:"info",
+      message:"Authorization: fixture-header password=synthetic-secret Bearer abc.def.ghi",
+      details:{
+        authorization:"fixture-authorization",safe:"fixture-visible",
+        nested:{github_token:"fixture-token",levels:{a:{b:{c:{d:{e:{f:{g:"deep-secret"}}}}}}}},
+        width:values,
+        array:Array.from({length:110},()=>({value:"safe"})),
+      },
+    });
+    assert.equal(event.details.authorization,"[REDACTED]");
+    assert.equal(event.details.nested.github_token,"[REDACTED]");
+    assert.equal(event.details.array.length,100);
+    assert.equal(Object.keys(event.details.width).length,100);
+    assert.equal(event.details.safe,"fixture-visible");
+    const text=await fs.readFile(path.join(root,__test.CURRENT_FILE),"utf8");
+    for(const secret of ["fixture-private-credential","fixture-authorization","fixture-token","synthetic-secret","abc.def.ghi"]){
+      assert.equal(text.includes(secret),false,secret);
+    }
+    assert.equal((await fs.stat(path.join(root,__test.CURRENT_FILE))).mode&0o077,0);
+    assert.equal((await fs.stat(root)).mode&0o077,0);
+  });
+});
+
+test("observability refuses invalid config, event names, oversize events and query filters without admitting records",async()=>{
+  await withTempDir(async root=>{
+    for(const options of [
+      {rootDir:"relative"},
+      {rootDir:root,maxSegmentBytes:1},
+      {rootDir:root,maxSegments:0},
+      {rootDir:root,maxSegments:101},
+    ])assert.throws(()=>createRuntimeObservability(options),Error);
+    const store=createRuntimeObservability({rootDir:root,maxEventBytes:512,now:()=>1_500_000});
+    for(const input of [
+      {component:"Bad Component",type:"runtime.start"},
+      {component:"runtime",type:"Bad Type"},
+      {component:"runtime",type:"runtime.start",severity:"unknown"},
+      {component:"runtime",type:"runtime.start",message:"x".repeat(20_000)},
+    ])await assert.rejects(store.record(input),Error);
+    assert.equal((await store.query()).length,0);
+    for(const input of [
+      {limit:0},{limit:501},{limit:1.5},{limit:"1"},{severity:"fatal"},
+    ])await assert.rejects(store.query(input),Error);
+    assert.equal((await store.storageStats()).currentBytes,0);
+  });
+});
+
+test("observability newest-first query limit, filters and malformed current lines retain exact stable ordering",async()=>{
+  await withTempDir(async root=>{
+    let timestamp=30_000_000,nonce=0;
+    const store=createRuntimeObservability({rootDir:root,now:()=>timestamp,randomId:()=>String(++nonce)});
+    for(const [type,severity,component] of [
+      ["alpha","info","runtime"],["beta","warn","chrome"],
+      ["gamma","error","chrome"],["delta","info","runtime"],
+    ]){
+      await store.record({component,type:"runtime."+type,severity});
+      timestamp+=100;
+    }
+    assert.deepEqual((await store.query({limit:2})).map(e=>e.type),["runtime.delta","runtime.gamma"]);
+    assert.deepEqual((await store.query({limit:2,newestFirst:false})).map(e=>e.type),["runtime.alpha","runtime.beta"]);
+    assert.deepEqual((await store.query({component:"chrome",severity:"warn",limit:5})).map(e=>e.type),["runtime.beta"]);
+    assert.deepEqual((await store.query({sinceMs:30_000_150,untilMs:30_000_250,newestFirst:false})).map(e=>e.type),["runtime.gamma"]);
+    await fs.appendFile(path.join(root,__test.CURRENT_FILE),"\n{not-json}\n", "utf8");
+    assert.deepEqual((await store.query({limit:1})).map(e=>e.type),["runtime.delta"]);
+    assert.equal((await store.storageStats()).malformedLines,1);
+    await store.query({limit:1});
+    assert.equal((await store.storageStats()).malformedLines,1);
+  });
+});
+
+test("observability health keeps independent recovery circuits and ignores user process crashes",async()=>{
+  await withTempDir(async root=>{
+    let timestamp=40_000_000;
+    const store=createRuntimeObservability({rootDir:root,now:()=>timestamp,randomId:()=>String(timestamp++)});
+    await store.record({component:"process",type:"process.crashed",severity:"critical",status:"attention_required",correlationId:"fixture-process"});
+    assert.equal((await store.health({windowMs:1000})).state,"HEALTHY");
+    await store.record({component:"recovery-policy",type:"recovery-policy.circuit_open",severity:"critical",status:"attention_required",details:{circuitKey:"bridge|one"}});
+    await store.record({component:"recovery-policy",type:"recovery-policy.recovered",severity:"info",status:"recovered",details:{circuitKey:"bridge|two"}});
+    assert.equal((await store.health({windowMs:1000})).state,"ATTENTION REQUIRED");
+    await store.record({component:"recovery-policy",type:"recovery-policy.recovered",severity:"info",status:"recovered",details:{circuitKey:"bridge|one"}});
+    const health=await store.health({windowMs:1000});
+    assert.equal(health.state,"HEALTHY");
+    assert.equal(health.reasons.length,0);
+    const metrics=await store.metrics({windowMs:1000});
+    assert.equal(metrics.totalEvents,4);
+    assert.equal(metrics.bySeverity.critical,2);
+  });
+});

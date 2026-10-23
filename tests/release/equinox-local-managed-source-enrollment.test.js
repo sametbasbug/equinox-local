@@ -317,7 +317,7 @@ test("prebuilt dependency install never exposes node-gyp fallback", async (t) =>
     env: { HOME: "/tmp/fixture", PATH: "ambient-tools-must-not-be-used" },
     execFileImpl: async (command, args, options) => { calls.push({ command, args: [...args], cwd: options.cwd, env: options.env }); return { stdout: "", stderr: "" }; },
   });
-  assert.deepEqual(calls[0].args, [contract.npmPath, "ci", "--ignore-scripts", "--no-audit", "--no-fund"]);
+  assert.deepEqual(calls[0].args, [contract.npmPath, "ci", "--ignore-scripts", "--omit=dev", "--no-audit", "--no-fund"]);
   assert.equal(calls[0].command, contract.nodePath);
   assert.equal(calls[0].env.PATH.startsWith(`${path.dirname(contract.nodePath)}:`), true);
   assert.equal(calls[0].env.PATH.includes("ambient-tools-must-not-be-used"), false);
@@ -325,4 +325,53 @@ test("prebuilt dependency install never exposes node-gyp fallback", async (t) =>
   assert.equal(calls[1].args[0], path.join(nodePty, "scripts", "prebuild.js"));
   assert.equal(calls[2].args[0], path.join(nodePty, "scripts", "post-install.js"));
   assert.equal(calls.some((call) => call.command.includes("node-gyp") || call.args.some((arg) => String(arg).includes("node-gyp"))), false);
+});
+
+test("prebuilt node-pty script symlink is refused without running untrusted lifecycle code", async(t)=>{
+  const root=await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(),"equinox-prebuilt-symlink-")));
+  t.after(()=>fs.rm(root,{recursive:true,force:true}));
+  const scriptDir=path.join(root,"node_modules","node-pty","scripts");
+  await fs.mkdir(scriptDir,{recursive:true});
+  const foreign=path.join(root,"foreign-prebuild.js");
+  await fs.writeFile(foreign,"throw new Error('foreign');\n");
+  await fs.symlink(foreign,path.join(scriptDir,"prebuild.js"));
+  await fs.writeFile(path.join(scriptDir,"post-install.js"),"// admitted fixture\n");
+  const calls=[];
+  const contract={nodePath:"/owned/node",npmPath:"/owned/npm-cli.js"};
+  await assert.rejects(installPrebuiltDependencies(root,contract,{
+    execFileImpl:async(command,args)=>{
+      calls.push([command,[...args]]);
+      return {stdout:"",stderr:""};
+    },
+  }),/node-pty lifecycle script is missing or unsafe/u);
+  assert.equal(calls.length,1,"only the owned npm ci command may run, never a symlink script");
+  assert.deepEqual(calls[0][1],[contract.npmPath,"ci","--ignore-scripts","--omit=dev","--no-audit","--no-fund"]);
+  assert.equal((await fs.lstat(path.join(scriptDir,"prebuild.js"))).isSymbolicLink(),true);
+  assert.equal(await fs.readFile(foreign,"utf8"),"throw new Error('foreign');\n");
+});
+
+test("Stable dependency seed rejects nested symlink and never dereferences foreign payload",async(t)=>{
+  const root=await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(),"equinox-source-seed-link-")));
+  t.after(()=>fs.rm(root,{recursive:true,force:true}));
+  const src=path.join(root,"source"),stable=path.join(root,"stable");
+  const moduleRoot=path.join(stable,"node_modules","nested");
+  await fs.mkdir(src,{recursive:true});
+  await fs.mkdir(moduleRoot,{recursive:true});
+  const pkg=Buffer.from('{"name":"same","version":"1.0.0"}\n'),lock=Buffer.from('{"name":"same","lockfileVersion":3}\n');
+  for(const dir of [src,stable]){
+    await fs.writeFile(path.join(dir,"package.json"),pkg);
+    await fs.writeFile(path.join(dir,"package-lock.json"),lock);
+  }
+  const foreign=path.join(root,"foreign-credentials.txt");
+  await fs.writeFile(foreign,"outside-data");
+  await fs.symlink(foreign,path.join(moduleRoot,"secret.txt"));
+  await assert.rejects(seedPrebuiltDependenciesFromStableRelease(src,stable),/contains a symbolic link/u);
+  assert.deepEqual(await fs.readFile(foreign),Buffer.from("outside-data"));
+  assert.equal((await fs.lstat(path.join(moduleRoot,"secret.txt"))).isSymbolicLink(),true);
+  assert.deepEqual(await fs.readFile(path.join(src,"package-lock.json")),lock);
+});
+
+test("managed-source enrollment entrypoints retain fail-closed no-argument defaults",async()=>{
+  await assert.rejects(enrollEquinoxLocalManagedSource(),/bootstrap SHA must be an exact lowercase 40-character Git SHA/u);
+  await assert.rejects(rollbackEquinoxLocalManagedSourceEnrollment(),/bootstrap SHA must be an exact lowercase 40-character Git SHA/u);
 });

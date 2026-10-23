@@ -5,7 +5,7 @@ import vm from "node:vm";
 import { fileURLToPath } from "node:url";
 import { createExtensionVmContext } from "../helpers/extension-vm-import-scripts.mjs";
 
-const SERVICE_WORKER_PATH = fileURLToPath(new URL("../../extension/service-worker.js", import.meta.url));
+const SERVICE_WORKER_PATH = process.env.EQUINOX_STAGED_BROWSER_WORKER || fileURLToPath(new URL("../../extension/service-worker.js", import.meta.url));
 const EXTENSION_ROOT = fileURLToPath(new URL("../../extension/", import.meta.url));
 
 function createEvent() {
@@ -20,10 +20,11 @@ function createEvent() {
   };
 }
 
+let syntheticAxNodeSequence = 0;
 function axNode({ role, name, backendNodeId = null, value = null, nodeId = null, parentId = null, childIds = null, properties = [] }) {
   return {
     ignored: false,
-    ...(nodeId == null ? {} : { nodeId: String(nodeId) }),
+    nodeId: String(nodeId ?? backendNodeId ?? `fixture-${++syntheticAxNodeSequence}`),
     ...(parentId == null ? {} : { parentId: String(parentId) }),
     ...(childIds == null ? {} : { childIds: childIds.map(String) }),
     role: { value: role },
@@ -46,6 +47,7 @@ async function createHarness({
   checkActionFailureMessage = null,
   initialRangeStates = {},
   ariaRangeUsesLastPointerMove = false,
+  stagedCdpResponses = {},
 } = {}) {
   const debuggerEvent = createEvent();
   const debuggerDetach = createEvent();
@@ -148,6 +150,7 @@ async function createHarness({
       async sendCommand(debuggee, method, params = {}) {
         const sessionId = debuggee?.sessionId || null;
         commands.push({ tabId: debuggee?.tabId, sessionId, method, params });
+        if (Object.hasOwn(stagedCdpResponses, method)) return stagedCdpResponses[method];
         if (method === "Page.enable" || method === "Accessibility.enable" || method === "DOM.enable" || method === "Page.bringToFront" || method === "DOM.scrollIntoViewIfNeeded") return {};
         if (method === "Target.setAutoAttach") {
           debuggerEvent.emit(
@@ -435,7 +438,7 @@ async function createHarness({
     allowedScripts: ["bookmarks.js"],
   });
   vm.runInContext(
-    `${source}\n;globalThis.__frameTest = { ensureBrowserEnabledLoaded, browserSnapshot, browserScreenshot, browserFind, browserReacquire, browserClick, browserDoubleClick, browserDrag, browserHover, browserScrollIntoView, browserRefInfo, browserFill, browserSelect, browserCheck, browserRangeSet, browserPress, browserTypeText, browserScroll, browserWait, browserPdfData, currentDocumentGeneration };`,
+    `${source}\n;globalThis.__frameTest = { ensureBrowserEnabledLoaded, browserSnapshot, browserScreenshot, browserFind, browserReacquire, browserClick, browserDoubleClick, browserDrag, browserHover, browserScrollIntoView, browserRefInfo, browserFill, browserSelect, browserCheck, browserRangeSet, browserPress, browserTypeText, browserScroll, browserWait, browserPdfData, currentDocumentGeneration${process.env.EQUINOX_STAGED_BROWSER_WORKER ? ", send" : ""} };`,
     context,
     { filename: SERVICE_WORKER_PATH },
   );
@@ -2176,3 +2179,53 @@ test("frame navigation increments document generation and rejects stale refs", a
     /stale after document\/frame navigation/i,
   );
 });
+
+// Exercise the ACTUAL TS7-emitted worker's CDP adapter in the existing Chrome
+// MV3 VM harness. The unchanged Web Store classic JS has no method allowlist.
+if (process.env.EQUINOX_STAGED_BROWSER_WORKER) {
+  test('staged CDP bridge denies unlisted methods and unsafe tab IDs before dispatch', async () => {
+    const { api, commands } = await createHarness();
+    const originalCount = commands.length;
+    for (const method of ['Browser.close', 'Runtime.runIfWaitingForDebugger', 'Target.setAutoAttach', 'toString']) {
+      await assert.rejects(() => api.send(41, method, {}), /CDP method is not allowlisted/u);
+    }
+    for (const tabId of [undefined, 0, -5, 1.5, Number.NaN, '41']) {
+      await assert.rejects(() => api.send(tabId, 'Runtime.evaluate', {}), /valid Chrome tab id/u);
+    }
+    assert.equal(commands.length, originalCount, 'Rejected commands must not reach Chrome debugger');
+    const output = await api.send(41, 'Runtime.evaluate', { expression: '1 + 1' }, 'child-session');
+    assert.equal(output.result.value.duration, 0);
+    assert.equal(commands.at(-1).sessionId, 'child-session', 'Valid child CDP sessions retain routing');
+  });
+
+  test('staged CDP bridge rejects malformed Runtime, DOM, Page and Accessibility responses', async () => {
+    const stagedCdpResponses = {};
+    const { api, commands } = await createHarness({ stagedCdpResponses });
+    const invalid = [
+      ['Runtime.evaluate', [], /non-object response/u],
+      ['Runtime.evaluate', { result: 'bad' }, /invalid remote object/u],
+      ['Runtime.callFunctionOn', { result: { type: 'object', objectId: 8 } }, /invalid remote object id/u],
+      ['Runtime.evaluate', { exceptionDetails: { text: 17 } }, /invalid exception text/u],
+      ['DOM.resolveNode', { object: 'bad' }, /invalid object metadata/u],
+      ['DOM.getBoxModel', { model: { border: [1, 2, 3] } }, /invalid border coordinates/u],
+      ['Page.getLayoutMetrics', { cssLayoutViewport: { clientWidth: Infinity } }, /invalid cssLayoutViewport.clientWidth/u],
+      ['DOM.querySelector', { nodeId: '12' }, /invalid nodeId/u],
+      ['DOM.getFrameOwner', { backendNodeId: 12.5 }, /invalid backendNodeId/u],
+      ['DOM.getDocument', { root: [] }, /invalid root node/u],
+      ['DOM.describeNode', { node: { backendNodeId: 'bad' } }, /invalid node metadata/u],
+      ['Page.getNavigationHistory', { entries: [{ id: '4' }] }, /invalid entries/u],
+      ['Page.captureScreenshot', { data: 17 }, /invalid image data/u],
+      ['Accessibility.getFullAXTree', { nodes: [{ ignored: false, role: { value: 'button' } }] }, /invalid AX tree/u],
+    ];
+    for (const [method, payload, expected] of invalid) {
+      stagedCdpResponses[method] = payload;
+      await assert.rejects(() => api.send(41, method, {}), expected, method);
+      delete stagedCdpResponses[method];
+    }
+    assert.equal(commands.length, invalid.length, 'Each malformed response reached CDP exactly once');
+    stagedCdpResponses['Runtime.evaluate'] = { result: { type: 'number', value: 42 } };
+    assert.equal((await api.send(41, 'Runtime.evaluate')).result.value, 42);
+    stagedCdpResponses['Accessibility.getFullAXTree'] = { nodes: [axNode({ role: 'button', name: 'Ready', backendNodeId: 101 })] };
+    assert.equal((await api.send(41, 'Accessibility.getFullAXTree')).nodes.length, 1);
+  });
+}

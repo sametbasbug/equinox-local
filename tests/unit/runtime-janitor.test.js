@@ -494,3 +494,93 @@ test("autonomous maintenance cycle uses exclusive mutation wrapper and scheduler
     assert.equal(cleared, scheduled);
   });
 });
+
+test("janitor refuses storage root outside workspace before touching any files",async()=>{
+  await withTempDir(async root=>{
+    const workspaceRoot=path.join(root,"workspace");
+    const foreign=path.join(root,"private-user-documents");
+    await fs.mkdir(workspaceRoot);
+    await fs.mkdir(foreign);
+    const marker=path.join(foreign,"keep.txt");
+    await fs.writeFile(marker,"PRIVATE-SYNTHETIC-MARKER");
+    const valid={
+      rootDir:path.join(workspaceRoot,"janitor"),
+      workspaceRoot,
+      workflowRoot:path.join(workspaceRoot,"workflows"),
+      visualRoot:foreign,
+      browserScreenshotRoot:path.join(workspaceRoot,"screenshots"),
+      releaseGateRoot:path.join(workspaceRoot,"release-gates"),
+      observabilityRoot:path.join(workspaceRoot,"observability"),
+      ...managers(),
+      observability:{record:async()=>{}},
+    };
+    assert.throws(()=>createRuntimeJanitor(valid),/storage kökü workspace dışında/u);
+    assert.equal(await fs.readFile(marker,"utf8"),"PRIVATE-SYNTHETIC-MARKER");
+    assert.equal(await fs.readdir(foreign).then(x=>x.length),1);
+  });
+});
+
+test("janitor never follows nested or top-level symlinks to private files",async()=>{
+  await withTempDir(async root=>{
+    const {janitor,roots,nowMs}=await buildJanitor(root);
+    const outside=path.join(root,"private-user-documents");
+    await fs.mkdir(outside);
+    const privateFile=path.join(outside,"keep.txt");
+    await fs.writeFile(privateFile,"PRIVATE-SYNTHETIC-MARKER");
+    const nested=path.join(roots.visualRoot,"old-symlinked");
+    await fs.mkdir(nested);
+    await fs.symlink(privateFile,path.join(nested,"escape"));
+    await fs.symlink(outside,path.join(roots.visualRoot,"top-level-link"));
+    await setTreeMtime(nested,nowMs-20*DAY);
+    const scanned=(await janitor.report({category:"visual_regression",includeProtected:true})).categories[0];
+    assert.equal(scanned.reclaimableCount,0);
+    assert.ok(scanned.protected.some(x=>x.id==="old-symlinked"&&x.reason==="UNSAFE_TREE_SYMLINK"));
+    assert.ok(scanned.protected.some(x=>x.id==="top-level-link"&&x.reason==="UNRECOGNIZED_OR_NON_DIRECTORY"));
+    const result=await janitor.cleanup({category:"visual_regression",cleanupToken:scanned.cleanupToken});
+    assert.equal(result.outcome,"SKIPPED_ALREADY_CLEAN");
+    assert.equal(await fs.readFile(privateFile,"utf8"),"PRIVATE-SYNTHETIC-MARKER");
+    assert.equal((await fs.lstat(nested)).isDirectory(),true);
+  });
+});
+
+test("janitor refuses previously eligible tree replaced with foreign symlink between dry-run and cleanup",async()=>{
+  await withTempDir(async root=>{
+    const {janitor,roots,nowMs}=await buildJanitor(root);
+    const external=path.join(root,"private-user-documents");
+    await fs.mkdir(external);
+    const sentinel=path.join(external,"keep.txt");
+    await fs.writeFile(sentinel,"PRIVATE-SYNTHETIC-MARKER");
+    const previous=path.join(roots.visualRoot,"old-preview");
+    await fs.mkdir(previous);
+    await fs.writeFile(path.join(previous,"screenshot.png"),"synthetic");
+    await setTreeMtime(previous,nowMs-20*DAY);
+    const token=(await janitor.report({category:"visual_regression"})).categories[0].cleanupToken;
+    const parked=path.join(root,"parked-owned-preview");
+    await fs.rename(previous,parked);
+    await fs.symlink(external,previous);
+    const result=await janitor.cleanup({category:"visual_regression",cleanupToken:token});
+    assert.equal(result.outcome,"REFUSED_STALE_PREVIEW");
+    assert.equal(await fs.readFile(sentinel,"utf8"),"PRIVATE-SYNTHETIC-MARKER");
+    assert.equal((await fs.lstat(previous)).isSymbolicLink(),true);
+    await fs.access(path.join(parked,"screenshot.png"));
+  });
+});
+
+test("janitor fails closed when release current baseline pointer disappears",async()=>{
+  await withTempDir(async root=>{
+    const {janitor,roots,nowMs}=await buildJanitor(root);
+    const fixture=await writeReleaseFixture({roots,nowMs});
+    const original=(await janitor.report({category:"release_baseline_sets",includeProtected:true})).categories[0];
+    assert.ok(original.items.some(x=>x.id===fixture.oldSet));
+    const pointer=path.join(roots.releaseGateRoot,"baselines","status","current.json");
+    await fs.rm(pointer);
+    const rejected=await janitor.cleanup({category:"release_baseline_sets",cleanupToken:original.cleanupToken});
+    assert.equal(rejected.outcome,"REFUSED_STALE_PREVIEW");
+    const current=(await janitor.report({category:"release_baseline_sets",includeProtected:true})).categories[0];
+    assert.equal(current.reclaimableCount,0);
+    assert.ok(current.protected.every(x=>x.reason==="CURRENT_POINTER_UNAVAILABLE_FAIL_CLOSED"));
+    for(const set of [fixture.oldSet,fixture.currentSet]){
+      await fs.access(path.join(roots.releaseGateRoot,"baselines","status","sets",set,"desktop.png"));
+    }
+  });
+});

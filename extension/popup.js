@@ -1,5 +1,9 @@
+"use strict";
+const popupChrome = globalThis.chrome;
+const popupErrorMessage = (error) => error && typeof error === "object" && "message" in error && typeof error.message === "string"
+    ? error.message
+    : null;
 const $ = (selector) => document.querySelector(selector);
-
 const consentCard = $("#consent-card");
 const acceptConsentButton = $("#accept-consent");
 const toggle = $("#enabled-toggle");
@@ -17,344 +21,348 @@ const tabTitle = $("#tab-title");
 const tabDot = $("#tab-dot");
 const tabState = $("#tab-state");
 const offNote = $("#off-note");
-
 let busy = false;
 let lastState = null;
 let pollTimer = null;
 let agentNameSaveTimer = null;
 let agentNameSaveSequence = 0;
 let agentBrowserFeedback = null;
-
 function send(message) {
-  return new Promise((resolve, reject) => {
-    chrome.runtime.sendMessage(message, (response) => {
-      const runtimeError = chrome.runtime.lastError;
-      if (runtimeError) {
-        reject(new Error(runtimeError.message));
-        return;
-      }
-      if (!response?.ok) {
-        reject(new Error(response?.error?.message || "Could not read Equinox Browser status."));
-        return;
-      }
-      resolve(response.result);
+    return new Promise((resolve, reject) => {
+        popupChrome.runtime.sendMessage(message, (response) => {
+            const runtimeError = popupChrome.runtime.lastError;
+            if (runtimeError) {
+                reject(new Error(runtimeError.message));
+                return;
+            }
+            if (!response?.ok) {
+                reject(new Error(response?.error?.message || "Could not read Equinox Browser status."));
+                return;
+            }
+            resolve(response.result);
+        });
     });
-  });
 }
-
 function setDot(element, tone) {
-  element.classList.remove("good", "warn");
-  if (tone === "good" || tone === "warn") element.classList.add(tone);
+    element.classList.remove("good", "warn");
+    if (tone === "good" || tone === "warn")
+        element.classList.add(tone);
 }
-
 function setAgentBrowserFeedback(text = "", { error = false } = {}) {
-  agentBrowserFeedback = text ? { text, error } : null;
-  agentBrowserFeedbackElement.textContent = text;
-  agentBrowserFeedbackElement.classList.toggle("error", Boolean(text && error));
+    agentBrowserFeedback = text ? { text, error } : null;
+    agentBrowserFeedbackElement.textContent = text;
+    agentBrowserFeedbackElement.classList.toggle("error", Boolean(text && error));
 }
-
 function syncInteractiveDisabled() {
-  const consentAccepted = Boolean(lastState?.consentAccepted);
-  const inAgentBrowser = lastState?.browserContext === "agent";
-  toggle.disabled = busy || !consentAccepted;
-  cursorToggle.disabled = busy;
-  agentNameInput.disabled = busy;
-  autoContinueTargetSelect.disabled = busy || !consentAccepted || !lastState?.enabled;
-  acceptConsentButton.disabled = busy;
-  openAgentBrowserButton.disabled = busy || inAgentBrowser || !lastState?.localConnected;
+    const consentAccepted = Boolean(lastState?.consentAccepted);
+    const inAgentBrowser = lastState?.browserContext === "agent";
+    toggle.disabled = busy || !consentAccepted;
+    cursorToggle.disabled = busy;
+    agentNameInput.disabled = busy;
+    autoContinueTargetSelect.disabled = busy || !consentAccepted || !lastState?.enabled;
+    acceptConsentButton.disabled = busy;
+    openAgentBrowserButton.disabled = busy || inAgentBrowser || !lastState?.localConnected;
 }
-
 function renderAgentBrowserAction(state) {
-  const inAgentBrowser = state.browserContext === "agent";
-  agentBrowserDescription.textContent = inAgentBrowser
-    ? "This Chrome profile is your agent's isolated browser."
-    : "Open your agent's isolated Chrome profile without sending it a message.";
-  openAgentBrowserButton.textContent = inAgentBrowser ? "Current" : busy ? "Opening…" : "Open";
-
-  if (inAgentBrowser) {
-    agentBrowserFeedbackElement.textContent = "You are already in Agent Browser.";
-    agentBrowserFeedbackElement.classList.remove("error");
-  } else if (!state.localConnected) {
-    agentBrowserFeedbackElement.textContent = "Connect Equinox Local to open Agent Browser.";
-    agentBrowserFeedbackElement.classList.add("error");
-  } else if (agentBrowserFeedback) {
-    agentBrowserFeedbackElement.textContent = agentBrowserFeedback.text;
-    agentBrowserFeedbackElement.classList.toggle("error", agentBrowserFeedback.error);
-  } else {
-    agentBrowserFeedbackElement.textContent = "";
-    agentBrowserFeedbackElement.classList.remove("error");
-  }
-}
-
-function renderAutoContinueTarget(state) {
-  const autoContinue = state.autoContinue || { target: { mode: "task-tab" }, tabs: [] };
-  const target = autoContinue.target || { mode: "task-tab" };
-  const tabs = Array.isArray(autoContinue.tabs) ? autoContinue.tabs : [];
-  const previousValue = target.mode === "pinned" && Number.isInteger(target.tabId)
-    ? `pinned:${target.tabId}`
-    : "task-tab";
-
-  autoContinueTargetSelect.replaceChildren();
-  const automatic = document.createElement("option");
-  automatic.value = "task-tab";
-  automatic.textContent = "Current task’s ChatGPT tab (automatic)";
-  autoContinueTargetSelect.append(automatic);
-
-  for (const tab of tabs) {
-    if (!Number.isInteger(tab?.tabId)) continue;
-    const option = document.createElement("option");
-    option.value = `pinned:${tab.tabId}`;
-    option.textContent = `Pin: ${String(tab.title || "ChatGPT").slice(0, 72)}`;
-    autoContinueTargetSelect.append(option);
-  }
-
-  if (target.mode === "pinned" && !tabs.some((tab) => tab?.tabId === target.tabId)) {
-    const stale = document.createElement("option");
-    stale.value = previousValue;
-    stale.textContent = `Pinned tab unavailable: ${String(target.title || "ChatGPT").slice(0, 56)}`;
-    autoContinueTargetSelect.append(stale);
-  }
-  autoContinueTargetSelect.value = previousValue;
-}
-
-function tabPresentation(state) {
-  if (!state.consentAccepted) {
-    return { tone: "warn", label: "Waiting for browser access consent" };
-  }
-  if (!state.enabled) {
-    return { tone: "off", label: "Control off" };
-  }
-  if (!state.tab) {
-    return { tone: "warn", label: "No active tab found" };
-  }
-  if (state.tab.debuggerSupported) {
-    return { tone: "good", label: "This tab is ready for control" };
-  }
-  if (state.tab.pageKind === "chrome-new-tab") {
-    return { tone: "warn", label: "Ready when a web page is open" };
-  }
-  return { tone: "warn", label: "This Chrome page cannot be controlled" };
-}
-
-function render(state) {
-  lastState = state;
-  const consentAccepted = Boolean(state.consentAccepted);
-  consentCard.hidden = consentAccepted;
-  toggle.checked = Boolean(state.enabled);
-  cursorToggle.checked = Boolean(state.agentCursorEnabled);
-  if (document.activeElement !== agentNameInput) {
-    agentNameInput.value = state.agentCursorName || "Agent";
-  }
-  renderAgentBrowserAction(state);
-  renderAutoContinueTarget(state);
-  syncInteractiveDisabled();
-  version.textContent = `v${state.extensionVersion || "—"}`;
-  offNote.hidden = !consentAccepted || Boolean(state.enabled);
-
-  if (!consentAccepted) {
-    setDot(connectionDot, "warn");
-    connectionStatus.textContent = "Waiting for consent";
-    connectionDetail.textContent = state.localConnected
-      ? "Equinox Local connected; browser data is not being shared."
-      : state.nativeHostConnected
-        ? "Local settings channel connected; browser data is not being shared."
-        : "Connecting Native Messaging host; browser data is not being shared.";
-  } else if (!state.enabled) {
-    if (state.localConnected) {
-      setDot(connectionDot, "good");
-      connectionStatus.textContent = "Automation off";
-      connectionDetail.textContent = "Equinox Local connected; settings channel only.";
-    } else {
-      setDot(connectionDot, "warn");
-      connectionStatus.textContent = "Automation off";
-      connectionDetail.textContent = "Settings channel is waiting for Equinox Local.";
+    const inAgentBrowser = state.browserContext === "agent";
+    agentBrowserDescription.textContent = inAgentBrowser
+        ? "This Chrome profile is your agent's isolated browser."
+        : "Open your agent's isolated Chrome profile without sending it a message.";
+    openAgentBrowserButton.textContent = inAgentBrowser ? "Current" : busy ? "Opening…" : "Open";
+    if (inAgentBrowser) {
+        agentBrowserFeedbackElement.textContent = "You are already in Agent Browser.";
+        agentBrowserFeedbackElement.classList.remove("error");
     }
-  } else if (state.localConnected) {
-    setDot(connectionDot, "good");
-    connectionStatus.textContent = "Equinox Local connected";
-    connectionDetail.textContent = "Browser bridge is ready and waiting for commands.";
-  } else if (state.nativeHostConnected) {
-    setDot(connectionDot, "warn");
-    connectionStatus.textContent = "Waiting for Equinox Local";
-    connectionDetail.textContent = "Native Messaging host connected; reconnecting to Local.";
-  } else {
-    setDot(connectionDot, "warn");
-    connectionStatus.textContent = "Connecting";
-    connectionDetail.textContent = state.lastNativeDisconnectError
-      ? "Retrying the Native Messaging host connection."
-      : "Starting the Native Messaging host.";
-  }
-
-  tabTitle.textContent = state.tab?.title || "—";
-  const tab = tabPresentation(state);
-  setDot(tabDot, tab.tone);
-  tabState.textContent = tab.label;
+    else if (!state.localConnected) {
+        agentBrowserFeedbackElement.textContent = "Connect Equinox Local to open Agent Browser.";
+        agentBrowserFeedbackElement.classList.add("error");
+    }
+    else if (agentBrowserFeedback) {
+        agentBrowserFeedbackElement.textContent = agentBrowserFeedback.text;
+        agentBrowserFeedbackElement.classList.toggle("error", agentBrowserFeedback.error);
+    }
+    else {
+        agentBrowserFeedbackElement.textContent = "";
+        agentBrowserFeedbackElement.classList.remove("error");
+    }
 }
-
+function renderAutoContinueTarget(state) {
+    const autoContinue = state.autoContinue || { target: { mode: "task-tab" }, tabs: [] };
+    const target = autoContinue.target || { mode: "task-tab" };
+    const tabs = Array.isArray(autoContinue.tabs) ? autoContinue.tabs : [];
+    const previousValue = target.mode === "pinned" && Number.isInteger(target.tabId)
+        ? `pinned:${target.tabId}`
+        : "task-tab";
+    autoContinueTargetSelect.replaceChildren();
+    const automatic = document.createElement("option");
+    automatic.value = "task-tab";
+    automatic.textContent = "Current task’s ChatGPT tab (automatic)";
+    autoContinueTargetSelect.append(automatic);
+    for (const tab of tabs) {
+        if (!Number.isInteger(tab?.tabId))
+            continue;
+        const option = document.createElement("option");
+        option.value = `pinned:${tab.tabId}`;
+        option.textContent = `Pin: ${String(tab.title || "ChatGPT").slice(0, 72)}`;
+        autoContinueTargetSelect.append(option);
+    }
+    if (target.mode === "pinned" && !tabs.some((tab) => tab?.tabId === target.tabId)) {
+        const stale = document.createElement("option");
+        stale.value = previousValue;
+        stale.textContent = `Pinned tab unavailable: ${String(target.title || "ChatGPT").slice(0, 56)}`;
+        autoContinueTargetSelect.append(stale);
+    }
+    autoContinueTargetSelect.value = previousValue;
+}
+function tabPresentation(state) {
+    if (!state.consentAccepted) {
+        return { tone: "warn", label: "Waiting for browser access consent" };
+    }
+    if (!state.enabled) {
+        return { tone: "off", label: "Control off" };
+    }
+    if (!state.tab) {
+        return { tone: "warn", label: "No active tab found" };
+    }
+    if (state.tab.debuggerSupported) {
+        return { tone: "good", label: "This tab is ready for control" };
+    }
+    if (state.tab.pageKind === "chrome-new-tab") {
+        return { tone: "warn", label: "Ready when a web page is open" };
+    }
+    return { tone: "warn", label: "This Chrome page cannot be controlled" };
+}
+function render(state) {
+    lastState = state;
+    const consentAccepted = Boolean(state.consentAccepted);
+    consentCard.hidden = consentAccepted;
+    toggle.checked = Boolean(state.enabled);
+    cursorToggle.checked = Boolean(state.agentCursorEnabled);
+    if (document.activeElement !== agentNameInput) {
+        agentNameInput.value = state.agentCursorName || "Agent";
+    }
+    renderAgentBrowserAction(state);
+    renderAutoContinueTarget(state);
+    syncInteractiveDisabled();
+    version.textContent = `v${state.extensionVersion || "—"}`;
+    offNote.hidden = !consentAccepted || Boolean(state.enabled);
+    if (!consentAccepted) {
+        setDot(connectionDot, "warn");
+        connectionStatus.textContent = "Waiting for consent";
+        connectionDetail.textContent = state.localConnected
+            ? "Equinox Local connected; browser data is not being shared."
+            : state.nativeHostConnected
+                ? "Local settings channel connected; browser data is not being shared."
+                : "Connecting Native Messaging host; browser data is not being shared.";
+    }
+    else if (!state.enabled) {
+        if (state.localConnected) {
+            setDot(connectionDot, "good");
+            connectionStatus.textContent = "Automation off";
+            connectionDetail.textContent = "Equinox Local connected; settings channel only.";
+        }
+        else {
+            setDot(connectionDot, "warn");
+            connectionStatus.textContent = "Automation off";
+            connectionDetail.textContent = "Settings channel is waiting for Equinox Local.";
+        }
+    }
+    else if (state.localConnected) {
+        setDot(connectionDot, "good");
+        connectionStatus.textContent = "Equinox Local connected";
+        connectionDetail.textContent = "Browser bridge is ready and waiting for commands.";
+    }
+    else if (state.nativeHostConnected) {
+        setDot(connectionDot, "warn");
+        connectionStatus.textContent = "Waiting for Equinox Local";
+        connectionDetail.textContent = "Native Messaging host connected; reconnecting to Local.";
+    }
+    else {
+        setDot(connectionDot, "warn");
+        connectionStatus.textContent = "Connecting";
+        connectionDetail.textContent = state.lastNativeDisconnectError
+            ? "Retrying the Native Messaging host connection."
+            : "Starting the Native Messaging host.";
+    }
+    tabTitle.textContent = state.tab?.title || "—";
+    const tab = tabPresentation(state);
+    setDot(tabDot, tab.tone);
+    tabState.textContent = tab.label;
+}
 function renderError(error) {
-  setDot(connectionDot, "warn");
-  connectionStatus.textContent = "Could not read status";
-  connectionDetail.textContent = error?.message || "Equinox Browser service worker did not respond.";
-  tabTitle.textContent = "—";
-  setDot(tabDot, "warn");
-  tabState.textContent = "Status unavailable";
+    setDot(connectionDot, "warn");
+    connectionStatus.textContent = "Could not read status";
+    connectionDetail.textContent = popupErrorMessage(error) || "Equinox Browser service worker did not respond.";
+    tabTitle.textContent = "—";
+    setDot(tabDot, "warn");
+    tabState.textContent = "Status unavailable";
 }
-
 async function refresh({ quiet = false } = {}) {
-  try {
-    const state = await send({ type: "equinox.popup.status" });
-    render(state);
-  } catch (error) {
-    if (!quiet || !lastState) renderError(error);
-  }
+    try {
+        const state = await send({ type: "equinox.popup.status" });
+        render(state);
+    }
+    catch (error) {
+        if (!quiet || !lastState)
+            renderError(error);
+    }
 }
-
 async function acceptBrowserControlConsent() {
-  if (busy) return;
-  busy = true;
-  syncInteractiveDisabled();
-  try {
-    const state = await send({ type: "equinox.popup.acceptBrowserControlConsent" });
-    render(state);
-  } catch (error) {
-    renderError(error);
-  } finally {
-    busy = false;
+    if (busy)
+        return;
+    busy = true;
     syncInteractiveDisabled();
-  }
+    try {
+        const state = await send({ type: "equinox.popup.acceptBrowserControlConsent" });
+        render(state);
+    }
+    catch (error) {
+        renderError(error);
+    }
+    finally {
+        busy = false;
+        syncInteractiveDisabled();
+    }
 }
-
 async function setEnabled(enabled) {
-  if (busy) return;
-  busy = true;
-  syncInteractiveDisabled();
-  try {
-    const state = await send({ type: "equinox.popup.setEnabled", enabled });
-    render(state);
-  } catch (error) {
-    toggle.checked = Boolean(lastState?.enabled);
-    renderError(error);
-  } finally {
-    busy = false;
+    if (busy)
+        return;
+    busy = true;
     syncInteractiveDisabled();
-  }
+    try {
+        const state = await send({ type: "equinox.popup.setEnabled", enabled });
+        render(state);
+    }
+    catch (error) {
+        toggle.checked = Boolean(lastState?.enabled);
+        renderError(error);
+    }
+    finally {
+        busy = false;
+        syncInteractiveDisabled();
+    }
 }
-
 async function setAgentCursorEnabled(enabled) {
-  if (busy) return;
-  busy = true;
-  syncInteractiveDisabled();
-  try {
-    const state = await send({ type: "equinox.popup.setAgentCursorEnabled", enabled });
-    render(state);
-  } catch (error) {
-    cursorToggle.checked = Boolean(lastState?.agentCursorEnabled);
-    renderError(error);
-  } finally {
-    busy = false;
+    if (busy)
+        return;
+    busy = true;
     syncInteractiveDisabled();
-  }
+    try {
+        const state = await send({ type: "equinox.popup.setAgentCursorEnabled", enabled });
+        render(state);
+    }
+    catch (error) {
+        cursorToggle.checked = Boolean(lastState?.agentCursorEnabled);
+        renderError(error);
+    }
+    finally {
+        busy = false;
+        syncInteractiveDisabled();
+    }
 }
-
 async function setAutoContinueTarget(value) {
-  if (busy) return;
-  busy = true;
-  syncInteractiveDisabled();
-  try {
-    const match = /^pinned:(\d+)$/u.exec(String(value || ""));
-    const state = match
-      ? await send({ type: "equinox.popup.setAutoContinueTarget", mode: "pinned", tabId: Number(match[1]) })
-      : await send({ type: "equinox.popup.setAutoContinueTarget", mode: "task-tab" });
-    render(state);
-  } catch (error) {
-    renderError(error);
-    if (lastState) renderAutoContinueTarget(lastState);
-  } finally {
-    busy = false;
+    if (busy)
+        return;
+    busy = true;
     syncInteractiveDisabled();
-  }
+    try {
+        const match = /^pinned:(\d+)$/u.exec(String(value || ""));
+        const state = match
+            ? await send({ type: "equinox.popup.setAutoContinueTarget", mode: "pinned", tabId: Number(match[1]) })
+            : await send({ type: "equinox.popup.setAutoContinueTarget", mode: "task-tab" });
+        render(state);
+    }
+    catch (error) {
+        renderError(error);
+        if (lastState)
+            renderAutoContinueTarget(lastState);
+    }
+    finally {
+        busy = false;
+        syncInteractiveDisabled();
+    }
 }
-
 async function openAgentBrowser() {
-  if (busy || lastState?.browserContext === "agent") return;
-  busy = true;
-  setAgentBrowserFeedback("Opening Agent Browser…");
-  if (lastState) renderAgentBrowserAction(lastState);
-  syncInteractiveDisabled();
-  try {
-    const result = await send({ type: "equinox.popup.openAgentBrowser" });
-    setAgentBrowserFeedback(
-      result?.opened ? "Agent Browser opened." : "Agent Browser is already open.",
-    );
-  } catch (error) {
-    setAgentBrowserFeedback(error?.message || "Could not open Agent Browser.", { error: true });
-  } finally {
-    busy = false;
-    if (lastState) renderAgentBrowserAction(lastState);
+    if (busy || lastState?.browserContext === "agent")
+        return;
+    busy = true;
+    setAgentBrowserFeedback("Opening Agent Browser…");
+    if (lastState)
+        renderAgentBrowserAction(lastState);
     syncInteractiveDisabled();
-    void refresh({ quiet: true });
-  }
+    try {
+        const result = await send({ type: "equinox.popup.openAgentBrowser" });
+        setAgentBrowserFeedback(result?.opened ? "Agent Browser opened." : "Agent Browser is already open.");
+    }
+    catch (error) {
+        setAgentBrowserFeedback(popupErrorMessage(error) || "Could not open Agent Browser.", { error: true });
+    }
+    finally {
+        busy = false;
+        if (lastState)
+            renderAgentBrowserAction(lastState);
+        syncInteractiveDisabled();
+        void refresh({ quiet: true });
+    }
 }
-
 async function persistAgentCursorName() {
-  if (agentNameSaveTimer) {
-    clearTimeout(agentNameSaveTimer);
-    agentNameSaveTimer = null;
-  }
-  const sequence = ++agentNameSaveSequence;
-  try {
-    const state = await send({
-      type: "equinox.popup.setAgentCursorName",
-      name: agentNameInput.value,
-    });
-    if (sequence === agentNameSaveSequence) render(state);
-  } catch (error) {
-    if (sequence === agentNameSaveSequence) renderError(error);
-  }
+    if (agentNameSaveTimer) {
+        clearTimeout(agentNameSaveTimer);
+        agentNameSaveTimer = null;
+    }
+    const sequence = ++agentNameSaveSequence;
+    try {
+        const state = await send({
+            type: "equinox.popup.setAgentCursorName",
+            name: agentNameInput.value,
+        });
+        if (sequence === agentNameSaveSequence)
+            render(state);
+    }
+    catch (error) {
+        if (sequence === agentNameSaveSequence)
+            renderError(error);
+    }
 }
-
 function queueAgentCursorNameSave() {
-  if (agentNameSaveTimer) clearTimeout(agentNameSaveTimer);
-  agentNameSaveTimer = setTimeout(() => {
-    agentNameSaveTimer = null;
-    void persistAgentCursorName();
-  }, 250);
+    if (agentNameSaveTimer)
+        clearTimeout(agentNameSaveTimer);
+    agentNameSaveTimer = setTimeout(() => {
+        agentNameSaveTimer = null;
+        void persistAgentCursorName();
+    }, 250);
 }
-
 openAgentBrowserButton.addEventListener("click", () => {
-  void openAgentBrowser();
+    void openAgentBrowser();
 });
-
 acceptConsentButton.addEventListener("click", () => {
-  void acceptBrowserControlConsent();
+    void acceptBrowserControlConsent();
 });
-
 toggle.addEventListener("change", () => {
-  void setEnabled(toggle.checked);
+    void setEnabled(toggle.checked);
 });
-
 cursorToggle.addEventListener("change", () => {
-  void setAgentCursorEnabled(cursorToggle.checked);
+    void setAgentCursorEnabled(cursorToggle.checked);
 });
-
 autoContinueTargetSelect.addEventListener("change", () => {
-  void setAutoContinueTarget(autoContinueTargetSelect.value);
+    void setAutoContinueTarget(autoContinueTargetSelect.value);
 });
-
 agentNameInput.addEventListener("input", queueAgentCursorNameSave);
 agentNameInput.addEventListener("change", () => {
-  void persistAgentCursorName();
+    void persistAgentCursorName();
 });
 agentNameInput.addEventListener("keydown", (event) => {
-  if (event.key === "Enter") agentNameInput.blur();
+    if (event.key === "Enter")
+        agentNameInput.blur();
 });
-
 void refresh();
 pollTimer = setInterval(() => {
-  if (!busy) void refresh({ quiet: true });
+    if (!busy)
+        void refresh({ quiet: true });
 }, 1_200);
-
 window.addEventListener("unload", () => {
-  if (pollTimer) clearInterval(pollTimer);
-  if (agentNameSaveTimer) clearTimeout(agentNameSaveTimer);
+    if (pollTimer)
+        clearInterval(pollTimer);
+    if (agentNameSaveTimer)
+        clearTimeout(agentNameSaveTimer);
 });

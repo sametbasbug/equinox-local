@@ -99,3 +99,64 @@ test("unknown schema or invalid source SHA is rejected before creating a recover
     { ...record, oldSourceSha: "wrong" }), /invalid/u);
   assert.deepEqual(await fs.readdir(root), []);
 });
+
+test("classic repair journal refuses symlinked parent and pre-existing foreign journal without deleting private data",async(t)=>{
+  const root=await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(),"equinox-classic-owner-")));
+  t.after(()=>fs.rm(root,{recursive:true,force:true}));
+  const owned=path.join(root,"owned");
+  await fs.mkdir(owned);
+  const foreignFile=path.join(owned,"foreign-credentials.json");
+  await fs.writeFile(foreignFile,"private-credential-payload");
+  const alias=path.join(root,"symlinked-owner");
+  await fs.symlink(owned,alias);
+  await assert.rejects(writeWindowsClassicRepairJournal(path.join(alias,"repair.json"),record),
+    /Windows classic repair journal parent is unsafe/u);
+  assert.equal(await fs.readFile(foreignFile,"utf8"),"private-credential-payload");
+  await assert.deepEqual(await fs.readdir(owned),["foreign-credentials.json"]);
+
+  const journal=path.join(owned,"classic-repair.json");
+  await fs.symlink(foreignFile,journal);
+  await assert.rejects(writeWindowsClassicRepairJournal(journal,record),
+    /An earlier Windows classic repair must be reconciled first/u);
+  assert.equal((await fs.lstat(journal)).isSymbolicLink(),true);
+  assert.equal(await fs.readFile(foreignFile,"utf8"),"private-credential-payload");
+});
+
+test("classic repair refuses unknown record keys and malformed provenance before any journal writes",async(t)=>{
+  const root=await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(),"equinox-classic-invalid-")));
+  t.after(()=>fs.rm(root,{recursive:true,force:true}));
+  const invalid=[
+    {...record,extraKey:"foreign"},
+    {...record,target:"win32-ia32"},
+    {...record,oldNativeSha:"a".repeat(39)+"G"},
+    {...record,oldMainVersion:"6.01.1"},
+    {...record,oldStablePointerVersion:"6.1.0\n--force"},
+    {...record,mainStamp:"a".repeat(1025)},
+  ];
+  for(const [index,value] of invalid.entries()){
+    const journal=path.join(root,"invalid-"+index+".json");
+    await assert.rejects(writeWindowsClassicRepairJournal(journal,value),
+      /malformed|invalid|Unsupported Equinox Local version/u);
+    await assert.rejects(fs.lstat(journal),{code:"ENOENT"});
+  }
+  assert.deepEqual(await fs.readdir(root),[]);
+});
+
+test("classic repair leaves durable journal intact when authenticated rollback or healthy B admission fails",async(t)=>{
+  const f=await fixture(t);
+  f.setPointer(record.targetVersion);
+  f.setStamps(null,record.mainStamp);
+  f.options.rollbackPreviousMain=async()=>{
+    f.events.push("rollback-failed");
+    throw Error("rollback did not complete");
+  };
+  await assert.rejects(reconcileWindowsClassicRepairJournal(f.options),
+    /rollback did not complete/u);
+  assert.deepEqual(f.events,["verified","rollback-failed"]);
+  assert.deepEqual(await readWindowsClassicRepairJournal(f.journalPath),record);
+  f.setStamps(null,null);
+  f.setHealth(false,false);
+  await assert.rejects(reconcileWindowsClassicRepairJournal(f.options),
+    /lost its Main owner before Stable B was verified/u);
+  assert.deepEqual(await readWindowsClassicRepairJournal(f.journalPath),record);
+});

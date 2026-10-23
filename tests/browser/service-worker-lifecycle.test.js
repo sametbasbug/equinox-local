@@ -5,7 +5,7 @@ import vm from "node:vm";
 import { fileURLToPath } from "node:url";
 import { createExtensionVmContext } from "../helpers/extension-vm-import-scripts.mjs";
 
-const SERVICE_WORKER_PATH = fileURLToPath(new URL("../../extension/service-worker.js", import.meta.url));
+const SERVICE_WORKER_PATH = process.env.EQUINOX_STAGED_BROWSER_WORKER || fileURLToPath(new URL("../../extension/service-worker.js", import.meta.url));
 const EXTENSION_ROOT = fileURLToPath(new URL("../../extension/", import.meta.url));
 
 function createEvent() {
@@ -28,6 +28,7 @@ async function createLifecycleHarness({
   storedAgentCursorName = "Selene",
   storedBrowserInstanceId = null,
   storedBrowserContext = null,
+  onStorageSet = null,
 } = {}) {
   const runtimeStartup = createEvent();
   const runtimeInstalled = createEvent();
@@ -109,6 +110,7 @@ async function createLifecycleHarness({
           return Object.fromEntries(keys.map((item) => [item, storageData[item]]));
         },
         async set(values) {
+          if (onStorageSet) await onStorageSet(values);
           Object.assign(storageData, values);
         },
       },
@@ -179,14 +181,14 @@ async function createLifecycleHarness({
     runtimeStartup,
     runtimeInstalled,
     runtimeMessage,
-    sendPopupMessage(message) {
+    sendPopupMessage(message, sender = { id: "fixture-extension", url: "chrome-extension://fixture-extension/popup.html" }) {
       return new Promise((resolve, reject) => {
         const listener = runtimeMessage.listeners[0];
         if (!listener) {
           reject(new Error("popup runtime listener missing"));
           return;
         }
-        const handled = listener(message, {}, resolve);
+        const handled = listener(message, sender, resolve);
         if (handled !== true) reject(new Error("popup runtime message was not handled"));
       });
     },
@@ -466,3 +468,201 @@ test("persisted popup off state survives service-worker cold boot while the sett
   await Promise.resolve();
   assert.equal(harness.ports.length, 1, "Chrome startup must not duplicate the existing settings channel");
 });
+
+// Migration-specific acceptance: the staged TypeScript worker rejects
+// inherited Object.prototype method names as native commands. The existing
+// Web Store JS worker is unchanged until coordinated Chrome admission.
+if (process.env.EQUINOX_STAGED_BROWSER_WORKER) {
+  test('staged worker rejects inherited and unknown native command names', async () => {
+    const harness = await createLifecycleHarness();
+    for (const method of ['constructor', 'toString', 'valueOf', '__proto__', 'hasOwnProperty', 'not.allowed']) {
+      const id = `guard-${method}`;
+      await harness.api.handleCommand({ type: 'command', id, method, args: {} });
+      const reply = harness.ports[0].posted.find((message) => message.id === id);
+      assert.equal(reply?.ok, false, `Native command ${method} must never dispatch`);
+      assert.match(reply.error?.message ?? '', /Unknown Equinox Browser command/u);
+    }
+    assert.equal(harness.tabQueries.length, 0, 'Unknown native commands must not inspect any browser tabs');
+  });
+}
+
+if (process.env.EQUINOX_STAGED_BROWSER_WORKER) {
+  test('staged native host status only accepts a literal boolean true', async () => {
+    const harness = await createLifecycleHarness({ storedEnabled: null, storedConsentVersion: null });
+    const port = harness.ports[0];
+    for (const localConnected of ['true', 1, { value: true }, null]) {
+      port.onMessage.emit({ type: 'host.status', localConnected });
+      assert.equal(harness.api.snapshot().localBridgeConnected, false, 'Malformed host status must not promote connectivity');
+    }
+    port.onMessage.emit({ type: 'host.status', localConnected: true });
+    assert.equal(harness.api.snapshot().localBridgeConnected, true, 'Valid host status still records connectivity');
+    port.onMessage.emit({ type: 'host.status', localConnected: false });
+    assert.equal(harness.api.snapshot().localBridgeConnected, false);
+    assert.equal(harness.api.snapshot().browserEnabled, false, 'Host connectivity must not grant automation consent');
+    assert.equal(harness.tabQueries.length, 0);
+  });
+
+  test('staged malformed native envelopes do not run automation or inspect tabs', async () => {
+    const denied = await createLifecycleHarness({ storedEnabled: null, storedConsentVersion: null });
+    const port = denied.ports[0];
+    const initialPosted = port.posted.length;
+    for (const malformed of [null, [], 'command', {}, { type: 'command', method: 'tabs.list' }, { type: 'unrecognized', id: 'x', method: 'tabs.list' }]) {
+      port.onMessage.emit(malformed);
+    }
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(port.posted.length, initialPosted, 'Invalid envelopes cannot trigger a reply or dispatch');
+    port.onMessage.emit({ type: 'command', id: 'no-consent', method: 'tabs.list', args: {} });
+    await new Promise((resolve) => setImmediate(resolve));
+    const reply = port.posted.find((item) => item.id === 'no-consent');
+    assert.equal(reply?.ok, false);
+    assert.match(reply.error?.message ?? '', /consent/u);
+    assert.equal(denied.tabQueries.length, 0, 'Invalid or blocked native commands cannot inspect Chrome tabs');
+
+    const enabled = await createLifecycleHarness();
+    enabled.ports[0].onMessage.emit({ type: 'command', id: 'invalid-method', method: 123, args: {} });
+    await new Promise((resolve) => setImmediate(resolve));
+    const invalid = enabled.ports[0].posted.find((item) => item.id === 'invalid-method');
+    assert.equal(invalid?.ok, false);
+    assert.match(invalid.error?.message ?? '', /Unknown Equinox Browser command/u);
+    assert.equal(enabled.tabQueries.length, 0);
+  });
+}
+
+if (process.env.EQUINOX_STAGED_BROWSER_WORKER) {
+  test('staged stale Native Messaging port cannot mutate a newer healthy connection', async () => {
+    const harness = await createLifecycleHarness({ storedBrowserContext: 'user' });
+    const oldPort = harness.ports[0];
+    oldPort.disconnect('initial crash');
+    await Promise.resolve();
+    assert.equal(harness.ports.length, 2, 'First crash reconnects exactly once');
+    const currentPort = harness.ports[1];
+    currentPort.onMessage.emit({ type: 'host.status', localConnected: true });
+    assert.equal(harness.api.snapshot().localBridgeConnected, true);
+
+    oldPort.onMessage.emit({ type: 'host.status', localConnected: false });
+    oldPort.onMessage.emit({ type: 'command', id: 'stale-context', method: 'context.set', args: { context: 'agent' } });
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(harness.storageData.browserContext, 'user', 'Stale port cannot switch profile context');
+    assert.equal(harness.api.snapshot().localBridgeConnected, true, 'Old messages cannot overwrite fresh host status');
+    assert.equal(oldPort.posted.some((message) => message.id === 'stale-context'), false);
+
+    oldPort.onDisconnect.emit();
+    assert.equal(harness.api.snapshot().nativePort, true, 'Old disconnect must not invalidate the new port');
+    assert.equal(harness.api.snapshot().localBridgeConnected, true, 'Old disconnect must not mark a healthy port disconnected');
+    assert.equal(harness.ports.length, 2, 'Stale disconnect must not initiate another reconnect');
+    assert.equal(harness.api.snapshot().reconnectTimer, false, 'Stale disconnect must not arm a backoff alarm');
+  });
+}
+
+if (process.env.EQUINOX_STAGED_BROWSER_WORKER) {
+  test('staged in-flight native command response never crosses a reconnect boundary', async () => {
+    let markStarted;
+    let releaseWrite;
+    const started = new Promise((resolve) => { markStarted = resolve; });
+    const held = new Promise((resolve) => { releaseWrite = resolve; });
+    const harness = await createLifecycleHarness({
+      storedBrowserContext: 'user',
+      onStorageSet: async (values) => {
+        if (values.browserContext === 'agent') {
+          markStarted();
+          await held;
+        }
+      },
+    });
+    const old = harness.ports[0];
+    old.onMessage.emit({ type: 'command', id: 'old-request', method: 'context.set', args: { context: 'agent' } });
+    await started;
+    old.disconnect('Native host restarted');
+    await Promise.resolve();
+    assert.equal(harness.ports.length, 2);
+    const replacement = harness.ports[1];
+    replacement.onMessage.emit({ type: 'host.status', localConnected: true });
+    releaseWrite();
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(harness.api.snapshot().localBridgeConnected, true);
+    assert.equal(harness.storageData.browserContext, 'agent', 'In-flight authorized mutation may complete after host disconnect');
+    assert.equal(replacement.posted.some((item) => item.id === 'old-request'), false,
+      'Late response from old host must never reach replacement host with potentially reused request IDs');
+
+    let markFailureStarted;
+    let releaseFailure;
+    const failureStarted = new Promise((resolve) => { markFailureStarted = resolve; });
+    const failureHeld = new Promise((resolve) => { releaseFailure = resolve; });
+    const failing = await createLifecycleHarness({
+      storedBrowserContext: 'user',
+      onStorageSet: async (values) => {
+        if (values.browserContext === 'agent') {
+          markFailureStarted();
+          await failureHeld;
+          throw new Error('simulated storage failure');
+        }
+      },
+    });
+    failing.ports[0].onMessage.emit({ type: 'command', id: 'old-failure', method: 'context.set', args: { context: 'agent' } });
+    await failureStarted;
+    failing.ports[0].disconnect('Native host restarted');
+    await Promise.resolve();
+    assert.equal(failing.ports.length, 2);
+    releaseFailure();
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(failing.ports[1].posted.some((item) => item.id === 'old-failure'), false,
+      'Late native error from old host must not leak to replacement host');
+    assert.equal(failing.storageData.browserContext, 'user');
+  });
+}
+
+if (process.env.EQUINOX_STAGED_BROWSER_WORKER) {
+  test('staged popup toggles require actual booleans and cannot coerce malformed strings into enabled control', async () => {
+    const harness = await createLifecycleHarness({ storedEnabled: false, storedConsentVersion: 2, storedAgentCursor: false });
+    for (const invalid of ['true', 'false', 1, null, {}]) {
+      const browser = await harness.sendPopupMessage({ type: 'equinox.popup.setEnabled', enabled: invalid });
+      assert.equal(browser.ok, false, `Invalid enabled type ${String(invalid)} must be rejected`);
+      assert.match(browser.error?.message || '', /boolean/u);
+      const cursor = await harness.sendPopupMessage({ type: 'equinox.popup.setAgentCursorEnabled', enabled: invalid });
+      assert.equal(cursor.ok, false, 'Invalid cursor enabled type must be rejected');
+    }
+    assert.equal(harness.storageData.browserEnabled, false);
+    assert.equal(harness.storageData.agentCursorEnabled, false);
+    assert.equal(harness.tabQueries.length, 0);
+    assert.equal((await harness.sendPopupMessage({ type: 'equinox.popup.setEnabled', enabled: true })).ok, true);
+    assert.equal(harness.storageData.browserEnabled, true);
+    assert.equal((await harness.sendPopupMessage({ type: 'equinox.popup.setAgentCursorEnabled', enabled: true })).ok, true);
+    assert.equal(harness.storageData.agentCursorEnabled, true);
+  });
+}
+
+if (process.env.EQUINOX_STAGED_BROWSER_WORKER) {
+  test('staged popup consent and control messages require the actual extension popup sender', async () => {
+    const harness = await createLifecycleHarness({ storedEnabled: null, storedConsentVersion: null });
+    const initialPosted = harness.ports[0].posted.length;
+    const illegalSenders = [
+      {},
+      { id: 'another-extension', url: 'chrome-extension://fixture-extension/popup.html' },
+      { id: 'fixture-extension', url: 'chrome-extension://fixture-extension/options.html' },
+      { id: 'fixture-extension', url: 'https://chatgpt.com/c/abc', tab: { id: 7, url: 'https://chatgpt.com/c/abc' } },
+      { id: 'fixture-extension', url: 'chrome-extension://fixture-extension/popup.html', tab: { id: 7 } },
+    ];
+    const sensitive = [
+      { type: 'equinox.popup.acceptBrowserControlConsent' },
+      { type: 'equinox.popup.setEnabled', enabled: true },
+      { type: 'equinox.popup.setAutoContinueTarget', mode: 'pinned', tabId: 7 },
+    ];
+    for (const sender of illegalSenders) {
+      for (const message of sensitive) {
+        let callbackInvoked = false;
+        const handled = harness.runtimeMessage.listeners[0](message, sender, () => { callbackInvoked = true; });
+        assert.equal(handled, false, `Popup command ${message.type} must reject ${JSON.stringify(sender)}`);
+        assert.equal(callbackInvoked, false);
+      }
+    }
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(harness.storageData.browserControlConsentVersion, null);
+    assert.equal(harness.storageData.browserEnabled, null);
+    assert.equal(harness.tabQueries.length, 0);
+    assert.equal(harness.ports[0].posted.length, initialPosted);
+
+    const accepted = await harness.sendPopupMessage({ type: 'equinox.popup.acceptBrowserControlConsent' });
+    assert.equal(accepted.ok, true, 'Legitimate popup can still consent');
+    assert.equal(harness.storageData.browserControlConsentVersion, 2);
+  });
+}

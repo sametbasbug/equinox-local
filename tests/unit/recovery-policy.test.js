@@ -313,3 +313,110 @@ test("policy internals expose expected bounded defaults", () => {
   assert.equal(__test.DEFAULT_CIRCUIT_OPEN_MS, 30 * 60 * 1000);
   assert.equal(__test.POLICIES.length, 4);
 });
+
+test("recovery refuses invalid policy roots and circuit limits before reading or mutating private state",async()=>{
+  await withTempDir(async root=>{
+    const diagnosisEngine={diagnose:async()=>({incidents:[]})};
+    const repairEngine={repairIssue:async()=>{throw Error("unauthorized repair")}};
+    const observability={record:async()=>{},query:async()=>[]};
+    for(const options of [
+      {rootDir:"relative/state"}, {rootDir:root,maxFailures:1},
+      {rootDir:root,maxFailures:11}, {rootDir:root,failureWindowMs:999},
+      {rootDir:root,circuitOpenMs:999},
+    ]){
+      assert.throws(()=>createRecoveryPolicyController({
+        rootDir:root,diagnosisEngine,repairEngine,observability,...options,
+      }),/mutlak yol|failure sınırı|failure window|open süresi/u);
+      assert.deepEqual(await fs.readdir(root),[]);
+    }
+  });
+});
+
+test("recovery deduplicates an in-flight same-subject repair and exposes no duplicate recipe mutation",async()=>{
+  await withTempDir(async root=>{
+    const nowRef={value:1_800_000_600_000};
+    const active=incident({incidentId:"inc-peekaboo-concurrent-1",code:"PEEKABOO_TRANSPORT_FAILURE",
+      component:"peekaboo",projectId:null,correlationId:null});
+    let releaseRepair=()=>{};
+    const pause=new Promise(resolve=>{releaseRepair=resolve});
+    let repairStarted=()=>{};
+    const started=new Promise(resolve=>{repairStarted=resolve});
+    const recipes=[];
+    const {controller,observability}=createController({
+      root,incidents:[active],nowRef,
+      repairIssue:async options=>{
+        recipes.push(options);
+        repairStarted();
+        await pause;
+        return {...options,repairId:"repair-concurrent-1",outcome:"RECOVERED",
+          actionStatus:"RESTARTED",summary:"fixture"};
+      },
+    });
+    const trigger={type:"peekaboo.unexpected_close",eventId:"evt-concurrent",projectId:null,correlationId:null};
+    const first=controller.handleEvent(trigger);
+    await started;
+    assert.equal(recipes.length,1);
+    const second=controller.handleEvent({...trigger,eventId:"evt-concurrent-redelivery"});
+    for(let attempt=0;attempt<40&&!observability.events.some(x=>x.type==="recovery-policy.coalesced");attempt++)
+      await new Promise(resolve=>setImmediate(resolve));
+    assert.equal(controller.activeJobCount,1);
+    releaseRepair();
+    const results=await Promise.all([first,second]);
+    assert.equal(recipes.length,1);
+    assert.deepEqual(results.map(x=>x[0].status),["RECOVERED","RECOVERED"]);
+    assert.equal(controller.activeJobCount,0);
+    assert.equal(observability.events.filter(x=>x.type==="recovery-policy.attempt_started").length,1);
+    assert.equal(observability.events.filter(x=>x.type==="recovery-policy.coalesced").length,1);
+  });
+});
+
+test("recovery only admits fixed event triggers and refuses cross-correlation incidents before repairs",async()=>{
+  await withTempDir(async root=>{
+    const nowRef={value:1_800_000_700_000},repairs=[];
+    const foreign=incident({incidentId:"inc-foreign-project",code:"WORKFLOW_FAILURE",
+      projectId:"foreign",correlationId:"wf-foreign"});
+    const {controller}=createController({root,incidents:[foreign],nowRef,
+      repairIssue:async options=>{repairs.push(options);return {...options,outcome:"RECOVERED"};}});
+    assert.deepEqual(await controller.handleEvent({eventId:"evt-untrusted",type:"workflow.resume",
+      projectId:"foreign",correlationId:"wf-foreign"}),[]);
+    assert.deepEqual(await controller.handleEvent({eventId:"evt-bad-correlation",type:"workflow.failed",
+      projectId:"foreign",correlationId:"wf-other"}).then(a=>a.map(x=>x.status)),["NO_ACTIVE_INCIDENT"]);
+    assert.deepEqual(repairs,[]);
+    const publicPolicies=controller.policies();
+    assert.equal(publicPolicies.length,4);
+    assert.ok(publicPolicies.every(x=>x.arbitraryCommand===false&&x.credentialMutation===false&&
+      x.gitMutation===false&&x.deploymentMutation===false&&x.projectFileMutation===false));
+  });
+});
+
+test("persistent circuit half-opens only after deadline and one recovered trial clears failure history",async()=>{
+  await withTempDir(async root=>{
+    const nowRef={value:1_800_000_800_000},inc=incident({
+      incidentId:"inc-peekaboo-halfopen",code:"PEEKABOO_TRANSPORT_FAILURE",
+      component:"peekaboo",projectId:null,correlationId:null,
+    });
+    let calls=0;
+    const {controller,observability}=createController({root,incidents:[inc],nowRef,maxFailures:2,
+      repairIssue:async args=>{calls++;return {...args,repairId:"repair-"+calls,
+        outcome:calls<=2?"FAILED":"RECOVERED",actionStatus:"synthetic"};}});
+    const input={type:"peekaboo.unexpected_close",eventId:"evt-halfopen"};
+    assert.equal((await controller.handleEvent(input))[0].status,"FAILED");
+    nowRef.value+=1000;
+    assert.equal((await controller.handleEvent(input))[0].status,"CIRCUIT_OPEN");
+    assert.equal(calls,2);
+    nowRef.value+=1000;
+    assert.equal((await controller.handleEvent(input))[0].status,"CIRCUIT_OPEN");
+    assert.equal(calls,2);
+    nowRef.value+=30*60*1000;
+    assert.equal((await controller.handleEvent(input))[0].status,"RECOVERED");
+    assert.equal(calls,3);
+    const status=await controller.status();
+    assert.equal(status.openCircuitCount,0);
+    assert.equal(status.circuits[0].failureCount,0);
+    assert.equal(status.circuits[0].lastOutcome,"RECOVERED");
+    assert.equal(observability.events.filter(x=>x.type==="recovery-policy.circuit_half_open").length,1);
+    const state=JSON.parse(await fs.readFile(controller.statePath,"utf8"));
+    assert.ok(Object.values(state.circuits).every(x=>x.openUntilMs===null&&x.failureTimestamps.length===0));
+    assert.equal((await fs.stat(controller.statePath)).mode&0o777,0o600);
+  });
+});

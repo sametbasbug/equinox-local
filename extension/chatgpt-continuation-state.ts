@@ -1,0 +1,186 @@
+// This is a Chrome classic content script: the compiled JS must remain a
+// non-module IIFE at the literal manifest path, without global runtime types.
+type BrowserContinuationState = {
+  generationActive: boolean;
+  userEpoch: string | null;
+  assistantTurnKey: string | null;
+  composerReady: boolean;
+  composerEmpty: boolean;
+  generationStartedAtMs: number | null;
+};
+
+declare const chrome: {
+  runtime: {
+    sendMessage(message: { type: string; state: BrowserContinuationState }): Promise<unknown> | undefined;
+    onMessage: {
+      addListener(listener: (message: { type?: string }, sender: unknown,
+        respond: (response: { state: BrowserContinuationState | null }) => void) => boolean): void;
+    };
+  };
+  storage: {
+    local: { get(keys: string[]): Promise<Record<string, unknown>> };
+    onChanged?: { addListener(listener: (changes: Record<string, unknown>, area: string) => void): void };
+  };
+};
+
+(() => {
+  const PUSH_TYPE = "equinox.chatgpt.continuationState.push";
+  const GET_TYPE = "equinox.chatgpt.continuationState.get";
+  const BROWSER_ENABLED_STORAGE_KEY = "browserEnabled";
+  const BROWSER_CONTROL_CONSENT_STORAGE_KEY = "browserControlConsentVersion";
+  const CURRENT_BROWSER_CONTROL_CONSENT_VERSION = 2;
+  const PUBLISH_DEBOUNCE_MS = 100;
+
+  const last = <T>(values: readonly T[]): T | null => values.length ? values[values.length - 1]! : null;
+
+  function firstMessageId(value: string | null | undefined): string | null {
+    const text = String(value || "").trim();
+    return text ? text.split(/\s+/u)[0].slice(0, 200) : null;
+  }
+
+  function looksLikeModernStopAction(button: Element): boolean {
+    if (!button?.querySelector) return false;
+    const svg = button.querySelector('svg[viewBox="0 0 20 20"]');
+    const path = svg?.querySelector?.('path');
+    if (!path || typeof path.getBBox !== "function") return false;
+    try {
+      const box = path.getBBox();
+      return box.x >= 4 && box.x <= 5.5
+        && box.y >= 4 && box.y <= 5.5
+        && box.width >= 10 && box.width <= 12
+        && box.height >= 10 && box.height <= 12
+        && Math.abs(box.width - box.height) <= 1;
+    } catch {
+      return false;
+    }
+  }
+
+  // Timestamp belongs to the Browser's actual generation transition,
+  // not to the first later Equinox Local RPC (which can be minutes later).
+  let activeGeneration: { key: string; startedAtMs: number } | null = null;
+
+  function readState(): BrowserContinuationState {
+    const userMessages = [...document.querySelectorAll('[data-message-author-role="user"][data-message-id]')];
+    const assistantMessages = [...document.querySelectorAll('[data-message-author-role="assistant"][data-message-id]')];
+    const userTurns = [...document.querySelectorAll('section[data-turn="user"][data-testid]')];
+    const assistantTurns = [...document.querySelectorAll('section[data-turn="assistant"][data-testid]')];
+    const modernTurns = [...document.querySelectorAll('[data-turn-key]')];
+    const modernUserUnits = [...document.querySelectorAll('[data-chatgpt-search-unit-key$=":user"][data-chatgpt-search-message-ids]')];
+    const composer = document.querySelector('#prompt-textarea[contenteditable="true"][role="textbox"]')
+      || document.querySelector('[data-composer-markdown][contenteditable="true"][role="textbox"]');
+    const modernPrimaryActions = [...document.querySelectorAll('[data-composer-body] button.bg-composer-primary')];
+    const modernGenerationActive = modernPrimaryActions.some(looksLikeModernStopAction);
+    const modernTurn = last(modernTurns);
+    const modernTurnKey = firstMessageId(modernTurn?.getAttribute('data-turn-key'));
+    const modernUserEpoch = modernTurnKey
+      || firstMessageId(last(modernUserUnits)?.getAttribute('data-chatgpt-search-message-ids'));
+    const modernAssistantUnits = modernTurn?.querySelectorAll
+      ? [...modernTurn.querySelectorAll('[data-chatgpt-search-unit-key$=":assistant"][data-chatgpt-search-message-ids]')]
+      : [];
+    const modernAssistantTurnKey = firstMessageId(last(modernAssistantUnits)?.getAttribute('data-chatgpt-search-message-ids'));
+    const result = {
+      generationActive: Boolean(document.querySelector('button[data-testid="stop-button"]')) || modernGenerationActive,
+      userEpoch: modernTurnKey
+        || last(userMessages)?.getAttribute('data-message-id')
+        || last(userTurns)?.getAttribute('data-testid')
+        || modernUserEpoch
+        || null,
+      assistantTurnKey: modernTurnKey
+        || last(assistantTurns)?.getAttribute('data-testid')
+        || last(assistantMessages)?.getAttribute('data-message-id')
+        || modernAssistantTurnKey
+        || null,
+      composerReady: Boolean(composer),
+      composerEmpty: composer !== null && !String(composer.textContent || '').trim(),
+    };
+    const key = result.userEpoch || result.assistantTurnKey;
+    if (!result.generationActive || !key) activeGeneration = null;
+    else if (!activeGeneration || activeGeneration.key !== key) {
+      activeGeneration = { key, startedAtMs: Date.now() };
+    }
+    return { ...result, generationStartedAtMs: activeGeneration?.startedAtMs ?? null };
+  }
+
+  let observer: MutationObserver | null = null;
+  let publishTimer: number | null = null;
+  let lastSerializedState: string | null = null;
+  let observationEnabled = false;
+
+  function publishState({ force = false }: { force?: boolean } = {}) {
+    publishTimer = null;
+    if (!observationEnabled) return;
+    const state = readState();
+    const serialized = JSON.stringify(state);
+    if (!force && serialized === lastSerializedState) return;
+    lastSerializedState = serialized;
+    try {
+      const pending = chrome.runtime.sendMessage({ type: PUSH_TYPE, state });
+      pending?.catch?.(() => {});
+    } catch {
+      // Extension reload/unload races are harmless; the next observer tick or GET will refresh state.
+    }
+  }
+
+  function schedulePublish() {
+    if (!observationEnabled || publishTimer !== null) return;
+    publishTimer = setTimeout(() => publishState(), PUBLISH_DEBOUNCE_MS);
+  }
+
+  function stopObservation() {
+    observationEnabled = false;
+    observer?.disconnect?.();
+    observer = null;
+    if (publishTimer !== null) clearTimeout(publishTimer);
+    publishTimer = null;
+    lastSerializedState = null;
+  }
+
+  function startObservation() {
+    if (observationEnabled || !document.documentElement) return;
+    observationEnabled = true;
+    observer = new MutationObserver(schedulePublish);
+    observer.observe(document.documentElement, {
+      subtree: true,
+      childList: true,
+      attributes: true,
+      characterData: true,
+      attributeFilter: [
+        "data-message-id", "data-testid", "data-turn-key",
+        "data-chatgpt-search-message-ids", "data-chatgpt-search-unit-key",
+        "data-content-search-unit-key", "data-composer-markdown",
+        "disabled", "aria-disabled",
+      ],
+    });
+    publishState({ force: true });
+  }
+
+  async function refreshObservationAccess() {
+    try {
+      const stored = await chrome.storage.local.get([
+        BROWSER_ENABLED_STORAGE_KEY,
+        BROWSER_CONTROL_CONSENT_STORAGE_KEY,
+      ]);
+      const allowed = stored?.[BROWSER_ENABLED_STORAGE_KEY] === true
+        && Number(stored?.[BROWSER_CONTROL_CONSENT_STORAGE_KEY] || 0) >= CURRENT_BROWSER_CONTROL_CONSENT_VERSION;
+      if (allowed) startObservation();
+      else stopObservation();
+    } catch {
+      stopObservation();
+    }
+  }
+
+  chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+    if (message?.type !== GET_TYPE) return false;
+    sendResponse({ state: observationEnabled ? readState() : null });
+    return false;
+  });
+
+  chrome.storage.onChanged?.addListener((changes, areaName) => {
+    if (areaName !== "local") return;
+    if (!changes?.[BROWSER_ENABLED_STORAGE_KEY] && !changes?.[BROWSER_CONTROL_CONSENT_STORAGE_KEY]) return;
+    void refreshObservationAccess();
+  });
+
+  if (document.documentElement) void refreshObservationAccess();
+  else document.addEventListener("DOMContentLoaded", () => { void refreshObservationAccess(); }, { once: true });
+})();

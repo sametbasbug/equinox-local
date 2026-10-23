@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
-const browser = readFileSync(new URL("../../extension/service-worker.js", import.meta.url), "utf8");
+const browser = readFileSync(process.env.EQUINOX_STAGED_BROWSER_WORKER || new URL("../../extension/service-worker.js", import.meta.url), "utf8");
 const telegram = readFileSync(new URL("../../src/telegram-chat-bridge-controller.js", import.meta.url), "utf8");
 const observer = readFileSync(new URL("../../extension/chatgpt-continuation-state.js", import.meta.url), "utf8");
 const modernSend = '[data-composer-body] button.bg-composer-primary[type="submit"]';
@@ -46,5 +46,5 @@ test("Fresh Chat Resume rejects a non-empty modern turn before submission", () =
   const reader = browser.slice(browser.indexOf("async function freshChatComposerState("), browser.indexOf("async function waitForFreshChatHome("));
   assert.match(reader, /const modernTurns = document\.querySelectorAll\('\[data-turn-key\]'\)/u);
   assert.match(reader, /userTurnCount: userTurns\.length \+ modernTurns\.length/u);
-  assert.match(browser, /if \(state\.userTurnCount \|\| state\.assistantTurnCount\) throw new Error\("Fresh Chat Resume destination is not an empty conversation\."\)/u);
+  assert.match(browser, /if \(state\.userTurnCount \|\| state\.assistantTurnCount\)\s*throw new Error\("Fresh Chat Resume destination is not an empty conversation\."\)/u);
 });

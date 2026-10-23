@@ -12,9 +12,11 @@ import { spawnTrackedProcess } from "../helpers/native-process-harness.mjs";
 import { ensureEquinoxLocalAppHost } from "../../src/equinox-local-app-host.js";
 import {
   buildEquinoxLocalNativeAppArtifacts,
+  normalizeMachOUuidBytes,
   EQUINOX_LOCAL_NATIVE_APP_SHELL_VERSION,
 } from "../../src/equinox-local-native-app.js";
 import {
+  inspectEquinoxLocalNativeAppHostSnapshot,
   restoreLegacyEquinoxLocalAppHost,
   synchronizeEquinoxLocalAppHostForRelease,
   synchronizeEquinoxLocalNativeAppHost,
@@ -387,4 +389,123 @@ macTest("native app host migrates legacy bundle once and restores it for rollbac
   const restored = await restoreLegacyEquinoxLocalAppHost({ homeDir });
   assert.equal(restored.restored, true);
   assert.deepEqual(await fs.readFile(restored.executablePath), legacyBytes);
+});
+
+macTest("native app admission rejects foreign symlink artifact before codesign or touching Applications", async (t) => {
+  const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(),"equinox-native-foreign-artifact-")));
+  t.after(()=>fs.rm(root,{recursive:true,force:true}));
+  const homeDir=path.join(root,"home"),releaseDir=path.join(root,"release");
+  const assets=path.join(releaseDir,"runtime","app");
+  const foreign=path.join(root,"foreign-applet");
+  await fs.mkdir(assets,{recursive:true});
+  await fs.mkdir(homeDir);
+  await fs.writeFile(foreign,"foreign-untrusted-executable");
+  await fs.symlink(foreign,path.join(assets,"applet"));
+  await fs.writeFile(path.join(assets,"EquinoxLocal.png"),"normal-icon");
+  const crypto=await import("node:crypto");
+  const digest=v=>crypto.createHash("sha256").update(v).digest("hex");
+  await fs.writeFile(path.join(assets,"native-app.json"),JSON.stringify({
+    schemaVersion:1,shellVersion:1,target:TARGET,executable:"applet",icon:"EquinoxLocal.png",
+    executableSha256:digest("foreign-untrusted-executable"),iconSha256:digest("normal-icon"),
+  }));
+  let commandCount=0;
+  await assert.rejects(synchronizeEquinoxLocalNativeAppHost({
+    homeDir,releaseDir,execFileImpl:async()=>{commandCount++;throw Error("should never run codesign");},
+  }),/native executable is not a safe normal file/u);
+  assert.equal(commandCount,0);
+  assert.equal((await fs.lstat(path.join(assets,"applet"))).isSymbolicLink(),true);
+  assert.equal(await fs.readFile(foreign,"utf8"),"foreign-untrusted-executable");
+  await assert.rejects(fs.lstat(path.join(homeDir,"Applications")),{code:"ENOENT"});
+});
+
+macTest("native rollback snapshot inspection rejects symlinked manifest before hashing trusted app",async(t)=>{
+  const root=await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(),"equinox-native-manifest-link-")));
+  t.after(()=>fs.rm(root,{recursive:true,force:true}));
+  const snapshotPath=path.join(root,"snapshot.app"),foreign=path.join(root,"foreign-credentials");
+  await fs.mkdir(path.join(snapshotPath,"Contents","MacOS"),{recursive:true});
+  await fs.writeFile(path.join(snapshotPath,"Contents","MacOS","applet"),"normal-applet");
+  await fs.writeFile(path.join(snapshotPath,"Contents","Info.plist"),"plist");
+  await fs.writeFile(foreign,"private-credentials");
+  await fs.symlink(foreign,snapshotPath+".rollback.json");
+  let commands=0;
+  await assert.rejects(inspectEquinoxLocalNativeAppHostSnapshot({
+    snapshotPath,
+    execFileImpl:async(_command,args)=>{
+      commands++;
+      assert.deepEqual(args.slice(0,2),["-c","Print :CFBundleIdentifier"]);
+      return{stdout:"dev.equinox.local\n",stderr:""};
+    },
+  }),/must be a normal|not a safe normal|symbolic link/u);
+  assert.equal(commands,1);
+  assert.equal((await fs.lstat(snapshotPath+".rollback.json")).isSymbolicLink(),true);
+  assert.equal(await fs.readFile(foreign,"utf8"),"private-credentials");
+  assert.equal(await fs.readFile(path.join(snapshotPath,"Contents","MacOS","applet"),"utf8"),"normal-applet");
+});
+
+test("Mach-O LC_UUID normalization is stable and independent of the original random UUID", () => {
+  const raw = Buffer.alloc(56);
+  raw.writeUInt32LE(0xfeedfacf, 0);
+  raw.writeUInt32LE(1, 16);
+  raw.writeUInt32LE(24, 20);
+  raw.writeUInt32LE(0x1b, 32);
+  raw.writeUInt32LE(24, 36);
+  const one = Buffer.from(raw);
+  const two = Buffer.from(raw);
+  one.fill(0x41,40,56);
+  two.fill(0x42,40,56);
+  const first = normalizeMachOUuidBytes(one);
+  const second = normalizeMachOUuidBytes(two);
+  assert.deepEqual(first, second, "Swift's random UUID must not affect distributable app SHA");
+  assert.deepEqual(normalizeMachOUuidBytes(first), first);
+  assert.equal(first[46] & 0xf0, 0x50, "derived UUID is version five");
+  assert.equal(first[48] & 0xc0, 0x80, "derived UUID uses RFC variant");
+  assert.equal(one[40],0x41,"original build buffer must be untouched");
+  assert.equal(two[40],0x42,"second build buffer must be untouched");
+});
+
+test("Mach-O admission refuses truncated, oversized, unsupported and malformed LC_UUID command records",()=>{
+  const basic = Buffer.alloc(56);
+  basic.writeUInt32LE(0xfeedfacf,0);
+  basic.writeUInt32LE(1,16);
+  basic.writeUInt32LE(24,20);
+  basic.writeUInt32LE(0x1b,32);
+  basic.writeUInt32LE(24,36);
+  const cases=[
+    [Buffer.alloc(31), /not a supported 64-bit/u],
+    [Buffer.alloc(56), /not a supported 64-bit/u],
+    [(()=>{const b=Buffer.from(basic);b.writeUInt32LE(4097,16);return b})(),/load commands are invalid/u],
+    [(()=>{const b=Buffer.from(basic);b.writeUInt32LE(100,20);return b})(),/load commands are invalid/u],
+    [(()=>{const b=Buffer.from(basic);b.writeUInt32LE(1,20);return b})(),/load command is truncated/u],
+    [(()=>{const b=Buffer.from(basic);b.writeUInt32LE(7,36);return b})(),/load command size is invalid/u],
+    [(()=>{const b=Buffer.from(basic);b.writeUInt32LE(20,36);return b})(),/LC_UUID command is invalid/u],
+    [(()=>{const b=Buffer.from(basic);b.writeUInt32LE(0x2,32);return b})(),/has no LC_UUID command/u],
+  ];
+  for(const [candidate,error] of cases)assert.throws(()=>normalizeMachOUuidBytes(candidate),error);
+});
+
+test("native app artifact builder refuses symlinked Swift or companion input before running xcrun",async(t)=>{
+  const work=await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(),"equinox-native-artifact-input-")));
+  t.after(()=>fs.rm(work,{recursive:true,force:true}));
+  const root=path.join(work,"root"),releaseDir=path.join(work,"out");
+  const app=path.join(root,"app");
+  await fs.mkdir(app,{recursive:true});
+  await fs.mkdir(releaseDir);
+  const foreign=path.join(work,"foreign-secret.txt");
+  await fs.writeFile(foreign,"do not read or compile foreign source");
+  const names=["EquinoxLocalApp.swift","EquinoxLocal.png","EquinoxLocalMenuBar.png","EquinoxCompanionNyx.webp"];
+  for(const filename of names)await fs.writeFile(path.join(app,filename),"safe input");
+  for(const filename of [names[0],names[3]]){
+    await fs.unlink(path.join(app,filename));
+    await fs.symlink(foreign,path.join(app,filename));
+    let launches=0;
+    await assert.rejects(buildEquinoxLocalNativeAppArtifacts({
+      rootDir:root,releaseDir,target:"darwin-arm64",
+      execFileImpl:async()=>{launches++;throw Error("must not spawn Swift compiler");},
+    }),/not a safe normal file/u);
+    assert.equal(launches,0);
+    await assert.rejects(fs.lstat(path.join(releaseDir,"runtime","app")),{code:"ENOENT"});
+    assert.equal(await fs.readFile(foreign,"utf8"),"do not read or compile foreign source");
+    await fs.unlink(path.join(app,filename));
+    await fs.writeFile(path.join(app,filename),"safe input");
+  }
 });

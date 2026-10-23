@@ -104,3 +104,27 @@ test("a Windows x64 host resolves a different exact target without using ambient
   assert.equal((await runWindowsMainFailedRollbackRecovery(f.opts)).status, "verified_dry_run");
   assert.equal(f.calls.at(-1)[1].target, actual.host.target);
 });
+
+test("Windows recovery refuses missing or substituted native shell and messaging ownership before apply", async () => {
+  for (const changed of [
+    { programRoot: undefined },
+    { programRoot: "C:\\Foreign\\Programs" },
+    { nativeMessagingManifestRoot: undefined },
+    { nativeMessagingManifestRoot: "C:\\Foreign\\NativeMessagingHosts" },
+  ]) {
+    const f = fixture({
+      args: ["--apply"],
+      resolveInstallation: async ({ baseInstallation }) => ({
+        ...baseInstallation,
+        kind: "managed-source", channel: "main",
+        sourceRoot: path.win32.join(layout.stateRoot, "main-update", "sources", sha),
+        sourceSha: sha,
+        mainTransactionRoot: path.win32.join(layout.stateRoot, "main-update"),
+        gitPath: "C:\\ProductOwned\\git.exe",
+        ...changed,
+      }),
+    });
+    await assert.rejects(runWindowsMainFailedRollbackRecovery(f.opts), /refuses non-managed-source/u);
+    assert.equal(f.calls.some(([kind]) => kind === "recover"), false);
+  }
+});

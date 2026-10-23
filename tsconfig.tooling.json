@@ -1,0 +1,10 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "rootDir": ".",
+    "noEmitOnError": true
+  },
+  "include": ["scripts/**/*.mts"],
+  "exclude": ["node_modules"]
+}

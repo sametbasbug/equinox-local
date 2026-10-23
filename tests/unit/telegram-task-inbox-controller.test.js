@@ -1038,3 +1038,97 @@ test("restart makes an in-flight new-Task chat creation ambiguous and never repl
   assert.equal(state.taskCreation.status, "ambiguous");
   assert.equal(state.taskCreation.reason, "runtime_restart_during_task_chat_create");
 });
+
+test("Telegram task callback cannot reuse a valid route on another card or route on the right card",async(t)=>{
+ const f=await fixture(t);
+ const controller=createTelegramTaskInboxController(f.deps);
+ await controller.initialize();
+ await controller.syncTasks();
+ const raw=JSON.parse(await fs.readFile(f.deps.statePath,"utf8"));
+ const routeId=raw.mappings[0].routeId;
+ for(const [updateId,messageId,data] of [
+  [401,999,"eqx:f:"+routeId],
+  [402,701,"eqx:f:r-foreign123"],
+  [403,701,"eqx:f:"+routeId.toUpperCase()],
+  [404,701,"eqx:f:"+routeId+"-extra"],
+ ]){
+  f.pending.push({updateId,kind:"callback",callbackQueryId:"cb-"+updateId,messageId,data,receivedAt:"2026-09-20T16:00:08.000Z"});
+ }
+ await controller.processPending();
+ assert.equal(f.calls.filter(x=>x[0]==="finish"||x[0]==="cancel").length,0);
+ assert.equal(f.pending.length,0);
+ assert.equal(f.calls.filter(x=>x[0]==="answer").length,3);
+ const state=JSON.parse(await fs.readFile(f.deps.statePath,"utf8"));
+ assert.equal(state.actions.some(x=>x.updateId>=401&&x.updateId<=404),false);
+});
+
+test("Telegram task inbound mapped reply cannot target another Task through guessed reply message ID",async(t)=>{
+ const f=await fixture(t);
+ const controller=createTelegramTaskInboxController(f.deps);
+ await controller.initialize();
+ await controller.syncTasks();
+ f.pending.push({updateId:408,kind:"message",messageId:908,replyToMessageId:999,text:"synthetic private reply",attachment:null,receivedAt:"2026-09-20T16:00:09.000Z"});
+ await controller.processPending();
+ assert.equal(f.calls.filter(x=>x[0]==="human-input").length,0);
+ assert.equal(f.calls.filter(x=>x[0]==="arm").length,0);
+ assert.ok(f.calls.some(x=>x[0]==="message"&&x[1].includes("No Task chat is selected")));
+ assert.equal(f.pending.length,0);
+});
+
+test("Telegram task invalid private-state binding is rejected rather than guessing another ChatGPT conversation",async(t)=>{
+ const f=await fixture(t);
+ await fs.writeFile(f.deps.statePath,JSON.stringify({
+  version:1,activatedAt:"2026-09-20T15:59:00.000Z",mappings:[],actions:[],
+  chatBridge:{
+   sourceTaskId:"task-abcdef12",browserContext:"user",browserInstanceId:"instance-1",tabId:77,
+   conversationId:"abcdef12-3456-7890-abcd-ef1234567890",
+   canonicalUrl:"https://chatgpt.com/c/abcdef12-3456-7890-abcd-ef1234567890",
+   title:"malformed",boundAt:"not-a-date",
+  },
+ })+"\n",{mode:0o600});
+ const controller=createTelegramTaskInboxController(f.deps);
+ await assert.rejects(()=>controller.initialize(),/Chat Bridge bound timestamp is invalid/u);
+ assert.equal(f.calls.filter(x=>x[0]==="chat-deliver"||x[0]==="task-chat-create"||x[0]==="arm").length,0);
+ assert.equal((await fs.readFile(f.deps.statePath,"utf8")).includes("not-a-date"),true);
+});
+
+test("Telegram task ambiguous in-flight action never executes a fake restart after crash recovery",async(t)=>{
+ const f=await fixture(t);
+ await fs.writeFile(f.deps.statePath,JSON.stringify({
+  version:1,activatedAt:"2026-09-20T15:59:00.000Z",
+  mappings:[],controlCards:[{routeId:"g-123456",messageId:700,expiresAt:"2026-09-20T17:00:00.000Z",pendingAction:"restart",confirmationExpiresAt:"2026-09-20T16:00:20.000Z"}],
+  actions:[{updateId:411,status:"processing",kind:"control:restart",taskId:null,startedAt:"2026-09-20T16:00:01.000Z",completedAt:null,reason:null}],
+ })+"\n",{mode:0o600});
+ f.pending.push({updateId:411,kind:"callback",callbackQueryId:"cb-crash",messageId:700,data:"eqx:t:g-123456",receivedAt:"2026-09-20T16:00:03.000Z"});
+ const controller=createTelegramTaskInboxController(f.deps);
+ await controller.initialize();
+ assert.equal(controller.snapshot().ambiguousActions,1);
+ await controller.processPending();
+ assert.equal(f.calls.filter(x=>x[0]==="restart-request"||x[0]==="pause-agent").length,0);
+ assert.equal(f.pending.length,0);
+ assert.equal((JSON.parse(await fs.readFile(f.deps.statePath,"utf8"))).actions[0].status,"ambiguous");
+});
+
+
+test("Telegram Task Inbox fails closed on persisted foreign or mismatched ChatGPT links", async (t) => {
+  for (const canonicalUrl of [
+    "https://evil.invalid/c/abcdef12-3456-7890-abcd-ef1234567890",
+    "https://chatgpt.com/c/ffffffff-3456-7890-abcd-ef1234567890",
+    "https://chatgpt.com:888/c/abcdef12-3456-7890-abcd-ef1234567890",
+    "https://user@chatgpt.com/c/abcdef12-3456-7890-abcd-ef1234567890",
+    "https://chatgpt.com/c/abcdef12-3456-7890-abcd-ef1234567890?redirect=x",
+  ]) {
+    const f = await fixture(t);
+    const state = {
+      version:1, activatedAt:"2026-09-20T15:59:00.000Z",mappings:[],actions:[],
+      chatBridge:{sourceTaskId:"task-abcdef12",browserContext:"user",browserInstanceId:"instance-1",
+        tabId:77,conversationId:"abcdef12-3456-7890-abcd-ef1234567890",canonicalUrl,
+        title:"synthetic",boundAt:"2026-09-20T15:59:00.000Z"},
+    };
+    await fs.writeFile(f.deps.statePath, JSON.stringify(state)+"\n", {mode:0o600});
+    const controller = createTelegramTaskInboxController(f.deps);
+    await assert.rejects(()=>controller.initialize(), /canonical URL does not identify/u);
+    assert.equal(f.calls.some((call)=>["chat-deliver","task-chat-create","arm","send-card"].includes(call[0])),false);
+    assert.equal(JSON.parse(await fs.readFile(f.deps.statePath,"utf8")).chatBridge.canonicalUrl,canonicalUrl);
+  }
+});

@@ -84,3 +84,83 @@ test("Main native pointer advances only to an exact verified durable payload", a
   );
   await assert.rejects(readEquinoxLocalMainNativePointer(path.join(f.root, "other.json"), { transactionRoot: f.root, validateRelease: f.validateRelease }), /outside canonical/u);
 });
+
+test("Main native state rejects foreign candidate staging paths without moving or deleting payload", async (t) => {
+  const f = await fixture(t);
+  const foreignRoot = path.join(f.root, "foreign", "native-candidate");
+  const foreignRelease = path.join(foreignRoot, "release");
+  await fs.mkdir(foreignRelease, { recursive: true });
+  await fs.writeFile(path.join(foreignRelease, "foreign.bin"), "keep");
+  await assert.rejects(
+    promoteEquinoxLocalMainNativeCandidate({
+      candidate: { ...f.candidate, releaseDir: foreignRelease },
+      transactionRoot: f.root,
+      transactionId: TX,
+      validateRelease: f.validateRelease,
+    }),
+    /not transaction-owned/,
+  );
+  assert.equal(await fs.readFile(path.join(foreignRelease, "foreign.bin"), "utf8"), "keep");
+  await assert.rejects(fs.lstat(path.join(f.root, "native-store", TARGET, SHA)), { code: "ENOENT" });
+});
+
+test("Main native state rejects symlinked staging before native promotion", async (t) => {
+  const f = await fixture(t);
+  const actualCandidate = path.join(f.root, "real-native-candidate");
+  await fs.rename(f.candidateRoot, actualCandidate);
+  await fs.symlink(actualCandidate, f.candidateRoot, "dir");
+  await assert.rejects(
+    promoteEquinoxLocalMainNativeCandidate({
+      candidate: f.candidate,
+      transactionRoot: f.root,
+      transactionId: TX,
+      validateRelease: f.validateRelease,
+    }),
+    /state directory is unsafe/,
+  );
+  assert.equal(await fs.readFile(path.join(actualCandidate, "release", "payload.bin"), "utf8"), "native payload");
+});
+
+test("Main native pointer retains authenticated previous bytes when atomic publish rename fails", async (t) => {
+  const f = await fixture(t);
+  await promoteEquinoxLocalMainNativeCandidate({ candidate: f.candidate, transactionRoot: f.root, transactionId: TX, validateRelease: f.validateRelease });
+  const pointerPath = path.join(f.root, "current-native.json");
+  const pointer = { schemaVersion: 1, channel: "main", sourceSha: SHA, target: TARGET, runtimeContractSha256: DIGEST };
+  await writeEquinoxLocalMainNativePointer(pointerPath, pointer, { transactionRoot: f.root, validateRelease: f.validateRelease });
+  const before = await fs.readFile(pointerPath);
+  const failingFs = {
+    ...fs,
+    rename: async (source, destination) => {
+      if (destination === pointerPath) throw new Error("Injected atomic native pointer rename failure");
+      return fs.rename(source, destination);
+    },
+  };
+  await assert.rejects(
+    writeEquinoxLocalMainNativePointer(pointerPath, pointer, {
+      transactionRoot: f.root, validateRelease: f.validateRelease, fsImpl: failingFs,
+    }),
+    /Injected atomic native pointer rename failure/,
+  );
+  assert.deepEqual(await fs.readFile(pointerPath), before);
+  assert.deepEqual(
+    (await fs.readdir(f.root)).filter((name) => name.startsWith(".main-native-")),
+    [],
+    "unpublished temporary pointer files must be cleaned",
+  );
+});
+
+test("Main native store refuses extra manifest fields without accepting durable payload", async (t) => {
+  const f = await fixture(t);
+  const promoted = await promoteEquinoxLocalMainNativeCandidate({ candidate: f.candidate, transactionRoot: f.root, transactionId: TX, validateRelease: f.validateRelease });
+  const paths = equinoxLocalMainNativeStatePaths({ transactionRoot: f.root, sourceSha: SHA, target: TARGET });
+  const original = JSON.parse(await fs.readFile(paths.manifestPath, "utf8"));
+  await fs.writeFile(paths.manifestPath, JSON.stringify({ ...original, privileged: true }), { mode: 0o600 });
+  await assert.rejects(
+    inspectEquinoxLocalMainNativeStoredRelease({
+      transactionRoot: f.root, sourceSha: SHA, target: TARGET,
+      validateRelease: f.validateRelease, expectedRuntimeContractSha256: DIGEST,
+    }),
+    /missing or unsupported fields/,
+  );
+  assert.equal(await fs.readFile(path.join(promoted.releaseDir, "payload.bin"), "utf8"), "native payload");
+});

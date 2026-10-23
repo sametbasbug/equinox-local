@@ -11,6 +11,7 @@ import {
   launchWindowsStableShell,
   replaceWindowsStableShellForRelease,
   snapshotWindowsStableShellTree,
+  snapshotWindowsStableShellForRollback,
 } from "../../src/equinox-local-windows-stable-shell.js";
 import { waitForWindowsShellPipeRelease } from "../../src/equinox-local-windows-shell-control.js";
 
@@ -339,4 +340,44 @@ test("old WPF shutdown wait fails closed if its single-instance pipe stays bound
     },
     sleepImpl: async () => {},
   }), /did not release its single-instance pipe/u);
+});
+
+test("legacy WebView2 cache exclusion rejects a foreign symlink without reading or snapshotting its contents", async (t) => {
+  const fixture = await shellFixture();
+  t.after(() => fs.rm(fixture.root, { recursive:true,force:true }));
+  const foreign = path.join(fixture.root, "foreign-webview-profile");
+  await fs.mkdir(foreign);
+  await fs.writeFile(path.join(foreign, "credential.txt"), "foreign-user-credential\n");
+  const linkedCache = path.join(fixture.programRoot, "EquinoxLocal.exe.WebView2");
+  await fs.symlink(foreign, linkedCache);
+  await assert.rejects(snapshotWindowsStableShellTree(fixture.programRoot, { ignoreLegacyCache:true }),
+    /symbolic links or junctions/u);
+  const snapshotReleaseDir = path.join(fixture.root, "owned-snapshot");
+  await assert.rejects(snapshotWindowsStableShellForRollback({
+    programRoot:fixture.programRoot,snapshotReleaseDir,
+  }), /symbolic links or junctions/u);
+  await assert.rejects(fs.lstat(snapshotReleaseDir), { code:"ENOENT" });
+  assert.equal((await fs.lstat(linkedCache)).isSymbolicLink(),true);
+  assert.equal(await fs.readFile(path.join(foreign,"credential.txt"),"utf8"),"foreign-user-credential\n");
+});
+
+test("native WPF replacement refuses staged symlink and never signals shutdown or mutates live shell",async(t)=>{
+  const fixture=await shellFixture();
+  t.after(()=>fs.rm(fixture.root,{recursive:true,force:true}));
+  const newShell=path.join(fixture.releases,"5.3.0","runtime","shell");
+  const foreign=path.join(fixture.root,"outside-shell.dll");
+  await fs.writeFile(foreign,"do-not-install\n");
+  await fs.symlink(foreign,path.join(newShell,"foreign.dll"));
+  const before=await snapshotWindowsStableShellTree(fixture.programRoot);
+  let shutdowns=0;
+  await assert.rejects(replaceWindowsStableShellForRelease({
+    releaseDir:path.join(fixture.releases,"5.3.0"),
+    previousReleaseDir:path.join(fixture.releases,"5.2.0"),
+    programRoot:fixture.programRoot,
+    requestShutdownImpl:async()=>{shutdowns++;},
+  }),/symbolic links or junctions/u);
+  assert.equal(shutdowns,0);
+  assert.deepEqual(await snapshotWindowsStableShellTree(fixture.programRoot),before);
+  assert.equal(await fs.readFile(foreign,"utf8"),"do-not-install\n");
+  assert.deepEqual(await fs.readdir(path.dirname(fixture.programRoot)),["Equinox Local"]);
 });

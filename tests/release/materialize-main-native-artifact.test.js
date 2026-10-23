@@ -70,3 +70,19 @@ test("materializer refuses checkout drift dirty source target mismatch symlinks 
   await materializeEquinoxLocalMainNativeArtifact({ ...base, execFileImpl: gitStub() });
   await assert.rejects(materializeEquinoxLocalMainNativeArtifact({ ...base, execFileImpl: gitStub() }), /EEXIST/u);
 });
+
+test("materializer preserves an existing exact-SHA manifest when exclusive creation fails", async (t) => {
+  const { root, candidate, output } = await fixture(t);
+  await fs.mkdir(output, { recursive: true, mode: 0o700 });
+  const priorManifest = path.join(output, `equinox-local-main-${SHA}-darwin-arm64.json`);
+  const priorBytes = 'preexisting-signed-manifest-must-not-be-deleted\n';
+  await fs.writeFile(priorManifest, priorBytes, { mode: 0o600, flag: "wx" });
+  await assert.rejects(materializeEquinoxLocalMainNativeArtifact({
+    rootDir: root, sourceSha: SHA, target: "darwin-arm64", candidateArtifactPath: candidate,
+    outputDir: output, execFileImpl: gitStub(), computeRuntimeContractImpl,
+  }), /EEXIST/u);
+  assert.equal(await fs.readFile(priorManifest, "utf8"), priorBytes,
+    "Exclusive manifest collision must never delete a preexisting signed manifest");
+  assert.deepEqual(await fs.readdir(output), [path.basename(priorManifest)],
+    "Uncommitted candidate artifact should be removed after collision");
+});

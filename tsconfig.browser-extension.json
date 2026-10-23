@@ -1,0 +1,18 @@
+{
+  "compilerOptions": {
+    "target": "ES2024",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "moduleDetection": "legacy",
+    "strict": true,
+    "lib": ["ES2024", "DOM", "DOM.Iterable"],
+    "types": [],
+    "rootDir": "extension",
+    "outDir": "extension",
+    "noEmitOnError": true,
+    "skipLibCheck": false,
+    "sourceMap": false,
+    "newLine": "lf"
+  },
+  "files": ["extension/chatgpt-continuation-state.ts", "extension/bookmarks.ts", "extension/popup.ts"]
+}

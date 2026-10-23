@@ -1,0 +1,3521 @@
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import * as z from "zod/v4";
+
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { execFile as execFileCallback } from "node:child_process";
+import { promisify } from "node:util";
+import { AsyncLocalStorage } from "node:async_hooks";
+import { pathToFileURL } from "node:url";
+import { maybeScheduleMacStableMainBridge } from "./equinox-local-mac-main-bridge.js";
+import { pruneVerifiedMainLargeStorage, pruneDisenrolledWindowsMainLargeStorage } from "./equinox-local-main-storage-retention.js";
+import { createMcpToolReplayGuard } from "./mcp-tool-replay-guard.js";
+import { createEquinoxLocalToolRegistrar } from "./equinox-local-tool-registration.js";
+import { createEquinoxLocalWorkspaceRuntime } from "./equinox-local-workspace-runtime.js";
+import {
+  createProtectedAgentPathChecker,
+  isSensitiveAgentName,
+} from "./equinox-local-agent-path-policy.js";
+import {
+  createTerminalManager,
+} from "./terminal-manager.js";
+import {
+  registerTerminalTools,
+} from "./equinox-local-terminal-tools.js";
+import {
+  createProcessManager,
+  probeTcpPort,
+} from "./process-manager.js";
+import {
+  createAgentControlController,
+} from "./equinox-local-agent-control.js";
+import {
+  createLocalPortInspector,
+  registerProcessTools,
+} from "./equinox-local-process-tools.js";
+import {
+  registerDesktopGatewayTools,
+} from "./equinox-local-desktop-tools.js";
+import {
+  registerProjectDiscoveryTools,
+} from "./equinox-local-project-tools.js";
+import {
+  registerImageViewTools,
+} from "./equinox-local-image-tools.js";
+import {
+  getWebImportSettings,
+  registerFileTransferTools,
+  resolveFileExportPath,
+  setWebImportLocation,
+} from "./equinox-local-file-transfer.js";
+import {
+  isPathInside as isPathInsideRoot,
+  parseGitWorktreePorcelain,
+  publicWorktreeRecord,
+} from "./worktree-utils.js";
+import {
+  createWorkflowRuntime,
+} from "./workflow-runtime.js";
+import { buildWorkflowPlan } from "./workflow-recipes.js";
+import {
+  createPrivateReleaseGateRuntime,
+  privateGitHubStatus,
+  privateReleaseGateSnapshot,
+  privateWorkflowStepExecutor,
+  registerPrivateReleaseGateTools,
+  registerPrivateSecureServiceTools,
+  registerPrivateVisualTools,
+} from "./equinox-local-private-composition.js";
+import {
+  createPeekabooBridge,
+  isPeekabooControlCenterReady,
+  PEEKABOO_ALLOWED_TOOLS,
+} from "./peekaboo-bridge.js";
+import { createWinappBridge } from "./winapp-bridge.js";
+import {
+  createRuntimeObservability,
+} from "./runtime-observability.js";
+import {
+  registerRuntimeObservabilityTools,
+} from "./runtime-observability-tools.js";
+import {
+  createEquinoxBrowserBridge,
+} from "./equinox-browser-bridge.js";
+import {
+  equinoxBrowserIpcEndpoint,
+} from "./equinox-browser-socket.js";
+import {
+  registerEquinoxBrowserTools,
+} from "./equinox-browser-tools.js";
+import {
+  createEquinoxAgentBrowser,
+} from "./equinox-agent-browser.js";
+import {
+  createDiagnosisEngine,
+} from "./diagnosis-engine.js";
+import {
+  registerDiagnosisTools,
+} from "./diagnosis-tools.js";
+import {
+  createRepairEngine,
+} from "./repair-engine.js";
+import {
+  registerRepairTools,
+} from "./repair-tools.js";
+import {
+  createRecoveryPolicyController,
+} from "./recovery-policy.js";
+import {
+  registerRecoveryPolicyTools,
+} from "./recovery-policy-tools.js";
+import {
+  createRuntimeJanitor,
+} from "./runtime-janitor.js";
+import {
+  registerRuntimeJanitorTools,
+} from "./runtime-janitor-tools.js";
+import {
+  createEquinoxLocalConfigManager,
+} from "./equinox-local-config.js";
+import {
+  createEquinoxLocalControlApi,
+} from "./equinox-local-control-api.js";
+import {
+  cancelTelegramPairing,
+  configureTelegramIntegration,
+  confirmTelegramPairing,
+  defaultTelegramTaskStatePath,
+  disconnectTelegramIntegration,
+  getTelegramDownloadSettings,
+  getTelegramIntegrationStatus,
+  setTelegramRemoteControlEnabled,
+  sendTelegramTyping,
+  pollTelegramPairing,
+  registerTelegramSendTool,
+  sendTelegramMessage,
+  setTelegramDownloadLocation,
+  startTelegramPairing,
+  syncTelegramBotCommands,
+  testTelegramIntegration,
+} from "./telegram-integration.js";
+import { createTelegramTaskInboxController } from "./telegram-task-inbox-controller.js";
+import { createTelegramChatBridgeController } from "./telegram-chat-bridge-controller.js";
+import {
+  registerAuthenticatedHttpTools,
+} from "./authenticated-http-tools.js";
+import {
+  authenticatedHttpRequest,
+  deleteAuthenticatedHttpProfile,
+  getAuthenticatedHttpProfiles,
+  setAuthenticatedHttpAgentManagement,
+  upsertAuthenticatedHttpProfileFromControlCenter,
+} from "./authenticated-http-integration.js";
+import {
+  resolveEquinoxLocalInstallation,
+} from "./equinox-local-installation.js";
+import {
+  resolveEquinoxLocalManagedSourceInstallation,
+} from "./equinox-local-managed-source-installation.js";
+import {
+  createEquinoxLocalUpdater,
+} from "./equinox-local-updater.js";
+import {
+  createEquinoxLocalUpdateCoordinator,
+} from "./equinox-local-update-coordinator.js";
+import {
+  createEquinoxLocalMainUpdateDiscovery,
+} from "./equinox-local-main-update.js";
+import {
+  createEquinoxLocalMainApplyController,
+} from "./equinox-local-main-apply-controller.js";
+import { createEquinoxLocalMainChannelNotice } from "./equinox-local-update-awareness.js";
+import {
+  configureManagedTunnel,
+  getManagedOnboardingStatus,
+  recordManagedAgentCommand,
+} from "./equinox-local-onboarding.js";
+import {
+  registerRestartRuntimeTool,
+  scheduleEquinoxLocalRestart,
+  scheduleSourceCheckoutRestart,
+} from "./equinox-local-restart.js";
+import {
+  createMutationPathLockManager,
+  resolveGitCommonDirectory,
+} from "./equinox-local-mutation-lock.js";
+import {
+  scheduleEquinoxLocalUninstall,
+} from "./equinox-local-uninstall.js";
+import {
+  getEquinoxLocalDoctorStatus,
+  registerSystemDoctorTool,
+} from "./equinox-local-doctor.js";
+import {
+  inspectSourceCheckoutVersion,
+  inspectSourcePeekabooRuntime,
+  inspectSourceTunnelRuntime,
+} from "./equinox-local-source-runtime.js";
+import {
+  EQUINOX_LOCAL_UPDATE_KEYS,
+} from "./equinox-local-update-keys.js";
+import {
+  EQUINOX_LOCAL_VERSION,
+} from "./equinox-local-version.js";
+import {
+  validateIndependentGitProjectRoot,
+} from "./equinox-local-bootstrap.js";
+import {
+  chooseLocalFolder,
+} from "./control-center-platform.js";
+import {
+  createCapabilityRegistry,
+  registerStableCapabilityGateways,
+} from "./capability-registry.js";
+import { createTaskCapsuleStore } from "./task-capsule-store.js";
+import { deriveEquinoxLocalPresentationState } from "./equinox-local-presentation-state.js";
+import { createAutoContinueController } from "./auto-continue-controller.js";
+import { createFreshChatResumeController } from "./fresh-chat-resume-controller.js";
+import { registerTaskCapsuleTools } from "./task-capsule-tools.js";
+import { startRuntimeLifecycle } from "./equinox-local-runtime-lifecycle.js";
+import { createTurnBudgetController } from "./turn-budget-controller.js";
+import { equinoxLocalPlatformPaths } from "./equinox-local-platform.js";
+import { probeWindowsTerminalExecution } from "./equinox-local-windows-terminal-health.js";
+
+type RuntimeBoundary = any; // Cross-module injected runtime compatibility boundary; per-endpoint checks remain in the owning modules.
+type ProjectContext={id:string;name:string;rootRealPath:string;configuredRoot:string;kind:string;gitCommonDirRealPath:string|null;configured:boolean};
+export async function createEquinoxLocalRuntime({
+  platform = process.platform,
+  arch = process.arch,
+  env = process.env,
+  homeDir = os.homedir(),
+}: { platform?:string;arch?:string;env?:NodeJS.ProcessEnv;homeDir?:string } = {}) {
+const execFile = promisify(execFileCallback);
+const runtimeHomeDir = homeDir;
+const runtimeEnv = env;
+const runtimePlatformPaths = equinoxLocalPlatformPaths({ platform, arch, homeDir: runtimeHomeDir, env: runtimeEnv });
+
+const equinoxLocalConfigManager:RuntimeBoundary = createEquinoxLocalConfigManager({
+  platform,
+  arch,
+  env: runtimeEnv,
+  homeDir: runtimeHomeDir,
+});
+const EQUINOX_LOCAL_CONFIG_SNAPSHOT = await equinoxLocalConfigManager.initialize();
+const EQUINOX_LOCAL_CONFIG = EQUINOX_LOCAL_CONFIG_SNAPSHOT.config;
+const AGENT_ACCESS = EQUINOX_LOCAL_CONFIG.agentAccess;
+const FULL_FILE_ACCESS = AGENT_ACCESS.files === "full";
+
+const DEFAULT_PROJECT = EQUINOX_LOCAL_CONFIG.defaultProject;
+const WORKSPACE_PROJECT_ID = EQUINOX_LOCAL_CONFIG.runtime.workspaceProject;
+const DOWNLOADS_ROOT_ID = EQUINOX_LOCAL_CONFIG.runtime.downloadsRoot;
+
+const PROJECT_DEFINITIONS:Record<string,{root:string;name:string;worktrees?:boolean}> = EQUINOX_LOCAL_CONFIG.projects;
+const PROJECT_IDS = Object.freeze(Object.keys(PROJECT_DEFINITIONS));
+const FILE_ROOT_DEFINITIONS:Record<string,{root:string;name:string;worktrees?:boolean}> = Object.freeze({
+  ...PROJECT_DEFINITIONS,
+  ...EQUINOX_LOCAL_CONFIG.fileRoots,
+});
+const FILE_ROOT_IDS = Object.freeze(Object.keys(FILE_ROOT_DEFINITIONS));
+
+const PROJECT_ID_VALUE_SCHEMA = FULL_FILE_ACCESS
+  ? z.string().min(1).max(1024)
+  : z.enum(PROJECT_IDS);
+const FILE_ROOT_ID_VALUE_SCHEMA = FULL_FILE_ACCESS
+  ? z.string().min(1).max(1024)
+  : z.enum(FILE_ROOT_IDS);
+
+const PROJECT_ID_SCHEMA = PROJECT_ID_VALUE_SCHEMA
+  .default(DEFAULT_PROJECT)
+  .describe(
+    FULL_FILE_ACCESS
+      ? `İşlem yapılacak proje kimliği, home veya erişilebilir mutlak klasör yolu; belirtilmezse ${DEFAULT_PROJECT} kullanılır.`
+      : `İşlem yapılacak izinli proje kimliği; belirtilmezse ${DEFAULT_PROJECT} kullanılır. Güncel liste için list_projects aracını kullan.`,
+  );
+
+const projectContextStorage =
+  new AsyncLocalStorage<ProjectContext>();
+
+const MAX_FILE_BYTES = 512 * 1024;
+const MAX_OUTPUT_CHARS = 120_000;
+
+const IGNORED_DIRECTORIES = new Set([
+  ".git",
+]);
+
+const isProtectedAgentPath = createProtectedAgentPathChecker(runtimeHomeDir, { platform });
+
+function assertNotProtectedAgentPath(absolutePath:RuntimeBoundary) {
+  if (isProtectedAgentPath(absolutePath)) {
+    throw new Error("Bu yol hassas kimlik bilgisi veya uygulama credential alanı olarak korunuyor.");
+  }
+}
+
+async function resolveProjectContext(
+  projectId = DEFAULT_PROJECT,
+) {
+  const configuredDefinition =
+    PROJECT_DEFINITIONS[projectId];
+  const adHocRoot =
+    !configuredDefinition && FULL_FILE_ACCESS
+      ? projectId === "home"
+        ? runtimeHomeDir
+        : path.isAbsolute(projectId)
+          ? projectId
+          : null
+      : null;
+  const definition =
+    configuredDefinition ??
+    (adHocRoot
+      ? {
+          name:
+            projectId === "home"
+              ? "Home"
+              : path.basename(adHocRoot) || adHocRoot,
+          root: adHocRoot,
+          worktrees: false,
+        }
+      : null);
+
+  if (!definition) {
+    throw new Error(
+      FULL_FILE_ACCESS
+        ? `Proje bağlamı bulunamadı. Yapılandırılmış bir proje kimliği, home veya mutlak klasör yolu kullan: ${projectId}`
+        : `İzin verilmeyen proje kimliği: ${projectId}`,
+    );
+  }
+
+  const normalizedRoot = path.normalize(definition.root);
+  if (!configuredDefinition && normalizedRoot === path.parse(normalizedRoot).root) {
+    throw new Error("Dosya sistemi kökü doğrudan ajan çalışma kökü olarak kullanılamaz.");
+  }
+
+  let rootRealPath;
+
+  try {
+    rootRealPath =
+      await fs.realpath(definition.root);
+  } catch (error:RuntimeBoundary) {
+    throw new Error(
+      [
+        `Proje klasörüne ulaşılamadı: ${projectId}`,
+        `Beklenen yol: ${definition.root}`,
+        error instanceof Error
+          ? error.message
+          : String(error),
+      ].join("\n"),
+    );
+  }
+
+  const stats = await fs.stat(rootRealPath);
+
+  if (!stats.isDirectory()) {
+    throw new Error(
+      `İzinli proje kökü bir klasör değil: ${projectId}`,
+    );
+  }
+
+  if (!configuredDefinition) {
+    assertNotProtectedAgentPath(rootRealPath);
+  }
+
+  let kind = "directory";
+  let gitCommonDirRealPath = null;
+  try {
+    await validateIndependentGitProjectRoot(rootRealPath);
+    kind = "git";
+    gitCommonDirRealPath = await resolveGitCommonDirectory(rootRealPath);
+  } catch (error:RuntimeBoundary) {
+    if (configuredDefinition) {
+      throw new Error(
+        [
+          `İzinli proje bağımsız bir Git reposu değil: ${projectId}`,
+          error instanceof Error
+            ? error.message
+            : String(error),
+        ].join("\n"),
+      );
+    }
+  }
+
+  return Object.freeze({
+    id: projectId,
+    name: definition.name,
+    configuredRoot: definition.root,
+    rootRealPath,
+    kind,
+    gitCommonDirRealPath,
+    configured: Boolean(configuredDefinition),
+  });
+}
+
+async function resolveFileRootContext(
+  rootId = DEFAULT_PROJECT,
+) {
+  const configuredDefinition =
+    FILE_ROOT_DEFINITIONS[rootId];
+  const adHocRoot =
+    !configuredDefinition && FULL_FILE_ACCESS
+      ? rootId === "home"
+        ? runtimeHomeDir
+        : path.isAbsolute(rootId)
+          ? rootId
+          : null
+      : null;
+  const definition =
+    configuredDefinition ??
+    (adHocRoot
+      ? {
+          name:
+            rootId === "home"
+              ? "Home"
+              : path.basename(adHocRoot) || adHocRoot,
+          root: adHocRoot,
+        }
+      : null);
+
+  if (!definition) {
+    throw new Error(
+      FULL_FILE_ACCESS
+        ? `Dosya kökü bulunamadı. Yapılandırılmış bir kök, home veya mutlak klasör yolu kullan: ${rootId}`
+        : `İzin verilmeyen dosya kökü: ${rootId}`,
+    );
+  }
+
+  const normalizedRoot = path.normalize(definition.root);
+  if (!configuredDefinition && normalizedRoot === path.parse(normalizedRoot).root) {
+    throw new Error("Dosya sistemi kökü doğrudan ajan dosya kökü olarak kullanılamaz.");
+  }
+
+  let rootRealPath;
+
+  try {
+    rootRealPath =
+      await fs.realpath(definition.root);
+  } catch (error:RuntimeBoundary) {
+    throw new Error(
+      [
+        `Dosya köküne ulaşılamadı: ${rootId}`,
+        `Beklenen yol: ${definition.root}`,
+        error instanceof Error
+          ? error.message
+          : String(error),
+      ].join("\n"),
+    );
+  }
+
+  const stats = await fs.stat(rootRealPath);
+  if (!stats.isDirectory()) {
+    throw new Error(
+      `İzinli dosya kökü bir klasör değil: ${rootId}`,
+    );
+  }
+
+  if (!configuredDefinition) {
+    assertNotProtectedAgentPath(rootRealPath);
+  }
+
+  return Object.freeze({
+    id: rootId,
+    name: definition.name,
+    configuredRoot: definition.root,
+    rootRealPath,
+    kind: configuredDefinition && PROJECT_DEFINITIONS[rootId]
+      ? "git"
+      : "files",
+    configured: Boolean(configuredDefinition),
+  });
+}
+
+function getActiveProjectContext() {
+  const context =
+    projectContextStorage.getStore();
+
+  if (!context) {
+    throw new Error(
+      "Aktif proje bağlamı bulunamadı.",
+    );
+  }
+
+  return context;
+}
+
+function getActiveProjectRoot() {
+  return getActiveProjectContext()
+    .rootRealPath;
+}
+
+function getActiveProjectId() {
+  return getActiveProjectContext().id;
+}
+
+function getActiveProjectName() {
+  return getActiveProjectContext().name;
+}
+
+function textResult(text:RuntimeBoundary) {
+  const output =
+    text.length > MAX_OUTPUT_CHARS
+      ? `${text.slice(0, MAX_OUTPUT_CHARS)}\n\n[Çıktı güvenlik sınırı nedeniyle kısaltıldı.]`
+      : text;
+
+  return {
+    content: [{ type: "text", text: output }],
+  };
+}
+
+function errorResult(error:RuntimeBoundary) {
+  const message =
+    error instanceof Error ? error.message : String(error);
+
+  return {
+    content: [{ type: "text", text: `Hata: ${message}` }],
+    isError: true,
+  };
+}
+
+function isInsideProject(targetPath:RuntimeBoundary) {
+  const relative = path.relative(getActiveProjectRoot(), targetPath);
+
+  return (
+    relative === "" ||
+    (!relative.startsWith(`..${path.sep}`) &&
+      relative !== ".." &&
+      !path.isAbsolute(relative))
+  );
+}
+
+const isSensitiveName = isSensitiveAgentName;
+
+function checkRequestedPath(relativePath:RuntimeBoundary) {
+  if (typeof relativePath !== "string" || relativePath.includes("\0")) {
+    throw new Error("Geçersiz dosya yolu.");
+  }
+
+  if (path.isAbsolute(relativePath)) {
+    throw new Error("Yalnızca proje köküne göre göreli yollar kullanılabilir.");
+  }
+
+  const parts = path
+    .normalize(relativePath)
+    .split(path.sep)
+    .filter((part) => part && part !== ".");
+
+  for (const part of parts) {
+    if (IGNORED_DIRECTORIES.has(part)) {
+      throw new Error(`Bu klasöre erişim kapalı: ${part}`);
+    }
+
+    if (isSensitiveName(part)) {
+      throw new Error(`Bu dosyaya erişim kapalı: ${part}`);
+    }
+  }
+}
+
+async function safeResolve(relativePath = ".") {
+  checkRequestedPath(relativePath);
+
+  const candidate = path.resolve(getActiveProjectRoot(), relativePath);
+
+  if (!isInsideProject(candidate)) {
+    throw new Error("Proje klasörü dışına çıkma girişimi engellendi.");
+  }
+
+  const realCandidate = await fs.realpath(candidate);
+
+  if (!isInsideProject(realCandidate)) {
+    throw new Error("Sembolik bağlantı üzerinden proje dışına çıkış engellendi.");
+  }
+  if (FULL_FILE_ACCESS && !getActiveProjectContext().configured) {
+    assertNotProtectedAgentPath(realCandidate);
+  }
+
+  return realCandidate;
+}
+
+function displayPath(absolutePath:RuntimeBoundary) {
+  const relative = path.relative(getActiveProjectRoot(), absolutePath);
+  return relative || ".";
+}
+
+const SERVER_NAME =
+  "equinox-local-multiproject";
+const SERVER_VERSION = EQUINOX_LOCAL_VERSION;
+const equinoxLocalBaseInstallation:RuntimeBoundary = resolveEquinoxLocalInstallation({
+  platform,
+  arch,
+  homeDir: runtimeHomeDir,
+  env: runtimeEnv,
+});
+const equinoxLocalInstallation:RuntimeBoundary = await resolveEquinoxLocalManagedSourceInstallation({
+  baseInstallation: equinoxLocalBaseInstallation,
+  platform,
+  arch,
+  homeDir: runtimeHomeDir,
+  env: runtimeEnv,
+});
+const equinoxLocalUpdater:RuntimeBoundary = createEquinoxLocalUpdater({
+  currentVersion: SERVER_VERSION,
+  installation: equinoxLocalInstallation,
+  publicKeys: EQUINOX_LOCAL_UPDATE_KEYS,
+});
+const equinoxLocalUpdateCoordinator:RuntimeBoundary = createEquinoxLocalUpdateCoordinator({
+  installation: equinoxLocalInstallation,
+  updater: equinoxLocalUpdater,
+});
+const equinoxLocalMainUpdateDiscovery = createEquinoxLocalMainUpdateDiscovery({
+  installation: equinoxLocalInstallation,
+  gitPath: equinoxLocalInstallation.gitPath ?? "git",
+});
+const equinoxLocalMainApplyController = createEquinoxLocalMainApplyController({
+  installation: equinoxLocalInstallation,
+  discovery: equinoxLocalMainUpdateDiscovery,
+});
+const equinoxMainChannelNotice = createEquinoxLocalMainChannelNotice();
+const checkInstalledChannelForUpdates = async ({ force = false } = {}) => {
+  if (["source", "managed-source"].includes(equinoxLocalInstallation.kind)) {
+    await equinoxLocalMainUpdateDiscovery.check({ force });
+  } else {
+    // A Stable installation learns about Main, but never downloads or applies Main.
+    await Promise.allSettled([equinoxLocalUpdater.check(), equinoxMainChannelNotice.check({ force })]);
+  }
+};
+// Keep update awareness alive when Control Center is closed. All checks are
+// bounded, informational and use the existing verified update channels.
+const automaticUpdateCheck = () => { void checkInstalledChannelForUpdates().catch(() => {}); };
+setTimeout(automaticUpdateCheck, 5_000).unref?.();
+setInterval(automaticUpdateCheck, 6 * 60 * 60_000).unref?.();
+const getCombinedUpdateStatus = () => Object.freeze({
+  ...equinoxLocalUpdateCoordinator.snapshot(),
+  mainNotice: equinoxMainChannelNotice.snapshot(),
+  main: Object.freeze({
+    ...equinoxLocalMainUpdateDiscovery.snapshot(),
+    ...equinoxLocalMainApplyController.snapshot(),
+  }),
+});
+
+async function noteManagedAgentCommand() {
+  try {
+    await recordManagedAgentCommand({
+      installation: equinoxLocalInstallation,
+      homeDir: runtimeHomeDir,
+      supervisorMode: process.env.EQUINOX_LOCAL_SUPERVISOR_MODE || null,
+    });
+  } catch (error:RuntimeBoundary) {
+    console.error(`[Equinox Local] First-agent-command milestone could not be recorded: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+const server = new McpServer({
+  name: SERVER_NAME,
+  version: SERVER_VERSION,
+});
+
+const workspaceRuntime:RuntimeBoundary = createEquinoxLocalWorkspaceRuntime({
+  workspaceProjectId: WORKSPACE_PROJECT_ID,
+  resolveProjectContext,
+  fsImpl: fs,
+  pathImpl: path,
+});
+const {
+  resolveWorkspaceRuntimePaths,
+  ensureWorkspaceRuntimeDirectories,
+} = workspaceRuntime;
+const initialRuntimePaths =
+  await resolveWorkspaceRuntimePaths();
+const runtimeObservability:RuntimeBoundary =
+  createRuntimeObservability({
+    rootDir: initialRuntimePaths.observabilityRoot,
+  });
+
+let recoveryPolicyController:RuntimeBoundary = null;
+
+function recordRuntimeEvent(event:RuntimeBoundary) {
+  return runtimeObservability
+    .record(event)
+    .then((recorded:RuntimeBoundary) => {
+      if (recoveryPolicyController) {
+        void recoveryPolicyController.handleEvent(recorded).catch((error:RuntimeBoundary) => {
+          console.error(
+            `[Equinox Local] Automatic recovery event işlenemedi: ${error instanceof Error ? error.message : String(error)}`,
+          );
+        });
+      }
+      return recorded;
+    })
+    .catch((error:RuntimeBoundary) => {
+      console.error(
+        `[Equinox Local] Observability event yazılamadı: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      return null;
+    });
+}
+
+const mcpToolReplayGuard = createMcpToolReplayGuard({
+  onReplay: ({ toolName, mode, ageMs, settled }) => recordRuntimeEvent({
+    component: "mcp",
+    type: "mcp.tool_replay_suppressed",
+    severity: "info",
+    status: "healthy",
+    message: "Duplicate MCP tool delivery was suppressed.",
+    details: { toolName, mode, ageMs, settled },
+  }),
+});
+
+const terminalManager:RuntimeBoundary =
+  createTerminalManager({
+    platform,
+    arch,
+    onEvent: recordRuntimeEvent,
+  });
+const processManager:RuntimeBoundary =
+  createProcessManager({
+    platform,
+    arch,
+    onEvent: recordRuntimeEvent,
+  });
+const inspectLocalPort:RuntimeBoundary = createLocalPortInspector({
+  processManager,
+  platform,
+  execFileImpl: execFile,
+});
+const agentControl =
+  createAgentControlController({
+    terminalManager,
+    processManager,
+    onEvent: recordRuntimeEvent,
+  });
+
+const capabilityRegistry:RuntimeBoundary = createCapabilityRegistry();
+const toolRegistrar:RuntimeBoundary = createEquinoxLocalToolRegistrar({
+  server:server as RuntimeBoundary,
+  capabilityRegistry,
+  runtimeRestartGuardError,
+  errorResult,
+  agentControl,
+  noteManagedAgentCommand,
+  mcpToolReplayGuard:mcpToolReplayGuard as RuntimeBoundary,
+  getToolMutationScopes,
+  getMutationLockPlan,
+  withMutationLockPlan,
+  projectContextStorage:projectContextStorage as RuntimeBoundary,
+  defaultProject: DEFAULT_PROJECT,
+  projectIdSchema: PROJECT_ID_SCHEMA,
+  resolveProjectContext,
+  z,
+  extractTextContent,
+});
+const { registerTextTool, registerRawTool } = toolRegistrar;
+
+const RUNTIME_RESTART_GUARD_MS = 30_000;
+let runtimeRestartPendingUntil = 0;
+
+function runtimeRestartGuardError(toolName:RuntimeBoundary) {
+  const remainingMs = runtimeRestartPendingUntil - Date.now();
+  if (remainingMs <= 0) {
+    runtimeRestartPendingUntil = 0;
+    return null;
+  }
+
+  return new Error(
+    `Equinox Local yeniden başlatma beklemede. ${toolName} çağrısı bu process üzerinde çalıştırılmadı; ` +
+      `yaklaşık ${Math.ceil(remainingMs / 1000)} saniye sonra yeni runtime üzerinden tekrar deneyin.`,
+  );
+}
+
+
+function extractTextContent(result:RuntimeBoundary) {
+  if (!result || !Array.isArray(result.content)) {
+    return "";
+  }
+
+  return result.content
+    .filter(
+      (item:RuntimeBoundary) =>
+        item &&
+        item.type === "text" &&
+        typeof item.text === "string",
+    )
+    .map((item:RuntimeBoundary) => item.text)
+    .join("\n");
+}
+
+const MUTATION_LOCK_WAIT_MS =
+  30 * 60 * 1000;
+
+const mutationLockTails = new Map<string,Promise<unknown>>();
+const mutationPathLocks = createMutationPathLockManager({
+  waitMs: MUTATION_LOCK_WAIT_MS,
+});
+
+function getToolMutationScopes(
+  name:RuntimeBoundary,
+  config:RuntimeBoundary,
+  options:RuntimeBoundary,
+  projectAware:RuntimeBoundary,
+) {
+  if (
+    Array.isArray(
+      options.mutationScopes,
+    )
+  ) {
+    return options.mutationScopes;
+  }
+
+  if (
+    config.annotations
+      ?.readOnlyHint !== false
+  ) {
+    return [];
+  }
+
+  return projectAware
+    ? ["project"]
+    : ["global"];
+}
+
+function getMutationLockPlan(
+  scopes:RuntimeBoundary,
+  context:RuntimeBoundary,
+) {
+  const keys = [];
+  let projectRoot = null;
+
+  for (const scope of scopes) {
+    if (scope === "project") {
+      if (!context?.rootRealPath) {
+        throw new Error(
+          "Proje yazma kilidi için aktif proje bağlamı gerekli.",
+        );
+      }
+      projectRoot = context.rootRealPath;
+      continue;
+    }
+
+    if (scope === "git-common") {
+      if (context?.kind !== "git" || !context.gitCommonDirRealPath) {
+        throw new Error("Git ortak kaynak kilidi için Git proje bağlamı gerekli.");
+      }
+      keys.push(`git-common:${context.gitCommonDirRealPath}`);
+      continue;
+    }
+
+    if (scope === "global") {
+      keys.push("global");
+      continue;
+    }
+
+    if (scope === "browser") {
+      keys.push("browser");
+      continue;
+    }
+
+    throw new Error(
+      `Bilinmeyen mutasyon kilidi kapsamı: ${scope}`,
+    );
+  }
+
+  return Object.freeze({
+    keys: [...new Set(keys)].sort(),
+    projectRoot,
+  });
+}
+
+async function waitForMutationTail(
+  key:RuntimeBoundary,
+  tail:RuntimeBoundary,
+) {
+  let timeoutHandle;
+
+  try {
+    await Promise.race([
+      tail.catch(() => {}),
+      new Promise((_, reject) => {
+        timeoutHandle = setTimeout(
+          () =>
+            reject(
+              new Error(
+                `Yazma kilidi bekleme süresi aşıldı: ${key}`,
+              ),
+            ),
+          MUTATION_LOCK_WAIT_MS,
+        );
+      }),
+    ]);
+  } finally {
+    clearTimeout(timeoutHandle);
+  }
+}
+
+async function withMutationLocks(
+  keys:RuntimeBoundary,
+  task:RuntimeBoundary,
+) {
+  if (keys.length === 0) {
+    return task();
+  }
+
+  const acquired = [];
+
+  try {
+    for (const key of keys) {
+      const previous =
+        mutationLockTails.get(key) ??
+        Promise.resolve();
+
+      let release:RuntimeBoundary;
+
+      const gate = new Promise<RuntimeBoundary>(
+        (resolve) => {
+          release = resolve;
+        },
+      );
+
+      const tail = previous
+        .catch(() => {})
+        .then(() => gate);
+
+      mutationLockTails.set(
+        key,
+        tail,
+      );
+
+      try {
+        await waitForMutationTail(
+          key,
+          previous,
+        );
+      } catch (error:RuntimeBoundary) {
+        release();
+
+        tail.finally(() => {
+          if (
+            mutationLockTails.get(
+              key,
+            ) === tail
+          ) {
+            mutationLockTails.delete(
+              key,
+            );
+          }
+        });
+
+        throw error;
+      }
+
+      acquired.push({
+        key,
+        tail,
+        release,
+      });
+    }
+
+    return await task();
+  } finally {
+    for (
+      let index =
+        acquired.length - 1;
+      index >= 0;
+      index -= 1
+    ) {
+      acquired[index]!.release();
+    }
+
+    for (const record of acquired) {
+      record.tail.finally(() => {
+        if (
+          mutationLockTails.get(
+            record.key,
+          ) === record.tail
+        ) {
+          mutationLockTails.delete(
+            record.key,
+          );
+        }
+      });
+    }
+  }
+}
+
+function withMutationLockPlan(plan:RuntimeBoundary, task:RuntimeBoundary) {
+  return withMutationLocks(
+    plan.keys,
+    () => plan.projectRoot
+      ? mutationPathLocks.withLock(plan.projectRoot, task)
+      : task(),
+  );
+}
+
+registerProjectDiscoveryTools({
+  registerTextTool,
+  projectIds: PROJECT_IDS,
+  projectDefinitions: PROJECT_DEFINITIONS,
+  fileRootIds: FILE_ROOT_IDS,
+  fileRootDefinitions: FILE_ROOT_DEFINITIONS,
+  fullFileAccess: FULL_FILE_ACCESS,
+  defaultProject: DEFAULT_PROJECT,
+  resolveProjectContext,
+  resolveFileRootContext,
+  execFileImpl: execFile,
+  fsImpl: fs,
+  gitEnv: process.env,
+  gitPath: platform === "win32" ? equinoxLocalInstallation.gitPath ?? "git" : "/usr/bin/git",
+  textResult,
+});
+
+registerImageViewTools({
+  registerRawTool,
+  z,
+  fullFileAccess: FULL_FILE_ACCESS,
+  fileRootIds: FILE_ROOT_IDS,
+  resolveFileRootContext,
+  homeDir: runtimeHomeDir,
+  fsImpl: fs,
+});
+
+registerFileTransferTools({
+  registerRawTool,
+  z,
+  fullFileAccess: FULL_FILE_ACCESS,
+  fileRootIds: FILE_ROOT_IDS,
+  projectIds: PROJECT_IDS,
+  resolveFileRootContext,
+  resolveProjectContext,
+  homeDir: runtimeHomeDir,
+  fsImpl: fs,
+});
+
+async function runGitWithCode(
+  args:RuntimeBoundary,
+  timeoutMs = 30_000,
+  cwd = getActiveProjectRoot(),
+) {
+  try {
+    const { stdout = "", stderr = "" } =
+      await execFile(
+        "/usr/bin/git",
+        args,
+        {
+          cwd,
+          timeout: timeoutMs,
+          maxBuffer: 4 * 1024 * 1024,
+          env: {
+            ...process.env,
+            PATH:
+              "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin",
+            GIT_TERMINAL_PROMPT: "0",
+            LC_ALL: "C",
+          },
+        },
+      );
+
+    return {
+      code: 0,
+      stdout:
+        typeof stdout === "string"
+          ? stdout
+          : (stdout as RuntimeBoundary).toString("utf8"),
+      stderr:
+        typeof stderr === "string"
+          ? stderr
+          : (stderr as RuntimeBoundary).toString("utf8"),
+    };
+  } catch (error:RuntimeBoundary) {
+    const stdout =
+      typeof error?.stdout === "string"
+        ? error.stdout
+        : error?.stdout
+          ? error.stdout.toString("utf8")
+          : "";
+
+    const stderr =
+      typeof error?.stderr === "string"
+        ? error.stderr
+        : error?.stderr
+          ? error.stderr.toString("utf8")
+          : "";
+
+    return {
+      code:
+        typeof error?.code === "number"
+          ? error.code
+          : 1,
+      stdout,
+      stderr:
+        stderr ||
+        (
+          error instanceof Error
+            ? error.message
+            : String(error)
+        ),
+    };
+  }
+}
+
+async function getCurrentGitBranch() {
+  const result =
+    await runGitWithCode([
+      "symbolic-ref",
+      "--quiet",
+      "--short",
+      "HEAD",
+    ]);
+
+  const branch =
+    result.stdout.trim();
+
+  if (
+    result.code !== 0 ||
+    !branch
+  ) {
+    throw new Error(
+      "Git HEAD bir branch'e bağlı değil. Detached HEAD durumunda işlem yapılamaz.",
+    );
+  }
+
+  return branch;
+}
+
+async function assertNoGitOperationInProgress() {
+  const pathModule =
+    await import("node:path");
+
+  const gitDirResult =
+    await runGitWithCode([
+      "rev-parse",
+      "--git-dir",
+    ]);
+
+  if (gitDirResult.code !== 0) {
+    throw new Error(
+      `Git dizini alınamadı: ${gitDirResult.stderr.trim()}`,
+    );
+  }
+
+  const gitDir =
+    pathModule.resolve(
+      getActiveProjectRoot(),
+      gitDirResult.stdout.trim(),
+    );
+
+  const markers = [
+    "MERGE_HEAD",
+    "CHERRY_PICK_HEAD",
+    "REVERT_HEAD",
+    "BISECT_LOG",
+    "rebase-merge",
+    "rebase-apply",
+  ];
+
+  for (const markerName of markers) {
+    try {
+      await fs.lstat(
+        pathModule.join(
+          gitDir,
+          markerName,
+        ),
+      );
+
+      throw new Error(
+        `Devam eden Git işlemi bulundu: ${markerName}. Önce bu işlemi tamamla veya iptal et.`,
+      );
+    } catch (error:RuntimeBoundary) {
+      if (error?.code === "ENOENT") {
+        continue;
+      }
+
+      throw error;
+    }
+  }
+}
+
+function sanitizeGitNetworkOutput(value:RuntimeBoundary) {
+  return String(value ?? "")
+    .replace(
+      /https?:\/\/[^@\s/]+@/gi,
+      "https://[REDACTED]@",
+    )
+    .replace(
+      /\b(?:ghp_|github_pat_|glpat-)[A-Za-z0-9_=-]+\b/g,
+      "[REDACTED_TOKEN]",
+    )
+    .trim();
+}
+
+async function getExactHeadCommit() {
+  const result =
+    await runGitWithCode([
+      "rev-parse",
+      "--verify",
+      "HEAD^{commit}",
+    ]);
+
+  const commit =
+    result.stdout.trim().toLowerCase();
+
+  if (
+    result.code !== 0 ||
+    !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(
+      commit,
+    )
+  ) {
+    throw new Error(
+      [
+        "Geçerli HEAD commit özeti alınamadı.",
+        sanitizeGitNetworkOutput(
+          result.stderr,
+        ),
+      ]
+        .filter(Boolean)
+        .join("\n"),
+    );
+  }
+
+  return commit;
+}
+
+async function assertCleanGitWorktree() {
+  const result =
+    await runGitWithCode([
+      "status",
+      "--porcelain=v1",
+      "--untracked-files=all",
+    ]);
+
+  if (result.code !== 0) {
+    throw new Error(
+      [
+        "Git çalışma ağacı durumu alınamadı.",
+        sanitizeGitNetworkOutput(
+          result.stderr,
+        ),
+      ]
+        .filter(Boolean)
+        .join("\n"),
+    );
+  }
+
+  if (result.stdout.length > 0) {
+    throw new Error(
+      [
+        "Çalışma ağacı temiz değil; push yapılmadı.",
+        result.stdout.trim(),
+      ].join("\n"),
+    );
+  }
+}
+
+async function resolveGhBinary() {
+  const candidates = [
+    "/opt/homebrew/bin/gh",
+    "/usr/local/bin/gh",
+    "/usr/bin/gh",
+  ];
+
+  for (const candidate of candidates) {
+    try {
+      await fs.access(candidate);
+      return candidate;
+    } catch {
+      // Sıradaki bilinen yolu dene.
+    }
+  }
+
+  throw new Error(
+    "GitHub CLI bulunamadı. Önce Homebrew ile 'brew install gh' çalıştır.",
+  );
+}
+
+async function runGhWithCode(
+  args:RuntimeBoundary,
+  input = "",
+  timeoutMs = 120_000,
+) {
+  const ghBinary =
+    await resolveGhBinary();
+
+  const { spawn } =
+    await import("node:child_process");
+
+  return new Promise<RuntimeBoundary>((resolve, reject) => {
+    const child = spawn(
+      ghBinary,
+      args,
+      {
+        cwd: getActiveProjectRoot(),
+        env: {
+          ...process.env,
+          PATH:
+            "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin",
+          GH_PROMPT_DISABLED: "1",
+          GH_NO_UPDATE_NOTIFIER: "1",
+          NO_COLOR: "1",
+          CLICOLOR: "0",
+        },
+        stdio: [
+          "pipe",
+          "pipe",
+          "pipe",
+        ],
+      },
+    );
+
+    let stdout = "";
+    let stderr = "";
+    let settled = false;
+    let outputTooLarge = false;
+    let timer:ReturnType<typeof setTimeout>|undefined;
+
+    const finishWithError = (error:RuntimeBoundary) => {
+      if (settled) {
+        return;
+      }
+
+      settled = true;
+      clearTimeout(timer);
+      reject(error);
+    };
+
+    const appendOutput = (
+      current:RuntimeBoundary,
+      chunk:RuntimeBoundary,
+    ) => {
+      const updated =
+        current +
+        chunk.toString("utf8");
+
+      if (
+        Buffer.byteLength(
+          stdout + stderr + updated,
+          "utf8",
+        ) >
+        2 * 1024 * 1024
+      ) {
+        outputTooLarge = true;
+        child.kill("SIGKILL");
+      }
+
+      return updated;
+    };
+
+    child.stdout.on(
+      "data",
+      (chunk) => {
+        stdout = appendOutput(
+          stdout,
+          chunk,
+        );
+      },
+    );
+
+    child.stderr.on(
+      "data",
+      (chunk) => {
+        stderr = appendOutput(
+          stderr,
+          chunk,
+        );
+      },
+    );
+
+    child.on(
+      "error",
+      finishWithError,
+    );
+
+    timer = setTimeout(() => {
+      child.kill("SIGKILL");
+
+      finishWithError(
+        new Error(
+          "GitHub CLI işlemi zaman aşımına uğradı.",
+        ),
+      );
+    }, timeoutMs);
+
+    child.on("close", (code) => {
+      if (settled) {
+        return;
+      }
+
+      settled = true;
+      clearTimeout(timer);
+
+      if (outputTooLarge) {
+        reject(
+          new Error(
+            "GitHub CLI çıktısı güvenlik sınırını aştı.",
+          ),
+        );
+        return;
+      }
+
+      resolve({
+        code: code ?? 1,
+        stdout,
+        stderr,
+      });
+    });
+
+    child.stdin.on(
+      "error",
+      () => {},
+    );
+
+    child.stdin.end(input);
+  });
+}
+
+function parseJsonOutput(
+  rawValue:RuntimeBoundary,
+  description:RuntimeBoundary,
+) {
+  try {
+    return JSON.parse(rawValue);
+  } catch {
+    throw new Error(
+      `${description} geçerli JSON döndürmedi.`,
+    );
+  }
+}
+
+function parseGitHubRepoSlug(
+  remoteUrl:RuntimeBoundary,
+) {
+  const value =
+    String(remoteUrl ?? "")
+      .trim();
+
+  const patterns = [
+    /^git@github\.com:([^/\s]+)\/([^/\s]+)$/i,
+    /^ssh:\/\/git@github\.com\/([^/\s]+)\/([^/\s]+)$/i,
+    /^https:\/\/github\.com\/([^/\s]+)\/([^/\s]+)$/i,
+  ];
+
+  let match;
+
+  for (const pattern of patterns) {
+    match = value.match(pattern);
+
+    if (match) {
+      break;
+    }
+  }
+
+  if (!match) {
+    throw new Error(
+      "Origin adresi desteklenen bir GitHub.com SSH veya HTTPS deposu değil.",
+    );
+  }
+
+  const owner = match[1];
+  const repository =
+    match[2]!.replace(
+      /\.git$/i,
+      "",
+    );
+
+  if (
+    !/^[A-Za-z0-9_.-]+$/.test(owner!) ||
+    !/^[A-Za-z0-9_.-]+$/.test(repository)
+  ) {
+    throw new Error(
+      "GitHub sahibi veya depo adı beklenen güvenli biçimde değil.",
+    );
+  }
+
+  return `${owner}/${repository}`;
+}
+
+async function getGitHubRepoSlug() {
+  const origin =
+    await runGitWithCode([
+      "remote",
+      "get-url",
+      "origin",
+    ]);
+
+  if (
+    origin.code !== 0 ||
+    !origin.stdout.trim()
+  ) {
+    throw new Error(
+      "Origin adlı Git remote bulunamadı.",
+    );
+  }
+
+  return parseGitHubRepoSlug(
+    origin.stdout,
+  );
+}
+
+async function assertRemoteBranchAtHead(
+  branch:RuntimeBoundary,
+  expectedHead:RuntimeBoundary,
+) {
+  const remoteRef =
+    `refs/heads/${branch}`;
+
+  const result =
+    await runGitWithCode(
+      [
+        "ls-remote",
+        "--quiet",
+        "--exit-code",
+        "--heads",
+        "origin",
+        remoteRef,
+      ],
+      60_000,
+    );
+
+  if (result.code !== 0) {
+    throw new Error(
+      [
+        "Aktif branch origin üzerinde bulunamadı.",
+        "Önce Terminal üzerinden branch'i origin üzerindeki aynı branch'e normal push ile gönder.",
+        sanitizeGitNetworkOutput(
+          result.stderr ||
+          result.stdout,
+        ),
+      ]
+        .filter(Boolean)
+        .join("\n"),
+    );
+  }
+
+  const remoteHead =
+    (
+      result.stdout
+        .trim()
+        .split(/\s+/)[0] ?? ""
+    ).toLowerCase();
+
+  if (remoteHead !== expectedHead) {
+    throw new Error(
+      [
+        "Origin branch SHA değeri yerel HEAD ile uyuşmuyor.",
+        `Yerel: ${expectedHead}`,
+        `Uzak:  ${remoteHead || "alınamadı"}`,
+        "Önce branch'i yeniden push et.",
+      ].join("\n"),
+    );
+  }
+
+  return remoteHead;
+}
+
+async function readProjectPackageJson() {
+  const packagePath =
+    path.join(
+      getActiveProjectRoot(),
+      "package.json",
+    );
+
+  let buffer;
+
+  try {
+    buffer = await fs.readFile(
+      packagePath,
+    );
+  } catch (error:RuntimeBoundary) {
+    if (error?.code === "ENOENT") {
+      throw new Error(
+        "Seçilen projede package.json bulunamadı.",
+      );
+    }
+
+    throw error;
+  }
+
+  if (
+    buffer.length >
+    MAX_FILE_BYTES
+  ) {
+    throw new Error(
+      "package.json 512 KB güvenlik sınırını aşıyor.",
+    );
+  }
+
+  if (buffer.includes(0)) {
+    throw new Error(
+      "package.json ikili veri içeriyor.",
+    );
+  }
+
+  let parsed;
+
+  try {
+    parsed = JSON.parse(
+      new TextDecoder(
+        "utf-8",
+        { fatal: true },
+      ).decode(buffer),
+    );
+  } catch {
+    throw new Error(
+      "package.json geçerli UTF-8 JSON değil.",
+    );
+  }
+
+  if (
+    !parsed ||
+    typeof parsed !== "object" ||
+    Array.isArray(parsed)
+  ) {
+    throw new Error(
+      "package.json beklenen nesne biçiminde değil.",
+    );
+  }
+
+  const scripts =
+    parsed.scripts &&
+    typeof parsed.scripts === "object" &&
+    !Array.isArray(parsed.scripts)
+      ? parsed.scripts
+      : {};
+
+  return {
+    packagePath,
+    packageJson: parsed,
+    scripts,
+  };
+}
+
+async function assertGhAuthenticated() {
+  const result:RuntimeBoundary =
+    await runGhWithCode([
+      "auth",
+      "status",
+      "--hostname",
+      "github.com",
+      "--active",
+    ]);
+
+  if (result.code !== 0) {
+    throw new Error(
+      [
+        "GitHub CLI oturumu geçerli değil.",
+        "Terminalde 'gh auth login --hostname github.com --web' çalıştır.",
+        sanitizeGitNetworkOutput(
+          result.stderr ||
+          result.stdout,
+        ),
+      ]
+        .filter(Boolean)
+        .join("\n"),
+    );
+  }
+}
+
+async function resolveNpmBinary() {
+  const candidates = [
+    "/opt/homebrew/bin/npm",
+    "/usr/local/bin/npm",
+    "/usr/bin/npm",
+  ];
+
+  for (const candidate of candidates) {
+    try {
+      await fs.access(candidate);
+      return candidate;
+    } catch {
+      // Sıradaki bilinen yolu dene.
+    }
+  }
+
+  throw new Error(
+    "npm çalıştırılabilir dosyası bulunamadı.",
+  );
+}
+
+async function readWorkflowRunById(
+  repoSlug:RuntimeBoundary,
+  runId:RuntimeBoundary,
+) {
+  const result:RuntimeBoundary =
+    await runGhWithCode([
+      "run",
+      "view",
+      String(runId),
+      "--repo",
+      repoSlug,
+      "--json",
+      [
+        "attempt",
+        "conclusion",
+        "createdAt",
+        "databaseId",
+        "displayTitle",
+        "event",
+        "headBranch",
+        "headSha",
+        "jobs",
+        "name",
+        "number",
+        "startedAt",
+        "status",
+        "updatedAt",
+        "url",
+        "workflowDatabaseId",
+        "workflowName",
+      ].join(","),
+    ]);
+
+  if (result.code !== 0) {
+    throw new Error(
+      [
+        `Workflow run ${runId} okunamadı.`,
+        sanitizeGitNetworkOutput(
+          result.stderr ||
+          result.stdout,
+        ),
+      ]
+        .filter(Boolean)
+        .join("\n"),
+    );
+  }
+
+  const run = parseJsonOutput(
+    result.stdout,
+    `Workflow run ${runId} sorgusu`,
+  );
+
+  if (
+    !run ||
+    Number(run.databaseId) !==
+      Number(runId)
+  ) {
+    throw new Error(
+      "GitHub workflow sorgusu beklenen run kimliğini döndürmedi.",
+    );
+  }
+
+  return run;
+}
+
+function delayMilliseconds(milliseconds:RuntimeBoundary) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, milliseconds);
+  });
+}
+
+registerTerminalTools({
+  registerTextTool,
+  z,
+  terminalManager,
+  processManager,
+  agentAccess: AGENT_ACCESS,
+  safeResolve,
+  getActiveProjectId,
+  getActiveProjectName,
+  getActiveProjectRoot,
+  runtimeEnv: process.env,
+  recordEvent: recordRuntimeEvent,
+  textResult,
+  errorResult,
+});
+
+
+registerProcessTools({
+  registerTextTool,
+  z,
+  processManager,
+  inspectLocalPort,
+  agentAccess: AGENT_ACCESS,
+  safeResolve,
+  getActiveProjectId,
+  getActiveProjectName,
+  getActiveProjectRoot,
+  runtimeEnv: process.env,
+  textResult,
+  errorResult,
+});
+
+
+async function resolveExplicitProjectPathForRead(
+  projectId:RuntimeBoundary,
+  relativePath:RuntimeBoundary,
+  {
+    resolveContext = resolveProjectContext,
+  } = {},
+) {
+  checkRequestedPath(relativePath);
+
+  const context =
+    await resolveContext(projectId);
+  const candidate = path.resolve(
+    context.rootRealPath,
+    relativePath,
+  );
+
+  if (
+    !isPathInsideRoot(
+      context.rootRealPath,
+      candidate,
+    )
+  ) {
+    throw new Error(
+      "İzinli proje kökü dışına çıkma girişimi engellendi.",
+    );
+  }
+
+  const realCandidate =
+    await fs.realpath(candidate);
+
+  if (
+    !isPathInsideRoot(
+      context.rootRealPath,
+      realCandidate,
+    )
+  ) {
+    throw new Error(
+      "Sembolik bağlantı üzerinden proje dışına çıkış engellendi.",
+    );
+  }
+
+  return {
+    context,
+    absolutePath: realCandidate,
+    relativePath:
+      path.relative(
+        context.rootRealPath,
+        realCandidate,
+      ) || ".",
+  };
+}
+
+async function resolveBrowserUploadFile(
+  rootId:RuntimeBoundary,
+  relativePath:RuntimeBoundary,
+) {
+  checkRequestedPath(relativePath);
+
+  if (
+    relativePath === "." ||
+    relativePath === ""
+  ) {
+    throw new Error(
+      "Browser upload için normal bir dosya yolu gerekli.",
+    );
+  }
+
+  const context =
+    await resolveFileRootContext(rootId);
+  const candidate = path.resolve(
+    context.rootRealPath,
+    relativePath,
+  );
+
+  if (
+    !isPathInsideRoot(
+      context.rootRealPath,
+      candidate,
+    )
+  ) {
+    throw new Error(
+      "Browser upload dosyası izinli kökün dışına çıkıyor.",
+    );
+  }
+
+  const candidateStats = await fs.lstat(candidate);
+  if (!candidateStats.isFile() || candidateStats.isSymbolicLink()) {
+    throw new Error("Browser upload için normal ve symlink olmayan bir dosya gerekli.");
+  }
+
+  const realCandidate = await fs.realpath(candidate);
+  if (
+    !isPathInsideRoot(
+      context.rootRealPath,
+      realCandidate,
+    )
+  ) {
+    throw new Error(
+      "Browser upload dosyası sembolik bağlantı üzerinden izinli kökün dışına çıkıyor.",
+    );
+  }
+
+  return Object.freeze({
+    rootId,
+    absolutePath: realCandidate,
+    relativePath:
+      path.relative(context.rootRealPath, realCandidate) || ".",
+  });
+}
+
+async function resolveExplicitProjectPathForWrite(
+  projectId:RuntimeBoundary,
+  relativePath:RuntimeBoundary,
+  {
+    requirePng = false,
+  } = {},
+) {
+  checkRequestedPath(relativePath);
+
+  if (
+    relativePath === "." ||
+    relativePath === ""
+  ) {
+    throw new Error(
+      "Proje kökü doğrudan hedef olarak kullanılamaz.",
+    );
+  }
+
+  if (
+    requirePng &&
+    path.extname(relativePath).toLowerCase() !==
+      ".png"
+  ) {
+    throw new Error(
+      "Görsel regresyon çıktısı .png uzantılı olmalı.",
+    );
+  }
+
+  const context =
+    await resolveProjectContext(projectId);
+  const candidate = path.resolve(
+    context.rootRealPath,
+    relativePath,
+  );
+
+  if (
+    !isPathInsideRoot(
+      context.rootRealPath,
+      candidate,
+    )
+  ) {
+    throw new Error(
+      "İzinli proje kökü dışına yazma girişimi engellendi.",
+    );
+  }
+
+  let ancestor = path.dirname(candidate);
+
+  while (true) {
+    try {
+      const stats = await fs.lstat(ancestor);
+
+      if (
+        stats.isSymbolicLink() ||
+        !stats.isDirectory()
+      ) {
+        throw new Error(
+          `Hedef üst yolu normal bir klasör değil: ${ancestor}`,
+        );
+      }
+
+      const realAncestor =
+        await fs.realpath(ancestor);
+
+      if (
+        !isPathInsideRoot(
+          context.rootRealPath,
+          realAncestor,
+        )
+      ) {
+        throw new Error(
+          "Hedef üst yolu sembolik bağlantıyla proje dışına çıkıyor.",
+        );
+      }
+
+      break;
+    } catch (error:RuntimeBoundary) {
+      if (error?.code !== "ENOENT") {
+        throw error;
+      }
+
+      const parent = path.dirname(ancestor);
+
+      if (parent === ancestor) {
+        throw new Error(
+          "Hedef için mevcut güvenli üst klasör bulunamadı.",
+        );
+      }
+
+      ancestor = parent;
+    }
+  }
+
+  try {
+    const existing = await fs.lstat(candidate);
+
+    if (existing.isSymbolicLink()) {
+      throw new Error(
+        "Hedef sembolik bağlantı olamaz.",
+      );
+    }
+  } catch (error:RuntimeBoundary) {
+    if (error?.code !== "ENOENT") {
+      throw error;
+    }
+  }
+
+  return {
+    context,
+    absolutePath: candidate,
+    relativePath:
+      path.relative(
+        context.rootRealPath,
+        candidate,
+      ),
+  };
+}
+
+const processJsonResult = (value:RuntimeBoundary) =>
+  textResult(JSON.stringify(value, null, 2));
+
+let equinoxAgentBrowser:RuntimeBoundary = null;
+const equinoxBrowserIpc = equinoxBrowserIpcEndpoint({
+  platform,
+  namespace: runtimeEnv.EQUINOX_LOCAL_BROWSER_SOCKET_NAMESPACE || null,
+});
+const equinoxBrowserBridge:RuntimeBoundary = createEquinoxBrowserBridge({
+  bridgeEndpoint: equinoxBrowserIpc,
+  recordEvent: recordRuntimeEvent,
+  handleExtensionRequest: async ({ context, method, args }) => {
+    if (method !== "agent_browser.open") {
+      throw new Error(`Unsupported extension-initiated Local action: ${method}`);
+    }
+    if (args && Object.keys(args).length > 0) {
+      throw new Error("agent_browser.open does not accept arguments.");
+    }
+    if (!equinoxAgentBrowser) {
+      throw new Error("Agent Browser manager is not ready yet.");
+    }
+    if (context === "agent") {
+      return {
+        opened: false,
+        alreadyOpen: true,
+        agentBrowser: equinoxAgentBrowser.snapshot(),
+      };
+    }
+    const alreadyOpen = equinoxBrowserBridge.readyFor("agent");
+    return {
+      opened: true,
+      alreadyOpen,
+      agentBrowser: await equinoxAgentBrowser.launch({ setup: false }),
+    };
+  },
+});
+equinoxAgentBrowser = createEquinoxAgentBrowser({
+  bridge: equinoxBrowserBridge,
+  homeDir: runtimeHomeDir,
+  profileRoot: runtimePlatformPaths.browserRoot,
+  platform,
+  env: runtimeEnv,
+  execFileAsync: execFile,
+  recordEvent: recordRuntimeEvent,
+});
+
+async function resolveTurnBudgetIdentity() {
+  const snapshot = equinoxBrowserBridge.snapshot();
+  const candidates = [];
+  const idleContexts = [];
+  for (const browserContext of ["agent", "user"]) {
+    if (!snapshot?.contexts?.[browserContext]?.ready) continue;
+    try {
+      const resolved:RuntimeBoundary = await equinoxBrowserBridge.call("turn_budget.identity.resolve", {}, {
+        context: browserContext,
+        timeoutMs: 1_500,
+      });
+      const target = resolved?.target;
+      if (resolved?.status === "ready" && target?.generationActive && (target.userEpoch || target.assistantTurnKey)) {
+        candidates.push({ browserContext, target });
+      } else if (resolved?.status === "idle") {
+        idleContexts.push(browserContext);
+      }
+    } catch {
+      // Turn Budget keeps its last safe state when Browser probing is temporarily unavailable.
+    }
+  }
+  const selected = candidates.length === 1 ? candidates[0] : null;
+  if (!selected) {
+    return idleContexts.length > 0
+      ? { status: "idle", idleContexts }
+      : null;
+  }
+  return {
+    browserContext: selected.browserContext,
+    conversationId: selected.target.conversationId ?? null,
+    userEpoch: selected.target.userEpoch ?? null,
+    assistantTurnKey: selected.target.assistantTurnKey,
+    generationStartedAtMs: selected.target.generationStartedAtMs ?? null,
+    title: selected.target.title ?? "ChatGPT",
+  };
+}
+
+const turnBudgetController:RuntimeBoundary = createTurnBudgetController({
+  resolveTurnIdentity: resolveTurnBudgetIdentity,
+});
+await turnBudgetController.initialize();
+// Poll the lightweight Browser turn-state observer even when Control Center
+// is closed and no Equinox tool has been called. Fallback stays tool-driven.
+let turnBudgetObservationBusy = false;
+setInterval(() => {
+  if (turnBudgetObservationBusy) return;
+  turnBudgetObservationBusy = true;
+  void turnBudgetController.refreshSnapshot().catch(() => {}).finally(() => {
+    turnBudgetObservationBusy = false;
+  });
+}, 3_000).unref?.();
+
+registerPrivateVisualTools({
+  registerTextTool,
+  z,
+  processJsonResult,
+  errorResult,
+  projectIdValueSchema: PROJECT_ID_VALUE_SCHEMA,
+  workspaceProjectId: WORKSPACE_PROJECT_ID,
+  ensureWorkspaceRuntimeDirectories,
+  resolveExplicitProjectPathForRead,
+  resolveExplicitProjectPathForWrite,
+  equinoxAgentBrowser,
+  equinoxBrowserBridge,
+  projectRoots: Object.values(PROJECT_DEFINITIONS).map((definition) => definition.root),
+});
+
+
+
+async function listProjectWorktrees(projectId:RuntimeBoundary) {
+  const project = await resolveProjectContext(projectId);
+  const result = await runGitWithCode(
+    [
+      "worktree",
+      "list",
+      "--porcelain",
+    ],
+    30_000,
+    project.rootRealPath,
+  );
+
+  if (result.code !== 0) {
+    throw new Error(
+      result.stderr ||
+      `Git worktree listesi alınamadı: ${projectId}`,
+    );
+  }
+
+  const workspace = await resolveProjectContext(WORKSPACE_PROJECT_ID);
+  return parseGitWorktreePorcelain(result.stdout).map((record) =>
+    publicWorktreeRecord({
+      record,
+      workspaceRoot: workspace.rootRealPath,
+    }),
+  );
+}
+
+async function listJanitorWorktrees() {
+  const records = [];
+  const projectIds = PROJECT_IDS.filter(
+    (projectId) => PROJECT_DEFINITIONS[projectId]?.worktrees !== false,
+  );
+
+  for (const projectId of projectIds) {
+    const projectRecords = await listProjectWorktrees(projectId);
+    for (const record of projectRecords) {
+      if (!record.managed && !record.prunable) {
+        continue;
+      }
+
+      let pathExists = false;
+      try {
+        await fs.lstat(record.path);
+        pathExists = true;
+      } catch (error:RuntimeBoundary) {
+        if (error?.code !== "ENOENT") {
+          throw error;
+        }
+      }
+
+      const activeTerminal = terminalManager.list().some(
+        (item:RuntimeBoundary) =>
+          item.running &&
+          pathExists &&
+          isPathInsideRoot(record.path, item.cwd),
+      );
+      const activeProcess = processManager.list().some(
+        (item:RuntimeBoundary) =>
+          item.running &&
+          pathExists &&
+          isPathInsideRoot(record.path, item.cwd),
+      );
+
+      records.push({
+        ...record,
+        projectId,
+        pathExists,
+        activeTerminal,
+        activeProcess,
+      });
+    }
+  }
+
+  return records;
+}
+
+async function pruneJanitorWorktrees(expectedCandidates:RuntimeBoundary) {
+  const grouped = new Map();
+  for (const candidate of expectedCandidates) {
+    const items = grouped.get(candidate.projectId) ?? [];
+    items.push(candidate);
+    grouped.set(candidate.projectId, items);
+  }
+
+  const pruned = [];
+  for (const [projectId, candidates] of grouped.entries()) {
+    const project = await resolveProjectContext(projectId);
+    const current = await listProjectWorktrees(projectId);
+    const prunable = [];
+
+    for (const record of current) {
+      if (!record.prunable) {
+        continue;
+      }
+      let pathExists = false;
+      try {
+        await fs.lstat(record.path);
+        pathExists = true;
+      } catch (error:RuntimeBoundary) {
+        if (error?.code !== "ENOENT") throw error;
+      }
+      const activeTerminal = terminalManager.list().some(
+        (item:RuntimeBoundary) => item.running && pathExists && isPathInsideRoot(record.path, item.cwd),
+      );
+      const activeProcess = processManager.list().some(
+        (item:RuntimeBoundary) => item.running && pathExists && isPathInsideRoot(record.path, item.cwd),
+      );
+      prunable.push({ ...record, pathExists, activeTerminal, activeProcess });
+    }
+
+    if (prunable.some((item) => !item.managed)) {
+      throw new Error(
+        `Janitor ${projectId} reposunda unmanaged prunable worktree gördü; git worktree prune fail-closed reddedildi.`,
+      );
+    }
+    if (prunable.some((item) => item.locked || item.pathExists || item.activeTerminal || item.activeProcess)) {
+      throw new Error(
+        `Janitor ${projectId} reposunda artık güvenli olmayan prunable worktree gördü; prune reddedildi.`,
+      );
+    }
+
+    const expectedPaths = new Set<string|null>(candidates.map((item:RuntimeBoundary) => item.workspaceRelativePath));
+    const actualPaths = new Set(prunable.map((item) => item.workspaceRelativePath));
+    if (
+      expectedPaths.size !== actualPaths.size ||
+      [...expectedPaths].some((item) => !actualPaths.has(item))
+    ) {
+      throw new Error(
+        `Janitor ${projectId} worktree preview ile canlı prunable set uyuşmuyor; prune reddedildi.`,
+      );
+    }
+
+    const result = await runGitWithCode(
+      ["worktree", "prune", "--expire", "now"],
+      30_000,
+      project.rootRealPath,
+    );
+    if (result.code !== 0) {
+      throw new Error(result.stderr || result.stdout || `Git worktree prune başarısız: ${projectId}`);
+    }
+
+    const remaining = await listProjectWorktrees(projectId);
+    for (const candidate of candidates) {
+      const stillPresent = remaining.some(
+        (item) => item.workspaceRelativePath === candidate.workspaceRelativePath,
+      );
+      if (stillPresent) {
+        throw new Error(`Prunable worktree metadata temizlenemedi: ${candidate.workspaceRelativePath}`);
+      }
+      pruned.push(candidate.id);
+    }
+  }
+
+  return { pruned };
+}
+
+
+const workflowRuntimePaths:RuntimeBoundary =
+  await ensureWorkspaceRuntimeDirectories();
+const releaseGateRuntime =
+  createPrivateReleaseGateRuntime({
+    rootDir: workflowRuntimePaths.releaseGateRoot,
+    processManager,
+    probeTcpPort,
+    equinoxAgentBrowser,
+    equinoxBrowserBridge,
+    projectRoots: Object.values(PROJECT_DEFINITIONS).map((definition) => definition.root),
+    extractTextContent,
+    resolveNpmBinary,
+    onEvent: recordRuntimeEvent,
+  });
+const workflowManager:RuntimeBoundary =
+  await createWorkflowRuntime({
+    rootDir: workflowRuntimePaths.workflowRoot,
+    processManager,
+    probeTcpPort:probeTcpPort as RuntimeBoundary,
+    extraStepExecutor:
+      privateWorkflowStepExecutor(releaseGateRuntime) as RuntimeBoundary,
+    onEvent: recordRuntimeEvent,
+  });
+const taskCapsuleStore:RuntimeBoundary = createTaskCapsuleStore({
+  rootDir: workflowRuntimePaths.taskRoot,
+  onEvent: recordRuntimeEvent,
+});
+await taskCapsuleStore.initialize();
+const autoContinueController:RuntimeBoundary = createAutoContinueController({
+  store: taskCapsuleStore,
+  browserBridge: equinoxBrowserBridge,
+  agentControl,
+  onEvent: recordRuntimeEvent,
+  getMaxChainHops: () => turnBudgetController.snapshot().autoContinueMaxHops,
+});
+const freshChatResumeController:RuntimeBoundary = createFreshChatResumeController({
+  store: taskCapsuleStore,
+  browserBridge: equinoxBrowserBridge,
+  autoContinueController,
+  agentControl,
+  onEvent: recordRuntimeEvent,
+});
+const telegramChatBridgeController:RuntimeBoundary = createTelegramChatBridgeController({
+  browserBridge: equinoxBrowserBridge,
+  agentControl,
+});
+const telegramTaskInboxController:RuntimeBoundary = createTelegramTaskInboxController({
+  store: taskCapsuleStore,
+  autoContinueController,
+  statePath: defaultTelegramTaskStatePath(runtimeHomeDir, { platform, arch, env: runtimeEnv }),
+  getRemoteStatus: async () => {
+    const [tasks, health] = await Promise.all([
+      taskCapsuleStore.list({ limit: 50 }),
+      runtimeObservability.health({ windowMs: 15 * 60 * 1000 }),
+    ]);
+    const browser = equinoxBrowserBridge.snapshot();
+    const active = tasks.filter((task:RuntimeBoundary) => task.status === "active");
+    return {
+      version: SERVER_VERSION,
+      health: health.state,
+      agentPaused: Boolean(agentControl.snapshot().paused),
+      agentBrowserReady: Boolean(browser.contexts?.agent?.ready),
+      userBrowserReady: Boolean(browser.contexts?.user?.ready),
+      activeTasks: active.length,
+      waitingTasks: active.filter((task:RuntimeBoundary) => Boolean(task.humanInput)).length,
+      continuingTasks: active.filter((task:RuntimeBoundary) => ["armed", "delivering"].includes(task.continuation?.status)).length,
+    };
+  },
+  getAgentActivity: async () => {
+    const budget = await turnBudgetController.refreshSnapshot();
+    return { working: budget?.active?.source === "browser", startedAt: budget?.active?.startedAt ?? null };
+  },
+  sendTyping: () => sendTelegramTyping(),
+  pauseAgent: () => pauseAgentForHuman("telegram_emergency_stop"),
+  resumeAgent: resumeAgentForHuman,
+  requestRestart: requestTelegramRuntimeRestart,
+  deliverChatMessage: (input) => telegramChatBridgeController.deliverText(input),
+  readChatResponse: (input) => telegramChatBridgeController.readFinal(input),
+  inspectChatIdentity: (input) => telegramChatBridgeController.inspectTurnIdentity(input),
+  startTaskChat: (input) => telegramChatBridgeController.startTaskChat(input),
+  onEvent: recordRuntimeEvent,
+});
+registerTaskCapsuleTools({
+  registerRawTool,
+  z,
+  store: taskCapsuleStore,
+  autoContinueController,
+  freshChatResumeController,
+});
+
+async function quiesceContinuityForRestart() {
+  await telegramTaskInboxController.shutdown();
+  await Promise.all([
+    freshChatResumeController.shutdown(),
+    autoContinueController.shutdown(),
+  ]);
+}
+
+async function resumeContinuityAfterFailedRestart() {
+  await autoContinueController.start();
+  await freshChatResumeController.start();
+  await telegramTaskInboxController.start();
+}
+
+async function pauseAgentForHuman(reason = "human_emergency_stop") {
+  return withMutationLocks(["agent-control"], async () => {
+    const paused = await agentControl.pause({ reason });
+    await taskCapsuleStore.cancelAllContinuations("emergency_stop");
+    await freshChatResumeController.cancelAll("emergency_stop");
+    return paused;
+  });
+}
+
+async function resumeAgentForHuman() {
+  return withMutationLocks(["agent-control"], async () => agentControl.resume());
+}
+
+async function restartLocalRuntime() {
+  return withMutationLocks(["local-restart"], async () => {
+    try {
+      await quiesceContinuityForRestart();
+      if (equinoxLocalInstallation.managed && equinoxLocalInstallation.selfUpdateSupported) {
+        const result = await scheduleEquinoxLocalRestart({ installation: equinoxLocalInstallation });
+        runtimeRestartPendingUntil = Date.now() + RUNTIME_RESTART_GUARD_MS;
+        return { ...result, installationKind: "managed" };
+      }
+
+      await scheduleSourceCheckoutRestart({
+        moduleUrl: import.meta.url,
+      });
+      runtimeRestartPendingUntil = Date.now() + RUNTIME_RESTART_GUARD_MS;
+      return { scheduled: true, installationKind: "source" };
+    } catch (error:RuntimeBoundary) {
+      await resumeContinuityAfterFailedRestart();
+      throw error;
+    }
+  });
+}
+
+async function requestTelegramRuntimeRestart() {
+  const timer = setTimeout(() => {
+    void restartLocalRuntime().catch(async (error) => {
+      recordRuntimeEvent({
+        component: "telegram-task-inbox",
+        type: "telegram.restart_failed",
+        severity: "error",
+        status: "failed",
+        message: "Telegram-requested runtime restart failed.",
+        details: { error: error instanceof Error ? error.message.slice(0, 240) : String(error).slice(0, 240) },
+      });
+      await sendTelegramMessage({
+        message: `⚠️ Equinox Local restart failed: ${error instanceof Error ? error.message.slice(0, 160) : String(error).slice(0, 160)}`,
+      }).catch(() => {});
+    });
+  }, 1_500);
+  timer.unref?.();
+  return { scheduled: true };
+}
+
+async function syncTelegramCommandMenuSafely(source:RuntimeBoundary) {
+  try {
+    return await syncTelegramBotCommands();
+  } catch (error:RuntimeBoundary) {
+    await recordRuntimeEvent({
+      component: "telegram-task-inbox",
+      type: "telegram.command_menu_sync_failed",
+      severity: "warn",
+      status: "failed",
+      message: "Telegram command menu sync failed.",
+      details: { source, error: error instanceof Error ? error.message.slice(0, 240) : String(error).slice(0, 240) },
+    }).catch(() => {});
+    return { configured: true, synced: false, commandCount: 0 };
+  }
+}
+
+async function resumeWorkflowSafelyForRepair(workflowId:RuntimeBoundary) {
+  const current = workflowManager.status(workflowId);
+  const context = await resolveProjectContext(current.projectId);
+
+  if (context.rootRealPath !== current.projectRoot) {
+    throw new Error(
+      "Workflow kayıtlı proje kökü güncel izinli proje slotuyla uyuşmuyor; repair resume engellendi.",
+    );
+  }
+
+  return workflowManager.resume(workflowId);
+}
+
+await registerPrivateReleaseGateTools({
+  registerTextTool,
+  z,
+  buildWorkflowPlan,
+  workflowManager,
+  releaseGateRuntime,
+  readProjectPackageJson,
+  getActiveProjectId,
+  getActiveProjectName,
+  getActiveProjectRoot,
+  resolveProjectContext,
+  processJsonResult,
+  errorResult,
+});
+
+
+const secureServiceState:RuntimeBoundary = registerPrivateSecureServiceTools({
+  registerTextTool,
+  z,
+  getActiveProjectId,
+  getActiveProjectName,
+  getActiveProjectRoot,
+  resolveProjectContext,
+  runGhWithCode,
+  assertGhAuthenticated,
+  getGitHubRepoSlug,
+  runGitWithCode,
+  getCurrentGitBranch,
+  getExactHeadCommit,
+  assertNoGitOperationInProgress,
+  assertCleanGitWorktree,
+  assertRemoteBranchAtHead,
+  readProjectPackageJson,
+  resolveNpmBinary,
+  processManager,
+  parseJsonOutput,
+  sanitizeGitNetworkOutput,
+  delayMilliseconds,
+  readWorkflowRunById,
+  onEvent: recordRuntimeEvent,
+  processJsonResult,
+  errorResult,
+});
+
+async function listProjectClientRoots() {
+  const roots = [];
+
+  for (const projectId of PROJECT_IDS) {
+    const definition =
+      PROJECT_DEFINITIONS[
+        projectId
+      ]!;
+
+    try {
+      const realPath =
+        await fs.realpath(
+          definition.root,
+        );
+      const stats =
+        await fs.stat(realPath);
+
+      if (!stats.isDirectory()) {
+        continue;
+      }
+
+      roots.push({
+        uri: pathToFileURL(
+          realPath,
+        ).href,
+        name:
+          `${projectId} — ${definition.name}`,
+      });
+    } catch {
+      // Kullanılamayan veya henüz hedefe bağlanmamış kökleri atla.
+    }
+  }
+
+  return roots;
+}
+
+function normalizeChromeToolResult(
+  result:RuntimeBoundary,
+) {
+  if (
+    result &&
+    Array.isArray(result.content)
+  ) {
+    return result;
+  }
+
+  return {
+    content: [
+      {
+        type: "text",
+        text: JSON.stringify(
+          result ?? null,
+          null,
+          2,
+        ),
+      },
+    ],
+  };
+}
+
+const peekabooBridge:RuntimeBoundary = createPeekabooBridge({
+  serverVersion: SERVER_VERSION,
+  listRoots: listProjectClientRoots,
+  onEvent: recordRuntimeEvent,
+});
+const winappBridge = createWinappBridge();
+const desktopBridge:RuntimeBoundary = process.platform === "win32" ? winappBridge : peekabooBridge;
+const desktopLabel = process.platform === "win32" ? "Windows desktop" : "macOS desktop";
+
+let equinoxLocalControlApi:RuntimeBoundary = null;
+
+await registerRuntimeObservabilityTools({
+  registerTextTool,
+  z,
+  observability: runtimeObservability,
+  getRuntimeSnapshot: async () => ({
+    server: {
+      name: SERVER_NAME,
+      version: SERVER_VERSION,
+      pid: process.pid,
+      uptimeSeconds: Math.round(process.uptime()),
+      mutationQueueKeys: mutationLockTails.size,
+    },
+    terminal: {
+      active: terminalManager.list().filter((item:RuntimeBoundary) => item.running).length,
+      total: terminalManager.list().length,
+    },
+    process: {
+      active: processManager.list().filter((item:RuntimeBoundary) => item.running).length,
+      total: processManager.list().length,
+    },
+    workflow: workflowManager.summary(),
+    ...((await privateReleaseGateSnapshot(releaseGateRuntime)) as RuntimeBoundary),
+    peekaboo: {
+      active: peekabooBridge.active,
+      reconnectCount: peekabooBridge.reconnectCount,
+      allowedToolCount: PEEKABOO_ALLOWED_TOOLS.length,
+    },
+    equinoxBrowser: equinoxBrowserBridge.snapshot(),
+    config: {
+      version: EQUINOX_LOCAL_CONFIG.version,
+      revision: EQUINOX_LOCAL_CONFIG_SNAPSHOT.revision,
+      defaultProject: DEFAULT_PROJECT,
+      projectCount: PROJECT_IDS.length,
+      fileRootCount: FILE_ROOT_IDS.length,
+    },
+    controlCenter: equinoxLocalControlApi?.snapshot() ?? { active: false },
+  }),
+  processJsonResult,
+  errorResult,
+});
+
+const diagnosisEngine:RuntimeBoundary = createDiagnosisEngine({
+  observability: runtimeObservability,
+  workflowManager,
+  processManager,
+  inspectPort: (port) => inspectLocalPort({
+    port,
+    host: "127.0.0.1",
+    timeoutMs: 1000,
+  }),
+  getBridgeSnapshot: () => ({
+    peekaboo: {
+      active: peekabooBridge.active,
+      reconnectCount: peekabooBridge.reconnectCount,
+      unexpectedCloseCount: peekabooBridge.unexpectedCloseCount,
+      allowedToolCount: PEEKABOO_ALLOWED_TOOLS.length,
+    },
+  }),
+});
+
+await registerDiagnosisTools({
+  registerTextTool,
+  z,
+  diagnosisEngine,
+  projectIdSchema: PROJECT_ID_VALUE_SCHEMA,
+  processJsonResult,
+  errorResult,
+});
+
+const repairEngine:RuntimeBoundary = createRepairEngine({
+  rootDir: workflowRuntimePaths.repairRoot,
+  diagnosisEngine,
+  observability: runtimeObservability,
+  processManager,
+  workflowManager,
+  inspectPort: (port) => inspectLocalPort({
+    port,
+    host: "127.0.0.1",
+    timeoutMs: 1000,
+  }),
+  restartPeekabooBridge: () => peekabooBridge.restart(),
+  getPeekabooStatus: () => peekabooBridge.status(),
+  resumeWorkflowSafely: resumeWorkflowSafelyForRepair,
+});
+await registerRepairTools({
+  registerTextTool,
+  z,
+  repairEngine,
+  processJsonResult,
+  errorResult,
+});
+
+recoveryPolicyController = createRecoveryPolicyController({
+  rootDir: workflowRuntimePaths.recoveryPolicyRoot,
+  diagnosisEngine,
+  repairEngine,
+  observability: runtimeObservability,
+});
+await registerRecoveryPolicyTools({
+  registerTextTool,
+  recoveryPolicyController,
+  processJsonResult,
+  errorResult,
+});
+
+const runtimeJanitor = createRuntimeJanitor({
+  rootDir: workflowRuntimePaths.janitorRoot,
+  workspaceRoot: workflowRuntimePaths.workspace.rootRealPath,
+  workflowRoot: workflowRuntimePaths.workflowRoot,
+  visualRoot: workflowRuntimePaths.visualRoot,
+  browserScreenshotRoot: workflowRuntimePaths.browserScreenshotRoot,
+  releaseGateRoot: workflowRuntimePaths.releaseGateRoot,
+  observabilityRoot: workflowRuntimePaths.observabilityRoot,
+  terminalManager,
+  processManager,
+  workflowManager,
+  observability: runtimeObservability,
+  listManagedWorktrees: listJanitorWorktrees,
+  pruneManagedWorktrees: pruneJanitorWorktrees,
+  runExclusive: (task) => withMutationLocks(["global"], task),
+});
+await registerRuntimeJanitorTools({
+  registerTextTool,
+  z,
+  janitor: runtimeJanitor,
+  processJsonResult,
+  errorResult,
+});
+
+await registerEquinoxBrowserTools({
+  registerTextTool,
+  registerRawTool,
+  z,
+  fileRootSchema: FILE_ROOT_ID_VALUE_SCHEMA,
+  resolveUploadFile: resolveBrowserUploadFile,
+  downloadsRoot: FILE_ROOT_DEFINITIONS[DOWNLOADS_ROOT_ID]!.root,
+  screenshotRoot: workflowRuntimePaths.browserScreenshotRoot,
+  screenshotProjectId: WORKSPACE_PROJECT_ID,
+  bridge: equinoxBrowserBridge,
+  isBrowserAccessEnabled: () => AGENT_ACCESS.browser,
+  ensureAgentBrowserReady: () => equinoxAgentBrowser.ensureReady(),
+  shutdownAgentBrowser: () => equinoxAgentBrowser.shutdown(),
+  getAgentBrowserStatus: () => equinoxAgentBrowser.snapshot(),
+  withMutationLocks,
+  textResult,
+  errorResult,
+});
+
+const CONTROL_CENTER_REDACTED_PATHS = Object.freeze(
+  [...new Set([
+    ...Object.values(PROJECT_DEFINITIONS).map((definition) => definition.root),
+    ...Object.values(FILE_ROOT_DEFINITIONS).map((definition) => definition.root),
+    runtimeHomeDir,
+  ].filter((value) => typeof value === "string" && value.length > 1))]
+    .sort((left, right) => right.length - left.length),
+);
+
+function sanitizeControlCenterEventText(value:RuntimeBoundary) {
+  let text = String(value ?? "").replace(/[\u0000-\u001f\u007f]+/gu, " ");
+  for (const privatePath of CONTROL_CENTER_REDACTED_PATHS) {
+    text = text.replaceAll(privatePath, "[local path]");
+  }
+  return text.replace(/\s+/gu, " ").trim().slice(0, 300);
+}
+
+async function getControlCenterActivity() {
+  const events = await runtimeObservability.query({
+    sinceMs: Date.now() - (6 * 60 * 60 * 1000),
+    limit: 30,
+    newestFirst: true,
+  });
+  return events.map((event:RuntimeBoundary) => ({
+    timestamp: event.timestamp,
+    component: sanitizeControlCenterEventText(event.component).slice(0, 80),
+    type: sanitizeControlCenterEventText(event.type).slice(0, 120),
+    severity: event.severity,
+    status: event.status ?? null,
+    message: sanitizeControlCenterEventText(event.message),
+  }));
+}
+
+function publicPeekabooVersion(value:RuntimeBoundary) {
+  const match = String(value ?? "").match(/(?:Peekaboo\s+)?(\d+\.\d+\.\d+)/u);
+  return match ? match[1] : null;
+}
+
+async function getControlCenterPeekabooStatus() {
+  // The existing Control Center desktop-status slot is shared across hosts.
+  // On Windows, report the actual pinned winapp engine rather than probing
+  // the macOS-only Peekaboo bridge and claiming Windows desktop is absent.
+  if (process.platform === "win32") {
+    try {
+      const status:RuntimeBoundary = await winappBridge.status();
+      return Object.freeze({ engine: "winapp", available: true, active: true, ready: true,
+        needsAttention: false, version: status.version, reconnectCount: 0 });
+    } catch {
+      return Object.freeze({ engine: "winapp", available: false, active: false, ready: false,
+        needsAttention: true, version: null, reconnectCount: 0 });
+    }
+  }
+  try {
+    const status = await peekabooBridge.status({ probePermissions: false });
+    const ready = isPeekabooControlCenterReady(status);
+    return Object.freeze({
+      available: true,
+      active: Boolean(status.active),
+      ready,
+      needsAttention: !ready,
+      version: publicPeekabooVersion(status.version),
+      reconnectCount: Number.isInteger(status.reconnectCount) ? status.reconnectCount : 0,
+    });
+  } catch {
+    return Object.freeze({
+      available: false,
+      active: false,
+      ready: false,
+      needsAttention: false,
+      version: null,
+      reconnectCount: 0,
+    });
+  }
+}
+
+async function getControlCenterDoctorStatus({ probeTerminal = false } = {}) {
+  const browser = equinoxBrowserBridge.snapshot();
+  const browserSettingsByContext:Record<"agent"|"user",RuntimeBoundary> = { agent: null, user: null };
+  for (const context of ["agent", "user"] as const) {
+    if (!browser.contexts?.[context]?.ready) continue;
+    try {
+      browserSettingsByContext[context] = await equinoxBrowserBridge.call("settings.status", {}, { timeoutMs: 2_500, context });
+    } catch {
+      // Browser settings are optional doctor context; bridge readiness remains useful on its own.
+    }
+  }
+  const agentBrowserStatus = await equinoxAgentBrowser.status();
+  const observabilityHealth = await runtimeObservability.health({
+    windowMs: 15 * 60 * 1000,
+  });
+  const onboarding = await getManagedOnboardingStatus({
+    installation: equinoxLocalInstallation,
+    homeDir: runtimeHomeDir,
+    supervisorMode: process.env.EQUINOX_LOCAL_SUPERVISOR_MODE || null,
+  });
+  const [developmentTunnel, developmentPeekaboo, sourceCheckout, peekabooStatus] = await Promise.all([
+    equinoxLocalInstallation.kind === "source" ? inspectSourceTunnelRuntime() : Promise.resolve(null),
+    equinoxLocalInstallation.kind === "source" ? inspectSourcePeekabooRuntime() : Promise.resolve(null),
+    equinoxLocalInstallation.kind === "source" ? inspectSourceCheckoutVersion() : Promise.resolve(null),
+    getControlCenterPeekabooStatus(),
+  ]);
+  return getEquinoxLocalDoctorStatus(({
+    installation: equinoxLocalInstallation,
+    config: EQUINOX_LOCAL_CONFIG,
+    runtimeHealthState: observabilityHealth.state,
+    runtimeVersion: SERVER_VERSION,
+    terminalExecution: probeTerminal && platform === "win32"
+      ? await probeWindowsTerminalExecution({
+        processManager, cwd: process.cwd(), env: runtimeEnv, arch,
+      })
+      : null,
+    sourceCheckoutVersion: sourceCheckout?.version ?? null,
+    browser: {
+      contexts: {
+        agent: {
+          ready: Boolean(browser.contexts?.agent?.ready),
+          consentAccepted: typeof browserSettingsByContext.agent?.consentAccepted === "boolean" ? browserSettingsByContext.agent.consentAccepted : null,
+          controlEnabled: typeof browserSettingsByContext.agent?.enabled === "boolean" ? browserSettingsByContext.agent.enabled : null,
+        },
+        user: {
+          ready: Boolean(browser.contexts?.user?.ready),
+          consentAccepted: typeof browserSettingsByContext.user?.consentAccepted === "boolean" ? browserSettingsByContext.user.consentAccepted : null,
+          controlEnabled: typeof browserSettingsByContext.user?.enabled === "boolean" ? browserSettingsByContext.user.enabled : null,
+        },
+      },
+      agentBrowser: agentBrowserStatus,
+    },
+    peekaboo: peekabooStatus,
+    desktop: process.platform === "win32" ? await winappBridge.status().catch(() => ({ engine: "winapp", active: false })) : {},
+    update: equinoxLocalUpdateCoordinator.snapshot(),
+    onboarding,
+    developmentTunnel,
+    developmentPeekaboo,
+    homeDir: runtimeHomeDir,
+  }) as RuntimeBoundary);
+}
+
+const CONTROL_CENTER_REPAIR_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+
+function compactControlCenterIncident(incident:RuntimeBoundary, recipes:RuntimeBoundary) {
+  const fixes = recipes
+    .filter((recipe:RuntimeBoundary) => recipe.incidentCodes.includes(incident.code))
+    .map((recipe:RuntimeBoundary) => ({
+      id: recipe.id,
+      label: recipe.label,
+      description: recipe.description,
+      scope: recipe.scope,
+      risk: recipe.risk,
+    }));
+  return {
+    incidentId: incident.incidentId,
+    code: incident.code,
+    title: incident.title,
+    summary: incident.summary,
+    state: incident.state,
+    severity: incident.severity,
+    component: incident.component,
+    projectId: incident.projectId ?? null,
+    lastSeen: incident.lastSeen,
+    recommendation: incident.recommendation,
+    fixes,
+  };
+}
+
+async function getControlCenterDoctorRepairs({ includeResolved = false } = {}) {
+  const diagnosis = await diagnosisEngine.diagnose({
+    windowMs: CONTROL_CENTER_REPAIR_WINDOW_MS,
+    includeResolved,
+    limit: 50,
+  });
+  const recipes = repairEngine.recipes();
+  const incidents = diagnosis.incidents.map((incident:RuntimeBoundary) => compactControlCenterIncident(incident, recipes));
+  return {
+    evaluatedAt: diagnosis.evaluatedAt,
+    incidentCount: incidents.length,
+    actionableCount: incidents.filter((incident:RuntimeBoundary) => incident.fixes.length > 0 && ["ACTIVE", "ATTENTION REQUIRED"].includes(incident.state)).length,
+    incidents,
+  };
+}
+
+async function applyControlCenterDoctorRepair({ incidentId, recipeId }:{incidentId:string;recipeId:string}) {
+  agentControl.assertMutationAllowed("doctor_repair");
+  return withMutationLocks(["doctor-repair"], async () => {
+    const before = await getControlCenterDoctorRepairs();
+    const incident = before.incidents.find((item:RuntimeBoundary) => item.incidentId === incidentId);
+    const fix = incident?.fixes.find((item:RuntimeBoundary) => item.id === recipeId);
+    if (!incident || !fix || !["ACTIVE", "ATTENTION REQUIRED"].includes(incident.state)) {
+      const error:Error & {statusCode?:number}=new Error("Doctor repair is no longer applicable to this active incident. Refresh diagnosis and try again.");
+      error.statusCode = 409;
+      throw error;
+    }
+
+    const repair = await repairEngine.repairIssue({ incidentId, recipeId });
+    const after = await getControlCenterDoctorRepairs({ includeResolved: true });
+    const verifiedIncident = after.incidents.find((item:RuntimeBoundary) => item.incidentId === incidentId) ?? null;
+    return {
+      repair,
+      verification: {
+        evaluatedAt: after.evaluatedAt,
+        resolved: verifiedIncident === null || verifiedIncident.state === "RESOLVED",
+        incident: verifiedIncident,
+      },
+    };
+  });
+}
+
+async function getControlCenterOnboardingStatus() {
+  const browser = equinoxBrowserBridge.snapshot();
+  let browserSettings:RuntimeBoundary = null;
+  if (browser.contexts?.user?.ready) {
+    try {
+      browserSettings = await equinoxBrowserBridge.call("settings.status", {}, { timeoutMs: 2_500, context: "user" });
+    } catch {
+      // Setup remains incomplete until the required Browser profile is reachable and consented.
+    }
+  }
+  return getManagedOnboardingStatus({
+    installation: equinoxLocalInstallation,
+    homeDir: runtimeHomeDir,
+    supervisorMode: process.env.EQUINOX_LOCAL_SUPERVISOR_MODE || null,
+    browserUser: {
+      ready: Boolean(browser.contexts?.user?.ready),
+      consentAccepted: browserSettings?.consentAccepted === true,
+      controlEnabled: browserSettings?.enabled === true,
+    },
+    reconcileCompletion: true,
+  });
+}
+
+equinoxLocalControlApi = createEquinoxLocalControlApi({
+  configManager: equinoxLocalConfigManager,
+  port: EQUINOX_LOCAL_CONFIG.controlCenter.port,
+  getStatus: async () => {
+    const browser = equinoxBrowserBridge.snapshot();
+    const browserSettingsByContext:Record<"agent"|"user",RuntimeBoundary> = { agent: null, user: null };
+    for (const context of ["agent", "user"] as const) {
+      if (!browser.contexts?.[context]?.ready) continue;
+      try {
+        browserSettingsByContext[context] = await equinoxBrowserBridge.call("settings.status", {}, {
+          timeoutMs: 2_500,
+          context,
+        });
+      } catch {
+        // Older extension builds may not expose the settings control plane yet.
+      }
+    }
+    const browserSettings:RuntimeBoundary = browserSettingsByContext.user;
+    const agentBrowserStatus = await equinoxAgentBrowser.status();
+    const observabilityHealth = await runtimeObservability.health({
+      windowMs: 15 * 60 * 1000,
+    });
+    const supervisorMode = process.env.EQUINOX_LOCAL_SUPERVISOR_MODE || null;
+    const managedConnection = equinoxLocalInstallation.managed === true;
+    const chatgptConnection = managedConnection
+      ? {
+          available: true,
+          connected: supervisorMode === "tunnel",
+          needsAttention: supervisorMode !== "tunnel",
+          mode: supervisorMode === "tunnel" ? "tunnel" : "local-only",
+        }
+      : {
+          available: true,
+          connected: true,
+          needsAttention: false,
+          mode: "source",
+        };
+    const status = {
+      server: {
+        name: SERVER_NAME,
+        version: SERVER_VERSION,
+        pid: process.pid,
+        uptimeSeconds: Math.round(process.uptime()),
+      },
+      health: {
+        state: observabilityHealth.state,
+        evaluatedAt: observabilityHealth.evaluatedAt,
+        recentEventCount: observabilityHealth.recentEventCount,
+        reasonCount: observabilityHealth.reasons.length,
+      },
+      installation: {
+        kind: equinoxLocalInstallation.kind,
+        sourceSha: equinoxLocalInstallation.kind === "managed-source" ? equinoxLocalInstallation.sourceSha : null,
+      },
+      chatgptConnection,
+      config: {
+        version: EQUINOX_LOCAL_CONFIG.version,
+        revision: EQUINOX_LOCAL_CONFIG_SNAPSHOT.revision,
+        defaultProject: DEFAULT_PROJECT,
+        workspaceProject: WORKSPACE_PROJECT_ID,
+        projectCount: PROJECT_IDS.length,
+        fileRootCount: FILE_ROOT_IDS.length,
+      },
+      browser: {
+        active: Boolean(browser.active),
+        ready: Boolean(browser.ready),
+        connectedAt: browser.connectedAt ?? null,
+        extensionVersion:
+          browser.extension?.extensionVersion ?? null,
+        consentAccepted: typeof browserSettings?.consentAccepted === "boolean" ? browserSettings.consentAccepted : null,
+        consentVersion: Number.isInteger(browserSettings?.consentVersion) ? browserSettings.consentVersion : null,
+        requiredConsentVersion: Number.isInteger(browserSettings?.requiredConsentVersion) ? browserSettings.requiredConsentVersion : null,
+        controlEnabled: typeof browserSettings?.enabled === "boolean" ? browserSettings.enabled : null,
+        agentCursorEnabled: typeof browserSettings?.agentCursorEnabled === "boolean" ? browserSettings.agentCursorEnabled : null,
+        agentCursorName: typeof browserSettings?.agentCursorName === "string" ? browserSettings.agentCursorName : null,
+        nativeHostConnected: Boolean(browserSettings?.nativeHostConnected ?? browser.ready),
+        localConnected: Boolean(browserSettings?.localConnected ?? browser.ready),
+        defaultTarget: "agent",
+        agentBrowser: agentBrowserStatus,
+        contexts: {
+          agent: {
+            ready: Boolean(browser.contexts?.agent?.ready),
+            connectedAt: browser.contexts?.agent?.connectedAt ?? null,
+            extensionVersion: browser.contexts?.agent?.extension?.extensionVersion ?? null,
+            consentAccepted: typeof browserSettingsByContext.agent?.consentAccepted === "boolean" ? browserSettingsByContext.agent.consentAccepted : null,
+            controlEnabled: typeof browserSettingsByContext.agent?.enabled === "boolean" ? browserSettingsByContext.agent.enabled : null,
+            agentCursorEnabled: typeof browserSettingsByContext.agent?.agentCursorEnabled === "boolean" ? browserSettingsByContext.agent.agentCursorEnabled : null,
+            agentCursorName: typeof browserSettingsByContext.agent?.agentCursorName === "string" ? browserSettingsByContext.agent.agentCursorName : null,
+          },
+          user: {
+            ready: Boolean(browser.contexts?.user?.ready),
+            connectedAt: browser.contexts?.user?.connectedAt ?? null,
+            extensionVersion: browser.contexts?.user?.extension?.extensionVersion ?? null,
+            consentAccepted: typeof browserSettingsByContext.user?.consentAccepted === "boolean" ? browserSettingsByContext.user.consentAccepted : null,
+            controlEnabled: typeof browserSettingsByContext.user?.enabled === "boolean" ? browserSettingsByContext.user.enabled : null,
+            agentCursorEnabled: typeof browserSettingsByContext.user?.agentCursorEnabled === "boolean" ? browserSettingsByContext.user.agentCursorEnabled : null,
+            agentCursorName: typeof browserSettingsByContext.user?.agentCursorName === "string" ? browserSettingsByContext.user.agentCursorName : null,
+          },
+        },
+      },
+      peekaboo: {
+        active: peekabooBridge.active,
+        reconnectCount: peekabooBridge.reconnectCount,
+      },
+      agentControl: agentControl.snapshot(),
+      turnBudget: await turnBudgetController.refreshSnapshot(),
+      capabilities: capabilityRegistry.summary(),
+    };
+    const [tasks, onboarding] = await Promise.all([
+      taskCapsuleStore.list({ limit: 50 }),
+      getManagedOnboardingStatus({
+        installation: equinoxLocalInstallation,
+        homeDir: runtimeHomeDir,
+        supervisorMode: process.env.EQUINOX_LOCAL_SUPERVISOR_MODE || null,
+        browserUser: {
+          ready: Boolean(browser.contexts?.user?.ready),
+          consentAccepted: browserSettingsByContext.user?.consentAccepted === true,
+          controlEnabled: browserSettingsByContext.user?.enabled === true,
+        },
+        reconcileCompletion: true,
+      }),
+    ]);
+    return {
+      ...status,
+      presentation: deriveEquinoxLocalPresentationState({ status, tasks, onboarding }),
+    };
+  },
+  getTurnBudget: async () => turnBudgetController.refreshSnapshot(),
+  updateTurnBudget: async (settings) => turnBudgetController.updateSettings(settings),
+  pauseAgent: () => pauseAgentForHuman("control_center_emergency_stop"),
+  resumeAgent: resumeAgentForHuman,
+  getDoctorStatus: getControlCenterDoctorStatus,
+  getDoctorRepairs: getControlCenterDoctorRepairs,
+  applyDoctorRepair: applyControlCenterDoctorRepair,
+  getActivity: getControlCenterActivity,
+  getUpdateStatus: async () => getCombinedUpdateStatus(),
+  getOnboardingStatus: getControlCenterOnboardingStatus,
+  getTasks: async () => taskCapsuleStore.list({ limit: 50 }),
+  getTask: async (taskId) => taskCapsuleStore.read(taskId),
+  updateTask: async (taskId, body) => withMutationLocks([`task:${taskId}`], async () => (
+    taskCapsuleStore.checkpoint({
+      taskId,
+      expectedRevision: body.expectedRevision,
+      title: body.title,
+      objective: body.objective,
+      completed: body.completed,
+      next: body.next,
+      references: body.references,
+    })
+  )),
+  completeTask: async (taskId) => withMutationLocks([`task:${taskId}`], async () => taskCapsuleStore.finish(taskId)),
+  cancelTask: async (taskId) => withMutationLocks([`task:${taskId}`], async () => taskCapsuleStore.cancel(taskId)),
+  deleteTask: async (taskId) => withMutationLocks([`task:${taskId}`], async () => taskCapsuleStore.remove(taskId)),
+  cancelTaskContinuation: async (taskId) => withMutationLocks([`task:${taskId}`], async () => (
+    autoContinueController.cancel(taskId, "human_cancelled")
+  )),
+  cancelTaskFreshResume: async (taskId) => withMutationLocks([`task:${taskId}`], async () => (
+    freshChatResumeController.cancel(taskId, "human_cancelled")
+  )),
+  abandonTaskFreshResume: async (taskId) => withMutationLocks([`task:${taskId}`], async () => (
+    freshChatResumeController.abandon(taskId, "human_recovered")
+  )),
+  restartRuntime: restartLocalRuntime,
+  configureTunnel: async (body) => withMutationLocks(["local-onboarding"], async () => {
+    const configured = await configureManagedTunnel({
+      installation: equinoxLocalInstallation,
+      homeDir: runtimeHomeDir,
+      tunnelId: body?.tunnelId,
+      runtimeKey: body?.runtimeKey,
+    });
+    const restart = await scheduleEquinoxLocalRestart({ installation: equinoxLocalInstallation });
+    return {
+      configured: configured.configured,
+      tunnelId: configured.tunnelId,
+      restartRequired: configured.restartRequired,
+      restartScheduled: restart.scheduled,
+    };
+  }),
+  scheduleUninstall: async ({ removeUserData }) => withMutationLocks(["local-uninstall"], async () => (
+    scheduleEquinoxLocalUninstall({
+      installation: equinoxLocalInstallation,
+      removeUserData,
+    })
+  )),
+  checkForUpdates: async () => {
+    await checkInstalledChannelForUpdates({ force: true });
+    if (["source", "managed-source"].includes(equinoxLocalInstallation.kind)) equinoxLocalMainApplyController.resetError();
+    return getCombinedUpdateStatus();
+  },
+  applyUpdate: async () => withMutationLocks(["local-update"], async () => (
+    equinoxLocalInstallation.kind === "managed-source"
+      ? equinoxLocalMainApplyController.apply()
+      : equinoxLocalUpdateCoordinator.apply()
+  )),
+  chooseFolder: chooseLocalFolder,
+  openAgentBrowser: async () => withMutationLocks(["browser:agent"], async () => (
+    equinoxAgentBrowser.launch({ setup: false })
+  )),
+  updateBrowserSettings: async (settings) => {
+    const context = settings?.context === "agent" ? "agent" : "user";
+    const { context: _context, ...extensionSettings } = settings ?? {};
+    return await withMutationLocks([`browser:${context}`], async () => {
+      if (!equinoxBrowserBridge.readyFor(context)) {
+        const error:Error & {statusCode?:number}=new Error(
+          context === "agent"
+            ? "Agent Browser is not connected to Equinox Local. Open Agent Browser and install/enable Equinox Browser in that isolated profile."
+            : "Equinox Browser is not connected to the user's Chrome profile.",
+        );
+        error.statusCode = 503;
+        throw error;
+      }
+      return await equinoxBrowserBridge.call("settings.update", extensionSettings, {
+        timeoutMs: 5_000,
+        context,
+      });
+    });
+  },
+  getPeekabooStatus: getControlCenterPeekabooStatus,
+  checkGitHub: async () => {
+    const context = await resolveProjectContext(EQUINOX_LOCAL_CONFIG.defaultProject);
+    return privateGitHubStatus({
+      context,
+      projectContextStorage,
+      secureServiceState,
+      runGhWithCode,
+    });
+  },
+  getWebImportSettings: async () => getWebImportSettings(),
+  updateWebImportDownloads: async ({ path: downloadPath }) => withMutationLocks(["file-import-settings"], async () => (
+    setWebImportLocation({ downloadPath })
+  )),
+  getTelegramStatus: async () => ({
+    ...(await getTelegramIntegrationStatus()),
+    downloads: await getTelegramDownloadSettings(),
+    taskInbox: telegramTaskInboxController.snapshot(),
+  }),
+  updateTelegramRemoteControl: async ({ enabled }) => withMutationLocks(["telegram"], async () => (
+    setTelegramRemoteControlEnabled({ enabled })
+  )),
+  updateTelegramDownloads: async ({ path: downloadPath }) => withMutationLocks(["telegram"], async () => (
+    setTelegramDownloadLocation({ downloadPath })
+  )),
+  configureTelegram: async (body) => withMutationLocks(["telegram"], async () => {
+    const telegram = await configureTelegramIntegration({
+      botToken: body?.botToken,
+      telegramUserId: body?.telegramUserId,
+    });
+    await telegramTaskInboxController.reset({ persistState: true });
+    await syncTelegramCommandMenuSafely("configure");
+    return telegram;
+  }),
+  startTelegramPairing: async (body) => withMutationLocks(["telegram"], async () => (
+    startTelegramPairing({ botToken: body?.botToken })
+  )),
+  pollTelegramPairing: async () => pollTelegramPairing(),
+  confirmTelegramPairing: async () => withMutationLocks(["telegram"], async () => {
+    const telegram = await confirmTelegramPairing();
+    await telegramTaskInboxController.reset({ persistState: true });
+    await syncTelegramCommandMenuSafely("pairing_confirm");
+    return telegram;
+  }),
+  cancelTelegramPairing: async () => withMutationLocks(["telegram"], async () => cancelTelegramPairing()),
+  testTelegram: async () => withMutationLocks(["telegram"], async () => testTelegramIntegration()),
+  disconnectTelegram: async () => withMutationLocks(["telegram"], async () => {
+    await telegramTaskInboxController.reset({ persistState: false });
+    return disconnectTelegramIntegration();
+  }),
+  getHttpProfiles: async () => getAuthenticatedHttpProfiles(),
+  setHttpProfileManagement: async ({ enabled }) => withMutationLocks(["authenticated-http-profiles"], async () => {
+    await setAuthenticatedHttpAgentManagement({ enabled });
+    return getAuthenticatedHttpProfiles();
+  }),
+  upsertHttpProfile: async ({ profile, credential }) => withMutationLocks(["authenticated-http-profiles"], async () => (
+    upsertAuthenticatedHttpProfileFromControlCenter({ profile, credential })
+  )),
+  testHttpProfile: async (request) => withMutationLocks(["authenticated-http-profiles"], async () => {
+    try {
+      return await authenticatedHttpRequest({
+        profileId: request.profileId,
+        method: request.method,
+        path: request.path,
+        query: request.query ?? {},
+        headers: request.headers ?? {},
+        body: request.body,
+        timeoutMs: request.timeoutMs,
+        captureResponseReference: false,
+      });
+    } catch (error:RuntimeBoundary) {
+      const message = error instanceof Error ? error.message : String(error);
+      error.statusCode = /timed out/iu.test(message) ? 504 : /failed before a response/iu.test(message) ? 502 : 400;
+      throw error;
+    }
+  }),
+  deleteHttpProfile: async ({ profileId }) => withMutationLocks(["authenticated-http-profiles"], async () => (
+    deleteAuthenticatedHttpProfile({ profileId })
+  )),
+  recordInternalError: (error) => recordRuntimeEvent({
+    component: "control-center",
+    type: "control.error",
+    severity: "error",
+    status: "failed",
+    message: "Control Center request failed internally.",
+    details: {
+      error: error instanceof Error ? error.message : String(error),
+    },
+  }),
+});
+const desktopCapabilityProvider = registerDesktopGatewayTools(({
+  registerTextTool,
+  registerRawTool,
+  z,
+  agentAccess: AGENT_ACCESS,
+  desktopBridge,
+  desktopLabel,
+  withMutationLocks,
+  normalizeChromeToolResult,
+  extractTextContent,
+  textResult,
+  errorResult,
+  assertMutationAllowed: (operationName:RuntimeBoundary) => agentControl.assertMutationAllowed(operationName),
+  turnBudgetController,
+}) as RuntimeBoundary);
+
+registerRestartRuntimeTool({
+  registerTextTool,
+  installation: equinoxLocalInstallation,
+  sourceModuleUrl: import.meta.url,
+  fsImpl: fs,
+  pathImpl: path,
+  processImpl: process,
+  markRestartPending: () => {
+    runtimeRestartPendingUntil =
+      Date.now() + RUNTIME_RESTART_GUARD_MS;
+  },
+  beforeRestart: quiesceContinuityForRestart,
+  restartFailed: resumeContinuityAfterFailedRestart,
+  textResult,
+  errorResult,
+});
+
+registerTelegramSendTool({
+  registerTextTool,
+  registerRawTool,
+  z,
+  taskStore: taskCapsuleStore,
+  resolveOutboundFile: async (filePath:RuntimeBoundary) => resolveFileExportPath({
+    filePath,
+    fullFileAccess: FULL_FILE_ACCESS,
+    fileRootIds: FILE_ROOT_IDS,
+    resolveFileRootContext,
+    homeDir: runtimeHomeDir,
+    fsImpl: fs,
+  }),
+  textResult,
+  errorResult,
+});
+
+registerAuthenticatedHttpTools({
+  registerTextTool,
+  z,
+  textResult,
+  errorResult,
+});
+
+registerSystemDoctorTool({
+  registerTextTool,
+  getDoctorStatus: () => getControlCenterDoctorStatus({ probeTerminal: true }),
+  textResult,
+  errorResult,
+});
+
+registerStableCapabilityGateways({
+  registerTextTool,
+  registerRawTool,
+  registry: capabilityRegistry,
+  textResult,
+  externalDomains: { desktop: desktopCapabilityProvider as RuntimeBoundary },
+  turnBudgetController,
+});
+
+let localShutdownStarted = false;
+
+async function shutdownLocalResources({ reason = "api" } = {}) {
+  if (localShutdownStarted) {
+    return;
+  }
+
+  localShutdownStarted = true;
+
+  await recordRuntimeEvent({
+    component: "runtime",
+    type: "runtime.shutdown_requested",
+    severity: "info",
+    status: "stopping",
+    message: "Equinox Local runtime shutdown started.",
+    details: {
+      pid: process.pid,
+      uptimeSeconds: Math.round(process.uptime()),
+      reason,
+    },
+  });
+
+  runtimeJanitor?.stopMaintenance();
+  await recoveryPolicyController?.shutdown();
+  await telegramTaskInboxController.shutdown();
+  await freshChatResumeController.shutdown();
+  await autoContinueController.shutdown();
+  await workflowManager.shutdown();
+
+  await Promise.all([
+    equinoxLocalControlApi?.close() ?? Promise.resolve(),
+    equinoxBrowserBridge.close(),
+    peekabooBridge.close(),
+    terminalManager.shutdown(),
+    processManager.shutdown(),
+  ]);
+
+  await recordRuntimeEvent({
+    component: "runtime",
+    type: "runtime.stopped",
+    severity: "info",
+    status: "completed",
+    message: "Equinox Local runtime resources shut down cleanly.",
+    details: {
+      pid: process.pid,
+    },
+  });
+  await runtimeObservability.flush();
+}
+
+let runtimeStarted = false;
+
+async function start({ transport = new StdioServerTransport() } = {}) {
+  if (runtimeStarted) throw new Error("Equinox Local runtime already started.");
+  runtimeStarted = true;
+
+  await ensureWorkspaceRuntimeDirectories();
+  await runtimeObservability.initialize();
+  await runtimeObservability.record({
+    component: "runtime",
+    type: "runtime.start",
+    severity: "info",
+    status: "healthy",
+    message: `Equinox Local ${SERVER_VERSION} runtime started.`,
+    details: {
+      server: SERVER_NAME,
+      version: SERVER_VERSION,
+      pid: process.pid,
+    },
+  });
+  if (equinoxBrowserIpc.implemented) {
+    await equinoxBrowserBridge.start();
+  }
+  await autoContinueController.start();
+  await freshChatResumeController.start();
+  await telegramTaskInboxController.start();
+  setTimeout(() => { void syncTelegramCommandMenuSafely("runtime_start"); }, 250).unref?.();
+  await repairEngine.initialize();
+  await recoveryPolicyController.initialize();
+  await runtimeJanitor.initialize();
+  await runtimeJanitor.startMaintenance();
+  // Reclaim all superseded big Main/Stable payloads only from the installed,
+  // genuinely healthy B runtime after the detached handoff has RELEASED its
+  // active marker. Do not let the old A worker, first-install Stable or a
+  // failed/rolling-back transaction erase recovery state. A Windows file lock
+  // is retried later instead of aborting the healthy installation.
+  if (platform === "win32" && ["managed-source", "managed"].includes(equinoxLocalInstallation.kind)) {
+    let attempts = 0;
+    let doctorApproved = false;
+    // Native-state hashing in Doctor is intentionally thorough but expensive:
+    // a full Windows payload can take >10 CPU-seconds per audit. A locked old
+    // native directory used to force eight audits, every 45 seconds, even
+    // though no additional safety was gained. Keep the Doctor health gate on
+    // the first attempt and rely on the pruner's own exact-SHA/pointer/active
+    // lock verification on any retry. Defer persistent locks to next startup.
+    const maxCleanupAttempts = 2;
+    const tryCleanup = async () => {
+      attempts += 1;
+      let complete = false;
+      try {
+        if (!doctorApproved) {
+          const doctor = await getControlCenterDoctorStatus();
+          doctorApproved = doctor.state === "HEALTHY" && doctor.summary.attention === 0;
+        }
+        if (doctorApproved) {
+          const result = equinoxLocalInstallation.kind === "managed-source"
+            ? await pruneVerifiedMainLargeStorage({
+                installation: equinoxLocalInstallation, platform,
+                processExecutable: process.execPath, runtimeVersion: SERVER_VERSION,
+              })
+            : await pruneDisenrolledWindowsMainLargeStorage({
+                installation: equinoxLocalInstallation,
+                processExecutable: process.execPath, runtimeVersion: SERVER_VERSION,
+              });
+          complete = result.pending.length === 0;
+        }
+      } catch {
+        // Pruners fail closed on active handoffs, changed native/source
+        // identity, unauthorized paths and locked files. Never force-delete.
+      }
+      if (!complete && attempts < maxCleanupAttempts) {
+        setTimeout(() => { void tryCleanup(); }, 45_000).unref?.();
+      } else if (!complete) {
+        console.error("[Equinox Local] Safe obsolete Main storage cleanup remains pending until next runtime startup.");
+      }
+    };
+    setTimeout(() => { void tryCleanup(); }, 12_000).unref?.();
+  }
+  if (EQUINOX_LOCAL_CONFIG.controlCenter.enabled) {
+    await equinoxLocalControlApi.start();
+  }
+  if (process.platform === "win32" && process.env.EQUINOX_LOCAL_SUPERVISOR_MODE === "local-only") {
+    process.stderr.write("[Equinox Windows supervisor] state=local-only-control-" +
+      (EQUINOX_LOCAL_CONFIG.controlCenter.enabled ? "ready" : "disabled") + ".\n");
+  }
+
+  setTimeout(() => {
+    void recoveryPolicyController?.reconcile().catch((error:RuntimeBoundary) => {
+      console.error(
+        `[Equinox Local] Startup automatic recovery reconciliation başarısız: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    });
+  }, 500).unref?.();
+
+  if (platform === "darwin" && equinoxLocalInstallation.kind === "managed") {
+    setTimeout(() => {
+      void maybeScheduleMacStableMainBridge({
+        installation: equinoxLocalInstallation,platform,env:runtimeEnv,
+      }).catch(() => {
+        // Never let a migration launch failure interrupt the signed Stable
+        // Control Center; no secrets or raw child diagnostics are logged.
+        console.error("[Equinox Local] Signed Stable Main migration bridge could not be scheduled.");
+      });
+    }, 1_500).unref?.();
+  }
+
+  return startRuntimeLifecycle({
+    connect: () => server.connect(transport),
+    shutdown: shutdownLocalResources,
+    consumeOwnedStdin: process.platform === "win32"
+      && process.env.EQUINOX_LOCAL_SUPERVISOR_MODE === "local-only",
+  });
+}
+
+return Object.freeze({
+  server,
+  start,
+  shutdown: shutdownLocalResources,
+  snapshot: () => Object.freeze({
+    started: runtimeStarted,
+    browser: equinoxBrowserBridge.snapshot(),
+    controlCenter: equinoxLocalControlApi?.snapshot?.() ?? null,
+    telegramTaskInbox: telegramTaskInboxController.snapshot(),
+  }),
+});
+}
+
+const isDirectExecution = Boolean(
+  process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href,
+);
+if (isDirectExecution) {
+  const runtime = await createEquinoxLocalRuntime();
+  await runtime.start();
+}

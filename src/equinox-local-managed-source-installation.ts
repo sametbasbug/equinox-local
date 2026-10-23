@@ -1,0 +1,153 @@
+import fs from "node:fs/promises";
+import path from "node:path";
+
+import { validateManagedSourceInstallStamp } from "./equinox-local-main-update.js";
+import { readEquinoxLocalMainSourcePointer } from "./equinox-local-main-source-pointer.js";
+import { readEquinoxLocalMainNativePointer } from "./equinox-local-main-native-state.js";
+import { equinoxLocalPlatformPaths } from "./equinox-local-platform.js";
+import { equinoxLocalToolchainContract } from "./equinox-local-toolchain-contract.js";
+import { inspectPrivateStatePath, verifyWindowsPrivateStateAcl } from "./equinox-local-private-state.js";
+import { readBoundedNormalFile } from "./equinox-local-safe-file.js";
+
+type SourceFs = typeof fs;
+type SourceEnv = NodeJS.ProcessEnv;
+type ManagedBaseInstallation = Readonly<Record<string, unknown>> & {
+  kind?: string; managed?: boolean; selfUpdateSupported?: boolean;
+  platform?: string; arch?: string;
+  mainNativeSha?: string | null; target?: string; releaseDir?: string;
+};
+type ManagedSourcePathOptions = {
+  platform?: string; arch?: string; homeDir?: string;
+  env?: SourceEnv;
+};
+type ManagedSourceResolveOptions = ManagedSourcePathOptions & {
+  baseInstallation?: ManagedBaseInstallation | null;
+  fsImpl?: SourceFs;
+  verifyWindowsAcl?: typeof verifyWindowsPrivateStateAcl;
+  readPointerImpl?: typeof readEquinoxLocalMainSourcePointer;
+  readNativePointerImpl?: typeof readEquinoxLocalMainNativePointer;
+};
+function hasErrorCode(error: unknown, code: string): boolean {
+  return error !== null && typeof error === "object" && "code" in error && error.code === code;
+}
+
+const MAX_STAMP_BYTES = 8 * 1024;
+
+export function equinoxLocalManagedSourcePaths({
+  platform = process.platform,
+  arch = process.arch,
+  homeDir,
+  env = process.env,
+}: ManagedSourcePathOptions = {}) {
+  const layout = equinoxLocalPlatformPaths({ platform, arch, ...(homeDir === undefined ? {} : {homeDir}), env });
+  const pathApi = platform === "win32" ? path.win32 : path.posix;
+  const mainTransactionRoot = pathApi.join(layout.stateRoot, "main-update");
+  return Object.freeze({
+    mainTransactionRoot,
+    installStampPath: pathApi.join(mainTransactionRoot, "install.json"),
+    sourcePointerPath: pathApi.join(mainTransactionRoot, "current-source.conf"),
+  });
+}
+
+export async function resolveEquinoxLocalManagedSourceInstallation({
+  baseInstallation,
+  platform = baseInstallation?.platform ?? process.platform,
+  arch = baseInstallation?.arch ?? process.arch,
+  homeDir,
+  env = process.env,
+  fsImpl = fs,
+  verifyWindowsAcl = verifyWindowsPrivateStateAcl,
+  readPointerImpl = readEquinoxLocalMainSourcePointer,
+  readNativePointerImpl = readEquinoxLocalMainNativePointer,
+}: ManagedSourceResolveOptions = {}) {
+  if (!baseInstallation || baseInstallation.kind !== "managed" || baseInstallation.managed !== true || baseInstallation.selfUpdateSupported !== true) {
+    return baseInstallation;
+  }
+
+  const paths = equinoxLocalManagedSourcePaths({ platform, arch, ...(homeDir === undefined ? {} : {homeDir}), env });
+  const directorySecurity = await inspectPrivateStatePath(paths.mainTransactionRoot, {
+    platform, type: "directory", mode: "700", fsImpl, verifyWindowsAcl,
+  });
+  if (!directorySecurity.exists) return baseInstallation;
+  if (!directorySecurity.safe) throw new Error("Managed-source state directory is not private.");
+
+  const stampSecurity = await inspectPrivateStatePath(paths.installStampPath, {
+    platform, type: "file", mode: "600", fsImpl, verifyWindowsAcl,
+  });
+  if (!stampSecurity.exists) {
+    if (baseInstallation.mainNativeSha) throw new Error("Main native runtime has no verified Main install stamp.");
+    return baseInstallation;
+  }
+  if (!stampSecurity.safe) throw new Error("Managed-source install stamp is not private.");
+
+  const { data } = await readBoundedNormalFile(paths.installStampPath, {
+    platform,
+    fsImpl,
+    minBytes: 2,
+    maxBytes: MAX_STAMP_BYTES,
+    encoding: "utf8",
+    label: "Managed-source install stamp",
+  });
+  let parsed: unknown;
+  try { parsed = JSON.parse(data); }
+  catch { throw new Error("Managed-source install stamp is not valid JSON."); }
+  const stamp = validateManagedSourceInstallStamp(parsed);
+
+  // Only an enrolled Main installation owns the complete toolchain contract.
+  // A signed Stable repair may retain a partial old Main toolchain while its
+  // install stamp is parked; it must boot without inspecting or deleting it.
+  const layout = equinoxLocalPlatformPaths({ platform, arch, ...(homeDir === undefined ? {} : {homeDir}), env });
+  const toolchain = equinoxLocalToolchainContract({ runtimeRoot: layout.runtimeRoot, target: `${platform}-${arch}` });
+  let managedGitPath: string | null = null;
+  try {
+    const [gitStat, nodeStat, npmStat] = await Promise.all([
+      fsImpl.lstat(toolchain.gitPath),
+      fsImpl.lstat(toolchain.nodePath),
+      fsImpl.lstat(toolchain.npmPath),
+    ]);
+    if (!gitStat.isFile() || gitStat.isSymbolicLink()) throw new Error("Managed Git executable is unsafe.");
+    if (!nodeStat.isFile() || nodeStat.isSymbolicLink()) throw new Error("Managed Node executable is unsafe.");
+    if (!npmStat.isFile() || npmStat.isSymbolicLink()) throw new Error("Managed npm CLI is unsafe.");
+    if (platform !== "win32" && ((gitStat.mode & 0o111) === 0 || (nodeStat.mode & 0o111) === 0)) throw new Error("Managed toolchain executable is not executable.");
+    managedGitPath = toolchain.gitPath;
+  } catch (error) {
+    if (!hasErrorCode(error, "ENOENT")) throw error;
+    const anyToolchainState = await Promise.all([toolchain.gitPath, toolchain.nodePath, toolchain.npmPath].map(async (candidate) => {
+      try { await fsImpl.lstat(candidate); return true; } catch (inner) { if (hasErrorCode(inner, "ENOENT")) return false; throw inner; }
+    }));
+    if (anyToolchainState.some(Boolean)) throw new Error("Managed product-owned toolchain is incomplete.");
+  }
+
+  const pointer = await readPointerImpl(paths.sourcePointerPath, {
+    fsImpl,
+    ...(managedGitPath ? { gitPath: managedGitPath } : {}),
+  });
+  if (baseInstallation.mainNativeSha) {
+    const native = await readNativePointerImpl((platform === "win32" ? path.win32 : path.posix).join(paths.mainTransactionRoot, "current-native.json"), {
+      transactionRoot: paths.mainTransactionRoot, fsImpl,
+    });
+    const pathApi = path.win32;
+    if (typeof baseInstallation.releaseDir !== "string" ||
+        native.sourceSha !== baseInstallation.mainNativeSha ||
+        native.target !== baseInstallation.target ||
+        pathApi.normalize(native.releaseDir).toLowerCase() !== pathApi.normalize(baseInstallation.releaseDir).toLowerCase()) {
+      throw new Error("Main bootstrap native runtime does not match the authenticated native-store pointer.");
+    }
+  }
+  return Object.freeze({
+    ...baseInstallation,
+    kind: "managed-source",
+    channel: "main",
+    mainUpdateSupported: true,
+    mainUpdateReason: null,
+    sourceRoot: pointer.sourceRoot,
+    sourceSha: pointer.sha,
+    mainTransactionRoot: paths.mainTransactionRoot,
+    mainInstallStamp: stamp,
+    gitPath: managedGitPath,
+    nodePath: managedGitPath ? toolchain.nodePath : null,
+    npmPath: managedGitPath ? toolchain.npmPath : null,
+    shellPath: managedGitPath ? toolchain.shellPath : null,
+    toolchainRoot: managedGitPath ? toolchain.toolchainRoot : null,
+  });
+}

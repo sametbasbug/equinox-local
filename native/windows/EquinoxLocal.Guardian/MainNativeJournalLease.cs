@@ -31,7 +31,7 @@ internal static partial class Program
         // a crash remnant, MUST NOT be overwritten or silently reclaimed.
         using var lease = new FileStream(leasePath, FileMode.CreateNew, FileAccess.ReadWrite,
             FileShare.None, 4096, FileOptions.WriteThrough);
-        var body = Encoding.ASCII.GetBytes($"schemaVersion=1\ntransactionId={owner.TransactionId}\nworkerPid={owner.Pid}\nguardianPid={Environment.ProcessId}\n");
+        var body = Encoding.ASCII.GetBytes($"schemaVersion=1\ntransactionId={owner.TransactionId}\nworkerPid={owner.Pid}\nworkerStartTimeUtcTicks={owner.Ticks}\nguardianPid={Environment.ProcessId}\n");
         if (body.Length > 512) throw new InvalidDataException("Windows journal lease record exceeds its bound.");
         lease.Write(body);
         lease.Flush(flushToDisk: true);

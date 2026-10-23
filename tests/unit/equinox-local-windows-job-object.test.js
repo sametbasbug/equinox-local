@@ -151,3 +151,84 @@ test("Windows native owned-process gate activates only alongside the matching pa
     else process.env.EQUINOX_WINDOWS_JOB_OBJECT_HELPER_PATH = before;
   }
 });
+
+test("Windows Job Object rejects unsupported hosts and out-of-range timeouts before helper launch", async () => {
+  let launches = 0;
+  const spawnImpl = () => { launches++; throw new Error("unexpected helper launch"); };
+  for (const options of [
+    { platform: "darwin", timeoutMs: 100 },
+    { platform: "win32", timeoutMs: 0 },
+    { platform: "win32", timeoutMs: 99 },
+    { platform: "win32", timeoutMs: 30001 },
+    { platform: "win32", timeoutMs: 10.5 },
+    { platform: "win32", timeoutMs: "5000" },
+  ]) {
+    await assert.rejects(createWindowsJobObjectLease({ ...options, spawnImpl }), /only on win32|timeout is invalid/u);
+  }
+  assert.equal(launches, 0);
+});
+
+test("Windows Job Object isolates concurrent request IDs and ignores malformed or unrelated helper replies", async () => {
+  const fixture = makeJobHelperFixture();
+  const lease = await createWindowsJobObjectLease({
+    platform: "win32", helperPath: "C:\\Owned\\job-helper.exe", spawnImpl: fixture.spawnImpl,
+  });
+  assert.equal(lease.kind, "job-object");
+  assert.equal(lease.helperPid, 42421);
+  const pending = [];
+  fixture.onRequest((message) => {
+    pending.push(message);
+    if (pending.length < 2) return;
+    fixture.child.stdout.write('not-json\n');
+    fixture.child.stdout.write('{"id":"not-our-request","ok":true}\n');
+    // Explicitly return replies in reverse order, never matching the wrong request.
+    const [assign, status] = pending;
+    assert.equal(assign.op, "assign");
+    assert.equal(status.op, "status");
+    assert.equal(assign.pid, 421);
+    fixture.child.stdout.write(JSON.stringify({ id: status.id, ok: true, activeProcesses: 2 }) + "\n");
+    fixture.child.stdout.write(JSON.stringify({ id: assign.id, ok: true, assigned: true }) + "\n");
+  });
+  const [assigned, status] = await Promise.all([lease.assign(421), lease.status()]);
+  assert.equal(assigned.assigned, true);
+  assert.equal(status.activeProcesses, 2);
+  assert.equal(pending.length, 2);
+});
+
+test("Windows Job Object propagates bounded helper failures, refuses invalid PID and exit codes without IPC", async () => {
+  const fixture = makeJobHelperFixture();
+  const lease = await createWindowsJobObjectLease({
+    platform: "win32", helperPath: "C:\\Owned\\job-helper.exe", spawnImpl: fixture.spawnImpl,
+  });
+  const requests = [];
+  fixture.onRequest((message) => {
+    requests.push(message);
+    fixture.child.stdout.write(JSON.stringify({ id: message.id, ok: false, error: "helper refused operation" }) + "\n");
+  });
+  for (const pid of [0, -1, 1.5, "777", undefined]) {
+    await assert.rejects(lease.assign(pid), /positive PID/u);
+  }
+  for (const exitCode of [-1, 0x1_0000_0000, 1.5, "9"]) {
+    await assert.rejects(lease.terminate(exitCode), /exit code is invalid/u);
+  }
+  assert.deepEqual(requests, []);
+  await assert.rejects(lease.assign(123), /helper refused operation/u);
+  await assert.rejects(lease.terminate(137), /helper refused operation/u);
+  assert.deepEqual(requests.map(({ op }) => op), ["assign", "terminate"]);
+  assert.deepEqual([requests[0].pid, requests[1].exitCode], [123, 137]);
+});
+
+test("Windows Job Object input stream errors reject pending requests and subsequent operations fail closed", async () => {
+  const fixture = makeJobHelperFixture();
+  const lease = await createWindowsJobObjectLease({
+    platform: "win32", helperPath: "C:\\Owned\\job-helper.exe", spawnImpl: fixture.spawnImpl,
+  });
+  let requests = 0;
+  fixture.onRequest(() => {
+    requests++;
+    fixture.child.stdin.emit("error", new Error("owned pipe broken"));
+  });
+  await assert.rejects(lease.status(), /helper input failed: owned pipe broken/u);
+  await assert.rejects(lease.status(), /helper is not available/u);
+  assert.equal(requests, 1, "failed delivery must not be retried");
+});

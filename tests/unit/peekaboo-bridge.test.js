@@ -188,3 +188,66 @@ test("transport errors, oversized inputs and oversized downstream results are gu
     /2 MB/u,
   );
 });
+
+test("Peekaboo refuses symbolic links and non-executable overrides rather than using PATH binaries",async t=>{
+  const root=await fs.mkdtemp(path.join(os.tmpdir(),"equinox-peekaboo-untrusted-"));
+  t.after(()=>fs.rm(root,{recursive:true,force:true}));
+  const regular=path.join(root,"regular");
+  const link=path.join(root,"link");
+  await fs.writeFile(regular,"not executable",{mode:0o600});
+  await fs.symlink(regular,link);
+  for(const configured of [regular,link,"relative-peekaboo"]){
+    await assert.rejects(resolvePeekabooBinary({
+      EQUINOX_PEEKABOO_PATH:configured,PATH:root,
+    }),/pinned Peekaboo runtime is unavailable/u);
+  }
+  assert.equal((await fs.lstat(link)).isSymbolicLink(),true);
+  assert.equal((await fs.stat(regular)).mode&0o111,0);
+});
+
+test("Peekaboo safe environment removes external code-injection variables and ignores oversized allowlisted fields",()=>{
+  const unsafe={
+    HOME:"/synthetic/home",USER:"fixture",NODE_OPTIONS:"--require /tmp/unsafe",
+    DYLD_INSERT_LIBRARIES:"/tmp/unsafe",LD_PRELOAD:"/tmp/unsafe",HTTP_PROXY:"http://fake.invalid",
+    ANTHROPIC_API_KEY:"synthetic-private",EQUINOX_PEEKABOO_PATH:"/synthetic/pinned",
+    PATH:"/synthetic/bin",LANG:"x".repeat(10001),TMPDIR:37,
+  };
+  const safe=buildSafePeekabooEnvironment(unsafe);
+  assert.equal(safe.HOME,"/synthetic/home");
+  for(const key of ["NODE_OPTIONS","DYLD_INSERT_LIBRARIES","LD_PRELOAD","HTTP_PROXY",
+    "ANTHROPIC_API_KEY","EQUINOX_PEEKABOO_PATH","LANG","TMPDIR"]){
+    assert.equal(Object.hasOwn(safe,key),false,key);
+  }
+  assert.equal(safe.NO_COLOR,"1");
+  assert.equal(safe.CLICOLOR,"0");
+  assert.equal(safe.PEEKABOO_ALLOW_TOOLS,PEEKABOO_ALLOWED_TOOLS.join(","));
+});
+
+test("Peekaboo rejects unsafe traversal, excessive text and non-JSON argument objects before desktop use",()=>{
+  for(const [tool,args] of [
+    ["see",{max_depth:0}],["inspect_ui",{max_children:2001}],
+    ["see",{max_elements:5001}],["sleep",{duration:-1}],
+    ["sleep",{duration:3.5}],["dialog",{text:"a".repeat(20001)}],
+    ["paste",{text:"a".repeat(20001)}],["type",{text:"\u0000"}],
+  ])assert.throws(()=>normalizePeekabooArguments(tool,args),Error);
+  assert.throws(()=>normalizePeekabooArguments("click",[]),/JSON nesnesi/u);
+  assert.throws(()=>normalizePeekabooArguments("click",Object.create(null)),/JSON nesnesi/u);
+  assert.throws(()=>normalizePeekabooArguments("click",{nested:BigInt(9)}),TypeError);
+  assert.throws(()=>normalizePeekabooArguments("agent",{}),/allowlist/u);
+});
+
+test("Peekaboo permission denial and ambiguous mutations never authorize a blind retry",()=>{
+  for(const tool of ["see","inspect_ui","window","menu","click","drag","press","paste","set_value","verify_state"]){
+    assert.throws(()=>__test.assertPermissionState(tool,{screenRecording:false,accessibility:false}),/izni gerekli/u);
+  }
+  assert.throws(()=>__test.assertPermissionState("capture",{screenRecording:false,accessibility:true}),/Screen Recording/u);
+  assert.doesNotThrow(()=>__test.assertPermissionState("capture",{screenRecording:true,accessibility:false}));
+  const uncertain={isError:true,content:[{type:"text",text:
+    "Action did not return a confirmed outcome; follow canonical escalation metadata"}]};
+  const outcome=__test.normalizePeekabooAmbiguousOutcomeResult(uncertain);
+  assert.equal(uncertain.isError,true);
+  assert.equal(outcome.isError,false);
+  assert.match(outcome.content[0].text,/Do not retry blindly/u);
+  assert.equal(__test.isPeekabooTransportError(new Error("not connected")),true);
+  assert.equal(__test.isPeekabooTransportError(new Error("button not found")),false);
+});

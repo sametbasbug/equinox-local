@@ -1964,3 +1964,104 @@ test("Agent Browser shutdown is agent-only and never routes through the extensio
   assert.equal(shutdownCalls, 1);
   assert.deepEqual(harness.calls, []);
 });
+
+test("simultaneous Your Browser and Agent Browser calls retain exact independent bridge contexts and lock ownership",async()=>{
+  const harness=makeHarness();
+  const locks=[];
+  const waiting=[];
+  harness.deps.withMutationLocks=async(scopes,task)=>{
+    locks.push([...scopes]);
+    return task();
+  };
+  harness.bridge.call=async(method,args,options)=>{
+    harness.calls.push({method,args,options});
+    if(method==="open"&&String(args.url).includes("/slow"))await new Promise(resolve=>waiting.push(resolve));
+    return {method,args};
+  };
+  await registerEquinoxBrowserTools(harness.deps);
+  const open=harness.tools.get("equinox_browser_open").handler;
+  const userSlow=open({target:"user",url:"https://example.test/slow"});
+  for(let i=0;i<12&&!waiting.length;i++)await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(waiting.length,1);
+  const agent=await open({target:"agent",url:"https://example.test/agent"});
+  const agentSnapshot=parseTextResult(agent);
+  assert.equal(agentSnapshot.args.url,"https://example.test/agent");
+  waiting[0]();
+  await userSlow;
+  const opens=harness.calls.filter(x=>x.method==="open");
+  assert.equal(opens.length,2);
+  assert.deepEqual(opens.map(x=>[x.args.url,x.options.context]),[
+    ["https://example.test/slow","user"],
+    ["https://example.test/agent","agent"],
+  ]);
+  assert.ok(locks.some(x=>x.includes("browser:user")));
+  assert.ok(locks.some(x=>x.includes("browser:agent")));
+});
+
+test("personal Your Browser never receives Agent bookmark or Agent process shutdown tools",async()=>{
+  const harness=makeHarness();
+  let shutdowns=0,agentStart=0;
+  harness.deps.shutdownAgentBrowser=async()=>{shutdowns++;return {stopped:true}};
+  harness.deps.ensureAgentBrowserReady=async()=>{agentStart++;return {ready:true}};
+  await registerEquinoxBrowserTools(harness.deps);
+  const checks=[
+    ["equinox_browser_bookmarks_list",{parent_id:"0"}],
+    ["equinox_browser_bookmarks_search",{query:"private"}],
+    ["equinox_browser_bookmark_add",{url:"https://example.test",title:"X"}],
+    ["equinox_browser_bookmark_folder_create",{title:"Private"}],
+    ["equinox_browser_bookmark_update_move",{id:"1",title:"Changed"}],
+    ["equinox_browser_bookmark_remove",{id:"1"}],
+    ["equinox_browser_shutdown",{}],
+  ];
+  for(const [name,args] of checks){
+    const result=await harness.tools.get(name).handler({target:"user",...args});
+    assert.equal(result.isError,true,name);
+    assert.match(result.content[0].text,/yalnız Agent Browser/u,name);
+  }
+  assert.deepEqual(harness.calls,[]);
+  assert.equal(shutdowns,0);
+  assert.equal(agentStart,0);
+});
+
+test("Your Browser bridge outage does not silently retry or switch to Agent Browser",async()=>{
+  const harness=makeHarness();
+  let agentStarts=0;
+  harness.deps.ensureAgentBrowserReady=async()=>{agentStarts++;return {ready:true}};
+  harness.bridge.readyFor=context=>context==="agent";
+  harness.bridge.call=async(method,args,options)=>{
+    harness.calls.push({method,args,options});
+    if(options?.context==="user")throw new Error("Synthetic user profile not connected");
+    return {method,args};
+  };
+  await registerEquinoxBrowserTools(harness.deps);
+  const rejected=await harness.tools.get("equinox_browser_tabs").handler({target:"user"});
+  assert.equal(rejected.isError,true);
+  assert.match(rejected.content[0].text,/not connected/u);
+  assert.deepEqual(harness.calls.map(x=>x.options?.context),["user"]);
+  assert.equal(agentStarts,0);
+  const agent=await harness.tools.get("equinox_browser_tabs").handler({target:"agent"});
+  assert.equal(agent.isError,undefined);
+  assert.deepEqual(harness.calls.map(x=>x.options?.context),["user","agent"]);
+});
+
+test("browser download tool rejects foreign Chrome ID and unsafe download before accessing a local file path",async()=>{
+  for(const [download,expected] of [
+    [{id:999,state:"complete",danger:"safe",filename:"/synthetic/private/foreign.txt"},/doğrulanamadı/u],
+    [{id:5,createdSequence:1,state:"complete",danger:"safe",filename:"/synthetic/private/foreign.txt"},/sequence kaydı doğrulanamadı/u],
+    [{id:5,state:"complete",danger:"dangerous_url",filename:"/synthetic/private/foreign.txt"},/güvenli kabul edilmedi/u],
+  ]){
+    const harness=makeHarness();
+    harness.bridge.call=async(method,args,options)=>{
+      harness.calls.push({method,args,options});
+      return {downloadLifecycleVersion:1,download};
+    };
+    await registerEquinoxBrowserTools(harness.deps);
+    const args=download.id===999?{download_id:5}:download.createdSequence?{since_sequence:1}:{download_id:5};
+    const result=await harness.tools.get("equinox_browser_download_wait").handler(args);
+    assert.equal(result.isError,true);
+    assert.match(result.content[0].text,expected);
+    assert.equal(result.content[0].text.includes("/synthetic/private/"),false);
+    assert.deepEqual(harness.calls.map(x=>x.method),["downloads.wait"]);
+    assert.deepEqual(harness.calls.map(x=>x.options?.context),["agent"]);
+  }
+});

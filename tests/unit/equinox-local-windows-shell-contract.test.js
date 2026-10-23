@@ -350,7 +350,7 @@ test("Windows shell exposes one origin-bound native folder picker bridge", async
   assert.match(client, /window\.chrome\?\.webview/u);
   assert.match(client, /pickLocalFolder/u);
   assert.match(client, /equinox-folder-picker-result/u);
-  assert.ok(client.includes(`if (/^[A-Za-z]:[\\\\/](?!$)/u.test(value)) return true;`));
+  assert.ok(client.includes(`if (/^[A-Za-z]:[\\\\/](?!$)/u.test(value))`));
 });
 
 test("Windows shell branding reuses canonical Equinox artwork across window, executable and tray", async () => {

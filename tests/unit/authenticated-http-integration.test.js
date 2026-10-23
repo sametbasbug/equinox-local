@@ -719,3 +719,94 @@ test("body-external response bindings assemble the request before fetch and reda
     assert.equal(verified.headers.etag, "[REDACTED]");
   });
 });
+
+test("HTTP private store symlink is rejected without reading or replacing its external file",async()=>{
+  await withTempStore(async({root,storePath})=>{
+    await fs.mkdir(path.dirname(storePath),{recursive:true});
+    const foreign=path.join(root,"foreign-sentinel");
+    await fs.writeFile(foreign,"synthetic-external-data");
+    await fs.symlink(foreign,storePath);
+    await assert.rejects(getAuthenticatedHttpProfiles({storePath}),Error);
+    await assert.rejects(upsertAuthenticatedHttpProfileFromAgent({profile:baseProfile(),storePath}),Error);
+    assert.equal((await fs.lstat(storePath)).isSymbolicLink(),true);
+    assert.equal(await fs.readFile(foreign,"utf8"),"synthetic-external-data");
+  });
+});
+
+test("HTTP request validation blocks invalid method, path, reserved headers, and query before fetch",async()=>{
+  await withTempStore(async({storePath})=>{
+    await readyProfile(storePath);
+    let requests=0;
+    const fakeFetch=async()=>{requests++;throw Error("unexpected network")};
+    for(const options of [
+      {path:"//other.example/posts"},
+      {path:"/posts%2fprivate"},
+      {path:"/posts/%252e%252e/hidden"},
+      {path:"/postscript"},
+      {method:"PUT"},
+      {method:"GET",body:{example:true}},
+      {headers:{Authorization:"invalid"}},
+      {headers:{"X-Forwarded-Host":"example.invalid"}},
+      {query:{page:Infinity}},
+    ]){
+      await assert.rejects(authenticatedHttpRequest({
+        profileId:"moltbook",method:"GET",path:"/posts",storePath,fetchImpl:fakeFetch,...options,
+      }),Error);
+      assert.equal(requests,0);
+    }
+  });
+});
+
+test("HTTP transport failures do not expose private credentials or raw provider error messages",async()=>{
+  await withTempStore(async({storePath})=>{
+    await readyProfile(storePath);
+    for(const type of ["AbortError","Error"]){
+      let fetchCount=0;
+      await assert.rejects(authenticatedHttpRequest({
+        profileId:"moltbook",method:"GET",path:"/posts",storePath,
+        fetchImpl:async(_url,init)=>{
+          fetchCount++;
+          assert.equal(init.headers.authorization,"Bearer "+SECRET);
+          assert.equal(init.redirect,"error");
+          assert.equal(init.credentials,"omit");
+          const error=new Error("synthetic-provider-error-"+SECRET);
+          error.name=type;
+          throw error;
+        },
+      }),error=>{
+        assert.match(error.message,type==="AbortError"?/timed out after/u:/failed before a response/u);
+        assert.equal(error.message.includes(SECRET),false);
+        assert.equal(error.message.includes("synthetic-provider-error"),false);
+        return true;
+      });
+      assert.equal(fetchCount,1);
+    }
+  });
+});
+
+test("HTTP trust identity change clears persisted credential and cached opaque response references",async()=>{
+  await withTempStore(async({storePath})=>{
+    await readyProfile(storePath,{allowedMethods:["POST"]});
+    const responseStore=createAuthenticatedHttpResponseReferenceStore();
+    const result=await authenticatedHttpRequest({
+      profileId:"moltbook",method:"POST",path:"/posts",body:{fixture:true},storePath,responseStore,
+      fetchImpl:async()=>new Response(JSON.stringify({code:"synthetic-opaque"}),{
+        status:200,headers:{"content-type":"application/json"},
+      }),
+    });
+    assert.ok(result.responseId);
+    assert.equal(responseStore.snapshot().entries,1);
+    const changed=await upsertAuthenticatedHttpProfileFromControlCenter({
+      profile:baseProfile({origin:"https://api.example.invalid",allowedMethods:["POST"]}),
+      storePath,responseStore,
+    });
+    assert.equal(changed.needsCredential,true);
+    assert.equal(responseStore.snapshot().entries,0);
+    let fetchCount=0;
+    await assert.rejects(authenticatedHttpRequest({
+      profileId:"moltbook",method:"POST",path:"/posts",storePath,
+      fetchImpl:async()=>{fetchCount++;throw Error("unexpected fetch")},
+    }),/needs a credential/u);
+    assert.equal(fetchCount,0);
+  });
+});

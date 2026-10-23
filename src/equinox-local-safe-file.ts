@@ -1,0 +1,298 @@
+import { createHash } from "node:crypto";
+import { constants as fsConstants } from "node:fs";
+import fs from "node:fs/promises";
+import path from "node:path";
+import type { Stats } from "node:fs";
+
+type ReadFilesystem = Pick<typeof fs, "open" | "lstat">;
+type WriteFilesystem = ReadFilesystem & Pick<typeof fs, "stat" | "link" | "unlink" | "rename" | "rm">;
+
+type ReadOptions = {
+  fsImpl?: ReadFilesystem;
+  platform?: string;
+  minBytes?: number;
+  maxBytes?: number;
+  encoding?: "utf8" | null;
+  label?: string;
+  requireSingleLink?: boolean;
+};
+type WriteOptions = {
+  content: unknown;
+  expectedSha256?: unknown;
+  fsImpl?: WriteFilesystem;
+  maxBytes?: number;
+  maxExistingBytes?: number;
+  label?: string;
+};
+type ReadResult<Data> = Readonly<{ data: Data; stat: Stats }>;
+
+function hasErrorCode(error: unknown, code: string): boolean {
+  return error !== null && (typeof error === "object" || typeof error === "function") &&
+    "code" in error && error.code === code;
+}
+
+
+export const SAFE_FILE_ERROR_CODES = Object.freeze({
+  notNormal: "EQUINOX_SAFE_FILE_NOT_NORMAL",
+  tooSmall: "EQUINOX_SAFE_FILE_TOO_SMALL",
+  tooLarge: "EQUINOX_SAFE_FILE_TOO_LARGE",
+});
+
+function safeFileError(message: string, code: string) {
+  return Object.assign(new Error(message), { code });
+}
+
+function validateBounds(minBytes: number, maxBytes: number | undefined): asserts maxBytes is number {
+  if (!Number.isInteger(minBytes) || minBytes < 0) {
+    throw new Error("Safe file minimum byte bound must be a non-negative integer.");
+  }
+  if (!Number.isInteger(maxBytes) || maxBytes === undefined || maxBytes < 1 || maxBytes < minBytes) {
+    throw new Error("Safe file maximum byte bound must be a positive integer not smaller than the minimum.");
+  }
+}
+
+export function readBoundedNormalFile(filePath: unknown, options: ReadOptions & { encoding: "utf8" }): Promise<ReadResult<string>>;
+export function readBoundedNormalFile(filePath: unknown, options: ReadOptions & { encoding?: null }): Promise<ReadResult<Buffer>>;
+export function readBoundedNormalFile(filePath: unknown, options: ReadOptions): Promise<ReadResult<string | Buffer>>;
+export async function readBoundedNormalFile(filePath: unknown, {
+  fsImpl = fs,
+  platform = process.platform,
+  minBytes = 0,
+  maxBytes,
+  encoding = null,
+  label = "File",
+  requireSingleLink = false,
+}: ReadOptions = {}): Promise<ReadResult<string | Buffer>> {
+  if (typeof filePath !== "string" || !filePath) {
+    throw new Error(`${label} path must be non-empty text.`);
+  }
+  validateBounds(minBytes, maxBytes);
+  if (encoding !== null && encoding !== "utf8") {
+    throw new Error("Safe file reads support only raw bytes or UTF-8 text.");
+  }
+  const hasNoFollow = Number.isInteger(fsConstants.O_NOFOLLOW);
+  if (platform !== "win32" && !hasNoFollow) {
+    throw new Error("This platform does not provide O_NOFOLLOW for safe file reads.");
+  }
+
+  let expectedIdentity: Readonly<{ dev: number; ino: number }> | null = null;
+  if (platform === "win32") {
+    const before = await fsImpl.lstat(filePath);
+    if (before.isSymbolicLink() || !before.isFile()) {
+      throw safeFileError(`${label} must be a normal, non-symlink file.`, SAFE_FILE_ERROR_CODES.notNormal);
+    }
+    if (before.dev === undefined || before.ino === undefined || (before.dev === 0 && before.ino === 0)) {
+      throw safeFileError(`${label} file identity could not be verified safely.`, SAFE_FILE_ERROR_CODES.notNormal);
+    }
+    expectedIdentity = Object.freeze({ dev: before.dev, ino: before.ino });
+  }
+
+  const flags = platform === "win32"
+    ? fsConstants.O_RDONLY
+    : fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW;
+  let handle;
+  try {
+    handle = await fsImpl.open(filePath, flags);
+  } catch (error) {
+    if (hasErrorCode(error, "ELOOP")) {
+      throw safeFileError(`${label} must be a normal, non-symlink file.`, SAFE_FILE_ERROR_CODES.notNormal);
+    }
+    throw error;
+  }
+
+  try {
+    const stat = await handle.stat();
+    if (!stat.isFile() || (requireSingleLink && stat.nlink !== 1)) {
+      throw safeFileError(`${label} must be an exclusive, normal file.`, SAFE_FILE_ERROR_CODES.notNormal);
+    }
+    if (expectedIdentity && (stat.dev !== expectedIdentity.dev || stat.ino !== expectedIdentity.ino)) {
+      throw safeFileError(`${label} changed while it was being opened.`, SAFE_FILE_ERROR_CODES.notNormal);
+    }
+    if (stat.size < minBytes) {
+      throw safeFileError(`${label} is smaller than the allowed minimum.`, SAFE_FILE_ERROR_CODES.tooSmall);
+    }
+    if (stat.size > maxBytes) {
+      throw safeFileError(`${label} exceeds the allowed size.`, SAFE_FILE_ERROR_CODES.tooLarge);
+    }
+
+    const chunks: Buffer[] = [];
+    let total = 0;
+    let position = 0;
+    while (total <= maxBytes) {
+      const remaining = maxBytes + 1 - total;
+      if (remaining <= 0) break;
+      const chunk = Buffer.allocUnsafe(Math.min(64 * 1024, remaining));
+      const { bytesRead } = await handle.read(chunk, 0, chunk.length, position);
+      if (bytesRead === 0) break;
+      chunks.push(chunk.subarray(0, bytesRead));
+      total += bytesRead;
+      position += bytesRead;
+      if (total > maxBytes) break;
+    }
+
+    if (total < minBytes) {
+      throw safeFileError(`${label} became smaller than the allowed minimum while being read.`, SAFE_FILE_ERROR_CODES.tooSmall);
+    }
+    if (total > maxBytes) {
+      throw safeFileError(`${label} exceeded the allowed size while being read.`, SAFE_FILE_ERROR_CODES.tooLarge);
+    }
+
+    const buffer = Buffer.concat(chunks, total);
+    return Object.freeze({
+      data: encoding === "utf8" ? buffer.toString("utf8") : buffer,
+      stat,
+    });
+  } finally {
+    await handle.close().catch(() => {});
+  }
+}
+
+export async function writeBoundedUtf8File(filePath: unknown, {
+  content,
+  expectedSha256,
+  fsImpl = fs,
+  maxBytes = 512 * 1024,
+  maxExistingBytes = 10 * 1024 * 1024,
+  label = "File",
+}: WriteOptions) {
+  if (typeof filePath !== "string" || !filePath) {
+    throw new Error(`${label} path must be non-empty text.`);
+  }
+  if (typeof content !== "string" || content.includes("\0")) {
+    throw new Error(`${label} content must be UTF-8 text without NUL characters.`);
+  }
+  if (!Number.isInteger(maxBytes) || maxBytes < 1) {
+    throw new Error("Safe file maximum byte bound must be a positive integer.");
+  }
+  if (!Number.isInteger(maxExistingBytes) || maxExistingBytes < 1) {
+    throw new Error("Safe existing-file byte bound must be a positive integer.");
+  }
+
+  const bytes = Buffer.byteLength(content, "utf8");
+  if (bytes > maxBytes) {
+    throw safeFileError(`${label} exceeds the allowed size.`, SAFE_FILE_ERROR_CODES.tooLarge);
+  }
+
+  const parentPath = path.dirname(filePath);
+  const baseName = path.basename(filePath);
+  const parentStat = await fsImpl.stat(parentPath);
+  if (!parentStat.isDirectory()) {
+    throw new Error(`${label} parent path must be a directory.`);
+  }
+
+  let existing = null;
+  try {
+    existing = await fsImpl.lstat(filePath);
+  } catch (error) {
+    if (!hasErrorCode(error, "ENOENT")) throw error;
+  }
+
+  let previousSha256: string | null = null;
+  let validatedExpectedSha256: string | null = null;
+  let mode = 0o644;
+  if (existing) {
+    if (existing.isSymbolicLink() || !existing.isFile()) {
+      throw safeFileError(
+        `${label} must be a normal, non-symlink file.`,
+        SAFE_FILE_ERROR_CODES.notNormal,
+      );
+    }
+    if (typeof expectedSha256 !== "string" || !/^[a-fA-F0-9]{64}$/u.test(expectedSha256)) {
+      throw new Error(`${label} replacement requires expectedSha256.`);
+    }
+    if (existing.size > maxExistingBytes) {
+      throw safeFileError(`${label} exceeds the allowed replacement size.`, SAFE_FILE_ERROR_CODES.tooLarge);
+    }
+    validatedExpectedSha256 = expectedSha256.toLowerCase();
+    const current = await readBoundedNormalFile(filePath, {
+      fsImpl,
+      maxBytes: maxExistingBytes,
+      label,
+    });
+    previousSha256 = createHash("sha256").update(current.data).digest("hex");
+    if (previousSha256 !== validatedExpectedSha256) {
+      throw new Error(
+        `${label} SHA-256 guard mismatch. Expected: ${validatedExpectedSha256} Current: ${previousSha256}`,
+      );
+    }
+    mode = existing.mode & 0o777;
+  } else if (expectedSha256 !== undefined) {
+    throw new Error(`${label} does not exist; expectedSha256 is only valid for replacement.`);
+  }
+
+  const temporaryPath = path.join(
+    parentPath,
+    `.${baseName}.equinox-write-${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+  );
+  let temporaryCreated = false;
+  let originalTemporary: Readonly<{ dev: number; ino: number }> | null = null;
+  const assertOriginal = async (candidate: string, expectedLinks: number): Promise<void> => {
+    const current = await fsImpl.lstat(candidate);
+    if (!originalTemporary || !current.isFile() || current.isSymbolicLink() ||
+        current.nlink !== expectedLinks ||
+        current.dev !== originalTemporary.dev || current.ino !== originalTemporary.ino) {
+      throw safeFileError(`${label} temporary file changed from its original inode.`, SAFE_FILE_ERROR_CODES.notNormal);
+    }
+  };
+  try {
+    const handle = await fsImpl.open(temporaryPath, "wx", mode);
+    temporaryCreated = true;
+    try {
+      const created = await handle.stat();
+      if (!created.isFile() || created.nlink !== 1 ||
+          (process.platform === "win32" && created.dev === 0 && created.ino === 0)) {
+        throw safeFileError(`${label} temporary file has no exclusive original inode.`, SAFE_FILE_ERROR_CODES.notNormal);
+      }
+      originalTemporary = { dev: created.dev, ino: created.ino };
+      await handle.writeFile(content, { encoding: "utf8" });
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
+    // Checking a replacement pathname's mode/length alone does not prove it
+    // is the inode we opened, wrote and synced. Protect both create and CAS.
+    await assertOriginal(temporaryPath, 1);
+    if (!existing) {
+      // Publish creates with no-clobber semantics. link() fails with EEXIST if
+      // another writer created the destination after our initial lstat.
+      await fsImpl.link(temporaryPath, filePath);
+      await assertOriginal(filePath, 2);
+      await fsImpl.unlink(temporaryPath);
+      temporaryCreated = false;
+    } else {
+      const current = await readBoundedNormalFile(filePath, {
+        fsImpl,
+        maxBytes: maxExistingBytes,
+        label,
+      });
+      const currentSha256 = createHash("sha256").update(current.data).digest("hex");
+      if (currentSha256 !== validatedExpectedSha256) {
+        throw new Error(
+          `${label} SHA-256 guard changed before replacement. Expected: ${validatedExpectedSha256} Current: ${currentSha256}`,
+        );
+      }
+      await assertOriginal(temporaryPath, 1);
+      await fsImpl.rename(temporaryPath, filePath);
+      temporaryCreated = false;
+      await assertOriginal(filePath, 1);
+    }
+  } finally {
+    if (temporaryCreated && originalTemporary) {
+      // Never delete a foreign file substituted at the temp pathname while
+      // we were writing. Ambiguous/linked files remain for owner recovery.
+      const current = await fsImpl.lstat(temporaryPath).catch(() => null);
+      if (current?.isFile() && !current.isSymbolicLink() && current.nlink === 1 &&
+          current.dev === originalTemporary.dev && current.ino === originalTemporary.ino) {
+        await fsImpl.unlink(temporaryPath).catch(() => {});
+      }
+    }
+  }
+
+  return Object.freeze({
+    created: !existing,
+    replaced: Boolean(existing),
+    previousSha256,
+    sha256: createHash("sha256").update(content, "utf8").digest("hex"),
+    bytes,
+  });
+}

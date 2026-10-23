@@ -611,3 +611,92 @@ test("real managed process produces output and exits", async () => {
   await manager.shutdown();
   assert.fail("Gerçek süreç zamanında kapanmadı.");
 });
+
+test("process manager refuses malformed command, arguments and ports before starting any child", async () => {
+  let spawned = 0;
+  const manager = createProcessManager({
+    spawnImpl: () => { spawned++; throw new Error("unexpected synthetic child"); },
+    randomId: () => "reject01",
+  });
+  const base = { projectId: "fixture", projectName: "Fixture", cwd: "/synthetic",
+    command: "fake-program", args: ["ok"] };
+  for (const overrides of [
+    { command: "" }, { args: ["ok", 17] }, { purpose: "unauthorized" },
+    { expectedPorts: [0] }, { expectedPorts: [65536] },
+    { expectedPorts: [4321, 3.5] },
+  ]) {
+    await assert.rejects(manager.start({ ...base, ...overrides }), Error);
+    assert.equal(spawned, 0);
+    assert.deepEqual(manager.list(), []);
+  }
+});
+
+test("Windows gate attachment failure kills the fake child, closes the owned set and never admits a session", async () => {
+  const child = makeFakeProcess(5100);
+  child.stdin = new PassThrough();
+  let closeCount = 0;
+  const effects = [];
+  const lease = { syntheticLease: "owned-only" };
+  const manager = createProcessManager({
+    platform: "win32", arch: "x64",
+    ownershipAdapter: {
+      kind: "job-object", implemented: true, detached: false,
+      async createOwnedSet() { effects.push("create"); return lease; },
+      spawnSpec(command, args, env) {
+        effects.push("spec"); return { command, args, env, stdin: "pipe" };
+      },
+      async attachAndRelease() { effects.push("attach"); throw new Error("synthetic gate rejected"); },
+      async closeOwnedSet(value) { assert.equal(value, lease); closeCount++; effects.push("close"); },
+      async ownedSetExists() { return false; },
+      async signalOwnedSet() { effects.push("signal"); },
+    },
+    spawnImpl: () => { effects.push("spawn"); return child; },
+  });
+  await assert.rejects(manager.start({
+    projectId: "fixture", projectName: "Fixture", cwd: "C:\\Synthetic",
+    command: "synthetic.exe", args: [],
+  }), /Süreç başlatılamadı: synthetic gate rejected/u);
+  assert.equal(child.killCalls.length, 1);
+  assert.equal(closeCount, 1);
+  assert.deepEqual(effects, ["create", "spec", "spawn", "attach", "close"]);
+  assert.deepEqual(manager.list(), []);
+});
+
+test("process manager never signals an unowned leader after leader exit if the owned group cannot be signalled", async () => {
+  const child = makeFakeProcess(5101);
+  const effects = [];
+  let groupAlive = true;
+  const manager = createProcessManager({
+    spawnImpl: () => child,
+    groupExistsImpl: () => groupAlive,
+    killImpl: (pid, signal) => {
+      effects.push([pid, signal]);
+      throw new Error("synthetic group signal refused");
+    },
+    groupPollMs: 5,
+    randomId: () => "ownedgrp",
+  });
+  const started = await manager.start({
+    projectId: "fixture", projectName: "Fixture", cwd: "/synthetic",
+    command: "fake-program", args: [],
+  });
+  child.emit("exit", 0, null);
+  await new Promise(resolve => setImmediate(resolve));
+  await assert.rejects(manager.stop({ processId: started.processId }), /Süreç grubuna sinyal gönderilemedi/u);
+  assert.deepEqual(effects, [[-5101, "SIGTERM"]]);
+  assert.deepEqual(child.killCalls, []);
+  assert.equal(manager.list()[0].running, true);
+  groupAlive = false;
+  child.stdout.end(); child.stderr.end(); child.emit("close", 0, null);
+  await manager.waitForExit({ processId: started.processId, waitMs: 150 });
+  assert.equal(manager.list()[0].running, false);
+});
+
+test("TCP port probe rejects invalid port without creating a socket", async () => {
+  let connections = 0;
+  const createConnectionImpl = () => { connections++; throw new Error("synthetic unexpected socket"); };
+  for (const port of [0, -1, 65536, 2.5, NaN]) {
+    await assert.rejects(probeTcpPort({ port, createConnectionImpl }), /Geçersiz TCP portu/u);
+    assert.equal(connections, 0);
+  }
+});

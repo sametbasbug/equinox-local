@@ -1,0 +1,7 @@
+# Emitted TypeScript runtime/tooling/Browser JavaScript must stay byte-identical
+# across Windows (core.autocrlf=true) and macOS/Linux checkouts.
+*.js text eol=lf
+*.mjs text eol=lf
+# TypeScript template literal line endings are copied verbatim into emitted JS.
+*.ts text eol=lf
+*.mts text eol=lf

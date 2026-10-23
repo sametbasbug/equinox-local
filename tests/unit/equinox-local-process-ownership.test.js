@@ -64,3 +64,99 @@ test("Darwin terminal ownership preserves POSIX-session/TTY cleanup signals", ()
   assert.equal(adapter.gracefulSignal, "SIGHUP");
   assert.equal(adapter.forceSignal, "SIGKILL");
 });
+
+test("Windows background ownership refuses an absent or invalid PID before assigning or releasing the process", async () => {
+  const adapter = createBackgroundProcessOwnershipAdapter({ platform: "win32", arch: "x64" });
+  const calls = [];
+  const lease = {
+    assign: async (pid) => calls.push(["assign", pid]),
+  };
+  const child = {
+    pid: 100,
+    stdin: {
+      write: (value, callback) => { calls.push(["write", value]); callback(null); },
+      end: () => { calls.push(["end"]); },
+    },
+  };
+  for (const invalid of [undefined, null, 0, -3, 1.1, "123"]) {
+    await assert.rejects(adapter.attachAndRelease(lease, { ...child, pid: invalid }), /could not be attached before gate release/u);
+  }
+  await assert.rejects(adapter.attachAndRelease(null, child), /could not be attached/u);
+  assert.deepEqual(calls, []);
+  await adapter.attachAndRelease(lease, child);
+  assert.deepEqual(calls, [["assign", 100], ["write", "EQUINOX_GO\n"], ["end"]]);
+});
+
+test("Windows background ownership never releases a gate after failed Job Object assignment or failed stdin write", async () => {
+  const adapter = createBackgroundProcessOwnershipAdapter({ platform: "win32", arch: "arm64" });
+  const calls = [];
+  const child = {
+    pid: 141,
+    stdin: {
+      write: (value, callback) => { calls.push(["write", value]); callback(new Error("gate write refused")); },
+      end: () => calls.push(["end"]),
+    },
+  };
+  const rejectedLease = { assign: async (pid) => { calls.push(["assign-refused", pid]); throw new Error("assign refused"); } };
+  await assert.rejects(adapter.attachAndRelease(rejectedLease, child), /assign refused/u);
+  assert.deepEqual(calls, [["assign-refused", 141]]);
+  const acceptedLease = { assign: async (pid) => calls.push(["assign", pid]) };
+  await assert.rejects(adapter.attachAndRelease(acceptedLease, child), /gate write refused/u);
+  assert.deepEqual(calls, [["assign-refused", 141], ["assign", 141], ["write", "EQUINOX_GO\n"]]);
+});
+
+test("Windows owned sets refuse unowned signal operations and retain graceful/forced exit codes", async () => {
+  const adapters = [
+    createBackgroundProcessOwnershipAdapter({ platform: "win32", arch: "x64" }),
+    createTerminalProcessOwnershipAdapter({ platform: "win32", arch: "arm64" }),
+  ];
+  for (const adapter of adapters) {
+    await assert.rejects(adapter.signalOwnedSet(null, "SIGTERM"), /ownership handle is missing/u);
+    const codes = [];
+    const lease = {
+      status: async () => ({ activeProcesses: 2 }),
+      terminate: async (code) => codes.push(code),
+      close: async () => codes.push("closed"),
+    };
+    assert.equal(await adapter.ownedSetExists(null), false);
+    assert.equal(await adapter.ownedSetExists(lease), true);
+    await adapter.signalOwnedSet(lease, "SIGTERM");
+    await adapter.signalOwnedSet(lease, "SIGKILL");
+    await adapter.closeOwnedSet(lease);
+    await adapter.closeOwnedSet(null);
+    assert.deepEqual(codes, [143, 137, "closed"]);
+  }
+});
+
+test("Windows interactive terminal gate rejects arbitrary shell paths and assigns verified PID before writing release", async () => {
+  const adapter = createTerminalProcessOwnershipAdapter({ platform: "win32", arch: "x64" });
+  for (const shell of ["cmd.exe", "C:\\Windows\\System32\\cmd.exe", "/bin/zsh", "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\not-powershell.exe"]) {
+    assert.throws(() => adapter.spawnSpec(shell, ["-NoProfile"], { SystemRoot: "C:\\Windows" }), /absolute PowerShell executable/u);
+  }
+  const calls = [];
+  const ownedSet = { assign: async (pid) => calls.push(["assign", pid]) };
+  const terminal = {
+    pid: 942,
+    write: (value) => calls.push(["write", value]),
+  };
+  await assert.rejects(adapter.attachAndRelease(null, terminal), /before gate release/u);
+  await assert.rejects(adapter.attachAndRelease(ownedSet, null), /before gate release/u);
+  assert.deepEqual(calls, []);
+  assert.equal(await adapter.attachAndRelease(ownedSet, terminal), 942);
+  assert.deepEqual(calls, [["assign", 942], ["write", "EQUINOX_GO\r"]]);
+  calls.length = 0;
+  const rejected = { assign: async (pid) => { calls.push(["assign-denied", pid]); throw new Error("assignment refused"); } };
+  await assert.rejects(adapter.attachAndRelease(rejected, terminal), /assignment refused/u);
+  assert.deepEqual(calls, [["assign-denied", 942]]);
+});
+
+test("Darwin and Windows reject unsupported host targets and do not claim absent process ownership", () => {
+  for (const options of [{ platform: "linux", arch: "x64" }, { platform: "win32", arch: "unsupported" }, { platform: "darwin", arch: "mips" }]) {
+    assert.throws(() => createBackgroundProcessOwnershipAdapter(options), /Unsupported Equinox Local release target/u);
+    assert.throws(() => createTerminalProcessOwnershipAdapter(options), /Unsupported Equinox Local release target/u);
+  }
+  for (const adapter of [null, undefined, {}, { kind: "job-object", implemented: false }]) {
+    assert.throws(() => assertProcessOwnershipImplemented(adapter, "background process execution"),
+      (error) => error?.code === "EQUINOX_PROCESS_OWNERSHIP_UNIMPLEMENTED");
+  }
+});

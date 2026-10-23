@@ -44,3 +44,65 @@ test('native worker witness rejects invalid tokens, transactions, and forbidden 
   await assert.rejects(startEquinoxWindowsMainWorkerProof({transactionId:id,workerToken:'bad',platform:'test',fixtureSocketPath:'/tmp/unused'}), /invalid/u);
   await assert.rejects(startEquinoxWindowsMainWorkerProof({transactionId:id,workerToken:token,platform:'win32',fixtureSocketPath:'/tmp/foreign'}), /invalid/u);
 });
+
+test('native worker witness rejects high-bit challenge bytes rather than authenticating lossy ASCII decoding', async t => {
+  const root=await fs.mkdtemp(path.join(os.tmpdir(),'win-worker-high-bit-'));
+  t.after(()=>fs.rm(root,{recursive:true,force:true}));
+  const socketPath=path.join(root,'proof.sock');
+  const witness=await startEquinoxWindowsMainWorkerProof({
+    transactionId:id,workerToken:token,platform:'test',fixtureSocketPath:socketPath,
+  });
+  t.after(()=>witness.close());
+  const bytes=Buffer.from('a'.repeat(64)+'\n','ascii');
+  bytes[0]|=0x80;
+  const result=await new Promise((resolve,reject)=>{
+    const socket=net.createConnection(socketPath);
+    let response='';
+    socket.on('connect',()=>socket.write(bytes));
+    socket.on('data',chunk=>response+=chunk.toString('ascii'));
+    socket.on('close',()=>resolve(response));
+    socket.on('error',reject);
+  });
+  assert.equal(result,'');
+});
+
+test('native worker witness accepts exact chunked 64-hex challenge and rejects malformed nonce suffix', async t=>{
+  const root=await fs.mkdtemp(path.join(os.tmpdir(),'win-worker-chunks-'));
+  t.after(()=>fs.rm(root,{recursive:true,force:true}));
+  const socketPath=path.join(root,'proof.sock');
+  const witness=await startEquinoxWindowsMainWorkerProof({
+    transactionId:id,workerToken:token,platform:'test',fixtureSocketPath:socketPath,
+  });
+  t.after(()=>witness.close());
+  const challenge='c'.repeat(64);
+  const result=await new Promise((resolve,reject)=>{
+    const socket=net.createConnection(socketPath);
+    let response='';
+    socket.on('connect',()=>{socket.write(challenge.slice(0,27));socket.write(challenge.slice(27)+'\n');});
+    socket.on('data',chunk=>response+=chunk.toString('ascii'));
+    socket.on('end',()=>resolve(response));
+    socket.on('error',reject);
+  });
+  const expected=createHmac('sha256',Buffer.from(token,'hex')).update(context,'ascii')
+    .update(Buffer.from(challenge,'hex')).digest('hex')+'\n';
+  assert.equal(result,expected);
+  assert.equal(await connect(socketPath,challenge+'\nforged'), '');
+  assert.equal(await connect(socketPath,challenge.toUpperCase()+'\n'), '');
+});
+
+test('native worker witness refuses an already-owned socket address without changing the owner', async t=>{
+  const root=await fs.mkdtemp(path.join(os.tmpdir(),'win-worker-owner-'));
+  t.after(()=>fs.rm(root,{recursive:true,force:true}));
+  const socketPath=path.join(root,'proof.sock');
+  const original=await startEquinoxWindowsMainWorkerProof({
+    transactionId:id,workerToken:token,platform:'test',fixtureSocketPath:socketPath,
+  });
+  t.after(()=>original.close());
+  await assert.rejects(startEquinoxWindowsMainWorkerProof({
+    transactionId:id,workerToken:token,platform:'test',fixtureSocketPath:socketPath,
+  }),{code:'EADDRINUSE'});
+  const challenge='f'.repeat(64);
+  const expected=createHmac('sha256',Buffer.from(token,'hex')).update(context,'ascii')
+    .update(Buffer.from(challenge,'hex')).digest('hex')+'\n';
+  assert.equal(await connect(socketPath,challenge+'\n'),expected);
+});

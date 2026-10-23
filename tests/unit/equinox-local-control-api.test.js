@@ -427,7 +427,7 @@ test("control API serves the visual Control Center shell and fixed same-origin a
     assert.match(shellText, /id="turn-budget-fallback-reset"/u);
     assert.match(shellText, /id="auto-continue-max-hops"/u);
     assert.match(scriptText, /state\.restartBusy \|\| state\.turnBudgetBusy/u);
-    assert.match(scriptText, /if \(state\.turnBudgetDirty\) \{\s*const saved = await saveTurnBudgetSettings\(\);\s*if \(!saved\) return;/u);
+    assert.match(scriptText, /if \(state\.turnBudgetDirty\) \{\s*const saved = await saveTurnBudgetSettings\(\);\s*if \(!saved\)\s+return;/u);
     assert.match(scriptText, /Authenticated HTTP profiles/u);
     assert.match(scriptText, /write-only/u);
     assert.match(cssText, /\.http-profile-card/u);
@@ -1495,4 +1495,84 @@ test("control API refuses non-loopback bind configuration", () => {
     () => createEquinoxLocalControlApi({ configManager, host: "0.0.0.0", port: 24891 }),
     /yalnız 127\.0\.0\.1/u,
   );
+});
+
+test("Control API prevents cross-origin and forged CSRF mutations before touching the native update backend", async () => {
+  const touched=[];
+  await withApi(async ({port})=>{
+    const base="http://127.0.0.1:"+port;
+    const token=(await jsonFetch(base+"/api/v1/session")).body.csrfToken;
+    const cases=[
+      {origin:"http://localhost:"+port,csrf:"forged-"+token},
+      {origin:"https://127.0.0.1:"+port,csrf:token},
+      {origin:"http://127.0.0.1:"+port+"/",csrf:token},
+      {origin:"http://evil.invalid",csrf:token},
+    ];
+    for(const {origin,csrf} of cases){
+      const {response,body}=await jsonFetch(base+"/api/v1/update/apply",{
+        method:"POST",headers:{"content-type":"application/json",origin,"x-equinox-csrf":csrf},
+        body:"{}",
+      });
+      assert.equal(response.status,403);
+      assert.equal(body.ok,false);
+    }
+    assert.deepEqual(touched,[]);
+  },{applyUpdate:async request=>{touched.push(request);return {synthetic:true}}});
+});
+
+test("Control API refuses oversized JSON and content-type camouflage before Telegram pairing reaches callback",async()=>{
+  const touched=[];
+  await withApi(async({port})=>{
+    const base="http://127.0.0.1:"+port;
+    const csrfToken=(await jsonFetch(base+"/api/v1/session")).body.csrfToken;
+    const options={method:"POST",headers:{origin:base,"x-equinox-csrf":csrfToken,"content-type":"application/json"}};
+    const oversized=await jsonFetch(base+"/api/v1/integrations/telegram/pair/start",{
+      ...options,body:JSON.stringify({botToken:"synthetic-"+("a".repeat(270000))}),
+    });
+    assert.equal(oversized.response.status,413);
+    const wrongType=await jsonFetch(base+"/api/v1/integrations/telegram/pair/start",{
+      ...options,headers:{...options.headers,"content-type":"text/plain"},body:'{"botToken":"synthetic"}',
+    });
+    assert.equal(wrongType.response.status,415);
+    assert.deepEqual(touched,[]);
+  },{startTelegramPairing:async request=>{touched.push(request);return {paired:true}}});
+});
+
+test("Control API denies ambiguous task navigation and query-injected mutation before callbacks",async()=>{
+  const touched=[];
+  await withApi(async({port})=>{
+    const base="http://127.0.0.1:"+port;
+    const token=(await jsonFetch(base+"/api/v1/session")).body.csrfToken;
+    for(const suffix of [
+      "/?section=tasks&section=browser",
+      "/?section=browser&task=task-fixture123",
+      "/?task=task-fixture123&extra=one",
+      "/api/v1/tasks?section=tasks",
+    ]){
+      const response=await fetch(base+suffix);
+      assert.equal(response.status,400,suffix);
+    }
+    const injected=await jsonFetch(base+"/api/v1/integrations/telegram/remote-control?enabled=true",{
+      method:"PUT",headers:{origin:base,"content-type":"application/json","x-equinox-csrf":token},
+      body:JSON.stringify({enabled:true}),
+    });
+    assert.equal(injected.response.status,400);
+    assert.deepEqual(touched,[]);
+  },{updateTelegramRemoteControl:async request=>{touched.push(request);return {enabled:true}}});
+});
+
+test("Control API backend exceptions never surface private credentials or machine paths to HTTP clients",async()=>{
+  const external="private-fixture-sentinel-raw";
+  await withApi(async({port})=>{
+    const base="http://127.0.0.1:"+port;
+    for(const route of ["/api/v1/status","/api/v1/doctor"]){
+      const response=await jsonFetch(base+route);
+      assert.equal(response.response.status,500);
+      assert.equal(response.body.error,"Control Center request failed.");
+      assert.doesNotMatch(JSON.stringify(response.body),/private-fixture-sentinel-raw|secret|Users\/fixture/u);
+    }
+  },{
+    getStatus:async()=>{throw Error("Bearer "+external+" /Users/fixture/credentials.json")},
+    getDoctorStatus:async()=>{throw Error("token="+external+" /Users/fixture/credentials.json")},
+  });
 });

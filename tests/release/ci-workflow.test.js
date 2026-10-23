@@ -56,6 +56,12 @@ test("CI retains full product validation while skipping only the explicit docs-o
   assert.doesNotMatch(job("macos-x64"), /run: npm test\n/u);
 });
 
+test("macOS ARM64 CI rejects production advisories and invalid npm package signatures", () => {
+  const arm = job("test");
+  assert.match(arm, /- name: Static checks\n\s+run: npm run check && npm audit --omit=dev --audit-level=moderate && npm audit signatures/u);
+  assert.doesNotMatch(arm, /continue-on-error:/u);
+});
+
 test("ARM64 package is built once on fast x64 Windows and exact-byte native consumers fan out in parallel", () => {
   const producer = job("windows-arm64-package-build");
   assert.match(producer, /runs-on: windows-latest/u);
@@ -248,7 +254,8 @@ test("ARM64 artifact consumers verify producer identity before acceptance", () =
   assert.match(packageLane, /EXPECTED_PACKAGE_SHA256: \$\{\{ needs\.windows-arm64-package-build\.outputs\.sha256 \}\}/u);
   assert.doesNotMatch(packageLane, /Get-FileHash -LiteralPath \$artifacts\[0\]\.FullName -Algorithm SHA256/u);
   assert.ok(packageLane.indexOf("EquinoxLocal.WindowsShell.UninstallHandoffHarness") < packageLane.indexOf("EquinoxLocal.WindowsShell.ManagedSourceHarness"));
-  assert.match(packageLane, /parallel:[\s\S]*Windows ARM64 stateful shell lifecycle acceptance[\s\S]*EquinoxLocal\.WindowsShell\.UninstallHandoffHarness[\s\S]*EquinoxLocal\.WindowsShell\.ManagedSourceHarness[\s\S]*Windows ARM64 packaged node-pty \/ ConPTY smoke[\s\S]*EQUINOX_WINDOWS_NODE_PTY_ROOT[\s\S]*windows-node-pty-smoke\.mjs[\s\S]*Windows ARM64 packaged winapp UIA smoke/u);
+  // ConPTY is deliberately serialized before native load-heavy parallel lanes.
+  assert.match(packageLane, /Windows ARM64 packaged node-pty \/ ConPTY smoke[\s\S]*EQUINOX_WINDOWS_NODE_PTY_ROOT[\s\S]*windows-node-pty-smoke\.mjs[\s\S]*- parallel:\n\s+- name: Windows ARM64 stateful shell lifecycle acceptance[\s\S]*EquinoxLocal\.WindowsShell\.UninstallHandoffHarness[\s\S]*EquinoxLocal\.WindowsShell\.ManagedSourceHarness[\s\S]*Windows ARM64 packaged winapp UIA smoke/u);
   assert.match(packageLane, /node tests\/release\/windows-node-pty-smoke\.mjs[\s\S]*Packaged ARM64 ConPTY smoke timed out once; retrying once[\s\S]*node tests\/release\/windows-node-pty-smoke\.mjs/u);
   assert.match(installer, /EQUINOX_WINDOWS_INSTALL_SHA256: \$\{\{ needs\.windows-arm64-package-build\.outputs\.sha256 \}\}/u);
   assert.match(installer, /EQUINOX_WINDOWS_INSTALL_SOURCE_SHA: \$\{\{ needs\.windows-arm64-package-build\.outputs\.source_sha \}\}/u);

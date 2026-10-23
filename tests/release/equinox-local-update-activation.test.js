@@ -546,3 +546,57 @@ test("same-version Stable health must reject an old healthy Main process", async
   }), true);
   assert.equal(probes, 2);
 });
+
+test("activation rejects a current-link symlink escaping managed release root without changing foreign bytes", async (t) => {
+  const fixture = await makeInstall();
+  t.after(() => fs.rm(fixture.root, {recursive:true,force:true}));
+  const foreign=path.join(fixture.root,"foreign-app");
+  await fs.mkdir(foreign);
+  await fs.writeFile(path.join(foreign,"secret"),"preserve-user-owned-bytes");
+  await fs.unlink(fixture.installation.currentLink);
+  await fs.symlink(path.relative(fixture.installation.installRoot,foreign),fixture.installation.currentLink,"dir");
+  await assert.rejects(readManagedCurrentRelease(fixture.installation),/current pointer escaped the releases root/u);
+  await assert.rejects(atomicSwitchCurrentRelease(fixture.installation,"4.3.0"),/current pointer escaped the releases root/u);
+  assert.equal((await fs.lstat(fixture.installation.currentLink)).isSymbolicLink(),true);
+  assert.equal(await fs.readFile(path.join(foreign,"secret"),"utf8"),"preserve-user-owned-bytes");
+  assert.equal((await fs.readlink(fixture.installation.currentLink)),path.relative(fixture.installation.installRoot,foreign));
+});
+
+test("health admission fails closed for malformed JSON payloads and wrong managed-source identity", async () => {
+  for(const [name,payload] of [
+    ["array",[]],["null",null],["primitive","HEALTHY"],
+    ["no server",{status:{health:{state:"HEALTHY"}}}],
+    ["wrong installation",{status:{server:{version:"5.2.1"},health:{state:"HEALTHY"},installation:{kind:"managed",sourceSha:"a".repeat(40)}}}],
+    ["wrong SHA",{status:{server:{version:"5.2.1"},health:{state:"HEALTHY"},installation:{kind:"managed-source",sourceSha:"b".repeat(40)}}}],
+  ]){
+    let attempts=0;
+    await assert.rejects(waitForEquinoxLocalManagedSource("5.2.1","a".repeat(40),{
+      attempts:1,sleepImpl:async()=>{},
+      fetchImpl:async()=>{attempts++;return new Response(JSON.stringify(payload),{status:200})},
+    }),/did not become healthy/u,name);
+    assert.equal(attempts,1,name);
+  }
+});
+
+test("rollback-failed writes an explicit forensic state without falsely reporting restored health", async(t)=>{
+  const fixture=await makeInstall();
+  t.after(()=>fs.rm(fixture.root,{recursive:true,force:true}));
+  const restarts=[],syncs=[];
+  await assert.rejects(activatePreparedEquinoxRelease({
+    installation:fixture.installation,
+    targetVersion:"4.3.0",
+    kickstartImpl:async version=>{restarts.push(version); if(version==="4.2.0")throw Error("rollback host unavailable")},
+    syncAppHostImpl:async ({version})=>syncs.push(version),
+    fetchImpl:async()=>{throw Error("candidate never healthy")},
+    sleepImpl:async()=>{},healthAttempts:1,now:()=>new Date("2026-10-19T00:00:00.000Z"),
+  }),/activation failed and automatic rollback also failed/u);
+  assert.deepEqual(restarts,["4.3.0","4.2.0"]);
+  assert.deepEqual(syncs,["4.3.0","4.2.0"]);
+  assert.equal(await currentVersion(fixture.installation),"4.2.0");
+  const state=JSON.parse(await fs.readFile(path.join(fixture.installation.installRoot,"update-state.json"),"utf8"));
+  assert.equal(state.status,"rollback-failed");
+  assert.equal(state.activationFailure,"activation-health-check-failed");
+  assert.equal(state.rollbackFailure,"rollback-health-check-failed");
+  assert.equal(state.failedVersion,"4.3.0");
+  assert.notEqual(state.status,"rolled-back");
+});
