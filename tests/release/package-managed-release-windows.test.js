@@ -520,6 +520,12 @@ test('vintage Windows A/B real PE smoke accepts pre-6.1.2 marker absence but alw
   assert.match(smoke, /Get-Process -Id/u);
   assert.match(smoke, /StartTime\.ToUniversalTime\(\)\.Ticks/u);
   assert.match(smoke, /timeout: 20_000, windowsHide: true/u);
+  // The hosted package fixture runs in a workflow that explicitly provisions
+  // pwsh. Avoid a separate cold Windows PowerShell 5.1 startup solely for
+  // worker birth ticks; preserve the exact live-PID birthtime attestation.
+  assert.match(smoke, /execFile\('pwsh\.exe', \[/u);
+  assert.doesNotMatch(smoke, /execFile\('powershell\.exe', \[/u);
+  assert.match(smoke, /Get-Process -Id \$\{process\.pid\} -ErrorAction Stop/u);
 });
 
 test('vintage installed Main upgrade does not require a Guardian absent from old signed packages', async () => {

@@ -186,9 +186,12 @@ try {
   await fs.mkdir(path.join(workRoot, 'handoff'), { recursive: true });
   const aid = `main-${'f'.repeat(32)}`;
   const token = 'e'.repeat(64);
-  // Windows PowerShell 5.1 cold startup may exceed five seconds on a busy
-  // hosted runner; its PID and kernel birth ticks must still be verified.
-  const birth = await execFile('powershell.exe', [
+  // This fixture runs ONLY from the GitHub Windows package acceptance lane,
+  // which already runs its steps under pwsh. Reuse the hosted PowerShell 7
+  // command rather than cold-launching Windows PowerShell 5.1 under heavy
+  // concurrent native workloads. The OS PID/start ticks and native helper
+  // witness stay exact; the independent 20-second bound remains fail-closed.
+  const birth = await execFile('pwsh.exe', [
     '-NoLogo', '-NoProfile', '-NonInteractive', '-Command',
     `(Get-Process -Id ${process.pid} -ErrorAction Stop).StartTime.ToUniversalTime().Ticks.ToString([Globalization.CultureInfo]::InvariantCulture)`,
   ], { timeout: 20_000, windowsHide: true });
