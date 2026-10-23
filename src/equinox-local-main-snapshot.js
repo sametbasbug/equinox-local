@@ -143,9 +143,21 @@ async function readBoundedLocalManifest(filePath, fsImpl) {
         const stat = await handle.stat();
         if (!stat.isFile() || stat.size < 1 || stat.size > MAX_MANIFEST_BYTES)
             throw new Error("Main snapshot staged manifest is not an admissible normal file.");
-        const text = await handle.readFile("utf8");
-        if (Buffer.byteLength(text, "utf8") > MAX_MANIFEST_BYTES)
+        // The manifest inode can grow after fstat. Never use unbounded readFile()
+        // for mutable staged data: cap descriptor reads at 64 KiB plus one byte.
+        const chunks = [];
+        let total = 0;
+        while (total <= MAX_MANIFEST_BYTES) {
+            const buffer = Buffer.allocUnsafe(Math.min(8192, MAX_MANIFEST_BYTES + 1 - total));
+            const { bytesRead } = await handle.read(buffer, 0, buffer.length, total);
+            if (bytesRead === 0)
+                break;
+            chunks.push(buffer.subarray(0, bytesRead));
+            total += bytesRead;
+        }
+        if (total > MAX_MANIFEST_BYTES)
             throw new Error("Main snapshot staged manifest exceeds the size limit.");
+        const text = Buffer.concat(chunks, total).toString("utf8");
         try {
             return JSON.parse(text);
         }

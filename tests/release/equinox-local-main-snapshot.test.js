@@ -311,6 +311,54 @@ test("staged Main snapshot rejects hard-linked manifest and artifact before open
   }
 });
 
+test("staged Main snapshot manifest read is bounded even if the opened inode grows after fstat", async (t) => {
+  const root = await fs.realpath(await fs.mkdtemp(path.join(path.dirname(fileURLToPath(import.meta.url)), ".equinox-main-snapshot-growth-")));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const transactionId = `main-${"8".repeat(32)}`;
+  const nativeDir = path.join(root, "staging", transactionId, "native");
+  await fs.mkdir(nativeDir, { recursive: true });
+  const bytes = Buffer.from("valid disposable native snapshot");
+  const manifest = manifestWithArtifact({
+    name: `equinox-local-main-${SHA}-${TARGET}.tar.gz`,
+    sha256: createHash("sha256").update(bytes).digest("hex"),
+    bytes: bytes.length,
+  });
+  const manifestPath = path.join(nativeDir, `equinox-local-main-${SHA}-${TARGET}.json`);
+  await fs.writeFile(manifestPath, JSON.stringify(manifest));
+  await fs.writeFile(path.join(nativeDir, manifest.artifact.name), bytes);
+  let unboundedReads = 0;
+  let descriptorReads = 0;
+  let requestedBytes = 0;
+  let closed = 0;
+  const mockFs = Object.create(fs);
+  mockFs.open = async (candidate, ...options) => {
+    const original = await fs.open(candidate, ...options);
+    if (candidate !== manifestPath) return original;
+    return {
+      stat: (...args) => original.stat(...args),
+      readFile: (...args) => { unboundedReads++; return original.readFile(...args); },
+      read: async (buffer, offset, length) => {
+        // Model a concurrent writer extending the opened inode after stat().
+        // The real file is never modified; only descriptor reads are injected.
+        descriptorReads++;
+        requestedBytes += length;
+        buffer.fill(0x20, offset, offset + length);
+        return { bytesRead: length, buffer };
+      },
+      close: async () => { closed++; await original.close(); },
+    };
+  };
+  await assert.rejects(inspectStagedEquinoxLocalMainSnapshotArtifact({
+    sourceSha: SHA, target: TARGET, expectedRuntimeContractSha256: DIGEST,
+    transactionRoot: root, transactionId, fsImpl: mockFs,
+  }), /manifest exceeds the size limit/u);
+  assert.equal(unboundedReads, 0, "Never read an unbounded manifest into memory");
+  assert.ok(descriptorReads > 0, "Read using the pinned descriptor with explicit lengths");
+  assert.equal(requestedBytes, 64 * 1024 + 1, "The absolute read budget is 64 KiB plus one");
+  assert.equal(closed, 1, "Rejected manifest descriptor is closed exactly once");
+  assert.equal(await fs.readFile(manifestPath, "utf8"), JSON.stringify(manifest));
+});
+
 test("staged Main snapshot rejects a swapped manifest inode before trusting JSON",async(t)=>{
   const root=await fs.realpath(await fs.mkdtemp(path.join(path.dirname(fileURLToPath(import.meta.url)), ".equinox-main-snapshot-inode-")));
   t.after(()=>fs.rm(root,{recursive:true,force:true}));
