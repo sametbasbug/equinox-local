@@ -799,7 +799,9 @@ jobs:
   windows-arm64-package:
     name: Windows ARM64 managed package
     runs-on: windows-11-vs2026-arm
-    timeout-minutes: 4
+    # The three native acceptance lanes can pass just before the old 4m
+    # ceiling; reserve time for post-step cleanup without weakening gates.
+    timeout-minutes: 6
     needs: [windows-arm64-package-build]
 
     steps:
