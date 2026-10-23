@@ -256,6 +256,7 @@ export async function stageEquinoxLocalMainSnapshotArtifact({
   const nativeDir = path.join(transactionDir, "native");
   let nativeCreated = false;
   let handle: OpenHandle | null = null;
+  let originalArtifact: Awaited<ReturnType<OpenHandle["stat"]>> | null = null;
   let tempPath: string | null = null;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -284,6 +285,10 @@ export async function stageEquinoxLocalMainSnapshotArtifact({
 
     tempPath = path.join(nativeDir, `.artifact-part-${randomBytesImpl(8).toString("hex")}`);
     handle = await fsImpl.open(tempPath, "wx", 0o600);
+    originalArtifact = await handle.stat();
+    if (!originalArtifact.isFile() || originalArtifact.nlink !== 1) {
+      throw new Error("Main snapshot temporary artifact is not an exclusive normal file.");
+    }
     const digest = createHash("sha256");
     let bytes = 0;
     for await (const chunkValue of response.body) {
@@ -301,12 +306,28 @@ export async function stageEquinoxLocalMainSnapshotArtifact({
     if (sha256 !== snapshot.manifest.artifact.sha256) throw new Error("Main snapshot artifact SHA-256 verification failed.");
 
     const artifactPath = path.join(nativeDir, snapshot.manifest.artifact.name);
+    const beforeLink = await fsImpl.lstat(tempPath);
+    if (!beforeLink.isFile() || beforeLink.isSymbolicLink() || beforeLink.nlink !== 1 ||
+        beforeLink.dev !== originalArtifact.dev || beforeLink.ino !== originalArtifact.ino) {
+      throw new Error("Main snapshot temporary artifact changed from the original inode before publication.");
+    }
     await fsImpl.link(tempPath, artifactPath);
+    // The pathname can be switched at link() even after the preceding stat.
+    // Never certify an alternate same-sized inode using the original digest.
+    const published = await fsImpl.lstat(artifactPath);
+    if (!published.isFile() || published.isSymbolicLink() ||
+        published.dev !== originalArtifact.dev || published.ino !== originalArtifact.ino) {
+      throw new Error("Main snapshot staged artifact changed from the original inode during publication.");
+    }
     await fsImpl.unlink(tempPath);
     tempPath = null;
     await syncDirectory(nativeDir, fsImpl);
     const finalStat = await fsImpl.lstat(artifactPath);
-    if (finalStat.isSymbolicLink() || !finalStat.isFile() || finalStat.size !== expectedBytes) throw new Error("Main snapshot staged artifact is not the verified normal file.");
+    if (finalStat.isSymbolicLink() || !finalStat.isFile() || finalStat.nlink !== 1 ||
+        finalStat.dev !== originalArtifact.dev || finalStat.ino !== originalArtifact.ino ||
+        finalStat.size !== expectedBytes) {
+      throw new Error("Main snapshot staged artifact is not the original verified normal file.");
+    }
     const manifestPath = path.join(nativeDir, snapshotManifestName(sourceSha, target));
     const manifestBody = `${JSON.stringify(snapshot.manifest, null, 2)}\n`;
     handle = await fsImpl.open(manifestPath, "wx", 0o600);

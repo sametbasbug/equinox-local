@@ -153,6 +153,37 @@ test("Main snapshot artifact staging streams into transaction-owned storage and 
   assert.equal(calls[1].options.credentials, "omit");
 });
 
+test("Main snapshot does not publish a same-length substituted artifact after digest verification", async (t) => {
+  const fixtureBase = path.dirname(fileURLToPath(import.meta.url));
+  const root = await fs.mkdtemp(path.join(fixtureBase, ".equinox-main-snapshot-inode-publication-"));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const transactionId = `main-${"9".repeat(32)}`;
+  await fs.mkdir(path.join(root, "staging", transactionId), { recursive: true, mode: 0o700 });
+  const original = Buffer.from("verified-native-archive");
+  const replacement = Buffer.from("forged!!-native-archive");
+  assert.equal(original.length, replacement.length);
+  const manifest = manifestWithArtifact({
+    name: `equinox-local-main-${SHA}-darwin-arm64.tar.gz`,
+    sha256: createHash("sha256").update(original).digest("hex"), bytes: original.length,
+  });
+  const fsImpl = Object.create(fs);
+  let substituted = false;
+  fsImpl.link = async (from, to) => {
+    if (!substituted && path.basename(from).startsWith(".artifact-part-")) {
+      substituted = true;
+      await fs.unlink(from);
+      await fs.writeFile(from, replacement, { mode: 0o600 });
+    }
+    return fs.link(from, to);
+  };
+  await assert.rejects(stageEquinoxLocalMainSnapshotArtifact({
+    sourceSha: SHA, target: "darwin-arm64", expectedRuntimeContractSha256: DIGEST,
+    transactionRoot: root, transactionId, fsImpl,
+    fetchImpl: async (url) => url.endsWith(".json") ? jsonResponse(manifest) : bytesResponse(original),
+  }), /original.*inode|staged artifact.*changed|temporary artifact.*changed/u);
+  assert.equal(substituted, true, "The actual hard-link publication must experience the substituted temp inode");
+});
+
 test("Main snapshot artifact staging cleans partial state on byte digest and destination collisions", async (t) => {
   const fixtureBase = path.dirname(fileURLToPath(import.meta.url));
   const root = await fs.mkdtemp(path.join(fixtureBase, ".equinox-main-snapshot-fail-"));
