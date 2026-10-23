@@ -6,6 +6,7 @@ import test from "node:test";
 
 import {
   provisionEquinoxLocalToolchain,
+  renameVerifiedToolchainOnWindows,
   toolchainFetchForArtifact,
   validateToolchainTarListing,
 } from "../../src/equinox-local-toolchain-provisioner.js";
@@ -15,6 +16,40 @@ function verbose(type, size, name, linkTarget = null) {
   return `${type}rwxr-xr-x 0 user group ${size} Jan 01 00:00 ${suffix}`;
 }
 
+
+test("Windows verified Node directory promotion retries bounded transient rename locks, never repeats payload validation", async () => {
+  let calls = 0;
+  const delays = [];
+  await renameVerifiedToolchainOnWindows("C:\\staging\\verified-node", "C:\\runtime\\node", {
+    platform: "win32",
+    renameImpl: async () => { calls += 1; if (calls < 3) throw Object.assign(new Error("locked"), {code: "EPERM"}); },
+    sleepImpl: async (ms) => { delays.push(ms); },
+  });
+  assert.equal(calls, 3);
+  assert.deepEqual(delays, [100, 200]);
+});
+
+test("Windows verified Node promotion fails closed after bounded locks and never retries foreign OS or nontransient failure", async () => {
+  const lock = Object.assign(new Error("locked"), {code: "EPERM"});
+  let calls = 0;
+  const delays = [];
+  await assert.rejects(renameVerifiedToolchainOnWindows("C:\\src", "C:\\dst", {
+    platform: "win32",
+    renameImpl: async () => { calls += 1; throw lock; },
+    sleepImpl: async (ms) => { delays.push(ms); },
+  }), (error) => error === lock);
+  assert.equal(calls, 7);
+  assert.deepEqual(delays, [100, 200, 400, 800, 1600, 3200]);
+  for (const [platform, code] of [["darwin", "EPERM"], ["win32", "EINVAL"]]) {
+    let attempts = 0;
+    await assert.rejects(renameVerifiedToolchainOnWindows("source", "dest", {
+      platform,
+      renameImpl: async () => { attempts += 1; throw Object.assign(new Error(code), {code}); },
+      sleepImpl: async () => assert.fail("unrelated failures cannot trigger sleep or retry"),
+    }), (error) => error.code === code);
+    assert.equal(attempts, 1);
+  }
+});
 
 test("M8 toolchain network policy permits only the exact GitHub release CDN redirect", async () => {
   const artifact = { url: "https://github.com/desktop/dugite-native/releases/download/v1/file.tar.gz" };

@@ -425,6 +425,25 @@ async function ensureNormalDirectoryChain(base:string, segments:string[], { fsIm
   return current;
 }
 
+// Windows may transiently hold the just-executed, verified Node binary open
+// while its process/AV handles retire. Retry ONLY an atomic directory rename,
+// never a download, extraction, trust check, or native activation.
+const WINDOWS_RENAME_DELAYS_MS = [100, 200, 400, 800, 1600, 3200] as const;
+export async function renameVerifiedToolchainOnWindows(source:string, destination:string, {
+  platform = process.platform,
+  renameImpl = fs.rename,
+  sleepImpl = (ms:number) => new Promise<void>((resolve) => setTimeout(resolve, ms)),
+}: {platform?:string; renameImpl?:typeof fs.rename; sleepImpl?: (ms:number)=>Promise<void>} = {}) {
+  for (let retries = 0;; retries += 1) {
+    try { await renameImpl(source, destination); return; }
+    catch (error) {
+      const code = error !== null && typeof error === "object" && "code" in error ? error.code : null;
+      if (platform !== "win32" || !["EPERM", "EACCES", "EBUSY"].includes(String(code)) || retries >= WINDOWS_RENAME_DELAYS_MS.length) throw error;
+      await sleepImpl(WINDOWS_RENAME_DELAYS_MS[retries]!);
+    }
+  }
+}
+
 async function installComponent(component:ProvisionComponent, contract:ProvisionContract, {
   platform,
   env,
@@ -459,7 +478,7 @@ async function installComponent(component:ProvisionComponent, contract:Provision
     if (!sourceStat.isDirectory() || sourceStat.isSymbolicLink()) throw new Error(`${component.component} toolchain archive root is unsafe.`);
     await validateComponentIdentity(sourceRoot, component, contract, { platform, fsImpl, execFileImpl });
     await writeComponentStamp(sourceRoot, component, { fsImpl });
-    await fsImpl.rename(sourceRoot, component.root);
+    await renameVerifiedToolchainOnWindows(sourceRoot, component.root, { platform, renameImpl: fsImpl.rename.bind(fsImpl) });
     await validateComponentIdentity(component.root, component, contract, { platform, fsImpl, execFileImpl });
     return Object.freeze({ component: component.component, status: "installed", root: component.root });
   } finally {
