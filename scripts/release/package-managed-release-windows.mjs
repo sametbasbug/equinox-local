@@ -533,7 +533,7 @@ async function createManagedZip(rootDir, releaseDir, artifactPath) {
             for (const line of String(result?.stdout ?? "").split(/\r?\n/u)) {
                 const match = /^Hosted Windows ZIP writer phase: (assembly-load|compile|write); durationSeconds=(\d{1,3}\.\d)$/u.exec(line);
                 if (match && Number(match[2]) <= 600) {
-                    process.stdout.write("Hosted Windows ZIP writer phase: " + match[1] + "; durationSeconds=" + match[2] + "\n");
+                    process.stderr.write("Hosted Windows ZIP writer phase: " + match[1] + "; durationSeconds=" + match[2] + "\n");
                 }
             }
         }
@@ -574,7 +574,7 @@ export async function packageManagedEquinoxWindowsRelease({ rootDir = path.resol
         const timed = (phase, started) => {
             if (!hostedTiming)
                 return;
-            process.stdout.write("Hosted Windows package phase: " + phase + "; durationSeconds=" +
+            process.stderr.write("Hosted Windows package phase: " + phase + "; durationSeconds=" +
                 Math.min(600, Math.max(0, (Date.now() - started) / 1000)).toFixed(1) + "\n");
         };
         const admittedTarget = contract.target;

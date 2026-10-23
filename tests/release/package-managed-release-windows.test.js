@@ -85,6 +85,14 @@ test("Windows managed ZIP helper uses bounded fast compression", async () => {
   assert.match(source, /Windows managed ZIP creation exceeded/u);
 });
 
+test("hosted Windows package timings are stderr-only and cannot corrupt CLI JSON stdout", async () => {
+  const source = await fs.readFile(new URL("../../scripts/release/package-managed-release-windows.mjs", import.meta.url), "utf8");
+  assert.match(source, /process\.stderr\.write\("Hosted Windows package phase: "/u);
+  assert.match(source, /process\.stderr\.write\("Hosted Windows ZIP writer phase: "/u);
+  assert.doesNotMatch(source, /process\.stdout\.write\("Hosted Windows/u);
+  assert.match(source, /process\.stdout\.write\(`\$\{JSON\.stringify\(result, null, 2\)\}\\n`\)/u);
+});
+
 test("ARM64 native Guardian and Job cache is exact-source keyed and fails closed on unsafe binaries", async () => {
   const action = await fs.readFile(new URL("../../.github/actions/prepare-arm64-package/action.yml", import.meta.url), "utf8");
   const builder = await fs.readFile(new URL("../../scripts/release/package-managed-release-windows.mjs", import.meta.url), "utf8");
