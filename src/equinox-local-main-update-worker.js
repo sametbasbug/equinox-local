@@ -12,6 +12,7 @@ import { equinoxLocalReleaseTarget } from "./equinox-local-platform.js";
 import { EQUINOX_LOCAL_INSTALL_LABEL, resolveEquinoxLocalInstallation } from "./equinox-local-installation.js";
 import { kickstartEquinoxLocalLaunchAgent } from "./equinox-local-update-activation.js";
 import { equinoxLocalToolchainContract } from "./equinox-local-toolchain-contract.js";
+import { provisionEquinoxLocalToolchain } from "./equinox-local-toolchain-provisioner.js";
 import { readBoundedNormalFile } from "./equinox-local-safe-file.js";
 import { createEquinoxLocalMainUpdateTransactionEngine } from "./equinox-local-main-update-transaction.js";
 import { runEquinoxLocalMainUpdateHandoff } from "./equinox-local-main-update-handoff.js";
@@ -176,7 +177,7 @@ async function ensureFreshTargetNativeArtifact({ transactionRoot, transactionId,
         expectedRuntimeContractSha256, transactionRoot, transactionId, fsImpl });
     return true;
 }
-export async function runEquinoxLocalMainUpdateWorker({ argv = process.argv.slice(2), execFileImpl = execFile, fetchImpl = globalThis.fetch, sleepImpl, fsImpl = fs, env = process.env, uid = process.getuid?.(), engineFactory = (options) => createEquinoxLocalMainUpdateTransactionEngine(options), resolveHostTarget = () => equinoxLocalReleaseTarget(), planNativeTransition = planEquinoxLocalMainNativeTransition, ensureNativeArtifact = ensureFreshTargetNativeArtifact, prepareNativeCandidate = prepareEquinoxLocalMainNativeCandidate, inspectStoredNativeRelease = inspectEquinoxLocalMainNativeStoredRelease, prepareNativeLifecycle = prepareEquinoxLocalMainNativeLifecycle, recoverNativeLifecycle = recoverEquinoxLocalMainNativeLifecycle, admitWindowsNativeWorker = admitWindowsMainNativeWorkerJournal, handoffImpl = runEquinoxLocalMainUpdateHandoff, restartRuntimeImpl = (value) => restartEquinoxLocalMainSourceRuntime({ ...value, execFileImpl, env, fsImpl }), verifyRuntimeImpl, resolveNativeInstallation = resolveEquinoxLocalMainWorkerNativeInstallation, cleanupImpl = (value) => cleanupEquinoxLocalMainUpdateWorkerOwnership({
+export async function runEquinoxLocalMainUpdateWorker({ argv = process.argv.slice(2), execFileImpl = execFile, fetchImpl = globalThis.fetch, sleepImpl, fsImpl = fs, env = process.env, uid = process.getuid?.(), engineFactory = (options) => createEquinoxLocalMainUpdateTransactionEngine(options), resolveHostTarget = () => equinoxLocalReleaseTarget(), planNativeTransition = planEquinoxLocalMainNativeTransition, ensureNativeArtifact = ensureFreshTargetNativeArtifact, prepareNativeCandidate = prepareEquinoxLocalMainNativeCandidate, inspectStoredNativeRelease = inspectEquinoxLocalMainNativeStoredRelease, prepareNativeLifecycle = prepareEquinoxLocalMainNativeLifecycle, recoverNativeLifecycle = recoverEquinoxLocalMainNativeLifecycle, admitWindowsNativeWorker = admitWindowsMainNativeWorkerJournal, handoffImpl = runEquinoxLocalMainUpdateHandoff, restartRuntimeImpl = (value) => restartEquinoxLocalMainSourceRuntime({ ...value, execFileImpl, env, fsImpl }), verifyRuntimeImpl, provisionToolchainImpl = provisionEquinoxLocalToolchain, resolveNativeInstallation = resolveEquinoxLocalMainWorkerNativeInstallation, cleanupImpl = (value) => cleanupEquinoxLocalMainUpdateWorkerOwnership({
     ...value, execFileImpl, fsImpl,
     ...(uid === undefined ? {} : { uid }),
     ...(env.EQUINOX_LOCAL_MAIN_WORKER_TOKEN === undefined ? {} : { ownershipToken: env.EQUINOX_LOCAL_MAIN_WORKER_TOKEN }),
@@ -220,6 +221,17 @@ export async function runEquinoxLocalMainUpdateWorker({ argv = process.argv.slic
         let nativeTransition;
         let nativeLifecycle = null;
         try {
+            // The detached worker executes the TARGET source, whose Git/Node pins
+            // may differ from the still-running A release. A's coordinator cannot
+            // install B's toolchain. Provision B's exact SHA/size-verified binaries
+            // after verifying transaction ownership, but BEFORE using B's Git to
+            // inspect the A -> B diff; a missing pin must fail before activation.
+            if (initialStage === "ready_to_switch") {
+                await provisionToolchainImpl({
+                    runtimeRoot, target: hostTarget, platform: process.platform,
+                    env, fsImpl, execFileImpl,
+                });
+            }
             const target = hostTarget;
             nativeTransition = await planNativeTransition({
                 ...(active.rollbackSourceRoot === null ? {} : { currentRoot: active.rollbackSourceRoot }),
