@@ -518,6 +518,22 @@ test("disconnect removes Telegram runtime state but preserves downloaded user fi
   });
 });
 
+test("Telegram pairing cancellation never deletes foreign state through a symlinked parent", async (t) => {
+  if (process.platform === "win32") { t.skip("POSIX symlinked-parent deletion fixture"); return; }
+  await withTempCredential(async ({ root, pairingPath }) => {
+    const privateDir = path.dirname(pairingPath);
+    const foreignDir = path.join(root, "foreign-owned-directory");
+    const foreignPath = path.join(foreignDir, path.basename(pairingPath));
+    const marker = "not-telegram-owned-state-must-survive\n";
+    await fs.mkdir(foreignDir, { mode: 0o700 });
+    await fs.writeFile(foreignPath, marker, { mode: 0o600 });
+    await fs.symlink(foreignDir, privateDir);
+    await assert.rejects(cancelTelegramPairing({ pairingPath }), /unsafe|symlink|private.state|directory/u);
+    assert.equal(await fs.readFile(foreignPath, "utf8"), marker,
+      "A symlinked private-state parent must never delete another owner's pairing file");
+  });
+});
+
 test("pairing discovers only a private /start user and requires explicit confirmation", async () => {
   await withTempCredential(async ({ credentialPath, pairingPath, inboxPath }) => {
     const calls = [];

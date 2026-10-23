@@ -309,6 +309,11 @@ async function removePrivateStateFile(filePath:string,{fsImpl=fs,label="Telegram
   if (process.platform === "win32") {
     const security = await assertPrivateFileSecurity(filePath, { fsImpl, label, allowMissing: true });
     if (!security!.exists) return false;
+  } else {
+    // Unlinking a name below a symlinked private-state directory would
+    // delete a foreign same-named file. Reads already enforce this boundary;
+    // cancellation must not be a weaker, path-only operation.
+    await assertPrivateReadParent(filePath, { fsImpl });
   }
   await fsImpl.rm(filePath, { force: true });
   return true;
