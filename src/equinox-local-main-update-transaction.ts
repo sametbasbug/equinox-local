@@ -106,7 +106,21 @@ async function writeAtomicPrivateJson(filePath: string, value: unknown, { fsImpl
   let handle: Awaited<ReturnType<TransactionFs['open']>> | null | undefined;
   try {
     handle = await fsImpl.open(tempPath, "wx", 0o600);
+    // Trust the inode created with O_EXCL, not the first later pathname stat.
+    // Another same-UID writer can substitute a different regular 0600 temp
+    // after this file is closed but before the atomic rename.
+    const created = await handle.stat();
+    if (!created.isFile() || created.nlink !== 1 ||
+        (process.platform !== "win32" && (created.mode & 0o777) !== 0o600)) {
+      throw new Error("Main update receipt temporary file is unsafe.");
+    }
     await handle.writeFile(body, "utf8"); await handle.sync(); await handle.close(); handle = null;
+    const current = await fsImpl.lstat(tempPath);
+    if (!current.isFile() || current.isSymbolicLink() || current.nlink !== 1 ||
+        current.dev !== created.dev || current.ino !== created.ino ||
+        (process.platform !== "win32" && (current.mode & 0o777) !== 0o600)) {
+      throw new Error("Main update receipt temporary file changed before rename.");
+    }
     await fsImpl.rename(tempPath, filePath); await syncDirectory(parent, { fsImpl });
   } catch (error) {
     if (handle) await handle.close().catch(() => {});

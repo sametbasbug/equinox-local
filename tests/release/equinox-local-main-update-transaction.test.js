@@ -175,6 +175,41 @@ test("Main refuses a receipt-directory symlink appearing after lock admission", 
   assert.equal(JSON.parse(await fs.readFile(path.join(moved, filename), "utf8")).status, "active");
 });
 
+test("Main receipt temp cannot be replaced by another normal inode before atomic rename", async (t) => {
+  const rogue = "synthetic-foreign-receipt-content";
+  let swapped = false;
+  let destination = null;
+  const fsImpl = Object.create(fs);
+  fsImpl.open = async (candidate, ...args) => {
+    const handle = await fs.open(candidate, ...args);
+    if (!candidate.includes(".json.tmp-")) return handle;
+    return new Proxy(handle, {
+      get(target, key) {
+        if (key === "close") return async () => {
+          await target.close();
+          if (!swapped) {
+            swapped = true;
+            destination = candidate.split(".tmp-")[0];
+            await fs.unlink(candidate);
+            await fs.writeFile(candidate, rogue, { mode: 0o600 });
+          }
+        };
+        const value = target[key];
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
+  };
+  const { engine } = await fixture(t, { fsImpl });
+  await assert.rejects(
+    engine.begin({ currentSha: CURRENT, targetSha: TARGET }),
+    /temporary.*changed|identity|unsafe|inode/u,
+  );
+  assert.equal(swapped, true, "A regular 0600 replacement must be injected after descriptor close");
+  await assert.rejects(fs.access(destination), { code: "ENOENT" });
+  assert.equal((await fs.lstat(engine.paths.lockPath)).isFile(), true,
+    "A failed receipt must retain single-flight ownership for recovery");
+});
+
 test("begin acquires one private durable owner and refuses a concurrent updater", async (t) => {
   const { engine } = await fixture(t);
   const first = await engine.begin({ currentSha: CURRENT, targetSha: TARGET });
