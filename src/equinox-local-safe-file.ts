@@ -225,19 +225,38 @@ export async function writeBoundedUtf8File(filePath: unknown, {
     `.${baseName}.equinox-write-${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}`,
   );
   let temporaryCreated = false;
+  let originalTemporary: Readonly<{ dev: number; ino: number }> | null = null;
+  const assertOriginal = async (candidate: string, expectedLinks: number): Promise<void> => {
+    const current = await fsImpl.lstat(candidate);
+    if (!originalTemporary || !current.isFile() || current.isSymbolicLink() ||
+        current.nlink !== expectedLinks ||
+        current.dev !== originalTemporary.dev || current.ino !== originalTemporary.ino) {
+      throw safeFileError(`${label} temporary file changed from its original inode.`, SAFE_FILE_ERROR_CODES.notNormal);
+    }
+  };
   try {
     const handle = await fsImpl.open(temporaryPath, "wx", mode);
     temporaryCreated = true;
     try {
+      const created = await handle.stat();
+      if (!created.isFile() || created.nlink !== 1 ||
+          (process.platform === "win32" && created.dev === 0 && created.ino === 0)) {
+        throw safeFileError(`${label} temporary file has no exclusive original inode.`, SAFE_FILE_ERROR_CODES.notNormal);
+      }
+      originalTemporary = { dev: created.dev, ino: created.ino };
       await handle.writeFile(content, { encoding: "utf8" });
       await handle.sync();
     } finally {
       await handle.close();
     }
+    // Checking a replacement pathname's mode/length alone does not prove it
+    // is the inode we opened, wrote and synced. Protect both create and CAS.
+    await assertOriginal(temporaryPath, 1);
     if (!existing) {
       // Publish creates with no-clobber semantics. link() fails with EEXIST if
       // another writer created the destination after our initial lstat.
       await fsImpl.link(temporaryPath, filePath);
+      await assertOriginal(filePath, 2);
       await fsImpl.unlink(temporaryPath);
       temporaryCreated = false;
     } else {
@@ -252,12 +271,20 @@ export async function writeBoundedUtf8File(filePath: unknown, {
           `${label} SHA-256 guard changed before replacement. Expected: ${validatedExpectedSha256} Current: ${currentSha256}`,
         );
       }
+      await assertOriginal(temporaryPath, 1);
       await fsImpl.rename(temporaryPath, filePath);
       temporaryCreated = false;
+      await assertOriginal(filePath, 1);
     }
   } finally {
-    if (temporaryCreated) {
-      await fsImpl.rm(temporaryPath, { force: true }).catch(() => {});
+    if (temporaryCreated && originalTemporary) {
+      // Never delete a foreign file substituted at the temp pathname while
+      // we were writing. Ambiguous/linked files remain for owner recovery.
+      const current = await fsImpl.lstat(temporaryPath).catch(() => null);
+      if (current?.isFile() && !current.isSymbolicLink() && current.nlink === 1 &&
+          current.dev === originalTemporary.dev && current.ino === originalTemporary.ino) {
+        await fsImpl.unlink(temporaryPath).catch(() => {});
+      }
     }
   }
 

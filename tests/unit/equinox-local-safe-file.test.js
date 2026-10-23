@@ -242,6 +242,50 @@ test("safe file writer never clobbers a file created during publish", async () =
   }
 });
 
+test("safe file writer rejects foreign normal temp substituted after close for create and replacement", async (t) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "equinox-safe-writer-original-inode-"));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  for (const replacing of [false, true]) {
+    const name = replacing ? "replace.txt" : "create.txt";
+    const target = path.join(root, name);
+    const savedOriginal = path.join(root, `original-${name}`);
+    const foreign = path.join(root, `foreign-${name}`);
+    const foreignData = `foreign unrelated source ${name}`;
+    await fs.writeFile(foreign, foreignData, { mode: 0o600, flag: "wx" });
+    if (replacing) await fs.writeFile(target, "old trusted bytes", { mode: 0o600, flag: "wx" });
+    const expectedSha256 = replacing
+      ? createHash("sha256").update("old trusted bytes").digest("hex") : undefined;
+    let swapped = null;
+    const racingFs = Object.create(fs);
+    racingFs.open = async (candidate, ...args) => {
+      const originalHandle = await fs.open(candidate, ...args);
+      if (!path.basename(String(candidate)).startsWith(`.${name}.equinox-write-`)) return originalHandle;
+      return new Proxy(originalHandle, {
+        get(handle, property) {
+          if (property === "close") return async () => {
+            await handle.close();
+            await fs.rename(candidate, savedOriginal);
+            await fs.rename(foreign, candidate);
+            swapped = candidate;
+          };
+          const value = handle[property];
+          return typeof value === "function" ? value.bind(handle) : value;
+        },
+      });
+    };
+    await assert.rejects(writeBoundedUtf8File(target, {
+      content: "new trusted bytes", expectedSha256, maxBytes: 128,
+      label: "Original inode fixture", fsImpl: racingFs,
+    }), /original.*temporary|temporary.*changed|foreign.*temporary|original.*inode/u);
+    assert.ok(swapped, "Another writer must substitute a distinct normal inode after close");
+    assert.equal(await fs.readFile(swapped, "utf8"), foreignData,
+      "Rejected writes must preserve the other writer's replacement temp");
+    assert.equal(await fs.readFile(savedOriginal, "utf8"), "new trusted bytes");
+    if (replacing) assert.equal(await fs.readFile(target, "utf8"), "old trusted bytes");
+    else await assert.rejects(fs.access(target), { code: "ENOENT" });
+  }
+});
+
 test("safe file writer replaces only with the current SHA-256 and preserves file mode", async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "equinox-safe-file-replace-"));
   try {
