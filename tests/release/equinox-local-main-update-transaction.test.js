@@ -179,6 +179,7 @@ test("Main receipt temp cannot be replaced by another normal inode before atomic
   const rogue = "synthetic-foreign-receipt-content";
   let swapped = false;
   let destination = null;
+  let foreignTemp = null;
   const fsImpl = Object.create(fs);
   fsImpl.open = async (candidate, ...args) => {
     const handle = await fs.open(candidate, ...args);
@@ -190,6 +191,7 @@ test("Main receipt temp cannot be replaced by another normal inode before atomic
           if (!swapped) {
             swapped = true;
             destination = candidate.split(".tmp-")[0];
+            foreignTemp = candidate;
             await fs.unlink(candidate);
             await fs.writeFile(candidate, rogue, { mode: 0o600 });
           }
@@ -205,6 +207,8 @@ test("Main receipt temp cannot be replaced by another normal inode before atomic
     /temporary.*changed|identity|unsafe|inode/u,
   );
   assert.equal(swapped, true, "A regular 0600 replacement must be injected after descriptor close");
+  assert.equal(await fs.readFile(foreignTemp, "utf8"), rogue,
+    "Refusing the substituted receipt must not delete another writer's private temporary file");
   await assert.rejects(fs.access(destination), { code: "ENOENT" });
   assert.equal((await fs.lstat(engine.paths.lockPath)).isFile(), true,
     "A failed receipt must retain single-flight ownership for recovery");

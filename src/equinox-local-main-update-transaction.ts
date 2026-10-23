@@ -104,12 +104,13 @@ async function writeAtomicPrivateJson(filePath: string, value: unknown, { fsImpl
   const body = `${JSON.stringify(value, null, 2)}\n`;
   if (Buffer.byteLength(body) > MAX_RECEIPT_BYTES) throw new Error("Main update receipt exceeds the size limit.");
   let handle: Awaited<ReturnType<TransactionFs['open']>> | null | undefined;
+  let created: Awaited<ReturnType<TransactionFs['stat']>> | null = null;
   try {
     handle = await fsImpl.open(tempPath, "wx", 0o600);
     // Trust the inode created with O_EXCL, not the first later pathname stat.
     // Another same-UID writer can substitute a different regular 0600 temp
     // after this file is closed but before the atomic rename.
-    const created = await handle.stat();
+    created = await handle.stat();
     if (!created.isFile() || created.nlink !== 1 ||
         (process.platform !== "win32" && (created.mode & 0o777) !== 0o600)) {
       throw new Error("Main update receipt temporary file is unsafe.");
@@ -134,7 +135,16 @@ async function writeAtomicPrivateJson(filePath: string, value: unknown, { fsImpl
     await syncDirectory(parent, { fsImpl });
   } catch (error) {
     if (handle) await handle.close().catch(() => {});
-    await fsImpl.rm(tempPath, { force: true }).catch(() => {});
+    // A different writer may have replaced the temporary pathname after
+    // we created it. Never delete a foreign inode while recovering a failed
+    // receipt write; only our original exclusive descriptor is disposable.
+    if (created) {
+      const current = await fsImpl.lstat(tempPath).catch(() => null);
+      if (current?.isFile() && !current.isSymbolicLink() && current.nlink === 1 &&
+          current.dev === created.dev && current.ino === created.ino) {
+        await fsImpl.unlink(tempPath).catch(() => {});
+      }
+    }
     throw error;
   }
 }
