@@ -410,11 +410,11 @@ async function main() {
 
     const toolchain = equinoxLocalToolchainContract({ runtimeRoot: path.join(installRoot, "runtime"), target });
     assert.equal(toolchain.ambientPathDiscovery, false);
-    assert.match(await commandText(toolchain.gitPath, ["--version"]), /^git version 2\.53\.0\b/u);
-    assert.equal(await commandText(toolchain.nodePath, ["--version"]), "v26.12.0");
+    assert.match(await commandText(toolchain.gitPath, ["--version"]), /^git version 2\.56\.0\b/u);
+    assert.equal(await commandText(toolchain.nodePath, ["--version"]), "v26.12.1");
     assert.match(await commandText(toolchain.nodePath, [toolchain.npmPath, "--version"]), /^\d+\.\d+\.\d+$/u);
-    assert.equal(await commandText(node, ["--version"]), "v26.12.0");
-    assert.match(await commandText(tunnel, ["--version"]), /^0\.0\.16\+/u);
+    assert.equal(await commandText(node, ["--version"]), "v26.12.1");
+    assert.match(await commandText(tunnel, ["--version"]), /^0\.0\.17\+/u);
     assert.match(await commandText(cloudflared, ["--version"]), /cloudflared version/u);
 
     const fakeKey = path.join(installRoot, "secrets", "openai-runtime-key");
@@ -490,8 +490,8 @@ async function main() {
       ok: true,
       version: EQUINOX_LOCAL_VERSION,
       target,
-      nodeVersion: "26.12.0",
-      tunnelClientVersion: "0.0.16",
+      nodeVersion: "26.12.1",
+      tunnelClientVersion: "0.0.17",
       controlCenterPort: CONTROL_CENTER_PORT,
       controlCenterHealth: status.status.health?.state ?? null,
       sourceSha,

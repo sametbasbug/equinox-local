@@ -325,7 +325,7 @@ test("independent Windows Guardian audits exact Main SHA/native-store identity w
   assert.match(inspector, /CompareNativeTrees\(immutableShell, activeProgram\)/u);
   assert.match(inspector, /InspectOwnedMainGit\(install, target, expectedSource, sourceSha\)/u);
   const gitAudit = await fs.readFile(new URL("../../native/windows/EquinoxLocal.Guardian/MainGitIdentity.cs", import.meta.url), "utf8");
-  assert.match(gitAudit, /PinnedWindowsGit = "2\.53\.0-4"/u);
+  assert.match(gitAudit, /PinnedWindowsGit = "2\.56\.0-1"/u);
   assert.match(gitAudit, /ProcessStartInfo\(executable\)/u);
   assert.match(gitAudit, /UseShellExecute = false/u);
   assert.match(gitAudit, /core\.autocrlf=true/u);

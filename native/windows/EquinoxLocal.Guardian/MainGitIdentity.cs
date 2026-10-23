@@ -5,7 +5,7 @@ namespace EquinoxLocal.Guardian;
 
 internal static partial class Program
 {
-    private const string PinnedWindowsGit = "2.53.0-4";
+    private const string PinnedWindowsGit = "2.56.0-1";
     private const int MaxGitOutput = 8192;
 
     // Never execute ambient Git, a source-owned binary, an arbitrary program,

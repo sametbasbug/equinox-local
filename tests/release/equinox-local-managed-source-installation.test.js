@@ -126,9 +126,9 @@ test("managed-source resolver prefers exact product-owned Git when the M8 toolch
   t.after(() => fs.rm(home, { recursive: true, force: true }));
   const installRoot = path.join(home, "Library", "Application Support", "Equinox Local");
   const paths = equinoxLocalManagedSourcePaths({ platform: "darwin", arch: "arm64", homeDir: home, env: {} });
-  const managedGit = path.join(installRoot, "runtime", "toolchain", "git", "2.53.0-4", "darwin-arm64", "bin", "git");
-  const managedNode = path.join(installRoot, "runtime", "toolchain", "node", "26.12.0", "darwin-arm64", "bin", "node");
-  const managedNpm = path.join(installRoot, "runtime", "toolchain", "node", "26.12.0", "darwin-arm64", "lib", "node_modules", "npm", "bin", "npm-cli.js");
+  const managedGit = path.join(installRoot, "runtime", "toolchain", "git", "2.56.0-1", "darwin-arm64", "bin", "git");
+  const managedNode = path.join(installRoot, "runtime", "toolchain", "node", "26.12.1", "darwin-arm64", "bin", "node");
+  const managedNpm = path.join(installRoot, "runtime", "toolchain", "node", "26.12.1", "darwin-arm64", "lib", "node_modules", "npm", "bin", "npm-cli.js");
   await fs.mkdir(path.dirname(managedGit), { recursive: true, mode: 0o700 });
   await fs.mkdir(path.dirname(managedNode), { recursive: true, mode: 0o700 });
   await fs.mkdir(path.dirname(managedNpm), { recursive: true, mode: 0o700 });
@@ -153,7 +153,7 @@ test("managed-source resolver prefers exact product-owned Git when the M8 toolch
     },
   });
   assert.equal(resolved.gitPath, managedGit);
-  assert.match(resolved.nodePath, /runtime\/toolchain\/node\/26\.12\.0\/darwin-arm64\/bin\/node$/u);
+  assert.match(resolved.nodePath, /runtime\/toolchain\/node\/26\.12\.1\/darwin-arm64\/bin\/node$/u);
   assert.match(resolved.npmPath, /npm-cli\.js$/u);
   assert.equal(resolved.shellPath, null);
 });
@@ -182,7 +182,7 @@ test("signed Stable ignores leftover incomplete Main toolchain but enrolled Main
   const installRoot = path.join(home, "Library", "Application Support", "Equinox Local");
   const original = base(installRoot);
   const paths = equinoxLocalManagedSourcePaths({ platform: "darwin", arch: "arm64", homeDir: home, env: {} });
-  const leftoverGit = path.join(installRoot, "runtime", "toolchain", "git", "2.53.0-4", "darwin-arm64", "bin", "git");
+  const leftoverGit = path.join(installRoot, "runtime", "toolchain", "git", "2.56.0-1", "darwin-arm64", "bin", "git");
   await fs.mkdir(path.dirname(leftoverGit), { recursive: true });
   await fs.writeFile(leftoverGit, "old product-owned leftover\n", { mode: 0o700 });
   await fs.mkdir(paths.mainTransactionRoot, { recursive: true, mode: 0o700 });
@@ -239,9 +239,9 @@ test("enrolled Main rejects symlinked product Git while preserving the signed St
   t.after(()=>fs.rm(home,{recursive:true,force:true}));
   const installRoot=path.join(home,"Library","Application Support","Equinox Local");
   const paths=equinoxLocalManagedSourcePaths({platform:"darwin",arch:"arm64",homeDir:home,env:{}});
-  const managedGit=path.join(installRoot,"runtime","toolchain","git","2.53.0-4","darwin-arm64","bin","git");
-  const managedNode=path.join(installRoot,"runtime","toolchain","node","26.12.0","darwin-arm64","bin","node");
-  const managedNpm=path.join(installRoot,"runtime","toolchain","node","26.12.0","darwin-arm64","lib","node_modules","npm","bin","npm-cli.js");
+  const managedGit=path.join(installRoot,"runtime","toolchain","git","2.56.0-1","darwin-arm64","bin","git");
+  const managedNode=path.join(installRoot,"runtime","toolchain","node","26.12.1","darwin-arm64","bin","node");
+  const managedNpm=path.join(installRoot,"runtime","toolchain","node","26.12.1","darwin-arm64","lib","node_modules","npm","bin","npm-cli.js");
   for(const executable of [managedGit,managedNode,managedNpm]) await fs.mkdir(path.dirname(executable),{recursive:true});
   const foreign=path.join(home,"foreign-git");
   await fs.writeFile(foreign,"foreign executable",{mode:0o700});

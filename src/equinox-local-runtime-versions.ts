@@ -1,8 +1,8 @@
-export const EQUINOX_LOCAL_NODE_VERSION = "26.12.0";
-export const EQUINOX_LOCAL_DUGITE_VERSION = "2.53.0-4";
-export const EQUINOX_LOCAL_DUGITE_BUILD = "4098283";
-export const EQUINOX_LOCAL_TUNNEL_CLIENT_VERSION = "0.0.16";
-export const EQUINOX_LOCAL_PEEKABOO_VERSION = "4.9.4";
+export const EQUINOX_LOCAL_NODE_VERSION = "26.12.1";
+export const EQUINOX_LOCAL_DUGITE_VERSION = "2.56.0-1";
+export const EQUINOX_LOCAL_DUGITE_BUILD = "7ce66f8";
+export const EQUINOX_LOCAL_TUNNEL_CLIENT_VERSION = "0.0.17";
+export const EQUINOX_LOCAL_PEEKABOO_VERSION = "4.9.6";
 export const EQUINOX_LOCAL_WINAPP_VERSION = "0.7.1";
 export const EQUINOX_LOCAL_BUNDLED_WINAPP_SINCE_VERSION = "5.2.1";
 export const EQUINOX_LOCAL_NATIVE_JOB_OBJECT_HELPER_SINCE_VERSION = "5.2.1";
@@ -12,7 +12,7 @@ export const EQUINOX_LOCAL_PEEKABOO_TEAM_ID = "FWJYW4S8P8";
 
 export const PEEKABOO_DISTRIBUTION = Object.freeze({
   filename: "peekaboo-macos-universal.tar.gz",
-  sha256: "cf385eb18b94c4261c28b62e1e8033d993c6fe272a4254fbaa5dcb8ddf3c26bb",
+  sha256: "01bdd139b7b010630378bbf0e31f54f38fde4501a5805b2bf66b64521b7ceca2",
   archiveRoot: "peekaboo-macos-universal",
   architectures: Object.freeze(["arm64", "x86_64"]),
 });
@@ -32,50 +32,50 @@ export const WINAPP_DISTRIBUTIONS = Object.freeze({
 
 export const DUGITE_DISTRIBUTIONS = Object.freeze({
   "darwin-arm64": Object.freeze({
-    filename: `dugite-native-v2.53.0-${EQUINOX_LOCAL_DUGITE_BUILD}-macOS-arm64.tar.gz`,
-    bytes: 62_348_987,
-    sha256: "f9dc64635a5b62fbd7ad95db73268bbb8912255ac516d65d37bf7af22fcb8ffe",
+    filename: `dugite-native-v2.56.0-${EQUINOX_LOCAL_DUGITE_BUILD}-macOS-arm64.tar.gz`,
+    bytes: 63_488_157,
+    sha256: "ab756ab9a15241f14b6c0a0386c704a998bb710a837ab35dc55d4747a90f2ca0",
   }),
   "darwin-x64": Object.freeze({
-    filename: `dugite-native-v2.53.0-${EQUINOX_LOCAL_DUGITE_BUILD}-macOS-x64.tar.gz`,
-    bytes: 66_136_060,
-    sha256: "ae6686718aa34f4140424db16b92a47dcffd6d1f312eb8b5f3b267f7404e2680",
+    filename: `dugite-native-v2.56.0-${EQUINOX_LOCAL_DUGITE_BUILD}-macOS-x64.tar.gz`,
+    bytes: 67_470_255,
+    sha256: "f294895790a98405b2900d55160945d4d0ce92492891aac4b95f2c7085220fa3",
   }),
   "win32-arm64": Object.freeze({
-    filename: `dugite-native-v2.53.0-${EQUINOX_LOCAL_DUGITE_BUILD}-windows-arm64.tar.gz`,
-    bytes: 45_084_825,
-    sha256: "1abbeb3a2ce06e9b80e75bb888dce959b6c73bdb11ccc670a01a71d64f4422a5",
+    filename: `dugite-native-v2.56.0-${EQUINOX_LOCAL_DUGITE_BUILD}-windows-arm64.tar.gz`,
+    bytes: 44_348_850,
+    sha256: "bd8ecc89890421684d9b49951af162725389a43b9f128350daff673116af5726",
   }),
   "win32-x64": Object.freeze({
-    filename: `dugite-native-v2.53.0-${EQUINOX_LOCAL_DUGITE_BUILD}-windows-x64.tar.gz`,
-    bytes: 47_119_821,
-    sha256: "7b76bc5c32c0d7c5984efdc2a8a32697cf1e8a43bc55176fbf9869c0ee995130",
+    filename: `dugite-native-v2.56.0-${EQUINOX_LOCAL_DUGITE_BUILD}-windows-x64.tar.gz`,
+    bytes: 46_985_154,
+    sha256: "2157566523b767a8f812a6733686fdf13046aa9c1d9987f96030401b759bffee",
   }),
 });
 
 export const NODE_DISTRIBUTIONS = Object.freeze({
   "darwin-arm64": Object.freeze({
     filename: `node-v${EQUINOX_LOCAL_NODE_VERSION}-darwin-arm64.tar.gz`,
-    bytes: 58_327_892,
-    sha256: "2a154d4a5458930e0a2d6a1ecf64eddf5a2b3e1c13636b609c2ecb042e8c4553",
+    bytes: 58_334_853,
+    sha256: "1901d539912c02afa10d1cc126943a8855a7eedebe830119463470db5e6c59e8",
     fileArchitecture: "arm64",
   }),
   "darwin-x64": Object.freeze({
     filename: `node-v${EQUINOX_LOCAL_NODE_VERSION}-darwin-x64.tar.gz`,
-    bytes: 59_797_494,
-    sha256: "878ecede191c7abc1bff01d3fb81f7ed81aa1161040dba18776b8ff8593614b1",
+    bytes: 59_800_211,
+    sha256: "b85c2ea4420ad0bc4abf2dc6cf1f55130ed681f1cabf60cf3f526e4c9e2712ff",
     fileArchitecture: "x86_64",
   }),
   "win32-arm64": Object.freeze({
     filename: `node-v${EQUINOX_LOCAL_NODE_VERSION}-win-arm64.zip`,
-    bytes: 37_267_737,
-    sha256: "cc773b9829623e3d4fd13aef394f05010e0459273f27fb3255150f38a2577abf",
+    bytes: 37_275_911,
+    sha256: "34567581ee63967b37afb6b7a0cc63a2d550a43d5d838adb75982d7e356f2e2c",
     fileArchitecture: "arm64",
   }),
   "win32-x64": Object.freeze({
     filename: `node-v${EQUINOX_LOCAL_NODE_VERSION}-win-x64.zip`,
-    bytes: 41_895_610,
-    sha256: "50efaf01a08c520b4bbe499c09a8c5a5c370002c419c0d9da2c6815d3066a453",
+    bytes: 41_901_456,
+    sha256: "b3efd5c70cba3308ed46e7e699a9b8aac075bbc6b027fcb39c84c31acc25e2b4",
     fileArchitecture: "x86_64",
   }),
 });
@@ -84,25 +84,25 @@ export const TUNNEL_CLIENT_DISTRIBUTIONS = Object.freeze({
   "darwin-arm64": Object.freeze({
     assetTag: "darwin-arm64",
     filename: `tunnel-client-v${EQUINOX_LOCAL_TUNNEL_CLIENT_VERSION}-darwin-arm64.zip`,
-    sha256: "a160820d45089b5253d8d671fe2a689bde0f73d78c135d1497a7b33f28a3ac62",
+    sha256: "df03ad0ba9c95c22951bab6833df289469f15b9a3fa0397d95e3d568d1ff6c1f",
     fileArchitecture: "arm64",
   }),
   "darwin-x64": Object.freeze({
     assetTag: "darwin-amd64",
     filename: `tunnel-client-v${EQUINOX_LOCAL_TUNNEL_CLIENT_VERSION}-darwin-amd64.zip`,
-    sha256: "57b3dd73f2d042c7aeb5664681f7538078359f55538b9e048640f1df71a0c83f",
+    sha256: "1d54cc57e0a624dc733d402f7d36585f2135a23ddc32c4cb52a7253c7d8d94a0",
     fileArchitecture: "x86_64",
   }),
   "win32-arm64": Object.freeze({
     assetTag: "windows-arm64",
     filename: `tunnel-client-v${EQUINOX_LOCAL_TUNNEL_CLIENT_VERSION}-windows-arm64.zip`,
-    sha256: "ecd748288b9bd9cc8f5a963855eb143f4788b831475156703d0bafdcd2dcb149",
+    sha256: "925c8298e46e088413bb02c81d36775f2e818970231bc2ecc215fcb0f0382bf7",
     fileArchitecture: "arm64",
   }),
   "win32-x64": Object.freeze({
     assetTag: "windows-amd64",
     filename: `tunnel-client-v${EQUINOX_LOCAL_TUNNEL_CLIENT_VERSION}-windows-amd64.zip`,
-    sha256: "edef7241b0c647fcb30f1a80ff376b6b25c51927960f257a3f01e21b17c2aba6",
+    sha256: "b89074637596262067061308cf174959561a1a8bcffe2db956650dad7303052b",
     fileArchitecture: "x86_64",
   }),
 });

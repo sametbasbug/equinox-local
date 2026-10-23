@@ -32,13 +32,13 @@ test("Release Validation covers all four platforms and does not duplicate full I
   const intel = workflow.split("  intel-x64:")[1]?.split("  arm64-managed:")[0] ?? "";
   const arm = workflow.split("  arm64-managed:")[1]?.split("  windows-native:")[0] ?? "";
   assert.match(workflow, /arm-target: \$\{\{ steps\.plan\.outputs\.arm-target \}\}/u);
-  assert.match(intel, /node-version: 26\.12\.0/u);
+  assert.match(intel, /node-version: 26\.12\.1/u);
   assert.match(intel, /npm run local:release:package/u);
   assert.match(intel, /npm run local:smoke:managed/u);
   assert.doesNotMatch(intel, /run: npm test/u);
   assert.match(arm, /runs-on: macos-latest/u);
   assert.match(arm, /test "\$\(uname -m\)" = "arm64"/u);
-  assert.match(arm, /node-version: 26\.12\.0/u);
+  assert.match(arm, /node-version: 26\.12\.1/u);
   assert.match(arm, /npm run local:release:package/u);
   assert.match(arm, /npm run local:smoke:managed/u);
   assert.match(arm, /darwin-arm64-validation-unsigned/u);

@@ -15,17 +15,17 @@ test("M8 toolchain contract derives exact product-owned identities for all targe
     const contract = equinoxLocalToolchainContract({ runtimeRoot, target });
     assert.equal(contract.ambientPathDiscovery, false);
     assert.equal(contract.gitPath, windows
-      ? p.join(runtimeRoot, "toolchain", "git", "2.53.0-4", target, "cmd", "git.exe")
-      : p.join(runtimeRoot, "toolchain", "git", "2.53.0-4", target, "bin", "git"));
+      ? p.join(runtimeRoot, "toolchain", "git", "2.56.0-1", target, "cmd", "git.exe")
+      : p.join(runtimeRoot, "toolchain", "git", "2.56.0-1", target, "bin", "git"));
     assert.equal(contract.nodePath, windows
-      ? p.join(runtimeRoot, "toolchain", "node", "26.12.0", target, "node.exe")
-      : p.join(runtimeRoot, "toolchain", "node", "26.12.0", target, "bin", "node"));
+      ? p.join(runtimeRoot, "toolchain", "node", "26.12.1", target, "node.exe")
+      : p.join(runtimeRoot, "toolchain", "node", "26.12.1", target, "bin", "node"));
     assert.equal(contract.shellPath, windows
-      ? p.join(runtimeRoot, "toolchain", "git", "2.53.0-4", target, "usr", "bin", "sh.exe")
+      ? p.join(runtimeRoot, "toolchain", "git", "2.56.0-1", target, "usr", "bin", "sh.exe")
       : null);
     const npmRoot = windows ? ["node_modules", "npm", "bin"] : ["lib", "node_modules", "npm", "bin"];
-    assert.equal(contract.npmPath, p.join(runtimeRoot, "toolchain", "node", "26.12.0", target, ...npmRoot, "npm-cli.js"));
-    assert.equal(contract.npxPath, p.join(runtimeRoot, "toolchain", "node", "26.12.0", target, ...npmRoot, "npx-cli.js"));
+    assert.equal(contract.npmPath, p.join(runtimeRoot, "toolchain", "node", "26.12.1", target, ...npmRoot, "npm-cli.js"));
+    assert.equal(contract.npxPath, p.join(runtimeRoot, "toolchain", "node", "26.12.1", target, ...npmRoot, "npx-cli.js"));
     assert.deepEqual(contract.gitInvocation, { command: contract.gitPath, argsPrefix: [] });
     assert.deepEqual(contract.npmInvocation, { command: contract.nodePath, argsPrefix: [contract.npmPath] });
     assert.equal(contract.git.archiveRoot, ".");
@@ -34,18 +34,18 @@ test("M8 toolchain contract derives exact product-owned identities for all targe
 
 test("M8 toolchain contract pins exact Dugite and Node archives", () => {
   const expected = {
-    "darwin-arm64": [["dugite-native-v2.53.0-4098283-macOS-arm64.tar.gz", 62_348_987, "f9dc64635a5b62fbd7ad95db73268bbb8912255ac516d65d37bf7af22fcb8ffe"], ["node-v26.12.0-darwin-arm64.tar.gz", 58_327_892, "2a154d4a5458930e0a2d6a1ecf64eddf5a2b3e1c13636b609c2ecb042e8c4553"]],
-    "darwin-x64": [["dugite-native-v2.53.0-4098283-macOS-x64.tar.gz", 66_136_060, "ae6686718aa34f4140424db16b92a47dcffd6d1f312eb8b5f3b267f7404e2680"], ["node-v26.12.0-darwin-x64.tar.gz", 59_797_494, "878ecede191c7abc1bff01d3fb81f7ed81aa1161040dba18776b8ff8593614b1"]],
-    "win32-arm64": [["dugite-native-v2.53.0-4098283-windows-arm64.tar.gz", 45_084_825, "1abbeb3a2ce06e9b80e75bb888dce959b6c73bdb11ccc670a01a71d64f4422a5"], ["node-v26.12.0-win-arm64.zip", 37_267_737, "cc773b9829623e3d4fd13aef394f05010e0459273f27fb3255150f38a2577abf"]],
-    "win32-x64": [["dugite-native-v2.53.0-4098283-windows-x64.tar.gz", 47_119_821, "7b76bc5c32c0d7c5984efdc2a8a32697cf1e8a43bc55176fbf9869c0ee995130"], ["node-v26.12.0-win-x64.zip", 41_895_610, "50efaf01a08c520b4bbe499c09a8c5a5c370002c419c0d9da2c6815d3066a453"]],
+    "darwin-arm64": [["dugite-native-v2.56.0-7ce66f8-macOS-arm64.tar.gz", 63_488_157, "ab756ab9a15241f14b6c0a0386c704a998bb710a837ab35dc55d4747a90f2ca0"], ["node-v26.12.1-darwin-arm64.tar.gz", 58_334_853, "1901d539912c02afa10d1cc126943a8855a7eedebe830119463470db5e6c59e8"]],
+    "darwin-x64": [["dugite-native-v2.56.0-7ce66f8-macOS-x64.tar.gz", 67_470_255, "f294895790a98405b2900d55160945d4d0ce92492891aac4b95f2c7085220fa3"], ["node-v26.12.1-darwin-x64.tar.gz", 59_800_211, "b85c2ea4420ad0bc4abf2dc6cf1f55130ed681f1cabf60cf3f526e4c9e2712ff"]],
+    "win32-arm64": [["dugite-native-v2.56.0-7ce66f8-windows-arm64.tar.gz", 44_348_850, "bd8ecc89890421684d9b49951af162725389a43b9f128350daff673116af5726"], ["node-v26.12.1-win-arm64.zip", 37_275_911, "34567581ee63967b37afb6b7a0cc63a2d550a43d5d838adb75982d7e356f2e2c"]],
+    "win32-x64": [["dugite-native-v2.56.0-7ce66f8-windows-x64.tar.gz", 46_985_154, "2157566523b767a8f812a6733686fdf13046aa9c1d9987f96030401b759bffee"], ["node-v26.12.1-win-x64.zip", 41_901_456, "b3efd5c70cba3308ed46e7e699a9b8aac075bbc6b027fcb39c84c31acc25e2b4"]],
   };
   for (const [target, [gitPin, nodePin]] of Object.entries(expected)) {
     const runtimeRoot = target.startsWith("win32-") ? WINDOWS_RUNTIME : DARWIN_RUNTIME;
     const contract = equinoxLocalToolchainContract({ runtimeRoot, target });
     assert.deepEqual([contract.git.distribution.filename, contract.git.distribution.bytes, contract.git.distribution.sha256], gitPin);
     assert.deepEqual([contract.node.distribution.filename, contract.node.distribution.bytes, contract.node.distribution.sha256], nodePin);
-    assert.match(contract.git.distribution.url, /^https:\/\/github\.com\/desktop\/dugite-native\/releases\/download\/v2\.53\.0-4\//u);
-    assert.match(contract.node.distribution.url, /^https:\/\/nodejs\.org\/dist\/v26\.12\.0\//u);
+    assert.match(contract.git.distribution.url, /^https:\/\/github\.com\/desktop\/dugite-native\/releases\/download\/v2\.56\.0-1\//u);
+    assert.match(contract.node.distribution.url, /^https:\/\/nodejs\.org\/dist\/v26\.12\.1\//u);
   }
 });
 
