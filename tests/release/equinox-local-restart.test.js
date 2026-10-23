@@ -31,6 +31,20 @@ function installation() {
   };
 }
 
+test("restart synchronizes admitted successor runtimes, never obsolete caller checkout tooling", async () => {
+  const script = await fs.readFile(path.join(ROOT, "scripts", "restart-runtime.sh"), "utf8");
+  const targetResolution = script.indexOf('TARGET_SOURCE_ROOT="$("$DEV_NODE" "$ROOT/scripts/release/resolve-source-restart-target.mjs" "$ROOT")"');
+  assert.ok(targetResolution >= 0, "a successor must be validated before runtime mutation");
+  for (const helper of ["sync-source-tunnel-runtime.mjs", "sync-source-peekaboo-runtime.mjs", "prepare-source-app-host.mjs"]) {
+    const command = `"$TARGET_SOURCE_ROOT/scripts/release/${helper}"`;
+    const invocation = script.indexOf(command);
+    assert.ok(invocation > targetResolution, `${helper} must come from the admitted successor after validation`);
+    assert.equal(script.includes(`"$ROOT/scripts/release/${helper}"`), false, `${helper} must not be loaded from the obsolete caller`);
+  }
+  assert.match(script, /RESTART_STAGE="sync-successor-runtimes"/u);
+  assert.match(script, /admitted restart target helper is missing or unsafe/u);
+});
+
 test("source-checkout restart uses only private generic developer runtime config", async () => {
   const script = await fs.readFile(path.join(ROOT, "scripts", "restart-runtime.sh"), "utf8");
   const example = await fs.readFile(path.join(ROOT, "examples", "equinox-local-dev-runtime.example.conf"), "utf8");
