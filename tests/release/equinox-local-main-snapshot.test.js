@@ -206,16 +206,20 @@ test("Main snapshot stage rejects altered bytes within its originally verified a
     return new Proxy(handle, {
       get(target, property) {
         if (property === "close") return async () => {
-          await target.close();
-          // Overwrite the *same inode* and retain the same file size after
-          // the streaming SHA-256 has already accepted network bytes.
-          const before = await fs.lstat(candidate);
-          await fs.writeFile(candidate, foreign);
-          const after = await fs.lstat(candidate);
+          // Mutate the actual opened file descriptor after the network
+          // stream has been hashed and synced, before the true close.
+          // This proves in-place tampering without introducing another
+          // pathname lstat -> open/write race inside the attack fixture.
+          const before = await target.stat();
+          const { bytesWritten } = await target.write(foreign, 0, foreign.length, 0);
+          assert.equal(bytesWritten, foreign.length);
+          await target.sync();
+          const after = await target.stat();
           assert.equal(after.ino, before.ino);
           assert.equal(after.dev, before.dev);
           assert.equal(after.size, trusted.length);
           tampered = true;
+          await target.close();
         };
         const value = target[property];
         return typeof value === "function" ? value.bind(target) : value;
