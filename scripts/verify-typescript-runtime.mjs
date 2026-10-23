@@ -70,12 +70,17 @@ export async function verifyTypeScriptRuntimeOutput({ rootDir = root, nodePath =
         // Keep the per-file checks below for substitutions between preflight and open.
         // A hard link looks regular, but overwriting it also changes a foreign file.
         // Reject multiply linked tooling outputs before opening or truncating them.
+        // Pin every destination's original inode before any writes. A parent
+        // directory can be replaced between this preflight and a later lstat;
+        // that later path may appear safe while naming a *foreign* regular file.
+        const preflightIdentities = new Map();
         if (writeOutput) {
             for (const relative of files) {
                 await assertToolingOutputParents(rootDir, sourceDirectory, relative);
                 const destination = path.join(rootDir, sourceDirectory, relative);
                 const stat = await fs.lstat(destination);
                 assert.ok(stat.isFile() && !stat.isSymbolicLink() && stat.nlink === 1, `Tooling output is not an owned regular file: ${relative}`);
+                preflightIdentities.set(relative, { dev: stat.dev, ino: stat.ino });
             }
         }
         const changed = [];
@@ -86,6 +91,8 @@ export async function verifyTypeScriptRuntimeOutput({ rootDir = root, nodePath =
                 await assertToolingOutputParents(rootDir, sourceDirectory, relative);
                 const stat = await fs.lstat(destination);
                 assert.ok(stat.isFile() && !stat.isSymbolicLink() && stat.nlink === 1, `Tooling output is not an owned regular file: ${relative}`);
+                const pinned = preflightIdentities.get(relative);
+                assert.ok(pinned && stat.dev === pinned.dev && stat.ino === pinned.ino, `Tooling output changed after preflight: ${relative}`);
                 const handle = await fs.open(destination, constants.O_WRONLY | (constants.O_NOFOLLOW ?? 0));
                 try {
                     const opened = await handle.stat();

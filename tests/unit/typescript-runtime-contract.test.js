@@ -206,6 +206,50 @@ test("tooling writer rejects hard-linked outputs without changing the foreign in
   }
 });
 
+test("tooling writer rejects a parent swap between preflight and the output inode check", async (t) => {
+  if (process.platform === "win32") { t.skip("POSIX directory substitution fixture"); return; }
+  const rootDir = await fs.mkdtemp(path.join(os.tmpdir(), "equinox-tooling-parent-swap-"));
+  const outside = await fs.mkdtemp(path.join(os.tmpdir(), "equinox-tooling-swap-foreign-"));
+  const targetDir = path.join(rootDir, "scripts", "lib");
+  const target = path.join(targetDir, "package-io.mjs");
+  const foreign = path.join(outside, "package-io.mjs");
+  const expected = "foreign-owned-file-must-not-be-modified\n";
+  const prior = "original-checkout-file\n";
+  const emitted = (_node, args) => {
+    const staging = args[args.indexOf("--outDir") + 1];
+    mkdirSync(path.join(staging, "scripts", "lib"), { recursive: true });
+    writeFileSync(path.join(staging, "scripts", "lib", "package-io.mjs"), 'export const generated = true;\n');
+    return { status: 0, stdout: "", stderr: "" };
+  };
+  await fs.mkdir(targetDir, { recursive: true });
+  await fs.writeFile(target, prior);
+  await fs.writeFile(foreign, expected);
+  const originalLstat = fs.lstat;
+  let observed = 0;
+  let swapped = false;
+  try {
+    fs.lstat = async (candidate, ...options) => {
+      if (candidate === target && ++observed === 2) {
+        await fs.rename(targetDir, `${targetDir}-original`);
+        await fs.symlink(outside, targetDir);
+        swapped = true;
+      }
+      return originalLstat(candidate, ...options);
+    };
+    await assert.rejects(verifyTypeScriptRuntimeOutput({
+      rootDir, projectFile: "tsconfig.tooling.json", sourceDirectory: "scripts",
+      emittedPrefix: "scripts", writeOutput: true, spawnImpl: emitted,
+    }), /changed after preflight|changed while opening|unsafe|symlink|output directory/u);
+    assert.equal(swapped, true, "Parent replacement attack must actually occur between checks");
+    assert.equal(await fs.readFile(foreign, "utf8"), expected, "Foreign file must never be truncated");
+    assert.equal(await fs.readFile(path.join(`${targetDir}-original`, "package-io.mjs"), "utf8"), prior);
+  } finally {
+    fs.lstat = originalLstat;
+    await fs.rm(rootDir, { recursive: true, force: true });
+    await fs.rm(outside, { recursive: true, force: true });
+  }
+});
+
 test("tooling writer preflights every emitted destination before modifying earlier outputs", async () => {
   const rootDir = await fs.mkdtemp(path.join(os.tmpdir(), "equinox-tooling-preflight-"));
   const outside = await fs.mkdtemp(path.join(os.tmpdir(), "equinox-tooling-preflight-external-"));
