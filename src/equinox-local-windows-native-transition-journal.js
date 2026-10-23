@@ -166,19 +166,37 @@ async function writeRecord(file, data, { fsImpl, createOnly, platform, protectAc
     const dir = path.dirname(file);
     const temp = path.join(dir, `.${path.basename(file)}.${randomBytes(8).toString("hex")}.tmp`);
     let handle;
+    let original = null;
+    const requireOriginal = async (candidate, label, singleLink = false) => {
+        const current = await fsImpl.lstat(candidate);
+        if (!original || !current.isFile() || current.isSymbolicLink() ||
+            current.dev !== original.dev || current.ino !== original.ino ||
+            (singleLink && current.nlink !== 1)) {
+            throw new Error(`Windows transition journal ${label} changed original file identity.`);
+        }
+    };
     try {
         handle = await fsImpl.open(temp, "wx", 0o600);
+        original = await handle.stat();
+        if (!original.isFile() || original.nlink !== 1) {
+            throw new Error("Windows transition journal temporary file is not exclusive and normal.");
+        }
         await handle.writeFile(body, "utf8");
         await handle.sync();
         await handle.close();
         handle = null;
+        await requireOriginal(temp, "temporary file", true);
         if (createOnly) {
             // Link with exclusivity: never silently overwrite an existing journal.
             await fsImpl.link(temp, file);
+            await requireOriginal(file, "published file");
+            await requireOriginal(temp, "temporary file");
             await fsImpl.unlink(temp);
         }
-        else
+        else {
             await fsImpl.rename(temp, file);
+        }
+        await requireOriginal(file, "published file", true);
         if (platform === "win32") {
             await protectAcl({ target: file, type: "file" });
             const checked = await verifyAcl({ target: file, type: "file" });
@@ -190,7 +208,15 @@ async function writeRecord(file, data, { fsImpl, createOnly, platform, protectAc
     catch (error) {
         if (handle)
             await handle.close().catch(() => { });
-        await fsImpl.rm(temp, { force: true }).catch(() => { });
+        // Never delete another writer's replacement of our temporary pathname.
+        // A changed inode is retained for explicit recovery/forensic review.
+        if (original) {
+            const current = await fsImpl.lstat(temp).catch(() => null);
+            if (current && current.isFile() && !current.isSymbolicLink() &&
+                current.dev === original.dev && current.ino === original.ino) {
+                await fsImpl.unlink(temp).catch(() => { });
+            }
+        }
         throw error;
     }
 }

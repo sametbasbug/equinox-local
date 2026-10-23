@@ -48,6 +48,36 @@ async function fixture(t, options = {}) {
   return { root, transactionRoot, journal, calls, changeReceipt: (change) => { receipt = { ...receipt, ...change }; } };
 }
 
+test("Guardian writer rejects a foreign ordinary temp inode before journal publication", async (t) => {
+  const foreignContents = "synthetic-foreign-native-transition-journal\n";
+  let replacedPath = null;
+  const wrappedFs = Object.create(fs);
+  wrappedFs.open = async (candidate, ...args) => {
+    const handle = await fs.open(candidate, ...args);
+    if (!/\.json\.[a-f0-9]{16}\.tmp$/u.test(String(candidate))) return handle;
+    return new Proxy(handle, {
+      get(target, property) {
+        if (property === "close") return async () => {
+          await target.close();
+          if (!replacedPath) {
+            replacedPath = candidate;
+            await fs.unlink(candidate);
+            await fs.writeFile(candidate, foreignContents, { mode: 0o600 });
+          }
+        };
+        const value = target[property];
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
+  };
+  const f = await fixture(t, { fsImpl: wrappedFs });
+  await assert.rejects(f.journal.create(input), /temporary.*changed|temporary.*identity|writer.*temp.*unsafe/u);
+  assert.ok(replacedPath, "Temp must be replaced after the original descriptor closed");
+  assert.equal(await fs.readFile(replacedPath, "utf8"), foreignContents,
+    "Another writer's substituted private temp must not be erased by cleanup");
+  await assert.rejects(fs.access(path.join(f.journal.root, `${TX}.json`)), { code: "ENOENT" });
+});
+
 test("Windows durable guardian journal is created once and safely reloaded without reset", async (t) => {
   const f = await fixture(t);
   const created = await f.journal.create(input);
