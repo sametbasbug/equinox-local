@@ -13,6 +13,7 @@ import { equinoxLocalReleaseTarget } from "./equinox-local-platform.js";
 import { EQUINOX_LOCAL_INSTALL_LABEL, resolveEquinoxLocalInstallation } from "./equinox-local-installation.js";
 import { kickstartEquinoxLocalLaunchAgent } from "./equinox-local-update-activation.js";
 import { equinoxLocalToolchainContract } from "./equinox-local-toolchain-contract.js";
+import { provisionEquinoxLocalToolchain } from "./equinox-local-toolchain-provisioner.js";
 import { readBoundedNormalFile } from "./equinox-local-safe-file.js";
 import { createEquinoxLocalMainUpdateTransactionEngine } from "./equinox-local-main-update-transaction.js";
 import { runEquinoxLocalMainUpdateHandoff } from "./equinox-local-main-update-handoff.js";
@@ -80,6 +81,7 @@ type WorkerRunnerOptions = {
   sleepImpl?: (ms: number) => Promise<unknown>; fsImpl?: WorkerFs; env?: WorkerEnv;
   uid?: number | undefined;
   engineFactory?: typeof createEquinoxLocalMainUpdateTransactionEngine;
+  provisionToolchainImpl?: typeof provisionEquinoxLocalToolchain;
   resolveHostTarget?: () => string;
   planNativeTransition?: typeof planEquinoxLocalMainNativeTransition;
   ensureNativeArtifact?: (args: EnsureArtifactOptions) => Promise<boolean>;
@@ -281,6 +283,7 @@ export async function runEquinoxLocalMainUpdateWorker({
   handoffImpl = runEquinoxLocalMainUpdateHandoff,
   restartRuntimeImpl = (value) => restartEquinoxLocalMainSourceRuntime({ ...value, execFileImpl, env, fsImpl }),
   verifyRuntimeImpl,
+  provisionToolchainImpl = provisionEquinoxLocalToolchain,
   resolveNativeInstallation = resolveEquinoxLocalMainWorkerNativeInstallation,
   cleanupImpl = (value) => cleanupEquinoxLocalMainUpdateWorkerOwnership({
     ...value, execFileImpl, fsImpl,
@@ -324,6 +327,17 @@ export async function runEquinoxLocalMainUpdateWorker({
     let nativeTransition: NativeTransition;
     let nativeLifecycle: NativeShellOwner | null = null;
     try {
+      // The detached worker executes the TARGET source, whose Git/Node pins
+      // may differ from the still-running A release. A's coordinator cannot
+      // install B's toolchain. Provision B's exact SHA/size-verified binaries
+      // after verifying transaction ownership, but BEFORE using B's Git to
+      // inspect the A -> B diff; a missing pin must fail before activation.
+      if (initialStage === "ready_to_switch") {
+        await provisionToolchainImpl({
+          runtimeRoot, target: hostTarget, platform: process.platform,
+          env, fsImpl, execFileImpl,
+        });
+      }
       const target = hostTarget;
       nativeTransition = await planNativeTransition({
         ...(active.rollbackSourceRoot === null ? {} : {currentRoot: active.rollbackSourceRoot}),

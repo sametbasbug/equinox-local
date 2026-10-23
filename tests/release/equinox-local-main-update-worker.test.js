@@ -26,6 +26,12 @@ function argv() {
   return ["--transaction-id", TX, "--source-root", SOURCE, "--transaction-root", STATE];
 }
 
+// Deterministic native-worker fixtures never access the network; specific
+// tests override this seam to exercise real ordering and fail-closed abort.
+function runWorkerFixture(options) {
+  return runEquinoxLocalMainUpdateWorker({ provisionToolchainImpl: async () => ({ components: [] }), ...options });
+}
+
 test("Main worker runtime restart uses the Windows shell handoff without POSIX execution", async () => {
   const calls = [];
   const result = await restartEquinoxLocalMainSourceRuntime({
@@ -38,6 +44,53 @@ test("Main worker runtime restart uses the Windows shell handoff without POSIX e
   });
   assert.deepEqual(calls, [{ platform: "win32" }]);
   assert.deepEqual(result, { requested: true, platform: "win32" });
+});
+
+test("detached target worker provisions pinned B Git and Node before native diff (real external Windows update regression)", async () => {
+  const events = [];
+  const receipt = preparedReceipt();
+  const result = await runWorkerFixture({
+    argv: argv(), resolveHostTarget: () => "win32-x64",
+    engineFactory: () => ({
+      readActive: async () => { events.push("read-owned-receipt"); return receipt; },
+      abortPreparedPromotion: async () => assert.fail("successful preflight must not abort"),
+    }),
+    provisionToolchainImpl: async ({target, runtimeRoot}) => {
+      assert.equal(target, "win32-x64");
+      assert.ok(runtimeRoot.endsWith("runtime"));
+      events.push("provision-target-toolchain");
+      return { components: [] };
+    },
+    planNativeTransition: async ({gitPath}) => {
+      assert.match(gitPath, /2\.56\.0-1/u);
+      events.push("plan-using-new-git");
+      return { mode: "reuse_native", target: "win32-x64" };
+    },
+    handoffImpl: async () => { events.push("handoff"); return {status:"succeeded"}; },
+    cleanupImpl: async () => events.push("cleanup"),
+  });
+  assert.equal(result.status, "succeeded");
+  assert.deepEqual(events, ["read-owned-receipt", "provision-target-toolchain", "plan-using-new-git", "handoff", "cleanup"]);
+});
+
+test("detached native worker fails closed on toolchain download and aborts only its owned pre-activation transaction", async () => {
+  const events = [];
+  await assert.rejects(runWorkerFixture({
+    argv: argv(), resolveHostTarget: () => "win32-x64",
+    engineFactory: () => ({
+      readActive: async () => preparedReceipt(),
+      abortPreparedPromotion: async (id, message, opts) => events.push(["abort",id,message,opts]),
+    }),
+    provisionToolchainImpl: async () => { events.push(["provision"]); throw new Error("pinned new Git unavailable"); },
+    planNativeTransition: async () => assert.fail("never inspect target with missing Git"),
+    handoffImpl: async () => assert.fail("never hand off native transition"),
+    cleanupImpl: async () => events.push(["cleanup"]),
+  }), /pinned new Git unavailable/u);
+  assert.equal(events[0][0], "provision");
+  assert.equal(events[1][0], "abort");
+  assert.equal(events[1][1], TX);
+  assert.deepEqual(events[1][3], {stage:"native_admission_failed"});
+  assert.equal(events[2][0], "cleanup");
 });
 
 test("Windows native Main replacement relaunches only the verified new WPF shell when the old pipe is gone", async () => {
@@ -81,7 +134,7 @@ test("Windows native worker handoff supplies exact candidate and rollback releas
   const journal = { source: "exact-admitted-native-journal" };
   const nativeLifecycle = { target: "win32-x64", journaledAB: true, journal, stored: { releaseDir: targetRelease }, rollbackPath, windowsProgramRoot: programRoot, activate: async () => {}, rollback: async () => {}, commit: async () => {} };
   const engine = { paths: { sourcePointerPath: "C:\\transaction\\current-source.conf" }, readActive: async () => receipt };
-  await runEquinoxLocalMainUpdateWorker({
+  await runWorkerFixture({
     argv: argv(), engineFactory: () => engine, resolveHostTarget: () => "win32-x64",
     planNativeTransition: async () => transition,
     resolveNativeInstallation: async () => ({ managed: true, selfUpdateSupported: true, target: "win32-x64" }),
@@ -114,7 +167,7 @@ test("Windows detached owner installs a fresh native release without a second Gu
     readActive: async () => receipt,
     markNativeRollbackReady: async () => ({ ...receipt, stage: "native_rollback_ready" }),
   };
-  const result = await runEquinoxLocalMainUpdateWorker({
+  const result = await runWorkerFixture({
     argv: argv(), engineFactory: () => engine, resolveHostTarget: () => "win32-x64",
     planNativeTransition: async () => transition,
     resolveNativeInstallation: async () => ({ managed: true, selfUpdateSupported: true, target: "win32-x64" }),
@@ -146,7 +199,7 @@ test("target-owned detached worker stages a full native package when older A omi
   const receipt = preparedReceipt();
   const transition = { mode: "artifact_required", target: "darwin-arm64", currentSha: A, targetSha: B,
     currentRuntimeContractSha256: DIGEST_A, targetRuntimeContractSha256: DIGEST_A };
-  await runEquinoxLocalMainUpdateWorker({
+  await runWorkerFixture({
     argv: argv(), resolveHostTarget: () => "darwin-arm64",
     engineFactory: () => ({ readActive: async () => receipt,
       markNativeRollbackReady: async () => ({ ...receipt, stage: "native_rollback_ready" }) }),
@@ -166,7 +219,7 @@ test("Windows clean replacement refuses missing detached worker ownership before
   const calls = [];
   const transition = { mode: "artifact_required", target: "win32-x64", currentSha: A, targetSha: B,
     currentRuntimeContractSha256: DIGEST_A, targetRuntimeContractSha256: DIGEST_B };
-  await assert.rejects(runEquinoxLocalMainUpdateWorker({
+  await assert.rejects(runWorkerFixture({
     argv: argv(), resolveHostTarget: () => "win32-x64",
     engineFactory: () => ({ readActive: async () => receipt,
       abortPreparedPromotion: async () => calls.push("abort") }),
@@ -203,7 +256,7 @@ test("Main worker runtime restart uses the managed Darwin LaunchAgent instead of
 test("launchd worker consumes only the prepared transaction it owns and cleans up after success", async () => {
   const events = [];
   const engine = { paths: { sourcePointerPath: `${STATE}/current-source.conf` }, readActive: async () => preparedReceipt(), abortPreparedPromotion: async () => assert.fail("success must not abort") };
-  const result = await runEquinoxLocalMainUpdateWorker({
+  const result = await runWorkerFixture({
     argv: argv(),
     engineFactory: (options) => { events.push(["engine", options]); return engine; },
     resolveHostTarget: () => "darwin-arm64",
@@ -228,7 +281,7 @@ test("launchd worker consumes only the prepared transaction it owns and cleans u
 
 test("worker rejects an unprepared transaction but still removes launchd ownership", async () => {
   const events = [];
-  await assert.rejects(runEquinoxLocalMainUpdateWorker({
+  await assert.rejects(runWorkerFixture({
     argv: argv(),
     engineFactory: () => ({ readActive: async () => ({ transactionId: TX, status: "staged", stage: "staged" }) }),
     cleanupImpl: async () => events.push("cleanup"),
@@ -238,7 +291,7 @@ test("worker rejects an unprepared transaction but still removes launchd ownersh
 
 test("worker rejects a foreign transaction owner and still cleans the one-shot job", async () => {
   let cleaned = false;
-  await assert.rejects(runEquinoxLocalMainUpdateWorker({
+  await assert.rejects(runWorkerFixture({
     argv: argv(),
     engineFactory: () => ({ readActive: async () => preparedReceipt({ transactionId: `main-${"b".repeat(32)}` }) }),
     cleanupImpl: async () => { cleaned = true; },
@@ -285,7 +338,7 @@ test("worker prepares exact native candidate and durable rollback lifecycle befo
     abortPreparedPromotion: async () => assert.fail("valid native preparation must not abort"),
     markNativeRollbackReady: async (id) => { events.push(["rollback-ready", id]); return preparedReceipt({ stage: "native_rollback_ready" }); },
   };
-  const result = await runEquinoxLocalMainUpdateWorker({
+  const result = await runWorkerFixture({
     argv: argv(),
     engineFactory: () => engine,
     resolveHostTarget: () => "darwin-arm64",
@@ -313,7 +366,7 @@ test("worker aborts its own prepared transaction when native admission revalidat
     readActive: async () => preparedReceipt(),
     abortPreparedPromotion: async (...args) => events.push(["abort", ...args]),
   };
-  await assert.rejects(runEquinoxLocalMainUpdateWorker({
+  await assert.rejects(runWorkerFixture({
     argv: argv(),
     engineFactory: () => engine,
     resolveHostTarget: () => "darwin-arm64",
@@ -337,7 +390,7 @@ test("worker resumes native_switched from durable native recovery without candid
   const lifecycle = { activate: async () => {}, rollback: async () => {}, commit: async () => {} };
   const receipt = preparedReceipt({ stage: "native_switched" });
   const engine = { paths: { sourcePointerPath: `${STATE}/current-source.conf` }, readActive: async () => receipt };
-  const result = await runEquinoxLocalMainUpdateWorker({
+  const result = await runWorkerFixture({
     argv: argv(), engineFactory: () => engine, resolveHostTarget: () => "darwin-arm64",
     planNativeTransition: async () => transition,
     resolveNativeInstallation: async () => ({ managed: true, selfUpdateSupported: true, target: "darwin-arm64" }),
@@ -357,7 +410,7 @@ test("worker resumes source_switched reuse_native without touching native state"
   const events = [];
   const receipt = preparedReceipt({ status: "verifying", stage: "source_switched" });
   const engine = { paths: { sourcePointerPath: `${STATE}/current-source.conf` }, readActive: async () => receipt };
-  await runEquinoxLocalMainUpdateWorker({
+  await runWorkerFixture({
     argv: argv(), engineFactory: () => engine, resolveHostTarget: () => "darwin-arm64",
     planNativeTransition: async () => reuseTransition(),
     recoverNativeLifecycle: async () => assert.fail("reuse_native must not recover native state"),
@@ -376,7 +429,7 @@ test("worker retains ownership as rollback_failed when post-switch native recove
     abortPreparedPromotion: async () => assert.fail("post-switch recovery must never use pre-switch abort"),
     markRollbackFailed: async (...args) => calls.push(["rollback-failed", ...args]),
   };
-  await assert.rejects(runEquinoxLocalMainUpdateWorker({
+  await assert.rejects(runWorkerFixture({
     argv: argv(), engineFactory: () => engine, resolveHostTarget: () => "darwin-arm64", planNativeTransition: async () => transition,
     resolveNativeInstallation: async () => ({ managed: true, selfUpdateSupported: true, target: "darwin-arm64" }),
     recoverNativeLifecycle: async () => { throw new Error("rollback descriptor drift"); }, cleanupImpl: async () => calls.push(["cleanup"]),
@@ -390,7 +443,7 @@ test("worker releases a stale terminal success lock without replaying mutation",
   const calls = [];
   const receipt = preparedReceipt({ status: "succeeded", stage: "healthy" });
   const engine = { readActive: async () => receipt, releaseStagedLock: async (id) => calls.push(id) };
-  const result = await runEquinoxLocalMainUpdateWorker({ argv: argv(), engineFactory: () => engine, planNativeTransition: async () => assert.fail("terminal receipt must not replan"), cleanupImpl: async () => {} });
+  const result = await runWorkerFixture({ argv: argv(), engineFactory: () => engine, planNativeTransition: async () => assert.fail("terminal receipt must not replan"), cleanupImpl: async () => {} });
   assert.equal(result.status, "succeeded");
   assert.equal(result.recovered, true);
   assert.deepEqual(calls, [TX]);
@@ -450,7 +503,7 @@ test("Main health rejects old runtime version even when the source pointer and r
 
 test("Main worker passes pinned Windows Git shell into recovery engine", async () => {
   let options;
-  await runEquinoxLocalMainUpdateWorker({
+  await runWorkerFixture({
     argv: argv(), resolveHostTarget: () => "win32-arm64",
     engineFactory: (input) => { options = input; return { readActive: async () => preparedReceipt({ status: "succeeded", stage: "healthy" }), releaseStagedLock: async () => true }; },
     cleanupImpl: async () => {},
@@ -468,7 +521,7 @@ test("detached worker rejects existing symlink native staging before trusting ca
     readActive: async () => receipt,
     abortPreparedPromotion: async (id, message, options) => events.push(["abort",id,message,options]),
   };
-  await assert.rejects(runEquinoxLocalMainUpdateWorker({
+  await assert.rejects(runWorkerFixture({
     argv:argv(), resolveHostTarget:()=> "win32-x64", engineFactory:()=>engine,
     planNativeTransition:async()=>transition,
     resolveNativeInstallation:async()=>({managed:true,selfUpdateSupported:true,target:"win32-x64"}),
@@ -486,7 +539,7 @@ test("detached worker rejects existing symlink native staging before trusting ca
 test("worker refuses a forensic rollback_failed receipt without replaying native mutation", async () => {
   const events=[];
   const receipt=preparedReceipt({status:"rollback_failed",stage:"rollback_failed"});
-  await assert.rejects(runEquinoxLocalMainUpdateWorker({
+  await assert.rejects(runWorkerFixture({
     argv:argv(),engineFactory:()=>({readActive:async()=>receipt}),
     planNativeTransition:async()=>assert.fail("failed rollback must not be re-planned"),
     handoffImpl:async()=>assert.fail("failed rollback must not handoff"),
