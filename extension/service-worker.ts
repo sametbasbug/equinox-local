@@ -1,8 +1,8 @@
-// Migration-only strict TS source: NOT loaded by Chrome, NOT compiled into the extension ZIP.
-// Preserve shipped extension/service-worker.js until this entire source typechecks and passes MV3 runtime gates.
+// Canonical TS7 owner of the classic Manifest V3 service worker shipped to Chrome.
+// Keep this file a classic script: importScripts loads the packaged bookmark API.
 importScripts("bookmarks.js");
 
-// Migration-only Chrome Native Messaging and drag interception lifetimes.
+// Chrome Native Messaging and drag interception lifetimes.
 // Narrow MV3 persistence contract. No new ambient Chrome namespace or
 // permissive catch-all API: only the startup consent/identity storage calls.
 type WorkerStorageLocal = {

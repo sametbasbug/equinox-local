@@ -5,7 +5,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { Script } from 'node:vm';
-// Validate the migrated worker without touching the Chrome-loaded classic JS.
+// Verify the canonical shipped TypeScript worker using a scratch CWS package, never a real Chrome profile.
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const scratch = mkdtempSync(path.join(os.tmpdir(), 'equinox-staged-worker-'));
 const shippingWorkerPath = path.join(root, 'extension', 'service-worker.js');
@@ -21,11 +21,12 @@ function run(args, env = process.env) {
 try {
     run([
         path.join(root, 'node_modules/typescript/lib/tsc.js'),
-        '--project', path.join(root, 'tsconfig.worker-migration.json'),
-        '--rootDir', path.join(root, 'migration/browser'),
+        '--project', path.join(root, 'tsconfig.browser-worker.json'),
+        '--rootDir', path.join(root, 'extension'),
         '--outDir', scratch, '--noEmit', 'false', '--pretty', 'false',
     ]);
     assert.deepEqual(readdirSync(scratch), ['service-worker.js']);
+    assert.deepEqual(readFileSync(path.join(scratch, 'service-worker.js')), shippingWorkerBefore, 'Shipped MV3 classic worker must be the exact generated TypeScript output');
     // Rehearse only the already-declared Chrome Web Store file allowlist in
     // scratch; never edit a real Chrome profile or extension installation.
     const packageScript = readFileSync(path.join(root, 'scripts/package-browser-extension.sh'), 'utf8');
@@ -64,7 +65,7 @@ try {
         new Script(readFileSync(path.join(unpacked, file), 'utf8'), { filename: file });
     }
     const worker = readFileSync(path.join(unpacked, 'service-worker.js'), 'utf8');
-    assert.ok(worker.split("\n").slice(0, 12).includes('importScripts("bookmarks.js");'), "Staged worker must load its packaged classic bookmark dependency before running");
+    assert.ok(worker.split("\n").slice(0, 12).includes('importScripts("bookmarks.js");'), "Shipped worker must load its packaged classic bookmark dependency before running");
     assert.deepEqual(readdirSync(unpacked).sort(), ['bookmarks.js', 'chatgpt-continuation-state.js',
         'icons', 'manifest.json', 'popup.css', 'popup.html', 'popup.js', 'service-worker.js']);
     console.log(`Staged MV3 package preflight passed (${allowed.length} files); no Chrome profile was opened.`);
@@ -74,7 +75,7 @@ try {
             .map((name) => path.join(root, 'tests/browser', `${name}.test.js`)),
     ], { ...process.env, EQUINOX_STAGED_BROWSER_WORKER: path.join(scratch, 'service-worker.js') });
     assert.deepEqual(readFileSync(shippingWorkerPath), shippingWorkerBefore, 'Staged TS7 Browser validation must never rewrite the shipping classic worker');
-    console.log('Staged TS7 Browser passed VM, ChatGPT DOM and manifest tests; shipping worker byte-exact unchanged.');
+    console.log('Shipping TS7 Browser passed VM, ChatGPT DOM and manifest tests; shipped worker byte-exact TS output unchanged.');
 }
 finally {
     rmSync(scratch, { recursive: true, force: true });

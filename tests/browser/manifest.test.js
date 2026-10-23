@@ -107,7 +107,7 @@ test("extension source directory retains exactly the runtime files and the autho
   const rootEntries = (await fs.readdir(EXTENSION_DIR, { withFileTypes: true }))
     .map((entry) => entry.name)
     .sort();
-  assert.deepEqual(rootEntries, ["bookmarks.js", "bookmarks.ts", "chatgpt-continuation-state.js", "chatgpt-continuation-state.ts", "icons", "manifest.json", "popup.css", "popup.html", "popup.js", "popup.ts", "service-worker.js"]);
+  assert.deepEqual(rootEntries, ["bookmarks.js", "bookmarks.ts", "chatgpt-continuation-state.js", "chatgpt-continuation-state.ts", "icons", "manifest.json", "popup.css", "popup.html", "popup.js", "popup.ts", "service-worker.js", "service-worker.ts"]);
 
   const iconEntries = (await fs.readdir(path.join(EXTENSION_DIR, "icons"))).sort();
   assert.deepEqual(iconEntries, ["icon-128.png", "icon-16.png", "icon-32.png", "icon-48.png"]);

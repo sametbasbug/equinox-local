@@ -13,16 +13,16 @@ const scratch = mkdtempSync(path.join(os.tmpdir(), 'equinox-browser-ts-'));
 try {
   // Execute the platform-neutral TypeScript 7 CLI through Node: on Windows,
   // node_modules/.bin/tsc is a .cmd shim and cannot be spawned like Unix tsc.
-  const result = spawnSync(process.execPath, [
-    path.join(root, 'node_modules/typescript/lib/tsc.js'),
-    '--project', path.join(root, 'tsconfig.browser-extension.json'),
-    '--outDir', scratch,
-    '--pretty', 'false',
-  ], { cwd: root, encoding: 'utf8', timeout: 120_000 });
-  if (result.error || result.status !== 0) {
-    throw new Error(`Browser TS compile failed: ${result.error?.message ?? result.stderr ?? result.stdout ?? result.status}`);
+  for (const config of ['tsconfig.browser-extension.json', 'tsconfig.browser-worker.json']) {
+    const result = spawnSync(process.execPath, [
+      path.join(root, 'node_modules/typescript/lib/tsc.js'),
+      '--project', path.join(root, config), '--outDir', scratch, '--pretty', 'false',
+    ], { cwd: root, encoding: 'utf8', timeout: 120_000 });
+    if (result.error || result.status !== 0) {
+      throw new Error(`Browser TS compile failed (${config}): ${result.error?.message ?? result.stderr ?? result.stdout ?? result.status}`);
+    }
   }
-  const expectedNames = ['bookmarks.js', 'chatgpt-continuation-state.js', 'popup.js'];
+  const expectedNames = ['bookmarks.js', 'chatgpt-continuation-state.js', 'popup.js', 'service-worker.js'];
   assert.deepEqual(readdirSync(scratch).sort(), expectedNames, 'Unexpected emitted Browser artifacts.');
   for (const name of expectedNames) {
     assert.equal(readFileSync(path.join(scratch, name), 'utf8'),

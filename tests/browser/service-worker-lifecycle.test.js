@@ -181,8 +181,7 @@ async function createLifecycleHarness({
     runtimeStartup,
     runtimeInstalled,
     runtimeMessage,
-    sendPopupMessage(message, sender = process.env.EQUINOX_STAGED_BROWSER_WORKER
-      ? { id: "fixture-extension", url: "chrome-extension://fixture-extension/popup.html" } : {}) {
+    sendPopupMessage(message, sender = { id: "fixture-extension", url: "chrome-extension://fixture-extension/popup.html" }) {
       return new Promise((resolve, reject) => {
         const listener = runtimeMessage.listeners[0];
         if (!listener) {

@@ -16,7 +16,7 @@
     "local:release:package:windows": "node scripts/release/package-managed-release-windows.mjs",
     "typecheck": "tsc --project tsconfig.json --noEmit",
     "verify:typed-runtime": "node scripts/verify-typescript-runtime.mjs",
-    "build:typed-browser": "tsc --project tsconfig.browser-extension.json",
+    "build:typed-browser": "tsc --project tsconfig.browser-extension.json && tsc --project tsconfig.browser-worker.json",
     "verify:typed-browser": "node scripts/verify-typescript-browser.mjs",
     "verify:staged-browser": "node scripts/verify-staged-browser.mjs",
     "build:typed-runtime": "tsc --project tsconfig.runtime.json --outDir src",
