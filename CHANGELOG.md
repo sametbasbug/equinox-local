@@ -6,7 +6,21 @@ This project follows semantic versioning for public releases.
 
 ## [Unreleased]
 
-_No unreleased changes currently._
+**Equinox Local 6.2.0 + Equinox Browser 1.1.0 — release candidates, not yet published.** The latest publicly signed Local release remains 6.1.2 and the installed Chrome Web Store Browser release remains 1.0.1. This draft is subject to release validation, protected signing and actual user acceptance before either candidate is published.
+
+### Runtime and build ownership
+
+- Migrated the Local Node runtime, release tooling, and Browser extension sources to strict TypeScript 7 while retaining generated JavaScript entrypoints and exact byte-for-byte output verification. Native Windows, macOS and shell implementations remain native where appropriate.
+- Moved Equinox Browser's classic Manifest V3 service worker into the shipping TypeScript build. It continues to load the packaged bookmarks script with `importScripts`, keeps the existing extension identity and permissions, and compiles independently of popup globals.
+- Kept deterministic generated assets and four-target unsigned release packaging checks for macOS ARM64/Intel and Windows ARM64/x64. Existing Main update and Stable recovery contracts remain unchanged.
+
+### Reliability and security
+
+- Hardened release, snapshot, tooling and Telegram credential filesystem operations against symbolic-link, identity-swap and foreign-file access, while retaining adversarial regression tests.
+- Corrected the hosted Windows release packager's diagnostic output so PowerShell receives machine-readable JSON on stdout and timing logs on stderr.
+- Expanded strict TypeScript, Browser MV3/ChatGPT DOM, updater rollback, native installer/repair and Guardian verification across the existing automated CI lanes. CodeQL code-scanning alerts are cleared on the reviewed draft source.
+
+**Release acceptance outstanding:** Production-signed installed upgrades and forced rollback on all four architectures, physical Windows Guardian original-file identity, and human-approved Chrome Web Store popup / Native Messaging / committed debugger and Auto Continue behavior are not yet certified by the unsigned hosted tests.
 
 ## [6.1.2] - 2026-10-18
 

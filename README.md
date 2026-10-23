@@ -141,6 +141,6 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for the supported Node version, full test
 
 ## Releases & license
 
-**Equinox Local v6.1.2** is the current signed Stable release, with macOS and Windows packages for ARM64 and x64. **Equinox Browser v1.0.1** is the extension version in this repository and has been submitted to Chrome Web Store; its Store rollout is controlled by Chrome's review process. The browser updates separately from Local. [Download Stable v6.1.2](https://github.com/sametbasbug/equinox-local/releases/tag/v6.1.2) · [Equinox Browser](https://chromewebstore.google.com/detail/equinox-browser/npdneefcobilfkjlihghjgjnknenhfoj) · [Product website](https://local.sametbasbug.dev/) · [Release notes](CHANGELOG.md).
+**Equinox Local v6.1.2** is the current signed Stable release, with macOS and Windows packages for ARM64 and x64. **Equinox Local v6.2.0 and Equinox Browser v1.1.0 are unreleased source candidates**, not currently distributed. **Equinox Browser v1.0.1** is the latest Store-installed extension; any newer rollout is controlled by Chrome Web Store review. The browser updates separately from Local. [Download Stable v6.1.2](https://github.com/sametbasbug/equinox-local/releases/tag/v6.1.2) · [Equinox Browser](https://chromewebstore.google.com/detail/equinox-browser/npdneefcobilfkjlihghjgjnknenhfoj) · [Product website](https://local.sametbasbug.dev/) · [Release notes](CHANGELOG.md).
 
 Licensed under **[AGPL-3.0-only](LICENSE)**. Contributions are welcome; see [CONTRIBUTING.md](CONTRIBUTING.md) and [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md).
