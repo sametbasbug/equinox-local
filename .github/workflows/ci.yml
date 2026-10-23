@@ -676,7 +676,9 @@ jobs:
   windows-arm64-runtime:
     name: Windows ARM64 runtime / Node 26
     runs-on: windows-11-vs2026-arm
-    timeout-minutes: 6
+    # Native A/B and launcher smoke can exceed 6m on a slow ARM runner.
+    # This is a ceiling only; green jobs still finish as soon as tests pass.
+    timeout-minutes: 8
 
     steps:
       - name: Checkout
