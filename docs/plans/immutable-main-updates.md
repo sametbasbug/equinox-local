@@ -121,3 +121,9 @@ authenticates source/native pointers and performs all deletion guards. After two
 unsuccessful passes, leftover files remain safely retained for another runtime
 startup rather than continually waking the laptop CPU/fan. No user settings,
 credentials, or active Main B files are eligible for this cleanup.
+
+### Supervisor-owned pointer commit seam (2026-10-24, unreleased WIP)
+
+The Windows native Main A/B coordinator no longer performs the final `current-native.json` commit using a Node/JavaScript filesystem writer. Even an otherwise admitted independent supervisor contract must implement its own **native `commitNativePointer`** operation and return positive confirmation for the exact transaction, native release identity and pinned `state/main-update/current-native.json` path. A missing callback, a forged owner-only worker claim, a foreign pointer name or a native refusal all fail closed; targeted negative tests assert no JavaScript pointer fallback. The TypeScript runtime output is regenerated from its source, and this code is in the single unreleased repair branch.
+
+**This is only a secured composition boundary, not an implementation of the required OS-owned Guardian writer.** No production supervisor currently satisfies this interface. The real native process must still hold the exclusive OS journal authority throughout physical WPF A/B shell shutdown, slot swap, Native Messaging ownership, sustained health, original-A restoration and pointer commit. Do not enable the user-facing Main upgrade, sign 6.2.0 for production or treat mock test callbacks as native proof until that process and physical signed acceptance are complete.

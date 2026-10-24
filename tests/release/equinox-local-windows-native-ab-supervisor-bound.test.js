@@ -29,7 +29,8 @@ function admitted(extra = {}) {
       shutdownOwnedWpf: async () => true,
       quiesceOwnedB: async () => true,
       verifyNativeMessaging: async () => true,
-      verifySustainedHealth: async () => true }, ...extra };
+      verifySustainedHealth: async () => true,
+      commitNativePointer: async () => true }, ...extra };
 }
 
 test('Windows native lifecycle admission without independent supervisor cannot promote inactive payload or touch WPF', async () => {
@@ -116,6 +117,13 @@ test('supervisor-bound native host registers exact launcher and makes pointer co
     quiesceOwnedB: async () => true,
     verifyNativeMessaging: async ({ release }) => release === 'B',
     verifySustainedHealth: async ({ sourceSha }) => sourceSha === B,
+    commitNativePointer: async ({ pointer, transactionRoot, pointerPath }) => {
+      assert.equal(pointer.sourceSha, B);
+      assert.equal(transactionRoot, TEST_TX_ROOT);
+      assert.equal(pointerPath, path.join(TEST_TX_ROOT, 'current-native.json'));
+      calls.push('pointer-B');
+      return true;
+    },
   } });
   let registered = oldRelease;
   const launcher = (value) => `${value}\\runtime\\browser\\host.exe`;
@@ -134,7 +142,6 @@ test('supervisor-bound native host registers exact launcher and makes pointer co
       calls.push('registered-B');
       assert.equal(launcherPath, launcher(newRelease));
     },
-    writePointerImpl: async (_path, value) => { assert.equal(value.sourceSha, B); calls.push('pointer-B'); },
     createLifecycleImpl: (args) => {
       assert.equal(args.journal, journal);
       assert.equal(args.previousReleaseDir, oldRelease);
@@ -171,6 +178,7 @@ test('native A/B rejects spoofed receipts, journal objects and lookalike transac
     { supervisor: { ...trusted.supervisor, verifyNativeMessaging: false } },
     { supervisor: { ...trusted.supervisor, assertWorkerOwnership: undefined } },
     { supervisor: { ...trusted.supervisor, quiesceOwnedB: undefined } },
+    { supervisor: { ...trusted.supervisor, commitNativePointer: undefined } },
   ];
   for (const override of badValues) {
     const transactionId = override.transactionId ?? ID;
@@ -216,7 +224,6 @@ test('native A/B refuses new Native Messaging owner not independently verified a
       registered = newRelease;
       calls.push(['register',launcherPath]);
     },
-    writePointerImpl: async () => {calls.push(['commit']);},
     createLifecycleImpl: args => ({
       async activate() {
         await args.registerNativeMessaging({release:'B'});
@@ -249,7 +256,6 @@ test('supervisor-owned WPF shutdown and Native Messaging write reject expired wo
       if (acceptedLauncherPaths[0].startsWith(newRelease)) throw Error('B is not registered');
     },
     registerNativeHostImpl: async () => calls.push('registry-mutated'),
-    writePointerImpl: async () => calls.push('pointer-mutated'),
     createLifecycleImpl: (args) => ({
       shutdown: () => args.shutdownOwnedWpf({transactionId:ID,programRoot:install.programRoot}),
       register: () => args.registerNativeMessaging({release:'B'}),
@@ -276,6 +282,7 @@ test('supervisor-bound B pointer refuses expired owner, messaging or health befo
       },
       verifyNativeMessaging: async () => scenario !== 'messaging-expired',
       verifySustainedHealth: async () => { calls.push('health-B'); return scenario !== 'health-expired'; },
+      commitNativePointer: async () => { calls.push('pointer-mutated'); return true; },
     }});
     const adapter = createSupervisorBoundWindowsNativeABLifecycle({
       transition,transactionId:ID,windowsAdmission:admission,
@@ -285,7 +292,6 @@ test('supervisor-bound B pointer refuses expired owner, messaging or health befo
       pointerPath:path.join(TEST_TX_ROOT,'current-native.json'),
       launcherPathImpl:dir=>`${dir}\\host.exe`,
       assertNativeHostImpl:async()=>calls.push('inspect-B'),
-      writePointerImpl:async()=>calls.push('pointer-mutated'),
       createLifecycleImpl:args=>({commit:()=>args.commitNativePointer()}),
     });
     await assert.rejects(adapter.commit(), /expired before (side effect|pointer commit)/u, scenario);
@@ -305,10 +311,9 @@ test('supervisor-bound rollback requires distinct native B quiesce and rejects u
     stored:{sourceSha:B,target,runtimeContractSha256:CB,releaseDir:newRelease},
     previousReleaseDir:oldRelease, programRoot:install.programRoot,
     manifestRoot:install.nativeMessagingManifestRoot,transactionRoot:TEST_TX_ROOT,
-    pointerPath:path.join(TEST_TX_ROOT,'pointer.json'),
+    pointerPath:path.join(TEST_TX_ROOT,'current-native.json'),
     launcherPathImpl:dir=>`${dir}\\host.exe`,
     registerNativeHostImpl:async()=>{fileMutations++},
-    writePointerImpl:async()=>{fileMutations++},
     createLifecycleImpl:args=>({tryBQuiesce:()=>args.quiesceOwnedB({transactionId:ID, programRoot:install.programRoot,sourceSha:B})}),
   });
   await assert.rejects(adapter.tryBQuiesce(),/B shutdown proof is unavailable/u);
@@ -316,4 +321,37 @@ test('supervisor-bound rollback requires distinct native B quiesce and rejects u
   assert.equal(namedProof.sourceSha,B);
   assert.equal(namedProof.programRoot,install.programRoot);
   assert.equal(fileMutations,0);
+});
+
+
+test('native B pointer commit never falls back to JavaScript when the independent native owner refuses', async () => {
+  const calls = [];
+  const admission = admitted({ supervisor: { ...admitted().supervisor,
+    commitNativePointer: async ({ transactionId, pointer, pointerPath }) => {
+      calls.push('native-owner-refusal');
+      assert.equal(transactionId, ID);
+      assert.equal(pointer.sourceSha, B);
+      assert.equal(pointerPath, path.join(TEST_TX_ROOT, 'current-native.json'));
+      return false;
+    },
+  }});
+  const adapter = createSupervisorBoundWindowsNativeABLifecycle({
+    transition, transactionId: ID, windowsAdmission: admission,
+    stored: { sourceSha: B, target, runtimeContractSha256: CB, releaseDir: newRelease },
+    previousReleaseDir: oldRelease, programRoot: install.programRoot,
+    manifestRoot: install.nativeMessagingManifestRoot, transactionRoot: TEST_TX_ROOT,
+    pointerPath: path.join(TEST_TX_ROOT, 'current-native.json'),
+    launcherPathImpl: dir => `${dir}\\host.exe`,
+    assertNativeHostImpl: async () => {},
+    createLifecycleImpl: args => ({ commit: () => args.commitNativePointer() }),
+  });
+  await assert.rejects(adapter.commit(), /native owner refused durable Main pointer commit/u);
+  assert.deepEqual(calls, ['native-owner-refusal']);
+  assert.throws(() => createSupervisorBoundWindowsNativeABLifecycle({
+    transition, transactionId: ID, windowsAdmission: admission,
+    stored: { sourceSha: B, target, runtimeContractSha256: CB, releaseDir: newRelease },
+    previousReleaseDir: oldRelease, programRoot: install.programRoot,
+    manifestRoot: install.nativeMessagingManifestRoot, transactionRoot: TEST_TX_ROOT,
+    pointerPath: path.join(TEST_TX_ROOT, 'foreign-native.json'),
+  }), /release roots are not pinned/u);
 });

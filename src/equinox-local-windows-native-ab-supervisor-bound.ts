@@ -1,11 +1,11 @@
 import fs from 'node:fs/promises';
+import path from 'node:path';
 
 import {
   assertWindowsNativeMessagingHostOwnership,
   registerWindowsNativeMessagingHost,
   windowsNativeMessagingLauncherPath,
 } from './equinox-browser-windows-native-messaging.js';
-import { writeEquinoxLocalMainNativePointer } from './equinox-local-main-native-state.js';
 import { createWindowsJournaledNativeABLifecycle } from './equinox-local-windows-native-ab-journal-lifecycle.js';
 
 
@@ -21,6 +21,7 @@ type BoundOwner = Readonly<{
   quiesceOwnedB:(values:Record<string,unknown>)=>Promise<unknown>;
   verifyNativeMessaging:(values:Record<string,unknown>)=>Promise<unknown>;
   verifySustainedHealth:(values:Record<string,unknown>)=>Promise<unknown>;
+  commitNativePointer:(values:Record<string,unknown>)=>Promise<unknown>;
 }>;
 type BoundAdmission = Readonly<{
   admitted:true;
@@ -34,7 +35,6 @@ type BoundOptions = SupervisorOptions & {
   stored?:Stored;previousPointer?:unknown;previousReleaseDir?:string;programRoot?:string;
   manifestRoot?:string;transactionRoot?:string;pointerPath?:string;
   fsImpl?:NativeFs;execFileImpl?:unknown;env?:NodeJS.ProcessEnv;
-  writePointerImpl?:typeof writeEquinoxLocalMainNativePointer;
   assertNativeHostImpl?:typeof assertWindowsNativeMessagingHostOwnership;
   registerNativeHostImpl?:typeof registerWindowsNativeMessagingHost;
   launcherPathImpl?:(releaseDir:string)=>string;
@@ -78,7 +78,7 @@ export function requireWindowsNativeABSupervisor({ windowsAdmission, transition,
       typeof journal?.read !== 'function' ||
       typeof journal?.advance !== 'function' ||
       owner?.independentNativeOwner !== true ||
-      !['assertWorkerOwnership', 'shutdownOwnedWpf', 'quiesceOwnedB', 'verifyNativeMessaging', 'verifySustainedHealth'].every((name) => typeof owner[name] === 'function')) {
+      !['assertWorkerOwnership', 'shutdownOwnedWpf', 'quiesceOwnedB', 'verifyNativeMessaging', 'verifySustainedHealth', 'commitNativePointer'].every((name) => typeof owner[name] === 'function')) {
     throw new Error('Windows native A/B refuses to replace WPF without independent supervisor ownership and exact journal identity.');
   }
   return owner as BoundOwner;
@@ -88,7 +88,6 @@ export function createSupervisorBoundWindowsNativeABLifecycle({
   windowsAdmission, transition, transactionId, stored, previousPointer,
   previousReleaseDir, programRoot, manifestRoot, transactionRoot, pointerPath,
   fsImpl = fs, execFileImpl, env = process.env,
-  writePointerImpl = writeEquinoxLocalMainNativePointer,
   assertNativeHostImpl = assertWindowsNativeMessagingHostOwnership,
   registerNativeHostImpl = registerWindowsNativeMessagingHost,
   launcherPathImpl = windowsNativeMessagingLauncherPath,
@@ -103,7 +102,10 @@ export function createSupervisorBoundWindowsNativeABLifecycle({
       typeof stored.releaseDir !== 'string' || !stored.releaseDir ||
       typeof previousReleaseDir !== 'string' || !previousReleaseDir ||
       typeof programRoot !== 'string' || !programRoot ||
-      typeof manifestRoot !== 'string' || !manifestRoot) {
+      typeof manifestRoot !== 'string' || !manifestRoot ||
+      typeof transactionRoot !== 'string' || !path.isAbsolute(transactionRoot) ||
+      typeof pointerPath !== 'string' ||
+      path.resolve(pointerPath) !== path.resolve(transactionRoot, 'current-native.json')) {
     throw new Error('Windows supervisor native A/B release roots are not pinned to admitted native identities.');
   }
   const previousLauncher = launcherPathImpl(previousReleaseDir);
@@ -167,7 +169,14 @@ export function createSupervisorBoundWindowsNativeABLifecycle({
         throw new Error('Native B health expired before pointer commit.');
       }
       await assertLiveOwner();
-      return writePointerImpl(pointerPath, pointer, { transactionRoot: transactionRoot!, fsImpl });
+      // The per-user current-native pointer is a security-critical Main
+      // milestone: Node must never write it on behalf of an alleged supervisor.
+      // Only the independently admitted native OS owner may commit the
+      // verified exact transaction; no JS filesystem fallback exists.
+      if (await supervisor.commitNativePointer({ ...ownerArgs, pointer, pointerPath, transactionRoot }) !== true) {
+        throw new Error('Independent Windows native owner refused durable Main pointer commit.');
+      }
+      return true;
     },
   });
   return Object.freeze({ ...adapter,

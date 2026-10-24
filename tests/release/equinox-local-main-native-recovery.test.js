@@ -26,7 +26,7 @@ function admittedWindowsSupervisor(target = "win32-x64") {
       targetRuntimeContractSha256: DB, receiptStartedAt: "2026-10-21T00:00:00.000Z" },
     supervisor: { independentNativeOwner: true, assertWorkerOwnership: async () => true,
       shutdownOwnedWpf: async () => true, quiesceOwnedB: async () => true, verifyNativeMessaging: async () => true,
-      verifySustainedHealth: async () => true },
+      verifySustainedHealth: async () => true, commitNativePointer: async () => true },
   };
 }
 
