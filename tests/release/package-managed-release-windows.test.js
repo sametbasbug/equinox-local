@@ -1078,4 +1078,11 @@ test('Guardian independently attests original managed Main A kernel physical NTF
   assert.match(host,/fsutil\.exe file queryfileid \$GuardianExe/u);
   assert.match(host,/\$NativeGuardianFileId -ceq \$SeparateGuardianFileId/u);
   assert.match(host,/WINDOWS_NATIVE_ORIGINAL_MAIN_A_GUARDIAN_KERNEL_ID target=\$FixtureTarget result=PASS/u);
+  const workerEstablished=host.indexOf("Assert-True $MainANodeProved 'Guardian did not admit the genuine native Main store Node OS PID/birth/executable.'");
+  const argvEstablished=host.indexOf("Assert-True ((Invoke-GuardianCheck '--audit-native-worker-argv') -eq 0) 'Guardian rejected the exact original Main A worker OS argv.'");
+  const physicalAudit=host.indexOf("$FileIdStart.Arguments = '--audit-native-a-file-id'");
+  const bIntegrity=host.indexOf("Assert-True ((Invoke-GuardianCheck '--audit-native-b-candidate') -eq 0) 'Original Main A native Guardian rejected a complete SHA/contract-bound staged B candidate.'");
+  assert.ok(workerEstablished>=0 && argvEstablished>workerEstablished && physicalAudit>argvEstablished && bIntegrity>physicalAudit,
+    'Physical original Main A file ID may only be admitted after genuine live native-store worker handoff and OS argv, before B audit');
+
 });
