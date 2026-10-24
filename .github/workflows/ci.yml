@@ -1314,6 +1314,7 @@ jobs:
         env:
           TARGET_SHA: ${{ needs.main-native-plan.outputs.target-sha }}
           PUBLIC_BASE: https://main.local.sametbasbug.dev
+          SNAPSHOT_DIR: ${{ runner.temp }}/main-snapshot
         run: |
           set -euo pipefail
           latest="$(git ls-remote https://github.com/${{ github.repository }}.git refs/heads/main | awk '{print $1}')"
@@ -1326,6 +1327,12 @@ jobs:
             artifact_url="$PUBLIC_BASE/snapshots/$TARGET_SHA/$artifact"
             curl --fail --silent --show-error --location --retry 5 --retry-all-errors --output "$RUNNER_TEMP/$manifest" "$manifest_url"
             jq -e --arg sha "$TARGET_SHA" --arg target "$target" '.sourceSha == $sha and .target == $target' "$RUNNER_TEMP/$manifest" >/dev/null
+            cmp "$SNAPSHOT_DIR/$manifest" "$RUNNER_TEMP/$manifest"
+            authorization="equinox-local-main-$TARGET_SHA-$target.b-authorization.json"
+            curl --fail --silent --show-error --location --retry 5 --retry-all-errors --output "$RUNNER_TEMP/$authorization" "$PUBLIC_BASE/snapshots/$TARGET_SHA/$authorization"
+            cmp "$SNAPSHOT_DIR/$authorization" "$RUNNER_TEMP/$authorization"
+            # ZIP identity is cryptographically pinned by the already admitted
+            # local Ed25519 sidecar; the remote key must at least be reachable.
             curl --fail --silent --show-error --location --retry 5 --retry-all-errors --range 0-0 --output /dev/null "$artifact_url"
           done
 
@@ -1341,7 +1348,9 @@ jobs:
           latest="$(git ls-remote https://github.com/$repo.git refs/heads/main | awk '{print $1}')"
           test "$latest" = "$TARGET_SHA"
           if gh api "/repos/$repo/git/ref/tags/main-snapshot" >/dev/null 2>&1; then
-            gh api --method PATCH "/repos/$repo/git/refs/tags/main-snapshot" -f sha="$TARGET_SHA" -F force=true >/dev/null
+            # Server-side fast-forward validation prevents a concurrent
+            # publisher from rewinding the Main tag after our latest check.
+            gh api --method PATCH "/repos/$repo/git/refs/tags/main-snapshot" -f sha="$TARGET_SHA" -F force=false >/dev/null
           else
             gh api --method POST "/repos/$repo/git/refs" -f ref='refs/tags/main-snapshot' -f sha="$TARGET_SHA" >/dev/null
           fi

@@ -87,3 +87,23 @@ test("Main snapshot tag promotion is cryptographically gated on all four factory
   assert.match(pub, /actions\/setup-node@v7/u);
   assert.doesNotMatch(pub, /SIGNING_PRIVATE_KEY|SIGNING_KEY_PEM|--private-key|--key-file/u);
 });
+
+
+test("Main snapshot tag update cannot force-rewind a concurrently moved Main tag",()=>{
+ const start=workflow.indexOf('  main-snapshot-publish:');
+ assert.ok(start>=0);
+ const block=workflow.slice(start);
+ assert.match(block,/git\/refs\/tags\/main-snapshot[^\n]*force=false/u);
+ assert.doesNotMatch(block,/force=true/u);
+});
+
+
+test('public Main snapshot verifies remote 4 sidecars AND manifests byte-for-byte before any tag mutation',()=>{
+ const section=workflow.slice(workflow.indexOf('  main-snapshot-publish:'));
+ const verification=section.indexOf('cmp "$SNAPSHOT_DIR/$authorization" "$RUNNER_TEMP/$authorization"');
+ const manifest=section.indexOf('cmp "$SNAPSHOT_DIR/$manifest" "$RUNNER_TEMP/$manifest"');
+ const tag=section.indexOf('Move tag-only Main Snapshot pointer');
+ assert.ok(verification>0 && manifest>0 && tag>verification && tag>manifest);
+ assert.match(section,/authorization="equinox-local-main-\$TARGET_SHA-\$target\.b-authorization\.json"/u);
+ assert.match(section,/git\/refs\/tags\/main-snapshot[^\n]*force=false/u);
+});
