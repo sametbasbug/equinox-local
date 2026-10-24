@@ -972,3 +972,28 @@ test('real hosted managed Main A WPF quiesce uses distinct product Node HMAC tri
   assert.match(native, /GetNamedPipeServerProcessId\(pipe\.SafePipeHandle, out var serverPid\) \|\| serverPid != pid/u);
   assert.doesNotMatch(host.slice(host.indexOf('# Positive original managed-Main A ownership:'), host.indexOf('# First permitted REAL native journal stage mutation:')), /(?:commitWindowsNativeABSlot|switchWindowsNativeABSlot|writePointerImpl)/u);
 });
+
+test('native B staged-candidate audit verifies original A, target SHA, contract and full B fingerprint but cannot advance or commit', async () => {
+  const [program, source, host] = await Promise.all([
+    fs.readFile(new URL('../../native/windows/EquinoxLocal.Guardian/Program.cs', import.meta.url), 'utf8'),
+    fs.readFile(new URL('../../native/windows/EquinoxLocal.Guardian/MainNativeStagedBPreflight.cs', import.meta.url), 'utf8'),
+    fs.readFile(new URL('./windows-installer-real-package-smoke.ps1', import.meta.url), 'utf8'),
+  ]);
+  assert.match(program, /if \(args\.Length == 1 && args\[0\] == "--audit-native-b-candidate"\)/u);
+  assert.match(program, /InspectOwnedStagedBNativeCandidate\(\)/u);
+  assert.match(source, /InspectOwnedNativeTransitionJournal\(\)/u);
+  assert.match(source, /InspectMainNativeIdentity\(allowExactActiveMainTransaction: true\)/u);
+  assert.match(source, /previous\.GetProperty\("kind"\)\.GetString\(\) != "main"/u);
+  assert.match(source, /journal\.GetProperty\("stage"\)\.GetString\(\) != "prepared"/u);
+  assert.match(source, /manifest\.GetProperty\("sourceSha"\)\.GetString\(\) != bSha/u);
+  assert.match(source, /manifest\.GetProperty\("runtimeContractSha256"\)\.GetString\(\) != contract/u);
+  assert.match(source, /FingerprintNativeMainRelease\(release\)/u);
+  assert.match(source, /fingerprint\.GetProperty\("sha256"\)\.GetString\(\) != measured\.Sha256/u);
+  assert.match(source, /native-b-candidate-audited-no-stage-authorization/u);
+  assert.doesNotMatch(source, /File\.Move\(|File\.Delete\(|File\.Write|CreateNew|Process\.Start|Registry\.SetValue/u);
+  assert.match(host, /WINDOWS_NATIVE_B_CANDIDATE_READONLY target=\$FixtureTarget result=PASS/u);
+  assert.match(host, /Original Main A native Guardian rejected a complete SHA\/contract-bound staged B candidate/u);
+  assert.match(host, /Read-only native B candidate audit accepted a foreign B runtime contract/u);
+  assert.match(host, /Native B full fingerprint accepted a modified but JSON-valid B payload/u);
+  assert.match(host, /Remove-Item -LiteralPath \$MainBStore -Recurse/u);
+});

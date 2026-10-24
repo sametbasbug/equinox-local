@@ -1016,8 +1016,9 @@ try {
         $MainARelease = Join-Path $MainAStore 'release'
         $MainAPointer = Join-Path $NativeTxRoot 'current-native.json'
         $MainAProof = Join-Path $JournalDataDir ("$JournalId.main-a-shell-quiesce.json")
-        Assert-True (-not (Test-Path -LiteralPath $MainAStore) -and -not (Test-Path -LiteralPath $MainAPointer) -and
-          -not (Test-Path -LiteralPath $MainAProof)) 'Managed Main A positive fixture is not isolated from old native state.'
+        $MainBStore = Join-Path $NativeTxRoot ("native-store\$FixtureTarget\$JournalTarget")
+        Assert-True (-not (Test-Path -LiteralPath $MainAStore) -and -not (Test-Path -LiteralPath $MainBStore) -and
+          -not (Test-Path -LiteralPath $MainAPointer) -and -not (Test-Path -LiteralPath $MainAProof)) 'Managed Main A/B candidate fixture is not isolated from old native state.'
         $MainAJournalOriginal = [IO.File]::ReadAllBytes($JournalData)
         $MainAManifestOriginal = [IO.File]::ReadAllBytes($ExpectedManifestPath)
         $MainAGuardian = $null
@@ -1055,6 +1056,36 @@ try {
           $MainANativeRecord.previousNative = [ordered]@{kind='main';sourceSha=$JournalCurrent;runtimeContractSha256=$MainAContract}
           [IO.File]::WriteAllText($JournalData, ($MainANativeRecord | ConvertTo-Json -Depth 8))
           Assert-True ((Invoke-GuardianCheck '--audit-native-journal') -eq 0) 'Original Main A prepared journal identity changed during fixture setup.'
+          # A distinct SHA-addressed candidate B is deliberately NOT signed
+          # newer release content here: the same packaged PE is used only to
+          # exercise complete read-only native B integrity under real Win32.
+          # No pointer or Native Messaging registration may move to B.
+          $MainBRelease = Join-Path $MainBStore 'release'
+          [IO.Directory]::CreateDirectory($MainBStore) | Out-Null
+          Copy-Item -LiteralPath $MainARelease -Destination $MainBRelease -Recurse -ErrorAction Stop
+          $MainBContract = [string]$JournalValue.targetRuntimeContractSha256
+          $MainBManifest = [ordered]@{
+            schemaVersion=1;channel='main';sourceSha=$JournalTarget;target=$FixtureTarget;
+            runtimeContractSha256=$MainBContract;artifactSha256=('b' * 64);artifactBytes=1024;
+            payloadVersion=$FixtureVersion;releaseFingerprint=$MainAFingerprint
+          }
+          $MainBManifestPath = Join-Path $MainBStore 'native-store.json'
+          [IO.File]::WriteAllText($MainBManifestPath, ($MainBManifest | ConvertTo-Json -Depth 6))
+          Assert-True ((Invoke-GuardianCheck '--audit-native-b-candidate') -eq 0) 'Original Main A native Guardian rejected a complete SHA/contract-bound staged B candidate.'
+          $MainBManifest.runtimeContractSha256 = ('0' * 64)
+          [IO.File]::WriteAllText($MainBManifestPath, ($MainBManifest | ConvertTo-Json -Depth 6))
+          Assert-True ((Invoke-GuardianCheck '--audit-native-b-candidate') -eq 70) 'Read-only native B candidate audit accepted a foreign B runtime contract.'
+          $MainBManifest.runtimeContractSha256 = $MainBContract
+          [IO.File]::WriteAllText($MainBManifestPath, ($MainBManifest | ConvertTo-Json -Depth 6))
+          $MainBMetadata = Join-Path $MainBRelease 'release.json'
+          $MainBMetadataOriginal = [IO.File]::ReadAllBytes($MainBMetadata)
+          try {
+            [IO.File]::AppendAllText($MainBMetadata, ' ')
+            Assert-True ((Invoke-GuardianCheck '--audit-native-b-candidate') -eq 70) 'Native B full fingerprint accepted a modified but JSON-valid B payload.'
+          } finally { [IO.File]::WriteAllBytes($MainBMetadata, $MainBMetadataOriginal) }
+          Assert-True ((Invoke-GuardianCheck '--audit-native-journal') -eq 0) 'B candidate read-only inspection advanced or mutated the original A journal.'
+          Assert-True (-not (Test-Path -LiteralPath $JournalGuard) -and -not (Test-Path -LiteralPath $MainAProof)) 'B candidate inspection created an OS lease or WPF stop marker.'
+          Write-Output "WINDOWS_NATIVE_B_CANDIDATE_READONLY target=$FixtureTarget result=PASS"
           # MAIN ownership is an OS process launched from this exact native
           # store's product Node, not the historical numbered Stable bootstrap.
           $MainANode = Join-Path $MainARuntime 'node\bin\node.exe'
@@ -1152,6 +1183,7 @@ try {
           [IO.File]::WriteAllBytes($ExpectedManifestPath, $MainAManifestOriginal)
           Remove-Item -LiteralPath $MainAPointer -Force -ErrorAction SilentlyContinue
           Remove-Item -LiteralPath $MainAStore -Recurse -Force -ErrorAction SilentlyContinue
+          Remove-Item -LiteralPath $MainBStore -Recurse -Force -ErrorAction SilentlyContinue
           # Never leave the hosted tester's ORIGINAL WPF down after proof.
           $Reopen = @(Get-CimInstance Win32_Process -Filter "Name='EquinoxLocal.exe'" -ErrorAction SilentlyContinue |
             Where-Object { -not [string]::IsNullOrWhiteSpace($_.ExecutablePath) -and (Same-Path $_.ExecutablePath $StableExe) })
