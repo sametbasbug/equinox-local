@@ -1077,21 +1077,7 @@ try {
           }
           $MainBManifestPath = Join-Path $MainBStore 'native-store.json'
           [IO.File]::WriteAllText($MainBManifestPath, ($MainBManifest | ConvertTo-Json -Depth 6))
-          Assert-True ((Invoke-GuardianCheck '--audit-native-b-candidate') -eq 0) 'Original Main A native Guardian rejected a complete SHA/contract-bound staged B candidate.'
-          $MainBManifest.runtimeContractSha256 = ('0' * 64)
-          [IO.File]::WriteAllText($MainBManifestPath, ($MainBManifest | ConvertTo-Json -Depth 6))
-          Assert-True ((Invoke-GuardianCheck '--audit-native-b-candidate') -eq 70) 'Read-only native B candidate audit accepted a foreign B runtime contract.'
-          $MainBManifest.runtimeContractSha256 = $MainBContract
-          [IO.File]::WriteAllText($MainBManifestPath, ($MainBManifest | ConvertTo-Json -Depth 6))
-          $MainBMetadata = Join-Path $MainBRelease 'release.json'
-          $MainBMetadataOriginal = [IO.File]::ReadAllBytes($MainBMetadata)
-          try {
-            [IO.File]::AppendAllText($MainBMetadata, ' ')
-            Assert-True ((Invoke-GuardianCheck '--audit-native-b-candidate') -eq 70) 'Native B full fingerprint accepted a modified but JSON-valid B payload.'
-          } finally { [IO.File]::WriteAllBytes($MainBMetadata, $MainBMetadataOriginal) }
-          Assert-True ((Invoke-GuardianCheck '--audit-native-journal') -eq 0) 'B candidate read-only inspection advanced or mutated the original A journal.'
-          Assert-True (-not (Test-Path -LiteralPath $JournalGuard) -and -not (Test-Path -LiteralPath $MainAProof)) 'B candidate inspection created an OS lease or WPF stop marker.'
-          Write-Output "WINDOWS_NATIVE_B_CANDIDATE_READONLY target=$FixtureTarget result=PASS"
+
           # MAIN ownership is an OS process launched from this exact native
           # store's product Node, not the historical numbered Stable bootstrap.
           $MainANode = Join-Path $MainARuntime 'node\bin\node.exe'
@@ -1123,6 +1109,22 @@ try {
           }
           Assert-True $MainANodeProved 'Guardian did not admit the genuine native Main store Node OS PID/birth/executable.'
           Assert-True ((Invoke-GuardianCheck '--audit-native-worker-argv') -eq 0) 'Guardian rejected the exact original Main A worker OS argv.'
+          # A-signed Git/worker handoff is a mandatory native read-only B preflight.
+          Assert-True ((Invoke-GuardianCheck '--audit-native-b-candidate') -eq 0) 'Original Main A native Guardian rejected a complete SHA/contract-bound staged B candidate.'
+          $MainBManifest.runtimeContractSha256 = ('0' * 64)
+          [IO.File]::WriteAllText($MainBManifestPath, ($MainBManifest | ConvertTo-Json -Depth 6))
+          Assert-True ((Invoke-GuardianCheck '--audit-native-b-candidate') -eq 70) 'Read-only native B candidate audit accepted a foreign B runtime contract.'
+          $MainBManifest.runtimeContractSha256 = $MainBContract
+          [IO.File]::WriteAllText($MainBManifestPath, ($MainBManifest | ConvertTo-Json -Depth 6))
+          $MainBMetadata = Join-Path $MainBRelease 'release.json'
+          $MainBMetadataOriginal = [IO.File]::ReadAllBytes($MainBMetadata)
+          try {
+            [IO.File]::AppendAllText($MainBMetadata, ' ')
+            Assert-True ((Invoke-GuardianCheck '--audit-native-b-candidate') -eq 70) 'Native B full fingerprint accepted a modified but JSON-valid B payload.'
+          } finally { [IO.File]::WriteAllBytes($MainBMetadata, $MainBMetadataOriginal) }
+          Assert-True ((Invoke-GuardianCheck '--audit-native-journal') -eq 0) 'B candidate read-only inspection advanced or mutated the original A journal.'
+          Assert-True (-not (Test-Path -LiteralPath $JournalGuard) -and -not (Test-Path -LiteralPath $MainAProof)) 'B candidate inspection created an OS lease or WPF stop marker.'
+          Write-Output "WINDOWS_NATIVE_B_CANDIDATE_READONLY target=$FixtureTarget result=PASS"
           # The default `--audit-native-identity` must STILL reject an active
           # journal, while the independently prepared OS owner may inspect A.
           Assert-True ((Invoke-GuardianCheck '--audit-native-identity') -eq 70) 'Active Main transaction was silently admitted via idle-only auditor.'

@@ -992,6 +992,7 @@ test('native B staged-candidate audit verifies original A, target SHA, contract 
   assert.match(source, /native-b-candidate-audited-no-stage-authorization/u);
   assert.doesNotMatch(source, /File\.Move\(|File\.Delete\(|File\.Write|CreateNew|Process\.Start|Registry\.SetValue/u);
   assert.match(host, /WINDOWS_NATIVE_B_CANDIDATE_READONLY target=\$FixtureTarget result=PASS/u);
+  assert.ok(host.indexOf('Guardian rejected the exact original Main A worker OS argv.') < host.indexOf('WINDOWS_NATIVE_B_CANDIDATE_READONLY target='), 'the standalone B candidate audit requires a genuine already-authorized original Main A Node worker handoff');
   assert.match(host, /releaseFingerprint=\$MainBFingerprint/u);
   assert.match(host, /\$MainBFingerprintJson = & \$OwnedFingerprintNode/u);
   assert.match(host, /Original Main A native Guardian rejected a complete SHA\/contract-bound staged B candidate/u);
