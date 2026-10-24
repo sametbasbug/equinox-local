@@ -1124,6 +1124,17 @@ try {
           } finally { [IO.File]::WriteAllBytes($MainBMetadata, $MainBMetadataOriginal) }
           Assert-True ((Invoke-GuardianCheck '--audit-native-journal') -eq 0) 'B candidate read-only inspection advanced or mutated the original A journal.'
           Assert-True (-not (Test-Path -LiteralPath $JournalGuard) -and -not (Test-Path -LiteralPath $MainAProof)) 'B candidate inspection created an OS lease or WPF stop marker.'
+          # This B is a synthetic artifact at a fabricated target SHA. It has
+          # a valid complete native fingerprint but no corresponding actual
+          # product Git target checkout (and no production Ed25519 signature).
+          # The NEW source-provenance gate must refuse WITHOUT touching A.
+          $MainAPointerBeforeSourceAudit = (Get-FileHash -LiteralPath $MainAPointer -Algorithm SHA256).Hash.ToLowerInvariant()
+          $MainAJournalBeforeSourceAudit = (Get-FileHash -LiteralPath $JournalData -Algorithm SHA256).Hash.ToLowerInvariant()
+          Assert-True ((Invoke-GuardianCheck '--audit-native-b-source') -eq 70) 'Synthetic B native payload without its real canonical Git checkout passed target-source verification.'
+          Assert-True (((Get-FileHash -LiteralPath $MainAPointer -Algorithm SHA256).Hash.ToLowerInvariant()) -ceq $MainAPointerBeforeSourceAudit -and
+            ((Get-FileHash -LiteralPath $JournalData -Algorithm SHA256).Hash.ToLowerInvariant()) -ceq $MainAJournalBeforeSourceAudit) 'Read-only B target source rejection changed the original Main A journal or pointer.'
+          Assert-True (-not (Test-Path -LiteralPath $JournalGuard)) 'B source-only audit wrote an OS journal lease.'
+          Write-Output "WINDOWS_NATIVE_B_SOURCE_UNBOUND_REJECTED target=$FixtureTarget result=PASS"
           Write-Output "WINDOWS_NATIVE_B_CANDIDATE_READONLY target=$FixtureTarget result=PASS"
           # The default `--audit-native-identity` must STILL reject an active
           # journal, while the independently prepared OS owner may inspect A.

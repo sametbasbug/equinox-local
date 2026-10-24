@@ -1000,3 +1000,25 @@ test('native B staged-candidate audit verifies original A, target SHA, contract 
   assert.match(host, /Native B full fingerprint accepted a modified but JSON-valid B payload/u);
   assert.match(host, /Remove-Item -LiteralPath \$MainBStore -Recurse/u);
 });
+
+
+test('native B product-owned Git target ancestry is distinct from B PE integrity and always rejects synthetic unsigned fixture', async () => {
+  const [source, program, host] = await Promise.all([
+    fs.readFile(new URL('../../native/windows/EquinoxLocal.Guardian/MainNativeTargetSourcePreflight.cs', import.meta.url), 'utf8'),
+    fs.readFile(new URL('../../native/windows/EquinoxLocal.Guardian/Program.cs', import.meta.url), 'utf8'),
+    fs.readFile(new URL('./windows-installer-real-package-smoke.ps1', import.meta.url), 'utf8'),
+  ]);
+  assert.match(program, /--audit-native-b-source/u);
+  assert.match(program, /InspectOwnedTargetMainSource\(\)/u);
+  assert.match(source, /InspectOwnedNativeTransitionJournal\(\)/u);
+  assert.match(source, /journal\.GetProperty\("stage"\)\.GetString\(\) != "prepared"/u);
+  assert.match(source, /RequireNormalDirectory\(stagedSource\)/u);
+  assert.match(source, /InspectOwnedMainGit\(install, target, stagedSource, bSha\)/u);
+  assert.match(source, /RunOwnedGit\(git, stagedSource, "merge-base", "--is-ancestor", currentSha, bSha\)/u);
+  assert.match(source, /InspectOwnedStagedBNativeCandidate\(\)/u);
+  assert.match(source, /native-b-git-and-payload-audited-not-signed-no-stage/u);
+  assert.doesNotMatch(source, /File\.Move\(|File\.Delete\(|File\.Write|CreateNew|Process\.Start|Registry\.SetValue/u);
+  assert.match(host, /Synthetic B native payload without its real canonical Git checkout passed target-source verification/u);
+  assert.match(host, /WINDOWS_NATIVE_B_SOURCE_UNBOUND_REJECTED target=\$FixtureTarget result=PASS/u);
+  assert.match(host, /Read-only B target source rejection changed the original Main A journal or pointer/u);
+});
