@@ -207,8 +207,10 @@ test("real public installer enters managed-source on native Windows x64 and ARM6
   assert.match(smoke, /EQUINOX_WINDOWS_INSTALL_SOURCE_SHA/u);
   assert.match(smoke, /EQUINOX_WINDOWS_INSTALL_SHA256/u);
   assert.match(smoke, /New-Item -ItemType HardLink/u);
-  assert.match(smoke, /runtime\\toolchain\\git\\2\.56\.0-1/u);
-  assert.match(smoke, /runtime\\toolchain\\node\\26\.12\.1/u);
+  assert.match(smoke, /OldProductGitVersion/u);
+  assert.match(smoke, /2\.53\.0-4/u);
+  assert.match(smoke, /2\.56\.0-1/u);
+  assert.match(smoke, /OldProductNodeVersion/u);
 });
 
 test("managed-source runtime acceptance runs on real Windows x64 and ARM64 hosts", () => {

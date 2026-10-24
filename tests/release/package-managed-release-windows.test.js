@@ -592,8 +592,8 @@ test("native Guardian durable owner identity binds exact OS worker birth across 
   assert.match(recovery, /workerTicks\.ToString\(CultureInfo\.InvariantCulture\)/u);
   assert.match(recovery, /GetProperty\("startTimeUtcTicks"\)\.GetString\(\) != workerTicks/u);
   assert.match(recovery, /GetProperty\("workerStartTimeUtcTicks"\)\.GetString\(\) != workerTicks/u);
-  assert.match(host, /Orphan recovery accepted forged worker creation time in the native writer lease/u);
-  assert.match(host, /Orphan recovery accepted forged worker creation time in the native authority receipt/u);
+  assert.match(host, /Native recovery accepted forged original worker lease identity./u);
+  assert.match(host, /Orphan recovery accepted a forged native authority worker identity/u);
 });
 
 
@@ -615,7 +615,7 @@ test("native Guardian binds immutable worker handoff bytes through live authoriz
   assert.match(recovery, /GetProperty\("handoffSha256"\)/u);
   assert.match(recovery, /HashOwnedWorkerHandoff\(root, id\)/u);
   assert.match(hosted, /AuthorityRecord\.handoffSha256/u);
-  assert.match(hosted, /Orphan recovery accepted a changed authenticated worker handoff token/u);
+  assert.match(hosted, /Native recovery accepted forged worker handoff identity./u);
 });
 
 
@@ -631,7 +631,7 @@ test("native prepared abort commit retains exact prepared-to-aborted journal dig
   assert.match(recovery,/GetProperty\("preparedJournalSha256"\)/u);
   assert.match(recovery,/auth\.GetProperty\("journalSha256"\)/u);
   assert.match(host,/AbortReceipt\.preparedJournalSha256 -ceq \$AuthorityRecord\.journalSha256/u);
-  assert.match(host,/Orphan recovery accepted an abort commit forged to an unrelated prepared journal/u);
+  assert.match(host,/Native recovery accepted forged abort stage or prepared digest./u);
 });
 
 test('Windows native B rollback preflight pins OS-installed B shell to SHA release and exact rollback journal without granting shutdown', async () => {
