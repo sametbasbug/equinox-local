@@ -1018,6 +1018,10 @@ function renderUpdate() {
       setText("update-title", `Restarting into Main ${shortUpdateSha(main.restartScheduledFor) || "snapshot"}`);
       setText("update-copy", "The admitted Main update is prepared. Control Center may disconnect briefly while the runtime switches, verifies health and rolls back automatically on failure.");
       setBadge("update-badge", "Restart scheduled", "warn");
+    } else if (main.applyError) {
+      setText("update-title", "Main update failed safely");
+      setText("update-copy", main.applyError);
+      setBadge("update-badge", "Update failed", "bad");
     } else if (state.updateApplyBusy || main.applying) {
       setText("update-title", `Preparing Main ${targetSha || "snapshot"}`);
       setText("update-copy", "Preparing the exact admitted source/native transition before scheduling the managed runtime restart.");

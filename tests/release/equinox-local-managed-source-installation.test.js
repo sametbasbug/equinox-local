@@ -43,7 +43,7 @@ test("server routes managed-source Main check/apply without changing Stable rout
   assert.match(server, /\["source", "managed-source"\]\.includes\(equinoxLocalInstallation\.kind\)/u);
   assert.match(server, /equinoxLocalMainApplyController\.resetError\(\)/u);
   assert.match(server, /kind === "managed-source"[\s\S]*equinoxLocalMainApplyController\.apply\(\)[\s\S]*equinoxLocalUpdateCoordinator\.apply\(\)/u);
-  assert.match(server, /\.\.\.equinoxLocalMainApplyController\.snapshot\(\)/u);
+  assert.match(server, /\.\.\.await equinoxLocalMainApplyController\.reconcile\(\)/u);
 });
 
 test("Windows Main native-store bootstrap is owned, but foreign and malformed releases cannot claim it", () => {

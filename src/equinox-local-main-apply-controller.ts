@@ -1,6 +1,7 @@
 import path from "node:path";
 
 import { prepareAndScheduleEquinoxLocalMainUpdate } from "./equinox-local-main-update-coordinator.js";
+import { createEquinoxLocalMainUpdateTransactionEngine } from "./equinox-local-main-update-transaction.js";
 
 type ScheduleInput=Parameters<typeof prepareAndScheduleEquinoxLocalMainUpdate>[0];
 type ScheduleResult=Readonly<{status?:string;targetSha?:string;[key:string]:unknown}>;
@@ -16,7 +17,15 @@ type DiscoverySnapshot=Readonly<{
   targetSha?:string|null;dirty?:boolean|null;remoteCanonical?:boolean|null;
 }>;
 type Discovery=Readonly<{snapshot:()=>DiscoverySnapshot}>;
-type Options={installation?:Install;discovery?:Discovery;applyImpl?:MainApply};
+type ScheduledReceipt=Readonly<{transactionId:string;currentSha:string;targetSha:string;status:string;stage:string;lastError:string|null}>;
+type ReceiptReader=(options:{transactionId:string;sourceRoot:string;transactionRoot:string})=>Promise<ScheduledReceipt>;
+type Options={installation?:Install;discovery?:Discovery;applyImpl?:MainApply;readScheduledReceiptImpl?:ReceiptReader};
+
+const TX_PATTERN=/^main-[a-f0-9]{32}$/u;
+async function readExactScheduledReceipt({transactionId,sourceRoot,transactionRoot}:Parameters<ReceiptReader>[0]):Promise<ScheduledReceipt>{
+  return createEquinoxLocalMainUpdateTransactionEngine({sourceRoot,transactionRoot}).readReceipt(transactionId);
+}
+
 
 const SHA_PATTERN = /^[a-f0-9]{40}$/u;
 
@@ -41,6 +50,7 @@ export function createEquinoxLocalMainApplyController({
   installation,
   discovery,
   applyImpl = prepareAndScheduleEquinoxLocalMainUpdate,
+  readScheduledReceiptImpl = readExactScheduledReceipt,
 }:Options = {}) {
   if (!discovery || typeof discovery.snapshot !== "function") {
     throw new Error("Main update discovery is required by the apply controller.");
@@ -51,6 +61,8 @@ export function createEquinoxLocalMainApplyController({
 
   let applying = false;
   let restartScheduledFor:string|null = null;
+  let scheduledTransactionId:string|null = null;
+  let scheduledCurrentSha:string|null = null;
   let lastError:string|null = null;
 
   const snapshot = () => {
@@ -75,6 +87,37 @@ export function createEquinoxLocalMainApplyController({
       applyReason: reason,
       applyError: lastError,
     });
+  };
+
+  // GET /update status reconciles only the exact scheduled transaction, not
+  // unrelated historical receipts. Never infer failure from a transient read
+  // error, and never allow a mismatched receipt to clear the restart guard.
+  const reconcile = async () => {
+    if (!restartScheduledFor || !scheduledTransactionId || !scheduledCurrentSha || !TX_PATTERN.test(scheduledTransactionId)) return snapshot();
+    try {
+      const receipt = await readScheduledReceiptImpl({
+        transactionId:scheduledTransactionId,
+        sourceRoot:path.resolve(installation!.sourceRoot!),
+        transactionRoot:path.resolve(installation!.mainTransactionRoot!),
+      });
+      if (receipt.transactionId !== scheduledTransactionId || receipt.currentSha !== scheduledCurrentSha || receipt.targetSha !== restartScheduledFor) {
+        throw new Error("Main update receipt no longer matches the scheduled source identities.");
+      }
+      if (["failed", "rolled_back", "rollback_failed"].includes(receipt.status)) {
+        const message = String(receipt.lastError || "The detached Main worker did not complete.").slice(0,500);
+        lastError = `Main update ${receipt.status} (${receipt.stage}): ${message}`;
+        restartScheduledFor = null;
+        scheduledTransactionId = null;
+        scheduledCurrentSha = null;
+      } else if (receipt.status === "succeeded") {
+        restartScheduledFor = null;
+        scheduledTransactionId = null;
+        scheduledCurrentSha = null;
+      }
+    } catch {
+      // Missing/unsafe/foreign receipt is unknown, not proof of failure or success.
+    }
+    return snapshot();
   };
 
   const resetError = () => {
@@ -119,6 +162,8 @@ export function createEquinoxLocalMainApplyController({
         throw new Error("Main update handoff did not preserve the admitted target identity.");
       }
       restartScheduledFor = targetSha;
+      scheduledTransactionId = typeof result.transactionId === "string" && TX_PATTERN.test(result.transactionId) ? result.transactionId : null;
+      scheduledCurrentSha = currentSha;
       return Object.freeze({
         ...result,
         currentSha,
@@ -132,5 +177,5 @@ export function createEquinoxLocalMainApplyController({
     }
   };
 
-  return Object.freeze({ snapshot, apply, resetError });
+  return Object.freeze({ snapshot, apply, resetError, reconcile });
 }
