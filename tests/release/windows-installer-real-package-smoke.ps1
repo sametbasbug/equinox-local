@@ -224,15 +224,21 @@ try {
     $FixtureVersion -ceq '6.1.2' -and
     $FixtureSourceSha -ceq '66786207350cc809b44fc5c376eba8912b35fa47' -and
     -not $SkipLegacyGuardianFixture)
+  $AcceptedOldOriginalMainA70 = ($env:EQUINOX_WINDOWS_ORIGINAL_MAIN_A70_REINSTALL_ACCEPTANCE -ceq 'true' -and
+    $FixtureVersion -ceq '6.1.2' -and
+    $FixtureSourceSha -ceq 'a70b6219e41036d39b1850c39c16a92b5d4dbcd5' -and
+    -not $SkipLegacyGuardianFixture)
+  $LegacyGuardian612Abi = ($AcceptedOldSigned612 -or $AcceptedOldOriginalMainA70)
   if ($HistoricRepair -and ($env:GITHUB_ACTIONS -cne 'true' -or
-      (-not $AcceptedOldHistoricMain -and -not $AcceptedOldSigned610 -and -not $AcceptedOldSigned612) -or
-      ($env:EQUINOX_WINDOWS_SIGNED_612_REINSTALL_ACCEPTANCE -ceq 'true' -and -not $AcceptedOldSigned612))) {
+      (-not $AcceptedOldHistoricMain -and -not $AcceptedOldSigned610 -and -not $AcceptedOldSigned612 -and -not $AcceptedOldOriginalMainA70) -or
+      ($env:EQUINOX_WINDOWS_SIGNED_612_REINSTALL_ACCEPTANCE -ceq 'true' -and -not $AcceptedOldSigned612) -or
+      ($env:EQUINOX_WINDOWS_ORIGINAL_MAIN_A70_REINSTALL_ACCEPTANCE -ceq 'true' -and -not $AcceptedOldOriginalMainA70))) {
     throw 'Historical signed Stable repair requires exact approved old A on disposable Windows.'
   }
   # Exact published signed 6.1.2 contains its OWN older pinned runtime.
   # Do not require B's current Node/Git paths inside already installed A.
-  $OldProductGitVersion = if ($AcceptedOldSigned612) { '2.53.0-4' } else { '2.56.0-1' }
-  $OldProductNodeVersion = if ($AcceptedOldSigned612) { '26.12.0' } else { '26.12.1' }
+  $OldProductGitVersion = if ($LegacyGuardian612Abi) { '2.53.0-4' } else { '2.56.0-1' }
+  $OldProductNodeVersion = if ($LegacyGuardian612Abi) { '26.12.0' } else { '26.12.1' }
   if (-not $SkipLegacyGuardianFixture) {
   # Exercise the real independent Guardian binary on a disposable hosted runner
   # without changing Start Menu, Installed Apps, autostart or the running WPF.
@@ -694,7 +700,7 @@ try {
         Assert-True ($AuthorityProcess.WaitForExit(5000)) 'Guardian authority process did not terminate under powercut fixture.'
         Assert-True ([IO.File]::Exists($JournalGuard) -and [IO.File]::Exists($JournalAuthority)) 'Guardian authority powercut lost durable native evidence.'
         $AuthorityRecord = ConvertFrom-Json ([IO.File]::ReadAllText($JournalAuthority))
-                $AuthorityKeys = if ($AcceptedOldSigned612) {
+                $AuthorityKeys = if ($LegacyGuardian612Abi) {
           @('schemaVersion','transactionId','stage','sequence','workerPid','guardianPid','journalSha256')
         } else {
           @('schemaVersion','transactionId','stage','sequence','workerPid','workerStartTimeUtcTicks','guardianPid','journalSha256','handoffSha256')
@@ -705,7 +711,7 @@ try {
           $AuthorityRecord.stage -ceq 'prepared' -and $AuthorityRecord.sequence -eq 0 -and
           $AuthorityRecord.workerPid -eq $WorkerProcess.Id -and
           $AuthorityRecord.guardianPid -eq $AuthorityProcess.Id) 'Native authority durable record has foreign worker or journal identity.'
-        if (-not $AcceptedOldSigned612) {
+        if (-not $LegacyGuardian612Abi) {
           Assert-True ($AuthorityRecord.workerStartTimeUtcTicks -ceq $WorkerRecord.startTimeUtcTicks -and
             $AuthorityRecord.handoffSha256 -ceq (Get-FileHash -LiteralPath $WorkerRecordPath -Algorithm SHA256).Hash.ToLowerInvariant()) 'Current Guardian authority lacks exact worker birth time and handoff hash.'
         }
@@ -739,7 +745,7 @@ try {
         try {
           $RealWpfTicks = $RealWpf.StartTime.ToUniversalTime().Ticks.ToString([Globalization.CultureInfo]::InvariantCulture)
         } finally { $RealWpf.Dispose() }
-        if (-not $AcceptedOldSigned612) {
+        if (-not $LegacyGuardian612Abi) {
           Assert-True ((Invoke-NativeWpfWitness ([string]$OriginalShellPid) $RealWpfTicks) -ceq 'running') 'OS native helper refused the genuine installed WPF owner.'
           $WrongWpfTicks = ([long]::Parse($RealWpfTicks) - 1).ToString([Globalization.CultureInfo]::InvariantCulture)
           Assert-True ((Invoke-NativeWpfWitness ([string]$OriginalShellPid) $WrongWpfTicks) -ceq 'mismatch') 'OS native helper accepted a forged WPF birth time.'
@@ -771,7 +777,7 @@ try {
         $ShellGuardian.Kill()
         Assert-True ($ShellGuardian.WaitForExit(5000)) 'WPF quiesce owner did not exit under forced-death fixture.'
         $ShellRecord = ConvertFrom-Json ([IO.File]::ReadAllText($JournalShellQuiesced))
-        $QuiesceKeys = if ($AcceptedOldSigned612) {
+        $QuiesceKeys = if ($LegacyGuardian612Abi) {
           @('schemaVersion','transactionId','disposition','shellPid','shellStartTimeUtcTicks','guardianPid','preparedJournalSha256')
         } else {
           @('schemaVersion','transactionId','disposition','shellPid','shellStartTimeUtcTicks','workerPid','workerStartTimeUtcTicks','guardianPid','preparedJournalSha256')
@@ -784,14 +790,14 @@ try {
           $ShellRecord.shellStartTimeUtcTicks -ceq $RealWpfTicks -and
           $ShellRecord.guardianPid -eq $ShellGuardian.Id -and
           $ShellRecord.preparedJournalSha256 -ceq ((Get-FileHash -LiteralPath $JournalData -Algorithm SHA256).Hash.ToLowerInvariant())) 'Native WPF graceful-exit proof is not exact shell/journal evidence.'
-        if (-not $AcceptedOldSigned612) {
+        if (-not $LegacyGuardian612Abi) {
           Assert-True ($ShellRecord.workerPid -eq $WorkerProcess.Id -and
             $ShellRecord.workerStartTimeUtcTicks -ceq $WorkerRecord.startTimeUtcTicks) 'Current Guardian quiesce evidence lost worker process identity.'
         }
         $StillOwned = @(Get-CimInstance Win32_Process -Filter "Name='EquinoxLocal.exe'" -ErrorAction SilentlyContinue |
           Where-Object { -not [string]::IsNullOrWhiteSpace($_.ExecutablePath) -and (Same-Path $_.ExecutablePath $StableExe) })
         Assert-True ($StillOwned.Count -eq 0) 'Native quiesce did not actually stop the installed WPF shell.'
-        if (-not $AcceptedOldSigned612) {
+        if (-not $LegacyGuardian612Abi) {
           Assert-True ((Invoke-NativeWpfWitness ([string]$OriginalShellPid) $RealWpfTicks) -cne 'running') 'OS native helper accepted a terminated WPF owner.'
         }
         Assert-True ((Invoke-GuardianCheck '--audit-native-journal') -eq 70) 'Native shell exit proof silently resumed Main despite stale owner lease.'
@@ -849,14 +855,14 @@ try {
         Assert-True ($AbortReceipt.transactionId -ceq $JournalId -and $AbortReceipt.stage -ceq 'rollback_started' -and
           $AbortReceipt.sequence -eq 1 -and $AbortReceipt.guardianPid -eq $AbortOwner.Id -and
           $AbortReceipt.journalSha256 -ceq $ActualAbortDigest) 'Durable native abort commit receipt does not bind exact updated bytes.'
-        $AbortReceiptKeys = if ($AcceptedOldSigned612) {
+        $AbortReceiptKeys = if ($LegacyGuardian612Abi) {
           @('schemaVersion','transactionId','stage','sequence','guardianPid','journalSha256')
         } else {
           @('schemaVersion','transactionId','stage','sequence','guardianPid','preparedJournalSha256','journalSha256')
         }
         Assert-True ((@($AbortReceiptKeys | Sort-Object) -join ',') -ceq
           (@($AbortReceipt.PSObject.Properties.Name | Sort-Object) -join ',')) 'Native abort receipt evidence differs from exact signed old or current schema.'
-        if (-not $AcceptedOldSigned612) {
+        if (-not $LegacyGuardian612Abi) {
           Assert-True ($AbortReceipt.preparedJournalSha256 -ceq $AuthorityRecord.journalSha256) 'Current Guardian abort lost source journal binding.'
         }
         $AbortData = ConvertFrom-Json ([IO.File]::ReadAllText($JournalData))
@@ -875,7 +881,7 @@ try {
         # authority layer must fail before quarantine or journal advancement.
         $OriginalLock = [IO.File]::ReadAllText($JournalGuard)
         try {
-          if ($AcceptedOldSigned612) {
+          if ($LegacyGuardian612Abi) {
             $ForgedLock = $OriginalLock.Replace('workerPid=' + $WorkerRecord.pid,
               'workerPid=' + ([int]$WorkerRecord.pid + 1))
           } else {
@@ -889,7 +895,7 @@ try {
         $OriginalHandoff = [IO.File]::ReadAllBytes($WorkerRecordPath)
         try {
           $ForgedWorker = ConvertFrom-Json ([Text.Encoding]::UTF8.GetString($OriginalHandoff))
-          if ($AcceptedOldSigned612) {
+          if ($LegacyGuardian612Abi) {
             # Original A durable authority only contains worker PID; modern B
             # additionally persists hash of its full authenticated handoff.
             $ForgedWorker.pid = [int]$WorkerRecord.pid + 1
@@ -902,7 +908,7 @@ try {
         $OriginalAuthority = [IO.File]::ReadAllBytes($JournalAuthority)
         try {
           $ForgedAuthority = ConvertFrom-Json ([Text.Encoding]::UTF8.GetString($OriginalAuthority))
-          if ($AcceptedOldSigned612) {
+          if ($LegacyGuardian612Abi) {
             # Signed v6.1.2 authority record has no durable worker birth time;
             # verify its actually supported exact worker PID instead.
             $ForgedAuthority.workerPid = [int]$WorkerRecord.pid + 1
@@ -915,7 +921,7 @@ try {
         $CommitBackup = [IO.File]::ReadAllBytes($JournalAbortCommit)
         try {
           $WrongPreparedLink = ConvertFrom-Json ([Text.Encoding]::UTF8.GetString($CommitBackup))
-          if ($AcceptedOldSigned612) {
+          if ($LegacyGuardian612Abi) {
             # Published 6.1.2 abort commit has no prepared SHA sidecar field.
             $WrongPreparedLink.stage = 'prepared'
           } else {
@@ -1140,7 +1146,7 @@ try {
     $OldGuardian = Join-Path $InstallRoot 'runtime\guardian\EquinoxLocalGuardian.exe'
     $OldGuardianSha = $null
     $OldGuardianFileId = $null
-    if ($AcceptedOldSigned612) {
+    if ($LegacyGuardian612Abi) {
       Assert-True ([IO.File]::Exists($OldGuardian)) 'Published 6.1.2 Guardian is missing.'
       $OldGuardianSha = (Get-FileHash -LiteralPath $OldGuardian -Algorithm SHA256).Hash
       $identity = [string]::Join(' ', [string[]]@(& fsutil.exe file queryfileid $OldGuardian))
@@ -1189,7 +1195,7 @@ try {
     Assert-True ([IO.File]::Exists((Join-Path $BRelease 'release.json'))) 'Historical B staged release missing.'
     & $OwnedNode (Join-Path $Root 'tests/release/windows-legacy-stable-health-rollback.mjs') $BRelease $InstallRoot $FixtureSourceSha $BVersion
     if ($LASTEXITCODE -ne 0) { throw "Historic $FixtureTarget real B-to-A health-failure rollback failed with $LASTEXITCODE." }
-    if ($AcceptedOldSigned612) {
+    if ($LegacyGuardian612Abi) {
       Assert-True ([IO.File]::Exists($OldGuardian)) 'Original old A Guardian missing after forced B rollback.'
       Assert-True ((Get-FileHash -LiteralPath $OldGuardian -Algorithm SHA256).Hash -ceq $OldGuardianSha) 'Original signed A Guardian bytes changed during rollback.'
       $restoredIdentity = [string]::Join(' ', [string[]]@(& fsutil.exe file queryfileid $OldGuardian))

@@ -384,3 +384,28 @@ test("ARM64 winapp smoke can use a native PowerShell helper host without weakeni
   assert.match(smoke, /CurrentProcess -eq \$smokePowerShellProcessName/u);
   assert.match(x64, /powershell\.exe[^\n]*windows-winapp-smoke\.ps1/u);
 });
+
+test("disposable original a70b621 consumer Main A native repair pins BOTH architecture bytes without claiming new-B signature", async () => {
+  const yml = await fs.readFile(new URL("../../.github/workflows/main-installed-windows-acceptance.yml", import.meta.url), "utf8");
+  const harness = await fs.readFile(new URL("./windows-installer-real-package-smoke.ps1", import.meta.url), "utf8");
+  const native = await fs.readFile(new URL("./windows-native-ab-installed-smoke.mjs", import.meta.url), "utf8");
+  assert.match(yml, /original_main_a70_reinstall_acceptance:\n\s+description:/u);
+  assert.match(yml, /main-native-a70b6219e41036d39b1850c39c16a92b5d4dbcd5-win32-\$\{\{ matrix\.arch \}\}/u);
+  assert.match(yml, /run-id: '39107295019'/u);
+  for (const [sha,bytes] of [
+    ["8fcb1b17fd2bf131af1b9472af1b14545f76182ca1430a59c990f6eda4d7d8af","244877728"],
+    ["5c781d90776ee45385a3f4dfcedf52ec6c1cf4e2d8674de635052a49da49067b","227967331"],
+  ]) {
+    assert.ok(yml.includes(sha), "exact original Main native ZIP SHA256 must be immutable");
+    assert.ok(yml.includes(bytes), "exact original Main native ZIP byte count must be immutable");
+  }
+  assert.match(yml, /\$manifest\.channel -cne 'main'/u);
+  assert.match(yml, /\$release\.sourceSha -cne 'a70b6219e41036d39b1850c39c16a92b5d4dbcd5'/u);
+  assert.match(yml, /EQUINOX_WINDOWS_ORIGINAL_MAIN_A70_REINSTALL_ACCEPTANCE/u);
+  assert.match(yml, /candidate B native artifact \(unsigned, never production\)/u);
+  assert.match(harness, /AcceptedOldOriginalMainA70/u);
+  assert.match(harness, /LegacyGuardian612Abi/u);
+  assert.match(harness, /OldGuardianFileId/u);
+  assert.match(native, /a70b6219e41036d39b1850c39c16a92b5d4dbcd5/u);
+  assert.match(yml, /Refusing to replace a pre-existing Browser Native Messaging registry key|Native Messaging registry key is already owned by a different installation/u);
+});

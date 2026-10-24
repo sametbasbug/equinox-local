@@ -522,8 +522,10 @@ test('vintage Windows A/B real PE smoke accepts pre-6.1.2 marker absence but alw
   const smoke = await fs.readFile(new URL('./windows-native-ab-installed-smoke.mjs', import.meta.url), 'utf8');
   assert.match(smoke, /compareEquinoxVersions\(installedRelease\.version, "6\.1\.2"\) >= 0/u);
   assert.match(smoke, /assert\.equal\(\(await fs\.stat\(nativeHelper\)\)\.isFile\(\), true/u);
-  assert.match(smoke, /publicSignedLegacy612/u);
-  assert.match(smoke, /installedRelease\.sourceSha === "66786207350cc809b44fc5c376eba8912b35fa47"/u);
+  assert.match(smoke, /original612InspectorMissing/u);
+  assert.match(smoke, /66786207350cc809b44fc5c376eba8912b35fa47/u);
+  assert.match(smoke, /a70b6219e41036d39b1850c39c16a92b5d4dbcd5/u);
+  assert.match(smoke, /hasNativeInspector/u);
   assert.match(smoke, /if \(compareEquinoxVersions\(installedRelease\.version, "6\.1\.2"\) >= 0\) \{[\s\S]*?await fs\.readFile\(nativeGateMarker, "utf8"\)/u);
   assert.match(smoke, /if \(hasNativeInspector\) \{[\s\S]*?runWpfWitness/u);
   assert.match(smoke, /inspectWindowsMainUpdateWorkerProcess\(ownership\)/u);

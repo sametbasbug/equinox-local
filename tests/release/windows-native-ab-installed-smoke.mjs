@@ -41,9 +41,12 @@ try {
   // --inspect-owned-wpf / --inspect-owned-worker ABI despite its version.
   // Bind this exception to the immutable released A source identity: any
   // different 6.1.2 build and every later release MUST prove the native ABI.
-  const publicSignedLegacy612 = installedRelease.version === "6.1.2" &&
-    installedRelease.sourceSha === "66786207350cc809b44fc5c376eba8912b35fa47";
-  const hasNativeInspector = compareEquinoxVersions(installedRelease.version, "6.1.2") >= 0 && !publicSignedLegacy612;
+  // Two immutable shipped A binaries predate the bounded inspector ABI:
+  // the signed Stable tag and the ORIGINAL managed Main consumer source.
+  // No other 6.1.2 SHA or future release may inherit this exception.
+  const original612InspectorMissing = installedRelease.version === "6.1.2" &&
+    ["66786207350cc809b44fc5c376eba8912b35fa47", "a70b6219e41036d39b1850c39c16a92b5d4dbcd5"].includes(installedRelease.sourceSha);
+  const hasNativeInspector = compareEquinoxVersions(installedRelease.version, "6.1.2") >= 0 && !original612InspectorMissing;
   const nativeHelper = path.join(releaseDir, "runtime", "job", "equinox-local-job-object-helper.exe");
   const nativeGateMarker = path.join(releaseDir, "runtime", "job", "owned-process-gate-v1.marker");
   assert.equal((await fs.stat(nativeHelper)).isFile(), true, "installed native helper must exist");

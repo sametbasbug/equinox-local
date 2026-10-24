@@ -30,6 +30,11 @@ on:
         required: false
         default: false
         type: boolean
+      original_main_a70_reinstall_acceptance:
+        description: Disposable exact previous consumer Main a70b621 native A (not signed Stable) to unsigned Stable repair, forced B rollback; no production publish
+        required: false
+        default: false
+        type: boolean
       previous_main_sha:
         description: Separately admitted immutable Main A SHA
         required: true
@@ -59,7 +64,7 @@ concurrency:
 
 jobs:
   installed-update:
-    if: ${{ !inputs.stable_bridge_acceptance && !inputs.signed_610_reinstall_acceptance && !inputs.signed_612_reinstall_acceptance }}
+    if: ${{ !inputs.stable_bridge_acceptance && !inputs.signed_610_reinstall_acceptance && !inputs.signed_612_reinstall_acceptance && !inputs.original_main_a70_reinstall_acceptance }}
     name: Windows ${{ matrix.target }} real installed A-to-B Main upgrade
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 24
@@ -207,7 +212,7 @@ jobs:
 
   # Optional genuine native hosted-OS bridge smoke. No production signing.
   stable-bridge-windows:
-    if: ${{ inputs.stable_bridge_acceptance && !inputs.signed_610_reinstall_acceptance && !inputs.signed_612_reinstall_acceptance }}
+    if: ${{ inputs.stable_bridge_acceptance && !inputs.signed_610_reinstall_acceptance && !inputs.signed_612_reinstall_acceptance && !inputs.original_main_a70_reinstall_acceptance }}
     name: Windows ${{ matrix.arch }} owned WPF Stable-to-Main bridge and recovery
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 22
@@ -275,7 +280,7 @@ jobs:
   # An unsigned B fixture is NOT full production-signed acceptance or authority
   # to bypass independent native Main WPF A/B supervisor. Never mutate user PC.
   signed-old-to-candidate-reinstall:
-    if: ${{ inputs.signed_610_reinstall_acceptance || inputs.signed_612_reinstall_acceptance }}
+    if: ${{ inputs.signed_610_reinstall_acceptance || inputs.signed_612_reinstall_acceptance || inputs.original_main_a70_reinstall_acceptance }}
     name: Windows ${{ matrix.arch }} pinned old A to native candidate Stable repair
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 25
@@ -283,8 +288,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { arch: x64, runner: windows-latest, rid: win-x64, platform: x64, signed612sha: e8c86e676ff2319c6f1171b971156e17b6dd86bc2fde4bca6e9aded223cb401b, signed612bytes: 244877669 }
-          - { arch: arm64, runner: windows-11-vs2026-arm, rid: win-arm64, platform: ARM64, signed612sha: 9b8eb1f7ce07c40b9815151a3758258e679d393baaf795031eb58886763edc45, signed612bytes: 227967258 }
+          - { arch: x64, runner: windows-latest, rid: win-x64, platform: x64, signed612sha: e8c86e676ff2319c6f1171b971156e17b6dd86bc2fde4bca6e9aded223cb401b, signed612bytes: 244877669, originalMainA70Sha: 8fcb1b17fd2bf131af1b9472af1b14545f76182ca1430a59c990f6eda4d7d8af, originalMainA70Bytes: 244877728 }
+          - { arch: arm64, runner: windows-11-vs2026-arm, rid: win-arm64, platform: ARM64, signed612sha: 9b8eb1f7ce07c40b9815151a3758258e679d393baaf795031eb58886763edc45, signed612bytes: 227967258, originalMainA70Sha: 5c781d90776ee45385a3f4dfcedf52ec6c1cf4e2d8674de635052a49da49067b, originalMainA70Bytes: 227967331 }
     steps:
       - uses: actions/checkout@v7
         with:
@@ -305,20 +310,20 @@ jobs:
       - name: Enforce exact, isolated public A and candidate B
         shell: pwsh
         env:
-          OLD_SHA: ${{ inputs.signed_612_reinstall_acceptance && '66786207350cc809b44fc5c376eba8912b35fa47' || 'e85790a99e8e05ccf9997279d174b452793d6097' }}
+          OLD_SHA: ${{ inputs.original_main_a70_reinstall_acceptance && 'a70b6219e41036d39b1850c39c16a92b5d4dbcd5' || (inputs.signed_612_reinstall_acceptance && '66786207350cc809b44fc5c376eba8912b35fa47' || 'e85790a99e8e05ccf9997279d174b452793d6097') }}
         run: |
           $ErrorActionPreference = 'Stop'
-          if ('${{ inputs.signed_610_reinstall_acceptance }}' -eq 'true' -and
-              '${{ inputs.signed_612_reinstall_acceptance }}' -eq 'true') {
-            throw 'Choose exactly one historical or signed 6.1.2 native repair test.'
-          }
+          $selectedModes = @('${{ inputs.signed_610_reinstall_acceptance }}',
+            '${{ inputs.signed_612_reinstall_acceptance }}',
+            '${{ inputs.original_main_a70_reinstall_acceptance }}' | Where-Object { $_ -eq 'true' })
+          if ($selectedModes.Count -ne 1) { throw 'Exactly one immutable original A native acceptance mode must be selected.' }
           if ($env:GITHUB_REPOSITORY -cne 'sametbasbug/equinox-local' -or $env:GITHUB_ACTIONS -cne 'true' -or
               (node -p 'process.platform + "-" + process.arch') -cne 'win32-${{ matrix.arch }}' -or
               $env:GITHUB_REF -notlike 'refs/heads/equinox/*') {
             throw 'Candidate reinstall acceptance requires a disposable native Windows runner and explicit development branch'
           }
           & git merge-base --is-ancestor $env:OLD_SHA HEAD
-          if ($LASTEXITCODE -ne 0) { throw 'Candidate B does not descend from the exact signed 6.1.0 A source' }
+          if ($LASTEXITCODE -ne 0) { throw 'Candidate B does not descend from the exact pinned original A source.' }
           $root = Join-Path ([Environment]::GetFolderPath([Environment+SpecialFolder]::LocalApplicationData)) 'Equinox Local'
           if (Test-Path -LiteralPath $root) { throw 'Unexpected real user Equinox Local data on disposable acceptance runner' }
           if (Test-Path 'Registry::HKEY_CURRENT_USER\Software\Google\Chrome\NativeMessagingHosts\dev.equinox.browser') {
@@ -376,6 +381,59 @@ jobs:
             throw 'Public signed A release source SHA/version/native target differs from pin.'
           }
           'Production-published old A archive has pinned independent SHA256 and bytes; B is an unsigned candidate rehearsal only.' >> $env:GITHUB_STEP_SUMMARY
+      - name: Retrieve original owner's exact managed Main a70b621 A native archive
+        if: ${{ inputs.original_main_a70_reinstall_acceptance }}
+        uses: actions/download-artifact@v8
+        with:
+          name: main-native-a70b6219e41036d39b1850c39c16a92b5d4dbcd5-win32-${{ matrix.arch }}
+          run-id: '39107295019'
+          github-token: ${{ github.token }}
+          repository: sametbasbug/equinox-local
+          path: ${{ runner.temp }}/original-main-a70-base
+      - name: Independently verify original exact managed Main a70b621 A manifest, ZIP bytes and CRC
+        if: ${{ inputs.original_main_a70_reinstall_acceptance }}
+        shell: pwsh
+        env:
+          EXPECTED_SHA256: ${{ matrix.originalMainA70Sha }}
+          EXPECTED_BYTES: ${{ matrix.originalMainA70Bytes }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $root = Join-Path $env:RUNNER_TEMP 'original-main-a70-base'
+          $target = 'win32-${{ matrix.arch }}'
+          $prefix = 'equinox-local-main-a70b6219e41036d39b1850c39c16a92b5d4dbcd5-' + $target
+          $files = @(Get-ChildItem -LiteralPath $root -File)
+          if ($files.Count -ne 2 -or @($files | Where-Object { $_.Name -in @("$prefix.zip", "$prefix.json") }).Count -ne 2) {
+            throw 'Original Main A CI archive includes foreign or missing evidence files.'
+          }
+          $manifest = Get-Content -LiteralPath (Join-Path $root "$prefix.json") -Raw | ConvertFrom-Json
+          if ($manifest.schemaVersion -ne 1 -or $manifest.channel -cne 'main' -or
+              $manifest.sourceSha -cne 'a70b6219e41036d39b1850c39c16a92b5d4dbcd5' -or
+              $manifest.target -cne $target -or $manifest.artifact.name -cne "$prefix.zip" -or
+              $manifest.artifact.sha256 -cne $env:EXPECTED_SHA256 -or
+              [int64]$manifest.artifact.bytes -ne [int64]$env:EXPECTED_BYTES) {
+            throw 'Original Main A immutable CI manifest differs from independently pinned owner A identity.'
+          }
+          $artifact = Join-Path $root "$prefix.zip"
+          if ((Get-Item -LiteralPath $artifact).Length -ne [int64]$env:EXPECTED_BYTES -or
+              (Get-FileHash -LiteralPath $artifact -Algorithm SHA256).Hash.ToLowerInvariant() -cne $env:EXPECTED_SHA256) {
+            throw 'Owner exact original Main A ZIP byte length or pinned SHA256 differs.'
+          }
+          Add-Type -AssemblyName System.IO.Compression
+          $zip = [IO.Compression.ZipFile]::OpenRead($artifact)
+          try {
+            $entry = $zip.GetEntry('release/release.json')
+            if ($null -eq $entry -or $entry.Length -lt 2 -or $entry.Length -gt 16384) { throw 'Original managed Main A ZIP lacks bounded release identity.' }
+            $reader = [IO.StreamReader]::new($entry.Open(), [Text.UTF8Encoding]::new($false,$true))
+            try { $release = $reader.ReadToEnd() | ConvertFrom-Json } finally { $reader.Dispose() }
+            if ($release.schemaVersion -ne 1 -or $release.version -cne '6.1.2' -or
+                $release.sourceSha -cne 'a70b6219e41036d39b1850c39c16a92b5d4dbcd5' -or
+                $release.target -cne $target) { throw 'Original managed Main A ZIP metadata differs from owner source.' }
+            foreach ($file in $zip.Entries) {
+              if ($file.Length -lt 0 -or $file.Length -gt 671088640) { throw 'Main A archive contains an oversized entry.' }
+              # Exact ZIP SHA256 above already authenticates all entries and CRC descriptors.
+            }
+          } finally { $zip.Dispose() }
+          'This is the EXACT original owner managed MAIN A archival CI package; it is NOT a signed Stable artifact and B is UNSIGNED.' >> $env:GITHUB_STEP_SUMMARY
       - run: npm ci --prefer-offline --no-audit --no-fund
       - name: Publish candidate B genuine WPF native executable
         shell: pwsh
@@ -395,9 +453,12 @@ jobs:
         env:
           EQUINOX_WINDOWS_LEGACY_REINSTALL_ACCEPTANCE: 'true'
           EQUINOX_WINDOWS_SIGNED_612_REINSTALL_ACCEPTANCE: ${{ inputs.signed_612_reinstall_acceptance }}
+          EQUINOX_WINDOWS_ORIGINAL_MAIN_A70_REINSTALL_ACCEPTANCE: ${{ inputs.original_main_a70_reinstall_acceptance }}
         run: |
           $ErrorActionPreference = 'Stop'
-          $baseDir = if ('${{ inputs.signed_612_reinstall_acceptance }}' -eq 'true') {
+          $baseDir = if ('${{ inputs.original_main_a70_reinstall_acceptance }}' -eq 'true') {
+            '${{ runner.temp }}/original-main-a70-base'
+          } elseif ('${{ inputs.signed_612_reinstall_acceptance }}' -eq 'true') {
             '${{ runner.temp }}/signed-612-base'
           } else {
             '${{ runner.temp }}/signed-610-base'
