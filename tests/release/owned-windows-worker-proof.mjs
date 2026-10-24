@@ -30,12 +30,17 @@ for (const source of [trigger, abortTrigger, shellTrigger, mainAShellTrigger].fi
     // The Guardian might not yet have called CreateNamedPipe. A tightly
     // bounded retry is test orchestration only; never retry a journal write.
     void (async () => {
-      for (let attempt = 0; attempt < 30; attempt += 1) {
+      // Genuine managed-Main A validation performs the product Git and full
+      // native fingerprint twice before CreateNamedPipe; keep its disposable
+      // worker alive long enough to meet that OS owner without relaxing any
+      // production Guardian deadline or HMAC check.
+      const maxAttempts = source === mainAShellTrigger ? 240 : 30;
+      for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
         try {
           await proveEquinoxWindowsNativeJournalAuthority({transactionId: tx, transactionRoot: root, workerToken: token});
           return;
         } catch (error) {
-          if (attempt === 29) throw error;
+          if (attempt === maxAttempts - 1) throw error;
           await new Promise(resolve => setTimeout(resolve, 130));
         }
       }
