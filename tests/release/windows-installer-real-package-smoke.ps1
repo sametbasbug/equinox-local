@@ -1183,6 +1183,13 @@ try {
           # OS-owned A must fail closed with no pointer/journal/file mutation.
           Assert-True ((Invoke-GuardianCheck '--audit-native-worker-ipc') -eq 0) 'Composite signed B negative requires a genuine live Main A IPC owner.'
           Assert-True ((Invoke-GuardianCheck '--audit-native-b-stage-ready') -eq 70) 'Composite OS owner accepted an unsigned or fake staged Main B.'
+          # The NEXT stronger stage entry is an OS-held exclusive lease;
+          # with an unsigned/foreign B it must reject BEFORE CreateNew can
+          # leave even a lock file. This fixture never writes native_staged.
+          Assert-True ((Invoke-GuardianCheck '--hold-native-b-stage-lease') -eq 70) 'Unsigned Main B acquired the exclusive native signed stage lease.'
+          Assert-True (-not (Test-Path -LiteralPath $JournalGuard)) 'Unsigned B stage lease refusal left a durable writer lock.'
+          Write-Output "WINDOWS_NATIVE_B_UNSIGNED_STAGE_LEASE_REJECTED target=$FixtureTarget result=PASS"
+
           Write-Output "WINDOWS_NATIVE_B_COMPOSITE_UNSIGNED_OS_OWNER_REJECTED target=$FixtureTarget result=PASS"
 
           Assert-True (((Get-FileHash -LiteralPath $MainAPointer -Algorithm SHA256).Hash.ToLowerInvariant()) -ceq $MainAPointerBeforeSourceAudit -and

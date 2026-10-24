@@ -10,7 +10,7 @@ internal static partial class Program
     // writer and NOT permission to stop WPF, swap A/B or relaunch anything.
     // The persistent marker is intentionally never deleted automatically:
     // a dead native owner needs independent receipt + filesystem reconciliation.
-    private static void HoldOwnedNativeJournalLease(bool acceptAuthorityProof = false, bool recordPreparedAbort = false, bool quiesceStableShell = false, bool quiesceMainAShell = false)
+    private static void HoldOwnedNativeJournalLease(bool acceptAuthorityProof = false, bool recordPreparedAbort = false, bool quiesceStableShell = false, bool quiesceMainAShell = false, bool requireSignedBStageLease = false)
     {
         InspectionPhase = "native-journal-lease-preflight";
         InspectOwnedNativeWorkerOsArguments();
@@ -22,6 +22,13 @@ internal static partial class Program
         var root = Path.Combine(local, "Equinox Local", "state", "main-update", "guardian-journal");
         RequireNormalDirectory(root);
         var leasePath = Path.Combine(root, "." + owner.TransactionId + ".writer-lock");
+        // A B-stage lease cannot even create an orphan lock unless the real
+        // ORIGINAL Main A OS owner, physical Guardian kernel FileID and
+        // immutable production-root signed distinct B are ALL verified.
+        // Readiness remains read-only; the OS-held lease alone is NOT a
+        // native_staged milestone, update, pointer or shutdown permission.
+        if (requireSignedBStageLease)
+            InspectOwnedSignedMainBStageReadiness();
         // Reject a wrong predecessor before CREATE_NEW creates even an orphan
         // writer lock. In particular a Stable A cannot request Main A quiesce.
         // The physical WPF exit path will revalidate everything under the
@@ -42,6 +49,11 @@ internal static partial class Program
         lease.Write(body);
         lease.Flush(flushToDisk: true);
         InspectionPhase = "native-journal-lease-exclusive-held";
+        // Re-prove the same live A and genuine production-signed B AFTER
+        // gaining the exclusive kernel lease; a raced B or replaced A
+        // must leave an orphan lease for independent fail-closed recovery.
+        if (requireSignedBStageLease)
+            InspectOwnedSignedMainBStageReadiness();
         if (acceptAuthorityProof || recordPreparedAbort || quiesceStableShell || quiesceMainAShell)
             RecordNativeJournalWorkerAuthority(owner, root, worker, recordPreparedAbort);
         if (quiesceStableShell)

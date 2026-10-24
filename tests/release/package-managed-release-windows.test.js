@@ -1119,3 +1119,26 @@ test('native Guardian pre-stage B readiness requires live A OS owner, kernel phy
   const oldPointer=host.indexOf("Assert-True (((Get-FileHash -LiteralPath $MainAPointer -Algorithm SHA256).Hash.ToLowerInvariant()) -ceq $MainAPointerBeforeSourceAudit", composite);
   assert.ok(expected>=0 && composite>expected && oldPointer>composite, 'Unsigned B rejection must preserve exact A pointer and journal');
 });
+
+
+test('native exclusive B stage lease requires the same live original A and production-signed B both before and after OS CreateNew lock', async () => {
+  const root = new URL('../../native/windows/EquinoxLocal.Guardian/', import.meta.url);
+  const [program, lease, host] = await Promise.all([
+    fs.readFile(new URL('Program.cs', root), 'utf8'),
+    fs.readFile(new URL('MainNativeJournalLease.cs', root), 'utf8'),
+    fs.readFile(new URL('./windows-installer-real-package-smoke.ps1', import.meta.url), 'utf8'),
+  ]);
+  assert.match(program, /--hold-native-b-stage-lease/u);
+  assert.match(program, /HoldOwnedNativeJournalLease\(requireSignedBStageLease: true\)/u);
+  assert.match(lease, /bool requireSignedBStageLease = false/u);
+  assert.match(lease, /if \(requireSignedBStageLease\)\s*InspectOwnedSignedMainBStageReadiness\(\)/u);
+  const first=lease.indexOf('if (requireSignedBStageLease)');
+  const created=lease.indexOf('FileMode.CreateNew');
+  const second=lease.lastIndexOf('if (requireSignedBStageLease)');
+  const authority=lease.indexOf('if (acceptAuthorityProof');
+  assert.ok(first>=0 && first<created && second>created && second<authority,
+    'True production-signed B check must precede exclusive Windows lease and repeat under held handle, before any authority receipt');
+  assert.match(host,/Invoke-GuardianCheck '--hold-native-b-stage-lease'\) -eq 70/u);
+  assert.match(host,/WINDOWS_NATIVE_B_UNSIGNED_STAGE_LEASE_REJECTED target=\$FixtureTarget result=PASS/u);
+  assert.match(host,/Unsigned B stage lease refusal left a durable writer lock/u);
+});
