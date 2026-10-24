@@ -268,7 +268,7 @@ try {
         throw 'Independent Windows Guardian exceeded its 30-second inspection limit.'
       }
       $diagnostic = $process.StandardError.ReadToEnd().Trim()
-      if (($Argument -ceq '--inspect' -or $Argument -ceq '--audit-native-identity' -or $Argument -ceq '--audit-native-journal' -or $Argument -ceq '--audit-native-worker') -and $process.ExitCode -ne 0) {
+      if (($Argument -ceq '--inspect' -or $Argument -ceq '--audit-native-identity' -or $Argument -ceq '--audit-native-journal' -or $Argument -ceq '--audit-native-worker' -or $Argument -ceq '--audit-native-b-candidate') -and $process.ExitCode -ne 0) {
         Write-Host ('Windows Guardian inspection diagnosis: ' + $diagnostic)
       }
       return [int]$process.ExitCode
@@ -1063,11 +1063,17 @@ try {
           $MainBRelease = Join-Path $MainBStore 'release'
           [IO.Directory]::CreateDirectory($MainBStore) | Out-Null
           Copy-Item -LiteralPath $MainARelease -Destination $MainBRelease -Recurse -ErrorAction Stop
+          Assert-True ([IO.File]::Exists((Join-Path $MainBRelease 'release.json'))) 'Hosted B copy did not preserve the native release root.'
+          # PowerShell copy can alter readonly attributes/modes. Bind to
+          # the B candidate's actual staged bytes, not A's earlier digest.
+          $MainBFingerprintJson = & $OwnedFingerprintNode (Join-Path $Root 'tests/release/guardian-native-fingerprint-fixture.mjs') $MainBRelease
+          if ($LASTEXITCODE -ne 0) { throw 'Staged B candidate full fingerprint fixture failed.' }
+          $MainBFingerprint = $MainBFingerprintJson | ConvertFrom-Json
           $MainBContract = [string]$JournalValue.targetRuntimeContractSha256
           $MainBManifest = [ordered]@{
             schemaVersion=1;channel='main';sourceSha=$JournalTarget;target=$FixtureTarget;
             runtimeContractSha256=$MainBContract;artifactSha256=('b' * 64);artifactBytes=1024;
-            payloadVersion=$FixtureVersion;releaseFingerprint=$MainAFingerprint
+            payloadVersion=$FixtureVersion;releaseFingerprint=$MainBFingerprint
           }
           $MainBManifestPath = Join-Path $MainBStore 'native-store.json'
           [IO.File]::WriteAllText($MainBManifestPath, ($MainBManifest | ConvertTo-Json -Depth 6))

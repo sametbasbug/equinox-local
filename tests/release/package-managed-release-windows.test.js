@@ -992,6 +992,8 @@ test('native B staged-candidate audit verifies original A, target SHA, contract 
   assert.match(source, /native-b-candidate-audited-no-stage-authorization/u);
   assert.doesNotMatch(source, /File\.Move\(|File\.Delete\(|File\.Write|CreateNew|Process\.Start|Registry\.SetValue/u);
   assert.match(host, /WINDOWS_NATIVE_B_CANDIDATE_READONLY target=\$FixtureTarget result=PASS/u);
+  assert.match(host, /releaseFingerprint=\$MainBFingerprint/u);
+  assert.match(host, /\$MainBFingerprintJson = & \$OwnedFingerprintNode/u);
   assert.match(host, /Original Main A native Guardian rejected a complete SHA\/contract-bound staged B candidate/u);
   assert.match(host, /Read-only native B candidate audit accepted a foreign B runtime contract/u);
   assert.match(host, /Native B full fingerprint accepted a modified but JSON-valid B payload/u);
