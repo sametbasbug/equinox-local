@@ -25,6 +25,11 @@ on:
         required: false
         default: false
         type: boolean
+      signed_612_reinstall_acceptance:
+        description: Disposable signed public v6.1.2 Windows A to unsigned native B Stable repair and rollback; no production publish
+        required: false
+        default: false
+        type: boolean
       previous_main_sha:
         description: Separately admitted immutable Main A SHA
         required: true
@@ -54,7 +59,7 @@ concurrency:
 
 jobs:
   installed-update:
-    if: ${{ !inputs.stable_bridge_acceptance && !inputs.signed_610_reinstall_acceptance }}
+    if: ${{ !inputs.stable_bridge_acceptance && !inputs.signed_610_reinstall_acceptance && !inputs.signed_612_reinstall_acceptance }}
     name: Windows ${{ matrix.target }} real installed A-to-B Main upgrade
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 24
@@ -202,7 +207,7 @@ jobs:
 
   # Optional genuine native hosted-OS bridge smoke. No production signing.
   stable-bridge-windows:
-    if: ${{ inputs.stable_bridge_acceptance && !inputs.signed_610_reinstall_acceptance }}
+    if: ${{ inputs.stable_bridge_acceptance && !inputs.signed_610_reinstall_acceptance && !inputs.signed_612_reinstall_acceptance }}
     name: Windows ${{ matrix.arch }} owned WPF Stable-to-Main bridge and recovery
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 22
@@ -263,21 +268,23 @@ jobs:
           & powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File tests/release/windows-installer-real-package-smoke.ps1
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-  # Disposable hosted acceptance: install the EXACT archived public 6.1.0
-  # build as A, invoke the REAL standard PowerShell installer with this branch's
-  # unsigned native B artifact, verify rollback+upgrade+config SHA and removal
-  # of every old numbered release. Does not touch main-snapshot, main or CDN.
-  signed-610-to-candidate-reinstall:
-    if: ${{ inputs.signed_610_reinstall_acceptance }}
-    name: Windows ${{ matrix.arch }} installed 6.1.0 to native candidate repair
+  # Disposable hosted acceptance: original archived old6.1.0 OR actual
+  # immutable PUBLIC SIGNED v6.1.2 ZIP as A. This branch builds UNSIGNED B,
+  # then exercises classic PowerShell Stable repair, forced failed B rollback
+  # (Guardian original NTFS File ID preserved) and healthy B promotion.
+  # An unsigned B fixture is NOT full production-signed acceptance or authority
+  # to bypass independent native Main WPF A/B supervisor. Never mutate user PC.
+  signed-old-to-candidate-reinstall:
+    if: ${{ inputs.signed_610_reinstall_acceptance || inputs.signed_612_reinstall_acceptance }}
+    name: Windows ${{ matrix.arch }} pinned old A to native candidate Stable repair
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
         include:
-          - { arch: x64, runner: windows-latest, rid: win-x64, platform: x64 }
-          - { arch: arm64, runner: windows-11-vs2026-arm, rid: win-arm64, platform: ARM64 }
+          - { arch: x64, runner: windows-latest, rid: win-x64, platform: x64, signed612sha: e8c86e676ff2319c6f1171b971156e17b6dd86bc2fde4bca6e9aded223cb401b, signed612bytes: 244877669 }
+          - { arch: arm64, runner: windows-11-vs2026-arm, rid: win-arm64, platform: ARM64, signed612sha: 9b8eb1f7ce07c40b9815151a3758258e679d393baaf795031eb58886763edc45, signed612bytes: 227967258 }
     steps:
       - uses: actions/checkout@v7
         with:
@@ -286,9 +293,13 @@ jobs:
       - name: Enforce exact, isolated public A and candidate B
         shell: pwsh
         env:
-          OLD_SHA: e85790a99e8e05ccf9997279d174b452793d6097
+          OLD_SHA: ${{ inputs.signed_612_reinstall_acceptance && '66786207350cc809b44fc5c376eba8912b35fa47' || 'e85790a99e8e05ccf9997279d174b452793d6097' }}
         run: |
           $ErrorActionPreference = 'Stop'
+          if ('${{ inputs.signed_610_reinstall_acceptance }}' -eq 'true' -and
+              '${{ inputs.signed_612_reinstall_acceptance }}' -eq 'true') {
+            throw 'Choose exactly one historical or signed 6.1.2 native repair test.'
+          }
           if ($env:GITHUB_REPOSITORY -cne 'sametbasbug/equinox-local' -or $env:GITHUB_ACTIONS -cne 'true' -or
               (node -p 'process.platform + "-" + process.arch') -cne 'win32-${{ matrix.arch }}' -or
               $env:GITHUB_REF -notlike 'refs/heads/equinox/*') {
@@ -310,6 +321,7 @@ jobs:
         with:
           dotnet-version: 10.0.x
       - name: Retrieve immutable exact-6.1.0 A native ZIP from successful release validation
+        if: ${{ inputs.signed_610_reinstall_acceptance }}
         uses: actions/download-artifact@v8
         with:
           name: equinox-local-6.1.0-win32-${{ matrix.arch }}-unsigned
@@ -317,6 +329,41 @@ jobs:
           github-token: ${{ github.token }}
           repository: sametbasbug/equinox-local
           path: ${{ runner.temp }}/signed-610-base
+      - name: Download actual signed public v6.1.2 A by pinned GitHub Release digest
+        if: ${{ inputs.signed_612_reinstall_acceptance }}
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXPECTED_SHA256: ${{ matrix.signed612sha }}
+          EXPECTED_BYTES: ${{ matrix.signed612bytes }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $target = 'win32-${{ matrix.arch }}'
+          $name = "equinox-local-6.1.2-$target.zip"
+          $root = Join-Path $env:RUNNER_TEMP 'signed-612-base'
+          New-Item -ItemType Directory -Path $root -Force | Out-Null
+          gh release download v6.1.2 -R sametbasbug/equinox-local --pattern $name --dir $root --clobber
+          if ($LASTEXITCODE -ne 0) { throw 'Pinned public signed v6.1.2 A release download failed.' }
+          $artifact = Join-Path $root $name
+          $files = @(Get-ChildItem -LiteralPath $root -File)
+          if ($files.Count -ne 1 -or $files[0].Name -cne $name -or
+              $files[0].Length -ne [int64]$env:EXPECTED_BYTES -or
+              (Get-FileHash -LiteralPath $artifact -Algorithm SHA256).Hash.ToLowerInvariant() -cne $env:EXPECTED_SHA256) {
+            throw 'Signed old A release asset name, bytes or pinned SHA256 differs.'
+          }
+          Add-Type -AssemblyName System.IO.Compression
+          $zip = [IO.Compression.ZipFile]::OpenRead($artifact)
+          try {
+            $entry = $zip.GetEntry('release/release.json')
+            if ($null -eq $entry -or $entry.Length -lt 2 -or $entry.Length -gt 16384) { throw 'Signed A lacks bounded release identity.' }
+            $reader = [IO.StreamReader]::new($entry.Open(), [Text.UTF8Encoding]::new($false,$true))
+            try { $release = $reader.ReadToEnd() | ConvertFrom-Json } finally { $reader.Dispose() }
+          } finally { $zip.Dispose() }
+          if ($release.schemaVersion -ne 1 -or $release.version -cne '6.1.2' -or
+              $release.sourceSha -cne '66786207350cc809b44fc5c376eba8912b35fa47' -or $release.target -cne $target) {
+            throw 'Public signed A release source SHA/version/native target differs from pin.'
+          }
+          'Production-published old A archive has pinned independent SHA256 and bytes; B is an unsigned candidate rehearsal only.' >> $env:GITHUB_STEP_SUMMARY
       - run: npm ci --prefer-offline --no-audit --no-fund
       - name: Publish candidate B genuine WPF native executable
         shell: pwsh
@@ -335,9 +382,15 @@ jobs:
         shell: pwsh
         env:
           EQUINOX_WINDOWS_LEGACY_REINSTALL_ACCEPTANCE: 'true'
+          EQUINOX_WINDOWS_SIGNED_612_REINSTALL_ACCEPTANCE: ${{ inputs.signed_612_reinstall_acceptance }}
         run: |
           $ErrorActionPreference = 'Stop'
-          $old = @(Get-ChildItem -LiteralPath '${{ runner.temp }}/signed-610-base' -Recurse -File -Filter '*.zip')
+          $baseDir = if ('${{ inputs.signed_612_reinstall_acceptance }}' -eq 'true') {
+            '${{ runner.temp }}/signed-612-base'
+          } else {
+            '${{ runner.temp }}/signed-610-base'
+          }
+          $old = @(Get-ChildItem -LiteralPath $baseDir -Recurse -File -Filter '*.zip')
           $new = @(Get-ChildItem -LiteralPath 'backups/local-packages' -File -Filter 'equinox-local-*-win32-${{ matrix.arch }}.zip')
           if ($old.Count -ne 1 -or $new.Count -ne 1) { throw 'Expected exactly one immutable A archive and one matching native candidate B ZIP' }
           $env:EQUINOX_WINDOWS_INSTALL_ARTIFACT = $old[0].FullName

@@ -220,9 +220,14 @@ try {
   $HistoricRepair = ($env:EQUINOX_WINDOWS_LEGACY_REINSTALL_ACCEPTANCE -ceq 'true')
   $AcceptedOldHistoricMain = ($FixtureSourceSha -ceq '8dbe965d28e76026123ce8de34d8f1aa27c10465' -and $SkipLegacyGuardianFixture)
   $AcceptedOldSigned610 = ($FixtureSourceSha -ceq 'e85790a99e8e05ccf9997279d174b452793d6097' -and -not $SkipLegacyGuardianFixture)
+  $AcceptedOldSigned612 = ($env:EQUINOX_WINDOWS_SIGNED_612_REINSTALL_ACCEPTANCE -ceq 'true' -and
+    $FixtureVersion -ceq '6.1.2' -and
+    $FixtureSourceSha -ceq '66786207350cc809b44fc5c376eba8912b35fa47' -and
+    -not $SkipLegacyGuardianFixture)
   if ($HistoricRepair -and ($env:GITHUB_ACTIONS -cne 'true' -or
-      (-not $AcceptedOldHistoricMain -and -not $AcceptedOldSigned610))) {
-    throw 'Historical or 6.1.0 native repair requires a pinned real A archive on disposable hosted Windows.'
+      (-not $AcceptedOldHistoricMain -and -not $AcceptedOldSigned610 -and -not $AcceptedOldSigned612) -or
+      ($env:EQUINOX_WINDOWS_SIGNED_612_REINSTALL_ACCEPTANCE -ceq 'true' -and -not $AcceptedOldSigned612))) {
+    throw 'Historical signed Stable repair requires exact approved old A on disposable Windows.'
   }
   if (-not $SkipLegacyGuardianFixture) {
   # Exercise the real independent Guardian binary on a disposable hosted runner
@@ -1071,6 +1076,17 @@ try {
     Write-Output "Windows $FixtureTarget real same-version Main-to-Stable reinstall: WPF/Native Messaging/credentials preservation PASSED."
   }
   if ($HistoricRepair) {
+    # Published signed old A Guardian bytes must survive a deliberately failed B.
+    $OldGuardian = Join-Path $InstallRoot 'runtime\guardian\EquinoxLocalGuardian.exe'
+    $OldGuardianSha = $null
+    $OldGuardianFileId = $null
+    if ($AcceptedOldSigned612) {
+      Assert-True ([IO.File]::Exists($OldGuardian)) 'Published 6.1.2 Guardian is missing.'
+      $OldGuardianSha = (Get-FileHash -LiteralPath $OldGuardian -Algorithm SHA256).Hash
+      $identity = [string]::Join(' ', [string[]]@(& fsutil.exe file queryfileid $OldGuardian))
+      if ($LASTEXITCODE -ne 0 -or $identity -notmatch '0x[0-9a-fA-F]{16,32}') { throw 'Signed 6.1.2 Guardian original NTFS file identity could not be attested.' }
+      $OldGuardianFileId = $Matches[0].ToLowerInvariant()
+    }
     $CandidateZip = [string]$env:EQUINOX_WINDOWS_LEGACY_STABLE_ARTIFACT
     Assert-True ([IO.File]::Exists($CandidateZip)) 'Historical repair candidate ZIP missing.'
     Add-Type -AssemblyName System.IO.Compression
@@ -1113,6 +1129,14 @@ try {
     Assert-True ([IO.File]::Exists((Join-Path $BRelease 'release.json'))) 'Historical B staged release missing.'
     & $OwnedNode (Join-Path $Root 'tests/release/windows-legacy-stable-health-rollback.mjs') $BRelease $InstallRoot $FixtureSourceSha $BVersion
     if ($LASTEXITCODE -ne 0) { throw "Historic $FixtureTarget real B-to-A health-failure rollback failed with $LASTEXITCODE." }
+    if ($AcceptedOldSigned612) {
+      Assert-True ([IO.File]::Exists($OldGuardian)) 'Original old A Guardian missing after forced B rollback.'
+      Assert-True ((Get-FileHash -LiteralPath $OldGuardian -Algorithm SHA256).Hash -ceq $OldGuardianSha) 'Original signed A Guardian bytes changed during rollback.'
+      $restoredIdentity = [string]::Join(' ', [string[]]@(& fsutil.exe file queryfileid $OldGuardian))
+      if ($LASTEXITCODE -ne 0 -or $restoredIdentity -notmatch '0x[0-9a-fA-F]{16,32}' -or $Matches[0].ToLowerInvariant() -cne $OldGuardianFileId) {
+        throw 'Original signed A Guardian kernel NTFS file identity was not preserved during B rollback.'
+      }
+    }
     foreach ($item in $UserFiles) {
       Assert-True ((Get-FileHash -LiteralPath $item -Algorithm SHA256).Hash -ceq $UserHashes[$item]) "Historic forced rollback changed private user state: $item"
     }
