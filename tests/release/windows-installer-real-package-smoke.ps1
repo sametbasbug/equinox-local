@@ -694,12 +694,21 @@ try {
         Assert-True ($AuthorityProcess.WaitForExit(5000)) 'Guardian authority process did not terminate under powercut fixture.'
         Assert-True ([IO.File]::Exists($JournalGuard) -and [IO.File]::Exists($JournalAuthority)) 'Guardian authority powercut lost durable native evidence.'
         $AuthorityRecord = ConvertFrom-Json ([IO.File]::ReadAllText($JournalAuthority))
+                $AuthorityKeys = if ($AcceptedOldSigned612) {
+          @('schemaVersion','transactionId','stage','sequence','workerPid','guardianPid','journalSha256')
+        } else {
+          @('schemaVersion','transactionId','stage','sequence','workerPid','workerStartTimeUtcTicks','guardianPid','journalSha256','handoffSha256')
+        }
+        Assert-True ((@($AuthorityKeys | Sort-Object) -join ',') -ceq
+          (@($AuthorityRecord.PSObject.Properties.Name | Sort-Object) -join ',')) 'Native authority record fields differ from the exact published A or current schema.'
         Assert-True ($AuthorityRecord.transactionId -ceq $JournalId -and
           $AuthorityRecord.stage -ceq 'prepared' -and $AuthorityRecord.sequence -eq 0 -and
           $AuthorityRecord.workerPid -eq $WorkerProcess.Id -and
-          $AuthorityRecord.workerStartTimeUtcTicks -ceq $WorkerRecord.startTimeUtcTicks -and
-          $AuthorityRecord.guardianPid -eq $AuthorityProcess.Id -and
-          $AuthorityRecord.handoffSha256 -ceq (Get-FileHash -LiteralPath $WorkerRecordPath -Algorithm SHA256).Hash.ToLowerInvariant()) 'Native authority durable record has foreign process or journal identity.'
+          $AuthorityRecord.guardianPid -eq $AuthorityProcess.Id) 'Native authority durable record has foreign worker or journal identity.'
+        if (-not $AcceptedOldSigned612) {
+          Assert-True ($AuthorityRecord.workerStartTimeUtcTicks -ceq $WorkerRecord.startTimeUtcTicks -and
+            $AuthorityRecord.handoffSha256 -ceq (Get-FileHash -LiteralPath $WorkerRecordPath -Algorithm SHA256).Hash.ToLowerInvariant()) 'Current Guardian authority lacks exact worker birth time and handoff hash.'
+        }
         $ExpectedDigest = (Get-FileHash -LiteralPath $JournalData -Algorithm SHA256).Hash.ToLowerInvariant()
         Assert-True ($AuthorityRecord.journalSha256 -ceq $ExpectedDigest) 'Native authority durable record does not bind the exact journal bytes.'
         Assert-True ($JournalValue.stage -ceq 'prepared' -and $JournalValue.sequence -eq 0) 'Native authority proof incorrectly advanced the Main update stage.'
@@ -757,14 +766,23 @@ try {
         $ShellGuardian.Kill()
         Assert-True ($ShellGuardian.WaitForExit(5000)) 'WPF quiesce owner did not exit under forced-death fixture.'
         $ShellRecord = ConvertFrom-Json ([IO.File]::ReadAllText($JournalShellQuiesced))
+        $QuiesceKeys = if ($AcceptedOldSigned612) {
+          @('schemaVersion','transactionId','disposition','shellPid','shellStartTimeUtcTicks','guardianPid','preparedJournalSha256')
+        } else {
+          @('schemaVersion','transactionId','disposition','shellPid','shellStartTimeUtcTicks','workerPid','workerStartTimeUtcTicks','guardianPid','preparedJournalSha256')
+        }
+        Assert-True ((@($QuiesceKeys | Sort-Object) -join ',') -ceq
+          (@($ShellRecord.PSObject.Properties.Name | Sort-Object) -join ',')) 'Native quiesce evidence fields differ from the exact published A or current schema.'
         Assert-True ($ShellRecord.transactionId -ceq $JournalId -and
           $ShellRecord.disposition -ceq 'stable-shell-quiesced-only' -and
           $ShellRecord.shellPid -eq $OriginalShellPid -and
           $ShellRecord.shellStartTimeUtcTicks -ceq $RealWpfTicks -and
-          $ShellRecord.workerPid -eq $WorkerProcess.Id -and
-          $ShellRecord.workerStartTimeUtcTicks -ceq $WorkerRecord.startTimeUtcTicks -and
           $ShellRecord.guardianPid -eq $ShellGuardian.Id -and
-          $ShellRecord.preparedJournalSha256 -ceq ((Get-FileHash -LiteralPath $JournalData -Algorithm SHA256).Hash.ToLowerInvariant())) 'Native WPF graceful-exit proof is not exact process/journal evidence.'
+          $ShellRecord.preparedJournalSha256 -ceq ((Get-FileHash -LiteralPath $JournalData -Algorithm SHA256).Hash.ToLowerInvariant())) 'Native WPF graceful-exit proof is not exact shell/journal evidence.'
+        if (-not $AcceptedOldSigned612) {
+          Assert-True ($ShellRecord.workerPid -eq $WorkerProcess.Id -and
+            $ShellRecord.workerStartTimeUtcTicks -ceq $WorkerRecord.startTimeUtcTicks) 'Current Guardian quiesce evidence lost worker process identity.'
+        }'
         $StillOwned = @(Get-CimInstance Win32_Process -Filter "Name='EquinoxLocal.exe'" -ErrorAction SilentlyContinue |
           Where-Object { -not [string]::IsNullOrWhiteSpace($_.ExecutablePath) -and (Same-Path $_.ExecutablePath $StableExe) })
         Assert-True ($StillOwned.Count -eq 0) 'Native quiesce did not actually stop the installed WPF shell.'
@@ -857,9 +875,15 @@ try {
         $OriginalAuthority = [IO.File]::ReadAllBytes($JournalAuthority)
         try {
           $ForgedAuthority = ConvertFrom-Json ([Text.Encoding]::UTF8.GetString($OriginalAuthority))
-          $ForgedAuthority.workerStartTimeUtcTicks = ([long]::Parse($WorkerRecord.startTimeUtcTicks) - 1).ToString([Globalization.CultureInfo]::InvariantCulture)
+          if ($AcceptedOldSigned612) {
+            # Signed v6.1.2 authority record has no durable worker birth time;
+            # verify its actually supported exact worker PID instead.
+            $ForgedAuthority.workerPid = [int]$WorkerRecord.pid + 1
+          } else {
+            $ForgedAuthority.workerStartTimeUtcTicks = ([long]::Parse($WorkerRecord.startTimeUtcTicks) - 1).ToString([Globalization.CultureInfo]::InvariantCulture)
+          }
           [IO.File]::WriteAllText($JournalAuthority, ($ForgedAuthority | ConvertTo-Json -Depth 4))
-          Assert-True ((Invoke-GuardianCheck '--reconcile-native-prepared-abort') -eq 70) 'Orphan recovery accepted forged worker creation time in the native authority receipt.'
+          Assert-True ((Invoke-GuardianCheck '--reconcile-native-prepared-abort') -eq 70) 'Orphan recovery accepted a forged native authority worker identity.'
         } finally { [IO.File]::WriteAllBytes($JournalAuthority, $OriginalAuthority) }
         $CommitBackup = [IO.File]::ReadAllBytes($JournalAbortCommit)
         try {
