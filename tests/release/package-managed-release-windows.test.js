@@ -1022,3 +1022,32 @@ test('native B product-owned Git target ancestry is distinct from B PE integrity
   assert.match(host, /WINDOWS_NATIVE_B_SOURCE_UNBOUND_REJECTED target=\$FixtureTarget result=PASS/u);
   assert.match(host, /Read-only B target source rejection changed the original Main A journal or pointer/u);
 });
+
+
+test('native OS Guardian audits Main-B signed authorization with pinned A Node and refuses missing production signature before mutation', async () => {
+  const [guard, program, host] = await Promise.all([
+    fs.readFile(new URL('../../native/windows/EquinoxLocal.Guardian/MainNativeBAuthorizationAudit.cs', import.meta.url), 'utf8'),
+    fs.readFile(new URL('../../native/windows/EquinoxLocal.Guardian/Program.cs', import.meta.url), 'utf8'),
+    fs.readFile(new URL('./windows-installer-real-package-smoke.ps1', import.meta.url), 'utf8'),
+  ]);
+  assert.match(program, /--audit-native-b-authorization/u);
+  assert.match(program, /InspectOwnedSignedMainBCandidate\(\)/u);
+  assert.match(guard, /MainBSignatureDomain = "equinox-local-main-native-b-authorization-v1\\n"/u);
+  assert.match(guard, /MainBTrustedSpkiDer/u);
+  assert.match(guard, /verify,createPublicKey/u);
+  assert.match(guard, /Buffer\.from\(x\.payload,'utf8'\)/u);
+  assert.match(guard, /JsonSerializer\.Serialize\(new/u);
+  assert.match(guard, /child\.ExitCode != 0/u);
+  assert.match(guard, /stdout\.WaitAsync\(timeout\.Token\)/u);
+  assert.match(guard, /psi\.Environment\.Remove\(name\)/u);
+  assert.match(guard, /signature\.GetProperty\("keyId"\)\.GetString\(\) != "stable-2026-01"/u);
+  assert.match(guard, /ReadOwnedTransitionRecord\(file, 8192\)/u);
+  assert.match(guard, /InspectOwnedTargetMainSource\(\)/u);
+  assert.match(guard, /ResolveOwnedMainWorkerNodePath\(install, target\)/u);
+  assert.match(guard, /psi\.ArgumentList\.Add\("-e"\)/u);
+  assert.match(guard, /RedirectStandardInput = true/u);
+  assert.match(guard, /native-b-signed-audited-no-stage-authorization/u);
+  assert.doesNotMatch(guard, /File\.Move\(|File\.Write|File\.Delete|CreateNew|Registry\.SetValue/u);
+  assert.match(host, /WINDOWS_NATIVE_B_SIGNATURE_MISSING_REJECTED target=\$FixtureTarget result=PASS/u);
+  assert.match(host, /Refusing an unsigned B mutated original Main A pointer or journal/u);
+});

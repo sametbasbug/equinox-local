@@ -268,7 +268,7 @@ try {
         throw 'Independent Windows Guardian exceeded its 30-second inspection limit.'
       }
       $diagnostic = $process.StandardError.ReadToEnd().Trim()
-      if (($Argument -ceq '--inspect' -or $Argument -ceq '--audit-native-identity' -or $Argument -ceq '--audit-native-journal' -or $Argument -ceq '--audit-native-worker' -or $Argument -ceq '--audit-native-b-candidate') -and $process.ExitCode -ne 0) {
+      if (($Argument -ceq '--inspect' -or $Argument -ceq '--audit-native-identity' -or $Argument -ceq '--audit-native-journal' -or $Argument -ceq '--audit-native-worker' -or $Argument -ceq '--audit-native-b-candidate' -or $Argument -ceq '--audit-native-b-authorization') -and $process.ExitCode -ne 0) {
         Write-Host ('Windows Guardian inspection diagnosis: ' + $diagnostic)
       }
       return [int]$process.ExitCode
@@ -1134,6 +1134,12 @@ try {
           Assert-True (((Get-FileHash -LiteralPath $MainAPointer -Algorithm SHA256).Hash.ToLowerInvariant()) -ceq $MainAPointerBeforeSourceAudit -and
             ((Get-FileHash -LiteralPath $JournalData -Algorithm SHA256).Hash.ToLowerInvariant()) -ceq $MainAJournalBeforeSourceAudit) 'Read-only B target source rejection changed the original Main A journal or pointer.'
           Assert-True (-not (Test-Path -LiteralPath $JournalGuard)) 'B source-only audit wrote an OS journal lease.'
+          # Even with the full native B fingerprint, a B without the signed
+          # immutable Main authorization must fail independent OS admission.
+          Assert-True ((Invoke-GuardianCheck '--audit-native-b-authorization') -eq 70) 'Unsigned Main B candidate escaped independent native Guardian cryptographic admission.'
+          Assert-True (((Get-FileHash -LiteralPath $MainAPointer -Algorithm SHA256).Hash.ToLowerInvariant()) -ceq $MainAPointerBeforeSourceAudit -and
+            ((Get-FileHash -LiteralPath $JournalData -Algorithm SHA256).Hash.ToLowerInvariant()) -ceq $MainAJournalBeforeSourceAudit) 'Refusing an unsigned B mutated original Main A pointer or journal.'
+          Write-Output "WINDOWS_NATIVE_B_SIGNATURE_MISSING_REJECTED target=$FixtureTarget result=PASS"
           Write-Output "WINDOWS_NATIVE_B_SOURCE_UNBOUND_REJECTED target=$FixtureTarget result=PASS"
           Write-Output "WINDOWS_NATIVE_B_CANDIDATE_READONLY target=$FixtureTarget result=PASS"
           # The default `--audit-native-identity` must STILL reject an active
