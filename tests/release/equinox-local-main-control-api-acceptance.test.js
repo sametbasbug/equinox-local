@@ -124,7 +124,7 @@ for (const failure of [false, true]) {
         catch (error) {
           // This is a scratch-only CI acceptance fixture: surface the exact
           // internal failure instead of a generic HTTP 500 for diagnosis.
-          console.error("Main acceptance update apply failed:", error?.message ?? error);
+          if (process.platform !== "win32") console.error("Main acceptance update apply failed:", error?.message ?? error);
           throw error;
         }
       },
@@ -141,7 +141,25 @@ for (const failure of [false, true]) {
     assert.equal(rejected.status, 403, "real Control Center must reject missing/foreign CSRF");
     assert.equal((await get("/api/v1/update")).update.main.applyAvailable, false);
     assert.equal((await mutate("/api/v1/update/check")).status, 200);
-    assert.equal((await get("/api/v1/update")).update.main.applyAvailable, true);
+    const checkedState = (await get("/api/v1/update")).update.main;
+    if (process.platform === "win32") {
+      // An intentionally missing independent OS-owned WPF A/B supervisor must
+      // prevent *all* Windows in-app Main scheduling before download/staging.
+      // Four macOS scenarios below still exercise the real Git A→B handoff.
+      assert.equal(checkedState.applySupported, false);
+      assert.equal(checkedState.applyAvailable, false);
+      assert.match(checkedState.applyReason, /independent native WPF A\/B supervisor/u);
+      const denied = await mutate("/api/v1/update/apply");
+      assert.equal(denied.status, 500);
+      assert.equal((await denied.json()).ok, false);
+      assert.equal(handoff, null);
+      assert.equal(nativeArtifactStaged, false);
+      assert.deepEqual(events, ["check"]);
+      assert.equal((await readEquinoxLocalMainSourcePointer(f.engine.paths.sourcePointerPath,
+        { execFileImpl: f.gitForLocalAdmission })).sha, f.A);
+      return;
+    }
+    assert.equal(checkedState.applyAvailable, true);
     const submitted = await mutate("/api/v1/update/apply");
     assert.equal(submitted.status, 202);
     const scheduled = (await submitted.json()).result;

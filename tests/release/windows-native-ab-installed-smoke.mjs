@@ -155,6 +155,16 @@ try {
         quiesceOwnedB: async () => true, // fixture-only simulated native B quiesce
         verifyNativeMessaging: async ({ release }) => nm === release,
         verifySustainedHealth: async ({ release, sourceSha }) => release === 'B' && sourceSha === shaB && source === 'B' && restarted,
+        // Fixture-only simulated native commit receipt. Production has NO
+        // fallback JS pointer writer; a real OS Guardian writer is required.
+        commitNativePointer: async ({ transactionId, pointer, pointerPath, transactionRoot }) => {
+          assert.equal(transactionId, jid);
+          assert.equal(pointer.sourceSha, shaB);
+          assert.equal(pointer.target, target);
+          assert.equal(transactionRoot, txroot);
+          assert.equal(pointerPath, path.join(txroot, 'current-native.json'));
+          return true;
+        },
       },
     },
     launcherPathImpl: (release) => path.join(release, 'runtime', 'browser', 'host.exe'),
@@ -167,7 +177,6 @@ try {
       assert.equal(expectedPreviousLauncherPath, prior);
       nm = launcherPath.startsWith(targetReleaseDir) ? 'B' : 'A';
     },
-    writePointerImpl: async (_pointer, value) => { assert.equal(value.sourceSha, shaB); },
   });
   const base = { currentSha: shaA, targetSha: shaB, rollbackSha: shaA,
     rollbackSourceRoot: path.join(root, 'sourceA'), targetSourceRoot: path.join(root, 'sourceB') };
