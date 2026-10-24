@@ -782,7 +782,7 @@ try {
         if (-not $AcceptedOldSigned612) {
           Assert-True ($ShellRecord.workerPid -eq $WorkerProcess.Id -and
             $ShellRecord.workerStartTimeUtcTicks -ceq $WorkerRecord.startTimeUtcTicks) 'Current Guardian quiesce evidence lost worker process identity.'
-        }'
+        }
         $StillOwned = @(Get-CimInstance Win32_Process -Filter "Name='EquinoxLocal.exe'" -ErrorAction SilentlyContinue |
           Where-Object { -not [string]::IsNullOrWhiteSpace($_.ExecutablePath) -and (Same-Path $_.ExecutablePath $StableExe) })
         Assert-True ($StillOwned.Count -eq 0) 'Native quiesce did not actually stop the installed WPF shell.'
@@ -841,8 +841,17 @@ try {
         $ActualAbortDigest = (Get-FileHash -LiteralPath $JournalData -Algorithm SHA256).Hash.ToLowerInvariant()
         Assert-True ($AbortReceipt.transactionId -ceq $JournalId -and $AbortReceipt.stage -ceq 'rollback_started' -and
           $AbortReceipt.sequence -eq 1 -and $AbortReceipt.guardianPid -eq $AbortOwner.Id -and
-          $AbortReceipt.preparedJournalSha256 -ceq $AuthorityRecord.journalSha256 -and
           $AbortReceipt.journalSha256 -ceq $ActualAbortDigest) 'Durable native abort commit receipt does not bind exact updated bytes.'
+        $AbortReceiptKeys = if ($AcceptedOldSigned612) {
+          @('schemaVersion','transactionId','stage','sequence','guardianPid','journalSha256')
+        } else {
+          @('schemaVersion','transactionId','stage','sequence','guardianPid','preparedJournalSha256','journalSha256')
+        }
+        Assert-True ((@($AbortReceiptKeys | Sort-Object) -join ',') -ceq
+          (@($AbortReceipt.PSObject.Properties.Name | Sort-Object) -join ',')) 'Native abort receipt evidence differs from exact signed old or current schema.'
+        if (-not $AcceptedOldSigned612) {
+          Assert-True ($AbortReceipt.preparedJournalSha256 -ceq $AuthorityRecord.journalSha256) 'Current Guardian abort lost source journal binding.'
+        }
         $AbortData = ConvertFrom-Json ([IO.File]::ReadAllText($JournalData))
         Assert-True ($AbortData.stage -ceq 'rollback_started' -and $AbortData.sequence -eq 1 -and
           $AbortData.transactionId -ceq $JournalId -and $AbortData.currentSha -ceq $JournalCurrent -and
@@ -859,18 +868,29 @@ try {
         # authority layer must fail before quarantine or journal advancement.
         $OriginalLock = [IO.File]::ReadAllText($JournalGuard)
         try {
-          $ForgedLock = $OriginalLock.Replace('workerStartTimeUtcTicks=' + $WorkerRecord.startTimeUtcTicks,
-            'workerStartTimeUtcTicks=' + ([long]::Parse($WorkerRecord.startTimeUtcTicks) - 1))
-          Assert-True ($ForgedLock -cne $OriginalLock) 'Orphan writer lease did not contain the OS worker birth identity.'
+          if ($AcceptedOldSigned612) {
+            $ForgedLock = $OriginalLock.Replace('workerPid=' + $WorkerRecord.pid,
+              'workerPid=' + ([int]$WorkerRecord.pid + 1))
+          } else {
+            $ForgedLock = $OriginalLock.Replace('workerStartTimeUtcTicks=' + $WorkerRecord.startTimeUtcTicks,
+              'workerStartTimeUtcTicks=' + ([long]::Parse($WorkerRecord.startTimeUtcTicks) - 1))
+          }
+          Assert-True ($ForgedLock -cne $OriginalLock) 'Native writer lease lacks pinned original worker identity.'
           [IO.File]::WriteAllText($JournalGuard, $ForgedLock)
-          Assert-True ((Invoke-GuardianCheck '--reconcile-native-prepared-abort') -eq 70) 'Orphan recovery accepted forged worker creation time in the native writer lease.'
+          Assert-True ((Invoke-GuardianCheck '--reconcile-native-prepared-abort') -eq 70) 'Native recovery accepted forged original worker lease identity.'
         } finally { [IO.File]::WriteAllText($JournalGuard, $OriginalLock) }
         $OriginalHandoff = [IO.File]::ReadAllBytes($WorkerRecordPath)
         try {
           $ForgedWorker = ConvertFrom-Json ([Text.Encoding]::UTF8.GetString($OriginalHandoff))
-          $ForgedWorker.token = ('a' * 64)
+          if ($AcceptedOldSigned612) {
+            # Original A durable authority only contains worker PID; modern B
+            # additionally persists hash of its full authenticated handoff.
+            $ForgedWorker.pid = [int]$WorkerRecord.pid + 1
+          } else {
+            $ForgedWorker.token = ('a' * 64)
+          }
           [IO.File]::WriteAllText($WorkerRecordPath, ($ForgedWorker | ConvertTo-Json -Depth 4))
-          Assert-True ((Invoke-GuardianCheck '--reconcile-native-prepared-abort') -eq 70) 'Orphan recovery accepted a changed authenticated worker handoff token.'
+          Assert-True ((Invoke-GuardianCheck '--reconcile-native-prepared-abort') -eq 70) 'Native recovery accepted forged worker handoff identity.'
         } finally { [IO.File]::WriteAllBytes($WorkerRecordPath, $OriginalHandoff) }
         $OriginalAuthority = [IO.File]::ReadAllBytes($JournalAuthority)
         try {
@@ -888,9 +908,14 @@ try {
         $CommitBackup = [IO.File]::ReadAllBytes($JournalAbortCommit)
         try {
           $WrongPreparedLink = ConvertFrom-Json ([Text.Encoding]::UTF8.GetString($CommitBackup))
-          $WrongPreparedLink.preparedJournalSha256 = ('c' * 64)
+          if ($AcceptedOldSigned612) {
+            # Published 6.1.2 abort commit has no prepared SHA sidecar field.
+            $WrongPreparedLink.stage = 'prepared'
+          } else {
+            $WrongPreparedLink.preparedJournalSha256 = ('c' * 64)
+          }
           [IO.File]::WriteAllText($JournalAbortCommit, ($WrongPreparedLink | ConvertTo-Json -Depth 4))
-          Assert-True ((Invoke-GuardianCheck '--reconcile-native-prepared-abort') -eq 70) 'Orphan recovery accepted an abort commit forged to an unrelated prepared journal.'
+          Assert-True ((Invoke-GuardianCheck '--reconcile-native-prepared-abort') -eq 70) 'Native recovery accepted forged abort stage or prepared digest.'
         } finally { [IO.File]::WriteAllBytes($JournalAbortCommit, $CommitBackup) }
         try {
           $WrongCommit = ConvertFrom-Json ([Text.Encoding]::UTF8.GetString($CommitBackup))

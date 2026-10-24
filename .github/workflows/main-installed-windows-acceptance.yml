@@ -290,6 +290,18 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+      - name: Parse native installer smoke PowerShell before downloads or native builds
+        shell: powershell
+        run: |
+          $errors = $null
+          $tokens = $null
+          $file = Join-Path $env:GITHUB_WORKSPACE 'tests/release/windows-installer-real-package-smoke.ps1'
+          [void][System.Management.Automation.Language.Parser]::ParseFile($file, [ref]$tokens, [ref]$errors)
+          if ($null -ne $errors -and $errors.Count -gt 0) {
+            foreach ($error in $errors) { Write-Error ($error.Extent.StartLineNumber.ToString() + ': ' + $error.Message) }
+            throw 'Installer acceptance PowerShell has syntax errors; do not build/download signed payloads.'
+          }
+          Write-Output 'Legacy and signed 6.1.2 installer PowerShell grammar validated before native build.'
       - name: Enforce exact, isolated public A and candidate B
         shell: pwsh
         env:
