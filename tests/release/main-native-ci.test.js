@@ -107,3 +107,12 @@ test('public Main snapshot verifies remote 4 sidecars AND manifests byte-for-byt
  assert.match(section,/authorization="equinox-local-main-\$TARGET_SHA-\$target\.b-authorization\.json"/u);
  assert.match(section,/git\/refs\/tags\/main-snapshot[^\n]*force=false/u);
 });
+
+
+test("Main snapshot R2 writer may only create immutable SHA-scoped objects with independently checkable SHA metadata",()=>{
+ const publisher=workflow.slice(workflow.indexOf('  main-snapshot-publish:'));
+ assert.match(publisher,/sha256="\$\(sha256sum "\$object"/u);
+ assert.match(publisher,/--if-none-match "\*"/u);
+ assert.match(publisher,/--metadata "sha256=\$sha256"/u);
+ assert.match(publisher,/--key "snapshots\/\$TARGET_SHA\/\$name"/u);
+});

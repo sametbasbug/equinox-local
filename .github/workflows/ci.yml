@@ -1299,10 +1299,15 @@ jobs:
             xargs -0 -P 4 -I '{}' bash -euo pipefail -c '
               object="$1"
               name="$(basename "$object")"
+              sha256="$(sha256sum "$object" | awk '''{print $1}''')"
+              # Create-once per exact SHA; never overwrite a previously
+              # committed R2 object on retries or competing publishers.
               aws s3api put-object \
                 --bucket equinox-local-main \
                 --key "snapshots/$TARGET_SHA/$name" \
                 --body "$object" \
+                --if-none-match "*" \
+                --metadata "sha256=$sha256" \
                 --endpoint-url "$R2_ENDPOINT" \
                 --cache-control "public,max-age=31536000,immutable" \
                 >/dev/null
