@@ -881,3 +881,34 @@ test("Windows managed release source mapping refuses drive-qualified paths and N
       `A release source path cannot contain a drive, alternate stream or dot segment: ${unsafe}`);
   }
 });
+
+
+test('Guardian original Main A graceful quiesce pilot requires immutable active Main, OS owner and pinned prepared journal; it cannot switch native B', async () => {
+  const root = new URL('../../native/windows/EquinoxLocal.Guardian/', import.meta.url);
+  const [program, lease, source, identity] = await Promise.all([
+    'Program.cs','MainNativeJournalLease.cs','MainNativeStableShellQuiesce.cs','MainNativeIdentity.cs',
+  ].map(file => fs.readFile(new URL(file, root), 'utf8')));
+  assert.match(program, /--hold-native-main-a-shell-quiesce/u);
+  assert.match(program, /HoldOwnedNativeJournalLease\(quiesceMainAShell: true\)/u);
+  assert.match(lease, /InspectOwnedNativeWorkerOsArguments\(\)/u);
+  assert.match(lease, /InspectOwnedNativeWorkerPipeProof\(\)/u);
+  assert.match(lease, /RecordNativeJournalWorkerAuthority\(owner, root, worker, recordPreparedAbort\)/u);
+  assert.match(lease, /QuiesceOwnedMainAShell\(owner, root, worker\)/u);
+  assert.match(source, /InspectMainNativeIdentity\(allowExactActiveMainTransaction: true\)/u);
+  assert.match(identity, /active\.GetProperty\("currentSha"\)\.GetString\(\) != sourceSha/u);
+  assert.match(source, /RequireExactKeys\(previousA, \["kind", "sourceSha", "runtimeContractSha256"\]\)/u);
+  assert.match(source, /previousA\.GetProperty\("runtimeContractSha256"\)/u);
+  assert.match(source, /using var activeHandle = new FileStream\(activePath, FileMode\.Open, FileAccess\.Read, FileShare\.Read\)/u);
+  assert.match(source, /using var pointerHandle = mainA/u);
+  assert.match(source, /using var pointer = JsonDocument\.Parse\(pointerHandle\)/u);
+  assert.match(source, /using var journalHandle = new FileStream\(journalPath, FileMode\.Open, FileAccess\.Read, FileShare\.Read\)/u);
+  assert.match(source, /HashPinnedOriginalAJournal\(journalHandle\)/u);
+  assert.match(source, /using var proofHandle = new FileStream\(proofPath, FileMode\.Open, FileAccess\.Read, FileShare\.Read\)/u);
+  assert.match(source, /GetNamedPipeServerProcessId\(pipe.SafePipeHandle, out var serverPid\) \|\| serverPid != pid/u);
+  assert.match(source, /ReadWindowsLogonAuthenticationId\(shellToken\)/u);
+  assert.match(source, /shell\.WaitForExit\(12000\)/u);
+  assert.match(source, /"original-main-a-shell-quiesced-only"/u);
+  assert.match(source, /\.main-a-shell-quiesce\.json/u);
+  assert.doesNotMatch(source, /\.Kill\(|TerminateProcess|File\.Move\(|SetValue\(|RegisterNativeMessaging|commitNativePointer|shell_stopped"|switched"|committed"/u);
+  assert.doesNotMatch(lease, /File\.Move\(|native_staged"|shell_stopped"|switched"|committed"/u);
+});

@@ -12,7 +12,7 @@ internal static partial class Program
     private static readonly Regex SourceShaPattern = new("^[a-f0-9]{40}$", RegexOptions.CultureInvariant);
     private static readonly Regex DigestPattern = new("^[a-f0-9]{64}$", RegexOptions.CultureInvariant);
 
-    private static void InspectMainNativeIdentity()
+    private static void InspectMainNativeIdentity(bool allowExactActiveMainTransaction = false)
     {
         InspectionPhase = "native-owner";
         var local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
@@ -31,13 +31,19 @@ internal static partial class Program
         RequireNormalDirectory(Path.Combine(install, "state"));
         RequireNormalDirectory(tx);
         InspectionPhase = "native-transaction-boundary";
-        if (File.Exists(Path.Combine(tx, "active.json")) || Directory.Exists(Path.Combine(tx, "active.json")))
+        // Default standalone audit remains strictly idle-only. A Guardian
+        // already holding the exclusive, HMAC-authenticated native owner lease
+        // may verify the original A while its exact Main transaction is active.
+        // This exception NEVER authorizes an A/B rename or pointer commit.
+        if (!allowExactActiveMainTransaction &&
+            (File.Exists(Path.Combine(tx, "active.json")) || Directory.Exists(Path.Combine(tx, "active.json"))))
             throw new InvalidDataException("Unreconciled native Main transaction blocks audit.");
         var handoff = Path.Combine(tx, "handoff");
         if (Directory.Exists(handoff))
         {
             RequireNormalDirectory(handoff);
-            if (Directory.EnumerateFileSystemEntries(handoff, "*.windows-worker.json").Any())
+            if (!allowExactActiveMainTransaction &&
+                Directory.EnumerateFileSystemEntries(handoff, "*.windows-worker.json").Any())
                 throw new InvalidDataException("Detached Main worker ownership blocks audit.");
         }
         var target = RuntimeInformation.ProcessArchitecture switch
@@ -60,6 +66,23 @@ internal static partial class Program
             throw new InvalidDataException("Main source pointer structure differs from product schema.");
         var sourceSha = rows[2][4..];
         if (!SourceShaPattern.IsMatch(sourceSha)) throw new InvalidDataException("Main source pointer SHA is invalid.");
+        if (allowExactActiveMainTransaction)
+        {
+            // Reconcile the original source with the OS-owned transaction, not
+            // merely the caller's claim that it was the previous A release.
+            using var activeDoc = ReadOwnedTransitionRecord(Path.Combine(tx, "active.json"), 8192);
+            var active = activeDoc.RootElement;
+            RequireExactKeys(active, ["schemaVersion", "transactionId", "channel", "currentSha", "targetSha", "startedAt"]);
+            if (active.GetProperty("schemaVersion").GetInt32() != 1 ||
+                active.GetProperty("channel").GetString() != "main" ||
+                !NativeTransactionPattern.IsMatch(active.GetProperty("transactionId").GetString() ?? "") ||
+                active.GetProperty("currentSha").GetString() != sourceSha ||
+                !SourceShaPattern.IsMatch(active.GetProperty("targetSha").GetString() ?? "") ||
+                active.GetProperty("targetSha").GetString() == sourceSha)
+                throw new InvalidDataException("Main A source differs from the active native owner transaction.");
+            RequireNormalDirectory(handoff);
+            RequireNormalFile(Path.Combine(handoff, active.GetProperty("transactionId").GetString() + ".windows-worker.json"));
+        }
         var expectedSource = Path.Combine(tx, "sources", sourceSha);
         var storedSource = rows[1]["sourceRoot=".Length..];
         if (!Compare.Equals(storedSource, expectedSource))
