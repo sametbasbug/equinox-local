@@ -359,3 +359,39 @@ test("signed Stable helper refuses malformed action/target before invoking OS ac
   }
   assert.deepEqual([activation,bridge,cleanup],[0,0,0]);
 });
+
+test('Windows activation must positively acknowledge the handoff before showing Restarting', async () => {
+  const installation = { ...managedInstallation(), platform: 'win32' };
+  await assert.rejects(scheduleEquinoxLocalActivation({
+    installation, version: '4.3.0', requestWindowsActivationImpl: async () => ({ requested: false }),
+  }), /did not confirm managed update activation/u);
+});
+
+test('old responsive runtime stops saying Restarting forever after an unconfirmed update handoff', async () => {
+  let time = 1_000;
+  const coordinator = createEquinoxLocalUpdateCoordinator({
+    installation: managedInstallation(), updater: updaterStub(), now: () => time,
+    prepareRelease: async () => ({ fileCount: 1, extractedBytes: 12 }),
+    spawnImpl: () => {
+      const child = new EventEmitter();
+      child.unref = () => {};
+      queueMicrotask(() => child.emit('spawn'));
+      return child;
+    },
+  });
+  await coordinator.apply();
+  assert.equal(coordinator.snapshot().restartScheduledFor, '4.3.0');
+  assert.equal(coordinator.snapshot().restartError, null);
+  time += 4 * 60_000;
+  assert.equal(coordinator.snapshot().restartScheduledFor, '4.3.0');
+  time += 60_000;
+  const after = coordinator.snapshot();
+  assert.equal(after.restartScheduledFor, null);
+  assert.match(after.restartError, /not confirmed within five minutes/u);
+  // No silent auto-retry and no permanent client lockout: a deliberate retry
+  // is still allowed when the old runtime remains healthy and responsive.
+  const retry = await coordinator.apply();
+  assert.equal(retry.scheduled, true);
+  assert.equal(coordinator.snapshot().restartError, null);
+  assert.equal(coordinator.snapshot().restartScheduledFor, '4.3.0');
+});

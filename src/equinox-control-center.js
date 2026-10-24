@@ -1078,6 +1078,11 @@ function renderUpdate() {
         setText("update-copy", "The verified release is prepared. Control Center may disconnect briefly while the managed runtime restarts and verifies the new version; automatic rollback is used if health verification fails.");
         setBadge("update-badge", "Restart scheduled", "warn");
     }
+    else if (update.restartError) {
+        setText("update-title", "Update restart was not confirmed");
+        setText("update-copy", update.restartError);
+        setBadge("update-badge", "Update needs attention", "bad");
+    }
     else if (state.updateApplyBusy || update.applying) {
         setText("update-title", `Preparing Equinox Local ${update.latestVersion || "update"}`);
         setText("update-copy", "Downloading the signed artifact, verifying its exact size and SHA-256 digest, then staging the release before any runtime switch occurs.");
