@@ -37,14 +37,20 @@ const sourceShell = path.join(releaseDir, 'runtime', 'shell');
 const readInstalled = () => snapshotWindowsStableShellTree(programRoot);
 try {
   const installedRelease = JSON.parse(await fs.readFile(path.join(releaseDir, "release.json"), "utf8"));
-  const hasNativeInspector = compareEquinoxVersions(installedRelease.version, "6.1.2") >= 0;
+  // The EXACT published signed Stable 6.1.2 ZIP predates the bounded
+  // --inspect-owned-wpf / --inspect-owned-worker ABI despite its version.
+  // Bind this exception to the immutable released A source identity: any
+  // different 6.1.2 build and every later release MUST prove the native ABI.
+  const publicSignedLegacy612 = installedRelease.version === "6.1.2" &&
+    installedRelease.sourceSha === "66786207350cc809b44fc5c376eba8912b35fa47";
+  const hasNativeInspector = compareEquinoxVersions(installedRelease.version, "6.1.2") >= 0 && !publicSignedLegacy612;
   const nativeHelper = path.join(releaseDir, "runtime", "job", "equinox-local-job-object-helper.exe");
   const nativeGateMarker = path.join(releaseDir, "runtime", "job", "owned-process-gate-v1.marker");
   assert.equal((await fs.stat(nativeHelper)).isFile(), true, "installed native helper must exist");
   // Immutable older A (e.g. 6.1.0) predates the compiled process gate marker.
   // Modern releases MUST retain it. The A/B native PE fixture and old-A worker
   // PID/birthtime/executable proof below still execute for vintage packages.
-  if (hasNativeInspector) {
+  if (compareEquinoxVersions(installedRelease.version, "6.1.2") >= 0) {
     assert.equal((await fs.readFile(nativeGateMarker, "utf8")).trim(), "equinox-owned-process-gate-v1",
       "extracted Windows managed installer ZIP must retain the matching no-console native gate marker");
   }
@@ -61,11 +67,15 @@ try {
     });
     return result.stdout.trim();
   };
-  assert.equal(await runWpfWitness("", "638953728000000000"), "unknown",
-    "WPF witness must fail closed without exact PID");
-  assert.equal(await runWpfWitness(String(process.pid), "638953728000000000",
-    {EQUINOX_LOCAL_CHECK_WPF_EXE: process.execPath}), "mismatch",
-    "a real running owned Node must never be accepted as the installed WPF shell");
+  if (hasNativeInspector) {
+    assert.equal(await runWpfWitness("", "638953728000000000"), "unknown",
+      "WPF witness must fail closed without exact PID");
+    assert.equal(await runWpfWitness(String(process.pid), "638953728000000000",
+      {EQUINOX_LOCAL_CHECK_WPF_EXE: process.execPath}), "mismatch",
+      "a real running owned Node must never be accepted as the installed WPF shell");
+  } else {
+    console.log(`Windows ${target} immutable published-old A uses separate bounded native Guardian/WPF/worker checks; modern witness ABI not invented`);
+  }
   for (const rootRelease of [previousReleaseDir, targetReleaseDir]) {
     await fs.mkdir(path.dirname(path.join(rootRelease, 'runtime', 'shell')), { recursive: true });
     await fs.cp(sourceShell, path.join(rootRelease, 'runtime', 'shell'), { recursive: true, force: false, errorOnExist: true, dereference: false });
