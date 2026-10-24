@@ -1094,8 +1094,18 @@ try {
           Assert-True ($null -ne $MainAGuardian) 'Native Main A Guardian owner did not start.'
           [IO.File]::WriteAllText($JournalMainAShellTrigger, 'hosted-main-a-positive-only')
           $MainAProved = $false
+          $MainARecord = $null
           for ($MainAAttempt=0; $MainAAttempt -lt 420; $MainAAttempt++) {
-            if ([IO.File]::Exists($MainAProof) -and -not $MainAGuardian.HasExited) { $MainAProved = $true; break }
+            if ([IO.File]::Exists($MainAProof) -and -not $MainAGuardian.HasExited) {
+              # CREATE_NEW FileShare.None publishes the filename before its
+              # bounded JSON is flushed and its OS handle closed. Read only
+              # after the independent Guardian has released that handle.
+              try {
+                $MainARecord = ConvertFrom-Json ([IO.File]::ReadAllText($MainAProof))
+                $MainAProved = $true
+                break
+              } catch [IO.IOException] { }
+            }
             if ($MainAGuardian.HasExited) { break }
             Start-Sleep -Milliseconds 120
           }
@@ -1103,7 +1113,6 @@ try {
             Write-Output ('Native original Main A diagnostic: ' + $MainAGuardian.StandardError.ReadToEnd())
           }
           Assert-True $MainAProved 'Independent Guardian did not prove genuine original managed Main A WPF exit.'
-          $MainARecord = ConvertFrom-Json ([IO.File]::ReadAllText($MainAProof))
           Assert-True ($MainARecord.transactionId -ceq $JournalId -and
             $MainARecord.disposition -ceq 'original-main-a-shell-quiesced-only' -and
             $MainARecord.shellPid -eq $MainAPid -and $MainARecord.shellStartTimeUtcTicks -ceq $MainATicks -and

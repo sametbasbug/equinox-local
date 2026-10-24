@@ -957,6 +957,8 @@ test('real hosted managed Main A WPF quiesce uses distinct product Node HMAC tri
   assert.match(host, /\$MainAWorkerStart\.EnvironmentVariables\['EQUINOX_LOCAL_TEST_MAIN_A_QUIESCE_TRIGGER'\]/u);
   assert.match(host, /MainARecord\.workerStartTimeUtcTicks -ceq \$MainAWorkerRecord\.startTimeUtcTicks/u);
   assert.match(host, /MainARecord\.preparedJournalSha256 -ceq/u);
+  assert.match(host, /catch \[IO\.IOException\] \{ \}/u);
+  assert.match(host, /\$MainARecord = ConvertFrom-Json \(\[IO\.File\]::ReadAllText\(\$MainAProof\)\)/u);
   assert.match(host, /\[IO\.File\]::WriteAllBytes\(\$JournalData, \$MainAJournalOriginal\)/u);
   assert.match(host, /\[IO\.File\]::WriteAllBytes\(\$ExpectedManifestPath, \$MainAManifestOriginal\)/u);
   assert.match(host, /Remove-Item -LiteralPath \$MainAPointer/u);
