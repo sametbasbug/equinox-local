@@ -633,6 +633,25 @@ try {
       $WorkerRecord.token = ('e' * 64)
       [IO.File]::WriteAllText($WorkerRecordPath,($WorkerRecord | ConvertTo-Json -Depth 4))
       Assert-True ((Invoke-GuardianCheck '--audit-native-worker') -eq 0) 'Guardian refused restored live OS process identity.'
+      # Real hosted Windows GUI negative: a live prepared STABLE A journal
+      # must never be admitted as the original managed-MAIN A. The new native
+      # read-only preflight must refuse BEFORE creating a Guardian writer lock,
+      # authority sidecar, Main-A quiesce proof or touching the running WPF.
+      # Older signed A packages lack this new CLI and are excluded explicitly.
+      if (-not $LegacyGuardian612Abi -and $FixtureSourceSha -ceq $env:GITHUB_SHA) {
+        $StableBeforeMainA = @(Get-CimInstance Win32_Process -Filter "Name='EquinoxLocal.exe'" -ErrorAction SilentlyContinue |
+          Where-Object { -not [string]::IsNullOrWhiteSpace($_.ExecutablePath) -and (Same-Path $_.ExecutablePath $StableExe) })
+        Assert-True ($StableBeforeMainA.Count -eq 1) 'Wrong-predecessor negative needs exactly one real Stable WPF shell.'
+        $JournalDigestBeforeMainA = (Get-FileHash -LiteralPath $JournalData -Algorithm SHA256).Hash.ToLowerInvariant()
+        Assert-True ((Invoke-GuardianCheck '--hold-native-main-a-shell-quiesce') -eq 70) 'Native Main A pilot wrongly accepted previous Stable A.'
+        Assert-True (-not (Test-Path -LiteralPath $JournalGuard) -and
+          -not (Test-Path -LiteralPath $JournalAuthority) -and
+          -not (Test-Path -LiteralPath (Join-Path $JournalDataDir ("$JournalId.main-a-shell-quiesce.json")))) 'Wrong Main A predecessor created native side effects before ownership.'
+        Assert-True (((Get-FileHash -LiteralPath $JournalData -Algorithm SHA256).Hash.ToLowerInvariant()) -ceq $JournalDigestBeforeMainA) 'Wrong Main A predecessor mutated the original prepared journal.'
+        $StableAfterMainA = @(Get-CimInstance Win32_Process -Filter "Name='EquinoxLocal.exe'" -ErrorAction SilentlyContinue |
+          Where-Object { -not [string]::IsNullOrWhiteSpace($_.ExecutablePath) -and (Same-Path $_.ExecutablePath $StableExe) })
+        Assert-True ($StableAfterMainA.Count -eq 1 -and [int]$StableAfterMainA[0].ProcessId -eq [int]$StableBeforeMainA[0].ProcessId) 'Wrong Main A predecessor stopped or replaced the original Stable WPF process.'
+      }
       $LeaseProcess = $null
       try {
         $LeaseStart = [Diagnostics.ProcessStartInfo]::new($GuardianExe)

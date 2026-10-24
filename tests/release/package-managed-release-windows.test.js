@@ -912,3 +912,21 @@ test('Guardian original Main A graceful quiesce pilot requires immutable active 
   assert.doesNotMatch(source, /\.Kill\(|TerminateProcess|File\.Move\(|SetValue\(|RegisterNativeMessaging|commitNativePointer|shell_stopped"|switched"|committed"/u);
   assert.doesNotMatch(lease, /File\.Move\(|native_staged"|shell_stopped"|switched"|committed"/u);
 });
+
+
+test('native original Main A rejects wrong predecessor before durable Guardian lease and tests real Windows WPF unchanged', async () => {
+  const root = new URL('../../native/windows/EquinoxLocal.Guardian/', import.meta.url);
+  const [lease, a, host] = await Promise.all([
+    fs.readFile(new URL('MainNativeJournalLease.cs', root), 'utf8'),
+    fs.readFile(new URL('MainNativeStableShellQuiesce.cs', root), 'utf8'),
+    fs.readFile(new URL('../../tests/release/windows-installer-real-package-smoke.ps1', import.meta.url), 'utf8'),
+  ]);
+  assert.ok(lease.indexOf('InspectOwnedMainAQuiescePreflight(owner, root)') < lease.indexOf('using var lease = new FileStream(leasePath, FileMode.CreateNew'), 'read-only predecessor proof must precede CREATE_NEW');
+  assert.match(a, /InspectMainNativeIdentity\(allowExactActiveMainTransaction: true\)/u);
+  assert.match(a, /RequireExactKeys\(previous, \["kind", "sourceSha", "runtimeContractSha256"\]\)/u);
+  assert.match(a, /previous\.GetProperty\("kind"\)\.GetString\(\) != "main"/u);
+  assert.match(host, /Invoke-GuardianCheck '--hold-native-main-a-shell-quiesce'/u);
+  assert.match(host, /StableAfterMainA\.Count -eq 1/u);
+  assert.match(host, /Wrong Main A predecessor mutated the original prepared journal/u);
+  assert.doesNotMatch(a, /File\.Move\(|File\.Delete\(|TerminateProcess|Process\.Start\(|Registry\.SetValue/u);
+});

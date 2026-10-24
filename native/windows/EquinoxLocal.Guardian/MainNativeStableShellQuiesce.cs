@@ -15,6 +15,28 @@ internal static partial class Program
     // Opt-in pilot: actually ask exactly the installed Stable WPF shell to
     // exit through its existing ownership pipe, but NEVER swap native bytes,
     // register Chrome Native Messaging, start a B runtime or advance Main.
+    // A read-only rejection gate BEFORE the Guardian creates a durable writer
+    // lock. Never leave a persistent orphan solely because the caller chose
+    // the Main-A operation on a Stable-A or a foreign native state.
+    private static void InspectOwnedMainAQuiescePreflight(OwnedWorkerClaim owner, string journalRoot)
+    {
+        InspectionPhase = "native-original-main-a-read-only-preflight";
+        // Fail fast on Stable A without a costly full native-store SHA pass.
+        using var journal = ReadOwnedTransitionRecord(Path.Combine(journalRoot, owner.TransactionId + ".json"), 8192);
+        var record = journal.RootElement;
+        var previous = record.GetProperty("previousNative");
+        RequireExactKeys(previous, ["kind", "sourceSha", "runtimeContractSha256"]);
+        if (record.GetProperty("transactionId").GetString() != owner.TransactionId ||
+            record.GetProperty("stage").GetString() != "prepared" ||
+            record.GetProperty("sequence").GetInt32() != 0 ||
+            previous.GetProperty("kind").GetString() != "main" ||
+            previous.GetProperty("sourceSha").GetString() != record.GetProperty("currentSha").GetString())
+            throw new InvalidDataException("Original Main A native owner is not the exact prepared predecessor.");
+        // Only the exact original Main A may reach the expensive Git/full
+        // native fingerprint/installed-shell/Native Messaging identity audit.
+        InspectMainNativeIdentity(allowExactActiveMainTransaction: true);
+    }
+
     private static void QuiesceOwnedStableShell(OwnedWorkerClaim owner, string journalRoot, Process worker) =>
         QuiesceOwnedAShell(owner, journalRoot, worker, mainA: false);
 

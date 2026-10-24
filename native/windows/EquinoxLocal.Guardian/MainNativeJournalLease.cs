@@ -22,6 +22,12 @@ internal static partial class Program
         var root = Path.Combine(local, "Equinox Local", "state", "main-update", "guardian-journal");
         RequireNormalDirectory(root);
         var leasePath = Path.Combine(root, "." + owner.TransactionId + ".writer-lock");
+        // Reject a wrong predecessor before CREATE_NEW creates even an orphan
+        // writer lock. In particular a Stable A cannot request Main A quiesce.
+        // The physical WPF exit path will revalidate everything under the
+        // authenticated OS-held lease before and after shutdown.
+        if (quiesceMainAShell)
+            InspectOwnedMainAQuiescePreflight(owner, root);
         using var worker = Process.GetProcessById(owner.Pid);
         if (worker.HasExited || worker.StartTime.ToUniversalTime().Ticks.ToString(CultureInfo.InvariantCulture) != owner.Ticks)
             throw new InvalidDataException("Windows journal lease worker exited during admission.");
