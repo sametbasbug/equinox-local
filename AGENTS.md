@@ -10,7 +10,7 @@ These instructions apply to the entire Equinox Local canonical product repositor
 - Private factory/ops tooling is a client of this checkout by canonical repository identity and exact SHA. It may provide explicit external private composition, credentials integration and authorized publication orchestration; ordinary product development, build and tests must not require it.
 - Do not edit a private product mirror, export a second writable source tree, backport product commits to factory, or graft private Git history into this repository. Keep the existing public history and AGPL-3.0-only boundary.
 - A factory installation is a local configuration/profile role, not another product lineage. Keep machine-local config, persistent state and secrets outside tracked source; loading an explicit private composition must not make the default public runtime depend on private files.
-- Canonical repository ownership does not enable main-tracking updates by itself, change stable users' channel, authorize publication, or promote the unreleased development version.
+- Canonical repository ownership does not authorize publication, bypass signed Main snapshot admission, or promote unreleased development commits. All normal installations and updates target the single admitted Main stream; prior Stable is historical bootstrap compatibility only.
 
 ## Product boundaries
 
@@ -47,7 +47,7 @@ These instructions apply to the entire Equinox Local canonical product repositor
 - Run the full `npm test` suite before release/publication, after release/install/update/native-lifecycle changes, or after broad cross-cutting refactors.
 - Run `git diff --check` before commit/push.
 - Add or update tests for behavior changes, especially security boundaries, updater/rollback behavior, onboarding, Control Center APIs, Telegram recipient isolation, and browser-lane isolation.
-- Release-affecting changes must preserve the established release gates: clean public source, CI/CodeQL, native ARM64/x64 validation, signed stable manifests, and production-domain upgrade smoke for real version bumps.
+- Release-affecting changes must preserve the established release gates: clean public source, CI/CodeQL, native ARM64/x64 validation, the signed immutable Main commit/artifact trust boundary, and production-domain upgrade smoke for actual published commit changes.
 - After a successful Equinox Local runtime restart, do not invoke another Equinox Local tool in the same assistant turn. Send the user the final status response immediately, then perform Doctor/status verification after the connector is available in a new turn.
 
 ## Architecture references
@@ -59,4 +59,4 @@ These instructions apply to the entire Equinox Local canonical product repositor
 
 ## Single Main update stream
 
-Read [`docs/plans/unified-main-update-channel.md`](docs/plans/unified-main-update-channel.md) before editing bootstrap/update enrollment or Stable releases. Read [`docs/plans/immutable-main-updates.md`](docs/plans/immutable-main-updates.md) before modifying Windows native Main update/recovery or external launcher design. Existing Stable users require a signed migration bridge.
+Read [`docs/plans/unified-main-update-channel.md`](docs/plans/unified-main-update-channel.md) before editing bootstrap/update enrollment or Stable releases. Read [`docs/plans/immutable-main-updates.md`](docs/plans/immutable-main-updates.md) before modifying Windows native Main update/recovery or external launcher design. Maintainer decision 2026-10-24: there is NO separate active Stable-user cohort to migrate. Previously the first-install bootstrap used Stable, but active installed update discovery was already Main. New/fresh/reinstall and current users must use one CI-admitted, independently signed Main commit stream; display version is informational (e.g. 6.2.0 · abcdef1) while exact Git SHA is the update/rollback identity. Historic Stable docs and endpoint compatibility do not justify building a perpetual Stable channel or a fictional cohort bridge. Do not switch unsigned native updates on until signed A/B verification and physical recovery are complete.
