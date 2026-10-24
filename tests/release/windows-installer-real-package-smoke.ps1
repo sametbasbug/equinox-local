@@ -268,7 +268,7 @@ try {
         throw 'Independent Windows Guardian exceeded its 30-second inspection limit.'
       }
       $diagnostic = $process.StandardError.ReadToEnd().Trim()
-      if (($Argument -ceq '--inspect' -or $Argument -ceq '--audit-native-identity' -or $Argument -ceq '--audit-native-journal') -and $process.ExitCode -ne 0) {
+      if (($Argument -ceq '--inspect' -or $Argument -ceq '--audit-native-identity' -or $Argument -ceq '--audit-native-journal' -or $Argument -ceq '--audit-native-worker') -and $process.ExitCode -ne 0) {
         Write-Host ('Windows Guardian inspection diagnosis: ' + $diagnostic)
       }
       return [int]$process.ExitCode
@@ -1073,7 +1073,13 @@ try {
             token=('e' * 64);nodePath=$MainANode
           }
           [IO.File]::WriteAllText($WorkerRecordPath, ($MainAWorkerRecord | ConvertTo-Json -Depth 5))
-          Assert-True ((Invoke-GuardianCheck '--audit-native-worker') -eq 0) 'Guardian did not admit the genuine native Main store Node OS PID/birth/executable.'
+          $MainANodeProved = $false
+          for ($MainAWorkerAttempt=0; $MainAWorkerAttempt -lt 18; $MainAWorkerAttempt++) {
+            if ((Invoke-GuardianCheck '--audit-native-worker') -eq 0) { $MainANodeProved = $true; break }
+            if ($MainAWorkerProcess.HasExited) { break }
+            Start-Sleep -Milliseconds 170
+          }
+          Assert-True $MainANodeProved 'Guardian did not admit the genuine native Main store Node OS PID/birth/executable.'
           Assert-True ((Invoke-GuardianCheck '--audit-native-worker-argv') -eq 0) 'Guardian rejected the exact original Main A worker OS argv.'
           # The default `--audit-native-identity` must STILL reject an active
           # journal, while the independently prepared OS owner may inspect A.
