@@ -21,13 +21,20 @@ const CONTROL_CENTER_PORT = 34991;
 const TAR = "/usr/bin/tar";
 const PLUTIL = "/usr/bin/plutil";
 
-async function waitForJson(url, attempts = 40) {
+async function waitForJson(url, attempts = 40, accept = () => true) {
   let lastError;
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     try {
       const response = await fetch(url, { cache: "no-store" });
-      if (response.ok) return await response.json();
-      lastError = new Error(`HTTP ${response.status}`);
+      if (response.ok) {
+        const value = await response.json();
+        if (accept(value)) return value;
+        // launchd bootout/bootstrap can temporarily expose the PREVIOUS
+        // healthy responder on the same port. Never treat that as a passing
+        // new LaunchAgent identity or as a definitive new-owner failure.
+        const info = value?.status;
+        lastError = new Error(`LaunchAgent still reports version=${String(info?.server?.version ?? "unknown")}, kind=${String(info?.installation?.kind ?? "unknown")}, health=${String(info?.health?.state ?? "unknown")}`);
+      } else lastError = new Error(`HTTP ${response.status}`);
     } catch (error) {
       lastError = error;
     }
@@ -82,7 +89,11 @@ async function runRealLaunchAgentWrapperSmoke({ homeDir, installRoot, expectedVe
     await execFile("/bin/launchctl", ["kickstart", service], { timeout: 15_000, maxBuffer: 1024 * 1024 });
     let status;
     try {
-      status = await waitForJson(`http://127.0.0.1:${CONTROL_CENTER_PORT}/api/v1/status`, 120);
+      status = await waitForJson(`http://127.0.0.1:${CONTROL_CENTER_PORT}/api/v1/status`, 120, (value) =>
+        value?.status?.server?.version === expectedVersion &&
+        value?.status?.health?.state === "HEALTHY" &&
+        value?.status?.installation?.kind === expectedInstallationKind &&
+        (value?.status?.installation?.sourceSha ?? null) === expectedSourceSha);
     } catch (error) {
       const launchState = await execFile("/bin/launchctl", ["print", service], { timeout: 5_000, maxBuffer: 1024 * 1024 })
         .then(({ stdout }) => stdout.slice(-8_000))
