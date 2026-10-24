@@ -563,11 +563,11 @@ function renderDashboard() {
                 : "ChatGPT not connected";
     setBadge("chatgpt-connection-badge", connectionLabel, !connectionAvailable ? "neutral" : connectionNeedsAttention ? "warn" : connectionConnected ? "good" : "neutral");
     setBadge("health-summary-badge", runtimeHealth === "UNKNOWN" ? "Unknown" : runtimeHealth, runtimeTone);
-    setText("runtime-version", status.server?.version ? `v${status.server.version}` : "—");
     setText("runtime-uptime", formatUptime(status.server?.uptimeSeconds));
     const channel = state.update || {};
     const onMain = ["source", "managed-source"].includes(channel.installationKind) && channel.main?.checkSupported === true;
     const currentSha = shortUpdateSha(channel.main?.currentSha || status.installation?.sourceSha);
+    setText("runtime-version", status.server?.version ? `v${status.server.version}${onMain && currentSha ? ` - ${currentSha}` : ""}` : "—");
     setText("sidebar-version", status.server?.version
         ? `${status.server.version}${onMain && currentSha ? ` - ${currentSha}` : ""}`
         : "Local runtime");
@@ -981,7 +981,7 @@ function renderUpdate() {
     if (mainChannel) {
         const currentSha = shortUpdateSha(main.currentSha);
         const targetSha = shortUpdateSha(main.targetSha);
-        setText("update-version", current ? `Equinox Local ${current}` : "Current version unavailable");
+        setText("update-version", current ? `Equinox Local ${current}${runningSha ? ` - ${runningSha}` : ""}` : "Current version unavailable");
         setText("update-checked-at", main.checkedAt ? `Checked ${formatDate(main.checkedAt)}` : "Not checked yet");
         setText("update-main-current", currentSha ? `Current SHA ${currentSha}` : "Current SHA —");
         setText("update-main-target", targetSha ? `Target SHA ${targetSha}` : "Target SHA —");

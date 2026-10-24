@@ -846,6 +846,44 @@ export async function installManagedEquinoxRelease({ stagedReleaseDir, homeDir =
                 throw error;
         }
     }
+    // A website reinstall must not replace an already healthy Main with a
+    // different numbered signed bootstrap (or mutate its WPF/native host).
+    // The existing verified Main identity and live exact-SHA health win; an
+    // unhealthy/ambiguous install fails closed for explicit recovery instead.
+    if (allowExistingStableToMainMigration && currentMainStamp) {
+        const active = await fsImpl.lstat(pathApi.join(mainPaths.mainTransactionRoot, "active.json")).catch((error) => {
+            if (error?.code === "ENOENT")
+                return null;
+            throw error;
+        });
+        if (active)
+            throw new Error("Main update transaction must complete before reinstalling.");
+        const contract = equinoxLocalToolchainContract({
+            runtimeRoot: pathApi.join(paths.installRoot, "runtime"), target: expectedTarget,
+        });
+        const source = await readMainSourcePointerImpl(mainPaths.sourcePointerPath, {
+            fsImpl, execFileImpl, gitPath: contract.gitPath,
+        });
+        if (!/^[a-f0-9]{40}$/u.test(source?.sha ?? "")) {
+            throw new Error("Existing Main source SHA is invalid.");
+        }
+        const sourceRoot = pathApi.join(mainPaths.mainTransactionRoot, "sources", source.sha);
+        if (source.sourceRoot !== sourceRoot) {
+            throw new Error("Existing Main source identity is not an exact owned checkout.");
+        }
+        const { data: declaration } = await readBoundedNormalFile(pathApi.join(sourceRoot, "src", "equinox-local-version.js"), {
+            fsImpl, platform, minBytes: 25, maxBytes: 1024, encoding: "utf8", label: "Existing Main version declaration",
+        });
+        const version = /^export const EQUINOX_LOCAL_VERSION = "(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)";$/mu.exec(declaration);
+        if (!version)
+            throw new Error("Existing Main version declaration is invalid.");
+        const currentVersion = `${version[1]}.${version[2]}.${version[3]}`;
+        await waitForManagedSourceImpl(currentVersion, source.sha, { attempts: 6, delayMs: 500 });
+        return Object.freeze({
+            status: "already-installed", version: currentVersion, managedSourceSha: source.sha,
+            configCreated: false, controlCenterUrl: "http://127.0.0.1:24891/",
+        });
+    }
     let previousMainNativeReleaseDir = null;
     let previousManagedMain = null;
     if (currentMainStamp && platform === "win32") {
