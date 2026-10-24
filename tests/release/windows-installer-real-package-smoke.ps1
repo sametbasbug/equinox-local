@@ -138,8 +138,9 @@ try {
   }
 
   try {
-    # This specialized acceptance exercises the optional legacy Main bridge.
-    # The PUBLIC installer default remains Stable; no automatic enrollment.
+    # Public Main-first acceptance reuses the signed bootstrap and verified
+    # existing Main-enrollment helper; retain explicit false below only for
+    # historical Stable-only repair fixtures.
     $EnrollExistingMain = $true
     $InstallCallStarted = [DateTimeOffset]::UtcNow
     Invoke-EquinoxLocalInstall | Out-Host
