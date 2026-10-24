@@ -651,6 +651,22 @@ try {
         $StableAfterMainA = @(Get-CimInstance Win32_Process -Filter "Name='EquinoxLocal.exe'" -ErrorAction SilentlyContinue |
           Where-Object { -not [string]::IsNullOrWhiteSpace($_.ExecutablePath) -and (Same-Path $_.ExecutablePath $StableExe) })
         Assert-True ($StableAfterMainA.Count -eq 1 -and [int]$StableAfterMainA[0].ProcessId -eq [int]$StableBeforeMainA[0].ProcessId) 'Wrong Main A predecessor stopped or replaced the original Stable WPF process.'
+        # Even a structurally plausible forged previous-Main journal must be
+        # rejected without a real bound source/native pointer and payload.
+        $StableJournalBytes = [IO.File]::ReadAllBytes($JournalData)
+        try {
+          $ForgedMainRecord = ConvertFrom-Json ([Text.Encoding]::UTF8.GetString($StableJournalBytes))
+          $ForgedMainRecord.previousNative = [ordered]@{kind='main';sourceSha=$JournalCurrent;runtimeContractSha256=('f' * 64)}
+          [IO.File]::WriteAllText($JournalData, ($ForgedMainRecord | ConvertTo-Json -Depth 8))
+          Assert-True ((Invoke-GuardianCheck '--hold-native-main-a-shell-quiesce') -eq 70) 'Forged original Main A was admitted without authentic bound native state.'
+          Assert-True (-not (Test-Path -LiteralPath $JournalGuard) -and
+            -not (Test-Path -LiteralPath $JournalAuthority) -and
+            -not (Test-Path -LiteralPath (Join-Path $JournalDataDir ("$JournalId.main-a-shell-quiesce.json")))) 'Forged Main A created persistent native owner or WPF exit evidence.'
+          $StillRunningStableA = @(Get-CimInstance Win32_Process -Filter "Name='EquinoxLocal.exe'" -ErrorAction SilentlyContinue |
+            Where-Object { -not [string]::IsNullOrWhiteSpace($_.ExecutablePath) -and (Same-Path $_.ExecutablePath $StableExe) })
+          Assert-True ($StillRunningStableA.Count -eq 1 -and [int]$StillRunningStableA[0].ProcessId -eq [int]$StableBeforeMainA[0].ProcessId) 'Forged Main A stopped the real previous WPF process.'
+        } finally { [IO.File]::WriteAllBytes($JournalData, $StableJournalBytes) }
+        Assert-True (((Get-FileHash -LiteralPath $JournalData -Algorithm SHA256).Hash.ToLowerInvariant()) -ceq $JournalDigestBeforeMainA) 'Wrong predecessor fixture did not restore exact journal bytes.'
       }
       $LeaseProcess = $null
       try {

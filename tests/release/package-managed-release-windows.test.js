@@ -925,8 +925,11 @@ test('native original Main A rejects wrong predecessor before durable Guardian l
   assert.match(a, /InspectMainNativeIdentity\(allowExactActiveMainTransaction: true\)/u);
   assert.match(a, /RequireExactKeys\(previous, \["kind", "sourceSha", "runtimeContractSha256"\]\)/u);
   assert.match(a, /previous\.GetProperty\("kind"\)\.GetString\(\) != "main"/u);
+  assert.match(a, /current\.RootElement\.GetProperty\("runtimeContractSha256"\)\.GetString\(\) != previous\.GetProperty\("runtimeContractSha256"\)\.GetString\(\)/u);
   assert.match(host, /Invoke-GuardianCheck '--hold-native-main-a-shell-quiesce'/u);
   assert.match(host, /StableAfterMainA\.Count -eq 1/u);
   assert.match(host, /Wrong Main A predecessor mutated the original prepared journal/u);
+  assert.match(host, /Forged original Main A was admitted without authentic bound native state/u);
+  assert.match(host, /StableJournalBytes/u);
   assert.doesNotMatch(a, /File\.Move\(|File\.Delete\(|TerminateProcess|Process\.Start\(|Registry\.SetValue/u);
 });

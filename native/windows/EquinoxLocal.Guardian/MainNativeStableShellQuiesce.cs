@@ -32,6 +32,18 @@ internal static partial class Program
             previous.GetProperty("kind").GetString() != "main" ||
             previous.GetProperty("sourceSha").GetString() != record.GetProperty("currentSha").GetString())
             throw new InvalidDataException("Original Main A native owner is not the exact prepared predecessor.");
+        var local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+        var originalPointer = Path.Combine(local, "Equinox Local", "state", "main-update", "current-native.json");
+        using (var current = ReadOwnedTransitionRecord(originalPointer, 8192))
+        {
+            RequireExactKeys(current.RootElement, ["schemaVersion", "channel", "sourceSha", "target", "runtimeContractSha256"]);
+            if (current.RootElement.GetProperty("schemaVersion").GetInt32() != 1 ||
+                current.RootElement.GetProperty("channel").GetString() != "main" ||
+                current.RootElement.GetProperty("sourceSha").GetString() != previous.GetProperty("sourceSha").GetString() ||
+                current.RootElement.GetProperty("runtimeContractSha256").GetString() != previous.GetProperty("runtimeContractSha256").GetString() ||
+                current.RootElement.GetProperty("target").GetString() != record.GetProperty("target").GetString())
+                throw new InvalidDataException("Original Main A pointer contract does not match the prepared owner.");
+        }
         // Only the exact original Main A may reach the expensive Git/full
         // native fingerprint/installed-shell/Native Messaging identity audit.
         InspectMainNativeIdentity(allowExactActiveMainTransaction: true);
