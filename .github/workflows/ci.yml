@@ -1203,6 +1203,15 @@ jobs:
       group: equinox-local-main-snapshot-publish
       cancel-in-progress: false
     steps:
+      - parallel:
+          - name: Checkout exact admitted Main publisher
+            uses: actions/checkout@v7
+
+          - name: Set up Node for signed Main snapshot authorization
+            uses: actions/setup-node@v7
+            with:
+              node-version: 26.12.1
+
       - name: Confirm this run still owns latest Main
         id: latest
         shell: bash
@@ -1240,9 +1249,26 @@ jobs:
             artifact="$SNAPSHOT_DIR/equinox-local-main-$TARGET_SHA-$target$extension"
             test -f "$manifest"
             test -f "$artifact"
+            if [[ "$target" == win32-* ]]; then
+              # A bare old 8-object Main snapshot is NOT a signed B release.
+              test -f "$SNAPSHOT_DIR/equinox-local-main-$TARGET_SHA-$target.b-authorization.json"
+            fi
           done
           count="$(find "$SNAPSHOT_DIR" -maxdepth 1 -type f | wc -l | tr -d ' ')"
-          test "$count" = 8
+          test "$count" = 10
+
+      - name: Require trusted Ed25519 B authorization before ANY R2 upload or Main tag promotion
+        if: ${{ steps.latest.outputs.publish == 'true' }}
+        shell: bash
+        env:
+          TARGET_SHA: ${{ needs.main-native-plan.outputs.target-sha }}
+          SNAPSHOT_DIR: ${{ runner.temp }}/main-snapshot
+        run: |
+          set -euo pipefail
+          # This process has ONLY shipped public trust keys, NEVER production
+          # FD3 private key material. Without two externally factory-signed
+          # Windows B sidecars the job must FAIL CLOSED before the R2 write.
+          node scripts/release/verify-main-native-signed-snapshot-set.mjs --directory "$SNAPSHOT_DIR" --source-sha "$TARGET_SHA"
 
       - name: Publish exact-SHA snapshot objects to public R2
         if: ${{ steps.latest.outputs.publish == 'true' }}
@@ -1262,7 +1288,7 @@ jobs:
           test -n "${AWS_ACCESS_KEY_ID:-}"
           test -n "${AWS_SECRET_ACCESS_KEY:-}"
           aws --version
-          # Transfer only the eight already-validated immutable objects. Each
+          # Transfer only the ten public-key-verified immutable objects. Each
           # upload retains its exact s3api PUT contract and retry policy; four
           # independent network transfers overlap instead of serializing a
           # minute of R2 uploads on the Main critical path. Any failed PUT

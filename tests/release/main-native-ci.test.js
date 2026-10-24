@@ -72,3 +72,18 @@ test("Main Snapshot publish uses public R2 plus a tag-only pointer and never cre
 test("main pushes are never cancelled by a newer push while PR runs remain cancelable", () => {
   assert.match(workflow, /cancel-in-progress: \$\{\{ github\.event_name == 'pull_request' \}\}/u);
 });
+
+
+test("Main snapshot tag promotion is cryptographically gated on exactly two factory-signed B sidecars before ANY R2 upload", () => {
+  const start = workflow.indexOf('  main-snapshot-publish:');
+  assert.ok(start >= 0);
+  const pub = workflow.slice(start);
+  const verification = pub.indexOf('node scripts/release/verify-main-native-signed-snapshot-set.mjs --directory "$SNAPSHOT_DIR" --source-sha "$TARGET_SHA"');
+  const transfer = pub.indexOf('aws s3api put-object');
+  const move = pub.indexOf('Move tag-only Main Snapshot pointer');
+  assert.ok(verification >= 0 && transfer > verification && move > transfer, 'signed B Ed25519 must gate ALL R2 uploads and tag promotion');
+  assert.match(pub, /equinox-local-main-\$TARGET_SHA-\$target\.b-authorization\.json/u);
+  assert.match(pub, /test "\$count" = 10/u);
+  assert.match(pub, /actions\/setup-node@v7/u);
+  assert.doesNotMatch(pub, /SIGNING_PRIVATE_KEY|SIGNING_KEY_PEM|--private-key|--key-file/u);
+});
