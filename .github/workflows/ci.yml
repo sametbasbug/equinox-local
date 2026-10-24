@@ -1190,7 +1190,7 @@ jobs:
             echo "- Exact-SHA snapshot target count: $GITHUB_COUNT"
             echo "- All four Main snapshot targets are built on GitHub; no factory host is required."
             echo ""
-            echo "Main Snapshot is a moving pre-release channel. Numbered Stable releases remain deliberate fresh-install/checkpoint baselines."
+            echo "Main uses one signed immutable commit-SHA update stream for new and existing installs. Display version is informational."
           } >> "$GITHUB_STEP_SUMMARY"
 
   main-snapshot-publish:
@@ -1268,8 +1268,8 @@ jobs:
         run: |
           set -euo pipefail
           # This process has ONLY shipped public trust keys, NEVER production
-          # FD3 private key material. Without two externally factory-signed
-          # Windows B sidecars the job must FAIL CLOSED before the R2 write.
+          # FD3 private key material. Without FOUR externally factory-signed
+          # per-platform B sidecars the job must FAIL CLOSED before R2 writes.
           node scripts/release/verify-main-native-signed-snapshot-set.mjs --directory "$SNAPSHOT_DIR" --source-sha "$TARGET_SHA"
 
       - name: Publish exact-SHA snapshot objects to public R2
