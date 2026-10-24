@@ -229,6 +229,10 @@ try {
       ($env:EQUINOX_WINDOWS_SIGNED_612_REINSTALL_ACCEPTANCE -ceq 'true' -and -not $AcceptedOldSigned612))) {
     throw 'Historical signed Stable repair requires exact approved old A on disposable Windows.'
   }
+  # Exact published signed 6.1.2 contains its OWN older pinned runtime.
+  # Do not require B's current Node/Git paths inside already installed A.
+  $OldProductGitVersion = if ($AcceptedOldSigned612) { '2.53.0-4' } else { '2.56.0-1' }
+  $OldProductNodeVersion = if ($AcceptedOldSigned612) { '26.12.0' } else { '26.12.1' }
   if (-not $SkipLegacyGuardianFixture) {
   # Exercise the real independent Guardian binary on a disposable hosted runner
   # without changing Start Menu, Installed Apps, autostart or the running WPF.
@@ -341,7 +345,7 @@ try {
   # Git and sanitized environment as the independent Guardian. Emit counts
   # only, never filenames or private paths, to distinguish genuine mutations
   # from inherited Git configuration drift.
-  $OwnedGitStatusExe = Join-Path $InstallRoot ("runtime\toolchain\git\2.56.0-1\$FixtureTarget\cmd\git.exe")
+  $OwnedGitStatusExe = Join-Path $InstallRoot ("runtime\toolchain\git\$OldProductGitVersion\$FixtureTarget\cmd\git.exe")
   Assert-True ([IO.File]::Exists($OwnedGitStatusExe)) 'Main Git status diagnostic is missing the product-owned Git.'
   $SavedGitEnvironment = @{}
   foreach ($entry in @(Get-ChildItem Env: | Where-Object { $_.Name -like 'GIT_*' })) {
@@ -390,7 +394,7 @@ try {
     Copy-Item -LiteralPath $NativeBrowserRuntime -Destination (Join-Path $NativeRuntimeProbe 'browser') -Recurse -ErrorAction Stop
     Copy-Item -LiteralPath (Join-Path $ReleaseDir 'release.json') -Destination (Join-Path $NativeReleaseProbe 'release.json') -ErrorAction Stop
     $NativeContract = 'b' * 64
-    $OwnedFingerprintNode = Join-Path $InstallRoot ("runtime\toolchain\node\26.12.1\$FixtureTarget\node.exe")
+    $OwnedFingerprintNode = Join-Path $InstallRoot ("runtime\toolchain\node\$OldProductNodeVersion\$FixtureTarget\node.exe")
     Assert-True ([IO.File]::Exists($OwnedFingerprintNode)) 'Native Main fingerprint fixture requires the owned Node executable.'
     $NativeFingerprintJson = & $OwnedFingerprintNode (Join-Path $Root 'tests/release/guardian-native-fingerprint-fixture.mjs') $NativeReleaseProbe
     if ($LASTEXITCODE -ne 0) { throw 'Canonical JS native release fingerprint fixture refused the disposable Main slot.' }
@@ -942,18 +946,18 @@ try {
   # An old, signed A installed the toolchain PINNED BY A (e.g. Node 26.10.0),
   # not the Node pinned by the latest hosted test harness. Read only the
   # exact already-verified A source file; never use ambient PATH fallback.
-  $NodeVersion = '26.12.1'
+  $NodeVersion = $OldProductNodeVersion
   if ($SkipLegacyGuardianFixture) {
     $VersionSource = [IO.File]::ReadAllText((Join-Path $ManagedSourceRoot 'src\equinox-local-runtime-versions.js'))
     $PinnedNode = [regex]::Match($VersionSource, 'export const EQUINOX_LOCAL_NODE_VERSION = "(\d+\.\d+\.\d+)";')
     Assert-True ($PinnedNode.Success) 'Vintage A signed source has no pinned native Node version.'
     $NodeVersion = $PinnedNode.Groups[1].Value
   }
-  $OwnedGit = Join-Path $InstallRoot ("runtime\toolchain\git\2.56.0-1\$FixtureTarget\cmd\git.exe")
+  $OwnedGit = Join-Path $InstallRoot ("runtime\toolchain\git\$OldProductGitVersion\$FixtureTarget\cmd\git.exe")
   $OwnedNode = Join-Path $InstallRoot ("runtime\toolchain\node\$NodeVersion\$FixtureTarget\node.exe")
   $OwnedNpm = Join-Path $InstallRoot ("runtime\toolchain\node\$NodeVersion\$FixtureTarget\node_modules\npm\bin\npm-cli.js")
   foreach ($owned in @($OwnedGit,$OwnedNode,$OwnedNpm)) { Assert-True ([IO.File]::Exists($owned)) ("Product-owned toolchain file is missing: $owned") }
-  Assert-True ((& $OwnedGit --version) -match '^git version 2\.56\.0\b') 'Product-owned Git version mismatch.'
+  Assert-True ((& $OwnedGit --version) -match ('^git version ' + [regex]::Escape(($OldProductGitVersion -split '-')[0]) + '\b')) 'Product-owned old A Git version mismatch.'
   Assert-True ((& $OwnedNode --version) -ceq ('v' + $NodeVersion)) 'Product-owned Node version mismatch.'
   # End-to-end actual NTFS A/B switch and failed-B rollback against exact
   # architecture-specific installed WPF PE bytes in an isolated temp root.
