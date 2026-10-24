@@ -933,3 +933,31 @@ test('native original Main A rejects wrong predecessor before durable Guardian l
   assert.match(host, /StableJournalBytes/u);
   assert.doesNotMatch(a, /File\.Move\(|File\.Delete\(|TerminateProcess|Process\.Start\(|Registry\.SetValue/u);
 });
+
+
+test('real hosted managed Main A WPF quiesce uses distinct product Node HMAC trigger, native OS owner and restores original A without activating B', async () => {
+  const [host, witness, native] = await Promise.all([
+    fs.readFile(new URL('./windows-installer-real-package-smoke.ps1', import.meta.url), 'utf8'),
+    fs.readFile(new URL('./owned-windows-worker-proof.mjs', import.meta.url), 'utf8'),
+    fs.readFile(new URL('../../native/windows/EquinoxLocal.Guardian/MainNativeStableShellQuiesce.cs', import.meta.url), 'utf8'),
+  ]);
+  assert.match(witness, /EQUINOX_LOCAL_TEST_MAIN_A_QUIESCE_TRIGGER/u);
+  assert.match(host, /EQUINOX_LOCAL_TEST_MAIN_A_QUIESCE_TRIGGER/u);
+  assert.match(host, /\$JournalMainAShellTrigger = Join-Path \$Work/u);
+  assert.match(host, /previousNative = \[ordered\]@\{kind='main';sourceSha=\$JournalCurrent;runtimeContractSha256=\$MainAContract\}/u);
+  assert.match(host, /runtimeContractSha256=\$MainAContract/u);
+  assert.match(host, /guardian-native-fingerprint-fixture\.mjs/u);
+  assert.match(host, /Invoke-GuardianCheck '--audit-native-identity'\) -eq 70/u);
+  assert.match(host, /--hold-native-main-a-shell-quiesce/u);
+  assert.match(host, /original-main-a-shell-quiesced-only/u);
+  assert.match(host, /MainARecord\.shellPid -eq \$MainAPid/u);
+  assert.match(host, /MainARecord\.workerStartTimeUtcTicks -ceq \$WorkerRecord\.startTimeUtcTicks/u);
+  assert.match(host, /MainARecord\.preparedJournalSha256 -ceq/u);
+  assert.match(host, /\[IO\.File\]::WriteAllBytes\(\$JournalData, \$MainAJournalOriginal\)/u);
+  assert.match(host, /\[IO\.File\]::WriteAllBytes\(\$ExpectedManifestPath, \$MainAManifestOriginal\)/u);
+  assert.match(host, /Remove-Item -LiteralPath \$MainAPointer/u);
+  assert.match(host, /Remove-Item -LiteralPath \$MainAStore -Recurse/u);
+  assert.match(host, /Real hosted WPF did not return after Main A proof teardown/u);
+  assert.match(native, /GetNamedPipeServerProcessId\(pipe\.SafePipeHandle, out var serverPid\) \|\| serverPid != pid/u);
+  assert.doesNotMatch(host.slice(host.indexOf('# Positive original managed-Main A ownership:'), host.indexOf('# First permitted REAL native journal stage mutation:')), /(?:commitWindowsNativeABSlot|switchWindowsNativeABSlot|writePointerImpl)/u);
+});

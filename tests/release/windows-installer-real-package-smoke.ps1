@@ -525,6 +525,7 @@ try {
   $JournalAuthorityTrigger = Join-Path $Work 'start-journal-authority-client.trigger'
   $JournalAbortTrigger = Join-Path $Work 'start-journal-abort-client.trigger'
   $JournalShellTrigger = Join-Path $Work 'start-wpf-quiesce-client.trigger'
+  $JournalMainAShellTrigger = Join-Path $Work 'start-main-a-wpf-quiesce-client.trigger'
   $JournalShellQuiesced = Join-Path $JournalDataDir ("$JournalId.stable-shell-quiesce.json")
   $JournalAbortCommit = Join-Path $JournalDataDir ("$JournalId.abort-commit.json")
   $JournalQuarantinedLock = Join-Path $JournalDataDir (".$JournalId.quarantined.writer-lock")
@@ -585,6 +586,7 @@ try {
       $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_JOURNAL_TRIGGER'] = $JournalAuthorityTrigger
       $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_JOURNAL_ABORT_TRIGGER'] = $JournalAbortTrigger
       $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_WPF_QUIESCE_TRIGGER'] = $JournalShellTrigger
+      $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_MAIN_A_QUIESCE_TRIGGER'] = $JournalMainAShellTrigger
       $WorkerProcess = [Diagnostics.Process]::Start($WorkerStartInfo)
       if ($null -eq $WorkerProcess) { throw 'Unable to start ephemeral owned Node process for Guardian audit.' }
       $WorkerRecord = [ordered]@{
@@ -857,6 +859,119 @@ try {
         Assert-True $ShellReturned 'Hosted real stable WPF shell did not restart after native Guardian quiesce.'
       }
       Assert-True ((Invoke-GuardianCheck '--audit-native-journal') -eq 0) 'WPF quiesce fixture did not restore exact journal ownership.'
+      # Positive original managed-Main A ownership: the real disposable
+      # managed-source install has product-owned Git A and a live native WPF.
+      # Build a test-only SHA-bound native A store from the SAME packaged PE,
+      # then have the real OS Guardian and worker HMAC stop that live WPF.
+      # No B activation, pointer commit, journal promotion or real user device.
+      if (-not $LegacyGuardian612Abi -and $FixtureSourceSha -ceq $env:GITHUB_SHA) {
+        $MainAStore = Join-Path $NativeTxRoot ("native-store\$FixtureTarget\$JournalCurrent")
+        $MainARelease = Join-Path $MainAStore 'release'
+        $MainAPointer = Join-Path $NativeTxRoot 'current-native.json'
+        $MainAProof = Join-Path $JournalDataDir ("$JournalId.main-a-shell-quiesce.json")
+        Assert-True (-not (Test-Path -LiteralPath $MainAStore) -and -not (Test-Path -LiteralPath $MainAPointer) -and
+          -not (Test-Path -LiteralPath $MainAProof)) 'Managed Main A positive fixture is not isolated from old native state.'
+        $MainAJournalOriginal = [IO.File]::ReadAllBytes($JournalData)
+        $MainAManifestOriginal = [IO.File]::ReadAllBytes($ExpectedManifestPath)
+        $MainAGuardian = $null
+        try {
+          $MainARuntime = Join-Path $MainARelease 'runtime'
+          [IO.Directory]::CreateDirectory($MainARuntime) | Out-Null
+          Copy-Item -LiteralPath (Join-Path $ReleaseDir 'runtime\shell') -Destination (Join-Path $MainARuntime 'shell') -Recurse -ErrorAction Stop
+          Copy-Item -LiteralPath (Join-Path $ReleaseDir 'runtime\browser') -Destination (Join-Path $MainARuntime 'browser') -Recurse -ErrorAction Stop
+          Copy-Item -LiteralPath (Join-Path $ReleaseDir 'release.json') -Destination (Join-Path $MainARelease 'release.json') -ErrorAction Stop
+          $MainAFingerprintJson = & $OwnedFingerprintNode (Join-Path $Root 'tests/release/guardian-native-fingerprint-fixture.mjs') $MainARelease
+          if ($LASTEXITCODE -ne 0) { throw 'Managed Main A fingerprint is not a real exact packaged native release.' }
+          $MainAFingerprint = $MainAFingerprintJson | ConvertFrom-Json
+          $MainAContract = 'd' * 64
+          $MainAStoreManifest = [ordered]@{
+            schemaVersion=1;channel='main';sourceSha=$JournalCurrent;target=$FixtureTarget;
+            runtimeContractSha256=$MainAContract;artifactSha256=('b' * 64);artifactBytes=1024;
+            payloadVersion=$FixtureVersion;releaseFingerprint=$MainAFingerprint
+          }
+          [IO.File]::WriteAllText((Join-Path $MainAStore 'native-store.json'), ($MainAStoreManifest | ConvertTo-Json -Depth 5))
+          $MainAPointerValue = [ordered]@{schemaVersion=1;channel='main';sourceSha=$JournalCurrent;target=$FixtureTarget;runtimeContractSha256=$MainAContract}
+          [IO.File]::WriteAllText($MainAPointer, ($MainAPointerValue | ConvertTo-Json -Depth 4))
+          $MainANm = [ordered]@{
+            name='dev.equinox.browser';description='Equinox Browser native messaging bridge';
+            path=(Join-Path $MainARuntime 'browser\equinox-browser-native-host.exe');type='stdio';
+            allowed_origins=@('chrome-extension://npdneefcobilfkjlihghjgjnknenhfoj/')
+          }
+          [IO.File]::WriteAllText($ExpectedManifestPath, ($MainANm | ConvertTo-Json -Depth 5))
+          $MainANativeRecord = ConvertFrom-Json ([Text.Encoding]::UTF8.GetString($MainAJournalOriginal))
+          $MainANativeRecord.previousNative = [ordered]@{kind='main';sourceSha=$JournalCurrent;runtimeContractSha256=$MainAContract}
+          [IO.File]::WriteAllText($JournalData, ($MainANativeRecord | ConvertTo-Json -Depth 8))
+          # The default `--audit-native-identity` must STILL reject an active
+          # journal, while the independently prepared OS owner may inspect A.
+          Assert-True ((Invoke-GuardianCheck '--audit-native-identity') -eq 70) 'Active Main transaction was silently admitted via idle-only auditor.'
+          $MainABefore = @(Get-CimInstance Win32_Process -Filter "Name='EquinoxLocal.exe'" -ErrorAction SilentlyContinue |
+            Where-Object { -not [string]::IsNullOrWhiteSpace($_.ExecutablePath) -and (Same-Path $_.ExecutablePath $StableExe) })
+          Assert-True ($MainABefore.Count -eq 1) 'Positive Main A fixture requires exactly one real installed native WPF.'
+          $MainAPid = [int]$MainABefore[0].ProcessId
+          $MainAWpf = [Diagnostics.Process]::GetProcessById($MainAPid)
+          try { $MainATicks = $MainAWpf.StartTime.ToUniversalTime().Ticks.ToString([Globalization.CultureInfo]::InvariantCulture) }
+          finally { $MainAWpf.Dispose() }
+          $MainAStart = [Diagnostics.ProcessStartInfo]::new($GuardianExe)
+          $MainAStart.Arguments = '--hold-native-main-a-shell-quiesce'
+          $MainAStart.UseShellExecute = $false
+          $MainAStart.CreateNoWindow = $true
+          $MainAStart.RedirectStandardError = $true
+          $MainAGuardian = [Diagnostics.Process]::Start($MainAStart)
+          Assert-True ($null -ne $MainAGuardian) 'Native Main A Guardian owner did not start.'
+          [IO.File]::WriteAllText($JournalMainAShellTrigger, 'hosted-main-a-positive-only')
+          $MainAProved = $false
+          for ($MainAAttempt=0; $MainAAttempt -lt 140; $MainAAttempt++) {
+            if ([IO.File]::Exists($MainAProof) -and -not $MainAGuardian.HasExited) { $MainAProved = $true; break }
+            if ($MainAGuardian.HasExited) { break }
+            Start-Sleep -Milliseconds 120
+          }
+          if (-not $MainAProved -and $MainAGuardian.HasExited) {
+            Write-Output ('Native original Main A diagnostic: ' + $MainAGuardian.StandardError.ReadToEnd())
+          }
+          Assert-True $MainAProved 'Independent Guardian did not prove genuine original managed Main A WPF exit.'
+          $MainARecord = ConvertFrom-Json ([IO.File]::ReadAllText($MainAProof))
+          Assert-True ($MainARecord.transactionId -ceq $JournalId -and
+            $MainARecord.disposition -ceq 'original-main-a-shell-quiesced-only' -and
+            $MainARecord.shellPid -eq $MainAPid -and $MainARecord.shellStartTimeUtcTicks -ceq $MainATicks -and
+            $MainARecord.workerPid -eq $WorkerProcess.Id -and
+            $MainARecord.workerStartTimeUtcTicks -ceq $WorkerRecord.startTimeUtcTicks -and
+            $MainARecord.guardianPid -eq $MainAGuardian.Id -and
+            $MainARecord.preparedJournalSha256 -ceq ((Get-FileHash -LiteralPath $JournalData -Algorithm SHA256).Hash.ToLowerInvariant())) 'Main A quiesce proof is not the exact genuine OS worker/WPF/journal owner.'
+          Assert-True ((Invoke-GuardianCheck '--hold-native-main-a-shell-quiesce') -eq 70) 'Concurrent Main A Guardian stole the live OS journal lease.'
+          Assert-True ((Invoke-GuardianCheck '--audit-native-journal') -eq 70) 'Live Main A owner was replayed by a standalone audit.'
+          Assert-True (-not (Test-Path -LiteralPath (Join-Path $JournalDataDir ("$JournalId.abort-commit.json")))) 'Main A quiesce unexpectedly advanced rollback journal.'
+          Write-Output "WINDOWS_NATIVE_ORIGINAL_MAIN_A_QUIESCE_POSITIVE target=$FixtureTarget result=PASS"
+        } finally {
+          if ($null -ne $MainAGuardian) {
+            try { if (-not $MainAGuardian.HasExited) { $MainAGuardian.Kill() } } catch {}
+            try { $MainAGuardian.WaitForExit(5000) | Out-Null } catch {}
+            $MainAGuardian.Dispose()
+          }
+          Remove-Item -LiteralPath $JournalGuard,$JournalAuthority,$MainAProof,$JournalMainAShellTrigger -Force -ErrorAction SilentlyContinue
+          [IO.File]::WriteAllBytes($JournalData, $MainAJournalOriginal)
+          [IO.File]::WriteAllBytes($ExpectedManifestPath, $MainAManifestOriginal)
+          Remove-Item -LiteralPath $MainAPointer -Force -ErrorAction SilentlyContinue
+          Remove-Item -LiteralPath $MainAStore -Recurse -Force -ErrorAction SilentlyContinue
+          # Never leave the hosted tester's ORIGINAL WPF down after proof.
+          $Reopen = @(Get-CimInstance Win32_Process -Filter "Name='EquinoxLocal.exe'" -ErrorAction SilentlyContinue |
+            Where-Object { -not [string]::IsNullOrWhiteSpace($_.ExecutablePath) -and (Same-Path $_.ExecutablePath $StableExe) })
+          if ($Reopen.Count -eq 0) {
+            $MainARestart = [Diagnostics.ProcessStartInfo]::new($StableExe)
+            $MainARestart.UseShellExecute = $false
+            $MainARestart.CreateNoWindow = $true
+            [Diagnostics.Process]::Start($MainARestart) | Out-Null
+          }
+          $MainAReturned = $false
+          for ($MainAReturnAttempt=0; $MainAReturnAttempt -lt 120; $MainAReturnAttempt++) {
+            $CurrentWpf = @(Get-CimInstance Win32_Process -Filter "Name='EquinoxLocal.exe'" -ErrorAction SilentlyContinue |
+              Where-Object { -not [string]::IsNullOrWhiteSpace($_.ExecutablePath) -and (Same-Path $_.ExecutablePath $StableExe) })
+            if ($CurrentWpf.Count -eq 1) { $MainAReturned = $true; break }
+            Start-Sleep -Milliseconds 200
+          }
+          Assert-True $MainAReturned 'Real hosted WPF did not return after Main A proof teardown.'
+        }
+        Assert-True ((Invoke-GuardianCheck '--audit-native-journal') -eq 0) 'Main A proof teardown did not restore the exact previous prepared journal.'
+      }
       # First permitted REAL native journal stage mutation: prepared/0 to
       # rollback_started/1 only. The installed Guardian itself persists the
       # exact journal bytes under its own OS-exclusive writer lease; WPF and

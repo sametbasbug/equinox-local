@@ -31,10 +31,12 @@ internal static partial class Program
         RequireNormalDirectory(Path.Combine(install, "state"));
         RequireNormalDirectory(tx);
         InspectionPhase = "native-transaction-boundary";
-        // Default standalone audit remains strictly idle-only. A Guardian
-        // already holding the exclusive, HMAC-authenticated native owner lease
-        // may verify the original A while its exact Main transaction is active.
-        // This exception NEVER authorizes an A/B rename or pointer commit.
+        // Default standalone audit remains strictly idle-only. The OS Guardian
+        // may invoke this active-transaction read-only identity check before
+        // claiming its exclusive journal lease (fail without side effects),
+        // then repeat it after authenticating the live worker and OS lease.
+        // Merely passing this audit NEVER authorizes WPF exit, an A/B rename,
+        // native pointer commit or journal stage transition.
         if (!allowExactActiveMainTransaction &&
             (File.Exists(Path.Combine(tx, "active.json")) || Directory.Exists(Path.Combine(tx, "active.json"))))
             throw new InvalidDataException("Unreconciled native Main transaction blocks audit.");
