@@ -268,7 +268,7 @@ try {
         throw 'Independent Windows Guardian exceeded its 30-second inspection limit.'
       }
       $diagnostic = $process.StandardError.ReadToEnd().Trim()
-      if (($Argument -ceq '--inspect' -or $Argument -ceq '--audit-native-identity' -or $Argument -ceq '--audit-native-journal' -or $Argument -ceq '--audit-native-worker' -or $Argument -ceq '--audit-native-b-candidate' -or $Argument -ceq '--audit-native-b-authorization') -and $process.ExitCode -ne 0) {
+      if (($Argument -ceq '--inspect' -or $Argument -ceq '--audit-native-identity' -or $Argument -ceq '--audit-native-journal' -or $Argument -ceq '--audit-native-worker' -or $Argument -ceq '--audit-native-b-candidate' -or $Argument -ceq '--audit-native-b-authorization' -or $Argument -ceq '--audit-native-b-stage-ready') -and $process.ExitCode -ne 0) {
         Write-Host ('Windows Guardian inspection diagnosis: ' + $diagnostic)
       }
       return [int]$process.ExitCode
@@ -1175,6 +1175,16 @@ try {
           # Even with the full native B fingerprint, a B without the signed
           # immutable Main authorization must fail independent OS admission.
           Assert-True ((Invoke-GuardianCheck '--audit-native-b-authorization') -eq 70) 'Unsigned Main B candidate escaped independent native Guardian cryptographic admission.'
+          # Combined prospective signed-B readiness must independently prove
+          # the SAME live original-A worker OS PID, actual kernel argv, live
+          # pipe/HMAC, physical original Guardian and production-root B
+          # authorization before any future native stage writer can exist.
+          # The disposable B has no production signature, so even a fully
+          # OS-owned A must fail closed with no pointer/journal/file mutation.
+          Assert-True ((Invoke-GuardianCheck '--audit-native-worker-ipc') -eq 0) 'Composite signed B negative requires a genuine live Main A IPC owner.'
+          Assert-True ((Invoke-GuardianCheck '--audit-native-b-stage-ready') -eq 70) 'Composite OS owner accepted an unsigned or fake staged Main B.'
+          Write-Output "WINDOWS_NATIVE_B_COMPOSITE_UNSIGNED_OS_OWNER_REJECTED target=$FixtureTarget result=PASS"
+
           Assert-True (((Get-FileHash -LiteralPath $MainAPointer -Algorithm SHA256).Hash.ToLowerInvariant()) -ceq $MainAPointerBeforeSourceAudit -and
             ((Get-FileHash -LiteralPath $JournalData -Algorithm SHA256).Hash.ToLowerInvariant()) -ceq $MainAJournalBeforeSourceAudit) 'Refusing an unsigned B mutated original Main A pointer or journal.'
           Write-Output "WINDOWS_NATIVE_B_SIGNATURE_MISSING_REJECTED target=$FixtureTarget result=PASS"

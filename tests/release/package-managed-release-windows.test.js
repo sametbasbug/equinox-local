@@ -1086,3 +1086,36 @@ test('Guardian independently attests original managed Main A kernel physical NTF
     'Physical original Main A file ID may only be admitted after genuine live native-store worker handoff and OS argv, before B audit');
 
 });
+
+
+test('native Guardian pre-stage B readiness requires live A OS owner, kernel physical A and pinned Ed25519 B, never writes state', async () => {
+  const root = new URL('../../native/windows/EquinoxLocal.Guardian/', import.meta.url);
+  const [program, stage, physical, host] = await Promise.all([
+    fs.readFile(new URL('Program.cs', root), 'utf8'),
+    fs.readFile(new URL('MainNativeSignedBStageReadiness.cs', root), 'utf8'),
+    fs.readFile(new URL('MainNativeOriginalGuardianFileIdentity.cs', root), 'utf8'),
+    fs.readFile(new URL('./windows-installer-real-package-smoke.ps1', import.meta.url), 'utf8'),
+  ]);
+  assert.match(program, /--audit-native-b-stage-ready/u);
+  assert.match(program, /InspectOwnedSignedMainBStageReadiness\(\)/u);
+  const initialArgv=stage.indexOf('InspectOwnedNativeWorkerOsArguments();');
+  const initialPipe=stage.indexOf('InspectOwnedNativeWorkerPipeProof();');
+  const originalA=stage.indexOf('var originalA = InspectOriginalMainGuardianPhysicalFileId(emitEvidence: false);');
+  const signature=stage.indexOf('InspectOwnedSignedMainBCandidate();');
+  const repeatArgv=stage.lastIndexOf('InspectOwnedNativeWorkerOsArguments();');
+  const repeatPipe=stage.lastIndexOf('InspectOwnedNativeWorkerPipeProof();');
+  const repeatA=stage.lastIndexOf('var confirmedA = InspectOriginalMainGuardianPhysicalFileId(emitEvidence: false);');
+  assert.ok(initialArgv>=0 && initialPipe>initialArgv && originalA>initialPipe && signature>originalA &&
+    repeatArgv>signature && repeatPipe>repeatArgv && repeatA>repeatPipe,
+    'Composite native admission must reprove unchanged OS owner and original physical A after B Ed25519');
+  assert.match(physical,/if \(emitEvidence\)/u);
+  assert.match(stage,/if \(confirmedA != originalA\)/u);
+  assert.match(stage,/Original Main A physical Guardian kernel File ID changed across signed B admission/u);
+  assert.doesNotMatch(stage, /File\.Move|File\.Delete|File\.WriteAll|FileMode\.Create|RegistryKey|SetValue|RenameNativeOrphanByHandle/u);
+  assert.match(host,/Invoke-GuardianCheck '--audit-native-b-stage-ready'\) -eq 70/u);
+  assert.match(host,/WINDOWS_NATIVE_B_COMPOSITE_UNSIGNED_OS_OWNER_REJECTED target=\$FixtureTarget result=PASS/u);
+  const expected=host.indexOf("Assert-True ((Invoke-GuardianCheck '--audit-native-worker-ipc') -eq 0) 'Composite signed B negative requires a genuine live Main A IPC owner.'");
+  const composite=host.indexOf("Assert-True ((Invoke-GuardianCheck '--audit-native-b-stage-ready') -eq 70)");
+  const oldPointer=host.indexOf("Assert-True (((Get-FileHash -LiteralPath $MainAPointer -Algorithm SHA256).Hash.ToLowerInvariant()) -ceq $MainAPointerBeforeSourceAudit", composite);
+  assert.ok(expected>=0 && composite>expected && oldPointer>composite, 'Unsigned B rejection must preserve exact A pointer and journal');
+});

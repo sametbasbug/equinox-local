@@ -10,7 +10,7 @@ internal static partial class Program
     // An unsigned B or callback must never supply an old-A File ID string.
     // This does NOT authorize staged B, journal writes, WPF exit, rollback,
     // current-native pointer changes or Native Messaging registration.
-    private static void InspectOriginalMainGuardianPhysicalFileId()
+    private static (uint VolumeSerial, ulong FileId) InspectOriginalMainGuardianPhysicalFileId(bool emitEvidence = true)
     {
         InspectionPhase = "native-original-a-guardian-main-identity";
         if (!OperatingSystem.IsWindows())
@@ -48,7 +48,9 @@ internal static partial class Program
         var physical = ((ulong)original.FileIndexHigh << 32) | original.FileIndexLow;
         // Test-only output of a non-secret kernel file identity. This is NOT
         // a durable journal milestone or a future rollback success receipt.
-        Console.WriteLine($"MAIN_A_GUARDIAN_KERNEL_ID volume={original.VolumeSerial.ToString("x8", CultureInfo.InvariantCulture)} fileId={physical.ToString("x16", CultureInfo.InvariantCulture)} readOnly=true");
+        if (emitEvidence)
+            Console.WriteLine($"MAIN_A_GUARDIAN_KERNEL_ID volume={original.VolumeSerial.ToString("x8", CultureInfo.InvariantCulture)} fileId={physical.ToString("x16", CultureInfo.InvariantCulture)} readOnly=true");
         InspectionPhase = "native-original-a-guardian-physical-baseline-readonly";
+        return (original.VolumeSerial, physical);
     }
 }
