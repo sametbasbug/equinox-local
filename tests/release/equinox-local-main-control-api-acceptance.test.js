@@ -155,8 +155,12 @@ for (const failure of [false, true]) {
       assert.equal(handoff, null);
       assert.equal(nativeArtifactStaged, false);
       assert.deepEqual(events, ["check"]);
-      assert.equal((await readEquinoxLocalMainSourcePointer(f.engine.paths.sourcePointerPath,
-        { execFileImpl: f.gitForLocalAdmission })).sha, f.A);
+      // Early Windows policy denial happens BEFORE a Main source-pointer
+      // transaction is created. Verify original Git A remains untouched and
+      // the nonexistent pointer is NOT manufactured just for this test.
+      const { stdout: unchangedSha } = await git(["-C", f.sourceRoot, "rev-parse", "HEAD"]);
+      assert.equal(unchangedSha.trim(), f.A);
+      await assert.rejects(fs.stat(f.engine.paths.sourcePointerPath), { code: "ENOENT" });
       return;
     }
     assert.equal(checkedState.applyAvailable, true);
