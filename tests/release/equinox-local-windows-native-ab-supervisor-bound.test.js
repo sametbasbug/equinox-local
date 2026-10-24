@@ -44,9 +44,26 @@ test('Windows native lifecycle admission without independent supervisor cannot p
   }), /independent supervisor/u);
   assert.equal(prepared, false);
   for (const extra of [{ record: { ...admitted().record, targetSha: A } }, { admitted: false }, { journal: {} },
-    { supervisor: { independentNativeOwner: true } }]) {
+    { ownerOnly: true }, { supervisor: { independentNativeOwner: true } }]) {
     assert.throws(() => requireWindowsNativeABSupervisor({ windowsAdmission: admitted(extra), transition, transactionId: ID }), /independent supervisor/u);
   }
+});
+
+
+test('owner-only Windows worker evidence cannot be upgraded by attaching fake WPF callbacks', async () => {
+  const owned = admitted({ ownerOnly: true });
+  let sideEffects = 0;
+  const forged = { ...owned, supervisor: { ...owned.supervisor,
+    shutdownOwnedWpf: async () => { sideEffects++; },
+  }};
+  assert.throws(() => requireWindowsNativeABSupervisor({ windowsAdmission: forged, transition, transactionId: ID }), /independent supervisor/u);
+  await assert.rejects(prepareEquinoxLocalMainNativeLifecycle({
+    transition, transactionId: ID, transactionRoot: TEST_TX_ROOT,
+    candidate: { sourceSha: B, target, runtimeContractSha256: CB }, installation: install,
+    windowsAdmission: forged,
+    promoteCandidateImpl: async () => { sideEffects++; return { sourceSha: B, target, runtimeContractSha256: CB, releaseDir: newRelease }; },
+  }), /independent supervisor/u);
+  assert.equal(sideEffects, 0);
 });
 
 test('real prepare lifecycle binds stored A/B source/native identities, journal and pointer through supervisor instead of legacy random backup', async () => {

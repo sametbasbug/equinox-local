@@ -22,7 +22,11 @@ export function requireWindowsNativeABSupervisor({ windowsAdmission, transition,
     const journal = recordOrNull(admission?.journal);
     const record = recordOrNull(admission?.record);
     const owner = recordOrNull(admission?.supervisor);
-    if (admission?.admitted !== true ||
+    // A detached worker `ownerOnly` witness confirms a Node PID/token. It is
+    // intentionally NOT OS-owned WPF shutdown, native slot or journal authority.
+    // Never allow later callers to bolt synthetic supervisor callbacks onto
+    // that weaker result and promote a native A/B replacement.
+    if (admission?.admitted !== true || admission?.ownerOnly === true ||
         !matches(TX, transactionId) ||
         record?.transactionId !== transactionId ||
         record?.target !== nativeTransition?.target ||
