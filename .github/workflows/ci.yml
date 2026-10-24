@@ -504,7 +504,9 @@ jobs:
   windows-x64-installer:
     name: Windows x64 public installer acceptance
     runs-on: windows-latest
-    timeout-minutes: 8
+    # Native ZIP download consumed ~7m on hosted Windows in CI40072459172.
+    # Preserve the genuine installed-host acceptance with a bounded cushion.
+    timeout-minutes: 11
     needs: [windows-x64-package-build]
 
     steps:

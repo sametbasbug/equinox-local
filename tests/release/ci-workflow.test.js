@@ -409,3 +409,10 @@ test("disposable original a70b621 consumer Main A native repair pins BOTH archit
   assert.match(native, /a70b6219e41036d39b1850c39c16a92b5d4dbcd5/u);
   assert.match(yml, /Refusing to replace a pre-existing Browser Native Messaging registry key|Native Messaging registry key is already owned by a different installation/u);
 });
+
+
+test('real Windows x64 public installer allows bounded cold native artifact download without skipping acceptance',()=>{
+ const block=job('windows-x64-installer');
+ assert.match(block,/timeout-minutes: 11/u);
+ assert.match(block,/windows-installer-real-package-smoke\.ps1/u);
+});
