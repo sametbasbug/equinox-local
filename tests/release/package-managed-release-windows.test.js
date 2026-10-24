@@ -952,6 +952,8 @@ test('real hosted managed Main A WPF quiesce uses distinct product Node HMAC tri
   assert.match(host, /original-main-a-shell-quiesced-only/u);
   assert.match(host, /MainARecord\.shellPid -eq \$MainAPid/u);
   assert.match(host, /MainARecord\.workerPid -eq \$MainAWorkerProcess\.Id/u);
+  assert.match(host, /foreach \(\$MainAJournalKey in \$JournalValue\.Keys\)/u);
+  assert.match(host, /Original Main A prepared journal identity changed during fixture setup/u);
   assert.match(host, /MainAWorkerStart = \[Diagnostics\.ProcessStartInfo\]::new\(\$MainANode\)/u);
   assert.match(host, /\$MainAWorkerProcess\.HasExited/u);
   assert.match(host, /\$MainAWorkerAttempt -lt 18/u);

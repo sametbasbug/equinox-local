@@ -1047,9 +1047,14 @@ try {
             allowed_origins=@('chrome-extension://npdneefcobilfkjlihghjgjnknenhfoj/')
           }
           [IO.File]::WriteAllText($ExpectedManifestPath, ($MainANm | ConvertTo-Json -Depth 5))
-          $MainANativeRecord = ConvertFrom-Json ([Text.Encoding]::UTF8.GetString($MainAJournalOriginal))
+          # PowerShell ConvertFrom-Json may coerce timestamp fields to DateTime
+          # and re-emit noncanonical UTC shapes on ARM64. Copy the already
+          # independently audited raw fixture fields without deserializing A.
+          $MainANativeRecord = [ordered]@{}
+          foreach ($MainAJournalKey in $JournalValue.Keys) { $MainANativeRecord[$MainAJournalKey] = $JournalValue[$MainAJournalKey] }
           $MainANativeRecord.previousNative = [ordered]@{kind='main';sourceSha=$JournalCurrent;runtimeContractSha256=$MainAContract}
           [IO.File]::WriteAllText($JournalData, ($MainANativeRecord | ConvertTo-Json -Depth 8))
+          Assert-True ((Invoke-GuardianCheck '--audit-native-journal') -eq 0) 'Original Main A prepared journal identity changed during fixture setup.'
           # MAIN ownership is an OS process launched from this exact native
           # store's product Node, not the historical numbered Stable bootstrap.
           $MainANode = Join-Path $MainARuntime 'node\bin\node.exe'

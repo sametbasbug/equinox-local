@@ -133,7 +133,11 @@ export async function readWindowsNativeMessagingRegistryValue({
   const { stdout } = await (execFileAsync as NativeExec)(windowsPowerShellPath(env), [
     "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", READ_REGISTRY_SCRIPT,
   ], {
-    timeout: 15_000,
+    // Native Windows ARM64 runners and machines can cold-start the bundled
+    // OS Windows PowerShell 5.1 registry reader under emulation notably more
+    // slowly than x64. Keep the same exact HKCU attestation and strict bound;
+    // do not fall back to another executable or accept missing ownership.
+    timeout: process.platform === "win32" && process.arch === "arm64" ? 45_000 : 15_000,
     maxBuffer: 64 * 1024,
     windowsHide: true,
     env: windowsRegistryReadEnvironment(env),

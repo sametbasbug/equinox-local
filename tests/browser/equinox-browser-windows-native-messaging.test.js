@@ -215,7 +215,7 @@ test("Windows Native Messaging registry read is module-independent, credential-s
     env,
     execFileAsync: async (command, args, options) => {
       assert.equal(command, "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe");
-      assert.equal(options.timeout, 15_000);
+      assert.equal(options.timeout, process.platform === "win32" && process.arch === "arm64" ? 45_000 : 15_000);
       assert.equal(options.env.SystemRoot, env.SystemRoot);
       assert.equal(options.env.EQUINOX_BROWSER_NATIVE_HOST_REGISTRY_SUBKEY, "Software\\Google\\Chrome\\NativeMessagingHosts\\dev.equinox.browser");
       assert.equal("PSModulePath" in options.env, false);
