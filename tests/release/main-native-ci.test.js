@@ -42,31 +42,15 @@ test("Main Snapshot publish waits for the complete product CI aggregate", () => 
   assert.match(workflow, /main-snapshot-publish:[\s\S]*needs\.test\.result == 'success'[\s\S]*needs\.macos-managed-source\.result == 'success'[\s\S]*needs\.macos-x64\.result == 'success'[\s\S]*needs\.windows-headless\.result == 'success'/u);
 });
 
-test("Main Snapshot publish uses public R2 plus a tag-only pointer and never creates a GitHub Release", () => {
-  assert.match(workflow, /main-snapshot-publish:\n    needs: \[test, macos-managed-source, macos-x64, windows-headless, main-native-plan, main-native-build, main-native-result\]/u);
-  assert.match(workflow, /needs\.test\.result == 'success'/u);
-  assert.match(workflow, /needs\.macos-managed-source\.result == 'success'/u);
-  assert.match(workflow, /needs\.macos-x64\.result == 'success'/u);
-  assert.match(workflow, /needs\.windows-headless\.result == 'success'/u);
-  assert.match(workflow, /permissions:\n      contents: write/u);
-  assert.match(workflow, /group: equinox-local-main-snapshot-publish\n      cancel-in-progress: false/u);
-  assert.match(workflow, /pattern: main-native-\$\{\{ needs\.main-native-plan\.outputs\.target-sha \}\}-\*/u);
-  assert.match(workflow, /secrets\.EQUINOX_MAIN_R2_ACCESS_KEY_ID/u);
-  assert.match(workflow, /secrets\.EQUINOX_MAIN_R2_SECRET_ACCESS_KEY/u);
-  assert.match(workflow, /aws s3api put-object/u);
-  assert.match(workflow, /--bucket equinox-local-main/u);
-  assert.match(workflow, /--key "snapshots\/\$TARGET_SHA\/\$name"/u);
-  assert.match(workflow, /AWS_RETRY_MODE: standard/u);
-  assert.match(workflow, /AWS_MAX_ATTEMPTS: '8'/u);
-  assert.doesNotMatch(workflow, /aws s3 cp/u);
-  assert.doesNotMatch(workflow, /--recursive/u);
-  assert.match(workflow, /https:\/\/main\.local\.sametbasbug\.dev/u);
-  assert.match(workflow, /jq -e --arg sha/u);
-  assert.match(workflow, /--range 0-0/u);
-  assert.match(workflow, /git\/refs\/tags\/main-snapshot/u);
-  assert.match(workflow, /refs\/tags\/main-snapshot/u);
-  assert.doesNotMatch(workflow, /gh release (?:create|upload|edit) main-snapshot/u);
-  assert.match(workflow, /No GitHub Release was created/u);
+test("public Main snapshot CI has only READ-only authorization, never R2 or tag write authority", () => {
+ const pub=workflow.slice(workflow.indexOf('  main-snapshot-publish:'));
+ assert.match(pub, /name: Publish Main Snapshot/u);
+ assert.match(pub, /permissions:\n      contents: read/u);
+ assert.match(pub, /group: equinox-local-main-snapshot-publish\n      cancel-in-progress: false/u);
+ assert.match(pub, /pattern: main-native-\$\{\{ needs\.main-native-plan\.outputs\.target-sha \}\}-\*/u);
+ assert.doesNotMatch(pub, /secrets\.EQUINOX_MAIN_R2|AWS_ACCESS_KEY_ID|aws s3api put-object|--method PATCH|--method POST|git\/refs\/tags\/main-snapshot/u);
+ assert.doesNotMatch(pub, /GH_TOKEN|contents: write|--force|force=true/u);
+ assert.doesNotMatch(pub, /gh release (?:create|upload|edit)/u);
 });
 
 test("main pushes are never cancelled by a newer push while PR runs remain cancelable", () => {
@@ -74,45 +58,19 @@ test("main pushes are never cancelled by a newer push while PR runs remain cance
 });
 
 
-test("Main snapshot tag promotion is cryptographically gated on all four factory-signed B sidecars before ANY R2 upload", () => {
-  const start = workflow.indexOf('  main-snapshot-publish:');
-  assert.ok(start >= 0);
-  const pub = workflow.slice(start);
-  const verification = pub.indexOf('node scripts/release/verify-main-native-signed-snapshot-set.mjs --directory "$SNAPSHOT_DIR" --source-sha "$TARGET_SHA"');
-  const transfer = pub.indexOf('aws s3api put-object');
-  const move = pub.indexOf('Move tag-only Main Snapshot pointer');
-  assert.ok(verification >= 0 && transfer > verification && move > transfer, 'signed B Ed25519 must gate ALL R2 uploads and tag promotion');
-  assert.match(pub, /equinox-local-main-\$TARGET_SHA-\$target\.b-authorization\.json/u);
-  assert.match(pub, /test "\$count" = 12/u);
-  assert.match(pub, /actions\/setup-node@v7/u);
-  assert.doesNotMatch(pub, /SIGNING_PRIVATE_KEY|SIGNING_KEY_PEM|--private-key|--key-file/u);
+test("Main signed CI authorization requires four genuine factory Ed25519 sidecars before independent private promotion",()=>{
+ const pub=workflow.slice(workflow.indexOf('  main-snapshot-publish:'));
+ assert.match(pub,/equinox-local-main-\$TARGET_SHA-\$target\.b-authorization\.json/u);
+ assert.match(pub,/test "\$count" = 12/u);
+ assert.match(pub,/verify-main-native-signed-snapshot-set\.mjs --directory "\$SNAPSHOT_DIR" --source-sha "\$TARGET_SHA"/u);
+ assert.match(pub,/Separate private factory promotion is still required/u);
+ assert.doesNotMatch(pub,/aws s3api|git\/refs\/tags\/main-snapshot|gh api --method/u);
+ assert.doesNotMatch(pub,/SIGNING_PRIVATE_KEY|SIGNING_KEY_PEM|--private-key|--key-file/u);
 });
 
-
-test("Main snapshot tag update cannot force-rewind a concurrently moved Main tag",()=>{
- const start=workflow.indexOf('  main-snapshot-publish:');
- assert.ok(start>=0);
- const block=workflow.slice(start);
- assert.match(block,/git\/refs\/tags\/main-snapshot[^\n]*force=false/u);
- assert.doesNotMatch(block,/force=true/u);
-});
-
-
-test('public Main snapshot verifies remote 4 sidecars AND manifests byte-for-byte before any tag mutation',()=>{
- const section=workflow.slice(workflow.indexOf('  main-snapshot-publish:'));
- const verification=section.indexOf('cmp "$SNAPSHOT_DIR/$authorization" "$RUNNER_TEMP/$authorization"');
- const manifest=section.indexOf('cmp "$SNAPSHOT_DIR/$manifest" "$RUNNER_TEMP/$manifest"');
- const tag=section.indexOf('Move tag-only Main Snapshot pointer');
- assert.ok(verification>0 && manifest>0 && tag>verification && tag>manifest);
- assert.match(section,/authorization="equinox-local-main-\$TARGET_SHA-\$target\.b-authorization\.json"/u);
- assert.match(section,/git\/refs\/tags\/main-snapshot[^\n]*force=false/u);
-});
-
-
-test("Main snapshot R2 writer may only create immutable SHA-scoped objects with independently checkable SHA metadata",()=>{
- const publisher=workflow.slice(workflow.indexOf('  main-snapshot-publish:'));
- assert.match(publisher,/sha256="\$\(sha256sum "\$object"/u);
- assert.match(publisher,/--if-none-match "\*"/u);
- assert.match(publisher,/--metadata "sha256=\$sha256"/u);
- assert.match(publisher,/--key "snapshots\/\$TARGET_SHA\/\$name"/u);
+test("Main native SHA artifacts remain published to CI storage but NEVER directly to public R2 or moving Git ref",()=>{
+ assert.match(workflow,/Upload exact-SHA Main native candidate[\s\S]*actions\/upload-artifact@v7/u);
+ const pub=workflow.slice(workflow.indexOf('  main-snapshot-publish:'));
+ assert.doesNotMatch(pub,/R2_ENDPOINT|--if-none-match|--metadata "sha256=|GitHub Release was created|tag-only Main Snapshot pointer/u);
+ assert.match(pub,/github\.event_name == 'push' && github\.ref == 'refs\/heads\/main'/u);
 });

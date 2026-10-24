@@ -1200,7 +1200,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
-      contents: write
+      contents: read
     concurrency:
       group: equinox-local-main-snapshot-publish
       cancel-in-progress: false
@@ -1272,91 +1272,13 @@ jobs:
           # per-platform B sidecars the job must FAIL CLOSED before R2 writes.
           node scripts/release/verify-main-native-signed-snapshot-set.mjs --directory "$SNAPSHOT_DIR" --source-sha "$TARGET_SHA"
 
-      - name: Publish exact-SHA snapshot objects to public R2
+      - name: Record independent private Main promotion boundary
         if: ${{ steps.latest.outputs.publish == 'true' }}
         shell: bash
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.EQUINOX_MAIN_R2_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.EQUINOX_MAIN_R2_SECRET_ACCESS_KEY }}
-          AWS_DEFAULT_REGION: auto
-          AWS_EC2_METADATA_DISABLED: 'true'
-          AWS_RETRY_MODE: standard
-          AWS_MAX_ATTEMPTS: '8'
-          TARGET_SHA: ${{ needs.main-native-plan.outputs.target-sha }}
-          SNAPSHOT_DIR: ${{ runner.temp }}/main-snapshot
-          R2_ENDPOINT: https://c1ff8ccffcbffe46094cd3a2729a1c1f.r2.cloudflarestorage.com
         run: |
-          set -euo pipefail
-          test -n "${AWS_ACCESS_KEY_ID:-}"
-          test -n "${AWS_SECRET_ACCESS_KEY:-}"
-          aws --version
-          # Transfer only the twelve public-key-verified immutable objects. Each
-          # upload retains its exact s3api PUT contract and retry policy; four
-          # independent network transfers overlap instead of serializing a
-          # minute of R2 uploads on the Main critical path. Any failed PUT
-          # causes xargs to fail, preventing public verification/tag promotion.
-          find "$SNAPSHOT_DIR" -maxdepth 1 -type f -print0 | \
-            xargs -0 -P 4 -I '{}' bash -euo pipefail -c '
-              object="$1"
-              name="$(basename "$object")"
-              sha256="$(sha256sum "$object" | awk '''{print $1}''')"
-              # Create-once per exact SHA; never overwrite a previously
-              # committed R2 object on retries or competing publishers.
-              aws s3api put-object \
-                --bucket equinox-local-main \
-                --key "snapshots/$TARGET_SHA/$name" \
-                --body "$object" \
-                --if-none-match "*" \
-                --metadata "sha256=$sha256" \
-                --endpoint-url "$R2_ENDPOINT" \
-                --cache-control "public,max-age=31536000,immutable" \
-                >/dev/null
-            ' _ '{}'
-
-      - name: Verify public snapshot before moving tag
-        if: ${{ steps.latest.outputs.publish == 'true' }}
-        shell: bash
-        env:
-          TARGET_SHA: ${{ needs.main-native-plan.outputs.target-sha }}
-          PUBLIC_BASE: https://main.local.sametbasbug.dev
-          SNAPSHOT_DIR: ${{ runner.temp }}/main-snapshot
-        run: |
-          set -euo pipefail
-          latest="$(git ls-remote https://github.com/${{ github.repository }}.git refs/heads/main | awk '{print $1}')"
-          test "$latest" = "$TARGET_SHA"
-          for target in darwin-arm64 darwin-x64 win32-arm64 win32-x64; do
-            manifest="equinox-local-main-$TARGET_SHA-$target.json"
-            if [[ "$target" == darwin-* ]]; then extension='.tar.gz'; else extension='.zip'; fi
-            artifact="equinox-local-main-$TARGET_SHA-$target$extension"
-            manifest_url="$PUBLIC_BASE/snapshots/$TARGET_SHA/$manifest"
-            artifact_url="$PUBLIC_BASE/snapshots/$TARGET_SHA/$artifact"
-            curl --fail --silent --show-error --location --retry 5 --retry-all-errors --output "$RUNNER_TEMP/$manifest" "$manifest_url"
-            jq -e --arg sha "$TARGET_SHA" --arg target "$target" '.sourceSha == $sha and .target == $target' "$RUNNER_TEMP/$manifest" >/dev/null
-            cmp "$SNAPSHOT_DIR/$manifest" "$RUNNER_TEMP/$manifest"
-            authorization="equinox-local-main-$TARGET_SHA-$target.b-authorization.json"
-            curl --fail --silent --show-error --location --retry 5 --retry-all-errors --output "$RUNNER_TEMP/$authorization" "$PUBLIC_BASE/snapshots/$TARGET_SHA/$authorization"
-            cmp "$SNAPSHOT_DIR/$authorization" "$RUNNER_TEMP/$authorization"
-            # ZIP identity is cryptographically pinned by the already admitted
-            # local Ed25519 sidecar; the remote key must at least be reachable.
-            curl --fail --silent --show-error --location --retry 5 --retry-all-errors --range 0-0 --output /dev/null "$artifact_url"
-          done
-
-      - name: Move tag-only Main Snapshot pointer
-        if: ${{ steps.latest.outputs.publish == 'true' }}
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-          TARGET_SHA: ${{ needs.main-native-plan.outputs.target-sha }}
-        run: |
-          set -euo pipefail
-          repo="${{ github.repository }}"
-          latest="$(git ls-remote https://github.com/$repo.git refs/heads/main | awk '{print $1}')"
-          test "$latest" = "$TARGET_SHA"
-          if gh api "/repos/$repo/git/ref/tags/main-snapshot" >/dev/null 2>&1; then
-            # Server-side fast-forward validation prevents a concurrent
-            # publisher from rewinding the Main tag after our latest check.
-            gh api --method PATCH "/repos/$repo/git/refs/tags/main-snapshot" -f sha="$TARGET_SHA" -F force=false >/dev/null
-          else
-            gh api --method POST "/repos/$repo/git/refs" -f ref='refs/tags/main-snapshot' -f sha="$TARGET_SHA" >/dev/null
-          fi
-          echo "Published public exact-SHA Main snapshot objects for $TARGET_SHA and moved tag-only main-snapshot. No GitHub Release was created." >> "$GITHUB_STEP_SUMMARY"
+          # A public runner NEVER has R2 write credentials, production
+          # signing FD3, or tag write authority. This CI job owns only native
+          # build provenance and verifies the required four Ed25519 B receipts.
+          # Main currently emits eight unsigned artifacts, so verification
+          # above intentionally fails closed until private signing is ready.
+          echo "Four signed Main B targets passed CI authorization checks. Separate private factory promotion is still required." >> "$GITHUB_STEP_SUMMARY"
