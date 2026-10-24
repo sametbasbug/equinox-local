@@ -1163,7 +1163,7 @@ function parseCli(argv:string[]) {
 const invokedPath = process.argv[1] ? path.resolve(process.argv[1]) : null;
 if (invokedPath && path.basename(invokedPath) === path.basename(fileURLToPath(import.meta.url))) {
   if (process.argv.length === 3 && process.argv[2] === "--help") {
-    process.stdout.write("Usage: equinox-local-first-install.js --staged-release /absolute/path/to/release [--enroll-existing-main]\nBundled internal helper: --enroll-existing-main enrolls Main after signed Stable health.\nPublic installer defaults to Stable; Main enrollment is explicit via Update & restart.\n");
+    process.stdout.write("Usage: equinox-local-first-install.js --staged-release /absolute/path/to/release [--enroll-existing-main]\nBundled internal helper: --enroll-existing-main enrolls Main after signed Stable health.\nPublic installers enroll the admitted Main commit by default; this internal helper without the flag preserves legacy Stable-only recovery.\n");
   } else {
     installManagedEquinoxRelease(parseCli(process.argv.slice(2)))
       .then((result) => process.stdout.write(`${JSON.stringify(result, null, 2)}\n`))

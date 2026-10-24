@@ -11,23 +11,23 @@ const WINDOWS_INSTALLER = path.join(ROOT, "scripts", "install-equinox-local.ps1"
 
 test("macOS installer forwards zero or one Main argument safely under system Bash nounset", { skip: process.platform !== "darwin" }, async () => {
   const source = await fs.readFile(INSTALLER, "utf8");
-  const parser = source.slice(source.indexOf("MAIN_ARGS=()"), source.indexOf('[ "$(/usr/bin/uname -s)"'));
+  const parser = source.slice(source.indexOf("MAIN_ARGS=(--enroll-existing-main)"), source.indexOf('[ "$(/usr/bin/uname -s)"'));
   const forwarded = source.match(/--staged-release "\$SOURCE_RELEASE" (.+)\)" \|\| fail/u)[1];
   const harness = `set -eu\nfail() { exit 2; }\n${parser}\nprintf '%s\\n' stable ${forwarded}`;
-  assert.equal(execFileSync("/bin/bash", ["-c", harness, "installer"], { encoding: "utf8" }), "stable\n");
+  assert.equal(execFileSync("/bin/bash", ["-c", harness, "installer"], { encoding: "utf8" }), "stable\n--enroll-existing-main\n");
   assert.equal(execFileSync("/bin/bash", ["-c", harness, "installer", "--enroll-existing-main"], { encoding: "utf8" }), "stable\n--enroll-existing-main\n");
 });
 
-test("public installers install Stable by default; Main enrollment is not automatic", async () => {
+test("public installers enroll Main by default after pinned signed bootstrap", async () => {
   const mac = await fs.readFile(INSTALLER, "utf8");
   const windows = await fs.readFile(WINDOWS_INSTALLER, "utf8");
-  assert.match(mac, /MAIN_ARGS=\(\)/u);
+  assert.match(mac, /MAIN_ARGS=\(--enroll-existing-main\)/u);
   assert.match(mac, /--enroll-existing-main\) MAIN_ARGS=\(--enroll-existing-main\)/u);
   assert.ok(mac.includes('"$SOURCE_RELEASE" ${MAIN_ARGS[@]+"${MAIN_ARGS[@]}"}'));
-  assert.match(mac, /The installer installs Stable/u);
-  assert.match(windows, /param\(\[switch\]\$EnrollExistingMain, \[switch\]\$Help\)/u);
+  assert.match(mac, /enrolls the admitted Main commit by default/u);
+  assert.match(windows, /param\(\[switch\]\$EnrollExistingMain = \$true, \[switch\]\$Help\)/u);
   assert.match(windows, /if \(\$EnrollExistingMain\) \{ \$psi\.Arguments \+= ' --enroll-existing-main' \}/u);
-  assert.match(windows, /The installer installs Stable/u);
+  assert.match(windows, /enrolls the admitted Main commit by default/u);
 });
 
 test("public shell installer stays user-level, pinned to Equinox HTTPS and bounded", async () => {

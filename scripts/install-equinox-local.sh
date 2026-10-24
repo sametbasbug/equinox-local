@@ -30,12 +30,12 @@ require_private_directory() {
   /bin/chmod 700 "$directory" 2>/dev/null || true
 }
 
-MAIN_ARGS=()
+MAIN_ARGS=(--enroll-existing-main)
 for argument in "$@"; do
   case "$argument" in
     --enroll-existing-main) MAIN_ARGS=(--enroll-existing-main) ;;
     --help|-h)
-      printf '%s\n' 'Usage: install-equinox-local.sh [--enroll-existing-main]' 'The installer installs Stable. Select Update & restart in Control Center to move to Main.' 'Rerunning the installer repairs Stable while preserving your settings.'
+      printf '%s\n' 'Usage: install-equinox-local.sh [--enroll-existing-main]' 'The installer verifies the signed bootstrap and enrolls the admitted Main commit by default.' 'Failure preserves the signed bootstrap for recovery; existing settings are retained.'
       exit 0 ;;
     *) fail "unknown argument: $argument (use --help)" ;;
   esac
@@ -202,7 +202,7 @@ RESULT="$(/usr/bin/env -i \
   "$NODE" "$FIRST_INSTALL" --staged-release "$SOURCE_RELEASE" ${MAIN_ARGS[@]+"${MAIN_ARGS[@]}"})" || fail "managed first-install activation failed"
 
 printf '%s\n' "$RESULT"
-info "installation is ready; opening Equinox Local"
+info "Main installation is ready; opening Equinox Local"
 NATIVE_APP_OPENED=0
 if [ -d "$CONTROL_CENTER_APP" ] && [ ! -L "$CONTROL_CENTER_APP" ] && [ "$(/usr/bin/stat -f '%u' "$CONTROL_CENTER_APP")" = "$CURRENT_UID" ]; then
   if /usr/bin/open "$CONTROL_CENTER_APP" >/dev/null 2>&1; then

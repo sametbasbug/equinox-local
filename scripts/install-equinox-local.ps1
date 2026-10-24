@@ -1,8 +1,8 @@
-param([switch]$EnrollExistingMain, [switch]$Help)
+param([switch]$EnrollExistingMain = $true, [switch]$Help)
 if ($Help) {
   Write-Output 'Usage: install-equinox-local.ps1 [-EnrollExistingMain] [-Help]'
-  Write-Output 'The installer installs Stable. Select Update & restart in Control Center to move to Main.'
-  Write-Output 'Rerunning the installer repairs Stable while preserving your settings.'
+  Write-Output 'The installer verifies a signed bootstrap and enrolls the admitted Main commit by default.'
+  Write-Output 'Failed Main enrollment preserves the verified bootstrap for recovery and keeps your settings.'
   return
 }
 $ErrorActionPreference = 'Stop'
@@ -106,7 +106,7 @@ function Invoke-CleanNode([string]$Node, [string]$FirstInstall, [string]$Release
   $psi.RedirectStandardOutput = $true
   $psi.RedirectStandardError = $true
   $psi.Arguments = '"' + $FirstInstall.Replace('"','\"') + '" --staged-release "' + $ReleaseDir.Replace('"','\"') + '"'
-  if ($EnrollExistingMain) { $psi.Arguments += ' --enroll-existing-main' } # Explicit legacy compatibility only.
+  if ($EnrollExistingMain) { $psi.Arguments += ' --enroll-existing-main' } # Website defaults to Main; explicit false is for legacy signed-install recovery.
   $psi.EnvironmentVariables.Clear()
   foreach ($name in @('SystemRoot','WINDIR','ComSpec','TEMP','TMP','USERPROFILE','LOCALAPPDATA','APPDATA','USERNAME','USERDOMAIN','PATH','PATHEXT')) {
     $value = [Environment]::GetEnvironmentVariable($name)
@@ -156,7 +156,7 @@ function Invoke-EquinoxLocalInstall {
     $manifestPath = Join-Path $tempRoot 'bootstrap.txt'
     $artifactPath = Join-Path $tempRoot 'release.zip'
     $helperPath = Join-Path $tempRoot $ZipHelperName
-    Write-Info "checking the stable $Target bootstrap manifest"
+    Write-Info "checking the signed $Target bootstrap manifest"
     Save-BoundedHttpsFile "$UpdateBase/bootstrap-$Target.txt" $manifestPath $MaxManifestBytes
     $manifest = Read-BootstrapManifest $manifestPath
     Assert-ExistingStableUpgradeRoute $installRoot $manifest.Version $Target
