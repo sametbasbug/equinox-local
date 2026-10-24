@@ -1,12 +1,15 @@
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import test from "node:test";
 
 import {
   createEquinoxLocalUpdateCoordinator,
   scheduleEquinoxLocalActivation,
 } from "../../src/equinox-local-update-coordinator.js";
-import { runEquinoxLocalUpdateHelper } from "../../src/equinox-local-update-helper.js";
+import { runEquinoxLocalUpdateHelper, runEquinoxLocalUpdateHelperCli, recordEquinoxLocalUpdateHelperFailure } from "../../src/equinox-local-update-helper.js";
 
 function managedInstallation() {
   const installRoot = "/Users/example/Library/Application Support/Equinox Local";
@@ -394,4 +397,43 @@ test('old responsive runtime stops saying Restarting forever after an unconfirme
   assert.equal(retry.scheduled, true);
   assert.equal(coordinator.snapshot().restartError, null);
   assert.equal(coordinator.snapshot().restartScheduledFor, '4.3.0');
+});
+
+
+test("detached Windows helper writes bounded, credential-free failure to the existing shell diagnostic log", async (t) => {
+  const localAppData = await fs.mkdtemp(path.join(os.tmpdir(), "equinox-helper-failure-"));
+  t.after(() => fs.rm(localAppData, { recursive: true, force: true }));
+  const env = { LOCALAPPDATA: localAppData, OPENAI_API_KEY: "SECRET-NEVER-LOG" };
+  const logPath = path.join(localAppData, "Equinox Local", "logs", "windows-shell-runtime.log");
+  const exitCode = await runEquinoxLocalUpdateHelperCli({
+    argv: ["--activate", "6.1.2"], env, platform: "win32",
+    runImpl: async () => { throw Object.assign(new Error("SECRET-NEVER-LOG /Users/private key\nINJECT"), { code: "EACCES" }); },
+  });
+  assert.equal(exitCode, 1);
+  const log = await fs.readFile(logPath, "utf8");
+  assert.match(log, /update-helper action=activate status=failed phase=helper-failed code=EACCES/u);
+  assert.doesNotMatch(log, /SECRET|private|INJECT|6\.1\.2/u);
+  assert.equal(log.trim().split("\n").length, 1);
+  assert.equal(await runEquinoxLocalUpdateHelperCli({
+    argv: ["--activate", "6.1.2"], env, platform: "win32",
+    runImpl: async () => ({ status: "activated", version: "6.1.2" }),
+  }), 0);
+  assert.equal(await fs.readFile(logPath, "utf8"), log);
+});
+
+test("helper diagnostics fail closed on symlink targets and do not expose unclassified messages", async (t) => {
+  const localAppData = await fs.mkdtemp(path.join(os.tmpdir(), "equinox-helper-symlink-"));
+  t.after(() => fs.rm(localAppData, { recursive: true, force: true }));
+  const outside = path.join(localAppData, "outside.txt");
+  const logsRoot = path.join(localAppData, "Equinox Local", "logs");
+  await fs.mkdir(logsRoot, { recursive: true });
+  await fs.writeFile(outside, "untouched");
+  await fs.symlink(outside, path.join(logsRoot, "windows-shell-runtime.log"));
+  assert.equal(await recordEquinoxLocalUpdateHelperFailure(
+    new Error("super-secret"), { platform: "win32", env: { LOCALAPPDATA: localAppData }, argv: ["--activate", "bad"] },
+  ), false);
+  assert.equal(await fs.readFile(outside, "utf8"), "untouched");
+  assert.equal(await recordEquinoxLocalUpdateHelperFailure(
+    Error("cannot log"), { platform: "darwin", env: { LOCALAPPDATA: localAppData } },
+  ), false);
 });
