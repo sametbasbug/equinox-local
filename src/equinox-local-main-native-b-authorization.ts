@@ -8,12 +8,12 @@ const KEY_ID = /^[a-z0-9][a-z0-9._-]{0,63}$/u;
 const TARGETS = new Set(["win32-x64", "win32-arm64"]);
 const MAX_BYTES = 1024 * 1024 * 1024;
 // Never interpret a Stable manifest signature as authorization to mutate Main B.
-export const MAIN_NATIVE_B_SIGNATURE_DOMAIN = "equinox-local-main-native-b-authorization-v1\n";
+export const MAIN_NATIVE_B_SIGNATURE_DOMAIN = "equinox-local-main-native-b-authorization-v2\n";
 
 type BArtifact = Readonly<{ sha256: string; bytes: number }>;
 type BTree = Readonly<{ sha256: string; entries: number; bytes: number }>;
 export type MainNativeBAuthorizationPayload = Readonly<{
-  schemaVersion: 1; channel: "main"; previousSourceSha: string; sourceSha: string;
+  schemaVersion: 2; channel: "main"; sourceSha: string;
   target: "win32-x64" | "win32-arm64"; runtimeContractSha256: string;
   artifact: BArtifact; releaseFingerprint: BTree;
 }>;
@@ -48,11 +48,10 @@ function size(value: unknown, label: string, max = MAX_BYTES): number {
 }
 function parsePayload(input: unknown): MainNativeBAuthorizationPayload {
   const raw = object(input, "Main B authorization payload");
-  keys(raw, ["schemaVersion", "channel", "previousSourceSha", "sourceSha", "target", "runtimeContractSha256", "artifact", "releaseFingerprint"], "Main B authorization payload");
-  if (raw.schemaVersion !== 1 || raw.channel !== "main") throw new Error("Main B authorization version or channel is invalid.");
-  if (typeof raw.previousSourceSha !== "string" || !SHA.test(raw.previousSourceSha) ||
-      typeof raw.sourceSha !== "string" || !SHA.test(raw.sourceSha) || raw.sourceSha === raw.previousSourceSha) {
-    throw new Error("Main B source Git identities must be exact and distinct.");
+  keys(raw, ["schemaVersion", "channel", "sourceSha", "target", "runtimeContractSha256", "artifact", "releaseFingerprint"], "Main B authorization payload");
+  if (raw.schemaVersion !== 2 || raw.channel !== "main") throw new Error("Main B authorization version or channel is invalid.");
+  if (typeof raw.sourceSha !== "string" || !SHA.test(raw.sourceSha)) {
+    throw new Error("Main B immutable source Git SHA must be exact.");
   }
   if (typeof raw.target !== "string" || !TARGETS.has(raw.target)) throw new Error("Main B target architecture is invalid.");
   const art = object(raw.artifact, "Main B artifact");
@@ -60,7 +59,7 @@ function parsePayload(input: unknown): MainNativeBAuthorizationPayload {
   const tree = object(raw.releaseFingerprint, "Main B native release fingerprint");
   keys(tree, ["sha256", "entries", "bytes"], "Main B native release fingerprint");
   return Object.freeze({
-    schemaVersion: 1, channel: "main", previousSourceSha: raw.previousSourceSha,
+    schemaVersion: 2, channel: "main",
     sourceSha: raw.sourceSha, target: raw.target as MainNativeBAuthorizationPayload["target"],
     runtimeContractSha256: digest(raw.runtimeContractSha256, "Main B runtime contract"),
     artifact: Object.freeze({ sha256: digest(art.sha256, "Main B artifact"), bytes: size(art.bytes, "Main B artifact") }),
@@ -90,7 +89,7 @@ export function validateSignedMainNativeBAuthorization(raw: unknown, {
   publicKeys = EQUINOX_LOCAL_UPDATE_KEYS, expected = {},
 }: VerificationOptions = {}): SignedMainNativeBAuthorization {
   const value = object(raw, "Signed Main B authorization");
-  keys(value, ["schemaVersion", "channel", "previousSourceSha", "sourceSha", "target", "runtimeContractSha256", "artifact", "releaseFingerprint", "signature"], "Signed Main B authorization");
+  keys(value, ["schemaVersion", "channel", "sourceSha", "target", "runtimeContractSha256", "artifact", "releaseFingerprint", "signature"], "Signed Main B authorization");
   const {signature: rawSignature, ...payload} = value;
   const verifiedPayload = parsePayload(payload);
   const sig = object(rawSignature, "Main B signature");

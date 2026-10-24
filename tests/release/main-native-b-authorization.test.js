@@ -13,8 +13,8 @@ import { EQUINOX_LOCAL_UPDATE_KEYS } from "../../src/equinox-local-update-keys.j
 import { canonicalUpdateManifestPayload } from "../../src/equinox-local-updater.js";
 
 const original = {
-  schemaVersion: 1, channel: "main",
-  previousSourceSha: "a".repeat(40), sourceSha: "b".repeat(40), target: "win32-x64",
+  schemaVersion: 2, channel: "main",
+  sourceSha: "b".repeat(40), target: "win32-x64",
   runtimeContractSha256: "c".repeat(64),
   artifact: { sha256: "d".repeat(64), bytes: 1024 },
   releaseFingerprint: { sha256: "e".repeat(64), entries: 11, bytes: 4096 },
@@ -25,8 +25,8 @@ const ephemeralKeys = { [ephemeralKeyId]: publicKey.export({ type: "spki", forma
 function signed() { return createSignedMainNativeBAuthorization(original, { privateKey, keyId: ephemeralKeyId }); }
 
 // This test key MUST never be serialized to a file or inserted into the product keyring.
-test("separate Main B signature binds old A, B target, runtime, artifact and native tree", () => {
-  assert.match(MAIN_NATIVE_B_SIGNATURE_DOMAIN, /^equinox-local-main-native-b-authorization-v1\n$/u);
+test("separate Main B v2 signature binds reusable target B, runtime, artifact and native tree", () => {
+  assert.match(MAIN_NATIVE_B_SIGNATURE_DOMAIN, /^equinox-local-main-native-b-authorization-v2\n$/u);
   const value = signed();
   assert.deepEqual(validateSignedMainNativeBAuthorization(value, { publicKeys: ephemeralKeys, expected: original }), value);
   assert.throws(() => validateSignedMainNativeBAuthorization(value), /not trusted/u);
@@ -40,7 +40,7 @@ test("separate Main B signature binds old A, B target, runtime, artifact and nat
 test("Main B Ed25519 signature refuses every mutation and wrong transaction binding", () => {
   const value = signed();
   for (const change of [
-    { previousSourceSha: "0".repeat(40) }, { sourceSha: "1".repeat(40) }, { target: "win32-arm64" },
+    { sourceSha: "1".repeat(40) }, { target: "win32-arm64" },
     { runtimeContractSha256: "f".repeat(64) },
     { artifact: { ...value.artifact, bytes: 2048 } },
     { artifact: { ...value.artifact, sha256: "0".repeat(64) } },
@@ -51,7 +51,7 @@ test("Main B Ed25519 signature refuses every mutation and wrong transaction bind
     assert.throws(() => validateSignedMainNativeBAuthorization({ ...value, ...change }, { publicKeys: ephemeralKeys }), /signature failed/u, JSON.stringify(change));
   }
   assert.throws(() => validateSignedMainNativeBAuthorization(value, {
-    publicKeys: ephemeralKeys, expected: { previousSourceSha: "0".repeat(40) },
+    publicKeys: ephemeralKeys, expected: { sourceSha: "0".repeat(40) },
   }), /differs from the independently expected/u);
 });
 
@@ -63,8 +63,10 @@ test("Main B authorization rejects missing, malformed, hostile or unknown signin
   assert.throws(() => validateSignedMainNativeBAuthorization({ ...value, signature: { ...value.signature, value: "a" } }, { publicKeys: ephemeralKeys }), /signature metadata/u);
   assert.throws(() => validateSignedMainNativeBAuthorization({ ...value, signature: { ...value.signature, algorithm: "rsa" } }, { publicKeys: ephemeralKeys }), /signature metadata/u);
   assert.throws(() => validateSignedMainNativeBAuthorization({ ...value, signature: { ...value.signature, keyId: "not-registered" } }, { publicKeys: ephemeralKeys }), /not trusted/u);
-  const empty = { ...value, sourceSha: value.previousSourceSha };
-  assert.throws(() => validateSignedMainNativeBAuthorization(empty, { publicKeys: ephemeralKeys }), /distinct/u);
+  const invalid = { ...value, sourceSha: "bad" };
+  assert.throws(() => validateSignedMainNativeBAuthorization(invalid, { publicKeys: ephemeralKeys }), /must be exact/u);
+  assert.throws(() => validateSignedMainNativeBAuthorization({...value, previousSourceSha: "a".repeat(40)}, {publicKeys: ephemeralKeys}), /missing or unexpected/u);
+  assert.throws(() => validateSignedMainNativeBAuthorization({...value, schemaVersion:1}, {publicKeys:ephemeralKeys}), /version or channel/u);
   assert.throws(() => createSignedMainNativeBAuthorization(original, { privateKey: publicKey, keyId: ephemeralKeyId }), /private key/u);
   assert.throws(() => createSignedMainNativeBAuthorization(original, { privateKey, keyId: "../bad" }), /key ID/u);
 });

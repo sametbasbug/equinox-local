@@ -33,7 +33,7 @@ async function fixture(t) {
     releaseDir,reused:false,payloadVersion:'6.2.0',tree:{},metadata:{},
   });
   const payload = Object.freeze({
-    schemaVersion:1,channel:'main',previousSourceSha:oldA,sourceSha:bSha,
+    schemaVersion:2,channel:'main',sourceSha:bSha,
     target:'win32-x64',runtimeContractSha256:contract,
     artifact:{sha256:digest,bytes:2048},
     releaseFingerprint:{sha256:tree.sha256,entries:tree.entries,bytes:tree.bytes},
@@ -60,7 +60,7 @@ test('read-only signed B admission rejects no envelope, altered old A, source, a
   const f=await fixture(t);
   for(const [name,options] of [
     ['missing',{authorization:null}],
-    ['foreign original A',{previousSourceSha:'0'.repeat(40)}],
+    ['identical predecessor',{previousSourceSha:bSha}],
     ['wrong B',{candidate:{...f.candidate,sourceSha:'1'.repeat(40)}}],
     ['wrong arch',{candidate:{...f.candidate,target:'win32-arm64'}}],
     ['wrong contract',{candidate:{...f.candidate,runtimeContractSha256:'2'.repeat(64)}}],
@@ -90,4 +90,15 @@ test('symlinked staged native B release is rejected before any signature/identit
   await assert.rejects(inspectSignedEquinoxLocalMainNativeCandidate({
     previousSourceSha:oldA,candidate:{...f.candidate,releaseDir:link},authorization:f.signed,publicKeys,
   }),/canonical normal directory/u);
+});
+
+
+test('a single signed B artifact admits multiple distinct original A commits at this read-only step',async(t)=>{
+ const f=await fixture(t);
+ for(const previousSourceSha of [oldA,'0'.repeat(40),'f'.repeat(40)]){
+  const result=await inspectSignedEquinoxLocalMainNativeCandidate({previousSourceSha,candidate:f.candidate,authorization:f.signed,publicKeys});
+  assert.equal(result.previousSourceSha,previousSourceSha);
+  assert.equal(result.sourceSha,bSha);
+ }
+ // Actual history verification is a separate product-owned Git check in the native OS Guardian.
 });

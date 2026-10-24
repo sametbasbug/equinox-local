@@ -1034,7 +1034,7 @@ test('native OS Guardian audits Main-B signed authorization with pinned A Node a
   ]);
   assert.match(program, /--audit-native-b-authorization/u);
   assert.match(program, /InspectOwnedSignedMainBCandidate\(\)/u);
-  assert.match(guard, /MainBSignatureDomain = "equinox-local-main-native-b-authorization-v1\\n"/u);
+  assert.match(guard, /MainBSignatureDomain = "equinox-local-main-native-b-authorization-v2\\n"/u);
   assert.match(guard, /MainBTrustedSpkiDer/u);
   const nativeRoot = guard.match(/private const string MainBTrustedSpkiDer = "([A-Za-z0-9+/=]+)";/u)?.[1];
   assert.equal(nativeRoot, createPublicKey(EQUINOX_LOCAL_UPDATE_KEYS['stable-2026-01']).export({type: 'spki',format: 'der'}).toString('base64'), 'native OS Guardian root must match shipped immutable public signing key');

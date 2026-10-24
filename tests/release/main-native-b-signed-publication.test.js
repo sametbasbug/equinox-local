@@ -17,7 +17,7 @@ const keyId='test-source-not-prod';
 const keys={[keyId]:publicKey.export({format:'pem',type:'spki'}).toString()};
 const nativeManifest={schemaVersion:1,channel:'main',sourceSha:b,target:'win32-x64',runtimeContractSha256:contract,
  artifact:{name:`equinox-local-main-${b}-win32-x64.zip`,sha256:digest,bytes:2048}};
-const signed=createSignedMainNativeBAuthorization({schemaVersion:1,channel:'main',previousSourceSha:a,sourceSha:b,target:'win32-x64',runtimeContractSha256:contract,
+const signed=createSignedMainNativeBAuthorization({schemaVersion:2,channel:'main',sourceSha:b,target:'win32-x64',runtimeContractSha256:contract,
  artifact:{sha256:digest,bytes:2048},releaseFingerprint:{sha256:'e'.repeat(64),entries:20,bytes:9204}},
  {privateKey,keyId});
 function response(value,status=200){const data=Buffer.from(JSON.stringify(value));return {ok:status===200,status,headers:{get:(key)=>key.toLowerCase()==='content-length'?String(data.length):null},body:(async function*(){yield data;})()};}
@@ -28,7 +28,7 @@ test('signed B publication fetch is exact SHA/target and separately verifies dom
  const result=await fetchEquinoxLocalSignedMainBPublication({previousSourceSha:a,sourceSha:b,target:'win32-x64',expectedRuntimeContractSha256:contract,
   fetchImpl:fetchFixture(nativeManifest,signed,requests),publicKeys:keys});
  assert.equal(result.authorization.sourceSha,b);
- assert.equal(result.authorization.previousSourceSha,a);
+ assert.equal(result.authorization.sourceSha,b);
  assert.equal(result.manifest.artifact.sha256,digest);
  assert.equal(result.authorizationUrl,equinoxLocalMainSnapshotBAuthorizationUrl(b,'win32-x64'));
  assert.equal(requests.length,2);
@@ -40,7 +40,6 @@ test('signed B publication fetch is exact SHA/target and separately verifies dom
 test('signed B publication refuses an unsigned Main snapshot, forged artifact, old A or modified signed B',async()=>{
  for(const [name,options] of [
   ['missing',{auth:{...signed,signature:undefined}}],
-  ['oldA',{previousSourceSha:'f'.repeat(40)}],
   ['source',{auth:{...signed,sourceSha:'0'.repeat(40)}}],
   ['archive sha',{manifest:{...nativeManifest,artifact:{...nativeManifest.artifact,sha256:'0'.repeat(64)}}}],
   ['archive bytes',{manifest:{...nativeManifest,artifact:{...nativeManifest.artifact,bytes:3000}}}],
@@ -92,8 +91,18 @@ test('signed B staging refuses an untrusted envelope before fetching bytes and s
   const staged=await stageSignedEquinoxLocalMainBArtifact({previousSourceSha:a,sourceSha:b,target:'win32-x64',
     expectedRuntimeContractSha256:contract,transactionRoot:root,transactionId,fetchImpl,publicKeys:keys});
   assert.equal(staged.sha256,sha256);
-  assert.equal(staged.signedAuthorization.previousSourceSha,a);
+  assert.equal(staged.signedAuthorization.sourceSha,b);
   assert.equal(staged.signedAuthorization.signature.keyId,keyId);
   assert.deepEqual(await fs.readFile(staged.artifactPath),bytes);
   assert.equal(requests.length,4);
+});
+
+
+test('one immutable B v2 signature is reusable across distinct prior Main A commits',async()=>{
+ for(const original of [a,'f'.repeat(40),'9'.repeat(40)]){
+  const result=await fetchEquinoxLocalSignedMainBPublication({previousSourceSha:original,sourceSha:b,target:'win32-x64',expectedRuntimeContractSha256:contract,
+   fetchImpl:fetchFixture(),publicKeys:keys});
+  assert.equal(result.authorization.sourceSha,b);
+  assert.equal('previousSourceSha' in result.authorization,false);
+ }
 });

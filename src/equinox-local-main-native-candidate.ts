@@ -154,9 +154,8 @@ export async function inspectSignedEquinoxLocalMainNativeCandidate({
   const directory = await assertCanonicalDirectory(candidate.releaseDir, "Signed Main B release directory", fsImpl);
   const measured = await fingerprintEquinoxLocalNativeState(directory, {fsImpl});
   const expected = {
-    schemaVersion: 1 as const,
+    schemaVersion: 2 as const,
     channel: "main" as const,
-    previousSourceSha,
     sourceSha: candidate.sourceSha,
     target: candidate.target,
     runtimeContractSha256: candidate.runtimeContractSha256,
@@ -167,7 +166,7 @@ export async function inspectSignedEquinoxLocalMainNativeCandidate({
     ...(publicKeys === undefined ? {} : {publicKeys}), expected,
   });
   return Object.freeze({
-    sourceSha: signed.sourceSha, previousSourceSha: signed.previousSourceSha,
+    sourceSha: signed.sourceSha, previousSourceSha,
     target: signed.target, releaseDir: directory,
     artifactSha256: signed.artifact.sha256, artifactBytes: signed.artifact.bytes,
     runtimeContractSha256: signed.runtimeContractSha256,

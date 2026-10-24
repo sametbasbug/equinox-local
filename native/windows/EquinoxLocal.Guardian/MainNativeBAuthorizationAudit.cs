@@ -10,7 +10,7 @@ internal static partial class Program
     // Immutable SPKI from the shipped product Ed25519 root stable-2026-01.
     // NEVER accept key material from the candidate, journal, env or command line.
     private const string MainBTrustedSpkiDer = "MCowBQYDK2VwAyEAmFYwZkZ7Aabb8QZ/RAwhxr3D4RenekD4Cf2vhs7Vk/A=";
-    private const string MainBSignatureDomain = "equinox-local-main-native-b-authorization-v1\n";
+    private const string MainBSignatureDomain = "equinox-local-main-native-b-authorization-v2\n";
     // Invoked solely by the OS Guardian using its already fingerprint-checked
     // original A native-store Node. No script on disk, no B code, no shell,
     // and no untrusted executable. Native Guardian owns the result/decision.
@@ -47,7 +47,7 @@ internal static partial class Program
         var file = Path.Combine(store, "main-b-authorization.json");
         using var signedDoc = ReadOwnedTransitionRecord(file, 8192);
         var signed = signedDoc.RootElement;
-        RequireExactKeys(signed, ["schemaVersion", "channel", "previousSourceSha", "sourceSha", "target",
+        RequireExactKeys(signed, ["schemaVersion", "channel", "sourceSha", "target",
             "runtimeContractSha256", "artifact", "releaseFingerprint", "signature"]);
         using var manifestDoc = ReadOwnedTransitionRecord(Path.Combine(store, "native-store.json"), 8192);
         var manifest = manifestDoc.RootElement;
@@ -57,9 +57,8 @@ internal static partial class Program
         RequireExactKeys(artifact, ["sha256", "bytes"]);
         RequireExactKeys(fingerprint, ["sha256", "entries", "bytes"]);
         RequireExactKeys(signature, ["algorithm", "keyId", "value"]);
-        if (signed.GetProperty("schemaVersion").GetInt32() != 1 ||
+        if (signed.GetProperty("schemaVersion").GetInt32() != 2 ||
             signed.GetProperty("channel").GetString() != "main" ||
-            signed.GetProperty("previousSourceSha").GetString() != aSha ||
             signed.GetProperty("sourceSha").GetString() != bSha ||
             signed.GetProperty("target").GetString() != target ||
             signed.GetProperty("runtimeContractSha256").GetString() != manifest.GetProperty("runtimeContractSha256").GetString() ||
@@ -76,7 +75,7 @@ internal static partial class Program
             fingerprint.GetProperty("bytes").GetInt64() is < 1 or > 1_073_741_824 ||
             signature.GetProperty("algorithm").GetString() != "ed25519" ||
             signature.GetProperty("keyId").GetString() != "stable-2026-01")
-            throw new InvalidDataException("Signed B authorization is not bound to the installed original A/native-store manifest.");
+            throw new InvalidDataException("Signed B target authorization is not bound to native-store manifest or original A successor.");
         var base64 = signature.GetProperty("value").GetString() ?? "";
         if (base64.Length != 88 || !base64.EndsWith('=') ||
             Convert.ToBase64String(Convert.FromBase64String(base64)) != base64 ||
@@ -94,9 +93,8 @@ internal static partial class Program
         var canonical = MainBSignatureDomain + WriteFixedJson(writer =>
         {
             writer.WriteStartObject();
-            writer.WriteNumber("schemaVersion", 1);
+            writer.WriteNumber("schemaVersion", 2);
             writer.WriteString("channel", "main");
-            writer.WriteString("previousSourceSha", aSha);
             writer.WriteString("sourceSha", bSha);
             writer.WriteString("target", target);
             writer.WriteString("runtimeContractSha256", signed.GetProperty("runtimeContractSha256").GetString());

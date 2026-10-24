@@ -96,7 +96,7 @@ export async function fetchEquinoxLocalSignedMainBPublication({
     const authorization = validateSignedMainNativeBAuthorization(parsed, {
       ...(publicKeys === undefined ? {} : {publicKeys}),
       expected: {
-        schemaVersion: 1, channel: "main", previousSourceSha, sourceSha, target: target as "win32-x64" | "win32-arm64",
+        schemaVersion: 2, channel: "main", sourceSha, target: target as "win32-x64" | "win32-arm64",
         runtimeContractSha256: expectedRuntimeContractSha256,
         artifact: {sha256: original.manifest.artifact.sha256, bytes: original.manifest.artifact.bytes},
       },
