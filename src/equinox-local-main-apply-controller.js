@@ -9,9 +9,17 @@ const SHA_PATTERN = /^[a-f0-9]{40}$/u;
 function validAbsolute(value) {
     return typeof value === "string" && path.isAbsolute(value) && !/[\r\n\0]/u.test(value);
 }
-function unavailableReason(installation) {
+function unavailableReason(installation, platform) {
     if (installation?.kind !== "managed-source") {
         return "Main apply is available only for managed-source installations.";
+    }
+    // Until an independent OS-owned Windows native A/B supervisor exists, the
+    // installed worker cannot safely quiesce WPF, commit B or restore A. Stop
+    // BEFORE staging/downloading rather than promising a restart that will fail.
+    // This gate must be replaced ONLY alongside a real, native-authenticated
+    // journal owner and physical signed Windows A/B + rollback acceptance.
+    if (platform === "win32") {
+        return "Windows Main updates are held: an independent native WPF A/B supervisor and authenticated journal are not yet installed. The current release is preserved.";
     }
     if (installation?.mainUpdateSupported !== true) {
         return installation?.mainUpdateReason || "This managed-source installation has not enabled Main update handoff.";
@@ -21,7 +29,7 @@ function unavailableReason(installation) {
     }
     return null;
 }
-export function createEquinoxLocalMainApplyController({ installation, discovery, applyImpl = prepareAndScheduleEquinoxLocalMainUpdate, readScheduledReceiptImpl = readExactScheduledReceipt, } = {}) {
+export function createEquinoxLocalMainApplyController({ installation, discovery, applyImpl = prepareAndScheduleEquinoxLocalMainUpdate, readScheduledReceiptImpl = readExactScheduledReceipt, platform = process.platform, } = {}) {
     if (!discovery || typeof discovery.snapshot !== "function") {
         throw new Error("Main update discovery is required by the apply controller.");
     }
@@ -35,7 +43,7 @@ export function createEquinoxLocalMainApplyController({ installation, discovery,
     let lastError = null;
     const snapshot = () => {
         const main = discovery.snapshot();
-        const reason = unavailableReason(installation);
+        const reason = unavailableReason(installation, platform);
         const applySupported = reason === null && main?.checkSupported === true;
         const applyAvailable = Boolean(applySupported
             && main?.state === "behind"

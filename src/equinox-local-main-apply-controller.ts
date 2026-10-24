@@ -19,7 +19,7 @@ type DiscoverySnapshot=Readonly<{
 type Discovery=Readonly<{snapshot:()=>DiscoverySnapshot}>;
 type ScheduledReceipt=Readonly<{transactionId:string;currentSha:string;targetSha:string;status:string;stage:string;lastError:string|null}>;
 type ReceiptReader=(options:{transactionId:string;sourceRoot:string;transactionRoot:string})=>Promise<ScheduledReceipt>;
-type Options={installation?:Install;discovery?:Discovery;applyImpl?:MainApply;readScheduledReceiptImpl?:ReceiptReader};
+type Options={installation?:Install;discovery?:Discovery;applyImpl?:MainApply;readScheduledReceiptImpl?:ReceiptReader;platform?:string};
 
 const TX_PATTERN=/^main-[a-f0-9]{32}$/u;
 async function readExactScheduledReceipt({transactionId,sourceRoot,transactionRoot}:Parameters<ReceiptReader>[0]):Promise<ScheduledReceipt>{
@@ -33,9 +33,17 @@ function validAbsolute(value:unknown):value is string {
   return typeof value === "string" && path.isAbsolute(value) && !/[\r\n\0]/u.test(value);
 }
 
-function unavailableReason(installation:Install|undefined):string|null {
+function unavailableReason(installation:Install|undefined, platform:string):string|null {
   if (installation?.kind !== "managed-source") {
     return "Main apply is available only for managed-source installations.";
+  }
+  // Until an independent OS-owned Windows native A/B supervisor exists, the
+  // installed worker cannot safely quiesce WPF, commit B or restore A. Stop
+  // BEFORE staging/downloading rather than promising a restart that will fail.
+  // This gate must be replaced ONLY alongside a real, native-authenticated
+  // journal owner and physical signed Windows A/B + rollback acceptance.
+  if (platform === "win32") {
+    return "Windows Main updates are held: an independent native WPF A/B supervisor and authenticated journal are not yet installed. The current release is preserved.";
   }
   if (installation?.mainUpdateSupported !== true) {
     return installation?.mainUpdateReason || "This managed-source installation has not enabled Main update handoff.";
@@ -51,6 +59,7 @@ export function createEquinoxLocalMainApplyController({
   discovery,
   applyImpl = prepareAndScheduleEquinoxLocalMainUpdate,
   readScheduledReceiptImpl = readExactScheduledReceipt,
+  platform = process.platform,
 }:Options = {}) {
   if (!discovery || typeof discovery.snapshot !== "function") {
     throw new Error("Main update discovery is required by the apply controller.");
@@ -67,7 +76,7 @@ export function createEquinoxLocalMainApplyController({
 
   const snapshot = () => {
     const main = discovery.snapshot();
-    const reason = unavailableReason(installation);
+    const reason = unavailableReason(installation, platform);
     const applySupported = reason === null && main?.checkSupported === true;
     const applyAvailable = Boolean(
       applySupported

@@ -214,3 +214,21 @@ test("Main scheduled receipt status cannot be cleared by missing, foreign or sti
   assert.equal((await c.reconcile()).restartScheduledFor,null);
   assert.equal(c.snapshot().applyError,null);
 });
+
+test("real Windows managed Main refuses WPF A/B scheduling before independent OS-owned supervisor exists",async()=>{
+  let scheduled=0;
+  const controller=createEquinoxLocalMainApplyController({
+    platform:"win32",
+    installation:installation(),
+    discovery:discovery({checkSupported:true,state:"behind",currentSha:A,targetSha:B,dirty:false,remoteCanonical:true}),
+    applyImpl:async()=>{scheduled++;return {status:"scheduled",targetSha:B};},
+  });
+  const before=controller.snapshot();
+  assert.equal(before.applySupported,false);
+  assert.equal(before.applyAvailable,false);
+  assert.equal(before.restartScheduledFor,null);
+  assert.match(before.applyReason,/independent native WPF A\/B supervisor/u);
+  await assert.rejects(controller.apply(),/independent native WPF A\/B supervisor/u);
+  assert.equal(scheduled,0);
+  assert.equal(controller.snapshot().restartScheduledFor,null);
+});

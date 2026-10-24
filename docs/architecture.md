@@ -2,6 +2,12 @@
 
 Equinox Local is a per-user **macOS and Windows** runtime that exposes local capabilities to AI clients while providing a native Control Center backed by a private loopback management service. Native shells and process supervision follow each platform’s lifecycle rules.
 
+## Windows native Main update admission — currently held (2026-10-24)
+
+A real per-user Windows 6.1.2 installation remained HEALTHY after attempted Main source `e2df6f8` returned `native_admission_failed`: `Windows native A/B refuses to replace WPF without independent supervisor ownership and exact journal identity.` This is deliberate fail-closed behavior, not an established WPF A/B success: today's worker authenticates only its Node owner and has **no independent native supervisor** to authorize WPF A shutdown, the transition journal, B Native Messaging/sustained health or exact original A restoration. See [issue #284](https://github.com/sametbasbug/equinox-local/issues/284). CI package smoke and offline signatures alone cannot satisfy that physical installed-host gate.
+
+For Windows managed-source installs, the next candidate holds **Update & restart** at the controller until independently OS-verified A/B supervision exists. `Check main` remains informational. No fake supervisor callbacks, manually rewritten native pointers or removal of the WPF ownership requirement are permitted. The Control Center additionally consults the exact scheduled detached-worker transaction receipt to display terminal failures rather than indefinite `Restarting`. These changes do **not** retroactively patch an already running old 6.1.2 binary: a separately admitted, genuinely production-signed user-data-preserving repair/update path is required. Public Stable remains 6.1.2 until physical signed Windows upgrade, forced bad-B→original A rollback and original Guardian OS file identity are verified.
+
 ## Repository and installation ownership
 
 `sametbasbug/equinox-local` is the single canonical product source: runtime, native/platform code, installers, public tests and product CI/CodeQL live here. Ordinary feature/fix and contributor PRs target canonical `main` without generating another source tree.

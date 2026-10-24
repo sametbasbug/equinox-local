@@ -1030,6 +1030,10 @@ function renderUpdate() {
       setText("update-title", "Checking Main snapshot");
       setText("update-copy", "Reading local Git identity and checking the admitted Main snapshot without changing the checkout.");
       setBadge("update-badge", "Checking", "neutral");
+    } else if (managedMain && main.applySupported === false && main.applyReason) {
+      setText("update-title", "Main update safely held");
+      setText("update-copy", main.applyReason);
+      setBadge("update-badge", "Update unavailable", "warn");
     } else if (main.state === "behind") {
       setText("update-title", `Verified Main ${targetSha || "snapshot"} available`);
       setText("update-copy", managedMain
