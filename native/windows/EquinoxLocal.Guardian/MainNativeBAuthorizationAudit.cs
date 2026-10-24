@@ -82,14 +82,43 @@ internal static partial class Program
             Convert.ToBase64String(Convert.FromBase64String(base64)) != base64 ||
             Convert.FromBase64String(base64).Length != 64)
             throw new InvalidDataException("Signed B Ed25519 signature is not canonical.");
-        // Compute identical explicit whitelisted property order as TS signer,
-        // never serialize the attacker's arbitrary untrusted JSON structure.
-        var canonical = MainBSignatureDomain + JsonSerializer.Serialize(new
+        // The self-contained Guardian is PublishTrimmed=true. Use explicit
+        // Utf8JsonWriter property order rather than reflection-based JSON
+        // serialization, so the signed bytes exactly match the TS signer.
+        static string WriteFixedJson(Action<Utf8JsonWriter> write)
         {
-            schemaVersion = 1, channel = "main", previousSourceSha = aSha, sourceSha = bSha, target,
-            runtimeContractSha256 = signed.GetProperty("runtimeContractSha256").GetString(),
-            artifact = new { sha256 = artifact.GetProperty("sha256").GetString(), bytes = artifact.GetProperty("bytes").GetInt64() },
-            releaseFingerprint = new { sha256 = fingerprint.GetProperty("sha256").GetString(), entries = fingerprint.GetProperty("entries").GetInt64(), bytes = fingerprint.GetProperty("bytes").GetInt64() },
+            using var buffer = new MemoryStream();
+            using (var writer = new Utf8JsonWriter(buffer)) { write(writer); writer.Flush(); }
+            return Encoding.UTF8.GetString(buffer.ToArray());
+        }
+        var canonical = MainBSignatureDomain + WriteFixedJson(writer =>
+        {
+            writer.WriteStartObject();
+            writer.WriteNumber("schemaVersion", 1);
+            writer.WriteString("channel", "main");
+            writer.WriteString("previousSourceSha", aSha);
+            writer.WriteString("sourceSha", bSha);
+            writer.WriteString("target", target);
+            writer.WriteString("runtimeContractSha256", signed.GetProperty("runtimeContractSha256").GetString());
+            writer.WritePropertyName("artifact");
+            writer.WriteStartObject();
+            writer.WriteString("sha256", artifact.GetProperty("sha256").GetString());
+            writer.WriteNumber("bytes", artifact.GetProperty("bytes").GetInt64());
+            writer.WriteEndObject();
+            writer.WritePropertyName("releaseFingerprint");
+            writer.WriteStartObject();
+            writer.WriteString("sha256", fingerprint.GetProperty("sha256").GetString());
+            writer.WriteNumber("entries", fingerprint.GetProperty("entries").GetInt64());
+            writer.WriteNumber("bytes", fingerprint.GetProperty("bytes").GetInt64());
+            writer.WriteEndObject();
+            writer.WriteEndObject();
+        });
+        var verificationStdin = WriteFixedJson(writer =>
+        {
+            writer.WriteStartObject();
+            writer.WriteString("payload", canonical);
+            writer.WriteString("signature", base64);
+            writer.WriteEndObject();
         });
         // Original Main A + native B source Git/fingerprint are checked by the
         // *native OS owner* independently of any updater/worker callback.
@@ -114,7 +143,7 @@ internal static partial class Program
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(12));
         try
         {
-            var stdin = child.StandardInput.WriteAsync(JsonSerializer.Serialize(new {payload = canonical, signature = base64}));
+            var stdin = child.StandardInput.WriteAsync(verificationStdin);
             stdin.WaitAsync(timeout.Token).GetAwaiter().GetResult();
             child.StandardInput.Close();
             var stdout = child.StandardOutput.ReadToEndAsync();

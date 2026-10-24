@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
+import { createPublicKey } from "node:crypto";
 import fs from "node:fs/promises";
 import test from "node:test";
 
 import { assertWindowsBatchQuotedPath, packageManagedEquinoxWindowsRelease, windowsManagedPackageContract, windowsManagedReleaseDestinationRelative } from "../../scripts/release/package-managed-release-windows.mjs";
+import { EQUINOX_LOCAL_UPDATE_KEYS } from "../../src/equinox-local-update-keys.js";
 
 test("Windows managed package contract keeps x64 stable and defines explicit native ARM64 tooling", () => {
   const x64 = windowsManagedPackageContract();
@@ -1034,9 +1036,13 @@ test('native OS Guardian audits Main-B signed authorization with pinned A Node a
   assert.match(program, /InspectOwnedSignedMainBCandidate\(\)/u);
   assert.match(guard, /MainBSignatureDomain = "equinox-local-main-native-b-authorization-v1\\n"/u);
   assert.match(guard, /MainBTrustedSpkiDer/u);
+  const nativeRoot = guard.match(/private const string MainBTrustedSpkiDer = "([A-Za-z0-9+/=]+)";/u)?.[1];
+  assert.equal(nativeRoot, createPublicKey(EQUINOX_LOCAL_UPDATE_KEYS['stable-2026-01']).export({type: 'spki',format: 'der'}).toString('base64'), 'native OS Guardian root must match shipped immutable public signing key');
   assert.match(guard, /verify,createPublicKey/u);
   assert.match(guard, /Buffer\.from\(x\.payload,'utf8'\)/u);
-  assert.match(guard, /JsonSerializer\.Serialize\(new/u);
+  assert.match(guard, /Utf8JsonWriter/u);
+  assert.match(guard, /WriteFixedJson/u);
+  assert.doesNotMatch(guard, /JsonSerializer\.Serialize/u);
   assert.match(guard, /child\.ExitCode != 0/u);
   assert.match(guard, /stdout\.WaitAsync\(timeout\.Token\)/u);
   assert.match(guard, /psi\.Environment\.Remove\(name\)/u);
