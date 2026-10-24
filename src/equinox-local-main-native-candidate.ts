@@ -122,3 +122,56 @@ export async function prepareEquinoxLocalMainNativeCandidate({
     throw error;
   }
 }
+
+// This is the trust transition between a merely hash-matching staged ZIP and
+// an independently signed, complete native B payload. It is intentionally
+// read-only; the Windows Guardian must verify the SAME signed record again
+// inside the live OS-owned A/B lease before writing any journal milestone.
+import { fingerprintEquinoxLocalNativeState } from "./equinox-local-native-state-fingerprint.js";
+import { validateSignedMainNativeBAuthorization } from "./equinox-local-main-native-b-authorization.js";
+
+export async function inspectSignedEquinoxLocalMainNativeCandidate({
+  previousSourceSha,
+  candidate,
+  authorization,
+  publicKeys,
+  fsImpl = fs,
+}: {
+  previousSourceSha: string;
+  candidate: Awaited<ReturnType<typeof prepareEquinoxLocalMainNativeCandidate>>;
+  authorization: unknown;
+  /** Test injection only; production callers omit it and use the pinned public keyring. */
+  publicKeys?: Readonly<Record<string, string>>;
+  fsImpl?: CandidateFs;
+}) {
+  if (typeof previousSourceSha !== "string" || !/^[a-f0-9]{40}$/u.test(previousSourceSha) ||
+      previousSourceSha === candidate?.sourceSha) {
+    throw new Error("Signed native Main B predecessor must be a distinct exact commit SHA.");
+  }
+  if (candidate?.target !== "win32-x64" && candidate?.target !== "win32-arm64") {
+    throw new Error("Signed native Main B admission is currently Windows-only.");
+  }
+  const directory = await assertCanonicalDirectory(candidate.releaseDir, "Signed Main B release directory", fsImpl);
+  const measured = await fingerprintEquinoxLocalNativeState(directory, {fsImpl});
+  const expected = {
+    schemaVersion: 1 as const,
+    channel: "main" as const,
+    previousSourceSha,
+    sourceSha: candidate.sourceSha,
+    target: candidate.target,
+    runtimeContractSha256: candidate.runtimeContractSha256,
+    artifact: {sha256: candidate.artifactSha256, bytes: candidate.artifactBytes},
+    releaseFingerprint: {sha256: measured.sha256, entries: measured.entries, bytes: measured.bytes},
+  };
+  const signed = validateSignedMainNativeBAuthorization(authorization, {
+    ...(publicKeys === undefined ? {} : {publicKeys}), expected,
+  });
+  return Object.freeze({
+    sourceSha: signed.sourceSha, previousSourceSha: signed.previousSourceSha,
+    target: signed.target, releaseDir: directory,
+    artifactSha256: signed.artifact.sha256, artifactBytes: signed.artifact.bytes,
+    runtimeContractSha256: signed.runtimeContractSha256,
+    fingerprint: measured,
+    signedKeyId: signed.signature.keyId,
+  });
+}

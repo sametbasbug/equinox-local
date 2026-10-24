@@ -5,6 +5,7 @@ import path from "node:path";
 
 import { EQUINOX_LOCAL_SUPPORTED_RELEASE_TARGETS } from "./equinox-local-platform.js";
 import { validateEquinoxLocalMainNativeArtifactManifest } from "./equinox-local-main-native-admission.js";
+import { validateSignedMainNativeBAuthorization } from "./equinox-local-main-native-b-authorization.js";
 
 type NativeSnapshotFs = typeof fs;
 type SnapshotFetch = typeof fetch;
@@ -51,6 +52,57 @@ export function equinoxLocalMainSnapshotManifestUrl(sourceSha: string, target: s
 export function equinoxLocalMainSnapshotArtifactUrl(sourceSha: string, target: string): string {
   assertSnapshotIdentity(sourceSha, target);
   return `${MAIN_SNAPSHOT_ORIGIN}${MAIN_SNAPSHOT_PREFIX}${sourceSha}/equinox-local-main-${sourceSha}-${target}${snapshotArtifactExtension(target)}`;
+}
+
+// Domain-separated, exact-SHA sibling to the old unsigned Main snapshot manifest.
+// This is a read-only opt-in fetch boundary until the production FD3 signer
+// publishes a genuine B authorization for the immutable four-OS artifact set.
+export function equinoxLocalMainSnapshotBAuthorizationUrl(sourceSha: string, target: string): string {
+  assertSnapshotIdentity(sourceSha, target);
+  if (!target.startsWith("win32-")) throw new Error("Native signed B authorization is currently Windows-only.");
+  return `${MAIN_SNAPSHOT_ORIGIN}${MAIN_SNAPSHOT_PREFIX}${sourceSha}/equinox-local-main-${sourceSha}-${target}.b-authorization.json`;
+}
+
+export async function fetchEquinoxLocalSignedMainBPublication({
+  previousSourceSha, sourceSha, target, expectedRuntimeContractSha256,
+  fetchImpl = globalThis.fetch,
+  publicKeys,
+}: {
+  previousSourceSha: string; sourceSha: string; target: string;
+  expectedRuntimeContractSha256: string;
+  fetchImpl?: SnapshotFetch;
+  /** Test injection only: production callers omit this and trust the shipped public keyring. */
+  publicKeys?: Readonly<Record<string, string>>;
+}) {
+  if (typeof previousSourceSha !== "string" || !SHA_PATTERN.test(previousSourceSha) || previousSourceSha === sourceSha) {
+    throw new Error("Signed Main B publication requires a distinct exact previous Main commit SHA.");
+  }
+  const original = await fetchEquinoxLocalMainSnapshotManifest({
+    sourceSha, target, expectedRuntimeContractSha256, fetchImpl,
+  });
+  const authorizationUrl = equinoxLocalMainSnapshotBAuthorizationUrl(sourceSha, target);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  timer.unref?.();
+  try {
+    const response = await fetchImpl(authorizationUrl, {
+      method: "GET", redirect: "error", cache: "no-store", credentials: "omit",
+      headers: {accept: "application/json"}, signal: controller.signal,
+    });
+    if (!response?.ok) throw new Error(`Signed Main B authorization returned HTTP ${response?.status ?? "unknown"}.`);
+    const text = await readBoundedManifestText(response);
+    let parsed: unknown;
+    try { parsed = JSON.parse(text); } catch { throw new Error("Signed Main B authorization is not valid JSON."); }
+    const authorization = validateSignedMainNativeBAuthorization(parsed, {
+      ...(publicKeys === undefined ? {} : {publicKeys}),
+      expected: {
+        schemaVersion: 1, channel: "main", previousSourceSha, sourceSha, target: target as "win32-x64" | "win32-arm64",
+        runtimeContractSha256: expectedRuntimeContractSha256,
+        artifact: {sha256: original.manifest.artifact.sha256, bytes: original.manifest.artifact.bytes},
+      },
+    });
+    return Object.freeze({...original, authorizationUrl, authorization});
+  } finally { clearTimeout(timer); }
 }
 
 async function readBoundedManifestText(response: ResponseWithBody): Promise<string> {
@@ -402,4 +454,40 @@ export async function stageEquinoxLocalMainSnapshotArtifact({
   } finally {
     clearTimeout(timer);
   }
+}
+
+// Explicit future signed-Main B staging entrypoint. Old unsigned snapshot
+// helper remains for historic read-only artifact tests; production Windows
+// B activation must use this signature gate AND the post-extraction native
+// fingerprint/Guardian OS signature gates before any journal or pointer write.
+export async function stageSignedEquinoxLocalMainBArtifact({
+  previousSourceSha,
+  publicKeys,
+  ...stageOptions
+}: StageOptions & {
+  previousSourceSha: string;
+  /** Test injection only, omitted in production for immutable shipped trust. */
+  publicKeys?: Readonly<Record<string, string>>;
+}) {
+  const admitted = await fetchEquinoxLocalSignedMainBPublication({
+    previousSourceSha,
+    sourceSha: stageOptions.sourceSha,
+    target: stageOptions.target,
+    expectedRuntimeContractSha256: stageOptions.expectedRuntimeContractSha256,
+    ...(stageOptions.fetchImpl === undefined ? {} : {fetchImpl: stageOptions.fetchImpl}),
+    ...(publicKeys === undefined ? {} : {publicKeys}),
+  });
+  // Download ONLY after the exact previous A, B SHA/contract, target and ZIP
+  // digest/size have passed a trusted Ed25519 signature check.
+  const staged = await stageEquinoxLocalMainSnapshotArtifact(stageOptions);
+  if (staged.sha256 !== admitted.authorization.artifact.sha256 ||
+      staged.bytes !== admitted.authorization.artifact.bytes ||
+      staged.manifest.artifact.sha256 !== admitted.authorization.artifact.sha256 ||
+      staged.manifest.runtimeContractSha256 !== admitted.authorization.runtimeContractSha256) {
+    // No state/activation is promoted. Leave transaction-owned immutable
+    // staging for the normal crash reconciliation, never delete another
+    // writer's same-named directory on a failed cross-fetch identity check.
+    throw new Error("Signed Main B authorization changed between publication and staging.");
+  }
+  return Object.freeze({...staged, signedAuthorization: admitted.authorization});
 }
