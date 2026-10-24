@@ -25,7 +25,7 @@ async function fixture(t){
   const sha256=createHash('sha256').update(bytes).digest('hex');
   const manifest={schemaVersion:1,channel:'main',sourceSha:B,target,runtimeContractSha256:D,artifact:{name,sha256,bytes:bytes.length}};
   await fs.writeFile(path.join(directory,`${base}.json`),JSON.stringify(manifest));
-  if(target.startsWith('win32-')){
+  {
    const signed=createSignedMainNativeBAuthorization({schemaVersion:2,channel:'main',sourceSha:B,target,runtimeContractSha256:D,
     artifact:{sha256,bytes:bytes.length},releaseFingerprint:{sha256:'f'.repeat(64),entries:11,bytes:2000}},
     {privateKey,keyId});
@@ -34,17 +34,17 @@ async function fixture(t){
  }
  return {directory};
 }
-test('exact four-platform signed publication includes two authenticated Windows B release sidecars and refuses temporary key under product trust',async t=>{
+test('exact four-platform signed publication requires four authenticated native B release sidecars and refuses temporary key under product trust',async t=>{
  const f=await fixture(t);
  const result=await verifyMainNativeSignedSnapshotSet({directory:f.directory,sourceSha:B,publicKeys});
  assert.equal(result.sourceSha,B);
  assert.deepEqual(result.verifiedTargets,TARGETS);
- assert.deepEqual(result.signedWindowsTargets,['win32-arm64','win32-x64']);
+ assert.deepEqual(result.signedTargets,TARGETS);
  await assert.rejects(verifyMainNativeSignedSnapshotSet({directory:f.directory,sourceSha:B}),/not trusted/u);
 });
 test('unsigned historic eight-file set never passes tag-promotion signature gate',async t=>{
  const f=await fixture(t);
- for(const target of ['win32-arm64','win32-x64']){
+ for(const target of TARGETS){
   await fs.rm(path.join(f.directory,`equinox-local-main-${B}-${target}.b-authorization.json`));
  }
  await assert.rejects(verifyMainNativeSignedSnapshotSet({directory:f.directory,sourceSha:B,publicKeys}),/ENOENT/u);
@@ -65,4 +65,11 @@ test('strict manifest and directory file-set refuse arbitrary extra files and un
  const f=await fixture(t);
  await fs.writeFile(path.join(f.directory,'unrelated.txt'),'cannot publish');
  await assert.rejects(verifyMainNativeSignedSnapshotSet({directory:f.directory,sourceSha:B,publicKeys}),/exactly four native archives/u);
+});
+
+
+test('partially signed Windows-only ten-object bundle cannot promote unsigned macOS Main',async t=>{
+ const f=await fixture(t);
+ for(const target of ['darwin-arm64','darwin-x64']) await fs.rm(path.join(f.directory,`equinox-local-main-${B}-${target}.b-authorization.json`));
+ await assert.rejects(verifyMainNativeSignedSnapshotSet({directory:f.directory,sourceSha:B,publicKeys}),/ENOENT/u);
 });

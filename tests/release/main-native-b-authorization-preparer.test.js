@@ -53,7 +53,7 @@ test('offline producer refuses mismatched release metadata, link, wrong arch and
  const f=await fixture(t);
  const input={sourceSha:B,target:'win32-x64',artifactPath:f.artifactPath,manifestPath:f.manifestPath,releaseDir:f.releaseDir,validateRelease:f.validateRelease};
  await assert.rejects(prepareMainNativeBAuthorizationPayload({...input,validateRelease:async(dir,{target})=>({target,releaseDir:dir,metadata:{sourceSha:'f'.repeat(40)}})}),/identity differs/u);
- await assert.rejects(prepareMainNativeBAuthorizationPayload({...input,target:'darwin-arm64'}),/Windows architecture/u);
+ await assert.rejects(prepareMainNativeBAuthorizationPayload({...input,target:'linux-x64'}),/supported architecture/u);
  await assert.rejects(prepareMainNativeBAuthorizationPayload({...input,sourceSha:'bad'}),/exact full target SHA/u);
  const link=path.join(f.root,'link.zip');await fs.symlink(f.artifactPath,link);
  await assert.rejects(prepareMainNativeBAuthorizationPayload({...input,artifactPath:link}),/exact manifest artifact/u);

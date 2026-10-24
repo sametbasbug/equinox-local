@@ -42,8 +42,8 @@ async function hashPinnedArchive(filename) {
     }
 }
 export async function prepareMainNativeBAuthorizationPayload({ sourceSha, target, artifactPath, manifestPath, releaseDir, validateRelease = validateFirstInstallRelease, }) {
-    if (!SHA.test(sourceSha) || (target !== "win32-x64" && target !== "win32-arm64")) {
-        throw new Error("Unsigned Main B payload needs an exact full target SHA and Windows architecture.");
+    if (!SHA.test(sourceSha) || !["win32-x64", "win32-arm64", "darwin-x64", "darwin-arm64"].includes(target)) {
+        throw new Error("Unsigned Main B payload needs an exact full target SHA and supported architecture.");
     }
     for (const [name, filename] of Object.entries({ artifactPath, manifestPath, releaseDir })) {
         if (typeof filename !== "string" || !path.isAbsolute(filename) || path.resolve(filename) !== filename) {

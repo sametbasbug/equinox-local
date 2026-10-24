@@ -38,8 +38,6 @@ export function equinoxLocalMainSnapshotArtifactUrl(sourceSha, target) {
 // publishes a genuine B authorization for the immutable four-OS artifact set.
 export function equinoxLocalMainSnapshotBAuthorizationUrl(sourceSha, target) {
     assertSnapshotIdentity(sourceSha, target);
-    if (!target.startsWith("win32-"))
-        throw new Error("Native signed B authorization is currently Windows-only.");
     return `${MAIN_SNAPSHOT_ORIGIN}${MAIN_SNAPSHOT_PREFIX}${sourceSha}/equinox-local-main-${sourceSha}-${target}.b-authorization.json`;
 }
 export async function fetchEquinoxLocalSignedMainBPublication({ previousSourceSha, sourceSha, target, expectedRuntimeContractSha256, fetchImpl = globalThis.fetch, publicKeys, }) {

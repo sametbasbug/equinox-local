@@ -74,7 +74,7 @@ test("main pushes are never cancelled by a newer push while PR runs remain cance
 });
 
 
-test("Main snapshot tag promotion is cryptographically gated on exactly two factory-signed B sidecars before ANY R2 upload", () => {
+test("Main snapshot tag promotion is cryptographically gated on all four factory-signed B sidecars before ANY R2 upload", () => {
   const start = workflow.indexOf('  main-snapshot-publish:');
   assert.ok(start >= 0);
   const pub = workflow.slice(start);
@@ -83,7 +83,7 @@ test("Main snapshot tag promotion is cryptographically gated on exactly two fact
   const move = pub.indexOf('Move tag-only Main Snapshot pointer');
   assert.ok(verification >= 0 && transfer > verification && move > transfer, 'signed B Ed25519 must gate ALL R2 uploads and tag promotion');
   assert.match(pub, /equinox-local-main-\$TARGET_SHA-\$target\.b-authorization\.json/u);
-  assert.match(pub, /test "\$count" = 10/u);
+  assert.match(pub, /test "\$count" = 12/u);
   assert.match(pub, /actions\/setup-node@v7/u);
   assert.doesNotMatch(pub, /SIGNING_PRIVATE_KEY|SIGNING_KEY_PEM|--private-key|--key-file/u);
 });

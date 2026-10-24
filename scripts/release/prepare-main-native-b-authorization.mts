@@ -45,12 +45,12 @@ export async function prepareMainNativeBAuthorizationPayload({
   sourceSha, target, artifactPath, manifestPath, releaseDir,
   validateRelease = validateFirstInstallRelease,
 }: {
-  sourceSha: string; target: "win32-x64" | "win32-arm64";
+  sourceSha: string; target: "win32-x64" | "win32-arm64" | "darwin-x64" | "darwin-arm64";
   artifactPath: string; manifestPath: string; releaseDir: string;
   validateRelease?: typeof validateFirstInstallRelease;
 }): Promise<MainNativeBAuthorizationPayload> {
-  if (!SHA.test(sourceSha) || (target !== "win32-x64" && target !== "win32-arm64")) {
-    throw new Error("Unsigned Main B payload needs an exact full target SHA and Windows architecture.");
+  if (!SHA.test(sourceSha) || !["win32-x64", "win32-arm64", "darwin-x64", "darwin-arm64"].includes(target)) {
+    throw new Error("Unsigned Main B payload needs an exact full target SHA and supported architecture.");
   }
   for (const [name, filename] of Object.entries({artifactPath,manifestPath,releaseDir})) {
     if (typeof filename !== "string" || !path.isAbsolute(filename) || path.resolve(filename) !== filename) {
@@ -107,7 +107,7 @@ async function cli(argv: string[]) {
   }
   if (args.size !== 6) throw new Error("Main B authorization preparer is missing required arguments.");
   const payload = await prepareMainNativeBAuthorizationPayload({
-    sourceSha:args.get("--source-sha")!, target:args.get("--target")! as "win32-x64" | "win32-arm64",
+    sourceSha:args.get("--source-sha")!, target:args.get("--target")! as "win32-x64" | "win32-arm64" | "darwin-x64" | "darwin-arm64",
     artifactPath:args.get("--artifact")!,manifestPath:args.get("--manifest")!,releaseDir:args.get("--release-dir")!,
   });
   const output=args.get("--output")!;

@@ -66,7 +66,7 @@ test('read-only signed B admission rejects no envelope, altered old A, source, a
     ['wrong contract',{candidate:{...f.candidate,runtimeContractSha256:'2'.repeat(64)}}],
     ['wrong archive digest',{candidate:{...f.candidate,artifactSha256:'3'.repeat(64)}}],
     ['wrong archive bytes',{candidate:{...f.candidate,artifactBytes:2049}}],
-    ['foreign target',{candidate:{...f.candidate,target:'darwin-arm64'}}],
+    ['foreign target',{candidate:{...f.candidate,target:'linux-x64'}}],
   ]){
     await assert.rejects(inspectSignedEquinoxLocalMainNativeCandidate({
       previousSourceSha:oldA,candidate:f.candidate,authorization:f.signed,publicKeys,...options,

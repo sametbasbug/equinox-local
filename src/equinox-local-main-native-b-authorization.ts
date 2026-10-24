@@ -5,7 +5,7 @@ import { EQUINOX_LOCAL_UPDATE_KEYS } from "./equinox-local-update-keys.js";
 const SHA = /^[a-f0-9]{40}$/u;
 const DIGEST = /^[a-f0-9]{64}$/u;
 const KEY_ID = /^[a-z0-9][a-z0-9._-]{0,63}$/u;
-const TARGETS = new Set(["win32-x64", "win32-arm64"]);
+const TARGETS = new Set(["win32-x64", "win32-arm64", "darwin-x64", "darwin-arm64"]);
 const MAX_BYTES = 1024 * 1024 * 1024;
 // Never interpret a Stable manifest signature as authorization to mutate Main B.
 export const MAIN_NATIVE_B_SIGNATURE_DOMAIN = "equinox-local-main-native-b-authorization-v2\n";
@@ -14,7 +14,7 @@ type BArtifact = Readonly<{ sha256: string; bytes: number }>;
 type BTree = Readonly<{ sha256: string; entries: number; bytes: number }>;
 export type MainNativeBAuthorizationPayload = Readonly<{
   schemaVersion: 2; channel: "main"; sourceSha: string;
-  target: "win32-x64" | "win32-arm64"; runtimeContractSha256: string;
+  target: "win32-x64" | "win32-arm64" | "darwin-x64" | "darwin-arm64"; runtimeContractSha256: string;
   artifact: BArtifact; releaseFingerprint: BTree;
 }>;
 type Signature = Readonly<{ algorithm: "ed25519"; keyId: string; value: string }>;

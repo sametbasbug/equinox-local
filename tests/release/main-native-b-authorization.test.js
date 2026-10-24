@@ -79,7 +79,7 @@ test("Main B canonical payload is deterministic, domain-separated and bounded", 
   for (const value of [NaN, Infinity, -1, 0, 1.5, 2**54]) {
     assert.throws(() => canonicalMainNativeBAuthorizationPayload({ ...original, artifact: { ...original.artifact, bytes: value } }), /bounded positive integer/u);
   }
-  assert.throws(() => canonicalMainNativeBAuthorizationPayload({ ...original, target: "darwin-arm64" }), /architecture/u);
+  assert.throws(() => canonicalMainNativeBAuthorizationPayload({ ...original, target: "linux-x64" }), /architecture/u);
   assert.throws(() => canonicalMainNativeBAuthorizationPayload({ ...original, extra: "ignored" }), /missing or unexpected/u);
 });
 

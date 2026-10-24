@@ -1249,13 +1249,13 @@ jobs:
             artifact="$SNAPSHOT_DIR/equinox-local-main-$TARGET_SHA-$target$extension"
             test -f "$manifest"
             test -f "$artifact"
-            if [[ "$target" == win32-* ]]; then
-              # A bare old 8-object Main snapshot is NOT a signed B release.
-              test -f "$SNAPSHOT_DIR/equinox-local-main-$TARGET_SHA-$target.b-authorization.json"
-            fi
+            # Every platform must have a production Ed25519 authorization.
+            # Old unsigned 8-object snapshots and partially signed 10-object
+            # snapshots MUST fail before any R2 PUT or moving the Main tag.
+            test -f "$SNAPSHOT_DIR/equinox-local-main-$TARGET_SHA-$target.b-authorization.json"
           done
           count="$(find "$SNAPSHOT_DIR" -maxdepth 1 -type f | wc -l | tr -d ' ')"
-          test "$count" = 10
+          test "$count" = 12
 
       - name: Require trusted Ed25519 B authorization before ANY R2 upload or Main tag promotion
         if: ${{ steps.latest.outputs.publish == 'true' }}
@@ -1288,7 +1288,7 @@ jobs:
           test -n "${AWS_ACCESS_KEY_ID:-}"
           test -n "${AWS_SECRET_ACCESS_KEY:-}"
           aws --version
-          # Transfer only the ten public-key-verified immutable objects. Each
+          # Transfer only the twelve public-key-verified immutable objects. Each
           # upload retains its exact s3api PUT contract and retry policy; four
           # independent network transfers overlap instead of serializing a
           # minute of R2 uploads on the Main critical path. Any failed PUT

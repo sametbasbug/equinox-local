@@ -148,8 +148,8 @@ export async function inspectSignedEquinoxLocalMainNativeCandidate({
       previousSourceSha === candidate?.sourceSha) {
     throw new Error("Signed native Main B predecessor must be a distinct exact commit SHA.");
   }
-  if (candidate?.target !== "win32-x64" && candidate?.target !== "win32-arm64") {
-    throw new Error("Signed native Main B admission is currently Windows-only.");
+  if (!(["win32-x64", "win32-arm64", "darwin-x64", "darwin-arm64"] as string[]).includes(candidate?.target)) {
+    throw new Error("Signed native Main B target is unsupported.");
   }
   const directory = await assertCanonicalDirectory(candidate.releaseDir, "Signed Main B release directory", fsImpl);
   const measured = await fingerprintEquinoxLocalNativeState(directory, {fsImpl});

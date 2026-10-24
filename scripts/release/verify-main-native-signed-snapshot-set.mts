@@ -98,14 +98,14 @@ export async function verifyMainNativeSignedSnapshotSet({
     if (validated.artifact.name !== archiveName) throw new Error("Main snapshot archive filename does not match the exact SHA and platform.");
     const sha = await hashNormal(path.join(directory,archiveName),validated.artifact.bytes);
     if (sha !== validated.artifact.sha256) throw new Error("Main snapshot archive SHA-256 differs from the published manifest.");
-    if (target.startsWith("win32-")) {
+    {
       const sidecarName = `${prefix}.b-authorization.json`;
       expectedFiles.push(sidecarName);
       const authorization: unknown = JSON.parse((await readNormal(path.join(directory,sidecarName),8192)).toString("utf8"));
       validateSignedMainNativeBAuthorization(authorization,{
         ...(publicKeys === undefined ? {} : {publicKeys}),
         expected: {
-          schemaVersion:2,channel:"main",sourceSha,target:target as "win32-arm64"|"win32-x64",
+          schemaVersion:2,channel:"main",sourceSha,target:target as "win32-arm64"|"win32-x64"|"darwin-arm64"|"darwin-x64",
           runtimeContractSha256:validated.runtimeContractSha256,
           artifact:{sha256:validated.artifact.sha256,bytes:validated.artifact.bytes},
         },
@@ -116,9 +116,9 @@ export async function verifyMainNativeSignedSnapshotSet({
   const contents = (await fs.readdir(directory)).sort();
   expectedFiles.sort();
   if (contents.length !== expectedFiles.length || contents.some((name,index)=>name!==expectedFiles[index])) {
-    throw new Error("Signed Main snapshot set must contain exactly four native archives, four transport manifests and two signed Windows B authorizations.");
+    throw new Error("Signed Main snapshot set must contain exactly four native archives, four transport manifests and four signed native B authorizations.");
   }
-  return Object.freeze({schemaVersion:2,sourceSha,verifiedTargets:manifests.map(m=>m.target),signedWindowsTargets:["win32-arm64","win32-x64"]});
+  return Object.freeze({schemaVersion:2,sourceSha,verifiedTargets:manifests.map(m=>m.target),signedTargets:[...TARGETS]});
 }
 
 if (process.argv[1] && pathToFileURL(path.resolve(process.argv[1])).href===import.meta.url) {

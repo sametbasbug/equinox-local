@@ -54,7 +54,8 @@ test('signed B publication refuses an unsigned Main snapshot, forged artifact, o
 test('signed B publication refuses stale/no-B response, invalid old SHA and non-Windows B target',async()=>{
  await assert.rejects(fetchEquinoxLocalSignedMainBPublication({previousSourceSha:b,sourceSha:b,target:'win32-x64',expectedRuntimeContractSha256:contract,
   fetchImpl:fetchFixture(),publicKeys:keys}),/distinct exact previous/u);
- assert.throws(()=>equinoxLocalMainSnapshotBAuthorizationUrl(b,'darwin-arm64'),/Windows-only/u);
+ assert.equal(equinoxLocalMainSnapshotBAuthorizationUrl(b,'darwin-arm64').endsWith('-darwin-arm64.b-authorization.json'),true);
+ assert.throws(()=>equinoxLocalMainSnapshotBAuthorizationUrl(b,'linux-x64'),/target is unsupported/u);
  await assert.rejects(fetchEquinoxLocalSignedMainBPublication({previousSourceSha:a,sourceSha:b,target:'win32-x64',expectedRuntimeContractSha256:contract,
   fetchImpl:async(url)=>url.endsWith('.b-authorization.json')?response({error:'not found'},404):response(nativeManifest),publicKeys:keys}),/HTTP 404/u);
 });
