@@ -1057,3 +1057,25 @@ test('native OS Guardian audits Main-B signed authorization with pinned A Node a
   assert.match(host, /WINDOWS_NATIVE_B_SIGNATURE_MISSING_REJECTED target=\$FixtureTarget result=PASS/u);
   assert.match(host, /Refusing an unsigned B mutated original Main A pointer or journal/u);
 });
+
+
+test('Guardian independently attests original managed Main A kernel physical NTFS File ID without granting native B or rollback writes', async()=>{
+  const guardian=new URL('../../native/windows/EquinoxLocal.Guardian/',import.meta.url);
+  const [program,source,host]=await Promise.all([
+   fs.readFile(new URL('Program.cs',guardian),'utf8'),
+   fs.readFile(new URL('MainNativeOriginalGuardianFileIdentity.cs',guardian),'utf8'),
+   fs.readFile(new URL('windows-installer-real-package-smoke.ps1',import.meta.url),'utf8'),
+  ]);
+  assert.match(program,/--audit-native-a-file-id/u);
+  assert.match(program,/InspectOriginalMainGuardianPhysicalFileId\(\)/u);
+  assert.match(source,/InspectMainNativeIdentity\(allowExactActiveMainTransaction: true\)/u);
+  assert.match(source,/OpenNativeOrphanFileForRename\(guardian, NativeOrphanGenericRead/u);
+  assert.match(source,/NativeOrphanShareRead, 0, NativeOrphanOpenExisting, NativeOrphanOpenReparsePoint/u);
+  assert.match(source,/ReadNativeOrphanHandleInformation\(native, out var original\)/u);
+  assert.match(source,/original\.LinkCount != 1/u);
+  assert.match(source,/MAIN_A_GUARDIAN_KERNEL_ID volume=/u);
+  assert.doesNotMatch(source,/File\.Move\(|RenameNativeOrphanByHandle\(|File\.WriteAll|File\.Delete\(|NativeOrphanDelete|shell_stopped|native_staged|commitNativePointer|RegistryKey/u);
+  assert.match(host,/fsutil\.exe file queryfileid \$GuardianExe/u);
+  assert.match(host,/\$NativeGuardianFileId -ceq \$SeparateGuardianFileId/u);
+  assert.match(host,/WINDOWS_NATIVE_ORIGINAL_MAIN_A_GUARDIAN_KERNEL_ID target=\$FixtureTarget result=PASS/u);
+});

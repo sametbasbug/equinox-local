@@ -28,7 +28,7 @@ internal static partial class Program
     {
         try
         {
-            if (args.Length > 1 || (args.Length == 1 && args[0] is not ("--inspect" or "--audit-native-identity" or "--audit-native-b-candidate" or "--audit-native-b-source" or "--audit-native-b-authorization" or "--audit-native-journal" or "--audit-native-worker" or "--audit-native-worker-ipc" or "--audit-native-worker-argv" or "--hold-native-journal-lease" or "--hold-native-journal-authority" or "--hold-native-prepared-abort" or "--hold-native-stable-shell-quiesce" or "--hold-native-main-a-shell-quiesce" or "--reconcile-native-prepared-abort" or "--startup" or "--uninstall")))
+            if (args.Length > 1 || (args.Length == 1 && args[0] is not ("--inspect" or "--audit-native-identity" or "--audit-native-b-candidate" or "--audit-native-b-source" or "--audit-native-b-authorization" or "--audit-native-a-file-id" or "--audit-native-journal" or "--audit-native-worker" or "--audit-native-worker-ipc" or "--audit-native-worker-argv" or "--hold-native-journal-lease" or "--hold-native-journal-authority" or "--hold-native-prepared-abort" or "--hold-native-stable-shell-quiesce" or "--hold-native-main-a-shell-quiesce" or "--reconcile-native-prepared-abort" or "--startup" or "--uninstall")))
                 throw new InvalidOperationException("Unsupported Guardian argument.");
             if (args.Length == 1 && args[0] == "--audit-native-identity")
             {
@@ -49,6 +49,11 @@ internal static partial class Program
             {
                 InspectOwnedSignedMainBCandidate();
                 return 0; // Cryptographic B audit only, never commit a journal stage.
+            }
+            if (args.Length == 1 && args[0] == "--audit-native-a-file-id")
+            {
+                InspectOriginalMainGuardianPhysicalFileId();
+                return 0; // OS kernel File ID baseline ONLY, no update or restore.
             }
             if (args.Length == 1 && args[0] == "--audit-native-journal")
             {
@@ -101,7 +106,7 @@ internal static partial class Program
                 return 0; // Retire only a fully verified dead prepared abort lock; no launch.
             }
             var inspection = InspectBaseline();
-            if (args.Length == 1 && args[0] is "--inspect" or "--audit-native-identity" or "--audit-native-b-candidate" or "--audit-native-b-source" or "--audit-native-b-authorization" or "--audit-native-journal" or "--audit-native-worker" or "--audit-native-worker-ipc" or "--audit-native-worker-argv") return 0;
+            if (args.Length == 1 && args[0] is "--inspect" or "--audit-native-identity" or "--audit-native-b-candidate" or "--audit-native-b-source" or "--audit-native-b-authorization" or "--audit-native-a-file-id" or "--audit-native-journal" or "--audit-native-worker" or "--audit-native-worker-ipc" or "--audit-native-worker-argv") return 0;
             using var process = Launch(inspection.Executable, args.Length == 0 ? null : args[0]);
             return process.Id > 0 ? 0 : 70;
         }
@@ -110,7 +115,7 @@ internal static partial class Program
             // Only the explicit inspection mode exposes bounded, static
             // validation errors to the disposable installed-host acceptance.
             // Never echo paths from OS exceptions or launch arguments.
-            if (args.Length == 1 && args[0] is "--inspect" or "--audit-native-identity" or "--audit-native-b-candidate" or "--audit-native-b-source" or "--audit-native-b-authorization" or "--audit-native-journal" or "--audit-native-worker" or "--audit-native-worker-ipc" or "--audit-native-worker-argv")
+            if (args.Length == 1 && args[0] is "--inspect" or "--audit-native-identity" or "--audit-native-b-candidate" or "--audit-native-b-source" or "--audit-native-b-authorization" or "--audit-native-a-file-id" or "--audit-native-journal" or "--audit-native-worker" or "--audit-native-worker-ipc" or "--audit-native-worker-argv")
             {
                 var reason = ex is InvalidDataException or InvalidOperationException or PlatformNotSupportedException
                     ? ex.Message : ex.GetType().Name;

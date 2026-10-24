@@ -1056,6 +1056,42 @@ try {
           $MainANativeRecord.previousNative = [ordered]@{kind='main';sourceSha=$JournalCurrent;runtimeContractSha256=$MainAContract}
           [IO.File]::WriteAllText($JournalData, ($MainANativeRecord | ConvertTo-Json -Depth 8))
           Assert-True ((Invoke-GuardianCheck '--audit-native-journal') -eq 0) 'Original Main A prepared journal identity changed during fixture setup.'
+          # Independently read the ORIGINAL installed Main A Guardian's kernel
+          # NTFS File ID from the Guardian's OWN read-only OS handle. Compare
+          # it with fsutil's separate OS witness, not a caller-supplied SHA.
+          # Neither process may change native A pointers/journal/registry.
+          $MainAFileIdJournalBefore = (Get-FileHash -LiteralPath $JournalData -Algorithm SHA256).Hash.ToLowerInvariant()
+          $MainAFileIdPointerBefore = (Get-FileHash -LiteralPath $MainAPointer -Algorithm SHA256).Hash.ToLowerInvariant()
+          $MainAFileIdGuardianBefore = (Get-FileHash -LiteralPath $GuardianExe -Algorithm SHA256).Hash.ToLowerInvariant()
+          $FileIdStart = [Diagnostics.ProcessStartInfo]::new($GuardianExe)
+          $FileIdStart.Arguments = '--audit-native-a-file-id'
+          $FileIdStart.UseShellExecute = $false
+          $FileIdStart.CreateNoWindow = $true
+          $FileIdStart.RedirectStandardOutput = $true
+          $FileIdStart.RedirectStandardError = $true
+          $FileIdProcess = [Diagnostics.Process]::Start($FileIdStart)
+          Assert-True ($null -ne $FileIdProcess) 'Native A Guardian kernel identity process did not start.'
+          try {
+            if (-not $FileIdProcess.WaitForExit(30000)) {
+              $FileIdProcess.Kill()
+              throw 'Native A Guardian kernel identity exceeded its timeout.'
+            }
+            $FileIdResult = $FileIdProcess.StandardOutput.ReadToEnd().Trim()
+            $FileIdDiagnostic = $FileIdProcess.StandardError.ReadToEnd().Trim()
+            Assert-True ($FileIdProcess.ExitCode -eq 0) ('Native A physical Guardian file-ID audit refused: ' + $FileIdDiagnostic)
+          } finally { $FileIdProcess.Dispose() }
+          Assert-True ($FileIdResult -cmatch '^MAIN_A_GUARDIAN_KERNEL_ID volume=[0-9a-f]{8} fileId=([0-9a-f]{16}) readOnly=true$') 'Native Guardian kernel File ID witness is absent or malformed.'
+          $NativeGuardianFileId = $Matches[1].ToLowerInvariant()
+          $SeparateFsutil = [string]::Join(' ', [string[]]@(& fsutil.exe file queryfileid $GuardianExe))
+          Assert-True ($LASTEXITCODE -eq 0 -and $SeparateFsutil -match '0x[0-9a-fA-F]{16,32}') 'Separate Windows kernel fsutil original Guardian File ID proof unavailable.'
+          $SeparateGuardianFileId = $Matches[0].Substring($Matches[0].Length - 16).ToLowerInvariant()
+          Assert-True ($NativeGuardianFileId -ceq $SeparateGuardianFileId) 'Native Main A Guardian disagrees with independent OS NTFS file identity.'
+          Assert-True (((Get-FileHash -LiteralPath $JournalData -Algorithm SHA256).Hash.ToLowerInvariant()) -ceq $MainAFileIdJournalBefore -and
+            ((Get-FileHash -LiteralPath $MainAPointer -Algorithm SHA256).Hash.ToLowerInvariant()) -ceq $MainAFileIdPointerBefore -and
+            ((Get-FileHash -LiteralPath $GuardianExe -Algorithm SHA256).Hash.ToLowerInvariant()) -ceq $MainAFileIdGuardianBefore) 'Guardian original A kernel ID inspection modified A journal, native pointer or executable bytes.'
+          Assert-True (-not (Test-Path -LiteralPath $JournalGuard)) 'Read-only old A Guardian physical identity accidentally opened a native writer lock.'
+          Write-Output "WINDOWS_NATIVE_ORIGINAL_MAIN_A_GUARDIAN_KERNEL_ID target=$FixtureTarget result=PASS"
+
           # A distinct SHA-addressed candidate B is deliberately NOT signed
           # newer release content here: the same packaged PE is used only to
           # exercise complete read-only native B integrity under real Win32.
