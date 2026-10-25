@@ -81,4 +81,4 @@ try {
   Assert-True (-not [IO.File]::Exists((Join-Path $root 'releases\6.2.0\new.exe'))) 'Failed candidate leaked into active releases.'
   Assert-Private
   Write-Output 'Real PowerShell backup functions PASS: prior broken source ignored, one backup, successful cleanup, failure restoration and unchanged user settings.'
-} finally { if ([IO.Directory]::Exists($fixture)) { [IO.Directory]::Delete($fixture,$true) } }
+} finally { if ([IO.Directory]::Exists($fixture)) { Remove-Item -LiteralPath $fixture -Recurse -Force -ErrorAction Stop } }
