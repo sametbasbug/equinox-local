@@ -1011,6 +1011,7 @@ try {
   $PositiveGuard = Join-Path $NativeTxRoot ("guardian-journal\.$PositiveTx.writer-lock")
   $PositiveAuthority = Join-Path $NativeTxRoot ("guardian-journal\$PositiveTx.native-authority.json")
   $PositiveCommit = Join-Path $NativeTxRoot ("guardian-journal\$PositiveTx.stage-b-commit.json")
+  $PositiveAbortCommit = Join-Path $NativeTxRoot ("guardian-journal\$PositiveTx.pre-switch-abort-commit.json")
   $PositiveTrigger = Join-Path $Work 'positive-stage-client.trigger'
   $OwnedWorkerScript = Join-Path $ManagedSourceRoot 'src\equinox-local-main-update-worker.js'
   $WitnessScript = Join-Path $Root 'tests\release\owned-windows-worker-proof.mjs'
@@ -1026,7 +1027,7 @@ try {
   # Refuse BEFORE entering any cleanup scope: never remove a pre-existing
   # Main transaction/slot even when a disposable test unexpectedly collides.
   foreach ($occupied in @($PositiveLock,$PositiveJournal,$PositiveReceipt,$PositiveHandoff,
-       $PositiveGuard,$PositiveAuthority,$PositiveCommit,$PositiveBRoot,$PositiveSource)) {
+       $PositiveGuard,$PositiveAuthority,$PositiveCommit,$PositiveAbortCommit,$PositiveBRoot,$PositiveSource)) {
     Assert-True (-not (Test-Path -LiteralPath $occupied)) 'Positive B fixture found occupied independent native owner or slot.'
   }
   $PositiveWorker = $null
@@ -1103,7 +1104,7 @@ try {
     $WorkerReplaced = $false
     Assert-True ((Invoke-GuardianCheck '--audit-native-worker-argv') -eq 0) 'Positive B worker OS argv source identity does not match committed source.'
     $BStageInfo = [Diagnostics.ProcessStartInfo]::new($GuardianExe)
-    $BStageInfo.Arguments = '--hold-native-stage-b'
+    $BStageInfo.Arguments = '--hold-native-stage-b-cancel'
     $BStageInfo.UseShellExecute = $false
     $BStageInfo.CreateNoWindow = $true
     $BStageInfo.RedirectStandardError = $true
@@ -1112,7 +1113,7 @@ try {
     [IO.File]::WriteAllText($PositiveTrigger, 'disposable-positive-b')
     $Staged = $false
     for ($i=0; $i -lt 450; $i++) {
-      if ([IO.File]::Exists($PositiveCommit)) { $Staged = $true; break }
+      if ([IO.File]::Exists($PositiveAbortCommit)) { $Staged = $true; break }
       if ($PositiveGuardian.HasExited) { break }
       Start-Sleep -Milliseconds 120
     }
@@ -1122,11 +1123,15 @@ try {
     Assert-True $Staged 'Verified product Git source and signed native B failed independently owned positive staging.'
     $StageValue = ConvertFrom-Json ([IO.File]::ReadAllText($PositiveJournal))
     $StageReceipt = ConvertFrom-Json ([IO.File]::ReadAllText($PositiveCommit))
-    Assert-True ($StageValue.stage -ceq 'native_staged' -and $StageValue.sequence -eq 1 -and
+    $CancelReceipt = ConvertFrom-Json ([IO.File]::ReadAllText($PositiveAbortCommit))
+    Assert-True ($StageValue.stage -ceq 'rollback_started' -and $StageValue.sequence -eq 2 -and
       $StageValue.targetSha -ceq $FixtureSourceSha -and
       $StageReceipt.stage -ceq 'native_staged' -and $StageReceipt.sequence -eq 1 -and
       $StageReceipt.nativeBFingerprintSha256 -ceq $Finger.sha256 -and
-      $StageReceipt.journalSha256 -ceq (Get-FileHash -LiteralPath $PositiveJournal -Algorithm SHA256).Hash.ToLowerInvariant()) 'Native B positive staged evidence is not exact durable source/contract/fingerprint evidence.'
+      $CancelReceipt.stage -ceq 'rollback_started' -and $CancelReceipt.sequence -eq 2 -and
+      $CancelReceipt.stagedJournalSha256 -ceq $StageReceipt.journalSha256 -and
+      $CancelReceipt.nativeBFingerprintSha256 -ceq $Finger.sha256 -and
+      $CancelReceipt.rollbackJournalSha256 -ceq (Get-FileHash -LiteralPath $PositiveJournal -Algorithm SHA256).Hash.ToLowerInvariant()) 'Native B positive staged-to-cancel evidence does not bind both durable source/contract/fingerprint generations.'
     Assert-True ((Get-FileHash -LiteralPath $StableExe -Algorithm SHA256).Hash -ceq $OriginalWpfHash) 'Positive B stage mutated running original A WPF bytes.'
     $AfterWpfOwners = @(Get-CimInstance Win32_Process -Filter "Name='EquinoxLocal.exe'" -ErrorAction SilentlyContinue |
       Where-Object { $_.ExecutablePath -and (Same-Path $_.ExecutablePath $StableExe) })
@@ -1135,7 +1140,7 @@ try {
       [string](Get-Item -LiteralPath $NativeRegistryKey).GetValue('') -ceq $OriginalRegistry) 'Positive B stage changed original A Native Messaging.'
     Assert-True ((Get-FileHash -LiteralPath (Join-Path $InstallRoot 'current-version.json') -Algorithm SHA256).Hash -ceq $OriginalStablePointerHash) 'Positive B stage changed installed A native pointer.'
     Assert-True (-not $PositiveGuardian.HasExited -and [IO.File]::Exists($PositiveGuard)) 'Staged B lost original independent OS writer lease.'
-    Write-Output "Windows $FixtureTarget actual product-Git and packaged signed-native B positive staging: prepared/0 to native_staged/1 PASSED (WPF/Native Messaging untouched; not activated)."
+    Write-Output "Windows $FixtureTarget actual product-Git B positive staging and pre-switch cancellation: prepared/0 to native_staged/1 to rollback_started/2 PASSED (A WPF/Native Messaging untouched; B never activated)."
   } finally {
     # Test-only owner reclamation. Real installation must never erase an
     # orphan lock automatically or restore a native journal without proof.
@@ -1150,7 +1155,7 @@ try {
       $PositiveWorker.Dispose()
     }
     if ($WorkerReplaced) { [IO.File]::WriteAllBytes($OwnedWorkerScript, $OriginalWorkerBytes) }
-    Remove-Item -LiteralPath $PositiveGuard,$PositiveAuthority,$PositiveCommit,$PositiveJournal,$PositiveLock,$PositiveReceipt,$PositiveHandoff,$PositiveTrigger -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $PositiveGuard,$PositiveAuthority,$PositiveCommit,$PositiveAbortCommit,$PositiveJournal,$PositiveLock,$PositiveReceipt,$PositiveHandoff,$PositiveTrigger -Force -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath $PositiveBRoot,$PositiveSource -Recurse -Force -ErrorAction SilentlyContinue
   }
   } # Positive B staging runs only in dedicated x64 Guardian CI.

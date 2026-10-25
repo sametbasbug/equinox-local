@@ -96,6 +96,14 @@ On exact 8b05504 [CI40159974403](https://github.com/sametbasbug/equinox-local/ac
 
 The test is now explicitly scoped to the dedicated hosted Guardian-only fixture; unrelated x64/ARM64 public installer and same-version repair lanes keep their original acceptance. The new SHA CI must pass before calling all platforms green. The test-specific B manifest and synthetic previous SHA remain a **fixture**, not independent production signing trust or proof of actual A/B switch, health or rollback. Production still fail-closes windowsAdmission:null; PR285 remains DRAFT and issue284 OPEN.
 
+### CP367 — First native pre-switch cancellation after accepted B stage (unreleased 2026-10-25)
+
+The corrective CP366 [exact CI40160549746](https://github.com/sametbasbug/equinox-local/actions/runs/40160549746) **COMPLETED SUCCESS: 19 successful jobs / 4 planned skips / zero failures**, including real Windows x64 *positive* native B staging, x64/ARM64 public installer/repair, and CodeQL40160549758 success with no new findings.
+
+The next opt-in command in the SAME signed Guardian, hold-native-stage-b-cancel, now drives a second **real OS-owned journal mutation** without stopping A: authenticates the same detached worker/lease/HMAC, stages actual immutable B prepared/0 to native_staged/1, then verifies the matching create-only prepared and B-stage receipts, exactly installed original Stable A bytes/pointer, user SID/logon, live old WPF kernel PID/birth and existing pipe ownership, and Chrome HKCU Native Messaging manifest and registry. Only while original A is still alive and unchanged can it durably write native_staged/1 to rollback_started/2, with a new create-only Guardian receipt binding old/new journal hashes, B fingerprint, Guardian PID and original WPF OS identity. Original WPF receives **no IPC command**; A/B binaries, active pointers, source, user settings and registry are not altered. The existing exclusive Guardian lock remains unreclaimed. This is NOT a terminal completed rollback, not permission to restore a switched B or update the production Main worker.
+
+A disposable hosted x64 real installed Guardian positive B-stage fixture now follows this native pre-switch cancellation path and verifies both durable receipts and original A unchanged. x64 native build and positive/negative acceptance must still pass on the NEW exact SHA before claiming this milestone works. Main production windowsAdmission:null, PR285 DRAFT, issue284 OPEN and signed physical A→healthy B→failed B→exact original A recovery remain intentionally blocked.
+
 ## Product contract
 
 - Public installers use the verified native bootstrap and enroll an admitted exact-SHA Main source by default after health checks; healthy existing Main is a verified no-op, not a forced reinstall or a downgrade. The signed numbered Stable bootstrap remains a historical/recovery transport, not a second active channel or user opt-in.

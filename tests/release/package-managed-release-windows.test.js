@@ -410,7 +410,7 @@ test("native journal authority accepts only kernel-PID+HMAC live prepared worker
   const source = await fs.readFile(new URL('../../native/windows/EquinoxLocal.Guardian/MainNativeJournalAuthority.cs', import.meta.url), 'utf8');
   const lease = await fs.readFile(new URL('../../native/windows/EquinoxLocal.Guardian/MainNativeJournalLease.cs', import.meta.url), 'utf8');
   assert.match(program, /--hold-native-journal-authority/u);
-  assert.match(lease, /RecordNativeJournalWorkerAuthority\(owner, root, worker, recordPreparedAbort, recordNativeStaged\)/u);
+  assert.match(lease, /RecordNativeJournalWorkerAuthority\(owner, root, worker, recordPreparedAbort, recordNativeStaged, cancelBeforeSwitch\)/u);
   assert.match(source, /GetNamedPipeClientProcessId\(listener\.SafePipeHandle/u);
   assert.match(source, /clientPid != owner\.Pid/u);
   assert.match(source, /stage"\)\.GetString\(\) != "prepared"/u);
@@ -810,7 +810,7 @@ test("hosted native Guardian positive B acceptance uses exact packaged SHA and p
     "guardian-native-fingerprint-fixture.mjs",
     "GITHUB_ACTIONS", "EQUINOX_LOCAL_TEST_JOURNAL_STAGE_TRIGGER",
     "audit-native-worker-ipc", "audit-native-worker-argv",
-    "hold-native-stage-b", "native_staged", "nativeBFingerprintSha256",
+    "hold-native-stage-b-cancel", "native_staged", "nativeBFingerprintSha256",
     "OriginalWpfHash", "OriginalManifestHash", "OriginalRegistry",
     "OriginalStablePointerHash", "WorkerReplaced",
   ]) {
@@ -819,7 +819,34 @@ test("hosted native Guardian positive B acceptance uses exact packaged SHA and p
   assert.match(script, /if \(\$GuardianAuditOnly\) \{\s*# Positive forward-stage evidence/u);
   assert.match(script, /\[IO.File\]::WriteAllBytes\(\$OwnedWorkerScript, \$OriginalWorkerBytes\)/u);
   assert.match(script, /Assert-True \$Staged/u);
-  assert.match(script, /\$StageValue.stage -ceq 'native_staged'/u);
+  assert.match(script, /\$StageValue.stage -ceq 'rollback_started'/u);
+});
+
+test("Guardian staged B cancellation cannot stop A or claim a completed A/B recovery", async () => {
+  const root = new URL("../../native/windows/EquinoxLocal.Guardian/", import.meta.url);
+  const [command, lease, authority, cancel] = await Promise.all([
+    "Program.cs", "MainNativeJournalLease.cs", "MainNativeJournalAuthority.cs",
+    "MainNativeStagedCancel.cs",
+  ].map((name) => fs.readFile(new URL(name, root), "utf8")));
+  assert.match(command, /"--hold-native-stage-b-cancel"/u);
+  assert.match(lease, /cancelBeforeSwitch/u);
+  assert.match(authority, /CancelNativeStagedBWithoutStoppingA\(owner, root, worker\)/u);
+  for (const required of [
+    "stage-b-commit.json", "native-authority.json", "pre-switch-abort-commit.json",
+    "FindSingleOwnedStableShell", "CompareNativeTrees", "GetNamedPipeServerProcessId",
+    "NativeMessagingRegistrySubkey", "current-version.json",
+    "rollback_started", "native_staged", "nativeBFingerprintSha256",
+    "stagedJournalSha256", "rollbackJournalSha256", "File.Move(temp, journalPath, overwrite: true)",
+    "FileMode.CreateNew", "FileOptions.WriteThrough", "CryptographicOperations.FixedTimeEquals",
+  ]) {
+    assert.ok(cancel.toLowerCase().includes(required.toLowerCase()), "Missing pre-switch native cancellation requirement: " + required);
+  }
+  assert.doesNotMatch(cancel, /Process\.Start|\.Kill\(|shutdown-for-update|File\.Copy|Registry\.SetValue|\.WriteAsync\(|shell\.CloseMainWindow|native_switched|File\.Delete\(/u);
+  assert.match(cancel, /Not terminal rolled_back or permission to clean an orphan lease/u);
+  const harness = await fs.readFile(new URL("./windows-installer-real-package-smoke.ps1", import.meta.url), "utf8");
+  assert.match(harness, /--hold-native-stage-b-cancel/u);
+  assert.match(harness, /\$StageValue.stage -ceq 'rollback_started'/u);
+  assert.match(harness, /\$CancelReceipt.stagedJournalSha256 -ceq \$StageReceipt.journalSha256/u);
 });
 
 test("Guardian forward B staging advances an authenticated prepared journal but cannot alter installed WPF or Native Messaging", async () => {
@@ -828,8 +855,8 @@ test("Guardian forward B staging advances an authenticated prepared journal but 
     "Program.cs", "MainNativeJournalLease.cs", "MainNativeJournalAuthority.cs", "MainNativeStageB.cs",
   ].map((name) => fs.readFile(new URL(name, root), "utf8")));
   assert.match(program, /args\[0\] == "--hold-native-stage-b"/u);
-  assert.match(lease, /RecordNativeJournalWorkerAuthority\(owner, root, worker, recordPreparedAbort, recordNativeStaged\)/u);
-  assert.match(authority, /if \(recordNativeStaged\) WriteNativeJournalStagedB\(owner, journalPath, journalBytes, digest\)/u);
+  assert.match(lease, /RecordNativeJournalWorkerAuthority\(owner, root, worker, recordPreparedAbort, recordNativeStaged, cancelBeforeSwitch\)/u);
+  assert.match(authority, /if \(recordNativeStaged\)\s*\{\s*WriteNativeJournalStagedB\(owner, journalPath, journalBytes, digest\)/u);
   for (const requirement of [
     "prepared", "native_staged", "sequence", "targetSha", "targetRuntimeContractSha256",
     "InspectOwnedMainGit(install, target, source, sourceSha)", "native-store.json",
@@ -863,7 +890,7 @@ test('Guardian authenticates one pinned prepared journal OS handle across HMAC a
   assert.match(body, /using var journal = JsonDocument.Parse\(pinnedJournal\)/u);
   assert.match(body, /pinnedJournal.ReadExactly\(journalBytes\)/u);
   assert.match(body, /CryptographicOperations.FixedTimeEquals\(digest, SHA256.HashData\(pinnedJournal\)\)/u);
-  assert.match(body, /pinnedJournal.Dispose\(\);\s*if \(recordNativeStaged\) WriteNativeJournalStagedB\(owner, journalPath, journalBytes, digest\);\s*else WriteNativeJournalPreparedAbort/u);
+  assert.match(body, /pinnedJournal.Dispose\(\);\s*if \(recordNativeStaged\)\s*\{\s*WriteNativeJournalStagedB\(owner, journalPath, journalBytes, digest\);\s*if \(cancelBeforeSwitch\) CancelNativeStagedBWithoutStoppingA/u);
   assert.doesNotMatch(body, /SHA256.HashData\(File.ReadAllBytes\(journalPath\)\)|var journalBytes = File.ReadAllBytes\(journalPath\)/u);
 });
 
