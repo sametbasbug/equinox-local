@@ -801,6 +801,27 @@ test('all Guardian native transition record reads validate size and parse on one
   assert.doesNotMatch(body, /FileInfo\(|File\.ReadAllBytes\(|FileShare\.(?:Delete|ReadWrite)|FileMode\.OpenOrCreate/u);
 });
 
+test("hosted native Guardian positive B acceptance uses exact packaged SHA and preserves signed old A", async () => {
+  const script = await fs.readFile(new URL("./windows-installer-real-package-smoke.ps1", import.meta.url), "utf8");
+  for (const required of [
+    "Positive forward-stage evidence", "$PositiveTarget = $ManagedSourceRoot",
+    "$PositiveBRoot = Join-Path $NativeTxRoot",
+    "Copy-Item -LiteralPath $ReleaseDir -Destination $PositiveRelease",
+    "guardian-native-fingerprint-fixture.mjs",
+    "GITHUB_ACTIONS", "EQUINOX_LOCAL_TEST_JOURNAL_STAGE_TRIGGER",
+    "audit-native-worker-ipc", "audit-native-worker-argv",
+    "hold-native-stage-b", "native_staged", "nativeBFingerprintSha256",
+    "OriginalWpfHash", "OriginalManifestHash", "OriginalRegistry",
+    "OriginalStablePointerHash", "WorkerReplaced",
+  ]) {
+    assert.ok(script.includes(required), "Missing genuine hosted B stage evidence: " + required);
+  }
+  assert.match(script, /if \(\$env:GITHUB_ACTIONS -cne 'true' -or -not \$GuardianAuditOnly\)/u);
+  assert.match(script, /\[IO.File\]::WriteAllBytes\(\$OwnedWorkerScript, \$OriginalWorkerBytes\)/u);
+  assert.match(script, /Assert-True \$Staged/u);
+  assert.match(script, /\$StageValue.stage -ceq 'native_staged'/u);
+});
+
 test("Guardian forward B staging advances an authenticated prepared journal but cannot alter installed WPF or Native Messaging", async () => {
   const root = new URL("../../native/windows/EquinoxLocal.Guardian/", import.meta.url);
   const [program, lease, authority, writer] = await Promise.all([
@@ -817,6 +838,7 @@ test("Guardian forward B staging advances an authenticated prepared journal but 
     "CryptographicOperations.FixedTimeEquals", "File.Move(temp, journalPath, overwrite: true)",
     "FileMode.CreateNew", "FileOptions.WriteThrough", "nativeBFingerprintSha256",
     "preparedJournalSha256", "journalSha256",
+    'metadata.GetProperty("sourceSha").GetString() != sourceSha',
     "using var stagedHandle = new FileStream(journalPath, FileMode.Open, FileAccess.Read, FileShare.Read)",
     "SHA256.HashData(stagedHandle)",
   ]) {

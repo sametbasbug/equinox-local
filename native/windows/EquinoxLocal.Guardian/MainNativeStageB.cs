@@ -76,6 +76,7 @@ internal static partial class Program
         using var releaseDoc = ReadOwnedTransitionRecord(Path.Combine(release, "release.json"), 16384);
         var metadata = releaseDoc.RootElement;
         if (metadata.GetProperty("schemaVersion").GetInt32() != 1 ||
+            metadata.GetProperty("sourceSha").GetString() != sourceSha ||
             metadata.GetProperty("target").GetString() != target ||
             metadata.GetProperty("version").GetString() != payloadVersion ||
             metadata.GetProperty("serverEntry").GetString() != "server.js")
