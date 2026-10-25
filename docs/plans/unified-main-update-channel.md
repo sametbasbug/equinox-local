@@ -110,6 +110,14 @@ Exact 7fc784d [CI40161391502](https://github.com/sametbasbug/equinox-local/actio
 
 The narrow repair explicitly disposes the authority writer **only after fully flushed durable proof**, and before the next independently verified staged-B cancel operation reads the receipt. Original exclusive Guardian writer lease remains held, no sharing mode is loosened, no retry/reclaim or bypass is introduced. Source regression requires this ordering; a new exact hosted x64 positive native acceptance result is still mandatory before claiming green. Production native switch/rollback remains disabled.
 
+### CP369 — Authenticated committed Main native boot (unreleased 2026-10-25)
+
+The focused previous SHA92af385 hosted [CI40161799553](https://github.com/sametbasbug/equinox-local/actions/runs/40161799553) completed **19 PASS / 4 planned SKIP / 0 FAIL**, including real x64 native B staging/cancellation and Windows x64/ARM64 installer/repair; CodeQL had no new alerts. We stopped adding standalone read-only Guardian pilot commands or alternative update frameworks.
+
+**A complete A/B release was impossible even after a hypothetical successful B switch:** the existing signed Guardian InspectBaseline() categorically refused every current-native.json Main pointer before reaching its dormant Main launch code. This change enables Guardian startup and inspect of a **committed, fully verified native Main snapshot only**: no active transaction/worker handoff is allowed, and the already existing InspectMainNativeIdentity() independently validates the pinned product-owned clean Git source, exact source/native pointers, native-store target/contract, full fingerprint, release metadata **including source SHA**, installed WPF byte-for-byte match and HKCU Native Messaging manifest+registration before Guardian resolves/launches the installed Main WPF. A changed source SHA, foreign manifest, modified release file or active transaction still rejects. Existing disposable Windows installed-host native identity fixture now expects success for verified committed Main inspect and refuses forged Main pointer or an active unfinished update.
+
+This is a **necessary post-commit B boot fix**, not permission for native_staged to switch native slots. Product worker still fails closed with windowsAdmission:null; native B startup/sustained health, bad B→EXACT original A rollback, kernel Guardian file-ID and user state acceptance on the physical Windows remain missing. Do not merge draft PR285 or publish 6.2.0 until the complete signed recovery is independently proven.
+
 ## Product contract
 
 - Public installers use the verified native bootstrap and enroll an admitted exact-SHA Main source by default after health checks; healthy existing Main is a verified no-op, not a forced reinstall or a downgrade. The signed numbered Stable bootstrap remains a historical/recovery transport, not a second active channel or user opt-in.

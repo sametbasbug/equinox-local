@@ -119,6 +119,7 @@ internal static partial class Program
         var metadata = releaseDoc.RootElement;
         if (metadata.ValueKind != JsonValueKind.Object ||
             metadata.GetProperty("schemaVersion").GetInt32() != 1 ||
+            metadata.GetProperty("sourceSha").GetString() != sourceSha ||
             metadata.GetProperty("target").GetString() != target ||
             metadata.GetProperty("version").GetString() != payloadVersion ||
             metadata.GetProperty("serverEntry").GetString() != "server.js")

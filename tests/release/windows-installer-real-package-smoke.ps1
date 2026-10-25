@@ -384,6 +384,11 @@ try {
     $NativeBrowserRuntime = Join-Path $ReleaseDir 'runtime\browser'
     Assert-True ([IO.File]::Exists((Join-Path $NativeBrowserRuntime 'equinox-browser-native-host.exe'))) 'Native Main identity test requires the signed release browser launcher.'
     Copy-Item -LiteralPath $NativeBrowserRuntime -Destination (Join-Path $NativeRuntimeProbe 'browser') -Recurse -ErrorAction Stop
+    # Committed Main Guardian boot selects the exact product-owned packaged
+    # Node from the immutable native slot, not the ambient runner Node.
+    $NativeNodeRuntime = Join-Path $ReleaseDir 'runtime\node'
+    Assert-True ([IO.File]::Exists((Join-Path $NativeNodeRuntime 'bin\node.exe'))) 'Main native boot fixture lacks its signed product Node.'
+    Copy-Item -LiteralPath $NativeNodeRuntime -Destination (Join-Path $NativeRuntimeProbe 'node') -Recurse -ErrorAction Stop
     Copy-Item -LiteralPath (Join-Path $ReleaseDir 'release.json') -Destination (Join-Path $NativeReleaseProbe 'release.json') -ErrorAction Stop
     $NativeContract = 'b' * 64
     $OwnedFingerprintNode = Join-Path $InstallRoot ("runtime\toolchain\node\26.12.1\$FixtureTarget\node.exe")
@@ -455,16 +460,18 @@ try {
       [IO.File]::WriteAllBytes($NativeReleaseJson, $MutatedNativeRelease)
       Assert-True ((Invoke-GuardianCheck '--audit-native-identity') -eq 70) 'Guardian trusted a mutated immutable native payload.'
     } finally { [IO.File]::WriteAllBytes($NativeReleaseJson, $OriginalNativeRelease) }
-    Assert-True ((Invoke-GuardianCheck '--inspect') -eq 70) 'Stable-only Guardian must never launch a native Main pointer by accident.'
+    Assert-True ((Invoke-GuardianCheck '--inspect') -eq 0) 'Guardian refused independently verified committed Main WPF snapshot.'
     $NativePointerProbeValue.sourceSha = 'a' * 40
     [IO.File]::WriteAllText($NativePointerProbe, ($NativePointerProbeValue | ConvertTo-Json -Depth 3))
     Assert-True ((Invoke-GuardianCheck '--audit-native-identity') -eq 70) 'Guardian trusted the wrong native Main source SHA.'
+    Assert-True ((Invoke-GuardianCheck '--inspect') -eq 70) 'Guardian allowed Main WPF launch with a forged committed native pointer.'
     $NativePointerProbeValue.sourceSha = $FixtureSourceSha
     [IO.File]::WriteAllText($NativePointerProbe, ($NativePointerProbeValue | ConvertTo-Json -Depth 3))
     $NativeActiveProbe = Join-Path $NativeTxRoot 'active.json'
     try {
       [IO.File]::WriteAllText($NativeActiveProbe, 'fail-closed-test-lock')
       Assert-True ((Invoke-GuardianCheck '--audit-native-identity') -eq 70) 'Guardian audited an unresolved native Main transaction.'
+      Assert-True ((Invoke-GuardianCheck '--inspect') -eq 70) 'Guardian launched Main while its original native transaction remained active.'
     } finally { Remove-Item -LiteralPath $NativeActiveProbe -Force -ErrorAction SilentlyContinue }
   } finally {
     # Restore independently registered Stable Native Messaging bytes before

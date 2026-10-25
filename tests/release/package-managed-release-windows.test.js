@@ -297,7 +297,7 @@ test("Windows package builds independent native Guardian for both CPU targets ou
   assert.match(csproj, /<SelfContained>true<\/SelfContained>/u);
   assert.match(csproj, /win-x64/u);
   assert.match(csproj, /win-arm64/u);
-  assert.match(source, /Main native switching is not activated/u);
+  assert.match(source, /InspectMainNativeIdentity\(\);/u);
   assert.match(source, /CompareNativeTrees\(sourceShell, programRoot\)/u);
   assert.match(source, /CryptographicOperations\.FixedTimeEquals/u);
   assert.match(source, /FileAccess\.Read, share/u);
@@ -342,13 +342,17 @@ test("independent Windows Guardian audits exact Main SHA/native-store identity w
   const inspector = await fs.readFile(new URL("../../native/windows/EquinoxLocal.Guardian/MainNativeIdentity.cs", import.meta.url), "utf8");
   assert.match(program, /args\[0\] == "--audit-native-identity"/u);
   assert.match(program, /Structural audit only; never a Main launch signal/u);
-  assert.match(program, /Main native switching is not activated for the Stable-only Guardian/u);
+  assert.match(program, /InspectMainNativeIdentity\(\);/u);
+  assert.match(program, /if \(File.Exists\(mainPointerPath\)\)\s*\{[^]*?InspectMainNativeIdentity\(\);/u);
+  assert.match(inspector, /native-full-fingerprint/u);
+
   assert.match(inspector, /current-source\.conf/u);
   assert.match(inspector, /current-native\.json/u);
   assert.match(inspector, /native-store/u);
   assert.match(inspector, /runtimeContractSha256/u);
   assert.match(inspector, /artifactSha256/u);
   assert.match(inspector, /CompareNativeTrees\(immutableShell, activeProgram\)/u);
+  assert.match(inspector, /metadata.GetProperty\("sourceSha"\).GetString\(\) != sourceSha/u);
   assert.match(inspector, /InspectOwnedMainGit\(install, target, expectedSource, sourceSha\)/u);
   const gitAudit = await fs.readFile(new URL("../../native/windows/EquinoxLocal.Guardian/MainGitIdentity.cs", import.meta.url), "utf8");
   assert.match(gitAudit, /PinnedWindowsGit = "2\.56\.0-1"/u);
@@ -392,7 +396,7 @@ test("independent Windows Guardian journal audit is read-only and binds active m
   const journal = await fs.readFile(new URL("../../native/windows/EquinoxLocal.Guardian/MainNativeJournalIdentity.cs", import.meta.url), "utf8");
   assert.match(program, /args\[0\] == "--audit-native-journal"/u);
   assert.match(program, /Receipt ownership audit ONLY; no resume or launch/u);
-  assert.match(program, /Main native switching is not activated for the Stable-only Guardian/u);
+  assert.match(program, /InspectMainNativeIdentity\(\);/u);
   for (const name of ["active.json", "receipts", "guardian-journal", "writer-lock", "previousNative", "targetRuntimeContractSha256", "receiptStartedAt"]) {
     assert.ok(journal.includes(name), `Missing native journal binding: ${name}`);
   }

@@ -7,9 +7,10 @@ using System.Text.RegularExpressions;
 namespace EquinoxLocal.Guardian;
 
 /// <summary>
-/// Independent, per-user native launcher. Deliberately supports the verified
-/// Stable WPF baseline only in this migration stage. Native Main switching
-/// requires the separately audited journal/slot protocol and is fail-closed.
+/// Independent, per-user native launcher. Launches only a verified Stable
+/// baseline or a fully committed, independently attested Main native snapshot.
+/// An active or orphaned transaction always blocks launch; this is NOT
+/// permission to switch native A/B or recover an unverified transaction.
 /// No network access, arbitrary executable, generic command or server.
 /// </summary>
 internal static partial class Program
@@ -150,8 +151,8 @@ internal static partial class Program
         if (!allowActiveOrphanForReconciliation && (File.Exists(updateLock) || Directory.Exists(updateLock)))
             throw new InvalidDataException("A Main update requires exact journal reconciliation before Guardian launch.");
         var nativePointer = Path.Combine(transactionRoot, "current-native.json");
-        if (File.Exists(nativePointer) || Directory.Exists(nativePointer))
-            throw new InvalidDataException("Main native switching is not activated for the Stable-only Guardian.");
+        if (Directory.Exists(nativePointer))
+            throw new InvalidDataException("Main native pointer is not a normal file.");
         var handoffDir = Path.Combine(transactionRoot, "handoff");
         if (Directory.Exists(handoffDir))
         {
@@ -174,7 +175,13 @@ internal static partial class Program
         var mainPointerPath = Path.Combine(installRoot, "state", "main-update", "current-native.json");
         if (File.Exists(mainPointerPath))
         {
-            InspectionPhase = "verify-main-native-baseline";
+            // Post-commit WPF launch is an entirely different privilege from
+            // updating the native slot. Verify the exact committed source Git,
+            // source/native pointers, complete SHA-addressed B payload, actual
+            // installed WPF bytes and HKCU Native Messaging FIRST. A partially
+            // advanced transaction or a forged pointer cannot launch Main.
+            InspectionPhase = "verify-committed-main-native-baseline";
+            InspectMainNativeIdentity();
             var node = ResolveOwnedMainWorkerNodePath(installRoot, target);
             var nodeBin = Path.GetDirectoryName(node)
                 ?? throw new InvalidDataException("Main native Node path has no directory.");
