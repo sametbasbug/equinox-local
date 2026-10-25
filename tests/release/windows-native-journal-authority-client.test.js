@@ -395,6 +395,10 @@ test('physical native A/B milestones require original Guardian fresh generation 
  for(let code=5;code<=14;code++)assert.match(csharp,new RegExp('opcode == '+code+'\\b'));
  assert.match(csharp,/InspectExactImmutableNativeBPayload\(owner, journal\)/u);
  assert.match(csharp,/stable-shell-quiesce\.json/u);
+ // An old signed A-exit receipt alone is NOT current shell_stopped proof.
+ // The original Guardian must observe no running WPF after verifying the
+ // exact receipt and before acknowledging opcode6's native milestone.
+ assert.match(csharp,/if \(opcode == 6\)[\s\S]*stable-shell-quiesce\.json[\s\S]*InspectOwnedAbsentNativeShellAfterStop\(owner, worker\)/u);
  assert.match(csharp,/InspectOwnedNativeShellPayload\(owner, journal, targetB: opcode == 7\)/u);
  assert.match(csharp,/InspectOwnedLiveNativeShellSustained\(owner, journal, opcode is 8 or 9 or 10, worker\)/u);
 });
@@ -448,7 +452,7 @@ test('signed Guardian opcode15 permits missing-B rollback only with exact rollba
  }
  const csharp=await fs.readFile(new URL('../../native/windows/EquinoxLocal.Guardian/MainNativeGuardianSession.cs',import.meta.url),'utf8');
  assert.match(csharp,/opcode == 15 && stage == "rollback_started"/u);
- assert.match(csharp,/InspectOwnedAbsentNativeShellForRollback\(owner, worker\)/u);
+ assert.match(csharp,/InspectOwnedAbsentNativeShellAfterStop\(owner, worker\)/u);
  assert.match(csharp,/Process.GetProcessesByName\("EquinoxLocal"\)/u);
  assert.match(csharp,/if \(!process.HasExited\)/u);
 });

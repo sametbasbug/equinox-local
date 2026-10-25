@@ -156,7 +156,7 @@ internal static partial class Program
         else if (opcode is 3 or 4)
             InspectOwnedLiveNativeShellSustained(owner, j, opcode == 3, worker);
         else if (opcode == 15)
-            InspectOwnedAbsentNativeShellForRollback(owner, worker);
+            InspectOwnedAbsentNativeShellAfterStop(owner, worker);
         else
             InspectOriginalGuardianPhysicalMilestone(owner, root, j, digest, opcode, worker);
 
@@ -176,15 +176,14 @@ internal static partial class Program
             : "native-session-stage-wpf-exit-confirmed";
     }
 
-    private static void InspectOwnedAbsentNativeShellForRollback(OwnedWorkerClaim owner, Process worker)
+    private static void InspectOwnedAbsentNativeShellAfterStop(OwnedWorkerClaim owner, Process worker)
     {
-        // If a crash occurs after original A exited but before B began
-        // running, THERE IS NO B TO SHUT DOWN. Instead of inventing a
-        // successful B shutdown receipt, require an independent kernel
-        // observation proving NO live EquinoxLocal WPF process exists.
+        // Both post-A shell_stopped and post-crash no-B rollback require an
+        // independent CURRENT OS observation, not an old signed exit receipt.
+        // A fresh/restarted A or B must stop journal advancement.
         // Fail closed on ANY same-name WPF including uninspectable/foreign
         // processes; never silently treat those as a stopped product shell.
-        InspectionPhase = "native-rollback-no-running-wpf-kernel-proof";
+        InspectionPhase = "native-transaction-no-running-wpf-kernel-proof";
         for (var observation = 0; observation < 2; observation++)
         {
             foreach (var process in Process.GetProcessesByName("EquinoxLocal"))
@@ -192,15 +191,15 @@ internal static partial class Program
                 using (process)
                 {
                     if (!process.HasExited)
-                        throw new InvalidDataException("Rollback cannot prove B absent while any EquinoxLocal WPF is live.");
+                        throw new InvalidDataException("Native stage requires no running EquinoxLocal WPF.");
                 }
             }
             if (worker.HasExited ||
                 worker.StartTime.ToUniversalTime().Ticks.ToString(CultureInfo.InvariantCulture) != owner.Ticks)
-                throw new InvalidDataException("Original native rollback worker exited during no-B OS proof.");
+                throw new InvalidDataException("Original native worker exited during no-WPF OS proof.");
             if (observation == 0) Thread.Sleep(400);
         }
-        InspectionPhase = "native-rollback-no-wpf-sustained-kernel-proof";
+        InspectionPhase = "native-transaction-no-wpf-sustained-kernel-proof";
     }
 
     private static void InspectOriginalGuardianPhysicalMilestone(
@@ -237,6 +236,10 @@ internal static partial class Program
                     Encoding.ASCII.GetBytes(proof.GetProperty("preparedJournalSha256").GetString() ?? ""),
                     Encoding.ASCII.GetBytes(Convert.ToHexStringLower(digest))))
                 throw new InvalidDataException("Original A WPF exit has no durable exact Guardian OS proof.");
+            // The signed exit receipt is historical. A restarted original A,
+            // unexpected B or foreign same-name WPF makes shell_stopped false
+            // regardless of who produced the previous authorized receipt.
+            InspectOwnedAbsentNativeShellAfterStop(owner, worker);
             return;
         }
         if (opcode == 7 || opcode == 12)
