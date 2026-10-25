@@ -153,6 +153,15 @@ internal static partial class Program
         var nativePointer = Path.Combine(transactionRoot, "current-native.json");
         if (Directory.Exists(nativePointer))
             throw new InvalidDataException("Main native pointer is not a normal file.");
+        // A signed owner crash leaves a durable OS-session lease, never an
+        // implicit green light to launch Main after partial A/B replacement.
+        var guardianJournalDir = Path.Combine(transactionRoot, "guardian-journal");
+        if (!allowActiveOrphanForReconciliation && Directory.Exists(guardianJournalDir))
+        {
+            RequireNormalDirectory(guardianJournalDir);
+            if (Directory.EnumerateFileSystemEntries(guardianJournalDir, "*.guardian-session-lock").Any())
+                throw new InvalidDataException("Unreconciled signed Guardian owner session blocks native launch.");
+        }
         var handoffDir = Path.Combine(transactionRoot, "handoff");
         if (Directory.Exists(handoffDir))
         {

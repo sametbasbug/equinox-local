@@ -526,6 +526,7 @@ try {
   $JournalReceipt = Join-Path $JournalReceiptDir ("$JournalId.json")
   $JournalData = Join-Path $JournalDataDir ("$JournalId.json")
   $JournalGuard = Join-Path $JournalDataDir (".$JournalId.writer-lock")
+  $JournalGuardianSession = Join-Path $JournalDataDir (".$JournalId.guardian-session-lock")
   $JournalAuthority = Join-Path $JournalDataDir ("$JournalId.native-authority.json")
   $JournalAuthorityTrigger = Join-Path $Work 'start-journal-authority-client.trigger'
   $JournalAbortTrigger = Join-Path $Work 'start-journal-abort-client.trigger'
@@ -681,9 +682,18 @@ try {
         Remove-Item -LiteralPath $JournalGuard -Force -ErrorAction SilentlyContinue
       }
       Assert-True ((Invoke-GuardianCheck '--audit-native-journal') -eq 0) 'Native journal did not recover after explicit disposable fixture reconciliation.'
-      # New Guardian authority mode is a real separate native process, not
-      # a JS journal writer. The exact Node PID answers its 256-bit challenge,
-      # and ONLY the native owner persists the prepared journal digest proof.
+      # The independent original-Guardian session cannot be started over an
+      # orphaned JS writer. Reject first, without consuming the live HMAC
+      # witness or changing any transaction state.
+      [IO.File]::WriteAllText($JournalGuard, 'foreign-js-writer')
+      try {
+        Assert-True ((Invoke-GuardianCheck '--hold-native-journal-authority') -eq 70) 'Guardian accepted a pre-existing foreign JS journal writer lock.'
+      } finally {
+        Remove-Item -LiteralPath $JournalGuard -Force -ErrorAction SilentlyContinue
+      }
+      # Existing authenticated Guardian authority is now a continuous
+      # independent session: it pins original kernel FILE ID, while REAL
+      # product Node owns the distinct short-lived JS .writer-lock.
       $AuthorityProcess = $null
       try {
         $AuthorityStart = [Diagnostics.ProcessStartInfo]::new($GuardianExe)
@@ -704,10 +714,19 @@ try {
           Write-Output ('Hosted native authority diagnostic: ' + $AuthorityProcess.StandardError.ReadToEnd())
         }
         Assert-True $AuthorityDurable 'Native Guardian refused the real worker kernel PID-bound nonce/HMAC journal authority proof.'
+        Assert-True ([IO.File]::Exists($JournalGuardianSession) -and -not [IO.File]::Exists($JournalGuard)) 'Independent signed Guardian session incorrectly seized the JS journal writer lock.'
+        # The REAL packaged Node binary, not a mock callback, must be able to
+        # acquire the journal's exclusive short-lived CREATE_NEW write guard
+        # while the kernel-owned signed Guardian session remains alive.
+        $WriterCode = "const fs=require('node:fs');const p=process.argv[1];fs.writeFileSync(p,'writer',{flag:'wx'});fs.unlinkSync(p)"
+        & $WorkerNode -e $WriterCode $JournalGuard
+        Assert-True ($LASTEXITCODE -eq 0 -and -not [IO.File]::Exists($JournalGuard) -and
+          -not $AuthorityProcess.HasExited) 'Actual JS journal writer collided with independently pinned original Guardian session.'
         Assert-True ((Invoke-GuardianCheck '--hold-native-journal-authority') -eq 70) 'Duplicate native authority owner silently replaced a live owner.'
         $AuthorityProcess.Kill()
         Assert-True ($AuthorityProcess.WaitForExit(5000)) 'Guardian authority process did not terminate under powercut fixture.'
-        Assert-True ([IO.File]::Exists($JournalGuard) -and [IO.File]::Exists($JournalAuthority)) 'Guardian authority powercut lost durable native evidence.'
+        Assert-True ([IO.File]::Exists($JournalGuardianSession) -and [IO.File]::Exists($JournalAuthority) -and
+          -not [IO.File]::Exists($JournalGuard)) 'Guardian authority powercut lost its original independent kernel owner lease.'
         $AuthorityRecord = ConvertFrom-Json ([IO.File]::ReadAllText($JournalAuthority))
         Assert-True ($AuthorityRecord.transactionId -ceq $JournalId -and
           $AuthorityRecord.stage -ceq 'prepared' -and $AuthorityRecord.sequence -eq 0 -and
@@ -725,7 +744,7 @@ try {
           try { $AuthorityProcess.WaitForExit(5000) | Out-Null } catch {}
           $AuthorityProcess.Dispose()
         }
-        Remove-Item -LiteralPath $JournalGuard -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $JournalGuardianSession -Force -ErrorAction SilentlyContinue
         Remove-Item -LiteralPath $JournalAuthority -Force -ErrorAction SilentlyContinue
         Remove-Item -LiteralPath $JournalAuthorityTrigger -Force -ErrorAction SilentlyContinue
       }

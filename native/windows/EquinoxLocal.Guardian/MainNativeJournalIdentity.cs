@@ -102,6 +102,7 @@ internal static partial class Program
             var name = Path.GetFileName(entry);
             if ((name.EndsWith(".writer-lock", StringComparison.OrdinalIgnoreCase) &&
                  !(allowExactPreparedAbortOrphanLock && name == "." + id + ".writer-lock")) ||
+                name.EndsWith(".guardian-session-lock", StringComparison.OrdinalIgnoreCase) ||
                 name.StartsWith("." + id + ".json.", StringComparison.OrdinalIgnoreCase))
                 throw new InvalidDataException("Unreconciled native journal writer or staging file blocks audit.");
         }

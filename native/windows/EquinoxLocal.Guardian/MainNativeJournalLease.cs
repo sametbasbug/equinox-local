@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Globalization;
 using System.Text;
+using Microsoft.Win32.SafeHandles;
 
 namespace EquinoxLocal.Guardian;
 
@@ -21,7 +22,19 @@ internal static partial class Program
             throw new InvalidDataException("Windows native journal lease has no canonical user root.");
         var root = Path.Combine(local, "Equinox Local", "state", "main-update", "guardian-journal");
         RequireNormalDirectory(root);
-        var leasePath = Path.Combine(root, "." + owner.TransactionId + ".writer-lock");
+        // Existing authenticated authority mode is the one continuous OS
+        // Guardian session. It must NOT take the JS journal's .writer-lock:
+        // that lock has exactly one writer, the transaction journal. Other
+        // historical one-shot native journal mutation modes still hold the
+        // exclusive writer-lock and cannot run beside the JS writer.
+        var continuousSession = acceptAuthorityProof && !recordPreparedAbort &&
+            !recordNativeStaged && !quiesceStableShell && !cancelBeforeSwitch;
+        var leasePath = Path.Combine(root, "." + owner.TransactionId +
+            (continuousSession ? ".guardian-session-lock" : ".writer-lock"));
+        if (continuousSession && (File.Exists(Path.Combine(root, "." + owner.TransactionId + ".writer-lock")) ||
+            Directory.Exists(Path.Combine(root, "." + owner.TransactionId + ".writer-lock"))))
+            throw new InvalidDataException("Orphan or active JS journal writer blocks independent Guardian session.");
+        using var originalGuardian = continuousSession ? PinNativeGuardianFileForSession() : null;
         using var worker = Process.GetProcessById(owner.Pid);
         if (worker.HasExited || worker.StartTime.ToUniversalTime().Ticks.ToString(CultureInfo.InvariantCulture) != owner.Ticks)
             throw new InvalidDataException("Windows journal lease worker exited during admission.");
@@ -40,6 +53,8 @@ internal static partial class Program
             RecordNativeJournalWorkerAuthority(owner, root, worker, recordPreparedAbort, recordNativeStaged, cancelBeforeSwitch);
         if (quiesceStableShell)
             QuiesceOwnedStableShell(owner, root, worker);
+        if (continuousSession)
+            VerifyPinnedNativeGuardianFile(originalGuardian!);
         // Deliberately no journal/receipt modifications and no automatic
         // cleanup. Worker exit or bounded lease expiry means a trusted
         // supervisor must reconcile before any further native mutation.
@@ -51,5 +66,42 @@ internal static partial class Program
             Thread.Sleep(150);
         }
         throw new InvalidOperationException("Windows native journal lease ended and requires explicit owner reconciliation.");
+    }
+
+    // Hold the original signed Guardian executable's kernel FILE ID throughout
+    // the native owner session. FILE_SHARE_READ excludes delete/rename by a
+    // later competing native update; no pathname-based identity reassignment.
+    private static SafeFileHandle PinNativeGuardianFileForSession()
+    {
+        InspectionPhase = "native-guardian-session-original-file-id";
+        if (!OperatingSystem.IsWindows())
+            throw new PlatformNotSupportedException("Guardian OS file identity requires Windows.");
+        var expected = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "Equinox Local", "runtime", "guardian", "EquinoxLocalGuardian.exe");
+        if (!Compare.Equals(Path.GetFullPath(Environment.ProcessPath ?? ""), Path.GetFullPath(expected)))
+            throw new InvalidDataException("Original Guardian executable is not the installed signed owner.");
+        RequireNormalFile(expected);
+        var handle = OpenNativeOrphanFileForRename(expected, NativeOrphanGenericRead,
+            NativeOrphanShareRead, 0, NativeOrphanOpenExisting, NativeOrphanOpenReparsePoint, 0);
+        try
+        {
+            VerifyPinnedNativeGuardianFile(handle);
+            return handle;
+        }
+        catch
+        {
+            handle.Dispose();
+            throw;
+        }
+    }
+
+    private static void VerifyPinnedNativeGuardianFile(SafeFileHandle handle)
+    {
+        if (handle.IsInvalid || handle.IsClosed ||
+            !ReadNativeOrphanHandleInformation(handle, out var info) ||
+            (info.Attributes & (NativeOrphanReparseAttribute | NativeOrphanDirectoryAttribute)) != 0 ||
+            info.LinkCount != 1 || info.SizeHigh == 0 && info.SizeLow == 0 ||
+            info.VolumeSerial == 0 || info.FileIndexHigh == 0 && info.FileIndexLow == 0)
+            throw new InvalidDataException("Original signed Guardian kernel file ID is not pinned.");
     }
 }

@@ -430,6 +430,29 @@ test("native journal authority accepts only kernel-PID+HMAC live prepared worker
   assert.doesNotMatch(source, /Process\.Start|Registry\.SetValue|\.writer-lock"\s*,\s*FileMode\.OpenOrCreate|"shell_stopped"|"switched"/u);
 });
 
+test("continuous signed Guardian session pins original kernel file ID but leaves JS journal writer as the sole writer", async () => {
+  const lease = await fs.readFile(new URL('../../native/windows/EquinoxLocal.Guardian/MainNativeJournalLease.cs', import.meta.url), 'utf8');
+  const osFile = await fs.readFile(new URL('../../native/windows/EquinoxLocal.Guardian/MainNativeOrphanHandleRename.cs', import.meta.url), 'utf8');
+  const hosted = await fs.readFile(new URL('./windows-installer-real-package-smoke.ps1', import.meta.url), 'utf8');
+  assert.match(lease, /continuousSession = acceptAuthorityProof && !recordPreparedAbort/u);
+  assert.match(lease, /continuousSession \? "\.guardian-session-lock" : "\.writer-lock"/u);
+  assert.match(lease, /Orphan or active JS journal writer blocks independent Guardian session/u);
+  assert.match(lease, /PinNativeGuardianFileForSession\(\)/u);
+  assert.match(lease, /OpenNativeOrphanFileForRename\(expected, NativeOrphanGenericRead,/u);
+  assert.match(lease, /NativeOrphanShareRead, 0, NativeOrphanOpenExisting, NativeOrphanOpenReparsePoint/u);
+  assert.match(lease, /info.VolumeSerial == 0 \|\| info.FileIndexHigh == 0 && info.FileIndexLow == 0/u);
+  assert.match(lease, /using var lease = new FileStream\(leasePath, FileMode.CreateNew/u);
+  const program = await fs.readFile(new URL('../../native/windows/EquinoxLocal.Guardian/Program.cs', import.meta.url), 'utf8');
+  const journal = await fs.readFile(new URL('../../native/windows/EquinoxLocal.Guardian/MainNativeJournalIdentity.cs', import.meta.url), 'utf8');
+  assert.match(program, /Unreconciled signed Guardian owner session blocks native launch/u);
+  assert.match(journal, /name.EndsWith\("\.guardian-session-lock"/u);
+  assert.match(osFile, /ReadNativeOrphanHandleInformation/u);
+  assert.match(hosted, /Guardian accepted a pre-existing foreign JS journal writer lock/u);
+  assert.match(hosted, /const fs=require\('node:fs'\);const p=process.argv\[1\]/u);
+  assert.match(hosted, /Actual JS journal writer collided with independently pinned original Guardian session/u);
+  assert.doesNotMatch(lease, /FileMode\.OpenOrCreate|\.Delete\(leasePath\)|File\.Move\(|Process\.Kill/u);
+});
+
 test("native Guardian WPF graceful quiesce requires exact OS shell PID and live worker authority without Main activation", async () => {
   const code = await fs.readFile(new URL('../../native/windows/EquinoxLocal.Guardian/MainNativeStableShellQuiesce.cs', import.meta.url), 'utf8');
   const lease = await fs.readFile(new URL('../../native/windows/EquinoxLocal.Guardian/MainNativeJournalLease.cs', import.meta.url), 'utf8');
