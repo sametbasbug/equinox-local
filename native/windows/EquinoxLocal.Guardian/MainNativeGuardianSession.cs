@@ -15,6 +15,8 @@ internal static partial class Program
 {
     // SAME pinned signed Guardian OS process and original worker HMAC.
     // No new CLI, service, journal writer or independently spawnable agent.
+    // 0 = read-only independently authenticated ORIGINAL live Guardian session
+    //     (every valid original journal generation, including prepared/0)
     // 1 = graceful native A shutdown at native_staged
     // 2 = graceful native B shutdown at rollback_started
     // 3 = sustained native B WPF OS identity at restarted/healthy
@@ -51,10 +53,14 @@ internal static partial class Program
         if (j.GetProperty("schemaVersion").GetInt32() != 1 ||
             j.GetProperty("channel").GetString() != "main" ||
             j.GetProperty("transactionId").GetString() != owner.TransactionId ||
-            stage is not ("native_staged" or "rollback_started" or
+            stage is not ("prepared" or "native_staged" or "shell_stopped" or
+                "switched" or "rollback_started" or
                 "restarted" or "healthy" or "committed" or
                 "rollback_native_restored" or "rollback_healthy" or "rolled_back") ||
-            sequence is < 1 or > 9)
+            sequence is < 0 or > 9 ||
+            (stage == "prepared" && sequence != 0) ||
+            (stage == "shell_stopped" && sequence != 2) ||
+            (stage == "switched" && sequence != 3))
             throw new InvalidDataException("Native session request has no authorized A/B stage.");
 
         journalHandle.Position = 0;
@@ -72,7 +78,8 @@ internal static partial class Program
             offset += count;
         }
         var opcode = reply[0];
-        if (!((opcode == 1 && stage == "native_staged" && sequence == 1) ||
+        if (!((opcode == 0) ||
+              (opcode == 1 && stage == "native_staged" && sequence == 1) ||
               (opcode == 2 && stage == "rollback_started" && sequence is >= 1 and <= 6) ||
               (opcode == 3 && ((stage == "restarted" && sequence == 4) ||
                                (stage == "healthy" && sequence == 5) ||
@@ -107,7 +114,14 @@ internal static partial class Program
         // named-pipe server PID/actual graceful exit checks own the effects.
         // Nothing here swaps native bytes or writes Main journal transitions.
         InspectionPhase = "native-session-authorized-wpf-side-effect";
-        if (opcode == 1)
+        if (opcode == 0)
+        {
+            // Fresh nonce + exact journal + kernel client PID and original
+            // Guardian NTFS File ID ONLY. Never claim a WPF health/stop,
+            // native byte switch or independently completed JS milestone.
+            InspectionPhase = "native-session-live-original-os-owner";
+        }
+        else if (opcode == 1)
         {
             // A forged native_staged marker is NOT evidence of a loadable B.
             // Use EXACTLY the same full SHA-addressed Git/native manifest,
@@ -132,8 +146,8 @@ internal static partial class Program
         journalHandle.Dispose();
         server.WriteByte(1);
         server.Flush();
-        InspectionPhase = opcode is 3 or 4
-            ? "native-session-sustained-os-wpf-identity-confirmed"
+        InspectionPhase = opcode == 0 ? "native-session-original-os-owner-confirmed"
+            : opcode is 3 or 4 ? "native-session-sustained-os-wpf-identity-confirmed"
             : "native-session-stage-wpf-exit-confirmed";
     }
 

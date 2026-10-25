@@ -241,6 +241,7 @@ try {
     // the separate installed-host test exercises actual product Node-spawned
     // Guardian/HMAC/lease. Never let this synthetic slot fixture spawn a
     // real product Guardian or impersonate production native admission.
+    attestGuardianSessionImpl: async () => {},
     authenticateSignedGuardianImpl: async identity => ({
       originalSignedOwner: true, guardianPid: 733, workerPid: process.pid,
       workerStartTimeUtcTicks: owner.startTimeUtcTicks,

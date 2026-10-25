@@ -35,6 +35,7 @@ function fixture({ stage = 'ready_to_switch', token = TOKEN, pid = 1234, process
     journalFactory: () => journal,
     // Unit fixture cannot spawn a signed Windows executable on macOS/Linux.
     // The PRODUCT DEFAULT is the real signed Guardian process/HMAC/OS lease.
+    attestGuardianSessionImpl: async () => { calls.push('guardian-live-hmac'); },
     authenticateSignedGuardianImpl: async (identity) => {
       calls.push('signed-guardian');
       assert.equal(identity.transactionId, ID);
@@ -51,11 +52,11 @@ test('real Windows worker admission binds product Stable Node, PID, secret, rece
   const value = await admitWindowsMainNativeWorkerJournal(f.options);
   assert.equal(value.admitted, true);
   assert.equal(value.journal, f.journal);
-  assert.deepEqual(f.calls, ['create', 'read', 'signed-guardian']);
+  assert.deepEqual(f.calls, ['create', 'read', 'signed-guardian', 'guardian-live-hmac']);
   assert.deepEqual(f.getStored().previousNative, f.previousNative);
   const again = fixture({ journalRecord: f.getStored() });
   assert.equal((await admitWindowsMainNativeWorkerJournal(again.options)).admitted, true);
-  assert.deepEqual(again.calls, ['create', 'read', 'signed-guardian']);
+  assert.deepEqual(again.calls, ['create', 'read', 'signed-guardian', 'guardian-live-hmac']);
 });
 
 test('resuming interrupted Windows worker never invents missing durable journal', async () => {
@@ -177,4 +178,19 @@ test('full native admission refuses any forged, missing or mismatched signed Gua
  });
  assert.equal(value.ownerOnly,true);
  assert.equal(attempts,0);
+});
+
+test('full signed native admission rejects a historically valid durable Guardian receipt if the live kernel/HMAC owner no longer answers', async()=>{
+ const fixtureResult=fixture();
+ await assert.rejects(admitWindowsMainNativeWorkerJournal({
+   ...fixtureResult.options,
+   attestGuardianSessionImpl:async()=>{throw Error('Original signed Guardian process exited after durable receipt');},
+ }),/Original signed Guardian process exited after durable receipt/u);
+ assert.deepEqual(fixtureResult.calls,['create','read','signed-guardian']);
+ const only=fixture();
+ const admitted=await admitWindowsMainNativeWorkerJournal({
+   ...only.options,ownerOnly:true,
+   attestGuardianSessionImpl:async()=>{throw Error('unexpected signed stage probe');},
+ });
+ assert.equal(admitted.ownerOnly,true);
 });

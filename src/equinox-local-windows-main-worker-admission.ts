@@ -14,7 +14,7 @@ import {
 import { createEquinoxLocalWindowsNativeTransitionJournal } from './equinox-local-windows-native-transition-journal.js';
 import { readEquinoxLocalMainNativePointer } from './equinox-local-main-native-state.js';
 import { parseEquinoxVersion } from './equinox-local-updater.js';
-import { proveEquinoxWindowsNativeJournalAuthority } from './equinox-local-windows-native-journal-authority-client.js';
+import { attestEquinoxWindowsOriginalGuardianSession, proveEquinoxWindowsNativeJournalAuthority } from './equinox-local-windows-native-journal-authority-client.js';
 
 type AdmissionFs = typeof fs;
 type WorkerOwnerResult = Awaited<ReturnType<typeof readWindowsMainUpdateWorkerOwnership>>;
@@ -49,6 +49,7 @@ type AdmissionOptions = {
   verifyMilestone?: () => Promise<boolean>;
   ownerOnly?: boolean;
   authenticateSignedGuardianImpl?: typeof authenticateOriginalWindowsGuardianOwner;
+  attestGuardianSessionImpl?: typeof attestEquinoxWindowsOriginalGuardianSession;
   sleepImpl?: (ms: number) => Promise<unknown>;
   ownershipAttempts?: number;
 };
@@ -232,6 +233,7 @@ export async function admitWindowsMainNativeWorkerJournal({
   verifyMilestone = async () => false,
   ownerOnly = false,
   authenticateSignedGuardianImpl = authenticateOriginalWindowsGuardianOwner,
+  attestGuardianSessionImpl = attestEquinoxWindowsOriginalGuardianSession,
   sleepImpl = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
   ownershipAttempts = 25,
 }: AdmissionOptions = {}): Promise<WorkerAdmission> {
@@ -339,5 +341,12 @@ export async function admitWindowsMainNativeWorkerJournal({
       !Number.isSafeInteger(guardian.guardianPid) || guardian.guardianPid < 1) {
     throw new Error('Original signed Guardian OS owner is not independently admitted.');
   }
+  // Durable receipt alone is historical evidence: the Guardian may already
+  // have exited. The SAME ORIGINAL signed executable must answer a second,
+  // fresh per-current-journal HMAC from this exact OS worker before admission.
+  // The independent Guardian verifies its own pinned NTFS FILE ID/kernel PID.
+  await attestGuardianSessionImpl({
+    transactionId: receipt.transactionId, transactionRoot, workerToken, platform:'win32',
+  });
   return Object.freeze({ admitted: true, journal, record, ownedNode, guardian });
 }

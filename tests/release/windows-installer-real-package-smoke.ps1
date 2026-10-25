@@ -723,10 +723,25 @@ try {
           Write-Output ('Original product Node Guardian admission safe category: ' + [string]$OwnerResult.category)
           throw 'Original product-owned Node did not gain signed Guardian kernel OS session admission.'
         }
-        Assert-True ($OwnerResult.originalSignedOwner -eq $true -and $OwnerResult.workerPid -eq $WorkerProcess.Id -and
-          $OwnerResult.workerStartTimeUtcTicks -ceq $WorkerRecord.startTimeUtcTicks -and
-          $OwnerResult.guardianPid -is [int]) 'Installed product Node failed original signed Guardian HMAC/OS identity admission.'
-        $AuthorityProcess = [Diagnostics.Process]::GetProcessById([int]$OwnerResult.guardianPid)
+        # ConvertFrom-Json can materialize a JSON integer as Int32 or Int64
+        # depending on PowerShell edition/CPU. Type-checking [int] was wrongly
+        # rejecting real ARM64 owners. Validate canonical bounded decimal PID
+        # and re-open that same LIVE OS process below instead.
+        $GuardianPidText = [string]$OwnerResult.guardianPid
+        $GuardianPid = [int]0
+        $GuardianPidValid = ($GuardianPidText -cmatch '^[1-9][0-9]{0,9}$') -and
+          [int]::TryParse($GuardianPidText, [Globalization.NumberStyles]::None,
+            [Globalization.CultureInfo]::InvariantCulture, [ref]$GuardianPid) -and $GuardianPid -gt 0
+        $GuardianOwnerValid = ($OwnerResult.originalSignedOwner -eq $true -and
+          $OwnerResult.workerPid -eq $WorkerProcess.Id -and
+          $OwnerResult.workerStartTimeUtcTicks -ceq $WorkerRecord.startTimeUtcTicks)
+        if (-not $GuardianOwnerValid -or -not $GuardianPidValid) {
+          # Safe boolean diagnostic only: no PID, path, timestamp or token.
+          Write-Output ('Original Guardian strict owner checks: owner=' + [bool]$GuardianOwnerValid +
+            ';pid=' + [bool]$GuardianPidValid)
+        }
+        Assert-True ($GuardianOwnerValid -and $GuardianPidValid) 'Installed product Node failed original signed Guardian HMAC/OS identity admission.'
+        $AuthorityProcess = [Diagnostics.Process]::GetProcessById($GuardianPid)
         Assert-True ($null -ne $AuthorityProcess -and -not $AuthorityProcess.HasExited -and
           [IO.File]::Exists($JournalAuthority)) 'Original signed Guardian did not durably hold kernel-bound owner session.'
         $AuthorityDurable = $true

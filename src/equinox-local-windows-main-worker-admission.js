@@ -7,7 +7,7 @@ import { inspectWindowsMainUpdateWorkerProcess, readWindowsMainUpdateWorkerOwner
 import { createEquinoxLocalWindowsNativeTransitionJournal } from './equinox-local-windows-native-transition-journal.js';
 import { readEquinoxLocalMainNativePointer } from './equinox-local-main-native-state.js';
 import { parseEquinoxVersion } from './equinox-local-updater.js';
-import { proveEquinoxWindowsNativeJournalAuthority } from './equinox-local-windows-native-journal-authority-client.js';
+import { attestEquinoxWindowsOriginalGuardianSession, proveEquinoxWindowsNativeJournalAuthority } from './equinox-local-windows-native-journal-authority-client.js';
 function hasErrorCode(error, code) {
     return error !== null && typeof error === "object" && "code" in error && error.code === code;
 }
@@ -180,7 +180,7 @@ export async function authenticateOriginalWindowsGuardianOwner({ transactionId, 
  * This is admission, NOT permission to kill WPF or switch directories:
  * milestones remain fail-closed unless a separate verified supervisor exists.
  */
-export async function admitWindowsMainNativeWorkerJournal({ receipt, transition, installation, transactionRoot, engine, workerToken = process.env.EQUINOX_LOCAL_MAIN_WORKER_TOKEN, workerPid = process.pid, workerNodePath = process.execPath, nativeHelperPath = null, fsImpl = fs, execFileImpl, readWorkerImpl = readWindowsMainUpdateWorkerOwnership, inspectWorkerImpl = inspectWindowsMainUpdateWorkerProcess, readPointerImpl = readEquinoxLocalMainNativePointer, journalFactory = createEquinoxLocalWindowsNativeTransitionJournal, verifyMilestone = async () => false, ownerOnly = false, authenticateSignedGuardianImpl = authenticateOriginalWindowsGuardianOwner, sleepImpl = (ms) => new Promise((resolve) => setTimeout(resolve, ms)), ownershipAttempts = 25, } = {}) {
+export async function admitWindowsMainNativeWorkerJournal({ receipt, transition, installation, transactionRoot, engine, workerToken = process.env.EQUINOX_LOCAL_MAIN_WORKER_TOKEN, workerPid = process.pid, workerNodePath = process.execPath, nativeHelperPath = null, fsImpl = fs, execFileImpl, readWorkerImpl = readWindowsMainUpdateWorkerOwnership, inspectWorkerImpl = inspectWindowsMainUpdateWorkerProcess, readPointerImpl = readEquinoxLocalMainNativePointer, journalFactory = createEquinoxLocalWindowsNativeTransitionJournal, verifyMilestone = async () => false, ownerOnly = false, authenticateSignedGuardianImpl = authenticateOriginalWindowsGuardianOwner, attestGuardianSessionImpl = attestEquinoxWindowsOriginalGuardianSession, sleepImpl = (ms) => new Promise((resolve) => setTimeout(resolve, ms)), ownershipAttempts = 25, } = {}) {
     if (!receipt || !TX.test(receipt.transactionId ?? '') || !SHA.test(receipt?.currentSha ?? '') ||
         !SHA.test(receipt?.targetSha ?? '') || receipt.currentSha === receipt.targetSha ||
         !VALID_RESUME.has(receipt.stage) || !['promoting', 'verifying'].includes(receipt.status) ||
@@ -294,5 +294,12 @@ export async function admitWindowsMainNativeWorkerJournal({ receipt, transition,
         !Number.isSafeInteger(guardian.guardianPid) || guardian.guardianPid < 1) {
         throw new Error('Original signed Guardian OS owner is not independently admitted.');
     }
+    // Durable receipt alone is historical evidence: the Guardian may already
+    // have exited. The SAME ORIGINAL signed executable must answer a second,
+    // fresh per-current-journal HMAC from this exact OS worker before admission.
+    // The independent Guardian verifies its own pinned NTFS FILE ID/kernel PID.
+    await attestGuardianSessionImpl({
+        transactionId: receipt.transactionId, transactionRoot, workerToken, platform: 'win32',
+    });
     return Object.freeze({ admitted: true, journal, record, ownedNode, guardian });
 }

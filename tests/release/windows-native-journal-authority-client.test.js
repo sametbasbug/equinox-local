@@ -5,7 +5,7 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import {proveEquinoxWindowsNativeJournalAuthority,proveEquinoxWindowsNativeBRollbackAuthority,requestEquinoxWindowsOwnedNativeShellShutdown,requestEquinoxWindowsOwnedNativeShellHealth} from '../../src/equinox-local-windows-native-journal-authority-client.js';
+import {proveEquinoxWindowsNativeJournalAuthority,proveEquinoxWindowsNativeBRollbackAuthority,requestEquinoxWindowsOwnedNativeShellShutdown,requestEquinoxWindowsOwnedNativeShellHealth,attestEquinoxWindowsOriginalGuardianSession} from '../../src/equinox-local-windows-native-journal-authority-client.js';
 
 const tx = `main-${'a'.repeat(32)}`;
 const token = 'e'.repeat(64);
@@ -283,4 +283,56 @@ test('the SAME live signed Guardian requires independent sustained B and restore
    platform:'test',fixturePipePath:pipe,
   }),/unrelated native A\/B journal generation/u);
  }
+});
+
+test('original Guardian read-only opcode zero authenticates fresh kernel owner at every legal journal stage, but never grants native shutdown',async t=>{
+ const root=await fs.mkdtemp(path.join(os.tmpdir(),'equinox-native-owner-'));
+ t.after(()=>fs.rm(root,{recursive:true,force:true}));
+ await fs.mkdir(path.join(root,'guardian-journal'));
+ const file=path.join(root,'guardian-journal',tx+'.json');
+ const pipe=path.join(root,'read-owner.sock');
+ const nonce=Buffer.alloc(32,29);
+ let count=0;
+ let raw=Buffer.alloc(0);
+ const server=net.createServer(socket=>{
+  const expected=createHmac('sha256',Buffer.from(token,'hex'))
+   .update('equinox-local-guardian-native-stage-v1:')
+   .update(Buffer.from([0])).update(nonce)
+   .update(createHash('sha256').update(raw).digest()).digest();
+  let bytes=Buffer.alloc(0);
+  socket.on('data',chunk=>{
+   bytes=Buffer.concat([bytes,chunk]);
+   if(bytes.length===33){
+    assert.equal(bytes[0],0);
+    assert.deepEqual(bytes.subarray(1),expected);
+    count++;
+    socket.end(Buffer.from([1]));
+   }
+  });
+  socket.write(nonce);
+ });
+ await new Promise(resolve=>server.listen(pipe,resolve));
+ t.after(()=>new Promise(resolve=>server.close(resolve)));
+ for(const [stage,sequence] of [['prepared',0],['native_staged',1],['shell_stopped',2],
+  ['switched',3],['restarted',4],['healthy',5],['committed',6],
+  ['rollback_started',3],['rollback_native_restored',4],['rollback_healthy',5],['rolled_back',6]]){
+  raw=Buffer.from(JSON.stringify({transactionId:tx,stage,sequence}));
+  await fs.writeFile(file,raw);
+  await attestEquinoxWindowsOriginalGuardianSession({
+   transactionId:tx,transactionRoot:root,workerToken:token,platform:'test',
+   fixturePipePath:pipe,
+  });
+ }
+ assert.equal(count,11);
+ for(const [stage,sequence] of [['prepared',1],['shell_stopped',3],['switched',2],['alien',4]]){
+  await fs.writeFile(file,JSON.stringify({transactionId:tx,stage,sequence}));
+  await assert.rejects(attestEquinoxWindowsOriginalGuardianSession({
+   transactionId:tx,transactionRoot:root,workerToken:token,platform:'test',
+   fixturePipePath:pipe,
+  }),/unrelated native A\/B journal generation/u);
+ }
+ const guardian=await fs.readFile(new URL('../../native/windows/EquinoxLocal.Guardian/MainNativeGuardianSession.cs',import.meta.url),'utf8');
+ assert.match(guardian,/opcode == 0/u);
+ assert.match(guardian,/native-session-live-original-os-owner/u);
+ assert.ok(guardian.indexOf('if (opcode == 0)')<guardian.indexOf('QuiesceOwnedStableShell(owner, root, worker, continuousNativeSession: true)'));
 });

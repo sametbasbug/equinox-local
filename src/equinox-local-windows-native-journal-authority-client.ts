@@ -61,14 +61,22 @@ async function connectOriginalGuardianStagePipe(pipe:string):Promise<net.Socket>
 // This is the SAME independently signed Guardian kernel owner session,
 // not a new executable or bearer-only native shell permission.
 const SESSION_DOMAIN = Buffer.from('equinox-local-guardian-native-stage-v1:', 'ascii');
+// The kernel-attested original Guardian remains alive AND owns this exact
+// journal generation. It grants no A/B WPF action or milestone assertion.
+export async function attestEquinoxWindowsOriginalGuardianSession(
+  options:AuthorityProofOptions,
+):Promise<void> {
+  return requestEquinoxWindowsOwnedNativeShellShutdown({...options, release:'A', signedOwnerOnly:true});
+}
+
 export async function requestEquinoxWindowsOwnedNativeShellHealth(options:AuthorityProofOptions & {release:'A'|'B'}):Promise<void> {
   return requestEquinoxWindowsOwnedNativeShellShutdown({...options, sustainedHealth:true});
 }
 
 export async function requestEquinoxWindowsOwnedNativeShellShutdown({
   transactionId, transactionRoot, workerToken, platform = process.platform,
-  fixturePipePath = null, release, sustainedHealth = false,
-}:AuthorityProofOptions & {release:'A'|'B'; sustainedHealth?:boolean}):Promise<void> {
+  fixturePipePath = null, release, sustainedHealth = false, signedOwnerOnly = false,
+}:AuthorityProofOptions & {release:'A'|'B'; sustainedHealth?:boolean; signedOwnerOnly?:boolean}):Promise<void> {
   if (!TX.test(transactionId ?? '') || !TOKEN.test(workerToken ?? '') ||
       typeof transactionRoot !== 'string' || !path.isAbsolute(transactionRoot) ||
       path.normalize(transactionRoot) !== transactionRoot ||
@@ -76,7 +84,8 @@ export async function requestEquinoxWindowsOwnedNativeShellShutdown({
       (platform === 'win32' && fixturePipePath !== null) || !['A','B'].includes(release)) {
     throw new Error('Native Guardian session command has invalid exact worker identity.');
   }
-  const opcode = sustainedHealth ? (release === 'A' ? 4 : 3) : (release === 'A' ? 1 : 2);
+  const opcode = signedOwnerOnly ? 0 :
+    sustainedHealth ? (release === 'A' ? 4 : 3) : (release === 'A' ? 1 : 2);
   const handle = await fs.open(path.join(transactionRoot!, 'guardian-journal', transactionId! + '.json'),
     fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0));
   let raw:Buffer;
@@ -88,7 +97,20 @@ export async function requestEquinoxWindowsOwnedNativeShellShutdown({
     if (raw.length < 2 || raw.length > 8192) throw new Error('Native stage journal exceeds its bound.');
   } finally { await handle.close(); }
   const j = recordOrNull(JSON.parse(raw.toString('utf8')));
-  const valid = opcode === 1
+  const seq = typeof j?.sequence === 'number' && Number.isSafeInteger(j.sequence) ? j.sequence : -1;
+  const valid = opcode === 0
+    ? (j?.stage === 'prepared' && seq === 0) ||
+      (j?.stage === 'native_staged' && seq === 1) ||
+      (j?.stage === 'shell_stopped' && seq === 2) ||
+      (j?.stage === 'switched' && seq === 3) ||
+      (j?.stage === 'restarted' && seq === 4) ||
+      (j?.stage === 'healthy' && seq === 5) ||
+      (j?.stage === 'committed' && seq === 6) ||
+      (j?.stage === 'rollback_started' && Number.isInteger(seq) && seq >= 1 && seq <= 6) ||
+      (j?.stage === 'rollback_native_restored' && Number.isInteger(seq) && seq >= 2 && seq <= 7) ||
+      (j?.stage === 'rollback_healthy' && Number.isInteger(seq) && seq >= 3 && seq <= 8) ||
+      (j?.stage === 'rolled_back' && Number.isInteger(seq) && seq >= 4 && seq <= 9)
+    : opcode === 1
     ? j?.stage === 'native_staged' && j.sequence === 1
     : opcode === 2
       ? j?.stage === 'rollback_started' && Number.isInteger(j.sequence) &&
