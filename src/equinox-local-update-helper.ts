@@ -1,3 +1,4 @@
+import { constants as fsConstants } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -113,17 +114,19 @@ export async function recordEquinoxLocalUpdateHelperFailure(error:unknown, {
     const directory = await fs.lstat(logsRoot);
     if (!directory.isDirectory() || directory.isSymbolicLink()) return false;
     const logPath = path.join(logsRoot, "windows-shell-runtime.log");
-    const existing = await fs.lstat(logPath).catch((failure:NodeJS.ErrnoException) => {
-      if (failure.code === "ENOENT") return null;
-      throw failure;
-    });
-    if (existing && (!existing.isFile() || existing.isSymbolicLink())) return false;
-    if (existing && existing.size > WINDOWS_SHELL_LOG_MAX_BYTES) {
-      const previous = await fs.readFile(logPath);
-      await fs.writeFile(logPath, previous.subarray(-WINDOWS_SHELL_LOG_MAX_BYTES / 2));
+    // Open exactly once with no symlink following. A prior lstat followed by
+    // append/rotation is racy and could overwrite a foreign file on replacement.
+    const flags = fsConstants.O_WRONLY | fsConstants.O_APPEND | fsConstants.O_CREAT | fsConstants.O_NOFOLLOW;
+    const log = await fs.open(logPath, flags, 0o600);
+    try {
+      const info = await log.stat();
+      // Native WPF owns rotation of this shared log; never truncate its data.
+      if (!info.isFile() || info.size >= WINDOWS_SHELL_LOG_MAX_BYTES) return false;
+      await log.writeFile(line);
+      return true;
+    } finally {
+      await log.close();
     }
-    await fs.appendFile(logPath, line, { mode: 0o600 });
-    return true;
   } catch {
     // Logging must never interfere with the update/rollback decision.
     return false;

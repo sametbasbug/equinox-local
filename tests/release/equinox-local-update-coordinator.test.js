@@ -433,6 +433,13 @@ test("helper diagnostics fail closed on symlink targets and do not expose unclas
     new Error("super-secret"), { platform: "win32", env: { LOCALAPPDATA: localAppData }, argv: ["--activate", "bad"] },
   ), false);
   assert.equal(await fs.readFile(outside, "utf8"), "untouched");
+  // A full native WPF log is never truncated/replaced by the detached helper.
+  await fs.rm(path.join(logsRoot, "windows-shell-runtime.log"));
+  await fs.writeFile(path.join(logsRoot, "windows-shell-runtime.log"), "x".repeat(64 * 1024));
+  assert.equal(await recordEquinoxLocalUpdateHelperFailure(
+    Error("unclassified private failure"), { platform: "win32", env: { LOCALAPPDATA: localAppData }, argv: ["--activate", "6.2.0"] },
+  ), false);
+  assert.equal((await fs.stat(path.join(logsRoot, "windows-shell-runtime.log"))).size, 64 * 1024);
   assert.equal(await recordEquinoxLocalUpdateHelperFailure(
     Error("cannot log"), { platform: "darwin", env: { LOCALAPPDATA: localAppData } },
   ), false);

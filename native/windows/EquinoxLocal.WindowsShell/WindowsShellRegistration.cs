@@ -29,7 +29,7 @@ internal static class WindowsShellRegistration
             throw new InvalidDataException("Main source version declaration is unavailable or unsafe.");
         var declaration = File.ReadAllText(versionFile);
         var match = System.Text.RegularExpressions.Regex.Match(declaration,
-            @"(?m)^export const EQUINOX_LOCAL_VERSION = ""((?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*))"";$");
+            @"(?m)^export const EQUINOX_LOCAL_VERSION = ""((?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*))"";\r?$");
         if (!match.Success || System.Text.RegularExpressions.Regex.Matches(declaration, "EQUINOX_LOCAL_VERSION").Count != 1)
             throw new InvalidDataException("Main source version declaration is ambiguous.");
         return match.Groups[1].Value;
