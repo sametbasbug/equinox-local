@@ -831,6 +831,7 @@ test("Guardian staged B cancellation cannot stop A or claim a completed A/B reco
   assert.match(command, /"--hold-native-stage-b-cancel"/u);
   assert.match(lease, /cancelBeforeSwitch/u);
   assert.match(authority, /CancelNativeStagedBWithoutStoppingA\(owner, root, worker\)/u);
+  assert.match(authority, /fd.Flush\(flushToDisk: true\);\s*\/\/ The CREATE_NEW authority receipt[^]*?fd.Dispose\(\);\s*InspectionPhase = "native-journal-authority-proof-durable"/u);
   for (const required of [
     "stage-b-commit.json", "native-authority.json", "pre-switch-abort-commit.json",
     "FindSingleOwnedStableShell", "CompareNativeTrees", "GetNamedPipeServerProcessId",

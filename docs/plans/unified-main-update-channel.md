@@ -104,6 +104,12 @@ The next opt-in command in the SAME signed Guardian, hold-native-stage-b-cancel,
 
 A disposable hosted x64 real installed Guardian positive B-stage fixture now follows this native pre-switch cancellation path and verifies both durable receipts and original A unchanged. x64 native build and positive/negative acceptance must still pass on the NEW exact SHA before claiming this milestone works. Main production windowsAdmission:null, PR285 DRAFT, issue284 OPEN and signed physical A→healthy B→failed B→exact original A recovery remain intentionally blocked.
 
+### CP367 native Windows acceptance fix — durable authority FileShare.None lifetime (2026-10-25)
+
+Exact 7fc784d [CI40161391502](https://github.com/sametbasbug/equinox-local/actions/runs/40161391502) **FAILED** in the dedicated Windows x64 real Guardian positive staging/cancellation case, while native package compilation, other Windows installer/repair lanes and [CodeQL40161391522](https://github.com/sametbasbug/equinox-local/actions/runs/40161391522) succeeded. Exact x64 job log reports Guardian phase native-journal-bounded-read, IOException 0x80070020 (Windows sharing violation) during the new second-stage read. Root cause: RecordNativeJournalWorkerAuthority flushed its create-only native authority receipt, but retained the C# using-var FILE_SHARE_NONE writer handle until the whole method returned; the second-stage same-process read was legitimately refused by Windows.
+
+The narrow repair explicitly disposes the authority writer **only after fully flushed durable proof**, and before the next independently verified staged-B cancel operation reads the receipt. Original exclusive Guardian writer lease remains held, no sharing mode is loosened, no retry/reclaim or bypass is introduced. Source regression requires this ordering; a new exact hosted x64 positive native acceptance result is still mandatory before claiming green. Production native switch/rollback remains disabled.
+
 ## Product contract
 
 - Public installers use the verified native bootstrap and enroll an admitted exact-SHA Main source by default after health checks; healthy existing Main is a verified no-op, not a forced reinstall or a downgrade. The signed numbered Stable bootstrap remains a historical/recovery transport, not a second active channel or user opt-in.

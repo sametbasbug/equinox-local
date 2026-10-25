@@ -135,6 +135,10 @@ internal static partial class Program
             writer.Flush();
         }
         fd.Flush(flushToDisk: true);
+        // The CREATE_NEW authority receipt is complete and durable. Close
+        // its FILE_SHARE_NONE writer handle BEFORE the second native milestone
+        // rereads the same receipt; Windows must never bypass file sharing.
+        fd.Dispose();
         InspectionPhase = "native-journal-authority-proof-durable";
         if (recordPreparedAbort || recordNativeStaged)
         {
