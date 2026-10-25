@@ -40,6 +40,7 @@ $StableExe = $null
 
 try {
   if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) { throw 'Real Windows installer smoke requires Windows.' }
+  & (Join-Path $Root 'tests/release/windows-signed-reinstall-backup-smoke.ps1')
   # This CI-only lane still performs a real fresh install followed by repair;
   # the separate full installer lane retains all Guardian security-negative
   # and native A/B rollback acceptance on another disposable hosted runner.
@@ -1382,8 +1383,14 @@ try {
       Assert-True ([IO.File]::Exists($file)) "Same-version repair user proof is missing: $file"
       $beforeHashes[$file] = (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash
     }
+    # Simulate exactly the previously observed user failure: the old Main
+    # source is no longer a Git checkout. The freshly signed PowerShell
+    # reinstall must NOT inspect/repair/boot that old Git source at all.
+    $oldGitHead = Join-Path $ManagedSourceRoot '.git\HEAD'
+    if ([IO.File]::Exists($oldGitHead)) { [IO.File]::WriteAllText($oldGitHead,'not-a-git-checkout') }
     $EnrollExistingMain = $false
     Invoke-EquinoxLocalInstall | Out-Host
+    Assert-True (-not [IO.Directory]::Exists((Join-Path $InstallRoot '.equinox-signed-reinstall-backup'))) 'Successful reinstall retained old Main executable backup.'
     $afterStatus = (Invoke-WebRequest -UseBasicParsing -Uri 'http://127.0.0.1:24891/api/v1/status' -TimeoutSec 8).Content | ConvertFrom-Json
     Assert-True ($afterStatus.ok -eq $true -and $afterStatus.status.health.state -ceq 'HEALTHY') 'Same-version signed Stable repair did not launch a healthy runtime.'
     Assert-True ([string]$afterStatus.status.server.version -ceq $FixtureVersion) 'Same-version signed Stable repair reported another version.'
