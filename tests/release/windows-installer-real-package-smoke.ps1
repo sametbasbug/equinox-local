@@ -991,11 +991,12 @@ try {
   }
   Assert-True ((Invoke-GuardianCheck '--audit-native-journal') -eq 70) 'Guardian accepted an orphan journal after its owning active receipt disappeared.'
   Write-Output "Windows $FixtureTarget Guardian native journal ownership audit positive/negative hosted acceptance PASSED."
+  if ($GuardianAuditOnly) {
   # Positive forward-stage evidence on a NEW disposable transaction. Unlike
   # the earlier forged-B negative, B here is the exact real installed signed
   # release bytes paired with the genuine pinned, clean product Git checkout.
   # No update/switch is ever admitted; old Stable WPF stays live.
-  if ($env:GITHUB_ACTIONS -cne 'true' -or -not $GuardianAuditOnly) { throw 'Positive native B staging requires isolated hosted Guardian acceptance.' }
+  if ($env:GITHUB_ACTIONS -cne 'true') { throw 'Positive native B staging requires isolated hosted Guardian acceptance.' }
   $PositiveTx = 'main-' + ('5' * 32)
   $PositiveCurrent = $(if ($FixtureSourceSha -ceq ('a' * 40)) { 'b' * 40 } else { 'a' * 40 })
   $PositiveSource = Join-Path $NativeTxRoot ("sources\$PositiveCurrent")
@@ -1152,6 +1153,7 @@ try {
     Remove-Item -LiteralPath $PositiveGuard,$PositiveAuthority,$PositiveCommit,$PositiveJournal,$PositiveLock,$PositiveReceipt,$PositiveHandoff,$PositiveTrigger -Force -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath $PositiveBRoot,$PositiveSource -Recurse -Force -ErrorAction SilentlyContinue
   }
+  } # Positive B staging runs only in dedicated x64 Guardian CI.
   if ($GuardianAuditOnly) {
     # The full real installer lane independently checks WPF, Node, native
     # messaging and user state. On this isolated runner the complete Guardian

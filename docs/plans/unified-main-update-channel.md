@@ -90,6 +90,12 @@ The hosted Guardian-only disposable Windows acceptance now performs a **separate
 
 This is a **positive staging candidate**, not yet accepted until the exact hosted Windows x64 Guardian run passes. The test prepares its own receipt/manifest and an artificial previous source identity, so success will establish genuine release B bytes and product Git/OS-owned staging only, **not** production-signed end-to-end A/B eligibility, B startup, health or rollback. Production still passes windowsAdmission:null, and PR #285 stays DRAFT/UNMERGED with issue #284 open.
 
+### CP366 acceptance follow-up — x64 positive staged, ARM64 fixture-lane guard corrected (2026-10-25)
+
+On exact 8b05504 [CI40159974403](https://github.com/sametbasbug/equinox-local/actions/runs/40159974403), the **dedicated Windows x64 real installed Guardian job succeeded** and its real OS log explicitly recorded the first successful genuine-package/clean-Git B staging prepared/0 to native_staged/1 with old A WPF and Native Messaging unchanged. CodeQL40159974385 succeeded. **The aggregate CI failed**, however, because the new positive fixture threw in the separate ARM64 public installer lane rather than being restricted to the Guardian-only lane; this was a test scope error, not a demonstrated B staging rejection or native ARM64 package defect. The x64 headless and ARM64 foundation jobs consequently failed as aggregate dependencies.
+
+The test is now explicitly scoped to the dedicated hosted Guardian-only fixture; unrelated x64/ARM64 public installer and same-version repair lanes keep their original acceptance. The new SHA CI must pass before calling all platforms green. The test-specific B manifest and synthetic previous SHA remain a **fixture**, not independent production signing trust or proof of actual A/B switch, health or rollback. Production still fail-closes windowsAdmission:null; PR285 remains DRAFT and issue284 OPEN.
+
 ## Product contract
 
 - Public installers use the verified native bootstrap and enroll an admitted exact-SHA Main source by default after health checks; healthy existing Main is a verified no-op, not a forced reinstall or a downgrade. The signed numbered Stable bootstrap remains a historical/recovery transport, not a second active channel or user opt-in.

@@ -816,7 +816,7 @@ test("hosted native Guardian positive B acceptance uses exact packaged SHA and p
   ]) {
     assert.ok(script.includes(required), "Missing genuine hosted B stage evidence: " + required);
   }
-  assert.match(script, /if \(\$env:GITHUB_ACTIONS -cne 'true' -or -not \$GuardianAuditOnly\)/u);
+  assert.match(script, /if \(\$GuardianAuditOnly\) \{\s*# Positive forward-stage evidence/u);
   assert.match(script, /\[IO.File\]::WriteAllBytes\(\$OwnedWorkerScript, \$OriginalWorkerBytes\)/u);
   assert.match(script, /Assert-True \$Staged/u);
   assert.match(script, /\$StageValue.stage -ceq 'native_staged'/u);
