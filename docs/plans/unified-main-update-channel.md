@@ -130,6 +130,12 @@ The diagnostic SHA 0389e8f [CI40163957517](https://github.com/sametbasbug/equino
 
 The fixture now freezes the originally verified SHA-256 as an independent string before any mutation, restores from that immutable digest and requires a positive independent exact Main identity audit after restoration. It retains the positive committed Main Guardian inspect and negative forged-pointer/active transaction checks. The exact corrective Windows x64+ARM64 hosted CI must pass before accepting CP369 boot as working; this test-only repair does not permit production native switching or relax signature/OS ownership.
 
+### CP370 closed — committed Main native boot acceptance GREEN (2026-10-25)
+
+Exact corrective public SHA cb0a03addb4b9be00b17e6989993cf2edba77684 [CI40164302497](https://github.com/sametbasbug/equinox-local/actions/runs/40164302497) **COMPLETED SUCCESS: 19 passed / 4 planned skips / 0 failures**. The dedicated hosted Windows x64 real Guardian acceptance and ARM64 public installer/repair now pass with the exact packaged native bytes, including positive committed Main native audit and Guardian inspect, wrong SHA, dirty Git, forged release fingerprint, changed native messaging and active unclosed transaction negative cases. [CodeQL40164302500](https://github.com/sametbasbug/equinox-local/actions/runs/40164302500) SUCCESS with no new alerts. The apparent Guardian failure was a test-only aliased fingerprint that now restores its true initial digest correctly. No native Guardian permission or ownership check was relaxed.
+
+**Product still not release-ready**: production Main worker continues to pass windowsAdmission:null and refuses WPF replacement without an independently OS-owned signed supervisor. No complete live original A→working B→deliberately broken B→exact original A rollback has been demonstrated with kernel Guardian file-ID, Chrome Native Messaging, private tunnel and user settings on the physical consumer Windows. DRAFT PR285 remains unmerged, issue284 OPEN, public Main and installed private factory remain on their current versions.
+
 ## Product contract
 
 - Public installers use the verified native bootstrap and enroll an admitted exact-SHA Main source by default after health checks; healthy existing Main is a verified no-op, not a forced reinstall or a downgrade. The signed numbered Stable bootstrap remains a historical/recovery transport, not a second active channel or user opt-in.
