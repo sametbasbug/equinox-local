@@ -135,6 +135,8 @@ internal static partial class Program
             journal.GetProperty("target").GetString() != target ||
             !((stage == "prepared" && sequence == 0) ||
               (stage == "native_staged" && sequence == 1) ||
+              (stage == "shell_stopped" && sequence == 2) ||
+              (stage == "switched" && sequence == 3) ||
               (stage == "restarted" && sequence == 4) ||
               (stage == "healthy" && sequence == 5) ||
               (stage == "committed" && sequence == 6)) ||

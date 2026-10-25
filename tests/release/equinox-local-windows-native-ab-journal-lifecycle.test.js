@@ -313,3 +313,19 @@ test('native A→B failure rollback proves B shutdown before B quarantine and A 
   assert.ok(shutdown>=0 && restoreMessage>shutdown,'real A restore may not begin before B shutdown proof');
   assert.equal(await f.readExe(),'trusted WPF-A');
 });
+
+test('rollback before native shell-stop restores exact A without pretending the original running A is a B process',async t=>{
+ const prepared=await fixture(t,{denyBQuiesce:true});
+ const result=await prepared.lifecycle.rollback();
+ assert.equal(result.stage,'rollback_native_restored');
+ assert.equal((await prepared.journal.read(ID)).sequence,2);
+ assert.equal(await prepared.readExe(),'trusted WPF-A');
+ assert.equal(prepared.getPointer(),'A');
+ assert.equal(prepared.calls.includes('quiesce-owned-B'),false);
+ const staged=await fixture(t,{denyBQuiesce:true});
+ await staged.journal.advance(ID,{from:'prepared',to:'native_staged',sequence:0});
+ await staged.lifecycle.rollback();
+ assert.equal((await staged.journal.read(ID)).stage,'rollback_native_restored');
+ assert.equal(await staged.readExe(),'trusted WPF-A');
+ assert.equal(staged.calls.includes('quiesce-owned-B'),false);
+});

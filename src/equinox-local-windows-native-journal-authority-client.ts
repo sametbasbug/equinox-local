@@ -69,6 +69,20 @@ export async function attestEquinoxWindowsOriginalGuardianSession(
   return requestEquinoxWindowsOwnedNativeShellShutdown({...options, release:'A', signedOwnerOnly:true});
 }
 
+const PHYSICAL_MILESTONES = Object.freeze({
+  native_staged: 5, shell_stopped: 6, switched: 7, restarted: 8,
+  healthy: 9, committed: 10, rollback_started: 11,
+  rollback_native_restored: 12, rollback_healthy: 13, rolled_back: 14,
+} as const);
+
+export async function attestEquinoxWindowsNativePhysicalMilestone(
+  options:AuthorityProofOptions & {to:keyof typeof PHYSICAL_MILESTONES},
+):Promise<void> {
+  return requestEquinoxWindowsOwnedNativeShellShutdown({
+    ...options, release:'B', signedMilestone:options.to,
+  });
+}
+
 export async function requestEquinoxWindowsOwnedNativeShellHealth(options:AuthorityProofOptions & {release:'A'|'B'}):Promise<void> {
   return requestEquinoxWindowsOwnedNativeShellShutdown({...options, sustainedHealth:true});
 }
@@ -76,7 +90,9 @@ export async function requestEquinoxWindowsOwnedNativeShellHealth(options:Author
 export async function requestEquinoxWindowsOwnedNativeShellShutdown({
   transactionId, transactionRoot, workerToken, platform = process.platform,
   fixturePipePath = null, release, sustainedHealth = false, signedOwnerOnly = false,
-}:AuthorityProofOptions & {release:'A'|'B'; sustainedHealth?:boolean; signedOwnerOnly?:boolean}):Promise<void> {
+  signedMilestone,
+}:AuthorityProofOptions & {release:'A'|'B'; sustainedHealth?:boolean; signedOwnerOnly?:boolean;
+  signedMilestone?:keyof typeof PHYSICAL_MILESTONES}):Promise<void> {
   if (!TX.test(transactionId ?? '') || !TOKEN.test(workerToken ?? '') ||
       typeof transactionRoot !== 'string' || !path.isAbsolute(transactionRoot) ||
       path.normalize(transactionRoot) !== transactionRoot ||
@@ -84,8 +100,9 @@ export async function requestEquinoxWindowsOwnedNativeShellShutdown({
       (platform === 'win32' && fixturePipePath !== null) || !['A','B'].includes(release)) {
     throw new Error('Native Guardian session command has invalid exact worker identity.');
   }
-  const opcode = signedOwnerOnly ? 0 :
-    sustainedHealth ? (release === 'A' ? 4 : 3) : (release === 'A' ? 1 : 2);
+  const opcode = signedMilestone === undefined
+    ? signedOwnerOnly ? 0 : sustainedHealth ? (release === 'A' ? 4 : 3) : (release === 'A' ? 1 : 2)
+    : PHYSICAL_MILESTONES[signedMilestone];
   const handle = await fs.open(path.join(transactionRoot!, 'guardian-journal', transactionId! + '.json'),
     fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0));
   let raw:Buffer;
@@ -98,7 +115,23 @@ export async function requestEquinoxWindowsOwnedNativeShellShutdown({
   } finally { await handle.close(); }
   const j = recordOrNull(JSON.parse(raw.toString('utf8')));
   const seq = typeof j?.sequence === 'number' && Number.isSafeInteger(j.sequence) ? j.sequence : -1;
-  const valid = opcode === 0
+  const valid = opcode >= 5 && opcode <= 14
+    ? (opcode === 5 && j?.stage === 'prepared' && seq === 0) ||
+      (opcode === 6 && j?.stage === 'native_staged' && seq === 1) ||
+      (opcode === 7 && j?.stage === 'shell_stopped' && seq === 2) ||
+      (opcode === 8 && j?.stage === 'switched' && seq === 3) ||
+      (opcode === 9 && j?.stage === 'restarted' && seq === 4) ||
+      (opcode === 10 && j?.stage === 'healthy' && seq === 5) ||
+      (opcode === 11 && (j?.stage === 'prepared' && seq === 0 ||
+        j?.stage === 'native_staged' && seq === 1 ||
+        j?.stage === 'shell_stopped' && seq === 2 ||
+        j?.stage === 'switched' && seq === 3 ||
+        j?.stage === 'restarted' && seq === 4 ||
+        j?.stage === 'healthy' && seq === 5)) ||
+      (opcode === 12 && j?.stage === 'rollback_started' && seq >= 1 && seq <= 6) ||
+      (opcode === 13 && j?.stage === 'rollback_native_restored' && seq >= 2 && seq <= 7) ||
+      (opcode === 14 && j?.stage === 'rollback_healthy' && seq >= 3 && seq <= 8)
+    : opcode === 0
     ? (j?.stage === 'prepared' && seq === 0) ||
       (j?.stage === 'native_staged' && seq === 1) ||
       (j?.stage === 'shell_stopped' && seq === 2) ||

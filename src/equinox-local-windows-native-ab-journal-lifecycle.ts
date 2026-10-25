@@ -147,7 +147,16 @@ export function createWindowsJournaledNativeABLifecycle({
         // owner must prove B is gone (or never started) before any B→A rename.
         // The current native Guardian only proves Stable A shutdown; never
         // reinterpret that older proof as permission to stop or replace B.
-        if (await quiesceOwnedB!({ transactionId: transactionId!, programRoot: programRoot!, sourceSha: targetSha! }) !== true) {
+        // Journal generation 1 or 2 means we never entered shell_stopped:
+        // no A→B slot rename could have been attempted by the sole journal
+        // writer. A is still the installed slot (independently checked again
+        // by slotRestore). Asking the Guardian to shut down B would instead
+        // target the STILL RUNNING original A and incorrectly make early
+        // rollback unrecoverable. From generation 3 onward a partial rename
+        // is possible, so NEVER skip the signed B shutdown gate there.
+        if (record.sequence >= 3 && await quiesceOwnedB!({
+          transactionId: transactionId!, programRoot: programRoot!, sourceSha: targetSha!,
+        }) !== true) {
           throw new Error('Independent Windows native B WPF shutdown is not verified before rollback.');
         }
         if ((await owned()).stage !== 'rollback_started') {

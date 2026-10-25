@@ -5,7 +5,7 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import {proveEquinoxWindowsNativeJournalAuthority,proveEquinoxWindowsNativeBRollbackAuthority,requestEquinoxWindowsOwnedNativeShellShutdown,requestEquinoxWindowsOwnedNativeShellHealth,attestEquinoxWindowsOriginalGuardianSession} from '../../src/equinox-local-windows-native-journal-authority-client.js';
+import {proveEquinoxWindowsNativeJournalAuthority,proveEquinoxWindowsNativeBRollbackAuthority,requestEquinoxWindowsOwnedNativeShellShutdown,requestEquinoxWindowsOwnedNativeShellHealth,attestEquinoxWindowsOriginalGuardianSession,attestEquinoxWindowsNativePhysicalMilestone} from '../../src/equinox-local-windows-native-journal-authority-client.js';
 
 const tx = `main-${'a'.repeat(32)}`;
 const token = 'e'.repeat(64);
@@ -335,4 +335,66 @@ test('original Guardian read-only opcode zero authenticates fresh kernel owner a
  assert.match(guardian,/opcode == 0/u);
  assert.match(guardian,/native-session-live-original-os-owner/u);
  assert.ok(guardian.indexOf('if (opcode == 0)')<guardian.indexOf('QuiesceOwnedStableShell(owner, root, worker, continuousNativeSession: true)'));
+});
+
+test('physical native A/B milestones require original Guardian fresh generation HMAC and deny wrong stages',async t=>{
+ const root=await fs.mkdtemp(path.join(os.tmpdir(),'equinox-native-milestone-'));
+ t.after(()=>fs.rm(root,{recursive:true,force:true}));
+ await fs.mkdir(path.join(root,'guardian-journal'));
+ const file=path.join(root,'guardian-journal',tx+'.json');
+ const pipe=path.join(root,'milestones.sock');
+ let raw=Buffer.alloc(0), expectedOpcode=0, n=0;
+ const nonce=Buffer.alloc(32,81);
+ const server=net.createServer(socket=>{
+  let bytes=Buffer.alloc(0);
+  socket.on('data',chunk=>{
+   bytes=Buffer.concat([bytes,chunk]);
+   if(bytes.length===33){
+    assert.equal(bytes[0],expectedOpcode);
+    const expected=createHmac('sha256',Buffer.from(token,'hex'))
+     .update('equinox-local-guardian-native-stage-v1:')
+     .update(Buffer.from([expectedOpcode])).update(nonce)
+     .update(createHash('sha256').update(raw).digest()).digest();
+    assert.deepEqual(bytes.subarray(1),expected);
+    n++;
+    socket.end(Buffer.from([1]));
+   }
+  });
+  socket.write(nonce);
+ });
+ await new Promise(resolve=>server.listen(pipe,resolve));
+ t.after(()=>new Promise(resolve=>server.close(resolve)));
+ const rows=[
+  ['prepared',0,'native_staged',5],['native_staged',1,'shell_stopped',6],
+  ['shell_stopped',2,'switched',7],['switched',3,'restarted',8],
+  ['restarted',4,'healthy',9],['healthy',5,'committed',10],
+  ['healthy',5,'rollback_started',11],['rollback_started',6,'rollback_native_restored',12],
+  ['rollback_native_restored',7,'rollback_healthy',13],['rollback_healthy',8,'rolled_back',14],
+ ];
+ for(const [stage,sequence,to,opcode] of rows){
+  raw=Buffer.from(JSON.stringify({transactionId:tx,stage,sequence}));
+  await fs.writeFile(file,raw);
+  expectedOpcode=opcode;
+  await attestEquinoxWindowsNativePhysicalMilestone({
+   transactionId:tx,transactionRoot:root,workerToken:token,platform:'test',
+   fixturePipePath:pipe,to,
+  });
+ }
+ assert.equal(n,rows.length);
+ for(const [stage,sequence,to] of [
+  ['prepared',0,'switched'],['native_staged',1,'healthy'],['rollback_started',3,'restarted'],
+  ['committed',6,'rollback_started'],['rollback_native_restored',7,'rolled_back'],
+ ]){
+  await fs.writeFile(file,JSON.stringify({transactionId:tx,stage,sequence}));
+  await assert.rejects(attestEquinoxWindowsNativePhysicalMilestone({
+   transactionId:tx,transactionRoot:root,workerToken:token,platform:'test',
+   fixturePipePath:pipe,to,
+  }),/unrelated native A\/B journal generation/u);
+ }
+ const csharp=await fs.readFile(new URL('../../native/windows/EquinoxLocal.Guardian/MainNativeGuardianSession.cs',import.meta.url),'utf8');
+ for(let code=5;code<=14;code++)assert.match(csharp,new RegExp('opcode == '+code+'\\b'));
+ assert.match(csharp,/InspectExactImmutableNativeBPayload\(owner, journal\)/u);
+ assert.match(csharp,/stable-shell-quiesce\.json/u);
+ assert.match(csharp,/InspectOwnedNativeShellPayload\(owner, journal, targetB: opcode == 7\)/u);
+ assert.match(csharp,/InspectOwnedLiveNativeShellSustained\(owner, journal, opcode is 8 or 9 or 10, worker\)/u);
 });

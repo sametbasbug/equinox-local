@@ -14,7 +14,7 @@ import {
 import { createEquinoxLocalWindowsNativeTransitionJournal } from './equinox-local-windows-native-transition-journal.js';
 import { readEquinoxLocalMainNativePointer } from './equinox-local-main-native-state.js';
 import { parseEquinoxVersion } from './equinox-local-updater.js';
-import { attestEquinoxWindowsOriginalGuardianSession, proveEquinoxWindowsNativeJournalAuthority } from './equinox-local-windows-native-journal-authority-client.js';
+import { attestEquinoxWindowsOriginalGuardianSession, attestEquinoxWindowsNativePhysicalMilestone, proveEquinoxWindowsNativeJournalAuthority, requestEquinoxWindowsOwnedNativeShellHealth } from './equinox-local-windows-native-journal-authority-client.js';
 
 type AdmissionFs = typeof fs;
 type WorkerOwnerResult = Awaited<ReturnType<typeof readWindowsMainUpdateWorkerOwnership>>;
@@ -46,7 +46,7 @@ type AdmissionOptions = {
   inspectWorkerImpl?: ProcessInspect;
   readPointerImpl?: NativePointerRead;
   journalFactory?: NativeJournalFactory;
-  verifyMilestone?: () => Promise<boolean>;
+  verifyMilestone?: (record:WindowsJournalRecord,to:string) => Promise<boolean>;
   ownerOnly?: boolean;
   authenticateSignedGuardianImpl?: typeof authenticateOriginalWindowsGuardianOwner;
   attestGuardianSessionImpl?: typeof attestEquinoxWindowsOriginalGuardianSession;
@@ -57,6 +57,12 @@ type WorkerAdmission = Readonly<{
   admitted: true; ownedNode: string; ownerOnly?: true;
   journal?: WindowsJournal; record?: WindowsJournalRecord;
   guardian?: Readonly<{guardianPid:number; workerPid:number; workerStartTimeUtcTicks:string; originalSignedOwner:true}>;
+  supervisor?: Readonly<{independentNativeOwner:true;
+    assertWorkerOwnership:(args:Record<string,unknown>)=>Promise<boolean>;
+    shutdownOwnedWpf:(args:Record<string,unknown>)=>Promise<boolean>;
+    quiesceOwnedB:(args:Record<string,unknown>)=>Promise<boolean>;
+    verifyNativeMessaging:(args:Record<string,unknown>)=>Promise<boolean>;
+    verifySustainedHealth:(args:Record<string,unknown>)=>Promise<boolean>}>;
 }>;
 function hasErrorCode(error: unknown, code: string): boolean {
   return error !== null && typeof error === "object" && "code" in error && error.code === code;
@@ -230,7 +236,7 @@ export async function admitWindowsMainNativeWorkerJournal({
   inspectWorkerImpl = inspectWindowsMainUpdateWorkerProcess,
   readPointerImpl = readEquinoxLocalMainNativePointer,
   journalFactory = createEquinoxLocalWindowsNativeTransitionJournal,
-  verifyMilestone = async () => false,
+  verifyMilestone,
   ownerOnly = false,
   authenticateSignedGuardianImpl = authenticateOriginalWindowsGuardianOwner,
   attestGuardianSessionImpl = attestEquinoxWindowsOriginalGuardianSession,
@@ -250,7 +256,7 @@ export async function admitWindowsMainNativeWorkerJournal({
       typeof transactionRoot !== 'string' || !path.win32.isAbsolute(transactionRoot) ||
       (typeof workerToken !== 'string' || !TOKEN.test(workerToken)) || !Number.isSafeInteger(workerPid) || workerPid < 1 ||
       typeof workerNodePath !== 'string' || !path.win32.isAbsolute(workerNodePath) ||
-      typeof engine?.readActive !== 'function' || typeof verifyMilestone !== 'function' ||
+      typeof engine?.readActive !== 'function' || (verifyMilestone !== undefined && typeof verifyMilestone !== 'function') ||
       typeof sleepImpl !== 'function' || !Number.isSafeInteger(ownershipAttempts) || ownershipAttempts < 1 || ownershipAttempts > 25) {
     throw new Error('Windows Main native worker journal admission lacks exact owned transaction identity.');
   }
@@ -315,7 +321,21 @@ export async function admitWindowsMainNativeWorkerJournal({
     }
     return active;
   };
-  const journal = journalFactory({ transactionRoot, fsImpl, platform: 'win32', inspectOwningReceipt: inspectedReceipt, verifyMilestone });
+  // ONE durable JS journal writer. The DEFAULT stage verifier is NOT a
+  // Node-side boolean: each physical milestone must be authenticated by the
+  // original signed Guardian process, matching CURRENT journal bytes, kernel
+  // worker PID/birth and pinned executable File ID. Only explicit unit-test
+  // injection may replace the real native OS transport.
+  const verifyPhysicalMilestone = verifyMilestone ?? (async (_record:WindowsJournalRecord,to:string) => {
+    if (!['native_staged','shell_stopped','switched','restarted','healthy','committed',
+      'rollback_started','rollback_native_restored','rollback_healthy','rolled_back'].includes(to)) return false;
+    await attestEquinoxWindowsNativePhysicalMilestone({
+      transactionId:receipt.transactionId, transactionRoot, workerToken, platform:'win32',
+      to:to as Parameters<typeof attestEquinoxWindowsNativePhysicalMilestone>[0]['to'],
+    });
+    return true;
+  });
+  const journal = journalFactory({ transactionRoot, fsImpl, platform: 'win32', inspectOwningReceipt: inspectedReceipt, verifyMilestone:verifyPhysicalMilestone });
   const expected = { transactionId: receipt.transactionId, target: transition.target, currentSha: receipt.currentSha,
     targetSha: receipt.targetSha, receiptStartedAt: receipt.startedAt };
   if (receipt.stage === 'ready_to_switch') {
@@ -348,5 +368,58 @@ export async function admitWindowsMainNativeWorkerJournal({
   await attestGuardianSessionImpl({
     transactionId: receipt.transactionId, transactionRoot, workerToken, platform:'win32',
   });
-  return Object.freeze({ admitted: true, journal, record, ownedNode, guardian });
+  // These are ADDITIONAL independent signed-OS observations consumed by the
+  // pre-existing supervisor-bound A/B adapter, NOT a new WPF controller.
+  const assertLiveWorker=async()=>{
+    await attestGuardianSessionImpl({
+      transactionId:receipt.transactionId,transactionRoot,workerToken,platform:'win32',
+    });
+    const active=await inspectedReceipt();
+    if (!['promoting','verifying','succeeded','rolled_back'].includes(active.status))
+      throw new Error('Signed Guardian lost the exact active or durable terminal transaction.');
+    return true;
+  };
+  const signedShutdownReceipt = async (kind:'A'|'B')=>{
+    await assertLiveWorker();
+    const file=path.win32.join(transactionRoot,'guardian-journal',
+      receipt.transactionId+(kind==='A'?'.stable-shell-quiesce.json':'.b-shell-quiesce.json'));
+    const fd=await fsImpl.open(file,fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0));
+    let data:Record<string,unknown>;
+    try {
+      const st=await fd.stat();
+      if (!st.isFile() || st.nlink!==1 || st.size<2 || st.size>8192)
+        throw new Error('Original native WPF shutdown receipt is not a bounded owned file.');
+      data=JSON.parse((await fd.readFile('utf8'))) as Record<string,unknown>;
+    }finally{await fd.close();}
+    if (data.schemaVersion!==1 || data.transactionId!==receipt.transactionId ||
+        data.workerPid!==workerPid || data.workerStartTimeUtcTicks!==ownership.startTimeUtcTicks ||
+        data.guardianPid!==guardian.guardianPid ||
+        data.disposition!==(kind==='A'?'stable-shell-quiesced-only':'b-shell-quiesced-only'))
+      throw new Error('Original native WPF shutdown is not proven by the same Guardian OS owner.');
+    await assertLiveWorker();
+    return true;
+  };
+  const supervisor=Object.freeze({
+    independentNativeOwner:true as const,
+    assertWorkerOwnership:async (_args:Record<string,unknown>)=>assertLiveWorker(),
+    shutdownOwnedWpf:async (args:Record<string,unknown>)=>{
+      if(args.afterSignedExit!==true) throw new Error('Only signed Guardian may shut down original A.');
+      return signedShutdownReceipt('A');
+    },
+    quiesceOwnedB:async (args:Record<string,unknown>)=>{
+      if(args.afterSignedExit!==true || args.release!=='B')
+        throw new Error('Only signed Guardian may quiesce native B.');
+      return signedShutdownReceipt('B');
+    },
+    verifyNativeMessaging:async (_args:Record<string,unknown>)=>assertLiveWorker(),
+    verifySustainedHealth:async (args:Record<string,unknown>)=>{
+      if(args.release!=='A' && args.release!=='B') throw new Error('Native WPF health release is invalid.');
+      await assertLiveWorker();
+      await requestEquinoxWindowsOwnedNativeShellHealth({
+        transactionId:receipt.transactionId,transactionRoot,workerToken,platform:'win32',release:args.release,
+      });
+      return assertLiveWorker();
+    },
+  });
+  return Object.freeze({ admitted: true, journal, record, ownedNode, guardian, supervisor });
 }
