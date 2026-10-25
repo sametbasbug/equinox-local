@@ -23,6 +23,9 @@ const READ_REGISTRY_SCRIPT = [
     "  [Console]::Out.WriteLine('value:' + $hex)",
     "} finally { $key.Dispose() }",
 ].join("\n");
+// Windows PowerShell 5.1 accepts UTF-16LE -EncodedCommand on x64 and ARM64.
+// Keep the script static and avoid native argv newline/quoting differences.
+const READ_REGISTRY_ENCODED_COMMAND = Buffer.from(READ_REGISTRY_SCRIPT, "utf16le").toString("base64");
 const MANIFEST_MAX_BYTES = 16 * 1024;
 function windowsPowerShellPath(env = process.env) {
     const root = env?.SystemRoot || env?.SYSTEMROOT;
@@ -107,14 +110,29 @@ async function readManifestState(manifestPath, { launcherPath, expectedPreviousL
     throw new Error("Windows Native Messaging manifest is foreign or malformed; refusing to overwrite it.");
 }
 export async function readWindowsNativeMessagingRegistryValue({ execFileAsync = execFile, env = process.env, } = {}) {
-    const { stdout } = await execFileAsync(windowsPowerShellPath(env), [
-        "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", READ_REGISTRY_SCRIPT,
-    ], {
-        timeout: 15_000,
-        maxBuffer: 64 * 1024,
-        windowsHide: true,
-        env: windowsRegistryReadEnvironment(env),
-    });
+    let stdout;
+    try {
+        ({ stdout } = await execFileAsync(windowsPowerShellPath(env), [
+            "-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", READ_REGISTRY_ENCODED_COMMAND,
+        ], {
+            timeout: 15_000,
+            maxBuffer: 64 * 1024,
+            windowsHide: true,
+            env: windowsRegistryReadEnvironment(env),
+        }));
+    }
+    catch (error) {
+        // Never expose raw PowerShell output, potentially containing private paths
+        // and registry values. Emit a bounded category for failed hosted acceptance.
+        const info = error && typeof error === "object" ? error : {};
+        const code = Number.isInteger(info.code) && Number(info.code) >= 0 && Number(info.code) <= 255
+            ? "exit-" + String(info.code) : info.code === "ENOENT" ? "powershell-missing" : "spawn-failed";
+        const diagnostic = typeof info.stderr === "string" ? info.stderr : "";
+        const category = /ParserError|ParseException/iu.test(diagnostic) ? "syntax" :
+            /UnauthorizedAccessException|SecurityException|Access is denied/iu.test(diagnostic) ? "access" :
+                /CommandNotFoundException/iu.test(diagnostic) ? "command" : "unclassified";
+        throw new Error("Windows Native Messaging registry probe failed (" + code + "; " + category + ").");
+    }
     const output = String(stdout).trim();
     if (output === "missing")
         return null;

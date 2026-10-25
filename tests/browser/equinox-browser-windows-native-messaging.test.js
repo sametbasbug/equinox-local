@@ -220,7 +220,8 @@ test("Windows Native Messaging registry read is module-independent, credential-s
       assert.equal(options.env.EQUINOX_BROWSER_NATIVE_HOST_REGISTRY_SUBKEY, "Software\\Google\\Chrome\\NativeMessagingHosts\\dev.equinox.browser");
       assert.equal("PSModulePath" in options.env, false);
       assert.equal("OPENAI_API_KEY" in options.env, false);
-      const script = args.at(-1);
+      assert.equal(args.at(-2), "-EncodedCommand");
+      const script = Buffer.from(args.at(-1), "base64").toString("utf16le");
       assert.match(script, /Microsoft\.Win32\.Registry/u);
       assert.doesNotMatch(script, /Get-Item|ConvertTo-Json|Import-Module/u);
       return { stdout: registryReadOutput(expected), stderr: "" };
@@ -234,7 +235,8 @@ test("Windows Native Messaging registry reader is valid native PowerShell 5.1 sy
   await readWindowsNativeMessagingRegistryValue({
     env: { SystemRoot: "C:\\Windows" },
     execFileAsync: async (_executable, args) => {
-      actualScript = args.at(-1);
+      assert.equal(args.at(-2), "-EncodedCommand");
+      actualScript = Buffer.from(args.at(-1), "base64").toString("utf16le");
       return { stdout: "missing\n", stderr: "" };
     },
   });
@@ -249,7 +251,7 @@ test("Windows Native Messaging registry reader is valid native PowerShell 5.1 sy
   const systemRoot = process.env.SystemRoot || process.env.SYSTEMROOT;
   assert.ok(systemRoot && path.win32.isAbsolute(systemRoot));
   const output = execFileSync(path.win32.join(systemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe"),
-    ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", actualScript], {
+    ["-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(actualScript, "utf16le").toString("base64")], {
       windowsHide: true, timeout: 15_000, encoding: "utf8", maxBuffer: 32 * 1024,
       env: {
         ...process.env,
@@ -257,6 +259,23 @@ test("Windows Native Messaging registry reader is valid native PowerShell 5.1 sy
       },
     });
   assert.equal(output.trim(), "missing");
+});
+
+test("PowerShell registry spawn errors report only fixed safe categories", async () => {
+  for (const [stderr, category] of [
+    ["ParserError: C:\\\\Private\\\\SECRET", "syntax"],
+    ["UnauthorizedAccessException: SECRET-USER-PATH", "access"],
+    ["CommandNotFoundException: PRIVATE-TOKEN", "command"],
+  ]) {
+    await assert.rejects(readWindowsNativeMessagingRegistryValue({
+      env: {SystemRoot:"C:\\Windows"},
+      execFileAsync: async () => { throw Object.assign(new Error("PRIVATE user path"), {code:1,stderr}); },
+    }), (error) => {
+      assert.ok(error.message.includes("registry probe failed (exit-1; " + category + ")"));
+      assert.doesNotMatch(error.message, /PRIVATE|SECRET|TOKEN|user path/u);
+      return true;
+    });
+  }
 });
 
 test("Windows Native Messaging registry read rejects malformed helper protocol", async () => {
