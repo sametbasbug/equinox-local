@@ -134,7 +134,9 @@ internal static partial class Program
             journal.GetProperty("transactionId").GetString() != owner.TransactionId ||
             journal.GetProperty("target").GetString() != target ||
             !((stage == "prepared" && sequence == 0) ||
-              (stage == "native_staged" && sequence == 1)) ||
+              (stage == "native_staged" && sequence == 1) ||
+              (stage == "restarted" && sequence == 4) ||
+              (stage == "healthy" && sequence == 5)) ||
             !SourceShaPattern.IsMatch(sourceSha) || !DigestPattern.IsMatch(contract))
             throw new InvalidDataException("Original Guardian immutable native B identity is invalid.");
         InspectionPhase = "native-stage-b-exact-source";

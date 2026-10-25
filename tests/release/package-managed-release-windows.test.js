@@ -430,7 +430,7 @@ test("native journal authority accepts only kernel-PID+HMAC live prepared worker
   assert.doesNotMatch(source, /Process\.Start|Registry\.SetValue|\.writer-lock"\s*,\s*FileMode\.OpenOrCreate|"shell_stopped"|"switched"/u);
 });
 
-test("one signed Guardian session authentically accepts ONLY exact journal-stage WPF A/B shutdown requests", async () => {
+test("one signed Guardian session authenticates WPF A/B shutdown and separately sustained OS health", async () => {
   const session=await fs.readFile(new URL('../../native/windows/EquinoxLocal.Guardian/MainNativeGuardianSession.cs',import.meta.url),'utf8');
   const lease=await fs.readFile(new URL('../../native/windows/EquinoxLocal.Guardian/MainNativeJournalLease.cs',import.meta.url),'utf8');
   const stable=await fs.readFile(new URL('../../native/windows/EquinoxLocal.Guardian/MainNativeStableShellQuiesce.cs',import.meta.url),'utf8');
@@ -441,6 +441,15 @@ test("one signed Guardian session authentically accepts ONLY exact journal-stage
   assert.match(session,/FixedTimeEquals\(mac, reply.AsSpan\(1\)\)/u);
   assert.match(session,/opcode == 1 && stage == "native_staged"/u);
   assert.match(session,/opcode == 2 && stage == "rollback_started"/u);
+  assert.match(session,/opcode == 3 && \(\(stage == "restarted"/u);
+  assert.match(session,/opcode == 4 && \(\(stage == "rollback_native_restored"/u);
+  assert.match(session,/InspectOwnedLiveNativeShellSustained\(owner, j, opcode == 3, worker\)/u);
+  assert.match(session,/CompareNativeTrees\(originalShell, installedShell\)/u);
+  assert.match(session,/GetNamedPipeServerProcessId\(pipe.SafePipeHandle, out var serverPid\)/u);
+  assert.match(session,/ReadWindowsLogonAuthenticationId\(token\)/u);
+  assert.match(session,/Thread.Sleep\(1500\)/u);
+  assert.match(session,/shell.StartTime.ToUniversalTime\(\).Ticks.ToString/u);
+
   const staging=await fs.readFile(new URL('../../native/windows/EquinoxLocal.Guardian/MainNativeStageB.cs',import.meta.url),'utf8');
   assert.match(session,/InspectExactImmutableNativeBPayload\(owner, j\)/u);
   assert.ok(session.indexOf('InspectExactImmutableNativeBPayload(owner, j)') < session.indexOf('QuiesceOwnedStableShell(owner, root, worker, continuousNativeSession: true)'));

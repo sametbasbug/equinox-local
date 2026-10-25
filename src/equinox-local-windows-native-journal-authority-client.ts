@@ -61,10 +61,14 @@ async function connectOriginalGuardianStagePipe(pipe:string):Promise<net.Socket>
 // This is the SAME independently signed Guardian kernel owner session,
 // not a new executable or bearer-only native shell permission.
 const SESSION_DOMAIN = Buffer.from('equinox-local-guardian-native-stage-v1:', 'ascii');
+export async function requestEquinoxWindowsOwnedNativeShellHealth(options:AuthorityProofOptions & {release:'A'|'B'}):Promise<void> {
+  return requestEquinoxWindowsOwnedNativeShellShutdown({...options, sustainedHealth:true});
+}
+
 export async function requestEquinoxWindowsOwnedNativeShellShutdown({
   transactionId, transactionRoot, workerToken, platform = process.platform,
-  fixturePipePath = null, release,
-}:AuthorityProofOptions & {release:'A'|'B'}):Promise<void> {
+  fixturePipePath = null, release, sustainedHealth = false,
+}:AuthorityProofOptions & {release:'A'|'B'; sustainedHealth?:boolean}):Promise<void> {
   if (!TX.test(transactionId ?? '') || !TOKEN.test(workerToken ?? '') ||
       typeof transactionRoot !== 'string' || !path.isAbsolute(transactionRoot) ||
       path.normalize(transactionRoot) !== transactionRoot ||
@@ -72,7 +76,7 @@ export async function requestEquinoxWindowsOwnedNativeShellShutdown({
       (platform === 'win32' && fixturePipePath !== null) || !['A','B'].includes(release)) {
     throw new Error('Native Guardian session command has invalid exact worker identity.');
   }
-  const opcode = release === 'A' ? 1 : 2;
+  const opcode = sustainedHealth ? (release === 'A' ? 4 : 3) : (release === 'A' ? 1 : 2);
   const handle = await fs.open(path.join(transactionRoot!, 'guardian-journal', transactionId! + '.json'),
     fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0));
   let raw:Buffer;
@@ -84,10 +88,19 @@ export async function requestEquinoxWindowsOwnedNativeShellShutdown({
     if (raw.length < 2 || raw.length > 8192) throw new Error('Native stage journal exceeds its bound.');
   } finally { await handle.close(); }
   const j = recordOrNull(JSON.parse(raw.toString('utf8')));
-  if (j?.transactionId !== transactionId ||
-      (release === 'A' ? (j?.stage !== 'native_staged' || j?.sequence !== 1)
-        : (j?.stage !== 'rollback_started' || !Number.isInteger(j?.sequence) ||
-          Number(j.sequence) < 1 || Number(j.sequence) > 6))) {
+  const valid = opcode === 1
+    ? j?.stage === 'native_staged' && j.sequence === 1
+    : opcode === 2
+      ? j?.stage === 'rollback_started' && Number.isInteger(j.sequence) &&
+        Number(j.sequence) >= 1 && Number(j.sequence) <= 6
+      : opcode === 3
+        ? (j?.stage === 'restarted' && j.sequence === 4) ||
+          (j?.stage === 'healthy' && j.sequence === 5)
+        : (j?.stage === 'rollback_native_restored' && Number.isInteger(j.sequence) &&
+            Number(j.sequence) >= 2 && Number(j.sequence) <= 7) ||
+          (j?.stage === 'rollback_healthy' && Number.isInteger(j.sequence) &&
+            Number(j.sequence) >= 3 && Number(j.sequence) <= 8);
+  if (j?.transactionId !== transactionId || !valid) {
     throw new Error('Original signed Guardian refuses unrelated native A/B journal generation.');
   }
   const digest = createHash('sha256').update(raw).digest();
@@ -101,7 +114,7 @@ export async function requestEquinoxWindowsOwnedNativeShellShutdown({
       let challengeAnswered = false;
       let settled = false;
       const fail = (error:Error) => { if (settled) return; settled=true; socket.destroy(); reject(error); };
-      socket.setTimeout(24000,()=>fail(new Error('Original native Guardian stage proof timed out.')));
+      socket.setTimeout(60000,()=>fail(new Error('Original native Guardian stage proof timed out.')));
       socket.on('data', (chunk)=>{
         if (!Buffer.isBuffer(chunk)) return fail(new Error('Invalid native stage proof bytes.'));
         if (!challengeAnswered) {
@@ -115,7 +128,7 @@ export async function requestEquinoxWindowsOwnedNativeShellShutdown({
           }
         } else {
           if (chunk.length !== 1 || chunk[0] !== 1)
-            return fail(new Error('Original Guardian did not confirm exact WPF OS shutdown.'));
+            return fail(new Error('Original Guardian did not confirm exact WPF OS shutdown or sustained health.'));
           settled=true;
           socket.end();
           resolve();

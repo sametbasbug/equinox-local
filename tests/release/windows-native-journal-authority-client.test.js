@@ -5,7 +5,7 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import {proveEquinoxWindowsNativeJournalAuthority,proveEquinoxWindowsNativeBRollbackAuthority,requestEquinoxWindowsOwnedNativeShellShutdown} from '../../src/equinox-local-windows-native-journal-authority-client.js';
+import {proveEquinoxWindowsNativeJournalAuthority,proveEquinoxWindowsNativeBRollbackAuthority,requestEquinoxWindowsOwnedNativeShellShutdown,requestEquinoxWindowsOwnedNativeShellHealth} from '../../src/equinox-local-windows-native-journal-authority-client.js';
 
 const tx = `main-${'a'.repeat(32)}`;
 const token = 'e'.repeat(64);
@@ -235,4 +235,51 @@ test('live original Guardian stage refuses swapped generation, foreign worker an
  await assert.rejects(requestEquinoxWindowsOwnedNativeShellShutdown({...args,release:'A'}),
   /did not confirm exact WPF OS shutdown/u);
  assert.equal(received,33);
+});
+
+test('the SAME live signed Guardian requires independent sustained B and restored A WPF OS HMAC proof',async t=>{
+ const root=await fs.mkdtemp(path.join(os.tmpdir(),'equinox-wpf-health-'));
+ t.after(()=>fs.rm(root,{recursive:true,force:true}));
+ await fs.mkdir(path.join(root,'guardian-journal'));
+ const file=path.join(root,'guardian-journal',tx+'.json');
+ const pipe=path.join(root,'health.sock');
+ const nonce=Buffer.alloc(32,25);
+ const examples=[['B','restarted',4,3],['B','healthy',5,3],
+  ['A','rollback_native_restored',7,4],['A','rollback_healthy',8,4]];
+ let count=0;
+ const server=net.createServer(socket=>{
+  const [release,stage,sequence,opcode]=examples[count];
+  const journal=Buffer.from(JSON.stringify({transactionId:tx,stage,sequence}));
+  const expected=createHmac('sha256',Buffer.from(token,'hex'))
+   .update('equinox-local-guardian-native-stage-v1:').update(Buffer.from([opcode]))
+   .update(nonce).update(createHash('sha256').update(journal).digest()).digest();
+  let response=Buffer.alloc(0);
+  socket.on('data',chunk=>{
+   response=Buffer.concat([response,chunk]);
+   if(response.length===33){
+    assert.equal(response[0],opcode);
+    assert.deepEqual(response.subarray(1),expected);
+    count++;
+    socket.write(Buffer.from([1]));
+  }});
+  socket.write(nonce);
+ });
+ await new Promise(resolve=>server.listen(pipe,resolve));
+ t.after(()=>new Promise(resolve=>server.close(resolve)));
+ for(const [release,stage,sequence] of examples) {
+  await fs.writeFile(file,JSON.stringify({transactionId:tx,stage,sequence}));
+  await requestEquinoxWindowsOwnedNativeShellHealth({
+   transactionId:tx,transactionRoot:root,workerToken:token,release,
+   platform:'test',fixturePipePath:pipe,
+  });
+ }
+ assert.equal(count,4);
+ for(const [release,stage,sequence] of [['B','native_staged',1],['B','switched',3],
+   ['A','rollback_started',5],['A','restarted',4]]){
+  await fs.writeFile(file,JSON.stringify({transactionId:tx,stage,sequence}));
+  await assert.rejects(requestEquinoxWindowsOwnedNativeShellHealth({
+   transactionId:tx,transactionRoot:root,workerToken:token,release,
+   platform:'test',fixturePipePath:pipe,
+  }),/unrelated native A\/B journal generation/u);
+ }
 });
