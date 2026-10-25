@@ -529,6 +529,8 @@ try {
   $JournalGuardianSession = Join-Path $JournalDataDir (".$JournalId.guardian-session-lock")
   $JournalAuthority = Join-Path $JournalDataDir ("$JournalId.native-authority.json")
   $JournalAuthorityTrigger = Join-Path $Work 'start-journal-authority-client.trigger'
+  $OriginalGuardianStartTrigger = Join-Path $Work 'start-original-guardian-from-product-node.trigger'
+  $OriginalGuardianStartResult = Join-Path $Work 'original-guardian-owned-node-result.json'
   $JournalAbortTrigger = Join-Path $Work 'start-journal-abort-client.trigger'
   $JournalStageTrigger = Join-Path $Work 'start-journal-stage-client.trigger'
   $JournalStageCommit = Join-Path $JournalDataDir ("$JournalId.stage-b-commit.json")
@@ -593,6 +595,10 @@ try {
       $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_MAIN_WORKER_TOKEN'] = ('e' * 64)
       $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_JOURNAL_CLIENT_MODULE'] = Join-Path $Root 'src\equinox-local-windows-native-journal-authority-client.js'
       $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_JOURNAL_TX_ROOT'] = $NativeTxRoot
+      $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_SIGNED_GUARDIAN_START_TRIGGER'] = $OriginalGuardianStartTrigger
+      $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_SIGNED_GUARDIAN_START_RESULT'] = $OriginalGuardianStartResult
+      $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_SIGNED_GUARDIAN_ADMISSION_MODULE'] = Join-Path $Root 'src\equinox-local-windows-main-worker-admission.js'
+      $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_SIGNED_GUARDIAN_RELEASE'] = $ReleaseDir
       $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_JOURNAL_TRIGGER'] = $JournalAuthorityTrigger
       $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_JOURNAL_ABORT_TRIGGER'] = $JournalAbortTrigger
       $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_JOURNAL_STAGE_TRIGGER'] = $JournalStageTrigger
@@ -700,24 +706,24 @@ try {
       # product Node owns the distinct short-lived JS .writer-lock.
       $AuthorityProcess = $null
       try {
-        $AuthorityStart = [Diagnostics.ProcessStartInfo]::new($GuardianExe)
-        $AuthorityStart.Arguments = '--hold-native-journal-authority'
-        $AuthorityStart.UseShellExecute = $false
-        $AuthorityStart.CreateNoWindow = $true
-        $AuthorityStart.RedirectStandardError = $true
-        $AuthorityProcess = [Diagnostics.Process]::Start($AuthorityStart)
-        Assert-True ($null -ne $AuthorityProcess) 'Independent native journal authority failed to launch.'
-        [IO.File]::WriteAllText($JournalAuthorityTrigger, 'fixed-test-only-trigger')
-        $AuthorityDurable = $false
-        for ($AuthorityAttempt=0; $AuthorityAttempt -lt 80; $AuthorityAttempt++) {
-          if ([IO.File]::Exists($JournalAuthority) -and -not $AuthorityProcess.HasExited) { $AuthorityDurable = $true; break }
-          if ($AuthorityProcess.HasExited) { break }
-          Start-Sleep -Milliseconds 110
+        # REAL installed product-owned Node now spawns the existing original
+        # signed Guardian and proves its prepared journal/worker HMAC itself.
+        # PowerShell never creates the authority process for this acceptance.
+        [IO.File]::WriteAllText($OriginalGuardianStartTrigger, 'owned-worker-native-guardian-session')
+        $OwnerSpawned = $false
+        for ($AuthorityAttempt=0; $AuthorityAttempt -lt 140; $AuthorityAttempt++) {
+          if ([IO.File]::Exists($OriginalGuardianStartResult)) { $OwnerSpawned = $true; break }
+          Start-Sleep -Milliseconds 125
         }
-        if (-not $AuthorityDurable -and $AuthorityProcess.HasExited) {
-          Write-Output ('Hosted native authority diagnostic: ' + $AuthorityProcess.StandardError.ReadToEnd())
-        }
-        Assert-True $AuthorityDurable 'Native Guardian refused the real worker kernel PID-bound nonce/HMAC journal authority proof.'
+        Assert-True $OwnerSpawned 'Installed product Node did not finish authentic original Guardian session admission.'
+        $OwnerResult = ConvertFrom-Json ([IO.File]::ReadAllText($OriginalGuardianStartResult))
+        Assert-True ($OwnerResult.originalSignedOwner -eq $true -and $OwnerResult.workerPid -eq $WorkerProcess.Id -and
+          $OwnerResult.workerStartTimeUtcTicks -ceq $WorkerRecord.startTimeUtcTicks -and
+          $OwnerResult.guardianPid -is [int]) 'Installed product Node failed original signed Guardian HMAC/OS identity admission.'
+        $AuthorityProcess = [Diagnostics.Process]::GetProcessById([int]$OwnerResult.guardianPid)
+        Assert-True ($null -ne $AuthorityProcess -and -not $AuthorityProcess.HasExited -and
+          [IO.File]::Exists($JournalAuthority)) 'Original signed Guardian did not durably hold kernel-bound owner session.'
+        $AuthorityDurable = $true
         Assert-True ([IO.File]::Exists($JournalGuardianSession) -and -not [IO.File]::Exists($JournalGuard)) 'Independent signed Guardian session incorrectly seized the JS journal writer lock.'
         # The REAL packaged Node binary, not a mock callback, must be able to
         # acquire the journal's exclusive short-lived CREATE_NEW write guard
@@ -775,7 +781,7 @@ try {
         }
         Remove-Item -LiteralPath $JournalGuardianSession -Force -ErrorAction SilentlyContinue
         Remove-Item -LiteralPath $JournalAuthority -Force -ErrorAction SilentlyContinue
-        Remove-Item -LiteralPath $JournalAuthorityTrigger,$JournalNativeStageDenyTrigger,$JournalNativeStageDenyResult -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $JournalAuthorityTrigger,$OriginalGuardianStartTrigger,$OriginalGuardianStartResult,$JournalNativeStageDenyTrigger,$JournalNativeStageDenyResult -Force -ErrorAction SilentlyContinue
       }
       Assert-True ((Invoke-GuardianCheck '--audit-native-journal') -eq 0) 'Native journal authority disposable fixture reconciliation failed.'
       # Real OS negative forward milestone: the detached worker and prepared

@@ -2,6 +2,8 @@
 // impersonates any process and never accepts arbitrary user commands.
 import { pathToFileURL } from 'node:url';
 import fs from 'node:fs';
+import path from 'node:path';
+import fsPromises from 'node:fs/promises';
 const productProofModule = process.env.EQUINOX_LOCAL_TEST_PROOF_MODULE;
 if (!productProofModule) throw new Error('Hosted IPC witness module path is missing.');
 const { startEquinoxWindowsMainWorkerProof } = await import(pathToFileURL(productProofModule).href);
@@ -68,6 +70,44 @@ if (nativeStageTrigger && nativeStageResult) {
         fs.writeFileSync(nativeStageResult,'denied-before-WPF-exit');
       }
     })().catch(() => fs.writeFileSync(nativeStageResult,'test-client-failure'));
+  },120);
+  timer.unref();
+}
+
+// Positive native OS integration: the REAL product-owned signed Node worker
+// launches the already-installed original Guardian and completes the same
+// per-journal HMAC as production admission. PowerShell only inspects/ends the
+// resulting real OS process and fixture evidence; it does NOT spawn Guardian.
+const originalLaunchTrigger=process.env.EQUINOX_LOCAL_TEST_SIGNED_GUARDIAN_START_TRIGGER;
+const originalLaunchResult=process.env.EQUINOX_LOCAL_TEST_SIGNED_GUARDIAN_START_RESULT;
+if (originalLaunchTrigger && originalLaunchResult) {
+  const timer=setInterval(()=>{
+    if (!fs.existsSync(originalLaunchTrigger)) return;
+    clearInterval(timer);
+    void (async()=>{
+      const modulePath=process.env.EQUINOX_LOCAL_TEST_SIGNED_GUARDIAN_ADMISSION_MODULE;
+      const root=process.env.EQUINOX_LOCAL_TEST_JOURNAL_TX_ROOT;
+      const transactionId=process.env.EQUINOX_LOCAL_TEST_WORKER_TX;
+      if (!modulePath || !root || !transactionId) throw Error('Original signed Guardian module/root is absent.');
+      const ownership=JSON.parse(fs.readFileSync(path.win32.join(root,'handoff',transactionId+'.windows-worker.json'),'utf8'));
+      const {authenticateOriginalWindowsGuardianOwner}=await import(pathToFileURL(modulePath).href);
+      const admitted=await authenticateOriginalWindowsGuardianOwner({
+        transactionId,transactionRoot:root,
+        releaseDir:process.env.EQUINOX_LOCAL_TEST_SIGNED_GUARDIAN_RELEASE,
+        workerToken:process.env.EQUINOX_LOCAL_MAIN_WORKER_TOKEN,
+        workerPid:process.pid,workerStartTimeUtcTicks:ownership.startTimeUtcTicks,
+        fsImpl:fsPromises,sleepImpl:ms=>new Promise(resolve=>setTimeout(resolve,ms)),
+      });
+      fs.writeFileSync(originalLaunchResult,JSON.stringify({
+        originalSignedOwner:admitted.originalSignedOwner,guardianPid:admitted.guardianPid,
+        workerPid:admitted.workerPid,workerStartTimeUtcTicks:admitted.workerStartTimeUtcTicks,
+      }));
+    })().catch(error=>{
+      // The installed test only accepts a bounded error category; never
+      // leak potentially private paths/tokens into hosted job logs.
+      fs.writeFileSync(originalLaunchResult,JSON.stringify({failed:true,
+        category:error?.constructor?.name==='Error'?'admission-refused':'unexpected-failure'}));
+    });
   },120);
   timer.unref();
 }

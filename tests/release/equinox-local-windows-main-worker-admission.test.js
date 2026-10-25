@@ -33,6 +33,15 @@ function fixture({ stage = 'ready_to_switch', token = TOKEN, pid = 1234, process
     inspectWorkerImpl: async (_ownership, options) => { assert.equal(options.nativeHelperPath, NATIVE_HELPER); return processOk ? { running: true, stale: false, uncertain: false } : { running: false, stale: true, uncertain: false }; },
     readPointerImpl: async () => previous ? { sourceSha: A, target: 'win32-x64', runtimeContractSha256: 'a'.repeat(64) } : Promise.reject(Object.assign(Error('none'), { code: 'ENOENT' })),
     journalFactory: () => journal,
+    // Unit fixture cannot spawn a signed Windows executable on macOS/Linux.
+    // The PRODUCT DEFAULT is the real signed Guardian process/HMAC/OS lease.
+    authenticateSignedGuardianImpl: async (identity) => {
+      calls.push('signed-guardian');
+      assert.equal(identity.transactionId, ID);
+      assert.equal(identity.workerToken, TOKEN);
+      return Object.freeze({originalSignedOwner:true, guardianPid:733,workerPid:1234,
+        workerStartTimeUtcTicks:'638958000000000000'});
+    },
   };
   return { options, journal, calls, getStored: () => stored, previousNative };
 }
@@ -42,11 +51,11 @@ test('real Windows worker admission binds product Stable Node, PID, secret, rece
   const value = await admitWindowsMainNativeWorkerJournal(f.options);
   assert.equal(value.admitted, true);
   assert.equal(value.journal, f.journal);
-  assert.deepEqual(f.calls, ['create', 'read']);
+  assert.deepEqual(f.calls, ['create', 'read', 'signed-guardian']);
   assert.deepEqual(f.getStored().previousNative, f.previousNative);
   const again = fixture({ journalRecord: f.getStored() });
   assert.equal((await admitWindowsMainNativeWorkerJournal(again.options)).admitted, true);
-  assert.deepEqual(again.calls, ['create', 'read']);
+  assert.deepEqual(again.calls, ['create', 'read', 'signed-guardian']);
 });
 
 test('resuming interrupted Windows worker never invents missing durable journal', async () => {
@@ -146,4 +155,26 @@ test('uncertain Windows process identity rejects both journal and ownerOnly befo
     assert.equal(receiptReads, 0);
     assert.deepEqual(f.calls, [], 'uncertain birth timestamp cannot get an owned journal');
   }
+});
+
+test('full native admission refuses any forged, missing or mismatched signed Guardian owner even with valid worker PID/token/journal',async()=>{
+ for(const proof of [null, {originalSignedOwner:false,guardianPid:5,workerPid:1234,
+   workerStartTimeUtcTicks:'638958000000000000'},
+   {originalSignedOwner:true,guardianPid:5,workerPid:4001,
+    workerStartTimeUtcTicks:'638958000000000000'},
+   {originalSignedOwner:true,guardianPid:5,workerPid:1234,
+    workerStartTimeUtcTicks:'638958000000000001'}]){
+  const f=fixture();
+  await assert.rejects(admitWindowsMainNativeWorkerJournal({...f.options,
+    authenticateSignedGuardianImpl:async()=>proof,
+  }),/Original signed Guardian OS owner is not independently admitted/u);
+  assert.deepEqual(f.calls,['create','read']);
+ }
+ const ownerOnly=fixture();
+ let attempts=0;
+ const value=await admitWindowsMainNativeWorkerJournal({...ownerOnly.options,ownerOnly:true,
+  authenticateSignedGuardianImpl:async()=>{attempts++;throw Error('must not start guardian for disabled product path');},
+ });
+ assert.equal(value.ownerOnly,true);
+ assert.equal(attempts,0);
 });
