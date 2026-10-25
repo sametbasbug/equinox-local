@@ -95,7 +95,14 @@ internal static partial class Program
         // Nothing here swaps native bytes or writes Main journal transitions.
         InspectionPhase = "native-session-authorized-wpf-side-effect";
         if (opcode == 1)
+        {
+            // A forged native_staged marker is NOT evidence of a loadable B.
+            // Use EXACTLY the same full SHA-addressed Git/native manifest,
+            // release and byte fingerprint gate as the original prepared
+            // writer, before allowing the OS-owned WPF A to exit.
+            InspectExactImmutableNativeBPayload(owner, j);
             QuiesceOwnedStableShell(owner, root, worker, continuousNativeSession: true);
+        }
         else
             QuiesceOwnedMainBRollbackShell(owner, root, worker, digest, handoffDigest,
                 j.GetProperty("targetSha").GetString() ?? "", continuousNativeSession: true);

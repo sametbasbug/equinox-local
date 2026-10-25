@@ -40,58 +40,7 @@ internal static partial class Program
             !SourceShaPattern.IsMatch(sourceSha) || !DigestPattern.IsMatch(contract))
             throw new InvalidDataException("Native B staging has a foreign transaction or generation.");
 
-        InspectionPhase = "native-stage-b-exact-source";
-        var install = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Equinox Local");
-        var tx = Path.Combine(install, "state", "main-update");
-        var source = Path.Combine(tx, "sources", sourceSha);
-        RequireNormalDirectory(source);
-        InspectOwnedMainGit(install, target, source, sourceSha);
-
-        InspectionPhase = "native-stage-b-manifest";
-        var nativeRoot = Path.Combine(tx, "native-store", target, sourceSha);
-        RequireNormalDirectory(nativeRoot);
-        using var manifestDoc = ReadOwnedTransitionRecord(Path.Combine(nativeRoot, "native-store.json"), 8192);
-        var manifest = manifestDoc.RootElement;
-        RequireExactKeys(manifest, ["schemaVersion", "channel", "sourceSha", "target", "runtimeContractSha256",
-            "artifactSha256", "artifactBytes", "payloadVersion", "releaseFingerprint"]);
-        var payloadVersion = manifest.GetProperty("payloadVersion").GetString() ?? "";
-        if (manifest.GetProperty("schemaVersion").GetInt32() != 1 ||
-            manifest.GetProperty("channel").GetString() != "main" ||
-            manifest.GetProperty("sourceSha").GetString() != sourceSha ||
-            manifest.GetProperty("target").GetString() != target ||
-            manifest.GetProperty("runtimeContractSha256").GetString() != contract ||
-            !DigestPattern.IsMatch(manifest.GetProperty("artifactSha256").GetString() ?? "") ||
-            manifest.GetProperty("artifactBytes").GetInt64() is < 1 or > 1_073_741_824 ||
-            !VersionRegex().IsMatch(payloadVersion))
-            throw new InvalidDataException("Native B manifest does not bind the immutable SHA and runtime contract.");
-        var fingerprint = manifest.GetProperty("releaseFingerprint");
-        RequireExactKeys(fingerprint, ["schemaVersion", "sha256", "entries", "bytes"]);
-        if (fingerprint.GetProperty("schemaVersion").GetInt32() != 1 ||
-            !DigestPattern.IsMatch(fingerprint.GetProperty("sha256").GetString() ?? "") ||
-            fingerprint.GetProperty("entries").GetInt64() < 1 ||
-            fingerprint.GetProperty("bytes").GetInt64() < 1)
-            throw new InvalidDataException("Native B fingerprint claim is incomplete.");
-        var release = Path.Combine(nativeRoot, "release");
-        RequireNormalDirectory(release);
-        using var releaseDoc = ReadOwnedTransitionRecord(Path.Combine(release, "release.json"), 16384);
-        var metadata = releaseDoc.RootElement;
-        if (metadata.GetProperty("schemaVersion").GetInt32() != 1 ||
-            metadata.GetProperty("sourceSha").GetString() != sourceSha ||
-            metadata.GetProperty("target").GetString() != target ||
-            metadata.GetProperty("version").GetString() != payloadVersion ||
-            metadata.GetProperty("serverEntry").GetString() != "server.js")
-            throw new InvalidDataException("Native B release metadata is inconsistent.");
-        RequireNormalFile(Path.Combine(release, "runtime", "node", "bin", "node.exe"));
-        RequireNormalFile(Path.Combine(release, "runtime", "shell", "EquinoxLocal.exe"));
-        RequireNormalFile(Path.Combine(release, "runtime", "browser", "equinox-browser-native-host.exe"));
-
-        InspectionPhase = "native-stage-b-full-fingerprint";
-        var measured = FingerprintNativeMainRelease(release);
-        if (measured.Sha256 != fingerprint.GetProperty("sha256").GetString() ||
-            measured.Entries != fingerprint.GetProperty("entries").GetInt64() ||
-            measured.Bytes != fingerprint.GetProperty("bytes").GetInt64())
-            throw new InvalidDataException("Native B release bytes differ from the exact immutable fingerprint.");
-
+        var measured = InspectExactImmutableNativeBPayload(owner, journal);
         InspectionPhase = "native-stage-b-authenticated-commit";
         var now = DateTimeOffset.UtcNow.ToString(CanonicalUtcTime, CultureInfo.InvariantCulture);
         if (string.CompareOrdinal(now, journal.GetProperty("updatedAt").GetString()) < 0)
@@ -164,4 +113,83 @@ internal static partial class Program
         receipt.Flush(flushToDisk: true);
         InspectionPhase = "native-stage-b-committed-under-lease";
     }
+    // Common read-only FULL immutable B provenance gate. Both the legacy
+    // prepared-stage writer and the original signed continuous Guardian OS
+    // session MUST validate the exact same product-owned Git SHA, native
+    // manifest, release fingerprint and full native payload before A exits.
+    private static (string Sha256, long Entries, long Bytes) InspectExactImmutableNativeBPayload(
+        OwnedWorkerClaim owner, JsonElement journal)
+    {
+        var sourceSha = journal.GetProperty("targetSha").GetString() ?? "";
+        var contract = journal.GetProperty("targetRuntimeContractSha256").GetString() ?? "";
+        var target = RuntimeInformation.ProcessArchitecture switch
+        {
+            Architecture.X64 => "win32-x64", Architecture.Arm64 => "win32-arm64",
+            _ => throw new PlatformNotSupportedException("Unsupported B staging architecture."),
+        };
+        var stage = journal.GetProperty("stage").GetString();
+        var sequence = journal.GetProperty("sequence").GetInt32();
+        if (journal.GetProperty("schemaVersion").GetInt32() != 1 ||
+            journal.GetProperty("channel").GetString() != "main" ||
+            journal.GetProperty("transactionId").GetString() != owner.TransactionId ||
+            journal.GetProperty("target").GetString() != target ||
+            !((stage == "prepared" && sequence == 0) ||
+              (stage == "native_staged" && sequence == 1)) ||
+            !SourceShaPattern.IsMatch(sourceSha) || !DigestPattern.IsMatch(contract))
+            throw new InvalidDataException("Original Guardian immutable native B identity is invalid.");
+        InspectionPhase = "native-stage-b-exact-source";
+        var install = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Equinox Local");
+        var tx = Path.Combine(install, "state", "main-update");
+        var source = Path.Combine(tx, "sources", sourceSha);
+        RequireNormalDirectory(source);
+        InspectOwnedMainGit(install, target, source, sourceSha);
+
+        InspectionPhase = "native-stage-b-manifest";
+        var nativeRoot = Path.Combine(tx, "native-store", target, sourceSha);
+        RequireNormalDirectory(nativeRoot);
+        using var manifestDoc = ReadOwnedTransitionRecord(Path.Combine(nativeRoot, "native-store.json"), 8192);
+        var manifest = manifestDoc.RootElement;
+        RequireExactKeys(manifest, ["schemaVersion", "channel", "sourceSha", "target", "runtimeContractSha256",
+            "artifactSha256", "artifactBytes", "payloadVersion", "releaseFingerprint"]);
+        var payloadVersion = manifest.GetProperty("payloadVersion").GetString() ?? "";
+        if (manifest.GetProperty("schemaVersion").GetInt32() != 1 ||
+            manifest.GetProperty("channel").GetString() != "main" ||
+            manifest.GetProperty("sourceSha").GetString() != sourceSha ||
+            manifest.GetProperty("target").GetString() != target ||
+            manifest.GetProperty("runtimeContractSha256").GetString() != contract ||
+            !DigestPattern.IsMatch(manifest.GetProperty("artifactSha256").GetString() ?? "") ||
+            manifest.GetProperty("artifactBytes").GetInt64() is < 1 or > 1_073_741_824 ||
+            !VersionRegex().IsMatch(payloadVersion))
+            throw new InvalidDataException("Native B manifest does not bind the immutable SHA and runtime contract.");
+        var fingerprint = manifest.GetProperty("releaseFingerprint");
+        RequireExactKeys(fingerprint, ["schemaVersion", "sha256", "entries", "bytes"]);
+        if (fingerprint.GetProperty("schemaVersion").GetInt32() != 1 ||
+            !DigestPattern.IsMatch(fingerprint.GetProperty("sha256").GetString() ?? "") ||
+            fingerprint.GetProperty("entries").GetInt64() < 1 ||
+            fingerprint.GetProperty("bytes").GetInt64() < 1)
+            throw new InvalidDataException("Native B fingerprint claim is incomplete.");
+        var release = Path.Combine(nativeRoot, "release");
+        RequireNormalDirectory(release);
+        using var releaseDoc = ReadOwnedTransitionRecord(Path.Combine(release, "release.json"), 16384);
+        var metadata = releaseDoc.RootElement;
+        if (metadata.GetProperty("schemaVersion").GetInt32() != 1 ||
+            metadata.GetProperty("sourceSha").GetString() != sourceSha ||
+            metadata.GetProperty("target").GetString() != target ||
+            metadata.GetProperty("version").GetString() != payloadVersion ||
+            metadata.GetProperty("serverEntry").GetString() != "server.js")
+            throw new InvalidDataException("Native B release metadata is inconsistent.");
+        RequireNormalFile(Path.Combine(release, "runtime", "node", "bin", "node.exe"));
+        RequireNormalFile(Path.Combine(release, "runtime", "shell", "EquinoxLocal.exe"));
+        RequireNormalFile(Path.Combine(release, "runtime", "browser", "equinox-browser-native-host.exe"));
+
+        InspectionPhase = "native-stage-b-full-fingerprint";
+        var measured = FingerprintNativeMainRelease(release);
+        if (measured.Sha256 != fingerprint.GetProperty("sha256").GetString() ||
+            measured.Entries != fingerprint.GetProperty("entries").GetInt64() ||
+            measured.Bytes != fingerprint.GetProperty("bytes").GetInt64())
+            throw new InvalidDataException("Native B release bytes differ from the exact immutable fingerprint.");
+
+        return (measured.Sha256, measured.Entries, measured.Bytes);
+    }
+
 }

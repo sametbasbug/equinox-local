@@ -534,6 +534,8 @@ try {
   $JournalStageCommit = Join-Path $JournalDataDir ("$JournalId.stage-b-commit.json")
   $JournalShellTrigger = Join-Path $Work 'start-wpf-quiesce-client.trigger'
   $JournalShellQuiesced = Join-Path $JournalDataDir ("$JournalId.stable-shell-quiesce.json")
+  $JournalNativeStageDenyTrigger = Join-Path $JournalDataDir ("$JournalId.native-stage-deny.trigger")
+  $JournalNativeStageDenyResult = Join-Path $JournalDataDir ("$JournalId.native-stage-deny.result")
   $JournalAbortCommit = Join-Path $JournalDataDir ("$JournalId.abort-commit.json")
   $JournalQuarantinedLock = Join-Path $JournalDataDir (".$JournalId.quarantined.writer-lock")
   $JournalQuarantineReceipt = Join-Path $JournalDataDir ("$JournalId.orphan-quarantine.json")
@@ -595,6 +597,8 @@ try {
       $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_JOURNAL_ABORT_TRIGGER'] = $JournalAbortTrigger
       $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_JOURNAL_STAGE_TRIGGER'] = $JournalStageTrigger
       $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_WPF_QUIESCE_TRIGGER'] = $JournalShellTrigger
+      $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_NATIVE_STAGE_DENY_TRIGGER'] = $JournalNativeStageDenyTrigger
+      $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_NATIVE_STAGE_DENY_RESULT'] = $JournalNativeStageDenyResult
       $WorkerProcess = [Diagnostics.Process]::Start($WorkerStartInfo)
       if ($null -eq $WorkerProcess) { throw 'Unable to start ephemeral owned Node process for Guardian audit.' }
       $WorkerRecord = [ordered]@{
@@ -723,7 +727,32 @@ try {
         Assert-True ($LASTEXITCODE -eq 0 -and -not [IO.File]::Exists($JournalGuard) -and
           -not $AuthorityProcess.HasExited) 'Actual JS journal writer collided with independently pinned original Guardian session.'
         Assert-True ((Invoke-GuardianCheck '--hold-native-journal-authority') -eq 70) 'Duplicate native authority owner silently replaced a live owner.'
-        $AuthorityProcess.Kill()
+        # A real kernel-owned Guardian session must reject a forged staged B
+        # whose signed source and immutable release fingerprint do NOT exist.
+        # This is a negative installed-host regression, never a new public CLI
+        # or a fake B promotion. Keep installed native A WPF running.
+        $PreparedBytes = [IO.File]::ReadAllBytes($JournalData)
+        $StageSnapshot = ConvertFrom-Json ([Text.Encoding]::UTF8.GetString($PreparedBytes))
+        try {
+          $StageSnapshot.stage = 'native_staged'
+          $StageSnapshot.sequence = 1
+          [IO.File]::WriteAllText($JournalData, ($StageSnapshot | ConvertTo-Json -Depth 8))
+          [IO.File]::WriteAllText($JournalNativeStageDenyTrigger, 'test-only-native-b-absent')
+          $Denied = $false
+          for ($NativeStageTry=0; $NativeStageTry -lt 100; $NativeStageTry++) {
+            if ([IO.File]::Exists($JournalNativeStageDenyResult)) { $Denied = $true; break }
+            Start-Sleep -Milliseconds 120
+          }
+          Assert-True $Denied 'Real signed Guardian did not answer current-stage worker before bounded timeout.'
+          Assert-True (([IO.File]::ReadAllText($JournalNativeStageDenyResult)) -ceq 'denied-before-WPF-exit') 'Guardian accepted invalid B staged fingerprint or stage worker proof.'
+          $AliveA = @(Get-CimInstance Win32_Process -Filter "Name='EquinoxLocal.exe'" -ErrorAction SilentlyContinue |
+            Where-Object { -not [string]::IsNullOrWhiteSpace($_.ExecutablePath) -and (Same-Path $_.ExecutablePath $StableExe) })
+          Assert-True ($AliveA.Count -eq 1) 'Staged B fingerprint failure incorrectly stopped original native A WPF.'
+        } finally {
+          [IO.File]::WriteAllBytes($JournalData, $PreparedBytes)
+          Remove-Item -LiteralPath $JournalNativeStageDenyTrigger,$JournalNativeStageDenyResult -Force -ErrorAction SilentlyContinue
+        }
+        if (-not $AuthorityProcess.HasExited) { $AuthorityProcess.Kill() }
         Assert-True ($AuthorityProcess.WaitForExit(5000)) 'Guardian authority process did not terminate under powercut fixture.'
         Assert-True ([IO.File]::Exists($JournalGuardianSession) -and [IO.File]::Exists($JournalAuthority) -and
           -not [IO.File]::Exists($JournalGuard)) 'Guardian authority powercut lost its original independent kernel owner lease.'
@@ -746,7 +775,7 @@ try {
         }
         Remove-Item -LiteralPath $JournalGuardianSession -Force -ErrorAction SilentlyContinue
         Remove-Item -LiteralPath $JournalAuthority -Force -ErrorAction SilentlyContinue
-        Remove-Item -LiteralPath $JournalAuthorityTrigger -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $JournalAuthorityTrigger,$JournalNativeStageDenyTrigger,$JournalNativeStageDenyResult -Force -ErrorAction SilentlyContinue
       }
       Assert-True ((Invoke-GuardianCheck '--audit-native-journal') -eq 0) 'Native journal authority disposable fixture reconciliation failed.'
       # Real OS negative forward milestone: the detached worker and prepared

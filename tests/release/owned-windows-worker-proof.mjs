@@ -43,3 +43,31 @@ for (const source of [trigger, abortTrigger, shellTrigger, stageTrigger].filter(
   }, 120);
   timer.unref();
 }
+
+// Negative staged-B admission using the SAME real installed worker PID.
+// A forged native_staged journal without immutable B bytes MUST NOT stop A.
+// Never retry after a stage HMAC could have been sent.
+const nativeStageTrigger = process.env.EQUINOX_LOCAL_TEST_NATIVE_STAGE_DENY_TRIGGER;
+const nativeStageResult = process.env.EQUINOX_LOCAL_TEST_NATIVE_STAGE_DENY_RESULT;
+if (nativeStageTrigger && nativeStageResult) {
+  const timer = setInterval(() => {
+    if (!fs.existsSync(nativeStageTrigger)) return;
+    clearInterval(timer);
+    void (async () => {
+      const modulePath = process.env.EQUINOX_LOCAL_TEST_JOURNAL_CLIENT_MODULE;
+      if (!modulePath) throw new Error('Stage denial needs exact product client module.');
+      const {requestEquinoxWindowsOwnedNativeShellShutdown} = await import(pathToFileURL(modulePath).href);
+      try {
+        await requestEquinoxWindowsOwnedNativeShellShutdown({
+          transactionId: process.env.EQUINOX_LOCAL_TEST_WORKER_TX,
+          transactionRoot: process.env.EQUINOX_LOCAL_TEST_JOURNAL_TX_ROOT,
+          workerToken: process.env.EQUINOX_LOCAL_MAIN_WORKER_TOKEN, release:'A',
+        });
+        fs.writeFileSync(nativeStageResult,'UNSAFE-ACCEPTED');
+      } catch {
+        fs.writeFileSync(nativeStageResult,'denied-before-WPF-exit');
+      }
+    })().catch(() => fs.writeFileSync(nativeStageResult,'test-client-failure'));
+  },120);
+  timer.unref();
+}

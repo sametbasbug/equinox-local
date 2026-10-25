@@ -441,6 +441,14 @@ test("one signed Guardian session authentically accepts ONLY exact journal-stage
   assert.match(session,/FixedTimeEquals\(mac, reply.AsSpan\(1\)\)/u);
   assert.match(session,/opcode == 1 && stage == "native_staged"/u);
   assert.match(session,/opcode == 2 && stage == "rollback_started"/u);
+  const staging=await fs.readFile(new URL('../../native/windows/EquinoxLocal.Guardian/MainNativeStageB.cs',import.meta.url),'utf8');
+  assert.match(session,/InspectExactImmutableNativeBPayload\(owner, j\)/u);
+  assert.ok(session.indexOf('InspectExactImmutableNativeBPayload(owner, j)') < session.indexOf('QuiesceOwnedStableShell(owner, root, worker, continuousNativeSession: true)'));
+  assert.match(staging,/InspectExactImmutableNativeBPayload\(owner, journal\)/u);
+  assert.match(staging,/InspectOwnedMainGit\(install, target, source, sourceSha\)/u);
+  assert.match(staging,/FingerprintNativeMainRelease\(release\)/u);
+  assert.match(staging,/measured.Sha256 != fingerprint.GetProperty\("sha256"\)/u);
+  assert.match(staging,/stage == "native_staged" && sequence == 1/u);
   assert.match(session,/QuiesceOwnedStableShell\(owner, root, worker, continuousNativeSession: true\)/u);
   assert.match(session,/QuiesceOwnedMainBRollbackShell\(owner, root, worker, digest, handoffDigest/u);
   assert.match(session,/VerifyPinnedNativeGuardianFile\(originalGuardian\)/u);
