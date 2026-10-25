@@ -7,6 +7,7 @@ import { inspectWindowsMainUpdateWorkerProcess, readWindowsMainUpdateWorkerOwner
 import { createEquinoxLocalWindowsNativeTransitionJournal } from './equinox-local-windows-native-transition-journal.js';
 import { readEquinoxLocalMainNativePointer } from './equinox-local-main-native-state.js';
 import { parseEquinoxVersion } from './equinox-local-updater.js';
+import { provisionWindowsGuardianFromRelease } from './equinox-local-windows-guardian-provision.js';
 import { attestEquinoxWindowsOriginalGuardianSession, attestEquinoxWindowsNativePhysicalMilestone, proveEquinoxWindowsNativeJournalAuthority, requestEquinoxWindowsOwnedNativeShellHealth } from './equinox-local-windows-native-journal-authority-client.js';
 function hasErrorCode(error, code) {
     return error !== null && typeof error === "object" && "code" in error && error.code === code;
@@ -18,6 +19,28 @@ const VALID_RESUME = new Set(['ready_to_switch', 'native_rollback_ready', 'nativ
 const HEX_DIGEST = /^[a-f0-9]{64}$/u;
 const ORIGINAL_PROOF_KEYS = ['guardianPid', 'handoffSha256', 'journalSha256', 'schemaVersion',
     'sequence', 'stage', 'transactionId', 'workerPid', 'workerStartTimeUtcTicks'];
+// The original signed A can run from either a numbered Stable release or
+// the exact committed immutable Main native-store. The transaction root,
+// NOT the location of A's release, identifies the one installed product.
+export function resolveWindowsGuardianInstallationRoot(transactionRoot, releaseDir) {
+    if (!path.win32.isAbsolute(transactionRoot) || !path.win32.isAbsolute(releaseDir))
+        throw new Error('Guardian session root is not the actual signed product installation.');
+    const installRoot = path.win32.dirname(path.win32.dirname(transactionRoot));
+    const same = (a, b) => path.win32.normalize(a).toLowerCase() === path.win32.normalize(b).toLowerCase();
+    const stableRoot = path.win32.join(installRoot, 'releases');
+    const stable = same(path.win32.dirname(releaseDir), stableRoot) &&
+        /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/u.test(path.win32.basename(releaseDir));
+    const nativeRoot = path.win32.join(transactionRoot, 'native-store', `win32-${process.arch}`);
+    const mainParts = path.win32.relative(nativeRoot, releaseDir).split(path.win32.sep);
+    const main = mainParts.length === 2 && /^[a-f0-9]{40}$/u.test(mainParts[0] ?? '') &&
+        mainParts[1] === 'release' &&
+        same(releaseDir, path.win32.join(nativeRoot, mainParts[0], mainParts[1]));
+    if (!same(transactionRoot, path.win32.join(installRoot, 'state', 'main-update')) ||
+        (!stable && !main)) {
+        throw new Error('Guardian session root is not the actual signed product installation.');
+    }
+    return installRoot;
+}
 // The existing product-installed Guardian is itself the only kernel-native
 // authority. This helper neither grants a supervisor nor replaces the sole
 // JS journal writer. A failure leaves Guardian's original durable owner lock
@@ -30,11 +53,12 @@ export async function authenticateOriginalWindowsGuardianOwner({ transactionId, 
         !/^[0-9]{1,19}$/u.test(workerStartTimeUtcTicks)) {
         throw new Error('Signed Windows Guardian requires its original live product worker.');
     }
-    const installRoot = path.win32.dirname(path.win32.dirname(releaseDir));
-    if (path.win32.dirname(releaseDir) !== path.win32.join(installRoot, 'releases') ||
-        transactionRoot !== path.win32.join(installRoot, 'state', 'main-update')) {
-        throw new Error('Guardian session root is not the actual signed product installation.');
-    }
+    const installRoot = resolveWindowsGuardianInstallationRoot(transactionRoot, releaseDir);
+    // Provision ONLY the exact authenticated current A Guardian, never a
+    // different obsolete numbered Stable Guardian. Existing differing bytes
+    // are refused by the exclusive installer rather than silently replaced.
+    await provisionWindowsGuardianFromRelease({ installation: { platform: 'win32',
+            target: `win32-${process.arch}`, installRoot, releaseDir }, fsImpl });
     const installed = path.win32.join(installRoot, 'runtime', 'guardian', 'EquinoxLocalGuardian.exe');
     const releaseGuardian = path.win32.join(releaseDir, 'runtime', 'guardian', 'EquinoxLocalGuardian.exe');
     const digest = async (file) => {

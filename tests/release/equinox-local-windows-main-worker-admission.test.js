@@ -3,7 +3,7 @@ import path from 'node:path';
 import {createHash} from 'node:crypto';
 import test from 'node:test';
 
-import { admitWindowsMainNativeWorkerJournal } from '../../src/equinox-local-windows-main-worker-admission.js';
+import { admitWindowsMainNativeWorkerJournal, resolveWindowsGuardianInstallationRoot } from '../../src/equinox-local-windows-main-worker-admission.js';
 
 const ID = `main-${'e'.repeat(32)}`;
 const A = 'a'.repeat(40), B = 'b'.repeat(40), CONTRACT = 'c'.repeat(64);
@@ -47,6 +47,18 @@ function fixture({ stage = 'ready_to_switch', token = TOKEN, pid = 1234, process
   };
   return { options, journal, calls, getStored: () => stored, previousNative };
 }
+
+test('original Guardian accepts exact native Main A root and numbered Stable A, never a foreign release', () => {
+  const install = path.win32.dirname(path.win32.dirname(ROOT));
+  assert.equal(resolveWindowsGuardianInstallationRoot(ROOT,RELEASE),install);
+  assert.equal(resolveWindowsGuardianInstallationRoot(ROOT,path.win32.join(ROOT,'native-store',`win32-${process.arch}`,'a'.repeat(40),'release')),install);
+  for(const foreign of [
+    String.raw`C:\Windows\System32`,
+    path.win32.join(ROOT,'native-store',`win32-${process.arch}`,'b'.repeat(40),'other'),
+    path.win32.join(ROOT,'native-store','win32-unknown','a'.repeat(40),'release'),
+    path.win32.join(install,'releases','..','foreign','6.1.2'),
+  ]) assert.throws(()=>resolveWindowsGuardianInstallationRoot(ROOT,foreign),/Guardian session root/u);
+});
 
 test('real Windows worker admission binds product Stable Node, PID, secret, receipt and creates journal once', async () => {
   const f = fixture();
