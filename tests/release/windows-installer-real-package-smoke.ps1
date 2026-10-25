@@ -460,7 +460,11 @@ try {
       [IO.File]::WriteAllBytes($NativeReleaseJson, $MutatedNativeRelease)
       Assert-True ((Invoke-GuardianCheck '--audit-native-identity') -eq 70) 'Guardian trusted a mutated immutable native payload.'
     } finally { [IO.File]::WriteAllBytes($NativeReleaseJson, $OriginalNativeRelease) }
-    Assert-True ((Invoke-GuardianCheck '--inspect') -eq 0) 'Guardian refused independently verified committed Main WPF snapshot.'
+    $CommittedAuditCode = [int](Invoke-GuardianCheck '--audit-native-identity')
+    Assert-True ($CommittedAuditCode -eq 0) 'Restored committed Main identity no longer passes the independent exact-slot audit.'
+    $CommittedInspectCode = [int](Invoke-GuardianCheck '--inspect')
+    Write-Output ("Windows committed native Main Guardian inspect evidence: target={0}; identity={1}; inspect={2}" -f $FixtureTarget, $CommittedAuditCode, $CommittedInspectCode)
+    Assert-True ($CommittedInspectCode -eq 0) 'Guardian refused independently verified committed Main WPF snapshot.'
     $NativePointerProbeValue.sourceSha = 'a' * 40
     [IO.File]::WriteAllText($NativePointerProbe, ($NativePointerProbeValue | ConvertTo-Json -Depth 3))
     Assert-True ((Invoke-GuardianCheck '--audit-native-identity') -eq 70) 'Guardian trusted the wrong native Main source SHA.'

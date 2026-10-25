@@ -118,6 +118,12 @@ The focused previous SHA92af385 hosted [CI40161799553](https://github.com/sametb
 
 This is a **necessary post-commit B boot fix**, not permission for native_staged to switch native slots. Product worker still fails closed with windowsAdmission:null; native B startup/sustained health, bad B→EXACT original A rollback, kernel Guardian file-ID and user state acceptance on the physical Windows remain missing. Do not merge draft PR285 or publish 6.2.0 until the complete signed recovery is independently proven.
 
+### CP370 — x64 and ARM64 committed-Main Guardian inspect refusal isolated (2026-10-25)
+
+The first committed Main boot fix SHA e646137 failed exact [CI40163154652](https://github.com/sametbasbug/equinox-local/actions/runs/40163154652): the Windows x64 real Guardian acceptance and ARM64 public installer acceptance BOTH stopped at the same positive fully verified Main Guardian inspect, while forged-pointer, altered-fingerprint, foreign Native Messaging and dirty-Git negatives correctly refused. Two dependent aggregate jobs consequently failed; overall 15 PASS / 4 expected SKIP / 4 FAIL. CodeQL40163154636 passed with no new alerts. This is a **real acceptance failure**, not a green release.
+
+Before changing native ownership or weakening the Main verification gate, the existing disposable native identity acceptance now independently reconfirms exact committed --audit-native-identity after all malicious fixtures have been restored, then captures the concrete --inspect exit status for each Windows CPU architecture. The goal is to distinguish fixture state drift from a post-audit Guardian launch-path defect, not create another inspector or workaround. Physical user Windows and Mac private Developer installations remain unchanged; production Main windowsAdmission:null, DRAFT PR285 and signed A/B rollback blockade are unchanged.
+
 ## Product contract
 
 - Public installers use the verified native bootstrap and enroll an admitted exact-SHA Main source by default after health checks; healthy existing Main is a verified no-op, not a forced reinstall or a downgrade. The signed numbered Stable bootstrap remains a historical/recovery transport, not a second active channel or user opt-in.
