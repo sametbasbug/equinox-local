@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import path from 'node:path';
+import {createHash} from 'node:crypto';
 import test from 'node:test';
 
 import { admitWindowsMainNativeWorkerJournal } from '../../src/equinox-local-windows-main-worker-admission.js';
@@ -193,4 +194,44 @@ test('full signed native admission rejects a historically valid durable Guardian
    attestGuardianSessionImpl:async()=>{throw Error('unexpected signed stage probe');},
  });
  assert.equal(admitted.ownerOnly,true);
+});
+
+test('original Guardian WPF exit postcondition binds actual OS receipt to SAME stage SHA and exact handoff (A and B)',async()=>{
+ const digest=bytes=>createHash('sha256').update(bytes).digest('hex');
+ for(const release of ['A','B']){
+  const f=fixture();
+  const journal=Buffer.from(JSON.stringify({transactionId:ID,stage:release==='A'?'native_staged':'rollback_started',sequence:release==='A'?1:4}));
+  const handoff=Buffer.from(JSON.stringify({transactionId:ID,pid:1234}));
+  const root=path.win32.join(ROOT,'guardian-journal');
+  const stageKey=path.win32.join(root,ID+'.json');
+  const handoffKey=path.win32.join(ROOT,'handoff',ID+'.windows-worker.json');
+  const exitKey=path.win32.join(root,ID+(release==='A'?'.stable-shell-quiesce.json':'.b-shell-quiesce.json'));
+  const proof={
+   schemaVersion:1,transactionId:ID,disposition:release==='A'?'stable-shell-quiesced-only':'b-shell-quiesced-only',
+   shellPid:987,shellStartTimeUtcTicks:'638958000000000001',workerPid:1234,
+   workerStartTimeUtcTicks:'638958000000000000',guardianPid:733,
+   ...(release==='A'?{preparedJournalSha256:digest(journal)}:
+     {stage:'rollback_started',sequence:4,rollbackJournalSha256:digest(journal),handoffSha256:digest(handoff)}),
+  };
+  const files=new Map([[stageKey,journal],[handoffKey,handoff],[exitKey,Buffer.from(JSON.stringify(proof))]]);
+  const fsImpl={open:async file=>{
+   if(!files.has(file)) throw Object.assign(Error('file missing'),{code:'ENOENT'});
+   const bytes=Buffer.from(files.get(file));
+   return {stat:async()=>({isFile:()=>true,isSymbolicLink:()=>false,nlink:1,size:bytes.length}),
+     readFile:async()=>Buffer.from(bytes),close:async()=>{}};
+  }};
+  const admitted=await admitWindowsMainNativeWorkerJournal({...f.options,fsImpl});
+  const verify=()=>release==='A'
+    ? admitted.supervisor.shutdownOwnedWpf({afterSignedExit:true,release:'A'})
+    : admitted.supervisor.quiesceOwnedB({afterSignedExit:true,release:'B'});
+  assert.equal(await verify(),true);
+  files.set(exitKey,Buffer.from(JSON.stringify({...proof,guardianPid:734})));
+  await assert.rejects(verify(),/not bound to this Guardian and exact journal generation/u);
+  files.set(exitKey,Buffer.from(JSON.stringify({...proof,
+    ...(release==='A'?{preparedJournalSha256:'0'.repeat(64)}:{handoffSha256:'0'.repeat(64)})})));
+  await assert.rejects(verify(),/not bound to this Guardian and exact journal generation/u);
+  files.set(exitKey,Buffer.from(JSON.stringify(proof)));
+  files.set(stageKey,Buffer.from(JSON.stringify({...JSON.parse(journal.toString()),sequence:9})));
+  await assert.rejects(verify(),/not bound to this Guardian and exact journal generation/u);
+ }
 });

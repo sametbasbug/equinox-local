@@ -381,21 +381,58 @@ export async function admitWindowsMainNativeWorkerJournal({
   };
   const signedShutdownReceipt = async (kind:'A'|'B')=>{
     await assertLiveWorker();
-    const file=path.win32.join(transactionRoot,'guardian-journal',
-      receipt.transactionId+(kind==='A'?'.stable-shell-quiesce.json':'.b-shell-quiesce.json'));
-    const fd=await fsImpl.open(file,fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0));
-    let data:Record<string,unknown>;
-    try {
-      const st=await fd.stat();
-      if (!st.isFile() || st.nlink!==1 || st.size<2 || st.size>8192)
-        throw new Error('Original native WPF shutdown receipt is not a bounded owned file.');
-      data=JSON.parse((await fd.readFile('utf8'))) as Record<string,unknown>;
-    }finally{await fd.close();}
-    if (data.schemaVersion!==1 || data.transactionId!==receipt.transactionId ||
-        data.workerPid!==workerPid || data.workerStartTimeUtcTicks!==ownership.startTimeUtcTicks ||
-        data.guardianPid!==guardian.guardianPid ||
-        data.disposition!==(kind==='A'?'stable-shell-quiesced-only':'b-shell-quiesced-only'))
-      throw new Error('Original native WPF shutdown is not proven by the same Guardian OS owner.');
+    const nativeRoot=path.win32.join(transactionRoot,'guardian-journal');
+    const file=path.win32.join(nativeRoot,receipt.transactionId+
+      (kind==='A'?'.stable-shell-quiesce.json':'.b-shell-quiesce.json'));
+    const inspectFile=async(filePath:string):Promise<Buffer>=>{
+      // Read the SAME normal file handle from stat to bytes. A recreated
+      // pathname or truncated stage receipt cannot become a signed OS proof.
+      const fd=await fsImpl.open(filePath,fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0));
+      try {
+        const st=await fd.stat();
+        if (!st.isFile() || st.isSymbolicLink() || st.nlink!==1 ||
+            st.size<2 || st.size>8192)
+          throw new Error('Original signed WPF evidence file is not an immutable bounded normal file.');
+        const bytes=await fd.readFile();
+        if (bytes.length!==st.size) throw new Error('Original WPF evidence was replaced during read.');
+        return bytes;
+      }finally{await fd.close();}
+    };
+    const proof=JSON.parse((await inspectFile(file)).toString('utf8')) as Record<string,unknown>;
+    const journalBytes=await inspectFile(path.win32.join(nativeRoot,receipt.transactionId+'.json'));
+    const journal=JSON.parse(journalBytes.toString('utf8')) as Record<string,unknown>;
+    const stage=kind==='A'?'native_staged':'rollback_started';
+    const generation=journal.sequence;
+    const validGeneration=kind==='A'?generation===1:
+      Number.isSafeInteger(generation) && typeof generation==='number' &&
+      generation>=1 && generation<=6;
+    const stageHash=createHash('sha256').update(journalBytes).digest('hex');
+    const handoffHash=kind==='B'?createHash('sha256').update(await inspectFile(
+      path.win32.join(transactionRoot,'handoff',receipt.transactionId+'.windows-worker.json'))).digest('hex'):null;
+    const originalAKeys=['disposition','guardianPid','preparedJournalSha256','schemaVersion',
+      'shellPid','shellStartTimeUtcTicks','transactionId','workerPid','workerStartTimeUtcTicks'];
+    const originalBKeys=['disposition','guardianPid','handoffSha256','rollbackJournalSha256',
+      'schemaVersion','sequence','shellPid','shellStartTimeUtcTicks','stage','transactionId',
+      'workerPid','workerStartTimeUtcTicks'];
+    const keys=kind==='A'?originalAKeys:originalBKeys;
+    const savedHash=kind==='A'?proof.preparedJournalSha256:proof.rollbackJournalSha256;
+    if (Object.keys(proof).sort().join(',')!==keys.join(',') ||
+        proof.schemaVersion!==1 || proof.transactionId!==receipt.transactionId ||
+        proof.workerPid!==workerPid || proof.workerStartTimeUtcTicks!==ownership.startTimeUtcTicks ||
+        proof.guardianPid!==guardian.guardianPid ||
+        proof.disposition!==(kind==='A'?'stable-shell-quiesced-only':'b-shell-quiesced-only') ||
+        !Number.isSafeInteger(proof.shellPid) || (proof.shellPid as number)<1 ||
+        typeof proof.shellStartTimeUtcTicks!=='string' ||
+        !/^[0-9]{1,19}$/u.test(proof.shellStartTimeUtcTicks) ||
+        journal.stage!==stage || journal.transactionId!==receipt.transactionId ||
+        !validGeneration || typeof savedHash!=='string' ||
+        !HEX_DIGEST.test(savedHash) || savedHash!==stageHash ||
+        (kind==='B' && (proof.stage!=='rollback_started' ||
+          proof.sequence!==generation ||
+          typeof proof.handoffSha256!=='string' ||
+          !HEX_DIGEST.test(proof.handoffSha256) || proof.handoffSha256!==handoffHash))) {
+      throw new Error('Original native WPF shutdown receipt is not bound to this Guardian and exact journal generation.');
+    }
     await assertLiveWorker();
     return true;
   };
