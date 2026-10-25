@@ -236,6 +236,15 @@ try {
     journalFactory: (o) => createEquinoxLocalWindowsNativeTransitionJournal({
       ...o, protectWindowsAcl: async () => ({ safe: true }), verifyWindowsAcl: async () => ({ safe: true }),
     }),
+    // This disposable PE/native-slot fixture unpacks only shell/node/job
+    // payloads in RUNNER_TEMP. It is NOT an installed full signed A release:
+    // the separate installed-host test exercises actual product Node-spawned
+    // Guardian/HMAC/lease. Never let this synthetic slot fixture spawn a
+    // real product Guardian or impersonate production native admission.
+    authenticateSignedGuardianImpl: async identity => ({
+      originalSignedOwner: true, guardianPid: 733, workerPid: process.pid,
+      workerStartTimeUtcTicks: owner.startTimeUtcTicks,
+    }),
   };
   const admitted = await admitWindowsMainNativeWorkerJournal(realAdmission);
   assert.equal(admitted.record.stage, 'prepared');

@@ -224,6 +224,14 @@ The already-existing disposable real signed Windows x64/ARM64 installer acceptan
 
 Remaining: only after signed hosted OS acceptance is green, bind the original independently admitted live Guardian/sole JS journal milestones into the ONE existing supervisor-bound A/B adapter and complete A→B→A with terminal/crash reconciliation and physical protected user Windows; production windowsAdmission:null must remain FAIL CLOSED until those exact proofs. Keep DRAFT PR285, issue284, canonical main and private Mac mini Developer unchanged.
 
+### CP382 — Fix fixture-only admission regression and expose bounded real signed Guardian failure category (unreleased 2026-10-25)
+
+Exact CP381 public commit90031a6 CI40179800623 FAILED 6 jobs, not green. Windows x64/ARM64 managed-package native PE-only slot smoke failed because its deliberately unpacked RUNNER_TEMP fixture has NO installed original Guardian or real user transaction root and previously admitted purely as a disposable fixture; the new PRODUCT DEFAULT real Guardian admission correctly refused the foreign root. That PE-only fixture now explicitly injects a **test-only signed Guardian admission witness**, as it already injects test-only signed WPF stage/health callbacks and ACLs. It remains restricted to a disposable slot exercise and DOES NOT act as physical signed OS admission; production/default full admission always starts the actual existing original installed signed Guardian and verifies its own HMAC/NTFS lease.
+
+The independent real signed Windows installer acceptance ALSO failed product-owned Node native admission after its worker attempted the actual Guardian start: the fixture error report incorrectly reduced all exceptions to generic admission-refused, hiding the exact cause. It now emits only a bounded allowlisted admission reason code or safe OS error code, never worker tokens, paths, exe/journal contents, or stderr; the same already-existing PowerShell fixture immediately reports this category and fails the test. Real original Guardian and its existing separate HMAC protocol are unchanged; no silent blanket retry or fake success.
+
+CP382 verifies local mixed 76 focused source/unit tests, preserves public production windowsAdmission:null FAIL-CLOSED, DRAFT PR285 and canonical main unchanged. New hosted x64/ARM64 acceptance must still determine WHY the real original product-Node Guardian authority failed and then fix that specific real signed OS admission path before full A→healthy B→forced bad B→EXACT original A production activation. Do not treat success of PE-only fixture as proof of real signed runtime.
+
 ## Product contract
 
 - Public installers use the verified native bootstrap and enroll an admitted exact-SHA Main source by default after health checks; healthy existing Main is a verified no-op, not a forced reinstall or a downgrade. The signed numbered Stable bootstrap remains a historical/recovery transport, not a second active channel or user opt-in.

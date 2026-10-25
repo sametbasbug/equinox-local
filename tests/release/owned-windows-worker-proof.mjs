@@ -105,8 +105,23 @@ if (originalLaunchTrigger && originalLaunchResult) {
     })().catch(error=>{
       // The installed test only accepts a bounded error category; never
       // leak potentially private paths/tokens into hosted job logs.
+      const reason = String(error?.message ?? '');
+      const SAFE_REASON = [
+        'Signed Windows Guardian requires its original live product worker.',
+        'Guardian session root is not the actual signed product installation.',
+        'Original signed Guardian session already exists; explicit recovery required.',
+        'Original signed Guardian requires the first prepared journal generation.',
+        'Original signed Guardian exited before ownership proof.',
+        'Original signed Guardian refused live prepared worker HMAC.',
+        'Original signed Guardian exited without durable ownership.',
+        'Original signed Guardian durable kernel worker/journal/handoff attestation failed.',
+        'Original signed Guardian did not retain its exclusive native OS session lease.',
+        'Installed original signed Guardian differs from the current immutable A release.',
+      ];
+      const category = SAFE_REASON.indexOf(reason);
       fs.writeFileSync(originalLaunchResult,JSON.stringify({failed:true,
-        category:error?.constructor?.name==='Error'?'admission-refused':'unexpected-failure'}));
+        // A finite allowlist index, never native stderr, paths or HMAC tokens.
+        category: category >= 0 ? 'admission-'+category : 'unclassified-'+String(error?.code ?? 'none').replace(/[^A-Z0-9_]/g,'').slice(0,18)}));
     });
   },120);
   timer.unref();

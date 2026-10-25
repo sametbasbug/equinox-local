@@ -717,6 +717,10 @@ try {
         }
         Assert-True $OwnerSpawned 'Installed product Node did not finish authentic original Guardian session admission.'
         $OwnerResult = ConvertFrom-Json ([IO.File]::ReadAllText($OriginalGuardianStartResult))
+        if ($OwnerResult.failed -eq $true) {
+          Write-Output ('Original product Node Guardian admission safe category: ' + [string]$OwnerResult.category)
+          throw 'Original product-owned Node did not gain signed Guardian kernel OS session admission.'
+        }
         Assert-True ($OwnerResult.originalSignedOwner -eq $true -and $OwnerResult.workerPid -eq $WorkerProcess.Id -and
           $OwnerResult.workerStartTimeUtcTicks -ceq $WorkerRecord.startTimeUtcTicks -and
           $OwnerResult.guardianPid -is [int]) 'Installed product Node failed original signed Guardian HMAC/OS identity admission.'
