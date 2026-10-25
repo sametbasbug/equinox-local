@@ -450,6 +450,31 @@ test("worker releases a stale terminal success lock without replaying mutation",
 });
 
 
+test("Main worker never reports success while signed Guardian terminal owner remains unresolved", async () => {
+  const receipt = preparedReceipt({ status: "succeeded", stage: "healthy" });
+  const engine = {
+    readActive: async () => receipt,
+    releaseStagedLock: async () => true,
+  };
+  await assert.rejects(runWorkerFixture({
+    argv: argv(), engineFactory: () => engine, resolveHostTarget: () => "darwin-arm64",
+    planNativeTransition: async () => assert.fail("resumed terminal receipt must not replay native B"),
+    cleanupImpl: async () => ({ cleaned: false, pendingNativeOwner: true }),
+  }), /signed native Guardian owner did not verify terminal A\/B completion/u);
+  const recovered = await runWorkerFixture({
+    argv: argv(), engineFactory: () => engine, resolveHostTarget: () => "darwin-arm64",
+    planNativeTransition: async () => assert.fail("resumed terminal receipt must not replay native B"),
+    cleanupImpl: async () => ({ cleaned: true, nativeOwner: true }),
+  });
+  assert.equal(recovered.status, "succeeded");
+
+  await assert.rejects(runWorkerFixture({
+    argv: argv(),
+    engineFactory: () => ({ readActive: async () => { throw new Error("original transaction still broken"); } }),
+    cleanupImpl: async () => ({ cleaned: false, pendingNativeOwner: true }),
+  }), /original transaction still broken/u);
+});
+
 test("native health rejects healthy A until restarted Control Center actually serves exact source B", async () => {
   const states = [
     { server: { version: "6.1.0" }, health: { state: "HEALTHY" }, installation: { kind: "managed-source", sourceSha: A } },

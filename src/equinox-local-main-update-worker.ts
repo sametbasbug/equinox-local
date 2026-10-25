@@ -298,6 +298,7 @@ export async function runEquinoxLocalMainUpdateWorker({
     ? pathApi.join(pathApi.dirname(pathApi.dirname(args.transactionRoot)), "runtime")
     : pathApi.join(pathApi.dirname(args.transactionRoot), "runtime");
   const toolchain = equinoxLocalToolchainContract({ runtimeRoot, target: hostTarget });
+  let updateFailed = false;
   try {
     const engine = engineFactory({
       sourceRoot: args.sourceRoot,
@@ -468,8 +469,19 @@ export async function runEquinoxLocalMainUpdateWorker({
       restartRuntime: restartWithNativeOwnership,
       verifyRuntime: verify,
     });
+  } catch (error) {
+    updateFailed = true;
+    throw error;
   } finally {
-    await cleanupImpl({ transactionId: args.transactionId, transactionRoot: args.transactionRoot });
+    const cleanup = await cleanupImpl({ transactionId: args.transactionId, transactionRoot: args.transactionRoot });
+    // A signed Windows Guardian can legitimately refuse terminal cleanup.
+    // Never report SUCCESS for a worker whose original kernel-owned HMAC
+    // session still blocks the next boot; preserve the earlier failure if
+    // this invocation already rejected the update or rollback.
+    if (!updateFailed && cleanup !== null && typeof cleanup === "object" &&
+        "pendingNativeOwner" in cleanup && cleanup.pendingNativeOwner === true) {
+      throw new Error("Original signed native Guardian owner did not verify terminal A/B completion.");
+    }
   }
 }
 
