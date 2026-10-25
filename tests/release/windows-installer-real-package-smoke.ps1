@@ -510,6 +510,8 @@ try {
   $JournalAuthority = Join-Path $JournalDataDir ("$JournalId.native-authority.json")
   $JournalAuthorityTrigger = Join-Path $Work 'start-journal-authority-client.trigger'
   $JournalAbortTrigger = Join-Path $Work 'start-journal-abort-client.trigger'
+  $JournalStageTrigger = Join-Path $Work 'start-journal-stage-client.trigger'
+  $JournalStageCommit = Join-Path $JournalDataDir ("$JournalId.stage-b-commit.json")
   $JournalShellTrigger = Join-Path $Work 'start-wpf-quiesce-client.trigger'
   $JournalShellQuiesced = Join-Path $JournalDataDir ("$JournalId.stable-shell-quiesce.json")
   $JournalAbortCommit = Join-Path $JournalDataDir ("$JournalId.abort-commit.json")
@@ -571,6 +573,7 @@ try {
       $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_JOURNAL_TX_ROOT'] = $NativeTxRoot
       $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_JOURNAL_TRIGGER'] = $JournalAuthorityTrigger
       $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_JOURNAL_ABORT_TRIGGER'] = $JournalAbortTrigger
+      $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_JOURNAL_STAGE_TRIGGER'] = $JournalStageTrigger
       $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_WPF_QUIESCE_TRIGGER'] = $JournalShellTrigger
       $WorkerProcess = [Diagnostics.Process]::Start($WorkerStartInfo)
       if ($null -eq $WorkerProcess) { throw 'Unable to start ephemeral owned Node process for Guardian audit.' }
@@ -708,6 +711,36 @@ try {
         Remove-Item -LiteralPath $JournalAuthorityTrigger -Force -ErrorAction SilentlyContinue
       }
       Assert-True ((Invoke-GuardianCheck '--audit-native-journal') -eq 0) 'Native journal authority disposable fixture reconciliation failed.'
+      # Real OS negative forward milestone: the detached worker and prepared
+      # journal genuinely authenticate, but its dummy B source is not a pinned
+      # product Git checkout/native release. Guardian MUST refuse native_staged,
+      # leave old A WPF and Native Messaging untouched, and persist an orphan
+      # writer lock for explicit reconciliation only.
+      $StageProcess = $null
+      try {
+        $StageStart = [Diagnostics.ProcessStartInfo]::new($GuardianExe)
+        $StageStart.Arguments = '--hold-native-stage-b'
+        $StageStart.UseShellExecute = $false
+        $StageStart.CreateNoWindow = $true
+        $StageStart.RedirectStandardError = $true
+        $StageProcess = [Diagnostics.Process]::Start($StageStart)
+        Assert-True ($null -ne $StageProcess) 'Native B stage refusal fixture could not launch Guardian.'
+        [IO.File]::WriteAllText($JournalStageTrigger, 'disposable-stage-proof')
+        Assert-True ($StageProcess.WaitForExit(18000)) 'Guardian failed to refuse foreign B staging before timeout.'
+        Assert-True ($StageProcess.ExitCode -eq 70) 'Guardian admitted a synthetic B native store.'
+        $StageAfter = ConvertFrom-Json ([IO.File]::ReadAllText($JournalData))
+        Assert-True ($StageAfter.stage -ceq 'prepared' -and $StageAfter.sequence -eq 0) 'Guardian advanced the journal without a real immutable B.'
+        Assert-True (-not [IO.File]::Exists($JournalStageCommit)) 'Guardian wrote a fake native_staged commit.'
+        Assert-True ([IO.File]::Exists($JournalGuard) -and [IO.File]::Exists($JournalAuthority)) 'Native stage refusal lost independent orphan-owner evidence.'
+      } finally {
+        if ($null -ne $StageProcess) {
+          try { if (-not $StageProcess.HasExited) { $StageProcess.Kill() } } catch {}
+          try { $StageProcess.WaitForExit(5000) | Out-Null } catch {}
+          $StageProcess.Dispose()
+        }
+        Remove-Item -LiteralPath $JournalGuard,$JournalAuthority,$JournalStageTrigger -Force -ErrorAction SilentlyContinue
+      }
+      Assert-True ((Invoke-GuardianCheck '--audit-native-journal') -eq 0) 'Negative forward-stage fixture failed explicit disposable journal reconciliation.'
       # Real installed WPF native pilot: independently authenticated Guardian
       # locates the exact Stable GUI OS PID, verifies owner SID/logon/session,
       # verifies the live named-pipe server PID, requests graceful exit via

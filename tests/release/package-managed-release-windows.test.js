@@ -410,7 +410,7 @@ test("native journal authority accepts only kernel-PID+HMAC live prepared worker
   const source = await fs.readFile(new URL('../../native/windows/EquinoxLocal.Guardian/MainNativeJournalAuthority.cs', import.meta.url), 'utf8');
   const lease = await fs.readFile(new URL('../../native/windows/EquinoxLocal.Guardian/MainNativeJournalLease.cs', import.meta.url), 'utf8');
   assert.match(program, /--hold-native-journal-authority/u);
-  assert.match(lease, /RecordNativeJournalWorkerAuthority\(owner, root, worker, recordPreparedAbort\)/u);
+  assert.match(lease, /RecordNativeJournalWorkerAuthority\(owner, root, worker, recordPreparedAbort, recordNativeStaged\)/u);
   assert.match(source, /GetNamedPipeClientProcessId\(listener\.SafePipeHandle/u);
   assert.match(source, /clientPid != owner\.Pid/u);
   assert.match(source, /stage"\)\.GetString\(\) != "prepared"/u);
@@ -801,6 +801,34 @@ test('all Guardian native transition record reads validate size and parse on one
   assert.doesNotMatch(body, /FileInfo\(|File\.ReadAllBytes\(|FileShare\.(?:Delete|ReadWrite)|FileMode\.OpenOrCreate/u);
 });
 
+test("Guardian forward B staging advances an authenticated prepared journal but cannot alter installed WPF or Native Messaging", async () => {
+  const root = new URL("../../native/windows/EquinoxLocal.Guardian/", import.meta.url);
+  const [program, lease, authority, writer] = await Promise.all([
+    "Program.cs", "MainNativeJournalLease.cs", "MainNativeJournalAuthority.cs", "MainNativeStageB.cs",
+  ].map((name) => fs.readFile(new URL(name, root), "utf8")));
+  assert.match(program, /args\[0\] == "--hold-native-stage-b"/u);
+  assert.match(lease, /RecordNativeJournalWorkerAuthority\(owner, root, worker, recordPreparedAbort, recordNativeStaged\)/u);
+  assert.match(authority, /if \(recordNativeStaged\) WriteNativeJournalStagedB\(owner, journalPath, journalBytes, digest\)/u);
+  for (const requirement of [
+    "prepared", "native_staged", "sequence", "targetSha", "targetRuntimeContractSha256",
+    "InspectOwnedMainGit(install, target, source, sourceSha)", "native-store.json",
+    "runtimeContractSha256", "releaseFingerprint", "FingerprintNativeMainRelease",
+    "node.exe", "EquinoxLocal.exe", "equinox-browser-native-host.exe",
+    "CryptographicOperations.FixedTimeEquals", "File.Move(temp, journalPath, overwrite: true)",
+    "FileMode.CreateNew", "FileOptions.WriteThrough", "nativeBFingerprintSha256",
+    "preparedJournalSha256", "journalSha256",
+    "using var stagedHandle = new FileStream(journalPath, FileMode.Open, FileAccess.Read, FileShare.Read)",
+    "SHA256.HashData(stagedHandle)",
+  ]) {
+    assert.ok(writer.includes(requirement), "Guardian stage B must bind: " + requirement);
+  }
+  assert.doesNotMatch(writer, /Process\.Start\(|Kill\(|shutdown-for-update|\.WriteAsync\(|Registry\.(?:CurrentUser|SetValue)|SetValue\(|CopyDirectory|Directory\.Move|File\.Delete|File\.Copy|Programs.*Equinox Local/u);
+  assert.match(writer, /"stage", "native_staged"/u);
+  assert.match(writer, /"sequence", 1/u);
+  assert.match(writer, /native-stage-b-committed-under-lease/u);
+  assert.doesNotMatch(writer, /"stage", "(?:switched|healthy|committed|shell_stopped|restarted|rolled_back)"|File.ReadAllBytes\(journalPath\)/u);
+});
+
 test('Guardian authenticates one pinned prepared journal OS handle across HMAC and durable authority proof', async () => {
   const root = new URL('../../native/windows/EquinoxLocal.Guardian/', import.meta.url);
   const native = await fs.readFile(new URL('MainNativeJournalAuthority.cs', root), 'utf8');
@@ -813,7 +841,7 @@ test('Guardian authenticates one pinned prepared journal OS handle across HMAC a
   assert.match(body, /using var journal = JsonDocument.Parse\(pinnedJournal\)/u);
   assert.match(body, /pinnedJournal.ReadExactly\(journalBytes\)/u);
   assert.match(body, /CryptographicOperations.FixedTimeEquals\(digest, SHA256.HashData\(pinnedJournal\)\)/u);
-  assert.match(body, /pinnedJournal.Dispose\(\);\s*WriteNativeJournalPreparedAbort/u);
+  assert.match(body, /pinnedJournal.Dispose\(\);\s*if \(recordNativeStaged\) WriteNativeJournalStagedB\(owner, journalPath, journalBytes, digest\);\s*else WriteNativeJournalPreparedAbort/u);
   assert.doesNotMatch(body, /SHA256.HashData\(File.ReadAllBytes\(journalPath\)\)|var journalBytes = File.ReadAllBytes\(journalPath\)/u);
 });
 
