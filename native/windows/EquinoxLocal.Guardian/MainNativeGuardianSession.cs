@@ -52,7 +52,8 @@ internal static partial class Program
             j.GetProperty("channel").GetString() != "main" ||
             j.GetProperty("transactionId").GetString() != owner.TransactionId ||
             stage is not ("native_staged" or "rollback_started" or
-                "restarted" or "healthy" or "rollback_native_restored" or "rollback_healthy") ||
+                "restarted" or "healthy" or "committed" or
+                "rollback_native_restored" or "rollback_healthy" or "rolled_back") ||
             sequence is < 1 or > 9)
             throw new InvalidDataException("Native session request has no authorized A/B stage.");
 
@@ -74,9 +75,11 @@ internal static partial class Program
         if (!((opcode == 1 && stage == "native_staged" && sequence == 1) ||
               (opcode == 2 && stage == "rollback_started" && sequence is >= 1 and <= 6) ||
               (opcode == 3 && ((stage == "restarted" && sequence == 4) ||
-                               (stage == "healthy" && sequence == 5))) ||
+                               (stage == "healthy" && sequence == 5) ||
+                               (stage == "committed" && sequence == 6))) ||
               (opcode == 4 && ((stage == "rollback_native_restored" && sequence is >= 2 and <= 7) ||
-                               (stage == "rollback_healthy" && sequence is >= 3 and <= 8)))))
+                               (stage == "rollback_healthy" && sequence is >= 3 and <= 8) ||
+                               (stage == "rolled_back" && sequence is >= 4 and <= 9)))))
             throw new InvalidDataException("Native stage opcode does not match exact journal generation.");
 
         var key = Convert.FromHexString(owner.Token);

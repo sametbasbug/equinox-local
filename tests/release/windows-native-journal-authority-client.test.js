@@ -244,8 +244,9 @@ test('the SAME live signed Guardian requires independent sustained B and restore
  const file=path.join(root,'guardian-journal',tx+'.json');
  const pipe=path.join(root,'health.sock');
  const nonce=Buffer.alloc(32,25);
- const examples=[['B','restarted',4,3],['B','healthy',5,3],
-  ['A','rollback_native_restored',7,4],['A','rollback_healthy',8,4]];
+ const examples=[['B','restarted',4,3],['B','healthy',5,3],['B','committed',6,3],
+  ['A','rollback_native_restored',7,4],['A','rollback_healthy',8,4],
+  ['A','rolled_back',9,4]];
  let count=0;
  const server=net.createServer(socket=>{
   const [release,stage,sequence,opcode]=examples[count];
@@ -273,7 +274,7 @@ test('the SAME live signed Guardian requires independent sustained B and restore
    platform:'test',fixturePipePath:pipe,
   });
  }
- assert.equal(count,4);
+ assert.equal(count,examples.length);
  for(const [release,stage,sequence] of [['B','native_staged',1],['B','switched',3],
    ['A','rollback_started',5],['A','restarted',4]]){
   await fs.writeFile(file,JSON.stringify({transactionId:tx,stage,sequence}));

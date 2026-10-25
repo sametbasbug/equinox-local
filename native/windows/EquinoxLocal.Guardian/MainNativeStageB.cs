@@ -136,7 +136,8 @@ internal static partial class Program
             !((stage == "prepared" && sequence == 0) ||
               (stage == "native_staged" && sequence == 1) ||
               (stage == "restarted" && sequence == 4) ||
-              (stage == "healthy" && sequence == 5)) ||
+              (stage == "healthy" && sequence == 5) ||
+              (stage == "committed" && sequence == 6)) ||
             !SourceShaPattern.IsMatch(sourceSha) || !DigestPattern.IsMatch(contract))
             throw new InvalidDataException("Original Guardian immutable native B identity is invalid.");
         InspectionPhase = "native-stage-b-exact-source";

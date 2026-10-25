@@ -103,6 +103,10 @@ test('supervisor-bound native host registers exact launcher and makes pointer co
   let registered = oldRelease;
   const launcher = (value) => `${value}\\runtime\\browser\\host.exe`;
   const adapter = createSupervisorBoundWindowsNativeABLifecycle({
+    // The fixture has no real signed Guardian. Production defaults to
+    // original Windows PID/file-ID/HMAC pipe, never to this stub.
+    env: {EQUINOX_LOCAL_MAIN_WORKER_TOKEN:'e'.repeat(64)},
+    verifySignedGuardianHealthImpl: async () => {},
     transition, transactionId: ID, stored: { sourceSha: B, target, runtimeContractSha256: CB, releaseDir: newRelease },
     windowsAdmission: admission, previousReleaseDir: oldRelease,
     programRoot: install.programRoot, manifestRoot: install.nativeMessagingManifestRoot,
@@ -181,6 +185,10 @@ test('native A/B refuses new Native Messaging owner not independently verified a
     verifyNativeMessaging: async () => false,
   }});
   const adapter = createSupervisorBoundWindowsNativeABLifecycle({
+    // The fixture has no real signed Guardian. Production defaults to
+    // original Windows PID/file-ID/HMAC pipe, never to this stub.
+    env: {EQUINOX_LOCAL_MAIN_WORKER_TOKEN:'e'.repeat(64)},
+    verifySignedGuardianHealthImpl: async () => {},
     transition, transactionId: ID,
     windowsAdmission: admission,
     stored: { sourceSha:B, target, runtimeContractSha256:CB, releaseDir:newRelease },
@@ -221,6 +229,10 @@ test('supervisor-owned WPF shutdown and Native Messaging write reject expired wo
     verifySustainedHealth: async () => true,
   }});
   const adapter = createSupervisorBoundWindowsNativeABLifecycle({
+    // The fixture has no real signed Guardian. Production defaults to
+    // original Windows PID/file-ID/HMAC pipe, never to this stub.
+    env: {EQUINOX_LOCAL_MAIN_WORKER_TOKEN:'e'.repeat(64)},
+    verifySignedGuardianHealthImpl: async () => {},
     transition, transactionId: ID, windowsAdmission: admission,
     stored: {sourceSha:B,target,runtimeContractSha256:CB,releaseDir:newRelease},
     previousReleaseDir:oldRelease,programRoot:install.programRoot,
@@ -261,6 +273,10 @@ test('supervisor-bound B pointer refuses expired owner, messaging or health befo
       verifySustainedHealth: async () => { calls.push('health-B'); return scenario !== 'health-expired'; },
     }});
     const adapter = createSupervisorBoundWindowsNativeABLifecycle({
+    // The fixture has no real signed Guardian. Production defaults to
+    // original Windows PID/file-ID/HMAC pipe, never to this stub.
+    env: {EQUINOX_LOCAL_MAIN_WORKER_TOKEN:'e'.repeat(64)},
+    verifySignedGuardianHealthImpl: async () => {},
       transition,transactionId:ID,windowsAdmission:admission,
       stored:{sourceSha:B,target,runtimeContractSha256:CB,releaseDir:newRelease},
       previousReleaseDir:oldRelease,programRoot:install.programRoot,
@@ -289,6 +305,10 @@ test('supervisor-bound rollback restores exact Stable A absence after B pointer 
     async unlink() { assert.equal(pointer.sourceSha,B); pointer = null; events.push('pointer-removed'); },
   };
   const a = createSupervisorBoundWindowsNativeABLifecycle({
+    // The fixture has no real signed Guardian. Production defaults to
+    // original Windows PID/file-ID/HMAC pipe, never to this stub.
+    env: {EQUINOX_LOCAL_MAIN_WORKER_TOKEN:'e'.repeat(64)},
+    verifySignedGuardianHealthImpl: async () => {},
     transition,transactionId:ID,windowsAdmission:admitted({supervisor:{
       ...admitted().supervisor,
       assertWorkerOwnership:async()=>owned,
@@ -318,6 +338,10 @@ test('supervisor-bound rollback restores exact Stable A absence after B pointer 
 
 test('original Main pointer cannot be substituted with a foreign runtime contract before rollback', () => {
   assert.throws(() => createSupervisorBoundWindowsNativeABLifecycle({
+    // The fixture has no real signed Guardian. Production defaults to
+    // original Windows PID/file-ID/HMAC pipe, never to this stub.
+    env: {EQUINOX_LOCAL_MAIN_WORKER_TOKEN:'e'.repeat(64)},
+    verifySignedGuardianHealthImpl: async () => {},
     transition,transactionId:ID,windowsAdmission:admitted(),
     stored:{sourceSha:B,target,runtimeContractSha256:CB,releaseDir:newRelease},
     previousPointer:{sourceSha:A,target,runtimeContractSha256:'f'.repeat(64)},
@@ -332,6 +356,10 @@ test('supervisor-bound rollback restores exact prior Main A pointer after B poin
   const original={sourceSha:A,target,runtimeContractSha256:CA};
   let wrote=0;
   const lc=createSupervisorBoundWindowsNativeABLifecycle({
+    // The fixture has no real signed Guardian. Production defaults to
+    // original Windows PID/file-ID/HMAC pipe, never to this stub.
+    env: {EQUINOX_LOCAL_MAIN_WORKER_TOKEN:'e'.repeat(64)},
+    verifySignedGuardianHealthImpl: async () => {},
     transition,transactionId:ID,windowsAdmission:admitted(),
     stored:{sourceSha:B,target,runtimeContractSha256:CB,releaseDir:newRelease},
     previousPointer:original,previousReleaseDir:oldRelease,programRoot:install.programRoot,
@@ -358,6 +386,10 @@ test('supervisor-bound rollback requires distinct native B quiesce and rejects u
     quiesceOwnedB: async (input) => { namedProof = input; return false; },
   }});
   const adapter = createSupervisorBoundWindowsNativeABLifecycle({
+    // The fixture has no real signed Guardian. Production defaults to
+    // original Windows PID/file-ID/HMAC pipe, never to this stub.
+    env: {EQUINOX_LOCAL_MAIN_WORKER_TOKEN:'e'.repeat(64)},
+    verifySignedGuardianHealthImpl: async () => {},
     transition, transactionId:ID,windowsAdmission:admission,
     stored:{sourceSha:B,target,runtimeContractSha256:CB,releaseDir:newRelease},
     previousReleaseDir:oldRelease, programRoot:install.programRoot,
@@ -373,4 +405,43 @@ test('supervisor-bound rollback requires distinct native B quiesce and rejects u
   assert.equal(namedProof.sourceSha,B);
   assert.equal(namedProof.programRoot,install.programRoot);
   assert.equal(fileMutations,0);
+});
+
+test('genuine Guardian B/A OS witness is required in addition to admitted supervisor health, never inferred from a worker token', async () => {
+  const events=[];
+  const admission=admitted({supervisor:{...admitted().supervisor,
+    verifySustainedHealth:async ({release,sourceSha})=>{
+      events.push('supervisor-'+release+'-'+sourceSha);
+      return true;
+    },
+  }});
+  const adapter=createSupervisorBoundWindowsNativeABLifecycle({
+    transition,transactionId:ID,windowsAdmission:admission,
+    stored:{sourceSha:B,target,runtimeContractSha256:CB,releaseDir:newRelease},
+    previousReleaseDir:oldRelease,programRoot:install.programRoot,
+    manifestRoot:install.nativeMessagingManifestRoot,transactionRoot:TEST_TX_ROOT,
+    pointerPath:path.join(TEST_TX_ROOT,'current-native.json'),
+    env:{EQUINOX_LOCAL_MAIN_WORKER_TOKEN:'e'.repeat(64)},
+    verifySignedGuardianHealthImpl:async ({release,transactionId,workerToken,transactionRoot})=>{
+      assert.equal(transactionId,ID);
+      assert.equal(transactionRoot,TEST_TX_ROOT);
+      assert.equal(workerToken,'e'.repeat(64));
+      events.push('kernel-witness-'+release);
+      throw Error('original signed Guardian did not attest installed WPF PID and File ID');
+    },
+    assertNativeHostImpl:async()=>true,
+    writePointerImpl:async()=>events.push('UNSAFE POINTER'),
+    createLifecycleImpl:args=>({
+      nativeBHealth:()=>args.verifySustainedHealth({release:'B',sourceSha:B}),
+      restoredAHealth:()=>args.verifySustainedHealth({release:'A',sourceSha:A}),
+      commit:()=>args.commitNativePointer(),
+    }),
+  });
+  await assert.rejects(adapter.nativeBHealth(),/did not attest installed WPF PID/u);
+  await assert.rejects(adapter.restoredAHealth(),/did not attest installed WPF PID/u);
+  await assert.rejects(adapter.commit(),/did not attest installed WPF PID/u);
+  assert.deepEqual(events,['supervisor-B-'+B,'kernel-witness-B',
+    'supervisor-A-'+A,'kernel-witness-A',
+    'supervisor-B-'+B,'kernel-witness-B']);
+  assert.equal(events.includes('UNSAFE POINTER'),false);
 });

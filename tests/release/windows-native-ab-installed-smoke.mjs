@@ -128,6 +128,10 @@ try {
     receiptStartedAt: started, previousNative: { kind: 'stable', version: '6.0.4' },
     targetRuntimeContractSha256: contract });
   const lifecycle = createSupervisorBoundWindowsNativeABLifecycle({
+    // Disposable slot exercise; ONLY the real installed Guardian acceptance
+    // authorizes native HMAC WPF lifecycle on a non-fixture Main transaction.
+    env: {EQUINOX_LOCAL_MAIN_WORKER_TOKEN:'e'.repeat(64)},
+    verifySignedGuardianHealthImpl: async () => {},
     transactionId: jid, transition: { mode: 'artifact_required', target, currentSha: shaA, targetSha: shaB,
       targetRuntimeContractSha256: contract },
     stored: { sourceSha: shaB, target, runtimeContractSha256: contract, releaseDir: targetReleaseDir },

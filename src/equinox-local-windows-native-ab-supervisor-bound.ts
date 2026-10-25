@@ -8,6 +8,7 @@ import {
 } from './equinox-browser-windows-native-messaging.js';
 import { readEquinoxLocalMainNativePointer, writeEquinoxLocalMainNativePointer } from './equinox-local-main-native-state.js';
 import { createWindowsJournaledNativeABLifecycle } from './equinox-local-windows-native-ab-journal-lifecycle.js';
+import { requestEquinoxWindowsOwnedNativeShellHealth } from './equinox-local-windows-native-journal-authority-client.js';
 
 
 type NativeFs = typeof fs;
@@ -42,6 +43,7 @@ type BoundOptions = SupervisorOptions & {
   registerNativeHostImpl?:typeof registerWindowsNativeMessagingHost;
   launcherPathImpl?:(releaseDir:string)=>string;
   createLifecycleImpl?:typeof createWindowsJournaledNativeABLifecycle;
+  verifySignedGuardianHealthImpl?:typeof requestEquinoxWindowsOwnedNativeShellHealth;
 };
 function matches(pattern:RegExp,value:unknown):boolean {
   return typeof value === "string" && pattern.test(value);
@@ -93,6 +95,7 @@ export function createSupervisorBoundWindowsNativeABLifecycle({
   registerNativeHostImpl = registerWindowsNativeMessagingHost,
   launcherPathImpl = windowsNativeMessagingLauncherPath,
   createLifecycleImpl = createWindowsJournaledNativeABLifecycle,
+  verifySignedGuardianHealthImpl = requestEquinoxWindowsOwnedNativeShellHealth,
 }:BoundOptions = {}) {
   const supervisor = requireWindowsNativeABSupervisor({ windowsAdmission, transition, transactionId });
   const admitted = windowsAdmission as BoundAdmission;
@@ -125,6 +128,26 @@ export function createSupervisorBoundWindowsNativeABLifecycle({
       throw new Error('Independent Windows native worker ownership expired before side effect.');
     }
     return true as const;
+  };
+  // This does NOT grant native admission. Only the already-admitted signed
+  // Guardian OS owner may independently certify that an exact live WPF B or
+  // restored A survived sustained process/pipe/NTFS identity observations.
+  // In addition, the existing supervisor and Main SHA/HTTP health gates stay
+  // mandatory; Node's environment token alone has NO authorization.
+  const proveSignedNativeHealth = async (release:'A'|'B', sourceSha:string) => {
+    await assertLiveOwner();
+    if (await supervisor.verifySustainedHealth({
+      ...ownerArgs, release, sourceSha, programRoot,
+    }) !== true) return false;
+    const workerToken = env.EQUINOX_LOCAL_MAIN_WORKER_TOKEN;
+    if (typeof workerToken !== 'string' || !/^[a-f0-9]{64}$/u.test(workerToken)) {
+      throw new Error('Signed native WPF health requires the original owned worker token.');
+    }
+    await verifySignedGuardianHealthImpl({
+      transactionId: id, transactionRoot, workerToken, platform:'win32', release,
+    });
+    await assertLiveOwner();
+    return true;
   };
   const proveNativeMessaging = async (release:'A'|'B') => {
     const launcher = release === 'B' ? targetLauncher : previousLauncher;
@@ -165,7 +188,7 @@ export function createSupervisorBoundWindowsNativeABLifecycle({
     },
     verifyNativeMessaging: ({ release }) => proveNativeMessaging(release),
     registerNativeMessaging: ({ release }) => registerNativeMessaging(release),
-    verifySustainedHealth: ({ release, sourceSha }) => supervisor.verifySustainedHealth({ ...ownerArgs, release, sourceSha, programRoot }),
+    verifySustainedHealth: ({ release, sourceSha }) => proveSignedNativeHealth(release, sourceSha),
     restoreNativePointer: async () => {
       // This is the same authenticated rollback session that restored the
       // installed original A bytes and its Native Messaging owner. Do not
@@ -238,7 +261,7 @@ export function createSupervisorBoundWindowsNativeABLifecycle({
       if (!await proveNativeMessaging('B')) {
         throw new Error('Native B messaging owner expired before pointer commit.');
       }
-      if (await supervisor.verifySustainedHealth({ ...ownerArgs, release: 'B', sourceSha: exactTransition.targetSha, programRoot }) !== true) {
+      if (await proveSignedNativeHealth('B', exactTransition.targetSha) !== true) {
         throw new Error('Native B health expired before pointer commit.');
       }
       await assertLiveOwner();

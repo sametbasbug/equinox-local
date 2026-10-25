@@ -443,6 +443,9 @@ test("one signed Guardian session authenticates WPF A/B shutdown and separately 
   assert.match(session,/opcode == 2 && stage == "rollback_started"/u);
   assert.match(session,/opcode == 3 && \(\(stage == "restarted"/u);
   assert.match(session,/opcode == 4 && \(\(stage == "rollback_native_restored"/u);
+  assert.match(session, /stage == "committed" && sequence == 6/u);
+  assert.match(session, /stage == "rolled_back" && sequence is >= 4 and <= 9/u);
+
   assert.match(session,/InspectOwnedLiveNativeShellSustained\(owner, j, opcode == 3, worker\)/u);
   assert.match(session,/CompareNativeTrees\(originalShell, installedShell\)/u);
   assert.match(session,/GetNamedPipeServerProcessId\(pipe.SafePipeHandle, out var serverPid\)/u);

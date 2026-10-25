@@ -95,11 +95,14 @@ export async function requestEquinoxWindowsOwnedNativeShellShutdown({
         Number(j.sequence) >= 1 && Number(j.sequence) <= 6
       : opcode === 3
         ? (j?.stage === 'restarted' && j.sequence === 4) ||
-          (j?.stage === 'healthy' && j.sequence === 5)
+          (j?.stage === 'healthy' && j.sequence === 5) ||
+          (j?.stage === 'committed' && j.sequence === 6)
         : (j?.stage === 'rollback_native_restored' && Number.isInteger(j.sequence) &&
             Number(j.sequence) >= 2 && Number(j.sequence) <= 7) ||
           (j?.stage === 'rollback_healthy' && Number.isInteger(j.sequence) &&
-            Number(j.sequence) >= 3 && Number(j.sequence) <= 8);
+            Number(j.sequence) >= 3 && Number(j.sequence) <= 8) ||
+          (j?.stage === 'rolled_back' && Number.isInteger(j.sequence) &&
+            Number(j.sequence) >= 4 && Number(j.sequence) <= 9);
   if (j?.transactionId !== transactionId || !valid) {
     throw new Error('Original signed Guardian refuses unrelated native A/B journal generation.');
   }

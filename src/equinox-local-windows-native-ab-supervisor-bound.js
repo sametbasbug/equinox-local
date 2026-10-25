@@ -3,6 +3,7 @@ import path from 'node:path';
 import { assertWindowsNativeMessagingHostOwnership, registerWindowsNativeMessagingHost, windowsNativeMessagingLauncherPath, } from './equinox-browser-windows-native-messaging.js';
 import { readEquinoxLocalMainNativePointer, writeEquinoxLocalMainNativePointer } from './equinox-local-main-native-state.js';
 import { createWindowsJournaledNativeABLifecycle } from './equinox-local-windows-native-ab-journal-lifecycle.js';
+import { requestEquinoxWindowsOwnedNativeShellHealth } from './equinox-local-windows-native-journal-authority-client.js';
 function matches(pattern, value) {
     return typeof value === "string" && pattern.test(value);
 }
@@ -40,7 +41,7 @@ export function requireWindowsNativeABSupervisor({ windowsAdmission, transition,
     }
     return owner;
 }
-export function createSupervisorBoundWindowsNativeABLifecycle({ windowsAdmission, transition, transactionId, stored, previousPointer, previousReleaseDir, programRoot, manifestRoot, transactionRoot, pointerPath, fsImpl = fs, execFileImpl, env = process.env, writePointerImpl = writeEquinoxLocalMainNativePointer, readPointerImpl = readEquinoxLocalMainNativePointer, assertNativeHostImpl = assertWindowsNativeMessagingHostOwnership, registerNativeHostImpl = registerWindowsNativeMessagingHost, launcherPathImpl = windowsNativeMessagingLauncherPath, createLifecycleImpl = createWindowsJournaledNativeABLifecycle, } = {}) {
+export function createSupervisorBoundWindowsNativeABLifecycle({ windowsAdmission, transition, transactionId, stored, previousPointer, previousReleaseDir, programRoot, manifestRoot, transactionRoot, pointerPath, fsImpl = fs, execFileImpl, env = process.env, writePointerImpl = writeEquinoxLocalMainNativePointer, readPointerImpl = readEquinoxLocalMainNativePointer, assertNativeHostImpl = assertWindowsNativeMessagingHostOwnership, registerNativeHostImpl = registerWindowsNativeMessagingHost, launcherPathImpl = windowsNativeMessagingLauncherPath, createLifecycleImpl = createWindowsJournaledNativeABLifecycle, verifySignedGuardianHealthImpl = requestEquinoxWindowsOwnedNativeShellHealth, } = {}) {
     const supervisor = requireWindowsNativeABSupervisor({ windowsAdmission, transition, transactionId });
     const admitted = windowsAdmission;
     const id = transactionId;
@@ -71,6 +72,27 @@ export function createSupervisorBoundWindowsNativeABLifecycle({ windowsAdmission
         if (await supervisor.assertWorkerOwnership(ownerArgs) !== true) {
             throw new Error('Independent Windows native worker ownership expired before side effect.');
         }
+        return true;
+    };
+    // This does NOT grant native admission. Only the already-admitted signed
+    // Guardian OS owner may independently certify that an exact live WPF B or
+    // restored A survived sustained process/pipe/NTFS identity observations.
+    // In addition, the existing supervisor and Main SHA/HTTP health gates stay
+    // mandatory; Node's environment token alone has NO authorization.
+    const proveSignedNativeHealth = async (release, sourceSha) => {
+        await assertLiveOwner();
+        if (await supervisor.verifySustainedHealth({
+            ...ownerArgs, release, sourceSha, programRoot,
+        }) !== true)
+            return false;
+        const workerToken = env.EQUINOX_LOCAL_MAIN_WORKER_TOKEN;
+        if (typeof workerToken !== 'string' || !/^[a-f0-9]{64}$/u.test(workerToken)) {
+            throw new Error('Signed native WPF health requires the original owned worker token.');
+        }
+        await verifySignedGuardianHealthImpl({
+            transactionId: id, transactionRoot, workerToken, platform: 'win32', release,
+        });
+        await assertLiveOwner();
         return true;
     };
     const proveNativeMessaging = async (release) => {
@@ -116,7 +138,7 @@ export function createSupervisorBoundWindowsNativeABLifecycle({ windowsAdmission
         },
         verifyNativeMessaging: ({ release }) => proveNativeMessaging(release),
         registerNativeMessaging: ({ release }) => registerNativeMessaging(release),
-        verifySustainedHealth: ({ release, sourceSha }) => supervisor.verifySustainedHealth({ ...ownerArgs, release, sourceSha, programRoot }),
+        verifySustainedHealth: ({ release, sourceSha }) => proveSignedNativeHealth(release, sourceSha),
         restoreNativePointer: async () => {
             // This is the same authenticated rollback session that restored the
             // installed original A bytes and its Native Messaging owner. Do not
@@ -197,7 +219,7 @@ export function createSupervisorBoundWindowsNativeABLifecycle({ windowsAdmission
             if (!await proveNativeMessaging('B')) {
                 throw new Error('Native B messaging owner expired before pointer commit.');
             }
-            if (await supervisor.verifySustainedHealth({ ...ownerArgs, release: 'B', sourceSha: exactTransition.targetSha, programRoot }) !== true) {
+            if (await proveSignedNativeHealth('B', exactTransition.targetSha) !== true) {
                 throw new Error('Native B health expired before pointer commit.');
             }
             await assertLiveOwner();
