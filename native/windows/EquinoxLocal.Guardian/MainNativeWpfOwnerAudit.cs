@@ -39,13 +39,23 @@ internal static partial class Program
         string release;
         if (kind == "stable")
         {
+            RequireExactKeys(nativeA, ["kind", "version"]);
             var version = nativeA.GetProperty("version").GetString() ?? "";
             if (!VersionRegex().IsMatch(version))
                 throw new InvalidDataException("Previous signed Stable native version is malformed.");
+            using var pointerDoc = ReadOwnedTransitionRecord(
+                Path.Combine(install, "current-version.json"), 4096);
+            var pointer = pointerDoc.RootElement;
+            RequireExactKeys(pointer, ["schemaVersion", "target", "version"]);
+            if (pointer.GetProperty("schemaVersion").GetInt32() != 1 ||
+                pointer.GetProperty("target").GetString() != target ||
+                pointer.GetProperty("version").GetString() != version)
+                throw new InvalidDataException("Previous signed Stable A differs from the installed native pointer.");
             release = Path.Combine(install, "releases", version);
         }
         else if (kind == "main")
         {
+            RequireExactKeys(nativeA, ["kind", "sourceSha", "runtimeContractSha256"]);
             var sourceSha = nativeA.GetProperty("sourceSha").GetString() ?? "";
             var contractSha = nativeA.GetProperty("runtimeContractSha256").GetString() ?? "";
             if (!SourceShaPattern.IsMatch(sourceSha) || !DigestPattern.IsMatch(contractSha) ||
@@ -61,7 +71,14 @@ internal static partial class Program
                 pointer.GetProperty("target").GetString() != target ||
                 pointer.GetProperty("runtimeContractSha256").GetString() != contractSha)
                 throw new InvalidDataException("Active Main native pointer no longer identifies original A.");
+            // Reinspect original A's canonical immutable source with the
+            // product-owned Git (never ambient PATH) and bound Native Messaging
+            // registration. Native shell bytes alone are not source identity.
+            var sourceRoot = Path.Combine(transactionRoot, "sources", sourceSha);
+            RequireNormalDirectory(sourceRoot);
+            InspectOwnedMainGit(install, target, sourceRoot, sourceSha);
             release = Path.Combine(transactionRoot, "native-store", target, sourceSha, "release");
+            InspectOwnedMainNativeMessaging(install, release);
         }
         else throw new InvalidDataException("Main WPF audit cannot identify original native A.");
 

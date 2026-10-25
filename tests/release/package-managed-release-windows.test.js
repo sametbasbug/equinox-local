@@ -324,6 +324,9 @@ test("Guardian independently audits original A WPF kernel identity without grant
     "ReadWindowsLogonAuthenticationId", "SessionId",
     "GetNamedPipeServerProcessId", "shell.StartTime",
     "Original A WPF ownership pipe",
+    "current-version.json", "RequireExactKeys(nativeA",
+    "InspectOwnedMainGit(install, target, sourceRoot, sourceSha)",
+    "InspectOwnedMainNativeMessaging(install, release)",
   ]) {
     assert.ok(audit.includes(required), "Missing exact original A WPF observation: " + required);
   }

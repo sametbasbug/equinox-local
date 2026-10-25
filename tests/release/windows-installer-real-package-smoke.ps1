@@ -734,6 +734,25 @@ try {
           Start-Sleep -Milliseconds 150
         }
         Assert-True $WpfOwnerReady 'Guardian failed read-only kernel ownership verification of installed native A WPF.'
+        # This is a disposable hosted installation, not the user's Windows.
+        # A forged Stable A pointer must not be accepted even when the WPF
+        # bytes, process and live kernel pipe are otherwise legitimate.
+        $OriginalAPointerPath = Join-Path $OwnedInstallRoot 'current-version.json'
+        $OriginalAPointerBytes = [IO.File]::ReadAllBytes($OriginalAPointerPath)
+        try {
+          $ForgedPointer = [Text.Encoding]::UTF8.GetString($OriginalAPointerBytes) | ConvertFrom-Json
+          $ForgedPointer.version = '0.0.0'
+          [IO.File]::WriteAllText($OriginalAPointerPath, ($ForgedPointer | ConvertTo-Json -Depth 5))
+          Assert-True ((Invoke-GuardianCheck '--audit-native-wpf-owner') -eq 70) 'Guardian accepted foreign original A version pointer despite a live real WPF.'
+        } finally {
+          [IO.File]::WriteAllBytes($OriginalAPointerPath, $OriginalAPointerBytes)
+        }
+        $OriginalPointerRestored = $false
+        for ($AuditRetry=0; $AuditRetry -lt 10; $AuditRetry++) {
+          if ((Invoke-GuardianCheck '--audit-native-wpf-owner') -eq 0) { $OriginalPointerRestored = $true; break }
+          Start-Sleep -Milliseconds 150
+        }
+        Assert-True $OriginalPointerRestored 'Guardian rejected restored exact original A after negative pointer tamper.'
         $WrongWpfTicks = ([long]::Parse($RealWpfTicks) - 1).ToString([Globalization.CultureInfo]::InvariantCulture)
         Assert-True ((Invoke-NativeWpfWitness ([string]$OriginalShellPid) $WrongWpfTicks) -ceq 'mismatch') 'OS native helper accepted a forged WPF birth time.'
         Assert-True ((Invoke-NativeWpfWitness ([string]$WorkerProcess.Id) $WorkerRecord.startTimeUtcTicks) -ceq 'mismatch') 'OS native helper accepted the native worker Node as WPF.'
