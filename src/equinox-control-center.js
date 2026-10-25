@@ -1006,9 +1006,10 @@ function renderUpdate() {
             setBadge("update-badge", "Restart scheduled", "warn");
         }
         else if (main.applyError) {
-            setText("update-title", "Main update failed safely");
+            const rollbackUnverified = main.applyError.startsWith("Main update rollback_failed:");
+            setText("update-title", rollbackUnverified ? "Main rollback needs attention" : "Main update failed");
             setText("update-copy", main.applyError);
-            setBadge("update-badge", "Update failed", "bad");
+            setBadge("update-badge", rollbackUnverified ? "Rollback unverified" : "Update failed", "bad");
         }
         else if (state.updateApplyBusy || main.applying) {
             setText("update-title", `Preparing Main ${targetSha || "snapshot"}`);
