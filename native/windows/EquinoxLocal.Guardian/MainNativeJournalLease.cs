@@ -75,6 +75,7 @@ internal static partial class Program
             {
                 nextTerminalCheck = cutoff.Elapsed + TimeSpan.FromSeconds(1);
                 VerifyPinnedNativeGuardianFile(originalGuardian!);
+                HandleOneOwnedGuardianSessionRequest(owner, root, worker, originalGuardian!);
                 if (TryRetireCompletedNativeGuardianSession(owner, root, worker,
                     originalGuardian!, lease)) return;
             }

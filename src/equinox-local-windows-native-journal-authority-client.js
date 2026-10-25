@@ -23,6 +23,106 @@ export async function proveEquinoxWindowsNativeBRollbackAuthority(options = {}) 
 export async function proveEquinoxWindowsNativeJournalAuthority(options = {}) {
     return proveJournalAuthorityWitness(options, "prepared");
 }
+// Retry only before a pipe has connected; NEVER retry a mutating request
+// after its HMAC was sent, where WPF might already have exited.
+async function connectOriginalGuardianStagePipe(pipe) {
+    for (let attempt = 0; attempt < 40; attempt++) {
+        try {
+            return await new Promise((resolve, reject) => {
+                const socket = net.createConnection(pipe);
+                const fail = (error) => { socket.destroy(); reject(error); };
+                socket.once('error', fail);
+                socket.once('connect', () => {
+                    socket.off('error', fail);
+                    resolve(socket);
+                });
+            });
+        }
+        catch (error) {
+            const code = error !== null && typeof error === 'object' && 'code' in error ? error.code : null;
+            if (!['ENOENT', 'ECONNREFUSED', 'EPIPE'].includes(String(code)) || attempt === 39)
+                throw error;
+            await new Promise(resolve => setTimeout(resolve, 120));
+        }
+    }
+    throw new Error('Original signed Guardian stage socket is unavailable.');
+}
+// This is the SAME independently signed Guardian kernel owner session,
+// not a new executable or bearer-only native shell permission.
+const SESSION_DOMAIN = Buffer.from('equinox-local-guardian-native-stage-v1:', 'ascii');
+export async function requestEquinoxWindowsOwnedNativeShellShutdown({ transactionId, transactionRoot, workerToken, platform = process.platform, fixturePipePath = null, release, }) {
+    if (!TX.test(transactionId ?? '') || !TOKEN.test(workerToken ?? '') ||
+        typeof transactionRoot !== 'string' || !path.isAbsolute(transactionRoot) ||
+        path.normalize(transactionRoot) !== transactionRoot ||
+        (platform !== 'win32' && !(platform === 'test' && typeof fixturePipePath === 'string')) ||
+        (platform === 'win32' && fixturePipePath !== null) || !['A', 'B'].includes(release)) {
+        throw new Error('Native Guardian session command has invalid exact worker identity.');
+    }
+    const opcode = release === 'A' ? 1 : 2;
+    const handle = await fs.open(path.join(transactionRoot, 'guardian-journal', transactionId + '.json'), fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0));
+    let raw;
+    try {
+        const stat = await handle.stat();
+        if (!stat.isFile() || stat.size < 2 || stat.size > 8192)
+            throw new Error('Native stage journal exceeds its bound.');
+        raw = await handle.readFile();
+        if (raw.length < 2 || raw.length > 8192)
+            throw new Error('Native stage journal exceeds its bound.');
+    }
+    finally {
+        await handle.close();
+    }
+    const j = recordOrNull(JSON.parse(raw.toString('utf8')));
+    if (j?.transactionId !== transactionId ||
+        (release === 'A' ? (j?.stage !== 'native_staged' || j?.sequence !== 1)
+            : (j?.stage !== 'rollback_started' || !Number.isInteger(j?.sequence) ||
+                Number(j.sequence) < 1 || Number(j.sequence) > 6))) {
+        throw new Error('Original signed Guardian refuses unrelated native A/B journal generation.');
+    }
+    const digest = createHash('sha256').update(raw).digest();
+    const secret = Buffer.from(workerToken, 'hex');
+    const pipe = platform === 'win32'
+        ? `\\\\.\\pipe\\EquinoxLocalMainSession-${transactionId}` : fixturePipePath;
+    try {
+        const socket = await connectOriginalGuardianStagePipe(pipe);
+        await new Promise((resolve, reject) => {
+            let nonce = Buffer.alloc(0);
+            let challengeAnswered = false;
+            let settled = false;
+            const fail = (error) => { if (settled)
+                return; settled = true; socket.destroy(); reject(error); };
+            socket.setTimeout(24000, () => fail(new Error('Original native Guardian stage proof timed out.')));
+            socket.on('data', (chunk) => {
+                if (!Buffer.isBuffer(chunk))
+                    return fail(new Error('Invalid native stage proof bytes.'));
+                if (!challengeAnswered) {
+                    nonce = Buffer.concat([nonce, chunk]);
+                    if (nonce.length > 32)
+                        return fail(new Error('Original Guardian stage nonce exceeded bound.'));
+                    if (nonce.length === 32) {
+                        challengeAnswered = true;
+                        const mac = createHmac('sha256', secret).update(SESSION_DOMAIN)
+                            .update(Buffer.from([opcode])).update(nonce).update(digest).digest();
+                        socket.write(Buffer.concat([Buffer.from([opcode]), mac]));
+                    }
+                }
+                else {
+                    if (chunk.length !== 1 || chunk[0] !== 1)
+                        return fail(new Error('Original Guardian did not confirm exact WPF OS shutdown.'));
+                    settled = true;
+                    socket.end();
+                    resolve();
+                }
+            });
+            socket.once('error', (e) => fail(e));
+            socket.once('end', () => { if (!settled)
+                fail(new Error('Original Guardian exited without OS shell shutdown receipt.')); });
+        });
+    }
+    finally {
+        secret.fill(0);
+    }
+}
 async function proveJournalAuthorityWitness({ transactionId, transactionRoot, workerToken, platform = process.platform, fixturePipePath = null, }, stage) {
     if (!TX.test(transactionId ?? "") || !TOKEN.test(workerToken ?? "") ||
         typeof transactionRoot !== "string" || !path.isAbsolute(transactionRoot) ||

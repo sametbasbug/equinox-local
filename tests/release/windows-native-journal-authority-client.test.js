@@ -5,7 +5,7 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import {proveEquinoxWindowsNativeJournalAuthority,proveEquinoxWindowsNativeBRollbackAuthority} from '../../src/equinox-local-windows-native-journal-authority-client.js';
+import {proveEquinoxWindowsNativeJournalAuthority,proveEquinoxWindowsNativeBRollbackAuthority,requestEquinoxWindowsOwnedNativeShellShutdown} from '../../src/equinox-local-windows-native-journal-authority-client.js';
 
 const tx = `main-${'a'.repeat(32)}`;
 const token = 'e'.repeat(64);
@@ -165,4 +165,74 @@ test('native rollback witness fails closed on prepared, forged sequence, symlink
  const foreign=path.join(root,'foreign-journal.json');await fs.writeFile(foreign,JSON.stringify({transactionId:tx,stage:'rollback_started',sequence:1}));
  await fs.symlink(foreign,file);
  await assert.rejects(proveEquinoxWindowsNativeBRollbackAuthority(args),{code:'ELOOP'});
+});
+
+test('same signed Guardian session checks stage-separated A and B shutdown HMAC before OS confirmation',async t=>{
+ const root=await fs.mkdtemp(path.join(os.tmpdir(),'equinox-native-live-stage-'));
+ t.after(()=>fs.rm(root,{recursive:true,force:true}));
+ await fs.mkdir(path.join(root,'guardian-journal'));
+ const socketPath=path.join(root,'stage.sock');
+ const nonce=Buffer.alloc(32,19);
+ const stages=[['A','native_staged',1,1],['B','rollback_started',5,2]];
+ let index=0;
+ const server=net.createServer(socket=>{
+  const current=stages[index];
+  const journal=Buffer.from(JSON.stringify({transactionId:tx,stage:current[1],sequence:current[2]}));
+  const expected=createHmac('sha256',Buffer.from(token,'hex'))
+   .update('equinox-local-guardian-native-stage-v1:')
+   .update(Buffer.from([current[3]])).update(nonce)
+   .update(createHash('sha256').update(journal).digest()).digest();
+  let answer=Buffer.alloc(0);
+  socket.on('data',chunk=>{
+   answer=Buffer.concat([answer,chunk]);
+   if(answer.length===33){
+    assert.equal(answer[0],current[3]);
+    assert.deepEqual(answer.subarray(1),expected);
+    socket.write(Buffer.from([1]));
+    index++;
+   }
+  });
+  socket.write(nonce.subarray(0,8));setImmediate(()=>socket.write(nonce.subarray(8)));
+ });
+ await new Promise(resolve=>server.listen(socketPath,resolve));
+ t.after(()=>new Promise(resolve=>server.close(resolve)));
+ for(const [release,stage,sequence] of stages){
+  await fs.writeFile(path.join(root,'guardian-journal',tx+'.json'),
+   JSON.stringify({transactionId:tx,stage,sequence}));
+  await requestEquinoxWindowsOwnedNativeShellShutdown({
+   transactionId:tx,transactionRoot:root,workerToken:token,platform:'test',
+   fixturePipePath:socketPath,release,
+  });
+ }
+ assert.equal(index,2);
+});
+
+test('live original Guardian stage refuses swapped generation, foreign worker and forged OS confirmation',async t=>{
+ const root=await fs.mkdtemp(path.join(os.tmpdir(),'eq-native-live-deny-'));
+ t.after(()=>fs.rm(root,{recursive:true,force:true}));
+ await fs.mkdir(path.join(root,'guardian-journal'));
+ const file=path.join(root,'guardian-journal',tx+'.json');
+ const sock=path.join(root,'stage.sock');
+ const args={transactionId:tx,transactionRoot:root,workerToken:token,platform:'test',fixturePipePath:sock};
+ for(const [stage,sequence,release] of [['prepared',0,'A'],['native_staged',2,'A'],
+   ['rollback_started',0,'B'],['rollback_started',7,'B'],['switched',4,'B']]){
+  await fs.writeFile(file,JSON.stringify({transactionId:tx,stage,sequence}));
+  await assert.rejects(requestEquinoxWindowsOwnedNativeShellShutdown({...args,release}),
+   /unrelated native A\/B journal generation/u);
+ }
+ await fs.writeFile(file,JSON.stringify({transactionId:tx,stage:'native_staged',sequence:1}));
+ await assert.rejects(requestEquinoxWindowsOwnedNativeShellShutdown({...args,workerToken:'bad',release:'A'}),
+  /invalid exact worker identity/u);
+ await assert.rejects(requestEquinoxWindowsOwnedNativeShellShutdown({...args,platform:'win32',release:'A'}),
+  /invalid exact worker identity/u);
+ let received=0;
+ const server=net.createServer(socket=>{
+  socket.on('data',chunk=>{received+=chunk.length;socket.write(Buffer.from([0]));});
+  socket.write(Buffer.alloc(32,3));
+ });
+ await new Promise(resolve=>server.listen(sock,resolve));
+ t.after(()=>new Promise(resolve=>server.close(resolve)));
+ await assert.rejects(requestEquinoxWindowsOwnedNativeShellShutdown({...args,release:'A'}),
+  /did not confirm exact WPF OS shutdown/u);
+ assert.equal(received,33);
 });

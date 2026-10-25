@@ -430,6 +430,26 @@ test("native journal authority accepts only kernel-PID+HMAC live prepared worker
   assert.doesNotMatch(source, /Process\.Start|Registry\.SetValue|\.writer-lock"\s*,\s*FileMode\.OpenOrCreate|"shell_stopped"|"switched"/u);
 });
 
+test("one signed Guardian session authentically accepts ONLY exact journal-stage WPF A/B shutdown requests", async () => {
+  const session=await fs.readFile(new URL('../../native/windows/EquinoxLocal.Guardian/MainNativeGuardianSession.cs',import.meta.url),'utf8');
+  const lease=await fs.readFile(new URL('../../native/windows/EquinoxLocal.Guardian/MainNativeJournalLease.cs',import.meta.url),'utf8');
+  const stable=await fs.readFile(new URL('../../native/windows/EquinoxLocal.Guardian/MainNativeStableShellQuiesce.cs',import.meta.url),'utf8');
+  const rollback=await fs.readFile(new URL('../../native/windows/EquinoxLocal.Guardian/MainNativeBRollbackShellQuiesce.cs',import.meta.url),'utf8');
+  const client=await fs.readFile(new URL('../../src/equinox-local-windows-native-journal-authority-client.ts',import.meta.url),'utf8');
+  assert.match(lease,/HandleOneOwnedGuardianSessionRequest\(owner, root, worker, originalGuardian!\)/u);
+  assert.match(session,/GetNamedPipeClientProcessId\(server.SafePipeHandle, out var pid\)/u);
+  assert.match(session,/FixedTimeEquals\(mac, reply.AsSpan\(1\)\)/u);
+  assert.match(session,/opcode == 1 && stage == "native_staged"/u);
+  assert.match(session,/opcode == 2 && stage == "rollback_started"/u);
+  assert.match(session,/QuiesceOwnedStableShell\(owner, root, worker, continuousNativeSession: true\)/u);
+  assert.match(session,/QuiesceOwnedMainBRollbackShell\(owner, root, worker, digest, handoffDigest/u);
+  assert.match(session,/VerifyPinnedNativeGuardianFile\(originalGuardian\)/u);
+  assert.match(stable,/continuousNativeSession = false/u);
+  assert.match(rollback,/continuousNativeSession = false/u);
+  assert.match(client,/equinox-local-guardian-native-stage-v1:/u);
+  assert.doesNotMatch(session,/Process.Kill|File.Delete|File.Move|Registry.SetValue/u);
+});
+
 test("native owner terminal cleanup uses its original DELETE-capable Windows handles and refuses uncommitted receipt", async () => {
   const source = await fs.readFile(new URL('../../native/windows/EquinoxLocal.Guardian/MainNativeJournalLease.cs', import.meta.url), 'utf8');
   const program = await fs.readFile(new URL('../../native/windows/EquinoxLocal.Guardian/Program.cs', import.meta.url), 'utf8');
@@ -801,7 +821,8 @@ test('native B WPF quiesce receipt preserves exact rollback stage and sequence l
   const root=new URL('../../native/windows/EquinoxLocal.Guardian/', import.meta.url);
   const pilot=await fs.readFile(new URL('MainNativeBRollbackShellQuiesce.cs',root),'utf8');
   assert.match(pilot,/using var rollbackJournal = JsonDocument.Parse\(journalHandle\)/u);
-  assert.match(pilot,/journal\.GetProperty\("sequence"\)\.GetInt32\(\) != receipt\.GetProperty\("sequence"\)\.GetInt32\(\)/u);
+  assert.match(pilot,/journal\.GetProperty\("sequence"\)\.GetInt32\(\) !=/u);
+  assert.match(pilot,/nativeAuthority!\.RootElement\.GetProperty\("sequence"\)\.GetInt32\(\)/u);
   assert.match(pilot,/journal\.GetProperty\("stage"\)\.GetString\(\) != "rollback_started"/u);
   assert.match(pilot,/json\.WriteString\("stage", "rollback_started"\)/u);
   assert.match(pilot,/json\.WriteNumber\("sequence", journal\.GetProperty\("sequence"\)\.GetInt32\(\)\)/u);
@@ -811,10 +832,11 @@ test('native B quiesce pins rollback authority receipt via a read-only non-repla
   const root = new URL('../../native/windows/EquinoxLocal.Guardian/', import.meta.url);
   const native = await fs.readFile(new URL('MainNativeBRollbackShellQuiesce.cs', root), 'utf8');
   assert.match(native, /RequireNormalFile\(nativeAuthorityPath\)/u);
-  assert.match(native, /using var nativeAuthorityHandle = new FileStream\(nativeAuthorityPath, FileMode\.Open,/u);
+  assert.match(native, /using var nativeAuthorityHandle = continuousNativeSession \? null :/u);
+  assert.match(native, /new FileStream\(nativeAuthorityPath, FileMode.Open,/u);
   assert.match(native, /FileAccess\.Read, FileShare\.Read\)/u);
   assert.match(native, /nativeAuthorityHandle\.Length is < 2 or > 8192/u);
-  assert.match(native, /using var nativeAuthority = JsonDocument\.Parse\(nativeAuthorityHandle\)/u);
+  assert.match(native, /using var nativeAuthority = nativeAuthorityHandle is null \? null : JsonDocument\.Parse\(nativeAuthorityHandle\)/u);
   assert.match(native, /using var pipe = new NamedPipeClientStream/u);
   assert.match(native, /shell\.WaitForExit\(12000\)/u);
   assert.doesNotMatch(native, /FileShare\.(?:ReadWrite|Delete)|nativeAuthorityHandle\.Dispose\(\)/u);
