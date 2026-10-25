@@ -106,7 +106,15 @@ function Invoke-CleanNode([string]$Node, [string]$FirstInstall, [string]$Release
   $psi.RedirectStandardOutput = $true
   $psi.RedirectStandardError = $true
   $psi.Arguments = '"' + $FirstInstall.Replace('"','\"') + '" --staged-release "' + $ReleaseDir.Replace('"','\"') + '"'
-  if ($EnrollExistingMain) { $psi.Arguments += ' --enroll-existing-main' } # Website defaults to Main; explicit false is for legacy signed-install recovery.
+  # An existing Main source may be healthy, stopped, or completely unable to
+  # boot. The freshly signed Stable installer must not call its OLD source's
+  # health endpoint or treat that old source as the installed target. Route an
+  # existing Main through the classic signed native replacement, which only
+  # starts and health-checks the NEW verified release; keep user private state.
+  $mainStamp = Join-Path $env:LOCALAPPDATA 'Equinox Local\state\main-update\install.json'
+  $existingMain = [IO.File]::Exists($mainStamp)
+  if ($existingMain) { Assert-NormalFile $mainStamp 1 8192 | Out-Null }
+  if ($EnrollExistingMain -and -not $existingMain) { $psi.Arguments += ' --enroll-existing-main' }
   $psi.EnvironmentVariables.Clear()
   foreach ($name in @('SystemRoot','WINDIR','ComSpec','TEMP','TMP','USERPROFILE','LOCALAPPDATA','APPDATA','USERNAME','USERDOMAIN','PATH','PATHEXT')) {
     $value = [Environment]::GetEnvironmentVariable($name)

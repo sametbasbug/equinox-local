@@ -26,8 +26,10 @@ test("public installers enroll Main by default after pinned signed bootstrap", a
   assert.ok(mac.includes('"$SOURCE_RELEASE" ${MAIN_ARGS[@]+"${MAIN_ARGS[@]}"}'));
   assert.match(mac, /enrolls the admitted Main commit by default/u);
   assert.match(windows, /param\(\[switch\]\$EnrollExistingMain = \$true, \[switch\]\$Help\)/u);
-  assert.match(windows, /if \(\$EnrollExistingMain\) \{ \$psi\.Arguments \+= ' --enroll-existing-main' \}/u);
+  assert.match(windows, /if \(\$EnrollExistingMain -and -not \$existingMain\) \{ \$psi\.Arguments \+= ' --enroll-existing-main' \}/u);
   assert.match(windows, /enrolls the admitted Main commit by default/u);
+  assert.match(windows, /\[IO\.File\]::Exists\(\$mainStamp\)/u);
+  assert.match(windows, /Assert-NormalFile \$mainStamp 1 8192/u);
 });
 
 test("public shell installer stays user-level, pinned to Equinox HTTPS and bounded", async () => {
