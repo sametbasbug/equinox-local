@@ -717,7 +717,9 @@ try {
         }
         Assert-True $OwnerSpawned 'Installed product Node did not finish authentic original Guardian session admission.'
         $OwnerResult = ConvertFrom-Json ([IO.File]::ReadAllText($OriginalGuardianStartResult))
-        if ($OwnerResult.failed -eq $true) {
+        # StrictMode prohibits accessing an omitted optional field on a
+        # successful native Guardian admission response.
+        if ($null -ne $OwnerResult.PSObject.Properties['failed'] -and $OwnerResult.failed -eq $true) {
           Write-Output ('Original product Node Guardian admission safe category: ' + [string]$OwnerResult.category)
           throw 'Original product-owned Node did not gain signed Guardian kernel OS session admission.'
         }
