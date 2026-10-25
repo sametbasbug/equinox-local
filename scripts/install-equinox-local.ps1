@@ -124,7 +124,14 @@ function Stop-ExistingEquinoxExecutables([string]$InstallRoot, [string]$ProgramR
     # Revalidate the executable before terminating an owned process.
     $live = Get-CimInstance Win32_Process -Filter ("ProcessId=" + [int]$item.ProcessId) -ErrorAction Stop
     if ($null -ne $live -and [string]::Equals([string]$live.ExecutablePath, [string]$item.ExecutablePath, [StringComparison]::OrdinalIgnoreCase)) {
-      Stop-Process -Id ([int]$item.ProcessId) -Force -ErrorAction Stop
+      try { Stop-Process -Id ([int]$item.ProcessId) -Force -ErrorAction Stop }
+      catch {
+        # The exact owned process can exit between OS identity verification
+        # and Stop-Process. Ignore ONLY a process that is now absent or is
+        # no longer the verified old executable (PID reuse).
+        $still = Get-CimInstance Win32_Process -Filter ("ProcessId=" + [int]$item.ProcessId) -ErrorAction Stop
+        if ($null -ne $still -and [string]::Equals([string]$still.ExecutablePath, [string]$item.ExecutablePath, [StringComparison]::OrdinalIgnoreCase)) { throw }
+      }
     }
   }
   if ($owned.Count -gt 0) { Start-Sleep -Milliseconds 900 }
@@ -197,7 +204,18 @@ function Complete-ExecutableReplacement($Transaction) {
   if ($null -ne $Transaction) {
     # The bundled installer already verified exact NEW version and HEALTHY.
     # Never keep successful historical executable archives on the user's disk.
-    [IO.Directory]::Delete($Transaction.Backup, $true)
+    # Retired managed Git child processes can briefly retain an NTFS handle
+    # (notably commit-graph-chain) after the NEW runtime is healthy. Retry
+    # only this exact product-owned temporary backup, not any user folders.
+    for ($attempt=0; $attempt -lt 20; $attempt++) {
+      try {
+        if ([IO.Directory]::Exists($Transaction.Backup)) { [IO.Directory]::Delete($Transaction.Backup, $true) }
+        return
+      } catch {
+        if ($attempt -eq 19) { throw }
+        Start-Sleep -Milliseconds 500
+      }
+    }
   }
 }
 
