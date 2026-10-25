@@ -546,6 +546,7 @@ try {
     Assert-True ((Invoke-GuardianCheck '--audit-native-worker') -eq 70) 'Guardian accepted absent native worker ownership.'
     Assert-True ((Invoke-GuardianCheck '--audit-native-worker-ipc') -eq 70) 'Guardian accepted absent native worker IPC owner.'
     Assert-True ((Invoke-GuardianCheck '--audit-native-worker-argv') -eq 70) 'Guardian accepted absent native worker OS argv ownership.'
+    Assert-True ((Invoke-GuardianCheck '--audit-native-wpf-owner') -eq 70) 'Guardian claimed a live Main A WPF owner without an authenticated detached worker.'
     $WorkerNode = Join-Path $ReleaseDir 'runtime\node\bin\node.exe'
     Assert-True ([IO.File]::Exists($WorkerNode)) 'Native worker OS identity test requires release-owned Node.'
     $WorkerHandoff = Join-Path $NativeTxRoot 'handoff'
@@ -723,6 +724,16 @@ try {
           $RealWpfTicks = $RealWpf.StartTime.ToUniversalTime().Ticks.ToString([Globalization.CultureInfo]::InvariantCulture)
         } finally { $RealWpf.Dispose() }
         Assert-True ((Invoke-NativeWpfWitness ([string]$OriginalShellPid) $RealWpfTicks) -ceq 'running') 'OS native helper refused the genuine installed WPF owner.'
+        # Read-only independent Guardian WPF A audit must attest the SAME
+        # original installed shell, worker and kernel named-pipe PID. The
+        # WPF listener may need one accept/re-arm cycle; never auto-retry any
+        # mutating native action.
+        $WpfOwnerReady = $false
+        for ($AuditAttempt=0; $AuditAttempt -lt 10; $AuditAttempt++) {
+          if ((Invoke-GuardianCheck '--audit-native-wpf-owner') -eq 0) { $WpfOwnerReady = $true; break }
+          Start-Sleep -Milliseconds 150
+        }
+        Assert-True $WpfOwnerReady 'Guardian failed read-only kernel ownership verification of installed native A WPF.'
         $WrongWpfTicks = ([long]::Parse($RealWpfTicks) - 1).ToString([Globalization.CultureInfo]::InvariantCulture)
         Assert-True ((Invoke-NativeWpfWitness ([string]$OriginalShellPid) $WrongWpfTicks) -ceq 'mismatch') 'OS native helper accepted a forged WPF birth time.'
         Assert-True ((Invoke-NativeWpfWitness ([string]$WorkerProcess.Id) $WorkerRecord.startTimeUtcTicks) -ceq 'mismatch') 'OS native helper accepted the native worker Node as WPF.'
@@ -761,6 +772,7 @@ try {
           Where-Object { -not [string]::IsNullOrWhiteSpace($_.ExecutablePath) -and (Same-Path $_.ExecutablePath $StableExe) })
         Assert-True ($StillOwned.Count -eq 0) 'Native quiesce did not actually stop the installed WPF shell.'
         Assert-True ((Invoke-NativeWpfWitness ([string]$OriginalShellPid) $RealWpfTicks) -cne 'running') 'OS native helper accepted a terminated WPF owner.'
+        Assert-True ((Invoke-GuardianCheck '--audit-native-wpf-owner') -eq 70) 'Guardian claimed an original A WPF owner after the real shell exited.'
         Assert-True ((Invoke-GuardianCheck '--audit-native-journal') -eq 70) 'Native shell exit proof silently resumed Main despite stale owner lease.'
       } finally {
         if ($null -ne $ShellGuardian) {

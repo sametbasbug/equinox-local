@@ -311,6 +311,29 @@ test("Windows package builds independent native Guardian for both CPU targets ou
 });
 
 
+test("Guardian independently audits original A WPF kernel identity without granting Main A/B mutation", async () => {
+  const program = await fs.readFile(new URL("../../native/windows/EquinoxLocal.Guardian/Program.cs", import.meta.url), "utf8");
+  const audit = await fs.readFile(new URL("../../native/windows/EquinoxLocal.Guardian/MainNativeWpfOwnerAudit.cs", import.meta.url), "utf8");
+  assert.match(program, /args\[0\] == "--audit-native-wpf-owner"/u);
+  assert.match(program, /Read-only kernel ownership evidence, never transition authority/u);
+  for (const required of [
+    "InspectOwnedNativeWorkerProcess()", "guardian-journal",
+    "current-native.json", "native-store", "previousNative",
+    "stage", "prepared", "sequence", "CompareNativeTrees",
+    "FindSingleOwnedStableShell", "OpenProcessToken",
+    "ReadWindowsLogonAuthenticationId", "SessionId",
+    "GetNamedPipeServerProcessId", "shell.StartTime",
+    "Original A WPF ownership pipe",
+  ]) {
+    assert.ok(audit.includes(required), "Missing exact original A WPF observation: " + required);
+  }
+  // Audit may observe a native OS handle but may never send a shell command,
+  // change a journal or start a native process.
+  assert.doesNotMatch(audit, /Process\.Start\s*\(|ProcessStartInfo|File\.Move|File\.Delete|File\.WriteAllText|Registry\.|Kill\s*\(|\.WriteAsync\s*\(|\.Write\s*\(/u);
+  assert.match(audit, /No command is sent on this pipe/u);
+  assert.match(audit, /never an admitted native supervisor/u);
+});
+
 test("independent Windows Guardian audits exact Main SHA/native-store identity without enabling Main launch", async () => {
   const program = await fs.readFile(new URL("../../native/windows/EquinoxLocal.Guardian/Program.cs", import.meta.url), "utf8");
   const inspector = await fs.readFile(new URL("../../native/windows/EquinoxLocal.Guardian/MainNativeIdentity.cs", import.meta.url), "utf8");
