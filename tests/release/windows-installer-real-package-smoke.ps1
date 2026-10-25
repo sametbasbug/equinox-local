@@ -397,6 +397,11 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Canonical JS native release fingerprint fixture refused the disposable Main slot.' }
     $NativeFingerprint = $NativeFingerprintJson | ConvertFrom-Json
     Assert-True ([string]$NativeFingerprint.sha256 -cmatch '^[a-f0-9]{64}$') 'Canonical native Main fingerprint fixture is invalid.'
+    # ConvertFrom-Json returns an object also used by the fixture manifest.
+    # Save an IMMUTABLE string before corrupting manifest.releaseFingerprint:
+    # otherwise mutation changes $NativeFingerprint.sha256 through its alias,
+    # and the supposedly restored positive Main snapshot remains forged.
+    $OriginalNativeFingerprintSha = [string]$NativeFingerprint.sha256
     $NativeManifestProbe = [ordered]@{
       schemaVersion=1; channel='main'; sourceSha=$FixtureSourceSha; target=$FixtureTarget;
       runtimeContractSha256=$NativeContract; artifactSha256=('d' * 64); artifactBytes=1024;
@@ -449,8 +454,11 @@ try {
     $NativeManifestProbe.releaseFingerprint.sha256 = 'e' * 64
     [IO.File]::WriteAllText((Join-Path $NativeStoreProbe 'native-store.json'), ($NativeManifestProbe | ConvertTo-Json -Depth 5))
     Assert-True ((Invoke-GuardianCheck '--audit-native-identity') -eq 70) 'Guardian trusted a forged complete native-store fingerprint.'
-    $NativeManifestProbe.releaseFingerprint.sha256 = $NativeFingerprint.sha256
+    $NativeManifestProbe.releaseFingerprint.sha256 = $OriginalNativeFingerprintSha
     [IO.File]::WriteAllText((Join-Path $NativeStoreProbe 'native-store.json'), ($NativeManifestProbe | ConvertTo-Json -Depth 5))
+    # Ensure restoration really returns a valid positive identity before any
+    # additional negative probe changes release.json.
+    Assert-True ((Invoke-GuardianCheck '--audit-native-identity') -eq 0) 'Restored native fingerprint did not recover the exact original Main identity.'
     # Even preserving the original manifest is insufficient after release drift.
     $NativeReleaseJson = Join-Path $NativeReleaseProbe 'release.json'
     $OriginalNativeRelease = [IO.File]::ReadAllBytes($NativeReleaseJson)

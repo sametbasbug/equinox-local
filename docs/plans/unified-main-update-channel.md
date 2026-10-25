@@ -124,6 +124,12 @@ The first committed Main boot fix SHA e646137 failed exact [CI40163154652](https
 
 Before changing native ownership or weakening the Main verification gate, the existing disposable native identity acceptance now independently reconfirms exact committed --audit-native-identity after all malicious fixtures have been restored, then captures the concrete --inspect exit status for each Windows CPU architecture. The goal is to distinguish fixture state drift from a post-audit Guardian launch-path defect, not create another inspector or workaround. Physical user Windows and Mac private Developer installations remain unchanged; production Main windowsAdmission:null, DRAFT PR285 and signed A/B rollback blockade are unchanged.
 
+### CP370 resolution — real x64 and ARM64 CI failure was the aliased test digest (2026-10-25)
+
+The diagnostic SHA 0389e8f [CI40163957517](https://github.com/sametbasbug/equinox-local/actions/runs/40163957517) isolated the SAME genuine failure on BOTH real Windows x64 and ARM64 installed hosts: after the deliberately forged native release-fingerprint test, even the restored independent Main identity audit failed, before invoking the new committed Main launch. The test fixture stored the parsed fingerprint object directly in its manifest. Assigning the malicious sha256 value on the manifest therefore also changed the original fingerprint object **by alias**; the subsequent supposed restoration copied the already-forged value. Guardian correctly rejected the now-stale fingerprint; it was NOT a native launch failure.
+
+The fixture now freezes the originally verified SHA-256 as an independent string before any mutation, restores from that immutable digest and requires a positive independent exact Main identity audit after restoration. It retains the positive committed Main Guardian inspect and negative forged-pointer/active transaction checks. The exact corrective Windows x64+ARM64 hosted CI must pass before accepting CP369 boot as working; this test-only repair does not permit production native switching or relax signature/OS ownership.
+
 ## Product contract
 
 - Public installers use the verified native bootstrap and enroll an admitted exact-SHA Main source by default after health checks; healthy existing Main is a verified no-op, not a forced reinstall or a downgrade. The signed numbered Stable bootstrap remains a historical/recovery transport, not a second active channel or user opt-in.

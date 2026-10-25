@@ -822,6 +822,8 @@ test("hosted native Guardian positive B acceptance uses exact packaged SHA and p
   }
   assert.match(script, /if \(\$GuardianAuditOnly\) \{\s*# Positive forward-stage evidence/u);
   assert.match(script, /Windows committed native Main Guardian inspect evidence/u);
+  assert.match(script, /\$OriginalNativeFingerprintSha = \[string\]\$NativeFingerprint.sha256/u);
+  assert.match(script, /\$NativeManifestProbe.releaseFingerprint.sha256 = \$OriginalNativeFingerprintSha/u);
   assert.match(script, /\[IO.File\]::WriteAllBytes\(\$OwnedWorkerScript, \$OriginalWorkerBytes\)/u);
   assert.match(script, /Assert-True \$Staged/u);
   assert.match(script, /\$StageValue.stage -ceq 'rollback_started'/u);
