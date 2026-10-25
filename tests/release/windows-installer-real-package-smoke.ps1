@@ -1331,7 +1331,7 @@ try {
     $BrowserProofPath = Join-Path $InstallRoot 'browser\ci-user-browser-proof.txt'
     [IO.File]::WriteAllText($UserProofPath,'old-version-private-setting')
     [IO.File]::WriteAllText($BrowserProofPath,'old-version-browser-preference')
-    & node (Join-Path $Root 'tests/release/smoke-main-upgrade-windows.mjs') $InstallRoot $FixtureSourceSha $env:EQUINOX_WINDOWS_MAIN_ACCEPT_TARGET_SHA
+    & $OwnedNode (Join-Path $Root 'tests/release/smoke-main-upgrade-windows.mjs') $InstallRoot $FixtureSourceSha $env:EQUINOX_WINDOWS_MAIN_ACCEPT_TARGET_SHA ([string]$ownedShell[0].ProcessId)
     Assert-True ((Get-FileHash -LiteralPath $UserSettingsPath -Algorithm SHA256).Hash -ceq $UserConfigShaBefore) 'Real installed Main upgrade changed user config.'
     Assert-True ([IO.File]::ReadAllText($UserProofPath) -ceq 'old-version-private-setting') 'Real Main upgrade lost user settings.'
     Assert-True ([IO.File]::ReadAllText($BrowserProofPath) -ceq 'old-version-browser-preference') 'Real Main upgrade lost user browser data.'

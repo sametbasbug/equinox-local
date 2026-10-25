@@ -3,10 +3,13 @@
 // owns machine state and cleanup. Never execute on someone's Windows PC.
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
+import { constants as fsConstants } from "node:fs";
 import { spawn } from "node:child_process";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 
 import { readEquinoxLocalMainSourcePointer } from "../../src/equinox-local-main-source-pointer.js";
+import { validateEquinoxLocalWindowsNativeTransitionJournal } from "../../src/equinox-local-windows-native-transition-journal.js";
 
 const BASE = "http://127.0.0.1:24891";
 const SHA = /^[a-f0-9]{40}$/u;
@@ -50,14 +53,104 @@ async function healthy(sha) {
   }, `real installed Windows source ${sha} HEALTHY`, 90_000);
 }
 
+// This is the existing genuine installed-host lane, not an artificial socket
+// witness. A terminal Main receipt by itself does not prove the original
+// signed Guardian actually stopped WPF A/B or retired its kernel OS lease.
+async function readOriginalNativeProof(file) {
+  const handle = await fs.open(file, fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0));
+  try {
+    const st = await handle.stat();
+    const linked = await fs.lstat(file);
+    assert.ok(st.isFile() && st.nlink === 1 && st.size >= 2 && st.size <= 8192 &&
+      linked.isFile() && !linked.isSymbolicLink() && linked.dev === st.dev && linked.ino === st.ino,
+      "native Guardian OS receipt must be one bounded original normal file");
+    const bytes = await handle.readFile();
+    assert.equal(bytes.length, st.size, "native Guardian OS receipt changed during read");
+    return JSON.parse(bytes.toString("utf8"));
+  } finally { await handle.close(); }
+}
+
+function assertOriginalExitReceipt(proof, kind, id, firstWpfPid = null) {
+  const a = ["schemaVersion","transactionId","disposition","shellPid","shellStartTimeUtcTicks",
+    "workerPid","workerStartTimeUtcTicks","guardianPid","preparedJournalSha256"];
+  const b = ["schemaVersion","transactionId","disposition","stage","sequence","shellPid",
+    "shellStartTimeUtcTicks","workerPid","workerStartTimeUtcTicks","guardianPid",
+    "rollbackJournalSha256","handoffSha256"];
+  assert.deepEqual(Object.keys(proof).sort(), (kind === "A" ? a : b).sort(), "original Guardian receipt schema differs");
+  assert.equal(proof.schemaVersion, 1);
+  assert.equal(proof.transactionId, id);
+  assert.equal(proof.disposition, kind === "A" ? "stable-shell-quiesced-only" : "b-shell-quiesced-only");
+  for (const value of [proof.shellPid,proof.workerPid,proof.guardianPid])
+    assert.ok(Number.isSafeInteger(value) && value > 0, "original signed OS process ID missing");
+  for (const value of [proof.shellStartTimeUtcTicks,proof.workerStartTimeUtcTicks])
+    assert.match(value, /^[0-9]{1,19}$/u, "original signed OS process birth missing");
+  assert.match(kind === "A" ? proof.preparedJournalSha256 : proof.rollbackJournalSha256, /^[a-f0-9]{64}$/u);
+  if (kind === "A") assert.equal(proof.shellPid, firstWpfPid, "signed Guardian did not stop the initially installed original A WPF");
+  else {
+    assert.equal(proof.stage, "rollback_started");
+    assert.ok(Number.isSafeInteger(proof.sequence) && proof.sequence >= 3 && proof.sequence <= 6,
+      "bad B original signed Guardian shutdown was not after physical A/B switch");
+    assert.match(proof.handoffSha256, /^[a-f0-9]{64}$/u);
+    assert.notEqual(proof.shellPid, firstWpfPid, "bad B shutdown reused the original A WPF process");
+  }
+}
+
+export async function verifyOriginalSignedWindowsGuardianTerminal({transactionRoot,id,a,b,target,negative,firstWpfPid}) {
+  assert.match(id, TRANSACTION);
+  assert.ok(Number.isSafeInteger(firstWpfPid) && firstWpfPid > 0);
+  const root = path.join(transactionRoot,"guardian-journal");
+  const journal = validateEquinoxLocalWindowsNativeTransitionJournal(
+    await readOriginalNativeProof(path.join(root,`${id}.json`)),
+    {transactionId:id,target,currentSha:a,targetSha:b});
+  assert.equal(journal.stage, negative ? "rolled_back" : "committed",
+    "real installed Main terminal receipt lacks an original signed Guardian A/B terminal journal");
+  if (negative) assert.ok(journal.sequence >= 4 && journal.sequence <= 9);
+  else assert.equal(journal.sequence, 6);
+  const oldExit = await readOriginalNativeProof(path.join(root,`${id}.stable-shell-quiesce.json`));
+  assertOriginalExitReceipt(oldExit,"A",id,firstWpfPid);
+  if (negative) {
+    const bExit = await readOriginalNativeProof(path.join(root,`${id}.b-shell-quiesce.json`));
+    assertOriginalExitReceipt(bExit,"B",id,firstWpfPid);
+    assert.equal(bExit.guardianPid,oldExit.guardianPid,"rollback was not owned by the original signed Guardian");
+    assert.equal(bExit.workerPid,oldExit.workerPid,"rollback was not owned by the original detached worker");
+    assert.equal(bExit.workerStartTimeUtcTicks,oldExit.workerStartTimeUtcTicks,
+      "rollback worker birth differs from original signed A exit");
+  }
+  // Guardian retains the signed prepared authority as immutable audit evidence.
+  // Only its original OS lease and worker handoff are retired by exact handle.
+  const authority = await readOriginalNativeProof(path.join(root,`${id}.native-authority.json`));
+  assert.deepEqual(Object.keys(authority).sort(), ["schemaVersion","transactionId","stage","sequence",
+    "workerPid","workerStartTimeUtcTicks","guardianPid","journalSha256","handoffSha256"].sort());
+  assert.equal(authority.schemaVersion,1);
+  assert.equal(authority.transactionId,id);
+  assert.equal(authority.stage,"prepared");
+  assert.equal(authority.sequence,0);
+  assert.equal(authority.guardianPid,oldExit.guardianPid);
+  assert.equal(authority.workerPid,oldExit.workerPid);
+  assert.equal(authority.workerStartTimeUtcTicks,oldExit.workerStartTimeUtcTicks);
+  for (const key of ["journalSha256","handoffSha256"]) assert.match(authority[key],/^[a-f0-9]{64}$/u);
+  const retired = [path.join(root,`.${id}.guardian-session-lock`),
+    path.join(transactionRoot,"handoff",`${id}.windows-worker.json`),
+    path.join(transactionRoot,"active.json")];
+  await poll(async () => {
+    for (const file of retired) {
+      try { await fs.lstat(file); return false; }
+      catch (error) { if (error?.code !== "ENOENT") throw error; }
+    }
+    return true;
+  }, "original signed Guardian OS terminal lease/authority/worker retirement", 15_000);
+  return journal;
+}
+
 async function main() {
   if (process.platform !== "win32" || !["x64", "arm64"].includes(process.arch)
     || process.env.GITHUB_ACTIONS !== "true" || !process.env.RUNNER_TEMP) {
     throw new Error("Real installed Windows Main acceptance requires a disposable native GitHub-hosted Windows runner.");
   }
-  const [installRoot, a, b] = process.argv.slice(2);
-  if (!path.isAbsolute(installRoot ?? "") || !SHA.test(a ?? "") || !SHA.test(b ?? "") || a === b) {
-    throw new Error("Usage: smoke-main-upgrade-windows.mjs <real-installed-Windows-root> <admitted-A-SHA> <admitted-B-SHA>");
+  const [installRoot, a, b, initialPidText] = process.argv.slice(2);
+  const firstWpfPid = Number(initialPidText);
+  if (!path.isAbsolute(installRoot ?? "") || !SHA.test(a ?? "") || !SHA.test(b ?? "") || a === b || !Number.isSafeInteger(firstWpfPid) || firstWpfPid < 1) {
+    throw new Error("Usage: smoke-main-upgrade-windows.mjs <real-installed-Windows-root> <admitted-A-SHA> <admitted-B-SHA> <original-A-WPF-PID>");
   }
   const scenario = process.env.EQUINOX_WINDOWS_MAIN_ACCEPT_SCENARIO || "positive";
   if (!["positive", "target-crash"].includes(scenario)) throw new Error("Unsupported Windows native acceptance scenario.");
@@ -143,6 +236,11 @@ async function main() {
     return record.status === (negative ? "rolled_back" : "succeeded") ? record : null;
   }, "native Windows detached update worker receipt", 240_000);
   assert.equal(receipt.targetSha, b);
+  assert.equal(applied.result.nativeTransition?.mode, "artifact_required",
+    "installed A→B native shell test cannot pass as source-only/reused-native");
+  await verifyOriginalSignedWindowsGuardianTerminal({
+    transactionRoot,id,a,b,target,negative,firstWpfPid,
+  });
   if (negative) {
     assert.equal(receipt.rollbackSha, a);
     assert.equal((await pointer()).sha, a);
@@ -169,4 +267,6 @@ async function main() {
   }
 }
 
-main().catch((error) => { console.error(error?.stack ?? String(error)); process.exitCode = 1; });
+if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
+  main().catch((error) => { console.error(error?.stack ?? String(error)); process.exitCode = 1; });
+}
