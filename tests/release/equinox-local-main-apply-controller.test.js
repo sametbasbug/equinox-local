@@ -177,3 +177,67 @@ test("Main apply never calls worker scheduling for untrusted snapshot SHA, remot
   }
   assert.equal(launched,0);
 });
+
+test("scheduled Main update reads exact failed detached receipt and stops misleading Restarting display", async () => {
+  const tx = `main-${"1".repeat(32)}`;
+  const options = { installation:installation(), discovery:discovery({checkSupported:true,state:"behind",currentSha:A,targetSha:B,dirty:false,remoteCanonical:true}) };
+  let receipt = {transactionId:tx,currentSha:A,targetSha:B,status:"promoting",stage:"ready_to_switch",lastError:null};
+  const c = createEquinoxLocalMainApplyController({...options,
+    applyImpl:async()=>({status:"scheduled",transactionId:tx,targetSha:B}),
+    readScheduledReceiptImpl:async({transactionId})=>{assert.equal(transactionId,tx);return receipt;},
+  });
+  await c.apply();
+  assert.equal((await c.reconcile()).restartScheduledFor,B);
+  receipt={...receipt,status:"failed",stage:"native_admission_failed",lastError:"Missing independent supervisor"};
+  const after=await c.reconcile();
+  assert.equal(after.restartScheduledFor,null);
+  assert.match(after.applyError,/native_admission_failed.*independent Windows native supervisor ownership/u);
+  assert.equal(after.applyAvailable,false);
+  c.resetError();
+  assert.equal(c.snapshot().applyAvailable,true);
+});
+
+test("Main scheduled receipt status cannot be cleared by missing, foreign or still-active receipts",async()=>{
+  const tx=`main-${"2".repeat(32)}`;
+  let receipt={transactionId:tx,currentSha:A,targetSha:B,status:"promoting",stage:"ready_to_switch",lastError:null};
+  const c=createEquinoxLocalMainApplyController({installation:installation(),discovery:discovery({checkSupported:true,state:"behind",currentSha:A,targetSha:B,dirty:false,remoteCanonical:true}),
+    applyImpl:async()=>({status:"scheduled",transactionId:tx,targetSha:B}),
+    readScheduledReceiptImpl:async()=>receipt,
+  });
+  await c.apply();
+  for(const modified of [{...receipt,transactionId:`main-${"3".repeat(32)}`,status:"failed"}, {...receipt,currentSha:"c".repeat(40),status:"failed"}]){
+    receipt=modified;
+    assert.equal((await c.reconcile()).restartScheduledFor,B);
+    assert.equal(c.snapshot().applyError,null);
+  }
+  receipt={...receipt,transactionId:tx,currentSha:A,status:"succeeded",stage:"healthy"};
+  assert.equal((await c.reconcile()).restartScheduledFor,null);
+  assert.equal(c.snapshot().applyError,null);
+});
+
+test("Main failed receipt only displays fixed safe categories, not sensitive worker output", async () => {
+  const tx = "main-" + "4".repeat(32);
+  const secret = "SECRET-KEY-DO-NOT-DISPLAY";
+  for (const value of [
+    { status:"failed", stage:"native_admission_failed", lastError:"ENOENT C:\\Private\\alice\\" + secret },
+    { status:"rollback_failed", stage:"rollback_failed", lastError:"failed rollback: " + secret },
+    { status:"rolled_back", stage:"rollback_source_restored", lastError:"dumped credential " + secret },
+    { status:"failed", stage:"private\\n<script>alert(1)</script>", lastError:secret },
+  ]) {
+    const controller = createEquinoxLocalMainApplyController({
+      installation:installation(), discovery:discovery({
+        checkSupported:true,state:"behind",currentSha:A,targetSha:B,dirty:false,remoteCanonical:true,
+      }),
+      applyImpl:async()=>({status:"scheduled",transactionId:tx,targetSha:B}),
+      readScheduledReceiptImpl:async()=>({
+        transactionId:tx,currentSha:A,targetSha:B,...value,
+      }),
+    });
+    await controller.apply();
+    const result = await controller.reconcile();
+    assert.equal(result.restartScheduledFor, null);
+    assert.equal(result.applyAvailable, false);
+    assert.match(result.applyError, /Main update/u);
+    assert.doesNotMatch(result.applyError, /SECRET|Private|script|alice|\n/u);
+  }
+});

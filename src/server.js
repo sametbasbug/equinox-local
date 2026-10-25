@@ -386,12 +386,12 @@ export async function createEquinoxLocalRuntime({ platform = process.platform, a
     const automaticUpdateCheck = () => { void checkInstalledChannelForUpdates().catch(() => { }); };
     setTimeout(automaticUpdateCheck, 5_000).unref?.();
     setInterval(automaticUpdateCheck, 6 * 60 * 60_000).unref?.();
-    const getCombinedUpdateStatus = () => Object.freeze({
+    const getCombinedUpdateStatus = async () => Object.freeze({
         ...equinoxLocalUpdateCoordinator.snapshot(),
         mainNotice: equinoxMainChannelNotice.snapshot(),
         main: Object.freeze({
             ...equinoxLocalMainUpdateDiscovery.snapshot(),
-            ...equinoxLocalMainApplyController.snapshot(),
+            ...await equinoxLocalMainApplyController.reconcile(),
         }),
     });
     async function noteManagedAgentCommand() {
