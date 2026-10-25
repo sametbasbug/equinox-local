@@ -3,7 +3,7 @@ import path from 'node:path';
 import { assertWindowsNativeMessagingHostOwnership, registerWindowsNativeMessagingHost, windowsNativeMessagingLauncherPath, } from './equinox-browser-windows-native-messaging.js';
 import { readEquinoxLocalMainNativePointer, writeEquinoxLocalMainNativePointer } from './equinox-local-main-native-state.js';
 import { createWindowsJournaledNativeABLifecycle } from './equinox-local-windows-native-ab-journal-lifecycle.js';
-import { requestEquinoxWindowsOwnedNativeShellHealth } from './equinox-local-windows-native-journal-authority-client.js';
+import { requestEquinoxWindowsOwnedNativeShellHealth, requestEquinoxWindowsOwnedNativeShellShutdown } from './equinox-local-windows-native-journal-authority-client.js';
 function matches(pattern, value) {
     return typeof value === "string" && pattern.test(value);
 }
@@ -41,7 +41,7 @@ export function requireWindowsNativeABSupervisor({ windowsAdmission, transition,
     }
     return owner;
 }
-export function createSupervisorBoundWindowsNativeABLifecycle({ windowsAdmission, transition, transactionId, stored, previousPointer, previousReleaseDir, programRoot, manifestRoot, transactionRoot, pointerPath, fsImpl = fs, execFileImpl, env = process.env, writePointerImpl = writeEquinoxLocalMainNativePointer, readPointerImpl = readEquinoxLocalMainNativePointer, assertNativeHostImpl = assertWindowsNativeMessagingHostOwnership, registerNativeHostImpl = registerWindowsNativeMessagingHost, launcherPathImpl = windowsNativeMessagingLauncherPath, createLifecycleImpl = createWindowsJournaledNativeABLifecycle, verifySignedGuardianHealthImpl = requestEquinoxWindowsOwnedNativeShellHealth, } = {}) {
+export function createSupervisorBoundWindowsNativeABLifecycle({ windowsAdmission, transition, transactionId, stored, previousPointer, previousReleaseDir, programRoot, manifestRoot, transactionRoot, pointerPath, fsImpl = fs, execFileImpl, env = process.env, writePointerImpl = writeEquinoxLocalMainNativePointer, readPointerImpl = readEquinoxLocalMainNativePointer, assertNativeHostImpl = assertWindowsNativeMessagingHostOwnership, registerNativeHostImpl = registerWindowsNativeMessagingHost, launcherPathImpl = windowsNativeMessagingLauncherPath, createLifecycleImpl = createWindowsJournaledNativeABLifecycle, verifySignedGuardianHealthImpl = requestEquinoxWindowsOwnedNativeShellHealth, shutdownSignedGuardianWpfImpl = requestEquinoxWindowsOwnedNativeShellShutdown, } = {}) {
     const supervisor = requireWindowsNativeABSupervisor({ windowsAdmission, transition, transactionId });
     const admitted = windowsAdmission;
     const id = transactionId;
@@ -79,6 +79,21 @@ export function createSupervisorBoundWindowsNativeABLifecycle({ windowsAdmission
     // restored A survived sustained process/pipe/NTFS identity observations.
     // In addition, the existing supervisor and Main SHA/HTTP health gates stay
     // mandatory; Node's environment token alone has NO authorization.
+    const attestSignedNativeShutdown = async (release) => {
+        // An arbitrary Node-side supervisor callback must NEVER be the first
+        // process allowed to stop the installed shell. The SAME signed Guardian
+        // checks the exact original worker kernel PID/birth/NTFS File ID, journal
+        // stage and one-use challenge, and performs the WPF graceful OS exit.
+        await assertLiveOwner();
+        const workerToken = env.EQUINOX_LOCAL_MAIN_WORKER_TOKEN;
+        if (typeof workerToken !== 'string' || !/^[a-f0-9]{64}$/u.test(workerToken)) {
+            throw new Error('Signed WPF shutdown requires the original owned worker token.');
+        }
+        await shutdownSignedGuardianWpfImpl({
+            transactionId: id, transactionRoot, workerToken, platform: 'win32', release,
+        });
+        await assertLiveOwner();
+    };
     const proveSignedNativeHealth = async (release, sourceSha) => {
         await assertLiveOwner();
         if (await supervisor.verifySustainedHealth({
@@ -125,12 +140,14 @@ export function createSupervisorBoundWindowsNativeABLifecycle({ windowsAdmission
         journal: admitted.journal, fsImpl,
         assertWorkerOwnership: assertLiveOwner,
         shutdownOwnedWpf: async ({ transactionId: id, programRoot: root }) => {
-            await assertLiveOwner();
-            return supervisor.shutdownOwnedWpf({ ...ownerArgs, transactionId: id, programRoot: root });
+            await attestSignedNativeShutdown('A');
+            // This callback remains an ADDITIONAL supervisor postcondition, not a
+            // substitute for the kernel Guardian that already observed WPF exit.
+            return supervisor.shutdownOwnedWpf({ ...ownerArgs, transactionId: id, programRoot: root, afterSignedExit: true });
         },
         quiesceOwnedB: async ({ transactionId: id, programRoot: root, sourceSha }) => {
-            await assertLiveOwner();
-            if (await supervisor.quiesceOwnedB({ ...ownerArgs, transactionId: id, programRoot: root, release: 'B', sourceSha }) !== true) {
+            await attestSignedNativeShutdown('B');
+            if (await supervisor.quiesceOwnedB({ ...ownerArgs, transactionId: id, programRoot: root, release: 'B', sourceSha, afterSignedExit: true }) !== true) {
                 throw new Error('Independent Windows native B shutdown proof is unavailable.');
             }
             await assertLiveOwner();

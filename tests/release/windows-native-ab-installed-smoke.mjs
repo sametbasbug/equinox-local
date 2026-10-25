@@ -132,6 +132,7 @@ try {
     // authorizes native HMAC WPF lifecycle on a non-fixture Main transaction.
     env: {EQUINOX_LOCAL_MAIN_WORKER_TOKEN:'e'.repeat(64)},
     verifySignedGuardianHealthImpl: async () => {},
+    shutdownSignedGuardianWpfImpl: async () => {},
     transactionId: jid, transition: { mode: 'artifact_required', target, currentSha: shaA, targetSha: shaB,
       targetRuntimeContractSha256: contract },
     stored: { sourceSha: shaB, target, runtimeContractSha256: contract, releaseDir: targetReleaseDir },
