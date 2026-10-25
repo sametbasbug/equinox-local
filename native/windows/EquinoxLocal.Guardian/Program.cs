@@ -69,7 +69,7 @@ internal static partial class Program
             if (args.Length == 1 && args[0] == "--hold-native-journal-authority")
             {
                 HoldOwnedNativeJournalLease(acceptAuthorityProof: true);
-                return 70; // Prepared-stage sidecar proof only, never native mutation.
+                return 0; // Exact OS-owned completed transaction fully audited; both owner handles retired.
             }
             if (args.Length == 1 && args[0] == "--hold-native-prepared-abort")
             {

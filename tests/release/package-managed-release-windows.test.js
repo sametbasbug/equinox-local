@@ -430,6 +430,24 @@ test("native journal authority accepts only kernel-PID+HMAC live prepared worker
   assert.doesNotMatch(source, /Process\.Start|Registry\.SetValue|\.writer-lock"\s*,\s*FileMode\.OpenOrCreate|"shell_stopped"|"switched"/u);
 });
 
+test("native owner terminal cleanup uses its original DELETE-capable Windows handles and refuses uncommitted receipt", async () => {
+  const source = await fs.readFile(new URL('../../native/windows/EquinoxLocal.Guardian/MainNativeJournalLease.cs', import.meta.url), 'utf8');
+  const program = await fs.readFile(new URL('../../native/windows/EquinoxLocal.Guardian/Program.cs', import.meta.url), 'utf8');
+  assert.match(source, /OpenOwnedTerminalCapableSessionLease\(leasePath\)/u);
+  assert.match(source, /NativeOrphanGenericRead \| NativeGuardianGenericWrite \| NativeOrphanDelete/u);
+  assert.match(source, /TryRetireCompletedNativeGuardianSession\(owner, root, worker,/u);
+  assert.match(source, /if \(File.Exists\(active\) \|\| Directory.Exists\(active\)\) return false/u);
+  assert.match(source, /disposition is not \("succeeded" or "rolled_back"\)/u);
+  assert.match(source, /"rollback_healthy" : "healthy"/u);
+  assert.match(source, /"rolled_back" : "committed"/u);
+  assert.match(source, /DeleteExactOwnedNativeFileOnHandle\(handoffStream.SafeFileHandle\)/u);
+  assert.match(source, /InspectMainNativeIdentity\(\)/u);
+  assert.match(source, /DeleteExactOwnedNativeFileOnHandle\(lease.SafeFileHandle\)/u);
+  assert.match(source, /RenameNativeOrphanByHandle\(handle, NativeGuardianFileDispositionInfo/u);
+  assert.doesNotMatch(source, /File.Delete\(leasePath\)|File.Delete\(handoffPath\)/u);
+  assert.match(program, /return 0; \/\/ Exact OS-owned completed transaction fully audited/u);
+});
+
 test("continuous signed Guardian session pins original kernel file ID but leaves JS journal writer as the sole writer", async () => {
   const lease = await fs.readFile(new URL('../../native/windows/EquinoxLocal.Guardian/MainNativeJournalLease.cs', import.meta.url), 'utf8');
   const osFile = await fs.readFile(new URL('../../native/windows/EquinoxLocal.Guardian/MainNativeOrphanHandleRename.cs', import.meta.url), 'utf8');
@@ -441,7 +459,8 @@ test("continuous signed Guardian session pins original kernel file ID but leaves
   assert.match(lease, /OpenNativeOrphanFileForRename\(expected, NativeOrphanGenericRead,/u);
   assert.match(lease, /NativeOrphanShareRead, 0, NativeOrphanOpenExisting, NativeOrphanOpenReparsePoint/u);
   assert.match(lease, /info.VolumeSerial == 0 \|\| info.FileIndexHigh == 0 && info.FileIndexLow == 0/u);
-  assert.match(lease, /using var lease = new FileStream\(leasePath, FileMode.CreateNew/u);
+  assert.match(lease, /OpenOwnedTerminalCapableSessionLease\(leasePath\)/u);
+  assert.match(lease, /: new FileStream\(leasePath, FileMode.CreateNew/u);
   const program = await fs.readFile(new URL('../../native/windows/EquinoxLocal.Guardian/Program.cs', import.meta.url), 'utf8');
   const journal = await fs.readFile(new URL('../../native/windows/EquinoxLocal.Guardian/MainNativeJournalIdentity.cs', import.meta.url), 'utf8');
   assert.match(program, /Unreconciled signed Guardian owner session blocks native launch/u);
@@ -520,7 +539,9 @@ test("independent native Guardian obtains an OS-exclusive durable journal lease 
   assert.match(code, /lease\.Flush\(flushToDisk: true\)/u);
   assert.match(code, /\.writer-lock/u);
   assert.match(code, /explicit owner reconciliation/u);
-  assert.doesNotMatch(code, /File\.Delete|File\.Move|Directory\.Delete|Process\.Start|Registry\.SetValue|NativeMessaging|shell_stopped|switched/u);
+  // Verified terminal retirement now audits the EXISTING Native Messaging
+  // owner/journal; it still cannot start WPF, modify the registry or swap slots.
+  assert.doesNotMatch(code, /File\.Delete|File\.Move|Directory\.Delete|Process\.Start|Registry\.SetValue/u);
 });
 
 test("independent Guardian worker process provenance never invokes a launcher or accepts unbound PID ownership", async () => {
