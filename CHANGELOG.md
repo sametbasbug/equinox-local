@@ -6,13 +6,15 @@ This project follows semantic versioning for public releases.
 
 ## [Unreleased]
 
+## [6.2.0] - 2026-10-25
+
 ### Updated runtime dependencies for 6.2.0
 
 - Upgraded the four-platform bundled Node.js to **26.12.1**, owned Git/Dugite native to **2.56.0-1**, tunnel-client to **0.0.17**, and the macOS signed Peekaboo runtime to **4.9.6**. Each distribution remains SHA-256 and exact-byte pinned for its target.
 - Refreshed `node-pty` to **1.2.0-beta.18**, `fast-uri` to **4.2.3**, and the pinned Node.js CI/build lanes. Existing current-version GitHub Actions major versions are retained; the workflows do not install Python, and the .NET SDK already resolves the current 10.0 servicing patch.
 
 
-**Equinox Local 6.2.0 + Equinox Browser 1.1.0 — release candidates, not yet published.** The latest publicly signed Local release remains 6.1.2 and the installed Chrome Web Store Browser release remains 1.0.1. This draft is subject to release validation, protected signing and actual user acceptance before either candidate is published.
+**Equinox Local 6.2.0** is distributed independently from Equinox Browser, which is updated through Chrome Web Store. This release packages the canonical Main source with the signed native Windows and macOS runtime.
 
 ### Runtime and build ownership
 
@@ -26,7 +28,7 @@ This project follows semantic versioning for public releases.
 - Corrected the hosted Windows release packager's diagnostic output so PowerShell receives machine-readable JSON on stdout and timing logs on stderr.
 - Expanded strict TypeScript, Browser MV3/ChatGPT DOM, updater rollback, native installer/repair and Guardian verification across the existing automated CI lanes. CodeQL code-scanning alerts are cleared on the reviewed draft source.
 
-**Release acceptance outstanding:** Production-signed installed upgrades and forced rollback on all four architectures, physical Windows Guardian original-file identity, and human-approved Chrome Web Store popup / Native Messaging / committed debugger and Auto Continue behavior are not yet certified by the unsigned hosted tests.
+**Compatibility note:** Existing Windows Main installations running an older Guardian may reject an in-app 6.2.0 native update before restart. The freshly signed website installer is the supported path to replace the native runtime; preserve user settings and verify installation health before treating the upgrade as complete.
 
 ## [6.1.2] - 2026-10-18
 
