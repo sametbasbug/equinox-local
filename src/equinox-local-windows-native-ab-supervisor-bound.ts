@@ -1,17 +1,19 @@
 import fs from 'node:fs/promises';
+import path from 'node:path';
 
 import {
   assertWindowsNativeMessagingHostOwnership,
   registerWindowsNativeMessagingHost,
   windowsNativeMessagingLauncherPath,
 } from './equinox-browser-windows-native-messaging.js';
-import { writeEquinoxLocalMainNativePointer } from './equinox-local-main-native-state.js';
+import { readEquinoxLocalMainNativePointer, writeEquinoxLocalMainNativePointer } from './equinox-local-main-native-state.js';
 import { createWindowsJournaledNativeABLifecycle } from './equinox-local-windows-native-ab-journal-lifecycle.js';
 
 
 type NativeFs = typeof fs;
 type NativeTransition = Readonly<{
-  target:string;currentSha:string;targetSha:string;targetRuntimeContractSha256:string;
+  target:string;currentSha:string;targetSha:string;
+  currentRuntimeContractSha256:string;targetRuntimeContractSha256:string;
 }>;
 type Stored = Readonly<{sourceSha:string;target:string;runtimeContractSha256:string;releaseDir:string}>;
 type BoundOwner = Readonly<{
@@ -35,6 +37,7 @@ type BoundOptions = SupervisorOptions & {
   manifestRoot?:string;transactionRoot?:string;pointerPath?:string;
   fsImpl?:NativeFs;execFileImpl?:unknown;env?:NodeJS.ProcessEnv;
   writePointerImpl?:typeof writeEquinoxLocalMainNativePointer;
+  readPointerImpl?:typeof readEquinoxLocalMainNativePointer;
   assertNativeHostImpl?:typeof assertWindowsNativeMessagingHostOwnership;
   registerNativeHostImpl?:typeof registerWindowsNativeMessagingHost;
   launcherPathImpl?:(releaseDir:string)=>string;
@@ -85,6 +88,7 @@ export function createSupervisorBoundWindowsNativeABLifecycle({
   previousReleaseDir, programRoot, manifestRoot, transactionRoot, pointerPath,
   fsImpl = fs, execFileImpl, env = process.env,
   writePointerImpl = writeEquinoxLocalMainNativePointer,
+  readPointerImpl = readEquinoxLocalMainNativePointer,
   assertNativeHostImpl = assertWindowsNativeMessagingHostOwnership,
   registerNativeHostImpl = registerWindowsNativeMessagingHost,
   launcherPathImpl = windowsNativeMessagingLauncherPath,
@@ -104,6 +108,16 @@ export function createSupervisorBoundWindowsNativeABLifecycle({
   }
   const previousLauncher = launcherPathImpl(previousReleaseDir);
   const targetLauncher = launcherPathImpl(stored.releaseDir);
+  const prior = previousPointer === null || previousPointer === undefined
+    ? null : recordOrNull(previousPointer);
+  if ((previousPointer !== null && previousPointer !== undefined && prior === null) ||
+      (prior && (prior.sourceSha !== exactTransition.currentSha ||
+        prior.target !== exactTransition.target ||
+        prior.runtimeContractSha256 !== exactTransition.currentRuntimeContractSha256)) ||
+      typeof pointerPath !== 'string' || typeof transactionRoot !== 'string' ||
+      path.resolve(pointerPath) !== path.join(path.resolve(transactionRoot), 'current-native.json')) {
+    throw new Error('Windows native A rollback pointer is not the exact original Main identity.');
+  }
   const ownerArgs = Object.freeze({ transactionId: id, currentSha: exactTransition.currentSha, targetSha: exactTransition.targetSha, target: exactTransition.target });
   const pointer = Object.freeze({ schemaVersion: 1, channel: 'main', sourceSha: exactTransition.targetSha, target: exactTransition.target, runtimeContractSha256: exactTransition.targetRuntimeContractSha256 });
   const assertLiveOwner = async () => {
@@ -152,6 +166,71 @@ export function createSupervisorBoundWindowsNativeABLifecycle({
     verifyNativeMessaging: ({ release }) => proveNativeMessaging(release),
     registerNativeMessaging: ({ release }) => registerNativeMessaging(release),
     verifySustainedHealth: ({ release, sourceSha }) => supervisor.verifySustainedHealth({ ...ownerArgs, release, sourceSha, programRoot }),
+    restoreNativePointer: async () => {
+      // This is the same authenticated rollback session that restored the
+      // installed original A bytes and its Native Messaging owner. Do not
+      // silently leave a B pointer after a failure between pointer commit
+      // and the durable Main succeeded receipt.
+      await assertLiveOwner();
+      if (!await proveNativeMessaging('A')) {
+        throw new Error('Original A Native Messaging owner is not verified before pointer restoration.');
+      }
+      const nativeOptions = { transactionRoot: transactionRoot!, fsImpl };
+      let existing = null;
+      let before = null;
+      try {
+        before = await fsImpl.lstat(pointerPath!);
+        if (!before.isFile() || before.isSymbolicLink() || before.nlink !== 1) {
+          throw new Error('Native rollback pointer is not one normal owned file.');
+        }
+        existing = await readPointerImpl(pointerPath!, nativeOptions);
+      } catch (error) {
+        if (error === null || typeof error !== 'object' || !('code' in error) || error.code !== 'ENOENT') throw error;
+      }
+      const same = (pointer:Record<string,unknown>, other:Record<string,unknown>) =>
+        pointer.sourceSha === other.sourceSha &&
+        pointer.target === other.target &&
+        pointer.runtimeContractSha256 === other.runtimeContractSha256;
+      const b = { sourceSha: exactTransition.targetSha,
+        target: exactTransition.target,
+        runtimeContractSha256: exactTransition.targetRuntimeContractSha256 };
+      if (existing && !same(existing, b) && !(prior && same(existing, prior))) {
+        throw new Error('Foreign native pointer blocks exact original A rollback.');
+      }
+      if (prior && existing && same(existing, prior)) return;
+      if (!prior && !existing) return;
+      // Recheck identity after the asynchronous owned Main/NM inspections.
+      if (before) {
+        const now = await fsImpl.lstat(pointerPath!);
+        if (!now.isFile() || now.isSymbolicLink() || now.nlink !== 1 ||
+            now.dev !== before.dev || now.ino !== before.ino ||
+            now.size !== before.size || now.mtimeMs !== before.mtimeMs) {
+          throw new Error('Native pointer changed ownership before original A rollback.');
+        }
+      }
+      await assertLiveOwner();
+      if (prior) {
+        await writePointerImpl(pointerPath!, {
+          schemaVersion: 1, channel: 'main', sourceSha: prior.sourceSha as string,
+          target: prior.target as string, runtimeContractSha256: prior.runtimeContractSha256 as string,
+        }, nativeOptions);
+      } else {
+        // Stable A had no Main-native pointer. Only the exact verified B
+        // pointer may be retired, and only after original A is restored.
+        await fsImpl.unlink(pointerPath!);
+      }
+      if (prior) {
+        const restored = await readPointerImpl(pointerPath!, nativeOptions);
+        if (!same(restored, prior)) throw new Error('Original A native pointer restoration did not persist.');
+      } else {
+        try {
+          await fsImpl.lstat(pointerPath!);
+          throw new Error('Stable A restoration left an active Main B native pointer.');
+        } catch (error) {
+          if (error === null || typeof error !== 'object' || !('code' in error) || error.code !== 'ENOENT') throw error;
+        }
+      }
+    },
     commitNativePointer: async () => {
       // A HEALTHY journal is historical evidence, not proof the owner and B
       // stayed healthy until the irreversible durable pointer write.

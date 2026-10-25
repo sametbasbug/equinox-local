@@ -277,6 +277,80 @@ test('supervisor-bound B pointer refuses expired owner, messaging or health befo
 });
 
 
+test('supervisor-bound rollback restores exact Stable A absence after B pointer persisted and refuses foreign pointers', async () => {
+  let owned = true, registered = oldRelease, pointer = {sourceSha:B,target,runtimeContractSha256:CB};
+  const events = [];
+  const launcher = dir => dir + '\\\\runtime\\\\browser\\\\host.exe';
+  const fakeFs = {
+    async lstat() {
+      if (!pointer) throw Object.assign(Error('pointer absent'),{code:'ENOENT'});
+      return {isFile:()=>true,isSymbolicLink:()=>false,nlink:1,dev:1,ino:2,size:80,mtimeMs:3};
+    },
+    async unlink() { assert.equal(pointer.sourceSha,B); pointer = null; events.push('pointer-removed'); },
+  };
+  const a = createSupervisorBoundWindowsNativeABLifecycle({
+    transition,transactionId:ID,windowsAdmission:admitted({supervisor:{
+      ...admitted().supervisor,
+      assertWorkerOwnership:async()=>owned,
+      verifyNativeMessaging:async({release})=>release==='A'&&registered===oldRelease,
+    }}),
+    stored:{sourceSha:B,target,runtimeContractSha256:CB,releaseDir:newRelease},
+    previousPointer:null,previousReleaseDir:oldRelease,programRoot:install.programRoot,
+    manifestRoot:install.nativeMessagingManifestRoot,transactionRoot:TEST_TX_ROOT,
+    pointerPath:path.join(TEST_TX_ROOT,'current-native.json'),launcherPathImpl:launcher,
+    fsImpl:fakeFs,readPointerImpl:async()=>pointer,
+    assertNativeHostImpl:async({acceptedLauncherPaths})=>assert.deepEqual(acceptedLauncherPaths,[launcher(oldRelease)]),
+    createLifecycleImpl:args=>({restore:()=>args.restoreNativePointer()}),
+  });
+  await a.restore();
+  assert.equal(pointer,null);
+  assert.deepEqual(events,['pointer-removed']);
+  await a.restore(); // exact previous Stable state is idempotent
+  assert.equal(pointer,null);
+  pointer={sourceSha:'d'.repeat(40),target,runtimeContractSha256:CB};
+  await assert.rejects(a.restore(),/Foreign native pointer/u);
+  assert.equal(pointer.sourceSha,'d'.repeat(40));
+  pointer={sourceSha:B,target,runtimeContractSha256:CB};
+  owned=false;
+  await assert.rejects(a.restore(),/ownership expired/u);
+  assert.equal(pointer.sourceSha,B);
+});
+
+test('original Main pointer cannot be substituted with a foreign runtime contract before rollback', () => {
+  assert.throws(() => createSupervisorBoundWindowsNativeABLifecycle({
+    transition,transactionId:ID,windowsAdmission:admitted(),
+    stored:{sourceSha:B,target,runtimeContractSha256:CB,releaseDir:newRelease},
+    previousPointer:{sourceSha:A,target,runtimeContractSha256:'f'.repeat(64)},
+    previousReleaseDir:oldRelease,programRoot:install.programRoot,
+    manifestRoot:install.nativeMessagingManifestRoot,transactionRoot:TEST_TX_ROOT,
+    pointerPath:path.join(TEST_TX_ROOT,'current-native.json'),
+  }), /original Main identity/u);
+});
+
+test('supervisor-bound rollback restores exact prior Main A pointer after B pointer persisted', async () => {
+  let pointer={sourceSha:B,target,runtimeContractSha256:CB};
+  const original={sourceSha:A,target,runtimeContractSha256:CA};
+  let wrote=0;
+  const lc=createSupervisorBoundWindowsNativeABLifecycle({
+    transition,transactionId:ID,windowsAdmission:admitted(),
+    stored:{sourceSha:B,target,runtimeContractSha256:CB,releaseDir:newRelease},
+    previousPointer:original,previousReleaseDir:oldRelease,programRoot:install.programRoot,
+    manifestRoot:install.nativeMessagingManifestRoot,transactionRoot:TEST_TX_ROOT,
+    pointerPath:path.join(TEST_TX_ROOT,'current-native.json'),
+    launcherPathImpl:dir=>dir+'\\\\runtime\\\\browser\\\\host.exe',
+    fsImpl:{async lstat(){return {isFile:()=>true,isSymbolicLink:()=>false,nlink:1,dev:1,ino:4,size:80,mtimeMs:3}}},
+    readPointerImpl:async()=>pointer,
+    writePointerImpl:async(_path,value)=>{wrote++;pointer={sourceSha:value.sourceSha,target:value.target,runtimeContractSha256:value.runtimeContractSha256}},
+    assertNativeHostImpl:async()=>true,
+    createLifecycleImpl:args=>({restore:()=>args.restoreNativePointer()}),
+  });
+  await lc.restore();
+  assert.deepEqual(pointer,original);
+  assert.equal(wrote,1);
+  await lc.restore();
+  assert.equal(wrote,1);
+});
+
 test('supervisor-bound rollback requires distinct native B quiesce and rejects unproved B shutdown', async () => {
   let namedProof = null;
   let fileMutations = 0;
@@ -288,7 +362,7 @@ test('supervisor-bound rollback requires distinct native B quiesce and rejects u
     stored:{sourceSha:B,target,runtimeContractSha256:CB,releaseDir:newRelease},
     previousReleaseDir:oldRelease, programRoot:install.programRoot,
     manifestRoot:install.nativeMessagingManifestRoot,transactionRoot:TEST_TX_ROOT,
-    pointerPath:path.join(TEST_TX_ROOT,'pointer.json'),
+    pointerPath:path.join(TEST_TX_ROOT,'current-native.json'),
     launcherPathImpl:dir=>`${dir}\\host.exe`,
     registerNativeHostImpl:async()=>{fileMutations++},
     writePointerImpl:async()=>{fileMutations++},

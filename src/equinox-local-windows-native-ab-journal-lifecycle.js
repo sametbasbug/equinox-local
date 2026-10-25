@@ -7,13 +7,13 @@ const DIGEST = /^[a-f0-9]{64}$/u;
 // The worker-side physical-slot/journal bridge, not a public updater entry.
 // Caller MUST supply independent OS worker attestations, exact native messaging
 // proof and a journal whose writer authenticates the active Main receipt.
-export function createWindowsJournaledNativeABLifecycle({ transactionId, target, currentSha, targetSha, receiptStartedAt, targetRuntimeContractSha256, programRoot, previousReleaseDir, targetReleaseDir, journal, assertWorkerOwnership, shutdownOwnedWpf, quiesceOwnedB, verifyNativeMessaging, registerNativeMessaging, verifySustainedHealth, fsImpl = fs, slotSwitch = switchWindowsNativeABSlot, slotRestore = restoreWindowsNativeABSlot, slotCommit = commitWindowsNativeABSlot, slotFinalizeRollback = finalizeWindowsNativeABRollback, commitNativePointer, } = {}) {
+export function createWindowsJournaledNativeABLifecycle({ transactionId, target, currentSha, targetSha, receiptStartedAt, targetRuntimeContractSha256, programRoot, previousReleaseDir, targetReleaseDir, journal, assertWorkerOwnership, shutdownOwnedWpf, quiesceOwnedB, verifyNativeMessaging, registerNativeMessaging, verifySustainedHealth, fsImpl = fs, slotSwitch = switchWindowsNativeABSlot, slotRestore = restoreWindowsNativeABSlot, slotCommit = commitWindowsNativeABSlot, slotFinalizeRollback = finalizeWindowsNativeABRollback, commitNativePointer, restoreNativePointer, } = {}) {
     if (!TX.test(transactionId ?? '') || !['win32-x64', 'win32-arm64'].includes(target ?? '') ||
         !SHA.test(currentSha ?? '') || !SHA.test(targetSha ?? '') || currentSha === targetSha ||
         !DIGEST.test(targetRuntimeContractSha256 ?? '') ||
         typeof receiptStartedAt !== 'string' || Number.isNaN(Date.parse(receiptStartedAt)) ||
         !programRoot || !previousReleaseDir || !targetReleaseDir ||
-        typeof commitNativePointer !== 'function' ||
+        typeof commitNativePointer !== 'function' || typeof restoreNativePointer !== 'function' ||
         typeof journal?.read !== 'function' || typeof journal?.advance !== 'function' ||
         ![assertWorkerOwnership, shutdownOwnedWpf, quiesceOwnedB, verifyNativeMessaging, registerNativeMessaging, verifySustainedHealth].every((v) => typeof v === 'function')) {
         throw new Error('Windows A/B lifecycle requires authenticated worker, journal and native ownership callbacks.');
@@ -116,12 +116,20 @@ export function createWindowsJournaledNativeABLifecycle({ transactionId, target,
                 await slotRestore(paths, { fsImpl });
                 await registerNativeMessaging({ transactionId, release: 'A' });
                 await messaging('A');
+                // Failed B can leave a durable B native pointer if the Main success
+                // receipt failed AFTER pointer commit. Restore the exact original A
+                // pointer before recording native rollback, never claim recovered A
+                // while future Guardian launches would still resolve B.
+                await restoreNativePointer({ transactionId, currentSha, targetSha, target });
                 record = await advance(record, 'rollback_native_restored');
             }
             if (!['rollback_native_restored', 'rollback_healthy'].includes(record.stage)) {
                 throw new Error('Native A rollback has no verified restored ownership.');
             }
             await messaging('A');
+            // Repeated rollback/recovery must independently verify the pointer,
+            // even if a previous writer recorded rollback_native_restored.
+            await restoreNativePointer({ transactionId, currentSha, targetSha, target });
             return Object.freeze({ stage: record.stage });
         },
         async recordRollbackHealthy() {
