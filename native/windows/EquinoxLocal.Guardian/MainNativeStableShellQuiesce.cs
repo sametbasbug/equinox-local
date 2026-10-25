@@ -15,7 +15,8 @@ internal static partial class Program
     // Opt-in pilot: actually ask exactly the installed Stable WPF shell to
     // exit through its existing ownership pipe, but NEVER swap native bytes,
     // register Chrome Native Messaging, start a B runtime or advance Main.
-    private static void QuiesceOwnedStableShell(OwnedWorkerClaim owner, string journalRoot, Process worker)
+    private static void QuiesceOwnedStableShell(OwnedWorkerClaim owner, string journalRoot, Process worker,
+        bool continuousNativeSession = false)
     {
         InspectionPhase = "native-wpf-quiesce-owned-stable";
         InspectBaseline(allowActiveOrphanForReconciliation: true);
@@ -25,8 +26,11 @@ internal static partial class Program
         if (active.RootElement.GetProperty("transactionId").GetString() != owner.TransactionId)
             throw new InvalidDataException("Stable WPF quiesce active transaction changed.");
         using var journal = ReadOwnedTransitionRecord(Path.Combine(journalRoot, owner.TransactionId + ".json"), 8192);
-        if (journal.RootElement.GetProperty("stage").GetString() != "prepared" ||
-            journal.RootElement.GetProperty("sequence").GetInt32() != 0 ||
+        if (!(continuousNativeSession
+                ? journal.RootElement.GetProperty("stage").GetString() == "native_staged" &&
+                  journal.RootElement.GetProperty("sequence").GetInt32() == 1
+                : journal.RootElement.GetProperty("stage").GetString() == "prepared" &&
+                  journal.RootElement.GetProperty("sequence").GetInt32() == 0) ||
             journal.RootElement.GetProperty("previousNative").GetProperty("kind").GetString() != "stable")
             throw new InvalidDataException("Stable shell quiesce pilot requires exact unchanged prepared Stable A.");
         var stableExe = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
@@ -65,9 +69,9 @@ internal static partial class Program
                 proof.GetProperty("workerPid").GetInt32() != owner.Pid ||
                 proof.GetProperty("workerStartTimeUtcTicks").GetString() != owner.Ticks ||
                 proof.GetProperty("guardianPid").GetInt32() != Environment.ProcessId ||
-                !CryptographicOperations.FixedTimeEquals(
+                (!continuousNativeSession && !CryptographicOperations.FixedTimeEquals(
                     Encoding.ASCII.GetBytes(proof.GetProperty("journalSha256").GetString() ?? ""),
-                    Encoding.ASCII.GetBytes(Convert.ToHexStringLower(originalJournalDigest))) ||
+                    Encoding.ASCII.GetBytes(Convert.ToHexStringLower(originalJournalDigest)))) ||
                 !CryptographicOperations.FixedTimeEquals(
                     Encoding.ASCII.GetBytes(proof.GetProperty("handoffSha256").GetString() ?? ""),
                     Encoding.ASCII.GetBytes(Convert.ToHexStringLower(HashOwnedWorkerHandoff(journalRoot, owner.TransactionId)))))

@@ -583,11 +583,11 @@ function renderDashboard() {
     !connectionAvailable ? "neutral" : connectionNeedsAttention ? "warn" : connectionConnected ? "good" : "neutral");
 
   setBadge("health-summary-badge", runtimeHealth === "UNKNOWN" ? "Unknown" : runtimeHealth, runtimeTone);
-  setText("runtime-version", status.server?.version ? `v${status.server.version}` : "—");
   setText("runtime-uptime", formatUptime(status.server?.uptimeSeconds));
   const channel = state.update || {};
   const onMain = ["source", "managed-source"].includes(channel.installationKind) && channel.main?.checkSupported === true;
   const currentSha = shortUpdateSha(channel.main?.currentSha || status.installation?.sourceSha);
+  setText("runtime-version", status.server?.version ? `v${status.server.version}${onMain && currentSha ? ` - ${currentSha}` : ""}` : "—");
   setText("sidebar-version", status.server?.version
     ? `${status.server.version}${onMain && currentSha ? ` - ${currentSha}` : ""}`
     : "Local runtime");
@@ -994,7 +994,7 @@ function renderUpdate() {
   if (mainChannel) {
     const currentSha = shortUpdateSha(main.currentSha);
     const targetSha = shortUpdateSha(main.targetSha);
-    setText("update-version", current ? `Equinox Local ${current}` : "Current version unavailable");
+    setText("update-version", current ? `Equinox Local ${current}${runningSha ? ` - ${runningSha}` : ""}` : "Current version unavailable");
     setText("update-checked-at", main.checkedAt ? `Checked ${formatDate(main.checkedAt)}` : "Not checked yet");
     setText("update-main-current", currentSha ? `Current SHA ${currentSha}` : "Current SHA —");
     setText("update-main-target", targetSha ? `Target SHA ${targetSha}` : "Target SHA —");
@@ -1018,6 +1018,11 @@ function renderUpdate() {
       setText("update-title", `Restarting into Main ${shortUpdateSha(main.restartScheduledFor) || "snapshot"}`);
       setText("update-copy", "The admitted Main update is prepared. Control Center may disconnect briefly while the runtime switches, verifies health and rolls back automatically on failure.");
       setBadge("update-badge", "Restart scheduled", "warn");
+    } else if (main.applyError) {
+      const rollbackUnverified = main.applyError.startsWith("Main update rollback_failed:");
+      setText("update-title", rollbackUnverified ? "Main rollback needs attention" : "Main update failed");
+      setText("update-copy", main.applyError);
+      setBadge("update-badge", rollbackUnverified ? "Rollback unverified" : "Update failed", "bad");
     } else if (state.updateApplyBusy || main.applying) {
       setText("update-title", `Preparing Main ${targetSha || "snapshot"}`);
       setText("update-copy", "Preparing the exact admitted source/native transition before scheduling the managed runtime restart.");
@@ -1075,6 +1080,10 @@ function renderUpdate() {
     setText("update-title", `Restarting into Equinox Local ${update.restartScheduledFor}`);
     setText("update-copy", "The verified release is prepared. Control Center may disconnect briefly while the managed runtime restarts and verifies the new version; automatic rollback is used if health verification fails.");
     setBadge("update-badge", "Restart scheduled", "warn");
+  } else if (update.restartError) {
+    setText("update-title", "Update restart was not confirmed");
+    setText("update-copy", update.restartError);
+    setBadge("update-badge", "Update needs attention", "bad");
   } else if (state.updateApplyBusy || update.applying) {
     setText("update-title", `Preparing Equinox Local ${update.latestVersion || "update"}`);
     setText("update-copy", "Downloading the signed artifact, verifying its exact size and SHA-256 digest, then staging the release before any runtime switch occurs.");

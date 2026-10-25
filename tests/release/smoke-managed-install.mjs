@@ -21,13 +21,19 @@ const CONTROL_CENTER_PORT = 34991;
 const TAR = "/usr/bin/tar";
 const PLUTIL = "/usr/bin/plutil";
 
-async function waitForJson(url, attempts = 40) {
+async function waitForJson(url, attempts = 40, accepts = () => true) {
   let lastError;
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     try {
-      const response = await fetch(url, { cache: "no-store" });
-      if (response.ok) return await response.json();
-      lastError = new Error(`HTTP ${response.status}`);
+      const response = await fetch(url, { cache: "no-store", signal: AbortSignal.timeout(2000) });
+      if (response.ok) {
+        const result = await response.json();
+        if (accepts(result)) return result;
+        // After bootout/bootstrap the previous LaunchAgent may briefly return 200.
+        lastError = new Error("HTTP 200 from a different installation or nonhealthy runtime");
+      } else {
+        lastError = new Error(`HTTP ${response.status}`);
+      }
     } catch (error) {
       lastError = error;
     }
@@ -82,13 +88,25 @@ async function runRealLaunchAgentWrapperSmoke({ homeDir, installRoot, expectedVe
     await execFile("/bin/launchctl", ["kickstart", service], { timeout: 15_000, maxBuffer: 1024 * 1024 });
     let status;
     try {
-      status = await waitForJson(`http://127.0.0.1:${CONTROL_CENTER_PORT}/api/v1/status`, 120);
+      status = await waitForJson(
+        `http://127.0.0.1:${CONTROL_CENTER_PORT}/api/v1/status`, 120,
+        (value) => value?.status?.server?.version === expectedVersion &&
+          value?.status?.health?.state === "HEALTHY" &&
+          value?.status?.installation?.kind === expectedInstallationKind &&
+          (value?.status?.installation?.sourceSha ?? null) === expectedSourceSha,
+      );
     } catch (error) {
+      // Only bounded process state and redacted stderr; no launchctl environment.
       const launchState = await execFile("/bin/launchctl", ["print", service], { timeout: 5_000, maxBuffer: 1024 * 1024 })
-        .then(({ stdout }) => stdout.slice(-8_000))
-        .catch((launchError) => `launchctl print failed: ${launchError.message}`);
-      const stderr = await fs.readFile(stderrLog, "utf8").then((value) => value.slice(-8_000)).catch(() => "(empty)");
-      throw new Error(`Real LaunchAgent wrapper smoke did not become healthy: ${error instanceof Error ? error.message : error}\nLaunchAgent:\n${launchState}\nStderr:\n${stderr}`);
+        .then(({ stdout }) => stdout.split("\n").filter((line) =>
+          /^\s*(?:state|pid|last exit code|runs) =/u.test(line)).join("; ").slice(0, 350))
+        .catch(() => "launchctl state unavailable");
+      const stderr = await fs.readFile(stderrLog, "utf8")
+        .then((value) => value.slice(-800)
+          .replace(/(?:sk-[^\s]+|(?:token|secret|password|api[-_]?key)\s*[:=]\s*[^\s]+)/giu, "[redacted]")
+          .replace(/[\r\n\t]+/gu, " ")).catch(() => "(empty)");
+      console.error(`Real LaunchAgent wrapper smoke failed expected ${expectedInstallationKind} healthy runtime; probe=${error instanceof Error ? error.message : "unknown"}; launch=${launchState}; stderrTail=${stderr}`);
+      throw new Error("Real LaunchAgent wrapper smoke failed expected health.");
     }
     assert.equal(status.status.server.version, expectedVersion);
     assert.equal(status.status.health?.state, "HEALTHY");

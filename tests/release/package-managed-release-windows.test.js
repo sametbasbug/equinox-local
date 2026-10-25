@@ -297,7 +297,7 @@ test("Windows package builds independent native Guardian for both CPU targets ou
   assert.match(csproj, /<SelfContained>true<\/SelfContained>/u);
   assert.match(csproj, /win-x64/u);
   assert.match(csproj, /win-arm64/u);
-  assert.match(source, /Main native switching is not activated/u);
+  assert.match(source, /InspectMainNativeIdentity\(\);/u);
   assert.match(source, /CompareNativeTrees\(sourceShell, programRoot\)/u);
   assert.match(source, /CryptographicOperations\.FixedTimeEquals/u);
   assert.match(source, /FileAccess\.Read, share/u);
@@ -311,18 +311,48 @@ test("Windows package builds independent native Guardian for both CPU targets ou
 });
 
 
+test("Guardian independently audits original A WPF kernel identity without granting Main A/B mutation", async () => {
+  const program = await fs.readFile(new URL("../../native/windows/EquinoxLocal.Guardian/Program.cs", import.meta.url), "utf8");
+  const audit = await fs.readFile(new URL("../../native/windows/EquinoxLocal.Guardian/MainNativeWpfOwnerAudit.cs", import.meta.url), "utf8");
+  assert.match(program, /args\[0\] == "--audit-native-wpf-owner"/u);
+  assert.match(program, /Read-only kernel ownership evidence, never transition authority/u);
+  for (const required of [
+    "InspectOwnedNativeWorkerProcess()", "guardian-journal",
+    "current-native.json", "native-store", "previousNative",
+    "stage", "prepared", "sequence", "CompareNativeTrees",
+    "FindSingleOwnedStableShell", "OpenProcessToken",
+    "ReadWindowsLogonAuthenticationId", "SessionId",
+    "GetNamedPipeServerProcessId", "shell.StartTime",
+    "Original A WPF ownership pipe",
+    "current-version.json", "RequireExactKeys(nativeA",
+    "InspectOwnedMainGit(install, target, sourceRoot, sourceSha)",
+    "InspectOwnedMainNativeMessaging(install, release)",
+  ]) {
+    assert.ok(audit.includes(required), "Missing exact original A WPF observation: " + required);
+  }
+  // Audit may observe a native OS handle but may never send a shell command,
+  // change a journal or start a native process.
+  assert.doesNotMatch(audit, /Process\.Start\s*\(|ProcessStartInfo|File\.Move|File\.Delete|File\.WriteAllText|Registry\.|Kill\s*\(|\.WriteAsync\s*\(|\.Write\s*\(/u);
+  assert.match(audit, /No command is sent on this pipe/u);
+  assert.match(audit, /never an admitted native supervisor/u);
+});
+
 test("independent Windows Guardian audits exact Main SHA/native-store identity without enabling Main launch", async () => {
   const program = await fs.readFile(new URL("../../native/windows/EquinoxLocal.Guardian/Program.cs", import.meta.url), "utf8");
   const inspector = await fs.readFile(new URL("../../native/windows/EquinoxLocal.Guardian/MainNativeIdentity.cs", import.meta.url), "utf8");
   assert.match(program, /args\[0\] == "--audit-native-identity"/u);
   assert.match(program, /Structural audit only; never a Main launch signal/u);
-  assert.match(program, /Main native switching is not activated for the Stable-only Guardian/u);
+  assert.match(program, /InspectMainNativeIdentity\(\);/u);
+  assert.match(program, /if \(File.Exists\(mainPointerPath\)\)\s*\{[^]*?InspectMainNativeIdentity\(\);/u);
+  assert.match(inspector, /native-full-fingerprint/u);
+
   assert.match(inspector, /current-source\.conf/u);
   assert.match(inspector, /current-native\.json/u);
   assert.match(inspector, /native-store/u);
   assert.match(inspector, /runtimeContractSha256/u);
   assert.match(inspector, /artifactSha256/u);
   assert.match(inspector, /CompareNativeTrees\(immutableShell, activeProgram\)/u);
+  assert.match(inspector, /metadata.GetProperty\("sourceSha"\).GetString\(\) != sourceSha/u);
   assert.match(inspector, /InspectOwnedMainGit\(install, target, expectedSource, sourceSha\)/u);
   const gitAudit = await fs.readFile(new URL("../../native/windows/EquinoxLocal.Guardian/MainGitIdentity.cs", import.meta.url), "utf8");
   assert.match(gitAudit, /PinnedWindowsGit = "2\.56\.0-1"/u);
@@ -366,7 +396,7 @@ test("independent Windows Guardian journal audit is read-only and binds active m
   const journal = await fs.readFile(new URL("../../native/windows/EquinoxLocal.Guardian/MainNativeJournalIdentity.cs", import.meta.url), "utf8");
   assert.match(program, /args\[0\] == "--audit-native-journal"/u);
   assert.match(program, /Receipt ownership audit ONLY; no resume or launch/u);
-  assert.match(program, /Main native switching is not activated for the Stable-only Guardian/u);
+  assert.match(program, /InspectMainNativeIdentity\(\);/u);
   for (const name of ["active.json", "receipts", "guardian-journal", "writer-lock", "previousNative", "targetRuntimeContractSha256", "receiptStartedAt"]) {
     assert.ok(journal.includes(name), `Missing native journal binding: ${name}`);
   }
@@ -384,7 +414,7 @@ test("native journal authority accepts only kernel-PID+HMAC live prepared worker
   const source = await fs.readFile(new URL('../../native/windows/EquinoxLocal.Guardian/MainNativeJournalAuthority.cs', import.meta.url), 'utf8');
   const lease = await fs.readFile(new URL('../../native/windows/EquinoxLocal.Guardian/MainNativeJournalLease.cs', import.meta.url), 'utf8');
   assert.match(program, /--hold-native-journal-authority/u);
-  assert.match(lease, /RecordNativeJournalWorkerAuthority\(owner, root, worker, recordPreparedAbort\)/u);
+  assert.match(lease, /RecordNativeJournalWorkerAuthority\(owner, root, worker, recordPreparedAbort, recordNativeStaged, cancelBeforeSwitch\)/u);
   assert.match(source, /GetNamedPipeClientProcessId\(listener\.SafePipeHandle/u);
   assert.match(source, /clientPid != owner\.Pid/u);
   assert.match(source, /stage"\)\.GetString\(\) != "prepared"/u);
@@ -398,6 +428,88 @@ test("native journal authority accepts only kernel-PID+HMAC live prepared worker
   assert.match(source, /new Utf8JsonWriter\(fd\)/u);
   assert.doesNotMatch(source, /JsonSerializer\.Serialize\(/u);
   assert.doesNotMatch(source, /Process\.Start|Registry\.SetValue|\.writer-lock"\s*,\s*FileMode\.OpenOrCreate|"shell_stopped"|"switched"/u);
+});
+
+test("one signed Guardian session authenticates WPF A/B shutdown and separately sustained OS health", async () => {
+  const session=await fs.readFile(new URL('../../native/windows/EquinoxLocal.Guardian/MainNativeGuardianSession.cs',import.meta.url),'utf8');
+  const lease=await fs.readFile(new URL('../../native/windows/EquinoxLocal.Guardian/MainNativeJournalLease.cs',import.meta.url),'utf8');
+  const stable=await fs.readFile(new URL('../../native/windows/EquinoxLocal.Guardian/MainNativeStableShellQuiesce.cs',import.meta.url),'utf8');
+  const rollback=await fs.readFile(new URL('../../native/windows/EquinoxLocal.Guardian/MainNativeBRollbackShellQuiesce.cs',import.meta.url),'utf8');
+  const client=await fs.readFile(new URL('../../src/equinox-local-windows-native-journal-authority-client.ts',import.meta.url),'utf8');
+  assert.match(lease,/HandleOneOwnedGuardianSessionRequest\(owner, root, worker, originalGuardian!\)/u);
+  assert.match(session,/GetNamedPipeClientProcessId\(server.SafePipeHandle, out var pid\)/u);
+  assert.match(session,/FixedTimeEquals\(mac, reply.AsSpan\(1\)\)/u);
+  assert.match(session,/opcode == 1 && stage == "native_staged"/u);
+  assert.match(session,/opcode == 2 && stage == "rollback_started"/u);
+  assert.match(session,/opcode == 3 && \(\(stage == "restarted"/u);
+  assert.match(session,/opcode == 4 && \(\(stage == "rollback_native_restored"/u);
+  assert.match(session, /stage == "committed" && sequence == 6/u);
+  assert.match(session, /stage == "rolled_back" && sequence is >= 4 and <= 9/u);
+
+  assert.match(session,/InspectOwnedLiveNativeShellSustained\(owner, j, opcode == 3, worker\)/u);
+  assert.match(session,/CompareNativeTrees\(originalShell, installedShell\)/u);
+  assert.match(session,/GetNamedPipeServerProcessId\(pipe.SafePipeHandle, out var serverPid\)/u);
+  assert.match(session,/ReadWindowsLogonAuthenticationId\(token\)/u);
+  assert.match(session,/Thread.Sleep\(1500\)/u);
+  assert.match(session,/shell.StartTime.ToUniversalTime\(\).Ticks.ToString/u);
+
+  const staging=await fs.readFile(new URL('../../native/windows/EquinoxLocal.Guardian/MainNativeStageB.cs',import.meta.url),'utf8');
+  assert.match(session,/InspectExactImmutableNativeBPayload\(owner, j\)/u);
+  assert.ok(session.indexOf('InspectExactImmutableNativeBPayload(owner, j)') < session.indexOf('QuiesceOwnedStableShell(owner, root, worker, continuousNativeSession: true)'));
+  assert.match(staging,/InspectExactImmutableNativeBPayload\(owner, journal\)/u);
+  assert.match(staging,/InspectOwnedMainGit\(install, target, source, sourceSha\)/u);
+  assert.match(staging,/FingerprintNativeMainRelease\(release\)/u);
+  assert.match(staging,/measured.Sha256 != fingerprint.GetProperty\("sha256"\)/u);
+  assert.match(staging,/stage == "native_staged" && sequence == 1/u);
+  assert.match(session,/QuiesceOwnedStableShell\(owner, root, worker, continuousNativeSession: true\)/u);
+  assert.match(session,/QuiesceOwnedMainBRollbackShell\(owner, root, worker, digest, handoffDigest/u);
+  assert.match(session,/VerifyPinnedNativeGuardianFile\(originalGuardian\)/u);
+  assert.match(stable,/continuousNativeSession = false/u);
+  assert.match(rollback,/continuousNativeSession = false/u);
+  assert.match(client,/equinox-local-guardian-native-stage-v1:/u);
+  assert.doesNotMatch(session,/Process.Kill|File.Delete|File.Move|Registry.SetValue/u);
+});
+
+test("native owner terminal cleanup uses its original DELETE-capable Windows handles and refuses uncommitted receipt", async () => {
+  const source = await fs.readFile(new URL('../../native/windows/EquinoxLocal.Guardian/MainNativeJournalLease.cs', import.meta.url), 'utf8');
+  const program = await fs.readFile(new URL('../../native/windows/EquinoxLocal.Guardian/Program.cs', import.meta.url), 'utf8');
+  assert.match(source, /OpenOwnedTerminalCapableSessionLease\(leasePath\)/u);
+  assert.match(source, /NativeOrphanGenericRead \| NativeGuardianGenericWrite \| NativeOrphanDelete/u);
+  assert.match(source, /TryRetireCompletedNativeGuardianSession\(owner, root, worker,/u);
+  assert.match(source, /if \(File.Exists\(active\) \|\| Directory.Exists\(active\)\) return false/u);
+  assert.match(source, /disposition is not \("succeeded" or "rolled_back"\)/u);
+  assert.match(source, /"rollback_healthy" : "healthy"/u);
+  assert.match(source, /"rolled_back" : "committed"/u);
+  assert.match(source, /DeleteExactOwnedNativeFileOnHandle\(handoffStream.SafeFileHandle\)/u);
+  assert.match(source, /InspectMainNativeIdentity\(\)/u);
+  assert.match(source, /DeleteExactOwnedNativeFileOnHandle\(lease.SafeFileHandle\)/u);
+  assert.match(source, /RenameNativeOrphanByHandle\(handle, NativeGuardianFileDispositionInfo/u);
+  assert.doesNotMatch(source, /File.Delete\(leasePath\)|File.Delete\(handoffPath\)/u);
+  assert.match(program, /return 0; \/\/ Exact OS-owned completed transaction fully audited/u);
+});
+
+test("continuous signed Guardian session pins original kernel file ID but leaves JS journal writer as the sole writer", async () => {
+  const lease = await fs.readFile(new URL('../../native/windows/EquinoxLocal.Guardian/MainNativeJournalLease.cs', import.meta.url), 'utf8');
+  const osFile = await fs.readFile(new URL('../../native/windows/EquinoxLocal.Guardian/MainNativeOrphanHandleRename.cs', import.meta.url), 'utf8');
+  const hosted = await fs.readFile(new URL('./windows-installer-real-package-smoke.ps1', import.meta.url), 'utf8');
+  assert.match(lease, /continuousSession = acceptAuthorityProof && !recordPreparedAbort/u);
+  assert.match(lease, /continuousSession \? "\.guardian-session-lock" : "\.writer-lock"/u);
+  assert.match(lease, /Orphan or active JS journal writer blocks independent Guardian session/u);
+  assert.match(lease, /PinNativeGuardianFileForSession\(\)/u);
+  assert.match(lease, /OpenNativeOrphanFileForRename\(expected, NativeOrphanGenericRead,/u);
+  assert.match(lease, /NativeOrphanShareRead, 0, NativeOrphanOpenExisting, NativeOrphanOpenReparsePoint/u);
+  assert.match(lease, /info.VolumeSerial == 0 \|\| info.FileIndexHigh == 0 && info.FileIndexLow == 0/u);
+  assert.match(lease, /OpenOwnedTerminalCapableSessionLease\(leasePath\)/u);
+  assert.match(lease, /: new FileStream\(leasePath, FileMode.CreateNew/u);
+  const program = await fs.readFile(new URL('../../native/windows/EquinoxLocal.Guardian/Program.cs', import.meta.url), 'utf8');
+  const journal = await fs.readFile(new URL('../../native/windows/EquinoxLocal.Guardian/MainNativeJournalIdentity.cs', import.meta.url), 'utf8');
+  assert.match(program, /Unreconciled signed Guardian owner session blocks native launch/u);
+  assert.match(journal, /name.EndsWith\("\.guardian-session-lock"/u);
+  assert.match(osFile, /ReadNativeOrphanHandleInformation/u);
+  assert.match(hosted, /Guardian accepted a pre-existing foreign JS journal writer lock/u);
+  assert.match(hosted, /const fs=require\('node:fs'\);const p=process.argv\[1\]/u);
+  assert.match(hosted, /Actual JS journal writer collided with independently pinned original Guardian session/u);
+  assert.doesNotMatch(lease, /FileMode\.OpenOrCreate|\.Delete\(leasePath\)|File\.Move\(|Process\.Kill/u);
 });
 
 test("native Guardian WPF graceful quiesce requires exact OS shell PID and live worker authority without Main activation", async () => {
@@ -467,7 +579,9 @@ test("independent native Guardian obtains an OS-exclusive durable journal lease 
   assert.match(code, /lease\.Flush\(flushToDisk: true\)/u);
   assert.match(code, /\.writer-lock/u);
   assert.match(code, /explicit owner reconciliation/u);
-  assert.doesNotMatch(code, /File\.Delete|File\.Move|Directory\.Delete|Process\.Start|Registry\.SetValue|NativeMessaging|shell_stopped|switched/u);
+  // Verified terminal retirement now audits the EXISTING Native Messaging
+  // owner/journal; it still cannot start WPF, modify the registry or swap slots.
+  assert.doesNotMatch(code, /File\.Delete|File\.Move|Directory\.Delete|Process\.Start|Registry\.SetValue/u);
 });
 
 test("independent Guardian worker process provenance never invokes a launcher or accepts unbound PID ownership", async () => {
@@ -727,7 +841,8 @@ test('native B WPF quiesce receipt preserves exact rollback stage and sequence l
   const root=new URL('../../native/windows/EquinoxLocal.Guardian/', import.meta.url);
   const pilot=await fs.readFile(new URL('MainNativeBRollbackShellQuiesce.cs',root),'utf8');
   assert.match(pilot,/using var rollbackJournal = JsonDocument.Parse\(journalHandle\)/u);
-  assert.match(pilot,/journal\.GetProperty\("sequence"\)\.GetInt32\(\) != receipt\.GetProperty\("sequence"\)\.GetInt32\(\)/u);
+  assert.match(pilot,/journal\.GetProperty\("sequence"\)\.GetInt32\(\) !=/u);
+  assert.match(pilot,/nativeAuthority!\.RootElement\.GetProperty\("sequence"\)\.GetInt32\(\)/u);
   assert.match(pilot,/journal\.GetProperty\("stage"\)\.GetString\(\) != "rollback_started"/u);
   assert.match(pilot,/json\.WriteString\("stage", "rollback_started"\)/u);
   assert.match(pilot,/json\.WriteNumber\("sequence", journal\.GetProperty\("sequence"\)\.GetInt32\(\)\)/u);
@@ -737,10 +852,11 @@ test('native B quiesce pins rollback authority receipt via a read-only non-repla
   const root = new URL('../../native/windows/EquinoxLocal.Guardian/', import.meta.url);
   const native = await fs.readFile(new URL('MainNativeBRollbackShellQuiesce.cs', root), 'utf8');
   assert.match(native, /RequireNormalFile\(nativeAuthorityPath\)/u);
-  assert.match(native, /using var nativeAuthorityHandle = new FileStream\(nativeAuthorityPath, FileMode\.Open,/u);
+  assert.match(native, /using var nativeAuthorityHandle = continuousNativeSession \? null :/u);
+  assert.match(native, /new FileStream\(nativeAuthorityPath, FileMode.Open,/u);
   assert.match(native, /FileAccess\.Read, FileShare\.Read\)/u);
   assert.match(native, /nativeAuthorityHandle\.Length is < 2 or > 8192/u);
-  assert.match(native, /using var nativeAuthority = JsonDocument\.Parse\(nativeAuthorityHandle\)/u);
+  assert.match(native, /using var nativeAuthority = nativeAuthorityHandle is null \? null : JsonDocument\.Parse\(nativeAuthorityHandle\)/u);
   assert.match(native, /using var pipe = new NamedPipeClientStream/u);
   assert.match(native, /shell\.WaitForExit\(12000\)/u);
   assert.doesNotMatch(native, /FileShare\.(?:ReadWrite|Delete)|nativeAuthorityHandle\.Dispose\(\)/u);
@@ -773,6 +889,103 @@ test('all Guardian native transition record reads validate size and parse on one
   assert.match(body, /handle\.Length is < 2 or > 65536 \|\| handle\.Length > limit/u);
   assert.match(body, /return JsonDocument\.Parse\(handle\)/u);
   assert.doesNotMatch(body, /FileInfo\(|File\.ReadAllBytes\(|FileShare\.(?:Delete|ReadWrite)|FileMode\.OpenOrCreate/u);
+});
+
+test("hosted native Guardian positive B acceptance uses exact packaged SHA and preserves signed old A", async () => {
+  const script = await fs.readFile(new URL("./windows-installer-real-package-smoke.ps1", import.meta.url), "utf8");
+  for (const required of [
+    "Positive forward-stage evidence", "$PositiveTarget = $ManagedSourceRoot",
+    "$PositiveBRoot = Join-Path $NativeTxRoot",
+    "Copy-Item -LiteralPath $ReleaseDir -Destination $PositiveRelease",
+    "guardian-native-fingerprint-fixture.mjs",
+    "GITHUB_ACTIONS", "EQUINOX_LOCAL_TEST_JOURNAL_STAGE_TRIGGER",
+    "audit-native-worker-ipc", "audit-native-worker-argv",
+    "hold-native-stage-b-cancel", "native_staged", "nativeBFingerprintSha256",
+    "OriginalWpfHash", "OriginalManifestHash", "OriginalRegistry",
+    "OriginalStablePointerHash", "WorkerReplaced",
+  ]) {
+    assert.ok(script.includes(required), "Missing genuine hosted B stage evidence: " + required);
+  }
+  assert.match(script, /if \(\$GuardianAuditOnly\) \{\s*# Positive forward-stage evidence/u);
+  assert.match(script, /Windows committed native Main Guardian inspect evidence/u);
+  assert.match(script, /\$OriginalNativeFingerprintSha = \[string\]\$NativeFingerprint.sha256/u);
+  assert.match(script, /\$NativeManifestProbe.releaseFingerprint.sha256 = \$OriginalNativeFingerprintSha/u);
+  assert.match(script, /\[IO.File\]::WriteAllBytes\(\$OwnedWorkerScript, \$OriginalWorkerBytes\)/u);
+  assert.match(script, /Assert-True \$Staged/u);
+  assert.match(script, /\$StageValue.stage -ceq 'rollback_started'/u);
+});
+
+test("Guardian staged B cancellation cannot stop A or claim a completed A/B recovery", async () => {
+  const root = new URL("../../native/windows/EquinoxLocal.Guardian/", import.meta.url);
+  const [command, lease, authority, cancel] = await Promise.all([
+    "Program.cs", "MainNativeJournalLease.cs", "MainNativeJournalAuthority.cs",
+    "MainNativeStagedCancel.cs",
+  ].map((name) => fs.readFile(new URL(name, root), "utf8")));
+  assert.match(command, /"--hold-native-stage-b-cancel"/u);
+  assert.match(lease, /cancelBeforeSwitch/u);
+  assert.match(authority, /CancelNativeStagedBWithoutStoppingA\(owner, root, worker\)/u);
+  assert.match(authority, /fd.Flush\(flushToDisk: true\);\s*\/\/ The CREATE_NEW authority receipt[^]*?fd.Dispose\(\);\s*InspectionPhase = "native-journal-authority-proof-durable"/u);
+  for (const required of [
+    "stage-b-commit.json", "native-authority.json", "pre-switch-abort-commit.json",
+    "FindSingleOwnedStableShell", "CompareNativeTrees", "GetNamedPipeServerProcessId",
+    "NativeMessagingRegistrySubkey", "current-version.json",
+    "rollback_started", "native_staged", "nativeBFingerprintSha256",
+    "stagedJournalSha256", "rollbackJournalSha256", "File.Move(temp, journalPath, overwrite: true)",
+    "FileMode.CreateNew", "FileOptions.WriteThrough", "CryptographicOperations.FixedTimeEquals",
+  ]) {
+    assert.ok(cancel.toLowerCase().includes(required.toLowerCase()), "Missing pre-switch native cancellation requirement: " + required);
+  }
+  assert.doesNotMatch(cancel, /Process\.Start|\.Kill\(|shutdown-for-update|File\.Copy|Registry\.SetValue|\.WriteAsync\(|shell\.CloseMainWindow|native_switched|File\.Delete\(/u);
+  assert.match(cancel, /Not terminal rolled_back or permission to clean an orphan lease/u);
+  const harness = await fs.readFile(new URL("./windows-installer-real-package-smoke.ps1", import.meta.url), "utf8");
+  assert.match(harness, /--hold-native-stage-b-cancel/u);
+  assert.match(harness, /\$StageValue.stage -ceq 'rollback_started'/u);
+  assert.match(harness, /\$CancelReceipt.stagedJournalSha256 -ceq \$StageReceipt.journalSha256/u);
+});
+
+test("Guardian forward B staging advances an authenticated prepared journal but cannot alter installed WPF or Native Messaging", async () => {
+  const root = new URL("../../native/windows/EquinoxLocal.Guardian/", import.meta.url);
+  const [program, lease, authority, writer] = await Promise.all([
+    "Program.cs", "MainNativeJournalLease.cs", "MainNativeJournalAuthority.cs", "MainNativeStageB.cs",
+  ].map((name) => fs.readFile(new URL(name, root), "utf8")));
+  assert.match(program, /args\[0\] == "--hold-native-stage-b"/u);
+  assert.match(lease, /RecordNativeJournalWorkerAuthority\(owner, root, worker, recordPreparedAbort, recordNativeStaged, cancelBeforeSwitch\)/u);
+  assert.match(authority, /if \(recordNativeStaged\)\s*\{\s*WriteNativeJournalStagedB\(owner, journalPath, journalBytes, digest\)/u);
+  for (const requirement of [
+    "prepared", "native_staged", "sequence", "targetSha", "targetRuntimeContractSha256",
+    "InspectOwnedMainGit(install, target, source, sourceSha)", "native-store.json",
+    "runtimeContractSha256", "releaseFingerprint", "FingerprintNativeMainRelease",
+    "node.exe", "EquinoxLocal.exe", "equinox-browser-native-host.exe",
+    "CryptographicOperations.FixedTimeEquals", "File.Move(temp, journalPath, overwrite: true)",
+    "FileMode.CreateNew", "FileOptions.WriteThrough", "nativeBFingerprintSha256",
+    "preparedJournalSha256", "journalSha256",
+    'metadata.GetProperty("sourceSha").GetString() != sourceSha',
+    "using var stagedHandle = new FileStream(journalPath, FileMode.Open, FileAccess.Read, FileShare.Read)",
+    "SHA256.HashData(stagedHandle)",
+  ]) {
+    assert.ok(writer.includes(requirement), "Guardian stage B must bind: " + requirement);
+  }
+  assert.doesNotMatch(writer, /Process\.Start\(|Kill\(|shutdown-for-update|\.WriteAsync\(|Registry\.(?:CurrentUser|SetValue)|SetValue\(|CopyDirectory|Directory\.Move|File\.Delete|File\.Copy|Programs.*Equinox Local/u);
+  assert.match(writer, /"stage", "native_staged"/u);
+  assert.match(writer, /"sequence", 1/u);
+  assert.match(writer, /native-stage-b-committed-under-lease/u);
+  assert.doesNotMatch(writer, /"stage", "(?:switched|healthy|committed|shell_stopped|restarted|rolled_back)"|File.ReadAllBytes\(journalPath\)/u);
+});
+
+test('Guardian authenticates one pinned prepared journal OS handle across HMAC and durable authority proof', async () => {
+  const root = new URL('../../native/windows/EquinoxLocal.Guardian/', import.meta.url);
+  const native = await fs.readFile(new URL('MainNativeJournalAuthority.cs', root), 'utf8');
+  const start = native.indexOf('private static void RecordNativeJournalWorkerAuthority(');
+  const end = native.indexOf('\n    }', start);
+  assert.ok(start !== -1 && end > start);
+  const body = native.slice(start);
+  assert.match(body, /using var pinnedJournal = new FileStream\(journalPath, FileMode.Open, FileAccess.Read, FileShare.Read\)/u);
+  assert.match(body, /pinnedJournal.Length is < 2 or > 8192/u);
+  assert.match(body, /using var journal = JsonDocument.Parse\(pinnedJournal\)/u);
+  assert.match(body, /pinnedJournal.ReadExactly\(journalBytes\)/u);
+  assert.match(body, /CryptographicOperations.FixedTimeEquals\(digest, SHA256.HashData\(pinnedJournal\)\)/u);
+  assert.match(body, /pinnedJournal.Dispose\(\);\s*if \(recordNativeStaged\)\s*\{\s*WriteNativeJournalStagedB\(owner, journalPath, journalBytes, digest\);\s*if \(cancelBeforeSwitch\) CancelNativeStagedBWithoutStoppingA/u);
+  assert.doesNotMatch(body, /SHA256.HashData\(File.ReadAllBytes\(journalPath\)\)|var journalBytes = File.ReadAllBytes\(journalPath\)/u);
 });
 
 test('Guardian shared native worker handoff digest hashes the same bounded Windows OS file handle', async () => {

@@ -17,7 +17,7 @@ import { readBoundedNormalFile } from "./equinox-local-safe-file.js";
 import { createEquinoxLocalMainUpdateTransactionEngine } from "./equinox-local-main-update-transaction.js";
 import { runEquinoxLocalMainUpdateHandoff } from "./equinox-local-main-update-handoff.js";
 import { readEquinoxLocalMainSourcePointer } from "./equinox-local-main-source-pointer.js";
-import { inspectEquinoxLocalMainNativeStoredRelease } from "./equinox-local-main-native-state.js";
+import { inspectEquinoxLocalMainNativeStoredRelease, promoteEquinoxLocalMainNativeCandidate } from "./equinox-local-main-native-state.js";
 import { inspectCanonicalMainCheckout } from "./equinox-local-main-update.js";
 import { EQUINOX_LOCAL_CONTROL_CENTER_STATUS_URL } from "./equinox-local-update-activation.js";
 import { requestWindowsShellRuntimeRestart } from "./equinox-local-windows-shell-control.js";
@@ -177,7 +177,7 @@ async function ensureFreshTargetNativeArtifact({ transactionRoot, transactionId,
         expectedRuntimeContractSha256, transactionRoot, transactionId, fsImpl });
     return true;
 }
-export async function runEquinoxLocalMainUpdateWorker({ argv = process.argv.slice(2), execFileImpl = execFile, fetchImpl = globalThis.fetch, sleepImpl, fsImpl = fs, env = process.env, uid = process.getuid?.(), engineFactory = (options) => createEquinoxLocalMainUpdateTransactionEngine(options), resolveHostTarget = () => equinoxLocalReleaseTarget(), planNativeTransition = planEquinoxLocalMainNativeTransition, ensureNativeArtifact = ensureFreshTargetNativeArtifact, prepareNativeCandidate = prepareEquinoxLocalMainNativeCandidate, inspectStoredNativeRelease = inspectEquinoxLocalMainNativeStoredRelease, prepareNativeLifecycle = prepareEquinoxLocalMainNativeLifecycle, recoverNativeLifecycle = recoverEquinoxLocalMainNativeLifecycle, admitWindowsNativeWorker = admitWindowsMainNativeWorkerJournal, handoffImpl = runEquinoxLocalMainUpdateHandoff, restartRuntimeImpl = (value) => restartEquinoxLocalMainSourceRuntime({ ...value, execFileImpl, env, fsImpl }), verifyRuntimeImpl, provisionToolchainImpl = provisionEquinoxLocalToolchain, resolveNativeInstallation = resolveEquinoxLocalMainWorkerNativeInstallation, cleanupImpl = (value) => cleanupEquinoxLocalMainUpdateWorkerOwnership({
+export async function runEquinoxLocalMainUpdateWorker({ argv = process.argv.slice(2), execFileImpl = execFile, fetchImpl = globalThis.fetch, sleepImpl, fsImpl = fs, env = process.env, uid = process.getuid?.(), engineFactory = (options) => createEquinoxLocalMainUpdateTransactionEngine(options), resolveHostTarget = () => equinoxLocalReleaseTarget(), planNativeTransition = planEquinoxLocalMainNativeTransition, ensureNativeArtifact = ensureFreshTargetNativeArtifact, prepareNativeCandidate = prepareEquinoxLocalMainNativeCandidate, inspectStoredNativeRelease = inspectEquinoxLocalMainNativeStoredRelease, promoteNativeCandidateImpl = promoteEquinoxLocalMainNativeCandidate, prepareNativeLifecycle = prepareEquinoxLocalMainNativeLifecycle, recoverNativeLifecycle = recoverEquinoxLocalMainNativeLifecycle, admitWindowsNativeWorker = admitWindowsMainNativeWorkerJournal, handoffImpl = runEquinoxLocalMainUpdateHandoff, restartRuntimeImpl = (value) => restartEquinoxLocalMainSourceRuntime({ ...value, execFileImpl, env, fsImpl }), verifyRuntimeImpl, provisionToolchainImpl = provisionEquinoxLocalToolchain, resolveNativeInstallation = resolveEquinoxLocalMainWorkerNativeInstallation, cleanupImpl = (value) => cleanupEquinoxLocalMainUpdateWorkerOwnership({
     ...value, execFileImpl, fsImpl,
     ...(uid === undefined ? {} : { uid }),
     ...(env.EQUINOX_LOCAL_MAIN_WORKER_TOKEN === undefined ? {} : { ownershipToken: env.EQUINOX_LOCAL_MAIN_WORKER_TOKEN }),
@@ -189,6 +189,7 @@ export async function runEquinoxLocalMainUpdateWorker({ argv = process.argv.slic
         ? pathApi.join(pathApi.dirname(pathApi.dirname(args.transactionRoot)), "runtime")
         : pathApi.join(pathApi.dirname(args.transactionRoot), "runtime");
     const toolchain = equinoxLocalToolchainContract({ runtimeRoot, target: hostTarget });
+    let updateFailed = false;
     try {
         const engine = engineFactory({
             sourceRoot: args.sourceRoot,
@@ -269,29 +270,53 @@ export async function runEquinoxLocalMainUpdateWorker({ argv = process.argv.slic
                         execFileImpl,
                     });
                 }
-                const trustedNativeRelease = hostTarget.startsWith("win32-")
-                    ? (candidate ?? await inspectStoredNativeRelease({
+                const windowsTarget = hostTarget.startsWith("win32-");
+                const candidateOrStored = candidate ?? (windowsTarget
+                    ? await inspectStoredNativeRelease({
                         transactionRoot: args.transactionRoot, sourceSha: active.targetSha,
                         target, expectedRuntimeContractSha256: nativeTransition.targetRuntimeContractSha256, fsImpl,
-                    }))
-                    : null;
-                const nativeHelperPath = trustedNativeRelease
-                    ? path.win32.join(trustedNativeRelease.releaseDir, "runtime", "job", "equinox-local-job-object-helper.exe")
-                    : null;
-                if (hostTarget.startsWith("win32-") && typeof installation.target !== "string") {
-                    throw new Error("Windows native worker installation target was not authenticated.");
+                    }) : null);
+                if (windowsTarget && (typeof installation.target !== "string" || !candidateOrStored)) {
+                    throw new Error("Windows native worker lacks its authentic immutable release.");
                 }
-                const windowsAdmission = hostTarget.startsWith("win32-")
+                const ownedHelperPath = windowsTarget && candidateOrStored
+                    ? path.win32.join(candidateOrStored.releaseDir, "runtime", "job", "equinox-local-job-object-helper.exe")
+                    : null;
+                // The detached worker is authenticated BEFORE inactive B payload
+                // promotion. This first check grants no WPF, pointer or journal
+                // mutation. The second check later requires the ACTUAL independently
+                // spawned signed Guardian process and per-generation journal HMAC.
+                const initialWindowsOwner = windowsTarget
                     ? await admitWindowsNativeWorker({
                         receipt: active, transition: nativeTransition,
                         installation: { ...installation, target: installation.target },
-                        transactionRoot: args.transactionRoot, engine,
-                        fsImpl, execFileImpl, ...(env.EQUINOX_LOCAL_MAIN_WORKER_TOKEN === undefined ? {} : { workerToken: env.EQUINOX_LOCAL_MAIN_WORKER_TOKEN }),
-                        nativeHelperPath, ownerOnly: true,
+                        transactionRoot: args.transactionRoot, engine, fsImpl, execFileImpl,
+                        ...(env.EQUINOX_LOCAL_MAIN_WORKER_TOKEN === undefined ? {} : { workerToken: env.EQUINOX_LOCAL_MAIN_WORKER_TOKEN }),
+                        nativeHelperPath: ownedHelperPath, ownerOnly: true,
+                    }) : null;
+                if (initialWindowsOwner && initialWindowsOwner.admitted !== true)
+                    throw new Error("Windows update has no verified detached WPF owner or signed Guardian.");
+                // The B store is INACTIVE and immutable. Its promotion is required
+                // BEFORE the original Guardian's full Git/native-payload gate; no
+                // installed WPF, Native Messaging or pointer is touched at this step.
+                const storedCandidate = windowsTarget && candidate
+                    ? await promoteNativeCandidateImpl({ candidate, transactionRoot: args.transactionRoot,
+                        transactionId: args.transactionId, fsImpl })
+                    : candidateOrStored;
+                const windowsAdmission = windowsTarget && initialStage === "ready_to_switch"
+                    ? await admitWindowsNativeWorker({
+                        receipt: active, transition: nativeTransition,
+                        installation: { ...installation, target: installation.target },
+                        transactionRoot: args.transactionRoot, engine, fsImpl, execFileImpl,
+                        ...(env.EQUINOX_LOCAL_MAIN_WORKER_TOKEN === undefined ? {} : { workerToken: env.EQUINOX_LOCAL_MAIN_WORKER_TOKEN }),
+                        nativeHelperPath: path.win32.join(storedCandidate.releaseDir, "runtime", "job", "equinox-local-job-object-helper.exe"),
+                        ownerOnly: false,
                     })
                     : null;
-                if (windowsAdmission && windowsAdmission.admitted !== true) {
-                    throw new Error("Windows update has no verified detached WPF owner.");
+                if (windowsTarget && initialStage === "ready_to_switch" &&
+                    (!windowsAdmission || windowsAdmission.admitted !== true ||
+                        !windowsAdmission.supervisor || !windowsAdmission.journal)) {
+                    throw new Error("Windows native transition lacks original signed Guardian OS and journal authorization.");
                 }
                 if (initialStage === "ready_to_switch") {
                     nativeLifecycle = await prepareNativeLifecycle({
@@ -303,7 +328,7 @@ export async function runEquinoxLocalMainUpdateWorker({ argv = process.argv.slic
                         fsImpl,
                         execFileImpl,
                         env,
-                        windowsAdmission: null,
+                        windowsAdmission,
                     });
                     active = await engine.markNativeRollbackReady(args.transactionId);
                 }
@@ -366,8 +391,20 @@ export async function runEquinoxLocalMainUpdateWorker({ argv = process.argv.slic
             verifyRuntime: verify,
         });
     }
+    catch (error) {
+        updateFailed = true;
+        throw error;
+    }
     finally {
-        await cleanupImpl({ transactionId: args.transactionId, transactionRoot: args.transactionRoot });
+        const cleanup = await cleanupImpl({ transactionId: args.transactionId, transactionRoot: args.transactionRoot });
+        // A signed Windows Guardian can legitimately refuse terminal cleanup.
+        // Never report SUCCESS for a worker whose original kernel-owned HMAC
+        // session still blocks the next boot; preserve the earlier failure if
+        // this invocation already rejected the update or rollback.
+        if (!updateFailed && cleanup !== null && typeof cleanup === "object" &&
+            "pendingNativeOwner" in cleanup && cleanup.pendingNativeOwner === true) {
+            throw new Error("Original signed native Guardian owner did not verify terminal A/B completion.");
+        }
     }
 }
 const invoked = process.argv[1] ? pathToFileURL(process.argv[1]).href : null;

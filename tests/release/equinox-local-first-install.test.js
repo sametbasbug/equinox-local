@@ -23,11 +23,11 @@ import {
 
 const TARGET = "darwin-arm64";
 
-test("first-install internal CLI help states Stable by default and user-triggered Main update", () => {
+test("first-install CLI distinguishes Main-default public installer from internal Stable recovery", () => {
   const help = execFileSync(process.execPath, [fileURLToPath(new URL("../../src/equinox-local-first-install.js", import.meta.url)), "--help"], { encoding: "utf8" });
-  assert.match(help, /Public installer defaults to Stable/u);
+  assert.match(help, /Public installers enroll the admitted Main commit by default/u);
   assert.match(help, /--enroll-existing-main/u);
-  assert.match(help, /Main enrollment is explicit via Update & restart/u);
+  assert.match(help, /internal helper without the flag preserves legacy Stable-only recovery/u);
 });
 
 test("Windows first-install enrollment uses durable release-local helper paths after staging promotion", async () => {
@@ -1249,4 +1249,45 @@ test("first-install refuses invalid Windows architecture and cross-target overri
     }),/not implemented|does not match native/u);
   }
   assert.equal(fsCalls,0);
+});
+
+test('website Main-default reinstall preserves a healthy different-SHA Main without replacing its native runtime', async () => {
+  const fixture = await createFixture('5.2.1');
+  const previousSha = 'b'.repeat(40);
+  const tx = path.join(fixture.installRoot, 'main-update');
+  const sourceRoot = path.join(tx, 'sources', previousSha);
+  await fs.mkdir(path.join(sourceRoot, 'src'), { recursive: true });
+  await fs.writeFile(path.join(tx, 'install.json'), `${JSON.stringify({ schemaVersion: 1, channel: 'main', repository: 'sametbasbug/equinox-local', branch: 'main', bootstrapSha: 'a'.repeat(40) })}\n`);
+  await fs.writeFile(path.join(sourceRoot, 'src', 'equinox-local-version.js'), 'export const EQUINOX_LOCAL_VERSION = "6.2.0";\n');
+  const events = [];
+  const options = {
+    stagedReleaseDir: fixture.releaseDir, homeDir: fixture.homeDir,
+    platform: 'darwin', target: TARGET, uid: process.getuid?.() ?? 501,
+    allowExistingStableToMainMigration: true,
+    readCurrentImpl: async () => ({ version: '5.2.0', releaseDir: path.join(fixture.installRoot, 'releases', '5.2.0') }),
+    readMainSourcePointerImpl: async () => ({ sha: previousSha, sourceRoot }),
+    bootstrapImpl: async () => { events.push('bootstrap'); throw new Error('must not overwrite Main'); },
+    enrollManagedSourceImpl: async () => { events.push('enroll'); throw new Error('must not reenroll Main'); },
+    activateImpl: async () => { events.push('activation'); throw new Error('must not replace Main'); },
+    waitForManagedSourceImpl: async (version, sha) => {
+      events.push(`health:${version}:${sha}`);
+    },
+  };
+  try {
+    const result = await installManagedEquinoxRelease(options);
+    assert.equal(result.status, 'already-installed');
+    assert.equal(result.version, '6.2.0');
+    assert.equal(result.managedSourceSha, previousSha);
+    assert.deepEqual(events, [`health:6.2.0:${previousSha}`]);
+    const failed = await installManagedEquinoxRelease({ ...options,
+      waitForManagedSourceImpl: async () => { throw new Error('Main is unhealthy'); },
+    }).then(() => null, (error) => error);
+    assert.match(failed.message, /Main is unhealthy/u);
+    assert.deepEqual(events, [`health:6.2.0:${previousSha}`]);
+    await fs.writeFile(path.join(tx, 'active.json'), '{}\n');
+    await assert.rejects(installManagedEquinoxRelease(options), /Main update transaction must complete/u);
+    assert.deepEqual(events, [`health:6.2.0:${previousSha}`]);
+  } finally {
+    await fs.rm(fixture.homeDir, { recursive: true, force: true });
+  }
 });

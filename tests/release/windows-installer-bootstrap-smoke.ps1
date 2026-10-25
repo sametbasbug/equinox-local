@@ -106,11 +106,11 @@ process.stdout.write(JSON.stringify({ ok: true, count: count + 1 }));
   $marker = [IO.File]::ReadAllText($markerPath, (New-Object Text.UTF8Encoding($false, $true))) | ConvertFrom-Json
   Assert-True ($marker.count -eq 2) 'Windows bootstrap retry did not reach the bundled first-install helper twice.'
   Assert-True (-not $marker.leaked) 'Windows bootstrap leaked provider credentials into bundled Node.'
-  Assert-True (-not $marker.mainOptIn) 'Default Windows bootstrap unexpectedly enrolled Main.'
-  $EnrollExistingMain = $true
+  Assert-True ($marker.mainOptIn) 'Default Windows bootstrap did not enroll Main.'
+  $EnrollExistingMain = $false
   Invoke-EquinoxLocalInstall | Out-Null
   $mainMarker = [IO.File]::ReadAllText($markerPath, (New-Object Text.UTF8Encoding($false, $true))) | ConvertFrom-Json
-  Assert-True ($mainMarker.count -eq 3 -and $mainMarker.mainOptIn) 'Explicit Windows Main choice did not reach bundled first-install helper.'
+  Assert-True ($mainMarker.count -eq 3 -and -not $mainMarker.mainOptIn) 'Explicit legacy bootstrap recovery unexpectedly enrolled Main.'
   $EnrollExistingMain = $false
   $managedStaging = [IO.Path]::GetFullPath((Join-Path $LocalState 'Equinox Local\staging')).TrimEnd('\') + '\'
   $markerRelease = [IO.Path]::GetFullPath([string]$marker.release)

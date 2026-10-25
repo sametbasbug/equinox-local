@@ -319,6 +319,46 @@ test("Windows ownership cleanup is token-owned, removes verified stale records, 
   assert.deepEqual(liveRemovals, []);
 });
 
+test("signed native Guardian retires its own worker record; Node waits and never unlinks a live or orphaned original owner", async () => {
+  const root = "C:\\Equinox\\state\\main-update";
+  const handoff = root + "\\handoff\\" + TX + ".windows-worker.json";
+  const guard = root + "\\guardian-journal\\." + TX + ".guardian-session-lock";
+  const owner = { transactionId: TX, token: "b".repeat(64) };
+  let remaining = new Set([guard, handoff]);
+  const removed = [];
+  const fsImpl = {
+    lstat: async (file) => {
+      if (!remaining.has(file)) throw Object.assign(new Error("not found"), { code: "ENOENT" });
+      return { isFile: () => true, isSymbolicLink: () => false, nlink: 1 };
+    },
+    rm: async (file) => { removed.push(file); remaining.delete(file); },
+  };
+  let polls = 0;
+  const success = await cleanupEquinoxLocalMainUpdateWorkerOwnership({
+    transactionId: TX, transactionRoot: root, platform: "win32",
+    ownershipToken: owner.token, fsImpl,
+    readWindowsOwnershipImpl: async () => assert.fail("Node must not reopen Guardian-owned worker handoff"),
+    sleepImpl: async () => { polls++; if (polls === 2) remaining.clear(); },
+  });
+  assert.equal(success.cleaned, true);
+  assert.equal(success.nativeOwner, true);
+  assert.deepEqual(removed, []);
+
+  remaining = new Set([guard, handoff]);
+  let waits = 0;
+  const orphan = await cleanupEquinoxLocalMainUpdateWorkerOwnership({
+    transactionId: TX, transactionRoot: root, platform: "win32",
+    ownershipToken: owner.token, fsImpl,
+    readWindowsOwnershipImpl: async () => assert.fail("Node must not delete an orphan native owner"),
+    sleepImpl: async () => { waits++; },
+  });
+  assert.equal(orphan.cleaned, false);
+  assert.equal(orphan.pendingNativeOwner, true);
+  assert.equal(waits, 59);
+  assert.deepEqual([...remaining].sort(), [guard, handoff].sort());
+  assert.deepEqual(removed, []);
+});
+
 test("launchd bootstrap failure removes the unpublished worker plist", async (t) => {
   const root = await fs.mkdtemp(path.join(await fs.realpath(os.tmpdir()), "equinox-scheduler-fail-"));
   t.after(() => fs.rm(root, { recursive: true, force: true }));

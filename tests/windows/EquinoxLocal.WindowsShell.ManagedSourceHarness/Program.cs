@@ -233,7 +233,7 @@ static async Task WriteSourceAsync(string sourceRoot, string marker)
         JsonSerializer.Serialize(new { name = "equinox-managed-source-acceptance", type = "module" }) + "\n");
     var appVersion = marker == "A" ? "5.2.0" : "5.2.1";
     await File.WriteAllTextAsync(Path.Combine(srcRoot, "equinox-local-version.js"),
-        $"export const EQUINOX_LOCAL_VERSION = \"{appVersion}\";\n");
+        $"export const EQUINOX_LOCAL_VERSION = \"{appVersion}\";{(marker == "A" ? "\n" : "\r\n")}");
     var markerJson = JsonSerializer.Serialize(marker);
     var server =
         "import http from 'node:http';\n" +

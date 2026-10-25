@@ -54,3 +54,10 @@ test("Control Center avoids expensive Doctor fingerprints and hidden-page redraw
   assert.match(js, /if \(state\.activeSection === "browser"\)\s+renderBrowserPage\(\)/u);
   assert.match(js, /if \(section === "tasks"\)\s+renderTasks\(\)/u);
 });
+
+test("Main failure feedback never labels an unverified rollback as safe", () => {
+  assert.match(js, /rollbackUnverified = main\.applyError\.startsWith\("Main update rollback_failed:"\)/u);
+  assert.match(js, /"Main rollback needs attention"/u);
+  assert.match(js, /"Rollback unverified"/u);
+  assert.doesNotMatch(js, /Main update failed safely/u);
+});

@@ -7,9 +7,10 @@ using System.Text.RegularExpressions;
 namespace EquinoxLocal.Guardian;
 
 /// <summary>
-/// Independent, per-user native launcher. Deliberately supports the verified
-/// Stable WPF baseline only in this migration stage. Native Main switching
-/// requires the separately audited journal/slot protocol and is fail-closed.
+/// Independent, per-user native launcher. Launches only a verified Stable
+/// baseline or a fully committed, independently attested Main native snapshot.
+/// An active or orphaned transaction always blocks launch; this is NOT
+/// permission to switch native A/B or recover an unverified transaction.
 /// No network access, arbitrary executable, generic command or server.
 /// </summary>
 internal static partial class Program
@@ -28,7 +29,7 @@ internal static partial class Program
     {
         try
         {
-            if (args.Length > 1 || (args.Length == 1 && args[0] is not ("--inspect" or "--audit-native-identity" or "--audit-native-journal" or "--audit-native-worker" or "--audit-native-worker-ipc" or "--audit-native-worker-argv" or "--hold-native-journal-lease" or "--hold-native-journal-authority" or "--hold-native-prepared-abort" or "--hold-native-stable-shell-quiesce" or "--reconcile-native-prepared-abort" or "--startup" or "--uninstall")))
+            if (args.Length > 1 || (args.Length == 1 && args[0] is not ("--inspect" or "--audit-native-identity" or "--audit-native-journal" or "--audit-native-worker" or "--audit-native-worker-ipc" or "--audit-native-worker-argv" or "--audit-native-wpf-owner" or "--hold-native-journal-lease" or "--hold-native-journal-authority" or "--hold-native-prepared-abort" or "--hold-native-stage-b" or "--hold-native-stage-b-cancel" or "--hold-native-stable-shell-quiesce" or "--reconcile-native-prepared-abort" or "--startup" or "--uninstall")))
                 throw new InvalidOperationException("Unsupported Guardian argument.");
             if (args.Length == 1 && args[0] == "--audit-native-identity")
             {
@@ -55,6 +56,11 @@ internal static partial class Program
                 InspectOwnedNativeWorkerOsArguments();
                 return 0; // Exact kernel argv proof ONLY; never Main mutation authority.
             }
+            if (args.Length == 1 && args[0] == "--audit-native-wpf-owner")
+            {
+                InspectOwnedMainWpfProcess();
+                return 0; // Read-only kernel ownership evidence, never transition authority.
+            }
             if (args.Length == 1 && args[0] == "--hold-native-journal-lease")
             {
                 HoldOwnedNativeJournalLease();
@@ -63,12 +69,22 @@ internal static partial class Program
             if (args.Length == 1 && args[0] == "--hold-native-journal-authority")
             {
                 HoldOwnedNativeJournalLease(acceptAuthorityProof: true);
-                return 70; // Prepared-stage sidecar proof only, never native mutation.
+                return 0; // Exact OS-owned completed transaction fully audited; both owner handles retired.
             }
             if (args.Length == 1 && args[0] == "--hold-native-prepared-abort")
             {
                 HoldOwnedNativeJournalLease(recordPreparedAbort: true);
                 return 70; // Only prepared -> rollback_started, never native side effects.
+            }
+            if (args.Length == 1 && args[0] == "--hold-native-stage-b")
+            {
+                HoldOwnedNativeJournalLease(recordNativeStaged: true);
+                return 70; // Authenticated prepared -> native_staged ONLY; no WPF mutation.
+            }
+            if (args.Length == 1 && args[0] == "--hold-native-stage-b-cancel")
+            {
+                HoldOwnedNativeJournalLease(recordNativeStaged: true, cancelBeforeSwitch: true);
+                return 70; // Durable pre-switch cancellation only. No native slot/WPF change.
             }
             if (args.Length == 1 && args[0] == "--hold-native-stable-shell-quiesce")
             {
@@ -81,7 +97,7 @@ internal static partial class Program
                 return 0; // Retire only a fully verified dead prepared abort lock; no launch.
             }
             var inspection = InspectBaseline();
-            if (args.Length == 1 && args[0] is "--inspect" or "--audit-native-identity" or "--audit-native-journal" or "--audit-native-worker" or "--audit-native-worker-ipc" or "--audit-native-worker-argv") return 0;
+            if (args.Length == 1 && args[0] is "--inspect" or "--audit-native-identity" or "--audit-native-journal" or "--audit-native-worker" or "--audit-native-worker-ipc" or "--audit-native-worker-argv" or "--audit-native-wpf-owner") return 0;
             using var process = Launch(inspection.Executable, args.Length == 0 ? null : args[0]);
             return process.Id > 0 ? 0 : 70;
         }
@@ -90,14 +106,14 @@ internal static partial class Program
             // Only the explicit inspection mode exposes bounded, static
             // validation errors to the disposable installed-host acceptance.
             // Never echo paths from OS exceptions or launch arguments.
-            if (args.Length == 1 && args[0] is "--inspect" or "--audit-native-identity" or "--audit-native-journal" or "--audit-native-worker" or "--audit-native-worker-ipc" or "--audit-native-worker-argv")
+            if (args.Length == 1 && args[0] is "--inspect" or "--audit-native-identity" or "--audit-native-journal" or "--audit-native-worker" or "--audit-native-worker-ipc" or "--audit-native-worker-argv" or "--audit-native-wpf-owner")
             {
                 var reason = ex is InvalidDataException or InvalidOperationException or PlatformNotSupportedException
                     ? ex.Message : ex.GetType().Name;
                 if (reason.Length > 120) reason = reason[..120];
                 Console.Error.WriteLine($"Guardian inspection refused: phase={InspectionPhase}; kind={ex.GetType().Name}; code=0x{ex.HResult:x8}; reason={reason}");
             }
-            else if (args.Length == 1 && args[0] is "--hold-native-journal-authority" or "--hold-native-prepared-abort" or "--hold-native-stable-shell-quiesce" or "--reconcile-native-prepared-abort")
+            else if (args.Length == 1 && args[0] is "--hold-native-journal-authority" or "--hold-native-prepared-abort" or "--hold-native-stage-b" or "--hold-native-stage-b-cancel" or "--hold-native-stable-shell-quiesce" or "--reconcile-native-prepared-abort")
             {
                 // Bounded phase/type only: no worker token, paths, journal
                 // contents or dynamic exception reason enter CI diagnostics.
@@ -135,8 +151,17 @@ internal static partial class Program
         if (!allowActiveOrphanForReconciliation && (File.Exists(updateLock) || Directory.Exists(updateLock)))
             throw new InvalidDataException("A Main update requires exact journal reconciliation before Guardian launch.");
         var nativePointer = Path.Combine(transactionRoot, "current-native.json");
-        if (File.Exists(nativePointer) || Directory.Exists(nativePointer))
-            throw new InvalidDataException("Main native switching is not activated for the Stable-only Guardian.");
+        if (Directory.Exists(nativePointer))
+            throw new InvalidDataException("Main native pointer is not a normal file.");
+        // A signed owner crash leaves a durable OS-session lease, never an
+        // implicit green light to launch Main after partial A/B replacement.
+        var guardianJournalDir = Path.Combine(transactionRoot, "guardian-journal");
+        if (!allowActiveOrphanForReconciliation && Directory.Exists(guardianJournalDir))
+        {
+            RequireNormalDirectory(guardianJournalDir);
+            if (Directory.EnumerateFileSystemEntries(guardianJournalDir, "*.guardian-session-lock").Any())
+                throw new InvalidDataException("Unreconciled signed Guardian owner session blocks native launch.");
+        }
         var handoffDir = Path.Combine(transactionRoot, "handoff");
         if (Directory.Exists(handoffDir))
         {
@@ -159,7 +184,13 @@ internal static partial class Program
         var mainPointerPath = Path.Combine(installRoot, "state", "main-update", "current-native.json");
         if (File.Exists(mainPointerPath))
         {
-            InspectionPhase = "verify-main-native-baseline";
+            // Post-commit WPF launch is an entirely different privilege from
+            // updating the native slot. Verify the exact committed source Git,
+            // source/native pointers, complete SHA-addressed B payload, actual
+            // installed WPF bytes and HKCU Native Messaging FIRST. A partially
+            // advanced transaction or a forged pointer cannot launch Main.
+            InspectionPhase = "verify-committed-main-native-baseline";
+            InspectMainNativeIdentity();
             var node = ResolveOwnedMainWorkerNodePath(installRoot, target);
             var nodeBin = Path.GetDirectoryName(node)
                 ?? throw new InvalidDataException("Main native Node path has no directory.");

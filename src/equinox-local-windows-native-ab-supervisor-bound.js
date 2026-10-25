@@ -1,7 +1,9 @@
 import fs from 'node:fs/promises';
+import path from 'node:path';
 import { assertWindowsNativeMessagingHostOwnership, registerWindowsNativeMessagingHost, windowsNativeMessagingLauncherPath, } from './equinox-browser-windows-native-messaging.js';
-import { writeEquinoxLocalMainNativePointer } from './equinox-local-main-native-state.js';
+import { readEquinoxLocalMainNativePointer, writeEquinoxLocalMainNativePointer } from './equinox-local-main-native-state.js';
 import { createWindowsJournaledNativeABLifecycle } from './equinox-local-windows-native-ab-journal-lifecycle.js';
+import { attestEquinoxWindowsNoRunningNativeShell, requestEquinoxWindowsOwnedNativeShellHealth, requestEquinoxWindowsOwnedNativeShellShutdown } from './equinox-local-windows-native-journal-authority-client.js';
 function matches(pattern, value) {
     return typeof value === "string" && pattern.test(value);
 }
@@ -39,7 +41,7 @@ export function requireWindowsNativeABSupervisor({ windowsAdmission, transition,
     }
     return owner;
 }
-export function createSupervisorBoundWindowsNativeABLifecycle({ windowsAdmission, transition, transactionId, stored, previousPointer, previousReleaseDir, programRoot, manifestRoot, transactionRoot, pointerPath, fsImpl = fs, execFileImpl, env = process.env, writePointerImpl = writeEquinoxLocalMainNativePointer, assertNativeHostImpl = assertWindowsNativeMessagingHostOwnership, registerNativeHostImpl = registerWindowsNativeMessagingHost, launcherPathImpl = windowsNativeMessagingLauncherPath, createLifecycleImpl = createWindowsJournaledNativeABLifecycle, } = {}) {
+export function createSupervisorBoundWindowsNativeABLifecycle({ windowsAdmission, transition, transactionId, stored, previousPointer, previousReleaseDir, programRoot, manifestRoot, transactionRoot, pointerPath, fsImpl = fs, execFileImpl, env = process.env, writePointerImpl = writeEquinoxLocalMainNativePointer, readPointerImpl = readEquinoxLocalMainNativePointer, assertNativeHostImpl = assertWindowsNativeMessagingHostOwnership, registerNativeHostImpl = registerWindowsNativeMessagingHost, launcherPathImpl = windowsNativeMessagingLauncherPath, createLifecycleImpl = createWindowsJournaledNativeABLifecycle, verifySignedGuardianHealthImpl = requestEquinoxWindowsOwnedNativeShellHealth, shutdownSignedGuardianWpfImpl = requestEquinoxWindowsOwnedNativeShellShutdown, attestSignedNoRunningShellImpl = attestEquinoxWindowsNoRunningNativeShell, } = {}) {
     const supervisor = requireWindowsNativeABSupervisor({ windowsAdmission, transition, transactionId });
     const admitted = windowsAdmission;
     const id = transactionId;
@@ -54,12 +56,58 @@ export function createSupervisorBoundWindowsNativeABLifecycle({ windowsAdmission
     }
     const previousLauncher = launcherPathImpl(previousReleaseDir);
     const targetLauncher = launcherPathImpl(stored.releaseDir);
+    const prior = previousPointer === null || previousPointer === undefined
+        ? null : recordOrNull(previousPointer);
+    if ((previousPointer !== null && previousPointer !== undefined && prior === null) ||
+        (prior && (prior.sourceSha !== exactTransition.currentSha ||
+            prior.target !== exactTransition.target ||
+            prior.runtimeContractSha256 !== exactTransition.currentRuntimeContractSha256)) ||
+        typeof pointerPath !== 'string' || typeof transactionRoot !== 'string' ||
+        path.resolve(pointerPath) !== path.join(path.resolve(transactionRoot), 'current-native.json')) {
+        throw new Error('Windows native A rollback pointer is not the exact original Main identity.');
+    }
     const ownerArgs = Object.freeze({ transactionId: id, currentSha: exactTransition.currentSha, targetSha: exactTransition.targetSha, target: exactTransition.target });
     const pointer = Object.freeze({ schemaVersion: 1, channel: 'main', sourceSha: exactTransition.targetSha, target: exactTransition.target, runtimeContractSha256: exactTransition.targetRuntimeContractSha256 });
     const assertLiveOwner = async () => {
         if (await supervisor.assertWorkerOwnership(ownerArgs) !== true) {
             throw new Error('Independent Windows native worker ownership expired before side effect.');
         }
+        return true;
+    };
+    // This does NOT grant native admission. Only the already-admitted signed
+    // Guardian OS owner may independently certify that an exact live WPF B or
+    // restored A survived sustained process/pipe/NTFS identity observations.
+    // In addition, the existing supervisor and Main SHA/HTTP health gates stay
+    // mandatory; Node's environment token alone has NO authorization.
+    const attestSignedNativeShutdown = async (release) => {
+        // An arbitrary Node-side supervisor callback must NEVER be the first
+        // process allowed to stop the installed shell. The SAME signed Guardian
+        // checks the exact original worker kernel PID/birth/NTFS File ID, journal
+        // stage and one-use challenge, and performs the WPF graceful OS exit.
+        await assertLiveOwner();
+        const workerToken = env.EQUINOX_LOCAL_MAIN_WORKER_TOKEN;
+        if (typeof workerToken !== 'string' || !/^[a-f0-9]{64}$/u.test(workerToken)) {
+            throw new Error('Signed WPF shutdown requires the original owned worker token.');
+        }
+        await shutdownSignedGuardianWpfImpl({
+            transactionId: id, transactionRoot, workerToken, platform: 'win32', release,
+        });
+        await assertLiveOwner();
+    };
+    const proveSignedNativeHealth = async (release, sourceSha) => {
+        await assertLiveOwner();
+        if (await supervisor.verifySustainedHealth({
+            ...ownerArgs, release, sourceSha, programRoot,
+        }) !== true)
+            return false;
+        const workerToken = env.EQUINOX_LOCAL_MAIN_WORKER_TOKEN;
+        if (typeof workerToken !== 'string' || !/^[a-f0-9]{64}$/u.test(workerToken)) {
+            throw new Error('Signed native WPF health requires the original owned worker token.');
+        }
+        await verifySignedGuardianHealthImpl({
+            transactionId: id, transactionRoot, workerToken, platform: 'win32', release,
+        });
+        await assertLiveOwner();
         return true;
     };
     const proveNativeMessaging = async (release) => {
@@ -92,12 +140,31 @@ export function createSupervisorBoundWindowsNativeABLifecycle({ windowsAdmission
         journal: admitted.journal, fsImpl,
         assertWorkerOwnership: assertLiveOwner,
         shutdownOwnedWpf: async ({ transactionId: id, programRoot: root }) => {
-            await assertLiveOwner();
-            return supervisor.shutdownOwnedWpf({ ...ownerArgs, transactionId: id, programRoot: root });
+            await attestSignedNativeShutdown('A');
+            // This callback remains an ADDITIONAL supervisor postcondition, not a
+            // substitute for the kernel Guardian that already observed WPF exit.
+            return supervisor.shutdownOwnedWpf({ ...ownerArgs, transactionId: id, programRoot: root, afterSignedExit: true });
         },
         quiesceOwnedB: async ({ transactionId: id, programRoot: root, sourceSha }) => {
-            await assertLiveOwner();
-            if (await supervisor.quiesceOwnedB({ ...ownerArgs, transactionId: id, programRoot: root, release: 'B', sourceSha }) !== true) {
+            try {
+                await attestSignedNativeShutdown('B');
+            }
+            catch (error) {
+                // A process-free partial swap is NOT proof B was ever running.
+                // Fail closed unless the SAME original signed Guardian verifies
+                // there are ZERO live EquinoxLocal WPF processes in two separate
+                // kernel observations. A still-running A or bad B fails this gate.
+                await assertLiveOwner();
+                const workerToken = env.EQUINOX_LOCAL_MAIN_WORKER_TOKEN;
+                if (typeof workerToken !== 'string' || !/^[a-f0-9]{64}$/u.test(workerToken))
+                    throw error;
+                await attestSignedNoRunningShellImpl({
+                    transactionId: id, transactionRoot, workerToken, platform: 'win32',
+                });
+                await assertLiveOwner();
+                return true;
+            }
+            if (await supervisor.quiesceOwnedB({ ...ownerArgs, transactionId: id, programRoot: root, release: 'B', sourceSha, afterSignedExit: true }) !== true) {
                 throw new Error('Independent Windows native B shutdown proof is unavailable.');
             }
             await assertLiveOwner();
@@ -105,7 +172,80 @@ export function createSupervisorBoundWindowsNativeABLifecycle({ windowsAdmission
         },
         verifyNativeMessaging: ({ release }) => proveNativeMessaging(release),
         registerNativeMessaging: ({ release }) => registerNativeMessaging(release),
-        verifySustainedHealth: ({ release, sourceSha }) => supervisor.verifySustainedHealth({ ...ownerArgs, release, sourceSha, programRoot }),
+        verifySustainedHealth: ({ release, sourceSha }) => proveSignedNativeHealth(release, sourceSha),
+        restoreNativePointer: async () => {
+            // This is the same authenticated rollback session that restored the
+            // installed original A bytes and its Native Messaging owner. Do not
+            // silently leave a B pointer after a failure between pointer commit
+            // and the durable Main succeeded receipt.
+            await assertLiveOwner();
+            if (!await proveNativeMessaging('A')) {
+                throw new Error('Original A Native Messaging owner is not verified before pointer restoration.');
+            }
+            const nativeOptions = { transactionRoot: transactionRoot, fsImpl };
+            let existing = null;
+            let before = null;
+            try {
+                before = await fsImpl.lstat(pointerPath);
+                if (!before.isFile() || before.isSymbolicLink() || before.nlink !== 1) {
+                    throw new Error('Native rollback pointer is not one normal owned file.');
+                }
+                existing = await readPointerImpl(pointerPath, nativeOptions);
+            }
+            catch (error) {
+                if (error === null || typeof error !== 'object' || !('code' in error) || error.code !== 'ENOENT')
+                    throw error;
+            }
+            const same = (pointer, other) => pointer.sourceSha === other.sourceSha &&
+                pointer.target === other.target &&
+                pointer.runtimeContractSha256 === other.runtimeContractSha256;
+            const b = { sourceSha: exactTransition.targetSha,
+                target: exactTransition.target,
+                runtimeContractSha256: exactTransition.targetRuntimeContractSha256 };
+            if (existing && !same(existing, b) && !(prior && same(existing, prior))) {
+                throw new Error('Foreign native pointer blocks exact original A rollback.');
+            }
+            if (prior && existing && same(existing, prior))
+                return;
+            if (!prior && !existing)
+                return;
+            // Recheck identity after the asynchronous owned Main/NM inspections.
+            if (before) {
+                const now = await fsImpl.lstat(pointerPath);
+                if (!now.isFile() || now.isSymbolicLink() || now.nlink !== 1 ||
+                    now.dev !== before.dev || now.ino !== before.ino ||
+                    now.size !== before.size || now.mtimeMs !== before.mtimeMs) {
+                    throw new Error('Native pointer changed ownership before original A rollback.');
+                }
+            }
+            await assertLiveOwner();
+            if (prior) {
+                await writePointerImpl(pointerPath, {
+                    schemaVersion: 1, channel: 'main', sourceSha: prior.sourceSha,
+                    target: prior.target, runtimeContractSha256: prior.runtimeContractSha256,
+                }, nativeOptions);
+            }
+            else {
+                // Stable A had no Main-native pointer. Only the exact verified B
+                // pointer may be retired, and only after original A is restored.
+                await fsImpl.unlink(pointerPath);
+            }
+            if (prior) {
+                const restored = await readPointerImpl(pointerPath, nativeOptions);
+                if (!same(restored, prior))
+                    throw new Error('Original A native pointer restoration did not persist.');
+            }
+            else {
+                try {
+                    await fsImpl.lstat(pointerPath);
+                    throw new Error('Stable A restoration left an active Main B native pointer.');
+                }
+                catch (error) {
+                    if (error === null || typeof error !== 'object' || !('code' in error) || error.code !== 'ENOENT')
+                        throw error;
+                }
+            }
+        },
         commitNativePointer: async () => {
             // A HEALTHY journal is historical evidence, not proof the owner and B
             // stayed healthy until the irreversible durable pointer write.
@@ -113,7 +253,7 @@ export function createSupervisorBoundWindowsNativeABLifecycle({ windowsAdmission
             if (!await proveNativeMessaging('B')) {
                 throw new Error('Native B messaging owner expired before pointer commit.');
             }
-            if (await supervisor.verifySustainedHealth({ ...ownerArgs, release: 'B', sourceSha: exactTransition.targetSha, programRoot }) !== true) {
+            if (await proveSignedNativeHealth('B', exactTransition.targetSha) !== true) {
                 throw new Error('Native B health expired before pointer commit.');
             }
             await assertLiveOwner();

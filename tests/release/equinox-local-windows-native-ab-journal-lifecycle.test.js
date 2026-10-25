@@ -11,7 +11,7 @@ import { runEquinoxLocalMainUpdateHandoff } from '../../src/equinox-local-main-u
 const A = 'a'.repeat(40), B = 'b'.repeat(40), CONTRACT = 'f'.repeat(64);
 const ID = `main-${'6'.repeat(32)}`, STARTED = '2026-10-12T09:00:00.000Z';
 
-async function fixture(t, { healthyB = true, blockOwnership = false, failMessagingBOnce = false, failFinalBHealth = false, failFinalAHealth = false, denyBQuiesce = false, loseOwnershipAfterQuiesce = false } = {}) {
+async function fixture(t, { healthyB = true, blockOwnership = false, failMessagingBOnce = false, failFinalBHealth = false, failFinalAHealth = false, denyBQuiesce = false, loseOwnershipAfterQuiesce = false, failSuccessReceiptAfterPointer = false, failPointerRestoration = false } = {}) {
   const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'equinox-journal-ab-')));
   t.after(() => fs.rm(root, { recursive: true, force: true }));
   const transactionRoot = path.join(root, 'main-update');
@@ -77,6 +77,11 @@ async function fixture(t, { healthyB = true, blockOwnership = false, failMessagi
         (release === 'A' || healthyB) && sourceSha === (release === 'A' ? A : B);
     },
     commitNativePointer: async ({ sourceSha }) => { assert.equal(sourceSha, B); nativePointer = 'B'; calls.push('native-pointer-B'); },
+    restoreNativePointer: async ({ currentSha }) => {
+      assert.equal(currentSha, A);
+      if (failPointerRestoration) throw new Error('synthetic original A native pointer write failed');
+      nativePointer = 'A'; calls.push('native-pointer-A');
+    },
   });
   const base = {
     transactionId: ID, currentSha: A, targetSha: B, rollbackSha: A,
@@ -87,7 +92,12 @@ async function fixture(t, { healthyB = true, blockOwnership = false, failMessagi
     async activatePromotion() { switchedSource = 'B'; receipt = { ...receipt, status: 'verifying', stage: 'source_switched' }; return { ...base, ...receipt }; },
     async rollbackPromotion(_id, reason) { switchedSource = 'A'; receipt = { ...receipt, status: 'verifying', stage: 'rollback_source_restored', lastError: reason }; return { ...base, ...receipt }; },
     async markNativeRollbackRestored() { receipt = { ...receipt, stage: 'rollback_native_restored' }; return { ...base, ...receipt }; },
-    async markPromotionSucceeded() { receipt = { ...receipt, status: 'succeeded', stage: 'healthy' }; calls.push('durable-receipt-succeeded'); return { ...base, ...receipt }; },
+    async markPromotionSucceeded() {
+      if (failSuccessReceiptAfterPointer) throw new Error('synthetic error writing terminal success receipt after B pointer');
+      receipt = { ...receipt, status: 'succeeded', stage: 'healthy' };
+      calls.push('durable-receipt-succeeded');
+      return { ...base, ...receipt };
+    },
     async markRollbackSucceeded() { receipt = { ...receipt, status: 'rolled_back', stage: 'rollback_healthy' }; calls.push('durable-receipt-rolled-back'); return { ...base, ...receipt }; },
     async markRollbackFailed() { calls.push('rollback-failed'); },
     async releaseStagedLock() { calls.push('release-lock'); },
@@ -126,6 +136,30 @@ test('shared handoff physically rolls back unhealthy B→A and finalizes only af
   assert.ok(f.calls.indexOf('durable-receipt-rolled-back') < f.calls.indexOf('milestone:rolled_back'));
   await assert.rejects(fs.lstat(f.quarantineRoot), { code: 'ENOENT' });
   assert.equal(f.calls.at(-1), 'release-lock');
+});
+
+test('terminal receipt failure after B pointer commit restores the exact original A pointer before rollback health', async (t) => {
+  const f = await fixture(t, { failSuccessReceiptAfterPointer: true });
+  const result = await runEquinoxLocalMainUpdateHandoff(f.options);
+  assert.equal(result.status, 'rolled_back');
+  assert.equal(await f.readExe(), 'trusted WPF-A');
+  assert.equal(f.getPointer(), 'A');
+  assert.equal((await f.journal.read(ID)).stage, 'rolled_back');
+  assert.ok(f.calls.indexOf('native-pointer-B') >= 0);
+  assert.ok(f.calls.indexOf('native-pointer-A') > f.calls.indexOf('native-pointer-B'));
+  assert.ok(f.calls.indexOf('native-pointer-A') < f.calls.indexOf('milestone:rollback_native_restored'));
+  assert.equal(f.calls.includes('rollback-failed'), false);
+});
+
+test('failed original pointer restoration cannot record native rollback completed or discard old A', async (t) => {
+  const f = await fixture(t, { failSuccessReceiptAfterPointer: true, failPointerRestoration: true });
+  await assert.rejects(runEquinoxLocalMainUpdateHandoff(f.options), /rollback did not recover.*original A native pointer/u);
+  assert.equal(await f.readExe(), 'trusted WPF-A');
+  assert.equal(f.getPointer(), 'B', 'unrecovered B pointer is not silently acknowledged');
+  assert.equal((await f.journal.read(ID)).stage, 'rollback_started');
+  assert.ok(f.calls.includes('rollback-failed'));
+  assert.equal(f.calls.includes('durable-receipt-rolled-back'), false);
+  assert.equal(await fs.readFile(path.join(f.quarantineRoot, 'EquinoxLocal.exe'), 'utf8'), 'trusted WPF-B');
 });
 
 test('foreign worker refuses journal and physical A→B without touching the shell', async (t) => {
@@ -236,6 +270,7 @@ test('untrusted native A/B journal transport cannot trigger WPF changes with for
       registerNativeMessaging: dangerous,
       verifySustainedHealth: dangerous,
       commitNativePointer: dangerous,
+      restoreNativePointer: dangerous,
       slotSwitch: dangerous,
     });
     await assert.rejects(lifecycle.activate(), /journal|identity|contract|state|transaction/u);
@@ -277,4 +312,34 @@ test('native A→B failure rollback proves B shutdown before B quarantine and A 
   const restoreMessage=f.calls.indexOf('nm:A');
   assert.ok(shutdown>=0 && restoreMessage>shutdown,'real A restore may not begin before B shutdown proof');
   assert.equal(await f.readExe(),'trusted WPF-A');
+});
+
+test('rollback before native shell-stop restores exact A without pretending the original running A is a B process',async t=>{
+ const prepared=await fixture(t,{denyBQuiesce:true});
+ const result=await prepared.lifecycle.rollback();
+ assert.equal(result.stage,'rollback_native_restored');
+ assert.equal((await prepared.journal.read(ID)).sequence,2);
+ assert.equal(await prepared.readExe(),'trusted WPF-A');
+ assert.equal(prepared.getPointer(),'A');
+ assert.equal(prepared.calls.includes('quiesce-owned-B'),false);
+ const staged=await fixture(t,{denyBQuiesce:true});
+ await staged.journal.advance(ID,{from:'prepared',to:'native_staged',sequence:0});
+ await staged.lifecycle.rollback();
+ assert.equal((await staged.journal.read(ID)).stage,'rollback_native_restored');
+ assert.equal(await staged.readExe(),'trusted WPF-A');
+ assert.equal(staged.calls.includes('quiesce-owned-B'),false);
+});
+
+test('power loss after A→B rename but before B process start restores EXACT A without pretending B health was achieved',async t=>{
+ const f=await fixture(t,{failMessagingBOnce:true});
+ await assert.rejects(f.lifecycle.activate(),/simulated power loss/u);
+ assert.equal((await f.journal.read(ID)).stage,'shell_stopped');
+ assert.equal(await f.readExe(),'trusted WPF-B');
+ assert.equal(await fs.readFile(path.join(f.backupRoot,'EquinoxLocal.exe'),'utf8'),'trusted WPF-A');
+ await f.lifecycle.rollback();
+ assert.equal((await f.journal.read(ID)).stage,'rollback_native_restored');
+ assert.equal(await f.readExe(),'trusted WPF-A');
+ assert.equal(f.getPointer(),'A');
+ assert.ok(f.calls.includes('quiesce-owned-B'));
+ assert.equal(await fs.readFile(path.join(f.quarantineRoot,'EquinoxLocal.exe'),'utf8'),'trusted WPF-B');
 });

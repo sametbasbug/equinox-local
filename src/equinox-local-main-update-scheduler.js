@@ -269,10 +269,41 @@ export async function inspectEquinoxLocalMainUpdateWorkerOwnership({ transaction
         return Object.freeze({ loaded: false, running: false, label });
     }
 }
-export async function cleanupEquinoxLocalMainUpdateWorkerOwnership({ transactionId, transactionRoot, platform = process.platform, uid = process.getuid?.(), fsImpl = fs, execFileImpl = execFile, ownershipToken = process.env.EQUINOX_LOCAL_MAIN_WORKER_TOKEN, inspectWorkerImpl = inspectEquinoxLocalMainUpdateWorkerOwnership, readWindowsOwnershipImpl = readWindowsMainUpdateWorkerOwnership, } = {}) {
+export async function cleanupEquinoxLocalMainUpdateWorkerOwnership({ transactionId, transactionRoot, platform = process.platform, uid = process.getuid?.(), fsImpl = fs, execFileImpl = execFile, ownershipToken = process.env.EQUINOX_LOCAL_MAIN_WORKER_TOKEN, inspectWorkerImpl = inspectEquinoxLocalMainUpdateWorkerOwnership, readWindowsOwnershipImpl = readWindowsMainUpdateWorkerOwnership, sleepImpl = (ms) => new Promise((resolve) => setTimeout(resolve, ms)), } = {}) {
     transactionId = assertTransactionId(transactionId);
     const stateRoot = assertAbsolute(transactionRoot, "Main update transaction root", platform);
     if (platform === "win32") {
+        // If the original signed Guardian's live HMAC/NTFS-file-ID session exists,
+        // only THAT native owner may dispose of BOTH its kernel-pinned lease and
+        // the authenticated Windows worker handoff. Never let Node unlink the
+        // worker record before the Guardian can verify terminal A/B success.
+        const sessionPath = path.win32.join(stateRoot, "guardian-journal", "." + transactionId + ".guardian-session-lock");
+        const handoffPath = windowsMainUpdateWorkerOwnershipPath(stateRoot, transactionId);
+        const exists = async (file) => {
+            try {
+                const stat = await fsImpl.lstat(file);
+                if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1)
+                    throw new Error("Signed native A/B owner left an unsafe terminal identity file.");
+                return true;
+            }
+            catch (error) {
+                if (hasErrorCode(error, "ENOENT"))
+                    return false;
+                throw error;
+            }
+        };
+        if (typeof fsImpl.lstat === "function" && await exists(sessionPath)) {
+            // The real detached worker remains alive while its Guardian polls the
+            // fully committed/rolled-back Main+native receipt. Without this bounded
+            // rendezvous it exits and leaves a permanent orphan session marker.
+            for (let attempt = 0; attempt < 60; attempt += 1) {
+                if (!await exists(sessionPath) && !await exists(handoffPath))
+                    return Object.freeze({ cleaned: true, platform: "win32", nativeOwner: true, ownershipPath: handoffPath });
+                if (attempt < 59)
+                    await sleepImpl(200);
+            }
+            return Object.freeze({ cleaned: false, platform: "win32", pendingNativeOwner: true, ownershipPath: handoffPath });
+        }
         const record = await readWindowsOwnershipImpl({ transactionId, transactionRoot: stateRoot, fsImpl });
         if (!record?.ownership) {
             return Object.freeze({

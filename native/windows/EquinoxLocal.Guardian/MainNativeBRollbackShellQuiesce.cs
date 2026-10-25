@@ -16,7 +16,8 @@ internal static partial class Program
     // rollback-stage Guardian lease that owns the live HMAC journal challenge.
     // No CLI, independent Node flag, general process killer or slot rename.
     private static void QuiesceOwnedMainBRollbackShell(OwnedWorkerClaim owner, string journalRoot,
-        Process worker, byte[] originalJournalDigest, byte[] handoffDigest, string sourceSha)
+        Process worker, byte[] originalJournalDigest, byte[] handoffDigest, string sourceSha,
+        bool continuousNativeSession = false)
     {
         InspectionPhase = "native-b-wpf-quiesce-rollback-stage-only";
         InspectOwnedMainBRollbackPreflight(owner.TransactionId, sourceSha);
@@ -28,31 +29,41 @@ internal static partial class Program
         if (File.Exists(receiptPath))
             throw new InvalidDataException("B WPF rollback shutdown receipt already exists.");
         var nativeAuthorityPath = Path.Combine(journalRoot, owner.TransactionId + ".rollback-authority.json");
-        RequireNormalFile(nativeAuthorityPath);
+        if (!continuousNativeSession) RequireNormalFile(nativeAuthorityPath);
         // Keep the exact independently created Guardian receipt open for the
         // whole WPF shutdown. Windows FileShare.Read forbids replacement,
         // renaming or rewriting this file during the asynchronous IPC/exit.
-        using var nativeAuthorityHandle = new FileStream(nativeAuthorityPath, FileMode.Open,
-            FileAccess.Read, FileShare.Read);
-        if (nativeAuthorityHandle.Length is < 2 or > 8192)
+        // Continuous signed Guardian session already proved the exact
+        // rollback_started journal generation with a fresh worker HMAC; the
+        // legacy isolated rollback receipt must NOT be forged as its owner.
+        // Preserve the ORIGINAL rollback proof's nonreplaceable OS handle
+        // across the entire graceful WPF exit in its legacy mode. The new
+        // continuous session has a different freshly attested stage HMAC
+        // and MUST NOT synthesize this older receipt.
+        using var nativeAuthorityHandle = continuousNativeSession ? null :
+            new FileStream(nativeAuthorityPath, FileMode.Open, FileAccess.Read, FileShare.Read);
+        if (nativeAuthorityHandle is not null && nativeAuthorityHandle.Length is < 2 or > 8192)
             throw new InvalidDataException("B rollback authority receipt exceeds its trusted size bound.");
-        using var nativeAuthority = JsonDocument.Parse(nativeAuthorityHandle);
-        var receipt = nativeAuthority.RootElement;
-        RequireExactKeys(receipt, ["schemaVersion", "transactionId", "stage", "sequence", "workerPid",
-            "workerStartTimeUtcTicks", "guardianPid", "journalSha256", "handoffSha256"]);
-        if (receipt.GetProperty("schemaVersion").GetInt32() != 1 ||
-            receipt.GetProperty("transactionId").GetString() != owner.TransactionId ||
-            receipt.GetProperty("stage").GetString() != "rollback_started" ||
-            receipt.GetProperty("workerPid").GetInt32() != owner.Pid ||
-            receipt.GetProperty("workerStartTimeUtcTicks").GetString() != owner.Ticks ||
-            receipt.GetProperty("guardianPid").GetInt32() != Environment.ProcessId ||
-            !CryptographicOperations.FixedTimeEquals(
-                Encoding.ASCII.GetBytes(receipt.GetProperty("journalSha256").GetString() ?? ""),
-                Encoding.ASCII.GetBytes(Convert.ToHexStringLower(originalJournalDigest))) ||
-            !CryptographicOperations.FixedTimeEquals(
-                Encoding.ASCII.GetBytes(receipt.GetProperty("handoffSha256").GetString() ?? ""),
-                Encoding.ASCII.GetBytes(Convert.ToHexStringLower(handoffDigest))))
-            throw new InvalidDataException("B shutdown has no exact rollback-stage independent Guardian proof.");
+        using var nativeAuthority = nativeAuthorityHandle is null ? null : JsonDocument.Parse(nativeAuthorityHandle);
+        if (!continuousNativeSession)
+        {
+            var receipt = nativeAuthority!.RootElement;
+            RequireExactKeys(receipt, ["schemaVersion", "transactionId", "stage", "sequence", "workerPid",
+                "workerStartTimeUtcTicks", "guardianPid", "journalSha256", "handoffSha256"]);
+            if (receipt.GetProperty("schemaVersion").GetInt32() != 1 ||
+                receipt.GetProperty("transactionId").GetString() != owner.TransactionId ||
+                receipt.GetProperty("stage").GetString() != "rollback_started" ||
+                receipt.GetProperty("workerPid").GetInt32() != owner.Pid ||
+                receipt.GetProperty("workerStartTimeUtcTicks").GetString() != owner.Ticks ||
+                receipt.GetProperty("guardianPid").GetInt32() != Environment.ProcessId ||
+                !CryptographicOperations.FixedTimeEquals(
+                    Encoding.ASCII.GetBytes(receipt.GetProperty("journalSha256").GetString() ?? ""),
+                    Encoding.ASCII.GetBytes(Convert.ToHexStringLower(originalJournalDigest))) ||
+                !CryptographicOperations.FixedTimeEquals(
+                    Encoding.ASCII.GetBytes(receipt.GetProperty("handoffSha256").GetString() ?? ""),
+                    Encoding.ASCII.GetBytes(Convert.ToHexStringLower(handoffDigest))))
+                throw new InvalidDataException("B shutdown has no exact rollback-stage independent Guardian proof.");
+        }
         RequireNormalFile(journalPath);
         // Keep the ORIGINAL HMAC-authorized rollback journal readable but
         // non-replaceable for the whole B shutdown/exit evidence lifetime.
@@ -68,7 +79,9 @@ internal static partial class Program
             journal.GetProperty("stage").GetString() != "rollback_started" ||
             journal.GetProperty("targetSha").GetString() != sourceSha ||
             journal.GetProperty("sequence").GetInt32() is < 1 or > 6 ||
-            journal.GetProperty("sequence").GetInt32() != receipt.GetProperty("sequence").GetInt32())
+            (!continuousNativeSession &&
+             journal.GetProperty("sequence").GetInt32() !=
+                nativeAuthority!.RootElement.GetProperty("sequence").GetInt32()))
             throw new InvalidDataException("Native B quiesce evidence does not belong to the same rollback journal generation.");
         journalHandle.Position = 0;
         if (!CryptographicOperations.FixedTimeEquals(originalJournalDigest, SHA256.HashData(journalHandle)))

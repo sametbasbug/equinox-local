@@ -138,8 +138,9 @@ try {
   }
 
   try {
-    # This specialized acceptance exercises the optional legacy Main bridge.
-    # The PUBLIC installer default remains Stable; no automatic enrollment.
+    # Public Main-first acceptance reuses the signed bootstrap and verified
+    # existing Main-enrollment helper; retain explicit false below only for
+    # historical Stable-only repair fixtures.
     $EnrollExistingMain = $true
     $InstallCallStarted = [DateTimeOffset]::UtcNow
     Invoke-EquinoxLocalInstall | Out-Host
@@ -383,6 +384,11 @@ try {
     $NativeBrowserRuntime = Join-Path $ReleaseDir 'runtime\browser'
     Assert-True ([IO.File]::Exists((Join-Path $NativeBrowserRuntime 'equinox-browser-native-host.exe'))) 'Native Main identity test requires the signed release browser launcher.'
     Copy-Item -LiteralPath $NativeBrowserRuntime -Destination (Join-Path $NativeRuntimeProbe 'browser') -Recurse -ErrorAction Stop
+    # Committed Main Guardian boot selects the exact product-owned packaged
+    # Node from the immutable native slot, not the ambient runner Node.
+    $NativeNodeRuntime = Join-Path $ReleaseDir 'runtime\node'
+    Assert-True ([IO.File]::Exists((Join-Path $NativeNodeRuntime 'bin\node.exe'))) 'Main native boot fixture lacks its signed product Node.'
+    Copy-Item -LiteralPath $NativeNodeRuntime -Destination (Join-Path $NativeRuntimeProbe 'node') -Recurse -ErrorAction Stop
     Copy-Item -LiteralPath (Join-Path $ReleaseDir 'release.json') -Destination (Join-Path $NativeReleaseProbe 'release.json') -ErrorAction Stop
     $NativeContract = 'b' * 64
     $OwnedFingerprintNode = Join-Path $InstallRoot ("runtime\toolchain\node\26.12.1\$FixtureTarget\node.exe")
@@ -391,6 +397,11 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Canonical JS native release fingerprint fixture refused the disposable Main slot.' }
     $NativeFingerprint = $NativeFingerprintJson | ConvertFrom-Json
     Assert-True ([string]$NativeFingerprint.sha256 -cmatch '^[a-f0-9]{64}$') 'Canonical native Main fingerprint fixture is invalid.'
+    # ConvertFrom-Json returns an object also used by the fixture manifest.
+    # Save an IMMUTABLE string before corrupting manifest.releaseFingerprint:
+    # otherwise mutation changes $NativeFingerprint.sha256 through its alias,
+    # and the supposedly restored positive Main snapshot remains forged.
+    $OriginalNativeFingerprintSha = [string]$NativeFingerprint.sha256
     $NativeManifestProbe = [ordered]@{
       schemaVersion=1; channel='main'; sourceSha=$FixtureSourceSha; target=$FixtureTarget;
       runtimeContractSha256=$NativeContract; artifactSha256=('d' * 64); artifactBytes=1024;
@@ -443,8 +454,11 @@ try {
     $NativeManifestProbe.releaseFingerprint.sha256 = 'e' * 64
     [IO.File]::WriteAllText((Join-Path $NativeStoreProbe 'native-store.json'), ($NativeManifestProbe | ConvertTo-Json -Depth 5))
     Assert-True ((Invoke-GuardianCheck '--audit-native-identity') -eq 70) 'Guardian trusted a forged complete native-store fingerprint.'
-    $NativeManifestProbe.releaseFingerprint.sha256 = $NativeFingerprint.sha256
+    $NativeManifestProbe.releaseFingerprint.sha256 = $OriginalNativeFingerprintSha
     [IO.File]::WriteAllText((Join-Path $NativeStoreProbe 'native-store.json'), ($NativeManifestProbe | ConvertTo-Json -Depth 5))
+    # Ensure restoration really returns a valid positive identity before any
+    # additional negative probe changes release.json.
+    Assert-True ((Invoke-GuardianCheck '--audit-native-identity') -eq 0) 'Restored native fingerprint did not recover the exact original Main identity.'
     # Even preserving the original manifest is insufficient after release drift.
     $NativeReleaseJson = Join-Path $NativeReleaseProbe 'release.json'
     $OriginalNativeRelease = [IO.File]::ReadAllBytes($NativeReleaseJson)
@@ -454,16 +468,22 @@ try {
       [IO.File]::WriteAllBytes($NativeReleaseJson, $MutatedNativeRelease)
       Assert-True ((Invoke-GuardianCheck '--audit-native-identity') -eq 70) 'Guardian trusted a mutated immutable native payload.'
     } finally { [IO.File]::WriteAllBytes($NativeReleaseJson, $OriginalNativeRelease) }
-    Assert-True ((Invoke-GuardianCheck '--inspect') -eq 70) 'Stable-only Guardian must never launch a native Main pointer by accident.'
+    $CommittedAuditCode = [int](Invoke-GuardianCheck '--audit-native-identity')
+    Assert-True ($CommittedAuditCode -eq 0) 'Restored committed Main identity no longer passes the independent exact-slot audit.'
+    $CommittedInspectCode = [int](Invoke-GuardianCheck '--inspect')
+    Write-Output ("Windows committed native Main Guardian inspect evidence: target={0}; identity={1}; inspect={2}" -f $FixtureTarget, $CommittedAuditCode, $CommittedInspectCode)
+    Assert-True ($CommittedInspectCode -eq 0) 'Guardian refused independently verified committed Main WPF snapshot.'
     $NativePointerProbeValue.sourceSha = 'a' * 40
     [IO.File]::WriteAllText($NativePointerProbe, ($NativePointerProbeValue | ConvertTo-Json -Depth 3))
     Assert-True ((Invoke-GuardianCheck '--audit-native-identity') -eq 70) 'Guardian trusted the wrong native Main source SHA.'
+    Assert-True ((Invoke-GuardianCheck '--inspect') -eq 70) 'Guardian allowed Main WPF launch with a forged committed native pointer.'
     $NativePointerProbeValue.sourceSha = $FixtureSourceSha
     [IO.File]::WriteAllText($NativePointerProbe, ($NativePointerProbeValue | ConvertTo-Json -Depth 3))
     $NativeActiveProbe = Join-Path $NativeTxRoot 'active.json'
     try {
       [IO.File]::WriteAllText($NativeActiveProbe, 'fail-closed-test-lock')
       Assert-True ((Invoke-GuardianCheck '--audit-native-identity') -eq 70) 'Guardian audited an unresolved native Main transaction.'
+      Assert-True ((Invoke-GuardianCheck '--inspect') -eq 70) 'Guardian launched Main while its original native transaction remained active.'
     } finally { Remove-Item -LiteralPath $NativeActiveProbe -Force -ErrorAction SilentlyContinue }
   } finally {
     # Restore independently registered Stable Native Messaging bytes before
@@ -506,11 +526,18 @@ try {
   $JournalReceipt = Join-Path $JournalReceiptDir ("$JournalId.json")
   $JournalData = Join-Path $JournalDataDir ("$JournalId.json")
   $JournalGuard = Join-Path $JournalDataDir (".$JournalId.writer-lock")
+  $JournalGuardianSession = Join-Path $JournalDataDir (".$JournalId.guardian-session-lock")
   $JournalAuthority = Join-Path $JournalDataDir ("$JournalId.native-authority.json")
   $JournalAuthorityTrigger = Join-Path $Work 'start-journal-authority-client.trigger'
+  $OriginalGuardianStartTrigger = Join-Path $Work 'start-original-guardian-from-product-node.trigger'
+  $OriginalGuardianStartResult = Join-Path $Work 'original-guardian-owned-node-result.json'
   $JournalAbortTrigger = Join-Path $Work 'start-journal-abort-client.trigger'
+  $JournalStageTrigger = Join-Path $Work 'start-journal-stage-client.trigger'
+  $JournalStageCommit = Join-Path $JournalDataDir ("$JournalId.stage-b-commit.json")
   $JournalShellTrigger = Join-Path $Work 'start-wpf-quiesce-client.trigger'
   $JournalShellQuiesced = Join-Path $JournalDataDir ("$JournalId.stable-shell-quiesce.json")
+  $JournalNativeStageDenyTrigger = Join-Path $JournalDataDir ("$JournalId.native-stage-deny.trigger")
+  $JournalNativeStageDenyResult = Join-Path $JournalDataDir ("$JournalId.native-stage-deny.result")
   $JournalAbortCommit = Join-Path $JournalDataDir ("$JournalId.abort-commit.json")
   $JournalQuarantinedLock = Join-Path $JournalDataDir (".$JournalId.quarantined.writer-lock")
   $JournalQuarantineReceipt = Join-Path $JournalDataDir ("$JournalId.orphan-quarantine.json")
@@ -545,6 +572,7 @@ try {
     Assert-True ((Invoke-GuardianCheck '--audit-native-worker') -eq 70) 'Guardian accepted absent native worker ownership.'
     Assert-True ((Invoke-GuardianCheck '--audit-native-worker-ipc') -eq 70) 'Guardian accepted absent native worker IPC owner.'
     Assert-True ((Invoke-GuardianCheck '--audit-native-worker-argv') -eq 70) 'Guardian accepted absent native worker OS argv ownership.'
+    Assert-True ((Invoke-GuardianCheck '--audit-native-wpf-owner') -eq 70) 'Guardian claimed a live Main A WPF owner without an authenticated detached worker.'
     $WorkerNode = Join-Path $ReleaseDir 'runtime\node\bin\node.exe'
     Assert-True ([IO.File]::Exists($WorkerNode)) 'Native worker OS identity test requires release-owned Node.'
     $WorkerHandoff = Join-Path $NativeTxRoot 'handoff'
@@ -567,9 +595,16 @@ try {
       $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_MAIN_WORKER_TOKEN'] = ('e' * 64)
       $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_JOURNAL_CLIENT_MODULE'] = Join-Path $Root 'src\equinox-local-windows-native-journal-authority-client.js'
       $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_JOURNAL_TX_ROOT'] = $NativeTxRoot
+      $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_SIGNED_GUARDIAN_START_TRIGGER'] = $OriginalGuardianStartTrigger
+      $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_SIGNED_GUARDIAN_START_RESULT'] = $OriginalGuardianStartResult
+      $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_SIGNED_GUARDIAN_ADMISSION_MODULE'] = Join-Path $Root 'src\equinox-local-windows-main-worker-admission.js'
+      $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_SIGNED_GUARDIAN_RELEASE'] = $ReleaseDir
       $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_JOURNAL_TRIGGER'] = $JournalAuthorityTrigger
       $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_JOURNAL_ABORT_TRIGGER'] = $JournalAbortTrigger
+      $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_JOURNAL_STAGE_TRIGGER'] = $JournalStageTrigger
       $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_WPF_QUIESCE_TRIGGER'] = $JournalShellTrigger
+      $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_NATIVE_STAGE_DENY_TRIGGER'] = $JournalNativeStageDenyTrigger
+      $WorkerStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_NATIVE_STAGE_DENY_RESULT'] = $JournalNativeStageDenyResult
       $WorkerProcess = [Diagnostics.Process]::Start($WorkerStartInfo)
       if ($null -eq $WorkerProcess) { throw 'Unable to start ephemeral owned Node process for Guardian audit.' }
       $WorkerRecord = [ordered]@{
@@ -657,33 +692,97 @@ try {
         Remove-Item -LiteralPath $JournalGuard -Force -ErrorAction SilentlyContinue
       }
       Assert-True ((Invoke-GuardianCheck '--audit-native-journal') -eq 0) 'Native journal did not recover after explicit disposable fixture reconciliation.'
-      # New Guardian authority mode is a real separate native process, not
-      # a JS journal writer. The exact Node PID answers its 256-bit challenge,
-      # and ONLY the native owner persists the prepared journal digest proof.
+      # The independent original-Guardian session cannot be started over an
+      # orphaned JS writer. Reject first, without consuming the live HMAC
+      # witness or changing any transaction state.
+      [IO.File]::WriteAllText($JournalGuard, 'foreign-js-writer')
+      try {
+        Assert-True ((Invoke-GuardianCheck '--hold-native-journal-authority') -eq 70) 'Guardian accepted a pre-existing foreign JS journal writer lock.'
+      } finally {
+        Remove-Item -LiteralPath $JournalGuard -Force -ErrorAction SilentlyContinue
+      }
+      # Existing authenticated Guardian authority is now a continuous
+      # independent session: it pins original kernel FILE ID, while REAL
+      # product Node owns the distinct short-lived JS .writer-lock.
       $AuthorityProcess = $null
       try {
-        $AuthorityStart = [Diagnostics.ProcessStartInfo]::new($GuardianExe)
-        $AuthorityStart.Arguments = '--hold-native-journal-authority'
-        $AuthorityStart.UseShellExecute = $false
-        $AuthorityStart.CreateNoWindow = $true
-        $AuthorityStart.RedirectStandardError = $true
-        $AuthorityProcess = [Diagnostics.Process]::Start($AuthorityStart)
-        Assert-True ($null -ne $AuthorityProcess) 'Independent native journal authority failed to launch.'
-        [IO.File]::WriteAllText($JournalAuthorityTrigger, 'fixed-test-only-trigger')
-        $AuthorityDurable = $false
-        for ($AuthorityAttempt=0; $AuthorityAttempt -lt 80; $AuthorityAttempt++) {
-          if ([IO.File]::Exists($JournalAuthority) -and -not $AuthorityProcess.HasExited) { $AuthorityDurable = $true; break }
-          if ($AuthorityProcess.HasExited) { break }
-          Start-Sleep -Milliseconds 110
+        # REAL installed product-owned Node now spawns the existing original
+        # signed Guardian and proves its prepared journal/worker HMAC itself.
+        # PowerShell never creates the authority process for this acceptance.
+        [IO.File]::WriteAllText($OriginalGuardianStartTrigger, 'owned-worker-native-guardian-session')
+        $OwnerSpawned = $false
+        for ($AuthorityAttempt=0; $AuthorityAttempt -lt 140; $AuthorityAttempt++) {
+          if ([IO.File]::Exists($OriginalGuardianStartResult)) { $OwnerSpawned = $true; break }
+          Start-Sleep -Milliseconds 125
         }
-        if (-not $AuthorityDurable -and $AuthorityProcess.HasExited) {
-          Write-Output ('Hosted native authority diagnostic: ' + $AuthorityProcess.StandardError.ReadToEnd())
+        Assert-True $OwnerSpawned 'Installed product Node did not finish authentic original Guardian session admission.'
+        $OwnerResult = ConvertFrom-Json ([IO.File]::ReadAllText($OriginalGuardianStartResult))
+        # StrictMode prohibits accessing an omitted optional field on a
+        # successful native Guardian admission response.
+        if ($null -ne $OwnerResult.PSObject.Properties['failed'] -and $OwnerResult.failed -eq $true) {
+          Write-Output ('Original product Node Guardian admission safe category: ' + [string]$OwnerResult.category)
+          throw 'Original product-owned Node did not gain signed Guardian kernel OS session admission.'
         }
-        Assert-True $AuthorityDurable 'Native Guardian refused the real worker kernel PID-bound nonce/HMAC journal authority proof.'
+        # ConvertFrom-Json can materialize a JSON integer as Int32 or Int64
+        # depending on PowerShell edition/CPU. Type-checking [int] was wrongly
+        # rejecting real ARM64 owners. Validate canonical bounded decimal PID
+        # and re-open that same LIVE OS process below instead.
+        $GuardianPidText = [string]$OwnerResult.guardianPid
+        $GuardianPid = [int]0
+        $GuardianPidValid = ($GuardianPidText -cmatch '^[1-9][0-9]{0,9}$') -and
+          [int]::TryParse($GuardianPidText, [Globalization.NumberStyles]::None,
+            [Globalization.CultureInfo]::InvariantCulture, [ref]$GuardianPid) -and $GuardianPid -gt 0
+        $GuardianOwnerValid = ($OwnerResult.originalSignedOwner -eq $true -and
+          $OwnerResult.workerPid -eq $WorkerProcess.Id -and
+          $OwnerResult.workerStartTimeUtcTicks -ceq $WorkerRecord.startTimeUtcTicks)
+        if (-not $GuardianOwnerValid -or -not $GuardianPidValid) {
+          # Safe boolean diagnostic only: no PID, path, timestamp or token.
+          Write-Output ('Original Guardian strict owner checks: owner=' + [bool]$GuardianOwnerValid +
+            ';pid=' + [bool]$GuardianPidValid)
+        }
+        Assert-True ($GuardianOwnerValid -and $GuardianPidValid) 'Installed product Node failed original signed Guardian HMAC/OS identity admission.'
+        $AuthorityProcess = [Diagnostics.Process]::GetProcessById($GuardianPid)
+        Assert-True ($null -ne $AuthorityProcess -and -not $AuthorityProcess.HasExited -and
+          [IO.File]::Exists($JournalAuthority)) 'Original signed Guardian did not durably hold kernel-bound owner session.'
+        $AuthorityDurable = $true
+        Assert-True ([IO.File]::Exists($JournalGuardianSession) -and -not [IO.File]::Exists($JournalGuard)) 'Independent signed Guardian session incorrectly seized the JS journal writer lock.'
+        # The REAL packaged Node binary, not a mock callback, must be able to
+        # acquire the journal's exclusive short-lived CREATE_NEW write guard
+        # while the kernel-owned signed Guardian session remains alive.
+        $WriterCode = "const fs=require('node:fs');const p=process.argv[1];fs.writeFileSync(p,'writer',{flag:'wx'});fs.unlinkSync(p)"
+        & $WorkerNode -e $WriterCode $JournalGuard
+        Assert-True ($LASTEXITCODE -eq 0 -and -not [IO.File]::Exists($JournalGuard) -and
+          -not $AuthorityProcess.HasExited) 'Actual JS journal writer collided with independently pinned original Guardian session.'
         Assert-True ((Invoke-GuardianCheck '--hold-native-journal-authority') -eq 70) 'Duplicate native authority owner silently replaced a live owner.'
-        $AuthorityProcess.Kill()
+        # A real kernel-owned Guardian session must reject a forged staged B
+        # whose signed source and immutable release fingerprint do NOT exist.
+        # This is a negative installed-host regression, never a new public CLI
+        # or a fake B promotion. Keep installed native A WPF running.
+        $PreparedBytes = [IO.File]::ReadAllBytes($JournalData)
+        $StageSnapshot = ConvertFrom-Json ([Text.Encoding]::UTF8.GetString($PreparedBytes))
+        try {
+          $StageSnapshot.stage = 'native_staged'
+          $StageSnapshot.sequence = 1
+          [IO.File]::WriteAllText($JournalData, ($StageSnapshot | ConvertTo-Json -Depth 8))
+          [IO.File]::WriteAllText($JournalNativeStageDenyTrigger, 'test-only-native-b-absent')
+          $Denied = $false
+          for ($NativeStageTry=0; $NativeStageTry -lt 100; $NativeStageTry++) {
+            if ([IO.File]::Exists($JournalNativeStageDenyResult)) { $Denied = $true; break }
+            Start-Sleep -Milliseconds 120
+          }
+          Assert-True $Denied 'Real signed Guardian did not answer current-stage worker before bounded timeout.'
+          Assert-True (([IO.File]::ReadAllText($JournalNativeStageDenyResult)) -ceq 'denied-before-WPF-exit') 'Guardian accepted invalid B staged fingerprint or stage worker proof.'
+          $AliveA = @(Get-CimInstance Win32_Process -Filter "Name='EquinoxLocal.exe'" -ErrorAction SilentlyContinue |
+            Where-Object { -not [string]::IsNullOrWhiteSpace($_.ExecutablePath) -and (Same-Path $_.ExecutablePath $StableExe) })
+          Assert-True ($AliveA.Count -eq 1) 'Staged B fingerprint failure incorrectly stopped original native A WPF.'
+        } finally {
+          [IO.File]::WriteAllBytes($JournalData, $PreparedBytes)
+          Remove-Item -LiteralPath $JournalNativeStageDenyTrigger,$JournalNativeStageDenyResult -Force -ErrorAction SilentlyContinue
+        }
+        if (-not $AuthorityProcess.HasExited) { $AuthorityProcess.Kill() }
         Assert-True ($AuthorityProcess.WaitForExit(5000)) 'Guardian authority process did not terminate under powercut fixture.'
-        Assert-True ([IO.File]::Exists($JournalGuard) -and [IO.File]::Exists($JournalAuthority)) 'Guardian authority powercut lost durable native evidence.'
+        Assert-True ([IO.File]::Exists($JournalGuardianSession) -and [IO.File]::Exists($JournalAuthority) -and
+          -not [IO.File]::Exists($JournalGuard)) 'Guardian authority powercut lost its original independent kernel owner lease.'
         $AuthorityRecord = ConvertFrom-Json ([IO.File]::ReadAllText($JournalAuthority))
         Assert-True ($AuthorityRecord.transactionId -ceq $JournalId -and
           $AuthorityRecord.stage -ceq 'prepared' -and $AuthorityRecord.sequence -eq 0 -and
@@ -701,11 +800,41 @@ try {
           try { $AuthorityProcess.WaitForExit(5000) | Out-Null } catch {}
           $AuthorityProcess.Dispose()
         }
-        Remove-Item -LiteralPath $JournalGuard -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $JournalGuardianSession -Force -ErrorAction SilentlyContinue
         Remove-Item -LiteralPath $JournalAuthority -Force -ErrorAction SilentlyContinue
-        Remove-Item -LiteralPath $JournalAuthorityTrigger -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $JournalAuthorityTrigger,$OriginalGuardianStartTrigger,$OriginalGuardianStartResult,$JournalNativeStageDenyTrigger,$JournalNativeStageDenyResult -Force -ErrorAction SilentlyContinue
       }
       Assert-True ((Invoke-GuardianCheck '--audit-native-journal') -eq 0) 'Native journal authority disposable fixture reconciliation failed.'
+      # Real OS negative forward milestone: the detached worker and prepared
+      # journal genuinely authenticate, but its dummy B source is not a pinned
+      # product Git checkout/native release. Guardian MUST refuse native_staged,
+      # leave old A WPF and Native Messaging untouched, and persist an orphan
+      # writer lock for explicit reconciliation only.
+      $StageProcess = $null
+      try {
+        $StageStart = [Diagnostics.ProcessStartInfo]::new($GuardianExe)
+        $StageStart.Arguments = '--hold-native-stage-b'
+        $StageStart.UseShellExecute = $false
+        $StageStart.CreateNoWindow = $true
+        $StageStart.RedirectStandardError = $true
+        $StageProcess = [Diagnostics.Process]::Start($StageStart)
+        Assert-True ($null -ne $StageProcess) 'Native B stage refusal fixture could not launch Guardian.'
+        [IO.File]::WriteAllText($JournalStageTrigger, 'disposable-stage-proof')
+        Assert-True ($StageProcess.WaitForExit(18000)) 'Guardian failed to refuse foreign B staging before timeout.'
+        Assert-True ($StageProcess.ExitCode -eq 70) 'Guardian admitted a synthetic B native store.'
+        $StageAfter = ConvertFrom-Json ([IO.File]::ReadAllText($JournalData))
+        Assert-True ($StageAfter.stage -ceq 'prepared' -and $StageAfter.sequence -eq 0) 'Guardian advanced the journal without a real immutable B.'
+        Assert-True (-not [IO.File]::Exists($JournalStageCommit)) 'Guardian wrote a fake native_staged commit.'
+        Assert-True ([IO.File]::Exists($JournalGuard) -and [IO.File]::Exists($JournalAuthority)) 'Native stage refusal lost independent orphan-owner evidence.'
+      } finally {
+        if ($null -ne $StageProcess) {
+          try { if (-not $StageProcess.HasExited) { $StageProcess.Kill() } } catch {}
+          try { $StageProcess.WaitForExit(5000) | Out-Null } catch {}
+          $StageProcess.Dispose()
+        }
+        Remove-Item -LiteralPath $JournalGuard,$JournalAuthority,$JournalStageTrigger -Force -ErrorAction SilentlyContinue
+      }
+      Assert-True ((Invoke-GuardianCheck '--audit-native-journal') -eq 0) 'Negative forward-stage fixture failed explicit disposable journal reconciliation.'
       # Real installed WPF native pilot: independently authenticated Guardian
       # locates the exact Stable GUI OS PID, verifies owner SID/logon/session,
       # verifies the live named-pipe server PID, requests graceful exit via
@@ -722,6 +851,35 @@ try {
           $RealWpfTicks = $RealWpf.StartTime.ToUniversalTime().Ticks.ToString([Globalization.CultureInfo]::InvariantCulture)
         } finally { $RealWpf.Dispose() }
         Assert-True ((Invoke-NativeWpfWitness ([string]$OriginalShellPid) $RealWpfTicks) -ceq 'running') 'OS native helper refused the genuine installed WPF owner.'
+        # Read-only independent Guardian WPF A audit must attest the SAME
+        # original installed shell, worker and kernel named-pipe PID. The
+        # WPF listener may need one accept/re-arm cycle; never auto-retry any
+        # mutating native action.
+        $WpfOwnerReady = $false
+        for ($AuditAttempt=0; $AuditAttempt -lt 10; $AuditAttempt++) {
+          if ((Invoke-GuardianCheck '--audit-native-wpf-owner') -eq 0) { $WpfOwnerReady = $true; break }
+          Start-Sleep -Milliseconds 150
+        }
+        Assert-True $WpfOwnerReady 'Guardian failed read-only kernel ownership verification of installed native A WPF.'
+        # This is a disposable hosted installation, not the user's Windows.
+        # A forged Stable A pointer must not be accepted even when the WPF
+        # bytes, process and live kernel pipe are otherwise legitimate.
+        $OriginalAPointerPath = Join-Path $OwnedInstallRoot 'current-version.json'
+        $OriginalAPointerBytes = [IO.File]::ReadAllBytes($OriginalAPointerPath)
+        try {
+          $ForgedPointer = [Text.Encoding]::UTF8.GetString($OriginalAPointerBytes) | ConvertFrom-Json
+          $ForgedPointer.version = '0.0.0'
+          [IO.File]::WriteAllText($OriginalAPointerPath, ($ForgedPointer | ConvertTo-Json -Depth 5))
+          Assert-True ((Invoke-GuardianCheck '--audit-native-wpf-owner') -eq 70) 'Guardian accepted foreign original A version pointer despite a live real WPF.'
+        } finally {
+          [IO.File]::WriteAllBytes($OriginalAPointerPath, $OriginalAPointerBytes)
+        }
+        $OriginalPointerRestored = $false
+        for ($AuditRetry=0; $AuditRetry -lt 10; $AuditRetry++) {
+          if ((Invoke-GuardianCheck '--audit-native-wpf-owner') -eq 0) { $OriginalPointerRestored = $true; break }
+          Start-Sleep -Milliseconds 150
+        }
+        Assert-True $OriginalPointerRestored 'Guardian rejected restored exact original A after negative pointer tamper.'
         $WrongWpfTicks = ([long]::Parse($RealWpfTicks) - 1).ToString([Globalization.CultureInfo]::InvariantCulture)
         Assert-True ((Invoke-NativeWpfWitness ([string]$OriginalShellPid) $WrongWpfTicks) -ceq 'mismatch') 'OS native helper accepted a forged WPF birth time.'
         Assert-True ((Invoke-NativeWpfWitness ([string]$WorkerProcess.Id) $WorkerRecord.startTimeUtcTicks) -ceq 'mismatch') 'OS native helper accepted the native worker Node as WPF.'
@@ -760,6 +918,7 @@ try {
           Where-Object { -not [string]::IsNullOrWhiteSpace($_.ExecutablePath) -and (Same-Path $_.ExecutablePath $StableExe) })
         Assert-True ($StillOwned.Count -eq 0) 'Native quiesce did not actually stop the installed WPF shell.'
         Assert-True ((Invoke-NativeWpfWitness ([string]$OriginalShellPid) $RealWpfTicks) -cne 'running') 'OS native helper accepted a terminated WPF owner.'
+        Assert-True ((Invoke-GuardianCheck '--audit-native-wpf-owner') -eq 70) 'Guardian claimed an original A WPF owner after the real shell exited.'
         Assert-True ((Invoke-GuardianCheck '--audit-native-journal') -eq 70) 'Native shell exit proof silently resumed Main despite stale owner lease.'
       } finally {
         if ($null -ne $ShellGuardian) {
@@ -927,6 +1086,174 @@ try {
   Assert-True ((Invoke-GuardianCheck '--audit-native-journal') -eq 70) 'Guardian accepted an orphan journal after its owning active receipt disappeared.'
   Write-Output "Windows $FixtureTarget Guardian native journal ownership audit positive/negative hosted acceptance PASSED."
   if ($GuardianAuditOnly) {
+  # Positive forward-stage evidence on a NEW disposable transaction. Unlike
+  # the earlier forged-B negative, B here is the exact real installed signed
+  # release bytes paired with the genuine pinned, clean product Git checkout.
+  # No update/switch is ever admitted; old Stable WPF stays live.
+  if ($env:GITHUB_ACTIONS -cne 'true') { throw 'Positive native B staging requires isolated hosted Guardian acceptance.' }
+  $PositiveTx = 'main-' + ('5' * 32)
+  $PositiveCurrent = $(if ($FixtureSourceSha -ceq ('a' * 40)) { 'b' * 40 } else { 'a' * 40 })
+  $PositiveSource = Join-Path $NativeTxRoot ("sources\$PositiveCurrent")
+  $PositiveTarget = $ManagedSourceRoot
+  $PositiveBRoot = Join-Path $NativeTxRoot ("native-store\$FixtureTarget\$FixtureSourceSha")
+  $PositiveRelease = Join-Path $PositiveBRoot 'release'
+  $PositiveContract = 'f' * 64
+  $PositiveJournal = Join-Path $NativeTxRoot ("guardian-journal\$PositiveTx.json")
+  $PositiveLock = Join-Path $NativeTxRoot 'active.json'
+  $PositiveReceipt = Join-Path $NativeTxRoot ("receipts\$PositiveTx.json")
+  $PositiveHandoff = Join-Path $NativeTxRoot ("handoff\$PositiveTx.windows-worker.json")
+  $PositiveGuard = Join-Path $NativeTxRoot ("guardian-journal\.$PositiveTx.writer-lock")
+  $PositiveAuthority = Join-Path $NativeTxRoot ("guardian-journal\$PositiveTx.native-authority.json")
+  $PositiveCommit = Join-Path $NativeTxRoot ("guardian-journal\$PositiveTx.stage-b-commit.json")
+  $PositiveAbortCommit = Join-Path $NativeTxRoot ("guardian-journal\$PositiveTx.pre-switch-abort-commit.json")
+  $PositiveTrigger = Join-Path $Work 'positive-stage-client.trigger'
+  $OwnedWorkerScript = Join-Path $ManagedSourceRoot 'src\equinox-local-main-update-worker.js'
+  $WitnessScript = Join-Path $Root 'tests\release\owned-windows-worker-proof.mjs'
+  $OriginalWorkerBytes = [IO.File]::ReadAllBytes($OwnedWorkerScript)
+  $OriginalWpfHash = (Get-FileHash -LiteralPath $StableExe -Algorithm SHA256).Hash
+  $OriginalManifestHash = (Get-FileHash -LiteralPath $ExpectedManifestPath -Algorithm SHA256).Hash
+  $OriginalRegistry = [string](Get-Item -LiteralPath $NativeRegistryKey -ErrorAction Stop).GetValue('')
+  $OriginalStablePointerHash = (Get-FileHash -LiteralPath (Join-Path $InstallRoot 'current-version.json') -Algorithm SHA256).Hash
+  $OriginalWpfOwners = @(Get-CimInstance Win32_Process -Filter "Name='EquinoxLocal.exe'" -ErrorAction SilentlyContinue |
+    Where-Object { $_.ExecutablePath -and (Same-Path $_.ExecutablePath $StableExe) })
+  Assert-True ($OriginalWpfOwners.Count -eq 1) 'Positive native B staging needs exactly one real original A WPF.'
+  $OriginalWpfPid = [int]$OriginalWpfOwners[0].ProcessId
+  # Refuse BEFORE entering any cleanup scope: never remove a pre-existing
+  # Main transaction/slot even when a disposable test unexpectedly collides.
+  foreach ($occupied in @($PositiveLock,$PositiveJournal,$PositiveReceipt,$PositiveHandoff,
+       $PositiveGuard,$PositiveAuthority,$PositiveCommit,$PositiveAbortCommit,$PositiveBRoot,$PositiveSource)) {
+    Assert-True (-not (Test-Path -LiteralPath $occupied)) 'Positive B fixture found occupied independent native owner or slot.'
+  }
+  $PositiveWorker = $null
+  $PositiveGuardian = $null
+  $WorkerReplaced = $false
+  try {
+    [IO.Directory]::CreateDirectory($PositiveSource) | Out-Null
+    [IO.Directory]::CreateDirectory($PositiveBRoot) | Out-Null
+    Copy-Item -LiteralPath $ReleaseDir -Destination $PositiveRelease -Recurse -ErrorAction Stop
+    $BNode = Join-Path $InstallRoot ("runtime\toolchain\node\26.12.1\$FixtureTarget\node.exe")
+    Assert-True ([IO.File]::Exists($BNode)) 'Genuine B fingerprint fixture missing product-owned Node.'
+    $FingerJson = & $BNode (Join-Path $Root 'tests/release/guardian-native-fingerprint-fixture.mjs') $PositiveRelease
+    Assert-True ($LASTEXITCODE -eq 0) 'Full genuine signed B fingerprint producer rejected installed release.'
+    $Finger = $FingerJson | ConvertFrom-Json
+    $NativeBManifest = [ordered]@{
+      schemaVersion=1;channel='main';sourceSha=$FixtureSourceSha;target=$FixtureTarget;
+      runtimeContractSha256=$PositiveContract;artifactSha256=$artifactSha;artifactBytes=$artifactBytes;
+      payloadVersion=$FixtureVersion;releaseFingerprint=$Finger
+    }
+    [IO.File]::WriteAllText((Join-Path $PositiveBRoot 'native-store.json'), ($NativeBManifest | ConvertTo-Json -Depth 5))
+    $PositiveStart = '2026-10-11T18:00:00.000Z'
+    $PositiveMarker = [ordered]@{schemaVersion=1;transactionId=$PositiveTx;channel='main';currentSha=$PositiveCurrent;targetSha=$FixtureSourceSha;startedAt=$PositiveStart}
+    $PositiveReceiptValue = [ordered]@{
+      schemaVersion=1;transactionId=$PositiveTx;channel='main';status='promoting';stage='ready_to_switch';
+      currentSha=$PositiveCurrent;targetSha=$FixtureSourceSha;rollbackSha=$PositiveCurrent;
+      rollbackSourceRoot=$PositiveSource;targetSourceRoot=$PositiveTarget;startedAt=$PositiveStart;
+      updatedAt=$PositiveStart;lastError=$null
+    }
+    $PositiveJournalValue = [ordered]@{
+      schemaVersion=1;channel='main';transactionId=$PositiveTx;target=$FixtureTarget;
+      currentSha=$PositiveCurrent;targetSha=$FixtureSourceSha;receiptStartedAt=$PositiveStart;
+      previousNative=[ordered]@{kind='stable';version=$FixtureVersion};
+      targetRuntimeContractSha256=$PositiveContract;stage='prepared';sequence=0;
+      createdAt=$PositiveStart;updatedAt=$PositiveStart
+    }
+    [IO.File]::WriteAllText($PositiveLock, ($PositiveMarker | ConvertTo-Json -Depth 4))
+    [IO.File]::WriteAllText($PositiveReceipt, ($PositiveReceiptValue | ConvertTo-Json -Depth 5))
+    [IO.File]::WriteAllText($PositiveJournal, ($PositiveJournalValue | ConvertTo-Json -Depth 5))
+    Assert-True ((Invoke-GuardianCheck '--audit-native-journal') -eq 0) 'Genuine B prepared journal did not match independently owned transaction.'
+
+    # Real product code remains byte-for-byte unchanged when Guardian audits
+    # B's clean Git. A temporary test-only witness occupies the real exact
+    # worker script path only long enough for Node to import it, then restore
+    # the original file BEFORE invoking any native B stage.
+    [IO.File]::WriteAllBytes($OwnedWorkerScript, [IO.File]::ReadAllBytes($WitnessScript))
+    $WorkerReplaced = $true
+    $PositiveStartInfo = [Diagnostics.ProcessStartInfo]::new((Join-Path $ReleaseDir 'runtime\node\bin\node.exe'))
+    $PositiveStartInfo.UseShellExecute = $false
+    $PositiveStartInfo.CreateNoWindow = $true
+    $PositiveStartInfo.Arguments = '"' + $OwnedWorkerScript + '" --transaction-id ' + $PositiveTx +
+      ' --source-root "' + $PositiveSource + '" --transaction-root "' + $NativeTxRoot + '"'
+    $PositiveStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_PROOF_MODULE'] = Join-Path $Root 'src\equinox-local-windows-main-worker-proof.js'
+    $PositiveStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_WORKER_TX'] = $PositiveTx
+    $PositiveStartInfo.EnvironmentVariables['EQUINOX_LOCAL_MAIN_WORKER_TOKEN'] = ('e' * 64)
+    $PositiveStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_JOURNAL_CLIENT_MODULE'] = Join-Path $Root 'src\equinox-local-windows-native-journal-authority-client.js'
+    $PositiveStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_JOURNAL_TX_ROOT'] = $NativeTxRoot
+    $PositiveStartInfo.EnvironmentVariables['EQUINOX_LOCAL_TEST_JOURNAL_STAGE_TRIGGER'] = $PositiveTrigger
+    $PositiveWorker = [Diagnostics.Process]::Start($PositiveStartInfo)
+    Assert-True ($null -ne $PositiveWorker) 'Native positive B worker could not start.'
+    $PositiveRecord = [ordered]@{
+      schemaVersion=1;transactionId=$PositiveTx;pid=$PositiveWorker.Id;
+      startTimeUtcTicks=$PositiveWorker.StartTime.ToUniversalTime().Ticks.ToString([Globalization.CultureInfo]::InvariantCulture);
+      token=('e' * 64);nodePath=(Join-Path $ReleaseDir 'runtime\node\bin\node.exe')
+    }
+    [IO.File]::WriteAllText($PositiveHandoff, ($PositiveRecord | ConvertTo-Json -Depth 4))
+    $ProofReady = $false
+    for ($i=0; $i -lt 35; $i++) {
+      if ($PositiveWorker.HasExited) { break }
+      if ((Invoke-GuardianCheck '--audit-native-worker-ipc') -eq 0) { $ProofReady = $true; break }
+      Start-Sleep -Milliseconds 130
+    }
+    Assert-True $ProofReady 'Actual owned Node worker witness did not start; refusing to restore over a potentially loading script.'
+    [IO.File]::WriteAllBytes($OwnedWorkerScript, $OriginalWorkerBytes)
+    $WorkerReplaced = $false
+    Assert-True ((Invoke-GuardianCheck '--audit-native-worker-argv') -eq 0) 'Positive B worker OS argv source identity does not match committed source.'
+    $BStageInfo = [Diagnostics.ProcessStartInfo]::new($GuardianExe)
+    $BStageInfo.Arguments = '--hold-native-stage-b-cancel'
+    $BStageInfo.UseShellExecute = $false
+    $BStageInfo.CreateNoWindow = $true
+    $BStageInfo.RedirectStandardError = $true
+    $PositiveGuardian = [Diagnostics.Process]::Start($BStageInfo)
+    Assert-True ($null -ne $PositiveGuardian) 'Positive B native Guardian owner failed to start.'
+    [IO.File]::WriteAllText($PositiveTrigger, 'disposable-positive-b')
+    $Staged = $false
+    for ($i=0; $i -lt 450; $i++) {
+      if ([IO.File]::Exists($PositiveAbortCommit)) { $Staged = $true; break }
+      if ($PositiveGuardian.HasExited) { break }
+      Start-Sleep -Milliseconds 120
+    }
+    if (-not $Staged -and $PositiveGuardian.HasExited) {
+      Write-Output ('Native B stage positive diagnostic: ' + $PositiveGuardian.StandardError.ReadToEnd())
+    }
+    Assert-True $Staged 'Verified product Git source and signed native B failed independently owned positive staging.'
+    $StageValue = ConvertFrom-Json ([IO.File]::ReadAllText($PositiveJournal))
+    $StageReceipt = ConvertFrom-Json ([IO.File]::ReadAllText($PositiveCommit))
+    $CancelReceipt = ConvertFrom-Json ([IO.File]::ReadAllText($PositiveAbortCommit))
+    Assert-True ($StageValue.stage -ceq 'rollback_started' -and $StageValue.sequence -eq 2 -and
+      $StageValue.targetSha -ceq $FixtureSourceSha -and
+      $StageReceipt.stage -ceq 'native_staged' -and $StageReceipt.sequence -eq 1 -and
+      $StageReceipt.nativeBFingerprintSha256 -ceq $Finger.sha256 -and
+      $CancelReceipt.stage -ceq 'rollback_started' -and $CancelReceipt.sequence -eq 2 -and
+      $CancelReceipt.stagedJournalSha256 -ceq $StageReceipt.journalSha256 -and
+      $CancelReceipt.nativeBFingerprintSha256 -ceq $Finger.sha256 -and
+      $CancelReceipt.rollbackJournalSha256 -ceq (Get-FileHash -LiteralPath $PositiveJournal -Algorithm SHA256).Hash.ToLowerInvariant()) 'Native B positive staged-to-cancel evidence does not bind both durable source/contract/fingerprint generations.'
+    Assert-True ((Get-FileHash -LiteralPath $StableExe -Algorithm SHA256).Hash -ceq $OriginalWpfHash) 'Positive B stage mutated running original A WPF bytes.'
+    $AfterWpfOwners = @(Get-CimInstance Win32_Process -Filter "Name='EquinoxLocal.exe'" -ErrorAction SilentlyContinue |
+      Where-Object { $_.ExecutablePath -and (Same-Path $_.ExecutablePath $StableExe) })
+    Assert-True ($AfterWpfOwners.Count -eq 1 -and [int]$AfterWpfOwners[0].ProcessId -eq $OriginalWpfPid) 'Positive B staging restarted or stopped original A WPF.'
+    Assert-True ((Get-FileHash -LiteralPath $ExpectedManifestPath -Algorithm SHA256).Hash -ceq $OriginalManifestHash -and
+      [string](Get-Item -LiteralPath $NativeRegistryKey).GetValue('') -ceq $OriginalRegistry) 'Positive B stage changed original A Native Messaging.'
+    Assert-True ((Get-FileHash -LiteralPath (Join-Path $InstallRoot 'current-version.json') -Algorithm SHA256).Hash -ceq $OriginalStablePointerHash) 'Positive B stage changed installed A native pointer.'
+    Assert-True (-not $PositiveGuardian.HasExited -and [IO.File]::Exists($PositiveGuard)) 'Staged B lost original independent OS writer lease.'
+    Write-Output "Windows $FixtureTarget actual product-Git B positive staging and pre-switch cancellation: prepared/0 to native_staged/1 to rollback_started/2 PASSED (A WPF/Native Messaging untouched; B never activated)."
+  } finally {
+    # Test-only owner reclamation. Real installation must never erase an
+    # orphan lock automatically or restore a native journal without proof.
+    if ($null -ne $PositiveGuardian) {
+      try { if (-not $PositiveGuardian.HasExited) { $PositiveGuardian.Kill() } } catch {}
+      try { $PositiveGuardian.WaitForExit(5000) | Out-Null } catch {}
+      $PositiveGuardian.Dispose()
+    }
+    if ($null -ne $PositiveWorker) {
+      try { if (-not $PositiveWorker.HasExited) { $PositiveWorker.Kill() } } catch {}
+      try { $PositiveWorker.WaitForExit(5000) | Out-Null } catch {}
+      $PositiveWorker.Dispose()
+    }
+    if ($WorkerReplaced) { [IO.File]::WriteAllBytes($OwnedWorkerScript, $OriginalWorkerBytes) }
+    Remove-Item -LiteralPath $PositiveGuard,$PositiveAuthority,$PositiveCommit,$PositiveAbortCommit,$PositiveJournal,$PositiveLock,$PositiveReceipt,$PositiveHandoff,$PositiveTrigger -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $PositiveBRoot,$PositiveSource -Recurse -Force -ErrorAction SilentlyContinue
+  }
+  } # Positive B staging runs only in dedicated x64 Guardian CI.
+  if ($GuardianAuditOnly) {
     # The full real installer lane independently checks WPF, Node, native
     # messaging and user state. On this isolated runner the complete Guardian
     # negative audit has passed; always run the enclosing finally cleanup.
@@ -1004,7 +1331,7 @@ try {
     $BrowserProofPath = Join-Path $InstallRoot 'browser\ci-user-browser-proof.txt'
     [IO.File]::WriteAllText($UserProofPath,'old-version-private-setting')
     [IO.File]::WriteAllText($BrowserProofPath,'old-version-browser-preference')
-    & node (Join-Path $Root 'tests/release/smoke-main-upgrade-windows.mjs') $InstallRoot $FixtureSourceSha $env:EQUINOX_WINDOWS_MAIN_ACCEPT_TARGET_SHA
+    & $OwnedNode (Join-Path $Root 'tests/release/smoke-main-upgrade-windows.mjs') $InstallRoot $FixtureSourceSha $env:EQUINOX_WINDOWS_MAIN_ACCEPT_TARGET_SHA ([string]$ownedShell[0].ProcessId)
     Assert-True ((Get-FileHash -LiteralPath $UserSettingsPath -Algorithm SHA256).Hash -ceq $UserConfigShaBefore) 'Real installed Main upgrade changed user config.'
     Assert-True ([IO.File]::ReadAllText($UserProofPath) -ceq 'old-version-private-setting') 'Real Main upgrade lost user settings.'
     Assert-True ([IO.File]::ReadAllText($BrowserProofPath) -ceq 'old-version-browser-preference') 'Real Main upgrade lost user browser data.'

@@ -128,6 +128,12 @@ try {
     receiptStartedAt: started, previousNative: { kind: 'stable', version: '6.0.4' },
     targetRuntimeContractSha256: contract });
   const lifecycle = createSupervisorBoundWindowsNativeABLifecycle({
+    // Disposable slot exercise; ONLY the real installed Guardian acceptance
+    // authorizes native HMAC WPF lifecycle on a non-fixture Main transaction.
+    env: {EQUINOX_LOCAL_MAIN_WORKER_TOKEN:'e'.repeat(64)},
+    verifySignedGuardianHealthImpl: async () => {},
+    shutdownSignedGuardianWpfImpl: async () => {},
+    attestSignedNoRunningShellImpl: async () => {},
     transactionId: jid, transition: { mode: 'artifact_required', target, currentSha: shaA, targetSha: shaB,
       targetRuntimeContractSha256: contract },
     stored: { sourceSha: shaB, target, runtimeContractSha256: contract, releaseDir: targetReleaseDir },
@@ -230,6 +236,16 @@ try {
     readPointerImpl: async () => { throw Object.assign(new Error('Stable A has no main pointer'), { code: 'ENOENT' }); },
     journalFactory: (o) => createEquinoxLocalWindowsNativeTransitionJournal({
       ...o, protectWindowsAcl: async () => ({ safe: true }), verifyWindowsAcl: async () => ({ safe: true }),
+    }),
+    // This disposable PE/native-slot fixture unpacks only shell/node/job
+    // payloads in RUNNER_TEMP. It is NOT an installed full signed A release:
+    // the separate installed-host test exercises actual product Node-spawned
+    // Guardian/HMAC/lease. Never let this synthetic slot fixture spawn a
+    // real product Guardian or impersonate production native admission.
+    attestGuardianSessionImpl: async () => {},
+    authenticateSignedGuardianImpl: async identity => ({
+      originalSignedOwner: true, guardianPid: 733, workerPid: process.pid,
+      workerStartTimeUtcTicks: owner.startTimeUtcTicks,
     }),
   };
   const admitted = await admitWindowsMainNativeWorkerJournal(realAdmission);
