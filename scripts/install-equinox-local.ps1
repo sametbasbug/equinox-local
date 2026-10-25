@@ -98,7 +98,128 @@ function Read-BootstrapManifest([string]$Path) {
   if ($values.artifactUrl -cne $expectedUrl) { Fail 'bootstrap artifact URL escaped the pinned Equinox Local HTTPS path' }
   return [pscustomobject]@{ Version=$values.version; ArtifactUrl=$values.artifactUrl; ArtifactSha256=$values.artifactSha256; ArtifactBytes=$bytes }
 }
-function Invoke-CleanNode([string]$Node, [string]$FirstInstall, [string]$ReleaseDir) {
+# This is a one-shot replacement of product EXECUTABLES, not an update of
+# the prior source. Preserve config, secrets, workspace, tunnel, downloads and
+# browser personal state in place. Retire only exact product-owned executable
+# roots and selectors. The backup is a single bounded transaction, never an
+# accumulation of historical release ZIPs or copied files.
+function Stop-ExistingEquinoxExecutables([string]$InstallRoot, [string]$ProgramRoot) {
+  $prefixes = @(
+    ($InstallRoot + '\releases\'),
+    ($InstallRoot + '\runtime\'),
+    ($InstallRoot + '\state\main-update\')
+  )
+  $wpfExe = Join-Path $ProgramRoot 'EquinoxLocal.exe'
+  $owned = @(Get-CimInstance Win32_Process -ErrorAction Stop | Where-Object {
+    $executable = [string]$_.ExecutablePath
+    if ([string]::IsNullOrEmpty($executable)) { return $false }
+    $canonical = [IO.Path]::GetFullPath($executable)
+    if ([string]::Equals($canonical, $wpfExe, [StringComparison]::OrdinalIgnoreCase)) { return $true }
+    foreach ($prefix in $prefixes) {
+      if ($canonical.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase)) { return $true }
+    }
+    return $false
+  })
+  foreach ($item in $owned) {
+    # Revalidate the executable before terminating an owned process.
+    $live = Get-CimInstance Win32_Process -Filter ("ProcessId=" + [int]$item.ProcessId) -ErrorAction Stop
+    if ($null -ne $live -and [string]::Equals([string]$live.ExecutablePath, [string]$item.ExecutablePath, [StringComparison]::OrdinalIgnoreCase)) {
+      try { Stop-Process -Id ([int]$item.ProcessId) -Force -ErrorAction Stop }
+      catch {
+        # The exact owned process can exit between OS identity verification
+        # and Stop-Process. Ignore ONLY a process that is now absent or is
+        # no longer the verified old executable (PID reuse).
+        $still = Get-CimInstance Win32_Process -Filter ("ProcessId=" + [int]$item.ProcessId) -ErrorAction Stop
+        if ($null -ne $still -and [string]::Equals([string]$still.ExecutablePath, [string]$item.ExecutablePath, [StringComparison]::OrdinalIgnoreCase)) { throw }
+      }
+    }
+  }
+  if ($owned.Count -gt 0) { Start-Sleep -Milliseconds 900 }
+}
+function Get-ExecutableReplacementPaths([string]$InstallRoot) {
+  $localRoot = [IO.Path]::GetDirectoryName($InstallRoot)
+  return @(
+    [pscustomobject]@{ Name='releases'; Path=(Join-Path $InstallRoot 'releases') },
+    [pscustomobject]@{ Name='runtime'; Path=(Join-Path $InstallRoot 'runtime') },
+    [pscustomobject]@{ Name='main-update'; Path=(Join-Path $InstallRoot 'state\main-update') },
+    [pscustomobject]@{ Name='current-version'; Path=(Join-Path $InstallRoot 'current-version.json') },
+    [pscustomobject]@{ Name='program'; Path=(Join-Path $localRoot 'Programs\Equinox Local') },
+    [pscustomobject]@{ Name='native-messaging'; Path=(Join-Path $InstallRoot 'browser\native-messaging\dev.equinox.browser.json') }
+  )
+}
+function Get-NormalExistingEntry([string]$Path) {
+  $item = Get-Item -LiteralPath $Path -Force -ErrorAction SilentlyContinue
+  if ($null -ne $item -and (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0)) {
+    Fail 'existing managed executable entry is a symbolic link or junction; refusing replacement'
+  }
+  return $item
+}
+function Begin-ExecutableReplacement([string]$InstallRoot) {
+  $backup = Join-Path $InstallRoot '.equinox-signed-reinstall-backup'
+  if ($null -ne (Get-NormalExistingEntry $backup)) {
+    Fail 'an interrupted signed reinstall backup exists; automatic second replacement is blocked to preserve the original installation'
+  }
+  $entries = @(Get-ExecutableReplacementPaths $InstallRoot)
+  $present = @($entries | Where-Object { $null -ne (Get-NormalExistingEntry $_.Path) })
+  if ($present.Count -eq 0) { return $null }
+  Stop-ExistingEquinoxExecutables $InstallRoot (Join-Path ([IO.Path]::GetDirectoryName($InstallRoot)) 'Programs\Equinox Local')
+  [IO.Directory]::CreateDirectory($backup) | Out-Null
+  $transaction = [pscustomobject]@{ Backup=$backup; Entries=$entries }
+  try {
+    foreach ($entry in $present) {
+      $source = [string]$entry.Path
+      $destination = Join-Path $backup ([string]$entry.Name)
+      if ([IO.Directory]::Exists($source)) { [IO.Directory]::Move($source, $destination) }
+      elseif ([IO.File]::Exists($source)) { [IO.File]::Move($source, $destination) }
+      else { Fail 'existing executable disappeared during signed reinstall' }
+    }
+  } catch {
+    Restore-ExecutableReplacement $transaction
+    throw
+  }
+  return $transaction
+}
+function Restore-ExecutableReplacement($Transaction) {
+  if ($null -eq $Transaction) { return }
+  $failed = Join-Path $Transaction.Backup 'failed-new'
+  foreach ($entry in $Transaction.Entries) {
+    $old = Join-Path $Transaction.Backup ([string]$entry.Name)
+    $existing = Get-NormalExistingEntry $old
+    $installed = Get-NormalExistingEntry ([string]$entry.Path)
+    if ($null -ne $installed) {
+      [IO.Directory]::CreateDirectory($failed) | Out-Null
+      $quarantine = Join-Path $failed ([string]$entry.Name)
+      if ($installed.PSIsContainer) { [IO.Directory]::Move($installed.FullName, $quarantine) }
+      else { [IO.File]::Move($installed.FullName, $quarantine) }
+    }
+    if ($null -ne $existing) {
+      if ($existing.PSIsContainer) { [IO.Directory]::Move($old, [string]$entry.Path) }
+      else { [IO.File]::Move($old, [string]$entry.Path) }
+    }
+  }
+  # Only after original owned paths have been fully restored is deletion safe.
+  Remove-Item -LiteralPath $Transaction.Backup -Recurse -Force -ErrorAction Stop
+}
+function Complete-ExecutableReplacement($Transaction) {
+  if ($null -ne $Transaction) {
+    # The bundled installer already verified exact NEW version and HEALTHY.
+    # Never keep successful historical executable archives on the user's disk.
+    # Retired managed Git child processes can briefly retain an NTFS handle
+    # (notably commit-graph-chain) after the NEW runtime is healthy. Retry
+    # only this exact product-owned temporary backup, not any user folders.
+    for ($attempt=0; $attempt -lt 20; $attempt++) {
+      try {
+        if ([IO.Directory]::Exists($Transaction.Backup)) { Remove-Item -LiteralPath $Transaction.Backup -Recurse -Force -ErrorAction Stop }
+        return
+      } catch {
+        if ($attempt -eq 19) { throw }
+        Start-Sleep -Milliseconds 500
+      }
+    }
+  }
+}
+
+function Invoke-CleanNode([string]$Node, [string]$FirstInstall, [string]$ReleaseDir, [bool]$FreshReplacement = $false) {
   $psi = New-Object Diagnostics.ProcessStartInfo
   $psi.FileName = $Node
   $psi.UseShellExecute = $false
@@ -114,7 +235,7 @@ function Invoke-CleanNode([string]$Node, [string]$FirstInstall, [string]$Release
   $mainStamp = Join-Path $env:LOCALAPPDATA 'Equinox Local\state\main-update\install.json'
   $existingMain = [IO.File]::Exists($mainStamp)
   if ($existingMain) { Assert-NormalFile $mainStamp 1 8192 | Out-Null }
-  if ($EnrollExistingMain -and -not $existingMain) { $psi.Arguments += ' --enroll-existing-main' }
+  if ($EnrollExistingMain -and -not $existingMain -and -not $FreshReplacement) { $psi.Arguments += ' --enroll-existing-main' }
   $psi.EnvironmentVariables.Clear()
   foreach ($name in @('SystemRoot','WINDIR','ComSpec','TEMP','TMP','USERPROFILE','LOCALAPPDATA','APPDATA','USERNAME','USERDOMAIN','PATH','PATHEXT')) {
     $value = [Environment]::GetEnvironmentVariable($name)
@@ -125,22 +246,16 @@ function Invoke-CleanNode([string]$Node, [string]$FirstInstall, [string]$Release
   if (-not $process.Start()) { Fail 'bundled Node first-install helper did not start' }
   $stdout = $process.StandardOutput.ReadToEnd(); $stderr = $process.StandardError.ReadToEnd(); $process.WaitForExit()
   if ($process.ExitCode -ne 0) { Fail ("managed first-install activation failed: " + ($stderr.Trim() -replace '[\r\n]+',' ')) }
-  if (-not [string]::IsNullOrWhiteSpace($stdout)) { Write-Output $stdout.TrimEnd() }
+  return $stdout.Trim()
 }
 function Assert-ExistingStableUpgradeRoute([string]$InstallRoot, [string]$RequestedVersion, [string]$ExpectedTarget) {
   $currentPointer = Join-Path $InstallRoot 'current-version.json'
   if (-not [IO.File]::Exists($currentPointer)) { return }
   Assert-NormalFile $currentPointer 1 4096 | Out-Null
   $current = $null
-  try { $current = [IO.File]::ReadAllText($currentPointer, (New-Object Text.UTF8Encoding($false, $true))) | ConvertFrom-Json -ErrorAction Stop }
-  catch { Fail 'existing Windows Stable version pointer is malformed; open Equinox Local Control Center for diagnosis' }
-  $keys = @($current.PSObject.Properties.Name | Sort-Object)
-  if ($null -eq $current -or $current.schemaVersion -ne 1 -or $current.target -cne $ExpectedTarget -or
-      $keys.Count -ne 3 -or ($keys -join ',') -cne 'schemaVersion,target,version' -or
-      $current.version -isnot [string] -or
-      $current.version -notmatch '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$') {
-    Fail 'existing Windows Stable version pointer has invalid ownership; open Equinox Local Control Center for diagnosis'
-  }
+  # Old version contents do not participate in new signed package trust.
+  # A stale or malformed pointer is parked along with the other old runtime
+  # selectors; only the signed downloaded candidate determines the target.
   # A valid existing pointer is NOT a reason to reject a fresh signed Stable
   # installation. The bundled managed installer handles the native switch.
   # The user separately selects Update & restart to enroll Main.
@@ -201,8 +316,32 @@ function Invoke-EquinoxLocalInstall {
     Assert-NormalFile $node 1 536870912 | Out-Null
     Assert-NormalFile $firstInstall 1 2097152 | Out-Null
     Write-Info 'installing the verified release'
-    Invoke-CleanNode $node $firstInstall $release
-    Write-Info 'done'
+    $transaction = Begin-ExecutableReplacement $installRoot
+    $newHealthy = $false
+    try {
+      $resultText = Invoke-CleanNode $node $firstInstall $release ([bool]($null -ne $transaction))
+      $result = $null
+      try { $result = $resultText | ConvertFrom-Json -ErrorAction Stop }
+      catch { Fail 'verified installer returned an invalid completion receipt' }
+      if ($null -eq $result -or $result.version -cne $manifest.Version -or
+          $result.status -cnotin @('installed','activated','already-installed')) {
+        Fail 'verified installer did not activate the requested signed release'
+      }
+      $newHealthy = $true
+      Complete-ExecutableReplacement $transaction
+      Write-Output $resultText
+      Write-Info 'done'
+    } catch {
+      if (-not $newHealthy -and $null -ne $transaction) {
+        try {
+          Stop-ExistingEquinoxExecutables $installRoot (Join-Path $localAppData 'Programs\Equinox Local')
+          Restore-ExecutableReplacement $transaction
+        } catch {
+          Fail 'signed reinstall failed and original executable rollback needs repair; backup retained'
+        }
+      }
+      throw
+    }
   } finally {
     if ([IO.Directory]::Exists($stage)) {
       $stageItem = Get-Item -LiteralPath $stage -Force -ErrorAction SilentlyContinue

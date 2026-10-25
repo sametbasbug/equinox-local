@@ -26,10 +26,20 @@ test("public installers enroll Main by default after pinned signed bootstrap", a
   assert.ok(mac.includes('"$SOURCE_RELEASE" ${MAIN_ARGS[@]+"${MAIN_ARGS[@]}"}'));
   assert.match(mac, /enrolls the admitted Main commit by default/u);
   assert.match(windows, /param\(\[switch\]\$EnrollExistingMain = \$true, \[switch\]\$Help\)/u);
-  assert.match(windows, /if \(\$EnrollExistingMain -and -not \$existingMain\) \{ \$psi\.Arguments \+= ' --enroll-existing-main' \}/u);
+  assert.match(windows, /if \(\$EnrollExistingMain -and -not \$existingMain -and -not \$FreshReplacement\) \{ \$psi\.Arguments \+= ' --enroll-existing-main' \}/u);
   assert.match(windows, /enrolls the admitted Main commit by default/u);
   assert.match(windows, /\[IO\.File\]::Exists\(\$mainStamp\)/u);
   assert.match(windows, /Assert-NormalFile \$mainStamp 1 8192/u);
+  // The old Main source is never used as a prerequisite; executable runtime
+  // identities are parked once, while config/credentials/workspace persist.
+  assert.match(windows, /function Begin-ExecutableReplacement/u);
+  assert.match(windows, /function Restore-ExecutableReplacement/u);
+  assert.match(windows, /function Complete-ExecutableReplacement/u);
+  assert.match(windows, /Remove-Item -LiteralPath \$Transaction\.Backup -Recurse -Force -ErrorAction Stop/u);
+  assert.match(windows, /\$result\.version -cne \$manifest\.Version/u);
+  assert.match(windows, /\$newHealthy = \$true/u);
+  assert.doesNotMatch(windows, /\[IO\.Directory\]::Move\([^\n]*config\.json/u);
+
 });
 
 test("public shell installer stays user-level, pinned to Equinox HTTPS and bounded", async () => {

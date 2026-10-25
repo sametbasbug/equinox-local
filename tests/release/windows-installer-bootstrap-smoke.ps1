@@ -40,7 +40,7 @@ const marker = path.join(root, "bootstrap-smoke.json");
 let count = 0;
 try { count = JSON.parse(fs.readFileSync(marker, "utf8")).count || 0; } catch {}
 fs.writeFileSync(marker, JSON.stringify({ count: count + 1, release: process.argv[index + 1], leaked: Boolean(process.env.OPENAI_API_KEY), mainOptIn: process.argv.includes("--enroll-existing-main") }));
-process.stdout.write(JSON.stringify({ ok: true, count: count + 1 }));
+process.stdout.write(JSON.stringify({ status: "installed", version: "9.8.7", count: count + 1 }));
 '@
   [IO.File]::WriteAllText((Join-Path $Release 'equinox-local-first-install.js'), $Stub, (New-Object Text.UTF8Encoding($false)))
   Add-Type -AssemblyName System.IO.Compression
