@@ -34,6 +34,19 @@ test("independent Guardian is staged byte-for-byte outside WPF and remains unreg
   assert.equal((await provision({ installation: f.installation })).status, "already-provisioned");
 });
 
+test("exact Main native-store Guardian is provisioned without requiring old numbered Stable",async (t)=>{
+  const f=await fixture(t);
+  const releaseDir=path.join(f.installRoot,'state','main-update','native-store','win32-x64','a'.repeat(40),'release');
+  const source=path.join(releaseDir,'runtime','guardian','EquinoxLocalGuardian.exe');
+  await fs.mkdir(path.dirname(source),{recursive:true});
+  await fs.writeFile(source,Buffer.alloc(2048,0x31));
+  const installation={...f.installation,releaseDir};
+  assert.equal((await provision({installation})).status,'provisioned');
+  assert.deepEqual(await fs.readFile(f.target),await fs.readFile(source));
+  await assert.rejects(provision({installation:f.installation}),/differs from the trusted release/u);
+  await assert.rejects(provision({installation:{...installation,releaseDir:path.join(f.installRoot,'state','main-update','native-store','win32-x64','b'.repeat(40),'other')}}),/exact owned managed release/u);
+});
+
 test("legacy Stable without a Guardian stays compatible and remains untouched", async (t) => {
   const f = await fixture(t, { guardian: false });
   assert.deepEqual(await provision({ installation: f.installation }), { status: "legacy-release", installed: false });

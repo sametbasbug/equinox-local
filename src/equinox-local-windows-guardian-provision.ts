@@ -13,6 +13,17 @@ function errorCode(error:unknown,code:string):boolean {
 }
 
 const MAX_GUARDIAN_SIZE = 80 * 1024 * 1024;
+// Main A may have reclaimed its old numbered Stable native tree. The
+// immutable source A native-store is its only correct Guardian provenance.
+function isOwnedNativeOrStableRelease(installation:GuardianInstallation):boolean {
+  const root=installation.installRoot!, release=installation.releaseDir!;
+  if (path.dirname(release)===path.join(root,'releases')) return true;
+  const store=path.join(root,'state','main-update','native-store',installation.target!);
+  const relative=path.relative(store,release).split(path.sep);
+  return relative.length===2 && /^[a-f0-9]{40}$/u.test(relative[0]??'') &&
+    relative[1]==='release' && release===path.join(store,relative[0]!,relative[1]!);
+}
+
 
 async function normalDir(dir:string,fsImpl:GuardianFs) {
   const stat = await fsImpl.lstat(dir);
@@ -54,7 +65,7 @@ export async function provisionWindowsGuardianFromRelease({
       !path.isAbsolute(installation.installRoot) || !path.isAbsolute(installation.releaseDir) ||
       path.normalize(installation.installRoot) !== installation.installRoot ||
       path.normalize(installation.releaseDir) !== installation.releaseDir ||
-      path.dirname(installation.releaseDir) !== path.join(installation.installRoot, "releases")) {
+      !isOwnedNativeOrStableRelease(installation)) {
     throw new Error("Windows Guardian requires an exact owned managed release.");
   }
   const releaseDir = installation.releaseDir;
