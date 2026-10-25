@@ -198,7 +198,7 @@ function Restore-ExecutableReplacement($Transaction) {
     }
   }
   # Only after original owned paths have been fully restored is deletion safe.
-  [IO.Directory]::Delete($Transaction.Backup, $true)
+  Remove-Item -LiteralPath $Transaction.Backup -Recurse -Force -ErrorAction Stop
 }
 function Complete-ExecutableReplacement($Transaction) {
   if ($null -ne $Transaction) {
@@ -209,7 +209,7 @@ function Complete-ExecutableReplacement($Transaction) {
     # only this exact product-owned temporary backup, not any user folders.
     for ($attempt=0; $attempt -lt 20; $attempt++) {
       try {
-        if ([IO.Directory]::Exists($Transaction.Backup)) { [IO.Directory]::Delete($Transaction.Backup, $true) }
+        if ([IO.Directory]::Exists($Transaction.Backup)) { Remove-Item -LiteralPath $Transaction.Backup -Recurse -Force -ErrorAction Stop }
         return
       } catch {
         if ($attempt -eq 19) { throw }

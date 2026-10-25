@@ -29,6 +29,9 @@ function Prepare-Old {
   Put (Join-Path $root 'releases\6.1.0\old.exe') 'old-signed-release'
   Put (Join-Path $root 'runtime\guardian\guardian.exe') 'old-guardian'
   Put (Join-Path $root 'state\main-update\sources\broken-old\src\server.js') 'broken-old-source-no-git'
+  $readOnly = Join-Path $root 'state\main-update\sources\broken-old\.git\objects\info\commit-graphs\commit-graph-chain'
+  Put $readOnly 'old-read-only-git-commit-graph'
+  [IO.File]::SetAttributes($readOnly, [IO.FileAttributes]::ReadOnly)
   Put (Join-Path $root 'current-version.json') 'bad-stale-pointer'
   Put (Join-Path $program 'EquinoxLocal.exe') 'old-wpf'
   Put (Join-Path $root 'browser\native-messaging\dev.equinox.browser.json') 'old-host'

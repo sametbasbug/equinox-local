@@ -35,7 +35,7 @@ test("public installers enroll Main by default after pinned signed bootstrap", a
   assert.match(windows, /function Begin-ExecutableReplacement/u);
   assert.match(windows, /function Restore-ExecutableReplacement/u);
   assert.match(windows, /function Complete-ExecutableReplacement/u);
-  assert.match(windows, /\[IO\.Directory\]::Delete\(\$Transaction\.Backup, \$true\)/u);
+  assert.match(windows, /Remove-Item -LiteralPath \$Transaction\.Backup -Recurse -Force -ErrorAction Stop/u);
   assert.match(windows, /\$result\.version -cne \$manifest\.Version/u);
   assert.match(windows, /\$newHealthy = \$true/u);
   assert.doesNotMatch(windows, /\[IO\.Directory\]::Move\([^\n]*config\.json/u);
