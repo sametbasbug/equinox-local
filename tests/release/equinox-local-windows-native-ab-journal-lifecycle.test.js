@@ -329,3 +329,17 @@ test('rollback before native shell-stop restores exact A without pretending the 
  assert.equal(await staged.readExe(),'trusted WPF-A');
  assert.equal(staged.calls.includes('quiesce-owned-B'),false);
 });
+
+test('power loss after A→B rename but before B process start restores EXACT A without pretending B health was achieved',async t=>{
+ const f=await fixture(t,{failMessagingBOnce:true});
+ await assert.rejects(f.lifecycle.activate(),/simulated power loss/u);
+ assert.equal((await f.journal.read(ID)).stage,'shell_stopped');
+ assert.equal(await f.readExe(),'trusted WPF-B');
+ assert.equal(await fs.readFile(path.join(f.backupRoot,'EquinoxLocal.exe'),'utf8'),'trusted WPF-A');
+ await f.lifecycle.rollback();
+ assert.equal((await f.journal.read(ID)).stage,'rollback_native_restored');
+ assert.equal(await f.readExe(),'trusted WPF-A');
+ assert.equal(f.getPointer(),'A');
+ assert.ok(f.calls.includes('quiesce-owned-B'));
+ assert.equal(await fs.readFile(path.join(f.quarantineRoot,'EquinoxLocal.exe'),'utf8'),'trusted WPF-B');
+});

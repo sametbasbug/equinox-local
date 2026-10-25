@@ -8,7 +8,7 @@ import {
 } from './equinox-browser-windows-native-messaging.js';
 import { readEquinoxLocalMainNativePointer, writeEquinoxLocalMainNativePointer } from './equinox-local-main-native-state.js';
 import { createWindowsJournaledNativeABLifecycle } from './equinox-local-windows-native-ab-journal-lifecycle.js';
-import { requestEquinoxWindowsOwnedNativeShellHealth, requestEquinoxWindowsOwnedNativeShellShutdown } from './equinox-local-windows-native-journal-authority-client.js';
+import { attestEquinoxWindowsNoRunningNativeShell, requestEquinoxWindowsOwnedNativeShellHealth, requestEquinoxWindowsOwnedNativeShellShutdown } from './equinox-local-windows-native-journal-authority-client.js';
 
 
 type NativeFs = typeof fs;
@@ -45,6 +45,7 @@ type BoundOptions = SupervisorOptions & {
   createLifecycleImpl?:typeof createWindowsJournaledNativeABLifecycle;
   verifySignedGuardianHealthImpl?:typeof requestEquinoxWindowsOwnedNativeShellHealth;
   shutdownSignedGuardianWpfImpl?:typeof requestEquinoxWindowsOwnedNativeShellShutdown;
+  attestSignedNoRunningShellImpl?:typeof attestEquinoxWindowsNoRunningNativeShell;
 };
 function matches(pattern:RegExp,value:unknown):boolean {
   return typeof value === "string" && pattern.test(value);
@@ -98,6 +99,7 @@ export function createSupervisorBoundWindowsNativeABLifecycle({
   createLifecycleImpl = createWindowsJournaledNativeABLifecycle,
   verifySignedGuardianHealthImpl = requestEquinoxWindowsOwnedNativeShellHealth,
   shutdownSignedGuardianWpfImpl = requestEquinoxWindowsOwnedNativeShellShutdown,
+  attestSignedNoRunningShellImpl = attestEquinoxWindowsNoRunningNativeShell,
 }:BoundOptions = {}) {
   const supervisor = requireWindowsNativeABSupervisor({ windowsAdmission, transition, transactionId });
   const admitted = windowsAdmission as BoundAdmission;
@@ -198,7 +200,22 @@ export function createSupervisorBoundWindowsNativeABLifecycle({
       return supervisor.shutdownOwnedWpf({ ...ownerArgs, transactionId: id, programRoot: root, afterSignedExit:true });
     },
     quiesceOwnedB: async ({ transactionId: id, programRoot: root, sourceSha }) => {
-      await attestSignedNativeShutdown('B');
+      try {
+        await attestSignedNativeShutdown('B');
+      } catch (error) {
+        // A process-free partial swap is NOT proof B was ever running.
+        // Fail closed unless the SAME original signed Guardian verifies
+        // there are ZERO live EquinoxLocal WPF processes in two separate
+        // kernel observations. A still-running A or bad B fails this gate.
+        await assertLiveOwner();
+        const workerToken = env.EQUINOX_LOCAL_MAIN_WORKER_TOKEN;
+        if (typeof workerToken !== 'string' || !/^[a-f0-9]{64}$/u.test(workerToken)) throw error;
+        await attestSignedNoRunningShellImpl({
+          transactionId:id,transactionRoot,workerToken,platform:'win32',
+        });
+        await assertLiveOwner();
+        return true;
+      }
       if (await supervisor.quiesceOwnedB({ ...ownerArgs, transactionId: id, programRoot: root, release: 'B', sourceSha, afterSignedExit:true }) !== true) {
         throw new Error('Independent Windows native B shutdown proof is unavailable.');
       }

@@ -173,13 +173,19 @@ test("Windows detached owner installs a fresh native release without a second Gu
     resolveNativeInstallation: async () => ({ managed: true, selfUpdateSupported: true, target: "win32-x64" }),
     admitWindowsNativeWorker: async (options) => {
       events.push(["owner", options.ownerOnly]);
-      assert.equal(options.nativeHelperPath, path.win32.join('C:\\native-candidate', 'release', 'runtime', 'job', 'equinox-local-job-object-helper.exe'));
-      return { admitted: true, ownerOnly: true };
+      const release = options.ownerOnly ? 'C:\\native-candidate\\release' : 'C:\\native-store\\release';
+      assert.equal(options.nativeHelperPath, path.win32.join(release, 'runtime', 'job', 'equinox-local-job-object-helper.exe'));
+      return options.ownerOnly ? { admitted: true, ownerOnly: true } :
+        { admitted: true, supervisor:{independentNativeOwner:true}, journal:{read:async()=>{},advance:async()=>{}} };
+    },
+    promoteNativeCandidateImpl: async ({candidate}) => {
+      events.push(["inactive-B",candidate.sourceSha]);
+      return {sourceSha:B,target:"win32-x64",releaseDir:'C:\\native-store\\release'};
     },
     ensureNativeArtifact: async () => { events.push(["native-download", B]); },
     prepareNativeCandidate: async () => ({ sourceSha: B, target: "win32-x64", releaseDir: String.raw`C:\native-candidate\release` }),
     prepareNativeLifecycle: async (options) => {
-      assert.equal(options.windowsAdmission, null);
+      assert.equal(options.windowsAdmission.supervisor.independentNativeOwner,true);
       events.push(["fresh-native", options.candidate.sourceSha]);
       return lifecycle;
     },
@@ -191,7 +197,7 @@ test("Windows detached owner installs a fresh native release without a second Gu
     cleanupImpl: async () => events.push(["cleanup"]),
   });
   assert.equal(result.status, "succeeded");
-  assert.deepEqual(events, [["native-download", B], ["owner", true], ["fresh-native", B], ["handoff"], ["cleanup"]]);
+  assert.deepEqual(events, [["native-download", B], ["owner", true], ["inactive-B", B], ["owner", false], ["fresh-native", B], ["handoff"], ["cleanup"]]);
 });
 
 test("target-owned detached worker stages a full native package when older A omitted it", async () => {

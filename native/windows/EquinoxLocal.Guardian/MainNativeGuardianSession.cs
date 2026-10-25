@@ -21,6 +21,8 @@ internal static partial class Program
     // 2 = graceful native B shutdown at rollback_started
     // 3 = sustained native B WPF OS identity at restarted/healthy
     // 4 = sustained restored A WPF OS identity at rollback_native_restored/rollback_healthy
+    // 15 = signed OS proof that no EquinoxLocal WPF runs during a post-A
+    //      shell-stop/pre-B-start rollback (never permission to kill anything)
     // 5..14 = READ-ONLY signed physical milestone evidence for the ONE JS journal
     // writer. Every request verifies CURRENT stage; only JS may advance it.
     private const string SessionProofDomain = "equinox-local-guardian-native-stage-v1:";
@@ -103,7 +105,8 @@ internal static partial class Program
                                (stage == "healthy" && sequence == 5))) ||
               (opcode == 12 && stage == "rollback_started" && sequence is >= 1 and <= 6) ||
               (opcode == 13 && stage == "rollback_native_restored" && sequence is >= 2 and <= 7) ||
-              (opcode == 14 && stage == "rollback_healthy" && sequence is >= 3 and <= 8)))
+              (opcode == 14 && stage == "rollback_healthy" && sequence is >= 3 and <= 8) ||
+              (opcode == 15 && stage == "rollback_started" && sequence is >= 3 and <= 6)))
             throw new InvalidDataException("Native stage opcode does not match exact journal generation.");
 
         var key = Convert.FromHexString(owner.Token);
@@ -152,6 +155,8 @@ internal static partial class Program
                 j.GetProperty("targetSha").GetString() ?? "", continuousNativeSession: true);
         else if (opcode is 3 or 4)
             InspectOwnedLiveNativeShellSustained(owner, j, opcode == 3, worker);
+        else if (opcode == 15)
+            InspectOwnedAbsentNativeShellForRollback(owner, worker);
         else
             InspectOriginalGuardianPhysicalMilestone(owner, root, j, digest, opcode, worker);
 
@@ -167,8 +172,35 @@ internal static partial class Program
         server.Flush();
         InspectionPhase = opcode == 0 ? "native-session-original-os-owner-confirmed"
             : opcode is 3 or 4 ? "native-session-sustained-os-wpf-identity-confirmed"
-            : opcode is >= 5 and <= 14 ? "native-session-physical-milestone-verified"
+            : opcode is >= 5 and <= 15 ? "native-session-physical-milestone-verified"
             : "native-session-stage-wpf-exit-confirmed";
+    }
+
+    private static void InspectOwnedAbsentNativeShellForRollback(OwnedWorkerClaim owner, Process worker)
+    {
+        // If a crash occurs after original A exited but before B began
+        // running, THERE IS NO B TO SHUT DOWN. Instead of inventing a
+        // successful B shutdown receipt, require an independent kernel
+        // observation proving NO live EquinoxLocal WPF process exists.
+        // Fail closed on ANY same-name WPF including uninspectable/foreign
+        // processes; never silently treat those as a stopped product shell.
+        InspectionPhase = "native-rollback-no-running-wpf-kernel-proof";
+        for (var observation = 0; observation < 2; observation++)
+        {
+            foreach (var process in Process.GetProcessesByName("EquinoxLocal"))
+            {
+                using (process)
+                {
+                    if (!process.HasExited)
+                        throw new InvalidDataException("Rollback cannot prove B absent while any EquinoxLocal WPF is live.");
+                }
+            }
+            if (worker.HasExited ||
+                worker.StartTime.ToUniversalTime().Ticks.ToString(CultureInfo.InvariantCulture) != owner.Ticks)
+                throw new InvalidDataException("Original native rollback worker exited during no-B OS proof.");
+            if (observation == 0) Thread.Sleep(400);
+        }
+        InspectionPhase = "native-rollback-no-wpf-sustained-kernel-proof";
     }
 
     private static void InspectOriginalGuardianPhysicalMilestone(

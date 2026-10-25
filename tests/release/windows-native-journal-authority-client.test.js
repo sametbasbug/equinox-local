@@ -5,7 +5,7 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import {proveEquinoxWindowsNativeJournalAuthority,proveEquinoxWindowsNativeBRollbackAuthority,requestEquinoxWindowsOwnedNativeShellShutdown,requestEquinoxWindowsOwnedNativeShellHealth,attestEquinoxWindowsOriginalGuardianSession,attestEquinoxWindowsNativePhysicalMilestone} from '../../src/equinox-local-windows-native-journal-authority-client.js';
+import {proveEquinoxWindowsNativeJournalAuthority,proveEquinoxWindowsNativeBRollbackAuthority,requestEquinoxWindowsOwnedNativeShellShutdown,requestEquinoxWindowsOwnedNativeShellHealth,attestEquinoxWindowsOriginalGuardianSession,attestEquinoxWindowsNativePhysicalMilestone,attestEquinoxWindowsNoRunningNativeShell} from '../../src/equinox-local-windows-native-journal-authority-client.js';
 
 const tx = `main-${'a'.repeat(32)}`;
 const token = 'e'.repeat(64);
@@ -397,4 +397,58 @@ test('physical native A/B milestones require original Guardian fresh generation 
  assert.match(csharp,/stable-shell-quiesce\.json/u);
  assert.match(csharp,/InspectOwnedNativeShellPayload\(owner, journal, targetB: opcode == 7\)/u);
  assert.match(csharp,/InspectOwnedLiveNativeShellSustained\(owner, journal, opcode is 8 or 9 or 10, worker\)/u);
+});
+
+test('signed Guardian opcode15 permits missing-B rollback only with exact rollback_started generation and fresh OS HMAC',async t=>{
+ const root=await fs.mkdtemp(path.join(os.tmpdir(),'equinox-no-b-wpf-'));
+ t.after(()=>fs.rm(root,{recursive:true,force:true}));
+ await fs.mkdir(path.join(root,'guardian-journal'));
+ const file=path.join(root,'guardian-journal',tx+'.json');
+ const pipe=path.join(root,'no-b.sock');
+ const nonce=Buffer.alloc(32,73);
+ let raw=Buffer.alloc(0), observed=0;
+ const server=net.createServer(socket=>{
+  let bytes=Buffer.alloc(0);
+  socket.on('data',chunk=>{
+   bytes=Buffer.concat([bytes,chunk]);
+   if(bytes.length===33){
+    assert.equal(bytes[0],15);
+    const expected=createHmac('sha256',Buffer.from(token,'hex'))
+      .update('equinox-local-guardian-native-stage-v1:')
+      .update(Buffer.from([15])).update(nonce)
+      .update(createHash('sha256').update(raw).digest()).digest();
+    assert.deepEqual(bytes.subarray(1),expected);
+    observed++;
+    socket.end(Buffer.from([1]));
+   }
+  });
+  socket.write(nonce);
+ });
+ await new Promise(resolve=>server.listen(pipe,resolve));
+ t.after(()=>new Promise(resolve=>server.close(resolve)));
+ for(const sequence of [3,4,5,6]){
+  raw=Buffer.from(JSON.stringify({transactionId:tx,stage:'rollback_started',sequence}));
+  await fs.writeFile(file,raw);
+  await attestEquinoxWindowsNoRunningNativeShell({
+   transactionId:tx,transactionRoot:root,workerToken:token,platform:'test',
+   fixturePipePath:pipe,
+  });
+ }
+ assert.equal(observed,4);
+ for(const [stage,sequence] of [
+  ['prepared',0],['native_staged',1],['shell_stopped',2],
+  ['rollback_started',1],['rollback_started',2],['rollback_started',7],
+  ['rollback_native_restored',4],['healthy',5],
+ ]){
+  await fs.writeFile(file,JSON.stringify({transactionId:tx,stage,sequence}));
+  await assert.rejects(attestEquinoxWindowsNoRunningNativeShell({
+   transactionId:tx,transactionRoot:root,workerToken:token,platform:'test',
+   fixturePipePath:pipe,
+  }),/unrelated native A\/B journal generation/u);
+ }
+ const csharp=await fs.readFile(new URL('../../native/windows/EquinoxLocal.Guardian/MainNativeGuardianSession.cs',import.meta.url),'utf8');
+ assert.match(csharp,/opcode == 15 && stage == "rollback_started"/u);
+ assert.match(csharp,/InspectOwnedAbsentNativeShellForRollback\(owner, worker\)/u);
+ assert.match(csharp,/Process.GetProcessesByName\("EquinoxLocal"\)/u);
+ assert.match(csharp,/if \(!process.HasExited\)/u);
 });

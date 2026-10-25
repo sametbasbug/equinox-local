@@ -108,6 +108,7 @@ test('supervisor-bound native host registers exact launcher and makes pointer co
     env: {EQUINOX_LOCAL_MAIN_WORKER_TOKEN:'e'.repeat(64)},
     verifySignedGuardianHealthImpl: async () => {},
     shutdownSignedGuardianWpfImpl: async () => {},
+    attestSignedNoRunningShellImpl: async () => {},
     transition, transactionId: ID, stored: { sourceSha: B, target, runtimeContractSha256: CB, releaseDir: newRelease },
     windowsAdmission: admission, previousReleaseDir: oldRelease,
     programRoot: install.programRoot, manifestRoot: install.nativeMessagingManifestRoot,
@@ -191,6 +192,7 @@ test('native A/B refuses new Native Messaging owner not independently verified a
     env: {EQUINOX_LOCAL_MAIN_WORKER_TOKEN:'e'.repeat(64)},
     verifySignedGuardianHealthImpl: async () => {},
     shutdownSignedGuardianWpfImpl: async () => {},
+    attestSignedNoRunningShellImpl: async () => {},
     transition, transactionId: ID,
     windowsAdmission: admission,
     stored: { sourceSha:B, target, runtimeContractSha256:CB, releaseDir:newRelease },
@@ -236,6 +238,7 @@ test('supervisor-owned WPF shutdown and Native Messaging write reject expired wo
     env: {EQUINOX_LOCAL_MAIN_WORKER_TOKEN:'e'.repeat(64)},
     verifySignedGuardianHealthImpl: async () => {},
     shutdownSignedGuardianWpfImpl: async () => {},
+    attestSignedNoRunningShellImpl: async () => {},
     transition, transactionId: ID, windowsAdmission: admission,
     stored: {sourceSha:B,target,runtimeContractSha256:CB,releaseDir:newRelease},
     previousReleaseDir:oldRelease,programRoot:install.programRoot,
@@ -281,6 +284,7 @@ test('supervisor-bound B pointer refuses expired owner, messaging or health befo
     env: {EQUINOX_LOCAL_MAIN_WORKER_TOKEN:'e'.repeat(64)},
     verifySignedGuardianHealthImpl: async () => {},
     shutdownSignedGuardianWpfImpl: async () => {},
+    attestSignedNoRunningShellImpl: async () => {},
       transition,transactionId:ID,windowsAdmission:admission,
       stored:{sourceSha:B,target,runtimeContractSha256:CB,releaseDir:newRelease},
       previousReleaseDir:oldRelease,programRoot:install.programRoot,
@@ -314,6 +318,7 @@ test('supervisor-bound rollback restores exact Stable A absence after B pointer 
     env: {EQUINOX_LOCAL_MAIN_WORKER_TOKEN:'e'.repeat(64)},
     verifySignedGuardianHealthImpl: async () => {},
     shutdownSignedGuardianWpfImpl: async () => {},
+    attestSignedNoRunningShellImpl: async () => {},
     transition,transactionId:ID,windowsAdmission:admitted({supervisor:{
       ...admitted().supervisor,
       assertWorkerOwnership:async()=>owned,
@@ -348,6 +353,7 @@ test('original Main pointer cannot be substituted with a foreign runtime contrac
     env: {EQUINOX_LOCAL_MAIN_WORKER_TOKEN:'e'.repeat(64)},
     verifySignedGuardianHealthImpl: async () => {},
     shutdownSignedGuardianWpfImpl: async () => {},
+    attestSignedNoRunningShellImpl: async () => {},
     transition,transactionId:ID,windowsAdmission:admitted(),
     stored:{sourceSha:B,target,runtimeContractSha256:CB,releaseDir:newRelease},
     previousPointer:{sourceSha:A,target,runtimeContractSha256:'f'.repeat(64)},
@@ -367,6 +373,7 @@ test('supervisor-bound rollback restores exact prior Main A pointer after B poin
     env: {EQUINOX_LOCAL_MAIN_WORKER_TOKEN:'e'.repeat(64)},
     verifySignedGuardianHealthImpl: async () => {},
     shutdownSignedGuardianWpfImpl: async () => {},
+    attestSignedNoRunningShellImpl: async () => {},
     transition,transactionId:ID,windowsAdmission:admitted(),
     stored:{sourceSha:B,target,runtimeContractSha256:CB,releaseDir:newRelease},
     previousPointer:original,previousReleaseDir:oldRelease,programRoot:install.programRoot,
@@ -398,6 +405,7 @@ test('supervisor-bound rollback requires distinct native B quiesce and rejects u
     env: {EQUINOX_LOCAL_MAIN_WORKER_TOKEN:'e'.repeat(64)},
     verifySignedGuardianHealthImpl: async () => {},
     shutdownSignedGuardianWpfImpl: async () => {},
+    attestSignedNoRunningShellImpl: async () => {},
     transition, transactionId:ID,windowsAdmission:admission,
     stored:{sourceSha:B,target,runtimeContractSha256:CB,releaseDir:newRelease},
     previousReleaseDir:oldRelease, programRoot:install.programRoot,
@@ -476,6 +484,10 @@ test('original signed Guardian must authorize BOTH WPF A and failed B shutdown b
         assert.equal(req.workerToken,'e'.repeat(64));
         throw new Error('original signed Guardian refused the exact WPF native stage');
       },
+      attestSignedNoRunningShellImpl:async()=>{
+        events.push('no-wpf-kernel-denial');
+        throw new Error('original signed Guardian refused the exact WPF native stage');
+      },
       assertNativeHostImpl:async()=>events.push('UNSAFE-REGISTRY'),
       writePointerImpl:async()=>events.push('UNSAFE-POINTER'),
       createLifecycleImpl:input=>({
@@ -488,7 +500,8 @@ test('original signed Guardian must authorize BOTH WPF A and failed B shutdown b
       release==='A'?lc.terminateA():lc.terminateB(),
       /original signed Guardian refused the exact WPF native stage/u,
     );
-    assert.deepEqual(events,['guardian-'+release]);
+    assert.deepEqual(events,release==='B'
+      ? ['guardian-B','no-wpf-kernel-denial'] : ['guardian-A']);
   }
 });
 
@@ -515,4 +528,40 @@ test('real signed Guardian WPF exit precedes optional independent supervisor pos
   await lc.terminateA();
   await lc.terminateB();
   assert.deepEqual(events,['guardian-A','post-A','guardian-B','post-B']);
+});
+
+test('post-A-exit rollback may skip shutting down NEVER-RUNNING B only with original signed Guardian no-WPF OS proof',async()=>{
+ const events=[];
+ const adm=admitted({supervisor:{...admitted().supervisor,
+   quiesceOwnedB:async()=>{events.push('UNSAFE-SUPERVISOR-KILL');return true;},
+ }});
+ const base={
+   transition,transactionId:ID,windowsAdmission:adm,
+   stored:{sourceSha:B,target,runtimeContractSha256:CB,releaseDir:newRelease},
+   previousReleaseDir:oldRelease,programRoot:install.programRoot,
+   manifestRoot:install.nativeMessagingManifestRoot,transactionRoot:TEST_TX_ROOT,
+   pointerPath:path.join(TEST_TX_ROOT,'current-native.json'),
+   env:{EQUINOX_LOCAL_MAIN_WORKER_TOKEN:'e'.repeat(64)},
+   verifySignedGuardianHealthImpl:async()=>{},
+   shutdownSignedGuardianWpfImpl:async()=>{events.push('B-shutdown-refused');throw Error('no live B shell');},
+   createLifecycleImpl:args=>({
+     rollbackB:()=>args.quiesceOwnedB({transactionId:ID,programRoot:install.programRoot,sourceSha:B}),
+   }),
+ };
+ const noWitness=createSupervisorBoundWindowsNativeABLifecycle({
+   ...base,attestSignedNoRunningShellImpl:async()=>{events.push('kernel-wpf-still-running');throw Error('WPF is running');},
+ });
+ await assert.rejects(noWitness.rollbackB(),/WPF is running/u);
+ assert.deepEqual(events,['B-shutdown-refused','kernel-wpf-still-running']);
+ const witness=createSupervisorBoundWindowsNativeABLifecycle({
+   ...base,attestSignedNoRunningShellImpl:async req=>{
+     assert.equal(req.transactionId,ID);
+     assert.equal(req.workerToken,'e'.repeat(64));
+     events.push('kernel-sustained-zero-wpf');
+   },
+ });
+ assert.equal(await witness.rollbackB(),true);
+ assert.deepEqual(events,['B-shutdown-refused','kernel-wpf-still-running',
+   'B-shutdown-refused','kernel-sustained-zero-wpf']);
+ assert.equal(events.includes('UNSAFE-SUPERVISOR-KILL'),false);
 });

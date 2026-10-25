@@ -83,6 +83,14 @@ export async function attestEquinoxWindowsNativePhysicalMilestone(
   });
 }
 
+// Only an independently verified ABSENCE of all EquinoxLocal WPF processes
+// permits rollback after A stopped but BEFORE B was ever launched.
+export async function attestEquinoxWindowsNoRunningNativeShell(options:AuthorityProofOptions):Promise<void> {
+  return requestEquinoxWindowsOwnedNativeShellShutdown({
+    ...options,release:'B',signedNoRunningShell:true,
+  });
+}
+
 export async function requestEquinoxWindowsOwnedNativeShellHealth(options:AuthorityProofOptions & {release:'A'|'B'}):Promise<void> {
   return requestEquinoxWindowsOwnedNativeShellShutdown({...options, sustainedHealth:true});
 }
@@ -90,9 +98,9 @@ export async function requestEquinoxWindowsOwnedNativeShellHealth(options:Author
 export async function requestEquinoxWindowsOwnedNativeShellShutdown({
   transactionId, transactionRoot, workerToken, platform = process.platform,
   fixturePipePath = null, release, sustainedHealth = false, signedOwnerOnly = false,
-  signedMilestone,
+  signedMilestone, signedNoRunningShell = false,
 }:AuthorityProofOptions & {release:'A'|'B'; sustainedHealth?:boolean; signedOwnerOnly?:boolean;
-  signedMilestone?:keyof typeof PHYSICAL_MILESTONES}):Promise<void> {
+  signedNoRunningShell?:boolean; signedMilestone?:keyof typeof PHYSICAL_MILESTONES}):Promise<void> {
   if (!TX.test(transactionId ?? '') || !TOKEN.test(workerToken ?? '') ||
       typeof transactionRoot !== 'string' || !path.isAbsolute(transactionRoot) ||
       path.normalize(transactionRoot) !== transactionRoot ||
@@ -101,7 +109,8 @@ export async function requestEquinoxWindowsOwnedNativeShellShutdown({
     throw new Error('Native Guardian session command has invalid exact worker identity.');
   }
   const opcode = signedMilestone === undefined
-    ? signedOwnerOnly ? 0 : sustainedHealth ? (release === 'A' ? 4 : 3) : (release === 'A' ? 1 : 2)
+    ? signedNoRunningShell ? 15 : signedOwnerOnly ? 0 :
+      sustainedHealth ? (release === 'A' ? 4 : 3) : (release === 'A' ? 1 : 2)
     : PHYSICAL_MILESTONES[signedMilestone];
   const handle = await fs.open(path.join(transactionRoot!, 'guardian-journal', transactionId! + '.json'),
     fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0));
@@ -115,7 +124,9 @@ export async function requestEquinoxWindowsOwnedNativeShellShutdown({
   } finally { await handle.close(); }
   const j = recordOrNull(JSON.parse(raw.toString('utf8')));
   const seq = typeof j?.sequence === 'number' && Number.isSafeInteger(j.sequence) ? j.sequence : -1;
-  const valid = opcode >= 5 && opcode <= 14
+  const valid = opcode === 15
+    ? (j?.stage === 'rollback_started' && seq >= 3 && seq <= 6)
+    : opcode >= 5 && opcode <= 14
     ? (opcode === 5 && j?.stage === 'prepared' && seq === 0) ||
       (opcode === 6 && j?.stage === 'native_staged' && seq === 1) ||
       (opcode === 7 && j?.stage === 'shell_stopped' && seq === 2) ||
