@@ -801,6 +801,22 @@ test('all Guardian native transition record reads validate size and parse on one
   assert.doesNotMatch(body, /FileInfo\(|File\.ReadAllBytes\(|FileShare\.(?:Delete|ReadWrite)|FileMode\.OpenOrCreate/u);
 });
 
+test('Guardian authenticates one pinned prepared journal OS handle across HMAC and durable authority proof', async () => {
+  const root = new URL('../../native/windows/EquinoxLocal.Guardian/', import.meta.url);
+  const native = await fs.readFile(new URL('MainNativeJournalAuthority.cs', root), 'utf8');
+  const start = native.indexOf('private static void RecordNativeJournalWorkerAuthority(');
+  const end = native.indexOf('\n    }', start);
+  assert.ok(start !== -1 && end > start);
+  const body = native.slice(start);
+  assert.match(body, /using var pinnedJournal = new FileStream\(journalPath, FileMode.Open, FileAccess.Read, FileShare.Read\)/u);
+  assert.match(body, /pinnedJournal.Length is < 2 or > 8192/u);
+  assert.match(body, /using var journal = JsonDocument.Parse\(pinnedJournal\)/u);
+  assert.match(body, /pinnedJournal.ReadExactly\(journalBytes\)/u);
+  assert.match(body, /CryptographicOperations.FixedTimeEquals\(digest, SHA256.HashData\(pinnedJournal\)\)/u);
+  assert.match(body, /pinnedJournal.Dispose\(\);\s*WriteNativeJournalPreparedAbort/u);
+  assert.doesNotMatch(body, /SHA256.HashData\(File.ReadAllBytes\(journalPath\)\)|var journalBytes = File.ReadAllBytes\(journalPath\)/u);
+});
+
 test('Guardian shared native worker handoff digest hashes the same bounded Windows OS file handle', async () => {
   const root=new URL('../../native/windows/EquinoxLocal.Guardian/',import.meta.url);
   const source=await fs.readFile(new URL('MainNativeJournalAuthority.cs',root),'utf8');

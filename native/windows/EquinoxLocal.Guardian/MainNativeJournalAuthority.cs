@@ -47,14 +47,20 @@ internal static partial class Program
         InspectionPhase = "native-journal-authority-prepared-only";
         var journalPath = Path.Combine(root, owner.TransactionId + ".json");
         RequireNormalFile(journalPath);
-        using var journal = ReadOwnedTransitionRecord(journalPath, 8192);
+        // Keep the exact journal OS file handle nonreplaceable across parsing,
+        // digest, live worker HMAC and durable authority receipt. Never reopen
+        // its pathname between authentication and commit.
+        using var pinnedJournal = new FileStream(journalPath, FileMode.Open, FileAccess.Read, FileShare.Read);
+        if (pinnedJournal.Length is < 2 or > 8192)
+            throw new InvalidDataException("Native journal generation exceeds its bound.");
+        using var journal = JsonDocument.Parse(pinnedJournal);
         if (journal.RootElement.GetProperty("transactionId").GetString() != owner.TransactionId ||
             journal.RootElement.GetProperty("stage").GetString() != "prepared" ||
             journal.RootElement.GetProperty("sequence").GetInt32() != 0)
             throw new InvalidDataException("Guardian authority proof requires the exact prepared journal generation.");
-        var journalBytes = File.ReadAllBytes(journalPath);
-        if (journalBytes.Length < 2 || journalBytes.Length > 8192)
-            throw new InvalidDataException("Native journal generation exceeds its bound.");
+        pinnedJournal.Position = 0;
+        var journalBytes = new byte[checked((int)pinnedJournal.Length)];
+        pinnedJournal.ReadExactly(journalBytes);
         var digest = SHA256.HashData(journalBytes);
         var handoffDigest = HashOwnedWorkerHandoff(root, owner.TransactionId);
         var dest = Path.Combine(root, owner.TransactionId + ".native-authority.json");
@@ -93,8 +99,10 @@ internal static partial class Program
         finally { CryptographicOperations.ZeroMemory(key); }
         if (worker.HasExited || worker.StartTime.ToUniversalTime().Ticks.ToString(CultureInfo.InvariantCulture) != owner.Ticks)
             throw new InvalidDataException("Native journal worker changed after HMAC proof.");
-        // Never accept a journal generation that changed during the handshake.
-        if (!CryptographicOperations.FixedTimeEquals(digest, SHA256.HashData(File.ReadAllBytes(journalPath))))
+        // Hash the same original nonreplaceable handle after the challenge:
+        // no pathname substitution can change which journal was authorized.
+        pinnedJournal.Position = 0;
+        if (!CryptographicOperations.FixedTimeEquals(digest, SHA256.HashData(pinnedJournal)))
             throw new InvalidDataException("Native journal generation changed during worker authentication.");
         if (!CryptographicOperations.FixedTimeEquals(handoffDigest, HashOwnedWorkerHandoff(root, owner.TransactionId)))
             throw new InvalidDataException("Native worker handoff changed during live Guardian authorization.");
@@ -129,6 +137,12 @@ internal static partial class Program
         fd.Flush(flushToDisk: true);
         InspectionPhase = "native-journal-authority-proof-durable";
         if (recordPreparedAbort)
+        {
+            // The separate prepared-abort pilot atomically renames the journal.
+            // Release this read-only nonreplaceable handle only AFTER the
+            // durable prepared receipt; the abort compares the exact digest.
+            pinnedJournal.Dispose();
             WriteNativeJournalPreparedAbort(owner, journalPath, journalBytes, digest);
+        }
     }
 }
