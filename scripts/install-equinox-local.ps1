@@ -125,6 +125,23 @@ function Test-ExistingEquinoxOwnedProcess($Process, [string]$InstallRoot, [strin
   return [regex]::IsMatch($args,$pattern,[Text.RegularExpressions.RegexOptions]::IgnoreCase)
 }
 function Stop-ExistingEquinoxExecutables([string]$InstallRoot, [string]$ProgramRoot) {
+  # Shut down the verified old WPF process TREE before stopping individual
+  # children. Stop-Process on only the root leaves detached old Node/job
+  # helpers running, and those processes can keep the previous native-store
+  # executable directory alive throughout the rename transaction.
+  $app = [IO.Path]::GetFullPath((Join-Path $ProgramRoot 'EquinoxLocal.exe'))
+  $systemKill = Join-Path ([Environment]::SystemDirectory) 'taskkill.exe'
+  $oldShells = @(Get-CimInstance Win32_Process -Filter "Name='EquinoxLocal.exe'" -ErrorAction Stop | Where-Object {
+    [string]::Equals([string]$_.ExecutablePath, $app, [StringComparison]::OrdinalIgnoreCase)
+  })
+  foreach ($shell in $oldShells) {
+    $still = Get-CimInstance Win32_Process -Filter ("ProcessId=" + [int]$shell.ProcessId) -ErrorAction Stop
+    if ($null -eq $still -or $still.CreationDate -ne $shell.CreationDate -or
+        -not [string]::Equals([string]$still.ExecutablePath,$app,[StringComparison]::OrdinalIgnoreCase)) { continue }
+    # taskkill /T terminates only descendants of this exact, revalidated
+    # signed product WPF root, never all instances of a process by name.
+    & $systemKill /PID ([string]$shell.ProcessId) /T /F 2>$null | Out-Null
+  }
   # The old supervisor may relaunch children while exiting, and Chrome may
   # still hold a Native Messaging host. Re-query exact OS identities until no
   # owned processes remain; never terminate a same-PID foreign replacement.
@@ -146,7 +163,10 @@ function Stop-ExistingEquinoxExecutables([string]$InstallRoot, [string]$ProgramR
     }
     Start-Sleep -Milliseconds 400
   }
-  Fail 'old Equinox Local processes still hold the runtime; signed reinstall cannot safely continue'
+  $remains=@(Get-CimInstance Win32_Process -ErrorAction Stop | Where-Object {
+    Test-ExistingEquinoxOwnedProcess $_ $InstallRoot $ProgramRoot
+  } | ForEach-Object { "$($_.Name):$($_.ProcessId)" })
+  Fail ('old Equinox Local processes still hold the runtime: ' + ($remains -join ', '))
 }
 
 function Get-ExecutableReplacementPaths([string]$InstallRoot) {
