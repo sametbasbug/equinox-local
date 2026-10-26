@@ -124,6 +124,67 @@ function Test-ExistingEquinoxOwnedProcess($Process, [string]$InstallRoot, [strin
   $pattern = [regex]::Escape($managedRoot) + '[^"\r\n]+\.(?:js|mjs|ps1|git)(?:"|\s|$)'
   return [regex]::IsMatch($args,$pattern,[Text.RegularExpressions.RegexOptions]::IgnoreCase)
 }
+# Chrome can restart its still-registered OLD Native Messaging host after the
+# previous WPF shuts down. Its old executable then pins the immutable Main
+# directory even while the new independently signed installer is ready.
+# Temporarily hide ONLY the verified, exclusively product-owned HKCU Chrome
+# host registration while retiring the old runtime. On failed installation
+# restore the same registration AFTER old executable rollback. The admitted
+# new release re-registers its own host on successful activation.
+function Suspend-OldEquinoxChromeHost([string]$InstallRoot) {
+  $subkey = 'Software\Google\Chrome\NativeMessagingHosts\dev.equinox.browser'
+  $parent = 'Software\Google\Chrome\NativeMessagingHosts'
+  $manifest = [IO.Path]::GetFullPath((Join-Path $InstallRoot 'browser\native-messaging\dev.equinox.browser.json'))
+  $key = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($subkey, $false)
+  if ($null -eq $key) { return $null }
+  try {
+    if ($key.SubKeyCount -ne 0 -or $key.ValueCount -ne 1 -or
+        $key.GetValueKind('') -ne [Microsoft.Win32.RegistryValueKind]::String -or
+        -not [string]::Equals([string]$key.GetValue('', $null), $manifest, [StringComparison]::OrdinalIgnoreCase)) {
+      Fail 'existing Chrome Native Messaging registration is not exclusively owned by Equinox Local'
+    }
+  } finally { $key.Dispose() }
+  Assert-NormalFile $manifest 1 16384 | Out-Null
+  $record = Get-Content -LiteralPath $manifest -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+  $launcher = [IO.Path]::GetFullPath([string]$record.path)
+  $allowedRoots = @('state\main-update', 'releases') | ForEach-Object {
+    [IO.Path]::GetFullPath((Join-Path $InstallRoot $_)).TrimEnd('\') + '\'
+  }
+  $ownedLauncher = $false
+  foreach ($prefix in $allowedRoots) {
+    if ($launcher.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase)) { $ownedLauncher = $true }
+  }
+  if ($record.name -cne 'dev.equinox.browser' -or $record.type -cne 'stdio' -or
+      @($record.allowed_origins).Count -ne 1 -or
+      [string]::IsNullOrWhiteSpace([string]$record.path) -or
+      -not [IO.Path]::IsPathRooted([string]$record.path) -or
+      -not $ownedLauncher -or
+      -not $launcher.EndsWith('\runtime\browser\equinox-browser-native-host.exe', [StringComparison]::OrdinalIgnoreCase)) {
+    Fail 'old Chrome Native Messaging manifest does not identify a product-owned Main launcher'
+  }
+  $registry = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($parent, $true)
+  if ($null -eq $registry) { Fail 'Chrome Native Messaging registry parent is inaccessible' }
+  try {
+    $registry.DeleteSubKey('dev.equinox.browser', $false)
+  } finally { $registry.Dispose() }
+  return [pscustomobject]@{ Subkey=$subkey; Manifest=$manifest }
+}
+function Restore-OldEquinoxChromeHost($Suspended) {
+  if ($null -eq $Suspended) { return }
+  # Never leave the old installation without its browser bridge after a
+  # failed reinstall. Refuse to overwrite a foreign registrant.
+  Assert-NormalFile $Suspended.Manifest 1 16384 | Out-Null
+  $key = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey($Suspended.Subkey)
+  if ($null -eq $key) { Fail 'old Chrome Native Messaging registration could not be restored' }
+  try {
+    $value = $key.GetValue('', $null)
+    if ($null -ne $value -and -not [string]::Equals([string]$value, [string]$Suspended.Manifest, [StringComparison]::OrdinalIgnoreCase)) {
+      Fail 'Chrome Native Messaging registration changed ownership during reinstall'
+    }
+    $key.SetValue('', [string]$Suspended.Manifest, [Microsoft.Win32.RegistryValueKind]::String)
+  } finally { $key.Dispose() }
+}
+
 function Stop-ExistingEquinoxExecutables([string]$InstallRoot, [string]$ProgramRoot) {
   # Shut down the verified old WPF process TREE before stopping individual
   # children. Stop-Process on only the root leaves detached old Node/job
@@ -365,9 +426,11 @@ function Invoke-EquinoxLocalInstall {
     Assert-NormalFile $node 1 536870912 | Out-Null
     Assert-NormalFile $firstInstall 1 2097152 | Out-Null
     Write-Info 'installing the verified release'
-    $transaction = Begin-ExecutableReplacement $installRoot
+    $nativeHostSuspension = Suspend-OldEquinoxChromeHost $installRoot
+    $transaction = $null
     $newHealthy = $false
     try {
+      $transaction = Begin-ExecutableReplacement $installRoot
       $resultText = Invoke-CleanNode $node $firstInstall $release ([bool]($null -ne $transaction))
       $result = $null
       try { $result = $resultText | ConvertFrom-Json -ErrorAction Stop }
@@ -381,12 +444,15 @@ function Invoke-EquinoxLocalInstall {
       Write-Output $resultText
       Write-Info 'done'
     } catch {
-      if (-not $newHealthy -and $null -ne $transaction) {
+      if (-not $newHealthy) {
         try {
-          Stop-ExistingEquinoxExecutables $installRoot (Join-Path $localAppData 'Programs\Equinox Local')
-          Restore-ExecutableReplacement $transaction
+          if ($null -ne $transaction) {
+            Stop-ExistingEquinoxExecutables $installRoot (Join-Path $localAppData 'Programs\Equinox Local')
+            Restore-ExecutableReplacement $transaction
+          }
+          Restore-OldEquinoxChromeHost $nativeHostSuspension
         } catch {
-          Fail 'signed reinstall failed and original executable rollback needs repair; backup retained'
+          Fail 'signed reinstall failed and original executable/native-host rollback needs repair; backup retained'
         }
       }
       throw
