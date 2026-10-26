@@ -103,39 +103,52 @@ function Read-BootstrapManifest([string]$Path) {
 # browser personal state in place. Retire only exact product-owned executable
 # roots and selectors. The backup is a single bounded transaction, never an
 # accumulation of historical release ZIPs or copied files.
+# Ownership includes product scripts executed by system PowerShell and native
+# messaging helpers, not just executables whose own path is under installRoot.
+function Test-ExistingEquinoxOwnedProcess($Process, [string]$InstallRoot, [string]$ProgramRoot) {
+  $executable = ([string]$Process.ExecutablePath).Replace('/', '\')
+  if ([string]::IsNullOrWhiteSpace($executable)) { return $false }
+  $full = [IO.Path]::GetFullPath($executable)
+  $app = [IO.Path]::GetFullPath((Join-Path $ProgramRoot 'EquinoxLocal.exe'))
+  if ([string]::Equals($full, $app, [StringComparison]::OrdinalIgnoreCase)) { return $true }
+  foreach ($root in @('releases','runtime','state\main-update')) {
+    $prefix = [IO.Path]::GetFullPath((Join-Path $InstallRoot $root)).TrimEnd('\') + '\'
+    if ($full.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase)) { return $true }
+  }
+  # Stock Windows PowerShell 5.1 or an external Node/Git executable can run
+  # an exact product-owned entrypoint without itself residing in the product.
+  $name = [string]$Process.Name
+  if ($name -notin @('node.exe','powershell.exe','pwsh.exe','git.exe')) { return $false }
+  $args = ([string]$Process.CommandLine).Replace('/', '\')
+  $managedRoot = [IO.Path]::GetFullPath((Join-Path $InstallRoot 'state\main-update')).TrimEnd('\') + '\'
+  $pattern = [regex]::Escape($managedRoot) + '[^"\r\n]+\.(?:js|mjs|ps1|git)(?:"|\s|$)'
+  return [regex]::IsMatch($args,$pattern,[Text.RegularExpressions.RegexOptions]::IgnoreCase)
+}
 function Stop-ExistingEquinoxExecutables([string]$InstallRoot, [string]$ProgramRoot) {
-  $prefixes = @(
-    ($InstallRoot + '\releases\'),
-    ($InstallRoot + '\runtime\'),
-    ($InstallRoot + '\state\main-update\')
-  )
-  $wpfExe = Join-Path $ProgramRoot 'EquinoxLocal.exe'
-  $owned = @(Get-CimInstance Win32_Process -ErrorAction Stop | Where-Object {
-    $executable = [string]$_.ExecutablePath
-    if ([string]::IsNullOrEmpty($executable)) { return $false }
-    $canonical = [IO.Path]::GetFullPath($executable)
-    if ([string]::Equals($canonical, $wpfExe, [StringComparison]::OrdinalIgnoreCase)) { return $true }
-    foreach ($prefix in $prefixes) {
-      if ($canonical.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase)) { return $true }
-    }
-    return $false
-  })
-  foreach ($item in $owned) {
-    # Revalidate the executable before terminating an owned process.
-    $live = Get-CimInstance Win32_Process -Filter ("ProcessId=" + [int]$item.ProcessId) -ErrorAction Stop
-    if ($null -ne $live -and [string]::Equals([string]$live.ExecutablePath, [string]$item.ExecutablePath, [StringComparison]::OrdinalIgnoreCase)) {
+  # The old supervisor may relaunch children while exiting, and Chrome may
+  # still hold a Native Messaging host. Re-query exact OS identities until no
+  # owned processes remain; never terminate a same-PID foreign replacement.
+  for ($attempt = 0; $attempt -lt 24; $attempt++) {
+    $owned = @(Get-CimInstance Win32_Process -ErrorAction Stop | Where-Object {
+      Test-ExistingEquinoxOwnedProcess $_ $InstallRoot $ProgramRoot
+    })
+    if ($owned.Count -eq 0) { return }
+    foreach ($item in $owned) {
+      $live = Get-CimInstance Win32_Process -Filter ("ProcessId=" + [int]$item.ProcessId) -ErrorAction Stop
+      if ($null -eq $live -or $live.CreationDate -ne $item.CreationDate -or
+          -not (Test-ExistingEquinoxOwnedProcess $live $InstallRoot $ProgramRoot)) { continue }
       try { Stop-Process -Id ([int]$item.ProcessId) -Force -ErrorAction Stop }
       catch {
-        # The exact owned process can exit between OS identity verification
-        # and Stop-Process. Ignore ONLY a process that is now absent or is
-        # no longer the verified old executable (PID reuse).
         $still = Get-CimInstance Win32_Process -Filter ("ProcessId=" + [int]$item.ProcessId) -ErrorAction Stop
-        if ($null -ne $still -and [string]::Equals([string]$still.ExecutablePath, [string]$item.ExecutablePath, [StringComparison]::OrdinalIgnoreCase)) { throw }
+        if ($null -ne $still -and $still.CreationDate -eq $item.CreationDate -and
+            (Test-ExistingEquinoxOwnedProcess $still $InstallRoot $ProgramRoot)) { throw }
       }
     }
+    Start-Sleep -Milliseconds 400
   }
-  if ($owned.Count -gt 0) { Start-Sleep -Milliseconds 900 }
+  Fail 'old Equinox Local processes still hold the runtime; signed reinstall cannot safely continue'
 }
+
 function Get-ExecutableReplacementPaths([string]$InstallRoot) {
   $localRoot = [IO.Path]::GetDirectoryName($InstallRoot)
   return @(
@@ -169,9 +182,21 @@ function Begin-ExecutableReplacement([string]$InstallRoot) {
     foreach ($entry in $present) {
       $source = [string]$entry.Path
       $destination = Join-Path $backup ([string]$entry.Name)
-      if ([IO.Directory]::Exists($source)) { [IO.Directory]::Move($source, $destination) }
-      elseif ([IO.File]::Exists($source)) { [IO.File]::Move($source, $destination) }
-      else { Fail 'existing executable disappeared during signed reinstall' }
+      for ($moveAttempt=0; $moveAttempt -lt 10; $moveAttempt++) {
+        try {
+          if ([IO.Directory]::Exists($source)) { [IO.Directory]::Move($source, $destination) }
+          elseif ([IO.File]::Exists($source)) { [IO.File]::Move($source, $destination) }
+          else { Fail 'existing executable disappeared during signed reinstall' }
+          break
+        } catch [UnauthorizedAccessException], [IO.IOException] {
+          if ($moveAttempt -eq 9) { throw }
+          # Chrome Native Messaging or old runtime helpers may exit just
+          # after the first process snapshot. Retry only this verified owned
+          # entry and re-check old process identities before each retry.
+          Stop-ExistingEquinoxExecutables $InstallRoot (Join-Path ([IO.Path]::GetDirectoryName($InstallRoot)) 'Programs\Equinox Local')
+          Start-Sleep -Milliseconds 300
+        }
+      }
     }
   } catch {
     Restore-ExecutableReplacement $transaction
@@ -186,6 +211,10 @@ function Restore-ExecutableReplacement($Transaction) {
     $old = Join-Path $Transaction.Backup ([string]$entry.Name)
     $existing = Get-NormalExistingEntry $old
     $installed = Get-NormalExistingEntry ([string]$entry.Path)
+    # A failed attempt may have been unable to move a locked old directory.
+    # Never quarantine that still-original directory unless its exact backup
+    # actually exists. This also makes an early move failure reversible.
+    if ($null -eq $existing) { continue }
     if ($null -ne $installed) {
       [IO.Directory]::CreateDirectory($failed) | Out-Null
       $quarantine = Join-Path $failed ([string]$entry.Name)
