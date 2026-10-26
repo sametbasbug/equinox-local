@@ -32,6 +32,9 @@ test("public installers enroll Main by default after pinned signed bootstrap", a
   assert.match(windows, /Assert-NormalFile \$mainStamp 1 8192/u);
   // The old Main source is never used as a prerequisite; executable runtime
   // identities are parked once, while config/credentials/workspace persist.
+  assert.match(windows, /function Suspend-OldEquinoxChromeHost/u);
+  assert.match(windows, /function Restore-OldEquinoxChromeHost/u);
+  assert.match(windows, /Restore-OldEquinoxChromeHost \$nativeHostSuspension/u);
   assert.match(windows, /function Begin-ExecutableReplacement/u);
   assert.ok(windows.includes("& $systemKill /PID ([string]$shell.ProcessId) /T /F"));
   assert.ok(windows.includes("Get-CimInstance Win32_Process -Filter"));

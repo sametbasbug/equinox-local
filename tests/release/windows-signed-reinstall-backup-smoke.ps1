@@ -45,6 +45,59 @@ function Put([string]$path,[string]$text) {
   [IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($path)) | Out-Null
   [IO.File]::WriteAllText($path,$text)
 }
+function Assert-TemporaryChromeRegistration {
+  # Exercise the REAL functions against one disposable HKCU registration,
+  # never the owner's connected Chrome/Equinox registration.
+  $testName='dev.equinox.browser.fixture' + [Guid]::NewGuid().ToString('N')
+  $subkey='Software\Google\Chrome\NativeMessagingHosts\' + $testName
+  $parent='Software\Google\Chrome\NativeMessagingHosts'
+  $manifest=Join-Path $root ('browser\native-messaging\' + $testName + '.json')
+  $exe=Join-Path $root 'state\main-update\native-store\test\release\runtime\browser\equinox-browser-native-host.exe'
+  $actualNames=@('Suspend-OldEquinoxChromeHost','Restore-OldEquinoxChromeHost')
+  foreach ($name in $actualNames) {
+    $entry=@($functions | Where-Object Name -eq $name)
+    Assert-True ($entry.Count -eq 1) 'Missing Chrome suspend/restore function in real signed installer.'
+    $source=$entry[0].Extent.Text.Replace('dev.equinox.browser',$testName)
+    if ($name -eq 'Suspend-OldEquinoxChromeHost') {
+      $source=$source.Replace('function Suspend-OldEquinoxChromeHost','function Suspend-DisposableChromeRegistration')
+    } else {
+      $source=$source.Replace('function Restore-OldEquinoxChromeHost','function Restore-DisposableChromeRegistration')
+    }
+    Invoke-Expression $source
+  }
+  function Assert-NormalFile([string]$Path,[long]$MinBytes,[long]$MaxBytes) {
+    $stat=Get-Item -LiteralPath $Path -ErrorAction Stop
+    Assert-True (-not $stat.PSIsContainer -and $stat.Length -ge $MinBytes -and $stat.Length -le $MaxBytes) 'Invalid disposable manifest file.'
+  }
+  try {
+    Put $exe 'disposable launcher'
+    Put $manifest (@{name=$testName;type='stdio';path=$exe;allowed_origins=@('chrome-extension://fixture/')}|ConvertTo-Json)
+    $key=[Microsoft.Win32.Registry]::CurrentUser.CreateSubKey($subkey)
+    try {$key.SetValue('', $manifest, [Microsoft.Win32.RegistryValueKind]::String)} finally {$key.Dispose()}
+    $paused=Suspend-DisposableChromeRegistration $root
+    Assert-True ($null -ne $paused) 'Did not suspend exact disposable owned Chrome host.'
+    $read=[Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($subkey,$false)
+    if($null -ne $read){$read.Dispose();throw 'Chrome host registration still exists while suspended.'}
+    $foreign=[Microsoft.Win32.Registry]::CurrentUser.CreateSubKey($subkey)
+    try{$foreign.SetValue('', 'C:\foreign\host.json', [Microsoft.Win32.RegistryValueKind]::String)} finally{$foreign.Dispose()}
+    $blocked=$false
+    try{Restore-DisposableChromeRegistration $paused}catch{$blocked=$true}
+    Assert-True $blocked 'Registry restore overwrote a foreign registrant.'
+    $parentKey=[Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($parent,$true)
+    try{$parentKey.DeleteSubKey($testName,$false)}finally{$parentKey.Dispose()}
+    Restore-DisposableChromeRegistration $paused
+    $read=[Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($subkey,$false)
+    Assert-True ($null -ne $read) 'Failed to restore original host registration after unsuccessful install.'
+    try{Assert-True ($read.GetValue('', $null) -ceq $manifest) 'Restored wrong exact manifest.'}
+    finally {$read.Dispose()}
+  } finally {
+    $parentKey=[Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($parent,$true)
+    if($null -ne $parentKey) {
+      try{$parentKey.DeleteSubKey($testName,$false)}catch{}finally{$parentKey.Dispose()}
+    }
+  }
+}
+
 function Prepare-Old {
   Put (Join-Path $root 'releases\6.1.0\old.exe') 'old-signed-release'
   Put (Join-Path $root 'runtime\guardian\guardian.exe') 'old-guardian'
@@ -71,6 +124,7 @@ function Assert-Private {
   )) { Assert-True (([IO.File]::ReadAllText((Join-Path $root $row[0])) -ceq $row[1])) 'Installer modified user-owned data.' }
 }
 try {
+  Assert-TemporaryChromeRegistration
   Prepare-Old
   # Reproduce the user's lock: stock Windows PowerShell runs an old Main
   # script from the managed source tree despite powershell.exe living in
