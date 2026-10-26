@@ -6,6 +6,17 @@ This project follows semantic versioning for public releases.
 
 ## [Unreleased]
 
+## [6.2.1] - 2026-10-26
+
+### Windows signed reinstall and runtime refresh
+
+- Fixed the signed Windows Stable installer replacement of an existing Main installation independently of the old Main Git checkout, source health or background updater. It now preserves user configuration, secrets and workspaces, verifies the newly installed runtime and removes transient executable backups after success.
+- Prevented Chrome from recreating an old product-owned Native Messaging host while the installer retires the previous runtime. Only the validated Equinox Browser host registration is suspended and restored on failure; personal browser data, foreign registrations and Chrome processes are untouched.
+- Updated the MCP SDK to **1.32.2**, pinned tunnel-client to **0.0.18** and the macOS signed Peekaboo runtime to **4.9.7**, with four-target SHA-256-verified release distributions. Existing current GitHub Actions, Node.js **26.12.1**, Dugite **2.56.0-1**, Windows winapp **0.7.1** and TypeScript **7.0.2** remain current.
+
+**Compatibility:** This release does not remove the independent native Main A/B supervision requirements tracked in issue #284. The signed Stable installer remains the supported recovery path for older Main installations.
+
+
 ## [6.2.0] - 2026-10-25
 
 ### Updated runtime dependencies for 6.2.0
