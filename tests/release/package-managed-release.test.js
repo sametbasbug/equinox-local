@@ -138,28 +138,28 @@ test("pinned Node runtime metadata covers all four production release targets", 
 });
 
 test("pinned tunnel runtime metadata covers all four production release targets", () => {
-  assert.equal(EQUINOX_LOCAL_TUNNEL_CLIENT_VERSION, "0.0.17");
+  assert.equal(EQUINOX_LOCAL_TUNNEL_CLIENT_VERSION, "0.0.18");
   assert.deepEqual(Object.keys(TUNNEL_CLIENT_DISTRIBUTIONS).sort(), ["darwin-arm64", "darwin-x64", "win32-arm64", "win32-x64"]);
   assert.match(TUNNEL_CLIENT_DISTRIBUTIONS["darwin-arm64"].sha256, /^[a-f0-9]{64}$/u);
   assert.match(TUNNEL_CLIENT_DISTRIBUTIONS["darwin-x64"].sha256, /^[a-f0-9]{64}$/u);
   assert.equal(TUNNEL_CLIENT_DISTRIBUTIONS["darwin-arm64"].fileArchitecture, "arm64");
   assert.equal(TUNNEL_CLIENT_DISTRIBUTIONS["darwin-x64"].fileArchitecture, "x86_64");
-  assert.equal(TUNNEL_CLIENT_DISTRIBUTIONS["darwin-arm64"].filename, "tunnel-client-v0.0.17-darwin-arm64.zip");
-  assert.equal(TUNNEL_CLIENT_DISTRIBUTIONS["darwin-x64"].filename, "tunnel-client-v0.0.17-darwin-amd64.zip");
+  assert.equal(TUNNEL_CLIENT_DISTRIBUTIONS["darwin-arm64"].filename, "tunnel-client-v0.0.18-darwin-arm64.zip");
+  assert.equal(TUNNEL_CLIENT_DISTRIBUTIONS["darwin-x64"].filename, "tunnel-client-v0.0.18-darwin-amd64.zip");
   assert.equal(TUNNEL_CLIENT_DISTRIBUTIONS["win32-arm64"].assetTag, "windows-arm64");
-  assert.equal(TUNNEL_CLIENT_DISTRIBUTIONS["win32-arm64"].filename, "tunnel-client-v0.0.17-windows-arm64.zip");
-  assert.equal(TUNNEL_CLIENT_DISTRIBUTIONS["win32-arm64"].sha256, "925c8298e46e088413bb02c81d36775f2e818970231bc2ecc215fcb0f0382bf7");
+  assert.equal(TUNNEL_CLIENT_DISTRIBUTIONS["win32-arm64"].filename, "tunnel-client-v0.0.18-windows-arm64.zip");
+  assert.equal(TUNNEL_CLIENT_DISTRIBUTIONS["win32-arm64"].sha256, "b73237513d50bf7acbeb960d80d9cbb6513879292f80ec1bd04b886fac1fe1c8");
   assert.equal(TUNNEL_CLIENT_DISTRIBUTIONS["win32-arm64"].fileArchitecture, "arm64");
   assert.equal(TUNNEL_CLIENT_DISTRIBUTIONS["win32-x64"].assetTag, "windows-amd64");
-  assert.equal(TUNNEL_CLIENT_DISTRIBUTIONS["win32-x64"].filename, "tunnel-client-v0.0.17-windows-amd64.zip");
-  assert.equal(TUNNEL_CLIENT_DISTRIBUTIONS["win32-x64"].sha256, "b89074637596262067061308cf174959561a1a8bcffe2db956650dad7303052b");
+  assert.equal(TUNNEL_CLIENT_DISTRIBUTIONS["win32-x64"].filename, "tunnel-client-v0.0.18-windows-amd64.zip");
+  assert.equal(TUNNEL_CLIENT_DISTRIBUTIONS["win32-x64"].sha256, "8d0da1ce79532d44ccc5ed5d8bd36cdfffba37dfd287c602d69635c8bb5db2b2");
 });
 
 test("pinned Peekaboo runtime metadata is universal and fixed to the verified OpenClaw release", () => {
-  assert.equal(EQUINOX_LOCAL_PEEKABOO_VERSION, "4.9.6");
+  assert.equal(EQUINOX_LOCAL_PEEKABOO_VERSION, "4.9.7");
   assert.equal(EQUINOX_LOCAL_PEEKABOO_TEAM_ID, "FWJYW4S8P8");
   assert.equal(PEEKABOO_DISTRIBUTION.filename, "peekaboo-macos-universal.tar.gz");
-  assert.equal(PEEKABOO_DISTRIBUTION.sha256, "01bdd139b7b010630378bbf0e31f54f38fde4501a5805b2bf66b64521b7ceca2");
+  assert.equal(PEEKABOO_DISTRIBUTION.sha256, "8a4136b9efd4c3a5591840375b024009a3cfb1b5fe994f62268cc755fb37744c");
   assert.deepEqual(PEEKABOO_DISTRIBUTION.architectures, ["arm64", "x86_64"]);
 });
 

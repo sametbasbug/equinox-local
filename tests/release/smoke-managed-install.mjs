@@ -432,7 +432,7 @@ async function main() {
     assert.equal(await commandText(toolchain.nodePath, ["--version"]), "v26.12.1");
     assert.match(await commandText(toolchain.nodePath, [toolchain.npmPath, "--version"]), /^\d+\.\d+\.\d+$/u);
     assert.equal(await commandText(node, ["--version"]), "v26.12.1");
-    assert.match(await commandText(tunnel, ["--version"]), /^0\.0\.17\+/u);
+    assert.match(await commandText(tunnel, ["--version"]), /^0\.0\.18\+/u);
     assert.match(await commandText(cloudflared, ["--version"]), /cloudflared version/u);
 
     const fakeKey = path.join(installRoot, "secrets", "openai-runtime-key");
@@ -509,7 +509,7 @@ async function main() {
       version: EQUINOX_LOCAL_VERSION,
       target,
       nodeVersion: "26.12.1",
-      tunnelClientVersion: "0.0.17",
+      tunnelClientVersion: "0.0.18",
       controlCenterPort: CONTROL_CENTER_PORT,
       controlCenterHealth: status.status.health?.state ?? null,
       sourceSha,

@@ -1,8 +1,8 @@
 export const EQUINOX_LOCAL_NODE_VERSION = "26.12.1";
 export const EQUINOX_LOCAL_DUGITE_VERSION = "2.56.0-1";
 export const EQUINOX_LOCAL_DUGITE_BUILD = "7ce66f8";
-export const EQUINOX_LOCAL_TUNNEL_CLIENT_VERSION = "0.0.17";
-export const EQUINOX_LOCAL_PEEKABOO_VERSION = "4.9.6";
+export const EQUINOX_LOCAL_TUNNEL_CLIENT_VERSION = "0.0.18";
+export const EQUINOX_LOCAL_PEEKABOO_VERSION = "4.9.7";
 export const EQUINOX_LOCAL_WINAPP_VERSION = "0.7.1";
 export const EQUINOX_LOCAL_BUNDLED_WINAPP_SINCE_VERSION = "5.2.1";
 export const EQUINOX_LOCAL_NATIVE_JOB_OBJECT_HELPER_SINCE_VERSION = "5.2.1";
@@ -12,7 +12,7 @@ export const EQUINOX_LOCAL_PEEKABOO_TEAM_ID = "FWJYW4S8P8";
 
 export const PEEKABOO_DISTRIBUTION = Object.freeze({
   filename: "peekaboo-macos-universal.tar.gz",
-  sha256: "01bdd139b7b010630378bbf0e31f54f38fde4501a5805b2bf66b64521b7ceca2",
+  sha256: "8a4136b9efd4c3a5591840375b024009a3cfb1b5fe994f62268cc755fb37744c",
   archiveRoot: "peekaboo-macos-universal",
   architectures: Object.freeze(["arm64", "x86_64"]),
 });
@@ -84,25 +84,25 @@ export const TUNNEL_CLIENT_DISTRIBUTIONS = Object.freeze({
   "darwin-arm64": Object.freeze({
     assetTag: "darwin-arm64",
     filename: `tunnel-client-v${EQUINOX_LOCAL_TUNNEL_CLIENT_VERSION}-darwin-arm64.zip`,
-    sha256: "df03ad0ba9c95c22951bab6833df289469f15b9a3fa0397d95e3d568d1ff6c1f",
+    sha256: "ba7a0994f7dd15bc8708aa1602ecf54371a492319a641ab9c33dc00f1fd56bfe",
     fileArchitecture: "arm64",
   }),
   "darwin-x64": Object.freeze({
     assetTag: "darwin-amd64",
     filename: `tunnel-client-v${EQUINOX_LOCAL_TUNNEL_CLIENT_VERSION}-darwin-amd64.zip`,
-    sha256: "1d54cc57e0a624dc733d402f7d36585f2135a23ddc32c4cb52a7253c7d8d94a0",
+    sha256: "95595c6538b3f9872c1367592aede22e0d18ea7f6bdd51cd17fe0bf7e5ca8b26",
     fileArchitecture: "x86_64",
   }),
   "win32-arm64": Object.freeze({
     assetTag: "windows-arm64",
     filename: `tunnel-client-v${EQUINOX_LOCAL_TUNNEL_CLIENT_VERSION}-windows-arm64.zip`,
-    sha256: "925c8298e46e088413bb02c81d36775f2e818970231bc2ecc215fcb0f0382bf7",
+    sha256: "b73237513d50bf7acbeb960d80d9cbb6513879292f80ec1bd04b886fac1fe1c8",
     fileArchitecture: "arm64",
   }),
   "win32-x64": Object.freeze({
     assetTag: "windows-amd64",
     filename: `tunnel-client-v${EQUINOX_LOCAL_TUNNEL_CLIENT_VERSION}-windows-amd64.zip`,
-    sha256: "b89074637596262067061308cf174959561a1a8bcffe2db956650dad7303052b",
+    sha256: "8d0da1ce79532d44ccc5ed5d8bd36cdfffba37dfd287c602d69635c8bb5db2b2",
     fileArchitecture: "x86_64",
   }),
 });
