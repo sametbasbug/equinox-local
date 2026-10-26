@@ -6,7 +6,7 @@ $installer = Join-Path ([IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..')
 $tokens = $null; $errors = $null
 $ast = [Management.Automation.Language.Parser]::ParseFile($installer, [ref]$tokens, [ref]$errors)
 if (@($errors).Count -ne 0) { throw 'Public signed Windows installer has a PowerShell syntax error.' }
-$required = @('Get-NormalExistingEntry','Get-ExecutableReplacementPaths','Begin-ExecutableReplacement','Restore-ExecutableReplacement','Complete-ExecutableReplacement')
+$required = @('Test-ExistingEquinoxOwnedProcess','Stop-ExistingEquinoxExecutables','Get-NormalExistingEntry','Get-ExecutableReplacementPaths','Begin-ExecutableReplacement','Restore-ExecutableReplacement','Complete-ExecutableReplacement')
 $functions = @($ast.FindAll({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst]}, $true))
 foreach ($name in $required) {
   $entry = @($functions | Where-Object Name -eq $name)
@@ -14,10 +14,30 @@ foreach ($name in $required) {
   Invoke-Expression $entry[0].Extent.Text
 }
 function Fail([string]$Reason) { throw $Reason }
-# No live applications live in this fixture; stop is independently exercised
-# on actual installed Windows product smoke, never against this host profile.
-function Stop-ExistingEquinoxExecutables([string]$InstallRoot, [string]$ProgramRoot) { }
+# All process stop operations below are against a unique disposable fixture only.
 function Assert-True([bool]$ok,[string]$message) { if (-not $ok) { throw $message } }
+function Assert-ProcessClassification {
+  $fakeRoot = 'C:\Users\fixture\AppData\Local\Equinox Local'
+  $fakeProg = 'C:\Users\fixture\AppData\Local\Programs\Equinox Local'
+  $managed = $fakeRoot + '\state\main-update'
+  foreach ($owned in @(
+    [pscustomobject]@{Name='equinox-browser-native-host.exe';ExecutablePath="$managed\native-store\win32-x64\old\release\runtime\browser\equinox-browser-native-host.exe";CommandLine='host'},
+    [pscustomobject]@{Name='node.exe';ExecutablePath="$managed\native-store\win32-x64\old\release\runtime\node\bin\node.exe";CommandLine='node'},
+    [pscustomobject]@{Name='node.exe';ExecutablePath='C:\Program Files\nodejs\node.exe';CommandLine=('"C:\Program Files\nodejs\node.exe" "' + $managed + '\sources\old\src\server.js"')},
+    [pscustomobject]@{Name='powershell.exe';ExecutablePath='C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe';CommandLine=('powershell.exe -NoProfile -File "' + $managed + '\sources\old\src\equinox-local-windows-job-object.ps1"')},
+    [pscustomobject]@{Name='EquinoxLocal.exe';ExecutablePath="$fakeProg\EquinoxLocal.exe";CommandLine='WPF'}
+  )) { Assert-True (Test-ExistingEquinoxOwnedProcess $owned $fakeRoot $fakeProg) "Missed an owned old runtime: $($owned.Name)" }
+  foreach ($foreign in @(
+    [pscustomobject]@{Name='powershell.exe';ExecutablePath='C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe';CommandLine='powershell -File C:\Users\fixture\Documents\my-script.ps1'},
+    [pscustomobject]@{Name='node.exe';ExecutablePath='C:\Program Files\nodejs\node.exe';CommandLine='node C:\Users\fixture\other\server.js'},
+    [pscustomobject]@{Name='chrome.exe';ExecutablePath='C:\Program Files\Google\Chrome\Application\chrome.exe';CommandLine=('chrome --url="file:///' + $managed + '\sources\old\src\server.js"')},
+    [pscustomobject]@{Name='pwsh.exe';ExecutablePath='C:\Program Files\PowerShell\7\pwsh.exe';CommandLine='pwsh -Command irm https://local.sametbasbug.dev/downloads/updates/install-equinox-local.ps1'},
+    [pscustomobject]@{Name='node.exe';ExecutablePath="$fakeRoot\state\main-update-foreign\node.exe";CommandLine='node'},
+    [pscustomobject]@{Name='node.exe';ExecutablePath='C:\Program Files\nodejs\node.exe';CommandLine=('node "' + $managed + '\sources\old\src\server.js.evil"')}
+  )) { Assert-True (-not (Test-ExistingEquinoxOwnedProcess $foreign $fakeRoot $fakeProg)) "Foreign process falsely admitted: $($foreign.Name)" }
+}
+Assert-ProcessClassification
+
 $fixture=Join-Path ([IO.Path]::GetTempPath()) ('equinox-reinstall-backup-' + [Guid]::NewGuid().ToString('N'))
 $root=Join-Path $fixture 'Equinox Local'
 $program=Join-Path $fixture 'Programs\Equinox Local'
@@ -52,7 +72,37 @@ function Assert-Private {
 }
 try {
   Prepare-Old
-  $first=Begin-ExecutableReplacement $root
+  # Reproduce the user's lock: stock Windows PowerShell runs an old Main
+  # script from the managed source tree despite powershell.exe living in
+  # System32, not under the product install root. The real installer must
+  # terminate this exact owned helper before moving main-update.
+  $ownedScript=Join-Path $root 'state\main-update\sources\broken-old\src\fixture-owned.ps1'
+  Put $ownedScript 'Start-Sleep -Seconds 120'
+  $systemPowerShell=Join-Path $env:WINDIR 'System32\WindowsPowerShell\v1.0\powershell.exe'
+  $ownedProcess=Start-Process -FilePath $systemPowerShell -ArgumentList ('-NoProfile -NonInteractive -File "' + $ownedScript + '"') -PassThru -WindowStyle Hidden
+  try {
+    $seen=$false
+    for ($poll=0; $poll -lt 25; $poll++) {
+      $cim=Get-CimInstance Win32_Process -Filter ('ProcessId=' + $ownedProcess.Id)
+      if ($null -ne $cim -and (Test-ExistingEquinoxOwnedProcess $cim $root $program)) { $seen=$true; break }
+      Start-Sleep -Milliseconds 80
+    }
+    Assert-True $seen 'Disposable managed PowerShell process did not start or match exact owner.'
+    # A foreign non-share-delete file handle can block a rename even when
+    # all owned processes are gone. Refuse without quarantining the untouched
+    # original tree or retaining a partial backup.
+    $locked=Join-Path $root 'state\main-update\sources\broken-old\src\server.js'
+    $held=[IO.File]::Open($locked,[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::Read)
+    $blockedByLock=$false
+    try { Begin-ExecutableReplacement $root | Out-Null } catch { $blockedByLock=$true }
+    finally { $held.Dispose() }
+    Assert-True $blockedByLock 'Locked old Main folder unexpectedly moved.'
+    Assert-True ([IO.File]::Exists($locked)) 'Locked old Main source was incorrectly quarantined during rollback.'
+    Assert-True (-not [IO.Directory]::Exists((Join-Path $root '.equinox-signed-reinstall-backup'))) 'Aborted move retained an empty transaction backup.'
+    $first=Begin-ExecutableReplacement $root
+    Assert-True ($null -eq (Get-CimInstance Win32_Process -Filter ('ProcessId=' + $ownedProcess.Id))) 'Old managed PowerShell child remains alive after installer retirement.'
+  } finally { if (-not $ownedProcess.HasExited) { Stop-Process -Id $ownedProcess.Id -Force -ErrorAction SilentlyContinue } }
+
   Assert-True ($null -ne $first) 'Historic signed runtime was not parked.'
   Assert-True (-not [IO.File]::Exists((Join-Path $root 'current-version.json'))) 'Stale version pointer survived initial reset.'
   Assert-True (-not [IO.Directory]::Exists((Join-Path $root 'state\main-update'))) 'Broken old source survived reset.'
