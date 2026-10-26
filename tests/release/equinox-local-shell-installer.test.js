@@ -33,6 +33,8 @@ test("public installers enroll Main by default after pinned signed bootstrap", a
   // The old Main source is never used as a prerequisite; executable runtime
   // identities are parked once, while config/credentials/workspace persist.
   assert.match(windows, /function Begin-ExecutableReplacement/u);
+  assert.ok(windows.includes("& $systemKill /PID ([string]$shell.ProcessId) /T /F"));
+  assert.ok(windows.includes("Get-CimInstance Win32_Process -Filter"));
   assert.match(windows, /function Restore-ExecutableReplacement/u);
   assert.match(windows, /function Complete-ExecutableReplacement/u);
   assert.match(windows, /Remove-Item -LiteralPath \$Transaction\.Backup -Recurse -Force -ErrorAction Stop/u);
