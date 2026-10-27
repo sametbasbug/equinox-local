@@ -313,7 +313,9 @@ test("Git-free Main boot requires original Ed25519 selector, exact durable SHA/c
  const input={baseInstallation,platform:"darwin",arch:"arm64",homeDir:home,env:{},
   verifySignedPointerImpl,readNativePointerImpl:async()=>native};
  await assert.rejects(resolveEquinoxLocalManagedSourceInstallation(input),/no verified Main install stamp or signed native selector/u);
- await fs.writeFile(state.signedNativePointerPath,JSON.stringify(signed),{mode:0o600});
+ const selectorPath=path.join(path.dirname(installedDir),"signed-selector.json");
+ await fs.mkdir(path.dirname(selectorPath),{recursive:true,mode:0o700});
+ await fs.writeFile(selectorPath,JSON.stringify(signed),{mode:0o600});
  const installed=await resolveEquinoxLocalManagedSourceInstallation(input);
  assert.equal(installed.kind,"managed-main");
  assert.equal(installed.sourceSha,sourceSha);
@@ -333,9 +335,9 @@ test("Git-free Main boot requires original Ed25519 selector, exact durable SHA/c
    readNativePointerImpl:async()=>({...native,...nativeChange}),
   }),/differs from its exact durable SHA pointer/u);
  }
- await fs.chmod(state.signedNativePointerPath,0o644);
+ await fs.chmod(selectorPath,0o644);
  await assert.rejects(resolveEquinoxLocalManagedSourceInstallation(input),/selector is not private/u);
- await fs.chmod(state.signedNativePointerPath,0o600);
+ await fs.chmod(selectorPath,0o600);
  assert.equal((await fs.readdir(state.mainTransactionRoot)).includes("install.json"),false,
    "Git-free native identity must never create old source stamps or tooling");
 });

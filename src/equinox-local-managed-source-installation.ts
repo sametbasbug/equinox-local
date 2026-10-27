@@ -48,7 +48,6 @@ export function equinoxLocalManagedSourcePaths({
     mainTransactionRoot,
     installStampPath: pathApi.join(mainTransactionRoot, "install.json"),
     sourcePointerPath: pathApi.join(mainTransactionRoot, "current-source.conf"),
-    signedNativePointerPath: pathApi.join(mainTransactionRoot, "native-install-signed.json"),
   });
 }
 
@@ -84,12 +83,21 @@ export async function resolveEquinoxLocalManagedSourceInstallation({
     // Its complete original production-root signed selector is persisted by
     // the external installer. An arbitrary release path alone is NEVER
     // sufficient for a native process to claim a trusted Main identity.
-    const signedSecurity=await inspectPrivateStatePath(paths.signedNativePointerPath,{
+    const pathApi=platform==="win32"?path.win32:path.posix;
+    // Each immutable native SHA owns its ORIGINAL signed selector. A->B
+    // rollback selects A's selector automatically, without a second mutable
+    // pointer or a risky multi-file identity switch.
+    const releaseDir=baseInstallation.releaseDir;
+    if(typeof releaseDir!=="string" || !pathApi.isAbsolute(releaseDir)) {
+      throw new Error("Signed Main native release path is not owned.");
+    }
+    const selectorPath=pathApi.join(pathApi.dirname(releaseDir),"signed-selector.json");
+    const signedSecurity=await inspectPrivateStatePath(selectorPath,{
       platform,type:"file",mode:"600",fsImpl,verifyWindowsAcl,
     });
     if (!signedSecurity.exists) throw new Error("Main native runtime has no verified Main install stamp or signed native selector.");
     if (!signedSecurity.safe) throw new Error("Signed Main native install selector is not private.");
-    const {data}=await readBoundedNormalFile(paths.signedNativePointerPath,{
+    const {data}=await readBoundedNormalFile(selectorPath,{
       platform,fsImpl,minBytes:200,maxBytes:16*1024,encoding:"utf8",
       label:"Production-signed native Main install selector",
     });
@@ -99,7 +107,6 @@ export async function resolveEquinoxLocalManagedSourceInstallation({
     const signed=verifySignedPointerImpl(raw,{expectedSourceSha:baseInstallation.mainNativeSha});
     const row=signed.targets.find(value=>value.target===baseInstallation.target);
     if (!row) throw new Error("Signed native Main selector does not admit the current target.");
-    const pathApi=platform==="win32"?path.win32:path.posix;
     const native=await readNativePointerImpl(pathApi.join(paths.mainTransactionRoot,"current-native.json"),{
       transactionRoot:paths.mainTransactionRoot,fsImpl,
     });

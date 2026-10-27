@@ -1210,6 +1210,79 @@ export async function installManagedEquinoxRelease({
   });
 }
 
+// The signed selector belongs to one IMMUTABLE native-store SHA, not a
+// mutable global "active selector" slot. Pointer A/B rollback automatically
+// reads each SHA's own signed receipt without multi-file CAS.
+export async function persistSignedMainNativeStoreSelector({
+  signedPointer,sourceSha,target,releaseDir,transactionRoot,
+  platform=process.platform,env=process.env,
+  uid=typeof process.getuid==="function"?process.getuid():null,
+  fsImpl=fs,verifyPointerImpl=validateTrustedMainInstallPointer,
+}:{
+  signedPointer:unknown;sourceSha:string;target:string;releaseDir:string;transactionRoot:string;
+  platform?:string;env?:NodeJS.ProcessEnv;uid?:number|null;fsImpl?:FsImpl;
+  verifyPointerImpl?:typeof validateTrustedMainInstallPointer;
+}) {
+  const signed=verifyPointerImpl(signedPointer,{expectedSourceSha:sourceSha});
+  if(!signed.targets.some(row=>row.target===target)) throw new Error("Signed Main selector does not authorize this native target.");
+  const pathApi=platform==="win32"?path.win32:path.posix;
+  const directory=pathApi.join(transactionRoot,"native-store",target,sourceSha);
+  if(typeof releaseDir!=="string" || pathApi.normalize(releaseDir)!==pathApi.join(directory,"release") ||
+     !pathApi.isAbsolute(transactionRoot) || !pathApi.isAbsolute(releaseDir)) {
+    throw new Error("Signed Main native receipt must belong to its exact source-SHA store.");
+  }
+  await assertOwnedNormalDirectory(directory,{uid,platform,fsImpl});
+  const receiptPath=pathApi.join(directory,"signed-selector.json");
+  const content=JSON.stringify(signedPointer)+"\n";
+  if(Buffer.byteLength(content,"utf8")>16*1024)throw new Error("Signed Main native selector exceeds the bounded size.");
+  const readExisting=async()=>{
+    const {data}=await readBoundedNormalFile(receiptPath,{
+      platform,fsImpl,minBytes:200,maxBytes:16*1024,encoding:"utf8",
+      label:"Immutable native Main signed selector",
+    });
+    if(JSON.stringify(JSON.parse(data))!==JSON.stringify(signedPointer)){
+      throw new Error("Immutable Main native signed selector differs from its existing SHA.");
+    }
+  };
+  try{
+    await readExisting();
+  }catch(error){
+    if((error as ErrorCode).code!=="ENOENT")throw error;
+    const temporary=pathApi.join(directory,".signed-selector-"+randomBytes(12).toString("hex")+".tmp");
+    let created=false;
+    try{
+      const handle=await fsImpl.open(temporary,"wx",0o600);
+      created=true;
+      try {
+        const file=await handle.stat();
+        if(!file.isFile() || file.nlink!==1)throw new Error("Signed Main selector temporary inode is unsafe.");
+        await handle.writeFile(content,"utf8");
+        await handle.sync();
+      }finally{await handle.close();}
+      try{
+        await fsImpl.link(temporary,receiptPath);
+      }catch(error){
+        if((error as ErrorCode).code!=="EEXIST")throw error;
+        await readExisting(); // Replayed identical publish, never replace.
+      }
+    }finally{
+      if(created)await fsImpl.rm(temporary,{force:true});
+    }
+    await readExisting();
+  }
+  if(platform==="win32"){
+    await protectWindowsPrivateStatePath({target:receiptPath,type:"file",env});
+    const acl=await verifyWindowsPrivateStateAcl({target:receiptPath,type:"file",env});
+    if(!acl.safe)throw new Error("Signed Main native selector Windows ACL is not private.");
+  }else{
+    const stat=await fsImpl.lstat(receiptPath);
+    if(!stat.isFile() || stat.isSymbolicLink() || (stat.mode&0o777)!==0o600){
+      throw new Error("Signed Main native selector is not a private normal file.");
+    }
+  }
+  return receiptPath;
+}
+
 // Stage ONLY the production-signed source SHA into the existing inactive A/B
 // native store. OS-native WPF/Guardian and macOS restart/rollback are *never*
 // performed by this preparation phase, and no current pointer is changed.
@@ -1226,6 +1299,7 @@ export async function stageSignedMainInstallerNativeArchive({
   importArchiveImpl,
   prepareCandidateImpl,
   promoteCandidateImpl,
+  persistSelectorImpl = persistSignedMainNativeStoreSelector,
 }: {
   signedPointer:unknown;sourceArchivePath:string;homeDir?:string;
   platform?:string;arch?:string;env?:NodeJS.ProcessEnv;uid?:number|null;
@@ -1234,6 +1308,7 @@ export async function stageSignedMainInstallerNativeArchive({
   importArchiveImpl?:(...args:any[])=>Promise<any>;
   prepareCandidateImpl?: (...args:any[])=>Promise<any>;
   promoteCandidateImpl?: (...args:any[])=>Promise<any>;
+  persistSelectorImpl?:typeof persistSignedMainNativeStoreSelector;
 }) {
   const expectedTarget=equinoxLocalUpdateTarget({platform,arch});
   const pointer=verifyPointerImpl(signedPointer);
@@ -1306,6 +1381,9 @@ export async function stageSignedMainInstallerNativeArchive({
        stored.payloadVersion!==pointer.version){
       throw new Error("Signed Main inactive durable release identity drifted.");
     }
+    await persistSelectorImpl({signedPointer,sourceSha:pointer.sourceSha,target:expectedTarget,
+      releaseDir:stored.releaseDir,transactionRoot:root,platform,env,uid,fsImpl,
+      verifyPointerImpl});
     return Object.freeze({
       status:"staged",sourceSha:pointer.sourceSha,version:pointer.version,
       target:expectedTarget,releaseDir:stored.releaseDir,reused:stored.reused===true,

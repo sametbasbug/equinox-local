@@ -11,6 +11,7 @@ import {
   equinoxLocalFirstInstallHealthBudget,
   installManagedEquinoxRelease,
   stageSignedMainInstallerNativeArchive,
+  persistSignedMainNativeStoreSelector,
   synchronizeFreshWindowsShell,
   validateFirstInstallRelease,
 } from "../../src/equinox-local-first-install.js";
@@ -1415,6 +1416,10 @@ test("signed Main inactive store stages exact SHA using existing import, candida
     artifactSha256:digest,artifactBytes:111,payloadVersion:"6.2.1",
     releaseDir:path.join(i.transactionRoot,"staging",i.transactionId,"native-candidate","release")};
   },
+  persistSelectorImpl:async input=>{
+   events.push("signed-selector");
+   assert.equal(input.sourceSha,sourceSha);
+  },
   promoteCandidateImpl:async i=>{
    events.push("promote");
    return {sourceSha,target:TARGET,runtimeContractSha256:contract,payloadVersion:"6.2.1",
@@ -1425,7 +1430,7 @@ test("signed Main inactive store stages exact SHA using existing import, candida
  assert.equal(receipt.sourceSha,sourceSha);
  assert.equal(receipt.status,"staged");
  assert.equal(receipt.version,"6.2.1");
- assert.deepEqual(events,["import","prepare","promote"]);
+ assert.deepEqual(events,["import","prepare","promote","signed-selector"]);
  const nativeRoot=path.join(home,"Library","Application Support","Equinox Local","main-update");
  assert.deepEqual(await fs.readdir(path.join(nativeRoot,"staging")),[]);
  await assert.rejects(fs.stat(path.join(nativeRoot,"current-native.json")),{code:"ENOENT"});
@@ -1453,4 +1458,81 @@ test("signed Main inactive store stages exact SHA using existing import, candida
   promoteCandidateImpl:async()=>assert.fail("mismatched signed SHA must never be promoted"),
  }),/identity drifted/u);
  assert.deepEqual(await fs.readdir(path.join(nativeRoot,"staging")),[]);
+});
+
+
+test("each signed native SHA stores its own immutable private selector and cannot overwrite another commit or foreign file",async t=>{
+ const home=await fs.realpath(await fs.mkdtemp(path.join(path.dirname(fileURLToPath(import.meta.url)),".equinox-private-signed-selectors-")));
+ t.after(()=>fs.rm(home,{recursive:true,force:true}));
+ const root=path.join(home,"main-update");
+ const target="darwin-arm64";
+ const {privateKey,publicKey}=generateKeyPairSync("ed25519");
+ const keyId="ephemeral-native-selector-test";
+ const verifyPointerImpl=(raw,opts)=>validateSignedMainInstallPointer(raw,{
+  ...opts,publicKeys:{[keyId]:publicKey.export({type:"spki",format:"pem"})},
+ });
+ const build=sourceSha=>createSignedMainInstallPointer({
+  sourceSha,version:"6.2.1",publishedAt:"2026-10-28T00:00:00.000Z",
+  nativeManifests:["darwin-arm64","darwin-x64","win32-arm64","win32-x64"].map(native=>({
+   schemaVersion:1,channel:"main",sourceSha,target:native,runtimeContractSha256:"a".repeat(64),
+   artifact:{name:"equinox-local-main-"+sourceSha+"-"+native+(native.startsWith("win32-")?".zip":".tar.gz"),
+    sha256:"b".repeat(64),bytes:300},
+  })),
+  keyId,privateKey,
+ });
+ const a="a".repeat(40), b="b".repeat(40);
+ const ptrA=build(a),ptrB=build(b);
+ const location=sha=>path.join(root,"native-store",target,sha);
+ for(const sha of [a,b])await fs.mkdir(location(sha),{recursive:true,mode:0o700});
+ const persist=(sourceSha,signedPointer,overrides={})=>persistSignedMainNativeStoreSelector({
+  transactionRoot:root,sourceSha,target,releaseDir:path.join(location(sourceSha),"release"),
+  signedPointer,uid:process.getuid(),platform:"darwin",verifyPointerImpl,
+  ...overrides,
+ });
+ const selectorA=await persist(a,ptrA);
+ const selectorB=await persist(b,ptrB);
+ assert.equal(selectorA,path.join(location(a),"signed-selector.json"));
+ assert.equal(selectorB,path.join(location(b),"signed-selector.json"));
+ assert.equal((await fs.stat(selectorA)).mode&0o777,0o600);
+ assert.equal((await fs.stat(selectorB)).mode&0o777,0o600);
+ const aBytes=await fs.readFile(selectorA);
+ const bBytes=await fs.readFile(selectorB);
+ await persist(a,ptrA); // Replayed same signed SHA must be idempotent
+ assert.deepEqual(await fs.readFile(selectorA),aBytes);
+ await assert.rejects(persist(a,ptrB),/source SHA|signed|match/i);
+ await assert.rejects(persist(a,ptrA,{releaseDir:path.join(location(b),"release")}),/exact source-SHA store/u);
+ await fs.writeFile(selectorA,"foreign file\n",{mode:0o600});
+ await assert.rejects(persist(a,ptrA),/Immutable native Main signed selector/u);
+ assert.equal(await fs.readFile(selectorA,"utf8"),"foreign file\n");
+ assert.deepEqual(await fs.readFile(selectorB),bBytes,"independent B keeps its original signature for A rollback");
+ assert.equal((await fs.readdir(location(a))).some(x=>x.endsWith(".tmp")),false);
+});
+
+test("immutable signed native receipt rejects a symlink before modifying external contents",async t=>{
+ const root=await fs.mkdtemp(path.join(path.dirname(fileURLToPath(import.meta.url)),".equinox-selector-symlink-"));
+ t.after(()=>fs.rm(root,{recursive:true,force:true}));
+ const target="darwin-arm64",sourceSha="a".repeat(40);
+ const folder=path.join(root,"native-store",target,sourceSha);
+ await fs.mkdir(folder,{recursive:true,mode:0o700});
+ const victim=path.join(root,"outside");
+ await fs.writeFile(victim,"private victim");
+ await fs.symlink(victim,path.join(folder,"signed-selector.json"));
+ const {privateKey,publicKey}=generateKeyPairSync("ed25519");
+ const keyId="ephemeral-selector-symlink-test";
+ const signedPointer=createSignedMainInstallPointer({
+  sourceSha,version:"6.2.1",publishedAt:"2026-10-28T00:00:00.000Z",keyId,privateKey,
+  nativeManifests:["darwin-arm64","darwin-x64","win32-arm64","win32-x64"].map(arch=>({
+   schemaVersion:1,channel:"main",sourceSha,target:arch,runtimeContractSha256:"a".repeat(64),
+   artifact:{name:"equinox-local-main-"+sourceSha+"-"+arch+(arch.startsWith("win32-")?".zip":".tar.gz"),
+    sha256:"b".repeat(64),bytes:300},
+  })),
+ });
+ await assert.rejects(persistSignedMainNativeStoreSelector({
+  signedPointer,sourceSha,target,transactionRoot:root,releaseDir:path.join(folder,"release"),
+  platform:"darwin",uid:process.getuid(),
+  verifyPointerImpl:(raw,opts)=>validateSignedMainInstallPointer(raw,{
+   ...opts,publicKeys:{[keyId]:publicKey.export({type:"spki",format:"pem"})},
+  }),
+ }),/not a normal|symbolic|symlink|normal file/u);
+ assert.equal(await fs.readFile(victim,"utf8"),"private victim");
 });
