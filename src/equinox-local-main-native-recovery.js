@@ -1,4 +1,5 @@
 import fs from "node:fs/promises";
+import { createHash } from "node:crypto";
 import path from "node:path";
 import { assertWindowsNativeMessagingHostOwnership, registerWindowsNativeMessagingHost, windowsNativeMessagingLauncherPath, } from "./equinox-browser-windows-native-messaging.js";
 import { resolveEquinoxLocalInstallation } from "./equinox-local-installation.js";
@@ -9,6 +10,7 @@ import { validateTrustedMainInstallPointer } from "./equinox-local-main-install-
 import { createEquinoxLocalMainMacCurrentLinkTransition, createEquinoxLocalMainNativePointerTransition } from "./equinox-local-main-native-pointer-transition.js";
 import { readEquinoxLocalMainNativePointer } from "./equinox-local-main-native-state.js";
 import { parseEquinoxVersion } from "./equinox-local-updater.js";
+import { readBoundedJsonFile, writeAtomicPrivateJson } from "./equinox-local-main-update-transaction.js";
 import { createSupervisorBoundWindowsNativeABLifecycle, requireWindowsNativeABSupervisor } from "./equinox-local-windows-native-ab-supervisor-bound.js";
 function hasErrorCode(error, code) {
     return error !== null && typeof error === "object" && "code" in error && error.code === code;
@@ -143,6 +145,183 @@ export async function readEquinoxLocalMainNativeRecoveryDescriptor({ transaction
         throw new Error("Main native recovery descriptor is not valid JSON.");
     }
     return validateDescriptor(raw, expected);
+}
+// The signed native installer and existing Git-backed Main updater share
+// ONE exclusive active.json lock namespace. Native records do not pretend
+// to be Git receipts: legacy readActive rejects their distinct schema.
+export async function beginEquinoxLocalSignedNativeMacOwner({ transactionRoot, transactionId, sourceSha, target, runtimeContractSha256, fsImpl = fs, uid = process.getuid?.(), }) {
+    const paths = recoveryPath(transactionRoot, transactionId);
+    const id = assertTransactionId(transactionId);
+    const sha = assertSha(sourceSha, "Signed native handoff SHA");
+    const digest = assertDigest(runtimeContractSha256, "Signed native handoff contract");
+    if (!/^darwin-(arm64|x64)$/u.test(target) || !Number.isInteger(uid) || !uid || uid < 1) {
+        throw new Error("Signed native Mac owner requires a non-root supported host.");
+    }
+    const root = await fsImpl.lstat(paths.root);
+    if (!root.isDirectory() || root.isSymbolicLink() || (root.mode & 0o777) !== 0o700 ||
+        root.uid !== uid || await fsImpl.realpath(paths.root) !== paths.root) {
+        throw new Error("Signed native transaction state root is not a private owned directory.");
+    }
+    await readEquinoxLocalMainNativeRecoveryDescriptor({
+        transactionRoot: paths.root, transactionId: id,
+        expected: { targetSha: sha, target, targetRuntimeContractSha256: digest }, fsImpl,
+    });
+    const lockPath = path.join(paths.root, "active.json");
+    const record = Object.freeze({
+        schemaVersion: 1, kind: "signed-native", transactionId: id, sourceSha: sha,
+        target, runtimeContractSha256: digest,
+    });
+    const handle = await fsImpl.open(lockPath, "wx", 0o600);
+    const original = await handle.stat();
+    let closed = false, success = false;
+    try {
+        if (!original.isFile() || original.nlink !== 1 || (original.mode & 0o777) !== 0o600) {
+            throw new Error("Signed native owner lock inode is unsafe.");
+        }
+        await handle.writeFile(JSON.stringify(record) + "\n", "utf8");
+        await handle.sync();
+        await handle.close();
+        closed = true;
+        const stored = await fsImpl.lstat(lockPath);
+        if (!stored.isFile() || stored.isSymbolicLink() || stored.nlink !== 1 ||
+            stored.dev !== original.dev || stored.ino !== original.ino) {
+            throw new Error("Signed native owner lock changed during publication.");
+        }
+        const directory = await fsImpl.open(paths.root, "r");
+        try {
+            await directory.sync();
+        }
+        finally {
+            await directory.close();
+        }
+        success = true;
+        await writeEquinoxLocalSignedNativeMacReceipt({
+            transactionRoot: paths.root, transactionId: id, sourceSha: sha, target,
+            runtimeContractSha256: digest, status: "admitted", fsImpl,
+        });
+        return record;
+    }
+    finally {
+        if (!closed)
+            await handle.close().catch(() => { });
+        if (!success) {
+            const stored = await fsImpl.lstat(lockPath).catch(() => null);
+            if (stored?.isFile() && !stored.isSymbolicLink() &&
+                stored.dev === original.dev && stored.ino === original.ino) {
+                await fsImpl.unlink(lockPath).catch(() => { });
+            }
+        }
+    }
+}
+// Read-only owner check for a future detached/recovery runner. Never delete a
+// native lock on a mismatched identity or when the terminal journal is absent.
+export async function assertEquinoxLocalSignedNativeMacOwner({ transactionRoot, transactionId, sourceSha, target, runtimeContractSha256, fsImpl = fs, }) {
+    const paths = recoveryPath(transactionRoot, transactionId);
+    const lockPath = path.join(paths.root, "active.json");
+    const stat = await fsImpl.lstat(lockPath);
+    if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1 ||
+        (stat.mode & 0o777) !== 0o600) {
+        throw new Error("Signed native owner is not a private normal lock.");
+    }
+    const { data } = await readBoundedNormalFile(lockPath, {
+        fsImpl, minBytes: 30, maxBytes: 1024, encoding: "utf8", label: "Signed native owner lock",
+    });
+    let raw;
+    try {
+        raw = JSON.parse(data);
+    }
+    catch {
+        throw new Error("Signed native owner lock JSON is invalid.");
+    }
+    exactKeys(raw, ["schemaVersion", "kind", "transactionId", "sourceSha", "target", "runtimeContractSha256"], "Signed native owner");
+    if (raw.schemaVersion !== 1 || raw.kind !== "signed-native" ||
+        raw.transactionId !== transactionId || raw.sourceSha !== sourceSha ||
+        raw.target !== target || raw.runtimeContractSha256 !== runtimeContractSha256) {
+        throw new Error("Signed native owner differs from the exact active transaction.");
+    }
+    return Object.freeze({ ...raw });
+}
+const SIGNED_NATIVE_STAGES = new Set([
+    "admitted", "activating", "rolling_back", "healthy", "rolled_back", "rollback_failed",
+]);
+function signedNativeReceiptPath(args) {
+    return path.join(recoveryPath(args.transactionRoot, args.transactionId).root, "receipts", args.transactionId + ".signed-native.json");
+}
+function validateSignedNativeReceipt(raw, identity) {
+    exactKeys(raw, ["schemaVersion", "kind", "transactionId", "sourceSha", "target",
+        "runtimeContractSha256", "status"], "Signed native durable receipt");
+    if (raw.schemaVersion !== 1 || raw.kind !== "signed-native" ||
+        raw.transactionId !== identity.transactionId || raw.sourceSha !== identity.sourceSha ||
+        raw.target !== identity.target || raw.runtimeContractSha256 !== identity.runtimeContractSha256 ||
+        !SIGNED_NATIVE_STAGES.has(raw.status)) {
+        throw new Error("Signed native durable receipt differs from active transaction.");
+    }
+    return Object.freeze({ ...raw, status: raw.status });
+}
+export async function readEquinoxLocalSignedNativeMacReceipt(args) {
+    await assertEquinoxLocalSignedNativeMacOwner(args);
+    const root = path.join(recoveryPath(args.transactionRoot, args.transactionId).root, "receipts");
+    const dir = await (args.fsImpl ?? fs).lstat(root);
+    if (!dir.isDirectory() || dir.isSymbolicLink())
+        throw new Error("Signed native receipt directory is unsafe.");
+    const file = signedNativeReceiptPath(args);
+    const stat = await (args.fsImpl ?? fs).lstat(file);
+    if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1 ||
+        (stat.mode & 0o777) !== 0o600)
+        throw new Error("Signed native receipt is not a private normal file.");
+    return validateSignedNativeReceipt(await readBoundedJsonFile(file, { fsImpl: args.fsImpl ?? fs }), args);
+}
+export async function writeEquinoxLocalSignedNativeMacReceipt({ status, fsImpl = fs, ...identity }) {
+    if (!SIGNED_NATIVE_STAGES.has(status))
+        throw new Error("Signed native receipt stage is invalid.");
+    await assertEquinoxLocalSignedNativeMacOwner({ ...identity, fsImpl });
+    const receiptDir = path.join(identity.transactionRoot, "receipts");
+    await fsImpl.mkdir(receiptDir, { recursive: true, mode: 0o700 });
+    const receiptPath = signedNativeReceiptPath(identity);
+    let previous = null;
+    try {
+        previous = await readEquinoxLocalSignedNativeMacReceipt({ ...identity, fsImpl });
+    }
+    catch (error) {
+        if (!hasErrorCode(error, "ENOENT"))
+            throw error;
+    }
+    const next = Object.freeze({ schemaVersion: 1, kind: "signed-native",
+        transactionId: identity.transactionId, sourceSha: identity.sourceSha,
+        target: identity.target, runtimeContractSha256: identity.runtimeContractSha256, status });
+    const allowed = {
+        admitted: ["activating"], activating: ["rolling_back", "healthy"],
+        rolling_back: ["rolled_back", "rollback_failed"],
+        healthy: [], rolled_back: [], rollback_failed: [],
+    };
+    if (!previous && status !== "admitted")
+        throw new Error("Signed native owner has no admitted durable receipt.");
+    if (previous && previous.status !== status && !allowed[previous.status].includes(status)) {
+        throw new Error("Signed native receipt cannot advance from its durable terminal/rollback stage.");
+    }
+    if (previous?.status === status)
+        return previous;
+    if (previous) {
+        // Replacement is a SHA-256 compare-and-swap: two detached invocations
+        // sharing a transaction ID cannot silently overwrite another's phase.
+        const { data } = await readBoundedNormalFile(receiptPath, {
+            fsImpl, minBytes: 30, maxBytes: 1024, encoding: "utf8",
+            label: "Signed native durable receipt",
+        });
+        const current = validateSignedNativeReceipt(JSON.parse(data), identity);
+        if (current.status !== previous.status) {
+            throw new Error("Signed native receipt stage changed before publication.");
+        }
+        await writeBoundedUtf8File(receiptPath, {
+            content: JSON.stringify(next) + "\n",
+            expectedSha256: createHash("sha256").update(data).digest("hex"),
+            fsImpl, maxBytes: 1024, maxExistingBytes: 1024, label: "Signed native durable receipt",
+        });
+    }
+    else {
+        await writeAtomicPrivateJson(receiptPath, next, { fsImpl });
+    }
+    return await readEquinoxLocalSignedNativeMacReceipt({ ...identity, fsImpl });
 }
 async function previousReleaseFromDescriptor({ descriptor, transactionRoot, installation, fsImpl, inspectStoredReleaseImpl }) {
     if (descriptor.previous.kind === "main") {

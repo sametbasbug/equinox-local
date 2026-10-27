@@ -655,6 +655,7 @@ test("Git-free native health detects native A/B pointer drift after a perfect B 
 
 function signedMacHandoffFixture(previous={kind:"stable",version:"6.2.0"}){
  const events=[];
+ let receiptStatus="admitted";
  const prior=previous.kind==="main"?{
   sourceSha:A,target:"darwin-arm64",runtimeContractSha256:DIGEST_A,
  }:null;
@@ -668,6 +669,13 @@ function signedMacHandoffFixture(previous={kind:"stable",version:"6.2.0"}){
    activate:async()=>{events.push("select native B + mac link B + apphost B")},
    rollback:async()=>{events.push("restore mac link A + native pointer A + apphost A")},
    commit:async()=>{events.push("check B pointers")},
+  },
+  readReceiptImpl:async()=>({status:receiptStatus}),
+  writeReceiptImpl:async({status})=>{receiptStatus=status;return {status}},
+  assertOwnerImpl:async args=>{
+   events.push("native owner");
+   assert.equal(args.sourceSha,B);
+   assert.equal(args.transactionId,TX);
   },
   readDescriptorImpl:async args=>{
    events.push("durable descriptor");
@@ -693,7 +701,7 @@ function signedMacHandoffFixture(previous={kind:"stable",version:"6.2.0"}){
     payloadVersion:"6.2.1",releaseDir:"/owned/native/A"};
   },
  };
- return {input,events};
+ return {input,events,getReceipt:()=>receiptStatus};
 }
 
 test("signed Git-free macOS handoff restarts actual B before checking exact SHA twice and declaring healthy",async()=>{
@@ -701,7 +709,7 @@ test("signed Git-free macOS handoff restarts actual B before checking exact SHA 
  const result=await runEquinoxLocalSignedMacNativeHandoff(input);
  assert.equal(result.status,"healthy");
  assert.equal(result.sourceSha,B);
- assert.deepEqual(events,["durable descriptor","select native B + mac link B + apphost B",
+ assert.deepEqual(events,["durable descriptor","native owner","select native B + mac link B + apphost B",
   "launchctl restart","health native 2","check B pointers","health native 2"]);
 });
 
@@ -712,7 +720,7 @@ test("signed macOS B failed health restores old Stable A then restarts and verif
  });
  assert.equal(result.status,"rolled_back");
  assert.match(result.targetError,/old SHA/u);
- assert.deepEqual(events,["durable descriptor","select native B + mac link B + apphost B",
+ assert.deepEqual(events,["durable descriptor","native owner","select native B + mac link B + apphost B",
   "launchctl restart","unhealthy B","restore mac link A + native pointer A + apphost A",
   "launchctl restart","health stable 6.2.0"]);
 });
@@ -732,7 +740,7 @@ test("same displayed version native A and B roll back with original A full SHA n
   },
  });
  assert.equal(result.status,"rolled_back");
- assert.deepEqual(events,["durable descriptor","select native B + mac link B + apphost B",
+ assert.deepEqual(events,["durable descriptor","native owner","select native B + mac link B + apphost B",
   "launchctl restart","health native 2","restore mac link A + native pointer A + apphost A",
   "launchctl restart","inspect durable native 1","health native 1"]);
 });
@@ -747,7 +755,7 @@ test("failed B and failed A health stays explicitly unrecovered, does not report
   assert.match(error.cause.message,/Stable A health missing/u);
   return true;
  });
- assert.deepEqual(events,["durable descriptor","select native B + mac link B + apphost B",
+ assert.deepEqual(events,["durable descriptor","native owner","select native B + mac link B + apphost B",
   "launchctl restart","restore mac link A + native pointer A + apphost A",
   "launchctl restart","A cannot boot"]);
 });
@@ -763,8 +771,8 @@ test("signed native preflight refuses wrong descriptor A and missing/malformed i
  ]){
   await assert.rejects(runEquinoxLocalSignedMacNativeHandoff({...input,...mutation}));
  }
- assert.equal(events.length,2);
- assert.ok(events.every(event=>event==="durable descriptor"),"no native mutation or restart before admission");
+ assert.deepEqual(events,["durable descriptor","durable descriptor","native owner","native owner"],
+   "invalid handoff cannot restart or mutate native installation");
 });
 
 test("signed native B second SHA-health loss triggers A rollback even after first B health and pointer check",async()=>{
@@ -775,7 +783,41 @@ test("signed native B second SHA-health loss triggers A rollback even after firs
  });
  assert.equal(result.status,"rolled_back");
  assert.equal(checks,2);
- assert.deepEqual(events,["durable descriptor","select native B + mac link B + apphost B",
+ assert.deepEqual(events,["durable descriptor","native owner","select native B + mac link B + apphost B",
   "launchctl restart","B health 1","check B pointers","B health 2",
   "restore mac link A + native pointer A + apphost A","launchctl restart","health stable 6.2.0"]);
+});
+
+
+test("signed native durable receipt replay resumes rollback without retrying failed B",async()=>{
+ const {input,events}=signedMacHandoffFixture();
+ const status=[];
+ const result=await runEquinoxLocalSignedMacNativeHandoff({...input,
+  readReceiptImpl:async()=>({status:"rolling_back"}),
+  writeReceiptImpl:async r=>{status.push(r.status);return r},
+ });
+ assert.equal(result.status,"rolled_back");
+ assert.deepEqual(status,["rolled_back"]);
+ assert.deepEqual(events,["durable descriptor","native owner",
+  "restore mac link A + native pointer A + apphost A",
+  "launchctl restart","health stable 6.2.0"]);
+});
+
+test("signed-native terminal receipt forbids second activation or rollback",async()=>{
+ const {input,events}=signedMacHandoffFixture();
+ for(const status of ["healthy","rolled_back","rollback_failed"]){
+  await assert.rejects(runEquinoxLocalSignedMacNativeHandoff({...input,
+   readReceiptImpl:async()=>({status}),
+  }),/existing terminal receipt/u);
+ }
+ assert.deepEqual(events,["durable descriptor","native owner",
+  "durable descriptor","native owner","durable descriptor","native owner"]);
+});
+
+test("unhealthy A recovery persists rollback_failed and never reports success",async()=>{
+ const {input,getReceipt}=signedMacHandoffFixture();
+ await assert.rejects(runEquinoxLocalSignedMacNativeHandoff({...input,
+  verifyNativeImpl:async()=>false,verifyStableImpl:async()=>false,
+ }),/rollback A health is unverified/u);
+ assert.equal(getReceipt(),"rollback_failed");
 });

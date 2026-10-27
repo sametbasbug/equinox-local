@@ -23,7 +23,7 @@ import { EQUINOX_LOCAL_CONTROL_CENTER_STATUS_URL, waitForEquinoxLocalVersion, } 
 import { requestWindowsShellRuntimeRestart } from "./equinox-local-windows-shell-control.js";
 import { assertWindowsStableShellOwnedByRelease, launchWindowsStableShell } from "./equinox-local-windows-stable-shell.js";
 import { cleanupEquinoxLocalMainUpdateWorkerOwnership } from "./equinox-local-main-update-scheduler.js";
-import { readEquinoxLocalMainNativeRecoveryDescriptor } from "./equinox-local-main-native-recovery.js";
+import { readEquinoxLocalMainNativeRecoveryDescriptor, assertEquinoxLocalSignedNativeMacOwner, readEquinoxLocalSignedNativeMacReceipt, writeEquinoxLocalSignedNativeMacReceipt, } from "./equinox-local-main-native-recovery.js";
 import { admitWindowsMainNativeWorkerJournal } from "./equinox-local-windows-main-worker-admission.js";
 const execFile = promisify(execFileCallback);
 function hasErrorCode(error, code) {
@@ -191,7 +191,7 @@ export async function waitForExactNativeMainHealth({ transactionRoot, sourceSha,
 // Before the installer exposes this operation, its detached worker must own
 // the journal/lock and be restart-safe. This bounded orchestration works only
 // with an already prepared, production-signed immutable native B lifecycle.
-export async function runEquinoxLocalSignedMacNativeHandoff({ transactionRoot, transactionId, lifecycle, sourceSha, target, version, runtimeContractSha256, previousVersion = null, restartImpl = async () => restartEquinoxLocalMainSourceRuntime({ platform: "darwin" }), verifyNativeImpl = waitForExactNativeMainHealth, verifyStableImpl = waitForEquinoxLocalVersion, inspectStoredImpl = inspectEquinoxLocalMainNativeStoredRelease, readDescriptorImpl = readEquinoxLocalMainNativeRecoveryDescriptor, }) {
+export async function runEquinoxLocalSignedMacNativeHandoff({ transactionRoot, transactionId, lifecycle, sourceSha, target, version, runtimeContractSha256, previousVersion = null, restartImpl = async () => restartEquinoxLocalMainSourceRuntime({ platform: "darwin" }), verifyNativeImpl = waitForExactNativeMainHealth, verifyStableImpl = waitForEquinoxLocalVersion, inspectStoredImpl = inspectEquinoxLocalMainNativeStoredRelease, readDescriptorImpl = readEquinoxLocalMainNativeRecoveryDescriptor, assertOwnerImpl = assertEquinoxLocalSignedNativeMacOwner, readReceiptImpl = readEquinoxLocalSignedNativeMacReceipt, writeReceiptImpl = writeEquinoxLocalSignedNativeMacReceipt, }) {
     if (!/^main-[a-f0-9]{32}$/u.test(transactionId) ||
         !path.isAbsolute(transactionRoot) || path.resolve(transactionRoot) !== transactionRoot ||
         !/^[a-f0-9]{40}$/u.test(sourceSha) ||
@@ -204,6 +204,15 @@ export async function runEquinoxLocalSignedMacNativeHandoff({ transactionRoot, t
     }
     const descriptor = await readDescriptorImpl({ transactionRoot, transactionId,
         expected: { targetSha: sourceSha, target, targetRuntimeContractSha256: runtimeContractSha256 } });
+    await assertOwnerImpl({ transactionRoot, transactionId, sourceSha, target, runtimeContractSha256 });
+    const ownerIdentity = { transactionRoot, transactionId, sourceSha, target, runtimeContractSha256 };
+    const receipt = await readReceiptImpl(ownerIdentity);
+    if (["healthy", "rolled_back", "rollback_failed"].includes(receipt.status)) {
+        throw new Error("Signed native handoff has an existing terminal receipt; no native mutation is allowed.");
+    }
+    if (!["admitted", "activating", "rolling_back"].includes(receipt.status)) {
+        throw new Error("Signed native handoff state is not resumable.");
+    }
     const prior = lifecycle.previousPointer;
     if (descriptor.previous.kind === "main") {
         if (!prior || prior.sourceSha !== descriptor.previous.sourceSha ||
@@ -244,24 +253,38 @@ export async function runEquinoxLocalSignedMacNativeHandoff({ transactionRoot, t
             throw new Error("Restored native A did not pass exact SHA health.");
         }
     };
-    try {
-        await lifecycle.activate(); // BOTH pointers B before restart
-        await restartImpl(); // launchd must actually boot B
-        if ((await verifyNativeImpl(b)) !== true)
-            throw new Error("Signed native B failed exact SHA health.");
-        await lifecycle.commit(); // check BOTH B pointers after health
-        if ((await verifyNativeImpl(b)) !== true)
-            throw new Error("Signed native B lost exact SHA health.");
-        // Terminal receipt is written by the owning durable native-only worker.
-        return Object.freeze({ status: "healthy", sourceSha, target, version });
+    if (receipt.status !== "rolling_back") {
+        try {
+            if (receipt.status === "admitted") {
+                await writeReceiptImpl({ ...ownerIdentity, status: "activating" });
+            }
+            await lifecycle.activate(); // BOTH pointers B before restart
+            await restartImpl(); // launchd must actually boot B
+            if ((await verifyNativeImpl(b)) !== true)
+                throw new Error("Signed native B failed exact SHA health.");
+            await lifecycle.commit(); // check BOTH B pointers after health
+            if ((await verifyNativeImpl(b)) !== true)
+                throw new Error("Signed native B lost exact SHA health.");
+            await writeReceiptImpl({ ...ownerIdentity, status: "healthy" });
+            return Object.freeze({ status: "healthy", sourceSha, target, version });
+        }
+        catch (targetFailure) {
+            // Before touching A, make the crash-resumable rollback decision
+            // DURABLE. If it cannot be recorded, preserve B for explicit recovery.
+            await writeReceiptImpl({ ...ownerIdentity, status: "rolling_back" });
+            return await rollbackA(targetFailure);
+        }
     }
-    catch (targetFailure) {
+    return await rollbackA(new Error("Resuming the durable native A rollback."));
+    async function rollbackA(targetFailure) {
         try {
             await lifecycle.rollback(); // both A pointers and apphost
             await restartImpl(); // launchd must actually boot A
             await verifyA(); // stable A or full-SHA native A
+            await writeReceiptImpl({ ...ownerIdentity, status: "rolled_back" });
         }
         catch (rollbackFailure) {
+            await writeReceiptImpl({ ...ownerIdentity, status: "rollback_failed" }).catch(() => { });
             throw Object.assign(new Error("Signed native B failed and rollback A health is unverified."), {
                 cause: rollbackFailure, targetFailure,
             });

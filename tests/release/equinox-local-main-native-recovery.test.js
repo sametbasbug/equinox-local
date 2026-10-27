@@ -10,8 +10,13 @@ import {
   readEquinoxLocalMainNativeRecoveryDescriptor,
   recoverEquinoxLocalMainNativeLifecycle,
   writeEquinoxLocalMainNativeRecoveryDescriptor,
+  beginEquinoxLocalSignedNativeMacOwner,
+  assertEquinoxLocalSignedNativeMacOwner,
+  readEquinoxLocalSignedNativeMacReceipt,
+  writeEquinoxLocalSignedNativeMacReceipt,
 } from "../../src/equinox-local-main-native-recovery.js";
 import { createSignedMainInstallPointer,validateSignedMainInstallPointer } from "../../src/equinox-local-main-install-pointer.js";
+import { createEquinoxLocalMainUpdateTransactionEngine } from "../../src/equinox-local-main-update-transaction.js";
 
 const A = "1".repeat(40);
 const B = "2".repeat(40);
@@ -261,4 +266,100 @@ test("signed native crash recovery replays a half-selected B to both exact Mac p
  await fs.rm(selectorPath);
  await fs.symlink(path.join(home,"foreign"),selectorPath);
  await assert.rejects(recoverEquinoxLocalMainNativeLifecycle(opts),/not a private normal file/u);
+});
+
+
+test("signed native activation uses the SAME exclusive Main active.json lock as the legacy source updater",async t=>{
+ const root=await scratch(t);
+ const input={transactionRoot:root,transactionId:TX,sourceSha:B,
+  target:"darwin-arm64",runtimeContractSha256:DB};
+ await writeEquinoxLocalMainNativeRecoveryDescriptor({
+  transition:transition("darwin-arm64"),previousPointer:null,
+  installation:{releaseDir:"/owned/release/5.2.0"},
+  transactionRoot:root,transactionId:TX,
+ });
+ const owned=await beginEquinoxLocalSignedNativeMacOwner(input);
+ assert.equal(owned.kind,"signed-native");
+ assert.deepEqual(await assertEquinoxLocalSignedNativeMacOwner(input),owned);
+ assert.equal((await readEquinoxLocalSignedNativeMacReceipt(input)).status,"admitted");
+ await writeEquinoxLocalSignedNativeMacReceipt({...input,status:"activating"});
+ await writeEquinoxLocalSignedNativeMacReceipt({...input,status:"rolling_back"});
+ await writeEquinoxLocalSignedNativeMacReceipt({...input,status:"rolled_back"});
+ assert.equal((await readEquinoxLocalSignedNativeMacReceipt(input)).status,"rolled_back");
+ await assert.rejects(writeEquinoxLocalSignedNativeMacReceipt({...input,status:"activating"}),
+  /cannot advance from its durable terminal/u);
+ const lock=path.join(root,"active.json");
+ assert.equal((await fs.stat(lock)).mode&0o777,0o600);
+ assert.equal((await fs.stat(lock)).nlink,1);
+ await assert.rejects(beginEquinoxLocalSignedNativeMacOwner(input),{code:"EEXIST"});
+ for(const invalid of [
+  {sourceSha:A},{transactionId:"main-"+ "d".repeat(32)},
+  {runtimeContractSha256:DA},{target:"darwin-x64"},
+ ]){
+  await assert.rejects(assertEquinoxLocalSignedNativeMacOwner({...input,...invalid}),
+    /differs from the exact active transaction/u);
+ }
+ const sourceEngine=createEquinoxLocalMainUpdateTransactionEngine({
+  sourceRoot:"/owned/main/source",transactionRoot:root,
+  inspectCheckoutImpl:async()=>assert.fail("legacy Git must never run on a native-owned lock"),
+ });
+ await assert.rejects(sourceEngine.begin({currentSha:A,targetSha:B}),
+  /missing or unsupported fields|Main update lock marker/u);
+ assert.deepEqual(await assertEquinoxLocalSignedNativeMacOwner(input),owned,
+  "legacy Main admission must not replace signed native ownership");
+});
+
+test("signed native lock refuses private-root drift, forged owner symlinks and mismatched recovery descriptor",async t=>{
+ const root=await scratch(t);
+ const input={transactionRoot:root,transactionId:TX,sourceSha:B,
+  target:"darwin-arm64",runtimeContractSha256:DB};
+ await writeEquinoxLocalMainNativeRecoveryDescriptor({
+  transition:transition("darwin-arm64"),previousPointer:null,
+  installation:{releaseDir:"/owned/release/5.2.0"},
+  transactionRoot:root,transactionId:TX,
+ });
+ const external=path.join(root,"outside.json");
+ await fs.writeFile(external,'{"secret":"untouched"}',{mode:0o600});
+ const lock=path.join(root,"active.json");
+ await fs.symlink(external,lock);
+ await assert.rejects(assertEquinoxLocalSignedNativeMacOwner(input),/private normal lock/u);
+ await assert.rejects(beginEquinoxLocalSignedNativeMacOwner(input),{code:"EEXIST"});
+ assert.equal(await fs.readFile(external,"utf8"),'{"secret":"untouched"}');
+ await fs.unlink(lock);
+ await assert.rejects(beginEquinoxLocalSignedNativeMacOwner({...input,sourceSha:A}),/target SHA mismatch/u);
+ await fs.chmod(root,0o755);
+ await assert.rejects(beginEquinoxLocalSignedNativeMacOwner(input),/private owned directory/u);
+ await assert.rejects(fs.lstat(lock),{code:"ENOENT"});
+});
+
+
+test("signed native durable receipt refuses forged identity and symlink without damaging foreign contents",async t=>{
+ const root=await scratch(t);
+ const input={transactionRoot:root,transactionId:TX,sourceSha:B,
+  target:"darwin-arm64",runtimeContractSha256:DB};
+ await writeEquinoxLocalMainNativeRecoveryDescriptor({
+  transition:transition("darwin-arm64"),previousPointer:null,
+  installation:{releaseDir:"/owned/release/5.2.0"},
+  transactionRoot:root,transactionId:TX,
+ });
+ await beginEquinoxLocalSignedNativeMacOwner(input);
+ await writeEquinoxLocalSignedNativeMacReceipt({...input,status:"activating"});
+ await writeEquinoxLocalSignedNativeMacReceipt({...input,status:"rolling_back"});
+ await writeEquinoxLocalSignedNativeMacReceipt({...input,status:"rollback_failed"});
+ await assert.rejects(writeEquinoxLocalSignedNativeMacReceipt({...input,status:"rolled_back"}),
+  /cannot advance from its durable terminal/u);
+ const file=path.join(root,"receipts",TX+".signed-native.json");
+ const before=await fs.readFile(file);
+ const corrupted=JSON.parse(before.toString("utf8"));
+ corrupted.sourceSha=A;
+ await fs.writeFile(file,JSON.stringify(corrupted),{mode:0o600});
+ await assert.rejects(readEquinoxLocalSignedNativeMacReceipt(input),/differs from active transaction/u);
+ await assert.rejects(writeEquinoxLocalSignedNativeMacReceipt({...input,status:"healthy"}),
+  /differs from active transaction/u);
+ await fs.unlink(file);
+ const foreign=path.join(root,"foreign");
+ await fs.writeFile(foreign,"foreign",{mode:0o600});
+ await fs.symlink(foreign,file);
+ await assert.rejects(readEquinoxLocalSignedNativeMacReceipt(input),/not a private normal file/u);
+ assert.equal(await fs.readFile(foreign,"utf8"),"foreign");
 });
