@@ -31,11 +31,13 @@ require_private_directory() {
 }
 
 MAIN_ARGS=(--enroll-existing-main)
+PREPARE_MAIN=0
 for argument in "$@"; do
   case "$argument" in
     --enroll-existing-main) MAIN_ARGS=(--enroll-existing-main) ;;
+    --prepare-main) PREPARE_MAIN=1 ;;
     --help|-h)
-      printf '%s\n' 'Usage: install-equinox-local.sh [--enroll-existing-main]' 'The installer verifies the signed bootstrap and enrolls the admitted Main commit by default.' 'Failure preserves the signed bootstrap for recovery; existing settings are retained.'
+      printf '%s\n' 'Usage: install-equinox-local.sh [--enroll-existing-main] [--prepare-main]' 'The installer verifies the signed bootstrap and enrolls the admitted Main commit by default.' 'Failure preserves the signed bootstrap for recovery; existing settings are retained.'
       exit 0 ;;
     *) fail "unknown argument: $argument (use --help)" ;;
   esac
@@ -67,6 +69,62 @@ case "$ARCH" in
   *) fail "unsupported Mac architecture: $ARCH" ;;
 esac
 
+# Pre-activation SHA-bound Main verification path, shared with Windows.
+# Run this until native source-SHA activation and rollback handoff is ready.
+# The production installer default remains unchanged meanwhile.
+MAIN_VERIFY_URL="https://local.sametbasbug.dev/downloads/updates/install-main-verify.mjs"
+MAIN_VERIFY_SHA256="2b7cffc35c0d6bcd2336e27e7468ad3379d805a6ef1211e00330c8b2ad67acab"
+MAIN_VERIFY_BYTES=8228
+MAIN_NODE_VERSION="26.12.1"
+case "$TARGET" in
+  darwin-arm64)
+    MAIN_NODE_ARCHIVE_BYTES=58334853
+    MAIN_NODE_ARCHIVE_SHA256="1901d539912c02afa10d1cc126943a8855a7eedebe830119463470db5e6c59e8" ;;
+  darwin-x64)
+    MAIN_NODE_ARCHIVE_BYTES=59800211
+    MAIN_NODE_ARCHIVE_SHA256="b85c2ea4420ad0bc4abf2dc6cf1f55130ed681f1cabf60cf3f526e4c9e2712ff" ;;
+  *) fail "unsupported Main bootstrap architecture" ;;
+esac
+
+# No trust is given to JavaScript merely because it arrives over HTTPS.
+# Source digest and pinned Node official distribution are verified BEFORE
+# either binary or downloaded JS code executes.
+prepare_verified_main() {
+  local verifier="$TEMP_ROOT/install-main-verify.mjs"
+  local node_archive="$TEMP_ROOT/node.tar.gz"
+  local node_root="node-v$MAIN_NODE_VERSION-$TARGET"
+  local node_url="https://nodejs.org/dist/v$MAIN_NODE_VERSION/$node_root.tar.gz"
+  info "checking pinned Main verification code"
+  /usr/bin/curl --fail --silent --show-error --proto '=https' --tlsv1.2 \
+    --connect-timeout 15 --max-time 40 --max-filesize "$MAIN_VERIFY_BYTES" \
+    --output "$verifier" "$MAIN_VERIFY_URL" || fail "Main verifier download failed"
+  [ "$(/usr/bin/stat -f '%z' "$verifier")" = "$MAIN_VERIFY_BYTES" ] ||
+    fail "Main verifier byte count mismatch"
+  [ "$(/usr/bin/shasum -a 256 "$verifier" | /usr/bin/awk '{print $1}')" = "$MAIN_VERIFY_SHA256" ] ||
+    fail "Main verifier trusted code SHA-256 mismatch"
+  info "checking pinned Node $MAIN_NODE_VERSION ($TARGET)"
+  /usr/bin/curl --fail --silent --show-error --proto '=https' --tlsv1.2 \
+    --connect-timeout 15 --max-time 240 --max-filesize "$MAIN_NODE_ARCHIVE_BYTES" \
+    --output "$node_archive" "$node_url" || fail "pinned Node download failed"
+  [ "$(/usr/bin/stat -f '%z' "$node_archive")" = "$MAIN_NODE_ARCHIVE_BYTES" ] ||
+    fail "pinned Node byte count mismatch"
+  [ "$(/usr/bin/shasum -a 256 "$node_archive" | /usr/bin/awk '{print $1}')" = "$MAIN_NODE_ARCHIVE_SHA256" ] ||
+    fail "pinned Node SHA-256 mismatch"
+  /usr/bin/tar -xzf "$node_archive" -C "$TEMP_ROOT" --no-same-owner ||
+    fail "verified Node archive extraction failed"
+  local node="$TEMP_ROOT/$node_root/bin/node"
+  [ -f "$node" ] && [ ! -L "$node" ] && [ -x "$node" ] ||
+    fail "verified Node executable missing"
+  local archive="$TEMP_ROOT/main-native.tar.gz"
+  local receipt
+  receipt="$(/usr/bin/env -i HOME="$HOME_DIR" PATH="/usr/bin:/bin:/usr/sbin:/sbin" \
+    "$node" "$verifier" --target "$TARGET" --output "$archive")" ||
+    fail "production-signed Main selector or native archive verification failed"
+  [ -f "$archive" ] && [ ! -L "$archive" ] ||
+    fail "verified Main native archive was not produced"
+  printf '%s\n' "$receipt"
+}
+
 MANIFEST_URL="$UPDATE_BASE/bootstrap-$TARGET.txt"
 TEMP_ROOT="$(/usr/bin/mktemp -d /tmp/equinox-local-install.XXXXXX)" || fail "could not create a private temporary directory"
 MANIFEST_PATH="$TEMP_ROOT/bootstrap.txt"
@@ -87,6 +145,11 @@ handle_signal() {
 
 trap cleanup EXIT
 trap handle_signal HUP INT TERM
+
+if [ "$PREPARE_MAIN" -eq 1 ]; then
+  prepare_verified_main
+  exit 0
+fi
 
 info "checking the stable $TARGET bootstrap manifest"
 /usr/bin/curl \

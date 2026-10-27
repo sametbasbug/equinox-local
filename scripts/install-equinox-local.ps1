@@ -1,6 +1,6 @@
-param([switch]$EnrollExistingMain = $true, [switch]$Help)
+param([switch]$EnrollExistingMain = $true, [switch]$Help, [switch]$PrepareMain = $false)
 if ($Help) {
-  Write-Output 'Usage: install-equinox-local.ps1 [-EnrollExistingMain] [-Help]'
+  Write-Output 'Usage: install-equinox-local.ps1 [-EnrollExistingMain] [-Help] [-PrepareMain]'
   Write-Output 'The installer verifies a signed bootstrap and enrolls the admitted Main commit by default.'
   Write-Output 'Failed Main enrollment preserves the verified bootstrap for recovery and keeps your settings.'
   return
@@ -15,6 +15,10 @@ $MaxArtifactBytes = 1073741824
 $ZipHelperName = 'equinox-local-windows-release-zip.ps1'
 $ZipHelperSha256 = '__EQUINOX_ZIP_HELPER_SHA256__'
 $ZipHelperBytes = '__EQUINOX_ZIP_HELPER_BYTES__'
+$MainVerifyUrl = 'https://local.sametbasbug.dev/downloads/updates/install-main-verify.mjs'
+$MainVerifySha256 = '2b7cffc35c0d6bcd2336e27e7468ad3379d805a6ef1211e00330c8b2ad67acab'
+$MainVerifyBytes = 8228
+$MainNodeVersion = '26.12.1'
 
 function Fail([string]$Message) { throw "Equinox Local installer: $Message" }
 function Write-Info([string]$Message) { Write-Host "Equinox Local installer: $Message" }
@@ -23,11 +27,17 @@ function Get-NativeWindowsTarget {
   if (-not [Environment]::Is64BitProcess) { Fail 'native 64-bit Windows PowerShell is required' }
   $processArchitecture = [string]$env:PROCESSOR_ARCHITECTURE
   $nativeArchitecture = [string]$env:PROCESSOR_ARCHITEW6432
+  if ([string]::IsNullOrWhiteSpace($processArchitecture)) {
+    # Managed child processes may deliberately remove nonessential OS env vars.
+    $processArchitecture = [string][System.Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture
+    $nativeArchitecture = [string][System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture
+  }
   if (-not [string]::IsNullOrWhiteSpace($nativeArchitecture) -and $nativeArchitecture -cne $processArchitecture) {
     Fail 'native 64-bit Windows PowerShell is required'
   }
   switch ($processArchitecture.ToUpperInvariant()) {
     'AMD64' { return 'win32-x64' }
+    'X64' { return 'win32-x64' }
     'ARM64' { return 'win32-arm64' }
     default { Fail "unsupported Windows architecture: $processArchitecture" }
   }
@@ -98,6 +108,55 @@ function Read-BootstrapManifest([string]$Path) {
   if ($values.artifactUrl -cne $expectedUrl) { Fail 'bootstrap artifact URL escaped the pinned Equinox Local HTTPS path' }
   return [pscustomobject]@{ Version=$values.version; ArtifactUrl=$values.artifactUrl; ArtifactSha256=$values.artifactSha256; ArtifactBytes=$bytes }
 }
+# A pre-activation admission path shared with the macOS external installer.
+# This stops after producing authenticated native bytes until SHA-transaction
+# activation/rollback is independently accepted. No ambient Node/npm/Git.
+function Invoke-VerifiedMainPreparation([string]$PrivateTemp) {
+  $nodeBytes = [long]0
+  $nodeSha = ''
+  switch ($Target) {
+    'win32-arm64' { $nodeBytes = 37275911; $nodeSha = '34567581ee63967b37afb6b7a0cc63a2d550a43d5d838adb75982d7e356f2e2c' }
+    'win32-x64' { $nodeBytes = 41901456; $nodeSha = 'b3efd5c70cba3308ed46e7e699a9b8aac075bbc6b027fcb39c84c31acc25e2b4' }
+    default { Fail 'unsupported Main verification architecture' }
+  }
+  $architecture = if ($Target -ceq 'win32-arm64') { 'arm64' } else { 'x64' }
+  $nodeBase = 'node-v' + $MainNodeVersion + '-win-' + $architecture
+  $nodeZip = Join-Path $PrivateTemp 'pinned-node.zip'
+  $nodeStage = Join-Path $PrivateTemp 'node'
+  $source = Join-Path $PrivateTemp 'install-main-verify.mjs'
+  $verifiedArchive = Join-Path $PrivateTemp 'main-native.zip'
+  Write-Info 'checking pinned shared Main verification code'
+  Save-BoundedHttpsFile $MainVerifyUrl $source $MainVerifyBytes
+  Assert-NormalFile $source $MainVerifyBytes $MainVerifyBytes | Out-Null
+  if ((Get-Sha256 $source) -cne $MainVerifySha256) { Fail 'Main verifier code digest is invalid' }
+  $nodeUrl = 'https://nodejs.org/dist/v' + $MainNodeVersion + '/' + $nodeBase + '.zip'
+  Write-Info "checking pinned Node $MainNodeVersion ($Target)"
+  Save-BoundedHttpsFile $nodeUrl $nodeZip $nodeBytes
+  Assert-NormalFile $nodeZip $nodeBytes $nodeBytes | Out-Null
+  if ((Get-Sha256 $nodeZip) -cne $nodeSha) { Fail 'pinned Node SHA-256 is invalid' }
+  [IO.Directory]::CreateDirectory($nodeStage) | Out-Null
+  # Windows ships native bsdtar; avoid slow PowerShell ZIP expansion and PATH discovery.
+  $nativeTar = Join-Path $env:WINDIR 'System32\tar.exe'
+  Assert-NormalFile $nativeTar 1 5000000 | Out-Null
+  $tarOutput = @(& $nativeTar '-xf' $nodeZip '-C' $nodeStage 2>&1)
+  if ($LASTEXITCODE -ne 0) { Fail 'verified pinned Node ZIP extraction failed' }
+  $node = Join-Path (Join-Path $nodeStage $nodeBase) 'node.exe'
+  Assert-NormalFile $node 1 200000000 | Out-Null
+  # HTTPS/download/Node/content verification precede all execution.
+  $receipt = @(& $node $source '--target' $Target '--output' $verifiedArchive)
+  if ($LASTEXITCODE -ne 0) { Fail 'production-signed Main pointer or native archive was rejected' }
+  Assert-NormalFile $verifiedArchive 1 $MaxArtifactBytes | Out-Null
+  if ($receipt.Count -ne 1) { Fail 'signed Main verifier produced an unexpected receipt' }
+  try { $parsed = $receipt[0] | ConvertFrom-Json -ErrorAction Stop }
+  catch { Fail 'signed Main verification receipt is invalid' }
+  if ($parsed.target -cne $Target -or $parsed.sourceSha -notmatch '^[a-f0-9]{40}$' -or
+      $parsed.artifactSha256 -cne (Get-Sha256 $verifiedArchive) -or
+      [long]$parsed.artifactBytes -ne (Get-Item -LiteralPath $verifiedArchive).Length) {
+    Fail 'signed Main archive receipt mismatch'
+  }
+  Write-Output $receipt[0]
+}
+
 # This is a one-shot replacement of product EXECUTABLES, not an update of
 # the prior source. Preserve config, secrets, workspace, tunnel, downloads and
 # browser personal state in place. Retire only exact product-owned executable
@@ -386,6 +445,7 @@ function Invoke-EquinoxLocalInstall {
   $stage = Join-Path $stagingRoot ('bootstrap-' + [Guid]::NewGuid().ToString('N'))
   [IO.Directory]::CreateDirectory($tempRoot) | Out-Null
   try {
+    if ($PrepareMain) { Invoke-VerifiedMainPreparation $tempRoot; return }
     $manifestPath = Join-Path $tempRoot 'bootstrap.txt'
     $artifactPath = Join-Path $tempRoot 'release.zip'
     $helperPath = Join-Path $tempRoot $ZipHelperName
