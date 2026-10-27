@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { resolveEquinoxLocalMainWorkerNativeInstallation, restartEquinoxLocalMainSourceRuntime, runEquinoxLocalMainUpdateWorker, waitForExactSourceHealth } from "../../src/equinox-local-main-update-worker.js";
+import { resolveEquinoxLocalMainWorkerNativeInstallation, restartEquinoxLocalMainSourceRuntime, runEquinoxLocalMainUpdateWorker, waitForExactSourceHealth, waitForExactNativeMainHealth } from "../../src/equinox-local-main-update-worker.js";
 
 const TX = `main-${"a".repeat(32)}`;
 const SOURCE = "/private/tmp/equinox-source-a";
@@ -577,4 +577,77 @@ test("worker refuses a forensic rollback_failed receipt without replaying native
     cleanupImpl:async()=>events.push("cleanup"),
   }),/cannot resume a transaction whose rollback already failed/u);
   assert.deepEqual(events,["cleanup"],"forensic owner must be retained but detached job cleaned");
+});
+
+test("Git-free Main native health accepts exact B full SHA and rejects healthy same-version A and Stable",async()=>{
+ const B_SHA="e".repeat(40);
+ const contract="c".repeat(64);
+ const version="6.2.1";
+ const baseline={sourceSha:B_SHA,target:"win32-x64",runtimeContractSha256:contract,payloadVersion:version};
+ const statuses=[
+  {kind:"managed-main",sourceSha:A,mainNativeSha:A,target:"win32-x64"},
+  {kind:"managed",sourceSha:B_SHA,mainNativeSha:B_SHA,target:"win32-x64"},
+  {kind:"managed-main",sourceSha:B_SHA,mainNativeSha:B_SHA,target:"darwin-arm64"},
+  {kind:"managed-main",sourceSha:B_SHA,mainNativeSha:B_SHA,target:"win32-x64"},
+ ];
+ let request=0;
+ const result=await waitForExactNativeMainHealth({
+  transactionRoot:STATE,sourceSha:B_SHA,target:"win32-x64",version,
+  runtimeContractSha256:contract,attempts:4,sleepImpl:async()=>{},
+  readNativePointerImpl:async()=>baseline,
+  fetchImpl:async()=>({status:200,json:async()=>({status:{
+    health:{state:"HEALTHY"},server:{version},
+    installation:statuses[request++],
+  }})}),
+ });
+ assert.equal(result,true);
+ assert.equal(request,4,"only the exact B runtime may satisfy the native health gate");
+});
+
+test("Git-free native health rejects wrong durable B SHA, contract, target or version before touching status endpoint",async()=>{
+ const input={transactionRoot:STATE,sourceSha:B,target:"darwin-arm64",
+   version:"6.2.1",runtimeContractSha256:DIGEST_B,attempts:1};
+ for(const pointer of [
+  {sourceSha:A,target:"darwin-arm64",runtimeContractSha256:DIGEST_B,payloadVersion:"6.2.1"},
+  {sourceSha:B,target:"win32-x64",runtimeContractSha256:DIGEST_B,payloadVersion:"6.2.1"},
+  {sourceSha:B,target:"darwin-arm64",runtimeContractSha256:DIGEST_A,payloadVersion:"6.2.1"},
+  {sourceSha:B,target:"darwin-arm64",runtimeContractSha256:DIGEST_B,payloadVersion:"6.2.0"},
+ ]){
+  await assert.rejects(waitForExactNativeMainHealth({
+   ...input,readNativePointerImpl:async()=>pointer,
+   fetchImpl:async()=>assert.fail("mismatched durable source identity must never call HTTP"),
+  }),/Installed native pointer does not match/u);
+ }
+ for(const override of [{sourceSha:"bad"},{target:"linux-x64"},{version:"6.2.1-rc"},{runtimeContractSha256:"bad"},
+   {attempts:0},{attempts:500},{transactionRoot:"relative"}]){
+  await assert.rejects(waitForExactNativeMainHealth({...input,...override,
+   readNativePointerImpl:async()=>assert.fail("invalid identity must not read durable native store"),
+  }),/identity or bounded attempts are invalid/u);
+ }
+});
+
+test("Git-free native health rejects healthy old A process and never compares manual versions alone",async()=>{
+ const input={transactionRoot:STATE,sourceSha:B,target:"win32-x64",
+  version:"6.2.1",runtimeContractSha256:DIGEST_B,attempts:2,sleepImpl:async()=>{},
+  readNativePointerImpl:async()=>({sourceSha:B,target:"win32-x64",runtimeContractSha256:DIGEST_B,payloadVersion:"6.2.1"})};
+ let calls=0;
+ await assert.rejects(waitForExactNativeMainHealth({...input,fetchImpl:async()=>{
+  calls++;
+  return {status:200,json:async()=>({status:{health:{state:"HEALTHY"},server:{version:"6.2.1"},
+    installation:{kind:"managed-main",sourceSha:A,mainNativeSha:A,target:"win32-x64"}}})};
+ }}),/has not converged/u);
+ assert.equal(calls,2);
+});
+
+test("Git-free native health detects native A/B pointer drift after a perfect B HTTP response",async()=>{
+ const input={transactionRoot:STATE,sourceSha:B,target:"win32-x64",
+  version:"6.2.1",runtimeContractSha256:DIGEST_B,attempts:1};
+ let reads=0;
+ await assert.rejects(waitForExactNativeMainHealth({...input,
+  readNativePointerImpl:async()=>({sourceSha:++reads===1?B:A,
+   target:"win32-x64",runtimeContractSha256:DIGEST_B,payloadVersion:"6.2.1"}),
+  fetchImpl:async()=>({status:200,json:async()=>({status:{health:{state:"HEALTHY"},
+   server:{version:"6.2.1"},installation:{kind:"managed-main",sourceSha:B,mainNativeSha:B,target:"win32-x64"}}})}),
+ }),/has not converged/u);
+ assert.equal(reads,2);
 });

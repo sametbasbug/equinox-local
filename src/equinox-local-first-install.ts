@@ -29,6 +29,7 @@ import { enrollEquinoxLocalManagedSource, rollbackEquinoxLocalManagedSourceEnrol
 import { equinoxLocalManagedSourcePaths } from "./equinox-local-managed-source-installation.js";
 import { validateManagedSourceInstallStamp } from "./equinox-local-main-update.js";
 import { readEquinoxLocalMainNativePointer } from "./equinox-local-main-native-state.js";
+import { validateTrustedMainInstallPointer } from "./equinox-local-main-install-pointer.js";
 import { readEquinoxLocalMainSourcePointer } from "./equinox-local-main-source-pointer.js";
 import {
   reconcileWindowsClassicRepairJournal,
@@ -1217,13 +1218,15 @@ function parseCli(argv:string[]) {
 }
 
 function parseSignedMainInspectionCli(argv:string[]) {
-  if (argv.length !== 9 || argv[0] !== "--inspect-signed-main" ||
+  if ((argv.length !== 9 && argv.length !== 11) || argv[0] !== "--inspect-signed-main" ||
       argv[1] !== "--staged-release" || argv[3] !== "--source-sha" ||
       argv[5] !== "--version" || argv[7] !== "--target" ||
-      !path.isAbsolute(argv[2]!)) {
+      !path.isAbsolute(argv[2]!) ||
+      (argv.length === 11 && (argv[9] !== "--signed-pointer-file" || !path.isAbsolute(argv[10]!)))) {
     throw new Error("Signed Main admission requires staged release, full source SHA, version and target.");
   }
-  return {releaseDir:argv[2]!,sourceSha:argv[4]!,version:argv[6]!,target:argv[8]!};
+  return {releaseDir:argv[2]!,sourceSha:argv[4]!,version:argv[6]!,target:argv[8]!,
+    signedPointerFile:argv.length===11 ? argv[10]! : null};
 }
 
 const invokedPath = process.argv[1] ? path.resolve(process.argv[1]) : null;
@@ -1231,6 +1234,16 @@ if (invokedPath && path.basename(invokedPath) === path.basename(fileURLToPath(im
   if (process.argv[2] === "--inspect-signed-main") {
     Promise.resolve().then(async () => {
       const input = parseSignedMainInspectionCli(process.argv.slice(2));
+      let signedTarget:null|{runtimeContractSha256:string;artifact:{sha256:string;bytes:number}} = null;
+      if (input.signedPointerFile !== null) {
+        const {data} = await readBoundedNormalFile(input.signedPointerFile,{
+          minBytes:200,maxBytes:16*1024,encoding:"utf8",label:"Private production-signed Main selector",
+        });
+        const signed = validateTrustedMainInstallPointer(JSON.parse(data),{expectedSourceSha:input.sourceSha});
+        if (signed.version !== input.version) throw new Error("Signed Main presentation version differs from native candidate.");
+        signedTarget = signed.targets.find(row=>row.target===input.target) ?? null;
+        if (!signedTarget) throw new Error("Signed Main selector does not admit this native architecture.");
+      }
       const candidate = await validateFirstInstallRelease(input.releaseDir, {
         target: input.target,
         expectedMainSourceSha: input.sourceSha,
@@ -1239,6 +1252,11 @@ if (invokedPath && path.basename(invokedPath) === path.basename(fileURLToPath(im
       process.stdout.write(JSON.stringify({
         status: "admitted", sourceSha: candidate.metadata.sourceSha,
         version: candidate.version, target: candidate.target,
+        ...(signedTarget ? {
+          runtimeContractSha256:signedTarget.runtimeContractSha256,
+          artifactSha256:signedTarget.artifact.sha256,
+          artifactBytes:signedTarget.artifact.bytes,
+        } : {}),
       }) + "\n");
     }).catch((error) => {
       process.stderr.write("Signed Main native candidate admission failed.\n");

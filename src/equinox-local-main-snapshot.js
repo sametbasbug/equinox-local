@@ -4,6 +4,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { EQUINOX_LOCAL_SUPPORTED_RELEASE_TARGETS } from "./equinox-local-platform.js";
 import { validateEquinoxLocalMainNativeArtifactManifest } from "./equinox-local-main-native-admission.js";
+import { validateTrustedMainInstallPointer } from "./equinox-local-main-install-pointer.js";
 const MAIN_SNAPSHOT_ORIGIN = "https://main.local.sametbasbug.dev";
 const MAIN_SNAPSHOT_PREFIX = "/snapshots/";
 const MAX_MANIFEST_BYTES = 64 * 1024;
@@ -226,7 +227,7 @@ export async function inspectStagedEquinoxLocalMainSnapshotArtifact({ sourceSha,
     }
     return Object.freeze({ sourceSha, target, transactionId, manifest, manifestPath, artifactPath, ...artifact });
 }
-export async function stageEquinoxLocalMainSnapshotArtifact({ sourceSha, target, expectedRuntimeContractSha256, transactionRoot, transactionId, fetchImpl = globalThis.fetch, fsImpl = fs, randomBytesImpl = randomBytes, timeoutMs = ARTIFACT_TIMEOUT_MS, }) {
+export async function stageEquinoxLocalMainSnapshotArtifact({ sourceSha, target, expectedRuntimeContractSha256, transactionRoot, transactionId, fetchImpl = globalThis.fetch, fsImpl = fs, randomBytesImpl = randomBytes, timeoutMs = ARTIFACT_TIMEOUT_MS, signedArtifactSha256, signedArtifactBytes, signedPointer, }) {
     assertSnapshotIdentity(sourceSha, target);
     if (typeof transactionId !== "string" || !TRANSACTION_ID_PATTERN.test(transactionId))
         throw new Error("Main snapshot transaction id is invalid.");
@@ -234,10 +235,39 @@ export async function stageEquinoxLocalMainSnapshotArtifact({ sourceSha, target,
         throw new Error("Main snapshot network client is unavailable.");
     if (!Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 30 * 60 * 1000)
         throw new Error("Main snapshot artifact timeout is invalid.");
+    // The signed external installer passes both fields authenticated by the
+    // fixed production Ed25519 root. Neither a matching SHA URL nor an
+    // unsigned R2 manifest may substitute for this expected archive digest.
+    if ((signedArtifactSha256 === undefined) !== (signedArtifactBytes === undefined) ||
+        (signedArtifactSha256 !== undefined &&
+            (!/^[a-f0-9]{64}$/u.test(signedArtifactSha256) ||
+                !Number.isSafeInteger(signedArtifactBytes) || signedArtifactBytes < 1 ||
+                signedArtifactBytes > 1024 * 1024 * 1024))) {
+        throw new Error("Signed Main archive size and SHA-256 must be provided together.");
+    }
+    // A standalone installer must supply the exact production-signed selector,
+    // not a mutable R2 manifest with a caller-chosen SHA. Existing Git-backed
+    // worker stages are unchanged when this option is absent.
+    if (signedPointer !== undefined) {
+        const signed = validateTrustedMainInstallPointer(signedPointer, { expectedSourceSha: sourceSha });
+        const entry = signed.targets.find(item => item.target === target);
+        if (!entry || entry.runtimeContractSha256 !== expectedRuntimeContractSha256 ||
+            (signedArtifactSha256 !== undefined && entry.artifact.sha256 !== signedArtifactSha256) ||
+            (signedArtifactBytes !== undefined && entry.artifact.bytes !== signedArtifactBytes)) {
+            throw new Error("Main native staging signature does not match expected architecture, contract or archive.");
+        }
+        signedArtifactSha256 = entry.artifact.sha256;
+        signedArtifactBytes = entry.artifact.bytes;
+    }
     const root = await assertCanonicalExistingDirectory(transactionRoot, "Main update transaction root", fsImpl);
     const stagingRoot = await assertCanonicalExistingDirectory(path.join(root, "staging"), "Main update staging root", fsImpl);
     const transactionDir = await assertCanonicalExistingDirectory(path.join(stagingRoot, transactionId), "Main update transaction directory", fsImpl);
     const snapshot = await fetchEquinoxLocalMainSnapshotManifest({ sourceSha, target, expectedRuntimeContractSha256, fetchImpl });
+    if (signedArtifactSha256 !== undefined &&
+        (snapshot.manifest.artifact.sha256 !== signedArtifactSha256 ||
+            snapshot.manifest.artifact.bytes !== signedArtifactBytes)) {
+        throw new Error("Main R2 manifest differs from the production-signed native archive.");
+    }
     const nativeDir = path.join(transactionDir, "native");
     let nativeCreated = false;
     let originalNativeDirectory = null;

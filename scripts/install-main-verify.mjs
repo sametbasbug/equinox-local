@@ -99,14 +99,21 @@ async function smallResponse(response){
 
 // Caller provides a NEW absolute file inside its owned private staging root.
 // File creation uses exclusive mode; failed partial downloads are removed.
-export async function downloadVerifiedMainArchive({target,destination}={}){
+export async function downloadVerifiedMainArchive({target,destination,pointerDestination}={}){
  if(!TARGETS.includes(target)||typeof destination!=='string'||!path.isAbsolute(destination)||
     path.resolve(destination)!==destination){
   throw Error('Main verification needs a supported target and absolute new file.');
  }
+ if(pointerDestination!==undefined&&
+   (typeof pointerDestination!=='string'||!path.isAbsolute(pointerDestination)||
+    path.resolve(pointerDestination)!==pointerDestination||
+    pointerDestination===destination)){
+  throw Error('Signed Main selector output requires a separate absolute new file.');
+ }
  const response=await fetch(POINTER_URL,{redirect:'error',
   headers:{'cache-control':'no-cache'},signal:AbortSignal.timeout(30000)});
- const selected=verifyMainInstallerPointer(await smallResponse(response),{target});
+ const signedPointer=await smallResponse(response);
+ const selected=verifyMainInstallerPointer(signedPointer,{target});
  const artifact=selected.artifact;
  const data=await fetch(artifact.url,{redirect:'error',signal:AbortSignal.timeout(600000)});
  if(data.status!==200||!data.body)throw Error('Main native archive HTTP request failed.');
@@ -118,6 +125,7 @@ export async function downloadVerifiedMainArchive({target,destination}={}){
  }
  const file=await fs.open(destination,'wx',0o600);
  let verified=false;
+ let pointerCreated=false;
  try{
   let total=0;
   const sha=createHash('sha256');
@@ -136,20 +144,35 @@ export async function downloadVerifiedMainArchive({target,destination}={}){
    throw Error('Main archive failed signed SHA-256 and byte count.');
   }
   await file.sync();
+  if(pointerDestination!==undefined){
+   // Exact original production signature and payload are retained for the
+   // already trusted native A/B stage, whose pinned root rechecks it.
+   const bytes=Buffer.from(JSON.stringify(signedPointer));
+   if(bytes.length>MAX_POINTER)throw Error('Signed Main selector exceeded the bounded persistence size.');
+   const pointer=await fs.open(pointerDestination,'wx',0o600);
+   pointerCreated=true;
+   try{await pointer.writeFile(bytes);await pointer.sync();}
+   finally{await pointer.close();}
+  }
   verified=true;
   return Object.freeze({sourceSha:selected.sourceSha,version:selected.version,publishedAt:selected.publishedAt,target,
    runtimeContractSha256:selected.runtimeContractSha256,
    artifactSha256:artifact.sha256,artifactBytes:artifact.bytes});
  }finally{
   await file.close();
-  if(!verified)await fs.rm(destination,{force:true});
+  if(!verified){
+   await fs.rm(destination,{force:true});
+   if(pointerCreated)await fs.rm(pointerDestination,{force:true});
+  }
  }
 }
 async function main(args){
- if(args.length!==4||args[0]!=='--target'||args[2]!=='--output'){
-  throw Error('Usage: install-main-verify.mjs --target <native-target> --output <new-absolute-file>');
+ if((args.length!==4&&args.length!==6)||args[0]!=='--target'||args[2]!=='--output'||
+   (args.length===6&&args[4]!=='--pointer-output')){
+  throw Error('Usage: install-main-verify.mjs --target <native-target> --output <new-absolute-file> [--pointer-output <new-absolute-file>]');
  }
- const result=await downloadVerifiedMainArchive({target:args[1],destination:args[3]});
+ const result=await downloadVerifiedMainArchive({target:args[1],destination:args[3],
+  ...(args.length===6?{pointerDestination:args[5]}:{})});
  process.stdout.write(JSON.stringify(result)+'\n');
 }
 if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.url)){

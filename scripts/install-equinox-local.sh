@@ -73,8 +73,8 @@ esac
 # Run this until native source-SHA activation and rollback handoff is ready.
 # The production installer default remains unchanged meanwhile.
 MAIN_VERIFY_URL="https://local.sametbasbug.dev/downloads/updates/install-main-verify.mjs"
-MAIN_VERIFY_SHA256="2b7cffc35c0d6bcd2336e27e7468ad3379d805a6ef1211e00330c8b2ad67acab"
-MAIN_VERIFY_BYTES=8228
+MAIN_VERIFY_SHA256="df0aea950440d6efad47b92398a0a8bdc4a63d4db0a26d4db05a0b137c9989c8"
+MAIN_VERIFY_BYTES=9396
 MAIN_NODE_VERSION="26.12.1"
 case "$TARGET" in
   darwin-arm64)
@@ -118,7 +118,8 @@ prepare_verified_main() {
   local archive="$TEMP_ROOT/main-native.tar.gz"
   local receipt
   receipt="$(/usr/bin/env -i HOME="$HOME_DIR" PATH="/usr/bin:/bin:/usr/sbin:/sbin" \
-    "$node" "$verifier" --target "$TARGET" --output "$archive")" ||
+    "$node" "$verifier" --target "$TARGET" --output "$archive" \
+    --pointer-output "$TEMP_ROOT/main-signed-pointer.json")" ||
     fail "production-signed Main selector or native archive verification failed"
   [ -f "$archive" ] && [ ! -L "$archive" ] ||
     fail "verified Main native archive was not produced"
@@ -143,7 +144,8 @@ prepare_verified_main() {
   [ -d "$candidate" ] && [ ! -L "$candidate" ] &&
     [ -f "$inspector" ] && [ ! -L "$inspector" ] ||
     fail "verified Main candidate lacks a normal native release/inspector"
-  /usr/bin/env -i HOME="$HOME_DIR" PATH="/usr/bin:/bin:/usr/sbin:/sbin" "$node" "$inspector" --inspect-signed-main     --staged-release "$candidate" --source-sha "$signed_sha"     --version "$signed_version" --target "$TARGET" >/dev/null ||
+  /usr/bin/env -i HOME="$HOME_DIR" PATH="/usr/bin:/bin:/usr/sbin:/sbin" "$node" "$inspector" --inspect-signed-main     --staged-release "$candidate" --source-sha "$signed_sha"     --version "$signed_version" --target "$TARGET" \
+    --signed-pointer-file "$TEMP_ROOT/main-signed-pointer.json" >/dev/null ||
     fail "Main native release metadata does not match the signed full SHA"
   printf '%s\n' "$receipt"
 }

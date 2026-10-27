@@ -218,6 +218,28 @@ test("signed Main native candidate CLI checks exact SHA without starting or muta
   }
 });
 
+test("native SHA admission independently rejects a forged or wrong-root persisted signed selector before inspecting a release",async()=>{
+ const fixture=await createFixture("5.2.1");
+ const sha="a".repeat(40);
+ const selector=path.join(fixture.homeDir,"forged-main-selector.json");
+ const pointer={schemaVersion:1,channel:"main",sourceSha:sha,version:"5.2.1",
+  publishedAt:"2026-10-27T20:00:00.000Z",targets:[],
+  signature:{algorithm:"ed25519",keyId:"attacker",value:Buffer.alloc(64).toString("base64")}};
+ await fs.writeFile(selector,JSON.stringify(pointer));
+ const inspector=fileURLToPath(new URL("../../src/equinox-local-first-install.js",import.meta.url));
+ try{
+  assert.throws(()=>execFileSync(process.execPath,[
+   inspector,"--inspect-signed-main","--staged-release",fixture.releaseDir,
+   "--source-sha",sha,"--version","5.2.1","--target",TARGET,
+   "--signed-pointer-file",selector,
+  ],{encoding:"utf8",timeout:10000}),/Command failed/u);
+  const unchanged=JSON.parse(await fs.readFile(path.join(fixture.releaseDir,"release.json"),"utf8"));
+  assert.equal(unchanged.version,"5.2.1");
+ }finally{
+  await fs.rm(fixture.homeDir,{recursive:true,force:true});
+ }
+});
+
 test("Windows x64 first-install release validation accepts native runtime names without Peekaboo", async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "equinox-first-install-windows-contract-"));
   const releaseDir = path.join(root, "release");

@@ -121,3 +121,18 @@ test('all Node bootstrap/inspector invocations are isolated from user-provided N
  assert.match(windows,/Invoke-PinnedMainNode \$node @\(\$inspector/u);
  assert.doesNotMatch(windows,/\$receipt = @\(& \$node/u);
 });
+
+
+test('both OS bootstrap paths preserve the signed pointer for a second independent production-root verification',async()=>{
+ const [mac,windows,helper]=await Promise.all([
+   fs.readFile(macURL,'utf8'),fs.readFile(windowsURL,'utf8'),fs.readFile(verifierURL,'utf8'),
+ ]);
+ assert.match(helper,/--pointer-output/u);
+ assert.match(helper,/fs\.open\(pointerDestination,'wx',0o600\)/u);
+ assert.match(mac,/--pointer-output "\$TEMP_ROOT\/main-signed-pointer\.json"/u);
+ assert.match(mac,/--signed-pointer-file "\$TEMP_ROOT\/main-signed-pointer\.json"/u);
+ assert.match(windows,/--pointer-output', \(Join-Path \$PrivateTemp 'main-signed-pointer\.json'\)/u);
+ assert.match(windows,/--signed-pointer-file', \(Join-Path \$PrivateTemp 'main-signed-pointer\.json'\)/u);
+ assert.match(windows,/\$matched\.runtimeContractSha256 -cne \$parsed\.runtimeContractSha256/u);
+ assert.match(windows,/\$matched\.artifactSha256 -cne \$parsed\.artifactSha256/u);
+});

@@ -66,6 +66,14 @@ test('common Main downloader refuses an unsigned latest pointer before fetching 
  await assert.rejects(downloadVerifiedMainArchive({target:'darwin-arm64',destination:dest}),/production signature/u);
  assert.deepEqual(requests,['https://main.local.sametbasbug.dev/latest/main.json']);
  await assert.rejects(fs.stat(dest),/ENOENT/u);
+ const pointerFile=path.join(root,'signed-main.json');
+ await assert.rejects(downloadVerifiedMainArchive({
+   target:'darwin-arm64',destination:dest,pointerDestination:pointerFile,
+ }),/production signature/u);
+ await assert.rejects(fs.stat(pointerFile),/ENOENT/u);
+ await assert.rejects(downloadVerifiedMainArchive({
+   target:'darwin-arm64',destination:dest,pointerDestination:dest,
+ }),/separate absolute new file/u);
 });
 
 test('common Main downloader bounds selector bytes and rejects remote redirects',async t=>{
@@ -96,7 +104,7 @@ test('common Main downloader requires new absolute output and never discovers am
  assert.match(source,/fs\.open\(destination,'wx',0o600\)/u);
  assert.match(source,/--/u);
  assert.match(source,/sha\.digest\('hex'\)!==artifact\.sha256/u);
- assert.match(source,/if\(!verified\)await fs\.rm\(destination,\{force:true\}\)/u);
+ assert.match(source,/if\(!verified\)\{\s+await fs\.rm\(destination,\{force:true\}\)/u);
  assert.equal(createHash('sha256').update(source).digest('hex').length,64);
 });
 

@@ -17,7 +17,7 @@ import { readBoundedNormalFile } from "./equinox-local-safe-file.js";
 import { createEquinoxLocalMainUpdateTransactionEngine } from "./equinox-local-main-update-transaction.js";
 import { runEquinoxLocalMainUpdateHandoff } from "./equinox-local-main-update-handoff.js";
 import { readEquinoxLocalMainSourcePointer } from "./equinox-local-main-source-pointer.js";
-import { inspectEquinoxLocalMainNativeStoredRelease, promoteEquinoxLocalMainNativeCandidate } from "./equinox-local-main-native-state.js";
+import { inspectEquinoxLocalMainNativeStoredRelease, promoteEquinoxLocalMainNativeCandidate, readEquinoxLocalMainNativePointer } from "./equinox-local-main-native-state.js";
 import { inspectCanonicalMainCheckout } from "./equinox-local-main-update.js";
 import { EQUINOX_LOCAL_CONTROL_CENTER_STATUS_URL } from "./equinox-local-update-activation.js";
 import { requestWindowsShellRuntimeRestart } from "./equinox-local-windows-shell-control.js";
@@ -128,6 +128,62 @@ export async function waitForExactSourceHealth({ sha, sourceRoot, pointerPath, g
         }
     }
     throw new Error(`Main update runtime did not become healthy: ${lastError instanceof Error ? lastError.message : String(lastError)}`);
+}
+// Direct signed Main installations have no Git checkout. Their health gate
+// must bind the immutable native-store pointer to the RESPONDING process; a
+// healthy old A process at the same manually displayed version is not enough.
+export async function waitForExactNativeMainHealth({ transactionRoot, sourceSha, target, version, runtimeContractSha256, fetchImpl = globalThis.fetch, readNativePointerImpl = readEquinoxLocalMainNativePointer, sleepImpl = (ms) => new Promise((resolve) => setTimeout(resolve, ms)), attempts = HEALTH_ATTEMPTS, }) {
+    if (typeof transactionRoot !== "string" || !path.isAbsolute(transactionRoot) ||
+        path.resolve(transactionRoot) !== transactionRoot ||
+        !/^[a-f0-9]{40}$/u.test(sourceSha) ||
+        !/^(darwin|win32)-(arm64|x64)$/u.test(target) ||
+        !/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/u.test(version) ||
+        !/^[a-f0-9]{64}$/u.test(runtimeContractSha256) ||
+        !Number.isInteger(attempts) || attempts < 1 || attempts > HEALTH_ATTEMPTS) {
+        throw new Error("Signed Main native health identity or bounded attempts are invalid.");
+    }
+    const pointerPath = path.join(transactionRoot, "current-native.json");
+    const pointer = await readNativePointerImpl(pointerPath, { transactionRoot });
+    if (pointer.sourceSha !== sourceSha || pointer.target !== target ||
+        pointer.runtimeContractSha256 !== runtimeContractSha256 ||
+        pointer.payloadVersion !== version) {
+        throw new Error("Installed native pointer does not match the exact signed Main identity.");
+    }
+    let lastError = null;
+    for (let attempt = 0; attempt < attempts; attempt++) {
+        try {
+            const response = await fetchImpl(EQUINOX_LOCAL_CONTROL_CENTER_STATUS_URL, {
+                method: "GET", redirect: "error", cache: "no-store", credentials: "omit",
+                headers: { accept: "application/json" },
+            });
+            if (response.status !== 200)
+                throw new Error("Main native runtime status HTTP response is invalid.");
+            const result = await response.json();
+            const observed = result?.status;
+            const installed = observed?.installation;
+            if (observed?.health?.state === "HEALTHY" &&
+                observed?.server?.version === version &&
+                ["managed-main", "managed-source"].includes(installed?.kind) &&
+                installed?.target === target &&
+                installed?.sourceSha === sourceSha &&
+                installed?.mainNativeSha === sourceSha) {
+                // Recheck local durable A/B pointer immediately after exact B status,
+                // rather than accepting a concurrent return to old A.
+                const latest = await readNativePointerImpl(pointerPath, { transactionRoot });
+                if (latest.sourceSha === sourceSha && latest.target === target &&
+                    latest.runtimeContractSha256 === runtimeContractSha256 &&
+                    latest.payloadVersion === version)
+                    return true;
+            }
+            throw new Error("Signed Main native runtime source SHA or health has not converged.");
+        }
+        catch (error) {
+            lastError = error;
+            if (attempt + 1 < attempts)
+                await sleepImpl(HEALTH_DELAY_MS);
+        }
+    }
+    throw new Error("Signed Main native runtime did not become healthy: " + errorMessage(lastError));
 }
 // Older admitted A versions schedule the B worker with a minimal launchd
 // environment that omits both managed installation paths. Derive identity

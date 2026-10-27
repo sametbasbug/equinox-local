@@ -16,8 +16,8 @@ $ZipHelperName = 'equinox-local-windows-release-zip.ps1'
 $ZipHelperSha256 = '__EQUINOX_ZIP_HELPER_SHA256__'
 $ZipHelperBytes = '__EQUINOX_ZIP_HELPER_BYTES__'
 $MainVerifyUrl = 'https://local.sametbasbug.dev/downloads/updates/install-main-verify.mjs'
-$MainVerifySha256 = '2b7cffc35c0d6bcd2336e27e7468ad3379d805a6ef1211e00330c8b2ad67acab'
-$MainVerifyBytes = 8228
+$MainVerifySha256 = 'df0aea950440d6efad47b92398a0a8bdc4a63d4db0a26d4db05a0b137c9989c8'
+$MainVerifyBytes = 9396
 $MainNodeVersion = '26.12.1'
 
 function Fail([string]$Message) { throw "Equinox Local installer: $Message" }
@@ -162,7 +162,7 @@ function Invoke-VerifiedMainPreparation([string]$PrivateTemp) {
   $node = Join-Path (Join-Path $nodeStage $nodeBase) 'node.exe'
   Assert-NormalFile $node 1 200000000 | Out-Null
   # HTTPS/download/Node/content verification precede all execution.
-  $receipt = @(Invoke-PinnedMainNode $node @($source, '--target', $Target, '--output', $verifiedArchive))
+  $receipt = @(Invoke-PinnedMainNode $node @($source, '--target', $Target, '--output', $verifiedArchive, '--pointer-output', (Join-Path $PrivateTemp 'main-signed-pointer.json')))
   Assert-NormalFile $verifiedArchive 1 $MaxArtifactBytes | Out-Null
   if ($receipt.Count -ne 1) { Fail 'signed Main verifier produced an unexpected receipt' }
   try { $parsed = $receipt[0] | ConvertFrom-Json -ErrorAction Stop }
@@ -181,12 +181,15 @@ function Invoke-VerifiedMainPreparation([string]$PrivateTemp) {
   Assert-NormalDirectory $candidate $false | Out-Null
   $inspector = Join-Path $candidate 'equinox-local-first-install.js'
   Assert-NormalFile $inspector 1 2097152 | Out-Null
-  $admitted = @(Invoke-PinnedMainNode $node @($inspector, '--inspect-signed-main', '--staged-release', $candidate, '--source-sha', ([string]$parsed.sourceSha), '--version', ([string]$parsed.version), '--target', $Target))
+  $admitted = @(Invoke-PinnedMainNode $node @($inspector, '--inspect-signed-main', '--staged-release', $candidate, '--source-sha', ([string]$parsed.sourceSha), '--version', ([string]$parsed.version), '--target', $Target, '--signed-pointer-file', (Join-Path $PrivateTemp 'main-signed-pointer.json')))
   if ($admitted.Count -ne 1) { Fail 'Main native candidate exact source SHA admission failed' }
   try { $matched = $admitted[0] | ConvertFrom-Json -ErrorAction Stop }
   catch { Fail 'Main native candidate admission receipt is invalid' }
   if ($matched.status -cne 'admitted' -or $matched.sourceSha -cne $parsed.sourceSha -or
-      $matched.version -cne $parsed.version -or $matched.target -cne $Target) {
+      $matched.version -cne $parsed.version -or $matched.target -cne $Target -or
+      $matched.runtimeContractSha256 -cne $parsed.runtimeContractSha256 -or
+      $matched.artifactSha256 -cne $parsed.artifactSha256 -or
+      [long]$matched.artifactBytes -ne [long]$parsed.artifactBytes) {
     Fail 'Main native candidate admission changed the signed identity'
   }
   Write-Output $receipt[0]
