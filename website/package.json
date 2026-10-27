@@ -16,7 +16,7 @@
     "@tailwindcss/vite": "4.3.3",
     "astro": "7.4.2",
     "tailwindcss": "4.3.3",
-    "wrangler": "4.152.0"
+    "wrangler": "4.153.0"
   },
   "overrides": {
     "miniflare": {
