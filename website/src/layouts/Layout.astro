@@ -1,0 +1,55 @@
+---
+import '../styles/global.css';
+import Icon from '../components/Icon.astro';
+import { origin, github, pathFor, ui, type Lang } from '../data/site';
+interface Props { lang: Lang; title: string; description: string; page?: string; }
+const { lang, title, description, page = '' } = Astro.props;
+const t = ui[lang];
+const home = pathFor(lang);
+const canonical = origin + (page === '404' ? '/404.html' : pathFor(lang, page));
+const nav = [{label: t.product, href: `${home}#capabilities`}, {label: t.browser, href: pathFor(lang, 'browser')}, {label: t.security, href: pathFor(lang, 'security')}, {label: 'GitHub', href: github}];
+---
+<!doctype html>
+<html lang={lang}>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#f8f7f4" />
+    <title>{title}</title>
+    <meta name="description" content={description} />
+    <link rel="canonical" href={canonical} />
+    {page !== '404' && <><link rel="alternate" hreflang="en" href={origin + pathFor('en', page)} /><link rel="alternate" hreflang="tr" href={origin + pathFor('tr', page)} /><link rel="alternate" hreflang="x-default" href={origin + pathFor('en', page)} /></>}
+    {page === '404' && <meta name="robots" content="noindex" />}
+    <link rel="icon" href="/assets/equinox-browser.png" type="image/png" />
+    <meta property="og:title" content={title} />
+    <meta property="og:description" content={description} />
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content={canonical} />
+    <meta property="og:image" content={origin + '/assets/equinox-browser.png'} />
+    <meta property="og:locale" content={lang === 'tr' ? 'tr_TR' : 'en_US'} />
+    <meta name="twitter:card" content="summary" />
+  </head>
+  <body>
+    <a class="skip-link" href="#main">{t.skip}</a>
+    <header class="site-header">
+      <div class="shell header-inner">
+        <a href={home} class="brand" aria-label="Equinox Local"><img src="/assets/equinox-browser.png" width="38" height="38" alt="" /><span>Equinox<span class="brand-local">Local</span></span></a>
+        <nav class="desktop-nav" aria-label={t.nav}>{nav.map(item => <a href={item.href} aria-current={item.href === pathFor(lang, page) ? 'page' : undefined}>{item.label}{item.label === 'GitHub' && <Icon name="external" size={13} />}</a>)}</nav>
+        <div class="header-actions">
+          <a class="language-link" href={pathFor(lang === 'en' ? 'tr' : 'en', page === '404' ? '' : page)} lang={lang === 'en' ? 'tr' : 'en'} aria-label={lang === 'en' ? 'Türkçe' : 'English'}>{lang === 'en' ? 'TR' : 'EN'}</a>
+          <a class="button button-small" href={pathFor(lang, 'install')}>{t.install}<Icon size={16} /></a>
+          <details class="mobile-menu"><summary>{t.menu}<Icon name="plus" size={17} /></summary><nav aria-label={t.nav}>{nav.map(item => <a href={item.href}>{item.label}</a>)}</nav></details>
+        </div>
+      </div>
+    </header>
+    <main id="main"><slot /></main>
+    <footer class="site-footer">
+      <div class="shell footer-main">
+        <div><a href={home} class="brand"><img src="/assets/equinox-browser.png" width="38" height="38" alt="" /><span>equinox<span class="brand-local">local</span></span></a><p>{t.footer}</p><a class="ecosystem-link" href="https://equinox.sametbasbug.dev/">{t.ecosystem}<Icon name="external" size={15} /></a></div>
+        <div class="footer-column"><span>Equinox Local</span><a href={pathFor(lang, 'install')}>{t.install}</a><a href={pathFor(lang, 'browser')}>Equinox Browser</a><a href={github}>{t.source}<Icon name="external" size={13} /></a></div>
+        <div class="footer-column"><span>{t.docs}</span><a href={pathFor(lang, 'security')}>{t.security}</a><a href={pathFor(lang, 'privacy')}>{t.privacy}</a><a href={pathFor(lang, 'contact')}>{t.contact}</a></div>
+      </div>
+      <div class="shell footer-bottom"><span>© 2026 Equinox Local. {t.rights}</span><span>{t.mac}</span></div>
+    </footer>
+  </body>
+</html>

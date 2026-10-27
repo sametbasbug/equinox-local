@@ -1,0 +1,39 @@
+name: Website integrity
+
+on:
+  pull_request:
+    paths:
+      - "website/**"
+      - ".github/workflows/website.yml"
+  push:
+    branches: [main]
+    paths:
+      - "website/**"
+      - ".github/workflows/website.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  website-check:
+    name: Build and validate website
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: website
+    steps:
+      - name: Checkout canonical public source
+        uses: actions/checkout@v7
+      - name: Setup pinned Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 26.12.1
+          cache: npm
+          cache-dependency-path: website/package-lock.json
+      - name: Install website dependencies
+        run: npm ci --no-audit --no-fund
+      - name: Astro build and site integrity
+        run: npm run check
+      - name: Cloudflare Worker packaging (no deployment)
+        run: npm run deploy:dry

@@ -1,0 +1,7 @@
+schemaVersion=1
+channel=stable
+target=win32-arm64
+version=6.2.1
+artifactUrl=https://local.sametbasbug.dev/downloads/updates/equinox-local-6.2.1-win32-arm64.zip
+artifactSha256=c3b290588bcbd234c63781a356314d7176a4438504458afad20c5306a400b50e
+artifactBytes=229424421

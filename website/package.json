@@ -1,0 +1,26 @@
+{
+  "name": "equinox-local-site",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "astro dev --host 127.0.0.1",
+    "build": "astro build",
+    "preview": "astro preview --host 127.0.0.1",
+    "check": "npm run build && node scripts/check.mjs",
+    "release:set-version": "node scripts/set-release-version.mjs",
+    "deploy:dry": "npm run build && wrangler deploy --dry-run --outdir .wrangler/dry-run",
+    "deploy": "npm run check && wrangler deploy"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "4.3.3",
+    "astro": "7.4.2",
+    "tailwindcss": "4.3.3",
+    "wrangler": "4.152.0"
+  },
+  "overrides": {
+    "miniflare": {
+      "sharp": "0.35.5"
+    }
+  }
+}

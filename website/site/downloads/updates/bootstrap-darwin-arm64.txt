@@ -1,0 +1,7 @@
+schemaVersion=1
+channel=stable
+target=darwin-arm64
+version=6.2.1
+artifactUrl=https://local.sametbasbug.dev/downloads/updates/equinox-local-6.2.1-darwin-arm64.tar.gz
+artifactSha256=1f16426366912afc4c97517cf1638d25e70f60b7bead3e76a4600b2f3abc0b6f
+artifactBytes=145497165

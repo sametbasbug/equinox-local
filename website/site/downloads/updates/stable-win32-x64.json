@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "channel": "stable",
+  "target": "win32-x64",
+  "version": "6.2.1",
+  "publishedAt": "2026-10-26T03:04:18.139Z",
+  "artifact": {
+    "url": "https://local.sametbasbug.dev/downloads/updates/equinox-local-6.2.1-win32-x64.zip",
+    "sha256": "255353e881bc7ea47b2ee763be80969d9ef985a6f1a461f61ea02931ab5764b1",
+    "bytes": 246531203
+  },
+  "signature": {
+    "algorithm": "ed25519",
+    "keyId": "stable-2026-01",
+    "value": "cZMZoMTFbbjV4lCQVV8PKaxQmk7jV21Cnx/SlINFoyQ+MEmGxhFIB7JntvCaWUCIwsyJAiN203k2+ShsNsaxDw=="
+  }
+}
