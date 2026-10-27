@@ -5,6 +5,9 @@ import { resolveEquinoxLocalInstallation } from "./equinox-local-installation.js
 import { inspectEquinoxLocalMainNativeStoredRelease, writeEquinoxLocalMainNativePointer, } from "./equinox-local-main-native-state.js";
 import { inspectEquinoxLocalNativeAppHostSnapshot, restoreEquinoxLocalNativeAppHostSnapshot, synchronizeEquinoxLocalAppHostForRelease, } from "./equinox-local-native-app-host.js";
 import { readBoundedNormalFile, writeBoundedUtf8File } from "./equinox-local-safe-file.js";
+import { validateTrustedMainInstallPointer } from "./equinox-local-main-install-pointer.js";
+import { createEquinoxLocalMainMacCurrentLinkTransition, createEquinoxLocalMainNativePointerTransition } from "./equinox-local-main-native-pointer-transition.js";
+import { readEquinoxLocalMainNativePointer } from "./equinox-local-main-native-state.js";
 import { parseEquinoxVersion } from "./equinox-local-updater.js";
 import { createSupervisorBoundWindowsNativeABLifecycle, requireWindowsNativeABSupervisor } from "./equinox-local-windows-native-ab-supervisor-bound.js";
 function hasErrorCode(error, code) {
@@ -161,7 +164,7 @@ async function previousReleaseFromDescriptor({ descriptor, transactionRoot, inst
         throw new Error("Stable native recovery release escaped the managed releases root.");
     return releaseDir;
 }
-export async function recoverEquinoxLocalMainNativeLifecycle({ transition, transactionRoot, transactionId, installation = resolveEquinoxLocalInstallation(), fsImpl = fs, execFileImpl, env = process.env, windowsAdmission = null, createBoundWindowsABImpl = createSupervisorBoundWindowsNativeABLifecycle, readDescriptorImpl = readEquinoxLocalMainNativeRecoveryDescriptor, inspectStoredReleaseImpl = inspectEquinoxLocalMainNativeStoredRelease, writePointerImpl = writeEquinoxLocalMainNativePointer, inspectDarwinSnapshotImpl = inspectEquinoxLocalNativeAppHostSnapshot, activateDarwinImpl = synchronizeEquinoxLocalAppHostForRelease, restoreDarwinImpl = restoreEquinoxLocalNativeAppHostSnapshot, assertWindowsNativeHostImpl = assertWindowsNativeMessagingHostOwnership, registerWindowsNativeHostImpl = registerWindowsNativeMessagingHost, windowsLauncherPathImpl = windowsNativeMessagingLauncherPath, } = {}) {
+export async function recoverEquinoxLocalMainNativeLifecycle({ transition, transactionRoot, transactionId, installation = resolveEquinoxLocalInstallation(), fsImpl = fs, execFileImpl, env = process.env, windowsAdmission = null, createBoundWindowsABImpl = createSupervisorBoundWindowsNativeABLifecycle, readDescriptorImpl = readEquinoxLocalMainNativeRecoveryDescriptor, inspectStoredReleaseImpl = inspectEquinoxLocalMainNativeStoredRelease, verifySignedPointerImpl = validateTrustedMainInstallPointer, readPointerImpl = readEquinoxLocalMainNativePointer, createPointerTransitionImpl = createEquinoxLocalMainNativePointerTransition, createMacLinkTransitionImpl = createEquinoxLocalMainMacCurrentLinkTransition, writePointerImpl = writeEquinoxLocalMainNativePointer, inspectDarwinSnapshotImpl = inspectEquinoxLocalNativeAppHostSnapshot, activateDarwinImpl = synchronizeEquinoxLocalAppHostForRelease, restoreDarwinImpl = restoreEquinoxLocalNativeAppHostSnapshot, assertWindowsNativeHostImpl = assertWindowsNativeMessagingHostOwnership, registerWindowsNativeHostImpl = registerWindowsNativeMessagingHost, windowsLauncherPathImpl = windowsNativeMessagingLauncherPath, } = {}) {
     if (transition?.mode !== "artifact_required")
         throw new Error("Main native recovery requires an artifact transition.");
     if (!installation?.managed || !installation?.selfUpdateSupported || installation.target !== transition.target)
@@ -188,6 +191,76 @@ export async function recoverEquinoxLocalMainNativeLifecycle({ transition, trans
             throw new Error("Managed macOS installation root cannot be mapped to the user home directory.");
         const snapshotPath = path.join(paths.rollbackRoot, "Equinox Local.app");
         await inspectDarwinSnapshotImpl({ snapshotPath, fsImpl, execFileImpl });
+        const selectorPath = path.join(path.dirname(stored.releaseDir), "signed-selector.json");
+        let selectorStat;
+        try {
+            selectorStat = await fsImpl.lstat(selectorPath);
+        }
+        catch (error) {
+            if (!hasErrorCode(error, "ENOENT"))
+                throw error;
+        }
+        if (selectorStat) {
+            // A signed, Git-free immutable B must be recovered with BOTH its
+            // current-native pointer and LaunchAgent link. If a forged selector is
+            // present, NEVER silently downgrade to the old transient recovery.
+            if (!selectorStat.isFile() || selectorStat.isSymbolicLink() ||
+                selectorStat.nlink !== 1 || (selectorStat.mode & 0o777) !== 0o600) {
+                throw new Error("Signed Main crash recovery selector is not a private normal file.");
+            }
+            const { data } = await readBoundedNormalFile(selectorPath, { fsImpl, minBytes: 200,
+                maxBytes: 16 * 1024, encoding: "utf8", label: "Signed Main recovery selector" });
+            let raw;
+            try {
+                raw = JSON.parse(data);
+            }
+            catch {
+                throw new Error("Signed Main recovery selector JSON is invalid.");
+            }
+            const signed = verifySignedPointerImpl(raw, { expectedSourceSha: transition.targetSha });
+            const selected = signed.targets.find(row => row.target === transition.target);
+            if (!selected || selected.runtimeContractSha256 !== transition.targetRuntimeContractSha256 ||
+                stored.sourceSha !== signed.sourceSha ||
+                stored.target !== transition.target ||
+                stored.runtimeContractSha256 !== selected.runtimeContractSha256 ||
+                stored.payloadVersion !== signed.version ||
+                stored.manifest?.artifactSha256 !== selected.artifact.sha256 ||
+                stored.manifest?.artifactBytes !== selected.artifact.bytes) {
+                throw new Error("Signed Main recovery stored native B differs from production selector.");
+            }
+            const previous = descriptor.previous.kind === "main" ? {
+                sourceSha: descriptor.previous.sourceSha, target: descriptor.previous.target,
+                runtimeContractSha256: descriptor.previous.runtimeContractSha256,
+            } : null;
+            const nativePointer = createPointerTransitionImpl({
+                pointerPath: paths.pointerPath, transactionRoot: paths.root, target: pointerValue,
+                previous, fsImpl, readPointer: readPointerImpl, writePointer: writePointerImpl,
+            });
+            const macLink = createMacLinkTransitionImpl({
+                installRoot: installation.installRoot, target: pointerValue,
+                previousReleaseDir, fsImpl,
+            });
+            return Object.freeze({
+                target: transition.target, stored, descriptor, rollbackPath: snapshotPath,
+                activate: async () => {
+                    await nativePointer.selectTarget();
+                    await macLink.selectTarget();
+                    await activateDarwinImpl({ installation, releaseDir: stored.releaseDir, fsImpl, execFileImpl, requirePayloadIdentity: true });
+                },
+                rollback: async () => {
+                    await macLink.restorePrevious();
+                    await nativePointer.restorePrevious();
+                    await restoreDarwinImpl({ homeDir, snapshotPath, fsImpl, execFileImpl });
+                },
+                commit: async () => {
+                    await nativePointer.requireTarget();
+                    if (await macLink.current() !== macLink.targetReleaseDir) {
+                        throw new Error("Recovered signed Main macOS B link is not durably selected.");
+                    }
+                    return stored;
+                },
+            });
+        }
         return Object.freeze({
             target: transition.target,
             stored,

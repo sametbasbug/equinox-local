@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
+import { generateKeyPairSync } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -10,6 +11,7 @@ import {
   recoverEquinoxLocalMainNativeLifecycle,
   writeEquinoxLocalMainNativeRecoveryDescriptor,
 } from "../../src/equinox-local-main-native-recovery.js";
+import { createSignedMainInstallPointer,validateSignedMainInstallPointer } from "../../src/equinox-local-main-install-pointer.js";
 
 const A = "1".repeat(40);
 const B = "2".repeat(40);
@@ -182,4 +184,81 @@ test("Main native recovery refuses descriptor SHA drift before inspecting stored
     activateWindowsImpl: async () => { actions.push("activate"); throw new Error("must never activate"); },
   }), /target SHA mismatch/u);
   assert.deepEqual(actions, ["read descriptor"]);
+});
+
+
+test("signed native crash recovery replays a half-selected B to both exact Mac pointers, then A rollback",async t=>{
+ const home=await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(),"equinox-signed-recovery-")));
+ t.after(()=>fs.rm(home,{recursive:true,force:true}));
+ const target="darwin-arm64",root=path.join(home,"Library","Application Support","Equinox Local");
+ const txRoot=path.join(root,"main-update"),nativeB=path.join(txRoot,"native-store",target,B,"release");
+ const stable=path.join(root,"releases","5.2.0"),nativePath=path.join(txRoot,"current-native.json");
+ await fs.mkdir(nativeB,{recursive:true,mode:0o700});
+ await fs.mkdir(stable,{recursive:true,mode:0o700});
+ await fs.symlink(path.relative(root,stable),path.join(root,"current"));
+ const keyId="ephemeral-native-crash-test";
+ const {privateKey,publicKey}=generateKeyPairSync("ed25519");
+ const signed=createSignedMainInstallPointer({
+  sourceSha:B,version:"5.2.1",publishedAt:"2026-10-28T01:00:00.000Z",keyId,privateKey,
+  nativeManifests:["darwin-arm64","darwin-x64","win32-arm64","win32-x64"].map(arch=>({
+   schemaVersion:1,channel:"main",sourceSha:B,target:arch,runtimeContractSha256:DB,
+   artifact:{name:"equinox-local-main-"+B+"-"+arch+(arch.startsWith("win32-")?".zip":".tar.gz"),
+    sha256:"d".repeat(64),bytes:42},
+  })),
+ });
+ const selectorPath=path.join(path.dirname(nativeB),"signed-selector.json");
+ await fs.writeFile(selectorPath,JSON.stringify(signed),{mode:0o600});
+ const events=[];
+ const opts={
+  transition:transition(target),transactionRoot:txRoot,transactionId:TX,
+  installation:{managed:true,selfUpdateSupported:true,target,platform:"darwin",
+   installRoot:root,releasesRoot:path.join(root,"releases"),releaseDir:stable},
+  readDescriptorImpl:async()=>({schemaVersion:1,channel:"main",
+   targetSha:B,target,targetRuntimeContractSha256:DB,previous:{kind:"stable",version:"5.2.0"}}),
+  inspectStoredReleaseImpl:async()=>({releaseDir:nativeB,sourceSha:B,target,
+   runtimeContractSha256:DB,payloadVersion:"5.2.1",manifest:{artifactSha256:"d".repeat(64),artifactBytes:42}}),
+  inspectDarwinSnapshotImpl:async()=>events.push("verified-A-snapshot"),
+  verifySignedPointerImpl:(raw,options)=>validateSignedMainInstallPointer(raw,{
+   ...options,publicKeys:{[keyId]:publicKey.export({type:"spki",format:"pem"})},
+  }),
+  readPointerImpl:async file=>JSON.parse(await fs.readFile(file,"utf8")),
+  writePointerImpl:async(file,value)=>{
+   await fs.writeFile(file,JSON.stringify(value),{mode:0o600});
+   return value;
+  },
+  activateDarwinImpl:async()=>{
+   events.push("app-B");
+   assert.equal((await fs.realpath(path.join(root,"current"))),nativeB);
+   assert.equal(JSON.parse(await fs.readFile(nativePath,"utf8")).sourceSha,B);
+  },
+  restoreDarwinImpl:async()=>{
+   events.push("app-A");
+   assert.equal(await fs.realpath(path.join(root,"current")),stable);
+   await assert.rejects(fs.lstat(nativePath),{code:"ENOENT"});
+  },
+ };
+ // Simulate crash after exact native pointer B write but before current B.
+ await fs.writeFile(nativePath,JSON.stringify({
+  schemaVersion:1,channel:"main",sourceSha:B,target,runtimeContractSha256:DB,
+ }),{mode:0o600});
+ const recovered=await recoverEquinoxLocalMainNativeLifecycle(opts);
+ assert.deepEqual(events,["verified-A-snapshot"]);
+ await recovered.activate();
+ assert.equal(await fs.realpath(path.join(root,"current")),nativeB);
+ await recovered.commit();
+ await recovered.rollback();
+ await recovered.rollback();
+ assert.equal(await fs.realpath(path.join(root,"current")),stable);
+ await assert.rejects(fs.stat(nativePath),{code:"ENOENT"});
+ assert.deepEqual(events,["verified-A-snapshot","app-B","app-A","app-A"]);
+ // The real production verifier MUST refuse a user-invented key, even if
+ // all package names, SHA and metadata appear otherwise admissible.
+ await assert.rejects(recoverEquinoxLocalMainNativeLifecycle({...opts,
+  verifySignedPointerImpl:undefined,
+ }),/signing key|signature|trusted/u);
+ assert.equal(await fs.realpath(path.join(root,"current")),stable);
+ // A malicious selector symlink must not downgrade to legacy recovery.
+ await fs.rm(selectorPath);
+ await fs.symlink(path.join(home,"foreign"),selectorPath);
+ await assert.rejects(recoverEquinoxLocalMainNativeLifecycle(opts),/not a private normal file/u);
 });
