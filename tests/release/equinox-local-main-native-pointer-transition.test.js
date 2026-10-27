@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
+import fs from "node:fs/promises";
+import os from "node:os";
+import nodePath from "node:path";
 import test from "node:test";
-import { createEquinoxLocalMainNativePointerTransition } from "../../src/equinox-local-main-native-pointer-transition.js";
+import { createEquinoxLocalMainNativePointerTransition, createEquinoxLocalMainMacCurrentLinkTransition } from "../../src/equinox-local-main-native-pointer-transition.js";
 
 const A = { sourceSha: "a".repeat(40), target: "win32-x64", runtimeContractSha256: "1".repeat(64) };
 const B = { sourceSha: "b".repeat(40), target: "win32-x64", runtimeContractSha256: "2".repeat(64) };
@@ -109,4 +112,106 @@ test("native pointer refuses rollback when another owner changes B to an unadmit
   await assert.rejects(transition.restorePrevious(), /no longer belongs/u);
   await assert.rejects(transition.requireTarget(), /not durably selected/u);
   assert.deepEqual(changes, [B.sourceSha]);
+});
+
+
+async function nativeMacFixture(t){
+ const folder=await fs.realpath(await fs.mkdtemp(nodePath.join(os.tmpdir(),"equinox-mac-native-current-")));
+ t.after(()=>fs.rm(folder,{recursive:true,force:true}));
+ const root=nodePath.join(folder,"Library","Application Support","Equinox Local");
+ const releaseA=nodePath.join(root,"main-update","native-store","darwin-arm64","a".repeat(40),"release");
+ const releaseB=nodePath.join(root,"main-update","native-store","darwin-arm64","b".repeat(40),"release");
+ const stable=nodePath.join(root,"releases","6.2.1");
+ await Promise.all([fs.mkdir(releaseA,{recursive:true,mode:0o700}),
+   fs.mkdir(releaseB,{recursive:true,mode:0o700}),fs.mkdir(stable,{recursive:true,mode:0o700})]);
+ await fs.writeFile(nodePath.join(releaseA,"identity"),"native A commit");
+ await fs.writeFile(nodePath.join(releaseB,"identity"),"native B commit");
+ return {root,releaseA,releaseB,stable,pointer:nodePath.join(root,"current"),
+  target:{sourceSha:"b".repeat(40),target:"darwin-arm64",runtimeContractSha256:"f".repeat(64)}};
+}
+
+test("Mac native Main switches the owned Stable A symlink to immutable B and idempotently restores A",async t=>{
+ const f=await nativeMacFixture(t);
+ await fs.symlink(nodePath.relative(f.root,f.stable),f.pointer);
+ const transition=createEquinoxLocalMainMacCurrentLinkTransition({
+  installRoot:f.root,target:f.target,previousReleaseDir:f.stable,
+ });
+ assert.equal(await transition.current(),f.stable);
+ assert.equal(await transition.selectTarget(),f.releaseB);
+ assert.equal(await fs.realpath(f.pointer),f.releaseB);
+ await transition.selectTarget(); // Already selected; never create a duplicate A/B move.
+ assert.equal(await transition.restorePrevious(),f.stable);
+ await transition.restorePrevious();
+ assert.equal(await fs.realpath(f.pointer),f.stable);
+ assert.equal(await fs.readFile(nodePath.join(f.releaseB,"identity"),"utf8"),"native B commit");
+ assert.equal((await fs.readdir(f.root)).filter(name=>name.startsWith(".current-main-")).length,0);
+});
+
+test("Mac native A to B with identical displayed version rolls back by full source SHA",async t=>{
+ const f=await nativeMacFixture(t);
+ await fs.symlink(nodePath.relative(f.root,f.releaseA),f.pointer);
+ const transition=createEquinoxLocalMainMacCurrentLinkTransition({
+  installRoot:f.root,target:f.target,previousReleaseDir:f.releaseA,
+ });
+ assert.equal(await transition.selectTarget(),f.releaseB);
+ assert.equal(await fs.realpath(f.pointer),f.releaseB);
+ assert.equal(await transition.restorePrevious(),f.releaseA);
+ assert.equal(await fs.realpath(f.pointer),f.releaseA);
+ assert.equal(await fs.readFile(nodePath.join(f.releaseA,"identity"),"utf8"),"native A commit");
+ assert.equal(await fs.readFile(nodePath.join(f.releaseB,"identity"),"utf8"),"native B commit");
+});
+
+test("Mac first signed native install creates only B symlink and rollback removes just B",async t=>{
+ const f=await nativeMacFixture(t);
+ const transition=createEquinoxLocalMainMacCurrentLinkTransition({
+  installRoot:f.root,target:f.target,previousReleaseDir:null,
+ });
+ assert.equal(await transition.current(),null);
+ await transition.selectTarget();
+ assert.equal(await fs.realpath(f.pointer),f.releaseB);
+ assert.equal(await transition.restorePrevious(),null);
+ await assert.rejects(fs.lstat(f.pointer),{code:"ENOENT"});
+ assert.equal(await fs.readFile(nodePath.join(f.releaseB,"identity"),"utf8"),"native B commit");
+});
+
+test("Mac native pointer refuses foreign owner, broken link and ordinary file without replacing A or B",async t=>{
+ const f=await nativeMacFixture(t);
+ const transition=createEquinoxLocalMainMacCurrentLinkTransition({
+  installRoot:f.root,target:f.target,previousReleaseDir:f.stable,
+ });
+ const foreign=nodePath.join(f.root,"foreign");
+ await fs.mkdir(foreign,{recursive:true});
+ await fs.symlink("foreign",f.pointer);
+ await assert.rejects(transition.selectTarget(),/outside admitted A\/B releases/u);
+ await assert.rejects(transition.restorePrevious(),/outside admitted A\/B releases/u);
+ assert.equal(await fs.readlink(f.pointer),"foreign");
+ await fs.unlink(f.pointer);
+ await fs.symlink("releases/missing",f.pointer);
+ await assert.rejects(transition.selectTarget(),/outside admitted A\/B releases/u);
+ await fs.unlink(f.pointer);
+ await fs.symlink(nodePath.relative(f.root,f.stable),f.pointer);
+ await fs.rm(f.stable,{recursive:true});
+ await assert.rejects(transition.selectTarget(),/ENOENT/u,"broken trusted A symlink is not an absent clean install");
+ await fs.unlink(f.pointer);
+ await fs.writeFile(f.pointer,"not an owned symlink");
+ await assert.rejects(transition.selectTarget(),/not an owned symlink/u);
+ assert.equal(await fs.readFile(f.pointer,"utf8"),"not an owned symlink");
+});
+
+test("Mac native pointer keeps A on failed atomic rename and blocks arbitrary predecessor and target",async t=>{
+ const f=await nativeMacFixture(t);
+ await fs.symlink(nodePath.relative(f.root,f.releaseA),f.pointer);
+ const transition=createEquinoxLocalMainMacCurrentLinkTransition({
+  installRoot:f.root,target:f.target,previousReleaseDir:f.releaseA,
+  fsImpl:{...fs,rename:async()=>{throw new Error("atomic update rejected")}},
+ });
+ await assert.rejects(transition.selectTarget(),/atomic update rejected/u);
+ assert.equal(await fs.realpath(f.pointer),f.releaseA);
+ assert.equal((await fs.readdir(f.root)).filter(name=>name.startsWith(".current-main-")).length,0);
+ assert.throws(()=>createEquinoxLocalMainMacCurrentLinkTransition({
+  installRoot:f.root,target:f.target,previousReleaseDir:nodePath.join(f.root,"foreign"),
+ }),/outside an owned Stable\/native release/u);
+ assert.throws(()=>createEquinoxLocalMainMacCurrentLinkTransition({
+  installRoot:f.root,target:{...f.target,sourceSha:"wrong"},previousReleaseDir:f.releaseA,
+ }),/identity or install root is invalid/u);
 });
