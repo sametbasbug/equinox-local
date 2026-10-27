@@ -61,6 +61,7 @@ const RELEASE_ENTRYPOINTS = Object.freeze([
   "src/equinox-local-restart-helper.js",
   "src/equinox-local-uninstall-helper.js",
   "src/equinox-local-supervisor.js",
+  "src/equinox-local-main-update-worker.js",
 ]);
 
 export async function resolveManagedReleaseSourceSha(rootDir: string, { execFileImpl = execFile }: {execFileImpl?: ExecFile} = {}): Promise<string> {

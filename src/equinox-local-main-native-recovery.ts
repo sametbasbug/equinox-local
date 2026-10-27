@@ -264,9 +264,20 @@ export async function assertEquinoxLocalSignedNativeMacOwner({
   const paths=recoveryPath(transactionRoot,transactionId);
   const lockPath=path.join(paths.root,"active.json");
   const stat=await fsImpl.lstat(lockPath);
-  if(!stat.isFile()||stat.isSymbolicLink()||stat.nlink!==1||
-     (stat.mode&0o777)!==0o600){
+  if(!stat.isFile()||stat.isSymbolicLink()||
+     ![1,2].includes(stat.nlink)||(stat.mode&0o777)!==0o600){
     throw new Error("Signed native owner is not a private normal lock.");
+  }
+  if(stat.nlink===2){
+    // Interrupted terminal release may already have created this precise
+    // no-clobber archive hardlink, but no foreign additional hardlinks.
+    const archive=path.join(paths.root,"receipts",transactionId+".signed-native-owner.json");
+    const linked=await fsImpl.lstat(archive);
+    if(!linked.isFile()||linked.isSymbolicLink()||
+       linked.dev!==stat.dev||linked.ino!==stat.ino||
+       (linked.mode&0o777)!==0o600){
+      throw new Error("Signed native owner has an unexpected second hardlink.");
+    }
   }
   const {data}=await readBoundedNormalFile(lockPath,{
     fsImpl,minBytes:30,maxBytes:1024,encoding:"utf8",label:"Signed native owner lock",
@@ -360,6 +371,88 @@ export async function writeEquinoxLocalSignedNativeMacReceipt({
     await writeAtomicPrivateJson(receiptPath,next,{fsImpl});
   }
   return await readEquinoxLocalSignedNativeMacReceipt({...identity,fsImpl});
+}
+
+// The exact terminal lock inode is retained in receipts/ before the shared
+// active.json name is released. Crash between link and unlink is resumable
+// ONLY when both names still refer to the original signed-native lock inode.
+export async function releaseEquinoxLocalSignedNativeMacOwner({
+  fsImpl=fs,...identity
+}:SignedNativeReceiptArgs) {
+  const paths=recoveryPath(identity.transactionRoot,identity.transactionId);
+  const lockPath=path.join(paths.root,"active.json");
+  const archivePath=path.join(paths.root,"receipts",identity.transactionId+".signed-native-owner.json");
+  const receiptPath=signedNativeReceiptPath(identity);
+  let stat;
+  try{stat=await fsImpl.lstat(lockPath);}
+  catch(error){if(!hasErrorCode(error,"ENOENT"))throw error;}
+  if(!stat){
+    // A previous release may already have removed active.json. Do not
+    // accept an unrelated archived marker as proof of our terminal record.
+    const archive=await fsImpl.lstat(archivePath);
+    if(!archive.isFile()||archive.isSymbolicLink()||
+       archive.nlink!==1||(archive.mode&0o777)!==0o600){
+      throw new Error("Signed native release archive is unsafe.");
+    }
+    const {data}=await readBoundedNormalFile(archivePath,{
+      fsImpl,minBytes:30,maxBytes:1024,encoding:"utf8",label:"Signed native archived owner",
+    });
+    let raw:unknown;
+    try{raw=JSON.parse(data);}catch{throw new Error("Signed native archived owner is invalid.");}
+    exactKeys(raw,["schemaVersion","kind","transactionId","sourceSha","target","runtimeContractSha256"],"Archived signed native owner");
+    if(raw.schemaVersion!==1||raw.kind!=="signed-native"||
+       raw.transactionId!==identity.transactionId||raw.sourceSha!==identity.sourceSha||
+       raw.target!==identity.target||raw.runtimeContractSha256!==identity.runtimeContractSha256){
+      throw new Error("Signed native archived owner does not match this transaction.");
+    }
+    const verified=await readStandaloneNativeReceipt();
+    if(!["healthy","rolled_back"].includes(verified.status)){
+      throw new Error("Signed native release cannot reuse a non-success terminal receipt.");
+    }
+    return Object.freeze({released:true,alreadyReleased:true,transactionId:identity.transactionId});
+  }
+  await assertEquinoxLocalSignedNativeMacOwner({...identity,fsImpl});
+  const receipt=await readEquinoxLocalSignedNativeMacReceipt({...identity,fsImpl});
+  if(!["healthy","rolled_back"].includes(receipt.status)){
+    throw new Error("Signed native owner cannot be released before verified healthy or rolled-back terminal health.");
+  }
+  const original=await fsImpl.lstat(lockPath);
+  if(!original.isFile()||original.isSymbolicLink()||
+     (original.mode&0o777)!==0o600||![1,2].includes(original.nlink)){
+    throw new Error("Signed native owner changed before terminal release.");
+  }
+  try{
+    if(original.nlink===1)await fsImpl.link(lockPath,archivePath);
+  }catch(error){
+    if(!hasErrorCode(error,"EEXIST"))throw error;
+  }
+  const archive=await fsImpl.lstat(archivePath);
+  const before=await fsImpl.lstat(lockPath);
+  if(!archive.isFile()||archive.isSymbolicLink()||
+     archive.dev!==original.dev||archive.ino!==original.ino||
+     before.dev!==original.dev||before.ino!==original.ino||
+     before.nlink!==2||archive.nlink!==2){
+    throw new Error("Signed native terminal lock archive does not match the active owner inode.");
+  }
+  const receiptsDir=await fsImpl.open(path.dirname(archivePath),"r");
+  try{await receiptsDir.sync();}finally{await receiptsDir.close();}
+  // No other actor should mutate a claimed signed-native owner; check
+  // identity again before releasing the global Main lock name.
+  await assertEquinoxLocalSignedNativeMacOwner({...identity,fsImpl});
+  await fsImpl.unlink(lockPath);
+  const rootDir=await fsImpl.open(paths.root,"r");
+  try{await rootDir.sync();}finally{await rootDir.close();}
+  return Object.freeze({released:true,alreadyReleased:false,transactionId:identity.transactionId});
+
+  async function readStandaloneNativeReceipt(){
+    const st=await fsImpl.lstat(receiptPath);
+    if(!st.isFile()||st.isSymbolicLink()||st.nlink!==1||
+       (st.mode&0o777)!==0o600){
+      throw new Error("Signed native terminal receipt is unsafe.");
+    }
+    const raw=await readBoundedJsonFile(receiptPath,{fsImpl});
+    return validateSignedNativeReceipt(raw,identity);
+  }
 }
 
 async function previousReleaseFromDescriptor({ descriptor, transactionRoot, installation, fsImpl, inspectStoredReleaseImpl }: {descriptor: NativeDescriptor; transactionRoot: string; installation: Installation; fsImpl: NativeFs; inspectStoredReleaseImpl: InspectStoredRelease}): Promise<string> {
@@ -469,7 +562,7 @@ export async function recoverEquinoxLocalMainNativeLifecycle({
         previousReleaseDir,fsImpl,
       });
       return Object.freeze({
-        target:transition.target,stored,descriptor,rollbackPath:snapshotPath,
+        target:transition.target,stored,descriptor,previousPointer:previous,rollbackPath:snapshotPath,
         activate:async()=>{
           await nativePointer.selectTarget();
           await macLink.selectTarget();

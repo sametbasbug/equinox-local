@@ -22,8 +22,8 @@ import { inspectCanonicalMainCheckout } from "./equinox-local-main-update.js";
 import { EQUINOX_LOCAL_CONTROL_CENTER_STATUS_URL, waitForEquinoxLocalVersion, } from "./equinox-local-update-activation.js";
 import { requestWindowsShellRuntimeRestart } from "./equinox-local-windows-shell-control.js";
 import { assertWindowsStableShellOwnedByRelease, launchWindowsStableShell } from "./equinox-local-windows-stable-shell.js";
-import { cleanupEquinoxLocalMainUpdateWorkerOwnership } from "./equinox-local-main-update-scheduler.js";
-import { readEquinoxLocalMainNativeRecoveryDescriptor, assertEquinoxLocalSignedNativeMacOwner, readEquinoxLocalSignedNativeMacReceipt, writeEquinoxLocalSignedNativeMacReceipt, } from "./equinox-local-main-native-recovery.js";
+import { cleanupEquinoxLocalMainUpdateWorkerOwnership, mainUpdateLaunchdLabel } from "./equinox-local-main-update-scheduler.js";
+import { readEquinoxLocalMainNativeRecoveryDescriptor, assertEquinoxLocalSignedNativeMacOwner, readEquinoxLocalSignedNativeMacReceipt, writeEquinoxLocalSignedNativeMacReceipt, releaseEquinoxLocalSignedNativeMacOwner, } from "./equinox-local-main-native-recovery.js";
 import { admitWindowsMainNativeWorkerJournal } from "./equinox-local-windows-main-worker-admission.js";
 const execFile = promisify(execFileCallback);
 function hasErrorCode(error, code) {
@@ -186,12 +186,33 @@ export async function waitForExactNativeMainHealth({ transactionRoot, sourceSha,
     }
     throw new Error("Signed Main native runtime did not become healthy: " + errorMessage(lastError));
 }
+// Existing launchd's per-transaction service label is the one native-worker
+// execution claim: only its actual matching process PID may touch the native
+// A/B transaction. Avoid adding a second pid/lease file that strands crashes.
+export async function assertEquinoxLocalSignedMacWorkerProcess({ transactionId, uid = process.getuid?.(), pid = process.pid, execFileImpl = execFile, }) {
+    if (!/^main-[a-f0-9]{32}$/u.test(transactionId) ||
+        !Number.isSafeInteger(uid) || uid === null || uid === undefined || uid < 1 ||
+        !Number.isSafeInteger(pid) || pid < 2) {
+        throw new Error("Signed native detached worker requires valid launchd uid and PID.");
+    }
+    const service = "gui/" + uid + "/" + mainUpdateLaunchdLabel(transactionId);
+    const { stdout } = await execFileImpl("/bin/launchctl", ["print", service], {
+        encoding: "utf8", timeout: 5_000, maxBuffer: 64 * 1024,
+    });
+    const output = String(stdout ?? "");
+    const processId = output.match(/^\s*pid\s*=\s*(\d+)\s*$/mu);
+    if (!/(?:^|\n)\s*state\s*=\s*running\s*(?:\n|$)/u.test(output) ||
+        !processId || Number(processId[1]) !== pid) {
+        throw new Error("Signed native detached worker is not the running owner of its launchd service.");
+    }
+    return Object.freeze({ transactionId, service, pid });
+}
 // The signed, Git-free Mac installer uses the SAME A/B native lifecycle as
 // the old Main worker, but MUST NOT use its Git source transaction receipt.
 // Before the installer exposes this operation, its detached worker must own
 // the journal/lock and be restart-safe. This bounded orchestration works only
 // with an already prepared, production-signed immutable native B lifecycle.
-export async function runEquinoxLocalSignedMacNativeHandoff({ transactionRoot, transactionId, lifecycle, sourceSha, target, version, runtimeContractSha256, previousVersion = null, restartImpl = async () => restartEquinoxLocalMainSourceRuntime({ platform: "darwin" }), verifyNativeImpl = waitForExactNativeMainHealth, verifyStableImpl = waitForEquinoxLocalVersion, inspectStoredImpl = inspectEquinoxLocalMainNativeStoredRelease, readDescriptorImpl = readEquinoxLocalMainNativeRecoveryDescriptor, assertOwnerImpl = assertEquinoxLocalSignedNativeMacOwner, readReceiptImpl = readEquinoxLocalSignedNativeMacReceipt, writeReceiptImpl = writeEquinoxLocalSignedNativeMacReceipt, }) {
+export async function runEquinoxLocalSignedMacNativeHandoff({ transactionRoot, transactionId, lifecycle, sourceSha, target, version, runtimeContractSha256, previousVersion = null, restartImpl = async () => restartEquinoxLocalMainSourceRuntime({ platform: "darwin" }), verifyNativeImpl = waitForExactNativeMainHealth, verifyStableImpl = waitForEquinoxLocalVersion, inspectStoredImpl = inspectEquinoxLocalMainNativeStoredRelease, readDescriptorImpl = readEquinoxLocalMainNativeRecoveryDescriptor, assertOwnerImpl = assertEquinoxLocalSignedNativeMacOwner, readReceiptImpl = readEquinoxLocalSignedNativeMacReceipt, writeReceiptImpl = writeEquinoxLocalSignedNativeMacReceipt, releaseOwnerImpl = releaseEquinoxLocalSignedNativeMacOwner, assertWorkerImpl = assertEquinoxLocalSignedMacWorkerProcess, }) {
     if (!/^main-[a-f0-9]{32}$/u.test(transactionId) ||
         !path.isAbsolute(transactionRoot) || path.resolve(transactionRoot) !== transactionRoot ||
         !/^[a-f0-9]{40}$/u.test(sourceSha) ||
@@ -202,6 +223,9 @@ export async function runEquinoxLocalSignedMacNativeHandoff({ transactionRoot, t
         typeof lifecycle.rollback !== "function" || typeof lifecycle.commit !== "function") {
         throw new Error("Signed native Mac handoff requires exact durable transaction and A/B identities.");
     }
+    // This must be a detached, one-owner launchd worker, never an in-process
+    // Control Center request or a second concurrent invocation of the job.
+    await assertWorkerImpl({ transactionId });
     const descriptor = await readDescriptorImpl({ transactionRoot, transactionId,
         expected: { targetSha: sourceSha, target, targetRuntimeContractSha256: runtimeContractSha256 } });
     await assertOwnerImpl({ transactionRoot, transactionId, sourceSha, target, runtimeContractSha256 });
@@ -254,26 +278,38 @@ export async function runEquinoxLocalSignedMacNativeHandoff({ transactionRoot, t
         }
     };
     if (receipt.status !== "rolling_back") {
+        let targetFailure = null;
         try {
             if (receipt.status === "admitted") {
                 await writeReceiptImpl({ ...ownerIdentity, status: "activating" });
+                await lifecycle.activate(); // BOTH pointers B before restart
+                await restartImpl(); // launchd must actually boot B
             }
-            await lifecycle.activate(); // BOTH pointers B before restart
-            await restartImpl(); // launchd must actually boot B
+            else {
+                // Crash while "activating": NEVER blindly select B or restart
+                // another process. First check if the exact B is already healthy.
+                // If not, record rolling_back before restoring A.
+            }
             if ((await verifyNativeImpl(b)) !== true)
                 throw new Error("Signed native B failed exact SHA health.");
             await lifecycle.commit(); // check BOTH B pointers after health
             if ((await verifyNativeImpl(b)) !== true)
                 throw new Error("Signed native B lost exact SHA health.");
             await writeReceiptImpl({ ...ownerIdentity, status: "healthy" });
-            return Object.freeze({ status: "healthy", sourceSha, target, version });
         }
-        catch (targetFailure) {
+        catch (error) {
+            targetFailure = error;
+        }
+        if (targetFailure !== null) {
             // Before touching A, make the crash-resumable rollback decision
-            // DURABLE. If it cannot be recorded, preserve B for explicit recovery.
+            // DURABLE. If it cannot be recorded, preserve the current owner.
             await writeReceiptImpl({ ...ownerIdentity, status: "rolling_back" });
             return await rollbackA(targetFailure);
         }
+        // Terminal health is committed: release failure MUST NOT cause
+        // a rollback of a fully healthy B.
+        await releaseOwnerImpl(ownerIdentity);
+        return Object.freeze({ status: "healthy", sourceSha, target, version });
     }
     return await rollbackA(new Error("Resuming the durable native A rollback."));
     async function rollbackA(targetFailure) {
@@ -289,6 +325,9 @@ export async function runEquinoxLocalSignedMacNativeHandoff({ transactionRoot, t
                 cause: rollbackFailure, targetFailure,
             });
         }
+        // A is verified and its terminal receipt is durable. If lock release
+        // fails, leave A running and fail rather than changing A status.
+        await releaseOwnerImpl(ownerIdentity);
         return Object.freeze({ status: "rolled_back", sourceSha, target, version,
             targetError: errorMessage(targetFailure) });
     }
