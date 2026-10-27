@@ -208,6 +208,7 @@ test("macOS native A/B lifecycle accepts ONLY production-root signed pre-staged 
   createPointerTransitionImpl:()=>({
    selectTarget:async()=>{events.push("select-native-B")},
    requireTarget:async()=>{events.push("require-native-B")},
+   assertRollbackAdmitted:async()=>{},
    restorePrevious:async()=>{events.push("restore-native-A")},
   }),
   createMacLinkTransitionImpl:()=>({
@@ -292,6 +293,7 @@ test("signed native mac lifecycle rolls back BOTH B pointers if app-host activat
   createPointerTransitionImpl:()=>({
    selectTarget:async()=>{currentNative="B";events.push("native-B")},
    requireTarget:async()=>{if(currentNative!=="B")throw Error("wrong B pointer")},
+   assertRollbackAdmitted:async()=>{},
    restorePrevious:async()=>{currentNative="A";events.push("native-A")},
   }),
   createMacLinkTransitionImpl:()=>({
@@ -333,6 +335,7 @@ test("signed native mac lifecycle cannot claim committed B after pointer drift o
   createPointerTransitionImpl:()=>({
    selectTarget:async()=>{pointerB=true},
    requireTarget:async()=>{if(!pointerB)throw Error("B native drifted")},
+   assertRollbackAdmitted:async()=>{},
    restorePrevious:async()=>{pointerB=false},
   }),
   createMacLinkTransitionImpl:()=>({
@@ -399,6 +402,25 @@ test("real filesystem signed native mac lifecycle selects both B pointers BEFORE
  assert.equal((await readPointerImpl(nativePath)).sourceSha,B);
  assert.equal(await fs.realpath(path.join(root,"current")),nativeB);
  await lifecycle.commit();
+ // A third-party overwrite of the native identity must refuse rollback
+ // BEFORE the already-selected B LaunchAgent link can be changed.
+ await fs.writeFile(nativePath,JSON.stringify({
+  schemaVersion:1,channel:"main",sourceSha:"e".repeat(40),
+  target,runtimeContractSha256:"e".repeat(64),
+ }),{mode:0o600});
+ await assert.rejects(lifecycle.rollback(),/neither admitted A nor B/u);
+ assert.equal(await fs.realpath(path.join(root,"current")),nativeB);
+ await fs.writeFile(nativePath,JSON.stringify({
+  schemaVersion:1,channel:"main",sourceSha:B,target,runtimeContractSha256:DB,
+ }),{mode:0o600});
+ // Conversely a foreign symlink must not cause the owned B native pointer
+ // to be removed before we detect the invalid runtime owner.
+ await fs.unlink(path.join(root,"current"));
+ await fs.symlink("foreign",path.join(root,"current"));
+ await assert.rejects(lifecycle.rollback(),/outside admitted A\/B releases/u);
+ assert.equal((await readPointerImpl(nativePath)).sourceSha,B);
+ await fs.unlink(path.join(root,"current"));
+ await fs.symlink(path.relative(root,nativeB),path.join(root,"current"));
  await lifecycle.rollback(); // Mock failed B health before terminal success
  assert.equal(await fs.realpath(path.join(root,"current")),stable);
  await assert.rejects(fs.lstat(nativePath),{code:"ENOENT"});

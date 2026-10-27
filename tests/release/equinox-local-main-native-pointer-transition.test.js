@@ -62,6 +62,7 @@ test("unexpected third-party pointer identity prevents B selection, commit and r
   await assert.rejects(fOutsider.selectTarget(), /switched away/u);
   await assert.rejects(fOutsider.restorePrevious(), /no longer belongs/u);
   await assert.rejects(fOutsider.requireTarget(), /not durably selected/u);
+  await assert.rejects(fOutsider.assertRollbackAdmitted(),/neither admitted A nor B/u);
   assert.deepEqual(f.events, []);
 });
 

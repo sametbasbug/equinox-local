@@ -72,6 +72,13 @@ export function createEquinoxLocalMainNativePointerTransition({
       if (!sameIdentity(observed, target)) throw new Error("Native B pointer is not durably selected.");
       return observed;
     },
+    async assertRollbackAdmitted() {
+      const observed=await current();
+      if(!sameIdentity(observed,target) && !sameIdentity(observed,previous)){
+        throw new Error("Native Main rollback pointer is neither admitted A nor B.");
+      }
+      return observed;
+    },
   });
 }
 

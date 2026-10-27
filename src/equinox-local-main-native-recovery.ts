@@ -299,6 +299,13 @@ export async function recoverEquinoxLocalMainNativeLifecycle({
           await activateDarwinImpl({installation,releaseDir:stored.releaseDir,fsImpl,execFileImpl,requirePayloadIdentity:true});
         },
         rollback:async()=>{
+          // Preflight BOTH pointers before mutating either: foreign owners
+          // cannot trick partial rollback into mixing A and another SHA.
+          const observedLink=await macLink.current();
+          if(observedLink!==previousReleaseDir && observedLink!==macLink.targetReleaseDir){
+            throw new Error("Signed native Mac rollback link is outside admitted A/B.");
+          }
+          await nativePointer.assertRollbackAdmitted();
           await macLink.restorePrevious();
           await nativePointer.restorePrevious();
           await restoreDarwinImpl({homeDir,snapshotPath,fsImpl,execFileImpl});

@@ -236,6 +236,13 @@ export async function prepareEquinoxLocalMainNativeLifecycle({
         rollback:async()=>{
           // Strict reverse of A->B ownership. Every step is idempotent for
           // interrupted journal replay, and foreign pointer drift aborts.
+          // Preflight BOTH pointers before mutating either: foreign owners
+          // cannot trick partial rollback into mixing A and another SHA.
+          const observedLink=await macLink.current();
+          if(observedLink!==previousReleaseDir && observedLink!==macLink.targetReleaseDir){
+            throw new Error("Signed native Mac rollback link is outside admitted A/B.");
+          }
+          await nativePointer.assertRollbackAdmitted();
           await macLink.restorePrevious();
           await nativePointer.restorePrevious();
           await restoreDarwinImpl({homeDir,snapshotPath,fsImpl,execFileImpl});
