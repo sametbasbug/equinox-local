@@ -166,6 +166,9 @@ export async function inspectEquinoxLocalMainNativeStoredRelease({
   const manifest = validateStoreManifest(raw, { sourceSha, target, runtimeContractSha256: expectedRuntimeContractSha256 });
   const validated = await validateRelease(paths.releaseDir, { target, fsImpl });
   if (validated?.releaseDir !== paths.releaseDir || validated?.target !== target || validated?.version !== manifest.payloadVersion) throw new Error("Main native stored release validation drifted.");
+  if (validated.metadata?.sourceSha !== sourceSha || validated.metadata?.version !== manifest.payloadVersion) {
+    throw new Error("Main native stored release source SHA does not match the durable signed identity.");
+  }
   const fingerprint = await fingerprintRelease(paths.releaseDir, { fsImpl });
   if (fingerprint.sha256 !== manifest.releaseFingerprint.sha256 || fingerprint.entries !== manifest.releaseFingerprint.entries || fingerprint.bytes !== manifest.releaseFingerprint.bytes) {
     throw new Error("Main native stored release fingerprint mismatch.");
@@ -203,6 +206,9 @@ export async function promoteEquinoxLocalMainNativeCandidate({
   await ensureCanonicalDirectory(candidateRoot, { fsImpl });
   const validated = await validateRelease(expectedReleaseDir, { target: candidate.target, fsImpl });
   if (validated?.releaseDir !== expectedReleaseDir || validated?.target !== candidate.target || validated?.version !== candidate.payloadVersion) throw new Error("Main native candidate identity drifted before durable promotion.");
+  if (validated.metadata?.sourceSha !== candidate.sourceSha || validated.metadata?.version !== candidate.payloadVersion) {
+    throw new Error("Main native candidate source SHA does not match the durable signed identity.");
+  }
   const releaseFingerprint = await fingerprintRelease(expectedReleaseDir, { fsImpl });
   const manifest = validateStoreManifest({
     schemaVersion: EQUINOX_LOCAL_MAIN_NATIVE_STATE_SCHEMA_VERSION,
