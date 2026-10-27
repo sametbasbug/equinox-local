@@ -2083,3 +2083,12 @@ test("signed-native first-install recovery CLI refuses malformed transaction ide
  }
  await assert.rejects(fs.lstat(path.join(home,"Library")),{code:"ENOENT"});
 });
+
+
+test("admitted signed native recovery refuses a false absence response even when the callback does not throw",async t=>{
+ const f=await signedAbandonedMacFixture(t);
+ await assert.rejects(recoverAbandonedSignedMainMacAdmission({...f.opts,
+  proveAbsentImpl:async()=>({absent:false}),
+ }),/absence is not proven/u);
+ assert.equal(JSON.parse(await fs.readFile(path.join(f.root,"active.json"),"utf8")).transactionId,f.tx);
+});

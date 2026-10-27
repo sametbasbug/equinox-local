@@ -1748,7 +1748,9 @@ export async function recoverAbandonedSignedMainMacAdmission({ transactionId, ho
     // Snapshot is not needed: a never-started B has not changed either A
     // pointer. The worker can later be rejected by terminal CAS even if
     // a stale scheduler races to start it.
-    await absent(absenceInput);
+    if ((await absent(absenceInput)).absent !== true) {
+        throw new Error("Signed native launchd absence is not proven; owner remains locked.");
+    }
     const prior = await assertA();
     const verify = verifyPriorHealthImpl ?? (async (input) => {
         if (input.previousKind === "stable") {
@@ -1770,7 +1772,9 @@ export async function recoverAbandonedSignedMainMacAdmission({ transactionId, ho
     if ((await verify(prior)) !== true) {
         throw new Error("Abandoned signed Main Mac original A did not pass exact health; owner retained.");
     }
-    await absent(absenceInput);
+    if ((await absent(absenceInput)).absent !== true) {
+        throw new Error("Signed native launchd absence changed before terminal receipt.");
+    }
     await assertA();
     if ((await recovery.readEquinoxLocalSignedNativeMacReceipt({ ...owner, fsImpl })).status !== "admitted") {
         throw new Error("Signed native receipt was advanced while proving abandoned ownership.");
