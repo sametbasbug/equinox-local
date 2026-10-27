@@ -19,10 +19,11 @@ import { runEquinoxLocalMainUpdateHandoff } from "./equinox-local-main-update-ha
 import { readEquinoxLocalMainSourcePointer } from "./equinox-local-main-source-pointer.js";
 import { inspectEquinoxLocalMainNativeStoredRelease, promoteEquinoxLocalMainNativeCandidate, readEquinoxLocalMainNativePointer } from "./equinox-local-main-native-state.js";
 import { inspectCanonicalMainCheckout } from "./equinox-local-main-update.js";
-import { EQUINOX_LOCAL_CONTROL_CENTER_STATUS_URL } from "./equinox-local-update-activation.js";
+import { EQUINOX_LOCAL_CONTROL_CENTER_STATUS_URL, waitForEquinoxLocalVersion, } from "./equinox-local-update-activation.js";
 import { requestWindowsShellRuntimeRestart } from "./equinox-local-windows-shell-control.js";
 import { assertWindowsStableShellOwnedByRelease, launchWindowsStableShell } from "./equinox-local-windows-stable-shell.js";
 import { cleanupEquinoxLocalMainUpdateWorkerOwnership } from "./equinox-local-main-update-scheduler.js";
+import { readEquinoxLocalMainNativeRecoveryDescriptor } from "./equinox-local-main-native-recovery.js";
 import { admitWindowsMainNativeWorkerJournal } from "./equinox-local-windows-main-worker-admission.js";
 const execFile = promisify(execFileCallback);
 function hasErrorCode(error, code) {
@@ -184,6 +185,90 @@ export async function waitForExactNativeMainHealth({ transactionRoot, sourceSha,
         }
     }
     throw new Error("Signed Main native runtime did not become healthy: " + errorMessage(lastError));
+}
+// The signed, Git-free Mac installer uses the SAME A/B native lifecycle as
+// the old Main worker, but MUST NOT use its Git source transaction receipt.
+// Before the installer exposes this operation, its detached worker must own
+// the journal/lock and be restart-safe. This bounded orchestration works only
+// with an already prepared, production-signed immutable native B lifecycle.
+export async function runEquinoxLocalSignedMacNativeHandoff({ transactionRoot, transactionId, lifecycle, sourceSha, target, version, runtimeContractSha256, previousVersion = null, restartImpl = async () => restartEquinoxLocalMainSourceRuntime({ platform: "darwin" }), verifyNativeImpl = waitForExactNativeMainHealth, verifyStableImpl = waitForEquinoxLocalVersion, inspectStoredImpl = inspectEquinoxLocalMainNativeStoredRelease, readDescriptorImpl = readEquinoxLocalMainNativeRecoveryDescriptor, }) {
+    if (!/^main-[a-f0-9]{32}$/u.test(transactionId) ||
+        !path.isAbsolute(transactionRoot) || path.resolve(transactionRoot) !== transactionRoot ||
+        !/^[a-f0-9]{40}$/u.test(sourceSha) ||
+        !/^darwin-(arm64|x64)$/u.test(target) ||
+        !/^[a-f0-9]{64}$/u.test(runtimeContractSha256) ||
+        !/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/u.test(version) ||
+        !lifecycle || typeof lifecycle.activate !== "function" ||
+        typeof lifecycle.rollback !== "function" || typeof lifecycle.commit !== "function") {
+        throw new Error("Signed native Mac handoff requires exact durable transaction and A/B identities.");
+    }
+    const descriptor = await readDescriptorImpl({ transactionRoot, transactionId,
+        expected: { targetSha: sourceSha, target, targetRuntimeContractSha256: runtimeContractSha256 } });
+    const prior = lifecycle.previousPointer;
+    if (descriptor.previous.kind === "main") {
+        if (!prior || prior.sourceSha !== descriptor.previous.sourceSha ||
+            prior.target !== descriptor.previous.target ||
+            prior.runtimeContractSha256 !== descriptor.previous.runtimeContractSha256 ||
+            prior.sourceSha === sourceSha) {
+            throw new Error("Signed native Mac handoff prior A differs from durable rollback descriptor.");
+        }
+    }
+    else if (descriptor.previous.kind === "stable") {
+        if (prior || previousVersion !== descriptor.previous.version) {
+            throw new Error("Signed native Mac handoff stable A version differs from rollback descriptor.");
+        }
+    }
+    else {
+        throw new Error("Signed native Mac handoff has no admitted previous A.");
+    }
+    const b = { transactionRoot, sourceSha, target, version, runtimeContractSha256 };
+    const verifyA = async () => {
+        if (descriptor.previous.kind === "stable") {
+            if ((await verifyStableImpl(descriptor.previous.version, {
+                expectedInstallationKind: "managed",
+            })) !== true)
+                throw new Error("Restored Stable A did not pass runtime health.");
+            return;
+        }
+        const a = descriptor.previous;
+        const stored = await inspectStoredImpl({ transactionRoot, sourceSha: a.sourceSha,
+            target: a.target, expectedRuntimeContractSha256: a.runtimeContractSha256 });
+        if (stored.sourceSha !== a.sourceSha || stored.target !== a.target ||
+            stored.runtimeContractSha256 !== a.runtimeContractSha256 ||
+            !/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/u.test(stored.payloadVersion)) {
+            throw new Error("Restored native A durable identity was not admitted.");
+        }
+        if ((await verifyNativeImpl({ transactionRoot, sourceSha: a.sourceSha,
+            target: a.target, version: stored.payloadVersion,
+            runtimeContractSha256: a.runtimeContractSha256 })) !== true) {
+            throw new Error("Restored native A did not pass exact SHA health.");
+        }
+    };
+    try {
+        await lifecycle.activate(); // BOTH pointers B before restart
+        await restartImpl(); // launchd must actually boot B
+        if ((await verifyNativeImpl(b)) !== true)
+            throw new Error("Signed native B failed exact SHA health.");
+        await lifecycle.commit(); // check BOTH B pointers after health
+        if ((await verifyNativeImpl(b)) !== true)
+            throw new Error("Signed native B lost exact SHA health.");
+        // Terminal receipt is written by the owning durable native-only worker.
+        return Object.freeze({ status: "healthy", sourceSha, target, version });
+    }
+    catch (targetFailure) {
+        try {
+            await lifecycle.rollback(); // both A pointers and apphost
+            await restartImpl(); // launchd must actually boot A
+            await verifyA(); // stable A or full-SHA native A
+        }
+        catch (rollbackFailure) {
+            throw Object.assign(new Error("Signed native B failed and rollback A health is unverified."), {
+                cause: rollbackFailure, targetFailure,
+            });
+        }
+        return Object.freeze({ status: "rolled_back", sourceSha, target, version,
+            targetError: errorMessage(targetFailure) });
+    }
 }
 // Older admitted A versions schedule the B worker with a minimal launchd
 // environment that omits both managed installation paths. Derive identity

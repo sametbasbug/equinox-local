@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { resolveEquinoxLocalMainWorkerNativeInstallation, restartEquinoxLocalMainSourceRuntime, runEquinoxLocalMainUpdateWorker, waitForExactSourceHealth, waitForExactNativeMainHealth } from "../../src/equinox-local-main-update-worker.js";
+import { resolveEquinoxLocalMainWorkerNativeInstallation, restartEquinoxLocalMainSourceRuntime, runEquinoxLocalMainUpdateWorker, runEquinoxLocalSignedMacNativeHandoff, waitForExactSourceHealth, waitForExactNativeMainHealth } from "../../src/equinox-local-main-update-worker.js";
 
 const TX = `main-${"a".repeat(32)}`;
 const SOURCE = "/private/tmp/equinox-source-a";
@@ -650,4 +650,132 @@ test("Git-free native health detects native A/B pointer drift after a perfect B 
    server:{version:"6.2.1"},installation:{kind:"managed-main",sourceSha:B,mainNativeSha:B,target:"win32-x64"}}})}),
  }),/has not converged/u);
  assert.equal(reads,2);
+});
+
+
+function signedMacHandoffFixture(previous={kind:"stable",version:"6.2.0"}){
+ const events=[];
+ const prior=previous.kind==="main"?{
+  sourceSha:A,target:"darwin-arm64",runtimeContractSha256:DIGEST_A,
+ }:null;
+ const descriptor={previous};
+ const input={
+  transactionRoot:STATE,transactionId:TX,sourceSha:B,
+  target:"darwin-arm64",version:"6.2.1",
+  runtimeContractSha256:DIGEST_B,previousVersion:previous.kind==="stable"?previous.version:null,
+  lifecycle:{
+   previousPointer:prior,
+   activate:async()=>{events.push("select native B + mac link B + apphost B")},
+   rollback:async()=>{events.push("restore mac link A + native pointer A + apphost A")},
+   commit:async()=>{events.push("check B pointers")},
+  },
+  readDescriptorImpl:async args=>{
+   events.push("durable descriptor");
+   assert.equal(args.transactionId,TX);
+   assert.equal(args.expected.targetSha,B);
+   return descriptor;
+  },
+  restartImpl:async()=>events.push("launchctl restart"),
+  verifyNativeImpl:async args=>{
+   events.push("health native "+args.sourceSha.slice(0,1));
+   assert.equal(args.transactionRoot,STATE);
+   return true;
+  },
+  verifyStableImpl:async(v,opts)=>{
+   events.push("health stable "+v);
+   assert.equal(opts.expectedInstallationKind,"managed");
+   return true;
+  },
+  inspectStoredImpl:async args=>{
+   events.push("inspect durable native "+args.sourceSha.slice(0,1));
+   assert.equal(args.expectedRuntimeContractSha256,DIGEST_A);
+   return {sourceSha:A,target:"darwin-arm64",runtimeContractSha256:DIGEST_A,
+    payloadVersion:"6.2.1",releaseDir:"/owned/native/A"};
+  },
+ };
+ return {input,events};
+}
+
+test("signed Git-free macOS handoff restarts actual B before checking exact SHA twice and declaring healthy",async()=>{
+ const {input,events}=signedMacHandoffFixture();
+ const result=await runEquinoxLocalSignedMacNativeHandoff(input);
+ assert.equal(result.status,"healthy");
+ assert.equal(result.sourceSha,B);
+ assert.deepEqual(events,["durable descriptor","select native B + mac link B + apphost B",
+  "launchctl restart","health native 2","check B pointers","health native 2"]);
+});
+
+test("signed macOS B failed health restores old Stable A then restarts and verifies Stable installation kind",async()=>{
+ const {input,events}=signedMacHandoffFixture();
+ const result=await runEquinoxLocalSignedMacNativeHandoff({...input,
+  verifyNativeImpl:async()=>{events.push("unhealthy B");throw Error("old SHA still serves HTTP")},
+ });
+ assert.equal(result.status,"rolled_back");
+ assert.match(result.targetError,/old SHA/u);
+ assert.deepEqual(events,["durable descriptor","select native B + mac link B + apphost B",
+  "launchctl restart","unhealthy B","restore mac link A + native pointer A + apphost A",
+  "launchctl restart","health stable 6.2.0"]);
+});
+
+test("same displayed version native A and B roll back with original A full SHA not the semantic version",async()=>{
+ const {input,events}=signedMacHandoffFixture({
+  kind:"main",sourceSha:A,target:"darwin-arm64",runtimeContractSha256:DIGEST_A,
+ });
+ const result=await runEquinoxLocalSignedMacNativeHandoff({...input,
+  verifyNativeImpl:async args=>{
+   events.push("health native "+args.sourceSha.slice(0,1));
+   if(args.sourceSha===B)throw Error("new B cannot boot");
+   assert.equal(args.sourceSha,A);
+   assert.equal(args.version,"6.2.1");
+   assert.equal(args.runtimeContractSha256,DIGEST_A);
+   return true;
+  },
+ });
+ assert.equal(result.status,"rolled_back");
+ assert.deepEqual(events,["durable descriptor","select native B + mac link B + apphost B",
+  "launchctl restart","health native 2","restore mac link A + native pointer A + apphost A",
+  "launchctl restart","inspect durable native 1","health native 1"]);
+});
+
+test("failed B and failed A health stays explicitly unrecovered, does not report healthy or rolled back",async()=>{
+ const {input,events}=signedMacHandoffFixture();
+ await assert.rejects(runEquinoxLocalSignedMacNativeHandoff({...input,
+  verifyNativeImpl:async()=>false,
+  verifyStableImpl:async()=>{events.push("A cannot boot");throw Error("Stable A health missing");},
+ }),error=>{
+  assert.match(error.message,/rollback A health is unverified/u);
+  assert.match(error.cause.message,/Stable A health missing/u);
+  return true;
+ });
+ assert.deepEqual(events,["durable descriptor","select native B + mac link B + apphost B",
+  "launchctl restart","restore mac link A + native pointer A + apphost A",
+  "launchctl restart","A cannot boot"]);
+});
+
+test("signed native preflight refuses wrong descriptor A and missing/malformed identity before any restart",async()=>{
+ const {input,events}=signedMacHandoffFixture();
+ for(const mutation of [
+  {sourceSha:"f".repeat(40)},
+  {target:"win32-x64"},
+  {transactionId:"bad"},
+  {previousVersion:"6.2.1"},
+  {readDescriptorImpl:async()=>({previous:{kind:"main",sourceSha:A,target:"darwin-arm64",runtimeContractSha256:DIGEST_A}})},
+ ]){
+  await assert.rejects(runEquinoxLocalSignedMacNativeHandoff({...input,...mutation}));
+ }
+ assert.equal(events.length,2);
+ assert.ok(events.every(event=>event==="durable descriptor"),"no native mutation or restart before admission");
+});
+
+test("signed native B second SHA-health loss triggers A rollback even after first B health and pointer check",async()=>{
+ const {input,events}=signedMacHandoffFixture();
+ let checks=0;
+ const result=await runEquinoxLocalSignedMacNativeHandoff({...input,
+  verifyNativeImpl:async()=>{checks++;events.push("B health "+checks);return checks===1},
+ });
+ assert.equal(result.status,"rolled_back");
+ assert.equal(checks,2);
+ assert.deepEqual(events,["durable descriptor","select native B + mac link B + apphost B",
+  "launchctl restart","B health 1","check B pointers","B health 2",
+  "restore mac link A + native pointer A + apphost A","launchctl restart","health stable 6.2.0"]);
 });
