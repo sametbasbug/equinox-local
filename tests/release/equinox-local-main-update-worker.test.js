@@ -1,10 +1,13 @@
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
+import { generateKeyPairSync } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { resolveEquinoxLocalMainWorkerNativeInstallation, restartEquinoxLocalMainSourceRuntime, runEquinoxLocalMainUpdateWorker, runEquinoxLocalSignedMacNativeHandoff, assertEquinoxLocalSignedMacWorkerProcess, waitForExactSourceHealth, waitForExactNativeMainHealth } from "../../src/equinox-local-main-update-worker.js";
+import { resolveEquinoxLocalMainWorkerNativeInstallation, restartEquinoxLocalMainSourceRuntime, runEquinoxLocalMainUpdateWorker, runEquinoxLocalSignedMacNativeHandoff, runEquinoxLocalSignedMacNativeWorker, assertEquinoxLocalSignedMacWorkerProcess, waitForExactSourceHealth, waitForExactNativeMainHealth } from "../../src/equinox-local-main-update-worker.js";
+
+import { createSignedMainInstallPointer, validateSignedMainInstallPointer } from "../../src/equinox-local-main-install-pointer.js";
 
 const TX = `main-${"a".repeat(32)}`;
 const SOURCE = "/private/tmp/equinox-source-a";
@@ -906,4 +909,126 @@ test("signed native handoff cannot touch even its descriptor when launchd worker
   assertWorkerImpl:async()=>{throw new Error("foreign launchd worker");},
  }),/foreign launchd worker/u);
  assert.deepEqual(events,[]);
+});
+
+
+async function signedNativeWorkerFixture(t){
+ const tmp=await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(),"equinox-main-signed-cli-")));
+ t.after(()=>fs.rm(tmp,{recursive:true,force:true}));
+ const root=path.join(tmp,"Library","Application Support","Equinox Local","main-update");
+ const target="darwin-arm64";
+ const release=path.join(root,"native-store",target,B,"release");
+ const workerPath=path.join(release,"equinox-local-main-update-worker.js");
+ const nodePath=path.join(release,"runtime","node","bin","node");
+ const selectorPath=path.join(path.dirname(release),"signed-selector.json");
+ await fs.mkdir(path.dirname(nodePath),{recursive:true,mode:0o700});
+ await fs.writeFile(workerPath,"// packaged B worker",{mode:0o600});
+ await fs.writeFile(nodePath,"// product-owned Node 26",{mode:0o700});
+ const keyId="native-worker-ephemeral-test";
+ const {privateKey,publicKey}=generateKeyPairSync("ed25519");
+ const signed=createSignedMainInstallPointer({
+  sourceSha:B,version:"6.2.1",keyId,privateKey,
+  publishedAt:"2026-10-28T01:00:00.000Z",
+  nativeManifests:["darwin-arm64","darwin-x64","win32-arm64","win32-x64"].map(arch=>({
+   schemaVersion:1,channel:"main",sourceSha:B,target:arch,
+   runtimeContractSha256:DIGEST_B,
+   artifact:{name:"equinox-local-main-"+B+"-"+arch+
+    (arch.startsWith("win32-")?".zip":".tar.gz"),sha256:"d".repeat(64),bytes:42},
+  })),
+ });
+ await fs.writeFile(selectorPath,JSON.stringify(signed),{mode:0o600});
+ const descriptor={schemaVersion:1,channel:"main",targetSha:B,target,
+  targetRuntimeContractSha256:DIGEST_B,previous:{kind:"stable",version:"6.2.0"}};
+ const events=[];
+ const opts={
+  argv:["--signed-native","--transaction-id",TX,"--transaction-root",root],
+  workerPath,nodePath,env:{HOME:tmp},platform:"darwin",arch:"arm64",
+  assertWorkerImpl:async arg=>{events.push("launchd owner");assert.equal(arg.transactionId,TX)},
+  readDescriptorImpl:async arg=>{
+   events.push("descriptor");
+   assert.deepEqual(arg.expected,{targetSha:B,target});
+   return descriptor;
+  },
+  inspectStoredImpl:async arg=>{
+   events.push("store fingerprint");
+   assert.equal(arg.sourceSha,B);
+   assert.equal(arg.expectedRuntimeContractSha256,DIGEST_B);
+   return {sourceSha:B,target,releaseDir:release,runtimeContractSha256:DIGEST_B,
+    payloadVersion:"6.2.1",manifest:{artifactSha256:"d".repeat(64),artifactBytes:42}};
+  },
+  verifyPointerImpl:(raw,options)=>{
+   events.push("Ed25519 signature");
+   return validateSignedMainInstallPointer(raw,{...options,
+    publicKeys:{[keyId]:publicKey.export({type:"spki",format:"pem"})}});
+  },
+  resolveInstallationImpl:async arg=>{
+   events.push("managed installation");
+   assert.equal(arg.transactionRoot,root);
+   return {managed:true,selfUpdateSupported:true,target,installRoot:path.dirname(root)};
+  },
+  recoverLifecycleImpl:async arg=>{
+   events.push("recovered A/B");
+   assert.deepEqual(arg.transition,{mode:"artifact_required",target,targetSha:B,
+    targetRuntimeContractSha256:DIGEST_B});
+   return {stored:{releaseDir:release},descriptor,
+    previousPointer:null,activate:async()=>{},rollback:async()=>{},commit:async()=>{}};
+  },
+  handoffImpl:async arg=>{
+   events.push("native restart-health");
+   assert.equal(arg.sourceSha,B);
+   assert.equal(arg.version,"6.2.1");
+   assert.equal(arg.previousVersion,"6.2.0");
+   return {status:"healthy",sourceSha:B};
+  },
+ };
+ return {opts,events,release,root,selectorPath,workerPath,nodePath,tmp};
+}
+
+test("the actual packaged signed-native worker CLI verifies immutable B and dispatches the SAME A/B native handoff without Git",async t=>{
+ const f=await signedNativeWorkerFixture(t);
+ const result=await runEquinoxLocalSignedMacNativeWorker(f.opts);
+ assert.deepEqual(result,{status:"healthy",sourceSha:B});
+ assert.deepEqual(f.events,["launchd owner","descriptor","store fingerprint",
+  "Ed25519 signature","managed installation","recovered A/B","native restart-health"]);
+});
+
+test("signed-native worker CLI rejects forged identity/ambient Node and malformed arguments before a launchd action",async t=>{
+ const f=await signedNativeWorkerFixture(t);
+ for(const patch of [
+  {argv:["--transaction-id",TX,"--source-root",SOURCE,"--transaction-root",f.root]},
+  {argv:["--signed-native","--transaction-id",TX,"--transaction-root",f.root,"--source-root",SOURCE]},
+  {platform:"win32"},{arch:"x64"},{nodePath:process.execPath},
+  {workerPath:path.join(f.tmp,"fake.js")},
+  {env:{HOME:path.join(f.tmp,"other")}},
+ ]){
+  await assert.rejects(runEquinoxLocalSignedMacNativeWorker({...f.opts,...patch}));
+ }
+ assert.deepEqual(f.events,[]);
+});
+
+test("signed-native worker CLI fails closed on attacker-provided selector before recovering or starting B",async t=>{
+ const f=await signedNativeWorkerFixture(t);
+ const fake=JSON.parse(await fs.readFile(f.selectorPath,"utf8"));
+ fake.version="6.2.2";
+ await fs.writeFile(f.selectorPath,JSON.stringify(fake),{mode:0o600});
+ await assert.rejects(runEquinoxLocalSignedMacNativeWorker(f.opts),/signature|signing/u);
+ assert.deepEqual(f.events,["launchd owner","descriptor","store fingerprint","Ed25519 signature"]);
+ f.events.length=0;
+ await fs.unlink(f.selectorPath);
+ const foreign=path.join(f.tmp,"foreign.json");
+ await fs.writeFile(foreign,"foreign",{mode:0o600});
+ await fs.symlink(foreign,f.selectorPath);
+ await assert.rejects(runEquinoxLocalSignedMacNativeWorker(f.opts),/private normal file/u);
+ assert.equal(await fs.readFile(foreign,"utf8"),"foreign");
+ assert.deepEqual(f.events,["launchd owner","descriptor","store fingerprint"]);
+});
+
+test("signed-native worker CLI rejects a mismatched stored B digest and never touches the app",async t=>{
+ const f=await signedNativeWorkerFixture(t);
+ await assert.rejects(runEquinoxLocalSignedMacNativeWorker({...f.opts,
+  inspectStoredImpl:async()=>({sourceSha:B,target:"darwin-arm64",
+   releaseDir:f.release,runtimeContractSha256:DIGEST_B,payloadVersion:"6.2.1",
+   manifest:{artifactSha256:"0".repeat(64),artifactBytes:42}}),
+ }),/differs from production Ed25519 pointer/u);
+ assert.deepEqual(f.events,["launchd owner","descriptor","Ed25519 signature"]);
 });

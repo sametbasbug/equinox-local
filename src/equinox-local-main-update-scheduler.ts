@@ -47,11 +47,13 @@ type CleanupWorkerOptions = WorkerOptions & {
 };
 type ScheduleWorkerOptions = WorkerOptions & {
   sourceRoot?: string; nodePath?: string; workerPath?: string;
+  signedNative?:boolean;sourceSha?:string;target?:string;
   sourceEnv?: NodeJS.ProcessEnv; requestWindowsHandoffImpl?: typeof requestWindowsShellMainUpdateHandoff;
 };
 type LaunchdInput = {
   label: string; nodePath: string; workerPath: string; sourceRoot: string;
   transactionRoot: string; transactionId: string; logPath: string; environment: Record<string,string>;
+  signedNative?:boolean;
 };
 type ProcessInspectOptions = {execFileImpl?: ExecFileImpl; nativeHelperPath?: unknown};
 
@@ -263,8 +265,10 @@ export function mainUpdateWorkerEnvironment(sourceEnv: NodeJS.ProcessEnv = proce
   };
   return Object.fromEntries(Object.entries(env).filter((entry): entry is [string, string] => typeof entry[1] === "string" && entry[1].length > 0));
 }
-export function renderMainUpdateLaunchdPlist({ label, nodePath, workerPath, sourceRoot, transactionRoot, transactionId, logPath, environment }: LaunchdInput): string {
-  const args = [nodePath, workerPath, "--transaction-id", transactionId, "--source-root", sourceRoot, "--transaction-root", transactionRoot];
+export function renderMainUpdateLaunchdPlist({ label, nodePath, workerPath, sourceRoot, transactionRoot, transactionId, logPath, environment, signedNative = false }: LaunchdInput): string {
+  const args = signedNative
+    ? [nodePath,workerPath,"--signed-native","--transaction-id",transactionId,"--transaction-root",transactionRoot]
+    : [nodePath, workerPath, "--transaction-id", transactionId, "--source-root", sourceRoot, "--transaction-root", transactionRoot];
   const envXml = Object.entries(environment).map(([key, value]) => `    <key>${xml(key)}</key>\n    <string>${xml(value)}</string>`).join("\n");
   return `<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0">\n<dict>\n  <key>Label</key>\n  <string>${xml(label)}</string>\n  <key>ProgramArguments</key>\n  <array>\n${args.map((arg) => `    <string>${xml(arg)}</string>`).join("\n")}\n  </array>\n  <key>EnvironmentVariables</key>\n  <dict>\n${envXml}\n  </dict>\n  <key>RunAtLoad</key>\n  <true/>\n  <key>KeepAlive</key>\n  <false/>\n  <key>ProcessType</key>\n  <string>Background</string>\n  <key>StandardOutPath</key>\n  <string>${xml(logPath)}</string>\n  <key>StandardErrorPath</key>\n  <string>${xml(logPath)}</string>\n</dict>\n</plist>\n`;
 }
@@ -409,6 +413,9 @@ export async function scheduleEquinoxLocalMainUpdateWorker({
   platform = process.platform,
   nodePath = process.env.EQUINOX_LOCAL_DEV_NODE || process.execPath,
   workerPath = path.join(sourceRoot ?? "", "src", "equinox-local-main-update-worker.js"),
+  signedNative = false,
+  sourceSha,
+  target,
   sourceEnv = process.env,
   uid = process.getuid?.(),
   fsImpl = fs,
@@ -421,6 +428,22 @@ export async function scheduleEquinoxLocalMainUpdateWorker({
   const worker = assertAbsolute(workerPath, "Main update worker", platform);
   const workerStat = await fsImpl.lstat(worker);
   if (!workerStat.isFile() || workerStat.isSymbolicLink()) throw new Error("Main update worker executable/source is unsafe.");
+  if (signedNative) {
+    // The same launcher services the signed native-only update, but its B
+    // worker+Node must come from one exact immutable target SHA store; a
+    // source checkout or ambient Node cannot schedule this privileged job.
+    if(platform!=="darwin" || !/^darwin-(arm64|x64)$/u.test(target??"") ||
+       !/^[a-f0-9]{40}$/u.test(sourceSha??"") ||
+       stateRoot!==path.posix.join(sourceEnv.HOME??"","Library","Application Support","Equinox Local","main-update") ||
+       root!==path.posix.join(stateRoot,"native-store",target!,sourceSha!,"release") ||
+       worker!==path.posix.join(root,"equinox-local-main-update-worker.js") ||
+       nodePath!==path.posix.join(root,"runtime","node","bin","node")) {
+      throw new Error("Signed native Main scheduler requires the exact packaged immutable B release.");
+    }
+    if(await fsImpl.realpath(root)!==root || await fsImpl.realpath(worker)!==worker){
+      throw new Error("Signed native Main scheduler release directory is not canonical.");
+    }
+  }
   if (platform === "win32") {
     const handoff = await requestWindowsHandoffImpl(transactionId, { platform: "win32" });
     return Object.freeze({ scheduled: true, platform: "win32", transactionId, handoff });
@@ -431,6 +454,9 @@ export async function scheduleEquinoxLocalMainUpdateWorker({
   if (typeof execFileImpl !== "function") throw new Error("Main update launchd scheduler requires an exec function.");
   const nodeStat = await fsImpl.lstat(node);
   if (!nodeStat.isFile() || nodeStat.isSymbolicLink()) throw new Error("Main update worker executable/source is unsafe.");
+  if(signedNative && await fsImpl.realpath(node)!==node){
+    throw new Error("Signed native Main scheduler runtime Node is not canonical.");
+  }
   const schedulerRoot = path.join(stateRoot, "handoff");
   await fsImpl.mkdir(schedulerRoot, { recursive: true, mode: 0o700 });
   const schedulerReal = await fsImpl.realpath(schedulerRoot);
@@ -438,8 +464,11 @@ export async function scheduleEquinoxLocalMainUpdateWorker({
   const label = mainUpdateLaunchdLabel(transactionId);
   const plistPath = path.join(schedulerRoot, `${transactionId}.plist`);
   const logPath = path.join(schedulerRoot, `${transactionId}.log`);
-  const environment = mainUpdateWorkerEnvironment(sourceEnv);
-  const plist = renderMainUpdateLaunchdPlist({ label, nodePath: node, workerPath: worker, sourceRoot: root, transactionRoot: stateRoot, transactionId, logPath, environment });
+  const allowed = mainUpdateWorkerEnvironment(sourceEnv);
+  const environment = signedNative
+    ? Object.fromEntries(Object.entries(allowed).filter(([name])=>["HOME","USER","LOGNAME","TMPDIR","PATH"].includes(name)))
+    : allowed;
+  const plist = renderMainUpdateLaunchdPlist({ label, nodePath: node, workerPath: worker, sourceRoot: root, transactionRoot: stateRoot, transactionId, logPath, environment, signedNative });
   const handle = await fsImpl.open(plistPath, "wx", 0o600);
   try { await handle.writeFile(plist, "utf8"); await handle.sync(); } finally { await handle.close(); }
   let bootstrapped = false;

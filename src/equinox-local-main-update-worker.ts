@@ -15,6 +15,7 @@ import { kickstartEquinoxLocalLaunchAgent } from "./equinox-local-update-activat
 import { equinoxLocalToolchainContract } from "./equinox-local-toolchain-contract.js";
 import { provisionEquinoxLocalToolchain } from "./equinox-local-toolchain-provisioner.js";
 import { readBoundedNormalFile } from "./equinox-local-safe-file.js";
+import { validateTrustedMainInstallPointer } from "./equinox-local-main-install-pointer.js";
 import { createEquinoxLocalMainUpdateTransactionEngine } from "./equinox-local-main-update-transaction.js";
 import { runEquinoxLocalMainUpdateHandoff } from "./equinox-local-main-update-handoff.js";
 import type { NativeLifecycle as HandoffNativeLifecycle } from "./equinox-local-main-update-handoff.js";
@@ -469,6 +470,131 @@ export async function runEquinoxLocalSignedMacNativeHandoff({
   }
 }
 
+// Exact, package-owned Git-free worker entrypoint. The existing single
+// external installer must stage/verify/prepare B and schedule this same
+// launchd worker; this path does not enable a new public update command.
+export async function runEquinoxLocalSignedMacNativeWorker({
+  argv = process.argv.slice(2),
+  workerPath = process.argv[1],
+  nodePath = process.execPath,
+  env = process.env,
+  arch = process.arch,
+  platform = process.platform,
+  fsImpl = fs,
+  assertWorkerImpl = assertEquinoxLocalSignedMacWorkerProcess,
+  readDescriptorImpl = readEquinoxLocalMainNativeRecoveryDescriptor,
+  inspectStoredImpl = inspectEquinoxLocalMainNativeStoredRelease,
+  verifyPointerImpl = validateTrustedMainInstallPointer,
+  resolveInstallationImpl = resolveEquinoxLocalMainWorkerNativeInstallation,
+  recoverLifecycleImpl = recoverEquinoxLocalMainNativeLifecycle,
+  handoffImpl = runEquinoxLocalSignedMacNativeHandoff,
+}: {
+  argv?:string[];workerPath?:string;nodePath?:string;env?:NodeJS.ProcessEnv;
+  arch?:string;platform?:string;fsImpl?:WorkerFs;
+  assertWorkerImpl?:typeof assertEquinoxLocalSignedMacWorkerProcess;
+  readDescriptorImpl?:typeof readEquinoxLocalMainNativeRecoveryDescriptor;
+  inspectStoredImpl?:typeof inspectEquinoxLocalMainNativeStoredRelease;
+  verifyPointerImpl?:typeof validateTrustedMainInstallPointer;
+  resolveInstallationImpl?:typeof resolveEquinoxLocalMainWorkerNativeInstallation;
+  recoverLifecycleImpl?:typeof recoverEquinoxLocalMainNativeLifecycle;
+  handoffImpl?:typeof runEquinoxLocalSignedMacNativeHandoff;
+}={}) {
+  if(platform!=="darwin" || !["arm64","x64"].includes(arch) ||
+     argv.length!==5 || argv[0]!=="--signed-native" ||
+     argv[1]!=="--transaction-id" || argv[3]!=="--transaction-root" ||
+     !/^main-[a-f0-9]{32}$/u.test(argv[2]??"") ||
+     typeof argv[4]!=="string" || !path.posix.isAbsolute(argv[4]) ||
+     path.posix.resolve(argv[4])!==argv[4] ||
+     typeof workerPath!=="string" || !path.posix.isAbsolute(workerPath) ||
+     typeof nodePath!=="string" || !path.posix.isAbsolute(nodePath)) {
+    throw new Error("Signed native Main worker requires exactly its transaction and canonical Mac ownership.");
+  }
+  const transactionId=argv[2]!;
+  const root=argv[4]!;
+  const home=env.HOME;
+  if(typeof home!=="string" || !path.posix.isAbsolute(home) ||
+     path.posix.join(home,"Library","Application Support","Equinox Local","main-update")!==root) {
+    throw new Error("Signed native Main worker root is not the per-user managed installation.");
+  }
+  const target="darwin-"+arch;
+  const installRoot=path.posix.dirname(root);
+  const storeRoot=path.posix.join(root,"native-store",target);
+  const releaseDir=path.posix.dirname(workerPath);
+  const sha=path.posix.basename(path.posix.dirname(releaseDir));
+  if(!/^[a-f0-9]{40}$/u.test(sha) ||
+     releaseDir!==path.posix.join(storeRoot,sha,"release") ||
+     workerPath!==path.posix.join(releaseDir,"equinox-local-main-update-worker.js") ||
+     nodePath!==path.posix.join(releaseDir,"runtime","node","bin","node")) {
+    throw new Error("Signed native worker executable and Node must both belong to one immutable SHA B.");
+  }
+  // Both entrypoint and Node must be normal owned release files, not an
+  // alternate symlinked runtime or an ambient PATH-provided interpreter.
+  for(const file of [workerPath,nodePath]){
+    const stat=await fsImpl.lstat(file);
+    if(!stat.isFile() || stat.isSymbolicLink() ||
+       await fsImpl.realpath(file)!==file) {
+      throw new Error("Signed native worker executable is not a normal immutable release file.");
+    }
+  }
+  await assertWorkerImpl({transactionId});
+  const descriptor=await readDescriptorImpl({transactionRoot:root,transactionId,
+    expected:{targetSha:sha,target},fsImpl});
+  const contract=descriptor.targetRuntimeContractSha256;
+  const stored=await inspectStoredImpl({transactionRoot:root,sourceSha:sha,target,
+    expectedRuntimeContractSha256:contract,fsImpl});
+  if(stored.sourceSha!==sha || stored.target!==target ||
+     stored.runtimeContractSha256!==contract || stored.releaseDir!==releaseDir){
+    throw new Error("Signed native worker release differs from immutable B store.");
+  }
+  const selectorPath=path.posix.join(path.posix.dirname(releaseDir),"signed-selector.json");
+  const selectorStat=await fsImpl.lstat(selectorPath);
+  if(!selectorStat.isFile() || selectorStat.isSymbolicLink() || selectorStat.nlink!==1 ||
+     (selectorStat.mode&0o777)!==0o600) {
+    throw new Error("Signed native worker selector must be a private normal file.");
+  }
+  const selector=await readBoundedNormalFile(selectorPath,{fsImpl,minBytes:200,
+    maxBytes:16*1024,encoding:"utf8",label:"Signed native worker selector"});
+  let raw:unknown;
+  try{raw=JSON.parse(selector.data);}catch{throw new Error("Signed native worker selector is not JSON.");}
+  const signed=verifyPointerImpl(raw,{expectedSourceSha:sha});
+  const row=signed.targets.find(entry=>entry.target===target);
+  if(!row || row.runtimeContractSha256!==contract ||
+     stored.payloadVersion!==signed.version ||
+     stored.manifest.artifactSha256!==row.artifact.sha256 ||
+     stored.manifest.artifactBytes!==row.artifact.bytes) {
+    throw new Error("Signed native worker immutable B differs from production Ed25519 pointer.");
+  }
+  const installation=await resolveInstallationImpl({
+    transactionRoot:root,env,platform:"darwin",arch,fsImpl,
+  });
+  if(!installation.managed || !installation.selfUpdateSupported ||
+     installation.target!==target || installation.installRoot!==installRoot){
+    throw new Error("Signed native worker has no admitted managed macOS installation.");
+  }
+  const transition={mode:"artifact_required",target,targetSha:sha,
+    targetRuntimeContractSha256:contract};
+  const recovered=await recoverLifecycleImpl({
+    transition,transactionRoot:root,transactionId,installation,fsImpl,env,
+  });
+  if(!recovered || typeof recovered!=="object" ||
+     !("activate" in recovered) || !("rollback" in recovered) || !("commit" in recovered)) {
+    throw new Error("Signed native worker recovery did not return an A/B lifecycle.");
+  }
+  const lifecycle=recovered as {
+    activate:()=>Promise<unknown>;rollback:()=>Promise<unknown>;
+    commit:()=>Promise<unknown>;
+    previousPointer?:{sourceSha:string;target:string;runtimeContractSha256:string}|null;
+    stored?:{releaseDir:string};descriptor?:{targetSha:string};
+  };
+  if(lifecycle.stored?.releaseDir!==releaseDir ||
+     lifecycle.descriptor?.targetSha!==sha){
+    throw new Error("Signed native worker recovery differs from the authenticated native B.");
+  }
+  return await handoffImpl({transactionRoot:root,transactionId,lifecycle,
+    sourceSha:sha,target,version:signed.version,runtimeContractSha256:contract,
+    previousVersion:descriptor.previous.kind==="stable"?descriptor.previous.version:null});
+}
+
 // Older admitted A versions schedule the B worker with a minimal launchd
 // environment that omits both managed installation paths. Derive identity
 // from the actual owned current-release pointer and the tightly constrained
@@ -766,7 +892,9 @@ export async function runEquinoxLocalMainUpdateWorker({
 
 const invoked = process.argv[1] ? pathToFileURL(process.argv[1]).href : null;
 if (invoked && import.meta.url === invoked) {
-  runEquinoxLocalMainUpdateWorker().catch((error) => {
+  (process.argv[2] === "--signed-native"
+    ? runEquinoxLocalSignedMacNativeWorker()
+    : runEquinoxLocalMainUpdateWorker()).catch((error) => {
     console.error(error instanceof Error ? error.message : String(error));
     process.exitCode = 1;
   });
