@@ -1,4 +1,4 @@
-> **Migration note (2026-10-27):** This site is now tracked in the canonical public `equinox-local/website/` directory. Cloudflare production still uses the original site repo until the verified Workers Builds cutover. Use `cd website` from the public root for the commands below. See [`../docs/plans/one-main-one-installer-one-repo.md`](../docs/plans/one-main-one-installer-one-repo.md).
+> **Migration note (2026-10-27):** This site is now tracked in the canonical public `equinox-local/website/` directory. Cloudflare production now builds this public repository’s `main` branch from `website/` (cutover verified 2026-10-27); the former site repository is rollback-only and must not deploy production. Use `cd website` from the public root for the commands below. See [`../docs/plans/one-main-one-installer-one-repo.md`](../docs/plans/one-main-one-installer-one-repo.md).
 
 # Equinox Local site
 
