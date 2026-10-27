@@ -11,6 +11,7 @@ import {
   equinoxLocalFirstInstallHealthBudget,
   installManagedEquinoxRelease,
   stageSignedMainInstallerNativeArchive,
+  inspectSignedMainInstallerMacActivation,
   persistSignedMainNativeStoreSelector,
   synchronizeFreshWindowsShell,
   validateFirstInstallRelease,
@@ -1535,4 +1536,103 @@ test("immutable signed native receipt rejects a symlink before modifying externa
   }),
  }),/not a normal|symbolic|symlink|normal file/u);
  assert.equal(await fs.readFile(victim,"utf8"),"private victim");
+});
+
+
+async function signedMacInstallerInspectFixture(t){
+ const homeDir=await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(),"equinox-main-mac-inspect-")));
+ t.after(()=>fs.rm(homeDir,{recursive:true,force:true}));
+ const installRoot=path.join(homeDir,"Library","Application Support","Equinox Local");
+ const stable=path.join(installRoot,"releases","6.2.1");
+ const native=path.join(installRoot,"main-update","native-store","darwin-arm64","b".repeat(40),"release");
+ const current=path.join(installRoot,"current");
+ await fs.mkdir(stable,{recursive:true,mode:0o700});
+ await fs.mkdir(native,{recursive:true,mode:0o700});
+ await fs.symlink(path.relative(installRoot,stable),current);
+ const {privateKey,publicKey}=generateKeyPairSync("ed25519");
+ const keyId="ephemeral-activation-inspect";
+ const sha="b".repeat(40),contract="c".repeat(64);
+ const signedPointer=createSignedMainInstallPointer({sourceSha:sha,version:"6.2.1",
+  publishedAt:"2026-10-28T01:00:00.000Z",privateKey,keyId,
+  nativeManifests:["darwin-arm64","darwin-x64","win32-arm64","win32-x64"].map(target=>({
+   schemaVersion:1,channel:"main",sourceSha:sha,target,
+   runtimeContractSha256:contract,artifact:{name:"equinox-local-main-"+sha+"-"+target+
+    (target.startsWith("win32")?".zip":".tar.gz"),sha256:"d".repeat(64),bytes:42},
+  })),
+ });
+ const events=[];
+ const options={signedPointer,homeDir,platform:"darwin",arch:"arm64",
+  env:{HOME:homeDir},
+  verifyPointerImpl:(raw,o)=>{
+   events.push("verify original B selector");
+   return validateSignedMainInstallPointer(raw,{...o,
+    publicKeys:{[keyId]:publicKey.export({type:"spki",format:"pem"})}});
+  },
+  resolveInstallationImpl:({env})=>{
+   events.push("managed A layout");
+   return {kind:"managed",managed:true,selfUpdateSupported:true,target:"darwin-arm64",
+    releaseDir:env.EQUINOX_LOCAL_RELEASE_DIR,mainNativeSha:null};
+  },
+  resolveManagedImpl:async({baseInstallation})=>{
+   events.push("verify active A identity");
+   return baseInstallation;
+  },
+  inspectStoredImpl:async({sourceSha,target,expectedRuntimeContractSha256})=>{
+   events.push("immutable B fingerprint");
+   assert.equal(sourceSha,sha);
+   assert.equal(target,"darwin-arm64");
+   assert.equal(expectedRuntimeContractSha256,contract);
+   return {releaseDir:native,sourceSha:sha,target,runtimeContractSha256:contract,
+    payloadVersion:"6.2.1",manifest:{artifactSha256:"d".repeat(64),artifactBytes:42}};
+  },
+ };
+ return {options,events,stable,native,current,homeDir,signedPointer};
+}
+
+test("signed installer Mac preflight selects exact new B SHA even with SAME displayed Stable A version",async t=>{
+ const f=await signedMacInstallerInspectFixture(t);
+ const result=await inspectSignedMainInstallerMacActivation(f.options);
+ assert.equal(result.action,"activate");
+ assert.equal(result.previousKind,"stable");
+ assert.equal(result.previousVersion,"6.2.1");
+ assert.equal(result.sourceSha,"b".repeat(40));
+ assert.equal(result.releaseDir,f.native);
+ assert.equal(await fs.realpath(f.current),f.stable,"read-only preflight never switches A");
+ assert.deepEqual(f.events,["verify original B selector","managed A layout",
+  "verify active A identity","immutable B fingerprint"]);
+});
+
+test("signed installer Mac preflight identifies same-SHA native B as verify-or-repair, not version-based reinstall",async t=>{
+ const f=await signedMacInstallerInspectFixture(t);
+ await fs.unlink(f.current);
+ await fs.symlink(path.relative(path.dirname(f.current),f.native),f.current);
+ const options={...f.options,
+  resolveInstallationImpl:({env})=>({kind:"managed",managed:true,selfUpdateSupported:true,
+   target:"darwin-arm64",releaseDir:env.EQUINOX_LOCAL_RELEASE_DIR,mainNativeSha:"b".repeat(40)}),
+  resolveManagedImpl:async({baseInstallation})=>({...baseInstallation,
+   kind:"managed-main",sourceSha:"b".repeat(40),mainNativeSha:"b".repeat(40)}),
+ };
+ const result=await inspectSignedMainInstallerMacActivation(options);
+ assert.equal(result.action,"verify_or_repair");
+ assert.equal(result.previousSha,"b".repeat(40));
+ assert.equal(result.previousVersion,null);
+});
+
+test("signed installer Mac preflight refuses legacy Git/Factory identity, foreign current and digest drift",async t=>{
+ const f=await signedMacInstallerInspectFixture(t);
+ await assert.rejects(inspectSignedMainInstallerMacActivation({...f.options,
+  resolveManagedImpl:async()=>({kind:"managed-main",managed:true,sourceSha:"1".repeat(40)}),
+ }),/private Factory installation/u);
+ await assert.rejects(inspectSignedMainInstallerMacActivation({...f.options,
+  inspectStoredImpl:async()=>({releaseDir:f.native,sourceSha:"b".repeat(40),
+   target:"darwin-arm64",runtimeContractSha256:"c".repeat(64),
+   payloadVersion:"6.2.1",manifest:{artifactSha256:"0".repeat(64),artifactBytes:42}}),
+ }),/different immutable Ed25519 identity/u);
+ await fs.unlink(f.current);
+ await fs.symlink(path.relative(path.dirname(f.current),f.homeDir),f.current);
+ await assert.rejects(inspectSignedMainInstallerMacActivation(f.options),
+  /escaped the owned Stable\/native release roots|not an admitted managed/u);
+ await fs.unlink(f.current);
+ await fs.writeFile(f.current,"untrusted",{mode:0o600});
+ await assert.rejects(inspectSignedMainInstallerMacActivation(f.options),/owned current symlink/u);
 });

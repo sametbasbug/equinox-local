@@ -11,7 +11,9 @@ import { activatePreparedEquinoxRelease, kickstartEquinoxLocalLaunchAgent, readM
 import { compareEquinoxVersions, equinoxLocalUpdateTarget, parseEquinoxVersion, } from "./equinox-local-updater.js";
 import { managedSupervisorPaths } from "./equinox-local-supervisor.js";
 import { enrollEquinoxLocalManagedSource, rollbackEquinoxLocalManagedSourceEnrollment } from "./equinox-local-managed-source-enrollment.js";
-import { equinoxLocalManagedSourcePaths } from "./equinox-local-managed-source-installation.js";
+import { equinoxLocalManagedSourcePaths, resolveEquinoxLocalManagedSourceInstallation } from "./equinox-local-managed-source-installation.js";
+import { resolveEquinoxLocalInstallation } from "./equinox-local-installation.js";
+import { inspectEquinoxLocalMainNativeStoredRelease } from "./equinox-local-main-native-state.js";
 import { validateManagedSourceInstallStamp } from "./equinox-local-main-update.js";
 import { readEquinoxLocalMainNativePointer } from "./equinox-local-main-native-state.js";
 import { validateTrustedMainInstallPointer } from "./equinox-local-main-install-pointer.js";
@@ -1350,6 +1352,84 @@ export async function stageSignedMainInstallerNativeArchive({ signedPointer, sou
         // our exclusively owned short-lived transaction, never A or current.
         await fsImpl.rm(transactionDir, { recursive: true, force: true });
     }
+}
+// Read-only admission before the SAME signed installer schedules an inactive
+// native B. Version is display-only; a healthy exact SHA may be a no-op,
+// whereas an unhealthy identical SHA requires repair (not a downgrade).
+// A legacy source/Factory Main MUST NOT be mistaken for public Stable A.
+export async function inspectSignedMainInstallerMacActivation({ signedPointer, homeDir = os.homedir(), platform = process.platform, arch = process.arch, env = process.env, fsImpl = fs, verifyPointerImpl = validateTrustedMainInstallPointer, resolveInstallationImpl = resolveEquinoxLocalInstallation, resolveManagedImpl = resolveEquinoxLocalManagedSourceInstallation, inspectStoredImpl = inspectEquinoxLocalMainNativeStoredRelease, }) {
+    if (platform !== "darwin" || !["arm64", "x64"].includes(arch) ||
+        typeof homeDir !== "string" || !path.posix.isAbsolute(homeDir) ||
+        path.posix.normalize(homeDir) !== homeDir) {
+        throw new Error("Signed Main Mac activation requires a canonical non-Windows user HOME.");
+    }
+    const signed = verifyPointerImpl(signedPointer);
+    const target = "darwin-" + arch;
+    const row = signed.targets.find(value => value.target === target);
+    if (!row)
+        throw new Error("Signed Main Mac activation has no admitted B architecture.");
+    const installRoot = path.posix.join(homeDir, "Library", "Application Support", "Equinox Local");
+    const currentLink = path.posix.join(installRoot, "current");
+    const stat = await fsImpl.lstat(currentLink);
+    if (!stat.isSymbolicLink())
+        throw new Error("Signed Main Mac A must have an owned current symlink.");
+    const currentRaw = await fsImpl.readlink(currentLink);
+    const lexicalA = path.posix.resolve(installRoot, currentRaw);
+    const stableRelative = path.posix.relative(path.posix.join(installRoot, "releases"), lexicalA);
+    const nativeRelative = path.posix.relative(path.posix.join(installRoot, "main-update", "native-store", target), lexicalA).split(path.posix.sep);
+    const stableShape = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/u.test(stableRelative);
+    const nativeShape = nativeRelative.length === 2 && /^[a-f0-9]{40}$/u.test(nativeRelative[0] ?? "") && nativeRelative[1] === "release";
+    if (!stableShape && !nativeShape) {
+        throw new Error("Signed Main Mac A current link escaped the owned Stable/native release roots.");
+    }
+    const physicalA = await fsImpl.realpath(currentLink);
+    const physicalRoot = await fsImpl.realpath(installRoot);
+    if (physicalA !== path.posix.join(physicalRoot, path.posix.relative(installRoot, lexicalA))) {
+        throw new Error("Signed Main Mac A current symlink escapes the owned release.");
+    }
+    const base = resolveInstallationImpl({ homeDir, platform, arch,
+        env: { ...env, EQUINOX_LOCAL_INSTALL_ROOT: installRoot, EQUINOX_LOCAL_RELEASE_DIR: lexicalA } });
+    if (!base.managed || !base.selfUpdateSupported || base.target !== target ||
+        base.releaseDir !== lexicalA) {
+        throw new Error("Signed Main Mac A is not an admitted managed Stable/native release.");
+    }
+    const previous = await resolveManagedImpl({
+        baseInstallation: { ...base, target, releaseDir: lexicalA }, platform, arch, homeDir, env, fsImpl,
+    });
+    if (!previous || typeof previous !== "object" || !("kind" in previous)) {
+        throw new Error("Signed Main Mac A has no authenticated source identity.");
+    }
+    const previousMain = base.mainNativeSha ?? null;
+    if (previousMain) {
+        if (previous.kind !== "managed-main" || previous.sourceSha !== previousMain ||
+            previous.mainNativeSha !== previousMain) {
+            throw new Error("Signed Main Mac A immutable native selector is unauthenticated.");
+        }
+    }
+    else if (previous.kind !== "managed") {
+        throw new Error("Signed Main Mac cannot replace a legacy Git source or private Factory installation.");
+    }
+    const root = equinoxLocalManagedSourcePaths({ homeDir, platform, arch, env }).mainTransactionRoot;
+    const store = await inspectStoredImpl({ transactionRoot: root, sourceSha: signed.sourceSha,
+        target, expectedRuntimeContractSha256: row.runtimeContractSha256, fsImpl });
+    const expectedB = path.posix.join(root, "native-store", target, signed.sourceSha, "release");
+    if (store.releaseDir !== expectedB || store.sourceSha !== signed.sourceSha ||
+        store.target !== target || store.runtimeContractSha256 !== row.runtimeContractSha256 ||
+        store.payloadVersion !== signed.version ||
+        store.manifest.artifactSha256 !== row.artifact.sha256 ||
+        store.manifest.artifactBytes !== row.artifact.bytes) {
+        throw new Error("Signed Main Mac B inactive store has a different immutable Ed25519 identity.");
+    }
+    return Object.freeze({
+        action: previousMain === signed.sourceSha ? "verify_or_repair" : "activate",
+        target, sourceSha: signed.sourceSha, version: signed.version,
+        runtimeContractSha256: row.runtimeContractSha256,
+        transactionRoot: root, releaseDir: store.releaseDir,
+        previousKind: previousMain ? "main" : "stable",
+        previousSha: previousMain,
+        previousVersion: previousMain ? null : path.posix.basename(lexicalA),
+        previousReleaseDir: lexicalA,
+    });
 }
 function parseCli(argv) {
     if ((argv.length !== 2 && argv.length !== 3) || argv[0] !== "--staged-release" || !path.isAbsolute(argv[1]) ||
