@@ -140,8 +140,11 @@ function execute() {
       const keys = plan.deleteKeys.slice(start, start + 1000);
       const file = path.join(tempRoot, "delete-" + start + ".json");
       fs.writeFileSync(file, JSON.stringify({ Objects: keys.map((Key) => ({ Key })), Quiet: true }), { flag: "wx", mode: 0o600 });
-      const result = JSON.parse(cmd(["aws", "s3api", "delete-objects", "--bucket", BUCKET,
-        "--delete", "file://" + file, "--endpoint-url", ENDPOINT, "--output", "json"]));
+      // R2 accepts quiet bulk deletion with an empty success response.
+      // The authoritative proof is the fresh complete inventory check below.
+      const receipt = cmd(["aws", "s3api", "delete-objects", "--bucket", BUCKET,
+        "--delete", "file://" + file, "--endpoint-url", ENDPOINT, "--output", "json"]);
+      const result = receipt.trim() ? JSON.parse(receipt) : {};
       if (!result || typeof result !== "object" || Array.isArray(result) ||
         (Array.isArray(result.Errors) && result.Errors.length)) {
         throw new Error("R2 delete API did not confirm a safe batch response.");
