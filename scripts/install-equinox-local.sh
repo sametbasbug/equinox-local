@@ -33,13 +33,15 @@ require_private_directory() {
 MAIN_ARGS=(--enroll-existing-main)
 PREPARE_MAIN=0
 STAGE_MAIN=0
+ACTIVATE_MAIN=0
 for argument in "$@"; do
   case "$argument" in
     --enroll-existing-main) MAIN_ARGS=(--enroll-existing-main) ;;
     --prepare-main) PREPARE_MAIN=1 ;;
     --stage-main) PREPARE_MAIN=1; STAGE_MAIN=1 ;;
+    --activate-main) PREPARE_MAIN=1; STAGE_MAIN=1; ACTIVATE_MAIN=1 ;;
     --help|-h)
-      printf '%s\n' 'Usage: install-equinox-local.sh [--enroll-existing-main] [--prepare-main] [--stage-main]' 'The installer verifies the signed bootstrap and enrolls the admitted Main commit by default.' 'Failure preserves the signed bootstrap for recovery; existing settings are retained.'
+      printf '%s\n' 'Usage: install-equinox-local.sh [--enroll-existing-main] [--prepare-main] [--stage-main] [--activate-main]' 'The installer verifies the signed bootstrap and enrolls the admitted Main commit by default.' 'Failure preserves the signed bootstrap for recovery; existing settings are retained.'
       exit 0 ;;
     *) fail "unknown argument: $argument (use --help)" ;;
   esac
@@ -152,6 +154,14 @@ prepare_verified_main() {
   if [ "$STAGE_MAIN" -eq 1 ]; then
     /usr/bin/env -i HOME="$HOME_DIR" PATH="/usr/bin:/bin:/usr/sbin:/sbin"       "$node" "$inspector" --stage-signed-main       --signed-pointer-file "$TEMP_ROOT/main-signed-pointer.json" --archive "$archive" ||
       fail "signed Main inactive A/B staging failed; active installation untouched"
+  fi
+  if [ "$ACTIVATE_MAIN" -eq 1 ]; then
+    info "checking existing managed A and scheduling signed Main B"
+    local handoff
+    handoff="$(/usr/bin/env -i HOME="$HOME_DIR" USER="$CURRENT_USER" LOGNAME="$CURRENT_USER"       TMPDIR="/tmp" PATH="/usr/bin:/bin:/usr/sbin:/sbin" "$node" "$inspector"       --activate-signed-main --signed-pointer-file "$TEMP_ROOT/main-signed-pointer.json")" ||
+      fail "signed native Main handoff rejected or requires recovery; active A/B must be checked"
+    printf '%s\n' "$handoff"
+    info "native Main worker scheduled; do not treat scheduling as completed A/B health"
   fi
   printf '%s\n' "$receipt"
 }

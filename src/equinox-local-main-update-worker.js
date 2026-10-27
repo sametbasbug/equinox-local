@@ -232,10 +232,10 @@ export async function runEquinoxLocalSignedMacNativeHandoff({ transactionRoot, t
     await assertOwnerImpl({ transactionRoot, transactionId, sourceSha, target, runtimeContractSha256 });
     const ownerIdentity = { transactionRoot, transactionId, sourceSha, target, runtimeContractSha256 };
     const receipt = await readReceiptImpl(ownerIdentity);
-    if (["healthy", "rolled_back", "rollback_failed"].includes(receipt.status)) {
-        throw new Error("Signed native handoff has an existing terminal receipt; no native mutation is allowed.");
+    if (receipt.status === "rollback_failed") {
+        throw new Error("Signed native handoff has an unrecovered terminal rollback failure.");
     }
-    if (!["admitted", "activating", "rolling_back"].includes(receipt.status)) {
+    if (!["admitted", "activating", "rolling_back", "healthy", "rolled_back"].includes(receipt.status)) {
         throw new Error("Signed native handoff state is not resumable.");
     }
     const prior = lifecycle.previousPointer;
@@ -278,6 +278,24 @@ export async function runEquinoxLocalSignedMacNativeHandoff({ transactionRoot, t
             throw new Error("Restored native A did not pass exact SHA health.");
         }
     };
+    if (receipt.status === "healthy") {
+        // Crash after terminal B receipt but before global lock archive. Do not
+        // select B again or roll a healthy installed B back on a cleanup failure.
+        await lifecycle.commit();
+        if ((await verifyNativeImpl(b)) !== true)
+            throw new Error("Terminal native B failed exact SHA health; lock retained.");
+        await releaseOwnerImpl(ownerIdentity);
+        return Object.freeze({ status: "healthy", sourceSha, target, version, recovered: true });
+    }
+    if (receipt.status === "rolled_back") {
+        // Terminal A already won, but the owner lock may still exist. Run the
+        // idempotent A rollback identity guard and verify A health BEFORE
+        // releasing exactly its own lock inode. Never attempt B again.
+        await lifecycle.rollback();
+        await verifyA();
+        await releaseOwnerImpl(ownerIdentity);
+        return Object.freeze({ status: "rolled_back", sourceSha, target, version, recovered: true });
+    }
     if (receipt.status !== "rolling_back") {
         let targetFailure = null;
         try {

@@ -811,16 +811,50 @@ test("signed native durable receipt replay resumes rollback without retrying fai
   "launchctl restart","health stable 6.2.0","release terminal native lock"]);
 });
 
-test("signed-native terminal receipt forbids second activation or rollback",async()=>{
+test("signed-native terminal B health replay releases owner without reactivating/restarting B",async()=>{
  const {input,events}=signedMacHandoffFixture();
- for(const status of ["healthy","rolled_back","rollback_failed"]){
-  await assert.rejects(runEquinoxLocalSignedMacNativeHandoff({...input,
-   readReceiptImpl:async()=>({status}),
-  }),/existing terminal receipt/u);
- }
+ const result=await runEquinoxLocalSignedMacNativeHandoff({...input,
+  readReceiptImpl:async()=>({status:"healthy"}),
+ });
+ assert.deepEqual(result,{status:"healthy",sourceSha:B,target:"darwin-arm64",
+  version:"6.2.1",recovered:true});
  assert.deepEqual(events,["detached worker owner","durable descriptor","native owner",
-  "detached worker owner","durable descriptor","native owner","detached worker owner","durable descriptor","native owner"]);
+  "check B pointers","health native 2","release terminal native lock"]);
+ assert.equal(events.includes("launchctl restart"),false);
 });
+
+test("signed-native terminal A rollback replay verifies Stable health before releasing owner without restarting B",async()=>{
+ const {input,events}=signedMacHandoffFixture();
+ const result=await runEquinoxLocalSignedMacNativeHandoff({...input,
+  readReceiptImpl:async()=>({status:"rolled_back"}),
+ });
+ assert.equal(result.status,"rolled_back");
+ assert.equal(result.recovered,true);
+ assert.deepEqual(events,["detached worker owner","durable descriptor","native owner",
+  "restore mac link A + native pointer A + apphost A",
+  "health stable 6.2.0","release terminal native lock"]);
+ assert.equal(events.includes("select native B + mac link B + apphost B"),false);
+ assert.equal(events.includes("launchctl restart"),false);
+});
+
+test("signed-native terminal receipt never releases B without health nor A without verified rollback",async()=>{
+ const f=signedMacHandoffFixture();
+ await assert.rejects(runEquinoxLocalSignedMacNativeHandoff({...f.input,
+  readReceiptImpl:async()=>({status:"healthy"}),
+  verifyNativeImpl:async()=>false,
+  releaseOwnerImpl:async()=>assert.fail("unhealthy B cannot release owner"),
+ }),/Terminal native B failed exact SHA health/u);
+ await assert.rejects(runEquinoxLocalSignedMacNativeHandoff({...f.input,
+  readReceiptImpl:async()=>({status:"rolled_back"}),
+  verifyStableImpl:async()=>false,
+  releaseOwnerImpl:async()=>assert.fail("unhealthy A cannot release owner"),
+ }),/Restored Stable A did not pass runtime health/u);
+ await assert.rejects(runEquinoxLocalSignedMacNativeHandoff({...f.input,
+  readReceiptImpl:async()=>({status:"rollback_failed"}),
+  releaseOwnerImpl:async()=>assert.fail("failed A cannot release owner"),
+ }),/unrecovered terminal rollback failure/u);
+});
+
 
 test("unhealthy A recovery persists rollback_failed and never reports success",async()=>{
  const {input,getReceipt}=signedMacHandoffFixture();

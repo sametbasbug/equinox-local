@@ -1,4 +1,4 @@
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { generateKeyPairSync } from "node:crypto";
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
@@ -12,6 +12,7 @@ import {
   installManagedEquinoxRelease,
   stageSignedMainInstallerNativeArchive,
   inspectSignedMainInstallerMacActivation,
+  prepareSignedMainInstallerMacActivation,
   persistSignedMainNativeStoreSelector,
   synchronizeFreshWindowsShell,
   validateFirstInstallRelease,
@@ -1635,4 +1636,201 @@ test("signed installer Mac preflight refuses legacy Git/Factory identity, foreig
  await fs.unlink(f.current);
  await fs.writeFile(f.current,"untrusted",{mode:0o600});
  await assert.rejects(inspectSignedMainInstallerMacActivation(f.options),/owned current symlink/u);
+});
+
+
+async function signedMacInstallerCoordinatorFixture(t){
+ const f=await signedMacInstallerInspectFixture(t);
+ const root=path.join(f.homeDir,"Library","Application Support","Equinox Local","main-update");
+ const installRoot=path.dirname(root);
+ const tx="main-"+"e".repeat(32);
+ const events=[];
+ const {readEquinoxLocalMainNativeRecoveryDescriptor,readEquinoxLocalSignedNativeMacReceipt}=await import("../../src/equinox-local-main-native-recovery.js");
+ const opts={
+  signedPointer:f.signedPointer,homeDir:f.homeDir,platform:"darwin",arch:"arm64",
+  env:{HOME:f.homeDir,USER:"test",LOGNAME:"test"},transactionId:tx,
+  inspectImpl:async inputs=>{
+   events.push("inspect A/B");
+   return inspectSignedMainInstallerMacActivation({...f.options,signedPointer:inputs.signedPointer});
+  },
+  verifyPointerImpl:f.options.verifyPointerImpl,
+  resolveInstallationImpl:({env})=>({
+   kind:"managed",managed:true,selfUpdateSupported:true,platform:"darwin",arch:"arm64",
+   target:"darwin-arm64",installRoot,releaseDir:env.EQUINOX_LOCAL_RELEASE_DIR,
+   releasesRoot:path.join(installRoot,"releases"),
+  }),
+  prepareLifecycleImpl:async args=>{
+   events.push("snapshot A under native owner");
+   const record=JSON.parse(await fs.readFile(path.join(root,"active.json"),"utf8"));
+   assert.equal(record.kind,"signed-native");
+   assert.equal(record.sourceSha,"b".repeat(40));
+   const descriptor=await readEquinoxLocalMainNativeRecoveryDescriptor({
+    transactionRoot:root,transactionId:tx});
+   assert.equal(descriptor.targetSha,"b".repeat(40));
+   assert.equal(descriptor.previous.kind,"stable");
+   assert.equal(await fs.realpath(f.current),f.stable);
+   assert.equal(args.storedCandidate.artifactSha256,"d".repeat(64));
+   return {stored:{releaseDir:f.native}};
+  },
+  scheduleImpl:async args=>{
+   events.push("schedule exact B");
+   assert.equal(args.signedNative,true);
+   assert.equal(args.transactionId,tx);
+   assert.equal(args.nodePath,path.join(f.native,"runtime","node","bin","node"));
+   assert.equal(args.workerPath,path.join(f.native,"equinox-local-main-update-worker.js"));
+   assert.equal(args.sourceSha,"b".repeat(40));
+   assert.equal((await readEquinoxLocalSignedNativeMacReceipt({
+    transactionRoot:root,transactionId:tx,sourceSha:args.sourceSha,
+    target:args.target,runtimeContractSha256:"c".repeat(64),
+   })).status,"admitted");
+   assert.equal(await fs.realpath(f.current),f.stable);
+   return {scheduled:true};
+  },
+ };
+ return {...f,opts,events,root,tx};
+}
+
+test("Mac signed Main coordinator persists exact native recovery descriptor + exclusive owner BEFORE snapshots and detached launchd",async t=>{
+ const f=await signedMacInstallerCoordinatorFixture(t);
+ const result=await prepareSignedMainInstallerMacActivation(f.opts);
+ assert.deepEqual(result,{status:"scheduled",transactionId:f.tx,sourceSha:"b".repeat(40),
+  target:"darwin-arm64",version:"6.2.1"});
+ assert.deepEqual(f.events,["inspect A/B","inspect A/B","snapshot A under native owner","schedule exact B"]);
+ assert.equal(await fs.realpath(f.current),f.stable);
+ await assert.rejects(prepareSignedMainInstallerMacActivation(f.opts),{code:"EEXIST"});
+});
+
+test("Mac signed Main coordinator never schedules identical native SHA; health/repair remains a separate path",async t=>{
+ const f=await signedMacInstallerCoordinatorFixture(t);
+ const result=await prepareSignedMainInstallerMacActivation({...f.opts,
+  inspectImpl:async()=>({action:"verify_or_repair",sourceSha:"b".repeat(40),
+   target:"darwin-arm64",version:"6.2.1"}),
+ });
+ assert.deepEqual(result,{status:"verify_or_repair_required",sourceSha:"b".repeat(40),
+  target:"darwin-arm64",version:"6.2.1"});
+ assert.deepEqual(f.events,[]);
+ await assert.rejects(fs.lstat(path.join(f.root,"active.json")),{code:"ENOENT"});
+});
+
+test("Mac signed Main coordinator scheduler failure preserves exact admitted lock for forensic recovery",async t=>{
+ const f=await signedMacInstallerCoordinatorFixture(t);
+ await assert.rejects(prepareSignedMainInstallerMacActivation({...f.opts,
+  scheduleImpl:async()=>{f.events.push("launchctl ambiguous");throw Error("bootstrap failed")},
+ }),/bootstrap failed/u);
+ assert.deepEqual(f.events,["inspect A/B","inspect A/B","snapshot A under native owner","launchctl ambiguous"]);
+ assert.equal(JSON.parse(await fs.readFile(path.join(f.root,"active.json"),"utf8")).transactionId,f.tx);
+ assert.equal(await fs.realpath(f.current),f.stable);
+});
+
+test("Mac signed Main coordinator refuses an A switch after owner admission without scheduling any B",async t=>{
+ const f=await signedMacInstallerCoordinatorFixture(t);
+ let reads=0;
+ const inspector=f.opts.inspectImpl;
+ await assert.rejects(prepareSignedMainInstallerMacActivation({...f.opts,
+  inspectImpl:async inputs=>{
+   reads++;
+   const admitted=await inspector(inputs);
+   if(reads===2)return {...admitted,previousReleaseDir:path.join(f.homeDir,"other")};
+   return admitted;
+  },
+ }),/identity changed after acquiring/u);
+ assert.equal(reads,2);
+ assert.equal(f.events.includes("snapshot A under native owner"),false);
+ assert.equal(f.events.includes("schedule exact B"),false);
+ assert.equal(JSON.parse(await fs.readFile(path.join(f.root,"active.json"),"utf8")).kind,"signed-native");
+});
+
+test("Mac signed Main coordinator refuses foreign user/target and untrusted Factory A without creating a global lock",async t=>{
+ const f=await signedMacInstallerCoordinatorFixture(t);
+ for(const bad of [
+  {uid:0},
+  {platform:"win32"},
+  {arch:"ia32"},
+  {homeDir:"relative"},
+  {transactionId:"bad"},
+  {inspectImpl:async()=>{throw Error("private Factory A")}},
+ ]){
+  await assert.rejects(prepareSignedMainInstallerMacActivation({...f.opts,...bad}));
+ }
+ await assert.rejects(fs.lstat(path.join(f.root,"active.json")),{code:"ENOENT"});
+ assert.deepEqual(f.events,[]);
+});
+
+
+test("Mac signed native pre-launch snapshot failure unlocks only AFTER stable A identity and live health",async t=>{
+ const f=await signedMacInstallerCoordinatorFixture(t);
+ const events=[];
+ await assert.rejects(prepareSignedMainInstallerMacActivation({...f.opts,
+  prepareLifecycleImpl:async()=>{events.push("snapshot failed");throw Error("snapshot unavailable")},
+  verifyPriorHealthImpl:async identity=>{
+   events.push("health A");
+   assert.equal(identity.previousKind,"stable");
+   assert.equal(identity.previousVersion,"6.2.1");
+   assert.equal(await fs.realpath(f.current),f.stable);
+   return true;
+  },
+  scheduleImpl:async()=>assert.fail("no worker after failed snapshot"),
+ }),/snapshot unavailable/u);
+ assert.deepEqual(events,["snapshot failed","health A"]);
+ assert.deepEqual(f.events,["inspect A/B","inspect A/B","inspect A/B"]);
+ await assert.rejects(fs.lstat(path.join(f.root,"active.json")),{code:"ENOENT"});
+ const terminal=JSON.parse(await fs.readFile(path.join(f.root,"receipts",
+  f.tx+".signed-native.json"),"utf8"));
+ assert.equal(terminal.status,"rolled_back");
+ assert.equal(JSON.parse(await fs.readFile(path.join(f.root,"receipts",
+  f.tx+".signed-native-owner.json"),"utf8")).transactionId,f.tx);
+});
+
+test("Mac signed native pre-launch snapshot failure with unhealthy A retains exclusive lock and never schedules B",async t=>{
+ const f=await signedMacInstallerCoordinatorFixture(t);
+ await assert.rejects(prepareSignedMainInstallerMacActivation({...f.opts,
+  prepareLifecycleImpl:async()=>{throw Error("snapshot unavailable")},
+  verifyPriorHealthImpl:async()=>false,
+  scheduleImpl:async()=>assert.fail("worker should never launch"),
+ }),/original Main owner remains locked/u);
+ const receipt=JSON.parse(await fs.readFile(path.join(f.root,"receipts",
+  f.tx+".signed-native.json"),"utf8"));
+ assert.equal(receipt.status,"admitted");
+ assert.equal(JSON.parse(await fs.readFile(path.join(f.root,"active.json"),"utf8")).transactionId,f.tx);
+ assert.equal(await fs.realpath(f.current),f.stable);
+});
+
+
+test("existing macOS shell installer exposes ONLY an explicit signed activation flag while preserving Stable default",async()=>{
+ const file=path.resolve("scripts/install-equinox-local.sh");
+ const contents=await fs.readFile(file,"utf8");
+ assert.match(contents,/--activate-main\) PREPARE_MAIN=1; STAGE_MAIN=1; ACTIVATE_MAIN=1/u);
+ assert.match(contents,/if \[ "\$ACTIVATE_MAIN" -eq 1 \]; then/u);
+ assert.match(contents,/--activate-signed-main --signed-pointer-file/u);
+ assert.match(contents,/if \[ "\$PREPARE_MAIN" -eq 1 \]; then\s+prepare_verified_main/u);
+ assert.match(contents,/^ACTIVATE_MAIN=0$/mu);
+ assert.match(contents,/MANIFEST_URL="\$UPDATE_BASE\/bootstrap-\$TARGET\.txt"/u);
+ const syntax=spawnSync("/bin/bash",["-n",file],{encoding:"utf8",timeout:5000});
+ assert.equal(syntax.status,0,syntax.stderr);
+ const help=spawnSync("/bin/bash",[file,"--help"],{encoding:"utf8",timeout:5000});
+ assert.equal(help.status,0,help.stderr);
+ assert.match(help.stdout,/--activate-main/u);
+});
+
+test("first-install signed-activation CLI refuses unsigned pointer and malformed flags before changing HOME",async t=>{
+ const home=await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(),"equinox-main-cli-deny-")));
+ t.after(()=>fs.rm(home,{recursive:true,force:true}));
+ const pointer=path.join(home,"unsigned.json");
+ await fs.writeFile(pointer,JSON.stringify({schemaVersion:1,channel:"main",sourceSha:"b".repeat(40),
+  ignored:"x".repeat(220)}),{mode:0o600});
+ const cli=path.resolve("src/equinox-local-first-install.js");
+ for(const args of [
+  ["--activate-signed-main","--signed-pointer-file",pointer],
+  ["--activate-signed-main","--signed-pointer-file",pointer,"--source-root",home],
+  ["--activate-signed-main","--signed-pointer-file","relative.json"],
+ ]){
+  const result=spawnSync(process.execPath,[cli,...args],{
+   env:{HOME:home,PATH:"/usr/bin:/bin:/usr/sbin:/sbin"},
+   encoding:"utf8",timeout:10000,
+  });
+  assert.equal(result.status,1);
+  assert.match(result.stderr,/Signed Main activation rejected/u);
+  assert.equal(result.stdout,"");
+ }
+ await assert.rejects(fs.lstat(path.join(home,"Library")),{code:"ENOENT"});
 });

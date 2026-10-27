@@ -342,7 +342,10 @@ export async function writeEquinoxLocalSignedNativeMacReceipt({
     transactionId:identity.transactionId,sourceSha:identity.sourceSha,
     target:identity.target,runtimeContractSha256:identity.runtimeContractSha256,status});
   const allowed:Readonly<Record<SignedNativeStage,readonly SignedNativeStage[]>>={
-    admitted:["activating"],activating:["rolling_back","healthy"],
+    // An installer may cancel *before scheduling launchd* only after
+    // rechecking old A + its live health. It uses rolling_back/rolled_back
+    // and the exact same terminal release gate, never deletes active.json.
+    admitted:["activating","rolling_back"],activating:["rolling_back","healthy"],
     rolling_back:["rolled_back","rollback_failed"],
     healthy:[],rolled_back:[],rollback_failed:[],
   };
