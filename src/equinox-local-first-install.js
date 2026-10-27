@@ -19,6 +19,7 @@ import { readEquinoxLocalMainSourcePointer } from "./equinox-local-main-source-p
 import { reconcileWindowsClassicRepairJournal, writeWindowsClassicRepairJournal, } from "./equinox-local-windows-classic-repair-journal.js";
 import { pruneInactiveManagedStableReleases } from "./equinox-local-release-retention.js";
 import { readBoundedNormalFile } from "./equinox-local-safe-file.js";
+import { protectWindowsPrivateStatePath, verifyWindowsPrivateStateAcl } from "./equinox-local-private-state.js";
 import { assertWindowsNativeMessagingHostOwnership, windowsNativeMessagingLauncherPath } from "./equinox-browser-windows-native-messaging.js";
 import { assertWindowsStableShellOwnedByRelease } from "./equinox-local-windows-stable-shell.js";
 import { requestWindowsShellRuntimeRestart, requestWindowsShellUpdateShutdown, waitForWindowsShellPipeRelease } from "./equinox-local-windows-shell-control.js";
@@ -1178,6 +1179,98 @@ export async function installManagedEquinoxRelease({ stagedReleaseDir, homeDir =
         controlCenterUrl: bootstrap.controlCenterUrl || "http://127.0.0.1:24891/",
     });
 }
+// Stage ONLY the production-signed source SHA into the existing inactive A/B
+// native store. OS-native WPF/Guardian and macOS restart/rollback are *never*
+// performed by this preparation phase, and no current pointer is changed.
+export async function stageSignedMainInstallerNativeArchive({ signedPointer, sourceArchivePath, homeDir = os.homedir(), platform = process.platform, arch = process.arch, env = process.env, uid = typeof process.getuid === "function" ? process.getuid() : null, fsImpl = fs, verifyPointerImpl = validateTrustedMainInstallPointer, importArchiveImpl, prepareCandidateImpl, promoteCandidateImpl, }) {
+    const expectedTarget = equinoxLocalUpdateTarget({ platform, arch });
+    const pointer = verifyPointerImpl(signedPointer);
+    const row = pointer.targets.find(value => value.target === expectedTarget);
+    if (!row)
+        throw new Error("Signed Main inactive staging requires an admitted native architecture.");
+    const pathApi = platform === "win32" ? path.win32 : path.posix;
+    if (typeof homeDir !== "string" || !pathApi.isAbsolute(homeDir) ||
+        typeof sourceArchivePath !== "string" || !pathApi.isAbsolute(sourceArchivePath)) {
+        throw new Error("Signed Main inactive staging paths must be absolute.");
+    }
+    if (platform === "darwin" && (!Number.isInteger(uid) || uid < 1)) {
+        throw new Error("Signed Main staging cannot execute as root.");
+    }
+    // Do not use Git, the legacy numbered releases directory, or a mutable
+    // version number as the installed runtime identity.
+    const root = equinoxLocalManagedSourcePaths({ homeDir, platform, arch, env }).mainTransactionRoot;
+    const staging = pathApi.join(root, "staging");
+    await assertOwnedNormalDirectory(root, { uid, platform, fsImpl, create: true });
+    await assertOwnedNormalDirectory(staging, { uid, platform, fsImpl, create: true });
+    if (platform === "win32") {
+        for (const directory of [root, staging]) {
+            await protectWindowsPrivateStatePath({ target: directory, type: "directory", env });
+            const acl = await verifyWindowsPrivateStateAcl({ target: directory, type: "directory", env });
+            if (!acl.safe)
+                throw new Error("Signed Main staging directory Windows ACL is not private.");
+        }
+    }
+    for (const directory of [root, staging]) {
+        const actual = await fsImpl.realpath(directory);
+        if (platform === "darwin" && actual !== directory)
+            throw new Error("Signed Main staging directory is not canonical.");
+    }
+    try {
+        await fsImpl.lstat(pathApi.join(root, "active.json"));
+        throw new Error("Main source transaction is active; signed staging cannot race it.");
+    }
+    catch (error) {
+        if (error.code !== "ENOENT")
+            throw error;
+    }
+    const transactionId = "main-" + randomBytes(16).toString("hex");
+    const transactionDir = pathApi.join(staging, transactionId);
+    await fsImpl.mkdir(transactionDir, { recursive: false, mode: 0o700 });
+    try {
+        await assertOwnedNormalDirectory(transactionDir, { uid, platform, fsImpl });
+        if (platform === "win32") {
+            await protectWindowsPrivateStatePath({ target: transactionDir, type: "directory", env });
+            const acl = await verifyWindowsPrivateStateAcl({ target: transactionDir, type: "directory", env });
+            if (!acl.safe)
+                throw new Error("Signed Main transaction Windows ACL is not private.");
+        }
+        const { stageEquinoxLocalSignedMainLocalArchive } = await import("./equinox-local-main-snapshot.js");
+        const { prepareEquinoxLocalMainNativeCandidate } = await import("./equinox-local-main-native-candidate.js");
+        const { promoteEquinoxLocalMainNativeCandidate } = await import("./equinox-local-main-native-state.js");
+        const input = { sourceSha: pointer.sourceSha, target: expectedTarget,
+            expectedRuntimeContractSha256: row.runtimeContractSha256,
+            transactionRoot: root, transactionId, fsImpl };
+        await (importArchiveImpl ?? stageEquinoxLocalSignedMainLocalArchive)({
+            ...input, signedPointer, sourceArchivePath,
+        });
+        const candidate = await (prepareCandidateImpl ?? prepareEquinoxLocalMainNativeCandidate)(input);
+        if (candidate.sourceSha !== pointer.sourceSha ||
+            candidate.target !== expectedTarget ||
+            candidate.runtimeContractSha256 !== row.runtimeContractSha256 ||
+            candidate.artifactSha256 !== row.artifact.sha256 ||
+            candidate.artifactBytes !== row.artifact.bytes ||
+            candidate.payloadVersion !== pointer.version) {
+            throw new Error("Signed Main inactive candidate identity drifted before durable promotion.");
+        }
+        const stored = await (promoteCandidateImpl ?? promoteEquinoxLocalMainNativeCandidate)({
+            candidate, transactionRoot: root, transactionId, fsImpl,
+        });
+        if (stored.sourceSha !== pointer.sourceSha || stored.target !== expectedTarget ||
+            stored.runtimeContractSha256 !== row.runtimeContractSha256 ||
+            stored.payloadVersion !== pointer.version) {
+            throw new Error("Signed Main inactive durable release identity drifted.");
+        }
+        return Object.freeze({
+            status: "staged", sourceSha: pointer.sourceSha, version: pointer.version,
+            target: expectedTarget, releaseDir: stored.releaseDir, reused: stored.reused === true,
+        });
+    }
+    finally {
+        // The native-store is immutable and outside staging. This only removes
+        // our exclusively owned short-lived transaction, never A or current.
+        await fsImpl.rm(transactionDir, { recursive: true, force: true });
+    }
+}
 function parseCli(argv) {
     if ((argv.length !== 2 && argv.length !== 3) || argv[0] !== "--staged-release" || !path.isAbsolute(argv[1]) ||
         (argv.length === 3 && argv[2] !== "--enroll-existing-main")) {
@@ -1196,9 +1289,32 @@ function parseSignedMainInspectionCli(argv) {
     return { releaseDir: argv[2], sourceSha: argv[4], version: argv[6], target: argv[8],
         signedPointerFile: argv.length === 11 ? argv[10] : null };
 }
+function parseSignedMainStageCli(argv) {
+    if (argv.length !== 5 || argv[0] !== "--stage-signed-main" ||
+        argv[1] !== "--signed-pointer-file" || argv[3] !== "--archive" ||
+        !path.isAbsolute(argv[2]) || !path.isAbsolute(argv[4])) {
+        throw new Error("Signed Main inactive staging requires an absolute signed pointer file and archive.");
+    }
+    return { signedPointerFile: argv[2], sourceArchivePath: argv[4] };
+}
 const invokedPath = process.argv[1] ? path.resolve(process.argv[1]) : null;
 if (invokedPath && path.basename(invokedPath) === path.basename(fileURLToPath(import.meta.url))) {
-    if (process.argv[2] === "--inspect-signed-main") {
+    if (process.argv[2] === "--stage-signed-main") {
+        Promise.resolve().then(async () => {
+            const cli = parseSignedMainStageCli(process.argv.slice(2));
+            const { data } = await readBoundedNormalFile(cli.signedPointerFile, {
+                minBytes: 200, maxBytes: 16 * 1024, encoding: "utf8", label: "Private production-signed Main staging selector",
+            });
+            const result = await stageSignedMainInstallerNativeArchive({
+                signedPointer: JSON.parse(data), sourceArchivePath: cli.sourceArchivePath,
+            });
+            process.stdout.write(JSON.stringify(result) + "\n");
+        }).catch(() => {
+            process.stderr.write("Signed Main inactive staging rejected; active installation was not changed.\n");
+            process.exitCode = 1;
+        });
+    }
+    else if (process.argv[2] === "--inspect-signed-main") {
         Promise.resolve().then(async () => {
             const input = parseSignedMainInspectionCli(process.argv.slice(2));
             let signedTarget = null;

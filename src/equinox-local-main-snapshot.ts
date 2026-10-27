@@ -241,6 +241,85 @@ export async function inspectStagedEquinoxLocalMainSnapshotArtifact({
   return Object.freeze({ sourceSha, target, transactionId, manifest, manifestPath, artifactPath, ...artifact });
 }
 
+// The external macOS/Windows installer already downloaded and authenticated
+// these native bytes. Reuse the SAME existing durable Main snapshot stage
+// without a second CDN download, unsigned override or alternate A/B engine.
+export async function stageEquinoxLocalSignedMainLocalArchive({
+  signedPointer,
+  sourceSha,
+  target,
+  sourceArchivePath,
+  transactionRoot,
+  transactionId,
+  fsImpl = fs,
+  verifySignedPointerImpl = validateTrustedMainInstallPointer,
+}: {
+  signedPointer:unknown;sourceSha:string;target:string;
+  sourceArchivePath:string;transactionRoot:string;transactionId:string;
+  fsImpl?:NativeSnapshotFs;
+  verifySignedPointerImpl?:typeof validateTrustedMainInstallPointer;
+}) {
+  const verified = verifySignedPointerImpl(signedPointer,{expectedSourceSha:sourceSha});
+  const row = verified.targets.find(entry=>entry.target===target);
+  if (!row) throw new Error("Production-signed Main pointer does not authorize the native target.");
+  if (typeof sourceArchivePath !== "string" || !path.isAbsolute(sourceArchivePath) ||
+      path.resolve(sourceArchivePath) !== sourceArchivePath) {
+    throw new Error("Verified Main archive must have a canonical absolute path.");
+  }
+  const manifest = validateEquinoxLocalMainNativeArtifactManifest({
+    schemaVersion:1,channel:"main",sourceSha,target,
+    runtimeContractSha256:row.runtimeContractSha256,
+    artifact:{
+      name:path.posix.basename(new URL(row.artifact.url).pathname),
+      sha256:row.artifact.sha256,bytes:row.artifact.bytes,
+    },
+  },{expectedSourceSha:sourceSha,expectedTarget:target,expectedRuntimeContractSha256:row.runtimeContractSha256});
+  const archive = await openPinnedSnapshotFile(sourceArchivePath,fsImpl);
+  try {
+    const stat = await archive.stat();
+    if (stat.size !== row.artifact.bytes) throw new Error("Verified local native archive byte size differs from the signed Main pointer.");
+    const manifestUrl = equinoxLocalMainSnapshotManifestUrl(sourceSha,target);
+    const artifactUrl = equinoxLocalMainSnapshotArtifactUrl(sourceSha,target);
+    let archiveIssued = false;
+    const offlineFetch = async (url:string) => {
+      if (url === manifestUrl) {
+        const json = Buffer.from(JSON.stringify(manifest));
+        return {
+          ok:true,status:200,headers:{get:(name:string)=>name==="content-length"?String(json.length):null},
+          body:(async function*(){yield json;})(),
+        } as unknown as Response;
+      }
+      if (url === artifactUrl && !archiveIssued) {
+        archiveIssued=true;
+        return {
+          ok:true,status:200,
+          headers:{get:(name:string)=>name==="content-length"?String(stat.size):null},
+          body:(async function*(){
+            const buffer=Buffer.allocUnsafe(1024*1024);
+            let offset=0;
+            while(offset<stat.size){
+              const count=Math.min(buffer.length,stat.size-offset);
+              const {bytesRead}=await archive.read(buffer,0,count,offset);
+              if(bytesRead<1)throw new Error("Verified local native archive ended prematurely.");
+              offset+=bytesRead;
+              yield Buffer.from(buffer.subarray(0,bytesRead));
+            }
+          })(),
+        } as unknown as Response;
+      }
+      throw new Error("Local signed Main staging forbids foreign or repeated network fetches.");
+    };
+    return await stageEquinoxLocalMainSnapshotArtifact({
+      sourceSha,target,
+      expectedRuntimeContractSha256:row.runtimeContractSha256,
+      signedArtifactSha256:row.artifact.sha256,signedArtifactBytes:row.artifact.bytes,
+      transactionRoot,transactionId,fsImpl,fetchImpl:offlineFetch as typeof fetch,
+    });
+  } finally {
+    await archive.close();
+  }
+}
+
 export async function stageEquinoxLocalMainSnapshotArtifact({
   sourceSha,
   target,

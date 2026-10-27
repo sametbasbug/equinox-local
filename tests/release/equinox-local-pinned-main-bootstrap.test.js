@@ -62,8 +62,8 @@ test('prepare-only CLI stops before old Stable activation and preserves default 
  assert.match(windows,/\[switch\]\$PrepareMain = \$false/u);
  assert.match(windows,/RuntimeInformation\]::ProcessArchitecture/u);
  assert.match(windows,/RuntimeInformation\]::OSArchitecture/u);
- assert.match(windows,/if \(\$PrepareMain\) \{ Invoke-VerifiedMainPreparation \$tempRoot; return \}/u);
- assert.ok(windows.indexOf('if ($PrepareMain)')<windows.indexOf('Save-BoundedHttpsFile "$UpdateBase/bootstrap-'));
+ assert.match(windows,/if \(\$PrepareMain -or \$StageMain\) \{ Invoke-VerifiedMainPreparation \$tempRoot; return \}/u);
+ assert.ok(windows.indexOf('if ($PrepareMain -or $StageMain)')<windows.indexOf('Save-BoundedHttpsFile "$UpdateBase/bootstrap-'));
  assert.match(mac,/MAIN_ARGS=\(--enroll-existing-main\)/u);
  assert.match(windows,/Restore-ExecutableReplacement \$transaction/u);
  assert.match(windows,/Restore-OldEquinoxChromeHost \$nativeHostSuspension/u);
@@ -96,14 +96,14 @@ test('the same verified Main SHA and version enter the existing native release i
 test('Windows prepare-only mode bypasses Stable-only ZIP helper and owned install-directory mutations',async()=>{
  const ps=await fs.readFile(windowsURL,'utf8');
  const start=ps.indexOf('function Invoke-EquinoxLocalInstall');
- const stableOnly=ps.indexOf('if (-not $PrepareMain) {',start);
+ const stableOnly=ps.indexOf('if (-not ($PrepareMain -or $StageMain)) {',start);
  const zipPin=ps.indexOf("installer ZIP helper pin is not materialized",start);
  const directoryCreate=ps.indexOf('Assert-NormalDirectory $installRoot $true',start);
- const admission=ps.indexOf('if ($PrepareMain) { Invoke-VerifiedMainPreparation $tempRoot; return }',start);
+ const admission=ps.indexOf('if ($PrepareMain -or $StageMain) { Invoke-VerifiedMainPreparation $tempRoot; return }',start);
  assert.ok(start>0&&stableOnly>start&&zipPin>stableOnly);
- assert.ok(ps.indexOf('if (-not $PrepareMain) {',zipPin)<directoryCreate);
+ assert.ok(ps.indexOf('if (-not ($PrepareMain -or $StageMain)) {',zipPin)<directoryCreate);
  assert.ok(directoryCreate<admission);
- assert.match(ps,/if \(\$PrepareMain\) \{ Invoke-VerifiedMainPreparation \$tempRoot; return \}/u);
+ assert.match(ps,/if \(\$PrepareMain -or \$StageMain\) \{ Invoke-VerifiedMainPreparation \$tempRoot; return \}/u);
 });
 
 
@@ -135,4 +135,18 @@ test('both OS bootstrap paths preserve the signed pointer for a second independe
  assert.match(windows,/--signed-pointer-file', \(Join-Path \$PrivateTemp 'main-signed-pointer\.json'\)/u);
  assert.match(windows,/\$matched\.runtimeContractSha256 -cne \$parsed\.runtimeContractSha256/u);
  assert.match(windows,/\$matched\.artifactSha256 -cne \$parsed\.artifactSha256/u);
+});
+
+
+test('opt-in Main staging is the existing OS installer and never silently replaces the default Stable deployment',async()=>{
+ const [mac,windows]=await Promise.all([fs.readFile(macURL,'utf8'),fs.readFile(windowsURL,'utf8')]);
+ assert.match(mac,/--stage-main\) PREPARE_MAIN=1; STAGE_MAIN=1/u);
+ assert.match(mac,/if \[ "\$STAGE_MAIN" -eq 1 \]; then/u);
+ assert.match(mac,/--stage-signed-main/u);
+ assert.match(windows,/\[switch\]\$StageMain = \$false/u);
+ assert.match(windows,/if \(\$PrepareMain -or \$StageMain\)/u);
+ assert.match(windows,/if \(\$StageMain\) \{/u);
+ assert.match(windows,/--stage-signed-main/u);
+ assert.ok(mac.indexOf('if [ "$STAGE_MAIN" -eq 1 ]')>mac.indexOf('--inspect-signed-main'));
+ assert.ok(windows.indexOf('if ($StageMain)')>windows.indexOf('--inspect-signed-main'));
 });

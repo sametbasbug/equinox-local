@@ -32,12 +32,14 @@ require_private_directory() {
 
 MAIN_ARGS=(--enroll-existing-main)
 PREPARE_MAIN=0
+STAGE_MAIN=0
 for argument in "$@"; do
   case "$argument" in
     --enroll-existing-main) MAIN_ARGS=(--enroll-existing-main) ;;
     --prepare-main) PREPARE_MAIN=1 ;;
+    --stage-main) PREPARE_MAIN=1; STAGE_MAIN=1 ;;
     --help|-h)
-      printf '%s\n' 'Usage: install-equinox-local.sh [--enroll-existing-main] [--prepare-main]' 'The installer verifies the signed bootstrap and enrolls the admitted Main commit by default.' 'Failure preserves the signed bootstrap for recovery; existing settings are retained.'
+      printf '%s\n' 'Usage: install-equinox-local.sh [--enroll-existing-main] [--prepare-main] [--stage-main]' 'The installer verifies the signed bootstrap and enrolls the admitted Main commit by default.' 'Failure preserves the signed bootstrap for recovery; existing settings are retained.'
       exit 0 ;;
     *) fail "unknown argument: $argument (use --help)" ;;
   esac
@@ -147,6 +149,10 @@ prepare_verified_main() {
   /usr/bin/env -i HOME="$HOME_DIR" PATH="/usr/bin:/bin:/usr/sbin:/sbin" "$node" "$inspector" --inspect-signed-main     --staged-release "$candidate" --source-sha "$signed_sha"     --version "$signed_version" --target "$TARGET" \
     --signed-pointer-file "$TEMP_ROOT/main-signed-pointer.json" >/dev/null ||
     fail "Main native release metadata does not match the signed full SHA"
+  if [ "$STAGE_MAIN" -eq 1 ]; then
+    /usr/bin/env -i HOME="$HOME_DIR" PATH="/usr/bin:/bin:/usr/sbin:/sbin"       "$node" "$inspector" --stage-signed-main       --signed-pointer-file "$TEMP_ROOT/main-signed-pointer.json" --archive "$archive" ||
+      fail "signed Main inactive A/B staging failed; active installation untouched"
+  fi
   printf '%s\n' "$receipt"
 }
 

@@ -1,6 +1,6 @@
-param([switch]$EnrollExistingMain = $true, [switch]$Help, [switch]$PrepareMain = $false)
+param([switch]$EnrollExistingMain = $true, [switch]$Help, [switch]$PrepareMain = $false, [switch]$StageMain = $false)
 if ($Help) {
-  Write-Output 'Usage: install-equinox-local.ps1 [-EnrollExistingMain] [-Help] [-PrepareMain]'
+  Write-Output 'Usage: install-equinox-local.ps1 [-EnrollExistingMain] [-Help] [-PrepareMain] [-StageMain]'
   Write-Output 'The installer verifies a signed bootstrap and enrolls the admitted Main commit by default.'
   Write-Output 'Failed Main enrollment preserves the verified bootstrap for recovery and keeps your settings.'
   return
@@ -191,6 +191,19 @@ function Invoke-VerifiedMainPreparation([string]$PrivateTemp) {
       $matched.artifactSha256 -cne $parsed.artifactSha256 -or
       [long]$matched.artifactBytes -ne [long]$parsed.artifactBytes) {
     Fail 'Main native candidate admission changed the signed identity'
+  }
+  if ($StageMain) {
+    $staged = @(Invoke-PinnedMainNode $node @($inspector, '--stage-signed-main',
+      '--signed-pointer-file', (Join-Path $PrivateTemp 'main-signed-pointer.json'),
+      '--archive', $verifiedArchive))
+    if ($staged.Count -ne 1) { Fail 'signed inactive native A/B staging receipt is invalid' }
+    try { $saved = $staged[0] | ConvertFrom-Json -ErrorAction Stop }
+    catch { Fail 'signed native A/B staging returned invalid JSON' }
+    if ($saved.status -cne 'staged' -or $saved.sourceSha -cne $parsed.sourceSha -or
+        $saved.version -cne $parsed.version -or $saved.target -cne $Target) {
+      Fail 'signed inactive native A/B staging identity mismatch'
+    }
+    Write-Output $staged[0]
   }
   Write-Output $receipt[0]
 }
@@ -470,7 +483,7 @@ function Assert-ExistingStableUpgradeRoute([string]$InstallRoot, [string]$Reques
 function Invoke-EquinoxLocalInstall {
   if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) { Fail 'Windows is required' }
   $script:Target = Get-NativeWindowsTarget
-  if (-not $PrepareMain) {
+  if (-not ($PrepareMain -or $StageMain)) {
     if ($ZipHelperSha256 -notmatch '^[a-f0-9]{64}$') { Fail 'installer ZIP helper pin is not materialized' }
     [long]$helperBytes = 0
     if (-not [long]::TryParse($ZipHelperBytes, [ref]$helperBytes) -or $helperBytes -lt 1 -or $helperBytes -gt 1048576) { Fail 'installer ZIP helper size pin is invalid' }
@@ -479,7 +492,7 @@ function Invoke-EquinoxLocalInstall {
   if ([string]::IsNullOrWhiteSpace($localAppData) -or -not [IO.Path]::IsPathRooted($localAppData)) { Fail 'trusted LOCALAPPDATA is required' }
   $installRoot = Join-Path $localAppData 'Equinox Local'
   $stagingRoot = Join-Path $installRoot 'staging'
-  if (-not $PrepareMain) {
+  if (-not ($PrepareMain -or $StageMain)) {
     Assert-NormalDirectory $installRoot $true | Out-Null
     Assert-NormalDirectory $stagingRoot $true | Out-Null
   }
@@ -487,7 +500,7 @@ function Invoke-EquinoxLocalInstall {
   $stage = Join-Path $stagingRoot ('bootstrap-' + [Guid]::NewGuid().ToString('N'))
   [IO.Directory]::CreateDirectory($tempRoot) | Out-Null
   try {
-    if ($PrepareMain) { Invoke-VerifiedMainPreparation $tempRoot; return }
+    if ($PrepareMain -or $StageMain) { Invoke-VerifiedMainPreparation $tempRoot; return }
     $manifestPath = Join-Path $tempRoot 'bootstrap.txt'
     $artifactPath = Join-Path $tempRoot 'release.zip'
     $helperPath = Join-Path $tempRoot $ZipHelperName

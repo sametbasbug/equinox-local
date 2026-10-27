@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { generateKeyPairSync } from "node:crypto";
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import os from "node:os";
@@ -9,10 +10,12 @@ import { fileURLToPath } from "node:url";
 import {
   equinoxLocalFirstInstallHealthBudget,
   installManagedEquinoxRelease,
+  stageSignedMainInstallerNativeArchive,
   synchronizeFreshWindowsShell,
   validateFirstInstallRelease,
 } from "../../src/equinox-local-first-install.js";
 import { equinoxLocalReleaseRuntimeContract } from "../../src/equinox-local-release-runtime-contract.js";
+import { createSignedMainInstallPointer, validateSignedMainInstallPointer } from "../../src/equinox-local-main-install-pointer.js";
 import { writeWindowsClassicRepairJournal, readWindowsClassicRepairJournal } from "../../src/equinox-local-windows-classic-repair-journal.js";
 import { EQUINOX_LOCAL_MAIN_BRANCH, EQUINOX_LOCAL_MAIN_REPOSITORY, EQUINOX_LOCAL_MAIN_UPDATE_CHANNEL, EQUINOX_LOCAL_MAIN_UPDATE_SCHEMA_VERSION } from "../../src/equinox-local-main-update.js";
 import {
@@ -1381,4 +1384,73 @@ test('website Main-default reinstall preserves a healthy different-SHA Main with
   } finally {
     await fs.rm(fixture.homeDir, { recursive: true, force: true });
   }
+});
+
+test("signed Main inactive store stages exact SHA using existing import, candidate and promotion without touching current",async t=>{
+ const home=await fs.mkdtemp(path.join(path.dirname(fileURLToPath(import.meta.url)),".equinox-signed-inactive-"));
+ t.after(()=>fs.rm(home,{recursive:true,force:true}));
+ const sourceSha="e".repeat(40), contract="f".repeat(64), digest="a".repeat(64);
+ const {privateKey,publicKey}=generateKeyPairSync("ed25519");
+ const keyId="test-store-only";
+ const pointer=createSignedMainInstallPointer({
+  sourceSha,version:"6.2.1",publishedAt:"2026-10-27T12:00:00.000Z",
+  nativeManifests:["darwin-arm64","darwin-x64","win32-arm64","win32-x64"].map(target=>({
+   schemaVersion:1,channel:"main",sourceSha,target,runtimeContractSha256:contract,
+   artifact:{name:"equinox-local-main-"+sourceSha+"-"+target+(target.startsWith("win32-")?".zip":".tar.gz"),
+    sha256:digest,bytes:111},
+  })),keyId,privateKey,
+ });
+ const verifyPointerImpl=(raw,opts)=>validateSignedMainInstallPointer(raw,{
+  ...opts,publicKeys:{[keyId]:publicKey.export({type:"spki",format:"pem"})},
+ });
+ const events=[];
+ const stageInput={
+  signedPointer:pointer,sourceArchivePath:path.join(home,"candidate.tar.gz"),
+  homeDir:home,platform:"darwin",arch:"arm64",uid:process.getuid(),
+  verifyPointerImpl,
+  importArchiveImpl:async i=>{events.push("import");assert.equal(i.sourceSha,sourceSha);},
+  prepareCandidateImpl:async i=>{
+   events.push("prepare");
+   return {sourceSha,target:TARGET,runtimeContractSha256:contract,
+    artifactSha256:digest,artifactBytes:111,payloadVersion:"6.2.1",
+    releaseDir:path.join(i.transactionRoot,"staging",i.transactionId,"native-candidate","release")};
+  },
+  promoteCandidateImpl:async i=>{
+   events.push("promote");
+   return {sourceSha,target:TARGET,runtimeContractSha256:contract,payloadVersion:"6.2.1",
+    releaseDir:path.join(i.transactionRoot,"native-store",TARGET,sourceSha,"release"),reused:false};
+  },
+ };
+ const receipt=await stageSignedMainInstallerNativeArchive(stageInput);
+ assert.equal(receipt.sourceSha,sourceSha);
+ assert.equal(receipt.status,"staged");
+ assert.equal(receipt.version,"6.2.1");
+ assert.deepEqual(events,["import","prepare","promote"]);
+ const nativeRoot=path.join(home,"Library","Application Support","Equinox Local","main-update");
+ assert.deepEqual(await fs.readdir(path.join(nativeRoot,"staging")),[]);
+ await assert.rejects(fs.stat(path.join(nativeRoot,"current-native.json")),{code:"ENOENT"});
+ await assert.rejects(fs.stat(path.join(nativeRoot,"current-source.conf")),{code:"ENOENT"});
+
+ // The guard prevents a second update from staging while another owns active.json.
+ await fs.writeFile(path.join(nativeRoot,"active.json"),"{}");
+ events.length=0;
+ await assert.rejects(stageSignedMainInstallerNativeArchive(stageInput),/transaction is active/u);
+ assert.deepEqual(events,[]);
+ await fs.rm(path.join(nativeRoot,"active.json"));
+
+ // No trust-root override exists in the actual production CLI.
+ await assert.rejects(stageSignedMainInstallerNativeArchive({
+  ...stageInput,verifyPointerImpl:undefined,
+ }),/signing key|trusted|signature/u);
+ assert.deepEqual(events,[]);
+
+ // A partial or wrong SHA staging candidate must not reach promotion.
+ await assert.rejects(stageSignedMainInstallerNativeArchive({
+  ...stageInput,prepareCandidateImpl:async i=>({
+   sourceSha:"d".repeat(40),target:TARGET,runtimeContractSha256:contract,
+   artifactSha256:digest,artifactBytes:111,payloadVersion:"6.2.1",
+  }),
+  promoteCandidateImpl:async()=>assert.fail("mismatched signed SHA must never be promoted"),
+ }),/identity drifted/u);
+ assert.deepEqual(await fs.readdir(path.join(nativeRoot,"staging")),[]);
 });
