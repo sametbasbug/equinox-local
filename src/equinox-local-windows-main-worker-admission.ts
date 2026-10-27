@@ -221,7 +221,10 @@ export async function authenticateOriginalWindowsGuardianOwner({
       if (value && typeof value === 'object' && !Array.isArray(value)) proof = value as Record<string,unknown>;
       break;
     } catch (error) {
-      if (!hasErrorCode(error,'ENOENT') && !hasErrorCode(error,'EACCES')) throw error;
+      // A still-flushing native FileShare.None proof briefly surfaces as EBUSY
+      // on Windows. Retry only its bounded, already authenticated read.
+      if (!hasErrorCode(error,'ENOENT') && !hasErrorCode(error,'EACCES') &&
+          !hasErrorCode(error,'EBUSY')) throw error;
       await sleepImpl(125);
     }
   }

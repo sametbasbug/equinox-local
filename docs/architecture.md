@@ -148,3 +148,7 @@ These are internal boundaries, not new MCP operations, configuration keys or man
 - retired legacy QA Chrome backends or alternate browser transports;
 - generic shell/command management endpoints;
 - a fallback into user Chrome outside Equinox Browser.
+
+## Approved distribution consolidation (transition, 2026-10-27)
+
+The maintainer has approved one canonical public repository, signed Main-SHA packages independent of manually numbered Releases, and one external installer invoked identically by Control Center and terminal. The Astro website source is imported under `website/` while its production Cloudflare deployment remains on the old source pending validated cutover. No change to current updater authority or private Factory composition is implied until the staged acceptance gates in [`plans/one-main-one-installer-one-repo.md`](plans/one-main-one-installer-one-repo.md) succeed.

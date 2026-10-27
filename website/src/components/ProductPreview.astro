@@ -1,0 +1,58 @@
+---
+import Icon from './Icon.astro';
+import release from '../data/release.json';
+import type { Lang } from '../data/site';
+const { lang } = Astro.props as { lang: Lang };
+const tr = lang === 'tr';
+const t = (en: string, turkish: string) => tr ? turkish : en;
+---
+<figure class="product-stage">
+  <div class="stage-top"><span><span class="tiny-dot"></span>{t('Your ChatGPT agent’s tools. On your computer.', 'ChatGPT ajanınızın araçları. Bilgisayarınızda.')}</span><span class="stage-label">EQUINOX LOCAL / macOS + Windows</span></div>
+  <fieldset class="preview-controls">
+    <legend class="sr-only">{t('Explore an illustrative Control Center', 'Örnek Control Center görünümünü keşfedin')}</legend>
+    <input class="sr-only preview-radio" id="preview-dashboard" name="preview" type="radio" aria-label={t('Overview', 'Genel bakış')} checked />
+    <input class="sr-only preview-radio" id="preview-browser" name="preview" type="radio" aria-label={t('Browser', 'Tarayıcı')} />
+    <input class="sr-only preview-radio" id="preview-access" name="preview" type="radio" aria-label={t('Access', 'Erişim')} />
+    <div class="app-window">
+      <div class="app-titlebar"><div class="traffic-lights"><i></i><i></i><i></i></div><span>Equinox Local</span><span class="app-private">{t('Private to this computer', 'Bu bilgisayara özel')}<Icon name="shield" size={12} /></span></div>
+      <div class="app-body">
+        <div class="app-sidebar">
+          <div class="app-brand"><img src="/assets/equinox-browser.png" width="32" height="32" alt="" /><span>EQUINOX LOCAL<strong>Control Center</strong></span></div>
+          <div class="app-navigation">
+            <label for="preview-dashboard" class="preview-label dashboard-label"><Icon name="grid" size={17} />{t('Overview', 'Genel bakış')}</label>
+            <label for="preview-browser" class="preview-label browser-label"><Icon name="browser" size={17} />{t('Browser', 'Tarayıcı')}</label>
+            <label for="preview-access" class="preview-label access-label"><Icon name="shield" size={17} />{t('Agent Access', 'Ajan erişimi')}</label>
+          </div>
+          <div class="app-sidebar-note"><span class="tiny-dot"></span>{t('Local runtime', 'Yerel çalışma ortamı')}<small>v{release.version} · macOS + Windows</small></div>
+        </div>
+        <div class="app-content">
+          <section class="preview-panel dashboard-panel" aria-label={t('Overview example', 'Örnek genel bakış')}>
+            <div class="app-page-heading"><div><span class="app-eyebrow">{t('YOUR WORKSPACE', 'ÇALIŞMA ALANINIZ')}</span><h3>{t('Everything, connected.', 'Her şey bir arada.')}</h3></div><span class="app-badge"><span class="tiny-dot"></span>{t('Healthy', 'Sağlıklı')}</span></div>
+            <div class="app-hero-card"><div><span class="app-eyebrow">EQUINOX LOCAL</span><h4>{t('Ready for real work.', 'Gerçek işler için hazır.')}</h4><p>{t('Your tools are here. You decide how they’re used.', 'Araçlarınız burada. Nasıl kullanılacağına siz karar verin.')}</p></div><div class="app-orbit" aria-hidden="true"><span>e</span></div></div>
+            <div class="app-status-grid">
+              <div><Icon name="link" /><span>ChatGPT</span><strong>{t('Connected', 'Bağlı')}</strong><small>Secure MCP Tunnel</small></div>
+              <div><Icon name="browser" /><span>Agent Browser</span><strong>{t('Ready', 'Hazır')}</strong><small>{t('Dedicated Chrome profile', 'Ayrı Chrome profili')}</small></div>
+              <div><Icon name="terminal" /><span>Terminal</span><strong>{t('Enabled', 'Etkin')}</strong><small>{t('Your signed-in OS user', 'Oturum açtığınız işletim sistemi kullanıcısı')}</small></div>
+            </div>
+            <div class="app-bottom-row"><span><Icon name="shield" size={15} />{t('Access and connections, in one place.', 'Erişim ve bağlantılar, tek bir yerde.')}</span><span>127.0.0.1</span></div>
+          </section>
+          <section class="preview-panel browser-panel" aria-label={t('Browser example', 'Örnek tarayıcı görünümü')}>
+            <div class="app-page-heading"><div><span class="app-eyebrow">EQUINOX BROWSER</span><h3>{t('Two spaces. No crossover.', 'İki ayrı alan.')}</h3></div><Icon name="browser" /></div>
+            <div class="app-browser-row"><div class="context-icon"><Icon name="browser" size={26} /></div><div><h4>Agent Browser <span class="app-badge">{t('Default', 'Varsayılan')}</span></h4><p>{t('A separate Chrome profile for your agent’s work.', 'Ajanınızın çalışmaları için ayrı bir Chrome profili.')}</p></div></div>
+            <div class="app-browser-row"><div class="context-icon muted"><Icon name="browser" size={26} /></div><div><h4>Your Browser <span class="app-badge neutral">{t('Explicit choice', 'Açık seçim')}</span></h4><p>{t('Your personal Chrome, only when you choose it.', 'Kişisel Chrome’unuz, yalnızca siz seçtiğinizde.')}</p></div></div>
+            <p class="app-explainer">{t('Install the extension and enable control separately in each profile. Local never silently switches between them.', 'Eklentiyi her profile ayrı kurun ve kontrolü ayrıca açın. Local profiller arasında sessizce geçiş yapmaz.')}</p>
+          </section>
+          <section class="preview-panel access-panel" aria-label={t('Access example', 'Örnek erişim görünümü')}>
+            <div class="app-page-heading"><div><span class="app-eyebrow">AGENT ACCESS</span><h3>{t('Make the access yours.', 'Erişimi siz belirleyin.')}</h3></div><Icon name="shield" /></div>
+            <div class="app-access-row"><div><strong>{t('Structured folder access', 'Yapılandırılmış klasör erişimi')}</strong><p>{t('Full by default. Selected roots when you prefer.', 'Varsayılan Full. İsterseniz yalnızca seçili kökler.')}</p></div><span class="app-badge">Full / Selected</span></div>
+            <div class="app-access-row"><div><strong>{t('Terminal & processes', 'Terminal ve süreçler')}</strong><p>{t('A separate, broad operating-system-user capability.', 'İşletim sistemi kullanıcısı yetkileriyle ayrı, geniş bir erişim.')}</p></div><Icon name="terminal" /></div>
+            <div class="app-access-row"><div><strong>{t('Desktop & Browser', 'Masaüstü ve tarayıcı')}</strong><p>{t('Browser is available on both platforms; Desktop automation is currently macOS-only.', 'Browser iki platformda da kullanılabilir; Desktop otomasyonu şu anda yalnızca macOS’tadır.')}</p></div><Icon name="desktop" /></div>
+            <p class="app-explainer">{t('Selected roots do not sandbox Terminal. Turn Terminal off if you need strict selected-root containment.', 'Selected kökler Terminal’i sınırlandırmaz. Kesin klasör sınırlaması için Terminal’i kapatın.')}</p>
+          </section>
+        </div>
+      </div>
+    </div>
+    <div class="preview-switcher"><span>{t('Take a look around', 'İçeriye göz atın')}<Icon size={15} /></span><label for="preview-dashboard" class="dashboard-label">{t('Overview', 'Genel bakış')}</label><label for="preview-browser" class="browser-label">{t('Browser', 'Tarayıcı')}</label><label for="preview-access" class="access-label">{t('Access', 'Erişim')}</label></div>
+  </fieldset>
+  <figcaption>{t('Illustrative Control Center preview. Example states, not a live connection to your computer.', 'Temsili Control Center önizlemesi. Örnek durumlar gösterilir; bilgisayarınıza canlı bağlantı kurulmaz.')}</figcaption>
+</figure>

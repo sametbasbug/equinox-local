@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "channel": "stable",
+  "target": "darwin-arm64",
+  "version": "6.2.1",
+  "publishedAt": "2026-10-26T03:04:18.139Z",
+  "artifact": {
+    "url": "https://local.sametbasbug.dev/downloads/updates/equinox-local-6.2.1-darwin-arm64.tar.gz",
+    "sha256": "1f16426366912afc4c97517cf1638d25e70f60b7bead3e76a4600b2f3abc0b6f",
+    "bytes": 145497165
+  },
+  "signature": {
+    "algorithm": "ed25519",
+    "keyId": "stable-2026-01",
+    "value": "N3lnvJWK4/E2ccBN9/5gwwqJGMqfq0quwh/BrWxN3xDaJV10jspNs+lQf4w1DkqLVrDbugCY9h1S5aUnPna/Dg=="
+  }
+}

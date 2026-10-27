@@ -1,0 +1,15 @@
+---
+import Home from '../components/Home.astro';
+import Doc from '../components/Doc.astro';
+import Browser from '../components/Browser.astro';
+import type { Lang } from '../data/site';
+
+export function getStaticPaths() {
+  return (['en', 'tr'] as const).flatMap(lang => ['', 'install', 'browser', 'security', 'privacy', 'contact'].map(page => ({
+    params: { path: [lang === 'tr' ? 'tr' : '', page].filter(Boolean).join('/') || undefined },
+    props: { lang, page },
+  })));
+}
+const { lang, page } = Astro.props as { lang: Lang; page: '' | 'browser' | 'install' | 'security' | 'privacy' | 'contact' };
+---
+{!page ? <Home lang={lang} /> : page === 'browser' ? <Browser lang={lang} /> : <Doc lang={lang} page={page} />}

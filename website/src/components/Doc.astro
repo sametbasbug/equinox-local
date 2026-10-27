@@ -1,0 +1,18 @@
+---
+import Layout from '../layouts/Layout.astro';
+import { docs } from '../data/docs';
+import release from '../data/release.json';
+import { pathFor, ui, type Lang } from '../data/site';
+interface Props { lang: Lang; page: keyof typeof docs.en; }
+const { lang, page } = Astro.props;
+const meta = docs[lang][page];
+const contents = import.meta.glob('../content/*/*.html', { query: '?raw', import: 'default', eager: true });
+const html = contents[`../content/${lang}/${page}.html`] as string;
+const headings = [...html.matchAll(/<section id="([^"]+)">\s*<h2>([^<]+)<\/h2>/g)].map(m => ({ id: m[1], title: m[2] }));
+---
+<Layout lang={lang} page={page} title={`${ui[lang][page]} — Equinox Local`} description={meta.description}>
+  <div class="shell">
+    <header class="doc-hero"><span class="eyebrow">{page === 'install' ? `Equinox Local ${release.version}` : meta.eyebrow}</span><h1>{meta.title}</h1><p>{meta.description}</p></header>
+    <div class="doc-layout"><aside class="doc-nav" aria-label={lang === 'tr' ? 'Sayfa içeriği' : 'On this page'}><strong>{lang === 'tr' ? 'BU SAYFADA' : 'ON THIS PAGE'}</strong>{headings.map(h => <a href={`#${h.id}`}>{h.title}</a>)}<div class="doc-nav-pages">{(['install','browser','security','privacy','contact'] as const).map(p => <a href={pathFor(lang, p)} aria-current={page === p ? 'page' : undefined}>{ui[lang][p]}</a>)}</div></aside><article class="prose" set:html={html} /></div>
+  </div>
+</Layout>

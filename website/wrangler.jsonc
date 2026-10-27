@@ -1,0 +1,22 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "equinox-local-site",
+  "main": "src/index.js",
+  "compatibility_date": "2026-08-22",
+  "previews": {},
+  "workers_dev": true,
+  "preview_urls": true,
+  "assets": {
+    "binding": "ASSETS",
+    "directory": "./dist",
+    "run_worker_first": true,
+    "html_handling": "auto-trailing-slash",
+    "not_found_handling": "404-page"
+  },
+  "routes": [
+    {
+      "pattern": "local.sametbasbug.dev",
+      "custom_domain": true
+    }
+  ]
+}
