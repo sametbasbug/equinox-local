@@ -174,7 +174,10 @@ export async function authenticateOriginalWindowsGuardianOwner({ transactionId, 
             break;
         }
         catch (error) {
-            if (!hasErrorCode(error, 'ENOENT') && !hasErrorCode(error, 'EACCES'))
+            // A still-flushing native FileShare.None proof briefly surfaces as EBUSY
+            // on Windows. Retry only its bounded, already authenticated read.
+            if (!hasErrorCode(error, 'ENOENT') && !hasErrorCode(error, 'EACCES') &&
+                !hasErrorCode(error, 'EBUSY'))
                 throw error;
             await sleepImpl(125);
         }
