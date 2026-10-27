@@ -29,10 +29,12 @@ This plan supersedes the numbered-Stable-vs-Main distribution/independent-A-B-up
 - [ ] Inventory private-only capabilities, signing/credential dependencies, site origin/Cloudflare configuration and existing bootstrap/update files. Keep a short allowlist of importable non-secret behavior, rather than copying private modules wholesale.
 
 ### 2. Consolidate the site without breaking production
-- [ ] Import *tracked* site source into `website/` in this repository. This parent directory avoids a confusing `site/site/` project root; keep its nested `website/site/` static assets paths unchanged within the project.
-- [ ] Keep all existing routes and URLs (especially `/downloads/updates/*`, `/privacy/`, browser reviewer, EN/TR), matching security/cache behavior. No copied build output, `.env`, tokens, `.wrangler` state or separate Git history.
-- [ ] Run fresh `npm ci`, `npm run check`, and Wrangler dry-run from `website/`, plus product gates. Add minimal CI paths/build ownership for website in public repo without running the four-target product gates on website-only changes.
-- [ ] Migrate Cloudflare Workers Builds production source/root to the **public repo's `website/`**, preserving the existing Worker, Custom Domain, previews where supported and secret bindings. Confirm a real live deployment before cutting the previous site repo. No unverified downtime or duplicate Worker origin.
+- [x] Import *tracked* site source into `website/` in this repository. This parent directory avoids a confusing `site/site/` project root; keep its nested `website/site/` static assets paths unchanged within the project.
+- [x] Keep all existing routes and URLs (especially `/downloads/updates/*`, `/privacy/`, browser reviewer, EN/TR), matching security/cache behavior. No copied build output, `.env`, tokens, `.wrangler` state or separate Git history.
+- [x] Run fresh `npm ci`, `npm run check`, and Wrangler dry-run from `website/`, plus product gates. Add minimal CI paths/build ownership for website in public repo without running the four-target product gates on website-only changes.
+- [x] Migrate Cloudflare Workers Builds production source/root to the **public repo's `website/`**, preserving the existing Worker, Custom Domain, previews where supported and secret bindings. Confirm a real live deployment before cutting the previous site repo. No unverified downtime or duplicate Worker origin.
+
+**Stage 2 acceptance (2026-10-27):** The 53 tracked site files live in the public `website/` (PR #294, merge `3bb440a`). Public website CI, CodeQL, full four-target product CI (26/26) and postmerge snapshot passed. The existing Cloudflare `equinox-local-site` Worker was **preserved**; only its Workers Builds repository connection was switched from `equinox-local-site/main` root `/` to `equinox-local/main` root `website/` (both production and preview). Public Worker build `c48056ca-c22b-4878-b335-0ae4082b6798` succeeded and deployed Worker version `630953c1-ef80-43ae-82e6-0f928c856194` with 100% traffic. The temporary hook used for the controlled first build was deleted. All four live signed manifests and both terminal installer scripts were compared byte-for-byte by SHA-256 to the public website checkout; eleven live EN/TR/privacy/reviewer/browser pages returned HTTP 200 with required security headers. Existing Worker and custom domain stayed online throughout. The two old repositories remain untouched as recoverable sources until later real-device and release-path acceptance.
 
 ### 3. Consolidate signed Main publication without exposing private signing
 - [ ] Retire factory-only Stable numbered release publication as an update prerequisite. Public CI can build and validate the four platform artifacts for exact `main` SHA, but **private key operations remain on the Mac mini** or another trusted secret-free Git backend. Use the *existing* signing implementation with narrowly scoped invocation, not a new release framework.
@@ -59,7 +61,7 @@ This plan supersedes the numbered-Stable-vs-Main distribution/independent-A-B-up
 
 ## Safe rollback and checkpoints
 
-- Stages 1–2: retain production's existing Cloudflare source and both original repos. Revert imported public website change without affecting live site.
+- Stage 2 **completed**: Cloudflare production now builds `website/` from public `main`, using the *same* existing Worker and domain. Preserve the original site repo (still readable) and an offline copy of the previous Builds connection settings for controlled rollback; do not route production back or delete the old Worker casually.
 - Stage 3: existing stable/installer distribution remains the trusted fallback until the exact-SHA Main publish and signing gates are green.
 - Stage 4: do not retire old updater entrypoints until single engine successfully updates and repairs both real platforms, then remove duplicate dead code in a bounded change.
 - Never bypass the signed manifest identity/trust boundary to meet schedule. If any long process or service restart blocks or fails, checkpoint exact active commit, process and next action and stop safely.
