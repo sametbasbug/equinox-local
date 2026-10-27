@@ -13,6 +13,7 @@ import {
   stageSignedMainInstallerNativeArchive,
   inspectSignedMainInstallerMacActivation,
   prepareSignedMainInstallerMacActivation,
+  recoverAbandonedSignedMainMacAdmission,
   persistSignedMainNativeStoreSelector,
   synchronizeFreshWindowsShell,
   validateFirstInstallRelease,
@@ -1700,15 +1701,63 @@ test("Mac signed Main coordinator persists exact native recovery descriptor + ex
  await assert.rejects(prepareSignedMainInstallerMacActivation(f.opts),{code:"EEXIST"});
 });
 
-test("Mac signed Main coordinator never schedules identical native SHA; health/repair remains a separate path",async t=>{
+async function sameShaSignedMacFixture(t){
  const f=await signedMacInstallerCoordinatorFixture(t);
+ await fs.unlink(f.current);
+ await fs.symlink(path.relative(path.dirname(f.current),f.native),f.current);
+ const sourceSha="b".repeat(40),contract="c".repeat(64);
+ const opts={...f.opts,
+  inspectImpl:async()=>inspectSignedMainInstallerMacActivation({...f.options,
+   resolveInstallationImpl:({env})=>({
+    kind:"managed",managed:true,selfUpdateSupported:true,target:"darwin-arm64",
+    releaseDir:env.EQUINOX_LOCAL_RELEASE_DIR,mainNativeSha:sourceSha,
+   }),
+   resolveManagedImpl:async({baseInstallation})=>({
+    ...baseInstallation,kind:"managed-main",sourceSha,mainNativeSha:sourceSha,
+   }),
+  }),
+  readPointerImpl:async()=>({sourceSha,target:"darwin-arm64",runtimeContractSha256:contract}),
+ };
+ return {...f,opts,sourceSha,contract};
+}
+
+test("Mac signed Main SAME-SHA verified healthy is a real zero-write no-op without launchd or native transaction",async t=>{
+ const f=await sameShaSignedMacFixture(t);
+ let observed=null;
  const result=await prepareSignedMainInstallerMacActivation({...f.opts,
-  inspectImpl:async()=>({action:"verify_or_repair",sourceSha:"b".repeat(40),
-   target:"darwin-arm64",version:"6.2.1"}),
+  verifySameShaHealthImpl:async identity=>{
+   observed=identity;return true;
+  },
+  scheduleImpl:async()=>assert.fail("same SHA must not launch a B worker"),
  });
- assert.deepEqual(result,{status:"verify_or_repair_required",sourceSha:"b".repeat(40),
+ assert.deepEqual(result,{status:"already_healthy",sourceSha:f.sourceSha,
   target:"darwin-arm64",version:"6.2.1"});
- assert.deepEqual(f.events,[]);
+ assert.deepEqual(observed,{transactionRoot:f.root,sourceSha:f.sourceSha,
+  target:"darwin-arm64",version:"6.2.1",runtimeContractSha256:f.contract});
+ assert.equal(await fs.realpath(f.current),f.native);
+ await assert.rejects(fs.lstat(path.join(f.root,"active.json")),{code:"ENOENT"});
+});
+
+test("Mac signed Main SAME-SHA unhealthy/timeout requires explicit repair, not a fake successful installation",async t=>{
+ const f=await sameShaSignedMacFixture(t);
+ for(const verify of [async()=>false,async()=>{throw Error("unreachable")}]) {
+  const result=await prepareSignedMainInstallerMacActivation({...f.opts,
+   verifySameShaHealthImpl:verify,
+  });
+  assert.equal(result.status,"repair_required");
+  assert.equal(result.sourceSha,f.sourceSha);
+ }
+ await assert.rejects(fs.lstat(path.join(f.root,"active.json")),{code:"ENOENT"});
+ assert.equal(await fs.realpath(f.current),f.native);
+});
+
+test("Mac signed Main SAME-SHA refuses pointer runtime contract drift instead of reporting healthy",async t=>{
+ const f=await sameShaSignedMacFixture(t);
+ await assert.rejects(prepareSignedMainInstallerMacActivation({...f.opts,
+  readPointerImpl:async()=>({sourceSha:f.sourceSha,target:"darwin-arm64",
+   runtimeContractSha256:"f".repeat(64)}),
+  verifySameShaHealthImpl:async()=>assert.fail("wrong contract cannot be healthy"),
+ }),/current identity drifted/u);
  await assert.rejects(fs.lstat(path.join(f.root,"active.json")),{code:"ENOENT"});
 });
 
@@ -1886,4 +1935,151 @@ test("signed Mac coordinator refuses native A pointer SHA drift before creating 
    runtimeContractSha256:"a".repeat(64)}),
  }),/previous native A pointer drifted/u);
  await assert.rejects(fs.lstat(path.join(f.root,"active.json")),{code:"ENOENT"});
+});
+
+
+async function signedAbandonedMacFixture(t){
+ const f=await signedMacInstallerCoordinatorFixture(t);
+ const selector=path.join(path.dirname(f.native),"signed-selector.json");
+ await fs.writeFile(selector,JSON.stringify(f.signedPointer),{mode:0o600});
+ await assert.rejects(prepareSignedMainInstallerMacActivation({...f.opts,
+  scheduleImpl:async()=>{throw Error("launchctl bootstrap uncertain");},
+ }),/launchctl bootstrap uncertain/u);
+ const events=[];
+ const opts={
+  transactionId:f.tx,homeDir:f.homeDir,platform:"darwin",arch:"arm64",
+  env:{HOME:f.homeDir},uid:process.getuid(),
+  inspectImpl:f.opts.inspectImpl,
+  verifyPointerImpl:f.options.verifyPointerImpl,
+  proveAbsentImpl:async({transactionId,transactionRoot})=>{
+   assert.equal(transactionId,f.tx);assert.equal(transactionRoot,f.root);
+   events.push("two service probes show absent");
+   return {absent:true};
+  },
+  verifyPriorHealthImpl:async input=>{
+   assert.equal(input.previousKind,"stable");
+   assert.equal(input.previousVersion,"6.2.1");
+   assert.equal(await fs.realpath(f.current),f.stable);
+   events.push("verified live Stable A");
+   return true;
+  },
+ };
+ return {...f,selector,opts,recoveryEvents:events};
+}
+
+test("admitted signed native Mac transaction left by failed launchctl can be recovered ONLY with proven worker absence and healthy original A",async t=>{
+ const f=await signedAbandonedMacFixture(t);
+ const result=await recoverAbandonedSignedMainMacAdmission(f.opts);
+ assert.equal(result.status,"rolled_back");
+ assert.equal(result.workerNeverStarted,true);
+ assert.deepEqual(f.recoveryEvents,["two service probes show absent",
+  "verified live Stable A","two service probes show absent"]);
+ assert.equal(await fs.realpath(f.current),f.stable);
+ await assert.rejects(fs.lstat(path.join(f.root,"active.json")),{code:"ENOENT"});
+ const receipt=JSON.parse(await fs.readFile(path.join(f.root,"receipts",f.tx+".signed-native.json"),"utf8"));
+ assert.equal(receipt.status,"rolled_back");
+ assert.equal(receipt.sourceSha,"b".repeat(40));
+ const archived=JSON.parse(await fs.readFile(path.join(f.root,"receipts",f.tx+".signed-native-owner.json"),"utf8"));
+ assert.equal(archived.transactionId,f.tx);
+});
+
+test("admitted signed native Mac recovery refuses uncertain launchd inspection and retains original shared lock",async t=>{
+ const f=await signedAbandonedMacFixture(t);
+ for(const uncertainty of ["service was loaded","launchctl permission denied"]){
+  await assert.rejects(recoverAbandonedSignedMainMacAdmission({...f.opts,
+   proveAbsentImpl:async()=>{throw Error(uncertainty)},
+  }),new RegExp(uncertainty));
+  assert.equal(JSON.parse(await fs.readFile(path.join(f.root,"active.json"),"utf8")).transactionId,f.tx);
+ }
+ assert.equal(f.recoveryEvents.length,0);
+});
+
+test("admitted signed native Mac recovery refuses A health loss or A pointer swap without releasing shared lock",async t=>{
+ const f=await signedAbandonedMacFixture(t);
+ await assert.rejects(recoverAbandonedSignedMainMacAdmission({...f.opts,
+  verifyPriorHealthImpl:async()=>false,
+ }),/did not pass exact health/u);
+ assert.equal(JSON.parse(await fs.readFile(path.join(f.root,"active.json"),"utf8")).transactionId,f.tx);
+ await fs.unlink(f.current);
+ await fs.symlink(path.relative(path.dirname(f.current),f.homeDir),f.current);
+ await assert.rejects(recoverAbandonedSignedMainMacAdmission(f.opts),
+  /escaped the owned Stable\/native|not an admitted managed/u);
+ assert.equal(JSON.parse(await fs.readFile(path.join(f.root,"active.json"),"utf8")).transactionId,f.tx);
+});
+
+test("admitted signed native Mac recovery refuses a forged stored selector and never clears the shared lock",async t=>{
+ const f=await signedAbandonedMacFixture(t);
+ const signed=JSON.parse(await fs.readFile(f.selector,"utf8"));
+ signed.version="6.2.2";
+ await fs.writeFile(f.selector,JSON.stringify(signed),{mode:0o600});
+ await assert.rejects(recoverAbandonedSignedMainMacAdmission(f.opts),/signature|invalid/u);
+ assert.equal(JSON.parse(await fs.readFile(path.join(f.root,"active.json"),"utf8")).transactionId,f.tx);
+ assert.equal(f.recoveryEvents.length,0);
+});
+
+test("admitted signed native Mac recovery detects a worker starting during its own verification probes and retains owner",async t=>{
+ const f=await signedAbandonedMacFixture(t);
+ let checks=0;
+ await assert.rejects(recoverAbandonedSignedMainMacAdmission({...f.opts,
+  proveAbsentImpl:async()=>{
+   checks++;
+   if(checks===2)throw Error("service appeared during second proof");
+   return {absent:true};
+  },
+ }),/service appeared/u);
+ assert.equal(checks,2);
+ const receipt=JSON.parse(await fs.readFile(path.join(f.root,"receipts",f.tx+".signed-native.json"),"utf8"));
+ assert.equal(receipt.status,"admitted");
+ assert.equal(JSON.parse(await fs.readFile(path.join(f.root,"active.json"),"utf8")).transactionId,f.tx);
+});
+
+test("admitted native Mac recovery never downgrades a receipt already claimed by a real worker",async t=>{
+ const f=await signedAbandonedMacFixture(t);
+ const {writeEquinoxLocalSignedNativeMacReceipt}=await import("../../src/equinox-local-main-native-recovery.js");
+ await writeEquinoxLocalSignedNativeMacReceipt({transactionRoot:f.root,transactionId:f.tx,
+  sourceSha:"b".repeat(40),target:"darwin-arm64",runtimeContractSha256:"c".repeat(64),
+  status:"activating"});
+ await assert.rejects(recoverAbandonedSignedMainMacAdmission(f.opts),/only cancels a never-activated/u);
+ assert.equal(f.recoveryEvents.length,0);
+ assert.equal(JSON.parse(await fs.readFile(path.join(f.root,"active.json"),"utf8")).transactionId,f.tx);
+});
+
+
+test("existing macOS shell exposes explicit abandoned-native recovery without staging or activating B",async()=>{
+ const file=path.resolve("scripts/install-equinox-local.sh");
+ const src=await fs.readFile(file,"utf8");
+ assert.match(src,/--recover-main=\*\) PREPARE_MAIN=1; RECOVER_MAIN_TX=/u);
+ assert.match(src,/--recover-signed-main --transaction-id "\$RECOVER_MAIN_TX"/u);
+ assert.match(src,/\[ "\$STAGE_MAIN" -eq 0 \] && \[ "\$ACTIVATE_MAIN" -eq 0 \]/u);
+ const help=spawnSync("/bin/bash",[file,"--help"],{encoding:"utf8",timeout:5000});
+ assert.equal(help.status,0);
+ assert.match(help.stdout,/--recover-main=main-<32-lowercase-hex>/u);
+ for(const invalid of ["--recover-main=main-short","--recover-main="+ "A".repeat(40),
+   "--recover-main=main-"+ "f".repeat(32)+" --activate-main"]){
+  const args=invalid.includes(" --activate-main")?invalid.split(" "):[invalid];
+  const result=spawnSync("/bin/bash",[file,...args],{
+   encoding:"utf8",timeout:5000,
+  });
+  assert.equal(result.status,1);
+  assert.match(result.stderr,/recovery requires an exact transaction id|cannot be combined with staging or activation/u);
+ }
+});
+
+test("signed-native first-install recovery CLI refuses malformed transaction identities without touching user HOME",async t=>{
+ const home=await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(),"equinox-native-recovery-usage-")));
+ t.after(()=>fs.rm(home,{recursive:true,force:true}));
+ const cli=path.resolve("src/equinox-local-first-install.js");
+ for(const args of [
+  ["--recover-signed-main","--transaction-id","bad"],
+  ["--recover-signed-main","--transaction-id","main-"+ "F".repeat(32)],
+  ["--recover-signed-main","--transaction-id","main-"+ "a".repeat(32),"--source-root",home],
+ ]){
+  const result=spawnSync(process.execPath,[cli,...args],{
+   env:{HOME:home,PATH:"/usr/bin:/bin:/usr/sbin:/sbin"},encoding:"utf8",timeout:10000,
+  });
+  assert.equal(result.status,1);
+  assert.match(result.stderr,/abandoned worker recovery denied/u);
+  assert.equal(result.stdout,"");
+ }
+ await assert.rejects(fs.lstat(path.join(home,"Library")),{code:"ENOENT"});
 });

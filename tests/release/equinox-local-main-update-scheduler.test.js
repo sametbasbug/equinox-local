@@ -10,6 +10,7 @@ import test from "node:test";
 import {
   cleanupEquinoxLocalMainUpdateWorkerOwnership,
   inspectEquinoxLocalMainUpdateWorkerOwnership,
+  assertEquinoxLocalSignedMacWorkerNeverStarted,
   inspectWindowsMainUpdateWorkerProcess,
   inspectWindowsOwnedWpfProcess,
   mainUpdateWorkerEnvironment,
@@ -604,4 +605,69 @@ test("signed-native scheduler refuses ambient Node, different release SHA and Wi
   await assert.rejects(scheduleEquinoxLocalMainUpdateWorker({...base,...patch}));
  }
  await assert.rejects(fs.lstat(path.join(stateRoot,"handoff",TX+".plist")),{code:"ENOENT"});
+});
+
+
+test("signed native A/B abandoned launchd admission requires TWO exact service-not-found responses and a healthy user service table",async t=>{
+ const root=await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(),"equinox-native-absence-")));
+ t.after(()=>fs.rm(root,{recursive:true,force:true}));
+ const label="dev.equinox.local.main-update."+TX.slice(5);
+ const calls=[];
+ const absentError=Object.assign(new Error("missing"),{
+  code:113,stderr:'Bad request.\nCould not find service "'+label+'" in domain for user gui: 501\n',
+ });
+ const execFileImpl=async(_file,args)=>{
+  calls.push(args.join(" "));
+  if(args[0]==="print" && args[1]==="gui/501/"+label)throw absentError;
+  if(args[0]==="print" && args[1]==="gui/501")return {stdout:"domain = gui/501"};
+  if(args[0]==="list")return {stdout:"PID\tStatus\tLabel\n-\t0\tcom.apple.SafariHistoryServiceAgent\n"};
+  throw Error("unexpected command");
+ };
+ const result=await assertEquinoxLocalSignedMacWorkerNeverStarted({
+  transactionId:TX,transactionRoot:root,uid:501,currentUid:501,execFileImpl,
+  sleepImpl:async()=>{},
+ });
+ assert.equal(result.absent,true);
+ assert.equal(calls.length,6,"service, domain, list repeated twice");
+ assert.deepEqual(calls.slice(0,3),["print gui/501/"+label,"print gui/501","list"]);
+});
+
+test("signed native launchd absence fails closed for loaded/running/uncertain services and ambiguous command errors",async t=>{
+ const root=await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(),"equinox-native-absence-denial-")));
+ t.after(()=>fs.rm(root,{recursive:true,force:true}));
+ const label="dev.equinox.local.main-update."+TX.slice(5);
+ const absent=Object.assign(new Error("missing"),{code:113,
+  stderr:'Could not find service "'+label+'" in domain for user gui: 501',
+ });
+ const base={transactionId:TX,transactionRoot:root,uid:501,currentUid:501,
+  sleepImpl:async()=>{}};
+ for(const failure of ["loaded","permission","generic","listed","malformed","changed"]){
+  let calls=0;
+  const execFileImpl=async(_file,args)=>{
+   calls++;
+   if(args[0]==="print" && args[1]==="gui/501/"+label){
+    if(failure==="loaded")return {stdout:"state = running"};
+    if(failure==="permission")throw Object.assign(Error("permission"),{code:1,
+      stderr:"Permission denied"});
+    if(failure==="generic")throw Object.assign(Error("error"),{code:113,stderr:"Bad request"});
+    if(failure==="changed" && calls>3)return {stdout:"state = running"};
+    throw absent;
+   }
+   if(args[0]==="print" && args[1]==="gui/501")return {stdout:"domain = gui/501"};
+   if(args[0]==="list")return {stdout:failure==="malformed"?"unexpected":
+    "PID\tStatus\tLabel\n"+(failure==="listed"?"-\t0\t"+label+"\n":"")};
+   throw Error("unexpected");
+  };
+  await assert.rejects(assertEquinoxLocalSignedMacWorkerNeverStarted({...base,execFileImpl}),
+   /cancellation forbidden|not conclusively absent|not unambiguously readable/u);
+ }
+ const handoff=path.join(root,"handoff",TX+".plist");
+ await fs.mkdir(path.dirname(handoff),{recursive:true});
+ await fs.writeFile(handoff,"plisted",{mode:0o600});
+ await assert.rejects(assertEquinoxLocalSignedMacWorkerNeverStarted({...base,
+  execFileImpl:async()=>assert.fail("existing plist prohibits probes"),
+ }),/plist still exists/u);
+ await assert.rejects(assertEquinoxLocalSignedMacWorkerNeverStarted({...base,uid:502,
+  execFileImpl:async()=>assert.fail("foreign uid must not probe"),
+ }),/owning non-root launchd/u);
 });

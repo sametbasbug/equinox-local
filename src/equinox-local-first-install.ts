@@ -1508,6 +1508,7 @@ export async function prepareSignedMainInstallerMacActivation({
   prepareLifecycleImpl,
   scheduleImpl,
   verifyPriorHealthImpl,
+  verifySameShaHealthImpl,
 }:{
   signedPointer:unknown;homeDir?:string;platform?:string;arch?:string;
   env?:NodeJS.ProcessEnv;uid?:number|null;fsImpl?:FsImpl;transactionId?:string;
@@ -1524,6 +1525,7 @@ export async function prepareSignedMainInstallerMacActivation({
     previousSha:string|null;previousRuntimeContractSha256:string|null;
     transactionRoot:string;target:string;
   })=>Promise<boolean>;
+  verifySameShaHealthImpl?:typeof import("./equinox-local-main-update-worker.js").waitForExactNativeMainHealth;
 }) {
   if(platform!=="darwin" || !["arm64","x64"].includes(arch) ||
      typeof homeDir!=="string" || !path.posix.isAbsolute(homeDir) ||
@@ -1534,10 +1536,48 @@ export async function prepareSignedMainInstallerMacActivation({
   }
   const initial=await inspectImpl({signedPointer,homeDir,platform,arch,env,fsImpl});
   if(initial.action==="verify_or_repair") {
-    // Same source SHA is never treated as a new A->B installation. Health
-    // and repair have their own explicit checkpointed branch to implement.
-    return Object.freeze({status:"verify_or_repair_required",sourceSha:initial.sourceSha,
-      target:initial.target,version:initial.version});
+    // A full source SHA is the installation identity, not the displayed
+    // semantic version. A healthy identical SHA is a true no-op: no new
+    // launchd worker, runtime restart or A/B journal is ever created.
+    const expectedRoot=path.posix.join(homeDir,"Library","Application Support","Equinox Local","main-update");
+    if(initial.transactionRoot!==expectedRoot ||
+       initial.target!=="darwin-"+arch ||
+       initial.previousKind!=="main" ||
+       initial.previousSha!==initial.sourceSha ||
+       !/^[a-f0-9]{40}$/u.test(initial.sourceSha) ||
+       !/^[a-f0-9]{64}$/u.test(initial.runtimeContractSha256)){
+      throw new Error("Same-SHA Main verification requires the exact admitted installed native B identity.");
+    }
+    const selected=verifyPointerImpl(signedPointer,{expectedSourceSha:initial.sourceSha});
+    const row=selected.targets.find(item=>item.target===initial.target);
+    if(!row || selected.version!==initial.version ||
+       row.runtimeContractSha256!==initial.runtimeContractSha256){
+      throw new Error("Same-SHA native Main selector does not match the currently installed runtime contract.");
+    }
+    const current=await readPointerImpl(path.posix.join(expectedRoot,"current-native.json"),{
+      transactionRoot:expectedRoot,fsImpl,
+    });
+    if(current.sourceSha!==initial.sourceSha ||
+       current.runtimeContractSha256!==initial.runtimeContractSha256 ||
+       current.target!==initial.target){
+      throw new Error("Same-SHA native Main current identity drifted before health verification.");
+    }
+    const {waitForExactNativeMainHealth:verifyDefault}=
+      await import("./equinox-local-main-update-worker.js");
+    const verify=verifySameShaHealthImpl??verifyDefault;
+    let healthy=false;
+    try{
+      healthy=(await verify({
+        transactionRoot:expectedRoot,sourceSha:initial.sourceSha,
+        target:initial.target,version:initial.version,
+        runtimeContractSha256:initial.runtimeContractSha256,
+      }))===true;
+    }catch{
+      // Failed/unknown runtime health is not proof of a healthy install.
+      // Leave A untouched; an explicit durable repair path is still needed.
+    }
+    return Object.freeze({status:healthy?"already_healthy":"repair_required",
+      sourceSha:initial.sourceSha,target:initial.target,version:initial.version});
   }
   if(initial.action!=="activate" || initial.target!=="darwin-"+arch ||
      initial.transactionRoot!==path.posix.join(homeDir,"Library","Application Support","Equinox Local","main-update") ||
@@ -1694,6 +1734,158 @@ export async function prepareSignedMainInstallerMacActivation({
     target:initial.target,version:initial.version});
 }
 
+// Explicit recovery ONLY for an admitted, not-yet-started signed-native
+// handoff. A failed "launchctl bootstrap" never alone implies absence.
+// No new runtime updater is introduced: this reuses the exact existing
+// signed owner + durable receipt + original launchd scheduler ownership.
+export async function recoverAbandonedSignedMainMacAdmission({
+  transactionId,homeDir=os.homedir(),platform=process.platform,
+  arch=process.arch,uid=process.getuid?.(),env=process.env,fsImpl=fs,
+  inspectImpl=inspectSignedMainInstallerMacActivation,
+  verifyPointerImpl=validateTrustedMainInstallPointer,
+  proveAbsentImpl,
+  verifyPriorHealthImpl,
+}:{
+  transactionId:string;homeDir?:string;platform?:string;arch?:string;
+  uid?:number|null;env?:NodeJS.ProcessEnv;fsImpl?:FsImpl;
+  inspectImpl?:typeof inspectSignedMainInstallerMacActivation;
+  verifyPointerImpl?:typeof validateTrustedMainInstallPointer;
+  proveAbsentImpl?:typeof import("./equinox-local-main-update-scheduler.js").assertEquinoxLocalSignedMacWorkerNeverStarted;
+  verifyPriorHealthImpl?:(args:{
+    previousKind:"stable"|"main";previousVersion:string|null;
+    previousSha:string|null;previousRuntimeContractSha256:string|null;
+    transactionRoot:string;target:string;
+  })=>Promise<boolean>;
+}) {
+  if(platform!=="darwin" || !["arm64","x64"].includes(arch) ||
+     !/^main-[a-f0-9]{32}$/u.test(transactionId) ||
+     typeof homeDir!=="string" || !path.posix.isAbsolute(homeDir) ||
+     path.posix.normalize(homeDir)!==homeDir ||
+     !Number.isSafeInteger(uid)||uid===null||uid===undefined||uid<1) {
+    throw new Error("Abandoned signed Main Mac recovery requires the exact owning user and transaction.");
+  }
+  const root=path.posix.join(homeDir,"Library","Application Support","Equinox Local","main-update");
+  const {data}=await readBoundedNormalFile(path.join(root,"active.json"),{
+    fsImpl,minBytes:100,maxBytes:1024,encoding:"utf8",label:"Active signed native Main owner",
+  });
+  let raw:unknown;
+  try{raw=JSON.parse(data);}catch{throw new Error("Signed native Main active owner is invalid.");}
+  if(!raw||typeof raw!=="object"||Array.isArray(raw) ||
+     Object.keys(raw).sort().join(",")!==
+       ["schemaVersion","kind","transactionId","sourceSha","target","runtimeContractSha256"].sort().join(",")){
+    throw new Error("Main update active owner does not contain an exact signed-native identity.");
+  }
+  const active=raw as Record<string,unknown>;
+  const sha=active.sourceSha,contract=active.runtimeContractSha256,target=active.target;
+  if(active.schemaVersion!==1||active.kind!=="signed-native"||
+     active.transactionId!==transactionId ||
+     typeof sha!=="string"||!/^[a-f0-9]{40}$/u.test(sha) ||
+     typeof contract!=="string"||!/^[a-f0-9]{64}$/u.test(contract)||
+     target!=="darwin-"+arch){
+    throw new Error("Main update active owner differs from this signed native Mac transaction.");
+  }
+  const owner={transactionRoot:root,transactionId,sourceSha:sha,target,
+    runtimeContractSha256:contract};
+  const recovery=await import("./equinox-local-main-native-recovery.js");
+  await recovery.assertEquinoxLocalSignedNativeMacOwner({...owner,fsImpl});
+  if((await recovery.readEquinoxLocalSignedNativeMacReceipt({...owner,fsImpl})).status!=="admitted"){
+    throw new Error("Signed native Main recovery only cancels a never-activated admitted owner.");
+  }
+  const desc=await recovery.readEquinoxLocalMainNativeRecoveryDescriptor({
+    transactionRoot:root,transactionId,fsImpl,
+    expected:{targetSha:sha,target,targetRuntimeContractSha256:contract},
+  });
+  const selectorPath=path.posix.join(root,"native-store",target,sha,"signed-selector.json");
+  const selectorStat=await fsImpl.lstat(selectorPath);
+  if(!selectorStat.isFile()||selectorStat.isSymbolicLink()||
+     selectorStat.nlink!==1||(selectorStat.mode&0o777)!==0o600) {
+    throw new Error("Abandoned signed native selector is not a private normal file.");
+  }
+  const selector=await readBoundedNormalFile(selectorPath,{
+    fsImpl,minBytes:200,maxBytes:16*1024,encoding:"utf8",label:"Stored original production-signed Main pointer",
+  });
+  let rawSelector:unknown;
+  try{rawSelector=JSON.parse(selector.data);}catch{throw new Error("Stored signed Main pointer is invalid.");}
+  const signed=verifyPointerImpl(rawSelector,{expectedSourceSha:sha});
+  const relevant=signed.targets.find(v=>v.target===target);
+  if(!relevant||relevant.runtimeContractSha256!==contract){
+    throw new Error("Stored native B is not authenticated for the abandoned transaction.");
+  }
+  const assertA=async()=>{
+    const current=await inspectImpl({signedPointer:rawSelector,homeDir,platform,arch,env,fsImpl});
+    if(current.action!=="activate" || current.sourceSha!==sha ||
+       current.target!==target || current.runtimeContractSha256!==contract) {
+      throw new Error("Signed native original A/B identity changed since failed handoff.");
+    }
+    if(desc.previous.kind==="stable"){
+      if(current.previousKind!=="stable"||
+         current.previousVersion!==desc.previous.version ||
+         current.previousReleaseDir!==path.posix.join(path.dirname(root),"releases",desc.previous.version)) {
+        throw new Error("Abandoned signed native Stable A does not match the immutable recovery descriptor.");
+      }
+      return {previousKind:"stable" as const,previousVersion:desc.previous.version,
+        previousSha:null,previousRuntimeContractSha256:null,transactionRoot:root,target};
+    }
+    if(current.previousKind!=="main"||
+       current.previousSha!==desc.previous.sourceSha||
+       desc.previous.target!==target ||
+       current.previousReleaseDir!==path.posix.join(root,"native-store",target,desc.previous.sourceSha,"release")){
+      throw new Error("Abandoned signed native A SHA differs from immutable rollback identity.");
+    }
+    const previous=await readEquinoxLocalMainNativePointer(path.posix.join(root,"current-native.json"),{
+      transactionRoot:root,fsImpl,
+    });
+    if(previous.sourceSha!==desc.previous.sourceSha||
+       previous.runtimeContractSha256!==desc.previous.runtimeContractSha256||
+       previous.target!==target) {
+      throw new Error("Abandoned native A runtime contract pointer drifted.");
+    }
+    return {previousKind:"main" as const,previousVersion:null,
+      previousSha:desc.previous.sourceSha,
+      previousRuntimeContractSha256:desc.previous.runtimeContractSha256,
+      transactionRoot:root,target};
+  };
+  const {assertEquinoxLocalSignedMacWorkerNeverStarted:defaultAbsent}=
+    await import("./equinox-local-main-update-scheduler.js");
+  const absent=proveAbsentImpl??defaultAbsent;
+  const absenceInput={transactionId,transactionRoot:root,uid,fsImpl};
+  // Snapshot is not needed: a never-started B has not changed either A
+  // pointer. The worker can later be rejected by terminal CAS even if
+  // a stale scheduler races to start it.
+  await absent(absenceInput);
+  const prior=await assertA();
+  const verify=verifyPriorHealthImpl??(async(input:typeof prior)=>{
+    if(input.previousKind==="stable"){
+      return await waitForEquinoxLocalVersion(input.previousVersion!,{
+        expectedInstallationKind:"managed",
+      });
+    }
+    const stored=await inspectEquinoxLocalMainNativeStoredRelease({
+      transactionRoot:root,sourceSha:input.previousSha!,
+      target,expectedRuntimeContractSha256:input.previousRuntimeContractSha256!,fsImpl,
+    });
+    const {waitForExactNativeMainHealth}=await import("./equinox-local-main-update-worker.js");
+    return await waitForExactNativeMainHealth({
+      transactionRoot:root,sourceSha:input.previousSha!,target,
+      version:stored.payloadVersion,
+      runtimeContractSha256:input.previousRuntimeContractSha256!,
+    });
+  });
+  if((await verify(prior))!==true){
+    throw new Error("Abandoned signed Main Mac original A did not pass exact health; owner retained.");
+  }
+  await absent(absenceInput);
+  await assertA();
+  if((await recovery.readEquinoxLocalSignedNativeMacReceipt({...owner,fsImpl})).status!=="admitted"){
+    throw new Error("Signed native receipt was advanced while proving abandoned ownership.");
+  }
+  await recovery.writeEquinoxLocalSignedNativeMacReceipt({...owner,status:"rolling_back",fsImpl});
+  await recovery.writeEquinoxLocalSignedNativeMacReceipt({...owner,status:"rolled_back",fsImpl});
+  await recovery.releaseEquinoxLocalSignedNativeMacOwner({...owner,fsImpl});
+  return Object.freeze({status:"rolled_back",transactionId,sourceSha:sha,
+    target,originalAHealthy:true,workerNeverStarted:true});
+}
+
 function parseCli(argv:string[]) {
   if ((argv.length !== 2 && argv.length !== 3) || argv[0] !== "--staged-release" || !path.isAbsolute(argv[1]!) ||
       (argv.length === 3 && argv[2] !== "--enroll-existing-main")) {
@@ -1732,9 +1924,29 @@ function parseSignedMainActivateCli(argv:string[]) {
   return {signedPointerFile:argv[2]};
 }
 
+function parseSignedMainRecoverCli(argv:string[]) {
+  if(argv.length!==3 || argv[0]!=="--recover-signed-main" ||
+     argv[1]!=="--transaction-id" ||
+     typeof argv[2]!=="string" || !/^main-[a-f0-9]{32}$/u.test(argv[2])){
+    throw new Error("Signed Main abandoned admission recovery requires one exact transaction id.");
+  }
+  return {transactionId:argv[2]};
+}
+
 const invokedPath = process.argv[1] ? path.resolve(process.argv[1]) : null;
 if (invokedPath && path.basename(invokedPath) === path.basename(fileURLToPath(import.meta.url))) {
-  if (process.argv[2] === "--activate-signed-main") {
+  if (process.argv[2] === "--recover-signed-main") {
+    Promise.resolve().then(async()=>{
+      const input=parseSignedMainRecoverCli(process.argv.slice(2));
+      const result=await recoverAbandonedSignedMainMacAdmission({
+        transactionId:input.transactionId,
+      });
+      process.stdout.write(JSON.stringify(result)+"\n");
+    }).catch(()=>{
+      process.stderr.write("Signed Main abandoned worker recovery denied; owner preserved unless verified safe.\n");
+      process.exitCode=1;
+    });
+  } else if (process.argv[2] === "--activate-signed-main") {
     Promise.resolve().then(async()=>{
       const cli=parseSignedMainActivateCli(process.argv.slice(2));
       const {data}=await readBoundedNormalFile(cli.signedPointerFile,{
@@ -1744,8 +1956,8 @@ if (invokedPath && path.basename(invokedPath) === path.basename(fileURLToPath(im
       const result=await prepareSignedMainInstallerMacActivation({
         signedPointer:JSON.parse(data),
       });
-      if(result.status!=="scheduled"){
-        throw new Error("Same-SHA installation requires health/repair; no native worker was scheduled.");
+      if(result.status!=="scheduled" && result.status!=="already_healthy"){
+        throw new Error("Same-SHA installation requires explicit repair; no native worker was scheduled.");
       }
       process.stdout.write(JSON.stringify(result)+"\n");
     }).catch(()=>{

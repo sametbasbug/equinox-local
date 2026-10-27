@@ -34,18 +34,27 @@ MAIN_ARGS=(--enroll-existing-main)
 PREPARE_MAIN=0
 STAGE_MAIN=0
 ACTIVATE_MAIN=0
+RECOVER_MAIN_TX=""
 for argument in "$@"; do
   case "$argument" in
     --enroll-existing-main) MAIN_ARGS=(--enroll-existing-main) ;;
     --prepare-main) PREPARE_MAIN=1 ;;
     --stage-main) PREPARE_MAIN=1; STAGE_MAIN=1 ;;
     --activate-main) PREPARE_MAIN=1; STAGE_MAIN=1; ACTIVATE_MAIN=1 ;;
+    --recover-main=*) PREPARE_MAIN=1; RECOVER_MAIN_TX="${argument#--recover-main=}" ;;
     --help|-h)
-      printf '%s\n' 'Usage: install-equinox-local.sh [--enroll-existing-main] [--prepare-main] [--stage-main] [--activate-main]' 'The installer verifies the signed bootstrap and enrolls the admitted Main commit by default.' 'Failure preserves the signed bootstrap for recovery; existing settings are retained.'
+      printf '%s\n' 'Usage: install-equinox-local.sh [--enroll-existing-main] [--prepare-main] [--stage-main] [--activate-main] [--recover-main=main-<32-lowercase-hex>]' 'The installer verifies the signed bootstrap and enrolls the admitted Main commit by default.' 'Failure preserves the signed bootstrap for recovery; existing settings are retained.'
       exit 0 ;;
     *) fail "unknown argument: $argument (use --help)" ;;
   esac
 done
+
+if [ -n "$RECOVER_MAIN_TX" ]; then
+  [[ "$RECOVER_MAIN_TX" =~ ^main-[a-f0-9]{32}$ ]] ||
+    fail "signed native admission recovery requires an exact transaction id"
+  [ "$STAGE_MAIN" -eq 0 ] && [ "$ACTIVATE_MAIN" -eq 0 ] ||
+    fail "signed native recovery cannot be combined with staging or activation"
+fi
 
 [ "$(/usr/bin/uname -s)" = "Darwin" ] || fail "macOS is required"
 CURRENT_UID="$(/usr/bin/id -u)"
@@ -151,6 +160,14 @@ prepare_verified_main() {
   /usr/bin/env -i HOME="$HOME_DIR" PATH="/usr/bin:/bin:/usr/sbin:/sbin" "$node" "$inspector" --inspect-signed-main     --staged-release "$candidate" --source-sha "$signed_sha"     --version "$signed_version" --target "$TARGET" \
     --signed-pointer-file "$TEMP_ROOT/main-signed-pointer.json" >/dev/null ||
     fail "Main native release metadata does not match the signed full SHA"
+  if [ -n "$RECOVER_MAIN_TX" ]; then
+    info "checking an abandoned native Main transaction without activating any B"
+    local recovery
+    recovery="$(/usr/bin/env -i HOME="$HOME_DIR" USER="$CURRENT_USER"       LOGNAME="$CURRENT_USER" TMPDIR="/tmp" PATH="/usr/bin:/bin:/usr/sbin:/sbin"       "$node" "$inspector" --recover-signed-main --transaction-id "$RECOVER_MAIN_TX")" ||
+      fail "signed native Main admission recovery requires explicit original A and launchd health proof"
+    printf '%s\n' "$recovery"
+    return 0
+  fi
   if [ "$STAGE_MAIN" -eq 1 ]; then
     /usr/bin/env -i HOME="$HOME_DIR" PATH="/usr/bin:/bin:/usr/sbin:/sbin"       "$node" "$inspector" --stage-signed-main       --signed-pointer-file "$TEMP_ROOT/main-signed-pointer.json" --archive "$archive" ||
       fail "signed Main inactive A/B staging failed; active installation untouched"
@@ -161,7 +178,7 @@ prepare_verified_main() {
     handoff="$(/usr/bin/env -i HOME="$HOME_DIR" USER="$CURRENT_USER" LOGNAME="$CURRENT_USER"       TMPDIR="/tmp" PATH="/usr/bin:/bin:/usr/sbin:/sbin" "$node" "$inspector"       --activate-signed-main --signed-pointer-file "$TEMP_ROOT/main-signed-pointer.json")" ||
       fail "signed native Main handoff rejected or requires recovery; active A/B must be checked"
     printf '%s\n' "$handoff"
-    info "native Main worker scheduled; do not treat scheduling as completed A/B health"
+    info "signed Main response recorded; scheduled A/B work still requires health verification"
   fi
   printf '%s\n' "$receipt"
 }

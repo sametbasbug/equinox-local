@@ -271,6 +271,68 @@ export async function inspectEquinoxLocalMainUpdateWorkerOwnership({ transaction
         return Object.freeze({ loaded: false, running: false, label });
     }
 }
+// A failed launchd bootstrap is NOT evidence of an absent worker. Only
+// accept two explicit service-not-found responses (macOS exit 113) while
+// successfully inspecting the user's actual GUI domain and service table,
+// and with NO scheduled handoff plist. Every other outcome fails closed.
+export async function assertEquinoxLocalSignedMacWorkerNeverStarted({ transactionId, transactionRoot, uid = process.getuid?.(), currentUid = process.getuid?.(), fsImpl = fs, execFileImpl = execFile, sleepImpl = async (ms) => new Promise(resolve => setTimeout(resolve, ms)), }) {
+    const id = assertTransactionId(transactionId);
+    const root = assertAbsolute(transactionRoot, "Signed native Main transaction root", "darwin");
+    if (!Number.isSafeInteger(uid) || !uid || uid < 1 || uid !== currentUid) {
+        throw new Error("Signed native worker absence can only be proven in the owning non-root launchd user session.");
+    }
+    const label = mainUpdateLaunchdLabel(id);
+    const service = "gui/" + uid + "/" + label;
+    const plist = path.join(root, "handoff", id + ".plist");
+    const assertNoPlist = async () => {
+        try {
+            await fsImpl.lstat(plist);
+            throw new Error("Signed native launchd handoff plist still exists; worker absence is not proven.");
+        }
+        catch (error) {
+            if (!hasErrorCode(error, "ENOENT"))
+                throw error;
+        }
+    };
+    for (let attempt = 0; attempt < 2; attempt++) {
+        await assertNoPlist();
+        try {
+            await execFileImpl("/bin/launchctl", ["print", service], {
+                timeout: 5000, maxBuffer: 64 * 1024, encoding: "utf8",
+            });
+            throw new Error("Signed native launchd worker service is loaded; cancellation forbidden.");
+        }
+        catch (error) {
+            const message = String(error?.stderr ?? "");
+            if (error?.code !== 113 ||
+                !message.includes("Could not find service") ||
+                !message.includes('"' + label + '"') ||
+                !message.includes("in domain for user gui: " + uid)) {
+                throw new Error("Signed native launchd service status is not conclusively absent.");
+            }
+        }
+        // A healthy gui domain probe plus a fully readable launchctl service
+        // table is independent confirmation. No parse errors are absence.
+        await execFileImpl("/bin/launchctl", ["print", "gui/" + uid], {
+            timeout: 5000, maxBuffer: 64 * 1024, encoding: "utf8",
+        });
+        const { stdout } = await execFileImpl("/bin/launchctl", ["list"], {
+            timeout: 5000, maxBuffer: 1024 * 1024, encoding: "utf8",
+        });
+        const lines = String(stdout ?? "").split(/\r?\n/u);
+        if (lines[0] !== "PID\tStatus\tLabel" ||
+            lines.slice(1).some(line => line.trim() && line.split("\t").length !== 3)) {
+            throw new Error("Signed native launchd service table is not unambiguously readable.");
+        }
+        if (lines.slice(1).some(line => line.split("\t")[2] === label)) {
+            throw new Error("Signed native launchd worker is listed; cancellation forbidden.");
+        }
+        await assertNoPlist();
+        if (attempt === 0)
+            await sleepImpl(250);
+    }
+    return Object.freeze({ absent: true, transactionId: id, label });
+}
 export async function cleanupEquinoxLocalMainUpdateWorkerOwnership({ transactionId, transactionRoot, platform = process.platform, uid = process.getuid?.(), fsImpl = fs, execFileImpl = execFile, ownershipToken = process.env.EQUINOX_LOCAL_MAIN_WORKER_TOKEN, inspectWorkerImpl = inspectEquinoxLocalMainUpdateWorkerOwnership, readWindowsOwnershipImpl = readWindowsMainUpdateWorkerOwnership, sleepImpl = (ms) => new Promise((resolve) => setTimeout(resolve, ms)), } = {}) {
     transactionId = assertTransactionId(transactionId);
     const stateRoot = assertAbsolute(transactionRoot, "Main update transaction root", platform);
