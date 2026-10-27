@@ -1318,3 +1318,20 @@ jobs:
             gh api --method POST "/repos/$repo/git/refs" -f ref='refs/tags/main-snapshot' -f sha="$TARGET_SHA" >/dev/null
           fi
           echo "Published public exact-SHA Main snapshot objects for $TARGET_SHA and moved tag-only main-snapshot. No GitHub Release was created." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Prune retired exact-SHA R2 archives (protect active SHA and latest eight)
+        if: ${{ steps.latest.outputs.publish == 'true' }}
+        shell: bash
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.EQUINOX_MAIN_R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.EQUINOX_MAIN_R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+          AWS_EC2_METADATA_DISABLED: 'true'
+          AWS_RETRY_MODE: standard
+          AWS_MAX_ATTEMPTS: '8'
+        run: |
+          set -euo pipefail
+          test -n "${AWS_ACCESS_KEY_ID:-}"
+          test -n "${AWS_SECRET_ACCESS_KEY:-}"
+          node scripts/release/prune-main-r2.mjs
+          node scripts/release/prune-main-r2.mjs --apply
