@@ -359,3 +359,93 @@ test("supervisor rejects mismatched configured root and falls back to local-only
   assert.equal(localOnly,1);
   assert.equal(tunnelInit,1,"failed tunnel initialization must not be replayed");
 });
+
+test("native Main supervisor selects exact active SHA B bytes with the existing signed admission instead of numbered Stable",async t=>{
+ const f=await makeFixture({transport:true});
+ t.after(()=>fs.rm(f.root,{recursive:true,force:true}));
+ const sha="b".repeat(40);
+ const target="darwin-"+process.arch;
+ const native=path.join(f.paths.stateRoot,"main-update","native-store",target,sha,"release");
+ await fs.mkdir(path.dirname(native),{recursive:true});
+ await fs.cp(f.releaseDir,native,{recursive:true});
+ await fs.writeFile(path.join(native,"release.json"),JSON.stringify({
+  schemaVersion:1,version:"4.2.0",sourceSha:sha,target,
+  serverEntry:"server.js",
+ }));
+ await fs.unlink(f.paths.currentLink);
+ await fs.symlink(path.relative(f.paths.installRoot,native),f.paths.currentLink,"dir");
+ const calls=[], children=[];
+ const verify=async({baseInstallation})=>{
+  calls.push(baseInstallation.releaseDir);
+  assert.equal(baseInstallation.releaseDir,await fs.realpath(native));
+  assert.equal(baseInstallation.target,target);
+  return {...baseInstallation,kind:"managed-main",sourceSha:sha,mainNativeSha:sha,
+   version:"4.2.0",releaseDir:baseInstallation.releaseDir};
+ };
+ const inspected=await resolveSupervisorRelease(f.paths,{resolveManagedSourceImpl:verify});
+ assert.equal(inspected.releaseDir,await fs.realpath(native));
+ assert.equal(inspected.nativeInstallation.sourceSha,sha);
+ const result=await runManagedSupervisor({
+  homeDir:f.homeDir,
+  sourceEnv:{EQUINOX_LOCAL_INSTALL_ROOT:f.paths.installRoot,USER:"example"},
+  resolveManagedSourceImpl:verify,
+  execFileImpl:async(...args)=>calls.push(args),
+  runChildImpl:async(...args)=>{children.push(args);return {code:0,signal:null,terminatingSignal:"SIGTERM"}},
+ });
+ assert.equal(result.mode,"tunnel");
+ assert.equal(calls.length,3,"production auth before transport, once per supervisor startup");
+ const nativeReal=await fs.realpath(native);
+ assert.equal(children[0][0],path.join(nativeReal,"runtime","tunnel","tunnel-client"));
+ assert.equal(children[0][2].env.EQUINOX_LOCAL_RELEASE_DIR,nativeReal);
+ assert.equal(children[0][2].cwd,nativeReal);
+ assert.equal(calls[2][0],path.join(nativeReal,"runtime","tunnel","tunnel-client"));
+ const tunnelArgs=calls[2][1];
+ const mcp=tunnelArgs[tunnelArgs.indexOf("--mcp-command")+1];
+ assert.ok(mcp.includes(path.join(nativeReal,"runtime","node","bin","node")));
+ assert.ok(mcp.includes(path.join(nativeReal,"server.js")));
+ assert.equal(mcp.includes(path.join(f.releaseDir,"server.js")),false,"must not silently boot Stable A");
+});
+
+test("native Main supervisor refuses unsigned SHA alias and wrong source/version/architecture before launching",async t=>{
+ const f=await makeFixture();
+ t.after(()=>fs.rm(f.root,{recursive:true,force:true}));
+ const sha="c".repeat(40);
+ const native=path.join(f.paths.stateRoot,"main-update","native-store","darwin-"+process.arch,sha,"release");
+ await fs.mkdir(path.dirname(native),{recursive:true});
+ await fs.cp(f.releaseDir,native,{recursive:true});
+ await fs.writeFile(path.join(native,"release.json"),JSON.stringify({
+  schemaVersion:1,version:"4.2.0",target:"darwin-"+process.arch,sourceSha:sha,serverEntry:"server.js",
+ }));
+ await fs.unlink(f.paths.currentLink);
+ await fs.symlink(path.relative(f.paths.installRoot,native),f.paths.currentLink);
+ const unsigned=async()=>({kind:"managed",releaseDir:native});
+ await assert.rejects(resolveSupervisorRelease(f.paths,{resolveManagedSourceImpl:unsigned}),/not admitted/u);
+ // The actual production verifier must not admit the synthetic unsigned B.
+ await assert.rejects(resolveSupervisorRelease(f.paths),/no verified Main install stamp|signed native selector|native Main runtime|state directory is not private/u);
+ let attempts=0;
+ const admitted=async({baseInstallation})=>{
+  attempts++;
+  return {...baseInstallation,kind:"managed-main",sourceSha:sha,mainNativeSha:sha,version:"4.2.0"};
+ };
+ assert.equal((await resolveSupervisorRelease(f.paths,{resolveManagedSourceImpl:admitted})).releaseDir,await fs.realpath(native));
+ for(const change of [
+  {sourceSha:"d".repeat(40)},
+  {mainNativeSha:"d".repeat(40)},
+  {version:"4.2.1"},
+  {releaseDir:path.join(f.paths.releasesRoot,"4.2.0")},
+ ]){
+  await assert.rejects(resolveSupervisorRelease(f.paths,{
+   resolveManagedSourceImpl:async({baseInstallation})=>({...baseInstallation,kind:"managed-main",
+    sourceSha:sha,mainNativeSha:sha,version:"4.2.0",...change}),
+  }),/not admitted|metadata is invalid/u);
+ }
+ await fs.writeFile(path.join(native,"release.json"),JSON.stringify({
+  schemaVersion:1,version:"4.2.0",sourceSha:"d".repeat(40),target:"darwin-"+process.arch,serverEntry:"server.js",
+ }));
+ await assert.rejects(resolveSupervisorRelease(f.paths,{resolveManagedSourceImpl:admitted}),/metadata is invalid/u);
+ await fs.unlink(f.paths.currentLink);
+ const foreign=path.join(f.root,"foreign");
+ await fs.mkdir(foreign);
+ await fs.symlink(foreign,f.paths.currentLink);
+ await assert.rejects(resolveSupervisorRelease(f.paths,{resolveManagedSourceImpl:async()=>assert.fail("foreign path must not resolve")}),/escaped the releases root/u);
+});

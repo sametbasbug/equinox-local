@@ -126,6 +126,7 @@ export async function resolveEquinoxLocalManagedSourceInstallation({
     return Object.freeze({
       ...baseInstallation,kind:"managed-main",channel:"main",
       sourceSha:signed.sourceSha,mainNativeSha:signed.sourceSha,
+      version:signed.version,
       mainTransactionRoot:paths.mainTransactionRoot,
       mainUpdateSupported:false,
       mainUpdateReason:"The unified signed installer owns Main updates.",

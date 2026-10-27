@@ -63,17 +63,46 @@ async function assertNormalFile(filePath, label, { executable = false, maxBytes 
         throw new Error(`${label} must be executable.`);
     return stat;
 }
-export async function resolveSupervisorRelease(paths) {
+export async function resolveSupervisorRelease(paths, { platform = process.platform, arch = process.arch, sourceEnv = process.env, resolveManagedSourceImpl = resolveEquinoxLocalManagedSourceInstallation, } = {}) {
     const link = await fs.lstat(paths.currentLink);
     if (!link.isSymbolicLink())
         throw new Error("Managed current pointer must be a symbolic link.");
-    const releasesRoot = await fs.realpath(paths.releasesRoot);
     const releaseDir = await fs.realpath(paths.currentLink);
-    if (!inside(releasesRoot, releaseDir) || path.dirname(releaseDir) !== releasesRoot) {
-        throw new Error("Managed current pointer escaped the releases root.");
+    const nativeTarget = equinoxLocalUpdateTarget({ platform, arch });
+    // macOS /var can resolve to /private/var; compare both sides after
+    // canonicalization, while the existing signed runtime verifier still
+    // validates the original fixed per-user transaction root.
+    const nativeRoot = path.posix.join(await fs.realpath(paths.stateRoot), "main-update", "native-store", nativeTarget);
+    const relativeNative = path.posix.relative(nativeRoot, releaseDir).split(path.posix.sep);
+    const nativeSha = relativeNative.length === 2 && /^[a-f0-9]{40}$/u.test(relativeNative[0] ?? "") &&
+        relativeNative[1] === "release" ? relativeNative[0] : null;
+    let nativeInstallation;
+    if (nativeSha) {
+        // This is a distinct branch from Stable. The existing production-root
+        // signed selector and current-native fingerprinted pointer MUST admit
+        // the actual release before any Node, tunnel or local server executes.
+        const installation = await resolveManagedSourceImpl({
+            baseInstallation: {
+                kind: "managed", managed: true, selfUpdateSupported: true,
+                platform, arch, target: nativeTarget, installRoot: paths.installRoot,
+                releasesRoot: paths.releasesRoot, releaseDir,
+            },
+            platform, arch, homeDir: paths.homeDir, env: sourceEnv,
+        });
+        if (installation?.kind !== "managed-main" ||
+            installation.sourceSha !== nativeSha ||
+            installation.mainNativeSha !== nativeSha ||
+            installation.releaseDir !== releaseDir) {
+            throw new Error("Supervisor native Main SHA was not admitted by the production-signed runtime identity.");
+        }
+        nativeInstallation = installation;
     }
-    const version = path.basename(releaseDir);
-    parseEquinoxVersion(version);
+    else {
+        const releasesRoot = await fs.realpath(paths.releasesRoot);
+        if (!inside(releasesRoot, releaseDir) || path.dirname(releaseDir) !== releasesRoot) {
+            throw new Error("Managed current pointer escaped the releases root.");
+        }
+    }
     const metadataPath = path.join(releaseDir, "release.json");
     const { data: metadataText } = await readBoundedNormalFile(metadataPath, {
         minBytes: 1,
@@ -82,14 +111,19 @@ export async function resolveSupervisorRelease(paths) {
         label: "Release metadata",
     });
     const metadata = JSON.parse(metadataText);
-    const expectedTarget = equinoxLocalUpdateTarget();
+    const expectedTarget = nativeTarget;
     if (metadata?.schemaVersion !== 1 ||
-        metadata?.version !== version ||
+        (nativeInstallation
+            ? (metadata?.sourceSha !== nativeSha ||
+                metadata?.version !== nativeInstallation.version)
+            : metadata?.version !== path.basename(releaseDir)) ||
         metadata?.target !== expectedTarget ||
         (metadata?.nativeAppShellVersion !== undefined && (!Number.isSafeInteger(metadata.nativeAppShellVersion) || metadata.nativeAppShellVersion < 1)) ||
         metadata?.serverEntry !== "server.js") {
         throw new Error(`Managed release metadata is invalid for ${expectedTarget}.`);
     }
+    const version = metadata.version;
+    parseEquinoxVersion(version);
     for (const relative of [
         path.join("runtime", "node", "bin", "node"),
         path.join("runtime", "tunnel", "tunnel-client"),
@@ -98,7 +132,9 @@ export async function resolveSupervisorRelease(paths) {
         await assertNormalFile(path.join(releaseDir, relative), `Runtime ${relative}`, { executable: true });
     }
     await assertNormalFile(path.join(releaseDir, "server.js"), "Equinox Local server");
-    return Object.freeze({ version, releaseDir, metadata: Object.freeze({ ...metadata }) });
+    return Object.freeze({ version, releaseDir, metadata: Object.freeze({ ...metadata }),
+        ...(nativeInstallation ? { nativeInstallation } : {}),
+    });
 }
 export async function readSupervisorTransport(paths, { platform = process.platform, verifyWindowsAcl = verifyWindowsPrivateStateAcl, } = {}) {
     let text;
@@ -210,17 +246,25 @@ export async function runManagedSupervisor({ platform = process.platform, arch =
     if (configuredRoot && path.resolve(configuredRoot) !== paths.installRoot) {
         throw new Error("Managed supervisor install root does not match the per-user Equinox Local location.");
     }
-    const release = await resolveSupervisorRelease(paths);
-    const logicalReleaseDir = path.join(paths.releasesRoot, release.version);
+    const release = await resolveSupervisorRelease(paths, {
+        platform, arch, sourceEnv, resolveManagedSourceImpl,
+    });
+    const logicalReleaseDir = release.nativeInstallation
+        ? release.releaseDir
+        : path.join(paths.releasesRoot, release.version);
     const baseInstallation = Object.freeze({
         kind: "managed", managed: true, selfUpdateSupported: true,
         platform, arch, target: lifecycle.host.target, lifecycleKind: lifecycle.kind,
         installRoot: paths.installRoot, releasesRoot: paths.releasesRoot, releaseDir: logicalReleaseDir,
     });
-    const installation = await resolveManagedSourceImpl({
+    const installation = release.nativeInstallation ?? await resolveManagedSourceImpl({
         baseInstallation, platform, arch, homeDir, env: sourceEnv,
     });
     const managedSource = installation?.kind === "managed-source";
+    const managedMain = installation?.kind === "managed-main";
+    if (managedMain && (!release.nativeInstallation || installation.releaseDir !== release.releaseDir)) {
+        throw new Error("Supervisor rejected native Main without matching signed release admission.");
+    }
     const sourceRoot = managedSource ? path.resolve(installation.sourceRoot) : release.releaseDir;
     const serverPath = managedSource ? path.join(sourceRoot, "src", "server.js") : path.join(release.releaseDir, "server.js");
     if (managedSource) {
