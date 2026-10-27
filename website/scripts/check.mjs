@@ -33,7 +33,10 @@ for (const file of required) await fs.access(path.join(root, file));
 const htmlFiles = required.filter((file) => file.endsWith('.html'));
 for (const file of htmlFiles) {
   const text = await fs.readFile(path.join(root, file), 'utf8');
-  if (!text.includes('https://local.sametbasbug.dev')) throw new Error(`${file}: canonical/local URL missing`);
+  const canonical = /<link\s+rel="canonical"\s+href="([^"]+)"/u.exec(text)?.[1];
+  if (!canonical || new URL(canonical).origin !== 'https://local.sametbasbug.dev') {
+    throw new Error(`${file}: canonical/local URL missing or wrong origin`);
+  }
   if (/https:\/\/(fonts|www\.google-analytics|googletagmanager|cdn\.jsdelivr|unpkg)\./u.test(text)) {
     throw new Error(`${file}: forbidden third-party runtime dependency`);
   }
@@ -146,11 +149,14 @@ for (const file of htmlFiles) {
     if (url.origin !== currentUrl.origin) continue;
     const pathname = decodeURIComponent(url.pathname);
     const asset = path.join(root, pathname.endsWith('/') ? pathname + 'index.html' : pathname);
-    await fs.access(asset).catch(() => { throw new Error(`${file}: missing local target ${match[1]}`); });
     if (url.hash && asset.endsWith('.html')) {
-      const targetHtml = await fs.readFile(asset, 'utf8');
+      const targetHtml = await fs.readFile(asset, 'utf8').catch(() => {
+        throw new Error(`${file}: missing local target ${match[1]}`);
+      });
       const id = decodeURIComponent(url.hash.slice(1));
       if (!targetHtml.includes(`id="${id}"`)) throw new Error(`${file}: missing fragment ${match[1]}`);
+    } else {
+      await fs.access(asset).catch(() => { throw new Error(`${file}: missing local target ${match[1]}`); });
     }
   }
 }
@@ -158,14 +164,20 @@ for (const file of htmlFiles) {
 // Pass-through downloads and Store review documents must be byte-for-byte unchanged by Astro.
 async function assertCopied(relative) {
   const source = path.join('site', relative);
-  const stat = await fs.stat(source);
-  if (stat.isDirectory()) {
-    for (const child of await fs.readdir(source)) await assertCopied(path.join(relative, child));
-  } else {
-    const before = await fs.readFile(source);
-    const after = await fs.readFile(path.join(root, relative));
-    if (!before.equals(after)) throw new Error(`pass-through asset changed: ${relative}`);
+  // Read without a separate stat-before-read check; avoid a path-swap race.
+  let children;
+  try {
+    children = await fs.readdir(source);
+  } catch (error) {
+    if (error.code !== 'ENOTDIR') throw error;
   }
+  if (children) {
+    for (const child of children) await assertCopied(path.join(relative, child));
+    return;
+  }
+  const before = await fs.readFile(source);
+  const after = await fs.readFile(path.join(root, relative));
+  if (!before.equals(after)) throw new Error(`pass-through asset changed: ${relative}`);
 }
 await assertCopied('downloads');
 await assertCopied('reviewer');
