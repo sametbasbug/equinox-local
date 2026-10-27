@@ -2,6 +2,7 @@ import { sign as signBytes, verify as verifyBytes, type KeyObject } from "node:c
 
 import { validateEquinoxLocalMainNativeArtifactManifest } from "./equinox-local-main-native-admission.js";
 import { EQUINOX_LOCAL_SUPPORTED_RELEASE_TARGETS } from "./equinox-local-platform.js";
+import { EQUINOX_LOCAL_UPDATE_KEYS } from "./equinox-local-update-keys.js";
 import { parseEquinoxVersion } from "./equinox-local-updater.js";
 
 const SHA = /^[a-f0-9]{40}$/u;
@@ -178,5 +179,16 @@ export function validateSignedMainInstallPointer(value: unknown, {
       keyId: signature.keyId,
       value: signature.value,
     }),
+  });
+}
+
+// Production consumers never accept a caller-provided trust root. Only this
+// pinned, append-only update-key registry may authorize the Main channel.
+export function validateTrustedMainInstallPointer(
+  value: unknown, { expectedSourceSha }: { expectedSourceSha?: string } = {},
+): SignedPointer {
+  return validateSignedMainInstallPointer(value, {
+    publicKeys: EQUINOX_LOCAL_UPDATE_KEYS,
+    ...(expectedSourceSha === undefined ? {} : { expectedSourceSha }),
   });
 }

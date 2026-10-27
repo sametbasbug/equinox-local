@@ -1218,7 +1218,25 @@ try {
     Assert-True $Staged 'Verified product Git source and signed native B failed independently owned positive staging.'
     $StageValue = ConvertFrom-Json ([IO.File]::ReadAllText($PositiveJournal))
     $StageReceipt = ConvertFrom-Json ([IO.File]::ReadAllText($PositiveCommit))
-    $CancelReceipt = ConvertFrom-Json ([IO.File]::ReadAllText($PositiveAbortCommit))
+    # The independently owned Guardian can briefly hold its just-published
+    # cancellation receipt with an exclusive Windows handle. Retry only this
+    # hosted fixture READ; never rerun the Guardian action, weaken evidence or
+    # infer acceptance from file existence alone.
+    $CancelReceipt = $null
+    for ($ReadTry = 0; $ReadTry -lt 48; $ReadTry++) {
+      try {
+        $CancelReceipt = ConvertFrom-Json ([IO.File]::ReadAllText($PositiveAbortCommit))
+        break
+      } catch {
+        # Windows PowerShell wraps the static .NET read IOException in a
+        # MethodInvocationException. Never retry JSON/security errors.
+        if ($_.Exception -isnot [IO.IOException] -and
+            $_.Exception.InnerException -isnot [IO.IOException]) { throw }
+        if ($ReadTry -eq 47 -or $PositiveGuardian.HasExited) { throw }
+        Start-Sleep -Milliseconds 125
+      }
+    }
+    Assert-True ($null -ne $CancelReceipt) 'Positive Guardian cancellation receipt was not read and validated.'
     Assert-True ($StageValue.stage -ceq 'rollback_started' -and $StageValue.sequence -eq 2 -and
       $StageValue.targetSha -ceq $FixtureSourceSha -and
       $StageReceipt.stage -ceq 'native_staged' -and $StageReceipt.sequence -eq 1 -and
