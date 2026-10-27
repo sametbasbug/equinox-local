@@ -1834,3 +1834,56 @@ test("first-install signed-activation CLI refuses unsigned pointer and malformed
  }
  await assert.rejects(fs.lstat(path.join(home,"Library")),{code:"ENOENT"});
 });
+
+
+test("signed Mac coordinator preserves ORIGINAL native A full SHA and runtime contract in immutable rollback descriptor",async t=>{
+ const f=await signedMacInstallerCoordinatorFixture(t);
+ const prevSha="a".repeat(40),prevContract="a".repeat(64);
+ const nativeA=path.join(f.root,"native-store","darwin-arm64",prevSha,"release");
+ await fs.mkdir(nativeA,{recursive:true,mode:0o700});
+ await fs.unlink(f.current);
+ await fs.symlink(path.relative(path.dirname(f.current),nativeA),f.current);
+ const originalInspector=f.opts.inspectImpl;
+ const previous=await originalInspector({signedPointer:f.signedPointer});
+ const mainIdentity={...previous,action:"activate",previousKind:"main",previousSha:prevSha,
+  previousVersion:null,previousReleaseDir:nativeA};
+ f.events.length=0;
+ const events=[];
+ const result=await prepareSignedMainInstallerMacActivation({...f.opts,
+  inspectImpl:async()=>mainIdentity,
+  readPointerImpl:async()=>{
+   events.push("read native A pointer");
+   return {sourceSha:prevSha,target:"darwin-arm64",
+    runtimeContractSha256:prevContract,releaseDir:nativeA};
+  },
+  prepareLifecycleImpl:async args=>{
+   events.push("native A/B snapshot");
+   assert.equal(args.transition.currentSha,prevSha);
+   assert.equal(args.transition.currentRuntimeContractSha256,prevContract);
+   const {readEquinoxLocalMainNativeRecoveryDescriptor}=await import("../../src/equinox-local-main-native-recovery.js");
+   const d=await readEquinoxLocalMainNativeRecoveryDescriptor({
+    transactionRoot:f.root,transactionId:f.tx});
+   assert.deepEqual(d.previous,{kind:"main",sourceSha:prevSha,
+    target:"darwin-arm64",runtimeContractSha256:prevContract});
+   assert.equal(await fs.realpath(f.current),nativeA);
+  },
+  scheduleImpl:async()=>{events.push("schedule native B");return {scheduled:true}},
+ });
+ assert.equal(result.status,"scheduled");
+ assert.deepEqual(events,["read native A pointer","native A/B snapshot","schedule native B"]);
+ assert.equal(await fs.realpath(f.current),nativeA);
+});
+
+test("signed Mac coordinator refuses native A pointer SHA drift before creating descriptor or acquiring owner",async t=>{
+ const f=await signedMacInstallerCoordinatorFixture(t);
+ const previous=await f.opts.inspectImpl({signedPointer:f.signedPointer});
+ f.events.length=0;
+ await assert.rejects(prepareSignedMainInstallerMacActivation({...f.opts,
+  inspectImpl:async()=>({...previous,previousKind:"main",
+   previousSha:"a".repeat(40),previousVersion:null,
+   previousReleaseDir:path.join(f.root,"native-store","darwin-arm64","a".repeat(40),"release")}),
+  readPointerImpl:async()=>({sourceSha:"f".repeat(40),target:"darwin-arm64",
+   runtimeContractSha256:"a".repeat(64)}),
+ }),/previous native A pointer drifted/u);
+ await assert.rejects(fs.lstat(path.join(f.root,"active.json")),{code:"ENOENT"});
+});
