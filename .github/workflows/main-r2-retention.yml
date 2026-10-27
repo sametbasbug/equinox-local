@@ -1,0 +1,40 @@
+name: Prune Main R2 snapshots
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: equinox-local-main-snapshot-publish
+  cancel-in-progress: false
+
+jobs:
+  prune:
+    name: Retain safe Main snapshots
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.EQUINOX_MAIN_R2_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.EQUINOX_MAIN_R2_SECRET_ACCESS_KEY }}
+      AWS_DEFAULT_REGION: auto
+      AWS_EC2_METADATA_DISABLED: 'true'
+      AWS_RETRY_MODE: standard
+      AWS_MAX_ATTEMPTS: '8'
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 26.12.1
+      - name: Preflight R2 inventory and protected Main references
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${AWS_ACCESS_KEY_ID:-}"
+          test -n "${AWS_SECRET_ACCESS_KEY:-}"
+          aws --version
+          node --test tests/release/main-r2-retention.test.js
+          node scripts/release/prune-main-r2.mjs
+      - name: Prune only expired exact-SHA archives after revalidating Main references
+        run: node scripts/release/prune-main-r2.mjs --apply
