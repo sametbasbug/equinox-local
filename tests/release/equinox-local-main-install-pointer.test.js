@@ -158,12 +158,18 @@ test("existing private-key signer CLI loads only bounded normal Main manifests a
     const run = promisify(execFile);
     const { stdout } = await run(process.execPath, args, { timeout: 12_000 });
     assert.match(stdout, /Signed Main pointer created/u);
-    assert.equal((await fs.stat(output)).mode & 0o777, 0o600);
-    const pointer = JSON.parse(await fs.readFile(output, "utf8"));
-    validateSignedMainInstallPointer(pointer, {
-      publicKeys: { "ephemeral-test": publicKey.export({ type: "spki", format: "pem" }) },
-      expectedSourceSha: SHA,
-    });
+    // Inspect permission bits and bytes on one pinned handle, never stat-then-reopen.
+    const saved = await fs.open(output, "r");
+    try {
+      assert.equal((await saved.stat()).mode & 0o777, 0o600);
+      const pointer = JSON.parse(await saved.readFile("utf8"));
+      validateSignedMainInstallPointer(pointer, {
+        publicKeys: { "ephemeral-test": publicKey.export({ type: "spki", format: "pem" }) },
+        expectedSourceSha: SHA,
+      });
+    } finally {
+      await saved.close();
+    }
     await assert.rejects(run(process.execPath, args, { timeout: 12_000 }), /EEXIST/u);
     await fs.rm(output);
     const suspect = path.join(root, "equinox-local-main-" + SHA + "-darwin-arm64.json");
