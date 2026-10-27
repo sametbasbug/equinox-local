@@ -672,3 +672,42 @@ test("Doctor tool registration returns bounded errors through the injected error
   assert.deepEqual(response,{isError:true,error:"synthetic-diagnostic-failure"});
   assert.equal(inspected,1);
 });
+
+
+test("Git-free Main Doctor verifies exact signed SHA and running version without touching legacy Git/Stable pointers",async t=>{
+ const home=await fs.mkdtemp(path.join(os.tmpdir(),"equinox-doctor-signed-main-"));
+ t.after(()=>fs.rm(home,{recursive:true,force:true}));
+ const installRoot=path.join(home,"Library","Application Support","Equinox Local");
+ const transactionRoot=path.join(installRoot,"main-update");
+ const sha="e".repeat(40), target="darwin-arm64";
+ const releaseDir=path.join(transactionRoot,"native-store",target,sha,"release");
+ const workspace=path.join(home,"workspace");
+ await fs.mkdir(workspace,{recursive:true,mode:0o700});
+ const current=path.join(transactionRoot,"current-native.json");
+ let nativeReads=0;
+ const input={
+  installation:{kind:"managed-main",managed:true,selfUpdateSupported:true,platform:"darwin",arch:"arm64",
+   target,installRoot,mainTransactionRoot:transactionRoot,releaseDir,sourceSha:sha,mainNativeSha:sha,
+   launchAgentLabel:"dev.equinox.local",launchAgentPath:path.join(home,"Library","LaunchAgents","dev.equinox.local.plist")},
+  config:{version:1,runtime:{workspaceProject:"workspace"},projects:{workspace:{root:workspace}}},
+  runtimeHealthState:"HEALTHY",runtimeVersion:"6.2.1",
+  host:{platform:"darwin",arch:"arm64",target,displayName:"macOS"},
+  browser:{ready:false},
+  readCurrentReleaseImpl:async()=>assert.fail("Git-free native release must not read legacy Stable"),
+  readMainSourcePointerImpl:async()=>assert.fail("Git-free native release must not use Git checkout"),
+  readMainNativePointerImpl:async(pointer)=>{
+   nativeReads++;
+   assert.equal(pointer,current);
+   return {sourceSha:sha,target,releaseDir,payloadVersion:"6.2.1"};
+  },
+ };
+ const good=await getEquinoxLocalDoctorStatus(input);
+ assert.equal(good.checks.find(x=>x.id==="release")?.status,"pass");
+ assert.match(good.checks.find(x=>x.id==="release")?.detail ?? "",/Signed Main e{12} native 6\.2\.1/u);
+ assert.equal(nativeReads,1);
+ const wrongVersion=await getEquinoxLocalDoctorStatus({...input,runtimeVersion:"6.2.0"});
+ assert.equal(wrongVersion.checks.find(x=>x.id==="release")?.status,"attention");
+ const wrongSha=await getEquinoxLocalDoctorStatus({...input,
+  readMainNativePointerImpl:async()=>({sourceSha:"a".repeat(40),target,releaseDir,payloadVersion:"6.2.1"})});
+ assert.equal(wrongSha.checks.find(x=>x.id==="release")?.status,"attention");
+});

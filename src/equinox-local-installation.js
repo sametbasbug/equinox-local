@@ -67,12 +67,9 @@ export function resolveEquinoxLocalInstallation({ platform = process.platform, a
     // bundle just to satisfy the bootstrap path contract. The async
     // managed-source resolver MUST authenticate this native SHA/pointer before
     // admitting a running server.
-    const mainNativeTargetRoot = pathApi.join(installRoot, "state", "main-update", "native-store", lifecycle.host.target);
-    const mainRelative = platform === "win32"
-        ? pathApi.relative(mainNativeTargetRoot, releaseDir)
-        : "";
-    const mainSegments = mainRelative.split(pathApi.sep);
-    const mainNativeSha = platform === "win32" && mainSegments.length === 2 &&
+    const mainNativeTargetRoot = pathApi.join(installRoot, ...(platform === "win32" ? ["state"] : []), "main-update", "native-store", lifecycle.host.target);
+    const mainSegments = pathApi.relative(mainNativeTargetRoot, releaseDir).split(pathApi.sep);
+    const mainNativeSha = mainSegments.length === 2 &&
         /^[a-f0-9]{40}$/u.test(mainSegments[0] ?? "") && mainSegments[1] === "release"
         ? mainSegments[0] : null;
     if ((!isInside(releasesRoot, releaseDir, pathApi) || releaseDir === releasesRoot) && !mainNativeSha) {

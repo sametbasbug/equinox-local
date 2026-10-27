@@ -356,7 +356,9 @@ export async function createEquinoxLocalRuntime({ platform = process.platform, a
     });
     const equinoxLocalUpdater = createEquinoxLocalUpdater({
         currentVersion: SERVER_VERSION,
-        installation: equinoxLocalInstallation,
+        installation: equinoxLocalInstallation.kind === "managed-main"
+            ? { ...equinoxLocalInstallation, selfUpdateSupported: false }
+            : equinoxLocalInstallation,
         publicKeys: EQUINOX_LOCAL_UPDATE_KEYS,
     });
     const equinoxLocalUpdateCoordinator = createEquinoxLocalUpdateCoordinator({
@@ -373,6 +375,11 @@ export async function createEquinoxLocalRuntime({ platform = process.platform, a
     });
     const equinoxMainChannelNotice = createEquinoxLocalMainChannelNotice();
     const checkInstalledChannelForUpdates = async ({ force = false } = {}) => {
+        if (equinoxLocalInstallation.kind === "managed-main") {
+            // Direct Main only accepts full-SHA signed native installer updates.
+            // Never fall back to a manually numbered Stable release here.
+            return;
+        }
         if (["source", "managed-source"].includes(equinoxLocalInstallation.kind)) {
             await equinoxLocalMainUpdateDiscovery.check({ force });
         }
@@ -2120,7 +2127,12 @@ export async function createEquinoxLocalRuntime({ platform = process.platform, a
                 },
                 installation: {
                     kind: equinoxLocalInstallation.kind,
-                    sourceSha: equinoxLocalInstallation.kind === "managed-source" ? equinoxLocalInstallation.sourceSha : null,
+                    sourceSha: ["managed-source", "managed-main"].includes(equinoxLocalInstallation.kind)
+                        ? equinoxLocalInstallation.sourceSha : null,
+                    ...(equinoxLocalInstallation.mainNativeSha
+                        ? { mainNativeSha: equinoxLocalInstallation.mainNativeSha,
+                            target: equinoxLocalInstallation.target }
+                        : {}),
                 },
                 chatgptConnection,
                 config: {
@@ -2247,9 +2259,14 @@ export async function createEquinoxLocalRuntime({ platform = process.platform, a
                 equinoxLocalMainApplyController.resetError();
             return getCombinedUpdateStatus();
         },
-        applyUpdate: async () => withMutationLocks(["local-update"], async () => (equinoxLocalInstallation.kind === "managed-source"
-            ? equinoxLocalMainApplyController.apply()
-            : equinoxLocalUpdateCoordinator.apply())),
+        applyUpdate: async () => withMutationLocks(["local-update"], async () => {
+            if (equinoxLocalInstallation.kind === "managed-main") {
+                throw Object.assign(new Error("Direct Main updates require the signed external installer handoff; legacy Stable activation is disabled."), { statusCode: 503 });
+            }
+            return equinoxLocalInstallation.kind === "managed-source"
+                ? equinoxLocalMainApplyController.apply()
+                : equinoxLocalUpdateCoordinator.apply();
+        }),
         chooseFolder: chooseLocalFolder,
         openAgentBrowser: async () => withMutationLocks(["browser:agent"], async () => (equinoxAgentBrowser.launch({ setup: false }))),
         updateBrowserSettings: async (settings) => {

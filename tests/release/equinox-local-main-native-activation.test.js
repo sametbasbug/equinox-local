@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
+import {generateKeyPairSync} from "node:crypto";
 import test from "node:test";
 
 import { prepareEquinoxLocalMainNativeLifecycle } from "../../src/equinox-local-main-native-activation.js";
+import { createSignedMainInstallPointer, validateSignedMainInstallPointer } from "../../src/equinox-local-main-install-pointer.js";
 
 const A = "1".repeat(40);
 const B = "2".repeat(40);
@@ -160,4 +162,100 @@ test("Windows Main accepted supervisor can reach only the journal-bound native l
   });
   assert.equal(result, lifecycle);
   assert.deepEqual(calls, ["promote", "pointer", "descriptor", "supervisor-lifecycle"]);
+});
+
+
+function signedDurableFixture(target="darwin-arm64"){
+ const {privateKey,publicKey}=generateKeyPairSync("ed25519");
+ const signedPointer=createSignedMainInstallPointer({
+  sourceSha:B,version:"5.2.1",publishedAt:"2026-10-27T22:00:00.000Z",
+  nativeManifests:["darwin-arm64","darwin-x64","win32-arm64","win32-x64"].map(arch=>({
+   schemaVersion:1,channel:"main",sourceSha:B,target:arch,runtimeContractSha256:DB,
+   artifact:{name:"equinox-local-main-"+B+"-"+arch+(arch.startsWith("win32-")?".zip":".tar.gz"),
+    sha256:"d".repeat(64),bytes:42},
+  })),keyId:"unit-temporary",privateKey,
+ });
+ const verifySignedPointerImpl=(raw,opts)=>validateSignedMainInstallPointer(raw,{
+  ...opts,publicKeys:{"unit-temporary":publicKey.export({type:"spki",format:"pem"})},
+ });
+ const storedCandidate={sourceSha:B,target,runtimeContractSha256:DB,
+  artifactSha256:"d".repeat(64),artifactBytes:42,payloadVersion:"5.2.1"};
+ const releaseDir=ROOT+"/native-store/"+target+"/"+B+"/release";
+ const durable={sourceSha:B,target,runtimeContractSha256:DB,releaseDir,payloadVersion:"5.2.1",
+  manifest:{artifactSha256:"d".repeat(64),artifactBytes:42}};
+ return {signedPointer,verifySignedPointerImpl,storedCandidate,durable};
+}
+
+test("macOS native A/B lifecycle accepts ONLY production-root signed pre-staged immutable B without re-promoting or switching prematurely",async()=>{
+ const f=signedDurableFixture();
+ const events=[];
+ const options={
+  transition:transition("darwin-arm64"),
+  storedCandidate:f.storedCandidate,signedPointer:f.signedPointer,
+  verifySignedPointerImpl:f.verifySignedPointerImpl,
+  transactionRoot:ROOT,transactionId:TX,
+  installation:{managed:true,selfUpdateSupported:true,target:"darwin-arm64",
+    installRoot:"/Users/test/Library/Application Support/Equinox Local",releaseDir:"/stable/5.2.0"},
+  inspectStoredImpl:async()=>{events.push("read-store");return f.durable},
+  promoteCandidateImpl:async()=>assert.fail("pre-staged B must not be promoted again"),
+  readPointerImpl:async()=>{throw Object.assign(new Error("not yet Main"),{code:"ENOENT"})},
+  snapshotDarwinImpl:async()=>{events.push("snapshot")},
+  writeRecoveryDescriptorImpl:async()=>{events.push("recovery")},
+  activateDarwinImpl:async()=>{events.push("activate")},
+  restoreDarwinImpl:async()=>{events.push("restore")},
+  writePointerImpl:async()=>{events.push("commit");return f.durable},
+ };
+ const lifecycle=await prepareEquinoxLocalMainNativeLifecycle(options);
+ assert.deepEqual(events,["read-store","snapshot","recovery"]);
+ await lifecycle.activate();
+ await lifecycle.commit();
+ assert.deepEqual(events,["read-store","snapshot","recovery","activate","commit"]);
+ await lifecycle.rollback();
+ assert.equal(events.at(-1),"restore");
+});
+
+test("pre-staged native A/B rejects unsigned, forged, wrong-SHA/bytes/version BEFORE native mutation",async()=>{
+ const f=signedDurableFixture();
+ const events=[];
+ const opts={
+  transition:transition("darwin-arm64"),
+  storedCandidate:f.storedCandidate,signedPointer:f.signedPointer,
+  transactionRoot:ROOT,transactionId:TX,
+  installation:{managed:true,selfUpdateSupported:true,target:"darwin-arm64",
+   installRoot:"/Users/test/Library/Application Support/Equinox Local",releaseDir:"/stable/5.2.0"},
+  inspectStoredImpl:async()=>{events.push("read-store");return f.durable},
+  snapshotDarwinImpl:async()=>{events.push("snapshot")},
+ };
+ await assert.rejects(prepareEquinoxLocalMainNativeLifecycle(opts),/trusted|signature|signing key/u);
+ assert.deepEqual(events,[]);
+ for(const change of [
+  {storedCandidate:{...f.storedCandidate,sourceSha:A}},
+  {storedCandidate:{...f.storedCandidate,artifactSha256:"e".repeat(64)}},
+  {storedCandidate:{...f.storedCandidate,artifactBytes:43}},
+  {storedCandidate:{...f.storedCandidate,payloadVersion:"5.2.0"}},
+ ]){
+  await assert.rejects(prepareEquinoxLocalMainNativeLifecycle({
+   ...opts,verifySignedPointerImpl:f.verifySignedPointerImpl,...change,
+  }),/Signed Main stored native candidate differs/u);
+ }
+ assert.deepEqual(events,[]);
+ await assert.rejects(prepareEquinoxLocalMainNativeLifecycle({
+  ...opts,verifySignedPointerImpl:f.verifySignedPointerImpl,
+  inspectStoredImpl:async()=>({...f.durable,manifest:{...f.durable.manifest,artifactBytes:43}}),
+ }),/durable native manifest does not match/u);
+ assert.deepEqual(events,[]);
+});
+
+test("Windows pre-staged B remains UNACTIVATABLE without independent signed Guardian ownership, even with correct Ed25519 selector",async()=>{
+ const f=signedDurableFixture("win32-x64");
+ const events=[];
+ await assert.rejects(prepareEquinoxLocalMainNativeLifecycle({
+  transition:transition("win32-x64"),
+  storedCandidate:f.storedCandidate,signedPointer:f.signedPointer,
+  verifySignedPointerImpl:f.verifySignedPointerImpl,
+  transactionRoot:ROOT,transactionId:TX,
+  installation:{managed:true,selfUpdateSupported:true,target:"win32-x64"},
+  inspectStoredImpl:async()=>{events.push("store");return f.durable},
+ }),/independent supervisor ownership and exact journal identity/u);
+ assert.deepEqual(events,[]);
 });

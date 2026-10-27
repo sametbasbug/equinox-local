@@ -110,7 +110,29 @@ export async function getEquinoxLocalDoctorStatus({ installation, config, runtim
     if (installation?.managed && installation?.selfUpdateSupported) {
         checks.push(check("installation", "Managed installation", "pass", "Equinox Local is running from the per-user managed release layout."));
         try {
-            if (installation.kind === "managed-source") {
+            if (installation.kind === "managed-main") {
+                // Git-free native Main has no source checkout or numbered Stable
+                // version pointer. The verified boot identity must still agree with
+                // the fingerprinted current-native pointer and actual running binary.
+                const pathApi = hostDescriptor.platform === "win32" ? path.win32 : path.posix;
+                const native = await readActiveMainNative();
+                const equivalent = (a, b) => hostDescriptor.platform === "win32"
+                    ? pathApi.normalize(a).toLowerCase() === pathApi.normalize(b).toLowerCase()
+                    : pathApi.normalize(a) === pathApi.normalize(b);
+                if (typeof installation.sourceSha !== "string" ||
+                    !/^[a-f0-9]{40}$/u.test(installation.sourceSha) ||
+                    native.sourceSha !== installation.sourceSha ||
+                    native.sourceSha !== installation.mainNativeSha ||
+                    native.target !== hostDescriptor.target ||
+                    typeof native.releaseDir !== "string" ||
+                    typeof installation.releaseDir !== "string" ||
+                    !equivalent(native.releaseDir, installation.releaseDir) ||
+                    native.payloadVersion !== runtimeVersion) {
+                    throw new Error("Active signed native Main SHA/version differs from verified boot.");
+                }
+                checks.push(check("release", "Active release", "pass", `Signed Main ${native.sourceSha.slice(0, 12)} native ${native.payloadVersion} passed exact running identity validation.`));
+            }
+            else if (installation.kind === "managed-source") {
                 const transactionRoot = installation.mainTransactionRoot;
                 const pathApi = hostDescriptor.platform === "win32" ? path.win32 : path.posix;
                 if (typeof transactionRoot !== "string" || !pathApi.isAbsolute(transactionRoot) ||
@@ -194,7 +216,7 @@ export async function getEquinoxLocalDoctorStatus({ installation, config, runtim
                 if (pointerPresent) {
                     ownedReleaseDir = null;
                     try {
-                        const current = installation.kind === "managed-source" && installation.mainNativeSha
+                        const current = (installation.kind === "managed-source" || installation.kind === "managed-main") && installation.mainNativeSha
                             ? await readActiveMainNative()
                             : await readMainNativePointerImpl(pointerPath, { transactionRoot: transactionRoot, fsImpl });
                         if (current.target === hostDescriptor.target && path.win32.isAbsolute(current.releaseDir)) {

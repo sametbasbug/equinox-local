@@ -3,6 +3,7 @@ import path from "node:path";
 import { validateManagedSourceInstallStamp } from "./equinox-local-main-update.js";
 import { readEquinoxLocalMainSourcePointer } from "./equinox-local-main-source-pointer.js";
 import { readEquinoxLocalMainNativePointer } from "./equinox-local-main-native-state.js";
+import { validateTrustedMainInstallPointer } from "./equinox-local-main-install-pointer.js";
 import { equinoxLocalPlatformPaths } from "./equinox-local-platform.js";
 import { equinoxLocalToolchainContract } from "./equinox-local-toolchain-contract.js";
 import { inspectPrivateStatePath, verifyWindowsPrivateStateAcl } from "./equinox-local-private-state.js";
@@ -19,9 +20,10 @@ export function equinoxLocalManagedSourcePaths({ platform = process.platform, ar
         mainTransactionRoot,
         installStampPath: pathApi.join(mainTransactionRoot, "install.json"),
         sourcePointerPath: pathApi.join(mainTransactionRoot, "current-source.conf"),
+        signedNativePointerPath: pathApi.join(mainTransactionRoot, "native-install-signed.json"),
     });
 }
-export async function resolveEquinoxLocalManagedSourceInstallation({ baseInstallation, platform = baseInstallation?.platform ?? process.platform, arch = baseInstallation?.arch ?? process.arch, homeDir, env = process.env, fsImpl = fs, verifyWindowsAcl = verifyWindowsPrivateStateAcl, readPointerImpl = readEquinoxLocalMainSourcePointer, readNativePointerImpl = readEquinoxLocalMainNativePointer, } = {}) {
+export async function resolveEquinoxLocalManagedSourceInstallation({ baseInstallation, platform = baseInstallation?.platform ?? process.platform, arch = baseInstallation?.arch ?? process.arch, homeDir, env = process.env, fsImpl = fs, verifyWindowsAcl = verifyWindowsPrivateStateAcl, readPointerImpl = readEquinoxLocalMainSourcePointer, readNativePointerImpl = readEquinoxLocalMainNativePointer, verifySignedPointerImpl = validateTrustedMainInstallPointer, } = {}) {
     if (!baseInstallation || baseInstallation.kind !== "managed" || baseInstallation.managed !== true || baseInstallation.selfUpdateSupported !== true) {
         return baseInstallation;
     }
@@ -37,9 +39,59 @@ export async function resolveEquinoxLocalManagedSourceInstallation({ baseInstall
         platform, type: "file", mode: "600", fsImpl, verifyWindowsAcl,
     });
     if (!stampSecurity.exists) {
-        if (baseInstallation.mainNativeSha)
-            throw new Error("Main native runtime has no verified Main install stamp.");
-        return baseInstallation;
+        if (!baseInstallation.mainNativeSha)
+            return baseInstallation;
+        // A Git-free, signed-native release has NO legacy Git install stamp.
+        // Its complete original production-root signed selector is persisted by
+        // the external installer. An arbitrary release path alone is NEVER
+        // sufficient for a native process to claim a trusted Main identity.
+        const signedSecurity = await inspectPrivateStatePath(paths.signedNativePointerPath, {
+            platform, type: "file", mode: "600", fsImpl, verifyWindowsAcl,
+        });
+        if (!signedSecurity.exists)
+            throw new Error("Main native runtime has no verified Main install stamp or signed native selector.");
+        if (!signedSecurity.safe)
+            throw new Error("Signed Main native install selector is not private.");
+        const { data } = await readBoundedNormalFile(paths.signedNativePointerPath, {
+            platform, fsImpl, minBytes: 200, maxBytes: 16 * 1024, encoding: "utf8",
+            label: "Production-signed native Main install selector",
+        });
+        let raw;
+        try {
+            raw = JSON.parse(data);
+        }
+        catch {
+            throw new Error("Production-signed native Main install selector is invalid JSON.");
+        }
+        const signed = verifySignedPointerImpl(raw, { expectedSourceSha: baseInstallation.mainNativeSha });
+        const row = signed.targets.find(value => value.target === baseInstallation.target);
+        if (!row)
+            throw new Error("Signed native Main selector does not admit the current target.");
+        const pathApi = platform === "win32" ? path.win32 : path.posix;
+        const native = await readNativePointerImpl(pathApi.join(paths.mainTransactionRoot, "current-native.json"), {
+            transactionRoot: paths.mainTransactionRoot, fsImpl,
+        });
+        const equivalent = (a, b) => platform === "win32"
+            ? pathApi.normalize(a).toLowerCase() === pathApi.normalize(b).toLowerCase()
+            : pathApi.normalize(a) === pathApi.normalize(b);
+        if (native.sourceSha !== signed.sourceSha ||
+            native.sourceSha !== baseInstallation.mainNativeSha ||
+            native.target !== baseInstallation.target ||
+            native.runtimeContractSha256 !== row.runtimeContractSha256 ||
+            native.payloadVersion !== signed.version ||
+            typeof native.releaseDir !== "string" ||
+            typeof baseInstallation.releaseDir !== "string" ||
+            !equivalent(native.releaseDir, baseInstallation.releaseDir)) {
+            throw new Error("Signed native Main runtime differs from its exact durable SHA pointer.");
+        }
+        return Object.freeze({
+            ...baseInstallation, kind: "managed-main", channel: "main",
+            sourceSha: signed.sourceSha, mainNativeSha: signed.sourceSha,
+            mainTransactionRoot: paths.mainTransactionRoot,
+            mainUpdateSupported: false,
+            mainUpdateReason: "The unified signed installer owns Main updates.",
+            gitPath: null, nodePath: null, npmPath: null, shellPath: null, toolchainRoot: null,
+        });
     }
     if (!stampSecurity.safe)
         throw new Error("Managed-source install stamp is not private.");

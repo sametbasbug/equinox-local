@@ -9,8 +9,10 @@ import {
   windowsNativeMessagingLauncherPath,
 } from "./equinox-browser-windows-native-messaging.js";
 import { resolveEquinoxLocalInstallation } from "./equinox-local-installation.js";
+import { validateTrustedMainInstallPointer } from "./equinox-local-main-install-pointer.js";
 import {
   promoteEquinoxLocalMainNativeCandidate,
+  inspectEquinoxLocalMainNativeStoredRelease,
   readEquinoxLocalMainNativePointer,
   writeEquinoxLocalMainNativePointer,
 } from "./equinox-local-main-native-state.js";
@@ -38,6 +40,10 @@ type NativeCandidate = {
 type NativeStore = {
   sourceSha: string; target: string; runtimeContractSha256: string; releaseDir: string;
 };
+type SignedStoredCandidate = Readonly<{
+  sourceSha:string;target:string;runtimeContractSha256:string;artifactSha256:string;
+  artifactBytes:number;payloadVersion:string;
+}>;
 type NativePointer = Readonly<{
   sourceSha: string; target: string; runtimeContractSha256: string; releaseDir?: string;
 }>;
@@ -51,11 +57,14 @@ type SnapshotDarwin = (options: {
 type RecoveryDescriptorWriter = typeof writeEquinoxLocalMainNativeRecoveryDescriptor;
 type NativeActivationOptions = {
   transition?: NativeTransition; candidate?: NativeCandidate;
+  storedCandidate?: SignedStoredCandidate; signedPointer?: unknown;
   transactionRoot?: string; transactionId?: string;
   installation?: Installation; fsImpl?: NativeFilesystem;
   execFileImpl?: NativeExec; env?: NodeJS.ProcessEnv; windowsAdmission?: unknown;
   createBoundWindowsABImpl?: (options: Record<string, unknown>) => unknown;
   promoteCandidateImpl?: PromoteCandidate;
+  inspectStoredImpl?: typeof inspectEquinoxLocalMainNativeStoredRelease;
+  verifySignedPointerImpl?: typeof validateTrustedMainInstallPointer;
   readPointerImpl?: ReadNativePointer;
   writePointerImpl?: typeof writeEquinoxLocalMainNativePointer;
   snapshotDarwinImpl?: SnapshotDarwin;
@@ -90,6 +99,8 @@ async function readPreviousPointer(pointerPath: string, options: {transactionRoo
 export async function prepareEquinoxLocalMainNativeLifecycle({
   transition,
   candidate,
+  storedCandidate,
+  signedPointer,
   transactionRoot,
   transactionId,
   installation = resolveEquinoxLocalInstallation(),
@@ -99,6 +110,8 @@ export async function prepareEquinoxLocalMainNativeLifecycle({
   windowsAdmission = null,
   createBoundWindowsABImpl = createSupervisorBoundWindowsNativeABLifecycle,
   promoteCandidateImpl = promoteEquinoxLocalMainNativeCandidate,
+  inspectStoredImpl = inspectEquinoxLocalMainNativeStoredRelease,
+  verifySignedPointerImpl = validateTrustedMainInstallPointer,
   readPointerImpl = readEquinoxLocalMainNativePointer,
   writePointerImpl = writeEquinoxLocalMainNativePointer,
   snapshotDarwinImpl = snapshotEquinoxLocalNativeAppHost,
@@ -111,8 +124,28 @@ export async function prepareEquinoxLocalMainNativeLifecycle({
   writeRecoveryDescriptorImpl = writeEquinoxLocalMainNativeRecoveryDescriptor,
 }: NativeActivationOptions = {}) {
   if (transition?.mode !== "artifact_required") throw new Error("Main native lifecycle requires an artifact-required transition.");
-  if (!candidate || candidate.sourceSha !== transition.targetSha || candidate.target !== transition.target || candidate.runtimeContractSha256 !== transition.targetRuntimeContractSha256) {
+  if (Boolean(candidate) === Boolean(storedCandidate)) {
+    throw new Error("Main native lifecycle requires exactly one transient or signed durable candidate.");
+  }
+  if (candidate && (candidate.sourceSha !== transition.targetSha || candidate.target !== transition.target ||
+      candidate.runtimeContractSha256 !== transition.targetRuntimeContractSha256)) {
     throw new Error("Main native lifecycle candidate identity does not match the exact transition.");
+  }
+  if (storedCandidate) {
+    // The independent external installer previously admitted this inactive
+    // immutable release. Reauthenticate the ORIGINAL production-root selector
+    // before touching any running WPF/app, pointer or rollback snapshot.
+    const signed = verifySignedPointerImpl(signedPointer, {expectedSourceSha:transition.targetSha});
+    const selected = signed.targets.find(entry=>entry.target===transition.target);
+    if (!selected || storedCandidate.sourceSha !== signed.sourceSha ||
+        storedCandidate.target !== transition.target ||
+        storedCandidate.runtimeContractSha256 !== selected.runtimeContractSha256 ||
+        storedCandidate.runtimeContractSha256 !== transition.targetRuntimeContractSha256 ||
+        storedCandidate.artifactSha256 !== selected.artifact.sha256 ||
+        storedCandidate.artifactBytes !== selected.artifact.bytes ||
+        storedCandidate.payloadVersion !== signed.version) {
+      throw new Error("Signed Main stored native candidate differs from exact production selector.");
+    }
   }
   if (!installation?.managed || !installation?.selfUpdateSupported || installation.target !== transition.target) {
     throw new Error("Main native lifecycle requires the matching managed Equinox Local installation.");
@@ -127,7 +160,18 @@ export async function prepareEquinoxLocalMainNativeLifecycle({
     requireWindowsNativeABSupervisor({ windowsAdmission, transition, transactionId: id });
   }
   const root = requireAbsolute(transactionRoot, "Main native transaction root");
-  const stored = await promoteCandidateImpl({ candidate, transactionRoot: root, transactionId: id, fsImpl });
+  const durable = storedCandidate
+    ? await inspectStoredImpl({transactionRoot:root,sourceSha:storedCandidate.sourceSha,
+      target:storedCandidate.target,
+      expectedRuntimeContractSha256:storedCandidate.runtimeContractSha256,fsImpl})
+    : null;
+  if (storedCandidate && durable && (
+      durable.manifest.artifactSha256 !== storedCandidate.artifactSha256 ||
+      durable.manifest.artifactBytes !== storedCandidate.artifactBytes ||
+      durable.payloadVersion !== storedCandidate.payloadVersion)) {
+    throw new Error("Signed Main durable native manifest does not match authenticated archive/version.");
+  }
+  const stored = durable ?? await promoteCandidateImpl({ candidate: candidate!, transactionRoot: root, transactionId: id, fsImpl });
   if (stored.sourceSha !== transition.targetSha || stored.target !== transition.target || stored.runtimeContractSha256 !== transition.targetRuntimeContractSha256) {
     throw new Error("Main native durable payload identity drifted from the exact transition.");
   }

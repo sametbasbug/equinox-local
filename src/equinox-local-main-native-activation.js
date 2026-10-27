@@ -4,7 +4,8 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { assertWindowsNativeMessagingHostOwnership, registerWindowsNativeMessagingHost, windowsNativeMessagingLauncherPath, } from "./equinox-browser-windows-native-messaging.js";
 import { resolveEquinoxLocalInstallation } from "./equinox-local-installation.js";
-import { promoteEquinoxLocalMainNativeCandidate, readEquinoxLocalMainNativePointer, writeEquinoxLocalMainNativePointer, } from "./equinox-local-main-native-state.js";
+import { validateTrustedMainInstallPointer } from "./equinox-local-main-install-pointer.js";
+import { promoteEquinoxLocalMainNativeCandidate, inspectEquinoxLocalMainNativeStoredRelease, readEquinoxLocalMainNativePointer, writeEquinoxLocalMainNativePointer, } from "./equinox-local-main-native-state.js";
 import { inspectEquinoxLocalNativeAppHostSnapshot, restoreEquinoxLocalNativeAppHostSnapshot, snapshotEquinoxLocalNativeAppHost, synchronizeEquinoxLocalAppHostForRelease, } from "./equinox-local-native-app-host.js";
 import { writeEquinoxLocalMainNativeRecoveryDescriptor } from "./equinox-local-main-native-recovery.js";
 import { createSupervisorBoundWindowsNativeABLifecycle, requireWindowsNativeABSupervisor } from "./equinox-local-windows-native-ab-supervisor-bound.js";
@@ -27,11 +28,31 @@ async function readPreviousPointer(pointerPath, options, readPointerImpl) {
         throw error;
     }
 }
-export async function prepareEquinoxLocalMainNativeLifecycle({ transition, candidate, transactionRoot, transactionId, installation = resolveEquinoxLocalInstallation(), fsImpl = fs, execFileImpl = execFile, env = process.env, windowsAdmission = null, createBoundWindowsABImpl = createSupervisorBoundWindowsNativeABLifecycle, promoteCandidateImpl = promoteEquinoxLocalMainNativeCandidate, readPointerImpl = readEquinoxLocalMainNativePointer, writePointerImpl = writeEquinoxLocalMainNativePointer, snapshotDarwinImpl = snapshotEquinoxLocalNativeAppHost, inspectDarwinSnapshotImpl = inspectEquinoxLocalNativeAppHostSnapshot, activateDarwinImpl = synchronizeEquinoxLocalAppHostForRelease, restoreDarwinImpl = restoreEquinoxLocalNativeAppHostSnapshot, assertWindowsNativeHostImpl = assertWindowsNativeMessagingHostOwnership, registerWindowsNativeHostImpl = registerWindowsNativeMessagingHost, windowsLauncherPathImpl = windowsNativeMessagingLauncherPath, writeRecoveryDescriptorImpl = writeEquinoxLocalMainNativeRecoveryDescriptor, } = {}) {
+export async function prepareEquinoxLocalMainNativeLifecycle({ transition, candidate, storedCandidate, signedPointer, transactionRoot, transactionId, installation = resolveEquinoxLocalInstallation(), fsImpl = fs, execFileImpl = execFile, env = process.env, windowsAdmission = null, createBoundWindowsABImpl = createSupervisorBoundWindowsNativeABLifecycle, promoteCandidateImpl = promoteEquinoxLocalMainNativeCandidate, inspectStoredImpl = inspectEquinoxLocalMainNativeStoredRelease, verifySignedPointerImpl = validateTrustedMainInstallPointer, readPointerImpl = readEquinoxLocalMainNativePointer, writePointerImpl = writeEquinoxLocalMainNativePointer, snapshotDarwinImpl = snapshotEquinoxLocalNativeAppHost, inspectDarwinSnapshotImpl = inspectEquinoxLocalNativeAppHostSnapshot, activateDarwinImpl = synchronizeEquinoxLocalAppHostForRelease, restoreDarwinImpl = restoreEquinoxLocalNativeAppHostSnapshot, assertWindowsNativeHostImpl = assertWindowsNativeMessagingHostOwnership, registerWindowsNativeHostImpl = registerWindowsNativeMessagingHost, windowsLauncherPathImpl = windowsNativeMessagingLauncherPath, writeRecoveryDescriptorImpl = writeEquinoxLocalMainNativeRecoveryDescriptor, } = {}) {
     if (transition?.mode !== "artifact_required")
         throw new Error("Main native lifecycle requires an artifact-required transition.");
-    if (!candidate || candidate.sourceSha !== transition.targetSha || candidate.target !== transition.target || candidate.runtimeContractSha256 !== transition.targetRuntimeContractSha256) {
+    if (Boolean(candidate) === Boolean(storedCandidate)) {
+        throw new Error("Main native lifecycle requires exactly one transient or signed durable candidate.");
+    }
+    if (candidate && (candidate.sourceSha !== transition.targetSha || candidate.target !== transition.target ||
+        candidate.runtimeContractSha256 !== transition.targetRuntimeContractSha256)) {
         throw new Error("Main native lifecycle candidate identity does not match the exact transition.");
+    }
+    if (storedCandidate) {
+        // The independent external installer previously admitted this inactive
+        // immutable release. Reauthenticate the ORIGINAL production-root selector
+        // before touching any running WPF/app, pointer or rollback snapshot.
+        const signed = verifySignedPointerImpl(signedPointer, { expectedSourceSha: transition.targetSha });
+        const selected = signed.targets.find(entry => entry.target === transition.target);
+        if (!selected || storedCandidate.sourceSha !== signed.sourceSha ||
+            storedCandidate.target !== transition.target ||
+            storedCandidate.runtimeContractSha256 !== selected.runtimeContractSha256 ||
+            storedCandidate.runtimeContractSha256 !== transition.targetRuntimeContractSha256 ||
+            storedCandidate.artifactSha256 !== selected.artifact.sha256 ||
+            storedCandidate.artifactBytes !== selected.artifact.bytes ||
+            storedCandidate.payloadVersion !== signed.version) {
+            throw new Error("Signed Main stored native candidate differs from exact production selector.");
+        }
     }
     if (!installation?.managed || !installation?.selfUpdateSupported || installation.target !== transition.target) {
         throw new Error("Main native lifecycle requires the matching managed Equinox Local installation.");
@@ -46,7 +67,17 @@ export async function prepareEquinoxLocalMainNativeLifecycle({ transition, candi
         requireWindowsNativeABSupervisor({ windowsAdmission, transition, transactionId: id });
     }
     const root = requireAbsolute(transactionRoot, "Main native transaction root");
-    const stored = await promoteCandidateImpl({ candidate, transactionRoot: root, transactionId: id, fsImpl });
+    const durable = storedCandidate
+        ? await inspectStoredImpl({ transactionRoot: root, sourceSha: storedCandidate.sourceSha,
+            target: storedCandidate.target,
+            expectedRuntimeContractSha256: storedCandidate.runtimeContractSha256, fsImpl })
+        : null;
+    if (storedCandidate && durable && (durable.manifest.artifactSha256 !== storedCandidate.artifactSha256 ||
+        durable.manifest.artifactBytes !== storedCandidate.artifactBytes ||
+        durable.payloadVersion !== storedCandidate.payloadVersion)) {
+        throw new Error("Signed Main durable native manifest does not match authenticated archive/version.");
+    }
+    const stored = durable ?? await promoteCandidateImpl({ candidate: candidate, transactionRoot: root, transactionId: id, fsImpl });
     if (stored.sourceSha !== transition.targetSha || stored.target !== transition.target || stored.runtimeContractSha256 !== transition.targetRuntimeContractSha256) {
         throw new Error("Main native durable payload identity drifted from the exact transition.");
     }
