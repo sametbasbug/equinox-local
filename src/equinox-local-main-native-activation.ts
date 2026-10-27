@@ -23,6 +23,7 @@ import {
   synchronizeEquinoxLocalAppHostForRelease,
 } from "./equinox-local-native-app-host.js";
 import { writeEquinoxLocalMainNativeRecoveryDescriptor } from "./equinox-local-main-native-recovery.js";
+import { createEquinoxLocalMainMacCurrentLinkTransition, createEquinoxLocalMainNativePointerTransition } from "./equinox-local-main-native-pointer-transition.js";
 import { createSupervisorBoundWindowsNativeABLifecycle, requireWindowsNativeABSupervisor } from "./equinox-local-windows-native-ab-supervisor-bound.js";
 
 type NativeFilesystem = typeof fs;
@@ -75,6 +76,8 @@ type NativeActivationOptions = {
   registerWindowsNativeHostImpl?: typeof registerWindowsNativeMessagingHost;
   windowsLauncherPathImpl?: typeof windowsNativeMessagingLauncherPath;
   writeRecoveryDescriptorImpl?: RecoveryDescriptorWriter;
+  createPointerTransitionImpl?: typeof createEquinoxLocalMainNativePointerTransition;
+  createMacLinkTransitionImpl?: typeof createEquinoxLocalMainMacCurrentLinkTransition;
 };
 function hasErrorCode(error: unknown, code: string): boolean {
   return error !== null && typeof error === "object" && "code" in error && error.code === code;
@@ -122,6 +125,8 @@ export async function prepareEquinoxLocalMainNativeLifecycle({
   registerWindowsNativeHostImpl = registerWindowsNativeMessagingHost,
   windowsLauncherPathImpl = windowsNativeMessagingLauncherPath,
   writeRecoveryDescriptorImpl = writeEquinoxLocalMainNativeRecoveryDescriptor,
+  createPointerTransitionImpl = createEquinoxLocalMainNativePointerTransition,
+  createMacLinkTransitionImpl = createEquinoxLocalMainMacCurrentLinkTransition,
 }: NativeActivationOptions = {}) {
   if (transition?.mode !== "artifact_required") throw new Error("Main native lifecycle requires an artifact-required transition.");
   if (Boolean(candidate) === Boolean(storedCandidate)) {
@@ -178,8 +183,10 @@ export async function prepareEquinoxLocalMainNativeLifecycle({
 
   const pointerPath = path.join(root, "current-native.json");
   const previousPointer = await readPreviousPointer(pointerPath, { transactionRoot: root, fsImpl }, readPointerImpl);
-  if (previousPointer && (previousPointer.target !== transition.target || previousPointer.runtimeContractSha256 !== transition.currentRuntimeContractSha256)) {
-    throw new Error("Installed Main native pointer does not match the current source runtime contract.");
+  if (previousPointer && (previousPointer.target !== transition.target ||
+      previousPointer.sourceSha !== transition.currentSha ||
+      previousPointer.runtimeContractSha256 !== transition.currentRuntimeContractSha256)) {
+    throw new Error("Installed Main native pointer does not match the current source SHA/runtime contract.");
   }
   const previousReleaseDir = previousPointer?.releaseDir ?? installation.releaseDir;
   if (typeof previousReleaseDir !== "string") throw new Error("Previous managed native release is unavailable.");
@@ -206,6 +213,42 @@ export async function prepareEquinoxLocalMainNativeLifecycle({
       await inspectDarwinSnapshotImpl({ snapshotPath, fsImpl, execFileImpl });
     }
     await writeRecoveryDescriptorImpl({ transition, previousPointer, installation, transactionRoot: root, transactionId: id, fsImpl });
+    if (storedCandidate) {
+      // The external signed installer installs a Git-free native process.
+      // BOTH pointers must select B before LaunchAgent restart, otherwise
+      // the supervisor cannot verify the exact source SHA. Keep the existing
+      // transient Git-backed worker's post-health commit semantics unchanged.
+      const nativePointer = createPointerTransitionImpl({
+        pointerPath, transactionRoot:root, target:pointerValue,
+        previous:previousPointer, fsImpl, readPointer:readPointerImpl, writePointer:writePointerImpl,
+      });
+      const macLink = createMacLinkTransitionImpl({
+        installRoot:installation.installRoot!,target:pointerValue,
+        previousReleaseDir,fsImpl,
+      });
+      return Object.freeze({
+        target:transition.target,stored,previousPointer,rollbackPath:snapshotPath,
+        activate:async()=>{
+          await nativePointer.selectTarget();
+          await macLink.selectTarget();
+          await activateDarwinImpl({installation,releaseDir:stored.releaseDir,fsImpl,execFileImpl,requirePayloadIdentity:true});
+        },
+        rollback:async()=>{
+          // Strict reverse of A->B ownership. Every step is idempotent for
+          // interrupted journal replay, and foreign pointer drift aborts.
+          await macLink.restorePrevious();
+          await nativePointer.restorePrevious();
+          await restoreDarwinImpl({homeDir,snapshotPath,fsImpl,execFileImpl});
+        },
+        commit:async()=>{
+          await nativePointer.requireTarget();
+          if(await macLink.current()!==macLink.targetReleaseDir){
+            throw new Error("Signed native B macOS runtime link is not durably selected.");
+          }
+          return stored;
+        },
+      });
+    }
     return Object.freeze({
       target: transition.target,
       stored,
