@@ -122,6 +122,29 @@ prepare_verified_main() {
     fail "production-signed Main selector or native archive verification failed"
   [ -f "$archive" ] && [ ! -L "$archive" ] ||
     fail "verified Main native archive was not produced"
+  local signed_fields
+  signed_fields="$(printf '%s' "$receipt" | /usr/bin/env -i HOME="$HOME_DIR" PATH="/usr/bin:/bin:/usr/sbin:/sbin" "$node" -e '
+    const fs=require("node:fs");
+    const entry=JSON.parse(fs.readFileSync(0,"utf8"));
+    if (!/^[a-f0-9]{40}$/.test(entry.sourceSha) ||
+        !/^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/.test(entry.version) ||
+        entry.target!==process.argv[1]) process.exit(1);
+    process.stdout.write(entry.sourceSha+" "+entry.version);
+  ' "$TARGET")" || fail "signed Main receipt has an invalid source identity"
+  local signed_sha signed_version
+  read -r signed_sha signed_version <<< "$signed_fields"
+  local extracted="$TEMP_ROOT/main-extracted"
+  /bin/mkdir -m 700 "$extracted" ||
+    fail "could not create Main native inspection directory"
+  /usr/bin/tar -xzf "$archive" -C "$extracted" --no-same-owner ||
+    fail "could not unpack verified Main candidate"
+  local candidate="$extracted/release"
+  local inspector="$candidate/equinox-local-first-install.js"
+  [ -d "$candidate" ] && [ ! -L "$candidate" ] &&
+    [ -f "$inspector" ] && [ ! -L "$inspector" ] ||
+    fail "verified Main candidate lacks a normal native release/inspector"
+  /usr/bin/env -i HOME="$HOME_DIR" PATH="/usr/bin:/bin:/usr/sbin:/sbin" "$node" "$inspector" --inspect-signed-main     --staged-release "$candidate" --source-sha "$signed_sha"     --version "$signed_version" --target "$TARGET" >/dev/null ||
+    fail "Main native release metadata does not match the signed full SHA"
   printf '%s\n' "$receipt"
 }
 

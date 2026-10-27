@@ -149,6 +149,75 @@ test("first-install release validation accepts exact source provenance while ret
   }
 });
 
+test("signed Main native admission binds full SHA AND manual version before accepting any extracted executable", async () => {
+  const fixture = await createFixture("5.2.1");
+  const shaA = "a".repeat(40);
+  const shaB = "b".repeat(40);
+  const metadataPath = path.join(fixture.releaseDir, "release.json");
+  const legacy = JSON.parse(await fs.readFile(metadataPath, "utf8"));
+  try {
+    for (const metadata of [legacy, { ...legacy, sourceSha: shaB }]) {
+      await fs.writeFile(metadataPath, JSON.stringify(metadata) + "\n");
+      await assert.rejects(
+        validateFirstInstallRelease(fixture.releaseDir, {
+          target: TARGET, expectedMainSourceSha: shaA, expectedMainVersion: "5.2.1",
+        }), /signed full source SHA\/version/u);
+    }
+    await fs.writeFile(metadataPath, JSON.stringify({ ...legacy, sourceSha: shaA }) + "\n");
+    const accepted = await validateFirstInstallRelease(fixture.releaseDir, {
+      target: TARGET, expectedMainSourceSha: shaA, expectedMainVersion: "5.2.1",
+    });
+    assert.equal(accepted.metadata.sourceSha, shaA);
+    assert.equal(accepted.version, "5.2.1");
+    await assert.rejects(
+      validateFirstInstallRelease(fixture.releaseDir, {
+        target: TARGET, expectedMainSourceSha: shaA, expectedMainVersion: "5.2.2",
+      }), /signed full source SHA\/version/u);
+    for (const extra of [
+      {expectedMainSourceSha: "malformed", expectedMainVersion: "5.2.1"},
+      {expectedMainSourceSha: shaA},
+      {expectedMainVersion: "5.2.1"},
+      {expectedMainSourceSha: shaA, expectedMainVersion: "05.2.1"},
+    ]) {
+      await assert.rejects(validateFirstInstallRelease(fixture.releaseDir, {
+        target: TARGET, ...extra,
+      }), /Main native candidate requires/u);
+    }
+  } finally {
+    await fs.rm(fixture.homeDir, {recursive:true,force:true});
+  }
+});
+
+test("signed Main native candidate CLI checks exact SHA without starting or mutating the installed product", async () => {
+  const fixture = await createFixture("5.2.1");
+  const sha = "c".repeat(40);
+  const inspect = fileURLToPath(new URL("../../src/equinox-local-first-install.js", import.meta.url));
+  const releaseFile = path.join(fixture.releaseDir, "release.json");
+  const initial = JSON.parse(await fs.readFile(releaseFile, "utf8"));
+  await fs.writeFile(releaseFile, JSON.stringify({ ...initial, sourceSha: sha }) + "\n");
+  const invoke = (sourceSha, version = "5.2.1") =>
+    execFileSync(process.execPath, [
+      inspect, "--inspect-signed-main", "--staged-release", fixture.releaseDir,
+      "--source-sha", sourceSha, "--version", version, "--target", TARGET,
+    ], { encoding:"utf8", timeout:10000 });
+  try {
+    const before = (await fs.readdir(fixture.installRoot)).sort();
+    assert.deepEqual(JSON.parse(invoke(sha)), {
+      status: "admitted", sourceSha: sha, version:"5.2.1", target:TARGET,
+    });
+    assert.deepEqual((await fs.readdir(fixture.installRoot)).sort(), before);
+    assert.equal(await exists(path.join(fixture.installRoot, "current")), false);
+    assert.throws(() => invoke("a".repeat(40)), /Command failed/u);
+    assert.throws(() => invoke(sha,"5.2.2"), /Command failed/u);
+    assert.throws(() => execFileSync(process.execPath, [
+      inspect,"--inspect-signed-main","--staged-release",fixture.releaseDir,"--source-sha",sha,
+    ], { encoding:"utf8" }), /Command failed/u);
+    assert.deepEqual((await fs.readdir(fixture.installRoot)).sort(), before);
+  } finally {
+    await fs.rm(fixture.homeDir,{recursive:true,force:true});
+  }
+});
+
 test("Windows x64 first-install release validation accepts native runtime names without Peekaboo", async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "equinox-first-install-windows-contract-"));
   const releaseDir = path.join(root, "release");

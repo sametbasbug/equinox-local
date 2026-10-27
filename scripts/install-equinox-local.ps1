@@ -108,6 +108,25 @@ function Read-BootstrapManifest([string]$Path) {
   if ($values.artifactUrl -cne $expectedUrl) { Fail 'bootstrap artifact URL escaped the pinned Equinox Local HTTPS path' }
   return [pscustomobject]@{ Version=$values.version; ArtifactUrl=$values.artifactUrl; ArtifactSha256=$values.artifactSha256; ArtifactBytes=$bytes }
 }
+# Prevent ambient Node loader overrides from changing the identity of a
+# verified installer or extracted native-inspection script. Restore on errors.
+function Invoke-PinnedMainNode([string]$Executable, [string[]]$Parameters) {
+  $blocked = @('NODE_OPTIONS','NODE_PATH','NODE_EXTRA_CA_CERTS','NODE_TLS_REJECT_UNAUTHORIZED','NODE_USE_ENV_PROXY','NODE_DEBUG')
+  $original = @{}
+  foreach ($name in $blocked) {
+    $original[$name] = [Environment]::GetEnvironmentVariable($name,'Process')
+    [Environment]::SetEnvironmentVariable($name,$null,'Process')
+  }
+  try {
+    $result = @(& $Executable @Parameters)
+    if ($LASTEXITCODE -ne 0) { Fail 'verified Main Node admission failed' }
+    return $result
+  } finally {
+    foreach ($name in $blocked) {
+      [Environment]::SetEnvironmentVariable($name,$original[$name],'Process')
+    }
+  }
+}
 # A pre-activation admission path shared with the macOS external installer.
 # This stops after producing authenticated native bytes until SHA-transaction
 # activation/rollback is independently accepted. No ambient Node/npm/Git.
@@ -143,16 +162,32 @@ function Invoke-VerifiedMainPreparation([string]$PrivateTemp) {
   $node = Join-Path (Join-Path $nodeStage $nodeBase) 'node.exe'
   Assert-NormalFile $node 1 200000000 | Out-Null
   # HTTPS/download/Node/content verification precede all execution.
-  $receipt = @(& $node $source '--target' $Target '--output' $verifiedArchive)
-  if ($LASTEXITCODE -ne 0) { Fail 'production-signed Main pointer or native archive was rejected' }
+  $receipt = @(Invoke-PinnedMainNode $node @($source, '--target', $Target, '--output', $verifiedArchive))
   Assert-NormalFile $verifiedArchive 1 $MaxArtifactBytes | Out-Null
   if ($receipt.Count -ne 1) { Fail 'signed Main verifier produced an unexpected receipt' }
   try { $parsed = $receipt[0] | ConvertFrom-Json -ErrorAction Stop }
   catch { Fail 'signed Main verification receipt is invalid' }
   if ($parsed.target -cne $Target -or $parsed.sourceSha -notmatch '^[a-f0-9]{40}$' -or
+      $parsed.version -notmatch '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$' -or
       $parsed.artifactSha256 -cne (Get-Sha256 $verifiedArchive) -or
       [long]$parsed.artifactBytes -ne (Get-Item -LiteralPath $verifiedArchive).Length) {
     Fail 'signed Main archive receipt mismatch'
+  }
+  $mainExtracted = Join-Path $PrivateTemp 'main-extracted'
+  [IO.Directory]::CreateDirectory($mainExtracted) | Out-Null
+  $nativeOutput = @(& $nativeTar '-xf' $verifiedArchive '-C' $mainExtracted 2>&1)
+  if ($LASTEXITCODE -ne 0) { Fail 'verified Main ZIP candidate could not be unpacked' }
+  $candidate = Join-Path $mainExtracted 'release'
+  Assert-NormalDirectory $candidate $false | Out-Null
+  $inspector = Join-Path $candidate 'equinox-local-first-install.js'
+  Assert-NormalFile $inspector 1 2097152 | Out-Null
+  $admitted = @(Invoke-PinnedMainNode $node @($inspector, '--inspect-signed-main', '--staged-release', $candidate, '--source-sha', ([string]$parsed.sourceSha), '--version', ([string]$parsed.version), '--target', $Target))
+  if ($admitted.Count -ne 1) { Fail 'Main native candidate exact source SHA admission failed' }
+  try { $matched = $admitted[0] | ConvertFrom-Json -ErrorAction Stop }
+  catch { Fail 'Main native candidate admission receipt is invalid' }
+  if ($matched.status -cne 'admitted' -or $matched.sourceSha -cne $parsed.sourceSha -or
+      $matched.version -cne $parsed.version -or $matched.target -cne $Target) {
+    Fail 'Main native candidate admission changed the signed identity'
   }
   Write-Output $receipt[0]
 }
@@ -432,15 +467,19 @@ function Assert-ExistingStableUpgradeRoute([string]$InstallRoot, [string]$Reques
 function Invoke-EquinoxLocalInstall {
   if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) { Fail 'Windows is required' }
   $script:Target = Get-NativeWindowsTarget
-  if ($ZipHelperSha256 -notmatch '^[a-f0-9]{64}$') { Fail 'installer ZIP helper pin is not materialized' }
-  [long]$helperBytes = 0
-  if (-not [long]::TryParse($ZipHelperBytes, [ref]$helperBytes) -or $helperBytes -lt 1 -or $helperBytes -gt 1048576) { Fail 'installer ZIP helper size pin is invalid' }
+  if (-not $PrepareMain) {
+    if ($ZipHelperSha256 -notmatch '^[a-f0-9]{64}$') { Fail 'installer ZIP helper pin is not materialized' }
+    [long]$helperBytes = 0
+    if (-not [long]::TryParse($ZipHelperBytes, [ref]$helperBytes) -or $helperBytes -lt 1 -or $helperBytes -gt 1048576) { Fail 'installer ZIP helper size pin is invalid' }
+  }
   $localAppData = $env:LOCALAPPDATA
   if ([string]::IsNullOrWhiteSpace($localAppData) -or -not [IO.Path]::IsPathRooted($localAppData)) { Fail 'trusted LOCALAPPDATA is required' }
   $installRoot = Join-Path $localAppData 'Equinox Local'
   $stagingRoot = Join-Path $installRoot 'staging'
-  Assert-NormalDirectory $installRoot $true | Out-Null
-  Assert-NormalDirectory $stagingRoot $true | Out-Null
+  if (-not $PrepareMain) {
+    Assert-NormalDirectory $installRoot $true | Out-Null
+    Assert-NormalDirectory $stagingRoot $true | Out-Null
+  }
   $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ('equinox-local-install-' + [Guid]::NewGuid().ToString('N'))
   $stage = Join-Path $stagingRoot ('bootstrap-' + [Guid]::NewGuid().ToString('N'))
   [IO.Directory]::CreateDirectory($tempRoot) | Out-Null

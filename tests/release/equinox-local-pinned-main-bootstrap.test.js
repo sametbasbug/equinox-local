@@ -30,7 +30,7 @@ test('one byte-identical standalone verifier is SHA pinned by BOTH OS installers
  assert.match(mac,/shasum -a 256 "\$verifier"/u);
  assert.ok(mac.indexOf('MAIN_VERIFY_SHA256"')<mac.indexOf('"$node" "$verifier"'));
  assert.match(windows,/Get-Sha256 \$source\) -cne \$MainVerifySha256/u);
- assert.ok(windows.indexOf('Get-Sha256 $source')<windows.indexOf('& $node $source'));
+ assert.ok(windows.indexOf('Get-Sha256 $source')<windows.indexOf('Invoke-PinnedMainNode $node @($source'));
 });
 
 test('all four fresh-user Node archives are independently pinned to existing release-toolchain contracts',async()=>{
@@ -49,7 +49,7 @@ test('all four fresh-user Node archives are independently pinned to existing rel
  assert.ok(mac.indexOf('MAIN_NODE_ARCHIVE_SHA256"')<mac.indexOf('"$node" "$verifier"'));
  assert.match(windows,/Assert-NormalFile \$nodeZip \$nodeBytes \$nodeBytes/u);
  assert.match(windows,/Get-Sha256 \$nodeZip\) -cne \$nodeSha/u);
- assert.ok(windows.indexOf('Get-Sha256 $nodeZip')<windows.indexOf('& $node $source'));
+ assert.ok(windows.indexOf('Get-Sha256 $nodeZip')<windows.indexOf('Invoke-PinnedMainNode $node @($source'));
  assert.match(windows,/System32\\tar\.exe/u);
  assert.doesNotMatch(windows,/Expand-Archive/u);
 });
@@ -67,4 +67,57 @@ test('prepare-only CLI stops before old Stable activation and preserves default 
  assert.match(mac,/MAIN_ARGS=\(--enroll-existing-main\)/u);
  assert.match(windows,/Restore-ExecutableReplacement \$transaction/u);
  assert.match(windows,/Restore-OldEquinoxChromeHost \$nativeHostSuspension/u);
+});
+
+
+test('the same verified Main SHA and version enter the existing native release inspector on both OSes before activation',async()=>{
+ const [mac,windows,inspectionSource]=await Promise.all([
+  fs.readFile(macURL,'utf8'),fs.readFile(windowsURL,'utf8'),
+  fs.readFile(new URL('../../src/equinox-local-first-install.js',import.meta.url),'utf8'),
+ ]);
+ assert.match(inspectionSource,/expectedMainSourceSha/u);
+ assert.match(inspectionSource,/expectedMainVersion/u);
+ assert.match(inspectionSource,/--inspect-signed-main/u);
+ assert.match(mac,/tar -xzf "\$archive" -C "\$extracted" --no-same-owner/u);
+ assert.match(mac,/--inspect-signed-main/u);
+ assert.ok(mac.indexOf('MAIN_VERIFY_SHA256"')<mac.indexOf('tar -xzf "$archive"'));
+ assert.ok(mac.indexOf('tar -xzf "$archive"')<mac.indexOf('"$node" "$inspector"'));
+ assert.match(mac,/--source-sha "\$signed_sha"/u);
+ assert.match(mac,/--version "\$signed_version"/u);
+ assert.match(windows,/--inspect-signed-main/u);
+ assert.match(windows,/\$nativeTar '-xf' \$verifiedArchive '-C' \$mainExtracted/u);
+ assert.ok(windows.indexOf('Get-Sha256 $verifiedArchive')<windows.indexOf("$nativeTar '-xf' $verifiedArchive"));
+ assert.ok(windows.indexOf("$nativeTar '-xf' $verifiedArchive")<windows.indexOf('Invoke-PinnedMainNode $node @($inspector'));
+ assert.match(windows,/\$matched\.sourceSha -cne \$parsed\.sourceSha/u);
+ assert.match(windows,/\$matched\.version -cne \$parsed\.version/u);
+ assert.match(windows,/\$matched\.target -cne \$Target/u);
+});
+
+test('Windows prepare-only mode bypasses Stable-only ZIP helper and owned install-directory mutations',async()=>{
+ const ps=await fs.readFile(windowsURL,'utf8');
+ const start=ps.indexOf('function Invoke-EquinoxLocalInstall');
+ const stableOnly=ps.indexOf('if (-not $PrepareMain) {',start);
+ const zipPin=ps.indexOf("installer ZIP helper pin is not materialized",start);
+ const directoryCreate=ps.indexOf('Assert-NormalDirectory $installRoot $true',start);
+ const admission=ps.indexOf('if ($PrepareMain) { Invoke-VerifiedMainPreparation $tempRoot; return }',start);
+ assert.ok(start>0&&stableOnly>start&&zipPin>stableOnly);
+ assert.ok(ps.indexOf('if (-not $PrepareMain) {',zipPin)<directoryCreate);
+ assert.ok(directoryCreate<admission);
+ assert.match(ps,/if \(\$PrepareMain\) \{ Invoke-VerifiedMainPreparation \$tempRoot; return \}/u);
+});
+
+
+test('all Node bootstrap/inspector invocations are isolated from user-provided Node loader overrides',async()=>{
+ const [mac,windows]=await Promise.all([fs.readFile(macURL,'utf8'),fs.readFile(windowsURL,'utf8')]);
+ const macNodeInvokes=mac.split('"$node"').length-1;
+ assert.ok(macNodeInvokes>=3);
+ assert.match(mac,/signed_fields="\$\(printf.*\/usr\/bin\/env -i HOME=/u);
+ assert.match(mac,/\/usr\/bin\/env -i HOME="\$HOME_DIR" PATH="\/usr\/bin:\/bin:\/usr\/sbin:\/sbin" "\$node" "\$inspector"/u);
+ assert.match(windows,/function Invoke-PinnedMainNode/u);
+ assert.match(windows,/\$blocked = @\('NODE_OPTIONS','NODE_PATH'/u);
+ assert.match(windows,/\[Environment\]::SetEnvironmentVariable\(\$name,\$null,'Process'\)/u);
+ assert.match(windows,/finally \{\s+foreach \(\$name in \$blocked\)/u);
+ assert.match(windows,/Invoke-PinnedMainNode \$node @\(\$source/u);
+ assert.match(windows,/Invoke-PinnedMainNode \$node @\(\$inspector/u);
+ assert.doesNotMatch(windows,/\$receipt = @\(& \$node/u);
 });

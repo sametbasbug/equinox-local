@@ -145,8 +145,24 @@ async function validateReleaseTree(root:string,{fsImpl=fs}:{fsImpl?:FsImpl}={}) 
 
 export async function validateFirstInstallRelease(releaseDir:string,{
   target = equinoxLocalUpdateTarget(),
+  expectedMainSourceSha = null,
+  expectedMainVersion = null,
   fsImpl = fs,
-}:{target?:string;fsImpl?:FsImpl}={}):Promise<Release> {
+}:{target?:string;expectedMainSourceSha?:string|null;expectedMainVersion?:string|null;fsImpl?:FsImpl}={}):Promise<Release> {
+  // A source-SHA installer must not infer identity from a manual 6.x version.
+  // The caller's expected SHA/version must originate from the production-
+  // signed selector AND its verified archived bytes, not untrusted metadata.
+  if (expectedMainSourceSha !== null &&
+      (typeof expectedMainSourceSha !== "string" || !/^[a-f0-9]{40}$/u.test(expectedMainSourceSha))) {
+    throw new Error("Main native candidate requires a signed exact source SHA.");
+  }
+  if (expectedMainVersion !== null &&
+      (typeof expectedMainVersion !== "string" || !/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/u.test(expectedMainVersion))) {
+    throw new Error("Main native candidate requires an exact signed presentation version.");
+  }
+  if ((expectedMainSourceSha === null) !== (expectedMainVersion === null)) {
+    throw new Error("Main native candidate requires both signed source SHA and version.");
+  }
   if (typeof releaseDir !== "string" || !path.isAbsolute(releaseDir)) {
     throw new Error("Staged Equinox Local release path must be absolute.");
   }
@@ -176,6 +192,10 @@ export async function validateFirstInstallRelease(releaseDir:string,{
     throw new Error(`Staged Equinox Local release metadata is invalid for ${target}.`);
   }
   parseEquinoxVersion(metadata.version);
+  if (expectedMainSourceSha !== null &&
+      (metadata.sourceSha !== expectedMainSourceSha || metadata.version !== expectedMainVersion)) {
+    throw new Error("Main native release metadata does not match the signed full source SHA/version.");
+  }
   for (const relative of runtimeContract.runtimeExecutables) {
     await assertNormalFile(path.join(releaseDir, relative), `Runtime ${relative}`, { executable: runtimeContract.executableModeRequired, fsImpl });
   }
@@ -1196,9 +1216,35 @@ function parseCli(argv:string[]) {
   return { stagedReleaseDir: argv[1]!, allowExistingStableToMainMigration: argv.length === 3 };
 }
 
+function parseSignedMainInspectionCli(argv:string[]) {
+  if (argv.length !== 9 || argv[0] !== "--inspect-signed-main" ||
+      argv[1] !== "--staged-release" || argv[3] !== "--source-sha" ||
+      argv[5] !== "--version" || argv[7] !== "--target" ||
+      !path.isAbsolute(argv[2]!)) {
+    throw new Error("Signed Main admission requires staged release, full source SHA, version and target.");
+  }
+  return {releaseDir:argv[2]!,sourceSha:argv[4]!,version:argv[6]!,target:argv[8]!};
+}
+
 const invokedPath = process.argv[1] ? path.resolve(process.argv[1]) : null;
 if (invokedPath && path.basename(invokedPath) === path.basename(fileURLToPath(import.meta.url))) {
-  if (process.argv.length === 3 && process.argv[2] === "--help") {
+  if (process.argv[2] === "--inspect-signed-main") {
+    Promise.resolve().then(async () => {
+      const input = parseSignedMainInspectionCli(process.argv.slice(2));
+      const candidate = await validateFirstInstallRelease(input.releaseDir, {
+        target: input.target,
+        expectedMainSourceSha: input.sourceSha,
+        expectedMainVersion: input.version,
+      });
+      process.stdout.write(JSON.stringify({
+        status: "admitted", sourceSha: candidate.metadata.sourceSha,
+        version: candidate.version, target: candidate.target,
+      }) + "\n");
+    }).catch((error) => {
+      process.stderr.write("Signed Main native candidate admission failed.\n");
+      process.exitCode = 1;
+    });
+  } else if (process.argv.length === 3 && process.argv[2] === "--help") {
     process.stdout.write("Usage: equinox-local-first-install.js --staged-release /absolute/path/to/release [--enroll-existing-main]\nBundled internal helper: --enroll-existing-main enrolls Main after signed Stable health.\nPublic installers enroll the admitted Main commit by default; this internal helper without the flag preserves legacy Stable-only recovery.\n");
   } else {
     installManagedEquinoxRelease(parseCli(process.argv.slice(2)))
