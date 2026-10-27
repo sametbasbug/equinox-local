@@ -1319,6 +1319,13 @@ jobs:
           fi
           echo "Published public exact-SHA Main snapshot objects for $TARGET_SHA and moved tag-only main-snapshot. No GitHub Release was created." >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Checkout the exact Main source for bounded R2 pruning
+        if: ${{ steps.latest.outputs.publish == 'true' }}
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.main-native-plan.outputs.target-sha }}
+          persist-credentials: false
+
       - name: Prune retired exact-SHA R2 archives (protect active SHA and latest eight)
         if: ${{ steps.latest.outputs.publish == 'true' }}
         shell: bash
