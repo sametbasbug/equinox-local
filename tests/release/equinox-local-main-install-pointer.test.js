@@ -12,6 +12,7 @@ import {
   canonicalMainInstallPointerPayload,
   createSignedMainInstallPointer,
   validateSignedMainInstallPointer,
+  validateTrustedMainInstallPointer,
 } from "../../src/equinox-local-main-install-pointer.js";
 
 const SHA = "a".repeat(40);
@@ -181,4 +182,15 @@ test("existing private-key signer CLI loads only bounded normal Main manifests a
   } finally {
     await fs.rm(root, { recursive: true, force: true });
   }
+});
+
+
+test("production Main pointer consumer pins the shipped Ed25519 root, never a fixture-provided key", () => {
+  const { pointer, publicKeys } = signedFixture();
+  assert.equal(validateSignedMainInstallPointer(pointer, { publicKeys }).sourceSha, SHA);
+  assert.throws(() => validateTrustedMainInstallPointer(pointer), /signature verification failed/u);
+  assert.throws(() => validateTrustedMainInstallPointer(pointer, { expectedSourceSha: "b".repeat(40) }), /expected SHA/u);
+  assert.throws(() => validateTrustedMainInstallPointer(mutate(pointer, x => {
+    x.signature.keyId = "test-ephemeral";
+  })), /trusted public signing key/u);
 });
