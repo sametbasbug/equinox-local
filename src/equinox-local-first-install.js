@@ -1945,6 +1945,9 @@ export async function installFreshSignedMainRelease({ signedPointer, sourceArchi
         transactionRoot: main.mainTransactionRoot, sourceSha: signed.sourceSha,
         target, version: signed.version,
         runtimeContractSha256: targetRow.runtimeContractSha256,
+        // Windows WPF + Node supervisor can need longer than the default 20s.
+        // Keep the bound: 180 polls x 500ms = at most 90s for fresh installs.
+        attempts: platform === "win32" ? 180 : 40,
     });
     return Object.freeze({ status: "installed", channel: "main",
         version: signed.version, sourceSha: signed.sourceSha, target,

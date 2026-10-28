@@ -1,3 +1,13 @@
+## [6.3.1] - 2026-10-29
+
+### Windows signed Main update reliability
+
+- Launch the original signed Windows PowerShell installer through the operating system task scheduler in the signed-in user's session, outside the application's shutdown-bound Job Object. The one-shot task executes immediately and removes itself when complete; a past trigger prevents unintended automatic retries.
+- Capture the installer transcript so a failed update no longer sits at "Updating" with an empty private handoff log.
+- Allow up to 90 seconds for a freshly installed Windows native runtime to become healthy, avoiding false rollback while WPF and its supervised Node process are still starting.
+- Treat race-related `taskkill` stderr as a nonterminal diagnostic: revalidate the exact product-owned processes before deciding whether installation or rollback can proceed. No foreign processes or user data are removed.
+- Preserve the existing Ed25519-signed Main SHA verification and fail-closed install/rollback behavior.
+
 ## [6.3.0] - 2026-10-29
 
 - Main signed four-platform native delivery and private live-checkout Factory runtime now share the canonical source while preserving their distinct installation roles.

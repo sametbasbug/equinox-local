@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
-import { spawn } from "node:child_process";
+import { spawn, execFile as execFileCallback } from "node:child_process";
+import { promisify } from "node:util";
 import { constants as fsConstants } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -175,7 +176,8 @@ export async function scheduleEquinoxLocalSignedNativeWindowsInstaller({ install
         throw new Error("Windows Main installer logs directory is unsafe.");
     const requestId = "main-" + randomBytes(16).toString("hex");
     const logPath = path.win32.join(logs, requestId + ".original-installer.log");
-    // Keep both script and working directory outside the retired runtime.
+    // Keep both the PowerShell script AND its current working directory outside
+    // the retired runtime; Windows holds the process working directory open.
     // The original PowerShell installer must run OUTSIDE old executable roots:
     // Clear-ExistingEquinoxExecutables stops product-owned PowerShell scripts that
     // name native-store paths, otherwise the installer kills ITSELF.
@@ -189,27 +191,60 @@ export async function scheduleEquinoxLocalSignedNativeWindowsInstaller({ install
     finally {
         await runnerHandle.close();
     }
-    const handle = await fsImpl.open(logPath, fsConstants.O_WRONLY | fsConstants.O_CREAT |
+    // Windows does not break a detached child out of the parent Win32 Job
+    // Object. The installer would be terminated when its own cleanup stops
+    // EquinoxLocal.exe. Ask the OS Task Scheduler to run the original immutable
+    // script in the currently signed-in user's interactive session instead.
+    const taskName = "Equinox-Main-" + randomBytes(12).toString("hex");
+    const wrapper = path.win32.join(logs, requestId + ".scheduled-installer.ps1");
+    const psQuote = (value) => "'" + value.replace(/'/gu, "''") + "'";
+    const wrapperSource = `$ErrorActionPreference='Stop'
+try {
+` +
+        ` Start-Transcript -LiteralPath ${psQuote(logPath)} -Force | Out-Null
+` +
+        ` & ${psQuote(runner)}
+` +
+        ` if (-not $?) { throw 'Signed Main installer failed' }
+` +
+        `} catch { Write-Host ('Signed Main installer failed: '+$_.Exception.Message); throw }
+` +
+        `finally {
+ try { Stop-Transcript | Out-Null } catch {}
+` +
+        ` try { Unregister-ScheduledTask -TaskName ${psQuote(taskName)} -Confirm:$false -ErrorAction SilentlyContinue } catch {}
+}
+`;
+    const wrapperHandle = await fsImpl.open(wrapper, fsConstants.O_WRONLY | fsConstants.O_CREAT |
         fsConstants.O_EXCL | (fsConstants.O_NOFOLLOW ?? 0), 0o600);
     try {
-        await launchHelperImpl({
-            spawnImpl, command: powershell,
-            args: ["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", runner],
-            options: { cwd: logs, detached: true, windowsHide: true,
-                stdio: ["ignore", handle.fd, handle.fd],
-                env: { SystemRoot: sourceEnv.SystemRoot ?? sourceEnv.WINDIR ?? "C:\\Windows",
-                    WINDIR: sourceEnv.WINDIR ?? sourceEnv.SystemRoot ?? "C:\\Windows",
-                    LOCALAPPDATA: sourceEnv.LOCALAPPDATA,
-                    USERPROFILE: sourceEnv.USERPROFILE ?? homeDir,
-                    TEMP: sourceEnv.TEMP ?? path.win32.join(homeDir, "AppData", "Local", "Temp"),
-                    TMP: sourceEnv.TMP ?? path.win32.join(homeDir, "AppData", "Local", "Temp"),
-                    PATH: path.win32.join(sourceEnv.SystemRoot ?? sourceEnv.WINDIR ?? "C:\\Windows", "System32") },
-            }, label: "Original signed Main PowerShell installer",
-        });
+        await wrapperHandle.writeFile(wrapperSource);
+        await wrapperHandle.sync();
     }
     finally {
-        await handle.close();
+        await wrapperHandle.close();
     }
+    // A past one-shot trigger cannot unexpectedly rerun after a crash/reboot.
+    // Start-ScheduledTask launches it immediately via the Windows service.
+    const launcher = `$ErrorActionPreference='Stop'
+$ProgressPreference='SilentlyContinue'
+` +
+        `$action=New-ScheduledTaskAction -Execute ${psQuote(powershell)} -Argument ${psQuote(`-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "${wrapper}"`)} -WorkingDirectory ${psQuote(logs)}
+` +
+        `$trigger=New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(-5)
+` +
+        `$principal=New-ScheduledTaskPrincipal -UserId ([Security.Principal.WindowsIdentity]::GetCurrent().Name) -LogonType Interactive -RunLevel Limited
+` +
+        `Register-ScheduledTask -TaskName ${psQuote(taskName)} -Action $action -Trigger $trigger -Principal $principal -ErrorAction Stop | Out-Null
+` +
+        `try { Start-ScheduledTask -TaskName ${psQuote(taskName)} -ErrorAction Stop } catch { Unregister-ScheduledTask -TaskName ${psQuote(taskName)} -Confirm:$false -ErrorAction SilentlyContinue; throw }
+`;
+    const encoded = Buffer.from(launcher, "utf16le").toString("base64");
+    const run = promisify(execFileCallback);
+    await run(powershell, ["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand", encoded], {
+        cwd: logs, windowsHide: true, timeout: 20_000, maxBuffer: 8192,
+        env: { ...sourceEnv, PATH: path.win32.join(sourceEnv.SystemRoot ?? sourceEnv.WINDIR ?? "C:\\Windows", "System32") },
+    });
     return Object.freeze({ scheduled: true, requestId, targetSha: null,
-        handoff: "original-signed-main-powershell", logPath });
+        handoff: "original-signed-main-scheduled-powershell", logPath });
 }

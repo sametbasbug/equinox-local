@@ -266,7 +266,14 @@ function Stop-ExistingEquinoxExecutables([string]$InstallRoot, [string]$ProgramR
         -not [string]::Equals([string]$still.ExecutablePath,$app,[StringComparison]::OrdinalIgnoreCase)) { continue }
     # taskkill /T terminates only descendants of this exact, revalidated
     # signed product WPF root, never all instances of a process by name.
-    & $systemKill /PID ([string]$shell.ProcessId) /T /F 2>$null | Out-Null
+    # taskkill can return nonzero when a descendant already exited. In
+    # Windows PowerShell 5.1 native stderr is terminating under Stop. Always
+    # re-check exact owned process identities in the loop below instead.
+    $previousPreference = $ErrorActionPreference
+    try {
+      $ErrorActionPreference = 'Continue'
+      & $systemKill /PID ([string]$shell.ProcessId) /T /F 2>$null | Out-Null
+    } finally { $ErrorActionPreference = $previousPreference }
   }
   # The old supervisor may relaunch children while exiting, and Chrome may
   # still hold a Native Messaging host. Re-query exact OS identities until no
