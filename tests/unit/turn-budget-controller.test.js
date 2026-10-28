@@ -461,3 +461,20 @@ test("turn budget falls back on a broken browser probe while preserving image co
   now=3*60_000;
   assert.equal((await controller.refreshSnapshot()).active,null);
 });
+
+test("a draft in the ChatGPT composer never resets an already running Turn Budget", async () => {
+  let timestamp = 100_000;
+  let probe = { browserContext: "user", conversationId: "conversation-1", userEpoch: "turn-1", assistantTurnKey: "assistant-1", generationStartedAtMs: timestamp };
+  const controller = createTurnBudgetController({ settingsPath: TEST_SETTINGS_PATH, now: () => timestamp, resolveTurnIdentity: async () => probe });
+  await controller.initialize();
+  assert.equal((await controller.refreshSnapshot()).active.elapsedMs, 0);
+  timestamp += 75_000;
+  // The Browser reports composing, not idle, if a draft has temporarily
+  // removed ChatGPT's generation-button indicator.
+  probe = { status: "composing", reason: "draft_not_turn_completion" };
+  assert.equal((await controller.refreshSnapshot()).active.elapsedMs, 75_000);
+  timestamp += 30_000;
+  assert.equal(controller.snapshot().active.elapsedMs, 105_000);
+  probe = { status: "idle", idleContexts: ["user"] };
+  assert.equal((await controller.refreshSnapshot()).active, null, "confirmed idle clears budget only after the draft is gone");
+});

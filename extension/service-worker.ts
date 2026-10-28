@@ -1405,10 +1405,14 @@ async function resolveAutoContinueTarget() {
 async function resolveTurnBudgetTarget() {
   const tabs = await listChatGptConversationTabs();
   const generating = [];
+  let composing = false;
   for (const tab of tabs) {
     try {
       const state = await chatGptContinuationState(tab.tabId);
       if (state.generationActive && (state.userEpoch || state.assistantTurnKey)) generating.push(state);
+      // A draft can temporarily change ChatGPT's stop/send-button markup.
+      // It is not evidence that an already observed assistant turn ended.
+      if (state.composerReady && !state.composerEmpty) composing = true;
     } catch {
       // A disappearing/restricted tab or missing observer is not an eligible active turn.
     }
@@ -1416,6 +1420,7 @@ async function resolveTurnBudgetTarget() {
   if (generating.length === 1) {
     return { status: "ready", target: generating[0] };
   }
+  if (generating.length === 0 && composing) return { status: "composing", reason: "draft_not_turn_completion" };
   return {
     status: generating.length === 0 ? "idle" : "ambiguous",
     reason: generating.length === 0 ? "no_generating_chatgpt_tab" : "multiple_generating_chatgpt_tabs",

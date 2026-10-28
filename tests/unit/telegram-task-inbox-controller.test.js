@@ -1132,3 +1132,31 @@ test("Telegram Task Inbox fails closed on persisted foreign or mismatched ChatGP
     assert.equal(JSON.parse(await fs.readFile(f.deps.statePath,"utf8")).chatBridge.canonicalUrl,canonicalUrl);
   }
 });
+
+test("Telegram sync announces only newly created active Tasks, never older checkpointed or finished Tasks", async (t) => {
+  const f = await fixture(t);
+  const oldUpdated = { taskId: "task-oldactive", title: "Old active", createdAt: "2026-09-19T12:00:00.000Z", updatedAt: "2026-09-20T16:01:00.000Z", status: "active", checkpointRevision: 15, next: [] };
+  const oldFinished = { ...oldUpdated, taskId: "task-oldclosed", status: "completed", title: "Finished" };
+  const fresh = { ...oldUpdated, taskId: "task-newactive", createdAt: "2026-09-20T16:00:02.000Z", title: "Fresh task" };
+  f.deps.store.list = async () => [oldUpdated, oldFinished, fresh];
+  f.deps.store.readInternal = async (taskId) => ({ ...[oldUpdated,oldFinished,fresh].find((item) => item.taskId === taskId), chatBinding: null });
+  const controller = createTelegramTaskInboxController(f.deps);
+  await controller.initialize();
+  const result = await controller.syncTasks();
+  assert.equal(result.changed, 1);
+  const cards = f.calls.filter((item) => item[0] === "send-card");
+  assert.equal(cards.length, 1);
+  assert.match(cards[0][1], /Fresh task/u);
+  assert.equal((await controller.syncTasks()).changed, 0);
+});
+
+test("Telegram /tasks reports picker failures instead of silently ignoring the command", async (t) => {
+  const f = await fixture(t);
+  f.deps.sendCard = async () => { throw new Error("Telegram picker unavailable"); };
+  const controller = createTelegramTaskInboxController(f.deps);
+  await controller.initialize();
+  f.pending.push({ updateId: 900, kind: "message", messageId: 999, replyToMessageId: null, text: "/tasks", attachment: null, receivedAt: "2026-09-20T16:00:10.000Z" });
+  await controller.processPending();
+  assert.equal(f.calls.filter((item) => item[0] === "message").length, 1);
+  assert.match(f.calls.find((item) => item[0] === "message")[1], /Task list could not be opened/u);
+});
