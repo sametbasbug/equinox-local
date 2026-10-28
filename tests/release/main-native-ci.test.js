@@ -13,7 +13,10 @@ test("normal CI owns automatic Main snapshot production and optional manual reco
   assert.match(workflow, /name: Exact-SHA Main snapshot plan/u);
   assert.match(workflow, /CURRENT_SHA: \$\{\{ github\.event_name == 'push' && github\.event\.before \|\| inputs\.main_native_current \}\}/u);
   assert.match(workflow, /TARGET_SHA: \$\{\{ github\.event_name == 'push' && github\.sha \|\| inputs\.main_native_target \}\}/u);
-  assert.match(workflow, /plan-main-native-artifacts\.mjs --current-sha/u);
+  assert.match(workflow, /plan-main-native-artifacts\.mjs \\\n\s*--current-sha/u);
+  assert.match(workflow, /test "\$TARGET_SHA" = "\$\{\{ github\.sha \}\}"/u);
+  assert.match(workflow, /--candidate-only true > "\$plan_file"/u);
+  assert.match(workflow, /main-snapshot-publish:[^]*github\.event_name == 'push'/u);
 });
 
 test("every product-impacting Main CI push builds all four exact-SHA snapshot targets on GitHub", () => {

@@ -62,3 +62,20 @@ test("Main native planner fails closed for invalid target contracts", async () =
   await assert.rejects(planEquinoxLocalMainNativeArtifacts({ rootDir: "/tmp/canonical", currentSha: CURRENT, targetSha: TARGET, inspectImpactImpl: oneTarget, targetMatrix: [] }), /contract is missing/u);
   await assert.rejects(planEquinoxLocalMainNativeArtifacts({ rootDir: "/tmp/canonical", currentSha: CURRENT, targetSha: TARGET, inspectImpactImpl: oneTarget, targetMatrix: [matrix[1], matrix[1]] }), /duplicate targets/u);
 });
+
+test('manual unpublished candidate is forwarded only on explicit request and never becomes publication authority',async()=>{
+ const calls=[];
+ const inspectImpactImpl=async(args)=>{
+  calls.push(args);
+  return {canonicalMainSha:CURRENT,mainUpdateImpact:true,nativeImpact:true,
+   changedPaths:['src/server.js'],requiredTargets:[],reasons:[]};
+ };
+ const base={rootDir:'/tmp/canonical',currentSha:CURRENT,targetSha:TARGET,inspectImpactImpl};
+ const candidate=await planEquinoxLocalMainNativeArtifacts({...base,candidateOnly:true});
+ assert.equal(calls.at(-1).candidateOnly,true);
+ assert.equal(candidate.canonicalMainSha,CURRENT);
+ const published=await planEquinoxLocalMainNativeArtifacts(base);
+ assert.equal(calls.at(-1).candidateOnly,false);
+ assert.equal(published.targetSha,TARGET);
+ await assert.rejects(planEquinoxLocalMainNativeArtifacts({...base,candidateOnly:'true'}),/must be boolean/u);
+});

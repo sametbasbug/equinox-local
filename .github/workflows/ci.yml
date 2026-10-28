@@ -1060,7 +1060,16 @@ jobs:
           TARGET_SHA: ${{ github.event_name == 'push' && github.sha || inputs.main_native_target }}
         run: |
           plan_file="$RUNNER_TEMP/main-native-plan.json"
-          node scripts/release/plan-main-native-artifacts.mjs --current-sha "$CURRENT_SHA" --target-sha "$TARGET_SHA" > "$plan_file"
+          if [[ "${{ github.event_name }}" == 'workflow_dispatch' ]]; then
+            # Manual preview: exact checked-out feature SHA, NEVER publication.
+            test "$TARGET_SHA" = "${{ github.sha }}"
+            node scripts/release/plan-main-native-artifacts.mjs \
+              --current-sha "$CURRENT_SHA" --target-sha "$TARGET_SHA" \
+              --candidate-only true > "$plan_file"
+          else
+            node scripts/release/plan-main-native-artifacts.mjs \
+              --current-sha "$CURRENT_SHA" --target-sha "$TARGET_SHA" > "$plan_file"
+          fi
           cat "$plan_file"
           PLAN_FILE="$plan_file" node --input-type=module <<'NODE'
           import fs from 'node:fs';
