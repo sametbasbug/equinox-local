@@ -63,15 +63,16 @@ test("original Guardian pins the same B Node/worker kernel identities while reco
  assert.doesNotMatch(guardian,/HoldOwnedNativeJournalLease\(|QuiesceOwnedStableShell\(|Process\.Start\(/u);
 });
 
-test("original user-facing PowerShell native activation remains unavailable until a separately authenticated signed-native Guardian OS mutation journal and actual Windows host tests",async()=>{
+test("Windows Main full reinstall invokes the existing PowerShell installer without Guardian update lease",async()=>{
  const [ps,guardian,worker]=await Promise.all([
   read("scripts/install-equinox-local.ps1"),
-  read("native/windows/EquinoxLocal.Guardian/MainNativeJournalLease.cs"),
-  read("src/equinox-local-signed-main-windows-worker.ts"),
+  read("native/windows/EquinoxLocal.Guardian/MainOriginalInstalledSignedMainAudit.cs"),
+  read("src/equinox-local-first-install.ts"),
  ]);
- assert.match(ps,/\[switch\]\$CheckMainNative = \$false/u);
- assert.doesNotMatch(ps,/\[switch\]\$ActivateMain/u);
- assert.match(guardian,/InspectOwnedNativeWorkerOsArguments\(\);\s*InspectOwnedNativeWorkerPipeProof\(\);\s*var owner = InspectOwnedNativeWorkerProcess\(\);/u);
- assert.doesNotMatch(guardian,/signedNativeReadOnly:\s*true/u);
- assert.match(worker,/original native OS mutation session is not authorized/u);
+ assert.match(ps,/--install-main-fresh/u);
+ assert.match(ps,/Begin-ExecutableReplacement/u);
+ assert.match(guardian,/VerifyOriginalSignedNativeMainSelector/u);
+ assert.match(guardian,/InspectOriginalSignedWindowsArchive/u);
+ assert.doesNotMatch(guardian,/File\.Move|File\.Delete|Quiesce|Kill\(/u);
+ assert.match(worker,/installFreshSignedMainRelease/u);
 });

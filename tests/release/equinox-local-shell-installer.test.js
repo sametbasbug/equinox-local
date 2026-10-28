@@ -1,138 +1,61 @@
-import { execFileSync } from "node:child_process";
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
-import { fileURLToPath } from "node:url";
+import {fileURLToPath} from "node:url";
 
-const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
-const INSTALLER = path.join(ROOT, "scripts", "install-equinox-local.sh");
-const WINDOWS_INSTALLER = path.join(ROOT, "scripts", "install-equinox-local.ps1");
+const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),"../..");
+const mac=path.join(root,"scripts","install-equinox-local.sh");
+const win=path.join(root,"scripts","install-equinox-local.ps1");
 
-test("macOS installer forwards zero or one Main argument safely under system Bash nounset", { skip: process.platform !== "darwin" }, async () => {
-  const source = await fs.readFile(INSTALLER, "utf8");
-  const parser = source.slice(source.indexOf("MAIN_ARGS=(--enroll-existing-main)"), source.indexOf('[ "$(/usr/bin/uname -s)"'));
-  const forwarded = source.match(/--staged-release "\$SOURCE_RELEASE" (.+)\)" \|\| fail/u)[1];
-  const harness = `set -eu\nfail() { exit 2; }\n${parser}\nprintf '%s\\n' stable ${forwarded}`;
-  assert.equal(execFileSync("/bin/bash", ["-c", harness, "installer"], { encoding: "utf8" }), "stable\n--enroll-existing-main\n");
-  assert.equal(execFileSync("/bin/bash", ["-c", harness, "installer", "--enroll-existing-main"], { encoding: "utf8" }), "stable\n--enroll-existing-main\n");
+test("ONE macOS shell command always verifies latest production Main then reinstalls owned executables",async()=>{
+ const s=await fs.readFile(mac,"utf8");
+ assert.match(s,/^#!\/bin\/bash\nset -euo pipefail/u);
+ assert.match(s,/--proto '=https' --tlsv1\.2/u);
+ assert.match(s,/MAIN_VERIFY_SHA256="[a-f0-9]{64}"/u);
+ assert.match(s,/MAIN_VERIFY_URL="https:\/\/local\.sametbasbug\.dev\/downloads\/updates\/install-main-verify\.mjs"/u);
+ assert.match(s,/prepare_verified_main\ninfo "replacing product executables/u);
+ assert.match(s,/for entry in current releases runtime main-update; do/u);
+ assert.match(s,/--install-main-fresh/u);
+ assert.match(s,/--signed-pointer-file "\$MAIN_POINTER" --archive "\$MAIN_ARCHIVE"/u);
+ assert.ok(s.indexOf("prepare_verified_main\ninfo")<s.indexOf("/bin/rm -rf \"$old\""));
+ assert.doesNotMatch(s,/bootstrap-\$TARGET\.txt|unexpected bootstrap channel|\bCHANNEL="stable"|--activate-main|--repair-main|--recover-main/u);
+ for(const userEntry of ["config.json","workspace","secrets","downloads","logs","tunnel-profile"]){
+   assert.doesNotMatch(s,new RegExp(`\\$INSTALL_ROOT/\\$\\{?${userEntry}`,'u'));
+ }
+ assert.match(s,/trap cleanup EXIT/u);
+ assert.match(s,/do not run this installer with sudo or as root/u);
+ assert.doesNotMatch(s,/curl[^\n]*\|[^\n]*(?:sh|bash)/u);
 });
 
-test("public installers enroll Main by default after pinned signed bootstrap", async () => {
-  const mac = await fs.readFile(INSTALLER, "utf8");
-  const windows = await fs.readFile(WINDOWS_INSTALLER, "utf8");
-  assert.match(mac, /MAIN_ARGS=\(--enroll-existing-main\)/u);
-  assert.match(mac, /--enroll-existing-main\) MAIN_ARGS=\(--enroll-existing-main\)/u);
-  assert.ok(mac.includes('"$SOURCE_RELEASE" ${MAIN_ARGS[@]+"${MAIN_ARGS[@]}"}'));
-  assert.match(mac, /enrolls the admitted Main commit by default/u);
-  assert.match(windows, /param\(\[switch\]\$EnrollExistingMain = \$true, \[switch\]\$Help, \[switch\]\$PrepareMain = \$false, \[switch\]\$StageMain = \$false, \[switch\]\$CheckMainNative = \$false\)/u);
-  assert.match(windows, /if \(\$EnrollExistingMain -and -not \$existingMain -and -not \$FreshReplacement\) \{ \$psi\.Arguments \+= ' --enroll-existing-main' \}/u);
-  assert.match(windows, /enrolls the admitted Main commit by default/u);
-  assert.match(windows, /\[IO\.File\]::Exists\(\$mainStamp\)/u);
-  assert.match(windows, /Assert-NormalFile \$mainStamp 1 8192/u);
-  // The old Main source is never used as a prerequisite; executable runtime
-  // identities are parked once, while config/credentials/workspace persist.
-  assert.match(windows, /function Suspend-OldEquinoxChromeHost/u);
-  assert.match(windows, /function Restore-OldEquinoxChromeHost/u);
-  assert.match(windows, /Restore-OldEquinoxChromeHost \$nativeHostSuspension/u);
-  assert.match(windows, /function Begin-ExecutableReplacement/u);
-  assert.ok(windows.includes("& $systemKill /PID ([string]$shell.ProcessId) /T /F"));
-  assert.ok(windows.includes("Get-CimInstance Win32_Process -Filter"));
-  assert.match(windows, /function Restore-ExecutableReplacement/u);
-  assert.match(windows, /function Complete-ExecutableReplacement/u);
-  assert.match(windows, /Remove-Item -LiteralPath \$Transaction\.Backup -Recurse -Force -ErrorAction Stop/u);
-  assert.match(windows, /\$result\.version -cne \$manifest\.Version/u);
-  assert.match(windows, /\$newHealthy = \$true/u);
-  assert.doesNotMatch(windows, /\[IO\.Directory\]::Move\([^\n]*config\.json/u);
-
+test("macOS and Windows installers support their actual native Main architectures",async()=>{
+ const [m,w]=await Promise.all([fs.readFile(mac,"utf8"),fs.readFile(win,"utf8")]);
+ assert.match(m,/arm64\) TARGET="darwin-arm64"/u);
+ assert.match(m,/x86_64\) TARGET="darwin-x64"/u);
+ assert.match(w,/'AMD64' \{ return 'win32-x64' \}/u);
+ assert.match(w,/'ARM64' \{ return 'win32-arm64' \}/u);
+ assert.match(w,/native 64-bit Windows PowerShell is required/u);
 });
 
-test("public shell installer stays user-level, pinned to Equinox HTTPS and bounded", async () => {
-  const source = await fs.readFile(INSTALLER, "utf8");
-  assert.match(source, /^#!\/bin\/bash\nset -euo pipefail\n/u);
-  assert.match(source, /UPDATE_BASE="https:\/\/local\.sametbasbug\.dev\/downloads\/updates"/u);
-  assert.match(source, /--proto '=https' --tlsv1\.2/u);
-  assert.match(source, /--max-filesize "\$MAX_MANIFEST_BYTES"/u);
-  assert.match(source, /--max-filesize "\$ARTIFACT_BYTES"/u);
-  assert.match(source, /downloaded release size does not match/u);
-  assert.match(source, /downloaded release SHA-256 verification failed/u);
-  assert.match(source, /bootstrap artifact URL escaped the pinned Equinox Local HTTPS path/u);
-  assert.match(source, /do not run this installer with sudo or as root/u);
-  assert.match(source, /\/usr\/bin\/env -i/u);
-  assert.match(source, /\/usr\/bin\/grep \/usr\/bin\/awk/u);
-  assert.match(source, /CONTROL_CENTER_URL="http:\/\/127\.0\.0\.1:24891\/"/u);
-  assert.match(source, /CONTROL_CENTER_APP="\$HOME_DIR\/Applications\/Equinox Local\.app"/u);
-  assert.match(source, /installation is ready; opening Equinox Local/u);
-  assert.match(source, /\/usr\/bin\/open "\$CONTROL_CENTER_APP"/u);
-  assert.match(source, /native app reopen was unavailable; opening the localhost fallback/u);
-  assert.match(source, /\/usr\/bin\/open "\$CONTROL_CENTER_URL"/u);
-  const appOpen = source.indexOf('/usr/bin/open "$CONTROL_CENTER_APP"');
-  const browserFallback = source.indexOf('/usr/bin/open "$CONTROL_CENTER_URL"');
-  assert.equal(appOpen >= 0, true);
-  assert.equal(browserFallback > appOpen, true);
-  assert.doesNotMatch(source, /\/usr\/bin\/open -n/u);
-  assert.doesNotMatch(source, /CONTROL_CENTER_EXECUTABLE|NATIVE_APP_PID/u);
-  assert.doesNotMatch(source, /\/usr\/bin\/nohup/u);
-  assert.doesNotMatch(source, /Contents\/MacOS\/applet/u);
-  assert.match(source, /trap cleanup EXIT/u);
-  assert.match(source, /trap handle_signal HUP INT TERM/u);
-  assert.doesNotMatch(source, /\bsudo\b(?! or as root)/u);
-  assert.doesNotMatch(source, /pkgbuild|notarytool|Developer ID|\.pkg/u);
-  assert.doesNotMatch(source, /curl[^\n]*\|[^\n]*(?:sh|bash)/u);
+test("ONE PowerShell command checks signed latest Main before reusing product-only executable replacement",async()=>{
+ const w=await fs.readFile(win,"utf8");
+ assert.match(w,/param\(\[switch\]\$Help\)/u);
+ assert.match(w,/function Invoke-VerifiedMainPreparation/u);
+ assert.match(w,/\$freshReceipt = @\(Invoke-VerifiedMainPreparation \$tempRoot\)/u);
+ assert.match(w,/\$oldExecutables = Begin-ExecutableReplacement \$installRoot/u);
+ assert.match(w,/\$freshResult = @\(Invoke-PinnedMainNode \$mainNode/u);
+ assert.match(w,/--install-main-fresh/u);
+ assert.match(w,/\$installed\.sourceSha -cne \$main\.sourceSha/u);
+ assert.match(w,/Complete-ExecutableReplacement \$oldExecutables/u);
+ assert.match(w,/function Suspend-OldEquinoxChromeHost/u);
+ assert.match(w,/function Stop-ExistingEquinoxExecutables/u);
+ assert.ok(w.indexOf("$freshReceipt = @(") < w.indexOf("$oldExecutables = Begin-ExecutableReplacement"));
+ assert.doesNotMatch(w,/Read-BootstrapManifest|bootstrap-\$Target\.txt|Invoke-CleanNode|Assert-ExistingStableUpgradeRoute/u);
+ assert.doesNotMatch(w,/Start-Process[^\n]*-Verb\s+RunAs|Expand-Archive/u);
 });
 
-test("public shell installer supports only the two managed macOS release targets", async () => {
-  const source = await fs.readFile(INSTALLER, "utf8");
-  assert.match(source, /arm64\) TARGET="darwin-arm64"/u);
-  assert.match(source, /x86_64\) TARGET="darwin-x64"/u);
-  assert.match(source, /unsupported Mac architecture/u);
-  assert.match(source, /bootstrap-\$TARGET\.txt/u);
-});
-
-
-test("public Windows installer selects only native x64/ARM64 targets, stays fixed-origin and delegates ZIP extraction to the pinned helper", async () => {
-  const source = await fs.readFile(WINDOWS_INSTALLER, "utf8");
-  assert.match(source, /\$UpdateBase = 'https:\/\/local\.sametbasbug\.dev\/downloads\/updates'/u);
-  assert.match(source, /\$Target = \$null/u);
-  assert.match(source, /function Get-NativeWindowsTarget/u);
-  assert.match(source, /Is64BitProcess/u);
-  assert.match(source, /'AMD64' \{ return 'win32-x64' \}/u);
-  assert.match(source, /'ARM64' \{ return 'win32-arm64' \}/u);
-  assert.match(source, /PROCESSOR_ARCHITEW6432/u);
-  assert.match(source, /native 64-bit Windows PowerShell is required/u);
-  assert.match(source, /unsupported Windows architecture/u);
-  assert.match(source, /Save-BoundedHttpsFile/u);
-  assert.match(source, /ContentLength -gt \$MaxBytes/u);
-  assert.match(source, /\$total -gt \$MaxBytes/u);
-  assert.match(source, /bootstrap-\$Target\.txt/u);
-  assert.match(source, /function Assert-ExistingStableUpgradeRoute/u);
-  assert.match(source, /Assert-ExistingStableUpgradeRoute \$installRoot \$manifest\.Version \$Target/u);
-  assert.match(source, /current-version\.json/u);
-  assert.doesNotMatch(source, /The website installer is only for first install or same-version repair/u);
-  assert.ok(source.indexOf("Assert-ExistingStableUpgradeRoute $installRoot $manifest.Version $Target") < source.indexOf("Write-Info 'downloading the verified ZIP helper'"));
-  assert.match(source, /equinox-local-\$\(\$values\.version\)-\$Target\.zip/u);
-  assert.match(source, /Get-FileHash -LiteralPath \$Path -Algorithm SHA256/u);
-  assert.match(source, /__EQUINOX_ZIP_HELPER_SHA256__/u);
-  assert.match(source, /__EQUINOX_ZIP_HELPER_BYTES__/u);
-  assert.match(source, /function Assert-NormalDirectory/u);
-  assert.match(source, /\$installRoot = Join-Path \$localAppData 'Equinox Local'/u);
-  assert.match(source, /\$stagingRoot = Join-Path \$installRoot 'staging'/u);
-  assert.match(source, /Assert-NormalDirectory \$stagingRoot \$true/u);
-  assert.match(source, /\$stage = Join-Path \$stagingRoot \('bootstrap-' \+ \[Guid\]::NewGuid\(\)\.ToString\('N'\)\)/u);
-  assert.match(source, /ReparsePoint/u);
-  assert.doesNotMatch(source, /-Mode Inspect -ArchivePath \$artifactPath/u);
-  assert.match(source, /-Mode Extract -ArchivePath \$artifactPath -DestinationPath \$stage/u);
-  assert.match(source, /Extract performs the same bounded central-directory validation/u);
-  assert.match(source, /runtime\\node\\bin\\node\.exe/u);
-  assert.match(source, /equinox-local-first-install\.js/u);
-  assert.match(source, /EnvironmentVariables\.Clear\(\)/u);
-  assert.match(source, /\$extractionOutput = @\(& \$powerShellHost/u);
-  assert.match(source, /\$extractExitCode = \$LASTEXITCODE/u);
-  assert.match(source, /Check your security product detection logs/u);
-  assert.match(source, /Windows denied access to a file/u);
-  assert.match(source, /a staged file was unavailable/u);
-  assert.doesNotMatch(source, /\$extractionOutput.*Write-Host/u);
-  assert.doesNotMatch(source, /Expand-Archive/u);
-  assert.doesNotMatch(source, /Start-Process[^\n]+-Verb\s+RunAs/u);
-  assert.doesNotMatch(source, /\bsudo\b/u);
+test("both original scripts are shipped in the same public signed Main release",async()=>{
+ const pkg=await fs.readFile(path.join(root,"scripts","release","package-managed-release.mjs"),"utf8");
+ assert.match(pkg,/"scripts\/install-equinox-local\.sh"/u);
+ assert.match(pkg,/"scripts\/install-equinox-local\.ps1"/u);
 });

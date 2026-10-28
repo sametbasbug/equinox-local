@@ -71,17 +71,18 @@ test("managed-native Main UI checks only original Ed25519 full SHA and dispatche
   'mode: "signed-native", checkSupported: true, channel: "main"',
   'state: signed.status === "available" ? "behind"',
   'currentSha: signed.installedSha, targetSha: signed.targetSha',
-  'signed.status === "available" && !signedMainInstallerPending()',
-  'await scheduleEquinoxLocalSignedNativeMacInstaller({',
+  '!signedMainInstallerPending()',
+  'scheduleEquinoxLocalSignedNativeWindowsInstaller',
   'signedMainInstallerRequestedSha = checked.targetSha',
  ];
  for(const field of serverFields) assert.equal(server.includes(field),true,field);
+ assert.match(server,/\["available",\s*"up_to_date"\]\.includes\(signed\.status\)/u);
  const uiFields=[
   'const signedNativeMain = update.installationKind === "managed-main" && main.mode === "signed-native"',
   "Check signed SHA",
   "original Ed25519-signed native selector",
-  "A newer exact source SHA is production-signed. Update & restart launches the same original external installer",
-  "Signed native Main SHA is up to date",
+  "The latest Main source SHA is production-signed. Reinstall Main runs the same original installer",
+  "Latest signed Main is installed",
   'const managedMain = update.installationKind === "managed-source"',
   'installButton.hidden = !nativeOrSourceMain',
   'const nativeOrSourceMain = managedMain || signedNativeMain',

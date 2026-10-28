@@ -126,17 +126,13 @@ test("download-artifact consumers use current v8 with integrity errors enabled",
   assert.doesNotMatch(ci + archived, /actions\/download-artifact@v7/u);
 });
 
-test("hosted native installer exposes only bounded WPF cold-start phase timings, never raw runtime details", async () => {
-  const smoke = await fs.readFile(new URL("./windows-installer-real-package-smoke.ps1", import.meta.url), "utf8");
-  assert.match(smoke, /\$env:GITHUB_ACTIONS -ceq 'true'/u);
-  assert.match(smoke, /\$InstallCallStarted = \[DateTimeOffset\]::UtcNow/u);
-  assert.match(smoke, /\$InstallCallCompleted = \[DateTimeOffset\]::UtcNow/u);
-  assert.match(smoke, /\$AllowedPhase = @\(/u);
-  assert.match(smoke, /'runtime-start-phase:child-started'/u);
-  assert.match(smoke, /\$PhaseName -cnotin \$AllowedPhase/u);
-  assert.match(smoke, /\$ShellLogFile\.Length -gt 65536/u);
-  assert.match(smoke, /\$Seconds -ge 0 -and \$Seconds -le 600/u);
-  assert.doesNotMatch(smoke, /Write-Output \$ShellLine/u);
+test("hosted native Main-only ZIP gate asserts exact package identity without falsely claiming WPF startup",async()=>{
+ const smoke=await fs.readFile(new URL("./windows-installer-real-package-smoke.ps1",import.meta.url),"utf8");
+ assert.match(smoke,/EQUINOX_WINDOWS_INSTALL_SOURCE_SHA/u);
+ assert.match(smoke,/Get-FileHash -LiteralPath \$Archive -Algorithm SHA256/u);
+ assert.match(smoke,/Original Windows Guardian PE header is malformed/u);
+ assert.match(smoke,/production-signed full install NOT asserted/u);
+ assert.doesNotMatch(smoke,/Write-Output \$ShellLine/u);
 });
 
 test("manual Windows installed A-to-B acceptance admits post-snapshot CI/docs but rejects unadmitted product code", async () => {
@@ -192,23 +188,17 @@ test("Main snapshot publication waits for real macOS managed-source fresh-instal
   assert.match(publish, /needs\.macos-managed-source\.result == 'success'/u);
 });
 
-test("real public installer enters managed-source on native Windows x64 and ARM64", async () => {
-  const smoke = await fs.readFile(new URL("./windows-installer-real-package-smoke.ps1", import.meta.url), "utf8");
-  const x64 = job("windows-x64-installer");
-  const arm64 = job("windows-arm64-installer");
-  assert.match(x64, /name: Windows x64 public installer acceptance/u);
-  assert.match(x64, /runs-on: windows-latest/u);
-  assert.match(x64, /win32-x64/u);
-  assert.match(x64, /windows-installer-real-package-smoke\.ps1/u);
-  assert.match(arm64, /& \.\/tests\/release\/windows-installer-real-package-smoke\.ps1/u);
-  assert.doesNotMatch(arm64, /powershell\.exe[^\n]*windows-installer-real-package-smoke/u);
-  assert.match(smoke, /installation\.kind -ceq 'managed-source'/u);
-  assert.match(smoke, /installation\.sourceSha -ceq \$FixtureSourceSha/u);
-  assert.match(smoke, /EQUINOX_WINDOWS_INSTALL_SOURCE_SHA/u);
-  assert.match(smoke, /EQUINOX_WINDOWS_INSTALL_SHA256/u);
-  assert.match(smoke, /New-Item -ItemType HardLink/u);
-  assert.match(smoke, /runtime\\toolchain\\git\\2\.56\.0-1/u);
-  assert.match(smoke, /runtime\\toolchain\\node\\26\.12\.1/u);
+test("native Windows x64 and ARM64 CI use Main-only real-package checks, not old Stable bootstrap",async()=>{
+ const smoke=await fs.readFile(new URL("./windows-installer-real-package-smoke.ps1",import.meta.url),"utf8");
+ const x64=job("windows-x64-installer"),arm64=job("windows-arm64-installer");
+ assert.match(x64,/name: Windows x64 Main-only native package \/ installer gate/u);
+ assert.match(x64,/runs-on: windows-latest/u);
+ assert.match(x64,/windows-installer-real-package-smoke\.ps1/u);
+ assert.match(arm64,/windows-installer-real-package-smoke\.ps1/u);
+ assert.match(smoke,/\$Metadata\.sourceSha -cne \$ExpectedSourceSha/u);
+ assert.match(smoke,/release\/scripts\/install-equinox-local\.ps1/u);
+ assert.match(smoke,/Original signed Main ZIP still contains a Stable-first installer/u);
+ assert.match(smoke,/Main-only PowerShell fail-closed smoke failed/u);
 });
 
 test("managed-source runtime acceptance runs on real Windows x64 and ARM64 hosts", () => {
@@ -354,23 +344,16 @@ test("CI parallelizes independent macOS gates and shares one verified x64 packag
 });
 
 
-test("independent real x64 Guardian negative audit is required alongside full installation and repair", async () => {
-  const guardian = job("windows-x64-guardian");
-  const installer = job("windows-x64-installer");
-  const repair = job("windows-x64-repair");
-  const smoke = await fs.readFile(new URL("./windows-installer-real-package-smoke.ps1", import.meta.url), "utf8");
-  assert.match(guardian, /needs: \[windows-x64-package-build\]/u);
-  assert.match(guardian, /EQUINOX_WINDOWS_GUARDIAN_AUDIT_ONLY: 'true'/u);
-  assert.match(guardian, /EQUINOX_WINDOWS_INSTALL_SHA256/u);
-  assert.match(guardian, /windows-installer-real-package-smoke\.ps1/u);
-  assert.match(installer, /EQUINOX_WINDOWS_GUARDIAN_AUDIT_IN_PARALLEL: 'true'/u);
-  assert.doesNotMatch(repair, /EQUINOX_WINDOWS_GUARDIAN_AUDIT_ONLY|EQUINOX_WINDOWS_GUARDIAN_AUDIT_IN_PARALLEL/u);
-  assert.match(smoke, /Guardian native journal ownership audit positive\/negative hosted acceptance PASSED/u);
-  assert.match(smoke, /if \(-not \$SkipLegacyGuardianFixture -and -not \$RepairOnly -and -not \$GuardianAuditElsewhere\)/u);
-  assert.match(smoke, /if \(\$GuardianAuditOnly\) \{/u);
-  assert.match(smoke, /GITHUB_ACTIONS -cne 'true'/u);
-  assert.match(job("windows-headless"), /X64_GUARDIAN_RESULT: \$\{\{ needs\.windows-x64-guardian\.result \}\}/u);
-  assert.match(job("windows-headless"), /test "\$X64_GUARDIAN_RESULT" = success/u);
+test("original Windows Guardian package gate independently denies foreign standalone signed-Main audit",async()=>{
+ const guardian=job("windows-x64-guardian");
+ const smoke=await fs.readFile(new URL("./windows-installer-real-package-smoke.ps1",import.meta.url),"utf8");
+ assert.match(guardian,/needs: \[windows-x64-package-build\]/u);
+ assert.match(guardian,/EQUINOX_WINDOWS_INSTALL_SHA256/u);
+ assert.match(guardian,/windows-installer-real-package-smoke\.ps1/u);
+ assert.match(smoke,/\$DisposableGuardian --audit-installed-signed-main/u);
+ assert.match(smoke,/\$AuditExit -eq 0/u);
+ assert.match(smoke,/original Windows Guardian accepted a foreign/iu);
+ assert.match(job("windows-headless"),/X64_GUARDIAN_RESULT: \$\{\{ needs\.windows-x64-guardian\.result \}\}/u);
 });
 
 test("ARM64 winapp smoke can use a native PowerShell helper host without weakening x64 PS5.1 coverage", async () => {

@@ -37,7 +37,7 @@ async function fixture(t){
     launchHelperImpl:async args=>{
       events.push(args);
       assert.equal(args.command,"/bin/bash");
-      assert.deepEqual(args.args,[script,"--activate-main"]);
+      assert.deepEqual(args.args,[script]);
       assert.equal(args.options.cwd,releaseDir);
       assert.equal(args.options.detached,true);
       assert.equal(args.options.env.HOME,homeDir);
@@ -121,6 +121,6 @@ test("real macOS detached Bash execution uses only the isolated original-script 
     if(result.includes("SAFE_TEMP_EXEC"))break;
     await new Promise(resolve=>setTimeout(resolve,25));
   }
-  assert.equal(result.trim(),"SAFE_TEMP_EXEC --activate-main");
+  assert.equal(result.trim(),"SAFE_TEMP_EXEC");
   assert.equal((await fs.lstat(receipt.logPath)).mode&0o777,0o600);
 });

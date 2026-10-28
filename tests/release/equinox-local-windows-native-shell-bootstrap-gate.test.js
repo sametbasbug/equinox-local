@@ -15,7 +15,8 @@ test("original Windows WPF cannot silently claim stale Stable A when committed G
  assert.match(section,/if \(nativePointerPresent\)/u);
  assert.doesNotMatch(section,/if \(File\.Exists\(nativePointerPath\)\)/u);
  assert.match(section,/ResolveNativeRelease\(transactionRoot, candidateNativePointerPath\)/u);
- assert.match(section,/production Ed25519 and independent Guardian admission/u);
+ assert.match(section,/--audit-installed-signed-main/u);
+ assert.match(section,/guardian.ExitCode != 0/u);
  assert.ok(section.indexOf("nativePointerPresent")<
    section.indexOf("WindowsManagedReleaseLocator.ResolveCurrentRelease()"));
  assert.match(source,/RequireExactProperties\(pointer, \["schemaVersion", "channel", "sourceSha", "target", "runtimeContractSha256"\]/u);

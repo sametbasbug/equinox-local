@@ -1068,7 +1068,7 @@ function renderUpdate() {
             summaryNode.replaceChildren(...(snapshotAvailable ? [entry] : []));
             if (main.restartScheduledFor) {
                 setText("update-title", "Original signed Main installer launched");
-                setText("update-copy", "The original external installer is checking native B. A detached worker must still verify B health or roll back before this update is complete.");
+                setText("update-copy", "The original Main installer is replacing program files while retaining your settings and personal data.");
             }
             else if (main.applyError) {
                 setText("update-title", "Original signed Main installer needs attention");
@@ -1077,11 +1077,11 @@ function renderUpdate() {
             else if (main.state === "behind") {
                 setText("update-title", "Production-signed Main " + (targetSha || "SHA") + " available");
                 setText("update-copy", main.applyAvailable
-                    ? "A newer exact source SHA is production-signed. Update & restart launches the same original external installer, which independently verifies B and owns native rollback."
-                    : "A different native Main SHA is signed. This platform has not yet been admitted for the original external installer handoff.");
+                    ? "The latest Main source SHA is production-signed. Reinstall Main runs the same original installer used in Terminal or PowerShell, preserving personal settings."
+                    : "The signed Main installer is temporarily unavailable for this platform.");
             }
             else if (main.state === "up_to_date") {
-                setText("update-title", "Signed native Main SHA is up to date");
+                setText("update-title", "Latest signed Main is installed");
                 setText("update-copy", "The current native source SHA exactly matches the original Ed25519-signed native selector.");
             }
             else if (main.state === "unavailable") {
@@ -1100,7 +1100,7 @@ function renderUpdate() {
         const canApplyMain = Boolean(nativeOrSourceMain && main.applyAvailable && !main.applyError && !main.restartScheduledFor);
         installButton.hidden = !nativeOrSourceMain || (!canApplyMain && !state.updateApplyBusy && !main.applying && !main.restartScheduledFor);
         installButton.disabled = mainLocked || !canApplyMain;
-        installButton.textContent = localizeUiText(state.updateApplyBusy || main.applying ? "Preparing update…" : main.restartScheduledFor ? "Restarting…" : "Update & restart");
+        installButton.textContent = localizeUiText(state.updateApplyBusy || main.applying ? "Reinstalling Main…" : main.restartScheduledFor ? "Restarting…" : signedNativeMain ? "Reinstall Main" : "Update & restart");
         return;
     }
     setText("update-version", current ? `Current version ${current}` : "Current version unavailable");

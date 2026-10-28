@@ -51,7 +51,8 @@ internal sealed class RuntimeSupervisor : IAsyncDisposable
         // B's shell silently boots A and reports a false successful upgrade.
         var local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
         if (!string.IsNullOrWhiteSpace(local) &&
-            File.Exists(Path.Combine(local, "Equinox Local", "state", "main-update", "install.json")))
+            (File.Exists(Path.Combine(local, "Equinox Local", "state", "main-update", "install.json")) ||
+             File.Exists(Path.Combine(local, "Equinox Local", "state", "main-update", "current-native.json"))))
             return new RuntimeSupervisor(WindowsManagedSourceRuntimeLocator.Resolve);
         var releaseDir = Environment.GetEnvironmentVariable("EQUINOX_LOCAL_RELEASE_DIR");
         if (!string.IsNullOrWhiteSpace(releaseDir)) return new RuntimeSupervisor(releaseDir);

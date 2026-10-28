@@ -9,21 +9,16 @@ import {collectManagedReleaseSourceFiles} from "../../scripts/release/package-ma
 const installer=new URL("../../scripts/install-equinox-local.ps1",import.meta.url);
 const cli=new URL("../../src/equinox-local-first-install.js",import.meta.url);
 
-test("original PowerShell signed Windows Main check stages only immutable B, then invokes read-only Guardian admission; never uses direct WPF switch",async()=>{
+test("the production signed Main Windows ZIP is installed by the SAME original PowerShell command",async()=>{
  const source=await fs.readFile(installer,"utf8");
- assert.match(source,/\[switch\]\$CheckMainNative = \$false/u);
- assert.match(source,/if \(\$CheckMainNative\) \{ \$StageMain = \$true \}/u);
- assert.match(source,/--check-windows-signed-main/u);
- assert.match(source,/guardian_handoff_required/u);
- assert.match(source,/NEVER activates or stops WPF/u);
- assert.match(source,/Invoke-PinnedMainNode \$node @\(\$inspector, '--check-windows-signed-main'/u);
- const checkIndex=source.indexOf("if ($CheckMainNative) {",source.indexOf("function Invoke-VerifiedMainPreparation"));
- assert.ok(checkIndex>source.indexOf("if ($StageMain) {"));
- assert.ok(checkIndex<source.indexOf("function Test-ExistingEquinoxOwnedProcess"));
+ assert.match(source,/Invoke-VerifiedMainPreparation/u);
+ assert.match(source,/--install-main-fresh/u);
+ assert.match(source,/Begin-ExecutableReplacement/u);
+ assert.match(source,/Complete-ExecutableReplacement/u);
+ assert.doesNotMatch(source,/--check-windows-signed-main|--activate-main|Read-BootstrapManifest/u);
  const js=await fs.readFile(cli,"utf8");
- assert.match(js,/--check-windows-signed-main/u);
- assert.match(js,/inspectSignedMainInstallerWindowsAdmission/u);
- assert.match(js,/guardian_handoff_required/u);
+ assert.match(js,/--install-main-fresh/u);
+ assert.match(js,/installFreshSignedMainRelease/u);
 });
 
 test("same bundled first-install helper rejects unsigned Windows Guardian preflight selector and extra command arguments without filesystem mutation",async t=>{

@@ -1,4 +1,5 @@
 using System.IO;
+using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -39,24 +40,47 @@ internal static partial class WindowsManagedSourceRuntimeLocator
         var installStampPath = Path.Combine(transactionRoot, "install.json");
         if (!File.Exists(installStampPath))
         {
-            // A committed Git-free signed Main native SHA is NOT a Stable
-            // install, even if an old numbered Stable directory survives.
-            // Native WPF must NOT boot from that stale A as though B were
-            // installed or execute the B Node without independent original
-            // production-root signature and Guardian acceptance. Until the
-            // original signed-native WPF handoff is implemented, fail closed.
+            // The one external signed Main installer has already replaced
+            // old executables; only the committed native SHA is runnable.
+            // Reuse the ORIGINAL installed Guardian's existing production
+            // Ed25519 + exact archived ZIP verification, no journal/rollback.
             var candidateNativePointerPath = Path.Combine(transactionRoot, "current-native.json");
-            // File.Exists is FALSE for a dangling symlink/reparse point.
-            // An attacker must not be able to turn an invalid Main pointer
-            // into permission to launch an unrelated stale Stable A.
             var nativePointerPresent = Directory.Exists(transactionRoot) &&
                 Directory.EnumerateFileSystemEntries(transactionRoot, "current-native.json",
                     SearchOption.TopDirectoryOnly).Any();
             if (nativePointerPresent)
             {
-                _ = ResolveNativeRelease(transactionRoot, candidateNativePointerPath);
-                throw new InvalidDataException(
-                    "Git-free signed Main WPF launch requires original production Ed25519 and independent Guardian admission; Stable fallback is forbidden.");
+                var release = ResolveNativeRelease(transactionRoot, candidateNativePointerPath);
+                var guardianPath = RequireNormalFile(Path.Combine(installRoot, "runtime", "guardian",
+                    "EquinoxLocalGuardian.exe"), "Original installed Main Guardian");
+                var audit = new ProcessStartInfo(guardianPath)
+                {
+                    WorkingDirectory = installRoot,
+                    UseShellExecute = false,
+                    CreateNoWindow = true,
+                };
+                audit.ArgumentList.Add("--audit-installed-signed-main");
+                audit.Environment.Clear();
+                foreach (var name in new[] { "SystemRoot", "WINDIR", "USERPROFILE", "LOCALAPPDATA" })
+                {
+                    var value = Environment.GetEnvironmentVariable(name);
+                    if (!string.IsNullOrWhiteSpace(value)) audit.Environment[name] = value;
+                }
+                using var guardian = Process.Start(audit) ??
+                    throw new InvalidOperationException("Original signed Main verifier failed to start.");
+                if (!guardian.WaitForExit(120_000))
+                {
+                    try { guardian.Kill(entireProcessTree: true); } catch { }
+                    throw new InvalidOperationException("Original signed Main verifier timed out.");
+                }
+                if (guardian.ExitCode != 0)
+                    throw new InvalidDataException("Original production-signed Main release audit failed.");
+                var serverPath = RequireNormalFile(Path.Combine(release, "server.js"),
+                    "Signed Main server entry");
+                _ = RequireNormalFile(Path.Combine(release, "equinox-local-supervisor.js"),
+                    "Signed Main supervisor");
+                return new WindowsRuntimeLocation(release, release, serverPath, release,
+                    installRoot, ManagedSource: false);
             }
             // Stable is a separate first-install bootstrap, not a permanent
             // dependency of a successfully committed Main native runtime.

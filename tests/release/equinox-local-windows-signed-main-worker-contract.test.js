@@ -83,7 +83,7 @@ test("Windows signed native contract remains INSPECT-ONLY: public PowerShell act
   read("scripts/install-equinox-local.ps1"),
   read("src/equinox-local-main-update-worker.ts"),
  ]);
- assert.match(ps,/\[switch\]\$CheckMainNative = \$false/u);
+ assert.match(ps,/--install-main-fresh/u);
  assert.doesNotMatch(ps,/\[switch\]\$ActivateMain/u);
  assert.match(worker,/if\(platform!=="darwin" \|\| !\["arm64","x64"\]\.includes\(arch\)/u);
  assert.match(worker,/argv\.length!==5 \|\| argv\[0\]!=="--signed-native"/u);

@@ -30,7 +30,8 @@ import { equinoxLocalManagedSourcePaths, resolveEquinoxLocalManagedSourceInstall
 import { resolveEquinoxLocalInstallation } from "./equinox-local-installation.js";
 import { inspectEquinoxLocalMainNativeStoredRelease } from "./equinox-local-main-native-state.js";
 import { validateManagedSourceInstallStamp } from "./equinox-local-main-update.js";
-import { readEquinoxLocalMainNativePointer } from "./equinox-local-main-native-state.js";
+import { readEquinoxLocalMainNativePointer, writeEquinoxLocalMainNativePointer } from "./equinox-local-main-native-state.js";
+import { createEquinoxLocalMainMacCurrentLinkTransition } from "./equinox-local-main-native-pointer-transition.js";
 import { validateTrustedMainInstallPointer } from "./equinox-local-main-install-pointer.js";
 import { readEquinoxLocalMainSourcePointer } from "./equinox-local-main-source-pointer.js";
 import {
@@ -1986,6 +1987,75 @@ export async function recoverAbandonedSignedMainMacAdmission({
     target,originalAHealthy:true,workerNeverStarted:true});
 }
 
+// The original external installer owns stopping and removing *only* old
+// executable roots. This is the existing first-install/managed bootstrap
+// path for the independently verified Main ZIP, NOT an A/B updater.
+// It never inspects an old version or attempts rollback: a retry simply
+// runs the SAME fresh installer again, leaving config/workspace untouched.
+export async function installFreshSignedMainRelease({
+  signedPointer,sourceArchivePath,
+  homeDir=os.homedir(),platform=process.platform,arch=process.arch,
+  env=process.env,uid=process.getuid?.()??null,
+}:{signedPointer:unknown;sourceArchivePath:string;homeDir?:string;
+  platform?:string;arch?:string;env?:NodeJS.ProcessEnv;uid?:number|null}){
+  const target=equinoxLocalUpdateTarget({platform,arch});
+  const signed=validateTrustedMainInstallPointer(signedPointer);
+  const targetRow=signed.targets.find(row=>row.target===target);
+  if(!targetRow)throw new Error("Production signed Main lacks the current native target.");
+  const paths=managedSupervisorPaths(homeDir,{platform,arch,env});
+  const main=equinoxLocalManagedSourcePaths({platform,arch,homeDir,env});
+  const pointerPath=(platform==="win32"?path.win32:path.posix)
+    .join(main.mainTransactionRoot,"current-native.json");
+  // The external installer must have completed its owned executable-only
+  // cleanup BEFORE this operation. Never overwrite a live old Main pointer.
+  try{
+    await fs.lstat(pointerPath);
+    throw new Error("Fresh Main installer requires the old executable owner to stop first.");
+  }catch(error){if((error as ErrorCode)?.code!=="ENOENT")throw error;}
+  const staged=await stageSignedMainInstallerNativeArchive({
+    signedPointer,sourceArchivePath,homeDir,platform,arch,env,uid,
+  });
+  if(staged.status!=="staged" || staged.sourceSha!==signed.sourceSha ||
+     staged.version!==signed.version || staged.target!==target){
+    throw new Error("Fresh Main staged release differs from the production selector.");
+  }
+  await writeEquinoxLocalMainNativePointer(pointerPath,{
+    schemaVersion:1,channel:"main",sourceSha:signed.sourceSha,target,
+    runtimeContractSha256:targetRow.runtimeContractSha256,
+  },{transactionRoot:main.mainTransactionRoot});
+  if(platform==="darwin"){
+    const link=createEquinoxLocalMainMacCurrentLinkTransition({
+      installRoot:paths.installRoot,
+      target:{sourceSha:signed.sourceSha,target,
+        runtimeContractSha256:targetRow.runtimeContractSha256},
+      previousReleaseDir:null,
+    });
+    await link.selectTarget();
+  }
+  const installation={...installationFor(paths,staged.releaseDir,{platform,arch,target}),
+    releaseDir:staged.releaseDir};
+  const bootstrap=await bootstrapManagedEquinoxUser({homeDir,platform,arch,env});
+  await initializeManagedOnboardingState({installation,homeDir});
+  if(platform==="darwin"){
+    await reloadLaunchAgent(installation,{uid,execFileImpl:execFile});
+  }else{
+    const shell=await synchronizeFreshWindowsShell({
+      releaseDir:staged.releaseDir,programRoot:paths.programRoot,
+    });
+    await provisionWindowsGuardianFromRelease({installation});
+    await launchWindowsStableShell(shell.shellExecutable);
+  }
+  const {waitForExactNativeMainHealth}=await import("./equinox-local-main-update-worker.js");
+  await waitForExactNativeMainHealth({
+    transactionRoot:main.mainTransactionRoot,sourceSha:signed.sourceSha,
+    target,version:signed.version,
+    runtimeContractSha256:targetRow.runtimeContractSha256,
+  });
+  return Object.freeze({status:"installed",channel:"main",
+    version:signed.version,sourceSha:signed.sourceSha,target,
+    configCreated:bootstrap.configCreated});
+}
+
 function parseCli(argv:string[]) {
   if ((argv.length !== 2 && argv.length !== 3) || argv[0] !== "--staged-release" || !path.isAbsolute(argv[1]!) ||
       (argv.length === 3 && argv[2] !== "--enroll-existing-main")) {
@@ -2044,6 +2114,23 @@ if (invokedPath && path.basename(invokedPath) === path.basename(fileURLToPath(im
       process.stdout.write(JSON.stringify(result)+"\n");
     }).catch(()=>{
       process.stderr.write("Signed Main abandoned worker recovery denied; owner preserved unless verified safe.\n");
+      process.exitCode=1;
+    });
+  } else if (process.argv[2] === "--install-main-fresh") {
+    Promise.resolve().then(async()=>{
+      const cli=parseSignedMainStageCli([
+        "--stage-signed-main",...process.argv.slice(3),
+      ]);
+      const {data}=await readBoundedNormalFile(cli.signedPointerFile,{
+        minBytes:200,maxBytes:16*1024,encoding:"utf8",
+        label:"Original production-signed fresh Main selector",
+      });
+      const result=await installFreshSignedMainRelease({
+        signedPointer:JSON.parse(data),sourceArchivePath:cli.sourceArchivePath,
+      });
+      process.stdout.write(JSON.stringify(result)+"\n");
+    }).catch(()=>{
+      process.stderr.write("Signed Main fresh installation failed; user settings were not cleared.\n");
       process.exitCode=1;
     });
   } else if (process.argv[2] === "--check-windows-signed-main") {

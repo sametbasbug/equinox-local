@@ -1,4 +1,4 @@
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { spawn } from "node:child_process";
 import { constants as fsConstants } from "node:fs";
 import fs from "node:fs/promises";
@@ -88,7 +88,7 @@ export async function scheduleEquinoxLocalSignedNativeMacInstaller({ installatio
         fsConstants.O_EXCL | (fsConstants.O_NOFOLLOW ?? 0), 0o600);
     try {
         await launchHelperImpl({
-            spawnImpl, command: "/bin/bash", args: [installer, "--activate-main"],
+            spawnImpl, command: "/bin/bash", args: [installer],
             options: {
                 cwd: installation.releaseDir, detached: true,
                 stdio: ["ignore", fd.fd, fd.fd],
@@ -107,4 +107,98 @@ export async function scheduleEquinoxLocalSignedNativeMacInstaller({ installatio
     }
     return Object.freeze({ scheduled: true, requestId, targetSha: null,
         handoff: "original-signed-main-shell", logPath });
+}
+// Windows uses the SAME shipped PowerShell installer as a terminal user.
+// The script itself independently downloads and verifies the newest signed
+// Main, then replaces only product executables. No Guardian update session.
+export async function scheduleEquinoxLocalSignedNativeWindowsInstaller({ installation, homeDir = os.homedir(), sourceEnv = process.env, fsImpl = fs, inspectStoredImpl = inspectEquinoxLocalMainNativeStoredRelease, readPointerImpl = readEquinoxLocalMainNativePointer, verifyPointerImpl = validateTrustedMainInstallPointer, launchHelperImpl = launchDetachedHelper, spawnImpl = spawn, }) {
+    const target = installation?.target;
+    const sha = installation?.sourceSha;
+    const root = installation?.mainTransactionRoot;
+    const expectedRoot = path.win32.join(sourceEnv.LOCALAPPDATA ?? "", "Equinox Local");
+    if (process.platform !== "win32" || installation?.platform !== "win32" ||
+        !/^win32-(x64|arm64)$/u.test(target) || target !== "win32-" + installation.arch ||
+        !SHA.test(sha) || installation.mainNativeSha !== sha ||
+        typeof homeDir !== "string" || !path.win32.isAbsolute(homeDir) ||
+        typeof sourceEnv.LOCALAPPDATA !== "string" || !path.win32.isAbsolute(sourceEnv.LOCALAPPDATA) ||
+        installation.installRoot !== expectedRoot ||
+        root !== path.win32.join(expectedRoot, "state", "main-update") ||
+        installation.releaseDir !== path.win32.join(root, "native-store", target, sha, "release")) {
+        throw new Error("Windows Main installer requires exact owned native SHA and LOCALAPPDATA.");
+    }
+    const stored = await inspectStoredImpl({ transactionRoot: root, sourceSha: sha, target, fsImpl });
+    const pointer = await readPointerImpl(path.win32.join(root, "current-native.json"), {
+        transactionRoot: root, fsImpl,
+    });
+    if (stored.sourceSha !== sha || stored.target !== target ||
+        stored.releaseDir !== installation.releaseDir ||
+        pointer.sourceSha !== sha || pointer.target !== target ||
+        pointer.runtimeContractSha256 !== stored.runtimeContractSha256 ||
+        pointer.releaseDir !== stored.releaseDir) {
+        throw new Error("Windows installed signed Main SHA and current native pointer differ.");
+    }
+    const selector = await readBoundedNormalFile(path.win32.join(path.win32.dirname(installation.releaseDir), "signed-selector.json"), {
+        fsImpl, platform: "win32", minBytes: 200, maxBytes: 16 * 1024, encoding: "utf8",
+        label: "Original Windows Main production-signed selector",
+    });
+    const signed = verifyPointerImpl(JSON.parse(selector.data), { expectedSourceSha: sha });
+    const row = signed.targets.find(item => item.target === target);
+    if (!row || signed.version !== stored.payloadVersion ||
+        row.runtimeContractSha256 !== stored.runtimeContractSha256 ||
+        row.artifact.sha256 !== stored.manifest.artifactSha256 ||
+        row.artifact.bytes !== stored.manifest.artifactBytes) {
+        throw new Error("Original Windows Main signed selector differs from installed source.");
+    }
+    const installer = path.win32.join(installation.releaseDir, "scripts", "install-equinox-local.ps1");
+    const script = await fsImpl.lstat(installer);
+    if (!script.isFile() || script.isSymbolicLink() || script.nlink !== 1 ||
+        await fsImpl.realpath(installer) !== installer) {
+        throw new Error("Original Windows Main PowerShell installer is not a normal product file.");
+    }
+    const powershell = path.win32.join(sourceEnv.SystemRoot ?? sourceEnv.WINDIR ?? "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
+    const shellStat = await fsImpl.lstat(powershell);
+    if (!shellStat.isFile() || shellStat.isSymbolicLink())
+        throw new Error("Windows system PowerShell is unavailable.");
+    const logs = path.win32.join(expectedRoot, "logs");
+    await fsImpl.mkdir(logs, { recursive: true });
+    const logStat = await fsImpl.lstat(logs);
+    if (!logStat.isDirectory() || logStat.isSymbolicLink())
+        throw new Error("Windows Main installer logs directory is unsafe.");
+    const requestId = "main-" + randomBytes(16).toString("hex");
+    const logPath = path.win32.join(logs, requestId + ".original-installer.log");
+    // The original PowerShell installer must run OUTSIDE old executable roots:
+    // Begin-ExecutableReplacement stops product-owned PowerShell scripts that
+    // name native-store paths, otherwise the installer kills ITSELF.
+    const runner = path.win32.join(logs, requestId + ".original-installer.ps1");
+    await fsImpl.copyFile(installer, runner, fsConstants.COPYFILE_EXCL);
+    const [originalBody, runnerBody] = await Promise.all([
+        fsImpl.readFile(installer), fsImpl.readFile(runner),
+    ]);
+    if (!createHash("sha256").update(originalBody).digest().equals(createHash("sha256").update(runnerBody).digest())) {
+        await fsImpl.rm(runner, { force: true });
+        throw new Error("Temporary Windows installer differs from the signed release script.");
+    }
+    const handle = await fsImpl.open(logPath, fsConstants.O_WRONLY | fsConstants.O_CREAT |
+        fsConstants.O_EXCL | (fsConstants.O_NOFOLLOW ?? 0), 0o600);
+    try {
+        await launchHelperImpl({
+            spawnImpl, command: powershell,
+            args: ["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", runner],
+            options: { cwd: installation.releaseDir, detached: true, windowsHide: true,
+                stdio: ["ignore", handle.fd, handle.fd],
+                env: { SystemRoot: sourceEnv.SystemRoot ?? sourceEnv.WINDIR ?? "C:\\Windows",
+                    WINDIR: sourceEnv.WINDIR ?? sourceEnv.SystemRoot ?? "C:\\Windows",
+                    LOCALAPPDATA: sourceEnv.LOCALAPPDATA,
+                    USERPROFILE: sourceEnv.USERPROFILE ?? homeDir,
+                    TEMP: sourceEnv.TEMP ?? path.win32.join(homeDir, "AppData", "Local", "Temp"),
+                    TMP: sourceEnv.TMP ?? path.win32.join(homeDir, "AppData", "Local", "Temp"),
+                    PATH: path.win32.join(sourceEnv.SystemRoot ?? sourceEnv.WINDIR ?? "C:\\Windows", "System32") },
+            }, label: "Original signed Main PowerShell installer",
+        });
+    }
+    finally {
+        await handle.close();
+    }
+    return Object.freeze({ scheduled: true, requestId, targetSha: null,
+        handoff: "original-signed-main-powershell", logPath });
 }

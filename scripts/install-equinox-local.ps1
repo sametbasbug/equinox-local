@@ -1,25 +1,15 @@
-param([switch]$EnrollExistingMain = $true, [switch]$Help, [switch]$PrepareMain = $false, [switch]$StageMain = $false, [switch]$CheckMainNative = $false)
+param([switch]$Help)
 if ($Help) {
-  Write-Output 'Usage: install-equinox-local.ps1 [-EnrollExistingMain] [-Help] [-PrepareMain] [-StageMain] [-CheckMainNative]'
-  Write-Output 'CheckMainNative only verifies original production-signed B plus currently installed A and Guardian; it NEVER activates or stops WPF.'
-  Write-Output 'The installer verifies a signed bootstrap and enrolls the admitted Main commit by default.'
-  Write-Output 'Failed Main enrollment preserves the verified bootstrap for recovery and keeps your settings.'
+  Write-Output 'Usage: install-equinox-local.ps1'
+  Write-Output 'Downloads the latest production-signed Main and reinstalls only program files.'
+  Write-Output 'User settings/data are preserved; installed versions are not compared.'
   return
 }
-# Read-only Windows A/B admission still requires the B archive to be
-# independently signed and staged in the INACTIVE immutable native store.
-# This flag must NEVER be treated as WPF/Guardian activation permission.
-if ($CheckMainNative) { $StageMain = $true }
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version 2.0
 
-$UpdateBase = 'https://local.sametbasbug.dev/downloads/updates'
 $Target = $null
-$MaxManifestBytes = 16384
 $MaxArtifactBytes = 1073741824
-$ZipHelperName = 'equinox-local-windows-release-zip.ps1'
-$ZipHelperSha256 = '__EQUINOX_ZIP_HELPER_SHA256__'
-$ZipHelperBytes = '__EQUINOX_ZIP_HELPER_BYTES__'
 $MainVerifyUrl = 'https://local.sametbasbug.dev/downloads/updates/install-main-verify.mjs'
 $MainVerifySha256 = 'df0aea950440d6efad47b92398a0a8bdc4a63d4db0a26d4db05a0b137c9989c8'
 $MainVerifyBytes = 9396
@@ -88,33 +78,6 @@ function Save-BoundedHttpsFile([string]$Url, [string]$Destination, [long]$MaxByt
     } finally { $output.Dispose(); $input.Dispose() }
   } finally { $response.Dispose() }
 }
-function Read-BootstrapManifest([string]$Path) {
-  Assert-NormalFile $Path 1 $MaxManifestBytes | Out-Null
-  $text = [IO.File]::ReadAllText($Path, (New-Object Text.UTF8Encoding($false, $true)))
-  if ($text.Contains("`r")) { Fail 'bootstrap manifest contains unsupported line endings' }
-  $allowed = @('schemaVersion','channel','target','version','artifactUrl','artifactSha256','artifactBytes')
-  $values = @{}
-  foreach ($line in ($text -split "`n")) {
-    if ($line.Length -eq 0) { continue }
-    $index = $line.IndexOf('=')
-    if ($index -le 0) { Fail 'bootstrap manifest contains a malformed line' }
-    $key = $line.Substring(0, $index); $value = $line.Substring($index + 1)
-    if ($allowed -notcontains $key) { Fail "bootstrap manifest contains an unsupported field: $key" }
-    if ($values.ContainsKey($key)) { Fail "bootstrap manifest repeats $key" }
-    $values[$key] = $value
-  }
-  foreach ($key in $allowed) { if (-not $values.ContainsKey($key)) { Fail "bootstrap manifest is missing $key" } }
-  if ($values.schemaVersion -ne '1' -or $values.channel -ne 'stable' -or $values.target -ne $Target) { Fail 'bootstrap manifest identity is invalid' }
-  if ($values.version -notmatch '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$') { Fail 'bootstrap manifest version is invalid' }
-  if ($values.artifactSha256 -notmatch '^[a-f0-9]{64}$') { Fail 'bootstrap manifest SHA-256 is invalid' }
-  [long]$bytes = 0
-  if (-not [long]::TryParse($values.artifactBytes, [ref]$bytes) -or $bytes -lt 1 -or $bytes -gt $MaxArtifactBytes) { Fail 'bootstrap artifact size is invalid' }
-  $expectedUrl = "$UpdateBase/equinox-local-$($values.version)-$Target.zip"
-  if ($values.artifactUrl -cne $expectedUrl) { Fail 'bootstrap artifact URL escaped the pinned Equinox Local HTTPS path' }
-  return [pscustomobject]@{ Version=$values.version; ArtifactUrl=$values.artifactUrl; ArtifactSha256=$values.artifactSha256; ArtifactBytes=$bytes }
-}
-# Prevent ambient Node loader overrides from changing the identity of a
-# verified installer or extracted native-inspection script. Restore on errors.
 function Invoke-PinnedMainNode([string]$Executable, [string[]]$Parameters) {
   $blocked = @('NODE_OPTIONS','NODE_PATH','NODE_EXTRA_CA_CERTS','NODE_TLS_REJECT_UNAUTHORIZED','NODE_USE_ENV_PROXY','NODE_DEBUG')
   $original = @{}
@@ -132,9 +95,8 @@ function Invoke-PinnedMainNode([string]$Executable, [string[]]$Parameters) {
     }
   }
 }
-# A pre-activation admission path shared with the macOS external installer.
-# This stops after producing authenticated native bytes until SHA-transaction
-# activation/rollback is independently accepted. No ambient Node/npm/Git.
+# The original production-signed Main ZIP verifier shared with the macOS
+# external installer. HTTPS alone is never a signature trust root.
 function Invoke-VerifiedMainPreparation([string]$PrivateTemp) {
   $nodeBytes = [long]0
   $nodeSha = ''
@@ -196,36 +158,6 @@ function Invoke-VerifiedMainPreparation([string]$PrivateTemp) {
       $matched.artifactSha256 -cne $parsed.artifactSha256 -or
       [long]$matched.artifactBytes -ne [long]$parsed.artifactBytes) {
     Fail 'Main native candidate admission changed the signed identity'
-  }
-  if ($StageMain) {
-    $staged = @(Invoke-PinnedMainNode $node @($inspector, '--stage-signed-main',
-      '--signed-pointer-file', (Join-Path $PrivateTemp 'main-signed-pointer.json'),
-      '--archive', $verifiedArchive))
-    if ($staged.Count -ne 1) { Fail 'signed inactive native A/B staging receipt is invalid' }
-    try { $saved = $staged[0] | ConvertFrom-Json -ErrorAction Stop }
-    catch { Fail 'signed native A/B staging returned invalid JSON' }
-    if ($saved.status -cne 'staged' -or $saved.sourceSha -cne $parsed.sourceSha -or
-        $saved.version -cne $parsed.version -or $saved.target -cne $Target) {
-      Fail 'signed inactive native A/B staging identity mismatch'
-    }
-    Write-Output $staged[0]
-  }
-  if ($CheckMainNative) {
-    # The SAME original verified archive helper performs the read-only
-    # full-SHA Windows A/B + independent installed Guardian preflight.
-    # Do NOT hand off to an untrusted Node / ad-hoc WPF updater.
-    $preflight = @(Invoke-PinnedMainNode $node @($inspector, '--check-windows-signed-main',
-      '--signed-pointer-file', (Join-Path $PrivateTemp 'main-signed-pointer.json')))
-    if ($preflight.Count -ne 1) { Fail 'original Windows Guardian preflight receipt is missing' }
-    try { $checked = $preflight[0] | ConvertFrom-Json -ErrorAction Stop }
-    catch { Fail 'original Windows Guardian preflight receipt is invalid' }
-    if ($checked.status -cne 'guardian_handoff_required' -or
-        $checked.target -cne $Target -or
-        $checked.sourceSha -cne [string]$parsed.sourceSha -or
-        $checked.version -cne [string]$parsed.version) {
-      Fail 'original Windows signed Main native preflight does not match the admitted B'
-    }
-    Write-Output $preflight[0]
   }
   Write-Output $receipt[0]
 }
@@ -382,8 +314,20 @@ function Get-NormalExistingEntry([string]$Path) {
 }
 function Begin-ExecutableReplacement([string]$InstallRoot) {
   $backup = Join-Path $InstallRoot '.equinox-signed-reinstall-backup'
-  if ($null -ne (Get-NormalExistingEntry $backup)) {
-    Fail 'an interrupted signed reinstall backup exists; automatic second replacement is blocked to preserve the original installation'
+  # An interrupted previous reinstall may have left ONLY retired product
+  # executables behind. Never require an older version for retry: authenticate
+  # the newest signed Main first, then discard the fixed owned backup.
+  $existingBackup = Get-NormalExistingEntry $backup
+  if ($null -ne $existingBackup) {
+    if (-not $existingBackup.PSIsContainer) { Fail 'interrupted executable backup is not a directory' }
+    $allowed = @('releases','runtime','main-update','current-version','program','native-messaging','failed-new')
+    foreach ($child in @(Get-ChildItem -LiteralPath $backup -Force)) {
+      if ($child.Name -cnotin $allowed -or (($child.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0)) {
+        Fail 'interrupted executable backup has an unexpected entry'
+      }
+    }
+    Stop-ExistingEquinoxExecutables $InstallRoot (Join-Path ([IO.Path]::GetDirectoryName($InstallRoot)) 'Programs\Equinox Local')
+    Remove-Item -LiteralPath $backup -Recurse -Force -ErrorAction Stop
   }
   $entries = @(Get-ExecutableReplacementPaths $InstallRoot)
   $present = @($entries | Where-Object { $null -ne (Get-NormalExistingEntry $_.Path) })
@@ -461,146 +405,61 @@ function Complete-ExecutableReplacement($Transaction) {
   }
 }
 
-function Invoke-CleanNode([string]$Node, [string]$FirstInstall, [string]$ReleaseDir, [bool]$FreshReplacement = $false) {
-  $psi = New-Object Diagnostics.ProcessStartInfo
-  $psi.FileName = $Node
-  $psi.UseShellExecute = $false
-  $psi.CreateNoWindow = $true
-  $psi.RedirectStandardOutput = $true
-  $psi.RedirectStandardError = $true
-  $psi.Arguments = '"' + $FirstInstall.Replace('"','\"') + '" --staged-release "' + $ReleaseDir.Replace('"','\"') + '"'
-  # An existing Main source may be healthy, stopped, or completely unable to
-  # boot. The freshly signed Stable installer must not call its OLD source's
-  # health endpoint or treat that old source as the installed target. Route an
-  # existing Main through the classic signed native replacement, which only
-  # starts and health-checks the NEW verified release; keep user private state.
-  $mainStamp = Join-Path $env:LOCALAPPDATA 'Equinox Local\state\main-update\install.json'
-  $existingMain = [IO.File]::Exists($mainStamp)
-  if ($existingMain) { Assert-NormalFile $mainStamp 1 8192 | Out-Null }
-  if ($EnrollExistingMain -and -not $existingMain -and -not $FreshReplacement) { $psi.Arguments += ' --enroll-existing-main' }
-  $psi.EnvironmentVariables.Clear()
-  foreach ($name in @('SystemRoot','WINDIR','ComSpec','TEMP','TMP','USERPROFILE','LOCALAPPDATA','APPDATA','USERNAME','USERDOMAIN','PATH','PATHEXT')) {
-    $value = [Environment]::GetEnvironmentVariable($name)
-    if (-not [string]::IsNullOrWhiteSpace($value)) { $psi.EnvironmentVariables[$name] = $value }
-  }
-  $process = New-Object Diagnostics.Process
-  $process.StartInfo = $psi
-  if (-not $process.Start()) { Fail 'bundled Node first-install helper did not start' }
-  $stdout = $process.StandardOutput.ReadToEnd(); $stderr = $process.StandardError.ReadToEnd(); $process.WaitForExit()
-  if ($process.ExitCode -ne 0) { Fail ("managed first-install activation failed: " + ($stderr.Trim() -replace '[\r\n]+',' ')) }
-  return $stdout.Trim()
-}
-function Assert-ExistingStableUpgradeRoute([string]$InstallRoot, [string]$RequestedVersion, [string]$ExpectedTarget) {
-  $currentPointer = Join-Path $InstallRoot 'current-version.json'
-  if (-not [IO.File]::Exists($currentPointer)) { return }
-  Assert-NormalFile $currentPointer 1 4096 | Out-Null
-  $current = $null
-  # Old version contents do not participate in new signed package trust.
-  # A stale or malformed pointer is parked along with the other old runtime
-  # selectors; only the signed downloaded candidate determines the target.
-  # A valid existing pointer is NOT a reason to reject a fresh signed Stable
-  # installation. The bundled managed installer handles the native switch.
-  # The user separately selects Update & restart to enroll Main.
-}
 function Invoke-EquinoxLocalInstall {
   if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) { Fail 'Windows is required' }
   $script:Target = Get-NativeWindowsTarget
-  if (-not ($PrepareMain -or $StageMain)) {
-    if ($ZipHelperSha256 -notmatch '^[a-f0-9]{64}$') { Fail 'installer ZIP helper pin is not materialized' }
-    [long]$helperBytes = 0
-    if (-not [long]::TryParse($ZipHelperBytes, [ref]$helperBytes) -or $helperBytes -lt 1 -or $helperBytes -gt 1048576) { Fail 'installer ZIP helper size pin is invalid' }
-  }
   $localAppData = $env:LOCALAPPDATA
   if ([string]::IsNullOrWhiteSpace($localAppData) -or -not [IO.Path]::IsPathRooted($localAppData)) { Fail 'trusted LOCALAPPDATA is required' }
   $installRoot = Join-Path $localAppData 'Equinox Local'
   $stagingRoot = Join-Path $installRoot 'staging'
-  if (-not ($PrepareMain -or $StageMain)) {
-    Assert-NormalDirectory $installRoot $true | Out-Null
-    Assert-NormalDirectory $stagingRoot $true | Out-Null
-  }
+  Assert-NormalDirectory $installRoot $true | Out-Null
+  Assert-NormalDirectory $stagingRoot $true | Out-Null
   $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ('equinox-local-install-' + [Guid]::NewGuid().ToString('N'))
-  $stage = Join-Path $stagingRoot ('bootstrap-' + [Guid]::NewGuid().ToString('N'))
   [IO.Directory]::CreateDirectory($tempRoot) | Out-Null
   try {
-    if ($PrepareMain -or $StageMain) { Invoke-VerifiedMainPreparation $tempRoot; return }
-    $manifestPath = Join-Path $tempRoot 'bootstrap.txt'
-    $artifactPath = Join-Path $tempRoot 'release.zip'
-    $helperPath = Join-Path $tempRoot $ZipHelperName
-    Write-Info "checking the signed $Target bootstrap manifest"
-    Save-BoundedHttpsFile "$UpdateBase/bootstrap-$Target.txt" $manifestPath $MaxManifestBytes
-    $manifest = Read-BootstrapManifest $manifestPath
-    Assert-ExistingStableUpgradeRoute $installRoot $manifest.Version $Target
-    Write-Info 'downloading the verified ZIP helper'
-    Save-BoundedHttpsFile "$UpdateBase/$ZipHelperName" $helperPath $helperBytes
-    $helper = Assert-NormalFile $helperPath $helperBytes $helperBytes
-    if ((Get-Sha256 $helperPath) -cne $ZipHelperSha256) { Fail 'ZIP helper SHA-256 verification failed' }
-    Write-Info "downloading Equinox Local $($manifest.Version)"
-    Save-BoundedHttpsFile $manifest.ArtifactUrl $artifactPath $manifest.ArtifactBytes
-    Assert-NormalFile $artifactPath $manifest.ArtifactBytes $manifest.ArtifactBytes | Out-Null
-    if ((Get-Sha256 $artifactPath) -cne $manifest.ArtifactSha256) { Fail 'downloaded release SHA-256 verification failed' }
-    # Extract performs the same bounded central-directory validation before writing any entry,
-    # so a separate Inspect pass would only scan the verified archive twice.
-    $powerShellHost = [Diagnostics.Process]::GetCurrentProcess().MainModule.FileName
-    if ([string]::IsNullOrWhiteSpace($powerShellHost) -or -not [IO.File]::Exists($powerShellHost)) { Fail 'current PowerShell host executable is unavailable' }
-    # Capture bounded diagnostic *classification*, not raw helper output.
-    # Raw PowerShell exception text can include private user paths; never echo it.
-    $extractionOutput = @(& $powerShellHost -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $helperPath -Mode Extract -ArchivePath $artifactPath -DestinationPath $stage 2>&1)
-    $extractExitCode = $LASTEXITCODE
-    if ($extractExitCode -ne 0) {
-      $extractionText = (($extractionOutput | Out-String) -replace '[\r\n]+',' ')
-      if ($extractionText.Length -gt 4096) { $extractionText = $extractionText.Substring($extractionText.Length - 4096) }
-      if ($extractionText -match '(?i)UnauthorizedAccessException|access is denied|access to the path|access denied|virus|malware|threat|blocked by|antivirus') {
-        Fail 'verified release ZIP extraction failed: Windows denied access to a file. Check your security product detection logs for blocked or removed files; do not disable protection'
-      }
-      if ($extractionText -match '(?i)IOException|could not find|not found|cannot find|does not exist|file is missing') {
-        Fail 'verified release ZIP extraction failed: a staged file was unavailable. Check whether security software removed it during extraction, and verify disk and folder permissions'
-      }
-      Fail 'verified release ZIP extraction failed: the verified archive could not be unpacked. Check disk space, folder permissions and security-product detection logs before retrying'
+    # The SAME fully signed Main ZIP for fresh install, reinstall and update.
+    $freshReceipt = @(Invoke-VerifiedMainPreparation $tempRoot)
+    if ($freshReceipt.Count -ne 1) { Fail 'signed Main verifier did not return one receipt' }
+    try { $main = $freshReceipt[0] | ConvertFrom-Json -ErrorAction Stop }
+    catch { Fail 'signed Main verification receipt is malformed' }
+    if ($main.sourceSha -notmatch '^[a-f0-9]{40}$' -or $main.target -cne $Target -or
+        $main.version -notmatch '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$') {
+      Fail 'production Main selector source SHA, target or version is invalid'
     }
-    $release = Join-Path $stage 'release'
-    $node = Join-Path $release 'runtime\node\bin\node.exe'
-    $firstInstall = Join-Path $release 'equinox-local-first-install.js'
-    Assert-NormalFile $node 1 536870912 | Out-Null
-    Assert-NormalFile $firstInstall 1 2097152 | Out-Null
-    Write-Info 'installing the verified release'
-    $nativeHostSuspension = Suspend-OldEquinoxChromeHost $installRoot
-    $transaction = $null
-    $newHealthy = $false
+    $mainArch = if ($Target -ceq 'win32-arm64') { 'arm64' } else { 'x64' }
+    $mainNode = Join-Path (Join-Path (Join-Path $tempRoot 'node') ('node-v' + $MainNodeVersion + '-win-' + $mainArch)) 'node.exe'
+    $mainInstaller = Join-Path (Join-Path $tempRoot 'main-extracted') 'release\equinox-local-first-install.js'
+    $mainArchive = Join-Path $tempRoot 'main-native.zip'
+    $mainSelector = Join-Path $tempRoot 'main-signed-pointer.json'
+    Assert-NormalFile $mainNode 1 200000000 | Out-Null
+    Assert-NormalFile $mainInstaller 1 2097152 | Out-Null
+    Assert-NormalFile $mainArchive 1 $MaxArtifactBytes | Out-Null
+    Assert-NormalFile $mainSelector 200 16384 | Out-Null
+    # Existing product-owned executable replacement already stops WPF,
+    # clears old software paths, and preserves state/config/workspace.
+    $suspendedHost = Suspend-OldEquinoxChromeHost $installRoot
+    try { $oldExecutables = Begin-ExecutableReplacement $installRoot }
+    catch { Restore-OldEquinoxChromeHost $suspendedHost; throw }
     try {
-      $transaction = Begin-ExecutableReplacement $installRoot
-      $resultText = Invoke-CleanNode $node $firstInstall $release ([bool]($null -ne $transaction))
-      $result = $null
-      try { $result = $resultText | ConvertFrom-Json -ErrorAction Stop }
-      catch { Fail 'verified installer returned an invalid completion receipt' }
-      if ($null -eq $result -or $result.version -cne $manifest.Version -or
-          $result.status -cnotin @('installed','activated','already-installed')) {
-        Fail 'verified installer did not activate the requested signed release'
+      $freshResult = @(Invoke-PinnedMainNode $mainNode @($mainInstaller,
+        '--install-main-fresh', '--signed-pointer-file', $mainSelector,
+        '--archive', $mainArchive))
+      if ($freshResult.Count -ne 1) { Fail 'signed Main has no verified completion receipt' }
+      try { $installed = $freshResult[0] | ConvertFrom-Json -ErrorAction Stop }
+      catch { Fail 'signed Main completion receipt is invalid' }
+      if ($installed.status -cne 'installed' -or $installed.channel -cne 'main' -or
+          $installed.sourceSha -cne $main.sourceSha -or
+          $installed.version -cne $main.version -or $installed.target -cne $Target) {
+        Fail 'running Main release does not match its exact signed source SHA'
       }
-      $newHealthy = $true
-      Complete-ExecutableReplacement $transaction
-      Write-Output $resultText
-      Write-Info 'done'
-    } catch {
-      if (-not $newHealthy) {
-        try {
-          if ($null -ne $transaction) {
-            Stop-ExistingEquinoxExecutables $installRoot (Join-Path $localAppData 'Programs\Equinox Local')
-            Restore-ExecutableReplacement $transaction
-          }
-          Restore-OldEquinoxChromeHost $nativeHostSuspension
-        } catch {
-          Fail 'signed reinstall failed and original executable/native-host rollback needs repair; backup retained'
-        }
-      }
-      throw
+      Write-Output $freshResult[0]
+      Write-Info 'signed Main is installed and healthy'
+    } finally {
+      # No rollback to a prior version; repeat this installer for repair.
+      Complete-ExecutableReplacement $oldExecutables
     }
+    return
   } finally {
-    if ([IO.Directory]::Exists($stage)) {
-      $stageItem = Get-Item -LiteralPath $stage -Force -ErrorAction SilentlyContinue
-      if ($null -ne $stageItem -and $stageItem.PSIsContainer -and (($stageItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -eq 0)) {
-        Remove-Item -LiteralPath $stage -Recurse -Force -ErrorAction SilentlyContinue
-      }
-    }
     if ([IO.Directory]::Exists($tempRoot)) { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
   }
 }

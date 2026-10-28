@@ -15,6 +15,21 @@ internal static class WindowsShellRegistration
     {
         if (!active.ManagedSource)
         {
+            // A full signed native Main install uses an immutable SHA path;
+            // the manual display version comes from its already-audited B.
+            if (Path.GetFileName(active.NativeReleaseDir) == "release" &&
+                System.Text.RegularExpressions.Regex.IsMatch(
+                    Path.GetFileName(Path.GetDirectoryName(active.NativeReleaseDir)),
+                    @"^[a-f0-9]{40}$"))
+            {
+                var metadata = System.Text.Json.JsonDocument.Parse(File.ReadAllText(
+                    Path.Combine(active.NativeReleaseDir, "release.json"))).RootElement;
+                var version = metadata.GetProperty("version").GetString() ?? "";
+                if (!System.Text.RegularExpressions.Regex.IsMatch(version,
+                    @"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$"))
+                    throw new InvalidDataException("Signed Main display version is invalid.");
+                return version;
+            }
             var stable = Path.GetFileName(active.NativeReleaseDir);
             if (!System.Text.RegularExpressions.Regex.IsMatch(stable, @"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$"))
                 throw new InvalidDataException("Stable display version is invalid.");

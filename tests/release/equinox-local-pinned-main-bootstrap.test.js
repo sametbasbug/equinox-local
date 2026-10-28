@@ -54,21 +54,14 @@ test('all four fresh-user Node archives are independently pinned to existing rel
  assert.doesNotMatch(windows,/Expand-Archive/u);
 });
 
-test('prepare-only CLI stops before old Stable activation and preserves default rollback until unified Main installer is ready',async()=>{
+test('Main is the only default installer on both operating systems',async()=>{
  const [mac,windows]=await Promise.all([fs.readFile(macURL,'utf8'),fs.readFile(windowsURL,'utf8')]);
- assert.match(mac,/--prepare-main\) PREPARE_MAIN=1/u);
- assert.match(mac,/if \[ "\$PREPARE_MAIN" -eq 1 \]; then\s+prepare_verified_main\s+exit 0\s+fi/u);
- assert.ok(mac.indexOf('prepare_verified_main\n  exit 0')<mac.indexOf('info "checking the stable'));
- assert.match(windows,/\[switch\]\$PrepareMain = \$false/u);
- assert.match(windows,/RuntimeInformation\]::ProcessArchitecture/u);
- assert.match(windows,/RuntimeInformation\]::OSArchitecture/u);
- assert.match(windows,/if \(\$PrepareMain -or \$StageMain\) \{ Invoke-VerifiedMainPreparation \$tempRoot; return \}/u);
- assert.ok(windows.indexOf('if ($PrepareMain -or $StageMain)')<windows.indexOf('Save-BoundedHttpsFile "$UpdateBase/bootstrap-'));
- assert.match(mac,/MAIN_ARGS=\(--enroll-existing-main\)/u);
- assert.match(windows,/Restore-ExecutableReplacement \$transaction/u);
- assert.match(windows,/Restore-OldEquinoxChromeHost \$nativeHostSuspension/u);
+ assert.match(mac,/prepare_verified_main\ninfo "replacing/u);
+ assert.match(windows,/\$freshReceipt = @\(Invoke-VerifiedMainPreparation \$tempRoot\)/u);
+ assert.match(mac,/--install-main-fresh/u);assert.match(windows,/--install-main-fresh/u);
+ assert.doesNotMatch(mac,/bootstrap-\$TARGET|--prepare-main/u);
+ assert.doesNotMatch(windows,/Read-BootstrapManifest|\$PrepareMain/u);
 });
-
 
 test('the same verified Main SHA and version enter the existing native release inspector on both OSes before activation',async()=>{
  const [mac,windows,inspectionSource]=await Promise.all([
@@ -93,19 +86,13 @@ test('the same verified Main SHA and version enter the existing native release i
  assert.match(windows,/\$matched\.target -cne \$Target/u);
 });
 
-test('Windows prepare-only mode bypasses Stable-only ZIP helper and owned install-directory mutations',async()=>{
+test('Windows Main verifies signed B before replacing existing executables',async()=>{
  const ps=await fs.readFile(windowsURL,'utf8');
- const start=ps.indexOf('function Invoke-EquinoxLocalInstall');
- const stableOnly=ps.indexOf('if (-not ($PrepareMain -or $StageMain)) {',start);
- const zipPin=ps.indexOf("installer ZIP helper pin is not materialized",start);
- const directoryCreate=ps.indexOf('Assert-NormalDirectory $installRoot $true',start);
- const admission=ps.indexOf('if ($PrepareMain -or $StageMain) { Invoke-VerifiedMainPreparation $tempRoot; return }',start);
- assert.ok(start>0&&stableOnly>start&&zipPin>stableOnly);
- assert.ok(ps.indexOf('if (-not ($PrepareMain -or $StageMain)) {',zipPin)<directoryCreate);
- assert.ok(directoryCreate<admission);
- assert.match(ps,/if \(\$PrepareMain -or \$StageMain\) \{ Invoke-VerifiedMainPreparation \$tempRoot; return \}/u);
+ const start=ps.indexOf('$freshReceipt = @(Invoke-VerifiedMainPreparation');
+ const change=ps.indexOf('$oldExecutables = Begin-ExecutableReplacement');
+ assert.ok(start>0&&change>start);
+ assert.doesNotMatch(ps,/installer ZIP helper pin is not materialized|Read-BootstrapManifest/u);
 });
-
 
 test('all Node bootstrap/inspector invocations are isolated from user-provided Node loader overrides',async()=>{
  const [mac,windows]=await Promise.all([fs.readFile(macURL,'utf8'),fs.readFile(windowsURL,'utf8')]);
@@ -138,15 +125,10 @@ test('both OS bootstrap paths preserve the signed pointer for a second independe
 });
 
 
-test('opt-in Main staging is the existing OS installer and never silently replaces the default Stable deployment',async()=>{
+test('the existing Main inspector installs directly from the signed archive',async()=>{
  const [mac,windows]=await Promise.all([fs.readFile(macURL,'utf8'),fs.readFile(windowsURL,'utf8')]);
- assert.match(mac,/--stage-main\) PREPARE_MAIN=1; STAGE_MAIN=1/u);
- assert.match(mac,/if \[ "\$STAGE_MAIN" -eq 1 \]; then/u);
- assert.match(mac,/--stage-signed-main/u);
- assert.match(windows,/\[switch\]\$StageMain = \$false/u);
- assert.match(windows,/if \(\$PrepareMain -or \$StageMain\)/u);
- assert.match(windows,/if \(\$StageMain\) \{/u);
- assert.match(windows,/--stage-signed-main/u);
- assert.ok(mac.indexOf('if [ "$STAGE_MAIN" -eq 1 ]')>mac.indexOf('--inspect-signed-main'));
- assert.ok(windows.indexOf('if ($StageMain)')>windows.indexOf('--inspect-signed-main'));
+ assert.match(mac,/--install-main-fresh/u);assert.match(windows,/--install-main-fresh/u);
+ assert.match(mac,/--signed-pointer-file "\$MAIN_POINTER" --archive "\$MAIN_ARCHIVE"/u);
+ assert.match(windows,/--signed-pointer-file', \$mainSelector/u);
+ assert.doesNotMatch(mac,/--stage-main/u);assert.doesNotMatch(windows,/\$StageMain/u);
 });

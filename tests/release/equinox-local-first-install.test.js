@@ -1967,20 +1967,13 @@ test("Mac signed native pre-launch snapshot failure with unhealthy A retains exc
 });
 
 
-test("existing macOS shell installer exposes ONLY an explicit signed activation flag while preserving Stable default",async()=>{
- const file=path.resolve("scripts/install-equinox-local.sh");
- const contents=await fs.readFile(file,"utf8");
- assert.match(contents,/--activate-main\) PREPARE_MAIN=1; STAGE_MAIN=1; ACTIVATE_MAIN=1/u);
- assert.match(contents,/if \[ "\$ACTIVATE_MAIN" -eq 1 \]; then/u);
- assert.match(contents,/--activate-signed-main --signed-pointer-file/u);
- assert.match(contents,/if \[ "\$PREPARE_MAIN" -eq 1 \]; then\s+prepare_verified_main/u);
- assert.match(contents,/^ACTIVATE_MAIN=0$/mu);
- assert.match(contents,/MANIFEST_URL="\$UPDATE_BASE\/bootstrap-\$TARGET\.txt"/u);
- const syntax=spawnSync("/bin/bash",["-n",file],{encoding:"utf8",timeout:5000});
- assert.equal(syntax.status,0,syntax.stderr);
- const help=spawnSync("/bin/bash",[file,"--help"],{encoding:"utf8",timeout:5000});
- assert.equal(help.status,0,help.stderr);
- assert.match(help.stdout,/--activate-main/u);
+test("the same Bash installer always chooses signed Main and has no old Stable channel",async()=>{
+ const source=await fs.readFile(path.resolve("scripts/install-equinox-local.sh"),"utf8");
+ assert.match(source,/prepare_verified_main\ninfo "replacing product executables/u);
+ assert.match(source,/--install-main-fresh/u);
+ assert.doesNotMatch(source,/--activate-main|bootstrap-\$TARGET|Stable default/u);
+ const help=spawnSync("/bin/bash",["scripts/install-equinox-local.sh","--help"],{encoding:"utf8"});
+ assert.equal(help.status,0);assert.match(help.stdout,/production-signed Main/u);
 });
 
 test("first-install signed-activation CLI refuses unsigned pointer and malformed flags before changing HOME",async t=>{
@@ -2167,24 +2160,13 @@ test("admitted native Mac recovery never downgrades a receipt already claimed by
 });
 
 
-test("existing macOS shell exposes explicit abandoned-native recovery without staging or activating B",async()=>{
+test("macOS public installer exposes one normal update command, not native recovery flags",async()=>{
  const file=path.resolve("scripts/install-equinox-local.sh");
- const src=await fs.readFile(file,"utf8");
- assert.match(src,/--recover-main=\*\) PREPARE_MAIN=1; RECOVER_MAIN_TX=/u);
- assert.match(src,/--recover-signed-main --transaction-id "\$RECOVER_MAIN_TX"/u);
- assert.match(src,/\[ "\$STAGE_MAIN" -eq 0 \] && \[ "\$ACTIVATE_MAIN" -eq 0 \]/u);
- const help=spawnSync("/bin/bash",[file,"--help"],{encoding:"utf8",timeout:5000});
- assert.equal(help.status,0);
- assert.match(help.stdout,/--recover-main=main-<32-lowercase-hex>/u);
- for(const invalid of ["--recover-main=main-short","--recover-main="+ "A".repeat(40),
-   "--recover-main=main-"+ "f".repeat(32)+" --activate-main"]){
-  const args=invalid.includes(" --activate-main")?invalid.split(" "):[invalid];
-  const result=spawnSync("/bin/bash",[file,...args],{
-   encoding:"utf8",timeout:5000,
-  });
-  assert.equal(result.status,1);
-  assert.match(result.stderr,/recovery requires an exact transaction id|cannot be combined with staging, activation or repair/u);
- }
+ const source=await fs.readFile(file,"utf8");
+ assert.match(source,/--install-main-fresh/u);
+ assert.doesNotMatch(source,/--recover-main|--stage-main|--activate-main/u);
+ const bad=spawnSync("/bin/bash",[file,"--recover-main=main-"+"f".repeat(32)],{encoding:"utf8"});
+ assert.equal(bad.status,1); assert.match(bad.stderr,/unknown argument/u);
 });
 
 test("signed-native first-install recovery CLI refuses malformed transaction identities without touching user HOME",async t=>{
@@ -2271,26 +2253,15 @@ test("abandoned clean Mac first-install refuses newly introduced foreign apphost
 });
 
 
-test("original macOS shell SAME-SHA repair flag is explicit and cannot be combined with normal Main activation",async()=>{
+test("same-SHA Main reinstallation uses same no-argument shell installer",async()=>{
  const file=path.resolve("scripts/install-equinox-local.sh");
- const contents=await fs.readFile(file,"utf8");
- assert.match(contents,/^REPAIR_MAIN=0$/mu);
- assert.match(contents,/--repair-main\) PREPARE_MAIN=1; STAGE_MAIN=1; REPAIR_MAIN=1/u);
- assert.match(contents,/--repair-signed-main --signed-pointer-file/u);
- assert.match(contents,/signed Main activation and exact-SHA repair cannot run together/u);
- const help=spawnSync("/bin/bash",[file,"--help"],{encoding:"utf8",timeout:5000});
- assert.equal(help.status,0);
- assert.match(help.stdout,/--repair-main/u);
- const mutuallyExclusive=spawnSync("/bin/bash",[file,"--repair-main","--activate-main"],{
-  encoding:"utf8",timeout:5000,
- });
- assert.equal(mutuallyExclusive.status,1);
- assert.match(mutuallyExclusive.stderr,/activation and exact-SHA repair cannot run together/u);
- const withRecovery=spawnSync("/bin/bash",[file,"--repair-main","--recover-main=main-"+ "f".repeat(32)],{
-  encoding:"utf8",timeout:5000,
- });
- assert.equal(withRecovery.status,1);
- assert.match(withRecovery.stderr,/recovery cannot be combined with staging, activation or repair/u);
+ const source=await fs.readFile(file,"utf8");
+ assert.match(source,/--install-main-fresh/u);
+ assert.doesNotMatch(source,/--repair-main|--repair-signed-main/u);
+ const help=spawnSync("/bin/bash",[file,"--help"],{encoding:"utf8"});
+ assert.equal(help.status,0); assert.match(help.stdout,/prior installed version is irrelevant/u);
+ const invalid=spawnSync("/bin/bash",[file,"--repair-main"],{encoding:"utf8"});
+ assert.equal(invalid.status,1);
 });
 
 test("signed-native repair CLI rejects unsigned or malformed selector without touching user HOME",async t=>{

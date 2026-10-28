@@ -29,8 +29,13 @@ internal static partial class Program
     {
         try
         {
-            if (args.Length > 1 || (args.Length == 1 && args[0] is not ("--inspect" or "--audit-native-identity" or "--audit-native-journal" or "--audit-signed-native-journal" or "--audit-signed-native-worker-argv" or "--audit-signed-native-worker-pipe" or "--audit-signed-native-owner-lease" or "--prepare-signed-native-journal" or "--audit-signed-native-prepared-journal" or "--reconcile-signed-native-prepared-orphan" or "--audit-native-worker" or "--audit-native-worker-ipc" or "--audit-native-worker-argv" or "--audit-native-wpf-owner" or "--hold-native-journal-lease" or "--hold-native-journal-authority" or "--hold-native-prepared-abort" or "--hold-native-stage-b" or "--hold-native-stage-b-cancel" or "--hold-native-stable-shell-quiesce" or "--reconcile-native-prepared-abort" or "--startup" or "--uninstall")))
+            if (args.Length > 1 || (args.Length == 1 && args[0] is not ("--audit-installed-signed-main" or "--inspect" or "--audit-native-identity" or "--audit-native-journal" or "--audit-signed-native-journal" or "--audit-signed-native-worker-argv" or "--audit-signed-native-worker-pipe" or "--audit-signed-native-owner-lease" or "--prepare-signed-native-journal" or "--audit-signed-native-prepared-journal" or "--reconcile-signed-native-prepared-orphan" or "--audit-native-worker" or "--audit-native-worker-ipc" or "--audit-native-worker-argv" or "--audit-native-wpf-owner" or "--hold-native-journal-lease" or "--hold-native-journal-authority" or "--hold-native-prepared-abort" or "--hold-native-stage-b" or "--hold-native-stage-b-cancel" or "--hold-native-stable-shell-quiesce" or "--reconcile-native-prepared-abort" or "--startup" or "--uninstall")))
                 throw new InvalidOperationException("Unsupported Guardian argument.");
+            if (args.Length == 1 && args[0] == "--audit-installed-signed-main")
+            {
+                InspectOriginalInstalledSignedMain();
+                return 0; // Same original Ed25519+ZIP proof; read-only install verification.
+            }
             if (args.Length == 1 && args[0] == "--audit-native-identity")
             {
                 InspectMainNativeIdentity();
