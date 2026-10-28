@@ -349,6 +349,7 @@ test("server reports exact Git-free Main native SHA and prohibits obsolete Stabl
  assert.match(source,/sourceSha: \["managed-source", "managed-main"\]\.includes\(equinoxLocalInstallation\.kind\)/u);
  assert.match(source,/mainNativeSha: equinoxLocalInstallation\.mainNativeSha/u);
  assert.match(source,/target: equinoxLocalInstallation\.target/u);
- assert.match(source,/equinoxLocalInstallation\.kind === "managed-main"[\s\S]*?legacy Stable activation is disabled/u);
+ assert.match(source,/equinoxLocalInstallation\.kind === "managed-main"[\s\S]*?scheduleEquinoxLocalSignedNativeMacInstaller/u);
+ assert.match(source,/sourceSha: \["managed-source", "managed-main"\]/u);
  assert.match(source,/if \(equinoxLocalInstallation\.kind === "managed-main"\) \{\s*\/\/ This is a BOUNDED read-only/u);
 });

@@ -1061,14 +1061,24 @@ function renderUpdate() {
         }
         if (signedNativeMain) {
             // Native Main discovery is an original Ed25519 full-source-SHA check;
-            // never label the result a Git snapshot or enable unaccepted Apply.
+            // only the original signed external script can be launched for Apply.
             setText("update-main-distance", "Native source SHA comparison");
             const entry = document.createElement("li");
             entry.textContent = targetSha ? "Production-signed native Main SHA " + targetSha : "";
             summaryNode.replaceChildren(...(snapshotAvailable ? [entry] : []));
-            if (main.state === "behind") {
+            if (main.restartScheduledFor) {
+                setText("update-title", "Original signed Main installer launched");
+                setText("update-copy", "The original external installer is checking native B. A detached worker must still verify B health or roll back before this update is complete.");
+            }
+            else if (main.applyError) {
+                setText("update-title", "Original signed Main installer needs attention");
+                setText("update-copy", main.applyError);
+            }
+            else if (main.state === "behind") {
                 setText("update-title", "Production-signed Main " + (targetSha || "SHA") + " available");
-                setText("update-copy", "A different exact source SHA is signed for this native target. Automatic installation remains disabled until the original external installer passes real-host acceptance.");
+                setText("update-copy", main.applyAvailable
+                    ? "A newer exact source SHA is production-signed. Update & restart launches the same original external installer, which independently verifies B and owns native rollback."
+                    : "A different native Main SHA is signed. This platform has not yet been admitted for the original external installer handoff.");
             }
             else if (main.state === "up_to_date") {
                 setText("update-title", "Signed native Main SHA is up to date");
@@ -1086,8 +1096,9 @@ function renderUpdate() {
         const mainLocked = state.updateBusy || state.updateApplyBusy || Boolean(main.applying) || Boolean(main.restartScheduledFor);
         checkButton.disabled = mainLocked;
         checkButton.textContent = localizeUiText(state.updateBusy ? "Checking…" : signedNativeMain ? "Check signed SHA" : "Check main");
-        const canApplyMain = Boolean(managedMain && main.applyAvailable && !main.applyError && !main.restartScheduledFor);
-        installButton.hidden = !managedMain || (!canApplyMain && !state.updateApplyBusy && !main.applying && !main.restartScheduledFor);
+        const nativeOrSourceMain = managedMain || signedNativeMain;
+        const canApplyMain = Boolean(nativeOrSourceMain && main.applyAvailable && !main.applyError && !main.restartScheduledFor);
+        installButton.hidden = !nativeOrSourceMain || (!canApplyMain && !state.updateApplyBusy && !main.applying && !main.restartScheduledFor);
         installButton.disabled = mainLocked || !canApplyMain;
         installButton.textContent = localizeUiText(state.updateApplyBusy || main.applying ? "Preparing update…" : main.restartScheduledFor ? "Restarting…" : "Update & restart");
         return;
@@ -3403,7 +3414,9 @@ async function checkForUpdates() {
             const main = state.update?.main || {};
             if (main.state === "behind")
                 showToast(main.mode === "signed-native"
-                    ? "A different production-signed native Main SHA is available; installation remains gated."
+                    ? main.applyAvailable
+                        ? "A new production-signed Main SHA is available through the original installer."
+                        : "A different production-signed native Main SHA is available; installation is gated on this platform."
                     : "A verified Main snapshot update is available.");
             else if (main.state === "up_to_date")
                 showToast("Main snapshot is up to date.");
@@ -3437,7 +3450,9 @@ async function checkForUpdates() {
     }
 }
 async function applyAvailableUpdate() {
-    const managedMain = state.update?.installationKind === "managed-source";
+    const signedNativeMain = state.update?.installationKind === "managed-main" &&
+        state.update?.main?.mode === "signed-native";
+    const managedMain = state.update?.installationKind === "managed-source" || signedNativeMain;
     const canApplyMain = Boolean(managedMain && state.update?.main?.applyAvailable && !state.update?.main?.applyError);
     const canApplyStable = Boolean(!managedMain
         && state.update?.selfUpdateSupported
@@ -3472,9 +3487,11 @@ async function applyAvailableUpdate() {
             state.health.controlCenter.mutationCount += 1;
         renderUpdate();
         renderActivity();
-        showToast(managedMain
-            ? `Main ${shortUpdateSha(scheduled.targetSha) || "snapshot"} is prepared. Restarting safely…`
-            : `Equinox Local ${scheduled.targetVersion || "update"} is prepared. Restarting safely…`);
+        showToast(signedNativeMain
+            ? "Original signed Main installer launched. Native B verification and rollback remain in progress."
+            : managedMain
+                ? `Main ${shortUpdateSha(scheduled.targetSha) || "snapshot"} is prepared. Restarting safely…`
+                : `Equinox Local ${scheduled.targetVersion || "update"} is prepared. Restarting safely…`);
     }
     catch (error) {
         showError(error);

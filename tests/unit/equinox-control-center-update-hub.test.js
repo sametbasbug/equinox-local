@@ -64,25 +64,28 @@ test("Main failure feedback never labels an unverified rollback as safe", () => 
 
 
 
-test("managed-native Main UI checks only original Ed25519 signed full SHA and never exposes unsafe Apply",()=>{
+test("managed-native Main UI checks only original Ed25519 full SHA and dispatches ONLY the original external installer",()=>{
  const serverFields=[
   'const signedNativeMainNotice = equinoxLocalInstallation.kind === "managed-main"',
   "await signedNativeMainNotice?.check({ force })",
   'mode: "signed-native", checkSupported: true, channel: "main"',
   'state: signed.status === "available" ? "behind"',
   'currentSha: signed.installedSha, targetSha: signed.targetSha',
-  'applyAvailable: false, applying: false, applyError: null',
-  'Direct Main updates require the signed external installer handoff',
+  'signed.status === "available" && !signedMainInstallerPending()',
+  'await scheduleEquinoxLocalSignedNativeMacInstaller({',
+  'signedMainInstallerRequestedSha = checked.targetSha',
  ];
  for(const field of serverFields) assert.equal(server.includes(field),true,field);
  const uiFields=[
   'const signedNativeMain = update.installationKind === "managed-main" && main.mode === "signed-native"',
   "Check signed SHA",
   "original Ed25519-signed native selector",
-  "Automatic installation remains disabled until the original external installer passes real-host acceptance",
+  "A newer exact source SHA is production-signed. Update & restart launches the same original external installer",
   "Signed native Main SHA is up to date",
   'const managedMain = update.installationKind === "managed-source"',
-  'installButton.hidden = !managedMain',
+  'installButton.hidden = !nativeOrSourceMain',
+  'const nativeOrSourceMain = managedMain || signedNativeMain',
+  'const managedMain = state.update?.installationKind === "managed-source" || signedNativeMain',
  ];
  for(const field of uiFields) assert.equal(js.includes(field),true,field);
 });

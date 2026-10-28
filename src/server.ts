@@ -188,6 +188,7 @@ import {
 import {
   scheduleEquinoxLocalUninstall,
 } from "./equinox-local-uninstall.js";
+import {scheduleEquinoxLocalSignedNativeMacInstaller} from "./equinox-local-signed-main-installer-handoff.js";
 import {
   getEquinoxLocalDoctorStatus,
   registerSystemDoctorTool,
@@ -621,6 +622,19 @@ const signedNativeMainNotice = equinoxLocalInstallation.kind === "managed-main"
       target:equinoxLocalInstallation.target,
     })
   : null;
+// Detached shell spawn acknowledges ONLY that the original installed
+// external installer started; it is not an A/B health confirmation.
+let signedMainInstallerRequestedSha:string|null=null;
+let signedMainInstallerRequestedAt:number|null=null;
+let signedMainInstallerError:string|null=null;
+const signedMainInstallerPending=()=>{
+  if(!signedMainInstallerRequestedSha||signedMainInstallerRequestedAt===null)return false;
+  if(Date.now()-signedMainInstallerRequestedAt<5*60_000)return true;
+  signedMainInstallerError="The signed Main external installer did not confirm a new running SHA within five minutes. Review its private handoff log and transaction recovery before retrying.";
+  signedMainInstallerRequestedSha=null;
+  signedMainInstallerRequestedAt=null;
+  return false;
+};
 const checkInstalledChannelForUpdates = async ({ force = false } = {}) => {
   if (equinoxLocalInstallation.kind === "managed-main") {
     // This is a BOUNDED read-only original production-signed Ed25519
@@ -655,10 +669,14 @@ const getCombinedUpdateStatus = async () => Object.freeze({
           currentSha:signed.installedSha,targetSha:signed.targetSha,
           version:signed.version,checkedAt:signed.checkedAt,
           lastError:signed.lastError,
-          // Until physical host acceptance and the fixed external script
-          // handoff ship, Control Center MUST NOT show an unsafe Apply.
-          applyAvailable:false,applying:false,applyError:null,
-          restartScheduledFor:null,reason:signed.lastError,
+          // Only the original external macOS shell may start an update.
+          // No Git/Stable fallback or Windows WPF direct activation.
+          applyAvailable:equinoxLocalInstallation.platform==="darwin" &&
+            signed.status==="available" && !signedMainInstallerPending() &&
+            !signedMainInstallerError,
+          applying:false,applyError:signedMainInstallerError,
+          restartScheduledFor:signedMainInstallerPending()?signedMainInstallerRequestedSha:null,
+          reason:signed.lastError,
         };
       })())
     : Object.freeze({
@@ -3179,11 +3197,39 @@ equinoxLocalControlApi = createEquinoxLocalControlApi({
   checkForUpdates: async () => {
     await checkInstalledChannelForUpdates({ force: true });
     if (["source", "managed-source"].includes(equinoxLocalInstallation.kind)) equinoxLocalMainApplyController.resetError();
+    if(equinoxLocalInstallation.kind==="managed-main" && !signedMainInstallerPending())signedMainInstallerError=null;
     return getCombinedUpdateStatus();
   },
   applyUpdate: async () => withMutationLocks(["local-update"], async () => {
     if (equinoxLocalInstallation.kind === "managed-main") {
-      throw Object.assign(new Error("Direct Main updates require the signed external installer handoff; legacy Stable activation is disabled."), { statusCode: 503 });
+      if(equinoxLocalInstallation.platform!=="darwin"){
+        throw Object.assign(new Error("Windows native Main requires the original independent signed Guardian/WPF handoff."),{statusCode:503});
+      }
+      if(signedMainInstallerPending()){
+        throw Object.assign(new Error("The original signed Main installer is already scheduled."),{statusCode:409});
+      }
+      const checked=await signedNativeMainNotice?.check({force:true});
+      if(!checked || checked.status!=="available" ||
+         typeof checked.targetSha!=="string" ||
+         checked.installedSha!==equinoxLocalInstallation.mainNativeSha ||
+         checked.targetSha===checked.installedSha){
+        throw Object.assign(new Error("No newer production-signed native Main SHA is currently admitted."),{statusCode:409});
+      }
+      signedMainInstallerError=null;
+      try{
+        const handoff=await scheduleEquinoxLocalSignedNativeMacInstaller({
+          installation:equinoxLocalInstallation,homeDir:runtimeHomeDir,
+          sourceEnv:runtimeEnv,
+        });
+        // The detached original .sh re-verifies the actual NEW selector
+        // before it can schedule the signed native B-owned worker.
+        signedMainInstallerRequestedSha=checked.targetSha;
+        signedMainInstallerRequestedAt=Date.now();
+        return Object.freeze({...handoff,targetSha:checked.targetSha});
+      }catch{
+        signedMainInstallerError="The original signed Main installer could not be safely launched. Current native A was not changed by Control Center.";
+        throw Object.assign(new Error(signedMainInstallerError),{statusCode:503});
+      }
     }
     return equinoxLocalInstallation.kind === "managed-source"
       ? equinoxLocalMainApplyController.apply()
