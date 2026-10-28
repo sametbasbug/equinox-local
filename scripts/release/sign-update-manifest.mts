@@ -290,35 +290,31 @@ export async function writeSignedUpdateBundle({
     await fs.rm(destinationArtifact, { force: true });
     throw new Error("Copied update artifact failed final SHA-256 verification.");
   }
-  if (windows && zipHelperSourcePath !== null && zipHelperPath !== null) {
-    const zipHelperSource = await readBoundedNormalFile(zipHelperSourcePath, {
-      minBytes: 1,
-      maxBytes: 1024 * 1024,
-      label: "Tracked Windows ZIP helper",
-    });
-    await writeOrVerifySharedPublicFile(zipHelperPath, zipHelperSource.data, {
-      label: "Windows ZIP helper",
-      maxBytes: 1024 * 1024,
-    });
-    const helperDigest = Object.freeze({
-      bytes: zipHelperSource.data.byteLength,
-      sha256: createHash("sha256").update(zipHelperSource.data).digest("hex"),
-    });
-    let installerTemplate = installerSource.data;
-    if (!installerTemplate.includes(WINDOWS_INSTALLER_TEMPLATE_SHA) || !installerTemplate.includes(WINDOWS_INSTALLER_TEMPLATE_BYTES)) {
-      throw new Error("Windows installer template is missing ZIP helper pin placeholders.");
+  // The one-Main PowerShell installer no longer executes the legacy Stable ZIP helper.
+  // Keep the historical stable-bundle generator compatible with old pinned
+  // templates, without requiring those pins in the new Main-only script.
+  if (windows && installerSource.data.includes(WINDOWS_INSTALLER_TEMPLATE_SHA)) {
+    if (!installerSource.data.includes(WINDOWS_INSTALLER_TEMPLATE_BYTES) || !zipHelperSourcePath || !zipHelperPath) {
+      throw new Error("Legacy Windows installer has incomplete ZIP helper pins.");
     }
-    installerTemplate = installerTemplate
-      .replaceAll(WINDOWS_INSTALLER_TEMPLATE_SHA, helperDigest.sha256)
-      .replaceAll(WINDOWS_INSTALLER_TEMPLATE_BYTES, String(helperDigest.bytes));
-    await writeOrVerifySharedPublicFile(installerPath, installerTemplate, {
-      label: "Windows installer",
-      maxBytes: 64 * 1024,
+    const helper = await readBoundedNormalFile(zipHelperSourcePath, {
+      minBytes: 1, maxBytes: 1024 * 1024, label: "Tracked Windows ZIP helper",
+    });
+    await writeOrVerifySharedPublicFile(zipHelperPath, helper.data, {
+      label: "Windows ZIP helper", maxBytes: 1024 * 1024,
+    });
+    const installerText = installerSource.data
+      .replaceAll(WINDOWS_INSTALLER_TEMPLATE_SHA, createHash("sha256").update(helper.data).digest("hex"))
+      .replaceAll(WINDOWS_INSTALLER_TEMPLATE_BYTES, String(helper.data.byteLength));
+    await writeOrVerifySharedPublicFile(installerPath, installerText, {
+      label: "Windows legacy installer", maxBytes: 64 * 1024,
     });
   } else {
+    if (windows && installerSource.data.includes(WINDOWS_INSTALLER_TEMPLATE_BYTES)) {
+      throw new Error("Legacy Windows installer has incomplete ZIP helper pins.");
+    }
     await writeOrVerifySharedPublicFile(installerPath, installerSource.data, {
-      label: "Darwin installer",
-      maxBytes: 64 * 1024,
+      label: "Signed Main installer", maxBytes: 64 * 1024,
     });
   }
   const installerDigest = await sha256File(installerPath);

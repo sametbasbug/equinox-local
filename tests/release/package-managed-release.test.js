@@ -64,6 +64,7 @@ test("managed release source graph follows local imports and excludes developmen
     "src/equinox-local-uninstall.js",
     "src/equinox-local-uninstall-helper.js",
     "src/equinox-local-supervisor.js",
+    "src/equinox-local-main-update-worker.js",
     "src/equinox-browser-native-host.js",
     "src/equinox-control-center.html",
     "src/equinox-control-center.css",
@@ -75,6 +76,8 @@ test("managed release source graph follows local imports and excludes developmen
     "src/equinox-local-native-app-host.js",
     "package.json",
     "package-lock.json",
+    "scripts/install-equinox-local.sh",
+    "scripts/install-equinox-local.ps1",
   ]) {
     assert.equal(files.includes(required), true, `${required} should be packaged`);
   }
@@ -91,10 +94,11 @@ test("managed release source graph includes the complete browser UI dependency g
     "src/server.js", "src/equinox-local-bootstrap.js", "src/equinox-local-first-install.js",
     "src/equinox-browser-native-host.js", "src/equinox-local-update-helper.js",
     "src/equinox-local-restart-helper.js", "src/equinox-local-uninstall-helper.js",
-    "src/equinox-local-supervisor.js", "src/equinox-control-center.html",
+    "src/equinox-local-supervisor.js", "src/equinox-local-main-update-worker.js", "src/equinox-control-center.html",
     "src/equinox-control-center.css", "src/equinox-control-center.js",
     "app/EquinoxLocal.png", "app/EquinoxLocalMenuBar.png", "app/EquinoxCompanionNyx.webp",
     "package.json", "package-lock.json", "src/ui-dependency.js", "src/ui-leaf.js",
+    "scripts/install-equinox-local.sh", "scripts/install-equinox-local.ps1",
   ];
   for (const relative of fixtureFiles) {
     await fs.mkdir(path.dirname(path.join(root, relative)), { recursive: true });

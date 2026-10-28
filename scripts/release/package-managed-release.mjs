@@ -32,6 +32,10 @@ const STATIC_RELEASE_FILES = Object.freeze([
     "app/EquinoxCompanionNyx.webp",
     "package.json",
     "package-lock.json",
+    // SAME external installer used by terminal users and Control Center.
+    // Both platforms package these original scripts, not a second updater.
+    "scripts/install-equinox-local.sh",
+    "scripts/install-equinox-local.ps1",
 ]);
 const RELEASE_ENTRYPOINTS = Object.freeze([
     "src/equinox-control-center.js",
@@ -43,6 +47,7 @@ const RELEASE_ENTRYPOINTS = Object.freeze([
     "src/equinox-local-restart-helper.js",
     "src/equinox-local-uninstall-helper.js",
     "src/equinox-local-supervisor.js",
+    "src/equinox-local-main-update-worker.js",
 ]);
 export async function resolveManagedReleaseSourceSha(rootDir, { execFileImpl = execFile } = {}) {
     const root = path.resolve(rootDir);

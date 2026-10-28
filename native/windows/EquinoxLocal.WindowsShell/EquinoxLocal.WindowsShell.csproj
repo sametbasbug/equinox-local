@@ -36,4 +36,9 @@
     <Resource Include="../../../app/EquinoxLocal.png" Link="Assets\EquinoxLocal.png" />
     <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4258.31" />
   </ItemGroup>
+  <!-- The same original native Main worker argv contract for WPF and Guardian. -->
+  <ItemGroup>
+    <Compile Include="../EquinoxLocal.NativeShared/MainSignedNativeWorkerContract.cs"
+             Link="NativeShared/MainSignedNativeWorkerContract.cs" />
+  </ItemGroup>
 </Project>

@@ -20,7 +20,7 @@ function parseCliArgs(argv) {
             throw new Error(`Duplicate Main native artifact planner argument: ${key}.`);
         values.set(key, value);
     }
-    const allowed = new Set(["--current-sha", "--target-sha", "--root"]);
+    const allowed = new Set(["--current-sha", "--target-sha", "--root", "--candidate-only"]);
     for (const key of values.keys())
         if (!allowed.has(key))
             throw new Error(`Unsupported Main native artifact planner argument: ${key}.`);
@@ -37,7 +37,7 @@ function githubTargetEntry(contract, mainNativeRunners) {
     }
     return Object.freeze(entry);
 }
-export async function planEquinoxLocalMainNativeArtifacts({ rootDir, currentSha, targetSha, inspectImpactImpl = inspectEquinoxLocalMainNativeImpactRange, targetMatrix = EQUINOX_LOCAL_RELEASE_TARGET_MATRIX, mainNativeRunners = MAIN_NATIVE_RUNNERS, } = {}) {
+export async function planEquinoxLocalMainNativeArtifacts({ rootDir, currentSha, targetSha, inspectImpactImpl = inspectEquinoxLocalMainNativeImpactRange, targetMatrix = EQUINOX_LOCAL_RELEASE_TARGET_MATRIX, mainNativeRunners = MAIN_NATIVE_RUNNERS, candidateOnly = false, } = {}) {
     if (typeof rootDir !== "string" || !rootDir)
         throw new Error("Main native artifact planner root is required.");
     if (!SHA_PATTERN.test(currentSha ?? ""))
@@ -46,7 +46,9 @@ export async function planEquinoxLocalMainNativeArtifacts({ rootDir, currentSha,
         throw new Error("Main native artifact planner target SHA is invalid.");
     if (!Array.isArray(targetMatrix))
         throw new Error("Main native artifact target matrix is invalid.");
-    const impact = await inspectImpactImpl({ rootDir: path.resolve(rootDir), currentSha, targetSha });
+    if (typeof candidateOnly !== "boolean")
+        throw new Error("Main native candidate mode must be boolean.");
+    const impact = await inspectImpactImpl({ rootDir: path.resolve(rootDir), currentSha, targetSha, candidateOnly });
     const contracts = new Map(targetMatrix.map((entry) => [entry.target, entry]));
     if (contracts.size !== targetMatrix.length)
         throw new Error("Main native artifact target matrix contains duplicate targets.");
@@ -82,7 +84,12 @@ if (invokedPath && import.meta.url === invokedPath) {
         const currentSha = args.get("--current-sha");
         const targetSha = args.get("--target-sha");
         const rootDir = path.resolve(args.get("--root") ?? path.dirname(path.dirname(path.dirname(fileURLToPath(import.meta.url)))));
-        const result = await planEquinoxLocalMainNativeArtifacts({ rootDir, currentSha: currentSha ?? "", targetSha: targetSha ?? "" });
+        if (args.has("--candidate-only") && args.get("--candidate-only") !== "true")
+            throw new Error("Main native candidate-only flag must be true when supplied.");
+        const result = await planEquinoxLocalMainNativeArtifacts({
+            rootDir, currentSha: currentSha ?? "", targetSha: targetSha ?? "",
+            candidateOnly: args.get("--candidate-only") === "true",
+        });
         process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
     }
     catch (error) {

@@ -1,4 +1,5 @@
 using System.IO;
+using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -39,6 +40,48 @@ internal static partial class WindowsManagedSourceRuntimeLocator
         var installStampPath = Path.Combine(transactionRoot, "install.json");
         if (!File.Exists(installStampPath))
         {
+            // The one external signed Main installer has already replaced
+            // old executables; only the committed native SHA is runnable.
+            // Reuse the ORIGINAL installed Guardian's existing production
+            // Ed25519 + exact archived ZIP verification, no journal/rollback.
+            var candidateNativePointerPath = Path.Combine(transactionRoot, "current-native.json");
+            var nativePointerPresent = Directory.Exists(transactionRoot) &&
+                Directory.EnumerateFileSystemEntries(transactionRoot, "current-native.json",
+                    SearchOption.TopDirectoryOnly).Any();
+            if (nativePointerPresent)
+            {
+                var release = ResolveNativeRelease(transactionRoot, candidateNativePointerPath);
+                var guardianPath = RequireNormalFile(Path.Combine(installRoot, "runtime", "guardian",
+                    "EquinoxLocalGuardian.exe"), "Original installed Main Guardian");
+                var audit = new ProcessStartInfo(guardianPath)
+                {
+                    WorkingDirectory = installRoot,
+                    UseShellExecute = false,
+                    CreateNoWindow = true,
+                };
+                audit.ArgumentList.Add("--audit-installed-signed-main");
+                audit.Environment.Clear();
+                foreach (var name in new[] { "SystemRoot", "WINDIR", "USERPROFILE", "LOCALAPPDATA" })
+                {
+                    var value = Environment.GetEnvironmentVariable(name);
+                    if (!string.IsNullOrWhiteSpace(value)) audit.Environment[name] = value;
+                }
+                using var guardian = Process.Start(audit) ??
+                    throw new InvalidOperationException("Original signed Main verifier failed to start.");
+                if (!guardian.WaitForExit(120_000))
+                {
+                    try { guardian.Kill(entireProcessTree: true); } catch { }
+                    throw new InvalidOperationException("Original signed Main verifier timed out.");
+                }
+                if (guardian.ExitCode != 0)
+                    throw new InvalidDataException("Original production-signed Main release audit failed.");
+                var signedServerPath = RequireNormalFile(Path.Combine(release, "server.js"),
+                    "Signed Main server entry");
+                _ = RequireNormalFile(Path.Combine(release, "equinox-local-supervisor.js"),
+                    "Signed Main supervisor");
+                return new WindowsRuntimeLocation(release, release, signedServerPath, release,
+                    installRoot, ManagedSource: false);
+            }
             // Stable is a separate first-install bootstrap, not a permanent
             // dependency of a successfully committed Main native runtime.
             var stable = WindowsManagedReleaseLocator.ResolveCurrentRelease();

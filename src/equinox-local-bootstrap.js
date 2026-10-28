@@ -8,6 +8,8 @@ import { equinoxLocalAppExecutablePath, equinoxLocalAppRuntimeWrapperPath, launc
 import { synchronizeEquinoxLocalNativeAppHost } from "./equinox-local-native-app-host.js";
 import { registerWindowsNativeMessagingHost, windowsNativeMessagingLauncherPath, } from "./equinox-browser-windows-native-messaging.js";
 import { readEquinoxLocalCurrentVersionPointer } from "./equinox-local-current-release.js";
+import { readEquinoxLocalMainNativePointer } from "./equinox-local-main-native-state.js";
+import { validateTrustedMainInstallPointer } from "./equinox-local-main-install-pointer.js";
 import { readBoundedNormalFile } from "./equinox-local-safe-file.js";
 import { managedSupervisorPaths, resolveSupervisorRelease, } from "./equinox-local-supervisor.js";
 import { equinoxLocalUpdateTarget } from "./equinox-local-updater.js";
@@ -262,6 +264,47 @@ async function resolveBootstrapRelease(paths, { platform = process.platform, tar
         return resolveSupervisorRelease(paths);
     if (platform !== "win32")
         throw new Error(`Equinox Local managed bootstrap is not implemented for ${platform}.`);
+    // One signed Main installer selects its original full-SHA native pointer.
+    // Never require an obsolete Stable current-version file for Main. If the
+    // Main pointer exists but is invalid, fail CLOSED; do not boot Stable.
+    const nativeRoot = path.win32.join(paths.stateRoot, "main-update");
+    const nativePath = path.win32.join(nativeRoot, "current-native.json");
+    const nativeEntry = await fsImpl.lstat(nativePath).catch(error => {
+        if (error?.code === "ENOENT")
+            return null;
+        throw error;
+    });
+    if (nativeEntry) {
+        if (!nativeEntry.isFile() || nativeEntry.isSymbolicLink())
+            throw new Error("Signed Main native current pointer is unsafe.");
+        const native = await readEquinoxLocalMainNativePointer(nativePath, {
+            transactionRoot: nativeRoot, fsImpl,
+        });
+        if (native.target !== target)
+            throw new Error("Signed Main native target differs from Windows host.");
+        const { data } = await readBoundedNormalFile(path.win32.join(path.win32.dirname(native.releaseDir), "signed-selector.json"), {
+            fsImpl, platform: "win32", minBytes: 200, maxBytes: 16 * 1024,
+            encoding: "utf8", label: "Original production-signed Main installer selector",
+        });
+        const signed = validateTrustedMainInstallPointer(JSON.parse(data), {
+            expectedSourceSha: native.sourceSha,
+        });
+        const row = signed.targets.find(value => value.target === target);
+        if (!row || row.runtimeContractSha256 !== native.runtimeContractSha256 ||
+            signed.version !== native.payloadVersion)
+            throw new Error("Signed native Main current release differs from production Ed25519 selector.");
+        const { data: metadataText } = await readBoundedNormalFile(path.win32.join(native.releaseDir, "release.json"), {
+            fsImpl, platform: "win32", minBytes: 1, maxBytes: 16 * 1024,
+            encoding: "utf8", label: "Signed Main native release metadata",
+        });
+        const metadata = JSON.parse(metadataText);
+        if (metadata?.schemaVersion !== 1 || metadata.version !== signed.version ||
+            metadata.sourceSha !== native.sourceSha || metadata.target !== target ||
+            metadata.serverEntry !== "server.js")
+            throw new Error("Signed Main native release metadata differs from authenticated SHA.");
+        return Object.freeze({ version: signed.version, releaseDir: native.releaseDir,
+            metadata: Object.freeze({ ...metadata }) });
+    }
     const pointer = await readEquinoxLocalCurrentVersionPointer(paths.currentPointer, {
         fsImpl,
         platform: "win32",

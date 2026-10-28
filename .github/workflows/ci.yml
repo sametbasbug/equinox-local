@@ -502,7 +502,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
   windows-x64-installer:
-    name: Windows x64 public installer acceptance
+    name: Windows x64 Main-only native package / installer gate
     runs-on: windows-latest
     timeout-minutes: 8
     needs: [windows-x64-package-build]
@@ -518,7 +518,7 @@ jobs:
               name: windows-x64-managed-package-${{ github.sha }}
               path: ${{ runner.temp }}/x64-package
 
-      - name: Windows x64 real public-installer acceptance
+      - name: Windows x64 signed Main package and fail-closed preflight
         shell: pwsh
         env:
           EQUINOX_WINDOWS_SAME_VERSION_REPAIR: 'false'
@@ -538,7 +538,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
   windows-x64-guardian:
-    name: Windows x64 real Guardian journal security acceptance
+    name: Windows x64 original Guardian installed-identity denial (package)
     runs-on: windows-latest
     timeout-minutes: 8
     needs: [windows-x64-package-build]
@@ -554,7 +554,7 @@ jobs:
               name: windows-x64-managed-package-${{ github.sha }}
               path: ${{ runner.temp }}/x64-package
 
-      - name: Independently install and audit all native Guardian journal positive and negative cases
+      - name: Audit compiled Guardian binary and foreign-install denial (no signed user install)
         shell: pwsh
         env:
           EQUINOX_WINDOWS_SAME_VERSION_REPAIR: 'false'
@@ -573,7 +573,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
   windows-x64-repair:
-    name: Windows x64 same-version public repair
+    name: Windows x64 Main-only reinstall preflight gate
     runs-on: windows-latest
     timeout-minutes: 8
     needs: [windows-x64-package-build]
@@ -589,7 +589,7 @@ jobs:
               name: windows-x64-managed-package-${{ github.sha }}
               path: ${{ runner.temp }}/x64-package
 
-      - name: Windows x64 real public-installer acceptance
+      - name: Windows x64 signed Main package and fail-closed preflight
         shell: pwsh
         env:
           EQUINOX_WINDOWS_SAME_VERSION_REPAIR: 'true'
@@ -900,7 +900,7 @@ jobs:
               & ./tests/release/windows-winapp-smoke.ps1 -WinappPath (Join-Path $extract 'release/runtime/winapp/winapp.exe') -FixturePath (Join-Path $fixtureOut 'EquinoxLocal.WinappSmokeFixture.exe') -ClipboardHelperPath (Join-Path $extract 'release/equinox-local-windows-clipboard.ps1') -DesktopHelperPath (Join-Path $extract 'release/equinox-local-windows-desktop.ps1') -HelperPowerShellPath $nativePwsh
 
   windows-arm64-installer:
-    name: Windows ARM64 public installer acceptance
+    name: Windows ARM64 Main-only native package / installer gate
     runs-on: windows-11-vs2026-arm
     timeout-minutes: 7
     needs: [windows-arm64-package-build]
@@ -916,7 +916,7 @@ jobs:
               name: windows-arm64-managed-package-${{ github.sha }}
               path: ${{ runner.temp }}/arm64-package
 
-      - name: Verify and run ARM64 real public-installer fresh-install and same-version repair acceptance
+      - name: Verify ARM64 native Main package and fail-closed preflight (no production signing key)
         shell: pwsh
         env:
           EQUINOX_WINDOWS_SAME_VERSION_REPAIR: 'false'
@@ -934,7 +934,7 @@ jobs:
           & ./tests/release/windows-installer-real-package-smoke.ps1
 
   windows-arm64-repair:
-    name: Windows ARM64 same-version public repair
+    name: Windows ARM64 Main-only reinstall preflight gate
     runs-on: windows-11-vs2026-arm
     timeout-minutes: 7
     needs: [windows-arm64-package-build]
@@ -950,7 +950,7 @@ jobs:
               name: windows-arm64-managed-package-${{ github.sha }}
               path: ${{ runner.temp }}/arm64-package
 
-      - name: Verify and run ARM64 real public-installer fresh-install and same-version repair acceptance
+      - name: Verify ARM64 native Main package and fail-closed preflight (no production signing key)
         shell: pwsh
         env:
           EQUINOX_WINDOWS_SAME_VERSION_REPAIR: 'true'
@@ -1060,7 +1060,16 @@ jobs:
           TARGET_SHA: ${{ github.event_name == 'push' && github.sha || inputs.main_native_target }}
         run: |
           plan_file="$RUNNER_TEMP/main-native-plan.json"
-          node scripts/release/plan-main-native-artifacts.mjs --current-sha "$CURRENT_SHA" --target-sha "$TARGET_SHA" > "$plan_file"
+          if [[ "${{ github.event_name }}" == 'workflow_dispatch' ]]; then
+            # Manual preview: exact checked-out feature SHA, NEVER publication.
+            test "$TARGET_SHA" = "${{ github.sha }}"
+            node scripts/release/plan-main-native-artifacts.mjs \
+              --current-sha "$CURRENT_SHA" --target-sha "$TARGET_SHA" \
+              --candidate-only true > "$plan_file"
+          else
+            node scripts/release/plan-main-native-artifacts.mjs \
+              --current-sha "$CURRENT_SHA" --target-sha "$TARGET_SHA" > "$plan_file"
+          fi
           cat "$plan_file"
           PLAN_FILE="$plan_file" node --input-type=module <<'NODE'
           import fs from 'node:fs';

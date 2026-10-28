@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
+import { generateKeyPairSync } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -9,7 +10,15 @@ import {
   readEquinoxLocalMainNativeRecoveryDescriptor,
   recoverEquinoxLocalMainNativeLifecycle,
   writeEquinoxLocalMainNativeRecoveryDescriptor,
+  beginEquinoxLocalSignedNativeMacOwner,
+  assertEquinoxLocalSignedNativeMacOwner,
+  readEquinoxLocalSignedNativeMacReceipt,
+  writeEquinoxLocalSignedNativeMacReceipt,
+  releaseEquinoxLocalSignedNativeMacOwner,
 } from "../../src/equinox-local-main-native-recovery.js";
+import { createSignedMainInstallPointer,validateSignedMainInstallPointer } from "../../src/equinox-local-main-install-pointer.js";
+import { createEquinoxLocalMainUpdateTransactionEngine } from "../../src/equinox-local-main-update-transaction.js";
+import { runEquinoxLocalSignedMacNativeHandoff } from "../../src/equinox-local-main-update-worker.js";
 
 const A = "1".repeat(40);
 const B = "2".repeat(40);
@@ -43,6 +52,46 @@ test("native recovery descriptor stores identities without arbitrary release pat
   assert.equal(JSON.stringify(main).includes("/do/not/persist"), false);
   const stable = equinoxLocalMainNativeRecoveryDescriptor({ transition: transition("darwin-arm64"), previousPointer: null, installation: { releaseDir: "/stable/5.2.0" } });
   assert.deepEqual(stable.previous, { kind: "stable", version: "5.2.0" });
+});
+
+test("direct Main clean install durably records previous NONE, but old A/B worker and recovery never silently fake a Stable A",async t=>{
+ const root=await scratch(t);
+ const transitionB=transition("darwin-arm64");
+ const installation={managed:true,selfUpdateSupported:true,platform:"darwin",
+  target:"darwin-arm64",installRoot:"/Users/test/Library/Application Support/Equinox Local",
+  releasesRoot:"/Users/test/Library/Application Support/Equinox Local/releases",releaseDir:null};
+ const expected=equinoxLocalMainNativeRecoveryDescriptor({transition:transitionB,
+  previousPointer:null,installation});
+ assert.deepEqual(expected.previous,{kind:"none"});
+ const durable=await writeEquinoxLocalMainNativeRecoveryDescriptor({transition:transitionB,
+  previousPointer:null,installation,transactionRoot:root,transactionId:TX});
+ assert.deepEqual(durable.previous,{kind:"none"});
+ assert.deepEqual((await readEquinoxLocalMainNativeRecoveryDescriptor({
+  transactionRoot:root,transactionId:TX})).previous,{kind:"none"});
+ await assert.rejects(writeEquinoxLocalMainNativeRecoveryDescriptor({transition:transitionB,
+  previousPointer:null,installation:{...installation,releaseDir:"/managed/releases/6.2.0"},
+  transactionRoot:root,transactionId:TX}),/immutable identity mismatch/u);
+ await assert.rejects(recoverEquinoxLocalMainNativeLifecycle({
+  transition:transitionB,transactionRoot:root,transactionId:TX,installation,
+  inspectStoredReleaseImpl:async()=>{throw Error("Untrusted first-install B is not admitted");},
+ }),/Untrusted first-install B is not admitted/u);
+ const events=[];
+ const outcome=await runEquinoxLocalSignedMacNativeHandoff({
+  transactionRoot:root,transactionId:TX,sourceSha:B,target:"darwin-arm64",
+  version:"6.2.1",runtimeContractSha256:DB,
+  lifecycle:{previousPointer:null,activate:async()=>events.push("first native B"),
+   rollback:async()=>events.push("no-A rollback"),commit:async()=>events.push("commit B")},
+  assertWorkerImpl:async()=>{},readDescriptorImpl:async()=>durable,
+  assertOwnerImpl:async()=>{},readReceiptImpl:async()=>({status:"admitted"}),
+  writeReceiptImpl:async({status})=>events.push(status),
+  verifyNativeImpl:async()=>true,restartImpl:async()=>assert.fail("no existing A service to restart"),
+  releaseOwnerImpl:async()=>events.push("owner released"),
+ });
+ assert.equal(outcome.status,"healthy");
+ assert.deepEqual(events,["activating","first native B","commit B","healthy","owner released"]);
+ assert.throws(()=>equinoxLocalMainNativeRecoveryDescriptor({transition:transition("win32-x64"),
+  previousPointer:null,installation:{...installation,target:"win32-x64"}}),
+ /Unsupported Equinox Local version/u,"Windows direct install is not implicitly enabled by Mac descriptor.");
 });
 
 test("native recovery descriptor is immutable-once-created and exact-identity bound", async (t) => {
@@ -182,4 +231,339 @@ test("Main native recovery refuses descriptor SHA drift before inspecting stored
     activateWindowsImpl: async () => { actions.push("activate"); throw new Error("must never activate"); },
   }), /target SHA mismatch/u);
   assert.deepEqual(actions, ["read descriptor"]);
+});
+
+
+test("signed native crash recovery replays a half-selected B to both exact Mac pointers, then A rollback",async t=>{
+ const home=await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(),"equinox-signed-recovery-")));
+ t.after(()=>fs.rm(home,{recursive:true,force:true}));
+ const target="darwin-arm64",root=path.join(home,"Library","Application Support","Equinox Local");
+ const txRoot=path.join(root,"main-update"),nativeB=path.join(txRoot,"native-store",target,B,"release");
+ const stable=path.join(root,"releases","5.2.0"),nativePath=path.join(txRoot,"current-native.json");
+ await fs.mkdir(nativeB,{recursive:true,mode:0o700});
+ await fs.mkdir(stable,{recursive:true,mode:0o700});
+ await fs.symlink(path.relative(root,stable),path.join(root,"current"));
+ const keyId="ephemeral-native-crash-test";
+ const {privateKey,publicKey}=generateKeyPairSync("ed25519");
+ const signed=createSignedMainInstallPointer({
+  sourceSha:B,version:"5.2.1",publishedAt:"2026-10-28T01:00:00.000Z",keyId,privateKey,
+  nativeManifests:["darwin-arm64","darwin-x64","win32-arm64","win32-x64"].map(arch=>({
+   schemaVersion:1,channel:"main",sourceSha:B,target:arch,runtimeContractSha256:DB,
+   artifact:{name:"equinox-local-main-"+B+"-"+arch+(arch.startsWith("win32-")?".zip":".tar.gz"),
+    sha256:"d".repeat(64),bytes:42},
+  })),
+ });
+ const selectorPath=path.join(path.dirname(nativeB),"signed-selector.json");
+ await fs.writeFile(selectorPath,JSON.stringify(signed),{mode:0o600});
+ const events=[];
+ const opts={
+  transition:transition(target),transactionRoot:txRoot,transactionId:TX,
+  installation:{managed:true,selfUpdateSupported:true,target,platform:"darwin",
+   installRoot:root,releasesRoot:path.join(root,"releases"),releaseDir:stable},
+  readDescriptorImpl:async()=>({schemaVersion:1,channel:"main",
+   targetSha:B,target,targetRuntimeContractSha256:DB,previous:{kind:"stable",version:"5.2.0"}}),
+  inspectStoredReleaseImpl:async()=>({releaseDir:nativeB,sourceSha:B,target,
+   runtimeContractSha256:DB,payloadVersion:"5.2.1",manifest:{artifactSha256:"d".repeat(64),artifactBytes:42}}),
+  inspectDarwinSnapshotImpl:async()=>events.push("verified-A-snapshot"),
+  verifySignedPointerImpl:(raw,options)=>validateSignedMainInstallPointer(raw,{
+   ...options,publicKeys:{[keyId]:publicKey.export({type:"spki",format:"pem"})},
+  }),
+  readPointerImpl:async file=>JSON.parse(await fs.readFile(file,"utf8")),
+  writePointerImpl:async(file,value)=>{
+   await fs.writeFile(file,JSON.stringify(value),{mode:0o600});
+   return value;
+  },
+  activateDarwinImpl:async()=>{
+   events.push("app-B");
+   assert.equal((await fs.realpath(path.join(root,"current"))),nativeB);
+   assert.equal(JSON.parse(await fs.readFile(nativePath,"utf8")).sourceSha,B);
+  },
+  restoreDarwinImpl:async()=>{
+   events.push("app-A");
+   assert.equal(await fs.realpath(path.join(root,"current")),stable);
+   await assert.rejects(fs.lstat(nativePath),{code:"ENOENT"});
+  },
+ };
+ // Simulate crash after exact native pointer B write but before current B.
+ await fs.writeFile(nativePath,JSON.stringify({
+  schemaVersion:1,channel:"main",sourceSha:B,target,runtimeContractSha256:DB,
+ }),{mode:0o600});
+ const recovered=await recoverEquinoxLocalMainNativeLifecycle(opts);
+ assert.deepEqual(events,["verified-A-snapshot"]);
+ await recovered.activate();
+ assert.equal(await fs.realpath(path.join(root,"current")),nativeB);
+ await recovered.commit();
+ await recovered.rollback();
+ await recovered.rollback();
+ assert.equal(await fs.realpath(path.join(root,"current")),stable);
+ await assert.rejects(fs.stat(nativePath),{code:"ENOENT"});
+ assert.deepEqual(events,["verified-A-snapshot","app-B","app-A","app-A"]);
+ // The real production verifier MUST refuse a user-invented key, even if
+ // all package names, SHA and metadata appear otherwise admissible.
+ await assert.rejects(recoverEquinoxLocalMainNativeLifecycle({...opts,
+  verifySignedPointerImpl:undefined,
+ }),/signing key|signature|trusted/u);
+ assert.equal(await fs.realpath(path.join(root,"current")),stable);
+ // A malicious selector symlink must not downgrade to legacy recovery.
+ await fs.rm(selectorPath);
+ await fs.symlink(path.join(home,"foreign"),selectorPath);
+ await assert.rejects(recoverEquinoxLocalMainNativeLifecycle(opts),/not a private normal file/u);
+});
+
+
+test("signed native activation uses the SAME exclusive Main active.json lock as the legacy source updater",async t=>{
+ const root=await scratch(t);
+ const input={transactionRoot:root,transactionId:TX,sourceSha:B,
+  target:"darwin-arm64",runtimeContractSha256:DB};
+ await writeEquinoxLocalMainNativeRecoveryDescriptor({
+  transition:transition("darwin-arm64"),previousPointer:null,
+  installation:{releaseDir:"/owned/release/5.2.0"},
+  transactionRoot:root,transactionId:TX,
+ });
+ const owned=await beginEquinoxLocalSignedNativeMacOwner(input);
+ assert.equal(owned.kind,"signed-native");
+ assert.deepEqual(await assertEquinoxLocalSignedNativeMacOwner(input),owned);
+ assert.equal((await readEquinoxLocalSignedNativeMacReceipt(input)).status,"admitted");
+ await writeEquinoxLocalSignedNativeMacReceipt({...input,status:"activating"});
+ await writeEquinoxLocalSignedNativeMacReceipt({...input,status:"rolling_back"});
+ await writeEquinoxLocalSignedNativeMacReceipt({...input,status:"rolled_back"});
+ assert.equal((await readEquinoxLocalSignedNativeMacReceipt(input)).status,"rolled_back");
+ await assert.rejects(writeEquinoxLocalSignedNativeMacReceipt({...input,status:"activating"}),
+  /cannot advance from its durable terminal/u);
+ const lock=path.join(root,"active.json");
+ assert.equal((await fs.stat(lock)).mode&0o777,0o600);
+ assert.equal((await fs.stat(lock)).nlink,1);
+ await assert.rejects(beginEquinoxLocalSignedNativeMacOwner(input),{code:"EEXIST"});
+ for(const invalid of [
+  {sourceSha:A},{transactionId:"main-"+ "d".repeat(32)},
+  {runtimeContractSha256:DA},{target:"darwin-x64"},
+ ]){
+  await assert.rejects(assertEquinoxLocalSignedNativeMacOwner({...input,...invalid}),
+    /differs from the exact active transaction/u);
+ }
+ const sourceEngine=createEquinoxLocalMainUpdateTransactionEngine({
+  sourceRoot:"/owned/main/source",transactionRoot:root,
+  inspectCheckoutImpl:async()=>assert.fail("legacy Git must never run on a native-owned lock"),
+ });
+ await assert.rejects(sourceEngine.begin({currentSha:A,targetSha:B}),
+  /missing or unsupported fields|Main update lock marker/u);
+ assert.deepEqual(await assertEquinoxLocalSignedNativeMacOwner(input),owned,
+  "legacy Main admission must not replace signed native ownership");
+});
+
+test("signed native lock refuses private-root drift, forged owner symlinks and mismatched recovery descriptor",async t=>{
+ const root=await scratch(t);
+ const input={transactionRoot:root,transactionId:TX,sourceSha:B,
+  target:"darwin-arm64",runtimeContractSha256:DB};
+ await writeEquinoxLocalMainNativeRecoveryDescriptor({
+  transition:transition("darwin-arm64"),previousPointer:null,
+  installation:{releaseDir:"/owned/release/5.2.0"},
+  transactionRoot:root,transactionId:TX,
+ });
+ const external=path.join(root,"outside.json");
+ await fs.writeFile(external,'{"secret":"untouched"}',{mode:0o600});
+ const lock=path.join(root,"active.json");
+ await fs.symlink(external,lock);
+ await assert.rejects(assertEquinoxLocalSignedNativeMacOwner(input),/private normal lock/u);
+ await assert.rejects(beginEquinoxLocalSignedNativeMacOwner(input),{code:"EEXIST"});
+ assert.equal(await fs.readFile(external,"utf8"),'{"secret":"untouched"}');
+ await fs.unlink(lock);
+ await assert.rejects(beginEquinoxLocalSignedNativeMacOwner({...input,sourceSha:A}),/target SHA mismatch/u);
+ await fs.chmod(root,0o755);
+ await assert.rejects(beginEquinoxLocalSignedNativeMacOwner(input),/private owned directory/u);
+ await assert.rejects(fs.lstat(lock),{code:"ENOENT"});
+});
+
+
+test("signed native durable receipt refuses forged identity and symlink without damaging foreign contents",async t=>{
+ const root=await scratch(t);
+ const input={transactionRoot:root,transactionId:TX,sourceSha:B,
+  target:"darwin-arm64",runtimeContractSha256:DB};
+ await writeEquinoxLocalMainNativeRecoveryDescriptor({
+  transition:transition("darwin-arm64"),previousPointer:null,
+  installation:{releaseDir:"/owned/release/5.2.0"},
+  transactionRoot:root,transactionId:TX,
+ });
+ await beginEquinoxLocalSignedNativeMacOwner(input);
+ await writeEquinoxLocalSignedNativeMacReceipt({...input,status:"activating"});
+ await writeEquinoxLocalSignedNativeMacReceipt({...input,status:"rolling_back"});
+ await writeEquinoxLocalSignedNativeMacReceipt({...input,status:"rollback_failed"});
+ await assert.rejects(writeEquinoxLocalSignedNativeMacReceipt({...input,status:"rolled_back"}),
+  /cannot advance from its durable terminal/u);
+ const file=path.join(root,"receipts",TX+".signed-native.json");
+ const before=await fs.readFile(file);
+ const corrupted=JSON.parse(before.toString("utf8"));
+ corrupted.sourceSha=A;
+ await fs.writeFile(file,JSON.stringify(corrupted),{mode:0o600});
+ await assert.rejects(readEquinoxLocalSignedNativeMacReceipt(input),/differs from active transaction/u);
+ await assert.rejects(writeEquinoxLocalSignedNativeMacReceipt({...input,status:"healthy"}),
+  /differs from active transaction/u);
+ await fs.unlink(file);
+ const foreign=path.join(root,"foreign");
+ await fs.writeFile(foreign,"foreign",{mode:0o600});
+ await fs.symlink(foreign,file);
+ await assert.rejects(readEquinoxLocalSignedNativeMacReceipt(input),/not a private normal file/u);
+ assert.equal(await fs.readFile(foreign,"utf8"),"foreign");
+});
+
+
+test("native signed terminal owner archives exact hardlink inode, releases global Main lock and survives repeated calls",async t=>{
+ const root=await scratch(t);
+ const identity={transactionRoot:root,transactionId:TX,sourceSha:B,
+  target:"darwin-arm64",runtimeContractSha256:DB};
+ await writeEquinoxLocalMainNativeRecoveryDescriptor({
+  transition:transition("darwin-arm64"),previousPointer:null,
+  installation:{releaseDir:"/owned/release/5.2.0"},
+  transactionRoot:root,transactionId:TX,
+ });
+ await beginEquinoxLocalSignedNativeMacOwner(identity);
+ const active=path.join(root,"active.json");
+ const before=await fs.stat(active);
+ await assert.rejects(releaseEquinoxLocalSignedNativeMacOwner(identity),/cannot be released before verified/u);
+ assert.equal((await fs.stat(active)).ino,before.ino);
+ await writeEquinoxLocalSignedNativeMacReceipt({...identity,status:"activating"});
+ await writeEquinoxLocalSignedNativeMacReceipt({...identity,status:"healthy"});
+ const result=await releaseEquinoxLocalSignedNativeMacOwner(identity);
+ assert.equal(result.released,true);
+ assert.equal(result.alreadyReleased,false);
+ await assert.rejects(fs.lstat(active),{code:"ENOENT"});
+ const archived=path.join(root,"receipts",TX+".signed-native-owner.json");
+ const archiveStat=await fs.stat(archived);
+ assert.equal(archiveStat.ino,before.ino);
+ assert.equal(archiveStat.nlink,1);
+ assert.equal((await fs.stat(archived)).mode&0o777,0o600);
+ assert.deepEqual(await releaseEquinoxLocalSignedNativeMacOwner(identity),{
+  released:true,alreadyReleased:true,transactionId:TX,
+ });
+ await assert.rejects(releaseEquinoxLocalSignedNativeMacOwner({...identity,sourceSha:A}),
+  /archived owner does not match/u);
+ assert.equal((await fs.stat(archived)).ino,before.ino);
+});
+
+test("native terminal owner safely resumes after crash between archive hardlink and active.json unlink",async t=>{
+ const root=await scratch(t);
+ const identity={transactionRoot:root,transactionId:TX,sourceSha:B,
+  target:"darwin-arm64",runtimeContractSha256:DB};
+ await writeEquinoxLocalMainNativeRecoveryDescriptor({
+  transition:transition("darwin-arm64"),previousPointer:null,
+  installation:{releaseDir:"/owned/release/5.2.0"},
+  transactionRoot:root,transactionId:TX,
+ });
+ await beginEquinoxLocalSignedNativeMacOwner(identity);
+ await writeEquinoxLocalSignedNativeMacReceipt({...identity,status:"activating"});
+ await writeEquinoxLocalSignedNativeMacReceipt({...identity,status:"rolling_back"});
+ await writeEquinoxLocalSignedNativeMacReceipt({...identity,status:"rolled_back"});
+ const active=path.join(root,"active.json");
+ const archived=path.join(root,"receipts",TX+".signed-native-owner.json");
+ await fs.link(active,archived);
+ assert.equal((await fs.stat(active)).nlink,2);
+ assert.equal((await fs.stat(archived)).ino,(await fs.stat(active)).ino);
+ assert.equal((await readEquinoxLocalSignedNativeMacReceipt(identity)).status,"rolled_back");
+ assert.equal((await releaseEquinoxLocalSignedNativeMacOwner(identity)).alreadyReleased,false);
+ await assert.rejects(fs.lstat(active),{code:"ENOENT"});
+ assert.equal((await releaseEquinoxLocalSignedNativeMacOwner(identity)).alreadyReleased,true);
+});
+
+test("native terminal lock release refuses forged archive, active symlink, failed A and foreign receipts",async t=>{
+ const root=await scratch(t);
+ const identity={transactionRoot:root,transactionId:TX,sourceSha:B,
+  target:"darwin-arm64",runtimeContractSha256:DB};
+ await writeEquinoxLocalMainNativeRecoveryDescriptor({
+  transition:transition("darwin-arm64"),previousPointer:null,
+  installation:{releaseDir:"/owned/release/5.2.0"},
+  transactionRoot:root,transactionId:TX,
+ });
+ await beginEquinoxLocalSignedNativeMacOwner(identity);
+ await writeEquinoxLocalSignedNativeMacReceipt({...identity,status:"activating"});
+ await writeEquinoxLocalSignedNativeMacReceipt({...identity,status:"rolling_back"});
+ await writeEquinoxLocalSignedNativeMacReceipt({...identity,status:"rollback_failed"});
+ const active=path.join(root,"active.json");
+ await assert.rejects(releaseEquinoxLocalSignedNativeMacOwner(identity),/cannot be released before verified/u);
+ const fakeArchive=path.join(root,"receipts",TX+".signed-native-owner.json");
+ await fs.writeFile(fakeArchive,"foreign",{mode:0o600});
+ await assert.rejects(releaseEquinoxLocalSignedNativeMacOwner(identity),/cannot be released before verified/u);
+ await fs.unlink(fakeArchive);
+ await fs.unlink(active);
+ const external=path.join(root,"external.txt");
+ await fs.writeFile(external,"safe",{mode:0o600});
+ await fs.symlink(external,active);
+ await assert.rejects(releaseEquinoxLocalSignedNativeMacOwner(identity),/not a private normal lock/u);
+ assert.equal(await fs.readFile(external,"utf8"),"safe");
+});
+
+
+test("real filesystem detached-native handoff rolls back half-selected B, verifies Stable A and releases shared Main lock",async t=>{
+ const raw=await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(),"equinox-mac-detached-native-")));
+ t.after(()=>fs.rm(raw,{recursive:true,force:true}));
+ const root=path.join(raw,"Library","Application Support","Equinox Local");
+ const state=path.join(root,"main-update"),target="darwin-arm64",version="5.2.1";
+ const b=path.join(state,"native-store",target,B,"release");
+ const stable=path.join(root,"releases","5.2.0");
+ await fs.mkdir(b,{recursive:true,mode:0o700});
+ await fs.mkdir(stable,{recursive:true,mode:0o700});
+ await fs.symlink(path.relative(root,stable),path.join(root,"current"));
+ const {privateKey,publicKey}=generateKeyPairSync("ed25519");
+ const keyId="ephemeral-native-detached-handoff";
+ const signed=createSignedMainInstallPointer({
+  sourceSha:B,version,keyId,privateKey,publishedAt:"2026-10-28T01:00:00.000Z",
+  nativeManifests:["darwin-arm64","darwin-x64","win32-arm64","win32-x64"].map(arch=>({
+   schemaVersion:1,channel:"main",sourceSha:B,target:arch,runtimeContractSha256:DB,
+   artifact:{name:"equinox-local-main-"+B+"-"+arch+(arch.startsWith("win32-")?".zip":".tar.gz"),
+    sha256:"d".repeat(64),bytes:42},
+  })),
+ });
+ await fs.writeFile(path.join(path.dirname(b),"signed-selector.json"),JSON.stringify(signed),{mode:0o600});
+ const installation={managed:true,selfUpdateSupported:true,target,platform:"darwin",
+  installRoot:root,releasesRoot:path.join(root,"releases"),releaseDir:stable};
+ const tr=transition(target),owner={transactionRoot:state,transactionId:TX,
+  sourceSha:B,target,runtimeContractSha256:DB};
+ await writeEquinoxLocalMainNativeRecoveryDescriptor({
+  transition:tr,previousPointer:null,installation,transactionRoot:state,transactionId:TX,
+ });
+ await beginEquinoxLocalSignedNativeMacOwner(owner);
+ const pointer=path.join(state,"current-native.json");
+ // Crash after native pointer B switch, before LaunchAgent current B switch.
+ await fs.writeFile(pointer,JSON.stringify({
+  schemaVersion:1,channel:"main",sourceSha:B,target,runtimeContractSha256:DB,
+ }),{mode:0o600});
+ await writeEquinoxLocalSignedNativeMacReceipt({...owner,status:"activating"});
+ const readNative=async f=>JSON.parse(await fs.readFile(f,"utf8"));
+ const recovery=await recoverEquinoxLocalMainNativeLifecycle({
+  transition:tr,transactionRoot:state,transactionId:TX,installation,
+  inspectStoredReleaseImpl:async()=>({releaseDir:b,sourceSha:B,target,runtimeContractSha256:DB,
+   payloadVersion:version,manifest:{artifactSha256:"d".repeat(64),artifactBytes:42}}),
+  verifySignedPointerImpl:(raw,opts)=>validateSignedMainInstallPointer(raw,{
+   ...opts,publicKeys:{[keyId]:publicKey.export({type:"spki",format:"pem"})},
+  }),
+  readPointerImpl:readNative,
+  writePointerImpl:async(f,value)=>{await fs.writeFile(f,JSON.stringify(value),{mode:0o600});return value},
+  inspectDarwinSnapshotImpl:async()=>{},
+  restoreDarwinImpl:async()=>{},
+  activateDarwinImpl:async()=>assert.fail("activating replay must never blindly start B"),
+ });
+ assert.equal(recovery.previousPointer,null,"a Stable A has no SHA-addressed native pointer");
+ const events=[];
+ const result=await runEquinoxLocalSignedMacNativeHandoff({...owner,lifecycle:recovery,
+  version,previousVersion:"5.2.0",
+  assertWorkerImpl:async()=>events.push("verified-detached-launchd-process"),
+  restartImpl:async()=>events.push("restart-A"),
+  verifyNativeImpl:async()=>{events.push("verify-exact-B");return false},
+  verifyStableImpl:async(v,opts)=>{
+   events.push("verify-stable-A");
+   assert.equal(v,"5.2.0");
+   assert.equal(opts.expectedInstallationKind,"managed");
+   assert.equal(await fs.realpath(path.join(root,"current")),stable);
+   await assert.rejects(fs.lstat(pointer),{code:"ENOENT"});
+   return true;
+  },
+ });
+ assert.equal(result.status,"rolled_back");
+ assert.deepEqual(events,["verified-detached-launchd-process","verify-exact-B","restart-A","verify-stable-A"]);
+ await assert.rejects(fs.lstat(path.join(state,"active.json")),{code:"ENOENT"});
+ assert.equal(await fs.realpath(path.join(root,"current")),stable);
+ const archived=JSON.parse(await fs.readFile(path.join(state,"receipts",TX+".signed-native.json"),"utf8"));
+ assert.equal(archived.status,"rolled_back");
+ assert.equal(archived.sourceSha,B);
+ const originalArchive=JSON.parse(await fs.readFile(path.join(state,"receipts",TX+".signed-native-owner.json"),"utf8"));
+ assert.equal(originalArchive.transactionId,TX);
 });

@@ -47,11 +47,13 @@ type CleanupWorkerOptions = WorkerOptions & {
 };
 type ScheduleWorkerOptions = WorkerOptions & {
   sourceRoot?: string; nodePath?: string; workerPath?: string;
+  signedNative?:boolean;sourceSha?:string;target?:string;
   sourceEnv?: NodeJS.ProcessEnv; requestWindowsHandoffImpl?: typeof requestWindowsShellMainUpdateHandoff;
 };
 type LaunchdInput = {
   label: string; nodePath: string; workerPath: string; sourceRoot: string;
   transactionRoot: string; transactionId: string; logPath: string; environment: Record<string,string>;
+  signedNative?:boolean;
 };
 type ProcessInspectOptions = {execFileImpl?: ExecFileImpl; nativeHelperPath?: unknown};
 
@@ -263,8 +265,10 @@ export function mainUpdateWorkerEnvironment(sourceEnv: NodeJS.ProcessEnv = proce
   };
   return Object.fromEntries(Object.entries(env).filter((entry): entry is [string, string] => typeof entry[1] === "string" && entry[1].length > 0));
 }
-export function renderMainUpdateLaunchdPlist({ label, nodePath, workerPath, sourceRoot, transactionRoot, transactionId, logPath, environment }: LaunchdInput): string {
-  const args = [nodePath, workerPath, "--transaction-id", transactionId, "--source-root", sourceRoot, "--transaction-root", transactionRoot];
+export function renderMainUpdateLaunchdPlist({ label, nodePath, workerPath, sourceRoot, transactionRoot, transactionId, logPath, environment, signedNative = false }: LaunchdInput): string {
+  const args = signedNative
+    ? [nodePath,workerPath,"--signed-native","--transaction-id",transactionId,"--transaction-root",transactionRoot]
+    : [nodePath, workerPath, "--transaction-id", transactionId, "--source-root", sourceRoot, "--transaction-root", transactionRoot];
   const envXml = Object.entries(environment).map(([key, value]) => `    <key>${xml(key)}</key>\n    <string>${xml(value)}</string>`).join("\n");
   return `<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0">\n<dict>\n  <key>Label</key>\n  <string>${xml(label)}</string>\n  <key>ProgramArguments</key>\n  <array>\n${args.map((arg) => `    <string>${xml(arg)}</string>`).join("\n")}\n  </array>\n  <key>EnvironmentVariables</key>\n  <dict>\n${envXml}\n  </dict>\n  <key>RunAtLoad</key>\n  <true/>\n  <key>KeepAlive</key>\n  <false/>\n  <key>ProcessType</key>\n  <string>Background</string>\n  <key>StandardOutPath</key>\n  <string>${xml(logPath)}</string>\n  <key>StandardErrorPath</key>\n  <string>${xml(logPath)}</string>\n</dict>\n</plist>\n`;
 }
@@ -323,6 +327,74 @@ export async function inspectEquinoxLocalMainUpdateWorkerOwnership({
   } catch {
     return Object.freeze({ loaded: false, running: false, label });
   }
+}
+
+// A failed launchd bootstrap is NOT evidence of an absent worker. Only
+// accept two explicit service-not-found responses (macOS exit 113) while
+// successfully inspecting the user's actual GUI domain and service table,
+// and with NO scheduled handoff plist. Every other outcome fails closed.
+export async function assertEquinoxLocalSignedMacWorkerNeverStarted({
+  transactionId,transactionRoot,
+  uid=process.getuid?.(),currentUid=process.getuid?.(),
+  fsImpl=fs,execFileImpl=execFile,
+  sleepImpl=async(ms:number)=>new Promise<void>(resolve=>setTimeout(resolve,ms)),
+}:{
+  transactionId:string;transactionRoot:string;uid?:number|null;
+  currentUid?:number|null;fsImpl?:typeof fs;execFileImpl?:typeof execFile;
+  sleepImpl?:(milliseconds:number)=>Promise<unknown>;
+}){
+  const id=assertTransactionId(transactionId);
+  const root=assertAbsolute(transactionRoot,"Signed native Main transaction root","darwin");
+  if(!Number.isSafeInteger(uid)||!uid||uid<1||uid!==currentUid){
+    throw new Error("Signed native worker absence can only be proven in the owning non-root launchd user session.");
+  }
+  const label=mainUpdateLaunchdLabel(id);
+  const service="gui/"+uid+"/"+label;
+  const plist=path.join(root,"handoff",id+".plist");
+  const assertNoPlist=async()=>{
+    try{
+      await fsImpl.lstat(plist);
+      throw new Error("Signed native launchd handoff plist still exists; worker absence is not proven.");
+    }catch(error){
+      if(!hasErrorCode(error,"ENOENT"))throw error;
+    }
+  };
+  for(let attempt=0;attempt<2;attempt++){
+    await assertNoPlist();
+    try{
+      await execFileImpl("/bin/launchctl",["print",service],{
+        timeout:5000,maxBuffer:64*1024,encoding:"utf8",
+      });
+      throw new Error("Signed native launchd worker service is loaded; cancellation forbidden.");
+    }catch(error){
+      const message=String((error as {stderr?:unknown})?.stderr??"");
+      if((error as {code?:unknown})?.code!==113 ||
+         !message.includes("Could not find service") ||
+         !message.includes('"'+label+'"') ||
+         !message.includes("in domain for user gui: "+uid)) {
+        throw new Error("Signed native launchd service status is not conclusively absent.");
+      }
+    }
+    // A healthy gui domain probe plus a fully readable launchctl service
+    // table is independent confirmation. No parse errors are absence.
+    await execFileImpl("/bin/launchctl",["print","gui/"+uid],{
+      timeout:5000,maxBuffer:64*1024,encoding:"utf8",
+    });
+    const {stdout}=await execFileImpl("/bin/launchctl",["list"],{
+      timeout:5000,maxBuffer:1024*1024,encoding:"utf8",
+    });
+    const lines=String(stdout??"").split(/\r?\n/u);
+    if(lines[0]!=="PID\tStatus\tLabel" ||
+       lines.slice(1).some(line=>line.trim() && line.split("\t").length!==3)){
+      throw new Error("Signed native launchd service table is not unambiguously readable.");
+    }
+    if(lines.slice(1).some(line=>line.split("\t")[2]===label)){
+      throw new Error("Signed native launchd worker is listed; cancellation forbidden.");
+    }
+    await assertNoPlist();
+    if(attempt===0)await sleepImpl(250);
+  }
+  return Object.freeze({absent:true,transactionId:id,label});
 }
 
 export async function cleanupEquinoxLocalMainUpdateWorkerOwnership({
@@ -409,6 +481,9 @@ export async function scheduleEquinoxLocalMainUpdateWorker({
   platform = process.platform,
   nodePath = process.env.EQUINOX_LOCAL_DEV_NODE || process.execPath,
   workerPath = path.join(sourceRoot ?? "", "src", "equinox-local-main-update-worker.js"),
+  signedNative = false,
+  sourceSha,
+  target,
   sourceEnv = process.env,
   uid = process.getuid?.(),
   fsImpl = fs,
@@ -421,6 +496,22 @@ export async function scheduleEquinoxLocalMainUpdateWorker({
   const worker = assertAbsolute(workerPath, "Main update worker", platform);
   const workerStat = await fsImpl.lstat(worker);
   if (!workerStat.isFile() || workerStat.isSymbolicLink()) throw new Error("Main update worker executable/source is unsafe.");
+  if (signedNative) {
+    // The same launcher services the signed native-only update, but its B
+    // worker+Node must come from one exact immutable target SHA store; a
+    // source checkout or ambient Node cannot schedule this privileged job.
+    if(platform!=="darwin" || !/^darwin-(arm64|x64)$/u.test(target??"") ||
+       !/^[a-f0-9]{40}$/u.test(sourceSha??"") ||
+       stateRoot!==path.posix.join(sourceEnv.HOME??"","Library","Application Support","Equinox Local","main-update") ||
+       root!==path.posix.join(stateRoot,"native-store",target!,sourceSha!,"release") ||
+       worker!==path.posix.join(root,"equinox-local-main-update-worker.js") ||
+       nodePath!==path.posix.join(root,"runtime","node","bin","node")) {
+      throw new Error("Signed native Main scheduler requires the exact packaged immutable B release.");
+    }
+    if(await fsImpl.realpath(root)!==root || await fsImpl.realpath(worker)!==worker){
+      throw new Error("Signed native Main scheduler release directory is not canonical.");
+    }
+  }
   if (platform === "win32") {
     const handoff = await requestWindowsHandoffImpl(transactionId, { platform: "win32" });
     return Object.freeze({ scheduled: true, platform: "win32", transactionId, handoff });
@@ -431,6 +522,9 @@ export async function scheduleEquinoxLocalMainUpdateWorker({
   if (typeof execFileImpl !== "function") throw new Error("Main update launchd scheduler requires an exec function.");
   const nodeStat = await fsImpl.lstat(node);
   if (!nodeStat.isFile() || nodeStat.isSymbolicLink()) throw new Error("Main update worker executable/source is unsafe.");
+  if(signedNative && await fsImpl.realpath(node)!==node){
+    throw new Error("Signed native Main scheduler runtime Node is not canonical.");
+  }
   const schedulerRoot = path.join(stateRoot, "handoff");
   await fsImpl.mkdir(schedulerRoot, { recursive: true, mode: 0o700 });
   const schedulerReal = await fsImpl.realpath(schedulerRoot);
@@ -438,8 +532,11 @@ export async function scheduleEquinoxLocalMainUpdateWorker({
   const label = mainUpdateLaunchdLabel(transactionId);
   const plistPath = path.join(schedulerRoot, `${transactionId}.plist`);
   const logPath = path.join(schedulerRoot, `${transactionId}.log`);
-  const environment = mainUpdateWorkerEnvironment(sourceEnv);
-  const plist = renderMainUpdateLaunchdPlist({ label, nodePath: node, workerPath: worker, sourceRoot: root, transactionRoot: stateRoot, transactionId, logPath, environment });
+  const allowed = mainUpdateWorkerEnvironment(sourceEnv);
+  const environment = signedNative
+    ? Object.fromEntries(Object.entries(allowed).filter(([name])=>["HOME","USER","LOGNAME","TMPDIR","PATH"].includes(name)))
+    : allowed;
+  const plist = renderMainUpdateLaunchdPlist({ label, nodePath: node, workerPath: worker, sourceRoot: root, transactionRoot: stateRoot, transactionId, logPath, environment, signedNative });
   const handle = await fsImpl.open(plistPath, "wx", 0o600);
   try { await handle.writeFile(plist, "utf8"); await handle.sync(); } finally { await handle.close(); }
   let bootstrapped = false;

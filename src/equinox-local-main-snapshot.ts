@@ -5,6 +5,7 @@ import path from "node:path";
 
 import { EQUINOX_LOCAL_SUPPORTED_RELEASE_TARGETS } from "./equinox-local-platform.js";
 import { validateEquinoxLocalMainNativeArtifactManifest } from "./equinox-local-main-native-admission.js";
+import { validateTrustedMainInstallPointer } from "./equinox-local-main-install-pointer.js";
 
 type NativeSnapshotFs = typeof fs;
 type SnapshotFetch = typeof fetch;
@@ -17,6 +18,8 @@ type NativeSnapshotTransaction = NativeSnapshotIdentity & {
 type ManifestFetchOptions = NativeSnapshotIdentity & { fetchImpl?: SnapshotFetch };
 type StageOptions = NativeSnapshotTransaction & {
   fetchImpl?: SnapshotFetch; randomBytesImpl?: typeof randomBytes; timeoutMs?: number;
+  signedArtifactSha256?: string; signedArtifactBytes?: number;
+  signedPointer?: unknown;
 };
 type ResponseWithBody = Pick<Response, "headers" | "body" | "ok" | "status">;
 type OpenHandle = Awaited<ReturnType<NativeSnapshotFs["open"]>>;
@@ -238,6 +241,85 @@ export async function inspectStagedEquinoxLocalMainSnapshotArtifact({
   return Object.freeze({ sourceSha, target, transactionId, manifest, manifestPath, artifactPath, ...artifact });
 }
 
+// The external macOS/Windows installer already downloaded and authenticated
+// these native bytes. Reuse the SAME existing durable Main snapshot stage
+// without a second CDN download, unsigned override or alternate A/B engine.
+export async function stageEquinoxLocalSignedMainLocalArchive({
+  signedPointer,
+  sourceSha,
+  target,
+  sourceArchivePath,
+  transactionRoot,
+  transactionId,
+  fsImpl = fs,
+  verifySignedPointerImpl = validateTrustedMainInstallPointer,
+}: {
+  signedPointer:unknown;sourceSha:string;target:string;
+  sourceArchivePath:string;transactionRoot:string;transactionId:string;
+  fsImpl?:NativeSnapshotFs;
+  verifySignedPointerImpl?:typeof validateTrustedMainInstallPointer;
+}) {
+  const verified = verifySignedPointerImpl(signedPointer,{expectedSourceSha:sourceSha});
+  const row = verified.targets.find(entry=>entry.target===target);
+  if (!row) throw new Error("Production-signed Main pointer does not authorize the native target.");
+  if (typeof sourceArchivePath !== "string" || !path.isAbsolute(sourceArchivePath) ||
+      path.resolve(sourceArchivePath) !== sourceArchivePath) {
+    throw new Error("Verified Main archive must have a canonical absolute path.");
+  }
+  const manifest = validateEquinoxLocalMainNativeArtifactManifest({
+    schemaVersion:1,channel:"main",sourceSha,target,
+    runtimeContractSha256:row.runtimeContractSha256,
+    artifact:{
+      name:path.posix.basename(new URL(row.artifact.url).pathname),
+      sha256:row.artifact.sha256,bytes:row.artifact.bytes,
+    },
+  },{expectedSourceSha:sourceSha,expectedTarget:target,expectedRuntimeContractSha256:row.runtimeContractSha256});
+  const archive = await openPinnedSnapshotFile(sourceArchivePath,fsImpl);
+  try {
+    const stat = await archive.stat();
+    if (stat.size !== row.artifact.bytes) throw new Error("Verified local native archive byte size differs from the signed Main pointer.");
+    const manifestUrl = equinoxLocalMainSnapshotManifestUrl(sourceSha,target);
+    const artifactUrl = equinoxLocalMainSnapshotArtifactUrl(sourceSha,target);
+    let archiveIssued = false;
+    const offlineFetch = async (url:string) => {
+      if (url === manifestUrl) {
+        const json = Buffer.from(JSON.stringify(manifest));
+        return {
+          ok:true,status:200,headers:{get:(name:string)=>name==="content-length"?String(json.length):null},
+          body:(async function*(){yield json;})(),
+        } as unknown as Response;
+      }
+      if (url === artifactUrl && !archiveIssued) {
+        archiveIssued=true;
+        return {
+          ok:true,status:200,
+          headers:{get:(name:string)=>name==="content-length"?String(stat.size):null},
+          body:(async function*(){
+            const buffer=Buffer.allocUnsafe(1024*1024);
+            let offset=0;
+            while(offset<stat.size){
+              const count=Math.min(buffer.length,stat.size-offset);
+              const {bytesRead}=await archive.read(buffer,0,count,offset);
+              if(bytesRead<1)throw new Error("Verified local native archive ended prematurely.");
+              offset+=bytesRead;
+              yield Buffer.from(buffer.subarray(0,bytesRead));
+            }
+          })(),
+        } as unknown as Response;
+      }
+      throw new Error("Local signed Main staging forbids foreign or repeated network fetches.");
+    };
+    return await stageEquinoxLocalMainSnapshotArtifact({
+      sourceSha,target,
+      expectedRuntimeContractSha256:row.runtimeContractSha256,
+      signedArtifactSha256:row.artifact.sha256,signedArtifactBytes:row.artifact.bytes,
+      transactionRoot,transactionId,fsImpl,fetchImpl:offlineFetch as typeof fetch,
+    });
+  } finally {
+    await archive.close();
+  }
+}
+
 export async function stageEquinoxLocalMainSnapshotArtifact({
   sourceSha,
   target,
@@ -248,16 +330,48 @@ export async function stageEquinoxLocalMainSnapshotArtifact({
   fsImpl = fs,
   randomBytesImpl = randomBytes,
   timeoutMs = ARTIFACT_TIMEOUT_MS,
+  signedArtifactSha256,
+  signedArtifactBytes,
+  signedPointer,
 }: StageOptions) {
   assertSnapshotIdentity(sourceSha, target);
   if (typeof transactionId !== "string" || !TRANSACTION_ID_PATTERN.test(transactionId)) throw new Error("Main snapshot transaction id is invalid.");
   if (typeof fetchImpl !== "function") throw new Error("Main snapshot network client is unavailable.");
   if (!Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 30 * 60 * 1000) throw new Error("Main snapshot artifact timeout is invalid.");
+  // The signed external installer passes both fields authenticated by the
+  // fixed production Ed25519 root. Neither a matching SHA URL nor an
+  // unsigned R2 manifest may substitute for this expected archive digest.
+  if ((signedArtifactSha256 === undefined) !== (signedArtifactBytes === undefined) ||
+      (signedArtifactSha256 !== undefined &&
+        (!/^[a-f0-9]{64}$/u.test(signedArtifactSha256) ||
+         !Number.isSafeInteger(signedArtifactBytes) || signedArtifactBytes! < 1 ||
+         signedArtifactBytes! > 1024*1024*1024))) {
+    throw new Error("Signed Main archive size and SHA-256 must be provided together.");
+  }
+  // A standalone installer must supply the exact production-signed selector,
+  // not a mutable R2 manifest with a caller-chosen SHA. Existing Git-backed
+  // worker stages are unchanged when this option is absent.
+  if (signedPointer !== undefined) {
+    const signed = validateTrustedMainInstallPointer(signedPointer,{expectedSourceSha:sourceSha});
+    const entry = signed.targets.find(item=>item.target===target);
+    if (!entry || entry.runtimeContractSha256 !== expectedRuntimeContractSha256 ||
+        (signedArtifactSha256 !== undefined && entry.artifact.sha256 !== signedArtifactSha256) ||
+        (signedArtifactBytes !== undefined && entry.artifact.bytes !== signedArtifactBytes)) {
+      throw new Error("Main native staging signature does not match expected architecture, contract or archive.");
+    }
+    signedArtifactSha256 = entry.artifact.sha256;
+    signedArtifactBytes = entry.artifact.bytes;
+  }
 
   const root = await assertCanonicalExistingDirectory(transactionRoot, "Main update transaction root", fsImpl);
   const stagingRoot = await assertCanonicalExistingDirectory(path.join(root, "staging"), "Main update staging root", fsImpl);
   const transactionDir = await assertCanonicalExistingDirectory(path.join(stagingRoot, transactionId), "Main update transaction directory", fsImpl);
   const snapshot = await fetchEquinoxLocalMainSnapshotManifest({ sourceSha, target, expectedRuntimeContractSha256, fetchImpl });
+  if (signedArtifactSha256 !== undefined &&
+      (snapshot.manifest.artifact.sha256 !== signedArtifactSha256 ||
+       snapshot.manifest.artifact.bytes !== signedArtifactBytes)) {
+    throw new Error("Main R2 manifest differs from the production-signed native archive.");
+  }
   const nativeDir = path.join(transactionDir, "native");
   let nativeCreated = false;
   let originalNativeDirectory: { dev: number; ino: number } | null = null;

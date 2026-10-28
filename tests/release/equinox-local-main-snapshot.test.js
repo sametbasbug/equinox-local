@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
+import { createHash, generateKeyPairSync } from "node:crypto";
 import fs from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
@@ -10,8 +10,11 @@ import {
   equinoxLocalMainSnapshotManifestUrl,
   inspectStagedEquinoxLocalMainSnapshotArtifact,
   stageEquinoxLocalMainSnapshotArtifact,
+  stageEquinoxLocalSignedMainLocalArchive,
   fetchEquinoxLocalMainSnapshotManifest,
 } from "../../src/equinox-local-main-snapshot.js";
+
+import { createSignedMainInstallPointer, validateSignedMainInstallPointer } from "../../src/equinox-local-main-install-pointer.js";
 
 const SHA = "a".repeat(40);
 const DIGEST = "b".repeat(64);
@@ -151,6 +154,136 @@ test("Main snapshot artifact staging streams into transaction-owned storage and 
   assert.equal(calls[1].url, equinoxLocalMainSnapshotArtifactUrl(SHA, "darwin-arm64"));
   assert.equal(calls[1].options.redirect, "error");
   assert.equal(calls[1].options.credentials, "omit");
+});
+
+test("standalone native staging rejects unknown Ed25519 roots and untrusted selectors before any network or disk work",async(t)=>{
+ const root=await fs.mkdtemp(path.join(path.dirname(fileURLToPath(import.meta.url)),".equinox-main-signed-root-"));
+ t.after(()=>fs.rm(root,{recursive:true,force:true}));
+ const transactionId="main-"+"f".repeat(32);
+ await fs.mkdir(path.join(root,"staging",transactionId),{recursive:true,mode:0o700});
+ const base={schemaVersion:1,channel:"main",sourceSha:SHA,version:"6.2.1",
+  publishedAt:"2026-10-27T21:00:00.000Z",
+  targets:["darwin-arm64","darwin-x64","win32-arm64","win32-x64"].map(target=>({
+    target,runtimeContractSha256:DIGEST,
+    artifact:{url:equinoxMainSignedURL(SHA,target),sha256:"e".repeat(64),bytes:34},
+  })),
+  signature:{algorithm:"ed25519",keyId:"stable-2026-01",value:Buffer.alloc(64).toString("base64")},
+ };
+ function equinoxMainSignedURL(sha,target){
+  return `https://main.local.sametbasbug.dev/snapshots/${sha}/equinox-local-main-${sha}-${target}${target.startsWith("win32-")?".zip":".tar.gz"}`;
+ }
+ for(const signedPointer of [
+  base,
+  {...base,signature:{...base.signature,keyId:"unknown-key"}},
+  {...base,targets:[...base.targets.slice(0,3),{...base.targets[3],target:"unknown"}]},
+  {...base,sourceSha:"b".repeat(40)},
+ ]){
+  await assert.rejects(stageEquinoxLocalMainSnapshotArtifact({
+    signedPointer,sourceSha:SHA,target:TARGET,expectedRuntimeContractSha256:DIGEST,
+    transactionRoot:root,transactionId,
+    fetchImpl:async()=>assert.fail("untrusted Ed25519 selector must not trigger a request"),
+  }),/signature|signing key|source SHA|target order|unknown|artifact URL/i);
+  assert.deepEqual(await fs.readdir(path.join(root,"staging",transactionId)),[]);
+ }
+});
+
+test("Main native staged archive must match BOTH production-signed SHA and bytes before download",async(t)=>{
+ const root=await fs.mkdtemp(path.join(path.dirname(fileURLToPath(import.meta.url)),".equinox-main-signed-stage-"));
+ t.after(()=>fs.rm(root,{recursive:true,force:true}));
+ const transactionId="main-"+"a".repeat(32);
+ await fs.mkdir(path.join(root,"staging",transactionId),{recursive:true,mode:0o700});
+ const archive=Buffer.from("genuine native package sha bytes");
+ const checksum=createHash("sha256").update(archive).digest("hex");
+ const manifest=manifestWithArtifact({
+  name:`equinox-local-main-${SHA}-${TARGET}.tar.gz`,
+  sha256:checksum,bytes:archive.length,
+ });
+ let requests=0;
+ const opts={sourceSha:SHA,target:TARGET,expectedRuntimeContractSha256:DIGEST,
+  transactionRoot:root,transactionId,
+  fetchImpl:async()=>{
+   requests++;
+   return requests%2===1?jsonResponse(manifest):bytesResponse(archive);
+  },
+ };
+ for(const signed of [
+  {signedArtifactSha256:"e".repeat(64),signedArtifactBytes:archive.length},
+  {signedArtifactSha256:checksum,signedArtifactBytes:archive.length+1},
+ ]){
+  await assert.rejects(stageEquinoxLocalMainSnapshotArtifact({...opts,...signed}),
+   /differs from the production-signed native archive/u);
+  assert.equal(requests,1,"unsigned artifact must never be downloaded");
+  assert.equal(await fs.readdir(path.join(root,"staging",transactionId)).then(x=>x.length),0);
+  requests=0;
+ }
+ for(const signed of [
+  {signedArtifactSha256:checksum},
+  {signedArtifactBytes:archive.length},
+  {signedArtifactSha256:checksum,signedArtifactBytes:-1},
+  {signedArtifactSha256:"bad",signedArtifactBytes:archive.length},
+ ]){
+  await assert.rejects(stageEquinoxLocalMainSnapshotArtifact({...opts,...signed}),/must be provided together/u);
+  assert.equal(requests,0,"invalid signed receipt must fail before HTTP");
+ }
+ const result=await stageEquinoxLocalMainSnapshotArtifact({...opts,
+  signedArtifactSha256:checksum,signedArtifactBytes:archive.length,
+ });
+ assert.equal(result.sha256,checksum);
+ assert.equal(result.bytes,archive.length);
+ assert.equal((await inspectStagedEquinoxLocalMainSnapshotArtifact(opts)).sha256,checksum);
+ assert.equal(requests,2,"exact signed expected metadata gates actual download");
+});
+
+
+test("signed offline native archive uses the existing staging engine without an extra network download",async t=>{
+ const root=await fs.mkdtemp(path.join(path.dirname(fileURLToPath(import.meta.url)),".equinox-main-signed-local-"));
+ t.after(()=>fs.rm(root,{recursive:true,force:true}));
+ const tx="main-"+"e".repeat(32);
+ await fs.mkdir(path.join(root,"staging",tx),{recursive:true,mode:0o700});
+ const archive=path.join(root,"signed-local.tar.gz");
+ const payload=Buffer.from("authenticated native payload bytes");
+ await fs.writeFile(archive,payload,{mode:0o600});
+ const digest=createHash("sha256").update(payload).digest("hex");
+ const {privateKey,publicKey}=generateKeyPairSync("ed25519");
+ const keyId="local-test-key";
+ const pointer=createSignedMainInstallPointer({
+  sourceSha:SHA,version:"6.2.1",publishedAt:"2026-10-27T12:00:00.000Z",
+  nativeManifests:["darwin-arm64","darwin-x64","win32-arm64","win32-x64"].map(target=>({
+   schemaVersion:1,channel:"main",sourceSha:SHA,target,runtimeContractSha256:DIGEST,
+   artifact:{name:"equinox-local-main-"+SHA+"-"+target+(target.startsWith("win32-")?".zip":".tar.gz"),
+    sha256:digest,bytes:payload.length},
+  })),keyId,privateKey,
+ });
+ const verifySignedPointerImpl=(raw,options)=>validateSignedMainInstallPointer(raw,{
+  ...options,publicKeys:{[keyId]:publicKey.export({type:"spki",format:"pem"})},
+ });
+ const props={signedPointer:pointer,sourceSha:SHA,target:TARGET,sourceArchivePath:archive,
+  transactionRoot:root,transactionId:tx,verifySignedPointerImpl};
+ const result=await stageEquinoxLocalSignedMainLocalArchive(props);
+ assert.equal(result.sha256,digest);
+ assert.deepEqual(await fs.readFile(result.artifactPath),payload);
+ assert.equal((await inspectStagedEquinoxLocalMainSnapshotArtifact({
+  sourceSha:SHA,target:TARGET,expectedRuntimeContractSha256:DIGEST,
+  transactionRoot:root,transactionId:tx,
+ })).sha256,digest);
+ // Never let a caller's ephemeral test key into the real installed verifier.
+ const other=await fs.mkdtemp(path.join(path.dirname(fileURLToPath(import.meta.url)),".equinox-main-untrusted-"));
+ t.after(()=>fs.rm(other,{recursive:true,force:true}));
+ await fs.mkdir(path.join(other,"staging",tx),{recursive:true,mode:0o700});
+ await assert.rejects(stageEquinoxLocalSignedMainLocalArchive({
+  ...props,transactionRoot:other,verifySignedPointerImpl:undefined,
+ }),/trusted|signature|signing key/u);
+ assert.deepEqual(await fs.readdir(path.join(other,"staging",tx)),[]);
+ // Same signed SHA, incorrect local file cannot enter the durable candidate.
+ await fs.writeFile(archive,Buffer.from("forged!"),{mode:0o600});
+ const failing=await fs.mkdtemp(path.join(path.dirname(fileURLToPath(import.meta.url)),".equinox-main-reject-"));
+ t.after(()=>fs.rm(failing,{recursive:true,force:true}));
+ await fs.mkdir(path.join(failing,"staging",tx),{recursive:true,mode:0o700});
+ await assert.rejects(stageEquinoxLocalSignedMainLocalArchive({...props,transactionRoot:failing}),/byte size differs/u);
+ assert.deepEqual(await fs.readdir(path.join(failing,"staging",tx)),[]);
+ await assert.rejects(stageEquinoxLocalSignedMainLocalArchive({
+  ...props,transactionRoot:failing,sourceArchivePath:"relative.tar.gz",
+ }),/canonical absolute/u);
 });
 
 test("Main snapshot does not publish a same-length substituted artifact after digest verification", async (t) => {

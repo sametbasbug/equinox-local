@@ -21,4 +21,14 @@
   <Target Name="ValidateGuardianTarget" BeforeTargets="PrepareForPublish">
     <Error Condition="'$(RuntimeIdentifier)' != 'win-x64' And '$(RuntimeIdentifier)' != 'win-arm64'" Text="Windows Guardian requires win-x64 or win-arm64." />
   </Target>
+  <!-- Ed25519 verification runs in the ORIGINAL Guardian binary, not a Node helper.
+       The package is pinned and bundled in the self-contained signed release. -->
+  <ItemGroup>
+    <PackageReference Include="BouncyCastle.Cryptography" Version="2.7.0" />
+  </ItemGroup>
+  <!-- The same original native Main worker argv contract for WPF and Guardian. -->
+  <ItemGroup>
+    <Compile Include="../EquinoxLocal.NativeShared/MainSignedNativeWorkerContract.cs"
+             Link="NativeShared/MainSignedNativeWorkerContract.cs" />
+  </ItemGroup>
 </Project>

@@ -31,12 +31,10 @@ test('setup no longer offers redundant Tunnel ID copy and distinguishes reconnec
 });
 
 
-test('actual Windows installer acceptance must exercise real bundled tunnel-client offline init', () => {
-  const installer = readFileSync(new URL('./windows-installer-real-package-smoke.ps1', import.meta.url), 'utf8');
-  const smoke = readFileSync(new URL('./windows-tunnel-offline-init-smoke.mjs', import.meta.url), 'utf8');
-  assert.match(installer, /windows-tunnel-offline-init-smoke\.mjs/u);
-  assert.match(smoke, /windowsTunnelInitArguments/u);
-  assert.match(smoke, /tunnel-client\.exe/u);
-  assert.match(smoke, /tunnel_00000000000000000000000000000000/u);
-  assert.doesNotMatch(smoke, /\brun\b.*--profile.*--profile-dir/u);
+test('bundled Windows tunnel offline init is tested independently of Main package proof',()=>{
+ const smoke=readFileSync(new URL('./windows-tunnel-offline-init-smoke.mjs',import.meta.url),'utf8');
+ const script=readFileSync(new URL('./windows-installer-real-package-smoke.ps1',import.meta.url),'utf8');
+ assert.match(smoke,/windowsTunnelInitArguments/u);
+ assert.match(smoke,/tunnel-client\.exe/u);
+ assert.doesNotMatch(script,/tunnel-profile\.json|Get-Content.*runtime-key/u);
 });

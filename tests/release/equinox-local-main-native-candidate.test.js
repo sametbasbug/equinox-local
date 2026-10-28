@@ -52,7 +52,7 @@ test("Main native candidate preparation reuses bounded archive validation inside
     },
     validateRelease: async (releaseDir, options) => {
       events.push(["validate", releaseDir, options.target]);
-      return { version: "5.2.1", target: TARGET, releaseDir, tree: { entryCount: 12, totalBytes: 345 }, metadata: { version: "5.2.1", target: TARGET } };
+      return { version: "5.2.1", target: TARGET, releaseDir, tree: { entryCount: 12, totalBytes: 345 }, metadata: { version: "5.2.1", target: TARGET, sourceSha: SHA } };
     },
   });
   assert.equal(result.sourceSha, SHA);
@@ -98,7 +98,7 @@ test("Main native candidate preparation reuses a previously validated candidate 
     transactionId: TX,
     inspectStagedArtifact: async () => stagedArtifact(f.artifactPath),
     inspectArchive: async () => { archiveMutated = true; },
-    validateRelease: async (releaseDir, options) => ({ version: "5.2.1", target: options.target, releaseDir, tree: {}, metadata: {} }),
+    validateRelease: async (releaseDir, options) => ({ version: "5.2.1", target: options.target, releaseDir, tree: {}, metadata: {version:"5.2.1",sourceSha:SHA} }),
   });
   assert.equal(result.reused, true);
   assert.equal(result.releaseDir, candidateRelease);
@@ -145,7 +145,7 @@ test("Main native candidate refuses reusing an unrelated release without replaci
       actions.push("validate");
       return { target: "win32-x64", releaseDir, version: "5.2.1" };
     },
-  }), /Existing Main native candidate identity drifted/u);
+  }), /release provenance does not match exact signed source SHA/u);
   assert.deepEqual(actions, ["validate"]);
   assert.equal(await fs.readFile(canary, "utf8"), "original");
   assert.equal(await fs.readFile(f.artifactPath, "utf8"), "artifact");
@@ -168,11 +168,32 @@ test("Main native candidate cleans own new candidate after post-rename validatio
       return {
         version: "5.2.1", target: TARGET,
         releaseDir: validations === 2 ? "/foreign-release" : releaseDir,
-        metadata: {}, tree: {},
+        metadata: {version:"5.2.1",sourceSha:SHA}, tree: {},
       };
     },
   }), /final validation drifted/u);
   assert.equal(validations, 2);
   await assert.rejects(fs.lstat(path.join(f.transactionDir, "native-candidate")), { code: "ENOENT" });
   assert.equal(await fs.readFile(f.artifactPath, "utf8"), "artifact");
+});
+
+test("Main native candidate rejects same-version artifact from a different commit before durable staging", async (t) => {
+  const f = await fixture(t);
+  let validations = 0;
+  const releaseSha = "f".repeat(40);
+  await assert.rejects(prepareEquinoxLocalMainNativeCandidate({
+    sourceSha: SHA, target:TARGET, expectedRuntimeContractSha256:DIGEST,
+    transactionRoot:f.root, transactionId:TX,
+    inspectStagedArtifact:async()=>stagedArtifact(f.artifactPath),
+    inspectArchive:async()=>{},
+    extractArchive:async (_archive,destination)=>fs.mkdir(path.join(destination,"release"),{recursive:true}),
+    validateRelease:async releaseDir=>{
+      validations++;
+      return {version:"5.2.1",target:TARGET,releaseDir,
+        metadata:{version:"5.2.1",sourceSha:releaseSha},tree:{}};
+    },
+  }),/release provenance does not match exact signed source SHA/u);
+  assert.equal(validations,1);
+  await assert.rejects(fs.lstat(path.join(f.transactionDir,"native-candidate")),{code:"ENOENT"});
+  assert.equal(await fs.readFile(f.artifactPath,"utf8"),"artifact");
 });

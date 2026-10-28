@@ -53,11 +53,13 @@ export async function runWindowsMainFailedRollbackRecovery({
   });
   const expectedStateRoot = path.win32.join(layout.stateRoot, "main-update");
   const expectedSourceStore = path.win32.join(expectedStateRoot, "sources");
-  const sourceSha = typeof installation?.sourceRoot === "string" ? path.win32.basename(installation.sourceRoot) : "";
+  const sourceRoot = installation && "sourceRoot" in installation && typeof installation.sourceRoot === "string"
+    ? installation.sourceRoot : null;
+  const sourceSha = sourceRoot ? path.win32.basename(sourceRoot) : "";
   if (!installation || installation.kind !== "managed-source" || installation.managed !== true ||
       installation.selfUpdateSupported !== true || installation.releaseDir !== current.releaseDir ||
-      typeof installation.sourceRoot !== "string" || !/^[a-f0-9]{40}$/u.test(sourceSha) ||
-      path.win32.dirname(installation.sourceRoot).toLowerCase() !== expectedSourceStore.toLowerCase() ||
+      typeof sourceRoot !== "string" || !/^[a-f0-9]{40}$/u.test(sourceSha) ||
+      path.win32.dirname(sourceRoot).toLowerCase() !== expectedSourceStore.toLowerCase() ||
       installation.sourceSha !== sourceSha ||
       (typeof installation.mainTransactionRoot !== "string" || installation.mainTransactionRoot.toLowerCase() !== expectedStateRoot.toLowerCase()) ||
       typeof installation.gitPath !== "string" || !path.win32.isAbsolute(installation.gitPath) ||

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import {generateKeyPairSync} from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -6,6 +7,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import { resolveEquinoxLocalInstallation } from "../../src/equinox-local-installation.js";
+import {createSignedMainInstallPointer,validateSignedMainInstallPointer} from "../../src/equinox-local-main-install-pointer.js";
 
 import {
   equinoxLocalManagedSourcePaths,
@@ -261,4 +263,93 @@ test("enrolled Main rejects symlinked product Git while preserving the signed St
   assert.equal((await fs.lstat(managedGit)).isSymbolicLink(),true);
   assert.equal(await fs.readFile(foreign,"utf8"),"foreign executable");
   assert.equal(JSON.parse(await fs.readFile(paths.installStampPath,"utf8")).bootstrapSha,SHA);
+});
+
+
+test("Mac base installation recognizes exact full-SHA native-store release and refuses arbitrary native paths",()=>{
+ const home="/Users/example";
+ const root=home+"/Library/Application Support/Equinox Local";
+ const sha="b".repeat(40);
+ const candidate=root+"/main-update/native-store/darwin-arm64/"+sha+"/release";
+ const resolve=release=>resolveEquinoxLocalInstallation({
+  homeDir:home,platform:"darwin",arch:"arm64",
+  env:{EQUINOX_LOCAL_INSTALL_ROOT:root,EQUINOX_LOCAL_RELEASE_DIR:release},
+ });
+ const admitted=resolve(candidate);
+ assert.equal(admitted.kind,"managed");
+ assert.equal(admitted.mainNativeSha,sha);
+ for(const foreign of [candidate+"/subdirectory",candidate.replace("darwin-arm64","darwin-x64"),
+  candidate.replace(sha,"bad-sha"),home+"/Downloads/foreign"]){
+  assert.equal(resolve(foreign).kind,"unsupported",foreign);
+ }
+});
+
+test("Git-free Main boot requires original Ed25519 selector, exact durable SHA/contract and matching running native release",async t=>{
+ const home=await fs.mkdtemp(path.join(os.tmpdir(),"equinox-native-main-direct-"));
+ t.after(()=>fs.rm(home,{recursive:true,force:true}));
+ const root=path.join(home,"Library","Application Support","Equinox Local");
+ const state=equinoxLocalManagedSourcePaths({platform:"darwin",arch:"arm64",homeDir:home,env:{}});
+ await fs.mkdir(state.mainTransactionRoot,{recursive:true,mode:0o700});
+ await fs.chmod(state.mainTransactionRoot,0o700);
+ const sourceSha="b".repeat(40),contract="c".repeat(64);
+ const target="darwin-arm64";
+ const installedDir=path.join(state.mainTransactionRoot,"native-store",target,sourceSha,"release");
+ const {privateKey,publicKey}=generateKeyPairSync("ed25519");
+ const keyId="test-ephemeral-only";
+ const signed=createSignedMainInstallPointer({
+  sourceSha,version:"6.2.1",publishedAt:"2026-10-27T22:00:00.000Z",keyId,privateKey,
+  nativeManifests:["darwin-arm64","darwin-x64","win32-arm64","win32-x64"].map(tgt=>({
+   schemaVersion:1,channel:"main",sourceSha,target:tgt,runtimeContractSha256:contract,
+   artifact:{name:"equinox-local-main-"+sourceSha+"-"+tgt+(tgt.startsWith("win32-")?".zip":".tar.gz"),
+    sha256:"f".repeat(64),bytes:12345},
+  })),
+ });
+ const verifySignedPointerImpl=(raw,opts)=>validateSignedMainInstallPointer(raw,{
+  ...opts,publicKeys:{[keyId]:publicKey.export({type:"spki",format:"pem"})},
+ });
+ const native={sourceSha,target,runtimeContractSha256:contract,
+  releaseDir:installedDir,payloadVersion:"6.2.1"};
+ const baseInstallation={...base(root),releaseDir:installedDir,mainNativeSha:sourceSha};
+ const input={baseInstallation,platform:"darwin",arch:"arm64",homeDir:home,env:{},
+  verifySignedPointerImpl,readNativePointerImpl:async()=>native};
+ await assert.rejects(resolveEquinoxLocalManagedSourceInstallation(input),/no verified Main install stamp or signed native selector/u);
+ const selectorPath=path.join(path.dirname(installedDir),"signed-selector.json");
+ await fs.mkdir(path.dirname(selectorPath),{recursive:true,mode:0o700});
+ await fs.writeFile(selectorPath,JSON.stringify(signed),{mode:0o600});
+ const installed=await resolveEquinoxLocalManagedSourceInstallation(input);
+ assert.equal(installed.kind,"managed-main");
+ assert.equal(installed.sourceSha,sourceSha);
+ assert.equal(installed.mainNativeSha,sourceSha);
+ assert.equal(installed.mainUpdateSupported,false);
+ assert.equal(installed.gitPath,null);
+ assert.equal(installed.nodePath,null);
+ await assert.rejects(resolveEquinoxLocalManagedSourceInstallation({...input,
+  verifySignedPointerImpl:undefined,
+ }),/trusted|signature|signing key/u);
+ for(const nativeChange of [
+  {sourceSha:"d".repeat(40)}, {target:"darwin-x64"},
+  {runtimeContractSha256:"d".repeat(64)},{payloadVersion:"6.2.0"},
+  {releaseDir:installedDir+"/different"},
+ ]){
+  await assert.rejects(resolveEquinoxLocalManagedSourceInstallation({...input,
+   readNativePointerImpl:async()=>({...native,...nativeChange}),
+  }),/differs from its exact durable SHA pointer/u);
+ }
+ await fs.chmod(selectorPath,0o644);
+ await assert.rejects(resolveEquinoxLocalManagedSourceInstallation(input),/selector is not private/u);
+ await fs.chmod(selectorPath,0o600);
+ assert.equal((await fs.readdir(state.mainTransactionRoot)).includes("install.json"),false,
+   "Git-free native identity must never create old source stamps or tooling");
+});
+
+
+test("server reports exact Git-free Main native SHA and prohibits obsolete Stable update execution",async()=>{
+ const source=await fs.readFile(new URL("../../src/server.js",import.meta.url),"utf8");
+ assert.match(source,/equinoxLocalInstallation\.kind === "managed-main"[\s\S]*selfUpdateSupported: false/u);
+ assert.match(source,/sourceSha: \["managed-source", "managed-main"\]\.includes\(equinoxLocalInstallation\.kind\)/u);
+ assert.match(source,/mainNativeSha: equinoxLocalInstallation\.mainNativeSha/u);
+ assert.match(source,/target: equinoxLocalInstallation\.target/u);
+ assert.match(source,/equinoxLocalInstallation\.kind === "managed-main"[\s\S]*?scheduleEquinoxLocalSignedNativeMacInstaller/u);
+ assert.match(source,/sourceSha: \["managed-source", "managed-main"\]/u);
+ assert.match(source,/if \(equinoxLocalInstallation\.kind === "managed-main"\) \{\s*\/\/ This is a BOUNDED read-only/u);
 });

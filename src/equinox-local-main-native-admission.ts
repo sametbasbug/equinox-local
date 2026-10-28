@@ -225,9 +225,11 @@ async function assertGitAncestor(root: string, ancestor: string, descendant: str
 export async function inspectEquinoxLocalMainNativeImpactRange({
   rootDir, currentSha, targetSha,
   canonicalMainRef = DEFAULT_CANONICAL_MAIN_REF, execFileImpl = execFile,
+  candidateOnly = false,
 }: {
   rootDir?: unknown; currentSha?: unknown; targetSha?: unknown;
   canonicalMainRef?: string; execFileImpl?: GitRunner;
+  candidateOnly?: boolean;
 } = {}) {
   if (typeof rootDir !== "string" || rootDir.length < 1) throw new Error("Main native-impact Git root is required.");
   if (typeof currentSha !== "string" || !SHA_PATTERN.test(currentSha)) throw new Error("Main native-impact current SHA is invalid.");
@@ -236,6 +238,7 @@ export async function inspectEquinoxLocalMainNativeImpactRange({
     throw new Error("Main native-impact canonical ref is invalid.");
   }
 
+  if (typeof candidateOnly !== "boolean") throw new Error("Main native candidate mode is invalid.");
   const root = path.resolve(rootDir);
   const [resolvedCurrent, resolvedTarget, canonicalMainSha] = await Promise.all([
     resolveExactCommit(root, currentSha, "Main native-impact current SHA", { execFileImpl }),
@@ -247,7 +250,15 @@ export async function inspectEquinoxLocalMainNativeImpactRange({
 
   await assertGitAncestor(root, currentSha, targetSha, "Main native-impact current SHA is not an ancestor of the target SHA.", { execFileImpl });
   await assertGitAncestor(root, currentSha, canonicalMainSha, "Main native-impact current SHA is not on canonical main history.", { execFileImpl });
-  await assertGitAncestor(root, targetSha, canonicalMainSha, "Main native-impact target SHA is not on canonical main history.", { execFileImpl });
+  if (candidateOnly) {
+    // Prepublication CI may build a descendant of canonical main for inspection,
+    // but production publication STILL requires the unchanged main-only gate.
+    await assertGitAncestor(root, canonicalMainSha, targetSha,
+      "Unpublished Main candidate is not descended from canonical main.", { execFileImpl });
+  } else {
+    await assertGitAncestor(root, targetSha, canonicalMainSha,
+      "Main native-impact target SHA is not on canonical main history.", { execFileImpl });
+  }
 
   if (currentSha === targetSha) {
     return Object.freeze({

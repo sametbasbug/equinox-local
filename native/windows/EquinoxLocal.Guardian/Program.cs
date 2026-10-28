@@ -29,8 +29,13 @@ internal static partial class Program
     {
         try
         {
-            if (args.Length > 1 || (args.Length == 1 && args[0] is not ("--inspect" or "--audit-native-identity" or "--audit-native-journal" or "--audit-native-worker" or "--audit-native-worker-ipc" or "--audit-native-worker-argv" or "--audit-native-wpf-owner" or "--hold-native-journal-lease" or "--hold-native-journal-authority" or "--hold-native-prepared-abort" or "--hold-native-stage-b" or "--hold-native-stage-b-cancel" or "--hold-native-stable-shell-quiesce" or "--reconcile-native-prepared-abort" or "--startup" or "--uninstall")))
+            if (args.Length > 1 || (args.Length == 1 && args[0] is not ("--audit-installed-signed-main" or "--inspect" or "--audit-native-identity" or "--audit-native-journal" or "--audit-signed-native-journal" or "--audit-signed-native-worker-argv" or "--audit-signed-native-worker-pipe" or "--audit-signed-native-owner-lease" or "--prepare-signed-native-journal" or "--audit-signed-native-prepared-journal" or "--reconcile-signed-native-prepared-orphan" or "--audit-native-worker" or "--audit-native-worker-ipc" or "--audit-native-worker-argv" or "--audit-native-wpf-owner" or "--hold-native-journal-lease" or "--hold-native-journal-authority" or "--hold-native-prepared-abort" or "--hold-native-stage-b" or "--hold-native-stage-b-cancel" or "--hold-native-stable-shell-quiesce" or "--reconcile-native-prepared-abort" or "--startup" or "--uninstall")))
                 throw new InvalidOperationException("Unsupported Guardian argument.");
+            if (args.Length == 1 && args[0] == "--audit-installed-signed-main")
+            {
+                InspectOriginalInstalledSignedMain();
+                return 0; // Same original Ed25519+ZIP proof; read-only install verification.
+            }
             if (args.Length == 1 && args[0] == "--audit-native-identity")
             {
                 InspectMainNativeIdentity();
@@ -41,6 +46,16 @@ internal static partial class Program
                 InspectOwnedNativeTransitionJournal();
                 return 0; // Receipt ownership audit ONLY; no resume or launch.
             }
+            if (args.Length == 1 && args[0] == "--audit-signed-native-journal")
+            {
+                InspectOwnedSignedNativeJournalWithoutGrant();
+                return 0; // Structural B and original A only; no signature/Guardian grants.
+            }
+            if (args.Length == 1 && args[0] == "--reconcile-signed-native-prepared-orphan")
+            {
+                ReconcileSignedNativePreparedOrphanWithoutResuming();
+                return 0; // Durable quarantine evidence; orphan still blocks new admission.
+            }
             if (args.Length == 1 && args[0] == "--audit-native-worker")
             {
                 InspectOwnedNativeWorkerProcess();
@@ -50,6 +65,35 @@ internal static partial class Program
             {
                 InspectOwnedNativeWorkerPipeProof();
                 return 0; // Live PID + token proof ONLY, never native update authority.
+            }
+            if (args.Length == 1 && args[0] == "--audit-signed-native-worker-argv")
+            {
+                InspectOwnedNativeWorkerOsArguments(signedNativeReadOnly: true);
+                return 0; // No original Guardian journal/HMAC/slot authority.
+            }
+            if (args.Length == 1 && args[0] == "--audit-signed-native-worker-pipe")
+            {
+                // Exact live OS server PID, worker token and fresh nonce MAC.
+                // No native journal lease, WPF stop or A/B mutation authority.
+                var audited = InspectOwnedNativeWorkerOsArguments(signedNativeReadOnly: true);
+                InspectSignedNativeWorkerWpfParentWithoutGrant(audited);
+                InspectOwnedNativeWorkerPipeProof(signedNativeReadOnly: true, previouslyAudited: audited);
+                return 0;
+            }
+            if (args.Length == 1 && args[0] == "--audit-signed-native-owner-lease")
+            {
+                InspectSignedNativeOwnerExclusiveLeaseWithoutGrant();
+                return 0; // Exclusive live OS proof only; NO native mutation.
+            }
+            if (args.Length == 1 && args[0] == "--prepare-signed-native-journal")
+            {
+                PrepareSignedNativeJournalWithoutMutation();
+                return 0; // Durable PREPARED evidence, never A/B mutation.
+            }
+            if (args.Length == 1 && args[0] == "--audit-signed-native-prepared-journal")
+            {
+                AuditSignedNativePreparedJournalWithoutGrant();
+                return 0; // Crash forensic inspection; never journal authority.
             }
             if (args.Length == 1 && args[0] == "--audit-native-worker-argv")
             {
@@ -97,7 +141,7 @@ internal static partial class Program
                 return 0; // Retire only a fully verified dead prepared abort lock; no launch.
             }
             var inspection = InspectBaseline();
-            if (args.Length == 1 && args[0] is "--inspect" or "--audit-native-identity" or "--audit-native-journal" or "--audit-native-worker" or "--audit-native-worker-ipc" or "--audit-native-worker-argv" or "--audit-native-wpf-owner") return 0;
+            if (args.Length == 1 && args[0] is "--inspect" or "--audit-native-identity" or "--audit-native-journal" or "--audit-signed-native-journal" or "--audit-signed-native-worker-argv" or "--audit-signed-native-worker-pipe" or "--audit-signed-native-owner-lease" or "--audit-native-worker" or "--audit-native-worker-ipc" or "--audit-native-worker-argv" or "--audit-native-wpf-owner") return 0;
             using var process = Launch(inspection.Executable, args.Length == 0 ? null : args[0]);
             return process.Id > 0 ? 0 : 70;
         }
@@ -106,14 +150,14 @@ internal static partial class Program
             // Only the explicit inspection mode exposes bounded, static
             // validation errors to the disposable installed-host acceptance.
             // Never echo paths from OS exceptions or launch arguments.
-            if (args.Length == 1 && args[0] is "--inspect" or "--audit-native-identity" or "--audit-native-journal" or "--audit-native-worker" or "--audit-native-worker-ipc" or "--audit-native-worker-argv" or "--audit-native-wpf-owner")
+            if (args.Length == 1 && args[0] is "--inspect" or "--audit-native-identity" or "--audit-native-journal" or "--audit-signed-native-journal" or "--audit-signed-native-worker-argv" or "--audit-signed-native-worker-pipe" or "--audit-signed-native-owner-lease" or "--audit-native-worker" or "--audit-native-worker-ipc" or "--audit-native-worker-argv" or "--audit-native-wpf-owner")
             {
                 var reason = ex is InvalidDataException or InvalidOperationException or PlatformNotSupportedException
                     ? ex.Message : ex.GetType().Name;
                 if (reason.Length > 120) reason = reason[..120];
                 Console.Error.WriteLine($"Guardian inspection refused: phase={InspectionPhase}; kind={ex.GetType().Name}; code=0x{ex.HResult:x8}; reason={reason}");
             }
-            else if (args.Length == 1 && args[0] is "--hold-native-journal-authority" or "--hold-native-prepared-abort" or "--hold-native-stage-b" or "--hold-native-stage-b-cancel" or "--hold-native-stable-shell-quiesce" or "--reconcile-native-prepared-abort")
+            else if (args.Length == 1 && args[0] is "--hold-native-journal-authority" or "--hold-native-prepared-abort" or "--hold-native-stage-b" or "--hold-native-stage-b-cancel" or "--hold-native-stable-shell-quiesce" or "--reconcile-native-prepared-abort" or "--reconcile-signed-native-prepared-orphan")
             {
                 // Bounded phase/type only: no worker token, paths, journal
                 // contents or dynamic exception reason enter CI diagnostics.

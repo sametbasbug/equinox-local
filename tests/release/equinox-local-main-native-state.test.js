@@ -3,6 +3,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import {createEquinoxLocalMainNativePointerTransition} from "../../src/equinox-local-main-native-pointer-transition.js";
 
 import {
   equinoxLocalMainNativeStatePaths,
@@ -26,7 +27,10 @@ async function fixture(t) {
   await fs.mkdir(releaseDir, { recursive: true, mode: 0o700 });
   await fs.writeFile(path.join(releaseDir, "payload.bin"), "native payload");
   const candidate = { sourceSha: SHA, target: TARGET, transactionId: TX, runtimeContractSha256: DIGEST, artifactSha256: ARTIFACT, artifactBytes: 123, payloadVersion: "5.2.1", releaseDir };
-  const validateRelease = async (dir, { target }) => ({ version: "5.2.1", target, releaseDir: dir, tree: { entryCount: 1, totalBytes: 14 } });
+  const validateRelease = async (dir, { target }) => ({
+    version:"5.2.1",target,releaseDir:dir,metadata:{version:"5.2.1",sourceSha:SHA},
+    tree:{entryCount:1,totalBytes:14},
+  });
   return { root, candidateRoot, releaseDir, candidate, validateRelease };
 }
 
@@ -163,4 +167,73 @@ test("Main native store refuses extra manifest fields without accepting durable 
     /missing or unsupported fields/,
   );
   assert.equal(await fs.readFile(path.join(promoted.releaseDir, "payload.bin"), "utf8"), "native payload");
+});
+
+test("Main native durable store refuses a different signed source SHA even at same presentation version", async t=>{
+ const f=await fixture(t);
+ const wrongValidate=async(dir,{target})=>({
+   version:"5.2.1",target,releaseDir:dir,metadata:{version:"5.2.1",sourceSha:"f".repeat(40)},
+   tree:{entryCount:1,totalBytes:14},
+ });
+ await assert.rejects(promoteEquinoxLocalMainNativeCandidate({
+   candidate:f.candidate,transactionRoot:f.root,transactionId:TX,validateRelease:wrongValidate,
+ }),/candidate source SHA does not match/u);
+ assert.equal((await fs.stat(f.releaseDir)).isDirectory(),true);
+ await assert.rejects(fs.stat(path.join(f.root,"native-store")),{code:"ENOENT"});
+ const stored=await promoteEquinoxLocalMainNativeCandidate({
+   candidate:f.candidate,transactionRoot:f.root,transactionId:TX,validateRelease:f.validateRelease,
+ });
+ await assert.rejects(inspectEquinoxLocalMainNativeStoredRelease({
+   transactionRoot:f.root,sourceSha:SHA,target:TARGET,expectedRuntimeContractSha256:DIGEST,
+   validateRelease:wrongValidate,
+ }),/stored release source SHA does not match/u);
+ assert.equal((await fs.stat(stored.releaseDir)).isDirectory(),true);
+ await assert.rejects(fs.stat(path.join(f.root,"current-native.json")),{code:"ENOENT"});
+});
+
+test("same-version Main A to B advances by signed full SHA and rollback restores A's durable runtime",async t=>{
+ const f=await fixture(t);
+ const secondSha="e".repeat(40);
+ const secondTx="main-"+"f".repeat(32);
+ const secondRelease=path.join(f.root,"staging",secondTx,"native-candidate","release");
+ await fs.mkdir(secondRelease,{recursive:true,mode:0o700});
+ await fs.writeFile(path.join(f.releaseDir,"release.json"),JSON.stringify({
+   version:"5.2.1",sourceSha:SHA,
+ }));
+ await fs.writeFile(path.join(secondRelease,"release.json"),JSON.stringify({
+   version:"5.2.1",sourceSha:secondSha,
+ }));
+ await fs.writeFile(path.join(secondRelease,"payload.bin"),"replacement native B");
+ const validateRelease=async (releaseDir,{target})=>({
+   version:"5.2.1",target,releaseDir,
+   metadata:JSON.parse(await fs.readFile(path.join(releaseDir,"release.json"),"utf8")),
+   tree:{entryCount:2,totalBytes:100},
+ });
+ const storedA=await promoteEquinoxLocalMainNativeCandidate({
+   candidate:f.candidate,transactionRoot:f.root,transactionId:TX,validateRelease,
+ });
+ const storedB=await promoteEquinoxLocalMainNativeCandidate({
+   candidate:{...f.candidate,sourceSha:secondSha,transactionId:secondTx,
+     releaseDir:secondRelease,artifactSha256:"e".repeat(64)},transactionRoot:f.root,
+   transactionId:secondTx,validateRelease,
+ });
+ assert.equal(storedA.payloadVersion,storedB.payloadVersion);
+ const identityA={schemaVersion:1,channel:"main",sourceSha:SHA,target:TARGET,runtimeContractSha256:DIGEST};
+ const identityB={schemaVersion:1,channel:"main",sourceSha:secondSha,target:TARGET,runtimeContractSha256:DIGEST};
+ const pointerPath=path.join(f.root,"current-native.json");
+ await writeEquinoxLocalMainNativePointer(pointerPath,identityA,{transactionRoot:f.root,validateRelease});
+ const transition=createEquinoxLocalMainNativePointerTransition({
+   pointerPath,transactionRoot:f.root,previous:identityA,target:identityB,
+   readPointer:(pointer,options)=>readEquinoxLocalMainNativePointer(pointer,{...options,validateRelease}),
+   writePointer:(pointer,next,options)=>writeEquinoxLocalMainNativePointer(pointer,next,{...options,validateRelease}),
+ });
+ const selected=await transition.selectTarget();
+ assert.equal(selected.sourceSha,secondSha);
+ assert.equal((await transition.requireTarget()).releaseDir,storedB.releaseDir);
+ await transition.selectTarget(); // Idempotent even at the same semantic version
+ const restored=await transition.restorePrevious();
+ assert.equal(restored.sourceSha,SHA);
+ assert.equal(restored.releaseDir,storedA.releaseDir);
+ assert.equal(await fs.readFile(path.join(storedA.releaseDir,"payload.bin"),"utf8"),"native payload");
+ assert.equal(await fs.readFile(path.join(storedB.releaseDir,"payload.bin"),"utf8"),"replacement native B");
 });

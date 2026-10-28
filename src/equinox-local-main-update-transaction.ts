@@ -94,7 +94,7 @@ async function syncDirectory(directory: string, { fsImpl = fs }: FsOptions = {})
   const handle = await fsImpl.open(directory, "r");
   try { await handle.sync(); } finally { await handle.close(); }
 }
-async function writeAtomicPrivateJson(filePath: string, value: unknown, { fsImpl = fs }: FsOptions = {}): Promise<void> {
+export async function writeAtomicPrivateJson(filePath: string, value: unknown, { fsImpl = fs }: FsOptions = {}): Promise<void> {
   const parent = path.dirname(filePath);
   await fsImpl.mkdir(parent, { recursive: true, mode: 0o700 });
   // A stable-looking filename is not private if an existing receipt parent is
@@ -148,7 +148,7 @@ async function writeAtomicPrivateJson(filePath: string, value: unknown, { fsImpl
     throw error;
   }
 }
-async function readBoundedJsonFile(filePath: string, { fsImpl = fs }: FsOptions = {}): Promise<unknown> {
+export async function readBoundedJsonFile(filePath: string, { fsImpl = fs }: FsOptions = {}): Promise<unknown> {
   let handle: Awaited<ReturnType<TransactionFs['open']>> | null | undefined;
   try {
     // Windows does not guarantee POSIX O_NOFOLLOW semantics. Pin the

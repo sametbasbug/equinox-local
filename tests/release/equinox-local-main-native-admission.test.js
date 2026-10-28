@@ -377,3 +377,32 @@ test("Main native admission rejects control characters and traversal in Git diff
     assert.throws(() => classifyEquinoxLocalMainUpdateImpact([unsafe]), /unsafe|invalid/u, unsafe);
   }
 });
+
+test('manual native Main candidate permits only unpublished descendant of real canonical main, default remains main-only',async()=>{
+ const currentSha='1'.repeat(40), canonicalMainSha='2'.repeat(40), targetSha='3'.repeat(40);
+ const pairs=[];
+ const execFileImpl=async(_command,args)=>{
+  if(args.includes('rev-parse')){
+   const raw=args.at(-1).replace(/\^\{commit\}$/u,'');
+   return {stdout:`${raw==='refs/remotes/origin/main'?canonicalMainSha:raw}\n`,stderr:''};
+  }
+  if(args.includes('merge-base')){
+   const pair=args.slice(-2).join(':');pairs.push(pair);
+   if(pair===`${targetSha}:${canonicalMainSha}`) throw Error('feature is not on canonical main');
+   return {stdout:'',stderr:''};
+  }
+  if(args.includes('diff')) return {stdout:'src/server.js\0',stderr:''};
+  throw Error('unexpected Git command');
+ };
+ await assert.rejects(inspectEquinoxLocalMainNativeImpactRange({rootDir:'/tmp/canonical',currentSha,targetSha,execFileImpl}),/not on canonical main history/u);
+ const candidate=await inspectEquinoxLocalMainNativeImpactRange({rootDir:'/tmp/canonical',currentSha,targetSha,candidateOnly:true,execFileImpl});
+ assert.equal(candidate.canonicalMainSha,canonicalMainSha);
+ assert.equal(candidate.mainUpdateImpact,true);
+ assert.ok(pairs.includes(`${canonicalMainSha}:${targetSha}`));
+ await assert.rejects(inspectEquinoxLocalMainNativeImpactRange({rootDir:'/tmp/canonical',currentSha,targetSha,candidateOnly:'unsafe',execFileImpl}),/candidate mode is invalid/u);
+ const notDescended=async(command,args)=>{
+  if(args.includes('merge-base')&&args.slice(-2).join(':')===`${canonicalMainSha}:${targetSha}`) throw Error('not descendant');
+  return execFileImpl(command,args);
+ };
+ await assert.rejects(inspectEquinoxLocalMainNativeImpactRange({rootDir:'/tmp/canonical',currentSha,targetSha,candidateOnly:true,execFileImpl:notDescended}),/not descended from canonical main/u);
+});

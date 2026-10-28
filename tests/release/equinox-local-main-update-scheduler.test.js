@@ -10,6 +10,7 @@ import test from "node:test";
 import {
   cleanupEquinoxLocalMainUpdateWorkerOwnership,
   inspectEquinoxLocalMainUpdateWorkerOwnership,
+  assertEquinoxLocalSignedMacWorkerNeverStarted,
   inspectWindowsMainUpdateWorkerProcess,
   inspectWindowsOwnedWpfProcess,
   mainUpdateWorkerEnvironment,
@@ -536,4 +537,137 @@ test("native WPF witness source binds OS current-logon SID/LUID and physical pro
   assert.match(text,/finalWait == WAIT_TIMEOUT \? "running"/u);
   assert.match(text,/WaitForSingleObject\(shell, 0\)/u);
   assert.doesNotMatch(text,/EQUINOX_LOCAL_CHECK_WPF_EXE/u);
+});
+
+
+test("same one-shot launchd scheduler starts signed-native B with its own Node and strict transaction-only CLI",async t=>{
+ const home=await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(),"equinox-signed-native-launchd-")));
+ t.after(()=>fs.rm(home,{recursive:true,force:true}));
+ const stateRoot=path.join(home,"Library","Application Support","Equinox Local","main-update");
+ const target="darwin-arm64",sourceSha="b".repeat(40);
+ const sourceRoot=path.join(stateRoot,"native-store",target,sourceSha,"release");
+ const nodePath=path.join(sourceRoot,"runtime","node","bin","node");
+ const workerPath=path.join(sourceRoot,"equinox-local-main-update-worker.js");
+ await fs.mkdir(path.dirname(nodePath),{recursive:true,mode:0o700});
+ await fs.writeFile(nodePath,"pinned B",{mode:0o700});
+ await fs.writeFile(workerPath,"verified B worker",{mode:0o600});
+ const calls=[];
+ const opts={transactionId:TX,transactionRoot:stateRoot,sourceRoot,nodePath,workerPath,
+  sourceSha,target,signedNative:true,platform:"darwin",uid:501,
+  sourceEnv:{HOME:home,USER:"example",PATH:"/malicious/bin",
+   OPENAI_API_KEY:"secret",EQUINOX_LOCAL_DEV_NODE:"/ambient/bad",
+   EQUINOX_LOCAL_RELEASE_DIR:"/old/stable"},
+  execFileImpl:async(...call)=>{calls.push(call);return {stdout:"state = running",stderr:""}},
+ };
+ const result=await scheduleEquinoxLocalMainUpdateWorker(opts);
+ assert.equal(result.scheduled,true);
+ assert.equal(calls.length,2);
+ assert.deepEqual(calls.map(v=>v[1][0]),["bootstrap","print"]);
+ const plist=await fs.readFile(result.plistPath,"utf8");
+ assert.ok(plist.includes("<string>--signed-native</string>"));
+ assert.ok(plist.includes("<string>--transaction-id</string>"));
+ assert.ok(plist.includes("<string>--transaction-root</string>"));
+ assert.ok(plist.includes("<string>"+workerPath+"</string>"));
+ assert.ok(plist.includes("<string>"+nodePath+"</string>"));
+ assert.equal(plist.includes("<string>--source-root</string>"),false);
+ assert.equal(plist.includes("OPENAI_API_KEY"),false);
+ assert.equal(plist.includes("EQUINOX_LOCAL_DEV_NODE"),false);
+ assert.equal(plist.includes("EQUINOX_LOCAL_RELEASE_DIR"),false);
+ assert.equal(plist.includes("/malicious/bin"),false);
+ assert.match(plist,/\/usr\/bin:\/bin:\/usr\/sbin:\/sbin/u);
+ assert.equal((await fs.stat(result.plistPath)).mode&0o777,0o600);
+});
+
+test("signed-native scheduler refuses ambient Node, different release SHA and Windows fallback before creating plist",async t=>{
+ const home=await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(),"equinox-signed-native-schedule-")));
+ t.after(()=>fs.rm(home,{recursive:true,force:true}));
+ const stateRoot=path.join(home,"Library","Application Support","Equinox Local","main-update");
+ const sourceSha="b".repeat(40),target="darwin-arm64";
+ const sourceRoot=path.join(stateRoot,"native-store",target,sourceSha,"release");
+ const nodePath=path.join(sourceRoot,"runtime","node","bin","node");
+ const workerPath=path.join(sourceRoot,"equinox-local-main-update-worker.js");
+ await fs.mkdir(path.dirname(nodePath),{recursive:true,mode:0o700});
+ await fs.writeFile(nodePath,"node",{mode:0o700});
+ await fs.writeFile(workerPath,"worker",{mode:0o600});
+ const base={transactionId:TX,transactionRoot:stateRoot,sourceRoot,nodePath,workerPath,
+  sourceSha,target,signedNative:true,platform:"darwin",uid:501,sourceEnv:{HOME:home},
+  execFileImpl:async()=>assert.fail("invalid native B must never reach launchctl"),
+ };
+ for(const patch of [
+  {sourceSha:"c".repeat(40)},
+  {nodePath:process.execPath},
+  {workerPath:nodePath},
+  {sourceRoot:path.join(home,"wrong")},
+  {platform:"win32"},
+  {target:"win32-x64"},
+  {sourceEnv:{HOME:"/wrong"}},
+ ]){
+  await assert.rejects(scheduleEquinoxLocalMainUpdateWorker({...base,...patch}));
+ }
+ await assert.rejects(fs.lstat(path.join(stateRoot,"handoff",TX+".plist")),{code:"ENOENT"});
+});
+
+
+test("signed native A/B abandoned launchd admission requires TWO exact service-not-found responses and a healthy user service table",async t=>{
+ const root=await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(),"equinox-native-absence-")));
+ t.after(()=>fs.rm(root,{recursive:true,force:true}));
+ const label="dev.equinox.local.main-update."+TX.slice(5);
+ const calls=[];
+ const absentError=Object.assign(new Error("missing"),{
+  code:113,stderr:'Bad request.\nCould not find service "'+label+'" in domain for user gui: 501\n',
+ });
+ const execFileImpl=async(_file,args)=>{
+  calls.push(args.join(" "));
+  if(args[0]==="print" && args[1]==="gui/501/"+label)throw absentError;
+  if(args[0]==="print" && args[1]==="gui/501")return {stdout:"domain = gui/501"};
+  if(args[0]==="list")return {stdout:"PID\tStatus\tLabel\n-\t0\tcom.apple.SafariHistoryServiceAgent\n"};
+  throw Error("unexpected command");
+ };
+ const result=await assertEquinoxLocalSignedMacWorkerNeverStarted({
+  transactionId:TX,transactionRoot:root,uid:501,currentUid:501,execFileImpl,
+  sleepImpl:async()=>{},
+ });
+ assert.equal(result.absent,true);
+ assert.equal(calls.length,6,"service, domain, list repeated twice");
+ assert.deepEqual(calls.slice(0,3),["print gui/501/"+label,"print gui/501","list"]);
+});
+
+test("signed native launchd absence fails closed for loaded/running/uncertain services and ambiguous command errors",async t=>{
+ const root=await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(),"equinox-native-absence-denial-")));
+ t.after(()=>fs.rm(root,{recursive:true,force:true}));
+ const label="dev.equinox.local.main-update."+TX.slice(5);
+ const absent=Object.assign(new Error("missing"),{code:113,
+  stderr:'Could not find service "'+label+'" in domain for user gui: 501',
+ });
+ const base={transactionId:TX,transactionRoot:root,uid:501,currentUid:501,
+  sleepImpl:async()=>{}};
+ for(const failure of ["loaded","permission","generic","listed","malformed","changed"]){
+  let calls=0;
+  const execFileImpl=async(_file,args)=>{
+   calls++;
+   if(args[0]==="print" && args[1]==="gui/501/"+label){
+    if(failure==="loaded")return {stdout:"state = running"};
+    if(failure==="permission")throw Object.assign(Error("permission"),{code:1,
+      stderr:"Permission denied"});
+    if(failure==="generic")throw Object.assign(Error("error"),{code:113,stderr:"Bad request"});
+    if(failure==="changed" && calls>3)return {stdout:"state = running"};
+    throw absent;
+   }
+   if(args[0]==="print" && args[1]==="gui/501")return {stdout:"domain = gui/501"};
+   if(args[0]==="list")return {stdout:failure==="malformed"?"unexpected":
+    "PID\tStatus\tLabel\n"+(failure==="listed"?"-\t0\t"+label+"\n":"")};
+   throw Error("unexpected");
+  };
+  await assert.rejects(assertEquinoxLocalSignedMacWorkerNeverStarted({...base,execFileImpl}),
+   /cancellation forbidden|not conclusively absent|not unambiguously readable/u);
+ }
+ const handoff=path.join(root,"handoff",TX+".plist");
+ await fs.mkdir(path.dirname(handoff),{recursive:true});
+ await fs.writeFile(handoff,"plisted",{mode:0o600});
+ await assert.rejects(assertEquinoxLocalSignedMacWorkerNeverStarted({...base,
+  execFileImpl:async()=>assert.fail("existing plist prohibits probes"),
+ }),/plist still exists/u);
+ await assert.rejects(assertEquinoxLocalSignedMacWorkerNeverStarted({...base,uid:502,
+  execFileImpl:async()=>assert.fail("foreign uid must not probe"),
+ }),/owning non-root launchd/u);
 });

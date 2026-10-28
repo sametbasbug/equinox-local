@@ -61,3 +61,32 @@ test("Main failure feedback never labels an unverified rollback as safe", () => 
   assert.match(js, /"Rollback unverified"/u);
   assert.doesNotMatch(js, /Main update failed safely/u);
 });
+
+
+
+test("managed-native Main UI checks only original Ed25519 full SHA and dispatches ONLY the original external installer",()=>{
+ const serverFields=[
+  'const signedNativeMainNotice = equinoxLocalInstallation.kind === "managed-main"',
+  "await signedNativeMainNotice?.check({ force })",
+  'mode: "signed-native", checkSupported: true, channel: "main"',
+  'state: signed.status === "available" ? "behind"',
+  'currentSha: signed.installedSha, targetSha: signed.targetSha',
+  '!signedMainInstallerPending()',
+  'scheduleEquinoxLocalSignedNativeWindowsInstaller',
+  'signedMainInstallerRequestedSha = checked.targetSha',
+ ];
+ for(const field of serverFields) assert.equal(server.includes(field),true,field);
+ assert.match(server,/\["available",\s*"up_to_date"\]\.includes\(signed\.status\)/u);
+ const uiFields=[
+  'const signedNativeMain = update.installationKind === "managed-main" && main.mode === "signed-native"',
+  "Check signed SHA",
+  "original Ed25519-signed native selector",
+  "The latest Main source SHA is production-signed. Reinstall Main runs the same original installer",
+  "Latest signed Main is installed",
+  'const managedMain = update.installationKind === "managed-source"',
+  'installButton.hidden = !nativeOrSourceMain',
+  'const nativeOrSourceMain = managedMain || signedNativeMain',
+  'const managedMain = state.update?.installationKind === "managed-source" || signedNativeMain',
+ ];
+ for(const field of uiFields) assert.equal(js.includes(field),true,field);
+});

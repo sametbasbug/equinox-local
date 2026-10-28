@@ -256,7 +256,7 @@ test("passive checks use a bounded cache", async () => {
 });
 
 
-test("Control Center keeps developer source check-only and enables managed-source Main apply", async () => {
+test("Control Center keeps developer source check-only and uses original Main installer for managed-native Apply", async () => {
   const [html, ui, macApp] = await Promise.all([
     fs.readFile(new URL("../../src/equinox-control-center.html", import.meta.url), "utf8"),
     fs.readFile(new URL("../../src/equinox-control-center.js", import.meta.url), "utf8"),
@@ -270,7 +270,7 @@ test("Control Center keeps developer source check-only and enables managed-sourc
   assert.match(ui, /main\.state === "diverged"/u);
   assert.match(ui, /main\.state === "unavailable"/u);
   assert.match(ui, /\["source", "managed-source"\]\.includes\(update\.installationKind\)/u);
-  assert.match(ui, /managedMain && main\.applyAvailable/u);
+  assert.match(ui, /nativeOrSourceMain && main\.applyAvailable/u);
   assert.match(ui, /This developer source checkout remains check-only/u);
   assert.match(ui, /scheduled\.targetSha/u);
   assert.match(ui, /Check main/u);

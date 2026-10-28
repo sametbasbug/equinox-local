@@ -59,6 +59,11 @@ async function fixture(t, platform = "darwin", { withNativePointer = true } = {}
   const nativePayloadRoot = path.join(mainPaths.mainTransactionRoot, "native-store", target, SOURCE);
   const nativeRelease = path.join(nativePayloadRoot, "release");
   await fs.cp(targetRelease, nativeRelease, { recursive: true });
+  // The numbered legacy Main baseline deliberately has another provenance.
+  // The SHA-addressed native store must instead carry its OWN signed SHA.
+  const nativeMetadataPath = path.join(nativeRelease,"release.json");
+  const nativeMetadata = JSON.parse(await fs.readFile(nativeMetadataPath,"utf8"));
+  await fs.writeFile(nativeMetadataPath,JSON.stringify({...nativeMetadata,sourceSha:SOURCE}));
   await fs.writeFile(path.join(nativeRelease, "server.js"), "exact-old-native-store\n");
   const releaseFingerprint = await fingerprintEquinoxLocalNativeState(nativeRelease);
   await fs.writeFile(path.join(nativePayloadRoot, "native-store.json"), JSON.stringify({

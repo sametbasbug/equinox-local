@@ -38,6 +38,13 @@ function hasErrorCode(error: unknown, code: string): boolean {
 }
 
 
+function assertSignedMainReleaseMetadata(release:ValidatedRelease,sourceSha:string,target:string):void {
+  if (release?.target !== target || release?.metadata?.sourceSha !== sourceSha ||
+      release?.metadata?.version !== release?.version) {
+    throw new Error("Main native candidate release provenance does not match exact signed source SHA.");
+  }
+}
+
 async function assertCanonicalDirectory(directory: string, label: string, fsImpl: CandidateFs): Promise<string> {
   const resolved = path.resolve(directory);
   const [stat, real] = await Promise.all([fsImpl.lstat(resolved), fsImpl.realpath(resolved)]);
@@ -83,6 +90,7 @@ export async function prepareEquinoxLocalMainNativeCandidate({
       if (!hasErrorCode(error, "EEXIST")) throw error;
       await assertCanonicalDirectory(candidateRoot, "Main native candidate root", fsImpl);
       const existing = await validateRelease(candidateReleaseDir, { target, fsImpl });
+      assertSignedMainReleaseMetadata(existing,sourceSha,target);
       if (existing?.target !== target || existing?.releaseDir !== candidateReleaseDir) throw new Error("Existing Main native candidate identity drifted from the exact transaction target.");
       return Object.freeze({
         sourceSha, target, transactionId, runtimeContractSha256: staged.manifest.runtimeContractSha256,
@@ -95,12 +103,14 @@ export async function prepareEquinoxLocalMainNativeCandidate({
     await extractArchive(staged.artifactPath, extractionRoot, { target, execFileImpl });
     const extractedReleaseDir = path.join(extractionRoot, "release");
     const validated = await validateRelease(extractedReleaseDir, { target, fsImpl });
+    assertSignedMainReleaseMetadata(validated,sourceSha,target);
     if (validated?.target !== target || validated?.releaseDir !== extractedReleaseDir) {
       throw new Error("Main native candidate release validation drifted from the exact transaction target.");
     }
     await fsImpl.rename(extractedReleaseDir, candidateReleaseDir);
     await fsImpl.rm(extractionRoot, { recursive: true, force: true });
     const finalValidation = await validateRelease(candidateReleaseDir, { target, fsImpl });
+    assertSignedMainReleaseMetadata(finalValidation,sourceSha,target);
     if (finalValidation?.target !== target || finalValidation?.releaseDir !== candidateReleaseDir) {
       throw new Error("Main native candidate final validation drifted from the exact transaction target.");
     }

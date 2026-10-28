@@ -1,10 +1,13 @@
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
+import { generateKeyPairSync } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { resolveEquinoxLocalMainWorkerNativeInstallation, restartEquinoxLocalMainSourceRuntime, runEquinoxLocalMainUpdateWorker, waitForExactSourceHealth } from "../../src/equinox-local-main-update-worker.js";
+import { resolveEquinoxLocalMainWorkerNativeInstallation, restartEquinoxLocalMainSourceRuntime, runEquinoxLocalMainUpdateWorker, runEquinoxLocalSignedMacNativeHandoff, runEquinoxLocalSignedMacNativeWorker, assertEquinoxLocalSignedMacWorkerProcess, waitForExactSourceHealth, waitForExactNativeMainHealth } from "../../src/equinox-local-main-update-worker.js";
+
+import { createSignedMainInstallPointer, validateSignedMainInstallPointer } from "../../src/equinox-local-main-install-pointer.js";
 
 const TX = `main-${"a".repeat(32)}`;
 const SOURCE = "/private/tmp/equinox-source-a";
@@ -577,4 +580,489 @@ test("worker refuses a forensic rollback_failed receipt without replaying native
     cleanupImpl:async()=>events.push("cleanup"),
   }),/cannot resume a transaction whose rollback already failed/u);
   assert.deepEqual(events,["cleanup"],"forensic owner must be retained but detached job cleaned");
+});
+
+test("Git-free Main native health accepts exact B full SHA and rejects healthy same-version A and Stable",async()=>{
+ const B_SHA="e".repeat(40);
+ const contract="c".repeat(64);
+ const version="6.2.1";
+ const baseline={sourceSha:B_SHA,target:"win32-x64",runtimeContractSha256:contract,payloadVersion:version};
+ const statuses=[
+  {kind:"managed-main",sourceSha:A,mainNativeSha:A,target:"win32-x64"},
+  {kind:"managed",sourceSha:B_SHA,mainNativeSha:B_SHA,target:"win32-x64"},
+  {kind:"managed-main",sourceSha:B_SHA,mainNativeSha:B_SHA,target:"darwin-arm64"},
+  {kind:"managed-main",sourceSha:B_SHA,mainNativeSha:B_SHA,target:"win32-x64"},
+ ];
+ let request=0;
+ const result=await waitForExactNativeMainHealth({
+  transactionRoot:STATE,sourceSha:B_SHA,target:"win32-x64",version,
+  runtimeContractSha256:contract,attempts:4,sleepImpl:async()=>{},
+  readNativePointerImpl:async()=>baseline,
+  fetchImpl:async()=>({status:200,json:async()=>({status:{
+    health:{state:"HEALTHY"},server:{version},
+    installation:statuses[request++],
+  }})}),
+ });
+ assert.equal(result,true);
+ assert.equal(request,4,"only the exact B runtime may satisfy the native health gate");
+});
+
+test("Git-free native health rejects wrong durable B SHA, contract, target or version before touching status endpoint",async()=>{
+ const input={transactionRoot:STATE,sourceSha:B,target:"darwin-arm64",
+   version:"6.2.1",runtimeContractSha256:DIGEST_B,attempts:1};
+ for(const pointer of [
+  {sourceSha:A,target:"darwin-arm64",runtimeContractSha256:DIGEST_B,payloadVersion:"6.2.1"},
+  {sourceSha:B,target:"win32-x64",runtimeContractSha256:DIGEST_B,payloadVersion:"6.2.1"},
+  {sourceSha:B,target:"darwin-arm64",runtimeContractSha256:DIGEST_A,payloadVersion:"6.2.1"},
+  {sourceSha:B,target:"darwin-arm64",runtimeContractSha256:DIGEST_B,payloadVersion:"6.2.0"},
+ ]){
+  await assert.rejects(waitForExactNativeMainHealth({
+   ...input,readNativePointerImpl:async()=>pointer,
+   fetchImpl:async()=>assert.fail("mismatched durable source identity must never call HTTP"),
+  }),/Installed native pointer does not match/u);
+ }
+ for(const override of [{sourceSha:"bad"},{target:"linux-x64"},{version:"6.2.1-rc"},{runtimeContractSha256:"bad"},
+   {attempts:0},{attempts:500},{transactionRoot:"relative"}]){
+  await assert.rejects(waitForExactNativeMainHealth({...input,...override,
+   readNativePointerImpl:async()=>assert.fail("invalid identity must not read durable native store"),
+  }),/identity or bounded attempts are invalid/u);
+ }
+});
+
+test("Git-free native health rejects healthy old A process and never compares manual versions alone",async()=>{
+ const input={transactionRoot:STATE,sourceSha:B,target:"win32-x64",
+  version:"6.2.1",runtimeContractSha256:DIGEST_B,attempts:2,sleepImpl:async()=>{},
+  readNativePointerImpl:async()=>({sourceSha:B,target:"win32-x64",runtimeContractSha256:DIGEST_B,payloadVersion:"6.2.1"})};
+ let calls=0;
+ await assert.rejects(waitForExactNativeMainHealth({...input,fetchImpl:async()=>{
+  calls++;
+  return {status:200,json:async()=>({status:{health:{state:"HEALTHY"},server:{version:"6.2.1"},
+    installation:{kind:"managed-main",sourceSha:A,mainNativeSha:A,target:"win32-x64"}}})};
+ }}),/has not converged/u);
+ assert.equal(calls,2);
+});
+
+test("Git-free native health detects native A/B pointer drift after a perfect B HTTP response",async()=>{
+ const input={transactionRoot:STATE,sourceSha:B,target:"win32-x64",
+  version:"6.2.1",runtimeContractSha256:DIGEST_B,attempts:1};
+ let reads=0;
+ await assert.rejects(waitForExactNativeMainHealth({...input,
+  readNativePointerImpl:async()=>({sourceSha:++reads===1?B:A,
+   target:"win32-x64",runtimeContractSha256:DIGEST_B,payloadVersion:"6.2.1"}),
+  fetchImpl:async()=>({status:200,json:async()=>({status:{health:{state:"HEALTHY"},
+   server:{version:"6.2.1"},installation:{kind:"managed-main",sourceSha:B,mainNativeSha:B,target:"win32-x64"}}})}),
+ }),/has not converged/u);
+ assert.equal(reads,2);
+});
+
+
+function signedMacHandoffFixture(previous={kind:"stable",version:"6.2.0"}){
+ const events=[];
+ let receiptStatus="admitted";
+ const prior=previous.kind==="main"?{
+  sourceSha:A,target:"darwin-arm64",runtimeContractSha256:DIGEST_A,
+ }:null;
+ const descriptor={previous};
+ const input={
+  transactionRoot:STATE,transactionId:TX,sourceSha:B,
+  target:"darwin-arm64",version:"6.2.1",
+  runtimeContractSha256:DIGEST_B,previousVersion:previous.kind==="stable"?previous.version:null,
+  lifecycle:{
+   previousPointer:prior,
+   activate:async()=>{events.push("select native B + mac link B + apphost B")},
+   rollback:async()=>{events.push("restore mac link A + native pointer A + apphost A")},
+   commit:async()=>{events.push("check B pointers")},
+  },
+  assertWorkerImpl:async()=>{events.push("detached worker owner")},
+  releaseOwnerImpl:async args=>{
+   events.push("release terminal native lock");
+   assert.equal(args.transactionId,TX);
+  },
+  readReceiptImpl:async()=>({status:receiptStatus}),
+  writeReceiptImpl:async({status})=>{receiptStatus=status;return {status}},
+  assertOwnerImpl:async args=>{
+   events.push("native owner");
+   assert.equal(args.sourceSha,B);
+   assert.equal(args.transactionId,TX);
+  },
+  readDescriptorImpl:async args=>{
+   events.push("durable descriptor");
+   assert.equal(args.transactionId,TX);
+   assert.equal(args.expected.targetSha,B);
+   return descriptor;
+  },
+  restartImpl:async()=>events.push("launchctl restart"),
+  verifyNativeImpl:async args=>{
+   events.push("health native "+args.sourceSha.slice(0,1));
+   assert.equal(args.transactionRoot,STATE);
+   return true;
+  },
+  verifyStableImpl:async(v,opts)=>{
+   events.push("health stable "+v);
+   assert.equal(opts.expectedInstallationKind,"managed");
+   return true;
+  },
+  inspectStoredImpl:async args=>{
+   events.push("inspect durable native "+args.sourceSha.slice(0,1));
+   assert.equal(args.expectedRuntimeContractSha256,DIGEST_A);
+   return {sourceSha:A,target:"darwin-arm64",runtimeContractSha256:DIGEST_A,
+    payloadVersion:"6.2.1",releaseDir:"/owned/native/A"};
+  },
+ };
+ return {input,events,getReceipt:()=>receiptStatus};
+}
+
+test("signed Git-free macOS handoff restarts actual B before checking exact SHA twice and declaring healthy",async()=>{
+ const {input,events}=signedMacHandoffFixture();
+ const result=await runEquinoxLocalSignedMacNativeHandoff(input);
+ assert.equal(result.status,"healthy");
+ assert.equal(result.sourceSha,B);
+ assert.deepEqual(events,["detached worker owner","durable descriptor","native owner","select native B + mac link B + apphost B",
+  "launchctl restart","health native 2","check B pointers","health native 2","release terminal native lock"]);
+});
+
+test("signed macOS B failed health restores old Stable A then restarts and verifies Stable installation kind",async()=>{
+ const {input,events}=signedMacHandoffFixture();
+ const result=await runEquinoxLocalSignedMacNativeHandoff({...input,
+  verifyNativeImpl:async()=>{events.push("unhealthy B");throw Error("old SHA still serves HTTP")},
+ });
+ assert.equal(result.status,"rolled_back");
+ assert.match(result.targetError,/old SHA/u);
+ assert.deepEqual(events,["detached worker owner","durable descriptor","native owner","select native B + mac link B + apphost B",
+  "launchctl restart","unhealthy B","restore mac link A + native pointer A + apphost A",
+  "launchctl restart","health stable 6.2.0","release terminal native lock"]);
+});
+
+test("same displayed version native A and B roll back with original A full SHA not the semantic version",async()=>{
+ const {input,events}=signedMacHandoffFixture({
+  kind:"main",sourceSha:A,target:"darwin-arm64",runtimeContractSha256:DIGEST_A,
+ });
+ const result=await runEquinoxLocalSignedMacNativeHandoff({...input,
+  verifyNativeImpl:async args=>{
+   events.push("health native "+args.sourceSha.slice(0,1));
+   if(args.sourceSha===B)throw Error("new B cannot boot");
+   assert.equal(args.sourceSha,A);
+   assert.equal(args.version,"6.2.1");
+   assert.equal(args.runtimeContractSha256,DIGEST_A);
+   return true;
+  },
+ });
+ assert.equal(result.status,"rolled_back");
+ assert.deepEqual(events,["detached worker owner","durable descriptor","native owner","select native B + mac link B + apphost B",
+  "launchctl restart","health native 2","restore mac link A + native pointer A + apphost A",
+  "launchctl restart","inspect durable native 1","health native 1","release terminal native lock"]);
+});
+
+test("failed B and failed A health stays explicitly unrecovered, does not report healthy or rolled back",async()=>{
+ const {input,events}=signedMacHandoffFixture();
+ await assert.rejects(runEquinoxLocalSignedMacNativeHandoff({...input,
+  verifyNativeImpl:async()=>false,
+  verifyStableImpl:async()=>{events.push("A cannot boot");throw Error("Stable A health missing");},
+ }),error=>{
+  assert.match(error.message,/rollback A health is unverified/u);
+  assert.match(error.cause.message,/Stable A health missing/u);
+  return true;
+ });
+ assert.deepEqual(events,["detached worker owner","durable descriptor","native owner","select native B + mac link B + apphost B",
+  "launchctl restart","restore mac link A + native pointer A + apphost A",
+  "launchctl restart","A cannot boot"]);
+});
+
+test("signed native preflight refuses wrong descriptor A and missing/malformed identity before any restart",async()=>{
+ const {input,events}=signedMacHandoffFixture();
+ for(const mutation of [
+  {sourceSha:"f".repeat(40)},
+  {target:"win32-x64"},
+  {transactionId:"bad"},
+  {previousVersion:"6.2.1"},
+  {readDescriptorImpl:async()=>({previous:{kind:"main",sourceSha:A,target:"darwin-arm64",runtimeContractSha256:DIGEST_A}})},
+ ]){
+  await assert.rejects(runEquinoxLocalSignedMacNativeHandoff({...input,...mutation}));
+ }
+ assert.deepEqual(events,["detached worker owner","durable descriptor","detached worker owner","durable descriptor","native owner","detached worker owner","native owner"],
+   "invalid handoff cannot restart or mutate native installation");
+});
+
+test("signed native B second SHA-health loss triggers A rollback even after first B health and pointer check",async()=>{
+ const {input,events}=signedMacHandoffFixture();
+ let checks=0;
+ const result=await runEquinoxLocalSignedMacNativeHandoff({...input,
+  verifyNativeImpl:async()=>{checks++;events.push("B health "+checks);return checks===1},
+ });
+ assert.equal(result.status,"rolled_back");
+ assert.equal(checks,2);
+ assert.deepEqual(events,["detached worker owner","durable descriptor","native owner","select native B + mac link B + apphost B",
+  "launchctl restart","B health 1","check B pointers","B health 2",
+  "restore mac link A + native pointer A + apphost A","launchctl restart","health stable 6.2.0","release terminal native lock"]);
+});
+
+
+test("signed native durable receipt replay resumes rollback without retrying failed B",async()=>{
+ const {input,events}=signedMacHandoffFixture();
+ const status=[];
+ const result=await runEquinoxLocalSignedMacNativeHandoff({...input,
+  readReceiptImpl:async()=>({status:"rolling_back"}),
+  writeReceiptImpl:async r=>{status.push(r.status);return r},
+ });
+ assert.equal(result.status,"rolled_back");
+ assert.deepEqual(status,["rolled_back"]);
+ assert.deepEqual(events,["detached worker owner","durable descriptor","native owner",
+  "restore mac link A + native pointer A + apphost A",
+  "launchctl restart","health stable 6.2.0","release terminal native lock"]);
+});
+
+test("signed-native terminal B health replay releases owner without reactivating/restarting B",async()=>{
+ const {input,events}=signedMacHandoffFixture();
+ const result=await runEquinoxLocalSignedMacNativeHandoff({...input,
+  readReceiptImpl:async()=>({status:"healthy"}),
+ });
+ assert.deepEqual(result,{status:"healthy",sourceSha:B,target:"darwin-arm64",
+  version:"6.2.1",recovered:true});
+ assert.deepEqual(events,["detached worker owner","durable descriptor","native owner",
+  "check B pointers","health native 2","release terminal native lock"]);
+ assert.equal(events.includes("launchctl restart"),false);
+});
+
+test("signed-native terminal A rollback replay verifies Stable health before releasing owner without restarting B",async()=>{
+ const {input,events}=signedMacHandoffFixture();
+ const result=await runEquinoxLocalSignedMacNativeHandoff({...input,
+  readReceiptImpl:async()=>({status:"rolled_back"}),
+ });
+ assert.equal(result.status,"rolled_back");
+ assert.equal(result.recovered,true);
+ assert.deepEqual(events,["detached worker owner","durable descriptor","native owner",
+  "restore mac link A + native pointer A + apphost A",
+  "health stable 6.2.0","release terminal native lock"]);
+ assert.equal(events.includes("select native B + mac link B + apphost B"),false);
+ assert.equal(events.includes("launchctl restart"),false);
+});
+
+test("signed-native terminal receipt never releases B without health nor A without verified rollback",async()=>{
+ const f=signedMacHandoffFixture();
+ await assert.rejects(runEquinoxLocalSignedMacNativeHandoff({...f.input,
+  readReceiptImpl:async()=>({status:"healthy"}),
+  verifyNativeImpl:async()=>false,
+  releaseOwnerImpl:async()=>assert.fail("unhealthy B cannot release owner"),
+ }),/Terminal native B failed exact SHA health/u);
+ await assert.rejects(runEquinoxLocalSignedMacNativeHandoff({...f.input,
+  readReceiptImpl:async()=>({status:"rolled_back"}),
+  verifyStableImpl:async()=>false,
+  releaseOwnerImpl:async()=>assert.fail("unhealthy A cannot release owner"),
+ }),/Restored Stable A did not pass runtime health/u);
+ await assert.rejects(runEquinoxLocalSignedMacNativeHandoff({...f.input,
+  readReceiptImpl:async()=>({status:"rollback_failed"}),
+  releaseOwnerImpl:async()=>assert.fail("failed A cannot release owner"),
+ }),/unrecovered terminal rollback failure/u);
+});
+
+
+test("unhealthy A recovery persists rollback_failed and never reports success",async()=>{
+ const {input,getReceipt}=signedMacHandoffFixture();
+ await assert.rejects(runEquinoxLocalSignedMacNativeHandoff({...input,
+  verifyNativeImpl:async()=>false,verifyStableImpl:async()=>false,
+ }),/rollback A health is unverified/u);
+ assert.equal(getReceipt(),"rollback_failed");
+});
+
+
+test("crash after B verified but before terminal receipt recovers exact healthy B without a second activation or restart",async()=>{
+ const {input,events}=signedMacHandoffFixture();
+ const phases=[];
+ const result=await runEquinoxLocalSignedMacNativeHandoff({...input,
+  readReceiptImpl:async()=>({status:"activating"}),
+  writeReceiptImpl:async arg=>{phases.push(arg.status);return arg},
+ });
+ assert.equal(result.status,"healthy");
+ assert.deepEqual(phases,["healthy"]);
+ assert.deepEqual(events,["detached worker owner","durable descriptor","native owner",
+  "health native 2","check B pointers","health native 2","release terminal native lock"]);
+ assert.equal(events.includes("launchctl restart"),false);
+});
+
+test("crash while activating B but no exact healthy B rolls back A without restarting B",async()=>{
+ const {input,events}=signedMacHandoffFixture();
+ const phases=[];
+ const result=await runEquinoxLocalSignedMacNativeHandoff({...input,
+  readReceiptImpl:async()=>({status:"activating"}),
+  writeReceiptImpl:async arg=>{phases.push(arg.status);return arg},
+  verifyNativeImpl:async()=>{events.push("unhealthy B");return false},
+ });
+ assert.equal(result.status,"rolled_back");
+ assert.deepEqual(phases,["rolling_back","rolled_back"]);
+ assert.deepEqual(events,["detached worker owner","durable descriptor","native owner",
+  "unhealthy B","restore mac link A + native pointer A + apphost A",
+  "launchctl restart","health stable 6.2.0","release terminal native lock"]);
+});
+
+test("lock archive failure after healthy B never restarts or mutates A and preserves terminal receipt",async()=>{
+ const {input,events,getReceipt}=signedMacHandoffFixture();
+ await assert.rejects(runEquinoxLocalSignedMacNativeHandoff({...input,
+  releaseOwnerImpl:async()=>{events.push("archive failed");throw Error("disk full")},
+ }),/disk full/u);
+ assert.equal(getReceipt(),"healthy");
+ assert.deepEqual(events,["detached worker owner","durable descriptor","native owner","select native B + mac link B + apphost B",
+  "launchctl restart","health native 2","check B pointers","health native 2","archive failed"]);
+ assert.equal(events.includes("restore mac link A + native pointer A + apphost A"),false);
+});
+
+test("lock archive failure after verified A rollback preserves the rolled_back terminal receipt",async()=>{
+ const {input,events,getReceipt}=signedMacHandoffFixture();
+ await assert.rejects(runEquinoxLocalSignedMacNativeHandoff({...input,
+  verifyNativeImpl:async()=>false,
+  releaseOwnerImpl:async()=>{events.push("archive failed");throw Error("archive unavailable")},
+ }),/archive unavailable/u);
+ assert.equal(getReceipt(),"rolled_back");
+ assert.equal(events.includes("release terminal native lock"),false);
+ assert.equal(events.includes("restore mac link A + native pointer A + apphost A"),true);
+});
+
+
+test("signed native detached worker rejects fake or duplicate launchd PID before transaction mutation",async()=>{
+ const assertWorker=async ({uid=501,pid=1234,output,transactionId=TX})=>
+  assertEquinoxLocalSignedMacWorkerProcess({
+   transactionId,uid,pid,execFileImpl:async(executable,args,opts)=>{
+    assert.equal(executable,"/bin/launchctl");
+    assert.deepEqual(args,["print","gui/501/dev.equinox.local.main-update."+"a".repeat(32)]);
+    assert.equal(opts.timeout,5000);
+    return {stdout:output};
+   },
+  });
+ const valid="state = running\n pid = 1234\n";
+ assert.equal((await assertWorker({output:valid})).pid,1234);
+ for(const output of ["state = running\n pid = 2222\n","state = stopped\n pid = 1234\n",
+    "state = running\n pid = not-a-number\n","state = running\n"]){
+  await assert.rejects(assertWorker({output}),/not the running owner/u);
+ }
+ await assert.rejects(assertWorker({uid:0,pid:1234,output:valid}),/requires valid launchd/u);
+ await assert.rejects(assertWorker({uid:501,pid:1,output:valid}),/requires valid launchd/u);
+});
+
+test("signed native handoff cannot touch even its descriptor when launchd worker owner is absent",async()=>{
+ const {input,events}=signedMacHandoffFixture();
+ await assert.rejects(runEquinoxLocalSignedMacNativeHandoff({...input,
+  assertWorkerImpl:async()=>{throw new Error("foreign launchd worker");},
+ }),/foreign launchd worker/u);
+ assert.deepEqual(events,[]);
+});
+
+
+async function signedNativeWorkerFixture(t){
+ const tmp=await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(),"equinox-main-signed-cli-")));
+ t.after(()=>fs.rm(tmp,{recursive:true,force:true}));
+ const root=path.join(tmp,"Library","Application Support","Equinox Local","main-update");
+ const target="darwin-arm64";
+ const release=path.join(root,"native-store",target,B,"release");
+ const workerPath=path.join(release,"equinox-local-main-update-worker.js");
+ const nodePath=path.join(release,"runtime","node","bin","node");
+ const selectorPath=path.join(path.dirname(release),"signed-selector.json");
+ await fs.mkdir(path.dirname(nodePath),{recursive:true,mode:0o700});
+ await fs.writeFile(workerPath,"// packaged B worker",{mode:0o600});
+ await fs.writeFile(nodePath,"// product-owned Node 26",{mode:0o700});
+ const keyId="native-worker-ephemeral-test";
+ const {privateKey,publicKey}=generateKeyPairSync("ed25519");
+ const signed=createSignedMainInstallPointer({
+  sourceSha:B,version:"6.2.1",keyId,privateKey,
+  publishedAt:"2026-10-28T01:00:00.000Z",
+  nativeManifests:["darwin-arm64","darwin-x64","win32-arm64","win32-x64"].map(arch=>({
+   schemaVersion:1,channel:"main",sourceSha:B,target:arch,
+   runtimeContractSha256:DIGEST_B,
+   artifact:{name:"equinox-local-main-"+B+"-"+arch+
+    (arch.startsWith("win32-")?".zip":".tar.gz"),sha256:"d".repeat(64),bytes:42},
+  })),
+ });
+ await fs.writeFile(selectorPath,JSON.stringify(signed),{mode:0o600});
+ const descriptor={schemaVersion:1,channel:"main",targetSha:B,target,
+  targetRuntimeContractSha256:DIGEST_B,previous:{kind:"stable",version:"6.2.0"}};
+ const events=[];
+ const opts={
+  argv:["--signed-native","--transaction-id",TX,"--transaction-root",root],
+  workerPath,nodePath,env:{HOME:tmp},platform:"darwin",arch:"arm64",
+  assertWorkerImpl:async arg=>{events.push("launchd owner");assert.equal(arg.transactionId,TX)},
+  readDescriptorImpl:async arg=>{
+   events.push("descriptor");
+   assert.deepEqual(arg.expected,{targetSha:B,target});
+   return descriptor;
+  },
+  inspectStoredImpl:async arg=>{
+   events.push("store fingerprint");
+   assert.equal(arg.sourceSha,B);
+   assert.equal(arg.expectedRuntimeContractSha256,DIGEST_B);
+   return {sourceSha:B,target,releaseDir:release,runtimeContractSha256:DIGEST_B,
+    payloadVersion:"6.2.1",manifest:{artifactSha256:"d".repeat(64),artifactBytes:42}};
+  },
+  verifyPointerImpl:(raw,options)=>{
+   events.push("Ed25519 signature");
+   return validateSignedMainInstallPointer(raw,{...options,
+    publicKeys:{[keyId]:publicKey.export({type:"spki",format:"pem"})}});
+  },
+  resolveInstallationImpl:async arg=>{
+   events.push("managed installation");
+   assert.equal(arg.transactionRoot,root);
+   return {managed:true,selfUpdateSupported:true,target,installRoot:path.dirname(root)};
+  },
+  recoverLifecycleImpl:async arg=>{
+   events.push("recovered A/B");
+   assert.deepEqual(arg.transition,{mode:"artifact_required",target,targetSha:B,
+    targetRuntimeContractSha256:DIGEST_B});
+   return {stored:{releaseDir:release},descriptor,
+    previousPointer:null,activate:async()=>{},rollback:async()=>{},commit:async()=>{}};
+  },
+  handoffImpl:async arg=>{
+   events.push("native restart-health");
+   assert.equal(arg.sourceSha,B);
+   assert.equal(arg.version,"6.2.1");
+   assert.equal(arg.previousVersion,"6.2.0");
+   return {status:"healthy",sourceSha:B};
+  },
+ };
+ return {opts,events,release,root,selectorPath,workerPath,nodePath,tmp};
+}
+
+test("the actual packaged signed-native worker CLI verifies immutable B and dispatches the SAME A/B native handoff without Git",async t=>{
+ const f=await signedNativeWorkerFixture(t);
+ const result=await runEquinoxLocalSignedMacNativeWorker(f.opts);
+ assert.deepEqual(result,{status:"healthy",sourceSha:B});
+ assert.deepEqual(f.events,["launchd owner","descriptor","store fingerprint",
+  "Ed25519 signature","managed installation","recovered A/B","native restart-health"]);
+});
+
+test("signed-native worker CLI rejects forged identity/ambient Node and malformed arguments before a launchd action",async t=>{
+ const f=await signedNativeWorkerFixture(t);
+ for(const patch of [
+  {argv:["--transaction-id",TX,"--source-root",SOURCE,"--transaction-root",f.root]},
+  {argv:["--signed-native","--transaction-id",TX,"--transaction-root",f.root,"--source-root",SOURCE]},
+  {platform:"win32"},{arch:"x64"},{nodePath:process.execPath},
+  {workerPath:path.join(f.tmp,"fake.js")},
+  {env:{HOME:path.join(f.tmp,"other")}},
+ ]){
+  await assert.rejects(runEquinoxLocalSignedMacNativeWorker({...f.opts,...patch}));
+ }
+ assert.deepEqual(f.events,[]);
+});
+
+test("signed-native worker CLI fails closed on attacker-provided selector before recovering or starting B",async t=>{
+ const f=await signedNativeWorkerFixture(t);
+ const fake=JSON.parse(await fs.readFile(f.selectorPath,"utf8"));
+ fake.version="6.2.2";
+ await fs.writeFile(f.selectorPath,JSON.stringify(fake),{mode:0o600});
+ await assert.rejects(runEquinoxLocalSignedMacNativeWorker(f.opts),/signature|signing/u);
+ assert.deepEqual(f.events,["launchd owner","descriptor","store fingerprint","Ed25519 signature"]);
+ f.events.length=0;
+ await fs.unlink(f.selectorPath);
+ const foreign=path.join(f.tmp,"foreign.json");
+ await fs.writeFile(foreign,"foreign",{mode:0o600});
+ await fs.symlink(foreign,f.selectorPath);
+ await assert.rejects(runEquinoxLocalSignedMacNativeWorker(f.opts),/private normal file/u);
+ assert.equal(await fs.readFile(foreign,"utf8"),"foreign");
+ assert.deepEqual(f.events,["launchd owner","descriptor","store fingerprint"]);
+});
+
+test("signed-native worker CLI rejects a mismatched stored B digest and never touches the app",async t=>{
+ const f=await signedNativeWorkerFixture(t);
+ await assert.rejects(runEquinoxLocalSignedMacNativeWorker({...f.opts,
+  inspectStoredImpl:async()=>({sourceSha:B,target:"darwin-arm64",
+   releaseDir:f.release,runtimeContractSha256:DIGEST_B,payloadVersion:"6.2.1",
+   manifest:{artifactSha256:"0".repeat(64),artifactBytes:42}}),
+ }),/differs from production Ed25519 pointer/u);
+ assert.deepEqual(f.events,["launchd owner","descriptor","Ed25519 signature"]);
 });

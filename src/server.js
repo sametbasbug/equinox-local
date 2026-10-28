@@ -56,11 +56,12 @@ import { createEquinoxLocalUpdater, } from "./equinox-local-updater.js";
 import { createEquinoxLocalUpdateCoordinator, } from "./equinox-local-update-coordinator.js";
 import { createEquinoxLocalMainUpdateDiscovery, } from "./equinox-local-main-update.js";
 import { createEquinoxLocalMainApplyController, } from "./equinox-local-main-apply-controller.js";
-import { createEquinoxLocalMainChannelNotice } from "./equinox-local-update-awareness.js";
+import { createEquinoxLocalMainChannelNotice, createEquinoxLocalSignedMainNativeNotice } from "./equinox-local-update-awareness.js";
 import { configureManagedTunnel, getManagedOnboardingStatus, recordManagedAgentCommand, } from "./equinox-local-onboarding.js";
 import { registerRestartRuntimeTool, scheduleEquinoxLocalRestart, scheduleSourceCheckoutRestart, } from "./equinox-local-restart.js";
 import { createMutationPathLockManager, resolveGitCommonDirectory, } from "./equinox-local-mutation-lock.js";
 import { scheduleEquinoxLocalUninstall, } from "./equinox-local-uninstall.js";
+import { scheduleEquinoxLocalSignedNativeMacInstaller, scheduleEquinoxLocalSignedNativeWindowsInstaller } from "./equinox-local-signed-main-installer-handoff.js";
 import { getEquinoxLocalDoctorStatus, registerSystemDoctorTool, } from "./equinox-local-doctor.js";
 import { inspectSourceCheckoutVersion, inspectSourcePeekabooRuntime, inspectSourceTunnelRuntime, } from "./equinox-local-source-runtime.js";
 import { EQUINOX_LOCAL_UPDATE_KEYS, } from "./equinox-local-update-keys.js";
@@ -356,7 +357,9 @@ export async function createEquinoxLocalRuntime({ platform = process.platform, a
     });
     const equinoxLocalUpdater = createEquinoxLocalUpdater({
         currentVersion: SERVER_VERSION,
-        installation: equinoxLocalInstallation,
+        installation: equinoxLocalInstallation.kind === "managed-main"
+            ? { ...equinoxLocalInstallation, selfUpdateSupported: false }
+            : equinoxLocalInstallation,
         publicKeys: EQUINOX_LOCAL_UPDATE_KEYS,
     });
     const equinoxLocalUpdateCoordinator = createEquinoxLocalUpdateCoordinator({
@@ -372,7 +375,35 @@ export async function createEquinoxLocalRuntime({ platform = process.platform, a
         discovery: equinoxLocalMainUpdateDiscovery,
     });
     const equinoxMainChannelNotice = createEquinoxLocalMainChannelNotice();
+    const signedNativeMainNotice = equinoxLocalInstallation.kind === "managed-main"
+        ? createEquinoxLocalSignedMainNativeNotice({
+            installedSha: equinoxLocalInstallation.mainNativeSha,
+            target: equinoxLocalInstallation.target,
+        })
+        : null;
+    // Detached shell spawn acknowledges ONLY that the original installed
+    // external installer started; it is not an A/B health confirmation.
+    let signedMainInstallerRequestedSha = null;
+    let signedMainInstallerRequestedAt = null;
+    let signedMainInstallerError = null;
+    const signedMainInstallerPending = () => {
+        if (!signedMainInstallerRequestedSha || signedMainInstallerRequestedAt === null)
+            return false;
+        if (Date.now() - signedMainInstallerRequestedAt < 5 * 60_000)
+            return true;
+        signedMainInstallerError = "The signed Main external installer did not confirm a new running SHA within five minutes. Review its private handoff log and transaction recovery before retrying.";
+        signedMainInstallerRequestedSha = null;
+        signedMainInstallerRequestedAt = null;
+        return false;
+    };
     const checkInstalledChannelForUpdates = async ({ force = false } = {}) => {
+        if (equinoxLocalInstallation.kind === "managed-main") {
+            // This is a BOUNDED read-only original production-signed Ed25519
+            // selector check. The old Git source Main/Stable updater is not a
+            // fallback for a SHA-addressed native installation.
+            await signedNativeMainNotice?.check({ force });
+            return;
+        }
         if (["source", "managed-source"].includes(equinoxLocalInstallation.kind)) {
             await equinoxLocalMainUpdateDiscovery.check({ force });
         }
@@ -389,10 +420,31 @@ export async function createEquinoxLocalRuntime({ platform = process.platform, a
     const getCombinedUpdateStatus = async () => Object.freeze({
         ...equinoxLocalUpdateCoordinator.snapshot(),
         mainNotice: equinoxMainChannelNotice.snapshot(),
-        main: Object.freeze({
-            ...equinoxLocalMainUpdateDiscovery.snapshot(),
-            ...await equinoxLocalMainApplyController.reconcile(),
-        }),
+        main: equinoxLocalInstallation.kind === "managed-main" && signedNativeMainNotice
+            ? Object.freeze((() => {
+                const signed = signedNativeMainNotice.snapshot();
+                return {
+                    mode: "signed-native", checkSupported: true, channel: "main",
+                    state: signed.status === "available" ? "behind" :
+                        signed.status === "up_to_date" ? "up_to_date" :
+                            signed.status === "unavailable" ? "unavailable" : "unknown",
+                    currentSha: signed.installedSha, targetSha: signed.targetSha,
+                    version: signed.version, checkedAt: signed.checkedAt,
+                    lastError: signed.lastError,
+                    // Only the original external macOS shell may start an update.
+                    // No Git/Stable fallback or Windows WPF direct activation.
+                    applyAvailable: ["darwin", "win32"].includes(equinoxLocalInstallation.platform) &&
+                        ["available", "up_to_date"].includes(signed.status) && !signedMainInstallerPending() &&
+                        !signedMainInstallerError,
+                    applying: false, applyError: signedMainInstallerError,
+                    restartScheduledFor: signedMainInstallerPending() ? signedMainInstallerRequestedSha : null,
+                    reason: signed.lastError,
+                };
+            })())
+            : Object.freeze({
+                ...equinoxLocalMainUpdateDiscovery.snapshot(),
+                ...await equinoxLocalMainApplyController.reconcile(),
+            }),
     });
     async function noteManagedAgentCommand() {
         try {
@@ -2120,7 +2172,12 @@ export async function createEquinoxLocalRuntime({ platform = process.platform, a
                 },
                 installation: {
                     kind: equinoxLocalInstallation.kind,
-                    sourceSha: equinoxLocalInstallation.kind === "managed-source" ? equinoxLocalInstallation.sourceSha : null,
+                    sourceSha: ["managed-source", "managed-main"].includes(equinoxLocalInstallation.kind)
+                        ? equinoxLocalInstallation.sourceSha : null,
+                    ...(equinoxLocalInstallation.mainNativeSha
+                        ? { mainNativeSha: equinoxLocalInstallation.mainNativeSha,
+                            target: equinoxLocalInstallation.target }
+                        : {}),
                 },
                 chatgptConnection,
                 config: {
@@ -2245,11 +2302,45 @@ export async function createEquinoxLocalRuntime({ platform = process.platform, a
             await checkInstalledChannelForUpdates({ force: true });
             if (["source", "managed-source"].includes(equinoxLocalInstallation.kind))
                 equinoxLocalMainApplyController.resetError();
+            if (equinoxLocalInstallation.kind === "managed-main" && !signedMainInstallerPending())
+                signedMainInstallerError = null;
             return getCombinedUpdateStatus();
         },
-        applyUpdate: async () => withMutationLocks(["local-update"], async () => (equinoxLocalInstallation.kind === "managed-source"
-            ? equinoxLocalMainApplyController.apply()
-            : equinoxLocalUpdateCoordinator.apply())),
+        applyUpdate: async () => withMutationLocks(["local-update"], async () => {
+            if (equinoxLocalInstallation.kind === "managed-main") {
+                if (signedMainInstallerPending()) {
+                    throw Object.assign(new Error("The original signed Main installer is already scheduled."), { statusCode: 409 });
+                }
+                const checked = await signedNativeMainNotice?.check({ force: true });
+                if (!checked || !["available", "up_to_date"].includes(checked.status) ||
+                    typeof checked.targetSha !== "string" ||
+                    checked.installedSha !== equinoxLocalInstallation.mainNativeSha) {
+                    throw Object.assign(new Error("No authenticated Main installer SHA is currently available."), { statusCode: 409 });
+                }
+                signedMainInstallerError = null;
+                try {
+                    const schedule = equinoxLocalInstallation.platform === "win32"
+                        ? scheduleEquinoxLocalSignedNativeWindowsInstaller
+                        : scheduleEquinoxLocalSignedNativeMacInstaller;
+                    const handoff = await schedule({
+                        installation: equinoxLocalInstallation, homeDir: runtimeHomeDir,
+                        sourceEnv: runtimeEnv,
+                    });
+                    // The detached original .sh re-verifies the actual NEW selector
+                    // before it can schedule the signed native B-owned worker.
+                    signedMainInstallerRequestedSha = checked.targetSha;
+                    signedMainInstallerRequestedAt = Date.now();
+                    return Object.freeze({ ...handoff, targetSha: checked.targetSha });
+                }
+                catch {
+                    signedMainInstallerError = "The original signed Main installer could not be launched. No update was started.";
+                    throw Object.assign(new Error(signedMainInstallerError), { statusCode: 503 });
+                }
+            }
+            return equinoxLocalInstallation.kind === "managed-source"
+                ? equinoxLocalMainApplyController.apply()
+                : equinoxLocalUpdateCoordinator.apply();
+        }),
         chooseFolder: chooseLocalFolder,
         openAgentBrowser: async () => withMutationLocks(["browser:agent"], async () => (equinoxAgentBrowser.launch({ setup: false }))),
         updateBrowserSettings: async (settings) => {

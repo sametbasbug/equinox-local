@@ -109,6 +109,41 @@ internal sealed class SingleInstanceCoordinator : IDisposable
                         await writer.WriteLineAsync($"error:{message}").ConfigureAwait(false);
                     }
                 }
+                else if (command is not null && command.StartsWith("main-native-proof:", StringComparison.Ordinal))
+                {
+                    var transactionId = command["main-native-proof:".Length..];
+                    await using var writer = new StreamWriter(server, new UTF8Encoding(false), leaveOpen: true) { AutoFlush = true };
+                    try
+                    {
+                        MainUpdateHandoff.LaunchSignedNativeProofOnly(transactionId);
+                        // A detached read-only owner is NOT native activation.
+                        await writer.WriteLineAsync("proof-started-read-only").ConfigureAwait(false);
+                    }
+                    catch (Exception error)
+                    {
+                        var message = error.Message.Replace('\r', ' ').Replace('\n', ' ');
+                        if (message.Length > 200) message = message[..200];
+                        await writer.WriteLineAsync($"error:{message}").ConfigureAwait(false);
+                    }
+                }
+                else if (command is not null && command.StartsWith("main-native-audit:", StringComparison.Ordinal))
+                {
+                    var transactionId = command["main-native-audit:".Length..];
+                    await using var writer = new StreamWriter(server, new UTF8Encoding(false), leaveOpen: true) { AutoFlush = true };
+                    try
+                    {
+                        // Independent original WPF user-session read-only
+                        // audit. Does not spawn B or grant Guardian mutation.
+                        MainUpdateHandoff.AuditSignedNativeWithoutGrant(transactionId);
+                        await writer.WriteLineAsync("verified-read-only").ConfigureAwait(false);
+                    }
+                    catch (Exception error)
+                    {
+                        var message = error.Message.Replace('\r', ' ').Replace('\n', ' ');
+                        if (message.Length > 200) message = message[..200];
+                        await writer.WriteLineAsync($"error:{message}").ConfigureAwait(false);
+                    }
+                }
                 else if (command is not null && command.StartsWith("main-update:", StringComparison.Ordinal))
                 {
                     var transactionId = command["main-update:".Length..];
