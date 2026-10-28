@@ -11,8 +11,8 @@ Set-StrictMode -Version 2.0
 $Target = $null
 $MaxArtifactBytes = 1073741824
 $MainVerifyUrl = 'https://local.sametbasbug.dev/downloads/updates/install-main-verify.mjs'
-$MainVerifySha256 = 'df0aea950440d6efad47b92398a0a8bdc4a63d4db0a26d4db05a0b137c9989c8'
-$MainVerifyBytes = 9396
+$MainVerifySha256 = '7af08a6b6ad4ff0223024d338b1260c7aba7af77f61d8e3398cd950b1dd397c9'
+$MainVerifyBytes = 9464
 $MainNodeVersion = '26.12.1'
 
 function Fail([string]$Message) { throw "Equinox Local installer: $Message" }
