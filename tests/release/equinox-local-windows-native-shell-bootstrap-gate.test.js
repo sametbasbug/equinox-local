@@ -10,11 +10,11 @@ test("original Windows WPF cannot silently claim stale Stable A when committed G
  const source=await fs.readFile(locator,"utf8");
  const section=source.slice(source.indexOf('if (!File.Exists(installStampPath))'),
   source.indexOf('RequireNormalDirectory(transactionRoot, "Main update state directory")'));
- assert.match(section,/var nativePointerPath = Path.Combine\(transactionRoot, "current-native.json"\)/u);
+ assert.match(section,/var candidateNativePointerPath = Path.Combine\(transactionRoot, "current-native.json"\)/u);
  assert.match(section,/Directory\.EnumerateFileSystemEntries\(transactionRoot, "current-native\.json"/u);
  assert.match(section,/if \(nativePointerPresent\)/u);
  assert.doesNotMatch(section,/if \(File\.Exists\(nativePointerPath\)\)/u);
- assert.match(section,/ResolveNativeRelease\(transactionRoot, nativePointerPath\)/u);
+ assert.match(section,/ResolveNativeRelease\(transactionRoot, candidateNativePointerPath\)/u);
  assert.match(section,/production Ed25519 and independent Guardian admission/u);
  assert.ok(section.indexOf("nativePointerPresent")<
    section.indexOf("WindowsManagedReleaseLocator.ResolveCurrentRelease()"));

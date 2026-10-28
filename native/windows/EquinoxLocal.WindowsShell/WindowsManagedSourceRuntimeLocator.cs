@@ -45,7 +45,7 @@ internal static partial class WindowsManagedSourceRuntimeLocator
             // installed or execute the B Node without independent original
             // production-root signature and Guardian acceptance. Until the
             // original signed-native WPF handoff is implemented, fail closed.
-            var nativePointerPath = Path.Combine(transactionRoot, "current-native.json");
+            var candidateNativePointerPath = Path.Combine(transactionRoot, "current-native.json");
             // File.Exists is FALSE for a dangling symlink/reparse point.
             // An attacker must not be able to turn an invalid Main pointer
             // into permission to launch an unrelated stale Stable A.
@@ -54,7 +54,7 @@ internal static partial class WindowsManagedSourceRuntimeLocator
                     SearchOption.TopDirectoryOnly).Any();
             if (nativePointerPresent)
             {
-                _ = ResolveNativeRelease(transactionRoot, nativePointerPath);
+                _ = ResolveNativeRelease(transactionRoot, candidateNativePointerPath);
                 throw new InvalidDataException(
                     "Git-free signed Main WPF launch requires original production Ed25519 and independent Guardian admission; Stable fallback is forbidden.");
             }
