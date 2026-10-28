@@ -8492,9 +8492,17 @@ async function browserStatus() {
   const consentAccepted = hasCurrentBrowserControlConsent();
   const mayInspectBrowser = browserEnabled && consentAccepted;
   const tabs = mayInspectBrowser ? await browserTabsList() : [];
+  // Chrome exposes the installed extension's own provenance without a new
+  // management permission. `development` means loaded unpacked, not Web Store.
+  const management = (globalThis as typeof globalThis & {
+    chrome?: { management?: { getSelf?: () => Promise<{ installType?: string }> } };
+  }).chrome?.management;
+  const extensionInstallType = await management?.getSelf?.()
+    .then((self) => self.installType ?? null).catch(() => null) ?? null;
   return {
     extensionId: workerRuntime().id,
     extensionVersion: workerRuntime().getManifest().version,
+    extensionInstallType,
     protocolVersion: BRIDGE_PROTOCOL_VERSION,
     controlEnabled: mayInspectBrowser,
     consentAccepted,
