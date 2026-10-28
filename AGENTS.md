@@ -6,8 +6,8 @@ These instructions apply to the entire Equinox Local canonical product repositor
 
 ## Source ownership
 
-- `sametbasbug/equinox-local` is the one canonical product source. Start all product features/fixes, public tests, platform/native work, installer/update changes and contributor PRs here; target this repository's `main`.
-- Private factory/ops tooling is a client of this checkout by canonical repository identity and exact SHA. It may provide explicit external private composition, credentials integration and authorized publication orchestration; ordinary product development, build and tests must not require it.
+- `sametbasbug/equinox-local` is the one canonical product source. Start all product features/fixes, platform/native work, installer/update changes and contributor PRs here; target this repository's `main`.
+- Private factory/ops tooling is a client of this checkout by canonical repository identity and exact SHA. It may provide explicit external private composition, credentials integration and authorized publication orchestration; ordinary product development and build must not require it.
 - Do not edit a private product mirror, export a second writable source tree, backport product commits to factory, or graft private Git history into this repository. Keep the existing public history and AGPL-3.0-only boundary.
 - A factory installation is a local configuration/profile role, not another product lineage. Keep machine-local config, persistent state and secrets outside tracked source; loading an explicit private composition must not make the default public runtime depend on private files.
 - Canonical repository ownership does not enable main-tracking updates by itself, change stable users' channel, authorize publication, or promote the unreleased development version.
@@ -18,7 +18,7 @@ These instructions apply to the entire Equinox Local canonical product repositor
 - Control Center extends the existing loopback backend at `127.0.0.1:24891`; do not add a competing local server.
 - Management APIs must remain loopback-only, bounded, and same-origin/CSRF protected for mutations. Never turn them into a generic shell or arbitrary-command backend.
 - Project and folder access follows the loaded Full/selected Agent Access mode and remains path-contained and fail-closed. Selected mode is limited to configured roots; Full mode may use contained home/absolute folders while filesystem root, protected credential/application-secret areas, traversal and symlink escape remain blocked. Preserve SHA guards, mutation locks, and bounded I/O.
-- Never expose credentials, update-signing secrets, runtime keys, private tokens, raw observability storage paths, or sensitive machine details through MCP, APIs, UI, logs, tests, or fixtures.
+- Never expose credentials, update-signing secrets, runtime keys, private tokens, raw observability storage paths, or sensitive machine details through MCP, APIs, UI, or logs.
 - Keep product source generic. Machine-specific project names, local paths, personal credentials, and private deployment configuration do not belong in the public repository.
 - Optional capabilities must fail independently. Telegram, macOS Peekaboo and other optional integrations must not block the core runtime. On Windows the pinned winapp desktop bridge is required and its unavailability must be surfaced as Attention without preventing diagnosis or repair. Equinox Browser is a required product component for fresh managed onboarding and the supported ChatGPT Web continuity/browser path.
 - macOS Screen Recording and Accessibility permissions belong only to the stable `Equinox Local.app` identity (`dev.equinox.local`). Peekaboo is an internal local/no-remote desktop engine; do not create a separate Peekaboo/Bridge/Terminal/Node TCC permission path.
@@ -40,15 +40,12 @@ These instructions apply to the entire Equinox Local canonical product repositor
 - Managed install/update work must preserve source-checkout development behavior rather than replacing it in place.
 - Ordinary managed-source bootstrap/update must not depend on ambient system Git, npm, Homebrew, Xcode Command Line Tools, Visual Studio build tools, or user PATH discovery. Use product-owned pinned update tooling; the M8 design uses a cross-platform embedded Git distribution plus pinned Node-distribution npm, invoked by absolute product-owned paths. Native dependency installation must use admitted prebuilt payloads and fail closed rather than compiling on the user machine.
 
-## Validation
+## Build and distribution
 
-- For ordinary local iteration, run `npm run check` and `npm run test:fast`.
-- `npm run test:fast` covers recursive unit/browser tests and intentionally leaves release/lifecycle integration coverage to the full suite.
-- Run the full `npm test` suite before release/publication, after release/install/update/native-lifecycle changes, or after broad cross-cutting refactors.
-- Run `git diff --check` before commit/push.
-- Add or update tests for behavior changes, especially security boundaries, updater/rollback behavior, onboarding, Control Center APIs, Telegram recipient isolation, and browser-lane isolation.
-- Release-affecting changes must preserve the established release gates: clean public source, CI/CodeQL, native ARM64/x64 validation, signed stable manifests, and production-domain upgrade smoke for real version bumps.
-- After a successful Equinox Local runtime restart, do not invoke another Equinox Local tool in the same assistant turn. Send the user the final status response immediately, then perform Doctor/status verification after the connector is available in a new turn.
+- The maintainer permanently removed automated tests and acceptance/smoke suites. Do not write, restore, require, or run tests.
+- Retain required native platform packaging, signed Main release publication and production Ed25519/hash/source-integrity checks. Do not downgrade runtime or distribution security checks as a substitute for tests.
+- Static code inspection is allowed. No build, installation or health claim may be made without actual evidence.
+- After a successful Equinox Local runtime restart, do not invoke another Equinox Local tool in the same assistant turn. Verify only in a fresh turn.
 
 ## Architecture references
 
@@ -59,4 +56,8 @@ These instructions apply to the entire Equinox Local canonical product repositor
 
 ## Approved one-Main distribution consolidation (2026-10-27)
 
-The maintainer approved replacing the existing separate Stable/Main/A-B update machinery with **the same external signed PowerShell/shell installer** for both Control Center Update and terminal install/repair, sourcing the latest signed/validated Main commit SHA independent of manually numbered GitHub Releases. The former plans are historical references for security invariants, not authorization to restore a second updater. The phased implementation and proof requirements are tracked in [`docs/plans/one-main-one-installer-one-repo.md`](docs/plans/one-main-one-installer-one-repo.md). The existing verified installer, update and release infrastructure remains in service **until** its replacements pass full native and real-host acceptance; never remove a working production safety gate prematurely. Website sources and Cloudflare production Builds now live in the public `website/` from `main`, with the previous website repository retained strictly as a rollback source; its nested AGENTS.md applies there. Mac mini private Factory composition/keys must remain external and must never be committed here.
+The maintainer approved replacing the existing separate Stable/Main/A-B update machinery with **the same external signed PowerShell/shell installer** for both Control Center Update and terminal install/repair, sourcing the latest signed/validated Main commit SHA independent of manually numbered GitHub Releases. The former plans are historical references for security invariants, not authorization to restore a second updater. The phased implementation and proof requirements are tracked in [`docs/plans/one-main-one-installer-one-repo.md`](docs/plans/one-main-one-installer-one-repo.md). The existing verified installer, update and release infrastructure remains in service **until** the replacement signed Main publisher is live; never remove a working production safety gate prematurely. Website sources and Cloudflare production Builds now live in the public `website/` from `main`, with the previous website repository retained strictly as a rollback source; its nested AGENTS.md applies there. Mac mini private Factory composition/keys must remain external and must never be committed here.
+
+## Maintainer directive (2026-10-28): direct signed reinstall only
+
+All new Main updates and repair actions must invoke the same existing external signed OS installer as first install. Reinstall only owned program files; preserve settings and user data. Do not build or extend a Guardian update engine, rollback engine or A/B updater. The existing runtime shell may keep unrelated runtime helpers until separately retired. The maintainer permanently removed tests, and forbids adding or running them. Finish code before the consolidated push; native build and signed publication gates remain. Do not claim unexecuted validation.

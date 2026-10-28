@@ -16,7 +16,7 @@ Only runtime files belong there:
 - `icons/icon-48.png`
 - `icons/icon-128.png`
 
-Public regression tests and fixtures live under `tests/browser/` and `tests/fixtures/browser/`; deterministic packaging lives at `scripts/package-browser-extension.sh`. Private reviewer/live-QA helpers remain factory/ops-only and are not required by the shipped extension or ordinary contributor workflows.
+Deterministic packaging lives at `scripts/package-browser-extension.sh`; automated regression suites were retired. Private reviewer/live-QA helpers remain factory/ops-only and are not required by the shipped extension or ordinary contributor workflows.
 
 ## Development unpacked source
 

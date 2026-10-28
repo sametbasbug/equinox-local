@@ -77,7 +77,7 @@ function addTargets(targets: Set<string>, values: readonly string[]): void {
   for (const target of values) targets.add(target);
 }
 
-const NON_PRODUCT_MAIN_UPDATE_PREFIXES = Object.freeze(["tests/", ".github/", "docs/"]);
+const NON_PRODUCT_MAIN_UPDATE_PREFIXES = Object.freeze([".github/", "docs/"]);
 const NON_PRODUCT_MAIN_UPDATE_FILES = new Set([
   "AGENTS.md",
   "README.md",

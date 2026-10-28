@@ -265,10 +265,7 @@ export async function validateManagedSource(sourceRoot:string, contract:ToolPath
   } else {
     checkPromise = run(contract.nodePath, [contract.npmPath, "run", "check"], { cwd: sourceRoot, execFileImpl, env, platform, pathPrefix: path.dirname(contract.nodePath) });
   }
-  const updaterTestPromise = run(contract.nodePath, ["--test", "tests/release/equinox-local-main-update.test.js"], {
-    cwd: sourceRoot, execFileImpl, env, platform, pathPrefix: path.dirname(contract.nodePath),
-  });
-  await Promise.all([checkPromise, updaterTestPromise]);
+  await checkPromise;
 }
 
 

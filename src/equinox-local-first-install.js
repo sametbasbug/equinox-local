@@ -1984,29 +1984,9 @@ function parseSignedMainActivateCli(argv) {
     }
     return { signedPointerFile: argv[2] };
 }
-function parseSignedMainRecoverCli(argv) {
-    if (argv.length !== 3 || argv[0] !== "--recover-signed-main" ||
-        argv[1] !== "--transaction-id" ||
-        typeof argv[2] !== "string" || !/^main-[a-f0-9]{32}$/u.test(argv[2])) {
-        throw new Error("Signed Main abandoned admission recovery requires one exact transaction id.");
-    }
-    return { transactionId: argv[2] };
-}
 const invokedPath = process.argv[1] ? path.resolve(process.argv[1]) : null;
 if (invokedPath && path.basename(invokedPath) === path.basename(fileURLToPath(import.meta.url))) {
-    if (process.argv[2] === "--recover-signed-main") {
-        Promise.resolve().then(async () => {
-            const input = parseSignedMainRecoverCli(process.argv.slice(2));
-            const result = await recoverAbandonedSignedMainMacAdmission({
-                transactionId: input.transactionId,
-            });
-            process.stdout.write(JSON.stringify(result) + "\n");
-        }).catch(() => {
-            process.stderr.write("Signed Main abandoned worker recovery denied; owner preserved unless verified safe.\n");
-            process.exitCode = 1;
-        });
-    }
-    else if (process.argv[2] === "--install-main-fresh") {
+    if (process.argv[2] === "--install-main-fresh") {
         Promise.resolve().then(async () => {
             const cli = parseSignedMainStageCli([
                 "--stage-signed-main", ...process.argv.slice(3),
@@ -2045,62 +2025,6 @@ if (invokedPath && path.basename(invokedPath) === path.basename(fileURLToPath(im
             process.stdout.write(JSON.stringify(result) + "\n");
         }).catch(() => {
             process.stderr.write("Windows signed native Main preflight denied; independent Guardian/WPF activation was not attempted.\n");
-            process.exitCode = 1;
-        });
-    }
-    else if (process.argv[2] === "--repair-signed-main") {
-        Promise.resolve().then(async () => {
-            // The same fixed authenticated release helper and original signed
-            // pointer are used for repair: never trust arbitrary CLI paths/code.
-            const cli = parseSignedMainActivateCli(["--activate-signed-main", ...process.argv.slice(3)]);
-            const { data } = await readBoundedNormalFile(cli.signedPointerFile, {
-                minBytes: 200, maxBytes: 16 * 1024, encoding: "utf8",
-                label: "Private original production-signed Main repair selector",
-            });
-            const { repairEquinoxLocalSignedMainMacRuntime } = await import("./equinox-local-signed-main-repair.js");
-            const result = await repairEquinoxLocalSignedMainMacRuntime({
-                signedPointer: JSON.parse(data),
-            });
-            process.stdout.write(JSON.stringify(result) + "\n");
-        }).catch(error => {
-            const tx = typeof error?.transactionId === "string" &&
-                /^main-[a-f0-9]{32}$/u.test(error.transactionId)
-                ? " Transaction " + error.transactionId + " remains locked." : "";
-            process.stderr.write("Exact signed Main repair rejected or health unverified." + tx + "\n");
-            process.exitCode = 1;
-        });
-    }
-    else if (process.argv[2] === "--activate-signed-main") {
-        Promise.resolve().then(async () => {
-            const cli = parseSignedMainActivateCli(process.argv.slice(2));
-            const { data } = await readBoundedNormalFile(cli.signedPointerFile, {
-                minBytes: 200, maxBytes: 16 * 1024, encoding: "utf8",
-                label: "Private production-signed Main activation selector",
-            });
-            const result = await prepareSignedMainInstallerMacActivation({
-                signedPointer: JSON.parse(data),
-            });
-            if (result.status !== "scheduled" && result.status !== "already_healthy") {
-                throw new Error("Same-SHA installation requires explicit repair; no native worker was scheduled.");
-            }
-            process.stdout.write(JSON.stringify(result) + "\n");
-        }).catch(() => {
-            process.stderr.write("Signed Main activation rejected or needs explicit recovery; no success was claimed.\n");
-            process.exitCode = 1;
-        });
-    }
-    else if (process.argv[2] === "--stage-signed-main") {
-        Promise.resolve().then(async () => {
-            const cli = parseSignedMainStageCli(process.argv.slice(2));
-            const { data } = await readBoundedNormalFile(cli.signedPointerFile, {
-                minBytes: 200, maxBytes: 16 * 1024, encoding: "utf8", label: "Private production-signed Main staging selector",
-            });
-            const result = await stageSignedMainInstallerNativeArchive({
-                signedPointer: JSON.parse(data), sourceArchivePath: cli.sourceArchivePath,
-            });
-            process.stdout.write(JSON.stringify(result) + "\n");
-        }).catch(() => {
-            process.stderr.write("Signed Main inactive staging rejected; active installation was not changed.\n");
             process.exitCode = 1;
         });
     }

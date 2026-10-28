@@ -2327,7 +2327,7 @@ export async function createEquinoxLocalRuntime({ platform = process.platform, a
                         sourceEnv: runtimeEnv,
                     });
                     // The detached original .sh re-verifies the actual NEW selector
-                    // before it can schedule the signed native B-owned worker.
+                    // before it can reinstall the verified Main program files.
                     signedMainInstallerRequestedSha = checked.targetSha;
                     signedMainInstallerRequestedAt = Date.now();
                     return Object.freeze({ ...handoff, targetSha: checked.targetSha });

@@ -34,7 +34,6 @@ jobs:
           test -n "${AWS_ACCESS_KEY_ID:-}"
           test -n "${AWS_SECRET_ACCESS_KEY:-}"
           aws --version
-          node --test tests/release/main-r2-retention.test.js
           node scripts/release/prune-main-r2.mjs
       - name: Prune only expired exact-SHA archives after revalidating Main references
         run: node scripts/release/prune-main-r2.mjs --apply

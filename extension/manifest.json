@@ -35,6 +35,14 @@
       "matches": [
         "https://chatgpt.com/*"
       ],
+      "js": ["chatgpt-commentary-visibility.js"],
+      "run_at": "document_start",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://chatgpt.com/*"
+      ],
       "js": [
         "chatgpt-continuation-state.js"
       ],

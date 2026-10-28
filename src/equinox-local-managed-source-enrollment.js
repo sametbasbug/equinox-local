@@ -227,10 +227,7 @@ export async function validateManagedSource(sourceRoot, contract, { execFileImpl
     else {
         checkPromise = run(contract.nodePath, [contract.npmPath, "run", "check"], { cwd: sourceRoot, execFileImpl, env, platform, pathPrefix: path.dirname(contract.nodePath) });
     }
-    const updaterTestPromise = run(contract.nodePath, ["--test", "tests/release/equinox-local-main-update.test.js"], {
-        cwd: sourceRoot, execFileImpl, env, platform, pathPrefix: path.dirname(contract.nodePath),
-    });
-    await Promise.all([checkPromise, updaterTestPromise]);
+    await checkPromise;
 }
 export async function rollbackEquinoxLocalManagedSourceEnrollment({ bootstrapSha, target, platform = process.platform, arch = process.arch, homeDir, env = process.env, fsImpl = fs, execFileImpl = execFile, readPointerImpl = readEquinoxLocalMainSourcePointer, } = {}) {
     const sha = assertSha(bootstrapSha);

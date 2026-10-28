@@ -17,6 +17,7 @@ mkdir -p "$STAGE_DIR"
 
 cat > "$TMP_LIST" <<'FILES'
 bookmarks.js
+chatgpt-commentary-visibility.js
 chatgpt-continuation-state.js
 icons/icon-128.png
 icons/icon-16.png

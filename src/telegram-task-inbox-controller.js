@@ -685,7 +685,11 @@ export function createTelegramTaskInboxController({ store, autoContinueControlle
         const { canonicalUrl, chatBindable, chatSelected } = chatInfo;
         const displayKey = taskDisplayKey(task, canonicalUrl, chatBindable, chatSelected);
         if (!mapping) {
-            if (Date.parse(task.updatedAt) <= Date.parse(state.activatedAt))
+            // Existing capsules may be checkpointed after Telegram activation.
+            // Never announce them as NEW tasks merely because their status changed.
+            if (task.status !== "active" ||
+                !Number.isFinite(Date.parse(task.createdAt ?? "")) ||
+                Date.parse(task.createdAt) <= Date.parse(state.activatedAt))
                 return false;
             const routeId = `r-${randomId()}`.toLowerCase().replace(/[^a-z0-9-]/gu, "").slice(0, 40);
             const sent = await sendCard({ text: taskCardText(task), keyboard: taskKeyboard(task, routeId, canonicalUrl, chatBindable, chatSelected) });
@@ -871,7 +875,11 @@ export function createTelegramTaskInboxController({ store, autoContinueControlle
             return "done";
         }
         catch (error) {
+            // A failed /tasks picker must never look like a successfully ignored
+            // command. Keep the reserved action to prevent unsafe duplicate sends.
             await settleAction(action, "ambiguous", errorMessage(error).slice(0, 180));
+            if (command === "tasks")
+                await sendMessage({ message: "⚠️ Task list could not be opened. Check the Telegram connection and try /tasks again." }).catch(() => { });
             return "ambiguous";
         }
     };

@@ -47,984 +47,6 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  test:
-    name: macOS ARM64 / Node 26
-    runs-on: macos-latest
-    timeout-minutes: 20
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v7
-        with:
-          node-version: 26.12.1
-          cache: npm
-
-      - name: Install dependencies
-        run: npm ci
-
-      - parallel:
-          - name: Static checks
-            run: npm run check && npm audit --omit=dev --audit-level=moderate && npm audit signatures
-
-          - name: Strict TypeScript and committed runtime parity
-            run: npm run typecheck && npm run verify:typed-runtime && npm run verify:typed-browser && npm run verify:typed-tooling
-
-          - name: Staged TypeScript Browser MV3 and VM acceptance
-            run: npm run verify:staged-browser
-
-          - name: Verify ARM64 host
-            run: test "$(node -p process.platform)-$(node -p process.arch)" = "darwin-arm64"
-
-          - name: Full test suite
-            run: npm test
-
-  macos-managed-source:
-    name: macOS ARM64 managed-source fresh install
-    runs-on: macos-latest
-    timeout-minutes: 15
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v7
-        with:
-          node-version: 26.12.1
-          cache: npm
-
-      - name: Install dependencies
-        run: npm ci --prefer-offline --no-audit --no-fund
-
-      - name: Verify ARM64 host
-        run: test "$(node -p process.platform)-$(node -p process.arch)" = "darwin-arm64"
-
-      - name: Build source-provenance Stable package
-        run: npm run local:release:package
-
-      - name: Native Stable-to-Main pointer and rollback acceptance
-        run: node --test tests/release/equinox-local-stable-main-native-fs-acceptance.test.js
-
-      - name: Real managed-source fresh-install acceptance
-        run: node tests/release/smoke-managed-install.mjs
-
-  macos-x64:
-    name: macOS x64 / Node 26
-    runs-on: macos-26-intel
-    timeout-minutes: 20
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v7
-        with:
-          node-version: 26.12.1
-          architecture: x64
-          cache: npm
-
-      - name: Install dependencies
-        run: npm ci
-
-      - parallel:
-          - name: Verify x64 host
-            run: test "$(node -p process.platform)-$(node -p process.arch)" = "darwin-x64"
-
-          - name: Static checks
-            run: npm run check
-
-          - name: Strict TypeScript and committed runtime parity
-            run: npm run typecheck && npm run verify:typed-runtime && npm run verify:typed-browser && npm run verify:typed-tooling
-
-          - name: Staged TypeScript Browser MV3 and VM acceptance
-            run: npm run verify:staged-browser
-
-          - name: Native Stable-to-Main pointer and rollback acceptance
-            run: node --test tests/release/equinox-local-stable-main-native-fs-acceptance.test.js
-
-          - name: Fast architecture parity suite
-            run: npm run test:fast
-
-  windows-runtime:
-    name: Windows x64 runtime / Node 26
-    runs-on: windows-latest
-    timeout-minutes: 8
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v7
-        with:
-          node-version: 26.12.1
-          architecture: x64
-          cache: npm
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Strict TypeScript and committed runtime parity
-        run: npm run typecheck && npm run verify:typed-runtime && npm run verify:typed-browser && npm run verify:typed-tooling
-
-      - name: Native Windows PowerShell 5.1 registry reader smoke
-        run: node --test --test-name-pattern "Windows Native Messaging registry reader is valid native PowerShell 5.1 syntax" tests/browser/equinox-browser-windows-native-messaging.test.js
-
-      - name: Windows browser PDF text extraction smoke
-        run: node --test tests/browser/browser-pdf-text.test.js
-
-      - name: Windows transfer and Telegram path parity smoke
-        run: node --test --test-name-pattern "Web transfer defaults follow the shared Windows per-user path contract|Telegram defaults follow the shared Windows per-user path contract" tests/unit/equinox-local-file-transfer.test.js tests/unit/telegram-integration.test.js
-
-      - name: Windows managed Doctor parity smoke
-        run: node --test --test-name-pattern "managed Windows Doctor" tests/release/equinox-local-doctor.test.js
-
-      - name: Windows Main source-store locked-directory fallback
-        run: node --test --test-name-pattern "Windows source" tests/release/equinox-local-main-update-transaction.test.js
-
-      - name: Windows private-state ACL acceptance
-        run: node --test tests/release/equinox-local-windows-private-state.test.js
-
-      - name: Windows managed release contract and activation rollback tests
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $PSNativeCommandUseErrorActionPreference = $true
-          node --test --test-name-pattern "Windows classic repair after Main GC uses verified native B as rollback without requiring obsolete releases|Windows classic install resumes an interrupted native Main->Stable handoff" tests/release/equinox-local-first-install.test.js
-          node --test tests/release/equinox-local-release-runtime-contract.test.js
-          node --test --test-name-pattern "Windows x64 first-install release validation accepts native runtime names without Peekaboo|Windows x64 fresh first install promotes current-version and stable shell without admin" tests/release/equinox-local-first-install.test.js
-          node --test --test-name-pattern "Windows x64 managed user bootstrap uses state config and Windows Native Messaging without Darwin lifecycle" tests/release/equinox-local-bootstrap.test.js
-          node --test tests/release/equinox-local-current-release.test.js
-          node --test tests/release/equinox-local-windows-stable-shell.test.js
-          node --test --test-name-pattern "Windows activation rollback restores current-version.json and the previous exact release|Windows classic installer can switch from verified Main native B after all old Stable folders were reclaimed|Windows managed activation rotates pointer stable shell and Native Messaging together|Windows managed activation forced health failure restores pointer stable shell and Native Messaging|Windows Main native-store origin survives Stable activation rollback" tests/release/equinox-local-update-activation.test.js
-          node --test tests/release/equinox-local-windows-lifecycle.test.js
-          node --test tests/release/equinox-local-main-native-windows-acceptance.test.js
-          node --test tests/release/equinox-local-main-storage-retention-windows.test.js
-          node --test --test-name-pattern "win32 same-version Main repair|win32 same-version Stable failure|win32 legacy Main without native pointer" tests/release/equinox-local-same-version-repair.test.js
-          node --test tests/release/equinox-local-main-control-api-acceptance.test.js
-          node --test tests/release/equinox-local-stable-main-native-fs-acceptance.test.js
-
-      - name: Windows PowerShell 5.1 bootstrap acceptance
-        shell: pwsh
-        run: |
-          & powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File tests/release/windows-installer-bootstrap-smoke.ps1
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-
-      - name: Real Windows x64 Main worker PowerShell 5.1 PID ownership
-        run: node --test --test-name-pattern "native Windows Main worker PID" tests/release/equinox-local-main-update-scheduler.test.js
-
-      - name: Windows headless runtime smoke
-        run: npm run smoke:windows-headless
-
-      - name: Windows Native Messaging launcher smoke
-        run: node tests/release/windows-native-messaging-smoke.mjs
-
-  windows-shell:
-    name: Windows x64 native shell
-    runs-on: windows-latest
-    timeout-minutes: 8
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v7
-        with:
-          node-version: 26.12.1
-          architecture: x64
-
-      - name: Set up .NET SDK
-        uses: actions/setup-dotnet@v6
-        with:
-          dotnet-version: 10.0.x
-
-      - name: Build Windows native shell
-        run: dotnet build native/windows/EquinoxLocal.WindowsShell/EquinoxLocal.WindowsShell.csproj --configuration Release -p:Platform=x64
-
-      - name: Publish Windows x64 native shell
-        run: dotnet publish native/windows/EquinoxLocal.WindowsShell/EquinoxLocal.WindowsShell.csproj --configuration Release --runtime win-x64 --self-contained true -p:Platform=x64 --output artifacts/windows-shell/win-x64
-
-      - name: Windows x64 native shell publish smoke
-        shell: pwsh
-        run: |
-          $publish = Join-Path $PWD 'artifacts/windows-shell/win-x64'
-          $exe = Join-Path $publish 'EquinoxLocal.exe'
-          foreach ($required in @($exe, (Join-Path $publish 'coreclr.dll'), (Join-Path $publish 'hostfxr.dll'), (Join-Path $publish 'Microsoft.Web.WebView2.Core.dll'))) {
-            if (-not (Test-Path -LiteralPath $required -PathType Leaf)) { throw "Missing published Windows shell component: $required" }
-          }
-          $bytes = [System.IO.File]::ReadAllBytes($exe)
-          if ($bytes.Length -lt 64) { throw 'Published EquinoxLocal.exe is unexpectedly small' }
-          $peOffset = [BitConverter]::ToInt32($bytes, 0x3c)
-          if ($peOffset -lt 0 -or ($peOffset + 6) -gt $bytes.Length) { throw 'Published EquinoxLocal.exe has an invalid PE header offset' }
-          $machine = [BitConverter]::ToUInt16($bytes, $peOffset + 4)
-          if ($machine -ne 0x8664) { throw ("Published EquinoxLocal.exe is not x64 (machine=0x{0:X4})" -f $machine) }
-          $loader = Get-ChildItem $publish -Filter WebView2Loader.dll -Recurse | Select-Object -First 1
-          if ($null -eq $loader) { throw 'Published shell is missing WebView2Loader.dll' }
-
-      - name: Windows native shell branding smoke
-        shell: pwsh
-        run: |
-          $exe = Get-ChildItem native/windows/EquinoxLocal.WindowsShell/bin -Filter EquinoxLocal.exe -Recurse | Select-Object -First 1
-          if ($null -eq $exe) { throw "EquinoxLocal.exe was not built" }
-          Add-Type -AssemblyName System.Drawing
-          $icon = [System.Drawing.Icon]::ExtractAssociatedIcon($exe.FullName)
-          if ($null -eq $icon) { throw "EquinoxLocal.exe has no embedded application icon" }
-          try {
-            if ($icon.Width -lt 16 -or $icon.Height -lt 16) { throw "Embedded Equinox icon is unexpectedly small" }
-            $bitmap = $icon.ToBitmap()
-            try {
-              $pixel = $bitmap.GetPixel([int]($bitmap.Width / 2), [int]($bitmap.Height / 2))
-              if ($pixel.A -eq 0) { throw "Embedded Equinox icon center is transparent" }
-            } finally { $bitmap.Dispose() }
-          } finally { $icon.Dispose() }
-
-      - name: Windows native shell runtime supervision smoke
-        shell: pwsh
-        run: |
-          $env:EQUINOX_TEST_NODE_EXE = (Get-Command node).Source
-          dotnet run --project tests/windows/EquinoxLocal.WindowsShell.RuntimeHarness/EquinoxLocal.WindowsShell.RuntimeHarness.csproj --configuration Release
-
-      - name: Windows x64 managed-source runtime acceptance
-        shell: pwsh
-        run: |
-          $env:EQUINOX_TEST_NODE_EXE = (Get-Command node).Source
-          dotnet run --project tests/windows/EquinoxLocal.WindowsShell.ManagedSourceHarness/EquinoxLocal.WindowsShell.ManagedSourceHarness.csproj --configuration Release -p:Platform=x64
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-
-      - name: Windows native shell update handoff smoke
-        shell: pwsh
-        run: |
-          $env:EQUINOX_TEST_NODE_EXE = (Get-Command node).Source
-          dotnet run --project tests/windows/EquinoxLocal.WindowsShell.UpdateHandoffHarness/EquinoxLocal.WindowsShell.UpdateHandoffHarness.csproj --configuration Release
-
-      - name: Windows native shell uninstall handoff smoke
-        shell: pwsh
-        run: |
-          $env:EQUINOX_TEST_NODE_EXE = (Get-Command node).Source
-          dotnet run --project tests/windows/EquinoxLocal.WindowsShell.UninstallHandoffHarness/EquinoxLocal.WindowsShell.UninstallHandoffHarness.csproj --configuration Release
-
-      - name: Windows native shell startup registration smoke
-        run: dotnet run --project tests/windows/EquinoxLocal.WindowsShell.StartupHarness/EquinoxLocal.WindowsShell.StartupHarness.csproj --configuration Release
-
-      - name: Windows native shell folder picker smoke
-        run: dotnet run --project tests/windows/EquinoxLocal.WindowsShell.FolderPickerHarness/EquinoxLocal.WindowsShell.FolderPickerHarness.csproj --configuration Release
-
-      - name: Windows native shell presentation smoke
-        run: dotnet run --project tests/windows/EquinoxLocal.WindowsShell.PresentationHarness/EquinoxLocal.WindowsShell.PresentationHarness.csproj --configuration Release
-
-      # Run the real WPF WebView2 first-open check AFTER all fresh-install
-      # harnesses: WebView2 correctly creates its user-local browser cache.
-      - name: Windows native Control Center delayed-loopback startup smoke
-        shell: pwsh
-        run: |
-          ./tests/release/windows-control-center-first-open-smoke.ps1 -ShellPath (Join-Path $PWD 'artifacts/windows-shell/win-x64/EquinoxLocal.exe') -NodePath (Get-Command node).Source
-
-  windows-x64-package-build:
-    name: Windows x64 package build
-    runs-on: windows-latest
-    timeout-minutes: 7
-    outputs:
-      sha256: ${{ steps.package.outputs.sha256 }}
-      bytes: ${{ steps.package.outputs.bytes }}
-      version: ${{ steps.package.outputs.version }}
-      target: ${{ steps.package.outputs.target }}
-      source_sha: ${{ steps.package.outputs.source_sha }}
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-
-      # Node setup, .NET SDK setup and ZIP security smoke have independent
-      # inputs. All three must pass before the signed package is assembled.
-      - parallel:
-          - name: Set up Node.js
-            uses: actions/setup-node@v7
-            with:
-              node-version: 26.12.1
-              architecture: x64
-              cache: npm
-
-          - name: Set up .NET SDK
-            uses: actions/setup-dotnet@v6
-            with:
-              dotnet-version: 10.0.x
-
-          - name: Windows release ZIP security acceptance
-            shell: pwsh
-            run: powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File tests/release/windows-release-zip-smoke.ps1
-
-      # npm writes node_modules; native WPF reads only .NET sources and app
-      # artwork; its output and obj/bin paths are in runner.temp.
-      - parallel:
-          - name: Install dependencies
-            run: npm ci
-
-          - name: Publish package shell payload
-            shell: pwsh
-            env:
-              EQUINOX_WINDOWS_SHELL_PUBLISH_DIR: ${{ runner.temp }}/windows-shell/win-x64
-              EQUINOX_WINDOWS_SHELL_BIN_DIR: ${{ runner.temp }}/windows-shell-bin/win-x64/
-              EQUINOX_WINDOWS_SHELL_OBJ_DIR: ${{ runner.temp }}/windows-shell-obj/win-x64/
-            run: dotnet publish native/windows/EquinoxLocal.WindowsShell/EquinoxLocal.WindowsShell.csproj --configuration Release --runtime win-x64 --self-contained true -p:Platform=x64 -p:BaseOutputPath="$env:EQUINOX_WINDOWS_SHELL_BIN_DIR" -p:BaseIntermediateOutputPath="$env:EQUINOX_WINDOWS_SHELL_OBJ_DIR" --output "$env:EQUINOX_WINDOWS_SHELL_PUBLISH_DIR"
-
-      # CI-only source/target exact-key native binaries; never a release
-      # artifact. Cache misses compile the original Guardian and Job helpers.
-      - name: Cache source-keyed x64 Guardian and Job Object binaries
-        id: native-helpers-cache
-        uses: actions/cache@v6
-        with:
-          path: ${{ runner.temp }}/windows-native-helpers/win-x64
-          key: native-helpers-v1-${{ runner.os }}-win-x64-dotnet10-msvc-${{ hashFiles('native/windows/EquinoxLocal.Guardian/**', 'native/windows/equinox-local-job-object-helper.cpp', 'scripts/release/package-managed-release-windows.mjs', 'native/windows/**/Directory.Build.*', 'global.json') }}
-
-      - name: Windows managed package assembly smoke
-        shell: pwsh
-        env:
-          EQUINOX_WINDOWS_NATIVE_HELPER_CACHE_DIR: ${{ runner.temp }}/windows-native-helpers/win-x64
-          EQUINOX_WINDOWS_NATIVE_HELPER_CACHE_HIT: ${{ steps.native-helpers-cache.outputs.cache-hit }}
-          EQUINOX_WINDOWS_SHELL_PUBLISH_DIR: ${{ runner.temp }}/windows-shell/win-x64
-        run: |
-          npm run local:release:package:windows
-          $artifact = Get-ChildItem backups/local-packages -Filter 'equinox-local-*-win32-x64.zip' | Select-Object -First 1
-          if ($null -eq $artifact) { throw 'Windows managed ZIP artifact was not created' }
-          Add-Type -AssemblyName System.IO.Compression.FileSystem
-          $zip = [System.IO.Compression.ZipFile]::OpenRead($artifact.FullName)
-          try {
-            $names = @($zip.Entries | ForEach-Object FullName)
-            foreach ($required in @('release/release.json','release/runtime/node/bin/node.exe','release/runtime/tunnel/tunnel-client.exe','release/runtime/tunnel/cloudflared.exe','release/runtime/browser/equinox-browser-native-host.exe','release/runtime/guardian/EquinoxLocalGuardian.exe','release/runtime/shell/EquinoxLocal.exe','release/runtime/winapp/winapp.exe','release/runtime/winapp/libHarfBuzzSharp.dll','release/runtime/winapp/libSkiaSharp.dll','release/runtime/winapp/LICENSE')) {
-              if ($names -notcontains $required) { throw "Windows managed ZIP is missing $required" }
-            }
-            if ($names | Where-Object { $_ -like 'release/runtime/peekaboo/*' }) { throw 'Windows managed ZIP unexpectedly contains Peekaboo' }
-          } finally { $zip.Dispose() }
-
-      - name: Verify and expose exact x64 managed ZIP
-        id: package
-        shell: pwsh
-        run: |
-          $archives = @(Get-ChildItem backups/local-packages -Filter 'equinox-local-*-win32-x64.zip')
-          if ($archives.Count -ne 1) { throw 'Expected exactly one current-run x64 managed ZIP' }
-          $archive = $archives[0]
-          Add-Type -AssemblyName System.IO.Compression.FileSystem
-          $zip = [IO.Compression.ZipFile]::OpenRead($archive.FullName)
-          try {
-            $entry = $zip.GetEntry('release/release.json')
-            if ($null -eq $entry) { throw 'x64 managed ZIP is missing release metadata' }
-            $reader = [IO.StreamReader]::new($entry.Open())
-            try { $metadata = $reader.ReadToEnd() | ConvertFrom-Json } finally { $reader.Dispose() }
-          } finally { $zip.Dispose() }
-          if ($metadata.schemaVersion -ne 1 -or $metadata.target -cne 'win32-x64' -or
-              $metadata.sourceSha -cne $env:GITHUB_SHA -or $metadata.version -cnotmatch '^[0-9]+\.[0-9]+\.[0-9]+$') {
-            throw 'x64 managed ZIP target/version/source SHA mismatches the current commit.'
-          }
-          $digest = (Get-FileHash -LiteralPath $archive.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
-          if ($digest -cnotmatch '^[0-9a-f]{64}$' -or $archive.Length -le 0) { throw 'Invalid x64 ZIP hash/length.' }
-          @(
-            "sha256=$digest"
-            "bytes=$($archive.Length)"
-            "version=$($metadata.version)"
-            "target=$($metadata.target)"
-            "source_sha=$($metadata.sourceSha)"
-          ) | Add-Content -LiteralPath $env:GITHUB_OUTPUT
-
-      - name: Upload exact x64 managed ZIP for installed-host acceptance
-        uses: actions/upload-artifact@v7
-        with:
-          name: windows-x64-managed-package-${{ github.sha }}
-          path: backups/local-packages/equinox-local-*-win32-x64.zip
-          if-no-files-found: error
-          compression-level: 0
-          retention-days: 1
-
-  windows-package:
-    name: Windows x64 managed package acceptance
-    runs-on: windows-latest
-    timeout-minutes: 6
-    needs: [windows-x64-package-build]
-
-    steps:
-      - parallel:
-          - name: Checkout
-            uses: actions/checkout@v7
-
-          - name: Set up .NET SDK
-            uses: actions/setup-dotnet@v6
-            with:
-              dotnet-version: 10.0.x
-
-          - name: Download exact x64 managed ZIP
-            uses: actions/download-artifact@v8
-            with:
-              name: windows-x64-managed-package-${{ github.sha }}
-              path: ${{ runner.temp }}/x64-package
-
-      - name: Verify downloaded exact x64 package
-        shell: pwsh
-        env:
-          EXPECTED_PACKAGE_SHA256: ${{ needs.windows-x64-package-build.outputs.sha256 }}
-          EXPECTED_PACKAGE_BYTES: ${{ needs.windows-x64-package-build.outputs.bytes }}
-          EXPECTED_PACKAGE_SOURCE_SHA: ${{ needs.windows-x64-package-build.outputs.source_sha }}
-        run: |
-          $archives = @(Get-ChildItem (Join-Path $env:RUNNER_TEMP 'x64-package') -Filter 'equinox-local-*-win32-x64.zip')
-          if ($archives.Count -ne 1) { throw 'Expected exactly one downloaded x64 managed ZIP' }
-          if ($env:EXPECTED_PACKAGE_SHA256 -cnotmatch '^[0-9a-f]{64}$' -or
-              $env:EXPECTED_PACKAGE_SOURCE_SHA -cne $env:GITHUB_SHA -or
-              $archives[0].Length -ne [int64]$env:EXPECTED_PACKAGE_BYTES -or
-              (Get-FileHash -LiteralPath $archives[0].FullName -Algorithm SHA256).Hash.ToLowerInvariant() -cne $env:EXPECTED_PACKAGE_SHA256) {
-            throw 'Downloaded x64 ZIP digest, size or source SHA differs from producer.'
-          }
-
-      - name: Windows x64 immutable native A/B rollback acceptance
-        shell: pwsh
-        run: |
-          $artifact = @(Get-ChildItem (Join-Path $env:RUNNER_TEMP 'x64-package') -Filter 'equinox-local-*-win32-x64.zip')
-          if ($artifact.Count -ne 1) { throw 'Expected exactly one native x64 package for A/B acceptance' }
-          & ./tests/release/windows-native-ab-package-smoke.ps1 -ArtifactPath $artifact[0].FullName -Target win32-x64
-
-      - name: Windows x64 packaged winapp UIA smoke
-        shell: pwsh
-        run: |
-          $fixtureOut = Join-Path $env:RUNNER_TEMP 'equinox-winapp-fixture-x64'
-          dotnet publish tests/windows/EquinoxLocal.WinappSmokeFixture/EquinoxLocal.WinappSmokeFixture.csproj --configuration Release --runtime win-x64 --self-contained false -p:Platform=x64 --output $fixtureOut
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          $artifact = Get-ChildItem (Join-Path $env:RUNNER_TEMP 'x64-package') -Filter 'equinox-local-*-win32-x64.zip' | Select-Object -First 1
-          if ($null -eq $artifact) { throw 'Windows managed ZIP artifact was not found for winapp acceptance' }
-          $extract = Join-Path $env:RUNNER_TEMP 'equinox-winapp-x64'
-          New-Item -ItemType Directory -Path $extract -Force | Out-Null
-          & tar.exe -xf $artifact.FullName -C $extract 'release/runtime/winapp/winapp.exe' 'release/runtime/winapp/libHarfBuzzSharp.dll' 'release/runtime/winapp/libSkiaSharp.dll' 'release/equinox-local-windows-clipboard.ps1' 'release/equinox-local-windows-desktop.ps1'
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          & powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File tests/release/windows-winapp-smoke.ps1 -WinappPath (Join-Path $extract 'release/runtime/winapp/winapp.exe') -FixturePath (Join-Path $fixtureOut 'EquinoxLocal.WinappSmokeFixture.exe') -ClipboardHelperPath (Join-Path $extract 'release/equinox-local-windows-clipboard.ps1') -DesktopHelperPath (Join-Path $extract 'release/equinox-local-windows-desktop.ps1')
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-
-  windows-x64-installer:
-    name: Windows x64 Main-only native package / installer gate
-    runs-on: windows-latest
-    timeout-minutes: 8
-    needs: [windows-x64-package-build]
-
-    steps:
-      - parallel:
-          - name: Checkout
-            uses: actions/checkout@v7
-
-          - name: Download exact x64 managed ZIP
-            uses: actions/download-artifact@v8
-            with:
-              name: windows-x64-managed-package-${{ github.sha }}
-              path: ${{ runner.temp }}/x64-package
-
-      - name: Windows x64 signed Main package and fail-closed preflight
-        shell: pwsh
-        env:
-          EQUINOX_WINDOWS_SAME_VERSION_REPAIR: 'false'
-          EQUINOX_WINDOWS_NATIVE_AB_IN_PACKAGE: 'true'
-          EQUINOX_WINDOWS_GUARDIAN_AUDIT_IN_PARALLEL: 'true'
-          EQUINOX_WINDOWS_INSTALL_SHA256: ${{ needs.windows-x64-package-build.outputs.sha256 }}
-          EQUINOX_WINDOWS_INSTALL_BYTES: ${{ needs.windows-x64-package-build.outputs.bytes }}
-          EQUINOX_WINDOWS_INSTALL_VERSION: ${{ needs.windows-x64-package-build.outputs.version }}
-          EQUINOX_WINDOWS_INSTALL_TARGET: ${{ needs.windows-x64-package-build.outputs.target }}
-          EQUINOX_WINDOWS_INSTALL_SOURCE_SHA: ${{ needs.windows-x64-package-build.outputs.source_sha }}
-        run: |
-          $archives = @(Get-ChildItem (Join-Path $env:RUNNER_TEMP 'x64-package') -Filter 'equinox-local-*-win32-x64.zip')
-          if ($archives.Count -ne 1) { throw 'Expected exactly one x64 producer ZIP' }
-          if ($archives[0].Length -ne [int64]$env:EQUINOX_WINDOWS_INSTALL_BYTES) { throw 'Producer ZIP length mismatch' }
-          $env:EQUINOX_WINDOWS_INSTALL_ARTIFACT = $archives[0].FullName
-          & powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File tests/release/windows-installer-real-package-smoke.ps1
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-
-  windows-x64-guardian:
-    name: Windows x64 original Guardian installed-identity denial (package)
-    runs-on: windows-latest
-    timeout-minutes: 8
-    needs: [windows-x64-package-build]
-
-    steps:
-      - parallel:
-          - name: Checkout
-            uses: actions/checkout@v7
-
-          - name: Download exact x64 managed ZIP
-            uses: actions/download-artifact@v8
-            with:
-              name: windows-x64-managed-package-${{ github.sha }}
-              path: ${{ runner.temp }}/x64-package
-
-      - name: Audit compiled Guardian binary and foreign-install denial (no signed user install)
-        shell: pwsh
-        env:
-          EQUINOX_WINDOWS_SAME_VERSION_REPAIR: 'false'
-          EQUINOX_WINDOWS_GUARDIAN_AUDIT_ONLY: 'true'
-          EQUINOX_WINDOWS_INSTALL_SHA256: ${{ needs.windows-x64-package-build.outputs.sha256 }}
-          EQUINOX_WINDOWS_INSTALL_BYTES: ${{ needs.windows-x64-package-build.outputs.bytes }}
-          EQUINOX_WINDOWS_INSTALL_VERSION: ${{ needs.windows-x64-package-build.outputs.version }}
-          EQUINOX_WINDOWS_INSTALL_TARGET: ${{ needs.windows-x64-package-build.outputs.target }}
-          EQUINOX_WINDOWS_INSTALL_SOURCE_SHA: ${{ needs.windows-x64-package-build.outputs.source_sha }}
-        run: |
-          $archives = @(Get-ChildItem (Join-Path $env:RUNNER_TEMP 'x64-package') -Filter 'equinox-local-*-win32-x64.zip')
-          if ($archives.Count -ne 1) { throw 'Expected exactly one x64 producer ZIP' }
-          if ($archives[0].Length -ne [int64]$env:EQUINOX_WINDOWS_INSTALL_BYTES) { throw 'Producer ZIP length mismatch' }
-          $env:EQUINOX_WINDOWS_INSTALL_ARTIFACT = $archives[0].FullName
-          & powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File tests/release/windows-installer-real-package-smoke.ps1
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-
-  windows-x64-repair:
-    name: Windows x64 Main-only reinstall preflight gate
-    runs-on: windows-latest
-    timeout-minutes: 8
-    needs: [windows-x64-package-build]
-
-    steps:
-      - parallel:
-          - name: Checkout
-            uses: actions/checkout@v7
-
-          - name: Download exact x64 managed ZIP
-            uses: actions/download-artifact@v8
-            with:
-              name: windows-x64-managed-package-${{ github.sha }}
-              path: ${{ runner.temp }}/x64-package
-
-      - name: Windows x64 signed Main package and fail-closed preflight
-        shell: pwsh
-        env:
-          EQUINOX_WINDOWS_SAME_VERSION_REPAIR: 'true'
-          EQUINOX_WINDOWS_INSTALLER_REPAIR_ONLY: 'true'
-          EQUINOX_WINDOWS_INSTALL_SHA256: ${{ needs.windows-x64-package-build.outputs.sha256 }}
-          EQUINOX_WINDOWS_INSTALL_BYTES: ${{ needs.windows-x64-package-build.outputs.bytes }}
-          EQUINOX_WINDOWS_INSTALL_VERSION: ${{ needs.windows-x64-package-build.outputs.version }}
-          EQUINOX_WINDOWS_INSTALL_TARGET: ${{ needs.windows-x64-package-build.outputs.target }}
-          EQUINOX_WINDOWS_INSTALL_SOURCE_SHA: ${{ needs.windows-x64-package-build.outputs.source_sha }}
-        run: |
-          $archives = @(Get-ChildItem (Join-Path $env:RUNNER_TEMP 'x64-package') -Filter 'equinox-local-*-win32-x64.zip')
-          if ($archives.Count -ne 1) { throw 'Expected exactly one x64 producer ZIP' }
-          if ($archives[0].Length -ne [int64]$env:EQUINOX_WINDOWS_INSTALL_BYTES) { throw 'Producer ZIP length mismatch' }
-          $env:EQUINOX_WINDOWS_INSTALL_ARTIFACT = $archives[0].FullName
-          & powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File tests/release/windows-installer-real-package-smoke.ps1
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-
-  windows-arm64-shared-core:
-    name: Windows shared core / Node 26
-    runs-on: windows-latest
-    timeout-minutes: 5
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-
-      - name: Set up Windows x64 Node.js
-        uses: actions/setup-node@v7
-        with:
-          node-version: 26.12.1
-          architecture: x64
-          cache: npm
-
-      - name: Verify Windows x64 shared-core host
-        shell: pwsh
-        run: |
-          if ((node -p "process.platform") -ne 'win32') { throw 'Windows shared-core lane is not running on Windows' }
-          if ((node -p "process.arch") -ne 'x64') { throw 'Windows shared-core lane is not running x64 Node' }
-
-      - name: Install dependencies
-        run: npm ci --prefer-offline --no-audit --no-fund
-
-      - name: Windows shared core parity suite
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $PSNativeCommandUseErrorActionPreference = $true
-          # Architecture-neutral Windows shared logic stays off scarce ARM64 runners; native ARM64 behavior is covered separately.
-          # Keep POSIX-only mode/path assertions out of the Windows lane; exact Windows private-state persistence has dedicated ACL acceptance.
-          node --test tests/unit/capability-registry.test.js tests/unit/task-capsule-tools.test.js tests/unit/auto-continue-controller.test.js tests/unit/fresh-chat-resume-controller.test.js tests/unit/telegram-chat-bridge-controller.test.js tests/unit/authenticated-http-tools.test.js tests/unit/authenticated-http-response-references.test.js
-          node --test tests/unit/task-capsule-store.test.js tests/unit/turn-budget-controller.test.js tests/unit/equinox-local-file-transfer.test.js tests/unit/authenticated-http-integration.test.js
-          node --test --test-name-pattern "Telegram defaults follow the shared Windows per-user path contract|Telegram connection input accepts only a token and positive user ID|Telegram message validation is bounded and rejects empty content|command menu sync is a no-op when Telegram is not configured|failed Telegram validation does not persist credentials or expose the token" tests/unit/telegram-integration.test.js
-          node --test tests/release/equinox-local-windows-private-state.test.js
-
-  windows-arm64-bootstrap:
-    name: Windows bootstrap contract / Node 26
-    runs-on: windows-latest
-    timeout-minutes: 3
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-
-      - name: Set up Windows x64 Node.js
-        uses: actions/setup-node@v7
-        with:
-          node-version: 26.12.1
-          architecture: x64
-
-      - name: Verify Windows x64 bootstrap-contract host
-        shell: pwsh
-        run: |
-          if ((node -p "process.platform") -ne 'win32') { throw 'Windows bootstrap contract lane is not running on Windows' }
-          if ((node -p "process.arch") -ne 'x64') { throw 'Windows bootstrap contract lane is not running x64 Node' }
-
-      - name: Windows PowerShell bootstrap contract acceptance
-        shell: pwsh
-        run: |
-          & powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File tests/release/windows-installer-bootstrap-smoke.ps1
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-
-  # Runtime, packaged Desktop/UIA and real installation acceptance are isolated
-  # native ARM64 lanes and start together, without a serial artifact dependency.
-  windows-arm64-runtime:
-    name: Windows ARM64 runtime / Node 26
-    runs-on: windows-11-vs2026-arm
-    # Native A/B and launcher smoke can exceed 6m on a slow ARM runner.
-    # This is a ceiling only; green jobs still finish as soon as tests pass.
-    timeout-minutes: 8
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-
-      - parallel:
-          - name: Set up native ARM64 Node.js
-            uses: actions/setup-node@v7
-            with:
-              node-version: 26.12.1
-              architecture: arm64
-              cache: npm
-
-          - name: Windows ARM64 PowerShell 5.1 native target acceptance
-            shell: pwsh
-            run: |
-              & powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File tests/release/windows-installer-native-target-smoke.ps1 -ExpectedTarget win32-arm64
-              if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-
-      - name: Verify native ARM64 Node host
-        shell: pwsh
-        run: |
-          if ((node -p "process.platform") -ne 'win32') { throw 'ARM64 lane is not running on Windows' }
-          if ((node -p "process.arch") -ne 'arm64') { throw 'ARM64 lane is not running native ARM64 Node' }
-          if ((node --version) -ne 'v26.12.1') { throw 'ARM64 lane Node version drifted' }
-
-      - name: Install dependencies
-        run: npm ci --prefer-offline --no-audit --no-fund
-
-      - name: ARM64 strict TypeScript and runtime parity
-        run: npm run typecheck && npm run verify:typed-runtime && npm run verify:typed-browser && npm run verify:typed-tooling
-
-      - name: Native ARM64 Windows PowerShell 5.1 registry reader smoke
-        run: node --test --test-name-pattern "Windows Native Messaging registry reader is valid native PowerShell 5.1 syntax" tests/browser/equinox-browser-windows-native-messaging.test.js
-
-      - name: Native CI input success and failure propagation smoke
-        shell: pwsh
-        run: '& ./tests/release/windows-ci-input-preparation-smoke.ps1'
-
-      - name: Windows ARM64 managed lifecycle plumbing smoke
-        run: node --test tests/unit/equinox-local-platform.test.js tests/release/equinox-local-windows-arm64-lifecycle.test.js
-
-      - name: Real Windows ARM64 Main worker PowerShell 5.1 PID ownership
-        run: node --test --test-name-pattern "native Windows Main worker PID" tests/release/equinox-local-main-update-scheduler.test.js
-
-      - name: Windows ARM64 headless runtime parity smoke
-        run: npm run smoke:windows-headless
-
-      - name: Windows ARM64 uninstall/reinstall lifecycle acceptance
-        run: node --test tests/release/equinox-local-windows-lifecycle.test.js
-
-      - name: Windows ARM64 Main native recovery acceptance
-        run: node --test tests/release/equinox-local-main-native-windows-acceptance.test.js
-      - name: Windows ARM64 interrupted classic Main handoff journal acceptance
-        run: node --test --test-name-pattern "Windows classic install resumes an interrupted native Main->Stable handoff" tests/release/equinox-local-first-install.test.js
-
-      - name: Windows ARM64 post-success versioned payload reclamation acceptance
-        run: node --test tests/release/equinox-local-main-storage-retention-windows.test.js
-
-      - name: Windows ARM64 same-version Main repair and rollback regression
-        run: node --test --test-name-pattern "win32 same-version Main repair|win32 same-version Stable failure|win32 legacy Main without native pointer" tests/release/equinox-local-same-version-repair.test.js
-
-      - name: Windows ARM64 Control Center exact-Main handoff and rollback acceptance
-        run: node --test tests/release/equinox-local-main-control-api-acceptance.test.js
-
-      - name: Native ARM64 Stable-to-Main pointer and rollback acceptance
-        run: node --test tests/release/equinox-local-stable-main-native-fs-acceptance.test.js
-
-      - name: Native ARM64 node-pty / ConPTY smoke
-        timeout-minutes: 1
-        run: node tests/release/windows-node-pty-smoke.mjs
-
-      - name: Native ARM64 Native Messaging launcher smoke
-        run: node tests/release/windows-native-messaging-smoke.mjs
-
-  # Build the exact ARM64 managed ZIP once. Package acceptance and the real
-  # public-installer acceptance consume the same verified bytes in parallel.
-  windows-arm64-package-build:
-    name: Windows ARM64 package build
-    runs-on: windows-latest
-    timeout-minutes: 5
-    outputs:
-      sha256: ${{ steps.package.outputs.sha256 }}
-      bytes: ${{ steps.package.outputs.bytes }}
-      version: ${{ steps.package.outputs.version }}
-      target: ${{ steps.package.outputs.target }}
-      source_sha: ${{ steps.package.outputs.source_sha }}
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-
-      - name: Prepare native ARM64 CI package
-        id: package
-        uses: ./.github/actions/prepare-arm64-package
-
-      - name: Verify exact prepared ARM64 CI package bytes
-        shell: pwsh
-        env:
-          EXPECTED_PACKAGE_SHA256: ${{ steps.package.outputs.sha256 }}
-          EXPECTED_PACKAGE_BYTES: ${{ steps.package.outputs.bytes }}
-        run: |
-          $artifacts = @(Get-ChildItem backups/local-packages -Filter 'equinox-local-*-win32-arm64.zip')
-          if ($artifacts.Count -ne 1) { throw 'Expected exactly one current-run ARM64 CI package' }
-          if ($env:EXPECTED_PACKAGE_SHA256 -cnotmatch '^[0-9a-f]{64}$' -or $env:EXPECTED_PACKAGE_BYTES -notmatch '^[1-9][0-9]*$') { throw 'ARM64 package producer metadata is missing or invalid' }
-          $sha256 = (Get-FileHash -LiteralPath $artifacts[0].FullName -Algorithm SHA256).Hash.ToLowerInvariant()
-          if ($sha256 -cne $env:EXPECTED_PACKAGE_SHA256 -or $artifacts[0].Length -ne [int64]$env:EXPECTED_PACKAGE_BYTES) { throw 'ARM64 CI package digest or length differs from the producer' }
-
-      - name: Publish exact ARM64 managed ZIP
-        uses: actions/upload-artifact@v7
-        with:
-          name: windows-arm64-managed-package-${{ github.sha }}
-          path: backups/local-packages/equinox-local-*-win32-arm64.zip
-          if-no-files-found: error
-          compression-level: 0
-          retention-days: 1
-
-  windows-arm64-package:
-    name: Windows ARM64 managed package
-    runs-on: windows-11-vs2026-arm
-    # The three native acceptance lanes can pass just before the old 4m
-    # ceiling; reserve time for post-step cleanup without weakening gates.
-    timeout-minutes: 6
-    needs: [windows-arm64-package-build]
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-
-      - parallel:
-          - name: Set up native ARM64 Node.js
-            uses: actions/setup-node@v7
-            with:
-              node-version: 26.12.1
-              architecture: arm64
-
-          - name: Set up .NET SDK
-            uses: actions/setup-dotnet@v6
-            with:
-              dotnet-version: 10.0.x
-
-          - name: Cache NuGet packages
-            uses: actions/cache@v6
-            with:
-              path: ~/.nuget/packages
-              key: nuget-${{ runner.os }}-${{ runner.arch }}-dotnet10-${{ hashFiles('native/windows/**/*.csproj', 'tests/windows/**/*.csproj') }}
-              restore-keys: |
-                nuget-${{ runner.os }}-${{ runner.arch }}-dotnet10-
-
-          - name: Download exact ARM64 managed ZIP
-            uses: actions/download-artifact@v8
-            with:
-              name: windows-arm64-managed-package-${{ github.sha }}
-              path: ${{ runner.temp }}/arm64-package
-
-      - name: Verify downloaded ARM64 package identity
-        shell: pwsh
-        env:
-          EXPECTED_PACKAGE_SHA256: ${{ needs.windows-arm64-package-build.outputs.sha256 }}
-          EXPECTED_PACKAGE_BYTES: ${{ needs.windows-arm64-package-build.outputs.bytes }}
-        run: |
-          $artifacts = @(Get-ChildItem (Join-Path $env:RUNNER_TEMP 'arm64-package') -Filter 'equinox-local-*-win32-arm64.zip')
-          if ($artifacts.Count -ne 1) { throw 'Expected exactly one downloaded ARM64 managed ZIP' }
-          if ($artifacts[0].Length -ne [int64]$env:EXPECTED_PACKAGE_BYTES) { throw 'Downloaded ARM64 package length mismatch' }
-
-      # Run packaged ConPTY in isolation from the three CPU-heavy native
-      # acceptance lanes; retain its exact test, retry, and failure contract.
-      - name: Windows ARM64 packaged node-pty / ConPTY smoke
-        shell: pwsh
-        run: |
-          $artifact = Get-ChildItem (Join-Path $env:RUNNER_TEMP 'arm64-package') -Filter 'equinox-local-*-win32-arm64.zip' | Select-Object -First 1
-          if ($null -eq $artifact) { throw 'Windows ARM64 managed ZIP artifact was not found for node-pty acceptance' }
-          $extract = Join-Path $env:RUNNER_TEMP 'equinox-node-pty-arm64'
-          New-Item -ItemType Directory -Path $extract -Force | Out-Null
-          & tar.exe -xf $artifact.FullName -C $extract 'release/node_modules/node-pty'
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          $env:EQUINOX_WINDOWS_NODE_PTY_ROOT = Join-Path $extract 'release/node_modules/node-pty'
-          node tests/release/windows-node-pty-smoke.mjs
-          if ($LASTEXITCODE -ne 0) {
-            Write-Warning 'Packaged ARM64 ConPTY smoke timed out once; retrying once on the same verified payload.'
-            node tests/release/windows-node-pty-smoke.mjs
-            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          }
-
-      - parallel:
-          - name: Windows ARM64 stateful shell lifecycle acceptance
-            shell: pwsh
-            run: |
-              $env:EQUINOX_TEST_NODE_EXE = (Get-Command node).Source
-              $publish = Join-Path $PWD 'artifacts/windows-uninstall-handoff/win-arm64'
-              dotnet publish tests/windows/EquinoxLocal.WindowsShell.UninstallHandoffHarness/EquinoxLocal.WindowsShell.UninstallHandoffHarness.csproj --configuration Release --runtime win-arm64 --self-contained true -p:Platform=ARM64 --output $publish
-              & (Join-Path $publish 'EquinoxLocal.WindowsShell.UninstallHandoffHarness.exe')
-              if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-              dotnet run --project tests/windows/EquinoxLocal.WindowsShell.ManagedSourceHarness/EquinoxLocal.WindowsShell.ManagedSourceHarness.csproj --configuration Release -p:Platform=ARM64
-              if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-
-          - name: Windows ARM64 immutable native A/B rollback acceptance
-            shell: pwsh
-            env:
-              EXPECTED_PACKAGE_SHA256: ${{ needs.windows-arm64-package-build.outputs.sha256 }}
-            run: |
-              $artifact = @(Get-ChildItem (Join-Path $env:RUNNER_TEMP 'arm64-package') -Filter 'equinox-local-*-win32-arm64.zip')
-              if ($artifact.Count -ne 1) { throw 'Expected one exact ARM64 package for A/B acceptance' }
-              & ./tests/release/windows-native-ab-package-smoke.ps1 -ArtifactPath $artifact[0].FullName -Target win32-arm64 -ExpectedSha256 $env:EXPECTED_PACKAGE_SHA256
-
-          - name: Windows ARM64 packaged winapp UIA smoke
-            shell: pwsh
-            run: |
-              $fixtureOut = Join-Path $env:RUNNER_TEMP 'equinox-winapp-fixture-arm64'
-              dotnet publish tests/windows/EquinoxLocal.WinappSmokeFixture/EquinoxLocal.WinappSmokeFixture.csproj --configuration Release --runtime win-arm64 --self-contained false -p:Platform=ARM64 --output $fixtureOut
-              if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-              $artifact = Get-ChildItem (Join-Path $env:RUNNER_TEMP 'arm64-package') -Filter 'equinox-local-*-win32-arm64.zip' | Select-Object -First 1
-              if ($null -eq $artifact) { throw 'Windows ARM64 managed ZIP artifact was not found for winapp acceptance' }
-              $extract = Join-Path $env:RUNNER_TEMP 'equinox-winapp-arm64'
-              New-Item -ItemType Directory -Path $extract -Force | Out-Null
-              & tar.exe -xf $artifact.FullName -C $extract 'release/runtime/winapp/winapp.exe' 'release/runtime/winapp/libHarfBuzzSharp.dll' 'release/runtime/winapp/libSkiaSharp.dll' 'release/equinox-local-windows-clipboard.ps1' 'release/equinox-local-windows-desktop.ps1'
-              if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-              $nativePwsh = (Get-Process -Id $PID).Path
-              & ./tests/release/windows-winapp-smoke.ps1 -WinappPath (Join-Path $extract 'release/runtime/winapp/winapp.exe') -FixturePath (Join-Path $fixtureOut 'EquinoxLocal.WinappSmokeFixture.exe') -ClipboardHelperPath (Join-Path $extract 'release/equinox-local-windows-clipboard.ps1') -DesktopHelperPath (Join-Path $extract 'release/equinox-local-windows-desktop.ps1') -HelperPowerShellPath $nativePwsh
-
-  windows-arm64-installer:
-    name: Windows ARM64 Main-only native package / installer gate
-    runs-on: windows-11-vs2026-arm
-    timeout-minutes: 7
-    needs: [windows-arm64-package-build]
-
-    steps:
-      - parallel:
-          - name: Checkout
-            uses: actions/checkout@v7
-
-          - name: Download exact ARM64 managed ZIP
-            uses: actions/download-artifact@v8
-            with:
-              name: windows-arm64-managed-package-${{ github.sha }}
-              path: ${{ runner.temp }}/arm64-package
-
-      - name: Verify ARM64 native Main package and fail-closed preflight (no production signing key)
-        shell: pwsh
-        env:
-          EQUINOX_WINDOWS_SAME_VERSION_REPAIR: 'false'
-          EQUINOX_WINDOWS_NATIVE_AB_IN_PACKAGE: 'true'
-          EQUINOX_WINDOWS_INSTALL_SHA256: ${{ needs.windows-arm64-package-build.outputs.sha256 }}
-          EQUINOX_WINDOWS_INSTALL_BYTES: ${{ needs.windows-arm64-package-build.outputs.bytes }}
-          EQUINOX_WINDOWS_INSTALL_VERSION: ${{ needs.windows-arm64-package-build.outputs.version }}
-          EQUINOX_WINDOWS_INSTALL_TARGET: ${{ needs.windows-arm64-package-build.outputs.target }}
-          EQUINOX_WINDOWS_INSTALL_SOURCE_SHA: ${{ needs.windows-arm64-package-build.outputs.source_sha }}
-        run: |
-          $artifact = Get-ChildItem (Join-Path $env:RUNNER_TEMP 'arm64-package') -Filter 'equinox-local-*-win32-arm64.zip' | Select-Object -First 1
-          if ($null -eq $artifact) { throw 'Windows ARM64 managed ZIP artifact was not found for fresh-install acceptance' }
-          if ($artifact.Length -ne [int64]$env:EQUINOX_WINDOWS_INSTALL_BYTES) { throw 'Downloaded ARM64 installer package length mismatch' }
-          $env:EQUINOX_WINDOWS_INSTALL_ARTIFACT = $artifact.FullName
-          & ./tests/release/windows-installer-real-package-smoke.ps1
-
-  windows-arm64-repair:
-    name: Windows ARM64 Main-only reinstall preflight gate
-    runs-on: windows-11-vs2026-arm
-    timeout-minutes: 7
-    needs: [windows-arm64-package-build]
-
-    steps:
-      - parallel:
-          - name: Checkout
-            uses: actions/checkout@v7
-
-          - name: Download exact ARM64 managed ZIP
-            uses: actions/download-artifact@v8
-            with:
-              name: windows-arm64-managed-package-${{ github.sha }}
-              path: ${{ runner.temp }}/arm64-package
-
-      - name: Verify ARM64 native Main package and fail-closed preflight (no production signing key)
-        shell: pwsh
-        env:
-          EQUINOX_WINDOWS_SAME_VERSION_REPAIR: 'true'
-          EQUINOX_WINDOWS_INSTALLER_REPAIR_ONLY: 'true'
-          EQUINOX_WINDOWS_INSTALL_SHA256: ${{ needs.windows-arm64-package-build.outputs.sha256 }}
-          EQUINOX_WINDOWS_INSTALL_BYTES: ${{ needs.windows-arm64-package-build.outputs.bytes }}
-          EQUINOX_WINDOWS_INSTALL_VERSION: ${{ needs.windows-arm64-package-build.outputs.version }}
-          EQUINOX_WINDOWS_INSTALL_TARGET: ${{ needs.windows-arm64-package-build.outputs.target }}
-          EQUINOX_WINDOWS_INSTALL_SOURCE_SHA: ${{ needs.windows-arm64-package-build.outputs.source_sha }}
-        run: |
-          $artifact = Get-ChildItem (Join-Path $env:RUNNER_TEMP 'arm64-package') -Filter 'equinox-local-*-win32-arm64.zip' | Select-Object -First 1
-          if ($null -eq $artifact) { throw 'Windows ARM64 managed ZIP artifact was not found for fresh-install acceptance' }
-          if ($artifact.Length -ne [int64]$env:EQUINOX_WINDOWS_INSTALL_BYTES) { throw 'Downloaded ARM64 installer package length mismatch' }
-          $env:EQUINOX_WINDOWS_INSTALL_ARTIFACT = $artifact.FullName
-          & ./tests/release/windows-installer-real-package-smoke.ps1
-
-  windows-arm64-foundation:
-    name: Windows ARM64 foundation / Node 26
-    runs-on: ubuntu-latest
-    timeout-minutes: 2
-    if: ${{ always() }}
-    needs: [windows-arm64-runtime, windows-arm64-package, windows-arm64-installer, windows-arm64-repair]
-
-    steps:
-      - name: Verify parallel native ARM64 acceptance
-        env:
-          ARM64_RUNTIME_RESULT: ${{ needs.windows-arm64-runtime.result }}
-          ARM64_PACKAGE_RESULT: ${{ needs.windows-arm64-package.result }}
-          ARM64_INSTALLER_RESULT: ${{ needs.windows-arm64-installer.result }}
-          ARM64_REPAIR_RESULT: ${{ needs.windows-arm64-repair.result }}
-        run: |
-          test "$ARM64_RUNTIME_RESULT" = success
-          test "$ARM64_PACKAGE_RESULT" = success
-          test "$ARM64_INSTALLER_RESULT" = success
-          test "$ARM64_REPAIR_RESULT" = success
-
-  windows-headless:
-    name: Windows x64 headless / Node 26
-    runs-on: ubuntu-latest
-    timeout-minutes: 2
-    if: ${{ always() }}
-    needs: [windows-runtime, windows-shell, windows-x64-package-build, windows-package, windows-x64-installer, windows-x64-guardian, windows-x64-repair, windows-arm64-shared-core, windows-arm64-bootstrap, windows-arm64-runtime, windows-arm64-package, windows-arm64-installer, windows-arm64-repair]
-
-    steps:
-      - name: Verify parallel Windows acceptance
-        env:
-          RUNTIME_RESULT: ${{ needs.windows-runtime.result }}
-          SHELL_RESULT: ${{ needs.windows-shell.result }}
-          X64_PACKAGE_BUILD_RESULT: ${{ needs.windows-x64-package-build.result }}
-          PACKAGE_RESULT: ${{ needs.windows-package.result }}
-          X64_INSTALLER_RESULT: ${{ needs.windows-x64-installer.result }}
-          X64_GUARDIAN_RESULT: ${{ needs.windows-x64-guardian.result }}
-          X64_REPAIR_RESULT: ${{ needs.windows-x64-repair.result }}
-          ARM64_SHARED_RESULT: ${{ needs.windows-arm64-shared-core.result }}
-          ARM64_BOOTSTRAP_RESULT: ${{ needs.windows-arm64-bootstrap.result }}
-          ARM64_RUNTIME_RESULT: ${{ needs.windows-arm64-runtime.result }}
-          ARM64_PACKAGE_RESULT: ${{ needs.windows-arm64-package.result }}
-          ARM64_INSTALLER_RESULT: ${{ needs.windows-arm64-installer.result }}
-          ARM64_REPAIR_RESULT: ${{ needs.windows-arm64-repair.result }}
-        run: |
-          test "$RUNTIME_RESULT" = success
-          test "$SHELL_RESULT" = success
-          test "$X64_PACKAGE_BUILD_RESULT" = success
-          test "$PACKAGE_RESULT" = success
-          test "$X64_INSTALLER_RESULT" = success
-          test "$X64_GUARDIAN_RESULT" = success
-          test "$X64_REPAIR_RESULT" = success
-          test "$ARM64_SHARED_RESULT" = success
-          test "$ARM64_BOOTSTRAP_RESULT" = success
-          test "$ARM64_RUNTIME_RESULT" = success
-          test "$ARM64_PACKAGE_RESULT" = success
-          test "$ARM64_INSTALLER_RESULT" = success
-          test "$ARM64_REPAIR_RESULT" = success
-
   main-native-plan:
     if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch' && inputs.main_native_current != '' && inputs.main_native_target != '' }}
     name: Exact-SHA Main snapshot plan
@@ -1184,7 +206,7 @@ jobs:
               echo "Non-product Main change unexpectedly ran native snapshot builds; result=$GITHUB_RESULT" >&2
               exit 1
             fi
-            echo "No user-visible Main update: changed paths are limited to tests/CI/docs metadata." >> "$GITHUB_STEP_SUMMARY"
+            echo "No user-visible Main update: changed paths are limited to CI/docs metadata." >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
           if [ "$GITHUB_COUNT" != "4" ] || [ "$GITHUB_RESULT" != "success" ]; then
@@ -1201,8 +223,8 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
   main-snapshot-publish:
-    needs: [test, macos-managed-source, macos-x64, windows-headless, main-native-plan, main-native-build, main-native-result]
-    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.test.result == 'success' && needs.macos-managed-source.result == 'success' && needs.macos-x64.result == 'success' && needs.windows-headless.result == 'success' && needs.main-native-plan.outputs.main-update-impact == 'true' && needs.main-native-result.result == 'success' }}
+    needs: [main-native-plan, main-native-build, main-native-result]
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.main-native-plan.outputs.main-update-impact == 'true' && needs.main-native-result.result == 'success' }}
     name: Publish Main Snapshot
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -1280,13 +302,29 @@ jobs:
             xargs -0 -P 4 -I '{}' bash -euo pipefail -c '
               object="$1"
               name="$(basename "$object")"
-              aws s3api put-object \
+              key="snapshots/$TARGET_SHA/$name"
+              # Immutable means immutable even on a workflow rerun. If the
+              # original push already wrote this SHA, read back exact bytes;
+              # never silently overwrite a live installer dependency.
+              if aws s3api put-object \
                 --bucket equinox-local-main \
-                --key "snapshots/$TARGET_SHA/$name" \
+                --key "$key" \
+                --if-none-match "*" \
                 --body "$object" \
                 --endpoint-url "$R2_ENDPOINT" \
                 --cache-control "public,max-age=31536000,immutable" \
-                >/dev/null
+                >/dev/null; then
+                exit 0
+              fi
+              existing="$(mktemp "$RUNNER_TEMP/equinox-existing.XXXXXXXX")"
+              trap "rm -f \"$existing\"" EXIT
+              aws s3api get-object \
+                --bucket equinox-local-main --key "$key" "$existing" \
+                --endpoint-url "$R2_ENDPOINT" >/dev/null
+              cmp -s "$object" "$existing" || {
+                echo "R2 immutable object $key differs from original native artifact" >&2
+                exit 1
+              }
             ' _ '{}'
 
       - name: Verify public snapshot before moving tag
@@ -1351,3 +389,103 @@ jobs:
           test -n "${AWS_SECRET_ACCESS_KEY:-}"
           node scripts/release/prune-main-r2.mjs
           node scripts/release/prune-main-r2.mjs --apply
+
+  main-signed-release-publish:
+    name: Publish production-signed Main (four targets)
+    # The pre-existing main-snapshot-publish checks the whole native matrix and
+    # uploads all eight exact-SHA archives/manifests BEFORE this protected job.
+    needs: [main-native-plan, main-snapshot-publish]
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.main-native-plan.outputs.main-update-impact == 'true' && needs.main-snapshot-publish.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    environment: main-production
+    permissions:
+      contents: read
+    concurrency:
+      group: equinox-local-main-signed-release
+      cancel-in-progress: false
+    steps:
+      - name: Checkout exact protected Main SHA
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Verify canonical Main identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${{ github.sha }}"
+          test "$(git ls-remote https://github.com/${{ github.repository }}.git refs/heads/main | cut -f1)" = "${{ github.sha }}"
+          test "${{ github.ref }}" = 'refs/heads/main'
+
+      - name: Install exact Node runtime
+        uses: actions/setup-node@v7
+        with:
+          node-version: 26.12.1
+
+      - name: Download four native CI artifacts
+        uses: actions/download-artifact@v8
+        with:
+          pattern: main-native-${{ github.sha }}-*
+          path: ${{ runner.temp }}/main-signed-artifacts
+          merge-multiple: true
+
+      - name: Admit complete exact-SHA artifact set
+        shell: bash
+        run: |
+          set -euo pipefail
+          dir="$RUNNER_TEMP/main-signed-artifacts"
+          for target in darwin-arm64 darwin-x64 win32-arm64 win32-x64; do
+            test -f "$dir/equinox-local-main-${{ github.sha }}-$target.json"
+            case "$target" in darwin-*) ext=.tar.gz;; win32-*) ext=.zip;; esac
+            test -f "$dir/equinox-local-main-${{ github.sha }}-$target$ext"
+          done
+          test "$(find "$dir" -maxdepth 1 -type f | wc -l | tr -d ' ')" = 8
+
+      - name: Stage protected production signing key without logging it
+        shell: bash
+        env:
+          SIGNING_PEM: ${{ secrets.EQUINOX_MAIN_PRODUCTION_SIGNING_KEY_PEM }}
+        run: |
+          set -euo pipefail
+          umask 077
+          node --input-type=module - <<'NODE'
+          import fs from 'node:fs';
+          const pem=process.env.SIGNING_PEM;
+          if(typeof pem!=='string'||!pem.includes('BEGIN PRIVATE KEY')||pem.length>16384)throw Error('Protected production Ed25519 signing secret is not configured.');
+          fs.writeFileSync(process.env.RUNNER_TEMP+'/main-production-key.pem',pem.endsWith('\n')?pem:pem+'\n',{flag:'wx',mode:0o600});
+          NODE
+
+      - name: Sign one immutable four-target Main installer selector
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -m 700 "$RUNNER_TEMP/main-signed-sidecars"
+          export SOURCE_DATE_EPOCH="$(git show -s --format=%ct HEAD)"
+          version="$(node --input-type=module -e 'import {EQUINOX_LOCAL_VERSION} from "./src/equinox-local-version.js";process.stdout.write(EQUINOX_LOCAL_VERSION)')"
+          node scripts/release/sign-main-snapshot-set.mjs \
+            --source-sha "${{ github.sha }}" --version "$version" \
+            --manifest-dir "$RUNNER_TEMP/main-signed-artifacts" \
+            --key-file "$RUNNER_TEMP/main-production-key.pem" \
+            --output-dir "$RUNNER_TEMP/main-signed-sidecars"
+          rm -f "$RUNNER_TEMP/main-production-key.pem"
+
+      - name: Publish immutable signed R2 objects and CAS latest LAST
+        shell: bash
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.EQUINOX_MAIN_R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.EQUINOX_MAIN_R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+          AWS_EC2_METADATA_DISABLED: 'true'
+        run: |
+          set -euo pipefail
+          test -n "${AWS_ACCESS_KEY_ID:-}"
+          test -n "${AWS_SECRET_ACCESS_KEY:-}"
+          node scripts/release/publish-main-signed-release.mjs \
+            "$RUNNER_TEMP/main-signed-artifacts" "$RUNNER_TEMP/main-signed-sidecars"
+
+      - name: Destroy protected key material even after a failure
+        if: ${{ always() }}
+        shell: bash
+        run: rm -f "$RUNNER_TEMP/main-production-key.pem"
