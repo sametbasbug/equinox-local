@@ -3,7 +3,7 @@ import {generateKeyPairSync} from "node:crypto";
 import test from "node:test";
 import {Readable} from "node:stream";
 import path from "node:path";
-import {inspectSignedMainInstallerWindowsAdmission,resolveOriginalWindowsInstalledA,inspectInstalledOriginalWindowsGuardian} from "../../src/equinox-local-signed-main-windows-admission.js";
+import {inspectSignedMainInstallerWindowsAdmission,resolveOriginalWindowsInstalledA,inspectInstalledOriginalWindowsGuardian,inspectInstalledOriginalWindowsShell} from "../../src/equinox-local-signed-main-windows-admission.js";
 import {createSignedMainInstallPointer,validateSignedMainInstallPointer} from "../../src/equinox-local-main-install-pointer.js";
 
 const SHA="b".repeat(40),A="a".repeat(40),CONTRACT="c".repeat(64);
@@ -53,6 +53,11 @@ function fixture(isNative=false){
    assert.equal(input.releaseDir,releaseDir);
    return {trusted:true,sha256:"e".repeat(64),bytes:3072};
   },
+  inspectShellImpl:async input=>{
+   calls.push(["wpf",input]);
+   assert.equal(input.releaseDir,releaseDir);
+   return {trusted:true,sha256:"f".repeat(64),bytes:3072};
+  },
   inspectStoredImpl:async input=>{
    calls.push(["B",input]);
    assert.equal(input.transactionRoot,root);
@@ -74,6 +79,8 @@ test("Windows read-only original signed Ed25519 Main B preflight admits authenti
  assert.equal(result.previousKind,"stable");
  assert.equal(result.previousSha,null);
  assert.equal(result.originalGuardianSha256,"e".repeat(64));
+ assert.equal(result.originalWpfSha256,"f".repeat(64));
+ assert.equal(f.calls.filter(([name])=>name==="wpf").length,1);
  assert.equal(result.sameSha,false);
  assert.equal(f.calls.filter(([name])=>name==="guardian").length,1);
  assert.equal(f.calls.filter(([name])=>name==="B").length,1);
@@ -92,6 +99,7 @@ test("Windows native Main A->signed Main B requires exact A pointer, source SHA 
   {resolveManagedImpl:async()=>({kind:"managed-source"})},
   {resolveManagedImpl:async()=>({kind:"managed-main",sourceSha:"f".repeat(40),mainNativeSha:"f".repeat(40)})},
   {inspectGuardianImpl:async()=>({trusted:false})},
+  {inspectShellImpl:async()=>({trusted:false})},
  ]){
   await assert.rejects(inspectSignedMainInstallerWindowsAdmission({...f.opts,...wrong}));
  }
@@ -196,4 +204,38 @@ test("original installed Windows Guardian byte-level inspection is read-only, re
   /not an owned bounded normal file/u);
  assert.equal(opens.length,6);
  assert.equal(closed.length,6);
+});
+
+
+test("original installed WPF executable must byte-match release A and its canonical user program directory; does not alter WPF",async()=>{
+ const visits=[];
+ const makeFs=({different=false,short=false}={})=>({
+  open:async file=>{
+   visits.push(file);
+   const isSigned=file.includes(path.win32.join("runtime", "shell"));
+   const size=short?20:4096;
+   const byte=(different && isSigned)?0x77:0x66;
+   return {
+    stat:async()=>({isFile:()=>true,isSymbolicLink:()=>false,nlink:1,size}),
+    createReadStream:()=>Readable.from([Buffer.alloc(size,byte)]),
+    close:async()=>{},
+   };
+  },
+ });
+ const baseline=await inspectInstalledOriginalWindowsShell({
+  installRoot,releaseDir:oldMain,fsImpl:makeFs(),
+ });
+ assert.equal(baseline.trusted,true);
+ assert.equal(baseline.bytes,4096);
+ assert.deepEqual(visits.slice(0,2),[
+  path.win32.join(env.LOCALAPPDATA,"Programs","Equinox Local","EquinoxLocal.exe"),
+  path.win32.join(oldMain,"runtime","shell","EquinoxLocal.exe"),
+ ]);
+ await assert.rejects(inspectInstalledOriginalWindowsShell({
+  installRoot,releaseDir:oldMain,fsImpl:makeFs({different:true}),
+ }),/differs from original A signed release/u);
+ await assert.rejects(inspectInstalledOriginalWindowsShell({
+  installRoot,releaseDir:oldMain,fsImpl:makeFs({short:true}),
+ }),/owned bounded normal file/u);
+ assert.equal(visits.length,6);
 });

@@ -50,6 +50,30 @@ export async function inspectInstalledOriginalWindowsGuardian({
  return Object.freeze({trusted:true,sha256:a.sha256,bytes:a.size});
 }
 
+// This is disk evidence, NOT proof that an already-running WPF PID was
+// authenticated. The latter remains the ORIGINAL Guardian's job. A staged
+// Main B cannot get Guardian handoff merely by replacing the installed WPF
+// executable while keeping the older signed Guardian unchanged.
+export async function inspectInstalledOriginalWindowsShell({
+  installRoot,releaseDir,fsImpl=fs,
+}:{installRoot:string;releaseDir:string;fsImpl?:AdmissionFs}){
+  if(!path.win32.isAbsolute(installRoot)||!path.win32.isAbsolute(releaseDir)||
+     path.win32.normalize(installRoot)!==installRoot||
+     path.win32.normalize(releaseDir)!==releaseDir||
+     path.win32.basename(installRoot).toLowerCase()!=="equinox local"){
+    throw new Error("Original Windows WPF shell has no canonical owned release path.");
+  }
+  const localAppData=path.win32.dirname(installRoot);
+  const programRoot=path.win32.join(localAppData,"Programs","Equinox Local");
+  const installed=path.win32.join(programRoot,"EquinoxLocal.exe");
+  const original=path.win32.join(releaseDir,"runtime","shell","EquinoxLocal.exe");
+  const [a,b]=await Promise.all([fileHash(installed,fsImpl),fileHash(original,fsImpl)]);
+  if(a.sha256!==b.sha256||a.size!==b.size){
+    throw new Error("Installed Windows WPF executable differs from original A signed release.");
+  }
+  return Object.freeze({trusted:true,sha256:a.sha256,bytes:a.size});
+}
+
 // Exactly one active A comes from a durable Native SHA pointer OR the
 // original numbered Stable current-version pointer. A caller must NOT
 // supply the identity from an ambient environment variable.
@@ -94,6 +118,7 @@ export async function inspectSignedMainInstallerWindowsAdmission({
  readPointerImpl=readEquinoxLocalMainNativePointer,
  resolveActiveAImpl=resolveOriginalWindowsInstalledA,
  inspectGuardianImpl=inspectInstalledOriginalWindowsGuardian,
+ inspectShellImpl=inspectInstalledOriginalWindowsShell,
 }:{
  signedPointer:unknown;platform?:string;arch?:string;homeDir?:string;env?:NodeJS.ProcessEnv;
  fsImpl?:AdmissionFs;
@@ -104,6 +129,7 @@ export async function inspectSignedMainInstallerWindowsAdmission({
  readPointerImpl?:typeof readEquinoxLocalMainNativePointer;
  resolveActiveAImpl?:typeof resolveOriginalWindowsInstalledA;
  inspectGuardianImpl?:typeof inspectInstalledOriginalWindowsGuardian;
+ inspectShellImpl?:typeof inspectInstalledOriginalWindowsShell;
 }){
  if(platform!=="win32"||!["x64","arm64"].includes(arch)||
     typeof homeDir!=="string"||!path.win32.isAbsolute(homeDir)||
@@ -144,6 +170,10 @@ export async function inspectSignedMainInstallerWindowsAdmission({
  const originalGuardian=await inspectGuardianImpl({installRoot,releaseDir:currentRelease,fsImpl});
  if(originalGuardian.trusted!==true){
   throw new Error("Windows signed Main requires the ORIGINAL installed signed Guardian.");
+ }
+ const originalWpf=await inspectShellImpl({installRoot,releaseDir:currentRelease,fsImpl});
+ if(originalWpf.trusted!==true){
+  throw new Error("Windows signed Main requires the ORIGINAL installed WPF executable.");
  }
  let previousSha:string|null=null;
  let previousRuntimeContractSha256:string|null=null;
@@ -189,6 +219,7 @@ export async function inspectSignedMainInstallerWindowsAdmission({
   previousKind:previousSha?"main" as const:"stable" as const,
   previousSha,previousRuntimeContractSha256,
   originalGuardianSha256:originalGuardian.sha256,
+  originalWpfSha256:originalWpf.sha256,
   sameSha:previousSha===signed.sourceSha,
  });
 }
