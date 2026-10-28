@@ -12,7 +12,6 @@ const DARWIN_TARGETS = Object.freeze(["darwin-arm64", "darwin-x64"]);
 const WINDOWS_TARGETS = Object.freeze(["win32-arm64", "win32-x64"]);
 const ALL_TARGETS = Object.freeze([...EQUINOX_LOCAL_SUPPORTED_RELEASE_TARGETS]);
 const SHARED_NATIVE_PATHS = Object.freeze([
-    ".github/workflows/release-validation.yml",
     "scripts/release/package-managed-release.mjs",
     "src/equinox-local-platform.js",
     "src/equinox-local-release-runtime-contract.js",
@@ -58,7 +57,7 @@ function addTargets(targets, values) {
     for (const target of values)
         targets.add(target);
 }
-const NON_PRODUCT_MAIN_UPDATE_PREFIXES = Object.freeze([".github/", "docs/"]);
+const NON_PRODUCT_MAIN_UPDATE_PREFIXES = Object.freeze([".github/", "docs/", "website/"]);
 const NON_PRODUCT_MAIN_UPDATE_FILES = new Set([
     "AGENTS.md",
     "README.md",

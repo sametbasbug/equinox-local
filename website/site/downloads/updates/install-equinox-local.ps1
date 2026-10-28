@@ -165,8 +165,7 @@ function Invoke-VerifiedMainPreparation([string]$PrivateTemp) {
 # This is a one-shot replacement of product EXECUTABLES, not an update of
 # the prior source. Preserve config, secrets, workspace, tunnel, downloads and
 # browser personal state in place. Retire only exact product-owned executable
-# roots and selectors. The backup is a single bounded transaction, never an
-# accumulation of historical release ZIPs or copied files.
+# roots and selectors. No old-version backup or rollback is created.
 # Ownership includes product scripts executed by system PowerShell and native
 # messaging helpers, not just executables whose own path is under installRoot.
 function Test-ExistingEquinoxOwnedProcess($Process, [string]$InstallRoot, [string]$ProgramRoot) {
@@ -193,8 +192,8 @@ function Test-ExistingEquinoxOwnedProcess($Process, [string]$InstallRoot, [strin
 # directory even while the new independently signed installer is ready.
 # Temporarily hide ONLY the verified, exclusively product-owned HKCU Chrome
 # host registration while retiring the old runtime. On failed installation
-# restore the same registration AFTER old executable rollback. The admitted
-# new release re-registers its own host on successful activation.
+# restore the same registration if cleanup fails before the new install.
+# The verified new release re-registers its host after reinstall.
 function Suspend-OldEquinoxChromeHost([string]$InstallRoot) {
   $subkey = 'Software\Google\Chrome\NativeMessagingHosts\dev.equinox.browser'
   $parent = 'Software\Google\Chrome\NativeMessagingHosts'
@@ -312,96 +311,41 @@ function Get-NormalExistingEntry([string]$Path) {
   }
   return $item
 }
-function Begin-ExecutableReplacement([string]$InstallRoot) {
-  $backup = Join-Path $InstallRoot '.equinox-signed-reinstall-backup'
-  # An interrupted previous reinstall may have left ONLY retired product
-  # executables behind. Never require an older version for retry: authenticate
-  # the newest signed Main first, then discard the fixed owned backup.
-  $existingBackup = Get-NormalExistingEntry $backup
-  if ($null -ne $existingBackup) {
-    if (-not $existingBackup.PSIsContainer) { Fail 'interrupted executable backup is not a directory' }
-    $allowed = @('releases','runtime','main-update','current-version','program','native-messaging','failed-new')
-    foreach ($child in @(Get-ChildItem -LiteralPath $backup -Force)) {
-      if ($child.Name -cnotin $allowed -or (($child.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0)) {
-        Fail 'interrupted executable backup has an unexpected entry'
-      }
-    }
-    Stop-ExistingEquinoxExecutables $InstallRoot (Join-Path ([IO.Path]::GetDirectoryName($InstallRoot)) 'Programs\Equinox Local')
-    Remove-Item -LiteralPath $backup -Recurse -Force -ErrorAction Stop
-  }
+# An update is the exact same verified fresh install. No version A/B state,
+# Guardian update transaction, old executable backup or rollback path.
+function Clear-ExistingEquinoxExecutables([string]$InstallRoot) {
   $entries = @(Get-ExecutableReplacementPaths $InstallRoot)
-  $present = @($entries | Where-Object { $null -ne (Get-NormalExistingEntry $_.Path) })
-  if ($present.Count -eq 0) { return $null }
-  Stop-ExistingEquinoxExecutables $InstallRoot (Join-Path ([IO.Path]::GetDirectoryName($InstallRoot)) 'Programs\Equinox Local')
-  [IO.Directory]::CreateDirectory($backup) | Out-Null
-  $transaction = [pscustomobject]@{ Backup=$backup; Entries=$entries }
-  try {
-    foreach ($entry in $present) {
-      $source = [string]$entry.Path
-      $destination = Join-Path $backup ([string]$entry.Name)
-      for ($moveAttempt=0; $moveAttempt -lt 10; $moveAttempt++) {
-        try {
-          if ([IO.Directory]::Exists($source)) { [IO.Directory]::Move($source, $destination) }
-          elseif ([IO.File]::Exists($source)) { [IO.File]::Move($source, $destination) }
-          else { Fail 'existing executable disappeared during signed reinstall' }
-          break
-        } catch [UnauthorizedAccessException], [IO.IOException] {
-          if ($moveAttempt -eq 9) { throw }
-          # Chrome Native Messaging or old runtime helpers may exit just
-          # after the first process snapshot. Retry only this verified owned
-          # entry and re-check old process identities before each retry.
-          Stop-ExistingEquinoxExecutables $InstallRoot (Join-Path ([IO.Path]::GetDirectoryName($InstallRoot)) 'Programs\Equinox Local')
-          Start-Sleep -Milliseconds 300
-        }
-      }
-    }
-  } catch {
-    Restore-ExecutableReplacement $transaction
-    throw
-  }
-  return $transaction
-}
-function Restore-ExecutableReplacement($Transaction) {
-  if ($null -eq $Transaction) { return }
-  $failed = Join-Path $Transaction.Backup 'failed-new'
-  foreach ($entry in $Transaction.Entries) {
-    $old = Join-Path $Transaction.Backup ([string]$entry.Name)
-    $existing = Get-NormalExistingEntry $old
-    $installed = Get-NormalExistingEntry ([string]$entry.Path)
-    # A failed attempt may have been unable to move a locked old directory.
-    # Never quarantine that still-original directory unless its exact backup
-    # actually exists. This also makes an early move failure reversible.
-    if ($null -eq $existing) { continue }
-    if ($null -ne $installed) {
-      [IO.Directory]::CreateDirectory($failed) | Out-Null
-      $quarantine = Join-Path $failed ([string]$entry.Name)
-      if ($installed.PSIsContainer) { [IO.Directory]::Move($installed.FullName, $quarantine) }
-      else { [IO.File]::Move($installed.FullName, $quarantine) }
-    }
-    if ($null -ne $existing) {
-      if ($existing.PSIsContainer) { [IO.Directory]::Move($old, [string]$entry.Path) }
-      else { [IO.File]::Move($old, [string]$entry.Path) }
-    }
-  }
-  # Only after original owned paths have been fully restored is deletion safe.
-  Remove-Item -LiteralPath $Transaction.Backup -Recurse -Force -ErrorAction Stop
-}
-function Complete-ExecutableReplacement($Transaction) {
-  if ($null -ne $Transaction) {
-    # The bundled installer already verified exact NEW version and HEALTHY.
-    # Never keep successful historical executable archives on the user's disk.
-    # Retired managed Git child processes can briefly retain an NTFS handle
-    # (notably commit-graph-chain) after the NEW runtime is healthy. Retry
-    # only this exact product-owned temporary backup, not any user folders.
-    for ($attempt=0; $attempt -lt 20; $attempt++) {
+  $programRoot = Join-Path ([IO.Path]::GetDirectoryName($InstallRoot)) 'Programs\Equinox Local'
+  # All downloads, detached signatures and native inspection succeeded first.
+  # Stop only old product-owned processes; leave user config/workspace untouched.
+  Stop-ExistingEquinoxExecutables $InstallRoot $programRoot
+  foreach ($entry in $entries) {
+    $source = [string]$entry.Path
+    for ($attempt = 0; $attempt -lt 10; $attempt++) {
+      $existing = Get-NormalExistingEntry $source
+      if ($null -eq $existing) { break }
       try {
-        if ([IO.Directory]::Exists($Transaction.Backup)) { Remove-Item -LiteralPath $Transaction.Backup -Recurse -Force -ErrorAction Stop }
-        return
-      } catch {
-        if ($attempt -eq 19) { throw }
-        Start-Sleep -Milliseconds 500
+        Remove-Item -LiteralPath $source -Recurse -Force -ErrorAction Stop
+        break
+      } catch [UnauthorizedAccessException], [IO.IOException] {
+        if ($attempt -eq 9) { throw }
+        Stop-ExistingEquinoxExecutables $InstallRoot $programRoot
+        Start-Sleep -Milliseconds 300
       }
     }
+  }
+  # Retire only the fixed, product-owned backup left by prior installers.
+  $oldBackup = Join-Path $InstallRoot '.equinox-signed-reinstall-backup'
+  $existingBackup = Get-NormalExistingEntry $oldBackup
+  if ($null -ne $existingBackup) {
+    if (-not $existingBackup.PSIsContainer) { Fail 'legacy executable backup is not a directory' }
+    $allowed = @('releases','runtime','main-update','current-version','program','native-messaging','failed-new')
+    foreach ($child in @(Get-ChildItem -LiteralPath $oldBackup -Force)) {
+      if ($child.Name -cnotin $allowed -or (($child.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0)) {
+        Fail 'legacy executable backup contains an unrecognized entry'
+      }
+    }
+    Remove-Item -LiteralPath $oldBackup -Recurse -Force -ErrorAction Stop
   }
 }
 
@@ -435,29 +379,25 @@ function Invoke-EquinoxLocalInstall {
     Assert-NormalFile $mainInstaller 1 2097152 | Out-Null
     Assert-NormalFile $mainArchive 1 $MaxArtifactBytes | Out-Null
     Assert-NormalFile $mainSelector 200 16384 | Out-Null
-    # Existing product-owned executable replacement already stops WPF,
-    # clears old software paths, and preserves state/config/workspace.
+    # Reuse the exact original installer for fresh install and update.
+    # No executable rollback: a failed installation can be repaired by
+    # running this same signed installer again.
     $suspendedHost = Suspend-OldEquinoxChromeHost $installRoot
-    try { $oldExecutables = Begin-ExecutableReplacement $installRoot }
+    try { Clear-ExistingEquinoxExecutables $installRoot }
     catch { Restore-OldEquinoxChromeHost $suspendedHost; throw }
-    try {
-      $freshResult = @(Invoke-PinnedMainNode $mainNode @($mainInstaller,
-        '--install-main-fresh', '--signed-pointer-file', $mainSelector,
-        '--archive', $mainArchive))
-      if ($freshResult.Count -ne 1) { Fail 'signed Main has no verified completion receipt' }
-      try { $installed = $freshResult[0] | ConvertFrom-Json -ErrorAction Stop }
-      catch { Fail 'signed Main completion receipt is invalid' }
-      if ($installed.status -cne 'installed' -or $installed.channel -cne 'main' -or
-          $installed.sourceSha -cne $main.sourceSha -or
-          $installed.version -cne $main.version -or $installed.target -cne $Target) {
-        Fail 'running Main release does not match its exact signed source SHA'
-      }
-      Write-Output $freshResult[0]
-      Write-Info 'signed Main is installed and healthy'
-    } finally {
-      # No rollback to a prior version; repeat this installer for repair.
-      Complete-ExecutableReplacement $oldExecutables
+    $freshResult = @(Invoke-PinnedMainNode $mainNode @($mainInstaller,
+      '--install-main-fresh', '--signed-pointer-file', $mainSelector,
+      '--archive', $mainArchive))
+    if ($freshResult.Count -ne 1) { Fail 'signed Main has no verified completion receipt' }
+    try { $installed = $freshResult[0] | ConvertFrom-Json -ErrorAction Stop }
+    catch { Fail 'signed Main completion receipt is invalid' }
+    if ($installed.status -cne 'installed' -or $installed.channel -cne 'main' -or
+        $installed.sourceSha -cne $main.sourceSha -or
+        $installed.version -cne $main.version -or $installed.target -cne $Target) {
+      Fail 'running Main release does not match its exact signed source SHA'
     }
+    Write-Output $freshResult[0]
+    Write-Info 'signed Main is installed and healthy'
     return
   } finally {
     if ([IO.Directory]::Exists($tempRoot)) { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
