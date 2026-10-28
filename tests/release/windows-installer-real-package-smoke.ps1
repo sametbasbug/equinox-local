@@ -511,6 +511,9 @@ try {
   Assert-True ((Invoke-GuardianCheck '--audit-signed-native-worker-argv') -eq 70) 'Guardian accepted absent signed-native worker process.'
   Assert-True ((Invoke-GuardianCheck '--audit-signed-native-worker-pipe') -eq 70) 'Guardian accepted absent signed-native kernel HMAC owner.'
   Assert-True ((Invoke-GuardianCheck '--audit-signed-native-owner-lease') -eq 70) 'Guardian accepted absent signed-native kernel exclusive owner.'
+  Assert-True ((Invoke-GuardianCheck '--prepare-signed-native-journal') -eq 70) 'Guardian created prepared signed-native journal without a real signed owner.'
+  Assert-True ((Invoke-GuardianCheck '--audit-signed-native-prepared-journal') -eq 70) 'Guardian accepted nonexistent prepared signed-native crash journal.'
+
 
 
   $JournalId = 'main-' + ('3' * 32)
@@ -580,6 +583,9 @@ try {
     Assert-True ((Invoke-GuardianCheck '--audit-signed-native-worker-argv') -eq 70) 'Guardian accepted Git worker as signed-native worker.'
     Assert-True ((Invoke-GuardianCheck '--audit-signed-native-worker-pipe') -eq 70) 'Guardian accepted Git worker HMAC as signed-native OS authority.'
     Assert-True ((Invoke-GuardianCheck '--audit-signed-native-owner-lease') -eq 70) 'Guardian accepted Git worker as signed-native exclusive owner.'
+    Assert-True ((Invoke-GuardianCheck '--prepare-signed-native-journal') -eq 70) 'Guardian accepted legacy Git worker to create signed-native prepared journal.'
+    Assert-True ((Invoke-GuardianCheck '--audit-signed-native-prepared-journal') -eq 70) 'Guardian accepted Git journal as signed-native crash evidence.'
+
 
 
     # The owning process must be a REAL product-owned Node with matching PID,

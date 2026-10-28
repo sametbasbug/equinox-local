@@ -17,7 +17,8 @@ internal static partial class Program
     // stop, A/B switch, NativeMessaging mutation or commit. A future
     // mutating lease MUST be durable/crash-recoverable instead, and must
     // never reuse this throwaway proof as update permission.
-    private static void InspectSignedNativeOwnerExclusiveLeaseWithoutGrant()
+    private static void InspectSignedNativeOwnerExclusiveLeaseWithoutGrant(
+        Action<string, string, string, string, int, string>? afterLiveProof = null)
     {
         InspectionPhase = "signed-native-independent-owner-lease";
         var local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
@@ -50,8 +51,9 @@ internal static partial class Program
             {
                 var name = Path.GetFileName(entry);
                 if (name.EndsWith(".writer-lock", StringComparison.OrdinalIgnoreCase) ||
-                    name.EndsWith(".guardian-session-lock", StringComparison.OrdinalIgnoreCase))
-                    throw new InvalidDataException("Original Git Guardian journal owner blocks signed-native OS admission.");
+                    name.EndsWith(".guardian-session-lock", StringComparison.OrdinalIgnoreCase) ||
+                    name.EndsWith(".signed-native.json", StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidDataException("Original Git or orphaned signed-native Guardian journal blocks fresh OS admission.");
             }
         }
 
@@ -87,6 +89,14 @@ internal static partial class Program
         if (process.HasExited ||
             process.StartTime.ToUniversalTime().Ticks.ToString(CultureInfo.InvariantCulture) != audited.Ticks)
             throw new InvalidDataException("Original signed-native OS owner changed during exclusive HMAC lease.");
+        // A durable PREPARED record may be minted only under the SAME
+        // original Guardian kernel-held live lease + pinned B executable
+        // handles, after full original Ed25519/ZIP, live PID and nonce HMAC.
+        // Its existence is NOT an OS mutation capability or approval to
+        // stop WPF, switch native pointers or install a Chrome NM host.
+        afterLiveProof?.Invoke(id, sha, target,
+            active.GetProperty("runtimeContractSha256").GetString() ?? "",
+            audited.Pid, audited.Ticks);
         // Success explicitly means ONLY live original Guardian owner proof.
         // No reference to the lease escapes, so no JS caller can promote it
         // to the original mutating Git Guardian journal authorization.
