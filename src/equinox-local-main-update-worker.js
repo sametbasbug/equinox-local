@@ -31,6 +31,7 @@ function hasErrorCode(error, code) {
     return error !== null && typeof error === "object" && "code" in error && error.code === code;
 }
 const HEALTH_ATTEMPTS = 40;
+const FRESH_WINDOWS_NATIVE_HEALTH_ATTEMPTS = 180;
 const HEALTH_DELAY_MS = 500;
 function errorMessage(error) {
     return error instanceof Error ? error.message : String(error);
@@ -141,7 +142,7 @@ export async function waitForExactNativeMainHealth({ transactionRoot, sourceSha,
         !/^(darwin|win32)-(arm64|x64)$/u.test(target) ||
         !/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/u.test(version) ||
         !/^[a-f0-9]{64}$/u.test(runtimeContractSha256) ||
-        !Number.isInteger(attempts) || attempts < 1 || attempts > HEALTH_ATTEMPTS) {
+        !Number.isInteger(attempts) || attempts < 1 || attempts > FRESH_WINDOWS_NATIVE_HEALTH_ATTEMPTS) {
         throw new Error("Signed Main native health identity or bounded attempts are invalid.");
     }
     const pointerPath = path.join(transactionRoot, "current-native.json");
