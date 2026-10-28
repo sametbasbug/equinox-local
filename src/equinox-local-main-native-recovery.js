@@ -210,13 +210,11 @@ export async function beginEquinoxLocalSignedNativeMacOwner({ transactionRoot, t
     finally {
         if (!closed)
             await handle.close().catch(() => { });
-        if (!success) {
-            const stored = await fsImpl.lstat(lockPath).catch(() => null);
-            if (stored?.isFile() && !stored.isSymbolicLink() &&
-                stored.dev === original.dev && stored.ino === original.ino) {
-                await fsImpl.unlink(lockPath).catch(() => { });
-            }
-        }
+        // An identity check followed by unlink is racy: another process could
+        // replace active.json between the two operations. Leave an ambiguous
+        // failed owner lock for explicit conservative recovery instead.
+        // Never delete a path merely because an earlier lstat matched its inode.
+        if (!success) { /* fail closed: active owner remains reserved */ }
     }
 }
 // Read-only owner check for a future detached/recovery runner. Never delete a

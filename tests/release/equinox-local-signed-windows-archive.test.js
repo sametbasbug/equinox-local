@@ -6,6 +6,7 @@ import path from "node:path";
 import test from "node:test";
 
 import {preserveOriginalSignedWindowsArchive} from "../../src/equinox-local-signed-windows-archive.js";
+import {readBoundedNormalFile} from "../../src/equinox-local-safe-file.js";
 
 const SHA="e".repeat(40);
 const TARGET="win32-x64";
@@ -96,7 +97,7 @@ test("signed Windows ZIP publication resumes ONLY its exact same-inode hardlink 
  assert.equal(result.status,"already_archived");
  assert.equal((await fs.lstat(archive)).nlink,1);
  await assert.rejects(fs.lstat(temporary),{code:"ENOENT"});
- assert.deepEqual(await fs.readFile(archive),bytes);
+ assert.deepEqual((await readBoundedNormalFile(archive,{minBytes:1,maxBytes:4096,requireSingleLink:true})).data,bytes);
 });
 
 test("Windows per-user native-store ZIP staging denies open ACLs before creating its SHA archive",async t=>{

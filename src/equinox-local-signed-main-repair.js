@@ -13,6 +13,7 @@ import { beginEquinoxLocalSignedNativeMacOwner, assertEquinoxLocalSignedNativeMa
 import { readEquinoxLocalMainNativePointer } from "./equinox-local-main-native-state.js";
 import { assertEquinoxLocalFreshNativeAppHostOwned } from "./equinox-local-native-app-host.js";
 import { waitForExactNativeMainHealth } from "./equinox-local-main-update-worker.js";
+import { readBoundedNormalFile } from "./equinox-local-safe-file.js";
 const execFile = promisify(callbackExec);
 const SHA = /^[a-f0-9]{40}$/u;
 const DIGEST = /^[a-f0-9]{64}$/u;
@@ -74,12 +75,12 @@ export async function recoverEquinoxLocalSignedMainMacRepair({ signedPointer, tr
         throw new Error("Same-SHA repair recovery original native pointers were modified.");
     }
     const agent = path.posix.join(homeDir, "Library", "LaunchAgents", EQUINOX_LOCAL_LAUNCH_AGENT_LABEL + ".plist");
-    const stat = await fsImpl.lstat(agent);
-    if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1 ||
-        (stat.mode & 0o777) !== 0o600 ||
-        await fsImpl.readFile(agent, "utf8") !== launchAgentPlist({
-            homeDir, installRoot: path.posix.dirname(root),
-        })) {
+    const { data: agentText, stat } = await readBoundedNormalFile(agent, {
+        fsImpl, minBytes: 1, maxBytes: 32 * 1024, encoding: "utf8", requireSingleLink: true,
+        label: "Original Main LaunchAgent",
+    });
+    if ((stat.mode & 0o777) !== 0o600 ||
+        agentText !== launchAgentPlist({ homeDir, installRoot: path.posix.dirname(root) })) {
         throw new Error("Same-SHA repair recovery LaunchAgent is foreign.");
     }
     await assertAppImpl({ homeDir, releaseDir: inspected.releaseDir, fsImpl });
@@ -146,10 +147,12 @@ export async function repairEquinoxLocalSignedMainMacRuntime({ signedPointer, ho
     const service = "gui/" + uid + "/" + EQUINOX_LOCAL_LAUNCH_AGENT_LABEL;
     const executable = equinoxLocalAppExecutablePath(homeDir);
     const checkHost = async () => {
-        const stat = await fsImpl.lstat(agentPath);
-        if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1 ||
-            (stat.mode & 0o777) !== 0o600 ||
-            await fsImpl.readFile(agentPath, "utf8") !== launchAgentPlist({ homeDir, installRoot })) {
+        const { data: agentText, stat } = await readBoundedNormalFile(agentPath, {
+            fsImpl, minBytes: 1, maxBytes: 32 * 1024, encoding: "utf8", requireSingleLink: true,
+            label: "Original Main LaunchAgent",
+        });
+        if ((stat.mode & 0o777) !== 0o600 ||
+            agentText !== launchAgentPlist({ homeDir, installRoot })) {
             throw new Error("Original Main LaunchAgent differs from the signed native installation.");
         }
         await assertAppImpl({ homeDir, releaseDir: initial.releaseDir, fsImpl, execFileImpl });

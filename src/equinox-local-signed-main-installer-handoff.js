@@ -1,4 +1,4 @@
-import { createHash, randomBytes } from "node:crypto";
+import { randomBytes } from "node:crypto";
 import { spawn } from "node:child_process";
 import { constants as fsConstants } from "node:fs";
 import fs from "node:fs/promises";
@@ -67,9 +67,14 @@ export async function scheduleEquinoxLocalSignedNativeMacInstaller({ installatio
         throw new Error("Original Main signed install selector differs from the immutable installed release.");
     }
     const installer = path.posix.join(installation.releaseDir, "scripts", "install-equinox-local.sh");
-    const stat = await fsImpl.lstat(installer);
-    if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1 ||
-        stat.uid !== process.getuid?.() || (stat.mode & 0o022) !== 0 ||
+    // Open the signed original once, without following symlinks. Launching
+    // its pathname after lstat would allow replacement between check and exec.
+    const originalInstaller = await readBoundedNormalFile(installer, {
+        fsImpl, minBytes: 1, maxBytes: 128 * 1024, requireSingleLink: true,
+        label: "Original signed Mac installer",
+    });
+    const stat = originalInstaller.stat;
+    if (stat.uid !== process.getuid?.() || (stat.mode & 0o022) !== 0 ||
         await fsImpl.realpath(installer) !== installer) {
         throw new Error("Original native Main installer is not an owned, unchanged release file.");
     }
@@ -84,11 +89,24 @@ export async function scheduleEquinoxLocalSignedNativeMacInstaller({ installatio
     // bootstrap, A/B, source-SHA health or rollback later succeeded.
     const requestId = "main-" + randomBytes(16).toString("hex");
     const logPath = path.posix.join(handoffRoot, requestId + ".original-installer.log");
+    // The private, create-only detached copy is EXACTLY the original script
+    // bytes read through the checked file descriptor. No pathname swap can
+    // change the code run by the detached process, even after the release moves.
+    const detachedScript = path.posix.join(handoffRoot, requestId + ".original-installer.sh");
+    const scriptHandle = await fsImpl.open(detachedScript, fsConstants.O_WRONLY | fsConstants.O_CREAT |
+        fsConstants.O_EXCL | (fsConstants.O_NOFOLLOW ?? 0), 0o600);
+    try {
+        await scriptHandle.writeFile(originalInstaller.data);
+        await scriptHandle.sync();
+    }
+    finally {
+        await scriptHandle.close();
+    }
     const fd = await fsImpl.open(logPath, fsConstants.O_WRONLY | fsConstants.O_CREAT |
         fsConstants.O_EXCL | (fsConstants.O_NOFOLLOW ?? 0), 0o600);
     try {
         await launchHelperImpl({
-            spawnImpl, command: "/bin/bash", args: [installer],
+            spawnImpl, command: "/bin/bash", args: [detachedScript],
             options: {
                 cwd: installation.releaseDir, detached: true,
                 stdio: ["ignore", fd.fd, fd.fd],
@@ -150,9 +168,11 @@ export async function scheduleEquinoxLocalSignedNativeWindowsInstaller({ install
         throw new Error("Original Windows Main signed selector differs from installed source.");
     }
     const installer = path.win32.join(installation.releaseDir, "scripts", "install-equinox-local.ps1");
-    const script = await fsImpl.lstat(installer);
-    if (!script.isFile() || script.isSymbolicLink() || script.nlink !== 1 ||
-        await fsImpl.realpath(installer) !== installer) {
+    const originalScript = await readBoundedNormalFile(installer, {
+        fsImpl, platform: "win32", minBytes: 1, maxBytes: 128 * 1024, requireSingleLink: true,
+        label: "Original signed Windows installer",
+    });
+    if (await fsImpl.realpath(installer) !== installer) {
         throw new Error("Original Windows Main PowerShell installer is not a normal product file.");
     }
     const powershell = path.win32.join(sourceEnv.SystemRoot ?? sourceEnv.WINDIR ?? "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
@@ -170,13 +190,14 @@ export async function scheduleEquinoxLocalSignedNativeWindowsInstaller({ install
     // Begin-ExecutableReplacement stops product-owned PowerShell scripts that
     // name native-store paths, otherwise the installer kills ITSELF.
     const runner = path.win32.join(logs, requestId + ".original-installer.ps1");
-    await fsImpl.copyFile(installer, runner, fsConstants.COPYFILE_EXCL);
-    const [originalBody, runnerBody] = await Promise.all([
-        fsImpl.readFile(installer), fsImpl.readFile(runner),
-    ]);
-    if (!createHash("sha256").update(originalBody).digest().equals(createHash("sha256").update(runnerBody).digest())) {
-        await fsImpl.rm(runner, { force: true });
-        throw new Error("Temporary Windows installer differs from the signed release script.");
+    const runnerHandle = await fsImpl.open(runner, fsConstants.O_WRONLY | fsConstants.O_CREAT |
+        fsConstants.O_EXCL | (fsConstants.O_NOFOLLOW ?? 0), 0o600);
+    try {
+        await runnerHandle.writeFile(originalScript.data);
+        await runnerHandle.sync();
+    }
+    finally {
+        await runnerHandle.close();
     }
     const handle = await fsImpl.open(logPath, fsConstants.O_WRONLY | fsConstants.O_CREAT |
         fsConstants.O_EXCL | (fsConstants.O_NOFOLLOW ?? 0), 0o600);
