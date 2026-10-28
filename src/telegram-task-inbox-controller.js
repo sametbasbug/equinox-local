@@ -688,7 +688,8 @@ export function createTelegramTaskInboxController({ store, autoContinueControlle
             // Existing capsules may be checkpointed after Telegram activation.
             // Never announce them as NEW tasks merely because their status changed.
             if (task.status !== "active" ||
-                Date.parse(task.createdAt || task.updatedAt) <= Date.parse(state.activatedAt))
+                !Number.isFinite(Date.parse(task.createdAt ?? "")) ||
+                Date.parse(task.createdAt) <= Date.parse(state.activatedAt))
                 return false;
             const routeId = `r-${randomId()}`.toLowerCase().replace(/[^a-z0-9-]/gu, "").slice(0, 40);
             const sent = await sendCard({ text: taskCardText(task), keyboard: taskKeyboard(task, routeId, canonicalUrl, chatBindable, chatSelected) });

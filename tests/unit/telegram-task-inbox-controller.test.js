@@ -15,6 +15,7 @@ async function fixture(t) {
     title: "Telegram task",
     status: "active",
     checkpointRevision: 1,
+    createdAt: "2026-09-20T16:00:01.000Z",
     updatedAt: "2026-09-20T16:00:01.000Z",
     humanInput: null,
     continuation: null,
@@ -46,6 +47,7 @@ async function fixture(t) {
     checkpoint: async ({ title, objective, completed = [], next = [], references = [] }) => {
       const created = {
         taskId: "task-newtask12", title, objective, status: "active", checkpointRevision: 1,
+        createdAt: new Date(now + 1_000).toISOString(),
         updatedAt: new Date(now + 1_000).toISOString(), humanInput: null, continuation: null,
         completed: structuredClone(completed), next: structuredClone(next), references: structuredClone(references),
       };
@@ -1137,9 +1139,11 @@ test("Telegram sync announces only newly created active Tasks, never older check
   const f = await fixture(t);
   const oldUpdated = { taskId: "task-oldactive", title: "Old active", createdAt: "2026-09-19T12:00:00.000Z", updatedAt: "2026-09-20T16:01:00.000Z", status: "active", checkpointRevision: 15, next: [] };
   const oldFinished = { ...oldUpdated, taskId: "task-oldclosed", status: "completed", title: "Finished" };
+  const oldWithoutCreationTime = { ...oldUpdated, taskId: "task-oldmissingtime", title: "Old unknown creation time" };
+  delete oldWithoutCreationTime.createdAt;
   const fresh = { ...oldUpdated, taskId: "task-newactive", createdAt: "2026-09-20T16:00:02.000Z", title: "Fresh task" };
-  f.deps.store.list = async () => [oldUpdated, oldFinished, fresh];
-  f.deps.store.readInternal = async (taskId) => ({ ...[oldUpdated,oldFinished,fresh].find((item) => item.taskId === taskId), chatBinding: null });
+  f.deps.store.list = async () => [oldUpdated, oldFinished, oldWithoutCreationTime, fresh];
+  f.deps.store.readInternal = async (taskId) => ({ ...[oldUpdated,oldFinished,oldWithoutCreationTime,fresh].find((item) => item.taskId === taskId), chatBinding: null });
   const controller = createTelegramTaskInboxController(f.deps);
   await controller.initialize();
   const result = await controller.syncTasks();

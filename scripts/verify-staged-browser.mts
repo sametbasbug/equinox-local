@@ -69,13 +69,13 @@ try {
   const popup = readFileSync(path.join(unpacked, 'popup.html'), 'utf8');
   assert.match(popup, /<script src="popup\.js"><\/script>/u);
   assert.match(popup, /<link rel="stylesheet" href="popup\.css">/u);
-  for (const file of ['service-worker.js', 'bookmarks.js', 'chatgpt-continuation-state.js', 'popup.js']) {
+  for (const file of ['service-worker.js', 'bookmarks.js', 'chatgpt-commentary-visibility.js', 'chatgpt-continuation-state.js', 'popup.js']) {
     new Script(readFileSync(path.join(unpacked, file), 'utf8'), { filename: file });
   }
   const worker = readFileSync(path.join(unpacked, 'service-worker.js'), 'utf8');
   assert.ok(worker.split("\n").slice(0, 12).includes('importScripts("bookmarks.js");'),
     "Shipped worker must load its packaged classic bookmark dependency before running");
-  assert.deepEqual(readdirSync(unpacked).sort(), ['bookmarks.js', 'chatgpt-continuation-state.js',
+  assert.deepEqual(readdirSync(unpacked).sort(), ['bookmarks.js', 'chatgpt-commentary-visibility.js', 'chatgpt-continuation-state.js',
     'icons', 'manifest.json', 'popup.css', 'popup.html', 'popup.js', 'service-worker.js']);
   console.log(`Staged MV3 package preflight passed (${allowed.length} files); no Chrome profile was opened.`);
 
