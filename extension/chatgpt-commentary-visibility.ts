@@ -4,8 +4,7 @@
   const nativeFetch = window.fetch;
   const encoder = new TextEncoder();
   const MAX_FRAME = 1024 * 1024;
-
-  function eligible(message: any): boolean {
+  function isPublicProgress(message: any): boolean {
     if (!message || typeof message !== "object" || Array.isArray(message)) return false;
     const metadata = message.metadata;
     return typeof message.id === "string" && message.id.length > 0
@@ -20,12 +19,11 @@
       // commentary channel and recipient=all establish public visibility.
       && metadata.message_type === "next"
       && message.end_turn !== true
-      && metadata.is_visually_hidden_from_conversation === true
       && metadata.is_visually_hidden !== true
       && metadata.is_hidden !== true;
   }
 
-  function changeFrame(frame: string): string {
+  function changeFrame(frame: string, state: { currentPublicProgress: boolean }): string {
     // SSE records must contain one complete JSON data field, not multiline
     // fragments or unrecognized control/event framing.
     const lines = frame.split(/\r?\n/u);
@@ -42,7 +40,11 @@
     // target is a user-facing commentary message or private analysis/tool work.
     let changed = false;
     const reveal = (message: any): void => {
-      if (!eligible(message)) return;
+      if (!message || typeof message !== "object") return;
+      // Each full message establishes the recipient and channel for later
+      // /message/metadata patches in this same SSE response.
+      state.currentPublicProgress = isPublicProgress(message);
+      if (!state.currentPublicProgress || message.metadata.is_visually_hidden_from_conversation !== true) return;
       message.metadata.is_visually_hidden_from_conversation = false;
       changed = true;
     };
@@ -52,8 +54,21 @@
     }
     if (Array.isArray(payload.v)) {
       for (const op of payload.v) {
-        if (op && typeof op === "object" && (op.o === "add" || op.o === "replace")
-            && (op.p === "/message" || op.p === "")) reveal(op.v);
+        if (!op || typeof op !== "object") continue;
+        if ((op.o === "add" || op.o === "replace") && (op.p === "/message" || op.p === "")) {
+          reveal(op.v);
+        } else if (state.currentPublicProgress && (op.o === "append" || op.o === "add" || op.o === "replace")
+          && op.p === "/message/metadata" && op.v && typeof op.v === "object"
+          && op.v.is_visually_hidden_from_conversation === true) {
+          // ChatGPT sometimes hides the FOURTH progress message only in a
+          // later metadata patch, even though its initial snapshot was public.
+          op.v.is_visually_hidden_from_conversation = false;
+          changed = true;
+        } else if (state.currentPublicProgress && (op.o === "add" || op.o === "replace")
+          && op.p === "/message/metadata/is_visually_hidden_from_conversation" && op.v === true) {
+          op.v = false;
+          changed = true;
+        }
       }
     }
     return changed ? frame.replace(data[0]!, "data: " + JSON.stringify(payload)) : frame;
@@ -63,6 +78,7 @@
     if (!response.body || response.status !== 200 ||
         !/^text\/event-stream(?:\s*;|\s*$)/iu.test(response.headers.get("content-type") || "")) return response;
     const decoder = new TextDecoder();
+    const state = { currentPublicProgress: false };
     let pending = "";
     let passthrough = false;
     const stream = response.body.pipeThrough(new TransformStream<Uint8Array, Uint8Array>({
@@ -73,7 +89,7 @@
           const match = /\r?\n\r?\n/u.exec(pending);
           if (!match) break;
           const end = match.index + match[0].length;
-          controller.enqueue(encoder.encode(changeFrame(pending.slice(0, match.index)) + match[0]));
+          controller.enqueue(encoder.encode(changeFrame(pending.slice(0, match.index), state) + match[0]));
           pending = pending.slice(end);
         }
         if (pending.length > MAX_FRAME) {

@@ -1,9 +1,10 @@
-## [6.3.0] - 2026-10-28
+## [6.3.0] - 2026-10-29
 
 - Main signed four-platform native delivery and private live-checkout Factory runtime now share the canonical source while preserving their distinct installation roles.
 - The installed Control Center displays the signed Main source commit next to the running version.
 - Equinox Browser 1.2.0 adds explicit Factory installation provenance and handles ChatGPT commentary message snapshots inside the streaming `v.message` envelope; only verified public commentary (including public thinking-preamble-labelled progress) is eligible, never private analysis or tool-directed traffic.
 - Verified in live ChatGPT Chat on Mac: IOTA1–IOTA5 all rendered after two safely classified hidden public commentary records were restored. The is_thinking_preamble_message flag also appears on user-facing commentary; private reasoning and tool recipients remain excluded.
+- The ChatGPT Chat SSE handler also preserves public commentary when a later `/message/metadata` patch marks an initially visible progress message as hidden. Independently verified 7/7 and 8/8 actual commentary messages in signed-in User Browser, including message #4; no Python output or tool messages counted.
 - No automated tests added.
 
 # Changelog
