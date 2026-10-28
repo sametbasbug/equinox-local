@@ -99,6 +99,9 @@ test('common Main downloader requires new absolute output and never discovers am
  await assert.rejects(downloadVerifiedMainArchive({target:'darwin-arm64',destination:'relative.bin'}),/absolute new file/u);
  const source=await fs.readFile(new URL('../../scripts/install-main-verify.mjs',import.meta.url),'utf8');
  assert.ok(!/\b(?:execFile|spawn|which|npm|git)\s*\(/u.test(source));
+ // Cloudflare may Zstd-compress the mutable pointer by default; explicitly
+ // negotiate identity rather than weakening signed-byte or cache checks.
+ assert.match(source,/fetch\(artifact\.url,\{redirect:'error',headers:\{'accept-encoding':'identity'\}/u);
  assert.match(source,/--target/u);
  assert.match(source,/--output/u);
  assert.match(source,/fs\.open\(destination,'wx',0o600\)/u);
@@ -121,7 +124,10 @@ test('portable Main verifier embeds only the existing public production trust ro
 
 test('mutable latest Main selector HTTP cache must be no-store before any signature processing',async t=>{
  const original=globalThis.fetch;
- globalThis.fetch=async()=>new Response(JSON.stringify(clone()),{status:200,headers:{'cache-control':'public,max-age=31536000,immutable'}});
+ globalThis.fetch=async(_url,options)=>{
+  assert.equal(options.headers['accept-encoding'],'identity','mutable Main request must disable Cloudflare Zstd compression');
+  return new Response(JSON.stringify(clone()),{status:200,headers:{'cache-control':'public,max-age=31536000,immutable'}});
+ };
  t.after(()=>{globalThis.fetch=original;});
  const root=await fs.mkdtemp(path.join(os.tmpdir(),'equinox-main-cache-test-'));
  t.after(()=>fs.rm(root,{recursive:true,force:true}));

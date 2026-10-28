@@ -111,11 +111,11 @@ export async function downloadVerifiedMainArchive({target,destination,pointerDes
   throw Error('Signed Main selector output requires a separate absolute new file.');
  }
  const response=await fetch(POINTER_URL,{redirect:'error',
-  headers:{'cache-control':'no-cache'},signal:AbortSignal.timeout(30000)});
+  headers:{'cache-control':'no-cache','accept-encoding':'identity'},signal:AbortSignal.timeout(30000)});
  const signedPointer=await smallResponse(response);
  const selected=verifyMainInstallerPointer(signedPointer,{target});
  const artifact=selected.artifact;
- const data=await fetch(artifact.url,{redirect:'error',signal:AbortSignal.timeout(600000)});
+ const data=await fetch(artifact.url,{redirect:'error',headers:{'accept-encoding':'identity'},signal:AbortSignal.timeout(600000)});
  if(data.status!==200||!data.body)throw Error('Main native archive HTTP request failed.');
  const encoding=data.headers.get('content-encoding');
  if(encoding&&encoding!=='identity')throw Error('Main archive HTTP content encoding is unsupported.');

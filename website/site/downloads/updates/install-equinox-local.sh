@@ -66,8 +66,8 @@ esac
 
 # Same original pinned signed Main archive verifier used by PowerShell.
 MAIN_VERIFY_URL="https://local.sametbasbug.dev/downloads/updates/install-main-verify.mjs"
-MAIN_VERIFY_SHA256="df0aea950440d6efad47b92398a0a8bdc4a63d4db0a26d4db05a0b137c9989c8"
-MAIN_VERIFY_BYTES=9396
+MAIN_VERIFY_SHA256="7af08a6b6ad4ff0223024d338b1260c7aba7af77f61d8e3398cd950b1dd397c9"
+MAIN_VERIFY_BYTES=9464
 MAIN_NODE_VERSION="26.12.1"
 case "$TARGET" in
   darwin-arm64)

@@ -227,22 +227,23 @@ export async function beginEquinoxLocalSignedNativeMacOwner({
   });
   const handle=await fsImpl.open(lockPath,"wx",0o600);
   const original=await handle.stat();
-  let closed=false,success=false;
+  let closed=false;
   try{
     if(!original.isFile()||original.nlink!==1||(original.mode&0o777)!==0o600){
       throw new Error("Signed native owner lock inode is unsafe.");
     }
     await handle.writeFile(JSON.stringify(record)+"\n","utf8");
     await handle.sync();
-    await handle.close();closed=true;
-    const stored=await fsImpl.lstat(lockPath);
-    if(!stored.isFile()||stored.isSymbolicLink()||stored.nlink!==1||
+    // Validate the SAME exclusive file descriptor, not a pathname lstat
+    // whose inode can be swapped between checking and receipt publication.
+    const stored=await handle.stat();
+    if(!stored.isFile()||stored.nlink!==1||
        stored.dev!==original.dev||stored.ino!==original.ino){
       throw new Error("Signed native owner lock changed during publication.");
     }
+    await handle.close();closed=true;
     const directory=await fsImpl.open(paths.root,"r");
     try{await directory.sync();}finally{await directory.close();}
-    success=true;
     await writeEquinoxLocalSignedNativeMacReceipt({
       transactionRoot:paths.root,transactionId:id,sourceSha:sha,target,
       runtimeContractSha256:digest,status:"admitted",fsImpl,
@@ -250,11 +251,8 @@ export async function beginEquinoxLocalSignedNativeMacOwner({
     return record;
   }finally{
     if(!closed)await handle.close().catch(()=>{});
-    // An identity check followed by unlink is racy: another process could
-    // replace active.json between the two operations. Leave an ambiguous
-    // failed owner lock for explicit conservative recovery instead.
-    // Never delete a path merely because an earlier lstat matched its inode.
-    if(!success) { /* fail closed: active owner remains reserved */ }
+    // Fail closed on ambiguous release: leave the exclusive owner lock
+    // reserved for explicit recovery, never unlink by prior pathname stat.
   }
 }
 
