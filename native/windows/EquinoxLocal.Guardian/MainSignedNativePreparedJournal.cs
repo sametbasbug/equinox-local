@@ -69,26 +69,46 @@ internal static partial class Program
             "native-rollback", "native-recovery.json");
         var receiptSha = HashOriginalBoundedSignedNativeFile(receipt);
         var rollbackSha = HashOriginalBoundedSignedNativeFile(descriptor);
+        // Genuine rollback A must be independently intact BEFORE creating
+        // any crash-durable signed-native PREPARED marker. In particular,
+        // previously selected signed Main A has no Git/stable fallback.
+        InspectOriginalSignedNativePreviousABaseline(id, sha, target, contract);
         var journalPath = OriginalSignedJournalPath(root, id);
-        var body = JsonSerializer.SerializeToUtf8Bytes(new
+        // This executable is PublishTrimmed/PublishSingleFile: never use
+        // reflection-based JsonSerializer for its crash-durable authority.
+        // Explicit property order and field types are the versioned ABI.
+        using var bodyBuffer = new MemoryStream(1024);
+        using (var json = new Utf8JsonWriter(bodyBuffer))
         {
-            schemaVersion = 1, channel = "main", kind = "signed-native",
-            transactionId = id, sourceSha = sha, target,
-            runtimeContractSha256 = contract, stage = "prepared", sequence = 0,
-            workerPid, workerStartTimeUtcTicks = workerTicks,
-            guardianPid = Environment.ProcessId,
-            guardianStartTimeUtcTicks = Process.GetCurrentProcess().StartTime.ToUniversalTime()
-                .Ticks.ToString(CultureInfo.InvariantCulture),
-            receiptSha256 = receiptSha, rollbackDescriptorSha256 = rollbackSha,
-        });
-        if (body.Length is < 128 or > 4096)
+            json.WriteStartObject();
+            json.WriteNumber("schemaVersion", 1);
+            json.WriteString("channel", "main");
+            json.WriteString("kind", "signed-native");
+            json.WriteString("transactionId", id);
+            json.WriteString("sourceSha", sha);
+            json.WriteString("target", target);
+            json.WriteString("runtimeContractSha256", contract);
+            json.WriteString("stage", "prepared");
+            json.WriteNumber("sequence", 0);
+            json.WriteNumber("workerPid", workerPid);
+            json.WriteString("workerStartTimeUtcTicks", workerTicks);
+            json.WriteNumber("guardianPid", Environment.ProcessId);
+            json.WriteString("guardianStartTimeUtcTicks", Process.GetCurrentProcess()
+                .StartTime.ToUniversalTime().Ticks.ToString(CultureInfo.InvariantCulture));
+            json.WriteString("receiptSha256", receiptSha);
+            json.WriteString("rollbackDescriptorSha256", rollbackSha);
+            json.WriteEndObject();
+            json.Flush();
+        }
+        if (bodyBuffer.Length is < 128 or > 4096)
             throw new InvalidDataException("Original signed-native prepared record length is invalid.");
         // FileMode.CreateNew + FileShare.None with flush-to-disk: a crash
         // before an entire JSON write leaves a forensic orphan, NEVER an
         // automatically accepted journal. No token/key is written to disk.
         using var journal = new FileStream(journalPath, FileMode.CreateNew, FileAccess.Write,
             FileShare.None, 8192, FileOptions.WriteThrough);
-        journal.Write(body);
+        bodyBuffer.Position = 0;
+        bodyBuffer.CopyTo(journal);
         journal.Flush(flushToDisk: true);
 
         using var worker = Process.GetProcessById(workerPid);

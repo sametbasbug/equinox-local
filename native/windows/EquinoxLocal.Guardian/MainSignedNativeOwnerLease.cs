@@ -82,6 +82,10 @@ internal static partial class Program
         var audited = InspectOwnedNativeWorkerOsArguments(signedNativeReadOnly: true);
         if (audited.TransactionId != id)
             throw new InvalidDataException("Signed-native Guardian live worker differs from exclusive lease.");
+        // The immutable B worker must have an authentic LIVE original WPF
+        // parent, matching kernel PPID, user SID, logon LUID and the original
+        // WPF named-pipe server PID. A receipt/HMAC alone cannot prove this.
+        InspectSignedNativeWorkerWpfParentWithoutGrant(audited);
         InspectionPhase = "signed-native-owner-live-kernel-hmac";
         InspectOwnedNativeWorkerPipeProof(signedNativeReadOnly: true, previouslyAudited: audited);
         VerifyPinnedNativeGuardianFile(originalGuardian);

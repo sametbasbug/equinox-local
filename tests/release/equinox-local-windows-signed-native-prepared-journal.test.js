@@ -33,13 +33,17 @@ test("original signed-native journal prepared writer is create-only, durable on 
  assert.match(source,/EndsWith\("\.signed-native\.json",/u);
  assert.match(source,/HashOriginalBoundedSignedNativeFile\(receipt\)/u);
  assert.match(source,/HashOriginalBoundedSignedNativeFile\(descriptor\)/u);
- assert.match(source,/stage = "prepared", sequence = 0,/u);
- assert.match(source,/workerPid, workerStartTimeUtcTicks = workerTicks,/u);
- assert.match(source,/guardianPid = Environment.ProcessId,/u);
- assert.match(source,/guardianStartTimeUtcTicks = Process.GetCurrentProcess\(\)\.StartTime/u);
+ assert.match(source,/json.WriteString\("stage", "prepared"\)/u);
+ assert.match(source,/json.WriteNumber\("sequence", 0\)/u);
+ assert.match(source,/json.WriteNumber\("workerPid", workerPid\)/u);
+ assert.match(source,/json.WriteString\("workerStartTimeUtcTicks", workerTicks\)/u);
+ assert.match(source,/json.WriteNumber\("guardianPid", Environment.ProcessId\)/u);
+ assert.match(source,/json.WriteString\("guardianStartTimeUtcTicks", Process.GetCurrentProcess\(\)/u);
  assert.match(source,/FileMode\.CreateNew, FileAccess\.Write,\s*FileShare\.None/u);
  assert.match(source,/FileOptions\.WriteThrough/u);
  assert.match(source,/journal\.Flush\(flushToDisk: true\)/u);
+ assert.match(source,/InspectOriginalSignedNativePreviousABaseline\(id, sha, target, contract\)/u);
+ assert.doesNotMatch(source,/JsonSerializer\.SerializeToUtf8Bytes|JsonSerializer\.Serialize\(/u);
  assert.match(source,/worker\.StartTime\.ToUniversalTime\(\)\.Ticks\.ToString\(CultureInfo\.InvariantCulture\) != workerTicks/u);
  assert.doesNotMatch(source,/FileMode\.Create\b|File\.Delete|File\.Move|Directory\.Delete|Process\.Start|Process\.Kill|SetDisposition|SwitchMainNative|CurrentNativePointer/u);
  assert.doesNotMatch(source,/EQUINOX_LOCAL_MAIN_WORKER_TOKEN|owner\.Token|token =/u);
@@ -81,7 +85,7 @@ test("existing hosted Windows package smoke denies signed-native prepared write 
  }
 });
 
-test("original signed-native prepared orphan recovery is explicit, OS-guarded and durable-quarantine-only after exact original Stable A/WPF/Chrome NM proof",async()=>{
+test("original signed-native prepared orphan recovery is explicit, OS-guarded and durable-quarantine-only after signed Stable or Main A physical proof",async()=>{
  const [program,source,prepared,lease,smoke]=await Promise.all([
   read("Program.cs"),read("MainSignedNativePreparedOrphanRecovery.cs"),
   read("MainSignedNativePreparedJournal.cs"),read("MainSignedNativeOwnerLease.cs"),
@@ -96,13 +100,14 @@ test("original signed-native prepared orphan recovery is explicit, OS-guarded an
  assert.match(source,/OsProcessExists\(workerPid\) \|\| OsProcessExists\(guardianPid\)/u);
  assert.match(source,/handoff\.GetProperty\("startTimeUtcTicks"\)/u);
  assert.match(source,/AuditSignedNativePreparedJournalWithoutGrant\(\)/u);
- assert.match(source,/InspectBaseline\(allowActiveOrphanForReconciliation: true\)/u);
  assert.match(source,/RequireExactKeys\(previous, \["kind", "version"\]\)/u);
- assert.match(source,/NativeMessagingRegistrySubkey/u);
- assert.match(source,/RegistryValueKind\.String/u);
- assert.match(source,/ExpectedChromeOrigin/u);
+ assert.match(source,/RequireExactKeys\(previous, \["kind", "sourceSha", "target", "runtimeContractSha256"\]\)/u);
+ assert.match(source,/InspectOriginalSignedNativePreviousABaseline\(id,/u);
+ assert.match(source,/json.WriteString\("previousKind", previousKind\)/u);
+ assert.match(source,/json.WriteString\("previousIdentity", previousIdentity\)/u);
  assert.match(source,/FileMode\.CreateNew, FileAccess\.Write,\s*FileShare\.None/u);
  assert.match(source,/record\.Flush\(flushToDisk: true\)/u);
+ assert.doesNotMatch(source,/JsonSerializer\.SerializeToUtf8Bytes|JsonSerializer\.Serialize\(/u);
  assert.match(source,/quarantined-no-resume/u);
  assert.match(source,/The original PREPARED\/0 file\s*\/\/ stays intact/u);
  assert.match(prepared,/guardianStartTimeUtcTicks/u);
@@ -110,4 +115,28 @@ test("original signed-native prepared orphan recovery is explicit, OS-guarded an
  assert.doesNotMatch(source,/File\.Delete|File\.Move|FileMode\.Create\b|Kill\(|Process\.Start|SetValue\(|Registry\.CurrentUser\.CreateSubKey|QuiesceOwned|SwitchMainNative/u);
  assert.doesNotMatch(program,/--hold-signed-native-journal-authority|--activate-signed-native/u);
  assert.equal(smoke.split("Invoke-GuardianCheck '--reconcile-signed-native-prepared-orphan'").length-1,2);
+});
+
+test("CP15 original installed Guardian authenticates previous signed Main A via independent original Ed25519 retained ZIP, full A shell and Chrome NM before fsync PREPARED",async()=>{
+ const [prior,prepared,owner,legacy]=await Promise.all([
+  read("MainSignedNativePreviousABaseline.cs"),
+  read("MainSignedNativePreparedJournal.cs"),
+  read("MainSignedNativeOwnerLease.cs"),
+  read("MainNativeJournalLease.cs"),
+ ]);
+ assert.match(prior,/if \(kind == "stable"\)/u);
+ assert.match(prior,/InspectBaseline\(allowActiveOrphanForReconciliation: true\)/u);
+ assert.match(prior,/else if \(kind == "main"\)/u);
+ assert.match(prior,/current\.GetProperty\("sourceSha"\)\.GetString\(\) != aSha/u);
+ assert.match(prior,/VerifyOriginalSignedNativeMainSelector\(Path\.Combine\(payload,/u);
+ assert.match(prior,/FingerprintNativeMainRelease\(release\)/u);
+ assert.match(prior,/InspectOriginalSignedWindowsArchive\(Path\.Combine\(payload, "signed-artifact\.zip"\)/u);
+ assert.match(prior,/CompareNativeTrees\(Path\.Combine\(release, "runtime", "shell"\)/u);
+ assert.match(prior,/InspectOwnedMainNativeMessaging\(install, release\)/u);
+ assert.match(prior,/No previous Stable or signed Main A exists for rollback/u);
+ assert.doesNotMatch(prior,/InspectOwnedMainGit\(|InspectMainNativeIdentity\(|File\.Delete|File\.Move|Kill\(|Process\.Start|Registry\.CurrentUser\.CreateSubKey/u);
+ assert.ok(prepared.indexOf("InspectOriginalSignedNativePreviousABaseline(id, sha, target, contract)")<prepared.indexOf("FileMode.CreateNew, FileAccess.Write"));
+ assert.match(owner,/InspectSignedNativeWorkerWpfParentWithoutGrant\(audited\)/u);
+ assert.ok(owner.indexOf("InspectSignedNativeWorkerWpfParentWithoutGrant(audited)")<owner.indexOf("afterLiveProof?.Invoke("));
+ assert.doesNotMatch(legacy,/InspectOriginalSignedNativePreviousABaseline|InspectSignedNativeWorkerWpfParentWithoutGrant/u);
 });

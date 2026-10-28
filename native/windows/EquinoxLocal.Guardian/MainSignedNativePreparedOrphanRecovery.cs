@@ -1,8 +1,5 @@
-using System.Globalization;
-using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text.Json;
-using Microsoft.Win32;
 
 namespace EquinoxLocal.Guardian;
 
@@ -10,9 +7,9 @@ internal static partial class Program
 {
     // Explicit forensic recovery only. Never automatically remove an orphan:
     // PREPARED/0 alone does not prove WPF, active Main slot or Chrome NM were
-    // untouched. This checks an original Stable A, creates durable quarantine
-    // evidence, and deliberately leaves the blocking .signed-native.json.
-    // Main->Main and clean A=null require their own independent baseline proof.
+    // untouched. This checks original Stable or production-signed Main A,
+    // writes durable quarantine evidence, and keeps .signed-native.json.
+    // Clean A=null first install requires independent baseline proof.
     private static void ReconcileSignedNativePreparedOrphanWithoutResuming()
     {
         InspectionPhase = "signed-native-orphan-exclusive-recovery";
@@ -102,77 +99,70 @@ internal static partial class Program
         pinnedJournal.Position = 0;
         var journalSha = Convert.ToHexStringLower(SHA256.HashData(pinnedJournal));
 
-        InspectionPhase = "signed-native-orphan-stable-a-unchanged";
+        InspectionPhase = "signed-native-orphan-original-a-unchanged";
         using var descriptorDoc = ReadOwnedTransitionRecord(Path.Combine(root,
             "staging", id, "native-rollback", "native-recovery.json"), 8192);
         var previous = descriptorDoc.RootElement.GetProperty("previous");
-        // Deliberately do not guess how to check an original signed Main A or
-        // first-install A=null; they require separate validated baseline rules.
-        RequireExactKeys(previous, ["kind", "version"]);
-        if (previous.GetProperty("kind").GetString() != "stable")
-            throw new InvalidDataException("Only an unchanged Stable A may be quarantined in this phase.");
-        var version = previous.GetProperty("version").GetString() ?? "";
-        if (!VersionRegex().IsMatch(version))
-            throw new InvalidDataException("Original Stable A version is invalid.");
-        var pointer = Path.Combine(root, "current-native.json");
-        if (File.Exists(pointer) || Directory.Exists(pointer))
-            throw new InvalidDataException("Native Main pointer was created before orphan recovery.");
-        // Independently rehash the FULL installed original WPF tree and its
-        // original numbered Stable pointer. No active B shell is accepted.
-        InspectBaseline(allowActiveOrphanForReconciliation: true);
-        var target = RuntimeInformation.ProcessArchitecture switch
+        var previousKind = previous.GetProperty("kind").GetString() ?? "";
+        string previousIdentity;
+        if (previousKind == "stable")
         {
-            Architecture.X64 => "win32-x64", Architecture.Arm64 => "win32-arm64",
-            _ => throw new PlatformNotSupportedException("Unsupported native orphan host architecture"),
-        };
-        using (var stableDoc = ReadOwnedTransitionRecord(Path.Combine(install, "current-version.json"), 4096))
-        {
-            var p = stableDoc.RootElement;
-            RequireExactKeys(p, ["schemaVersion", "target", "version"]);
-            if (p.GetProperty("schemaVersion").GetInt32() != 1 ||
-                p.GetProperty("target").GetString() != target ||
-                p.GetProperty("version").GetString() != version)
-                throw new InvalidDataException("Stable A pointer changed since admission.");
+            RequireExactKeys(previous, ["kind", "version"]);
+            previousIdentity = previous.GetProperty("version").GetString() ?? "";
+            if (!VersionRegex().IsMatch(previousIdentity))
+                throw new InvalidDataException("Signed-native orphan Stable A version is malformed.");
         }
-        var nativeManifestPath = Path.Combine(install, "browser", "native-messaging", NativeMessagingHost + ".json");
-        RequireNormalFile(nativeManifestPath);
-        using (var registry = Registry.CurrentUser.OpenSubKey(NativeMessagingRegistrySubkey, writable: false))
-        using (var manifestDoc = ReadOwnedTransitionRecord(nativeManifestPath, 16384))
+        else if (previousKind == "main")
         {
-            if (registry is null || registry.GetValueKind("") != RegistryValueKind.String ||
-                registry.GetValue("", null, RegistryValueOptions.DoNotExpandEnvironmentNames) is not string registered ||
-                !Compare.Equals(Path.GetFullPath(registered), Path.GetFullPath(nativeManifestPath)))
-                throw new InvalidDataException("Original Stable Chrome Native Messaging HKCU owner changed.");
-            var manifest = manifestDoc.RootElement;
-            RequireExactKeys(manifest, ["name", "description", "path", "type", "allowed_origins"]);
-            if (manifest.GetProperty("name").GetString() != NativeMessagingHost ||
-                manifest.GetProperty("description").GetString() != ExpectedBridgeDescription ||
-                manifest.GetProperty("type").GetString() != "stdio" ||
-                manifest.GetProperty("allowed_origins").GetArrayLength() != 1 ||
-                manifest.GetProperty("allowed_origins")[0].GetString() != ExpectedChromeOrigin ||
-                manifest.GetProperty("path").GetString() is not string launcher ||
-                !Compare.Equals(Path.GetFullPath(launcher), Path.Combine(install, "releases", version,
-                    "runtime", "browser", "equinox-browser-native-host.exe")))
-                throw new InvalidDataException("Original Stable Chrome Native Messaging launcher changed.");
+            RequireExactKeys(previous, ["kind", "sourceSha", "target", "runtimeContractSha256"]);
+            previousIdentity = previous.GetProperty("sourceSha").GetString() ?? "";
+            if (!SourceShaPattern.IsMatch(previousIdentity))
+                throw new InvalidDataException("Signed-native orphan Main A SHA is malformed.");
         }
-        // Final process/pointer check BEFORE create-only fsynced evidence.
-        if (OsProcessExists(workerPid) || OsProcessExists(guardianPid) ||
-            File.Exists(pointer) || Directory.Exists(pointer))
-            throw new InvalidDataException("Original owner or A pointer changed before quarantine.");
+        else throw new InvalidDataException("Signed-native orphan needs an original Stable or signed Main A.");
+
+        // Independently verify SAME original signed B and the complete
+        // current rollback A: full installed WPF tree, Ed25519/archive for
+        // native Main A, exact current A pointer and HKCU Chrome NM launcher.
+        // No Git identity or numbered Stable fallback is accepted for Main A.
+        InspectOriginalSignedNativePreviousABaseline(id,
+            active.GetProperty("sourceSha").GetString() ?? "",
+            active.GetProperty("target").GetString() ?? "",
+            active.GetProperty("runtimeContractSha256").GetString() ?? "");
+
+        // One more independent owner check after hashing both A and B.
+        // The original prepared journal/active marker remain blocking even
+        // when new durable quarantine is successfully persisted.
+        if (OsProcessExists(workerPid) || OsProcessExists(guardianPid))
+            throw new InvalidDataException("Original OS owner changed before forensic quarantine.");
+        pinnedJournal.Position = 0;
+        if (!CryptographicOperations.FixedTimeEquals(
+            SHA256.HashData(pinnedJournal), Convert.FromHexString(journalSha)))
+            throw new InvalidDataException("Signed-native journal changed before forensic quarantine.");
         InspectionPhase = "signed-native-orphan-write-durable-quarantine";
         // This is NOT abort success, permission to delete active.json or
         // authorization to start a new update. The original PREPARED/0 file
         // stays intact and continues to block new signed-native admissions.
-        var body = JsonSerializer.SerializeToUtf8Bytes(new
-        {
-            schemaVersion = 1, kind = "signed-native", transactionId = id,
-            disposition = "quarantined-no-resume", originalStage = "prepared", sequence = 0,
-            journalSha256 = journalSha, previousKind = "stable", previousVersion = version,
-            workerPid, guardianPid,
-        });
         using var record = new FileStream(recoveryPath, FileMode.CreateNew, FileAccess.Write,
             FileShare.None, 4096, FileOptions.WriteThrough);
-        record.Write(body);
+        // Trim-safe fixed schema, no reflection or runtime serializer rooting.
+        using (var json = new Utf8JsonWriter(record))
+        {
+            json.WriteStartObject();
+            json.WriteNumber("schemaVersion", 1);
+            json.WriteString("kind", "signed-native");
+            json.WriteString("transactionId", id);
+            json.WriteString("disposition", "quarantined-no-resume");
+            json.WriteString("originalStage", "prepared");
+            json.WriteNumber("sequence", 0);
+            json.WriteString("journalSha256", journalSha);
+            json.WriteString("previousKind", previousKind);
+            json.WriteString("previousIdentity", previousIdentity);
+            json.WriteNumber("workerPid", workerPid);
+            json.WriteNumber("guardianPid", guardianPid);
+            json.WriteEndObject();
+            json.Flush();
+        }
         record.Flush(flushToDisk: true);
         InspectionPhase = "signed-native-orphan-quarantined-still-blocked";
     }
