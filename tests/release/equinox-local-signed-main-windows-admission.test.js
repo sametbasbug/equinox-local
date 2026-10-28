@@ -209,6 +209,13 @@ test("original installed Windows Guardian byte-level inspection is read-only, re
 
 test("original installed WPF executable must byte-match release A and its canonical user program directory; does not alter WPF",async()=>{
  const visits=[];
+ const snapshotVisits=[];
+ const shellRows=[{relative:"EquinoxLocal.exe",bytes:4096,sha256:"b".repeat(64)},
+  {relative:"EquinoxLocal.dll",bytes:1056,sha256:"e".repeat(64)}];
+ const snapshotImpl=async(root,options)=>{
+  snapshotVisits.push({root,ignoreLegacyCache:options.ignoreLegacyCache??false});
+  return shellRows;
+ };
  const makeFs=({different=false,short=false}={})=>({
   open:async file=>{
    visits.push(file);
@@ -223,19 +230,40 @@ test("original installed WPF executable must byte-match release A and its canoni
   },
  });
  const baseline=await inspectInstalledOriginalWindowsShell({
-  installRoot,releaseDir:oldMain,fsImpl:makeFs(),
+  installRoot,releaseDir:oldMain,fsImpl:makeFs(),snapshotImpl,
  });
  assert.equal(baseline.trusted,true);
  assert.equal(baseline.bytes,4096);
+ assert.deepEqual(snapshotVisits,[
+  {root:path.win32.join(env.LOCALAPPDATA,"Programs","Equinox Local"),ignoreLegacyCache:true},
+  {root:path.win32.join(oldMain,"runtime","shell"),ignoreLegacyCache:false},
+ ]);
  assert.deepEqual(visits.slice(0,2),[
   path.win32.join(env.LOCALAPPDATA,"Programs","Equinox Local","EquinoxLocal.exe"),
   path.win32.join(oldMain,"runtime","shell","EquinoxLocal.exe"),
  ]);
  await assert.rejects(inspectInstalledOriginalWindowsShell({
-  installRoot,releaseDir:oldMain,fsImpl:makeFs({different:true}),
+  installRoot,releaseDir:oldMain,fsImpl:makeFs({different:true}),snapshotImpl,
  }),/differs from original A signed release/u);
  await assert.rejects(inspectInstalledOriginalWindowsShell({
-  installRoot,releaseDir:oldMain,fsImpl:makeFs({short:true}),
+  installRoot,releaseDir:oldMain,fsImpl:makeFs({short:true}),snapshotImpl,
  }),/owned bounded normal file/u);
  assert.equal(visits.length,6);
+});
+
+test("signed Windows original WPF preflight denies replaced native DLL despite identical EquinoxLocal.exe bytes",async()=>{
+ const rows=[{relative:"EquinoxLocal.exe",bytes:4096,sha256:"a".repeat(64)},
+   {relative:"EquinoxLocal.dll",bytes:2048,sha256:"b".repeat(64)}];
+ const fsImpl={open:async()=>({
+  stat:async()=>({isFile:()=>true,isSymbolicLink:()=>false,nlink:1,size:4096}),
+  createReadStream:()=>Readable.from([Buffer.alloc(4096,0x6a)]),
+  close:async()=>{},
+ })};
+ const snapshotImpl=async(_dir,{ignoreLegacyCache})=>ignoreLegacyCache
+   ? rows
+   : rows.map(row=>row.relative==="EquinoxLocal.dll"
+     ? {...row,sha256:"c".repeat(64)}:row);
+ await assert.rejects(inspectInstalledOriginalWindowsShell({
+  installRoot,releaseDir:oldMain,fsImpl,snapshotImpl,
+ }),/WPF tree differs from original A signed release/u);
 });

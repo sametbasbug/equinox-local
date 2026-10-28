@@ -9,6 +9,7 @@ import {resolveEquinoxLocalManagedSourceInstallation,equinoxLocalManagedSourcePa
 import {inspectEquinoxLocalMainNativeStoredRelease,readEquinoxLocalMainNativePointer} from "./equinox-local-main-native-state.js";
 import {validateTrustedMainInstallPointer} from "./equinox-local-main-install-pointer.js";
 import {readEquinoxLocalCurrentVersionPointer} from "./equinox-local-current-release.js";
+import {snapshotWindowsStableShellTree,sameWindowsStableShellTree} from "./equinox-local-windows-stable-shell.js";
 
 const SHA=/^[a-f0-9]{40}$/u;
 const DIGEST=/^[a-f0-9]{64}$/u;
@@ -56,7 +57,9 @@ export async function inspectInstalledOriginalWindowsGuardian({
 // executable while keeping the older signed Guardian unchanged.
 export async function inspectInstalledOriginalWindowsShell({
   installRoot,releaseDir,fsImpl=fs,
-}:{installRoot:string;releaseDir:string;fsImpl?:AdmissionFs}){
+  snapshotImpl=snapshotWindowsStableShellTree,
+}:{installRoot:string;releaseDir:string;fsImpl?:AdmissionFs;
+  snapshotImpl?:typeof snapshotWindowsStableShellTree}){
   if(!path.win32.isAbsolute(installRoot)||!path.win32.isAbsolute(releaseDir)||
      path.win32.normalize(installRoot)!==installRoot||
      path.win32.normalize(releaseDir)!==releaseDir||
@@ -70,6 +73,16 @@ export async function inspectInstalledOriginalWindowsShell({
   const [a,b]=await Promise.all([fileHash(installed,fsImpl),fileHash(original,fsImpl)]);
   if(a.sha256!==b.sha256||a.size!==b.size){
     throw new Error("Installed Windows WPF executable differs from original A signed release.");
+  }
+  // The bundled .exe is NOT the entire WPF app: native DLLs and other
+  // runtime shell assets must also match. Reuse the ORIGINAL native shell
+  // snapshotter, including its narrowly bounded legacy WebView2 cache.
+  const [installedTree,originalTree]=await Promise.all([
+    snapshotImpl(programRoot,{fsImpl,ignoreLegacyCache:true}),
+    snapshotImpl(path.win32.join(releaseDir,"runtime","shell"),{fsImpl}),
+  ]);
+  if(!sameWindowsStableShellTree(installedTree,originalTree)){
+    throw new Error("Installed Windows WPF tree differs from original A signed release.");
   }
   return Object.freeze({trusted:true,sha256:a.sha256,bytes:a.size});
 }
