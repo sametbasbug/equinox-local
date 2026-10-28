@@ -15,10 +15,10 @@ const KEEP_LATEST = 8;
 const MIN_AGE_MS = 24 * 60 * 60 * 1000;
 const MAX_OBJECTS = 20_000;
 
-function expectedKeys(sha) {
+function expectedKeys(sha, signed = false) {
   return new Set(TARGETS.flatMap((target) => {
     const stem = "snapshots/" + sha + "/equinox-local-main-" + sha + "-" + target;
-    return [stem + ".json", stem + (target.startsWith("win32") ? ".zip" : ".tar.gz")];
+    return [stem + ".json", stem + (target.startsWith("win32") ? ".zip" : ".tar.gz"), ...(signed ? [stem + ".b-authorization.json"] : [])];
   }));
 }
 
@@ -46,8 +46,10 @@ export function planEquinoxMainR2Retention(objects, { mainSha, snapshotSha, now 
     groups.set(sha, group);
   }
   const ordered = [...groups.values()].sort((left, right) => right.newest - left.newest || left.sha.localeCompare(right.sha));
-  const complete = (group) => group.keys.length === 8 &&
-    group.keys.every((key) => expectedKeys(group.sha).has(key));
+  const complete = (group) => (group.keys.length === 8 &&
+    group.keys.every((key) => expectedKeys(group.sha).has(key))) ||
+    (group.keys.length === 12 &&
+    group.keys.every((key) => expectedKeys(group.sha, true).has(key)));
   const keep = new Set([mainSha, snapshotSha,
     ...ordered.filter(complete).slice(0, KEEP_LATEST).map((item) => item.sha)]);
   const protectedGroups = [];

@@ -1351,3 +1351,103 @@ jobs:
           test -n "${AWS_SECRET_ACCESS_KEY:-}"
           node scripts/release/prune-main-r2.mjs
           node scripts/release/prune-main-r2.mjs --apply
+
+  main-signed-release-publish:
+    name: Publish production-signed Main (four targets)
+    # The pre-existing main-snapshot-publish checks the whole native matrix and
+    # uploads all eight exact-SHA archives/manifests BEFORE this protected job.
+    needs: [main-native-plan, main-snapshot-publish]
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.main-native-plan.outputs.main-update-impact == 'true' && needs.main-snapshot-publish.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    environment: main-production
+    permissions:
+      contents: read
+    concurrency:
+      group: equinox-local-main-signed-release
+      cancel-in-progress: false
+    steps:
+      - name: Checkout exact protected Main SHA
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Verify canonical Main identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${{ github.sha }}"
+          test "$(git ls-remote https://github.com/${{ github.repository }}.git refs/heads/main | cut -f1)" = "${{ github.sha }}"
+          test "${{ github.ref }}" = 'refs/heads/main'
+
+      - name: Install exact Node runtime
+        uses: actions/setup-node@v7
+        with:
+          node-version: 26.12.1
+
+      - name: Download four native CI artifacts
+        uses: actions/download-artifact@v8
+        with:
+          pattern: main-native-${{ github.sha }}-*
+          path: ${{ runner.temp }}/main-signed-artifacts
+          merge-multiple: true
+
+      - name: Admit complete exact-SHA artifact set
+        shell: bash
+        run: |
+          set -euo pipefail
+          dir="$RUNNER_TEMP/main-signed-artifacts"
+          for target in darwin-arm64 darwin-x64 win32-arm64 win32-x64; do
+            test -f "$dir/equinox-local-main-${{ github.sha }}-$target.json"
+            case "$target" in darwin-*) ext=.tar.gz;; win32-*) ext=.zip;; esac
+            test -f "$dir/equinox-local-main-${{ github.sha }}-$target$ext"
+          done
+          test "$(find "$dir" -maxdepth 1 -type f | wc -l | tr -d ' ')" = 8
+
+      - name: Stage protected production signing key without logging it
+        shell: bash
+        env:
+          SIGNING_PEM: ${{ secrets.EQUINOX_MAIN_PRODUCTION_SIGNING_KEY_PEM }}
+        run: |
+          set -euo pipefail
+          umask 077
+          node --input-type=module - <<'NODE'
+          import fs from 'node:fs';
+          const pem=process.env.SIGNING_PEM;
+          if(typeof pem!=='string'||!pem.includes('BEGIN PRIVATE KEY')||pem.length>16384)throw Error('Protected production Ed25519 signing secret is not configured.');
+          fs.writeFileSync(process.env.RUNNER_TEMP+'/main-production-key.pem',pem.endsWith('\n')?pem:pem+'\n',{flag:'wx',mode:0o600});
+          NODE
+
+      - name: Sign four native B authorizations and one immutable selector
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -m 700 "$RUNNER_TEMP/main-signed-sidecars"
+          export SOURCE_DATE_EPOCH="$(git show -s --format=%ct HEAD)"
+          version="$(node --input-type=module -e 'import {EQUINOX_LOCAL_VERSION} from "./src/equinox-local-version.js";process.stdout.write(EQUINOX_LOCAL_VERSION)')"
+          node scripts/release/sign-main-snapshot-set.mjs \
+            --source-sha "${{ github.sha }}" --version "$version" \
+            --manifest-dir "$RUNNER_TEMP/main-signed-artifacts" \
+            --key-file "$RUNNER_TEMP/main-production-key.pem" \
+            --output-dir "$RUNNER_TEMP/main-signed-sidecars"
+          rm -f "$RUNNER_TEMP/main-production-key.pem"
+
+      - name: Publish immutable signed R2 objects and CAS latest LAST
+        shell: bash
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.EQUINOX_MAIN_R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.EQUINOX_MAIN_R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+          AWS_EC2_METADATA_DISABLED: 'true'
+        run: |
+          set -euo pipefail
+          test -n "${AWS_ACCESS_KEY_ID:-}"
+          test -n "${AWS_SECRET_ACCESS_KEY:-}"
+          node scripts/release/publish-main-signed-release.mjs \
+            "$RUNNER_TEMP/main-signed-artifacts" "$RUNNER_TEMP/main-signed-sidecars"
+
+      - name: Destroy protected key material even after a failure
+        if: ${{ always() }}
+        shell: bash
+        run: rm -f "$RUNNER_TEMP/main-production-key.pem"
