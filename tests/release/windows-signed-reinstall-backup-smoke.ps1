@@ -1,16 +1,16 @@
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version 2.0
-# Use the actual public script's production backup functions in a disposable
+# Use the actual public script's executable cleanup functions in a disposable
 # Windows directory. Do NOT call its downloaded installer or touch this host.
 $installer = Join-Path ([IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))) 'scripts\install-equinox-local.ps1'
 $tokens = $null; $errors = $null
 $ast = [Management.Automation.Language.Parser]::ParseFile($installer, [ref]$tokens, [ref]$errors)
 if (@($errors).Count -ne 0) { throw 'Public signed Windows installer has a PowerShell syntax error.' }
-$required = @('Test-ExistingEquinoxOwnedProcess','Stop-ExistingEquinoxExecutables','Get-NormalExistingEntry','Get-ExecutableReplacementPaths','Begin-ExecutableReplacement','Restore-ExecutableReplacement','Complete-ExecutableReplacement')
+$required = @('Test-ExistingEquinoxOwnedProcess','Stop-ExistingEquinoxExecutables','Get-NormalExistingEntry','Get-ExecutableReplacementPaths','Clear-ExistingEquinoxExecutables')
 $functions = @($ast.FindAll({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst]}, $true))
 foreach ($name in $required) {
   $entry = @($functions | Where-Object Name -eq $name)
-  if ($entry.Count -ne 1) { throw "Missing real installer backup implementation: $name" }
+  if ($entry.Count -ne 1) { throw "Missing real installer cleanup implementation: $name" }
   Invoke-Expression $entry[0].Extent.Text
 }
 function Fail([string]$Reason) { throw $Reason }
@@ -99,90 +99,38 @@ function Assert-TemporaryChromeRegistration {
 }
 
 function Prepare-Old {
-  Put (Join-Path $root 'releases\6.1.0\old.exe') 'old-signed-release'
-  Put (Join-Path $root 'runtime\guardian\guardian.exe') 'old-guardian'
-  Put (Join-Path $root 'state\main-update\sources\broken-old\src\server.js') 'broken-old-source-no-git'
-  $readOnly = Join-Path $root 'state\main-update\sources\broken-old\.git\objects\info\commit-graphs\commit-graph-chain'
-  Put $readOnly 'old-read-only-git-commit-graph'
-  [IO.File]::SetAttributes($readOnly, [IO.FileAttributes]::ReadOnly)
-  Put (Join-Path $root 'current-version.json') 'bad-stale-pointer'
+  Put (Join-Path $root 'releases\6.1.0\old.exe') 'old-release'
+  Put (Join-Path $root 'runtime\old.exe') 'old-runtime'
+  Put (Join-Path $root 'state\main-update\sources\broken-old\src\server.js') 'old-source'
+  Put (Join-Path $root 'current-version.json') 'old-pointer'
   Put (Join-Path $program 'EquinoxLocal.exe') 'old-wpf'
   Put (Join-Path $root 'browser\native-messaging\dev.equinox.browser.json') 'old-host'
-  Put (Join-Path $root 'state\config.json') 'user-config-do-not-touch'
-  Put (Join-Path $root 'secrets\runtime-key') 'user-secret-do-not-touch'
-  Put (Join-Path $root 'workspace\notes.txt') 'user-workspace-do-not-touch'
-  Put (Join-Path $root 'browser\profile-settings.txt') 'user-browser-do-not-touch'
-  Put (Join-Path $root 'tunnel\settings.txt') 'user-tunnel-do-not-touch'
+  Put (Join-Path $root 'state\config.json') 'user-config'
+  Put (Join-Path $root 'secrets\runtime-key') 'user-secret'
+  Put (Join-Path $root 'workspace\notes.txt') 'user-workspace'
+  Put (Join-Path $root 'browser\profile-settings.txt') 'user-browser'
+  Put (Join-Path $root 'tunnel\settings.txt') 'user-tunnel'
 }
 function Assert-Private {
-  foreach ($row in @(
-    @('state\config.json','user-config-do-not-touch'),
-    @('secrets\runtime-key','user-secret-do-not-touch'),
-    @('workspace\notes.txt','user-workspace-do-not-touch'),
-    @('browser\profile-settings.txt','user-browser-do-not-touch'),
-    @('tunnel\settings.txt','user-tunnel-do-not-touch')
-  )) { Assert-True (([IO.File]::ReadAllText((Join-Path $root $row[0])) -ceq $row[1])) 'Installer modified user-owned data.' }
+  foreach ($item in @(
+    @('state\config.json','user-config'),@('secrets\runtime-key','user-secret'),
+    @('workspace\notes.txt','user-workspace'),
+    @('browser\profile-settings.txt','user-browser'),@('tunnel\settings.txt','user-tunnel')
+  )) { Assert-True ([IO.File]::ReadAllText((Join-Path $root $item[0])) -ceq $item[1]) 'Installer touched user data.' }
 }
 try {
   Assert-TemporaryChromeRegistration
   Prepare-Old
-  # Reproduce the user's lock: stock Windows PowerShell runs an old Main
-  # script from the managed source tree despite powershell.exe living in
-  # System32, not under the product install root. The real installer must
-  # terminate this exact owned helper before moving main-update.
-  $ownedScript=Join-Path $root 'state\main-update\sources\broken-old\src\fixture-owned.ps1'
-  Put $ownedScript 'Start-Sleep -Seconds 120'
-  $systemPowerShell=Join-Path $env:WINDIR 'System32\WindowsPowerShell\v1.0\powershell.exe'
-  $ownedProcess=Start-Process -FilePath $systemPowerShell -ArgumentList ('-NoProfile -NonInteractive -File "' + $ownedScript + '"') -PassThru -WindowStyle Hidden
-  try {
-    $seen=$false
-    for ($poll=0; $poll -lt 25; $poll++) {
-      $cim=Get-CimInstance Win32_Process -Filter ('ProcessId=' + $ownedProcess.Id)
-      if ($null -ne $cim -and (Test-ExistingEquinoxOwnedProcess $cim $root $program)) { $seen=$true; break }
-      Start-Sleep -Milliseconds 80
-    }
-    Assert-True $seen 'Disposable managed PowerShell process did not start or match exact owner.'
-    # A foreign non-share-delete file handle can block a rename even when
-    # all owned processes are gone. Refuse without quarantining the untouched
-    # original tree or retaining a partial backup.
-    $locked=Join-Path $root 'state\main-update\sources\broken-old\src\server.js'
-    $held=[IO.File]::Open($locked,[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::Read)
-    $blockedByLock=$false
-    try { Begin-ExecutableReplacement $root | Out-Null } catch { $blockedByLock=$true }
-    finally { $held.Dispose() }
-    Assert-True $blockedByLock 'Locked old Main folder unexpectedly moved.'
-    Assert-True ([IO.File]::Exists($locked)) 'Locked old Main source was incorrectly quarantined during rollback.'
-    Assert-True (-not [IO.Directory]::Exists((Join-Path $root '.equinox-signed-reinstall-backup'))) 'Aborted move retained an empty transaction backup.'
-    $first=Begin-ExecutableReplacement $root
-    Assert-True ($null -eq (Get-CimInstance Win32_Process -Filter ('ProcessId=' + $ownedProcess.Id))) 'Old managed PowerShell child remains alive after installer retirement.'
-  } finally { if (-not $ownedProcess.HasExited) { Stop-Process -Id $ownedProcess.Id -Force -ErrorAction SilentlyContinue } }
-
-  Assert-True ($null -ne $first) 'Historic signed runtime was not parked.'
-  Assert-True (-not [IO.File]::Exists((Join-Path $root 'current-version.json'))) 'Stale version pointer survived initial reset.'
-  Assert-True (-not [IO.Directory]::Exists((Join-Path $root 'state\main-update'))) 'Broken old source survived reset.'
+  Clear-ExistingEquinoxExecutables $root
+  foreach ($entry in @(Get-ExecutableReplacementPaths $root)) {
+    Assert-True (-not (Test-Path -LiteralPath $entry.Path)) ('Old executable survived: ' + $entry.Name)
+  }
   Assert-Private
-  $blocked=$false
-  try { Begin-ExecutableReplacement $root | Out-Null } catch { $blocked=$true }
-  Assert-True $blocked 'A second attempt created a second backup.'
-  Put (Join-Path $root 'releases\6.2.0\new.exe') 'new-signed-release'
-  Put (Join-Path $program 'EquinoxLocal.exe') 'new-wpf'
-  Complete-ExecutableReplacement $first
-  Assert-True (-not [IO.Directory]::Exists($first.Backup)) 'Successful reinstall retained old executable archive.'
-  Assert-True ([IO.File]::Exists((Join-Path $root 'releases\6.2.0\new.exe'))) 'Successful install removed new release.'
+  Assert-True (-not (Test-Path -LiteralPath (Join-Path $root '.equinox-signed-reinstall-backup'))) 'Old installer backup was retained.'
+  # A retry does exactly the same fresh install cleanup, without an A/B phase.
+  Put (Join-Path $root 'releases\6.2.0\new.exe') 'new-release'
+  Clear-ExistingEquinoxExecutables $root
+  Assert-True (-not (Test-Path -LiteralPath (Join-Path $root 'releases\6.2.0'))) 'Retry did not retire executable cache.'
   Assert-Private
-  # A failed candidate must be quarantined and the EXACT old executable
-  # directories returned; no accumulation after successful rollback either.
-  [IO.Directory]::Delete((Join-Path $root 'releases'),$true)
-  [IO.Directory]::Delete($program,$true)
-  Prepare-Old
-  $second=Begin-ExecutableReplacement $root
-  Put (Join-Path $root 'releases\6.2.0\new.exe') 'failed-new-release'
-  Put (Join-Path $program 'EquinoxLocal.exe') 'failed-new-wpf'
-  Restore-ExecutableReplacement $second
-  Assert-True (-not [IO.Directory]::Exists($second.Backup)) 'Successful rollback retained a backup archive.'
-  Assert-True ([IO.File]::ReadAllText((Join-Path $program 'EquinoxLocal.exe')) -ceq 'old-wpf') 'Rollback did not restore old WPF.'
-  Assert-True ([IO.File]::ReadAllText((Join-Path $root 'current-version.json')) -ceq 'bad-stale-pointer') 'Rollback altered stale old pointer.'
-  Assert-True (-not [IO.File]::Exists((Join-Path $root 'releases\6.2.0\new.exe'))) 'Failed candidate leaked into active releases.'
-  Assert-Private
-  Write-Output 'Real PowerShell backup functions PASS: prior broken source ignored, one backup, successful cleanup, failure restoration and unchanged user settings.'
+  Write-Output 'Real PowerShell reinstall PASS: direct clean, same-SHA retry, no rollback, user data unchanged.'
 } finally { if ([IO.Directory]::Exists($fixture)) { Remove-Item -LiteralPath $fixture -Recurse -Force -ErrorAction Stop } }

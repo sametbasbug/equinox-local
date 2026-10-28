@@ -1025,7 +1025,7 @@ function renderUpdate() {
         else if (main.state === "behind") {
             setText("update-title", `Verified Main ${targetSha || "snapshot"} available`);
             setText("update-copy", managedMain
-                ? "A newer admitted Main snapshot is available. Update & restart uses the transactional source/native handoff with health verification and automatic rollback."
+                ? "A newer Main is available. Update reinstalls signed program files and preserves settings."
                 : "A newer admitted Main snapshot is available. This developer source checkout remains check-only.");
             setBadge("update-badge", "Main update available", "good");
         }
@@ -1107,7 +1107,7 @@ function renderUpdate() {
     setText("update-checked-at", update.checkedAt ? `Checked ${formatDate(update.checkedAt)}` : "Not checked yet");
     if (update.restartScheduledFor) {
         setText("update-title", `Restarting into Equinox Local ${update.restartScheduledFor}`);
-        setText("update-copy", "The verified release is prepared. Control Center may disconnect briefly while the managed runtime restarts and verifies the new version; automatic rollback is used if health verification fails.");
+        setText("update-copy", "Control Center may disconnect while the installer replaces program files. Keep your settings; if installation fails, run the same signed installer again.");
         setBadge("update-badge", "Restart scheduled", "warn");
     }
     else if (update.restartError) {
@@ -3488,7 +3488,7 @@ async function applyAvailableUpdate() {
         renderUpdate();
         renderActivity();
         showToast(signedNativeMain
-            ? "Original signed Main installer launched. Native B verification and rollback remain in progress."
+            ? "Signed Main installer started. Program files will be reinstalled; settings remain intact."
             : managedMain
                 ? `Main ${shortUpdateSha(scheduled.targetSha) || "snapshot"} is prepared. Restarting safely…`
                 : `Equinox Local ${scheduled.targetVersion || "update"} is prepared. Restarting safely…`);

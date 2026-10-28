@@ -70,7 +70,7 @@ test("Windows Main full reinstall invokes the existing PowerShell installer with
   read("src/equinox-local-first-install.ts"),
  ]);
  assert.match(ps,/--install-main-fresh/u);
- assert.match(ps,/Begin-ExecutableReplacement/u);
+ assert.match(ps,/Clear-ExistingEquinoxExecutables/u);
  assert.match(guardian,/VerifyOriginalSignedNativeMainSelector/u);
  assert.match(guardian,/InspectOriginalSignedWindowsArchive/u);
  assert.doesNotMatch(guardian,/File\.Move|File\.Delete|Quiesce|Kill\(/u);

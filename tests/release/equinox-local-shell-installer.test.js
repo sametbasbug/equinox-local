@@ -42,14 +42,14 @@ test("ONE PowerShell command checks signed latest Main before reusing product-on
  assert.match(w,/param\(\[switch\]\$Help\)/u);
  assert.match(w,/function Invoke-VerifiedMainPreparation/u);
  assert.match(w,/\$freshReceipt = @\(Invoke-VerifiedMainPreparation \$tempRoot\)/u);
- assert.match(w,/\$oldExecutables = Begin-ExecutableReplacement \$installRoot/u);
+ assert.match(w,/Clear-ExistingEquinoxExecutables \$installRoot/u);
  assert.match(w,/\$freshResult = @\(Invoke-PinnedMainNode \$mainNode/u);
  assert.match(w,/--install-main-fresh/u);
  assert.match(w,/\$installed\.sourceSha -cne \$main\.sourceSha/u);
- assert.match(w,/Complete-ExecutableReplacement \$oldExecutables/u);
+ assert.doesNotMatch(w,/function Restore-ExecutableReplacement|function Begin-ExecutableReplacement/u);
  assert.match(w,/function Suspend-OldEquinoxChromeHost/u);
  assert.match(w,/function Stop-ExistingEquinoxExecutables/u);
- assert.ok(w.indexOf("$freshReceipt = @(") < w.indexOf("$oldExecutables = Begin-ExecutableReplacement"));
+ assert.ok(w.indexOf("$freshReceipt = @(") < w.indexOf("Clear-ExistingEquinoxExecutables $installRoot"));
  assert.doesNotMatch(w,/Read-BootstrapManifest|bootstrap-\$Target\.txt|Invoke-CleanNode|Assert-ExistingStableUpgradeRoute/u);
  assert.doesNotMatch(w,/Start-Process[^\n]*-Verb\s+RunAs|Expand-Archive/u);
 });

@@ -641,8 +641,8 @@ test("Main-only PowerShell installer always uses freshly authenticated source an
  const script=await fs.readFile(new URL("../../scripts/install-equinox-local.ps1",import.meta.url),"utf8");
  assert.match(script,/Invoke-VerifiedMainPreparation/u);
  assert.match(script,/--install-main-fresh/u);
- assert.match(script,/Begin-ExecutableReplacement/u);
- assert.match(script,/Complete-ExecutableReplacement/u);
+ assert.match(script,/Clear-ExistingEquinoxExecutables/u);
+ assert.match(script,/Clear-ExistingEquinoxExecutables/u);
  assert.doesNotMatch(script,/Read-BootstrapManifest|--activate-main|--recover-main/u);
  const offline=await fs.readFile(new URL("./windows-installer-bootstrap-smoke.ps1",import.meta.url),"utf8");
  assert.match(offline,/user_settings.*preserve/u);

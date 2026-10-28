@@ -23,11 +23,8 @@ type LaunchInput={
   spawnImpl?:typeof spawn;
 };
 
-function code(error:unknown,name:string){return error!==null&&typeof error==="object"&&"code" in error&&error.code===name;}
-
-// Acknowledges ONLY the detached ORIGINAL external installer process; the
-// signed release B and full-SHA health/rollback still belong to its existing
-// first-install coordinator and one native launchd worker.
+// Launches only the original signed external installer. An acknowledged spawn
+// is not a claim that the reinstallation has completed.
 export async function scheduleEquinoxLocalSignedNativeMacInstaller({
   installation,homeDir=os.homedir(),sourceEnv=process.env,fsImpl=fs,
   inspectStoredImpl=inspectEquinoxLocalMainNativeStoredRelease,
@@ -49,11 +46,6 @@ export async function scheduleEquinoxLocalSignedNativeMacInstaller({
     throw new Error("Main native updater requires the exact installed signed Mac SHA and non-root user.");
   }
   const root=installation.mainTransactionRoot;
-  // Never start a second external installer over an active native journal.
-  try{
-    await fsImpl.lstat(path.posix.join(root,"active.json"));
-    throw new Error("A Main native transaction is already active; repair or recover it first.");
-  }catch(error){if(!code(error,"ENOENT"))throw error;}
   const stored=await inspectStoredImpl({
     transactionRoot:root,sourceSha:sha,target,fsImpl,
   });
@@ -102,7 +94,7 @@ export async function scheduleEquinoxLocalSignedNativeMacInstaller({
     throw new Error("Native Main detached installer logs directory is unsafe.");
   }
   // Bounded private per-request log. A successful spawn is NOT proof that
-  // bootstrap, A/B, source-SHA health or rollback later succeeded.
+  // bootstrap or full-SHA installed health later succeeded.
   const requestId="main-"+randomBytes(16).toString("hex");
   const logPath=path.posix.join(handoffRoot,requestId+".original-installer.log");
   // The private, create-only detached copy is EXACTLY the original script
@@ -204,7 +196,7 @@ export async function scheduleEquinoxLocalSignedNativeWindowsInstaller({
   const requestId="main-"+randomBytes(16).toString("hex");
   const logPath=path.win32.join(logs,requestId+".original-installer.log");
   // The original PowerShell installer must run OUTSIDE old executable roots:
-  // Begin-ExecutableReplacement stops product-owned PowerShell scripts that
+  // Clear-ExistingEquinoxExecutables stops product-owned PowerShell scripts that
   // name native-store paths, otherwise the installer kills ITSELF.
   const runner=path.win32.join(logs,requestId+".original-installer.ps1");
   const runnerHandle=await fsImpl.open(runner,fsConstants.O_WRONLY|fsConstants.O_CREAT|

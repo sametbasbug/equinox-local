@@ -1419,7 +1419,7 @@ jobs:
           fs.writeFileSync(process.env.RUNNER_TEMP+'/main-production-key.pem',pem.endsWith('\n')?pem:pem+'\n',{flag:'wx',mode:0o600});
           NODE
 
-      - name: Sign four native B authorizations and one immutable selector
+      - name: Sign one immutable four-target Main installer selector
         shell: bash
         run: |
           set -euo pipefail

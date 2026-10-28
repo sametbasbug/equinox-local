@@ -86,10 +86,10 @@ test('the same verified Main SHA and version enter the existing native release i
  assert.match(windows,/\$matched\.target -cne \$Target/u);
 });
 
-test('Windows Main verifies signed B before replacing existing executables',async()=>{
+test('Windows Main verifies signed installer payload before replacing existing executables',async()=>{
  const ps=await fs.readFile(windowsURL,'utf8');
  const start=ps.indexOf('$freshReceipt = @(Invoke-VerifiedMainPreparation');
- const change=ps.indexOf('$oldExecutables = Begin-ExecutableReplacement');
+ const change=ps.indexOf('Clear-ExistingEquinoxExecutables $installRoot');
  assert.ok(start>0&&change>start);
  assert.doesNotMatch(ps,/installer ZIP helper pin is not materialized|Read-BootstrapManifest/u);
 });

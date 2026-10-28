@@ -1,6 +1,6 @@
 // Public-repo AWS/S3 adapter for a separately verified signed Main release. NEVER receives the signing key,
 // executes public checkout code, mutates Git tags, or decides release readiness.
-// This adapter is NOT connected to a production publication command yet.
+// Used by the existing protected main-push publication job, never a separate update engine.
 import {execFile as cb} from 'node:child_process';
 import {createReadStream} from 'node:fs';
 import {createHash} from 'node:crypto';
@@ -11,7 +11,7 @@ import {promisify} from 'node:util';
 
 const MAIN_R2_BUCKET='equinox-local-main';
 const MAIN_R2_IMMUTABLE_CACHE='public,max-age=31536000,immutable';
-const MAIN_NAME=/^equinox-local-main-[a-f0-9]{40}-(?:darwin-arm64|darwin-x64|win32-arm64|win32-x64)(?:\.json|\.zip|\.tar\.gz|\.b-authorization\.json)$/u;
+const MAIN_NAME=/^equinox-local-main-[a-f0-9]{40}-(?:darwin-arm64|darwin-x64|win32-arm64|win32-x64)(?:\.json|\.zip|\.tar\.gz)$/u;
 function mainR2ImmutableKey(sourceSha,name){
  if(!/^[a-f0-9]{40}$/u.test(sourceSha)||!MAIN_NAME.test(name)||!name.startsWith(`equinox-local-main-${sourceSha}-`))throw Error('Invalid immutable Main object identity.');
  return `snapshots/${sourceSha}/${name}`;
@@ -71,8 +71,8 @@ function contractToArguments(contract){
 }
 
 // Tests can inject the AWS CLI protocol runner, NEVER a trusted production
-// admission/gating callback or a signer. A real factory promoter later calls
-// this only after complete current-Main+Ed25519 admission.
+// admission/gating callback or a signer. The protected Main job calls
+// this only after current-Main and Ed25519 admission.
 export function createMainSignedR2Store({credentials,runner=execFile}={}){
  const env=boundedCredentials(credentials);
  if(typeof runner!=='function')throw Error('R2 runner must be an execution function.');

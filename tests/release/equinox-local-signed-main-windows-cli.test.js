@@ -13,8 +13,8 @@ test("the production signed Main Windows ZIP is installed by the SAME original P
  const source=await fs.readFile(installer,"utf8");
  assert.match(source,/Invoke-VerifiedMainPreparation/u);
  assert.match(source,/--install-main-fresh/u);
- assert.match(source,/Begin-ExecutableReplacement/u);
- assert.match(source,/Complete-ExecutableReplacement/u);
+ assert.match(source,/Clear-ExistingEquinoxExecutables/u);
+ assert.doesNotMatch(source,/function Restore-ExecutableReplacement/u);
  assert.doesNotMatch(source,/--check-windows-signed-main|--activate-main|Read-BootstrapManifest/u);
  const js=await fs.readFile(cli,"utf8");
  assert.match(js,/--install-main-fresh/u);

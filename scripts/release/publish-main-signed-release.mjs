@@ -1,6 +1,6 @@
-// Exact main-push, twelve immutable objects, production Ed25519 verification,
+// Exact main-push, eight immutable installer objects, production Ed25519 verification,
 // and a conditional latest/main.json move LAST. This is a keyless publisher.
-import { createHash, verify } from 'node:crypto';
+import { createHash } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { execFile as callback } from 'node:child_process';
@@ -9,19 +9,17 @@ import { pathToFileURL } from 'node:url';
 import { createMainSignedR2Store } from './main-signed-r2-store.mjs';
 import { validateTrustedMainInstallPointer } from '../../src/equinox-local-main-install-pointer.js';
 import { validateEquinoxLocalMainNativeArtifactManifest } from '../../src/equinox-local-main-native-admission.js';
-import { EQUINOX_LOCAL_UPDATE_KEYS } from '../../src/equinox-local-update-keys.js';
 import { EQUINOX_LOCAL_SUPPORTED_RELEASE_TARGETS } from '../../src/equinox-local-platform.js';
 
 const exec=promisify(callback);
 const SHA=/^[a-f0-9]{40}$/u;
-const DOMAIN='equinox-local-main-native-b-authorization-v2\n';
 const CACHE='public,max-age=31536000,immutable';
 const ORIGIN='https://main.local.sametbasbug.dev';
 const TARGETS=EQUINOX_LOCAL_SUPPORTED_RELEASE_TARGETS;
 const digest=body=>createHash('sha256').update(body).digest('hex');
 const expected=sourceSha=>TARGETS.flatMap(target=>{
   const base=`equinox-local-main-${sourceSha}-${target}`;
-  return [base+(target.startsWith('darwin-')?'.tar.gz':'.zip'),base+'.json',base+'.b-authorization.json'];
+  return [base+(target.startsWith('darwin-')?'.tar.gz':'.zip'),base+'.json'];
 });
 
 async function hashFile(file,max=1024*1024*1024){
@@ -41,36 +39,24 @@ export async function inspectMainSignedRelease({sourceSha,archiveDir,signedDir})
  const names=expected(sourceSha);
  const pointerName=`equinox-local-main-${sourceSha}.install-pointer.json`;
  const signedFiles=(await fs.readdir(signedDir)).sort();
- const expectedSigned=[...names.filter(n=>n.endsWith('.b-authorization.json')),pointerName].sort();
- if(JSON.stringify(signedFiles)!==JSON.stringify(expectedSigned))throw Error('Signed Main set must contain exactly four B sidecars and one pointer.');
+ const expectedSigned=[pointerName];
+ if(JSON.stringify(signedFiles)!==JSON.stringify(expectedSigned))throw Error('Signed Main set must contain exactly one install selector.');
  const pointerBytes=await fs.readFile(path.join(signedDir,pointerName));
  if(pointerBytes.length<200||pointerBytes.length>16384)throw Error('Signed Main pointer size invalid.');
  const pointer=validateTrustedMainInstallPointer(JSON.parse(pointerBytes.toString('utf8')),{expectedSourceSha:sourceSha});
  const files=[];
  for(const target of TARGETS){
   const base=`equinox-local-main-${sourceSha}-${target}`;
-  const manifestName=base+'.json',archiveName=base+(target.startsWith('darwin-')?'.tar.gz':'.zip'),authName=base+'.b-authorization.json';
+  const manifestName=base+'.json',archiveName=base+(target.startsWith('darwin-')?'.tar.gz':'.zip');
   const manifestBytes=await fs.readFile(path.join(archiveDir,manifestName));
   if(manifestBytes.length<1||manifestBytes.length>16384)throw Error('Native Main manifest size invalid.');
   const manifest=validateEquinoxLocalMainNativeArtifactManifest(JSON.parse(manifestBytes),{expectedSourceSha:sourceSha,expectedTarget:target});
   const entry=pointer.targets.find(t=>t.target===target);
   if(!entry||entry.runtimeContractSha256!==manifest.runtimeContractSha256||entry.artifact.sha256!==manifest.artifact.sha256||entry.artifact.bytes!==manifest.artifact.bytes||entry.artifact.url!==ORIGIN+'/snapshots/'+sourceSha+'/'+archiveName)throw Error('Signed Main pointer/native manifest mismatch.');
-  const authBytes=await fs.readFile(path.join(signedDir,authName));
-  if(authBytes.length<100||authBytes.length>16384)throw Error('Signed B authorization size invalid.');
-  const signed=JSON.parse(authBytes);
-  const {signature,...payload}=signed;
-  if(Object.keys(payload).sort().join(',')!==['artifact','channel','releaseFingerprint','runtimeContractSha256','schemaVersion','sourceSha','target'].sort().join(',')||
-     payload.schemaVersion!==2||payload.channel!=='main'||payload.sourceSha!==sourceSha||payload.target!==target||
-     payload.runtimeContractSha256!==manifest.runtimeContractSha256||payload.artifact?.sha256!==manifest.artifact.sha256||payload.artifact?.bytes!==manifest.artifact.bytes||
-     !/^[a-f0-9]{64}$/u.test(payload.releaseFingerprint?.sha256||'')||!Number.isInteger(payload.releaseFingerprint?.entries)||!Number.isInteger(payload.releaseFingerprint?.bytes)||payload.releaseFingerprint.entries<1||payload.releaseFingerprint.bytes<1||
-     signature?.algorithm!=='ed25519'||signature?.keyId!=='stable-2026-01')throw Error('Native B authorization payload malformed or does not bind to immutable artifact.');
-  const bytes=Buffer.from(signature.value||'','base64');
-  if(bytes.length!==64||bytes.toString('base64')!==signature.value||!verify(null,Buffer.from(DOMAIN+JSON.stringify(payload)),EQUINOX_LOCAL_UPDATE_KEYS['stable-2026-01'],bytes))throw Error('Native B production Ed25519 authorization invalid.');
   const archive=await hashFile(path.join(archiveDir,archiveName));
   if(archive.sha256!==manifest.artifact.sha256||archive.bytes!==manifest.artifact.bytes)throw Error('Native archive differs from signed hash.');
   files.push({name:archiveName,file:path.join(archiveDir,archiveName),...archive});
   files.push({name:manifestName,file:path.join(archiveDir,manifestName),sha256:digest(manifestBytes),bytes:manifestBytes.length});
-  files.push({name:authName,file:path.join(signedDir,authName),sha256:digest(authBytes),bytes:authBytes.length});
  }
  return Object.freeze({sourceSha,files:Object.freeze(files),pointer,pointerFile:path.join(signedDir,pointerName),pointerSha256:digest(pointerBytes),pointerBytes:pointerBytes.length});
 }
