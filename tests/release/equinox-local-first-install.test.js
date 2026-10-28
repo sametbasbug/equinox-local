@@ -2183,7 +2183,7 @@ test("existing macOS shell exposes explicit abandoned-native recovery without st
    encoding:"utf8",timeout:5000,
   });
   assert.equal(result.status,1);
-  assert.match(result.stderr,/recovery requires an exact transaction id|cannot be combined with staging or activation/u);
+  assert.match(result.stderr,/recovery requires an exact transaction id|cannot be combined with staging, activation or repair/u);
  }
 });
 
@@ -2268,4 +2268,49 @@ test("abandoned clean Mac first-install refuses newly introduced foreign apphost
   proveAbsentImpl:async()=>({absent:true}),
  }),/cannot displace a prior managed\/Factory/u);
  assert.equal(JSON.parse(await fs.readFile(path.join(f.root,"active.json"),"utf8")).kind,"signed-native");
+});
+
+
+test("original macOS shell SAME-SHA repair flag is explicit and cannot be combined with normal Main activation",async()=>{
+ const file=path.resolve("scripts/install-equinox-local.sh");
+ const contents=await fs.readFile(file,"utf8");
+ assert.match(contents,/^REPAIR_MAIN=0$/mu);
+ assert.match(contents,/--repair-main\) PREPARE_MAIN=1; STAGE_MAIN=1; REPAIR_MAIN=1/u);
+ assert.match(contents,/--repair-signed-main --signed-pointer-file/u);
+ assert.match(contents,/signed Main activation and exact-SHA repair cannot run together/u);
+ const help=spawnSync("/bin/bash",[file,"--help"],{encoding:"utf8",timeout:5000});
+ assert.equal(help.status,0);
+ assert.match(help.stdout,/--repair-main/u);
+ const mutuallyExclusive=spawnSync("/bin/bash",[file,"--repair-main","--activate-main"],{
+  encoding:"utf8",timeout:5000,
+ });
+ assert.equal(mutuallyExclusive.status,1);
+ assert.match(mutuallyExclusive.stderr,/activation and exact-SHA repair cannot run together/u);
+ const withRecovery=spawnSync("/bin/bash",[file,"--repair-main","--recover-main=main-"+ "f".repeat(32)],{
+  encoding:"utf8",timeout:5000,
+ });
+ assert.equal(withRecovery.status,1);
+ assert.match(withRecovery.stderr,/recovery cannot be combined with staging, activation or repair/u);
+});
+
+test("signed-native repair CLI rejects unsigned or malformed selector without touching user HOME",async t=>{
+ const home=await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(),"equinox-native-repair-cli-")));
+ t.after(()=>fs.rm(home,{recursive:true,force:true}));
+ const selector=path.join(home,"forge.json");
+ await fs.writeFile(selector,JSON.stringify({sourceSha:"a".repeat(40),padding:"x".repeat(250)}),{mode:0o600});
+ const cli=path.resolve("src/equinox-local-first-install.js");
+ for(const args of [
+  ["--repair-signed-main","--signed-pointer-file",selector],
+  ["--repair-signed-main","--signed-pointer-file",selector,"--source-root",home],
+  ["--repair-signed-main","--signed-pointer-file","relative.json"],
+ ]){
+  const out=spawnSync(process.execPath,[cli,...args],{
+   env:{HOME:home,PATH:"/usr/bin:/bin:/usr/sbin:/sbin"},
+   encoding:"utf8",timeout:10000,
+  });
+  assert.equal(out.status,1);
+  assert.match(out.stderr,/Exact signed Main repair rejected/u);
+  assert.equal(out.stdout,"");
+ }
+ await assert.rejects(fs.lstat(path.join(home,"Library")),{code:"ENOENT"});
 });

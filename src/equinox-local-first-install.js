@@ -1706,7 +1706,7 @@ export async function prepareSignedMainInstallerMacActivation({ signedPointer, h
 // handoff. A failed "launchctl bootstrap" never alone implies absence.
 // No new runtime updater is introduced: this reuses the exact existing
 // signed owner + durable receipt + original launchd scheduler ownership.
-export async function recoverAbandonedSignedMainMacAdmission({ transactionId, homeDir = os.homedir(), platform = process.platform, arch = process.arch, uid = process.getuid?.(), env = process.env, fsImpl = fs, inspectImpl = inspectSignedMainInstallerMacActivation, verifyPointerImpl = validateTrustedMainInstallPointer, proveAbsentImpl, verifyPriorHealthImpl, }) {
+export async function recoverAbandonedSignedMainMacAdmission({ transactionId, homeDir = os.homedir(), platform = process.platform, arch = process.arch, uid = process.getuid?.(), env = process.env, fsImpl = fs, inspectImpl = inspectSignedMainInstallerMacActivation, verifyPointerImpl = validateTrustedMainInstallPointer, proveAbsentImpl, verifyPriorHealthImpl, recoverRepairImpl, }) {
     if (platform !== "darwin" || !["arm64", "x64"].includes(arch) ||
         !/^main-[a-f0-9]{32}$/u.test(transactionId) ||
         typeof homeDir !== "string" || !path.posix.isAbsolute(homeDir) ||
@@ -1743,9 +1743,7 @@ export async function recoverAbandonedSignedMainMacAdmission({ transactionId, ho
         runtimeContractSha256: contract };
     const recovery = await import("./equinox-local-main-native-recovery.js");
     await recovery.assertEquinoxLocalSignedNativeMacOwner({ ...owner, fsImpl });
-    if ((await recovery.readEquinoxLocalSignedNativeMacReceipt({ ...owner, fsImpl })).status !== "admitted") {
-        throw new Error("Signed native Main recovery only cancels a never-activated admitted owner.");
-    }
+    const receipt = await recovery.readEquinoxLocalSignedNativeMacReceipt({ ...owner, fsImpl });
     const desc = await recovery.readEquinoxLocalMainNativeRecoveryDescriptor({
         transactionRoot: root, transactionId, fsImpl,
         expected: { targetSha: sha, target, targetRuntimeContractSha256: contract },
@@ -1770,6 +1768,21 @@ export async function recoverAbandonedSignedMainMacAdmission({ transactionId, ho
     const relevant = signed.targets.find(v => v.target === target);
     if (!relevant || relevant.runtimeContractSha256 !== contract) {
         throw new Error("Stored native B is not authenticated for the abandoned transaction.");
+    }
+    // Repair's previous A IS the signed target SHA. It has no detached B
+    // worker; recovery is permitted only once that SAME runtime is proven
+    // healthy, unlike an A->B abandoned-admission cancellation.
+    if (desc.previous.kind === "main" && desc.previous.sourceSha === sha &&
+        desc.previous.target === target &&
+        desc.previous.runtimeContractSha256 === contract) {
+        const { recoverEquinoxLocalSignedMainMacRepair: recoverDefault } = await import("./equinox-local-signed-main-repair.js");
+        return await (recoverRepairImpl ?? recoverDefault)({
+            signedPointer: rawSelector, transactionId, homeDir, platform, arch, uid,
+            env, fsImpl, inspectImpl, verifyPointerImpl,
+        });
+    }
+    if (receipt.status !== "admitted") {
+        throw new Error("Signed native Main recovery only cancels a never-activated admitted owner.");
     }
     const authenticatedA = desc.previous;
     const assertA = async () => {
@@ -1913,6 +1926,28 @@ if (invokedPath && path.basename(invokedPath) === path.basename(fileURLToPath(im
             process.stdout.write(JSON.stringify(result) + "\n");
         }).catch(() => {
             process.stderr.write("Signed Main abandoned worker recovery denied; owner preserved unless verified safe.\n");
+            process.exitCode = 1;
+        });
+    }
+    else if (process.argv[2] === "--repair-signed-main") {
+        Promise.resolve().then(async () => {
+            // The same fixed authenticated release helper and original signed
+            // pointer are used for repair: never trust arbitrary CLI paths/code.
+            const cli = parseSignedMainActivateCli(["--activate-signed-main", ...process.argv.slice(3)]);
+            const { data } = await readBoundedNormalFile(cli.signedPointerFile, {
+                minBytes: 200, maxBytes: 16 * 1024, encoding: "utf8",
+                label: "Private original production-signed Main repair selector",
+            });
+            const { repairEquinoxLocalSignedMainMacRuntime } = await import("./equinox-local-signed-main-repair.js");
+            const result = await repairEquinoxLocalSignedMainMacRuntime({
+                signedPointer: JSON.parse(data),
+            });
+            process.stdout.write(JSON.stringify(result) + "\n");
+        }).catch(error => {
+            const tx = typeof error?.transactionId === "string" &&
+                /^main-[a-f0-9]{32}$/u.test(error.transactionId)
+                ? " Transaction " + error.transactionId + " remains locked." : "";
+            process.stderr.write("Exact signed Main repair rejected or health unverified." + tx + "\n");
             process.exitCode = 1;
         });
     }

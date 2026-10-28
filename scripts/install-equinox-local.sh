@@ -34,6 +34,7 @@ MAIN_ARGS=(--enroll-existing-main)
 PREPARE_MAIN=0
 STAGE_MAIN=0
 ACTIVATE_MAIN=0
+REPAIR_MAIN=0
 RECOVER_MAIN_TX=""
 for argument in "$@"; do
   case "$argument" in
@@ -41,19 +42,23 @@ for argument in "$@"; do
     --prepare-main) PREPARE_MAIN=1 ;;
     --stage-main) PREPARE_MAIN=1; STAGE_MAIN=1 ;;
     --activate-main) PREPARE_MAIN=1; STAGE_MAIN=1; ACTIVATE_MAIN=1 ;;
+    --repair-main) PREPARE_MAIN=1; STAGE_MAIN=1; REPAIR_MAIN=1 ;;
     --recover-main=*) PREPARE_MAIN=1; RECOVER_MAIN_TX="${argument#--recover-main=}" ;;
     --help|-h)
-      printf '%s\n' 'Usage: install-equinox-local.sh [--enroll-existing-main] [--prepare-main] [--stage-main] [--activate-main] [--recover-main=main-<32-lowercase-hex>]' 'The installer verifies the signed bootstrap and enrolls the admitted Main commit by default.' 'Failure preserves the signed bootstrap for recovery; existing settings are retained.'
+      printf '%s\n' 'Usage: install-equinox-local.sh [--enroll-existing-main] [--prepare-main] [--stage-main] [--activate-main] [--repair-main] [--recover-main=main-<32-lowercase-hex>]' 'The installer verifies the signed bootstrap and enrolls the admitted Main commit by default.' 'Failure preserves the signed bootstrap for recovery; existing settings are retained.'
       exit 0 ;;
     *) fail "unknown argument: $argument (use --help)" ;;
   esac
 done
 
+if [ "$ACTIVATE_MAIN" -eq 1 ] && [ "$REPAIR_MAIN" -eq 1 ]; then
+  fail "signed Main activation and exact-SHA repair cannot run together"
+fi
 if [ -n "$RECOVER_MAIN_TX" ]; then
   [[ "$RECOVER_MAIN_TX" =~ ^main-[a-f0-9]{32}$ ]] ||
     fail "signed native admission recovery requires an exact transaction id"
-  [ "$STAGE_MAIN" -eq 0 ] && [ "$ACTIVATE_MAIN" -eq 0 ] ||
-    fail "signed native recovery cannot be combined with staging or activation"
+  [ "$STAGE_MAIN" -eq 0 ] && [ "$ACTIVATE_MAIN" -eq 0 ] && [ "$REPAIR_MAIN" -eq 0 ] ||
+    fail "signed native recovery cannot be combined with staging, activation or repair"
 fi
 
 [ "$(/usr/bin/uname -s)" = "Darwin" ] || fail "macOS is required"
@@ -171,6 +176,13 @@ prepare_verified_main() {
   if [ "$STAGE_MAIN" -eq 1 ]; then
     /usr/bin/env -i HOME="$HOME_DIR" PATH="/usr/bin:/bin:/usr/sbin:/sbin"       "$node" "$inspector" --stage-signed-main       --signed-pointer-file "$TEMP_ROOT/main-signed-pointer.json" --archive "$archive" ||
       fail "signed Main inactive A/B staging failed; active installation untouched"
+  fi
+  if [ "$REPAIR_MAIN" -eq 1 ]; then
+    info "checking exact original signed Main SHA and repairing only its owned LaunchAgent"
+    local repaired
+    repaired="$(/usr/bin/env -i HOME="$HOME_DIR" USER="$CURRENT_USER" LOGNAME="$CURRENT_USER"       TMPDIR="/tmp" PATH="/usr/bin:/bin:/usr/sbin:/sbin" "$node" "$inspector"       --repair-signed-main --signed-pointer-file "$TEMP_ROOT/main-signed-pointer.json")" ||
+      fail "same-SHA native repair could not prove healthy runtime; inspect the signed native owner before retry"
+    printf '%s\n' "$repaired"
   fi
   if [ "$ACTIVATE_MAIN" -eq 1 ]; then
     info "checking existing managed A and scheduling signed Main B"
