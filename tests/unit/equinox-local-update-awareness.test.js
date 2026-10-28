@@ -1,6 +1,8 @@
+import { generateKeyPairSync } from "node:crypto";
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createEquinoxLocalMainChannelNotice } from "../../src/equinox-local-update-awareness.js";
+import { createEquinoxLocalMainChannelNotice, createEquinoxLocalSignedMainNativeNotice } from "../../src/equinox-local-update-awareness.js";
+import { createSignedMainInstallPointer, validateSignedMainInstallPointer } from "../../src/equinox-local-main-install-pointer.js";
 const SHA = "a".repeat(40);
 const makeResponse = (value) => new Response(JSON.stringify(value), { status: 200 });
 
@@ -108,4 +110,99 @@ test("informational Main notice refreshes a cached SHA only after expiry or expl
   assert.equal(expired.lastError,"Main channel check unavailable.");
   assert.doesNotMatch(JSON.stringify(expired),/private network credentials/u);
   assert.equal(calls,2);
+});
+
+
+function ephemeralSignedMain(sha=SHA,version="6.2.1"){
+ const {privateKey,publicKey}=generateKeyPairSync("ed25519");
+ const keyId="test-notice-original-ed25519";
+ const pointer=createSignedMainInstallPointer({
+  sourceSha:sha,version,keyId,privateKey,publishedAt:"2026-10-28T00:00:00.000Z",
+  nativeManifests:["darwin-arm64","darwin-x64","win32-arm64","win32-x64"].map(target=>({
+   schemaVersion:1,channel:"main",sourceSha:sha,target,
+   runtimeContractSha256:"c".repeat(64),
+   artifact:{name:"equinox-local-main-"+sha+"-"+target+
+    (target.startsWith("win32-")?".zip":".tar.gz"),sha256:"d".repeat(64),bytes:42},
+  })),
+ });
+ return {pointer,verify:(raw)=>validateSignedMainInstallPointer(raw,{
+  publicKeys:{[keyId]:publicKey.export({type:"spki",format:"pem"})},
+ })};
+}
+
+test("managed-native Main notice uses production signed full SHA, not same displayed semver or GitHub tag",async()=>{
+ const {pointer,verify}=ephemeralSignedMain("b".repeat(40),"6.2.1");
+ let calls=0;
+ const notice=createEquinoxLocalSignedMainNativeNotice({
+  installedSha:SHA,target:"darwin-arm64",verifyPointerImpl:verify,
+  fetchImpl:async(url,opts)=>{
+   calls++;
+   assert.equal(url,"https://main.local.sametbasbug.dev/latest/main.json");
+   assert.equal(opts.redirect,"error");
+   assert.equal(opts.credentials,"omit");
+   return makeResponse(pointer);
+  },
+ });
+ assert.equal(notice.snapshot().status,"unknown");
+ const result=await notice.check();
+ assert.equal(result.status,"available");
+ assert.equal(result.installedSha,SHA);
+ assert.equal(result.targetSha,"b".repeat(40));
+ assert.equal(result.version,"6.2.1");
+ assert.equal(result.lastError,null);
+ await notice.check();
+ assert.equal(calls,1);
+});
+
+test("managed-native Main notice treats EXACT same source SHA as up to date",async()=>{
+ const {pointer,verify}=ephemeralSignedMain();
+ const notice=createEquinoxLocalSignedMainNativeNotice({
+  installedSha:SHA,target:"darwin-x64",verifyPointerImpl:verify,
+  fetchImpl:async()=>makeResponse(pointer),
+ });
+ assert.equal((await notice.check()).status,"up_to_date");
+ assert.equal(notice.snapshot().targetSha,SHA);
+});
+
+test("managed-native Main notice fails closed for tampered signature, wrong target, oversized selector and network failure",async()=>{
+ const {pointer,verify}=ephemeralSignedMain("b".repeat(40));
+ const forged={...pointer,sourceSha:"f".repeat(40)};
+ let count=0;
+ const notice=createEquinoxLocalSignedMainNativeNotice({
+  installedSha:SHA,target:"darwin-arm64",verifyPointerImpl:verify,
+  fetchImpl:async()=>{
+   count++;
+   if(count===1)return makeResponse(pointer);
+   if(count===2)return makeResponse(forged);
+   if(count===3)return new Response("x".repeat(16385),{status:200});
+   throw Error("network inaccessible");
+  },
+ });
+ assert.equal((await notice.check()).status,"available");
+ for(let i=0;i<3;i++){
+  const result=await notice.check({force:true});
+  assert.equal(result.status,"unavailable");
+  assert.equal(result.targetSha,null);
+  assert.equal(result.version,null);
+  assert.match(result.lastError,/unavailable/u);
+ }
+ assert.equal(count,4);
+ assert.throws(()=>createEquinoxLocalSignedMainNativeNotice({
+  installedSha:"bad",target:"darwin-arm64",
+ }),/requires an exact installed SHA/u);
+ assert.throws(()=>createEquinoxLocalSignedMainNativeNotice({
+  installedSha:SHA,target:"darwin-ia32",
+ }),/requires an exact installed SHA/u);
+});
+
+test("parallel native Main checks share a single bounded immutable signed-pointer request",async()=>{
+ const {pointer,verify}=ephemeralSignedMain("b".repeat(40));
+ let calls=0;
+ const notice=createEquinoxLocalSignedMainNativeNotice({
+  installedSha:SHA,target:"win32-arm64",verifyPointerImpl:verify,
+  fetchImpl:async()=>{calls++;return makeResponse(pointer)},
+ });
+ const [a,b]=await Promise.all([notice.check(),notice.check()]);
+ assert.equal(calls,1);
+ assert.deepEqual(a,b);
 });

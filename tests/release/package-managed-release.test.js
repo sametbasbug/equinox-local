@@ -76,6 +76,8 @@ test("managed release source graph follows local imports and excludes developmen
     "src/equinox-local-native-app-host.js",
     "package.json",
     "package-lock.json",
+    "scripts/install-equinox-local.sh",
+    "scripts/install-equinox-local.ps1",
   ]) {
     assert.equal(files.includes(required), true, `${required} should be packaged`);
   }
@@ -96,6 +98,7 @@ test("managed release source graph includes the complete browser UI dependency g
     "src/equinox-control-center.css", "src/equinox-control-center.js",
     "app/EquinoxLocal.png", "app/EquinoxLocalMenuBar.png", "app/EquinoxCompanionNyx.webp",
     "package.json", "package-lock.json", "src/ui-dependency.js", "src/ui-leaf.js",
+    "scripts/install-equinox-local.sh", "scripts/install-equinox-local.ps1",
   ];
   for (const relative of fixtureFiles) {
     await fs.mkdir(path.dirname(path.join(root, relative)), { recursive: true });

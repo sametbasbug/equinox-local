@@ -54,6 +54,40 @@ test("native recovery descriptor stores identities without arbitrary release pat
   assert.deepEqual(stable.previous, { kind: "stable", version: "5.2.0" });
 });
 
+test("direct Main clean install durably records previous NONE, but old A/B worker and recovery never silently fake a Stable A",async t=>{
+ const root=await scratch(t);
+ const transitionB=transition("darwin-arm64");
+ const installation={managed:true,selfUpdateSupported:true,platform:"darwin",
+  target:"darwin-arm64",installRoot:"/Users/test/Library/Application Support/Equinox Local",
+  releasesRoot:"/Users/test/Library/Application Support/Equinox Local/releases",releaseDir:null};
+ const expected=equinoxLocalMainNativeRecoveryDescriptor({transition:transitionB,
+  previousPointer:null,installation});
+ assert.deepEqual(expected.previous,{kind:"none"});
+ const durable=await writeEquinoxLocalMainNativeRecoveryDescriptor({transition:transitionB,
+  previousPointer:null,installation,transactionRoot:root,transactionId:TX});
+ assert.deepEqual(durable.previous,{kind:"none"});
+ assert.deepEqual((await readEquinoxLocalMainNativeRecoveryDescriptor({
+  transactionRoot:root,transactionId:TX})).previous,{kind:"none"});
+ await assert.rejects(writeEquinoxLocalMainNativeRecoveryDescriptor({transition:transitionB,
+  previousPointer:null,installation:{...installation,releaseDir:"/managed/releases/6.2.0"},
+  transactionRoot:root,transactionId:TX}),/immutable identity mismatch/u);
+ await assert.rejects(recoverEquinoxLocalMainNativeLifecycle({
+  transition:transitionB,transactionRoot:root,transactionId:TX,installation,
+  inspectStoredReleaseImpl:async()=>assert.fail("missing first-install lifecycle cannot touch B"),
+ }),/requires a verified new apphost and launchd bootstrap rollback/u);
+ await assert.rejects(runEquinoxLocalSignedMacNativeHandoff({
+  transactionRoot:root,transactionId:TX,sourceSha:B,target:"darwin-arm64",
+  version:"6.2.1",runtimeContractSha256:DB,
+  lifecycle:{previousPointer:null,activate:async()=>assert.fail("no activation"),
+   rollback:async()=>assert.fail("no rollback"),commit:async()=>assert.fail("no commit")},
+  assertWorkerImpl:async()=>{},readDescriptorImpl:async()=>durable,
+  assertOwnerImpl:async()=>{},readReceiptImpl:async()=>({status:"admitted"}),
+ }),/requires a dedicated new-runtime bootstrap\/rollback admission/u);
+ assert.throws(()=>equinoxLocalMainNativeRecoveryDescriptor({transition:transition("win32-x64"),
+  previousPointer:null,installation:{...installation,target:"win32-x64"}}),
+ /Unsupported Equinox Local version/u,"Windows direct install is not implicitly enabled by Mac descriptor.");
+});
+
 test("native recovery descriptor is immutable-once-created and exact-identity bound", async (t) => {
   const root = await scratch(t);
   const args = { transition: transition("darwin-arm64"), previousPointer: null, installation: { releaseDir: "/stable/5.2.0" }, transactionRoot: root, transactionId: TX };

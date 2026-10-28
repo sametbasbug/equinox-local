@@ -1431,7 +1431,54 @@ export async function inspectSignedMainInstallerMacActivation({
   if(!row)throw new Error("Signed Main Mac activation has no admitted B architecture.");
   const installRoot=path.posix.join(homeDir,"Library","Application Support","Equinox Local");
   const currentLink=path.posix.join(installRoot,"current");
-  const stat=await fsImpl.lstat(currentLink);
+  const paths=equinoxLocalManagedSourcePaths({homeDir,platform,arch,env});
+  const root=paths.mainTransactionRoot;
+  let stat:Awaited<ReturnType<FsImpl["lstat"]>>|null=null;
+  try{stat=await fsImpl.lstat(currentLink);}
+  catch(error){if((error as ErrorCode)?.code!=="ENOENT")throw error;}
+  if(stat===null){
+    // A genuinely clean direct-Main install has no prior Stable, Git,
+    // Factory, apphost or launchd identity to protect. Do not infer absence
+    // merely from a missing (or broken) current symlink.
+    const privateRoot=await fsImpl.lstat(root);
+    if(!privateRoot.isDirectory()||privateRoot.isSymbolicLink()||
+       (privateRoot.mode&0o777)!==0o700 ||
+       await fsImpl.realpath(root)!==root) {
+      throw new Error("Signed Main clean install requires the existing private canonical inactive B store.");
+    }
+    const forbidden=[
+      path.posix.join(root,"current-native.json"),paths.installStampPath,
+      paths.sourcePointerPath,
+      path.posix.join(homeDir,"Library","LaunchAgents","dev.equinox.local.plist"),
+      path.posix.join(homeDir,"Applications","Equinox Local.app"),
+      path.posix.join(installRoot,"releases"),
+      path.posix.join(installRoot,"runtime"),
+    ];
+    for(const name of forbidden){
+      try{
+        await fsImpl.lstat(name);
+        throw new Error("Signed Main clean install cannot displace a prior managed/Factory app or runtime state.");
+      }catch(error){
+        if((error as ErrorCode)?.code!=="ENOENT")throw error;
+      }
+    }
+    const store=await inspectStoredImpl({transactionRoot:root,sourceSha:signed.sourceSha,
+      target,expectedRuntimeContractSha256:row.runtimeContractSha256,fsImpl});
+    const expectedB=path.posix.join(root,"native-store",target,signed.sourceSha,"release");
+    if(store.releaseDir!==expectedB || store.sourceSha!==signed.sourceSha ||
+       store.target!==target || store.runtimeContractSha256!==row.runtimeContractSha256 ||
+       store.payloadVersion!==signed.version ||
+       store.manifest.artifactSha256!==row.artifact.sha256 ||
+       store.manifest.artifactBytes!==row.artifact.bytes) {
+      throw new Error("Signed Main clean install B differs from immutable production Ed25519 selector.");
+    }
+    return Object.freeze({action:"first_install" as const,target,
+      sourceSha:signed.sourceSha,version:signed.version,
+      runtimeContractSha256:row.runtimeContractSha256,
+      transactionRoot:root,releaseDir:store.releaseDir,
+      previousKind:"none" as const,previousSha:null,previousVersion:null,
+      previousReleaseDir:null});
+  }
   if(!stat.isSymbolicLink())throw new Error("Signed Main Mac A must have an owned current symlink.");
   const currentRaw=await fsImpl.readlink(currentLink);
   const lexicalA=path.posix.resolve(installRoot,currentRaw);
@@ -1468,7 +1515,6 @@ export async function inspectSignedMainInstallerMacActivation({
   }else if(previous.kind!=="managed") {
     throw new Error("Signed Main Mac cannot replace a legacy Git source or private Factory installation.");
   }
-  const root=equinoxLocalManagedSourcePaths({homeDir,platform,arch,env}).mainTransactionRoot;
   const store=await inspectStoredImpl({transactionRoot:root,sourceSha:signed.sourceSha,
     target,expectedRuntimeContractSha256:row.runtimeContractSha256,fsImpl});
   const expectedB=path.posix.join(root,"native-store",target,signed.sourceSha,"release");
@@ -1811,38 +1857,43 @@ export async function recoverAbandonedSignedMainMacAdmission({
   if(!relevant||relevant.runtimeContractSha256!==contract){
     throw new Error("Stored native B is not authenticated for the abandoned transaction.");
   }
+  if(desc.previous.kind==="none"){
+    throw new Error("An empty first install cannot use rollback-to-A abandoned admission recovery.");
+  }
+  const authenticatedA=desc.previous;
   const assertA=async()=>{
     const current=await inspectImpl({signedPointer:rawSelector,homeDir,platform,arch,env,fsImpl});
     if(current.action!=="activate" || current.sourceSha!==sha ||
        current.target!==target || current.runtimeContractSha256!==contract) {
       throw new Error("Signed native original A/B identity changed since failed handoff.");
     }
-    if(desc.previous.kind==="stable"){
+    if(authenticatedA.kind==="stable"){
       if(current.previousKind!=="stable"||
-         current.previousVersion!==desc.previous.version ||
-         current.previousReleaseDir!==path.posix.join(path.dirname(root),"releases",desc.previous.version)) {
+         current.previousVersion!==authenticatedA.version ||
+         current.previousReleaseDir!==path.posix.join(path.dirname(root),"releases",authenticatedA.version)) {
         throw new Error("Abandoned signed native Stable A does not match the immutable recovery descriptor.");
       }
-      return {previousKind:"stable" as const,previousVersion:desc.previous.version,
+      return {previousKind:"stable" as const,previousVersion:authenticatedA.version,
         previousSha:null,previousRuntimeContractSha256:null,transactionRoot:root,target};
     }
+    if(authenticatedA.kind!=="main")throw new Error("Clean install has no previous A to recover.");
     if(current.previousKind!=="main"||
-       current.previousSha!==desc.previous.sourceSha||
-       desc.previous.target!==target ||
-       current.previousReleaseDir!==path.posix.join(root,"native-store",target,desc.previous.sourceSha,"release")){
+       current.previousSha!==authenticatedA.sourceSha||
+       authenticatedA.target!==target ||
+       current.previousReleaseDir!==path.posix.join(root,"native-store",target,authenticatedA.sourceSha,"release")){
       throw new Error("Abandoned signed native A SHA differs from immutable rollback identity.");
     }
     const previous=await readEquinoxLocalMainNativePointer(path.posix.join(root,"current-native.json"),{
       transactionRoot:root,fsImpl,
     });
-    if(previous.sourceSha!==desc.previous.sourceSha||
-       previous.runtimeContractSha256!==desc.previous.runtimeContractSha256||
+    if(previous.sourceSha!==authenticatedA.sourceSha||
+       previous.runtimeContractSha256!==authenticatedA.runtimeContractSha256||
        previous.target!==target) {
       throw new Error("Abandoned native A runtime contract pointer drifted.");
     }
     return {previousKind:"main" as const,previousVersion:null,
-      previousSha:desc.previous.sourceSha,
-      previousRuntimeContractSha256:desc.previous.runtimeContractSha256,
+      previousSha:authenticatedA.sourceSha,
+      previousRuntimeContractSha256:authenticatedA.runtimeContractSha256,
       transactionRoot:root,target};
   };
   const {assertEquinoxLocalSignedMacWorkerNeverStarted:defaultAbsent}=

@@ -239,6 +239,9 @@ export async function runEquinoxLocalSignedMacNativeHandoff({ transactionRoot, t
         throw new Error("Signed native handoff state is not resumable.");
     }
     const prior = lifecycle.previousPointer;
+    if (descriptor.previous.kind === "none") {
+        throw new Error("Clean first Main install requires a dedicated new-runtime bootstrap/rollback admission.");
+    }
     if (descriptor.previous.kind === "main") {
         if (!prior || prior.sourceSha !== descriptor.previous.sourceSha ||
             prior.target !== descriptor.previous.target ||
@@ -256,15 +259,18 @@ export async function runEquinoxLocalSignedMacNativeHandoff({ transactionRoot, t
         throw new Error("Signed native Mac handoff has no admitted previous A.");
     }
     const b = { transactionRoot, sourceSha, target, version, runtimeContractSha256 };
+    const authenticatedA = descriptor.previous;
     const verifyA = async () => {
-        if (descriptor.previous.kind === "stable") {
-            if ((await verifyStableImpl(descriptor.previous.version, {
+        if (authenticatedA.kind === "stable") {
+            if ((await verifyStableImpl(authenticatedA.version, {
                 expectedInstallationKind: "managed",
             })) !== true)
                 throw new Error("Restored Stable A did not pass runtime health.");
             return;
         }
-        const a = descriptor.previous;
+        if (authenticatedA.kind !== "main")
+            throw new Error("Clean install has no previous A health to verify.");
+        const a = authenticatedA;
         const stored = await inspectStoredImpl({ transactionRoot, sourceSha: a.sourceSha,
             target: a.target, expectedRuntimeContractSha256: a.runtimeContractSha256 });
         if (stored.sourceSha !== a.sourceSha || stored.target !== a.target ||

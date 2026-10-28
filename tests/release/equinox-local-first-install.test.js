@@ -1640,6 +1640,71 @@ test("signed installer Mac preflight refuses legacy Git/Factory identity, foreig
 });
 
 
+test("genuinely clean Mac A=null accepts the same production-signed inactive native B WITHOUT creating a Stable installation",async t=>{
+ const f=await signedMacInstallerInspectFixture(t);
+ await fs.unlink(f.current);
+ await fs.rm(path.dirname(f.stable),{recursive:true,force:true});
+ const result=await inspectSignedMainInstallerMacActivation(f.options);
+ assert.deepEqual(result,{
+  action:"first_install",target:"darwin-arm64",sourceSha:"b".repeat(40),
+  version:"6.2.1",runtimeContractSha256:"c".repeat(64),
+  transactionRoot:path.join(f.homeDir,"Library","Application Support","Equinox Local","main-update"),
+  releaseDir:f.native,previousKind:"none",previousSha:null,
+  previousVersion:null,previousReleaseDir:null,
+ });
+ assert.deepEqual(f.events,["verify original B selector","immutable B fingerprint"]);
+ await assert.rejects(fs.lstat(f.current),{code:"ENOENT"});
+ await assert.rejects(fs.lstat(path.dirname(f.stable)),{code:"ENOENT"});
+});
+
+test("clean Mac A=null preflight refuses orphaned Stable, Git/Factory, apphost, launchd and native pointer identities",async t=>{
+ const f=await signedMacInstallerInspectFixture(t);
+ await fs.unlink(f.current);
+ await fs.rm(path.dirname(f.stable),{recursive:true,force:true});
+ const root=path.join(f.homeDir,"Library","Application Support","Equinox Local");
+ const forbidden=[
+  path.join(root,"releases","7.0.0"),
+  path.join(root,"main-update","install.json"),
+  path.join(root,"main-update","current-source.conf"),
+  path.join(root,"main-update","current-native.json"),
+  path.join(f.homeDir,"Library","LaunchAgents","dev.equinox.local.plist"),
+  path.join(f.homeDir,"Applications","Equinox Local.app"),
+  path.join(root,"runtime","node"),
+ ];
+ for(const file of forbidden) {
+  await fs.mkdir(path.dirname(file),{recursive:true,mode:0o700});
+  await fs.writeFile(file,"foreign old installation",{mode:0o600});
+  await assert.rejects(inspectSignedMainInstallerMacActivation(f.options),
+   /cannot displace a prior managed\/Factory/u);
+  await fs.unlink(file);
+ }
+ const current=path.join(root,"current");
+ await fs.symlink("releases/missing",current);
+ await assert.rejects(inspectSignedMainInstallerMacActivation(f.options),
+  /ENOENT|owned release|escaped the owned Stable\/native/u,"dangling current is NOT an absent A");
+ await fs.unlink(current);
+ await fs.writeFile(current,"old user data",{mode:0o600});
+ await assert.rejects(inspectSignedMainInstallerMacActivation(f.options),/owned current symlink/u);
+ assert.equal(await fs.readFile(current,"utf8"),"old user data");
+});
+
+test("clean Mac A=null preflight denies a tampered B digest and a symlinked transaction state root",async t=>{
+ const f=await signedMacInstallerInspectFixture(t);
+ await fs.unlink(f.current);
+ await fs.rm(path.dirname(f.stable),{recursive:true,force:true});
+ await assert.rejects(inspectSignedMainInstallerMacActivation({...f.options,
+  inspectStoredImpl:async()=>({releaseDir:f.native,
+   sourceSha:"b".repeat(40),target:"darwin-arm64",runtimeContractSha256:"c".repeat(64),
+   payloadVersion:"6.2.1",manifest:{artifactSha256:"0".repeat(64),artifactBytes:42}}),
+ }),/clean install B differs/u);
+ const root=path.join(f.homeDir,"Library","Application Support","Equinox Local","main-update");
+ const other=path.join(f.homeDir,"other");
+ await fs.rename(root,other);
+ await fs.symlink(other,root);
+ await assert.rejects(inspectSignedMainInstallerMacActivation(f.options),
+  /private canonical inactive B store/u);
+});
+
 async function signedMacInstallerCoordinatorFixture(t){
  const f=await signedMacInstallerInspectFixture(t);
  const root=path.join(f.homeDir,"Library","Application Support","Equinox Local","main-update");

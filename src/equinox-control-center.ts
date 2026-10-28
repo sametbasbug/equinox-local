@@ -979,7 +979,8 @@ function renderSidebarUpdateNotice(update: UiRemoteData, main: UiRemoteData, mai
 function renderUpdate() {
   const update = state.update || {};
   const main = update.main || {};
-  const mainChannel = ["source", "managed-source"].includes(update.installationKind) && main.checkSupported === true;
+  const signedNativeMain = update.installationKind === "managed-main" && main.mode === "signed-native";
+  const mainChannel = (["source", "managed-source"].includes(update.installationKind) || signedNativeMain) && main.checkSupported === true;
   const managedMain = update.installationKind === "managed-source";
   const checkButton = $("check-update-button");
   const installButton = $("install-update-button");
@@ -1063,9 +1064,30 @@ function renderUpdate() {
       setBadge("update-badge", "Ready", "neutral");
     }
 
+    if (signedNativeMain) {
+      // Native Main discovery is an original Ed25519 full-source-SHA check;
+      // never label the result a Git snapshot or enable unaccepted Apply.
+      setText("update-main-distance", "Native source SHA comparison");
+      const entry = document.createElement("li");
+      entry.textContent = targetSha ? "Production-signed native Main SHA " + targetSha : "";
+      summaryNode.replaceChildren(...(snapshotAvailable ? [entry] : []));
+      if (main.state === "behind") {
+        setText("update-title", "Production-signed Main " + (targetSha || "SHA") + " available");
+        setText("update-copy", "A different exact source SHA is signed for this native target. Automatic installation remains disabled until the original external installer passes real-host acceptance.");
+      } else if (main.state === "up_to_date") {
+        setText("update-title", "Signed native Main SHA is up to date");
+        setText("update-copy", "The current native source SHA exactly matches the original Ed25519-signed native selector.");
+      } else if (main.state === "unavailable") {
+        setText("update-title", "Signed native Main check unavailable");
+        setText("update-copy", "The original Ed25519-signed native selector could not be verified. This is not an up-to-date result.");
+      } else {
+        setText("update-title", "Signed native Main SHA check ready");
+        setText("update-copy", "Checking the original Ed25519-signed native selector is read-only.");
+      }
+    }
     const mainLocked = state.updateBusy || state.updateApplyBusy || Boolean(main.applying) || Boolean(main.restartScheduledFor);
     checkButton.disabled = mainLocked;
-    checkButton.textContent = localizeUiText(state.updateBusy ? "Checking…" : "Check main");
+    checkButton.textContent = localizeUiText(state.updateBusy ? "Checking…" : signedNativeMain ? "Check signed SHA" : "Check main");
     const canApplyMain = Boolean(managedMain && main.applyAvailable && !main.applyError && !main.restartScheduledFor);
     installButton.hidden = !managedMain || (!canApplyMain && !state.updateApplyBusy && !main.applying && !main.restartScheduledFor);
     installButton.disabled = mainLocked || !canApplyMain;
@@ -3345,7 +3367,9 @@ async function deleteHttpProfileFromControlCenter(profile: UiRemoteData) {
 
 
 async function checkForUpdates() {
-  const mainChannel = ["source", "managed-source"].includes(state.update?.installationKind) && state.update?.main?.checkSupported === true;
+  const mainChannel = (["source", "managed-source"].includes(state.update?.installationKind) ||
+    (state.update?.installationKind === "managed-main" && state.update?.main?.mode === "signed-native")) &&
+    state.update?.main?.checkSupported === true;
   if (state.updateBusy || (!state.update?.selfUpdateSupported && !mainChannel && !state.update?.managedInstallation)) return;
   clearError();
   state.updateBusy = true;
@@ -3356,7 +3380,9 @@ async function checkForUpdates() {
     renderUpdate();
     if (mainChannel) {
       const main = state.update?.main || {};
-      if (main.state === "behind") showToast("A verified Main snapshot update is available.");
+      if (main.state === "behind") showToast(main.mode === "signed-native"
+        ? "A different production-signed native Main SHA is available; installation remains gated."
+        : "A verified Main snapshot update is available.");
       else if (main.state === "up_to_date") showToast("Main snapshot is up to date.");
       else if (main.state === "unavailable") showToast("Main update check is unavailable; no up-to-date result was assumed.");
       else showToast("Main source identity check finished.");

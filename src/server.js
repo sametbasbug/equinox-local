@@ -56,7 +56,7 @@ import { createEquinoxLocalUpdater, } from "./equinox-local-updater.js";
 import { createEquinoxLocalUpdateCoordinator, } from "./equinox-local-update-coordinator.js";
 import { createEquinoxLocalMainUpdateDiscovery, } from "./equinox-local-main-update.js";
 import { createEquinoxLocalMainApplyController, } from "./equinox-local-main-apply-controller.js";
-import { createEquinoxLocalMainChannelNotice } from "./equinox-local-update-awareness.js";
+import { createEquinoxLocalMainChannelNotice, createEquinoxLocalSignedMainNativeNotice } from "./equinox-local-update-awareness.js";
 import { configureManagedTunnel, getManagedOnboardingStatus, recordManagedAgentCommand, } from "./equinox-local-onboarding.js";
 import { registerRestartRuntimeTool, scheduleEquinoxLocalRestart, scheduleSourceCheckoutRestart, } from "./equinox-local-restart.js";
 import { createMutationPathLockManager, resolveGitCommonDirectory, } from "./equinox-local-mutation-lock.js";
@@ -374,10 +374,18 @@ export async function createEquinoxLocalRuntime({ platform = process.platform, a
         discovery: equinoxLocalMainUpdateDiscovery,
     });
     const equinoxMainChannelNotice = createEquinoxLocalMainChannelNotice();
+    const signedNativeMainNotice = equinoxLocalInstallation.kind === "managed-main"
+        ? createEquinoxLocalSignedMainNativeNotice({
+            installedSha: equinoxLocalInstallation.mainNativeSha,
+            target: equinoxLocalInstallation.target,
+        })
+        : null;
     const checkInstalledChannelForUpdates = async ({ force = false } = {}) => {
         if (equinoxLocalInstallation.kind === "managed-main") {
-            // Direct Main only accepts full-SHA signed native installer updates.
-            // Never fall back to a manually numbered Stable release here.
+            // This is a BOUNDED read-only original production-signed Ed25519
+            // selector check. The old Git source Main/Stable updater is not a
+            // fallback for a SHA-addressed native installation.
+            await signedNativeMainNotice?.check({ force });
             return;
         }
         if (["source", "managed-source"].includes(equinoxLocalInstallation.kind)) {
@@ -396,10 +404,27 @@ export async function createEquinoxLocalRuntime({ platform = process.platform, a
     const getCombinedUpdateStatus = async () => Object.freeze({
         ...equinoxLocalUpdateCoordinator.snapshot(),
         mainNotice: equinoxMainChannelNotice.snapshot(),
-        main: Object.freeze({
-            ...equinoxLocalMainUpdateDiscovery.snapshot(),
-            ...await equinoxLocalMainApplyController.reconcile(),
-        }),
+        main: equinoxLocalInstallation.kind === "managed-main" && signedNativeMainNotice
+            ? Object.freeze((() => {
+                const signed = signedNativeMainNotice.snapshot();
+                return {
+                    mode: "signed-native", checkSupported: true, channel: "main",
+                    state: signed.status === "available" ? "behind" :
+                        signed.status === "up_to_date" ? "up_to_date" :
+                            signed.status === "unavailable" ? "unavailable" : "unknown",
+                    currentSha: signed.installedSha, targetSha: signed.targetSha,
+                    version: signed.version, checkedAt: signed.checkedAt,
+                    lastError: signed.lastError,
+                    // Until physical host acceptance and the fixed external script
+                    // handoff ship, Control Center MUST NOT show an unsafe Apply.
+                    applyAvailable: false, applying: false, applyError: null,
+                    restartScheduledFor: null, reason: signed.lastError,
+                };
+            })())
+            : Object.freeze({
+                ...equinoxLocalMainUpdateDiscovery.snapshot(),
+                ...await equinoxLocalMainApplyController.reconcile(),
+            }),
     });
     async function noteManagedAgentCommand() {
         try {

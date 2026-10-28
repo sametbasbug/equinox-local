@@ -58,6 +58,10 @@ function recoveryPath(transactionRoot, transactionId) {
     });
 }
 function validatePrevious(value) {
+    if (value !== null && typeof value === "object" && "kind" in value && value.kind === "none") {
+        exactKeys(value, ["kind"], "Main native empty first-install identity");
+        return Object.freeze({ kind: "none" });
+    }
     if (value !== null && typeof value === "object" && "kind" in value && value.kind === "main") {
         exactKeys(value, ["kind", "sourceSha", "target", "runtimeContractSha256"], "Main native previous identity");
         const parsed = value;
@@ -96,7 +100,9 @@ export function equinoxLocalMainNativeRecoveryDescriptor({ transition, previousP
         throw new Error("Main native recovery descriptor requires an artifact transition.");
     const previous = previousPointer
         ? Object.freeze({ kind: "main", sourceSha: previousPointer.sourceSha, target: previousPointer.target, runtimeContractSha256: previousPointer.runtimeContractSha256 })
-        : Object.freeze({ kind: "stable", version: parseEquinoxVersion(path.basename(installation?.releaseDir ?? "")).text });
+        : installation?.releaseDir === null && /^darwin-(arm64|x64)$/u.test(transition.target)
+            ? Object.freeze({ kind: "none" })
+            : Object.freeze({ kind: "stable", version: parseEquinoxVersion(path.basename(installation?.releaseDir ?? "")).text });
     return validateDescriptor({
         schemaVersion: 1,
         channel: "main",
@@ -439,6 +445,9 @@ export async function releaseEquinoxLocalSignedNativeMacOwner({ fsImpl = fs, ...
     }
 }
 async function previousReleaseFromDescriptor({ descriptor, transactionRoot, installation, fsImpl, inspectStoredReleaseImpl }) {
+    if (descriptor.previous.kind === "none") {
+        throw new Error("Clean Main first-install has no previous release; it cannot use existing A recovery.");
+    }
     if (descriptor.previous.kind === "main") {
         if (descriptor.previous.target !== descriptor.target)
             throw new Error("Main native previous target does not match recovery target.");
@@ -476,6 +485,9 @@ export async function recoverEquinoxLocalMainNativeLifecycle({ transition, trans
         expected: { targetSha: transition.targetSha, target: transition.target, targetRuntimeContractSha256: transition.targetRuntimeContractSha256 },
         fsImpl,
     });
+    if (descriptor.previous.kind === "none") {
+        throw new Error("Clean Main first-install lifecycle requires a verified new apphost and launchd bootstrap rollback, not existing A/B recovery.");
+    }
     const stored = await inspectStoredReleaseImpl({ transactionRoot: paths.root, sourceSha: transition.targetSha, target: transition.target, expectedRuntimeContractSha256: transition.targetRuntimeContractSha256, fsImpl });
     const previousReleaseDir = await previousReleaseFromDescriptor({ descriptor, transactionRoot: paths.root, installation, fsImpl, inspectStoredReleaseImpl });
     const pointerValue = Object.freeze({ schemaVersion: 1, channel: "main", sourceSha: transition.targetSha, target: transition.target, runtimeContractSha256: transition.targetRuntimeContractSha256 });
