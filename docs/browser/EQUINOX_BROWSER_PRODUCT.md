@@ -116,3 +116,5 @@ The toolbar action opens `popup.html`. The popup does not expose generic browser
 ## Artwork
 
 The canonical source artwork is `assets/equinox-browser.png` (512×512 PNG with alpha). Shipped icon sizes are generated from that source at 16, 32, 48 and 128 pixels.
+
+**Public ChatGPT progress, 2026-10-28:** Chrome uses `is_thinking_preamble_message: true` on user-visible `assistant/commentary` progress as well as nonpublic records. The MAIN-world SSE filter must not exclude user-visible commentary solely on that marker. Require assistant role, commentary channel, recipient `all`, textual content, next-message metadata, and no distinct privacy flags before clearing only `is_visually_hidden_from_conversation`. In a real Mac Chrome Chat streaming run, `IOTA1` through `IOTA5` all rendered and exactly two hidden public commentary events were rewritten; tool-directed and hidden reasoning records remained unchanged. Reload unpacked Factory extension manually as needed (no watcher).

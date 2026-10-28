@@ -16,9 +16,11 @@
             && message.content?.content_type === "text"
             && Array.isArray(message.content.parts)
             && metadata && typeof metadata === "object"
-            // A public commentary message can omit this optional marker. Explicit
-            // thinking preambles must never become visible.
-            && metadata.is_thinking_preamble_message !== true
+            // ChatGPT also sets is_thinking_preamble_message=true on public
+            // commentary progress. It is NOT proof of private analysis; role,
+            // commentary channel and recipient=all establish public visibility.
+            && metadata.message_type === "next"
+            && message.end_turn !== true
             && metadata.is_visually_hidden_from_conversation === true
             && metadata.is_visually_hidden !== true
             && metadata.is_hidden !== true;
