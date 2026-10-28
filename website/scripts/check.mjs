@@ -181,5 +181,18 @@ async function assertCopied(relative) {
 }
 await assertCopied('downloads');
 await assertCopied('reviewer');
+// The published Main installer, Control Center handoff and verifier MUST be
+// precisely the same tracked originals. A stale site copy would reinstall
+// Stable or yield a verifier-404 even when the canonical source is correct.
+for (const filename of ['install-equinox-local.sh','install-equinox-local.ps1','install-main-verify.mjs']) {
+  const source = await fs.readFile(path.join('..','scripts',filename));
+  const published = await fs.readFile(path.join(root,'downloads','updates',filename));
+  if (!source.equals(published)) throw new Error(`public Main installer/verifier differs from canonical scripts/${filename}`);
+}
+const verifySource = await fs.readFile(path.join(root,'downloads','updates','install-main-verify.mjs'));
+if (verifySource.length !== 9396 || crypto.createHash('sha256').update(verifySource).digest('hex') !==
+    'df0aea950440d6efad47b92398a0a8bdc4a63d4db0a26d4db05a0b137c9989c8') {
+  throw new Error('public native Main verifier no longer matches the SHA pinned in BOTH installers');
+}
 
 console.log('Site integrity checks passed.');
