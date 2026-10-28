@@ -1,3 +1,11 @@
+## [6.3.0] - 2026-10-28
+
+- Main signed four-platform native delivery and private live-checkout Factory runtime now share the canonical source while preserving their distinct installation roles.
+- The installed Control Center displays the signed Main source commit next to the running version.
+- Equinox Browser 1.2.0 adds explicit Factory installation provenance and handles ChatGPT commentary message snapshots inside the streaming `v.message` envelope; only fully identified public commentary is eligible, never analysis, tool traffic or thinking preambles.
+- Browser visibility for more than three public interim messages remains subject to real-host confirmation; do not treat unverified hidden records as public.
+- No automated tests added.
+
 # Changelog
 
 All notable public changes to Equinox Local will be documented here.
