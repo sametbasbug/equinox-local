@@ -72,22 +72,28 @@ internal static partial class Program
         finally { _ = LocalFree(pointer); }
     }
 
-    private static void InspectOwnedNativeWorkerOsArguments()
+    private static void InspectOwnedNativeWorkerOsArguments(bool signedNativeReadOnly = false)
     {
-        var worker = InspectOwnedNativeWorkerProcess();
+        var worker = InspectOwnedNativeWorkerProcess(signedNativeReadOnly);
         InspectionPhase = "native-worker-os-command-line";
         var install = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Equinox Local");
         var tx = Path.Combine(install, "state", "main-update");
         using var markerDocument = ReadOwnedTransitionRecord(Path.Combine(tx, "active.json"), 8192);
         var marker = markerDocument.RootElement;
-        if (marker.TryGetProperty("kind", out var kind))
+        if (marker.TryGetProperty("kind", out _))
         {
-            // A signed-native release has a different worker ABI from Git.
-            // Structural inspection alone does not confer Guardian authority.
+            if (!signedNativeReadOnly)
+                throw new InvalidDataException(
+                    "Signed-native Main cannot use the legacy Git Guardian authority path.");
+            // Only an explicit read-only CLI is permitted to return from
+            // this check. Existing lease/quiesce/slot mutation callers use
+            // signedNativeReadOnly=false, so they cannot inherit the audit.
             InspectSignedNativeWorkerArgvWithoutGrant(marker, worker);
-            throw new InvalidOperationException(
-                "Signed-native worker still requires independent Ed25519 and original Guardian journal admission.");
+            return;
         }
+        if (signedNativeReadOnly)
+            throw new InvalidDataException(
+                "Legacy Git Main cannot masquerade as signed-native Guardian read-only audit.");
         var currentSha = marker.GetProperty("currentSha").GetString() ?? "";
         var targetSha = marker.GetProperty("targetSha").GetString() ?? "";
         if (!SourceShaPattern.IsMatch(currentSha) || !SourceShaPattern.IsMatch(targetSha))

@@ -58,9 +58,11 @@ test("ORIGINAL Guardian reads kernel live signed-native OS worker argv with shar
   read("native/windows/EquinoxLocal.Guardian/MainNativeWorkerArguments.cs"),
   read("native/windows/EquinoxLocal.Guardian/MainNativeSignedWorkerAudit.cs"),
  ]);
- assert.match(argv,/marker\.TryGetProperty\("kind", out var kind\)/u);
+ assert.match(argv,/marker\.TryGetProperty\("kind", out _\)/u);
  assert.match(argv,/InspectSignedNativeWorkerArgvWithoutGrant\(marker, worker\)/u);
- assert.match(argv,/throw new InvalidOperationException\(\s*"Signed-native worker still requires independent Ed25519 and original Guardian journal admission/u);
+ assert.match(argv,/if \(!signedNativeReadOnly\)\s+throw new InvalidDataException\(/u);
+ assert.match(argv,/Signed-native Main cannot use the legacy Git Guardian authority path/u);
+ assert.match(argv,/Legacy Git Main cannot masquerade as signed-native Guardian read-only audit/u);
  assert.match(audit,/RequireExactKeys\(marker, \["schemaVersion", "kind", "transactionId",/u);
  assert.match(audit,/ReadOwnedTransitionRecord\(Path\.Combine\(\s*root, "receipts", worker\.TransactionId \+ "\.signed-native\.json"\)/u);
  assert.match(audit,/MainSignedNativeWorkerContract\.ForSignedNativeB/u);

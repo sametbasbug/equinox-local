@@ -505,6 +505,11 @@ try {
   # Independently inspect the exact 3-part durable Main transaction
   # ownership without activating Main, recovering a lock or changing WPF.
   Assert-True ((Invoke-GuardianCheck '--audit-native-journal') -eq 70) 'Guardian accepted a journal with no owning active receipt.'
+  # Separate signed-native audit CLI must deny an absent owner; this is
+  # never an OS Guardian admission or an alias of legacy Git transaction.
+  Assert-True ((Invoke-GuardianCheck '--audit-signed-native-journal') -eq 70) 'Guardian accepted absent signed-native owner.'
+  Assert-True ((Invoke-GuardianCheck '--audit-signed-native-worker-argv') -eq 70) 'Guardian accepted absent signed-native worker process.'
+
   $JournalId = 'main-' + ('3' * 32)
   $JournalCurrent = $FixtureSourceSha
   $JournalTarget = $(if ($JournalCurrent -ceq ('b' * 40)) { 'c' * 40 } else { 'b' * 40 })
@@ -566,6 +571,11 @@ try {
     [IO.File]::WriteAllText($JournalReceipt, ($JournalReceiptValue | ConvertTo-Json -Depth 5))
     [IO.File]::WriteAllText($JournalData, ($JournalValue | ConvertTo-Json -Depth 5))
     Assert-True ((Invoke-GuardianCheck '--audit-native-journal') -eq 0) 'Guardian refused an exact structurally owned in-progress journal.'
+    # Git-owned receipts must never be accepted as fake signed-native
+    # journal/OS worker authority, even during an accepted Git test.
+    Assert-True ((Invoke-GuardianCheck '--audit-signed-native-journal') -eq 70) 'Guardian accepted Git receipt as signed-native journal.'
+    Assert-True ((Invoke-GuardianCheck '--audit-signed-native-worker-argv') -eq 70) 'Guardian accepted Git worker as signed-native worker.'
+
     # The owning process must be a REAL product-owned Node with matching PID,
     # full UTC creation ticks and native executable. A reused PID or forged
     # executable must never authorize any resume. The disposable Node runs no

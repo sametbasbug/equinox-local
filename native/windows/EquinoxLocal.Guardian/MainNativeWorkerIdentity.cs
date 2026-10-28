@@ -63,9 +63,12 @@ internal static partial class Program
     // must never authorize a WPF shutdown or a journal replay. This remains a
     // read-only provenance test, NOT an authenticated worker command line or
     // an update/rollback authorization.
-    private static OwnedWorkerClaim InspectOwnedNativeWorkerProcess()
+    private static OwnedWorkerClaim InspectOwnedNativeWorkerProcess(bool signedNativeReadOnly = false)
     {
-        InspectOwnedNativeTransitionJournal();
+        if (signedNativeReadOnly)
+            InspectOwnedSignedNativeJournalWithoutGrant();
+        else
+            InspectOwnedNativeTransitionJournal();
         InspectionPhase = "native-worker-owned-release";
         var local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
         var install = Path.Combine(local, "Equinox Local");
@@ -81,7 +84,9 @@ internal static partial class Program
             System.Runtime.InteropServices.Architecture.Arm64 => "win32-arm64",
             _ => throw new PlatformNotSupportedException("Unsupported native worker architecture."),
         };
-        var expectedNode = ResolveOwnedMainWorkerNodePath(install, target);
+        var expectedNode = signedNativeReadOnly
+            ? ResolveSignedNativeBNodeForReadOnlyAudit(tx, id, target)
+            : ResolveOwnedMainWorkerNodePath(install, target);
 
         InspectionPhase = "native-worker-ownership-record";
         var handoff = Path.Combine(tx, "handoff");

@@ -29,7 +29,7 @@ internal static partial class Program
     {
         try
         {
-            if (args.Length > 1 || (args.Length == 1 && args[0] is not ("--inspect" or "--audit-native-identity" or "--audit-native-journal" or "--audit-native-worker" or "--audit-native-worker-ipc" or "--audit-native-worker-argv" or "--audit-native-wpf-owner" or "--hold-native-journal-lease" or "--hold-native-journal-authority" or "--hold-native-prepared-abort" or "--hold-native-stage-b" or "--hold-native-stage-b-cancel" or "--hold-native-stable-shell-quiesce" or "--reconcile-native-prepared-abort" or "--startup" or "--uninstall")))
+            if (args.Length > 1 || (args.Length == 1 && args[0] is not ("--inspect" or "--audit-native-identity" or "--audit-native-journal" or "--audit-signed-native-journal" or "--audit-signed-native-worker-argv" or "--audit-native-worker" or "--audit-native-worker-ipc" or "--audit-native-worker-argv" or "--audit-native-wpf-owner" or "--hold-native-journal-lease" or "--hold-native-journal-authority" or "--hold-native-prepared-abort" or "--hold-native-stage-b" or "--hold-native-stage-b-cancel" or "--hold-native-stable-shell-quiesce" or "--reconcile-native-prepared-abort" or "--startup" or "--uninstall")))
                 throw new InvalidOperationException("Unsupported Guardian argument.");
             if (args.Length == 1 && args[0] == "--audit-native-identity")
             {
@@ -41,6 +41,11 @@ internal static partial class Program
                 InspectOwnedNativeTransitionJournal();
                 return 0; // Receipt ownership audit ONLY; no resume or launch.
             }
+            if (args.Length == 1 && args[0] == "--audit-signed-native-journal")
+            {
+                InspectOwnedSignedNativeJournalWithoutGrant();
+                return 0; // Structural B and original A only; no signature/Guardian grants.
+            }
             if (args.Length == 1 && args[0] == "--audit-native-worker")
             {
                 InspectOwnedNativeWorkerProcess();
@@ -50,6 +55,11 @@ internal static partial class Program
             {
                 InspectOwnedNativeWorkerPipeProof();
                 return 0; // Live PID + token proof ONLY, never native update authority.
+            }
+            if (args.Length == 1 && args[0] == "--audit-signed-native-worker-argv")
+            {
+                InspectOwnedNativeWorkerOsArguments(signedNativeReadOnly: true);
+                return 0; // No original Guardian journal/HMAC/slot authority.
             }
             if (args.Length == 1 && args[0] == "--audit-native-worker-argv")
             {
@@ -97,7 +107,7 @@ internal static partial class Program
                 return 0; // Retire only a fully verified dead prepared abort lock; no launch.
             }
             var inspection = InspectBaseline();
-            if (args.Length == 1 && args[0] is "--inspect" or "--audit-native-identity" or "--audit-native-journal" or "--audit-native-worker" or "--audit-native-worker-ipc" or "--audit-native-worker-argv" or "--audit-native-wpf-owner") return 0;
+            if (args.Length == 1 && args[0] is "--inspect" or "--audit-native-identity" or "--audit-native-journal" or "--audit-signed-native-journal" or "--audit-signed-native-worker-argv" or "--audit-native-worker" or "--audit-native-worker-ipc" or "--audit-native-worker-argv" or "--audit-native-wpf-owner") return 0;
             using var process = Launch(inspection.Executable, args.Length == 0 ? null : args[0]);
             return process.Id > 0 ? 0 : 70;
         }
@@ -106,7 +116,7 @@ internal static partial class Program
             // Only the explicit inspection mode exposes bounded, static
             // validation errors to the disposable installed-host acceptance.
             // Never echo paths from OS exceptions or launch arguments.
-            if (args.Length == 1 && args[0] is "--inspect" or "--audit-native-identity" or "--audit-native-journal" or "--audit-native-worker" or "--audit-native-worker-ipc" or "--audit-native-worker-argv" or "--audit-native-wpf-owner")
+            if (args.Length == 1 && args[0] is "--inspect" or "--audit-native-identity" or "--audit-native-journal" or "--audit-signed-native-journal" or "--audit-signed-native-worker-argv" or "--audit-native-worker" or "--audit-native-worker-ipc" or "--audit-native-worker-argv" or "--audit-native-wpf-owner")
             {
                 var reason = ex is InvalidDataException or InvalidOperationException or PlatformNotSupportedException
                     ? ex.Message : ex.GetType().Name;

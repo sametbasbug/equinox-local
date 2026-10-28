@@ -598,7 +598,7 @@ test("independent Guardian worker process provenance never invokes a launcher or
   assert.match(argv, /targetSourceRoot/u);
   assert.match(argv, /"--transaction-id", worker\.TransactionId/u);
   assert.match(argv, /"--transaction-root", tx/u);
-  assert.match(argv, /InspectOwnedNativeWorkerProcess\(\)/u);
+  assert.match(argv, /InspectOwnedNativeWorkerProcess\(signedNativeReadOnly\)/u);
   assert.doesNotMatch(argv, /Process\.Start|File\.WriteAllText|File\.Delete|Registry\.SetValue/u);
   assert.match(auditor, /GetNamedPipeServerProcessId\(pipe\.SafePipeHandle/u);
   assert.match(auditor, /serverPid != owner\.Pid/u);
