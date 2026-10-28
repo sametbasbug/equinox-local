@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Globalization;
 using System.Runtime.InteropServices;
 using System.Text.Json;
+using EquinoxLocal.NativeShared;
 
 namespace EquinoxLocal.Guardian;
 
@@ -79,6 +80,14 @@ internal static partial class Program
         var tx = Path.Combine(install, "state", "main-update");
         using var markerDocument = ReadOwnedTransitionRecord(Path.Combine(tx, "active.json"), 8192);
         var marker = markerDocument.RootElement;
+        if (marker.TryGetProperty("kind", out var kind))
+        {
+            // A signed-native release has a different worker ABI from Git.
+            // Structural inspection alone does not confer Guardian authority.
+            InspectSignedNativeWorkerArgvWithoutGrant(marker, worker);
+            throw new InvalidOperationException(
+                "Signed-native worker still requires independent Ed25519 and original Guardian journal admission.");
+        }
         var currentSha = marker.GetProperty("currentSha").GetString() ?? "";
         var targetSha = marker.GetProperty("targetSha").GetString() ?? "";
         if (!SourceShaPattern.IsMatch(currentSha) || !SourceShaPattern.IsMatch(targetSha))

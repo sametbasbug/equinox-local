@@ -5,6 +5,7 @@ using System.Text;
 using System.IO;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using EquinoxLocal.NativeShared;
 
 namespace EquinoxLocal.WindowsShell;
 
@@ -22,6 +23,14 @@ internal static partial class MainUpdateHandoff
     {
         if (!TransactionPattern().IsMatch(transactionId))
             throw new InvalidDataException("Main update transaction id is invalid.");
+
+        // The original WPF/Guardian source-mode handoff has a distinct
+        // immutable receipt grammar from a Git-free signed-native B. Inspect
+        // that new ownership WITHOUT EVER spoofing install.json or
+        // sources/<SHA> into a legacy source-mode authorization. Until the
+        // original WPF/Guardian signed Ed25519 OS owner lane is implemented,
+        // successful structural inspection still explicitly DENIES launch.
+        InspectPendingSignedNativeWithoutGrant(transactionId);
 
         // The currently authenticated Main native-store owns the detached
         // worker runtime. Once B is healthy, a numbered Stable A directory
@@ -119,6 +128,55 @@ internal static partial class MainUpdateHandoff
             throw;
         }
         return process.Id;
+    }
+
+    private static void InspectPendingSignedNativeWithoutGrant(string transactionId)
+    {
+        var local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+        if (string.IsNullOrWhiteSpace(local) || !Path.IsPathFullyQualified(local))
+            throw new InvalidDataException("Original Windows user profile is unavailable.");
+        var root = Path.GetFullPath(Path.Combine(local, "Equinox Local", "state", "main-update"));
+        var activePath = Path.Combine(root, "active.json");
+        if (!File.Exists(activePath)) return;
+        var active = ReadState(activePath, "Original Main owner");
+        // A source-mode active marker has no kind; keep the unchanged
+        // original Git receipt/worker path below.
+        if (!active.TryGetProperty("kind", out var mode)) return;
+
+        RequireExactProperties(active, ["schemaVersion", "kind", "transactionId",
+            "sourceSha", "target", "runtimeContractSha256"], "Original signed-native Main owner");
+        RequireInt(active, "schemaVersion", 1);
+        RequireString(active, "kind", "signed-native");
+        RequireString(active, "transactionId", transactionId);
+        var sourceSha = RequireSha(active, "sourceSha");
+        var target = active.GetProperty("target").GetString()
+            ?? throw new InvalidDataException("Original signed-native Main target is missing.");
+        var contract = active.GetProperty("runtimeContractSha256").GetString();
+        if (contract is null || !Regex.IsMatch(contract, @"\A[a-f0-9]{64}\z", RegexOptions.CultureInvariant))
+            throw new InvalidDataException("Original signed-native Main contract is invalid.");
+        var expected = MainSignedNativeWorkerContract.ForSignedNativeB(
+            transactionId, sourceSha, target, root);
+        MainSignedNativeWorkerContract.ValidateOriginalReleaseFiles(expected);
+        var receipt = ReadState(Path.Combine(root, "receipts",
+            transactionId + ".signed-native.json"), "Original signed-native Main receipt");
+        RequireExactProperties(receipt, ["schemaVersion", "kind", "transactionId",
+            "sourceSha", "target", "runtimeContractSha256", "status"],
+            "Original signed-native Main receipt");
+        RequireInt(receipt, "schemaVersion", 1);
+        RequireString(receipt, "kind", "signed-native");
+        RequireString(receipt, "transactionId", transactionId);
+        RequireString(receipt, "sourceSha", sourceSha);
+        RequireString(receipt, "target", target);
+        RequireString(receipt, "runtimeContractSha256", contract);
+        if (receipt.GetProperty("status").GetString() is not ("admitted" or "activating"))
+            throw new InvalidDataException("Original signed-native receipt is not in an admissible worker stage.");
+        _ = RequireNormalFile(Path.Combine(Path.GetDirectoryName(expected.ReleaseDir)!,
+            "signed-selector.json"), "Original production-signed Main selector");
+        // Node/WPF structural files do not authenticate an Ed25519 signer
+        // or authorize the Guardian's kernel PID/HMAC/journal. No shell
+        // command, native pointer mutation or worker process may start here.
+        throw new InvalidOperationException(
+            "Signed-native Main WPF handoff requires independent original Ed25519 and Guardian OS session; no Git receipt fallback.");
     }
 
     private static void RemoveStaleOwnershipOrRejectActive(string ownershipPath, string transactionId)
