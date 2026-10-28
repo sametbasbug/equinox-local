@@ -1,3 +1,4 @@
+import {constants as fileFlags} from 'node:fs';
 // Exact main-push, eight immutable installer objects, production Ed25519 verification,
 // and a conditional latest/main.json move LAST. This is a keyless publisher.
 import { createHash } from 'node:crypto';
@@ -23,11 +24,10 @@ const expected=sourceSha=>TARGETS.flatMap(target=>{
 });
 
 async function hashFile(file,max=1024*1024*1024){
- const st=await fs.lstat(file);
- if(!st.isFile()||st.isSymbolicLink()||st.nlink!==1||st.size<1||st.size>max)throw Error('Immutable Main source must be a bounded normal file.');
- const handle=await fs.open(file,'r');
+ const handle=await fs.open(file,fileFlags.O_RDONLY|fileFlags.O_NOFOLLOW);
  try{
-  const a=await handle.stat();if(a.dev!==st.dev||a.ino!==st.ino||a.size!==st.size)throw Error('Immutable source identity changed.');
+  const a=await handle.stat();
+  if(!a.isFile()||a.nlink!==1||a.size<1||a.size>max)throw Error('Immutable Main source must be a bounded normal file.');
   const hash=createHash('sha256');for await(const data of handle.createReadStream({autoClose:false}))hash.update(data);
   const b=await handle.stat();if(a.dev!==b.dev||a.ino!==b.ino||a.mtimeMs!==b.mtimeMs||a.size!==b.size)throw Error('Immutable source changed.');
   return {sha256:hash.digest('hex'),bytes:a.size};

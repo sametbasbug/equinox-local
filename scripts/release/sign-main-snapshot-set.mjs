@@ -1,3 +1,4 @@
+import {constants as fileFlags} from 'node:fs';
 // One canonical public-repo production signer, called ONLY from a successful
 // main-push CI's main-only protected deployment environment. Never log a key.
 import { createHash, createPublicKey } from 'node:crypto';
@@ -28,12 +29,12 @@ export async function prepareMainNativeSigningManifests({sourceSha,directory}={}
     const archivePath=path.join(directory,archiveName);
     const manifest=validateEquinoxLocalMainNativeArtifactManifest(JSON.parse(await fs.readFile(manifestPath,'utf8')),{expectedSourceSha:sourceSha,expectedTarget:target});
     if(manifest.artifact.name!==archiveName)throw Error('Native Main artifact name differs from signed manifest.');
-    const st=await fs.lstat(archivePath);
-    if(!st.isFile()||st.isSymbolicLink()||st.nlink!==1||st.size<1||st.size>MAX_ARCHIVE||st.size!==manifest.artifact.bytes)throw Error('Native Main archive identity/size mismatch.');
-    const fd=await fs.open(archivePath,'r');
+    // Open first with NOFOLLOW; all admission checks and the stream use the
+    // same pinned descriptor, never a second pathname lookup.
+    const fd=await fs.open(archivePath,fileFlags.O_RDONLY|fileFlags.O_NOFOLLOW);
     try{
       const first=await fd.stat();
-      if(first.dev!==st.dev||first.ino!==st.ino||first.size!==st.size)throw Error('Native Main archive changed before hashing.');
+      if(!first.isFile()||first.nlink!==1||first.size<1||first.size>MAX_ARCHIVE||first.size!==manifest.artifact.bytes)throw Error('Native Main archive identity/size mismatch.');
       const hash=createHash('sha256');
       for await(const chunk of fd.createReadStream({autoClose:false}))hash.update(chunk);
       const last=await fd.stat();

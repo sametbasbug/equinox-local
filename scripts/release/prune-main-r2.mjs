@@ -129,11 +129,16 @@ function liveSignedMainSha() {
       if (/NoSuchKey|Not Found: \(404\)|\(404\)/u.test(message)) return null;
       throw new Error("Live signed Main pointer cannot be inspected; R2 pruning refused.");
     }
-    const stats = fs.lstatSync(destination);
-    if (!stats.isFile() || stats.isSymbolicLink() || stats.size < 200 || stats.size > 16 * 1024) {
-      throw new Error("Live signed Main pointer has invalid size or type.");
+    const fd = fs.openSync(destination, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+    try {
+      const stats = fs.fstatSync(fd);
+      if (!stats.isFile() || stats.nlink !== 1 || stats.size < 200 || stats.size > 16 * 1024) {
+        throw new Error("Live signed Main pointer has invalid size or type.");
+      }
+      return validateTrustedMainInstallPointer(JSON.parse(fs.readFileSync(fd, "utf8"))).sourceSha;
+    } finally {
+      fs.closeSync(fd);
     }
-    return validateTrustedMainInstallPointer(JSON.parse(fs.readFileSync(destination, "utf8"))).sourceSha;
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

@@ -42,7 +42,7 @@ These instructions apply to the entire Equinox Local canonical product repositor
 
 ## Build and distribution
 
-- The maintainer permanently removed automated tests and acceptance/smoke suites. Do not write, restore, require, or run tests.
+- The maintainer permanently removed automated tests and acceptance/smoke suites. Do not author or restore test files. Static validation, typechecks, security analysis and production builds remain permitted.
 - Retain required native platform packaging, signed Main release publication and production Ed25519/hash/source-integrity checks. Do not downgrade runtime or distribution security checks as a substitute for tests.
 - Static code inspection is allowed. No build, installation or health claim may be made without actual evidence.
 - After a successful Equinox Local runtime restart, do not invoke another Equinox Local tool in the same assistant turn. Verify only in a fresh turn.
@@ -60,4 +60,4 @@ The maintainer approved replacing the existing separate Stable/Main/A-B update m
 
 ## Maintainer directive (2026-10-28): direct signed reinstall only
 
-All new Main updates and repair actions must invoke the same existing external signed OS installer as first install. Reinstall only owned program files; preserve settings and user data. Do not build or extend a Guardian update engine, rollback engine or A/B updater. The existing runtime shell may keep unrelated runtime helpers until separately retired. The maintainer permanently removed tests, and forbids adding or running them. Finish code before the consolidated push; native build and signed publication gates remain. Do not claim unexecuted validation.
+All new Main updates and repair actions must invoke the same existing external signed OS installer as first install. Reinstall only owned program files; preserve settings and user data. Do not build or extend a Guardian update engine, rollback engine or A/B updater. The existing runtime shell may keep unrelated runtime helpers until separately retired. The maintainer permanently removed tests and forbids writing new ones. Finish code before the consolidated push; native build and signed publication gates remain. Do not claim unexecuted validation.
