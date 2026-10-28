@@ -103,7 +103,8 @@ export async function preserveOriginalSignedWindowsArchive({ transactionRoot, tr
             throw new Error("Original Windows staged archive ACL is not private.");
         }
         await assertExactArchive(temporary, artifactBytes, artifactSha256, fsImpl);
-        const handle = await fsImpl.open(temporary, "r");
+        // Windows FlushFileBuffers requires a writable handle; r would cause EPERM.
+        const handle = await fsImpl.open(temporary, "r+");
         try {
             await handle.sync();
         }
