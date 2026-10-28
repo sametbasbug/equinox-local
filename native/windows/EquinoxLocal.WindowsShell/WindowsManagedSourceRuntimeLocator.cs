@@ -39,6 +39,25 @@ internal static partial class WindowsManagedSourceRuntimeLocator
         var installStampPath = Path.Combine(transactionRoot, "install.json");
         if (!File.Exists(installStampPath))
         {
+            // A committed Git-free signed Main native SHA is NOT a Stable
+            // install, even if an old numbered Stable directory survives.
+            // Native WPF must NOT boot from that stale A as though B were
+            // installed or execute the B Node without independent original
+            // production-root signature and Guardian acceptance. Until the
+            // original signed-native WPF handoff is implemented, fail closed.
+            var nativePointerPath = Path.Combine(transactionRoot, "current-native.json");
+            // File.Exists is FALSE for a dangling symlink/reparse point.
+            // An attacker must not be able to turn an invalid Main pointer
+            // into permission to launch an unrelated stale Stable A.
+            var nativePointerPresent = Directory.Exists(transactionRoot) &&
+                Directory.EnumerateFileSystemEntries(transactionRoot, "current-native.json",
+                    SearchOption.TopDirectoryOnly).Any();
+            if (nativePointerPresent)
+            {
+                _ = ResolveNativeRelease(transactionRoot, nativePointerPath);
+                throw new InvalidDataException(
+                    "Git-free signed Main WPF launch requires original production Ed25519 and independent Guardian admission; Stable fallback is forbidden.");
+            }
             // Stable is a separate first-install bootstrap, not a permanent
             // dependency of a successfully committed Main native runtime.
             var stable = WindowsManagedReleaseLocator.ResolveCurrentRelease();
