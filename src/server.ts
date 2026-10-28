@@ -2101,6 +2101,7 @@ equinoxAgentBrowser = createEquinoxAgentBrowser({
 async function resolveTurnBudgetIdentity() {
   const snapshot = equinoxBrowserBridge.snapshot();
   const candidates = [];
+  const explicitPins: Array<{ browserContext: string; resolved: RuntimeBoundary }> = [];
   const idleContexts = [];
   for (const browserContext of ["agent", "user"]) {
     if (!snapshot?.contexts?.[browserContext]?.ready) continue;
@@ -2109,6 +2110,10 @@ async function resolveTurnBudgetIdentity() {
         context: browserContext,
         timeoutMs: 1_500,
       });
+      if (resolved?.mode === "pinned") {
+        explicitPins.push({ browserContext, resolved });
+        continue;
+      }
       const target = resolved?.target;
       if (resolved?.status === "ready" && target?.generationActive && (target.userEpoch || target.assistantTurnKey)) {
         candidates.push({ browserContext, target });
@@ -2118,6 +2123,28 @@ async function resolveTurnBudgetIdentity() {
     } catch {
       // Turn Budget keeps its last safe state when Browser probing is temporarily unavailable.
     }
+  }
+  // An explicit popup pin on either browser takes precedence over automatic
+  // discovery in both profiles. A pinned idle tab must never fall back to an
+  // unrelated generating test conversation in the other browser context.
+  if (explicitPins.length > 0) {
+    if (explicitPins.length !== 1) return { status: "idle", pinned: true, idleContexts: ["agent", "user"] }; // competing pins: fail closed
+    const { browserContext, resolved } = explicitPins[0]!;
+    const target = resolved?.target;
+    if (resolved?.status === "ready" && target?.generationActive
+      && (target.userEpoch || target.assistantTurnKey)) {
+      return {
+        browserContext,
+        conversationId: target.conversationId ?? null,
+        userEpoch: target.userEpoch ?? null,
+        assistantTurnKey: target.assistantTurnKey,
+        generationStartedAtMs: target.generationStartedAtMs ?? null,
+        title: target.title ?? "ChatGPT",
+      };
+    }
+    // Even a draft on the pinned tab must not keep the previous active
+    // conversation's timer or fall back to another browser profile.
+    return { status: "idle", pinned: true, idleContexts: ["agent", "user"] };
   }
   const selected = candidates.length === 1 ? candidates[0] : null;
   if (!selected) {

@@ -140,7 +140,7 @@ export function createTurnBudgetController({ settingsPath = defaultTurnBudgetSet
                 const idleContexts = Array.isArray(result.idleContexts)
                     ? result.idleContexts.filter((value) => value === "agent" || value === "user")
                     : [];
-                return Object.freeze({ status: "idle", idleContexts: Object.freeze([...new Set(idleContexts)]) });
+                return Object.freeze({ status: "idle", idleContexts: Object.freeze([...new Set(idleContexts)]), pinned: result.pinned === true });
             }
             const userEpoch = typeof result.userEpoch === "string" && result.userEpoch ? result.userEpoch : null;
             const assistantTurnKey = typeof result.assistantTurnKey === "string" && result.assistantTurnKey ? result.assistantTurnKey : null;
@@ -179,6 +179,17 @@ export function createTurnBudgetController({ settingsPath = defaultTurnBudgetSet
         }
         expireStaleFallback(timestamp);
         const probe = await resolveIdentitySafe();
+        // A newly pinned idle conversation must revoke the stale browser timer
+        // immediately, including on tool invocations between background polls.
+        if (probe.status === "idle" && probe.pinned) {
+            active = null;
+            // A pinned-but-idle conversation is not an agent turn. In particular,
+            // do not create a fallback budget just because a Local tool was called.
+            return Object.freeze({ input, firstNotice: false, waitClamped: false });
+        }
+        if (active?.source === "browser" && probe.status === "idle"
+            && probe.idleContexts.includes(active.browserContext))
+            active = null;
         const identity = probe.status === "active" ? probe.identity : null;
         if (identity) {
             if (!active || active.key !== identity.key)
@@ -232,6 +243,10 @@ export function createTurnBudgetController({ settingsPath = defaultTurnBudgetSet
         const timestamp = now();
         expireStaleFallback(timestamp);
         const probe = await resolveIdentitySafe();
+        if (probe.status === "idle" && probe.pinned) {
+            active = null;
+            return snapshot();
+        }
         if (probe.status === "active") {
             const identity = probe.identity;
             // Browser mode starts with an observed ChatGPT generation, independently
