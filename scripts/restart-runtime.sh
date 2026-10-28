@@ -331,7 +331,12 @@ DOMAIN="gui/$CURRENT_UID"
   # state. A helper launched from the previous SHA must not assume its own
   # checkout ROOT is the source the LaunchAgent is about to start.
   RESTART_STAGE="resolve-target"
-  TARGET_SOURCE_ROOT="$("$DEV_NODE" "$ROOT/scripts/release/resolve-source-restart-target.mjs" "$ROOT")" || fail "could not validate expected source restart target"
+  if [ -n "$PRIVATE_COMPOSITION_MODULE" ] && [ "$SOURCE_LAUNCHER" = "$ROOT/scripts/release/start-main-source-runtime.sh" ]; then
+    # Factory runs exactly the checkout being edited, including pre-merge work.
+    TARGET_SOURCE_ROOT="$ROOT"
+  else
+    TARGET_SOURCE_ROOT="$("$DEV_NODE" "$ROOT/scripts/release/resolve-source-restart-target.mjs" "$ROOT")" || fail "could not validate expected source restart target"
+  fi
   [ -n "$TARGET_SOURCE_ROOT" ] || fail "expected source restart target is empty"
 
   # The restart helper may originate in the PREVIOUS source checkout. Use
@@ -470,7 +475,11 @@ DOMAIN="gui/$CURRENT_UID"
 
   # Verify the admitted source did not change underneath this restart. A
   # surprising pointer change must not silently authenticate another process.
-  CONFIRMED_SOURCE_ROOT="$("$DEV_NODE" "$ROOT/scripts/release/resolve-source-restart-target.mjs" "$ROOT")" || fail "source restart target changed or failed validation"
+  if [ -n "$PRIVATE_COMPOSITION_MODULE" ] && [ "$SOURCE_LAUNCHER" = "$ROOT/scripts/release/start-main-source-runtime.sh" ]; then
+    CONFIRMED_SOURCE_ROOT="$ROOT"
+  else
+    CONFIRMED_SOURCE_ROOT="$("$DEV_NODE" "$ROOT/scripts/release/resolve-source-restart-target.mjs" "$ROOT")" || fail "source restart target changed or failed validation"
+  fi
   [ "$CONFIRMED_SOURCE_ROOT" = "$TARGET_SOURCE_ROOT" ] || fail "source restart target changed during relaunch"
   NEW_PID="$(/usr/bin/pgrep -f "node $TARGET_SOURCE_ROOT/src/server.js" | /usr/bin/head -n 1 || true)"
   [ -n "$NEW_PID" ] || fail "source runtime did not start a new Equinox Local server process"
