@@ -168,9 +168,9 @@ internal static partial class Program
     // Read-only interactive proof: the Windows kernel attests the server PID
     // for THIS pipe handle; the live Node worker must additionally possess
     // its launch-time token to MAC a fresh nonce. Never mutate journal/WPF here.
-    private static void InspectOwnedNativeWorkerPipeProof()
+    private static void InspectOwnedNativeWorkerPipeProof(bool signedNativeReadOnly = false)
     {
-        var owner = InspectOwnedNativeWorkerProcess();
+        var owner = InspectOwnedNativeWorkerProcess(signedNativeReadOnly);
         InspectionPhase = "native-worker-os-pipe-peer";
         using var pipe = new NamedPipeClientStream(".", "EquinoxLocalMainOwner-" + owner.TransactionId,
             PipeDirection.InOut, PipeOptions.Asynchronous);

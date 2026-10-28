@@ -105,3 +105,19 @@ test("existing original Windows hosted smoke exercises BOTH signed-native audit 
  // activation, original Ed25519 verification or A/B rollout works.
  assert.doesNotMatch(source,/Invoke-GuardianActivateSignedNative/u);
 });
+
+
+test("read-only native Guardian HMAC reuses original PID/launch-token OS pipe challenge, never original mutation lease",async()=>{
+ const [identity,program,lease]=await Promise.all([
+  read("MainNativeWorkerIdentity.cs"),read("Program.cs"),
+  read("MainNativeJournalLease.cs"),
+ ]);
+ assert.match(identity,/InspectOwnedNativeWorkerPipeProof\(bool signedNativeReadOnly = false\)/u);
+ assert.match(identity,/InspectOwnedNativeWorkerProcess\(signedNativeReadOnly\)/u);
+ assert.match(identity,/GetNamedPipeServerProcessId\(pipe\.SafePipeHandle, out var serverPid\)/u);
+ assert.match(identity,/HMACSHA256\.HashData\(key\.AsSpan\(\), message\.AsSpan\(\)\)/u);
+ assert.match(identity,/CryptographicOperations\.FixedTimeEquals\(actual, expected\)/u);
+ assert.match(program,/args\[0\] == "--audit-signed-native-worker-pipe"/u);
+ assert.match(program,/InspectOwnedNativeWorkerOsArguments\(signedNativeReadOnly: true\);\s+InspectOwnedNativeWorkerPipeProof\(signedNativeReadOnly: true\)/u);
+ assert.doesNotMatch(lease,/signedNativeReadOnly: true/u);
+});

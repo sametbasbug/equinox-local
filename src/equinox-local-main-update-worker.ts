@@ -942,7 +942,10 @@ export async function runEquinoxLocalMainUpdateWorker({
 const invoked = process.argv[1] ? pathToFileURL(process.argv[1]).href : null;
 if (invoked && import.meta.url === invoked) {
   (process.argv[2] === "--signed-native"
-    ? runEquinoxLocalSignedMacNativeWorker()
+    ? process.platform==="win32"
+      ? import("./equinox-local-signed-main-windows-worker.js").then(
+          ({runEquinoxLocalSignedWindowsNativeWorker})=>runEquinoxLocalSignedWindowsNativeWorker())
+      : runEquinoxLocalSignedMacNativeWorker()
     : runEquinoxLocalMainUpdateWorker()).catch((error) => {
     console.error(error instanceof Error ? error.message : String(error));
     process.exitCode = 1;

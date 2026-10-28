@@ -509,6 +509,8 @@ try {
   # never an OS Guardian admission or an alias of legacy Git transaction.
   Assert-True ((Invoke-GuardianCheck '--audit-signed-native-journal') -eq 70) 'Guardian accepted absent signed-native owner.'
   Assert-True ((Invoke-GuardianCheck '--audit-signed-native-worker-argv') -eq 70) 'Guardian accepted absent signed-native worker process.'
+  Assert-True ((Invoke-GuardianCheck '--audit-signed-native-worker-pipe') -eq 70) 'Guardian accepted absent signed-native kernel HMAC owner.'
+
 
   $JournalId = 'main-' + ('3' * 32)
   $JournalCurrent = $FixtureSourceSha
@@ -575,6 +577,8 @@ try {
     # journal/OS worker authority, even during an accepted Git test.
     Assert-True ((Invoke-GuardianCheck '--audit-signed-native-journal') -eq 70) 'Guardian accepted Git receipt as signed-native journal.'
     Assert-True ((Invoke-GuardianCheck '--audit-signed-native-worker-argv') -eq 70) 'Guardian accepted Git worker as signed-native worker.'
+    Assert-True ((Invoke-GuardianCheck '--audit-signed-native-worker-pipe') -eq 70) 'Guardian accepted Git worker HMAC as signed-native OS authority.'
+
 
     # The owning process must be a REAL product-owned Node with matching PID,
     # full UTC creation ticks and native executable. A reused PID or forged
