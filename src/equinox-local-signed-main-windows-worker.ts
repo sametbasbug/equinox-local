@@ -41,7 +41,7 @@ async function auditOriginalInstalledGuardian({guardianPath,env=process.env}:{
  // production-signed journal and B release fingerprint. Do not rescan B
  // with a redundant separate journal command; no OS mutation authority.
  await execFile(guardianPath,["--audit-signed-native-worker-argv"],{
-  timeout:15_000,windowsHide:true,maxBuffer:4096,
+  timeout:120_000,windowsHide:true,maxBuffer:4096,
   env:{
    ...(env.SystemRoot?{SystemRoot:env.SystemRoot}:{}),
    ...(env.WINDIR?{WINDIR:env.WINDIR}:{}),
@@ -55,7 +55,7 @@ async function auditOriginalInstalledGuardianPipe({
  guardianPath,env=process.env,
 }:{guardianPath:string;env?:NodeJS.ProcessEnv}){
  await execFile(guardianPath,["--audit-signed-native-worker-pipe"],{
-  timeout:15_000,windowsHide:true,maxBuffer:4096,
+  timeout:120_000,windowsHide:true,maxBuffer:4096,
   env:{
    ...(env.SystemRoot?{SystemRoot:env.SystemRoot}:{}),
    ...(env.WINDIR?{WINDIR:env.WINDIR}:{}),

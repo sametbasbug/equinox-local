@@ -118,6 +118,6 @@ test("read-only native Guardian HMAC reuses original PID/launch-token OS pipe ch
  assert.match(identity,/HMACSHA256\.HashData\(key\.AsSpan\(\), message\.AsSpan\(\)\)/u);
  assert.match(identity,/CryptographicOperations\.FixedTimeEquals\(actual, expected\)/u);
  assert.match(program,/args\[0\] == "--audit-signed-native-worker-pipe"/u);
- assert.match(program,/var audited = InspectOwnedNativeWorkerOsArguments\(signedNativeReadOnly: true\);\s+InspectOwnedNativeWorkerPipeProof\(signedNativeReadOnly: true, previouslyAudited: audited\)/u);
+ assert.match(program,/var audited = InspectOwnedNativeWorkerOsArguments\(signedNativeReadOnly: true\);\s+InspectSignedNativeWorkerWpfParentWithoutGrant\(audited\);\s+InspectOwnedNativeWorkerPipeProof\(signedNativeReadOnly: true, previouslyAudited: audited\)/u);
  assert.doesNotMatch(lease,/signedNativeReadOnly: true/u);
 });

@@ -142,7 +142,7 @@ test("ORIGINAL Windows WPF exposes ONLY a read-only Main signature/archive prove
  assert.match(wpf,/startInfo\.ArgumentList\.Add\("--audit-signed-native-journal"\)/u);
  assert.match(wpf,/guardian\.WaitForExit\(120_000\)/u);
  assert.match(wpf,/guardian\.ExitCode != 0/u);
- assert.match(wpf,/return; \/\/ AUDIT ONLY: no OS worker launch or WPF mutation/u);
+ assert.match(wpf,/return expected; \/\/ Only the explicit PROOF launcher can start B, never switch A\/B/u);
  assert.match(wpf,/InspectPendingSignedNativeWithoutGrant\(transactionId\);/u);
  assert.match(wpf,/throw new InvalidOperationException\(\s*"Signed-native Main WPF handoff requires independent original Ed25519 and Guardian OS session/u);
  assert.match(guardian,/InspectOriginalSignedWindowsArchive\(/u);
@@ -156,6 +156,7 @@ test("same original Guardian live signed-native OS HMAC challenge reuses the ver
  ]);
  assert.match(program,/var audited = InspectOwnedNativeWorkerOsArguments\(signedNativeReadOnly: true\);/u);
  assert.match(program,/InspectOwnedNativeWorkerPipeProof\(signedNativeReadOnly: true, previouslyAudited: audited\);/u);
+ assert.match(program,/InspectSignedNativeWorkerWpfParentWithoutGrant\(audited\)/u);
  assert.match(argv,/private static OwnedWorkerClaim InspectOwnedNativeWorkerOsArguments\(bool signedNativeReadOnly = false\)/u);
  assert.match(argv,/return worker;/u);
  assert.match(identity,/previouslyAudited \?\? InspectOwnedNativeWorkerProcess\(signedNativeReadOnly\)/u);

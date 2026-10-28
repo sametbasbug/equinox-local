@@ -212,7 +212,7 @@ test("original packaged native Main worker reuses original Guardian OS argv audi
  const code=await fs.readFile(new URL("../../src/equinox-local-signed-main-windows-worker.ts",import.meta.url),"utf8");
  assert.match(code,/execFile\(guardianPath,\["--audit-signed-native-worker-argv"\]/u);
  assert.doesNotMatch(code,/execFile\(guardianPath,\["--audit-signed-native-journal"\]/u);
- assert.match(code,/timeout:15_000,windowsHide:true,maxBuffer:4096/u);
+ assert.match(code,/timeout:120_000,windowsHide:true,maxBuffer:4096/u);
  assert.doesNotMatch(code,/--hold-native|--stop-wpf|--activate-signed-native/u);
 });
 
