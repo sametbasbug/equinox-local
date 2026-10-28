@@ -17,7 +17,15 @@ KEY_FILE="$HOME_DIR/.config/tunnel-client/secrets/equinox-local-runtime-key"
 export EQUINOX_LOCAL_DEV_RUNTIME_CONFIG="$DEV_CONFIG"
 
 [[ -f "$NODE_BIN" && -x "$NODE_BIN" ]] || { print -u2 -- "Developer Node runtime is unavailable."; exit 1; }
-SOURCE_ROOT="$("$NODE_BIN" "$SCRIPT_DIR/resolve-main-source-runtime.mjs" "$POINTER" "$DEV_CONFIG")"
+# Factory is a live development checkout: never pin it to a past published SHA.
+# Public managed-source installations still use the authenticated SHA pointer.
+FACTORY_COMPOSITION="$(/usr/bin/awk -F= '$1 == "privateCompositionModule" { print substr($0, index($0, "=") + 1); exit }' "$DEV_CONFIG")"
+CONFIGURED_LAUNCHER="$(/usr/bin/awk -F= '$1 == "sourceLauncher" { print substr($0, index($0, "=") + 1); exit }' "$DEV_CONFIG")"
+if [[ -n "$FACTORY_COMPOSITION" && "$CONFIGURED_LAUNCHER" == "$SCRIPT_DIR/start-main-source-runtime.sh" ]]; then
+  SOURCE_ROOT="$ROOT"
+else
+  SOURCE_ROOT="$("$NODE_BIN" "$SCRIPT_DIR/resolve-main-source-runtime.mjs" "$POINTER" "$DEV_CONFIG")"
+fi
 MCP_SERVER="$SOURCE_ROOT/src/server.js"
 WATCHDOG="$SOURCE_ROOT/scripts/release/watch-source-runtime.mjs"
 TUNNEL_CLIENT="$(/usr/bin/awk -F= '$1 == "tunnelClient" { print substr($0, index($0, "=") + 1); exit }' "$DEV_CONFIG")"

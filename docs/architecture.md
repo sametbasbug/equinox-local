@@ -152,3 +152,7 @@ These are internal boundaries, not new MCP operations, configuration keys or man
 ## Approved distribution consolidation (transition, 2026-10-27)
 
 The maintainer has approved one canonical public repository, signed Main-SHA packages independent of manually numbered Releases, and one external installer invoked identically by Control Center and terminal. The Astro website source and Cloudflare production Builds now run from this public repo’s `website/` (same existing Worker, unchanged custom domain, live route and signed-manifest parity verified on 2026-10-27). No change to current updater authority or private Factory composition is implied until the staged acceptance gates in [`plans/one-main-one-installer-one-repo.md`](plans/one-main-one-installer-one-repo.md) succeed.
+
+### Private Factory developer runtime
+
+The Mac mini Factory installation is a **live source development role**, not an immutable/public Main installation. When the private developer configuration has both `privateCompositionModule` and a `sourceLauncher` referencing the active checkout’s `scripts/release/start-main-source-runtime.sh`, the launcher runs `src/server.js` and supporting scripts directly from that checkout, including locally edited code before a commit/PR/CI/release. The existing `restart_runtime` operation reloads that same checkout. The private composition, tunnel, credentials and workspace remain outside the public Git tree. For consumers without this private configuration, the authenticated SHA source pointer remains unchanged. No test files are authored.
