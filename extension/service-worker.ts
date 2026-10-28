@@ -1403,6 +1403,32 @@ async function resolveAutoContinueTarget() {
 }
 
 async function resolveTurnBudgetTarget() {
+  // Auto Continue's explicit pin is also the Turn Budget scope. Never fall
+  // through to a different generating tab when the pinned one is idle/closed.
+  await ensureAutoContinueTargetLoaded();
+  if (autoContinueTarget.mode === "pinned") {
+    const pinned = autoContinueTarget;
+    let tab: WorkerTab;
+    try { tab = await workerTabs().get(pinned.tabId); }
+    catch { return { mode: "pinned", status: "idle", reason: "pinned_tab_closed" }; }
+    const identity = typeof tab.pendingUrl === "string" && tab.pendingUrl.length > 0
+      ? null : chatGptConversationIdentity(tab);
+    if (!identity || identity.conversationId !== pinned.conversationId
+      || identity.canonicalUrl !== pinned.canonicalUrl) {
+      return { mode: "pinned", status: "idle", reason: "pinned_conversation_changed" };
+    }
+    let state: Awaited<ReturnType<typeof chatGptContinuationState>>;
+    try { state = await chatGptContinuationState(pinned.tabId); }
+    catch { return { mode: "pinned", status: "idle", reason: "pinned_observer_unavailable" }; }
+    if (state.generationActive && (state.userEpoch || state.assistantTurnKey)) {
+      return { mode: "pinned", status: "ready", target: state };
+    }
+    if (state.composerReady && !state.composerEmpty) {
+      return { mode: "pinned", status: "composing", reason: "draft_not_turn_completion" };
+    }
+    return { mode: "pinned", status: "idle", reason: "pinned_tab_not_generating" };
+  }
+
   const tabs = await listChatGptConversationTabs();
   const generating = [];
   let composing = false;
@@ -8492,9 +8518,17 @@ async function browserStatus() {
   const consentAccepted = hasCurrentBrowserControlConsent();
   const mayInspectBrowser = browserEnabled && consentAccepted;
   const tabs = mayInspectBrowser ? await browserTabsList() : [];
+  // Chrome exposes the installed extension's own provenance without a new
+  // management permission. `development` means loaded unpacked, not Web Store.
+  const management = (globalThis as typeof globalThis & {
+    chrome?: { management?: { getSelf?: () => Promise<{ installType?: string }> } };
+  }).chrome?.management;
+  const extensionInstallType = await management?.getSelf?.()
+    .then((self) => self.installType ?? null).catch(() => null) ?? null;
   return {
     extensionId: workerRuntime().id,
     extensionVersion: workerRuntime().getManifest().version,
+    extensionInstallType,
     protocolVersion: BRIDGE_PROTOCOL_VERSION,
     controlEnabled: mayInspectBrowser,
     consentAccepted,

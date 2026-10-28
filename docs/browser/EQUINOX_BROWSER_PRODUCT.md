@@ -24,6 +24,8 @@ The development Chrome profile now loads the keyed unpacked extension directly f
 
 The physical migration was live-proven without changing the permanent production identity: the old mirror and product directory were byte-identical, the old path was temporarily replaced with a symlink to the product directory, `equinox_browser_reload_extension` succeeded, and Chrome canonicalized its stored unpacked path to `extension/`. The temporary symlink and mirror were then removed. Development self-reload now reads product files directly; no copy/sync helper is required.
 
+On the private Mac mini Factory, both **User Browser** and **Agent Browser** load this same unpacked `extension/` checkout. Verified by changing the local MV3 worker status payload and manually invoking the existing `reload_extension` operation for each context: both reported the new `extensionInstallType: "development"` field. **No automatic reload/watchers**: reload either or both contexts manually only when needed, preserving Turn Budget and active tasks. The Windows Chrome extension remains independently distributed through Chrome Web Store. No test files are added.
+
 ## Versioning
 
 - Extension product version: Chrome manifest semantic-style `major.minor.patch`. Productization starts at `0.2.0`; the first generic Chrome Web Store release is `0.3.0`; first-class isolated Agent Browser/Your Browser contexts ship in `0.4.0`; the finalized high-efficiency browser surface, Observation v2, device/touch support and Agent Browser bookmark workspace are the `0.5.x` product line; browser-side task continuity begins with `0.6.0`; the `0.7.0` line adds low-overhead ChatGPT turn observation and the browser delivery primitives used by direct Telegram Task chats. The current Chrome Web Store production package is `1.0.0`; the earlier `0.7.x` releases are historical continuity baselines.
@@ -114,3 +116,5 @@ The toolbar action opens `popup.html`. The popup does not expose generic browser
 ## Artwork
 
 The canonical source artwork is `assets/equinox-browser.png` (512×512 PNG with alpha). Shipped icon sizes are generated from that source at 16, 32, 48 and 128 pixels.
+
+**Public ChatGPT progress, 2026-10-28:** Chrome uses `is_thinking_preamble_message: true` on user-visible `assistant/commentary` progress as well as nonpublic records. The MAIN-world SSE filter must not exclude user-visible commentary solely on that marker. Require assistant role, commentary channel, recipient `all`, textual content, next-message metadata, and no distinct privacy flags before clearing only `is_visually_hidden_from_conversation`. In a real Mac Chrome Chat streaming run, `IOTA1` through `IOTA5` all rendered and exactly two hidden public commentary events were rewritten; tool-directed and hidden reasoning records remained unchanged. Reload unpacked Factory extension manually as needed (no watcher).

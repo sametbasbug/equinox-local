@@ -15,7 +15,11 @@
       && message.content?.content_type === "text"
       && Array.isArray(message.content.parts)
       && metadata && typeof metadata === "object"
-      && metadata.is_thinking_preamble_message === false
+      // ChatGPT also sets is_thinking_preamble_message=true on public
+      // commentary progress. It is NOT proof of private analysis; role,
+      // commentary channel and recipient=all establish public visibility.
+      && metadata.message_type === "next"
+      && message.end_turn !== true
       && metadata.is_visually_hidden_from_conversation === true
       && metadata.is_visually_hidden !== true
       && metadata.is_hidden !== true;
@@ -32,12 +36,27 @@
     let payload: any;
     try { payload = JSON.parse(raw); } catch { return frame; }
     if (!payload || typeof payload !== "object" || Array.isArray(payload)) return frame;
-    // Only an explicit, fully described message is eligible. Partial delta
-    // events may carry a hidden flag but lack author/channel identity.
-    const message = payload.message;
-    if (!eligible(message)) return frame;
-    message.metadata.is_visually_hidden_from_conversation = false;
-    return frame.replace(data[0]!, "data: " + JSON.stringify(payload));
+    // ChatGPT's conversation SSE wraps full message snapshots under v.message.
+    // Direct message snapshots and full-message patch operations also occur.
+    // Do not modify metadata-only deltas: they do not establish whether the
+    // target is a user-facing commentary message or private analysis/tool work.
+    let changed = false;
+    const reveal = (message: any): void => {
+      if (!eligible(message)) return;
+      message.metadata.is_visually_hidden_from_conversation = false;
+      changed = true;
+    };
+    reveal(payload.message);
+    if (payload.v && typeof payload.v === "object" && !Array.isArray(payload.v)) {
+      reveal(payload.v.message);
+    }
+    if (Array.isArray(payload.v)) {
+      for (const op of payload.v) {
+        if (op && typeof op === "object" && (op.o === "add" || op.o === "replace")
+            && (op.p === "/message" || op.p === "")) reveal(op.v);
+      }
+    }
+    return changed ? frame.replace(data[0]!, "data: " + JSON.stringify(payload)) : frame;
   }
 
   function rewrite(response: Response): Response {

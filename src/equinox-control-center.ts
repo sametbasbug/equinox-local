@@ -585,7 +585,7 @@ function renderDashboard() {
   setBadge("health-summary-badge", runtimeHealth === "UNKNOWN" ? "Unknown" : runtimeHealth, runtimeTone);
   setText("runtime-uptime", formatUptime(status.server?.uptimeSeconds));
   const channel = state.update || {};
-  const onMain = ["source", "managed-source"].includes(channel.installationKind) && channel.main?.checkSupported === true;
+  const onMain = (["source", "managed-source"].includes(channel.installationKind) || (channel.installationKind === "managed-main" && channel.main?.mode === "signed-native")) && channel.main?.checkSupported === true;
   const currentSha = shortUpdateSha(channel.main?.currentSha || status.installation?.sourceSha);
   setText("runtime-version", status.server?.version ? `v${status.server.version}${onMain && currentSha ? ` - ${currentSha}` : ""}` : "—");
   setText("sidebar-version", status.server?.version
@@ -996,9 +996,9 @@ function renderUpdate() {
     const pending = Boolean(main.restartScheduledFor);
     const busy = state.updateBusy || state.updateApplyBusy || Boolean(main.applying);
     const updateAvailable = main.state === "behind" && main.applyAvailable === true && !main.applyError;
-    if (runningVersion) setText("sidebar-version", runningVersion);
+    if (runningVersion) setText("sidebar-version", `${runningVersion}${runningSha ? ` - ${runningSha}` : ""}`);
     mainMeta.hidden = true;
-    setText("update-version", current ? `Equinox Local ${current}` : "Version unavailable");
+    setText("update-version", current ? `Equinox Local ${current}${runningSha ? ` - ${runningSha}` : ""}` : "Version unavailable");
     setText("update-checked-at", main.checkedAt ? `Checked ${formatDate(main.checkedAt)}` : "Not checked yet");
     if (pending) {
       setText("update-title", "Updating Equinox Local");
