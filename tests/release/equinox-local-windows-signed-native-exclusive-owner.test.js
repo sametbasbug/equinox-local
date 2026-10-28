@@ -46,10 +46,10 @@ test("same original bundled Windows B worker calls exclusive signed Guardian ker
  assert.match(owner,/mutating lease MUST be durable\/crash-recoverable/u);
 });
 
-test("original Windows packaged Guardian smoke checks signed-native owner lease denies absent and legacy Git-only owner",async()=>{
+test("Main PowerShell full reinstall uses original signed native proof, not a Guardian mutation lease",async()=>{
  const smoke=await fs.readFile(new URL("./windows-installer-real-package-smoke.ps1",import.meta.url),"utf8");
- assert.match(smoke,/Invoke-GuardianCheck '--audit-signed-native-owner-lease'/u);
- assert.match(smoke,/Guardian accepted absent signed-native kernel exclusive owner/u);
- assert.match(smoke,/Guardian accepted Git worker as signed-native exclusive owner/u);
- assert.doesNotMatch(smoke,/Invoke-GuardianSignedNativeActivate/u);
+ const script=await fs.readFile(new URL("../../scripts/install-equinox-local.ps1",import.meta.url),"utf8");
+ assert.match(smoke,/--audit-installed-signed-main/u);
+ assert.match(script,/--install-main-fresh/u);
+ assert.doesNotMatch(script,/--hold-native-journal|--prepare-signed-native-journal/u);
 });

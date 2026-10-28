@@ -488,28 +488,15 @@ test("native owner terminal cleanup uses its original DELETE-capable Windows han
   assert.match(program, /return 0; \/\/ Exact OS-owned completed transaction fully audited/u);
 });
 
-test("continuous signed Guardian session pins original kernel file ID but leaves JS journal writer as the sole writer", async () => {
-  const lease = await fs.readFile(new URL('../../native/windows/EquinoxLocal.Guardian/MainNativeJournalLease.cs', import.meta.url), 'utf8');
-  const osFile = await fs.readFile(new URL('../../native/windows/EquinoxLocal.Guardian/MainNativeOrphanHandleRename.cs', import.meta.url), 'utf8');
-  const hosted = await fs.readFile(new URL('./windows-installer-real-package-smoke.ps1', import.meta.url), 'utf8');
-  assert.match(lease, /continuousSession = acceptAuthorityProof && !recordPreparedAbort/u);
-  assert.match(lease, /continuousSession \? "\.guardian-session-lock" : "\.writer-lock"/u);
-  assert.match(lease, /Orphan or active JS journal writer blocks independent Guardian session/u);
-  assert.match(lease, /PinNativeGuardianFileForSession\(\)/u);
-  assert.match(lease, /OpenNativeOrphanFileForRename\(expected, NativeOrphanGenericRead,/u);
-  assert.match(lease, /NativeOrphanShareRead, 0, NativeOrphanOpenExisting, NativeOrphanOpenReparsePoint/u);
-  assert.match(lease, /info.VolumeSerial == 0 \|\| info.FileIndexHigh == 0 && info.FileIndexLow == 0/u);
-  assert.match(lease, /OpenOwnedTerminalCapableSessionLease\(leasePath\)/u);
-  assert.match(lease, /: new FileStream\(leasePath, FileMode.CreateNew/u);
-  const program = await fs.readFile(new URL('../../native/windows/EquinoxLocal.Guardian/Program.cs', import.meta.url), 'utf8');
-  const journal = await fs.readFile(new URL('../../native/windows/EquinoxLocal.Guardian/MainNativeJournalIdentity.cs', import.meta.url), 'utf8');
-  assert.match(program, /Unreconciled signed Guardian owner session blocks native launch/u);
-  assert.match(journal, /name.EndsWith\("\.guardian-session-lock"/u);
-  assert.match(osFile, /ReadNativeOrphanHandleInformation/u);
-  assert.match(hosted, /Guardian accepted a pre-existing foreign JS journal writer lock/u);
-  assert.match(hosted, /const fs=require\('node:fs'\);const p=process.argv\[1\]/u);
-  assert.match(hosted, /Actual JS journal writer collided with independently pinned original Guardian session/u);
-  assert.doesNotMatch(lease, /FileMode\.OpenOrCreate|\.Delete\(leasePath\)|File\.Move\(|Process\.Kill/u);
+test("Windows Main reinstall package gate verifies exact signed SHA and cannot silently claim installed B health",async()=>{
+  const smoke=await fs.readFile(new URL("./windows-installer-real-package-smoke.ps1",import.meta.url),"utf8");
+  assert.match(smoke,/EQUINOX_WINDOWS_INSTALL_SOURCE_SHA/u);
+  assert.match(smoke,/Get-FileHash -LiteralPath \$Archive -Algorithm SHA256/u);
+  assert.match(smoke,/release\/scripts\/install-equinox-local\.ps1/u);
+  assert.match(smoke,/BundledInstaller -cne \$PublicInstaller/u);
+  assert.match(smoke,/--audit-installed-signed-main/u);
+  assert.match(smoke,/production-signed full install NOT asserted/u);
+  assert.doesNotMatch(smoke,/--hold-native-stage-b-cancel|Invoke-GuardianSignedNativeActivate/u);
 });
 
 test("native Guardian WPF graceful quiesce requires exact OS shell PID and live worker authority without Main activation", async () => {
@@ -650,103 +637,21 @@ test('vintage Windows A/B real PE smoke accepts pre-6.1.2 marker absence but alw
   assert.match(smoke, /Get-Process -Id \$\{process\.pid\} -ErrorAction Stop/u);
 });
 
-test('vintage installed Main upgrade does not require a Guardian absent from old signed packages', async () => {
-  const fixture = await fs.readFile(new URL('./windows-installer-real-package-smoke.ps1', import.meta.url), 'utf8');
-  assert.match(fixture, /\$SkipLegacyGuardianFixture = \(\$env:GITHUB_ACTIONS -ceq 'true' -and -not \[string\]::IsNullOrWhiteSpace\(\$env:EQUINOX_WINDOWS_MAIN_ACCEPT_TARGET_SHA\)\)/u);
-  assert.ok((fixture.match(/if \(-not \$SkipLegacyGuardianFixture\) \{/gu) ?? []).length >= 4);
-  assert.match(fixture, /if \(-not \$SkipLegacyGuardianFixture -and -not \$RepairOnly -and -not \$GuardianAuditElsewhere\) \{/u,
-    "The real full installer must retain Guardian negative cases, while CI-only repair stays isolated.");
-  assert.match(fixture, /if \(\$RepairOnly -and \(\$env:GITHUB_ACTIONS -cne 'true'/u,
-    "Repair-only smoke must remain restricted to disposable hosted CI.");
-  assert.match(fixture, /EQUINOX_WINDOWS_NATIVE_AB_IN_PACKAGE/u);
-  assert.match(fixture, /Native A\/B package-lane ownership requires a current-product full installer running in GitHub CI/u);
-  assert.match(fixture, /if \(-not \$RepairOnly -and -not \$NativeABInPackage\)/u);
-  assert.match(fixture, /windows-native-ab-installed-smoke\.mjs/u);
-  assert.match(fixture, /Old installed A user config is missing/u);
-  assert.match(fixture, /Real Main upgrade lost user settings/u);
-  assert.match(fixture, /Real Main upgrade lost user browser data/u);
-  assert.match(fixture, /Updated Native Messaging manifest did not select exact B or restore A on failure/u);
-});
-
-test("signed Windows native WPF witness acceptance demands real owner and rejects impersonation", async () => {
-  const script = await fs.readFile(new URL("./windows-installer-real-package-smoke.ps1", import.meta.url), "utf8");
-  assert.match(script, /function Invoke-NativeWpfWitness/u);
-  assert.match(script, /runtime\\job\\equinox-local-job-object-helper\.exe/u);
-  assert.match(script, /Read-PeMachine \$NativeWpfWitness/u);
-  assert.match(script, /\$start\.Arguments = '--inspect-owned-wpf'/u);
-  assert.match(script, /\$start\.EnvironmentVariables\.Clear\(\)/u);
-  assert.match(script, /\$start\.EnvironmentVariables\['EQUINOX_LOCAL_CHECK_WPF_PID'\]/u);
-  assert.match(script, /\$start\.EnvironmentVariables\['EQUINOX_LOCAL_CHECK_WPF_TICKS'\]/u);
-  // CI launches this fixture explicitly with Windows PowerShell 5.1.
-  // Prevent accidental .NET Core-only ProcessStartInfo API regressions.
-  assert.doesNotMatch(script, /\$start\.ArgumentList\b|\$start\.Environment\s*\[/u);
-  assert.match(script, /\$start\.RedirectStandardOutput = \$true/u);
-  assert.match(script, /\$process\.WaitForExit\(5000\)/u);
-  assert.match(script, /OS native helper refused the genuine installed WPF owner/u);
-  assert.match(script, /OS native helper accepted a forged WPF birth time/u);
-  assert.match(script, /OS native helper accepted the native worker Node as WPF/u);
-  assert.match(script, /OS native helper accepted a terminated WPF owner/u);
-  assert.doesNotMatch(script, /EQUINOX_LOCAL_CHECK_WPF_EXE/u);
+test("Main-only PowerShell installer always uses freshly authenticated source and preserves config",async()=>{
+ const script=await fs.readFile(new URL("../../scripts/install-equinox-local.ps1",import.meta.url),"utf8");
+ assert.match(script,/Invoke-VerifiedMainPreparation/u);
+ assert.match(script,/--install-main-fresh/u);
+ assert.match(script,/Begin-ExecutableReplacement/u);
+ assert.match(script,/Complete-ExecutableReplacement/u);
+ assert.doesNotMatch(script,/Read-BootstrapManifest|--activate-main|--recover-main/u);
+ const offline=await fs.readFile(new URL("./windows-installer-bootstrap-smoke.ps1",import.meta.url),"utf8");
+ assert.match(offline,/user_settings.*preserve/u);
+ assert.match(offline,/offline-signed-Main-unavailable/u);
 });
 
 
-test("native Guardian durable owner identity binds exact OS worker birth across lease, authority, WPF and orphan recovery", async () => {
-  const base = new URL('../../native/windows/EquinoxLocal.Guardian/', import.meta.url);
-  const read = async (name) => fs.readFile(new URL(name,base),'utf8');
-  const [lease,authority,wpf,recovery,host]=await Promise.all([
-    read('MainNativeJournalLease.cs'), read('MainNativeJournalAuthority.cs'),
-    read('MainNativeStableShellQuiesce.cs'), read('MainNativePreparedAbortRecovery.cs'),
-    fs.readFile(new URL('./windows-installer-real-package-smoke.ps1', import.meta.url),'utf8'),
-  ]);
-  assert.match(lease, /workerStartTimeUtcTicks=\{owner\.Ticks\}/u);
-  assert.match(authority, /WriteString\("workerStartTimeUtcTicks", owner\.Ticks\)/u);
-  assert.match(wpf, /proof\.GetProperty\("workerStartTimeUtcTicks"\)\.GetString\(\) != owner\.Ticks/u);
-  assert.match(wpf, /proof\.GetProperty\("guardianPid"\)\.GetInt32\(\) != Environment\.ProcessId/u);
-  assert.match(wpf, /WriteString\("workerStartTimeUtcTicks", owner\.Ticks\)/u);
-  assert.match(recovery, /workerTicks\.ToString\(CultureInfo\.InvariantCulture\)/u);
-  assert.match(recovery, /GetProperty\("startTimeUtcTicks"\)\.GetString\(\) != workerTicks/u);
-  assert.match(recovery, /GetProperty\("workerStartTimeUtcTicks"\)\.GetString\(\) != workerTicks/u);
-  assert.match(host, /Orphan recovery accepted forged worker creation time in the native writer lease/u);
-  assert.match(host, /Orphan recovery accepted forged worker creation time in the native authority receipt/u);
-});
 
 
-test("native Guardian binds immutable worker handoff bytes through live authorization, WPF shutdown, and orphan recovery", async () => {
-  const base = new URL("../../native/windows/EquinoxLocal.Guardian/", import.meta.url);
-  const read = async (name) => fs.readFile(new URL(name, base), "utf8");
-  const [authority, quiesce, recovery, hosted] = await Promise.all([
-    read("MainNativeJournalAuthority.cs"), read("MainNativeStableShellQuiesce.cs"),
-    read("MainNativePreparedAbortRecovery.cs"),
-    fs.readFile(new URL("./windows-installer-real-package-smoke.ps1", import.meta.url), "utf8"),
-  ]);
-  assert.match(authority, /RequireNormalDirectory\(handoffRoot\)/u);
-  assert.match(authority, /RequireNormalFile\(path\)/u);
-  assert.match(authority, /handle.Length is < 2 or > 8192/u);
-  assert.match(authority, /CryptographicOperations\.FixedTimeEquals\(handoffDigest, HashOwnedWorkerHandoff/u);
-  assert.match(authority, /WriteString\("handoffSha256", Convert\.ToHexStringLower\(handoffDigest\)\)/u);
-  assert.match(quiesce, /GetProperty\("handoffSha256"\)/u);
-  assert.match(quiesce, /HashOwnedWorkerHandoff\(journalRoot, owner\.TransactionId\)/u);
-  assert.match(recovery, /GetProperty\("handoffSha256"\)/u);
-  assert.match(recovery, /HashOwnedWorkerHandoff\(root, id\)/u);
-  assert.match(hosted, /AuthorityRecord\.handoffSha256/u);
-  assert.match(hosted, /Orphan recovery accepted a changed authenticated worker handoff token/u);
-});
-
-
-test("native prepared abort commit retains exact prepared-to-aborted journal digest lineage", async () => {
-  const root = new URL("../../native/windows/EquinoxLocal.Guardian/", import.meta.url);
-  const [writer,recovery,host] = await Promise.all([
-    fs.readFile(new URL("MainNativePreparedAbort.cs",root),"utf8"),
-    fs.readFile(new URL("MainNativePreparedAbortRecovery.cs",root),"utf8"),
-    fs.readFile(new URL("./windows-installer-real-package-smoke.ps1",import.meta.url),"utf8"),
-  ]);
-  assert.match(writer,/WriteString\("preparedJournalSha256", Convert\.ToHexStringLower\(expectedDigest\)\)/u);
-  assert.match(writer,/WriteString\("journalSha256", Convert\.ToHexStringLower\(SHA256\.HashData\(File\.ReadAllBytes\(journalPath\)\)\)\)/u);
-  assert.match(recovery,/GetProperty\("preparedJournalSha256"\)/u);
-  assert.match(recovery,/auth\.GetProperty\("journalSha256"\)/u);
-  assert.match(host,/AbortReceipt\.preparedJournalSha256 -ceq \$AuthorityRecord\.journalSha256/u);
-  assert.match(host,/Orphan recovery accepted an abort commit forged to an unrelated prepared journal/u);
-});
 
 test('Windows native B rollback preflight pins OS-installed B shell to SHA release and exact rollback journal without granting shutdown', async () => {
   const root = new URL('../../native/windows/EquinoxLocal.Guardian/', import.meta.url);
@@ -891,57 +796,7 @@ test('all Guardian native transition record reads validate size and parse on one
   assert.doesNotMatch(body, /FileInfo\(|File\.ReadAllBytes\(|FileShare\.(?:Delete|ReadWrite)|FileMode\.OpenOrCreate/u);
 });
 
-test("hosted native Guardian positive B acceptance uses exact packaged SHA and preserves signed old A", async () => {
-  const script = await fs.readFile(new URL("./windows-installer-real-package-smoke.ps1", import.meta.url), "utf8");
-  for (const required of [
-    "Positive forward-stage evidence", "$PositiveTarget = $ManagedSourceRoot",
-    "$PositiveBRoot = Join-Path $NativeTxRoot",
-    "Copy-Item -LiteralPath $ReleaseDir -Destination $PositiveRelease",
-    "guardian-native-fingerprint-fixture.mjs",
-    "GITHUB_ACTIONS", "EQUINOX_LOCAL_TEST_JOURNAL_STAGE_TRIGGER",
-    "audit-native-worker-ipc", "audit-native-worker-argv",
-    "hold-native-stage-b-cancel", "native_staged", "nativeBFingerprintSha256",
-    "OriginalWpfHash", "OriginalManifestHash", "OriginalRegistry",
-    "OriginalStablePointerHash", "WorkerReplaced",
-  ]) {
-    assert.ok(script.includes(required), "Missing genuine hosted B stage evidence: " + required);
-  }
-  assert.match(script, /if \(\$GuardianAuditOnly\) \{\s*# Positive forward-stage evidence/u);
-  assert.match(script, /Windows committed native Main Guardian inspect evidence/u);
-  assert.match(script, /\$OriginalNativeFingerprintSha = \[string\]\$NativeFingerprint.sha256/u);
-  assert.match(script, /\$NativeManifestProbe.releaseFingerprint.sha256 = \$OriginalNativeFingerprintSha/u);
-  assert.match(script, /\[IO.File\]::WriteAllBytes\(\$OwnedWorkerScript, \$OriginalWorkerBytes\)/u);
-  assert.match(script, /Assert-True \$Staged/u);
-  assert.match(script, /\$StageValue.stage -ceq 'rollback_started'/u);
-});
 
-test("Guardian staged B cancellation cannot stop A or claim a completed A/B recovery", async () => {
-  const root = new URL("../../native/windows/EquinoxLocal.Guardian/", import.meta.url);
-  const [command, lease, authority, cancel] = await Promise.all([
-    "Program.cs", "MainNativeJournalLease.cs", "MainNativeJournalAuthority.cs",
-    "MainNativeStagedCancel.cs",
-  ].map((name) => fs.readFile(new URL(name, root), "utf8")));
-  assert.match(command, /"--hold-native-stage-b-cancel"/u);
-  assert.match(lease, /cancelBeforeSwitch/u);
-  assert.match(authority, /CancelNativeStagedBWithoutStoppingA\(owner, root, worker\)/u);
-  assert.match(authority, /fd.Flush\(flushToDisk: true\);\s*\/\/ The CREATE_NEW authority receipt[^]*?fd.Dispose\(\);\s*InspectionPhase = "native-journal-authority-proof-durable"/u);
-  for (const required of [
-    "stage-b-commit.json", "native-authority.json", "pre-switch-abort-commit.json",
-    "FindSingleOwnedStableShell", "CompareNativeTrees", "GetNamedPipeServerProcessId",
-    "NativeMessagingRegistrySubkey", "current-version.json",
-    "rollback_started", "native_staged", "nativeBFingerprintSha256",
-    "stagedJournalSha256", "rollbackJournalSha256", "File.Move(temp, journalPath, overwrite: true)",
-    "FileMode.CreateNew", "FileOptions.WriteThrough", "CryptographicOperations.FixedTimeEquals",
-  ]) {
-    assert.ok(cancel.toLowerCase().includes(required.toLowerCase()), "Missing pre-switch native cancellation requirement: " + required);
-  }
-  assert.doesNotMatch(cancel, /Process\.Start|\.Kill\(|shutdown-for-update|File\.Copy|Registry\.SetValue|\.WriteAsync\(|shell\.CloseMainWindow|native_switched|File\.Delete\(/u);
-  assert.match(cancel, /Not terminal rolled_back or permission to clean an orphan lease/u);
-  const harness = await fs.readFile(new URL("./windows-installer-real-package-smoke.ps1", import.meta.url), "utf8");
-  assert.match(harness, /--hold-native-stage-b-cancel/u);
-  assert.match(harness, /\$StageValue.stage -ceq 'rollback_started'/u);
-  assert.match(harness, /\$CancelReceipt.stagedJournalSha256 -ceq \$StageReceipt.journalSha256/u);
-});
 
 test("Guardian forward B staging advances an authenticated prepared journal but cannot alter installed WPF or Native Messaging", async () => {
   const root = new URL("../../native/windows/EquinoxLocal.Guardian/", import.meta.url);

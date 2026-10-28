@@ -75,11 +75,11 @@ internal static partial class WindowsManagedSourceRuntimeLocator
                 }
                 if (guardian.ExitCode != 0)
                     throw new InvalidDataException("Original production-signed Main release audit failed.");
-                var serverPath = RequireNormalFile(Path.Combine(release, "server.js"),
+                var signedServerPath = RequireNormalFile(Path.Combine(release, "server.js"),
                     "Signed Main server entry");
                 _ = RequireNormalFile(Path.Combine(release, "equinox-local-supervisor.js"),
                     "Signed Main supervisor");
-                return new WindowsRuntimeLocation(release, release, serverPath, release,
+                return new WindowsRuntimeLocation(release, release, signedServerPath, release,
                     installRoot, ManagedSource: false);
             }
             // Stable is a separate first-install bootstrap, not a permanent

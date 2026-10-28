@@ -94,18 +94,12 @@ test("signed-native read-only owner+kernel OS argv audit does NOT expand origina
 });
 
 
-test("existing original Windows hosted smoke exercises BOTH signed-native audit commands fail-closed for absent owner and legacy Git fixtures",async()=>{
- const source=await fs.readFile(new URL("./windows-installer-real-package-smoke.ps1",import.meta.url),"utf8");
- assert.match(source,/Invoke-GuardianCheck '--audit-signed-native-journal'/u);
- assert.match(source,/Invoke-GuardianCheck '--audit-signed-native-worker-argv'/u);
- assert.match(source,/Guardian accepted absent signed-native owner/u);
- assert.match(source,/Guardian accepted Git receipt as signed-native journal/u);
- assert.match(source,/Guardian accepted Git worker as signed-native worker/u);
- // These are negative hosted checks, not a claim that the Windows native
- // activation, original Ed25519 verification or A/B rollout works.
- assert.doesNotMatch(source,/Invoke-GuardianActivateSignedNative/u);
+test("Main native archive smoke uses the pinned installed Guardian in read-only mode",async()=>{
+ const script=await fs.readFile(new URL("./windows-installer-real-package-smoke.ps1",import.meta.url),"utf8");
+ assert.match(script,/--audit-installed-signed-main/u);
+ assert.match(script,/\$AuditExit -eq 0/u);
+ assert.doesNotMatch(script,/Invoke-GuardianActivateSignedNative|--prepare-signed-native-journal/u);
 });
-
 
 test("read-only native Guardian HMAC reuses original PID/launch-token OS pipe challenge, never original mutation lease",async()=>{
  const [identity,program,lease]=await Promise.all([

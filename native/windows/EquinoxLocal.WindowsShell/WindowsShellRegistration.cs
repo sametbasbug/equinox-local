@@ -19,7 +19,7 @@ internal static class WindowsShellRegistration
             // the manual display version comes from its already-audited B.
             if (Path.GetFileName(active.NativeReleaseDir) == "release" &&
                 System.Text.RegularExpressions.Regex.IsMatch(
-                    Path.GetFileName(Path.GetDirectoryName(active.NativeReleaseDir)),
+                    Path.GetFileName(Path.GetDirectoryName(active.NativeReleaseDir) ?? ""),
                     @"^[a-f0-9]{40}$"))
             {
                 var metadata = System.Text.Json.JsonDocument.Parse(File.ReadAllText(
