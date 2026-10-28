@@ -1,5 +1,6 @@
 import type { NativeHostExec } from "./equinox-local-native-app-host.js";
 import fs from "node:fs/promises";
+import {constants as fsConstants} from "node:fs";
 import { createHash } from "node:crypto";
 import path from "node:path";
 
@@ -211,8 +212,13 @@ export async function beginEquinoxLocalSignedNativeMacOwner({
   if(!/^darwin-(arm64|x64)$/u.test(target)||!Number.isInteger(uid)||!uid||uid<1){
     throw new Error("Signed native Mac owner requires a non-root supported host.");
   }
-  const root=await fsImpl.lstat(paths.root);
-  if(!root.isDirectory()||root.isSymbolicLink()||(root.mode&0o777)!==0o700 ||
+  // Keep the private directory open throughout ownership publication. Its
+  // descriptor, not a pathname re-opened after lstat, is the trust boundary.
+  const directory=await fsImpl.open(paths.root,
+    fsConstants.O_RDONLY|(fsConstants.O_DIRECTORY??0)|(fsConstants.O_NOFOLLOW??0));
+  try {
+  const root=await directory.stat();
+  if(!root.isDirectory()||(root.mode&0o777)!==0o700 ||
      root.uid!==uid || await fsImpl.realpath(paths.root)!==paths.root) {
     throw new Error("Signed native transaction state root is not a private owned directory.");
   }
@@ -242,8 +248,7 @@ export async function beginEquinoxLocalSignedNativeMacOwner({
       throw new Error("Signed native owner lock changed during publication.");
     }
     await handle.close();closed=true;
-    const directory=await fsImpl.open(paths.root,"r");
-    try{await directory.sync();}finally{await directory.close();}
+    await directory.sync();
     await writeEquinoxLocalSignedNativeMacReceipt({
       transactionRoot:paths.root,transactionId:id,sourceSha:sha,target,
       runtimeContractSha256:digest,status:"admitted",fsImpl,
@@ -254,6 +259,7 @@ export async function beginEquinoxLocalSignedNativeMacOwner({
     // Fail closed on ambiguous release: leave the exclusive owner lock
     // reserved for explicit recovery, never unlink by prior pathname stat.
   }
+  } finally { await directory.close(); }
 }
 
 // Read-only owner check for a future detached/recovery runner. Never delete a

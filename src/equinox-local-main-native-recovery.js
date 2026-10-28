@@ -1,4 +1,5 @@
 import fs from "node:fs/promises";
+import { constants as fsConstants } from "node:fs";
 import { createHash } from "node:crypto";
 import path from "node:path";
 import { assertWindowsNativeMessagingHostOwnership, registerWindowsNativeMessagingHost, windowsNativeMessagingLauncherPath, } from "./equinox-browser-windows-native-messaging.js";
@@ -163,56 +164,58 @@ export async function beginEquinoxLocalSignedNativeMacOwner({ transactionRoot, t
     if (!/^darwin-(arm64|x64)$/u.test(target) || !Number.isInteger(uid) || !uid || uid < 1) {
         throw new Error("Signed native Mac owner requires a non-root supported host.");
     }
-    const root = await fsImpl.lstat(paths.root);
-    if (!root.isDirectory() || root.isSymbolicLink() || (root.mode & 0o777) !== 0o700 ||
-        root.uid !== uid || await fsImpl.realpath(paths.root) !== paths.root) {
-        throw new Error("Signed native transaction state root is not a private owned directory.");
-    }
-    await readEquinoxLocalMainNativeRecoveryDescriptor({
-        transactionRoot: paths.root, transactionId: id,
-        expected: { targetSha: sha, target, targetRuntimeContractSha256: digest }, fsImpl,
-    });
-    const lockPath = path.join(paths.root, "active.json");
-    const record = Object.freeze({
-        schemaVersion: 1, kind: "signed-native", transactionId: id, sourceSha: sha,
-        target, runtimeContractSha256: digest,
-    });
-    const handle = await fsImpl.open(lockPath, "wx", 0o600);
-    const original = await handle.stat();
-    let closed = false;
+    // Keep the private directory open throughout ownership publication. Its
+    // descriptor, not a pathname re-opened after lstat, is the trust boundary.
+    const directory = await fsImpl.open(paths.root, fsConstants.O_RDONLY | (fsConstants.O_DIRECTORY ?? 0) | (fsConstants.O_NOFOLLOW ?? 0));
     try {
-        if (!original.isFile() || original.nlink !== 1 || (original.mode & 0o777) !== 0o600) {
-            throw new Error("Signed native owner lock inode is unsafe.");
+        const root = await directory.stat();
+        if (!root.isDirectory() || (root.mode & 0o777) !== 0o700 ||
+            root.uid !== uid || await fsImpl.realpath(paths.root) !== paths.root) {
+            throw new Error("Signed native transaction state root is not a private owned directory.");
         }
-        await handle.writeFile(JSON.stringify(record) + "\n", "utf8");
-        await handle.sync();
-        // Validate the SAME exclusive file descriptor, not a pathname lstat
-        // whose inode can be swapped between checking and receipt publication.
-        const stored = await handle.stat();
-        if (!stored.isFile() || stored.nlink !== 1 ||
-            stored.dev !== original.dev || stored.ino !== original.ino) {
-            throw new Error("Signed native owner lock changed during publication.");
-        }
-        await handle.close();
-        closed = true;
-        const directory = await fsImpl.open(paths.root, "r");
+        await readEquinoxLocalMainNativeRecoveryDescriptor({
+            transactionRoot: paths.root, transactionId: id,
+            expected: { targetSha: sha, target, targetRuntimeContractSha256: digest }, fsImpl,
+        });
+        const lockPath = path.join(paths.root, "active.json");
+        const record = Object.freeze({
+            schemaVersion: 1, kind: "signed-native", transactionId: id, sourceSha: sha,
+            target, runtimeContractSha256: digest,
+        });
+        const handle = await fsImpl.open(lockPath, "wx", 0o600);
+        const original = await handle.stat();
+        let closed = false;
         try {
+            if (!original.isFile() || original.nlink !== 1 || (original.mode & 0o777) !== 0o600) {
+                throw new Error("Signed native owner lock inode is unsafe.");
+            }
+            await handle.writeFile(JSON.stringify(record) + "\n", "utf8");
+            await handle.sync();
+            // Validate the SAME exclusive file descriptor, not a pathname lstat
+            // whose inode can be swapped between checking and receipt publication.
+            const stored = await handle.stat();
+            if (!stored.isFile() || stored.nlink !== 1 ||
+                stored.dev !== original.dev || stored.ino !== original.ino) {
+                throw new Error("Signed native owner lock changed during publication.");
+            }
+            await handle.close();
+            closed = true;
             await directory.sync();
+            await writeEquinoxLocalSignedNativeMacReceipt({
+                transactionRoot: paths.root, transactionId: id, sourceSha: sha, target,
+                runtimeContractSha256: digest, status: "admitted", fsImpl,
+            });
+            return record;
         }
         finally {
-            await directory.close();
+            if (!closed)
+                await handle.close().catch(() => { });
+            // Fail closed on ambiguous release: leave the exclusive owner lock
+            // reserved for explicit recovery, never unlink by prior pathname stat.
         }
-        await writeEquinoxLocalSignedNativeMacReceipt({
-            transactionRoot: paths.root, transactionId: id, sourceSha: sha, target,
-            runtimeContractSha256: digest, status: "admitted", fsImpl,
-        });
-        return record;
     }
     finally {
-        if (!closed)
-            await handle.close().catch(() => { });
-        // Fail closed on ambiguous release: leave the exclusive owner lock
-        // reserved for explicit recovery, never unlink by prior pathname stat.
+        await directory.close();
     }
 }
 // Read-only owner check for a future detached/recovery runner. Never delete a
