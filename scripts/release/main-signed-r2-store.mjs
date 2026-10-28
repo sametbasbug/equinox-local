@@ -2,7 +2,7 @@
 // executes public checkout code, mutates Git tags, or decides release readiness.
 // Used by the existing protected main-push publication job, never a separate update engine.
 import {execFile as cb} from 'node:child_process';
-import {createReadStream} from 'node:fs';
+import {constants as fileFlags} from 'node:fs';
 import {createHash} from 'node:crypto';
 import fs from 'node:fs/promises';
 import os from 'node:os';
@@ -31,12 +31,10 @@ const immutablePointerKey=sourceSha=>{
 async function validatedPointerBody(file,sha256,bytes){
  if(typeof file!=='string'||!path.isAbsolute(file)||path.resolve(file)!==file||!SHA.test(sha256)||
   !Number.isSafeInteger(bytes)||bytes<200||bytes>R2_SMALL_MAX)throw Error('Signed pointer source identity is not bounded.');
- const st=await fs.lstat(file);
- if(!st.isFile()||st.isSymbolicLink()||st.nlink!==1||st.size!==bytes)throw Error('Signed pointer must be a bounded normal file.');
- const fd=await fs.open(file,'r');
+ const fd=await fs.open(file,fileFlags.O_RDONLY|fileFlags.O_NOFOLLOW);
  try{
   const opened=await fd.stat();
-  if(opened.dev!==st.dev||opened.ino!==st.ino||opened.size!==st.size)throw Error('Signed pointer file changed during open.');
+  if(!opened.isFile()||opened.nlink!==1||opened.size!==bytes)throw Error('Signed pointer must be a bounded normal file.');
   const body=await fd.readFile();
   if(body.length!==bytes||createHash('sha256').update(body).digest('hex')!==sha256)throw Error('Signed pointer body differs from admitted SHA-256.');
   return body;
@@ -126,17 +124,20 @@ export function createMainSignedR2Store({credentials,runner=execFile}={}){
      throw Error('R2 signed Main pointer could not be read.');
     }
     const response=JSON.parse(result.stdout);
-    const stat=await fs.lstat(file);
-    if(!stat.isFile()||stat.isSymbolicLink()||stat.nlink!==1||stat.size<200||stat.size>R2_SMALL_MAX||
-      !E_TAG.test(response.ETag)||typeof response.Metadata?.sha256!=='string'||!SHA.test(response.Metadata.sha256)){
-     throw Error('Remote signed Main pointer metadata is invalid.');
-    }
-    const bytes=await fs.readFile(file);
-    const sha256=createHash('sha256').update(bytes).digest('hex');
-    if(sha256!==response.Metadata.sha256)throw Error('Remote signed Main pointer body/metadata mismatch.');
-    const expectedCache=sourceSha===undefined?NO_STORE:MAIN_R2_IMMUTABLE_CACHE;
-    if(response.CacheControl!==expectedCache)throw Error('Remote signed Main pointer caching contract mismatch.');
-    return Object.freeze({body:bytes,sha256,etag:response.ETag,key});
+    const fd=await fs.open(file,fileFlags.O_RDONLY|fileFlags.O_NOFOLLOW);
+    try{
+     const stat=await fd.stat();
+     if(!stat.isFile()||stat.nlink!==1||stat.size<200||stat.size>R2_SMALL_MAX||
+       !E_TAG.test(response.ETag)||typeof response.Metadata?.sha256!=='string'||!SHA.test(response.Metadata.sha256)){
+      throw Error('Remote signed Main pointer metadata is invalid.');
+     }
+     const bytes=await fd.readFile();
+     const sha256=createHash('sha256').update(bytes).digest('hex');
+     if(sha256!==response.Metadata.sha256)throw Error('Remote signed Main pointer body/metadata mismatch.');
+     const expectedCache=sourceSha===undefined?NO_STORE:MAIN_R2_IMMUTABLE_CACHE;
+     if(response.CacheControl!==expectedCache)throw Error('Remote signed Main pointer caching contract mismatch.');
+     return Object.freeze({body:bytes,sha256,etag:response.ETag,key});
+    }finally{await fd.close();}
    });
   },
   async compareAndSwapMainLatest({file,sha256,bytes,previousEtag=null}={}){
@@ -165,11 +166,14 @@ export function createMainSignedR2Store({credentials,runner=execFile}={}){
    const key=mainR2ImmutableKey(sourceSha,name);
    return toTemp(async(file)=>{
     await run(['s3api','get-object','--bucket',MAIN_R2_BUCKET,'--key',key,file],{maxTime:120000});
-    const stat=await fs.lstat(file);
-    if(!stat.isFile()||stat.isSymbolicLink()||stat.nlink!==1||stat.size>65536||stat.size<1){
-     throw Error('Remote Main signed JSON is not a bounded normal file.');
-    }
-    return fs.readFile(file);
+    const fd=await fs.open(file,fileFlags.O_RDONLY|fileFlags.O_NOFOLLOW);
+    try{
+     const stat=await fd.stat();
+     if(!stat.isFile()||stat.nlink!==1||stat.size>65536||stat.size<1){
+      throw Error('Remote Main signed JSON is not a bounded normal file.');
+     }
+     return await fd.readFile();
+    }finally{await fd.close();}
    });
   },
   async *streamArchive(sourceSha,name){
@@ -178,11 +182,14 @@ export function createMainSignedR2Store({credentials,runner=execFile}={}){
    try{
     const file=path.join(root,'archive');
     await run(['s3api','get-object','--bucket',MAIN_R2_BUCKET,'--key',key,file],{maxTime:600000});
-    const stat=await fs.lstat(file);
-    if(!stat.isFile()||stat.isSymbolicLink()||stat.nlink!==1||stat.size<1||stat.size>1024*1024*1024){
-     throw Error('Remote Main archived file is not normal and bounded.');
-    }
-    for await(const chunk of createReadStream(file,{highWaterMark:1024*1024})){yield chunk;}
+    const fd=await fs.open(file,fileFlags.O_RDONLY|fileFlags.O_NOFOLLOW);
+    try{
+     const stat=await fd.stat();
+     if(!stat.isFile()||stat.nlink!==1||stat.size<1||stat.size>1024*1024*1024){
+      throw Error('Remote Main archived file is not normal and bounded.');
+     }
+     for await(const chunk of fd.createReadStream({highWaterMark:1024*1024,autoClose:false})){yield chunk;}
+    }finally{await fd.close();}
    }finally{await fs.rm(root,{recursive:true,force:true});}
   },
  });

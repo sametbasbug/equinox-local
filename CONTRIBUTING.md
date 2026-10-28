@@ -17,7 +17,7 @@ npm ci
 npm run check
 ```
 
-The maintainer has retired automated tests; do not add or execute test suites. Preserve native package admission, signing and production integrity checks.
+The maintainer has retired automated tests; do not author new test suites. Static validation and native package/security analysis remain allowed. Preserve native package admission, signing and production integrity checks.
 
 Keep changes narrow enough to review. If a proposal changes a major product boundary, opening an issue first is usually more useful than arriving with a large implementation.
 
@@ -65,7 +65,7 @@ macOS/Windows ARM64 and x64 packages must each be built for the exact target sou
 
 ## Automated tests
 
-Automated tests, smoke and acceptance jobs have been removed by maintainer decision. Do not add new ones. This does not relax production signature, hash, platform or source-identity verification.
+Automated tests, smoke and acceptance jobs have been removed by maintainer decision. Do not write new ones. This does not relax production signature, hash, platform or source-identity verification.
 
 ## Security reports
 
