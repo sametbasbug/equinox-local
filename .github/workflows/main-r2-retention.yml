@@ -2,6 +2,11 @@ name: Prune Main R2 snapshots
 
 on:
   workflow_dispatch:
+  # Retention is independent housekeeping, not a signed release gate. Keeping
+  # it off the production critical path trims the publish latency and lets a
+  # transient R2 inventory failure be handled on the next daily run.
+  schedule:
+    - cron: '17 3 * * *'
 
 permissions:
   contents: read

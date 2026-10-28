@@ -185,6 +185,9 @@ jobs:
           path: artifacts/main-native/*
           if-no-files-found: error
           retention-days: 14
+          # Native archive payloads are already ZIP/tar.gz. Recompressing them
+          # wastes runner CPU and delays the slowest native target.
+          compression-level: 0
 
   main-native-result:
     needs: [main-native-plan, main-native-build]
@@ -299,7 +302,7 @@ jobs:
           # minute of R2 uploads on the Main critical path. Any failed PUT
           # causes xargs to fail, preventing public verification/tag promotion.
           find "$SNAPSHOT_DIR" -maxdepth 1 -type f -print0 | \
-            xargs -0 -P 4 -I '{}' bash -euo pipefail -c '
+            xargs -0 -P 8 -I '{}' bash -euo pipefail -c '
               object="$1"
               name="$(basename "$object")"
               key="snapshots/$TARGET_SHA/$name"
@@ -366,29 +369,6 @@ jobs:
           fi
           echo "Published public exact-SHA Main snapshot objects for $TARGET_SHA and moved tag-only main-snapshot. No GitHub Release was created." >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Checkout the exact Main source for bounded R2 pruning
-        if: ${{ steps.latest.outputs.publish == 'true' }}
-        uses: actions/checkout@v7
-        with:
-          ref: ${{ needs.main-native-plan.outputs.target-sha }}
-          persist-credentials: false
-
-      - name: Prune retired exact-SHA R2 archives (protect active SHA and latest eight)
-        if: ${{ steps.latest.outputs.publish == 'true' }}
-        shell: bash
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.EQUINOX_MAIN_R2_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.EQUINOX_MAIN_R2_SECRET_ACCESS_KEY }}
-          AWS_DEFAULT_REGION: auto
-          AWS_EC2_METADATA_DISABLED: 'true'
-          AWS_RETRY_MODE: standard
-          AWS_MAX_ATTEMPTS: '8'
-        run: |
-          set -euo pipefail
-          test -n "${AWS_ACCESS_KEY_ID:-}"
-          test -n "${AWS_SECRET_ACCESS_KEY:-}"
-          node scripts/release/prune-main-r2.mjs
-          node scripts/release/prune-main-r2.mjs --apply
 
   main-signed-release-publish:
     name: Publish production-signed Main (four targets)
