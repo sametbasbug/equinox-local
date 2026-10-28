@@ -195,6 +195,8 @@ export async function scheduleEquinoxLocalSignedNativeWindowsInstaller({
     throw new Error("Windows Main installer logs directory is unsafe.");
   const requestId="main-"+randomBytes(16).toString("hex");
   const logPath=path.win32.join(logs,requestId+".original-installer.log");
+  // Keep both the PowerShell script AND its current working directory outside
+  // the retired runtime; Windows holds the process working directory open.
   // The original PowerShell installer must run OUTSIDE old executable roots:
   // Clear-ExistingEquinoxExecutables stops product-owned PowerShell scripts that
   // name native-store paths, otherwise the installer kills ITSELF.
@@ -209,7 +211,7 @@ export async function scheduleEquinoxLocalSignedNativeWindowsInstaller({
     await launchHelperImpl({
       spawnImpl,command:powershell,
       args:["-NoLogo","-NoProfile","-NonInteractive","-ExecutionPolicy","Bypass","-File",runner],
-      options:{cwd:installation.releaseDir,detached:true,windowsHide:true,
+      options:{cwd:logs,detached:true,windowsHide:true,
         stdio:["ignore",handle.fd,handle.fd],
         env:{SystemRoot:sourceEnv.SystemRoot??sourceEnv.WINDIR??"C:\\Windows",
           WINDIR:sourceEnv.WINDIR??sourceEnv.SystemRoot??"C:\\Windows",
