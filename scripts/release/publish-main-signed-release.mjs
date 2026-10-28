@@ -74,17 +74,23 @@ export async function publishMainSignedRelease({sourceSha,archiveDir,signedDir,c
  const check=async()=>{if((await authority())!==sourceSha)throw Error('Signed Main source SHA no longer equals canonical main HEAD.');};
  await check();
  const proof=await inspectMainSignedRelease({sourceSha,archiveDir,signedDir});
- for(const item of proof.files){
-  await check();
-  const contract={bucket:'equinox-local-main',key:`snapshots/${sourceSha}/${item.name}`,ifNoneMatch:'*',metadata:{sha256:item.sha256},cacheControl:CACHE,bytes:item.bytes,bodyName:item.name};
-  await store.putIfAbsent({contract,file:item.file});
+ // Network-bound R2 operations are independent per immutable file. Four
+ // bounded in-flight transfers preserve full SHA-256 admission before CAS.
+ for(let start=0;start<proof.files.length;start+=4){
+  await Promise.all(proof.files.slice(start,start+4).map(async item=>{
+   await check();
+   const contract={bucket:'equinox-local-main',key:`snapshots/${sourceSha}/${item.name}`,ifNoneMatch:'*',metadata:{sha256:item.sha256},cacheControl:CACHE,bytes:item.bytes,bodyName:item.name};
+   await store.putIfAbsent({contract,file:item.file});
+  }));
  }
- for(const item of proof.files){
-  const head=await store.headArchive(sourceSha,item.name);
-  if(head.bytes!==item.bytes||head.immutable!==true||(head.sha256Metadata!=null&&head.sha256Metadata!==item.sha256))throw Error('Remote R2 immutable file metadata mismatch.');
-  const hash=createHash('sha256');let bytes=0;
-  for await(const chunk of store.streamArchive(sourceSha,item.name)){hash.update(chunk);bytes+=chunk.length;if(bytes>item.bytes)throw Error('R2 immutable body exceeded signed bounds.');}
-  if(bytes!==item.bytes||hash.digest('hex')!==item.sha256)throw Error('Remote R2 immutable object full-body mismatch.');
+ for(let start=0;start<proof.files.length;start+=4){
+  await Promise.all(proof.files.slice(start,start+4).map(async item=>{
+   const head=await store.headArchive(sourceSha,item.name);
+   if(head.bytes!==item.bytes||head.immutable!==true||(head.sha256Metadata!=null&&head.sha256Metadata!==item.sha256))throw Error('Remote R2 immutable file metadata mismatch.');
+   const hash=createHash('sha256');let bytes=0;
+   for await(const chunk of store.streamArchive(sourceSha,item.name)){hash.update(chunk);bytes+=chunk.length;if(bytes>item.bytes)throw Error('R2 immutable body exceeded signed bounds.');}
+   if(bytes!==item.bytes||hash.digest('hex')!==item.sha256)throw Error('Remote R2 immutable object full-body mismatch.');
+  }));
  }
  await check();
  const pointer=await store.putImmutableMainPointer({sourceSha,file:proof.pointerFile,sha256:proof.pointerSha256,bytes:proof.pointerBytes});
