@@ -31,7 +31,6 @@ const WINDOWS_TARGETS = Object.freeze(["win32-arm64", "win32-x64"]);
 const ALL_TARGETS = Object.freeze([...EQUINOX_LOCAL_SUPPORTED_RELEASE_TARGETS]);
 
 const SHARED_NATIVE_PATHS = Object.freeze([
-  ".github/workflows/release-validation.yml",
   "scripts/release/package-managed-release.mjs",
   "src/equinox-local-platform.js",
   "src/equinox-local-release-runtime-contract.js",

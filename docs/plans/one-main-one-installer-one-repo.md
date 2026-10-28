@@ -132,3 +132,5 @@ Original installed-Windows-host smoke adds negatives for missing signed native o
 **Maintainer policy — 2026-10-28:** Automated tests, smoke and acceptance suites are permanently retired from the public repository. Only exact native package builds, verified artifacts, Ed25519 signing, SHA/source identity controls, and publication jobs remain; removing tests is not evidence that the production installer has worked on a real host.
 
 **Post-merge site copy fix:** Keep `website/site/downloads/updates/install-equinox-local.ps1` byte-identical to `scripts/install-equinox-local.ps1`; site-only changes must not count as user-visible native Main updates or trigger the four-platform native rebuild. These are release-integrity and pipeline classification fixes, not tests.
+
+**Build follow-up:** Native package runtime-contract inputs no longer require the retired `release-validation.yml` workflow; all four original native builders rejected the missing historical workflow after test-suite retirement. The required native runtime/platform contract inputs stay unchanged.
