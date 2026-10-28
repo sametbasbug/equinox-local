@@ -37,7 +37,10 @@ async function fixture(t){
     launchHelperImpl:async args=>{
       events.push(args);
       assert.equal(args.command,"/bin/bash");
-      assert.deepEqual(args.args,[script]);
+      assert.equal(args.args.length,1);
+      assert.match(args.args[0],/\.original-installer\.sh$/u);
+      assert.notEqual(args.args[0],script);
+      assert.equal(await fs.readFile(args.args[0],"utf8"),await fs.readFile(script,"utf8"));
       assert.equal(args.options.cwd,releaseDir);
       assert.equal(args.options.detached,true);
       assert.equal(args.options.env.HOME,homeDir);
@@ -79,7 +82,7 @@ test("native Main handoff rejects altered original script, wrong signed selector
   await fs.rm(f.script);
   await fs.symlink("/bin/bash",f.script);
   await assert.rejects(scheduleEquinoxLocalSignedNativeMacInstaller(f.params),
-    /installer is not an owned, unchanged release file/u);
+    /installer is not an owned, unchanged release file|must be a normal, non-symlink file/u);
   await fs.rm(f.script);
   await fs.writeFile(f.script,"#!/bin/bash\n",{mode:0o600});
   await assert.rejects(scheduleEquinoxLocalSignedNativeMacInstaller({...f.params,

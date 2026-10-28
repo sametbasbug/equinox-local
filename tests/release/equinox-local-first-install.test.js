@@ -20,6 +20,7 @@ import {
 } from "../../src/equinox-local-first-install.js";
 import { equinoxLocalReleaseRuntimeContract } from "../../src/equinox-local-release-runtime-contract.js";
 import { createSignedMainInstallPointer, validateSignedMainInstallPointer } from "../../src/equinox-local-main-install-pointer.js";
+import { readBoundedNormalFile } from "../../src/equinox-local-safe-file.js";
 import { writeWindowsClassicRepairJournal, readWindowsClassicRepairJournal } from "../../src/equinox-local-windows-classic-repair-journal.js";
 import { EQUINOX_LOCAL_MAIN_BRANCH, EQUINOX_LOCAL_MAIN_REPOSITORY, EQUINOX_LOCAL_MAIN_UPDATE_CHANNEL, EQUINOX_LOCAL_MAIN_UPDATE_SCHEMA_VERSION } from "../../src/equinox-local-main-update.js";
 import {
@@ -1496,18 +1497,27 @@ test("each signed native SHA stores its own immutable private selector and canno
  const selectorB=await persist(b,ptrB);
  assert.equal(selectorA,path.join(location(a),"signed-selector.json"));
  assert.equal(selectorB,path.join(location(b),"signed-selector.json"));
- assert.equal((await fs.stat(selectorA)).mode&0o777,0o600);
- assert.equal((await fs.stat(selectorB)).mode&0o777,0o600);
- const aBytes=await fs.readFile(selectorA);
- const bBytes=await fs.readFile(selectorB);
+ // Every assertion reads through an open, no-follow descriptor; never
+ // trust a preceding pathname stat for a later file read or replacement.
+ const readSelector=filename=>readBoundedNormalFile(filename,{
+  minBytes:1,maxBytes:16*1024,requireSingleLink:true,label:"Fixture signed selector",
+ });
+ const aRead=await readSelector(selectorA);
+ const bRead=await readSelector(selectorB);
+ assert.equal(aRead.stat.mode&0o777,0o600);
+ assert.equal(bRead.stat.mode&0o777,0o600);
+ const aBytes=aRead.data;
+ const bBytes=bRead.data;
  await persist(a,ptrA); // Replayed same signed SHA must be idempotent
- assert.deepEqual(await fs.readFile(selectorA),aBytes);
+ assert.deepEqual((await readSelector(selectorA)).data,aBytes);
  await assert.rejects(persist(a,ptrB),/source SHA|signed|match/i);
  await assert.rejects(persist(a,ptrA,{releaseDir:path.join(location(b),"release")}),/exact source-SHA store/u);
- await fs.writeFile(selectorA,"foreign file\n",{mode:0o600});
+ const foreign=await fs.open(selectorA,"r+");
+ try{await foreign.truncate(0);await foreign.writeFile("foreign file\n");}
+ finally{await foreign.close();}
  await assert.rejects(persist(a,ptrA),/Immutable native Main signed selector/u);
- assert.equal(await fs.readFile(selectorA,"utf8"),"foreign file\n");
- assert.deepEqual(await fs.readFile(selectorB),bBytes,"independent B keeps its original signature for A rollback");
+ assert.equal((await readSelector(selectorA)).data.toString("utf8"),"foreign file\n");
+ assert.deepEqual((await readSelector(selectorB)).data,bBytes,"independent B keeps its original signature for A rollback");
  assert.equal((await fs.readdir(location(a))).some(x=>x.endsWith(".tmp")),false);
 });
 

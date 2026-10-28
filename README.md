@@ -1,5 +1,3 @@
-> **Repository consolidation in progress (approved 2026-10-27):** The Astro/Cloudflare website now lives in [`website/`](website/), and Cloudflare production now builds its `website/` directory directly from this public repo’s `main`. The old site repository remains a rollback-only source until full migration acceptance. The long-term distribution goal is **one signed Main commit stream and the same external installer for install, update and repair**, with version numbers manually selected for presentation and occasional GitHub Releases. See the [approved migration plan](docs/plans/one-main-one-installer-one-repo.md). This transition does not change the active production updater or public URLs until their acceptance checks pass.
-
 <div align="center">
   <img src="assets/equinox-browser.png" alt="Equinox Browser icon" width="112" height="112" />
 
