@@ -45,7 +45,8 @@ type DoctorOptions = {
   runtimeHealthState?:string;runtimeVersion?:string;sourceCheckoutVersion?:string | null;
   browser?:DoctorBrowser;peekaboo?:{ready?:boolean;active?:boolean;needsAttention?:boolean};
   desktop?:{engine?:string;active?:boolean;version?:string;compatibility?:{ok?:boolean}};
-  update?:{selfUpdateSupported?:boolean;configured?:boolean};
+  update?:{selfUpdateSupported?:boolean;configured?:boolean;
+    main?:{mode?:string;checkSupported?:boolean;applyAvailable?:boolean;currentSha?:string | null}};
   onboarding?:{needsAttention?:boolean;issue?:string;connectedThroughTunnel?:boolean;transportConfigured?:boolean};
   developmentTunnel?:{configured?:boolean;actualVersion?:string;expectedVersion?:string;synchronized?:boolean} | null;
   developmentPeekaboo?:{configured?:boolean;actualVersion?:string;expectedVersion?:string;synchronized?:boolean} | null;
@@ -448,13 +449,26 @@ export async function getEquinoxLocalDoctorStatus({
       ));
     }
 
+    // Git-free signed-native Main uses its own Ed25519 verification and
+    // exact-SHA updater. The legacy numbered Stable selfUpdateSupported flag
+    // is deliberately false for this mode; it must not produce a false alert.
+    const signedNativeMainReady = installation.kind === "managed-main" &&
+      update?.configured === true && update?.main?.mode === "signed-native" &&
+      update.main.checkSupported === true && update.main.applyAvailable === true &&
+      typeof installation.sourceSha === "string" &&
+      update.main.currentSha === installation.sourceSha;
+    const signedStableReady = update?.configured === true &&
+      update.selfUpdateSupported === true;
+    const secureUpdatesReady = signedNativeMainReady || signedStableReady;
     checks.push(check(
       "updates",
       "Secure updates",
-      update?.selfUpdateSupported === true && update?.configured === true ? "pass" : "attention",
-      update?.selfUpdateSupported === true && update?.configured === true
-        ? "Signed Control Center updates are available for this managed installation."
-        : "The managed updater is not fully provisioned for signed stable releases.",
+      secureUpdatesReady ? "pass" : "attention",
+      signedNativeMainReady
+        ? "Production-signed Main updates are available with verified native source identity."
+        : signedStableReady
+          ? "Signed Control Center updates are available for this managed installation."
+          : "The secure updater is unavailable or its signed Main identity needs attention.",
     ));
 
     if (onboarding?.needsAttention) {

@@ -281,9 +281,22 @@ export async function getEquinoxLocalDoctorStatus({ installation, config, runtim
         else {
             checks.push(check("managed-lifecycle", "Managed lifecycle", "attention", "The managed lifecycle type does not match this supported host."));
         }
-        checks.push(check("updates", "Secure updates", update?.selfUpdateSupported === true && update?.configured === true ? "pass" : "attention", update?.selfUpdateSupported === true && update?.configured === true
-            ? "Signed Control Center updates are available for this managed installation."
-            : "The managed updater is not fully provisioned for signed stable releases."));
+        // Git-free signed-native Main uses its own Ed25519 verification and
+        // exact-SHA updater. The legacy numbered Stable selfUpdateSupported flag
+        // is deliberately false for this mode; it must not produce a false alert.
+        const signedNativeMainReady = installation.kind === "managed-main" &&
+            update?.configured === true && update?.main?.mode === "signed-native" &&
+            update.main.checkSupported === true && update.main.applyAvailable === true &&
+            typeof installation.sourceSha === "string" &&
+            update.main.currentSha === installation.sourceSha;
+        const signedStableReady = update?.configured === true &&
+            update.selfUpdateSupported === true;
+        const secureUpdatesReady = signedNativeMainReady || signedStableReady;
+        checks.push(check("updates", "Secure updates", secureUpdatesReady ? "pass" : "attention", signedNativeMainReady
+            ? "Production-signed Main updates are available with verified native source identity."
+            : signedStableReady
+                ? "Signed Control Center updates are available for this managed installation."
+                : "The secure updater is unavailable or its signed Main identity needs attention."));
         if (onboarding?.needsAttention) {
             checks.push(check("chatgpt-connection", "ChatGPT connection", "attention", onboarding.issue || "The saved tunnel connection needs attention."));
         }
