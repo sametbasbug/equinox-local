@@ -122,22 +122,21 @@ Read the [architecture](docs/architecture.md), [Browser](docs/browser.md), [upda
 | [Architecture](docs/architecture.md) | How the runtime, UI, MCP gateways and native platforms fit together |
 | [Security model](docs/security-model.md) · [Security reports](SECURITY.md) | Permissions, trust boundaries, responsible disclosure |
 | [Updates & rollback](docs/updates.md) | Stable vs Main, signatures and recovery |
-| [Contributing](CONTRIBUTING.md) · [Changelog](CHANGELOG.md) | Local development, tests, release history |
+| [Contributing](CONTRIBUTING.md) · [Changelog](CHANGELOG.md) | Local development and release history |
 | [Migrating to 5.0](docs/migrating-to-5.0.md) | Historic major-version transition notes |
 
 ## For developers
 
-This is the **canonical public source** for Equinox Local, Equinox Browser, native macOS/Windows shells, installers and tests. The optional private factory tooling is **not** another product fork; production and factory environments consume verified canonical source while keeping local configuration and credentials outside Git.
+This is the **canonical public source** for Equinox Local, Equinox Browser, native macOS/Windows shells and installers. The optional private factory tooling is **not** another product fork; production and factory environments consume verified canonical source while keeping local configuration and credentials outside Git.
 
 ```bash
 git clone https://github.com/sametbasbug/equinox-local.git
 cd equinox-local
 npm ci
 npm run check
-npm run test:fast
 ```
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for the supported Node version, full test suite, Windows prerequisites and PR guidance. Please use the [issue templates](https://github.com/sametbasbug/equinox-local/issues/new/choose) for problems or improvements, and [private vulnerability reporting](SECURITY.md) for security issues.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the supported Node version, Windows prerequisites and PR guidance. Please use the [issue templates](https://github.com/sametbasbug/equinox-local/issues/new/choose) for problems or improvements, and [private vulnerability reporting](SECURITY.md) for security issues.
 
 ## Releases & license
 

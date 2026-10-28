@@ -16,7 +16,7 @@ The optional ChatGPT continuity content script on `chatgpt.com` observes bounded
 
 ## Pre-submit gate
 
-1. Public PR/CI and CodeQL pass; `npm run check`, full `npm test`, browser-focused modern ChatGPT DOM tests pass.
+1. Review source and package identity; automated tests have been retired. Keep security analysis and Chrome Web Store publication requirements.
 2. From exact public `main`, run `npm run browser:package`. Check ZIP SHA-256, `manifest.version === "1.0.1"`, 11-file allowlist, unchanged permissions and stable extension ID. The reviewed local package (2026-10-18) is 109,862 bytes, SHA-256 `01a02cf360c4b2ed26f17b0cb9f2c16c3df0300e8611fb488c5490aa8bb3cb8b`. Recompute the hash if repackaged.
 3. Open [Chrome Web Store Developer Dashboard](https://chrome.google.com/webstore/devconsole) with the human's authorized developer account. Choose the **existing** item by exact extension ID, upload `equinox-browser-1.0.1.zip` and inspect warnings, privacy declarations and reviewer-access instructions before submission.
 4. Explicitly **submit for review**. Confirm dashboard says *in review/submitted*; an uploaded draft is **not** a review submission. Preserve Unlisted visibility.

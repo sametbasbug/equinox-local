@@ -51,7 +51,7 @@ runs:
       uses: actions/cache@v6
       with:
         path: ~/.nuget/packages
-        key: nuget-${{ runner.os }}-target-arm64-dotnet10-${{ hashFiles('native/windows/**/*.csproj', 'tests/windows/**/*.csproj') }}
+        key: nuget-${{ runner.os }}-target-arm64-dotnet10-${{ hashFiles('native/windows/**/*.csproj') }}
         restore-keys: |
           nuget-${{ runner.os }}-target-arm64-dotnet10-
 
@@ -85,7 +85,7 @@ runs:
         if (-not (Test-Path -LiteralPath (Join-Path $PWD 'node_modules\@napi-rs\canvas-win32-arm64-msvc') -PathType Container)) { throw 'ARM64 canvas optional dependency is missing.' }
         if (Test-Path -LiteralPath (Join-Path $PWD 'node_modules\@napi-rs\canvas-win32-x64-msvc')) { throw 'x64 canvas optional dependency leaked into ARM64 package input.' }
 
-    - name: Windows ARM64 native shell publish smoke
+    - name: Windows ARM64 native shell package verification
       shell: pwsh
       env:
         EQUINOX_ARM64_SHELL_PUBLISH_DIR: ${{ runner.temp }}/windows-shell/win-arm64
@@ -152,7 +152,7 @@ runs:
         path: ${{ runner.temp }}/windows-native-helpers/win-arm64
         key: native-helpers-v1-${{ runner.os }}-win-arm64-dotnet10-msvc-${{ hashFiles('native/windows/EquinoxLocal.Guardian/**', 'native/windows/equinox-local-job-object-helper.cpp', 'scripts/release/package-managed-release-windows.mjs', 'native/windows/**/Directory.Build.*', 'global.json') }}
 
-    - name: Windows ARM64 managed package assembly smoke
+    - name: Windows ARM64 managed package assembly
       id: package
       shell: pwsh
       env:

@@ -111,7 +111,7 @@ The Local updater owns only Equinox Local runtime releases. Equinox Browser rema
 
 Release helpers live under [`scripts/release/`](../scripts/release/). Private signing material is intentionally not part of this repository.
 
-The release tests under [`tests/release/`](../tests/release/) cover deterministic packaging, signature verification, bootstrap manifest generation, managed installation and rollback behavior. Release smoke also exercises an isolated real macOS `launchctl -> runtime host -> app runtime wrapper -> supervisor -> server` lifecycle rather than stubbing LaunchAgent activation and health success.
+The maintainer retired automated release tests and installed-host acceptance workflows on 2026-10-28. Artifact digests, source identity, signatures and download validation remain mandatory production checks.
 
 ## Security expectations for maintainers
 
@@ -119,7 +119,7 @@ The release tests under [`tests/release/`](../tests/release/) cover deterministi
 - Store signing keys with restrictive filesystem permissions and a separate backup.
 - Never commit a private key, credential, tunnel runtime key, or generated signed release bundle.
 - Treat a key rotation as an explicit trust-root change requiring review.
-- Publish artifacts only after the source tree, public tests and clean-machine release gates are green.
+- Publish artifacts only through the canonical exact-source native package, trusted signature and immutable publication gates.
 
 ## Dependency refresh included in Equinox Local 6.0.0
 

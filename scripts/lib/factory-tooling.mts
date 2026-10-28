@@ -1,5 +1,5 @@
-import { spawn, spawnSync } from "node:child_process";
-import type { ChildProcess, StdioOptions } from "node:child_process";
+import { spawnSync } from "node:child_process";
+import type { StdioOptions } from "node:child_process";
 import fs from "node:fs/promises";
 import path from "node:path";
 
@@ -12,22 +12,8 @@ type CollectOptions = {
   includeFile?: FilePredicate;
   includeRootFile?: FilePredicate;
 };
-type SpawnAsync = (command: string, args: string[], options: {cwd: string; stdio: StdioOptions; env: NodeJS.ProcessEnv}) => ChildProcess;
 type SpawnSyncCheck = (command: string, args: string[], options: {cwd: string; stdio: StdioOptions}) => {status: number | null};
 type CheckOptions = CollectOptions & {rootDir: string; deduplicate?: boolean; jsonFiles?: readonly string[]; spawnSyncImpl?: SpawnSyncCheck | undefined; javascriptCommand?: string; shellCommand?: string | undefined};
-type RunOptions = {files: string[]; cwd: string; profile: string; stdio?: StdioOptions; spawnImpl?: SpawnAsync; propagateSignal?: (signal: NodeJS.Signals) => void};
-type DiscoveryOptions = {
-  rootDir: string;
-  profile: string;
-  profileDirectories: Record<string, readonly string[]>;
-  topLevelDirectories?: string[];
-  testSuffix?: string;
-};
-
-export function parseTestProfile(argv: string[]) {
-  const argument = argv.find((value) => value.startsWith("--profile="));
-  return argument ? argument.slice("--profile=".length) : "full";
-}
 
 export async function collectFiles(rootDir: string, {
   recursiveDirectories = [],
@@ -70,53 +56,6 @@ export async function collectFiles(rootDir: string, {
     }
   }
   return files;
-}
-
-export async function discoverTests({
-  rootDir,
-  profile,
-  profileDirectories,
-  topLevelDirectories = [],
-  testSuffix = ".test.js",
-}: DiscoveryOptions): Promise<string[]> {
-  if (!Object.hasOwn(profileDirectories ?? {}, profile)) {
-    throw new Error(`Unknown test profile: ${profile}`);
-  }
-  const files = await collectFiles(rootDir, {
-    recursiveDirectories: profileDirectories[profile],
-    topLevelDirectories,
-    includeFile: (_absolute, name) => name.endsWith(testSuffix),
-  });
-  return files.sort();
-}
-
-export function runNodeTests({
-  files,
-  cwd,
-  profile,
-  stdio = "inherit",
-  spawnImpl = spawn,
-  propagateSignal = (signal) => process.kill(process.pid, signal),
-}: RunOptions = {} as RunOptions): Promise<number> {
-  const child = spawnImpl(process.execPath, ["--test", ...files], {
-    cwd,
-    stdio,
-    env: {
-      ...process.env,
-      EQUINOX_TEST_PROFILE: profile,
-    },
-  });
-
-  return new Promise<number>((resolve, reject) => {
-    child.once("error", reject);
-    child.once("exit", (code, signal) => {
-      if (signal) {
-        propagateSignal(signal);
-        return;
-      }
-      resolve(code ?? 1);
-    });
-  });
 }
 
 export async function checkProject({

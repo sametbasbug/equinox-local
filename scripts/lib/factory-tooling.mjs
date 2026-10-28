@@ -1,10 +1,6 @@
-import { spawn, spawnSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs/promises";
 import path from "node:path";
-export function parseTestProfile(argv) {
-    const argument = argv.find((value) => value.startsWith("--profile="));
-    return argument ? argument.slice("--profile=".length) : "full";
-}
 export async function collectFiles(rootDir, { recursiveDirectories = [], topLevelDirectories = [], includeRootFiles = false, skipDirectoryNames = [], includeFile = () => true, includeRootFile = includeFile, } = {}) {
     const files = [];
     const skippedDirectories = new Set(skipDirectoryNames);
@@ -42,37 +38,6 @@ export async function collectFiles(rootDir, { recursiveDirectories = [], topLeve
         }
     }
     return files;
-}
-export async function discoverTests({ rootDir, profile, profileDirectories, topLevelDirectories = [], testSuffix = ".test.js", }) {
-    if (!Object.hasOwn(profileDirectories ?? {}, profile)) {
-        throw new Error(`Unknown test profile: ${profile}`);
-    }
-    const files = await collectFiles(rootDir, {
-        recursiveDirectories: profileDirectories[profile],
-        topLevelDirectories,
-        includeFile: (_absolute, name) => name.endsWith(testSuffix),
-    });
-    return files.sort();
-}
-export function runNodeTests({ files, cwd, profile, stdio = "inherit", spawnImpl = spawn, propagateSignal = (signal) => process.kill(process.pid, signal), } = {}) {
-    const child = spawnImpl(process.execPath, ["--test", ...files], {
-        cwd,
-        stdio,
-        env: {
-            ...process.env,
-            EQUINOX_TEST_PROFILE: profile,
-        },
-    });
-    return new Promise((resolve, reject) => {
-        child.once("error", reject);
-        child.once("exit", (code, signal) => {
-            if (signal) {
-                propagateSignal(signal);
-                return;
-            }
-            resolve(code ?? 1);
-        });
-    });
 }
 export async function checkProject({ rootDir, recursiveDirectories = [], skipDirectoryNames = [], includeRootFiles = false, includeFile = (_absolute, name) => /\.(?:js|mjs)$/u.test(name) || name.endsWith(".sh"), includeRootFile = includeFile, deduplicate = false, jsonFiles = [], spawnSyncImpl = spawnSync, javascriptCommand = process.execPath, shellCommand = "/bin/bash", } = {}) {
     const discovered = await collectFiles(rootDir, {

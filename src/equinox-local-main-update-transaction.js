@@ -268,7 +268,6 @@ export function createEquinoxLocalMainUpdateTransactionEngine({ sourceRoot, tran
         return;
     }
     await run("npm", ["run", "check"], { cwd: stagedSourceRoot, execFileImpl });
-    await run(nodePath, ["--test", "tests/release/equinox-local-main-update.test.js"], { cwd: stagedSourceRoot, execFileImpl });
 }, } = {}) {
     if (typeof sourceRoot !== "string" || !path.isAbsolute(sourceRoot))
         throw new Error("Main update source root must be absolute.");

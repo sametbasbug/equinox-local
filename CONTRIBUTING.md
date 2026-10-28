@@ -1,10 +1,10 @@
 # Contributing to Equinox Local
 
-Thanks for taking an interest in Equinox Local. The project welcomes focused bug fixes, tests, documentation improvements, and features that preserve its explicit local security boundaries.
+Thanks for taking an interest in Equinox Local. The project welcomes focused bug fixes, documentation improvements, and features that preserve its explicit local security boundaries.
 
 ## Canonical repository
 
-`sametbasbug/equinox-local` owns the actual product source, public tests, platform/native code, installers, CI and CodeQL. Start product changes from this repository, use a focused `equinox/` branch and target `main` here. Outside contributors fork this repository directly. No private factory checkout, public projection/export, duplicate product commit or factory backport is required.
+`sametbasbug/equinox-local` owns the actual product source, platform/native code, installers, CI and CodeQL. Start product changes from this repository, use a focused `equinox/` branch and target `main` here. Outside contributors fork this repository directly. No private factory checkout, public projection/export, duplicate product commit or factory backport is required.
 
 Private factory/ops tooling consumes accepted canonical source for maintainer-authorized publication; its credentials, machine configuration and history are outside this contribution boundary. Source ownership does not itself authorize a release or change users' update channel.
 
@@ -15,10 +15,9 @@ Equinox Local targets macOS and Windows on ARM64/x64. Use the pinned **Node.js 2
 ```bash
 npm ci
 npm run check
-npm run test:fast
 ```
 
-Use the fast profile for normal local iteration. Run the full `npm test` suite before release/publication and when changing release/install/update/native-lifecycle behavior.
+The maintainer has retired automated tests; do not add or execute test suites. Preserve native package admission, signing and production integrity checks.
 
 Keep changes narrow enough to review. If a proposal changes a major product boundary, opening an issue first is usually more useful than arriving with a large implementation.
 
@@ -26,7 +25,6 @@ Keep changes narrow enough to review. If a proposal changes a major product boun
 
 - `src/` — Equinox Local runtime and Control Center source.
 - `extension/` — Equinox Browser.
-- `tests/` — public unit/browser/release coverage.
 - `scripts/` — installer, packaging, and release tooling.
 - `examples/` — generic configuration examples only.
 - `docs/` — architecture and security documentation.
@@ -38,8 +36,8 @@ Machine-specific paths, credentials, private deployment profiles, and retired/pr
 A pull request should:
 
 1. explain the user-visible or security-relevant behavior being changed;
-2. include regression coverage when behavior changes;
-3. keep `npm run check` and `npm run test:fast` green during iteration, and the full `npm test` suite green before release/publication;
+2. preserve production security and signed-release constraints;
+3. keep normal packaging and native build contracts intact;
 4. avoid unrelated formatting or refactors; and
 5. update documentation when a public contract changes.
 
@@ -61,20 +59,13 @@ If a feature appears to require relaxing one of these rules, discuss the design 
 
 ## Continuous integration
 
-Product-impacting changes run the required CI/CodeQL and macOS/Windows native acceptance gates. **Documentation/metadata-only changes** use a separate lightweight Docs workflow and do not advance the admitted `main-snapshot` runtime SHA. CI status is visible on each PR; do not publish a numbered Stable release from PR checks alone.
+Product-impacting releases use exact-SHA native macOS/Windows package construction, production signing and CodeQL analysis. **Documentation/metadata-only changes** use a separate lightweight Docs workflow and do not advance the admitted `main-snapshot` runtime SHA. CI status is visible on each PR; do not publish a numbered Stable release from PR checks alone.
 
-macOS/Windows ARM64 and x64 release artifacts and installer smoke have separate platform ownership. Native packaging cannot borrow a successful test or artifact from a different commit. See [architecture](docs/architecture.md) and [updates](docs/updates.md) for the detailed admission and rollback model.
+macOS/Windows ARM64 and x64 packages must each be built for the exact target source SHA. Do not reuse artifacts from another commit. See [architecture](docs/architecture.md) and [updates](docs/updates.md) for the detailed admission and rollback model.
 
-## Tests
+## Automated tests
 
-Tests intentionally live under `tests/` rather than beside every source file. Add new coverage to the closest existing category:
-
-- `tests/unit/`
-- `tests/browser/`
-- `tests/release/`
-- `tests/fixtures/`
-
-The root test runner discovers `*.test.js` recursively. `npm run test:fast` selects the unit/browser profile; `npm test` includes release coverage as well.
+Automated tests, smoke and acceptance jobs have been removed by maintainer decision. Do not add new ones. This does not relax production signature, hash, platform or source-identity verification.
 
 ## Security reports
 
