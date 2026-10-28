@@ -75,7 +75,7 @@ test("native proof IPC never claims success of A/B and exact Windows Node worker
  assert.match(handoff,/return expected; \/\/ Only the explicit PROOF launcher can start B, never switch A\/B/u);
  assert.match(ipc,/proof-started-read-only/u);
  assert.match(worker,/startEquinoxWindowsMainWorkerProof/u);
- assert.match(worker,/--audit-signed-native-worker-pipe/u);
+ assert.match(worker,/--audit-signed-native-owner-lease/u);
  assert.match(worker,/finally\{\s*await proof\.close\(\);/u);
  assert.match(worker,/throw new Error\("Signed Windows Main B passed read-only Guardian kernel HMAC, but original native OS mutation session is not authorized\."\)/u);
  assert.match(originalGuardian,/--audit-signed-native-worker-pipe/u);

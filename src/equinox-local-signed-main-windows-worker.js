@@ -30,7 +30,7 @@ async function auditOriginalInstalledGuardian({ guardianPath, env = process.env 
     });
 }
 async function auditOriginalInstalledGuardianPipe({ guardianPath, env = process.env, }) {
-    await execFile(guardianPath, ["--audit-signed-native-worker-pipe"], {
+    await execFile(guardianPath, ["--audit-signed-native-owner-lease"], {
         timeout: 120_000, windowsHide: true, maxBuffer: 4096,
         env: {
             ...(env.SystemRoot ? { SystemRoot: env.SystemRoot } : {}),

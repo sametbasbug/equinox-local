@@ -195,7 +195,7 @@ test("same original packaged Main worker script dispatches native Windows B to d
  assert.match(safety,/guardian_os_handoff_required/u);
  assert.match(safety,/production-signed journal and B release fingerprint/u);
  assert.match(safety,/--audit-signed-native-worker-argv/u);
- assert.match(safety,/--audit-signed-native-worker-pipe/u);
+ assert.match(safety,/--audit-signed-native-owner-lease/u);
  assert.match(safety,/startEquinoxWindowsMainWorkerProof/u);
  assert.match(safety,/finally\{\s*await proof\.close\(\);/u);
  assert.match(safety,/original native OS mutation session is not authorized/u);
