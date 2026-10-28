@@ -1766,6 +1766,63 @@ test("Mac signed Main coordinator persists exact native recovery descriptor + ex
  await assert.rejects(prepareSignedMainInstallerMacActivation(f.opts),{code:"EEXIST"});
 });
 
+test("original external Mac signed Main coordinator admits genuinely empty A=null using the SAME native descriptor, owner and ONE detached launchd worker",async t=>{
+ const f=await signedMacInstallerCoordinatorFixture(t);
+ await fs.unlink(f.current);
+ await fs.rm(path.dirname(f.stable),{recursive:true,force:true});
+ const events=[];
+ const {readEquinoxLocalMainNativeRecoveryDescriptor,
+   readEquinoxLocalSignedNativeMacReceipt}=await import("../../src/equinox-local-main-native-recovery.js");
+ const result=await prepareSignedMainInstallerMacActivation({...f.opts,
+  prepareLifecycleImpl:async args=>{
+   events.push("prepare B owned by original signed transaction");
+   assert.equal(args.installation.releaseDir,null);
+   assert.equal(args.storedCandidate.sourceSha,"b".repeat(40));
+   const descriptor=await readEquinoxLocalMainNativeRecoveryDescriptor({
+    transactionRoot:f.root,transactionId:f.tx});
+   assert.deepEqual(descriptor.previous,{kind:"none"});
+   assert.equal(JSON.parse(await fs.readFile(path.join(f.root,"active.json"),"utf8")).kind,
+    "signed-native");
+   await assert.rejects(fs.lstat(f.current),{code:"ENOENT"});
+   return {stored:{releaseDir:f.native}};
+  },
+  scheduleImpl:async args=>{
+   events.push("schedule original detached B worker");
+   assert.equal(args.signedNative,true);
+   assert.equal(args.workerPath,path.join(f.native,"equinox-local-main-update-worker.js"));
+   const receipt=await readEquinoxLocalSignedNativeMacReceipt({
+    transactionRoot:f.root,transactionId:f.tx,
+    sourceSha:"b".repeat(40),target:"darwin-arm64",
+    runtimeContractSha256:"c".repeat(64),
+   });
+   assert.equal(receipt.status,"admitted");
+   return {scheduled:true};
+  },
+ });
+ assert.equal(result.status,"scheduled");
+ assert.equal(result.sourceSha,"b".repeat(40));
+ assert.deepEqual(events,["prepare B owned by original signed transaction",
+  "schedule original detached B worker"]);
+ await assert.rejects(fs.lstat(f.current),{code:"ENOENT"});
+ await assert.rejects(fs.lstat(path.join(f.root,"current-native.json")),{code:"ENOENT"});
+});
+
+test("first Main clean native preparation failure releases original signed owner only after re-proving EMPTY A",async t=>{
+ const f=await signedMacInstallerCoordinatorFixture(t);
+ await fs.unlink(f.current);
+ await fs.rm(path.dirname(f.stable),{recursive:true,force:true});
+ const {readEquinoxLocalSignedNativeMacReceipt}=await import("../../src/equinox-local-main-native-recovery.js");
+ await assert.rejects(prepareSignedMainInstallerMacActivation({...f.opts,
+  prepareLifecycleImpl:async()=>{throw Error("fresh app preparation refused");},
+  scheduleImpl:async()=>assert.fail("no LaunchAgent should be scheduled"),
+ }),/fresh app preparation refused/u);
+ await assert.rejects(fs.lstat(path.join(f.root,"active.json")),{code:"ENOENT"});
+ const receipt=JSON.parse(await fs.readFile(path.join(f.root,"receipts",
+  f.tx+".signed-native.json"),"utf8"));
+ assert.equal(receipt.status,"rolled_back");
+ await assert.rejects(fs.lstat(f.current),{code:"ENOENT"});
+});
+
 async function sameShaSignedMacFixture(t){
  const f=await signedMacInstallerCoordinatorFixture(t);
  await fs.unlink(f.current);
@@ -2156,4 +2213,59 @@ test("admitted signed native recovery refuses a false absence response even when
   proveAbsentImpl:async()=>({absent:false}),
  }),/absence is not proven/u);
  assert.equal(JSON.parse(await fs.readFile(path.join(f.root,"active.json"),"utf8")).transactionId,f.tx);
+});
+
+
+test("clean Mac A=null abandoned admission is recoverable ONLY when original signed B and no live launchd worker or foreign A are proven",async t=>{
+ const f=await signedMacInstallerCoordinatorFixture(t);
+ await fs.unlink(f.current);
+ await fs.rm(path.dirname(f.stable),{recursive:true,force:true});
+ const selectorPath=path.join(path.dirname(f.native),"signed-selector.json");
+ await fs.writeFile(selectorPath,JSON.stringify(f.signedPointer),{mode:0o600});
+ await assert.rejects(prepareSignedMainInstallerMacActivation({...f.opts,
+  prepareLifecycleImpl:async()=>({stored:{releaseDir:f.native}}),
+  scheduleImpl:async()=>{throw Error("launchd bootstrap unknown")},
+ }),/launchd bootstrap unknown/u);
+ const active=JSON.parse(await fs.readFile(path.join(f.root,"active.json"),"utf8"));
+ assert.equal(active.kind,"signed-native");
+ const probes=[];
+ const opts={
+  transactionId:f.tx,homeDir:f.homeDir,platform:"darwin",arch:"arm64",
+  uid:process.getuid(),env:{HOME:f.homeDir},
+  inspectImpl:f.opts.inspectImpl,verifyPointerImpl:f.options.verifyPointerImpl,
+  proveAbsentImpl:async()=>{probes.push("exact worker absent");return {absent:true}},
+  verifyPriorHealthImpl:async()=>assert.fail("an empty A has no health to verify"),
+ };
+ await assert.rejects(recoverAbandonedSignedMainMacAdmission({...opts,
+  proveAbsentImpl:async()=>({absent:false}),
+ }),/absence is not proven/u);
+ assert.equal(JSON.parse(await fs.readFile(path.join(f.root,"active.json"),"utf8")).kind,"signed-native");
+ const recovered=await recoverAbandonedSignedMainMacAdmission(opts);
+ assert.equal(recovered.status,"rolled_back");
+ assert.equal(recovered.workerNeverStarted,true);
+ assert.deepEqual(probes,["exact worker absent","exact worker absent"]);
+ await assert.rejects(fs.lstat(f.current),{code:"ENOENT"});
+ await assert.rejects(fs.lstat(path.join(f.root,"active.json")),{code:"ENOENT"});
+ const receipt=JSON.parse(await fs.readFile(path.join(f.root,"receipts",f.tx+".signed-native.json"),"utf8"));
+ assert.equal(receipt.status,"rolled_back");
+});
+
+test("abandoned clean Mac first-install refuses newly introduced foreign apphost after pending launchd error, retaining owner",async t=>{
+ const f=await signedMacInstallerCoordinatorFixture(t);
+ await fs.unlink(f.current);
+ await fs.rm(path.dirname(f.stable),{recursive:true,force:true});
+ await fs.writeFile(path.join(path.dirname(f.native),"signed-selector.json"),JSON.stringify(f.signedPointer),{mode:0o600});
+ await assert.rejects(prepareSignedMainInstallerMacActivation({...f.opts,
+  prepareLifecycleImpl:async()=>({stored:{releaseDir:f.native}}),
+  scheduleImpl:async()=>{throw Error("launchd ambiguous")},
+ }),/launchd ambiguous/u);
+ const app=path.join(f.homeDir,"Applications","Equinox Local.app");
+ await fs.mkdir(app,{recursive:true,mode:0o700});
+ await assert.rejects(recoverAbandonedSignedMainMacAdmission({
+  transactionId:f.tx,homeDir:f.homeDir,platform:"darwin",arch:"arm64",
+  uid:process.getuid(),env:{HOME:f.homeDir},
+  inspectImpl:f.opts.inspectImpl,verifyPointerImpl:f.options.verifyPointerImpl,
+  proveAbsentImpl:async()=>({absent:true}),
+ }),/cannot displace a prior managed\/Factory/u);
+ assert.equal(JSON.parse(await fs.readFile(path.join(f.root,"active.json"),"utf8")).kind,"signed-native");
 });

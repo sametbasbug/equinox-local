@@ -73,16 +73,22 @@ test("direct Main clean install durably records previous NONE, but old A/B worke
   transactionRoot:root,transactionId:TX}),/immutable identity mismatch/u);
  await assert.rejects(recoverEquinoxLocalMainNativeLifecycle({
   transition:transitionB,transactionRoot:root,transactionId:TX,installation,
-  inspectStoredReleaseImpl:async()=>assert.fail("missing first-install lifecycle cannot touch B"),
- }),/requires a verified new apphost and launchd bootstrap rollback/u);
- await assert.rejects(runEquinoxLocalSignedMacNativeHandoff({
+  inspectStoredReleaseImpl:async()=>{throw Error("Untrusted first-install B is not admitted");},
+ }),/Untrusted first-install B is not admitted/u);
+ const events=[];
+ const outcome=await runEquinoxLocalSignedMacNativeHandoff({
   transactionRoot:root,transactionId:TX,sourceSha:B,target:"darwin-arm64",
   version:"6.2.1",runtimeContractSha256:DB,
-  lifecycle:{previousPointer:null,activate:async()=>assert.fail("no activation"),
-   rollback:async()=>assert.fail("no rollback"),commit:async()=>assert.fail("no commit")},
+  lifecycle:{previousPointer:null,activate:async()=>events.push("first native B"),
+   rollback:async()=>events.push("no-A rollback"),commit:async()=>events.push("commit B")},
   assertWorkerImpl:async()=>{},readDescriptorImpl:async()=>durable,
   assertOwnerImpl:async()=>{},readReceiptImpl:async()=>({status:"admitted"}),
- }),/requires a dedicated new-runtime bootstrap\/rollback admission/u);
+  writeReceiptImpl:async({status})=>events.push(status),
+  verifyNativeImpl:async()=>true,restartImpl:async()=>assert.fail("no existing A service to restart"),
+  releaseOwnerImpl:async()=>events.push("owner released"),
+ });
+ assert.equal(outcome.status,"healthy");
+ assert.deepEqual(events,["activating","first native B","commit B","healthy","owner released"]);
  assert.throws(()=>equinoxLocalMainNativeRecoveryDescriptor({transition:transition("win32-x64"),
   previousPointer:null,installation:{...installation,target:"win32-x64"}}),
  /Unsupported Equinox Local version/u,"Windows direct install is not implicitly enabled by Mac descriptor.");

@@ -5,7 +5,10 @@ import path from "node:path";
 import {generateKeyPairSync} from "node:crypto";
 import test from "node:test";
 
-import { prepareEquinoxLocalMainNativeLifecycle } from "../../src/equinox-local-main-native-activation.js";
+import { prepareEquinoxLocalMainNativeLifecycle,createEquinoxLocalMainMacFreshFirstLifecycle } from "../../src/equinox-local-main-native-activation.js";
+import { appRuntimeWrapper,launchAgentPlist,nativeHostManifest,nativeHostWrapper,EQUINOX_BROWSER_NATIVE_HOST_NAME } from "../../src/equinox-local-bootstrap.js";
+import { equinoxLocalAppExecutablePath,equinoxLocalAppRuntimeWrapperPath,equinoxLocalAppPath } from "../../src/equinox-local-app-host.js";
+import { createEquinoxLocalMainNativePointerTransition } from "../../src/equinox-local-main-native-pointer-transition.js";
 import { createSignedMainInstallPointer, validateSignedMainInstallPointer } from "../../src/equinox-local-main-install-pointer.js";
 
 const A = "1".repeat(40);
@@ -465,4 +468,133 @@ test("real filesystem signed native A-to-B rollback restores BOTH exact SHAs whe
  assert.equal((await readPointerImpl(nativePath)).sourceSha,A);
  await life.rollback();
  assert.equal((await readPointerImpl(nativePath)).runtimeContractSha256,DA);
+});
+
+
+async function cleanNativeMacLifecycleFixture(t,{failBootstrap=false}={}){
+ const homeDir=await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(),"equinox-main-first-native-")));
+ t.after(()=>fs.rm(homeDir,{recursive:true,force:true}));
+ const installRoot=path.join(homeDir,"Library","Application Support","Equinox Local");
+ const transactionRoot=path.join(installRoot,"main-update");
+ const target="darwin-arm64",sourceSha=B,runtimeContractSha256=DB;
+ const releaseDir=path.join(transactionRoot,"native-store",target,sourceSha,"release");
+ await fs.mkdir(releaseDir,{recursive:true,mode:0o700});
+ const app= equinoxLocalAppPath(homeDir),agent=path.join(homeDir,"Library","LaunchAgents","dev.equinox.local.plist");
+ const hostWrapper=path.join(installRoot,"equinox-browser-native-host");
+ const hostManifest=path.join(homeDir,"Library","Application Support","Google","Chrome",
+  "NativeMessagingHosts",EQUINOX_BROWSER_NATIVE_HOST_NAME+".json");
+ const files=[
+  [agent,launchAgentPlist({homeDir,installRoot})],
+  [equinoxLocalAppRuntimeWrapperPath(homeDir),appRuntimeWrapper({installRoot})],
+  [hostWrapper,nativeHostWrapper({installRoot})],
+  [hostManifest,nativeHostManifest(hostWrapper)],
+ ];
+ const events=[];
+ let loaded=false,pointer=null;
+ const put=async(name,data)=>{
+  await fs.mkdir(path.dirname(name),{recursive:true,mode:0o700});
+  await fs.writeFile(name,data,{mode:0o600});
+ };
+ const bootstrapImpl=async()=>{
+  events.push("original managed bootstrap");
+  for(const [name,data] of files.slice(0,failBootstrap?1:undefined))await put(name,data);
+  await fs.mkdir(path.join(installRoot,"workspace"),{recursive:true});
+  await put(path.join(installRoot,"workspace","preserve-user-data.txt"),"user data");
+  if(failBootstrap)throw Error("partial original bootstrap failed");
+  await fs.mkdir(app,{recursive:true,mode:0o700});
+  await put(path.join(app,"owned"),"signed B apphost");
+  return {version:"6.2.1"};
+ };
+ const serviceLabel="dev.equinox.local";
+ const notFound=Object.assign(Error("missing"),{code:113,
+  stderr:'Could not find service "'+serviceLabel+'" in domain for user gui: '+process.getuid()});
+ const execFileImpl=async(_file,args)=>{
+  events.push(args.join(" "));
+  if(args[0]==="print" && args[1]==="gui/"+process.getuid())return {stdout:"domain"};
+  if(args[0]==="print"&&args[1]==="gui/"+process.getuid()+"/"+serviceLabel){
+   if(!loaded)throw notFound;
+   return {stdout:"state = running\nprogram = "+equinoxLocalAppExecutablePath(homeDir)+"\n"};
+  }
+  if(args[0]==="bootstrap"){loaded=true;return {stdout:""};}
+  if(args[0]==="bootout"){loaded=false;return {stdout:""};}
+  throw Error("unexpected launchctl "+args.join(" "));
+ };
+ const createPointerImpl=(opts)=>createEquinoxLocalMainNativePointerTransition({
+  ...opts,
+  readPointer:async()=>{
+   if(!pointer)throw Object.assign(Error("missing"),{code:"ENOENT"});
+   return pointer;
+  },
+  writePointer:async(file,value)=>{
+   pointer=value;events.push("write signed pointer "+value.sourceSha);
+   await put(file,JSON.stringify(value));
+   return pointer;
+  },
+  fsImpl:{
+   ...fs,unlink:async(file)=>{
+    events.push("unlink native pointer");
+    pointer=null;
+    await fs.unlink(file);
+   },
+  },
+ });
+ const lifecycle=await createEquinoxLocalMainMacFreshFirstLifecycle({
+  transactionRoot,target,sourceSha,runtimeContractSha256,releaseDir,homeDir,
+  bootstrapImpl,execFileImpl,createPointerImpl,
+  assertAppOwnedImpl:async({homeDir:checked,releaseDir:checkedRelease})=>{
+   assert.equal(checked,homeDir);assert.equal(checkedRelease,releaseDir);
+   assert.equal(await fs.readFile(path.join(app,"owned"),"utf8"),"signed B apphost");
+   return {appPath:app,owned:true};
+  },
+ });
+ return {lifecycle,homeDir,installRoot,transactionRoot,releaseDir,app,agent,files,events,
+  get loaded(){return loaded},get pointer(){return pointer}};
+}
+
+test("real isolated clean Mac native lifecycle selects B before ORIGINAL bootstrap and first launch, commits exact pointers, and removes B on verified rollback",async t=>{
+ const f=await cleanNativeMacLifecycleFixture(t);
+ assert.equal(f.pointer,null);
+ assert.equal(await f.lifecycle.commit().then(()=>true,()=>false),false);
+ await f.lifecycle.activate();
+ assert.equal(f.pointer.sourceSha,B);
+ assert.equal(await fs.realpath(path.join(f.installRoot,"current")),f.releaseDir);
+ assert.equal(f.loaded,true);
+ assert.equal(f.events.indexOf("original managed bootstrap")>f.events.indexOf("write signed pointer "+B),true);
+ assert.equal(f.events.includes("bootstrap gui/"+process.getuid()+" "+f.agent),true);
+ const result=await f.lifecycle.commit();
+ assert.equal(result.sourceSha,B);
+ await f.lifecycle.rollback();
+ assert.equal(f.pointer,null);
+ assert.equal(f.loaded,false);
+ await assert.rejects(fs.lstat(path.join(f.installRoot,"current")),{code:"ENOENT"});
+ for(const [file] of f.files)await assert.rejects(fs.lstat(file),{code:"ENOENT"});
+ await assert.rejects(fs.lstat(f.app),{code:"ENOENT"});
+ assert.equal(await fs.readFile(path.join(f.installRoot,"workspace","preserve-user-data.txt"),"utf8"),"user data");
+ await f.lifecycle.rollback();
+});
+
+test("interrupted clean Mac bootstrap rolls back partially-created verified files, both pointer and link, without deleting user workspace",async t=>{
+ const f=await cleanNativeMacLifecycleFixture(t,{failBootstrap:true});
+ await assert.rejects(f.lifecycle.activate(),/partial original bootstrap failed/u);
+ assert.equal(f.loaded,false);
+ assert.equal(f.pointer.sourceSha,B);
+ assert.equal(await fs.realpath(path.join(f.installRoot,"current")),f.releaseDir);
+ await f.lifecycle.rollback();
+ assert.equal(f.pointer,null);
+ await assert.rejects(fs.lstat(f.agent),{code:"ENOENT"});
+ await assert.rejects(fs.lstat(path.join(f.installRoot,"current")),{code:"ENOENT"});
+ assert.equal(await fs.readFile(path.join(f.installRoot,"workspace","preserve-user-data.txt"),"utf8"),"user data");
+});
+
+test("clean Mac native first-install refuses to overwrite preexisting apphost or altered generated artifacts during rollback",async t=>{
+ const f=await cleanNativeMacLifecycleFixture(t);
+ await fs.mkdir(f.app,{recursive:true});
+ await assert.rejects(f.lifecycle.activate(),/would overwrite a pre-existing/u);
+ await fs.rm(f.app,{recursive:true,force:true});
+ await f.lifecycle.activate();
+ await fs.writeFile(f.agent,"foreign user launch agent",{mode:0o600});
+ await assert.rejects(f.lifecycle.rollback(),/generated artifact changed/u);
+ assert.equal(f.pointer.sourceSha,B,"uncertain rollback never clears original B owner");
+ assert.equal(f.loaded,true,"foreign plist must not be used to bootout arbitrary service");
+ assert.equal(await fs.readFile(f.agent,"utf8"),"foreign user launch agent");
 });

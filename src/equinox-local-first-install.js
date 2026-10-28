@@ -1541,7 +1541,8 @@ export async function prepareSignedMainInstallerMacActivation({ signedPointer, h
         return Object.freeze({ status: healthy ? "already_healthy" : "repair_required",
             sourceSha: initial.sourceSha, target: initial.target, version: initial.version });
     }
-    if (initial.action !== "activate" || initial.target !== "darwin-" + arch ||
+    const cleanFirst = initial.action === "first_install";
+    if (!["activate", "first_install"].includes(initial.action) || initial.target !== "darwin-" + arch ||
         initial.transactionRoot !== path.posix.join(homeDir, "Library", "Application Support", "Equinox Local", "main-update") ||
         !/^[a-f0-9]{40}$/u.test(initial.sourceSha) ||
         !/^[a-f0-9]{64}$/u.test(initial.runtimeContractSha256) ||
@@ -1561,7 +1562,12 @@ export async function prepareSignedMainInstallerMacActivation({ signedPointer, h
         initial.previousReleaseDir !== path.posix.join(initial.transactionRoot, "native-store", initial.target, previousPointer.sourceSha, "release"))) {
         throw new Error("Signed Main Mac coordinator previous native A pointer drifted.");
     }
-    if (!previousMain && (initial.previousKind !== "stable" ||
+    if (cleanFirst && (initial.previousKind !== "none" ||
+        initial.previousSha !== null || initial.previousVersion !== null ||
+        initial.previousReleaseDir !== null)) {
+        throw new Error("Signed Main clean first install has a fabricated previous A.");
+    }
+    if (!previousMain && !cleanFirst && (initial.previousKind !== "stable" ||
         !/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/u.test(initial.previousVersion ?? "") ||
         initial.previousReleaseDir !== path.posix.join(homeDir, "Library", "Application Support", "Equinox Local", "releases", initial.previousVersion))) {
         throw new Error("Signed Main Mac coordinator cannot displace unknown or source/Factory A.");
@@ -1573,14 +1579,17 @@ export async function prepareSignedMainInstallerMacActivation({ signedPointer, h
         currentRuntimeContractSha256: previousPointer?.runtimeContractSha256 ?? "0".repeat(64),
         targetRuntimeContractSha256: initial.runtimeContractSha256,
     };
-    const installation = resolveInstallationImpl({ platform, arch, homeDir,
+    const admittedInstallation = resolveInstallationImpl({ platform, arch, homeDir,
         env: { ...env, EQUINOX_LOCAL_INSTALL_ROOT: path.posix.dirname(initial.transactionRoot),
-            EQUINOX_LOCAL_RELEASE_DIR: initial.previousReleaseDir } });
-    if (!installation.managed || !installation.selfUpdateSupported ||
-        installation.target !== initial.target ||
-        installation.releaseDir !== initial.previousReleaseDir) {
-        throw new Error("Signed Main Mac coordinator cannot authenticate the rollback A installation.");
+            EQUINOX_LOCAL_RELEASE_DIR: cleanFirst ? initial.releaseDir : initial.previousReleaseDir } });
+    if (!admittedInstallation.managed || !admittedInstallation.selfUpdateSupported ||
+        admittedInstallation.target !== initial.target ||
+        admittedInstallation.releaseDir !== (cleanFirst ? initial.releaseDir : initial.previousReleaseDir)) {
+        throw new Error("Signed Main Mac coordinator cannot authenticate the rollback A or clean signed B installation.");
     }
+    const installation = cleanFirst
+        ? Object.freeze({ ...admittedInstallation, releaseDir: null })
+        : admittedInstallation;
     // The second explicit verifier must run BEFORE acquiring an exclusive
     // owner; no bad/foreign signer can strand an admitted lock.
     const selected = signedPointer;
@@ -1607,7 +1616,7 @@ export async function prepareSignedMainInstallerMacActivation({ signedPointer, h
     // Revalidate A after ownership. Even independent external user actions
     // changing current must not cause us to snapshot the wrong rollback tree.
     const locked = await inspectImpl({ signedPointer, homeDir, platform, arch, env, fsImpl });
-    if (locked.action !== "activate" || locked.sourceSha !== initial.sourceSha ||
+    if (locked.action !== initial.action || locked.sourceSha !== initial.sourceSha ||
         locked.previousKind !== initial.previousKind ||
         locked.previousSha !== initial.previousSha ||
         locked.previousReleaseDir !== initial.previousReleaseDir) {
@@ -1633,7 +1642,7 @@ export async function prepareSignedMainInstallerMacActivation({ signedPointer, h
         // exclusive owner for explicit recovery instead of unlocking blind.
         try {
             const rechecked = await inspectImpl({ signedPointer, homeDir, platform, arch, env, fsImpl });
-            if (rechecked.action !== "activate" ||
+            if (rechecked.action !== initial.action ||
                 rechecked.previousKind !== initial.previousKind ||
                 rechecked.previousSha !== initial.previousSha ||
                 rechecked.previousReleaseDir !== initial.previousReleaseDir) {
@@ -1657,8 +1666,9 @@ export async function prepareSignedMainInstallerMacActivation({ signedPointer, h
                     runtimeContractSha256: input.previousRuntimeContractSha256,
                 });
             });
-            const healthy = await verify({
-                previousKind: initial.previousKind, previousVersion: initial.previousVersion,
+            const healthy = cleanFirst ? true : await verify({
+                previousKind: initial.previousKind,
+                previousVersion: initial.previousVersion,
                 previousSha: initial.previousSha,
                 previousRuntimeContractSha256: previousPointer?.runtimeContractSha256 ?? null,
                 transactionRoot: initial.transactionRoot, target: initial.target,
@@ -1761,15 +1771,21 @@ export async function recoverAbandonedSignedMainMacAdmission({ transactionId, ho
     if (!relevant || relevant.runtimeContractSha256 !== contract) {
         throw new Error("Stored native B is not authenticated for the abandoned transaction.");
     }
-    if (desc.previous.kind === "none") {
-        throw new Error("An empty first install cannot use rollback-to-A abandoned admission recovery.");
-    }
     const authenticatedA = desc.previous;
     const assertA = async () => {
         const current = await inspectImpl({ signedPointer: rawSelector, homeDir, platform, arch, env, fsImpl });
-        if (current.action !== "activate" || current.sourceSha !== sha ||
-            current.target !== target || current.runtimeContractSha256 !== contract) {
+        if (current.action !== (authenticatedA.kind === "none" ? "first_install" : "activate") ||
+            current.sourceSha !== sha || current.target !== target ||
+            current.runtimeContractSha256 !== contract) {
             throw new Error("Signed native original A/B identity changed since failed handoff.");
+        }
+        if (authenticatedA.kind === "none") {
+            if (current.previousKind !== "none" || current.previousReleaseDir !== null ||
+                current.previousSha !== null) {
+                throw new Error("Abandoned signed Main clean first-install has an unexpected A.");
+            }
+            return { previousKind: "none", previousVersion: null,
+                previousSha: null, previousRuntimeContractSha256: null, transactionRoot: root, target };
         }
         if (authenticatedA.kind === "stable") {
             if (current.previousKind !== "stable" ||
@@ -1828,7 +1844,7 @@ export async function recoverAbandonedSignedMainMacAdmission({ transactionId, ho
             runtimeContractSha256: input.previousRuntimeContractSha256,
         });
     });
-    if ((await verify(prior)) !== true) {
+    if (prior.previousKind !== "none" && (await verify(prior)) !== true) {
         throw new Error("Abandoned signed Main Mac original A did not pass exact health; owner retained.");
     }
     if ((await absent(absenceInput)).absent !== true) {

@@ -239,9 +239,6 @@ export async function runEquinoxLocalSignedMacNativeHandoff({ transactionRoot, t
         throw new Error("Signed native handoff state is not resumable.");
     }
     const prior = lifecycle.previousPointer;
-    if (descriptor.previous.kind === "none") {
-        throw new Error("Clean first Main install requires a dedicated new-runtime bootstrap/rollback admission.");
-    }
     if (descriptor.previous.kind === "main") {
         if (!prior || prior.sourceSha !== descriptor.previous.sourceSha ||
             prior.target !== descriptor.previous.target ||
@@ -254,6 +251,10 @@ export async function runEquinoxLocalSignedMacNativeHandoff({ transactionRoot, t
         if (prior || previousVersion !== descriptor.previous.version) {
             throw new Error("Signed native Mac handoff stable A version differs from rollback descriptor.");
         }
+    }
+    else if (descriptor.previous.kind === "none") {
+        if (prior)
+            throw new Error("Clean native Main cannot invent a previous A pointer.");
     }
     else {
         throw new Error("Signed native Mac handoff has no admitted previous A.");
@@ -268,8 +269,12 @@ export async function runEquinoxLocalSignedMacNativeHandoff({ transactionRoot, t
                 throw new Error("Restored Stable A did not pass runtime health.");
             return;
         }
-        if (authenticatedA.kind !== "main")
-            throw new Error("Clean install has no previous A health to verify.");
+        if (authenticatedA.kind === "none") {
+            // The first-install lifecycle's rollback has already verified the
+            // LaunchAgent is absent, removed ONLY authenticated B-owned files,
+            // and restored both absent native and macOS current pointers.
+            return;
+        }
         const a = authenticatedA;
         const stored = await inspectStoredImpl({ transactionRoot, sourceSha: a.sourceSha,
             target: a.target, expectedRuntimeContractSha256: a.runtimeContractSha256 });
@@ -308,7 +313,9 @@ export async function runEquinoxLocalSignedMacNativeHandoff({ transactionRoot, t
             if (receipt.status === "admitted") {
                 await writeReceiptImpl({ ...ownerIdentity, status: "activating" });
                 await lifecycle.activate(); // BOTH pointers B before restart
-                await restartImpl(); // launchd must actually boot B
+                if (descriptor.previous.kind !== "none") {
+                    await restartImpl(); // existing A service is already loaded
+                } // Clean A=null lifecycle itself bootstraps first launchAgent.
             }
             else {
                 // Crash while "activating": NEVER blindly select B or restart
@@ -339,8 +346,10 @@ export async function runEquinoxLocalSignedMacNativeHandoff({ transactionRoot, t
     return await rollbackA(new Error("Resuming the durable native A rollback."));
     async function rollbackA(targetFailure) {
         try {
-            await lifecycle.rollback(); // both A pointers and apphost
-            await restartImpl(); // launchd must actually boot A
+            await lifecycle.rollback(); // exact A or proven empty A=null
+            if (descriptor.previous.kind !== "none") {
+                await restartImpl(); // only an EXISTING A can be restarted
+            }
             await verifyA(); // stable A or full-SHA native A
             await writeReceiptImpl({ ...ownerIdentity, status: "rolled_back" });
         }
@@ -431,9 +440,26 @@ export async function runEquinoxLocalSignedMacNativeWorker({ argv = process.argv
         stored.manifest.artifactBytes !== row.artifact.bytes) {
         throw new Error("Signed native worker immutable B differs from production Ed25519 pointer.");
     }
-    const installation = await resolveInstallationImpl({
-        transactionRoot: root, env, platform: "darwin", arch, fsImpl,
-    });
+    const installation = descriptor.previous.kind === "none"
+        ? (() => {
+            // First install has no 'current' until the transaction selects B;
+            // old worker discovery intentionally requires an existing A link.
+            // Derive B only from the same signed, immutable worker release,
+            // but preserve NULL previous release for the recovery descriptor.
+            const candidate = resolveEquinoxLocalInstallation({ platform: "darwin",
+                arch, homeDir: home, env: { ...env,
+                    EQUINOX_LOCAL_INSTALL_ROOT: installRoot,
+                    EQUINOX_LOCAL_RELEASE_DIR: releaseDir } });
+            if (!candidate.managed || !candidate.selfUpdateSupported ||
+                candidate.releaseDir !== releaseDir ||
+                candidate.mainNativeSha !== sha) {
+                throw new Error("Signed first-install native B worker identity is unauthenticated.");
+            }
+            return Object.freeze({ ...candidate, releaseDir: null });
+        })()
+        : await resolveInstallationImpl({
+            transactionRoot: root, env, platform: "darwin", arch, fsImpl,
+        });
     if (!installation.managed || !installation.selfUpdateSupported ||
         installation.target !== target || installation.installRoot !== installRoot) {
         throw new Error("Signed native worker has no admitted managed macOS installation.");
@@ -616,7 +642,8 @@ export async function runEquinoxLocalMainUpdateWorker({ argv = process.argv.slic
                 const initialWindowsOwner = windowsTarget
                     ? await admitWindowsNativeWorker({
                         receipt: active, transition: nativeTransition,
-                        installation: { ...installation, target: installation.target },
+                        installation: (({ releaseDir, ...base }) => ({ ...base, target: installation.target,
+                            ...(typeof releaseDir === "string" ? { releaseDir } : {}) }))(installation),
                         transactionRoot: args.transactionRoot, engine, fsImpl, execFileImpl,
                         ...(env.EQUINOX_LOCAL_MAIN_WORKER_TOKEN === undefined ? {} : { workerToken: env.EQUINOX_LOCAL_MAIN_WORKER_TOKEN }),
                         nativeHelperPath: ownedHelperPath, ownerOnly: true,
@@ -633,7 +660,8 @@ export async function runEquinoxLocalMainUpdateWorker({ argv = process.argv.slic
                 const windowsAdmission = windowsTarget && initialStage === "ready_to_switch"
                     ? await admitWindowsNativeWorker({
                         receipt: active, transition: nativeTransition,
-                        installation: { ...installation, target: installation.target },
+                        installation: (({ releaseDir, ...base }) => ({ ...base, target: installation.target,
+                            ...(typeof releaseDir === "string" ? { releaseDir } : {}) }))(installation),
                         transactionRoot: args.transactionRoot, engine, fsImpl, execFileImpl,
                         ...(env.EQUINOX_LOCAL_MAIN_WORKER_TOKEN === undefined ? {} : { workerToken: env.EQUINOX_LOCAL_MAIN_WORKER_TOKEN }),
                         nativeHelperPath: path.win32.join(storedCandidate.releaseDir, "runtime", "job", "equinox-local-job-object-helper.exe"),

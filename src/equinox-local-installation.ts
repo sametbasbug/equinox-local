@@ -17,7 +17,7 @@ export type MainNativeInstallation = Readonly<{
   releasesRoot?: string;
   programRoot?: string;
   nativeMessagingManifestRoot?: string;
-  releaseDir?: string;
+  releaseDir?: string | null;
   stagingRoot?: string;
   currentLink?: string | null;
   currentPointer?: string;

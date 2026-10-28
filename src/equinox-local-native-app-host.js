@@ -308,6 +308,28 @@ export async function synchronizeEquinoxLocalNativeAppHost({ homeDir, releaseDir
     }
     return Object.freeze({ appPath, executablePath: path.join(appPath, "Contents", "MacOS", "applet"), shellVersion: metadata.shellVersion, changed: true, migratedLegacy: true });
 }
+// A failed genuinely clean Main first install may remove only the apphost
+// created from the original immutable B. Never remove a foreign or modified
+// app bundle under the user's ~/Applications.
+export async function assertEquinoxLocalFreshNativeAppHostOwned({ homeDir, releaseDir, fsImpl = fs, execFileImpl = execFile, } = {}) {
+    if (process.platform !== "darwin" || typeof homeDir !== "string" ||
+        typeof releaseDir !== "string" || !path.isAbsolute(homeDir) ||
+        !path.isAbsolute(releaseDir)) {
+        throw new Error("Clean Main native app ownership requires canonical macOS paths.");
+    }
+    const { metadata } = await readNativeMetadata(releaseDir, fsImpl);
+    const appPath = equinoxLocalAppPath(homeDir);
+    await validateEquinoxLocalAppHost(appPath, { fsImpl, execFileImpl });
+    if (await readBundleNativePayloadIdentity(appPath, execFileImpl) !== nativePayloadIdentity(metadata) ||
+        await readBundleNativeShellVersion(appPath, execFileImpl) !== metadata.shellVersion ||
+        !(await hasStableNativePermissionIdentity(appPath, execFileImpl))) {
+        throw new Error("Clean Main apphost no longer matches original signed native B payload.");
+    }
+    await execFileImpl("/usr/bin/codesign", ["--verify", "--deep", "--strict", appPath], {
+        timeout: 15_000, maxBuffer: 1024 * 1024,
+    });
+    return Object.freeze({ appPath, owned: true });
+}
 export async function snapshotEquinoxLocalNativeAppHost({ homeDir, snapshotPath, fsImpl = fs, execFileImpl = execFile, } = {}) {
     if (process.platform !== "darwin")
         throw new Error("Equinox Local native app snapshot is supported only on macOS.");

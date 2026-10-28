@@ -486,7 +486,48 @@ export async function recoverEquinoxLocalMainNativeLifecycle({ transition, trans
         fsImpl,
     });
     if (descriptor.previous.kind === "none") {
-        throw new Error("Clean Main first-install lifecycle requires a verified new apphost and launchd bootstrap rollback, not existing A/B recovery.");
+        if (!/^darwin-(arm64|x64)$/u.test(transition.target) ||
+            installation.releaseDir !== null || !installation.installRoot) {
+            throw new Error("Empty Main recovery has no authenticated first-install macOS baseline.");
+        }
+        const stored = await inspectStoredReleaseImpl({ transactionRoot: paths.root,
+            sourceSha: transition.targetSha, target: transition.target,
+            expectedRuntimeContractSha256: transition.targetRuntimeContractSha256, fsImpl });
+        const expectedB = path.posix.join(paths.root, "native-store", transition.target, transition.targetSha, "release");
+        if (stored.releaseDir !== expectedB ||
+            stored.sourceSha !== transition.targetSha ||
+            stored.target !== transition.target ||
+            stored.runtimeContractSha256 !== transition.targetRuntimeContractSha256) {
+            throw new Error("Empty Main recovery stored immutable B release drifted.");
+        }
+        const selectorPath = path.posix.join(path.posix.dirname(expectedB), "signed-selector.json");
+        const st = await fsImpl.lstat(selectorPath);
+        if (!st.isFile() || st.isSymbolicLink() || st.nlink !== 1 || (st.mode & 0o777) !== 0o600) {
+            throw new Error("Empty Main recovery selector is not a private normal file.");
+        }
+        const { data } = await readBoundedNormalFile(selectorPath, { fsImpl,
+            minBytes: 200, maxBytes: 16 * 1024, encoding: "utf8", label: "Signed first Main selector" });
+        const signed = verifySignedPointerImpl(JSON.parse(data), {
+            expectedSourceSha: transition.targetSha,
+        });
+        const row = signed.targets.find(entry => entry.target === transition.target);
+        if (!row || row.runtimeContractSha256 !== transition.targetRuntimeContractSha256 ||
+            stored.payloadVersion !== signed.version ||
+            stored.manifest?.artifactSha256 !== row.artifact.sha256 ||
+            stored.manifest?.artifactBytes !== row.artifact.bytes) {
+            throw new Error("Clean Main recovery signed selector differs from immutable B store.");
+        }
+        const homeDir = path.posix.dirname(path.posix.dirname(path.posix.dirname(path.posix.resolve(installation.installRoot))));
+        const { createEquinoxLocalMainMacFreshFirstLifecycle } = await import("./equinox-local-main-native-activation.js");
+        const fresh = await createEquinoxLocalMainMacFreshFirstLifecycle({
+            transactionRoot: paths.root, target: transition.target,
+            sourceSha: transition.targetSha,
+            runtimeContractSha256: transition.targetRuntimeContractSha256,
+            releaseDir: expectedB, homeDir, fsImpl,
+            ...(execFileImpl === undefined ? {} : { execFileImpl }),
+        });
+        return Object.freeze({ ...fresh, target: transition.target, stored, descriptor,
+            previousPointer: null, rollbackPath: null });
     }
     const stored = await inspectStoredReleaseImpl({ transactionRoot: paths.root, sourceSha: transition.targetSha, target: transition.target, expectedRuntimeContractSha256: transition.targetRuntimeContractSha256, fsImpl });
     const previousReleaseDir = await previousReleaseFromDescriptor({ descriptor, transactionRoot: paths.root, installation, fsImpl, inspectStoredReleaseImpl });

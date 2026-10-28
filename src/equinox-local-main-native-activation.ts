@@ -23,6 +23,9 @@ import {
   synchronizeEquinoxLocalAppHostForRelease,
 } from "./equinox-local-native-app-host.js";
 import { writeEquinoxLocalMainNativeRecoveryDescriptor } from "./equinox-local-main-native-recovery.js";
+import { bootstrapManagedEquinoxUser, appRuntimeWrapper, launchAgentPlist, nativeHostManifest, nativeHostWrapper, EQUINOX_BROWSER_NATIVE_HOST_NAME, EQUINOX_LOCAL_LAUNCH_AGENT_LABEL } from "./equinox-local-bootstrap.js";
+import { equinoxLocalAppPath, equinoxLocalAppExecutablePath, equinoxLocalAppRuntimeWrapperPath } from "./equinox-local-app-host.js";
+import { assertEquinoxLocalFreshNativeAppHostOwned } from "./equinox-local-native-app-host.js";
 import { createEquinoxLocalMainMacCurrentLinkTransition, createEquinoxLocalMainNativePointerTransition } from "./equinox-local-main-native-pointer-transition.js";
 import { createSupervisorBoundWindowsNativeABLifecycle, requireWindowsNativeABSupervisor } from "./equinox-local-windows-native-ab-supervisor-bound.js";
 
@@ -97,6 +100,170 @@ async function readPreviousPointer(pointerPath: string, options: {transactionRoo
     if (hasErrorCode(error, "ENOENT")) return null;
     throw error;
   }
+}
+
+// The SAME immutable native B pointer/link and original managed bootstrap
+// work on a genuinely empty macOS A. This is a lifecycle, not a second
+// installer/engine: the existing signed owner, receipt, worker and exact SHA
+// health protocol decide commit vs rollback.
+export async function createEquinoxLocalMainMacFreshFirstLifecycle({
+  transactionRoot, target, sourceSha, runtimeContractSha256, releaseDir,
+  homeDir, uid=process.getuid?.(),fsImpl=fs,execFileImpl=execFile,
+  bootstrapImpl=bootstrapManagedEquinoxUser,
+  assertAppOwnedImpl=assertEquinoxLocalFreshNativeAppHostOwned,
+  createPointerImpl=createEquinoxLocalMainNativePointerTransition,
+  createLinkImpl=createEquinoxLocalMainMacCurrentLinkTransition,
+}:{
+  transactionRoot:string;target:string;sourceSha:string;runtimeContractSha256:string;
+  releaseDir:string;homeDir:string;uid?:number|null;
+  fsImpl?:NativeFilesystem;execFileImpl?:NativeExec;
+  bootstrapImpl?:typeof bootstrapManagedEquinoxUser;
+  assertAppOwnedImpl?:typeof assertEquinoxLocalFreshNativeAppHostOwned;
+  createPointerImpl?:typeof createEquinoxLocalMainNativePointerTransition;
+  createLinkImpl?:typeof createEquinoxLocalMainMacCurrentLinkTransition;
+}){
+  const installRoot=path.posix.join(homeDir,"Library","Application Support","Equinox Local");
+  if(process.platform!=="darwin" || !["darwin-arm64","darwin-x64"].includes(target) ||
+     !/^[a-f0-9]{40}$/u.test(sourceSha) ||
+     !/^[a-f0-9]{64}$/u.test(runtimeContractSha256) ||
+     !path.posix.isAbsolute(homeDir) || path.posix.normalize(homeDir)!==homeDir ||
+     transactionRoot!==path.posix.join(installRoot,"main-update") ||
+     releaseDir!==path.posix.join(transactionRoot,"native-store",target,sourceSha,"release") ||
+     !Number.isSafeInteger(uid)||uid===null||uid===undefined||uid<1){
+    throw new Error("Clean native Main first-install lifecycle has an inauthentic OS and B identity.");
+  }
+  const pointerValue={schemaVersion:1 as const,channel:"main" as const,
+    sourceSha,target,runtimeContractSha256};
+  const native=createPointerImpl({pointerPath:path.posix.join(transactionRoot,"current-native.json"),
+    transactionRoot,target:pointerValue,previous:null,fsImpl});
+  const link=createLinkImpl({installRoot,target:pointerValue,previousReleaseDir:null,fsImpl});
+  const agentPath=path.posix.join(homeDir,"Library","LaunchAgents",
+    EQUINOX_LOCAL_LAUNCH_AGENT_LABEL+".plist");
+  const service="gui/"+uid+"/"+EQUINOX_LOCAL_LAUNCH_AGENT_LABEL;
+  const nativeHostPath=path.posix.join(homeDir,"Library","Application Support",
+    "Google","Chrome","NativeMessagingHosts",EQUINOX_BROWSER_NATIVE_HOST_NAME+".json");
+  const wrapperPath=equinoxLocalAppRuntimeWrapperPath(homeDir);
+  const nativeWrapperPath=path.posix.join(installRoot,"equinox-browser-native-host");
+  const generatedFiles=[
+    {name:agentPath,text:launchAgentPlist({homeDir,installRoot})},
+    {name:wrapperPath,text:appRuntimeWrapper({installRoot})},
+    {name:nativeWrapperPath,text:nativeHostWrapper({installRoot})},
+    {name:nativeHostPath,text:nativeHostManifest(nativeWrapperPath)},
+  ];
+  const originalLaunchAgentAbsent=async()=>{
+    try{
+      await execFileImpl("/bin/launchctl",["print",service],{
+        timeout:5000,maxBuffer:65536,
+      });
+      throw new Error("Clean native Main cannot replace an existing loaded user LaunchAgent.");
+    }catch(error){
+      const e=error as {code?:unknown;stderr?:unknown};
+      if(e.code!==113 || !String(e.stderr??"").includes(
+        'Could not find service "'+EQUINOX_LOCAL_LAUNCH_AGENT_LABEL+'" in domain for user gui: '+uid)){
+        throw new Error("Clean native Main LaunchAgent absence is not explicitly proven.");
+      }
+    }
+    await execFileImpl("/bin/launchctl",["print","gui/"+uid],{
+      timeout:5000,maxBuffer:65536,
+    });
+  };
+  const statOrNull=async(name:string)=>{
+    try{return await fsImpl.lstat(name);}
+    catch(error){if(hasErrorCode(error,"ENOENT"))return null;throw error;}
+  };
+  const assertGenerated=async()=>{
+    for(const file of generatedFiles){
+      const stat=await statOrNull(file.name);
+      if(!stat)continue; // interrupted bootstrap, not a foreign file
+      if(!stat.isFile()||stat.isSymbolicLink()||stat.nlink!==1||
+         (await fsImpl.readFile(file.name,"utf8"))!==file.text){
+        throw new Error("Clean native Main generated artifact changed outside this signed install.");
+      }
+    }
+    if(await statOrNull(equinoxLocalAppPath(homeDir))){
+      await assertAppOwnedImpl({homeDir,releaseDir,fsImpl,execFileImpl});
+    }
+  };
+  const assertNoOriginalArtifacts=async()=>{
+    for(const file of [...generatedFiles.map(value=>value.name),equinoxLocalAppPath(homeDir)]){
+      if(await statOrNull(file)){
+        throw new Error("Clean native Main would overwrite a pre-existing user app/LaunchAgent/Native Messaging artifact.");
+      }
+    }
+  };
+  return Object.freeze({
+    previousPointer:null,firstInstall:true,stored:{releaseDir,sourceSha,target,runtimeContractSha256},
+    async activate(){
+      // Recheck independent launchd ownership and original nonexistence
+      // BEFORE the B pointer changes, not only in HTTP installer admission.
+      await assertNoOriginalArtifacts();
+      await originalLaunchAgentAbsent();
+      await native.selectTarget();
+      await link.selectTarget();
+      await bootstrapImpl({homeDir,platform:"darwin",arch:target.slice(7),fsImpl});
+      await assertGenerated();
+      // This is the FIRST launch of the original managed LaunchAgent, so
+      // kickstart alone cannot work. Later worker restart validates B health.
+      await execFileImpl("/bin/launchctl",["bootstrap","gui/"+uid,agentPath],{
+        timeout:15000,maxBuffer:1024*1024,
+      });
+    },
+    async rollback(){
+      // Fail CLOSED if any bootstrap path was replaced by user/foreign bytes.
+      // Preserve config, workspace, downloads and all user-generated data.
+      await native.assertRollbackAdmitted();
+      const current=await link.current();
+      if(current!==null && current!==link.targetReleaseDir){
+        throw new Error("Clean native Main rollback current symlink is foreign.");
+      }
+      await assertGenerated();
+      let running=false;
+      try{
+        const status=await execFileImpl("/bin/launchctl",["print",service],{
+          timeout:5000,maxBuffer:65536,
+        });
+        const output=String(status.stdout??"");
+        const appExe=equinoxLocalAppExecutablePath(homeDir);
+        if(!output.includes(appExe) || !(await statOrNull(agentPath))){
+          throw new Error("Clean native Main cannot bootout an unauthenticated LaunchAgent.");
+        }
+        running=true;
+      }catch(error){
+        const e=error as {code?:unknown;stderr?:unknown};
+        if(e.code!==113||!String(e.stderr??"").includes(
+          'Could not find service "'+EQUINOX_LOCAL_LAUNCH_AGENT_LABEL+'" in domain for user gui: '+uid)){
+          throw error;
+        }
+      }
+      if(running){
+        await execFileImpl("/bin/launchctl",["bootout",service],{
+          timeout:15000,maxBuffer:1024*1024,
+        });
+      }
+      await originalLaunchAgentAbsent();
+      // Deleting foreign or modified bytes is categorically forbidden.
+      await assertGenerated();
+      for(const file of generatedFiles){
+        if(await statOrNull(file.name))await fsImpl.unlink(file.name);
+      }
+      const app=equinoxLocalAppPath(homeDir);
+      if(await statOrNull(app))await fsImpl.rm(app,{recursive:true,force:false});
+      await link.restorePrevious();
+      await native.restorePrevious();
+      if(await link.current()!==null){
+        throw new Error("Clean native Main rollback failed to clear B current link.");
+      }
+      return Object.freeze({restoredEmptyA:true});
+    },
+    async commit(){
+      await native.requireTarget();
+      if(await link.current()!==link.targetReleaseDir){
+        throw new Error("Clean native Main first install has no committed B symlink.");
+      }
+      await assertGenerated();
+      return Object.freeze({sourceSha,target,releaseDir});
+    },
+  });
 }
 
 export async function prepareEquinoxLocalMainNativeLifecycle({
@@ -187,6 +354,24 @@ export async function prepareEquinoxLocalMainNativeLifecycle({
       previousPointer.sourceSha !== transition.currentSha ||
       previousPointer.runtimeContractSha256 !== transition.currentRuntimeContractSha256)) {
     throw new Error("Installed Main native pointer does not match the current source SHA/runtime contract.");
+  }
+  // The exact SAME signed native Main owner can first-install on an empty
+  // machine without a fake Stable A. No snapshot exists for a nonexistent A;
+  // original bootstrap and clean no-A rollback live in this same lifecycle.
+  if(storedCandidate && transition.target.startsWith("darwin-") &&
+     previousPointer===null && installation.releaseDir===null){
+    await writeRecoveryDescriptorImpl({transition,previousPointer,installation,
+      transactionRoot:root,transactionId:id,fsImpl});
+    const homeDir=path.posix.dirname(path.posix.dirname(path.posix.dirname(
+      path.posix.resolve(installation.installRoot!))));
+    const fresh=await createEquinoxLocalMainMacFreshFirstLifecycle({
+      transactionRoot:root,target:transition.target,
+      sourceSha:transition.targetSha,
+      runtimeContractSha256:transition.targetRuntimeContractSha256,
+      releaseDir:stored.releaseDir,homeDir,fsImpl,execFileImpl,
+    });
+    return Object.freeze({...fresh,target:transition.target,stored,
+      previousPointer:null,rollbackPath:null});
   }
   const previousReleaseDir = previousPointer?.releaseDir ?? installation.releaseDir;
   if (typeof previousReleaseDir !== "string") throw new Error("Previous managed native release is unavailable.");
