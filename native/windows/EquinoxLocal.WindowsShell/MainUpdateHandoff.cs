@@ -149,15 +149,28 @@ internal static partial class MainUpdateHandoff
     {
         if (!TransactionPattern().IsMatch(transactionId))
             throw new InvalidDataException("Original WPF signed-native proof transaction is invalid.");
-        var expected = InspectPendingSignedNativeWithoutGrant(transactionId, auditOnly: true)
-            ?? throw new InvalidDataException("No original signed B is admitted for WPF proof.");
         var local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
         var wpf = Path.GetFullPath(Path.Combine(local, "Programs", "Equinox Local", "EquinoxLocal.exe"));
         if (!string.Equals(Environment.ProcessPath, wpf, StringComparison.OrdinalIgnoreCase))
             throw new InvalidDataException("Signed-native worker proof must originate in original installed WPF.");
         _ = RequireNormalFile(wpf, "Original installed WPF shell");
-        MainSignedNativeWorkerContract.ValidateOriginalReleaseFiles(expected);
+        var launchedPid = 0;
+        // This callback runs INSIDE the original Guardian ZIP audit's
+        // FileShare.Read kernel file pins, not afterward against newly
+        // resolved Node/worker paths that another process could replace.
+        _ = InspectPendingSignedNativeWithoutGrant(transactionId, auditOnly: true,
+            afterVerifiedReadOnly: expected =>
+            {
+                launchedPid = LaunchVerifiedSignedNativeProofOnly(expected, transactionId);
+            });
+        if (launchedPid < 1)
+            throw new InvalidDataException("Original WPF native B proof never acquired a verified launch.");
+        return launchedPid;
+    }
 
+    private static int LaunchVerifiedSignedNativeProofOnly(
+        MainSignedNativeWorkerContract.Expected expected, string transactionId)
+    {
         var start = new ProcessStartInfo(expected.NodePath)
         {
             UseShellExecute = false,
@@ -180,7 +193,14 @@ internal static partial class MainUpdateHandoff
         Directory.CreateDirectory(handoff);
         RequireNormalDirectory(handoff, "Original signed-native WPF handoff");
         var ownershipPath = Path.Combine(handoff, transactionId + ".windows-worker.json");
-        RemoveStaleOwnershipOrRejectActive(ownershipPath, transactionId);
+        // A crashed signed-native proof has NO independently authenticated
+        // Guardian native terminal journal yet. Never let WPF delete its
+        // prior identity by pathname just because its PID appears dead.
+        // Require explicit original Guardian orphan reconciliation later.
+        if (Directory.EnumerateFileSystemEntries(handoff,
+                transactionId + ".windows-worker.json", SearchOption.TopDirectoryOnly).Any())
+            throw new InvalidDataException(
+                "Original signed-native worker handoff exists; independent OS owner recovery is required.");
         var token = Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(32));
         start.Environment["EQUINOX_LOCAL_MAIN_WORKER_TOKEN"] = token;
         using var process = Process.Start(start)
@@ -203,7 +223,8 @@ internal static partial class MainUpdateHandoff
     }
 
     private static MainSignedNativeWorkerContract.Expected? InspectPendingSignedNativeWithoutGrant(
-        string transactionId, bool auditOnly = false)
+        string transactionId, bool auditOnly = false,
+        Action<MainSignedNativeWorkerContract.Expected>? afterVerifiedReadOnly = null)
     {
         var local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
         if (string.IsNullOrWhiteSpace(local) || !Path.IsPathFullyQualified(local))
@@ -255,6 +276,10 @@ internal static partial class MainUpdateHandoff
             "signed-selector.json"), "Original production-signed Main selector");
         if (auditOnly)
         {
+            // Pin EXACT original Node + worker NTFS file IDs BEFORE Guardian
+            // hashes the signed ZIP, and keep both read-only OS handles alive
+            // through the optional proof-only Process.Start and handoff.
+            using var pinned = MainSignedNativeWorkerContract.PinExactBExecutables(expected);
             // The ORIGINAL independently installed Guardian validates the
             // production Ed25519 source and retained original ZIP against
             // EACH extracted B file. WPF itself never runs untrusted B code.
@@ -283,6 +308,7 @@ internal static partial class MainUpdateHandoff
             }
             if (guardian.ExitCode != 0)
                 throw new InvalidDataException("Original Guardian refused the signed-native B archive or its transaction.");
+            afterVerifiedReadOnly?.Invoke(expected);
             return expected; // Only the explicit PROOF launcher can start B, never switch A/B.
         }
         // Node/WPF structural files do not authenticate an Ed25519 signer

@@ -69,7 +69,11 @@ internal static partial class Program
             target != hostTarget || !DigestPattern.IsMatch(contract))
             throw new InvalidDataException("Signed-native active owner is not an exact target SHA.");
         var expected = MainSignedNativeWorkerContract.ForSignedNativeB(id, sha, target, tx);
-        MainSignedNativeWorkerContract.ValidateOriginalReleaseFiles(expected);
+        // Pin the SAME kernel file IDs for B-owned Node.exe and worker.js
+        // throughout original Ed25519 ZIP and extracted B verification.
+        // FileShare.Read denies write/rename while the independent Guardian
+        // hashes B, not merely a pathname that could have changed.
+        using var pinnedB = MainSignedNativeWorkerContract.PinExactBExecutables(expected);
 
         InspectionPhase = "signed-native-journal-receipt";
         var receipts = Path.Combine(tx, "receipts");

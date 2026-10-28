@@ -34,12 +34,14 @@ test("original WPF starts only exact B-owned Node+worker argv AFTER full origina
  ]);
  const launch=handoff.slice(handoff.indexOf("internal static int LaunchSignedNativeProofOnly"),
   handoff.indexOf("private static MainSignedNativeWorkerContract.Expected?"));
- assert.match(launch,/InspectPendingSignedNativeWithoutGrant\(transactionId, auditOnly: true\)/u);
+ assert.match(launch,/InspectPendingSignedNativeWithoutGrant\(transactionId, auditOnly: true,/u);
+ assert.match(launch,/afterVerifiedReadOnly: expected =>/u);
  assert.match(launch,/Environment\.ProcessPath, wpf, StringComparison\.OrdinalIgnoreCase/u);
  assert.match(launch,/Path\.Combine\(local, "Programs", "Equinox Local", "EquinoxLocal\.exe"\)/u);
  assert.match(launch,/RequireNormalFile\(wpf, "Original installed WPF shell"\)/u);
- assert.match(launch,/MainSignedNativeWorkerContract\.ValidateOriginalReleaseFiles\(expected\)/u);
- const validated=launch.indexOf("InspectPendingSignedNativeWithoutGrant(transactionId, auditOnly: true)");
+ assert.match(handoff,/MainSignedNativeWorkerContract\.ValidateOriginalReleaseFiles\(expected\)/u);
+ assert.match(handoff,/using var pinned = MainSignedNativeWorkerContract\.PinExactBExecutables\(expected\);/u);
+ const validated=launch.indexOf("InspectPendingSignedNativeWithoutGrant(transactionId, auditOnly: true,");
  const started=launch.indexOf("Process.Start(start)");
  assert.ok(validated>=0&&started>validated,"full Ed25519 signed B gate BEFORE any worker process");
  assert.match(launch,/new ProcessStartInfo\(expected\.NodePath\)/u);
@@ -49,7 +51,9 @@ test("original WPF starts only exact B-owned Node+worker argv AFTER full origina
  assert.match(launch,/CopyEnvironment\(start, "LOCALAPPDATA"\)/u);
  assert.match(launch,/RandomNumberGenerator\.GetBytes\(32\)/u);
  assert.match(launch,/start\.Environment\["EQUINOX_LOCAL_MAIN_WORKER_TOKEN"\] = token/u);
- assert.match(launch,/RemoveStaleOwnershipOrRejectActive\(ownershipPath, transactionId\)/u);
+ assert.match(launch,/Directory\.EnumerateFileSystemEntries\(handoff,/u);
+ assert.match(launch,/independent OS owner recovery is required/u);
+ assert.doesNotMatch(launch,/RemoveStaleOwnershipOrRejectActive\(ownershipPath, transactionId\)/u);
  assert.match(launch,/WriteWorkerOwnership\(ownershipPath, transactionId, process\.Id,/u);
  assert.match(launch,/process\.StartTime\.ToUniversalTime\(\)\.Ticks/u);
  assert.match(launch,/process\.Kill\(entireProcessTree: true\)/u);
