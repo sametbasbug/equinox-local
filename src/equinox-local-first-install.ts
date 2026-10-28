@@ -46,6 +46,7 @@ import { requestWindowsShellRuntimeRestart, requestWindowsShellUpdateShutdown, w
 import { provisionWindowsGuardianFromRelease } from "./equinox-local-windows-guardian-provision.js";
 import { readEquinoxLocalCurrentVersionPointer, writeEquinoxLocalCurrentVersionPointer } from "./equinox-local-current-release.js";
 import { fingerprintEquinoxLocalNativeState } from "./equinox-local-native-state-fingerprint.js";
+import {preserveOriginalSignedWindowsArchive} from "./equinox-local-signed-windows-archive.js";
 import { initializeManagedOnboardingState } from "./equinox-local-onboarding.js";
 import { equinoxLocalReleaseRuntimeContract } from "./equinox-local-release-runtime-contract.js";
 import { equinoxLocalToolchainContract } from "./equinox-local-toolchain-contract.js";
@@ -1302,6 +1303,7 @@ export async function stageSignedMainInstallerNativeArchive({
   prepareCandidateImpl,
   promoteCandidateImpl,
   persistSelectorImpl = persistSignedMainNativeStoreSelector,
+  persistWindowsArchiveImpl = preserveOriginalSignedWindowsArchive,
 }: {
   signedPointer:unknown;sourceArchivePath:string;homeDir?:string;
   platform?:string;arch?:string;env?:NodeJS.ProcessEnv;uid?:number|null;
@@ -1311,6 +1313,7 @@ export async function stageSignedMainInstallerNativeArchive({
   prepareCandidateImpl?: (...args:any[])=>Promise<any>;
   promoteCandidateImpl?: (...args:any[])=>Promise<any>;
   persistSelectorImpl?:typeof persistSignedMainNativeStoreSelector;
+  persistWindowsArchiveImpl?:typeof preserveOriginalSignedWindowsArchive;
 }) {
   const expectedTarget=equinoxLocalUpdateTarget({platform,arch});
   const pointer=verifyPointerImpl(signedPointer);
@@ -1386,6 +1389,12 @@ export async function stageSignedMainInstallerNativeArchive({
     await persistSelectorImpl({signedPointer,sourceSha:pointer.sourceSha,target:expectedTarget,
       releaseDir:stored.releaseDir,transactionRoot:root,platform,env,uid,fsImpl,
       verifyPointerImpl});
+    if(platform==="win32"){
+      await persistWindowsArchiveImpl({transactionRoot:root,transactionId,
+        sourceSha:pointer.sourceSha,target:expectedTarget,
+        artifactSha256:row.artifact.sha256,artifactBytes:row.artifact.bytes,
+        env,fsImpl});
+    }
     return Object.freeze({
       status:"staged",sourceSha:pointer.sourceSha,version:pointer.version,
       target:expectedTarget,releaseDir:stored.releaseDir,reused:stored.reused===true,

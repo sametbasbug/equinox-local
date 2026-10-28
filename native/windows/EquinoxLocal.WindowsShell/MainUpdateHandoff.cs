@@ -130,18 +130,37 @@ internal static partial class MainUpdateHandoff
         return process.Id;
     }
 
-    private static void InspectPendingSignedNativeWithoutGrant(string transactionId)
+    // Independent, explicitly READ-ONLY original-WPF command. The Guardian
+    // checks production Ed25519, the retained signed ZIP and every B file
+    // WITHOUT EVER starting B, stopping A, or taking a mutation lease.
+    internal static void AuditSignedNativeWithoutGrant(string transactionId)
+    {
+        if (!TransactionPattern().IsMatch(transactionId))
+            throw new InvalidDataException("Signed-native WPF audit transaction ID is invalid.");
+        InspectPendingSignedNativeWithoutGrant(transactionId, auditOnly: true);
+    }
+
+    private static void InspectPendingSignedNativeWithoutGrant(
+        string transactionId, bool auditOnly = false)
     {
         var local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
         if (string.IsNullOrWhiteSpace(local) || !Path.IsPathFullyQualified(local))
             throw new InvalidDataException("Original Windows user profile is unavailable.");
         var root = Path.GetFullPath(Path.Combine(local, "Equinox Local", "state", "main-update"));
         var activePath = Path.Combine(root, "active.json");
-        if (!File.Exists(activePath)) return;
+        if (!File.Exists(activePath))
+        {
+            if (auditOnly) throw new InvalidDataException("Signed-native WPF audit has no original active owner.");
+            return;
+        }
         var active = ReadState(activePath, "Original Main owner");
-        // A source-mode active marker has no kind; keep the unchanged
-        // original Git receipt/worker path below.
-        if (!active.TryGetProperty("kind", out var mode)) return;
+        // A source-mode active marker has no kind; it must NEVER qualify
+        // for the signed-native audit or bypass the unchanged Git worker.
+        if (!active.TryGetProperty("kind", out _))
+        {
+            if (auditOnly) throw new InvalidDataException("Original Git owner cannot impersonate signed-native WPF audit.");
+            return;
+        }
 
         RequireExactProperties(active, ["schemaVersion", "kind", "transactionId",
             "sourceSha", "target", "runtimeContractSha256"], "Original signed-native Main owner");
@@ -172,6 +191,38 @@ internal static partial class MainUpdateHandoff
             throw new InvalidDataException("Original signed-native receipt is not in an admissible worker stage.");
         _ = RequireNormalFile(Path.Combine(Path.GetDirectoryName(expected.ReleaseDir)!,
             "signed-selector.json"), "Original production-signed Main selector");
+        if (auditOnly)
+        {
+            // The ORIGINAL independently installed Guardian validates the
+            // production Ed25519 source and retained original ZIP against
+            // EACH extracted B file. WPF itself never runs untrusted B code.
+            var installRoot = Path.GetFullPath(Path.Combine(local, "Equinox Local"));
+            var guardianPath = RequireNormalFile(Path.Combine(installRoot,
+                "runtime", "guardian", "EquinoxLocalGuardian.exe"),
+                "Original installed Main Guardian");
+            var startInfo = new ProcessStartInfo(guardianPath)
+            {
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                WorkingDirectory = installRoot,
+            };
+            startInfo.ArgumentList.Add("--audit-signed-native-journal");
+            startInfo.Environment.Clear();
+            CopyEnvironment(startInfo, "SystemRoot");
+            CopyEnvironment(startInfo, "WINDIR");
+            CopyEnvironment(startInfo, "USERPROFILE");
+            CopyEnvironment(startInfo, "LOCALAPPDATA");
+            using var guardian = Process.Start(startInfo)
+                ?? throw new InvalidOperationException("Original Guardian signed-native audit did not start.");
+            if (!guardian.WaitForExit(120_000))
+            {
+                try { guardian.Kill(entireProcessTree: true); } catch { }
+                throw new InvalidOperationException("Original signed-native Guardian audit deadline expired.");
+            }
+            if (guardian.ExitCode != 0)
+                throw new InvalidDataException("Original Guardian refused the signed-native B archive or its transaction.");
+            return; // AUDIT ONLY: no OS worker launch or WPF mutation.
+        }
         // Node/WPF structural files do not authenticate an Ed25519 signer
         // or authorize the Guardian's kernel PID/HMAC/journal. No shell
         // command, native pointer mutation or worker process may start here.

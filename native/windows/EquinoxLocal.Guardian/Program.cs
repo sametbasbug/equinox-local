@@ -65,8 +65,8 @@ internal static partial class Program
             {
                 // Exact live OS server PID, worker token and fresh nonce MAC.
                 // No native journal lease, WPF stop or A/B mutation authority.
-                InspectOwnedNativeWorkerOsArguments(signedNativeReadOnly: true);
-                InspectOwnedNativeWorkerPipeProof(signedNativeReadOnly: true);
+                var audited = InspectOwnedNativeWorkerOsArguments(signedNativeReadOnly: true);
+                InspectOwnedNativeWorkerPipeProof(signedNativeReadOnly: true, previouslyAudited: audited);
                 return 0;
             }
             if (args.Length == 1 && args[0] == "--audit-native-worker-argv")

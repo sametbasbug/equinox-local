@@ -218,6 +218,14 @@ internal static partial class Program
             throw new InvalidDataException(
                 "Original signed Main B full executable release fingerprint differs from immutable store.");
 
+        // Unlike a mutable native-store fingerprint, these exact ZIP
+        // compressed bytes are authenticated by the ORIGINAL production
+        // Ed25519 pointer. Compare every decompressed release entry before
+        // WPF could ever execute B; no separate new updater or signer.
+        InspectOriginalSignedWindowsArchive(
+            Path.Combine(payload, "signed-artifact.zip"), expected.ReleaseDir,
+            signed.ArtifactSha256, signed.ArtifactBytes);
+
         // Full SHA, Ed25519 signature, extracted release fingerprint and
         // structural journal STILL do NOT prove an independent Guardian
         // OS HMAC/journal authority or healthy B.

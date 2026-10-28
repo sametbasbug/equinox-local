@@ -72,7 +72,7 @@ internal static partial class Program
         finally { _ = LocalFree(pointer); }
     }
 
-    private static void InspectOwnedNativeWorkerOsArguments(bool signedNativeReadOnly = false)
+    private static OwnedWorkerClaim InspectOwnedNativeWorkerOsArguments(bool signedNativeReadOnly = false)
     {
         var worker = InspectOwnedNativeWorkerProcess(signedNativeReadOnly);
         InspectionPhase = "native-worker-os-command-line";
@@ -89,7 +89,7 @@ internal static partial class Program
             // this check. Existing lease/quiesce/slot mutation callers use
             // signedNativeReadOnly=false, so they cannot inherit the audit.
             InspectSignedNativeWorkerArgvWithoutGrant(marker, worker);
-            return;
+            return worker;
         }
         if (signedNativeReadOnly)
             throw new InvalidDataException(
@@ -141,6 +141,7 @@ internal static partial class Program
         if (process.HasExited || process.StartTime.ToUniversalTime().Ticks.ToString(CultureInfo.InvariantCulture) != worker.Ticks)
             throw new InvalidDataException("Windows worker changed after OS argv admission.");
         InspectionPhase = "native-worker-os-command-line-complete";
-        // Never return a mutation capability from this standalone audit.
+        // This is only an audited process identity, NEVER a mutation lease.
+        return worker;
     }
 }

@@ -28,6 +28,7 @@ import { requestWindowsShellRuntimeRestart, requestWindowsShellUpdateShutdown, w
 import { provisionWindowsGuardianFromRelease } from "./equinox-local-windows-guardian-provision.js";
 import { readEquinoxLocalCurrentVersionPointer, writeEquinoxLocalCurrentVersionPointer } from "./equinox-local-current-release.js";
 import { fingerprintEquinoxLocalNativeState } from "./equinox-local-native-state-fingerprint.js";
+import { preserveOriginalSignedWindowsArchive } from "./equinox-local-signed-windows-archive.js";
 import { initializeManagedOnboardingState } from "./equinox-local-onboarding.js";
 import { equinoxLocalReleaseRuntimeContract } from "./equinox-local-release-runtime-contract.js";
 import { equinoxLocalToolchainContract } from "./equinox-local-toolchain-contract.js";
@@ -1261,7 +1262,7 @@ export async function persistSignedMainNativeStoreSelector({ signedPointer, sour
 // Stage ONLY the production-signed source SHA into the existing inactive A/B
 // native store. OS-native WPF/Guardian and macOS restart/rollback are *never*
 // performed by this preparation phase, and no current pointer is changed.
-export async function stageSignedMainInstallerNativeArchive({ signedPointer, sourceArchivePath, homeDir = os.homedir(), platform = process.platform, arch = process.arch, env = process.env, uid = typeof process.getuid === "function" ? process.getuid() : null, fsImpl = fs, verifyPointerImpl = validateTrustedMainInstallPointer, importArchiveImpl, prepareCandidateImpl, promoteCandidateImpl, persistSelectorImpl = persistSignedMainNativeStoreSelector, }) {
+export async function stageSignedMainInstallerNativeArchive({ signedPointer, sourceArchivePath, homeDir = os.homedir(), platform = process.platform, arch = process.arch, env = process.env, uid = typeof process.getuid === "function" ? process.getuid() : null, fsImpl = fs, verifyPointerImpl = validateTrustedMainInstallPointer, importArchiveImpl, prepareCandidateImpl, promoteCandidateImpl, persistSelectorImpl = persistSignedMainNativeStoreSelector, persistWindowsArchiveImpl = preserveOriginalSignedWindowsArchive, }) {
     const expectedTarget = equinoxLocalUpdateTarget({ platform, arch });
     const pointer = verifyPointerImpl(signedPointer);
     const row = pointer.targets.find(value => value.target === expectedTarget);
@@ -1342,6 +1343,12 @@ export async function stageSignedMainInstallerNativeArchive({ signedPointer, sou
         await persistSelectorImpl({ signedPointer, sourceSha: pointer.sourceSha, target: expectedTarget,
             releaseDir: stored.releaseDir, transactionRoot: root, platform, env, uid, fsImpl,
             verifyPointerImpl });
+        if (platform === "win32") {
+            await persistWindowsArchiveImpl({ transactionRoot: root, transactionId,
+                sourceSha: pointer.sourceSha, target: expectedTarget,
+                artifactSha256: row.artifact.sha256, artifactBytes: row.artifact.bytes,
+                env, fsImpl });
+        }
         return Object.freeze({
             status: "staged", sourceSha: pointer.sourceSha, version: pointer.version,
             target: expectedTarget, releaseDir: stored.releaseDir, reused: stored.reused === true,
