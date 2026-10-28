@@ -190,8 +190,8 @@ for (const filename of ['install-equinox-local.sh','install-equinox-local.ps1','
   if (!source.equals(published)) throw new Error(`public Main installer/verifier differs from canonical scripts/${filename}`);
 }
 const verifySource = await fs.readFile(path.join(root,'downloads','updates','install-main-verify.mjs'));
-if (verifySource.length !== 9464 || crypto.createHash('sha256').update(verifySource).digest('hex') !==
-    '7af08a6b6ad4ff0223024d338b1260c7aba7af77f61d8e3398cd950b1dd397c9') {
+if (verifySource.length !== 9728 || crypto.createHash('sha256').update(verifySource).digest('hex') !==
+    '7a34d70e65c5b641c63baba1b5bd00f6b64ab9237d47f01fabce67702c4f99a5') {
   throw new Error('public native Main verifier no longer matches the SHA pinned in BOTH installers');
 }
 

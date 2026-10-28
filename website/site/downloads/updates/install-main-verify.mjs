@@ -176,8 +176,11 @@ async function main(args){
  process.stdout.write(JSON.stringify(result)+'\n');
 }
 if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.url)){
- main(process.argv.slice(2)).catch(()=>{
-  process.stderr.write('Signed Main verification failed; unverified archive refused.\n');
+ main(process.argv.slice(2)).catch((error)=>{
+  // This is an installer, so failed downloads must expose their stage instead
+  // of a generic catch that makes a missing native release impossible to diagnose.
+  const reason=error instanceof Error?error.message:'unknown failure';
+  process.stderr.write('Signed Main verification failed: '+reason.slice(0,400)+'. Unverified archive refused.\n');
   process.exitCode=1;
  });
 }

@@ -11,8 +11,8 @@ Set-StrictMode -Version 2.0
 $Target = $null
 $MaxArtifactBytes = 1073741824
 $MainVerifyUrl = 'https://local.sametbasbug.dev/downloads/updates/install-main-verify.mjs'
-$MainVerifySha256 = '7af08a6b6ad4ff0223024d338b1260c7aba7af77f61d8e3398cd950b1dd397c9'
-$MainVerifyBytes = 9464
+$MainVerifySha256 = '7a34d70e65c5b641c63baba1b5bd00f6b64ab9237d47f01fabce67702c4f99a5'
+$MainVerifyBytes = 9728
 $MainNodeVersion = '26.12.1'
 
 function Fail([string]$Message) { throw "Equinox Local installer: $Message" }
@@ -87,7 +87,7 @@ function Invoke-PinnedMainNode([string]$Executable, [string[]]$Parameters) {
   }
   try {
     $result = @(& $Executable @Parameters)
-    if ($LASTEXITCODE -ne 0) { Fail 'verified Main Node admission failed' }
+    if ($LASTEXITCODE -ne 0) { Fail ('verified Main Node operation failed at ' + [string]$Parameters[0] + ' (exit ' + [string]$LASTEXITCODE + ')') }
     return $result
   } finally {
     foreach ($name in $blocked) {
@@ -129,6 +129,7 @@ function Invoke-VerifiedMainPreparation([string]$PrivateTemp) {
   $node = Join-Path (Join-Path $nodeStage $nodeBase) 'node.exe'
   Assert-NormalFile $node 1 200000000 | Out-Null
   # HTTPS/download/Node/content verification precede all execution.
+  Write-Info 'verifying signed Main archive before changing the existing installation'
   $receipt = @(Invoke-PinnedMainNode $node @($source, '--target', $Target, '--output', $verifiedArchive, '--pointer-output', (Join-Path $PrivateTemp 'main-signed-pointer.json')))
   Assert-NormalFile $verifiedArchive 1 $MaxArtifactBytes | Out-Null
   if ($receipt.Count -ne 1) { Fail 'signed Main verifier produced an unexpected receipt' }
@@ -148,6 +149,7 @@ function Invoke-VerifiedMainPreparation([string]$PrivateTemp) {
   Assert-NormalDirectory $candidate $false | Out-Null
   $inspector = Join-Path $candidate 'equinox-local-first-install.js'
   Assert-NormalFile $inspector 1 2097152 | Out-Null
+  Write-Info 'checking unpacked signed Main before changing the existing installation'
   $admitted = @(Invoke-PinnedMainNode $node @($inspector, '--inspect-signed-main', '--staged-release', $candidate, '--source-sha', ([string]$parsed.sourceSha), '--version', ([string]$parsed.version), '--target', $Target, '--signed-pointer-file', (Join-Path $PrivateTemp 'main-signed-pointer.json')))
   if ($admitted.Count -ne 1) { Fail 'Main native candidate exact source SHA admission failed' }
   try { $matched = $admitted[0] | ConvertFrom-Json -ErrorAction Stop }
@@ -311,42 +313,49 @@ function Get-NormalExistingEntry([string]$Path) {
   }
   return $item
 }
-# An update is the exact same verified fresh install. No version A/B state,
-# Guardian update transaction, old executable backup or rollback path.
-function Clear-ExistingEquinoxExecutables([string]$InstallRoot) {
-  $entries = @(Get-ExecutableReplacementPaths $InstallRoot)
+# An update is the exact same verified fresh install. No second updater.
+# A temporary executable-only safety copy is removed AFTER health succeeds.
+# Never irreversibly delete a working installation before the new signed
+# release has started, passed health checks and returned its exact receipt.
+# Keep the old executable-only entries on the same volume so renames are fast.
+function Restore-PreviousEquinoxExecutables([string]$InstallRoot, [string]$SavedRoot) {
   $programRoot = Join-Path ([IO.Path]::GetDirectoryName($InstallRoot)) 'Programs\Equinox Local'
-  # All downloads, detached signatures and native inspection succeeded first.
-  # Stop only old product-owned processes; leave user config/workspace untouched.
   Stop-ExistingEquinoxExecutables $InstallRoot $programRoot
-  foreach ($entry in $entries) {
-    $source = [string]$entry.Path
-    for ($attempt = 0; $attempt -lt 10; $attempt++) {
-      $existing = Get-NormalExistingEntry $source
-      if ($null -eq $existing) { break }
-      try {
-        Remove-Item -LiteralPath $source -Recurse -Force -ErrorAction Stop
-        break
-      } catch [UnauthorizedAccessException], [IO.IOException] {
-        if ($attempt -eq 9) { throw }
-        Stop-ExistingEquinoxExecutables $InstallRoot $programRoot
-        Start-Sleep -Milliseconds 300
-      }
+  foreach ($entry in @(Get-ExecutableReplacementPaths $InstallRoot)) {
+    $saved = Join-Path $SavedRoot ([string]$entry.Name)
+    if ($null -eq (Get-NormalExistingEntry $saved)) { continue }
+    $current = Get-NormalExistingEntry ([string]$entry.Path)
+    if ($null -ne $current) {
+      Remove-Item -LiteralPath ([string]$entry.Path) -Recurse -Force -ErrorAction Stop
     }
+    Move-Item -LiteralPath $saved -Destination ([string]$entry.Path) -ErrorAction Stop
   }
-  # Retire only the fixed, product-owned backup left by prior installers.
-  $oldBackup = Join-Path $InstallRoot '.equinox-signed-reinstall-backup'
-  $existingBackup = Get-NormalExistingEntry $oldBackup
-  if ($null -ne $existingBackup) {
-    if (-not $existingBackup.PSIsContainer) { Fail 'legacy executable backup is not a directory' }
-    $allowed = @('releases','runtime','main-update','current-version','program','native-messaging','failed-new')
-    foreach ($child in @(Get-ChildItem -LiteralPath $oldBackup -Force)) {
-      if ($child.Name -cnotin $allowed -or (($child.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0)) {
-        Fail 'legacy executable backup contains an unrecognized entry'
-      }
+  if (Test-Path -LiteralPath $SavedRoot) {
+    Remove-Item -LiteralPath $SavedRoot -ErrorAction Stop
+  }
+}
+function Preserve-ExistingEquinoxExecutables([string]$InstallRoot) {
+  $savedRoot = Join-Path $InstallRoot '.equinox-main-reinstall-preserved'
+  if ($null -ne (Get-NormalExistingEntry $savedRoot)) {
+    Fail "previous interrupted installation may be recoverable at $savedRoot; refusing to overwrite it"
+  }
+  $entries = @(Get-ExecutableReplacementPaths $InstallRoot)
+  foreach ($entry in $entries) { Get-NormalExistingEntry ([string]$entry.Path) | Out-Null }
+  $programRoot = Join-Path ([IO.Path]::GetDirectoryName($InstallRoot)) 'Programs\Equinox Local'
+  Stop-ExistingEquinoxExecutables $InstallRoot $programRoot
+  $present = @($entries | Where-Object { $null -ne (Get-NormalExistingEntry ([string]$_.Path)) })
+  if ($present.Count -eq 0) { return $null }
+  [IO.Directory]::CreateDirectory($savedRoot) | Out-Null
+  try {
+    foreach ($entry in $present) {
+      Move-Item -LiteralPath ([string]$entry.Path) -Destination (Join-Path $savedRoot ([string]$entry.Name)) -ErrorAction Stop
     }
-    Remove-Item -LiteralPath $oldBackup -Recurse -Force -ErrorAction Stop
+  } catch {
+    try { Restore-PreviousEquinoxExecutables $InstallRoot $savedRoot }
+    catch { Fail "old program files are preserved in $savedRoot; automatic restoration failed" }
+    throw
   }
+  return $savedRoot
 }
 
 function Invoke-EquinoxLocalInstall {
@@ -380,21 +389,39 @@ function Invoke-EquinoxLocalInstall {
     Assert-NormalFile $mainArchive 1 $MaxArtifactBytes | Out-Null
     Assert-NormalFile $mainSelector 200 16384 | Out-Null
     # Reuse the exact original installer for fresh install and update.
-    # No executable rollback: a failed installation can be repaired by
-    # running this same signed installer again.
+    # Preserve old product binaries until the exact signed replacement is healthy.
+    # No user settings, workspace or secrets are ever moved.
     $suspendedHost = Suspend-OldEquinoxChromeHost $installRoot
-    try { Clear-ExistingEquinoxExecutables $installRoot }
-    catch { Restore-OldEquinoxChromeHost $suspendedHost; throw }
-    $freshResult = @(Invoke-PinnedMainNode $mainNode @($mainInstaller,
-      '--install-main-fresh', '--signed-pointer-file', $mainSelector,
-      '--archive', $mainArchive))
-    if ($freshResult.Count -ne 1) { Fail 'signed Main has no verified completion receipt' }
-    try { $installed = $freshResult[0] | ConvertFrom-Json -ErrorAction Stop }
-    catch { Fail 'signed Main completion receipt is invalid' }
-    if ($installed.status -cne 'installed' -or $installed.channel -cne 'main' -or
-        $installed.sourceSha -cne $main.sourceSha -or
-        $installed.version -cne $main.version -or $installed.target -cne $Target) {
-      Fail 'running Main release does not match its exact signed source SHA'
+    $savedRoot = $null
+    try {
+      $savedRoot = Preserve-ExistingEquinoxExecutables $installRoot
+      Write-Info 'activating verified signed Main; existing program files are preserved until healthy'
+      $freshResult = @(Invoke-PinnedMainNode $mainNode @($mainInstaller,
+        '--install-main-fresh', '--signed-pointer-file', $mainSelector,
+        '--archive', $mainArchive))
+      if ($freshResult.Count -ne 1) { Fail 'signed Main has no verified completion receipt' }
+      try { $installed = $freshResult[0] | ConvertFrom-Json -ErrorAction Stop }
+      catch { Fail 'signed Main completion receipt is invalid' }
+      if ($installed.status -cne 'installed' -or $installed.channel -cne 'main' -or
+          $installed.sourceSha -cne $main.sourceSha -or
+          $installed.version -cne $main.version -or $installed.target -cne $Target) {
+        Fail 'running Main release does not match its exact signed source SHA'
+      }
+    } catch {
+      $failed = $_
+      if ($null -ne $savedRoot) {
+        Write-Info 'signed Main activation failed; restoring previous program files'
+        try { Restore-PreviousEquinoxExecutables $installRoot $savedRoot }
+        catch { Fail "new install failed; original executable files remain under $savedRoot and must not be deleted" }
+      }
+      Restore-OldEquinoxChromeHost $suspendedHost
+      throw $failed
+    }
+    # Healthy, signed exact-SHA receipt is the sole commit point. A cleanup
+    # failure must never undo a running healthy installation.
+    if ($null -ne $savedRoot) {
+      try { Remove-Item -LiteralPath $savedRoot -Recurse -Force -ErrorAction Stop }
+      catch { Write-Warning "Old executable cleanup was deferred at $savedRoot" }
     }
     Write-Output $freshResult[0]
     Write-Info 'signed Main is installed and healthy'
