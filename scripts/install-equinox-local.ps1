@@ -1,10 +1,15 @@
-param([switch]$EnrollExistingMain = $true, [switch]$Help, [switch]$PrepareMain = $false, [switch]$StageMain = $false)
+param([switch]$EnrollExistingMain = $true, [switch]$Help, [switch]$PrepareMain = $false, [switch]$StageMain = $false, [switch]$CheckMainNative = $false)
 if ($Help) {
-  Write-Output 'Usage: install-equinox-local.ps1 [-EnrollExistingMain] [-Help] [-PrepareMain] [-StageMain]'
+  Write-Output 'Usage: install-equinox-local.ps1 [-EnrollExistingMain] [-Help] [-PrepareMain] [-StageMain] [-CheckMainNative]'
+  Write-Output 'CheckMainNative only verifies original production-signed B plus currently installed A and Guardian; it NEVER activates or stops WPF.'
   Write-Output 'The installer verifies a signed bootstrap and enrolls the admitted Main commit by default.'
   Write-Output 'Failed Main enrollment preserves the verified bootstrap for recovery and keeps your settings.'
   return
 }
+# Read-only Windows A/B admission still requires the B archive to be
+# independently signed and staged in the INACTIVE immutable native store.
+# This flag must NEVER be treated as WPF/Guardian activation permission.
+if ($CheckMainNative) { $StageMain = $true }
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version 2.0
 
@@ -204,6 +209,23 @@ function Invoke-VerifiedMainPreparation([string]$PrivateTemp) {
       Fail 'signed inactive native A/B staging identity mismatch'
     }
     Write-Output $staged[0]
+  }
+  if ($CheckMainNative) {
+    # The SAME original verified archive helper performs the read-only
+    # full-SHA Windows A/B + independent installed Guardian preflight.
+    # Do NOT hand off to an untrusted Node / ad-hoc WPF updater.
+    $preflight = @(Invoke-PinnedMainNode $node @($inspector, '--check-windows-signed-main',
+      '--signed-pointer-file', (Join-Path $PrivateTemp 'main-signed-pointer.json')))
+    if ($preflight.Count -ne 1) { Fail 'original Windows Guardian preflight receipt is missing' }
+    try { $checked = $preflight[0] | ConvertFrom-Json -ErrorAction Stop }
+    catch { Fail 'original Windows Guardian preflight receipt is invalid' }
+    if ($checked.status -cne 'guardian_handoff_required' -or
+        $checked.target -cne $Target -or
+        $checked.sourceSha -cne [string]$parsed.sourceSha -or
+        $checked.version -cne [string]$parsed.version) {
+      Fail 'original Windows signed Main native preflight does not match the admitted B'
+    }
+    Write-Output $preflight[0]
   }
   Write-Output $receipt[0]
 }

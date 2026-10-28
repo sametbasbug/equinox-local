@@ -25,7 +25,7 @@ test("public installers enroll Main by default after pinned signed bootstrap", a
   assert.match(mac, /--enroll-existing-main\) MAIN_ARGS=\(--enroll-existing-main\)/u);
   assert.ok(mac.includes('"$SOURCE_RELEASE" ${MAIN_ARGS[@]+"${MAIN_ARGS[@]}"}'));
   assert.match(mac, /enrolls the admitted Main commit by default/u);
-  assert.match(windows, /param\(\[switch\]\$EnrollExistingMain = \$true, \[switch\]\$Help, \[switch\]\$PrepareMain = \$false, \[switch\]\$StageMain = \$false\)/u);
+  assert.match(windows, /param\(\[switch\]\$EnrollExistingMain = \$true, \[switch\]\$Help, \[switch\]\$PrepareMain = \$false, \[switch\]\$StageMain = \$false, \[switch\]\$CheckMainNative = \$false\)/u);
   assert.match(windows, /if \(\$EnrollExistingMain -and -not \$existingMain -and -not \$FreshReplacement\) \{ \$psi\.Arguments \+= ' --enroll-existing-main' \}/u);
   assert.match(windows, /enrolls the admitted Main commit by default/u);
   assert.match(windows, /\[IO\.File\]::Exists\(\$mainStamp\)/u);

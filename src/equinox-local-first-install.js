@@ -1929,6 +1929,30 @@ if (invokedPath && path.basename(invokedPath) === path.basename(fileURLToPath(im
             process.exitCode = 1;
         });
     }
+    else if (process.argv[2] === "--check-windows-signed-main") {
+        Promise.resolve().then(async () => {
+            const cli = parseSignedMainActivateCli([
+                "--activate-signed-main", ...process.argv.slice(3),
+            ]);
+            const { data } = await readBoundedNormalFile(cli.signedPointerFile, {
+                minBytes: 200, maxBytes: 16 * 1024, encoding: "utf8",
+                label: "Private original production-signed Windows Main selector",
+            });
+            const { inspectSignedMainInstallerWindowsAdmission } = await import("./equinox-local-signed-main-windows-admission.js");
+            // NO WPF shutdown, no Guardian token mint, no native pointer switch,
+            // no receipt mutation. This check cannot authorize activation.
+            const result = await inspectSignedMainInstallerWindowsAdmission({
+                signedPointer: JSON.parse(data),
+            });
+            if (result.status !== "guardian_handoff_required") {
+                throw new Error("Windows native Main check cannot grant OS Guardian admission.");
+            }
+            process.stdout.write(JSON.stringify(result) + "\n");
+        }).catch(() => {
+            process.stderr.write("Windows signed native Main preflight denied; independent Guardian/WPF activation was not attempted.\n");
+            process.exitCode = 1;
+        });
+    }
     else if (process.argv[2] === "--repair-signed-main") {
         Promise.resolve().then(async () => {
             // The same fixed authenticated release helper and original signed
