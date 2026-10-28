@@ -2109,8 +2109,8 @@ if (invokedPath && path.basename(invokedPath) === path.basename(fileURLToPath(im
         signedPointer:JSON.parse(data),sourceArchivePath:cli.sourceArchivePath,
       });
       process.stdout.write(JSON.stringify(result)+"\n");
-    }).catch(()=>{
-      process.stderr.write("Signed Main fresh installation failed; user settings were not cleared.\n");
+    }).catch((error)=>{
+      process.stderr.write(`Signed Main fresh installation failed: ${boundedDiagnostic(error instanceof Error?error.message:error,500)}. User settings were not cleared.\n`);
       process.exitCode=1;
     });
   } else if (process.argv[2] === "--check-windows-signed-main") {
