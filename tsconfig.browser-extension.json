@@ -14,5 +14,5 @@
     "sourceMap": false,
     "newLine": "lf"
   },
-  "files": ["extension/chatgpt-continuation-state.ts", "extension/bookmarks.ts", "extension/popup.ts"]
+  "files": ["extension/chatgpt-commentary-visibility.ts", "extension/chatgpt-continuation-state.ts", "extension/bookmarks.ts", "extension/popup.ts"]
 }

@@ -21,7 +21,7 @@ try {
             throw new Error(`Browser TS compile failed (${config}): ${result.error?.message ?? result.stderr ?? result.stdout ?? result.status}`);
         }
     }
-    const expectedNames = ['bookmarks.js', 'chatgpt-continuation-state.js', 'popup.js', 'service-worker.js'];
+    const expectedNames = ['bookmarks.js', 'chatgpt-commentary-visibility.js', 'chatgpt-continuation-state.js', 'popup.js', 'service-worker.js'];
     assert.deepEqual(readdirSync(scratch).sort(), expectedNames, 'Unexpected emitted Browser artifacts.');
     for (const name of expectedNames) {
         assert.equal(readFileSync(path.join(scratch, name), 'utf8'), readFileSync(path.join(root, 'extension', name), 'utf8'), `Stale Browser output: npm run build:typed-browser (${name})`);
